@@ -162,23 +162,13 @@ prepare_mesa_venus()
 	[ "$actual_tree" = "$MESA_VENUS_UPSTREAM_TREE" ] ||
 		fail "fetched Mesa tree is $actual_tree, expected $MESA_VENUS_UPSTREAM_TREE"
 
-	tab=$(printf '\t')
-	while IFS="$tab" read -r order filename patch_id digest subject; do
-		case "$order" in
-		\#*|order|'') continue ;;
-		esac
-		patch="$ROOT_DIR/$MESA_VENUS_GUEST_SERIES/$filename"
-		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-			git -C "$MESA_VENUS_STAGING" \
-			-c core.hooksPath=/dev/null \
-			-c user.useConfigOnly=true \
-			am --committer-date-is-author-date "$patch"
-	done < "$ROOT_DIR/$MESA_VENUS_GUEST_SERIES/series.tsv"
-	actual_tree=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$MESA_VENUS_STAGING" rev-parse HEAD^{tree})
-	[ "$actual_tree" = "$MESA_VENUS_GUEST_TREE" ] ||
-		fail "replayed guest Mesa tree is $actual_tree, expected $MESA_VENUS_GUEST_TREE"
+	python3 -B "$ROOT_DIR/scripts/patch_series.py" apply \
+		--repo "$MESA_VENUS_STAGING" \
+		--series-dir "$ROOT_DIR/$MESA_VENUS_GUEST_SERIES" \
+		--expect-tree "$MESA_VENUS_GUEST_TREE" >/dev/null ||
+		fail "the guest Mesa series does not replay to $MESA_VENUS_GUEST_TREE"
 
+	tab=$(printf '\t')
 	while IFS="$tab" read -r order filename patch_id digest subject; do
 		case "$order" in
 		\#*|order|'') continue ;;

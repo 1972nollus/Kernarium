@@ -715,21 +715,9 @@ class VkGlCtsToolingTests(unittest.TestCase):
                     with self.assertRaisesRegex(cts.CampaignError, field):
                         cts.load_zink_gl_derivative_receipt(receipt, identity)
 
-    def test_zink_gl_receipt_requires_the_exact_ordered_patch_series(self) -> None:
+    def test_zink_gl_receipt_requires_patched_sources_to_say_so(self) -> None:
         identity = cts.load_identity()
         valid = zink_gl_derivative_receipt(identity)
-        for field in ("protocol", "mesa", "cts"):
-            patches = valid[field]["patches"]
-            changed = copy.deepcopy(patches)
-            changed[-1]["sha256"] = "0" * 64
-            wrong_id = copy.deepcopy(patches)
-            wrong_id[-1]["stable_patch_id"] = "0" * 40
-            for invalid in ([], patches[:-1], patches[::-1], changed, wrong_id):
-                with self.subTest(field=field, patches=invalid):
-                    receipt = copy.deepcopy(valid)
-                    receipt[field]["patches"] = invalid
-                    with self.assertRaisesRegex(cts.CampaignError, field + r"\.patches"):
-                        cts.load_zink_gl_derivative_receipt(receipt, identity)
         for field in ("protocol", "cts", "vulkan_headers", "vulkan_loader"):
             receipt = copy.deepcopy(valid)
             receipt[field]["patched"] = not receipt[field]["patched"]

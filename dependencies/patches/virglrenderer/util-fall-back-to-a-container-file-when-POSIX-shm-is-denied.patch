@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Mon, 14 Sep 2026 02:26:42 +0900
+Subject: [PATCH] util: fall back to a container file when POSIX shm is denied
+
+A sandboxed Apple application may only create POSIX shared memory under a
+name belonging to an entitled application group, and an iOS application has
+no such entitlement: shm_open() returns EPERM for every name. Measured in an
+iOS app on macOS in Designed for iPad mode, where shm_open() is denied but an
+mmap(MAP_SHARED) over a file in the app temporary directory works and carries
+4 MiB through unchanged.
+
+Fall back to an unlinked mkstemp file under TMPDIR, which inside an app
+container is that container's own tmp directory. Callers only need a shareable
+mapping, which this provides, and the file never appears in the namespace.
+Platforms that can create POSIX shared memory keep doing so.
+---
+ src/mesa/util/anon_file.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/src/mesa/util/anon_file.c b/src/mesa/util/anon_file.c
+index 2cf3b9ed421726ac3f99f5559316a97e1c2215a8..420bedc896f4a8e10f9baa2d0aea9988c80838b4 100644
+--- a/src/mesa/util/anon_file.c
++++ b/src/mesa/util/anon_file.c
+@@ -31,6 +31,8 @@
+ 
+ #include <errno.h>
+ #include <fcntl.h>
++#include <limits.h>
++#include <string.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <unistd.h>
+@@ -156,6 +158,27 @@ os_create_anonymous_file(off_t size, const char *debug_name)
+      if (errno != EEXIST)
+        break;
+    }
++   if (fd < 0 && (errno == EPERM || errno == EACCES)) {
++     /* A sandboxed Apple application is not allowed to create POSIX shared
++      * memory unless its name belongs to an entitled application group, and
++      * an iOS application has no such entitlement by default. An unlinked
++      * file in the process temporary directory -- inside the app container,
++      * on the same volume -- maps MAP_SHARED just as well, which is all a
++      * caller of this function needs. */
++     const char *tmpdir = getenv("TMPDIR");
++     char path[PATH_MAX];
++     int written = snprintf(path, sizeof(path), "%s%smesa-shared-XXXXXX",
++                            tmpdir && tmpdir[0] ? tmpdir : "/tmp",
++                            (tmpdir && tmpdir[0] &&
++                             tmpdir[strlen(tmpdir) - 1] == '/') ? "" : "/");
++     if (written > 0 && (size_t)written < sizeof(path)) {
++       fd = mkstemp(path);
++       if (fd >= 0) {
++         fcntl(fd, F_SETFD, FD_CLOEXEC);
++         unlink(path);
++       }
++     }
++   }
+ #elif defined(__OpenBSD__)
+    char template[] = "/tmp/mesa-XXXXXXXXXX";
+    fd = shm_mkstemp(template);

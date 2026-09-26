@@ -39,29 +39,10 @@ foreach(_uml_dependency_manifest_row IN LISTS _uml_dependency_manifest_rows)
                 set(_uml_dependency_series
                     "${CMAKE_CURRENT_SOURCE_DIR}/${_uml_dependency_series_relative}")
             endif()
+            # A series records the tree it produces, so its series.tsv
+            # changes whenever the patched source does.
             list(APPEND _uml_dependency_patch_inputs
                 "${_uml_dependency_series}")
-            get_filename_component(_uml_dependency_series_directory
-                "${_uml_dependency_series}" DIRECTORY)
-            file(STRINGS "${_uml_dependency_series}"
-                _uml_dependency_series_rows)
-            foreach(_uml_dependency_series_row IN LISTS
-                    _uml_dependency_series_rows)
-                if("${_uml_dependency_series_row}" MATCHES "^#" OR
-                        "${_uml_dependency_series_row}" STREQUAL "")
-                    continue()
-                endif()
-                string(REPLACE "\t" ";" _uml_dependency_series_fields
-                    "${_uml_dependency_series_row}")
-                list(GET _uml_dependency_series_fields 1
-                    _uml_dependency_patch_name)
-                list(GET _uml_dependency_series_fields 0
-                    _uml_dependency_patch_order)
-                if(NOT _uml_dependency_patch_order STREQUAL "order")
-                    list(APPEND _uml_dependency_patch_inputs
-                        "${_uml_dependency_series_directory}/${_uml_dependency_patch_name}")
-                endif()
-            endforeach()
         endif()
     endif()
 endforeach()

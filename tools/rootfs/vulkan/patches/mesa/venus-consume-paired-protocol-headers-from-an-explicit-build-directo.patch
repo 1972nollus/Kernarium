@@ -1,0 +1,352 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 5 Sep 2026 17:09:33 +0900
+Subject: [PATCH] venus: consume paired protocol headers from an explicit build
+ directory
+
+---
+ meson.options                                 | 7 +++++++
+ src/virtio/vulkan/meson.build                 | 7 +++++++
+ src/virtio/vulkan/vn_acceleration_structure.c | 2 +-
+ src/virtio/vulkan/vn_buffer.c                 | 4 ++--
+ src/virtio/vulkan/vn_command_buffer.c         | 4 ++--
+ src/virtio/vulkan/vn_common.c                 | 2 +-
+ src/virtio/vulkan/vn_cs.h                     | 2 +-
+ src/virtio/vulkan/vn_descriptor_heap.c        | 2 +-
+ src/virtio/vulkan/vn_descriptor_set.c         | 8 ++++----
+ src/virtio/vulkan/vn_device.c                 | 2 +-
+ src/virtio/vulkan/vn_device_memory.c          | 4 ++--
+ src/virtio/vulkan/vn_host_copy.c              | 2 +-
+ src/virtio/vulkan/vn_image.c                  | 8 ++++----
+ src/virtio/vulkan/vn_instance.c               | 6 +++---
+ src/virtio/vulkan/vn_physical_device.c        | 2 +-
+ src/virtio/vulkan/vn_pipeline.c               | 8 ++++----
+ src/virtio/vulkan/vn_query_pool.c             | 2 +-
+ src/virtio/vulkan/vn_queue.c                  | 4 ++--
+ src/virtio/vulkan/vn_render_pass.c            | 4 ++--
+ src/virtio/vulkan/vn_ring.c                   | 2 +-
+ src/virtio/vulkan/vn_sync.c                   | 8 ++++----
+ 21 files changed, 52 insertions(+), 38 deletions(-)
+
+diff --git a/meson.options b/meson.options
+index 93a60e3047b91efb89394fddacacf927009f26d6..92dfd10dafecbc5850eee3fde73e9ca648ea2a7b 100644
+--- a/meson.options
++++ b/meson.options
+@@ -202,6 +202,13 @@ option(
+   description : 'Location of D3D drivers. Default: $libdir/d3d',
+ )
+ 
++option(
++  'venus-protocol-dir',
++  type : 'string',
++  value : '',
++  description : 'Absolute build directory containing the paired generated Venus driver headers',
++)
++
+ option(
+   'vulkan-drivers',
+   type : 'array',
+diff --git a/src/virtio/vulkan/meson.build b/src/virtio/vulkan/meson.build
+index df85f0a040939c6622b8758fe52dbc41e00ccbb5..507d0b327c026eb7aaa04464462a8629291e72cc 100644
+--- a/src/virtio/vulkan/meson.build
++++ b/src/virtio/vulkan/meson.build
+@@ -92,7 +92,14 @@ libvn_files = files(
+   'vn_sync.c',
+ )
+ 
++vn_protocol_dir = get_option('venus-protocol-dir')
++if not fs.is_absolute(vn_protocol_dir) or not fs.is_file(
++    vn_protocol_dir / 'vn_protocol_driver.h')
++  error('Virtio requires -Dvenus-protocol-dir pointing to the paired generated driver headers')
++endif
++
+ vn_incs = [
++  include_directories(vn_protocol_dir),
+   inc_include,
+   inc_src,
+   inc_virtio,
+diff --git a/src/virtio/vulkan/vn_acceleration_structure.c b/src/virtio/vulkan/vn_acceleration_structure.c
+index 95d94f8b9ff4efd4a6012f6b4524af53346e00ab..fc8b3d147796e94af56035e8a70bf52ce158f91e 100644
+--- a/src/virtio/vulkan/vn_acceleration_structure.c
++++ b/src/virtio/vulkan/vn_acceleration_structure.c
+@@ -5,7 +5,7 @@
+ 
+ #include "vn_acceleration_structure.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_acceleration_structure.h"
++#include <vn_protocol_driver_acceleration_structure.h>
+ 
+ #include "vn_device.h"
+ 
+diff --git a/src/virtio/vulkan/vn_buffer.c b/src/virtio/vulkan/vn_buffer.c
+index 58f2264152472cde2b0054a633d67389e56ae2fb..0950c159859977075cbf148b64ce512cfde38207 100644
+--- a/src/virtio/vulkan/vn_buffer.c
++++ b/src/virtio/vulkan/vn_buffer.c
+@@ -10,8 +10,8 @@
+ 
+ #include "vn_buffer.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_buffer.h"
+-#include "venus-protocol/vn_protocol_driver_buffer_view.h"
++#include <vn_protocol_driver_buffer.h>
++#include <vn_protocol_driver_buffer_view.h>
+ 
+ #include "vn_device.h"
+ #include "vn_device_memory.h"
+diff --git a/src/virtio/vulkan/vn_command_buffer.c b/src/virtio/vulkan/vn_command_buffer.c
+index e7be2fff5e83fe436ffad3c6af2454f2317da98d..1e30520d43af1b8376f8a70e8c1d8e3178249561 100644
+--- a/src/virtio/vulkan/vn_command_buffer.c
++++ b/src/virtio/vulkan/vn_command_buffer.c
+@@ -10,8 +10,8 @@
+ 
+ #include "vn_command_buffer.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_command_buffer.h"
+-#include "venus-protocol/vn_protocol_driver_command_pool.h"
++#include <vn_protocol_driver_command_buffer.h>
++#include <vn_protocol_driver_command_pool.h>
+ #include "vk_synchronization.h"
+ 
+ #include "vn_descriptor_set.h"
+diff --git a/src/virtio/vulkan/vn_common.c b/src/virtio/vulkan/vn_common.c
+index 84e3052faabdbd070c16b2193d4da7136141a230..dcc23ed52d633984c8b514f54555cb45341be2fb 100644
+--- a/src/virtio/vulkan/vn_common.c
++++ b/src/virtio/vulkan/vn_common.c
+@@ -15,7 +15,7 @@
+ #include "util/log.h"
+ #include "util/os_misc.h"
+ #include "util/u_debug.h"
+-#include "venus-protocol/vn_protocol_driver_info.h"
++#include <vn_protocol_driver_info.h>
+ #include "vk_enum_to_str.h"
+ 
+ #include "vn_instance.h"
+diff --git a/src/virtio/vulkan/vn_cs.h b/src/virtio/vulkan/vn_cs.h
+index f2a9d127738c8c1382d7273f85a3b942ae70b5f1..a78523b1080764c661039ba1d2b4b2fbe628defb 100644
+--- a/src/virtio/vulkan/vn_cs.h
++++ b/src/virtio/vulkan/vn_cs.h
+@@ -8,7 +8,7 @@
+ 
+ #include "vn_common.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_info.h"
++#include <vn_protocol_driver_info.h>
+ 
+ #define VN_CS_ENCODER_BUFFER_INITIALIZER(storage)                            \
+    (struct vn_cs_encoder_buffer)                                             \
+diff --git a/src/virtio/vulkan/vn_descriptor_heap.c b/src/virtio/vulkan/vn_descriptor_heap.c
+index 0ce0c81e47dd37c047fe37983c11c3e9647538e0..f9098033510e7470ba9f8d9d957cb574c3f2965b 100644
+--- a/src/virtio/vulkan/vn_descriptor_heap.c
++++ b/src/virtio/vulkan/vn_descriptor_heap.c
+@@ -3,7 +3,7 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
+-#include "venus-protocol/vn_protocol_driver_descriptor_heap.h"
++#include <vn_protocol_driver_descriptor_heap.h>
+ 
+ #include "vn_descriptor.h"
+ #include "vn_device.h"
+diff --git a/src/virtio/vulkan/vn_descriptor_set.c b/src/virtio/vulkan/vn_descriptor_set.c
+index d452aa2b24dc11c93b878b91f76d8f48fa0f3f4c..10a4c002608056501a5f6dbbbbae8459fed0e5d0 100644
+--- a/src/virtio/vulkan/vn_descriptor_set.c
++++ b/src/virtio/vulkan/vn_descriptor_set.c
+@@ -10,10 +10,10 @@
+ 
+ #include "vn_descriptor_set.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_descriptor_pool.h"
+-#include "venus-protocol/vn_protocol_driver_descriptor_set.h"
+-#include "venus-protocol/vn_protocol_driver_descriptor_set_layout.h"
+-#include "venus-protocol/vn_protocol_driver_descriptor_update_template.h"
++#include <vn_protocol_driver_descriptor_pool.h>
++#include <vn_protocol_driver_descriptor_set.h>
++#include <vn_protocol_driver_descriptor_set_layout.h>
++#include <vn_protocol_driver_descriptor_update_template.h>
+ 
+ #include "vn_device.h"
+ #include "vn_pipeline.h"
+diff --git a/src/virtio/vulkan/vn_device.c b/src/virtio/vulkan/vn_device.c
+index e938ebc1c88f5856f71b274bd746c07aab7e8565..7a30a583f32723936524f057e30b2d7239f67d94 100644
+--- a/src/virtio/vulkan/vn_device.c
++++ b/src/virtio/vulkan/vn_device.c
+@@ -12,7 +12,7 @@
+ 
+ #include "util/disk_cache.h"
+ #include "util/hex.h"
+-#include "venus-protocol/vn_protocol_driver_device.h"
++#include <vn_protocol_driver_device.h>
+ 
+ #include "vn_android.h"
+ #include "vn_instance.h"
+diff --git a/src/virtio/vulkan/vn_device_memory.c b/src/virtio/vulkan/vn_device_memory.c
+index c38713be710cad18f8131f34b385a2fb921d2937..db16eff7462f6c32905e4a3e32dc32fb21b63271 100644
+--- a/src/virtio/vulkan/vn_device_memory.c
++++ b/src/virtio/vulkan/vn_device_memory.c
+@@ -10,8 +10,8 @@
+ 
+ #include "vn_device_memory.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_device_memory.h"
+-#include "venus-protocol/vn_protocol_driver_transport.h"
++#include <vn_protocol_driver_device_memory.h>
++#include <vn_protocol_driver_transport.h>
+ #include "vk_debug_utils.h"
+ 
+ #include "vn_android.h"
+diff --git a/src/virtio/vulkan/vn_host_copy.c b/src/virtio/vulkan/vn_host_copy.c
+index 69ed6314db85fc994682cc31d69002852cf303c8..2eae2f4efb4bb8c74defb71f3656fe272af49b2d 100644
+--- a/src/virtio/vulkan/vn_host_copy.c
++++ b/src/virtio/vulkan/vn_host_copy.c
+@@ -5,7 +5,7 @@
+ 
+ #include "vn_common.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_host_copy.h"
++#include <vn_protocol_driver_host_copy.h>
+ #include "vk_format.h"
+ 
+ #include "vn_device.h"
+diff --git a/src/virtio/vulkan/vn_image.c b/src/virtio/vulkan/vn_image.c
+index 9341c5c194437b744363899af3d2347732d23afe..921a044ddd1ef4d5d8485a36fc50b53f55cc32a7 100644
+--- a/src/virtio/vulkan/vn_image.c
++++ b/src/virtio/vulkan/vn_image.c
+@@ -10,10 +10,10 @@
+ 
+ #include "vn_image.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_image.h"
+-#include "venus-protocol/vn_protocol_driver_image_view.h"
+-#include "venus-protocol/vn_protocol_driver_sampler.h"
+-#include "venus-protocol/vn_protocol_driver_sampler_ycbcr_conversion.h"
++#include <vn_protocol_driver_image.h>
++#include <vn_protocol_driver_image_view.h>
++#include <vn_protocol_driver_sampler.h>
++#include <vn_protocol_driver_sampler_ycbcr_conversion.h>
+ #include "vk_format.h"
+ 
+ #include "vn_android.h"
+diff --git a/src/virtio/vulkan/vn_instance.c b/src/virtio/vulkan/vn_instance.c
+index 7fcee07b0d1666f537930efec223f5b87b76efb4..e0f00b9ed96a1297bfc627c5ec76804e86f810d9 100644
+--- a/src/virtio/vulkan/vn_instance.c
++++ b/src/virtio/vulkan/vn_instance.c
+@@ -11,9 +11,9 @@
+ #include "vn_instance.h"
+ 
+ #include "vn_drirc.h"
+-#include "venus-protocol/vn_protocol_driver_info.h"
+-#include "venus-protocol/vn_protocol_driver_instance.h"
+-#include "venus-protocol/vn_protocol_driver_transport.h"
++#include <vn_protocol_driver_info.h>
++#include <vn_protocol_driver_instance.h>
++#include <vn_protocol_driver_transport.h>
+ 
+ #include "vn_icd.h"
+ #include "vn_physical_device.h"
+diff --git a/src/virtio/vulkan/vn_physical_device.c b/src/virtio/vulkan/vn_physical_device.c
+index cdc44a58711855c88a93ee261b248331fb78f5ce..d80fa140833dffb5515da1b69ab5aeeba058b71f 100644
+--- a/src/virtio/vulkan/vn_physical_device.c
++++ b/src/virtio/vulkan/vn_physical_device.c
+@@ -15,7 +15,7 @@
+ #include "git_sha1.h"
+ #include "util/mesa-blake3.h"
+ #include "util/os_misc.h"
+-#include "venus-protocol/vn_protocol_driver_device.h"
++#include <vn_protocol_driver_device.h>
+ #include "vk_android.h"
+ #include "vk_common_entrypoints.h"
+ 
+diff --git a/src/virtio/vulkan/vn_pipeline.c b/src/virtio/vulkan/vn_pipeline.c
+index 0876f7b54f9ebe3f2ca5fba4d906f84f100f3a4a..3040a3a75538656e2c11201201c46d8ddeb62e9e 100644
+--- a/src/virtio/vulkan/vn_pipeline.c
++++ b/src/virtio/vulkan/vn_pipeline.c
+@@ -10,10 +10,10 @@
+ 
+ #include "vn_pipeline.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_pipeline.h"
+-#include "venus-protocol/vn_protocol_driver_pipeline_cache.h"
+-#include "venus-protocol/vn_protocol_driver_pipeline_layout.h"
+-#include "venus-protocol/vn_protocol_driver_shader_module.h"
++#include <vn_protocol_driver_pipeline.h>
++#include <vn_protocol_driver_pipeline_cache.h>
++#include <vn_protocol_driver_pipeline_layout.h>
++#include <vn_protocol_driver_shader_module.h>
+ 
+ #include "vn_descriptor_set.h"
+ #include "vn_device.h"
+diff --git a/src/virtio/vulkan/vn_query_pool.c b/src/virtio/vulkan/vn_query_pool.c
+index 383eea694b9d2f77dc7906bdd24b38ec3667b6ce..3944c4051f9911688eb8b67dae6fa4e395ffa2bf 100644
+--- a/src/virtio/vulkan/vn_query_pool.c
++++ b/src/virtio/vulkan/vn_query_pool.c
+@@ -10,7 +10,7 @@
+ 
+ #include "vn_query_pool.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_query_pool.h"
++#include <vn_protocol_driver_query_pool.h>
+ 
+ #include "vn_device.h"
+ #include "vn_feedback.h"
+diff --git a/src/virtio/vulkan/vn_queue.c b/src/virtio/vulkan/vn_queue.c
+index a4497b0d2161110d3bb9b83c6f6441b711519ca1..d85e9312626ac3a54acce6fa669380ac7162b539 100644
+--- a/src/virtio/vulkan/vn_queue.c
++++ b/src/virtio/vulkan/vn_queue.c
+@@ -10,8 +10,8 @@
+ 
+ #include "vn_queue.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_queue.h"
+-#include "venus-protocol/vn_protocol_driver_transport.h"
++#include <vn_protocol_driver_queue.h>
++#include <vn_protocol_driver_transport.h>
+ 
+ #include "vn_command_buffer.h"
+ #include "vn_device.h"
+diff --git a/src/virtio/vulkan/vn_render_pass.c b/src/virtio/vulkan/vn_render_pass.c
+index 42debbe7cec19b3e1a90c210639fefa17f0aa34e..d552233ebd53dfb5a8fabea651ccde969acd65fe 100644
+--- a/src/virtio/vulkan/vn_render_pass.c
++++ b/src/virtio/vulkan/vn_render_pass.c
+@@ -10,8 +10,8 @@
+ 
+ #include "vn_render_pass.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_framebuffer.h"
+-#include "venus-protocol/vn_protocol_driver_render_pass.h"
++#include <vn_protocol_driver_framebuffer.h>
++#include <vn_protocol_driver_render_pass.h>
+ #include "vk_format.h"
+ 
+ #include "vn_device.h"
+diff --git a/src/virtio/vulkan/vn_ring.c b/src/virtio/vulkan/vn_ring.c
+index 2d75f051ed7bd5328957917c063bd5f38cb2c71b..c458ee000643dc442f192de4e58478fcc18746e4 100644
+--- a/src/virtio/vulkan/vn_ring.c
++++ b/src/virtio/vulkan/vn_ring.c
+@@ -9,7 +9,7 @@
+ #include <sys/resource.h>
+ #endif
+ 
+-#include "venus-protocol/vn_protocol_driver_transport.h"
++#include <vn_protocol_driver_transport.h>
+ 
+ #include "vn_cs.h"
+ #include "vn_instance.h"
+diff --git a/src/virtio/vulkan/vn_sync.c b/src/virtio/vulkan/vn_sync.c
+index ee0a5391b25d172c5c5bffd6fc39b8189947920a..fdee560022bd94f1237f65bbbe361ba215e30f3f 100644
+--- a/src/virtio/vulkan/vn_sync.c
++++ b/src/virtio/vulkan/vn_sync.c
+@@ -5,10 +5,10 @@
+ 
+ #include "vn_sync.h"
+ 
+-#include "venus-protocol/vn_protocol_driver_event.h"
+-#include "venus-protocol/vn_protocol_driver_fence.h"
+-#include "venus-protocol/vn_protocol_driver_semaphore.h"
+-#include "venus-protocol/vn_protocol_driver_transport.h"
++#include <vn_protocol_driver_event.h>
++#include <vn_protocol_driver_fence.h>
++#include <vn_protocol_driver_semaphore.h>
++#include <vn_protocol_driver_transport.h>
+ 
+ #include "vn_device.h"
+ #include "vn_physical_device.h"

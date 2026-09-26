@@ -10,6 +10,7 @@ if(NOT DEFINED PLATFORM)
     set(PLATFORM ios-simulator)
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/VerifySourceTrees.cmake")
 if(PLATFORM STREQUAL "ios-simulator")
     set(_platform_receipt ios-simulator-network-arm64.tsv)
     set(_mach_platform 7)
@@ -42,29 +43,13 @@ uml_verify_dependency_manifest_product(
     INSTALLED "${PREFIX}/share/uml-dependencies/manifest.tsv"
     PRODUCT ios-network
     LABEL "iOS network")
+uml_verify_source_trees(
+    INSTALLED "${PREFIX}/share/uml-dependencies/source-trees.tsv"
+    LABEL "iOS network"
+    SOURCES glib-ios "${SOURCE_ROOT}/dependencies/patches/glib-ios/series.tsv")
 set(_provenance_files "${_platform_receipt}")
-set(_series "patches/glib-ios/series.tsv")
-list(APPEND _provenance_files "${_series}")
-get_filename_component(_series_directory "${_series}" DIRECTORY)
-file(STRINGS "${SOURCE_ROOT}/dependencies/${_series}" _series_rows)
-foreach(_row IN LISTS _series_rows)
-    if(_row MATCHES "^#" OR _row STREQUAL "")
-        continue()
-    endif()
-    string(REPLACE "\t" ";" _fields "${_row}")
-    list(GET _fields 0 _order)
-    if(NOT _order STREQUAL "order")
-        list(GET _fields 1 _patch)
-        list(APPEND _provenance_files
-            "${_series_directory}/${_patch}")
-    endif()
-endforeach()
 foreach(_relative IN LISTS _provenance_files)
-    if(_relative STREQUAL "${_platform_receipt}")
-        set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
-    else()
-        set(_source "${SOURCE_ROOT}/dependencies/${_relative}")
-    endif()
+    set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
     set(_installed "${PREFIX}/share/uml-dependencies/${_relative}")
     if(NOT EXISTS "${_installed}" OR IS_SYMLINK "${_installed}")
         message(FATAL_ERROR

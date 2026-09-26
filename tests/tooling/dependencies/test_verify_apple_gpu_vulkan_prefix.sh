@@ -71,7 +71,7 @@ EOF
 command -v xcrun >/dev/null 2>&1 || fail "xcrun is required"
 command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 mkdir -p "$BASE_PREFIX/Frameworks" "$BASE_PREFIX/lib" \
-	"$BASE_PREFIX/share/uml-dependencies/patches" \
+	"$BASE_PREFIX/share/uml-dependencies" \
 	"$BASE_PREFIX/include/EGL" "$BASE_PREFIX/include/GL" \
 	"$BASE_PREFIX/include/KHR" "$BASE_PREFIX/include/epoxy" \
 	"$BASE_PREFIX/include/virgl" \
@@ -148,20 +148,25 @@ cp "$ROOT_DIR/dependencies/manifest.tsv" \
 	"$BASE_PREFIX/share/uml-dependencies/manifest.tsv"
 cp "$ROOT_DIR/dependencies/platforms/macos-gpu-vulkan-arm64.tsv" \
 	"$BASE_PREFIX/share/uml-dependencies/macos-gpu-vulkan-arm64.tsv"
-for component in \
-	libepoxy virglrenderer mesa; do
-	cp -R "$ROOT_DIR/dependencies/patches/$component" \
-		"$BASE_PREFIX/share/uml-dependencies/patches/"
-done
+series_tree()
+{
+	awk -F '\t' '$1 == "tree" { print $2 }' "$1/series.tsv"
+}
+{
+	printf 'source\ttree\n'
+	for component in libepoxy virglrenderer mesa; do
+		printf '%s\t%s\n' "$component" \
+			"$(series_tree "$ROOT_DIR/dependencies/patches/$component")"
+	done
+	printf 'venus-protocol\t%s\n' \
+		"$(series_tree "$ROOT_DIR/tools/rootfs/vulkan/patches/venus-protocol")"
+} >"$BASE_PREFIX/share/uml-dependencies/source-trees.tsv"
 MANIFEST_SHA=$(shasum -a 256 "$ROOT_DIR/dependencies/manifest.tsv" | awk '{print $1}')
-mkdir -p "$BASE_PREFIX/share/uml-dependencies/tools/rootfs/vulkan/patches"
-cp -R "$ROOT_DIR/tools/rootfs/vulkan/patches/venus-protocol" \
-	"$BASE_PREFIX/share/uml-dependencies/tools/rootfs/vulkan/patches/"
 CONTRACT_SHA=$(shasum -a 256 \
 	"$ROOT_DIR/dependencies/platforms/macos-gpu-vulkan-arm64.tsv" | awk '{print $1}')
 cat >"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" <<EOF
 field	value
-format	1
+format	2
 product	apple-gpu-vulkan-experiment
 platform	macos
 sdk_name	macosx
@@ -173,7 +178,6 @@ source_manifest_sha256	$MANIFEST_SHA
 platform_contract_sha256	$CONTRACT_SHA
 mesa_base_commit	da14d65e4499e66468094be52bff9ea0915a695e
 vulkan_headers_base_commit	e3b1eec08173d6b825cd3ac88c885a63b621504a
-venus_protocol_source_commit	70991d4c7e4e5a7bfa2fbb8a6e77e4eac350145d
 venus_protocol_generated_sha256	0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 EOF
 
@@ -181,27 +185,39 @@ verify "$BASE_PREFIX" >/dev/null
 
 expect_failure "wrong platform" "$BASE_PREFIX" ios-simulator
 
-CASE_PREFIX="$TEST_ROOT/stale-series"
-copy_fixture "$CASE_PREFIX"
-printf '%s\n' '# stale' \
-	>>"$CASE_PREFIX/share/uml-dependencies/patches/virglrenderer/series.tsv"
-expect_failure "stale installed series" "$CASE_PREFIX"
+# A prefix is current exactly while each source tree matches its series.
+for component in virglrenderer mesa venus-protocol; do
+	CASE_PREFIX="$TEST_ROOT/stale-$component"
+	copy_fixture "$CASE_PREFIX"
+	awk -F '\t' -v OFS='\t' -v component="$component" \
+		'$1 == component { $2 = "0000000000000000000000000000000000000000" }
+		{ print }' "$BASE_PREFIX/share/uml-dependencies/source-trees.tsv" \
+		>"$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
+	expect_failure "stale $component source tree" "$CASE_PREFIX"
+done
 
-CASE_PREFIX="$TEST_ROOT/stale-mesa-series"
+CASE_PREFIX="$TEST_ROOT/missing-source-tree"
 copy_fixture "$CASE_PREFIX"
-printf '%s\n' '# stale' \
-	>>"$CASE_PREFIX/share/uml-dependencies/patches/mesa/series.tsv"
-expect_failure "stale installed Mesa series" "$CASE_PREFIX"
+grep -v '^libepoxy' "$BASE_PREFIX/share/uml-dependencies/source-trees.tsv" \
+	>"$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
+expect_failure "missing source tree" "$CASE_PREFIX"
 
-CASE_PREFIX="$TEST_ROOT/stale-protocol-series"
+CASE_PREFIX="$TEST_ROOT/extra-source-tree"
 copy_fixture "$CASE_PREFIX"
-printf '%s\n' '# stale' \
-	>>"$CASE_PREFIX/share/uml-dependencies/tools/rootfs/vulkan/patches/venus-protocol/series.tsv"
-expect_failure "stale installed shared protocol series" "$CASE_PREFIX"
+printf 'vulkan-headers\t%s\n' 0000000000000000000000000000000000000000 \
+	>>"$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
+expect_failure "unexpected source tree" "$CASE_PREFIX"
+
+CASE_PREFIX="$TEST_ROOT/installed-patches"
+copy_fixture "$CASE_PREFIX"
+mkdir -p "$CASE_PREFIX/share/uml-dependencies/patches"
+cp -R "$ROOT_DIR/dependencies/patches/mesa" \
+	"$CASE_PREFIX/share/uml-dependencies/patches/"
+expect_failure "installed patch files" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/invalid-protocol-identity"
 copy_fixture "$CASE_PREFIX"
-sed 's/^venus_protocol_source_commit.*/venus_protocol_source_commit\tunknown/' \
+sed 's/^venus_protocol_generated_sha256.*/venus_protocol_generated_sha256\tunknown/' \
 	"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" \
 	>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
 expect_failure "invalid protocol build identity" "$CASE_PREFIX"

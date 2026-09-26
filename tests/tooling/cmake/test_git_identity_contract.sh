@@ -38,7 +38,6 @@ named=$(git -C "$ROOT_DIR" grep -l -E 'user\.(name|email)=' -- \
 for relative in \
 	android/aosp-17/build/apply-orangefox-patches.sh \
 	android/aosp-17/build/prepare-sources.sh \
-	dependencies/prepare.sh \
 	kernel/mainline-6.18/scripts/check-next-version.sh \
 	scripts/git_identity.py \
 	scripts/patch_series.py \

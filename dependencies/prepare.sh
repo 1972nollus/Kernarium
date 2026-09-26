@@ -8,6 +8,7 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
+PATCH_SERIES="$ROOT_DIR/scripts/patch_series.py"
 MANIFEST=${UML_DEPENDENCY_MANIFEST:-"$ROOT_DIR/dependencies/manifest.tsv"}
 PATCH_ROOT=${UML_DEPENDENCY_PATCH_ROOT:-"$ROOT_DIR/dependencies"}
 DEPENDENCY_ROOT=${UML_DEPENDENCY_SOURCE_ROOT:-"$ROOT_DIR/external/sources"}
@@ -15,6 +16,7 @@ CACHE_ROOT=${UML_DEPENDENCY_CACHE:-"$ROOT_DIR/.build/dependency-cache"}
 PRODUCT=${UML_DEPENDENCY_PRODUCT:-macos}
 VERIFY_ONLY=0
 FETCH=1
+RECREATE=0
 VALIDATE_MANIFEST_ONLY=0
 RESOLVE_REPOSITORY=
 RESOLVE_REF=
@@ -44,6 +46,8 @@ Options:
   --cache PATH    Partial Git cache (default: .build/dependency-cache)
   --verify        Verify prepared repositories without changing or fetching
   --no-fetch      Prepare only from commits already present in the Git cache
+  --recreate      Replace a clean prepared source of the same upstream whose
+                  pinned commit or patch series changed
   --validate-manifest-only
                   Validate every source and patch-series identity only
   --archive-manifest PATH
@@ -56,8 +60,10 @@ Options:
                   verifying both pinned identities before publishing its ref
   -h, --help      Show this help
 
-Preparation never replaces an existing, mismatched repository. Move it aside
-after reviewing the mismatch, then rerun preparation.
+A prepared source is identified by the tree its patch series records.
+Preparation replaces an existing, mismatched repository only with --recreate,
+and then only a clean one of the same upstream repository whose branches
+point only at commits the Git cache already holds.
 EOF
 }
 
@@ -85,6 +91,10 @@ while [ "$#" -gt 0 ]; do
 		;;
 	--no-fetch)
 		FETCH=0
+		shift
+		;;
+	--recreate)
+		RECREATE=1
 		shift
 		;;
 	--validate-manifest-only)
@@ -420,77 +430,37 @@ validate_source_paths()
 	done
 }
 
-mail_subject()
+series_tool()
 {
-	git mailinfo /dev/null /dev/null < "$1" |
-		sed -n 's/^Subject: //p'
+	python3 -B "$PATCH_SERIES" "$@"
+}
+
+# A generated series records the tree it produces on the pinned commit. That
+# tree, not the patch bytes, identifies the prepared source.
+series_values()
+{
+	SERIES_COUNT=0
+	SERIES_TREE=
+	[ "$patch_series" != '-' ] || return 0
+	resolve_series
+	series_directory=$(dirname -- "$series_path")
+	SERIES_COUNT=$(awk -F '\t' '$1 == "patch" { count++ } END { print count + 0 }' \
+		"$series_path")
+	SERIES_TREE=$(series_tool recorded-tree --series-dir "$series_directory") ||
+		fail "$name patch series records no tree"
 }
 
 validate_series()
 {
 	[ "$patch_series" != '-' ] || return 0
 	resolve_series
+	[ "$(basename -- "$series_path")" = series.tsv ] ||
+		fail "$name patch series must name a series.tsv: $patch_series"
 	[ -f "$series_path" ] || fail "$name patch series is missing: $series_path"
-	awk -F '\t' '
-		/^#/ || /^[[:space:]]*$/ { next }
-		$1 == "order" {
-			if (header || data || NF != 5 || $2 != "patch" ||
-			    $3 != "stable_patch_id" || $4 != "sha256" ||
-			    $5 != "subject") exit 1
-			header = 1
-			next
-		}
-		!header || NF != 5 { exit 1 }
-		{ data = 1 }
-		END { if (!header || !data) exit 1 }
-	' "$series_path" || fail "$name patch-series structure is invalid"
-	series_directory=$(dirname -- "$series_path")
-	expected_order=1
-	series_count=0
-	while IFS="$tab" read -r order patch_file patch_id digest subject; do
-		case "$order" in
-		\#*|order|'') continue ;;
-		esac
-		[ "$order" = "$expected_order" ] ||
-			fail "$name patch-series order $order is not $expected_order"
-		case "$patch_file" in
-		''|*/*|*..*|*[!A-Za-z0-9._-]*)
-			fail "$name has an unsafe patch filename: $patch_file"
-			;;
-		esac
-		case "$patch_id:$digest" in
-		*[!0-9a-f:]*) fail "$name has an invalid patch identity" ;;
-		esac
-		[ "${#patch_id}" -eq 40 ] && [ "${#digest}" -eq 64 ] ||
-			fail "$name has an invalid patch identity"
-		[ -n "$subject" ] || fail "$name patch subject is empty"
-		patch_path="$series_directory/$patch_file"
-		verify_metadata_path "$patch_path"
-		[ -f "$patch_path" ] || fail "$name patch is missing: $patch_path"
-		[ "$(sha256_file "$patch_path")" = "$digest" ] ||
-			fail "$name patch hash changed: $patch_file"
-		grep -Eq '^From [0-9a-f]{40} Mon Sep 17 00:00:00 2001$' \
-			"$patch_path" ||
-			fail "$name patch was not emitted by git format-patch: $patch_file"
-		actual_patch_id=$(git patch-id --stable < "$patch_path" |
-			awk 'NF { count++; id = $1 } END { if (count == 1) print id }')
-		[ "$actual_patch_id" = "$patch_id" ] ||
-			fail "$name stable patch ID changed: $patch_file"
-		actual_subject=$(mail_subject "$patch_path")
-		[ "$actual_subject" = "$subject" ] ||
-			fail "$name patch subject changed: $patch_file"
-		series_count=$((series_count + 1))
-		expected_order=$((expected_order + 1))
-	done < "$series_path"
-	[ "$series_count" -gt 0 ] || fail "$name patch series is empty"
-	if [ "$patch_series" = rootfs-vulkan:patches/venus-protocol/series.tsv ]; then
-		declared_patches=$(awk -F '\t' '$1 ~ /^[0-9]+$/ { print $2 }' \
-			"$series_path" | LC_ALL=C sort)
-		owned_patches=$(find "$series_directory" -type f -name '*.patch' \
-			-exec basename {} \; | LC_ALL=C sort)
-		[ "$declared_patches" = "$owned_patches" ] ||
-			fail "venus-protocol patch inventory differs from its owning series"
-	fi
+	series_tool verify --series-dir "$(dirname -- "$series_path")" ||
+		fail "$name patch series is invalid"
+	series_values
+	[ "$SERIES_COUNT" -gt 0 ] || fail "$name patch series is empty"
 }
 
 validate_row()
@@ -543,8 +513,7 @@ validate_patch_inventory()
 		for relative_series in $manifest_series; do
 			series_directory=$(dirname -- "$relative_series")
 			awk -F '\t' -v prefix="$series_directory/" '
-				/^#/ || /^[[:space:]]*$/ || $1 == "order" { next }
-				{ print prefix $2 }
+				$1 == "patch" { print prefix $2 }
 			' "$PATCH_ROOT/$relative_series"
 		done | LC_ALL=C sort
 	)
@@ -582,25 +551,36 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 
-publish_exclusively()
+rename_atomically()
 {
-	source=$1
-	destination=$2
-	python3 - "$source" "$destination" <<'PY'
+	python3 - "$1" "$2" "$3" <<'PY'
 import ctypes
 import os
 import sys
 
 
-source = os.fsencode(sys.argv[1])
-destination = os.fsencode(sys.argv[2])
+flags = int(sys.argv[1], 0)
+source = os.fsencode(sys.argv[2])
+destination = os.fsencode(sys.argv[3])
 libc = ctypes.CDLL(None, use_errno=True)
-rename_exclusive = libc.renamex_np
-rename_exclusive.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-rename_exclusive.restype = ctypes.c_int
-if rename_exclusive(source, destination, 0x00000004) != 0:
+renamex_np = libc.renamex_np
+renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+renamex_np.restype = ctypes.c_int
+if renamex_np(source, destination, flags) != 0:
     raise SystemExit(1)
 PY
+}
+
+# RENAME_EXCL: never replace a destination another process published.
+publish_exclusively()
+{
+	rename_atomically 0x00000004 "$1" "$2"
+}
+
+# RENAME_SWAP: exchange a verified replacement with the stale repository.
+swap_atomically()
+{
+	rename_atomically 0x00000002 "$1" "$2"
 }
 
 selected_product()
@@ -612,70 +592,86 @@ selected_product()
 	return 1
 }
 
-series_values()
+git_value()
 {
-	SERIES_IDS=
-	SERIES_SUBJECTS=
-	SERIES_COUNT=0
-	[ "$patch_series" != '-' ] || return 0
-	resolve_series
-	while IFS="$tab" read -r order patch_file patch_id digest subject; do
-		case "$order" in
-		\#*|order|'') continue ;;
-		esac
-		SERIES_IDS="${SERIES_IDS}${patch_id}
-"
-		SERIES_SUBJECTS="${SERIES_SUBJECTS}${subject}
-"
-		SERIES_COUNT=$((SERIES_COUNT + 1))
-	done < "$series_path"
+	git -C "$1" config --get "$2" 2>/dev/null || true
+}
+
+# Set REPOSITORY_PROBLEM and fail the check without leaving the script, so
+# preparation can decide whether --recreate may replace the repository.
+check_repository()
+{
+	repository_directory=$1
+	REPOSITORY_PROBLEM=
+	[ -d "$repository_directory/.git" ] || {
+		REPOSITORY_PROBLEM="$name is not a prepared Git repository"
+		return 1
+	}
+	[ "$(git_value "$repository_directory" uml.source.repository)" = "$repository" ] || {
+		REPOSITORY_PROBLEM="$name prepared repository URL changed"
+		return 1
+	}
+	[ "$(git_value "$repository_directory" uml.source.commit)" = "$commit" ] || {
+		REPOSITORY_PROBLEM="$name prepared base commit changed"
+		return 1
+	}
+	[ "$(git_value "$repository_directory" uml.source.paths)" = "$source_paths" ] || {
+		REPOSITORY_PROBLEM="$name prepared sparse paths changed"
+		return 1
+	}
+	[ "$(git_value "$repository_directory" uml.source.patchSeries)" = "$patch_series" ] || {
+		REPOSITORY_PROBLEM="$name prepared patch series changed"
+		return 1
+	}
+	[ -z "$(git -C "$repository_directory" remote)" ] || {
+		REPOSITORY_PROBLEM="$name prepared repository retains a network remote"
+		return 1
+	}
+	[ -z "$(git -C "$repository_directory" status --porcelain --untracked-files=all)" ] || {
+		REPOSITORY_PROBLEM="$name prepared repository is dirty"
+		return 1
+	}
+	actual_base=$(git -C "$repository_directory" rev-parse "$commit^{commit}" 2>/dev/null || true)
+	[ "$actual_base" = "$commit" ] || {
+		REPOSITORY_PROBLEM="$name base commit is unavailable"
+		return 1
+	}
+	series_values
+	if [ "$SERIES_COUNT" -eq 0 ]; then
+		[ "$(git -C "$repository_directory" rev-parse HEAD)" = "$commit" ] || {
+			REPOSITORY_PROBLEM="$name unpatched source is not at its pinned commit"
+			return 1
+		}
+		return 0
+	fi
+	git -C "$repository_directory" merge-base --is-ancestor "$commit" HEAD || {
+		REPOSITORY_PROBLEM="$name prepared history is not based on its pinned commit"
+		return 1
+	}
+	actual_tree=$(git -C "$repository_directory" rev-parse 'HEAD^{tree}')
+	[ "$actual_tree" = "$SERIES_TREE" ] || {
+		REPOSITORY_PROBLEM="$name prepared tree is $actual_tree; its series produce $SERIES_TREE"
+		return 1
+	}
 }
 
 verify_repository()
 {
-	repository_directory=$1
-	[ -d "$repository_directory/.git" ] ||
-		fail "$name is not a prepared Git repository"
-	[ "$(git -C "$repository_directory" config --get uml.source.repository 2>/dev/null || true)" = \
-		"$repository" ] || fail "$name prepared repository URL changed"
-	[ "$(git -C "$repository_directory" config --get uml.source.commit 2>/dev/null || true)" = \
-		"$commit" ] || fail "$name prepared base commit changed"
-	[ "$(git -C "$repository_directory" config --get uml.source.paths 2>/dev/null || true)" = \
-		"$source_paths" ] || fail "$name prepared sparse paths changed"
-	[ "$(git -C "$repository_directory" config --get uml.source.patchSeries 2>/dev/null || true)" = \
-		"$patch_series" ] || fail "$name prepared patch series changed"
-	[ -z "$(git -C "$repository_directory" remote)" ] ||
-		fail "$name prepared repository retains a network remote"
-	[ -z "$(git -C "$repository_directory" status --porcelain --untracked-files=all)" ] ||
-		fail "$name prepared repository is dirty"
-	actual_base=$(git -C "$repository_directory" rev-parse "$commit^{commit}" 2>/dev/null || true)
-	[ "$actual_base" = "$commit" ] || fail "$name base commit is unavailable"
-	series_values
-	if [ "$SERIES_COUNT" -eq 0 ]; then
-		[ "$(git -C "$repository_directory" rev-parse HEAD)" = "$commit" ] ||
-			fail "$name unpatched source is not at its pinned commit"
-		return
-	fi
-	git -C "$repository_directory" merge-base --is-ancestor "$commit" HEAD ||
-		fail "$name prepared history is not based on its pinned commit"
-	commits=$(git -C "$repository_directory" rev-list --reverse "$commit..HEAD")
-	commit_count=$(printf '%s\n' "$commits" |
-		awk 'NF { count++ } END { print count + 0 }')
-	[ "$commit_count" -eq "$SERIES_COUNT" ] ||
-		fail "$name prepared history has $commit_count patches, expected $SERIES_COUNT"
-	[ -z "$(git -C "$repository_directory" rev-list --merges "$commit..HEAD")" ] ||
-		fail "$name prepared history contains a merge"
-	actual_subjects=$(git -C "$repository_directory" log --reverse --format='%s' "$commit..HEAD")
-	[ "$actual_subjects" = "$(printf '%s' "$SERIES_SUBJECTS")" ] ||
-		fail "$name prepared subjects differ from its series"
-	actual_ids=$(printf '%s\n' "$commits" |
-		while IFS= read -r prepared_commit; do
-			[ -n "$prepared_commit" ] || continue
-			git -C "$repository_directory" show --binary --pretty=format: "$prepared_commit" |
-				git patch-id --stable | awk '{print $1}'
-		done)
-	[ "$actual_ids" = "$(printf '%s' "$SERIES_IDS")" ] ||
-		fail "$name prepared patch IDs differ from its series"
+	check_repository "$1" || fail "$REPOSITORY_PROBLEM"
+}
+
+# --recreate replaces only what preparation itself made: a clean repository of
+# the same upstream whose branches point only at commits the Git cache holds.
+recreatable_repository()
+{
+	[ ! -L "$1" ] && [ -d "$1/.git" ] || return 1
+	[ "$(git_value "$1" uml.source.repository)" = "$repository" ] || return 1
+	[ -z "$(git -C "$1" status --porcelain --untracked-files=all 2>/dev/null)" ] ||
+		return 1
+	for branch_tip in $(git -C "$1" for-each-ref --format='%(objectname)' refs/heads); do
+		env GIT_NO_LAZY_FETCH=1 git -C "$CACHE_ROOT/git/$name" \
+			cat-file -e "$branch_tip^{commit}" 2>/dev/null || return 1
+	done
 }
 
 obtain_cache()
@@ -798,9 +794,14 @@ obtain_cache()
 prepare_repository()
 {
 	directory="$DEPENDENCY_ROOT/$name"
+	replacing=0
 	if [ -e "$directory" ] || [ -L "$directory" ]; then
-		verify_repository "$directory"
-		return
+		check_repository "$directory" && return
+		[ "$RECREATE" -eq 1 ] ||
+			fail "$REPOSITORY_PROBLEM; review it, then rerun with --recreate"
+		recreatable_repository "$directory" ||
+			fail "$REPOSITORY_PROBLEM; --recreate replaces only a clean prepared source whose branches the Git cache holds"
+		replacing=1
 	fi
 	obtain_cache
 	if [ -z "$STAGING_ROOT" ]; then
@@ -848,28 +849,29 @@ prepare_repository()
 	env GIT_NO_LAZY_FETCH=1 git -C "$staged_repository" \
 		switch --detach "$commit" >/dev/null
 	git -C "$staged_repository" remote remove origin
+	# Branches a clone copied from the cache are not part of the source.
+	git -C "$staged_repository" for-each-ref --format='delete %(refname)' \
+		refs/heads | git -C "$staged_repository" update-ref --stdin
 	if [ "$patch_series" != '-' ]; then
-		resolve_series
-		series_directory=$(dirname -- "$series_path")
-		while IFS="$tab" read -r order patch_file patch_id digest subject; do
-			case "$order" in
-			\#*|order|'') continue ;;
-			esac
-			if ! GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-				git -C "$staged_repository" \
-				-c user.useConfigOnly=true \
-				-c core.hooksPath=/dev/null am --3way --no-gpg-sign \
-				"$series_directory/$patch_file" >/dev/null; then
-				git -C "$staged_repository" am --abort >/dev/null 2>&1 || true
-				fail "$name patch does not apply: $patch_file"
-			fi
-		done < "$series_path"
+		series_values
+		env GIT_NO_LAZY_FETCH=1 python3 -B "$PATCH_SERIES" apply \
+			--repo "$staged_repository" --series-dir "$series_directory" \
+			--expect-tree "$SERIES_TREE" >/dev/null ||
+			fail "$name patch series does not apply"
 	fi
 	git -C "$staged_repository" config uml.source.repository "$repository"
 	git -C "$staged_repository" config uml.source.commit "$commit"
 	git -C "$staged_repository" config uml.source.paths "$source_paths"
 	git -C "$staged_repository" config uml.source.patchSeries "$patch_series"
 	verify_repository "$staged_repository"
+	if [ "$replacing" -eq 1 ]; then
+		swap_atomically "$staged_repository" "$directory" ||
+			fail "$name stale source could not be replaced atomically"
+		rm -rf -- "$staged_repository"
+		verify_repository "$directory"
+		printf '%s\n' "recreated $name in $directory"
+		return
+	fi
 	if ! publish_exclusively "$staged_repository" "$directory"; then
 		if [ -e "$directory" ] || [ -L "$directory" ]; then
 			verify_repository "$directory"

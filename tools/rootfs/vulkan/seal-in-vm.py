@@ -27,7 +27,9 @@ import tempfile
 from typing import Any, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests/integration/gpu"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import opengl_cts_plan  # noqa: E402
+import patch_series  # noqa: E402
 
 
 BASE_FILENAME = "rootfs.erofs"
@@ -258,13 +260,6 @@ MESA_ELF_STAGE_FILES = ARCHITECTURE["mesa_elf_stage_files"]
 EXPECTED_MESA_BUILD_OPTIONS = ARCHITECTURE["mesa_build_options"]
 EXPECTED_LOADER_STAGE = ARCHITECTURE["loader_stage"]
 LOADER_RUNTIME_GUEST_PATH = ARCHITECTURE["loader_runtime"]
-EXPECTED_FINAL_TREES = {
-    "mesa": "99bb2adc315eb12d02c791cbfd8e22afc43a4c2d",
-    "venus-protocol": "ebd380d887b9e14120316d9499728a01bcb5f49a",
-    "vulkan-headers": "7509994568d7423209793fb72c3ac793d9aec0c9",
-    "vulkan-loader": "9a68aaf7a98185b4e9224323003df0699033d0c4",
-    "vk-gl-cts": "baed9ddd836897afcd628c8480b497a3e42bef61",
-}
 CTS_ALLOWED_FETCHED_RESOURCE = (
     "external/vulkancts/data/vulkan/video/hevc/LTRPSPS_A_Qualcomm_1.bit",
     "8f8e50fa408b7e96e76e6936b380fc34c208271efb8c283b15a42cb1f8c78ae7",
@@ -405,18 +400,17 @@ def read_tsv(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def patch_rows(metadata_root: Path, series: str) -> list[dict[str, Any]]:
-    rows = read_tsv(metadata_root / series)
-    return [
-        {
-            "order": int(row["order"]),
-            "patch": row["patch"],
-            "stable_patch_id": row["stable_patch_id"],
-            "sha256": row["sha256"],
-            "subject": row["subject"],
-        }
-        for row in rows
-    ]
+def expected_tree(metadata_root: Path, row: dict[str, str]) -> str:
+    """Return the tree a source must have: its base, or what its series records."""
+    if row["series"] == "-":
+        return row["base_tree"]
+    try:
+        tree = patch_series.read_series((metadata_root / row["series"]).parent).tree
+    except patch_series.SeriesError as error:
+        fail(str(error))
+    if tree is None:
+        fail(f"{row['component']} series records no tree")
+    return tree
 
 
 def git(repository: Path, *arguments: str, input_bytes: bytes | None = None) -> str:
@@ -444,7 +438,7 @@ def verify_source(
     if base_commit != row["base_commit"] or base_tree != row["base_tree"]:
         fail(f"{component} base object identity changed")
     final_tree = git(repository, "rev-parse", "HEAD^{tree}")
-    if final_tree != EXPECTED_FINAL_TREES[component]:
+    if final_tree != expected_tree(metadata_root, row):
         fail(f"{component} final tree changed: {final_tree}")
 
     record: dict[str, Any] = {
@@ -468,21 +462,7 @@ def verify_source(
             fail(f"unpatched {component} checkout is not at its base commit")
         return record, repository
 
-    patches = patch_rows(metadata_root, series)
-    commits = git(
-        repository, "rev-list", "--reverse", f"{base_commit}..HEAD"
-    ).splitlines()
-    if len(commits) != len(patches):
-        fail(f"{component} topic commit count does not match its series")
-    for commit, patch in zip(commits, patches, strict=True):
-        mail = run(
-            ("git", "-C", repository, "show", "--format=email", "--binary", commit)
-        ).stdout
-        identity = run(("git", "patch-id", "--stable"), input_bytes=mail).stdout
-        words = identity.decode("ascii", errors="strict").split()
-        if not words or words[0] != patch["stable_patch_id"]:
-            fail(f"{component} topic patch identity changed at {commit}")
-    record.update({"patched_tree": final_tree, "patches": patches})
+    record.update({"patched_tree": final_tree})
     return record, repository
 
 

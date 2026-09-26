@@ -18,6 +18,10 @@ from typing import Any, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import patch_series  # noqa: E402
+
+
 RECEIPT_PATH = Path(__file__).resolve().with_name("vulkan_cts_receipt.json")
 SCHEMA_PATH = Path(__file__).resolve().with_name(
     "vulkan_cts_future_receipt.schema.json"
@@ -36,13 +40,6 @@ EXPECTED_CTS_RELEASE = (
 )
 EXPECTED_LOADER_BUILD_ID = "bbd14af1bc9b54509831cbb1a156d1a089a0be72"
 EXPECTED_LOADER_RUNTIME = "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357"
-EXPECTED_FINAL_TREES = {
-    "protocol": "ebd380d887b9e14120316d9499728a01bcb5f49a",
-    "mesa": "99bb2adc315eb12d02c791cbfd8e22afc43a4c2d",
-    "cts": "baed9ddd836897afcd628c8480b497a3e42bef61",
-    "vulkan_headers": "7509994568d7423209793fb72c3ac793d9aec0c9",
-    "vulkan_loader": "9a68aaf7a98185b4e9224323003df0699033d0c4",
-}
 EXPECTED_MESA_FILES = {
     "/usr/lib/aarch64-linux-gnu/dri/libdril_dri.so",
     "/usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
@@ -214,22 +211,20 @@ def verify_source_lock(
         if "patched_tree" in receipt_source or "patches" in receipt_source:
             fail(f"{field} has unexpected downstream patch identity")
         return
+    # The tree a series records is its identity: a reformatted or folded series
+    # that produces the same tree needs no new seal.
     if receipt_source.get("patched_tree") != patched_tree:
         fail(f"{field}.patched_tree changed")
-    series_path = METADATA_ROOT / lock["series"]
-    expected = []
-    for row in read_tsv(series_path):
-        expected.append(
-            {
-                "order": int(row["order"]),
-                "patch": row["patch"],
-                "stable_patch_id": row["stable_patch_id"],
-                "sha256": row["sha256"],
-                "subject": row["subject"],
-            }
-        )
-    if receipt_source.get("patches") != expected:
-        fail(f"{field}.patches differs from the generated series")
+
+
+def recorded_tree(lock: dict[str, str]) -> str:
+    try:
+        tree = patch_series.read_series((METADATA_ROOT / lock["series"]).parent).tree
+    except patch_series.SeriesError as error:
+        fail(str(error))
+    if tree is None:
+        fail(f"{lock['component']} series records no tree")
+    return tree
 
 
 def verify_source_epoch(receipt: dict[str, Any]) -> None:
@@ -249,9 +244,7 @@ def verify_source_epoch(receipt: dict[str, Any]) -> None:
             receipt.get(field),
             lock,
             field,
-            patched_tree=(
-                EXPECTED_FINAL_TREES[field] if lock["series"] != "-" else None
-            ),
+            patched_tree=recorded_tree(lock) if lock["series"] != "-" else None,
         )
     # Mesa's established receipt shape identifies its patches through the tree
     # and complete series; protocol and CTS additionally carry this boolean.

@@ -176,9 +176,8 @@ CTS 1.4.6.2 with its authenticated correctness patches. The guest
 and build-only codec generation; the host and guest consume one canonical
 protocol patch series and SDK identity.
 
-The checked receipt owns source trees, stable patch identities, installed
-files, loader and CTS build identities, filesystem UUID, image size, and image
-digest. A mismatched input, writable base, missing file, unexpected ICD, or
+The checked receipt owns patched source trees, installed files, loader and
+CTS build identities, filesystem UUID, image size, and image digest. A mismatched input, writable base, missing file, unexpected ICD, or
 software renderer fails closed.
 
 ## CTS acceptance

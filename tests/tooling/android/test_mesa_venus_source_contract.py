@@ -6,7 +6,6 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import hashlib
 import os
 import shutil
 import subprocess
@@ -74,26 +73,25 @@ def parse_env(path: Path) -> dict[str, str]:
     return result
 
 
-def write_guest_series(source_root: Path) -> str:
-    """A fixture stand-in for the guest Vulkan Mesa series this port pins."""
-    series = source_root / GUEST_SERIES
-    series.mkdir(parents=True)
-    text = (
-        "# SPDX-License-Identifier: GPL-2.0-or-later\n"
-        "order\tpatch\tstable_patch_id\tsha256\tsubject\n"
-        "1\t0001-venus-fixture.patch\t"
-        f"{'0' * 40}\t{'0' * 64}\tvenus: fixture\n"
-        "2\t0002-venus-fixture-two.patch\t"
-        f"{'1' * 40}\t{'1' * 64}\tvenus: fixture two\n"
+def write_guest_series(
+    source_root: Path, scripts: Path, topic: Path, base: str, head: str
+) -> None:
+    """Export the fixture's guest commits as the guest series this port pins."""
+    fixture_scripts = source_root / "scripts"
+    fixture_scripts.mkdir()
+    (source_root / GUEST_SERIES).mkdir(parents=True)
+    for name in ("patch_series.py", "git_identity.py"):
+        shutil.copy2(scripts / name, fixture_scripts / name)
+    run(
+        sys.executable, "-B", str(fixture_scripts / "patch_series.py"), "export",
+        "--source", str(topic), "--base", base, "--head", head,
+        "--series-dir", str(source_root / GUEST_SERIES), "--tree",
     )
-    (series / "series.tsv").write_text(text)
-    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def write_fixture(
     source_root: Path, android_root: Path, topic: Path, verifier: Path
 ) -> tuple[str, str]:
-    guest_digest = write_guest_series(source_root)
     run("git", "init", "-q", str(topic))
     run("git", "switch", "-q", "-c", "kernarium-android17", cwd=topic)
     commit(topic, "VERSION", "26.2.1\n", "VERSION: fixture upstream", 1700000000)
@@ -103,6 +101,9 @@ def write_fixture(
     commit(topic, "src/virtio/vulkan/vn_b.c", "b\n", "venus: fixture two", 1700000020)
     guest_tree = run("git", "rev-parse", "HEAD^{tree}", cwd=topic)
     guest_commit = run("git", "rev-parse", "HEAD", cwd=topic)
+    write_guest_series(
+        source_root, verifier.parents[3] / "scripts", topic, upstream_commit, guest_commit
+    )
     commit(
         topic,
         "src/virtio/venus-protocol/vn_protocol_driver.h",
@@ -133,8 +134,6 @@ def write_fixture(
         f"MESA_VENUS_UPSTREAM_TREE='{upstream_tree}'\n"
         "MESA_VENUS_GUEST_EPOCH='source-22'\n"
         f"MESA_VENUS_GUEST_SERIES='{GUEST_SERIES}'\n"
-        "MESA_VENUS_GUEST_PATCH_COUNT=2\n"
-        f"MESA_VENUS_GUEST_SERIES_SHA256='{guest_digest}'\n"
         f"MESA_VENUS_GUEST_TREE='{guest_tree}'\n"
         "MESA_VENUS_PATCH_BRANCH='kernarium-android17'\n"
         "MESA_VENUS_PATCH_COUNT=1\n"
@@ -235,7 +234,10 @@ def main() -> None:
         # A guest series that moves under the recorded pin must be refused.
         guest = root / GUEST_SERIES / "series.tsv"
         original_guest = guest.read_bytes()
-        guest.write_bytes(original_guest + b"3\t0003-venus-extra.patch\tx\tx\tvenus: extra\n")
+        guest.write_bytes(original_guest.replace(
+            f"tree\t{metadata['MESA_VENUS_GUEST_TREE']}".encode(),
+            f"tree\t{metadata['MESA_VENUS_UPSTREAM_TREE']}".encode(),
+        ))
         rejected = subprocess.run(
             (
                 sys.executable,

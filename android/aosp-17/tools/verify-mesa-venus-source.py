@@ -18,8 +18,12 @@ import argparse
 import hashlib
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+import patch_series  # noqa: E402
 
 
 HEX40 = re.compile(r"[0-9a-f]{40}")
@@ -27,7 +31,6 @@ HEX64 = re.compile(r"[0-9a-f]{64}")
 PATCH_NAME = re.compile(r"[0-9]{4}-[A-Za-z0-9._-]+\.patch")
 ASSIGNMENT = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([0-9]+))$")
 HEADER = ("order", "filename", "stable_patch_id", "sha256", "subject")
-GUEST_HEADER = ("order", "patch", "stable_patch_id", "sha256", "subject")
 SUBJECT_PREFIX = "UML-ANDROID-LOCAL: Mesa Venus "
 REQUIRED_METADATA = {
     "MESA_VENUS_SOURCE_SCHEMA",
@@ -37,8 +40,6 @@ REQUIRED_METADATA = {
     "MESA_VENUS_UPSTREAM_TREE",
     "MESA_VENUS_GUEST_EPOCH",
     "MESA_VENUS_GUEST_SERIES",
-    "MESA_VENUS_GUEST_PATCH_COUNT",
-    "MESA_VENUS_GUEST_SERIES_SHA256",
     "MESA_VENUS_GUEST_TREE",
     "MESA_VENUS_PATCH_BRANCH",
     "MESA_VENUS_PATCH_COUNT",
@@ -124,11 +125,10 @@ def validate_metadata(values: dict[str, str]) -> None:
     ):
         if HEX40.fullmatch(values[key]) is None:
             raise VerificationError(f"{key} is not a full lowercase Git object ID")
-    if HEX64.fullmatch(values["MESA_VENUS_GUEST_SERIES_SHA256"]) is None:
-        raise VerificationError("MESA_VENUS_GUEST_SERIES_SHA256 is not a sha256")
-    for key in ("MESA_VENUS_PATCH_COUNT", "MESA_VENUS_GUEST_PATCH_COUNT"):
-        if not values[key].isdecimal() or int(values[key]) <= 0:
-            raise VerificationError(f"{key} is not positive")
+    if not values["MESA_VENUS_PATCH_COUNT"].isdecimal() or int(
+        values["MESA_VENUS_PATCH_COUNT"]
+    ) <= 0:
+        raise VerificationError("MESA_VENUS_PATCH_COUNT is not positive")
     ref = subprocess.run(
         ("git", "check-ref-format", f"refs/heads/{values['MESA_VENUS_PATCH_BRANCH']}"),
         stdout=subprocess.DEVNULL,
@@ -138,26 +138,23 @@ def validate_metadata(values: dict[str, str]) -> None:
         raise VerificationError("Mesa Venus patch branch name is invalid")
 
 
-def verify_guest_pin(repository_root: Path, values: dict[str, str]) -> None:
-    """The guest Vulkan series is an input this port pins, never a copy."""
-    series = repository_root / values["MESA_VENUS_GUEST_SERIES"] / "series.tsv"
-    if series.is_symlink() or not series.is_file():
-        raise VerificationError(f"guest Mesa series is missing: {series}")
-    payload = series.read_bytes()
-    if hashlib.sha256(payload).hexdigest() != values["MESA_VENUS_GUEST_SERIES_SHA256"]:
+def verify_guest_pin(repository_root: Path, values: dict[str, str]) -> int:
+    """The guest Vulkan series is an input this port pins by tree, never a copy.
+
+    Return how many guest patches lie between the upstream base and the port.
+    """
+    try:
+        series = patch_series.read_series(
+            repository_root / values["MESA_VENUS_GUEST_SERIES"]
+        )
+    except patch_series.SeriesError as error:
+        raise VerificationError(f"guest Mesa series: {error}") from error
+    if series.tree != values["MESA_VENUS_GUEST_TREE"] or not series.names:
         raise VerificationError(
             "the pinned guest Mesa series changed; bump this port's guest epoch, "
             "replay the port, and regenerate its series"
         )
-    rows = [
-        line
-        for line in payload.decode(errors="strict").splitlines()
-        if line and not line.startswith("#")
-    ]
-    if not rows or tuple(rows[0].split("\t")) != GUEST_HEADER:
-        raise VerificationError("guest Mesa series manifest has the wrong header")
-    if len(rows) - 1 != int(values["MESA_VENUS_GUEST_PATCH_COUNT"]):
-        raise VerificationError("guest Mesa patch count differs from metadata")
+    return len(series.names)
 
 
 def mail_subject(payload: bytes) -> str:
@@ -258,7 +255,10 @@ def verify_series(root: Path, values: dict[str, str]) -> tuple[PatchEntry, ...]:
 
 
 def verify_checkout(
-    aosp_source: Path, values: dict[str, str], entries: tuple[PatchEntry, ...]
+    aosp_source: Path,
+    values: dict[str, str],
+    guest_count: int,
+    entries: tuple[PatchEntry, ...],
 ) -> None:
     if not aosp_source.is_dir() or not (aosp_source / ".repo").is_dir():
         raise VerificationError("AOSP source is not a Repo workspace")
@@ -297,7 +297,7 @@ def verify_checkout(
     upstream = run(
         "git",
         "rev-parse",
-        f"HEAD~{count + int(values['MESA_VENUS_GUEST_PATCH_COUNT'])}",
+        f"HEAD~{count + guest_count}",
         cwd=source,
     )
     if upstream != values["MESA_VENUS_UPSTREAM_COMMIT"]:
@@ -341,10 +341,10 @@ def main() -> None:
             raise VerificationError("Mesa Venus source metadata is missing")
         values = parse_metadata(metadata_path)
         validate_metadata(values)
-        verify_guest_pin(root.parents[1], values)
+        guest_count = verify_guest_pin(root.parents[1], values)
         entries = verify_series(root, values)
         if args.aosp_source is not None:
-            verify_checkout(args.aosp_source.resolve(), values, entries)
+            verify_checkout(args.aosp_source.resolve(), values, guest_count, entries)
     except (OSError, UnicodeError, VerificationError) as error:
         raise SystemExit(f"verify-mesa-venus-source.py: {error}") from error
 
