@@ -16,6 +16,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import receipt_fixtures
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 METADATA = REPO_ROOT / "tools/rootfs/vulkan"
@@ -651,9 +653,41 @@ class VulkanGuestRootfsTests(unittest.TestCase):
                 "overlay\n",
             )
 
+    def test_accepted_cts_images_match_the_current_guest_sources(self) -> None:
+        """The one tooling check that the accepted CTS images are current.
+
+        Every other receipt-bound tooling test uses a copy of the accepted
+        receipts rebound to the current source epoch, so a guest series that
+        produces a new tree fails here alone. The runners refuse the stale
+        images either way, until new ones are sealed and their receipts
+        checked in.
+        """
+        validator = receipt_fixtures.receipt_contract
+        for path in (
+            receipt_fixtures.VULKAN_RECEIPT,
+            receipt_fixtures.ZINK_GL_RECEIPT,
+        ):
+            with self.subTest(receipt=path.name):
+                receipt = validator.load_json(path)
+                difference = None
+                try:
+                    validator.verify_source_epoch(receipt)
+                except validator.ReceiptError as error:
+                    difference = str(error)
+                if difference is not None:
+                    self.fail(
+                        f"accepted CTS image is stale; reseal it: {path.name} "
+                        "was sealed from other guest sources than "
+                        f"tools/rootfs/vulkan records ({difference}). Seal a "
+                        "new image and check in its receipt as "
+                        "tools/rootfs/vulkan/README.md describes."
+                    )
+
     def test_checked_receipt_and_native_arm64_cts_verify(self) -> None:
+        # The accepted receipt, apart from the source epoch checked above.
+        current = receipt_fixtures.current_epoch_receipt_file(self, RECEIPT)
         result = subprocess.run(
-            (str(VERIFY_RECEIPT),),
+            (str(VERIFY_RECEIPT), "--receipt", str(current)),
             cwd=REPO_ROOT,
             text=True,
             stdout=subprocess.PIPE,
@@ -670,7 +704,7 @@ class VulkanGuestRootfsTests(unittest.TestCase):
         self.assertEqual(receipt["mustpass"]["case_count"], 3_247_552)
 
     def test_checked_receipt_rejects_claim_expansion(self) -> None:
-        receipt = json.loads(RECEIPT.read_text(encoding="utf-8"))
+        receipt = receipt_fixtures.current_epoch_receipt(RECEIPT)
         receipt["claim_scope"]["formal_conformance"] = True
         with tempfile.TemporaryDirectory() as temporary:
             changed = Path(temporary) / "receipt.json"

@@ -145,14 +145,20 @@ tools/rootfs/vulkan/rebase-patches.sh \
   --component mesa --source /path/to/mesa-topic
 ```
 
-The accepted CTS image and its receipt name one patched tree per component,
+The accepted CTS images and their receipts name one patched tree per component,
 and each component's `series.tsv` records the tree its patches produce. A
 series edit that keeps that tree, such as a reworded message or a folded
-follow-up, leaves the receipt valid. A series that produces a different tree
-invalidates the accepted receipt until a new image is sealed and accepted:
-every receipt-bound tooling gate fails with `<component>.patched_tree changed`
-in the meantime. That is the intended interlock, not a defect in the gates;
-the way to clear it is to seal a new image, never to relax a verifier.
+follow-up, leaves the receipts valid. A series that produces a different tree
+invalidates the accepted receipts until new images are sealed and accepted. In
+the meantime the CTS runners refuse the stale images, and the
+`vulkan-guest-rootfs-safety` tooling test fails with
+`accepted CTS image is stale`, naming the `<component>.patched_tree` that
+changed. That is the intended interlock, not a defect in the gates; the way to
+clear it is to seal new images, never to relax a verifier. The other
+receipt-bound tooling tests check runner logic against copies of the accepted
+receipts rebound to the current source locks and trees
+(`tests/tooling/gpu/receipt_fixtures.py`), so a series change leaves them
+passing.
 
 The final build, installation, CTS build, image creation, filesystem checks,
 and receipt generation run in a native arm64 Debian VM or, under `fakeroot`,

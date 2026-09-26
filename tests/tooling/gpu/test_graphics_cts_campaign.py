@@ -27,6 +27,11 @@ import run_graphics_cts_campaign as campaign  # noqa: E402
 import run_vk_gl_cts as gl  # noqa: E402
 import test_run_vk_gl_cts as fixtures  # noqa: E402
 import test_opengl_cts_plan as plan_fixtures  # noqa: E402
+import receipt_fixtures  # noqa: E402
+
+
+def setUpModule() -> None:
+    receipt_fixtures.bind_vulkan_receipt(campaign.vk)
 
 
 def ownership_record(attempt: Path) -> dict:

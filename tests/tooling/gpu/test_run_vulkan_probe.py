@@ -15,6 +15,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "integration/gpu"))
 import run_vulkan_probe as probe
+import receipt_fixtures
 
 
 class VulkanProbeTests(unittest.TestCase):
@@ -46,7 +47,7 @@ class VulkanProbeTests(unittest.TestCase):
                 probe.load_probe(path)
 
     def test_overlay_payload_is_checked_and_driver_is_receipt_bound(self):
-        receipt = probe.receipt_contract.validate_receipt()
+        receipt = receipt_fixtures.vulkan_receipt(self)
         payload = self.elf() + b"Vulkan probe data" * 64
         script = probe.build_probe_script(payload, receipt, 16384, ["a b", "$(false)"])
         encoded = re.search(r"printf '%s' '([^']+)' \| base64", script).group(1)

@@ -30,6 +30,12 @@ INTEGRATION_GPU = Path(__file__).resolve().parents[2] / "integration/gpu"
 sys.path.insert(0, str(INTEGRATION_GPU))
 import run_vk_gl_cts as gl  # noqa: E402
 import run_vk_cts as vk  # noqa: E402
+import receipt_fixtures  # noqa: E402
+
+
+def setUpModule() -> None:
+    receipt_fixtures.bind_vulkan_receipt(vk)
+
 
 CASES = tuple(f"KHR-GL46.fixture.case{index:02d}" for index in range(7))
 

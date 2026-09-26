@@ -13,6 +13,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import receipt_fixtures
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "tests/integration/gpu/run_chromium_webgl.py"
@@ -235,8 +237,9 @@ class AquariumProbePolicyTests(unittest.TestCase):
 
     def test_checked_vulkan_rootfs_is_accepted_for_zink(self) -> None:
         receipt, contract = run_chromium_webgl.load_vulkan_rootfs_contract(
-            REPO_ROOT
-            / "tests/integration/gpu/vulkan_cts_receipt.json"
+            receipt_fixtures.current_epoch_receipt_file(
+                self, receipt_fixtures.VULKAN_RECEIPT
+            )
         )
         self.assertEqual(receipt["artifact"], "uml-vulkan-rootfs")
         self.assertEqual(contract.filesystem_type, "ext4")

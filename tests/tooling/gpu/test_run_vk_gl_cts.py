@@ -30,10 +30,10 @@ from unittest import mock
 INTEGRATION_GPU = Path(__file__).resolve().parents[2] / "integration/gpu"
 sys.path.insert(0, str(INTEGRATION_GPU))
 import run_vk_gl_cts as cts  # noqa: E402
+import receipt_fixtures  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DERIVATIVE_RECEIPT = INTEGRATION_GPU / "vk_gl_cts_derivative_rootfs.json"
 
 
 def erofs_contract() -> cts.RootfsContract:
@@ -85,10 +85,8 @@ def derivative_receipt(identity: dict[str, object]) -> dict[str, object]:
 def zink_gl_derivative_receipt(
     identity: dict[str, object],
 ) -> dict[str, object]:
-    receipt = json.loads(
-        (INTEGRATION_GPU / "vulkan_cts_receipt.json").read_text(
-            encoding="utf-8"
-        )
+    receipt = receipt_fixtures.current_epoch_receipt(
+        receipt_fixtures.VULKAN_RECEIPT
     )
     receipt["schema_version"] = 3
     receipt["artifact"] = "uml-vulkan-zink-gl-rootfs"
@@ -511,7 +509,10 @@ class VkGlCtsToolingTests(unittest.TestCase):
         identity it pins is the only rendered image an iOS build will accept.
         """
         receipt, contract = cts.load_derivative_receipt(
-            DERIVATIVE_RECEIPT, cts.load_identity()
+            receipt_fixtures.current_epoch_receipt_file(
+                self, receipt_fixtures.ZINK_GL_RECEIPT
+            ),
+            cts.load_identity(),
         )
         self.assertEqual(receipt["artifact"], "uml-vulkan-zink-gl-rootfs")
         self.assertEqual(contract.filesystem_type, "ext4")
@@ -2064,6 +2065,12 @@ native_display_cleanup
 
     def test_kernarium_generator_embeds_the_common_page_specific_launcher(self) -> None:
         generator = REPO_ROOT / "Kernarium/scripts/generate-cts-campaign-header.py"
+        derivative_receipt = receipt_fixtures.current_epoch_receipt_file(
+            self, receipt_fixtures.ZINK_GL_RECEIPT
+        )
+        vulkan_receipt = receipt_fixtures.current_epoch_receipt_file(
+            self, receipt_fixtures.VULKAN_RECEIPT
+        )
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "KernariumCtsCampaigns.hpp"
             subprocess.run(
@@ -2084,7 +2091,7 @@ native_display_cleanup
                     "--matrix",
                     str(INTEGRATION_GPU / "vk_gl_cts_apple_matrix.json"),
                     "--derivative-receipt",
-                    str(DERIVATIVE_RECEIPT),
+                    str(derivative_receipt),
                     "--page-size",
                     "4096",
                     "--output",
@@ -2150,9 +2157,9 @@ native_display_cleanup
                     "--matrix",
                     str(INTEGRATION_GPU / "vk_gl_cts_apple_matrix.json"),
                     "--derivative-receipt",
-                    str(DERIVATIVE_RECEIPT),
+                    str(derivative_receipt),
                     "--vulkan-receipt",
-                    str(INTEGRATION_GPU / "vulkan_cts_receipt.json"),
+                    str(vulkan_receipt),
                     "--experimental-venus",
                     "--page-size",
                     "4096",
@@ -2163,10 +2170,7 @@ native_display_cleanup
             )
             venus_generated = venus_output.read_text(encoding="utf-8")
             self.assertIn("vulkan-info-receipt-smoke-v1", venus_generated)
-            self.assertIn(
-                cts.sha256_file(INTEGRATION_GPU / "vulkan_cts_receipt.json"),
-                venus_generated,
-            )
+            self.assertIn(cts.sha256_file(vulkan_receipt), venus_generated)
             self.assertIn(
                 "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357",
                 venus_generated,
@@ -2255,7 +2259,11 @@ native_display_cleanup
         """
         identity = cts.load_identity()
         receipt, _ = cts.select_rootfs_contract(
-            identity, "ext4", DERIVATIVE_RECEIPT
+            identity,
+            "ext4",
+            receipt_fixtures.current_epoch_receipt_file(
+                self, receipt_fixtures.ZINK_GL_RECEIPT
+            ),
         )
         self.assertEqual(
             len(cts.load_apple_matrix_shards(identity)), 100
