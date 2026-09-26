@@ -7,12 +7,12 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-BUILDROOT_VERSION=2026.05.2
-BUILDROOT_SHA256=7cd0b79e657b8a1760cef0a68d083265726efe96a17f7f0cb9c10dd6d29b7107
+BUILDROOT_VERSION=2026.05.3
+BUILDROOT_SHA256=f43f1627082a45848f73083b3b8d59f32bb4c77a449a8ead8a2a1f91849dea00
 BUSYBOX_VERSION=1.38.0
 BUSYBOX_SHA256=34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2
-ALPINE_VERSION=3.24.1
-ALPINE_SHA256=f55a90f69052c5bd6f92cb09a8f47065970830b194c917a006fb94028e721259
+ALPINE_VERSION=3.24.2
+ALPINE_SHA256=9bf70a7f18ea44094cbb5f70c58f9af129c8214745743db0e68e5502cc2ce773
 DEBIAN_SUITE=trixie
 
 fail()
@@ -96,8 +96,10 @@ esac
 [ ! -e "$final_output_dir" ] && [ ! -L "$final_output_dir" ] || \
 	fail "refusing to replace output directory: $final_output_dir"
 staging_output_dir=$(mktemp -d "$output_parent/.$output_name.partial.XXXXXX")
+chroot_proc=
 cleanup_output()
 {
+	unmount_chroot_proc || true
 	[ -n "$staging_output_dir" ] || return
 	rm -rf -- "$staging_output_dir"
 }
@@ -127,6 +129,22 @@ reset_root_directory()
 		as_root rm -rf -- "$directory"
 	fi
 	as_root mkdir -p -- "$directory"
+}
+
+# Package maintainer scripts need /proc in the chroot. Without it,
+# systemd-hwdb cannot replace hwdb.bin, and the udev hardware database
+# silently misses the entries of every later package.
+mount_chroot_proc()
+{
+	as_root mount -t proc proc "$1/proc"
+	chroot_proc=$1/proc
+}
+
+unmount_chroot_proc()
+{
+	[ -n "$chroot_proc" ] || return 0
+	as_root umount -- "$chroot_proc"
+	chroot_proc=
 }
 
 write_root_file()
@@ -228,8 +246,8 @@ build_initramfs()
 	gzip -t "$image"
 	listing=$buildroot_output/initramfs.list
 	gzip -dc "$image" | cpio -it > "$listing" 2>/dev/null
-	for required in init bin/busybox sbin/blkid sbin/resize2fs \
-		sbin/switch_root; do
+	for required in init bin/busybox sbin/blkid sbin/dumpe2fs sbin/e2fsck \
+		sbin/resize2fs sbin/switch_root; do
 		grep -qx "\./$required\|$required" "$listing" || \
 			fail "initramfs is missing $required"
 	done
@@ -254,15 +272,38 @@ https://dl-cdn.alpinelinux.org/alpine/v3.24/main
 https://dl-cdn.alpinelinux.org/alpine/v3.24/community
 EOF
 	as_root cp -L /etc/resolv.conf "$root/etc/resolv.conf"
-	as_root chroot "$root" /sbin/apk add --no-cache alpine-base ifupdown-ng
+	# The kernels have no uevent helper for BusyBox mdev, so mdevd, Alpine's
+	# netlink device manager, owns /dev as setup-devd would configure it.
+	as_root chroot "$root" /sbin/apk add --no-cache alpine-base ifupdown-ng \
+		mdevd mdevd-openrc
 	for service_level in \
-		"devfs sysinit" "procfs sysinit" "sysfs sysinit" "mdev sysinit" \
-		"hostname boot" "bootmisc boot" "networking boot" "local default"; do
+		"devfs sysinit" "procfs sysinit" "sysfs sysinit" "mdevd sysinit" \
+		"mdevd-init sysinit" "hostname boot" "bootmisc boot" \
+		"networking boot" "local default" "killprocs shutdown" \
+		"mount-ro shutdown"; do
 		set -- $service_level
 		if [ -x "$root/etc/init.d/$1" ]; then
 			as_root chroot "$root" /sbin/rc-update add "$1" "$2"
 		fi
 	done
+	# The kernel creates a virtio port's name attribute only for a named
+	# port, and the console port is unnamed.
+	mdev_conf=$root/etc/mdev.conf
+	unguarded_rule='SUBSYSTEM=virtio-ports;vport.* root:root 0600 @mkdir -p virtio-ports; ln -sf ../$MDEV virtio-ports/$(cat /sys/class/virtio-ports/$MDEV/name)'
+	guarded_rule='SUBSYSTEM=virtio-ports;vport.* root:root 0600 @if [ -r /sys/class/virtio-ports/$MDEV/name ]; then mkdir -p virtio-ports; ln -sf ../$MDEV virtio-ports/$(cat /sys/class/virtio-ports/$MDEV/name); fi'
+	[ "$(as_root grep -cxF -- "$unguarded_rule" "$mdev_conf")" = 1 ] || \
+		fail "unexpected virtio-ports rule in $mdev_conf"
+	as_root cat "$mdev_conf" | \
+		awk -v old="$unguarded_rule" -v new="$guarded_rule" \
+			'$0 == old { print new; next } { print }' | \
+		write_root_file "$mdev_conf" 0644
+	as_root grep -qxF -- "$guarded_rule" "$mdev_conf" || \
+		fail "could not guard the virtio-ports rule in $mdev_conf"
+	# Nothing is loadable into the monolithic kernels; the default entries
+	# (af_packet and ipv6) are built in.
+	write_root_file "$root/etc/modules" 0644 <<'EOF'
+# The Linux kernels for this image are monolithic; list no modules here.
+EOF
 	write_root_file "$root/etc/network/interfaces" 0644 <<'EOF'
 auto lo
 iface lo inet loopback
@@ -332,9 +373,12 @@ EOF
 	as_root cp -L /etc/resolv.conf "$root/etc/resolv.conf"
 	as_root chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
 		apt-get update
+	# systemd loads libbpf at runtime for its cgroup BPF features and reports
+	# them disabled at every boot when the library is absent.
 	as_root chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
 		apt-get install -y --no-install-recommends \
-		systemd-sysv systemd-resolved udev kmod dbus ca-certificates
+		systemd-sysv systemd-resolved udev kmod dbus ca-certificates \
+		libbpf1
 	write_root_file "$root/etc/hostname" 0644 <<EOF
 $hostname
 EOF
@@ -346,9 +390,18 @@ EOF
 	write_root_file "$root/etc/fstab" 0644 <<'EOF'
 /dev/ubda1 / ext4 defaults,noatime 0 1
 EOF
+	# Debian's systemd links /etc/default/locale to this file at boot, and
+	# pam_env reads it for every login. C.UTF-8 needs no locales package.
+	write_root_file "$root/etc/locale.conf" 0644 <<'EOF'
+LANG=C.UTF-8
+EOF
+	# Match wired links by type rather than by kernel-assigned name, and keep
+	# the image's own hostname: the DHCP-supplied one could only be applied
+	# through hostnamed, which refuses networkd without polkit.
 	write_root_file "$root/etc/systemd/network/20-wired.network" 0644 <<'EOF'
 [Match]
-Name=eth* en*
+Type=ether
+Kind=!*
 
 [Network]
 DHCP=yes
@@ -356,6 +409,10 @@ IPv6AcceptRA=yes
 
 [DHCPv4]
 UseDNS=yes
+UseHostname=no
+
+[DHCPv6]
+UseHostname=no
 EOF
 	write_root_file \
 		"$root/etc/systemd/system/serial-getty@hvc0.service.d/autologin.conf" \
@@ -368,7 +425,6 @@ EOF
 		systemd-networkd.service systemd-resolved.service \
 		serial-getty@hvc0.service
 	as_root ln -sfn /run/systemd/resolve/stub-resolv.conf "$root/etc/resolv.conf"
-	as_root truncate -s 0 "$root/etc/machine-id"
 }
 
 prune_debian()
@@ -386,6 +442,11 @@ prune_debian()
 		"$root/usr/share/lintian" "$root/usr/share/doc-base"
 	as_root find "$root/usr/share/locale" -mindepth 1 -maxdepth 1 \
 		! -name 'en' ! -name 'en_*' -exec rm -rf -- {} +
+	# Every guest generates its own machine ID at first boot. The D-Bus copy
+	# written during the package installs must not survive as a file, because
+	# systemd would adopt it and give every guest the same ID.
+	as_root truncate -s 0 "$root/etc/machine-id"
+	as_root ln -sfn /etc/machine-id "$root/var/lib/dbus/machine-id"
 }
 
 debootstrap_root()
@@ -401,11 +462,13 @@ build_debian_minimal()
 	printf '%s\n' "==> Building Debian 13 minimal GPT image"
 	root=$roots_dir/debian-minimal
 	debootstrap_root "$root"
+	mount_chroot_proc "$root"
 	configure_debian_base "$root" debian root
 	as_root chroot "$root" /usr/bin/passwd -d root
 	as_root systemctl --root="$root" set-default multi-user.target
 	as_root chroot "$root" dpkg-query -W -f='${binary:Package}\t${Version}\n' | \
 		sort > "$work_dir/debian-minimal.packages.tsv"
+	unmount_chroot_proc
 	cat "$root/etc/debian_version" > "$work_dir/debian.version"
 	prune_debian "$root"
 	destination=$(artifact_path debian-13-minimal.img)
@@ -419,11 +482,36 @@ build_debian_minimal()
 configure_plasma_user()
 {
 	root=$1
+	# PipeWire and WirePlumber are the session's audio server: pipewire-pulse
+	# serves the PulseAudio clients (Plasma and Chromium), pipewire-alsa
+	# routes plain ALSA clients through the server rather than around it,
+	# and RealtimeKit grants the audio threads their realtime priority.
+	# Bluetooth audio is left out because the guest has no Bluetooth.
 	as_root chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
 		apt-get install -y --no-install-recommends \
-		plasma-desktop konsole chromium sudo fonts-dejavu-core \
+		plasma-desktop systemsettings konsole chromium sudo fonts-dejavu-core \
 		libgl1-mesa-dri mesa-va-drivers vainfo ffmpeg \
-		xdg-desktop-portal-kde
+		xdg-desktop-portal-kde \
+		pipewire wireplumber pipewire-pulse pipewire-alsa rtkit
+	write_root_file \
+		"$root/etc/wireplumber/wireplumber.conf.d/50-no-bluetooth.conf" \
+		0644 <<'EOF'
+# The guest has no Bluetooth controller, and the image carries neither BlueZ
+# nor PipeWire's Bluetooth plugin, so WirePlumber does not monitor Bluetooth.
+wireplumber.profiles = {
+  main = {
+    hardware.bluetooth = disabled
+  }
+}
+EOF
+	# bubblewrap's sysctl.d file sets kernel.unprivileged_userns_clone, a
+	# Debian kernel patch that the mainline kernels booting this image lack;
+	# they already allow unprivileged user namespaces. Mask the file so
+	# systemd-sysctl does not warn about the missing knob at every boot.
+	as_root test -e "$root/usr/lib/sysctl.d/50-bubblewrap.conf" || \
+		fail "bubblewrap no longer ships 50-bubblewrap.conf; drop its mask"
+	as_root install -d -m 0755 "$root/etc/sysctl.d"
+	as_root ln -sfn /dev/null "$root/etc/sysctl.d/50-bubblewrap.conf"
 	as_root chroot "$root" useradd -m -s /bin/bash debian
 	as_root chroot "$root" passwd -d debian
 	debian_uid=$(as_root chroot "$root" id -u debian)
@@ -456,6 +544,46 @@ Autolock=false
 LockOnResume=false
 EOF
 	as_root chown -R "$debian_uid:$debian_gid" "$root/home/debian/.config"
+	# The task manager's default launchers include Discover, which needs the
+	# PackageKit daemon. Pin only the default launchers whose applications
+	# the image installs; Plasma runs this update script once per user,
+	# right after it creates the default panel.
+	taskmanager_config=$root/usr/share/plasma/plasmoids/org.kde.plasma.taskmanager/contents/config/main.xml
+	default_launchers=$(as_root cat "$taskmanager_config" | awk '
+		/<entry name="launchers"/ { entry = 1 }
+		entry && /<default>/ {
+			sub(/.*<default>/, ""); sub(/<\/default>.*/, ""); print; exit
+		}')
+	[ -n "$default_launchers" ] || \
+		fail "no default launchers in $taskmanager_config"
+	installed_launchers=
+	old_ifs=$IFS
+	IFS=,
+	for launcher in $default_launchers; do
+		case $launcher in
+		applications:*)
+			as_root test -e \
+				"$root/usr/share/applications/${launcher#applications:}" ||
+				continue
+			;;
+		esac
+		installed_launchers=${installed_launchers:+$installed_launchers,}$launcher
+	done
+	IFS=$old_ifs
+	write_root_file \
+		"$root/usr/share/plasma/shells/org.kde.plasma.desktop/contents/updates/starter-installed-launchers.js" \
+		0644 <<EOF
+// Pin only the default launchers whose applications this image installs.
+panels().forEach(function (panel) {
+    panel.widgets().forEach(function (widget) {
+        if (widget.type === "org.kde.plasma.icontasks" ||
+            widget.type === "org.kde.plasma.taskmanager") {
+            widget.currentConfigGroup = ["General"];
+            widget.writeConfig("launchers", "$installed_launchers".split(","));
+        }
+    });
+});
+EOF
 	as_root systemctl --root="$root" enable getty@tty1.service
 	as_root systemctl --root="$root" set-default graphical.target
 }
@@ -465,10 +593,12 @@ build_debian_plasma()
 	printf '%s\n' "==> Building Debian 13 minimal Plasma Wayland GPT image"
 	root=$roots_dir/debian-plasma
 	debootstrap_root "$root"
+	mount_chroot_proc "$root"
 	configure_debian_base "$root" debian debian
 	configure_plasma_user "$root"
 	as_root chroot "$root" dpkg-query -W -f='${binary:Package}\t${Version}\n' | \
 		sort > "$work_dir/debian-plasma.packages.tsv"
+	unmount_chroot_proc
 	prune_debian "$root"
 	destination=$(artifact_path debian-13-plasma-wayland.img)
 	as_root python3 "$SCRIPT_DIR/make-gpt-image.py" \

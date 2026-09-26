@@ -11,6 +11,74 @@ emergency()
 	exec sh
 }
 
+grow_ext4()
+{
+	device=$1
+	block_count=
+	block_size=
+	blocks_per_group=
+	inode_blocks=
+	reserved_gdt=0
+	superblock=$(dumpe2fs -h "$device" 2>/dev/null) || superblock=
+	while IFS=: read -r key value; do
+		case "$key" in
+		"Block count") set -- $value; block_count=${1-} ;;
+		"Block size") set -- $value; block_size=${1-} ;;
+		"Blocks per group") set -- $value; blocks_per_group=${1-} ;;
+		"Inode blocks per group") set -- $value; inode_blocks=${1-} ;;
+		"Reserved GDT blocks") set -- $value; reserved_gdt=${1-} ;;
+		esac
+	done <<-EOF
+	$superblock
+	EOF
+	partition_sectors=
+	read -r partition_sectors < "/sys/class/block/${device##*/}/size" || :
+	for number in "$block_count" "$block_size" "$blocks_per_group" \
+		"$inode_blocks" "$reserved_gdt" "$partition_sectors"; do
+		case "$number" in
+		''|*[!0-9]*)
+			echo "UML_RESIZE_INITRAMFS_WARN:geometry-unreadable:$device"
+			return
+			;;
+		esac
+	done
+	if [ "$block_size" -eq 0 ] || [ "$blocks_per_group" -eq 0 ]; then
+		echo "UML_RESIZE_INITRAMFS_WARN:geometry-unreadable:$device"
+		return
+	fi
+
+	# A grown filesystem can still end short of its partition: resize2fs rounds
+	# the size down to a whole page and drops a trailing group smaller than its
+	# metadata plus 50 blocks. Treat only a larger gap as growth, so an already
+	# grown disk is neither checked nor resized again.
+	partition_blocks=$((partition_sectors * 512 / block_size))
+	descriptor_blocks=$(((partition_blocks / blocks_per_group + 1) * 64 / \
+		block_size + 1))
+	slack_limit=$((inode_blocks + reserved_gdt + descriptor_blocks + 3 + 50 + \
+		65536 / block_size))
+	if [ $((partition_blocks - block_count)) -le "$slack_limit" ]; then
+		echo "UML_RESIZE_INITRAMFS_SKIP:no-growth:$device"
+		return
+	fi
+
+	# resize2fs refuses an unmounted filesystem that was mounted after its
+	# last full check. Status 4 or higher means errors were left uncorrected.
+	echo "UML_RESIZE_INITRAMFS_CHECK:$device"
+	e2fsck -f -p "$device"
+	status=$?
+	if [ "$status" -ge 4 ]; then
+		echo "UML_RESIZE_INITRAMFS_WARN:e2fsck-status=$status:$device"
+		return
+	fi
+	echo "UML_RESIZE_INITRAMFS_GROW_OFFLINE:$device"
+	if resize2fs "$device"; then
+		echo "UML_RESIZE_INITRAMFS_GROWN:$device"
+		sync
+	else
+		echo "UML_RESIZE_INITRAMFS_WARN:resize2fs-failed:$device"
+	fi
+}
+
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || :
 mount -t proc proc /proc || emergency "cannot mount proc"
 mount -t sysfs sysfs /sys || emergency "cannot mount sysfs"
@@ -35,13 +103,7 @@ else
 	filesystem_probe=$(blkid "$root_device" 2>/dev/null || :)
 	case "$filesystem_probe" in
 	*TYPE=\"ext4\"*)
-		echo "UML_RESIZE_INITRAMFS_GROW_OFFLINE:$root_device"
-		if resize2fs "$root_device"; then
-			echo "UML_RESIZE_INITRAMFS_GROWN:$root_device"
-			sync
-		else
-			echo "UML_RESIZE_INITRAMFS_WARN:resize2fs-failed:$root_device"
-		fi
+		grow_ext4 "$root_device"
 		;;
 	*)
 		echo "UML_RESIZE_INITRAMFS_SKIP:not-ext4:$root_device"

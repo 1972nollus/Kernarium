@@ -8,16 +8,19 @@ target=${1:?Buildroot TARGET_DIR is required}
 	printf '%s\n' "minimal initramfs: BusyBox is missing" >&2
 	exit 1
 }
-[ -x "$target/sbin/resize2fs" ] || {
-	printf '%s\n' "minimal initramfs: resize2fs is missing" >&2
-	exit 1
-}
-if readelf -l "$target/bin/busybox" "$target/sbin/resize2fs" |
-	grep -q 'Requesting program interpreter'; then
+for program in dumpe2fs e2fsck resize2fs; do
+	[ -x "$target/sbin/$program" ] || {
+		printf '%s\n' "minimal initramfs: $program is missing" >&2
+		exit 1
+	}
+done
+set -- "$target/bin/busybox" "$target/sbin/dumpe2fs" "$target/sbin/e2fsck" \
+	"$target/sbin/resize2fs"
+if readelf -l "$@" | grep -q 'Requesting program interpreter'; then
 	printf '%s\n' "minimal initramfs: retained programs must be static" >&2
 	exit 1
 fi
-for program in "$target/bin/busybox" "$target/sbin/resize2fs"; do
+for program in "$@"; do
 	if ! readelf -lW "$program" | awk '
 		$1 == "LOAD" { found = 1; if ($NF != "0x4000") exit 1 }
 		END { if (!found) exit 1 }
@@ -40,6 +43,8 @@ install -d -m 0755 \
 	"$staging/proc" "$staging/sbin" "$staging/sys"
 install -m 0755 "$target/init" "$staging/init"
 install -m 0755 "$target/bin/busybox" "$staging/bin/busybox"
+install -m 0755 "$target/sbin/dumpe2fs" "$staging/sbin/dumpe2fs"
+install -m 0755 "$target/sbin/e2fsck" "$staging/sbin/e2fsck"
 install -m 0755 "$target/sbin/resize2fs" "$staging/sbin/resize2fs"
 install -m 0644 "$target/etc/passwd" "$staging/etc/passwd"
 install -m 0600 "$target/etc/shadow" "$staging/etc/shadow"
