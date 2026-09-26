@@ -1,0 +1,215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 03:40:59 +0900
+Subject: [PATCH] um: report Darwin IRQ state changes to lockdep
+
+Lockdep keeps its own per-CPU record of whether hardirqs are enabled,
+which local_irq_*() update together with the logical IRQ state. The
+Darwin host layer changes that state directly wherever it runs interrupt
+work: the host signal handler, the cooperative timer deadline, the IPI
+drain, the user-mode return loop and the idle wait. None of them told
+lockdep, and um_set_signals_trace(), which UML_SETJMP uses to restore a
+saved state, did not trace either.
+
+Lockdep therefore saw every timer tick, IPI and host signal as running
+with hardirqs enabled, and every lockdep_assert_irqs_disabled() in
+interrupt code warned: ct_irq_enter(), rcu_sched_clock_irq(), the tick
+code, the softirq and call-function paths, and SLUB's freelist update.
+The user-mode return loop also enabled IRQs behind lockdep's back, so
+__local_bh_enable_ip() later warned that they were disabled. The
+irq-context checks were blind as a result.
+
+Report each such change as the generic wrappers do, a disable after it
+and an enable before it, and trace um_set_signals_trace() as the Linux
+host does. The idle loop tells lockdep that hardirqs are enabled for the
+wait, as a native CPU waits for an interrupt with them enabled; the
+interrupt work that ends a Darwin idle wait runs with them disabled, so
+arch_cpu_idle() reports them disabled around it, as interrupt entry
+would. The reports compile away without CONFIG_TRACE_IRQFLAGS.
+---
+ arch/um/kernel/process.c         | 13 +++++++++++++
+ arch/um/os-Darwin/internal.h     | 29 +++++++++++++++++++++++++++++
+ arch/um/os-Darwin/signal.c       | 20 +++++++++++++++++++-
+ arch/um/os-Darwin/skas/process.c |  2 +-
+ arch/um/os-Darwin/smp.c          |  2 ++
+ arch/um/os-Darwin/time.c         |  2 ++
+ 6 files changed, 66 insertions(+), 2 deletions(-)
+
+diff --git a/arch/um/kernel/process.c b/arch/um/kernel/process.c
+index 838272e9b62f582c94227f216f0b8ca2943ce8a8..9489651287b3d7fbe264d32eaeeb8977954a5a95 100644
+--- a/arch/um/kernel/process.c
++++ b/arch/um/kernel/process.c
+@@ -241,7 +241,20 @@ void um_idle_sleep(void)
+ 
+ void arch_cpu_idle(void)
+ {
++#ifdef UML_HOST_DARWIN
++	/*
++	 * ct_cpuidle_enter() has told lockdep that hardirqs are enabled for the
++	 * wait, as a native CPU waits for an interrupt with them enabled.  Darwin
++	 * runs the timer, IPI and I/O work that ends the wait inside
++	 * um_idle_sleep() with them still disabled, as interrupt entry would, so
++	 * report them disabled until it returns.
++	 */
++	trace_hardirqs_off();
+ 	um_idle_sleep();
++	trace_hardirqs_on();
++#else
++	um_idle_sleep();
++#endif
+ }
+ 
+ void arch_cpu_idle_prepare(void)
+diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
+index 7448cfbee7812882cc43118f3c2b74c5e23dc7ec..9ecdc925e8b965ad2408f65a28f83088d4b3ef8f 100644
+--- a/arch/um/os-Darwin/internal.h
++++ b/arch/um/os-Darwin/internal.h
+@@ -5,9 +5,38 @@
+ #include <pthread.h>
+ #include <signal.h>
+ #include <sysdep/archsetjmp.h>
++#include <os.h>
+ 
+ #define DARWIN_IPI_SIGNAL SIGUSR1
+ 
++/*
++ * Lockdep keeps its own record of each CPU's hardirq state, which
++ * local_irq_*() update alongside the logical IRQ state in signal.c.  A Darwin
++ * path which masks or restores that state directly, to run a host signal, a
++ * timer deadline or an IPI, reports the change here as the generic wrappers
++ * would: a disable after it happens and an enable before it happens.
++ * Otherwise lockdep keeps the interrupted context's state inside interrupt
++ * handlers.  Without CONFIG_TRACE_IRQFLAGS these compile to nothing.
++ */
++static inline void darwin_trace_irqs_off(int was_enabled)
++{
++	if (IS_ENABLED(CONFIG_TRACE_IRQFLAGS) && was_enabled)
++		um_trace_signals_off();
++}
++
++static inline void darwin_trace_irqs_on(int enabling)
++{
++	if (IS_ENABLED(CONFIG_TRACE_IRQFLAGS) && enabling)
++		um_trace_signals_on();
++}
++
++static inline void darwin_unblock_signals_trace(void)
++{
++	if (IS_ENABLED(CONFIG_TRACE_IRQFLAGS) && !um_get_signals())
++		um_trace_signals_on();
++	unblock_signals();
++}
++
+ void darwin_kill_integer_helper(int identifier);
+ int darwin_task_shutdown_requested(void);
+ int darwin_reserve_embedded_thread(void);
+diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
+index 6d2353ca584788caf98b780d27f58e91d99c0e04..b4bbda815fa6fc3660f739aeb76c76376c53b9ba 100644
+--- a/arch/um/os-Darwin/signal.c
++++ b/arch/um/os-Darwin/signal.c
+@@ -196,14 +196,18 @@ static void hard_handler(int signal, siginfo_t *info, void *pointer)
+ 			return;
+ 		}
+ 		block_signals();
++		darwin_trace_irqs_off(previous);
+ 		state->alarm_pending = 0;
+ 		state->alarm_active = 1;
+ 		run_timer(context);
+ 		state->alarm_active = 0;
++		darwin_trace_irqs_on(previous);
+ 		um_set_signals(previous);
+ 	} else {
+ 		block_signals();
++		darwin_trace_irqs_off(previous);
+ 		common_signal_handler(signal, info, context);
++		darwin_trace_irqs_on(previous);
+ 		um_set_signals(previous);
+ 	}
+ 	errno = saved_errno;
+@@ -218,10 +222,12 @@ void deliver_alarm(void)
+ 		return;
+ 	}
+ 	block_signals();
++	darwin_trace_irqs_off(1);
+ 	state->alarm_pending = 0;
+ 	state->alarm_active = 1;
+ 	run_timer(NULL);
+ 	state->alarm_active = 0;
++	darwin_trace_irqs_on(1);
+ 	um_set_signals(1);
+ }
+ 
+@@ -356,7 +362,19 @@ int um_set_signals(int enable)
+ 
+ int um_set_signals_trace(int enable)
+ {
+-	return um_set_signals(enable);
++	int previous;
++
++	if (!IS_ENABLED(CONFIG_TRACE_IRQFLAGS))
++		return um_set_signals(enable);
++	previous = um_get_signals();
++	if (enable) {
++		darwin_trace_irqs_on(!previous);
++		unblock_signals();
++	} else {
++		block_signals();
++		darwin_trace_irqs_off(previous);
++	}
++	return previous;
+ }
+ 
+ void block_signals_hard(void)
+diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
+index f8068b196c5b1b3ae9ee56ce9b6bb1662b9d57bc..4769a4b962339755c990c02520dbef982408ff97 100644
+--- a/arch/um/os-Darwin/skas/process.c
++++ b/arch/um/os-Darwin/skas/process.c
+@@ -440,7 +440,7 @@ void userspace(struct uml_pt_regs *registers)
+ 		 * user mode; do the equivalent explicitly before both guest execution
+ 		 * and the syscall entry which follows it.
+ 		 */
+-		unblock_signals();
++		darwin_unblock_signals_trace();
+ 
+ 		if (static_dispatch_trace_enabled())
+ 			os_warn("Darwin static loop begin cpu=%d pid=%d ip=%#lx generation=%lu\n",
+diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
+index c16721b616e4ff7081b33893cff1a11d47091af3..e2e05b841d32ca206955ca5d1a80a66f6939d531 100644
+--- a/arch/um/os-Darwin/smp.c
++++ b/arch/um/os-Darwin/smp.c
+@@ -214,6 +214,7 @@ static void drain_ipis(void)
+ 	 * both cases.
+ 	 */
+ 	previous = um_set_signals(0);
++	darwin_trace_irqs_off(previous);
+ 	/*
+ 	 * A sender leaves one pipe edge when the target is in host kernel or idle
+ 	 * code.  Consume that edge whenever the corresponding pending mask is
+@@ -224,6 +225,7 @@ static void drain_ipis(void)
+ 	darwin_ipi_idle_drain();
+ 	pending = __atomic_exchange_n(&pending_ipis[cpu], 0, __ATOMIC_ACQUIRE);
+ 	uml_ipi_handler_mask(pending);
++	darwin_trace_irqs_on(previous);
+ 	um_set_signals(previous);
+ }
+ 
+diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
+index 391cbe2ca5ff9afc491d9745d0ada901cf0011da..5a9ced39de53fa2071617d7c2a7e8d759258b09d 100644
+--- a/arch/um/os-Darwin/time.c
++++ b/arch/um/os-Darwin/time.c
+@@ -180,6 +180,7 @@ void darwin_timer_poll(struct uml_pt_regs *registers)
+ 	if (consume_expired_timer(state, now)) {
+ 		int previous = um_set_signals(0);
+ 
++		darwin_trace_irqs_off(previous);
+ 		/*
+ 		 * Darwin does not provide Linux-style per-thread SIGIO ownership.
+ 		 * CPU0 therefore owns host descriptor polling.  Do it at the same
+@@ -190,6 +191,7 @@ void darwin_timer_poll(struct uml_pt_regs *registers)
+ 		if (cpu == 0)
+ 			sigio_handler(SIGIO, NULL, registers, NULL);
+ 		timer_handler(SIGALRM, NULL, registers);
++		darwin_trace_irqs_on(previous);
+ 		um_set_signals(previous);
+ 	}
+ }

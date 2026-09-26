@@ -24,7 +24,7 @@ usage()
 	cat <<'EOF'
 Usage: kernel/mainline-6.18/build/build-kernel.sh \
        --build PATH --page-size 16k|4k [--slice arm64|x86_64] [--jobs N]
-       [--source CONFIGURED_PATH]
+       [--source CONFIGURED_PATH] [--lockdep]
 
 The compiler, linker, make program, cross prefix, and tool overrides are
 configured through UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,
@@ -41,7 +41,8 @@ kernel/mainline-6.18/build/toolchain/darwin-host. macOS, iOS Simulator, and phys
 the same constrained native address-space profile. An omitted jobs value uses
 all online host processors. The source is always read from the required,
 Git-ignored kernel/mainline-6.18/source-location.conf. --source is accepted only as an exact
-assertion of that configured path.
+assertion of that configured path. --lockdep also applies config/lockdep.fragment
+for a lock-checking probe kernel, which is never an accepted artifact.
 EOF
 }
 
@@ -49,6 +50,7 @@ REQUESTED_SOURCE_DIR=''
 BUILD_DIR=''
 PAGE_SIZE=''
 SLICE=arm64
+LOCKDEP=0
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--slice)
@@ -75,6 +77,10 @@ while [ "$#" -gt 0 ]; do
 		[ "$#" -ge 2 ] || fail "--jobs requires a positive integer"
 		UML_KERNEL_JOBS=$2
 		shift 2
+		;;
+	--lockdep)
+		LOCKDEP=1
+		shift
 		;;
 	-h|--help)
 		usage
@@ -366,10 +372,18 @@ if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
 		fail "missing slice config fragment: $UML_KERNEL_SLICE_CONFIG_FRAGMENT"
 	apply_config_fragment "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
 fi
+if [ "$LOCKDEP" -eq 1 ]; then
+	[ -f "$CONFIG_DIR/lockdep.fragment" ] ||
+		fail "missing lockdep config fragment: $CONFIG_DIR/lockdep.fragment"
+	apply_config_fragment "$CONFIG_DIR/lockdep.fragment"
+fi
 run_make olddefconfig
 set -- "$CONFIG_DIR/common.fragment" "$CONFIG_FRAGMENT"
 if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
 	set -- "$@" "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
+fi
+if [ "$LOCKDEP" -eq 1 ]; then
+	set -- "$@" "$CONFIG_DIR/lockdep.fragment"
 fi
 verify_composed_config "$@"
 run_make -j"$UML_KERNEL_JOBS"

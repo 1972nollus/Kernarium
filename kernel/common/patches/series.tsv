@@ -52,3 +52,4 @@ patch	kbuild-bpf-encode-pahole-1.27-BTF-in-a-fixed-order.patch
 patch	um-keep-the-line-input-IRQ-registered-across-a-tty-throttle.patch
 patch	bpf-run-callbacks-of-interpreted-programs.patch
 patch	um-arm64-select-HAVE_ALIGNED_STRUCT_PAGE-and-HAVE_CMPXCHG_DOUBLE.patch
+patch	um-report-Darwin-IRQ-state-changes-to-lockdep.patch
