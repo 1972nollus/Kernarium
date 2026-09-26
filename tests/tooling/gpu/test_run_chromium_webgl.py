@@ -222,17 +222,26 @@ class AquariumProbePolicyTests(unittest.TestCase):
         )
 
     def test_renderer_policy_distinguishes_virgl_and_zink(self) -> None:
-        virgl = metric_line([20.0] * 30)
-        zink = virgl.replace(
+        line = metric_line([20.0] * 30)
+        # Guest Virgl embeds the host renderer, Zink over KosmicKrisp, as a
+        # virgl Aquarium run reported it.
+        virgl = line.replace(
             "ANGLE (Mesa, virgl, OpenGL ES 3.0)",
-            "ANGLE (Mesa, zink Vulkan 1.4 (Virtio-GPU Venus), "
-            "OpenGL ES 3.0)",
+            "ANGLE (Mesa, virgl (zink Vulkan 1.4(Apple M1 Ultra "
+            "(MESA_KOSMICKRISP))), OpenGL ES 3.2)",
+        )
+        # Guest Zink on Venus, as a GL CTS session header records it; no zink
+        # Aquarium run has yet reported Chromium's ANGLE form of it.
+        zink = line.replace(
+            "ANGLE (Mesa, virgl, OpenGL ES 3.0)",
+            "zink Vulkan 1.4(Virtio-GPU Venus (Apple M1 Ultra) "
+            "(MESA_KOSMICKRISP))",
         )
         run_chromium_webgl.validate_renderer(virgl, "virgl")
         run_chromium_webgl.validate_renderer(zink, "zink")
-        with self.assertRaises(RuntimeError):
+        with self.assertRaisesRegex(RuntimeError, "did not report virgl"):
             run_chromium_webgl.validate_renderer(zink, "virgl")
-        with self.assertRaises(RuntimeError):
+        with self.assertRaisesRegex(RuntimeError, "did not report zink"):
             run_chromium_webgl.validate_renderer(virgl, "zink")
 
     def test_checked_vulkan_rootfs_is_accepted_for_zink(self) -> None:
