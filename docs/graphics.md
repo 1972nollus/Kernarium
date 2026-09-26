@@ -818,7 +818,10 @@ campaigns left behind cost about 85 MiB of footprint at launch and 115 MiB at
 the 35-second peak. One desktop boot leaves about 2 MB, which the next boot
 reuses entry for entry and which costs about 6 MiB. Starting from an empty
 cache costs about 1.8 s of host compilation before the guest starts, and the
-first desktop frame arrives that much later.
+first desktop frame arrives that much later. The application also sets
+`MESA_SHADER_CACHE_DISABLE`: Mesa's own disk cache would live below
+`$HOME/.cache`, which a device container does not let it create, so no guest
+shader outlives the launch that compiled it.
 
 The macOS command-line emulator has no bundle identifier. It shares
 `$(getconf DARWIN_USER_CACHE_DIR)/com.apple.metal` with every unsandboxed
