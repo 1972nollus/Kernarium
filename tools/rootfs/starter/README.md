@@ -16,7 +16,8 @@ The products are one common initramfs and three raw GPT disks:
 
 Every disk has one Linux-filesystem GPT partition ending at the last usable
 LBA. Networking belongs to the image: OpenRC or systemd starts a DHCP client
-and installs DNS information without kernel IP autoconfiguration. The images
+and installs DNS information without kernel IP autoconfiguration, and the image
+keeps its own hostname rather than one offered by DHCP. The images
 also own their account, getty, and desktop policy; launchers must not inject
 replacement setup scripts. The kernels are monolithic and have no uevent
 helper, so the Alpine image manages `/dev` with mdevd, Alpine's netlink device

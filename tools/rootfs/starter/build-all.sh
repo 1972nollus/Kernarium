@@ -372,9 +372,13 @@ EOF
 	write_root_file "$root/etc/fstab" 0644 <<'EOF'
 /dev/ubda1 / ext4 defaults,noatime 0 1
 EOF
+	# Match wired links by type rather than by kernel-assigned name, and keep
+	# the image's own hostname: the DHCP-supplied one could only be applied
+	# through hostnamed, which refuses networkd without polkit.
 	write_root_file "$root/etc/systemd/network/20-wired.network" 0644 <<'EOF'
 [Match]
-Name=eth* en*
+Type=ether
+Kind=!*
 
 [Network]
 DHCP=yes
@@ -382,6 +386,10 @@ IPv6AcceptRA=yes
 
 [DHCPv4]
 UseDNS=yes
+UseHostname=no
+
+[DHCPv6]
+UseHostname=no
 EOF
 	write_root_file \
 		"$root/etc/systemd/system/serial-getty@hvc0.service.d/autologin.conf" \
