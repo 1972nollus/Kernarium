@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -402,10 +403,12 @@ void unixSocketChannelNeverExposesAWiderModeWhileListening()
     const mode_t previous = ::umask(022);
     ::umask(previous);
 
+    std::atomic<bool> started {false};
     std::atomic<bool> stop {false};
     std::atomic<int> widerObservations {0};
     std::atomic<int> observations {0};
     std::thread watcher([&] {
+        started.store(true, std::memory_order_release);
         while (!stop.load(std::memory_order_relaxed)) {
             struct stat status {};
             if (::lstat(path.c_str(), &status) == 0) {
@@ -416,11 +419,20 @@ void unixSocketChannelNeverExposesAWiderModeWhileListening()
             }
         }
     });
+    while (!started.load(std::memory_order_acquire))
+        std::this_thread::yield();
     {
         uml::console::UnixSocketChannel channel(path);
         struct stat status {};
         require(::lstat(path.c_str(), &status) == 0);
         require((status.st_mode & 0777) == 0600);
+        // A loaded host can leave the watcher unscheduled for the whole
+        // lifetime of the channel. Keep the socket until it has been seen.
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (observations.load() == 0 &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
         stop.store(true, std::memory_order_relaxed);
         watcher.join();
     }
