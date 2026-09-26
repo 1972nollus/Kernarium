@@ -397,8 +397,14 @@ image each of them has to reinterpret. Conformance checks that a swapchain is
 created and reads back what was drawn, which both paths satisfy; what only the
 scanout path gives is a presented image with no copy in it. The modifier path
 stays for an application that asks for a modifier image directly and for a
-renderer that has no native heap. The guest Venus driver's two conditions for
-`VK_ANDROID_native_buffer` and
+renderer that has no native heap. A compositor's own scanout buffer is such an
+image when Zink allocates it through GBM: Zink gives every shareable image
+`DRM_FORMAT_MOD_LINEAR` on Venus, while the guest still allocates the image's
+device-local memory as an MTLHeap. The renderer publishes the Metal texture of
+every colour target created for external memory, whatever its tiling, once it
+is bound to a native heap, so the compositor's linear texture over that heap
+also reaches the display with no copy. The guest Venus driver's two conditions
+for `VK_ANDROID_native_buffer` and
 `VK_ANDROID_external_memory_android_hardware_buffer` are therefore met, and an
 Android guest presents its swapchain through them.
 
