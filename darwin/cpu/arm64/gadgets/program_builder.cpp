@@ -89,7 +89,7 @@ BuildResult Builder::build(
 	std::span<const std::uint32_t> instructions,
 	LinkResolver resolve_link, std::pmr::memory_resource *storage,
 	IndirectLinkResolver resolve_indirect_link, BuildOptions options,
-	LinkRelocations *relocations, const InlineCalls *inline_calls,
+	const InlineCalls *inline_calls,
 	std::span<std::uint32_t> consumed_out, std::size_t *consumed_count) const
 {
 	const ::uml::cpu::HostCapabilitiesScope capabilities_scope{
@@ -183,7 +183,6 @@ BuildResult Builder::build(
 			resolve_link,
 			resolve_indirect_link,
 			options,
-			relocations,
 			&suffixes,
 			retired_before_run,
 			inline_calls != nullptr ? &continue_at : nullptr,
@@ -274,9 +273,6 @@ BuildResult Builder::build(
 				 * continued -- which is exactly the ordinary
 				 * unlinked call or return. */
 				emit(words, uml_arm64_gadget_branch_linked);
-				if (relocations != nullptr)
-					relocations->add(words.size(), false,
-						continue_at);
 				emit(words, reinterpret_cast<std::uintptr_t>(
 					resolve_link(continue_at)));
 				close_run(compiled, compiled);
@@ -308,8 +304,6 @@ BuildResult Builder::build(
 	const auto fallthrough = run_base + compiled * sizeof(std::uint32_t);
 	if (resolve_link) {
 		emit(words, uml_arm64_gadget_branch_linked);
-		if (relocations != nullptr)
-			relocations->add(words.size(), false, fallthrough);
 		emit(words, reinterpret_cast<std::uintptr_t>(
 			resolve_link(fallthrough)));
 	} else {

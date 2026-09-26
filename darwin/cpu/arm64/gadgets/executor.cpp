@@ -4,7 +4,6 @@
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/gadget_cache_geometry.hpp"
 #include "cpu/gadget_record_table.hpp"
-#include "shared_programs.hpp"
 #include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
@@ -157,55 +156,6 @@ void correct_fpcr_enable_instruction_count(
 	 * condition because enabled entries use the one-instruction cold path.
 	 */
 	executed -= unretired;
-}
-
-/* Which translations this executor's builds are interchangeable with.
- *
- * Gadget selection reads every one of these, so two executors configured
- * differently must not adopt each other's streams even for identical guest
- * words. Production binds one profile to the whole pool, and only tests vary
- * them, but a silent collision here would be a wrong translation rather than a
- * lost opportunity.
- */
-[[nodiscard]] std::uint64_t profile_digest(
-	const arm64::gadgets::BuildOptions &options) noexcept
-{
-	static_assert(sizeof(arm64::gadgets::BuildOptions) ==
-		sizeof(::uml::cpu::HostCapabilities) + 16,
-		"a new build option must be added to the profile digest below, "
-		"or executors with different profiles will share translations");
-	const auto &host = options.host_capabilities;
-	const bool selectors[] = {
-		options.enable_pointer_authentication,
-		options.enable_guarded_control_flow,
-		options.force_software_checksum,
-		options.force_software_flags,
-		options.force_software_sha3,
-		options.force_software_fixed_transforms,
-		options.force_software_aes,
-		options.force_software_pmull,
-		options.force_software_dotprod,
-		options.force_software_i8mm,
-		host.floating_point,
-		host.advanced_simd,
-		host.fp16,
-		host.cssc,
-		host.aes,
-		host.pmull,
-		host.sha1,
-		host.sha2,
-		host.crc32,
-		host.sha3,
-		host.sha512,
-		host.afp,
-		host.jscvt_subnormal_flags_correct,
-	};
-	auto digest = static_cast<std::uint64_t>(
-		std::hash<::uml::platform::ArmFeatureSet>{}(host.supported));
-	for (const bool selector : selectors)
-		digest = (digest ^ static_cast<std::uint64_t>(selector)) *
-			0x100000001b3ULL;
-	return digest;
 }
 
 } // namespace
@@ -865,47 +815,6 @@ public:
 		site.next_replacement = static_cast<std::uint8_t>(
 			(site.next_replacement + 1U) %
 			arm64::gadgets::indirect_link_entries);
-	}
-
-	/* Take a translation another executor built, if one is on offer.
-	 *
-	 * The canonical stream holds zero wherever the producer held a pointer
-	 * to its own link state. Resolving those cells against this cache, while
-	 * copying the stream into this cache's storage, is the whole of what
-	 * makes the translation ours: after this the block is indistinguishable
-	 * from one built here, and the producer may be destroyed without
-	 * touching it.
-	 */
-	[[nodiscard]] std::optional<BuildResult> adopt(
-		const arm64::gadgets::SharedKey &key, std::uint64_t changes)
-	{
-		std::pmr::vector<std::uintptr_t> words{program_storage()};
-		arm64::gadgets::SharedTranslation translation;
-		if (!arm64::gadgets::SharedProgramStore::instance().adopt(
-			    key, words, translation))
-			return std::nullopt;
-		const auto &relocations = translation.relocations;
-		for (std::size_t index = 0; index < relocations.count; ++index) {
-			const auto &relocation = relocations.entries[index];
-			if (relocation.word >= words.size())
-				return std::nullopt;
-			words[relocation.word] = relocation.indirect ?
-				reinterpret_cast<std::uintptr_t>(
-					indirect_link(relocation.guest_pc)) :
-				reinterpret_cast<std::uintptr_t>(
-					link(relocation.guest_pc));
-		}
-		return store(key.guest_pc,
-			BuildResult{
-				arm64::gadgets::Program{
-					key.guest_pc,
-					translation.instruction_count,
-					std::move(words),
-					translation.accesses_fp_state},
-				translation.complete,
-				translation.stop_address,
-				translation.stop_instruction},
-			key.window, changes);
 	}
 
 	[[nodiscard]] BuildResult store(
@@ -1674,10 +1583,8 @@ private:
 GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
 	: programs_{std::make_unique<ProgramCache>()},
 	  build_options_{build_options},
-	  profile_{profile_digest(build_options)},
 	  sampling_{diagnostics::guest_sampling_register(*this)}
 {
-	arm64::gadgets::SharedProgramStore::executor_created();
 }
 
 GadgetExecutor::~GadgetExecutor()
@@ -1697,7 +1604,6 @@ GadgetExecutor::~GadgetExecutor()
 		}
 	}
 #endif
-	arm64::gadgets::SharedProgramStore::executor_destroyed();
 	if (current_cpu_ != nullptr) {
 		current_cpu_->gadget_indirect_miss = nullptr;
 		arm64::restore_native_fp_environment(*current_cpu_);
@@ -1801,34 +1707,17 @@ std::optional<BuildResult> GadgetExecutor::find(
 		cache_diagnostics_);
 }
 
-/* Produce a translation the cache did not hold.
- *
- * Asking the shared store first costs one hash of the fetched window and one
- * uncontended shard lookup, against a full decode of up to sixty-four
- * instructions when it fails -- and on this guest it succeeds far more often
- * than it fails, because most of what an executor is about to translate some
- * other executor has already translated. It is not worth asking when no other
- * executor exists to have answered.
- */
+/* Produce a translation the cache did not hold. */
 BuildResult GadgetExecutor::translate(
 	std::uint64_t pc, std::span<const std::uint32_t> window)
 {
 	++cache_diagnostics_.translations;
-	if (!arm64::gadgets::SharedProgramStore::sharing_worthwhile())
-		return build(pc, window, nullptr);
-	const auto key = arm64::gadgets::SharedKey::of(pc, window, profile_);
-	if (auto adopted = programs_->adopt(key, cache_changes_); adopted) {
-		++cache_diagnostics_.adoptions;
-		return std::move(*adopted);
-	}
-	return build(pc, window, &key);
+	return build(pc, window);
 }
 
 BuildResult GadgetExecutor::build(
-	std::uint64_t pc, std::span<const std::uint32_t> window,
-	const arm64::gadgets::SharedKey *key)
+	std::uint64_t pc, std::span<const std::uint32_t> window)
 {
-	arm64::gadgets::LinkRelocations relocations;
 	/* Translating a callee inline needs to read guest instructions somewhere
 	 * other than where the build started, which only the executor can do. */
 	const arm64::gadgets::InlineCalls inline_calls{
@@ -1851,13 +1740,10 @@ BuildResult GadgetExecutor::build(
 		[this](std::uint64_t source_pc) {
 			return programs_->indirect_link(source_pc);
 		},
-		build_options_, &relocations,
+		build_options_,
 		inline_calls_enabled && build_memory_ != nullptr ?
 			&inline_calls : nullptr,
 		std::span{consumed}, &consumed_count);
-	if (key != nullptr)
-		arm64::gadgets::SharedProgramStore::instance().publish(
-			*key, decoded, relocations);
 	/* With a callee inlined the words the build read are no longer a prefix
 	 * of the caller's window, so the stale-program check is given what the
 	 * build actually read, in run order. */

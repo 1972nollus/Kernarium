@@ -147,9 +147,8 @@ that differs by product: macOS defaults to 262,144 slots and iOS and the iOS
 Simulator to 65,536, because a slot is committed whether or not it is occupied
 and the iOS app runs under a jetsam limit. Their payloads and mutable branch
 links remain ISA-specific. Cached x86 programs
-release spare decoder and native-stream capacity before publication. The
-optional arm64 cross-executor translation store remains disabled by default;
-its measured memory/performance tradeoff is recorded in G166.
+release spare decoder and native-stream capacity before publication. Gadget
+executors do not share translations; G166 records why.
 
 The default-on `UML_GADGET_SCALAR_FORWARDING` build keeps one write-through scalar
 result in host `x0` between adjacent declared gadgets. Assembly templates emit

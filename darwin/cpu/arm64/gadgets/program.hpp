@@ -339,46 +339,6 @@ struct InlineSuffixes final {
 	}
 };
 
-/* A stream cell holding a pointer to link state the executor owns.
- *
- * Two executors translating the same guest words emit identical streams except
- * in these cells: BlockLink and IndirectLink records belong to one executor and
- * one address space, so a translation can be handed to another executor only if
- * every such cell is recorded by the guest PC it names rather than by the
- * pointer it holds, and resolved again against the consumer's own records.
- */
-struct LinkRelocation final {
-	/* Index into Program::words(). */
-	std::uint32_t word{};
-	/* False names a BlockLink for the branch target, true an IndirectLink
-	 * for the branch site. */
-	bool indirect{};
-	std::uint64_t guest_pc{};
-};
-
-/* A block ends at its first control-flow instruction and no terminal emits more
- * than two link cells, so recording them needs no allocation. A build that
- * somehow exceeds that says so instead of truncating, and an overflowed record
- * is never published. */
-struct LinkRelocations final {
-	static constexpr std::size_t capacity = 2;
-
-	std::array<LinkRelocation, capacity> entries{};
-	std::uint8_t count{};
-	bool overflowed{};
-
-	void add(std::size_t word, bool indirect,
-		 std::uint64_t guest_pc) noexcept
-	{
-		if (count == capacity) {
-			overflowed = true;
-			return;
-		}
-		entries[count++] = {static_cast<std::uint32_t>(word), indirect,
-			guest_pc};
-	}
-};
-
 struct BuildOptions final {
 	/* Select adjacent write-through forwarding for this program. Has no
 	 * effect for a register bank excluded from the engine build. */
@@ -512,7 +472,6 @@ public:
 			std::pmr::get_default_resource(),
 		IndirectLinkResolver resolve_indirect_link = {},
 		BuildOptions options = {},
-		LinkRelocations *relocations = nullptr,
 		const InlineCalls *inline_calls = nullptr,
 		std::span<std::uint32_t> consumed = {},
 		std::size_t *consumed_count = nullptr) const;

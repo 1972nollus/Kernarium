@@ -56,9 +56,6 @@ struct DecodeContext final {
 	const Builder::LinkResolver &resolve_link;
 	const Builder::IndirectLinkResolver &resolve_indirect_link;
 	const BuildOptions &options;
-	/* Where the link cells this decode emits are recorded, or null when the
-	 * caller will not offer the stream to another executor. */
-	LinkRelocations *relocations;
 	/* Where the suffix operands of inlined conditional branches are
 	 * recorded, so `build` can fill them in once it knows how long the block
 	 * turned out to be. */
@@ -89,17 +86,10 @@ struct DecodeContext final {
 	return static_cast<std::uintptr_t>(position) << 48;
 }
 
-/* Emit the cell a direct control-flow gadget reads its successor through.
- *
- * The pointer is this executor's record for `target`; the guest PC is what
- * another executor would resolve against its own. Recording the cell here is
- * what keeps the two descriptions from drifting apart -- every site that names
- * link state goes through one of these two helpers.
- */
+/* Emit the cell a direct control-flow gadget reads its successor through: this
+ * executor's record for `target`. */
 inline void emit_link(DecodeContext &context, std::uint64_t target)
 {
-	if (context.relocations != nullptr)
-		context.relocations->add(context.words.size(), false, target);
 	context.words.push_back(reinterpret_cast<std::uintptr_t>(
 		context.resolve_link(target)));
 }
@@ -110,8 +100,6 @@ inline void emit_link(DecodeContext &context, std::uint64_t target)
 inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 			       bool is_return = false)
 {
-	if (context.relocations != nullptr)
-		context.relocations->add(context.words.size(), true, source);
 	auto *site = context.resolve_indirect_link(source);
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	if (site != nullptr)

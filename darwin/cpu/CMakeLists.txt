@@ -233,28 +233,6 @@ option(UML_GADGET_TARGET_TIER
 # enough to be cut off by it rather than ending at a branch.
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
     "Guest instructions fetched per translation attempt")
-# Experimental A/B arm, off by default. Every vCPU carries its own executor and
-# its own cache, so a guest running on several of them translates the same code
-# once per vCPU -- 69% of translations at four vCPUs and 80% at eight were work
-# another executor had already done. Letting them adopt each other's
-# translations removes most of that work.
-#
-# At 128 MiB and the block sizes that predated G162 it cost frame rate, because
-# an adoption was two to three times the cost of the build it replaced (G161).
-# Remeasured at 512 MiB on the current, longer blocks it is instead an exact
-# swap: a shared tier serves 56% of private misses, Builder::build falls from
-# 4.66% of vCPU on-CPU time to 2.32% and the store itself takes 2.31%, leaving
-# frame rate at -0.89% (t = -0.49, n = 4 an arm) for 512 MiB of host memory.
-# Building is only a few percent of the time available to save, so the tier
-# cannot pay for itself however cheap adoption becomes. Paying for it by
-# shrinking the private cache to 16384 slots is far worse: the private hit rate
-# collapses to 72.7%, 96.8% of stores evict a live block, and frame rate falls
-# 26.3%. See G166; do not enable without re-measuring.
-set(UML_GADGET_SHARED_BUDGET_MIB "0" CACHE STRING
-    "Process-wide budget for shared gadget translations, in MiB; 0 disables")
-math(EXPR _uml_gadget_shared_budget_bytes
-    "${UML_GADGET_SHARED_BUDGET_MIB} * 1024 * 1024")
-
 add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/gadget_memory_selection.cpp
     arm64/gadgets/gadget_scalar_selection.cpp
@@ -267,7 +245,6 @@ add_library(uml_arm64_gadgets OBJECT
     # inlines as one unit; see the comment at the top of that file.
     arm64/gadgets/program_builder.cpp
     arm64/gadgets/program_execution.cpp
-    arm64/gadgets/shared_programs.cpp
     arm64/gadgets/software_helpers.cpp
     arm64/gadgets/software_floating_helpers.cpp
     arm64/gadgets/software_crypto_helpers.cpp
@@ -296,8 +273,7 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>
     UML_GADGET_FUSED_TRANSLATE=$<BOOL:${UML_GADGET_FUSED_TRANSLATE}>
     UML_GADGET_RETURN_STACK=$<BOOL:${UML_GADGET_RETURN_STACK}>
-    UML_GADGET_TARGET_TIER=$<BOOL:${UML_GADGET_TARGET_TIER}>
-    UML_GADGET_SHARED_BUDGET_BYTES=${_uml_gadget_shared_budget_bytes}UL)
+    UML_GADGET_TARGET_TIER=$<BOOL:${UML_GADGET_TARGET_TIER}>)
 
 # The gadget library is still many translation units, and the selection tables
 # the decode families call into are among them. Interprocedural optimization
