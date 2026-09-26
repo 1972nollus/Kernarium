@@ -43,7 +43,6 @@ struct CompiledBlock final {
   bool guest_illegal{};
 };
 
-
 struct CacheSet final {
   std::array<CompiledBlock, cache_ways> ways{};
 };

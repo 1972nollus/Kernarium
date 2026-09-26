@@ -394,7 +394,6 @@ void JitCompiler::emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool lo
     if (!load)
       track_direct_store(8, 64);
 
-
     /*
      * The native 64-byte forms name x0-x7 implicitly. Some of those registers
      * are ordinary resident-cache hosts, so publish and invalidate their

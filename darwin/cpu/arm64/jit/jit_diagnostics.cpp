@@ -701,7 +701,6 @@ void report_jit_compile_profile(const JitCompileProfile &profile,
       profile.largest_ratio_total);
 }
 
-
 } // namespace
 
 void report_final_jit_diagnostics() noexcept {

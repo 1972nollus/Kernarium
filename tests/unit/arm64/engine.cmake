@@ -913,7 +913,6 @@
     uml_add_unit_test(NAME arm64-jit-control-remap-codegen
         COMMAND uml_arm64_jit_control_remap_codegen_tests)
 
-
     add_executable(uml_arm64_gadget_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_runtime_tests.cpp
         $<TARGET_OBJECTS:uml_static_mmu>

@@ -15,7 +15,6 @@ using ::uml::cpu::ArmFeature;
 using ::uml::cpu::ArmFeatureSet;
 using ::uml::cpu::host_capabilities;
 
-
 /*
  * Family emitters live in separate translation units.  This small bridge
  * deliberately hides the executor's concrete Arm64Emitter: family code sees
@@ -317,7 +316,6 @@ private:
                           bool reads, bool writes) noexcept;
   [[nodiscard]] static std::size_t
   residency_benefit(const GprResidencyGuest &guest) noexcept;
-
 
   struct VectorSlot final {
     unsigned guest{unbound_guest};

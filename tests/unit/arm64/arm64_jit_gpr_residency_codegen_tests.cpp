@@ -121,7 +121,6 @@ void repeated_late_pair_replaces_single_use_bindings() {
           "test-only baseline unexpectedly planned GPR residency");
   require_same_metadata(planned, unplanned);
 
-
   require(planned.gpr_residency_planned,
           "JIT did not retain the profitable GPR plan");
   require(planned.gpr_estimated_avoided_accesses == 9U,

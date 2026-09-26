@@ -76,7 +76,6 @@ struct JitIndirectLinkDiagnostics final {
 };
 #endif
 
-
 class JitExecutor final {
 public:
 	explicit JitExecutor(bool enable_guarded_control_flow = false);

@@ -26,7 +26,6 @@ JitExecutor::Implementation::resolve_indirect_link(void *context, std::uint64_t 
   return static_cast<Implementation *>(context)->indirect_link_for(source_pc);
 }
 
-
 [[nodiscard]] JitBlockLink *JitExecutor::Implementation::link_for(std::uint64_t pc) {
   (void)pc;
   /* The literal is replaced with the private table's unique target anchor before

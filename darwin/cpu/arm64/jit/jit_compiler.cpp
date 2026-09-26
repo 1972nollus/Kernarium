@@ -48,7 +48,6 @@ JitCompiler::JitCompiler(bool enable_guarded_control_flow,
     translation_features_ = &translation_features;
   }
 
-
 void JitCompiler::set_gpr_residency_planning_enabled(bool enabled) noexcept {
     gpr_residency_planning_enabled_ = enabled;
   }

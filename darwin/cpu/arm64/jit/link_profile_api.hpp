@@ -14,5 +14,4 @@ namespace uml::cpu::arm64 {
 void report_jit_runtime_profiles() noexcept;
 #endif
 
-
 } // namespace uml::cpu::arm64

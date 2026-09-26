@@ -680,7 +680,6 @@ CompiledCode compile_block_without_gpr_residency_planning(
   return copied_code(compiler.compile(pc, instructions));
 }
 
-
 CompiledCode compile_block_with_feature_override(
     std::uint64_t pc, std::span<const std::uint32_t> instructions,
     ArmFeature feature, bool available) {
@@ -748,7 +747,6 @@ CompiledCode compile_linked_block_with_capacity(
                        resolver};
   return copied_code(compiler.compile(pc, instructions));
 }
-
 
 CompiledCode compile_linked_block_memory_abi(
     std::uint64_t pc,

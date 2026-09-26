@@ -151,7 +151,6 @@ JitExecutor::Implementation::indirect_link_diagnostics() const noexcept {
 }
 #endif
 
-
 JitExecutor::JitExecutor(bool enable_guarded_control_flow)
     : JitExecutor{JitExecutorOptions{
           .enable_guarded_control_flow = enable_guarded_control_flow}} {}
@@ -266,7 +265,6 @@ JitExecutor::indirect_link_diagnostics() const noexcept {
              : implementation_->indirect_link_diagnostics();
 }
 #endif
-
 
 bool native_jit_available() noexcept {
   return jit::detail::ExecutableArena::available();

@@ -184,8 +184,6 @@ bool JitCompilerFamilies::gpr_slots_unbound() const noexcept {
          });
 }
 
-
-
 void JitCompilerFamilies::emit(std::uint32_t instruction) {
   static_cast<Arm64Emitter *>(family_emitter_)->emit(instruction);
 }
@@ -1022,7 +1020,6 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
     emitter.return_constant(Event::continued, count);
     return;
   }
-
 
   const auto matched = emitter.make_label();
   const auto miss = emitter.make_label();

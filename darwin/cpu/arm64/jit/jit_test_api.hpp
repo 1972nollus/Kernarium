@@ -8,7 +8,6 @@
 #include <span>
 #include <vector>
 
-
 namespace uml::cpu::arm64::jit::testing {
 
 struct CompiledCode final {
@@ -91,8 +90,6 @@ materialize_constant_for_testing(unsigned destination, std::uint64_t value);
 [[nodiscard]] std::vector<std::uint32_t>
 lower_memory_barrier_for_testing(std::uint32_t instruction, bool native_sb,
                                  bool native_xs);
-
-
 
 [[nodiscard]] bool persistent_linked_block_abi_enabled() noexcept;
 [[nodiscard]] std::size_t
