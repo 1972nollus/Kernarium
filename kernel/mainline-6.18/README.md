@@ -183,7 +183,8 @@ native arm64 does; the x86-64 userspace slice keeps the arm64 kernel. SLUB
 therefore updates a slab's freelist and counters with one CASP, which runs
 directly on the host CPU, and `kmalloc_nolock()`, which BPF timers allocate
 with, can use every cache. `paging_init()` checks that the FLATMEM memory map
-keeps the double-word alignment this needs.
+keeps the double-word alignment this needs. The ACK line carries the same
+change.
 
 Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
 at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
