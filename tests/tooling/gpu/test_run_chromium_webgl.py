@@ -7,9 +7,13 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import importlib.util
+import os
 from pathlib import Path
+import re
+import socket
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -230,12 +234,12 @@ class AquariumProbePolicyTests(unittest.TestCase):
             "ANGLE (Mesa, virgl (zink Vulkan 1.4(Apple M1 Ultra "
             "(MESA_KOSMICKRISP))), OpenGL ES 3.2)",
         )
-        # Guest Zink on Venus, as a GL CTS session header records it; no zink
-        # Aquarium run has yet reported Chromium's ANGLE form of it.
+        # Guest Zink on Venus, as a zink Aquarium run on the Vulkan
+        # derivative reported it.
         zink = line.replace(
             "ANGLE (Mesa, virgl, OpenGL ES 3.0)",
-            "zink Vulkan 1.4(Virtio-GPU Venus (Apple M1 Ultra) "
-            "(MESA_KOSMICKRISP))",
+            "ANGLE (Mesa, zink Vulkan 1.4(Virtio-GPU Venus (Apple M1 Ultra) "
+            "(MESA_KOSMICKRISP)), OpenGL ES 3.2)",
         )
         run_chromium_webgl.validate_renderer(virgl, "virgl")
         run_chromium_webgl.validate_renderer(zink, "zink")
@@ -287,9 +291,250 @@ class AquariumProbePolicyTests(unittest.TestCase):
     def test_only_unrelated_site_favicon_is_ignored(self) -> None:
         script = run_chromium_webgl.EXTENSION_SCRIPT
         self.assertIn('url.pathname === "/favicon.ico"', script)
-        self.assertIn("document load did not finish within 600 seconds", script)
+        self.assertIn(
+            "document load did not finish before the page deadline", script
+        )
         self.assertIn("!isIgnoredSiteDecoration(entry.name)", script)
         self.assertIn("resource returned ", script)
+
+
+FAKE_CLOCK_STEP = 10
+STUB_COMMANDS = {
+    "id": "echo 1001",
+    # Waiting advances the fake guest clock, in coarse steps, instead of the
+    # host's.
+    "sleep": (
+        'read -r up rest < "$FAKE_UPTIME"\n'
+        'echo "$((${up%.*} + FAKE_CLOCK_STEP)).00 0" > "$FAKE_UPTIME"'
+    ),
+    # Run the bounded command without its bound; the fakes never block.
+    "timeout": (
+        'while :; do case "$1" in -k) shift 2 ;; -*) shift ;; *) break ;; '
+        "esac; done\n"
+        'shift\nexec "$@"'
+    ),
+    "runuser": 'shift 3\nexec "$@"',
+    "loginctl": "echo stub-loginctl",
+    "journalctl": "echo stub-journalctl",
+    "ps": "echo stub-ps",
+    "glxinfo": "echo stub-glxinfo",
+    "pgrep": "echo 4242",
+    # The guest has GNU sed; give macOS hosts its in-place form.
+    "sed": (
+        'if [ "$1" = -i ]; then\n'
+        '    /usr/bin/sed "$2" "$3" > "$3.new" && mv "$3.new" "$3"\n'
+        'else\n    exec /usr/bin/sed "$@"\nfi'
+    ),
+}
+
+
+class AquariumLauncherBudgetTests(unittest.TestCase):
+    """Every guest wait must end in a named error before the runner's."""
+
+    def run_launcher(
+        self,
+        backend: str,
+        *,
+        session_ready: bool,
+        stubs: dict[str, str] | None = None,
+    ) -> tuple[subprocess.CompletedProcess[str], int, str]:
+        budget = run_chromium_webgl.guest_budget(360, backend)
+        launcher = run_chromium_webgl.build_guest_launcher(
+            auto_poweroff=False, budget=budget, renderer_backend=backend
+        )
+        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+            root = Path(directory)
+            uptime = root / "uptime"
+            uptime.write_text("5.00 0\n", encoding="utf-8")
+            runtime = root / "run"
+            x11 = root / "x11"
+            extension = root / "ext"
+            for path in (runtime, x11, extension):
+                path.mkdir()
+            (extension / "verify.js").write_text(
+                run_chromium_webgl.build_probe_script(), encoding="utf-8"
+            )
+            environ = root / "environ"
+            environ.write_bytes(b"MESA_LOADER_DRIVER_OVERRIDE=zink\0")
+            listeners = []
+            if session_ready:
+                (runtime / "xauth_test").write_text("", encoding="utf-8")
+                for path in (runtime / "bus", runtime / "wayland-0", x11 / "X0"):
+                    listener = socket.socket(socket.AF_UNIX)
+                    listener.bind(str(path))
+                    listeners.append(listener)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            for name, body in {**STUB_COMMANDS, **(stubs or {})}.items():
+                stub = bin_directory / name
+                stub.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+                stub.chmod(0o755)
+            script = root / "launcher"
+            script.write_text(
+                launcher.replace("/proc/uptime", str(uptime))
+                .replace('/run/user/$uml_uid', str(runtime))
+                .replace("/tmp/.X11-unix", str(x11))
+                .replace('"/proc/$kwin_pid/environ"', f'"{environ}"')
+                .replace("/var/tmp/uml-aquarium-extension", str(extension)),
+                encoding="utf-8",
+            )
+            try:
+                result = subprocess.run(
+                    ["/bin/sh", str(script)],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    env={
+                        "PATH": f"{bin_directory}:/usr/bin:/bin",
+                        "FAKE_UPTIME": str(uptime),
+                        "FAKE_CLOCK_STEP": str(FAKE_CLOCK_STEP),
+                    },
+                )
+            finally:
+                for listener in listeners:
+                    listener.close()
+            elapsed = int(uptime.read_text(encoding="utf-8").split(".")[0])
+            armed = (extension / "verify.js").read_text(encoding="utf-8")
+        return result, elapsed, armed
+
+    def test_budget_keeps_every_phase_inside_the_runner_deadline(self) -> None:
+        for backend in ("virgl", "zink"):
+            for timeout in (360, 900):
+                budget = run_chromium_webgl.guest_budget(timeout, backend)
+                self.assertEqual(
+                    budget.deadline,
+                    timeout - run_chromium_webgl.GUEST_REPORT_MARGIN_SECONDS,
+                )
+                reserve = (
+                    run_chromium_webgl.DEFAULT_WARMUP_SECONDS
+                    + run_chromium_webgl.DEFAULT_SAMPLE_SECONDS
+                    + run_chromium_webgl.CHROMIUM_MINIMUM_SECONDS
+                )
+                self.assertEqual(
+                    budget.compositor_deadline, budget.deadline - reserve
+                )
+                self.assertLess(budget.session_deadline, budget.deadline)
+                self.assertLessEqual(
+                    budget.session_deadline, budget.compositor_deadline
+                )
+        zink = run_chromium_webgl.guest_budget(360, "zink")
+        self.assertEqual(
+            zink.compositor_deadline - zink.session_deadline,
+            run_chromium_webgl.COMPOSITOR_PROBE_SECONDS,
+        )
+        with self.assertRaises(ValueError):
+            run_chromium_webgl.guest_budget(200, "zink")
+
+    def test_launcher_carries_its_budget_and_bounds_each_call(self) -> None:
+        launcher = run_chromium_webgl.build_guest_launcher(
+            auto_poweroff=False,
+            budget=run_chromium_webgl.guest_budget(600, "zink"),
+            renderer_backend="zink",
+        )
+        self.assertIn("deadline=555\n", launcher)
+        self.assertIn("session_deadline=390\n", launcher)
+        self.assertIn("compositor_deadline=450\n", launcher)
+        self.assertIn('timeout -k 2 "$call_seconds"', launcher)
+        self.assertIn('timeout -k 10 "$chromium_seconds"', launcher)
+        self.assertIsNone(re.search(r"@[A-Z_]+@", launcher))
+        self.assertNotIn("remaining=", launcher)
+
+    def test_session_that_never_appears_is_named_at_its_deadline(self) -> None:
+        budget = run_chromium_webgl.guest_budget(360, "virgl")
+        result, elapsed, _ = self.run_launcher("virgl", session_ready=False)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        lines = result.stdout.strip().splitlines()
+        self.assertEqual(
+            lines[-1],
+            "UML_CHROMIUM_ERROR: KDE X11 bridge did not become ready by "
+            f"guest uptime {budget.session_deadline}s",
+        )
+        self.assertIn("UML_SESSION_DIAGNOSTICS_BEGIN", lines)
+        self.assertIn("stub-journalctl", lines)
+        self.assertGreaterEqual(elapsed, budget.session_deadline)
+        self.assertLess(elapsed, budget.session_deadline + FAKE_CLOCK_STEP)
+
+    def test_compositor_that_never_answers_is_named(self) -> None:
+        budget = run_chromium_webgl.guest_budget(360, "zink")
+        result, elapsed, _ = self.run_launcher(
+            "zink", session_ready=True, stubs={"qdbus6": "exit 1"}
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(
+            result.stdout.strip().splitlines()[-1],
+            "UML_CHROMIUM_ERROR: KDE compositor did not answer on D-Bus by "
+            f"guest uptime {budget.compositor_deadline}s",
+        )
+        self.assertGreaterEqual(elapsed, budget.compositor_deadline)
+        self.assertLess(
+            elapsed, budget.compositor_deadline + FAKE_CLOCK_STEP
+        )
+
+    def test_compositor_without_a_renderer_is_named(self) -> None:
+        result, _, _ = self.run_launcher(
+            "zink",
+            session_ready=True,
+            stubs={"qdbus6": "echo 'Compositing Type: none'"},
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(
+            "UML_CHROMIUM_ERROR: KDE compositor reported no OpenGL renderer",
+            result.stdout.strip().splitlines()[-1],
+        )
+
+    def test_chromium_that_exits_without_a_report_is_named(self) -> None:
+        for status, expected in (
+            ("3", "Chromium exited with status 3 before Aquarium reported"),
+            ("124", "Aquarium did not report by guest uptime 315s"),
+        ):
+            with self.subTest(status=status):
+                result, _, armed = self.run_launcher(
+                    "virgl",
+                    session_ready=True,
+                    stubs={"chromium": f"echo started\nexit {status}"},
+                )
+                self.assertEqual(
+                    result.stdout.strip().splitlines()[-1],
+                    "UML_CHROMIUM_ERROR: " + expected,
+                )
+                deadline = re.search(r"const pageDeadline = (\d+);", armed)
+                self.assertIsNotNone(deadline)
+                assert deadline is not None
+                remaining = int(deadline.group(1)) / 1000 - time.time()
+                # The fake clock stands at 5 s of a 315 s launcher budget.
+                self.assertGreater(remaining, 315 - 5 - 10 - 30)
+                self.assertLess(remaining, 315 - 5 - 10 + 30)
+
+    def test_named_guest_failures_reach_the_runner_error(self) -> None:
+        text = (
+            "noise\n[  12.5] uml-chromium-aquarium[504]: "
+            "UML_CHROMIUM_ERROR: KDE Wayland session did not become ready by "
+            "guest uptime 150s\n"
+        )
+        self.assertEqual(
+            run_chromium_webgl.guest_failure(text),
+            "UML_CHROMIUM_ERROR: KDE Wayland session did not become ready by "
+            "guest uptime 150s",
+        )
+        page = (
+            '[1:1:INFO:CONSOLE:130] "UML_AQUARIUM_ERROR|document load did '
+            'not finish", source: chrome-extension://x/verify.js (130)'
+        )
+        self.assertEqual(
+            run_chromium_webgl.guest_failure(page),
+            "UML_AQUARIUM_ERROR|document load did not finish",
+        )
+        budget = run_chromium_webgl.guest_budget(360, "zink")
+        self.assertIn(
+            "did not start the Aquarium launcher",
+            run_chromium_webgl.describe_missing_report("boot", 360, budget),
+        )
+        self.assertIn(
+            "guest itself is unresponsive",
+            run_chromium_webgl.describe_missing_report(
+                "UML_AQUARIUM_LAUNCHER|UPTIME=12.1|DEADLINE=315", 360, budget
+            ),
+        )
 
 
 class AquariumResourceMetricTests(unittest.TestCase):

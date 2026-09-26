@@ -20,9 +20,21 @@ DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
 DEFAULT_ROOTFS = (
     REPO_ROOT / ".build/rootfs/starter/debian-13-plasma-wayland.img"
 )
-DEFAULT_ROOT_DEVICE_BY_TYPE = {
-    "erofs": "/dev/ubda",
-    "ext4": "/dev/ubda1",
+# A starter image is a partitioned ext4 disk that owns its session and
+# network policy: its getty@tty1 autologin starts Plasma, and it configures
+# DHCP itself. A legacy image is the unified KDE filesystem, rootfs.erofs, or
+# an ext4 derivative sealed from it: an unpartitioned filesystem whose SDDM
+# autologin starts Plasma and whose gettys must stay off the display manager's
+# VT. The filesystem type selects the usual profile; runners that accept
+# legacy derivatives name the profile explicitly.
+IMAGE_PROFILES = ("starter", "legacy")
+DEFAULT_IMAGE_PROFILE_BY_TYPE = {
+    "erofs": "legacy",
+    "ext4": "starter",
+}
+ROOT_DEVICE_BY_IMAGE_PROFILE = {
+    "legacy": "/dev/ubda",
+    "starter": "/dev/ubda1",
 }
 CDROM_DEVICE = "/dev/ubdb"
 CDROM_MOUNT_POINT = "/mnt/cdrom"
@@ -73,10 +85,10 @@ STARTER_KDE_OVERLAY_COMMANDS = (
     "chown debian:debian /home/debian/.config/kscreenlockerrc",
 )
 
-# Explicit EROFS overrides retain the compatibility setup owned by the legacy
-# unified KDE image. The default starter image uses the smaller overlay above
-# and keeps its account, getty, and session policy image-owned.
-LEGACY_EROFS_KDE_OVERLAY_COMMANDS = (
+# Legacy images retain the compatibility setup owned by the unified KDE image.
+# The default starter image uses the smaller overlay above and keeps its
+# account, getty, and session policy image-owned.
+LEGACY_KDE_OVERLAY_COMMANDS = (
     "getent passwd uml >/dev/null",
     "usermod -a -G video,render,input uml",
     # /dev/tty0 is the active-VT alias, while tty1 is the VT SDDM initially
@@ -243,10 +255,18 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="lower filesystem type (default: ext4)",
     )
     parser.add_argument(
+        "--image-profile",
+        choices=IMAGE_PROFILES,
+        help=(
+            "session, getty, and network policy of the lower image "
+            "(default: starter for ext4, legacy for erofs)"
+        ),
+    )
+    parser.add_argument(
         "--root-device",
         help=(
-            "guest root device (default: /dev/ubda1 for ext4, "
-            "/dev/ubda for erofs)"
+            "guest root device (default: /dev/ubda1 for a starter image, "
+            "/dev/ubda for a legacy image)"
         ),
     )
     parser.add_argument(
@@ -287,8 +307,16 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         options.bind = "127.0.0.1"
     if options.port is None:
         options.port = 5900
+    if options.image_profile is None:
+        options.image_profile = DEFAULT_IMAGE_PROFILE_BY_TYPE[
+            options.rootfs_type
+        ]
+    if options.image_profile == "starter" and options.rootfs_type != "ext4":
+        parser.error("a starter image is an ext4 disk")
     if options.root_device is None:
-        options.root_device = DEFAULT_ROOT_DEVICE_BY_TYPE[options.rootfs_type]
+        options.root_device = ROOT_DEVICE_BY_IMAGE_PROFILE[
+            options.image_profile
+        ]
     if (
         options.serial_socket is not None
         and options.virtio_console_socket is not None
@@ -321,8 +349,8 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
     ]
     overlay_commands = (
         STARTER_KDE_OVERLAY_COMMANDS
-        if options.rootfs_type == "ext4"
-        else LEGACY_EROFS_KDE_OVERLAY_COMMANDS
+        if options.image_profile == "starter"
+        else LEGACY_KDE_OVERLAY_COMMANDS
     )
     for overlay_command in overlay_commands:
         command.extend(("--command", overlay_command))
@@ -341,14 +369,16 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
         f"ncpus={options.cpus}",
         f"--execution-engine={options.engine}",
     ))
-    if options.rootfs_type == "ext4":
+    if options.image_profile == "starter":
         # Starter images own DHCP/DNS. This later argument overrides the GPU
         # harness's legacy kernel-DHCP default. Their Plasma session starts
         # from the image's getty@tty1 autologin, so its getties stay unmasked.
         command.append("ip=off")
     else:
         # Legacy SDDM images must keep a getty off the display manager's VT
-        # from the start of boot, as their overlay setup explains.
+        # from the start of boot, as their overlay setup explains. Their
+        # getty@tty0 autologin otherwise opens the VT that SDDM has just given
+        # the Plasma session and hangs it up.
         command.extend((
             "systemd.mask=getty@tty0.service",
             "systemd.mask=getty@tty1.service",
