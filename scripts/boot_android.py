@@ -45,6 +45,7 @@ DEFAULT_ADB_PORT = 5555
 GUEST_ADB_PORT = 5555
 DEFAULT_DISPLAY_WIDTH = 720
 DEFAULT_DISPLAY_HEIGHT = 1280
+DEFAULT_VNC_PORT = 5900
 DEFAULT_DISK_SIZE_GIB = 8
 
 
@@ -126,6 +127,21 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         type=positive_integer,
         default=DEFAULT_DISPLAY_HEIGHT,
         help=f"guest display height in pixels (default: {DEFAULT_DISPLAY_HEIGHT})",
+    )
+    parser.add_argument(
+        "--display",
+        choices=("native", "vnc"),
+        default="native",
+        help=(
+            "native Metal window, or a loopback VNC server that scripted "
+            "runs can observe and drive (default: native)"
+        ),
+    )
+    parser.add_argument(
+        "--vnc-port",
+        type=port_number,
+        default=DEFAULT_VNC_PORT,
+        help=f"loopback VNC port for --display=vnc (default: {DEFAULT_VNC_PORT})",
     )
     parser.add_argument(
         "--engine",
@@ -465,7 +481,9 @@ def emulator_command(
         f"--android-boot-mode={options.boot_mode}",
         f"--net-forward=tcp:127.0.0.1:{options.adb_port}-{GUEST_ADB_PORT}",
         "--gpu",
-        "--gpu-display=native",
+        f"--gpu-display={options.display}",
+        *([f"--gpu-vnc-port={options.vnc_port}"]
+          if options.display == "vnc" else []),
         f"--gpu-width={options.width}",
         f"--gpu-height={options.height}",
         f"ncpus={options.cpus}",
@@ -597,7 +615,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(f"Booting accepted Android release {release.name}.", file=sys.stderr)
         action = "Re-created" if recreated else "Reusing"
         print(f"{action} persistent 8 GiB disk: {disk}", file=sys.stderr)
-        print("Native Metal display; press Ctrl-C to stop the guest.", file=sys.stderr)
+        if options.display == "vnc":
+            print(f"VNC display on 127.0.0.1:{options.vnc_port}; press Ctrl-C "
+                  "to stop the guest.", file=sys.stderr)
+        else:
+            print("Native Metal display; press Ctrl-C to stop the guest.",
+                  file=sys.stderr)
         guest = subprocess.Popen(guest_command, start_new_session=True)
         install_shutdown_handlers()
         try:

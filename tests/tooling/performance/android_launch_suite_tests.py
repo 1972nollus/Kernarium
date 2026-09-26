@@ -8,7 +8,8 @@ the activity manager's START line to its marker by logcat's own timestamps
 and never from a line older than the launch, CPU time
 must convert from every `ps` spelling, thread priorities must be read from
 `ps -M` (a napped emulator is several times slower), and a failed launch must stay out of
-the medians while still being counted.
+the medians while still being counted. Checked-in scenarios must parse, and a
+scenario's values come only from its completion line after its steps ended.
 """
 
 from __future__ import annotations
@@ -135,6 +136,42 @@ def test_summary(suite) -> None:
         check(json.loads(result.stdout) == summary, "--summary disagrees")
 
 
+def test_scenarios(suite) -> None:
+    directory = SUITE.parent / "android_scenarios"
+    apps = suite.read_manifest(suite.MANIFEST)
+    paths = sorted(directory.glob("*.json"))
+    check(paths, "no checked-in scenario")
+    for path in paths:
+        scenario = suite.read_scenario(path)
+        check(scenario.app in apps, f"{path.name}: unknown app {scenario.app}")
+        check(scenario.limit > 0 and scenario.values, f"{path.name}: limits")
+    wle = suite.read_scenario(directory / "3dmark-wild-life-extreme.json")
+    result = ('{"events": [{"eventType": "INITIALIZATION_COMPLETED", '
+              '"msSinceStart": 37426}, {"eventType": "WORKLOAD_COMPLETED", '
+              '"msSinceStart": 97577}], "outputs": [{"outputType": '
+              '"TYPED_RESULT", "resultType": "WILD_LIFE_GT1_X", '
+              '"value": 35.44}]}')
+    logcat = (
+        "  100.000  1  1 D x.AttanWorkloadActivity: Result: {\"events\": []}\n"
+        f"  200.500  1  1 D x.AttanWorkloadActivity: Result: {result}\n")
+    found = suite.scenario_values(logcat, wle, 150.0)
+    check(found == {"done_at": 200.5, "values": {
+        "initialization_ms": 37426.0, "workload_completed_ms": 97577.0,
+        "fps": 35.44}}, f"unexpected scenario values {found}")
+    check(suite.scenario_values(logcat, wle, 300.0) is None,
+          "a result older than the steps must not complete the scenario")
+    with tempfile.TemporaryDirectory() as temporary:
+        broken = pathlib.Path(temporary) / "broken.json"
+        broken.write_text(json.dumps({"app": "x", "steps": [{"tap": [1]}],
+                                      "done": "y", "limit_seconds": 1}))
+        try:
+            suite.read_scenario(broken)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("a tap without two coordinates must be rejected")
+
+
 def main() -> int:
     suite = load_suite()
     test_manifest(suite)
@@ -143,6 +180,7 @@ def main() -> int:
     test_cpu_seconds(suite)
     test_thread_priorities(suite)
     test_summary(suite)
+    test_scenarios(suite)
     print("android launch suite contract: ok")
     return 0
 

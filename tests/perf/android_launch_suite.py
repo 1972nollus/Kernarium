@@ -12,6 +12,12 @@ that marks the end of the launch's CPU work (a game's first scene, not its
 splash screen). Records, one JSON object per launch, are appended to
 --output; `--summary FILE...` prints each label's per-application medians.
 
+A --scenario file continues one application's launch into a phase the
+application reports itself: after the launch it replays taps and waits, then
+waits for a completion line and records named values captured from it (for a
+benchmark, its own loading time and score), plus the emulator CPU time spent.
+Taps are in guest display pixels, so a scenario belongs to one display size.
+
 The caller serializes guests: wrap the command in the host's GPU lock and
 guest slot. Environment for one arm of an A/B goes in with --env, and
 --guest-samples profiles the whole boot with DARWIN_UML_GUEST_SAMPLES.
@@ -140,12 +146,52 @@ def summarize(records: list[dict]) -> dict[str, dict[str, dict[str, float]]]:
     return summary
 
 
+@dataclasses.dataclass(frozen=True)
+class Scenario:
+    app: str
+    steps: tuple[dict, ...]
+    done: re.Pattern[str]
+    limit: int
+    values: dict[str, re.Pattern[str]]
+
+
+def read_scenario(path: pathlib.Path) -> Scenario:
+    data = json.loads(path.read_text())
+    steps = tuple(data["steps"])
+    for step in steps:
+        if set(step) not in ({"sleep"}, {"tap"}) or (
+                "tap" in step and len(step["tap"]) != 2):
+            raise ValueError(f"{path}: a step is one sleep or one tap: {step}")
+    return Scenario(data["app"], steps, re.compile(data["done"]),
+                    int(data["limit_seconds"]),
+                    {name: re.compile(pattern)
+                     for name, pattern in data.get("values", {}).items()})
+
+
+def scenario_values(logcat: str, scenario: Scenario,
+                    since: float) -> dict | None:
+    """The completion line's time and captured values, once it appears."""
+    for line in logcat.splitlines():
+        match = EPOCH_LINE.match(line)
+        if not match or float(match.group(1)) < since or \
+                not scenario.done.search(match.group(2)):
+            continue
+        values = {}
+        for name, pattern in scenario.values.items():
+            found = pattern.search(match.group(2))
+            values[name] = float(found.group(1)) if found else None
+        return {"done_at": float(match.group(1)), "values": values}
+    return None
+
+
 class Guest:
     def __init__(self, arguments: argparse.Namespace, environment: dict):
         self.arguments = arguments
         self.serial = f"127.0.0.1:{arguments.adb_port}"
         self.console = open(arguments.console, "ab")
         command = [sys.executable, str(BOOT),
+                   "--display", arguments.display,
+                   "--vnc-port", str(arguments.vnc_port),
                    "--emulator", str(arguments.emulator),
                    "--release", str(arguments.release),
                    "--disk", str(arguments.work_disk),
@@ -202,7 +248,37 @@ class Guest:
             self.console.close()
 
 
-def launch(guest: Guest, app: App, emulator_pid: int) -> dict:
+def run_scenario(guest: Guest, scenario: Scenario, logcat_path: pathlib.Path,
+                 emulator_pid: int) -> dict:
+    cpu0 = cpu_seconds(subprocess.run(
+        ["ps", "-o", "time=", "-p", str(emulator_pid)],
+        capture_output=True, text=True).stdout)
+    for step in scenario.steps:
+        if "sleep" in step:
+            time.sleep(float(step["sleep"]))
+        else:
+            guest.shell(f"input tap {step['tap'][0]} {step['tap'][1]}")
+    # The guest's own clock marks the end of the steps, as logcat does.
+    started = float(guest.shell("date +%s.%N").strip() or 0)
+    deadline = time.monotonic() + scenario.limit
+    result = None
+    while result is None and time.monotonic() < deadline:
+        time.sleep(2)
+        result = scenario_values(logcat_path.read_text(errors="replace"),
+                                 scenario, started)
+    cpu1 = cpu_seconds(subprocess.run(
+        ["ps", "-o", "time=", "-p", str(emulator_pid)],
+        capture_output=True, text=True).stdout)
+    record = {"scenario_seconds": None, "scenario_values": None,
+              "scenario_emulator_cpu": round(cpu1 - cpu0, 2)}
+    if result is not None:
+        record["scenario_seconds"] = round(result["done_at"] - started, 3)
+        record["scenario_values"] = result["values"]
+    return record
+
+
+def launch(guest: Guest, app: App, emulator_pid: int,
+           scenario: Scenario | None = None) -> dict:
     guest.shell(f"am force-stop {app.package}")
     time.sleep(3)
     guest.adb("logcat", "-c")
@@ -230,6 +306,8 @@ def launch(guest: Guest, app: App, emulator_pid: int) -> dict:
             cpu1 = cpu_seconds(subprocess.run(
                 ["ps", "-o", "time=", "-p", str(emulator_pid)],
                 capture_output=True, text=True).stdout)
+            followed = {} if scenario is None or seconds is None else \
+                run_scenario(guest, scenario, logcat_path, emulator_pid)
         finally:
             reader.terminate()
             reader.wait(timeout=30)
@@ -247,12 +325,14 @@ def launch(guest: Guest, app: App, emulator_pid: int) -> dict:
         "emulator_cpu": round(cpu1 - cpu0, 2),
         "thread_priorities": priorities,
         "load": os.getloadavg()[0],
+        **followed,
     }
 
 
 def run(arguments: argparse.Namespace) -> int:
     apps = read_manifest(MANIFEST)
     selected = [apps[name] for name in arguments.apps.split(",")]
+    scenario = read_scenario(arguments.scenario) if arguments.scenario else None
     environment = dict(os.environ)
     for item in arguments.env:
         key, _, value = item.partition("=")
@@ -295,7 +375,10 @@ def run(arguments: argparse.Namespace) -> int:
                 if f"package:{app.package}\n" not in installed + "\n":
                     record.update(seconds=None, missing=True)
                 else:
-                    record.update(launch(guest, app, emulator_pid))
+                    record.update(launch(
+                        guest, app, emulator_pid,
+                        scenario if scenario and scenario.app == app.name
+                        else None))
                 with arguments.output.open("a") as handle:
                     handle.write(json.dumps(record) + "\n")
                 print(json.dumps(record), flush=True)
@@ -325,6 +408,12 @@ def main() -> int:
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--settle", type=int, default=45)
+    parser.add_argument("--display", choices=("native", "vnc"),
+                        default="native")
+    parser.add_argument("--vnc-port", type=int, default=5900)
+    parser.add_argument("--scenario", type=pathlib.Path,
+                        help="continue one application's launch into a "
+                             "phase it reports (JSON, see android_scenarios/)")
     arguments = parser.parse_args()
     if arguments.summary:
         records = [json.loads(line) for path in arguments.summary

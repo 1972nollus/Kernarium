@@ -239,6 +239,15 @@ arm's emulator environment; `--guest-samples PATH` profiles the boot with the
 guest code sampler below. Guests are not serialized by the tool: take the GPU
 lock and a guest slot around each run, and alternate arms (ABBA) across runs.
 
+`--scenario android_scenarios/NAME.json` follows each successful launch with a
+fixed sequence of sleeps and taps and waits for the scenario's completion line;
+the record adds the guest seconds to that line, the emulator's CPU seconds, and
+the values the scenario's patterns extract from it, such as the phase times an
+application logs. Taps are display coordinates, so a scenario states the
+display size it was written for. `--display vnc --vnc-port N` boots on a VNC
+display instead of the native window, which lets a person watch or steer an
+unattended run.
+
 ## Gadget forwarding controls
 
 Scalar and SIMD/FP forwarding default to ON; dependency coverage remains OFF.
