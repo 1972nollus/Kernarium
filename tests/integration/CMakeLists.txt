@@ -231,6 +231,10 @@ uml_add_guest_integration_test(
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
 
+if(TARGET uml_balloon_device)
+    add_subdirectory(balloon)
+endif()
+
 # One-vCPU guest: an input burst past the tty buffer must not end console input.
 uml_add_guest_integration_test(
     NAME guest-console-input-burst

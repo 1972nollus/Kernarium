@@ -66,6 +66,23 @@ constexpr std::uint64_t baseOfferedProtocolFeatures =
 
 class ConnectionStopped final {};
 
+/* A front-end request whose reply the front-end reads from the main socket
+ * without draining the backend channel, and whose handling only reads state,
+ * so it can be answered while a backend request is outstanding. */
+[[nodiscard]] bool answeredDuringBackendWait(std::uint32_t request) noexcept
+{
+    switch (static_cast<protocol::VhostRequest>(request)) {
+    case protocol::VhostRequest::getFeatures:
+    case protocol::VhostRequest::getProtocolFeatures:
+    case protocol::VhostRequest::getQueueNum:
+    case protocol::VhostRequest::getSharedMemoryConfig:
+    case protocol::VhostRequest::getConfig:
+        return true;
+    default:
+        return false;
+    }
+}
+
 void setCloseOnExec(int descriptor)
 {
     const int flags = ::fcntl(descriptor, F_GETFD);
@@ -1481,18 +1498,8 @@ void VhostUserServer::signalQueue(std::uint32_t index)
         state,
         connectionStopRequested_);
 
-    VhostUserMessage reply;
-    if (!receiveVhostUserMessage(
-            slaveRequestDescriptor_.get(),
-            reply,
-            connectionStopRequested_)) {
-        if (connectionStopRequested_ != nullptr &&
-            connectionStopRequested_->load(std::memory_order_acquire)) {
-            throw ConnectionStopped {};
-        }
-        throw std::runtime_error(
-            "closed vhost-user in-band completion channel");
-    }
+    const VhostUserMessage reply =
+        receiveBackendReply("in-band completion");
     constexpr std::uint32_t expectedReplyFlags =
         protocol::vhostUserVersion | protocol::vhostUserReply;
     if (reply.header.request != header.request ||
@@ -1541,18 +1548,7 @@ void VhostUserServer::signalPendingConfigChange()
      * potentially slow frontend acknowledgement. */
     device_->releaseConfigChange();
 
-    VhostUserMessage reply;
-    if (!receiveVhostUserMessage(
-            slaveRequestDescriptor_.get(),
-            reply,
-            connectionStopRequested_)) {
-        if (connectionStopRequested_ != nullptr &&
-            connectionStopRequested_->load(std::memory_order_acquire)) {
-            throw ConnectionStopped {};
-        }
-        throw std::runtime_error(
-            "closed vhost-user config-change channel");
-    }
+    const VhostUserMessage reply = receiveBackendReply("config-change");
     constexpr std::uint32_t expectedReplyFlags =
         protocol::vhostUserVersion | protocol::vhostUserReply;
     if (reply.header.request != header.request ||
@@ -1564,6 +1560,96 @@ void VhostUserServer::signalPendingConfigChange()
             "invalid vhost-user config-change acknowledgement");
     }
     device_->clearConfigChange();
+}
+
+VhostUserMessage VhostUserServer::receiveBackendReply(const char* channel)
+{
+    /* The front-end reads the reply to a query such as GET_CONFIG from the
+     * main socket without draining this backend channel, and on UML the CPU
+     * that would drain it can be the one waiting for that reply. Blocking
+     * here on the backend channel alone would leave each side waiting for
+     * the other, so the queries are answered while the backend request is
+     * outstanding. Any other request waits until the reply has arrived: its
+     * sender drains the backend channel while it waits for an
+     * acknowledgement, and handling it here could start another backend
+     * request inside this one. */
+    bool frontendOpen = frontendDescriptor_ >= 0;
+    for (;;) {
+        std::array<pollfd, 2> descriptors {{
+            {
+                .fd = slaveRequestDescriptor_.get(),
+                .events = POLLIN,
+                .revents = 0,
+            },
+            {
+                .fd = frontendOpen ? frontendDescriptor_ : -1,
+                .events = POLLIN,
+                .revents = 0,
+            },
+        }};
+        const int ready = ::poll(
+            descriptors.data(),
+            static_cast<nfds_t>(descriptors.size()),
+            socketPollTimeoutMilliseconds);
+        if (connectionStopRequested_ != nullptr &&
+            connectionStopRequested_->load(std::memory_order_acquire)) {
+            throw ConnectionStopped {};
+        }
+        if (ready < 0) {
+            if (errno == EINTR)
+                continue;
+            throw std::runtime_error(
+                std::string("vhost-user ") + channel + " poll failed");
+        }
+        if (ready == 0)
+            continue;
+        if ((descriptors[0].revents & POLLNVAL) != 0 ||
+            (descriptors[1].revents & POLLNVAL) != 0) {
+            throw std::runtime_error(
+                std::string("invalid descriptor while waiting on the vhost-user ") +
+                channel + " channel");
+        }
+        if (descriptors[0].revents != 0) {
+            VhostUserMessage reply;
+            if (!receiveVhostUserMessage(
+                    slaveRequestDescriptor_.get(),
+                    reply,
+                    connectionStopRequested_)) {
+                if (connectionStopRequested_ != nullptr &&
+                    connectionStopRequested_->load(
+                        std::memory_order_acquire)) {
+                    throw ConnectionStopped {};
+                }
+                throw std::runtime_error(
+                    std::string("closed vhost-user ") + channel + " channel");
+            }
+            return reply;
+        }
+        if (descriptors[1].revents == 0)
+            continue;
+        VhostUserMessage request;
+        if (!receiveVhostUserMessage(
+                frontendDescriptor_, request, connectionStopRequested_)) {
+            // The connection loop sees the closed socket again afterwards.
+            frontendOpen = false;
+            continue;
+        }
+        if (answeredDuringBackendWait(request.header.request))
+            handleMessage(frontendDescriptor_, request);
+        else
+            deferredFrontendMessages_.push_back(std::move(request));
+    }
+}
+
+void VhostUserServer::handleDeferredFrontendMessages(int socket)
+{
+    // Handling one can defer more; they all keep their arrival order.
+    while (!deferredFrontendMessages_.empty()) {
+        VhostUserMessage message =
+            std::move(deferredFrontendMessages_.front());
+        deferredFrontendMessages_.pop_front();
+        handleMessage(socket, message);
+    }
 }
 
 std::uint64_t VhostUserServer::allocateRequestId()
@@ -1772,19 +1858,8 @@ void VhostUserServer::dispatchSharedMemoryActions()
 
             // Do not expose the Virtio-GPU mapping transition until the
             // front-end has installed or revoked the corresponding GPA range.
-            VhostUserMessage reply;
-            if (!receiveVhostUserMessage(
-                    slaveRequestDescriptor_.get(),
-                    reply,
-                    connectionStopRequested_)) {
-                if (connectionStopRequested_ != nullptr &&
-                    connectionStopRequested_->load(
-                        std::memory_order_acquire)) {
-                    throw ConnectionStopped {};
-                }
-                throw std::runtime_error(
-                    "closed vhost-user shared-memory acknowledgement channel");
-            }
+            const VhostUserMessage reply =
+                receiveBackendReply("shared-memory acknowledgement");
             constexpr std::uint32_t expectedReplyFlags =
                 protocol::vhostUserVersion | protocol::vhostUserReply;
             if (reply.header.request != header.request ||
@@ -2384,6 +2459,7 @@ void VhostUserServer::serveConnection(
     } stopRegistration {connectionStopRequested_, *device_, stopRequested};
     std::vector<pollfd> descriptors(queues_.size() + 2U);
     const std::size_t deviceEventIndex = queues_.size() + 1U;
+    frontendDescriptor_ = ownedConnection.get();
     try {
         while (!stopRequested.load(std::memory_order_acquire)) {
             /* The renderer drives Metal from this thread, and Metal
@@ -2392,6 +2468,10 @@ void VhostUserServer::serveConnection(
              * otherwise the objects live as long as the connection and the
              * process grows by gigabytes within a minute of a GL workload. */
             const uml::platform::apple::AutoreleaseScope autoreleaseScope;
+
+            // Requests read while a backend reply was outstanding come
+            // before anything still unread on the socket.
+            handleDeferredFrontendMessages(ownedConnection.get());
 
             /* This also publishes a resize which arrived before the guest
              * installed its backend-request descriptor. Running it at the
@@ -2410,6 +2490,10 @@ void VhostUserServer::serveConnection(
             // external readiness edge (for example a decoder produces a frame
             // for a capture buffer already queued by the guest).
             drainQueueCompletions();
+            // A backend wait in this pass may have deferred requests, and
+            // they must be handled before the socket is read again.
+            if (!deferredFrontendMessages_.empty())
+                continue;
 
             descriptors[0] = {
                 .fd = ownedConnection.get(),
@@ -2484,6 +2568,9 @@ void VhostUserServer::serveConnection(
             "%s vhost-user connection failed: unknown host error\n",
             device_->name());
     }
+    // Teardown can still wait on the backend channel; the socket is gone.
+    frontendDescriptor_ = -1;
+    deferredFrontendMessages_.clear();
     ownedConnection.reset();
     resetConnection();
 }
