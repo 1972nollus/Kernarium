@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdlib>
 #include <span>
 #include <utility>
 
@@ -50,19 +49,6 @@ DecodeResult builder_detail::implementation_gap(DecodeContext &context)
 }
 
 namespace {
-
-#if UML_GADGET_ELIDE_NOPS
-/* Opt-in until measured: DARWIN_UML_GADGET_ELIDE_NOPS=1 leaves NOP entries
- * out of the stream, so a mechanism comparison shares one code layout. */
-[[nodiscard]] bool elide_nops() noexcept
-{
-	static const bool enabled = [] {
-		const char *setting = std::getenv("DARWIN_UML_GADGET_ELIDE_NOPS");
-		return setting != nullptr && setting[0] == '1';
-	}();
-	return enabled;
-}
-#endif
 
 [[nodiscard]] Program finish(
 	const std::array<GuestRun, Program::maximum_runs> &runs,
@@ -232,19 +218,6 @@ BuildResult Builder::build(
 			decoded = decode_exception(context);
 			break;
 		}
-#if UML_GADGET_ELIDE_NOPS
-		/* A guest word that translated to the NOP entry alone does nothing
-		 * at run time: it cannot fault, retire out of order, or touch state.
-		 * The block still retires it through its precharged length and its
-		 * position stays addressable through the run list, so the entry and
-		 * its dispatch are simply not emitted. Adjacent forwarding is not
-		 * extended across it; the decode below sees nothing emitted. */
-		if (elide_nops() && decoded == DecodeResult::decoded &&
-		    words.size() == emitted_start + 1 &&
-		    words[emitted_start] == reinterpret_cast<std::uintptr_t>(
-			    uml_arm64_gadget_nop))
-			words.pop_back();
-#endif
 #if UML_GADGET_VECTOR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
 		const auto current_vector = decoded == DecodeResult::decoded &&
 			compiled == compiled_before ?

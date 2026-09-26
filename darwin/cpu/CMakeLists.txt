@@ -275,8 +275,6 @@ option(UML_GADGET_RETURN_STACK
 # trips are misses at sites with more targets than any cell array covers.
 option(UML_GADGET_TARGET_TIER
     "Follow indirect-site misses through a per-address-space target table" ON)
-option(UML_GADGET_ELIDE_NOPS
-    "Emit no gadget for guest instructions that translate to NOP" ON)
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
 # enough to be cut off by it rather than ending at a branch.
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
@@ -349,7 +347,6 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>
     UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>
-    UML_GADGET_ELIDE_NOPS=$<BOOL:${UML_GADGET_ELIDE_NOPS}>
     UML_GADGET_TAGGED_TLB_KEYS=$<BOOL:${UML_GADGET_TAGGED_TLB_KEYS}>
     UML_GADGET_FUSED_TRANSLATE=$<BOOL:${UML_GADGET_FUSED_TRANSLATE}>
     UML_GADGET_INDIRECT_ENTRIES=${UML_GADGET_INDIRECT_ENTRIES}
