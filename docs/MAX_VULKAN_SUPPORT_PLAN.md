@@ -169,7 +169,7 @@ The Vulkan derivative is a distinct, receipt-bound ext4 image. It is attached
 read-only and used below a disposable overlay. It does not alter the accepted
 desktop `rootfs.erofs`.
 
-`tools/rootfs/vulkan/sources.tsv` pins Mesa 26.2.1, matching Vulkan-Headers
+`tools/rootfs/vulkan/sources.tsv` pins Mesa 26.2.3, matching Vulkan-Headers
 and Vulkan-Loader inputs, the paired downstream Venus protocol, and Vulkan
 CTS 1.4.6.2 with its authenticated correctness patches. The guest
 [userspace contract](../tools/rootfs/vulkan/README.md) owns the transport fixes
