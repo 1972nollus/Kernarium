@@ -58,5 +58,5 @@ _\name:
 #include "engine/inplace_memory.inc"
 #include "engine/scalar_forwarding.inc"
 #include "engine/vector_forwarding.inc"
-#include "engine/dependency_coverage.inc"
+#include "engine/execution_count.inc"
 	gadget_bank_bounds end

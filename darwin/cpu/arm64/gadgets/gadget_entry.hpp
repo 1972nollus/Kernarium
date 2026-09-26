@@ -20,7 +20,7 @@ extern "C" EngineResult uml_arm64_gadget_enter(
 	const std::uintptr_t *program, CpuState *cpu, ::uml::memory::Tlb *tlb,
 	std::size_t initial_instructions
 #if UML_GADGET_EXECUTION_HISTOGRAM
-	, void *dependency_counters
+	, void *execution_counters
 #endif
 	);
 

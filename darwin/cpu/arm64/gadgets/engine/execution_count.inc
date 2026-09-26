@@ -3,7 +3,7 @@
 /* Diagnostic only. Forwarded x0/v2 results and architectural flags are
  * untouched. The entry frame owns a carrier-local counter pointer. No
  * helper or non-gadget exit is needed per observed decode group. */
-gadget dependency_coverage
+gadget execution_count
 	ldp x8, x9, [_stream], #16
 	ldr x10, [sp, #0x70]
 	ldr x11, [x10]

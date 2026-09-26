@@ -153,8 +153,8 @@ BuildResult Builder::build(
 				instruction_accesses_fp_state(instruction);
 		const auto address = run_base + compiled * sizeof(instruction);
 #if UML_GADGET_EXECUTION_HISTOGRAM
-		const auto coverage_word = words.size();
-		emit(words, diagnostics::uml_arm64_gadget_dependency_coverage);
+		const auto counter_word = words.size();
+		emit(words, diagnostics::uml_arm64_gadget_execution_count);
 		emit(words, std::uintptr_t{sizeof(std::uint64_t)});
 		emit(words, std::uintptr_t{1});
 #endif
@@ -243,10 +243,10 @@ BuildResult Builder::build(
 #if UML_GADGET_EXECUTION_HISTOGRAM
 		/* The entry is final only after forwarding selection above. */
 		if (words.size() > emitted_start) {
-			words[coverage_word + 1] = diagnostics::execution_histogram_slot(
+			words[counter_word + 1] = diagnostics::execution_histogram_slot(
 				previous_gadget,
 				reinterpret_cast<const void *>(words[emitted_start]));
-			words[coverage_word + 2] = std::max<std::size_t>(1,
+			words[counter_word + 2] = std::max<std::size_t>(1,
 				compiled - compiled_before +
 				(decoded == DecodeResult::decoded));
 		}

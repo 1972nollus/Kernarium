@@ -36,7 +36,7 @@ inline constexpr std::size_t execution_histogram_capacity = std::size_t{1} << 18
 /* Executor diagnostics blocks to sum into the dump; each executor registers
  * its own and keeps it alive for the process lifetime. */
 void execution_histogram_note_executor(const void *diagnostics);
-extern "C" void uml_arm64_gadget_dependency_coverage();
+extern "C" void uml_arm64_gadget_execution_count();
 #endif
 
 } // namespace uml::cpu::arm64::gadgets::diagnostics
