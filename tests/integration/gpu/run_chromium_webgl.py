@@ -556,10 +556,14 @@ def validate_renderer(renderer_line: str, backend: str) -> None:
             f"Chromium WebGL did not report hardware {backend}: "
             + renderer_line
         )
+    # The guest Virgl renderer string embeds the host renderer, which is
+    # itself Zink, so "zink" alone cannot identify the guest driver. Only the
+    # guest Zink driver runs on the Virtio-GPU Venus device.
+    on_venus = "virtio-gpu venus" in lowered
     if backend == "virgl":
-        matched = "virgl" in lowered and "zink" not in lowered
+        matched = "virgl" in lowered and not on_venus
     elif backend == "zink":
-        matched = "zink" in lowered and "virtio-gpu venus" in lowered
+        matched = "zink" in lowered and on_venus
     else:
         raise ValueError("unsupported Chromium renderer backend")
     if not matched:
@@ -1209,6 +1213,10 @@ def main() -> int:
         str(rootfs),
         "--rootfs-type",
         options.rootfs_contract.filesystem_type,
+        # Every image this runner accepts is an unpartitioned filesystem;
+        # the launcher's ext4 default names the starter image's partition.
+        "--root-device",
+        "/dev/ubda",
         "--memory",
         options.memory,
         "--cpus",

@@ -166,6 +166,14 @@ class KdeVncLauncherTests(unittest.TestCase):
                 "boot_kde_vnc.guest_argument_separator(command)", runner
             )
 
+    def test_webgl_runners_boot_unpartitioned_images(self) -> None:
+        # The erofs image and the receipt-bound ext4 derivatives these runners
+        # accept carry no partition table, unlike the starter image that the
+        # launcher's ext4 root-device default names.
+        for runner_name in ("run_chromium_webgl.py", "run_webgl_samples.py"):
+            runner = (GPU_INTEGRATION / runner_name).read_text(encoding="utf-8")
+            self.assertRegex(runner, r'"--root-device",\s*"/dev/ubda",')
+
     def test_webgl_samples_pin_gles_and_bound_first_navigation(self) -> None:
         runner = (
             GPU_INTEGRATION / "run_webgl_samples.py"
