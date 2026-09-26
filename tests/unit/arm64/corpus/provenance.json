@@ -1,5 +1,5 @@
 {
-  "cases": 171452,
+  "cases": 171836,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
@@ -7,12 +7,12 @@
     "illegal-instruction": 24616,
     "instruction-budget": 863,
     "memory-fault": 17462,
-    "system-call": 128401
+    "system-call": 128785
   },
   "cases_by_profile": {
-    "16k": 37311,
+    "16k": 37503,
     "16k+4k": 96818,
-    "4k": 37323
+    "4k": 37515
   },
   "coverage": {
     "entries": 983,
@@ -23,9 +23,9 @@
   },
   "exports": {
     "16k": {
-      "classes": 24288,
-      "covering_cases": 16753,
-      "declared_cases": 18218026,
+      "classes": 24308,
+      "covering_cases": 16778,
+      "declared_cases": 18218274,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -38,14 +38,14 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 134129,
-      "forced_cases": 4198,
+      "exported_cases": 134321,
+      "forced_cases": 4285,
       "producers": 452
     },
     "4k": {
-      "classes": 24287,
-      "covering_cases": 16766,
-      "declared_cases": 18218025,
+      "classes": 24307,
+      "covering_cases": 16791,
+      "declared_cases": 18218273,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -58,20 +58,20 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 134141,
-      "forced_cases": 4198,
+      "exported_cases": 134333,
+      "forced_cases": 4285,
       "producers": 452
     }
   },
   "force_include": {
     "file": "tests/unit/arm64/corpus/forced-cases.tsv",
-    "sha256": "88603b6a571ddde585b4e22826e2d52c3297ab5ed146c221127df674af0c9597"
+    "sha256": "123cd7f0950983d858b577a972819fd79577635596eed0b9b3bd7f1aab354c34"
   },
-  "memory_blobs": 3338,
-  "pack_bytes": 14860421,
-  "pack_sha256": "0796298178cfb6289cde559cd52a49c287f547b9e0f451cbb721b9565544847d",
-  "producer_commit": "384dd292aea95043d6bdf3a2743a000c1e44b907",
-  "programs": 147088,
+  "memory_blobs": 3346,
+  "pack_bytes": 14892664,
+  "pack_sha256": "24863a0b25e70452b00383b0f7f6cddf5d5d66093a80e6ece2712b2612ef56cc",
+  "producer_commit": "ab2344676255d39d793186fd63b29a7a85995f2e",
+  "programs": 147178,
   "records": 1334,
   "sample_limit": 8,
   "schema": 1,
@@ -79,7 +79,7 @@
   "state_minimization": {
     "broad": 63,
     "full": 1176,
-    "narrow": 170213
+    "narrow": 170597
   },
   "validator_cases": {
     "guarded-control-call-fault-atomicity/v1": 8,
