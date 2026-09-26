@@ -355,9 +355,12 @@ EOF
 	as_root cp -L /etc/resolv.conf "$root/etc/resolv.conf"
 	as_root chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
 		apt-get update
+	# systemd loads libbpf at runtime for its cgroup BPF features and reports
+	# them disabled at every boot when the library is absent.
 	as_root chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
 		apt-get install -y --no-install-recommends \
-		systemd-sysv systemd-resolved udev kmod dbus ca-certificates
+		systemd-sysv systemd-resolved udev kmod dbus ca-certificates \
+		libbpf1
 	write_root_file "$root/etc/hostname" 0644 <<EOF
 $hostname
 EOF
