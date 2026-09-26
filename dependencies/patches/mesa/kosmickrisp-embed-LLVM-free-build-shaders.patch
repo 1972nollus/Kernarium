@@ -15,7 +15,7 @@ Subject: [PATCH] kosmickrisp: embed LLVM-free build shaders
  create mode 100644 src/poly/cl/libpoly.spv
 
 diff --git a/meson.build b/meson.build
-index d6e3a8bea260e47bdac88cdf2fe983e47f96afe8..0b9b3b62a2244aad30f6d90d978db7f72d4fbd67 100644
+index a864ed0b23cdb0c4853e68432cdfdb6fcdd519c2..b2b81422b2c0ef07e4c05cd1e714ee49b1754870 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -959,7 +959,6 @@ with_driver_using_cl = [

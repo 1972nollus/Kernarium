@@ -34,10 +34,14 @@ ISO_MOUNT_COMMAND = (
 
 STARTER_KDE_OVERLAY_COMMANDS = (
     "getent passwd debian >/dev/null",
+    # install -d gives the requested owner only to the directories it names,
+    # so every parent below the home directory is named before its children.
     "install -d -m 0755 -o debian -g debian "
     "/home/debian/Desktop /home/debian/Documents /home/debian/Downloads "
     "/home/debian/Music /home/debian/Pictures /home/debian/Public "
     "/home/debian/Templates /home/debian/Videos /home/debian/.config "
+    "/home/debian/.local /home/debian/.local/share "
+    "/home/debian/.local/share/Trash "
     "/home/debian/.local/share/pki "
     "/home/debian/.local/share/Trash/files "
     "/home/debian/.local/share/Trash/info",
@@ -84,6 +88,7 @@ LEGACY_EROFS_KDE_OVERLAY_COMMANDS = (
     "/home/uml/Desktop /home/uml/Documents /home/uml/Downloads "
     "/home/uml/Music /home/uml/Pictures /home/uml/Public "
     "/home/uml/Templates /home/uml/Videos /home/uml/.config "
+    "/home/uml/.local /home/uml/.local/share /home/uml/.local/share/Trash "
     "/home/uml/.local/share/pki "
     "/home/uml/.local/share/Trash/files "
     "/home/uml/.local/share/Trash/info "
@@ -335,13 +340,19 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
         "--",
         f"ncpus={options.cpus}",
         f"--execution-engine={options.engine}",
-        "systemd.mask=getty@tty0.service",
-        "systemd.mask=getty@tty1.service",
     ))
     if options.rootfs_type == "ext4":
         # Starter images own DHCP/DNS. This later argument overrides the GPU
-        # harness's legacy kernel-DHCP default.
+        # harness's legacy kernel-DHCP default. Their Plasma session starts
+        # from the image's getty@tty1 autologin, so its getties stay unmasked.
         command.append("ip=off")
+    else:
+        # Legacy SDDM images must keep a getty off the display manager's VT
+        # from the start of boot, as their overlay setup explains.
+        command.extend((
+            "systemd.mask=getty@tty0.service",
+            "systemd.mask=getty@tty1.service",
+        ))
     if options.serial_socket is not None:
         command.append("systemd.wants=serial-getty@ttyS0.service")
     if options.virtio_console_socket is None:

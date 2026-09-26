@@ -8,8 +8,10 @@ __import__("sys").dont_write_bytecode = True
 import json
 import os
 import re
+import shutil
 import stat
 import struct
+import subprocess
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
@@ -81,6 +83,8 @@ SHT_SYMTAB = 2
 SHT_NOBITS = 8
 SHT_DYNSYM = 11
 SHN_UNDEF = 0
+SHF_ALLOC = 2
+DWARF_SECTION_PREFIXES = (".debug_", ".zdebug_")
 
 
 def fail(message: str) -> NoReturn:
@@ -323,6 +327,7 @@ def verify_config(path: Path, page_size: int, kernel_slice: str) -> None:
         "CONFIG_BPF": "y",
         "CONFIG_BPF_SYSCALL": "y",
         "CONFIG_CGROUP_BPF": "y",
+        "CONFIG_DEBUG_INFO_BTF": "y",
     }
     for symbol, wanted in expected.items():
         observed = config.get(symbol, "n")
@@ -494,6 +499,85 @@ def verify_elf(
         )
 
 
+def elf_sections(payload: bytes) -> list[tuple[str, int, int, int]]:
+    """Return (name, type, flags, size) for every ELF64 section."""
+    section_offset = struct.unpack_from("<Q", payload, 40)[0]
+    section_entry_size, section_count, names_index = struct.unpack_from(
+        "<HHH", payload, 58
+    )
+    if section_entry_size < 64 or section_count == 0 or names_index >= section_count:
+        fail("ELF section-header table is missing or malformed")
+    bounded_slice(
+        payload,
+        section_offset,
+        section_entry_size * section_count,
+        "section-header table",
+    )
+    headers = []
+    for index in range(section_count):
+        offset = section_offset + index * section_entry_size
+        name, kind, flags = struct.unpack_from("<IIQ", payload, offset)
+        file_offset, size = struct.unpack_from("<QQ", payload, offset + 24)
+        headers.append((name, kind, flags, file_offset, size))
+    _, names_kind, _, names_offset, names_size = headers[names_index]
+    if names_kind == SHT_NOBITS:
+        fail("ELF section-name table has no contents")
+    names = bounded_slice(payload, names_offset, names_size, "section-name table")
+    sections = []
+    for name, kind, flags, _, size in headers:
+        terminator = names.find(b"\0", name)
+        if name >= len(names) or terminator < 0:
+            fail("ELF section name is outside its string table")
+        sections.append(
+            (names[name:terminator].decode("ascii", "replace"), kind, flags, size)
+        )
+    return sections
+
+
+def verify_runtime_image(vmlinux: Path, config: Path) -> None:
+    """Check the shipped kernel carries BTF and no DWARF.
+
+    DWARF is only pahole's input for BTF; nothing at runtime reads it.
+    .BTF is allocated kernel data behind /sys/kernel/btf/vmlinux.
+    """
+    sections = {
+        name: (kind, flags, size)
+        for name, kind, flags, size in elf_sections(vmlinux.read_bytes())
+    }
+    dwarf = sorted(
+        name for name in sections if name.startswith(DWARF_SECTION_PREFIXES)
+    )
+    if dwarf:
+        fail(f"kernel image carries DWARF sections: {', '.join(dwarf[:8])}")
+    if parse_config(config).get("CONFIG_DEBUG_INFO_BTF", "n") != "y":
+        return
+    btf = sections.get(".BTF")
+    if btf is None or btf[0] == SHT_NOBITS or btf[2] == 0:
+        fail("kernel config enables BTF but the image has no .BTF contents")
+    if not btf[1] & SHF_ALLOC:
+        fail("kernel .BTF section is not allocated")
+
+
+def publish_runtime_image(objcopy: Path, source: Path, destination: Path) -> None:
+    """Copy a built vmlinux without its DWARF.
+
+    --strip-debug removes the debugging sections and the .symtab entries that
+    only describe them: STT_FILE symbols and locals defined in .debug_*
+    sections. Every other .symtab symbol, .dynsym, .BTF, and every loaded
+    segment remain, so System.map and symbolization are unaffected.
+    """
+    result = subprocess.run(
+        [str(objcopy), "--strip-debug", str(source), str(destination)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        fail(f"could not strip DWARF from the kernel image: {result.stderr.strip()}")
+    shutil.copymode(source, destination)
+
+
 def verify_tracked_identity(
     manifest: dict,
     kernel_metadata_path: Path,
@@ -615,6 +699,9 @@ def verify_artifact(
         common_root,
         manifest["slice"],
     )
+    verify_runtime_image(
+        artifact_root / "kernel/vmlinux", artifact_root / "kernel/config"
+    )
     return manifest
 
 
@@ -658,5 +745,8 @@ def verify_compatible_artifact(
         manifest["page_size"],
         common_root,
         manifest["slice"],
+    )
+    verify_runtime_image(
+        artifact_root / "kernel/vmlinux", artifact_root / "kernel/config"
     )
     return manifest

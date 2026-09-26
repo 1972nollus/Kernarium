@@ -516,7 +516,7 @@ $RSYNC -a "$VULKAN_HEADERS_SOURCE/include/vk_video/" "$STAGE/include/vk_video/"
 # The Vulkan driver is packaged before the OpenGL pass so that Zink links
 # against the published framework and records its runtime install name.
 install_framework KosmicKrisp "$KOSMICKRISP_BINARY" \
-	org.linux-um-darwin.KosmicKrisp 26.2.1
+	org.linux-um-darwin.KosmicKrisp "$MESA_VERSION"
 KOSMICKRISP_FRAMEWORK_BINARY="$STAGE/Frameworks/KosmicKrisp.framework/KosmicKrisp"
 
 # Mesa's OpenGL stack is a second configuration of the same authenticated

@@ -273,6 +273,11 @@ policy are built in. Hostfs is disabled. Deliberately unsupported kernel
 features are reflected in the LTP disabled manifest rather than enabled solely
 for test count.
 
+The kernel exposes its BTF at `/sys/kernel/btf/vmlinux` for CO-RE programs.
+BPF runs on the interpreter, so the verifier rejects programs that use
+callbacks, such as `bpf_loop`, with `EINVAL`. systemd-networkd's sysctl monitor
+is one; networkd logs that at info level and otherwise runs normally.
+
 Kernel IP autoconfiguration is disabled. Writable guest images start their own
 DHCP client and DNS resolver after init begins; launchers do not need kernel
 `ip=` configuration for those images.
@@ -303,7 +308,8 @@ kernel/mainline-6.18/build/build-kernel.sh \
 Publish each completed build with
 `build/publish-artifact.py`. The publisher requires a clean replay at the
 tracked final tree, validates resolved policy and ELF/ABI geometry, and copies
-only the compact runtime/support bundle. It never builds, fetches, or changes a
+only the compact runtime/support bundle, with the kernel image's DWARF
+stripped (see [Toolchain](#toolchain)). It never builds, fetches, or changes a
 source checkout. Use the script's `--help` for output and release options.
 
 `artifacts/accepted-16k.env` and `accepted-4k.env` select reviewed arm64 local
@@ -332,6 +338,40 @@ default Apple compiler lacks the feature.
 `UML_KERNEL_TOOLCHAIN_ROOT` and the documented `UML_KERNEL_*` variables may
 override compiler, host compiler, linker, binutils, make, cross prefix, and job
 count. Companion LLVM tools must match the selected compiler family.
+
+Every kernel generates BTF, so the build also needs pahole and a static
+libelf. Both come from the `kernel-host-tools` dependency product, built from
+pinned elfutils, dwarves, and libbpf sources:
+
+```sh
+dependencies/prepare.sh --product kernel-host-tools
+dependencies/prepare.sh --archive-manifest dependencies/kernel-host-tools/archives.tsv
+dependencies/build-kernel-host-tools.sh
+```
+
+`UML_KERNEL_HOST_TOOLS_PREFIX` selects the prefix (default
+`.build/dependencies/kernel-host-tools`) and `UML_KERNEL_PAHOLE` may select a
+different pahole. The build never searches `PATH` for either: the preflight
+fails before Kbuild when pahole is missing or older than v1.29, the first
+release whose parallel encoding is always ordered, or when the prefix lacks
+libelf. Kbuild's pkg-config lookups see only the prefix, whose real `elf.h`,
+`libelf.h`, and `libelf.a` serve every host tool, including `resolve_btfids`.
+`build/toolchain/darwin-host` supplies only the Linux host APIs Darwin lacks;
+the Linux system calls that libbpf reaches there fail with `ENOSYS`, because a
+host tool never drives a running Linux kernel.
+
+Host objects are compiled without debug information whenever BTF is enabled.
+They describe host C library types under the kernel's type names, and pahole
+would otherwise encode those definitions into vmlinux BTF.
+
+The kernel links with full DWARF 5, which is only pahole's input; frame
+pointers stay off, so debug information does not change the generated code.
+The publisher's `--objcopy`, the build's own `llvm-objcopy`, strips every
+`.debug_*` section from the published `vmlinux`; the artifact verifier rejects
+DWARF and requires an allocated `.BTF` section. Stripping drops only the
+`STT_FILE` symbols and the locals that describe debug sections. Every function
+and data symbol, `.dynsym`, and `System.map` stay, so crash symbolization is
+unchanged.
 
 The canonical bridge lives under [`../common/abi`](../common/abi/). Ordinary
 build and replay verification use `kernel/common/abi/sync.sh --verify`; only an

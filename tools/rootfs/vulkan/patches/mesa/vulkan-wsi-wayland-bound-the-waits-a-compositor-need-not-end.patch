@@ -36,10 +36,10 @@ connection still ends the wait. vkWaitForPresent2KHR gets the same treatment.
  1 file changed, 111 insertions(+), 11 deletions(-)
 
 diff --git a/src/vulkan/wsi/wsi_common_wayland.c b/src/vulkan/wsi/wsi_common_wayland.c
-index 028009573efa65331212c1c301b644d97674e340..17172759d2474b504687dd60d66180edcea9ba47 100644
+index 33a4059617c0689ebc9c703a0ec1ae537692fe43..236738311d7be6ce20da5c3af52e6d6c48e34683 100644
 --- a/src/vulkan/wsi/wsi_common_wayland.c
 +++ b/src/vulkan/wsi/wsi_common_wayland.c
-@@ -2752,6 +2752,28 @@ wsi_wl_swapchain_present_id_completes_in_finite_time_locked(struct wsi_wl_swapch
+@@ -2760,6 +2760,28 @@ wsi_wl_swapchain_present_id_completes_in_finite_time_locked(struct wsi_wl_swapch
     return present_id <= chain->present_ids.max_forward_progress_present_id;
  }
  
@@ -68,7 +68,7 @@ index 028009573efa65331212c1c301b644d97674e340..17172759d2474b504687dd60d66180ed
  static VkResult
  wsi_wl_swapchain_wait_for_present(struct wsi_swapchain *wsi_chain,
                                    uint64_t present_id,
-@@ -2814,9 +2836,14 @@ wsi_wl_swapchain_wait_for_present(struct wsi_swapchain *wsi_chain,
+@@ -2822,9 +2844,14 @@ wsi_wl_swapchain_wait_for_present(struct wsi_swapchain *wsi_chain,
     /* If app timeout is beyond the deadline we set for reply,
      * always treat the timeout as successful. */
     VkResult timeout_result = assumed_success_at < atimeout ? VK_SUCCESS : VK_TIMEOUT;
@@ -84,7 +84,7 @@ index 028009573efa65331212c1c301b644d97674e340..17172759d2474b504687dd60d66180ed
        err = mtx_lock(&chain->present_ids.lock);
        if (err != thrd_success)
           return VK_ERROR_OUT_OF_DATE_KHR;
-@@ -2828,7 +2855,13 @@ wsi_wl_swapchain_wait_for_present(struct wsi_swapchain *wsi_chain,
+@@ -2836,7 +2863,13 @@ wsi_wl_swapchain_wait_for_present(struct wsi_swapchain *wsi_chain,
           return VK_SUCCESS;
  
  retry:
@@ -98,7 +98,7 @@ index 028009573efa65331212c1c301b644d97674e340..17172759d2474b504687dd60d66180ed
        if (ret == VK_TIMEOUT) {
           if (timeout_result == VK_SUCCESS && chain->fifo && !chain->present_ids.frame_fallback) {
              /* If there have been subsequent commits since when we made the decision to add a timeout,
-@@ -2838,7 +2871,7 @@ retry:
+@@ -2846,7 +2879,7 @@ retry:
                 return VK_ERROR_OUT_OF_DATE_KHR;
  
              if (wsi_wl_swapchain_present_id_completes_in_finite_time_locked(chain, present_id)) {
@@ -107,7 +107,7 @@ index 028009573efa65331212c1c301b644d97674e340..17172759d2474b504687dd60d66180ed
                 timeout_result = VK_TIMEOUT;
              }
              mtx_unlock(&chain->present_ids.lock);
-@@ -2903,7 +2936,6 @@ wsi_wl_swapchain_wait_for_present2(struct wsi_swapchain *wsi_chain,
+@@ -2911,7 +2944,6 @@ wsi_wl_swapchain_wait_for_present2(struct wsi_swapchain *wsi_chain,
        atimeout = timeout;
     else
        atimeout = os_time_get_absolute_timeout(timeout);
@@ -115,7 +115,7 @@ index 028009573efa65331212c1c301b644d97674e340..17172759d2474b504687dd60d66180ed
  
     /* Need to observe that the swapchain semaphore has been unsignalled,
      * as this is guaranteed when a present is complete. */
-@@ -2913,6 +2945,11 @@ wsi_wl_swapchain_wait_for_present2(struct wsi_swapchain *wsi_chain,
+@@ -2921,6 +2953,11 @@ wsi_wl_swapchain_wait_for_present2(struct wsi_swapchain *wsi_chain,
        return result;
  
     while (1) {
@@ -127,7 +127,7 @@ index 028009573efa65331212c1c301b644d97674e340..17172759d2474b504687dd60d66180ed
        err = mtx_lock(&chain->present_ids.lock);
        if (err != thrd_success)
           return VK_ERROR_OUT_OF_DATE_KHR;
-@@ -2923,7 +2960,10 @@ wsi_wl_swapchain_wait_for_present2(struct wsi_swapchain *wsi_chain,
+@@ -2931,7 +2968,10 @@ wsi_wl_swapchain_wait_for_present2(struct wsi_swapchain *wsi_chain,
        if (completed)
           return VK_SUCCESS;
  
@@ -138,7 +138,7 @@ index 028009573efa65331212c1c301b644d97674e340..17172759d2474b504687dd60d66180ed
        if (ret != VK_SUCCESS)
           return ret;
     }
-@@ -3269,6 +3309,71 @@ set_timestamp(struct wsi_wl_swapchain *chain,
+@@ -3277,6 +3317,71 @@ set_timestamp(struct wsi_wl_swapchain *chain,
     return true;
  }
  
@@ -210,7 +210,7 @@ index 028009573efa65331212c1c301b644d97674e340..17172759d2474b504687dd60d66180ed
  static VkResult
  wsi_wl_swapchain_queue_present(struct wsi_swapchain *wsi_chain,
                                 uint32_t image_index,
-@@ -3316,14 +3421,9 @@ wsi_wl_swapchain_queue_present(struct wsi_swapchain *wsi_chain,
+@@ -3324,14 +3429,9 @@ wsi_wl_swapchain_queue_present(struct wsi_swapchain *wsi_chain,
  
     /* For KHR_swapchain_maintenance1. We might have transitioned from FIFO to MAILBOX.
      * In this case we need to let the FIFO request complete, before presenting MAILBOX. */

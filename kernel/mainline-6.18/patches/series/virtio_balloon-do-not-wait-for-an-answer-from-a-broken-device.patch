@@ -12,7 +12,9 @@ UML reaches that state on every power-off with an inflated balloon: it
 runs virtio_uml_exit() as an exitcall after device_shutdown() has broken
 and reset every virtio device, and virtio_balloon's remove then returns
 its pages through tell_host(). The guest stopped for ever after
-"reboot: Power down".
+"reboot: Power down". The .shutdown handler 6.18.52 added quiesces the
+balloon's workers before that break but leaves those pages in the
+balloon, so remove still reaches tell_host() on the broken queue.
 
 Return when the buffer cannot be queued. The pages still leave the
 balloon; a device that is gone cannot be told.
@@ -21,10 +23,10 @@ balloon; a device that is gone cannot be told.
  1 file changed, 6 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
-index 1b93d8c643612cf928c463891c3a6e1035bbcafc..240f6f83f26e8758ee23e1d027dde94d5ee98334 100644
+index a3995e77a652ca3a750bd2799243cc052dad7ba2..60e1242321d8c82c6f16d473393ebd5dbd5a0325 100644
 --- a/drivers/virtio/virtio_balloon.c
 +++ b/drivers/virtio/virtio_balloon.c
-@@ -187,8 +187,12 @@ static void tell_host(struct virtio_balloon *vb, struct virtqueue *vq)
+@@ -188,8 +188,12 @@ static void tell_host(struct virtio_balloon *vb, struct virtqueue *vq)
  
  	sg_init_one(&sg, vb->pfns, sizeof(vb->pfns[0]) * vb->num_pfns);
  

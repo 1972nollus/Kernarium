@@ -57,10 +57,10 @@ index d2e1788a82270a9b70cac3a0db0f74864ae5e3c4..437406234ab21926b4099e0b3cedb573
  	virtgpu_fence.o virtgpu_object.o virtgpu_debugfs.o virtgpu_plane.o \
  	virtgpu_ioctl.o virtgpu_prime.o virtgpu_trace_points.o virtgpu_submit.o
 diff --git a/drivers/gpu/drm/virtio/virtgpu_drv.h b/drivers/gpu/drm/virtio/virtgpu_drv.h
-index 2f3531950aa4db6117f717aa9cc458018f932354..4bc5065592cf160474fb8aff5ade82f6cfd179b5 100644
+index 00c609c3b53a80ee4cd0b03661d3d510246dce1d..1a6b956f090d90e18f974696c8374221f9c20f3f 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_drv.h
 +++ b/drivers/gpu/drm/virtio/virtgpu_drv.h
-@@ -497,6 +497,10 @@ int virtgpu_dma_buf_import_sgt(struct virtio_gpu_mem_entry **ents,
+@@ -517,6 +517,10 @@ int virtgpu_dma_buf_import_sgt(struct virtio_gpu_mem_entry **ents,
  /* virtgpu_debugfs.c */
  void virtio_gpu_debugfs_init(struct drm_minor *minor);
  
@@ -325,10 +325,10 @@ index 0000000000000000000000000000000000000000..bbcdafdf8dab6dd007e2f1a78fb67649
 +}
 +EXPORT_SYMBOL_GPL(virtio_gpu_host_blob_export);
 diff --git a/drivers/gpu/drm/virtio/virtgpu_kms.c b/drivers/gpu/drm/virtio/virtgpu_kms.c
-index 1c15cbf326b78c204a7d4f172a307ef65cf5a8f2..18f15c6935b3a4788f3e1eea3a8c3ea61584451b 100644
+index 4a25347734fda44e776f21e129e2ca264b10845d..34bd7b36a488478f23b596c9526f267d8b2189b2 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_kms.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_kms.c
-@@ -256,6 +256,13 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
+@@ -259,6 +259,13 @@ int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
  		wait_event_timeout(vgdev->resp_wq, !vgdev->display_info_pending,
  				   5 * HZ);
  	}
@@ -342,7 +342,7 @@ index 1c15cbf326b78c204a7d4f172a307ef65cf5a8f2..18f15c6935b3a4788f3e1eea3a8c3ea6
  	return 0;
  
  err_scanouts:
-@@ -281,6 +288,7 @@ void virtio_gpu_deinit(struct drm_device *dev)
+@@ -284,6 +291,7 @@ void virtio_gpu_deinit(struct drm_device *dev)
  {
  	struct virtio_gpu_device *vgdev = dev->dev_private;
  

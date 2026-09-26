@@ -209,6 +209,9 @@ explicit CTest presets when the complete registered guest set is required.
 The shared serial harness sends commands through a nonblocking pipe and keeps
 PTY output. This keeps host input pollable when every guest CPU is busy while
 preserving terminal output behavior and bounded writes under backpressure.
+`guest-console-input-burst` writes an 11 KiB burst to `ttyS0` in one host write,
+enough to throttle the tty, and then requires later typed input to reach the
+shell.
 
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
