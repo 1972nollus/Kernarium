@@ -790,6 +790,41 @@ Budget campaign concurrency from host physical footprint and the
 `IOAccelerator (graphics)` row of `vmmap -summary`, rather than process RSS,
 which omits swapped-out allocations.
 
+## Metal shader cache
+
+Metal keeps one shader cache per process identity: a `libraries` data and
+index file pair for the front end's output from MSL source, and a `functions`
+pair for the GPU binaries pipelines link. KosmicKrisp's `MTL4Compiler`, the
+display's pipelines and the terminal's all read and extend the same files, and
+nothing in them says which entries came from a guest shader. The process maps
+the data files, but the first compile reads the whole index into memory, so
+footprint grows with every entry an earlier run left, used or not. A pipeline
+built from a precompiled metallib skips only the `libraries` index. Metal has
+no call that clears, bounds, splits or bypasses the cache:
+`MTL4CompilerDescriptor` carries a label and a pipeline data-set serializer,
+and binary archives add lookups without taking a pipeline off the cache.
+
+Kernarium therefore removes its cache as the application starts, before any
+view or runtime exists and so before anything can read it. The cache is
+`<bundle identifier>/com.apple.metal` in the Darwin user cache directory: the
+container's `Library/Caches` on a device, where
+`confstr(_CS_DARWIN_USER_CACHE_DIR)` fails, and the per-application directory
+that call names in Designed for iPad mode. That layout is Metal's own and
+undocumented. Metal recreates the directory on every launch, so the
+application logs when it finds none. The system log's `fopen failed for data
+file` from `libCoreFSCache` at launch is Metal opening that empty cache, not a
+failure. On the iPad mini 6 with a 2 GiB guest, the 2.2 GB that conformance
+campaigns left behind cost about 85 MiB of footprint at launch and 115 MiB at
+the 35-second peak. One desktop boot leaves about 2 MB, which the next boot
+reuses entry for entry and which costs about 6 MiB. Starting from an empty
+cache costs about 1.8 s of host compilation before the guest starts, and the
+first desktop frame arrives that much later.
+
+The macOS command-line emulator has no bundle identifier. It shares
+`$(getconf DARWIN_USER_CACHE_DIR)/com.apple.metal` with every unsandboxed
+process of the user, one numbered file pair per concurrent process, and leaves
+that cache alone.
+
 ## Validation
 
 Use `check-gpu` for native GPU ownership and VNC checks and
