@@ -34,18 +34,12 @@ JitExecutor::Implementation::Implementation(
 #if UML_JIT_RUNTIME_DIAGNOSTICS
       links_{diagnostic_table_capacity(diagnostics.direct_link_capacity,
                                        geometry_.block_links)},
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-      profile_links_{geometry_.cache_sets * cache_ways},
-#endif
       indirect_links_{diagnostic_table_capacity(
                           diagnostics.indirect_link_capacity,
                           geometry_.indirect_links),
                       &empty_link_},
 #else
       links_{geometry_.block_links},
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-      profile_links_{geometry_.cache_sets * cache_ways},
-#endif
       indirect_links_{geometry_.indirect_links, &empty_link_},
 #endif
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -91,9 +85,6 @@ JitExecutor::Implementation::Implementation(
 JitExecutor::Implementation::~Implementation() {
   if (current_cpu_ != nullptr)
     arm64::restore_native_fp_environment(*current_cpu_);
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  gpr_link_profile_.publish();
-#endif
   release_current_reservation();
   unregister_jit_store_participant(store_participant_);
   SharedTranslationCache::instance().remove_executor();
@@ -158,14 +149,6 @@ JitExecutor::Implementation::cache_validation_diagnostics() const noexcept {
 JitExecutor::Implementation::indirect_link_diagnostics() const noexcept {
   return indirect_link_diagnostics_;
 }
-#endif
-
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-[[nodiscard]] JitGprLinkProfileDiagnostics
-JitExecutor::Implementation::gpr_link_profile_diagnostics() noexcept {
-  return gpr_link_profile_.diagnostics();
-}
-
 #endif
 
 JitExecutor::JitExecutor(bool enable_guarded_control_flow)
@@ -280,24 +263,6 @@ JitExecutor::indirect_link_diagnostics() const noexcept {
   return implementation_ == nullptr
              ? JitIndirectLinkDiagnostics{}
              : implementation_->indirect_link_diagnostics();
-}
-#endif
-
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-JitGprLinkProfileDiagnostics
-JitExecutor::gpr_link_profile_diagnostics() noexcept {
-  return implementation_ == nullptr
-             ? JitGprLinkProfileDiagnostics{}
-             : implementation_->gpr_link_profile_diagnostics();
-}
-
-JitGprLinkProfileDiagnostics
-global_gpr_link_profile_diagnostics() noexcept {
-  return JitGprLinkProfileGlobal::instance().diagnostics();
-}
-
-void report_global_gpr_link_profile() noexcept {
-  JitGprLinkProfileGlobal::instance().report();
 }
 #endif
 

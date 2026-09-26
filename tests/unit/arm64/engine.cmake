@@ -277,12 +277,6 @@
         uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_definitions(
-        uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
-        UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
-        UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
-        UML_GADGET_TEMPLATE_COPIES=${UML_GADGET_TEMPLATE_COPIES}
-        UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>)
     target_compile_options(
         uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
         -Wall -Wextra -Werror)
@@ -913,67 +907,6 @@
     uml_add_unit_test(NAME arm64-jit-control-remap-codegen
         COMMAND uml_arm64_jit_control_remap_codegen_tests)
 
-    if(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-        add_executable(uml_arm64_jit_gpr_link_profile_codegen_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_link_profile_codegen_tests.cpp
-            $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            $<TARGET_OBJECTS:uml_static_mmu>
-            ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-        target_include_directories(
-            uml_arm64_jit_gpr_link_profile_codegen_tests PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64
-            ${PROJECT_SOURCE_DIR}/darwin/include)
-        target_compile_options(
-            uml_arm64_jit_gpr_link_profile_codegen_tests PRIVATE
-            -Wall -Wextra -Werror)
-        uml_add_unit_test(NAME arm64-jit-gpr-link-profile-codegen
-            COMMAND uml_arm64_jit_gpr_link_profile_codegen_tests)
-
-        add_executable(uml_arm64_jit_gpr_link_profile_runtime_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_link_profile_runtime_tests.cpp
-            $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            $<TARGET_OBJECTS:uml_static_mmu>
-            ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
-        target_include_directories(
-            uml_arm64_jit_gpr_link_profile_runtime_tests PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64
-            ${PROJECT_SOURCE_DIR}/darwin/include)
-        target_compile_options(
-            uml_arm64_jit_gpr_link_profile_runtime_tests PRIVATE
-            -Wall -Wextra -Werror)
-        target_compile_definitions(
-            uml_arm64_jit_gpr_link_profile_runtime_tests PRIVATE
-            UML_JIT_RUNTIME_DIAGNOSTICS=1)
-        uml_add_unit_test(NAME arm64-jit-gpr-link-profile-runtime
-            COMMAND uml_arm64_jit_gpr_link_profile_runtime_tests)
-    endif()
-
-    if(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-        add_executable(uml_arm64_jit_gpr_pressure_profile_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_pressure_profile_tests.cpp
-            $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            $<TARGET_OBJECTS:uml_static_mmu>
-            ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-        target_include_directories(
-            uml_arm64_jit_gpr_pressure_profile_tests PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64
-            ${PROJECT_SOURCE_DIR}/darwin/include)
-        target_compile_options(
-            uml_arm64_jit_gpr_pressure_profile_tests PRIVATE
-            -Wall -Wextra -Werror)
-        uml_add_unit_test(NAME arm64-jit-gpr-pressure-profile
-            COMMAND uml_arm64_jit_gpr_pressure_profile_tests)
-    endif()
-
     add_executable(uml_arm64_gadget_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_runtime_tests.cpp
         $<TARGET_OBJECTS:uml_static_mmu>
@@ -1000,7 +933,6 @@
         ${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_definitions(
         uml_arm64_gadget_cache_validation_tests PRIVATE
-        UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
     target_compile_options(
@@ -1008,28 +940,6 @@
         -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-cache-validation
         COMMAND uml_arm64_gadget_cache_validation_tests)
-
-    if(UML_GADGET_SHARED_BUDGET_MIB GREATER 0)
-        add_executable(uml_arm64_gadget_shared_translation_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_shared_translation_tests.cpp
-            $<TARGET_OBJECTS:uml_static_mmu>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-        target_include_directories(
-            uml_arm64_gadget_shared_translation_tests PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64
-            ${PROJECT_SOURCE_DIR}/darwin/include)
-        target_compile_definitions(
-            uml_arm64_gadget_shared_translation_tests PRIVATE
-            UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>)
-        target_compile_options(
-            uml_arm64_gadget_shared_translation_tests PRIVATE
-            -Wall -Wextra -Werror)
-        uml_add_unit_test(NAME arm64-gadget-shared-translation
-            COMMAND uml_arm64_gadget_shared_translation_tests)
-    endif()
 
     add_executable(uml_arm64_gadget_inline_fallthrough_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_inline_fallthrough_tests.cpp
@@ -1042,10 +952,6 @@
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64
         ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_definitions(
-        uml_arm64_gadget_inline_fallthrough_tests PRIVATE
-        UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>
-        UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>)
     target_compile_options(
         uml_arm64_gadget_inline_fallthrough_tests PRIVATE
         -Wall -Wextra -Werror)
@@ -1060,10 +966,6 @@
     target_include_directories(uml_arm64_gadget_hot_path_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_definitions(
-        uml_arm64_gadget_hot_path_tests PRIVATE
-        UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
-        UML_GADGET_INPLACE_MEMORY=$<BOOL:${UML_GADGET_INPLACE_MEMORY}>)
     target_compile_options(uml_arm64_gadget_hot_path_tests PRIVATE
 		-Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-hot-path COMMAND uml_arm64_gadget_hot_path_tests)
@@ -1106,10 +1008,6 @@
         UML::CpuContract uml_arm64_engine_test_support)
     target_include_directories(uml_arm64_gadget_dependency_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_definitions(uml_arm64_gadget_dependency_tests PRIVATE
-        UML_GADGET_DEPENDENCY_COVERAGE=$<BOOL:${UML_GADGET_DEPENDENCY_COVERAGE}>
-        UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>
-        UML_GADGET_VECTOR_FORWARDING=$<BOOL:${UML_GADGET_VECTOR_FORWARDING}>)
     target_compile_options(uml_arm64_gadget_dependency_tests PRIVATE -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-dependencies COMMAND uml_arm64_gadget_dependency_tests)
 
@@ -1135,8 +1033,6 @@
 		${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_options(uml_arm64_gadget_indirect_link_tests PRIVATE
 		-Wall -Wextra -Werror)
-    target_compile_definitions(uml_arm64_gadget_indirect_link_tests PRIVATE
-		UML_GADGET_TARGET_TIER=$<BOOL:${UML_GADGET_TARGET_TIER}>)
     uml_add_unit_test(NAME arm64-gadget-indirect-links
 		COMMAND uml_arm64_gadget_indirect_link_tests)
 

@@ -17,15 +17,9 @@
 
 namespace uml::cpu::arm64::gadgets {
 
-struct SharedKey;
-
 struct GadgetCacheDiagnostics final {
-	/* Programs this executor had to produce, whether it built them or took
-	 * them from another executor. */
+	/* Programs this executor had to produce. */
 	std::uint64_t translations{};
-	/* Of those, the ones another executor had already built and this one
-	 * only had to copy and re-point at its own link records. */
-	std::uint64_t adoptions{};
 	std::uint64_t validation_attempts{};
 	std::uint64_t validation_hits{};
 	std::uint64_t validation_mismatches{};
@@ -93,8 +87,7 @@ private:
 	[[nodiscard]] BuildResult translate(
 		std::uint64_t pc, std::span<const std::uint32_t> window);
 	[[nodiscard]] BuildResult build(
-		std::uint64_t pc, std::span<const std::uint32_t> window,
-		const SharedKey *key);
+		std::uint64_t pc, std::span<const std::uint32_t> window);
 	[[nodiscard]] BuildResult store(
 		std::uint64_t pc, const BuildResult &result,
 		std::span<const std::uint32_t> guest_words);
@@ -118,13 +111,6 @@ private:
 	bool single_step_{};
 	std::uint32_t floating_point_syndrome_{};
 	BuildOptions build_options_;
-	/* Which translations this executor's builds are interchangeable with;
-	 * derived once from build_options_, since gadget selection is fixed for
-	 * the executor's lifetime. */
-	std::uint64_t profile_{};
-	/* The memory a build may read a callee's instructions through, set for
-	 * the duration of one run_block. */
-	::uml::memory::StaticGuestMemory *build_memory_{};
 	GadgetCacheDiagnostics cache_diagnostics_{};
 	/* Null unless DARWIN_UML_GUEST_SAMPLES is set. */
 	diagnostics::GuestSamplingSlot *sampling_{};

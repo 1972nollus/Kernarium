@@ -235,33 +235,12 @@ void linked_blocks_use_persistent_internal_entry()
 		0xd282'0014U, // movz x20, #4096
 		0x3940'6275U, // ldrb w21, [x19, #24]
 	};
-	constexpr std::array bank_prologue{
-		0xa9bb'7bfdU, // stp x29, x30, [sp, #-80]!
-		0x9100'03fdU, // mov x29, sp
-		0xa901'07e0U, // stp x0, x1, [sp, #16]
-		0xa902'57e2U, // stp x2, x21, [sp, #32]
-		0xa903'53f3U, // stp x19, x20, [sp, #48]
-		0xa904'5ff6U, // stp x22, x23, [sp, #64]
-		0xaa00'03efU, // mov x15, x0
-		0xaa01'03eeU, // mov x14, x1
-		0xaa02'03f3U, // mov x19, x2
-		0xd282'0014U, // movz x20, #4096
-		0x3940'6275U, // ldrb w21, [x19, #24]
-		0xa944'5df6U, // ldp x22, x23, [x15, #64]
-	};
-	const auto bank = uml::cpu::arm64::jit::testing::
-		linked_x8_x9_bank_enabled();
-	const auto prologue_words = bank ? bank_prologue.size() :
-		control_prologue.size();
+	const auto prologue_words = control_prologue.size();
 	require(compiled.guest_instructions == 1);
 	require(compiled.internal_entry_word == prologue_words);
 	require(compiled.words.size() >= prologue_words);
-	if (bank)
-		require(std::equal(bank_prologue.begin(), bank_prologue.end(),
-			compiled.words.begin()));
-	else
-		require(std::equal(control_prologue.begin(), control_prologue.end(),
-			compiled.words.begin()));
+	require(std::equal(control_prologue.begin(), control_prologue.end(),
+		compiled.words.begin()));
 
 	const auto hot = std::span<const std::uint32_t>{compiled.words}.first(
 		compiled.hot_words);
@@ -282,26 +261,15 @@ void linked_blocks_use_persistent_internal_entry()
 		0xa8c4'7bfdU, // ldp x29, x30, [sp], #64
 		0xd65f'03c0U, // ret
 	};
-	constexpr std::array bank_epilogue{
-		0xf900'0274U, // str x20, [x19]
-		0xa944'5ff6U, // ldp x22, x23, [sp, #64]
-		0xa943'53f3U, // ldp x19, x20, [sp, #48]
-		0xf940'17f5U, // ldr x21, [sp, #40]
-		0xa8c5'7bfdU, // ldp x29, x30, [sp], #80
-		0xd65f'03c0U, // ret
-	};
 	const auto require_restoration = [&](const auto &epilogue) {
 		for (const auto restoration : epilogue)
 			require(std::find(hot.begin(), branch, restoration) == branch);
 		require(std::search(hot.begin(), hot.end(), epilogue.begin(),
 			epilogue.end()) != hot.end());
 	};
-	if (bank)
-		require_restoration(bank_epilogue);
-	else
-		require_restoration(control_epilogue);
+	require_restoration(control_epilogue);
 	require(uml::cpu::arm64::jit::testing::
-			successful_link_host_word_savings() == (bank ? 16 : 14));
+			successful_link_host_word_savings() == 14);
 }
 
 void link_state_metadata_is_consistent()

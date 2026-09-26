@@ -34,9 +34,7 @@ DECLARE_UNSIGNED(store64_unsigned_fast)
 DECLARE_UNSIGNED(load64_unsigned_fast)
 #undef DECLARE_UNSIGNED
 
-#if UML_GADGET_INPLACE_MEMORY
 extern void (*const uml_arm64_gadget_scalar_unsigned_inplace_table[])();
-#endif
 
 #define DECLARE_OTHER_REGISTERS(name, mode) \
 	void uml_arm64_gadget_scalar_other_##name##_##mode##_r(); \
@@ -153,7 +151,6 @@ template<typename Function>
 	[[maybe_unused]] unsigned transfer_zero,
 	[[maybe_unused]] unsigned transferred)
 {
-#if UML_GADGET_INPLACE_MEMORY
 	if (transfer_zero == 0U) {
 		unsigned operation = 2U;
 		unsigned bits64 = 0U;
@@ -171,7 +168,6 @@ template<typename Function>
 				uml_arm64_gadget_scalar_unsigned_inplace_table[slot]);
 		}
 	}
-#endif
 	return shared;
 }
 

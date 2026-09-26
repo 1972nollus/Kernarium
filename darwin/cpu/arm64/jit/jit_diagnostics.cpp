@@ -401,16 +401,6 @@ struct JitCompileProfile final {
   std::size_t largest_ratio_guest{};
   std::size_t largest_ratio_hot{};
   std::size_t largest_ratio_total{};
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  std::array<std::uint64_t, 9> gpr_slot_high_water{};
-  std::uint64_t gpr_allocation_refusals{};
-  std::uint64_t gpr_fallback_read_loads{};
-  std::uint64_t gpr_fallback_write_stores{};
-  std::uint64_t gpr_repeated_overflow_accesses{};
-  std::array<std::uint64_t,
-             jit::jit_gpr_pressure_candidate_capacities.size()>
-      gpr_estimated_avoided_accesses{};
-#endif
 
   bool operator==(const JitCompileProfile &) const noexcept = default;
 };
@@ -491,21 +481,6 @@ void merge_jit_compile_profile(JitCompileProfile &destination,
     destination.largest_ratio_hot = source.largest_ratio_hot;
     destination.largest_ratio_total = source.largest_ratio_total;
   }
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  for (std::size_t index = 0;
-       index < destination.gpr_slot_high_water.size(); ++index)
-    destination.gpr_slot_high_water[index] +=
-        source.gpr_slot_high_water[index];
-  destination.gpr_allocation_refusals += source.gpr_allocation_refusals;
-  destination.gpr_fallback_read_loads += source.gpr_fallback_read_loads;
-  destination.gpr_fallback_write_stores += source.gpr_fallback_write_stores;
-  destination.gpr_repeated_overflow_accesses +=
-      source.gpr_repeated_overflow_accesses;
-  for (std::size_t index = 0;
-       index < destination.gpr_estimated_avoided_accesses.size(); ++index)
-    destination.gpr_estimated_avoided_accesses[index] +=
-        source.gpr_estimated_avoided_accesses[index];
-#endif
 }
 
 struct ThreadJitCompileProfile final {
@@ -724,69 +699,7 @@ void report_jit_compile_profile(const JitCompileProfile &profile,
       static_cast<unsigned long long>(profile.largest_ratio_pc),
       profile.largest_ratio_guest, profile.largest_ratio_hot,
       profile.largest_ratio_total);
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  write_jit_profile_record(
-      "Darwin JIT GPR pressure aggregate %s=%p "
-      "slot-high-water=%llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu "
-      "allocation-refusals=%llu fallback-read-loads=%llu "
-      "fallback-write-stores=%llu repeated-overflow-accesses=%llu "
-      "estimated-avoided-cap10=%llu estimated-avoided-cap12=%llu "
-      "estimated-avoided-cap15=%llu\n",
-      final ? "final" : "thread", static_cast<const void *>(&profile),
-      static_cast<unsigned long long>(profile.gpr_slot_high_water[0]),
-      static_cast<unsigned long long>(profile.gpr_slot_high_water[1]),
-      static_cast<unsigned long long>(profile.gpr_slot_high_water[2]),
-      static_cast<unsigned long long>(profile.gpr_slot_high_water[3]),
-      static_cast<unsigned long long>(profile.gpr_slot_high_water[4]),
-      static_cast<unsigned long long>(profile.gpr_slot_high_water[5]),
-      static_cast<unsigned long long>(profile.gpr_slot_high_water[6]),
-      static_cast<unsigned long long>(profile.gpr_slot_high_water[7]),
-      static_cast<unsigned long long>(profile.gpr_slot_high_water[8]),
-      static_cast<unsigned long long>(profile.gpr_allocation_refusals),
-      static_cast<unsigned long long>(profile.gpr_fallback_read_loads),
-      static_cast<unsigned long long>(profile.gpr_fallback_write_stores),
-      static_cast<unsigned long long>(
-          profile.gpr_repeated_overflow_accesses),
-      static_cast<unsigned long long>(
-          profile.gpr_estimated_avoided_accesses[0]),
-      static_cast<unsigned long long>(
-          profile.gpr_estimated_avoided_accesses[1]),
-      static_cast<unsigned long long>(
-          profile.gpr_estimated_avoided_accesses[2]));
-#endif
 }
-
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-[[nodiscard]] bool jit_gpr_pressure_dump_enabled() noexcept {
-  static const bool enabled = [] {
-    const auto *value = std::getenv("UML_JIT_DUMP_GPR_PRESSURE");
-    return value != nullptr && value[0] != '\0' && value[0] != '0';
-  }();
-  return enabled;
-}
-
-void dump_jit_gpr_pressure(std::uint64_t pc,
-                           std::size_t guest_instructions,
-                           const jit::JitGprPressureProfile &pressure) {
-  if (!jit_gpr_pressure_dump_enabled())
-    return;
-  static thread_local unsigned thread_identity;
-  write_jit_profile_record(
-      "Darwin JIT GPR pressure thread=%p pc=%#llx guest=%zu "
-      "slot-high-water=%zu allocation-refusals=%zu "
-      "fallback-read-loads=%zu fallback-write-stores=%zu "
-      "repeated-overflow-accesses=%zu estimated-avoided-cap10=%zu "
-      "estimated-avoided-cap12=%zu estimated-avoided-cap15=%zu\n",
-      static_cast<void *>(&thread_identity),
-      static_cast<unsigned long long>(pc), guest_instructions,
-      pressure.slot_high_water, pressure.allocation_refusals,
-      pressure.fallback_read_loads, pressure.fallback_write_stores,
-      pressure.repeated_overflow_accesses,
-      pressure.estimated_avoided_accesses[0],
-      pressure.estimated_avoided_accesses[1],
-      pressure.estimated_avoided_accesses[2]);
-}
-#endif
 
 } // namespace
 
@@ -800,14 +713,7 @@ void profile_jit_compilation(
     std::span<const std::uint32_t> host_words, std::size_t hot_words,
     bool tracked, std::size_t direct_link_refusals,
     std::size_t indirect_link_refusals
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-    ,
-    const jit::JitGprPressureProfile &gpr_pressure
-#endif
     ) {
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  dump_jit_gpr_pressure(pc, guest_words.size(), gpr_pressure);
-#endif
   record_translation_overlap(pc);
   if (!jit_compile_profile_enabled())
     return;
@@ -821,24 +727,6 @@ void profile_jit_compilation(
   profile.tracked_blocks += tracked;
   profile.direct_link_refusals += direct_link_refusals;
   profile.indirect_link_refusals += indirect_link_refusals;
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  const auto high_water = std::min(
-      gpr_pressure.slot_high_water,
-      profile.gpr_slot_high_water.size() - 1U);
-  ++profile.gpr_slot_high_water[high_water];
-  profile.gpr_allocation_refusals +=
-      gpr_pressure.allocation_refusals;
-  profile.gpr_fallback_read_loads +=
-      gpr_pressure.fallback_read_loads;
-  profile.gpr_fallback_write_stores +=
-      gpr_pressure.fallback_write_stores;
-  profile.gpr_repeated_overflow_accesses +=
-      gpr_pressure.repeated_overflow_accesses;
-  for (std::size_t index = 0;
-       index < profile.gpr_estimated_avoided_accesses.size(); ++index)
-    profile.gpr_estimated_avoided_accesses[index] +=
-        gpr_pressure.estimated_avoided_accesses[index];
-#endif
   const auto bucket =
       guest_instructions <= 1
           ? 0U

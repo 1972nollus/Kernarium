@@ -183,12 +183,7 @@ int main(int argc, char **argv)
 #endif
 		std::printf("CONFIG case=%s useful_ops=16 correctness=60_seeds_counts gadget_build=%d forwarding_build=%d\n",
 			description.name, UML_SCALAR_CEILING_GADGETS,
-#if UML_SCALAR_CEILING_GADGETS
-			UML_GADGET_SCALAR_FORWARDING
-#else
-			0
-#endif
-		);
+			UML_SCALAR_CEILING_GADGETS);
 		for (unsigned repetition = 0; repetition < repetitions; ++repetition) {
 			constexpr unsigned modes = UML_SCALAR_CEILING_GADGETS ? 3 : 1;
 			for (unsigned step = 0; step < modes; ++step) {

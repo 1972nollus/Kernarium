@@ -1823,7 +1823,6 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	return (decoded.subtract ? fmls : fmla)[shape];
 }
 
-#if UML_GADGET_INPLACE_IMMEDIATE
 /* fmla/fmls Vd, Vn, Vm: rows are 4h 8h 2s 4s 2d per operation. */
 [[nodiscard]] Gadget simd_fused_inplace_gadget(bool subtract,
 	unsigned int arrangement, unsigned int vector_index) noexcept
@@ -1846,7 +1845,6 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
 	return simd_fused_inplace_gadget(decoded.subtract, shape, vector_index);
 }
-#endif
 
 [[nodiscard]] Gadget simd_bitwise_gadget(unsigned operation, bool q) noexcept
 {

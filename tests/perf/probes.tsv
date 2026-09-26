@@ -5,8 +5,6 @@ guest_compare_branch_pair_loop.S	control-flow	base	run_guest_link_bench.py	Guest
 guest_compare_register_branch_loop.S	control-flow	base	run_guest_link_bench.py	Guest CMP of two registers followed by B.cond. G116 ranks this pair fourth and ninth over a full Geekbench run while the immediate form does not reach the table, so the two shapes get separate probes.
 guest_compare_retry_loop.S	atomic	base	run_guest_link_bench.py	Private compare-and-retry control for exclusive sequence quality.
 guest_compare_retry_shared_status_loop.S	atomic	base	run_guest_link_bench.py	Exercises the shared load-result and store-status register fallback shape.
-guest_fixed_gpr_link_loop.S	control-flow	base	run_guest_link_bench.py	Self-checking historical x0/x1 linked-loop control for the fixed x8/x9 bank's entry, exit, and link overhead.
-guest_fixed_x8_x9_link_loop.S	control-flow	base	run_guest_link_bench.py	Measures the exact guest x8/x9 resident bank across a linked backward edge, paired with guest_fixed_gpr_link_loop.S as its overhead control.
 guest_fp_environment_loop.S	floating-state	base	run_guest_link_bench.py	Measures floating-state activation and restoration overhead.
 guest_fp_environment_run_loop.S	floating-state	base	run_guest_link_bench.py	Measures a run of native floating-point operations sharing one program-level environment activation.
 guest_fp_link_loop.S	floating-state	base	run_guest_link_bench.py	Measures vector-state successor linking through a conditional self-edge.

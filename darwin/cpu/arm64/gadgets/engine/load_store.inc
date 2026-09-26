@@ -137,14 +137,11 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
-#if !UML_GADGET_TAGGED_TLB_KEYS
-	/* Tagged addresses are TLB keys of their own (translate_tagged), so the
-	 * keyed build needs no per-access strip. */
+	/* Top-byte ignore: the TLB is keyed by the untagged address. */
 	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, .Lscalar_unsigned_untagged\@
 	ubfx x7, x7, #0, #56
 .Lscalar_unsigned_untagged\@:
-#endif
 	.endif
 	.set .Lsb\@, 4
 	.if \bits64
@@ -267,10 +264,6 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 .Lscalar_forward_alignment_write\@:
 	b .Lscalar_alignment_fault_write_indexed
 	.endif
-#if UML_GADGET_TAGGED_TLB_KEYS
-	/* Matched-layout padding for the removed top-byte check; unreachable. */
-	.space 12
-#endif
 	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, scalar_unsigned_fast, \load, \bits64, \transfer_zero, \base_sp, \suffix, \baked
 .endm
 
@@ -287,9 +280,6 @@ scalar_unsigned_modes 0, 0, store32_unsigned_fast
 scalar_unsigned_modes 0, 1, store64_unsigned_fast
 
 .purgem scalar_unsigned_modes
-#if !UML_GADGET_INPLACE_MEMORY
-.purgem scalar_unsigned_fast
-#endif
 
 /* Translation-specialized byte/halfword and sign-extending unsigned-offset
  * scalar accesses. The stream operand carries CpuState byte offsets for Rt/Rn,
@@ -317,14 +307,11 @@ scalar_entry \name, \forward, (17 - 1), .Lsd\@, .Lsn\@, scalar_none, scalar_none
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
-#if !UML_GADGET_TAGGED_TLB_KEYS
-	/* Tagged addresses are TLB keys of their own (translate_tagged), so the
-	 * keyed build needs no per-access strip. */
+	/* Top-byte ignore: the TLB is keyed by the untagged address. */
 	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, .Lscalar_unsigned_narrow_load_untagged\@
 	ubfx x7, x7, #0, #56
 .Lscalar_unsigned_narrow_load_untagged\@:
-#endif
 	.endif
 	transfer_translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_narrow_load_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 	\instruction \host_register\()0, [x7]
@@ -362,10 +349,6 @@ scalar_entry \name, \forward, (17 - 1), .Lsd\@, .Lsn\@, scalar_none, scalar_none
 .Lscalar_forward_alignment_read\@:
 	b .Lscalar_alignment_fault_read_indexed
 	.endif
-#if UML_GADGET_TAGGED_TLB_KEYS
-	/* Matched-layout padding for the removed top-byte check; unreachable. */
-	.space 12
-#endif
 	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, scalar_unsigned_load_narrow_fast, \name, \instruction, \host_register, \bytes, \extension, \transfer_zero, \base_sp
 .endm
 
@@ -412,14 +395,11 @@ scalar_entry \name, \forward, (17 - 0), scalar_none, .Lsn\@, .Lsm\@, scalar_none
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
-#if !UML_GADGET_TAGGED_TLB_KEYS
-	/* Tagged addresses are TLB keys of their own (translate_tagged), so the
-	 * keyed build needs no per-access strip. */
+	/* Top-byte ignore: the TLB is keyed by the untagged address. */
 	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, .Lscalar_unsigned_narrow_store_untagged\@
 	ubfx x7, x7, #0, #56
 .Lscalar_unsigned_narrow_store_untagged\@:
-#endif
 	.endif
 	transfer_translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE, \bytes, x7, .Ltt_cold\@, .Ltt_resume\@, .Lscalar_unsigned_narrow_store_cross\@, \forward, fault=uml_arm64_gadget_memory_fault_indexed
 	.if \transfer_zero
@@ -450,10 +430,6 @@ scalar_entry \name, \forward, (17 - 0), scalar_none, .Lsn\@, .Lsm\@, scalar_none
 .Lscalar_forward_alignment_write\@:
 	b .Lscalar_alignment_fault_write_indexed
 	.endif
-#if UML_GADGET_TAGGED_TLB_KEYS
-	/* Matched-layout padding for the removed top-byte check; unreachable. */
-	.space 12
-#endif
 	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, scalar_unsigned_store_narrow_fast, \name, \instruction, \bytes, \transfer_zero, \base_sp
 .endm
 
@@ -645,14 +621,11 @@ scalar_entry \name, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_none,
 	mov x26, x25
 	.endif
 	.if !\base_sp
-#if !UML_GADGET_TAGGED_TLB_KEYS
-	/* Tagged addresses are TLB keys of their own (translate_tagged), so the
-	 * keyed build needs no per-access strip. */
+	/* Top-byte ignore: the TLB is keyed by the untagged address. */
 	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, .Lscalar_other_immediate_untagged\@
 	ubfx x26, x26, #0, #56
 .Lscalar_other_immediate_untagged\@:
-#endif
 	.endif
 	mov x7, x26
 	.if \load
@@ -733,10 +706,6 @@ scalar_entry \name, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_none,
 .Lscalar_forward_alignment_write\@:
 	b .Lscalar_alignment_fault_write
 	.endif
-#if UML_GADGET_TAGGED_TLB_KEYS
-	/* Matched-layout padding for the removed top-byte check; unreachable. */
-	.space 12
-#endif
 	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, scalar_other_immediate_fast, \name, \load, \instruction, \host_register, \bytes, \extension, \mode, \transfer_zero, \base_sp
 .endm
 
@@ -878,14 +847,11 @@ scalar_entry \name, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, .Lsa\@, 2
 	.endif
 	add x26, x24, x26
 	.if !\base_sp
-#if !UML_GADGET_TAGGED_TLB_KEYS
-	/* Tagged addresses are TLB keys of their own (translate_tagged), so the
-	 * keyed build needs no per-access strip. */
+	/* Top-byte ignore: the TLB is keyed by the untagged address. */
 	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, .Lscalar_other_register_untagged\@
 	ubfx x26, x26, #0, #56
 .Lscalar_other_register_untagged\@:
-#endif
 	.endif
 	mov x7, x26
 	.if \load
@@ -960,10 +926,6 @@ scalar_entry \name, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, .Lsa\@, 2
 .Lscalar_forward_alignment_write\@:
 	b .Lscalar_alignment_fault_write
 	.endif
-#if UML_GADGET_TAGGED_TLB_KEYS
-	/* Matched-layout padding for the removed top-byte check; unreachable. */
-	.space 12
-#endif
 	scalar_variants \forward, .Lsn\@, .Lsm\@, .Lsa\@, scalar_other_register_fast, \name, \load, \instruction, \host_register, \bytes, \address_extension, \shifted, \result_extension, \transfer_zero, \base_sp
 .endm
 

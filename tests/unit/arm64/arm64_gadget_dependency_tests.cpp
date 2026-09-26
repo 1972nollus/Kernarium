@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_gadget_dependency_reference.hpp"
-#include "cpu/arm64/gadgets/dependency_coverage.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
 #include "cpu/arm64/gadgets/scalar_forwarding.hpp"
 
@@ -101,10 +100,8 @@ void scalar_matrix()
 					std::pmr::get_default_resource(), {}, {.scalar_forwarding = false});
 				require(enabled.complete && disabled.complete);
 				require(enabled.program.words().size() == disabled.program.words().size());
-#if UML_GADGET_SCALAR_FORWARDING && !UML_GADGET_DEPENDENCY_COVERAGE
 				if (mask != 0)
 					require(enabled.program.words()[2] == g::scalar_access(disabled.program.words().subspan(2, 2)).contract->entries[mask]);
-#endif
 				for (unsigned trial = 0; trial < 4; ++trial) {
 					a::CpuState expected{};
 					for (auto &value : expected.registers) value = random_word(seed);
@@ -159,15 +156,13 @@ void undeclared_boundary()
 		actual.nzcv == expected.nzcv);
 }
 
-#if UML_GADGET_SCALAR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
 g::ScalarAccess access_for(std::uint32_t instruction)
 {
 	const std::array code{instruction};
 	const auto built = g::Builder{}.build(0x4000, code, {},
 		std::pmr::get_default_resource(), {}, {.scalar_forwarding = false});
-	constexpr auto prefix = UML_GADGET_DEPENDENCY_COVERAGE ? 3U : 0U;
-	for (std::size_t count = 1; count <= 4 && prefix + count <= built.program.words().size(); ++count) {
-		const auto access = g::scalar_access(built.program.words().subspan(prefix, count));
+	for (std::size_t count = 1; count <= 4 && count <= built.program.words().size(); ++count) {
+		const auto access = g::scalar_access(built.program.words().first(count));
 		if (access.contract) return access;
 	}
 	return {};
@@ -185,15 +180,11 @@ void catalog()
 		for (unsigned i = 0; i < contract.sources.size(); ++i)
 			if (contract.sources[i] != g::scalar_no_register) available |= 1U << i;
 		for (unsigned mask = 1; mask < 8; ++mask) {
-#if UML_GADGET_SCALAR_FORWARDING
 			require(bool(contract.entries[mask]) == ((available & mask) == mask));
 			if (contract.entries[mask]) {
 				require(entries.insert(contract.entries[mask]).second);
 				++variants;
 			}
-#else
-			require(contract.entries[mask] == 0);
-#endif
 		}
 	}
 	require(g::scalar_contracts().size() > 1000);
@@ -324,7 +315,6 @@ void broad_matrix()
 	std::printf("broad scalar matrix: %zu reference/on/off comparisons across %zu families\n",
 		comparisons, families.size());
 }
-#endif
 
 void linked_counts()
 {
@@ -347,26 +337,12 @@ void linked_counts()
 	a::CpuState cpu{};
 	cpu.registers[3] = iterations;
 	auto tlb = std::make_unique<uml::memory::Tlb>();
-#if UML_GADGET_DEPENDENCY_COVERAGE
-	const auto before = g::diagnostics::dependency_snapshot();
-#endif
 	std::size_t executed{};
 	const auto event = g::execute(built.program, cpu, *tlb, executed);
 	require(event == uml::cpu::EngineEvent::interrupt);
 	require(executed == 5 * iterations && cpu.registers[3] == 0);
 	require(cpu.registers[0] == iterations && cpu.registers[1] == iterations + 2);
 	require(cpu.registers[2] == 2 * iterations + 2);
-#if UML_GADGET_DEPENDENCY_COVERAGE
-	const auto after = g::diagnostics::dependency_snapshot();
-	require(after[0] - before[0] == 5 * iterations);
-	require(after[1] - before[1] == iterations);
-	constexpr std::array masks{0U, 1U, 1U, 0U};
-	std::array<std::uint64_t, g::diagnostics::dependency_counter_count> expected{};
-	for (unsigned i = 0; i < masks.size(); ++i)
-		expected[access_for(instructions[i]).coverage_bucket(masks[i])] += iterations;
-	for (std::size_t i = 2; i < expected.size(); ++i)
-		require(after[i] - before[i] == expected[i]);
-#endif
 }
 
 void taken_prefix()
@@ -380,100 +356,22 @@ void taken_prefix()
 		[&](std::uint64_t) -> const g::BlockLink * { return &end; });
 	a::CpuState cpu{};
 	auto tlb = std::make_unique<uml::memory::Tlb>();
-#if UML_GADGET_DEPENDENCY_COVERAGE
-	const auto before = g::diagnostics::dependency_snapshot();
-#endif
 	std::size_t executed{};
 	require(g::execute(built.program, cpu, *tlb, executed) == uml::cpu::EngineEvent::interrupt);
 	require(executed == 2 && cpu.registers[0] == 1 && cpu.registers[1] == 0);
-#if UML_GADGET_DEPENDENCY_COVERAGE
-	const auto after = g::diagnostics::dependency_snapshot();
-	require(after[0] - before[0] == 2 && after[1] - before[1] == 1);
-	const auto skipped = access_for(instructions[2]).coverage_bucket(1);
-	require(after[skipped] == before[skipped]);
-#endif
 }
 
-#if UML_GADGET_DEPENDENCY_COVERAGE
-void mixed_domain_counts()
-{
-	constexpr std::uint64_t pc = 0x4000;
-	const std::array code{
-		0x9100'0400U, // add x0,x0,#1
-		0x9100'0801U, // add x1,x0,#2: scalar edge
-		0x4e3e'87e0U, // add v0.16b,v31.16b,v30.16b
-		0x4e20'8401U, // add v1.16b,v0.16b,v0.16b: two vector sources
-		0x9100'0c02U, // add x2,x0,#3: vector entry broke scalar residency
-		0x4e21'8422U, // add v2.16b,v1.16b,v1.16b: scalar entry broke vector residency
-		0x4e22'8443U, // add v3.16b,v2.16b,v2.16b: two vector sources
-		0xd400'0001U,
-	};
-	constexpr std::array masks{0U, 1U, 0U, 3U, 0U, 0U, 3U};
-	g::diagnostics::DependencyCounts expected_counts{};
-	expected_counts[0] = code.size();
-	expected_counts[1] = 1;
-	for (unsigned i = 0; i < masks.size(); ++i) {
-		const auto built = g::Builder{}.build(pc, std::array{code[i]}, {},
-			std::pmr::get_default_resource(), {},
-			{.scalar_forwarding = false, .vector_forwarding = false});
-		const auto words = built.program.words().subspan(3, 2);
-		const auto scalar = g::scalar_access(words), vector = g::vector_access(words);
-		require(bool(scalar.contract) != bool(vector.contract));
-		++expected_counts[vector.contract ? vector.coverage_bucket(
-			masks[i], g::diagnostics::vector_coverage_family) : scalar.coverage_bucket(masks[i])];
-	}
-	a::CpuState expected{};
-	expected.pc = pc;
-	expected.nzcv = 0xa000'0000U;
-	for (unsigned reg = 0; reg < 32; ++reg)
-		for (unsigned byte = 0; byte < 16; ++byte)
-			expected.vectors[reg].bytes[byte] = std::byte(reg + byte);
-	const auto initial = expected;
-	run_reference(expected, code);
-	auto tlb = std::make_unique<uml::memory::Tlb>();
-	for (bool forwarding : {false, true}) {
-		const auto built = g::Builder{}.build(pc, code, {},
-			std::pmr::get_default_resource(), {},
-			{.scalar_forwarding = forwarding, .vector_forwarding = forwarding});
-		auto actual = initial;
-		const auto before = g::diagnostics::dependency_snapshot();
-		std::size_t executed{};
-		require(g::execute(built.program, actual, *tlb, executed) == uml::cpu::EngineEvent::system_call);
-		const auto after = g::diagnostics::dependency_snapshot();
-		for (std::size_t i = 0; i < expected_counts.size(); ++i)
-			require(after[i] - before[i] == expected_counts[i]);
-		require(executed == code.size() && actual.registers == expected.registers &&
-			actual.pc == expected.pc && actual.nzcv == expected.nzcv);
-		for (unsigned reg = 0; reg < 32; ++reg)
-			require(actual.vectors[reg].bytes == expected.vectors[reg].bytes);
-	}
-	// The builder's direct illegal-entry path is still an entered guest word.
-	const auto illegal = g::Builder{}.build(pc, std::array{0U});
-	auto state = initial;
-	const auto before = g::diagnostics::dependency_snapshot();
-	require(g::execute(illegal.program, state, *tlb) == uml::cpu::EngineEvent::illegal_instruction);
-	const auto after = g::diagnostics::dependency_snapshot();
-	for (std::size_t i = 0; i < before.size(); ++i)
-		require(after[i] - before[i] == (i < 2 ? 1U : 0U));
-	std::puts("mixed scalar/vector coverage: one bucket per group; both resident results preserved");
-}
-#endif
 } // namespace
 
 int main()
 {
-#if UML_GADGET_SCALAR_FORWARDING || UML_GADGET_DEPENDENCY_COVERAGE
 	catalog();
 	broad_matrix();
-#endif
 	scalar_matrix();
 	constant_boundary();
 	undeclared_boundary();
 	linked_counts();
 	taken_prefix();
-#if UML_GADGET_DEPENDENCY_COVERAGE
-	mixed_domain_counts();
-#endif
 	run_gadget_dependency_memory_tests();
 	run_gadget_vector_dependency_tests();
 	std::puts("gadget dependency tests passed");

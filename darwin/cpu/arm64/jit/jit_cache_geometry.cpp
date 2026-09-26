@@ -192,10 +192,6 @@ std::size_t JitCacheGeometry::total_bytes() const noexcept
 	 * Activation lists are intrusive; their context heads are inline state.
 	 */
 	checked_add(total, JitBlockLinkTable::allocation_bytes(block_links));
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-	checked_add(total, JitProfileBlockLinkTable::allocation_bytes(
-		cache_sets * cache_ways));
-#endif
 	checked_add(total,
 		JitIndirectLinkTable::allocation_bytes(indirect_links));
 	/* Shared materialization retains this bounded pointer scratch capacity. */

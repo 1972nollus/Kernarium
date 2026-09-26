@@ -25,7 +25,6 @@ target_include_directories(uml_static_runtime PRIVATE
 target_compile_features(uml_static_runtime PUBLIC cxx_std_20)
 target_compile_options(uml_static_runtime PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_static_runtime PRIVATE
-    UML_JIT_PUBLICATION_GATE_TESTING=0
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 set_target_properties(uml_static_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -101,7 +100,7 @@ target_compile_options(uml_runtime_entry PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_runtime_entry PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
-if(UML_ENABLE_JIT_PROFILE)
+if(UML_ENABLE_RUNTIME_PROFILING)
     add_library(uml_runtime_jit_profile_reporter OBJECT
         ${PROJECT_SOURCE_DIR}/darwin/runtime/jit_profile_reporter.cpp)
     uml_declare_architecture_target(uml_runtime_jit_profile_reporter runtime)

@@ -25,7 +25,6 @@
  * per vector register is about 1.7 MB of bank, which is the cost G194 found
  * is charged to every workload whether or not it forwards.
  */
-#if UML_GADGET_INPLACE_IMMEDIATE
 
 /* ---- logical immediate, Rd == Rn, both ordinary registers ---------------- */
 /* Two operand words: the register fields the baked entry no longer reads, and
@@ -69,9 +68,7 @@ scalar_entry logical_immediate_inplace_\suffix\()_\reg, \forward, 12, .Lipl\@, .
 
 .macro logical_inplace_register operation, bits64, reg, suffix
 logical_inplace_entry \operation, \bits64, \reg, \suffix, 0
-#if UML_GADGET_SCALAR_FORWARDING
 logical_inplace_entry \operation, \bits64, \reg, \suffix, 1
-#endif
 .endm
 
 .macro logical_inplace_modes operation, bits64, prefix
@@ -111,9 +108,7 @@ scalar_entry move_wide_keep_inplace_\suffix\()_\reg, \forward, 0, .Lipm\@, .Lipm
 
 .macro move_keep_inplace_register bits64, shift, reg, suffix
 move_keep_inplace_entry \bits64, \shift, \reg, \suffix, 0
-#if UML_GADGET_SCALAR_FORWARDING
 move_keep_inplace_entry \bits64, \shift, \reg, \suffix, 1
-#endif
 .endm
 
 .macro move_keep_inplace_modes bits64, shift, prefix
@@ -186,11 +181,9 @@ scalar_entry add_sub_register_inplace_\suffix\()_\reg, \forward, 2, .Lipr\@, .Li
 
 .macro add_sub_reg_inplace_register bits64, subtract, flags, reg, suffix
 add_sub_reg_inplace_entry \bits64, \subtract, \flags, \reg, \suffix, 0
-#if UML_GADGET_SCALAR_FORWARDING
 add_sub_reg_inplace_entry \bits64, \subtract, \flags, \reg, \suffix, 1
 add_sub_reg_inplace_entry \bits64, \subtract, \flags, \reg, \suffix, 2
 add_sub_reg_inplace_entry \bits64, \subtract, \flags, \reg, \suffix, 3
-#endif
 .endm
 
 .macro add_sub_reg_inplace_modes bits64, subtract, flags, prefix
@@ -233,7 +226,6 @@ vector_entry simd_fused_inplace_\name\()_\vec, \forward, .Lipv\@, scalar_offset1
 
 .macro simd_fused_inplace_register name, operation, arrangement, vec
 simd_fused_inplace_entry \name, \operation, \arrangement, \vec, 0
-#if UML_GADGET_VECTOR_FORWARDING
 /* Three declared sources, so the contract names every non-empty mask. */
 simd_fused_inplace_entry \name, \operation, \arrangement, \vec, 1
 simd_fused_inplace_entry \name, \operation, \arrangement, \vec, 2
@@ -242,7 +234,6 @@ simd_fused_inplace_entry \name, \operation, \arrangement, \vec, 4
 simd_fused_inplace_entry \name, \operation, \arrangement, \vec, 5
 simd_fused_inplace_entry \name, \operation, \arrangement, \vec, 6
 simd_fused_inplace_entry \name, \operation, \arrangement, \vec, 7
-#endif
 .endm
 
 .macro simd_fused_inplace name, operation, arrangement
@@ -343,4 +334,3 @@ inplace_row_32 simd_fused_inplace_fmls_2d
 .purgem logical_inplace_register
 .purgem logical_inplace_entry
 
-#endif

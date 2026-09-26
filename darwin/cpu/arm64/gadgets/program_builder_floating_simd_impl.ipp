@@ -8,7 +8,6 @@ namespace uml::cpu::arm64::gadgets::builder_detail {
 
 using namespace selection;
 
-#if UML_GADGET_SIMD_DESTINATION_RESIDENCY
 namespace {
 
 struct ResidentMla final {
@@ -81,7 +80,6 @@ struct ResidentMla final {
 }
 
 } // namespace
-#endif
 
 DecodeResult decode_floating_simd(DecodeContext &context)
 {
@@ -429,7 +427,6 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		   fused_floating.recognized) {
 		auto gadget = fused_floating.valid ?
 			fused_floating_arithmetic_gadget(fused_floating) : nullptr;
-#if UML_GADGET_INPLACE_IMMEDIATE
 		/* A vector FMLA/FMLS accumulates into Vd, so its destination is
 		 * also its third source and every one of them is the in-place
 		 * shape. */
@@ -438,7 +435,6 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 				    fused_floating, instruction & 31U);
 			    baked != nullptr)
 				gadget = baked;
-#endif
 		if (gadget == nullptr) {
 			emit(words, uml_arm64_gadget_illegal);
 			emit(words, address);
@@ -830,9 +826,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                     ++compiled;
                     return DecodeResult::terminal;
                   }
-#if UML_GADGET_SIMD_DESTINATION_RESIDENCY
                   if (!emit_resident_mla_run(context)) {
-#endif
                     emit(words, gadget);
                     emit(words, vector_operand_offset(instruction & 31U) |
                                     (static_cast<std::uintptr_t>(
@@ -841,9 +835,7 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                     (static_cast<std::uintptr_t>(
                                          vector_operand_offset((instruction >> 16) & 31U))
                                      << 32));
-#if UML_GADGET_SIMD_DESTINATION_RESIDENCY
                   }
-#endif
                 } else if (((instruction & 0xbf20'fc00U) == 0x0e00'1800U ||
                             (instruction & 0xbf20'fc00U) == 0x0e00'2800U ||
                             (instruction & 0xbf20'fc00U) == 0x0e00'3800U ||

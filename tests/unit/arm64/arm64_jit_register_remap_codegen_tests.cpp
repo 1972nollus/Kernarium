@@ -490,9 +490,7 @@ void javascript_conversion_writes_a_resident_gpr_directly() {
   require(native_source >= first_cached_vector &&
               native_source <= last_cached_vector,
           "JavaScript conversion source escaped the vector cache");
-  const bool fixed_x8_destination =
-      jit_test::linked_x8_x9_bank_enabled() && native_destination == 22U;
-  require(is_cached_host_gpr(native_destination) || fixed_x8_destination,
+  require(is_cached_host_gpr(native_destination),
           "JavaScript conversion escaped its resident GPR destination");
   if (source_copy)
     require(left(hot[*source_copy]) == native_source,
