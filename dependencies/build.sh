@@ -16,14 +16,14 @@ JOBS=${UML_DEPENDENCY_JOBS:-8}
 DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-14.0}
 CHECK_MANIFEST_ONLY=0
 BUILD_RECIPES='zlib|1.3.2
-pcre2|10.47
+pcre2|10.48
 libffi|3.7.1
 gnulib|2024-12-12
 libiconv|1.18
 proxy-libintl|0.5
 glib|2.88.3
 gvdb|2b42fc7
-libslirp|4.9.3
+libslirp|4.9.5
 libvncserver|0.9.15
 fex|FEX-2608'
 
@@ -367,7 +367,7 @@ cmake_setup "$SOURCES/zlib" "$BUILDS/zlib" \
 	-DZLIB_BUILD_TESTING=OFF
 cmake_build_install "$BUILDS/zlib"
 
-printf '%s\n' "building PCRE2 10.47"
+printf '%s\n' "building PCRE2 10.48"
 cmake_setup "$SOURCES/pcre2" "$BUILDS/pcre2" \
 	-DBUILD_SHARED_LIBS=OFF \
 	-DBUILD_STATIC_LIBS=ON \
@@ -448,7 +448,7 @@ meson_env setup "$BUILDS/glib" "$SOURCES/glib" \
 meson_env compile -C "$BUILDS/glib"
 meson_install_env install -C "$BUILDS/glib"
 
-printf '%s\n' "building libslirp 4.9.3"
+printf '%s\n' "building libslirp 4.9.5"
 # libslirp's project-level static option selects a non-installed helper target.
 # Let Meson's default-library setting make the installable library target static.
 require_private_pkg_config glib-2.0

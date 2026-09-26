@@ -519,7 +519,7 @@ class VkGlCtsToolingTests(unittest.TestCase):
         self.assertEqual(contract.size, 8 * 1024 * 1024 * 1024)
         self.assertEqual(
             contract.sha256,
-            "f844e5195ca43444a4f2d02b043b171b6e7d4422a4747a8a991f2d409069ad7d",
+            "e919fd40b5386f0b84067ef5aedec547e3ed5eca7f6751933b1c4e5559a4144d",
         )
         self.assertEqual(
             contract.glcts_sha256,
@@ -726,7 +726,7 @@ class VkGlCtsToolingTests(unittest.TestCase):
                 cts.load_zink_gl_derivative_receipt(receipt, identity)
         for field in ("vulkan_headers", "vulkan_loader"):
             receipt = copy.deepcopy(valid)
-            receipt[field]["patches"] = valid["cts"]["patches"]
+            receipt[field]["patches"] = [{"order": 1, "patch": "0001-unexpected.patch"}]
             with self.subTest(field=field), self.assertRaisesRegex(cts.CampaignError, field):
                 cts.load_zink_gl_derivative_receipt(receipt, identity)
 

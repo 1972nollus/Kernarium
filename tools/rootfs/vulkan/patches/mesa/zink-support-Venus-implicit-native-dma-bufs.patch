@@ -346,7 +346,7 @@ index 7e6ce00503041b392076d451e7dc30f48f3097f2..3415a91467a487dfa2970e57065569d1
  zink_screen_lock_context(struct zink_screen *screen);
  void
 diff --git a/src/gallium/drivers/zink/zink_types.h b/src/gallium/drivers/zink/zink_types.h
-index 34bcaf61d293b3888d54d57cc5323d3c59621d6c..122a8237434dbbefd2f243329f21fafe03ce632e 100644
+index 9c461cf4ad1d8124414f24980266f771c470604f..559e959e20cce9356e582259690b0a68cba019f1 100644
 --- a/src/gallium/drivers/zink/zink_types.h
 +++ b/src/gallium/drivers/zink/zink_types.h
 @@ -1233,6 +1233,7 @@ struct zink_resource_object {
