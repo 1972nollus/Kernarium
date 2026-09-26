@@ -489,7 +489,7 @@ configure_plasma_user()
 	# Bluetooth audio is left out because the guest has no Bluetooth.
 	as_root chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
 		apt-get install -y --no-install-recommends \
-		plasma-desktop konsole chromium sudo fonts-dejavu-core \
+		plasma-desktop systemsettings konsole chromium sudo fonts-dejavu-core \
 		libgl1-mesa-dri mesa-va-drivers vainfo ffmpeg \
 		xdg-desktop-portal-kde \
 		pipewire wireplumber pipewire-pulse pipewire-alsa rtkit
@@ -536,6 +536,46 @@ Autolock=false
 LockOnResume=false
 EOF
 	as_root chown -R "$debian_uid:$debian_gid" "$root/home/debian/.config"
+	# The task manager's default launchers include Discover, which needs the
+	# PackageKit daemon. Pin only the default launchers whose applications
+	# the image installs; Plasma runs this update script once per user,
+	# right after it creates the default panel.
+	taskmanager_config=$root/usr/share/plasma/plasmoids/org.kde.plasma.taskmanager/contents/config/main.xml
+	default_launchers=$(as_root cat "$taskmanager_config" | awk '
+		/<entry name="launchers"/ { entry = 1 }
+		entry && /<default>/ {
+			sub(/.*<default>/, ""); sub(/<\/default>.*/, ""); print; exit
+		}')
+	[ -n "$default_launchers" ] || \
+		fail "no default launchers in $taskmanager_config"
+	installed_launchers=
+	old_ifs=$IFS
+	IFS=,
+	for launcher in $default_launchers; do
+		case $launcher in
+		applications:*)
+			as_root test -e \
+				"$root/usr/share/applications/${launcher#applications:}" ||
+				continue
+			;;
+		esac
+		installed_launchers=${installed_launchers:+$installed_launchers,}$launcher
+	done
+	IFS=$old_ifs
+	write_root_file \
+		"$root/usr/share/plasma/shells/org.kde.plasma.desktop/contents/updates/starter-installed-launchers.js" \
+		0644 <<EOF
+// Pin only the default launchers whose applications this image installs.
+panels().forEach(function (panel) {
+    panel.widgets().forEach(function (widget) {
+        if (widget.type === "org.kde.plasma.icontasks" ||
+            widget.type === "org.kde.plasma.taskmanager") {
+            widget.currentConfigGroup = ["General"];
+            widget.writeConfig("launchers", "$installed_launchers".split(","));
+        }
+    });
+});
+EOF
 	as_root systemctl --root="$root" enable getty@tty1.service
 	as_root systemctl --root="$root" set-default graphical.target
 }
