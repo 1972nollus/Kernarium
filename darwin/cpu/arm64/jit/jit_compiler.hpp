@@ -30,26 +30,11 @@ public:
                            nullptr,
                        bool persistent_linked_block_abi =
                            persistent_linked_block_abi_default
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-                       ,
-                       void *gpr_link_profile_context = nullptr,
-                       DirectLinkProfileResolver direct_profile_resolver =
-                           nullptr,
-                       IndirectLinkProfileResolver indirect_profile_resolver =
-                           nullptr
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-                       ,
-                       bool profile_gpr_pressure = true
-#endif
                        ) noexcept;
 
   JitCompiler(bool enable_guarded_control_flow,
               const ArmFeatureSet &translation_features) noexcept;
 
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  void set_gpr_pressure_profile_enabled(bool enabled) noexcept;
-#endif
   void set_gpr_residency_planning_enabled(bool enabled) noexcept;
   void set_table_list_planning_enabled(bool enabled) noexcept;
   void set_pointer_authentication_enabled(bool enabled) noexcept;
@@ -80,13 +65,6 @@ public:
     bool native_fp{};
     bool native_fpmr{};
     bool guest_illegal{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    std::uint32_t profile_read_before_write{};
-    std::uint32_t profile_written{};
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-    jit::JitGprPressureProfile gpr_pressure{};
-#endif
     GprResidencyPlan gpr_residency_plan{};
   };
 
@@ -369,14 +347,6 @@ private:
   void *configured_link_context_{};
   LinkResolver configured_link_resolver_{};
   IndirectLinkResolver configured_indirect_link_resolver_{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  void *configured_gpr_link_profile_context_{};
-  DirectLinkProfileResolver configured_direct_profile_resolver_{};
-  IndirectLinkProfileResolver configured_indirect_profile_resolver_{};
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  bool configured_profile_gpr_pressure_{true};
-#endif
   bool configured_persistent_linked_block_abi_{
       persistent_linked_block_abi_default};
   bool track_direct_stores_{};

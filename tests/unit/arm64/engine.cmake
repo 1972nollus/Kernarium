@@ -913,66 +913,6 @@
     uml_add_unit_test(NAME arm64-jit-control-remap-codegen
         COMMAND uml_arm64_jit_control_remap_codegen_tests)
 
-    if(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-        add_executable(uml_arm64_jit_gpr_link_profile_codegen_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_link_profile_codegen_tests.cpp
-            $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            $<TARGET_OBJECTS:uml_static_mmu>
-            ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-        target_include_directories(
-            uml_arm64_jit_gpr_link_profile_codegen_tests PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64
-            ${PROJECT_SOURCE_DIR}/darwin/include)
-        target_compile_options(
-            uml_arm64_jit_gpr_link_profile_codegen_tests PRIVATE
-            -Wall -Wextra -Werror)
-        uml_add_unit_test(NAME arm64-jit-gpr-link-profile-codegen
-            COMMAND uml_arm64_jit_gpr_link_profile_codegen_tests)
-
-        add_executable(uml_arm64_jit_gpr_link_profile_runtime_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_link_profile_runtime_tests.cpp
-            $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            $<TARGET_OBJECTS:uml_static_mmu>
-            ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
-        target_include_directories(
-            uml_arm64_jit_gpr_link_profile_runtime_tests PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64
-            ${PROJECT_SOURCE_DIR}/darwin/include)
-        target_compile_options(
-            uml_arm64_jit_gpr_link_profile_runtime_tests PRIVATE
-            -Wall -Wextra -Werror)
-        target_compile_definitions(
-            uml_arm64_jit_gpr_link_profile_runtime_tests PRIVATE
-            UML_JIT_RUNTIME_DIAGNOSTICS=1)
-        uml_add_unit_test(NAME arm64-jit-gpr-link-profile-runtime
-            COMMAND uml_arm64_jit_gpr_link_profile_runtime_tests)
-    endif()
-
-    if(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-        add_executable(uml_arm64_jit_gpr_pressure_profile_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_pressure_profile_tests.cpp
-            $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            $<TARGET_OBJECTS:uml_static_mmu>
-            ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-        target_include_directories(
-            uml_arm64_jit_gpr_pressure_profile_tests PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64
-            ${PROJECT_SOURCE_DIR}/darwin/include)
-        target_compile_options(
-            uml_arm64_jit_gpr_pressure_profile_tests PRIVATE
-            -Wall -Wextra -Werror)
-        uml_add_unit_test(NAME arm64-jit-gpr-pressure-profile
-            COMMAND uml_arm64_jit_gpr_pressure_profile_tests)
-    endif()
 
     add_executable(uml_arm64_gadget_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_runtime_tests.cpp

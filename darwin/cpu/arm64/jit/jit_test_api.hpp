@@ -8,9 +8,6 @@
 #include <span>
 #include <vector>
 
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-#include "cpu/arm64/jit/jit_gpr_pressure_profile.hpp"
-#endif
 
 namespace uml::cpu::arm64::jit::testing {
 
@@ -30,14 +27,6 @@ struct CompiledCode final {
   bool guest_illegal{};
   bool gpr_residency_planned{};
   std::size_t gpr_estimated_avoided_accesses{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  std::uint32_t gpr_read_before_write_mask{};
-  std::uint32_t gpr_written_mask{};
-  std::uint32_t gpr_link_dirty_live_out_mask{};
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  JitGprPressureProfile gpr_pressure{};
-#endif
 };
 
 [[nodiscard]] CompiledCode
@@ -103,29 +92,7 @@ materialize_constant_for_testing(unsigned destination, std::uint64_t value);
 lower_memory_barrier_for_testing(std::uint32_t instruction, bool native_sb,
                                  bool native_xs);
 
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-[[nodiscard]] CompiledCode
-compile_gpr_profile_linked_block(
-    std::uint64_t pc, std::span<const std::uint32_t> instructions,
-    bool instrument);
-[[nodiscard]] bool
-gpr_profile_disabled_resolver_preserves_linked_code(
-    std::uint64_t pc, std::span<const std::uint32_t> instructions);
-[[nodiscard]] bool
-gpr_profile_disabled_resolver_preserves_indirect_code(
-    std::uint64_t pc, std::span<const std::uint32_t> instructions);
-void publish_gpr_link_profile_delta_for_testing(
-    std::uint64_t source_pc, std::uint64_t target_pc,
-    std::uint32_t dirty_live_out, std::uint32_t read_before_write,
-    std::uint64_t count, bool indirect);
-#endif
 
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-[[nodiscard]] CompiledCode
-compile_gpr_pressure_profile_block(
-    std::uint64_t pc, std::span<const std::uint32_t> instructions,
-    bool instrument);
-#endif
 
 [[nodiscard]] bool persistent_linked_block_abi_enabled() noexcept;
 [[nodiscard]] std::size_t

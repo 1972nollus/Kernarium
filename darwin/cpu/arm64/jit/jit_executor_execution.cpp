@@ -122,13 +122,6 @@ namespace uml::cpu::arm64 {
           enable_guarded_control_flow_, this,
           &Implementation::resolve_block_link, false,
           &Implementation::resolve_indirect_link
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-          ,
-          /*persistent_linked_block_abi=*/
-          persistent_linked_block_abi_default,
-          this, &Implementation::resolve_direct_link_profile,
-          &Implementation::resolve_indirect_link_profile
-#endif
       };
       // Compile once on a miss. Speculatively lowering the whole block a
       // second time for GPR residency delays cold multi-process workloads.
@@ -175,10 +168,6 @@ namespace uml::cpu::arm64 {
               candidate.accesses_fp_state, candidate.link_target_safe,
               candidate.native_fp, candidate.native_fpmr,
               candidate.guest_illegal
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-              ,
-              candidate.profile_read_before_write
-#endif
           );
         };
         if (!valid_compilation(compiled))
@@ -207,13 +196,6 @@ namespace uml::cpu::arm64 {
               enable_guarded_control_flow_, this,
               &Implementation::resolve_block_link, false,
               &Implementation::resolve_indirect_link
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-              ,
-              /*persistent_linked_block_abi=*/
-              persistent_linked_block_abi_default,
-              this, &Implementation::resolve_direct_link_profile,
-              &Implementation::resolve_indirect_link_profile
-#endif
           };
           retry_compiler.set_gpr_residency_planning_enabled(false);
           retry_compiler.set_pointer_authentication_enabled(
@@ -278,10 +260,6 @@ namespace uml::cpu::arm64 {
           link_capability(JitLinkCapability::native_fpmr_environment);
     }
     chain.link_selector = checked_link_selector(link_capabilities);
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    if (!tracked_stores)
-      gpr_link_profile_.record_outer_invocation();
-#endif
     const auto result = function(&cpu, &tlb_, &chain);
     if (block->native_fpmr)
       arm64::restore_native_fpmr_environment(cpu);

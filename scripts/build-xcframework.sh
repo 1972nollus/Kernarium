@@ -61,8 +61,6 @@ verify_release_cache()
 	require_cache_entry "$cache" "UML_APPLE_PLATFORM:STRING=$platform"
 	require_cache_entry "$cache" "UML_GUEST_16K_PAGES:BOOL=ON"
 	require_cache_entry "$cache" "UML_ENABLE_RUNTIME_PROFILING:BOOL=OFF"
-	require_cache_entry "$cache" "DARWIN_UML_JIT_GPR_LINK_PROFILE:BOOL=OFF"
-	require_cache_entry "$cache" "DARWIN_UML_JIT_GPR_PRESSURE_PROFILE:BOOL=OFF"
 	require_cache_entry "$cache" "UML_BUILD_CLI:BOOL=OFF"
 	require_cache_entry "$cache" "UML_BUILD_KERNEL_RUNNER:BOOL=OFF"
 	require_cache_entry "$cache" "UML_BUILD_UNIT_TESTS:BOOL=OFF"
@@ -263,8 +261,6 @@ build_slice()
 		-DUML_DEPENDENCY_PREFIX="$dependency_prefix" \
 		-DUML_GUEST_16K_PAGES=ON \
 		-DUML_ENABLE_RUNTIME_PROFILING=OFF \
-		-DDARWIN_UML_JIT_GPR_LINK_PROFILE=OFF \
-		-DDARWIN_UML_JIT_GPR_PRESSURE_PROFILE=OFF \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_C_FLAGS:STRING= \
 		-DCMAKE_CXX_FLAGS:STRING= \

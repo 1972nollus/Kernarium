@@ -43,13 +43,6 @@ namespace {
       .gpr_estimated_avoided_accesses =
           compiled.gpr_residency_plan.estimated_avoided_accesses,
   };
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  result.gpr_read_before_write_mask = compiled.profile_read_before_write;
-  result.gpr_written_mask = compiled.profile_written;
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  result.gpr_pressure = compiled.gpr_pressure;
-#endif
   return result;
 }
 
@@ -687,16 +680,6 @@ CompiledCode compile_block_without_gpr_residency_planning(
   return copied_code(compiler.compile(pc, instructions));
 }
 
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-CompiledCode compile_gpr_pressure_profile_block(
-    std::uint64_t pc, std::span<const std::uint32_t> instructions,
-    bool instrument) {
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false};
-  compiler.set_gpr_pressure_profile_enabled(instrument);
-  compiler.set_gpr_residency_planning_enabled(false);
-  return copied_code(compiler.compile(pc, instructions));
-}
-#endif
 
 CompiledCode compile_block_with_feature_override(
     std::uint64_t pc, std::span<const std::uint32_t> instructions,
@@ -741,165 +724,31 @@ CompiledCode compile_linked_block(
 CompiledCode compile_linked_block_with_capacity(
     std::uint64_t pc, std::span<const std::uint32_t> instructions,
     std::size_t capacity) {
-  JitProfileBlockLinkTable links{capacity};
+  /* Resolves each distinct target to its own record until the table is
+   * full, after which the compiler must fall back to an unlinked exit. */
+  struct Links final {
+    std::vector<JitBlockLink> records;
+    std::size_t capacity{};
+  } links;
+  links.records.reserve(capacity);
+  links.capacity = capacity;
   const auto resolver = +[](void *context,
                             std::uint64_t target) -> const void * {
-    return static_cast<JitProfileBlockLinkTable *>(context)
-        ->find_or_create(target);
+    auto &table = *static_cast<Links *>(context);
+    for (auto &record : table.records)
+      if (record.guest_pc == target)
+        return &record;
+    if (table.records.size() >= table.capacity)
+      return nullptr;
+    auto &record = table.records.emplace_back();
+    record.guest_pc = target;
+    return &record;
   };
   JitCompiler compiler{/*enable_guarded_control_flow=*/false, &links,
                        resolver};
   return copied_code(compiler.compile(pc, instructions));
 }
 
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-CompiledCode compile_gpr_profile_linked_block(
-    std::uint64_t pc, std::span<const std::uint32_t> instructions,
-    bool instrument) {
-  struct Context final {
-    JitBlockLink link{};
-    std::uint64_t counter{};
-    std::uint32_t dirty_live_out{};
-  } context;
-  const auto resolver = +[](void *opaque,
-                            std::uint64_t target) -> const void * {
-    auto &resolved = *static_cast<Context *>(opaque);
-    resolved.link.guest_pc = target;
-    return &resolved.link;
-  };
-  const auto profile_resolver =
-      +[](void *opaque, const void *, std::uint64_t,
-          std::uint32_t dirty_live_out) -> std::uint64_t * {
-    auto &resolved = *static_cast<Context *>(opaque);
-    resolved.dirty_live_out = dirty_live_out;
-    return &resolved.counter;
-  };
-  JitCompiler compiler{
-      /*enable_guarded_control_flow=*/false,
-      &context,
-      resolver,
-      /*track_direct_stores=*/false,
-      /*indirect_link_resolver=*/nullptr,
-      /*persistent_linked_block_abi=*/persistent_linked_block_abi_default,
-      instrument ? &context : nullptr,
-      instrument ? profile_resolver : nullptr,
-      /*indirect_profile_resolver=*/nullptr};
-  auto compiled = copied_code(compiler.compile(pc, instructions));
-  compiled.gpr_link_dirty_live_out_mask = context.dirty_live_out;
-  return compiled;
-}
-
-bool gpr_profile_disabled_resolver_preserves_linked_code(
-    std::uint64_t pc, std::span<const std::uint32_t> instructions) {
-  JitBlockLink link{};
-  const auto resolver = +[](void *opaque,
-                            std::uint64_t target) -> const void * {
-    auto &resolved = *static_cast<JitBlockLink *>(opaque);
-    resolved.guest_pc = target;
-    return &resolved;
-  };
-  JitCompiler baseline{/*enable_guarded_control_flow=*/false, &link, resolver};
-  const auto expected = copied_code(baseline.compile(pc, instructions));
-  JitCompiler diagnostic_disabled{
-      /*enable_guarded_control_flow=*/false,
-      &link,
-      resolver,
-      /*track_direct_stores=*/false,
-      /*indirect_link_resolver=*/nullptr,
-      /*persistent_linked_block_abi=*/persistent_linked_block_abi_default,
-      &link,
-      /*direct_profile_resolver=*/nullptr,
-      /*indirect_profile_resolver=*/nullptr};
-  const auto actual =
-      copied_code(diagnostic_disabled.compile(pc, instructions));
-  return actual.words == expected.words &&
-         actual.hot_words == expected.hot_words &&
-         actual.guest_instructions == expected.guest_instructions &&
-         actual.internal_entry_word == expected.internal_entry_word &&
-         actual.memory_write_mask == expected.memory_write_mask &&
-         actual.direct_memory_write_mask == expected.direct_memory_write_mask &&
-         actual.accesses_fp_state == expected.accesses_fp_state &&
-         actual.link_target_safe == expected.link_target_safe &&
-         actual.native_fp == expected.native_fp &&
-         actual.native_fpmr == expected.native_fpmr;
-}
-
-bool gpr_profile_disabled_resolver_preserves_indirect_code(
-    std::uint64_t pc, std::span<const std::uint32_t> instructions) {
-  struct Context final {
-    JitBlockLink empty{.guest_pc = 1};
-    JitIndirectLink site{};
-  } context;
-  context.site.source_pc = pc;
-  for (auto &entry : context.site.entries) {
-    entry.guest_pc = 1;
-    entry.link = &context.empty;
-  }
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  context.site.profile_targets.fill(&context.empty);
-#endif
-  const auto resolver =
-      +[](void *opaque, std::uint64_t) -> const void * {
-    return &static_cast<Context *>(opaque)->site;
-  };
-  JitCompiler baseline{/*enable_guarded_control_flow=*/false,
-                       &context,
-                       /*link_resolver=*/nullptr,
-                       /*track_direct_stores=*/false,
-                       resolver};
-  const auto expected = copied_code(baseline.compile(pc, instructions));
-  JitCompiler diagnostic_disabled{
-      /*enable_guarded_control_flow=*/false,
-      &context,
-      /*link_resolver=*/nullptr,
-      /*track_direct_stores=*/false,
-      resolver,
-      /*persistent_linked_block_abi=*/persistent_linked_block_abi_default,
-      &context,
-      /*direct_profile_resolver=*/nullptr,
-      /*indirect_profile_resolver=*/nullptr};
-  const auto actual =
-      copied_code(diagnostic_disabled.compile(pc, instructions));
-  return actual.words == expected.words &&
-         actual.hot_words == expected.hot_words &&
-         actual.guest_instructions == expected.guest_instructions &&
-         actual.internal_entry_word == expected.internal_entry_word &&
-         actual.memory_write_mask == expected.memory_write_mask &&
-         actual.direct_memory_write_mask == expected.direct_memory_write_mask &&
-         actual.accesses_fp_state == expected.accesses_fp_state &&
-         actual.link_target_safe == expected.link_target_safe &&
-         actual.native_fp == expected.native_fp &&
-         actual.native_fpmr == expected.native_fpmr;
-}
-
-void publish_gpr_link_profile_delta_for_testing(
-    std::uint64_t source_pc, std::uint64_t target_pc,
-    std::uint32_t dirty_live_out, std::uint32_t read_before_write,
-    std::uint64_t count, bool indirect) {
-  JitGprLinkProfileDiagnostics totals{
-      .successful_links = count,
-      .outer_invocations = count,
-  };
-  for (unsigned reg = 0; reg < totals.live_in_saves.size(); ++reg) {
-    const auto bit = std::uint32_t{1} << reg;
-    totals.live_in_saves[reg] =
-        (read_before_write & bit) != 0 ? count : 0;
-    totals.dirty_out_saves[reg] =
-        (dirty_live_out & bit) != 0 ? count : 0;
-    totals.full_handoffs[reg] =
-        ((dirty_live_out & read_before_write) & bit) != 0 ? count : 0;
-  }
-  const JitGprProfileEdgeKey key{
-      .source_pc = source_pc,
-      .target_pc = target_pc,
-      .dirty_live_out = dirty_live_out,
-      .read_before_write = read_before_write,
-      .indirect = indirect,
-  };
-  JitGprLinkProfileGlobal::Edges edges{{key, count}};
-  JitGprLinkProfileGlobal::instance().merge(totals, edges);
-}
-#endif
 
 CompiledCode compile_linked_block_memory_abi(
     std::uint64_t pc,
@@ -929,9 +778,6 @@ CompiledCode compile_indirect_linked_block(
     entry.guest_pc = 1;
     entry.link = &context.empty;
   }
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  context.site.profile_targets.fill(&context.empty);
-#endif
   const auto resolver =
       +[](void *opaque, std::uint64_t) -> const void * {
     return &static_cast<Context *>(opaque)->site;
@@ -969,9 +815,6 @@ CompiledCode compile_indirect_linked_block_memory_abi(
     entry.guest_pc = 1;
     entry.link = &context.empty;
   }
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  context.site.profile_targets.fill(&context.empty);
-#endif
   const auto resolver =
       +[](void *opaque, std::uint64_t) -> const void * {
     return &static_cast<Context *>(opaque)->site;

@@ -188,10 +188,6 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
                             bool accesses_fp_state, bool link_target_safe,
                             bool native_fp, bool native_fpmr,
                             bool guest_illegal
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-                            ,
-                            std::uint32_t profile_read_before_write
-#endif
 ) {
 #if !UML_JIT_RUNTIME_DIAGNOSTICS
   (void)direct_link_refusals;
@@ -214,9 +210,6 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
   block.function = function;
   block.internal_entry = internal_entry;
   block.link = target_link;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  block.profile_link = profile_links_.find_or_create(pc, generation);
-#endif
 #if UML_ENABLE_JIT_PROFILE
   profile_jit_target_link_refusal(block.link == nullptr);
   profile_jit_link_table_state(links_.size(), links_.capacity(),
@@ -242,9 +235,6 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
   block.native_fp = native_fp;
   block.native_fpmr = native_fpmr;
   block.guest_illegal = guest_illegal;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  block.profile_read_before_write = profile_read_before_write;
-#endif
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   ++cache_validation_diagnostics_.translations;
   if (shared_validation_words)
@@ -273,13 +263,7 @@ void JitExecutor::Implementation::clear_cache() noexcept {
   }
   link_contexts_ = {};
   link_context_ = nullptr;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  gpr_link_profile_.clear_code();
-#endif
   links_.clear();
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  profile_links_.clear();
-#endif
   indirect_links_.clear();
   pending_indirect_ = {};
   tracked_store_arena_.reset();
@@ -381,10 +365,6 @@ JitExecutor::Implementation::install_shared_translation(
       translation->accesses_fp_state, translation->link_target_safe,
       translation->native_fp, translation->native_fpmr,
       translation->guest_illegal
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-      ,
-      translation->profile_read_before_write
-#endif
   );
   cache.record_reuse();
 #if UML_ENABLE_JIT_PROFILE
@@ -457,9 +437,6 @@ JitExecutor::Implementation::publish_shared_translation(
     translation->native_fp = compiled.native_fp;
     translation->native_fpmr = compiled.native_fpmr;
     translation->guest_illegal = compiled.guest_illegal;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    translation->profile_read_before_write = compiled.profile_read_before_write;
-#endif
     return cache.insert(profile, pc, validation_words, std::move(translation));
   } catch (const std::bad_alloc &) {
     /* Cross-executor publication is opportunistic. The already-stored native

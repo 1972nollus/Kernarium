@@ -101,7 +101,7 @@ target_compile_options(uml_runtime_entry PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_runtime_entry PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
-if(UML_ENABLE_JIT_PROFILE)
+if(UML_ENABLE_RUNTIME_PROFILING)
     add_library(uml_runtime_jit_profile_reporter OBJECT
         ${PROJECT_SOURCE_DIR}/darwin/runtime/jit_profile_reporter.cpp)
     uml_declare_architecture_target(uml_runtime_jit_profile_reporter runtime)

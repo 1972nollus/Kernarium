@@ -394,14 +394,6 @@ void JitCompiler::emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool lo
     if (!load)
       track_direct_store(8, 64);
 
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    for (unsigned index = 0; index < 8; ++index) {
-      if (load)
-        profile_gpr_write(first + index, false);
-      else
-        profile_gpr_read(first + index, false);
-    }
-#endif
 
     /*
      * The native 64-byte forms name x0-x7 implicitly. Some of those registers

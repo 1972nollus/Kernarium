@@ -124,12 +124,8 @@ pack_jit_result(Event event, std::size_t retired) noexcept {
 #define UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS 1
 #endif
 
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-inline constexpr bool share_translations_between_executors = false;
-#else
 inline constexpr bool share_translations_between_executors =
     UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS != 0;
-#endif
 
 enum class JitRelocationKind : std::uint8_t {
   direct_link,

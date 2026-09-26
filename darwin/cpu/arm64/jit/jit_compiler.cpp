@@ -20,30 +20,12 @@ JitCompiler::JitCompiler(bool enable_guarded_control_flow,
                        bool track_direct_stores,
                        IndirectLinkResolver indirect_link_resolver,
                        bool persistent_linked_block_abi
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-                       ,
-                       void *gpr_link_profile_context,
-                       DirectLinkProfileResolver direct_profile_resolver,
-                       IndirectLinkProfileResolver indirect_profile_resolver
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-                       ,
-                       bool profile_gpr_pressure
-#endif
                        ) noexcept
       : emitter_{persistent_linked_block_abi, std::size_t{1} << 18U},
         cold_{this},
         configured_link_context_{link_context},
         configured_link_resolver_{link_resolver},
         configured_indirect_link_resolver_{indirect_link_resolver},
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-        configured_gpr_link_profile_context_{gpr_link_profile_context},
-        configured_direct_profile_resolver_{direct_profile_resolver},
-        configured_indirect_profile_resolver_{indirect_profile_resolver},
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-        configured_profile_gpr_pressure_{profile_gpr_pressure},
-#endif
         configured_persistent_linked_block_abi_{persistent_linked_block_abi},
         track_direct_stores_{track_direct_stores},
         enable_guarded_control_flow_{enable_guarded_control_flow} {
@@ -51,13 +33,6 @@ JitCompiler::JitCompiler(bool enable_guarded_control_flow,
                           !track_direct_stores_);
     attach_link_resolver(link_context, link_resolver);
     attach_indirect_link_resolver(link_context, indirect_link_resolver);
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    attach_gpr_link_profile(gpr_link_profile_context, direct_profile_resolver,
-                            indirect_profile_resolver);
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-    attach_gpr_pressure_profile(profile_gpr_pressure);
-#endif
     emitter_.attach_exit_flush(this, [](void *context) {
       static_cast<JitCompiler *>(context)->flush_exit_gprs();
     });
@@ -73,12 +48,6 @@ JitCompiler::JitCompiler(bool enable_guarded_control_flow,
     translation_features_ = &translation_features;
   }
 
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-void JitCompiler::set_gpr_pressure_profile_enabled(bool enabled) noexcept {
-    configured_profile_gpr_pressure_ = enabled;
-    attach_gpr_pressure_profile(enabled);
-}
-#endif
 
 void JitCompiler::set_gpr_residency_planning_enabled(bool enabled) noexcept {
     gpr_residency_planning_enabled_ = enabled;
@@ -96,10 +65,6 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
                  std::span<const std::uint32_t> instructions) {
     const bool can_plan_gpr_residency =
         gpr_residency_planning_enabled_
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-        && configured_direct_profile_resolver_ == nullptr &&
-        configured_indirect_profile_resolver_ == nullptr
-#endif
         ;
     auto selected =
         compile_once(guest_pc, instructions, can_plan_gpr_residency);
@@ -112,16 +77,6 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
           configured_link_resolver_, track_direct_stores_,
           configured_indirect_link_resolver_,
           configured_persistent_linked_block_abi_
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-          ,
-          configured_gpr_link_profile_context_,
-          configured_direct_profile_resolver_,
-          configured_indirect_profile_resolver_
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-          ,
-          configured_profile_gpr_pressure_
-#endif
       };
       candidate_compiler.translation_features_ = translation_features_;
       candidate_compiler.table_list_planning_enabled_ =
@@ -146,12 +101,6 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
           candidate.native_fp == selected.native_fp &&
           candidate.native_fpmr == selected.native_fpmr &&
           candidate.guest_illegal == selected.guest_illegal
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-          &&
-          candidate.profile_read_before_write ==
-              selected.profile_read_before_write &&
-          candidate.profile_written == selected.profile_written
-#endif
           ;
       if (same_metadata && !candidate.words.empty() &&
           candidate.hot_words < selected.hot_words &&
@@ -179,10 +128,6 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
             std::min(selected.guest_instructions, instructions.size())),
         selected.words, selected.hot_words, track_direct_stores_,
         selected.direct_link_refusals, selected.indirect_link_refusals
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-        ,
-        selected.gpr_pressure
-#endif
     );
     return selected;
   }
@@ -191,12 +136,6 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
                       std::span<const std::uint32_t> instructions,
                       bool observe_gpr_residency) {
     begin_link_observation();
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    begin_gpr_link_profile_block(guest_pc);
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-    begin_gpr_pressure_profile_block();
-#endif
     begin_gpr_residency_observation(observe_gpr_residency);
     select_constrained_vector_pins(instructions);
     if (table_list_planning_enabled_)
@@ -286,14 +225,6 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
     const auto gpr_residency_plan =
         finish_gpr_residency_observation();
     begin_gpr_residency_observation(false);
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-    const auto gpr_pressure = finish_gpr_pressure_profile_block();
-#endif
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    const auto profile_read_before_write =
-        gpr_profile_read_before_write_mask();
-    const auto profile_written = gpr_profile_written_mask();
-#endif
     for (const auto &translation : translation_cold_)
       emit_translation_cold(translation);
     for (const auto &cold : cold_) {
@@ -363,13 +294,6 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
         .guest_illegal = guest_illegal_,
         .gpr_residency_plan = gpr_residency_plan,
     };
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    result.profile_read_before_write = profile_read_before_write;
-    result.profile_written = profile_written;
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-    result.gpr_pressure = gpr_pressure;
-#endif
     return result;
   }
 
@@ -725,9 +649,6 @@ void JitCompiler::emit_code_synchronize(std::uint32_t instruction, std::uint64_t
     store_pc(pc + sizeof(std::uint32_t));
     spill_gprs_for_terminal_call();
     const unsigned source = instruction & 31U;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    profile_gpr_read(source, false);
-#endif
     if (source == 31U)
       emitter_.move_x(0, 31);
     else {

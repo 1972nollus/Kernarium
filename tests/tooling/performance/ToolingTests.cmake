@@ -9,14 +9,6 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
-    NAME jit-gpr-link-profile-analysis
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/tooling/performance/analyze_jit_gpr_link_profile_tests.py
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/tests/perf
-    LABELS cpu;jit
-    TIMEOUT 120)
-
-uml_add_tooling_test(
     NAME performance-runner-cli
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/performance/test_cli.py

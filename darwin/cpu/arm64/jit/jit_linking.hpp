@@ -115,10 +115,6 @@ struct alignas(64) JitBlockLink final {
   std::uint64_t activation_epoch{};
   JitBlockLink *next_target{};
   std::uint32_t allowed_selectors{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  std::uint32_t profile_read_before_write{};
-  bool profile_mask_valid{};
-#endif
   unsigned long generation{};
   JitBlockLink *next_active{};
 };
@@ -128,10 +124,6 @@ struct JitBlockLinkActivation final {
   std::uintptr_t internal_entry{};
   std::uint32_t allowed_selectors{};
   std::uint64_t epoch{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  std::uint32_t profile_read_before_write{};
-  bool profile_mask_valid{};
-#endif
 };
 
 struct JitIndirectLinkEntry final {
@@ -144,13 +136,6 @@ struct JitIndirectLink final {
   std::uint64_t source_pc{};
   std::uint64_t activation_epoch{};
   std::uint8_t next_replacement{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  /*
-   * Generated PIC data remains exactly {guest PC, entry-table pointer}.
-   * Diagnostic attribution retains the owning records out of that hot array.
-   */
-  std::array<const JitBlockLink *, 2> profile_targets{};
-#endif
   unsigned long generation{};
   JitIndirectLink *next_active{};
 };
@@ -200,36 +185,6 @@ private:
   std::unique_ptr<JitBlockLink *[]> index_;
   JitBlockLink *records_{};
   std::size_t owned_size_{};
-};
-
-/* GPR-link profiling resolves targets before arena publication so it can
- * attach stable counter ownership to the compilation. Keep that opt-in
- * diagnostic storage separate from the production link records.
- */
-class JitProfileBlockLinkTable final {
-public:
-  explicit JitProfileBlockLinkTable(std::size_t capacity);
-  ~JitProfileBlockLinkTable();
-
-  JitProfileBlockLinkTable(const JitProfileBlockLinkTable &) = delete;
-  JitProfileBlockLinkTable &operator=(const JitProfileBlockLinkTable &) =
-      delete;
-
-  [[nodiscard]] JitBlockLink *find_or_create(
-      std::uint64_t pc, unsigned long generation = 0);
-  void clear() noexcept;
-  [[nodiscard]] std::size_t size() const noexcept;
-  [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
-
-  [[nodiscard]] static std::size_t
-  allocation_bytes(std::size_t capacity) noexcept;
-
-private:
-  std::size_t capacity_{};
-  std::size_t size_{};
-  std::size_t index_capacity_{};
-  JitBlockLink *records_{};
-  std::unique_ptr<std::uint32_t[]> index_;
 };
 
 /*
@@ -287,11 +242,7 @@ static_assert(link_selector_for_capabilities(15) == 9);
 static_assert(link_selector_for_capabilities(4) ==
               invalid_link_selector);
 static_assert(alignof(JitBlockLink) == 64);
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-static_assert(sizeof(JitBlockLink) == 128);
-#else
 static_assert(sizeof(JitBlockLink) == 64);
-#endif
 static_assert(offsetof(JitBlockLink, guest_pc) == 0);
 static_assert(offsetof(JitBlockLink, instruction_count) == 8);
 static_assert(offsetof(JitBlockLink, internal_entry) == 16);

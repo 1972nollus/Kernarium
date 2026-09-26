@@ -74,9 +74,6 @@ struct SharedTranslation final {
   bool native_fp{};
   bool native_fpmr{};
   bool guest_illegal{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  std::uint32_t profile_read_before_write{};
-#endif
 };
 
 struct SharedTranslationStatistics final {

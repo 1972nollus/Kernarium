@@ -58,10 +58,6 @@ public:
   [[nodiscard]] JitIndirectLinkDiagnostics
   indirect_link_diagnostics() const noexcept;
 #endif
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  [[nodiscard]] JitGprLinkProfileDiagnostics
-  gpr_link_profile_diagnostics() noexcept;
-#endif
 
 private:
   struct PendingIndirect final {
@@ -125,16 +121,6 @@ private:
   resolve_block_link(void *context, std::uint64_t pc);
   [[nodiscard]] static const void *
   resolve_indirect_link(void *context, std::uint64_t source_pc);
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  [[nodiscard]] static std::uint64_t *
-  resolve_direct_link_profile(void *context, const void *target,
-                              std::uint64_t source_pc,
-                              std::uint32_t dirty_live_out);
-  [[nodiscard]] static jit::JitIndirectLinkProfileCounters
-  resolve_indirect_link_profile(void *context, const void *site,
-                                std::uint64_t source_pc,
-                                std::uint32_t dirty_live_out);
-#endif
   [[nodiscard]] JitBlockLink *link_for(std::uint64_t pc);
   [[nodiscard]] JitIndirectLink *
   indirect_link_for(std::uint64_t source_pc);
@@ -198,10 +184,6 @@ private:
                               bool accesses_fp_state, bool link_target_safe,
                               bool native_fp, bool native_fpmr,
                               bool guest_illegal
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-                              ,
-                              std::uint32_t profile_read_before_write
-#endif
   );
   void clear_cache() noexcept;
 
@@ -211,9 +193,6 @@ private:
     std::uint64_t epoch{};
     std::uint64_t stamp{};
     JitBlockLink *active_links{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    JitBlockLink *active_profile_links{};
-#endif
     JitIndirectLink *active_indirect_links{};
   };
 
@@ -227,9 +206,6 @@ private:
   std::shared_ptr<SavedGuestWordSet[]> fallback_saved_guest_words_;
   JitBlockLink empty_link_;
   JitBlockLinkTable links_;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  JitProfileBlockLinkTable profile_links_;
-#endif
   JitIndirectLinkTable indirect_links_;
   // The inline context directory is included in the fixed executor charge.
   // Records remain bounded by the existing link-table capacities.
@@ -266,9 +242,6 @@ private:
   void *shared_publication_context_{};
   JitExecutorDiagnosticsOptions::BeforeSharedPublication
       before_shared_publication_{};
-#endif
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  JitGprLinkProfiler gpr_link_profile_{};
 #endif
   PendingIndirect pending_indirect_{};
   bool preempted_{};

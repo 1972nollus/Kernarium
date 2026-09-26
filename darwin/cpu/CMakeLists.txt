@@ -421,7 +421,7 @@ set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_semantic_memory.cpp
     arm64/jit/jit_semantic_reservation.cpp
     arm64/jit/jit_shared_translations.cpp)
-if(UML_ENABLE_JIT_PROFILE)
+if(UML_ENABLE_RUNTIME_PROFILING)
     list(APPEND _uml_cpu_jit_executor_sources
         arm64/jit/jit_executor_pool_profile.cpp
         arm64/jit/jit_profile_api.cpp

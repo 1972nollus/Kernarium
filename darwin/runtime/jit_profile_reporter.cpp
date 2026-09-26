@@ -7,9 +7,6 @@
 namespace uml::runtime {
 
 void report_jit_profiles() noexcept {
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  ::uml::cpu::arm64::report_global_gpr_link_profile();
-#endif
   ::uml::cpu::arm64::report_jit_runtime_profiles();
 }
 
