@@ -1599,7 +1599,6 @@ floating_conditional_compare_variants le, le
 	 * overwrite exceptions accumulated by the software rare path. */
 	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x17
-#if UML_GADGET_VECTOR_FORWARDING
 	/* The software helper clobbers SIMD scratch registers. Reestablish the
 	 * complete result only on this cold path before forwarding can resume. */
 	ldr x8, [_stream, #-8]
@@ -1607,7 +1606,6 @@ floating_conditional_compare_variants le, le
 	add x11, _cpu, #UML_GADGET_CPU_V0
 	add x12, x11, x9, lsl #4
 	ldr q2, [x12]
-#endif
 	next_gadget
 .endm
 
@@ -5308,12 +5306,10 @@ vector_entry simd_indexed_\name\()_\shape\()_\index, \forward, scalar_offset0, s
 	orr w16, w16, w17
 	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x16
-#if UML_GADGET_VECTOR_FORWARDING
 	/* The cold helper publishes CpuState, not a native vector result. */
 	ldr x8, [_stream, #-16]
 	uxth w9, w8
 	ldr q2, [_cpu, x9]
-#endif
 	next_gadget
 	.endif
 	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, simd_indexed_floating_shape, \name, \operation, \shape, \destination, \source, \element, \index, \scalar, \accumulate, \checked, \fiz

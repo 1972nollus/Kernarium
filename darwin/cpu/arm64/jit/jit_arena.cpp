@@ -177,10 +177,6 @@ void ExecutableArena::activate_link(
 	link.internal_entry = activation.internal_entry;
 	link.allowed_selectors = activation.allowed_selectors;
 	link.activation_epoch = activation.epoch;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-	link.profile_read_before_write = activation.profile_read_before_write;
-	link.profile_mask_valid = activation.profile_mask_valid;
-#endif
 }
 
 void ExecutableArena::deactivate_links(
@@ -193,10 +189,6 @@ void ExecutableArena::deactivate_links(
 		link->internal_entry = 0;
 		link->allowed_selectors = 0;
 		link->activation_epoch = 0;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-		link->profile_read_before_write = 0;
-		link->profile_mask_valid = false;
-#endif
 	}
 }
 

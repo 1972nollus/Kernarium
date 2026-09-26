@@ -59,34 +59,10 @@ gadget link_exit
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
-/* A direct call whose callee was translated inline behind it.
- *
- * All that remains of the call is the link register it sets; control simply
- * continues into the callee's translation, which follows in the stream.
- */
-gadget call_inline
-	ldr x8, [_stream], #8
-	str x8, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	next_gadget
-
-/* The return of an inlined callee.
- *
- * The link register is what the guest will actually branch through, and
- * nothing guarantees the callee left it alone, so the inlined continuation is
- * taken only when it still holds the address the call pushed. Otherwise the
- * block gives back the precharge for everything translated behind this point
- * and falls into the ordinary cached return, whose operands follow.
- */
-gadget return_guarded
-	ldp x8, x9, [_stream], #16
-	ldr x10, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	cmp x10, x8
-	b.ne 99f
-	add _stream, _stream, #16
-	next_gadget
-99:
-	sub x29, x29, x9
-	b NAME(uml_arm64_gadget_return_cached)
+/* Unreachable padding where the inlined-call entries were, so every later
+ * entry keeps the address it was measured at. */
+	.p2align 4
+	.space 64
 
 /*
  * A block that accesses FP/SIMD state keeps this entry word in front of its
@@ -141,23 +117,15 @@ gadget branch_link
 	strb w12, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
 .endm
 
-/* With the return ring built in, the call's second operand is the return
- * block's link rather than the return address, which that BlockLink holds. */
+/* The call's second operand is the return block's link rather than the
+ * return address, which that BlockLink holds. */
 gadget branch_link_linked
 	ldr x8, [_stream], #8
-#if UML_GADGET_RETURN_STACK
 	ldr x11, [_stream]
 	ldr x9, [x11, #16]
 	str x9, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	push_return_record x9, x11
 	follow_block_link x8
-#else
-	ldr x9, [_stream]
-	str x9, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	follow_block_link x8
-	/* Matched-layout control for the return-stack build; unreachable. */
-	.space 32
-#endif
 
 gadget branch_register
 	ldr x8, [_stream]
@@ -193,16 +161,7 @@ gadget return
 	ldp x11, x12, [x9, #16]
 	cmp x10, x11
 	b.eq 98f
-#if UML_GADGET_INDIRECT_ENTRIES >= 4
-	ldp x11, x12, [x9, #32]
-	cmp x10, x11
-	b.eq 98f
-	ldp x11, x12, [x9, #48]
-	cmp x10, x11
-	b.eq 98f
-#endif
 	.if \ras
-#if UML_GADGET_RETURN_STACK
 	/* The newest return record is popped only when it names the live link
 	 * register; anything else leaves the ring alone and exits as before. */
 	ldrb w13, [_cpu, #UML_GADGET_CPU_RETURN_TOP]
@@ -226,33 +185,16 @@ gadget return
 	strb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
 	b 98f
 97:
-#endif
 	.endif
-#if UML_GADGET_TARGET_TIER
-	/* The target table is consulted out of line, so the bank keeps the
-	 * layout it has without it; the padding is unreachable. */
+	/* The target table is consulted out of line; the unreachable padding
+	 * keeps every later entry at the address it was measured at. */
 	b .Ltarget_tier\@
 	.space 12
-#else
-	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x10, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, wzr
-	b uml_arm64_gadget_leave
-#endif
 98:
 	follow_block_link x12
-#if UML_GADGET_INDIRECT_ENTRIES < 4
-	/* Matched-layout control: keep every later entry at the address the
-	 * four-cell build gives it; unreachable. */
+	/* Unreachable padding that keeps every later entry at the address
+	 * it was measured at. */
 	.space 24
-#endif
-	.if \ras
-#if !UML_GADGET_RETURN_STACK
-	/* Matched-layout control for the return-stack build; unreachable. */
-	.space 68
-#endif
-	.endif
-#if UML_GADGET_TARGET_TIER
 	/* Every site of the address space shares one direct-mapped table of
 	 * {target, BlockLink}, filled by the cold helper at each miss, so a
 	 * target any site has missed on before is followed without a round
@@ -287,7 +229,6 @@ gadget return
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 	.popsection
-#endif
 .endm
 
 gadget branch_register_cached
@@ -296,24 +237,15 @@ gadget branch_register_cached
 	follow_indirect_link
 
 /* As branch_link_linked, the return address comes out of the return block's
- * link when the ring is built in. */
+ * link. */
 gadget branch_link_register_cached
 	ldp x8, x9, [_stream], #16
-#if UML_GADGET_RETURN_STACK
 	ldr x14, [_stream]
 	ldr x10, [_cpu, x8]
 	ldr x11, [x14, #16]
 	str x11, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	push_return_record x11, x14
 	follow_indirect_link
-#else
-	ldr x11, [_stream]
-	ldr x10, [_cpu, x8]
-	str x11, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	follow_indirect_link
-	/* Matched-layout control for the return-stack build; unreachable. */
-	.space 32
-#endif
 
 gadget return_cached
 	ldp x8, x9, [_stream]

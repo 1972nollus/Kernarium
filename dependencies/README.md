@@ -51,8 +51,14 @@ generator through `dependencies/bison2-grammar-shim.sh` rather than forking
 the grammars. Platform-specific patches remain scoped by the checked contracts
 and series rather than being described as general hardware capability.
 
-SwiftTerm remains an Xcode Swift Package dependency. It is not part of the
-emulator library prefix.
+Kernarium's serial console uses the `GhosttyTerminal` product of
+[libghostty-spm](https://github.com/Lakr233/libghostty-spm), an Xcode Swift
+Package that the Kernarium project pins to exactly `1.6.20260922`. Its
+libghostty is a prebuilt binary XCFramework, built from Ghostty commit
+`3c47ca15`, which Swift Package Manager fetches from the package's GitHub
+release during Xcode package resolution and verifies against the checksum in
+the package manifest. Neither it nor the package's MSDisplayLink dependency is
+part of the emulator dependency prefixes.
 
 ## Prepare, build, and verify
 
@@ -164,6 +170,17 @@ KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
 regressions use `--suite vulkan`. Assertions must stay active in those builds.
 
+KosmicKrisp never hands Metal a texture view it cannot make, because Metal
+answers one with an assertion that ends the process. An image view whose type,
+levels or layers its image cannot provide fails with
+`VK_ERROR_OUT_OF_DEVICE_MEMORY`, except that a 3D view of a non-3D image is made
+as the 2D or 2D-array texture the image is: Venus creates views without waiting
+for the result, so a refusal would surface later as a lost device. Metal still
+decides pixel-format compatibility. The same invalid views through
+`vkCreateImageView` trip the common runtime's assertions, so
+`kosmickrisp_invalid_view_type` checks them there only in a build without
+assertions and checks the texture bridge directly in the regression suite.
+
 Programmable primitive IDs cross the Metal vertex/fragment interface as flat
 user varyings. Layer and viewport indices use unsigned native Metal attributes
 without interpolation qualifiers.
@@ -178,11 +195,14 @@ ordinary dependencies keep the immediate path, the worker stays off, and
 `vkQueueSubmit` never waits for the GPU work its batch depends on. A binary
 semaphore wait is pending by definition because its signal must have been
 submitted first. That distinction is what keeps a gated batch from blocking
-the caller that has to release it. A timeline wait whose signal is submitted
-later to the same queue remains unsupported: the device exposes one queue and
-submits in order. CPU waits preserve their absolute deadlines and observe
-device loss so pending submissions and queue drains can shut down before
-device resources are released.
+the caller that has to release it. Once the worker runs, a binary semaphore's
+payload moves to the batch waiting on it when the worker reaches that batch,
+after any signal queued ahead of it, never inside `vkQueueSubmit`, where a
+still-queued signal would land on a fresh payload. A timeline wait whose
+signal is submitted later to the same queue remains unsupported: the device
+exposes one queue and submits in order. CPU waits preserve their absolute
+deadlines and observe device loss so pending submissions and queue drains can
+shut down before device resources are released.
 
 A render pass clear depth reaches Metal already rounded to the attachment
 format's nearest representable value and offset inside that texel's interval.

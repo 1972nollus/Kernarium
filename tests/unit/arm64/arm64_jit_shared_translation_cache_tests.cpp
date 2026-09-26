@@ -540,8 +540,6 @@ void codegen_abi_shape_partitions_the_cache_identity()
 	const arm64::SharedTranslationCache::CodegenProfile compiled{};
 	require(compiled.persistent_linked_block_abi ==
 		arm64::persistent_linked_block_abi_default);
-	require(compiled.linked_x8_x9_bank ==
-		arm64::carry_x8_x9_across_links);
 	auto same = compiled;
 	require(same == compiled);
 
@@ -549,9 +547,6 @@ void codegen_abi_shape_partitions_the_cache_identity()
 	memory_abi.persistent_linked_block_abi =
 		!compiled.persistent_linked_block_abi;
 	require(!(memory_abi == compiled));
-	auto other_bank = compiled;
-	other_bank.linked_x8_x9_bank = !compiled.linked_x8_x9_bank;
-	require(!(other_bank == compiled));
 
 	const auto compiled_entry = cache.insert(
 		compiled, guest_pc, guest_words,
@@ -559,20 +554,12 @@ void codegen_abi_shape_partitions_the_cache_identity()
 	const auto memory_abi_entry = cache.insert(
 		memory_abi, guest_pc, guest_words,
 		make_translation(guest_words, 2));
-	const auto other_bank_entry = cache.insert(
-		other_bank, guest_pc, guest_words,
-		make_translation(guest_words, 3));
-	require(compiled_entry != nullptr && memory_abi_entry != nullptr &&
-		other_bank_entry != nullptr);
-	require(compiled_entry != memory_abi_entry &&
-		compiled_entry != other_bank_entry &&
-		memory_abi_entry != other_bank_entry);
+	require(compiled_entry != nullptr && memory_abi_entry != nullptr);
+	require(compiled_entry != memory_abi_entry);
 	require(cache.find(compiled, guest_pc, guest_words) == compiled_entry);
 	require(cache.find(memory_abi, guest_pc, guest_words) ==
 		memory_abi_entry);
-	require(cache.find(other_bank, guest_pc, guest_words) ==
-		other_bank_entry);
-	require(cache.statistics().entries == 3);
+	require(cache.statistics().entries == 2);
 	cache.remove_executor();
 	cache.remove_executor();
 }

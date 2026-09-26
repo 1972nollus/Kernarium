@@ -44,6 +44,11 @@ struct GuestSamplingSlot final {
 	/* Set while the executor runs guest code on that thread. Only then may a
 	 * PC in the bank be resolved through this executor's cache. */
 	std::atomic_bool active{};
+	/* The guest thread pointer (TPIDR_EL0) of the CPU state the executor
+	 * runs, published once per execution and cleared on leaving it. A
+	 * carrier suspended in gadget code is inside that execution, so the
+	 * state it points at is live while the sampler reads it. */
+	std::atomic<const std::uint64_t *> guest_thread{};
 };
 
 namespace {
@@ -65,9 +70,12 @@ namespace {
 	});
 }
 
+/* Samples of one block are kept apart per guest thread, so a profile of a
+ * phase can be narrowed to the thread doing it. */
 struct BlockKey final {
 	std::uint64_t address{};
 	std::uint64_t words{};
+	std::uint64_t thread{};
 
 	bool operator==(const BlockKey &) const noexcept = default;
 };
@@ -76,12 +84,14 @@ struct BlockKeyHash final {
 	[[nodiscard]] std::size_t operator()(const BlockKey &key) const noexcept
 	{
 		return static_cast<std::size_t>(
-			key.address * 0x9e37'79b9'7f4a'7c15ULL ^ key.words);
+			key.address * 0x9e37'79b9'7f4a'7c15ULL ^ key.words ^
+			key.thread * 0xc2b2'ae3d'27d4'eb4fULL);
 	}
 };
 
 struct BlockEntry final {
 	SampledBlock block;
+	std::uint64_t thread{};
 	std::uint64_t count{};
 };
 
@@ -247,6 +257,13 @@ private:
 		const bool resolved = in_bank && target.active != nullptr &&
 			target.active->executor->sample_block(
 				reinterpret_cast<const void *>(state.__x[28] - 8), block);
+		std::uint64_t guest_thread = 0;
+		if (resolved) {
+			const auto *thread_pointer = target.active->guest_thread.load(
+				std::memory_order_relaxed);
+			if (thread_pointer != nullptr)
+				guest_thread = *thread_pointer;
+		}
 		thread_resume(target.thread);
 
 		if (!read)
@@ -255,9 +272,11 @@ private:
 		try {
 			if (resolved) {
 				auto &entry = blocks_[{block.guest_address,
-					hash_words(block)}];
-				if (entry.count++ == 0)
+					hash_words(block), guest_thread}];
+				if (entry.count++ == 0) {
 					entry.block = block;
+					entry.thread = guest_thread;
+				}
 			} else if (in_bank) {
 				++unresolved_;
 			} else {
@@ -268,10 +287,22 @@ private:
 		}
 	}
 
+	/* A host PC's symbol never changes, and dladdr walks the image's symbol
+	 * table on every call: resolving each PC once keeps a periodic dump from
+	 * costing the host a core. Only dump() uses it, under dump_mutex_. */
+	const std::string &cached_host_symbol(std::uintptr_t pc)
+	{
+		auto [entry, inserted] = host_symbols_.try_emplace(pc);
+		if (inserted)
+			entry->second = host_symbol(pc);
+		return entry->second;
+	}
+
 	void dump() noexcept
 	{
 		try {
-			std::vector<std::pair<std::uint64_t, SampledBlock>> blocks;
+			const std::scoped_lock dump_lock{dump_mutex_};
+			std::vector<BlockEntry> blocks;
 			std::vector<std::pair<std::uintptr_t, std::uint64_t>> host;
 			std::uint64_t passes = 0;
 			std::uint64_t samples = 0;
@@ -281,7 +312,7 @@ private:
 				const std::scoped_lock lock{mutex_};
 				blocks.reserve(blocks_.size());
 				for (const auto &[key, entry] : blocks_)
-					blocks.emplace_back(entry.count, entry.block);
+					blocks.push_back(entry);
 				host.assign(host_.begin(), host_.end());
 				passes = passes_;
 				samples = samples_;
@@ -291,7 +322,7 @@ private:
 			std::unordered_map<std::string, std::uint64_t> symbols;
 			std::uint64_t host_total = 0;
 			for (const auto &[pc, count] : host) {
-				symbols[host_symbol(pc)] += count;
+				symbols[cached_host_symbol(pc)] += count;
 				host_total += count;
 			}
 			std::vector<std::pair<std::uint64_t, std::string>> ranked;
@@ -299,11 +330,11 @@ private:
 				ranked.emplace_back(count, name);
 			std::ranges::sort(ranked, std::greater{});
 			std::ranges::sort(blocks, [](const auto &a, const auto &b) {
-				return a.first > b.first;
+				return a.count > b.count;
 			});
 			std::uint64_t guest_total = 0;
-			for (const auto &[count, block] : blocks)
-				guest_total += count;
+			for (const auto &entry : blocks)
+				guest_total += entry.count;
 
 			const auto temporary = path_ + ".tmp";
 			std::FILE *out = std::fopen(temporary.c_str(), "we");
@@ -318,16 +349,18 @@ private:
 				static_cast<unsigned long long>(unresolved),
 				static_cast<unsigned long long>(host_total),
 				static_cast<unsigned long long>(dropped));
-			std::fprintf(out, "# guest\tcount\taddress\tinstructions\twords\n");
-			for (const auto &[count, block] : blocks) {
+			std::fprintf(out, "# guest\tcount\taddress\tinstructions\twords\tthread\n");
+			for (const auto &entry : blocks) {
+				const auto &block = entry.block;
 				std::fprintf(out, "guest\t%llu\t%#llx\t%u\t",
-					static_cast<unsigned long long>(count),
+					static_cast<unsigned long long>(entry.count),
 					static_cast<unsigned long long>(block.guest_address),
 					block.instruction_count);
 				for (std::uint32_t i = 0; i < block.word_count; ++i)
 					std::fprintf(out, "%s%08x", i == 0 ? "" : ",",
 						block.words[i]);
-				std::fputc('\n', out);
+				std::fprintf(out, "\t%#llx\n",
+					static_cast<unsigned long long>(entry.thread));
 			}
 			std::fprintf(out, "# host\tcount\tsymbol\n");
 			for (const auto &[count, name] : ranked)
@@ -342,6 +375,8 @@ private:
 
 	std::string path_;
 	std::chrono::nanoseconds period_;
+	std::mutex dump_mutex_;
+	std::unordered_map<std::uintptr_t, std::string> host_symbols_;
 	std::mutex mutex_;
 	std::vector<std::unique_ptr<GuestSamplingSlot>> slots_;
 	std::vector<Target> targets_;
@@ -403,7 +438,14 @@ void guest_sampling_enter(GuestSamplingSlot &slot) noexcept
 
 void guest_sampling_leave(GuestSamplingSlot &slot) noexcept
 {
+	slot.guest_thread.store(nullptr, std::memory_order_relaxed);
 	slot.active.store(false, std::memory_order_release);
+}
+
+void guest_sampling_thread(
+	GuestSamplingSlot &slot, const std::uint64_t *thread) noexcept
+{
+	slot.guest_thread.store(thread, std::memory_order_relaxed);
 }
 
 void guest_sampling_unregister(GuestSamplingSlot &slot) noexcept

@@ -94,12 +94,7 @@ void JitCompiler::emit_translation_cold(const TranslationColdPath &path) {
                   &uml_arm64_jit_tlb_translate_preserving_fpmr)
             : reinterpret_cast<const void *>(
                   &uml_arm64_jit_tlb_translate_preserving);
-    /* The bridge preserves dynamic host bindings, but every normal C++
-     * boundary still observes canonical guest x8/x9. Reload the continuing
-     * bank in case that boundary changes architectural state. */
-    publish_linked_gprs_for_returning_call();
     emitter_.call_preserving_flags(miss_bridge);
-    reload_linked_gprs_after_returning_call();
     emitter_.move_x(path.address, 0);
     emitter_.compare_zero(path.fault, path.address, true, false);
     emitter_.branch(path.continuation);
@@ -399,15 +394,6 @@ void JitCompiler::emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool lo
     if (!load)
       track_direct_store(8, 64);
 
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    for (unsigned index = 0; index < 8; ++index) {
-      if (load)
-        profile_gpr_write(first + index, false);
-      else
-        profile_gpr_read(first + index, false);
-    }
-#endif
-
     /*
      * The native 64-byte forms name x0-x7 implicitly. Some of those registers
      * are ordinary resident-cache hosts, so publish and invalidate their
@@ -440,12 +426,9 @@ void JitCompiler::emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool lo
     } else {
       emitter_.emit(0xf83f'9100U); // st64b x0, [x8]
     }
-    reload_gprs_after_constrained_sequence();
     if (!load && (status || accdata) && status_register != 31U) {
       /* Normal mapped emulator memory defines its successful status as zero,
        * independent of the host memory system's implementation-defined value.
-       * Apply it after restoring the fixed bank in case the destination is
-       * guest x8 or x9.
        */
       store_gpr(31, status_register, false);
     }

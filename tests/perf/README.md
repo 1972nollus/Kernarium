@@ -239,21 +239,27 @@ arm's emulator environment; `--guest-samples PATH` profiles the boot with the
 guest code sampler below. Guests are not serialized by the tool: take the GPU
 lock and a guest slot around each run, and alternate arms (ABBA) across runs.
 
+`--scenario android_scenarios/NAME.json` follows each successful launch with a
+fixed sequence of sleeps and taps and waits for the scenario's completion line;
+the record adds the guest seconds to that line, the emulator's CPU seconds, and
+the values the scenario's patterns extract from it, such as the phase times an
+application logs. Taps are display coordinates, so a scenario states the
+display size it was written for. `--display vnc --vnc-port N` boots on a VNC
+display instead of the native window, which lets a person watch or steer an
+unattended run.
+
 ## Gadget forwarding controls
 
-Scalar and SIMD/FP forwarding default to ON; dependency coverage remains OFF.
-Set the two forwarding options explicitly for A/B controls. Existing CMake
-caches retain their selected values when source defaults change.
+Scalar and SIMD/FP forwarding are always built; `BuildOptions` selects them per
+program, so controls compare forwarding in one binary.
 
-Build the manual `uml_scalar_ceiling_bench` target with
-`UML_GADGET_SCALAR_FORWARDING=ON` and dependency coverage disabled. Its sources
-live in `scalar_ceiling/`, separately from the freestanding guest probes. The
+The manual `uml_scalar_ceiling_bench` target has its sources in
+`scalar_ceiling/`, separately from the freestanding guest probes. The
 production builder translates the identical A64 bodies used by the native
-control. Same-binary forwarding-off/on runs share the stream, CPU-state, TLB,
-and link addresses; independent controls require byte-identical streams.
-This isolates operand forwarding from code and data layout changes. The
-default sample executes 800 million useful
-instructions; six repetitions alternate execution order and verify results.
+control. Forwarding-off and forwarding-on runs share the stream, CPU-state,
+TLB, and link addresses, which isolates operand forwarding from code and data
+layout changes. The default sample executes 800 million useful instructions;
+six repetitions alternate execution order and verify results.
 
 The ideal loop enters the gadget engine once, executes entirely in precompiled
 gadgets, and exits once. Its private zero-retirement loop link suppresses
@@ -263,38 +269,6 @@ the measured cost. This is an ideal scalar-workload ceiling, not a universal
 application/native ratio. The same two sources also compile native-only on
 AArch64 Linux; that binary can run through `run_guest_command_bench.py` for
 the real-guest comparison. See the executable's `--help` for workload selection.
-
-`UML_GADGET_VECTOR_FORWARDING=ON` independently enables adjacent SIMD/FP
-forwarding. For application-speed comparisons, keep dependency coverage and
-sampling disabled and compare matched builds with neither option, scalar only,
-and scalar plus vector forwarding. `run_guest_geekbench.py --cpus 4` runs both
-single-core and multi-core sets by default; omit an iteration override for
-Geekbench's default workload sizing. Alternate or reverse run order and retain
-individual results rather than interpreting one score as a stable gain.
-
-For execution-weighted coverage, use a separate
-`UML_GADGET_DEPENDENCY_COVERAGE=ON` build. The Geekbench runner's
-`--coverage-file` records counters and workload events; use each installed
-version's full single-core set with `--iterations 1 --no-upload`. Aquarium
-uses `DARWIN_UML_GADGET_DEPENDENCY_COVERAGE` with its ordinary runner. Analyze
-the corresponding files with `analyze_gadget_dependencies.py --help`. The
-analyzer separates single-core and multi-core sections when both are present.
-Use both forwarding options when measuring the enabled combined policy;
-coverage alone records the same declared opportunities without selecting
-forwarding variants.
-
-Counters are per entered decoder group and declared source accessor. Scalar
-sources include memory addresses; SIMD/FP sources follow the vector contracts.
-Each group belongs to one catalog or the unsupported bucket, so combined
-percentages divide summed counts without double-counting. Reports show scalar,
-SIMD/FP, and combined coverage against all entered guest words and declared
-eligible sources. Older scalar-only captures report SIMD coverage as unavailable,
-not zero. Window attribution uses nominal 100-ms counter snapshots and host
-polls (100 ms for Geekbench console markers, 500 ms for Aquarium); carrier
-snapshots are not globally atomic. Conditional reads are potential accesses,
-and no cross-block dependency is inferred. Report both all-guest-word coverage
-and the declared-source denominator. Never use instrumented scores as speed
-evidence.
 
 ## Execution histogram
 
@@ -320,9 +294,11 @@ second); the profile is rewritten there every two seconds, when a run ends,
 and at exit. A sampler thread suspends each vCPU carrier in turn; when the
 carrier is inside gadget code, its executor names the translated block and the
 guest instruction words it came from, and any other host PC is counted by host
-symbol (the guest kernel, the executor, translation, MMU). Guest entry and exit
-store one flag each; the translated code is unchanged. Only the gadgets engine
-is sampled, so a macOS run, whose default engine is the JIT, needs
+symbol (the guest kernel, the executor, translation, MMU). Each block sample
+also records the guest thread pointer (`TPIDR_EL0`) it ran under, which tells
+one busy guest thread from a pool. Guest entry and exit store one flag each;
+the translated code is unchanged. Only the gadgets engine is sampled, so a
+macOS run, whose default engine is the JIT, needs
 `--execution-engine=gadgets`.
 
 `symbolize_guest_samples.py PROFILE ELF_OR_DIR...` finds each block's words in
@@ -331,7 +307,10 @@ and function regardless of where the guest loaded it. For an Android
 application, pass its APK's `lib/arm64-v8a` and the guest's `/system/lib64`,
 `/apex/*/lib64` and `/system/bin` (all readable through `adb pull` on user
 builds). A block is attributed at its first instruction, so time in a block
-that falls through a function boundary counts against the first function.
+that falls through a function boundary counts against the first function. The
+report ranks guest threads; `--thread TPIDR` restricts it to one of them. The
+profile is cumulative, so copy it at a phase boundary and pass that copy as
+`--baseline` to report only the interval after it.
 
 ## Cache census
 
@@ -374,6 +353,23 @@ registrations and do not enter ordinary suite aggregates.
 The 16 KiB alias probe is page-profile-specific, and the LSE atomic probe needs
 assembler support for that extension. Other probes declare any restriction in
 the manifest.
+
+## Loader corpus
+
+A probe isolates one mechanism; an application's load phase is ordinary
+scalar code spread across many. [`guest_loader_corpus.sh`](guest_loader_corpus.sh)
+runs real programs from the Debian rootfs whose work resembles one: gzip,
+xz and bzip2 decompression, a bind-now dynamic link of a large library,
+Python imports, sort, glibc regular expressions, a C front end, Perl hash
+churn, JVM start-up and Node start-up. It runs inside the guest under any
+console runner (on the iPad through `KERNARIUM_GUEST_SCRIPT`), prepares its
+inputs from rootfs files, runs every workload once to warm the page and
+translation caches, and prints `CORPUS:<name>:<round>:<runs>:<centiseconds>`
+per workload and round. A workload the rootfs cannot run prints
+`CORPUS_SKIP:<name>` once and is left out; the iPad image has no `cc1`, so it
+skips the C front end. `CORPUS_ROUNDS` and `CORPUS_ONLY` select the work.
+Each workload is sized to about two seconds on a gadgets guest, so compare
+arms round by round rather than across launches.
 
 ## Ideal gadget ceiling
 

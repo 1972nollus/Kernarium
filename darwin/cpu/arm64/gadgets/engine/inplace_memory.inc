@@ -32,8 +32,6 @@
  * nothing, because XZR never reaches CpuState.
  */
 
-#if UML_GADGET_INPLACE_MEMORY
-
 .macro scalar_unsigned_inplace_register load, bits64, reg, prefix
 	.set .Lipmem\@, 0x8000 | (\reg * 8)
 scalar_unsigned_fast \load, \bits64, 0, 0, \prefix\()_r_\reg, .Lipmem\@
@@ -85,4 +83,3 @@ scalar_unsigned_inplace_row load64_unsigned_inplace, r_sp
 .purgem scalar_unsigned_inplace_register
 .purgem scalar_unsigned_fast
 
-#endif

@@ -110,7 +110,6 @@ using Gadget = void (*)();
 	[[maybe_unused]] bool base_sp,
 	[[maybe_unused]] unsigned transferred) noexcept
 {
-#if UML_GADGET_INPLACE_MEMORY
 	/* Only the scaled 32- and 64-bit forms are baked, and XZR never reaches
 	 * CpuState, so everything else keeps the established entry. */
 	if ((size != 2U && size != 3U) || operation > 1U || transferred >= 31U)
@@ -120,9 +119,6 @@ using Gadget = void (*)();
 		(base_sp ? 1U : 0U)) * 31U + transferred;
 	return reinterpret_cast<Gadget>(
 		uml_arm64_gadget_scalar_unsigned_inplace_table[index]);
-#else
-	return nullptr;
-#endif
 }
 
 [[nodiscard]] Gadget vector_unsigned_memory_gadget(

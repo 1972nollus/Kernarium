@@ -8,9 +8,6 @@
 #include <memory>
 #include <vector>
 
-#ifndef UML_GADGET_EXACT_CACHE_VALIDATION
-#error "gadget cache validation test needs the configured selector"
-#endif
 #ifndef UML_GADGET_CACHE_SLOTS
 #error "gadget cache validation test needs the configured cache geometry"
 #endif
@@ -91,14 +88,9 @@ void unchanged_words_avoid_retranslation()
 		::uml::cpu::EngineEvent::system_call);
 	require(cpu.registers[0] == 7);
 	const auto diagnostics = executor.cache_diagnostics();
-#if UML_GADGET_EXACT_CACHE_VALIDATION
 	require(diagnostics.translations == 1);
 	require(diagnostics.validation_attempts == 1);
 	require(diagnostics.validation_hits == 1);
-#else
-	require(diagnostics.translations == 2);
-	require(diagnostics.validation_attempts == 0);
-#endif
 }
 
 void changed_words_rebuild_and_republish_links()
@@ -144,15 +136,10 @@ void changed_words_rebuild_and_republish_links()
 	require(cpu.registers[0] == 2);
 
 	const auto diagnostics = executor.cache_diagnostics();
-#if UML_GADGET_EXACT_CACHE_VALIDATION
 	require(diagnostics.translations == 3);
 	require(diagnostics.validation_attempts == 2);
 	require(diagnostics.validation_hits == 1);
 	require(diagnostics.validation_mismatches == 1);
-#else
-	require(diagnostics.translations == 4);
-	require(diagnostics.validation_attempts == 0);
-#endif
 }
 
 /* Linux writes a traced process's text through its own view of the frame --
@@ -250,11 +237,9 @@ void an_unrelated_code_change_resets_an_untouched_link()
 	cpu = {};
 	cpu.pc = code_base;
 	const auto reset_link = run_once(executor, memory, generation, cpu);
-#if UML_GADGET_EXACT_CACHE_VALIDATION
 	require(reset_link.event == ::uml::cpu::EngineEvent::continued);
 	require(reset_link.executed == 1);
 	require(cpu.pc == target);
-#endif
 
 	/* The words never changed, so both blocks revalidate and relink rather
 	 * than retranslating.
@@ -268,13 +253,9 @@ void an_unrelated_code_change_resets_an_untouched_link()
 	require(relinked.executed == 3);
 	require(cpu.registers[0] == 5);
 	const auto diagnostics = executor.cache_diagnostics();
-#if UML_GADGET_EXACT_CACHE_VALIDATION
 	require(diagnostics.translations == 2);
 	require(diagnostics.validation_hits == diagnostics.validation_attempts);
 	require(diagnostics.validation_mismatches == 0);
-#else
-	require(diagnostics.validation_attempts == 0);
-#endif
 }
 
 /* Retiring the least recently current address space drops its translations and
@@ -337,7 +318,6 @@ void retiring_an_address_space_keeps_the_others()
 	require(executor->cache_diagnostics().translations == after_fill + 2);
 }
 
-#if UML_GADGET_EXACT_CACHE_VALIDATION
 /* Mirrors ProgramCache::locate(): the set a translation lands in folds the
  * address space into the index, so the only way to aim several address spaces
  * at one set of ways from outside is to choose generations that collide there.
@@ -478,7 +458,6 @@ void a_replaced_slot_drops_the_previous_owner_link()
 	 */
 	require(executor->cache_diagnostics().validation_attempts == 0);
 }
-#endif
 
 } // namespace
 
@@ -489,10 +468,6 @@ int main()
 	a_kernel_text_write_republishes_through_the_bridge();
 	an_unrelated_code_change_resets_an_untouched_link();
 	retiring_an_address_space_keeps_the_others();
-#if UML_GADGET_EXACT_CACHE_VALIDATION
-	/* Without exact validation every address-space switch empties the
-	 * cache, so no slot can ever pass from one address space to another. */
 	a_replaced_slot_drops_the_previous_owner_link();
-#endif
 	return 0;
 }

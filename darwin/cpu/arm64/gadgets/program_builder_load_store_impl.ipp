@@ -235,12 +235,10 @@ DecodeResult decode_load_store(DecodeContext &context)
 		const auto operation = opcode == 0xb940'0000U ||
 			opcode == 0xf940'0000U ? 1U : 0U;
 		Gadget transfer = nullptr;
-#if UML_GADGET_INPLACE_MEMORY
 		if (!transfer_zero) {
 			transfer = scalar_unsigned_memory_inplace_gadget(
 				scale, operation, base == 31U, reg);
 		}
-#endif
 		if (transfer == nullptr) {
 			transfer = scalar_unsigned_memory_gadget(
 				scale, operation, base == 31U, transfer_zero);

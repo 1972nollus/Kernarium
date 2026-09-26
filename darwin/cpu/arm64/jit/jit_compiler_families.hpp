@@ -2,9 +2,6 @@
 #pragma once
 
 #include "cpu/engine.hpp"
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-#include "jit_gpr_pressure_profile.hpp"
-#endif
 
 #include <array>
 #include <cstddef>
@@ -18,13 +15,6 @@ using ::uml::cpu::ArmFeature;
 using ::uml::cpu::ArmFeatureSet;
 using ::uml::cpu::host_capabilities;
 
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-struct JitIndirectLinkProfileCounters final {
-  std::uint64_t *first{};
-  std::uint64_t *second{};
-};
-#endif
-
 /*
  * Family emitters live in separate translation units.  This small bridge
  * deliberately hides the executor's concrete Arm64Emitter: family code sees
@@ -37,13 +27,6 @@ protected:
   using Label = std::size_t;
   using LinkResolver = const void *(*)(void *, std::uint64_t);
   using IndirectLinkResolver = const void *(*)(void *, std::uint64_t);
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  using DirectLinkProfileResolver =
-      std::uint64_t *(*)(void *, const void *, std::uint64_t, std::uint32_t);
-  using IndirectLinkProfileResolver =
-      JitIndirectLinkProfileCounters (*)(void *, const void *, std::uint64_t,
-                                        std::uint32_t);
-#endif
 
   JitCompilerFamilies() = default;
 
@@ -56,25 +39,6 @@ protected:
   [[nodiscard]] std::size_t indirect_link_refusals() const noexcept;
   void attach_indirect_link_resolver(
       void *context, IndirectLinkResolver resolver) noexcept;
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  void attach_gpr_link_profile(
-      void *context, DirectLinkProfileResolver direct_resolver,
-      IndirectLinkProfileResolver indirect_resolver) noexcept;
-  void begin_gpr_link_profile_block(std::uint64_t pc) noexcept;
-  [[nodiscard]] std::uint32_t
-  gpr_profile_read_before_write_mask() const noexcept;
-  [[nodiscard]] std::uint32_t gpr_profile_written_mask() const noexcept;
-  [[nodiscard]] std::uint32_t
-  gpr_profile_dirty_live_out_mask() const noexcept;
-  void profile_gpr_read(unsigned guest, bool stack_pointer) noexcept;
-  void profile_gpr_write(unsigned guest, bool stack_pointer) noexcept;
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  void attach_gpr_pressure_profile(bool enabled) noexcept;
-  void begin_gpr_pressure_profile_block() noexcept;
-  [[nodiscard]] JitGprPressureProfile
-  finish_gpr_pressure_profile_block() const noexcept;
-#endif
 
   void emit(std::uint32_t instruction);
   [[nodiscard]] Label make_label();
@@ -155,11 +119,8 @@ protected:
   void flush_exit_gprs();
   void spill_gprs_for_returning_call();
   void reload_gprs_after_call();
-  void publish_linked_gprs_for_returning_call();
-  void reload_linked_gprs_after_returning_call();
   void spill_gprs_for_terminal_call();
   void flush_and_invalidate_gprs();
-  void reload_gprs_after_constrained_sequence();
   void flush_link_transition_state();
 
   void store_pc(std::uint64_t pc);
@@ -320,8 +281,6 @@ protected:
 
 private:
   static constexpr unsigned unbound_guest = 32U;
-  static constexpr std::array<unsigned, 2> linked_gpr_guests{8U, 9U};
-  static constexpr std::array<unsigned, 2> linked_gpr_hosts{22U, 23U};
   static constexpr std::array<unsigned, 8> resident_gpr_hosts{
       3U, 4U, 5U, 6U, 7U, 12U, 13U, 17U};
   static_assert([] {
@@ -358,32 +317,6 @@ private:
   [[nodiscard]] static std::size_t
   residency_benefit(const GprResidencyGuest &guest) noexcept;
 
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  struct GprPressureGuest final {
-    static constexpr unsigned no_rank = 0xffU;
-
-    unsigned rank{no_rank};
-    std::size_t fallback_read_loads{};
-    std::size_t fallback_write_stores{};
-    std::size_t required_resident_accesses{};
-    bool resident_value_available{};
-    bool dirty{};
-  };
-
-  void profile_gpr_slot_allocation(std::size_t slots) noexcept;
-  void profile_gpr_overflow_native_access(
-      unsigned guest, bool stack_pointer, bool reads_old,
-      bool writes) noexcept;
-  void profile_gpr_overflow_nonallocating_access(
-      unsigned guest, bool stack_pointer, bool reads_old,
-      bool writes) noexcept;
-  void profile_gpr_overflow_fallback_store(
-      unsigned guest, bool stack_pointer) noexcept;
-  [[nodiscard]] GprPressureGuest *
-  find_profiled_overflow_guest(unsigned guest,
-                               bool stack_pointer) noexcept;
-#endif
-
   struct VectorSlot final {
     unsigned guest{unbound_guest};
     bool loaded{};
@@ -394,15 +327,11 @@ private:
   find_gpr_slot(unsigned guest, bool stack_pointer) const noexcept;
   [[nodiscard]] std::optional<std::size_t>
   allocate_gpr_slot(unsigned guest, bool stack_pointer);
-  [[nodiscard]] std::optional<unsigned>
-  linked_gpr_host(unsigned guest, bool stack_pointer) const noexcept;
   [[nodiscard]] std::optional<std::size_t>
   find_vector_slot(unsigned guest) const noexcept;
   [[nodiscard]] std::optional<std::size_t>
   allocate_vector_slot(unsigned guest);
   void flush_gprs(std::uint16_t mask);
-  void flush_linked_gpr_bank();
-  void reload_linked_gpr_bank();
   void flush_vectors(std::uint32_t mask);
 
   std::array<GprSlot, resident_gpr_hosts.size()> gpr_slots_{};
@@ -415,10 +344,7 @@ private:
   GuestFlagsState guest_flags_state_{GuestFlagsState::memory};
   bool exit_gpr_mask_set_{};
   bool exit_vector_mask_set_{};
-  bool exit_linked_gpr_bank_published_{};
   bool gpr_cache_enabled_{};
-  bool linked_gpr_bank_enabled_{};
-  std::uint32_t linked_gpr_bank_dirty_mask_{};
   void *family_emitter_{};
   bool *family_native_fp_{};
   bool *family_native_fpmr_{};
@@ -428,20 +354,6 @@ private:
   void *indirect_link_context_{};
   IndirectLinkResolver indirect_link_resolver_{};
   std::size_t indirect_link_refusals_{};
-#if defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-  std::uint64_t profile_block_pc_{};
-  std::uint32_t profile_gpr_read_before_write_{};
-  std::uint32_t profile_gpr_written_{};
-  void *gpr_link_profile_context_{};
-  DirectLinkProfileResolver direct_link_profile_resolver_{};
-  IndirectLinkProfileResolver indirect_link_profile_resolver_{};
-#endif
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-  bool gpr_pressure_profile_enabled_{};
-  std::size_t gpr_pressure_next_rank_{};
-  JitGprPressureProfile gpr_pressure_profile_{};
-  std::array<GprPressureGuest, 32> gpr_pressure_guests_{};
-#endif
 };
 
 } // namespace uml::cpu::arm64::jit

@@ -5,8 +5,6 @@ guest_compare_branch_pair_loop.S	control-flow	base	run_guest_link_bench.py	Guest
 guest_compare_register_branch_loop.S	control-flow	base	run_guest_link_bench.py	Guest CMP of two registers followed by B.cond. G116 ranks this pair fourth and ninth over a full Geekbench run while the immediate form does not reach the table, so the two shapes get separate probes.
 guest_compare_retry_loop.S	atomic	base	run_guest_link_bench.py	Private compare-and-retry control for exclusive sequence quality.
 guest_compare_retry_shared_status_loop.S	atomic	base	run_guest_link_bench.py	Exercises the shared load-result and store-status register fallback shape.
-guest_fixed_gpr_link_loop.S	control-flow	base	run_guest_link_bench.py	Self-checking historical x0/x1 linked-loop control for the fixed x8/x9 bank's entry, exit, and link overhead.
-guest_fixed_x8_x9_link_loop.S	control-flow	base	run_guest_link_bench.py	Measures the exact guest x8/x9 resident bank across a linked backward edge, paired with guest_fixed_gpr_link_loop.S as its overhead control.
 guest_fp_environment_loop.S	floating-state	base	run_guest_link_bench.py	Measures floating-state activation and restoration overhead.
 guest_fp_environment_run_loop.S	floating-state	base	run_guest_link_bench.py	Measures a run of native floating-point operations sharing one program-level environment activation.
 guest_fp_link_loop.S	floating-state	base	run_guest_link_bench.py	Measures vector-state successor linking through a conditional self-edge.
@@ -25,6 +23,7 @@ guest_inplace_memory_loop.S	memory	base	run_guest_link_bench.py	Matched control 
 guest_integer_pair_loop.S	memory	base	run_guest_link_bench.py	Matched control for same-page native integer pair transfers.
 guest_link_loop.S	control-flow	base	run_guest_link_bench.py	Baseline for cached direct successor-link throughput.
 guest_logical_move_loop.S	integer	base	run_guest_link_bench.py	Matched control for logical-register move alias lowering.
+guest_mmap_churn_loop.S	tlb	base	run_guest_link_bench.py	Maps an anonymous region, faults in and checks every page, and unmaps it, as allocators and loaders return memory. Measures publishing and removing host mappings and the software TLB range invalidation an unmap causes.
 guest_memory_site_loop.S	memory	base	run_guest_link_bench.py	Measures repeated scalar and vector accesses at stable translated sites.
 guest_mmu_miss_walk_loop.S	tlb	base	run_guest_link_bench.py	Walks twice the software TLB's capacity from threads sharing one address space, so every access is a miss and the software-MMU translate path is measured under the concurrency the multi-core phase produces.
 guest_move_keep_extract_loop.S	integer	base	run_guest_link_bench.py	MOVK at every halfword position and EXTR at both widths plus the ROR alias, in the loop body. The other integer probes reach these entries only while materialising their iteration count.
@@ -33,6 +32,7 @@ guest_pc_relative_address_loop.S	integer	base	run_guest_link_bench.py	The ADRP p
 guest_polymorphic_indirect_loop.S	control-flow	base	run_guest_link_bench.py	Rotates one BLR site through thirty-two targets, more than any site's cells hold, as virtual calls and handler dispatch do. Pairs with guest_indirect_link_loop.S as the monomorphic control.
 guest_reservation_store_fallback_loop.S	atomic	base	run_guest_link_bench.py	Exercises the software reservation fallback followed by publication.
 guest_reservation_store_loop.S	atomic	base	run_guest_link_bench.py	Exercises the bounded native reservation sequence followed by publication.
+guest_process_switch_loop.S	tlb	base	run_guest_link_bench.py	A parent and a forked child pinned to one CPU hand a byte back and forth over pipes and each touch a small working set, so every hand-off switches one vCPU's software TLB between address spaces. The only probe whose cost is the TLB flush and refill a context switch causes.
 guest_scalar_byte_loop.S	memory	base	run_guest_link_bench.py	Matched control for the page-contained scalar byte fast path.
 guest_scalar_mix_loop.S	integer	base	run_guest_link_bench.py	Realistic scalar mix (loads, stores, pairs, narrow accesses, flag-setting ALU, selects, a never-taken check and two data-dependent skips) sharing its body with the ideal gadget ceiling bench and printing the checksum, path counts and retired instructions the host bench must reproduce.
 guest_simd_basic_fadd_loop.S	simd	base	run_guest_link_bench.py	Measures basic vector floating arithmetic register addressing.
@@ -49,6 +49,7 @@ guest_simd_three_same_add_loop.S	simd	base	run_guest_link_bench.py	Measures same
 guest_simd_unsigned_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measures same-page unsigned-offset vector memory runs.
 guest_sp_memory_run_loop.S	memory	base	run_guest_link_bench.py	Measures adjacent scalar memory runs addressed directly from SP.
 guest_syscall_boundary_loop.S	base	base	run_guest_link_bench.py	Repeated getpid, the cheapest syscall the guest kernel offers, so the loop measures the guest entry boundary rather than the work behind it. The only probe that exercises the per-entry thread execution state resolution.
+guest_tagged_vector_memory_loop.S	memory	base	run_guest_link_bench.py	SIMD&FP transfers through a top-byte-tagged pointer with the tagged-address ABI enabled, as every Android process with heap pointer tagging makes them. The other vector memory probes use untagged addresses.
 guest_tlb_128m_alias_loop.S	tlb	base	run_guest_link_bench.py	Detects regressions in 16 KiB TLB indexing and set associativity.
 guest_vector_pair_loop.S	memory	base	run_guest_link_bench.py	Matched control for same-page native vector pair transfers.
 guest_vector_store32_register_offset_loop.S	memory	base	run_guest_link_bench.py	Executes five fixed-work samples of 160 million STR S register-offset stores selecting vector_other_store32_x_0, matched instruction-for-instruction with the unsigned-offset probe for cross-host comparison.

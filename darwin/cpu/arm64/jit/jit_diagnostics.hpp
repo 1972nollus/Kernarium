@@ -2,9 +2,6 @@
 #pragma once
 
 #include "jit_runtime_contract.hpp"
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-#include "jit_gpr_pressure_profile.hpp"
-#endif
 
 #include <cstdint>
 #include <span>
@@ -24,10 +21,6 @@ void profile_jit_compilation(
     std::span<const std::uint32_t> host_words, std::size_t hot_words,
     bool tracked, std::size_t direct_link_refusals,
     std::size_t indirect_link_refusals
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-    ,
-    const jit::JitGprPressureProfile &gpr_pressure
-#endif
 );
 void profile_jit_cache_replacement(bool eviction) noexcept;
 void profile_jit_arena_reset() noexcept;
@@ -52,10 +45,6 @@ inline constexpr void profile_jit_compilation(
     std::uint64_t, std::span<const std::uint32_t>,
     std::span<const std::uint32_t>, std::size_t, bool, std::size_t,
     std::size_t
-#if defined(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE)
-    ,
-    const jit::JitGprPressureProfile &
-#endif
 ) noexcept {}
 inline constexpr void profile_jit_cache_replacement(bool) noexcept {}
 inline constexpr void profile_jit_arena_reset() noexcept {}

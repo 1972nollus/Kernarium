@@ -144,10 +144,11 @@ NAME(uml_arm64_gadget_\name):
  * which becomes the host address on the fall-through path. The pair
  * transfer_translate / transfer_translate_cold replaces branch_if_cross_page
  * plus translate; the cold half is placed after the gadget's dispatch and
- * resumes at \resume. \check1 reproduces the control's check of one-byte
- * transfers; the fused build never checks them because they cannot cross.
+ * resumes at \resume. One-byte transfers cannot cross and are never checked;
+ * \check1 marks those whose retired unfused form checked them anyway, which
+ * the cold half's layout padding accounts for.
  *
- * With UML_GADGET_FUSED_TRANSLATE the 16 KiB build keys the lookup by the
+ * The 16 KiB build keys the lookup by the
  * page of the transfer's final byte while indexing by its first: pages n and
  * n + 1 never share a direct-mapped set, so a crossing transfer can only miss
  * and the cold path is where it is recognized. The folded 4 KiB index can map
@@ -157,7 +158,6 @@ NAME(uml_arm64_gadget_\name):
  * loops. Scratch: x8-x12.
  */
 .macro transfer_translate access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0, fault=uml_arm64_gadget_memory_fault
-#if UML_GADGET_FUSED_TRANSLATE
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	.if \bytes > 1
 	add x8, \address, #(\bytes - 1)
@@ -185,29 +185,15 @@ NAME(uml_arm64_gadget_\name):
 	b.ne \cold
 	add \address, x12, \address
 \resume:
-#else
-	.if \bytes > 1 || \check1
-	branch_if_cross_page \address, \bytes, x9, \cross
-	.endif
-	.ifnc \address, x7
-	mov x7, \address
-	.endif
-	translate \access, \page_offset, \forward, \fault
-	.ifnc \address, x7
-	mov \address, x7
-	.endif
-#endif
 .endm
 
-/* Second way, crossing, miss and fault handling for transfer_translate. The
- * two builds emit different word counts per entry; whichever is shorter pads
- * the difference after its last branch, so both keep every later entry at the
- * same address for matched A/B layouts. */
+/* Second way, crossing, miss and fault handling for transfer_translate. It
+ * pads after its last branch to the word count the retired unfused form had,
+ * so every later entry keeps the address it was measured at. */
 /* outofline=1 when the caller places this tail in a section of its own: a
  * conditional branch cannot leave its section, so the fault exit takes the
  * same trampoline the forwarding arm already uses. */
 .macro transfer_translate_cold access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0, outofline=0, fault=uml_arm64_gadget_memory_fault
-#if UML_GADGET_FUSED_TRANSLATE
 \cold:
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	.if \access
@@ -241,7 +227,7 @@ NAME(uml_arm64_gadget_\name):
 	add \address, x12, \address
 	b \resume
 #endif
-	/* Words the control has and this build lacks: three when the control
+	/* Words the unfused form had and this one lacks: three when it
 	 * checked a one-byte transfer, two for the pair moves, minus one for the
 	 * relocated cross-page check of a wider transfer (16 KiB). */
 	.set .Ltt_pad\@, 0
@@ -257,15 +243,6 @@ NAME(uml_arm64_gadget_\name):
 	.if .Ltt_pad\@ > 0
 	.space 4 * .Ltt_pad\@
 	.endif
-#elif DARWIN_UML_GUEST_PAGE_SIZE == 16384
-	/* The fused build's wider x7 transfers carry one word more; pad the
-	 * control so the A/B layouts match. */
-	.if \bytes > 1
-	.ifc \address, x7
-	.space 4
-	.endif
-	.endif
-#endif
 .endm
 
 /* Rare cross-page accesses stay on the gadget path. The helper validates all
@@ -356,7 +333,7 @@ NAME(uml_arm64_gadget_enter):
 	stp x26, x27, [sp, #0x40]
 	stp x28, x29, [sp, #0x50]
 	str lr, [sp, #0x60]
-#if UML_GADGET_DEPENDENCY_COVERAGE || UML_GADGET_EXECUTION_HISTOGRAM
+#if UML_GADGET_EXECUTION_HISTOGRAM
 	str x4, [sp, #0x70]
 #endif
 	str wzr, [sp, #0x84]
@@ -472,14 +449,10 @@ move_wide_keep 1, 48, x3
 	.set .Lsn\@, scalar_sp
 	.endif
 scalar_entry add_sub_immediate_\suffix, \forward, 1, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
-#if UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
 	/* This family is non-faulting and leaves x14 free. Builder always emits a
 	 * terminal after a translated fallthrough, so the successor word exists
 	 * even when this is the final guest instruction in the block. */
 	ldp x8, x14, [_stream], #16
-#else
-	ldr x8, [_stream], #8
-#endif
 	.if \source_sp
 	scalar_load_sp \forward, 1, x15
 	.else
@@ -526,15 +499,11 @@ scalar_entry add_sub_immediate_\suffix, \forward, 1, .Lsd\@, .Lsn\@, scalar_none
 	and w9, w8, #0x1f
 	str _scalar_x16, [_cpu, x9, lsl #3]
 	.endif
-#if UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
 	br x14
 	/* The removed successor LDR is restored as unreachable padding. Every
 	 * affected entry therefore retains its baseline size and all later entry
 	 * addresses and 64-byte phases remain unchanged. */
 	.space 4
-#else
-	next_gadget
-#endif
 	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, add_sub_immediate_fast, \bits64, \subtract, \flags, \source_sp, \destination_special, \suffix
 .endm
 
@@ -1740,15 +1709,8 @@ extract_sources 1, 1, x_s
 scalar_entry conditional_select_fast_\name\()_\suffix, \forward, 9, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
-#if UML_GADGET_SCALAR_FORWARDING
 	scalar_load \forward, 1, x15, 10, 8, 16
 	scalar_load \forward, 2, x16, 11, 8, 32
-#else
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	ldr x15, [_cpu, x10]
-	ldr x16, [_cpu, x11]
-#endif
 	msr nzcv, x27
 	.if \bits64
 		.if \operation == 0
@@ -2163,12 +2125,10 @@ scalar_entry bitfield_\suffix, \forward, 13, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none
 	.else
 	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
 	.endif
-#if UML_GADGET_SCALAR_FORWARDING
 	.if \operation == 1
 	/* Capture the old destination before the result overwrites x0. */
 	scalar_load \forward, 2, x6, 9, 8, 0
 	.endif
-#endif
 	.if !\bits64
 	mov w15, w15
 	.endif
@@ -2189,10 +2149,6 @@ scalar_entry bitfield_\suffix, \forward, 13, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none
 	tst x6, #1
 	csetm x6, ne
 	.elseif \operation == 1
-#if !UML_GADGET_SCALAR_FORWARDING
-	and x9, x8, #0xffff
-	ldr x6, [_cpu, x9]
-#endif
 	bic x7, x6, x14
 	orr _scalar_x16, _scalar_x16, x7
 	.else
@@ -2234,54 +2190,24 @@ bitfield_sources 2, 1, x_u
 	.set .Lsn\@, scalar_offset0
 scalar_entry bit_reverse_count_\suffix, \forward, 14, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
 	ldr x9, [_stream], #8
-#if UML_GADGET_SCALAR_FORWARDING
 	lsr x11, x9, #16
 	scalar_load \forward, 1, x12, 10, 9, 0
-#else
-	and x10, x9, #0xffff
-	lsr x11, x9, #16
-	ldr x12, [_cpu, x10]
-#endif
 	.if \native
 		.if \bits64
 			.if \operation == 6
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0xdac01980 /* ctz x0, x12 */
-#else
-	.inst 0xdac0198d /* ctz _scalar_x13, x12 */
-#endif
 			.elseif \operation == 7
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0xdac01d80 /* cnt x0, x12 */
-#else
-	.inst 0xdac01d8d /* cnt _scalar_x13, x12 */
-#endif
 			.else
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0xdac02180 /* abs x0, x12 */
-#else
-	.inst 0xdac0218d /* abs _scalar_x13, x12 */
-#endif
 			.endif
 		.else
 			.if \operation == 6
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0x5ac01980 /* ctz w0, w12 */
-#else
-	.inst 0x5ac0198d /* ctz _scalar_w13, w12 */
-#endif
 			.elseif \operation == 7
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0x5ac01d80 /* cnt w0, w12 */
-#else
-	.inst 0x5ac01d8d /* cnt _scalar_w13, w12 */
-#endif
 			.else
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0x5ac02180 /* abs w0, w12 */
-#else
-	.inst 0x5ac0218d /* abs _scalar_w13, w12 */
-#endif
 			.endif
 		.endif
 	.elseif \bits64
