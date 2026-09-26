@@ -162,6 +162,17 @@ KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
 regressions use `--suite vulkan`. Assertions must stay active in those builds.
 
+KosmicKrisp never hands Metal a texture view it cannot make, because Metal
+answers one with an assertion that ends the process. An image view whose type,
+levels or layers its image cannot provide fails with
+`VK_ERROR_OUT_OF_DEVICE_MEMORY`, except that a 3D view of a non-3D image is made
+as the 2D or 2D-array texture the image is: Venus creates views without waiting
+for the result, so a refusal would surface later as a lost device. Metal still
+decides pixel-format compatibility. The same invalid views through
+`vkCreateImageView` trip the common runtime's assertions, so
+`kosmickrisp_invalid_view_type` checks them there only in a build without
+assertions and checks the texture bridge directly in the regression suite.
+
 Programmable primitive IDs cross the Metal vertex/fragment interface as flat
 user varyings. Layer and viewport indices use unsigned native Metal attributes
 without interpolation qualifiers.
