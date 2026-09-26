@@ -268,17 +268,4 @@ LOSERS=$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type d \
 	\( -name first -o -name second \) | wc -l | tr -d ' ')
 [ "$LOSERS" -eq 1 ] || fail "concurrent publication did not retain one loser"
 
-grep -Fq -- '-Dvulkan-drivers=kosmickrisp' "$BUILDER" ||
-	fail "builder does not select the KosmicKrisp Vulkan driver"
-grep -Fq -- '-Dgallium-drivers=zink' "$BUILDER" ||
-	fail "builder does not select the Zink OpenGL driver"
-grep -Fq -- '-Dzink-vulkan-library-file=' "$BUILDER" ||
-	fail "builder does not link Zink against the packaged Vulkan driver"
-grep -Fq -- '-Dllvm=disabled' "$BUILDER" ||
-	fail "builder does not use the embedded KosmicKrisp shader blobs"
-grep -Fq -- '--wrap-mode=nodownload' "$BUILDER" ||
-	fail "builder does not disable Meson downloads"
-grep -Fq 'env -i PATH="$MESA_TOOL_PATH"' "$BUILDER" ||
-	fail "builder does not sanitize downstream build environments"
-
 printf '%s\n' "Experimental Apple GPU Vulkan prefix tests passed"

@@ -23,6 +23,9 @@ The helper that registers a test sets its suite label; `ctest -N -L <suite>`
 lists a configured tree's registrations.
 Performance and long external campaigns are not CTest correctness suites.
 
+Tooling tests run tools against fixtures; they do not grep tracked source for
+expected tokens or restate values that another file owns.
+
 Unit tests create scratch files through `tests/unit/scratch/`, never at a
 host-global path unless that path is the production contract under test, as
 for the mconsole socket. Each registration owns `test-scratch/<test>` in the
