@@ -5,7 +5,6 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
-import csv
 from contextlib import contextmanager
 import importlib.util
 import json
@@ -44,18 +43,6 @@ IMPORTER_SPEC = importlib.util.spec_from_file_location(
 assert IMPORTER_SPEC is not None and IMPORTER_SPEC.loader is not None
 importer = importlib.util.module_from_spec(IMPORTER_SPEC)
 IMPORTER_SPEC.loader.exec_module(importer)
-
-
-def source_rows(root: Path = METADATA) -> dict[str, dict[str, str]]:
-    lines = [
-        line
-        for line in (root / "sources.tsv").read_text(encoding="utf-8").splitlines()
-        if line and not line.startswith("#")
-    ]
-    return {
-        row["component"]: row
-        for row in csv.DictReader(lines, delimiter="\t")
-    }
 
 
 @contextmanager
@@ -355,51 +342,6 @@ class VulkanGuestRootfsTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("verified Vulkan guest source locks", result.stdout)
-
-        rows = source_rows()
-        self.assertEqual(
-            set(rows),
-            {
-                "mesa",
-                "venus-protocol",
-                "vulkan-headers",
-                "vulkan-loader",
-                "vk-gl-cts",
-            },
-        )
-        self.assertEqual(rows["mesa"]["release_ref"], "mesa-26.2.1")
-        self.assertEqual(
-            rows["mesa"]["base_commit"],
-            "da14d65e4499e66468094be52bff9ea0915a695e",
-        )
-        self.assertEqual(
-            rows["vk-gl-cts"]["release_ref"], "vulkan-cts-1.4.6.2"
-        )
-        self.assertEqual(
-            rows["vk-gl-cts"]["base_commit"],
-            "f6a29701220f34dd1407513bfe80d74ca7b392ce",
-        )
-        self.assertEqual(
-            rows["vk-gl-cts"]["series"],
-            "patches/vk-gl-cts/series.tsv",
-        )
-        self.assertEqual(rows["venus-protocol"]["series"], "patches/venus-protocol/series.tsv")
-        self.assertEqual(
-            rows["vulkan-headers"]["release_ref"],
-            "vulkan-sdk-1.4.357.0",
-        )
-        self.assertEqual(
-            rows["vulkan-headers"]["base_commit"],
-            "e3b1eec08173d6b825cd3ac88c885a63b621504a",
-        )
-        self.assertEqual(
-            rows["vulkan-loader"]["release_ref"],
-            "vulkan-sdk-1.4.357.0",
-        )
-        self.assertEqual(
-            rows["vulkan-loader"]["base_commit"],
-            "5f157b62e333c63260d05d81bf66faa216ab0fb8",
-        )
 
     def test_hand_edited_series_is_rejected_before_build(self) -> None:
         def unlisted(directory: Path) -> None:

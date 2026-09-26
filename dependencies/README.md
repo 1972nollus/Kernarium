@@ -102,9 +102,11 @@ architecture, Apple platform and deployment target, expected static payloads,
 framework install names, and the absence of undeclared or legacy providers.
 Every iOS prefix builds and verifies at an iOS 26.0 deployment target.
 
-Product-specific prefixes compare only the manifest rows consumed by that
-product. Adding an unrelated dependency does not invalidate an accepted
-prefix, while any change to one of its own rows still requires a rebuild.
+Every prefix installs the manifest it was built from and compares only the
+rows its product consumes, ignoring the products column, which records only
+which prefixes share a row. Adding, removing, or sharing another product's
+dependency does not invalidate a prefix, while any change to one of its own
+rows still requires a rebuild.
 
 ## Experimental Vulkan composition
 

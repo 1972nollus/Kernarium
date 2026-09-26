@@ -503,6 +503,8 @@ done
 
 RECEIPT_DIR="$STAGE/share/uml-dependencies"
 mkdir -p -- "$RECEIPT_DIR"
+cp "$MANIFEST" "$RECEIPT_DIR/manifest.tsv"
+# manifest_sha256 is read only by checkouts that predate the row comparison.
 manifest_sha256=$($SHASUM -a 256 "$MANIFEST" | awk '{print $1}')
 {
 	printf 'schema\t2\n'

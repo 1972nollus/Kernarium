@@ -42,6 +42,17 @@ uml_verify_dependency_manifest_product(
     PRODUCT apple-gpu
     LABEL fixture)
 
+# The products column records which prefixes share a row; changing it
+# identifies no new build.
+set(_shared_manifest "${_fixture_root}/shared.tsv")
+file(WRITE "${_shared_manifest}"
+    "${_header}gpu\t1\tapple-gpu,other-gpu\thttps://example.invalid/gpu.git\t1111111\t.\t-\n${_zstd_row}")
+uml_verify_dependency_manifest_product(
+    SOURCE "${_source_manifest}"
+    INSTALLED "${_shared_manifest}"
+    PRODUCT apple-gpu
+    LABEL fixture)
+
 execute_process(
     COMMAND "${CMAKE_COMMAND}"
         -DVERIFY_SCRIPT=${VERIFY_SCRIPT}

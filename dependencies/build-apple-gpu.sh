@@ -658,7 +658,7 @@ CONTRACT_SHA256=$(shasum -a 256 "$PLATFORM_CONTRACT" | awk '{print $1}')
 	printf 'source_manifest_sha256\t%s\n' "$MANIFEST_SHA256"
 	printf 'platform_contract_sha256\t%s\n' "$CONTRACT_SHA256"
 	printf 'mesa_base_commit\t%s\n' \
-		da14d65e4499e66468094be52bff9ea0915a695e
+		"$(awk -F '\t' '$1 == "mesa" { print $5 }' "$MANIFEST")"
 	printf 'vulkan_headers_base_commit\t%s\n' \
 		"$(git -C "$VULKAN_HEADERS_SOURCE" rev-parse HEAD)"
 	printf 'venus_protocol_generated_sha256\t%s\n' \

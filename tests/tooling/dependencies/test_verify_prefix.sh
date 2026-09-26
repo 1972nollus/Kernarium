@@ -136,6 +136,7 @@ printf '%s\n' "$required_archives" | while IFS= read -r archive; do
 done
 
 MANIFEST_HASH=$(sha256_file "$MANIFEST")
+cp "$MANIFEST" "$BASE_PREFIX/share/uml-dependencies/manifest.tsv"
 
 # GLib installs debugger helpers whose filenames embed an ELF shared-library
 # basename but end in -gdb.py. They are scripts, not dynamic libraries.
@@ -226,14 +227,24 @@ mv "$CASE_PREFIX/share/uml-dependencies/receipt.tsv.changed" \
 	"$CASE_PREFIX/share/uml-dependencies/receipt.tsv"
 expect_failure "missing SDK observation" "$CASE_PREFIX"
 
-CASE_PREFIX="$TEST_ROOT/wrong-receipt"
+CASE_PREFIX="$TEST_ROOT/unrecorded-manifest"
 copy_fixture "$CASE_PREFIX"
-sed 's/^manifest_sha256.*/manifest_sha256\tffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/' \
-	"$CASE_PREFIX/share/uml-dependencies/receipt.tsv" \
-	>"$CASE_PREFIX/share/uml-dependencies/receipt.tsv.changed"
-mv "$CASE_PREFIX/share/uml-dependencies/receipt.tsv.changed" \
-	"$CASE_PREFIX/share/uml-dependencies/receipt.tsv"
-expect_failure "wrong receipt provenance" "$CASE_PREFIX"
+rm "$CASE_PREFIX/share/uml-dependencies/manifest.tsv"
+expect_failure "prefix without its dependency manifest" "$CASE_PREFIX"
+
+# Rows of other products and the products column itself do not identify this
+# prefix; a changed macos row does.
+printf '%s\n' \
+	"other	1.0	ios-network	https://example.invalid/other.git	$BASE_COMMIT	.	-" \
+	>>"$MANIFEST"
+sed 's/	macos	/	macos,ios-network	/' "$MANIFEST" >"$MANIFEST.changed"
+mv "$MANIFEST.changed" "$MANIFEST"
+verify "$BASE_PREFIX" >/dev/null ||
+	fail "another product's row or a shared products column rejected the prefix"
+cp "$MANIFEST.original" "$MANIFEST"
+sed 's/	1\.0	macos	/	1.1	macos	/' "$MANIFEST.original" >"$MANIFEST"
+expect_failure "changed macos dependency row" "$BASE_PREFIX"
+cp "$MANIFEST.original" "$MANIFEST"
 
 CASE_PREFIX="$TEST_ROOT/manifest-tamper"
 copy_fixture "$CASE_PREFIX"
