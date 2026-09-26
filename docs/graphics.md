@@ -798,30 +798,40 @@ pair for the GPU binaries pipelines link. KosmicKrisp's `MTL4Compiler`, the
 display's pipelines and the terminal's all read and extend the same files, and
 nothing in them says which entries came from a guest shader. The process maps
 the data files, but the first compile reads the whole index into memory, so
-footprint grows with every entry an earlier run left, used or not. A pipeline
-built from a precompiled metallib skips only the `libraries` index. Metal has
-no call that clears, bounds, splits or bypasses the cache:
-`MTL4CompilerDescriptor` carries a label and a pipeline data-set serializer,
-and binary archives add lookups without taking a pipeline off the cache.
+footprint grows with the index whatever the data files hold: about 3.5 MiB per
+MB of index on the iPad mini 6 and 5 MiB per MB on an M1 Ultra. A pipeline
+built from a precompiled metallib skips only the `libraries` index. Metal
+stops each data file near 1.1 GB and evicts from there, so a full cache holds
+about 2.2 GB behind a 22 to 24 MB index, which costs 80 to 115 MiB; GPU
+conformance campaigns fill it. Metal has no call that clears, bounds, splits
+or bypasses the cache: `MTL4CompilerDescriptor` carries a label and a pipeline
+data-set serializer, and binary archives add lookups without taking a
+pipeline off the cache.
 
-Kernarium therefore removes its cache as the application starts, before any
-view or runtime exists and so before anything can read it. The cache is
-`<bundle identifier>/com.apple.metal` in the Darwin user cache directory: the
-container's `Library/Caches` on a device, where
+Kernarium therefore sizes its cache as the application starts, before any
+view or runtime exists and so before anything can read it, and removes the
+whole cache when its `.list` index files together hold more than
+`MetalShaderCache.indexLimit`, 1 MB. It logs what it found either way. Real
+workloads stay far below the limit, because their keys are stable: a repeated
+boot, benchmark or page reuses its entries and adds none. A desktop boot,
+glmark2 over Virgl and over guest Zink on Venus, WebGL Aquarium in Chromium
+and a Steam Big Picture boot together leave about 0.12 MB of index and 30 MB of
+data. Each entry's index record has the same size on the iPad and the Mac, so
+the same workload leaves the same index on both. At the limit the index costs
+about 3.5 MiB on the iPad. Removing a full cache takes under 0.1 s there;
+the next boot then spends about 2 s compiling the host's own pipelines before
+the guest's first frame, and each workload compiles its shaders once more.
+
+The cache is `<bundle identifier>/com.apple.metal` in the Darwin user cache
+directory: the container's `Library/Caches` on a device, where
 `confstr(_CS_DARWIN_USER_CACHE_DIR)` fails, and the per-application directory
 that call names in Designed for iPad mode. That layout is Metal's own and
-undocumented. Metal recreates the directory on every launch, so the
-application logs when it finds none. The system log's `fopen failed for data
-file` from `libCoreFSCache` at launch is Metal opening that empty cache, not a
-failure. On the iPad mini 6 with a 2 GiB guest, the 2.2 GB that conformance
-campaigns left behind cost about 85 MiB of footprint at launch and 115 MiB at
-the 35-second peak. One desktop boot leaves about 2 MB, which the next boot
-reuses entry for entry and which costs about 6 MiB. Starting from an empty
-cache costs about 1.8 s of host compilation before the guest starts, and the
-first desktop frame arrives that much later. The application also sets
-`MESA_SHADER_CACHE_DISABLE`: Mesa's own disk cache would live below
-`$HOME/.cache`, which a device container does not let it create, so no guest
-shader outlives the launch that compiled it.
+undocumented; if it moves, the application finds no cache, logs so, and
+removes nothing. The system log's `fopen failed for data file` from
+`libCoreFSCache` at launch is Metal opening an empty cache, not a failure. The
+application also sets `MESA_SHADER_CACHE_DISABLE`: Mesa's own disk cache would
+live below `$HOME/.cache`, which a device container does not let it create, so
+Metal's cache is the only one that outlives a launch.
 
 The macOS command-line emulator has no bundle identifier. It shares
 `$(getconf DARWIN_USER_CACHE_DIR)/com.apple.metal` with every unsandboxed
