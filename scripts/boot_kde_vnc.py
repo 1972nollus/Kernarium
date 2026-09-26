@@ -34,10 +34,14 @@ ISO_MOUNT_COMMAND = (
 
 STARTER_KDE_OVERLAY_COMMANDS = (
     "getent passwd debian >/dev/null",
+    # install -d gives the requested owner only to the directories it names,
+    # so every parent below the home directory is named before its children.
     "install -d -m 0755 -o debian -g debian "
     "/home/debian/Desktop /home/debian/Documents /home/debian/Downloads "
     "/home/debian/Music /home/debian/Pictures /home/debian/Public "
     "/home/debian/Templates /home/debian/Videos /home/debian/.config "
+    "/home/debian/.local /home/debian/.local/share "
+    "/home/debian/.local/share/Trash "
     "/home/debian/.local/share/pki "
     "/home/debian/.local/share/Trash/files "
     "/home/debian/.local/share/Trash/info",
@@ -84,6 +88,7 @@ LEGACY_EROFS_KDE_OVERLAY_COMMANDS = (
     "/home/uml/Desktop /home/uml/Documents /home/uml/Downloads "
     "/home/uml/Music /home/uml/Pictures /home/uml/Public "
     "/home/uml/Templates /home/uml/Videos /home/uml/.config "
+    "/home/uml/.local /home/uml/.local/share /home/uml/.local/share/Trash "
     "/home/uml/.local/share/pki "
     "/home/uml/.local/share/Trash/files "
     "/home/uml/.local/share/Trash/info "
