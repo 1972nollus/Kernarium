@@ -205,16 +205,19 @@ if [ -n "$GUEST_BUNDLE" ]; then
 	LAUNCH_ROOTFS=${GUEST_BUNDLE%.kern}.kern
 fi
 
-set -- -e "TEST_RUNNER_KERNARIUM_ROOTFS=$LAUNCH_ROOTFS"
+# xcodebuild has no option for the test host's environment. It passes each of
+# its own TEST_RUNNER_-prefixed variables to the test host with the prefix
+# removed, so these are exported to xcodebuild rather than given as arguments.
+set -- "TEST_RUNNER_KERNARIUM_ROOTFS=$LAUNCH_ROOTFS"
 if [ "$AQUARIUM" -eq 1 ]; then
 	set -- "$@" \
-		-e TEST_RUNNER_KERNARIUM_WEBGL_AQUARIUM=1 \
-		-e TEST_RUNNER_KERNARIUM_EXECUTION_ENGINE=gadgets \
-		-e TEST_RUNNER_KERNARIUM_VCPU_COUNT=4 \
-		-e TEST_RUNNER_KERNARIUM_GUEST_MEMORY_MIB=4096 \
-		-e TEST_RUNNER_KERNARIUM_OVERLAY_SIZE_GIB=8 \
-		-e TEST_RUNNER_KERNARIUM_RETINA_MODE=0 \
-		-e TEST_RUNNER_UML_GPU_FRAME_STATS=1
+		TEST_RUNNER_KERNARIUM_WEBGL_AQUARIUM=1 \
+		TEST_RUNNER_KERNARIUM_EXECUTION_ENGINE=gadgets \
+		TEST_RUNNER_KERNARIUM_VCPU_COUNT=4 \
+		TEST_RUNNER_KERNARIUM_GUEST_MEMORY_MIB=4096 \
+		TEST_RUNNER_KERNARIUM_OVERLAY_SIZE_GIB=8 \
+		TEST_RUNNER_KERNARIUM_RETINA_MODE=0 \
+		TEST_RUNNER_UML_GPU_FRAME_STATS=1
 fi
 
 # `open` cannot start an iOS application on macOS and `devicectl` does not
@@ -224,7 +227,7 @@ fi
 # checks the contracts that depend on the mode. The launched product stays
 # optimized; testability is raised only so the hosted bundle can import it.
 printf '%s\n' "launching Kernarium on this Mac in Designed for iPad mode"
-exec xcodebuild \
+exec env "$@" xcodebuild \
 	-project "$ROOT_DIR/Kernarium/Kernarium.xcodeproj" \
 	-scheme Kernarium \
 	-configuration Release \
@@ -233,5 +236,4 @@ exec xcodebuild \
 	-jobs "$JOBS" \
 	-only-testing:KernariumTests \
 	ENABLE_TESTABILITY=YES \
-	"$@" \
 	test

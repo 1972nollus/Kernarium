@@ -24,7 +24,10 @@ struct ContentView: View {
                 .accessibilityHidden(guestViewMode != .framebuffer)
                 .accessibilityIdentifier("framebufferView")
 
-                SerialConsoleView(controller: serialConsole)
+                SerialConsoleView(
+                    controller: serialConsole,
+                    isVisible: guestViewMode == .serialConsole
+                )
                     .opacity(guestViewMode == .serialConsole ? 1 : 0)
                     .allowsHitTesting(guestViewMode == .serialConsole)
                     .accessibilityHidden(guestViewMode != .serialConsole)
