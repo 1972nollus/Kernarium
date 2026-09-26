@@ -15,3 +15,23 @@ genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.4/virtio4/power_supply u:o
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.5/virtio5/power_supply u:object_r:sysfs_batteryinfo:s0
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.6/virtio6/power_supply u:object_r:sysfs_batteryinfo:s0
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.7/virtio7/power_supply u:object_r:sysfs_batteryinfo:s0
+# system_suspend reads every wakeup source through /sys/class/wakeup. A wakeup
+# source is a "wakeupN" child of the device that owns it, numbered in
+# registration order, so each entry is a prefix that covers any N: the UML RTC,
+# its alarm timer, and the battery's two supplies at each position above.
+genfscon sysfs /devices/platform/uml-rtc.0/wakeup/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/platform/uml-rtc.0/rtc/rtc0/alarmtimer.0.auto/wakeup/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.1/virtio1/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.1/virtio1/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.2/virtio2/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.2/virtio2/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.3/virtio3/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.3/virtio3/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.4/virtio4/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.4/virtio4/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.5/virtio5/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.5/virtio5/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.6/virtio6/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.6/virtio6/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.7/virtio7/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.7/virtio7/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
