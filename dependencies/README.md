@@ -252,6 +252,14 @@ keeps at most 64 MiB in total, and releases every other allocator. Feedback
 reporting remains valid after Vulkan device teardown through a separate
 reference-counted context.
 
+Apple builds compile KosmicKrisp's device library offline: `kk_clc` writes
+each program's MSL into one bundle, and the build compiles it with the target
+platform's Metal toolchain into a metallib that `KosmicKrisp.framework`
+carries as data. Creating a device loads its pipelines from that library and
+compiles a program's MSL only when the build made no metallib or Metal
+refuses one of its functions. What remains on a cold start is Metal's
+back-end compile to GPU code, which only its shader cache can skip.
+
 `MESA_KK_DEBUG=submit_timing` enables optional raw Metal commit-feedback
 diagnostics on stderr: an opaque device identity, GPU start and end host
 seconds, and the commit error code for the whole committed command-buffer
@@ -322,3 +330,7 @@ CMake, Ninja, GNU Make, Meson, Python 3, `pkg-config`, Git, rsync, Autoconf,
 Automake, gettext, GNU libtool, and gperf. Exact tool and SDK versions remain
 observed build metadata; source identity comes from the manifest and generated
 series.
+
+Apple GPU builds also need Xcode's Metal Toolchain component
+(`xcodebuild -downloadComponent MetalToolchain`), which compiles KosmicKrisp's
+device library.
