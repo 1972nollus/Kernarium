@@ -106,7 +106,10 @@ Never fall back to Homebrew, ambient `CMAKE_PREFIX_PATH`, or unrestricted
 
 Let Git, compilers, linkers, Kbuild, and Xcode retain authentic timestamps,
 IDs, tool identities, and output hashes. Do not add reproducibility flags whose
-only purpose is normalizing incidental metadata.
+only purpose is normalizing incidental metadata. Generated patch series are the
+one exception: `scripts/patch_series.py` omits replay commit IDs and patch
+ordinals, which describe a replay rather than the change, so a patch file
+changes only when its own topic does.
 
 ## ABI changes
 

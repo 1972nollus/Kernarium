@@ -3,6 +3,7 @@ source-tree-cxx-only	tests/tooling/cmake/test_source_tree_audit.cmake	tooling	re
 source-size-advisory-policy	tests/tooling/cmake/test_source_size_report.cmake	tooling	retained
 xcframework-output-safety	tests/tooling/cmake/test_xcframework_destination.sh	tooling	retained
 git-identity-environment-contract	tests/tooling/cmake/test_git_identity_contract.sh	tooling	retained
+patch-series-contract	tests/tooling/cmake/test_patch_series.py	tooling	retained
 apple-xcframework-staging	tests/tooling/cmake/test_create_apple_xcframework.sh	tooling	retained
 jit-profile-preset-contract	tests/tooling/cmake/test_jit_profile_preset.py	tooling	retained
 jit-profile-final-report-contract	tests/tooling/cmake/test_jit_profile_final_report.py	tooling	conditional
