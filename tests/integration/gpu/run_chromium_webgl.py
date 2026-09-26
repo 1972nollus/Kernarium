@@ -969,7 +969,7 @@ def stop_guest(process: subprocess.Popen[bytes]) -> None:
 
     The emulator can ignore a graceful signal while a guest is wedged. Keep
     escalation bounded so an interrupted validation cannot leave it consuming
-    host resources.
+    host resources. Only a reaped harness counts as stopped.
     """
     for guest_signal, timeout in (
         (signal.SIGINT, 45),
@@ -981,13 +981,17 @@ def stop_guest(process: subprocess.Popen[bytes]) -> None:
         try:
             os.killpg(process.pid, guest_signal)
         except ProcessLookupError:
-            return
+            # No group has the harness's ID, so the harness leads none. That
+            # is no evidence it exited: signal the harness itself.
+            process.send_signal(guest_signal)
         try:
             process.wait(timeout=timeout)
             return
         except subprocess.TimeoutExpired:
             continue
-    raise RuntimeError("Aquarium guest did not stop after SIGKILL")
+    raise RuntimeError(
+        f"guest harness {process.pid} did not stop after SIGKILL"
+    )
 
 
 def read_ppm(capture_path: Path) -> tuple[int, int, memoryview]:
