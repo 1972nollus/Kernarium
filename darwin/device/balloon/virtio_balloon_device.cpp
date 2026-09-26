@@ -72,7 +72,12 @@ std::unique_ptr<BalloonMemory> makeGuestRamBalloonMemory()
 std::function<std::uint64_t()> hostGpuMemoryTarget(std::uint64_t limit)
 {
     return [limit] {
-        return std::min(uml::platform::hostGpuAllocatedBytes(), limit);
+        /* The graphics footprint also holds the driver's command storage,
+         * which Metal's allocation counter omits; after a large recording it
+         * can outweigh every resource. Neither estimate may lower the other. */
+        return std::min(std::max(uml::platform::hostGpuAllocatedBytes(),
+                            uml::platform::hostGraphicsFootprintBytes()),
+            limit);
     };
 }
 
