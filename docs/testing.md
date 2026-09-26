@@ -327,23 +327,29 @@ persistent guests.
 
 ### UI automation on a device
 
-On a device with a passcode, an XCTest session that turns UI automation on can
-ask for the owner's approval (Touch ID or passcode) at the device. XCTest gives
-up 60 s after the runner starts. One approval covers later sessions for some
-time, but not indefinitely, so unattended work goes through one long-lived
-session: the `KernariumAutomation` UI-test target. It runs for hours and
-executes commands that `Kernarium/scripts/ipad-automation.py` copies into its
-runner's data container with `devicectl`. Build it with the script, run
-`start` while someone can approve at the device, and see `--help` for the
-commands (launch, tap, wait, type, key, element tree, screenshot, stop). Each
-command answers in about one to four seconds. Exit status 3 means no host is
-serving, which needs a new `start` and possibly a new approval.
+On a device with a passcode, turning UI automation on asks for the owner's
+approval (Touch ID or passcode) at the device. XCTest gives up 60 s after the
+runner starts, and the prompt stays on screen until someone dismisses it.
+Automation stays on while any XCTest session holds it, and other runners start
+without a prompt during that time. Once the last session ends, turning it on
+again needs a fresh approval. That includes stopping, redeploying or losing
+the automation host. Only a restart within a few minutes of the approval was
+seen to skip the prompt.
+
+Unattended work therefore goes through one long-lived session, the
+`KernariumAutomation` UI-test target. It runs for hours and executes commands
+that `Kernarium/scripts/ipad-automation.py` copies into its runner's data
+container with `devicectl`. Build it with the script and run `start` while
+someone can approve at the device. See `--help` for the commands: launch, tap,
+wait, type, key, element tree, screenshot, and stop, which refuses without
+`--force`. Each command answers in about one to four seconds. Exit status 3
+means no host is serving. The host recreates its channel folders if another
+tool clears the container.
 
 The target has no target application, so starting it installs only its own
 runner, and it is not in the `Kernarium` scheme. Reinstalling Kernarium,
-hosted `Kernarium` test runs, and other UI-test runners leave it running, and
-while it runs, those runners enable automation without a prompt. Keep all
-automation code in the test targets.
+hosted `Kernarium` test runs, and other UI-test runners leave it running. Keep
+all automation code in the test targets.
 
 ## LTP
 

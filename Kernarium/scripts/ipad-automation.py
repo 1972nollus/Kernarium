@@ -14,11 +14,12 @@ at the device, and then send commands:
   ipad-automation.py --device UDID launch --env KERNARIUM_ROOTFS=none.erofs
   ipad-automation.py --device UDID tap --id displayModeButton
   ipad-automation.py --device UDID screenshot -o shot.png
-  ipad-automation.py --device UDID stop
+  ipad-automation.py --device UDID stop --force
 
 Every command has a bounded wait. A command fails with exit status 3 when the
-host is not running, which means a new `start` and a new approval at the
-device. The host targets com.imxieyi.Kernarium unless --bundle names another
+host is not running. UI automation stays approved only while some XCTest
+session keeps it on, so a new host normally needs a new approval at the
+device: never stop a working host without someone to approve its successor. The host targets com.imxieyi.Kernarium unless --bundle names another
 application, such as com.apple.springboard.
 """
 
@@ -278,7 +279,8 @@ def command_start(options):
         time.sleep(3)
     text = log_path.read_text(errors="replace")
     if "enabling automation mode" in text:
-        log("the device did not enable UI automation: the prompt was not approved in time")
+        log("the device did not enable UI automation: the prompt was not approved "
+            "within 60 s, and it stays on the screen until someone dismisses it")
     elif supervisor.poll() is not None:
         log("xcodebuild ended before the host served; see the log")
     else:
@@ -289,6 +291,11 @@ def command_start(options):
 
 
 def command_stop(options):
+    if not options.force:
+        log("refusing to stop: automation stays approved only while a session runs, "
+            "so a new host will ask for approval at the device again; pass --force "
+            "when someone can approve it")
+        return EXIT_FAILED
     record = local_record(options)
     try:
         send(options, {"op": "stop"}, 30)
@@ -373,7 +380,10 @@ def parse(argv):
     supervise.add_argument("--seconds", type=int, required=True)
     supervise.add_argument("--nonce", required=True)
     commands.add_parser("status", help="report whether the host is serving")
-    commands.add_parser("stop", help="end the host session")
+    stop = commands.add_parser(
+        "stop", help="end the host session; starting another needs a new approval")
+    stop.add_argument("--force", action="store_true",
+                      help="stop even though a new host must be approved at the device")
 
     commands.add_parser("ping", help="round-trip an empty command")
     launch = commands.add_parser("launch", help="launch (or relaunch) the application")

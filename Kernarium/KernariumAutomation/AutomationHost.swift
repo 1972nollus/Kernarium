@@ -212,6 +212,8 @@ private final class Channel: @unchecked Sendable {
 
     /// Command identifiers whose ready marker has arrived, oldest first.
     func readyCommands() -> [String] {
+        // Another tool may clear the container, directories included.
+        try? files.createDirectory(at: inbox, withIntermediateDirectories: true)
         let names = (try? files.contentsOfDirectory(atPath: inbox.path)) ?? []
         return names.filter { $0.hasSuffix(".ready") }
             .map { String($0.dropLast(".ready".count)) }
@@ -273,6 +275,9 @@ private final class Channel: @unchecked Sendable {
         guard let data = try? JSONSerialization.data(
             withJSONObject: object, options: [.sortedKeys]
         ) else { return }
+        try? files.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
         try? data.write(to: url, options: .atomic)
     }
 }
@@ -429,6 +434,9 @@ private struct Executor {
         case "screenshot":
             let png = XCUIScreen.main.screenshot().pngRepresentation
             let url = channel.attachmentURL(id, extension: "png")
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
             try png.write(to: url, options: .atomic)
             return ["file": url.lastPathComponent]
 
