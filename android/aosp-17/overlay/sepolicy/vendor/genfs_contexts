@@ -35,3 +35,7 @@ genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.6/virtio6/power_supply/bat
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.6/virtio6/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.7/virtio7/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.7/virtio7/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
+# The UBD disk is the root disk whose discard limit AOSP's init.rc sets through
+# /dev/sys/block/by-name/rootdisk. It gets the type AOSP gives virtual block
+# devices, which the inherited Cuttlefish policy lets init tune.
+genfscon sysfs /devices/platform/uml-blkdev.0/block u:object_r:sysfs_devices_block:s0
