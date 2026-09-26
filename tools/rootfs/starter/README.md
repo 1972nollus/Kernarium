@@ -18,7 +18,9 @@ Every disk has one Linux-filesystem GPT partition ending at the last usable
 LBA. Networking belongs to the image: OpenRC or systemd starts a DHCP client
 and installs DNS information without kernel IP autoconfiguration. The images
 also own their account, getty, and desktop policy; launchers must not inject
-replacement setup scripts.
+replacement setup scripts. The kernels are monolithic and have no uevent
+helper, so the Alpine image manages `/dev` with mdevd, Alpine's netlink device
+manager, instead of BusyBox mdev, and lists no boot-time modules.
 
 The resize artifact is a compressed cpio initramfs passed with `initrd=`. The
 kernel unpacks it as the initial memory-backed root; it is neither another UBD

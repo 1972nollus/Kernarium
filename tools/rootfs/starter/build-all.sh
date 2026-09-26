@@ -254,16 +254,38 @@ https://dl-cdn.alpinelinux.org/alpine/v3.24/main
 https://dl-cdn.alpinelinux.org/alpine/v3.24/community
 EOF
 	as_root cp -L /etc/resolv.conf "$root/etc/resolv.conf"
-	as_root chroot "$root" /sbin/apk add --no-cache alpine-base ifupdown-ng
+	# The kernels have no uevent helper for BusyBox mdev, so mdevd, Alpine's
+	# netlink device manager, owns /dev as setup-devd would configure it.
+	as_root chroot "$root" /sbin/apk add --no-cache alpine-base ifupdown-ng \
+		mdevd mdevd-openrc
 	for service_level in \
-		"devfs sysinit" "procfs sysinit" "sysfs sysinit" "mdev sysinit" \
-		"hostname boot" "bootmisc boot" "networking boot" "local default" \
-		"killprocs shutdown" "mount-ro shutdown"; do
+		"devfs sysinit" "procfs sysinit" "sysfs sysinit" "mdevd sysinit" \
+		"mdevd-init sysinit" "hostname boot" "bootmisc boot" \
+		"networking boot" "local default" "killprocs shutdown" \
+		"mount-ro shutdown"; do
 		set -- $service_level
 		if [ -x "$root/etc/init.d/$1" ]; then
 			as_root chroot "$root" /sbin/rc-update add "$1" "$2"
 		fi
 	done
+	# The kernel creates a virtio port's name attribute only for a named
+	# port, and the console port is unnamed.
+	mdev_conf=$root/etc/mdev.conf
+	unguarded_rule='SUBSYSTEM=virtio-ports;vport.* root:root 0600 @mkdir -p virtio-ports; ln -sf ../$MDEV virtio-ports/$(cat /sys/class/virtio-ports/$MDEV/name)'
+	guarded_rule='SUBSYSTEM=virtio-ports;vport.* root:root 0600 @if [ -r /sys/class/virtio-ports/$MDEV/name ]; then mkdir -p virtio-ports; ln -sf ../$MDEV virtio-ports/$(cat /sys/class/virtio-ports/$MDEV/name); fi'
+	[ "$(as_root grep -cxF -- "$unguarded_rule" "$mdev_conf")" = 1 ] || \
+		fail "unexpected virtio-ports rule in $mdev_conf"
+	as_root cat "$mdev_conf" | \
+		awk -v old="$unguarded_rule" -v new="$guarded_rule" \
+			'$0 == old { print new; next } { print }' | \
+		write_root_file "$mdev_conf" 0644
+	as_root grep -qxF -- "$guarded_rule" "$mdev_conf" || \
+		fail "could not guard the virtio-ports rule in $mdev_conf"
+	# Nothing is loadable into the monolithic kernels; the default entries
+	# (af_packet and ipv6) are built in.
+	write_root_file "$root/etc/modules" 0644 <<'EOF'
+# The Linux kernels for this image are monolithic; list no modules here.
+EOF
 	write_root_file "$root/etc/network/interfaces" 0644 <<'EOF'
 auto lo
 iface lo inet loopback
