@@ -28,10 +28,7 @@ set(_uml_android_kernel_default
 uml_cache_accepted_artifact_path(
     UML_ANDROID17_KERNEL_ARTIFACT_DIR
     "${_uml_android_kernel_default}"
-    "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts"
-    "Installed accepted Android 17 ACK 6.18 kernel artifact directory"
-    LEGACY_DEFAULTS
-        "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/android-6.18-16k-20260829-no-ipconfig-8f74db26")
+    "Installed accepted Android 17 ACK 6.18 kernel artifact directory")
 
 uml_import_kernel_artifact(
     TARGET uml_android17_kernel_artifact

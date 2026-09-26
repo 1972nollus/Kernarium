@@ -6,19 +6,9 @@ uml_add_tooling_test(
         -DAUDIT_SCRIPT=${PROJECT_SOURCE_DIR}/scripts/audit-source-tree.cmake
         -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
         -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/source-tree-audit-fixture
-        -DSOURCE_SIZE_REPORT=${CMAKE_BINARY_DIR}/reports/source-sizes.tsv
         -P ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_source_tree_audit.cmake
     LABELS audit
     TIMEOUT 60)
-
-uml_add_tooling_test(
-    NAME source-size-advisory-policy
-    COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_SIZE_MODULE=${PROJECT_SOURCE_DIR}/cmake/SourceSizeReport.cmake
-        -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/source-size-policy-fixture
-        -P ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_source_size_report.cmake
-    LABELS audit
-    TIMEOUT 30)
 
 uml_add_tooling_test(
     NAME xcframework-output-safety

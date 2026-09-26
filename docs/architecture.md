@@ -499,13 +499,9 @@ Every first-party CTest has one primary suite: `unit`, `tooling`, or
 `integration`, set by the `cmake/UmlTesting.cmake` helper that registers it.
 
 `architecture-audit` checks the CMake File API graph, dependency cycles,
-implementation includes, source ownership, test registration, and advisory
-source-size metadata. It does not prove performance, generated code shape, a
-kernel boot, or guest behavior; those require their owning validation.
-
-Production files above 800 lines, test/support files above 600, and CMake files
-above 300 are reported as advisory review points; they are not acceptance
-failures or a request for a dated review ledger.
+implementation includes, source ownership, and test registration. It does not
+prove performance, generated code shape, a kernel boot, or guest behavior;
+those require their owning validation.
 
 The host/kernel ABI source is [`../kernel/common/abi`](../kernel/common/abi/).
 Version, fingerprint, generated-copy, layout, and import checks fail closed on

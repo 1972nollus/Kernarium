@@ -50,9 +50,7 @@ if(UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment" AND
 endif()
 
 # The Vulkan experiment reads the same mainline-6.18 series through its own
-# fixed descriptors, so the accepted default product keeps its reviewed bundle
-# and its migration defaults.
-set(_uml_mainline_artifact_cache_arguments)
+# fixed descriptors.
 if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
     if(UML_GUEST_16K_PAGES)
         message(FATAL_ERROR
@@ -68,8 +66,6 @@ elseif(UML_GUEST_16K_PAGES)
     else()
         set(_uml_mainline_acceptance
             "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-16k.env")
-        list(APPEND _uml_mainline_artifact_cache_arguments LEGACY_DEFAULTS
-            "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/mainline-6.18-16k-20260830-binfmt-xstate-a8fdb7c4")
     endif()
     set(_uml_expected_page_size 16384)
 else()
@@ -79,8 +75,6 @@ else()
     else()
         set(_uml_mainline_acceptance
             "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-4k.env")
-        list(APPEND _uml_mainline_artifact_cache_arguments LEGACY_DEFAULTS
-            "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/mainline-6.18-4k-20260830-binfmt-xstate-a8fdb7c4")
     endif()
     set(_uml_expected_page_size 4096)
 endif()
@@ -104,9 +98,7 @@ set(_uml_mainline_artifact_default
 uml_cache_accepted_artifact_path(
     UML_MAINLINE_618_KERNEL_ARTIFACT_DIR
     "${_uml_mainline_artifact_default}"
-    "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts"
-    "Installed accepted mainline-6.18 kernel artifact directory"
-    ${_uml_mainline_artifact_cache_arguments})
+    "Installed accepted mainline-6.18 kernel artifact directory")
 
 uml_import_kernel_artifact(
     TARGET uml_mainline_kernel_artifact

@@ -159,68 +159,20 @@ def verify_accepted_artifact_cache(artifact_cmake: Path) -> None:
             f'''cmake_minimum_required(VERSION 3.27)
 include([=[{artifact_cmake.resolve()}]=])
 
-# An older build tree has no default tracker. Its current accepted value is
-# retained and becomes the baseline for following later acceptance changes.
+# A first configure whose value already names the accepted default follows it.
 set(TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v1"}]=] CACHE PATH "test")
 uml_cache_accepted_artifact_path(
-    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v1"}]=] [=[{managed}]=] "test")
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v1"}]=] "test")
 if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "accepted-v1"}]=] OR
    NOT TEST_MANAGED_ARTIFACT_ACCEPTED_DEFAULT STREQUAL
        [=[{managed / "accepted-v1"}]=] OR
    NOT TEST_MANAGED_ARTIFACT_FOLLOW_ACCEPTED)
-    message(FATAL_ERROR "accepted artifact cache migration failed")
-endif()
-
-# An ambiguous pre-tracker value is preserved as an explicit override even
-# when it names another publication below the managed root.
-set(TEST_MIGRATED_OVERRIDE [=[{managed / "migrated-override"}]=]
-    CACHE PATH "test")
-uml_cache_accepted_artifact_path(
-    TEST_MIGRATED_OVERRIDE [=[{managed / "accepted-v1"}]=]
-    [=[{managed}]=] "test"
-    LEGACY_DEFAULTS [=[{managed / "recognized-other"}]=])
-if(NOT TEST_MIGRATED_OVERRIDE STREQUAL [=[{managed / "migrated-override"}]=] OR
-   TEST_MIGRATED_OVERRIDE_FOLLOW_ACCEPTED)
-    message(FATAL_ERROR "migrated managed override was replaced")
-endif()
-
-# A finite caller-owned legacy default advances on first use and then follows
-# later accepted defaults through the normal tracker.
-set(TEST_RECOGNIZED_LEGACY [=[{managed / "legacy-v0"}]=]
-    CACHE PATH "test")
-uml_cache_accepted_artifact_path(
-    TEST_RECOGNIZED_LEGACY [=[{managed / "legacy-v1"}]=]
-    [=[{managed}]=] "test"
-    LEGACY_DEFAULTS [=[{managed / "legacy-v0"}]=])
-if(NOT TEST_RECOGNIZED_LEGACY STREQUAL [=[{managed / "legacy-v1"}]=] OR
-   NOT TEST_RECOGNIZED_LEGACY_FOLLOW_ACCEPTED)
-    message(FATAL_ERROR "recognized legacy default did not advance")
-endif()
-uml_cache_accepted_artifact_path(
-    TEST_RECOGNIZED_LEGACY [=[{managed / "legacy-v2"}]=]
-    [=[{managed}]=] "test"
-    LEGACY_DEFAULTS [=[{managed / "legacy-v0"}]=])
-if(NOT TEST_RECOGNIZED_LEGACY STREQUAL [=[{managed / "legacy-v2"}]=] OR
-   NOT TEST_RECOGNIZED_LEGACY_FOLLOW_ACCEPTED)
-    message(FATAL_ERROR "migrated legacy default stopped following")
-endif()
-
-# Migrate the earlier equality-only tracker by following its prior default.
-set(TEST_TRACKER_MIGRATION [=[{managed / "tracked-v1"}]=]
-    CACHE PATH "test")
-set(TEST_TRACKER_MIGRATION_ACCEPTED_DEFAULT [=[{managed / "tracked-v1"}]=]
-    CACHE INTERNAL "test")
-uml_cache_accepted_artifact_path(
-    TEST_TRACKER_MIGRATION [=[{managed / "tracked-v2"}]=]
-    [=[{managed}]=] "test")
-if(NOT TEST_TRACKER_MIGRATION STREQUAL [=[{managed / "tracked-v2"}]=] OR
-   NOT TEST_TRACKER_MIGRATION_FOLLOW_ACCEPTED)
-    message(FATAL_ERROR "equality-only default tracker migration failed")
+    message(FATAL_ERROR "accepted artifact did not follow its first default")
 endif()
 
 # A value which still equals the prior generated default follows acceptance.
 uml_cache_accepted_artifact_path(
-    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v2"}]=] [=[{managed}]=] "test")
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v2"}]=] "test")
 if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "accepted-v2"}]=] OR
    NOT TEST_MANAGED_ARTIFACT_ACCEPTED_DEFAULT STREQUAL
        [=[{managed / "accepted-v2"}]=] OR
@@ -234,7 +186,7 @@ set(TEST_MANAGED_ARTIFACT [=[{managed / "local-override"}]=]
     CACHE PATH "test" FORCE)
 unset(TEST_MANAGED_ARTIFACT)
 uml_cache_accepted_artifact_path(
-    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v3"}]=] [=[{managed}]=] "test")
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v3"}]=] "test")
 if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "local-override"}]=] OR
    NOT TEST_MANAGED_ARTIFACT_ACCEPTED_DEFAULT STREQUAL
        [=[{managed / "accepted-v3"}]=] OR
@@ -246,7 +198,7 @@ endif()
 # override identity. It must remain pinned across the following change too.
 uml_cache_accepted_artifact_path(
     TEST_MANAGED_ARTIFACT [=[{managed / "local-override"}]=]
-    [=[{managed}]=] "test")
+    "test")
 if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "local-override"}]=] OR
    NOT TEST_MANAGED_ARTIFACT_ACCEPTED_DEFAULT STREQUAL
        [=[{managed / "local-override"}]=] OR
@@ -254,7 +206,7 @@ if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "local-override"}]=] OR
     message(FATAL_ERROR "matching accepted default reclassified an override")
 endif()
 uml_cache_accepted_artifact_path(
-    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v4"}]=] [=[{managed}]=] "test")
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v4"}]=] "test")
 if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "local-override"}]=] OR
    TEST_MANAGED_ARTIFACT_FOLLOW_ACCEPTED)
     message(FATAL_ERROR "managed override followed a later default")
@@ -264,12 +216,12 @@ endif()
 set(TEST_MANAGED_ARTIFACT "" CACHE PATH "test" FORCE)
 unset(TEST_MANAGED_ARTIFACT)
 uml_cache_accepted_artifact_path(
-    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v4"}]=] [=[{managed}]=] "test")
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v4"}]=] "test")
 if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "accepted-v4"}]=])
     message(FATAL_ERROR "cleared override did not restore acceptance")
 endif()
 uml_cache_accepted_artifact_path(
-    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v5"}]=] [=[{managed}]=] "test")
+    TEST_MANAGED_ARTIFACT [=[{managed / "accepted-v5"}]=] "test")
 if(NOT TEST_MANAGED_ARTIFACT STREQUAL [=[{managed / "accepted-v5"}]=] OR
    NOT TEST_MANAGED_ARTIFACT_FOLLOW_ACCEPTED)
     message(FATAL_ERROR "restored acceptance did not follow a later default")
@@ -277,7 +229,7 @@ endif()
 
 set(TEST_EXTERNAL_ARTIFACT [=[{external}]=] CACHE PATH "test")
 uml_cache_accepted_artifact_path(
-    TEST_EXTERNAL_ARTIFACT [=[{managed / "accepted-v3"}]=] [=[{managed}]=] "test")
+    TEST_EXTERNAL_ARTIFACT [=[{managed / "accepted-v3"}]=] "test")
 if(NOT TEST_EXTERNAL_ARTIFACT STREQUAL [=[{external}]=])
     message(FATAL_ERROR "external artifact override was replaced")
 endif()
@@ -296,42 +248,6 @@ endif()
             "accepted artifact cache policy failed:\n"
             f"{checked.stdout}{checked.stderr}",
         )
-        invalid_legacy_defaults = (
-            (
-                "relative",
-                Path("relative-legacy"),
-                "Legacy accepted-artifact defaults must be absolute",
-            ),
-            (
-                "outside",
-                external,
-                "Legacy accepted-artifact defaults must be below the managed root",
-            ),
-        )
-        for name, legacy, diagnostic in invalid_legacy_defaults:
-            invalid_script = temporary / f"invalid-{name}.cmake"
-            invalid_script.write_text(
-                f'''cmake_minimum_required(VERSION 3.27)
-include([=[{artifact_cmake.resolve()}]=])
-uml_cache_accepted_artifact_path(
-    TEST_INVALID_LEGACY [=[{managed / "accepted"}]=]
-    [=[{managed}]=] "test" LEGACY_DEFAULTS [=[{legacy}]=])
-''',
-                encoding="utf-8",
-            )
-            rejected = subprocess.run(
-                ["cmake", "-P", str(invalid_script)],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-            )
-            require(
-                rejected.returncode != 0
-                and diagnostic in f"{rejected.stdout}{rejected.stderr}",
-                f"invalid {name} legacy default was not rejected correctly:\n"
-                f"{rejected.stdout}{rejected.stderr}",
-            )
 
 
 def main() -> int:
@@ -535,8 +451,6 @@ def main() -> int:
         "vulkan-experiment-4k.env",
         "mainline-6.18-vulkan-experiment",
         "slices/x86_64/artifacts/accepted-4k.env",
-        "mainline-6.18-4k-20260830-binfmt-xstate-a8fdb7c4",
-        "mainline-6.18-16k-20260830-binfmt-xstate-a8fdb7c4",
         "The x86_64 mainline kernel slice supports only 4 KiB guest pages",
         "Accepted mainline kernel slice",
     ):
@@ -568,7 +482,6 @@ def main() -> int:
         "UML_ARTIFACT_SLICE",
         "CMAKE_CONFIGURE_DEPENDS",
         "uml_cache_accepted_artifact_path",
-        "LEGACY_DEFAULTS",
     ):
         require(contract in artifact_cmake, f"artifact CMake lacks {contract}")
     require(
@@ -1011,7 +924,6 @@ def main() -> int:
         "uml_import_kernel_artifact",
         "EXPECTED_SLICE arm64",
         "The Android 17 kernel artifact must use the arm64 slice",
-        "android-6.18-16k-20260829-no-ipconfig-8f74db26",
         "EXPECTED_RELEASE_SERIES 6.18",
     ):
         require(contract in android_cmake, f"Android product lacks {contract}")

@@ -43,9 +43,6 @@ done
 # the KosmicKrisp Vulkan driver. Only macOS has a build of that stack.
 case "$APPLE_GPU_PRODUCT" in
 apple-gpu-vulkan-experiment) ;;
-apple-gpu)
-	fail "iOS GPU product pending the Mesa/KosmicKrisp port; physical device only -- the iOS Simulator has no Metal 4"
-	;;
 *) fail "unsupported Apple GPU product: $APPLE_GPU_PRODUCT" ;;
 esac
 GL_FRAMEWORKS='MesaEGL MesaGallium'

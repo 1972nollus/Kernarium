@@ -282,7 +282,6 @@ uml_write_architecture_manifest()
 add_custom_target(architecture-audit
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
-        -DSOURCE_SIZE_REPORT=${CMAKE_BINARY_DIR}/reports/source-sizes.tsv
         -P ${PROJECT_SOURCE_DIR}/scripts/audit-source-tree.cmake
     COMMAND ${CMAKE_COMMAND}
         -DBUILD_ROOT=${CMAKE_BINARY_DIR}

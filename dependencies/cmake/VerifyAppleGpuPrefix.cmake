@@ -17,9 +17,7 @@ if(NOT DEFINED PRODUCT)
 endif()
 # Every Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on
 # the KosmicKrisp Vulkan driver.
-if(PRODUCT STREQUAL "apple-gpu")
-    message(FATAL_ERROR "apple-gpu is retired; build apple-gpu-vulkan-experiment")
-elseif(NOT PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
+if(NOT PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
     message(FATAL_ERROR "Unsupported Apple GPU product: ${PRODUCT}")
 endif()
 
