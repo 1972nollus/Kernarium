@@ -2543,7 +2543,7 @@ index d0f443c195f30b51bd8e011b1dbab1e8b32eaa88..54db27567bf51c577bded107bcaa1e58
  	       sizeof(current_pt_regs()->regs.pointer_auth_keys));
  #endif
 diff --git a/arch/um/kernel/process.c b/arch/um/kernel/process.c
-index 838272e9b62f582c94227f216f0b8ca2943ce8a8..d48d5ec6b859bc734c50fe0bb3e28fc9b5f589e1 100644
+index 9489651287b3d7fbe264d32eaeeb8977954a5a95..d254768e088ea9b85658600344bc3036941b18e9 100644
 --- a/arch/um/kernel/process.c
 +++ b/arch/um/kernel/process.c
 @@ -184,7 +184,7 @@ int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
@@ -2618,7 +2618,7 @@ index 31575c43f7e1ffdcfb7070ced4b346324b1d4274..06008dda154a783293c69f2666e49b92
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index f8068b196c5b1b3ae9ee56ce9b6bb1662b9d57bc..f4478d475e4d017b8225964b429e203f6214f3f0 100644
+index 4769a4b962339755c990c02520dbef982408ff97..21ec4ccf5dc03b6fce831ad82ccdc35317d94986 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -54,6 +54,7 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==

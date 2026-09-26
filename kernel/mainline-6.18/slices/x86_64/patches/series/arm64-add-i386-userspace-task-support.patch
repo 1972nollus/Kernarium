@@ -3076,7 +3076,7 @@ index 7cccc32c065260d31b7bdb0f1c23a615be4f445f..08ab5b2e09f71d080e784a061a290229
  			mm->context.id.darwin_generation, (void *)start,
  			end - start) < 0)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index f4478d475e4d017b8225964b429e203f6214f3f0..8d59e86d29af84a89f86f5a2ff91393fdead6118 100644
+index 21ec4ccf5dc03b6fce831ad82ccdc35317d94986..3d004bfd84df305a608d294364f813db754bf3cf 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -474,6 +474,10 @@ void userspace(struct uml_pt_regs *registers)

@@ -90,6 +90,11 @@ The series is maintained locally; no tooling submits or pushes it.
 `config/common.fragment` is the complete shipped policy. The build copies it
 as the starting `.config`, applies exactly one page fragment, runs
 `olddefconfig`, and verifies that every requested symbol resolved as declared.
+`build/build-kernel.sh --lockdep` also applies `config/lockdep.fragment`
+last, for a lock-checking probe with lockdep, its hardirq-state tracking and
+`DEBUG_VM`. Publish such a kernel only to a scratch output root and select it
+through `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; it is never an accepted
+artifact.
 
 The normal arm64-userspace profiles are:
 
@@ -188,9 +193,13 @@ change.
 
 Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
 at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
-`schedule()` when the caller stays runnable. The IPI signal is only a wake edge,
-so a task that yields in a retry loop would otherwise stop its CPU whenever
-nothing else is runnable there: `tty_open()` retries that way while the last
+`schedule()` when the caller stays runnable. Every path that changes a CPU's
+logical IRQ state outside `local_irq_*()`, including interrupt work run from an
+idle wait, reports the change to lockdep as interrupt entry would; without
+`CONFIG_TRACE_IRQFLAGS` the reports compile away. The IPI signal is only a
+wake edge, so a task that yields in a retry loop would otherwise stop its CPU
+whenever nothing else is runnable there: `tty_open()` retries that way while
+the last
 close of a terminal is in progress, and a shutdown that restarted a console
 getty stopped for minutes, with `rcu_sched` stall reports, waiting for a timer
 and a queued wakeup that the looping CPU never serviced. A pagefault-disabled
