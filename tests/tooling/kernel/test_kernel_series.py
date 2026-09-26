@@ -185,14 +185,12 @@ def run(scratch: Path) -> None:
     assert "arch-overlay-amended.patch" in patch_series.read_series(overlay_dir).names
 
     # A change below the overlay is visible only after a refresh rebases it.
+    # Here the common branch moved under the overlay in the same checkout.
     git(source, "switch", "-q", "common")
     (source / "extra.c").write_text("extra, amended\n")
     git(source, "commit", "-q", "--amend", "-a", "-m", "core: second, amended")
     kernel_series.regenerate(common_line, source)
-    # Another checkout's common branch still ends at the old topic.
-    git(source, "switch", "-q", "--detach", "HEAD")
-    git(source, "branch", "-f", "common", "overlay~1")
-    expect_error("stale inherited branch", "run refresh first",
+    expect_error("overlay left behind", "is not based on",
                  lambda: kernel_series.regenerate(overlay_line, source))
     overlay_patch = (overlay_dir / "arch-overlay-amended.patch").read_bytes()
     refreshed = kernel_series.refresh(overlay_line, source)
@@ -202,6 +200,21 @@ def run(scratch: Path) -> None:
     assert (overlay_dir / "arch-overlay-amended.patch").read_bytes() == overlay_patch
     kernel_series.verify_branch(overlay_line, source, "overlay")
     assert kernel_series.provenance(overlay_line)[1] != digest
+
+    # Another checkout's common branch still ends at the old topic, so the
+    # refresh replays the checked-in common series under its overlay.
+    expect_error("stale inherited branch", "run refresh first",
+                 lambda: kernel_series.regenerate(overlay_line, replay))
+    assert kernel_series.refresh(overlay_line, replay) == overlay_line.final_tree
+    assert git(replay, "rev-parse", "common^{tree}") == git(source, "rev-parse", "common^{tree}")
+
+    # Without a reflog there is no record of where the overlay left.
+    git(source, "switch", "-q", "common")
+    (source / "extra.c").write_text("extra, amended twice\n")
+    git(source, "commit", "-q", "--amend", "-a", "-m", "core: second, amended twice")
+    git(source, "reflog", "expire", "--expire=all", "--all")
+    expect_error("no fork point", "cannot tell where",
+                 lambda: kernel_series.refresh(overlay_line, source))
 
 
 if __name__ == "__main__":

@@ -135,6 +135,13 @@ def _branch_commit(repository: Path, branch: str) -> str | None:
     return result or None
 
 
+def _is_ancestor(repository: Path, ancestor: str, descendant: str) -> bool:
+    return subprocess.run(
+        ["git", "-C", str(repository), "merge-base", "--is-ancestor", ancestor, descendant],
+        check=False,
+    ).returncode == 0
+
+
 def configure_replay(repository: Path) -> None:
     """Remember conflict resolutions and carry layer branches through rebases."""
     for key, value in (("rerere.enabled", "true"), ("rerere.autoupdate", "true"),
@@ -194,11 +201,7 @@ def verify_branch(line: Line, repository: Path, tip: str, *,
     can be regenerated.
     """
     tip_commit = patch_series.resolve_commit(repository, tip)
-    ancestor = subprocess.run(
-        ["git", "-C", str(repository), "merge-base", "--is-ancestor", line.base, tip_commit],
-        check=False,
-    )
-    if ancestor.returncode != 0:
+    if not _is_ancestor(repository, line.base, tip_commit):
         raise SeriesError(f"{tip} is not based on {line.base}")
     if git(repository, "rev-list", "--merges", f"{line.base}..{tip_commit}").strip():
         raise SeriesError(f"{tip} contains a merge")
@@ -276,6 +279,15 @@ def refresh(line: Line, repository: Path) -> str:
     old_parent = _branch_commit(repository, parent.branch)
     if tip is None or old_parent is None:
         raise SeriesError(f"branches {parent.branch} and {line.tip_branch} must exist")
+    if not _is_ancestor(repository, old_parent, tip):
+        # A lower topic was amended in this checkout and the parent branch
+        # moved without the owned commits; its reflog still records where
+        # they left it.
+        old_parent = git(repository, "merge-base", "--fork-point", parent.branch,
+                         tip, check=False).strip()
+        if not old_parent:
+            raise SeriesError(f"cannot tell where {line.tip_branch} left {parent.branch}; "
+                              f"rebase it onto {parent.branch} and run regenerate")
     expected = patch_series.series_tree(
         repository, line.base, [layer.directory for layer in line.inherited])
     if patch_series.tree_of(repository, old_parent) != expected:
