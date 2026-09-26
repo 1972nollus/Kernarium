@@ -11,7 +11,9 @@
 #   CORPUS:<name>:<round>:<runs>:<centiseconds>
 #
 # A failing run prints CORPUS_FAIL:<name>:<status> and skips the rest of that
-# workload's round. CORPUS_ONLY=name,name selects workloads.
+# workload's round. A workload the rootfs cannot run, such as the C front end
+# on an image without cc1, prints CORPUS_SKIP:<name> once and is left out.
+# CORPUS_ONLY=name,name selects workloads.
 
 set +e
 rounds=${CORPUS_ROUNDS:-3}
@@ -63,17 +65,32 @@ nodejs() {
 	node -e "require('zlib').inflateSync(require('zlib').deflateSync(Buffer.alloc(1<<22,7)))"
 }
 
+available() {
+	case $1 in
+	compile) [ -x "$(gcc -print-prog-name=cc1 2>/dev/null)" ] ;;
+	*) return 0 ;;
+	esac
+}
+
 workloads="gunzip:10 unxz:5 bunzip2:2 ldso:8 pyimport:3 sorting:10 regex:2 compile:5 perlhash:2 javaint:4 nodejs:4"
 
+active=
 for item in $workloads; do
 	name=${item%%:*}
-	wanted "$name" && "$name" > /dev/null 2>&1
+	wanted "$name" || continue
+	if available "$name"; then
+		active="$active $item"
+	else
+		echo "CORPUS_SKIP:$name"
+	fi
+done
+for item in $active; do
+	"${item%%:*}" > /dev/null 2>&1
 done
 round=0
 while [ "$round" -lt "$rounds" ]; do
-	for item in $workloads; do
+	for item in $active; do
 		name=${item%%:*} runs=${item#*:}
-		wanted "$name" || continue
 		start=$(now) i=0 status=0
 		while [ "$i" -lt "$runs" ]; do
 			"$name" > /dev/null 2>&1

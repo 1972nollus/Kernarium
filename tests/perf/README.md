@@ -400,7 +400,9 @@ churn, JVM start-up and Node start-up. It runs inside the guest under any
 console runner (on the iPad through `KERNARIUM_GUEST_SCRIPT`), prepares its
 inputs from rootfs files, runs every workload once to warm the page and
 translation caches, and prints `CORPUS:<name>:<round>:<runs>:<centiseconds>`
-per workload and round. `CORPUS_ROUNDS` and `CORPUS_ONLY` select the work.
+per workload and round. A workload the rootfs cannot run prints
+`CORPUS_SKIP:<name>` once and is left out; the iPad image has no `cc1`, so it
+skips the C front end. `CORPUS_ROUNDS` and `CORPUS_ONLY` select the work.
 Each workload is sized to about two seconds on a gadgets guest, so compare
 arms round by round rather than across launches.
 
