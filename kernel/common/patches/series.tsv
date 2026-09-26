@@ -50,3 +50,4 @@ patch	power-add-Kernarium-host-battery.patch
 patch	um-keep-host-object-debug-information-out-of-BTF.patch
 patch	kbuild-bpf-encode-pahole-1.27-BTF-in-a-fixed-order.patch
 patch	um-keep-the-line-input-IRQ-registered-across-a-tty-throttle.patch
+patch	bpf-run-callbacks-of-interpreted-programs.patch

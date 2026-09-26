@@ -274,9 +274,14 @@ features are reflected in the LTP disabled manifest rather than enabled solely
 for test count.
 
 The kernel exposes its BTF at `/sys/kernel/btf/vmlinux` for CO-RE programs.
-BPF runs on the interpreter, so the verifier rejects programs that use
-callbacks, such as `bpf_loop`, with `EINVAL`. systemd-networkd's sysctl monitor
-is one; networkd logs that at info level and otherwise runs normally.
+BPF runs on the interpreter; no BPF code is generated at run time. Helpers
+that take a callback, such as `bpf_loop` and `bpf_for_each_map_elem`, reach an
+interpreted callback through a fixed pool of 1024 built-in entry points. Each
+callback subprogram of a loaded program holds one until the program is freed,
+and a load that finds none free fails with `ENOSPC`. The interpreter still
+rejects kfunc calls, and tail calls in a program that has callbacks or other
+subprograms. Tracing program types (kprobe, uprobe, tracepoint, raw
+tracepoint, iterator) need `CONFIG_BPF_EVENTS`, which UML does not provide.
 
 Kernel IP autoconfiguration is disabled. Writable guest images start their own
 DHCP client and DNS resolver after init begins; launchers do not need kernel

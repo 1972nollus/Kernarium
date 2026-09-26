@@ -243,6 +243,18 @@ uml_add_guest_integration_test(
     PROCESSORS 1
     RESOURCE_GROUPS cpus:1)
 
+# The interpreter runs BPF callbacks through its fixed entry-point pool.
+uml_add_guest_integration_test(
+    NAME guest-bpf-callbacks
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/bpf/run_guest_bpf_callbacks.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;bpf;smoke
+    TIMEOUT 600
+    PROCESSORS 4
+    RESOURCE_GROUPS cpus:4)
+
 set(UML_GUEST_SAMPLER_WORKLOAD
     "${CMAKE_CURRENT_BINARY_DIR}/guest-sampler-workload")
 add_custom_command(
