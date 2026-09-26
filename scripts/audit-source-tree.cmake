@@ -130,17 +130,22 @@ foreach(PATH IN LISTS LAYER_SOURCES)
         list(APPEND VIOLATIONS
             "${PATH}: platform layer includes a CPU-owned contract")
     endif()
-    if(PATH MATCHES "/darwin/cpu/arm64/gadgets/")
-        if(NORMALIZED_INCLUDE_TEXT MATCHES "(^|\n)(darwin/)?cpu/arm64/jit/")
-            list(APPEND VIOLATIONS
-                "${PATH}: gadget engine includes another engine implementation")
-        endif()
-    elseif(PATH MATCHES "/darwin/cpu/arm64/jit/")
-        if(NORMALIZED_INCLUDE_TEXT MATCHES
-           "(^|\n)(darwin/)?cpu/arm64/gadgets/")
-            list(APPEND VIOLATIONS
-                "${PATH}: JIT includes another engine implementation")
-        endif()
+    # Engines do not include one another and shared CPU code includes neither.
+    # The JIT owns arm64/jit/, the gadget engines own arm64/gadgets/ and
+    # x86_64/, and the engine factory is the one source that composes both.
+    set(FOREIGN_ENGINE_INCLUDE "")
+    if(PATH MATCHES "/darwin/cpu/arm64/jit/")
+        set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/gadgets|x86_64)/")
+    elseif(PATH MATCHES "/darwin/cpu/(arm64/gadgets|x86_64)/")
+        set(FOREIGN_ENGINE_INCLUDE "cpu/arm64/jit/")
+    elseif(PATH MATCHES "/darwin/cpu/" AND
+           NOT PATH MATCHES "/darwin/cpu/engine_factory\\.cpp$")
+        set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/jit|arm64/gadgets|x86_64)/")
+    endif()
+    if(FOREIGN_ENGINE_INCLUDE AND NORMALIZED_INCLUDE_TEXT MATCHES
+       "(^|\n)(darwin/)?${FOREIGN_ENGINE_INCLUDE}")
+        list(APPEND VIOLATIONS
+            "${PATH}: CPU source includes an engine implementation it does not own")
     endif()
     # Sandboxed iOS can execute the precompiled gadget engine without a
     # dynamic-code entitlement. Keep executable allocation and

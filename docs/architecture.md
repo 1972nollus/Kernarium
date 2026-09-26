@@ -15,7 +15,9 @@ device -> memory / platform
 
 `darwin/CMakeLists.txt` composes owning subdirectories. Each module owns its
 targets and source manifest. The neutral CPU factory selects the gadget or JIT
-adapter; engines do not depend on one another.
+adapter; engines do not depend on one another, and shared CPU code depends on
+neither. `architecture-audit` enforces this on each CPU target's declared
+engine kind and on textual includes between the engine directories.
 
 An emulator archive is a self-contained final product. CMake merges object
 libraries and interface-carried objects into it but never a linked static

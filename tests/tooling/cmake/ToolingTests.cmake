@@ -72,12 +72,10 @@ if(UML_ENABLE_RUNTIME_PROFILING)
 endif()
 
 uml_add_tooling_test(
-    NAME symmetric-engine-edge-audit
+    NAME engine-kind-link-audit
     COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_engine_edge_audit.py
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_engine_kind_link_audit.py
         --cmake ${CMAKE_COMMAND}
         --audit ${PROJECT_SOURCE_DIR}/scripts/audit-cmake-file-api.cmake
-        --build-root ${CMAKE_BINARY_DIR}
-        --manifest ${CMAKE_BINARY_DIR}/uml-architecture-targets.tsv
     LABELS audit;cpu
     TIMEOUT 60)
