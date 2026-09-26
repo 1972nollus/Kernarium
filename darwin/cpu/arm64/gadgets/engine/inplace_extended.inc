@@ -25,7 +25,6 @@
  * per vector register is about 1.7 MB of bank, which is the cost G194 found
  * is charged to every workload whether or not it forwards.
  */
-#if UML_GADGET_INPLACE_IMMEDIATE
 
 /* ---- logical immediate, Rd == Rn, both ordinary registers ---------------- */
 /* Two operand words: the register fields the baked entry no longer reads, and
@@ -335,4 +334,3 @@ inplace_row_32 simd_fused_inplace_fmls_2d
 .purgem logical_inplace_register
 .purgem logical_inplace_entry
 
-#endif

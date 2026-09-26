@@ -643,7 +643,6 @@ public:
 			    slot.generation != current_generation_ ||
 			    slot.body == nullptr)
 				continue;
-#if UML_GADGET_EXACT_CACHE_VALIDATION
 			if (slot.validated_changes == changes) {
 				return slot.body->result();
 			}
@@ -654,14 +653,6 @@ public:
 			}
 			activate(pc, slot);
 			return slot.body->result();
-#else
-			(void)changes;
-			(void)mapping_changes;
-			(void)memory;
-			(void)execution_context;
-			(void)diagnostics;
-			return slot.body->result();
-#endif
 		}
 		return std::nullopt;
 	}
@@ -771,9 +762,7 @@ public:
 		++site_misses_[&site][target_pc];
 #endif
 		const auto *target = link(target_pc);
-#if UML_GADGET_TARGET_TIER
 		train_target(target_pc, target);
-#endif
 		/* Training is the only thing that moves a site off its empty
 		 * cells, and empty_pc is unreachable as a guest target, so a
 		 * site still holding two empty cells is untrained since its last
@@ -838,7 +827,6 @@ public:
 		 * memory: the program's instructions, plus the word a stopped
 		 * build read without retiring. */
 		std::span<const std::uint32_t> validation;
-#if UML_GADGET_EXACT_CACHE_VALIDATION
 		const auto validation_words =
 			result.program.instruction_count() +
 			static_cast<std::size_t>(!result.complete);
@@ -846,7 +834,6 @@ public:
 		    validation_words <= block_instruction_count &&
 		    validation_words <= guest_words.size())
 			validation = guest_words.first(validation_words);
-#endif
 		auto *replacement_body = new_body(result, validation);
 		/* An epoch this slot no longer belongs to means its former owner
 		 * is already gone, so only a current occupant has a link record
@@ -875,12 +862,7 @@ public:
 		slot.pc = pc;
 		slot.generation = current_generation_;
 		slot.epoch = epoch_;
-#if UML_GADGET_EXACT_CACHE_VALIDATION
 		slot.validated_changes = changes;
-#else
-		(void)guest_words;
-		(void)changes;
-#endif
 #if UML_GADGET_CACHE_CENSUS
 		++stores_;
 #endif
@@ -1043,9 +1025,7 @@ private:
 		 */
 		LinkRecord *link{};
 		std::uint64_t link_epoch{};
-#if UML_GADGET_EXACT_CACHE_VALIDATION
 		std::uint64_t validated_changes{};
-#endif
 	};
 
 	/* The cache commits a slot per way whether or not it is occupied, so
@@ -1322,7 +1302,6 @@ private:
 		return link_record(current(), pc);
 	}
 
-#if UML_GADGET_EXACT_CACHE_VALIDATION
 	void discard(Slot &slot) noexcept
 	{
 		if (slot.body != nullptr) {
@@ -1390,7 +1369,6 @@ private:
 		++diagnostics.validation_hits;
 		return true;
 	}
-#endif
 
 	void activate(std::uint64_t pc, Slot &slot)
 	{
@@ -1570,21 +1548,10 @@ void GadgetExecutor::prepare_cache(
 {
 	if (cache_generation_ == generation && cache_changes_ == changes)
 		return;
-#if UML_GADGET_EXACT_CACHE_VALIDATION
-	/* Switching address space no longer empties the cache: slots, links and
+	/* Switching address space does not empty the cache: slots, links and
 	 * indirect sites all carry the address space they describe, so the
 	 * translations of the one being left stay resident for its return. */
 	programs_->prepare(generation, changes);
-#else
-	if (cache_generation_ != generation || cache_changes_ != changes) {
-		programs_->invalidate();
-		if (current_cpu_ != nullptr) {
-			current_cpu_->gadget_return_stack = {};
-			current_cpu_->gadget_return_top = 0;
-		}
-	}
-	programs_->prepare(generation, changes);
-#endif
 	cache_generation_ = generation;
 	cache_changes_ = changes;
 }
@@ -1694,11 +1661,9 @@ BuildResult GadgetExecutor::store(
 		cpu.pc = built.stop_address;
 		return ::uml::cpu::EngineEvent::illegal_instruction;
 	}
-#if UML_GADGET_TARGET_TIER
 	/* Published on every entry: the CpuState may last have run another
 	 * address space, whose table this cache may since have retired. */
 	cpu.gadget_target_tier = programs_->target_tier();
-#endif
 	const auto event =
 		arm64::gadgets::execute_preserving_native_fp_environment(
 			built.program, cpu, tlb_, executed);

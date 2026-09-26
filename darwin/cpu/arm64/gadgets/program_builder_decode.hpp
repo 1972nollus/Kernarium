@@ -14,20 +14,7 @@
 #include <span>
 #include <vector>
 
-/* Translating a conditional branch's fall-through inline behind it, rather than
- * ending the block there. A block otherwise ends at its first branch, which on
- * a browser guest is a mean of 4.93 instructions; conditional branches end
- * 36.8% of blocks and are the only large category whose continuation keeps the
- * guest addresses contiguous, so nothing about validation or fault accounting
- * has to change. See G162. */
-#ifndef UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH
-#define UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH 1
-#endif
-
 namespace uml::cpu::arm64::gadgets::builder_detail {
-
-inline constexpr bool inline_conditional_fallthrough =
-	UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH != 0;
 
 /* The byte offset of a guest vector register inside CpuState, which every
  * SIMD and floating-point operand word in the decode fragments is built from.
@@ -97,7 +84,9 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 }
 
 /* Continue translating the fall-through of a conditional branch rather than
- * ending the block at it.
+ * ending the block at it. A block otherwise ends at its first branch, and
+ * conditional branches are the only large category of block ends whose
+ * continuation keeps the guest addresses contiguous; see G162.
  *
  * The taken edge keeps its link. The word where the fall-through link used to
  * sit becomes the count of instructions translated after this one, which the
@@ -111,18 +100,14 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 	DecodeContext &context, selection::Gadget gadget, std::uint64_t target,
 	std::size_t retires = 1)
 {
-	if constexpr (!inline_conditional_fallthrough)
+	if (gadget == nullptr || context.suffixes == nullptr ||
+	    context.suffixes->full())
 		return false;
-	else if (gadget == nullptr || context.suffixes == nullptr ||
-		 context.suffixes->full())
-		return false;
-	else {
 	selection::emit(context.words, gadget);
 	emit_link(context, target);
 	context.suffixes->add(context.words.size(), context.compiled + retires);
 	context.words.push_back(0);
 	return true;
-	}
 }
 
 /* Pack an inline suffix into a zero high-bit range of an operand. The builder
@@ -135,22 +120,18 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 {
 	const auto suffix_maximum =
 		std::numeric_limits<std::uintptr_t>::max() >> suffix_shift;
-	if constexpr (!inline_conditional_fallthrough)
+	if (gadget == nullptr || suffix_shift == 0 ||
+	    (operand >> suffix_shift) != 0 ||
+	    context.following.size() > suffix_maximum ||
+	    context.suffixes == nullptr ||
+	    context.suffixes->full())
 		return false;
-	else if (gadget == nullptr || suffix_shift == 0 ||
-		 (operand >> suffix_shift) != 0 ||
-		 context.following.size() > suffix_maximum ||
-		 context.suffixes == nullptr ||
-		 context.suffixes->full())
-		return false;
-	else {
 	selection::emit(context.words, gadget);
 	context.suffixes->add(context.words.size(),
 		context.compiled + retires, suffix_shift);
 	selection::emit(context.words, operand);
 	emit_link(context, target);
 	return true;
-	}
 }
 
 [[nodiscard]] inline bool emit_inlined_compare_zero_branch(
@@ -166,13 +147,10 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 	std::uintptr_t operand, std::uintptr_t mask, std::uint64_t target,
 	std::size_t retires = 1)
 {
-	if constexpr (!inline_conditional_fallthrough)
+	if (gadget == nullptr || operand > 0xffffU ||
+	    context.suffixes == nullptr ||
+	    context.suffixes->full())
 		return false;
-	else if (gadget == nullptr || operand > 0xffffU ||
-		 context.suffixes == nullptr ||
-		 context.suffixes->full())
-		return false;
-	else {
 	selection::emit(context.words, gadget);
 	context.suffixes->add(context.words.size(),
 		context.compiled + retires, 16);
@@ -180,7 +158,6 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 	selection::emit(context.words, mask);
 	emit_link(context, target);
 	return true;
-	}
 }
 
 

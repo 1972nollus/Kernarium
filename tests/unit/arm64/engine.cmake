@@ -277,10 +277,6 @@
         uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_definitions(
-        uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
-        UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
-        UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>)
     target_compile_options(
         uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
         -Wall -Wextra -Werror)
@@ -937,7 +933,6 @@
         ${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_definitions(
         uml_arm64_gadget_cache_validation_tests PRIVATE
-        UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
     target_compile_options(
@@ -957,9 +952,6 @@
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64
         ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_definitions(
-        uml_arm64_gadget_inline_fallthrough_tests PRIVATE
-        UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>)
     target_compile_options(
         uml_arm64_gadget_inline_fallthrough_tests PRIVATE
         -Wall -Wextra -Werror)
@@ -974,10 +966,6 @@
     target_include_directories(uml_arm64_gadget_hot_path_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_definitions(
-        uml_arm64_gadget_hot_path_tests PRIVATE
-        UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
-        UML_GADGET_INPLACE_MEMORY=$<BOOL:${UML_GADGET_INPLACE_MEMORY}>)
     target_compile_options(uml_arm64_gadget_hot_path_tests PRIVATE
 		-Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-hot-path COMMAND uml_arm64_gadget_hot_path_tests)
@@ -1045,8 +1033,6 @@
 		${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_options(uml_arm64_gadget_indirect_link_tests PRIVATE
 		-Wall -Wextra -Werror)
-    target_compile_definitions(uml_arm64_gadget_indirect_link_tests PRIVATE
-		UML_GADGET_TARGET_TIER=$<BOOL:${UML_GADGET_TARGET_TIER}>)
     uml_add_unit_test(NAME arm64-gadget-indirect-links
 		COMMAND uml_arm64_gadget_indirect_link_tests)
 

@@ -28,7 +28,6 @@
  * Appended after the established bank so no existing entry moves or changes
  * its 64-byte phase.
  */
-#if UML_GADGET_INPLACE_IMMEDIATE
 
 /* Rd == Rn == \reg, both ordinary registers. The stream word keeps the
  * ordinary compact operand so the translator's encoding is unchanged; only
@@ -37,14 +36,10 @@
 .macro add_sub_immediate_inplace_entry bits64, subtract, flags, reg, suffix, forward
 	.set .Lipd\@, 0x8000 | (\reg * 8)
 scalar_entry add_sub_immediate_inplace_\suffix\()_\reg, \forward, 1, .Lipd\@, .Lipd\@, scalar_none, scalar_none, 1
-#if UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
 	/* Non-faulting, and x14 is free: the same bounded hoist the ordinary
 	 * family uses. Builder always emits a terminal after a translated
 	 * fallthrough, so the successor word exists. */
 	ldp x8, x14, [_stream], #16
-#else
-	ldr x8, [_stream], #8
-#endif
 	.if \forward & 1
 	mov x15, x0
 	.else
@@ -84,11 +79,7 @@ scalar_entry add_sub_immediate_inplace_\suffix\()_\reg, \forward, 1, .Lipd\@, .L
 	mrs x27, nzcv
 	.endif
 	str _scalar_x16, [_cpu, #(\reg * 8)]
-#if UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
 	br x14
-#else
-	next_gadget
-#endif
 .endm
 
 .macro add_sub_immediate_inplace_register bits64, subtract, flags, reg, suffix
@@ -146,4 +137,3 @@ add_sub_immediate_inplace_row x_sub_s
 .purgem add_sub_immediate_inplace_register
 .purgem add_sub_immediate_inplace_entry
 
-#endif

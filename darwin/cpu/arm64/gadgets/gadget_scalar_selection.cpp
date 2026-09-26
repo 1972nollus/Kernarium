@@ -1207,7 +1207,6 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 
 #undef UML_SELECT_ADD_SUB_IMMEDIATE_MODES
 
-#if UML_GADGET_INPLACE_IMMEDIATE
 /* Rd == Rn, both ordinary registers: one baked displacement serves the store
  * and the load, so the table is one row of 31 per operation. */
 [[nodiscard]] Gadget add_sub_immediate_inplace_gadget(bool is_64_bit, bool subtract,
@@ -1217,9 +1216,7 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 		static_cast<unsigned>(subtract)) * 2U + static_cast<unsigned>(set_flags);
 	return uml_arm64_gadget_add_sub_immediate_inplace_table[row * 31U + register_index];
 }
-#endif
 
-#if UML_GADGET_INPLACE_IMMEDIATE
 /* and/orr/eor/ands Rd, Rd, #imm: row = width * 4 + operation. */
 [[nodiscard]] Gadget logical_immediate_inplace_gadget(bool is_64_bit,
 	unsigned int operation, unsigned int register_index) noexcept
@@ -1244,7 +1241,6 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 		static_cast<unsigned>(subtract)) * 2U + static_cast<unsigned>(set_flags);
 	return uml_arm64_gadget_add_sub_register_inplace_table[row * 31U + register_index];
 }
-#endif
 
 #define UML_SELECT_ADD_SUB_REGISTER_DESTINATION(prefix) \
 	return destination_discard ? \

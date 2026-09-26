@@ -64,7 +64,6 @@ template<typename Function>
 [[nodiscard]] std::uintptr_t vector_entry(const test::Form &form,
 	[[maybe_unused]] unsigned destination = 0U)
 {
-#if UML_GADGET_INPLACE_IMMEDIATE
 	/* Every vector FMLA/FMLS accumulates into Vd, so the translator always
 	 * reaches the baked-accumulator entry for that register. */
 	{
@@ -77,7 +76,6 @@ template<typename Function>
 			gadgets::selection::uml_arm64_gadget_simd_fused_inplace_table[
 				row * 32U + destination]);
 	}
-#endif
 	const unsigned shape = form.width == 16U ?
 		(form.vector_bytes == 16U ? 1U : 0U) :
 		form.width == 32U ?
@@ -166,9 +164,6 @@ void direct_operands_and_live_bank()
 		for (const auto registers : test::register_cases)
 			expected.insert(vector_entry(form, registers.destination));
 	});
-#if !UML_GADGET_INPLACE_IMMEDIATE
-	test::common::require(expected.size() == 22U);
-#endif
 	test::common::require(selected == expected);
 
 	for (const auto entry : expected) {

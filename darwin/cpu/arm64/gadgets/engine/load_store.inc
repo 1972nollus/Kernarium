@@ -280,9 +280,6 @@ scalar_unsigned_modes 0, 0, store32_unsigned_fast
 scalar_unsigned_modes 0, 1, store64_unsigned_fast
 
 .purgem scalar_unsigned_modes
-#if !UML_GADGET_INPLACE_MEMORY
-.purgem scalar_unsigned_fast
-#endif
 
 /* Translation-specialized byte/halfword and sign-extending unsigned-offset
  * scalar accesses. The stream operand carries CpuState byte offsets for Rt/Rn,

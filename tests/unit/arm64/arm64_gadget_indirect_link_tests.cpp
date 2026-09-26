@@ -229,7 +229,6 @@ int main()
 		require(executed == 3);
 	}
 
-#if UML_GADGET_TARGET_TIER
 	/* A target the site's cells do not hold is followed through the address
 	 * space's target table, which also trains the site's next cell; without
 	 * a matching record, or with no table published, the site exits as
@@ -308,5 +307,4 @@ int main()
 		require(retired_cpu.gadget_indirect_miss == nullptr);
 		require(executed == 1);
 	}
-#endif
 }

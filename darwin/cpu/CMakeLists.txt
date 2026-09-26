@@ -45,6 +45,12 @@ if(UML_GADGET_CACHE_SLOTS LESS 1024 OR
         "not ${UML_GADGET_CACHE_SLOTS}")
 endif()
 unset(_uml_gadget_cache_slots_invalid)
+# Slots are tagged with the address space they describe, so one pool serves all
+# of them and a switch retains rather than discards. Eight resident address
+# spaces, measured on a browser guest at 65536 slots, reach a 76.2% lookup hit
+# rate against 29.7% for flushing on every switch and cut retranslation from
+# 1.46M to 255K a second; sixteen was worse on every axis, because more address
+# spaces dilute one pool the same way partitioning it did.
 set(UML_GADGET_RESIDENT_GENERATIONS "8" CACHE STRING
     "Address spaces that may hold translations in each private gadget cache")
 
@@ -133,86 +139,6 @@ option(UML_GADGET_EXECUTION_HISTOGRAM
     "Count executed gadget entries (diagnostic builds only)"
     OFF)
 
-# G107's bounded successor fetch applies only to the 32 non-faulting
-# ADD/SUB-immediate entries whose register and stream contract can safely load
-# the next gadget together with their operand. Focused and full Geekbench
-# measurements support enabling that bounded family in ordinary products.
-option(UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST
-    "Hoist successor fetch in ADD/SUB-immediate gadgets"
-    ON)
-
-# Keep the accepted destination-residency family separately selectable for
-# focused regression tests. The implementation never carries mutable vector
-# state across a translated block.
-option(UML_GADGET_SIMD_DESTINATION_RESIDENCY
-    "Keep one bounded SIMD MLA destination resident within a block"
-    ON)
-
-# An in-place "add Rd, Rd, #imm" writes and re-reads one CpuState slot;
-# addressing that slot with a baked displacement instead of a decoded register
-# index lets the host forward the store to the load at rename. Bounded at 31
-# entries per operation because the in-place shape needs one index for both
-# accesses. Turning this on without UML_GADGET_INPLACE_MEMORY leaves a baked
-# producer feeding an indexed consumer, which is slower than baking neither, so
-# the two belong on or off together.
-option(UML_GADGET_INPLACE_IMMEDIATE
-    "Bake the CpuState displacement into in-place ADD/SUB-immediate entries"
-    ON)
-
-# The companion to the entry above. An unsigned-offset transfer reaches CpuState
-# through the register it moves; baking that displacement both forwards the
-# value at rename and keeps the two ends of the hop in the same addressing form,
-# which a baked arithmetic entry alone does not. Covers the 32- and 64-bit forms
-# at 31 entries per mode, whose cold tails are out of line so the copies cost
-# only what differs between them.
-option(UML_GADGET_INPLACE_MEMORY
-    "Bake the CpuState displacement into unsigned-offset scalar transfer entries"
-    ON)
-
-# Retain decoded programs across a code-change sequence only after validating
-# every guest word the program consumed. Direct and indirect activations are
-# reset before any retained program can be reached again.
-option(UML_GADGET_EXACT_CACHE_VALIDATION
-    "Reuse exactly validated gadget programs after guest code changes"
-    ON)
-
-# Slots are tagged with the address space they describe, so one pool serves all
-# of them and a switch retains rather than discards. Capacity is therefore a
-# single shared budget: a busy address space may use more than an even share,
-# and an idle one costs nothing.
-# 65536 slots with eight resident address spaces: measured on a browser guest,
-# that reaches a 76.2% lookup hit rate against 29.7% for flushing on every
-# switch, and cuts retranslation from 1.46M to 255K a second. Sixteen resident
-# was measured and is worse on every axis -- more address spaces dilute one
-# pool the same way partitioning it did.
-# A block otherwise ends at its first branch, which on a browser guest is a mean
-# of 4.93 instructions -- too short for anything per-block to amortize against.
-# Conditional branches end 52.8% of blocks and are the only large category whose
-# fall-through is the next address, so continuing through them leaves fault
-# accounting and the G140/G141 validation contract untouched. Worth 60.1% of
-# frame rate on WebGL Aquarium; see G162.
-option(UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH
-    "Translate a conditional branch's fall-through inline behind it" ON)
-# Same-page transfers fold the cross-page check into the TLB tag compare
-# (16 KiB pages), fall through on a hit, and keep the second way, crossing and
-# miss handling behind the dispatch. OFF is the matched-layout control for A/B
-# timing; it pads each wider scalar transfer by one word so both builds keep
-# every later entry at the same address.
-option(UML_GADGET_FUSED_TRANSLATE
-    "Fold the transfer cross-page check into the TLB compare with a fall-through hit path" ON)
-# Linked calls push the return block's link on a private sixteen-record ring
-# and a cached return whose site cells miss pops a matching record, training
-# the cell. Exact counters over the Geekbench 6 single-core set: executor round
-# trips -59 percent, return misses -84 percent; HDR +9, Clang +4, HTML5 +4.5
-# percent on a quiet host with the aggregate inside the shared-host band.
-option(UML_GADGET_RETURN_STACK
-    "Predict cached returns through a private return-record ring" ON)
-# After a site's cells (and for a return the ring) miss, look the target up in
-# a direct-mapped {target, BlockLink} table the address space's misses fill,
-# instead of returning to the executor. Most Geekbench 6 single-core round
-# trips are misses at sites with more targets than any cell array covers.
-option(UML_GADGET_TARGET_TIER
-    "Follow indirect-site misses through a per-address-space target table" ON)
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
 # enough to be cut off by it rather than ending at a branch.
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
@@ -245,16 +171,7 @@ target_compile_options(uml_arm64_gadgets PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(uml_arm64_gadgets PRIVATE
-    UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
-    UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
-    UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
-    UML_GADGET_INPLACE_MEMORY=$<BOOL:${UML_GADGET_INPLACE_MEMORY}>
-    UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>
-    UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
-    UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>
-    UML_GADGET_FUSED_TRANSLATE=$<BOOL:${UML_GADGET_FUSED_TRANSLATE}>
-    UML_GADGET_RETURN_STACK=$<BOOL:${UML_GADGET_RETURN_STACK}>
-    UML_GADGET_TARGET_TIER=$<BOOL:${UML_GADGET_TARGET_TIER}>)
+    UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>)
 
 # The gadget library is still many translation units, and the selection tables
 # the decode families call into are among them. Interprocedural optimization
@@ -435,12 +352,10 @@ target_include_directories(uml_arm64_gadget_executor PRIVATE
 target_compile_features(uml_arm64_gadget_executor PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadget_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_gadget_executor PRIVATE
-    UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
     UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
-    UML_GADGET_TARGET_TIER=$<BOOL:${UML_GADGET_TARGET_TIER}>
     UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
 set_target_properties(uml_arm64_gadget_executor PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
