@@ -213,6 +213,12 @@ preserving terminal output behavior and bounded writes under backpressure.
 enough to throttle the tty, and then requires later typed input to reach the
 shell.
 
+`guest-bpf-callbacks` runs hand-assembled BPF programs through `bpf()` from the
+rootfs Python: `bpf_loop`, inlined and through the helper,
+`bpf_for_each_map_elem`, nested callbacks, and tail calls into callback
+programs, checks that the verifier's frame, stack, and tail-call limits still
+reject, and exhausts and refills the interpreter's callback entry-point pool.
+
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
 `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; do not override individual files.

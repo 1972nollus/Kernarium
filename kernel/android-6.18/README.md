@@ -31,7 +31,9 @@ ext4 userdata, but the fscrypt, inline-encryption fallback, HCTR2, and
 dm-default-key stack remains built in for ordinary Android application and
 framework compatibility. The
 native arm64 eBPF JIT is not exposed because its execution contracts do not
-match UML; the AOSP product uses the generic BPF interpreter. The kernel
+match UML; the AOSP product uses the generic BPF interpreter, which runs
+callbacks through the entry-point pool the
+[mainline README](../mainline-6.18/README.md) describes. The kernel
 carries BTF type information, exposed at `/sys/kernel/btf/vmlinux`, as GKI
 does. The build emits DWARF 5 only as pahole's input and keeps frame pointers
 off.
