@@ -275,6 +275,18 @@ class KdeVncLauncherTests(unittest.TestCase):
         separator = boot_kde_vnc.guest_argument_separator(command)
         kernel_arguments = command[separator + 1 :]
         self.assertIn("systemd.mask=serial-getty@hvc0.service", kernel_arguments)
+        # The starter Plasma session starts from its getty@tty1 autologin.
+        self.assertNotIn("systemd.mask=getty@tty0.service", kernel_arguments)
+        self.assertNotIn("systemd.mask=getty@tty1.service", kernel_arguments)
+
+    def test_legacy_erofs_kernel_arguments_mask_display_manager_getties(
+        self,
+    ) -> None:
+        command = boot_kde_vnc.build_harness_command(
+            boot_kde_vnc.parse_arguments(["--rootfs-type", "erofs"])
+        )
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        kernel_arguments = command[separator + 1 :]
         self.assertIn("systemd.mask=getty@tty0.service", kernel_arguments)
         self.assertIn("systemd.mask=getty@tty1.service", kernel_arguments)
 

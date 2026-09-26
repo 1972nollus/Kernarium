@@ -335,13 +335,19 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
         "--",
         f"ncpus={options.cpus}",
         f"--execution-engine={options.engine}",
-        "systemd.mask=getty@tty0.service",
-        "systemd.mask=getty@tty1.service",
     ))
     if options.rootfs_type == "ext4":
         # Starter images own DHCP/DNS. This later argument overrides the GPU
-        # harness's legacy kernel-DHCP default.
+        # harness's legacy kernel-DHCP default. Their Plasma session starts
+        # from the image's getty@tty1 autologin, so its getties stay unmasked.
         command.append("ip=off")
+    else:
+        # Legacy SDDM images must keep a getty off the display manager's VT
+        # from the start of boot, as their overlay setup explains.
+        command.extend((
+            "systemd.mask=getty@tty0.service",
+            "systemd.mask=getty@tty1.service",
+        ))
     if options.serial_socket is not None:
         command.append("systemd.wants=serial-getty@ttyS0.service")
     if options.virtio_console_socket is None:
