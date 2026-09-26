@@ -325,32 +325,67 @@ safe_relative_path()
 	return 0
 }
 
-# A shared protocol series has one source owner. The explicit namespace does
-# not grant general parent-directory access to dependency metadata.
-resolve_series()
+# A patch-series field names one generated series, or ordered layers joined
+# by "+": each layer applies to the tree the layers before it produce, and the
+# last one, which this directory owns, records the tree of the whole stack.
+# A series that the paired Vulkan guest owns is named through the explicit
+# rootfs-vulkan namespace, which grants no general parent-directory access.
+resolve_series_layer()
 {
-	case "$patch_series" in
+	case "$1" in
 	rootfs-vulkan:*)
-		series_relative=${patch_series#rootfs-vulkan:}
-		[ "$name:$series_relative" = \
-			'venus-protocol:patches/venus-protocol/series.tsv' ] ||
-			fail "$name has an unsupported rootfs-vulkan series: $patch_series"
+		series_relative=${1#rootfs-vulkan:}
+		case "$name:$series_relative" in
+		venus-protocol:patches/venus-protocol/series.tsv|\
+		mesa:patches/mesa/series.tsv) ;;
+		*) fail "$name has an unsupported rootfs-vulkan series: $1" ;;
+		esac
 		metadata_outer=$(CDPATH= cd -- "$PATCH_ROOT/.." && pwd -P)
 		series_owner="$metadata_outer/tools/rootfs/vulkan"
 		;;
-	*:*) fail "$name has an unknown patch-series owner: $patch_series" ;;
+	*:*) fail "$name has an unknown patch-series owner: $1" ;;
 	*)
-		series_relative=$patch_series
+		series_relative=$1
 		series_owner=$(CDPATH= cd -- "$PATCH_ROOT" && pwd -P)
 		;;
 	esac
 	safe_relative_path "$series_relative" ||
-		fail "$name has an unsafe patch-series path: $patch_series"
+		fail "$name has an unsafe patch-series path: $1"
 	case "$series_relative" in
-	*[!A-Za-z0-9._/-]*) fail "$name has an unsafe patch-series path: $patch_series" ;;
+	*[!A-Za-z0-9._/-]*) fail "$name has an unsafe patch-series path: $1" ;;
 	esac
 	series_path="$series_owner/$series_relative"
 	verify_metadata_path "$series_path"
+}
+
+# Sets SERIES_PATHS to the layers' series.tsv paths, one per line in
+# application order, and series_path to the last of them.
+resolve_series()
+{
+	case "$patch_series" in
+	*[!A-Za-z0-9._/:+-]*|+*|*+|*++*)
+		fail "$name has a malformed patch-series field: $patch_series" ;;
+	esac
+	SERIES_PATHS=
+	series_layer_count=0
+	old_ifs=$IFS
+	IFS=+
+	set -f
+	for series_layer in $patch_series; do
+		IFS=$old_ifs
+		resolve_series_layer "$series_layer"
+		SERIES_PATHS="${SERIES_PATHS}${SERIES_PATHS:+
+}$series_path"
+		series_layer_count=$((series_layer_count + 1))
+		last_series_layer=$series_layer
+	done
+	set +f
+	IFS=$old_ifs
+	if [ "$series_layer_count" -gt 1 ]; then
+		case "$last_series_layer" in
+		*:*) fail "$name must own the last layer of its patch series" ;;
+		esac
+	fi
 }
 
 verify_metadata_path()
@@ -367,8 +402,8 @@ PY
 
 validate_vulkan_pair()
 {
-	case "$name" in
-	venus-protocol|vulkan-headers) ;;
+	case "$name:$patch_series" in
+	venus-protocol:*|vulkan-headers:*|mesa:rootfs-vulkan:*) ;;
 	*) return 0 ;;
 	esac
 	metadata_outer=$(CDPATH= cd -- "$PATCH_ROOT/.." && pwd -P)
@@ -389,6 +424,13 @@ validate_vulkan_pair()
 		[ "$(awk -F '\t' '$1 == "venus-protocol" { print $7 }' "$paired_sources")" = \
 			patches/venus-protocol/series.tsv ] ||
 			fail "venus-protocol paired series owner differs"
+	elif [ "$name" = mesa ]; then
+		[ "$patch_series" = \
+			rootfs-vulkan:patches/mesa/series.tsv+patches/mesa/series.tsv ] ||
+			fail "mesa must layer its own series on the canonical rootfs-vulkan series"
+		[ "$(awk -F '\t' '$1 == "mesa" { print $7 }' "$paired_sources")" = \
+			patches/mesa/series.tsv ] ||
+			fail "mesa paired series owner differs"
 	else
 		[ "$patch_series" = - ] || fail "Vulkan-Headers must use the unmodified SDK"
 	fi
@@ -434,22 +476,40 @@ series_values()
 	SERIES_TREE=
 	[ "$patch_series" != '-' ] || return 0
 	resolve_series
-	series_directory=$(dirname -- "$series_path")
-	SERIES_COUNT=$(awk -F '\t' '$1 == "patch" { count++ } END { print count + 0 }' \
-		"$series_path")
-	SERIES_TREE=$(series_tool recorded-tree --series-dir "$series_directory") ||
+	SERIES_COUNT=$(printf '%s\n' "$SERIES_PATHS" | while IFS= read -r layer_path; do
+		awk -F '\t' '$1 == "patch" { count++ } END { print count + 0 }' "$layer_path"
+	done | awk '{ total += $1 } END { print total + 0 }')
+	SERIES_TREE=$(series_tool recorded-tree --series-dir "$(dirname -- "$series_path")") ||
 		fail "$name patch series records no tree"
+}
+
+# Runs the series tool with one --series-dir per layer, in order, after the
+# given arguments.
+series_tool_layers()
+{
+	(
+		IFS='
+'
+		set -f
+		for layer_path in $SERIES_PATHS; do
+			set -- "$@" --series-dir "$(dirname -- "$layer_path")"
+		done
+		set +f
+		series_tool "$@"
+	)
 }
 
 validate_series()
 {
 	[ "$patch_series" != '-' ] || return 0
 	resolve_series
-	[ "$(basename -- "$series_path")" = series.tsv ] ||
-		fail "$name patch series must name a series.tsv: $patch_series"
-	[ -f "$series_path" ] || fail "$name patch series is missing: $series_path"
-	series_tool verify --series-dir "$(dirname -- "$series_path")" ||
-		fail "$name patch series is invalid"
+	printf '%s\n' "$SERIES_PATHS" | while IFS= read -r layer_path; do
+		[ "$(basename -- "$layer_path")" = series.tsv ] ||
+			fail "$name patch series must name series.tsv files: $patch_series"
+		[ -f "$layer_path" ] || fail "$name patch series is missing: $layer_path"
+		series_tool verify --series-dir "$(dirname -- "$layer_path")" ||
+			fail "$name patch series is invalid: $layer_path"
+	done || exit 1
 	series_values
 	[ "$SERIES_COUNT" -gt 0 ] || fail "$name patch series is empty"
 }
@@ -490,9 +550,13 @@ paired_count=$(awk -F '\t' '$1 == "vulkan-headers" || $1 == "venus-protocol" \
 validate_patch_inventory()
 {
 	manifest_series=$(awk -F '\t' '
-		/^#/ || /^[[:space:]]*$/ || $1 == "name" || $7 == "-" ||
-		    $7 ~ /^rootfs-vulkan:/ { next }
-		{ print $7 }
+		/^#/ || /^[[:space:]]*$/ || $1 == "name" || $7 == "-" { next }
+		{
+			count = split($7, layers, "+")
+			for (i = 1; i <= count; i++)
+				if (layers[i] !~ /^rootfs-vulkan:/)
+					print layers[i]
+		}
 	' "$MANIFEST" | LC_ALL=C sort -u)
 	directory_series=$(
 		cd "$PATCH_ROOT"
@@ -845,10 +909,12 @@ prepare_repository()
 		refs/heads | git -C "$staged_repository" update-ref --stdin
 	if [ "$patch_series" != '-' ]; then
 		series_values
-		env GIT_NO_LAZY_FETCH=1 python3 -B "$PATCH_SERIES" apply \
-			--repo "$staged_repository" --series-dir "$series_directory" \
-			--expect-tree "$SERIES_TREE" >/dev/null ||
-			fail "$name patch series does not apply"
+		(
+			GIT_NO_LAZY_FETCH=1
+			export GIT_NO_LAZY_FETCH
+			series_tool_layers apply --repo "$staged_repository" \
+				--expect-tree "$SERIES_TREE" >/dev/null
+		) || fail "$name patch series does not apply"
 	fi
 	git -C "$staged_repository" config uml.source.repository "$repository"
 	git -C "$staged_repository" config uml.source.commit "$commit"

@@ -99,7 +99,8 @@ private:
 [[nodiscard]] std::unique_ptr<BalloonMemory> makeGuestRamBalloonMemory();
 
 /* A target that follows the memory the host GPU holds for this process, up
- * to `limit` bytes. */
+ * to `limit` bytes: the larger of Metal's allocation and the process's
+ * graphics footprint, which also counts the driver's command storage. */
 [[nodiscard]] std::function<std::uint64_t()> hostGpuMemoryTarget(
     std::uint64_t limit);
 

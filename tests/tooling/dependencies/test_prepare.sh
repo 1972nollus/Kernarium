@@ -399,6 +399,92 @@ expect_failure "missing paired SDK declaration" paired_prepare
 cp "$TEST_ROOT/paired-manifest.tsv" "$MANIFEST"
 paired_prepare >/dev/null
 
+# A layered Mesa series applies the paired guest's topics and then the host's
+# own, whose owned last layer records the tree of the whole stack.
+ROOTFS_MESA="$ROOTFS_METADATA/patches/mesa"
+HOST_MESA="$METADATA/patches/mesa"
+MESA_WORK="$TEST_ROOT/mesa-work"
+cp -R "$TEST_ROOT/series-original" "$ROOTFS_MESA"
+git clone --quiet "$UPSTREAM" "$MESA_WORK"
+GUEST_HEAD=$(git -C "$MESA_WORK" rev-parse HEAD)
+[ "$(python3 -B "$PATCH_SERIES" recorded-tree --series-dir "$ROOTFS_MESA")" = \
+	"$(git -C "$MESA_WORK" rev-parse 'HEAD^{tree}')" ] ||
+	fail "the guest layer fixture does not end at the work checkout"
+printf '%s\n' host >"$MESA_WORK/host.txt"
+git -C "$MESA_WORK" add host.txt
+git -C "$MESA_WORK" commit --quiet -m 'fixture: host change'
+mkdir -p "$HOST_MESA"
+python3 -B "$PATCH_SERIES" export --source "$MESA_WORK" --base "$GUEST_HEAD" \
+	--head HEAD --series-dir "$HOST_MESA" --tree >/dev/null
+git clone --quiet "$UPSTREAM" "$CACHE/git/mesa"
+git -C "$CACHE/git/mesa" remote set-url origin https://example.invalid/mesa.git
+git -C "$CACHE/git/mesa" update-ref refs/heads/uml-pin "$BASE"
+LAYERED_FIELD='rootfs-vulkan:patches/mesa/series.tsv+patches/mesa/series.tsv'
+printf 'mesa\t1.0\tapple-gpu-vulkan-experiment\thttps://example.invalid/mesa.git\t%s\t.\t%s\n' \
+	"$BASE" "$LAYERED_FIELD" >>"$MANIFEST"
+printf 'mesa\thttps://example.invalid/mesa.git\t%s\t-\t-\t-\tpatches/mesa/series.tsv\n' \
+	"$BASE" >>"$ROOTFS_METADATA/sources.tsv"
+cp "$MANIFEST" "$TEST_ROOT/layered-manifest.tsv"
+cp "$ROOTFS_METADATA/sources.tsv" "$TEST_ROOT/layered-sources.tsv"
+layered_prepare()
+{
+	UML_DEPENDENCY_MANIFEST="$MANIFEST" UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
+		"$PREPARE" --product apple-gpu-vulkan-experiment --root "$1" \
+		--cache "$CACHE" --no-fetch
+}
+LAYERED_PREPARED="$TEST_ROOT/layered-prepared"
+layered_prepare "$LAYERED_PREPARED" >/dev/null
+UML_DEPENDENCY_MANIFEST="$MANIFEST" UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
+	"$PREPARE" --product apple-gpu-vulkan-experiment --root "$LAYERED_PREPARED" \
+	--cache "$CACHE" --verify >/dev/null
+[ "$(cat "$LAYERED_PREPARED/mesa/payload.txt")" = patched ] &&
+	[ "$(cat "$LAYERED_PREPARED/mesa/host.txt")" = host ] ||
+	fail "a layered series did not replay both layers"
+[ "$(git -C "$LAYERED_PREPARED/mesa" rev-parse 'HEAD^{tree}')" = \
+	"$(git -C "$MESA_WORK" rev-parse 'HEAD^{tree}')" ] ||
+	fail "a layered series did not reproduce the whole stack"
+[ "$(git -C "$LAYERED_PREPARED/mesa" rev-list --count "$BASE..HEAD")" -eq 3 ] ||
+	fail "a layered series has the wrong topology"
+[ ! -e "$METADATA/patches/mesa/fixture-first-maintained-change.patch" ] ||
+	fail "preparation duplicated the guest layer"
+
+for invalid in \
+	'patches/mesa/series.tsv' \
+	'rootfs-vulkan:patches/mesa/series.tsv' \
+	'patches/mesa/series.tsv+rootfs-vulkan:patches/mesa/series.tsv' \
+	'rootfs-vulkan:patches/mesa/series.tsv++patches/mesa/series.tsv' \
+	'rootfs-vulkan:patches/mesa/series.tsv+patches/mesa/series.tsv+' \
+	'rootfs-vulkan:patches/venus-protocol/series.tsv+patches/mesa/series.tsv'; do
+	awk -F '\t' -v replacement="$invalid" 'BEGIN { OFS = FS }
+		$1 == "mesa" { $7 = replacement } { print }' \
+		"$TEST_ROOT/layered-manifest.tsv" >"$MANIFEST"
+	expect_failure "layered series field $invalid" \
+		layered_prepare "$TEST_ROOT/layered-invalid"
+done
+cp "$TEST_ROOT/layered-manifest.tsv" "$MANIFEST"
+awk -F '\t' 'BEGIN { OFS = FS } $1 == "mesa" { $3 = "0000000000000000000000000000000000000000" }
+	{ print }' "$TEST_ROOT/layered-sources.tsv" >"$ROOTFS_METADATA/sources.tsv"
+expect_failure "mismatched paired mesa source" \
+	layered_prepare "$TEST_ROOT/layered-mismatch"
+cp "$TEST_ROOT/layered-sources.tsv" "$ROOTFS_METADATA/sources.tsv"
+
+# The host layer's recorded tree names the guest layer it was exported on, so
+# a changed guest layer invalidates it instead of producing a new stack.
+mv "$ROOTFS_MESA" "$TEST_ROOT/guest-layer"
+mkdir -p "$ROOTFS_MESA"
+python3 -B "$PATCH_SERIES" export --source "$UPSTREAM" --base "$BASE" \
+	--head HEAD~1 --series-dir "$ROOTFS_MESA" --tree >/dev/null
+expect_failure "a host layer on a changed guest layer" \
+	layered_prepare "$TEST_ROOT/layered-stale"
+[ ! -e "$TEST_ROOT/layered-stale/mesa" ] ||
+	fail "a layered series that misses its recorded tree was published"
+rm -rf "$ROOTFS_MESA"
+mv "$TEST_ROOT/guest-layer" "$ROOTFS_MESA"
+layered_prepare "$LAYERED_PREPARED" >/dev/null
+rm -rf "$HOST_MESA"
+cp "$TEST_ROOT/paired-manifest.tsv" "$MANIFEST"
+cp "$TEST_ROOT/paired-sources.tsv" "$ROOTFS_METADATA/sources.tsv"
+
 # A changed series leaves an existing prepared source stale. Only --recreate
 # replaces it, and only when preparation could have made it.
 cp "$MANIFEST.original" "$MANIFEST"

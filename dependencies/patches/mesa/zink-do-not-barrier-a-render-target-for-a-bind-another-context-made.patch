@@ -31,7 +31,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 55 insertions(+)
 
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index 363dbf8fb177aaf742aba61f95e904463108d2f1..18e145399310161ab15f3b121bef903ad5896b49 100644
+index 509ac80de576024c9ceb4a34868215f523c194c6..3fa5a32a6d1f69933c69514c47bcb87866bd30ca 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
 @@ -6337,6 +6337,54 @@ add_implicit_feedback_loop(struct zink_context *ctx, struct zink_resource *res)

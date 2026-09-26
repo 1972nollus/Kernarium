@@ -662,6 +662,10 @@ int uml::app::runEmbeddedKernel(
 		try {
 			battery_service =
 				std::make_unique<uml::battery::InProcessBatteryService>();
+			/* The Android vendor policy labels the battery's sysfs
+			 * path by its position among these Virtio devices
+			 * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts);
+			 * a device added before it must extend that range. */
 			prepared.kernel.emplace_back(
 				"virtio_uml.device=" +
 				battery_service->takeConnectionName() + ":" +

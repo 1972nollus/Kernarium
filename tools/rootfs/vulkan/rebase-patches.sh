@@ -11,12 +11,16 @@ fail()
 usage()
 {
 	printf '%s\n' \
-		"usage: $0 --component NAME --source TOPIC_CHECKOUT" >&2
+		"usage: $0 --component NAME --source TOPIC_CHECKOUT [--head REF]" \
+		"" \
+		"REF (default HEAD) ends the component's topics. A host layer may follow" \
+		"them in the same checkout; see dependencies/rebase-patches.sh." >&2
 	exit 2
 }
 
 COMPONENT=
 SOURCE=
+HEAD_REF=HEAD
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--component)
@@ -27,6 +31,11 @@ while [ "$#" -gt 0 ]; do
 		--source)
 			[ "$#" -ge 2 ] || usage
 			SOURCE=$2
+			shift 2
+			;;
+		--head)
+			[ "$#" -ge 2 ] || usage
+			HEAD_REF=$2
 			shift 2
 			;;
 		*) usage ;;
@@ -57,5 +66,5 @@ EOF
 series_directory=$(dirname -- "$SCRIPT_DIR/$series")
 [ -d "$series_directory" ] || fail "patch directory is missing: $series_directory"
 python3 -B "$SCRIPT_DIR/../../../scripts/patch_series.py" export --source "$SOURCE" \
-	--base "$base" --head HEAD --series-dir "$series_directory" --tree >/dev/null
+	--base "$base" --head "$HEAD_REF" --series-dir "$series_directory" --tree >/dev/null
 printf '%s\n' "regenerated $COMPONENT patch series from $SOURCE"

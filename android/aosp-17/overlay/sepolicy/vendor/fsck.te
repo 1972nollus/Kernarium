@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# init.vendor.rc grows userdata with resize2fs, which runs in the fsck domain.
+# resize2fs leaves new inode tables for the kernel to initialise lazily only
+# when /sys/fs/ext4/features/lazy_itable_init is visible; otherwise it writes
+# every new table before the first boot can mount userdata. AOSP grants the
+# same read to the e2fs domain for mke2fs.
+allow fsck sysfs_fs_ext4_features:dir search;
+allow fsck sysfs_fs_ext4_features:file r_file_perms;

@@ -105,12 +105,14 @@ floor in the background (`page_cache_trim.*`). The host caches the same disk
 blocks, so a large guest page cache mostly holds memory twice.
 
 The Virtio balloon (`device/balloon`) takes the memory the host GPU uses out of
-the guest. Its target is the process's Metal allocation
-(`MTLDevice.currentAllocatedSize`), capped at the Venus device-memory limit of
-half the guest's RAM and followed in 16 MiB steps. A host page leaves the
-footprint once the guest has ballooned all of its 4 KiB frames. Under
-`VIRTIO_BALLOON_F_MUST_TELL_HOST`, a deflate commits the page before the guest
-may use it.
+the guest. Its target is the larger of the process's Metal allocation
+(`MTLDevice.currentAllocatedSize`) and its graphics footprint (the graphics
+ledger of `TASK_VM_INFO`), which also charges the command storage the GPU
+driver has written and the allocation omits. The target is capped at the Venus
+device-memory limit of half the guest's RAM and followed in 16 MiB steps. A
+host page leaves the footprint once the guest has ballooned all of its 4 KiB
+frames. Under `VIRTIO_BALLOON_F_MUST_TELL_HOST`, a deflate commits the page
+before the guest may use it.
 
 A host mapping call that fails says so. The kernel distinguishes an exhausted
 host only by `ENOMEM`, so Mach's resource-shortage and address-space-exhaustion

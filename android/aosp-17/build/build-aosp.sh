@@ -475,7 +475,9 @@ if ! cmp -s -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"; then
 	install -m 0755 -- "$KERNEL_ELF" "$PRODUCT_OUT/kernel"
 fi
 
-m -j"$JOBS" target-files-package check_target_files_vintf
+# publish-release.py consumes the packaged VINTF checker and the AOSP zstd from
+# this output, so a fresh output builds both host tools.
+m -j"$JOBS" target-files-package check_target_files_vintf zstd
 DEXPREOPT_CONFIG="$OUT_DIR_ABSOLUTE/soong/dexpreopt-${ANDROID17_PRODUCT}.config"
 verify_dexpreopt_config "$DEXPREOPT_CONFIG"
 TARGET_FILES="$PRODUCT_OUT/obj/PACKAGING/target_files_intermediates/${ANDROID17_PRODUCT}-target_files.zip"
@@ -488,6 +490,8 @@ HOST_BIN="$OUT_DIR_ABSOLUTE/host/linux-x86/bin"
 VINTF_CHECKER="$HOST_BIN/check_target_files_vintf"
 [[ -x "$VINTF_CHECKER" ]] || fail "packaged VINTF checker is missing: $VINTF_CHECKER"
 PATH="$HOST_BIN:/usr/bin:/bin" "$VINTF_CHECKER" "$TARGET_FILES"
+[[ -f "$HOST_BIN/zstd" && -x "$HOST_BIN/zstd" ]] ||
+	fail "AOSP zstd is missing: $HOST_BIN/zstd"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
 printf '%s\n' "built AOSP 17 UML target files under: $OUT_DIR_ABSOLUTE"

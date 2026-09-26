@@ -37,7 +37,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 46 insertions(+), 2 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index b9eeb6d2905c9dd4ee819f5bf28288a2592e607d..f73dc23ad02420fcf06bf5ed68d46cf535f9f2f0 100644
+index 058e80dccf2126a194a1ad7dc0708a749bcc8f93..6ffe07d344f8887bb9408d7895e3207d71ac3b98 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
 @@ -8,6 +8,8 @@

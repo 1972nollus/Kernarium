@@ -12,4 +12,11 @@ namespace uml::platform {
  * allocation. */
 [[nodiscard]] std::uint64_t hostGpuAllocatedBytes() noexcept;
 
+/* Bytes of this process's footprint the kernel charges as graphics memory:
+ * Metal resources and surfaces, and also the pages the GPU driver has written
+ * in its own storage, such as Metal 4 command allocators, which the device
+ * counter above omits. Zero when the kernel does not report it. One task_info
+ * call. */
+[[nodiscard]] std::uint64_t hostGraphicsFootprintBytes() noexcept;
+
 } // namespace uml::platform

@@ -170,6 +170,15 @@ The Venus protocol series is owned by
 parent-directory paths, unknown owners, or symlink traversal; no second copy
 exists under `patches/`.
 
+Host and guest build Mesa from one topic branch on the same pinned commit.
+The guest's Mesa series, `tools/rootfs/vulkan/patches/mesa`, is its lower
+segment, and `patches/mesa` holds only the host topics that follow it; the
+manifest names both layers, and the host series records the tree of the
+whole stack. A topic both need belongs in the guest segment and a host-only
+topic in the host segment, so a KosmicKrisp change never alters the guest
+tree its CTS receipts name. Every guest segment change also changes the host
+tree and needs new host prefixes.
+
 That series is patch-managed like every other dependency, and its editable
 source is a replay clone of the pinned generator repository whose history is
 the pinned commit followed by the maintained topic commits.
@@ -258,11 +267,25 @@ variant, including after pipeline-cache reload.
 Metal bridge constructors return one owned, initialized object. Callers release
 that object once; constructors must not initialize it again after `new`.
 
-One-time command submissions transfer native command buffers and allocators to
-completion-owned storage, which releases their capacity after the GPU finishes.
-Vulkan command-buffer reset with `RELEASE_RESOURCES` also drops allocator
-capacity; later recording recreates it. Feedback reporting remains valid after
-Vulkan device teardown through a separate reference-counted context.
+Sequential encoders of one recording share a Metal command buffer. Only
+compute that must run before or after a whole render pass, and each encoder of
+a layered or multiview pass, gets a Metal command buffer of its own. A command
+buffer takes a native command allocator for a lane only when that lane
+records, and hands it to the device's allocator cache when it is reset or, for
+a one-time submission, when the GPU finishes. An allocator keeps its
+high-water storage until it is released, and a recording that takes a grown
+one keeps all of it, so the cache recycles only allocators of at most 16 MiB,
+keeps at most 64 MiB in total, and releases every other allocator. Feedback
+reporting remains valid after Vulkan device teardown through a separate
+reference-counted context.
+
+Apple builds compile KosmicKrisp's device library offline: `kk_clc` writes
+each program's MSL into one bundle, and the build compiles it with the target
+platform's Metal toolchain into a metallib that `KosmicKrisp.framework`
+carries as data. Creating a device loads its pipelines from that library and
+compiles a program's MSL only when the build made no metallib or Metal
+refuses one of its functions. What remains on a cold start is Metal's
+back-end compile to GPU code, which only its shader cache can skip.
 
 `MESA_KK_DEBUG=submit_timing` enables optional raw Metal commit-feedback
 diagnostics on stderr: an opaque device identity, GPU start and end host
@@ -315,6 +338,17 @@ The regenerator exports the pinned commit's descendants through
 changed and records the resulting tree in `series.tsv`. Never edit patch bytes
 or `series.tsv` by hand.
 
+A manifest series field may join ordered layers with `+`. Each layer applies
+to the tree the layers before it produce, and the last layer, which
+`patches/` owns, records the tree of the whole stack. The only lower layer
+allowed is the paired guest's Mesa series, named
+`rootfs-vulkan:patches/mesa/series.tsv`, whose source pin must equal the
+host's; Mesa's row uses it. Its topic checkout carries the guest topics
+followed by the host topics. Regenerate a changed guest layer first with
+`tools/rootfs/vulkan/rebase-patches.sh --head GUEST_END`. This regenerator
+exports only the topics after the single commit whose tree the lower layer
+records, and it refuses a checkout without that commit.
+
 Changing `manifest.tsv` or a build recipe invalidates the corresponding
 installed receipt, and so does a series change that produces a different tree.
 A series change that keeps the tree, such as a reworded message or a folded
@@ -328,3 +362,7 @@ CMake, Ninja, GNU Make, Meson, Python 3, `pkg-config`, Git, rsync, Autoconf,
 Automake, gettext, GNU libtool, and gperf. Exact tool and SDK versions remain
 observed build metadata; source identity comes from the manifest and generated
 series.
+
+Apple GPU builds also need Xcode's Metal Toolchain component
+(`xcodebuild -downloadComponent MetalToolchain`), which compiles KosmicKrisp's
+device library.

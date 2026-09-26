@@ -307,19 +307,32 @@ maps and frees in a loop keeps the previous node resident while the next one is
 placed: two nodes concurrently on an idle host, and more where the host's
 retirement lags further behind. An aperture that cannot place the next node
 fails the blob at `vkMapMemory` with `VK_ERROR_OUT_OF_DEVICE_MEMORY`, which a
-conformance run reports as a session-ending `ResourceError`. A host-visible
-heap of one aperture therefore leaves a mapping of a quarter of it usable with
-room to spare.
+conformance run reports as a session-ending `ResourceError`. The memory itself
+stays mappable: the guest kernel has already created the blob resource when
+placement fails and destroys it at once, and the renderer lets a memory whose
+resource is gone be exported again, so a later `vkMapMemory` succeeds once the
+aperture has room. A host-visible heap of one aperture therefore leaves a
+mapping of a quarter of it usable with room to spare.
 
 Device memory is charged to the application like guest RAM, so the host gives
 Venus a share of the guest's allocation: half of `mem=`. The renderer shrinks
-every advertised heap and budget to that share and fails a new, non-import
-allocation with `VK_ERROR_OUT_OF_DEVICE_MEMORY` once the process's Metal
-allocation (`MTLDevice.currentAllocatedSize`, which also counts presentation
-and host GL memory) has reached it. A guest therefore sizes its allocations
-from the share instead of from the host's memory. The Virtio balloon then
-takes the same amount out of the guest's RAM (see [memory
+every advertised heap and budget to that share, so a guest sizes its
+allocations from the share instead of from the host's memory. The Virtio
+balloon then takes the same amount out of the guest's RAM (see [memory
 architecture](architecture.md#memory-and-executable-code)).
+
+The renderer also refuses a new, non-import allocation that would take the
+process's Metal allocation (`MTLDevice.currentAllocatedSize`, which also counts
+presentation and host GL memory) past the share. The application does not see
+that refusal as `VK_ERROR_OUT_OF_DEVICE_MEMORY`. Venus allocates
+asynchronously, so `vkAllocateMemory` has already succeeded in the guest; the
+first later command that names the missing memory fails in the renderer, which
+marks the Venus ring fatal, and the guest driver aborts the process. The
+counter also includes memory the guest has already freed while its blob
+resource is still referenced: a freed swapchain image stays allocated until the
+guest's resource release arrives on the control queue, a few milliseconds after
+`vkFreeMemory`. A loop that frees and reallocates large images can therefore be
+refused while its live memory is below the share.
 
 ### Android guest requirements
 
@@ -703,8 +716,10 @@ the device starts having single submissions killed, reported as the timeout
 above. `dEQP-VK.pipeline.*.render_to_image.core.{1d_array,2d_array}.huge.layers`
 stands on it: each of those cases renders one layer at a time into a 256-layer
 image, so it records 256 single-layer render passes of 44x23 (or 54x1), one
-draw each, into a single command buffer; the driver gives every render encoder
-its own `MTLCommandBuffer`, so one queue submit commits 257 of them. Fraction 05
+draw each, into a single command buffer, which reached Metal as 257
+`MTLCommandBuffer`s in one queue submit while every render encoder had its own.
+Sequential encoders now share one Metal command buffer, and the family has not
+been rerun on the device since. Fraction 05
 lost seven of those cases to six kills. A fourteen-case device rig covering the
 family reproduces it at nought to seven kills a run, and the kill always lands
 on the submission carrying the render passes, never on anything else.

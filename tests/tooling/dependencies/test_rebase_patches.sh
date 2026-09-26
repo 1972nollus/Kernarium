@@ -80,4 +80,60 @@ if UML_DEPENDENCY_MANIFEST="$MANIFEST" \
 fi
 [ -s "$TEST_ROOT/dirty.err" ] || fail "dirty rejection lacked a diagnostic"
 
+# A layered series exports only its owned, last layer: the topics after the
+# one commit whose tree the paired guest's lower layer records.
+LAYERED="$TEST_ROOT/layered"
+LSOURCE="$LAYERED/source"
+LOWER="$LAYERED/tools/rootfs/vulkan/patches/mesa"
+OWNED="$LAYERED/dependencies/patches/mesa"
+mkdir -p "$LSOURCE" "$LOWER" "$OWNED"
+git -C "$LSOURCE" init --quiet
+printf '%s\n' base >"$LSOURCE/guest.txt"
+printf '%s\n' base >"$LSOURCE/host.txt"
+git -C "$LSOURCE" add guest.txt host.txt
+git -C "$LSOURCE" commit --quiet -m 'fixture: upstream base'
+LBASE=$(git -C "$LSOURCE" rev-parse HEAD)
+git -C "$LSOURCE" switch --quiet -c unified
+printf '%s\n' guest >"$LSOURCE/guest.txt"
+git -C "$LSOURCE" commit --quiet -am 'fixture: guest change'
+python3 -B "$ROOT_DIR/scripts/patch_series.py" export --source "$LSOURCE" \
+	--base "$LBASE" --head HEAD --series-dir "$LOWER" --tree >/dev/null
+printf '%s\n' host >"$LSOURCE/host.txt"
+git -C "$LSOURCE" commit --quiet -am 'fixture: host change'
+printf '%s\n' second >>"$LSOURCE/host.txt"
+git -C "$LSOURCE" commit --quiet -am 'fixture: second host change'
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+	name version products repository commit source_paths patch_series \
+	mesa 1.0 fixture https://example.invalid/mesa.git "$LBASE" . \
+	'rootfs-vulkan:patches/mesa/series.tsv+patches/mesa/series.tsv' \
+	>"$LAYERED/dependencies/manifest.tsv"
+UML_DEPENDENCY_MANIFEST="$LAYERED/dependencies/manifest.tsv" \
+UML_DEPENDENCY_METADATA_ROOT="$LAYERED/dependencies" \
+	"$REGENERATOR" --dependency mesa --source "$LSOURCE" >/dev/null
+[ "$(awk -F '\t' '$1 == "patch" { print $2 }' "$OWNED/series.tsv" | tr '\n' ' ')" = \
+	'fixture-host-change.patch fixture-second-host-change.patch ' ] ||
+	fail "a layered export did not stop at the lower layer's tree"
+[ "$(awk -F '\t' '$1 == "tree" { print $2 }' "$OWNED/series.tsv")" = \
+	"$(git -C "$LSOURCE" rev-parse 'HEAD^{tree}')" ] ||
+	fail "a layered export did not record the whole stack's tree"
+[ "$(python3 -B "$ROOT_DIR/scripts/patch_series.py" tree --repo "$LSOURCE" \
+	--base "$LBASE" --series-dir "$LOWER" --series-dir "$OWNED")" = \
+	"$(git -C "$LSOURCE" rev-parse 'HEAD^{tree}')" ] ||
+	fail "the layers do not reproduce the checkout"
+
+# A lower layer the checkout no longer ends is refused rather than guessed.
+git -C "$LSOURCE" switch --quiet --detach "$LBASE"
+printf '%s\n' other >"$LSOURCE/guest.txt"
+git -C "$LSOURCE" commit --quiet -am 'fixture: different guest change'
+printf '%s\n' host >"$LSOURCE/host.txt"
+git -C "$LSOURCE" commit --quiet -am 'fixture: host change'
+if UML_DEPENDENCY_MANIFEST="$LAYERED/dependencies/manifest.tsv" \
+	UML_DEPENDENCY_METADATA_ROOT="$LAYERED/dependencies" \
+	"$REGENERATOR" --dependency mesa --source "$LSOURCE" \
+	>"$TEST_ROOT/layer.out" 2>"$TEST_ROOT/layer.err"; then
+	fail "a layered export accepted a checkout without the lower layer"
+fi
+grep -q 'end the lower layer' "$TEST_ROOT/layer.err" ||
+	fail "the missing lower layer lacked a diagnostic"
+
 printf '%s\n' "dependency patch regeneration tests passed"

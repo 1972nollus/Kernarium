@@ -31,18 +31,21 @@ foreach(_uml_dependency_manifest_row IN LISTS _uml_dependency_manifest_rows)
             _uml_dependency_series_relative)
         if(NOT _uml_dependency_manifest_name STREQUAL "name" AND
                 NOT _uml_dependency_series_relative STREQUAL "-")
-            if(_uml_dependency_series_relative STREQUAL
-                    "rootfs-vulkan:patches/venus-protocol/series.tsv")
-                set(_uml_dependency_series
-                    "${PROJECT_SOURCE_DIR}/tools/rootfs/vulkan/patches/venus-protocol/series.tsv")
-            else()
-                set(_uml_dependency_series
-                    "${CMAKE_CURRENT_SOURCE_DIR}/${_uml_dependency_series_relative}")
-            endif()
             # A series records the tree it produces, so its series.tsv
-            # changes whenever the patched source does.
-            list(APPEND _uml_dependency_patch_inputs
-                "${_uml_dependency_series}")
+            # changes whenever the patched source does. A layered field
+            # joins its layers with "+"; prepare.sh validates the owners.
+            string(REPLACE "+" ";" _uml_dependency_series_layers
+                "${_uml_dependency_series_relative}")
+            foreach(_uml_dependency_series_layer IN LISTS
+                    _uml_dependency_series_layers)
+                if(_uml_dependency_series_layer MATCHES "^rootfs-vulkan:(.+)$")
+                    list(APPEND _uml_dependency_patch_inputs
+                        "${PROJECT_SOURCE_DIR}/tools/rootfs/vulkan/${CMAKE_MATCH_1}")
+                else()
+                    list(APPEND _uml_dependency_patch_inputs
+                        "${CMAKE_CURRENT_SOURCE_DIR}/${_uml_dependency_series_layer}")
+                endif()
+            endforeach()
         endif()
     endif()
 endforeach()
