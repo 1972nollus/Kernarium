@@ -86,4 +86,7 @@ The KDE convenience launcher expects an accepted Plasma artifact at
 `.build/rootfs/starter/debian-13-plasma-wayland.img` by default. It attaches
 the disk read-only, selects `/dev/ubda1`, and uses the image-owned network,
 account, getty, and Plasma session. `--rootfs`, `--rootfs-type`, and
-`--root-device` remain available for an explicit legacy-image launch.
+`--root-device` remain available for an explicit legacy-image launch. An ext4
+filesystem selects the starter policy unless `--image-profile legacy` names an
+ext4 derivative of the unified EROFS image, which keeps that image's
+unpartitioned root, SDDM session, and getty masks.

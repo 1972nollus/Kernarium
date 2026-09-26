@@ -32,6 +32,7 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertEqual(options.engine, "jit")
         self.assertEqual(options.rootfs, boot_kde_vnc.DEFAULT_ROOTFS)
         self.assertEqual(options.rootfs_type, "ext4")
+        self.assertEqual(options.image_profile, "starter")
         self.assertEqual(options.root_device, "/dev/ubda1")
 
     def test_default_starter_disk_contract_is_forwarded(self) -> None:
@@ -166,13 +167,13 @@ class KdeVncLauncherTests(unittest.TestCase):
                 "boot_kde_vnc.guest_argument_separator(command)", runner
             )
 
-    def test_webgl_runners_boot_unpartitioned_images(self) -> None:
-        # The erofs image and the receipt-bound ext4 derivatives these runners
-        # accept carry no partition table, unlike the starter image that the
-        # launcher's ext4 root-device default names.
+    def test_webgl_runners_boot_legacy_images(self) -> None:
+        # rootfs.erofs and the receipt-bound ext4 derivatives sealed from it
+        # are legacy images even when their filesystem is ext4, the type that
+        # otherwise selects a starter disk.
         for runner_name in ("run_chromium_webgl.py", "run_webgl_samples.py"):
             runner = (GPU_INTEGRATION / runner_name).read_text(encoding="utf-8")
-            self.assertRegex(runner, r'"--root-device",\s*"/dev/ubda",')
+            self.assertRegex(runner, r'"--image-profile",\s*"legacy",')
 
     def test_webgl_samples_pin_gles_and_bound_first_navigation(self) -> None:
         runner = (
@@ -256,7 +257,7 @@ class KdeVncLauncherTests(unittest.TestCase):
         # children.
         for commands in (
             boot_kde_vnc.STARTER_KDE_OVERLAY_COMMANDS,
-            boot_kde_vnc.LEGACY_EROFS_KDE_OVERLAY_COMMANDS,
+            boot_kde_vnc.LEGACY_KDE_OVERLAY_COMMANDS,
         ):
             install = next(
                 command
@@ -288,9 +289,7 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertNotIn("chpasswd", commands)
 
     def test_conflicting_getties_are_masked_before_sddm(self) -> None:
-        commands = "\n".join(
-            boot_kde_vnc.LEGACY_EROFS_KDE_OVERLAY_COMMANDS
-        )
+        commands = "\n".join(boot_kde_vnc.LEGACY_KDE_OVERLAY_COMMANDS)
         self.assertIn(
             "systemctl mask --now getty@tty0.service getty@tty1.service",
             commands,
@@ -321,6 +320,43 @@ class KdeVncLauncherTests(unittest.TestCase):
         kernel_arguments = command[separator + 1 :]
         self.assertIn("systemd.mask=getty@tty0.service", kernel_arguments)
         self.assertIn("systemd.mask=getty@tty1.service", kernel_arguments)
+
+    def test_legacy_ext4_derivative_keeps_the_legacy_session_policy(
+        self,
+    ) -> None:
+        options = boot_kde_vnc.parse_arguments(
+            [
+                "--rootfs", "/tmp/rootfs-vulkan-venus.ext4",
+                "--rootfs-type", "ext4",
+                "--image-profile", "legacy",
+            ]
+        )
+        self.assertEqual(options.root_device, "/dev/ubda")
+        command = boot_kde_vnc.build_harness_command(options)
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        harness_arguments = command[:separator]
+        kernel_arguments = command[separator + 1 :]
+        rootfs_type = harness_arguments.index("--rootfs-type")
+        self.assertEqual(
+            harness_arguments[rootfs_type : rootfs_type + 2],
+            ["--rootfs-type", "ext4"],
+        )
+        self.assertIn(
+            "systemctl mask --now getty@tty0.service getty@tty1.service",
+            harness_arguments,
+        )
+        self.assertIn("systemd.mask=getty@tty0.service", kernel_arguments)
+        self.assertIn("systemd.mask=getty@tty1.service", kernel_arguments)
+        self.assertNotIn("ip=off", kernel_arguments)
+        self.assertNotIn(
+            "getent passwd debian", "\n".join(harness_arguments)
+        )
+
+    def test_starter_profile_requires_an_ext4_disk(self) -> None:
+        with self.assertRaises(SystemExit):
+            boot_kde_vnc.parse_arguments(
+                ["--rootfs-type", "erofs", "--image-profile", "starter"]
+            )
 
     def test_legacy_erofs_override_retains_uml_compatibility(self) -> None:
         options = boot_kde_vnc.parse_arguments(["--rootfs-type", "erofs"])

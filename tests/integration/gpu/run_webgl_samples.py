@@ -540,9 +540,9 @@ def main() -> int:
             "--emulator", str(options.emulator),
             "--rootfs", str(rootfs),
             "--rootfs-type", options.rootfs_contract.filesystem_type,
-            # Every image this runner accepts is an unpartitioned filesystem;
-            # the launcher's ext4 default names the starter image's partition.
-            "--root-device", "/dev/ubda",
+            # Every image this runner accepts is the unified KDE image or an
+            # ext4 derivative sealed from it, never a starter disk.
+            "--image-profile", "legacy",
             "--memory", options.memory,
             "--cpus", str(options.cpus),
             "--engine", options.engine,
