@@ -307,9 +307,12 @@ maps and frees in a loop keeps the previous node resident while the next one is
 placed: two nodes concurrently on an idle host, and more where the host's
 retirement lags further behind. An aperture that cannot place the next node
 fails the blob at `vkMapMemory` with `VK_ERROR_OUT_OF_DEVICE_MEMORY`, which a
-conformance run reports as a session-ending `ResourceError`. A host-visible
-heap of one aperture therefore leaves a mapping of a quarter of it usable with
-room to spare.
+conformance run reports as a session-ending `ResourceError`. The memory itself
+stays mappable: the guest kernel has already created the blob resource when
+placement fails and destroys it at once, and the renderer lets a memory whose
+resource is gone be exported again, so a later `vkMapMemory` succeeds once the
+aperture has room. A host-visible heap of one aperture therefore leaves a
+mapping of a quarter of it usable with room to spare.
 
 Device memory is charged to the application like guest RAM, so the host gives
 Venus a share of the guest's allocation: half of `mem=`. The renderer shrinks
