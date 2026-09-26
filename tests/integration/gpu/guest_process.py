@@ -30,6 +30,14 @@ class OwnershipError(RuntimeError):
 
 
 class Interrupts:
+    """Deliver at most one SIGINT/SIGTERM to the body as KeyboardInterrupt.
+
+    The phase leaves "running" before the raise, never after it: a repeated
+    signal handled while that exception unwinds through the body, contextlib
+    and the cleanup's first lines is then ignored instead of raising past the
+    stop/reap/journal cleanup.
+    """
+
     def __init__(self) -> None:
         self.previous: dict[int, Any] = {}
         self.pending = False
@@ -39,6 +47,7 @@ class Interrupts:
         if self.phase == "setup":
             self.pending = True
         elif self.phase == "running":
+            self.phase = "interrupted"
             raise KeyboardInterrupt
 
     def __enter__(self) -> Interrupts:
@@ -57,6 +66,7 @@ class Interrupts:
     def running(self) -> None:
         self.phase = "running"
         if self.pending:
+            self.phase = "interrupted"
             raise KeyboardInterrupt
 
     def cleanup(self) -> None:
