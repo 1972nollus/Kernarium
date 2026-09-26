@@ -618,6 +618,113 @@ void configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement()
     });
 }
 
+/* A UML front-end reads a GET_CONFIG reply from the main socket without
+ * draining the backend channel, and the guest CPU that drains it can be the
+ * one waiting. A config change still waiting for its acknowledgement must
+ * therefore not stop the server from answering; a request that is not a
+ * query waits for the acknowledgement and keeps its order. */
+void configChangeWaitStillAnswersConfigReads()
+{
+    auto device = std::make_unique<ConfigChangeDevice>();
+    auto* source = device.get();
+    VhostUserServer server {std::move(device)};
+    withServerConnection(server, [&](int socket) {
+        constexpr std::uint64_t features =
+            protocol::protocolFeatureReplyAck |
+            protocol::protocolFeatureSlaveRequest |
+            protocol::protocolFeatureConfig;
+        negotiateProtocolFeatures(socket, features);
+        auto backend = makeSocketPair();
+        const std::array descriptors {backend.descriptors[1].get()};
+        sendRequestAndReadAcknowledgement(
+            socket,
+            protocol::VhostRequest::setSlaveRequestFd,
+            {},
+            descriptors);
+
+        source->trigger();
+        pollfd notified {
+            .fd = backend.descriptors[0].get(),
+            .events = POLLIN,
+        };
+        require(::poll(&notified, 1, 2000) == 1);
+        protocol::VhostHeader notification {};
+        readExact(
+            backend.descriptors[0].get(),
+            &notification,
+            sizeof(notification));
+        require(notification.request == static_cast<std::uint32_t>(
+            protocol::VhostSlaveRequest::configChange));
+        require((notification.flags & protocol::vhostUserNeedReply) != 0);
+
+        // The acknowledgement is withheld: the server is now waiting.
+        const protocol::ConfigHeader configHeader {
+            .offset = 0,
+            .size = sizeof(protocol::GpuConfig),
+            .flags = protocol::configFlagWritable,
+        };
+        const std::array<std::uint8_t, sizeof(protocol::GpuConfig)> zeros {};
+        sendRequest(
+            socket,
+            protocol::VhostRequest::getConfig,
+            configPayload(configHeader, zeros),
+            {},
+            false);
+        pollfd answered {.fd = socket, .events = POLLIN};
+        require(::poll(&answered, 1, 2000) == 1);
+        protocol::VhostHeader response {};
+        std::array<
+            std::uint8_t,
+            sizeof(protocol::ConfigHeader) + sizeof(protocol::GpuConfig)>
+            payload {};
+        readExact(socket, &response, sizeof(response));
+        readExact(socket, payload.data(), payload.size());
+        require(response.request == static_cast<std::uint32_t>(
+            protocol::VhostRequest::getConfig));
+        require(response.size == payload.size());
+        protocol::GpuConfig config {};
+        std::memcpy(
+            &config,
+            payload.data() + sizeof(protocol::ConfigHeader),
+            sizeof(config));
+        require(config.eventsRead == protocol::gpuEventDisplay);
+
+        // GET_VRING_BASE changes queue state, so it waits for the reply.
+        const protocol::VringState ring {.index = 0, .value = 0};
+        sendRequest(
+            socket,
+            protocol::VhostRequest::getVringBase,
+            bytesOf(ring),
+            {},
+            false);
+        pollfd early {.fd = socket, .events = POLLIN};
+        require(::poll(&early, 1, 200) == 0);
+        require(source->pending());
+
+        const protocol::VhostHeader acknowledgement {
+            .request = notification.request,
+            .flags = protocol::vhostUserVersion | protocol::vhostUserReply,
+            .size = sizeof(std::uint64_t),
+        };
+        constexpr std::uint64_t status = 0;
+        sendMessageWithDescriptors(
+            backend.descriptors[0].get(),
+            acknowledgement,
+            {},
+            bytesOf(status));
+        const auto base = readValueReply<protocol::VringState>(
+            socket, protocol::VhostRequest::getVringBase);
+        require(base.index == 0 && base.value == 0);
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds {2};
+        while (source->pending() &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::yield();
+        }
+        require(!source->pending());
+    });
+}
+
 class SharedMemoryDevice final : public uml::virtio::VhostUserDevice {
 public:
     explicit SharedMemoryDevice(std::size_t actionCount = 1)
@@ -2114,6 +2221,7 @@ void runVhostUserProtocolTests()
     deferredCompletionSupportsFourQueues();
     completedPrefixNotifiesBeforeRetry();
     configChangeWaitsForTheBackendChannelAndRequiresAcknowledgement();
+    configChangeWaitStillAnswersConfigReads();
     sharedMemoryRequiresBackendAcknowledgements();
     sharedMemoryConfigurationRequiresNegotiation();
     standardizedSharedMemoryNegotiationBatchesBackendRequestsBeforeReply();

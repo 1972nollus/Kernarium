@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -127,6 +128,11 @@ private:
         std::span<const std::uint8_t> response);
     void notifyQueue(std::uint32_t index);
     void signalQueue(std::uint32_t index);
+    /* Waits for the front-end's answer to a backend request while still
+     * answering every front-end request whose reply it awaits without
+     * reading the backend channel; other requests are deferred. */
+    [[nodiscard]] VhostUserMessage receiveBackendReply(const char* channel);
+    void handleDeferredFrontendMessages(int socket);
     void serveConnection(
         int connection,
         const std::atomic_bool& stopRequested);
@@ -157,6 +163,10 @@ private:
     std::uint64_t negotiatedProtocolFeatures_ {};
     bool featuresConfigured_ {};
     const std::atomic_bool* connectionStopRequested_ {};
+    /* The connection's main socket, while one is being served. */
+    int frontendDescriptor_ {-1};
+    /* Front-end requests read during a backend wait, in arrival order. */
+    std::deque<VhostUserMessage> deferredFrontendMessages_;
 };
 
 } // namespace uml::gpu
