@@ -482,11 +482,28 @@ build_debian_minimal()
 configure_plasma_user()
 {
 	root=$1
+	# PipeWire and WirePlumber are the session's audio server: pipewire-pulse
+	# serves the PulseAudio clients (Plasma and Chromium), pipewire-alsa
+	# routes plain ALSA clients through the server rather than around it,
+	# and RealtimeKit grants the audio threads their realtime priority.
+	# Bluetooth audio is left out because the guest has no Bluetooth.
 	as_root chroot "$root" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
 		apt-get install -y --no-install-recommends \
 		plasma-desktop konsole chromium sudo fonts-dejavu-core \
 		libgl1-mesa-dri mesa-va-drivers vainfo ffmpeg \
-		xdg-desktop-portal-kde
+		xdg-desktop-portal-kde \
+		pipewire wireplumber pipewire-pulse pipewire-alsa rtkit
+	write_root_file \
+		"$root/etc/wireplumber/wireplumber.conf.d/50-no-bluetooth.conf" \
+		0644 <<'EOF'
+# The guest has no Bluetooth controller, and the image carries neither BlueZ
+# nor PipeWire's Bluetooth plugin, so WirePlumber does not monitor Bluetooth.
+wireplumber.profiles = {
+  main = {
+    hardware.bluetooth = disabled
+  }
+}
+EOF
 	as_root chroot "$root" useradd -m -s /bin/bash debian
 	as_root chroot "$root" passwd -d debian
 	debian_uid=$(as_root chroot "$root" id -u debian)

@@ -11,8 +11,9 @@ The products are one common initramfs and three raw GPT disks:
 - `debian-13-minimal.img` is a Debian systemd root with an automatically
   logged-in root shell on `hvc0`; and
 - `debian-13-plasma-wayland.img` starts Plasma on Wayland as `debian`, carries
-  Konsole, Chromium, the stock Debian Mesa VA-API driver, `vainfo`, and
-  FFmpeg, logs `debian` in on `hvc0`, and grants that user passwordless sudo.
+  Konsole, Chromium, the stock Debian Mesa VA-API driver, `vainfo`, FFmpeg,
+  and a PipeWire audio server for the guest sound device, logs `debian` in on
+  `hvc0`, and grants that user passwordless sudo.
 
 Every disk has one Linux-filesystem GPT partition ending at the last usable
 LBA. Networking belongs to the image: OpenRC or systemd starts a DHCP client
