@@ -257,7 +257,8 @@ EOF
 	as_root chroot "$root" /sbin/apk add --no-cache alpine-base ifupdown-ng
 	for service_level in \
 		"devfs sysinit" "procfs sysinit" "sysfs sysinit" "mdev sysinit" \
-		"hostname boot" "bootmisc boot" "networking boot" "local default"; do
+		"hostname boot" "bootmisc boot" "networking boot" "local default" \
+		"killprocs shutdown" "mount-ro shutdown"; do
 		set -- $service_level
 		if [ -x "$root/etc/init.d/$1" ]; then
 			as_root chroot "$root" /sbin/rc-update add "$1" "$2"
