@@ -44,8 +44,12 @@ root and enter its init. A root that cannot itself be mounted or does not
 contain `/sbin/init` remains a boot error.
 
 The producer runs natively on arm64 Linux and requires `sudo`, Buildroot's
-ordinary build prerequisites, `debootstrap`, `e2fsprogs`, and GPT fdisk. It
-downloads pinned Buildroot and Alpine inputs and current Debian 13 packages.
+ordinary build prerequisites (including `cpio` and `bc`), `debootstrap`,
+`e2fsprogs`, and GPT fdisk. It downloads pinned Buildroot and Alpine inputs and
+current Debian 13 packages. A container host is sufficient only when its root
+can create character device nodes and mount `proc` and `sysfs` inside the work
+tree, because `debootstrap` and the chroot package installs need both; the
+producer has no fakeroot path for a container that forbids them.
 The canonical entry point is:
 
 ```sh
