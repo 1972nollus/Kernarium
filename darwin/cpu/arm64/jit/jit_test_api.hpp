@@ -128,7 +128,6 @@ compile_gpr_pressure_profile_block(
 #endif
 
 [[nodiscard]] bool persistent_linked_block_abi_enabled() noexcept;
-[[nodiscard]] bool linked_x8_x9_bank_enabled() noexcept;
 [[nodiscard]] std::size_t
 persistent_link_successful_path_word_savings() noexcept;
 [[nodiscard]] std::size_t successful_link_host_word_savings() noexcept;

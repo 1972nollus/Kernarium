@@ -1018,10 +1018,6 @@ bool persistent_linked_block_abi_enabled() noexcept {
   return persistent_linked_block_abi_default;
 }
 
-bool linked_x8_x9_bank_enabled() noexcept {
-  return carry_x8_x9_across_links;
-}
-
 std::size_t persistent_link_successful_path_word_savings() noexcept {
   /*
    * Each successful edge removes the chain-pointer, selector-byte, and
@@ -1041,7 +1037,7 @@ std::size_t successful_link_host_word_savings() noexcept {
   constexpr std::size_t legacy_tail_words = 5;
   constexpr std::size_t external_prologue_words =
       persistent_linked_block_abi_default
-          ? (carry_x8_x9_across_links ? 12 : 10)
+          ? 10
           : 6;
   constexpr std::size_t internal_tail_words = 1;
   return legacy_tail_words + external_prologue_words - internal_tail_words;

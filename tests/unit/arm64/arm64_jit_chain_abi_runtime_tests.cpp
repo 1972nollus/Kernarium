@@ -490,7 +490,7 @@ void continuing_tlb_helper_reloads_x8_x9() {
   executor.end_execution();
 }
 
-void ls64_x8_group_synchronizes_the_fixed_bank() {
+void ls64_x8_group_preserves_guest_x8_x9() {
   if (!::uml::platform::apple::probed_host_capabilities().has(
           ::uml::cpu::ArmFeature::ls64))
     return;
@@ -864,7 +864,7 @@ int main() {
   linked_helper_observes_canonical_x8_x9();
   linked_helper_writes_x8_x9_before_a_linked_consumer();
   continuing_tlb_helper_reloads_x8_x9();
-  ls64_x8_group_synchronizes_the_fixed_bank();
+  ls64_x8_group_preserves_guest_x8_x9();
   conditional_and_pic_exits_chain();
   linked_fault_keeps_precise_count_and_pc();
   linked_illegal_and_breakpoint_publish_carried_state();

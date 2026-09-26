@@ -298,8 +298,7 @@ JitExecutor::Implementation::shared_codegen_profile() const noexcept {
           .guarded_control_flow = enable_guarded_control_flow_,
           .pointer_authentication = enable_pointer_authentication_,
           .persistent_linked_block_abi =
-              persistent_linked_block_abi_default,
-          .linked_x8_x9_bank = carry_x8_x9_across_links};
+              persistent_linked_block_abi_default};
 }
 
 [[nodiscard]] std::optional<SharedTranslationMaterializationFailure>

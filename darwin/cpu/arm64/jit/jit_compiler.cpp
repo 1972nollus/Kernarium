@@ -31,8 +31,7 @@ JitCompiler::JitCompiler(bool enable_guarded_control_flow,
                        bool profile_gpr_pressure
 #endif
                        ) noexcept
-      : emitter_{persistent_linked_block_abi, std::size_t{1} << 18U,
-                 carry_x8_x9_across_links && !track_direct_stores},
+      : emitter_{persistent_linked_block_abi, std::size_t{1} << 18U},
         cold_{this},
         configured_link_context_{link_context},
         configured_link_resolver_{link_resolver},

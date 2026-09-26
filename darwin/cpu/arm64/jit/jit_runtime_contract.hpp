@@ -27,20 +27,6 @@ inline constexpr std::size_t maximum_chain_instructions = 4096;
 /* Translation-time only: generated blocks select one ABI shape. */
 inline constexpr bool persistent_linked_block_abi_default = true;
 
-/*
- * Experimental exact A/B arm for the fixed cross-block guest-GPR bank.
- * Non-CMake consumers retain the control shape unless they opt in explicitly.
- */
-#ifndef UML_JIT_CARRY_X8_X9_ACROSS_LINKS
-#define UML_JIT_CARRY_X8_X9_ACROSS_LINKS 0
-#endif
-#if UML_JIT_CARRY_X8_X9_ACROSS_LINKS && \
-    defined(DARWIN_UML_JIT_GPR_LINK_PROFILE)
-#error "The fixed linked GPR bank is incompatible with GPR link profiling"
-#endif
-inline constexpr bool carry_x8_x9_across_links =
-    UML_JIT_CARRY_X8_X9_ACROSS_LINKS != 0;
-
 [[nodiscard]] constexpr bool
 floating_or_vector_primary_class(std::uint32_t instruction) noexcept {
   const auto op0 = (instruction >> 25U) & 15U;

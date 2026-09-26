@@ -155,11 +155,8 @@ protected:
   void flush_exit_gprs();
   void spill_gprs_for_returning_call();
   void reload_gprs_after_call();
-  void publish_linked_gprs_for_returning_call();
-  void reload_linked_gprs_after_returning_call();
   void spill_gprs_for_terminal_call();
   void flush_and_invalidate_gprs();
-  void reload_gprs_after_constrained_sequence();
   void flush_link_transition_state();
 
   void store_pc(std::uint64_t pc);
@@ -320,8 +317,6 @@ protected:
 
 private:
   static constexpr unsigned unbound_guest = 32U;
-  static constexpr std::array<unsigned, 2> linked_gpr_guests{8U, 9U};
-  static constexpr std::array<unsigned, 2> linked_gpr_hosts{22U, 23U};
   static constexpr std::array<unsigned, 8> resident_gpr_hosts{
       3U, 4U, 5U, 6U, 7U, 12U, 13U, 17U};
   static_assert([] {
@@ -394,15 +389,11 @@ private:
   find_gpr_slot(unsigned guest, bool stack_pointer) const noexcept;
   [[nodiscard]] std::optional<std::size_t>
   allocate_gpr_slot(unsigned guest, bool stack_pointer);
-  [[nodiscard]] std::optional<unsigned>
-  linked_gpr_host(unsigned guest, bool stack_pointer) const noexcept;
   [[nodiscard]] std::optional<std::size_t>
   find_vector_slot(unsigned guest) const noexcept;
   [[nodiscard]] std::optional<std::size_t>
   allocate_vector_slot(unsigned guest);
   void flush_gprs(std::uint16_t mask);
-  void flush_linked_gpr_bank();
-  void reload_linked_gpr_bank();
   void flush_vectors(std::uint32_t mask);
 
   std::array<GprSlot, resident_gpr_hosts.size()> gpr_slots_{};
@@ -415,10 +406,7 @@ private:
   GuestFlagsState guest_flags_state_{GuestFlagsState::memory};
   bool exit_gpr_mask_set_{};
   bool exit_vector_mask_set_{};
-  bool exit_linked_gpr_bank_published_{};
   bool gpr_cache_enabled_{};
-  bool linked_gpr_bank_enabled_{};
-  std::uint32_t linked_gpr_bank_dirty_mask_{};
   void *family_emitter_{};
   bool *family_native_fp_{};
   bool *family_native_fpmr_{};

@@ -171,7 +171,6 @@ public:
     bool guarded_control_flow{};
     bool pointer_authentication{};
     bool persistent_linked_block_abi{persistent_linked_block_abi_default};
-    bool linked_x8_x9_bank{carry_x8_x9_across_links};
 
     /* Compared field by field rather than by bytes so padding cannot make
      * two identical configurations look different.

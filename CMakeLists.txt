@@ -116,17 +116,8 @@ option(DARWIN_UML_JIT_GPR_PRESSURE_PROFILE
     "Instrument JIT translation for resident-GPR pressure profiling" OFF)
 option(UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS
     "Share relocatable JIT translations between concurrent executors" ON)
-option(UML_JIT_CARRY_X8_X9_ACROSS_LINKS
-    "Keep guest x8/x9 resident across successful JIT block links" OFF)
 option(UML_ENABLE_RUNTIME_PROFILING
     "Compile optional runtime, MMU, and device profiling into products" OFF)
-
-if(UML_JIT_CARRY_X8_X9_ACROSS_LINKS AND
-   DARWIN_UML_JIT_GPR_LINK_PROFILE)
-    message(FATAL_ERROR
-        "UML_JIT_CARRY_X8_X9_ACROSS_LINKS cannot be combined with "
-        "DARWIN_UML_JIT_GPR_LINK_PROFILE")
-endif()
 
 if(UML_ENABLE_RUNTIME_PROFILING OR
    DARWIN_UML_JIT_GPR_LINK_PROFILE OR
@@ -142,7 +133,6 @@ add_library(UML::JitProfileConfiguration ALIAS
 target_compile_definitions(uml_jit_profile_configuration INTERFACE
     UML_ENABLE_JIT_PROFILE=$<BOOL:${UML_ENABLE_JIT_PROFILE}>
     UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS=$<BOOL:${UML_JIT_SHARE_TRANSLATIONS_BETWEEN_EXECUTORS}>
-    UML_JIT_CARRY_X8_X9_ACROSS_LINKS=$<BOOL:${UML_JIT_CARRY_X8_X9_ACROSS_LINKS}>
     $<$<BOOL:${DARWIN_UML_JIT_GPR_LINK_PROFILE}>:DARWIN_UML_JIT_GPR_LINK_PROFILE=1>
     $<$<BOOL:${DARWIN_UML_JIT_GPR_PRESSURE_PROFILE}>:DARWIN_UML_JIT_GPR_PRESSURE_PROFILE=1>)
 
