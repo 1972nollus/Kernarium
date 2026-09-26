@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 04:49:54 +0900
-Subject: [PATCH] UML-DARWIN-LOCAL: drm/virtio: attach a buffer imported before
- the context exists
+Subject: [PATCH] drm/virtio: attach a buffer imported before the context
+ exists
 
 A file on a device that supports context initialization has no context
 until it asks for one or first needs one: DRM_IOCTL_VIRTGPU_CONTEXT_INIT,

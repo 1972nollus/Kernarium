@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 12:31:36 +0900
-Subject: [PATCH] UML-DARWIN-LOCAL: virtio_balloon: do not wait for an answer
- from a broken device
+Subject: [PATCH] virtio_balloon: do not wait for an answer from a broken
+ device
 
 tell_host() ignored the result of virtqueue_add_outbuf() and then waited,
 uninterruptibly, for the host to return the buffer. On a broken
@@ -16,8 +16,6 @@ its pages through tell_host(). The guest stopped for ever after
 
 Return when the buffer cannot be queued. The pages still leave the
 balloon; a device that is gone cannot be told.
-
-Change-Id: I64e9dab266f3ddebc853188d02585a7276c61dae
 ---
  drivers/virtio/virtio_balloon.c | 8 ++++++--
  1 file changed, 6 insertions(+), 2 deletions(-)

@@ -23,7 +23,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="uml-irq-edge-") as temporary:
         work = Path(temporary)
         # irq.c and its private header are whole-file additions in this topic.
-        patch = ROOT / "kernel/mainline-6.18/patches/series/uml-add-Darwin-host-service-implementation.patch"
+        patch = ROOT / "kernel/common/patches/uml-add-Darwin-host-service-implementation.patch"
         run("git", "apply", "--include=arch/um/os-Darwin/irq.c", "--include=arch/um/os-Darwin/irq.h", str(patch), cwd=work)
         source = work / "arch/um/os-Darwin/irq.c"
         run("cc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", f"-I{fixtures}", "-c", str(source), "-o", str(work / "irq.o"))

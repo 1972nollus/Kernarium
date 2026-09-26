@@ -179,8 +179,11 @@ verify_managed_branch()
 	actual_head=$(git -C "$SOURCE_DIR" rev-parse HEAD)
 	# The branch must be the checked-in series replayed on the pinned base:
 	# its tree is the line's final tree and exporting it reproduces every
-	# owned patch byte for byte.
-	kernel_series verify-branch --source "$SOURCE_DIR" --tip "$managed_branch" ||
+	# owned patch byte for byte. Preparation also marks a series boundary that
+	# an older replay has no branch for; verification alone writes nothing.
+	mark=--mark
+	[ "$VERIFY_ONLY" -eq 0 ] || mark=
+	kernel_series verify-branch --source "$SOURCE_DIR" --tip "$managed_branch" $mark ||
 		fail "managed branch $managed_branch is not the checked-in series (use --recreate only after reviewing it)"
 	"$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA_PATH" \
 		--kernel-source "$SOURCE_DIR" --verify ||

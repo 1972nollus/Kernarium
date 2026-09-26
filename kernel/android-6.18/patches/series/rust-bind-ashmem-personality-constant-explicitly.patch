@@ -1,10 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 20 Aug 2026 15:11:45 +0000
-Subject: [PATCH] UML-DARWIN-LOCAL: rust: bind ashmem personality constant
- explicitly
+Subject: [PATCH] rust: bind ashmem personality constant explicitly
 
-Change-Id: I7f97edb3c3dbfe8dc454785972747e80a67bae8b
 ---
  rust/bindings/bindings_helper.h | 1 +
  1 file changed, 1 insertion(+)

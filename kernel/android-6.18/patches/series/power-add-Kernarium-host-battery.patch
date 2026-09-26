@@ -1,9 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Wed, 26 Aug 2026 03:28:07 +0000
-Subject: [PATCH] UML-DARWIN-LOCAL: power: add Kernarium host battery
+Subject: [PATCH] power: add Kernarium host battery
 
-Change-Id: Ifb9f1003bb5e80a95dfb90048d6773414b775159
 ---
  drivers/power/supply/Kconfig                  |   8 +
  drivers/power/supply/Makefile                 |   1 +

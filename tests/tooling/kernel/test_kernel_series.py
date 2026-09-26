@@ -168,6 +168,12 @@ def run(scratch: Path) -> None:
     expect_error("moved layer branch", "does not end",
                  lambda: kernel_series.verify_branch(overlay_line, replay, "overlay"))
     git(replay, "branch", "-f", "common", "overlay~1")
+    # A replay made before its series was split gains the missing branch.
+    git(replay, "branch", "-D", "common")
+    kernel_series.verify_branch(overlay_line, replay, "overlay")
+    assert git(replay, "for-each-ref", "refs/heads/common") == ""
+    kernel_series.verify_branch(overlay_line, replay, "overlay", mark=True)
+    assert git(replay, "rev-parse", "common") == git(replay, "rev-parse", "overlay~1")
 
     # Amending the overlay regenerates only the overlay and its final tree.
     git(source, "commit", "-q", "--amend", "-m", "arch: overlay, amended")

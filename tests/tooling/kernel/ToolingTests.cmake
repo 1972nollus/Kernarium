@@ -109,7 +109,7 @@ uml_add_tooling_test(
         --carrier-verifier
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/verify-signed-kernel-carrier.py
         --linker-patch
-            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series/uml-establish-shared-architecture-contracts-and-build-wiring.patch
+            ${PROJECT_SOURCE_DIR}/kernel/common/patches/uml-establish-shared-architecture-contracts-and-build-wiring.patch
         --package-script
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/package-ios-frameworks.sh
         --xcode-project

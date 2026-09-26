@@ -47,8 +47,8 @@ for former in \
 		fail "former singleton owner remains in the worktree: $former"
 done
 
-[ ! -d "$COMMON/patches" ] ||
-	fail "shared contracts contain a generated patch-series owner"
+[ -f "$COMMON/patches/series.tsv" ] ||
+	fail "the shared kernel series is missing"
 [ ! -f "$COMMON/config/common.fragment" ] ||
 	fail "shared contracts contain a complete product configuration"
 

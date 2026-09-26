@@ -5,9 +5,9 @@
 A line's ``metadata.env`` names its pinned upstream commit, the ordered
 generated series that turn that commit into the line's tree, and that tree:
 
-    UML_KERNEL_SERIES='kernel/common/patches:uml/common-6.18
-                       kernel/mainline-6.18/patches/series:codex/linux-6.18-darwin'
-    UML_KERNEL_OWNED_SERIES='kernel/mainline-6.18/patches/series'
+    UML_KERNEL_SERIES='kernel/common/patches:codex/android17-6.18-common
+                       kernel/android-6.18/patches/series:codex/android17-6.18-darwin'
+    UML_KERNEL_OWNED_SERIES='kernel/android-6.18/patches/series'
     UML_KERNEL_FINAL_TREE='<tree>'
 
 Each ``UML_KERNEL_SERIES`` entry pairs a series directory with the managed
@@ -185,11 +185,13 @@ def _boundaries(line: Line, repository: Path, tip: str) -> list[str]:
 
 
 def verify_branch(line: Line, repository: Path, tip: str, *,
-                  detached: bool = False) -> None:
+                  detached: bool = False, mark: bool = False) -> None:
     """Prove that ``tip`` is exactly the line's series replayed on its base.
 
     Series branches that exist must end their series too, unless ``detached``
-    says the replay was made without them.
+    says the replay was made without them. ``mark`` creates the missing ones
+    at the commits just verified, so a replay made before a series was split
+    can be regenerated.
     """
     tip_commit = patch_series.resolve_commit(repository, tip)
     ancestor = subprocess.run(
@@ -213,9 +215,12 @@ def verify_branch(line: Line, repository: Path, tip: str, *,
                 repository, line.base, [item.directory for item in line.layers[:index + 1]])
             if patch_series.tree_of(repository, end) != expected:
                 raise SeriesError(f"{tip} does not reproduce {layer.relative}")
-        branch = None if detached else _branch_commit(repository, layer.branch)
-        if branch is not None and branch != end and layer is not line.layers[-1]:
-            raise SeriesError(f"branch {layer.branch} does not end {layer.relative}")
+        if layer is not line.layers[-1] and not detached:
+            branch = _branch_commit(repository, layer.branch)
+            if branch is None and mark:
+                git(repository, "branch", layer.branch, end)
+            elif branch is not None and branch != end:
+                raise SeriesError(f"branch {layer.branch} does not end {layer.relative}")
         start = end
 
 
@@ -308,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--detached", action="store_true",
                                  help="neither create nor check series branches")
         if name == "verify-branch":
+            command.add_argument("--mark", action="store_true",
+                                 help="create missing series branches once verified")
+        if name == "verify-branch":
             command.add_argument("--tip", required=True)
     arguments = parser.parse_args(argv)
     try:
@@ -327,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
                          detached=arguments.detached))
         elif arguments.command == "verify-branch":
             verify_branch(line, arguments.source, arguments.tip,
-                          detached=arguments.detached)
+                          detached=arguments.detached, mark=arguments.mark)
         elif arguments.command == "regenerate":
             print(regenerate(line, arguments.source))
         elif arguments.command == "refresh":
