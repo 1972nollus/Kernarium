@@ -10,9 +10,13 @@ import csv
 import hashlib
 import re
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+import patch_series  # noqa: E402
 
 
 PROJECT_HEADER = (
@@ -24,13 +28,9 @@ PROJECT_HEADER = (
     "base_commit",
     "base_tree",
     "final_tree",
-    "patch_count",
-    "series_manifest_sha256",
     "series_dir",
 )
-SERIES_HEADER = ("order", "filename", "stable_patch_id", "sha256", "subject")
 HEX40 = re.compile(r"[0-9a-f]{40}")
-HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
 def fail(message: str) -> None:
@@ -113,14 +113,6 @@ def manifest_projects(root: ET.Element) -> dict[str, ET.Element]:
 
 
 @dataclass(frozen=True)
-class SeriesEntry:
-    order: int
-    filename: str
-    patch_id: str
-    subject: str
-
-
-@dataclass(frozen=True)
 class Route:
     order: int
     route_id: str
@@ -130,9 +122,7 @@ class Route:
     base_commit: str
     base_tree: str
     final_tree: str
-    patch_count: int
     series_dir: Path
-    entries: tuple[SeriesEntry, ...]
 
 
 def inspect_series(android_root: Path, values: tuple[str, ...]) -> Route:
@@ -145,14 +135,10 @@ def inspect_series(android_root: Path, values: tuple[str, ...]) -> Route:
         base_commit,
         base_tree,
         final_tree,
-        patch_count_text,
-        manifest_digest,
         series_dir_text,
     ) = values
-    if not order_text.isdecimal() or not patch_count_text.isdecimal():
-        fail(f"route {route_id} has a non-numeric order or patch count")
-    order = int(order_text)
-    patch_count = int(patch_count_text)
+    if not order_text.isdecimal():
+        fail(f"route {route_id} has a non-numeric order")
     if not re.fullmatch(r"p[0-9]{4}", route_id):
         fail(f"invalid route ID: {route_id}")
     safe_relative(project, "manifest project name")
@@ -168,83 +154,15 @@ def inspect_series(android_root: Path, values: tuple[str, ...]) -> Route:
     ):
         if not HEX40.fullmatch(value):
             fail(f"route {route_id} has invalid {label}")
-    if patch_count <= 0 or not HEX64.fullmatch(manifest_digest):
-        fail(f"route {route_id} has invalid patch identity")
-
-    route_root = android_root / "patches/projects" / route_id
-    metadata = assignments(route_root / "metadata.env")
-    expected_metadata = {
-        "AOSP_PROJECT_PATCH_SCHEMA": "1",
-        "AOSP_ROUTE_ID": route_id,
-        "AOSP_MANIFEST_PROJECT": project,
-        "AOSP_CHECKOUT_PATH": checkout_path,
-        "AOSP_MANIFEST_REVISION": manifest_revision,
-        "AOSP_BASE_COMMIT": base_commit,
-        "AOSP_BASE_TREE": base_tree,
-        "AOSP_FINAL_TREE": final_tree,
-        "AOSP_PATCH_COUNT": patch_count_text,
-        "AOSP_SERIES_MANIFEST_SHA256": manifest_digest,
-        "AOSP_SERIES_DIR": series_dir_text,
-    }
-    if metadata != expected_metadata:
-        fail(f"route metadata differs from projects.tsv: {route_id}")
-
     series_dir = android_root / series_dir_text
-    manifest_path = series_dir / "manifest.tsv"
-    if digest(manifest_path) != manifest_digest:
-        fail(f"route {route_id} series manifest digest differs from projects.tsv")
-    rows = table(manifest_path, SERIES_HEADER)
-    if len(rows) != patch_count:
-        fail(f"route {route_id} has {len(rows)} patches, expected {patch_count}")
-
-    entries: list[SeriesEntry] = []
-    seen_files: set[str] = set()
-    seen_ids: set[str] = set()
-    for expected_order, row in enumerate(rows, 1):
-        row_order, filename, patch_id, patch_digest, subject = row
-        if row_order != str(expected_order):
-            fail(f"route {route_id} series order is not contiguous")
-        if not re.fullmatch(r"[A-Za-z0-9._-]+\.patch", filename):
-            fail(f"route {route_id} has unsafe patch filename: {filename}")
-        if filename in seen_files or patch_id in seen_ids:
-            fail(f"route {route_id} repeats a patch filename or ID")
-        if not HEX40.fullmatch(patch_id) or not HEX64.fullmatch(patch_digest):
-            fail(f"route {route_id} has malformed patch identity: {filename}")
-        patch = series_dir / filename
-        payload = patch.read_bytes()
-        if hashlib.sha256(payload).hexdigest() != patch_digest:
-            fail(f"route {route_id} patch digest mismatch: {filename}")
-        actual_ids = [
-            line.split()[0]
-            for line in run("git", "patch-id", "--stable", payload=payload).splitlines()
-            if line.strip()
-        ]
-        if actual_ids != [patch_id]:
-            fail(f"route {route_id} patch ID mismatch: {filename}")
-        mail = run("git", "mailinfo", "/dev/null", "/dev/null", payload=payload)
-        subjects = [line.removeprefix("Subject: ") for line in mail.splitlines() if line.startswith("Subject: ")]
-        if subjects != [subject] or not subject.startswith("UML-ANDROID-LOCAL:"):
-            fail(f"route {route_id} subject mismatch or missing local prefix: {filename}")
-
-        changed = 0
-        for raw in payload.decode(errors="strict").splitlines():
-            match = re.fullmatch(r"diff --git a/(.+) b/(.+)", raw)
-            if match is None:
-                continue
-            changed += 1
-            safe_relative(match.group(1), "patch source path")
-            safe_relative(match.group(2), "patch destination path")
-        if changed == 0:
-            fail(f"route {route_id} patch changes no project path: {filename}")
-        seen_files.add(filename)
-        seen_ids.add(patch_id)
-        entries.append(SeriesEntry(expected_order, filename, patch_id, subject))
-
-    actual_patches = {path.name for path in series_dir.glob("*.patch")}
-    if actual_patches != seen_files:
-        fail(f"route {route_id} patch inventory differs from its series manifest")
+    try:
+        series = patch_series.read_series(series_dir)
+    except patch_series.SeriesError as error:
+        fail(f"route {route_id}: {error}")
+    if not series.names:
+        fail(f"route {route_id} series is empty")
     return Route(
-        order,
+        int(order_text),
         route_id,
         project,
         checkout_path,
@@ -252,9 +170,7 @@ def inspect_series(android_root: Path, values: tuple[str, ...]) -> Route:
         base_commit,
         base_tree,
         final_tree,
-        patch_count,
         series_dir,
-        tuple(entries),
     )
 
 
@@ -309,31 +225,13 @@ def verify_source(
             continue
         if tree != route.final_tree:
             fail(f"route {route.route_id} tree is {tree}, expected {route.final_tree}")
-        commits = run(
-            "git", "rev-list", "--reverse", f"{route.base_commit}..HEAD", cwd=checkout
-        ).splitlines()
-        if len(commits) != route.patch_count:
-            fail(f"route {route.route_id} has {len(commits)} commits")
-        for commit, entry in zip(commits, route.entries, strict=True):
-            subject = run("git", "show", "-s", "--format=%s", commit, cwd=checkout).strip()
-            if subject != entry.subject:
-                fail(f"route {route.route_id} commit subject differs at {entry.order}")
-            shown = subprocess.run(
-                ["git", "show", "--format=email", "--full-index", "--binary", commit],
-                cwd=checkout,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-            )
-            if shown.returncode != 0:
-                fail(f"cannot inspect route {route.route_id} commit {commit}")
-            ids = [
-                line.split()[0]
-                for line in run("git", "patch-id", "--stable", payload=shown.stdout).splitlines()
-                if line.strip()
-            ]
-            if ids != [entry.patch_id]:
-                fail(f"route {route.route_id} commit patch ID differs at {entry.order}")
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", route.base_commit, "HEAD"],
+            cwd=checkout,
+            check=False,
+        )
+        if ancestor.returncode != 0:
+            fail(f"route {route.route_id} is not based on its pinned base")
 
     if expect == "final":
         sync_tool = android_root / "tools/sync-device-overlay.py"

@@ -1,4 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Ordered generated AOSP project topic identity.
-order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-audio-do-not-declare-the-absent-bl.patch	2f91ad896d271de51e87353a27adc8c528103b1f	26a058e6c97b52779b43bceafe2952dac453c92be3ac1fb66e26a613221d32a5	UML-ANDROID-LOCAL: audio do not declare the absent bluetooth module

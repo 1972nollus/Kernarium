@@ -1,4 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Ordered generated AOSP project topic identity.
-order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-show-active-download-status-icons.patch	606322fd3c97f1b69de05bf87fa52de8c6247ab9	89c06a01536058103e63ae3ff83a825718ca723530baa8cfce590e67080a2367	UML-ANDROID-LOCAL: show active download status icons

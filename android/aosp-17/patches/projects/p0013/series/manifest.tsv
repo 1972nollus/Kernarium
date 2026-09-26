@@ -1,4 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Ordered generated AOSP project topic identity.
-order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-Share-libzstd-with-the-Venus-Vulka.patch	645ac831a8c52e30617c6b83f6354095ec5d7997	72cf1b8c787a2cfe6dcda66aaa7339067327499af5ea30686514e420c0822173	UML-ANDROID-LOCAL: Share libzstd with the Venus Vulkan HAL

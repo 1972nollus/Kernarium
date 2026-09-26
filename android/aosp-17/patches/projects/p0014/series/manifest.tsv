@@ -1,5 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Ordered generated AOSP project topic identity.
-order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-report-the-real-buffer-layout-on-a.patch	94b692990396f437b52c97fc9289f682e3d0df52	f9ee44ee8dafb932faf5df4a2ccf86b554841589ba4d926b4eca3f594d6e1eef	UML-ANDROID-LOCAL: report the real buffer layout on an upstream virtio-gpu
-2	0002-UML-ANDROID-LOCAL-share-GPU-buffers-as-blob-resource.patch	54778a8776c0e633cf4f3a5fc640cd1a39540ce1	404cd80bedcce90606f4f540b15275538759bd017c495d96e62a3a78062efa17	UML-ANDROID-LOCAL: share GPU buffers as blob resources

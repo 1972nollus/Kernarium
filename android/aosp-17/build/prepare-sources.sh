@@ -106,27 +106,11 @@ prepare_jelly()
 	[ "$actual_tree" = "$JELLY_UPSTREAM_TREE" ] ||
 		fail "fetched Jelly tree is $actual_tree, expected $JELLY_UPSTREAM_TREE"
 
-	tab=$(printf '\t')
-	while IFS="$tab" read -r order filename patch_id digest subject; do
-		case "$order" in
-		\#*|order|'') continue ;;
-		esac
-		patch="$ROOT_DIR/android/aosp-17/third_party/jelly/series/$filename"
-		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-			git -C "$JELLY_STAGING" \
-			-c core.hooksPath=/dev/null \
-			-c user.useConfigOnly=true \
-			am --committer-date-is-author-date "$patch"
-	done < "$ROOT_DIR/android/aosp-17/third_party/jelly/series/manifest.tsv"
-
-	actual_commit=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$JELLY_STAGING" rev-parse HEAD)
-	actual_tree=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$JELLY_STAGING" rev-parse HEAD^{tree})
-	[ "$actual_commit" = "$JELLY_FINAL_COMMIT" ] ||
-		fail "replayed Jelly commit is $actual_commit, expected $JELLY_FINAL_COMMIT"
-	[ "$actual_tree" = "$JELLY_FINAL_TREE" ] ||
-		fail "replayed Jelly tree is $actual_tree, expected $JELLY_FINAL_TREE"
+	python3 -B "$ROOT_DIR/scripts/patch_series.py" apply \
+		--repo "$JELLY_STAGING" \
+		--series-dir "$ROOT_DIR/android/aosp-17/third_party/jelly/series" \
+		--expect-tree "$JELLY_FINAL_TREE" >/dev/null ||
+		fail "the Jelly series does not replay to $JELLY_FINAL_TREE"
 	mv -- "$JELLY_STAGING" "$destination"
 	JELLY_STAGING=
 	"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
@@ -168,22 +152,11 @@ prepare_mesa_venus()
 		--expect-tree "$MESA_VENUS_GUEST_TREE" >/dev/null ||
 		fail "the guest Mesa series does not replay to $MESA_VENUS_GUEST_TREE"
 
-	tab=$(printf '\t')
-	while IFS="$tab" read -r order filename patch_id digest subject; do
-		case "$order" in
-		\#*|order|'') continue ;;
-		esac
-		patch="$ROOT_DIR/android/aosp-17/third_party/mesa-venus/series/$filename"
-		GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-			git -C "$MESA_VENUS_STAGING" \
-			-c core.hooksPath=/dev/null \
-			-c user.useConfigOnly=true \
-			am --committer-date-is-author-date "$patch"
-	done < "$ROOT_DIR/android/aosp-17/third_party/mesa-venus/series/manifest.tsv"
-	actual_tree=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$MESA_VENUS_STAGING" rev-parse HEAD^{tree})
-	[ "$actual_tree" = "$MESA_VENUS_FINAL_TREE" ] ||
-		fail "replayed Mesa Venus tree is $actual_tree, expected $MESA_VENUS_FINAL_TREE"
+	python3 -B "$ROOT_DIR/scripts/patch_series.py" apply \
+		--repo "$MESA_VENUS_STAGING" \
+		--series-dir "$ROOT_DIR/android/aosp-17/third_party/mesa-venus/series" \
+		--expect-tree "$MESA_VENUS_FINAL_TREE" >/dev/null ||
+		fail "the Mesa Venus port does not replay to $MESA_VENUS_FINAL_TREE"
 
 	mv -- "$MESA_VENUS_STAGING" "$destination"
 	MESA_VENUS_STAGING=

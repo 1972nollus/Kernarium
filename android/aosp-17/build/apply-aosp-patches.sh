@@ -5,6 +5,9 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+ROOT_DIR=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
+GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
+PATCH_SERIES="$ROOT_DIR/scripts/patch_series.py"
 PROJECTS="$ANDROID_ROOT/patches/projects.tsv"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 OVERLAY_SYNC="$ANDROID_ROOT/tools/sync-device-overlay.py"
@@ -63,6 +66,10 @@ esac
 [ -x "$JELLY_VERIFIER" ] || fail "Jelly source verifier is missing"
 [ -x "$MESA_VENUS_VERIFIER" ] || fail "Mesa Venus source verifier is missing"
 [ -f "$PROJECTS" ] || fail "AOSP route table is missing"
+[ -f "$GIT_IDENTITY" ] || fail "missing Git identity helper: $GIT_IDENTITY"
+# shellcheck disable=SC1090
+. "$GIT_IDENTITY"
+uml_require_git_identity 'android/aosp-17/build/apply-aosp-patches.sh'
 
 "$JELLY_VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE"
@@ -71,18 +78,12 @@ esac
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect base
 
-awk -F '\t' '$1 ~ /^[0-9]+$/ { print $2 "\t" $4 "\t" $11 }' "$PROJECTS" |
-while IFS="$(printf '\t')" read -r route_id checkout_path series_dir; do
-	checkout="$AOSP_SOURCE/$checkout_path"
-	manifest="$ANDROID_ROOT/$series_dir/manifest.tsv"
-	awk -F '\t' '$1 ~ /^[0-9]+$/ { print $2 }' "$manifest" |
-	while IFS= read -r filename; do
-		patch="$ANDROID_ROOT/$series_dir/$filename"
-		if ! git -C "$checkout" am "$patch"; then
-			git -C "$checkout" am --abort || true
-			fail "could not apply $route_id patch: $filename"
-		fi
-	done
+awk -F '\t' '$1 ~ /^[0-9]+$/ { print $2 "\t" $4 "\t" $8 "\t" $9 }' "$PROJECTS" |
+while IFS="$(printf '\t')" read -r route_id checkout_path final_tree series_dir; do
+	python3 -B "$PATCH_SERIES" apply --repo "$AOSP_SOURCE/$checkout_path" \
+		--series-dir "$ANDROID_ROOT/$series_dir" \
+		--expect-tree "$final_tree" >/dev/null ||
+		fail "could not apply the $route_id series"
 done
 
 "$OVERLAY_SYNC" --android-root "$ANDROID_ROOT" --aosp-source "$AOSP_SOURCE"

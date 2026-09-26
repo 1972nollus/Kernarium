@@ -485,15 +485,49 @@ def kernel_series_provenance(outer_root: Path) -> tuple[int, str]:
         fail(f"ACK kernel series are invalid: {error}")
 
 
+def series_provenance(outer_root: Path, *directories: Path) -> tuple[int, str]:
+    """Return the patch count and ordered patch-content digest of generated series."""
+    import sys
+
+    scripts = str(outer_root / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import patch_series  # noqa: PLC0415
+
+    try:
+        return patch_series.series_provenance(list(directories))
+    except patch_series.SeriesError as error:
+        fail(f"generated patch series are invalid: {error}")
+
+
+def route_series(android_root: Path, projects: Path) -> list[Path]:
+    """Return the series directories a route table lists, in route order."""
+    lines = [
+        line for line in projects.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    header = lines[0].split("\t")
+    column = header.index("series_dir")
+    return [android_root / line.split("\t")[column] for line in lines[1:]]
+
+
 def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
     aosp_metadata = parse_env(android_root / "metadata/aosp.env")
     jelly_metadata = parse_env(android_root / "third_party/jelly/metadata.env")
     orangefox_metadata = parse_env(
         android_root / "third_party/orangefox/metadata.env"
     )
-    kernel_root = android_root.parents[1] / "kernel/android-6.18"
+    outer_root = android_root.parents[1]
+    kernel_root = outer_root / "kernel/android-6.18"
     kernel_metadata = parse_env(kernel_root / "patches/metadata.env")
-    abi_metadata = parse_env(android_root.parents[1] / "kernel/common/abi/identity.env")
+    abi_metadata = parse_env(outer_root / "kernel/common/abi/identity.env")
+    jelly_count, jelly_digest = series_provenance(
+        outer_root, android_root / "third_party/jelly/series"
+    )
+    orangefox_projects = android_root / "third_party/orangefox/patches/projects.tsv"
+    orangefox_count, _ = series_provenance(
+        outer_root, *route_series(android_root, orangefox_projects)
+    )
 
     expected = {
         "manifest_repository": aosp_metadata["ANDROID17_MANIFEST_REPOSITORY"],
@@ -512,12 +546,9 @@ def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
         "branch": jelly_metadata["JELLY_UPSTREAM_BRANCH"],
         "base_commit": jelly_metadata["JELLY_UPSTREAM_COMMIT"],
         "base_tree": jelly_metadata["JELLY_UPSTREAM_TREE"],
-        "final_commit": jelly_metadata["JELLY_FINAL_COMMIT"],
         "final_tree": jelly_metadata["JELLY_FINAL_TREE"],
-        "patch_count": int(jelly_metadata["JELLY_PATCH_COUNT"]),
-        "patch_manifest_sha256": sha256_path(
-            android_root / "third_party/jelly/series/manifest.tsv"
-        ),
+        "patch_count": jelly_count,
+        "patch_manifest_sha256": jelly_digest,
         "destination": jelly_metadata["JELLY_DESTINATION"],
         "license": jelly_metadata["JELLY_LICENSE"],
     }
@@ -549,10 +580,8 @@ def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
         "device_destination": orangefox_metadata["ORANGEFOX_DEVICE_OVERLAY_DESTINATION"],
         "product": orangefox_metadata["ORANGEFOX_PRODUCT"],
         "release_config": orangefox_metadata["ORANGEFOX_RELEASE_CONFIG"],
-        "patch_count": int(orangefox_metadata["ORANGEFOX_PATCH_COUNT"]),
-        "projects_manifest_sha256": sha256_path(
-            android_root / "third_party/orangefox/patches/projects.tsv"
-        ),
+        "patch_count": orangefox_count,
+        "projects_manifest_sha256": sha256_path(orangefox_projects),
         "license": orangefox_metadata["ORANGEFOX_LICENSE"],
     }
     for key, value in orangefox_expected.items():

@@ -108,14 +108,14 @@ def write_fixture(
         topic,
         "src/virtio/venus-protocol/vn_protocol_driver.h",
         "/* paired */\n",
-        "UML-ANDROID-LOCAL: Mesa Venus pair the generated protocol headers",
+        "Mesa Venus pair the generated protocol headers",
         1700000030,
     )
     commit(
         topic,
         "src/virtio/vulkan/Android.bp",
         'cc_library_shared {\n    name: "vulkan.virtio",\n}\n',
-        "UML-ANDROID-LOCAL: Mesa Venus generated Soong port",
+        "Mesa Venus generated Soong port",
         1700000040,
     )
 
@@ -136,7 +136,6 @@ def write_fixture(
         f"MESA_VENUS_GUEST_SERIES='{GUEST_SERIES}'\n"
         f"MESA_VENUS_GUEST_TREE='{guest_tree}'\n"
         "MESA_VENUS_PATCH_BRANCH='kernarium-android17'\n"
-        "MESA_VENUS_PATCH_COUNT=1\n"
         f"MESA_VENUS_FINAL_TREE='{guest_tree}'\n"
         "MESA_VENUS_DESTINATION='external/mesa3d-venus'\n"
         "MESA_VENUS_HAL_MODULE='vulkan.virtio'\n"
@@ -191,33 +190,47 @@ def main() -> None:
             raise SystemExit(
                 "the regenerator did not emit exactly the Android port commits"
             )
-        manifest = (series / "manifest.tsv").read_text()
-        for subject in (
-            "UML-ANDROID-LOCAL: Mesa Venus pair the generated protocol headers",
-            "UML-ANDROID-LOCAL: Mesa Venus generated Soong port",
+        listed = (series / "series.tsv").read_text()
+        for name in (
+            "Mesa-Venus-pair-the-generated-protocol-headers",
+            "Mesa-Venus-generated-Soong-port",
         ):
-            if subject not in manifest:
-                raise SystemExit(f"Mesa Venus series manifest lost subject: {subject}")
-        if "venus: fixture" in manifest:
+            if name not in listed:
+                raise SystemExit(f"Mesa Venus series lost patch: {name}")
+        if "venus-fixture" in listed:
             raise SystemExit("the Android series absorbed the pinned guest series")
+        final_tree = parse_env(android_root / "third_party/mesa-venus/metadata.env")[
+            "MESA_VENUS_FINAL_TREE"
+        ]
+        if final_tree != run("git", "rev-parse", "HEAD^{tree}", cwd=topic):
+            raise SystemExit("the regenerator did not record the topic tree")
+
+        def materialize(aosp: Path) -> Path:
+            (aosp / ".repo").mkdir(parents=True)
+            destination = aosp / "external/mesa3d-venus"
+            destination.parent.mkdir(parents=True)
+            run(
+                "git", "clone", "-q", "-b", "kernarium-android17",
+                str(topic), str(destination),
+            )
+            run("git", "remote", "set-url", "origin", REPOSITORY, cwd=destination)
+            run("git", "reset", "-q", "--hard", guest_commit, cwd=destination)
+            return destination
+
+        def apply(destination: Path) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                (
+                    sys.executable, "-B", str(root / "scripts/patch_series.py"),
+                    "apply", "--repo", str(destination), "--series-dir", str(series),
+                    "--expect-tree", final_tree,
+                ),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
 
         aosp = root / "aosp"
-        (aosp / ".repo").mkdir(parents=True)
-        destination = aosp / "external/mesa3d-venus"
-        destination.parent.mkdir(parents=True)
-        run("git", "clone", "-q", "-b", "kernarium-android17", str(topic), str(destination))
-        run("git", "remote", "set-url", "origin", REPOSITORY, cwd=destination)
-        run("git", "reset", "-q", "--hard", guest_commit, cwd=destination)
-        for patch in patches:
-            run(
-                "git",
-                "-c",
-                "user.useConfigOnly=true",
-                "am",
-                "--committer-date-is-author-date",
-                str(patch),
-                cwd=destination,
-            )
+        if apply(materialize(aosp)).returncode != 0:
+            raise SystemExit("the Mesa Venus series did not replay to its recorded tree")
         run(
             sys.executable,
             "-B",
@@ -253,8 +266,8 @@ def main() -> None:
             raise SystemExit("the verifier accepted a moved guest Mesa series")
         guest.write_bytes(original_guest)
 
-        original = patches[0].read_bytes()
-        patches[0].write_bytes(original.replace(b"/* paired */", b"/* PAIRED */", 1))
+        stray = series / "stray.patch"
+        stray.write_bytes(patches[0].read_bytes())
         rejected = subprocess.run(
             (
                 sys.executable,
@@ -267,13 +280,20 @@ def main() -> None:
             stderr=subprocess.STDOUT,
         )
         if rejected.returncode == 0:
-            raise SystemExit("the verifier accepted altered generated patch bytes")
-        patches[0].write_bytes(original)
+            raise SystemExit("the verifier accepted a patch its series does not list")
+        stray.unlink()
+
+        altered = next(patch for patch in patches if "protocol-headers" in patch.name)
+        original = altered.read_bytes()
+        altered.write_bytes(original.replace(b"+/* paired */", b"+/* PAIRED */", 1))
+        if apply(materialize(root / "altered")).returncode == 0:
+            raise SystemExit("the replay accepted a patch that changes the recorded tree")
+        altered.write_bytes(original)
 
         metadata_before = (
             android_root / "third_party/mesa-venus/metadata.env"
         ).read_bytes()
-        manifest_before = (series / "manifest.tsv").read_bytes()
+        series_before = (series / "series.tsv").read_bytes()
         (topic / "dirty.txt").write_text("dirty\n")
         rejected = subprocess.run(
             command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
@@ -284,7 +304,7 @@ def main() -> None:
             android_root / "third_party/mesa-venus/metadata.env"
         ).read_bytes() != metadata_before:
             raise SystemExit("dirty-topic rejection changed Mesa Venus metadata")
-        if (series / "manifest.tsv").read_bytes() != manifest_before:
+        if (series / "series.tsv").read_bytes() != series_before:
             raise SystemExit("dirty-topic rejection changed the Mesa Venus series")
 
     print("Android 17 Mesa Venus source contract passed")

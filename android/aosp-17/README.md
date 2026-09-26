@@ -39,7 +39,7 @@ republish the GPT or invalidate a guest bundle.
 ## Source and patch ownership
 
 `metadata/base-manifest.xml` pins every Repo project. `patches/projects.tsv`
-maps each changed project from its exact base to final tree. Generated mail
+maps each changed project from its exact base to final tree. Generated patch
 series under `patches/projects/` are the only maintained modifications to
 upstream AOSP projects.
 
@@ -56,10 +56,18 @@ roughly 85 GiB, matching the upstream `fox_14.1` guidance. The device tree is
 synced to the same `device/kernarium/darwin` path, but only inside the separate
 OrangeFox workspace.
 
+Every series here uses the shared
+[`scripts/patch_series.py`](../../scripts/patch_series.py) format and is
+identified by the tree it produces: replay applies it to the pinned base and
+requires the final tree recorded in `projects.tsv` or the owning
+`metadata.env`. Release manifests compute patch counts and digests from the
+series files when they are published.
+
 Never edit generated patch files. Amend clean Git topic branches and run the
-matching regenerator under `tools/`; it updates patch bytes and all related
-identity tables together. New local topics use the repository's required
-subject prefix.
+matching regenerator under `tools/`; it exports the series and records its
+final tree. OrangeFox routes have no dedicated regenerator: export a route with
+`scripts/patch_series.py export --license GPL-3.0-or-later` and record the tree
+it prints as that route's `final_tree`.
 
 ## Android product
 

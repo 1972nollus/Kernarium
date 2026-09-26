@@ -72,7 +72,9 @@ def parse_env(path: Path) -> dict[str, str]:
     return result
 
 
-def write_fixture(android_root: Path, topic: Path, verifier: Path) -> str:
+def write_fixture(
+    root: Path, android_root: Path, topic: Path, verifier: Path, scripts: Path
+) -> str:
     run("git", "init", "-q", str(topic))
     run("git", "switch", "-q", "-c", "kernarium-android17", cwd=topic)
     commit(topic, "app/base.txt", "base\n", "Jelly fixture base", 1700000000)
@@ -82,14 +84,14 @@ def write_fixture(android_root: Path, topic: Path, verifier: Path) -> str:
         topic,
         "app/Android.bp",
         'android_app {\n    name: "Jelly",\n    sdk_version: "37",\n}\n',
-        "UML-ANDROID-LOCAL: Jelly fixture SDK",
+        "Jelly fixture SDK",
         1700000010,
     )
     commit(
         topic,
         "app/location.txt",
         "location=false\n",
-        "UML-ANDROID-LOCAL: Jelly fixture defaults",
+        "Jelly fixture defaults",
         1700000020,
     )
 
@@ -99,6 +101,9 @@ def write_fixture(android_root: Path, topic: Path, verifier: Path) -> str:
     tools.mkdir(parents=True)
     shutil.copy2(verifier, tools / "verify-jelly-source.py")
     os.chmod(tools / "verify-jelly-source.py", 0o755)
+    (root / "scripts").mkdir()
+    for name in ("patch_series.py", "git_identity.py"):
+        shutil.copy2(scripts / name, root / "scripts" / name)
     (jelly / "metadata.env").write_text(
         "# SPDX-License-Identifier: Apache-2.0\n"
         "JELLY_SOURCE_SCHEMA=1\n"
@@ -107,9 +112,7 @@ def write_fixture(android_root: Path, topic: Path, verifier: Path) -> str:
         f"JELLY_UPSTREAM_COMMIT='{base_commit}'\n"
         f"JELLY_UPSTREAM_TREE='{base_tree}'\n"
         "JELLY_PATCH_BRANCH='kernarium-android17'\n"
-        f"JELLY_FINAL_COMMIT='{base_commit}'\n"
         f"JELLY_FINAL_TREE='{base_tree}'\n"
-        "JELLY_PATCH_COUNT=1\n"
         "JELLY_DESTINATION='packages/apps/Jelly'\n"
         "JELLY_LICENSE='Apache-2.0'\n"
     )
@@ -137,7 +140,9 @@ def main() -> None:
         root = Path(temporary)
         android_root = root / "android/aosp-17"
         topic = root / "topic"
-        base_commit = write_fixture(android_root, topic, verifier)
+        base_commit = write_fixture(
+            root, android_root, topic, verifier, source_root / "scripts"
+        )
         command = (
             sys.executable,
             "-B",
@@ -161,31 +166,40 @@ def main() -> None:
         patches = sorted(series.glob("*.patch"))
         if len(patches) != 2:
             raise SystemExit("Jelly regenerator did not emit the topic's two patches")
-        manifest = (series / "manifest.tsv").read_text()
-        for subject in (
-            "UML-ANDROID-LOCAL: Jelly fixture SDK",
-            "UML-ANDROID-LOCAL: Jelly fixture defaults",
+        listed = (series / "series.tsv").read_text()
+        for name in ("Jelly-fixture-SDK", "Jelly-fixture-defaults"):
+            if name not in listed:
+                raise SystemExit(f"Jelly series lost patch: {name}")
+        metadata = parse_env(android_root / "third_party/jelly/metadata.env")
+        if metadata["JELLY_FINAL_TREE"] != run(
+            "git", "rev-parse", "HEAD^{tree}", cwd=topic
         ):
-            if subject not in manifest:
-                raise SystemExit(f"Jelly series manifest lost subject: {subject}")
+            raise SystemExit("Jelly regenerator did not record the topic tree")
+
+        def materialize(aosp: Path) -> Path:
+            (aosp / ".repo").mkdir(parents=True)
+            destination = aosp / "packages/apps/Jelly"
+            destination.parent.mkdir(parents=True)
+            run("git", "clone", "-q", str(topic), str(destination))
+            run("git", "remote", "set-url", "origin", REPOSITORY, cwd=destination)
+            run("git", "switch", "-q", "--detach", base_commit, cwd=destination)
+            return destination
+
+        def apply(destination: Path) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                (
+                    sys.executable, "-B", str(root / "scripts/patch_series.py"),
+                    "apply", "--repo", str(destination),
+                    "--series-dir", str(series),
+                    "--expect-tree", metadata["JELLY_FINAL_TREE"],
+                ),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
 
         aosp = root / "aosp"
-        (aosp / ".repo").mkdir(parents=True)
-        destination = aosp / "packages/apps/Jelly"
-        destination.parent.mkdir(parents=True)
-        run("git", "clone", "-q", str(topic), str(destination))
-        run("git", "remote", "set-url", "origin", REPOSITORY, cwd=destination)
-        run("git", "switch", "-q", "--detach", base_commit, cwd=destination)
-        for patch in patches:
-            run(
-                "git",
-                "-c",
-                "user.useConfigOnly=true",
-                "am",
-                "--committer-date-is-author-date",
-                str(patch),
-                cwd=destination,
-            )
+        if apply(materialize(aosp)).returncode != 0:
+            raise SystemExit("Jelly series did not replay to its recorded tree")
         run(
             sys.executable,
             "-B",
@@ -195,14 +209,9 @@ def main() -> None:
             "--aosp-source",
             str(aosp),
         )
-        metadata = parse_env(android_root / "third_party/jelly/metadata.env")
-        if run("git", "rev-parse", "HEAD", cwd=destination) != metadata[
-            "JELLY_FINAL_COMMIT"
-        ]:
-            raise SystemExit("deterministic Jelly replay changed final commit identity")
 
-        original = patches[0].read_bytes()
-        patches[0].write_bytes(original.replace(b"fixture SDK", b"fixture sdk", 1))
+        stray = series / "stray.patch"
+        stray.write_bytes(patches[0].read_bytes())
         rejected = subprocess.run(
             (
                 sys.executable,
@@ -215,11 +224,18 @@ def main() -> None:
             stderr=subprocess.STDOUT,
         )
         if rejected.returncode == 0:
-            raise SystemExit("Jelly verifier accepted altered generated patch bytes")
-        patches[0].write_bytes(original)
+            raise SystemExit("Jelly verifier accepted a patch its series does not list")
+        stray.unlink()
+
+        altered = next(patch for patch in patches if "defaults" in patch.name)
+        original = altered.read_bytes()
+        altered.write_bytes(original.replace(b"+location=false", b"+location=true", 1))
+        if apply(materialize(root / "altered")).returncode == 0:
+            raise SystemExit("Jelly replay accepted a patch that changes the recorded tree")
+        altered.write_bytes(original)
 
         metadata_before = (android_root / "third_party/jelly/metadata.env").read_bytes()
-        manifest_before = (series / "manifest.tsv").read_bytes()
+        series_before = (series / "series.tsv").read_bytes()
         (topic / "dirty.txt").write_text("dirty\n")
         rejected = subprocess.run(
             command,
@@ -230,7 +246,7 @@ def main() -> None:
             raise SystemExit("Jelly regenerator accepted a dirty topic checkout")
         if (android_root / "third_party/jelly/metadata.env").read_bytes() != metadata_before:
             raise SystemExit("dirty-topic rejection changed Jelly metadata")
-        if (series / "manifest.tsv").read_bytes() != manifest_before:
+        if (series / "series.tsv").read_bytes() != series_before:
             raise SystemExit("dirty-topic rejection changed the Jelly series")
 
     print("Android 17 Jelly source contract passed")

@@ -1144,21 +1144,16 @@ def main() -> None:
         android_root / "support/verification/required-kernel-builtins.txt",
         android_root / "support/verification/forbidden-kernel-options.txt",
         android_root / "patches/projects.tsv",
-        android_root / "patches/projects/p0001/metadata.env",
-        android_root / "patches/projects/p0001/series/manifest.tsv",
-        android_root / "patches/projects/p0002/metadata.env",
-        android_root / "patches/projects/p0002/series/manifest.tsv",
-        android_root / "patches/projects/p0003/metadata.env",
-        android_root / "patches/projects/p0003/series/manifest.tsv",
+        android_root / "patches/projects/p0001/series/series.tsv",
+        android_root / "patches/projects/p0002/series/series.tsv",
+        android_root / "patches/projects/p0003/series/series.tsv",
         android_root / "third_party/jelly/metadata.env",
-        android_root / "third_party/jelly/series/manifest.tsv",
+        android_root / "third_party/jelly/series/series.tsv",
         android_root / "third_party/orangefox/metadata.env",
         android_root / "third_party/orangefox/base-manifest.xml",
         android_root / "third_party/orangefox/patches/projects.tsv",
-        android_root / "third_party/orangefox/patches/projects/p0001/metadata.env",
-        android_root / "third_party/orangefox/patches/projects/p0001/series/manifest.tsv",
-        android_root / "third_party/orangefox/patches/projects/p0002/metadata.env",
-        android_root / "third_party/orangefox/patches/projects/p0002/series/manifest.tsv",
+        android_root / "third_party/orangefox/patches/projects/p0001/series/series.tsv",
+        android_root / "third_party/orangefox/patches/projects/p0002/series/series.tsv",
         android_root / "third_party/orangefox/device/AndroidProducts.mk",
         android_root / "third_party/orangefox/device/BoardConfig.mk",
         android_root / "third_party/orangefox/device/device.mk",
@@ -1365,11 +1360,11 @@ def main() -> None:
         "JELLY_UPSTREAM_REPOSITORY",
         "JELLY_UPSTREAM_COMMIT",
         "JELLY_UPSTREAM_TREE",
-        "JELLY_FINAL_COMMIT",
         "JELLY_FINAL_TREE",
         "JELLY_DESTINATION",
         "git -C \"$JELLY_STAGING\" fetch",
-        "am --committer-date-is-author-date",
+        "scripts/patch_series.py\" apply",
+        "--repo \"$JELLY_STAGING\"",
         "verify-jelly-source.py",
     ):
         if token not in prepare:
@@ -1461,7 +1456,11 @@ def main() -> None:
         or "--detached" not in apply_kernel
     ):
         fail("ACK materializer does not replay generated topics in a worktree")
-    if "patches/projects.tsv" not in apply_aosp or 'git -C "$checkout" am' not in apply_aosp:
+    if (
+        "patches/projects.tsv" not in apply_aosp
+        or '"$PATCH_SERIES" apply' not in apply_aosp
+        or '--expect-tree "$final_tree"' not in apply_aosp
+    ):
         fail("AOSP materializer does not replay the routed per-project series")
     if "$ANDROID_ROOT/support" in apply_aosp or "cp " in apply_aosp:
         fail("AOSP materializer stages support files outside the exact overlay sync")
@@ -1806,9 +1805,7 @@ def main() -> None:
         "JELLY_UPSTREAM_BRANCH": "lineage-23.2",
         "JELLY_UPSTREAM_COMMIT": "767833067da7bbbb639782bbddec33f602215c3d",
         "JELLY_UPSTREAM_TREE": "82fe9a20385cd4546a0f5bc48c472e11ed7ad0fc",
-        "JELLY_FINAL_COMMIT": "5053e2cc96992955859f13e77a806bc6dee214b1",
         "JELLY_FINAL_TREE": "ce63d63703fbfd2e616e94513ea1e5c63ccae4ef",
-        "JELLY_PATCH_COUNT": "2",
         "JELLY_DESTINATION": "packages/apps/Jelly",
     }
     for key, expected in expected_jelly.items():
@@ -1843,7 +1840,6 @@ def main() -> None:
         "ORANGEFOX_SE_OMAPI_COMMIT": "9ea6e4a9ecfe04ffb82767d7cbcab3e8dc6295af",
         "ORANGEFOX_PRODUCT": "twrp_darwin",
         "ORANGEFOX_RELEASE_CONFIG": "ap2a",
-        "ORANGEFOX_PATCH_COUNT": "3",
     }
     for key, expected in expected_orangefox.items():
         if orangefox_metadata.get(key) != expected:
@@ -1944,7 +1940,8 @@ def main() -> None:
     for token in (
         "verify-orangefox-source.py",
         "sync-orangefox-device.py",
-        "am --committer-date-is-author-date",
+        '"$PATCH_SERIES" apply',
+        '--expect-tree "$final_tree"',
     ):
         if token not in apply_orangefox:
             fail(f"OrangeFox patch replay is missing policy: {token}")

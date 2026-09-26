@@ -31,7 +31,9 @@ def run(*command: str, cwd: Path | None = None) -> str:
     return result.stdout.strip()
 
 
-def write_fixture(android_root: Path, topic: Path, verifier: Path) -> None:
+def write_fixture(
+    root: Path, android_root: Path, topic: Path, verifier: Path, scripts: Path
+) -> None:
     run("git", "init", "-q", str(topic))
     run("git", "config", "user.name", "Android fixture", cwd=topic)
     run("git", "config", "user.email", "android-fixture@example.invalid", cwd=topic)
@@ -42,10 +44,10 @@ def write_fixture(android_root: Path, topic: Path, verifier: Path) -> None:
     base_tree = run("git", "rev-parse", "HEAD^{tree}", cwd=topic)
     (topic / "first.txt").write_text("first\n")
     run("git", "add", "first.txt", cwd=topic)
-    run("git", "commit", "-q", "-m", "UML-ANDROID-LOCAL: fixture: first", cwd=topic)
+    run("git", "commit", "-q", "-m", "fixture: first", cwd=topic)
     (topic / "second.txt").write_text("second\n")
     run("git", "add", "second.txt", cwd=topic)
-    run("git", "commit", "-q", "-m", "UML-ANDROID-LOCAL: fixture: second", cwd=topic)
+    run("git", "commit", "-q", "-m", "fixture: second", cwd=topic)
 
     (android_root / "metadata").mkdir(parents=True)
     route_root = android_root / "patches/projects/p0001"
@@ -53,6 +55,9 @@ def write_fixture(android_root: Path, topic: Path, verifier: Path) -> None:
     (android_root / "tools").mkdir()
     shutil.copy2(verifier, android_root / "tools/verify-aosp-patches.py")
     os.chmod(android_root / "tools/verify-aosp-patches.py", 0o755)
+    (root / "scripts").mkdir()
+    for name in ("patch_series.py", "git_identity.py"):
+        shutil.copy2(scripts / name, root / "scripts" / name)
     manifest = (
         '<manifest><project name="fixture/project" path="fixture/project" '
         f'revision="{base_commit}" upstream="refs/tags/fixture"/></manifest>\n'
@@ -63,32 +68,15 @@ def write_fixture(android_root: Path, topic: Path, verifier: Path) -> None:
         "AOSP_SOURCE_SCHEMA=1\n"
         f"ANDROID17_BASE_MANIFEST_SHA256='{manifest_digest}'\n"
     )
-    empty_digest = "0" * 64
     empty_tree = "0" * 40
     (android_root / "patches/projects.tsv").write_text(
         "# SPDX-License-Identifier: Apache-2.0\n"
         "order\troute_id\tmanifest_project\tcheckout_path\tmanifest_revision\t"
-        "base_commit\tbase_tree\tfinal_tree\tpatch_count\t"
-        "series_manifest_sha256\tseries_dir\n"
+        "base_commit\tbase_tree\tfinal_tree\tseries_dir\n"
         f"1\tp0001\tfixture/project\tfixture/project\trefs/tags/fixture\t"
-        f"{base_commit}\t{base_tree}\t{empty_tree}\t1\t{empty_digest}\t"
+        f"{base_commit}\t{base_tree}\t{empty_tree}\t"
         "patches/projects/p0001/series\n"
     )
-    (route_root / "metadata.env").write_text(
-        "# SPDX-License-Identifier: Apache-2.0\n"
-        "AOSP_PROJECT_PATCH_SCHEMA=1\n"
-        "AOSP_ROUTE_ID='p0001'\n"
-        "AOSP_MANIFEST_PROJECT='fixture/project'\n"
-        "AOSP_CHECKOUT_PATH='fixture/project'\n"
-        "AOSP_MANIFEST_REVISION='refs/tags/fixture'\n"
-        f"AOSP_BASE_COMMIT='{base_commit}'\n"
-        f"AOSP_BASE_TREE='{base_tree}'\n"
-        f"AOSP_FINAL_TREE='{empty_tree}'\n"
-        "AOSP_PATCH_COUNT=1\n"
-        f"AOSP_SERIES_MANIFEST_SHA256='{empty_digest}'\n"
-        "AOSP_SERIES_DIR='patches/projects/p0001/series'\n"
-    )
-    (route_root / "series/manifest.tsv").write_text("placeholder\n")
 
 
 def main() -> None:
@@ -103,7 +91,7 @@ def main() -> None:
         root = Path(temporary)
         android_root = root / "android/aosp-17"
         topic = root / "topic"
-        write_fixture(android_root, topic, verifier)
+        write_fixture(root, android_root, topic, verifier, source_root / "scripts")
         command = (
             sys.executable,
             "-B",
@@ -126,14 +114,18 @@ def main() -> None:
         patches = sorted((android_root / "patches/projects/p0001/series").glob("*.patch"))
         if len(patches) != 2:
             raise SystemExit("AOSP patch-regenerator fixture did not emit two patches")
-        manifest = (android_root / "patches/projects/p0001/series/manifest.tsv").read_text()
-        if "UML-ANDROID-LOCAL: fixture: first" not in manifest:
-            raise SystemExit("AOSP patch-regenerator fixture lost the first subject")
-        if "UML-ANDROID-LOCAL: fixture: second" not in manifest:
-            raise SystemExit("AOSP patch-regenerator fixture lost the second subject")
+        listed = (android_root / "patches/projects/p0001/series/series.tsv").read_text()
+        for name in ("fixture-first", "fixture-second"):
+            if name not in listed:
+                raise SystemExit(f"AOSP patch-regenerator fixture lost patch: {name}")
+        final_tree = run("git", "rev-parse", "HEAD^{tree}", cwd=topic)
+        if f"\t{final_tree}\t" not in (android_root / "patches/projects.tsv").read_text():
+            raise SystemExit("AOSP patch regenerator did not record the topic tree")
 
         projects_before = (android_root / "patches/projects.tsv").read_bytes()
-        metadata_before = (android_root / "patches/projects/p0001/metadata.env").read_bytes()
+        series_before = (
+            android_root / "patches/projects/p0001/series/series.tsv"
+        ).read_bytes()
         (topic / "dirty.txt").write_text("dirty\n")
         rejected = subprocess.run(
             command,
@@ -145,8 +137,10 @@ def main() -> None:
             raise SystemExit("AOSP patch regenerator accepted a dirty topic checkout")
         if (android_root / "patches/projects.tsv").read_bytes() != projects_before:
             raise SystemExit("dirty-topic rejection changed projects.tsv")
-        if (android_root / "patches/projects/p0001/metadata.env").read_bytes() != metadata_before:
-            raise SystemExit("dirty-topic rejection changed route metadata")
+        if (
+            android_root / "patches/projects/p0001/series/series.tsv"
+        ).read_bytes() != series_before:
+            raise SystemExit("dirty-topic rejection changed the route series")
 
     print("AOSP 17 patch-regenerator fixture passed")
 

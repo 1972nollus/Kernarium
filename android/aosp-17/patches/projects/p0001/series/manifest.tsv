@@ -1,9 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Ordered generated AOSP project topic identity.
-order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-cuttlefish-scope-nonsecure-securit.patch	f50e859a73d40219d85688b7b4630ec8847f7c32	7999f687f2d74f651013308fd03877572e4a3bbe07ca8573b259acf386cec51a	UML-ANDROID-LOCAL: cuttlefish: scope nonsecure security packages
-2	0002-UML-ANDROID-LOCAL-cuttlefish-use-built-in-kernel-ini.patch	60ed5453b8c0aaf83bbd2aec06d98bd60dd7223a	03ceeb67dd48a4a463fc9e5652e62f4385b145c382c097bd16138cf7ff16f4ab	UML-ANDROID-LOCAL: cuttlefish: use built-in-kernel init
-3	0003-UML-ANDROID-LOCAL-cuttlefish-use-fixed-UBD-partition.patch	aa94981dd2b2fe0dd5e1d40a73f70a650b7e3562	005d59f43bba450e99ea80af8d127811e192d7c8ebc52b89f3f89ff6c1a2f736	UML-ANDROID-LOCAL: cuttlefish: use fixed UBD partitions
-4	0004-UML-ANDROID-LOCAL-cuttlefish-disable-userdata-quotas.patch	fc2f8af2951eeacb060567231ec7ab7f564eabd5	2152a281d2cbf43784edf16303c9dec75cf3f2a59bdd6b30ac5729f79f95f558	UML-ANDROID-LOCAL: cuttlefish: disable userdata quotas
-5	0005-UML-ANDROID-LOCAL-cuttlefish-omit-unsupported-UML-HA.patch	42fc3b82e1f66500e17c650ee4c7d915e1e8bd47	385aa57378fdafbac618db57d2c940394ccdb2038e3c77a3af3ac053737fbea1	UML-ANDROID-LOCAL: cuttlefish omit unsupported UML HALs
-6	0006-UML-ANDROID-LOCAL-Package-16-KiB-Mesa-Virgl-GLES.patch	1a33433e9608c7e82c0b995af1ad373f822f468c	b1d33354dda2da145dc70bba4dcd6b3c65fe2b4d9ac4659e29e39cc396ec8a5e	UML-ANDROID-LOCAL: Package 16 KiB Mesa Virgl GLES

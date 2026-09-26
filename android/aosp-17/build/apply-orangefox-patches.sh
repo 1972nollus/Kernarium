@@ -7,6 +7,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ANDROID_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
 GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
+PATCH_SERIES="$ROOT_DIR/scripts/patch_series.py"
 PROJECTS="$ANDROID_ROOT/third_party/orangefox/patches/projects.tsv"
 VERIFIER="$ANDROID_ROOT/tools/verify-orangefox-source.py"
 DEVICE_SYNC="$ANDROID_ROOT/tools/sync-orangefox-device.py"
@@ -69,21 +70,12 @@ uml_require_git_identity 'android/aosp-17/build/apply-orangefox-patches.sh'
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--orangefox-source "$ORANGEFOX_SOURCE" --expect base
 
-awk -F '\t' '$1 ~ /^[0-9]+$/ { print $2 "\t" $4 "\t" $11 }' "$PROJECTS" |
-while IFS="$(printf '\t')" read -r route_id checkout_path series_dir; do
-	checkout="$ORANGEFOX_SOURCE/$checkout_path"
-	manifest="$ANDROID_ROOT/$series_dir/manifest.tsv"
-	awk -F '\t' '$1 ~ /^[0-9]+$/ { print $2 }' "$manifest" |
-	while IFS= read -r filename; do
-		patch="$ANDROID_ROOT/$series_dir/$filename"
-		if ! git -C "$checkout" \
-			-c core.hooksPath=/dev/null \
-			-c user.useConfigOnly=true \
-			am --committer-date-is-author-date "$patch"; then
-			git -C "$checkout" am --abort || true
-			fail "could not apply $route_id patch: $filename"
-		fi
-	done
+awk -F '\t' '$1 ~ /^[0-9]+$/ { print $2 "\t" $4 "\t" $8 "\t" $9 }' "$PROJECTS" |
+while IFS="$(printf '\t')" read -r route_id checkout_path final_tree series_dir; do
+	python3 -B "$PATCH_SERIES" apply --repo "$ORANGEFOX_SOURCE/$checkout_path" \
+		--series-dir "$ANDROID_ROOT/$series_dir" \
+		--expect-tree "$final_tree" >/dev/null ||
+		fail "could not apply the $route_id series"
 done
 
 "$DEVICE_SYNC" --android-root "$ANDROID_ROOT" \

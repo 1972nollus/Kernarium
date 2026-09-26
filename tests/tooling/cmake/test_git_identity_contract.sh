@@ -36,8 +36,6 @@ named=$(git -C "$ROOT_DIR" grep -l -E 'user\.(name|email)=' -- \
 # Every tool that creates commits must also stop Git from inventing one from
 # the account and host names, which is what a Linux builder would otherwise do.
 for relative in \
-	android/aosp-17/build/apply-orangefox-patches.sh \
-	android/aosp-17/build/prepare-sources.sh \
 	kernel/mainline-6.18/scripts/check-next-version.sh \
 	scripts/git_identity.py \
 	scripts/patch_series.py \

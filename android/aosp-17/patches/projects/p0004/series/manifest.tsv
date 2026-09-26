@@ -1,4 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Ordered generated AOSP project topic identity.
-order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-Build-16-KiB-Mesa-Virgl-GLES-stack.patch	c3a40806ea330da082cfea047e2181f0b77a527a	21e340a375e92d868cc17ff2afa6f2f0822db9adc410743a46169dc8a9a6cf9d	UML-ANDROID-LOCAL: Build 16 KiB Mesa Virgl GLES stack
