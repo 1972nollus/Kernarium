@@ -322,6 +322,26 @@ When copying a `.kern` bundle to a device, target the complete
 directory itself, because doing so can flatten the bundle or destroy unrelated
 persistent guests.
 
+### UI automation on a device
+
+On a device with a passcode, an XCTest session that turns UI automation on can
+ask for the owner's approval (Touch ID or passcode) at the device. XCTest gives
+up 60 s after the runner starts. One approval covers later sessions for some
+time, but not indefinitely, so unattended work goes through one long-lived
+session: the `KernariumAutomation` UI-test target. It runs for hours and
+executes commands that `Kernarium/scripts/ipad-automation.py` copies into its
+runner's data container with `devicectl`. Build it with the script, run
+`start` while someone can approve at the device, and see `--help` for the
+commands (launch, tap, wait, type, key, element tree, screenshot, stop). Each
+command answers in about one to four seconds. Exit status 3 means no host is
+serving, which needs a new `start` and possibly a new approval.
+
+The target has no target application, so starting it installs only its own
+runner, and it is not in the `Kernarium` scheme. Reinstalling Kernarium,
+hosted `Kernarium` test runs, and other UI-test runners leave it running, and
+while it runs, those runners enable automation without a prompt. Keep all
+automation code in the test targets.
+
 ## LTP
 
 The full LTP campaign is opt-in and runs only on gadget or JIT engines.
