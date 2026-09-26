@@ -242,12 +242,15 @@ that object once; constructors must not initialize it again after `new`.
 
 Sequential encoders of one recording share a Metal command buffer. Only
 compute that must run before or after a whole render pass, and each encoder of
-a layered or multiview pass, gets a Metal command buffer of its own. One-time
-command submissions transfer native command buffers and allocators to
-completion-owned storage, which releases their capacity after the GPU finishes.
-Vulkan command-buffer reset with `RELEASE_RESOURCES` also drops allocator
-capacity; later recording recreates it. Feedback reporting remains valid after
-Vulkan device teardown through a separate reference-counted context.
+a layered or multiview pass, gets a Metal command buffer of its own. A command
+buffer takes a native command allocator for a lane only when that lane
+records, and hands it to the device's allocator cache when it is reset or, for
+a one-time submission, when the GPU finishes. An allocator keeps its
+high-water storage until it is released, and a recording that takes a grown
+one keeps all of it, so the cache recycles only allocators of at most 16 MiB,
+keeps at most 64 MiB in total, and releases every other allocator. Feedback
+reporting remains valid after Vulkan device teardown through a separate
+reference-counted context.
 
 `MESA_KK_DEBUG=submit_timing` enables optional raw Metal commit-feedback
 diagnostics on stderr: an opaque device identity, GPU start and end host
