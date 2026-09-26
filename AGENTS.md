@@ -84,7 +84,10 @@ Never fall back to Homebrew, ambient `CMAKE_PREFIX_PATH`, or unrestricted
 - Patch-managed external repositories use Git topic commits as their editable
   source. When a change belongs to an existing topic, amend it into that topic
   commit and regenerate the owning patch series. Create a new topic commit only
-  for a distinct concern. Never edit generated patch files directly.
+  for a distinct concern. Never edit generated patch files directly. Every
+  series uses the `scripts/patch_series.py` format and is identified by the
+  tree it produces from its pinned base, so a pure reorder or message edit that
+  keeps that tree invalidates no build.
 - Kernel source must be materialized on a case-sensitive filesystem. The
   ignored `kernel/mainline-6.18/source-location.conf` selects the managed
   checkout for standalone kernel work.
