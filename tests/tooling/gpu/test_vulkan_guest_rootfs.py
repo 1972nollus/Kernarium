@@ -394,8 +394,6 @@ class VulkanGuestRootfsTests(unittest.TestCase):
                 ).stdout.strip()
 
             git("init", "--quiet")
-            git("config", "user.name", "fixture")
-            git("config", "user.email", "fixture@example.invalid")
             (repository / "file").write_text("base\n")
             git("add", "file")
             git("commit", "--quiet", "-m", "base")

@@ -18,7 +18,7 @@ fail()
 # Generated mail series carry the authentic author of each topic and are not
 # tooling configuration.
 status=0
-named=$(git -C "$ROOT_DIR" grep -l -E 'user\.(name|email)=' -- \
+named=$(git -C "$ROOT_DIR" grep -l -E 'user\.(name|email)' -- \
 	android dependencies kernel scripts tests tools \
 	':!*/patches/*' ':!*/series/*') || status=$?
 case $status in

@@ -60,8 +60,6 @@ BASE_REF=refs/heads/uml/upstream-linux-1.2.3
 REPOSITORY=https://example.invalid/stable-linux.git
 mkdir -p "$UPSTREAM" "$CACHE"
 git -C "$UPSTREAM" init --quiet
-git -C "$UPSTREAM" config user.name fixture
-git -C "$UPSTREAM" config user.email fixture@example.invalid
 printf '%s\n' parent >"$UPSTREAM/history.txt"
 git -C "$UPSTREAM" add history.txt
 git -C "$UPSTREAM" commit --quiet -m 'fixture: stable parent'
