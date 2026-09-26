@@ -195,24 +195,10 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		} else
 #endif
 		{
-#if UML_GADGET_TEMPLATE_COPIES > 1
-			/* Ordinary destination and source: pick one of the
-			 * identical copies by destination register, so two
-			 * chains do not share a load or store program
-			 * counter. The SP and discard modes keep the single
-			 * established entry. */
-			if (source != 31U && destination != 31U) {
-				emit(words, add_sub_immediate_copy_gadget(
-					wide, subtract, set_flags, destination));
-				emit(words, operand);
-			} else
-#endif
-			{
-				emit(words, add_sub_immediate_gadget(
-					wide, subtract, set_flags,
-					source == 31U, destination == 31U));
-				emit(words, operand);
-			}
+			emit(words, add_sub_immediate_gadget(
+				wide, subtract, set_flags,
+				source == 31U, destination == 31U));
+			emit(words, operand);
 		}
 	} else if ((instruction & 0x1f20'0000U) == 0x0b00'0000U ||
 		   (instruction & 0x1fe0'0000U) == 0x0b20'0000U) {

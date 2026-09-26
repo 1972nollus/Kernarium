@@ -41,11 +41,6 @@ extern void (*const uml_arm64_gadget_simd_fused_inplace_table[])();
  * ((operation * 2 + bits64) * 2 + base_sp) * 31 + register. */
 extern void (*const uml_arm64_gadget_scalar_unsigned_inplace_table[])();
 #endif
-#if UML_GADGET_TEMPLATE_COPIES > 1
-/* Byte-identical copies of the ordinary entry, indexed by
- * (((bits64 * 2 + subtract) * 2 + flags) * copies) + copy. */
-extern void (*const uml_arm64_gadget_add_sub_immediate_copy_table[])();
-#endif
 #define UML_DECLARE_ADD_SUB_REGISTER_DESTINATIONS(prefix) \
 	void uml_arm64_gadget_add_sub_register_##prefix##_r(); \
 	void uml_arm64_gadget_add_sub_register_##prefix##_d();

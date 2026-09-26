@@ -193,14 +193,6 @@ gadget return
 	ldp x11, x12, [x9, #16]
 	cmp x10, x11
 	b.eq 98f
-#if UML_GADGET_INDIRECT_ENTRIES >= 4
-	ldp x11, x12, [x9, #32]
-	cmp x10, x11
-	b.eq 98f
-	ldp x11, x12, [x9, #48]
-	cmp x10, x11
-	b.eq 98f
-#endif
 	.if \ras
 #if UML_GADGET_RETURN_STACK
 	/* The newest return record is popped only when it names the live link
@@ -241,11 +233,9 @@ gadget return
 #endif
 98:
 	follow_block_link x12
-#if UML_GADGET_INDIRECT_ENTRIES < 4
-	/* Matched-layout control: keep every later entry at the address the
-	 * four-cell build gives it; unreachable. */
+	/* Unreachable padding that keeps every later entry at the address
+	 * it was measured at. */
 	.space 24
-#endif
 	.if \ras
 #if !UML_GADGET_RETURN_STACK
 	/* Matched-layout control for the return-stack build; unreachable. */

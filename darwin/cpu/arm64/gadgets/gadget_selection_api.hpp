@@ -362,9 +362,6 @@ extern const std::array<std::uint8_t, 256> byte_popcount_table;
 [[nodiscard]] Gadget simd_fused_inplace_gadget(bool, unsigned int, unsigned int) noexcept;
 [[nodiscard]] Gadget fused_floating_inplace_gadget(const detail::FusedFloatingArithmetic &, unsigned int) noexcept;
 #endif
-#if UML_GADGET_TEMPLATE_COPIES > 1
-[[nodiscard]] Gadget add_sub_immediate_copy_gadget(bool, bool, bool, unsigned int) noexcept;
-#endif
 [[nodiscard]] Gadget add_sub_register_gadget(bool, bool, bool, bool, unsigned int, unsigned int, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget add_sub_carry_gadget(bool, bool, bool, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget variable_shift_gadget(bool, unsigned int, bool, bool, bool) noexcept;

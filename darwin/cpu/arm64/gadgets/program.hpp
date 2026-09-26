@@ -458,12 +458,9 @@ static_assert(sizeof(IndirectLinkEntry) == 16);
  * sites while keeping the assembly hit path compact: a hit in cell N costs
  * three instructions per cell scanned before it. ProgramCache owns and trains
  * these data-only cells; translated streams only retain stable pointers to
- * them. The count is a build constant shared with the assembly hit path. */
-#ifndef UML_GADGET_INDIRECT_ENTRIES
-#define UML_GADGET_INDIRECT_ENTRIES 2
-#endif
+ * them. The count is a layout constant shared with the assembly hit path. */
 inline constexpr std::size_t indirect_link_entries = UML_GADGET_INDIRECT_ENTRIES;
-static_assert(indirect_link_entries == 2 || indirect_link_entries == 4);
+static_assert(indirect_link_entries == 2, "the hit path scans two cells");
 struct IndirectLink final {
 	std::array<IndirectLinkEntry, indirect_link_entries> entries{};
 	std::uint8_t next_replacement{};

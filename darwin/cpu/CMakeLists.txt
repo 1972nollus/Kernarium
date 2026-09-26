@@ -177,18 +177,6 @@ option(UML_GADGET_INPLACE_MEMORY
     "Bake the CpuState displacement into unsigned-offset scalar transfer entries"
     ON)
 
-# Experimental A/B arm, 1 is off. Every guest register that flows through one
-# template shares that template's load and store program counters, and the
-# host's memory-dependence predictor is keyed on those, so it serializes
-# independent chains. Byte-identical copies selected by destination register
-# give them distinct program counters. 1, 2 or 4.
-set(UML_GADGET_TEMPLATE_COPIES "1" CACHE STRING
-    "Byte-identical copies of the ordinary ADD/SUB-immediate entry (1, 2 or 4)")
-if(NOT UML_GADGET_TEMPLATE_COPIES MATCHES "^(1|2|4)$")
-    message(FATAL_ERROR
-        "UML_GADGET_TEMPLATE_COPIES must be 1, 2 or 4")
-endif()
-
 # Retain decoded programs across a code-change sequence only after validating
 # every guest word the program consumed. Direct and indirect activations are
 # reset before any retained program can be reached again.
@@ -221,15 +209,6 @@ option(UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH
 # 3.43x duplication cancelling what the removed boundaries buy. See G163.
 option(UML_GADGET_INLINE_CALLS
     "Translate a direct call's callee inline behind it" OFF)
-# A guest instruction that resolves to the NOP entry (HINT space, BTI and
-# pointer-authentication hints on a profile without pointer authentication,
-# XZR-destination folds) otherwise costs a dispatch each time it runs. Leave
-# it out of the stream; retirement and fault positions are unaffected.
-# Experimental A/B arm, off by default: key the software TLB by the address
-# as presented, so scalar transfers skip the per-access top-byte check and the
-# miss helper strips the logical tag instead.
-option(UML_GADGET_TAGGED_TLB_KEYS
-    "Key the gadget TLB by tagged addresses instead of stripping per access" OFF)
 # Same-page transfers fold the cross-page check into the TLB tag compare
 # (16 KiB pages), fall through on a hit, and keep the second way, crossing and
 # miss handling behind the dispatch. OFF is the matched-layout control for A/B
@@ -237,11 +216,6 @@ option(UML_GADGET_TAGGED_TLB_KEYS
 # every later entry at the same address.
 option(UML_GADGET_FUSED_TRANSLATE
     "Fold the transfer cross-page check into the TLB compare with a fall-through hit path" ON)
-# Cells per indirect branch or return site. Execution histograms of Geekbench
-# and Aquarium show most executor round trips are misses through two cells;
-# four keeps the two-cell hit path and adds two scans before a miss.
-set(UML_GADGET_INDIRECT_ENTRIES "2" CACHE STRING
-    "Trained target cells per indirect branch site (2 or 4)")
 # Linked calls push the return block's link on a private sixteen-record ring
 # and a cached return whose site cells miss pops a matching record, training
 # the cell. Exact counters over the Geekbench 6 single-core set: executor round
@@ -315,15 +289,12 @@ target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_VECTOR_FORWARDING=$<BOOL:${UML_GADGET_VECTOR_FORWARDING}>
     UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
     UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
-    UML_GADGET_TEMPLATE_COPIES=${UML_GADGET_TEMPLATE_COPIES}
     UML_GADGET_INPLACE_MEMORY=$<BOOL:${UML_GADGET_INPLACE_MEMORY}>
     UML_GADGET_SIMD_DESTINATION_RESIDENCY=$<BOOL:${UML_GADGET_SIMD_DESTINATION_RESIDENCY}>
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH=$<BOOL:${UML_GADGET_INLINE_CONDITIONAL_FALLTHROUGH}>
     UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>
-    UML_GADGET_TAGGED_TLB_KEYS=$<BOOL:${UML_GADGET_TAGGED_TLB_KEYS}>
     UML_GADGET_FUSED_TRANSLATE=$<BOOL:${UML_GADGET_FUSED_TRANSLATE}>
-    UML_GADGET_INDIRECT_ENTRIES=${UML_GADGET_INDIRECT_ENTRIES}
     UML_GADGET_RETURN_STACK=$<BOOL:${UML_GADGET_RETURN_STACK}>
     UML_GADGET_TARGET_TIER=$<BOOL:${UML_GADGET_TARGET_TIER}>
     UML_GADGET_SHARED_BUDGET_BYTES=${_uml_gadget_shared_budget_bytes}UL)
@@ -510,7 +481,6 @@ target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_EXACT_CACHE_VALIDATION=$<BOOL:${UML_GADGET_EXACT_CACHE_VALIDATION}>
     UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
     UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
-    UML_GADGET_INDIRECT_ENTRIES=${UML_GADGET_INDIRECT_ENTRIES}
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
     UML_GADGET_INLINE_CALLS=$<BOOL:${UML_GADGET_INLINE_CALLS}>

@@ -1246,20 +1246,6 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 }
 #endif
 
-#if UML_GADGET_TEMPLATE_COPIES > 1
-/* The copies are identical; only the destination register decides which one,
- * so neighbouring registers never share a load or store program counter. */
-[[nodiscard]] Gadget add_sub_immediate_copy_gadget(bool is_64_bit, bool subtract,
-	bool set_flags, unsigned int destination) noexcept
-{
-	const auto row = (static_cast<unsigned>(is_64_bit) * 2U +
-		static_cast<unsigned>(subtract)) * 2U + static_cast<unsigned>(set_flags);
-	return uml_arm64_gadget_add_sub_immediate_copy_table[
-		row * UML_GADGET_TEMPLATE_COPIES +
-		destination % UML_GADGET_TEMPLATE_COPIES];
-}
-#endif
-
 #define UML_SELECT_ADD_SUB_REGISTER_DESTINATION(prefix) \
 	return destination_discard ? \
 		uml_arm64_gadget_add_sub_register_##prefix##_d : \
