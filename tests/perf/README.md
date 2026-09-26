@@ -380,6 +380,21 @@ The 16 KiB alias probe is page-profile-specific, and the LSE atomic probe needs
 assembler support for that extension. Other probes declare any restriction in
 the manifest.
 
+## Loader corpus
+
+A probe isolates one mechanism; an application's load phase is ordinary
+scalar code spread across many. [`guest_loader_corpus.sh`](guest_loader_corpus.sh)
+runs real programs from the Debian rootfs whose work resembles one: gzip,
+xz and bzip2 decompression, a bind-now dynamic link of a large library,
+Python imports, sort, glibc regular expressions, a C front end, Perl hash
+churn, JVM start-up and Node start-up. It runs inside the guest under any
+console runner (on the iPad through `KERNARIUM_GUEST_SCRIPT`), prepares its
+inputs from rootfs files, runs every workload once to warm the page and
+translation caches, and prints `CORPUS:<name>:<round>:<runs>:<centiseconds>`
+per workload and round. `CORPUS_ROUNDS` and `CORPUS_ONLY` select the work.
+Each workload is sized to about two seconds on a gadgets guest, so compare
+arms round by round rather than across launches.
+
 ## Ideal gadget ceiling
 
 `gadget-ceiling-binaries` builds a matched native/ideal benchmark with three
