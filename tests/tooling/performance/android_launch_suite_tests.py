@@ -10,6 +10,7 @@ must convert from every `ps` spelling, thread priorities must be read from
 `ps -M` (a napped emulator is several times slower), and a failed launch must stay out of
 the medians while still being counted. Checked-in scenarios must parse, and a
 scenario's values come only from its completion line after its steps ended.
+Powering off must kill a launcher that ignores SIGTERM and its emulator too.
 """
 
 from __future__ import annotations
@@ -18,8 +19,10 @@ __import__("sys").dont_write_bytecode = True
 
 import importlib.util
 import json
+import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -172,6 +175,57 @@ def test_scenarios(suite) -> None:
             raise AssertionError("a tap without two coordinates must be rejected")
 
 
+# A launcher that ignores SIGTERM, with an emulator stand-in that leads its own
+# session, as boot_android.py starts the real one.
+STUBBORN_LAUNCHER = """
+import os, signal, subprocess, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+emulator = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(60)"],
+    start_new_session=True)
+print(os.getpid(), emulator.pid, flush=True)
+time.sleep(60)
+"""
+
+
+def test_power_off_kills_a_stubborn_launcher(suite) -> None:
+    graces = (suite.POWER_OFF_SECONDS, suite.LAUNCHER_STOP_SECONDS)
+    emulator = None
+    launcher = subprocess.Popen(
+        [sys.executable, "-c", STUBBORN_LAUNCHER], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE)
+    assert launcher.stdout is not None
+    try:
+        _, emulator = map(int, launcher.stdout.readline().split())
+        with tempfile.TemporaryDirectory() as directory:
+            guest = suite.Guest.__new__(suite.Guest)
+            guest.process = launcher
+            guest.console = open(pathlib.Path(directory) / "console.log", "ab")
+
+            def unreachable_shell(command: str, timeout: int = 60) -> str:
+                raise subprocess.TimeoutExpired(command, timeout)
+
+            guest.shell = unreachable_shell
+            suite.POWER_OFF_SECONDS = suite.LAUNCHER_STOP_SECONDS = 1
+            status = guest.power_off()
+        check(status == -signal.SIGKILL,
+              f"a launcher that ignores SIGTERM must be killed, not {status}")
+        check(not suite.process_exists(emulator),
+              "the emulator outlived its launcher")
+    finally:
+        suite.POWER_OFF_SECONDS, suite.LAUNCHER_STOP_SECONDS = graces
+        # While the launcher lives, the emulator's PID is still its child's.
+        if launcher.poll() is None:
+            if emulator is not None:
+                try:
+                    os.killpg(emulator, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            launcher.kill()
+        launcher.wait(timeout=10)
+        launcher.stdout.close()
+
+
 def main() -> int:
     suite = load_suite()
     test_manifest(suite)
@@ -181,6 +235,7 @@ def main() -> int:
     test_thread_priorities(suite)
     test_summary(suite)
     test_scenarios(suite)
+    test_power_off_kills_a_stubborn_launcher(suite)
     print("android launch suite contract: ok")
     return 0
 
