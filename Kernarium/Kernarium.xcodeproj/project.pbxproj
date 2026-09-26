@@ -15,7 +15,7 @@
 		A10000000000000000000008 /* KRuntime_ACK_6_18_16K.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* KRuntime_ACK_6_18_16K.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000009 /* GPTFDisk.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* GPTFDisk.xcframework */; };
 		A1000000000000000000000A /* LibZstd.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* LibZstd.xcframework */; };
-		B20000000000000000000001 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000003 /* SwiftTerm */; };
+		B20000000000000000000001 /* GhosttyTerminal in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000003 /* GhosttyTerminal */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -93,7 +93,7 @@
 			files = (
 				A10000000000000000000009 /* GPTFDisk.xcframework in Frameworks */,
 				A1000000000000000000000A /* LibZstd.xcframework in Frameworks */,
-				B20000000000000000000001 /* SwiftTerm in Frameworks */,
+				B20000000000000000000001 /* GhosttyTerminal in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -171,7 +171,7 @@
 			);
 			name = Kernarium;
 			packageProductDependencies = (
-				B20000000000000000000003 /* SwiftTerm */,
+				B20000000000000000000003 /* GhosttyTerminal */,
 			);
 			productName = Kernarium;
 			productReference = 8AF5E8CF302C966200B19616 /* Kernarium.app */;
@@ -261,7 +261,7 @@
 			mainGroup = 8AF5E8C6302C966200B19616;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				B20000000000000000000002 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+				B20000000000000000000002 /* XCRemoteSwiftPackageReference "libghostty-spm" */,
 			);
 			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
@@ -700,21 +700,21 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		B20000000000000000000002 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+		B20000000000000000000002 /* XCRemoteSwiftPackageReference "libghostty-spm" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
+			repositoryURL = "https://github.com/Lakr233/libghostty-spm";
 			requirement = {
 				kind = exactVersion;
-				version = 1.18.0;
+				version = 1.6.20260922;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		B20000000000000000000003 /* SwiftTerm */ = {
+		B20000000000000000000003 /* GhosttyTerminal */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B20000000000000000000002 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
-			productName = SwiftTerm;
+			package = B20000000000000000000002 /* XCRemoteSwiftPackageReference "libghostty-spm" */;
+			productName = GhosttyTerminal;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

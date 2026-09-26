@@ -51,8 +51,14 @@ generator through `dependencies/bison2-grammar-shim.sh` rather than forking
 the grammars. Platform-specific patches remain scoped by the checked contracts
 and series rather than being described as general hardware capability.
 
-SwiftTerm remains an Xcode Swift Package dependency. It is not part of the
-emulator library prefix.
+Kernarium's serial console uses the `GhosttyTerminal` product of
+[libghostty-spm](https://github.com/Lakr233/libghostty-spm), an Xcode Swift
+Package that the Kernarium project pins to exactly `1.6.20260922`. Its
+libghostty is a prebuilt binary XCFramework, built from Ghostty commit
+`3c47ca15`, which Swift Package Manager fetches from the package's GitHub
+release during Xcode package resolution and verifies against the checksum in
+the package manifest. Neither it nor the package's MSDisplayLink dependency is
+part of the emulator dependency prefixes.
 
 ## Prepare, build, and verify
 
