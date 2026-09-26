@@ -31,7 +31,10 @@ ext4 userdata, but the fscrypt, inline-encryption fallback, HCTR2, and
 dm-default-key stack remains built in for ordinary Android application and
 framework compatibility. The
 native arm64 eBPF JIT is not exposed because its execution contracts do not
-match UML; the AOSP product uses the generic BPF interpreter.
+match UML; the AOSP product uses the generic BPF interpreter. The kernel
+carries BTF type information, exposed at `/sys/kernel/btf/vmlinux`, as GKI
+does. The build emits DWARF 5 only as pahole's input and keeps frame pointers
+off.
 
 Android's Ethernet IpClient acquires the SLiRP lease, default route, and DNS
 configuration after init starts, so the kernel does not perform IP
@@ -125,10 +128,13 @@ the mainline line carries; its contract is described there.
 The standalone ACK replay and build are owned by
 [`../../android/aosp-17`](../../android/aosp-17/README.md) and run on the Linux
 builder. That producer verifies the generated series, configuration, ELF, and
-exact bridge imports.
+exact bridge imports. As in Kleaf, its host tools build against the pinned
+kernel-build-tools musl sysroot and libraries, including the `libelf` that
+`resolve_btfids` needs, and BTF comes from that package's `pahole`.
 
 `android/aosp-17/tools/publish-kernel-artifact.py` publishes an already-built
-clean ACK result into the common compact artifact format.
+clean ACK result into the common compact artifact format. It strips DWARF from
+the published `vmlinux` and keeps `.BTF`, the symbol tables, and `System.map`.
 [`artifacts/accepted-16k.env`](artifacts/accepted-16k.env) selects the reviewed
 local bundle below `.build/kernel/artifacts`.
 

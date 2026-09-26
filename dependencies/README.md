@@ -33,7 +33,9 @@ The dependency products are:
 - `ios-storage`: the patch-managed GPT fdisk core as one static arm64
   `GPTFDisk.xcframework` with iOS device and Simulator slices;
 - `ios-compression`: the pinned, decode-only zstd library as one static arm64
-  `LibZstd.xcframework` with iOS device and Simulator slices; and
+  `LibZstd.xcframework` with iOS device and Simulator slices;
+- `kernel-host-tools`: pahole and the static libelf that the Darwin kernel
+  build uses to generate BTF, at `.build/dependencies/kernel-host-tools`; and
 - `x86-conformance`: the test-only FEX and K x86-64 semantics instruction
   corpora plus their pinned producer inputs, used to generate the checked-in
   self-contained x86 unit corpus and qualify x86 gadget
@@ -50,6 +52,17 @@ Apple's Bison 2 does not accept, so the macOS OpenGL build drives the host
 generator through `dependencies/bison2-grammar-shim.sh` rather than forking
 the grammars. Platform-specific patches remain scoped by the checked contracts
 and series rather than being described as general hardware capability.
+
+The kernel host tools are patch-managed ports of elfutils, musl-obstack,
+libbpf, and dwarves to Darwin, built with argp-standalone. elfutils' Git
+source carries only the generators of its DWARF name and x86 decoder tables,
+so the build first builds the pinned gawk as a build-only tool. The libbpf
+that pahole embeds needs Linux UAPI headers, which come from a pinned Debian
+`linux-libc-dev` package, and the Linux host APIs Darwin lacks, which come from
+[`kernel/mainline-6.18/build/toolchain/darwin-host`](../kernel/mainline-6.18/build/toolchain/darwin-host/)
+shared with Kbuild's host tools. The prefix publishes only `bin/pahole` and
+libelf; the tools target macOS 15.4, the first release with the `strchrnul`
+that elfutils calls.
 
 SwiftTerm remains an Xcode Swift Package dependency. It is not part of the
 emulator library prefix.
@@ -79,6 +92,11 @@ dependencies/build-ios-storage.sh --verify-only
 dependencies/prepare.sh --product ios-compression
 dependencies/build-ios-zstd.sh
 dependencies/build-ios-zstd.sh --verify-only
+
+dependencies/prepare.sh --product kernel-host-tools
+dependencies/prepare.sh --archive-manifest dependencies/kernel-host-tools/archives.tsv
+dependencies/build-kernel-host-tools.sh
+dependencies/build-kernel-host-tools.sh --verify-only
 
 dependencies/prepare.sh --product x86-conformance
 ```
@@ -247,6 +265,11 @@ manifest has `name`, `url`, and `sha256` columns; HTTPS downloads are verified
 before publication as `CACHE/archives/SHA256-NAME`. `--no-fetch` and `--verify`
 require those same authenticated cache entries. Archive preparation installs
 nothing; package installation belongs in an isolated build environment.
+[`kernel-host-tools/archives.tsv`](kernel-host-tools/archives.tsv) is the first
+production archive manifest: the kernel host tools build extracts headers from
+its Debian package into a private build directory. Its URL names a fixed
+snapshot.debian.org timestamp because Debian's pool drops a package version on
+the next stable update, so a pool URL would stop resolving on a fresh machine.
 
 To discover a release tag's immutable source identity, use
 `dependencies/prepare.sh --resolve-ref REPOSITORY refs/tags/TAG`. The result

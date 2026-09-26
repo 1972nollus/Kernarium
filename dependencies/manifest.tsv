@@ -23,3 +23,9 @@ venus-protocol	1.1.3	apple-gpu-vulkan-experiment	https://gitlab.freedesktop.org/
 fex	FEX-2608	macos,x86-conformance	https://github.com/FEX-Emu/FEX.git	e869aa644a16e4332cdc15c1ea0b4d13d482385d	.	-
 nasm	2.16.03	x86-conformance	https://github.com/netwide-assembler/nasm.git	cd37b81b320ead83ca5a6bbce5da0a6456663bc6	.	-
 x86-k-semantics	2020-03-04	x86-conformance	https://github.com/kframework/X86-64-semantics.git	592380aea04820ea11cfa5475b343f0257f2474e	.	-
+gawk	5.4.1	kernel-host-tools	https://git.savannah.gnu.org/git/gawk.git	52af7f12758da12db0ddbdb117a84e0685cd2f72	.	-
+argp-standalone	1.5.0	kernel-host-tools	https://github.com/argp-standalone/argp-standalone.git	b931da3e7e9a999b0d9515c087488e96821845fb	.	-
+musl-obstack	1.2.3	kernel-host-tools	https://github.com/void-linux/musl-obstack.git	f4385255be1615688c6a5f042277304d7ab288b1	.	patches/musl-obstack/series.tsv
+elfutils	0.196	kernel-host-tools	https://sourceware.org/git/elfutils.git	62563002d86d182bbf6a9689983629aaa075f505	.	patches/elfutils/series.tsv
+libbpf	1.8.0	kernel-host-tools	https://github.com/libbpf/libbpf.git	dd92bef7f6c7a00bb0312554119b6d9cf38e4f32	.	patches/libbpf/series.tsv
+dwarves	1.32	kernel-host-tools	https://git.kernel.org/pub/scm/devel/pahole/pahole.git	fa725d687ce3a712ef296b46bc63ea57ef466014	.	patches/dwarves/series.tsv

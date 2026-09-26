@@ -4,7 +4,8 @@ set -eu
 
 REPOSITORY=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 LINE_ROOT="$REPOSITORY/kernel/mainline-6.18"
-COMPAT_INCLUDE="$LINE_ROOT/build/toolchain/darwin-host/include"
+COMPAT_ROOT="$LINE_ROOT/build/toolchain/darwin-host"
+COMPAT_INCLUDE="$COMPAT_ROOT/include"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-darwin-host-compat.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
@@ -15,71 +16,79 @@ fail()
 }
 
 HOST_CC=$(command -v cc) || fail "cc is unavailable"
-mkdir -p -- "$TEST_ROOT/uapi/linux"
-cat >"$TEST_ROOT/uapi/linux/elf.h" <<'EOF'
-#ifndef UML_DARWIN_HOST_TEST_LINUX_ELF_H
-#define UML_DARWIN_HOST_TEST_LINUX_ELF_H
-typedef unsigned int Elf32_Word;
-typedef unsigned long long Elf64_Xword;
-typedef struct {
-	unsigned char e_ident[16];
-	Elf32_Word e_version;
-} Elf32_Ehdr;
-#define SHN_XINDEX 0xffff
-#define SHT_SYMTAB_SHNDX 18
-#define ELF_ST_BIND(info) ((info) >> 4)
-#define ELF_ST_TYPE(info) ((info) & 0x0f)
-#define ELF32_ST_BIND(info) ELF_ST_BIND(info)
-#define ELF32_ST_TYPE(info) ELF_ST_TYPE(info)
-#define ELF64_ST_BIND(info) ELF_ST_BIND(info)
-#define ELF64_ST_TYPE(info) ELF_ST_TYPE(info)
-#define ELF32_R_INFO(symbol, type) (((symbol) << 8) + ((type) & 0xff))
-#define ELF64_R_INFO(symbol, type) \
-	(((Elf64_Xword)(symbol) << 32) + ((type) & 0xffffffffL))
-#endif
-EOF
+
+# ELF declarations come from the pinned kernel-host-tools prefix, not from a
+# repository wrapper that could shadow the real elfutils headers.
+for header in elf.h libelf.h; do
+	[ ! -e "$COMPAT_INCLUDE/$header" ] ||
+		fail "the compatibility directory shadows <$header>"
+done
 
 cat >"$TEST_ROOT/compat.c" <<'EOF'
-#include <elf.h>
-#include <libelf.h>
+#include <asm/errno.h>
 #include <byteswap.h>
+#include <endian.h>
+#include <errno.h>
+#include <stdio_ext.h>
+#include <string.h>
+#include <sys/epoll.h>
+#include <sys/vfs.h>
 
-#ifndef UML_DARWIN_HOST_ELF_H
-#error "the repository elf.h wrapper was not selected"
-#endif
-#ifndef UML_DARWIN_HOST_LIBELF_H
-#error "the repository libelf.h compatibility contract was not selected"
-#endif
 #ifndef UML_DARWIN_HOST_BYTESWAP_H
 #error "the repository byteswap.h wrapper was not selected"
 #endif
+#ifndef UML_DARWIN_HOST_ENDIAN_H
+#error "the repository endian.h wrapper was not selected"
+#endif
+#ifndef UML_DARWIN_HOST_ASM_ERRNO_H
+#error "the repository asm/errno.h wrapper was not selected"
+#endif
+#if _FORTIFY_SOURCE != 0
+#error "host tools must not inherit Darwin's default fortification"
+#endif
+#ifdef strlcpy
+#error "strlcpy must remain definable by Linux host-tool sources"
+#endif
 
-_Static_assert(sizeof(Elf32_Ehdr) == 20, "ELF declarations did not come from UAPI");
-_Static_assert(SHN_XINDEX == 0xffff, "extended section index changed");
-_Static_assert(SHT_SYMTAB_SHNDX == 18, "section-index type changed");
-_Static_assert(ELF32_ST_BIND(0xab) == 0x0a, "ELF32 binding changed");
-_Static_assert(ELF64_ST_TYPE(0xab) == 0x0b, "ELF64 type changed");
-_Static_assert(ELF32_R_INFO(0x1234, 0x56) == 0x123456,
-	"ELF32 relocation packing changed");
-_Static_assert(ELF64_R_INFO(0x12345678, 0x9abcdef0) ==
-	0x123456789abcdef0ULL, "ELF64 relocation packing changed");
-_Static_assert(R_AARCH64_CALL26 == 283, "AArch64 relocation ABI changed");
-_Static_assert(R_ARM_THM_JUMP19 == 51, "ARM relocation ABI changed");
+/* tools/include defines __cold as empty; the compatibility layer must too. */
+#define __cold
+
 _Static_assert(bswap_16(0x1234) == 0x3412, "16-bit byte swap changed");
 _Static_assert(bswap_32(0x12345678U) == 0x78563412U,
 	"32-bit byte swap changed");
 _Static_assert(bswap_64(0x0123456789abcdefULL) == 0xefcdab8967452301ULL,
 	"64-bit byte swap changed");
+_Static_assert(__BYTE_ORDER == __LITTLE_ENDIAN, "host byte order changed");
+_Static_assert(EAGAIN == 35, "Darwin errno values were overridden");
+_Static_assert(EUCLEAN != 0 && EBADFD != 0, "Linux-only errno names missing");
+_Static_assert(AF_NETLINK != AF_UNIX && AF_PACKET != AF_UNIX,
+	"Linux address families collide with Darwin families");
 
 int main(void)
 {
+	struct epoll_event event = { .events = EPOLLIN };
+	struct statfs filesystem;
+
+	if (htobe32(0x12345678U) != 0x78563412U || le16toh(0x1234) != 0x1234)
+		return 1;
+	errno = 0;
+	if (syscall(__NR_bpf, 0, 0, 0) != -1 || errno != ENOSYS)
+		return 2;
+	errno = 0;
+	if (epoll_create1(EPOLL_CLOEXEC) != -1 || errno != ENOSYS ||
+	    epoll_ctl(0, EPOLL_CTL_ADD, 0, &event) != -1)
+		return 3;
+	if (__fsetlocking(stdout, FSETLOCKING_BYCALLER) != FSETLOCKING_INTERNAL)
+		return 4;
+	if (statfs("/", &filesystem) != 0)
+		return 5;
 	return 0;
 }
 EOF
 
 "$HOST_CC" -std=gnu11 -Wall -Wextra -Werror \
-	-I"$COMPAT_INCLUDE" -I"$TEST_ROOT/uapi" \
+	-include "$COMPAT_ROOT/host_compat.h" -I"$COMPAT_INCLUDE" \
 	"$TEST_ROOT/compat.c" -o "$TEST_ROOT/compat"
-"$TEST_ROOT/compat"
+"$TEST_ROOT/compat" || fail "compatibility runtime check failed with $?"
 
 printf '%s\n' "Darwin host compatibility header tests passed"

@@ -28,7 +28,11 @@ Usage: kernel/mainline-6.18/build/build-kernel.sh \
 
 The compiler, linker, make program, cross prefix, and tool overrides are
 configured through UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,
-OBJDUMP,READELF,STRIP,LLVM,JOBS,EXTRA_HOST_CFLAGS,EXTRA_HOST_CXXFLAGS}. One
+OBJDUMP,READELF,STRIP,LLVM,JOBS,EXTRA_HOST_CFLAGS,EXTRA_HOST_CXXFLAGS}. pahole
+and the static libelf used for BTF come from UML_KERNEL_HOST_TOOLS_PREFIX
+(default .build/dependencies/kernel-host-tools, built by
+dependencies/build-kernel-host-tools.sh); UML_KERNEL_PAHOLE may select another
+pahole v1.29 or newer. One
 The arm64 slice supports 16 KiB and 4 KiB pages. The x86_64 userspace slice is
 4 KiB only and composes its own config fragment after the shared common and
 page fragments. The output directory must be outside
@@ -132,6 +136,35 @@ command -v "$UML_KERNEL_HOST_CC" >/dev/null 2>&1 ||
 command -v "$UML_KERNEL_LD" >/dev/null 2>&1 ||
 	fail "linker is unavailable: $UML_KERNEL_LD"
 
+# Every line generates BTF. pahole encodes it at each vmlinux link and
+# resolve_btfids links the static libelf; both come from the pinned
+# kernel-host-tools prefix, never from PATH. Kconfig derives the BTF options
+# from the pahole version, and 1.29 is the first release whose parallel
+# encoding is always ordered.
+pahole_help="build it with dependencies/build-kernel-host-tools.sh or set UML_KERNEL_PAHOLE"
+[ -x "$UML_KERNEL_PAHOLE" ] ||
+	fail "pahole is unavailable: $UML_KERNEL_PAHOLE ($pahole_help)"
+pahole_version=$("$UML_KERNEL_PAHOLE" --version 2>/dev/null) ||
+	fail "pahole does not run: $UML_KERNEL_PAHOLE ($pahole_help)"
+case "$pahole_version" in
+v[0-9]*.[0-9]*)
+	pahole_major=${pahole_version#v}
+	pahole_major=${pahole_major%%.*}
+	pahole_minor=${pahole_version#v*.}
+	pahole_minor=${pahole_minor%%[!0-9]*}
+	;;
+*) fail "unrecognized pahole version '$pahole_version': $UML_KERNEL_PAHOLE" ;;
+esac
+case "$pahole_major$pahole_minor" in
+''|*[!0-9]*) fail "unrecognized pahole version '$pahole_version': $UML_KERNEL_PAHOLE" ;;
+esac
+[ "$pahole_major" -gt 1 ] || { [ "$pahole_major" -eq 1 ] && [ "$pahole_minor" -ge 29 ]; } ||
+	fail "pahole $pahole_version is older than v1.29: $UML_KERNEL_PAHOLE ($pahole_help)"
+for host_tool_file in include/libelf.h include/gelf.h include/elf.h lib/libelf.a; do
+	[ -f "$UML_KERNEL_HOST_TOOLS_PREFIX/$host_tool_file" ] ||
+		fail "kernel host tools lack $host_tool_file: $UML_KERNEL_HOST_TOOLS_PREFIX ($pahole_help)"
+done
+
 # Kbuild's standard deterministic-archive flag is not supported by Apple's BSD
 # ar. Selecting a compatible archiver here does not make output hashes a
 # cross-run acceptance identity.
@@ -167,10 +200,15 @@ run_make()
 	host_compat="$LINE_ROOT/build/toolchain/darwin-host/host_compat.h"
 	host_include="$LINE_ROOT/build/toolchain/darwin-host/include"
 	host_tool_bin="$LINE_ROOT/build/toolchain/darwin-host/bin"
-	host_uapi_flags="-I$host_include -idirafter $BUILD_DIR/arch/arm64/include/generated/uapi -idirafter $SOURCE_DIR/arch/arm64/include/uapi -idirafter $SOURCE_DIR/include/uapi -idirafter $BUILD_DIR/include/generated/uapi"
+	host_tools_include="$UML_KERNEL_HOST_TOOLS_PREFIX/include"
+	host_uapi_flags="-I$host_include -I$host_tools_include -idirafter $BUILD_DIR/arch/arm64/include/generated/uapi -idirafter $SOURCE_DIR/arch/arm64/include/uapi -idirafter $SOURCE_DIR/include/uapi -idirafter $BUILD_DIR/include/generated/uapi"
 	host_cflags="-include $host_compat $host_uapi_flags $UML_KERNEL_EXTRA_HOST_CFLAGS"
 	host_cxxflags="$host_uapi_flags $UML_KERNEL_EXTRA_HOST_CXXFLAGS"
-	set -- "HOSTCFLAGS=$host_cflags" "HOSTCXXFLAGS=$host_cxxflags" "$@"
+	# resolve_btfids asks pkg-config for libelf; only the pinned prefix may
+	# answer, and the library path serves a host without pkg-config.
+	set -- "HOSTCFLAGS=$host_cflags" "HOSTCXXFLAGS=$host_cxxflags" \
+		"HOSTLDFLAGS=-L$UML_KERNEL_HOST_TOOLS_PREFIX/lib" \
+		"PAHOLE=$UML_KERNEL_PAHOLE" "$@"
 	if [ -n "$UML_KERNEL_AR" ]; then
 		set -- "AR=$UML_KERNEL_AR" "$@"
 	fi
@@ -190,14 +228,18 @@ run_make()
 		set -- "STRIP=$UML_KERNEL_STRIP" "$@"
 	fi
 	if [ -n "$UML_KERNEL_LLVM" ]; then
-		PATH="$host_tool_bin:$PATH" "$UML_KERNEL_MAKE" \
+		PATH="$host_tool_bin:$PATH" \
+			PKG_CONFIG_LIBDIR="$UML_KERNEL_HOST_TOOLS_PREFIX/lib/pkgconfig" \
+			PKG_CONFIG_PATH= "$UML_KERNEL_MAKE" \
 			-C "$SOURCE_DIR" "O=$BUILD_DIR" \
 			ARCH=um SUBARCH=arm64 UML_HOST_OS=Darwin \
 			"CC=$UML_KERNEL_CC" "HOSTCC=$UML_KERNEL_HOST_CC" \
 			"LD=$UML_KERNEL_LD" "CROSS_COMPILE=$UML_KERNEL_CROSS_COMPILE" \
 			"LLVM=$UML_KERNEL_LLVM" "$@"
 	else
-		PATH="$host_tool_bin:$PATH" "$UML_KERNEL_MAKE" \
+		PATH="$host_tool_bin:$PATH" \
+			PKG_CONFIG_LIBDIR="$UML_KERNEL_HOST_TOOLS_PREFIX/lib/pkgconfig" \
+			PKG_CONFIG_PATH= "$UML_KERNEL_MAKE" \
 			-C "$SOURCE_DIR" "O=$BUILD_DIR" \
 			ARCH=um SUBARCH=arm64 UML_HOST_OS=Darwin \
 			"CC=$UML_KERNEL_CC" "HOSTCC=$UML_KERNEL_HOST_CC" \

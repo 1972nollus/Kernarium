@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 22:03:28 +0900
+Subject: [PATCH] libbpf: define legacy API names as wrapper functions
+
+Mach-O has no alias attribute. Define btf__get_raw_data,
+btf_ext__get_raw_data, libbpf_find_kernel_btf, bpf_map__get_pin_path,
+bpf_program__get_type and bpf_program__get_expected_attach_type as wrappers
+around their current names, so the library also builds on Darwin hosts.
+---
+ src/btf.c    | 17 ++++++++++++-----
+ src/libbpf.c | 18 ++++++++++++------
+ 2 files changed, 24 insertions(+), 11 deletions(-)
+
+diff --git a/src/btf.c b/src/btf.c
+index ceb57b46a8782a9cd58a28d9473e2e3281a4d022..fe6c357a99c6e8dab15a7fc1fbb7594ced1ac370 100644
+--- a/src/btf.c
++++ b/src/btf.c
+@@ -1872,8 +1872,10 @@ const void *btf__raw_data(const struct btf *btf_ro, __u32 *size)
+ 	return data;
+ }
+ 
+-__attribute__((alias("btf__raw_data")))
+-const void *btf__get_raw_data(const struct btf *btf, __u32 *size);
++const void *btf__get_raw_data(const struct btf *btf, __u32 *size)
++{
++	return btf__raw_data(btf, size);
++}
+ 
+ const char *btf__str_by_offset(const struct btf *btf, __u32 offset)
+ {
+@@ -3712,8 +3714,10 @@ const void *btf_ext__raw_data(const struct btf_ext *btf_ext, __u32 *size)
+ 	return data;
+ }
+ 
+-__attribute__((alias("btf_ext__raw_data")))
+-const void *btf_ext__get_raw_data(const struct btf_ext *btf_ext, __u32 *size);
++const void *btf_ext__get_raw_data(const struct btf_ext *btf_ext, __u32 *size)
++{
++	return btf_ext__raw_data(btf_ext, size);
++}
+ 
+ enum btf_endianness btf_ext__endianness(const struct btf_ext *btf_ext)
+ {
+@@ -5812,7 +5816,10 @@ struct btf *btf__load_vmlinux_btf(void)
+ 	return libbpf_err_ptr(-ESRCH);
+ }
+ 
+-struct btf *libbpf_find_kernel_btf(void) __attribute__((alias("btf__load_vmlinux_btf")));
++struct btf *libbpf_find_kernel_btf(void)
++{
++	return btf__load_vmlinux_btf();
++}
+ 
+ struct btf *btf__load_module_btf(const char *module_name, struct btf *vmlinux_btf)
+ {
+diff --git a/src/libbpf.c b/src/libbpf.c
+index 42bdba4efd0c67696c9f9b0623dccd93ddf47a06..b1b377779f680cb2a505c6db61a99805720b4a7f 100644
+--- a/src/libbpf.c
++++ b/src/libbpf.c
+@@ -9253,8 +9253,10 @@ int bpf_map__set_pin_path(struct bpf_map *map, const char *path)
+ 	return 0;
+ }
+ 
+-__alias(bpf_map__pin_path)
+-const char *bpf_map__get_pin_path(const struct bpf_map *map);
++const char *bpf_map__get_pin_path(const struct bpf_map *map)
++{
++	return bpf_map__pin_path(map);
++}
+ 
+ const char *bpf_map__pin_path(const struct bpf_map *map)
+ {
+@@ -9722,8 +9724,10 @@ int bpf_program__fd(const struct bpf_program *prog)
+ 	return prog->fd;
+ }
+ 
+-__alias(bpf_program__type)
+-enum bpf_prog_type bpf_program__get_type(const struct bpf_program *prog);
++enum bpf_prog_type bpf_program__get_type(const struct bpf_program *prog)
++{
++	return bpf_program__type(prog);
++}
+ 
+ enum bpf_prog_type bpf_program__type(const struct bpf_program *prog)
+ {
+@@ -9758,8 +9762,10 @@ int bpf_program__set_type(struct bpf_program *prog, enum bpf_prog_type type)
+ 	return 0;
+ }
+ 
+-__alias(bpf_program__expected_attach_type)
+-enum bpf_attach_type bpf_program__get_expected_attach_type(const struct bpf_program *prog);
++enum bpf_attach_type bpf_program__get_expected_attach_type(const struct bpf_program *prog)
++{
++	return bpf_program__expected_attach_type(prog);
++}
+ 
+ enum bpf_attach_type bpf_program__expected_attach_type(const struct bpf_program *prog)
+ {

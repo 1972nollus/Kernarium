@@ -5,10 +5,13 @@ Subject: [PATCH] kbuild: make host ELF tools portable to Darwin
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
- scripts/Makefile.vmlinux | 7 ++++++-
- scripts/link-vmlinux.sh  | 6 +++++-
- scripts/mod/file2alias.c | 6 ++++++
- 3 files changed, 17 insertions(+), 2 deletions(-)
+ scripts/Makefile.vmlinux  |  7 ++++++-
+ scripts/link-vmlinux.sh   |  6 +++++-
+ scripts/mod/file2alias.c  |  6 ++++++
+ tools/lib/bpf/btf.c       | 17 ++++++++++++-----
+ tools/lib/bpf/libbpf.c    | 18 ++++++++++++------
+ tools/lib/subcmd/Makefile |  2 +-
+ 6 files changed, 42 insertions(+), 14 deletions(-)
 
 diff --git a/scripts/Makefile.vmlinux b/scripts/Makefile.vmlinux
 index 276c3134a563ade4933fab4df17e7eafc6a39fe2..fbe545bd4c386f3ad3e563677b2a1fde0c5406f1 100644
@@ -70,3 +73,101 @@ index 4e99393a35f152d7b95a6c1d2a2368dcb58875b1..5820eb1b881a89fedc691ecfdffb0d75
  
  struct devtable {
  	const char *device_id;
+diff --git a/tools/lib/bpf/btf.c b/tools/lib/bpf/btf.c
+index 9f141395c074e33d60c3da6a6d2d0c594c2c2f18..841f3b0fa81647dd1547cd8cc3dbb706bdfc8ff9 100644
+--- a/tools/lib/bpf/btf.c
++++ b/tools/lib/bpf/btf.c
+@@ -1604,8 +1604,10 @@ const void *btf__raw_data(const struct btf *btf_ro, __u32 *size)
+ 	return data;
+ }
+ 
+-__attribute__((alias("btf__raw_data")))
+-const void *btf__get_raw_data(const struct btf *btf, __u32 *size);
++const void *btf__get_raw_data(const struct btf *btf, __u32 *size)
++{
++	return btf__raw_data(btf, size);
++}
+ 
+ const char *btf__str_by_offset(const struct btf *btf, __u32 offset)
+ {
+@@ -3375,8 +3377,10 @@ const void *btf_ext__raw_data(const struct btf_ext *btf_ext, __u32 *size)
+ 	return data;
+ }
+ 
+-__attribute__((alias("btf_ext__raw_data")))
+-const void *btf_ext__get_raw_data(const struct btf_ext *btf_ext, __u32 *size);
++const void *btf_ext__get_raw_data(const struct btf_ext *btf_ext, __u32 *size)
++{
++	return btf_ext__raw_data(btf_ext, size);
++}
+ 
+ enum btf_endianness btf_ext__endianness(const struct btf_ext *btf_ext)
+ {
+@@ -5415,7 +5419,10 @@ struct btf *btf__load_vmlinux_btf(void)
+ 	return libbpf_err_ptr(-ESRCH);
+ }
+ 
+-struct btf *libbpf_find_kernel_btf(void) __attribute__((alias("btf__load_vmlinux_btf")));
++struct btf *libbpf_find_kernel_btf(void)
++{
++	return btf__load_vmlinux_btf();
++}
+ 
+ struct btf *btf__load_module_btf(const char *module_name, struct btf *vmlinux_btf)
+ {
+diff --git a/tools/lib/bpf/libbpf.c b/tools/lib/bpf/libbpf.c
+index 94ee5f52b86617d56aae71271e131ab0b583ee14..ee93df1753518291acc503e554412cbc439f9966 100644
+--- a/tools/lib/bpf/libbpf.c
++++ b/tools/lib/bpf/libbpf.c
+@@ -8953,8 +8953,10 @@ int bpf_map__set_pin_path(struct bpf_map *map, const char *path)
+ 	return 0;
+ }
+ 
+-__alias(bpf_map__pin_path)
+-const char *bpf_map__get_pin_path(const struct bpf_map *map);
++const char *bpf_map__get_pin_path(const struct bpf_map *map)
++{
++	return bpf_map__pin_path(map);
++}
+ 
+ const char *bpf_map__pin_path(const struct bpf_map *map)
+ {
+@@ -9415,8 +9417,10 @@ int bpf_program__fd(const struct bpf_program *prog)
+ 	return prog->fd;
+ }
+ 
+-__alias(bpf_program__type)
+-enum bpf_prog_type bpf_program__get_type(const struct bpf_program *prog);
++enum bpf_prog_type bpf_program__get_type(const struct bpf_program *prog)
++{
++	return bpf_program__type(prog);
++}
+ 
+ enum bpf_prog_type bpf_program__type(const struct bpf_program *prog)
+ {
+@@ -9451,8 +9455,10 @@ int bpf_program__set_type(struct bpf_program *prog, enum bpf_prog_type type)
+ 	return 0;
+ }
+ 
+-__alias(bpf_program__expected_attach_type)
+-enum bpf_attach_type bpf_program__get_expected_attach_type(const struct bpf_program *prog);
++enum bpf_attach_type bpf_program__get_expected_attach_type(const struct bpf_program *prog)
++{
++	return bpf_program__expected_attach_type(prog);
++}
+ 
+ enum bpf_attach_type bpf_program__expected_attach_type(const struct bpf_program *prog)
+ {
+diff --git a/tools/lib/subcmd/Makefile b/tools/lib/subcmd/Makefile
+index 8703ab487b68c89406fed575217b57f58e71fb01..aee619cc0cbc55c7487b898e45f213f2510ccd2c 100644
+--- a/tools/lib/subcmd/Makefile
++++ b/tools/lib/subcmd/Makefile
+@@ -90,7 +90,7 @@ define do_install
+ 	if [ ! -d '$2' ]; then             \
+ 		$(INSTALL) -d -m 755 '$2'; \
+ 	fi;                                             \
+-	$(INSTALL) $1 $(if $3,-m $3,) '$2'
++	$(INSTALL) $(if $3,-m $3,) $1 '$2'
+ endef
+ 
+ install_lib: $(LIBFILE)
