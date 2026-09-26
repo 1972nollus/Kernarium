@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import json
+import math
 from pathlib import Path
 import re
 import shlex
@@ -23,6 +24,8 @@ import boot_kde_vnc  # noqa: E402
 import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
 import run_vk_gl_cts as cts  # noqa: E402
 from run_chromium_webgl import (  # noqa: E402
+    GUEST_REPORT_MARGIN_SECONDS,
+    MINIMUM_SESSION_SECONDS,
     announced_vnc_port,
     git_state,
     install_text,
@@ -307,62 +310,135 @@ VERIFY_TEMPLATE = r"""(() => {
 })();
 """
 
+# Guest-uptime deadlines come from the runner's two deadlines: the session
+# wait and first page fetch must leave the first sample its Chromium start-up
+# and the probe's own context wait before --first-sample-timeout, and Chromium
+# must finish before --timeout. Each ends in a named UML_WEBGL_RUNNER_ERROR.
+FIRST_CONTEXT_SECONDS = 120
+CHROMIUM_START_SECONDS = 30
+FETCH_MINIMUM_SECONDS = 30
 LAUNCHER_TEMPLATE = """#!/bin/sh
 set -eu
+session_deadline=@SESSION_DEADLINE@
+fetch_deadline=@FETCH_DEADLINE@
+deadline=@GUEST_DEADLINE@
 runtime="/run/user/$(id -u uml)"
-remaining=120
+printf 'UML_WEBGL_LAUNCHER|UPTIME=%s|DEADLINE=%s\\n' \\
+    "$(cut -d' ' -f1 /proc/uptime)" "$deadline"
+uptime_seconds()
+{
+    cut -d. -f1 /proc/uptime
+}
+fail()
+{
+    echo "UML_WEBGL_RUNNER_ERROR: $*"
+    exit 1
+}
 while [ ! -S /tmp/.X11-unix/X0 ] || [ ! -S "$runtime/bus" ]; do
-    if [ "$remaining" -le 0 ]; then
-        echo "UML_WEBGL_RUNNER_ERROR: KDE display did not become ready"
-        exit 1
+    if [ "$(uptime_seconds)" -ge "$session_deadline" ]; then
+        fail "KDE display did not become ready by guest uptime" \\
+            "${session_deadline}s"
     fi
-    remaining=$((remaining - 1))
     sleep 1
 done
 xauthority="$(find "$runtime" -maxdepth 1 -type f -name 'xauth_*' -print |
     head -n 1)"
-test -n "$xauthority"
+if [ -z "$xauthority" ]; then
+    fail "Xauthority cookie was not found"
+fi
 rm -rf /tmp/chromium-webgl-samples
 first_url="https://webglsamples.org@FIRST_PATH@"
-if ! curl --fail --location --silent --show-error \
-    --connect-timeout 30 --max-time 120 \
+fetch_seconds=$((fetch_deadline - $(uptime_seconds)))
+if [ "$fetch_seconds" -le 0 ]; then
+    fail "no budget remains for the first page fetch at guest uptime" \\
+        "$(uptime_seconds)s"
+fi
+if ! curl --fail --location --silent --show-error \\
+    --connect-timeout 30 --max-time "$fetch_seconds" \\
     --output /run/uml-webgl-first.html "$first_url"; then
-    echo "UML_WEBGL_RUNNER_ERROR: first page fetch failed"
-    exit 1
+    fail "first page fetch failed"
 fi
 first_size="$(wc -c < /run/uml-webgl-first.html)"
 if [ "$first_size" -le 0 ]; then
-    echo "UML_WEBGL_RUNNER_ERROR: first page fetch was empty"
-    exit 1
+    fail "first page fetch was empty"
 fi
 echo "UML_WEBGL_FETCH_OK|BYTES=$first_size|URL=$first_url"
-runuser -u uml -- env \
-    DISPLAY=:0 \
-    XAUTHORITY="$xauthority" \
-    XDG_RUNTIME_DIR="$runtime" \
-    glxinfo -B
-exec runuser -u uml -- env \
-    HOME=/home/uml \
-    DISPLAY=:0 \
-    WAYLAND_DISPLAY=wayland-0 \
-    XAUTHORITY="$xauthority" \
-    XDG_RUNTIME_DIR="$runtime" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
-    chromium \
-    @CHROMIUM_EXTRA_FLAGS@ \
-    --use-gl=angle \
-    --use-angle=gles-egl \
-    --ignore-gpu-blocklist \
-    --disable-quic \
-    --no-first-run \
-    --disable-crash-reporter \
-    --enable-logging=stderr \
-    --start-maximized \
-    --user-data-dir=/tmp/chromium-webgl-samples \
-    --disable-extensions-except=/var/tmp/uml-webgl-samples-extension \
-    --load-extension=/var/tmp/uml-webgl-samples-extension \
-    "$first_url"
+if ! runuser -u uml -- env \\
+    DISPLAY=:0 \\
+    XAUTHORITY="$xauthority" \\
+    XDG_RUNTIME_DIR="$runtime" \\
+    timeout 30 glxinfo -B; then
+    fail "glxinfo could not query the KDE display"
+fi
+chromium_status=0
+timeout -k 10 "$((deadline - $(uptime_seconds)))" runuser -u uml -- env \\
+    HOME=/home/uml \\
+    DISPLAY=:0 \\
+    WAYLAND_DISPLAY=wayland-0 \\
+    XAUTHORITY="$xauthority" \\
+    XDG_RUNTIME_DIR="$runtime" \\
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \\
+    chromium \\
+    @CHROMIUM_EXTRA_FLAGS@ \\
+    --use-gl=angle \\
+    --use-angle=gles-egl \\
+    --ignore-gpu-blocklist \\
+    --disable-quic \\
+    --no-first-run \\
+    --disable-crash-reporter \\
+    --enable-logging=stderr \\
+    --start-maximized \\
+    --user-data-dir=/tmp/chromium-webgl-samples \\
+    --disable-extensions-except=/var/tmp/uml-webgl-samples-extension \\
+    --load-extension=/var/tmp/uml-webgl-samples-extension \\
+    "$first_url" || chromium_status=$?
+if [ "$chromium_status" = 124 ] || [ "$chromium_status" = 137 ]; then
+    fail "WebGL samples did not finish by guest uptime ${deadline}s"
+fi
+fail "Chromium exited with status $chromium_status"
 """
+
+
+def launcher_deadlines(
+    first_sample_timeout: float, timeout: float
+) -> dict[str, int]:
+    """Derive the launcher's guest-uptime deadlines from the runner's."""
+    deadline = math.floor(timeout) - GUEST_REPORT_MARGIN_SECONDS
+    first_sample = math.floor(first_sample_timeout) - GUEST_REPORT_MARGIN_SECONDS
+    fetch_deadline = (
+        min(first_sample, deadline)
+        - FIRST_CONTEXT_SECONDS
+        - CHROMIUM_START_SECONDS
+    )
+    session_deadline = fetch_deadline - FETCH_MINIMUM_SECONDS
+    if session_deadline < MINIMUM_SESSION_SECONDS:
+        raise ValueError(
+            f"a {first_sample_timeout:g} s first-sample deadline leaves the "
+            f"boot and KDE session less than {MINIMUM_SESSION_SECONDS} s"
+        )
+    return {
+        "session_deadline": session_deadline,
+        "fetch_deadline": fetch_deadline,
+        "deadline": deadline,
+    }
+
+
+def build_launcher(
+    first_path: str,
+    chromium_flags: list[str] | tuple[str, ...],
+    deadlines: dict[str, int],
+) -> str:
+    return (
+        LAUNCHER_TEMPLATE.replace("@FIRST_PATH@", first_path)
+        .replace(
+            "@CHROMIUM_EXTRA_FLAGS@",
+            " ".join(shlex.quote(flag) for flag in chromium_flags),
+        )
+        .replace("@SESSION_DEADLINE@", str(deadlines["session_deadline"]))
+        .replace("@FETCH_DEADLINE@", str(deadlines["fetch_deadline"]))
+        .replace("@GUEST_DEADLINE@", str(deadlines["deadline"]))
+    )
+
 
 SERVICE = """[Unit]
 Description=Chromium WebGL Samples verification
@@ -515,6 +591,12 @@ def main() -> int:
         parser.error("--cpus must be positive")
     if options.first_sample_timeout <= 0:
         parser.error("--first-sample-timeout must be positive")
+    try:
+        deadlines = launcher_deadlines(
+            options.first_sample_timeout, options.timeout
+        )
+    except ValueError as error:
+        parser.error(f"--first-sample-timeout: {error}")
     rootfs = options.rootfs.resolve()
     kernarium_common.validate_rootfs(
         rootfs, identity, options.rootfs_contract
@@ -522,12 +604,8 @@ def main() -> int:
     samples = SAMPLES[options.start_at - 1 : options.end_at]
     sample_json = json.dumps(samples, separators=(",", ":"))
     verifier = VERIFY_TEMPLATE.replace("@SAMPLES@", sample_json)
-    launcher = (
-        LAUNCHER_TEMPLATE.replace("@FIRST_PATH@", samples[0][1])
-        .replace(
-            "@CHROMIUM_EXTRA_FLAGS@",
-            " ".join(shlex.quote(flag) for flag in options.chromium_flag),
-        )
+    launcher = build_launcher(
+        samples[0][1], options.chromium_flag, deadlines
     )
 
     port = 0
@@ -617,6 +695,8 @@ def main() -> int:
         "start_at": options.start_at,
         "end_at": options.end_at,
         "first_sample_timeout": options.first_sample_timeout,
+        "timeout_seconds": options.timeout,
+        "launcher_deadlines": deadlines,
         "samples": [name for name, _ in samples],
         "command": command,
         "shutdown_qualified": False,
@@ -646,7 +726,12 @@ def main() -> int:
                     )
                     raise RuntimeError(marker)
                 if "UML_WEBGL_RUNNER_ERROR:" in text:
-                    raise RuntimeError("Chromium sample runner failed to start")
+                    marker = next(
+                        line[line.index("UML_WEBGL_RUNNER_ERROR:") :].strip()
+                        for line in text.splitlines()
+                        if "UML_WEBGL_RUNNER_ERROR:" in line
+                    )
+                    raise RuntimeError(marker)
                 failure = graphics_failure(text)
                 if failure is not None:
                     raise RuntimeError(

@@ -7,6 +7,7 @@ __import__("sys").dont_write_bytecode = True
 
 import importlib.util
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -192,6 +193,28 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIn("first WebGL sample did not render within", runner)
         self.assertIn('"state": "failed"', runner)
         self.assertIn('"state": "interrupted"', runner)
+
+    def test_webgl_samples_derive_launcher_deadlines(self) -> None:
+        deadlines = run_webgl_samples.launcher_deadlines(300, 900)
+        self.assertEqual(
+            deadlines,
+            {"session_deadline": 75, "fetch_deadline": 105, "deadline": 855},
+        )
+        launcher = run_webgl_samples.build_launcher(
+            "/aquarium/aquarium.html", [], deadlines
+        )
+        self.assertIsNone(re.search(r"@[A-Z_]+@", launcher))
+        self.assertIn("session_deadline=75\n", launcher)
+        self.assertIn('--max-time "$fetch_seconds"', launcher)
+        self.assertIn("timeout 30 glxinfo -B", launcher)
+        self.assertIn(
+            'timeout -k 10 "$((deadline - $(uptime_seconds)))"', launcher
+        )
+        self.assertIn("Chromium exited with status", launcher)
+        self.assertIn("Xauthority cookie was not found", launcher)
+        self.assertNotIn("exec runuser", launcher)
+        with self.assertRaises(ValueError):
+            run_webgl_samples.launcher_deadlines(200, 900)
 
     def test_webgl_samples_reject_poisoned_virgl_contexts(self) -> None:
         clean = "UML_WEBGL_SAMPLE_OK|1/2|Aquarium"
