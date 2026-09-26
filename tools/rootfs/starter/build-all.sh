@@ -372,6 +372,11 @@ EOF
 	write_root_file "$root/etc/fstab" 0644 <<'EOF'
 /dev/ubda1 / ext4 defaults,noatime 0 1
 EOF
+	# Debian's systemd links /etc/default/locale to this file at boot, and
+	# pam_env reads it for every login. C.UTF-8 needs no locales package.
+	write_root_file "$root/etc/locale.conf" 0644 <<'EOF'
+LANG=C.UTF-8
+EOF
 	# Match wired links by type rather than by kernel-assigned name, and keep
 	# the image's own hostname: the DHCP-supplied one could only be applied
 	# through hostnamed, which refuses networkd without polkit.
