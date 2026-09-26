@@ -28,12 +28,14 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import os
 import pathlib
 import re
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -47,6 +49,11 @@ EPOCH_LINE = re.compile(r"^\s*(\d+\.\d+)\s+(.*)$")
 TOTAL_TIME = re.compile(r"^TotalTime:\s*(\d+)", re.MULTILINE)
 # `ps -M`: a thread's scheduling priority precedes its two CPU time columns.
 THREAD_PRIORITY = re.compile(r"\s(\d+)[A-Z]*\s+[\d:.]+\s+[\d:.]+\s*")
+# Seconds power_off waits for the guest to power itself off, for the launcher
+# to stop its emulator after SIGTERM, and for SIGKILLed processes to go.
+POWER_OFF_SECONDS = 300
+LAUNCHER_STOP_SECONDS = 60
+KILL_SECONDS = 10
 
 
 @dataclasses.dataclass(frozen=True)
@@ -184,6 +191,14 @@ def scenario_values(logcat: str, scenario: Scenario,
     return None
 
 
+def process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 class Guest:
     def __init__(self, arguments: argparse.Namespace, environment: dict):
         self.arguments = arguments
@@ -231,21 +246,71 @@ class Guest:
             time.sleep(10)
         return False
 
-    def power_off(self) -> int | None:
+    def power_off(self) -> int:
+        """Stop the guest and return the launcher's exit status.
+
+        The launcher stops its emulator when it receives SIGTERM; one that
+        does not is killed together with its children.
+        """
         try:
-            self.shell("reboot -p", timeout=30)
-        except subprocess.TimeoutExpired:
-            pass
-        try:
-            return self.process.wait(timeout=300)
-        except subprocess.TimeoutExpired:
+            try:
+                self.shell("reboot -p", timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                return self.process.wait(timeout=POWER_OFF_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
             self.process.terminate()
             try:
-                return self.process.wait(timeout=60)
+                return self.process.wait(timeout=LAUNCHER_STOP_SECONDS)
             except subprocess.TimeoutExpired:
-                return None
+                print(f"launcher {self.process.pid} ignored SIGTERM; "
+                      "killing it and its emulator", file=sys.stderr)
+                return self.kill()
         finally:
             self.console.close()
+
+    def kill(self) -> int:
+        """SIGKILL the launcher and its children; raise unless all are gone.
+
+        The emulator leads its own session, so killing the launcher alone
+        would orphan it. Stopping the launcher first keeps it from reaping
+        or starting a child, so every PID found stays its child until the
+        launcher dies; after that, launchd reaps them.
+        """
+        launcher = self.process.pid
+        self.process.send_signal(signal.SIGSTOP)
+        if self.process.poll() is not None:
+            return self.process.returncode
+        result = subprocess.run(
+            ["pgrep", "-P", str(launcher)], capture_output=True, text=True,
+            stdin=subprocess.DEVNULL, timeout=30)
+        children = [int(pid) for pid in result.stdout.split()]
+        for pid in children:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                # A child that leads no group shares the launcher's.
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)
+            except PermissionError:
+                # Darwin refuses a group whose leader is an unreaped zombie.
+                pass
+        self.process.kill()
+        try:
+            status = self.process.wait(timeout=KILL_SECONDS)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Android launcher {launcher} survived SIGKILL") from None
+        deadline = time.monotonic() + KILL_SECONDS
+        while children := [pid for pid in children if process_exists(pid)]:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"children {children} of Android launcher {launcher} "
+                    "survived SIGKILL")
+            time.sleep(0.1)
+        return status
 
 
 def run_scenario(guest: Guest, scenario: Scenario, logcat_path: pathlib.Path,
