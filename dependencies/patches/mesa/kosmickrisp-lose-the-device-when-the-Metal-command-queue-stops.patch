@@ -84,10 +84,10 @@ index 5e3f724b1cae465ef2512d0d120b9a7a299546a8..97b17238af3e4922d541a3bfdb5434c8
                         const VkDeviceQueueCreateInfo *pCreateInfo,
                         uint32_t index_in_family);
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index 91435c90e5203112521c73c4b75e1a929e0602f7..c7aa7be8076ee8d71eaca3384586c752577288b5 100644
+index abb6820665846e810707e66d2a2275841f4f6de8..af9580ca62353e52255e58ea5f3ec49a4c83bc17 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
-@@ -95,10 +95,25 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
+@@ -96,10 +96,25 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
   *
   * The bound is two orders of magnitude over any submission that runs to
   * completion on the tightest device this driver targets, whose GPU stops a
@@ -115,7 +115,7 @@ index 91435c90e5203112521c73c4b75e1a929e0602f7..c7aa7be8076ee8d71eaca3384586c752
  static void
  kk_timeline_recover_lost_signal(struct kk_device *dev,
                                  struct kk_sync_timeline *timeline,
-@@ -123,6 +138,34 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+@@ -124,6 +139,34 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
        timeline->overdue_since = now;
        return;
     }

@@ -8,19 +8,21 @@ Use on-demand common submission for unsatisfied timeline waits so Metal cannot r
 
 Answer VK_SYNC_WAIT_PENDING with whether a signal operation has been submitted rather than whether it completed. Track the highest value already signalled on the CPU or enqueued on the queue's Metal timeline, and treat a binary semaphore wait as pending because its signal must have been submitted first. Otherwise the common runtime reads every unfinished dependency as unsubmitted: it turns the assisted submission worker on for the life of the device and blocks the caller of vkQueueSubmit, which on a virtualized device is the thread that must deliver the release the worker is waiting for.
 
-Keep absolute CPU wait deadlines while observing device loss, wake queue drains when submission fails, and allow lost-device cleanup of pending submissions. Cover delayed host signals, mixed binary waits, loss during waits and drain, a binary wait queued behind a host-gated batch, and submission that outruns a long GPU dependency.
+In a threaded queue a binary payload moves when the worker reaches the wait, not inside vkQueueSubmit. The signal that payload waits for may still be queued ahead of the wait, and the worker unwraps it against whatever payload the semaphore holds when it runs, so a move made at once handed that signal the fresh payload and left the wait on a point nothing signals until Metal abandoned the native wait seconds later.
+
+Keep absolute CPU wait deadlines while observing device loss, wake queue drains when submission fails, and allow lost-device cleanup of pending submissions. Cover delayed host signals, mixed binary waits with every signalled stage bounded to a second, loss during waits and drain, a binary wait queued behind a host-gated batch, and submission that outruns a long GPU dependency.
 ---
  src/kosmickrisp/vulkan/kk_device.c            |  18 +-
  src/kosmickrisp/vulkan/kk_physical_device.c   |   2 +
  src/kosmickrisp/vulkan/kk_queue.c             |   7 +-
- src/kosmickrisp/vulkan/kk_sync.c              | 151 +++++++-
- src/kosmickrisp/vulkan/kk_sync.h              |  15 +
+ src/kosmickrisp/vulkan/kk_sync.c              | 200 +++++++++-
+ src/kosmickrisp/vulkan/kk_sync.h              |  19 +
  src/kosmickrisp/vulkan/meson.build            |  75 ++++
- .../vulkan/tests/test_timeline_host_wait.cpp  | 348 +++++++++++++++++
- .../tests/test_timeline_pending_wait.cpp      | 365 ++++++++++++++++++
+ .../vulkan/tests/test_timeline_host_wait.cpp  | 364 +++++++++++++++++
+ .../tests/test_timeline_pending_wait.cpp      | 372 ++++++++++++++++++
  .../vulkan/tests/test_timeline_wait_loss.c    | 182 +++++++++
  src/vulkan/runtime/vk_queue.c                 |  25 +-
- 10 files changed, 1155 insertions(+), 33 deletions(-)
+ 10 files changed, 1231 insertions(+), 33 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
@@ -112,7 +114,7 @@ index 64922e8a766daa526a11d61d096fcf78d71b248e..f7f30265b4c5081b797211980fe077a8
 -   vk_queue_finish(&queue->vk);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index f44200c379e50a828161b257313a2e7a2c5a42e6..4f03bf30db25a0b71c92b70fa7878cc79c18e335 100644
+index f44200c379e50a828161b257313a2e7a2c5a42e6..4f7dd2068c13371959ef59ee683bf2776a067d84 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
 @@ -7,6 +7,11 @@
@@ -127,15 +129,16 @@ index f44200c379e50a828161b257313a2e7a2c5a42e6..4f03bf30db25a0b71c92b70fa7878cc7
  
  #include "kosmickrisp/bridge/mtl_bridge.h"
  
-@@ -20,6 +25,7 @@ kk_timeline_init(struct vk_device *device, struct vk_sync *sync,
+@@ -20,6 +25,8 @@ kk_timeline_init(struct vk_device *device, struct vk_sync *sync,
     struct kk_device *dev = container_of(device, struct kk_device, vk);
     timeline->mtl_handle = mtl_new_shared_event(dev->mtl_handle);
     mtl_shared_event_set_signaled_value(timeline->mtl_handle, initial_value);
 +   timeline->pending_value = initial_value;
++   timeline->moved_from = NULL;
  
     return VK_SUCCESS;
  }
-@@ -39,9 +45,30 @@ kk_timeline_signal(struct vk_device *device, struct vk_sync *sync,
+@@ -39,9 +46,30 @@ kk_timeline_signal(struct vk_device *device, struct vk_sync *sync,
     struct kk_sync_timeline *timeline =
        container_of(sync, struct kk_sync_timeline, base);
     mtl_shared_event_set_signaled_value(timeline->mtl_handle, value);
@@ -166,7 +169,7 @@ index f44200c379e50a828161b257313a2e7a2c5a42e6..4f03bf30db25a0b71c92b70fa7878cc7
  static VkResult
  kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
                        uint64_t *value)
-@@ -60,34 +87,118 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
+@@ -60,34 +88,166 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
     struct kk_sync_timeline *timeline =
        container_of(sync, struct kk_sync_timeline, base);
  
@@ -228,14 +231,12 @@ index f44200c379e50a828161b257313a2e7a2c5a42e6..4f03bf30db25a0b71c92b70fa7878cc7
 +      if (abs_timeout_ns != OS_TIMEOUT_INFINITE &&
 +          os_time_get_nano() >= abs_timeout_ns)
 +         return VK_TIMEOUT;
-    }
--   int completed = mtl_shared_event_wait_until_signaled_value(
--      timeline->mtl_handle, wait_value, timeout_ms);
++   }
 +}
 +
-+VkResult
-+kk_sync_binary_move(struct vk_device *device, struct vk_sync *dst_sync,
-+                    struct vk_sync *src_sync)
++static VkResult
++kk_sync_binary_take_payload(struct vk_device *device, struct vk_sync *dst_sync,
++                            struct vk_sync *src_sync)
 +{
 +   struct vk_sync_binary *dst = vk_sync_as_binary(dst_sync);
 +   struct vk_sync_binary *src = vk_sync_as_binary(src_sync);
@@ -253,22 +254,72 @@ index f44200c379e50a828161b257313a2e7a2c5a42e6..4f03bf30db25a0b71c92b70fa7878cc7
 +   return vk_sync_reset(device, src_sync);
 +}
 +
++/* A threaded queue moves a permanent binary payload into a temporary inside
++ * vkQueueSubmit, but the signal that payload waits for may still sit in the
++ * submit worker, which unwraps it against whatever payload the semaphore holds
++ * when it gets there. Moving at once would hand that signal the fresh payload
++ * and leave the wait on a point nothing signals, until Metal abandons the
++ * native wait seconds later. Waiting in vkQueueSubmit for the worker to reach
++ * the signal is no answer either, because it can sit behind a batch only the
++ * caller can release. So the temporary only records its source here, and the
++ * worker completes the move in kk_sync_binary_wait_many() when it reaches the
++ * wait: every signal submitted before the wait has been unwrapped by then, and
++ * the wait itself is unwrapped only after. The source outlives the record,
++ * because a semaphore may not be destroyed before every batch waiting on it
++ * has completed (VUID-vkDestroySemaphore-semaphore-01137). An unthreaded queue
++ * has run every signal already, so its move is made at once. */
++VkResult
++kk_sync_binary_move(struct vk_device *device, struct vk_sync *dst_sync,
++                    struct vk_sync *src_sync)
++{
++   struct kk_device *dev = container_of(device, struct kk_device, vk);
++   if (dev->queue.vk.submit.mode != VK_QUEUE_SUBMIT_MODE_THREADED)
++      return kk_sync_binary_take_payload(device, dst_sync, src_sync);
++
++   struct vk_sync_binary *dst = vk_sync_as_binary(dst_sync);
++   assert(dst && vk_sync_as_binary(src_sync));
++   struct kk_sync_timeline *dst_timeline =
++      container_of(&dst->timeline, struct kk_sync_timeline, base);
++   assert(dst_timeline->moved_from == NULL);
++   dst_timeline->moved_from = src_sync;
++   return VK_SUCCESS;
++}
++
 +/* A binary semaphore wait is always pending. VUID-vkQueueSubmit-
 + * pWaitSemaphores-03238 requires its signal operation to have been submitted
-+ * for execution first, and this device submits one queue in order, so the
-+ * signal is already enqueued on the Metal timeline by the time anything acts
-+ * on the answer. Reporting completion instead would make vkQueueSubmit wait
-+ * for the GPU whenever one batch consumes another batch's semaphore. */
++ * for execution first, and this device runs one queue in order, so whatever
++ * orders native work behind the answer, the submit worker or an unthreaded
++ * submission, reaches the wait only after the signal; a move made on the
++ * answer waits for the worker too (kk_sync_binary_move). Reporting completion
++ * instead would make vkQueueSubmit wait for the GPU whenever one batch consumes
++ * another batch's semaphore. */
 +VkResult
 +kk_sync_binary_wait_many(struct vk_device *device, uint32_t wait_count,
 +                         const struct vk_sync_wait *waits,
 +                         enum vk_sync_wait_flags wait_flags,
 +                         uint64_t abs_timeout_ns)
 +{
-+   if (wait_flags & VK_SYNC_WAIT_PENDING)
-+      return VK_SUCCESS;
++   for (uint32_t i = 0; i < wait_count; i++) {
++      struct vk_sync_binary *binary = vk_sync_as_binary(waits[i].sync);
++      assert(binary);
++      struct kk_sync_timeline *timeline =
++         container_of(&binary->timeline, struct kk_sync_timeline, base);
++      struct vk_sync *source = timeline->moved_from;
++      if (source == NULL)
++         continue;
++      timeline->moved_from = NULL;
++      VkResult result =
++         kk_sync_binary_take_payload(device, waits[i].sync, source);
++      if (result != VK_SUCCESS)
++         return result;
+    }
+-   int completed = mtl_shared_event_wait_until_signaled_value(
+-      timeline->mtl_handle, wait_value, timeout_ms);
  
 -   return completed != 0 ? VK_SUCCESS : VK_TIMEOUT;
++   if (wait_flags & VK_SYNC_WAIT_PENDING)
++      return VK_SUCCESS;
++
 +   if (wait_count == 0)
 +      return VK_SUCCESS;
 +
@@ -306,10 +357,10 @@ index f44200c379e50a828161b257313a2e7a2c5a42e6..4f03bf30db25a0b71c92b70fa7878cc7
     .finish = kk_timeline_finish,
     .signal = kk_timeline_signal,
 diff --git a/src/kosmickrisp/vulkan/kk_sync.h b/src/kosmickrisp/vulkan/kk_sync.h
-index da4f149918dfa99b63618adc67ba3bf7be786d92..a045d8aea51648b2f4fea7b39306e7c3ad195383 100644
+index da4f149918dfa99b63618adc67ba3bf7be786d92..45aa22c6ecec6a4676172c5a79a168bc2dc71c47 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.h
 +++ b/src/kosmickrisp/vulkan/kk_sync.h
-@@ -16,8 +16,23 @@ struct kk_queue;
+@@ -16,8 +16,27 @@ struct kk_queue;
  struct kk_sync_timeline {
     struct vk_sync base;
     mtl_shared_event *mtl_handle;
@@ -317,6 +368,10 @@ index da4f149918dfa99b63618adc67ba3bf7be786d92..a045d8aea51648b2f4fea7b39306e7c3
 +    * CPU or enqueued on the queue's Metal timeline. Any wait at or below it
 +    * is pending in the common runtime's sense. */
 +   uint64_t pending_value;
++   /* The permanent binary semaphore a temporary still has to take its
++    * payload from, once the submit worker reaches it; see
++    * kk_sync_binary_move(). Null everywhere else. */
++   struct vk_sync *moved_from;
  };
  
  extern const struct vk_sync_type kk_sync_type;
@@ -421,15 +476,16 @@ index d7d479a6a34de65e0ec2231d576f8fb35d7a52fd..d04882b05615b5b2eec9f8f32ae8ef97
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp b/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..8998f9a9a385f39dc94d049c36988568d2daa987
+index 0000000000000000000000000000000000000000..9c52792a4dd8f4647dbf83c3ebb46dacab84d21d
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
-@@ -0,0 +1,348 @@
+@@ -0,0 +1,364 @@
 +/* SPDX-License-Identifier: MIT */
 +
 +#define VK_NO_PROTOTYPES
 +#include <vulkan/vulkan.h>
 +
++#include <algorithm>
 +#include <chrono>
 +#include <cstdio>
 +#include <cstdlib>
@@ -601,6 +657,7 @@ index 0000000000000000000000000000000000000000..8998f9a9a385f39dc94d049c36988568
 +
 +      constexpr uint32_t stages = 12;
 +      for (size_t bytes : {size_t(16384), size_t(262144)}) {
++         std::chrono::steady_clock::duration slowest{};
 +         std::vector<Buffer> input, output;
 +         for (uint32_t i = 0; i < stages; ++i) {
 +            input.push_back(make_buffer(bytes));
@@ -736,6 +793,7 @@ index 0000000000000000000000000000000000000000..8998f9a9a385f39dc94d049c36988568
 +               }
 +               std::memcpy(input[i].mapped,
 +                           i ? output[i - 1].mapped : seed.data(), bytes);
++               const auto signalled = std::chrono::steady_clock::now();
 +               VkSemaphoreSignalInfo signal{
 +                  VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
 +               signal.semaphore = semaphore;
@@ -751,6 +809,17 @@ index 0000000000000000000000000000000000000000..8998f9a9a385f39dc94d049c36988568
 +               require(result == VK_SUCCESS, "wait GPU copy (10 seconds)", result);
 +               require(std::memcmp(output[i].mapped, seed.data(), bytes) == 0,
 +                       "GPU copy observed stale host data");
++               /* Every dependency of this copy has been signalled, the first
++                * stage's binary semaphore included, so the copy is a round
++                * trip of a fraction of a millisecond. A binary signal lost
++                * to the payload move of a queued submission shows up only as
++                * seconds here: the copy runs once Metal abandons the native
++                * wait, so the chain still completes. */
++               const auto round_trip =
++                  std::chrono::steady_clock::now() - signalled;
++               slowest = std::max(slowest, round_trip);
++               require(round_trip < std::chrono::seconds(1),
++                       "a signalled chain stage took over a second");
 +            }
 +            vkDestroySemaphore(device, semaphore, nullptr);
 +         }
@@ -762,8 +831,10 @@ index 0000000000000000000000000000000000000000..8998f9a9a385f39dc94d049c36988568
 +               vkFreeMemory(device, buffer.memory, nullptr);
 +            }
 +         }
-+         std::printf("%s: %zu-byte delayed and immediate chains passed\n",
-+                     argv[1], bytes);
++         std::printf("%s: %zu-byte delayed and immediate chains passed, "
++                     "slowest stage %.2f ms\n",
++                     argv[1], bytes,
++                     std::chrono::duration<double, std::milli>(slowest).count());
 +      }
 +      vkDestroySemaphore(device, binary, nullptr);
 +      /* Completion is known from the final timeline wait. Destroy immediately
@@ -775,10 +846,10 @@ index 0000000000000000000000000000000000000000..8998f9a9a385f39dc94d049c36988568
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp b/src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..e808a6171ee4eb32efac9c13f91b172d254913e9
+index 0000000000000000000000000000000000000000..d066a52148c095fb9b9d7a860cfd931365815bde
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,372 @@
 +/* SPDX-License-Identifier: MIT */
 +
 +/* VK_SYNC_WAIT_PENDING asks whether a signal operation has been submitted.
@@ -917,6 +988,7 @@ index 0000000000000000000000000000000000000000..e808a6171ee4eb32efac9c13f91b172d
 +      LOAD_D(vkSignalSemaphore);
 +      LOAD_D(vkWaitSemaphores);
 +      LOAD_D(vkQueueSubmit);
++      LOAD_D(vkQueueWaitIdle);
 +      LOAD_D(vkCreateFence);
 +      LOAD_D(vkDestroyFence);
 +      LOAD_D(vkResetFences);
@@ -1012,6 +1084,12 @@ index 0000000000000000000000000000000000000000..e808a6171ee4eb32efac9c13f91b172d
 +         result = vkWaitSemaphores(device, &wait, 10000000000ull);
 +         require(result == VK_SUCCESS, "released chain completed", result);
 +
++         /* The batch waiting on the binary semaphore runs after the released
++          * one and may not have completed yet; neither semaphore may be
++          * destroyed before it has (VUID-vkDestroySemaphore-semaphore-01137). */
++         stage("drain the queue");
++         result = vkQueueWaitIdle(queue);
++         require(result == VK_SUCCESS, "drain queue", result);
 +         vkDestroySemaphore(device, binary, nullptr);
 +         vkDestroySemaphore(device, timeline, nullptr);
 +         std::printf("deadlock: queued binary wait did not block submission\n");
