@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 import json
 import os
 from pathlib import Path
+import select
 import signal
 import socket
 import subprocess
@@ -65,6 +66,74 @@ class GuestProcessTests(unittest.TestCase):
             cleanup.assert_called_once_with()
             owned.validate_journal(path, TOKEN, required=True)
         self.assertEqual(previous, {number: signal.getsignal(number) for number in previous})
+
+    def test_interrupt_is_raised_once_per_child(self) -> None:
+        for deferred in (False, True):
+            with self.subTest(deferred=deferred), owned.Interrupts() as interrupts:
+                if deferred:
+                    interrupts.handle(signal.SIGINT, None)
+                    with self.assertRaises(KeyboardInterrupt):
+                        interrupts.running()
+                else:
+                    interrupts.running()
+                    with self.assertRaises(KeyboardInterrupt):
+                        interrupts.handle(signal.SIGINT, None)
+                try:
+                    interrupts.handle(signal.SIGTERM, None)
+                    interrupts.handle(signal.SIGINT, None)
+                except KeyboardInterrupt:
+                    self.fail("a repeated signal raised a second interrupt")
+
+    @unittest.skipUnless(hasattr(signal, "pthread_kill"), "requires POSIX thread signals")
+    def test_repeated_signal_during_unwinding_cannot_skip_cleanup(self) -> None:
+        process = mock.Mock(pid=1002)
+        process.wait.return_value = -signal.SIGINT
+        cleanup = mock.Mock()
+        stop = mock.Mock()
+        numbers = {signal.SIGINT, signal.SIGTERM}
+        previous = {number: signal.getsignal(number) for number in numbers}
+        go_read, go_write = os.pipe()
+        done_read, done_write = os.pipe()
+
+        def deliver() -> None:
+            # Both C-level handlers run on this thread in one unblock. The main
+            # thread then runs SIGINT at its next check, and SIGTERM stays due
+            # while that interrupt unwinds into the context manager's exit.
+            if os.read(go_read, 1):
+                signal.pthread_sigmask(signal.SIG_BLOCK, numbers)
+                for number in sorted(numbers):
+                    signal.pthread_kill(threading.get_ident(), number)
+                signal.pthread_sigmask(signal.SIG_UNBLOCK, numbers)
+            os.write(done_write, b"x")
+
+        helper = threading.Thread(target=deliver)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / owned.JOURNAL_NAME
+            try:
+                with mock.patch.object(owned.subprocess, "Popen", return_value=process):
+                    try:
+                        with owned.managed_child(["fixture"], stop=stop, cleanup=cleanup,
+                                                 journal_setting=setting(path)):
+                            helper.start()
+                            os.write(go_write, b"x")
+                            select.select([done_read], [], [], 5)
+                            self.fail("running interrupt was not delivered")
+                    except KeyboardInterrupt:
+                        # The live exception still references every unwound frame,
+                        # so generator finalization cannot supply a skipped cleanup.
+                        stop.assert_called_once_with(process)
+                        cleanup.assert_called_once_with()
+                        owned.validate_journal(path, TOKEN, required=True)
+                self.assertEqual(previous, {number: signal.getsignal(number) for number in numbers})
+            finally:
+                os.close(go_write)
+                if helper.ident is not None:
+                    helper.join(timeout=5)
+                for descriptor in (go_read, done_read, done_write):
+                    os.close(descriptor)
+                for number, handler in previous.items():
+                    signal.signal(number, handler)
+            self.assertFalse(helper.is_alive())
 
     def test_body_error_is_not_changed_to_success_by_reap_ack(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
