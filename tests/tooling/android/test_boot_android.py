@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import importlib.util
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -295,6 +296,29 @@ class BootAndroidTests(unittest.TestCase):
                     mock.call(adb.resolve(), "127.0.0.1:5555"),
                 ],
             )
+
+    def test_guest_that_leads_no_group_is_still_stopped(self) -> None:
+        guest = mock.Mock()
+        guest.pid = 123
+        guest.poll.return_value = None
+        guest.wait.side_effect = (
+            subprocess.TimeoutExpired("guest", 10),
+            subprocess.TimeoutExpired("guest", 5),
+            0,
+        )
+        with mock.patch.object(
+            boot_android.os, "killpg", side_effect=ProcessLookupError
+        ):
+            boot_android.stop_guest(guest)
+        self.assertEqual(
+            guest.send_signal.call_args_list,
+            [
+                mock.call(boot_android.signal.SIGINT),
+                mock.call(boot_android.signal.SIGTERM),
+                mock.call(boot_android.signal.SIGKILL),
+            ],
+        )
+        self.assertEqual(guest.wait.call_count, 3)
 
 
 if __name__ == "__main__":

@@ -557,23 +557,30 @@ def wait_for_adb(
     raise LauncherError(f"ADB did not become ready within {timeout} seconds{detail}")
 
 
+def signal_guest(guest: subprocess.Popen[bytes], signum: int) -> None:
+    try:
+        os.killpg(guest.pid, signum)
+    except ProcessLookupError:
+        # No group has the emulator's ID, so it leads none. That is no
+        # evidence it exited: signal the emulator itself.
+        guest.send_signal(signum)
+
+
 def stop_guest(guest: subprocess.Popen[bytes]) -> None:
-    if guest.poll() is not None:
-        return
+    """Return only after the emulator has been reaped."""
     stages = ((signal.SIGINT, 10), (signal.SIGTERM, 5))
     for signum, timeout in stages:
-        try:
-            os.killpg(guest.pid, signum)
-            guest.wait(timeout=timeout)
+        if guest.poll() is not None:
             return
-        except ProcessLookupError:
+        signal_guest(guest, signum)
+        try:
+            guest.wait(timeout=timeout)
             return
         except subprocess.TimeoutExpired:
             continue
-    try:
-        os.killpg(guest.pid, signal.SIGKILL)
-    except ProcessLookupError:
+    if guest.poll() is not None:
         return
+    signal_guest(guest, signal.SIGKILL)
     guest.wait()
 
 

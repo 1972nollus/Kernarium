@@ -19,7 +19,7 @@ import statistics
 import subprocess
 import sys
 import time
-from typing import NamedTuple
+from typing import Any, BinaryIO, NamedTuple, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -947,12 +947,29 @@ def wait_for_log(
     raise TimeoutError("Chromium WebGL verification did not finish in time")
 
 
+def start_guest(
+    command: Sequence[str], log: BinaryIO, **options: Any
+) -> subprocess.Popen[bytes]:
+    """Start the guest harness as the leader of its own session.
+
+    stop_guest signals the harness's process group, and a terminal interrupt
+    then reaches only the runner, which stops the guest itself.
+    """
+    return subprocess.Popen(
+        command,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        **options,
+    )
+
+
 def stop_guest(process: subprocess.Popen[bytes]) -> None:
     """Stop the guest's isolated process group, escalating when necessary.
 
     The emulator can ignore a graceful signal while a guest is wedged. Keep
     escalation bounded so an interrupted validation cannot leave it consuming
-    host resources.
+    host resources. Only a reaped harness counts as stopped.
     """
     for guest_signal, timeout in (
         (signal.SIGINT, 45),
@@ -964,13 +981,17 @@ def stop_guest(process: subprocess.Popen[bytes]) -> None:
         try:
             os.killpg(process.pid, guest_signal)
         except ProcessLookupError:
-            return
+            # No group has the harness's ID, so the harness leads none. That
+            # is no evidence it exited: signal the harness itself.
+            process.send_signal(guest_signal)
         try:
             process.wait(timeout=timeout)
             return
         except subprocess.TimeoutExpired:
             continue
-    raise RuntimeError("Aquarium guest did not stop after SIGKILL")
+    raise RuntimeError(
+        f"guest harness {process.pid} did not stop after SIGKILL"
+    )
 
 
 def read_ppm(capture_path: Path) -> tuple[int, int, memoryview]:
@@ -1554,13 +1575,7 @@ def main() -> int:
     )
     environment = build_host_environment(options.display)
     with log_path.open("wb") as log:
-        process = subprocess.Popen(
-            command,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            env=environment,
-            start_new_session=True,
-        )
+        process = start_guest(command, log, env=environment)
         try:
             try:
                 text, host_measurement = wait_for_log(

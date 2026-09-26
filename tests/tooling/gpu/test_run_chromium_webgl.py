@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -222,6 +223,79 @@ class AquariumProbePolicyTests(unittest.TestCase):
                 mock.call(1234, run_chromium_webgl.signal.SIGINT),
                 mock.call(1234, run_chromium_webgl.signal.SIGTERM),
                 mock.call(1234, run_chromium_webgl.signal.SIGKILL),
+            ],
+        )
+        process.send_signal.assert_not_called()
+
+    def test_guest_starts_as_the_leader_of_its_own_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "console.log"
+            with log_path.open("wb") as log:
+                process = run_chromium_webgl.start_guest(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import os; print(os.getpgid(0), os.getsid(0))",
+                    ],
+                    log,
+                )
+                self.assertEqual(process.wait(timeout=30), 0)
+            group, session = map(int, log_path.read_text().split())
+        self.assertEqual((group, session), (process.pid, process.pid))
+
+    def test_guest_shutdown_signals_a_harness_that_leads_no_group(
+        self,
+    ) -> None:
+        # A harness left in its runner's process group has no group of its
+        # own to signal, yet it is still running.
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import signal, time\n"
+                "signal.signal(signal.SIGINT, signal.default_int_handler)\n"
+                "print('ready', flush=True)\n"
+                "time.sleep(60)\n",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            assert process.stdout is not None
+            self.assertEqual(process.stdout.readline(), b"ready\n")
+            self.assertNotEqual(os.getpgid(process.pid), process.pid)
+            started = time.monotonic()
+            run_chromium_webgl.stop_guest(process)
+            self.assertIsNotNone(process.poll())
+            # SIGINT stopped it; no escalation was needed.
+            self.assertLess(time.monotonic() - started, 30)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+            if process.stdout is not None:
+                process.stdout.close()
+
+    def test_guest_shutdown_never_reports_a_live_harness_stopped(
+        self,
+    ) -> None:
+        process = mock.Mock()
+        process.pid = 1234
+        process.poll.return_value = None
+        process.wait.side_effect = subprocess.TimeoutExpired("guest", 1)
+        with mock.patch.object(
+            run_chromium_webgl.os, "killpg", side_effect=ProcessLookupError
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "guest harness 1234 did not stop"
+            ):
+                run_chromium_webgl.stop_guest(process)
+        self.assertEqual(
+            process.send_signal.call_args_list,
+            [
+                mock.call(run_chromium_webgl.signal.SIGINT),
+                mock.call(run_chromium_webgl.signal.SIGTERM),
+                mock.call(run_chromium_webgl.signal.SIGKILL),
             ],
         )
 

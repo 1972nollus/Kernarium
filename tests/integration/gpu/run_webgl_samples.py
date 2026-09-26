@@ -30,6 +30,7 @@ from run_chromium_webgl import (  # noqa: E402
     git_state,
     install_text,
     rootfs_contract_metadata,
+    start_guest,
     stop_guest,
 )
 
@@ -710,11 +711,7 @@ def main() -> int:
     first_sample_deadline = time.monotonic() + options.first_sample_timeout
 
     with log_path.open("wb") as log:
-        process = subprocess.Popen(
-            command,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-        )
+        process = start_guest(command, log)
         try:
             while time.monotonic() < deadline:
                 text = log_path.read_text(encoding="utf-8", errors="replace")
