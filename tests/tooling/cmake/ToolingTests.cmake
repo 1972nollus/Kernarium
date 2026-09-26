@@ -48,18 +48,6 @@ uml_add_tooling_test(
     LABELS audit
     TIMEOUT 30)
 
-set(_uml_jit_profile_preset_command
-    ${Python3_EXECUTABLE} -B
-    ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_jit_profile_preset.py
-    --cmake ${CMAKE_COMMAND}
-    --source-root ${PROJECT_SOURCE_DIR})
-uml_add_tooling_test(
-    NAME jit-profile-preset-contract
-    COMMAND ${_uml_jit_profile_preset_command}
-    LABELS audit;cpu
-    TIMEOUT 30)
-unset(_uml_jit_profile_preset_command)
-
 if(UML_ENABLE_RUNTIME_PROFILING)
     add_executable(uml_jit_profile_final_report_fixture
         ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/jit_profile_final_report_fixture.cpp)

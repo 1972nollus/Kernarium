@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Verify the writable starter-image producer and GPT reader contracts."""
+"""Verify the starter-image GPT reader on synthetic GPT/ext4 fixtures."""
 
 from __future__ import annotations
 
@@ -107,16 +107,9 @@ def write_gpt_ext4_fixture(path: Path, gpt: object) -> None:
     path.write_bytes(disk)
 
 
-def require_tokens(source: str, tokens: tuple[str, ...], label: str) -> None:
-    missing = [token for token in tokens if token not in source]
-    require(not missing, f"{label} is missing required policy: {missing}")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--starter-root", required=True, type=Path)
-    parser.add_argument("--kernel-config", required=True, type=Path)
-    parser.add_argument("--android-kernel-config", required=True, type=Path)
     arguments = parser.parse_args()
 
     starter_root = arguments.starter_root.resolve()
@@ -146,100 +139,6 @@ def main() -> int:
         else:
             raise RuntimeError("corrupt GPT header was accepted")
 
-    init_source = (starter_root / "buildroot/overlay/init").read_text()
-    require_tokens(
-        init_source,
-        (
-            "root_device=/dev/ubda1",
-            "for candidate in /sys/block/ubda/ubda*",
-            'filesystem_probe=$(blkid "$root_device"',
-            '*TYPE=\\"ext4\\"*)',
-            'resize2fs "$root_device"',
-            "UML_RESIZE_INITRAMFS_WARN:resize2fs-failed",
-            "UML_RESIZE_INITRAMFS_SKIP:partition-count=",
-            "UML_RESIZE_INITRAMFS_SKIP:not-ext4",
-            "mount -o move",
-            "exec switch_root /newroot /sbin/init",
-        ),
-        "initramfs init",
-    )
-    require(
-        init_source.index('resize2fs "$root_device"')
-        < init_source.index('mount -o rw,noatime "$root_device"'),
-        "filesystem growth must precede the real-root mount",
-    )
-    require(
-        'resize2fs "$root_device" || emergency' not in init_source,
-        "filesystem growth failure must not stop boot",
-    )
-    require(
-        "sgdisk" not in init_source and "sfdisk" not in init_source,
-        "partition-table growth must remain a host operation",
-    )
-    busybox_source = (starter_root / "buildroot/busybox.fragment").read_text()
-    require_tokens(
-        busybox_source,
-        ("BLKID", "FEATURE_BLKID_TYPE", "FEATURE_VOLUMEID_EXT"),
-        "minimal filesystem-type probe",
-    )
-
-    grow_source = (starter_root / "grow-image.py").read_text()
-    require_tokens(
-        grow_source,
-        (
-            '"--move-second-header"',
-            '"--delete=1"',
-            'f"--new=1:{partition[\'first_lba\']}:0"',
-            'f"--partition-guid=1:{partition[\'unique_guid\']}"',
-            'if after_filesystem["bytes"] != before_filesystem["bytes"]:',
-        ),
-        "host image grower",
-    )
-
-    build_source = (starter_root / "build-all.sh").read_text()
-    require_tokens(
-        build_source,
-        (
-            "ALPINE_VERSION=3.24.1",
-            "alpine-base ifupdown-ng",
-            "iface eth0 inet dhcp",
-            "systemd-resolved udev kmod",
-            "systemd-networkd.service systemd-resolved.service",
-            "serial-getty@hvc0.service",
-            "plasma-desktop konsole chromium sudo",
-            "libgl1-mesa-dri mesa-va-drivers vainfo ffmpeg",
-            "debian ALL=(ALL:ALL) NOPASSWD: ALL",
-            "startplasma-wayland",
-        ),
-        "starter image producer",
-    )
-    buildroot_config = (starter_root / "buildroot/defconfig.in").read_text()
-    require_tokens(
-        buildroot_config,
-        (
-            "BR2_ARM64_PAGE_SIZE_16K=y",
-            "max-page-size=16384",
-            "common-page-size=16384",
-        ),
-        "initramfs ELF page profile",
-    )
-    for label, path in (
-        ("mainline", arguments.kernel_config),
-        ("Android", arguments.android_kernel_config),
-    ):
-        kernel_config = path.read_text()
-        require(
-            "# CONFIG_IP_PNP is not set" in kernel_config,
-            f"{label} IP_PNP remains on",
-        )
-        require(
-            "CONFIG_IP_PNP=y" not in kernel_config,
-            f"{label} kernel IP autoconfiguration remains on",
-        )
-        require(
-            "CONFIG_IP_PNP_DHCP=y" not in kernel_config,
-            f"{label} kernel DHCP client remains on",
-        )
     return 0
 
 

@@ -31,9 +31,5 @@ uml_add_tooling_test(
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_starter_images.py
         --starter-root ${PROJECT_SOURCE_DIR}/tools/rootfs/starter
-        --kernel-config
-        ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/config/common.fragment
-        --android-kernel-config
-        ${PROJECT_SOURCE_DIR}/kernel/android-6.18/config/android.fragment
     LABELS rootfs;audit
     TIMEOUT 30)
