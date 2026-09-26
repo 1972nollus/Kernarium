@@ -213,6 +213,12 @@ preserving terminal output behavior and bounded writes under backpressure.
 enough to throttle the tty, and then requires later typed input to reach the
 shell.
 
+`guest-balloon-config-churn` gives a one-vCPU guest an external balloon backend
+that raises a config change every 2 ms, so config-change requests cross the
+driver's config reads constantly; the guest must keep running commands and read
+the config thousands of times. The backend runs in its own process and so cannot
+serve virtqueues: guest RAM is resolvable only inside the emulator.
+
 `guest-bpf-callbacks` runs hand-assembled BPF programs through `bpf()` from the
 rootfs Python: `bpf_loop`, inlined and through the helper,
 `bpf_for_each_map_elem`, a self-rearming BPF timer, nested callbacks, and tail

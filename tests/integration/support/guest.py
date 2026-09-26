@@ -257,6 +257,7 @@ class Guest:
         core_class: str = "performance",
         systemd_overlay_size: str | None = None,
         systemd_image_init: str | None = None,
+        pass_fds: Sequence[int] = (),
     ) -> None:
         if sum((init_shell, overlay_shell, systemd_overlay, bool(systemd_image_init))) > 1:
             raise ValueError("guest boot modes are mutually exclusive")
@@ -329,6 +330,9 @@ class Guest:
                 stdout=slave,
                 stderr=slave,
                 close_fds=True,
+                # Descriptors a kernel argument names, such as an external
+                # vhost-user backend's end of a socket pair.
+                pass_fds=tuple(pass_fds),
             )
         except BaseException:
             os.close(master)
