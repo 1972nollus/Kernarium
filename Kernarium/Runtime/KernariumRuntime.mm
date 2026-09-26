@@ -1739,6 +1739,10 @@ int runtimeRun(
                 std::to_string(uml::console::protocol::deviceId));
         }
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
+        /* The Android vendor policy labels the battery's sysfs path by its
+         * position among these Virtio devices
+         * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts); a device
+         * added before it must extend that range. */
         arguments.emplace_back(
             "virtio_uml.device=" + batteryService.takeConnectionName() + ":" +
             std::to_string(uml::battery::protocol::deviceId));

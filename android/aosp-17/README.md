@@ -101,9 +101,11 @@ switcher so the remaining volume and vibration controls do not instantiate a
 radio-backed media manager. A dedicated Virtio
 battery device reports the Apple host's percentage and charging state through
 the generic Android Health service; hosts without readable battery data report
-an always-present battery at 100 percent and charging. The vendor policy labels
-both the standalone macOS and Kernarium iOS Virtio enumeration paths so the
-stock Health service can read the battery on every Apple product.
+an always-present battery at 100 percent and charging. The battery's sysfs path
+carries its position among the Virtio devices each host composes, so the vendor
+policy labels every position the standalone macOS launcher and the Kernarium
+iOS runtime can give it; a new Virtio device placed before the battery in
+either composer must extend that range.
 
 Both the framework and SettingsProvider defaults disable the non-secure
 keyguard, set the screen-off timeout to the maximum supported value, and keep
