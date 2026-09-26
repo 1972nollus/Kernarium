@@ -11,13 +11,14 @@ drain, the user-mode return loop and the idle wait. None of them told
 lockdep, and um_set_signals_trace(), which UML_SETJMP uses to restore a
 saved state, did not trace either.
 
-Lockdep therefore saw every timer tick, IPI and host signal as running
-with hardirqs enabled, and every lockdep_assert_irqs_disabled() in
-interrupt code warned: ct_irq_enter(), rcu_sched_clock_irq(), the tick
-code, the softirq and call-function paths, and SLUB's freelist update.
-The user-mode return loop also enabled IRQs behind lockdep's back, so
-__local_bh_enable_ip() later warned that they were disabled. The
-irq-context checks were blind as a result.
+Lockdep therefore recorded every timer tick, IPI and host signal as
+running with hardirqs enabled, and every lockdep_assert_irqs_disabled()
+in interrupt code warned: ct_irq_enter(), rcu_sched_clock_irq(), the
+tick code, the softirq and call-function paths, and SLUB's freelist
+update. The user-mode return loop also enabled IRQs behind lockdep's
+back, so __local_bh_enable_ip() later warned that they were disabled.
+Lock usage classification reads the real IRQ state at each acquisition
+and was unaffected, but these false warnings would bury a real one.
 
 Report each such change as the generic wrappers do, a disable after it
 and an enable before it, and trace um_set_signals_trace() as the Linux
