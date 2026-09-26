@@ -9,6 +9,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import importlib.util
 import json
+import struct
 import tempfile
 from pathlib import Path
 from types import ModuleType
@@ -147,7 +148,72 @@ def config_values(kernel_slice: str) -> dict[str, str]:
         "CONFIG_BPF": "y",
         "CONFIG_BPF_SYSCALL": "y",
         "CONFIG_CGROUP_BPF": "y",
+        "CONFIG_DEBUG_INFO_BTF": "y",
     }
+
+
+SHT_PROGBITS = 1
+SHT_STRTAB = 3
+SHF_ALLOC = 2
+
+
+def write_elf(path: Path, sections: list[tuple[str, int, int]]) -> None:
+    """Write an ELF64 file whose named sections each hold 16 bytes."""
+    names = b"\0"
+    name_offsets = []
+    for name, _, _ in sections:
+        name_offsets.append(len(names))
+        names += name.encode("ascii") + b"\0"
+    names_name = len(names)
+    names += b".shstrtab\0"
+    data_offset = 64
+    payload = b""
+    headers = [struct.pack("<IIQQQQIIQQ", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)]
+    for (_, kind, flags), name in zip(sections, name_offsets):
+        headers.append(
+            struct.pack(
+                "<IIQQQQIIQQ",
+                name, kind, flags, 0, data_offset + len(payload), 16, 0, 0, 1, 0,
+            )
+        )
+        payload += b"\xa5" * 16
+    headers.append(
+        struct.pack(
+            "<IIQQQQIIQQ",
+            names_name, SHT_STRTAB, 0, 0, data_offset + len(payload),
+            len(names), 0, 0, 1, 0,
+        )
+    )
+    payload += names
+    section_offset = data_offset + len(payload)
+    header = bytearray(64)
+    header[:7] = b"\x7fELF\x02\x01\x01"
+    struct.pack_into("<Q", header, 40, section_offset)
+    struct.pack_into("<HHH", header, 58, 64, len(headers), len(headers) - 1)
+    path.write_bytes(bytes(header) + payload + b"".join(headers))
+
+
+def require_runtime_image(
+    module: ModuleType,
+    root: Path,
+    label: str,
+    sections: list[tuple[str, int, int]],
+    btf: str,
+    diagnostic: str | None,
+) -> None:
+    image = root / f"{label}.elf"
+    config = root / f"{label}.config"
+    write_elf(image, sections)
+    write_config(config, {"CONFIG_DEBUG_INFO_BTF": btf})
+    try:
+        module.verify_runtime_image(image, config)
+    except SystemExit as error:
+        require(
+            diagnostic is not None and diagnostic in str(error),
+            f"runtime image {label} was rejected for the wrong reason: {error}",
+        )
+    else:
+        require(diagnostic is None, f"runtime image {label} was accepted")
 
 
 def write_config(path: Path, values: dict[str, str]) -> None:
@@ -249,6 +315,7 @@ def main() -> int:
                 "CONFIG_BPF",
                 "CONFIG_BPF_SYSCALL",
                 "CONFIG_CGROUP_BPF",
+                "CONFIG_DEBUG_INFO_BTF",
             ):
                 invalid = dict(expected)
                 invalid[symbol] = "n" if expected[symbol] == "y" else "y"
@@ -260,6 +327,35 @@ def main() -> int:
                     symbol,
                     expected[symbol],
                 )
+
+        text = (".text", SHT_PROGBITS, SHF_ALLOC)
+        btf = (".BTF", SHT_PROGBITS, SHF_ALLOC)
+        require_runtime_image(module, root, "btf", [text, btf], "y", None)
+        require_runtime_image(
+            module,
+            root,
+            "dwarf",
+            [text, btf, (".debug_info", SHT_PROGBITS, 0)],
+            "y",
+            "kernel image carries DWARF sections: .debug_info",
+        )
+        require_runtime_image(
+            module,
+            root,
+            "missing-btf",
+            [text],
+            "y",
+            "kernel config enables BTF but the image has no .BTF contents",
+        )
+        require_runtime_image(
+            module,
+            root,
+            "unallocated-btf",
+            [text, (".BTF", SHT_PROGBITS, 0)],
+            "y",
+            "kernel .BTF section is not allocated",
+        )
+        require_runtime_image(module, root, "no-btf", [text], "n", None)
 
     print("kernel artifact family/slice/page contract verified")
     return 0

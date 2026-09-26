@@ -205,7 +205,7 @@ index 6d15c566a08548ff304d15db2aac3d52794225bd..614f086a760a421d8f258f4827e82c87
  
  int darwin_ipi_idle_fd(void)
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index b5b5897b595b4ce2434738155905a2237bf3c668..0891d8afdf9e5b15c11a059acb623df4b9738087 100644
+index aad9813bd61713b60cdd8b13bd97103c34e179d4..c09922cb6fd70142a1dbc3fa28e44db4a6707d19 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
 @@ -82,6 +82,10 @@
@@ -219,7 +219,7 @@ index b5b5897b595b4ce2434738155905a2237bf3c668..0891d8afdf9e5b15c11a059acb623df4
  #define CREATE_TRACE_POINTS
  #include <linux/sched/rseq_api.h>
  #include <trace/events/sched.h>
-@@ -7034,6 +7038,18 @@ asmlinkage __visible void __sched schedule(void)
+@@ -7032,6 +7036,18 @@ asmlinkage __visible void __sched schedule(void)
  
  	if (!task_is_running(tsk))
  		sched_submit_work(tsk);
@@ -238,7 +238,7 @@ index b5b5897b595b4ce2434738155905a2237bf3c668..0891d8afdf9e5b15c11a059acb623df4
  	__schedule_loop(SM_NONE);
  	sched_update_worker(tsk);
  }
-@@ -7455,6 +7471,17 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
+@@ -7469,6 +7485,17 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
  #if !defined(CONFIG_PREEMPTION) || defined(CONFIG_PREEMPT_DYNAMIC)
  int __sched __cond_resched(void)
  {

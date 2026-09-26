@@ -473,18 +473,32 @@ class Guest:
                 )
 
     def run_command(
-        self, command: str, timeout_seconds: int = 30
+        self,
+        command: str,
+        timeout_seconds: int = 30,
+        *,
+        preamble: str = "",
+        single_write: bool = False,
     ) -> CommandResult:
-        """Run a shell command through the serial console and capture it."""
+        """Run a shell command through the serial console and capture it.
+
+        ``preamble`` is sent ahead of the command as part of the same input;
+        its output is not captured. ``single_write`` delivers all of that input
+        in one host write, so the guest receives it as one burst rather than
+        as the pipe accepts it.
+        """
         token = uuid.uuid4().hex
         begin = f"__UML_COMMAND_BEGIN_{token}__"
         end = f"__UML_COMMAND_END_{token}__"
         wrapped = (
-            f"printf '\\n{begin}\\n'; {command}; rc=$?; "
+            f"{preamble}printf '\\n{begin}\\n'; {command}; rc=$?; "
             f"printf '\\n{end}:%s\\n' \"$rc\"\n"
         )
         start = len(self._transcript)
-        self._write(wrapped)
+        if single_write:
+            self._write_once(wrapped)
+        else:
+            self._write(wrapped)
         match = self._read_until(marker_pattern(end), timeout_seconds, start)
         section = bytes(self._transcript[start : match.start()])
         begin_at = section.rfind(begin.encode())
@@ -580,6 +594,18 @@ class Guest:
                 self._drain()
             if not writable:
                 continue
+
+    def _write_once(self, text: str) -> None:
+        payload = text.encode()
+        try:
+            written = os.write(self._input.fileno(), payload)
+        except BlockingIOError:
+            written = 0
+        if written != len(payload):
+            raise RuntimeError(
+                f"guest console accepted {written} of {len(payload)} bytes "
+                "in one write"
+            )
 
     def _read_until(
         self,

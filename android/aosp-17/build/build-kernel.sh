@@ -14,7 +14,6 @@ REQUIRED_BUILTINS="$ROOT_DIR/android/aosp-17/support/verification/required-kerne
 FORBIDDEN_OPTIONS="$ROOT_DIR/android/aosp-17/support/verification/forbidden-kernel-options.txt"
 TARGET_WRAPPER="$SCRIPT_DIR/toolchain/aarch64-linux-clang.sh"
 HOST_WRAPPER="$SCRIPT_DIR/toolchain/linux-host-clang.sh"
-HOST_COMPAT="$SCRIPT_DIR/toolchain/linux-host-compat.h"
 ELF_VERIFIER="$SCRIPT_DIR/verify-kernel-elf.py"
 
 ACK_WORKSPACE=
@@ -112,7 +111,7 @@ esac
 [ "$JOBS" -gt 0 ] || fail "jobs must be a positive integer"
 
 for input in "$METADATA" "$CONFIG_FRAGMENT" "$PAGE_FRAGMENT" \
-	"$REQUIRED_BUILTINS" "$FORBIDDEN_OPTIONS" "$HOST_COMPAT"; do
+	"$REQUIRED_BUILTINS" "$FORBIDDEN_OPTIONS"; do
 	[ -f "$input" ] || fail "required input is missing: $input"
 done
 for tool in "$TARGET_WRAPPER" "$HOST_WRAPPER" "$ELF_VERIFIER"; do
@@ -142,13 +141,20 @@ BUILD_DIR=$(CDPATH= cd -- "$BUILD_DIR" && pwd -P)
 
 CLANG_ROOT="$ACK_WORKSPACE/prebuilts/clang/host/linux-x86/clang-$UML_KERNEL_CLANG_VERSION"
 CLANG_BIN="$CLANG_ROOT/bin"
+# Host C tools build against the kernel-build-tools musl sysroot and libraries,
+# as Kleaf builds them. Rust proc macros are loaded into the glibc-linked
+# rustc, so their link alone selects the glibc host toolchain again.
+KERNEL_BUILD_TOOLS="$ACK_WORKSPACE/prebuilts/kernel-build-tools"
+MUSL_SYSROOT="$KERNEL_BUILD_TOOLS/sysroots/x86_64-unknown-linux-musl"
+MUSL_LIB="$KERNEL_BUILD_TOOLS/linux_musl-x86/lib64"
+MUSL_INCLUDE="$KERNEL_BUILD_TOOLS/linux_musl-x86/include"
 HOST_TOOLCHAIN_ROOT="$ACK_WORKSPACE/prebuilts/gcc/linux-x86/host/$UML_KERNEL_HOST_GLIBC_TOOLCHAIN"
 HOST_SYSROOT="$HOST_TOOLCHAIN_ROOT/sysroot"
 HOST_GCC_LIB="$HOST_TOOLCHAIN_ROOT/lib/gcc/x86_64-linux/4.8.3"
 HOST_RUNTIME_LIB="$HOST_TOOLCHAIN_ROOT/x86_64-linux/lib64"
 RUST_ROOT="$ACK_WORKSPACE/prebuilts/rust-toolchain/linux-x86/$UML_KERNEL_RUST_VERSION"
 BUILD_TOOLS="$ACK_WORKSPACE/prebuilts/build-tools"
-KERNEL_TOOLS="$ACK_WORKSPACE/prebuilts/kernel-build-tools/linux_musl-x86/bin"
+KERNEL_TOOLS="$KERNEL_BUILD_TOOLS/linux_musl-x86/bin"
 
 MAKE="$BUILD_TOOLS/linux-x86/bin/make"
 M4="$BUILD_TOOLS/linux-x86/bin/m4"
@@ -166,16 +172,27 @@ for tool in "$MAKE" "$M4" "$BINDGEN" "$PAHOLE" "$RUSTC" "$RUSTFMT" \
 done
 [ -d "$HOST_GCC_LIB" ] || fail "host GCC runtime is missing: $HOST_GCC_LIB"
 [ -d "$HOST_RUNTIME_LIB" ] || fail "host glibc runtime is missing: $HOST_RUNTIME_LIB"
+[ -f "$MUSL_SYSROOT/lib/libc.so" ] || fail "host musl sysroot is missing: $MUSL_SYSROOT"
+for library in libelf.so libz-host.so; do
+	[ -f "$MUSL_LIB/$library" ] || fail "host musl library is missing: $MUSL_LIB/$library"
+done
+[ -f "$MUSL_INCLUDE/libelf.h" ] || fail "host libelf headers are missing: $MUSL_INCLUDE"
 [ -d "$RUST_LIB_SRC" ] || fail "Rust library source is missing: $RUST_LIB_SRC"
 
 export UML_ANDROID17_TARGET_CLANG="$CLANG_BIN/clang"
 export UML_ANDROID17_HOST_CLANG="$CLANG_BIN/clang"
-export UML_ANDROID17_HOST_SYSROOT="$HOST_SYSROOT"
-export UML_ANDROID17_HOST_GCC_LIB="$HOST_GCC_LIB"
-export UML_ANDROID17_HOST_COMPAT="$HOST_COMPAT"
+export UML_ANDROID17_HOST_SYSROOT="$MUSL_SYSROOT"
+export UML_ANDROID17_HOST_INCLUDE="$MUSL_INCLUDE"
 export LIBCLANG_PATH="$CLANG_ROOT/lib"
 TOOL_PATH="$BUILD_TOOLS/path/linux-x86:$BUILD_TOOLS/linux-x86/bin:$KERNEL_TOOLS:$CLANG_BIN:$RUST_ROOT/bin:$PATH"
-HOST_LINK_FLAGS="-Wl,-rpath-link,$HOST_RUNTIME_LIB -L$HOST_RUNTIME_LIB -L$HOST_GCC_LIB"
+# The kernel-build-tools zlib is named libz-host.so; resolve_btfids links -lz.
+HOST_LINK_ALIASES="$BUILD_DIR/host-link-aliases"
+mkdir -p -- "$HOST_LINK_ALIASES"
+ln -sfn -- "$MUSL_LIB/libz-host.so" "$HOST_LINK_ALIASES/libz.so"
+HOST_LINK_FLAGS="-L$MUSL_LIB -L$HOST_LINK_ALIASES -Wl,-rpath,$MUSL_LIB"
+PROCMACRO_LINK_FLAGS="--target=x86_64-unknown-linux-gnu --sysroot=$HOST_SYSROOT \
+-B$HOST_GCC_LIB -rtlib=libgcc -Wl,-rpath-link,$HOST_RUNTIME_LIB \
+-L$HOST_RUNTIME_LIB -L$HOST_GCC_LIB"
 
 run_make()
 {
@@ -185,6 +202,9 @@ run_make()
 		"DARWIN_SDKROOT=$DARWIN_SDK" \
 		"CC=$TARGET_WRAPPER" "HOSTCC=$HOST_WRAPPER" \
 		"HOSTLDFLAGS=$HOST_LINK_FLAGS" \
+		"PROCMACROLDFLAGS=$PROCMACRO_LINK_FLAGS" \
+		"HOSTRUSTFLAGS=--target x86_64-unknown-linux-musl" \
+		HOSTPKG_CONFIG=false \
 		"LD=$CLANG_BIN/ld.lld" "AR=$CLANG_BIN/llvm-ar" \
 		"NM=$CLANG_BIN/llvm-nm" "OBJCOPY=$CLANG_BIN/llvm-objcopy" \
 		"OBJDUMP=$CLANG_BIN/llvm-objdump" \

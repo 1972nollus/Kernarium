@@ -8,10 +8,10 @@ Subject: [PATCH] rust: bind ashmem personality constant explicitly
  1 file changed, 1 insertion(+)
 
 diff --git a/rust/bindings/bindings_helper.h b/rust/bindings/bindings_helper.h
-index ead4260dc6289fe547ae7dfadb49c625b813558c..0959692d02035efc561fc48f2befddb61a32dbfb 100644
+index 5e226bc11ff218a71352b6e96aae3a9f4ac1f5cb..34bc037d664421434e318c394ae6d70ee2274b32 100644
 --- a/rust/bindings/bindings_helper.h
 +++ b/rust/bindings/bindings_helper.h
-@@ -70,6 +70,7 @@
+@@ -71,6 +71,7 @@
  #include <linux/of_device.h>
  #include <linux/pci.h>
  #include <linux/page_size_compat.h>
