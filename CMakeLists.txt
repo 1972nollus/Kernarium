@@ -279,38 +279,14 @@ uml_write_architecture_manifest()
 # This structural gate is part of every Apple product configuration, including
 # iOS builds with behavioral tests disabled. The File API reply is produced by
 # the completed configure and the target never reconfigures its own tree.
-get_property(_uml_audit_test_suites GLOBAL PROPERTY
-    UML_AUDIT_EXPECTED_TEST_SUITES)
-get_property(_uml_audit_conditional_tests GLOBAL PROPERTY
-    UML_AUDIT_REQUIRED_CONDITIONAL_TESTS)
-if(_uml_audit_test_suites)
-    add_custom_target(architecture-audit
-        COMMAND ${CMAKE_COMMAND}
-            -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
-            -DSOURCE_SIZE_REPORT=${CMAKE_BINARY_DIR}/reports/source-sizes.tsv
-            -P ${PROJECT_SOURCE_DIR}/scripts/audit-source-tree.cmake
-        COMMAND ${CMAKE_COMMAND}
-            -DBUILD_ROOT=${CMAKE_BINARY_DIR}
-            -P ${PROJECT_SOURCE_DIR}/scripts/audit-cmake-file-api.cmake
-        COMMAND ${CMAKE_COMMAND}
-            -DBUILD_ROOT=${CMAKE_BINARY_DIR}
-            -DMANIFEST=${PROJECT_SOURCE_DIR}/tests/test-manifest.tsv
-            -DEXPECTED_SUITES=${_uml_audit_test_suites}
-            -DREQUIRED_CONDITIONAL_TESTS=${_uml_audit_conditional_tests}
-            -P ${PROJECT_SOURCE_DIR}/scripts/audit-test-manifest.cmake
-        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-        COMMENT "Auditing host source-tree architecture"
-        VERBATIM)
-else()
-    add_custom_target(architecture-audit
-        COMMAND ${CMAKE_COMMAND}
-            -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
-            -DSOURCE_SIZE_REPORT=${CMAKE_BINARY_DIR}/reports/source-sizes.tsv
-            -P ${PROJECT_SOURCE_DIR}/scripts/audit-source-tree.cmake
-        COMMAND ${CMAKE_COMMAND}
-            -DBUILD_ROOT=${CMAKE_BINARY_DIR}
-            -P ${PROJECT_SOURCE_DIR}/scripts/audit-cmake-file-api.cmake
-        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-        COMMENT "Auditing host source-tree architecture"
-        VERBATIM)
-endif()
+add_custom_target(architecture-audit
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
+        -DSOURCE_SIZE_REPORT=${CMAKE_BINARY_DIR}/reports/source-sizes.tsv
+        -P ${PROJECT_SOURCE_DIR}/scripts/audit-source-tree.cmake
+    COMMAND ${CMAKE_COMMAND}
+        -DBUILD_ROOT=${CMAKE_BINARY_DIR}
+        -P ${PROJECT_SOURCE_DIR}/scripts/audit-cmake-file-api.cmake
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    COMMENT "Auditing host source-tree architecture"
+    VERBATIM)

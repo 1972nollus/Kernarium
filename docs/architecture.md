@@ -496,11 +496,10 @@ receive unique run identities so management-console paths do not collide.
 ## Tests and structural audit
 
 Every first-party CTest has one primary suite: `unit`, `tooling`, or
-`integration`. `tests/test-manifest.tsv` is the exact registration and owner
-inventory.
+`integration`, set by the `cmake/UmlTesting.cmake` helper that registers it.
 
 `architecture-audit` checks the CMake File API graph, dependency cycles,
-implementation includes, source ownership, test manifests, and advisory
+implementation includes, source ownership, test registration, and advisory
 source-size metadata. It does not prove performance, generated code shape, a
 kernel boot, or guest behavior; those require their owning validation.
 

@@ -154,7 +154,6 @@ skip, exclude, or route around a workload that encounters `SIGILL`; diagnose
 and implement the missing instruction semantics before continuing the campaign.
 
 Every CTest has exactly one primary suite: `unit`, `tooling`, or `integration`.
-Keep the current-state `tests/test-manifest.tsv` synchronized.
 
 Every wait on a long-running run, agent, or external service has a hard time
 bound: `timeout` on the process, or a deadline inside the polling loop, chosen

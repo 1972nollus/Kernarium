@@ -93,24 +93,6 @@ if(UML_ENABLE_RUNTIME_PROFILING)
         TIMEOUT 30)
 endif()
 
-get_filename_component(_uml_tooling_fixture_parent
-    "${CMAKE_BINARY_DIR}" DIRECTORY)
-get_filename_component(_uml_tooling_build_name
-    "${CMAKE_BINARY_DIR}" NAME)
-set(_uml_test_manifest_audit_root
-    "${_uml_tooling_fixture_parent}/test-manifest-audit-fixture-${_uml_tooling_build_name}")
-
-uml_add_tooling_test(
-    NAME test-manifest-suite-label-policy
-    COMMAND ${CMAKE_COMMAND}
-        -DAUDIT_SCRIPT=${PROJECT_SOURCE_DIR}/scripts/audit-test-manifest.cmake
-        -DTEST_ROOT=${_uml_test_manifest_audit_root}
-        -DREGISTRATION_POLICY_MODULE=${PROJECT_SOURCE_DIR}/cmake/TestRegistrationPolicy.cmake
-        -DUML_TESTING_MODULE=${PROJECT_SOURCE_DIR}/cmake/UmlTesting.cmake
-        -P ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_test_manifest_audit.cmake
-    LABELS audit
-    TIMEOUT 30)
-
 uml_add_tooling_test(
     NAME symmetric-engine-edge-audit
     COMMAND ${Python3_EXECUTABLE}

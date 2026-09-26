@@ -445,8 +445,8 @@ uml_audit_protected_engine_source_contracts(
 list(APPEND VIOLATIONS ${PROTECTED_ENGINE_SOURCE_VIOLATIONS})
 
 # All first-party CTest registrations must pass through the suite helpers so
-# manifest ownership, labels, fixture policy, and aggregate binary dependencies
-# cannot be bypassed by a raw add_test() in another directory.
+# suite labels, fixture policy, and aggregate binary dependencies cannot be
+# bypassed by a raw add_test() in another directory.
 include("${SOURCE_ROOT}/cmake/TestRegistrationPolicy.cmake")
 uml_find_raw_test_registrations(
     SOURCE_ROOT "${SOURCE_ROOT}"

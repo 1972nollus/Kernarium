@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Summarise CTest JUnit timings by test-manifest owner and by name family.
+"""Summarise CTest JUnit timings by owning directory and by name family.
 
 A suite's wall clock is only actionable once it is attributed. This joins one
-or more `ctest --output-junit` files with `tests/test-manifest.tsv` and prints
-the time each owning directory and each test-name family costs, plus the
-slowest individual tests.
+or more `ctest --output-junit` files with the registrations of the build tree
+that produced them and prints the time each owning directory and each
+test-name family costs, plus the slowest individual tests.
 
-    tools/ctest-time-breakdown.py --junit 16k=unit-16k.xml --junit 4k=unit-4k.xml
+    tools/ctest-time-breakdown.py --test-dir .build/presets/macos-unit \
+        --junit 16k=unit-16k.xml --junit 4k=unit-4k.xml
 
-Owner groups come from the manifest's owner column relative to `tests/`; a name
-family is the first `--family-depth` dash-separated components of the test name.
-Tests absent from the manifest are reported under `(unregistered)` so a missing
-registration stays visible instead of silently vanishing from the totals.
+A test's owner is the CMake file that registered it, relative to
+`--owner-root`; a name family is the first `--family-depth` dash-separated
+components of the test name. Tests the build tree does not register are
+reported under `(unregistered)` so they stay visible in the totals.
 """
 
 from __future__ import annotations
@@ -20,8 +21,11 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import json
+import os
 import pathlib
 import statistics
+import subprocess
 import sys
 import xml.etree.ElementTree as ElementTree
 
@@ -31,17 +35,32 @@ UNREGISTERED = "(unregistered)"
 Case = tuple[str, float, str, str]
 
 
-def read_manifest(path: pathlib.Path) -> dict[str, str]:
-    """Map every registered test name to its owner path."""
+def read_owners(test_dir: pathlib.Path, source_root: pathlib.Path) -> dict[str, str]:
+    """Map every test the build tree registers to the CMake file that did so."""
+    listing = json.loads(
+        subprocess.run(
+            ["ctest", "--show-only=json-v1", "--test-dir", str(test_dir)],
+            check=True,
+            stdout=subprocess.PIPE,
+            text=True,
+        ).stdout
+    )
+    graph = listing["backtraceGraph"]
     owners: dict[str, str] = {}
-    with path.open(encoding="utf-8") as manifest:
-        for line_number, line in enumerate(manifest, start=1):
-            row = line.rstrip("\n").split("\t")
-            if line_number == 1 and row[0] == "name":
-                continue
-            if len(row) < 2 or not row[0]:
-                continue
-            owners[row[0]] = row[1]
+    for test in listing["tests"]:
+        node = test.get("backtrace")
+        owner = None
+        # The innermost frames are the shared suite helpers; the owner is
+        # the first caller outside cmake/.
+        while node is not None:
+            frame = graph["nodes"][node]
+            path = os.path.relpath(graph["files"][frame["file"]], source_root)
+            if not path.startswith("cmake" + os.sep):
+                owner = path
+                break
+            node = frame.get("parent")
+        if owner is not None:
+            owners[test["name"]] = owner
     return owners
 
 
@@ -117,7 +136,7 @@ def report(
     by_owner: dict[str, list[float]] = {}
     for name, seconds, _, _ in cases:
         by_owner.setdefault(
-            owner_group(owners.get(name), arguments.manifest_root), []
+            owner_group(owners.get(name), arguments.owner_root), []
         ).append(seconds)
     emit_table(f"{label} by owner directory", by_owner, total)
 
@@ -126,7 +145,7 @@ def report(
         members = [
             (name, seconds)
             for name, seconds, _, _ in cases
-            if owner_group(owners.get(name), arguments.manifest_root) == dominant
+            if owner_group(owners.get(name), arguments.owner_root) == dominant
         ]
         by_family: dict[str, list[float]] = {}
         for name, seconds in members:
@@ -189,13 +208,19 @@ def main(argv: list[str]) -> int:
         help="a ctest --output-junit file; repeat for several profiles",
     )
     parser.add_argument(
-        "--manifest",
+        "--test-dir",
         type=pathlib.Path,
-        default=pathlib.Path("tests/test-manifest.tsv"),
-        help="test manifest to join against (default: %(default)s)",
+        required=True,
+        help="configured build tree whose registrations name each test's owner",
     )
     parser.add_argument(
-        "--manifest-root",
+        "--source-root",
+        type=pathlib.Path,
+        default=pathlib.Path("."),
+        help="source tree the owners are relative to (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--owner-root",
         default="tests/unit",
         help="owner prefix stripped before grouping (default: %(default)s)",
     )
@@ -221,7 +246,7 @@ def main(argv: list[str]) -> int:
     )
     arguments = parser.parse_args(argv)
 
-    owners = read_manifest(arguments.manifest)
+    owners = read_owners(arguments.test_dir, arguments.source_root.resolve())
     everything: list[Case] = []
     for entry in arguments.junit:
         label, separator, path = entry.partition("=")
