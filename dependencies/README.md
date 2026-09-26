@@ -187,11 +187,14 @@ ordinary dependencies keep the immediate path, the worker stays off, and
 `vkQueueSubmit` never waits for the GPU work its batch depends on. A binary
 semaphore wait is pending by definition because its signal must have been
 submitted first. That distinction is what keeps a gated batch from blocking
-the caller that has to release it. A timeline wait whose signal is submitted
-later to the same queue remains unsupported: the device exposes one queue and
-submits in order. CPU waits preserve their absolute deadlines and observe
-device loss so pending submissions and queue drains can shut down before
-device resources are released.
+the caller that has to release it. Once the worker runs, a binary semaphore's
+payload moves to the batch waiting on it when the worker reaches that batch,
+after any signal queued ahead of it, never inside `vkQueueSubmit`, where a
+still-queued signal would land on a fresh payload. A timeline wait whose
+signal is submitted later to the same queue remains unsupported: the device
+exposes one queue and submits in order. CPU waits preserve their absolute
+deadlines and observe device loss so pending submissions and queue drains can
+shut down before device resources are released.
 
 A render pass clear depth reaches Metal already rounded to the attachment
 format's nearest representable value and offset inside that texel's interval.
