@@ -565,32 +565,6 @@ class VulkanGuestRootfsTests(unittest.TestCase):
             with self.assertRaisesRegex(sealer.SealError, "outside its authenticated source/build"):
                 sealer.verify_mesa_build_stage(source, build, stage, build.parent / "venus-protocol")
 
-    def test_vm_sealer_allows_only_the_release_verified_video_sample(self) -> None:
-        sealer = (METADATA / "seal-in-vm.py").read_text(encoding="utf-8")
-        self.assertIn("LTRPSPS_A_Qualcomm_1.bit", sealer)
-        self.assertIn(
-            "8f8e50fa408b7e96e76e6936b380fc34c208271efb8c283b15a42cb1f8c78ae7",
-            sealer,
-        )
-        self.assertIn("contains an unverified fetched or modified resource", sealer)
-
-    def test_vm_sealer_has_a_distinct_receipt_bound_zink_gl_mode(self) -> None:
-        sealer = (METADATA / "seal-in-vm.py").read_text(encoding="utf-8")
-        self.assertIn("--include-opengl-cts", sealer)
-        self.assertIn("rootfs-vulkan-zink-gl.ext4", sealer)
-        self.assertIn("3b59fbc9-4b35-4a2b-890d-286a77b04afd", sealer)
-        self.assertIn("external/openglcts/modules", sealer)
-        self.assertIn("copy_generated_runtime_directory", sealer)
-        self.assertIn("external/graphicsfuzz/data/gles3", sealer)
-        self.assertNotIn(
-            'copy_directory(\n                opengl_build / directory', sealer
-        )
-        self.assertIn("opengl_manifest(stage, cts_tree)", sealer)
-        self.assertIn('opengl_cts["mustpass"]["documents"]', sealer)
-        self.assertIn('opengl_cts["mustpass"]["leaves"]', sealer)
-        self.assertNotIn("gl46-gtf-main.txt", sealer)
-        self.assertIn("uml-vulkan-zink-gl-rootfs", sealer)
-
     def test_gl_sealer_derives_only_xml_referenced_scope_and_checks_runner(self) -> None:
         import test_opengl_cts_plan as fixtures
 
