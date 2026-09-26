@@ -14,25 +14,28 @@ uml_add_unit_test(
     LABELS gpu;vulkan)
 
 # The balloon follows host GPU memory that Metal's allocated size omits.
-add_executable(uml_gpu_host_graphics_footprint_tests
-    host_graphics_footprint_tests.mm)
-target_link_libraries(uml_gpu_host_graphics_footprint_tests PRIVATE
-    UML::BalloonDevice
-    UML::HostGpuMemory
-    "-framework Metal")
-target_compile_features(uml_gpu_host_graphics_footprint_tests PRIVATE cxx_std_20)
-set_target_properties(uml_gpu_host_graphics_footprint_tests PROPERTIES
-    OBJCXX_STANDARD 20)
-target_compile_options(uml_gpu_host_graphics_footprint_tests PRIVATE
-    $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
-    -Wall -Wextra -Werror)
-uml_add_unit_test(
-    NAME gpu-host-graphics-footprint
-    COMMAND uml_gpu_host_graphics_footprint_tests
-    LABELS gpu
-    TIMEOUT 60)
-set_tests_properties(gpu-host-graphics-footprint PROPERTIES
-    SKIP_RETURN_CODE 77)
+# Both libraries exist only in GPU builds.
+if(TARGET uml_balloon_device AND TARGET uml_host_gpu_memory)
+    add_executable(uml_gpu_host_graphics_footprint_tests
+        host_graphics_footprint_tests.mm)
+    target_link_libraries(uml_gpu_host_graphics_footprint_tests PRIVATE
+        UML::BalloonDevice
+        UML::HostGpuMemory
+        "-framework Metal")
+    target_compile_features(uml_gpu_host_graphics_footprint_tests PRIVATE cxx_std_20)
+    set_target_properties(uml_gpu_host_graphics_footprint_tests PROPERTIES
+        OBJCXX_STANDARD 20)
+    target_compile_options(uml_gpu_host_graphics_footprint_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(
+        NAME gpu-host-graphics-footprint
+        COMMAND uml_gpu_host_graphics_footprint_tests
+        LABELS gpu
+        TIMEOUT 60)
+    set_tests_properties(gpu-host-graphics-footprint PROPERTIES
+        SKIP_RETURN_CODE 77)
+endif()
 
 if(TARGET uml_gpu_kosmickrisp_capability_probe)
     add_executable(uml_gpu_kosmickrisp_external_image_alias_tests
