@@ -425,7 +425,6 @@ EOF
 		systemd-networkd.service systemd-resolved.service \
 		serial-getty@hvc0.service
 	as_root ln -sfn /run/systemd/resolve/stub-resolv.conf "$root/etc/resolv.conf"
-	as_root truncate -s 0 "$root/etc/machine-id"
 }
 
 prune_debian()
@@ -443,6 +442,11 @@ prune_debian()
 		"$root/usr/share/lintian" "$root/usr/share/doc-base"
 	as_root find "$root/usr/share/locale" -mindepth 1 -maxdepth 1 \
 		! -name 'en' ! -name 'en_*' -exec rm -rf -- {} +
+	# Every guest generates its own machine ID at first boot. The D-Bus copy
+	# written during the package installs must not survive as a file, because
+	# systemd would adopt it and give every guest the same ID.
+	as_root truncate -s 0 "$root/etc/machine-id"
+	as_root ln -sfn /etc/machine-id "$root/var/lib/dbus/machine-id"
 }
 
 debootstrap_root()
