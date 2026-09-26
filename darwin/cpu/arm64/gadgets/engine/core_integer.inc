@@ -1740,15 +1740,8 @@ extract_sources 1, 1, x_s
 scalar_entry conditional_select_fast_\name\()_\suffix, \forward, 9, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none, 1
 	ldr x8, [_stream], #8
 	ubfx x9, x8, #0, #16
-#if UML_GADGET_SCALAR_FORWARDING
 	scalar_load \forward, 1, x15, 10, 8, 16
 	scalar_load \forward, 2, x16, 11, 8, 32
-#else
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	ldr x15, [_cpu, x10]
-	ldr x16, [_cpu, x11]
-#endif
 	msr nzcv, x27
 	.if \bits64
 		.if \operation == 0
@@ -2163,12 +2156,10 @@ scalar_entry bitfield_\suffix, \forward, 13, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none
 	.else
 	scalar_load \forward, 1, x15, 10, 8, 16, 16, 0, _cpu
 	.endif
-#if UML_GADGET_SCALAR_FORWARDING
 	.if \operation == 1
 	/* Capture the old destination before the result overwrites x0. */
 	scalar_load \forward, 2, x6, 9, 8, 0
 	.endif
-#endif
 	.if !\bits64
 	mov w15, w15
 	.endif
@@ -2189,10 +2180,6 @@ scalar_entry bitfield_\suffix, \forward, 13, .Lsd\@, .Lsn\@, .Lsm\@, scalar_none
 	tst x6, #1
 	csetm x6, ne
 	.elseif \operation == 1
-#if !UML_GADGET_SCALAR_FORWARDING
-	and x9, x8, #0xffff
-	ldr x6, [_cpu, x9]
-#endif
 	bic x7, x6, x14
 	orr _scalar_x16, _scalar_x16, x7
 	.else
@@ -2234,54 +2221,24 @@ bitfield_sources 2, 1, x_u
 	.set .Lsn\@, scalar_offset0
 scalar_entry bit_reverse_count_\suffix, \forward, 14, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
 	ldr x9, [_stream], #8
-#if UML_GADGET_SCALAR_FORWARDING
 	lsr x11, x9, #16
 	scalar_load \forward, 1, x12, 10, 9, 0
-#else
-	and x10, x9, #0xffff
-	lsr x11, x9, #16
-	ldr x12, [_cpu, x10]
-#endif
 	.if \native
 		.if \bits64
 			.if \operation == 6
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0xdac01980 /* ctz x0, x12 */
-#else
-	.inst 0xdac0198d /* ctz _scalar_x13, x12 */
-#endif
 			.elseif \operation == 7
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0xdac01d80 /* cnt x0, x12 */
-#else
-	.inst 0xdac01d8d /* cnt _scalar_x13, x12 */
-#endif
 			.else
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0xdac02180 /* abs x0, x12 */
-#else
-	.inst 0xdac0218d /* abs _scalar_x13, x12 */
-#endif
 			.endif
 		.else
 			.if \operation == 6
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0x5ac01980 /* ctz w0, w12 */
-#else
-	.inst 0x5ac0198d /* ctz _scalar_w13, w12 */
-#endif
 			.elseif \operation == 7
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0x5ac01d80 /* cnt w0, w12 */
-#else
-	.inst 0x5ac01d8d /* cnt _scalar_w13, w12 */
-#endif
 			.else
-	#if UML_GADGET_SCALAR_FORWARDING
 	.inst 0x5ac02180 /* abs w0, w12 */
-#else
-	.inst 0x5ac0218d /* abs _scalar_w13, w12 */
-#endif
 			.endif
 		.endif
 	.elseif \bits64

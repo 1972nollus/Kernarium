@@ -250,18 +250,16 @@ unattended run.
 
 ## Gadget forwarding controls
 
-Scalar and SIMD/FP forwarding default to ON.
-Set the two forwarding options explicitly for A/B controls. Existing CMake
-caches retain their selected values when source defaults change.
+Scalar and SIMD/FP forwarding are always built; `BuildOptions` selects them per
+program, so controls compare forwarding in one binary.
 
-Build the manual `uml_scalar_ceiling_bench` target with
-`UML_GADGET_SCALAR_FORWARDING=ON`. Its sources live in `scalar_ceiling/`,
-separately from the freestanding guest probes. The production builder
-translates the identical A64 bodies used by the native control. Same-binary forwarding-off/on runs share the stream, CPU-state, TLB,
-and link addresses; independent controls require byte-identical streams.
-This isolates operand forwarding from code and data layout changes. The
-default sample executes 800 million useful
-instructions; six repetitions alternate execution order and verify results.
+The manual `uml_scalar_ceiling_bench` target has its sources in
+`scalar_ceiling/`, separately from the freestanding guest probes. The
+production builder translates the identical A64 bodies used by the native
+control. Forwarding-off and forwarding-on runs share the stream, CPU-state,
+TLB, and link addresses, which isolates operand forwarding from code and data
+layout changes. The default sample executes 800 million useful instructions;
+six repetitions alternate execution order and verify results.
 
 The ideal loop enters the gadget engine once, executes entirely in precompiled
 gadgets, and exits once. Its private zero-retirement loop link suppresses
@@ -271,14 +269,6 @@ the measured cost. This is an ideal scalar-workload ceiling, not a universal
 application/native ratio. The same two sources also compile native-only on
 AArch64 Linux; that binary can run through `run_guest_command_bench.py` for
 the real-guest comparison. See the executable's `--help` for workload selection.
-
-`UML_GADGET_VECTOR_FORWARDING=ON` independently enables adjacent SIMD/FP
-forwarding. For application-speed comparisons, keep sampling disabled and
-compare matched builds with neither option, scalar only, and scalar plus vector
-forwarding. `run_guest_geekbench.py --cpus 4` runs both
-single-core and multi-core sets by default; omit an iteration override for
-Geekbench's default workload sizing. Alternate or reverse run order and retain
-individual results rather than interpreting one score as a stable gain.
 
 ## Execution histogram
 

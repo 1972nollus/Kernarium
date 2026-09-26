@@ -280,8 +280,7 @@
     target_compile_definitions(
         uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
         UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
-        UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
-        UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>)
+        UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>)
     target_compile_options(
         uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
         -Wall -Wextra -Werror)
@@ -1021,9 +1020,6 @@
         UML::CpuContract uml_arm64_engine_test_support)
     target_include_directories(uml_arm64_gadget_dependency_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_definitions(uml_arm64_gadget_dependency_tests PRIVATE
-        UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>
-        UML_GADGET_VECTOR_FORWARDING=$<BOOL:${UML_GADGET_VECTOR_FORWARDING}>)
     target_compile_options(uml_arm64_gadget_dependency_tests PRIVATE -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-dependencies COMMAND uml_arm64_gadget_dependency_tests)
 

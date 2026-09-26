@@ -100,10 +100,8 @@ void scalar_matrix()
 					std::pmr::get_default_resource(), {}, {.scalar_forwarding = false});
 				require(enabled.complete && disabled.complete);
 				require(enabled.program.words().size() == disabled.program.words().size());
-#if UML_GADGET_SCALAR_FORWARDING
 				if (mask != 0)
 					require(enabled.program.words()[2] == g::scalar_access(disabled.program.words().subspan(2, 2)).contract->entries[mask]);
-#endif
 				for (unsigned trial = 0; trial < 4; ++trial) {
 					a::CpuState expected{};
 					for (auto &value : expected.registers) value = random_word(seed);
@@ -158,7 +156,6 @@ void undeclared_boundary()
 		actual.nzcv == expected.nzcv);
 }
 
-#if UML_GADGET_SCALAR_FORWARDING
 g::ScalarAccess access_for(std::uint32_t instruction)
 {
 	const std::array code{instruction};
@@ -183,15 +180,11 @@ void catalog()
 		for (unsigned i = 0; i < contract.sources.size(); ++i)
 			if (contract.sources[i] != g::scalar_no_register) available |= 1U << i;
 		for (unsigned mask = 1; mask < 8; ++mask) {
-#if UML_GADGET_SCALAR_FORWARDING
 			require(bool(contract.entries[mask]) == ((available & mask) == mask));
 			if (contract.entries[mask]) {
 				require(entries.insert(contract.entries[mask]).second);
 				++variants;
 			}
-#else
-			require(contract.entries[mask] == 0);
-#endif
 		}
 	}
 	require(g::scalar_contracts().size() > 1000);
@@ -322,7 +315,6 @@ void broad_matrix()
 	std::printf("broad scalar matrix: %zu reference/on/off comparisons across %zu families\n",
 		comparisons, families.size());
 }
-#endif
 
 void linked_counts()
 {
@@ -373,10 +365,8 @@ void taken_prefix()
 
 int main()
 {
-#if UML_GADGET_SCALAR_FORWARDING
 	catalog();
 	broad_matrix();
-#endif
 	scalar_matrix();
 	constant_boundary();
 	undeclared_boundary();

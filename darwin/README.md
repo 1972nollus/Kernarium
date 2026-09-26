@@ -150,8 +150,8 @@ links remain ISA-specific. Cached x86 programs
 release spare decoder and native-stream capacity before publication. Gadget
 executors do not share translations; G166 records why.
 
-The default-on `UML_GADGET_SCALAR_FORWARDING` build keeps one write-through scalar
-result in host `x0` between adjacent declared gadgets. Assembly templates emit
+Scalar forwarding keeps one write-through scalar result in host `x0` between
+adjacent declared gadgets. Assembly templates emit
 both immutable operand contracts and precompiled source-mask variants; the
 builder selects a variant from the actual decoded entry, not an opcode-pair
 whitelist. Canonical GPR/SP stores remain unchanged. Arithmetic, logical,
@@ -161,10 +161,10 @@ register. Unsupported entries, fused decoder groups, branches, and block
 boundaries end the chain. Pair results and writeback-load results are not
 exported. There are no runtime register tags or executable-memory writes.
 
-The independent, default-on `UML_GADGET_VECTOR_FORWARDING` option applies the same
-template-owned selection to SIMD/FP results naturally produced in host `v2`.
-Arithmetic, logic, comparisons, widening/narrowing, reductions, and
-accumulator templates declare their source masks. Consumers capture all
+Vector forwarding applies the same template-owned selection to SIMD/FP results
+naturally produced in host `v2`. Arithmetic, logic, comparisons,
+widening/narrowing, reductions, and accumulator templates declare their source
+masks. Consumers capture all
 forwarded inputs before overwriting `v2`; narrow reads retain architectural
 upper-bit clearing, and canonical vector stores remain write-through. Declared
 software fallbacks restore the complete result in `v2` on their cold return
@@ -172,10 +172,10 @@ path. Undeclared entries and block/link boundaries invalidate residency. Vector
 memory values and templates producing results in other scratch registers are
 not exported. This is not a persistent guest-vector register cache.
 
-Both forwarding options can be disabled independently for controls or code-size
-tradeoffs. With both options disabled, the original gadget text is unchanged.
-The default policy does not imply a general application speedup: measured
-gains are workload-dependent and the forwarding bank is larger.
+`BuildOptions` can disable either kind per program, which is how tests and the
+scalar ceiling bench compare forwarding in one binary. Forwarding does not imply
+a general application speedup: measured gains are workload-dependent and the
+forwarding bank is larger.
 
 `UML_GADGET_EXECUTION_HISTOGRAM` is a default-off diagnostic build. A threaded
 counter gadget indexes a table keyed by the exact (predecessor, entry) pair the

@@ -11,8 +11,7 @@ if(UML_TARGET_MACOS)
     target_include_directories(uml_scalar_ceiling_bench PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin ${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_definitions(uml_scalar_ceiling_bench PRIVATE
-        UML_SCALAR_CEILING_GADGETS=1
-        UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>)
+        UML_SCALAR_CEILING_GADGETS=1)
     target_compile_options(uml_scalar_ceiling_bench PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 endif()

@@ -133,14 +133,6 @@ option(UML_GADGET_EXECUTION_HISTOGRAM
     "Count executed gadget entries (diagnostic builds only)"
     OFF)
 
-option(UML_GADGET_SCALAR_FORWARDING
-    "Forward adjacent write-through scalar results within gadget blocks"
-    ON)
-
-option(UML_GADGET_VECTOR_FORWARDING
-    "Forward adjacent write-through SIMD/FP results within gadget blocks"
-    ON)
-
 # G107's bounded successor fetch applies only to the 32 non-faulting
 # ADD/SUB-immediate entries whose register and stream contract can safely load
 # the next gadget together with their operand. Focused and full Geekbench
@@ -254,8 +246,6 @@ target_compile_options(uml_arm64_gadgets PRIVATE
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(uml_arm64_gadgets PRIVATE
     UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
-    UML_GADGET_SCALAR_FORWARDING=$<BOOL:${UML_GADGET_SCALAR_FORWARDING}>
-    UML_GADGET_VECTOR_FORWARDING=$<BOOL:${UML_GADGET_VECTOR_FORWARDING}>
     UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST=$<BOOL:${UML_GADGET_ADD_SUB_IMMEDIATE_SUCCESSOR_HOIST}>
     UML_GADGET_INPLACE_IMMEDIATE=$<BOOL:${UML_GADGET_INPLACE_IMMEDIATE}>
     UML_GADGET_INPLACE_MEMORY=$<BOOL:${UML_GADGET_INPLACE_MEMORY}>

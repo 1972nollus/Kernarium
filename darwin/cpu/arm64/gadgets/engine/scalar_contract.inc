@@ -2,7 +2,6 @@
 /* One write-through result in x0. It is live only between declared adjacent
  * producers/consumers. Templates emit ordinary bodies, source-mask variants,
  * and immutable operand contracts. No runtime checks or executable writes. */
-#if UML_GADGET_SCALAR_FORWARDING
 _scalar_x7 .req x0
 _scalar_w7 .req w0
 _scalar_x11 .req x0
@@ -16,21 +15,6 @@ _scalar_x15 .req x0
 _scalar_w15 .req w0
 _scalar_x16 .req x0
 _scalar_w16 .req w0
-#else
-_scalar_x7 .req x7
-_scalar_w7 .req w7
-_scalar_x11 .req x11
-_scalar_x12 .req x12
-_scalar_w12 .req w12
-_scalar_x13 .req x13
-_scalar_w13 .req w13
-_scalar_x14 .req x14
-_scalar_w14 .req w14
-_scalar_x15 .req x15
-_scalar_w15 .req w15
-_scalar_x16 .req x16
-_scalar_w16 .req w16
-#endif
 
 /* First stream operand: shift[5:0], width[11:6], byte scaling[13:12].
  * Bit 15 denotes a constant CpuState offset; 0xffff denotes no operand. */
@@ -44,7 +28,6 @@ _scalar_w16 .req w16
 .set scalar_register16, (3 << 12) | (5 << 6) | 16
 .set scalar_sp, 0x8000 | UML_GADGET_CPU_SP
 
-#if UML_GADGET_SCALAR_FORWARDING
 #if __APPLE__
 .pushsection __DATA_CONST,__gadget_scalar
 #else
@@ -54,18 +37,13 @@ _scalar_w16 .req w16
 .globl NAME(uml_arm64_scalar_contract_begin)
 NAME(uml_arm64_scalar_contract_begin):
 .popsection
-#endif
 
 .macro scalar_pointer name, mask, sources
-#if UML_GADGET_SCALAR_FORWARDING
  .if (\mask & \sources) == \mask
  .quad NAME(uml_arm64_gadget_\name\()_forward_\mask)
  .else
  .quad 0
  .endif
-#else
- .quad 0
-#endif
 .endm
 
 /* Memory addressing sometimes also needs the decoded offset for writeback. */
@@ -106,7 +84,6 @@ NAME(uml_arm64_scalar_contract_begin):
 .macro scalar_entry name, forward, family, destination, first=scalar_none, second=scalar_none, third=scalar_none, words=1
  .if \forward == 0
  gadget \name
-#if UML_GADGET_SCALAR_FORWARDING
  .set .Lscalar_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
 #if __APPLE__
  .pushsection __DATA_CONST,__gadget_scalar
@@ -125,7 +102,6 @@ NAME(uml_arm64_scalar_contract_begin):
  .short \family, \words
  .long 0
  .popsection
-#endif
  .else
  gadget \name\()_forward_\forward
  .endif
@@ -135,7 +111,6 @@ NAME(uml_arm64_scalar_contract_begin):
  * section preserves the original bank's entry sizes and cache-line phase.
  * Each participating template's last parameter is its forwarding mask. */
 .macro scalar_variants forward, first, second, third, generator, arguments:vararg
-#if UML_GADGET_SCALAR_FORWARDING
  .set .Lvariant_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
  .if \forward == 0 && .Lvariant_sources\@ != 0
 #if __APPLE__
@@ -150,7 +125,6 @@ NAME(uml_arm64_scalar_contract_begin):
  .endr
  .popsection
  .endif
-#endif
 .endm
 
 /* Every forwarded input must be consumed before the body overwrites x0. */

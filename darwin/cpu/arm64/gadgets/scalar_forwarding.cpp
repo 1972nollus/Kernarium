@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "scalar_forwarding.hpp"
 
-#if UML_GADGET_SCALAR_FORWARDING || UML_GADGET_VECTOR_FORWARDING
 #include "../layout/assembly_offsets.h"
 #include <unordered_map>
 
@@ -40,7 +39,6 @@ private:
 };
 } // namespace
 
-#if UML_GADGET_SCALAR_FORWARDING
 extern "C" const ScalarContract uml_arm64_scalar_contract_begin[];
 extern "C" const ScalarContract uml_arm64_scalar_contract_end[];
 
@@ -56,9 +54,7 @@ ScalarAccess scalar_access(std::span<const std::uintptr_t> words)
 	static const ContractIndex index{scalar_contracts()};
 	return index.access(words);
 }
-#endif
 
-#if UML_GADGET_VECTOR_FORWARDING
 extern "C" const ScalarContract uml_arm64_vector_contract_begin[];
 extern "C" const ScalarContract uml_arm64_vector_contract_end[];
 std::span<const ScalarContract> vector_contracts() noexcept
@@ -72,6 +68,4 @@ ScalarAccess vector_access(std::span<const std::uintptr_t> words)
 	static const ContractIndex index{vector_contracts()};
 	return index.access(words);
 }
-#endif
 } // namespace uml::cpu::arm64::gadgets
-#endif

@@ -93,11 +93,9 @@ scalar_entry add_sub_immediate_inplace_\suffix\()_\reg, \forward, 1, .Lipd\@, .L
 
 .macro add_sub_immediate_inplace_register bits64, subtract, flags, reg, suffix
 add_sub_immediate_inplace_entry \bits64, \subtract, \flags, \reg, \suffix, 0
-#if UML_GADGET_SCALAR_FORWARDING
 	/* Keep the adjacent-forwarding arm the ordinary family has, so
 	 * selecting the baked entry never costs an existing forward. */
 add_sub_immediate_inplace_entry \bits64, \subtract, \flags, \reg, \suffix, 1
-#endif
 .endm
 
 .macro add_sub_immediate_inplace_modes bits64, subtract, flags, prefix

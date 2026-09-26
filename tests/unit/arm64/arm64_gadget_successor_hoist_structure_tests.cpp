@@ -129,9 +129,8 @@ void all_32_entries_keep_shape_and_reserve_x14()
 	constexpr std::uint32_t immediate_value = 0xd350'fd0bU;
 	constexpr std::uint32_t nzcv = 0xd53b'421bU;
 	constexpr std::uint32_t destination_register = 0x1200'1109U;
-	constexpr auto result_register = UML_GADGET_SCALAR_FORWARDING ? 0U : 16U;
-	constexpr std::uint32_t destination_value = 0xf829'7820U | result_register;
-	constexpr std::uint32_t destination_sp = 0xf900'7c20U | result_register;
+	constexpr std::uint32_t destination_value = 0xf829'7820U;
+	constexpr std::uint32_t destination_sp = 0xf900'7c20U;
 	constexpr std::uint32_t branch_x8 = 0xd61f'0100U;
 	constexpr std::uint32_t branch_x14 = 0xd61f'01c0U;
 	constexpr std::uint32_t nop = 0xd503'201fU;
@@ -165,7 +164,7 @@ void all_32_entries_keep_shape_and_reserve_x14()
 		append(immediate_value);
 		const bool bits64 = index >= 16U;
 		const bool subtract = (index % 16U) >= 8U;
-		auto arithmetic = (bits64 ? 0x8b0b'01e0U : 0x0b0b'01e0U) | result_register;
+		auto arithmetic = (bits64 ? 0x8b0b'01e0U : 0x0b0b'01e0U);
 		if (subtract)
 			arithmetic |= 0x4000'0000U;
 		if (entry.flags)

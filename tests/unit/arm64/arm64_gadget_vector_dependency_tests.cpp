@@ -113,7 +113,6 @@ void compare(std::span<const std::uint32_t> code, unsigned seed, std::uint32_t f
 	}
 }
 
-#if UML_GADGET_VECTOR_FORWARDING
 g::ScalarAccess access(std::uint32_t instruction)
 {
 	const auto built = g::Builder{}.build(pc, std::array{instruction}, {},
@@ -124,9 +123,7 @@ g::ScalarAccess access(std::uint32_t instruction)
 	}
 	return {};
 }
-#endif
 
-#if UML_GADGET_VECTOR_FORWARDING
 void catalog()
 {
 	std::set<std::uintptr_t> pointers;
@@ -138,30 +135,22 @@ void catalog()
 		for (unsigned i = 0; i < 3; ++i)
 			if (entry.sources[i] != g::scalar_no_register) present |= 1U << i;
 		for (unsigned mask = 1; mask < 8; ++mask) {
-#if UML_GADGET_VECTOR_FORWARDING
 			require(bool(entry.entries[mask]) == ((mask & present) == mask));
 			if (entry.entries[mask]) {
 				require(pointers.insert(entry.entries[mask]).second);
 				++variants;
 			}
-#else
-			require(entry.entries[mask] == 0);
-#endif
 		}
 	}
-#if UML_GADGET_SCALAR_FORWARDING
 	// A shared ordinary entry would need a combined variant contract, not
 	// two independent pointer substitutions by the builder.
 	for (const auto &entry : g::scalar_contracts())
 		require(!pointers.contains(entry.entries[0]));
-#endif
 	require(g::vector_contracts().size() >= 500);
 	std::printf("vector catalog: %zu ordinary entries, %zu source-mask variants\n",
 		g::vector_contracts().size(), variants);
 }
-#endif
 
-#if UML_GADGET_VECTOR_FORWARDING
 void broad_matrix(uml::memory::Tlb &tlb)
 {
 	// Enumerate encoding controls and retain one representative of each entry
@@ -223,7 +212,6 @@ void broad_matrix(uml::memory::Tlb &tlb)
 		"all source masks\n",
 		representatives.size(), edges, comparisons, comparisons * 3);
 }
-#endif
 
 void boundaries(uml::memory::Tlb &tlb)
 {
@@ -243,13 +231,11 @@ void boundaries(uml::memory::Tlb &tlb)
 	}) {
 		const std::array code{producer, middle, consumer, svc};
 		compare(code, 124, 0, tlb);
-#if UML_GADGET_VECTOR_FORWARDING
 		const auto on = g::Builder{}.build(pc, code);
 		const auto off = g::Builder{}.build(pc, code, {}, std::pmr::get_default_resource(), {},
 			{.vector_forwarding = false});
 		require(std::equal(on.program.words().begin(), on.program.words().end(),
 			off.program.words().begin(), off.program.words().end()));
-#endif
 	}
 }
 
@@ -289,12 +275,8 @@ void run_gadget_vector_dependency_tests()
 {
 	const uml::cpu::HostCapabilitiesScope host{uml::platform::apple::probed_host_capabilities()};
 	auto tlb = std::make_unique<uml::memory::Tlb>();
-#if UML_GADGET_VECTOR_FORWARDING
 	catalog();
-#endif
-#if UML_GADGET_VECTOR_FORWARDING
 	broad_matrix(*tlb);
-#endif
 	boundaries(*tlb);
 	linked_boundaries(*tlb);
 	std::puts("vector forwarding boundaries passed");

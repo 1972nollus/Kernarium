@@ -92,12 +92,8 @@ BuildResult Builder::build(
 			program_accesses_fp_state};
 	};
 	[[maybe_unused]] const void *previous_gadget = nullptr;
-#if UML_GADGET_SCALAR_FORWARDING
 	std::uint16_t previous_scalar = scalar_no_register;
-#endif
-#if UML_GADGET_VECTOR_FORWARDING
 	std::uint16_t previous_vector = scalar_no_register;
-#endif
 	/* Indexed rather than ranged, because a decoder that fuses a pair needs to
 	 * see what follows the instruction it was handed. `compiled` is the loop
 	 * position as well as the retired count, and a fusing decoder advances it
@@ -121,9 +117,7 @@ BuildResult Builder::build(
 			return {finish(compiled), true, address, instruction};
 		}
 
-#if UML_GADGET_SCALAR_FORWARDING || UML_GADGET_VECTOR_FORWARDING || UML_GADGET_EXECUTION_HISTOGRAM
 		const auto compiled_before = compiled;
-#endif
 		DecodeContext context{
 			guest_address,
 			address,
@@ -162,30 +156,22 @@ BuildResult Builder::build(
 			decoded = decode_exception(context);
 			break;
 		}
-#if UML_GADGET_VECTOR_FORWARDING
 		const auto current_vector = decoded == DecodeResult::decoded &&
 			compiled == compiled_before ?
 			vector_access(std::span{words.data(), words.size()}.subspan(emitted_start)) : ScalarAccess{};
 		const auto vector_mask = current_vector.source_mask(previous_vector);
 		previous_vector = current_vector.destination;
-#endif
-#if UML_GADGET_SCALAR_FORWARDING
 		// The selected assembly entry owns its access description. Do not
 		// infer it again from opcode bits: aliases and fused groups differ.
 		const auto current_scalar = decoded == DecodeResult::decoded &&
 			compiled == compiled_before ?
 			scalar_access(std::span{words.data(), words.size()}.subspan(emitted_start)) : ScalarAccess{};
 		const auto source_mask = current_scalar.source_mask(previous_scalar);
-#if UML_GADGET_SCALAR_FORWARDING
 		if (source_mask != 0 && options.scalar_forwarding)
 			words[emitted_start] = current_scalar.contract->entries[source_mask];
-#endif
 		previous_scalar = current_scalar.destination;
-#endif
-#if UML_GADGET_VECTOR_FORWARDING
 		if (vector_mask != 0 && options.vector_forwarding)
 			words[emitted_start] = current_vector.contract->entries[vector_mask];
-#endif
 #if UML_GADGET_EXECUTION_HISTOGRAM
 		/* The entry is final only after forwarding selection above. */
 		if (words.size() > emitted_start) {
