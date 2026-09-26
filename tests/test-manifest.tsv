@@ -83,6 +83,7 @@ arm64-gadget-successor-hoist-structure	tests/unit/arm64/arm64_gadget_successor_h
 arm64-static-runtime	tests/unit/arm64	unit	retained
 arm64-static-boundary-state	tests/unit/arm64	unit	retained
 arm64-static-translation	tests/unit/arm64	unit	retained
+arm64-tlb	tests/unit/arm64/arm64_tlb_tests.cpp	unit	retained
 arm64-jit-runtime	tests/unit/arm64	unit	retained
 arm64-jit-capability	tests/unit/arm64	unit	retained
 arm64-jit-cache_validation	tests/unit/arm64	unit	retained

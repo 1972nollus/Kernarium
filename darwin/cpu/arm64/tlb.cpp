@@ -45,13 +45,24 @@ static_assert(offsetof(Tlb, fault_access) ==
 
 Tlb::Tlb()
 {
+	dirty_count = tlb_dirty_capacity + 1;
 	flush();
 }
 
 void Tlb::flush()
 {
-	std::ranges::fill(entries, TlbEntry{});
-	std::ranges::fill(replacement_way, 0);
+	if (dirty_count > tlb_dirty_capacity) {
+		std::ranges::fill(entries, TlbEntry{});
+		std::ranges::fill(replacement_way, 0);
+	} else {
+		for (std::uint32_t index = 0; index < dirty_count; ++index) {
+			const std::size_t set = dirty_sets[index];
+			for (std::size_t way = 0; way < tlb_way_count; ++way)
+				entries[set * tlb_way_count + way] = TlbEntry{};
+			replacement_way[set] = 0;
+		}
+	}
+	dirty_count = 0;
 }
 
 void Tlb::invalidate(std::uint64_t address, std::uint64_t length)
@@ -62,6 +73,25 @@ void Tlb::invalidate(std::uint64_t address, std::uint64_t length)
 	constexpr std::uint64_t untagged =
 		0x00ff'ffff'ffff'ffffULL >> DARWIN_UML_GUEST_PAGE_SHIFT;
 	const auto end = address + length;
+	/* A range wider than the table is cheaper to find by its keys than by
+	 * its pages: a large unmap would otherwise cost every vCPU a loop over
+	 * pages the table cannot even hold. */
+	if (length / page_size >= tlb_set_count) {
+		const auto first_key = address >> DARWIN_UML_GUEST_PAGE_SHIFT;
+		const auto last_key = (end - 1) >> DARWIN_UML_GUEST_PAGE_SHIFT;
+		const auto in_range = [&](std::uint64_t key) {
+			const auto page = key & untagged;
+			return key != tlb_empty_key && page >= first_key &&
+				page <= last_key;
+		};
+		for (auto &entry : entries) {
+			if (in_range(entry.read_page))
+				entry.read_page = tlb_empty_key;
+			if (in_range(entry.write_page))
+				entry.write_page = tlb_empty_key;
+		}
+		return;
+	}
 	for (auto page = address; page < end; page += page_size) {
 		const auto first = index_for(page);
 		const auto key = page >> DARWIN_UML_GUEST_PAGE_SHIFT;
@@ -212,6 +242,20 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 		}
 	}
 	const auto set = first / tlb_way_count;
+	/* A fill into a wholly empty set records it for the next flush. A set
+	 * that invalidation emptied may be recorded twice, which only costs a
+	 * redundant clear. */
+	if (dirty_count <= tlb_dirty_capacity &&
+	    std::all_of(entries.begin() + first,
+		    entries.begin() + first + tlb_way_count,
+		    [](const TlbEntry &way) {
+			    return way.read_page == tlb_empty_key &&
+				    way.write_page == tlb_empty_key;
+		    })) {
+		if (dirty_count < tlb_dirty_capacity)
+			dirty_sets[dirty_count] = static_cast<std::uint16_t>(set);
+		++dirty_count;
+	}
 	if (selected == tlb_way_count) {
 		selected = replacement_way[set];
 		replacement_way[set] = static_cast<std::uint8_t>(

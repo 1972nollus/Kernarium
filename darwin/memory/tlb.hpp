@@ -61,6 +61,11 @@ inline constexpr std::size_t tlb_way_count =
 	DARWIN_UML_GUEST_PAGE_SIZE == 16384 ? 2U : 1U;
 inline constexpr std::size_t tlb_entry_count =
 	tlb_set_count * tlb_way_count;
+/* Sets a flush clears one by one before clearing the whole table is cheaper.
+ * A vCPU switching address spaces flushes; after a short run in the other
+ * space only a few sets hold anything. */
+inline constexpr std::size_t tlb_dirty_capacity = 1024;
+static_assert(tlb_set_count <= 65536, "dirty set indexes are 16 bits");
 
 /*
  * This layout is shared by the gadget and JIT engines and their assembly
@@ -81,6 +86,10 @@ struct alignas(32) Tlb final {
 	 * from its guest state; consumers that never present tagged addresses
 	 * leave it false. */
 	bool tagged_addresses{};
+	/* Sets filled since the last flush; a count above the capacity means the
+	 * next flush clears the whole table. Not read by generated code. */
+	std::uint32_t dirty_count{};
+	std::array<std::uint16_t, tlb_dirty_capacity> dirty_sets{};
 
 	Tlb();
 	void prepare(std::uint64_t next_generation, std::uint64_t next_changes);
