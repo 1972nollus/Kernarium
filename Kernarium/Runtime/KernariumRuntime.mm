@@ -379,10 +379,17 @@ public:
  * the peak when the guest stops. */
 class FootprintReporter final {
 public:
-    FootprintReporter()
+    static long intervalMilliseconds() noexcept
     {
         const char* value = std::getenv("KERNARIUM_FOOTPRINT_LOG_MS");
-        const long interval = value == nullptr ? 0 : std::strtol(value, nullptr, 10);
+        return value == nullptr ? 0 : std::strtol(value, nullptr, 10);
+    }
+
+    static bool enabled() noexcept { return intervalMilliseconds() > 0; }
+
+    FootprintReporter()
+    {
+        const long interval = intervalMilliseconds();
         if (interval <= 0)
             return;
         interval_ = std::chrono::milliseconds {interval};
@@ -412,14 +419,24 @@ public:
     FootprintReporter& operator=(const FootprintReporter&) = delete;
 
 private:
-    static std::uint64_t footprint() noexcept
+    struct Sample {
+        std::uint64_t footprint;
+        /* The share of the footprint charged as graphics memory: Metal
+         * resources and the driver's command storage alike. */
+        std::uint64_t graphics;
+    };
+
+    static Sample sample() noexcept
     {
         task_vm_info_data_t info {};
         mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
         if (task_info(mach_task_self(), TASK_VM_INFO,
                 reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
-            return 0;
-        return info.phys_footprint;
+            return {};
+        const std::int64_t graphics = info.ledger_tag_graphics_footprint +
+            info.ledger_tag_graphics_footprint_compressed;
+        return {info.phys_footprint,
+            static_cast<std::uint64_t>(std::max<std::int64_t>(graphics, 0))};
     }
 
     void run()
@@ -428,12 +445,13 @@ private:
         const auto start = std::chrono::steady_clock::now();
         std::unique_lock lock(mutex_);
         while (!stopped_.wait_for(lock, interval_, [this] { return stopping_; })) {
-            const std::uint64_t bytes = footprint();
-            peak_ = std::max(peak_, bytes);
+            const Sample current = sample();
+            peak_ = std::max(peak_, current.footprint);
             const auto elapsed = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - start).count();
-            std::printf("Kernarium: footprint %.1f s %.1f MiB\n", elapsed,
-                bytes / 1048576.0);
+            std::printf("Kernarium: footprint %.1f s %.1f MiB graphics %.1f MiB\n",
+                elapsed, current.footprint / 1048576.0,
+                current.graphics / 1048576.0);
         }
     }
 
@@ -1294,6 +1312,7 @@ int runtimeRun(
         const bool derivativeRootfs = ext4Rootfs(rootfsPath);
 #endif
         (void)setvbuf(stdout, nullptr, _IONBF, 0);
+        const auto bootingAt = std::chrono::steady_clock::now();
         std::printf(
             "Kernarium: booting %ux%u guest at %u DPI with mem=%uM "
             "ncpus=%u\n",
@@ -1600,6 +1619,12 @@ int runtimeRun(
         }
         const std::unique_ptr<uml_emulator, decltype(&uml_emulator_destroy)>
             emulator {created, uml_emulator_destroy};
+        /* The host devices, the GPU driver among them, start before the
+         * guest does; the footprint log times that stretch. */
+        if (FootprintReporter::enabled())
+            std::printf("Kernarium: emulator created %.1f ms after booting\n",
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - bootingAt).count());
         std::vector<const char*> pointers;
         pointers.reserve(arguments.size());
         for (const auto& argument : arguments)
