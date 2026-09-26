@@ -504,6 +504,14 @@ wireplumber.profiles = {
   }
 }
 EOF
+	# bubblewrap's sysctl.d file sets kernel.unprivileged_userns_clone, a
+	# Debian kernel patch that the mainline kernels booting this image lack;
+	# they already allow unprivileged user namespaces. Mask the file so
+	# systemd-sysctl does not warn about the missing knob at every boot.
+	as_root test -e "$root/usr/lib/sysctl.d/50-bubblewrap.conf" || \
+		fail "bubblewrap no longer ships 50-bubblewrap.conf; drop its mask"
+	as_root install -d -m 0755 "$root/etc/sysctl.d"
+	as_root ln -sfn /dev/null "$root/etc/sysctl.d/50-bubblewrap.conf"
 	as_root chroot "$root" useradd -m -s /bin/bash debian
 	as_root chroot "$root" passwd -d debian
 	debian_uid=$(as_root chroot "$root" id -u debian)
