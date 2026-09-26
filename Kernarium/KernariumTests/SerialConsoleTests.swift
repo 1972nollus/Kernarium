@@ -180,6 +180,7 @@ struct SerialConsoleTests {
         }
         #expect(terminal.renderedConfig.contains("clipboard-read = deny"))
         #expect(terminal.renderedConfig.contains("clipboard-write = deny"))
+        #expect(terminal.renderedConfig.contains("scrollback-limit-bytes = 10000000"))
     }
 
     @Test(.timeLimit(.minutes(1)))

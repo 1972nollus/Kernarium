@@ -26,6 +26,11 @@ final class SerialConsoleController: ObservableObject {
         builder.withCursorStyleBlink(true)
         builder.withCustom("clipboard-read", "deny")
         builder.withCustom("clipboard-write", "deny")
+        // Ghostty's 50 MB default keeps about 49,000 lines of a full-screen
+        // iPad console, and history stays uncompressed while output streams.
+        // 10 MB still keeps about 9,300 such lines, and more on a narrower
+        // screen.
+        builder.withCustom("scrollback-limit-bytes", "10000000")
     }
 
     /// One colour scheme regardless of the system appearance.
