@@ -92,12 +92,60 @@ final class KernariumUITests: XCTestCase {
         XCTAssertEqual(displayModeButton.label, "Show Serial Console")
     }
 
+    /// Tapping the serial console raises the software keyboard with the
+    /// terminal's key bar, which carries the keys the keyboard lacks.
+    /// Returning to the framebuffer dismisses the keyboard. The bytes those
+    /// keys produce are checked by the hosted SerialConsoleTests.
+    @MainActor
+    func testSerialConsoleRaisesTheKeyboardAndItsKeyBar() throws {
+        let app = testApplication()
+        app.launch()
+
+        let displayModeButton = app.buttons["displayModeButton"]
+        XCTAssertTrue(displayModeButton.waitForExistence(timeout: 10))
+        displayModeButton.tap()
+        let console = app.descendants(matching: .any)["serialConsoleView"]
+        XCTAssertTrue(console.waitForExistence(timeout: 5))
+        console.tap()
+
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(
+            keyboard.waitForExistence(timeout: 10),
+            "the console did not raise the software keyboard"
+        )
+        app.typeText("uname -a\n")
+        for key in [
+            "Escape", "Tab", "Up Arrow", "Down Arrow", "Left Arrow",
+            "Right Arrow", "Control",
+        ] {
+            let button = app.buttons[key]
+            XCTAssertTrue(button.exists, "the key bar has no \(key) key")
+            button.tap()
+        }
+        app.typeText("c")
+        attachScreenshot(of: app, named: "serial-console-keyboard")
+
+        displayModeButton.tap()
+        XCTAssertTrue(
+            keyboard.waitForNonExistence(timeout: 10),
+            "leaving the console did not dismiss the keyboard"
+        )
+    }
+
     @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             testApplication().launch()
         }
+    }
+
+    @MainActor
+    private func attachScreenshot(of app: XCUIApplication, named name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func testApplication() -> XCUIApplication {

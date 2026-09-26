@@ -231,6 +231,18 @@ uml_add_guest_integration_test(
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
 
+# One-vCPU guest: an input burst past the tty buffer must not end console input.
+uml_add_guest_integration_test(
+    NAME guest-console-input-burst
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/console/run_guest_console_burst.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;console;smoke
+    TIMEOUT 180
+    PROCESSORS 1
+    RESOURCE_GROUPS cpus:1)
+
 set(UML_GUEST_SAMPLER_WORKLOAD
     "${CMAKE_CURRENT_BINARY_DIR}/guest-sampler-workload")
 add_custom_command(

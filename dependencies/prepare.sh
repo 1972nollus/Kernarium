@@ -39,8 +39,8 @@ Usage: dependencies/prepare.sh [options]
 
 Options:
   --product NAME  macos (default), ios-network, ios-storage, ios-compression,
-                  apple-gpu, apple-gpu-vulkan-experiment, x86-conformance, or
-                  all
+                  apple-gpu, apple-gpu-vulkan-experiment, kernel-host-tools,
+                  x86-conformance, or all
   --root PATH     Prepared source root (default: external/sources)
   --cache PATH    Partial Git cache (default: .build/dependency-cache)
   --verify        Verify prepared repositories without changing or fetching

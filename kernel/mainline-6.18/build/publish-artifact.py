@@ -50,6 +50,13 @@ def main() -> None:
     parser.add_argument("--slice", choices=("arm64", "x86_64"), default="arm64")
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--release-id", required=True)
+    parser.add_argument(
+        "--objcopy",
+        type=Path,
+        required=True,
+        help="llvm-objcopy of the toolchain that built the kernel; it strips "
+        "the DWARF that only pahole consumes",
+    )
     args = parser.parse_args()
 
     line_root = Path(__file__).resolve().parents[1]
@@ -61,6 +68,7 @@ def main() -> None:
         RELEASE_ID_RE,
         SCHEMA_VERSION,
         parse_env,
+        publish_runtime_image,
         verify_artifact,
         verify_config,
         verify_elf,
@@ -73,6 +81,11 @@ def main() -> None:
     output_root = args.output_root.resolve()
     if RELEASE_ID_RE.fullmatch(args.release_id) is None:
         fail("release ID has an unsafe format")
+    objcopy = args.objcopy
+    if not objcopy.is_absolute() or not objcopy.is_file() or not os.access(
+        objcopy, os.X_OK
+    ):
+        fail("--objcopy must name an absolute executable")
     if args.slice == "x86_64" and args.page_size != "4k":
         fail("the x86_64 userspace slice supports only 4 KiB pages")
 
@@ -180,8 +193,13 @@ def main() -> None:
         for relative, (role, file_format) in sorted(PAYLOAD_SPECS.items()):
             destination_path = staging / relative
             destination_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source_paths[relative], destination_path)
-            shutil.copymode(source_paths[relative], destination_path)
+            if relative == "kernel/vmlinux":
+                publish_runtime_image(
+                    objcopy, source_paths[relative], destination_path
+                )
+            else:
+                shutil.copyfile(source_paths[relative], destination_path)
+                shutil.copymode(source_paths[relative], destination_path)
             inventory.append(
                 {
                     "path": relative,

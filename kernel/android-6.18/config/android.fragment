@@ -627,7 +627,20 @@ CONFIG_SND_VIRTIO=y
 # to drop it is that `default y if TREE_RCU` under a selected DEBUG_KERNEL is
 # the only thing that ever turned it on.
 # CONFIG_RCU_TRACE is not set
-# CONFIG_DEBUG_INFO is not set
+# BTF describes the kernel's types to BPF CO-RE programs and bpftool through
+# /sys/kernel/btf/vmlinux. pahole derives it from DWARF, so the build emits
+# DWARF 5, with zstd-compressed object sections as in GKI, and uses the pinned
+# ACK kernel-build-tools pahole. The published artifact drops the DWARF sections
+# and keeps .BTF. Split or reduced debug info would starve pahole of types.
+CONFIG_DEBUG_INFO=y
+CONFIG_DEBUG_INFO_DWARF5=y
+CONFIG_DEBUG_INFO_COMPRESSED_ZSTD=y
+# CONFIG_DEBUG_INFO_REDUCED is not set
+# CONFIG_DEBUG_INFO_SPLIT is not set
+CONFIG_DEBUG_INFO_BTF=y
+# UML defaults frame pointers on whenever DEBUG_INFO is set. The arm64 UML
+# port has no frame-pointer stack walker (PT_REGS_BP), and BTF needs none.
+# CONFIG_FRAME_POINTER is not set
 
 # Stateful Virtio video decoding is shared by every product profile.
 CONFIG_MEDIA_SUPPORT=y
