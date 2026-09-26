@@ -138,3 +138,42 @@ coverage and stipple, and depth-bias regressions used one provider across three
 verified, and every guest shut down and was reaped. The native planner,
 materialization, and raster regressions supplement this focused qualification;
 it does not replace the final complete Vulkan and Zink/OpenGL campaigns.
+
+## Mesa 26.2.3 guest epoch
+
+On 2026-09-26 the host and guest Mesa moved from 26.2.1 to the `mesa-26.2.3`
+tag (commit `31e9a6b2e95e30d84bf3177d1f497d063e59b6b2`, tree
+`7f4340843f646b83e354e94efb4f2205af97a7fe`) as guest epoch `source-30`. Every
+host and guest topic replayed without adaptation. The complete campaign above
+remains the 26.2.1 result; source-30 is qualified by the targeted checks
+below, each run beside a same-day source-29 control on the same host.
+
+| Input | Identity |
+| --- | --- |
+| Host Mesa series | final tree `959bd74e296bcb6f4d3c1060f25bb22cc13cb88d` |
+| Guest Mesa series | final tree `7059336f8075f678b4556dfbed555a3254cd9ea0` |
+| KosmicKrisp framework binary | SHA-256 `90f7d65eb2226ed7678d54591ed8feab06625d08dc620aa1f608c523912b3a46` |
+| Venus rootfs | SHA-256 `1bed9e0d01f903eb16da1a4aa826043849ced40747ece894b8ea9afdac926535`; receipt `f06a571e24959856ed108411256328edee2dbecbdecb17af97b913caa8398122` |
+| Zink/OpenGL rootfs | SHA-256 `e919fd40b5386f0b84067ef5aedec547e3ed5eca7f6751933b1c4e5559a4144d`; receipt `b5821fecbe2a004bff82127d73539c88cae79265cc8568f4ce759d9fe9ee5913` |
+
+The KosmicKrisp Meson suites pass (67 kosmickrisp tests and the Vulkan
+utility test), as do the guest Mesa unit tests built by the sealer. The
+guest reports driver version 26.2.3 through Venus and through Zink.
+
+Targeted CTS 1.4.6.2 results, each identical between source-29 and
+source-30:
+
+| Selection | Cases run | Pass | NotSupported | Other |
+| --- | ---: | ---: | ---: | --- |
+| Vulkan smoke | 21 | 19 | 2 | none |
+| `synchronization`, `synchronization2`, `device_group` | 91 | 58 | 33 | none |
+| `wsi.wayland` | 76 of 88 | 66 | 10 | 2 aborted, 10 not run |
+| `KHR-GL46` through Zink | 87 | 84 | 2 | 1 `ResourceError` |
+
+Two `wsi.wayland` cases that create 10-bit swapchains end the CTS process
+with `SIGABRT`: `swapchain.create.image_array_layers` and
+`swapchain.simulate_oom.image_extent`. In both, the host device rejects a
+guest `RESOURCE_CREATE_BLOB` with `INVALID_PARAMETER`. The other 10
+`simulate_oom` cases were not run. `texture_buffer.texture_buffer_max_size`
+fails to map its buffer in a 4 GiB guest, as described in
+[`graphics.md`](graphics.md).
