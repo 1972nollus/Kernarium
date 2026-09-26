@@ -1209,6 +1209,10 @@ def main() -> int:
         str(rootfs),
         "--rootfs-type",
         options.rootfs_contract.filesystem_type,
+        # Every image this runner accepts is an unpartitioned filesystem;
+        # the launcher's ext4 default names the starter image's partition.
+        "--root-device",
+        "/dev/ubda",
         "--memory",
         options.memory,
         "--cpus",
