@@ -40,10 +40,11 @@ def manifest(
     family: str,
     kernel_slice: str,
     page_size: int,
+    schema: int | None = None,
 ) -> dict:
     release_id = "contract-test"
-    return {
-        "schema_version": module.SCHEMA_VERSION,
+    value = {
+        "schema_version": module.SCHEMA_VERSION if schema is None else schema,
         "release_id": release_id,
         "directory_name": (
             f"{family}-{kernel_slice}-{page_size // 1024}k-{release_id}"
@@ -60,8 +61,6 @@ def manifest(
             "base_commit": "0" * 40,
             "base_tree": "1" * 40,
             "final_tree": "2" * 40,
-            "patch_count": 1,
-            "patch_manifest_sha256": "3" * 64,
         },
         "abi": {
             "version": 1,
@@ -77,6 +76,11 @@ def manifest(
             for path, (role, file_format) in sorted(module.PAYLOAD_SPECS.items())
         ],
     }
+    if value["schema_version"] == 2:
+        # Schema 2 bundles also named their patch count and series manifest.
+        value["source"]["patch_count"] = 1
+        value["source"]["patch_manifest_sha256"] = "3" * 64
+    return value
 
 
 def require_accepted(
@@ -203,6 +207,16 @@ def main() -> int:
     )
     for identity in SUPPORTED_IDENTITIES:
         require_accepted(module, *identity)
+        # Accepted schema 2 bundles stay importable beside schema 3 ones.
+        module.validate_manifest(manifest(module, *identity, schema=2))
+    legacy = manifest(module, "mainline-6.18", "arm64", 16384)
+    legacy["source"]["patch_count"] = 1
+    try:
+        module.validate_manifest(legacy)
+    except SystemExit as error:
+        require("source" in str(error), f"schema 3 patch count rejected oddly: {error}")
+    else:
+        raise AssertionError("a schema 3 manifest accepted a patch count")
 
     require_rejected(
         module,

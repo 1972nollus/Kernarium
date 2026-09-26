@@ -196,7 +196,7 @@ LIBFFI_SOURCE="$TEMP_ROOT/libffi"
 CROSS_FILE="$BUILDS/meson-$PLATFORM.cross"
 mkdir -p -- "$BUILDS" "$GLIB_SOURCE/subprojects/proxy-libintl-0.5" \
 	"$GLIB_SOURCE/subprojects/gvdb" "$LIBFFI_SOURCE" \
-	"$STAGE/share/uml-dependencies/patches"
+	"$STAGE/share/uml-dependencies"
 $RSYNC -a --exclude .git "$SOURCE_ROOT/glib-ios/" "$GLIB_SOURCE/"
 $RSYNC -a --exclude .git "$SOURCE_ROOT/libffi/" "$LIBFFI_SOURCE/"
 $RSYNC -a --exclude .git "$SOURCE_ROOT/proxy-libintl/" \
@@ -312,8 +312,9 @@ cp "$ROOT_DIR/dependencies/manifest.tsv" \
 	"$STAGE/share/uml-dependencies/manifest.tsv"
 cp "$RECEIPT" \
 	"$STAGE/share/uml-dependencies/$RECEIPT_NAME"
-cp -R "$ROOT_DIR/dependencies/patches/glib-ios" \
-	"$STAGE/share/uml-dependencies/patches/"
+printf 'source\ttree\nglib-ios\t%s\n' \
+	"$(git -C "$SOURCE_ROOT/glib-ios" rev-parse 'HEAD^{tree}')" \
+	> "$STAGE/share/uml-dependencies/source-trees.tsv"
 verify_prefix "$STAGE"
 mv "$STAGE" "$PREFIX"
 STAGE=

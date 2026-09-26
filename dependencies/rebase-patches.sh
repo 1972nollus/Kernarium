@@ -1,9 +1,9 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Rebase one maintained dependency topic branch onto its pinned upstream commit,
-# then replace its checked-in patch series exclusively with git format-patch
-# output. Never edit the generated .patch files by hand.
+# Export one maintained dependency topic checkout as its checked-in patch
+# series and the tree it produces. Never edit the generated .patch files or
+# series.tsv by hand.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -23,10 +23,10 @@ usage()
 	cat <<'EOF'
 Usage: dependencies/rebase-patches.sh --dependency NAME --source PATH
 
-PATH must be a clean Git topic branch whose history is the pinned upstream
-commit followed by the dependency's maintained commits. To edit a topic, first
-use `git rebase -i <pinned-commit>` in PATH, amend or reorder commits there,
-then run this command to regenerate the checked-in mail patch series.
+PATH must be a clean Git checkout whose HEAD is the pinned upstream commit
+followed by the dependency's topic commits. Amend, reorder, add, or drop
+topics there (`git rebase -i <pinned-commit>`), then run this command to
+export the series and record its tree.
 EOF
 }
 
@@ -59,10 +59,6 @@ case "$DEPENDENCY" in
 esac
 [ -f "$MANIFEST" ] || fail "manifest is missing: $MANIFEST"
 [ -d "$SOURCE/.git" ] || fail "source is not a Git working tree: $SOURCE"
-[ -z "$(git -C "$SOURCE" status --porcelain --untracked-files=all)" ] ||
-	fail "source working tree is dirty"
-branch=$(git -C "$SOURCE" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-[ -n "$branch" ] || fail "source must have a checked-out topic branch"
 
 row=$(awk -F '\t' -v wanted="$DEPENDENCY" '$1 == wanted { print; exit }' \
 	"$MANIFEST")
@@ -79,60 +75,9 @@ rootfs-vulkan:*)
 	;;
 *:*) fail "unknown patch-series owner: $series" ;;
 esac
-[ "$(git -C "$SOURCE" rev-parse "$base^{commit}" 2>/dev/null || true)" = "$base" ] ||
-	fail "pinned upstream commit is absent from source: $base"
-git -C "$SOURCE" merge-base --is-ancestor "$base" HEAD ||
-	fail "topic branch is not based on pinned upstream commit $base"
-[ -z "$(git -C "$SOURCE" rev-list --merges "$base..HEAD")" ] ||
-	fail "topic branch contains a merge commit"
 
-# Even a no-op rebase is deliberate: it makes Git, rather than patch-file
-# editing, the authority for how the topic relates to the pinned upstream.
-GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-	git -C "$SOURCE" -c core.hooksPath=/dev/null rebase "$base"
-
-commit_count=$(git -C "$SOURCE" rev-list --count "$base..HEAD")
-[ "$commit_count" -gt 0 ] || fail "topic branch contains no maintained commits"
-[ -z "$(git -C "$SOURCE" rev-list --merges "$base..HEAD")" ] ||
-	fail "rebased topic branch contains a merge commit"
-
-series_path="$METADATA_ROOT/$series"
-series_directory=$(dirname -- "$series_path")
+series_directory=$(dirname -- "$METADATA_ROOT/$series")
 [ -d "$series_directory" ] || fail "patch directory is missing: $series_directory"
-temporary=$(mktemp -d "$series_directory/.format-patch.XXXXXX")
-cleanup()
-{
-	[ ! -d "${temporary:-}" ] || rm -rf -- "$temporary"
-}
-trap cleanup EXIT HUP INT TERM
-
-git -C "$SOURCE" format-patch --no-signature --output-directory "$temporary" \
-	"$base..HEAD" >/dev/null
-generated_count=$(find "$temporary" -type f -name '*.patch' | wc -l | tr -d ' ')
-[ "$generated_count" -eq "$commit_count" ] ||
-	fail "git format-patch emitted $generated_count files for $commit_count commits"
-
-manifest_tmp="$temporary/series.tsv"
-{
-	printf '%s\n' '# SPDX-License-Identifier: GPL-2.0-or-later'
-	printf 'order\tpatch\tstable_patch_id\tsha256\tsubject\n'
-	order=1
-	find "$temporary" -type f -name '*.patch' -print | LC_ALL=C sort |
-	while IFS= read -r patch; do
-		filename=$(basename -- "$patch")
-		patch_id=$(git patch-id --stable < "$patch" | awk 'NF { print $1; exit }')
-		digest=$(shasum -a 256 "$patch" | awk '{print $1}')
-		subject=$(git mailinfo /dev/null /dev/null < "$patch" |
-			sed -n 's/^Subject: //p')
-		[ -n "$patch_id" ] && [ -n "$subject" ] ||
-			fail "could not identify generated patch $filename"
-		printf '%s\t%s\t%s\t%s\t%s\n' \
-			"$order" "$filename" "$patch_id" "$digest" "$subject"
-		order=$((order + 1))
-	done
-} > "$manifest_tmp"
-
-find "$series_directory" -maxdepth 1 -type f -name '*.patch' -delete
-find "$temporary" -maxdepth 1 -type f -name '*.patch' -exec mv {} "$series_directory" \;
-mv -- "$manifest_tmp" "$series_path"
-printf '%s\n' "regenerated $DEPENDENCY patch series from $branch"
+python3 -B "$ROOT_DIR/scripts/patch_series.py" export --source "$SOURCE" \
+	--base "$base" --head HEAD --series-dir "$series_directory" --tree >/dev/null
+printf '%s\n' "regenerated $DEPENDENCY patch series from $SOURCE"

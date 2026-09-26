@@ -1,4 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Ordered generated AOSP project topic identity.
-order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-report-an-absent-gpu_mem-map-inste.patch	2bab8de68f8492cbf4515521996aa163dd7e5491	aaedc122e25d2959dda694f3c9b35a2954f019fabb39f9eee71f117d292bf474	UML-ANDROID-LOCAL: report an absent gpu_mem map instead of aborting

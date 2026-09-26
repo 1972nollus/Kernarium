@@ -145,13 +145,14 @@ tools/rootfs/vulkan/rebase-patches.sh \
   --component mesa --source /path/to/mesa-topic
 ```
 
-The accepted CTS image and its receipt name one patched tree per component, and
-`EXPECTED_FINAL_TREES` in `seal-in-vm.py` names the same trees. Advancing a
-series therefore invalidates the accepted receipt until a new image is sealed
-and accepted: every receipt-bound tooling gate fails with `<component>.patches
-differs from the generated series` in the meantime. That is the intended
-interlock, not a defect in the gates; the way to clear it is to seal a new
-image, never to relax a verifier.
+The accepted CTS image and its receipt name one patched tree per component,
+and each component's `series.tsv` records the tree its patches produce. A
+series edit that keeps that tree, such as a reworded message or a folded
+follow-up, leaves the receipt valid. A series that produces a different tree
+invalidates the accepted receipt until a new image is sealed and accepted:
+every receipt-bound tooling gate fails with `<component>.patched_tree changed`
+in the meantime. That is the intended interlock, not a defect in the gates;
+the way to clear it is to seal a new image, never to relax a verifier.
 
 The final build, installation, CTS build, image creation, filesystem checks,
 and receipt generation run in a native arm64 Debian VM or, under `fakeroot`,
@@ -202,8 +203,8 @@ are retained. Historical schema-3 receipts remain readable for diagnostics,
 but cannot define a full GL46 campaign. The OpenGL runner proves both the
 Zink Gallium renderer and the underlying Virtio-GPU Venus device before
 executing a shard. Vulkan and OpenGL qualification require the same current
-source trees and ordered patch series for Mesa, Venus protocol, and CTS, plus
-the pinned Vulkan-Headers and Vulkan-Loader sources. Their image, executable,
+patched source trees for Mesa, Venus protocol, and CTS, plus the pinned
+Vulkan-Headers and Vulkan-Loader sources. Their image, executable,
 and runtime-closure identities remain separate.
 
 Seal only new stage, image, and receipt paths:
@@ -231,8 +232,8 @@ three path arguments with fresh paths:
   --receipt /home/vm/uml-vulkan-rootfs/output-zink-gl/rootfs-vulkan-zink-gl.receipt.json
 ```
 
-The sealer refuses existing output paths. It authenticates sources and stable
-patch identities, independently regenerates every driver header from the
+The sealer refuses existing output paths. It authenticates each source's base
+and the tree its series records, independently regenerates every driver header from the
 selected protocol source and SDK, checks the selected build's complete header
 inventory and bytes, and records their digests. Mesa must explicitly select
 that generated-header directory; it cannot fall back to its older vendored

@@ -401,27 +401,84 @@ class VulkanGuestRootfsTests(unittest.TestCase):
             "5f157b62e333c63260d05d81bf66faa216ab0fb8",
         )
 
-    def test_patch_tamper_is_rejected_before_build(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            copied = Path(temporary) / "vulkan"
-            shutil.copytree(METADATA, copied)
-            patch = next((copied / "patches/mesa").glob("*.patch"))
-            patch.write_bytes(patch.read_bytes() + b"\n")
-            result = subprocess.run(
-                (
-                    str(VERIFY),
-                    "--metadata-root",
-                    str(copied),
-                    "--outer-root",
-                    str(REPO_ROOT),
-                ),
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
+    def test_hand_edited_series_is_rejected_before_build(self) -> None:
+        def unlisted(directory: Path) -> None:
+            (directory / "stray.patch").write_bytes(
+                next(directory.glob("*.patch")).read_bytes()
             )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("patch digest changed", result.stderr)
+
+        def not_exported(directory: Path) -> None:
+            patch_file = next(directory.glob("*.patch"))
+            patch_file.write_bytes(
+                patch_file.read_bytes().replace(b"From 0000", b"From 1111", 1)
+            )
+
+        for name, tamper, message in (
+            ("unlisted", unlisted, "patch files differ"),
+            ("not-exported", not_exported, "not exported by"),
+        ):
+            with self.subTest(tamper=name), tempfile.TemporaryDirectory() as temporary:
+                copied = Path(temporary) / "vulkan"
+                shutil.copytree(METADATA, copied)
+                tamper(copied / "patches/mesa")
+                result = subprocess.run(
+                    (
+                        str(VERIFY),
+                        "--metadata-root",
+                        str(copied),
+                        "--outer-root",
+                        str(REPO_ROOT),
+                    ),
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+
+    def test_source_must_have_the_tree_its_series_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / "work/sources/mesa"
+            repository.mkdir(parents=True)
+
+            def git(*arguments: str) -> str:
+                return subprocess.run(
+                    ("git", "-C", str(repository), *arguments),
+                    check=True, text=True, stdout=subprocess.PIPE,
+                ).stdout.strip()
+
+            git("init", "--quiet")
+            git("config", "user.name", "fixture")
+            git("config", "user.email", "fixture@example.invalid")
+            (repository / "file").write_text("base\n")
+            git("add", "file")
+            git("commit", "--quiet", "-m", "base")
+            base = git("rev-parse", "HEAD")
+            (repository / "file").write_text("patched\n")
+            git("commit", "--quiet", "-am", "patched")
+            series = root / "metadata/patches/mesa"
+            series.mkdir(parents=True)
+            row = {
+                "component": "mesa",
+                "repository": "https://example.invalid/mesa.git",
+                "base_commit": base,
+                "base_tree": git("rev-parse", "HEAD~1^{tree}"),
+                "release_ref": "-",
+                "release_object": "-",
+                "series": "patches/mesa/series.tsv",
+            }
+            for tree, accepted in ((git("rev-parse", "HEAD^{tree}"), True),
+                                   (row["base_tree"], False)):
+                (series / "series.tsv").write_text(f"tree\t{tree}\n")
+                with self.subTest(accepted=accepted):
+                    if accepted:
+                        record, _ = sealer.verify_source(root / "work", root / "metadata", row)
+                        self.assertEqual(record["patched_tree"], tree)
+                    else:
+                        with self.assertRaisesRegex(sealer.SealError, "final tree changed"):
+                            sealer.verify_source(root / "work", root / "metadata", row)
 
     def test_downstream_scope_is_explicit_and_not_conformance(self) -> None:
         readme = (METADATA / "README.md").read_text(encoding="utf-8")

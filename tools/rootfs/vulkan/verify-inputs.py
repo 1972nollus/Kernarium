@@ -7,11 +7,13 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import csv
-import hashlib
 from pathlib import Path
 import re
-import subprocess
 import sys
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+import patch_series  # noqa: E402
 
 
 SOURCE_HEADER = (
@@ -23,7 +25,6 @@ SOURCE_HEADER = (
     "release_object",
     "series",
 )
-SERIES_HEADER = ("order", "patch", "stable_patch_id", "sha256", "subject")
 REQUIRED_COMPONENTS = {
     "mesa",
     "venus-protocol",
@@ -36,7 +37,6 @@ UNPATCHED_COMPONENTS = {
     "vulkan-loader",
 }
 HEX40 = re.compile(r"[0-9a-f]{40}")
-HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
 class VerificationError(RuntimeError):
@@ -78,76 +78,27 @@ def safe_relative(root: Path, value: str, label: str) -> Path:
     return candidate
 
 
-def patch_id(path: Path) -> str:
-    result = subprocess.run(
-        ("git", "patch-id", "--stable"),
-        input=path.read_bytes(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if result.returncode != 0:
-        fail(f"git patch-id failed for {path}: {result.stderr.decode().strip()}")
-    words = result.stdout.decode("ascii", errors="strict").split()
-    if len(words) < 2 or HEX40.fullmatch(words[0]) is None:
-        fail(f"git patch-id returned malformed output for {path}")
-    return words[0]
+def read_series(metadata_root: Path, series_value: str) -> Any:
+    """Parse a generated series; it must list patches and record its tree."""
+    series = safe_relative(metadata_root, series_value, "series path")
+    if series.name != "series.tsv":
+        fail(f"series path does not name a series.tsv: {series_value}")
+    try:
+        parsed = patch_series.read_series(series.parent)
+    except patch_series.SeriesError as error:
+        fail(str(error))
+    if parsed.tree is None:
+        fail(f"patch series records no tree: {series}")
+    if not parsed.names:
+        fail(f"patch series is empty: {series}")
+    return parsed
 
 
 def verify_series(metadata_root: Path, series_value: str) -> str:
-    series = safe_relative(metadata_root, series_value, "series path")
-    header, rows = read_tsv(series)
-    if header != SERIES_HEADER:
-        fail(f"series header changed in {series}: {header}")
-    if not rows:
-        fail(f"patch series is empty: {series}")
-
-    declared: set[str] = set()
-    payloads: list[str] = []
-    for expected_order, row in enumerate(rows, start=1):
-        if row["order"] != str(expected_order):
-            fail(f"patch order changed in {series}: {row['order']}")
-        filename = row["patch"]
-        if Path(filename).name != filename or not filename.endswith(".patch"):
-            fail(f"unsafe patch filename in {series}: {filename!r}")
-        if filename in declared:
-            fail(f"duplicate patch in {series}: {filename}")
-        declared.add(filename)
-        if HEX40.fullmatch(row["stable_patch_id"]) is None:
-            fail(f"malformed patch ID in {series}: {filename}")
-        if HEX64.fullmatch(row["sha256"]) is None:
-            fail(f"malformed patch digest in {series}: {filename}")
-        if not row["subject"] or "\t" in row["subject"]:
-            fail(f"malformed patch subject in {series}: {filename}")
-
-        patch = safe_relative(series.parent, filename, "patch path")
-        payload = patch.read_bytes()
-        digest = hashlib.sha256(payload).hexdigest()
-        if digest != row["sha256"]:
-            fail(f"patch digest changed for {patch}")
-        if patch_id(patch) != row["stable_patch_id"]:
-            fail(f"stable patch ID changed for {patch}")
-        text = payload.decode("utf-8", errors="strict")
-        # Git folds long Subject headers. Use the same parser as the owning
-        # format-patch generator rather than searching raw mail bytes.
-        mail = subprocess.run(
-            ("git", "mailinfo", "/dev/null", "/dev/null"),
-            input=payload,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        subjects = [line.removeprefix("Subject: ") for line in
-                    mail.stdout.decode("utf-8", errors="strict").splitlines()
-                    if line.startswith("Subject: ")]
-        if mail.returncode or "Subject: [PATCH" not in text or subjects != [row["subject"]]:
-            fail(f"patch subject does not match its mail file: {patch}")
-        payloads.append(text)
-
-    actual = {path.name for path in series.parent.glob("*.patch")}
-    if actual != declared:
-        fail(f"patch inventory differs from {series}: {sorted(actual ^ declared)}")
-    return "\n".join(payloads)
+    parsed = read_series(metadata_root, series_value)
+    return "\n".join(
+        patch.read_text(encoding="utf-8", errors="strict") for patch in parsed.patches
+    )
 
 
 def require_landmarks(payload: str, landmarks: tuple[str, ...], label: str) -> None:
@@ -261,10 +212,9 @@ def verify(metadata_root: Path, outer_root: Path) -> None:
         if obsolete in mesa_payload:
             fail(f"Mesa series retains obsolete portability path: {obsolete}")
 
-    renderer_series = (
-        outer_root / "dependencies/patches/virglrenderer/series.tsv"
-    )
-    _, renderer_rows = read_tsv(renderer_series)
+    renderer_names = read_series(
+        outer_root / "dependencies", "patches/virglrenderer/series.tsv"
+    ).names
     renderer_payload = verify_series(
         outer_root / "dependencies", "patches/virglrenderer/series.tsv"
     )
@@ -285,9 +235,9 @@ def verify(metadata_root: Path, outer_root: Path) -> None:
         "venus-transport-portability-subset-structures",
         "venus-cap-Metal-renderer-at-Vulkan-1.3",
     )
-    for row in renderer_rows:
-        if any(topic in row["patch"] for topic in obsolete_renderer_topics):
-            fail(f"host renderer retains obsolete topic: {row['patch']}")
+    for name in renderer_names:
+        if any(topic in name for topic in obsolete_renderer_topics):
+            fail(f"host renderer retains obsolete topic: {name}")
 
 
 def parse_arguments(argv: list[str]) -> argparse.Namespace:

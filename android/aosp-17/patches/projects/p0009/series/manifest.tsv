@@ -1,5 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Ordered generated AOSP project topic identity.
-order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-Settings-omit-unavailable-radio-co.patch	9c07cef86dba123215f3c09e5add2db326e25877	ac65d44d98045ceae1d71b79687d6eda7aaec59c1684fe79c70a1b3d1f40c05d	UML-ANDROID-LOCAL: Settings omit unavailable radio controls
-2	0002-UML-ANDROID-LOCAL-Settings-keep-network-software-con.patch	62bbfef488683bcaca2637510b29b7306dbdff06	4c9c55132cc3fdb8b7daaabd7c0d5fb7a874928890bafb2d2485bf6d16925b4f	UML-ANDROID-LOCAL: Settings keep network software controls

@@ -84,7 +84,10 @@ Never fall back to Homebrew, ambient `CMAKE_PREFIX_PATH`, or unrestricted
 - Patch-managed external repositories use Git topic commits as their editable
   source. When a change belongs to an existing topic, amend it into that topic
   commit and regenerate the owning patch series. Create a new topic commit only
-  for a distinct concern. Never edit generated patch files directly.
+  for a distinct concern. Never edit generated patch files directly. Every
+  series uses the `scripts/patch_series.py` format and is identified by the
+  tree it produces from its pinned base, so a pure reorder or message edit that
+  keeps that tree invalidates no build.
 - Kernel source must be materialized on a case-sensitive filesystem. The
   ignored `kernel/mainline-6.18/source-location.conf` selects the managed
   checkout for standalone kernel work.
@@ -93,12 +96,13 @@ Never fall back to Homebrew, ambient `CMAKE_PREFIX_PATH`, or unrestricted
   kernel directory.
 - Treat every kernel source, patch, and configuration change as shared across
   all maintained kernel lines and every supported configuration or page
-  profile. Update the mainline and Android lines, plus both 16 KiB and 4 KiB
-  profiles where those products exist, in the same change. Omit a line or
-  profile only when the behavior genuinely depends on the guest OS or the
-  target product does not exist, and record that reason in the owning
-  versioned README or patch metadata. Differences in source layout or Kconfig
-  spelling require an adapted port, not an exemption.
+  profile. Put a topic in the shared `kernel/common/patches` series, refresh
+  every line that applies it, and cover both 16 KiB and 4 KiB profiles where
+  those products exist, in the same change. Keep a topic in one line's overlay
+  only when the behavior genuinely depends on the guest OS or the target
+  product does not exist, and record that reason in the owning versioned
+  README. A topic whose context differs between bases gets an adapted variant
+  in each overlay, not an exemption.
 - Use `prepare-source.sh --recreate` only for a clean stale managed replay.
   Never replace an arbitrary source tree.
 - Maintained kernel changes are local to this project; tooling must not suggest
@@ -106,7 +110,10 @@ Never fall back to Homebrew, ambient `CMAKE_PREFIX_PATH`, or unrestricted
 
 Let Git, compilers, linkers, Kbuild, and Xcode retain authentic timestamps,
 IDs, tool identities, and output hashes. Do not add reproducibility flags whose
-only purpose is normalizing incidental metadata.
+only purpose is normalizing incidental metadata. Generated patch series are the
+one exception: `scripts/patch_series.py` omits replay commit IDs and patch
+ordinals, which describe a replay rather than the change, so a patch file
+changes only when its own topic does.
 
 ## ABI changes
 

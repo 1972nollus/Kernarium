@@ -1,0 +1,287 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 24 Sep 2026 11:21:26 +0900
+Subject: [PATCH] venus: bound device memory by a host-stated share
+
+A Venus guest was shown the host driver's whole device heap. On a
+unified-memory host that heap is most of the system: an iPad mini 6
+reports a recommended working set of 2730 MiB against an app limit of
+2864 MiB. Every byte of it is also charged to the same process as the
+guest's own RAM, so a guest sizing its textures from that heap could
+take the whole application down.
+
+Let the host state how much device memory the guest may use, together
+with a callback that reports how much is allocated right now. Every heap
+the guest is shown is at most that limit, memory budgets leave the guest
+only what the limit has left, and a new allocation that would pass it
+fails with VK_ERROR_OUT_OF_DEVICE_MEMORY, which an application is
+prepared to handle. An import names memory that already exists and is
+not counted twice. A host that states no limit keeps today's behaviour.
+---
+ src/venus/vkr_device_memory.c   | 11 ++++++++
+ src/venus/vkr_physical_device.c | 37 +++++++++++++++++++++++----
+ src/venus/vkr_physical_device.h |  2 ++
+ src/venus/vkr_renderer.c        | 45 +++++++++++++++++++++++++++++++++
+ src/venus/vkr_renderer.h        | 17 +++++++++++++
+ src/virglrenderer.c             | 14 ++++++++++
+ src/virglrenderer.h             | 19 ++++++++++++++
+ 7 files changed, 140 insertions(+), 5 deletions(-)
+
+diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
+index 0991d5da146c89e5a1f3551c532a1b31e00770fc..2e12e9c6316c6e3ede6be4b6626f1a59a8a3bb7f 100644
+--- a/src/venus/vkr_device_memory.c
++++ b/src/venus/vkr_device_memory.c
+@@ -303,6 +303,17 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+                                                      guest_mem_type_index);
+    alloc_info->memoryTypeIndex = host_mem_type_index;
+ 
++   /* A new allocation has to fit the device memory the host granted the
++    * guest. An import names memory that already exists, so it is not
++    * counted twice.
++    */
++   if (!vkr_find_struct(alloc_info->pNext,
++                        VK_STRUCTURE_TYPE_IMPORT_MEMORY_RESOURCE_INFO_MESA) &&
++       !vkr_renderer_device_memory_admits(alloc_info->allocationSize)) {
++      args->ret = VK_ERROR_OUT_OF_DEVICE_MEMORY;
++      return;
++   }
++
+    /* Translate VkImportMemoryResourceInfoMESA into the native handle type. */
+    VkImportMemoryFdInfoKHR local_import_info = { .fd = -1 };
+    VkImportMemoryHostPointerInfoEXT local_host_import = {
+diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
+index b045ef82ab1069249ef71db02df226632f85890d..00959d190a51de04b27cc5d1b5bcd6b6dc9bc5e9 100644
+--- a/src/venus/vkr_physical_device.c
++++ b/src/venus/vkr_physical_device.c
+@@ -240,6 +240,20 @@ vkr_physical_device_init_memory_properties(struct vkr_physical_device *physical_
+       }
+    }
+ 
++   /* The host grants the guest's GPU a share of memory rather than the whole
++    * device. A guest sizes its allocations from the heaps it is shown, so no
++    * heap may promise more than that share.
++    */
++   const uint64_t device_memory_limit = vkr_renderer_get_device_memory_limit();
++   if (device_memory_limit) {
++      VkPhysicalDeviceMemoryProperties *props = &physical_dev->memory_properties;
++      for (uint32_t i = 0; i < props->memoryHeapCount; i++) {
++         if (props->memoryHeaps[i].size > device_memory_limit)
++            props->memoryHeaps[i].size = device_memory_limit;
++      }
++      physical_dev->bounded_device_memory = true;
++   }
++
+    /* XXX When a VkMemoryType has VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, we
+     * assume any VkDeviceMemory with the memory type can be made external and
+     * be exportable.  That is incorrect but is what we have to live with with
+@@ -829,13 +843,16 @@ vkr_dispatch_vkGetPhysicalDeviceQueueFamilyProperties2(
+ 
+ /* A budget the host reported is indexed by its own heaps. Where the guest sees
+  * an extra heap that names the blob aperture, that heap's budget and usage are
+- * the host heap's, bounded by the aperture the guest was promised.
++ * the host heap's, bounded by the aperture the guest was promised. Where the
++ * host bounds the guest's device memory, a heap's budget is also no more than
++ * its usage plus what the bound has left.
+  */
+ static void
+ vkr_physical_device_map_memory_budget(
+    const struct vkr_physical_device *physical_dev, void *pnext)
+ {
+-   if (!physical_dev->bounded_host_visible_heap)
++   if (!physical_dev->bounded_host_visible_heap &&
++       !physical_dev->bounded_device_memory)
+       return;
+ 
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT *budget = vkr_find_struct(
+@@ -850,12 +867,22 @@ vkr_physical_device_map_memory_budget(
+    memcpy(heap_budget, budget->heapBudget, sizeof(heap_budget));
+    memcpy(heap_usage, budget->heapUsage, sizeof(heap_usage));
+ 
++   VkDeviceSize remaining = UINT64_MAX;
++   if (physical_dev->bounded_device_memory) {
++      const uint64_t limit = vkr_renderer_get_device_memory_limit();
++      const uint64_t usage = vkr_renderer_get_device_memory_usage();
++      remaining = usage < limit ? limit - usage : 0;
++   }
++
+    for (uint32_t i = 0; i < props->memoryHeapCount; i++) {
+       const uint32_t host_index = physical_dev->memory_heap_guest_to_host[i];
+       const VkDeviceSize size = props->memoryHeaps[i].size;
+-      budget->heapBudget[i] =
+-         MIN2(heap_budget[host_index], size);
+-      budget->heapUsage[i] = MIN2(heap_usage[host_index], size);
++      const VkDeviceSize usage = MIN2(heap_usage[host_index], size);
++      VkDeviceSize heap_budget_left = MIN2(heap_budget[host_index], size);
++      if (remaining != UINT64_MAX && usage + remaining < heap_budget_left)
++         heap_budget_left = usage + remaining;
++      budget->heapBudget[i] = heap_budget_left;
++      budget->heapUsage[i] = usage;
+    }
+    for (uint32_t i = props->memoryHeapCount; i < VK_MAX_MEMORY_HEAPS; i++) {
+       budget->heapBudget[i] = 0;
+diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
+index 0b101fb6fae1859e44108b9c8f3ccadfdd549160..a9c919d094a8c7f14b218a78222816dec10123ec 100644
+--- a/src/venus/vkr_physical_device.h
++++ b/src/venus/vkr_physical_device.h
+@@ -41,6 +41,8 @@ struct vkr_physical_device {
+    bool separate_external_host_memory;
+    /* set when the host-visible type was given its own aperture-sized heap */
+    bool bounded_host_visible_heap;
++   /* set when the host bounds the device memory the guest may allocate */
++   bool bounded_device_memory;
+    VkPhysicalDeviceIDProperties id_properties;
+    bool is_dma_buf_fd_export_supported;
+    bool is_opaque_fd_export_supported;
+diff --git a/src/venus/vkr_renderer.c b/src/venus/vkr_renderer.c
+index 47ef6c053c8c70e1e1a04ed2f1e246e6ad48f48f..16b5c113d2685c2f6a2da5f937a6cd630da43344 100644
+--- a/src/venus/vkr_renderer.c
++++ b/src/venus/vkr_renderer.c
+@@ -21,6 +21,13 @@ struct vkr_renderer_state {
+     * guest at once, or zero when it has no such bound
+     */
+    uint64_t host_visible_aperture_size;
++
++   /* how much device memory the host lets the guest's allocations reach, or
++    * zero when it sets no bound, and how much the host has allocated now
++    */
++   uint64_t device_memory_limit;
++   vkr_renderer_device_memory_usage_callback_type device_memory_usage;
++   void *device_memory_usage_data;
+ };
+ 
+ struct vkr_renderer_state vkr_state;
+@@ -40,6 +47,44 @@ vkr_renderer_get_host_visible_aperture_size(void)
+    return vkr_state.host_visible_aperture_size;
+ }
+ 
++/* Set before vkr_renderer_init, like the aperture: the share of memory the
++ * host grants the guest's GPU is a property of the host.
++ */
++void
++vkr_renderer_set_device_memory_limit(
++   uint64_t limit,
++   vkr_renderer_device_memory_usage_callback_type usage,
++   void *data)
++{
++   vkr_state.device_memory_limit = limit;
++   vkr_state.device_memory_usage = usage;
++   vkr_state.device_memory_usage_data = data;
++}
++
++uint64_t
++vkr_renderer_get_device_memory_limit(void)
++{
++   return vkr_state.device_memory_limit;
++}
++
++uint64_t
++vkr_renderer_get_device_memory_usage(void)
++{
++   if (!vkr_state.device_memory_usage)
++      return 0;
++   return vkr_state.device_memory_usage(vkr_state.device_memory_usage_data);
++}
++
++bool
++vkr_renderer_device_memory_admits(uint64_t size)
++{
++   const uint64_t limit = vkr_state.device_memory_limit;
++   if (!limit)
++      return true;
++   const uint64_t usage = vkr_renderer_get_device_memory_usage();
++   return size <= limit && usage <= limit - size;
++}
++
+ size_t
+ vkr_get_capset(void *capset, uint32_t flags)
+ {
+diff --git a/src/venus/vkr_renderer.h b/src/venus/vkr_renderer.h
+index 71fa65494fef44c0d66e1f5d9116e6e4806de9ee..65b3ea09d118586fc2454496c35eddb0ba5035ea 100644
+--- a/src/venus/vkr_renderer.h
++++ b/src/venus/vkr_renderer.h
+@@ -21,6 +21,8 @@ typedef void (*vkr_renderer_retire_fence_callback_type)(uint32_t ctx_id,
+                                                         uint32_t ring_idx,
+                                                         uint64_t fence_id);
+ 
++typedef uint64_t (*vkr_renderer_device_memory_usage_callback_type)(void *data);
++
+ struct vkr_renderer_callbacks {
+    virgl_log_callback_type debug_logger;
+    vkr_renderer_retire_fence_callback_type retire_fence;
+@@ -35,6 +37,21 @@ vkr_renderer_set_host_visible_aperture_size(uint64_t size);
+ uint64_t
+ vkr_renderer_get_host_visible_aperture_size(void);
+ 
++void
++vkr_renderer_set_device_memory_limit(
++   uint64_t limit,
++   vkr_renderer_device_memory_usage_callback_type usage,
++   void *data);
++
++uint64_t
++vkr_renderer_get_device_memory_limit(void);
++
++uint64_t
++vkr_renderer_get_device_memory_usage(void);
++
++bool
++vkr_renderer_device_memory_admits(uint64_t size);
++
+ bool
+ vkr_renderer_init(uint32_t flags, const struct vkr_renderer_callbacks *cbs);
+ 
+diff --git a/src/virglrenderer.c b/src/virglrenderer.c
+index 085f6c0d298f9350625ba7bd0604c7441b88e958..2229e47acfb0c6acf5b3ea2245b90c4729882e42 100644
+--- a/src/virglrenderer.c
++++ b/src/virglrenderer.c
+@@ -1557,6 +1557,20 @@ virgl_renderer_set_host_visible_aperture_size(uint64_t size)
+ #endif
+ }
+ 
++void
++virgl_renderer_set_device_memory_limit(
++   uint64_t limit, virgl_renderer_device_memory_usage_cb usage, void *data)
++{
++   TRACE_FUNC();
++#ifdef ENABLE_VENUS
++   vkr_renderer_set_device_memory_limit(limit, usage, data);
++#else
++   (void)limit;
++   (void)usage;
++   (void)data;
++#endif
++}
++
+ int
+ virgl_renderer_export_fence(uint64_t client_fence_id, int *fd)
+ {
+diff --git a/src/virglrenderer.h b/src/virglrenderer.h
+index 1b14cb00936cade3c1541248722de5c0a0356424..c0d8e293539594dc60c0225261d26746fabe797d 100644
+--- a/src/virglrenderer.h
++++ b/src/virglrenderer.h
+@@ -580,6 +580,25 @@ virgl_renderer_release_handle_for_scanout(enum virgl_renderer_native_handle_type
+ VIRGL_EXPORT void
+ virgl_renderer_set_host_visible_aperture_size(uint64_t size);
+ 
++/*
++ * Reports how many bytes of device memory the host has allocated now, across
++ * every consumer that shares the limit below.
++ */
++typedef uint64_t (*virgl_renderer_device_memory_usage_cb)(void *data);
++
++/*
++ * Bound the device memory a Venus guest may allocate, in bytes, or pass zero
++ * for no bound. Every memory heap the guest is shown is at most the limit,
++ * memory budgets leave the guest only what the limit has left, and a new
++ * allocation that would take `usage` past the limit fails with
++ * VK_ERROR_OUT_OF_DEVICE_MEMORY. An import names memory that already exists
++ * and is not refused. `usage` may be NULL, which counts nothing as allocated.
++ * Call this before `virgl_renderer_init`.
++ */
++VIRGL_EXPORT void
++virgl_renderer_set_device_memory_limit(
++   uint64_t limit, virgl_renderer_device_memory_usage_cb usage, void *data);
++
+ /* vtest semi-private APIs: */
+ VIRGL_EXPORT int virgl_renderer_attach_fence(int ctx_id, int fence_fd);
+ VIRGL_EXPORT int virgl_renderer_get_fence_fd(uint64_t fence_id);

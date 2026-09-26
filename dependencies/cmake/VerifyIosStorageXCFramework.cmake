@@ -7,6 +7,7 @@ if(NOT DEFINED SOURCE_ROOT)
     message(FATAL_ERROR "SOURCE_ROOT is required for storage verification")
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/VerifySourceTrees.cmake")
 
 set(_xcframework "${PREFIX}/GPTFDisk.xcframework")
 set(_required
@@ -28,29 +29,15 @@ uml_verify_dependency_manifest_product(
     INSTALLED "${PREFIX}/share/uml-dependencies/manifest.tsv"
     PRODUCT ios-storage
     LABEL "iOS storage")
+uml_verify_source_trees(
+    INSTALLED "${PREFIX}/share/uml-dependencies/source-trees.tsv"
+    LABEL "iOS storage"
+    SOURCES gptfdisk "${SOURCE_ROOT}/dependencies/patches/gptfdisk/series.tsv")
 set(_provenance_files
     "ios-device-storage-arm64.tsv"
-    "ios-simulator-storage-arm64.tsv"
-    "patches/gptfdisk/series.tsv")
-file(STRINGS
-    "${SOURCE_ROOT}/dependencies/patches/gptfdisk/series.tsv" _series_rows)
-foreach(_row IN LISTS _series_rows)
-    if(_row MATCHES "^#" OR _row STREQUAL "")
-        continue()
-    endif()
-    string(REPLACE "\t" ";" _fields "${_row}")
-    list(GET _fields 0 _order)
-    if(NOT _order STREQUAL "order")
-        list(GET _fields 1 _patch)
-        list(APPEND _provenance_files "patches/gptfdisk/${_patch}")
-    endif()
-endforeach()
+    "ios-simulator-storage-arm64.tsv")
 foreach(_relative IN LISTS _provenance_files)
-    if(_relative MATCHES "^ios-.*-storage-arm64\\.tsv$")
-        set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
-    else()
-        set(_source "${SOURCE_ROOT}/dependencies/${_relative}")
-    endif()
+    set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
     set(_installed "${PREFIX}/share/uml-dependencies/${_relative}")
     if(NOT EXISTS "${_installed}" OR IS_SYMLINK "${_installed}")
         message(FATAL_ERROR

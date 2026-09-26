@@ -4,6 +4,7 @@ set -eu
 
 DEPENDENCY_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../../dependencies" && pwd)
 PREPARE="$DEPENDENCY_DIR/prepare.sh"
+PATCH_SERIES="$DEPENDENCY_DIR/../scripts/patch_series.py"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-dependency-prepare.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
@@ -20,9 +21,18 @@ sha256_file()
 
 prepare()
 {
+	prepared_root=$1
+	shift
 	UML_DEPENDENCY_MANIFEST="$MANIFEST" \
 	UML_DEPENDENCY_PATCH_ROOT="$METADATA" \
-		"$PREPARE" --product fixture --root "$1" --cache "$CACHE" --no-fetch
+		"$PREPARE" --product fixture --root "$prepared_root" --cache "$CACHE" \
+		--no-fetch "$@"
+}
+
+export_series()
+{
+	python3 -B "$PATCH_SERIES" export --source "$UPSTREAM" --base "$BASE" \
+		--head HEAD --series-dir "$SERIES_DIR" --tree >/dev/null
 }
 
 verify()
@@ -183,23 +193,7 @@ printf '\000\001\002\377' >"$UPSTREAM/added.bin"
 git -C "$UPSTREAM" add added.txt added.bin
 git -C "$UPSTREAM" commit --quiet -m 'fixture: second maintained change'
 mkdir -p "$SERIES_DIR"
-git -C "$UPSTREAM" format-patch --no-signature --output-directory "$SERIES_DIR" \
-	"$BASE..HEAD" >/dev/null
-{
-	printf '%s\n' '# SPDX-License-Identifier: GPL-2.0-or-later'
-	printf 'order\tpatch\tstable_patch_id\tsha256\tsubject\n'
-	order=1
-	find "$SERIES_DIR" -type f -name '*.patch' -print | LC_ALL=C sort |
-	while IFS= read -r patch; do
-		patch_id=$(git patch-id --stable <"$patch" | awk '{print $1}')
-		digest=$(sha256_file "$patch")
-		subject=$(git mailinfo /dev/null /dev/null <"$patch" |
-			sed -n 's/^Subject: //p')
-		printf '%s\t%s\t%s\t%s\t%s\n' "$order" "$(basename "$patch")" \
-			"$patch_id" "$digest" "$subject"
-		order=$((order + 1))
-	done
-} >"$SERIES_DIR/series.tsv"
+export_series
 
 for name in clean patched sparse; do
 	git clone --quiet "$UPSTREAM" "$CACHE/git/$name"
@@ -311,9 +305,15 @@ expect_failure "prepared-repository tampering" verify "$PREPARED"
 git -C "$PREPARED/clean" restore payload.txt
 verify "$PREPARED" >/dev/null
 
-PATCH=$(find "$SERIES_DIR" -name '*.patch' -print -quit)
-printf '%s\n' '# manually edited' >>"$PATCH"
+# A hand edit that changes what the series produces no longer matches the
+# recorded tree.
+for PATCH in "$SERIES_DIR"/*.patch; do
+	sed 's/^+added$/+edited/' "$PATCH" >"$PATCH.edited"
+	mv "$PATCH.edited" "$PATCH"
+done
 expect_failure "manual patch-file editing" prepare "$TEST_ROOT/patch-tamper"
+[ ! -e "$TEST_ROOT/patch-tamper/patched" ] ||
+	fail "a series that misses its recorded tree was published"
 rm -rf "$SERIES_DIR"
 cp -R "$TEST_ROOT/series-original" "$SERIES_DIR"
 
@@ -400,5 +400,34 @@ awk -F '\t' '$1 != "vulkan-headers"' "$TEST_ROOT/paired-manifest.tsv" >"$MANIFES
 expect_failure "missing paired SDK declaration" paired_prepare
 cp "$TEST_ROOT/paired-manifest.tsv" "$MANIFEST"
 paired_prepare >/dev/null
+
+# A changed series leaves an existing prepared source stale. Only --recreate
+# replaces it, and only when preparation could have made it.
+cp "$MANIFEST.original" "$MANIFEST"
+RECREATED="$TEST_ROOT/recreated"
+prepare "$RECREATED" >/dev/null
+printf '%s\n' third >"$UPSTREAM/third.txt"
+git -C "$UPSTREAM" add third.txt
+git -C "$UPSTREAM" commit --quiet -m 'fixture: third maintained change'
+export_series
+expect_failure "stale prepared source" verify "$RECREATED"
+expect_failure "replacement without --recreate" prepare "$RECREATED"
+grep -q -- '--recreate' "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" ||
+	fail "stale-source diagnostic does not name --recreate"
+printf '%s\n' local >"$RECREATED/patched/local.txt"
+expect_failure "recreation of a dirty source" prepare "$RECREATED" --recreate
+[ -f "$RECREATED/patched/local.txt" ] || fail "recreation removed local work"
+rm "$RECREATED/patched/local.txt"
+git -C "$RECREATED/patched" branch topic
+expect_failure "recreation of a source with a branch" prepare "$RECREATED" --recreate
+git -C "$RECREATED/patched" branch -D topic >/dev/null
+prepare "$RECREATED" --recreate >/dev/null
+verify "$RECREATED" >/dev/null
+[ "$(cat "$RECREATED/patched/third.txt")" = third ] ||
+	fail "recreation did not replay the changed series"
+[ -z "$(git -C "$RECREATED/patched" for-each-ref refs/heads)" ] ||
+	fail "a prepared source kept a branch copied from the cache"
+[ -z "$(find "$RECREATED" -maxdepth 1 -name '.prepare.*' -print)" ] ||
+	fail "recreation left its staging directory behind"
 
 printf '%s\n' "dependency preparation tests passed"

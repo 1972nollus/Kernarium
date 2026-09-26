@@ -13,7 +13,9 @@ cp "$SOURCE_DEPENDENCY_DIR/verify-prefix.sh" \
 	"$DEPENDENCY_DIR/"
 # Preparation resolves its Git identity contract from the tree it ships in,
 # so the fixture tree carries the real helper too.
-cp "$SOURCE_DEPENDENCY_DIR/../scripts/git-identity.sh" "$TEST_ROOT/scripts/"
+cp "$SOURCE_DEPENDENCY_DIR/../scripts/git-identity.sh" \
+	"$SOURCE_DEPENDENCY_DIR/../scripts/git_identity.py" \
+	"$SOURCE_DEPENDENCY_DIR/../scripts/patch_series.py" "$TEST_ROOT/scripts/"
 VERIFIER="$DEPENDENCY_DIR/verify-prefix.sh"
 PREPARE="$DEPENDENCY_DIR/prepare.sh"
 
@@ -58,8 +60,7 @@ expect_failure()
 command -v xcrun >/dev/null 2>&1 || fail "xcrun is required"
 MANIFEST="$DEPENDENCY_DIR/manifest.tsv"
 PATCH_DIRECTORY="$DEPENDENCY_DIR/patches/fixture"
-PATCH="$PATCH_DIRECTORY/0001-fixture-maintained-change.patch"
-SERIES="$PATCH_DIRECTORY/series.tsv"
+PATCH="$PATCH_DIRECTORY/fixture-maintained-change.patch"
 BASE_PREFIX="$TEST_ROOT/prefix"
 FAILURE_NUMBER=0
 mkdir -p "$BASE_PREFIX/include/glib-2.0" \
@@ -82,14 +83,10 @@ git -C "$PATCH_REPOSITORY" commit --quiet -m 'fixture: upstream base'
 BASE_COMMIT=$(git -C "$PATCH_REPOSITORY" rev-parse HEAD)
 printf '%s\n' project-patched >"$PATCH_REPOSITORY/fixture.txt"
 git -C "$PATCH_REPOSITORY" commit --quiet -am 'fixture: maintained change'
-git -C "$PATCH_REPOSITORY" format-patch --no-signature -1 --stdout HEAD >"$PATCH"
-PATCH_HASH=$(sha256_file "$PATCH")
-PATCH_ID=$(git patch-id --stable <"$PATCH" | awk '{print $1}')
-cat >"$SERIES" <<EOF
-# SPDX-License-Identifier: GPL-2.0-or-later
-order	patch	stable_patch_id	sha256	subject
-1	$(basename "$PATCH")	$PATCH_ID	$PATCH_HASH	fixture: maintained change
-EOF
+python3 -B "$TEST_ROOT/scripts/patch_series.py" export \
+	--source "$PATCH_REPOSITORY" --base "$BASE_COMMIT" --head HEAD \
+	--series-dir "$PATCH_DIRECTORY" --tree >/dev/null
+[ -f "$PATCH" ] || fail "fixture series did not produce $PATCH"
 cat >"$MANIFEST" <<EOF
 name	version	products	repository	commit	source_paths	patch_series
 fixture	1.0	macos	https://example.invalid/fixture.git	$BASE_COMMIT	.	patches/fixture/series.tsv
@@ -160,9 +157,14 @@ EOF
 
 verify "$BASE_PREFIX" >/dev/null
 
-printf '%s\n' '# changed patch bytes' >>"$PATCH"
-expect_failure "changed dependency patch" "$BASE_PREFIX"
+sed '1s/^From 0\{40\}/From 1111111111111111111111111111111111111111/' \
+	"$PATCH.original" >"$PATCH"
+expect_failure "patch not produced by the series exporter" "$BASE_PREFIX"
 cp "$PATCH.original" "$PATCH"
+
+printf '%s\n' stray >"$PATCH_DIRECTORY/unlisted.patch"
+expect_failure "unlisted dependency patch" "$BASE_PREFIX"
+rm "$PATCH_DIRECTORY/unlisted.patch"
 
 mv "$PATCH" "$PATCH.absent"
 expect_failure "deleted dependency patch" "$BASE_PREFIX"

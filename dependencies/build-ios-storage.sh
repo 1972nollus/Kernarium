@@ -180,16 +180,15 @@ build_slice ios-simulator iphonesimulator \
 	-output "$STAGE/GPTFDisk.xcframework"
 
 PROVENANCE="$STAGE/share/uml-dependencies"
-mkdir -p -- "$PROVENANCE/patches/gptfdisk"
+mkdir -p -- "$PROVENANCE"
 cp "$ROOT_DIR/dependencies/manifest.tsv" "$PROVENANCE/manifest.tsv"
 cp "$ROOT_DIR/dependencies/platforms/ios-device-storage-arm64.tsv" \
 	"$PROVENANCE/ios-device-storage-arm64.tsv"
 cp "$ROOT_DIR/dependencies/platforms/ios-simulator-storage-arm64.tsv" \
 	"$PROVENANCE/ios-simulator-storage-arm64.tsv"
-cp "$ROOT_DIR/dependencies/patches/gptfdisk/series.tsv" \
-	"$PROVENANCE/patches/gptfdisk/series.tsv"
-cp "$ROOT_DIR"/dependencies/patches/gptfdisk/*.patch \
-	"$PROVENANCE/patches/gptfdisk/"
+printf 'source\ttree\ngptfdisk\t%s\n' \
+	"$(git -C "$SOURCE" rev-parse 'HEAD^{tree}')" \
+	> "$PROVENANCE/source-trees.tsv"
 
 verify_output "$STAGE"
 mv "$STAGE" "$OUTPUT"

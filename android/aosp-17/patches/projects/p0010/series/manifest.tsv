@@ -1,5 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# Ordered generated AOSP project topic identity.
-order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-Launcher-omit-first-screen-search-.patch	78d86eb46709b5b877caa99bf04a27439257398b	f6d9289c8cb6e6221398b480b174103ddc8ba99b79a70c3d0dd365a7a7cdd428	UML-ANDROID-LOCAL: Launcher omit first-screen search surface
-2	0002-UML-ANDROID-LOCAL-Launcher-guard-early-taskbar-layou.patch	792ecd6307e55351bdb37f2656b10913e7b99beb	a9f2d95d4b9a10d0090a709101864a4312fc2deea9520831998861fc212f35cd	UML-ANDROID-LOCAL: Launcher guard early taskbar layout

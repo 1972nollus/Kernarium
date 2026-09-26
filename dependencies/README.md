@@ -91,12 +91,16 @@ refuses to run when none is configured. See
 [`kernel/mainline-6.18/README.md`](../kernel/mainline-6.18/README.md) for the
 shared contract.
 
-An invalid prepared tree or installed prefix is never replaced automatically.
-Review the diagnostic and move the old path aside before rebuilding. Prefix
-verification checks manifest/series identity, architecture, Apple platform and
-deployment target, expected static payloads, framework install names, and the
-absence of undeclared or legacy providers. Every iOS prefix builds and verifies at an
-iOS 26.0 deployment target.
+A prepared source is identified by the tree its series records in
+`series.tsv`. A prepared source whose tree no longer matches is replaced only
+by `prepare.sh --recreate`, and only when it is clean and its branches point
+at commits the Git cache already holds; anything else is refused with a
+diagnostic. An installed prefix is never replaced automatically: build the new
+one beside it. Prefix verification checks the manifest rows, each patched
+source's tree in `share/uml-dependencies/source-trees.tsv` against its series,
+architecture, Apple platform and deployment target, expected static payloads,
+framework install names, and the absence of undeclared or legacy providers.
+Every iOS prefix builds and verifies at an iOS 26.0 deployment target.
 
 Product-specific prefixes compare only the manifest rows consumed by that
 product. Adding an unrelated dependency does not invalidate an accepted
@@ -119,11 +123,11 @@ independent `vk_provider=venus-kosmickrisp`. The build compiles KosmicKrisp as
 `KosmicKrisp.framework`, injects its `vkGetInstanceProcAddr` directly into
 Venus, and disables host Vulkan-loader discovery and downstream downloads.
 Prefix and runtime verification require exactly that provider set and reject a
-second Vulkan provider, an ambient loader, a platform mismatch, a stale
-generated series, or a duplicate framework copy. Host builds generate and test
+second Vulkan provider, an ambient loader, a platform mismatch, a source tree
+its series no longer records, or a duplicate framework copy. Host builds generate and test
 the protocol from the authenticated SDK registry before compiling Venus;
 generated codecs are build outputs rather than installed payload, and the
-prefix records the generator source commit and generated-header digest.
+prefix records the generator source tree and generated-header digest.
 
 The maintained virglrenderer series and the guest Mesa series under
 `tools/rootfs/vulkan/` form one compatibility epoch. The host translates
@@ -253,7 +257,7 @@ commit, and publishes only that tag without changing the checkout's HEAD or file
 
 ## Patch maintenance
 
-Patch files are generated mail artifacts. Modify the clean Git topic branch,
+Patch files are generated mail artifacts. Modify the clean Git topic checkout,
 then regenerate the owning series:
 
 ```sh
@@ -261,13 +265,16 @@ dependencies/rebase-patches.sh \
   --dependency NAME --source /path/to/topic-checkout
 ```
 
-The regenerator checks linear history against the pinned commit and updates the
-series manifest, stable patch IDs, hashes, subjects, and order. Never edit patch
-bytes or `series.tsv` by hand.
+The regenerator exports the pinned commit's descendants through
+`scripts/patch_series.py`, which rewrites only the patches whose commits
+changed and records the resulting tree in `series.tsv`. Never edit patch bytes
+or `series.tsv` by hand.
 
-Changing `manifest.tsv`, a source identity, a patch series, or a build recipe
-invalidates the corresponding installed receipt. Rebuild the affected prefix
-and run its tooling checks in the same change.
+Changing `manifest.tsv` or a build recipe invalidates the corresponding
+installed receipt, and so does a series change that produces a different tree.
+A series change that keeps the tree, such as a reworded message or a folded
+follow-up, leaves every prefix valid. Rebuild an invalidated prefix and run its
+tooling checks in the same change.
 
 ## Host prerequisites
 

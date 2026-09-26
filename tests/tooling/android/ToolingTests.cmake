@@ -17,14 +17,6 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
-    NAME android17-kernel-patch-regenerator
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_kernel_patch_regenerator.py
-        --source-root ${PROJECT_SOURCE_DIR}
-    LABELS android;kernel;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
     NAME android17-jelly-source-contract
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_jelly_source_contract.py

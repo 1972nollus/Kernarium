@@ -27,7 +27,7 @@ def expect_failure(function, label: str) -> None:
     fail(f"release contract accepted {label}")
 
 
-def read_routes(projects_path: Path) -> list[dict]:
+def read_routes(projects_path: Path, android_root: Path, provenance) -> list[dict]:
     lines = [
         line for line in projects_path.read_text(encoding="utf-8").splitlines()
         if line and not line.startswith("#")
@@ -35,6 +35,7 @@ def read_routes(projects_path: Path) -> list[dict]:
     reader = csv.DictReader(lines, delimiter="\t")
     routes = []
     for row in reader:
+        patch_count, series_digest = provenance(android_root / row["series_dir"])
         routes.append({
             "route_id": row["route_id"],
             "manifest_project": row["manifest_project"],
@@ -42,8 +43,8 @@ def read_routes(projects_path: Path) -> list[dict]:
             "base_commit": row["base_commit"],
             "base_tree": row["base_tree"],
             "final_tree": row["final_tree"],
-            "patch_count": int(row["patch_count"]),
-            "series_manifest_sha256": row["series_manifest_sha256"],
+            "patch_count": patch_count,
+            "series_manifest_sha256": series_digest,
         })
     return routes
 
@@ -62,10 +63,16 @@ def main() -> None:
         PRODUCT_FAMILY,
         SCHEMA_VERSION,
         ACCEPTANCE_KEYS,
+        kernel_series_provenance,
         parse_env,
+        route_series,
+        series_provenance,
         sha256_path,
         verify_release,
     )
+
+    def provenance(*directories: Path) -> tuple[int, str]:
+        return series_provenance(root, *directories)
 
     schema = json.loads(
         (android_root / "support/release/release-manifest.schema.json").read_text()
@@ -76,8 +83,11 @@ def main() -> None:
     aosp = parse_env(android_root / "metadata/aosp.env")
     jelly = parse_env(android_root / "third_party/jelly/metadata.env")
     orangefox = parse_env(android_root / "third_party/orangefox/metadata.env")
+    orangefox_projects = android_root / "third_party/orangefox/patches/projects.tsv"
+    jelly_count, jelly_digest = provenance(android_root / "third_party/jelly/series")
     kernel_root = root / "kernel/android-6.18"
     kernel = parse_env(kernel_root / "patches/metadata.env")
+    kernel_patch_count, kernel_patch_digest = kernel_series_provenance(root)
     abi = parse_env(root / "kernel/common/abi/identity.env")
     tracked_acceptance = parse_env(android_root / "metadata/accepted-release.env")
     if set(tracked_acceptance) != ACCEPTANCE_KEYS:
@@ -124,19 +134,19 @@ def main() -> None:
             "projects_manifest_sha256": sha256_path(
                 android_root / "patches/projects.tsv"
             ),
-            "routes": read_routes(android_root / "patches/projects.tsv"),
+            "routes": read_routes(
+                android_root / "patches/projects.tsv", android_root, provenance
+            ),
         },
         "jelly": {
             "repository": jelly["JELLY_UPSTREAM_REPOSITORY"],
             "branch": jelly["JELLY_UPSTREAM_BRANCH"],
             "base_commit": jelly["JELLY_UPSTREAM_COMMIT"],
             "base_tree": jelly["JELLY_UPSTREAM_TREE"],
-            "final_commit": jelly["JELLY_FINAL_COMMIT"],
+            "final_commit": "f" * 40,
             "final_tree": jelly["JELLY_FINAL_TREE"],
-            "patch_count": int(jelly["JELLY_PATCH_COUNT"]),
-            "patch_manifest_sha256": sha256_path(
-                android_root / "third_party/jelly/series/manifest.tsv"
-            ),
+            "patch_count": jelly_count,
+            "patch_manifest_sha256": jelly_digest,
             "destination": jelly["JELLY_DESTINATION"],
             "license": jelly["JELLY_LICENSE"],
         },
@@ -178,13 +188,11 @@ def main() -> None:
             ],
             "product": orangefox["ORANGEFOX_PRODUCT"],
             "release_config": orangefox["ORANGEFOX_RELEASE_CONFIG"],
-            "patch_count": int(orangefox["ORANGEFOX_PATCH_COUNT"]),
+            "patch_count": provenance(*route_series(android_root, orangefox_projects))[0],
             "projects_manifest_sha256": sha256_path(
                 android_root / "third_party/orangefox/patches/projects.tsv"
             ),
-            "routes": read_routes(
-                android_root / "third_party/orangefox/patches/projects.tsv"
-            ),
+            "routes": read_routes(orangefox_projects, android_root, provenance),
             "license": orangefox["ORANGEFOX_LICENSE"],
         },
         "kernel": {
@@ -195,10 +203,8 @@ def main() -> None:
             "base_commit": kernel["UML_KERNEL_UPSTREAM_COMMIT"],
             "base_tree": kernel["UML_KERNEL_UPSTREAM_TREE"],
             "final_tree": kernel["UML_KERNEL_FINAL_TREE"],
-            "patch_count": int(kernel["UML_KERNEL_PATCH_COUNT"]),
-            "patch_manifest_sha256": sha256_path(
-                kernel_root / "patches/series/manifest.tsv"
-            ),
+            "patch_count": kernel_patch_count,
+            "patch_manifest_sha256": kernel_patch_digest,
             "release": "6.18.21-fixture",
             "page_size": 16384,
             "abi_version": int(abi["DARWIN_UML_ABI_VERSION"]),

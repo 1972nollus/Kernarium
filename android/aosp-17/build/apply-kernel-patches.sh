@@ -8,7 +8,7 @@ ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 LINE_ROOT="$ROOT_DIR/kernel/android-6.18"
 COMMON_ROOT="$ROOT_DIR/kernel/common"
 METADATA="$LINE_ROOT/patches/metadata.env"
-MANIFEST="$LINE_ROOT/patches/series/manifest.tsv"
+KERNEL_SERIES="$COMMON_ROOT/tooling/kernel_series.py"
 
 ACK_WORKSPACE=
 KERNEL_SOURCE=
@@ -73,7 +73,6 @@ absolute_path "kernel source" "$KERNEL_SOURCE"
 [ "$(uname -s)" = Linux ] || fail "builder host must be Linux"
 [ "$(uname -m)" = x86_64 ] || fail "builder host must be x86_64"
 [ -f "$METADATA" ] || fail "missing ACK metadata: $METADATA"
-[ -f "$MANIFEST" ] || fail "missing ACK series manifest: $MANIFEST"
 # shellcheck disable=SC1090
 . "$METADATA"
 
@@ -94,36 +93,22 @@ actual_tree=$(git -C "$ACK_COMMON" rev-parse HEAD^{tree})
 [ -z "$(git -C "$ACK_COMMON" status --porcelain)" ] ||
 	fail "ACK common checkout is dirty"
 
-"$COMMON_ROOT/tooling/verify-series-policy.py" \
-	--line-root "$LINE_ROOT" manifest >/dev/null
+python3 -B "$KERNEL_SERIES" check --metadata "$METADATA" ||
+	fail "the ACK series files are invalid"
 git -C "$ACK_COMMON" worktree add --detach \
 	"$KERNEL_SOURCE" "$UML_KERNEL_UPSTREAM_COMMIT"
 
-awk -F '\t' '$1 ~ /^[0-9]+$/ { print $2 }' "$MANIFEST" |
-while IFS= read -r filename; do
-	patch="$LINE_ROOT/patches/series/$filename"
-	if ! git -C "$KERNEL_SOURCE" am "$patch"; then
-		git -C "$KERNEL_SOURCE" am --abort || true
-		fail "could not apply ACK topic: $filename"
-	fi
-done
-
-topic_count=$(git -C "$KERNEL_SOURCE" rev-list --count \
-	"$UML_KERNEL_UPSTREAM_COMMIT..HEAD")
-[ "$topic_count" -eq "$UML_KERNEL_PATCH_COUNT" ] ||
-	fail "replayed $topic_count topics, expected $UML_KERNEL_PATCH_COUNT"
-[ -z "$(git -C "$KERNEL_SOURCE" rev-list --merges \
-	"$UML_KERNEL_UPSTREAM_COMMIT..HEAD")" ] || fail "replayed series has a merge"
-final_tree=$(git -C "$KERNEL_SOURCE" rev-parse HEAD^{tree})
-[ "$final_tree" = "$UML_KERNEL_FINAL_TREE" ] ||
-	fail "replayed tree is $final_tree, expected $UML_KERNEL_FINAL_TREE"
+# Every worktree of the ACK checkout shares its branches, so the replay stays
+# detached and creates none.
+python3 -B "$KERNEL_SERIES" replay --metadata "$METADATA" \
+	--source "$KERNEL_SOURCE" --detached >/dev/null ||
+	fail "could not replay the ACK series onto $UML_KERNEL_UPSTREAM_COMMIT"
+python3 -B "$KERNEL_SERIES" verify-branch --metadata "$METADATA" \
+	--source "$KERNEL_SOURCE" --tip HEAD --detached ||
+	fail "replayed ACK worktree is not the checked-in series"
 [ -z "$(git -C "$KERNEL_SOURCE" status --porcelain)" ] ||
 	fail "replayed ACK worktree is dirty"
 
-"$COMMON_ROOT/tooling/verify-series-policy.py" \
-	--line-root "$LINE_ROOT" topology \
-	--source "$KERNEL_SOURCE" --base "$UML_KERNEL_UPSTREAM_COMMIT" \
-	--tip HEAD >/dev/null
 "$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA" \
 	--kernel-source "$KERNEL_SOURCE" --verify >/dev/null
 printf '%s\n' "materialized Android ACK source: $KERNEL_SOURCE"

@@ -1,4 +1,0 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
-# Ordered generated OrangeFox vendor/twrp topic identity.
-order	filename	stable_patch_id	sha256	subject
-1	0001-UML-ANDROID-LOCAL-OrangeFox-export-recovery-Soong-va.patch	c637afa533ae594cabaa004ba6459b37746c2396	589684c6fa7fc0f84e711290b269a829923e52f313cba6dc189fae65a19d2a32	UML-ANDROID-LOCAL: OrangeFox export recovery Soong variables

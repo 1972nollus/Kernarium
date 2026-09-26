@@ -10,6 +10,7 @@ if(NOT DEFINED PLATFORM)
     set(PLATFORM macos)
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/VerifySourceTrees.cmake")
 
 if(NOT DEFINED PRODUCT)
     set(PRODUCT apple-gpu-vulkan-experiment)
@@ -151,64 +152,26 @@ uml_verify_dependency_manifest_product(
     INSTALLED "${PREFIX}/share/uml-dependencies/manifest.tsv"
     PRODUCT "${PRODUCT}"
     LABEL "Apple GPU")
-set(_provenance_files manifest.tsv "${_platform_contract}")
-set(_provenance_series
-    "patches/libepoxy/series.tsv"
-    "patches/virglrenderer/series.tsv")
-foreach(_series IN LISTS _provenance_series)
-    list(APPEND _provenance_files "${_series}")
-    get_filename_component(_series_directory "${_series}" DIRECTORY)
-    file(STRINGS "${SOURCE_ROOT}/dependencies/${_series}" _series_rows)
-    foreach(_row IN LISTS _series_rows)
-        if(_row MATCHES "^#" OR _row STREQUAL "")
-            continue()
-        endif()
-        string(REPLACE "\t" ";" _fields "${_row}")
-        list(GET _fields 0 _order)
-        if(NOT _order STREQUAL "order")
-            list(GET _fields 1 _patch)
-            list(APPEND _provenance_files "${_series_directory}/${_patch}")
-        endif()
-    endforeach()
-endforeach()
-foreach(_series IN ITEMS "patches/mesa/series.tsv"
-        "tools/rootfs/vulkan/patches/venus-protocol/series.tsv")
-    list(APPEND _provenance_files "${_series}")
-    get_filename_component(_series_directory "${_series}" DIRECTORY)
-    if(_series MATCHES "^tools/rootfs/vulkan/")
-        set(_series_source "${SOURCE_ROOT}/${_series}")
-    else()
-        set(_series_source "${SOURCE_ROOT}/dependencies/${_series}")
-    endif()
-    file(STRINGS "${_series_source}" _series_rows)
-    foreach(_row IN LISTS _series_rows)
-        if(_row MATCHES "^#" OR _row STREQUAL "")
-            continue()
-        endif()
-        string(REPLACE "\t" ";" _fields "${_row}")
-        list(GET _fields 0 _order)
-        if(NOT _order STREQUAL "order")
-            list(GET _fields 1 _patch)
-            list(APPEND _provenance_files "${_series_directory}/${_patch}")
-        endif()
-    endforeach()
-endforeach()
+set(_provenance_files manifest.tsv "${_platform_contract}" source-trees.tsv)
+uml_verify_source_trees(
+    INSTALLED "${PREFIX}/share/uml-dependencies/source-trees.tsv"
+    LABEL "Apple GPU"
+    SOURCES
+        libepoxy "${SOURCE_ROOT}/dependencies/patches/libepoxy/series.tsv"
+        virglrenderer "${SOURCE_ROOT}/dependencies/patches/virglrenderer/series.tsv"
+        mesa "${SOURCE_ROOT}/dependencies/patches/mesa/series.tsv"
+        venus-protocol
+            "${SOURCE_ROOT}/tools/rootfs/vulkan/patches/venus-protocol/series.tsv")
 
 foreach(_relative IN LISTS _provenance_files)
     set(_installed "${PREFIX}/share/uml-dependencies/${_relative}")
     if(NOT EXISTS "${_installed}" OR IS_SYMLINK "${_installed}")
         message(FATAL_ERROR "Missing Apple GPU provenance: ${_installed}")
     endif()
-    if(_relative STREQUAL "manifest.tsv")
+    if(NOT _relative STREQUAL "${_platform_contract}")
         continue()
     endif()
-    if(_relative STREQUAL "${_platform_contract}")
-        set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
-    elseif(_relative MATCHES "^tools/rootfs/vulkan/")
-        set(_source "${SOURCE_ROOT}/${_relative}")
-    else()
-        set(_source "${SOURCE_ROOT}/dependencies/${_relative}")
-    endif()
+    set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E compare_files "${_source}" "${_installed}"
         RESULT_VARIABLE _provenance_status)
@@ -278,7 +241,7 @@ set(_receipt_fields
     format product platform sdk_name sdk_version sdk_path compiler
     built_at_utc source_manifest_sha256 platform_contract_sha256
     mesa_base_commit vulkan_headers_base_commit
-    venus_protocol_source_commit venus_protocol_generated_sha256)
+    venus_protocol_generated_sha256)
 set(_seen_receipt_fields)
 foreach(_row IN LISTS _receipt_rows)
     if(_row STREQUAL "" OR _row STREQUAL "field\tvalue")
@@ -324,29 +287,21 @@ function(_receipt_expect _field _expected)
             "Apple GPU build receipt ${_field} is ${_actual}, expected ${_expected}")
     endif()
 endfunction()
-_receipt_expect(format 1)
+_receipt_expect(format 2)
 _receipt_expect(product apple-gpu-vulkan-experiment)
 _receipt_expect(platform "${PLATFORM}")
 _receipt_expect(mesa_base_commit
     da14d65e4499e66468094be52bff9ea0915a695e)
 _receipt_expect(vulkan_headers_base_commit
     e3b1eec08173d6b825cd3ac88c885a63b621504a)
-foreach(_identity IN ITEMS venus_protocol_source_commit venus_protocol_generated_sha256)
-    foreach(_row IN LISTS _receipt_rows)
-        if(_row MATCHES "^${_identity}\t(.+)$")
-            set(_value "${CMAKE_MATCH_1}")
-            string(LENGTH "${_value}" _length)
-            if(_identity STREQUAL "venus_protocol_source_commit")
-                set(_expected_length 40)
-            else()
-                set(_expected_length 64)
-            endif()
-            if(NOT _value MATCHES "^[0-9a-f]+$" OR
-                    NOT _length EQUAL _expected_length)
-                message(FATAL_ERROR "Invalid protocol build identity: ${_identity}")
-            endif()
+foreach(_row IN LISTS _receipt_rows)
+    if(_row MATCHES "^venus_protocol_generated_sha256\t(.*)$")
+        string(LENGTH "${CMAKE_MATCH_1}" _length)
+        if(NOT CMAKE_MATCH_1 MATCHES "^[0-9a-f]+$" OR NOT _length EQUAL 64)
+            message(FATAL_ERROR
+                "Invalid protocol build identity: venus_protocol_generated_sha256")
         endif()
-    endforeach()
+    endif()
 endforeach()
 file(SHA256 "${SOURCE_ROOT}/dependencies/manifest.tsv" _manifest_sha256)
 file(SHA256

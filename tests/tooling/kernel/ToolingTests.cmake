@@ -14,6 +14,13 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME kernel-series-contract
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_series.py
+    LABELS kernel;android;audit
+    TIMEOUT 120)
+
+uml_add_tooling_test(
     NAME kernel-artifact-contract
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_artifact_contract.py
@@ -38,12 +45,6 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
-    NAME kernel-series-topology
-    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_series_topology.sh
-    LABELS kernel;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
     NAME kernel-compiler-selection
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_toolchain.sh
         ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/KernelToolchain.cmake
@@ -57,62 +58,12 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
-    NAME kernel-next-version-policy-actions
-    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_next_version_policy.sh
-    LABELS kernel;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
     NAME kernel-compressed-memory-policy
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_compressed_memory_policy.py
         --kernel-config
             ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/config/common.fragment
     LABELS kernel;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
-    NAME kernel-virtio-gpu-shutdown-policy
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_virtio_gpu_shutdown_policy.py
-        --series-manifest
-            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series/manifest.tsv
-        --series-directory
-            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series
-    LABELS kernel;gpu;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
-    NAME kernel-ubd-discard-policy
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_ubd_discard_policy.py
-        --mainline-patch
-            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series/0024-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch
-        --android-patch
-            ${PROJECT_SOURCE_DIR}/kernel/android-6.18/patches/series/0029-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch
-    LABELS kernel;android;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
-    NAME kernel-virtio-gpu-shared-memory-policy
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_virtio_gpu_shared_memory_policy.py
-        --series-manifest
-            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series/manifest.tsv
-        --series-directory
-            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series
-    LABELS kernel;gpu;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
-    NAME kernel-virtio-gpu-context-attach-policy
-    COMMAND ${Python3_EXECUTABLE} -B
-        ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_virtio_gpu_context_attach_policy.py
-        --mainline-series
-            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series
-        --android-series
-            ${PROJECT_SOURCE_DIR}/kernel/android-6.18/patches/series
-    LABELS kernel;android;gpu;audit
     TIMEOUT 30)
 
 uml_add_tooling_test(
@@ -158,7 +109,7 @@ uml_add_tooling_test(
         --carrier-verifier
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/verify-signed-kernel-carrier.py
         --linker-patch
-            ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/patches/series/0001-uml-establish-shared-architecture-contracts-and-buil.patch
+            ${PROJECT_SOURCE_DIR}/kernel/common/patches/uml-establish-shared-architecture-contracts-and-build-wiring.patch
         --package-script
             ${PROJECT_SOURCE_DIR}/Kernarium/scripts/package-ios-frameworks.sh
         --xcode-project

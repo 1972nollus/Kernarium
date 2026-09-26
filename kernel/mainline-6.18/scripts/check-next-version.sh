@@ -1,13 +1,13 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Report patch-series conflicts against a caller-selected development ref.
+# Report how a slice's series carries onto a caller-selected development ref.
 # This opt-in audit uses a temporary Git clone and never supplies source to a
 # build or rewrites a managed pinned-commit checkout.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
-SERIES_POLICY="$ROOT_DIR/kernel/common/tooling/verify-series-policy.py"
+KERNEL_SERIES="$ROOT_DIR/kernel/common/tooling/kernel_series.py"
 SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
 GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
 
@@ -19,15 +19,15 @@ fail()
 
 usage()
 {
-	cat <<'EOF'
+	cat <<'USAGE'
 Usage: kernel/mainline-6.18/scripts/check-next-version.sh \
        --work-root PATH --ref REF [--slice arm64|x86_64] [--keep]
 
-Clone the audit-only Linux origin, detach at REF, and apply the complete tracked
-series with git am --3way. Report the recorded local carry, drop, rebase, and
-retest action for every path when a topic applies, is already contained, or
-conflicts. This command never submits or pushes a change.
-EOF
+Clone the upstream Linux origin, replay the slice's series on the pinned
+commit, and rebase the result onto REF. A conflict stops with the topic and
+paths that need a port; otherwise `git range-diff` shows every topic that
+changed or became empty. This command never submits or pushes a change.
+USAGE
 }
 
 WORK_ROOT=''
@@ -74,16 +74,8 @@ uml_require_git_identity 'kernel/mainline-6.18/scripts/check-next-version.sh'
 . "$SLICE_SELECTOR"
 uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
 	fail "cannot select kernel slice: $SLICE"
-METADATA=$UML_KERNEL_METADATA_PATH
-POLICY_ROOT=$UML_KERNEL_POLICY_ROOT
-[ -r "$METADATA" ] || fail "missing metadata: $METADATA"
-[ -x "$SERIES_POLICY" ] || fail "missing series policy verifier: $SERIES_POLICY"
-"$SERIES_POLICY" --line-root "$POLICY_ROOT" manifest >/dev/null
-"$SERIES_POLICY" --line-root "$POLICY_ROOT" policy >/dev/null
-if [ "$UML_KERNEL_SLICE" = x86_64 ]; then
-	"$SERIES_POLICY" --line-root "$LINE_ROOT" manifest >/dev/null
-	"$SERIES_POLICY" --line-root "$LINE_ROOT" policy >/dev/null
-fi
+python3 -B "$KERNEL_SERIES" check --metadata "$UML_KERNEL_METADATA_PATH" ||
+	fail "the $UML_KERNEL_SLICE series files are invalid"
 
 mkdir -p -- "$WORK_ROOT"
 WORK_ROOT=$(CDPATH= cd -- "$WORK_ROOT" && pwd -P)
@@ -104,31 +96,31 @@ audit_git()
 		-c core.hooksPath=/dev/null "$@"
 }
 
-audit_git clone --filter=blob:none --no-checkout "$UML_KERNEL_UPSTREAM_REPOSITORY" \
-	"$CHECK_ROOT/linux"
-audit_git -C "$CHECK_ROOT/linux" fetch --no-tags origin "$UPSTREAM_REF"
-audit_git -C "$CHECK_ROOT/linux" switch --detach FETCH_HEAD
-NEXT_BASE=$(audit_git -C "$CHECK_ROOT/linux" rev-parse HEAD)
+LINUX="$CHECK_ROOT/linux"
+audit_git clone --filter=blob:none --no-checkout "$UML_KERNEL_UPSTREAM_REPOSITORY" "$LINUX"
+audit_git -C "$LINUX" fetch --no-tags origin "$UPSTREAM_REF"
+NEXT_BASE=$(audit_git -C "$LINUX" rev-parse FETCH_HEAD^{commit})
+audit_git -C "$LINUX" fetch --no-tags origin "$UML_KERNEL_UPSTREAM_COMMIT"
+audit_git -C "$LINUX" switch --quiet --detach "$UML_KERNEL_UPSTREAM_COMMIT"
+python3 -B "$KERNEL_SERIES" replay --metadata "$UML_KERNEL_METADATA_PATH" \
+	--source "$LINUX" >/dev/null ||
+	fail "the $UML_KERNEL_SLICE series does not replay on its pinned commit"
+audit_git -C "$LINUX" branch pinned HEAD
+audit_git -C "$LINUX" switch --quiet -c next pinned
 
-if [ "$UML_KERNEL_SLICE" = x86_64 ]; then
-	if ! "$SERIES_POLICY" --line-root "$LINE_ROOT" next-version \
-		--source "$CHECK_ROOT/linux" --base "$NEXT_BASE"; then
-		exit 1
-	fi
-	OVERLAY_BASE=$(audit_git -C "$CHECK_ROOT/linux" rev-parse HEAD)
-	if ! "$SERIES_POLICY" --line-root "$POLICY_ROOT" next-version \
-		--source "$CHECK_ROOT/linux" --base "$OVERLAY_BASE"; then
-		exit 1
-	fi
-else
-	if ! "$SERIES_POLICY" --line-root "$POLICY_ROOT" next-version \
-		--source "$CHECK_ROOT/linux" --base "$NEXT_BASE"; then
-		exit 1
-	fi
+if ! audit_git -C "$LINUX" rebase --empty=drop --onto "$NEXT_BASE" \
+		"$UML_KERNEL_UPSTREAM_COMMIT" next >/dev/null 2>&1; then
+	printf '%s\n' "topic needs a port onto $UPSTREAM_REF:" >&2
+	audit_git -C "$LINUX" log -1 --format='  %s' REBASE_HEAD >&2 || true
+	audit_git -C "$LINUX" diff --name-only --diff-filter=U | sed 's/^/    /' >&2
+	[ "$KEEP" -eq 1 ] && printf '%s\n' "stopped rebase retained: $LINUX" >&2
+	exit 1
 fi
 
-printf '%s\n' "$UML_KERNEL_SLICE series composition applies to $UPSTREAM_REF"
+audit_git -C "$LINUX" range-diff --no-color \
+	"$UML_KERNEL_UPSTREAM_COMMIT..pinned" "$NEXT_BASE..next"
+printf '%s\n' "$UML_KERNEL_SLICE series rebases onto $UPSTREAM_REF"
 if [ "$KEEP" -eq 1 ]; then
 	trap - 0 HUP INT TERM
-	printf '%s\n' "next-version checkout retained: $CHECK_ROOT/linux"
+	printf '%s\n' "next-version checkout retained: $LINUX"
 fi

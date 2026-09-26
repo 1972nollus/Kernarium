@@ -1,29 +1,31 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-order	patch	stable_patch_id	sha256	subject
-1	0001-venus-observe-pipeline-creation-results.patch	09fbb0b6c3a7c407e6913977b52158ef9f78ab1e	f21a2a6ebe33ad44b1a9b7f7cee528457e946c59fcbd234e688ce81a9a93fbf1	venus: observe pipeline creation results
-2	0002-venus-size-a-host-image-copy-from-a-describable-form.patch	2bdfbe66c3d8e453ae1f742d8f388078bd437f03	72782f6f2d7a110b5a94d1449c23d18e671d9e5a2dfe142305510feef9532a11	venus: size a host image copy from a describable format
-3	0003-venus-stop-advertising-DRM-display-acquisition.patch	531ad5aa9083942e485ffaa778c92794555c8013	1ae65c8f0d6733a460e44c034b077e4206d72e30821d39ccf7398aaeb9d15899	venus: stop advertising DRM display acquisition
-4	0004-venus-preserve-renderer-conformance-version.patch	75d0014ec339aeba1e3c475c60a2131a3b0a6b9c	d3c0d76478ce05de3d410b3dd7cef532baa064e61aaca577e6606a5a2a7e3800	venus: preserve renderer conformance version
-5	0005-venus-expose-host-backed-guest-memory-fds.patch	711ec19d680e2afdb105f6127aa1c46e1ac99061	0fdb7be02e3b3df95b68a395dad650dedc821e50e80f49ddb28c33c69c06e688	venus: expose host-backed guest memory fds
-6	0006-zink-support-Venus-implicit-native-dma-bufs.patch	c3095d3276ad839a815857e058d26fe0a48ed50d	219675a370c5a0bcb22e08b47cd81212454128b9cfb4abcd15ab21f799f60a94	zink: support Venus implicit native dma-bufs
-7	0007-venus-consume-paired-protocol-headers-from-an-explic.patch	527ef85dd7e56ba4e2067431d597e504439be4a1	2e26291da4ac778fefa2c06b8ee7a963e28dacbda4792c7575543e7ab66c04ad	venus: consume paired protocol headers from an explicit build directory
-8	0008-venus-forward-device-address-and-maintenance-command.patch	a7cc8a3fcab739ee6f9f17cef5dec4f87de14349	884e5c1503dbe6aa8f0f7a806c831ea212b62a5fdc60b09dbb2b7cc67753535f	venus: forward device address and maintenance commands
-9	0009-gallium-preserve-integer-blit-output-types-in-NIR.patch	f745f4673d3af8867f17935118831fd5d5e42c95	2182bab5f1fc3bcc48ac52cdd0322e9e644caac163c997fd9fc6ca23eb750bdb	gallium: preserve integer blit output types in NIR
-10	0010-mesa-st-store-integer-pixel-transfers-without-a-blit.patch	f3a8d18a722d1fc20eb451f6aa8a3e4d1bb33954	6db80d0426ce45688bd93a3dead49cdbd7feaacd047107ad8b961ccee9ac4d6b	mesa/st: store integer pixel transfers without a blit
-11	0011-gallium-return-NULL-for-failed-threaded-buffer-maps.patch	ca5f653cb19aacfd9cacfcdffe81a3cc40d9c8c4	5bf2868051ff711215304d272f4a196337ccbe1ac61e264425ca3e20f16bd542	gallium: return NULL for failed threaded buffer maps
-12	0012-mesa-st-delete-only-a-pixel-transfer-specialization-.patch	b74662d5150704e3af15e6890df0be57956f315f	5783abad62f0e4e72be43073080228ca30a48ac3af4a32b86c119e00c3db2231	mesa/st: delete only a pixel-transfer specialization that was compiled
-13	0013-vulkan-wsi-x11-bound-the-swapchain-event-wait.patch	602418d83354cebfa8a3a02e141fe1fd85f1f5e0	c74aff7aff29084c33e5ab4e21860d15b6a0ce2897d4499b2b6357bf3f836dc9	vulkan/wsi/x11: bound the swapchain event wait
-14	0014-vulkan-wsi-wayland-bound-the-waits-a-compositor-need.patch	83ae9afad0133d5363a88b8c77d9a3b39d658a21	a73f10c214b3eb33ebb9191959ffc78aee829175d4e4cfce3fc55096a3a54e9c	vulkan/wsi/wayland: bound the waits a compositor need not end
-15	0015-venus-serve-reference-counted-layouts-from-the-calle.patch	f609a767a8cfb3acc13b4f8532e0c1907dd0fbf1	18502768439444f8bc6b474db5dedc9010e96113b42253b0931cfdba6402d042	venus: serve reference-counted layouts from the caller's allocator
-16	0016-virgl-answer-the-reset-query-a-robust-context-owes.patch	3399af1d11962442f65e3aef4894394735593ef7	579c830547393b0cd42dc53197c2caba28022912cc24615753ef5324b20d3891	virgl: answer the reset query a robust context owes
-17	0017-nir-index-the-split-64-bit-vec3-vec4-arrays-by-leaf-.patch	7143b78b4e448c4b1a8165c2331f53320923a103	9b4a36e66bf84d56cb2c039b9b47513a60ca2a86317a4547ab39ea3ceb180b3f	nir: index the split 64-bit vec3/vec4 arrays by leaf element
-18	0018-venus-pass-through-the-extensions-the-uprevved-proto.patch	262df91a56be8433870cb623370929ef1bebe248	1025ce6a0a8cc61aeab253636186bb873835bd784de821c64b58daeaea569a36	venus: pass through the extensions the uprevved protocol reaches
-19	0019-venus-pass-through-VK_EXT_primitive_restart_index.patch	acf51b6e8026bf234a9950545c4f26d59b729f77	4d70cdca9f1b35c170dd8d64fc95035fd37d2315c048197d4bf402ee61d0289c	venus: pass through VK_EXT_primitive_restart_index
-20	0020-venus-pass-through-image-compression-control-and-the.patch	8a3452aeaae723b8a573a75c7a618a35b975118b	2a8f6b4184792ee1d34ea7b743cacb6c6ed1736099953afb77ba788ac547c12a	venus: pass through image compression control and the address binding report
-21	0021-venus-pass-through-VK_KHR_pipeline_binary.patch	eb7e3f92a43b1dee222f2957146211eb629702d0	8cc34f580fa92686403216aa523ff7880af511d7d2bb314a4cf80319d216a2ae	venus: pass through VK_KHR_pipeline_binary
-22	0022-zink-publish-a-batch-s-id-before-clearing-its-unflus.patch	a11651ce1c9673a9612ca95769bdcb7b931a6d55	5ecad7a1679516f40f7c12bdc18b7ae3b8e0f750126ec4c9c14eedc4adb58d5e	zink: publish a batch's id before clearing its unflushed flag
-23	0023-venus-support-hardware-buffers-over-a-host-allocatio.patch	c2b9e34fea735792c88cc25083673ca906f1a062	1b8418f9d033251f12306ece021ff0ea92cb78465d27cbf9f33c6acf79b6ef6b	venus: support hardware buffers over a host-allocation blob
-24	0024-venus-give-a-legacy-private-WSI-scanout-the-native-h.patch	c85c1813843c670d742340c946889ba581dd3cc5	10036974d8002576e5a38efc1e6436b1b263d2d7938c5507a4c252218c17550e	venus: give a legacy private WSI scanout the native heap identity
-25	0025-zink-give-a-shareable-image-a-layout-the-renderer-ca.patch	144ce64c0e7fa5bba95df66fdbd43d95958db1d3	0d61a25efa4036841b383683ea1eea2631fc238c19671a2263c3ba8eaa4686d7	zink: give a shareable image a layout the renderer can share
-26	0026-gbm-allocate-a-planar-buffer.patch	35528fd27ed73edaa8cb9dae74e2182ed774dd74	f10389e53a5420c098c35c9460a28a3070474d0e96f911d02578ed0413492ac2	gbm: allocate a planar buffer
-27	0027-zink-keep-a-shared-planar-image-in-one-allocation.patch	0026436870cc94b41ad0ead1c49fd58075ac0edb	118312f9a1c821e1695d66c2e56eb1e3f98052f94101fa5324bcbb3083ede322	zink: keep a shared planar image in one allocation
+# Generated by scripts/patch_series.py export. Amend the topic branch and
+# export again; never edit this directory by hand.
+tree	99bb2adc315eb12d02c791cbfd8e22afc43a4c2d
+patch	venus-observe-pipeline-creation-results.patch
+patch	venus-size-a-host-image-copy-from-a-describable-format.patch
+patch	venus-stop-advertising-DRM-display-acquisition.patch
+patch	venus-preserve-renderer-conformance-version.patch
+patch	venus-expose-host-backed-guest-memory-fds.patch
+patch	zink-support-Venus-implicit-native-dma-bufs.patch
+patch	venus-consume-paired-protocol-headers-from-an-explicit-build-directo.patch
+patch	venus-forward-device-address-and-maintenance-commands.patch
+patch	gallium-preserve-integer-blit-output-types-in-NIR.patch
+patch	mesa-st-store-integer-pixel-transfers-without-a-blit.patch
+patch	gallium-return-NULL-for-failed-threaded-buffer-maps.patch
+patch	mesa-st-delete-only-a-pixel-transfer-specialization-that-was-compile.patch
+patch	vulkan-wsi-x11-bound-the-swapchain-event-wait.patch
+patch	vulkan-wsi-wayland-bound-the-waits-a-compositor-need-not-end.patch
+patch	venus-serve-reference-counted-layouts-from-the-caller-s-allocator.patch
+patch	virgl-answer-the-reset-query-a-robust-context-owes.patch
+patch	nir-index-the-split-64-bit-vec3-vec4-arrays-by-leaf-element.patch
+patch	venus-pass-through-the-extensions-the-uprevved-protocol-reaches.patch
+patch	venus-pass-through-VK_EXT_primitive_restart_index.patch
+patch	venus-pass-through-image-compression-control-and-the-address-binding.patch
+patch	venus-pass-through-VK_KHR_pipeline_binary.patch
+patch	zink-publish-a-batch-s-id-before-clearing-its-unflushed-flag.patch
+patch	venus-support-hardware-buffers-over-a-host-allocation-blob.patch
+patch	venus-give-a-legacy-private-WSI-scanout-the-native-heap-identity.patch
+patch	zink-give-a-shareable-image-a-layout-the-renderer-can-share.patch
+patch	gbm-allocate-a-planar-buffer.patch
+patch	zink-keep-a-shared-planar-image-in-one-allocation.patch

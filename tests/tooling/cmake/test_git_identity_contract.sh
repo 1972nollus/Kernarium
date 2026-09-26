@@ -36,13 +36,9 @@ named=$(git -C "$ROOT_DIR" grep -l -E 'user\.(name|email)=' -- \
 # Every tool that creates commits must also stop Git from inventing one from
 # the account and host names, which is what a Linux builder would otherwise do.
 for relative in \
-	android/aosp-17/build/apply-orangefox-patches.sh \
-	android/aosp-17/build/prepare-sources.sh \
-	dependencies/prepare.sh \
-	kernel/common/tooling/verify-series-policy.py \
 	kernel/mainline-6.18/scripts/check-next-version.sh \
-	kernel/mainline-6.18/scripts/prepare-source.sh \
-	kernel/mainline-6.18/scripts/rebase-patches.sh \
+	scripts/git_identity.py \
+	scripts/patch_series.py \
 	tests/tooling/android/test_jelly_source_contract.py; do
 	tool="$ROOT_DIR/$relative"
 	[ -r "$tool" ] || fail "missing identity consumer: $relative"
@@ -50,14 +46,19 @@ for relative in \
 		fail "$relative does not disable Git identity auto-detection"
 done
 
-# Fixtures that replay or rebase must inherit the identity as well, so the
-# suite fails clearly instead of passing with a tool-supplied committer.
+# Tools and fixtures that replay, export, or rebase go through the shared
+# check, so the suite fails clearly instead of passing with a tool-supplied
+# committer.
 for relative in \
-	tests/tooling/kernel/test_next_version_policy.sh \
-	tests/tooling/kernel/test_series_topology.sh; do
+	kernel/common/tooling/kernel_series.py \
+	kernel/mainline-6.18/scripts/prepare-source.sh \
+	kernel/mainline-6.18/scripts/rebase-patches.sh \
+	scripts/patch_series.py \
+	tests/tooling/cmake/test_patch_series.py \
+	tests/tooling/kernel/test_kernel_series.py; do
 	tool="$ROOT_DIR/$relative"
 	[ -r "$tool" ] || fail "missing identity consumer: $relative"
-	grep -F 'uml_require_git_identity' "$tool" >/dev/null ||
+	grep -F 'require_git_identity' "$tool" >/dev/null ||
 		fail "$relative does not require an environment identity"
 done
 

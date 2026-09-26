@@ -282,6 +282,9 @@ def validate(
     require_pattern(
         userspace,
         r"darwin_uml_enter_guest\s*\(.*darwin_ipi_guest_end\s*\(\s*\)\s*;"
+        # Only the single-step epilogue may run between leaving the guest and
+        # honouring its stop.
+        r"(?:\s*end_guest_step\s*\([^;]*\)\s*;)?"
         r"\s*if\s*\(\s*event\s*==\s*DARWIN_UML_EVENT_STOP\s*\)\s*"
         r"darwin_host_stop\s*\(\s*\)",
         "an active translated guest cannot turn a public stop into carrier shutdown",

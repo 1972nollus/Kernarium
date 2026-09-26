@@ -27,7 +27,9 @@ from release_common import (  # noqa: E402
     PRODUCT_FAMILY,
     RELEASE_ID_RE,
     fail,
+    kernel_series_provenance,
     parse_env,
+    series_provenance,
     resolve_zstd,
     sha256_path,
     verify_disk_boot_payloads,
@@ -125,13 +127,16 @@ def property_value(values: dict[str, str], keys: tuple[str, ...], label: str) ->
     fail(f"packaged Android properties omit {label}")
 
 
-def read_routes(path: Path) -> list[dict]:
+def read_routes(path: Path, android_root: Path) -> list[dict]:
     lines = [
         line for line in path.read_text(encoding="utf-8").splitlines()
         if line and not line.startswith("#")
     ]
     routes = []
     for row in csv.DictReader(lines, delimiter="\t"):
+        patch_count, series_digest = series_provenance(
+            android_root.parents[1], android_root / row["series_dir"]
+        )
         routes.append({
             "route_id": row["route_id"],
             "manifest_project": row["manifest_project"],
@@ -139,8 +144,8 @@ def read_routes(path: Path) -> list[dict]:
             "base_commit": row["base_commit"],
             "base_tree": row["base_tree"],
             "final_tree": row["final_tree"],
-            "patch_count": int(row["patch_count"]),
-            "series_manifest_sha256": row["series_manifest_sha256"],
+            "patch_count": patch_count,
+            "series_manifest_sha256": series_digest,
         })
     if not routes:
         fail("AOSP projects manifest has no routes")
@@ -311,12 +316,7 @@ def main() -> None:
         "final",
         "--allow-prebuilt-kernel",
     ])
-    run([
-        str(outer_root / "kernel/common/tooling/verify-series-policy.py"),
-        "--line-root",
-        str(kernel_root),
-        "manifest",
-    ])
+    kernel_patch_count, kernel_manifest_sha = kernel_series_provenance(outer_root)
 
     kernel_elf = regular_file(kernel_build / "vmlinux", "ACK UML ELF")
     kernel_config = regular_file(kernel_build / ".config", "ACK configuration")
@@ -457,13 +457,22 @@ def main() -> None:
                 encoding="utf-8", errors="strict"
             ).strip()
             projects_manifest_sha = sha256_path(android_root / "patches/projects.tsv")
-            jelly_manifest_sha = sha256_path(
-                android_root / "third_party/jelly/series/manifest.tsv"
+            jelly_patch_count, jelly_manifest_sha = series_provenance(
+                outer_root, android_root / "third_party/jelly/series"
+            )
+            jelly_final_commit = run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=aosp_source / jelly_metadata["JELLY_DESTINATION"],
+                capture=True,
+            ).strip()
+            aosp_routes = read_routes(android_root / "patches/projects.tsv", android_root)
+            orangefox_routes = read_routes(
+                android_root / "third_party/orangefox/patches/projects.tsv",
+                android_root,
             )
             orangefox_projects_sha = sha256_path(
                 android_root / "third_party/orangefox/patches/projects.tsv"
             )
-            kernel_manifest_sha = sha256_path(kernel_root / "patches/series/manifest.tsv")
             receipt_rows = [
                 ("schema", 2),
                 ("release_id", args.release_id),
@@ -525,16 +534,16 @@ def main() -> None:
                     "manifest_tree": aosp_metadata["ANDROID17_MANIFEST_TREE"],
                     "base_manifest_sha256": aosp_metadata["ANDROID17_BASE_MANIFEST_SHA256"],
                     "projects_manifest_sha256": projects_manifest_sha,
-                    "routes": read_routes(android_root / "patches/projects.tsv"),
+                    "routes": aosp_routes,
                 },
                 "jelly": {
                     "repository": jelly_metadata["JELLY_UPSTREAM_REPOSITORY"],
                     "branch": jelly_metadata["JELLY_UPSTREAM_BRANCH"],
                     "base_commit": jelly_metadata["JELLY_UPSTREAM_COMMIT"],
                     "base_tree": jelly_metadata["JELLY_UPSTREAM_TREE"],
-                    "final_commit": jelly_metadata["JELLY_FINAL_COMMIT"],
+                    "final_commit": jelly_final_commit,
                     "final_tree": jelly_metadata["JELLY_FINAL_TREE"],
-                    "patch_count": int(jelly_metadata["JELLY_PATCH_COUNT"]),
+                    "patch_count": jelly_patch_count,
                     "patch_manifest_sha256": jelly_manifest_sha,
                     "destination": jelly_metadata["JELLY_DESTINATION"],
                     "license": jelly_metadata["JELLY_LICENSE"],
@@ -563,11 +572,9 @@ def main() -> None:
                     "device_destination": orangefox_metadata["ORANGEFOX_DEVICE_OVERLAY_DESTINATION"],
                     "product": orangefox_metadata["ORANGEFOX_PRODUCT"],
                     "release_config": orangefox_metadata["ORANGEFOX_RELEASE_CONFIG"],
-                    "patch_count": int(orangefox_metadata["ORANGEFOX_PATCH_COUNT"]),
+                    "patch_count": sum(route["patch_count"] for route in orangefox_routes),
                     "projects_manifest_sha256": orangefox_projects_sha,
-                    "routes": read_routes(
-                        android_root / "third_party/orangefox/patches/projects.tsv"
-                    ),
+                    "routes": orangefox_routes,
                     "license": orangefox_metadata["ORANGEFOX_LICENSE"],
                 },
                 "kernel": {
@@ -578,7 +585,7 @@ def main() -> None:
                     "base_commit": kernel_metadata["UML_KERNEL_UPSTREAM_COMMIT"],
                     "base_tree": kernel_metadata["UML_KERNEL_UPSTREAM_TREE"],
                     "final_tree": kernel_metadata["UML_KERNEL_FINAL_TREE"],
-                    "patch_count": int(kernel_metadata["UML_KERNEL_PATCH_COUNT"]),
+                    "patch_count": kernel_patch_count,
                     "patch_manifest_sha256": kernel_manifest_sha,
                     "release": kernel_release,
                     "page_size": 16384,

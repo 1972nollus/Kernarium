@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Wed, 16 Sep 2026 15:43:53 +0900
+Subject: [PATCH] vrend: cut the requested box out of a whole-level texture
+ readback
+
+glGetTexImage and glGetCompressedTexImage can only read a whole mip level,
+but write_transfer_data() expects its source buffer to hold exactly the
+requested box with no gap between rows.  vrend_transfer_send_getteximage()
+handed it the level unchanged, so any transfer of a sub-box was answered
+with the level's top left corner, re-cut at the box's own row length: the
+box origin was ignored and every row after the first came from the wrong
+place.
+
+Only formats that cannot be rendered to take this path, because everything
+else is read back through vrend_transfer_send_readpixels(), which asks the
+host for the box itself.  In practice that makes it the compressed formats,
+and KHR-GL46.get_texture_sub_image.functional_test fails on every target it
+covers with glGetCompressedTextureSubImage while the uncompressed half of
+the same test passes.
+
+Copy the box out of the level, at the level's own row stride, before the
+data is written to the guest.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/vrend/vrend_renderer.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
+index 68c2c1680ba904afaf098dc283e74817ce6a533d..7b6e5a8e0763ec98a2d525a0fcf57bf95cf2d95b 100644
+--- a/src/vrend/vrend_renderer.c
++++ b/src/vrend/vrend_renderer.c
+@@ -10303,6 +10303,37 @@ static int vrend_transfer_send_getteximage(struct vrend_resource *res,
+ 
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+ 
++   /* glGetTexImage and glGetCompressedTexImage can only read a whole level, but
++    * write_transfer_data() expects a buffer holding just the requested box with
++    * no gap between its rows. Cut the box out of the level first; otherwise a
++    * sub-box is answered with the level's top left corner, re-cut at the box's
++    * own row length. */
++   uint32_t level_rows = util_format_get_nblocksy(res->base.format,
++                                                  u_minify(res->base.height0, info->level));
++   uint32_t level_stride = util_format_get_nblocksx(res->base.format,
++                                                    u_minify(res->base.width0, info->level)) * elsize;
++   uint32_t box_rows = util_format_get_nblocksy(res->base.format, info->box->height);
++   uint32_t box_stride = util_format_get_nblocksx(res->base.format, info->box->width) * elsize;
++
++   if (box_stride != level_stride || box_rows != level_rows ||
++       info->box->x || info->box->y) {
++      uint32_t skip_x = util_format_get_nblocksx(res->base.format, info->box->x) * elsize;
++      uint32_t skip_y = util_format_get_nblocksy(res->base.format, info->box->y);
++      char *dst = data;
++
++      for (int slice = 0; slice < info->box->depth; slice++) {
++         const char *src = data + send_offset +
++                           (size_t)slice * level_stride * level_rows +
++                           (size_t)skip_y * level_stride + skip_x;
++         for (uint32_t row = 0; row < box_rows; row++) {
++            memmove(dst, src, box_stride);
++            dst += box_stride;
++            src += level_stride;
++         }
++      }
++      send_offset = 0;
++   }
++
+    write_transfer_data(&res->base, iov, num_iovs, data + send_offset,
+                        info->stride, info->box, info->level, info->offset,
+                        false);

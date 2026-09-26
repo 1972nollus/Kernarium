@@ -631,17 +631,15 @@ framework module KosmicKrisp {
 }
 EOF
 
-mkdir -p "$STAGE/share/uml-dependencies/patches"
+mkdir -p "$STAGE/share/uml-dependencies"
 cp "$MANIFEST" "$STAGE/share/uml-dependencies/manifest.tsv"
-cp -R "$ROOT_DIR/dependencies/patches/libepoxy" \
-	"$STAGE/share/uml-dependencies/patches/"
-cp -R "$ROOT_DIR/dependencies/patches/virglrenderer" \
-	"$STAGE/share/uml-dependencies/patches/"
-cp -R "$ROOT_DIR/dependencies/patches/mesa" \
-	"$STAGE/share/uml-dependencies/patches/"
-mkdir -p "$STAGE/share/uml-dependencies/tools/rootfs/vulkan/patches"
-cp -R "$ROOT_DIR/tools/rootfs/vulkan/patches/venus-protocol" \
-	"$STAGE/share/uml-dependencies/tools/rootfs/vulkan/patches/"
+{
+	printf 'source\ttree\n'
+	for source in libepoxy virglrenderer mesa venus-protocol; do
+		printf '%s\t%s\n' "$source" \
+			"$(git -C "$SOURCE_ROOT/$source" rev-parse 'HEAD^{tree}')"
+	done
+} > "$STAGE/share/uml-dependencies/source-trees.tsv"
 SDK_VERSION=$($XCRUN --sdk "$SDK_NAME" --show-sdk-version)
 COMPILER_VERSION=$("$CC" --version | sed -n '1p')
 BUILD_TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -649,7 +647,7 @@ MANIFEST_SHA256=$(shasum -a 256 "$MANIFEST" | awk '{print $1}')
 CONTRACT_SHA256=$(shasum -a 256 "$PLATFORM_CONTRACT" | awk '{print $1}')
 {
 	printf '%s\n' 'field	value'
-	printf 'format\t1\n'
+	printf 'format\t2\n'
 	printf 'product\t%s\n' "$PRODUCT"
 	printf 'platform\t%s\n' "$PLATFORM"
 	printf 'sdk_name\t%s\n' "$SDK_NAME"
@@ -663,8 +661,6 @@ CONTRACT_SHA256=$(shasum -a 256 "$PLATFORM_CONTRACT" | awk '{print $1}')
 		da14d65e4499e66468094be52bff9ea0915a695e
 	printf 'vulkan_headers_base_commit\t%s\n' \
 		"$(git -C "$VULKAN_HEADERS_SOURCE" rev-parse HEAD)"
-	printf 'venus_protocol_source_commit\t%s\n' \
-		"$(git -C "$VENUS_PROTOCOL_SOURCE" rev-parse HEAD)"
 	printf 'venus_protocol_generated_sha256\t%s\n' \
 		"$VENUS_PROTOCOL_GENERATED_SHA256"
 } > "$STAGE/share/uml-dependencies/build-receipt.tsv"

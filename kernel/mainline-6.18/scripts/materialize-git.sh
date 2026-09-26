@@ -74,7 +74,7 @@ fi
 [ -r "$METADATA_PATH" ] || fail "missing metadata: $METADATA_PATH"
 # shellcheck disable=SC1090
 . "$METADATA_PATH"
-[ "${UML_KERNEL_SERIES_SCHEMA:-}" = 3 ] ||
+[ "${UML_KERNEL_SERIES_SCHEMA:-}" = 4 ] ||
 	fail "unsupported kernel source/series schema"
 [ -n "${UML_KERNEL_RELEASE_VERSION:-}" ] || fail "release version is missing"
 [ -n "${UML_KERNEL_UPSTREAM_REPOSITORY:-}" ] ||

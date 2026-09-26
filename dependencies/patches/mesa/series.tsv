@@ -1,106 +1,108 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-order	patch	stable_patch_id	sha256	subject
-1	0001-kosmickrisp-support-an-embedded-Apple-build.patch	ceddd155846fe2c90fa27a38b08d10f96cc4434c	4810e10a4db4a53f6a4e786c7d86c5b952243bcd032b428af930b4ca3a1c8dc3	kosmickrisp: support an embedded Apple build
-2	0002-kosmickrisp-reject-unusable-image-memory.patch	c23d09950631b189412e12e848b546fa8b5f4b70	551f2e195d9b2d35677343ddee8cd6d93bca10480a6c7d96f912758bcf3ed6a0	kosmickrisp: reject unusable image memory
-3	0003-kosmickrisp-own-feedback-options-per-Metal-commit.patch	7b27dcc29a2c1ccf41bf9bbaa1de4eaf9765dff0	2b617f601e6e2f71d0cf762b5b04b8c3f2277dc1171f4dfea720014550623bcb	kosmickrisp: own feedback options per Metal commit
-4	0004-kosmickrisp-classify-half-NaNs-with-integer-operatio.patch	23b9e617725b47e6422975e55b5906a6c212cd06	e76bba432878ae4e60c90fc2c8df236d6be379fd178e5201769ecb967533e6d2	kosmickrisp: classify half NaNs with integer operations
-5	0005-kosmickrisp-compile-application-shaders-with-safe-ma.patch	7b37ca5579c161539c5ed6dcfde80682fb232136	404807d104a417418a6d1029f7afeef2f1bcff171ce4d3f0f442fd399be1a76a	kosmickrisp: compile application shaders with safe math
-6	0006-kosmickrisp-report-complete-Metal-diagnostics.patch	ca71b3c38567ea1e87d70bfe1edf36b0331b49f4	16c369350af10ea80cfcd3802e19a78a1191369d15e570049af8aefa9399ab08	kosmickrisp: report complete Metal diagnostics
-7	0007-kosmickrisp-preserve-fused-fp32-semantics.patch	c3b509f2ae76ff9a81f3e92f8d5a1960eebed3ce	15019ce3eaaffa8b8f0a2a79ae5dde0cf478fb7f20c382f0b1ced538d6c3a0e6	kosmickrisp: preserve fused fp32 semantics
-8	0008-kosmickrisp-make-timestamp-queries-reliable.patch	b930ea434b4a06e0e126594121eef4b6e72dfc1b	af298548ed91da906b04ccbc502955aee1acc334344c588ceca7ec4b346c698a	kosmickrisp: make timestamp queries reliable
-9	0009-kosmickrisp-avoid-pinning-residency-per-submit.patch	f2d6a7bdb2f35beb07b1671f3424ba88fb1ca17c	a44aed6f6f4eeef706c40c7b8d74c99a1739bd2c293d4eac688bfbd18dc515a1	kosmickrisp: avoid pinning residency per submit
-10	0010-kosmickrisp-stop-advertising-unreliable-float16-shad.patch	9a20ae6153156624904792c06738cebb1c0325c0	24b88e8b1ee8ca50c87c133431bbd5dbf3ce583a88c4da7e718f57def5d2f337	kosmickrisp: stop advertising unreliable float16 shaders
-11	0011-kosmickrisp-emulate-custom-border-colors-on-Metal.patch	17074d2d5f9cdeb6c3454711cf2f8a4e46f56a64	a878aec18da0145c43e50358f2f8c56c4af9821246cfedeff8f5974325a0c1dd	kosmickrisp: emulate custom border colors on Metal
-12	0012-kosmickrisp-support-non-solid-polygon-modes.patch	9ccb79ce2c6c60f5969a37a8b2c6aa8281412418	5d6dc3ff235efcb188a8d4551183a3e70ee1335e9dd7d76f48dc95335b4a59f0	kosmickrisp: support non-solid polygon modes
-13	0013-kosmickrisp-satisfy-the-Zink-OpenGL-2.1-profile.patch	44647b12e8b563b42e90ffc1976ff060a73adc0c	de6aac100b4128026496eeece1d682ace3e8608def2e2563254cd3bc6b9f3e4b	kosmickrisp: satisfy the Zink OpenGL 2.1 profile
-14	0014-kosmickrisp-implement-GPU-transform-feedback.patch	8e7f8aba424dfd0556a3874690024e04aec850ea	a9a93397194506b4df68dd8f2d1f1471995c25d2a2f0c80ef8684f3ce686ea4c	kosmickrisp: implement GPU transform feedback
-15	0015-kosmickrisp-embed-LLVM-free-build-shaders.patch	d918bc2340b48f8d9b0b3d06bf3d5e762a7dea6a	c537b4333ea38563040b992e1c34cac4e9cb4549465d7268b63de2925bfbd364	kosmickrisp: embed LLVM-free build shaders
-16	0016-kosmickrisp-export-native-Metal-textures.patch	dff14f617ac622466e67140deaa28294159b8573	700a7b3645aa31bfb43f163c237d59052ef5e8cb52ca4311b6e0b22f97962c8a	kosmickrisp: export native Metal textures
-17	0017-kosmickrisp-implement-GPU-geometry-shaders-and-strea.patch	449c557e0d0e01ef54ab469a1be15591baec22a4	dcea3d268ddbc8c9b537cb99d4f3d7fe02b5fd8c17b96798afc9f48c39fc9ddd	kosmickrisp: implement GPU geometry shaders and streams
-18	0018-kosmickrisp-implement-single-texel-buffer-alignment.patch	7e67755b266cbef6799fdd7a52b8993f52468d43	10e50164c83b623d7a1d311c40e538f4de1f3542563f45713d407d7c928a525e	kosmickrisp: implement single-texel buffer alignment
-19	0019-kosmickrisp-support-unused-dynamic-rendering-attachm.patch	1dfee930943f2c84ab273b0844a153be4f72e808	152e592173a59f379e8adde1a3760ec35c37bade9dec36d7e57322292149174c	kosmickrisp: support unused dynamic-rendering attachments
-20	0020-kosmickrisp-implement-depth-clip-enable.patch	db0e21cbdefe381aba6a29a995991abe88e5a147	0f3d92ee7573aa6d2ff4045202a3daee79322a8f67f2370250ed3db495946fe7	kosmickrisp: implement depth clip enable
-21	0021-kosmickrisp-support-incremental-present.patch	dec0b3a24d83762bb6b7df1a5ba1a054a0dbae80	3a0211b73d2b7c34b1a7cbb8e0bba1f4c7245c8ad10d86f80615e982b60f21e3	kosmickrisp: support incremental present
-22	0022-kosmickrisp-implement-non-seamless-cube-maps.patch	ed6df305d70852a039caaea83517f3b60f148edd	4d714e9e5091c3d9cee86ca8d6f7a1feb07d6acdb159330c34ef0c9d206fdff6	kosmickrisp: implement non-seamless cube maps
-23	0023-kosmickrisp-implement-RGB32-uniform-texel-buffers.patch	9a661f9166b2af33f82906112dfe1618895c869e	3cf9b564c3a0b9547136b76f4ec9d451c6d9925dd21955dae4dcdd79f8524f76	kosmickrisp: implement RGB32 uniform texel buffers
-24	0024-kosmickrisp-implement-graphics-pipeline-libraries.patch	e274e70c15cd19399adfe6615866aedeea3740fa	784dddbba85f35c991b4c18d297ddbd88edbe77261f6d75897af235374930761	kosmickrisp: implement graphics pipeline libraries
-25	0025-kosmickrisp-implement-device-address-commands.patch	42e8af7983ed392ff045759fec8641287a77cd6f	4f2e9f31d5b48e383dbd9b1faf3f520b20d1d78da19ff628cfb7901fc175fecd	kosmickrisp: implement device address commands
-26	0026-kosmickrisp-support-dynamic-logic-operations.patch	82591a24ddc10f8836c59e826e777962798b1abb	55f6c4db81ae1942eec3f7ec073c76a4242249abea9995d4e749395d176a1bce	kosmickrisp: support dynamic logic operations
-27	0027-kosmickrisp-implement-provoking-vertex-and-line-rast.patch	0cfaf39c958c13147e3639806e5010032ec0b24a	e96f17dc2aecb976ebd88721a17bad79ea08a909ab0eb88bf8beb9bf2bfd32fb	kosmickrisp: implement provoking vertex and line rasterization
-28	0028-kosmickrisp-implement-legacy-vertex-attributes.patch	c011348c8e3ad32ba9b31bc3a41b7ddd4508bd96	fbbcd2bb2af5eaa725d03618a8c1a9b653c9de7e0fdf8c20a772b4c89aac70c4	kosmickrisp: implement legacy vertex attributes
-29	0029-kosmickrisp-implement-pipeline-statistics-queries.patch	538e3843157922f0d64c0356770c2f9169ea23d6	118b561c7aa7b970d2143ac0fc612ccd4d021cd999d1878ced6e9a62d7f58f8d	kosmickrisp: implement pipeline statistics queries
-30	0030-vulkan-preserve-trailing-bytes-when-lowering-whole-s.patch	a5b9a62cd2f467c8a1e7647baadaa62b0477721b	be3aa79235ee3162cffdcc856630e6bf3c3b5c1746d0ea768c686ffa30465c84	vulkan: preserve trailing bytes when lowering whole-size fills
-31	0031-kosmickrisp-match-initial-render-pass-attachment-sam.patch	c3f4e48fce976e5be0692909c642ed127ab07fbf	7a1551832e9dad816b8a1187f5f7b976bca0e62181cae482f83d7623ae80037d	kosmickrisp: match initial render pass attachment samples
-32	0032-kosmickrisp-lower-clip-cull-outputs-after-software-s.patch	2330e9ff5af791ee9c6fda872e1d58b695fbfa91	fd9a982969a583fffbeb53157d484c36774274a1f7124ac1521512d6ea7df205	kosmickrisp: lower clip/cull outputs after software stages
-33	0033-kosmickrisp-precompile-bounded-raster-executable-cla.patch	e87da854ccbb08809b09e418e0acc033da949b29	4f9223460c0e12a28c201a4a9fe5f38a3ba75d7fef37d25fba2cbf7d509323b2	kosmickrisp: precompile bounded raster executable classes
-34	0034-kosmickrisp-cover-native-point-clipping-against-the-.patch	128fca11a447c9097468aea4ae75958eb33c93f3	a727de20b36150bec3e9dd86db7cc61d54444fdc481f4513e42f82419e8b4b79	kosmickrisp: cover native point clipping against the view volume
-35	0035-kosmickrisp-capture-tessellation-outputs-on-the-GPU.patch	38278ddd91d7d97d7317d2792a6e768342da7e4e	4a6ef973f051b605b8a39fe09b2aee3e7976fd677012db999237e37c7c270ab2	kosmickrisp: capture tessellation outputs on the GPU
-36	0036-kosmickrisp-read-every-merged-clip-cull-fragment-ele.patch	a5b951014d43879550455e63fead16519c4ee634	c577b633ee6b8baee2241b4b0f170c7e89f1825a258e4b0471ea53f366942833	kosmickrisp: read every merged clip/cull fragment element
-37	0037-kosmickrisp-correct-2D-array-aliasing-of-3D-images.patch	fcdb0bf20acea5165f5bff0137876557ad368fcb	e58ea57cd19fc60190eada678a77815d502bc8769c4a20d968a52790e61c26b3	kosmickrisp: correct 2D array aliasing of 3D images
-38	0038-kosmickrisp-retire-dead-values-before-MSL-translatio.patch	87ca4b9d4afbeca53568f7110787b3b82b4d8534	70d6249e71fb208f49579ae1bba9f2ee3c19247b1c1b02d8c9eee3e526b02b35	kosmickrisp: retire dead values before MSL translation
-39	0039-kosmickrisp-cover-emulated-border-colours-in-the-Mes.patch	1e7698d765fb89247e295d13c4ba6aeb5c738107	186f8e03a54cb7578e4c85e687f46f7ed297a3d8362631f3334a1efab03849b8	kosmickrisp: cover emulated border colours in the Meson suite
-40	0040-kosmickrisp-declare-MSL-temporaries-without-a-dead-s.patch	82e71fdb5cec129ddb00b1f1753ae41e93b348b7	072d35f6f6b8722986772ba8f8f0de276ce7d84a7308dc51b603a7a0915d72eb	kosmickrisp: declare MSL temporaries without a dead store
-41	0041-kosmickrisp-survive-Metal-command-queue-timeouts.patch	bacbe96a3b9702264693d6e9ab066b4ed3fab8bf	89f4f3cf995cb8dfeec781578f7dbdc5c7e6e9704ce7e4f1fad005d2573701fe	kosmickrisp: survive Metal command queue timeouts
-42	0042-kosmickrisp-restrict-the-coherency-workaround-to-loo.patch	ed6e7fada4cd0d42f309cdcfb08943d8dc453647	fc8d4fc3dddea8bc2729bf0f6c8b49ac6c8adf4757e5ce0ff8443b77eb29ff72	kosmickrisp: restrict the coherency workaround to loops
-43	0043-kosmickrisp-derive-alpha-to-coverage-without-a-colou.patch	a56025bb31ee6309339164ddfc4e22882873f887	bc2cad991980ef0d0713cd9aad24a7a76aedbba2db715bf34141e3563993118e	kosmickrisp: derive alpha to coverage without a colour attachment
-44	0044-kosmickrisp-compile-emulated-stages-without-a-thread.patch	0864b3c118b5dbb4d4798398de8450e602931feb	940303714707658b69f0d4b7358daccda8468a9a054c17506b0bda7ae4fb8fbb	kosmickrisp: compile emulated stages without a thread limit
-45	0045-kosmickrisp-initialize-Metal-descriptors-only-once.patch	64a919f5a3b583aa43e843465524b02fdb6c6a6b	5e7e0f0e96094bca43ce4308746dacba85da9e0531277c6f9d7aa452ff7b7c05	kosmickrisp: initialize Metal descriptors only once
-46	0046-kosmickrisp-reclaim-command-allocator-capacity-on-re.patch	728b6fd42986ca002e9ac1fe5c8563c3ce1520dc	1a59c7c49b8917fe605e9a1088b5c0647b897e5a8f4ab23948c74de3b112efe8	kosmickrisp: reclaim command allocator capacity on release
-47	0047-kosmickrisp-retire-and-recycle-one-time-command-stor.patch	4279708b3a985fbffe24d49ae01c9cbda43530a8	a43b48cb65db43075605abe42f931daf0907c3678828e387077a5c44d8932497	kosmickrisp: retire and recycle one-time command storage on completion
-48	0048-kosmickrisp-gate-pending-timeline-waits-before-Metal.patch	694b77687713367a3a310e2ef7d5f8969b5d2e0f	94af36eb1a01859ddd4c6c49b2c17bd4c7468c26c38dada7ae36aaa6c8100e81	kosmickrisp: gate pending timeline waits before Metal submission
-49	0049-kosmickrisp-read-coherent-global-memory-through-rela.patch	1369b1eed9a65f8d7c3993da7ed7d2a6d9759b54	19c584642aa508ad786a67943d29c4c1d858205f5a449fbe80834315d15cab19	kosmickrisp: read coherent global memory through relaxed atomics
-50	0050-kosmickrisp-round-depth-clears-into-normalized-depth.patch	c74fa87c1c87c3e7dbf61e809eb8b14f63fdd0f4	67ddafbf4e28ec81b08b8952ef58d94f2fccaf0704e982999c49564cd14da313	kosmickrisp: round depth clears into normalized depth formats
-51	0051-kosmickrisp-restart-the-render-encoder-for-layered-d.patch	9123335820c1bbaa07b6b3e2e25a76984b51507b	d47674221b611b48614b4d3634760eb53ceb76447fabfb1e1f6df12d723e2655	kosmickrisp: restart the render encoder for layered draws
-52	0052-kosmickrisp-present-a-single-invocation-subgroup-out.patch	12d3f798a6e041675b32e854d38896e96cae0ea2	39c40c01e2191f95f6213db48b7afba15527290e79c8ae08618f8c5b93704dce	kosmickrisp: present a single-invocation subgroup outside the SIMD stages
-53	0053-kosmickrisp-keep-the-silicon-workarounds-on-Apple7-a.patch	02df25ee5b5ef907883526026c01678f1b8fc8e1	ea558a358e1186d5f9e15377b3c6c46880bbb52feb81e5486019fe6881ab7355	kosmickrisp: keep the silicon workarounds on Apple7 and Apple8
-54	0054-kosmickrisp-apply-the-static-sample-mask-before-earl.patch	44a940ac3eb27b1ba18bb39679d330828803065d	b4a708908ef5249aad8d26b02581dd6acd1626cf93aeee17f22722e91e85b7bf	kosmickrisp: apply the static sample mask before early sample counting
-55	0055-kosmickrisp-measure-pipeline-library-link-time-again.patch	fcf659b252f4c709993c6c8ef7f32dda77120f50	84f76387912491dfebbf77aa62faa41945e92eb4098ad6b5b6283f7fe4c63534	kosmickrisp: measure pipeline library link time against fast linking
-56	0056-kosmickrisp-blend-with-Metal-s-own-state-where-Metal.patch	d810a712422bcd7feb73885706ebef4f79f643c3	f8347a432b114e1ef870cacd4e0bdc7a770e2fa1bcf7f515de4ae80be489cf66	kosmickrisp: blend with Metal's own state where Metal can express it
-57	0057-kosmickrisp-let-Metal-fetch-vertex-attributes-where-.patch	e82c0077a023e0c31056cff2fbd748076de85381	b2e7e9252c3750c240444e5c270269dede409c29d84327f36b139915a744ae35	kosmickrisp: let Metal fetch vertex attributes where Metal can express them
-58	0058-kosmickrisp-compile-a-pipeline-library-s-stages-when.patch	60ccfde4aa11e6ad9b5bee954acd1e8109720a88	1e5f4a75ed161fa193beea00f4a0cd18996dced3af7f510af25016f21a552ddc	kosmickrisp: compile a pipeline library's stages when it is created
-59	0059-zink-build-against-a-packaged-Apple-Vulkan-driver.patch	5e1ed87467f4deb0ea199c01fc4ba28b608903d3	ee55950ec150d2abd4bc354fb22fabb5bd9f721b91c4d97baaaa77043bc7f4b2	zink: build against a packaged Apple Vulkan driver
-60	0060-egl-reach-zink-on-platforms-without-DRM-devices.patch	274edb10840bd62b2c335742fce4b3feadca4a76	6b70c913b426761361184fec527bb3ada1418019dca8a03d6d94e621e97402d2	egl: reach zink on platforms without DRM devices
-61	0061-kosmickrisp-declare-Metal-s-built-in-outputs-at-thei.patch	9f64deded6f9d249b7e4ae376867537cdc4b0132	c7b6d80318eb78d8417686b765f0bc4b34d72a7727a509b24477dbc90c5fd223	kosmickrisp: declare Metal's built-in outputs at their fixed shape
-62	0062-kosmickrisp-reinterpret-a-mismatched-fragment-output.patch	ba34e57711bcf8d2f9421107273e8c1590235010	a8945de0e2532daec7c0767cd1ffcf022f8c9ee0af1bd84dcc3216c3b72bfd4b	kosmickrisp: reinterpret a mismatched fragment output, do not convert it
-63	0063-mesa-treat-RGB9_E5-as-the-floating-point-read-type-i.patch	f028f8979261401c87ed881cb36257ef0f3279d4	2118b16e38a5bc423e8c4b354f8fa47a8b572784126f77ac3443b4a9a7ee3aa6	mesa: treat RGB9_E5 as the floating-point read type it is
-64	0064-poly-compute-a-tessellation-shader-s-index-once-not-.patch	b8329e5fc343bd8249515ea38049b5016b4a140a	5b598c1dad6cdca7ddcb49f99ea4cae9b18dfb49eef9b19e742cfe3d70d64919	poly: compute a tessellation shader's index once, not once per load
-65	0065-zink-do-not-barrier-a-render-target-for-a-bind-anoth.patch	b3d3c7cdfaa654ae8e151a1541eb965e55634105	1cfee98442ab0a86244327c4e603d13afa5923011cdf2022fcc0ee6e45208c30	zink: do not barrier a render target for a bind another context made
-66	0066-egl-create-an-image-over-memory-the-caller-owns.patch	23c1365ca03fcb24bdb735afec97fbdd4b133484	831b26459ddafa40bc50d22e53e54b6a0b56af3d005a544d3ba772ec5f1cf443	egl: create an image over memory the caller owns
-67	0067-spirv-take-vtn_bindgen2-from-the-system-with-the-pre.patch	7a31dd1e6ea3e8f5fd5bc979261134906bc9a0a8	b27ce8bb5d97f28e4f52381bc37521d14940fa4544e73d5a4814158983bf3637	spirv: take vtn_bindgen2 from the system with the precomp compilers
-68	0068-vulkan-wsi-only-ask-for-immediate-present-where-Meta.patch	815342e8f4c072c23c599d512db8c90d0c0d2c24	c5264cd48a6c2b2036f81dc040aa4435ae0e5250ec4cba92ad11bb44d370c81e	vulkan/wsi: only ask for immediate present where Metal offers it
-69	0069-nir-opt_vectorize_io-merge-xfb-elements-a-dword-apar.patch	3b0dfad26971e0779388203d2c2b4e44c65b1de6	27673c12713f2c3b0446a7885cfe4729436d11a6703f47235f71fd4da6440d4c	nir/opt_vectorize_io: merge xfb elements a dword apart, in order
-70	0070-kosmickrisp-write-every-channel-of-a-swizzled-colour.patch	78377f7eb7fd22f2d79b10033154ed86e62e5a23	62741edfc12ea50e04d5040563218e09f5466d93e47577c123f9b44ead482d2b	kosmickrisp: write every channel of a swizzled colour attachment
-71	0071-kosmickrisp-advertise-VK_KHR_shader_quad_control.patch	290dce3c17aaceac29e2d0bbadda8fbdba992d25	678d1e9579859be2cfcf65b3a36d5852e37d73ec80ff09fca910b8af2a6ace23	kosmickrisp: advertise VK_KHR_shader_quad_control
-72	0072-kosmickrisp-advertise-VK_EXT_external_memory_acquire.patch	f3ba05d79bd64bb00f10469cc169830b1950cbc9	b21014a6a08a91a5e5a17506237245015be34634ee006a331a42a109bffcaa6c	kosmickrisp: advertise VK_EXT_external_memory_acquire_unmodified
-73	0073-kosmickrisp-advertise-VK_EXT_queue_family_foreign.patch	0aa786852882a7a22c6c70e9f1fb96fb2c76fb8b	9ec3094fc034aee9273a1e11d7582ef8746fe850151011b7caebed67afe2dfed	kosmickrisp: advertise VK_EXT_queue_family_foreign
-74	0074-kosmickrisp-implement-VK_EXT_image_drm_format_modifi.patch	bac6c4c6c0549471358973a7fc709e973f6267fb	1f47c169687e6f8442c1e8b1e499a7b4fb104482a0f378f2e8185530c3c2831e	kosmickrisp: implement VK_EXT_image_drm_format_modifier
-75	0075-kosmickrisp-widen-16-bit-varyings-to-the-slot-Metal-.patch	97d90212fcfb4aacd4b8ece2362993ddcf7fc914	919bbd5b6e454aabfb4a5b94d920c678517d67d5dcdf00be235a782bedc8bccf	kosmickrisp: widen 16-bit varyings to the slot Metal carries
-76	0076-kosmickrisp-implement-VK_EXT_image_compression_contr.patch	2b141dd22740f524e79668a5eb66fd03ad5e97f9	f7ce049a8a04f477b3b067ec592609db6071d7fa9421de5202f3742891f7dc7c	kosmickrisp: implement VK_EXT_image_compression_control
-77	0077-kosmickrisp-implement-VK_EXT_device_address_binding_.patch	8284bd04e4c93ba9362597a7547770d45ac58655	6c15cf2a4876e36ba88f72533db29b194ff1c07bc2426ef7f36c97043cfa518a	kosmickrisp: implement VK_EXT_device_address_binding_report
-78	0078-kosmickrisp-advertise-VK_KHR_pipeline_binary.patch	3f9bfd3f1a7a4dffcd4b23b544ad6f6d3ff4568a	7e5265dbaeaa78fef6997da15a057b392e08a5749f111cf5ab43c925d3873016	kosmickrisp: advertise VK_KHR_pipeline_binary
-79	0079-zink-publish-a-batch-s-id-before-clearing-its-unflus.patch	a11651ce1c9673a9612ca95769bdcb7b931a6d55	9262eb992a4fe26cf6d5f68bf87b7a2e90b650c2a003a7beff8b4f8105011d0b	zink: publish a batch's id before clearing its unflushed flag
-80	0080-zink-keep-a-queued-barrier-s-resource-alive-until-it.patch	c30b123c5baa9b6ac24351603f64ff727f3ae3a3	ac5c81ea9885504108cddf811c198908a64e3679483d338d4a8312d712ae48d2	zink: keep a queued barrier's resource alive until it is emitted
-81	0081-zink-do-not-wait-forever-for-another-context-to-flus.patch	a824649effb9414e6196422116a2b530cb038270	3535943758b994fb9a771635ef6c29dc5d3370dfc4b973171f2a9202b65a90d7	zink: do not wait forever for another context to flush
-82	0082-zink-do-not-answer-a-query-from-the-fast-path-that-s.patch	ee341843fe2adf08488ad40827303fdaf32609d7	8f3282e7250a29e607208529b05d83de5cb6a2642c65129daff46569bed72122	zink: do not answer a query from the fast path that skips its fixups
-83	0083-kosmickrisp-resolve-a-disabled-sampler-compare-to-ze.patch	4fe84e78c59b9e3c669d1f200f5190ce609e5be6	1edc5213100f0c28975fd75dc238e8aa07afefca3fcfbb7df7311f01479ac002	kosmickrisp: resolve a disabled sampler compare to zero, not one
-84	0084-zink-let-a-generated-TCS-stop-naming-the-nir-its-pro.patch	627436f81d98cc8fee3d455503ea6285131497a0	93951d839fd94bd54d6ed7926c85f006e840aecc2b26f1fb3017842c76acf2a0	zink: let a generated TCS stop naming the nir its program freed
-85	0085-kosmickrisp-read-a-vertex-attribute-the-pipeline-doe.patch	942de7fa42336d3370f2e4a6c37fc340171907e2	59d22776c39e5f0a574f1c23bcde7a851510f70919ce42a267afeab513824172	kosmickrisp: read a vertex attribute the pipeline does not describe
-86	0086-kosmickrisp-offer-only-the-texture-capabilities-the-.patch	57eeac268b557779547594c538ae8701f9361138	12904744291f5c0e1708d33e9f03ce877b5127e7697fedef2ec7e946b355c956	kosmickrisp: offer only the texture capabilities the Metal device has
-87	0087-vulkan-runtime-name-a-pipeline-binary-by-its-own-byt.patch	b46a75559466080b4475d01dd8b569cf7b39ddec	fdb05c1a0b1319dafa734299c7fd6d15bec02d5501b538431dbad99c99fd6f42	vulkan/runtime: name a pipeline binary by its own bytes
-88	0088-kosmickrisp-keep-a-terminated-invocation-s-quad-in-i.patch	cb0a851c9ff972a6b4fe1cfb8256aae17f8b2e01	c80f0f81fe1f3c347e071eccb83f8bc39842c7baeda5b060bdf92792cbce153f	kosmickrisp: keep a terminated invocation's quad in its subgroup
-89	0089-kosmickrisp-size-the-geometry-heap-from-measurement.patch	a8d578e24093ac4fe27ffcfbce9498ce01fd224d	cd275a6f81c04cc5fdd97ecbd964c2c049a66b66744dac77e768fa74400a70b6	kosmickrisp: size the geometry heap from measurement
-90	0090-kosmickrisp-load-descriptors-from-the-constant-addre.patch	50553a6326bdbc39d5d447f37b16429ec50648b1	1175fef1d5aeba53ac9511045dc847fd8ae32bb3e2e22934b5ee647d99d04afc	kosmickrisp: load descriptors from the constant address space
-91	0091-kosmickrisp-use-wide-buffer-accesses-where-NIR-prove.patch	52b4c01686e1af178a993e0f2750947449232169	741bb2e78e77200cd4405059d733e00664da394b7182bcb7dee3533cec155cd8	kosmickrisp: use wide buffer accesses where NIR proves the alignment
-92	0092-kosmickrisp-complete-the-timeline-signals-a-killed-s.patch	04c758be35801e6cfb2ea3901b40b1cca322139f	5b793e7a2e6e4f9899994f86f70a66b426b2a463becaada33d53a02174c961d6	kosmickrisp: complete the timeline signals a killed submission owed
-93	0093-kosmickrisp-retire-a-Metal-command-queue-a-failure-h.patch	8e17d9354c2a1ba4a468560cf408be8eaee73033	8aaabacd8ba729b747a723888f59c2d791743bafb643501fb40c838804ccc33c	kosmickrisp: retire a Metal command queue a failure has killed
-94	0094-kosmickrisp-never-wait-forever-for-a-query-a-failure.patch	73d298a30c76ff11a22a4ff55d316fa099426304	e1a3a6f875e5081c544fff369dcdd6d611f41c4ff17582ed66ba3b4e772f6db5	kosmickrisp: never wait forever for a query a failure destroyed
-95	0095-nir-compare-only-the-coordinate-components-an-image-.patch	29083aaace8fbf6957e67b114cac5b51e453dcd3	dae60051c0dff314d91bbafaaa44e9040f9851dbf8e892d976ba7ed587b11d89	nir: compare only the coordinate components an image uses
-96	0096-kosmickrisp-bounds-check-an-image-atomic.patch	ec4bd6baf694b6ce8cda636a943b41bc848fb853	fe226c05cc3efbf02005e4e63543ee57d50f05ad26fd17c06ba65db647e66099	kosmickrisp: bounds-check an image atomic
-97	0097-kosmickrisp-keep-a-transform-feedback-store-inside-t.patch	b9c6370d77f08f2f44dc1a5ab941e51883835202	c8a7ec7cd4977468180ec711d382d0c399499bd20f048bb80f13378f4ed61d57	kosmickrisp: keep a transform feedback store inside the bound buffer
-98	0098-kosmickrisp-lose-the-device-when-the-Metal-command-q.patch	2d67897e978b449eb27af488394bfd531ff999bd	de8a7d6dd78a082b65bbc832336657b4ca595b2f0b8780e10182cbf0fbdd3229	kosmickrisp: lose the device when the Metal command queue stops
-99	0099-kosmickrisp-keep-external-Metal-heap-images-out-of-t.patch	4080a8efbcd52592f49c3492388f677aed9daa11	a116b0be0c8469ea892080c4230ce890f6e68397bfe58490d5dfa016ff91945f	kosmickrisp: keep external Metal heap images out of the optimized layout
-100	0100-kosmickrisp-carry-an-authored-primitive-ID-as-an-uns.patch	89f2c7f047d695b5f69a24e4881b71789371882a	662cf31d8921ad3d192b834a40704f1f226ab306b81583088f52af0f0d760326	kosmickrisp: carry an authored primitive ID as an unsigned user varying
-101	0101-kosmickrisp-import-host-memory-into-a-linear-modifie.patch	c0d379024698abd82ec3db16188949b7218c110f	70ded40c83047b8cbca1fe7d54b66724018caddb634ac23e6d0e019f736c9b8d	kosmickrisp: import host memory into a linear modifier image
-102	0102-kosmickrisp-lay-a-multi-plane-image-out-for-sharing.patch	b60be6cfc8c2f794f9c6ee36d2fc2944bedcbb68	2b54e67a966ca7e1895054696c879a0a74012f8ba000ad3086418222eda1b116	kosmickrisp: lay a multi-plane image out for sharing
-103	0103-zink-hand-a-GL-texture-s-Metal-texture-to-a-GL-inter.patch	8ae185e6399e2fa5f476b9e6360a036ab6b1228e	9b37f76f26cf99430fe3d86d84b05d4ef1ea9beb86ad403765f5b709705f95a4	zink: hand a GL texture's Metal texture to a GL interop caller
-104	0104-kosmickrisp-read-a-linear-image-s-input-attachment-t.patch	0b0f058fbac0890716a30107e400a799d1dfbf28	94de3c15bd7c9c44f0fa41f7136993cd9f02e2d1c1c5cd8a58661f3724143890	kosmickrisp: read a linear image's input attachment through an array view
+# Generated by scripts/patch_series.py export. Amend the topic branch and
+# export again; never edit this directory by hand.
+tree	c6693b86754d03af0b4de8f0621d374988b64833
+patch	kosmickrisp-support-an-embedded-Apple-build.patch
+patch	kosmickrisp-reject-unusable-image-memory.patch
+patch	kosmickrisp-own-feedback-options-per-Metal-commit.patch
+patch	kosmickrisp-classify-half-NaNs-with-integer-operations.patch
+patch	kosmickrisp-compile-application-shaders-with-safe-math.patch
+patch	kosmickrisp-report-complete-Metal-diagnostics.patch
+patch	kosmickrisp-preserve-fused-fp32-semantics.patch
+patch	kosmickrisp-make-timestamp-queries-reliable.patch
+patch	kosmickrisp-avoid-pinning-residency-per-submit.patch
+patch	kosmickrisp-stop-advertising-unreliable-float16-shaders.patch
+patch	kosmickrisp-emulate-custom-border-colors-on-Metal.patch
+patch	kosmickrisp-support-non-solid-polygon-modes.patch
+patch	kosmickrisp-satisfy-the-Zink-OpenGL-2.1-profile.patch
+patch	kosmickrisp-implement-GPU-transform-feedback.patch
+patch	kosmickrisp-embed-LLVM-free-build-shaders.patch
+patch	kosmickrisp-export-native-Metal-textures.patch
+patch	kosmickrisp-implement-GPU-geometry-shaders-and-streams.patch
+patch	kosmickrisp-implement-single-texel-buffer-alignment.patch
+patch	kosmickrisp-support-unused-dynamic-rendering-attachments.patch
+patch	kosmickrisp-implement-depth-clip-enable.patch
+patch	kosmickrisp-support-incremental-present.patch
+patch	kosmickrisp-implement-non-seamless-cube-maps.patch
+patch	kosmickrisp-implement-RGB32-uniform-texel-buffers.patch
+patch	kosmickrisp-implement-graphics-pipeline-libraries.patch
+patch	kosmickrisp-implement-device-address-commands.patch
+patch	kosmickrisp-support-dynamic-logic-operations.patch
+patch	kosmickrisp-implement-provoking-vertex-and-line-rasterization.patch
+patch	kosmickrisp-implement-legacy-vertex-attributes.patch
+patch	kosmickrisp-implement-pipeline-statistics-queries.patch
+patch	vulkan-preserve-trailing-bytes-when-lowering-whole-size-fills.patch
+patch	kosmickrisp-match-initial-render-pass-attachment-samples.patch
+patch	kosmickrisp-lower-clip-cull-outputs-after-software-stages.patch
+patch	kosmickrisp-precompile-bounded-raster-executable-classes.patch
+patch	kosmickrisp-cover-native-point-clipping-against-the-view-volume.patch
+patch	kosmickrisp-capture-tessellation-outputs-on-the-GPU.patch
+patch	kosmickrisp-read-every-merged-clip-cull-fragment-element.patch
+patch	kosmickrisp-correct-2D-array-aliasing-of-3D-images.patch
+patch	kosmickrisp-retire-dead-values-before-MSL-translation.patch
+patch	kosmickrisp-cover-emulated-border-colours-in-the-Meson-suite.patch
+patch	kosmickrisp-declare-MSL-temporaries-without-a-dead-store.patch
+patch	kosmickrisp-survive-Metal-command-queue-timeouts.patch
+patch	kosmickrisp-restrict-the-coherency-workaround-to-loops.patch
+patch	kosmickrisp-derive-alpha-to-coverage-without-a-colour-attachment.patch
+patch	kosmickrisp-compile-emulated-stages-without-a-thread-limit.patch
+patch	kosmickrisp-initialize-Metal-descriptors-only-once.patch
+patch	kosmickrisp-reclaim-command-allocator-capacity-on-release.patch
+patch	kosmickrisp-retire-and-recycle-one-time-command-storage-on-completio.patch
+patch	kosmickrisp-gate-pending-timeline-waits-before-Metal-submission.patch
+patch	kosmickrisp-read-coherent-global-memory-through-relaxed-atomics.patch
+patch	kosmickrisp-round-depth-clears-into-normalized-depth-formats.patch
+patch	kosmickrisp-restart-the-render-encoder-for-layered-draws.patch
+patch	kosmickrisp-present-a-single-invocation-subgroup-outside-the-SIMD-st.patch
+patch	kosmickrisp-keep-the-silicon-workarounds-on-Apple7-and-Apple8.patch
+patch	kosmickrisp-apply-the-static-sample-mask-before-early-sample-countin.patch
+patch	kosmickrisp-measure-pipeline-library-link-time-against-fast-linking.patch
+patch	kosmickrisp-blend-with-Metal-s-own-state-where-Metal-can-express-it.patch
+patch	kosmickrisp-let-Metal-fetch-vertex-attributes-where-Metal-can-expres.patch
+patch	kosmickrisp-compile-a-pipeline-library-s-stages-when-it-is-created.patch
+patch	zink-build-against-a-packaged-Apple-Vulkan-driver.patch
+patch	egl-reach-zink-on-platforms-without-DRM-devices.patch
+patch	kosmickrisp-declare-Metal-s-built-in-outputs-at-their-fixed-shape.patch
+patch	kosmickrisp-reinterpret-a-mismatched-fragment-output-do-not-convert-.patch
+patch	mesa-treat-RGB9_E5-as-the-floating-point-read-type-it-is.patch
+patch	poly-compute-a-tessellation-shader-s-index-once-not-once-per-load.patch
+patch	zink-do-not-barrier-a-render-target-for-a-bind-another-context-made.patch
+patch	egl-create-an-image-over-memory-the-caller-owns.patch
+patch	spirv-take-vtn_bindgen2-from-the-system-with-the-precomp-compilers.patch
+patch	vulkan-wsi-only-ask-for-immediate-present-where-Metal-offers-it.patch
+patch	nir-opt_vectorize_io-merge-xfb-elements-a-dword-apart-in-order.patch
+patch	kosmickrisp-write-every-channel-of-a-swizzled-colour-attachment.patch
+patch	kosmickrisp-advertise-VK_KHR_shader_quad_control.patch
+patch	kosmickrisp-advertise-VK_EXT_external_memory_acquire_unmodified.patch
+patch	kosmickrisp-advertise-VK_EXT_queue_family_foreign.patch
+patch	kosmickrisp-implement-VK_EXT_image_drm_format_modifier.patch
+patch	kosmickrisp-widen-16-bit-varyings-to-the-slot-Metal-carries.patch
+patch	kosmickrisp-implement-VK_EXT_image_compression_control.patch
+patch	kosmickrisp-implement-VK_EXT_device_address_binding_report.patch
+patch	kosmickrisp-advertise-VK_KHR_pipeline_binary.patch
+patch	zink-publish-a-batch-s-id-before-clearing-its-unflushed-flag.patch
+patch	zink-keep-a-queued-barrier-s-resource-alive-until-it-is-emitted.patch
+patch	zink-do-not-wait-forever-for-another-context-to-flush.patch
+patch	zink-do-not-answer-a-query-from-the-fast-path-that-skips-its-fixups.patch
+patch	kosmickrisp-resolve-a-disabled-sampler-compare-to-zero-not-one.patch
+patch	zink-let-a-generated-TCS-stop-naming-the-nir-its-program-freed.patch
+patch	kosmickrisp-read-a-vertex-attribute-the-pipeline-does-not-describe.patch
+patch	kosmickrisp-offer-only-the-texture-capabilities-the-Metal-device-has.patch
+patch	vulkan-runtime-name-a-pipeline-binary-by-its-own-bytes.patch
+patch	kosmickrisp-keep-a-terminated-invocation-s-quad-in-its-subgroup.patch
+patch	kosmickrisp-size-the-geometry-heap-from-measurement.patch
+patch	kosmickrisp-load-descriptors-from-the-constant-address-space.patch
+patch	kosmickrisp-use-wide-buffer-accesses-where-NIR-proves-the-alignment.patch
+patch	kosmickrisp-complete-the-timeline-signals-a-killed-submission-owed.patch
+patch	kosmickrisp-retire-a-Metal-command-queue-a-failure-has-killed.patch
+patch	kosmickrisp-never-wait-forever-for-a-query-a-failure-destroyed.patch
+patch	nir-compare-only-the-coordinate-components-an-image-uses.patch
+patch	kosmickrisp-bounds-check-an-image-atomic.patch
+patch	kosmickrisp-keep-a-transform-feedback-store-inside-the-bound-buffer.patch
+patch	kosmickrisp-lose-the-device-when-the-Metal-command-queue-stops.patch
+patch	kosmickrisp-keep-external-Metal-heap-images-out-of-the-optimized-lay.patch
+patch	kosmickrisp-carry-an-authored-primitive-ID-as-an-unsigned-user-varyi.patch
+patch	kosmickrisp-import-host-memory-into-a-linear-modifier-image.patch
+patch	kosmickrisp-lay-a-multi-plane-image-out-for-sharing.patch
+patch	zink-hand-a-GL-texture-s-Metal-texture-to-a-GL-interop-caller.patch
+patch	kosmickrisp-read-a-linear-image-s-input-attachment-through-an-array-.patch

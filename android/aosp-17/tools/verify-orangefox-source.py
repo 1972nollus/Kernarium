@@ -11,9 +11,13 @@ import csv
 import hashlib
 import re
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+import patch_series  # noqa: E402
 
 
 HEX40 = re.compile(r"[0-9a-f]{40}")
@@ -21,10 +25,8 @@ HEX64 = re.compile(r"[0-9a-f]{64}")
 ASSIGNMENT = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([0-9]+))$")
 PROJECT_HEADER = (
     "order", "route_id", "manifest_project", "checkout_path",
-    "manifest_upstream", "base_commit", "base_tree", "final_tree",
-    "patch_count", "series_manifest_sha256", "series_dir",
+    "manifest_upstream", "base_commit", "base_tree", "final_tree", "series_dir",
 )
-SERIES_HEADER = ("order", "filename", "stable_patch_id", "sha256", "subject")
 EXTERNALS = (
     (
         "bootable/recovery",
@@ -52,14 +54,6 @@ class VerificationError(ValueError):
 
 
 @dataclass(frozen=True)
-class PatchEntry:
-    filename: str
-    patch_id: str
-    digest: str
-    subject: str
-
-
-@dataclass(frozen=True)
 class Route:
     order: int
     route_id: str
@@ -69,7 +63,6 @@ class Route:
     base_commit: str
     base_tree: str
     final_tree: str
-    entries: tuple[PatchEntry, ...]
 
 
 def run(*command: str, cwd: Path | None = None, payload: bytes | None = None) -> str:
@@ -161,7 +154,7 @@ def verify_metadata(root: Path) -> tuple[dict[str, str], dict[str, ET.Element]]:
         "ORANGEFOX_VENDOR_RECOVERY_TREE", "ORANGEFOX_SE_OMAPI_REPOSITORY",
         "ORANGEFOX_SE_OMAPI_COMMIT", "ORANGEFOX_SE_OMAPI_TREE",
         "ORANGEFOX_DEVICE_OVERLAY_DESTINATION", "ORANGEFOX_PRODUCT",
-        "ORANGEFOX_RELEASE_CONFIG", "ORANGEFOX_PATCH_COUNT", "ORANGEFOX_LICENSE",
+        "ORANGEFOX_RELEASE_CONFIG", "ORANGEFOX_LICENSE",
     }
     if set(values) != required:
         raise VerificationError(
@@ -188,24 +181,11 @@ def verify_metadata(root: Path) -> tuple[dict[str, str], dict[str, ET.Element]]:
             raise VerificationError(f"{key} is not a full Git object ID")
         if key.endswith("_SHA256") and HEX64.fullmatch(value) is None:
             raise VerificationError(f"{key} is not a SHA-256 digest")
-    if not values["ORANGEFOX_PATCH_COUNT"].isdecimal():
-        raise VerificationError("ORANGEFOX_PATCH_COUNT is not numeric")
 
     manifest_path = root / "third_party/orangefox/base-manifest.xml"
     if digest(manifest_path) != values["ORANGEFOX_BASE_MANIFEST_SHA256"]:
         raise VerificationError("resolved base manifest digest differs from metadata")
     return values, manifest_projects(ET.parse(manifest_path).getroot())
-
-
-def patch_subject(payload: bytes) -> str:
-    output = run("git", "mailinfo", "/dev/null", "/dev/null", payload=payload)
-    subjects = [
-        line.removeprefix("Subject: ")
-        for line in output.splitlines() if line.startswith("Subject: ")
-    ]
-    if len(subjects) != 1:
-        raise VerificationError("generated patch has no unique subject")
-    return subjects[0]
 
 
 def inspect_routes(root: Path, projects: dict[str, ET.Element]) -> list[Route]:
@@ -216,8 +196,7 @@ def inspect_routes(root: Path, projects: dict[str, ET.Element]) -> list[Route]:
     for expected_order, row in enumerate(project_rows, 1):
         (
             order_text, route_id, project_name, checkout_path, upstream,
-            base_commit, base_tree, final_tree, patch_count_text,
-            manifest_digest, series_dir_text,
+            base_commit, base_tree, final_tree, series_dir_text,
         ) = row
         if order_text != str(expected_order) or route_id != f"p{expected_order:04d}":
             raise VerificationError("OrangeFox route order or ID is invalid")
@@ -225,71 +204,22 @@ def inspect_routes(root: Path, projects: dict[str, ET.Element]) -> list[Route]:
         safe_relative(series_dir_text, "route series")
         if any(HEX40.fullmatch(value) is None for value in (base_commit, base_tree, final_tree)):
             raise VerificationError(f"route {route_id} has malformed Git identity")
-        if HEX64.fullmatch(manifest_digest) is None or not patch_count_text.isdecimal():
-            raise VerificationError(f"route {route_id} has malformed patch identity")
         project = projects.get(checkout_path)
         if (
             project is None or project.get("name") != project_name
             or project.get("revision") != base_commit or project.get("upstream") != upstream
         ):
             raise VerificationError(f"route {route_id} differs from the manifest lock")
-
-        route_root = root / "third_party/orangefox/patches/projects" / route_id
-        metadata = assignments(route_root / "metadata.env")
-        expected_metadata = {
-            "ORANGEFOX_PROJECT_PATCH_SCHEMA": "1",
-            "ORANGEFOX_ROUTE_ID": route_id,
-            "ORANGEFOX_MANIFEST_PROJECT": project_name,
-            "ORANGEFOX_CHECKOUT_PATH": checkout_path,
-            "ORANGEFOX_MANIFEST_UPSTREAM": upstream,
-            "ORANGEFOX_BASE_COMMIT": base_commit,
-            "ORANGEFOX_BASE_TREE": base_tree,
-            "ORANGEFOX_FINAL_TREE": final_tree,
-            "ORANGEFOX_PATCH_COUNT": patch_count_text,
-            "ORANGEFOX_SERIES_MANIFEST_SHA256": manifest_digest,
-            "ORANGEFOX_SERIES_DIR": series_dir_text,
-        }
-        if metadata != expected_metadata:
-            raise VerificationError(f"route metadata differs from projects.tsv: {route_id}")
-        series_dir = root / series_dir_text
-        series_manifest = series_dir / "manifest.tsv"
-        if digest(series_manifest) != manifest_digest:
-            raise VerificationError(f"route {route_id} manifest digest differs")
-        series_rows = table(series_manifest, SERIES_HEADER)
-        if len(series_rows) != int(patch_count_text):
-            raise VerificationError(f"route {route_id} patch count differs")
-
-        entries: list[PatchEntry] = []
-        seen: set[str] = set()
-        for patch_order, patch_row in enumerate(series_rows, 1):
-            order, filename, patch_id, patch_digest, subject = patch_row
-            if order != str(patch_order) or re.fullmatch(r"[0-9]{4}-[A-Za-z0-9._-]+\.patch", filename) is None:
-                raise VerificationError(f"route {route_id} patch order or name is invalid")
-            if filename in seen or HEX40.fullmatch(patch_id) is None or HEX64.fullmatch(patch_digest) is None:
-                raise VerificationError(f"route {route_id} patch identity is invalid")
-            patch = series_dir / filename
-            payload = patch.read_bytes()
-            if hashlib.sha256(payload).hexdigest() != patch_digest:
-                raise VerificationError(f"route {route_id} patch digest differs: {filename}")
-            ids = [
-                line.split()[0]
-                for line in run("git", "patch-id", "--stable", payload=payload).splitlines()
-                if line
-            ]
-            if ids != [patch_id] or patch_subject(payload) != subject:
-                raise VerificationError(f"route {route_id} patch semantic identity differs")
-            if not subject.startswith("UML-ANDROID-LOCAL: OrangeFox "):
-                raise VerificationError(f"route {route_id} patch lacks the local prefix")
-            if re.search(rb"^index [0-9a-f]{40}\.\.[0-9a-f]{40}", payload, re.MULTILINE) is None:
-                raise VerificationError(f"route {route_id} patch lacks full-index identity")
-            seen.add(filename)
-            entries.append(PatchEntry(filename, patch_id, patch_digest, subject))
-        if {path.name for path in series_dir.glob("*.patch")} != seen:
-            raise VerificationError(f"route {route_id} patch inventory differs")
+        try:
+            series = patch_series.read_series(root / series_dir_text)
+        except patch_series.SeriesError as error:
+            raise VerificationError(f"route {route_id}: {error}") from error
+        if not series.names:
+            raise VerificationError(f"route {route_id} series is empty")
         routes.append(
             Route(
                 expected_order, route_id, project_name, checkout_path, upstream,
-                base_commit, base_tree, final_tree, tuple(entries),
+                base_commit, base_tree, final_tree,
             )
         )
     return routes
@@ -362,14 +292,12 @@ def verify_checkout(
             continue
         if tree != route.final_tree:
             raise VerificationError(f"route {route.route_id} final tree differs")
-        commits = run(
-            "git", "rev-list", "--reverse", f"{route.base_commit}..HEAD", cwd=checkout
-        ).splitlines()
-        if len(commits) != len(route.entries):
-            raise VerificationError(f"route {route.route_id} history length differs")
-        for commit, entry in zip(commits, route.entries, strict=True):
-            if run("git", "show", "-s", "--format=%s", commit, cwd=checkout) != entry.subject:
-                raise VerificationError(f"route {route.route_id} subject differs")
+        ancestor = subprocess.run(
+            ("git", "merge-base", "--is-ancestor", route.base_commit, "HEAD"),
+            cwd=checkout, check=False,
+        )
+        if ancestor.returncode != 0:
+            raise VerificationError(f"route {route.route_id} is not based on its pinned base")
     if expect == "final":
         command = [
             str(root / "tools/sync-orangefox-device.py"),
@@ -391,8 +319,6 @@ def main() -> None:
         root = args.android_root.resolve()
         values, projects = verify_metadata(root)
         routes = inspect_routes(root, projects)
-        if len(routes) != int(values["ORANGEFOX_PATCH_COUNT"]):
-            raise VerificationError("OrangeFox route count differs from metadata")
         if args.allow_prebuilt_kernel and args.orangefox_source is None:
             raise VerificationError("--allow-prebuilt-kernel requires --orangefox-source")
         if args.orangefox_source is not None:

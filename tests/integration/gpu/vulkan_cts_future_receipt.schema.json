@@ -353,31 +353,14 @@
         "base_tree": { "$ref": "#/$defs/gitObject" }
       }
     },
-    "patch": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["order", "patch", "stable_patch_id", "sha256", "subject"],
-      "properties": {
-        "order": { "type": "integer", "minimum": 1 },
-        "patch": { "type": "string", "pattern": "^[^/\\u0000]+\\.patch$" },
-        "stable_patch_id": { "$ref": "#/$defs/gitObject" },
-        "sha256": { "$ref": "#/$defs/sha256" },
-        "subject": { "type": "string", "minLength": 1 }
-      }
-    },
     "patchedSource": {
       "allOf": [
         { "$ref": "#/$defs/source" },
         {
           "type": "object",
-          "required": ["patched_tree", "patches"],
+          "required": ["patched_tree"],
           "properties": {
-            "patched_tree": { "$ref": "#/$defs/gitObject" },
-            "patches": {
-              "type": "array",
-              "minItems": 1,
-              "items": { "$ref": "#/$defs/patch" }
-            }
+            "patched_tree": { "$ref": "#/$defs/gitObject" }
           }
         }
       ]

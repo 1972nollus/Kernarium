@@ -35,6 +35,13 @@ uml_add_tooling_test(
     TIMEOUT 120)
 
 uml_add_tooling_test(
+    NAME patch-series-contract
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_patch_series.py
+    LABELS audit;kernel;dependency;android
+    TIMEOUT 120)
+
+uml_add_tooling_test(
     NAME apple-xcframework-staging
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_create_apple_xcframework.sh
         ${PROJECT_SOURCE_DIR}/scripts/create-apple-xcframework.py

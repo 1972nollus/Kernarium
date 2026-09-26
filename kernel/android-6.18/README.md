@@ -1,17 +1,20 @@
 # Android Common Kernel 6.18 source policy
 
-This line is the ACK 6.18 kernel for the AOSP 17 guest. Exact upstream and
-final-tree identities, ABI, patch count, and delta limits live in
-[`patches/metadata.env`](patches/metadata.env); ordered generated patch identity
-lives in [`patches/series/manifest.tsv`](patches/series/manifest.tsv).
+This line is the ACK 6.18 kernel for the AOSP 17 guest. Exact upstream
+identity, the ordered series, the final tree they produce, and ABI live in
+[`patches/metadata.env`](patches/metadata.env).
 
-It is independent of both mainline page profiles. Mainline patch bytes are not
-this line's source of truth, even when a topic implements the same Darwin
-contract.
+It is independent of both mainline page profiles. It applies the shared
+[`kernel/common/patches`](../common/patches) series to its ACK base and then
+its own overlay in `patches/series`: build fixes for code only ACK carries (its
+PM callback tracepoint exports, its `asm/simd.h` callers, and its Rust ashmem
+driver's personality binding), a touchscreen-only input presentation for
+Android and recovery, and ACK ports of the balloon and drm-attach fixes whose
+context differs on this base.
 
 The shared stateful Virtio video decoder is built in for every product in this
 line. Its [wire contract](../common/video/README.md) is synchronized from the
-canonical header and its implementation is maintained as a local media topic.
+canonical header and its implementation is a topic in the shared series.
 The host exposes hardware decoding through V4L2 independently of the GPU.
 
 ## Product contract
@@ -136,8 +139,19 @@ time; patch releases and commit identities are provenance, not runtime gates.
 
 ## Patch maintenance
 
-Patch files are generated from the clean ACK topic history. Change commits in
-Git and run the regenerator documented by the AOSP producer; never edit patch
-bytes, metadata, or manifest rows independently. A changed final tree requires
-a fresh replay, build, artifact verification, and the affected Android runtime
+Shared topics are edited on the mainline replay. Android-only topics are
+edited on the ACK topic branch named in the metadata. After either, rebase the
+overlay onto the current shared series and export it with its final tree:
+
+```sh
+python3 kernel/common/tooling/kernel_series.py refresh \
+  --metadata kernel/android-6.18/patches/metadata.env --source ACK_CHECKOUT
+python3 kernel/common/tooling/kernel_series.py regenerate \
+  --metadata kernel/android-6.18/patches/metadata.env --source ACK_CHECKOUT
+```
+
+Every shared patch applies to this base with plain `git am`. A shared topic
+that cannot becomes a variant in each line's overlay. Never edit patch files,
+`series.tsv`, or the final tree by hand. A changed final tree requires a fresh
+replay, build, artifact verification, and the affected Android runtime
 qualification before acceptance.
