@@ -31,12 +31,17 @@ The kernel releases the compressed initrd input after unpacking it. BusyBox
 init, which releases their file-backed memory once nothing still references
 them.
 
-Growth is deliberately conservative. The initramfs attempts `resize2fs` only
-when `ubda` exposes exactly one partition and BusyBox `blkid` identifies
-`ubda1` as ext4. Multiple-partition and non-ext4 disks bypass growth. A failed
-resize is also only a warning: the initramfs still attempts to mount the
-unchanged root and enter its init. A root that cannot itself be mounted or
-does not contain `/sbin/init` remains a boot error.
+Growth is deliberately conservative. The initramfs considers growth only when
+`ubda` exposes exactly one partition and BusyBox `blkid` identifies `ubda1` as
+ext4, and grows only when the partition exceeds the filesystem by more than the
+tail `resize2fs` itself leaves unused (a page remainder or a trailing group too
+small for its metadata). It then runs `e2fsck -f -p` before `resize2fs`, which
+refuses an unmounted filesystem that was mounted after its last full check.
+Multiple-partition, non-ext4, and already-grown disks bypass both steps, so a
+normal boot neither checks nor resizes. A check that leaves errors or a failed
+resize is only a warning: the initramfs still attempts to mount the unchanged
+root and enter its init. A root that cannot itself be mounted or does not
+contain `/sbin/init` remains a boot error.
 
 The producer runs natively on arm64 Linux and requires `sudo`, Buildroot's
 ordinary build prerequisites, `debootstrap`, `e2fsprogs`, and GPT fdisk. It

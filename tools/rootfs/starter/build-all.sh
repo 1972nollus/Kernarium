@@ -228,8 +228,8 @@ build_initramfs()
 	gzip -t "$image"
 	listing=$buildroot_output/initramfs.list
 	gzip -dc "$image" | cpio -it > "$listing" 2>/dev/null
-	for required in init bin/busybox sbin/blkid sbin/resize2fs \
-		sbin/switch_root; do
+	for required in init bin/busybox sbin/blkid sbin/dumpe2fs sbin/e2fsck \
+		sbin/resize2fs sbin/switch_root; do
 		grep -qx "\./$required\|$required" "$listing" || \
 			fail "initramfs is missing $required"
 	done
