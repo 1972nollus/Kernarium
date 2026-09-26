@@ -320,9 +320,11 @@ second); the profile is rewritten there every two seconds, when a run ends,
 and at exit. A sampler thread suspends each vCPU carrier in turn; when the
 carrier is inside gadget code, its executor names the translated block and the
 guest instruction words it came from, and any other host PC is counted by host
-symbol (the guest kernel, the executor, translation, MMU). Guest entry and exit
-store one flag each; the translated code is unchanged. Only the gadgets engine
-is sampled, so a macOS run, whose default engine is the JIT, needs
+symbol (the guest kernel, the executor, translation, MMU). Each block sample
+also records the guest thread pointer (`TPIDR_EL0`) it ran under, which tells
+one busy guest thread from a pool. Guest entry and exit store one flag each;
+the translated code is unchanged. Only the gadgets engine is sampled, so a
+macOS run, whose default engine is the JIT, needs
 `--execution-engine=gadgets`.
 
 `symbolize_guest_samples.py PROFILE ELF_OR_DIR...` finds each block's words in
@@ -331,7 +333,10 @@ and function regardless of where the guest loaded it. For an Android
 application, pass its APK's `lib/arm64-v8a` and the guest's `/system/lib64`,
 `/apex/*/lib64` and `/system/bin` (all readable through `adb pull` on user
 builds). A block is attributed at its first instruction, so time in a block
-that falls through a function boundary counts against the first function.
+that falls through a function boundary counts against the first function. The
+report ranks guest threads; `--thread TPIDR` restricts it to one of them. The
+profile is cumulative, so copy it at a phase boundary and pass that copy as
+`--baseline` to report only the interval after it.
 
 ## Cache census
 

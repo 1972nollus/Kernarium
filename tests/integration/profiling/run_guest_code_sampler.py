@@ -32,6 +32,8 @@ SAMPLES_PER_SECOND = 1000
 HOT_SHARE = 0.9
 SHARE_TOLERANCE = 0.1
 MINIMUM_ATTRIBUTED = 200
+# The workload's TPIDR_EL0 (guest_sampler_workload.S).
+THREAD_POINTER = 0x5A5A0000
 
 
 def load_symbolizer():
@@ -102,6 +104,11 @@ def main() -> int:
             name = symbolizer.symbol_for(elf, address).split("+")[0]
             if name in counts:
                 counts[name] += profile.blocks[index].count
+                thread = profile.blocks[index].thread
+                if thread != THREAD_POINTER:
+                    raise RuntimeError(
+                        f"{name} was sampled under thread {thread:#x}, "
+                        f"expected {THREAD_POINTER:#x}")
         attributed = counts["hot_loop"] + counts["cold_loop"]
         print(f"{profile.header}; hot_loop {counts['hot_loop']}, "
               f"cold_loop {counts['cold_loop']}")

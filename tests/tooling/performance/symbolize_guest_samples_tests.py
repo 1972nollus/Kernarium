@@ -76,9 +76,9 @@ class SymbolizeGuestSamplesTests(unittest.TestCase):
             # words exist in no file.
             samples.write_text(
                 "# guest code samples\tpasses 10\tsamples 10\tguest 10\n"
-                f"guest\t6\t0x7f0000010010\t4\t{words(FIRST[4:8])}\n"
-                f"guest\t3\t0x7f0000010020\t8\t{words(SECOND)}\n"
-                f"guest\t1\t0x400000\t4\t{words([1, 2, 3, 4])}\n"
+                f"guest\t6\t0x7f0000010010\t4\t{words(FIRST[4:8])}\t0x7000\n"
+                f"guest\t3\t0x7f0000010020\t8\t{words(SECOND)}\t0x8000\n"
+                f"guest\t1\t0x400000\t4\t{words([1, 2, 3, 4])}\t0x7000\n"
                 "host\t5\tdarwin_idle\n")
             profile = symbolize.read_profile(samples)
             elves = [symbolize.read_elf(path)
@@ -101,6 +101,45 @@ class SymbolizeGuestSamplesTests(unittest.TestCase):
             self.assertIn("60.00%  first  [libdemo.so]", report)
             self.assertIn("30.00%  second  [libdemo.so]", report)
             self.assertIn("10.00%  0x400000  [[unmatched]]", report)
+            self.assertIn("70.00%  0x7000", report)
+            self.assertIn("30.00%  0x8000", report)
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), mock.patch.object(
+                    sys, "argv", ["symbolize", str(samples), str(root),
+                                  "--thread", "7000"]):
+                self.assertEqual(symbolize.main(), 0)
+            report = output.getvalue()
+            self.assertIn("guest samples 7,", report)
+            self.assertIn("85.71%  first  [libdemo.so]", report)
+            self.assertNotIn("second", report)
+
+    def test_baseline_leaves_the_interval_after_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            earlier = root / "earlier.tsv"
+            later = root / "later.tsv"
+            earlier.write_text(
+                f"guest\t4\t0x1000\t4\t{words(FIRST[:4])}\t0x7000\n"
+                f"guest\t2\t0x1000\t4\t{words(FIRST[:4])}\t0x8000\n"
+                "host\t5\tdarwin_idle\n")
+            later.write_text(
+                f"guest\t9\t0x1000\t4\t{words(FIRST[:4])}\t0x7000\n"
+                f"guest\t2\t0x1000\t4\t{words(FIRST[:4])}\t0x8000\n"
+                f"guest\t3\t0x2000\t4\t{words(SECOND[:4])}\t0x8000\n"
+                "host\t8\tdarwin_idle\n")
+            profile = symbolize.subtract(symbolize.read_profile(later),
+                                         symbolize.read_profile(earlier))
+            self.assertEqual([(block.count, block.address, block.thread)
+                              for block in profile.blocks],
+                             [(5, 0x1000, 0x7000), (3, 0x2000, 0x8000)])
+            self.assertEqual(profile.host, [(3, "darwin_idle")])
+
+    def test_profiles_without_a_thread_column_still_read(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "old.tsv"
+            path.write_text(f"guest\t1\t0x1000\t4\t{words(FIRST[:4])}\n")
+            self.assertEqual(symbolize.read_profile(path).blocks[0].thread, 0)
 
     def test_short_blocks_are_not_guessed(self) -> None:
         block = symbolize.Block(1, 0x1000, 2, tuple(FIRST[:2]))

@@ -9,7 +9,12 @@ the guest loaded it, and without any help from the guest. Pass the program's
 executable and its shared libraries (for Android, the APK's lib/ directory and
 /system/lib64); directories are searched recursively.
 
+Blocks carry the guest thread pointer (TPIDR_EL0) they ran under, which
+separates one busy thread from a pool. Profiles are cumulative: --baseline
+subtracts an earlier dump of the same run to isolate the interval between them.
+
 usage: symbolize_guest_samples.py SAMPLES ELF_OR_DIR... [--top N] [--min-words N]
+       [--thread TPIDR] [--baseline EARLIER]
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ class Block:
     address: int
     instructions: int
     words: tuple[int, ...]
+    thread: int = 0
 
 
 @dataclasses.dataclass
@@ -52,11 +58,32 @@ def read_profile(path: pathlib.Path) -> Profile:
         fields = line.split("\t")
         if fields[0] == "guest" and len(fields) >= 5:
             words = tuple(int(word, 16) for word in fields[4].split(",") if word)
+            thread = int(fields[5], 16) if len(fields) >= 6 else 0
             blocks.append(Block(int(fields[1]), int(fields[2], 16),
-                                int(fields[3]), words))
+                                int(fields[3]), words, thread))
         elif fields[0] == "host" and len(fields) >= 3:
             host.append((int(fields[1]), fields[2]))
     return Profile(header, blocks, host)
+
+
+def subtract(profile: Profile, baseline: Profile) -> Profile:
+    """The samples taken after baseline was dumped from the same run."""
+    earlier = collections.Counter()
+    for block in baseline.blocks:
+        earlier[(block.address, block.words, block.thread)] += block.count
+    blocks = []
+    for block in profile.blocks:
+        count = block.count - earlier[(block.address, block.words, block.thread)]
+        if count > 0:
+            blocks.append(dataclasses.replace(block, count=count))
+    earlier_host = collections.Counter()
+    for count, name in baseline.host:
+        earlier_host[name] += count
+    host = [(count - earlier_host[name], name) for count, name in profile.host
+            if count > earlier_host[name]]
+    host.sort(key=lambda item: -item[0])
+    blocks.sort(key=lambda block: -block.count)
+    return Profile(profile.header, blocks, host)
 
 
 @dataclasses.dataclass
@@ -154,9 +181,22 @@ def main() -> int:
     parser.add_argument("elves", type=pathlib.Path, nargs="+")
     parser.add_argument("--top", type=int, default=30)
     parser.add_argument("--min-words", type=int, default=4)
+    parser.add_argument("--thread", type=lambda value: int(value, 16),
+                        help="only blocks run under this TPIDR_EL0")
+    parser.add_argument("--baseline", type=pathlib.Path,
+                        help="an earlier dump of the same run to subtract")
     arguments = parser.parse_args()
 
     profile = read_profile(arguments.samples)
+    if arguments.baseline is not None:
+        profile = subtract(profile, read_profile(arguments.baseline))
+    by_thread: collections.Counter[int] = collections.Counter()
+    for block in profile.blocks:
+        by_thread[block.thread] += block.count
+    all_threads = sum(by_thread.values()) or 1
+    if arguments.thread is not None:
+        profile.blocks = [block for block in profile.blocks
+                          if block.thread == arguments.thread]
     elves = [elf for elf in map(read_elf, elf_files(arguments.elves)) if elf]
     located = locate(profile.blocks, elves, arguments.min_words)
     total = sum(block.count for block in profile.blocks) or 1
@@ -175,6 +215,9 @@ def main() -> int:
     print(f"{profile.header}")
     print(f"guest samples {total}, located in {len(elves)} ELF files: "
           f"{100 * (total - by_library['[unmatched]']) / total:.1f}%")
+    print("\nby guest thread (TPIDR_EL0):")
+    for thread, count in by_thread.most_common(arguments.top):
+        print(f"  {100 * count / all_threads:6.2f}%  {thread:#x}")
     print("\nby library:")
     for library, count in by_library.most_common(arguments.top):
         print(f"  {100 * count / total:6.2f}%  {library}")
