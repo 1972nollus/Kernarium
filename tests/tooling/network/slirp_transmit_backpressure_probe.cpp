@@ -44,9 +44,31 @@ struct NetworkContext final {
  * consumes and discards it. */
 const std::array<std::uint8_t, 64> frame{};
 
+/* Every frame the ring has accepted, from any writer. */
+std::atomic<std::uint64_t> accepted_frames{0};
+
 int write_frame(void *network)
 {
-	return uml_slirp_net_write(network, frame.data(), frame.size());
+	const int result =
+		uml_slirp_net_write(network, frame.data(), frame.size());
+	if (result == 0)
+		accepted_frames.fetch_add(1, std::memory_order_relaxed);
+	return result;
+}
+
+/* A resumed loop still has the frames of the last fill to take. A pause
+ * requested before it has taken them all parks it with some still queued,
+ * and the ring can then no longer hold its capacity. */
+bool wait_for_drained_ring(SlirpProvider &provider)
+{
+	const auto deadline = Clock::now() + std::chrono::seconds{2};
+	while (provider.processed_transmits_for_testing() !=
+	       accepted_frames.load(std::memory_order_relaxed)) {
+		if (Clock::now() >= deadline)
+			return false;
+		std::this_thread::sleep_for(std::chrono::milliseconds{1});
+	}
+	return true;
 }
 
 /* Park the event loop and leave the ring holding its capacity. */
@@ -112,6 +134,8 @@ bool run(void *network, SlirpProvider &provider)
 	if (result.load() != 0)
 		return fail("a waiting writer was refused after the loop drained");
 
+	if (!wait_for_drained_ring(provider))
+		return fail("the resumed loop did not drain the ring");
 	if (!fill_parked_ring(network, provider))
 		return fail("the ring could not be filled a second time");
 	writer = std::thread{[&] { result.store(write_frame(network)); }};
