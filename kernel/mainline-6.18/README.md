@@ -221,12 +221,35 @@ again, with a timer, IPI and scheduling checkpoint after every full batch and
 every sixteenth rejection, so a whole-`mm` replay after a fork makes progress
 while siblings keep invalidating. `init_mm` keeps its serialized walker.
 
+`init_mm` has one synchronizing owner at a time and walks without a batch
+budget. A synchronization its owner requests fails at once instead of
+blocking, and the entry for callers that already hold an `mmap` lock accepts
+only a user `mm`. Every synchronization takes and clears the pending ranges
+under one lock hold, applies all of them, and requeues all of them when any
+part fails, so no pending range is lost. Under 4 KiB pages one 16 KiB host
+slot carries four `init_mm` PTEs: they are sampled under the PTE lock, the
+whole host slot is dropped before the present quarters are mapped and the
+absent ones unmapped, and the first failure stops the slot. The four samples
+are not one atomic snapshot; a writer publishes its range after it changes a
+PTE, so a later walk reapplies it. A kernel-mode fault publishes exactly its
+Linux page, synchronizes `init_mm`, and resumes only when the host confirms
+the access is backed; any other outcome panics instead of faulting again. On
+both page profiles a nested mmu-gather flush keeps the range it collected
+instead of becoming a whole-`mm` flush, because a Darwin range invalidation
+already quiesces the generation's executors and advances its epoch.
+
 Signal dispositions are process-wide, so the emulator's device and renderer
 threads share UML's `SIGSEGV` and `SIGBUS` handlers even though they own no
 Linux task. A synchronous fault enters the guest path only from a virtual CPU
 carrier, or from the boot thread while it still owns CPU0. Every other fault is
 reported with its real host thread and literal addresses before the default
 host disposition terminates the faulting instruction.
+
+A public stop reaches every carrier: one leaving translated guest code honours
+it before its task continues, and an idle carrier's wait includes the stop
+descriptor. The last-ditch handler for a fatal host signal exits at once
+without Linux exitcalls, because the carrier that receives a process-directed
+signal may be running its vCPU's idle task.
 
 The Darwin network receive path uses NAPI, and the display-mapped absolute
 pointer is a direct touchscreen.
