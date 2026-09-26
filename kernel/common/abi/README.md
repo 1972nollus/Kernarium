@@ -1,47 +1,59 @@
 # Darwin UML ABI identities
 
 The installed emulator API and host/Linux bridge are independent ABI domains.
-A change in one domain must not advance the other's version, fingerprint, or
-history.
+A change in one domain must not advance the other's version or fingerprint.
+
+Each domain's `identity.env` is the only hand-edited copy of its version and
+fingerprint. The fingerprint is the first 64 bits of the SHA-256 of the
+domain's normalized declarations, which
+`verify-declarations.py --compute --domain <kernel|public>` prints. The
+verifier rejects an `identity.env` whose fingerprint no longer matches the
+declarations. Comment and whitespace changes do not change a fingerprint;
+declarations, layouts, enums, callbacks, and exported functions do.
+
+`sync.sh` writes each identity header from its `identity.env` and copies the
+canonical bridge headers. `sync.sh --verify` requires every destination to be
+byte-identical to what a write would produce. Do not edit a generated header.
 
 ## Installed public API
 
-Canonical declarations live in `darwin/api/include/uml/`. Identity and history
-live in `darwin/api/abi/`. These headers are installed with
-`libuml_emulator.a` and are not copied into Linux.
+Canonical declarations live in `darwin/api/include/uml/` and the identity in
+`darwin/api/abi/identity.env`, from which `uml/abi_identity.h` is generated.
+These headers are installed with `libuml_emulator.a` and are not copied into
+Linux.
 
-For an intentional declaration change, compute the public-domain fingerprint
-with `verify-declarations.py`, advance the version and identity, append the
-history row, verify the domain, and rebuild the external C, C++, and
-Objective-C consumers. Public-only changes do not alter the kernel bridge or
-patch series.
+For an intentional declaration change, set the new version and the computed
+public fingerprint in `darwin/api/abi/identity.env`, run
+`kernel/common/abi/sync.sh`, and rebuild the external C, C++, and Objective-C
+consumers. Public-only changes do not alter the kernel bridge or patch series.
 
 ## Host/Linux bridge
 
-Canonical bridge declarations, identity, history, and import policy live in
-this directory. `sync.sh` is the exact generated-copy authority for the host
-headers under `darwin/include/` and the corresponding headers in prepared
-kernel replays. Do not edit generated copies directly.
-
-The host-only contracts `darwin/include/uml_darwin_guest.h`,
+Canonical bridge declarations, `identity.env`, and the import policy live in
+this directory. `sync.sh` generates `uml_darwin_abi_identity.h` and copies the
+other headers to `darwin/include/` and, with `--kernel-source`, to a prepared
+kernel replay. The host-only contracts `darwin/include/uml_darwin_guest.h`,
 `uml_darwin_static_mmu.h`, and `uml_elf64.h` are authored in place and are not
 sync outputs.
 
 For an intentional bridge declaration change:
 
-1. compute and review the kernel-domain fingerprint;
-2. advance the bridge version, identity, and history;
-3. update matching versioned-kernel metadata;
-4. run `kernel/common/abi/sync.sh`; and
-5. regenerate and verify every affected kernel topic and import set.
+1. set the new version and the computed kernel fingerprint in `identity.env`;
+2. run `kernel/common/abi/sync.sh --kernel-source <replay>` and regenerate the
+   kernel topic that carries the change; and
+3. rebuild and re-accept the four kernel artifacts (mainline arm64 16 KiB and
+   4 KiB, mainline x86_64 4 KiB, and Android arm64 16 KiB).
 
-Use `kernel/common/abi/sync.sh --verify` for ordinary host verification. A
-versioned kernel line supplies its metadata and replay source explicitly; the
-common tool has no implicit family owner.
+Each artifact descriptor records the bridge identity it was built with, and
+configure rejects an artifact whose identity differs from `identity.env`.
 
-Comment and whitespace changes do not change an ABI identity. Declarations,
-layouts, enums, callbacks, and exported functions do. The declaration verifier
-checks both histories and rejects cross-domain drift.
+The next ABI-changing topic should also drop the literal identity checks the
+kernel tree still carries, because the generated identity header already
+defines both values: the `_Static_assert(DARWIN_UML_ABI_VERSION == N)` in
+`arch/um/os-Darwin/skas/process.c`, and the two C++ `static_assert`s on the
+version and fingerprint in `darwin_uml_abi.h`. The replay carries
+`darwin_uml_abi.h` byte for byte, so those lines change only with a kernel
+topic.
 
 Every kernel build also verifies its exact active `darwin_uml_*` imports for
 the selected page profile. The 4 KiB native-shadow services are inactive in

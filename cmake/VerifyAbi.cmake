@@ -54,22 +54,4 @@ function(uml_verify_generated_abi)
     file(APPEND "${CMAKE_BINARY_DIR}/uml-abi-identity.txt"
         "public_version=${_uml_public_abi_version}\n"
         "public_fingerprint=${_uml_public_abi_fingerprint}\n")
-
-    include(CheckCXXSourceCompiles)
-    set(_uml_saved_required_includes "${CMAKE_REQUIRED_INCLUDES}")
-    set(CMAKE_REQUIRED_INCLUDES
-        "${PROJECT_SOURCE_DIR}/darwin/api/include")
-    set(_uml_abi_consumer_source
-        "#include <uml/emulator.h>\n"
-        "static_assert(UML_EMULATOR_ABI_VERSION == ${_uml_public_abi_version}U);\n"
-        "static_assert(UML_EMULATOR_ABI_FINGERPRINT == ${_uml_public_abi_fingerprint}ULL);\n"
-        "int main() { return 0; }\n")
-    check_cxx_source_compiles(
-        "${_uml_abi_consumer_source}"
-        UML_EXTERNAL_ABI_IDENTITY_COMPILES)
-    set(CMAKE_REQUIRED_INCLUDES "${_uml_saved_required_includes}")
-    if(NOT UML_EXTERNAL_ABI_IDENTITY_COMPILES)
-        message(FATAL_ERROR
-            "Public external-consumer ABI identity does not match its identity.env")
-    endif()
 endfunction()

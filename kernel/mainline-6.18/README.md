@@ -4,8 +4,9 @@ This directory owns the maintained stable Linux 6.18 source identity, local
 Darwin UML patch series, complete kernel configuration, standalone build
 policy, and accepted artifact descriptors.
 
-Exact upstream commit/tree, the ordered series, the final tree they produce,
-and ABI identity live in [`patches/metadata.env`](patches/metadata.env). The
+Exact upstream commit/tree, the ordered series, and the final tree they
+produce live in [`patches/metadata.env`](patches/metadata.env); the bridge ABI
+identity is [`../common/abi/identity.env`](../common/abi/identity.env). The
 normal arm64 slices apply the shared
 [`kernel/common/patches`](../common/patches) series, which the Android line
 also applies, and then this line's overlay in `patches/series`. The dedicated

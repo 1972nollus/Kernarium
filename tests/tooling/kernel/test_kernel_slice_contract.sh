@@ -38,8 +38,6 @@ COMMON_PATCH_BRANCH=${UML_KERNEL_SERIES##*:}
 COMMON_RELEASE_VERSION=$UML_KERNEL_RELEASE_VERSION
 COMMON_UPSTREAM_REPOSITORY=$UML_KERNEL_UPSTREAM_REPOSITORY
 COMMON_UPSTREAM_BRANCH=$UML_KERNEL_UPSTREAM_BRANCH
-COMMON_ABI_VERSION=$UML_KERNEL_ABI_VERSION
-COMMON_ABI_FINGERPRINT=$UML_KERNEL_ABI_FINGERPRINT
 
 # The x86_64 slice is a true overlay whose series follow the arm64 series.
 # shellcheck disable=SC1090
@@ -74,8 +72,8 @@ uml_kernel_select_slice "$LINE_ROOT" x86_64 ||
 		"$SLICE_ROOT/config/userspace.fragment" ] ||
 	fail "x86_64 selection does not compose the overlay series/config"
 
-# An overlay that stops inheriting the common upstream or ABI identity is
-# rejected by every consumer of the selector.
+# An overlay that stops inheriting the common upstream identity is rejected
+# by every consumer of the selector.
 SELECTOR_FIXTURE="$TEST_ROOT/selector-fixture"
 mkdir -p \
 	"$SELECTOR_FIXTURE/patches" \
@@ -84,7 +82,7 @@ mkdir -p \
 cp "$COMMON_METADATA" "$SELECTOR_FIXTURE/patches/metadata.env"
 cp "$LINE_ROOT/scripts/select-slice.sh" \
 	"$SELECTOR_FIXTURE/scripts/select-slice.sh"
-sed "s/^UML_KERNEL_ABI_VERSION=.*/UML_KERNEL_ABI_VERSION=1/" \
+sed "s/^UML_KERNEL_UPSTREAM_COMMIT=.*/UML_KERNEL_UPSTREAM_COMMIT='$WRONG_TREE'/" \
 	"$SLICE_METADATA" \
 	> "$SELECTOR_FIXTURE/slices/x86_64/patches/metadata.env"
 if (
@@ -92,7 +90,7 @@ if (
 	. "$SELECTOR_FIXTURE/scripts/select-slice.sh"
 	uml_kernel_select_slice "$SELECTOR_FIXTURE" x86_64
 ) >"$TEST_ROOT/selector.out" 2>"$TEST_ROOT/selector.err"; then
-	fail "slice selection accepted an overlay with its own ABI identity"
+	fail "slice selection accepted an overlay with its own upstream identity"
 fi
 grep -F 'x86_64 metadata does not inherit the common kernel identity' \
 	"$TEST_ROOT/selector.err" >/dev/null ||
@@ -181,8 +179,6 @@ write_prepare_metadata()
 		"UML_KERNEL_SERIES='kernel/mainline-6.18/patches/series:managed-fixture'" \
 		"UML_KERNEL_OWNED_SERIES='kernel/mainline-6.18/patches/series'" \
 		"UML_KERNEL_FINAL_TREE='$prepare_final_tree'" \
-		"UML_KERNEL_ABI_VERSION=$COMMON_ABI_VERSION" \
-		"UML_KERNEL_ABI_FINGERPRINT='$COMMON_ABI_FINGERPRINT'" \
 		> "$PREPARE_METADATA"
 }
 

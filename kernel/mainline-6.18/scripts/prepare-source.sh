@@ -113,7 +113,7 @@ fi
 command -v git >/dev/null 2>&1 || fail "git is required"
 [ -x "$MATERIALIZER" ] || fail "missing Git materializer: $MATERIALIZER"
 [ -r "$KERNEL_SERIES" ] || fail "missing kernel series helper: $KERNEL_SERIES"
-"$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA_PATH" --verify ||
+"$COMMON_ROOT/abi/sync.sh" --verify ||
 	fail "host ABI copies are stale; run kernel/common/abi/sync.sh"
 
 kernel_series()
@@ -180,8 +180,7 @@ verify_managed_branch()
 	[ "$VERIFY_ONLY" -eq 0 ] || mark=
 	kernel_series verify-branch --source "$SOURCE_DIR" --tip "$managed_branch" $mark ||
 		fail "managed branch $managed_branch is not the checked-in series (use --recreate only after reviewing it)"
-	"$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA_PATH" \
-		--kernel-source "$SOURCE_DIR" --verify ||
+	"$COMMON_ROOT/abi/sync.sh" --kernel-source "$SOURCE_DIR" --verify ||
 		fail "managed Linux ABI copies are stale"
 	printf '%s\n' "verified $UML_KERNEL_SLICE slice ref $managed_branch HEAD $actual_head against canonical tree $UML_KERNEL_FINAL_TREE" >&2
 }

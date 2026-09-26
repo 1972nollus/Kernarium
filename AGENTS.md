@@ -119,7 +119,7 @@ changes only when its own topic does.
 
 The installed public API and the host/Linux bridge are independent domains.
 Follow [`kernel/common/abi/README.md`](kernel/common/abi/README.md) and update
-only the affected domain's identity and history.
+only the affected domain's `identity.env`.
 
 - Canonical public declarations live under `darwin/api/include/uml/`.
 - Canonical bridge declarations live under `kernel/common/abi/`.

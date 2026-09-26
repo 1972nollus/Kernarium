@@ -6,9 +6,6 @@
 
 namespace {
 
-static_assert(UML_EMULATOR_ABI_VERSION == 7U);
-static_assert(UML_EMULATOR_ABI_FINGERPRINT == 0x03a31773555faf7dULL);
-
 int native_kernel(int, char *const[], char *const[])
 {
 	return 0;

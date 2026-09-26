@@ -109,6 +109,5 @@ python3 -B "$KERNEL_SERIES" verify-branch --metadata "$METADATA" \
 [ -z "$(git -C "$KERNEL_SOURCE" status --porcelain)" ] ||
 	fail "replayed ACK worktree is dirty"
 
-"$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA" \
-	--kernel-source "$KERNEL_SOURCE" --verify >/dev/null
+"$COMMON_ROOT/abi/sync.sh" --kernel-source "$KERNEL_SOURCE" --verify >/dev/null
 printf '%s\n' "materialized Android ACK source: $KERNEL_SOURCE"

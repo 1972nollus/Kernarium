@@ -115,9 +115,7 @@ esac
 source_tree=$(git -C "$SOURCE_DIR" rev-parse HEAD^{tree} 2>/dev/null || true)
 [ "$source_tree" = "$UML_KERNEL_FINAL_TREE" ] ||
 	fail "$UML_KERNEL_SLICE source tree is $source_tree; expected $UML_KERNEL_FINAL_TREE"
-"$COMMON_ROOT/abi/sync.sh" \
-	--kernel-metadata "$UML_KERNEL_METADATA_PATH" \
-	--kernel-source "$SOURCE_DIR" --verify ||
+"$COMMON_ROOT/abi/sync.sh" --kernel-source "$SOURCE_DIR" --verify ||
 	fail "kernel ABI copies are stale; replay the tracked series or run kernel/common/abi/sync.sh"
 mkdir -p -- "$BUILD_DIR"
 SOURCE_DIR=$(CDPATH= cd -- "$SOURCE_DIR" && pwd -P)
