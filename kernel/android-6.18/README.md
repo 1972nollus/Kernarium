@@ -1,9 +1,8 @@
 # Android Common Kernel 6.18 source policy
 
-This line is the ACK 6.18 kernel for the AOSP 17 guest. Exact upstream and
-final-tree identities, ABI, patch count, and delta limits live in
-[`patches/metadata.env`](patches/metadata.env); ordered generated patch identity
-lives in [`patches/series/manifest.tsv`](patches/series/manifest.tsv).
+This line is the ACK 6.18 kernel for the AOSP 17 guest. Exact upstream
+identity, the ordered series, the final tree they produce, and ABI live in
+[`patches/metadata.env`](patches/metadata.env).
 
 It is independent of both mainline page profiles. Mainline patch bytes are not
 this line's source of truth, even when a topic implements the same Darwin
@@ -136,8 +135,14 @@ time; patch releases and commit identities are provenance, not runtime gates.
 
 ## Patch maintenance
 
-Patch files are generated from the clean ACK topic history. Change commits in
-Git and run the regenerator documented by the AOSP producer; never edit patch
-bytes, metadata, or manifest rows independently. A changed final tree requires
-a fresh replay, build, artifact verification, and the affected Android runtime
-qualification before acceptance.
+Patch files are generated from the ACK topic branch named in the metadata.
+Amend commits there, then export the series and final tree:
+
+```sh
+python3 kernel/common/tooling/kernel_series.py regenerate \
+  --metadata kernel/android-6.18/patches/metadata.env --source ACK_CHECKOUT
+```
+
+Never edit patch files, `series.tsv`, or the final tree by hand. A changed
+final tree requires a fresh replay, build, artifact verification, and the
+affected Android runtime qualification before acceptance.

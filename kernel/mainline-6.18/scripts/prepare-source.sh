@@ -9,7 +9,7 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 COMMON_ROOT="$ROOT_DIR/kernel/common"
 MATERIALIZER="$LINE_ROOT/scripts/materialize-git.sh"
-SERIES_POLICY="$COMMON_ROOT/tooling/verify-series-policy.py"
+KERNEL_SERIES="$COMMON_ROOT/tooling/kernel_series.py"
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
 GIT_IDENTITY="$ROOT_DIR/scripts/git-identity.sh"
@@ -95,18 +95,10 @@ done
 uml_require_git_identity 'kernel/mainline-6.18/scripts/prepare-source.sh'
 # shellcheck disable=SC1090
 . "$SLICE_SELECTOR"
-SELECT_PARENT_MODE=strict
-if [ "$SLICE" = x86_64 ] && [ "$RECREATE" -eq 1 ]; then
-	SELECT_PARENT_MODE=allow-stale-parent
-fi
-uml_kernel_select_slice "$LINE_ROOT" "$SLICE" "$SELECT_PARENT_MODE" ||
+uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
 	fail "cannot select kernel slice: $SLICE"
 METADATA_PATH=$UML_KERNEL_METADATA_PATH
-PATCH_DIR=$UML_KERNEL_PATCH_DIR
-MANIFEST_PATH=$UML_KERNEL_MANIFEST_PATH
-POLICY_ROOT=$UML_KERNEL_POLICY_ROOT
 [ -r "$METADATA_PATH" ] || fail "missing metadata: $METADATA_PATH"
-[ -r "$MANIFEST_PATH" ] || fail "missing series manifest: $MANIFEST_PATH"
 
 [ "$VERIFY_ONLY" -eq 0 ] || [ "$RECREATE" -eq 0 ] ||
 	fail "--verify and --recreate cannot be used together"
@@ -124,53 +116,16 @@ if [ -n "$REQUESTED_SOURCE_DIR" ] && [ "$REQUESTED_SOURCE_DIR" != "$SOURCE_DIR" 
 fi
 
 command -v git >/dev/null 2>&1 || fail "git is required"
-command -v shasum >/dev/null 2>&1 ||
-	fail "stock macOS shasum is required to verify patch hashes"
 [ -x "$MATERIALIZER" ] || fail "missing Git materializer: $MATERIALIZER"
-[ -x "$SERIES_POLICY" ] || fail "missing series policy verifier: $SERIES_POLICY"
+[ -r "$KERNEL_SERIES" ] || fail "missing kernel series helper: $KERNEL_SERIES"
 "$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA_PATH" --verify ||
 	fail "host ABI copies are stale; run kernel/common/abi/sync.sh"
 
-manifest_patch_ids=''
-manifest_subjects=''
-manifest_count=0
-validate_manifest()
+kernel_series()
 {
-	tab=$(printf '\t')
-	expected_order=1
-	while IFS="$tab" read -r order filename patch_id digest subject; do
-		case "$order" in
-		\#*|order|'') continue ;;
-		esac
-		[ "$order" = "$expected_order" ] ||
-			fail "series manifest order $order is not $expected_order"
-		case "$filename" in
-		''|*/*|*..*|*[!A-Za-z0-9._-]*)
-			fail "unsafe patch filename in manifest: $filename"
-			;;
-		esac
-		patch="$PATCH_DIR/$filename"
-		[ -f "$patch" ] || fail "manifest patch is missing: $patch"
-		actual_digest=$(shasum -a 256 "$patch" | awk '{print $1}')
-		[ "$actual_digest" = "$digest" ] ||
-			fail "patch hash mismatch for $filename"
-		actual_patch_id=$(git patch-id --stable < "$patch" | awk '{print $1}')
-		[ -n "$actual_patch_id" ] && [ "$actual_patch_id" = "$patch_id" ] ||
-			fail "stable patch-id mismatch for $filename"
-		manifest_patch_ids="${manifest_patch_ids}${patch_id}
-"
-		manifest_subjects="${manifest_subjects}${subject}
-"
-		manifest_count=$((manifest_count + 1))
-		expected_order=$((expected_order + 1))
-	done < "$MANIFEST_PATH"
-	[ "$manifest_count" -eq "$UML_KERNEL_PATCH_COUNT" ] ||
-		fail "manifest has $manifest_count patches; metadata requires $UML_KERNEL_PATCH_COUNT"
+	python3 -B "$KERNEL_SERIES" "$@" --metadata "$METADATA_PATH"
 }
-
-validate_manifest
-"$SERIES_POLICY" --line-root "$POLICY_ROOT" manifest >/dev/null
-"$SERIES_POLICY" --line-root "$POLICY_ROOT" policy >/dev/null
+kernel_series check || fail "the $UML_KERNEL_SLICE series files are invalid"
 
 if [ ! -d "$SOURCE_DIR/.git" ]; then
 	[ "$VERIFY_ONLY" -eq 0 ] || fail "Linux checkout is missing: $SOURCE_DIR"
@@ -222,41 +177,11 @@ verify_managed_branch()
 {
 	managed_branch=${1:-$UML_KERNEL_PATCH_BRANCH}
 	actual_head=$(git -C "$SOURCE_DIR" rev-parse HEAD)
-	branch_tree=$(git -C "$SOURCE_DIR" rev-parse "$managed_branch^{tree}")
-	[ "$branch_tree" = "$UML_KERNEL_FINAL_TREE" ] ||
-		fail "managed branch has tree $branch_tree; expected $UML_KERNEL_FINAL_TREE (use --recreate only after reviewing it)"
-	"$SERIES_POLICY" --line-root "$POLICY_ROOT" topology \
-		--source "$SOURCE_DIR" --base "$BASE_COMMIT" \
-		--tip "$managed_branch" >/dev/null
-	"$SERIES_POLICY" --line-root "$POLICY_ROOT" policy \
-		--source "$SOURCE_DIR" --base "$BASE_COMMIT" \
-		--tip "$managed_branch" >/dev/null
-	actual_commits=$(git -C "$SOURCE_DIR" rev-list --reverse \
-		"$BASE_COMMIT..$managed_branch")
-	actual_commit_count=$(printf '%s\n' "$actual_commits" |
-		awk 'NF { count++ } END { print count + 0 }')
-	[ "$actual_commit_count" -eq "$UML_KERNEL_PATCH_COUNT" ] ||
-		fail "managed branch has $actual_commit_count commits; expected $UML_KERNEL_PATCH_COUNT"
-	merge_commits=$(git -C "$SOURCE_DIR" rev-list --merges \
-		"$BASE_COMMIT..$managed_branch")
-	[ -z "$merge_commits" ] || fail "managed branch contains a merge commit"
-	actual_subjects=$(git -C "$SOURCE_DIR" log --reverse --format='%s' \
-		"$BASE_COMMIT..$managed_branch")
-	[ "$actual_subjects" = "$(printf '%s' "$manifest_subjects")" ] ||
-		fail "managed branch subjects/order do not match $MANIFEST_PATH"
-	actual_patch_ids=$(printf '%s\n' "$actual_commits" |
-		while IFS= read -r commit; do
-			[ -n "$commit" ] || continue
-			git -C "$SOURCE_DIR" show --pretty=format: "$commit" |
-				git patch-id --stable |
-				awk 'NF { count++; id = $1 }
-					END { print (count == 1 ? id : "__INVALID__") }'
-		done)
-	[ "$actual_patch_ids" = "$(printf '%s' "$manifest_patch_ids")" ] ||
-		fail "managed branch requires one nonempty manifest patch ID per commit"
-	git -C "$SOURCE_DIR" merge-base --is-ancestor "$BASE_COMMIT" \
-		"$managed_branch" ||
-		fail "managed branch is not based on the pinned upstream stable commit"
+	# The branch must be the checked-in series replayed on the pinned base:
+	# its tree is the line's final tree and exporting it reproduces every
+	# owned patch byte for byte.
+	kernel_series verify-branch --source "$SOURCE_DIR" --tip "$managed_branch" ||
+		fail "managed branch $managed_branch is not the checked-in series (use --recreate only after reviewing it)"
 	"$COMMON_ROOT/abi/sync.sh" --kernel-metadata "$METADATA_PATH" \
 		--kernel-source "$SOURCE_DIR" --verify ||
 		fail "managed Linux ABI copies are stale"
@@ -267,18 +192,12 @@ UPSTREAM_BASE_COMMIT=$BASE_COMMIT
 verify_common_parent()
 {
 	git -C "$SOURCE_DIR" show-ref --verify --quiet \
-		"refs/heads/$UML_KERNEL_COMMON_PATCH_BRANCH" ||
-		fail "common kernel branch is missing: $UML_KERNEL_COMMON_PATCH_BRANCH"
-	common_tree=$(git -C "$SOURCE_DIR" rev-parse \
-		"$UML_KERNEL_COMMON_PATCH_BRANCH^{tree}")
-	[ "$common_tree" = "$UML_KERNEL_COMMON_FINAL_TREE" ] ||
-		fail "common kernel tree is $common_tree; expected $UML_KERNEL_COMMON_FINAL_TREE"
-	"$SERIES_POLICY" --line-root "$LINE_ROOT" topology \
-		--source "$SOURCE_DIR" --base "$UPSTREAM_BASE_COMMIT" \
-		--tip "$UML_KERNEL_COMMON_PATCH_BRANCH" >/dev/null
-	"$SERIES_POLICY" --line-root "$LINE_ROOT" policy \
-		--source "$SOURCE_DIR" --base "$UPSTREAM_BASE_COMMIT" \
-		--tip "$UML_KERNEL_COMMON_PATCH_BRANCH" >/dev/null
+		"refs/heads/$UML_KERNEL_PARENT_BRANCH" ||
+		fail "arm64 kernel branch is missing: $UML_KERNEL_PARENT_BRANCH"
+	python3 -B "$KERNEL_SERIES" verify-branch \
+		--metadata "$UML_KERNEL_COMMON_METADATA_PATH" \
+		--source "$SOURCE_DIR" --tip "$UML_KERNEL_PARENT_BRANCH" ||
+		fail "arm64 kernel branch is not the checked-in arm64 series"
 }
 
 if [ "$UML_KERNEL_SLICE" = x86_64 ]; then
@@ -289,7 +208,7 @@ if [ "$UML_KERNEL_SLICE" = x86_64 ]; then
 	fi
 	verify_common_parent
 	BASE_COMMIT=$(git -C "$SOURCE_DIR" rev-parse \
-		"$UML_KERNEL_COMMON_PATCH_BRANCH^{commit}")
+		"$UML_KERNEL_PARENT_BRANCH^{commit}")
 fi
 
 branch_exists=0
@@ -322,11 +241,11 @@ fi
 if [ "$branch_exists" -eq 1 ]; then
 	old_managed_tip=$(git -C "$SOURCE_DIR" rev-parse \
 		"$UML_KERNEL_PATCH_BRANCH^{commit}")
-	# A stale replay is expected to differ from the current manifest, including
-	# its subjects, patch IDs, and topic count. Trust only the configured managed
-	# source and branch identity here, plus linear ancestry from the pinned base.
-	# The old tip remains recoverable below; the replacement candidate must pass
-	# the complete current manifest and policy verification before installation.
+	# A stale replay is expected to differ from the current series in any
+	# topic. Trust only the configured managed source and branch identity here,
+	# plus linear ancestry from the pinned base. The old tip remains recoverable
+	# below; the replacement candidate must pass the complete current series
+	# verification before installation.
 	git -C "$SOURCE_DIR" merge-base --is-ancestor "$UPSTREAM_BASE_COMMIT" \
 		"$old_managed_tip" ||
 		fail "refusing to recreate branch outside the pinned kernel ancestry"
@@ -379,20 +298,14 @@ fi
 # the real replay time; neither generated commit ID is treated as a source
 # identity.
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE
-tab=$(printf '\t')
-while IFS="$tab" read -r order filename patch_id digest subject; do
-	case "$order" in
-	\#*|order|'') continue ;;
-	esac
-	if ! GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$SOURCE_DIR" \
-			-c user.useConfigOnly=true \
-			-c core.hooksPath=/dev/null \
-			am --3way --no-gpg-sign "$PATCH_DIR/$filename"; then
-		git -C "$SOURCE_DIR" am --abort >/dev/null 2>&1 || true
-		fail "could not apply $UML_KERNEL_SLICE patch $filename to its selected parent"
-	fi
-done < "$MANIFEST_PATH"
+if [ -n "$UML_KERNEL_PARENT_BRANCH" ]; then
+	kernel_series replay --source "$SOURCE_DIR" \
+		--after "$UML_KERNEL_PARENT_BRANCH" >/dev/null ||
+		fail "could not apply the $UML_KERNEL_SLICE series to its selected parent"
+else
+	kernel_series replay --source "$SOURCE_DIR" >/dev/null ||
+		fail "could not apply the $UML_KERNEL_SLICE series to the pinned base"
+fi
 
 verify_managed_branch "$CREATE_BRANCH"
 if [ "$branch_exists" -eq 1 ]; then

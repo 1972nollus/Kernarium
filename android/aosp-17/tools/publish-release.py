@@ -27,6 +27,7 @@ from release_common import (  # noqa: E402
     PRODUCT_FAMILY,
     RELEASE_ID_RE,
     fail,
+    kernel_series_provenance,
     parse_env,
     resolve_zstd,
     sha256_path,
@@ -311,12 +312,7 @@ def main() -> None:
         "final",
         "--allow-prebuilt-kernel",
     ])
-    run([
-        str(outer_root / "kernel/common/tooling/verify-series-policy.py"),
-        "--line-root",
-        str(kernel_root),
-        "manifest",
-    ])
+    kernel_patch_count, kernel_manifest_sha = kernel_series_provenance(outer_root)
 
     kernel_elf = regular_file(kernel_build / "vmlinux", "ACK UML ELF")
     kernel_config = regular_file(kernel_build / ".config", "ACK configuration")
@@ -463,7 +459,6 @@ def main() -> None:
             orangefox_projects_sha = sha256_path(
                 android_root / "third_party/orangefox/patches/projects.tsv"
             )
-            kernel_manifest_sha = sha256_path(kernel_root / "patches/series/manifest.tsv")
             receipt_rows = [
                 ("schema", 2),
                 ("release_id", args.release_id),
@@ -578,7 +573,7 @@ def main() -> None:
                     "base_commit": kernel_metadata["UML_KERNEL_UPSTREAM_COMMIT"],
                     "base_tree": kernel_metadata["UML_KERNEL_UPSTREAM_TREE"],
                     "final_tree": kernel_metadata["UML_KERNEL_FINAL_TREE"],
-                    "patch_count": int(kernel_metadata["UML_KERNEL_PATCH_COUNT"]),
+                    "patch_count": kernel_patch_count,
                     "patch_manifest_sha256": kernel_manifest_sha,
                     "release": kernel_release,
                     "page_size": 16384,

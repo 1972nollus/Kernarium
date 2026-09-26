@@ -16,7 +16,6 @@ def main() -> None:
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--common-root", type=Path, required=True)
     parser.add_argument("--kernel-metadata", type=Path)
-    parser.add_argument("--patch-manifest", type=Path)
     parser.add_argument("--abi-metadata", type=Path, required=True)
     parser.add_argument("--acceptance", type=Path)
     parser.add_argument("--compatible", action="store_true")
@@ -33,7 +32,6 @@ def main() -> None:
             or args.expected_release_series is None
             or args.expected_page_size is None
             or args.kernel_metadata is not None
-            or args.patch_manifest is not None
             or args.acceptance is not None
         ):
             parser.error(
@@ -50,16 +48,12 @@ def main() -> None:
             args.expected_page_size,
         )
     else:
-        if args.kernel_metadata is None or args.patch_manifest is None:
-            parser.error(
-                "tracked verification requires --kernel-metadata and "
-                "--patch-manifest"
-            )
+        if args.kernel_metadata is None:
+            parser.error("tracked verification requires --kernel-metadata")
         manifest = verify_artifact(
             args.artifact,
             args.common_root,
             args.kernel_metadata,
-            args.patch_manifest,
             args.abi_metadata,
             acceptance_path=args.acceptance,
         )

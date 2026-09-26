@@ -23,6 +23,7 @@ in its own metadata. :func:`series_tree` recomputes it without a checkout, and
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -68,6 +69,11 @@ AM_OPTIONS = (
 )
 
 
+# Replays never run hooks, and Git never invents a committer from the account
+# and host names: the identity comes from git_identity.require_git_identity.
+GIT_OPTIONS = ("-c", "core.hooksPath=" + os.devnull, "-c", "user.useConfigOnly=true")
+
+
 class SeriesError(Exception):
     pass
 
@@ -83,7 +89,7 @@ class Series:
         return tuple(self.directory / name for name in self.names)
 
 
-def _isolated_environment(extra: dict[str, str] | None = None) -> dict[str, str]:
+def isolated_environment(extra: dict[str, str] | None = None) -> dict[str, str]:
     environment = dict(os.environ)
     environment["GIT_CONFIG_NOSYSTEM"] = "1"
     environment["GIT_CONFIG_GLOBAL"] = os.devnull
@@ -100,10 +106,10 @@ def git(
     check: bool = True,
 ) -> str:
     result = subprocess.run(
-        ["git", "-C", str(repository), "-c", "core.hooksPath=" + os.devnull, *arguments],
+        ["git", "-C", str(repository), *GIT_OPTIONS, *arguments],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=environment if environment is not None else _isolated_environment(),
+        env=environment if environment is not None else isolated_environment(),
         check=False,
     )
     if check and result.returncode != 0:
@@ -174,11 +180,28 @@ def read_series(directory: Path) -> Series:
     return Series(directory, tree, tuple(names))
 
 
+def series_provenance(directories: list[Path]) -> tuple[int, str]:
+    """Return the patch count and a SHA-256 over the ordered patch contents.
+
+    Release manifests record this so a published artifact names the exact
+    patch stack that produced it.
+    """
+    digest = hashlib.sha256()
+    count = 0
+    for directory in directories:
+        series = read_series(directory)
+        for name in series.names:
+            content = hashlib.sha256((directory / name).read_bytes()).hexdigest()
+            digest.update(f"{name}\t{content}\n".encode())
+            count += 1
+    return count, digest.hexdigest()
+
+
 def series_tree(repository: Path, base: str, directories: list[Path]) -> str:
     """Return the tree the series produce on ``base``, without a checkout."""
     base_commit = resolve_commit(repository, base)
     with tempfile.TemporaryDirectory(prefix="uml-series-index.") as scratch:
-        environment = _isolated_environment({"GIT_INDEX_FILE": str(Path(scratch) / "index")})
+        environment = isolated_environment({"GIT_INDEX_FILE": str(Path(scratch) / "index")})
         git(repository, "read-tree", base_commit, environment=environment)
         for directory in directories:
             for patch in read_series(directory).patches:
@@ -206,11 +229,11 @@ def apply_series(
     patches = [str(patch) for directory in directories for patch in read_series(directory).patches]
     if patches:
         result = subprocess.run(
-            ["git", "-C", str(repository), "-c", "core.hooksPath=" + os.devnull,
+            ["git", "-C", str(repository), *GIT_OPTIONS,
              "am", *AM_OPTIONS, *patches],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=_isolated_environment(),
+            env=isolated_environment(),
             check=False,
         )
         if result.returncode != 0:
@@ -289,7 +312,7 @@ def export_series(
     head_commit = resolve_commit(source, head)
     ancestor = subprocess.run(
         ["git", "-C", str(source), "merge-base", "--is-ancestor", base_commit, head_commit],
-        env=_isolated_environment(),
+        env=isolated_environment(),
         check=False,
     )
     if ancestor.returncode != 0:
@@ -306,7 +329,9 @@ def export_series(
     license_id = license_id or _existing_license(directory) or DEFAULT_LICENSE
     tree = tree_of(source, head_commit)
 
-    staging = Path(tempfile.mkdtemp(prefix=".export.", dir=directory))
+    # A check never writes below the checked-in directory; an export stages
+    # beside it so the final renames stay on one filesystem.
+    staging = Path(tempfile.mkdtemp(prefix=".export.", dir=None if check else directory))
     try:
         names = _format(source, base_commit, head_commit, staging)
         if len(names) != len(commits):

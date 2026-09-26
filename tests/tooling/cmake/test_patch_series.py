@@ -134,11 +134,16 @@ def run(scratch: Path) -> None:
     assert b"\r\n" in (series / "fix-keep-carriage-returns.patch").read_bytes()
     assert "rename from sub/c.txt" in (series / "refactor-move-c.patch").read_text()
 
-    # Exporting unchanged commits reproduces every byte.
+    # Exporting unchanged commits reproduces every byte, and a check writes
+    # nothing below the checked-in directory, not even transiently.
     before = snapshot(series)
     export(source, base, "topic", series, record_tree=True)
     assert snapshot(series) == before
-    export(source, base, "topic", series, record_tree=True, check=True)
+    series.chmod(0o555)
+    try:
+        export(source, base, "topic", series, record_tree=True, check=True)
+    finally:
+        series.chmod(0o755)
 
     # Inserting one topic changes that topic's file and series.tsv only.
     git(source, "checkout", "-q", "-b", "inserted", base)

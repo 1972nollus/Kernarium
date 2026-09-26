@@ -68,7 +68,6 @@ def main() -> None:
         RELEASE_ID_RE,
         SCHEMA_VERSION,
         parse_env,
-        sha256_path,
         verify_artifact,
         verify_config,
         verify_elf,
@@ -83,7 +82,6 @@ def main() -> None:
         fail("release ID has an unsafe format")
 
     metadata_path = line_root / "patches/metadata.env"
-    patch_manifest_path = line_root / "patches/series/manifest.tsv"
     abi_metadata_path = common_root / "abi/identity.env"
     metadata = parse_env(metadata_path)
     abi = parse_env(abi_metadata_path)
@@ -169,8 +167,6 @@ def main() -> None:
                 "base_commit": metadata["UML_KERNEL_UPSTREAM_COMMIT"],
                 "base_tree": metadata["UML_KERNEL_UPSTREAM_TREE"],
                 "final_tree": metadata["UML_KERNEL_FINAL_TREE"],
-                "patch_count": int(metadata["UML_KERNEL_PATCH_COUNT"]),
-                "patch_manifest_sha256": sha256_path(patch_manifest_path),
             },
             "abi": {
                 "version": int(abi["DARWIN_UML_ABI_VERSION"]),
@@ -186,7 +182,6 @@ def main() -> None:
             staging,
             common_root,
             metadata_path,
-            patch_manifest_path,
             abi_metadata_path,
         )
         os.replace(staging, destination)

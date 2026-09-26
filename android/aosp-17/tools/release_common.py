@@ -468,6 +468,23 @@ def sha256_path(path: Path) -> str:
     return digest.hexdigest()
 
 
+def kernel_series_provenance(outer_root: Path) -> tuple[int, str]:
+    """Return the ACK line's patch count and ordered patch-content digest."""
+    import sys
+
+    tooling = str(outer_root / "kernel/common/tooling")
+    if tooling not in sys.path:
+        sys.path.insert(0, tooling)
+    import kernel_series  # noqa: PLC0415
+
+    try:
+        return kernel_series.provenance(
+            kernel_series.load_line(outer_root / "kernel/android-6.18/patches/metadata.env")
+        )
+    except kernel_series.SeriesError as error:
+        fail(f"ACK kernel series are invalid: {error}")
+
+
 def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
     aosp_metadata = parse_env(android_root / "metadata/aosp.env")
     jelly_metadata = parse_env(android_root / "third_party/jelly/metadata.env")
@@ -542,6 +559,9 @@ def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
         if manifest["orangefox"][key] != value:
             fail(f"release OrangeFox identity differs from tracked {key}")
 
+    kernel_patch_count, kernel_patch_digest = kernel_series_provenance(
+        android_root.parents[1]
+    )
     kernel_expected = {
         "family": kernel_metadata["UML_KERNEL_FAMILY"],
         "repository": kernel_metadata["UML_KERNEL_UPSTREAM_REPOSITORY"],
@@ -550,8 +570,8 @@ def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
         "base_commit": kernel_metadata["UML_KERNEL_UPSTREAM_COMMIT"],
         "base_tree": kernel_metadata["UML_KERNEL_UPSTREAM_TREE"],
         "final_tree": kernel_metadata["UML_KERNEL_FINAL_TREE"],
-        "patch_count": int(kernel_metadata["UML_KERNEL_PATCH_COUNT"]),
-        "patch_manifest_sha256": sha256_path(kernel_root / "patches/series/manifest.tsv"),
+        "patch_count": kernel_patch_count,
+        "patch_manifest_sha256": kernel_patch_digest,
         "abi_version": int(abi_metadata["DARWIN_UML_ABI_VERSION"]),
         "abi_fingerprint": abi_metadata["DARWIN_UML_ABI_FINGERPRINT"],
     }

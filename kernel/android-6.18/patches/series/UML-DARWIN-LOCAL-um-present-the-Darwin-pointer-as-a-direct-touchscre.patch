@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 23 Aug 2026 04:16:53 +0000
+Subject: [PATCH] UML-DARWIN-LOCAL: um: present the Darwin pointer as a direct
+ touchscreen
+
+Android and recovery interfaces must see the Darwin display as a touchscreen,
+not a hybrid tablet and mouse. Advertise only INPUT_PROP_DIRECT, BTN_TOUCH, and
+ABS_X/ABS_Y, and discard auxiliary buttons and wheel events instead of exposing
+pointer-mode capabilities to the guest.
+
+Keep translating legacy host BTN_LEFT events to BTN_TOUCH so older accepted
+frontends remain usable. Current frontends send BTN_TOUCH directly and suppress
+hover coordinates outside an active contact.
+
+Change-Id: I29da7c53a5bd415d790b80a8ad5c2ec22dba3bae
+---
+ arch/um/drivers/vnc_input.c | 32 ++++++++++++++++++++------------
+ 1 file changed, 20 insertions(+), 12 deletions(-)
+
+diff --git a/arch/um/drivers/vnc_input.c b/arch/um/drivers/vnc_input.c
+index 6fafe8c1c4133066abd57665856ab09fff13fb99..0e5dfebe6106bc2843d0a26aeb96b9519f8dc7d5 100644
+--- a/arch/um/drivers/vnc_input.c
++++ b/arch/um/drivers/vnc_input.c
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * VNC keyboard and absolute-pointer input passed directly from the Darwin
+- * host frontend over an inherited datagram socket.
++ * VNC keyboard and direct-touch input passed from the Darwin host frontend
++ * over an inherited datagram socket.
+  */
+ 
+ #include <linux/init.h>
+@@ -45,9 +45,15 @@ static void deliver_event(const struct uml_vnc_input_event *wire)
+ 	if (type == EV_SYN) {
+ 		input_sync(keyboard);
+ 		input_sync(pointer);
+-	} else if (type == EV_ABS || type == EV_REL ||
+-		   (type == EV_KEY && code >= BTN_MISC)) {
++	} else if (type == EV_ABS ||
++		   (type == EV_KEY && code == BTN_TOUCH)) {
+ 		input_event(pointer, type, code, value);
++	} else if (type == EV_KEY && code == BTN_LEFT) {
++		/* Accept primary clicks from host frontends predating BTN_TOUCH. */
++		input_event(pointer, EV_KEY, BTN_TOUCH, value);
++	} else if (type == EV_REL ||
++		   (type == EV_KEY && code >= BTN_MISC)) {
++		return;
+ 	} else {
+ 		input_event(keyboard, type, code, value);
+ 	}
+@@ -94,15 +100,17 @@ static void configure_keyboard(struct input_dev *device)
+ 
+ static void configure_pointer(struct input_dev *device)
+ {
+-	device->name = "Darwin UML VNC Tablet";
++	device->name = "Darwin UML Touchscreen";
+ 	device->phys = "uml/vnc/input1";
+ 	device->id.bustype = BUS_VIRTUAL;
+-	__set_bit(INPUT_PROP_POINTER, device->propbit);
+-	input_set_capability(device, EV_KEY, BTN_LEFT);
+-	input_set_capability(device, EV_KEY, BTN_MIDDLE);
+-	input_set_capability(device, EV_KEY, BTN_RIGHT);
+-	input_set_capability(device, EV_REL, REL_WHEEL);
+-	input_set_capability(device, EV_REL, REL_HWHEEL);
++	/*
++	 * Android's EventHub only recognises an absolute device when it reports
++	 * BTN_TOUCH together with ABS_X and ABS_Y. INPUT_PROP_DIRECT selects
++	 * TouchInputMapper's direct mode and keeps pointer-mode buttons and wheel
++	 * axes out of the guest capability table.
++	 */
++	__set_bit(INPUT_PROP_DIRECT, device->propbit);
++	input_set_capability(device, EV_KEY, BTN_TOUCH);
+ 	input_set_abs_params(device, ABS_X, 0, 32767, 0, 0);
+ 	input_set_abs_params(device, ABS_Y, 0, 32767, 0, 0);
+ }
+@@ -143,7 +151,7 @@ static int __init vnc_input_init(void)
+ 		error = input_irq;
+ 		goto unregister_pointer;
+ 	}
+-	pr_info("uml_vnc_input: registered keyboard and tablet at fd=%d\n",
++	pr_info("uml_vnc_input: registered keyboard and touchscreen at fd=%d\n",
+ 		input_fd);
+ 	return 0;
+ 

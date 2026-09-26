@@ -572,14 +572,14 @@ def main() -> int:
     ):
         require(contract in artifact_cmake, f"artifact CMake lacks {contract}")
     require(
-        env_value(acceptance_16k, "UML_KERNEL_ARTIFACT_SCHEMA") == "2"
+        env_value(acceptance_16k, "UML_KERNEL_ARTIFACT_SCHEMA") in ("2", "3")
         and env_value(acceptance_16k, "UML_KERNEL_ARTIFACT_SLICE") == "arm64"
         and env_value(acceptance_16k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "16384"
         and directory_16k.startswith("mainline-6.18-arm64-16k-"),
         "16 KiB artifact acceptance is malformed",
     )
     require(
-        env_value(acceptance_4k, "UML_KERNEL_ARTIFACT_SCHEMA") == "2"
+        env_value(acceptance_4k, "UML_KERNEL_ARTIFACT_SCHEMA") in ("2", "3")
         and env_value(acceptance_4k, "UML_KERNEL_ARTIFACT_SLICE") == "arm64"
         and env_value(acceptance_4k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "4096"
         and directory_4k.startswith("mainline-6.18-arm64-4k-"),
@@ -592,14 +592,14 @@ def main() -> int:
         experiment_4k, "UML_KERNEL_ARTIFACT_DIRECTORY_NAME"
     )
     require(
-        env_value(experiment_16k, "UML_KERNEL_ARTIFACT_SCHEMA") == "2"
+        env_value(experiment_16k, "UML_KERNEL_ARTIFACT_SCHEMA") in ("2", "3")
         and env_value(experiment_16k, "UML_KERNEL_ARTIFACT_SLICE") == "arm64"
         and env_value(experiment_16k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "16384"
         and experiment_directory_16k.startswith("mainline-6.18-arm64-16k-"),
         "16 KiB Vulkan experiment descriptor is malformed",
     )
     require(
-        env_value(experiment_4k, "UML_KERNEL_ARTIFACT_SCHEMA") == "2"
+        env_value(experiment_4k, "UML_KERNEL_ARTIFACT_SCHEMA") in ("2", "3")
         and env_value(experiment_4k, "UML_KERNEL_ARTIFACT_SLICE") == "arm64"
         and env_value(experiment_4k, "UML_KERNEL_ARTIFACT_PAGE_SIZE") == "4096"
         and experiment_directory_4k.startswith("mainline-6.18-arm64-4k-"),
@@ -609,7 +609,6 @@ def main() -> int:
         "UML_KERNEL_ARTIFACT_FAMILY",
         "UML_KERNEL_ARTIFACT_RELEASE",
         "UML_KERNEL_ARTIFACT_FINAL_TREE",
-        "UML_KERNEL_ARTIFACT_PATCH_MANIFEST_SHA256",
         "UML_KERNEL_ARTIFACT_ABI_VERSION",
         "UML_KERNEL_ARTIFACT_ABI_FINGERPRINT",
     ):
@@ -629,7 +628,7 @@ def main() -> int:
         "Vulkan experiment descriptors do not name the maintained series",
     )
     require(
-        env_value(acceptance_x86_4k, "UML_KERNEL_ARTIFACT_SCHEMA") == "2"
+        env_value(acceptance_x86_4k, "UML_KERNEL_ARTIFACT_SCHEMA") in ("2", "3")
         and env_value(acceptance_x86_4k, "UML_KERNEL_ARTIFACT_SLICE")
         == "x86_64"
         and env_value(acceptance_x86_4k, "UML_KERNEL_ARTIFACT_PAGE_SIZE")
@@ -642,7 +641,7 @@ def main() -> int:
         == "android-6.18"
         and env_value(
             android_kernel_acceptance, "UML_KERNEL_ARTIFACT_SCHEMA"
-        ) == "2"
+        ) in ("2", "3")
         and env_value(
             android_kernel_acceptance, "UML_KERNEL_ARTIFACT_SLICE"
         ) == "arm64"

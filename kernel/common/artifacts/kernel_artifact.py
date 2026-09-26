@@ -14,17 +14,14 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+# Schema 2 bundles also recorded a patch count and a digest of a series
+# manifest. Both are still accepted; the final tree is the source identity.
+SUPPORTED_SCHEMA_VERSIONS = (2, 3)
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 ABI_FINGERPRINT_RE = re.compile(r"^0x[0-9a-f]{16}$")
-PATCH_SERIES_HEADER = "order\tfilename\tstable_patch_id\tsha256\tsubject"
-PATCH_COMPOSITION_HEADER = (
-    "order\tname\tpatch_count\tmanifest_path\tmanifest_sha256"
-)
-PATCH_SERIES_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-
 TOP_LEVEL_KEYS = {
     "schema_version",
     "release_id",
@@ -45,9 +42,8 @@ SOURCE_KEYS = {
     "base_commit",
     "base_tree",
     "final_tree",
-    "patch_count",
-    "patch_manifest_sha256",
 }
+SCHEMA_2_SOURCE_KEYS = SOURCE_KEYS | {"patch_count", "patch_manifest_sha256"}
 ABI_KEYS = {"version", "fingerprint"}
 INVENTORY_KEYS = {"path", "role", "format", "size"}
 ACCEPTANCE_KEYS = {
@@ -59,7 +55,6 @@ ACCEPTANCE_KEYS = {
     "UML_KERNEL_ARTIFACT_RELEASE",
     "UML_KERNEL_ARTIFACT_PAGE_SIZE",
     "UML_KERNEL_ARTIFACT_FINAL_TREE",
-    "UML_KERNEL_ARTIFACT_PATCH_MANIFEST_SHA256",
     "UML_KERNEL_ARTIFACT_ABI_VERSION",
     "UML_KERNEL_ARTIFACT_ABI_FINGERPRINT",
 }
@@ -167,123 +162,10 @@ def sha256_path(path: Path) -> str:
     return digest.hexdigest()
 
 
-def read_patch_provenance(path: Path) -> list[str]:
-    if not path.is_file() or path.is_symlink():
-        fail(f"patch provenance is missing or unsafe: {path}")
-    try:
-        rows = [
-            raw
-            for raw in path.read_text(encoding="utf-8").splitlines()
-            if raw and not raw.startswith("#")
-        ]
-    except (OSError, UnicodeError) as error:
-        fail(f"cannot read patch provenance: {error}")
-    if not rows:
-        fail("patch provenance is empty")
-    return rows
-
-
-def patch_series_count(rows: list[str], label: str) -> int:
-    if rows[0] != PATCH_SERIES_HEADER:
-        fail(f"{label} is not a patch-series manifest")
-    expected_order = 1
-    for line_number, row in enumerate(rows[1:], 2):
-        fields = row.split("\t", 4)
-        if len(fields) != 5:
-            fail(f"patch series provenance is malformed at line {line_number}")
-        order, filename, patch_id, digest, subject = fields
-        if order != str(expected_order):
-            fail(
-                f"patch series provenance order {order} is not "
-                f"{expected_order}"
-            )
-        safe_relative(filename, f"patch series filename at line {line_number}")
-        require_hex(patch_id, 40, f"stable patch ID at line {line_number}")
-        require_hex(digest, 64, f"patch digest at line {line_number}")
-        require_string(subject, f"patch subject at line {line_number}")
-        expected_order += 1
-    count = expected_order - 1
-    if count < 1:
-        fail("patch series provenance contains no patches")
-    return count
-
-
-def patch_provenance_count(
-    path: Path,
-    source_root: Path | None = None,
-    expected_composition: tuple[tuple[str, str], ...] | None = None,
-) -> int:
-    rows = read_patch_provenance(path)
-    header = rows[0]
-    if header == PATCH_SERIES_HEADER:
-        if expected_composition is not None:
-            fail("expected ordered patch composition, found one patch series")
-        return patch_series_count(rows, "patch provenance")
-
-    if header == PATCH_COMPOSITION_HEADER:
-        if source_root is None or not source_root.is_absolute():
-            fail("patch composition requires an absolute source root")
-        total = 0
-        seen_names: set[str] = set()
-        seen_manifests: set[str] = set()
-        expected_order = 1
-        actual_composition: list[tuple[str, str]] = []
-        for line_number, row in enumerate(rows[1:], 2):
-            fields = row.split("\t")
-            if len(fields) != 5:
-                fail(f"patch composition is malformed at line {line_number}")
-            order, name, raw_count, manifest_relative, digest = fields
-            if order != str(expected_order):
-                fail(
-                    f"patch composition order {order} is not "
-                    f"{expected_order}"
-                )
-            if PATCH_SERIES_NAME_RE.fullmatch(name) is None:
-                fail(f"patch composition name is unsafe at line {line_number}")
-            if name in seen_names:
-                fail(f"patch composition repeats series {name}")
-            if re.fullmatch(r"[1-9][0-9]*", raw_count) is None:
-                fail(f"patch composition count is invalid at line {line_number}")
-            require_hex(digest, 64, f"patch manifest digest at line {line_number}")
-            manifest_relative = safe_relative(
-                manifest_relative,
-                f"patch manifest path at line {line_number}",
-            )
-            if manifest_relative in seen_manifests:
-                fail(f"patch composition repeats manifest {manifest_relative}")
-            manifest_path = source_root / manifest_relative
-            referenced_rows = read_patch_provenance(manifest_path)
-            referenced_count = patch_series_count(
-                referenced_rows,
-                f"patch composition series {name}",
-            )
-            if referenced_count != int(raw_count):
-                fail(
-                    f"patch composition series {name} contains "
-                    f"{referenced_count} patches, expected {raw_count}"
-                )
-            if sha256_path(manifest_path) != digest:
-                fail(f"patch composition series {name} digest differs")
-            seen_names.add(name)
-            seen_manifests.add(manifest_relative)
-            actual_composition.append((name, manifest_relative))
-            total += referenced_count
-            expected_order += 1
-        if len(seen_names) < 2:
-            fail("patch composition must contain at least two ordered series")
-        if (
-            expected_composition is not None
-            and tuple(actual_composition) != expected_composition
-        ):
-            fail("patch composition differs from its required ordered series")
-        return total
-
-    fail("patch provenance has an unsupported header")
-
-
 def validate_manifest(value: object) -> dict:
     manifest = require_exact_keys(value, TOP_LEVEL_KEYS, "artifact manifest")
-    if manifest["schema_version"] != SCHEMA_VERSION:
+    schema = manifest["schema_version"]
+    if schema not in SUPPORTED_SCHEMA_VERSIONS or isinstance(schema, bool):
         fail("artifact manifest schema version is unsupported")
     release_id = require_string(manifest["release_id"], "release ID")
     if RELEASE_ID_RE.fullmatch(release_id) is None:
@@ -319,17 +201,22 @@ def validate_manifest(value: object) -> dict:
     if manifest["elf_role"] != "darwin-uml":
         fail("kernel ELF role is not darwin-uml")
 
-    source = require_exact_keys(manifest["source"], SOURCE_KEYS, "source")
+    source = require_exact_keys(
+        manifest["source"],
+        SCHEMA_2_SOURCE_KEYS if schema == 2 else SOURCE_KEYS,
+        "source",
+    )
     for key in ("repository", "branch"):
         require_string(source[key], f"source.{key}")
     for key in ("base_commit", "base_tree", "final_tree"):
         require_hex(source[key], 40, f"source.{key}")
-    require_integer(source["patch_count"], "source.patch_count", minimum=1)
-    require_hex(
-        source["patch_manifest_sha256"],
-        64,
-        "source.patch_manifest_sha256",
-    )
+    if schema == 2:
+        require_integer(source["patch_count"], "source.patch_count", minimum=1)
+        require_hex(
+            source["patch_manifest_sha256"],
+            64,
+            "source.patch_manifest_sha256",
+        )
 
     abi = require_exact_keys(manifest["abi"], ABI_KEYS, "abi")
     require_integer(abi["version"], "abi.version", minimum=1)
@@ -609,52 +496,16 @@ def verify_elf(
 
 def verify_tracked_identity(
     manifest: dict,
-    source_root: Path,
     kernel_metadata_path: Path,
-    patch_manifest_path: Path,
     abi_metadata_path: Path,
 ) -> None:
     kernel = parse_env(kernel_metadata_path)
-    raw_patch_count = kernel.get(
-        "UML_KERNEL_ARTIFACT_PATCH_COUNT",
-        kernel["UML_KERNEL_PATCH_COUNT"],
-    )
-    if re.fullmatch(r"[1-9][0-9]*", raw_patch_count) is None:
-        fail("tracked artifact patch count must be a positive integer")
-    patch_count = int(raw_patch_count)
-    expected_composition = None
-    if (
-        manifest["family"] == "mainline-6.18"
-        and manifest["slice"] == "x86_64"
-    ):
-        expected_composition = (
-            (
-                "common",
-                "kernel/mainline-6.18/patches/series/manifest.tsv",
-            ),
-            (
-                "x86_64",
-                "kernel/mainline-6.18/slices/x86_64/patches/series/manifest.tsv",
-            ),
-        )
-    provenance_count = patch_provenance_count(
-        patch_manifest_path,
-        source_root,
-        expected_composition,
-    )
-    if provenance_count != patch_count:
-        fail(
-            f"patch provenance contains {provenance_count} patches, "
-            f"tracked artifact identity requires {patch_count}"
-        )
     expected_source = {
         "repository": kernel["UML_KERNEL_UPSTREAM_REPOSITORY"],
         "branch": kernel["UML_KERNEL_UPSTREAM_BRANCH"],
         "base_commit": kernel["UML_KERNEL_UPSTREAM_COMMIT"],
         "base_tree": kernel["UML_KERNEL_UPSTREAM_TREE"],
         "final_tree": kernel["UML_KERNEL_FINAL_TREE"],
-        "patch_count": patch_count,
-        "patch_manifest_sha256": sha256_path(patch_manifest_path),
     }
     for key, value in expected_source.items():
         if manifest["source"][key] != value:
@@ -713,7 +564,7 @@ def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
     if set(acceptance) != ACCEPTANCE_KEYS:
         fail("kernel artifact acceptance keys differ from the fixed contract")
     expected = {
-        "UML_KERNEL_ARTIFACT_SCHEMA": str(SCHEMA_VERSION),
+        "UML_KERNEL_ARTIFACT_SCHEMA": str(manifest["schema_version"]),
         "UML_KERNEL_ARTIFACT_RELEASE_ID": manifest["release_id"],
         "UML_KERNEL_ARTIFACT_DIRECTORY_NAME": manifest["directory_name"],
         "UML_KERNEL_ARTIFACT_FAMILY": manifest["family"],
@@ -721,9 +572,6 @@ def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
         "UML_KERNEL_ARTIFACT_RELEASE": manifest["release"],
         "UML_KERNEL_ARTIFACT_PAGE_SIZE": str(manifest["page_size"]),
         "UML_KERNEL_ARTIFACT_FINAL_TREE": manifest["source"]["final_tree"],
-        "UML_KERNEL_ARTIFACT_PATCH_MANIFEST_SHA256": manifest["source"][
-            "patch_manifest_sha256"
-        ],
         "UML_KERNEL_ARTIFACT_ABI_VERSION": str(manifest["abi"]["version"]),
         "UML_KERNEL_ARTIFACT_ABI_FINGERPRINT": manifest["abi"]["fingerprint"],
     }
@@ -736,7 +584,6 @@ def verify_artifact(
     artifact_root: Path,
     common_root: Path,
     kernel_metadata_path: Path,
-    patch_manifest_path: Path,
     abi_metadata_path: Path,
     *,
     acceptance_path: Path | None = None,
@@ -748,13 +595,7 @@ def verify_artifact(
     manifest = load_manifest(artifact_root)
     if artifact_root.name != manifest["directory_name"]:
         fail("artifact directory basename differs from its manifest")
-    verify_tracked_identity(
-        manifest,
-        common_root.parents[1],
-        kernel_metadata_path,
-        patch_manifest_path,
-        abi_metadata_path,
-    )
+    verify_tracked_identity(manifest, kernel_metadata_path, abi_metadata_path)
     if acceptance_path is not None:
         verify_acceptance(manifest, acceptance_path)
     verify_inventory(artifact_root, manifest)

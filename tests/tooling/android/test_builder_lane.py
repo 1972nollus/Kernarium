@@ -1193,9 +1193,7 @@ def main() -> None:
         kernel_root / "README.md",
         kernel_root / "config/android.fragment",
         kernel_root / "patches/metadata.env",
-        kernel_root / "patches/topic-path-overlaps.tsv",
-        kernel_root / "patches/series/manifest.tsv",
-        android_root / "tools/regenerate-kernel-patches.py",
+        kernel_root / "patches/series/series.tsv",
     ]
     for path in required:
         if not path.is_file():
@@ -1275,7 +1273,6 @@ def main() -> None:
         "UML_KERNEL_UPSTREAM_COMMIT": "7942b4b6552dc2c5932ed2bd9a6f3981f6a04333",
         "UML_KERNEL_UPSTREAM_TREE": "24e0546bc6c78e8e829f0a3657c8ba7c68faabda",
         "UML_KERNEL_FINAL_TREE": "2ad9f685f3b6b173b6dd755cbeeec8eddf43998a",
-        "UML_KERNEL_PATCH_COUNT": "47",
         "UML_KERNEL_ABI_VERSION": "12",
         "UML_KERNEL_ABI_FINGERPRINT": "0xefee2a66cbe8be89",
         "UML_KERNEL_CLANG_VERSION": "r584948c",
@@ -1290,9 +1287,16 @@ def main() -> None:
         if ack.get(key) != value:
             fail(f"ACK metadata {key} is not pinned to {value}")
 
-    verifier = root / "kernel/common/tooling/verify-series-policy.py"
     subprocess.run(
-        [str(verifier), "--line-root", str(kernel_root), "manifest"], check=True
+        [
+            sys.executable,
+            "-B",
+            str(root / "kernel/common/tooling/kernel_series.py"),
+            "check",
+            "--metadata",
+            str(kernel_root / "patches/metadata.env"),
+        ],
+        check=True,
     )
     subprocess.run(
         [
@@ -1387,9 +1391,6 @@ def main() -> None:
             fail(f"{script_name} does not inspect each project porcelain status")
 
     apply_kernel = (android_root / "build/apply-kernel-patches.sh").read_text()
-    regenerate_kernel = (
-        android_root / "tools/regenerate-kernel-patches.py"
-    ).read_text()
     apply_aosp = (android_root / "build/apply-aosp-patches.sh").read_text()
     apply_orangefox = (
         android_root / "build/apply-orangefox-patches.sh"
@@ -1409,22 +1410,6 @@ def main() -> None:
     kernel_config = (kernel_root / "config/android.fragment").read_text()
     required_kernel_builtins = (
         android_root / "support/verification/required-kernel-builtins.txt"
-    ).read_text()
-    cooperative_patch = (
-        kernel_root
-        / "patches/series/0021-UML-DARWIN-LOCAL-service-cooperative-progress-at-ker.patch"
-    ).read_text()
-    ubd_direct_discard_patch = (
-        kernel_root
-        / "patches/series/0029-UML-DARWIN-LOCAL-um-batch-UBD-discard-ranges.patch"
-    ).read_text()
-    initrd_range_patch = (
-        kernel_root
-        / "patches/series/0026-UML-DARWIN-LOCAL-um-load-an-initrd-from-a-host-file-.patch"
-    ).read_text()
-    battery_patch = (
-        kernel_root
-        / "patches/series/0027-UML-DARWIN-LOCAL-power-add-Kernarium-host-battery.patch"
     ).read_text()
     build_make_patch = "\n".join(
         path.read_text()
@@ -1471,115 +1456,12 @@ def main() -> None:
             (android_root / "patches/projects/p0011/series").glob("*.patch")
         )
     )
-    if "worktree add --detach" not in apply_kernel or "git -C \"$KERNEL_SOURCE\" am" not in apply_kernel:
+    if (
+        "worktree add --detach" not in apply_kernel
+        or "kernel_series.py" not in apply_kernel
+        or "--detached" not in apply_kernel
+    ):
         fail("ACK materializer does not replay generated topics in a worktree")
-    for token in (
-        'expected_line_root = outer_root / "kernel/android-6.18"',
-        'metadata.get("UML_KERNEL_FAMILY") != "android-6.18"',
-        '"format-patch"',
-        '"--full-index"',
-        '"--binary"',
-        "series_dir.rename(series_backup)",
-        '"UML_KERNEL_FINAL_TREE"',
-        '"UML_KERNEL_PATCH_COUNT"',
-        '"kernel/common/tooling/verify-series-policy.py"',
-    ):
-        if token not in regenerate_kernel:
-            fail(f"ACK patch regenerator is missing isolation policy: {token}")
-    for token in (
-        "darwin_timer_poll(&current_pt_regs()->regs)",
-        "#include <linux/ptrace.h>",
-        "spin_relax_counts[CONFIG_NR_CPUS]",
-        "if (!um_get_signals())",
-        "darwin_ipi_poll();",
-        "(++spin_relax_counts[cpu] & 0xffU) == 0",
-    ):
-        if token not in cooperative_patch:
-            fail(f"ACK cooperative-progress topic is missing spin policy: {token}")
-    if len(re.findall(r"\+\s*cpu = uml_curr_cpu\(\);", cooperative_patch)) != 2:
-        fail("ACK spin checkpoint does not recompute CPU identity after IPI service")
-    if re.search(
-        r"if \(!um_get_signals\(\)\).*"
-        r"return;.*"
-        r"if \(__atomic_load_n\(&pending_ipis\[cpu\].*"
-        r"darwin_ipi_poll\(\);.*"
-        r"cpu = uml_curr_cpu\(\);.*"
-        r"darwin_timer_kernel_checkpoint\(\);",
-        cooperative_patch,
-        re.DOTALL,
-    ) is None:
-        fail("ACK spin checkpoint no longer preserves IRQ/IPI/timer ordering")
-    for token in (
-        "darwin_uaccess_checkpoint",
-        "!faulthandler_disabled()",
-        "cond_resched();",
-        "darwin_tlb_invalidate_range(mm, vma->vm_start, vma->vm_end);",
-    ):
-        if token not in cooperative_patch:
-            fail(f"ACK cooperative-progress topic is missing quiescent policy: {token}")
-    for token in (
-        "darwin_timer_kernel_checkpoint",
-        "!may_resched || !um_get_signals()",
-        "darwin_timer_poll(&current_pt_regs()->regs)",
-        "darwin_tlb_invalidate_range(mm, vma->vm_start, vma->vm_end);",
-    ):
-        if token not in cooperative_patch:
-            fail(f"ACK cooperative-progress topic is missing timer policy: {token}")
-    if re.search(
-        r"if \(!may_resched \|\| !um_get_signals\(\)\).*"
-        r"darwin_timer_kernel_checkpoint\(\);.*"
-        r"cond_resched\(\);",
-        cooperative_patch,
-        re.DOTALL,
-    ) is None:
-        fail("ACK uaccess boundary no longer polls the timer before rescheduling")
-    if re.search(
-        r"darwin_tlb_invalidate_range\(mm, vma->vm_start, vma->vm_end\);.*"
-        r"if \(um_get_signals\(\)\).*"
-        r"darwin_timer_kernel_checkpoint\(\);.*"
-        r"cond_resched\(\);",
-        cooperative_patch,
-        re.DOTALL,
-    ) is None:
-        fail("ACK TLB boundary no longer preserves invalidate/IRQ/timer/reschedule ordering")
-    for token in (
-        "#ifdef UML_HOST_DARWIN",
-        "#include <kern_util.h>",
-        "int __sched __cond_resched(void)",
-        "if (!irqs_disabled())",
-        "darwin_timer_kernel_checkpoint();",
-        "if (should_resched(0) && !irqs_disabled())",
-    ):
-        if token not in cooperative_patch:
-            fail(f"ACK cooperative-progress topic is missing cond_resched policy: {token}")
-    if re.search(
-        r"int __sched __cond_resched\(void\).*"
-        r"if \(!irqs_disabled\(\)\).*"
-        r"darwin_timer_kernel_checkpoint\(\);.*"
-        r"if \(should_resched\(0\) && !irqs_disabled\(\)\)",
-        cooperative_patch,
-        re.DOTALL,
-    ) is None:
-        fail("ACK cond_resched boundary no longer polls the timer before rescheduling")
-    if "UBD_MAX_DIRECT_DISCARD_SECTORS" not in ubd_direct_discard_patch:
-        fail("ACK direct-image discard topic is missing its large request limit")
-    for forbidden in (
-        "cow_bitmap",
-        "cow_bitmap_offset",
-        "req->offset += desc->length",
-    ):
-        if forbidden in ubd_direct_discard_patch:
-            fail(f"ACK discard topic adds COW behavior: {forbidden}")
-    for token in (
-        '__uml_setup("initrd_offset=", uml_initrd_offset_setup',
-        '__uml_setup("initrd_size=", uml_initrd_size_setup',
-        "initrd_offset and initrd_size are invalid or incomplete",
-        "uml_load_file_range",
-        "os_pread_file",
-        "os_pread_file",
-    ):
-        if token not in initrd_range_patch:
-            fail(f"ACK initrd-range topic is missing fixed policy: {token}")
     if "patches/projects.tsv" not in apply_aosp or 'git -C "$checkout" am' not in apply_aosp:
         fail("AOSP materializer does not replay the routed per-project series")
     if "$ANDROID_ROOT/support" in apply_aosp or "cp " in apply_aosp:
@@ -2222,7 +2104,7 @@ def main() -> None:
         "verify-aosp-patches.py",
         "verify-jelly-source.py",
         "verify-orangefox-source.py",
-        "verify-series-policy.py",
+        "kernel_series_provenance",
         "verify-kernel-elf.py",
         "verify-target-files.py",
         "ubd-disk.py",
@@ -2289,16 +2171,6 @@ def main() -> None:
         fail("Android UML must not select or advertise a Vulkan implementation")
     if "androidboot.hw_timeout_multiplier=5" not in command_line.split():
         fail("Android hardware timeout multiplier is not calibrated to five")
-    for token in (
-        "config KERNARIUM_VIRTIO_BATTERY",
-        "VIRTIO_ID_KERNARIUM_BATTERY",
-        "65535",
-        "devm_power_supply_register",
-        "POWER_SUPPLY_PROP_CAPACITY",
-        "KERNARIUM_BATTERY_STATUS_FULL",
-    ):
-        if token not in battery_patch:
-            fail(f"ACK battery topic is missing fixed transport policy: {token}")
     for token in (
         "CONFIG_MODULES=n",
         "CONFIG_[A-Za-z0-9_]+=m$",

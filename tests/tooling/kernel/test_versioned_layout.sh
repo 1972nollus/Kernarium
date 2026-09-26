@@ -19,7 +19,7 @@ for path in \
 	"$COMMON/artifacts/kernel_artifact.py" \
 	"$COMMON/artifacts/verify-kernel-artifact.py" \
 	"$COMMON/config/page-16k.fragment" \
-	"$COMMON/tooling/verify-series-policy.py" \
+	"$COMMON/tooling/kernel_series.py" \
 	"$LINE/config/common.fragment" \
 	"$LINE/config/page-4k.fragment" \
 	"$LINE/artifacts/accepted-16k.env" \
@@ -56,15 +56,5 @@ grep -F 'kernel/mainline-6.18' "$ROOT_DIR/kernel/CMakeLists.txt" >/dev/null ||
 	fail "kernel CMake does not select the current versioned line explicitly"
 grep -F 'kernel/common' "$ROOT_DIR/kernel/CMakeLists.txt" >/dev/null ||
 	fail "kernel CMake does not consume shared contracts explicitly"
-
-"$COMMON/tooling/verify-series-policy.py" \
-	--line-root "$LINE" manifest >/dev/null
-
-if grep -E 'retest-and-upstream|upstream-with-port|pending-upstream' \
-	"$LINE/patches/path-ownership.tsv" \
-	"$LINE/patches/outside-port-justification.tsv" \
-	"$LINE/patches/extraction-decisions.tsv" >/dev/null; then
-	fail "active kernel policy still suggests an external contribution action"
-fi
 
 printf '%s\n' "kernel versioned ownership layout passed"

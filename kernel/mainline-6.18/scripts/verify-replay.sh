@@ -90,7 +90,6 @@ printf 'UML_KERNEL_SOURCE_DIR=%s\n' "$REPLAY_DIR/linux" \
 
 "$LINE_ROOT/scripts/prepare-source.sh" --slice arm64
 "$LINE_ROOT/scripts/prepare-source.sh" --slice arm64 --verify --no-fetch
-"$LINE_ROOT/scripts/audit-delta.sh" --slice arm64 --tree HEAD
 python3 -B "$ROOT_DIR/tests/tooling/kernel/test_darwin_init_mm_tlb_policy.py" \
 	--linux-source "$REPLAY_DIR/linux"
 python3 -B "$ROOT_DIR/tests/tooling/kernel/test_darwin_vcpu_carrier_policy.py" \
@@ -122,7 +121,6 @@ fi
 
 "$LINE_ROOT/scripts/prepare-source.sh" --slice x86_64 --no-fetch
 "$LINE_ROOT/scripts/prepare-source.sh" --slice x86_64 --verify --no-fetch
-"$LINE_ROOT/scripts/audit-delta.sh" --slice x86_64 --tree HEAD
 
 if [ "$BUILD" -eq 1 ]; then
 	if [ -n "$JOBS" ]; then

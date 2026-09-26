@@ -61,8 +61,6 @@ def main() -> None:
         RELEASE_ID_RE,
         SCHEMA_VERSION,
         parse_env,
-        patch_provenance_count,
-        sha256_path,
         verify_artifact,
         verify_config,
         verify_elf,
@@ -81,21 +79,14 @@ def main() -> None:
     if args.slice == "x86_64":
         slice_root = line_root / "slices/x86_64"
         metadata_path = slice_root / "patches/metadata.env"
-        patch_manifest_path = slice_root / "patches/composition.tsv"
     else:
         metadata_path = line_root / "patches/metadata.env"
-        patch_manifest_path = line_root / "patches/series/manifest.tsv"
     abi_metadata_path = common_root / "abi/identity.env"
     metadata = parse_env(metadata_path)
     if args.slice == "x86_64":
         common_metadata = parse_env(line_root / "patches/metadata.env")
         if metadata.get("UML_KERNEL_SLICE") != "x86_64":
             fail("x86_64 patch metadata has the wrong slice identity")
-        if (
-            metadata.get("UML_KERNEL_PARENT_TREE")
-            != common_metadata["UML_KERNEL_FINAL_TREE"]
-        ):
-            fail("x86_64 patch parent tree differs from the common final tree")
         inherited_keys = (
             "UML_KERNEL_RELEASE_VERSION",
             "UML_KERNEL_UPSTREAM_REPOSITORY",
@@ -124,6 +115,24 @@ def main() -> None:
         != metadata["UML_KERNEL_FINAL_TREE"]
     ):
         fail("kernel source tree differs from the tracked final tree")
+    # The recorded final tree must still be what the checked-in series
+    # produce, so a slice left stale by a change below it cannot publish.
+    series_check = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(common_root / "tooling/kernel_series.py"),
+            "tree",
+            "--metadata",
+            str(metadata_path),
+            "--source",
+            str(source),
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+    )
+    if series_check.returncode != 0:
+        fail("the checked-in series do not produce the tracked final tree")
 
     page_size = 16384 if args.page_size == "16k" else 4096
     source_paths = {
@@ -157,33 +166,6 @@ def main() -> None:
 
     family = "mainline-6.18"
     directory_name = f"{family}-{args.slice}-{args.page_size}-{args.release_id}"
-    patch_count = int(
-        metadata.get(
-            "UML_KERNEL_ARTIFACT_PATCH_COUNT",
-            metadata["UML_KERNEL_PATCH_COUNT"],
-        )
-    )
-    expected_composition = None
-    if args.slice == "x86_64":
-        expected_composition = (
-            (
-                "common",
-                "kernel/mainline-6.18/patches/series/manifest.tsv",
-            ),
-            (
-                "x86_64",
-                "kernel/mainline-6.18/slices/x86_64/patches/series/manifest.tsv",
-            ),
-        )
-    if (
-        patch_provenance_count(
-            patch_manifest_path,
-            outer_root,
-            expected_composition,
-        )
-        != patch_count
-    ):
-        fail("tracked patch provenance count differs from kernel metadata")
     output_root.mkdir(parents=True, exist_ok=True)
     if output_root.is_symlink():
         fail("output root must not be a symlink")
@@ -228,8 +210,6 @@ def main() -> None:
                 "base_commit": metadata["UML_KERNEL_UPSTREAM_COMMIT"],
                 "base_tree": metadata["UML_KERNEL_UPSTREAM_TREE"],
                 "final_tree": metadata["UML_KERNEL_FINAL_TREE"],
-                "patch_count": patch_count,
-                "patch_manifest_sha256": sha256_path(patch_manifest_path),
             },
             "abi": {
                 "version": int(abi["DARWIN_UML_ABI_VERSION"]),
@@ -245,7 +225,6 @@ def main() -> None:
             staging,
             common_root,
             metadata_path,
-            patch_manifest_path,
             abi_metadata_path,
         )
         os.replace(staging, destination)

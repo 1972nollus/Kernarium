@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Thu, 20 Aug 2026 15:11:45 +0000
+Subject: [PATCH] UML-DARWIN-LOCAL: rust: bind ashmem personality constant
+ explicitly
+
+Change-Id: I7f97edb3c3dbfe8dc454785972747e80a67bae8b
+---
+ rust/bindings/bindings_helper.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/rust/bindings/bindings_helper.h b/rust/bindings/bindings_helper.h
+index ead4260dc6289fe547ae7dfadb49c625b813558c..0959692d02035efc561fc48f2befddb61a32dbfb 100644
+--- a/rust/bindings/bindings_helper.h
++++ b/rust/bindings/bindings_helper.h
+@@ -70,6 +70,7 @@
+ #include <linux/of_device.h>
+ #include <linux/pci.h>
+ #include <linux/page_size_compat.h>
++#include <linux/personality.h>
+ #include <linux/phy.h>
+ #include <linux/pid_namespace.h>
+ #include <linux/platform_device.h>

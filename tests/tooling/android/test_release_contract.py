@@ -62,6 +62,7 @@ def main() -> None:
         PRODUCT_FAMILY,
         SCHEMA_VERSION,
         ACCEPTANCE_KEYS,
+        kernel_series_provenance,
         parse_env,
         sha256_path,
         verify_release,
@@ -78,6 +79,7 @@ def main() -> None:
     orangefox = parse_env(android_root / "third_party/orangefox/metadata.env")
     kernel_root = root / "kernel/android-6.18"
     kernel = parse_env(kernel_root / "patches/metadata.env")
+    kernel_patch_count, kernel_patch_digest = kernel_series_provenance(root)
     abi = parse_env(root / "kernel/common/abi/identity.env")
     tracked_acceptance = parse_env(android_root / "metadata/accepted-release.env")
     if set(tracked_acceptance) != ACCEPTANCE_KEYS:
@@ -195,10 +197,8 @@ def main() -> None:
             "base_commit": kernel["UML_KERNEL_UPSTREAM_COMMIT"],
             "base_tree": kernel["UML_KERNEL_UPSTREAM_TREE"],
             "final_tree": kernel["UML_KERNEL_FINAL_TREE"],
-            "patch_count": int(kernel["UML_KERNEL_PATCH_COUNT"]),
-            "patch_manifest_sha256": sha256_path(
-                kernel_root / "patches/series/manifest.tsv"
-            ),
+            "patch_count": kernel_patch_count,
+            "patch_manifest_sha256": kernel_patch_digest,
             "release": "6.18.21-fixture",
             "page_size": 16384,
             "abi_version": int(abi["DARWIN_UML_ABI_VERSION"]),
