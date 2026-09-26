@@ -240,7 +240,10 @@ variant, including after pipeline-cache reload.
 Metal bridge constructors return one owned, initialized object. Callers release
 that object once; constructors must not initialize it again after `new`.
 
-One-time command submissions transfer native command buffers and allocators to
+Sequential encoders of one recording share a Metal command buffer. Only
+compute that must run before or after a whole render pass, and each encoder of
+a layered or multiview pass, gets a Metal command buffer of its own. One-time
+command submissions transfer native command buffers and allocators to
 completion-owned storage, which releases their capacity after the GPU finishes.
 Vulkan command-buffer reset with `RELEASE_RESOURCES` also drops allocator
 capacity; later recording recreates it. Feedback reporting remains valid after

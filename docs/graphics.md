@@ -716,8 +716,10 @@ the device starts having single submissions killed, reported as the timeout
 above. `dEQP-VK.pipeline.*.render_to_image.core.{1d_array,2d_array}.huge.layers`
 stands on it: each of those cases renders one layer at a time into a 256-layer
 image, so it records 256 single-layer render passes of 44x23 (or 54x1), one
-draw each, into a single command buffer; the driver gives every render encoder
-its own `MTLCommandBuffer`, so one queue submit commits 257 of them. Fraction 05
+draw each, into a single command buffer, which reached Metal as 257
+`MTLCommandBuffer`s in one queue submit while every render encoder had its own.
+Sequential encoders now share one Metal command buffer, and the family has not
+been rerun on the device since. Fraction 05
 lost seven of those cases to six kills. A fourteen-case device rig covering the
 family reproduces it at nought to seven kills a run, and the kill always lands
 on the submission carrying the render passes, never on anything else.
