@@ -58,7 +58,7 @@ Generate both x86-64 and i386 dispatch tables from the canonical Linux 6.18 sysc
  create mode 100644 arch/um/include/uapi/asm/signal.h
 
 diff --git a/arch/Kconfig b/arch/Kconfig
-index 61130b88964b94eda9be06fc06c58a7b63e251ca..928494d9c6c6a395a15c6b27ba701c39cee753be 100644
+index ee9fd0150f487c491d1ffa0637a004832481de8b..89a196845065fdd863ca5d0e4f5a7baaf3f66503 100644
 --- a/arch/Kconfig
 +++ b/arch/Kconfig
 @@ -105,9 +105,13 @@ config HOTPLUG_PARALLEL

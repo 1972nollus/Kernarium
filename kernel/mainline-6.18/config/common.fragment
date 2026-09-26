@@ -490,7 +490,9 @@ CONFIG_SND_VIRTIO=y
 # verifier's internal-bug path (include/linux/bpf.h).  What it does do is
 # default two other symbols on that nothing here asked for, and both are turned
 # back off below.  Those three are the whole of its reach: no other symbol in
-# the tree depends on or defaults from DEBUG_KERNEL in this configuration.
+# the tree defaults from DEBUG_KERNEL in this configuration. The debug
+# information that BTF needs is set explicitly below, together with the frame
+# pointers that it would otherwise default on.
 # Netfilter's hooks_validate() is the only applicable DEBUG_MISC site and runs
 # at hook registration, so this costs little; it is off because the shipped
 # profile should carry no diagnostic the configuration never requested.
@@ -502,7 +504,22 @@ CONFIG_SND_VIRTIO=y
 # to drop it is that `default y if TREE_RCU` under a selected DEBUG_KERNEL is
 # the only thing that ever turned it on.
 # CONFIG_RCU_TRACE is not set
-# CONFIG_DEBUG_INFO is not set
+
+# --- BTF type information ---------------------------------------------------
+# /sys/kernel/btf/vmlinux lets CO-RE BPF programs, such as systemd-networkd's
+# sysctl monitor, relocate against this kernel's types. pahole encodes .BTF
+# from DWARF 5, which Clang emits and pahole reads; one unsplit, uncompressed,
+# full DWARF image is its only input. .BTF is allocated and stays resident, but
+# the published artifact strips the DWARF, which nothing loads.
+CONFIG_DEBUG_INFO_DWARF5=y
+# CONFIG_DEBUG_INFO_REDUCED is not set
+# CONFIG_DEBUG_INFO_SPLIT is not set
+CONFIG_DEBUG_INFO_COMPRESSED_NONE=y
+CONFIG_DEBUG_INFO_BTF=y
+# UML defaults frame pointers on whenever DEBUG_INFO is set. The arm64 UML
+# port has no frame-pointer stack walker (PT_REGS_BP), BTF needs none, and
+# debug information must not change the generated code.
+# CONFIG_FRAME_POINTER is not set
 
 # Stateful Virtio video decoding is shared by every product profile.
 CONFIG_MEDIA_SUPPORT=y

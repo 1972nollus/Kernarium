@@ -51,6 +51,12 @@ def main() -> None:
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--release-id", required=True)
+    parser.add_argument(
+        "--objcopy",
+        type=Path,
+        required=True,
+        help="the pinned ACK llvm-objcopy that strips DWARF from vmlinux",
+    )
     args = parser.parse_args()
 
     if platform.system() != "Linux" or platform.machine() != "x86_64":
@@ -68,6 +74,7 @@ def main() -> None:
         RELEASE_ID_RE,
         SCHEMA_VERSION,
         parse_env,
+        publish_runtime_image,
         verify_artifact,
         verify_config,
         verify_elf,
@@ -80,6 +87,10 @@ def main() -> None:
     output_root = args.output_root.resolve()
     if RELEASE_ID_RE.fullmatch(args.release_id) is None:
         fail("release ID has an unsafe format")
+    objcopy = args.objcopy
+    if not objcopy.is_absolute() or not objcopy.is_file() or \
+            not os.access(objcopy, os.X_OK):
+        fail("--objcopy must name an absolute executable")
 
     metadata_path = line_root / "patches/metadata.env"
     abi_metadata_path = common_root / "abi/identity.env"
@@ -140,8 +151,15 @@ def main() -> None:
         for relative, (role, file_format) in sorted(PAYLOAD_SPECS.items()):
             destination_path = staging / relative
             destination_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source_paths[relative], destination_path)
-            shutil.copymode(source_paths[relative], destination_path)
+            if relative == "kernel/vmlinux":
+                # DWARF is only pahole's input. verify_artifact below proves
+                # that the image keeps .BTF and carries no DWARF.
+                publish_runtime_image(
+                    objcopy, source_paths[relative], destination_path
+                )
+            else:
+                shutil.copyfile(source_paths[relative], destination_path)
+                shutil.copymode(source_paths[relative], destination_path)
             inventory.append({
                 "path": relative,
                 "role": role,

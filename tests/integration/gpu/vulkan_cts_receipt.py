@@ -30,7 +30,7 @@ METADATA_ROOT = REPO_ROOT / "tools/rootfs/vulkan"
 MANDATORY_CASES_PATH = Path(__file__).resolve().with_name(
     "vulkan_cts_mandatory_1_4_6_2.txt"
 )
-EXPECTED_IMAGE_SHA256 = "381f08a985fc6c1a7e0a131abdf35272d52877381b099465c728fb41bfd87b2f"
+EXPECTED_IMAGE_SHA256 = "1bed9e0d01f903eb16da1a4aa826043849ced40747ece894b8ea9afdac926535"
 EXPECTED_IMAGE_SIZE = 8_589_934_592
 EXPECTED_IMAGE_UUID = "2240061a-2b64-4626-b8bf-dd0f9993a4a9"
 EXPECTED_BASE_SHA256 = "73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91"
@@ -45,7 +45,7 @@ EXPECTED_MESA_FILES = {
     "/usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
     "/usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0.0.0",
     "/usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0.0.0",
-    "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
+    "/usr/lib/aarch64-linux-gnu/libgallium-26.2.3.so",
     "/usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0",
     "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
     "/usr/share/drirc.d/00-mesa-defaults.conf",
@@ -61,7 +61,7 @@ EXPECTED_CLOSURE_CONSUMERS = {
     "/usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
     "/usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0.0.0",
     "/usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0.0.0",
-    "/usr/lib/aarch64-linux-gnu/libgallium-26.2.1.so",
+    "/usr/lib/aarch64-linux-gnu/libgallium-26.2.3.so",
     "/usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0",
     "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357",
     "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
@@ -331,7 +331,7 @@ def validate_receipt(path: Path = RECEIPT_PATH) -> dict[str, Any]:
 
     mesa = receipt["mesa"]
     if (
-        mesa.get("release") != "mesa-26.2.1"
+        mesa.get("release") != "mesa-26.2.3"
         or mesa.get("install_prefix") != "/usr"
         or mesa.get("reported_api_version") != "1.4.354"
         or mesa.get("portability_driver") is not False

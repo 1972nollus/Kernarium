@@ -9,10 +9,10 @@ Apply the reviewed final-state topic without intermediate churn.
  1 file changed, 14 insertions(+), 3 deletions(-)
 
 diff --git a/mm/filemap.c b/mm/filemap.c
-index 7c26e3735f1bb441eee06e1413011e6bb2172f87..ed8af7457c89f089c5568714c089765eedd3b5b9 100644
+index 1a035881060906d46ff279e8c55944d97742aa64..1c47783bda99b2d6cad06a78e291f70ffa3f799b 100644
 --- a/mm/filemap.c
 +++ b/mm/filemap.c
-@@ -4686,13 +4686,24 @@ SYSCALL_DEFINE4(cachestat, unsigned int, fd,
+@@ -4692,13 +4692,24 @@ SYSCALL_DEFINE4(cachestat, unsigned int, fd,
  	if (flags != 0)
  		return -EINVAL;
  

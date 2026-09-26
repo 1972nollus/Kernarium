@@ -23,8 +23,10 @@ same way.
 Keep a handle opened before its file has a context on a pending list,
 holding the object array its attachment will carry, and attach the
 file's pending handles when its context is created, right after
-CTX_CREATE on the same queue. Closing a pending handle drops it from
-the list instead of detaching it from a context it never joined. The
+CTX_CREATE on the same queue. Closing a pending handle drops it from the
+list instead of detaching it from a context it never joined. ACK already
+skips that detach on its own; the close path makes the same decision
+under the context lock so it can also drop the pending handle. The
 file's context lock orders the three, so a handle is attached exactly
 once however its open races the context's creation. Few handles ever
 wait, and only until their file's first context-creating ioctl, so one
@@ -33,9 +35,9 @@ list serves every file.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  .../gpu/drm/virtio/virtgpu_context_attach.h   |  23 ++++
- drivers/gpu/drm/virtio/virtgpu_gem.c          | 110 +++++++++++++++++-
+ drivers/gpu/drm/virtio/virtgpu_gem.c          | 124 ++++++++++++++++--
  drivers/gpu/drm/virtio/virtgpu_ioctl.c        |   4 +-
- 3 files changed, 131 insertions(+), 6 deletions(-)
+ 3 files changed, 137 insertions(+), 14 deletions(-)
  create mode 100644 drivers/gpu/drm/virtio/virtgpu_context_attach.h
 
 diff --git a/drivers/gpu/drm/virtio/virtgpu_context_attach.h b/drivers/gpu/drm/virtio/virtgpu_context_attach.h
@@ -68,7 +70,7 @@ index 0000000000000000000000000000000000000000..a06095966c8125bd3498819b72f89b22
 +
 +#endif
 diff --git a/drivers/gpu/drm/virtio/virtgpu_gem.c b/drivers/gpu/drm/virtio/virtgpu_gem.c
-index 573e02b2557d354f00d90e6f4ebc1876752fc3e1..d74649c97872c071de2435d8420b07ffb9e44bea 100644
+index 3888aaa6526d28d182ed16d497c6b389ad8d5507..d74649c97872c071de2435d8420b07ffb9e44bea 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_gem.c
 +++ b/drivers/gpu/drm/virtio/virtgpu_gem.c
 @@ -27,6 +27,7 @@
@@ -202,22 +204,37 @@ index 573e02b2557d354f00d90e6f4ebc1876752fc3e1..d74649c97872c071de2435d8420b07ff
  
  out_notify:
  	virtio_gpu_notify(vgdev);
-@@ -140,6 +231,15 @@ void virtio_gpu_gem_object_close(struct drm_gem_object *obj,
+@@ -140,15 +231,22 @@ void virtio_gpu_gem_object_close(struct drm_gem_object *obj,
  	if (!vgdev->has_virgl_3d)
  		return;
  
+-	if (vfpriv->context_created) {
+-		objs = virtio_gpu_array_alloc(1);
+-		if (!objs)
+-			return;
+-		virtio_gpu_array_add_obj(objs, obj);
+-
+-		virtio_gpu_cmd_context_detach_resource(vgdev, vfpriv->ctx_id,
+-						       objs);
 +	mutex_lock(&vfpriv->context_lock);
 +	if (!vfpriv->context_created) {
 +		/* It never joined a context, so there is nothing to detach. */
 +		virtio_gpu_forget_handle(vfpriv, obj);
 +		mutex_unlock(&vfpriv->context_lock);
 +		return;
-+	}
+ 	}
 +	mutex_unlock(&vfpriv->context_lock);
 +
- 	objs = virtio_gpu_array_alloc(1);
- 	if (!objs)
- 		return;
++	objs = virtio_gpu_array_alloc(1);
++	if (!objs)
++		return;
++	virtio_gpu_array_add_obj(objs, obj);
++
++	virtio_gpu_cmd_context_detach_resource(vgdev, vfpriv->ctx_id,
++					       objs);
+ 	virtio_gpu_notify(vgdev);
+ }
+ 
 diff --git a/drivers/gpu/drm/virtio/virtgpu_ioctl.c b/drivers/gpu/drm/virtio/virtgpu_ioctl.c
 index c33c057365f85a2ace536f91655c903036827312..b14254dd519ecf3ee59c1ff458343f87a5e6f989 100644
 --- a/drivers/gpu/drm/virtio/virtgpu_ioctl.c
