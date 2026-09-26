@@ -22,6 +22,7 @@ import time
 NR_BPF = {"aarch64": 280, "x86_64": 321}[platform.machine()]
 
 BPF_MAP_CREATE = 0
+BPF_MAP_LOOKUP_ELEM = 1
 BPF_MAP_UPDATE_ELEM = 2
 BPF_PROG_LOAD = 5
 BPF_PROG_TEST_RUN = 10
@@ -33,14 +34,19 @@ BPF_MAP_TYPE_ARRAY = 2
 BPF_MAP_TYPE_PROG_ARRAY = 3
 BPF_PROG_TYPE_SOCKET_FILTER = 1
 
+HELPER_MAP_LOOKUP_ELEM = 1
 HELPER_TAIL_CALL = 12
 HELPER_FOR_EACH_MAP_ELEM = 164
+HELPER_TIMER_INIT = 169
+HELPER_TIMER_SET_CALLBACK = 170
+HELPER_TIMER_START = 171
 HELPER_LOOP = 181
 
 BPF_MAX_LOOPS = 1 << 23
 # struct __sk_buff: mark follows len and pkt_type. A test run leaves it zero,
 # but the verifier cannot know that, which keeps bpf_loop() from inlining.
 SKB_MARK = 8
+CLOCK_MONOTONIC = 1
 
 R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10 = range(11)
 
@@ -99,6 +105,17 @@ class Btf:
         return self.add(struct.pack("<IIII", self.name(name), 1 << 24, size,
                                     encoding << 24 | size * 8))
 
+    def array(self, element: int, index: int, count: int) -> int:
+        return self.add(struct.pack("<IIIIII", 0, 3 << 24, 0, element, index,
+                                    count))
+
+    def structure(self, name: str, size: int,
+                  members: list[tuple[str, int, int]]) -> int:
+        data = struct.pack("<III", self.name(name), 4 << 24 | len(members), size)
+        for member, type_id, bit_offset in members:
+            data += struct.pack("<III", self.name(member), type_id, bit_offset)
+        return self.add(data)
+
     def prototype(self, returns: int, parameters: list[tuple[str, int]]) -> int:
         data = struct.pack("<III", 0, 13 << 24 | len(parameters), returns)
         for parameter, type_id in parameters:
@@ -137,6 +154,10 @@ class Types:
         self.main = btf.function("main", main, True)
         self.callbacks = [btf.function(f"callback{i}", callback, False)
                           for i in range(16)]
+        opaque = btf.array(u64, self.int, 2)
+        timer = btf.structure("bpf_timer", 16, [("__opaque", opaque, 0)])
+        self.timer_value = btf.structure(
+            "timer_value", 24, [("timer", timer, 0), ("count", u64, 128)])
         self.fd = btf.load()
 
 
@@ -238,11 +259,23 @@ class Asm:
 # --- Kernel objects --------------------------------------------------------
 
 
-def create_map(map_type: int, key_size: int, value_size: int,
-               entries: int) -> int:
+def create_map(map_type: int, key_size: int, value_size: int, entries: int,
+               types: Types | None = None, value_type: int = 0) -> int:
     attr = attr_buffer()
     put(attr, 0, "IIII", map_type, key_size, value_size, entries)
+    if types is not None:
+        put(attr, 48, "III", types.fd, types.int, value_type)
     return bpf(BPF_MAP_CREATE, attr)
+
+
+def lookup(map_fd: int, key: bytes, size: int) -> bytes:
+    key_buffer = ctypes.create_string_buffer(key)
+    value_buffer = ctypes.create_string_buffer(size)
+    attr = attr_buffer()
+    put(attr, 0, "IIQQQ", map_fd, 0, address(key_buffer),
+        address(value_buffer), 0)
+    bpf(BPF_MAP_LOOKUP_ELEM, attr)
+    return value_buffer.raw[:size]
 
 
 def update(map_fd: int, key: bytes, value: bytes) -> None:
@@ -457,6 +490,60 @@ def tail_and_callback_program(prog_array_fd: int) -> Asm:
     return asm
 
 
+def timer_program(map_fd: int, rounds: int) -> Asm:
+    """Arm a timer whose callback counts and re-arms itself rounds times."""
+    asm = Asm()
+    asm.function("main")
+    asm.st(R10, -4, 0, 0x00)
+    asm.ld_map(R1, map_fd)
+    asm.movr(R2, R10)
+    asm.add(R2, -4)
+    asm.call(HELPER_MAP_LOOKUP_ELEM)
+    asm.jump(0x50, R0, 0, "found")
+    asm.mov(R0, 1)
+    asm.exit()
+    asm.label("found")
+    asm.movr(R6, R0)
+    asm.movr(R1, R6)
+    asm.ld_map(R2, map_fd)
+    asm.mov(R3, CLOCK_MONOTONIC)
+    asm.call(HELPER_TIMER_INIT)
+    asm.mov(R7, 1000)
+    asm.jump(0x50, R0, 0, "failed")
+    asm.movr(R1, R6)
+    asm.ld_function(R2, "callback")
+    asm.call(HELPER_TIMER_SET_CALLBACK)
+    asm.mov(R7, 2000)
+    asm.jump(0x50, R0, 0, "failed")
+    asm.movr(R1, R6)
+    asm.mov(R2, 1000000)
+    asm.mov(R3, 0)
+    asm.call(HELPER_TIMER_START)
+    asm.mov(R7, 3000)
+    asm.jump(0x50, R0, 0, "failed")
+    asm.exit()
+    # Report which helper failed and its errno.
+    asm.label("failed")
+    asm.mul(R0, -1)
+    asm.addr(R0, R7)
+    asm.exit()
+    asm.function("callback")
+    asm.ldx(R6, R3, 16)
+    asm.add(R6, 1)
+    asm.stx(R3, 16, R6)
+    asm.jump(0xA0, R6, rounds, "rearm")
+    asm.mov(R0, 0)
+    asm.exit()
+    asm.label("rearm")
+    asm.movr(R1, R3)
+    asm.mov(R2, 1000000)
+    asm.mov(R3, 0)
+    asm.call(HELPER_TIMER_START)
+    asm.mov(R0, 0)
+    asm.exit()
+    return asm
+
+
 def slot_program(callbacks: int, references: int = 1) -> Asm:
     """Load callbacks distinct callbacks, each referenced references times."""
     asm = Asm()
@@ -647,6 +734,24 @@ def main() -> int:
     if fd is not None:
         os.close(fd)
     os.close(table)
+
+    # A timer callback runs from hrtimer expiry, outside any program run.
+    timers = create_map(BPF_MAP_TYPE_ARRAY, 4, 24, 1, types, types.timer_value)
+    fd = expect_value("timer-arm", types, timer_program(timers, 5), 0)
+    if fd is not None:
+        count = 0
+        deadline = time.monotonic() + 10
+        while count < 5 and time.monotonic() < deadline:
+            time.sleep(0.05)
+            count = struct.unpack_from(
+                "<Q", lookup(timers, struct.pack("<I", 0), 24), 16)[0]
+        # The fifth run does not re-arm, so the count must stay there.
+        time.sleep(0.2)
+        count = struct.unpack_from(
+            "<Q", lookup(timers, struct.pack("<I", 0), 24), 16)[0]
+        report("timer-callback", count == 5, f"callback ran {count} times")
+        os.close(fd)
+    os.close(timers)
 
     for depth in (2, 7):
         fd = expect_value(f"nested-{depth}", types, nested_program(depth, 2),

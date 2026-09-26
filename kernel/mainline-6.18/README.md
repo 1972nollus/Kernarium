@@ -178,6 +178,14 @@ after `device_shutdown()` has broken every virtqueue, so the balloon returns
 its pages without waiting for a host answer when its queue is broken; otherwise
 power-off with an inflated balloon never completes.
 
+Every slice selects `HAVE_ALIGNED_STRUCT_PAGE` and `HAVE_CMPXCHG_DOUBLE`, as
+native arm64 does; the x86-64 userspace slice keeps the arm64 kernel. SLUB
+therefore updates a slab's freelist and counters with one CASP, which runs
+directly on the host CPU, and `kmalloc_nolock()`, which BPF timers allocate
+with, can use every cache. `paging_init()` checks that the FLATMEM memory map
+keeps the double-word alignment this needs. The ACK line carries the same
+change.
+
 Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
 at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
 `schedule()` when the caller stays runnable. The IPI signal is only a wake edge,
@@ -275,13 +283,15 @@ for test count.
 
 The kernel exposes its BTF at `/sys/kernel/btf/vmlinux` for CO-RE programs.
 BPF runs on the interpreter; no BPF code is generated at run time. Helpers
-that take a callback, such as `bpf_loop` and `bpf_for_each_map_elem`, reach an
-interpreted callback through a fixed pool of 1024 built-in entry points. Each
-callback subprogram of a loaded program holds one until the program is freed,
-and a load that finds none free fails with `ENOSPC`. The interpreter still
-rejects kfunc calls, and tail calls in a program that has callbacks or other
-subprograms. Tracing program types (kprobe, uprobe, tracepoint, raw
-tracepoint, iterator) need `CONFIG_BPF_EVENTS`, which UML does not provide.
+that take a callback, such as `bpf_loop`, `bpf_for_each_map_elem`, and
+`bpf_timer_set_callback`, reach an interpreted callback through a fixed pool of
+1024 built-in entry points. Each callback subprogram of a loaded program holds
+one until the program is freed, and a load that finds none free fails with
+`ENOSPC`. The interpreter still rejects kfunc calls, and tail calls in a
+program that has callbacks or other subprograms; `bpf_wq`, which only kfuncs
+reach, is therefore unavailable. Tracing program types (kprobe, uprobe,
+tracepoint, raw tracepoint, iterator) need `CONFIG_BPF_EVENTS`, which UML does
+not provide.
 
 Kernel IP autoconfiguration is disabled. Writable guest images start their own
 DHCP client and DNS resolver after init begins; launchers do not need kernel

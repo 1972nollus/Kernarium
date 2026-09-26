@@ -2,8 +2,8 @@
 """Run BPF programs with callbacks on the interpreter-only guest kernel.
 
 The guest kernel has no BPF JIT, so every callback a helper such as
-bpf_loop() or bpf_for_each_map_elem() invokes enters the interpreter through
-the kernel's fixed pool of native entry points. The probe
+bpf_loop(), bpf_for_each_map_elem() or a BPF timer invokes enters the
+interpreter through the kernel's fixed pool of native entry points. The probe
 loads and runs such programs, checks the verifier limits still hold, and
 exhausts and refills the entry-point pool.
 """

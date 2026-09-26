@@ -49,10 +49,10 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 2b518b23fbe29da511c84051c58db647b1a80734..fbcbda0dd46d2799cd7d98a2abd895810bd4925e 100644
+index 06086feb226da3a2012f1ca2cfb0dec9bb63f69d..8b11524ed704297ef448fc36bdf785f9763e451c 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -21,6 +21,15 @@ config UML_ARM64
+@@ -23,6 +23,15 @@ config UML_ARM64
  	select ARCH_USE_QUEUED_RWLOCKS
  	select UML_SUBARCH_SUPPORTS_SMP
  
