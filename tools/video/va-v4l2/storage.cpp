@@ -184,8 +184,10 @@ void selectStorage(const char* request)
     else if (!loader.device) reason() = "no DRM device";
     else {
         auto probe = PixelBuffer::allocate(VA_FOURCC_NV12, 64, 64, error);
+        const int exported = probe && probe->kind() == StorageKind::gbm ? probe->exportDescriptor() : -1;
+        if (exported >= 0) ::close(exported);
         if (!probe || probe->kind() != StorageKind::gbm) reason() = "no GBM allocation";
-        else if (probe->exportDescriptor() < 0) reason() = "no dma-buf export";
+        else if (exported < 0) reason() = "no dma-buf export";
         else if (errno = 0, !probe->map()) {
             // The exact refusal matters to whoever owns the graphics stack:
             // a dma-buf that cannot be mapped cannot carry a decoded picture.
