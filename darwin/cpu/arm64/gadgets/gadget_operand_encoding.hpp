@@ -16,6 +16,9 @@ namespace uml::cpu::arm64::gadgets::selection {
 	return first | (second << 16) | (third << 32) | (fourth << 48);
 }
 
+/* The composers' own copy of detail::sign_extend: this shift form folds to
+ * SBFX, while detail's xor/subtract form costs a few more instructions at
+ * every decode. Both agree for the masked fields the composers pass. */
 [[nodiscard]] constexpr std::int64_t sign_extend(std::uint64_t value,
 						 unsigned bits) noexcept
 {
