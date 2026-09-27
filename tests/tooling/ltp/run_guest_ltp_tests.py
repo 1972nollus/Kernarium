@@ -6,7 +6,9 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import base64
+import contextlib
 import gzip
+import io
 import pathlib
 import re
 import shlex
@@ -1829,14 +1831,15 @@ page dumped because: still mapped when deleted
         self.assertFalse(defaults.run_host_pressure)
         self.assertTrue(explicit.run_host_pressure)
 
-    def test_ltp_cmake_campaign_feeds_exact_kernel_metadata(self) -> None:
-        cmake = (LTP_ROOT.parent / "CMakeLists.txt").read_text(encoding="utf-8")
-        self.assertIn(
-            "--modules-builtin ${_uml_integration_modules_builtin}",
-            cmake,
-        )
-        self.assertNotIn('command -v modprobe', cmake)
-        self.assertNotIn('command -v rmmod', cmake)
+    def test_campaign_requires_the_kernel_builds_modules_builtin(self) -> None:
+        arguments = [
+            "--emulator", "uml-darwin",
+            "--rootfs", "rootfs.erofs",
+            "--manifest", "verified-tests.tsv",
+        ]
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                runner.parse_arguments(arguments)
 
     def test_explicit_host_pressure_selection_preserves_all_cases(self) -> None:
         ordinary = runner.Case(
