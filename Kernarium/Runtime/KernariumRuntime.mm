@@ -399,12 +399,8 @@ public:
             return;
         interval_ = std::chrono::milliseconds {interval};
         /* The guest's timer signal must never land on this thread. */
-        sigset_t all;
-        sigset_t previous;
-        sigfillset(&all);
-        (void)pthread_sigmask(SIG_BLOCK, &all, &previous);
+        const ScopedGuestTimerBlock guestTimerBlock;
         thread_ = std::thread([this] { run(); });
-        (void)pthread_sigmask(SIG_SETMASK, &previous, nullptr);
     }
 
     ~FootprintReporter()

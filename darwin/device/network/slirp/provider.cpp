@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "provider.hpp"
 #include "uml_slirp_net.h"
+#include "platform/guest_timer_mask.hpp"
 
 #include <arpa/inet.h>
 #include <cerrno>
@@ -24,33 +25,6 @@
 
 namespace uml::network {
 namespace {
-
-class ScopedGuestTimerBlock final {
-public:
-	ScopedGuestTimerBlock()
-	{
-		sigset_t blocked;
-
-		sigemptyset(&blocked);
-		sigaddset(&blocked, SIGALRM);
-		error_ = pthread_sigmask(SIG_BLOCK, &blocked, &previous_);
-	}
-
-	~ScopedGuestTimerBlock()
-	{
-		if (error_ == 0)
-			(void)pthread_sigmask(SIG_SETMASK, &previous_, nullptr);
-	}
-
-	[[nodiscard]] int error() const noexcept
-	{
-		return error_;
-	}
-
-private:
-	sigset_t previous_ {};
-	int error_ {};
-};
 
 constexpr std::array<unsigned char, 6> default_mac{
 	0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
@@ -183,11 +157,8 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 			 * SLiRP worker for SIGALRM and enter Linux scheduler code on a
 			 * foreign host stack.
 			 */
-			ScopedGuestTimerBlock timer_block;
-
-			if (timer_block.error() != 0)
-				throw std::system_error{
-					timer_block.error(), std::generic_category()};
+			const uml::platform::ScopedGuestTimerBlock timer_block(
+				"blocking the UML timer around the SLiRP worker");
 			worker_ = std::jthread{[this](std::stop_token stop_token) {
 				event_loop(stop_token);
 			}};

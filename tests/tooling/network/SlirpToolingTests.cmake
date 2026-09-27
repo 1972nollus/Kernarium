@@ -18,6 +18,7 @@ if(UML_BUILD_NETWORK_PROVIDER)
     target_compile_options(uml_network_provider_test_variant PRIVATE
         -Wall -Wextra -Werror)
     target_link_libraries(uml_network_provider_test_variant PRIVATE
+        UML::GuestTimerMask
         UML::ThirdPartySlirp)
     add_dependencies(uml_network_provider_test_variant
         uml_dependency_prefix_verify)

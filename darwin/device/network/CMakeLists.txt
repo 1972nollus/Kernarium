@@ -35,6 +35,7 @@ if(UML_BUILD_NETWORK_PROVIDER)
         POSITION_INDEPENDENT_CODE ON)
 
     target_link_libraries(uml_network_provider PRIVATE
+        UML::GuestTimerMask
         UML::ThirdPartySlirp)
     if(TARGET uml_dependency_prefix_verify)
         add_dependencies(uml_network_provider uml_dependency_prefix_verify)
