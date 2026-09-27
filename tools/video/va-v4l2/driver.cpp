@@ -7,12 +7,14 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <new>
 #include <stdexcept>
+#include <type_traits>
 
 #include <va/va_dec_vp9.h>
 #include <va/va_drmcommon.h>
@@ -43,6 +45,27 @@ bool showHiddenFrames() noexcept
         return !request || std::strcmp(request, "skip") != 0;
     }();
     return show;
+}
+
+// A view of a mapped buffer's first plane, writable when the mapping is.
+template <class Byte>
+using PlaneViewOf = std::conditional_t<std::is_const_v<Byte>, ConstPlaneView, PlaneView>;
+
+template <class Byte>
+PlaneViewOf<Byte> planeView(const PixelBuffer& buffer, Byte* base) noexcept
+{
+    return {base + buffer.offset(0), buffer.pitch(0)};
+}
+
+// Views of a mapped NV12 buffer's two planes from the pixel at (x, y). A
+// chroma row covers two luma rows and a sample pair two columns, so the
+// chroma view starts at the pair holding that pixel.
+template <class Byte>
+std::array<PlaneViewOf<Byte>, 2> planeViews(const PixelBuffer& buffer, Byte* base, unsigned x = 0,
+                                            unsigned y = 0) noexcept
+{
+    return {{{base + buffer.offset(0) + y * buffer.pitch(0) + x, buffer.pitch(0)},
+             {base + buffer.offset(1) + (y / 2) * buffer.pitch(1) + (x & ~1u), buffer.pitch(1)}}};
 }
 
 unsigned lowestSlot(unsigned mask) noexcept
@@ -143,11 +166,9 @@ void Driver::materialise(Surface& target)
     const std::uint8_t* from = target.shadow->map();
     std::uint8_t* to = target.buffer->map();
     if (!from || !to) return;
-    const ConstPlaneView in {from + target.shadow->offset(0), target.shadow->pitch(0)};
-    const PlaneView out[2] {{to + target.buffer->offset(0), target.buffer->pitch(0)},
-                            {to + target.buffer->offset(1), target.buffer->pitch(1)}};
     const Region region {0, 0, target.width, target.height};
-    convertArgbToNv12(in, region, out, region, isBt709(target.height));
+    convertArgbToNv12(planeView(*target.shadow, from), region, planeViews(*target.buffer, to).data(), region,
+                      isBt709(target.height));
     target.nativeValid = true;
 }
 
@@ -335,28 +356,29 @@ bool Driver::fillFromLent(Surface& target, PixelBuffer& lent, bool packed)
     // the client is looking at.
     const std::uint8_t* from = lent.map();
     if (!from) return false;
-    const Region region {0, 0, std::min(target.width, lent.width()),
-                         std::min(target.height, lent.height())};
-    if (packed) {
-        std::string error;
-        if (!target.shadow)
-            target.shadow = PixelBuffer::allocate(VA_FOURCC_ARGB, target.width, target.height, error);
-        std::uint8_t* to = target.shadow ? target.shadow->map() : nullptr;
-        if (!to) { if (!error.empty()) note(error.c_str()); return false; }
-        copyPacked32(ConstPlaneView {from + lent.offset(0), lent.pitch(0)}, region,
-                     PlaneView {to + target.shadow->offset(0), target.shadow->pitch(0)}, region);
-        target.nativeValid = false;
-        return true;
-    }
+    if (packed) return storePacked(target, planeView(lent, from), lent.width(), lent.height());
     if (!target.buffer || lent.planes() < 2) return false;
     std::uint8_t* to = target.buffer->map();
     if (!to) return false;
-    const ConstPlaneView in[2] {{from + lent.offset(0), lent.pitch(0)},
-                                {from + lent.offset(1), lent.pitch(1)}};
-    const PlaneView out[2] {{to + target.buffer->offset(0), target.buffer->pitch(0)},
-                            {to + target.buffer->offset(1), target.buffer->pitch(1)}};
-    copyNv12(in, out, region.width, region.height);
+    copyNv12(planeViews(lent, from).data(), planeViews(*target.buffer, to).data(),
+             std::min(target.width, lent.width()), std::min(target.height, lent.height()));
     target.nativeValid = true;
+    return true;
+}
+
+bool Driver::storePacked(Surface& target, const ConstPlaneView& source, unsigned width, unsigned height)
+{
+    std::string error;
+    if (!target.shadow)
+        target.shadow = PixelBuffer::allocate(VA_FOURCC_ARGB, target.width, target.height, error);
+    std::uint8_t* to = target.shadow ? target.shadow->map() : nullptr;
+    if (!to) {
+        if (!error.empty()) note(error.c_str());
+        return false;
+    }
+    const Region region {0, 0, std::min(target.width, width), std::min(target.height, height)};
+    copyPacked32(source, region, planeView(*target.shadow, to), region);
+    target.nativeValid = false;
     return true;
 }
 
@@ -413,35 +435,18 @@ void Driver::harvest(Context& context, std::chrono::milliseconds wait)
                 }
             } else if (target && target->buffer && target->fourcc == VA_FOURCC_NV12 && packed &&
                 picture.planes >= 1 && !picture.error) {
-                // The host already converted, so keep the picture packed and
-                // leave the NV12 buffer stale until somebody asks for it.
-                std::string error;
-                if (!target->shadow)
-                    target->shadow = PixelBuffer::allocate(VA_FOURCC_ARGB, target->width, target->height,
-                                                           error);
-                std::uint8_t* destination = target->shadow ? target->shadow->map() : nullptr;
-                if (destination) {
-                    const ConstPlaneView in {picture.plane[0], picture.pitch[0]};
-                    const PlaneView out {destination + target->shadow->offset(0), target->shadow->pitch(0)};
-                    const Region region {0, 0, std::min(target->width, picture.width),
-                                         std::min(target->height, picture.height)};
-                    copyPacked32(in, region, out, region);
-                    target->nativeValid = false;
-                    target->state = Surface::State::ready;
-                } else {
-                    if (!error.empty()) note(error.c_str());
-                    target->state = Surface::State::failed;
-                }
+                // The host already converted, so keep the picture packed.
+                const bool stored = storePacked(*target, ConstPlaneView {picture.plane[0], picture.pitch[0]},
+                                                picture.width, picture.height);
+                target->state = stored ? Surface::State::ready : Surface::State::failed;
             } else if (target && target->buffer && target->fourcc == VA_FOURCC_NV12 && picture.planes >= 2 &&
                 !picture.error) {
                 if (std::uint8_t* destination = target->buffer->map()) {
                     const ConstPlaneView source[2] {
                         {picture.plane[0], picture.pitch[0]},
                         {picture.plane[1], picture.pitch[1]}};
-                    const PlaneView sink[2] {
-                        {destination + target->buffer->offset(0), target->buffer->pitch(0)},
-                        {destination + target->buffer->offset(1), target->buffer->pitch(1)}};
-                    copyNv12(source, sink, std::min(target->width, picture.width),
+                    copyNv12(source, planeViews(*target->buffer, destination).data(),
+                             std::min(target->width, picture.width),
                              std::min(target->height, picture.height));
                     target->nativeValid = true;
                     target->state = Surface::State::ready;
@@ -514,14 +519,9 @@ VAStatus Driver::submitFrame(Context& owner, VASurfaceID id, Surface& target)
             // Both sides hold packed pixels, so serve the repeat frame from
             // the shadow and leave the NV12 buffers alone.
             const std::uint8_t* packed = source->shadow->map();
-            std::uint8_t* out = target.shadow->map();
-            if (!packed || !out) return VA_STATUS_ERROR_OPERATION_FAILED;
-            const Region region {0, 0, std::min(source->width, target.width),
-                                 std::min(source->height, target.height)};
-            copyPacked32(ConstPlaneView {packed + source->shadow->offset(0), source->shadow->pitch(0)},
-                         region, PlaneView {out + target.shadow->offset(0), target.shadow->pitch(0)},
-                         region);
-            target.nativeValid = false;
+            if (!packed ||
+                !storePacked(target, planeView(*source->shadow, packed), source->width, source->height))
+                return VA_STATUS_ERROR_OPERATION_FAILED;
             target.state = Surface::State::ready;
             return VA_STATUS_SUCCESS;
         }
@@ -529,11 +529,8 @@ VAStatus Driver::submitFrame(Context& owner, VASurfaceID id, Surface& target)
         const std::uint8_t* from = source->buffer->map();
         std::uint8_t* to = target.buffer->map();
         if (!from || !to) return VA_STATUS_ERROR_OPERATION_FAILED;
-        const ConstPlaneView in[2] {{from + source->buffer->offset(0), source->buffer->pitch(0)},
-                                    {from + source->buffer->offset(1), source->buffer->pitch(1)}};
-        const PlaneView out[2] {{to + target.buffer->offset(0), target.buffer->pitch(0)},
-                                {to + target.buffer->offset(1), target.buffer->pitch(1)}};
-        copyNv12(in, out, std::min(source->width, target.width), std::min(source->height, target.height));
+        copyNv12(planeViews(*source->buffer, from).data(), planeViews(*target.buffer, to).data(),
+                 std::min(source->width, target.width), std::min(source->height, target.height));
         // The NV12 buffer is now the truth for this surface, whatever an
         // earlier packed decode left in its shadow.
         target.nativeValid = true;
@@ -617,9 +614,8 @@ VAStatus Driver::process(Context& owner, Surface& target)
         // produce, so the conversion the caller asked for is a copy.
         const std::uint8_t* packed = source->shadow->map();
         if (!packed) return VA_STATUS_ERROR_OPERATION_FAILED;
-        const ConstPlaneView in {packed + source->shadow->offset(0), source->shadow->pitch(0)};
-        const PlaneView out {to + target.buffer->offset(0), target.buffer->pitch(0)};
-        copyPacked32(in, sourceRegion, out, targetRegion);
+        copyPacked32(planeView(*source->shadow, packed), sourceRegion, planeView(*target.buffer, to),
+                     targetRegion);
         return VA_STATUS_SUCCESS;
     }
     if (source->shadow && !source->nativeValid) {
@@ -632,28 +628,14 @@ VAStatus Driver::process(Context& owner, Surface& target)
     if (source->fourcc == VA_FOURCC_NV12 && target.fourcc == VA_FOURCC_NV12) {
         if (sourceRegion.width != targetRegion.width || sourceRegion.height != targetRegion.height)
             return VA_STATUS_ERROR_UNIMPLEMENTED;
-        const ConstPlaneView in[2] {{from + source->buffer->offset(0) + sourceRegion.y * source->buffer->pitch(0) +
-                                         sourceRegion.x,
-                                     source->buffer->pitch(0)},
-                                    {from + source->buffer->offset(1) +
-                                         (sourceRegion.y / 2) * source->buffer->pitch(1) + (sourceRegion.x & ~1u),
-                                     source->buffer->pitch(1)}};
-        const PlaneView out[2] {{to + target.buffer->offset(0) + targetRegion.y * target.buffer->pitch(0) +
-                                     targetRegion.x,
-                                 target.buffer->pitch(0)},
-                                {to + target.buffer->offset(1) + (targetRegion.y / 2) * target.buffer->pitch(1) +
-                                     (targetRegion.x & ~1u),
-                                 target.buffer->pitch(1)}};
-        copyNv12(in, out, targetRegion.width, targetRegion.height);
+        copyNv12(planeViews(*source->buffer, from, sourceRegion.x, sourceRegion.y).data(),
+                 planeViews(*target.buffer, to, targetRegion.x, targetRegion.y).data(), targetRegion.width,
+                 targetRegion.height);
     } else if (source->fourcc == VA_FOURCC_NV12) {
-        const ConstPlaneView in[2] {{from + source->buffer->offset(0), source->buffer->pitch(0)},
-                                    {from + source->buffer->offset(1), source->buffer->pitch(1)}};
-        const PlaneView out {to + target.buffer->offset(0), target.buffer->pitch(0)};
-        convertNv12ToArgb(in, sourceRegion, out, targetRegion, isBt709(source->height));
+        convertNv12ToArgb(planeViews(*source->buffer, from).data(), sourceRegion, planeView(*target.buffer, to),
+                          targetRegion, isBt709(source->height));
     } else if (source->fourcc == target.fourcc) {
-        const ConstPlaneView in {from + source->buffer->offset(0), source->buffer->pitch(0)};
-        const PlaneView out {to + target.buffer->offset(0), target.buffer->pitch(0)};
-        copyPacked32(in, sourceRegion, out, targetRegion);
+        copyPacked32(planeView(*source->buffer, from), sourceRegion, planeView(*target.buffer, to), targetRegion);
     } else {
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
@@ -1387,27 +1369,20 @@ VAStatus readSurface(Driver& driver, Surface& surface, const Region& region, Ima
     const auto width = std::min<unsigned>(region.width, target.image.width);
     const auto height = std::min<unsigned>(region.height, target.image.height);
     if (surface.fourcc == VA_FOURCC_NV12 && target.image.format.fourcc == VA_FOURCC_NV12) {
-        const ConstPlaneView in[2] {
-            {source + surface.buffer->offset(0) + region.y * surface.buffer->pitch(0) + region.x,
-             surface.buffer->pitch(0)},
-            {source + surface.buffer->offset(1) + (region.y / 2) * surface.buffer->pitch(1) + (region.x & ~1u),
-             surface.buffer->pitch(1)}};
         const PlaneView out[2] {{destination + target.image.offsets[0], target.image.pitches[0]},
                                 {destination + target.image.offsets[1], target.image.pitches[1]}};
-        copyNv12(in, out, width, height);
+        copyNv12(planeViews(*surface.buffer, source, region.x, region.y).data(), out, width, height);
         return VA_STATUS_SUCCESS;
     }
     if (surface.fourcc == VA_FOURCC_NV12 && target.image.format.fourcc == VA_FOURCC_I420) {
-        const std::uint8_t* luma = source + surface.buffer->offset(0) + region.y * surface.buffer->pitch(0) + region.x;
-        const std::uint8_t* chroma = source + surface.buffer->offset(1) +
-                                     (region.y / 2) * surface.buffer->pitch(1) + (region.x & ~1u);
+        const auto [luma, chroma] = planeViews(*surface.buffer, source, region.x, region.y);
         for (unsigned row = 0; row < height; ++row)
             std::memcpy(destination + target.image.offsets[0] + std::size_t(row) * target.image.pitches[0],
-                        luma + std::size_t(row) * surface.buffer->pitch(0), width);
+                        luma.data + std::size_t(row) * luma.pitch, width);
         for (unsigned row = 0; row < (height + 1) / 2; ++row) {
             std::uint8_t* u = destination + target.image.offsets[1] + std::size_t(row) * target.image.pitches[1];
             std::uint8_t* v = destination + target.image.offsets[2] + std::size_t(row) * target.image.pitches[2];
-            const std::uint8_t* pair = chroma + std::size_t(row) * surface.buffer->pitch(1);
+            const std::uint8_t* pair = chroma.data + std::size_t(row) * chroma.pitch;
             for (unsigned column = 0; column < (width + 1) / 2; ++column) {
                 u[column] = pair[2 * column];
                 v[column] = pair[2 * column + 1];
@@ -1416,16 +1391,14 @@ VAStatus readSurface(Driver& driver, Surface& surface, const Region& region, Ima
         return VA_STATUS_SUCCESS;
     }
     if (surface.fourcc == VA_FOURCC_NV12 && target.image.format.fourcc == VA_FOURCC_ARGB) {
-        const ConstPlaneView in[2] {{source + surface.buffer->offset(0), surface.buffer->pitch(0)},
-                                    {source + surface.buffer->offset(1), surface.buffer->pitch(1)}};
         const PlaneView out {destination + target.image.offsets[0], target.image.pitches[0]};
-        convertNv12ToArgb(in, region, out, Region {0, 0, width, height}, isBt709(surface.height));
+        convertNv12ToArgb(planeViews(*surface.buffer, source).data(), region, out, Region {0, 0, width, height},
+                          isBt709(surface.height));
         return VA_STATUS_SUCCESS;
     }
     if (surface.fourcc == target.image.format.fourcc && surface.buffer->planes() == 1) {
-        const ConstPlaneView in {source + surface.buffer->offset(0), surface.buffer->pitch(0)};
         const PlaneView out {destination + target.image.offsets[0], target.image.pitches[0]};
-        copyPacked32(in, region, out, Region {0, 0, width, height});
+        copyPacked32(planeView(*surface.buffer, source), region, out, Region {0, 0, width, height});
         return VA_STATUS_SUCCESS;
     }
     return VA_STATUS_ERROR_UNIMPLEMENTED;
@@ -1474,17 +1447,10 @@ VAStatus putImage(VADriverContextP ctx, VASurfaceID id, VAImageID imageId, int s
             {source + image.offsets[0] + std::size_t(from->y) * image.pitches[0] + from->x, image.pitches[0]},
             {source + image.offsets[1] + std::size_t(from->y / 2) * image.pitches[1] + (from->x & ~1u),
              image.pitches[1]}};
-        const PlaneView out[2] {
-            {destination + surface->buffer->offset(0) + std::size_t(to->y) * surface->buffer->pitch(0) + to->x,
-             surface->buffer->pitch(0)},
-            {destination + surface->buffer->offset(1) + std::size_t(to->y / 2) * surface->buffer->pitch(1) +
-                 (to->x & ~1u),
-             surface->buffer->pitch(1)}};
-        copyNv12(in, out, to->width, to->height);
+        copyNv12(in, planeViews(*surface->buffer, destination, to->x, to->y).data(), to->width, to->height);
     } else {
         const ConstPlaneView in {source + image.offsets[0], image.pitches[0]};
-        const PlaneView out {destination + surface->buffer->offset(0), surface->buffer->pitch(0)};
-        copyPacked32(in, *from, out, *to);
+        copyPacked32(in, *from, planeView(*surface->buffer, destination), *to);
     }
     surface->state = Surface::State::ready;
     return VA_STATUS_SUCCESS;

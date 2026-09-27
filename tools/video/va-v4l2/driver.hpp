@@ -20,6 +20,8 @@
 
 namespace uml::va {
 
+struct ConstPlaneView;
+
 // The decoder profiles this driver can serve, and the V4L2 coded format each
 // one needs from the Virtio video device.
 struct CodecSupport {
@@ -163,6 +165,9 @@ public:
     // Copies a lent buffer's picture into a surface that has to keep its own
     // memory, because a client already holds it.
     bool fillFromLent(Surface& target, PixelBuffer& lent, bool packed);
+    // Copies packed pixels into a surface's RGB shadow, allocating it first,
+    // and leaves the NV12 buffer stale until somebody asks for it.
+    bool storePacked(Surface& target, const ConstPlaneView& source, unsigned width, unsigned height);
     VAStatus process(Context& context, Surface& target);
 
     // Fills a surface's NV12 buffer from its RGB shadow, if it has one and the
