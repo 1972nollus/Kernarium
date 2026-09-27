@@ -14,7 +14,7 @@ Add a native GPU regression for single-sample controls, default and maintenance1
  create mode 100644 src/kosmickrisp/vulkan/tests/test_maintenance10_resolve.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 88c15593c485e525990731f8c1122d7e4d48f039..06a8350206f43333cfbf9e69d3b5a95d2fe8571b 100644
+index 8d678acfc3c7a73aac5ec181d6c7fb5c852c0af6..93f7572fcfeea6fd8b10dda589c8953c58d1ffe6 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -390,8 +390,6 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,

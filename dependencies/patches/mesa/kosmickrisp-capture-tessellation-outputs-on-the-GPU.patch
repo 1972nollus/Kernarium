@@ -59,7 +59,7 @@ index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..abc66ebb70f22a7a821acfb4867327d1
 +   grids[17] = 1;
  }
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 5907bb25ddeeb596c1271b01ee6f5731fa86ebb9..cec6a46dc544107e257f072c898132d827f74a97 100644
+index 03c9be79c5316bcaca19607ecbc991c393a71d6c..236274e961f0b41844a1225e02d71095ccb2bb4c 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1471,6 +1471,7 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
@@ -146,7 +146,7 @@ index 5907bb25ddeeb596c1271b01ee6f5731fa86ebb9..cec6a46dc544107e257f072c898132d8
        grid_vs = kk_grid_indirect(gfx->tess.indirect_ptr.gpu + 0u * grid_stride);
        grid_tcs =
           kk_grid_indirect(gfx->tess.indirect_ptr.gpu + 1u * grid_stride);
-@@ -2943,6 +2932,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2961,6 +2950,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                               struct kk_draw_data draw, enum mesa_prim prim)
  {
     struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
@@ -154,7 +154,7 @@ index 5907bb25ddeeb596c1271b01ee6f5731fa86ebb9..cec6a46dc544107e257f072c898132d8
     struct kk_graphics_state *gfx = &cmd->state.gfx;
     const struct poly_gs_info *gsi = &vs->info.vs.transform_feedback;
     bool indirect = kk_grid_is_indirect(draw.grid);
-@@ -2963,7 +2953,8 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2981,7 +2971,8 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
           .vp = gfx->per_draw_data.vertex_params,
           .p = gfx->per_draw_data.geometry_params,
           .heap = kk_heap(cmd),
@@ -164,7 +164,7 @@ index 5907bb25ddeeb596c1271b01ee6f5731fa86ebb9..cec6a46dc544107e257f072c898132d8
           .index_size_B = draw.index.el_size_B,
           .index_buffer_range_el =
              draw.index.el_size_B
-@@ -2978,7 +2969,11 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2996,7 +2987,11 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
     }
  
     mtl_compute_encoder *enc = cs_get_compute(cmd, true);
@@ -177,7 +177,7 @@ index 5907bb25ddeeb596c1271b01ee6f5731fa86ebb9..cec6a46dc544107e257f072c898132d8
     struct mtl_size vs_local_size = {64, 1, 1};
  
     mtl_barrier_after_encoder_stages(enc, MTL_STAGE_DISPATCH,
-@@ -3343,15 +3338,24 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3324,15 +3319,24 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
                                     data->prim))
           return;
  
@@ -205,7 +205,7 @@ index 5907bb25ddeeb596c1271b01ee6f5731fa86ebb9..cec6a46dc544107e257f072c898132d8
  
        const enum mesa_prim source_raster_prim =
           emulate_geometry ? vs->info.vs.geometry.mode
-@@ -3375,7 +3379,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3356,7 +3360,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
         * requested provoking vertex itself.  Keep its non-indexed vertex IDs
         * intact: they also address the generated XFB records. */
        if (rasterize && provoking_last && !emulate_line_raster &&

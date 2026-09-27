@@ -257,7 +257,7 @@ index 3db643cfd996080847810d9198b1cf4134077a2f..3761d06afef8be760d62ad76db3bd653
  void cs_end(struct kk_cmd_buffer *cmd);
  void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 55332469061f75c7b4859313f203fd45766a8559..c1c37156776d9297764b8cf91d0670eec0fe1cb8 100644
+index 87cf8e5cc3485e42c08c47ef9fce84c955766f29..fb42389c5db398474c15ca1756179fc1b731b819 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -353,6 +353,7 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,

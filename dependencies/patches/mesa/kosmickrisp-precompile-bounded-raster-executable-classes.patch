@@ -183,7 +183,7 @@ index 06918dae6c8d4f5d2ad731b4a129123a8da59288..3db643cfd996080847810d9198b1cf41
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 06a8350206f43333cfbf9e69d3b5a95d2fe8571b..5907bb25ddeeb596c1271b01ee6f5731fa86ebb9 100644
+index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c393a71d6c 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -15,6 +15,7 @@
@@ -631,7 +631,7 @@ index 06a8350206f43333cfbf9e69d3b5a95d2fe8571b..5907bb25ddeeb596c1271b01ee6f5731
     lines.index.gpu = (struct kk_addr_range){0};
     lines.index.el_size_B = 0;
     lines.vertex_offset = 0;
-@@ -3178,7 +3213,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3159,7 +3194,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
     bool tess = cmd->state.shaders[MESA_SHADER_TESS_EVAL];
     struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
     bool geometry = vs && vs->info.vs.geometry_shader_emulation;
@@ -641,7 +641,7 @@ index 06a8350206f43333cfbf9e69d3b5a95d2fe8571b..5907bb25ddeeb596c1271b01ee6f5731
     struct kk_draw_data draw = {
        .index.gpu = data->index_buffer,
        .index.el_size_B = data->index_buffer_el_size_B,
-@@ -3204,7 +3240,7 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3185,7 +3221,7 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
        draw.vertex_offset = draw_cmd.vertexOffset;
  
        uint64_t index_offset =
@@ -650,7 +650,7 @@ index 06a8350206f43333cfbf9e69d3b5a95d2fe8571b..5907bb25ddeeb596c1271b01ee6f5731
        draw.index.gpu.addr += index_offset;
        draw.index.gpu.range = index_offset < draw.index.gpu.range
                                  ? draw.index.gpu.range - index_offset
-@@ -3246,11 +3282,12 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3227,11 +3263,12 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        return;
  
     bool tess = cmd->state.shaders[MESA_SHADER_TESS_EVAL];
@@ -665,7 +665,7 @@ index 06a8350206f43333cfbf9e69d3b5a95d2fe8571b..5907bb25ddeeb596c1271b01ee6f5731
     const bool emulate_line_raster = vs->info.vs.line_raster_emulation;
     const bool materialize_line_raster =
        vs->info.vs.line_raster_materialize;
-@@ -3261,7 +3298,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3242,7 +3279,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        cmd->vk.dynamic_graphics_state.rs.provoking_vertex ==
        VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
     const bool rewrite_direct_provoking =
@@ -674,7 +674,7 @@ index 06a8350206f43333cfbf9e69d3b5a95d2fe8571b..5907bb25ddeeb596c1271b01ee6f5731
        !emulate_transform_feedback && !emulate_polygon_points &&
        !emulate_line_raster &&
        u_reduced_prim(data->prim) != MESA_PRIM_POINTS;
-@@ -3278,7 +3315,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3259,7 +3296,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
          data->prim == MESA_PRIM_TRIANGLE_FAN) ||
         (emulate_transform_feedback && data->indexed && data->restart) ||
         (emulate_geometry && data->indexed && data->restart) ||
@@ -684,7 +684,7 @@ index 06a8350206f43333cfbf9e69d3b5a95d2fe8571b..5907bb25ddeeb596c1271b01ee6f5731
          data->restart) ||
         (!emulate_geometry && !emulate_polygon_points && polygon_as_points &&
          is_polygon_primitive(data->prim) &&
-@@ -3314,8 +3352,6 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3295,8 +3333,6 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        } else if (emulate_transform_feedback)
           draw_data =
              kk_launch_transform_feedback(cmd, draw_data, data->prim);
@@ -693,7 +693,7 @@ index 06a8350206f43333cfbf9e69d3b5a95d2fe8571b..5907bb25ddeeb596c1271b01ee6f5731
  
        const enum mesa_prim source_raster_prim =
           emulate_geometry ? vs->info.vs.geometry.mode
-@@ -3325,7 +3361,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3306,7 +3342,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        if (materialize_line_raster) {
           draw_data = kk_launch_materialized_line_raster(
              cmd, draw_data, source_raster_prim);
@@ -702,7 +702,7 @@ index 06a8350206f43333cfbf9e69d3b5a95d2fe8571b..5907bb25ddeeb596c1271b01ee6f5731
           draw_data =
              kk_launch_line_raster(cmd, draw_data, data->prim);
        }
-@@ -3338,12 +3374,13 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3319,12 +3355,13 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        /* The XFB pass-through raster shader sources flat outputs from the
         * requested provoking vertex itself.  Keep its non-indexed vertex IDs
         * intact: they also address the generated XFB records. */
