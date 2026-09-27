@@ -164,6 +164,17 @@ if "$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/16k-missing.nm" \
 	printf '%s\n' "16 KiB import audit accepted a missing active symbol" >&2
 	exit 1
 fi
+{ cat "$WORK_DIRECTORY/16k.nm"; printf '%s\n' \
+	"                 U _pthread_sigmask"; } > "$WORK_DIRECTORY/16k-thread-mask.nm"
+"$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/16k-thread-mask.nm" \
+	--page-size 16k --slice arm64 >/dev/null
+{ cat "$WORK_DIRECTORY/16k.nm"; printf '%s\n' \
+	"                 U sigprocmask"; } > "$WORK_DIRECTORY/16k-process-mask.nm"
+if "$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/16k-process-mask.nm" \
+	--page-size 16k --slice arm64 >/dev/null 2>&1; then
+	printf '%s\n' "import audit accepted the process-wide sigprocmask" >&2
+	exit 1
+fi
 
 printf '%s\n' \
 	"independent ABI identity and page-specific import negative tests passed"

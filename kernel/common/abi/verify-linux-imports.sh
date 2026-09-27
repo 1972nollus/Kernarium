@@ -142,6 +142,16 @@ awk '{
 			print $field
 }' "$WORK_DIRECTORY/nm" | LC_ALL=C sort -u > "$WORK_DIRECTORY/imported"
 
+# Darwin's sigprocmask() sets the mask of every thread in the process, vCPU
+# carriers included; host code must change a mask with pthread_sigmask().
+if awk '{
+	for (field = 1; field <= NF; ++field)
+		if ($field ~ /^_?sigprocmask([$].*)?$/)
+			found = 1
+} END { exit !found }' "$WORK_DIRECTORY/nm"; then
+	fail "the Linux image imports the process-wide Darwin sigprocmask"
+fi
+
 cmp -s "$WORK_DIRECTORY/expected" "$WORK_DIRECTORY/imported" || {
 	printf '%s\n' "active declared-only bridge symbols:" >&2
 	comm -23 "$WORK_DIRECTORY/expected" "$WORK_DIRECTORY/imported" >&2

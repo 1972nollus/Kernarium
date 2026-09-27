@@ -60,7 +60,8 @@ def main() -> None:
             '-o', str(executable),
         ], check=True, timeout=45)
         subprocess.run([str(executable)], check=True, timeout=10)
-    print('verified kernel console preserves queued host-terminal input')
+    print('verified kernel console preserves queued host-terminal input '
+          'and other threads\' signal masks')
 
 
 if __name__ == '__main__':
