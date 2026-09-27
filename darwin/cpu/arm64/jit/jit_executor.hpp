@@ -50,6 +50,7 @@ struct JitCacheValidationDiagnostics final {
 	std::uint64_t validation_sequence_races{};
 	std::uint64_t cache_replacements{};
 	std::uint64_t arena_resets{};
+	std::uint64_t link_table_resets{};
 	std::uint64_t private_validation_word_installs{};
 	std::uint64_t shared_validation_word_installs{};
 	std::uint64_t direct_link_refusals{};

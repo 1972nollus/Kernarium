@@ -513,6 +513,83 @@ void process_switches_retain_only_their_own_validated_links()
 	run(0, true, 99);
 }
 
+/* Link records are keyed by address space, so each short-lived process
+ * leaves its records behind. Many more processes than the tables hold must
+ * still get linked blocks: a full table recycles the cache instead of
+ * publishing unlinked exits.
+ */
+void link_many_short_lived_address_spaces(
+	JitExecutorDiagnosticsOptions diagnostics, unsigned long first_generation)
+{
+	constexpr std::uint64_t base = 0x158'0000;
+	constexpr auto direct_target = base + 8;
+	constexpr auto indirect_source = base + 0x100;
+	constexpr auto indirect_target = base + 0x108;
+	// Each process needs four direct records and one indirect site.
+	constexpr std::size_t processes = 24;
+	JitExecutor executor{JitExecutorOptions{}, diagnostics};
+	StaticGuestMemory memory;
+	for (std::size_t index = 0; index < processes; ++index) {
+		const auto generation = first_generation + index;
+		const auto value = static_cast<unsigned>(index + 1);
+		JitBacking backing{1};
+		backing.put32(0, branch(base, direct_target));
+		backing.put32(direct_target - base, move_immediate(0, value));
+		backing.put32(direct_target - base + 4, system_call);
+		backing.put32(indirect_source - base, branch_register(5));
+		backing.put32(indirect_target - base, move_immediate(1, value));
+		backing.put32(indirect_target - base + 4, system_call);
+		JitMapping mapping{generation, base, backing, 1};
+		arm64::CpuState cpu{};
+		/* The cold pass stops at the uncompiled target and runs it in the
+		 * same execution, where a pending indirect site trains; the next
+		 * pass from the source must run as one linked chain. */
+		const auto cold_then_linked = [&](std::uint64_t source) {
+			cpu.pc = source;
+			require(executor.begin_execution(generation, cpu.pc));
+			std::size_t executed = 0;
+			require(executor.run_block(cpu, memory, generation,
+					executed) ==
+				::uml::cpu::EngineEvent::continued);
+			require(executed == 1);
+			require(executor.run_block(cpu, memory, generation,
+					executed) ==
+				::uml::cpu::EngineEvent::system_call);
+			require(executed == 2);
+			executor.end_execution();
+			cpu.pc = source;
+			cpu.registers[0] = 0;
+			cpu.registers[1] = 0;
+			const auto linked =
+				run_once(executor, memory, generation, cpu);
+			require(linked.event ==
+				::uml::cpu::EngineEvent::system_call);
+			require(linked.executed == 3);
+		};
+
+		cold_then_linked(base);
+		require(cpu.registers[0] == value);
+		cpu.registers[5] = indirect_target;
+		cold_then_linked(indirect_source);
+		require(cpu.registers[1] == value);
+	}
+	const auto cache = executor.cache_validation_diagnostics();
+	require(cache.link_table_resets != 0);
+	require(cache.arena_resets == 0);
+	require(cache.target_link_refusals == 0);
+	require(cache.direct_link_refusals == 0);
+	require(executor.indirect_link_diagnostics().trains == processes);
+}
+
+void exited_address_spaces_do_not_exhaust_link_tables()
+{
+	// Eight direct records hold two processes; four sites hold four.
+	link_many_short_lived_address_spaces(
+		{.direct_link_capacity = 8}, 8400);
+	link_many_short_lived_address_spaces(
+		{.indirect_link_capacity = 4}, 8500);
+}
+
 void cache_replacement_keeps_validation_metadata_bounded()
 {
 	constexpr unsigned long generation = 8106;
@@ -1613,6 +1690,7 @@ int main()
 	cross_page_block_is_validated_completely();
 	sequence_change_deactivates_unvalidated_successor_link();
 	process_switches_retain_only_their_own_validated_links();
+	exited_address_spaces_do_not_exhaust_link_tables();
 	cache_replacement_keeps_validation_metadata_bounded();
 	arena_reset_discards_saved_validation_words();
 	arena_reset_recompiles_link_descriptors();

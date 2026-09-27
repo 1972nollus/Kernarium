@@ -24,6 +24,7 @@ void profile_jit_compilation(
 );
 void profile_jit_cache_replacement(bool eviction) noexcept;
 void profile_jit_arena_reset() noexcept;
+void profile_jit_link_table_reset() noexcept;
 void profile_jit_link_table_state(
     std::size_t direct_size, std::size_t direct_capacity,
     std::size_t indirect_size, std::size_t indirect_capacity) noexcept;
@@ -48,6 +49,7 @@ inline constexpr void profile_jit_compilation(
 ) noexcept {}
 inline constexpr void profile_jit_cache_replacement(bool) noexcept {}
 inline constexpr void profile_jit_arena_reset() noexcept {}
+inline constexpr void profile_jit_link_table_reset() noexcept {}
 inline constexpr void profile_jit_link_table_state(
     std::size_t, std::size_t, std::size_t, std::size_t) noexcept {}
 inline constexpr void profile_jit_target_link_refusal(bool) noexcept {}

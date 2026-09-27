@@ -171,17 +171,31 @@ namespace uml::cpu::arm64 {
         };
         if (!valid_compilation(compiled))
           return run_single_instruction(cpu, instructions[0], executed);
-        auto stored = arena_.store_block(
-            cpu.pc, compiled.words, compiled.relocations, {}, links_,
-            empty_link_, generation);
+        /* Link records are keyed by address-space generation and leave only
+         * with the whole cache, so exited address spaces keep theirs. A site
+         * refused by a table that holds records recycles the cache, as a
+         * full arena or direct-link table does, instead of publishing an
+         * unlinked block. */
+        jit::detail::ExecutableArena::StoredBlock stored{.links_exhausted = true};
+        if (compiled.indirect_link_refusals == 0 || indirect_links_.size() == 0)
+          stored = arena_.store_block(
+              cpu.pc, compiled.words, compiled.relocations, {}, links_,
+              empty_link_, generation);
         if (stored) {
           auto shared = publish_shared_translation(cpu.pc, fetched, compiled);
           block = install_compilation(compiled, stored, shared);
         } else {
-          profile_jit_arena_reset();
+          if (stored.links_exhausted) {
+            profile_jit_link_table_reset();
 #if UML_JIT_RUNTIME_DIAGNOSTICS
-          ++cache_validation_diagnostics_.arena_resets;
+            ++cache_validation_diagnostics_.link_table_resets;
 #endif
+          } else {
+            profile_jit_arena_reset();
+#if UML_JIT_RUNTIME_DIAGNOSTICS
+            ++cache_validation_diagnostics_.arena_resets;
+#endif
+          }
           clear_cache();
           arena_.reset();
 
