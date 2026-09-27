@@ -31,6 +31,9 @@ import sys
 import tomllib
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"))
+from contract_checks import parse_assignments  # noqa: E402
+
 PREFIX = "venus_"
 # The EGL and GLES libraries the Android EGL loader resolves through
 # ro.hardware.egl, by the names it looks for.
@@ -572,24 +575,7 @@ def repair(root: Path, config: Path) -> None:
     )
 
 
-ASSIGNMENT = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([0-9]+))$")
 FLAG_FIELDS = ("cflags", "conlyflags", "cppflags")
-
-
-def parse_metadata(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line_number, raw in enumerate(path.read_text().splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = ASSIGNMENT.fullmatch(line)
-        if match is None:
-            raise SystemExit(
-                f"generate-mesa-venus-port.py: {path} line {line_number} is malformed"
-            )
-        key, quoted, numeric = match.groups()
-        values[key] = quoted if quoted is not None else numeric
-    return values
 
 
 def git(directory: Path, *arguments: str) -> str:
@@ -609,7 +595,10 @@ def git(directory: Path, *arguments: str) -> str:
 
 def verify_converter(android_root: Path, converter: Path) -> None:
     """Refuse any converter but the pinned upstream commit plus the series."""
-    metadata = parse_metadata(android_root / "third_party/meson2hermetic/metadata.env")
+    metadata = parse_assignments(
+        android_root / "third_party/meson2hermetic/metadata.env",
+        lambda message: SystemExit(f"generate-mesa-venus-port.py: {message}"),
+    )
     expected = metadata["MESON2HERMETIC_FINAL_TREE"]
     checkout = converter.resolve().parent
     tree = git(checkout, "rev-parse", "HEAD^{tree}")

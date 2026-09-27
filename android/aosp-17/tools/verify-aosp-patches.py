@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"))
+from contract_checks import parse_assignments  # noqa: E402
 import patch_series  # noqa: E402
 
 
@@ -54,23 +56,6 @@ def run(*command: str, cwd: Path | None = None, payload: bytes | None = None) ->
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def assignments(path: Path) -> dict[str, str]:
-    pattern = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([0-9]+))$")
-    values: dict[str, str] = {}
-    for number, raw in enumerate(path.read_text().splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = pattern.fullmatch(line)
-        if match is None:
-            fail(f"{path}:{number}: malformed assignment")
-        key, quoted, numeric = match.groups()
-        if key in values:
-            fail(f"{path}:{number}: duplicate assignment {key}")
-        values[key] = quoted if quoted is not None else numeric
-    return values
 
 
 def table(path: Path, expected_header: tuple[str, ...]) -> list[tuple[str, ...]]:
@@ -257,7 +242,7 @@ def main() -> None:
     args = parser.parse_args()
     android_root = args.android_root.resolve()
 
-    metadata = assignments(android_root / "metadata/aosp.env")
+    metadata = parse_assignments(android_root / "metadata/aosp.env", fail)
     base_manifest = android_root / "metadata/base-manifest.xml"
     if digest(base_manifest) != metadata.get("ANDROID17_BASE_MANIFEST_SHA256"):
         fail("resolved base-manifest digest differs from AOSP metadata")

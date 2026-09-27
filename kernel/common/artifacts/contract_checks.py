@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 
 import hashlib
 import re
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import NoReturn
 
@@ -16,14 +17,49 @@ HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 ASSIGNMENT_RE = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([0-9]+))$")
 
 
+def parse_assignments(
+    path: Path, error: Callable[[str], BaseException] = ValueError
+) -> dict[str, str]:
+    """Parse KEY='value' and KEY=digits lines, raising error(message) on anything else."""
+    if not path.is_file() or path.is_symlink():
+        raise error(f"metadata file is missing or unsafe: {path}")
+    values: dict[str, str] = {}
+    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = ASSIGNMENT_RE.fullmatch(line)
+        if match is None:
+            raise error(f"{path}:{line_number}: malformed metadata assignment")
+        key, quoted, numeric = match.groups()
+        if key in values:
+            raise error(f"{path}:{line_number}: duplicate metadata key {key}")
+        values[key] = quoted if quoted is not None else numeric
+    return values
+
+
+def replace_assignment(
+    text: str, key: str, value: str, error: Callable[[str], BaseException] = ValueError
+) -> str:
+    """Replace the one assignment of key in metadata text."""
+    pattern = re.compile(rf"^{re.escape(key)}=(?:'[^']*'|[0-9]+)$", re.MULTILINE)
+    updated, count = pattern.subn(f"{key}={value}", text)
+    if count != 1:
+        raise error(f"metadata does not define {key} exactly once")
+    return updated
+
+
 class ContractChecks:
     """Checks that fail with one verifier's message prefix."""
 
     def __init__(self, prefix: str) -> None:
         self.prefix = prefix
 
+    def error(self, message: str) -> SystemExit:
+        return SystemExit(f"{self.prefix}: {message}")
+
     def fail(self, message: str) -> NoReturn:
-        raise SystemExit(f"{self.prefix}: {message}")
+        raise self.error(message)
 
     def require_exact_keys(self, value: object, expected: set[str], label: str) -> dict:
         if not isinstance(value, dict):
@@ -66,22 +102,7 @@ class ContractChecks:
         return text
 
     def parse_env(self, path: Path) -> dict[str, str]:
-        """Parse KEY='value' and KEY=digits lines, rejecting anything else."""
-        if not path.is_file() or path.is_symlink():
-            self.fail(f"metadata file is missing or unsafe: {path}")
-        values: dict[str, str] = {}
-        for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            match = ASSIGNMENT_RE.fullmatch(line)
-            if match is None:
-                self.fail(f"{path}:{line_number}: malformed metadata assignment")
-            key, quoted, numeric = match.groups()
-            if key in values:
-                self.fail(f"{path}:{line_number}: duplicate metadata key {key}")
-            values[key] = quoted if quoted is not None else numeric
-        return values
+        return parse_assignments(path, self.error)
 
 
 def sha256_path(path: Path) -> str:
