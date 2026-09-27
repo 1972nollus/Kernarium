@@ -82,13 +82,6 @@ public:
 			static_cast<ssize_t>(bytes.size()));
 	}
 
-	template<typename Value>
-	void put_object(std::size_t offset, const Value &value)
-	{
-		require(pwrite(fd_, &value, sizeof(value), offset) ==
-			static_cast<ssize_t>(sizeof(value)));
-	}
-
 private:
 	int fd_{-1};
 };
