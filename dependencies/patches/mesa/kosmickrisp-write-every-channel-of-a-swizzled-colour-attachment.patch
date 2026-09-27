@@ -164,7 +164,7 @@ index 0000000000000000000000000000000000000000..a99be20458da387cf5b3d63187d3564a
 +                                     nir_metadata_control_flow, (void *)state);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 7c25905dedebd21a8a13dea4000dfd7a70014697..2080eeeb9fcef8526f85c5da414d00ad03a266da 100644
+index 2d0468f1a6eca1d72f63addd44de68c8dff29ad8..d4072cc5da2a9ab34d2123c4d6f46f41e1d5eb64 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -280,57 +280,6 @@ type_size_vec4(const struct glsl_type *type, bool bindless)

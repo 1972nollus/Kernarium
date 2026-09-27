@@ -216,7 +216,7 @@ index 03c9be79c5316bcaca19607ecbc991c393a71d6c..236274e961f0b41844a1225e02d71095
              kk_rewrite_raster_provoking(cmd, draw_data, raster_prim);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 040e915000b63ee3a2d912585be5738581bef53d..b13ac2393381a6bcccd763d0985e7f6c3d12963e 100644
+index aed781e4926b73c38e19e5b14146c5eaa4d7292e..70cf3eed0bb94b2b9d5d6dc2951516db7b075081 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -1218,6 +1218,7 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,

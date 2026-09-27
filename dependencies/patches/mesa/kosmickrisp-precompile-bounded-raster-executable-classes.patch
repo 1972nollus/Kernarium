@@ -34,7 +34,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  src/kosmickrisp/vulkan/kk_physical_device.c   |    4 +-
  src/kosmickrisp/vulkan/kk_raster_edge.h       |   29 +
  src/kosmickrisp/vulkan/kk_raster_variant.h    |  112 +
- src/kosmickrisp/vulkan/kk_shader.c            | 1955 +++++++++++------
+ src/kosmickrisp/vulkan/kk_shader.c            | 1956 +++++++++++------
  src/kosmickrisp/vulkan/kk_shader.h            |   14 +-
  src/kosmickrisp/vulkan/meson.build            |   35 +
  .../vulkan/tests/line_raster_cache_state.h    |    1 +
@@ -52,7 +52,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  .../vulkan/tests/test_line_raster_cache.cpp   |    2 +
  .../vulkan/tests/test_raster_discard.cpp      |  500 +++++
  .../vulkan/tests/test_raster_variant.c        |   80 +
- 26 files changed, 2732 insertions(+), 774 deletions(-)
+ 26 files changed, 2732 insertions(+), 775 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_raster_edge.h
  create mode 100644 src/kosmickrisp/vulkan/kk_raster_variant.h
  create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag
@@ -975,7 +975,7 @@ index 0000000000000000000000000000000000000000..9b21bfd9fdc6a6a11859d163b4e37e8a
 +   return mask;
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be5738581bef53d 100644
+index 04c65c2bad326edcb321bf7a103ab44cef80553c..aed781e4926b73c38e19e5b14146c5eaa4d7292e 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -15,6 +15,7 @@
@@ -3024,10 +3024,10 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
           i == geometry_shader || i == transform_feedback_raster_shader,
 -         i == 0 && line_raster_emulation && !line_raster_materialize,
 +         i == 0 && generated_raster && !line_raster_materialize,
-          state && enabled_features &&
-             enabled_features->legacyVertexAttributes &&
-             BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_VI),
-@@ -3773,14 +4449,16 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+          byte_strides, pipeline_statistics, pAllocator, &shaders[i]);
+ 
+       if (result != VK_SUCCESS) {
+@@ -3770,14 +4446,16 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
  
        if (i == 0 && polygon_point_emulation)
           shaders[i]->info.vs.polygon_point_emulation = true;
@@ -3048,7 +3048,7 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
           shaders[i]->info.vs.line_raster_stipple = line_raster_stipple;
           shaders[i]->info.vs.line_raster_materialize =
              line_raster_materialize;
-@@ -3791,6 +4469,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3788,6 +4466,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                                       : line_raster_prim)
                 : line_raster_prim;
           shaders[i]->info.vs.line_raster_outputs = line_raster_outputs;
@@ -3057,9 +3057,9 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
        }
  
        if (i == 0 && transform_feedback_emulation) {
-@@ -3933,11 +4613,10 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -3932,11 +4612,10 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
                          const VkAllocationCallbacks *pAllocator,
-                         struct vk_shader **shaders_out)
+                         struct vk_shader **shaders_out, bool byte_strides)
  {
 -   /* A deferred GPL subset or dynamic vertex input never gets here: neither
 -    * has a complete draw configuration yet, so variant construction happens
@@ -3073,14 +3073,15 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
     if (!state || !kk_graphics_state_is_complete(state) || shader_count == 0 ||
         infos[0].stage != MESA_SHADER_VERTEX)
        return kk_compile_shaders_single(device, shader_count, infos, state,
-@@ -3963,82 +4642,101 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -3962,83 +4641,101 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
                           infos[i].stage == MESA_SHADER_GEOMETRY;
     const enum mesa_prim primitive =
        kk_graphics_raster_primitive(shader_count, infos, state);
 -   if (!kk_line_raster_has_native_variant(state, primitive, fixed_primitive))
 -      return kk_compile_shaders_single(device, shader_count, infos, state,
 -                                       enabled_features, pAllocator,
--                                       shaders_out, pipeline_statistics);
+-                                       shaders_out, byte_strides,
+-                                       pipeline_statistics);
 +   const uint32_t mask =
 +      kk_raster_variant_mask(state, primitive, fixed_primitive);
 +   assert(mask != 0);
@@ -3135,7 +3136,7 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
 -
 -   VkResult result = kk_compile_shaders_single(
 -      device, shader_count, infos, &native, enabled_features, pAllocator,
--      shaders_out, pipeline_statistics);
+-      shaders_out, byte_strides, pipeline_statistics);
 -   if (result != VK_SUCCESS) {
 -      for (uint32_t i = 0; i < shader_count; i++)
 -         ralloc_free(generated_infos[i].nir);
@@ -3180,7 +3181,7 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
 -   struct vk_shader *generated_shaders[shader_count];
 -   result = kk_compile_shaders_single(
 -      device, shader_count, generated_infos, &generated, enabled_features,
--      pAllocator, generated_shaders, pipeline_statistics);
+-      pAllocator, generated_shaders, byte_strides, pipeline_statistics);
 -   if (result != VK_SUCCESS) {
 -      for (uint32_t i = 0; i < shader_count; i++) {
 -         kk_shader_destroy(device,
@@ -3189,7 +3190,7 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
 +      struct vk_shader *compiled[shader_count];
 +      result = kk_compile_shaders_single(
 +         device, shader_count, variant_infos, &executable, enabled_features,
-+         pAllocator, compiled, pipeline_statistics);
++         pAllocator, compiled, byte_strides, pipeline_statistics);
 +      if (result != VK_SUCCESS)
 +         goto fail;
 +
@@ -3241,7 +3242,7 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
  }
  
  static VkResult
-@@ -4710,7 +5408,7 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
+@@ -4709,7 +5406,7 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
        if (shader->info.vs.line_raster_materialize)
           kk_msl_data_serialize(&shader->line_raster_materialize_msl, blob);
  
@@ -3250,7 +3251,7 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
           kk_msl_data_serialize(&shader->line_stipple_prefix_msl, blob);
  
        if (shader->info.vs.geometry_shader_emulation) {
-@@ -4721,11 +5419,14 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
+@@ -4720,11 +5417,14 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
           kk_msl_data_serialize(&shader->geometry_pre_gs_msl, blob);
        }
  
@@ -3270,7 +3271,7 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
        }
     }
  
-@@ -4775,11 +5476,14 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -4774,11 +5474,14 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
     if (blob->overrun || (unsigned)info.stage >= MESA_SHADER_STAGES)
        return vk_error(dev, VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT);
  
@@ -3288,7 +3289,7 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
           return vk_error(dev, VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT);
     }
  
-@@ -4842,7 +5546,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -4841,7 +5544,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
              goto fail;
        }
  
@@ -3297,7 +3298,7 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
           result = kk_msl_data_deserialize(blob,
                                            &shader->line_stipple_prefix_msl);
           if (result != VK_SUCCESS)
-@@ -4867,19 +5571,22 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -4866,19 +5569,22 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
              goto fail;
        }
  
@@ -3333,7 +3334,7 @@ index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be57385
           }
        }
     }
-@@ -5072,10 +5779,14 @@ kk_cmd_select_line_raster_variant(struct kk_cmd_buffer *cmd)
+@@ -5071,10 +5777,14 @@ kk_cmd_select_line_raster_variant(struct kk_cmd_buffer *cmd)
     const enum mesa_prim primitive = fixed_primitive
                                        ? owner->info.vs.raster_primitive
                                        : vk_topology_to_mesa(dyn->ia.primitive_topology);

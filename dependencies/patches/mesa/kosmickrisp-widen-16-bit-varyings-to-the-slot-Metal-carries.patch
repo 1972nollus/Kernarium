@@ -190,7 +190,7 @@ index 42716090f5c48b55a0081ec11684e307622b7498..2710b0b940ccdd3d2c59cb43ff11edae
        .uniformAndStorageBuffer16BitAccess = true,
        .variablePointers = true,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 2080eeeb9fcef8526f85c5da414d00ad03a266da..c54a69b985bacfc6f737490d492d31bc131a60b6 100644
+index d4072cc5da2a9ab34d2123c4d6f46f41e1d5eb64..5282044299e069282cf05a7c88f35b0ad1880809 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -5193,6 +5193,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
