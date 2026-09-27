@@ -7,7 +7,6 @@
 #include "protocol.hpp"
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cerrno>
@@ -19,7 +18,6 @@
 #include <stdexcept>
 #include <string>
 #include <sys/uio.h>
-#include <utility>
 #include <unistd.h>
 
 extern "C" {
@@ -255,13 +253,8 @@ VirglRenderer::VirglRenderer()
         }
         initialized = true;
         if (capabilityReportEnabled()) {
-            constexpr std::array versions {
-                std::pair {3U, 0U},
-                std::pair {3U, 1U},
-                std::pair {3U, 2U},
-            };
-            for (const auto [major, minor] : versions)
-                reportContextProbe(provider_->probeContext(major, minor));
+            // vrend asks for 4.6 first, the core context this provider serves.
+            reportContextProbe(provider_->probeContext(4, 6));
             reportCapset(virglCapsetId, capset(virglCapsetId));
             reportCapset(virgl2CapsetId, capset(virgl2CapsetId));
             reportCapset(venusCapsetId, capset(venusCapsetId));

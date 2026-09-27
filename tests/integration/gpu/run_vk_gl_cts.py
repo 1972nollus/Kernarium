@@ -2822,9 +2822,10 @@ def parse_gpu_capability_report(transcript: str) -> dict[str, Any]:
             continue
         raise CampaignError(f"malformed GPU capability marker: {marker[:120]}")
 
-    required_contexts = {(3, 0), (3, 1), (3, 2)}
-    if set(contexts) != required_contexts:
-        raise CampaignError("host capability report omitted an ES 3.x request")
+    if set(contexts) != {(4, 6)}:
+        raise CampaignError(
+            "host capability report omitted the desktop GL 4.6 core request"
+        )
     serialized_contexts: list[dict[str, Any]] = []
     for requested in sorted(contexts):
         context = contexts[requested]
@@ -2838,7 +2839,7 @@ def parse_gpu_capability_report(transcript: str) -> dict[str, Any]:
             if context["egl_error"] != 0x3000:
                 raise CampaignError("successful host context has an EGL error")
             if tuple(context["actual"]) < requested:
-                raise CampaignError("host context is below its requested ES version")
+                raise CampaignError("host context is below its requested GL version")
             for field in (
                 "vendor",
                 "renderer",

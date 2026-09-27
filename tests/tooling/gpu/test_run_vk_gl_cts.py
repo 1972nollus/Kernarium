@@ -323,15 +323,15 @@ def framed_artifact(name: str, payload: bytes) -> str:
 def gpu_capability_report(*, venus_capset: bool = False) -> str:
     lines: list[str] = []
     extensions = ["GL_EXT_alpha", "GL_EXT_beta"]
-    for major, minor in ((3, 0), (3, 1), (3, 2)):
+    for major, minor in ((4, 6),):
         encode = lambda value: value.encode().hex()
         lines.append(
             "UML_GPU_HOST_CONTEXT|"
             f"requested={major}.{minor}|created=1|egl_error=12288|"
             f"actual={major}.{minor}|vendor_hex={encode('vendor')}|"
             f"renderer_hex={encode('renderer')}|"
-            f"version_hex={encode(f'OpenGL ES {major}.{minor}')}|"
-            f"glsl_hex={encode('GLSL ES')}|extensions={len(extensions)}"
+            f"version_hex={encode(f'{major}.{minor} (Core Profile)')}|"
+            f"glsl_hex={encode('4.60')}|extensions={len(extensions)}"
         )
         lines.extend(
             "UML_GPU_HOST_EXTENSION|"
@@ -1405,7 +1405,7 @@ native_display_cleanup
         parsed = cts.parse_gpu_capability_report(report)
         self.assertEqual(
             [context["requested"] for context in parsed["host_contexts"]],
-            [[3, 0], [3, 1], [3, 2]],
+            [[4, 6]],
         )
         self.assertEqual(
             [capset["id"] for capset in parsed["virgl_capsets"]], [1, 2]
@@ -1442,12 +1442,12 @@ native_display_cleanup
                     f"id={cts.VENUS_CAPSET_ID}|", "id=3|"
                 )
             )
-        with self.assertRaisesRegex(cts.CampaignError, "omitted an ES 3.x"):
+        with self.assertRaisesRegex(cts.CampaignError, "omitted the desktop GL 4.6"):
             cts.parse_gpu_capability_report(
                 "\n".join(
                     line
                     for line in report.splitlines()
-                    if "requested=3.2" not in line
+                    if "requested=4.6" not in line
                 )
             )
         with self.assertRaisesRegex(cts.CampaignError, "size changed"):
