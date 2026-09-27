@@ -236,12 +236,12 @@ index 38f777799a6aa1f3752face93ed60e1e37107a56..ec376ac52ed48fa5768ce8749e23e5c0
     NIR_PASS(_, nir, msl_nir_fs_io_types);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 5a40c4ea6ab955843012d00e3489c3caa1b83341..dbc31d6194ae5b3d26ae05568a2c55353dbdaec3 100644
+index c509672590c4a72327b1ee377d73c3418386d0db..0b0730a1e934098b002520d919db4611b30af656 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
-@@ -282,6 +282,10 @@ bool kk_nir_lower_null_images(nir_shader *nir);
- 
- bool kk_nir_lower_custom_border(nir_shader *nir);
+@@ -290,6 +290,10 @@ nir_def *kk_nir_border_compare(struct nir_builder *b, nir_def *op,
+ nir_def *kk_nir_border_probe_reference(struct nir_builder *b, nir_def *op,
+                                        unsigned bit_size);
  
 +struct vk_graphics_pipeline_state;
 +bool kk_nir_lower_fragment_output_swizzle(

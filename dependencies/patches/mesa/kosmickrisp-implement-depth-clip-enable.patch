@@ -552,7 +552,7 @@ index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..93b77ae4a35eb7d96c3667d5d3de34ac
  
     /* Descriptor lowering needs to happen after lowering blend since we will
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 28354a818d875175c596ae8cb308b839da7d9914..112511fefa0fdd8d6b8a031bc0c34780aace01f4 100644
+index c14ac9789877ffc1fe6b8b4253c51e83a72a2017..67d45395434530d7b1f835fa75a079edb1588883 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -195,6 +195,11 @@ kk_nir_lower_descriptors(nir_shader *nir,

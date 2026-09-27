@@ -60,7 +60,7 @@ index ae9d752ca1a911affc567f1b077b7b38719ac6b6..50045f7f5d9c99e8c06abdcfc6ff0138
  
        if (sampler->has_border) {
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-index 9c2620f7d323207cccf4b2abf72ab22326a9166c..9b4a16dfd7288d13c0257b747b7260ae6d102dcf 100644
+index c0f74932a0392030c5e16a324068b7ebd7f31edf..1962ba6a1ccd8ed65d83593d1325dbba58800e28 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
 @@ -28,7 +28,10 @@ struct kk_sampled_image_descriptor {
@@ -714,7 +714,7 @@ index 93b77ae4a35eb7d96c3667d5d3de34ac9fc6b600..30f3e79e3ed19f91608d9813eaa8625a
  
        kk_gs_to_compute(main, 64);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 112511fefa0fdd8d6b8a031bc0c34780aace01f4..801e70cab4bb6287c01ced03220dac802059b662 100644
+index 67d45395434530d7b1f835fa75a079edb1588883..c3db6c67894eced6b1ac299b77006f39d03624e2 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -25,6 +25,8 @@ struct kk_cmd_buffer;

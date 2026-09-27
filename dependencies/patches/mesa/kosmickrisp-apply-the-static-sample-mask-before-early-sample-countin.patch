@@ -312,7 +312,7 @@ index d59ade5305d913cda049362d42dede62620f869b..8161cedc8b2fdcc302ef7893f2c06c04
  
     uint8_t topology = state->ia->primitive_topology;
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 52a458129777acc963c77ab59e948039ecd287b9..09add93f3c4a0164c74bd5cb77d89880e2aab09e 100644
+index 6a439054966ff29eb571fbaa222117909a0c6e2d..d20bf2c9fbc6d2c75a6b302941b06277cdd30e4f 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -125,6 +125,9 @@ struct kk_shader_info {

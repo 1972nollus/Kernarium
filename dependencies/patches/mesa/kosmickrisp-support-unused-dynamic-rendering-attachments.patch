@@ -718,7 +718,7 @@ index fc2bb0a0e5e09869b8a3727cd56d9f8c09620f0a..4f27d90b90c088abe8dad9b6ee5fa6e1
  kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
                     struct vk_shader_compile_info *infos,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 233b8a0e12a34369c1547ba5bb7fda3804564d8d..28354a818d875175c596ae8cb308b839da7d9914 100644
+index e16fb1986b75e96894487112796b5bd1286a8487..c14ac9789877ffc1fe6b8b4253c51e83a72a2017 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -19,6 +19,8 @@
@@ -751,7 +751,7 @@ index 233b8a0e12a34369c1547ba5bb7fda3804564d8d..28354a818d875175c596ae8cb308b839
     struct kk_shader_info info;
     struct msl_compile_data msl_data[MESA_SHADER_STAGES];
     struct msl_compile_data transform_feedback_pre_gs_msl;
-@@ -197,6 +209,16 @@ VkResult kk_compile_nir_shader(struct kk_device *dev, nir_shader *nir,
+@@ -205,6 +217,16 @@ VkResult kk_compile_nir_shader(struct kk_device *dev, nir_shader *nir,
                                 const VkAllocationCallbacks *alloc,
                                 struct kk_shader **shader_out);
  

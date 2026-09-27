@@ -1536,7 +1536,7 @@ index 2cb5a19f909fca0104017dc6cf420f92a352c8a2..21eebdb9f41c4ed24e09c12a7d6984b1
           kk_cmd_use_graphics_shader(cmd, stage, shader);
     }
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 6aa92011a1a4d42408a812e5f5b9e51184f2d30c..2a4b91440da56215fb7a9ce99c62b9a38ea54bba 100644
+index c3a27b321da8cd4d382b4eeec533bfc0de8fff04..c3939af69936578d95808c98020a6b6a4dfc350a 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -223,7 +223,7 @@ kk_nir_lower_descriptors(nir_shader *nir,

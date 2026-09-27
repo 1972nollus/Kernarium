@@ -1028,7 +1028,7 @@ index 74a0589de6ae67aee59a9e900dd9807c4231ed90..2cb5a19f909fca0104017dc6cf420f92
        struct kk_shader *shader = container_of(shaders[i], struct kk_shader, vk);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 29d7301cc561c1d0c052f6a5add7f0393cb84441..6aa92011a1a4d42408a812e5f5b9e51184f2d30c 100644
+index 305d35e072a40f0c3581acc02fac5e284c0f0542..c3a27b321da8cd4d382b4eeec533bfc0de8fff04 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -23,6 +23,7 @@
@@ -1039,7 +1039,7 @@ index 29d7301cc561c1d0c052f6a5add7f0393cb84441..6aa92011a1a4d42408a812e5f5b9e511
  
  enum kk_texture_flags {
     KK_TEXTURE_FLAG_CLAMP_TO_0 = 1u << 0,
-@@ -251,5 +252,7 @@ void kk_cmd_bind_compute_shader(struct kk_cmd_buffer *cmd,
+@@ -259,5 +260,7 @@ void kk_cmd_bind_compute_shader(struct kk_cmd_buffer *cmd,
                                  struct kk_shader *shader);
  
  void kk_cmd_select_line_raster_variant(struct kk_cmd_buffer *cmd);

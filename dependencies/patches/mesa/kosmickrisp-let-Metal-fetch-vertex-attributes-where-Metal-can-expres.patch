@@ -940,7 +940,7 @@ index 48eb424bd3b3bb6086b1b83c4a6673d61af8da60..60a1ed29e9e6aea4a79b174cbc6811fc
      * in the array so need to check them all, not just first
      * color_attachment_count entries.
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index c07cd7f67138b67ae99ebf143d251dccd56097a9..80551e6f2669191019879f48493b944ad5d6486c 100644
+index ed7fd4d5aa75d68a9fc45f1edff6d66f3a19108f..63c1420f05f83756fcd8b2f0024be8ca0cf7baf3 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -9,6 +9,7 @@

@@ -3353,7 +3353,7 @@ index c5905b533e434fb6c9313e6adbf866a2cf286144..943e740463f9451fccd131afef8442e6
     for (uint32_t stage = 0; stage <= MESA_SHADER_FRAGMENT; stage++) {
        struct kk_shader *shader = selected[stage];
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 2a4b91440da56215fb7a9ce99c62b9a38ea54bba..52a458129777acc963c77ab59e948039ecd287b9 100644
+index c3939af69936578d95808c98020a6b6a4dfc350a..6a439054966ff29eb571fbaa222117909a0c6e2d 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -10,6 +10,7 @@

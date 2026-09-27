@@ -835,7 +835,7 @@ index 30f3e79e3ed19f91608d9813eaa8625a2af45867..9352afddfcc01b827a3b63ec97193ad9
     .cmd_set_dynamic_graphics_state = vk_cmd_set_dynamic_graphics_state,
     .cmd_bind_shaders = kk_cmd_bind_shaders,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 801e70cab4bb6287c01ced03220dac802059b662..64799e3dbf4bffc3eb4a873489d5a8b8b7512f74 100644
+index c3db6c67894eced6b1ac299b77006f39d03624e2..7e187015d14c1cc66ca824f4685ebcde07599ca8 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -14,6 +14,7 @@

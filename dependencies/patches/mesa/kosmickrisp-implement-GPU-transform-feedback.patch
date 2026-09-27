@@ -1150,7 +1150,7 @@ index 481905828b72494579e34ae322ead4860cab74f6..91b3cee96ee2ad651a11960643274bf6
  
     if (info.stage == MESA_SHADER_COMPUTE) {
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 4aaf802bb2271eabae61fd8ca09c3db9dd3b0529..15d27ab9b5dbb68de3e0460fd8460252543610e2 100644
+index dac4b88aad55053e662224d540d5add8d90667db..fa63a3662642e857d9db9959b045632c3246c1dd 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -17,6 +17,8 @@

@@ -163,7 +163,7 @@ index 50045f7f5d9c99e8c06abdcfc6ff0138185f4c1e..66505561a19c2f4e575528d86650c0b9
        desc.element_count = view->vk.elements;
     }
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-index 9b4a16dfd7288d13c0257b747b7260ae6d102dcf..fa4bea4fc90aa63227ae603a0041304afd0d6b55 100644
+index 1962ba6a1ccd8ed65d83593d1325dbba58800e28..b33c61bf1afd20684add23e18f76cb6e1c018928 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
 @@ -77,13 +77,64 @@ struct kk_storage_image_descriptor {
