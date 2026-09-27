@@ -140,11 +140,16 @@ remain subject to the pinned platform's own ART policy.
 
 ## Graphics
 
-The GLES stack is the AOSP `external/mesa3d` Virgl port routed through `p0004`.
-The Vulkan HAL is separate: it is Mesa's Venus driver, `VK_DRIVER_ID_MESA_VENUS`
-over Virtio-GPU, built from this project's own guest Mesa source rather than
-from the AOSP Mesa snapshot, so the Android guest and the Linux Venus guest run
-the same driver against the same renderer.
+Both graphics APIs come from one Mesa build of this project's own guest Mesa
+source rather than from the AOSP Mesa snapshot, so the Android guest and the
+Linux guest run the same drivers against the same renderer. GLES is Mesa's
+Virgl gallium driver behind `libEGL_kernarium`, `libGLESv1_CM_kernarium` and
+`libGLESv2_kernarium` in `/vendor/lib64/egl`, which the platform EGL loader
+selects through `ro.hardware.egl=kernarium`; the three libraries link
+`venus_gallium_dri.so` in `/vendor/lib64`. The product excludes the inherited
+Cuttlefish `libGLES_mesa`, and the AOSP `external/mesa3d` project stays at its
+pinned revision. The Vulkan HAL is Mesa's Venus driver,
+`VK_DRIVER_ID_MESA_VENUS` over Virtio-GPU.
 
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under
@@ -177,8 +182,9 @@ static closure, so each library links only its direct Meson dependencies, and
 passes Meson's C arguments to C sources only.
 
 `vulkan.virtio.so` is a same-process HAL: it is loaded into every application
-that uses Vulkan, so the product labels it `same_process_hal_file` beside the
-Mesa EGL/GLES libraries.
+that uses Vulkan, so the product labels it `same_process_hal_file`. The platform
+labels `/vendor/lib64/egl` the same way, and the product adds the label for the
+gallium driver those libraries link.
 
 Mesa reads a buffer's DRM format, modifier and plane layout through gralloc, so
 the product installs the allocator's own `gralloc.minigbm` module and sets
