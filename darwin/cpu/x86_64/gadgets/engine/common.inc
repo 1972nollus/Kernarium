@@ -384,6 +384,36 @@ NAME(uml_x86_64_gadget_\name):
 	.endif
 .endm
 
+/* A probe that only translates, for the gather and masked-memory loops,
+ * which translate element by element: it neither records the stack entry
+ * nor settles a store's publication, and a miss the MMU refuses branches to
+ * `fault`. A write probe compares the write page with its tag bits intact,
+ * so a store to a page holding code always takes the miss path, where the
+ * helper publishes it. Its index is translate's. */
+.macro translate_plain access, entry_offset, size, fault
+	x86_marks_guest_memory
+	and x9, x7, #0xfffffffffffff000
+	lsr x10, x7, #12
+	eor x10, x10, x10, lsr #15
+	and w10, w10, #0x7fff
+	ldr x11, [_context, #UML_X86_64_CONTEXT_TLB]
+	add x11, x11, x10, lsl #5
+	ldp x12, x13, [x11, #\entry_offset]
+	cmp x9, x12
+	b.eq .Lx86_plain_tlb_hit\@
+	mov x0, _context
+	mov x1, x7
+	mov w2, #\access
+	mov w3, #\size
+	bl NAME(uml_x86_64_gadget_tlb_miss)
+	cbz x0, \fault
+	mov x7, x0
+	b .Lx86_plain_tlb_done\@
+.Lx86_plain_tlb_hit\@:
+	add x7, x13, x7
+.Lx86_plain_tlb_done\@:
+.endm
+
 /* x86 LOCK-prefixed read-modify-write.
  *
  * A locked gadget must be atomic against the other vCPU threads that execute
