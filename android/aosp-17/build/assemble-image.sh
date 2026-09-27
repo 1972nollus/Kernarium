@@ -13,7 +13,7 @@ INITRAMFS_VERIFIER="$ANDROID_ROOT/tools/verify-initramfs.py"
 RECOVERY_VERIFIER="$ANDROID_ROOT/tools/verify-orangefox-recovery.py"
 
 TARGET_FILES=
-KERNEL_ELF=
+KERNEL_ARTIFACT=
 RAMDISK=
 RECOVERY_IMAGE=
 MKBOOTIMG=
@@ -31,7 +31,7 @@ usage()
 	cat <<'EOF'
 Usage: android/aosp-17/build/assemble-image.sh \
        --target-files ABSOLUTE_PATH \
-       --kernel-elf ABSOLUTE_PATH \
+       --kernel-artifact ABSOLUTE_PATH \
        --ramdisk ABSOLUTE_PATH \
        --recovery-image ABSOLUTE_PATH \
        --mkbootimg ABSOLUTE_PATH \
@@ -73,9 +73,9 @@ while [[ $# -gt 0 ]]; do
 		TARGET_FILES=$2
 		shift 2
 		;;
-	--kernel-elf)
-		[[ $# -ge 2 ]] || fail "--kernel-elf requires a path"
-		KERNEL_ELF=$2
+	--kernel-artifact)
+		[[ $# -ge 2 ]] || fail "--kernel-artifact requires a path"
+		KERNEL_ARTIFACT=$2
 		shift 2
 		;;
 	--ramdisk)
@@ -107,13 +107,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$TARGET_FILES" ]] || fail "--target-files is required"
-[[ -n "$KERNEL_ELF" ]] || fail "--kernel-elf is required"
+[[ -n "$KERNEL_ARTIFACT" ]] || fail "--kernel-artifact is required"
 [[ -n "$RAMDISK" ]] || fail "--ramdisk is required"
 [[ -n "$RECOVERY_IMAGE" ]] || fail "--recovery-image is required"
 [[ -n "$MKBOOTIMG" ]] || fail "--mkbootimg is required"
 [[ -n "$OUTPUT" ]] || fail "--output is required"
 absolute_path "target-files archive" "$TARGET_FILES"
-absolute_path "kernel ELF" "$KERNEL_ELF"
+absolute_path "kernel artifact" "$KERNEL_ARTIFACT"
 absolute_path "normal ramdisk" "$RAMDISK"
 absolute_path "OrangeFox recovery image" "$RECOVERY_IMAGE"
 absolute_path "mkbootimg" "$MKBOOTIMG"
@@ -128,8 +128,11 @@ absolute_path "output disk" "$OUTPUT"
 [[ -f "$LAYOUT" ]] || fail "fixed UBD partition layout is missing"
 [[ -f "$TARGET_FILES" && ! -L "$TARGET_FILES" ]] ||
 	fail "target-files archive must be a regular non-symlink file"
+[[ -d "$KERNEL_ARTIFACT" && ! -L "$KERNEL_ARTIFACT" ]] ||
+	fail "kernel artifact must be a regular non-symlink directory"
+KERNEL_ELF="$KERNEL_ARTIFACT/kernel/vmlinux"
 [[ -f "$KERNEL_ELF" && ! -L "$KERNEL_ELF" ]] ||
-	fail "kernel ELF must be a regular non-symlink file"
+	fail "kernel artifact ELF must be a regular non-symlink file"
 [[ -f "$RAMDISK" && ! -L "$RAMDISK" ]] ||
 	fail "normal ramdisk must be a regular non-symlink file"
 [[ -f "$RECOVERY_IMAGE" && ! -L "$RECOVERY_IMAGE" ]] ||
@@ -144,7 +147,9 @@ IMAGES_DIR="$TARGET_FILES_DIR/IMAGES"
 [[ -d "$IMAGES_DIR" && ! -L "$IMAGES_DIR" ]] ||
 	fail "target-files IMAGES staging directory is missing"
 "$TARGET_FILES_VERIFIER" --target-files "$TARGET_FILES" \
-	--kernel-elf "$KERNEL_ELF"
+	--kernel-elf "$KERNEL_ELF" \
+	--kernel-config "$KERNEL_ARTIFACT/kernel/config" \
+	--kernel-release-file "$KERNEL_ARTIFACT/kernel/kernel.release"
 "$INITRAMFS_VERIFIER" "$RAMDISK"
 WORK_DIR=$(mktemp -d)
 INIT_BOOT_IMAGE="$WORK_DIR/init_boot.img"

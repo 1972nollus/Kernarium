@@ -20,7 +20,7 @@ publication are offline.
 
 The producer has five independent outputs:
 
-1. a replayed and built ACK 16 KiB kernel;
+1. a replayed and built ACK 16 KiB kernel, published as a kernel artifact;
 2. the `aosp_kernarium_darwin-user` target files;
 3. a kernel-less OrangeFox recovery partition;
 4. one static GPT guest disk containing both boot ramdisks; and
@@ -34,7 +34,11 @@ introduce a second build system.
 Kernel publication is independent of AOSP/rootfs publication. An already-built
 clean ACK result is published with `tools/publish-kernel-artifact.py` and
 installed below `.build/kernel/artifacts`. Updating this artifact must not
-republish the GPT or invalidate a guest bundle.
+republish the GPT or invalidate a guest bundle. The AOSP build, the disk
+assembly and the release publisher take their kernel from such an artifact
+(`--kernel-artifact`). Its `vmlinux` is the runtime image; the build's own
+`vmlinux` keeps the DWARF pahole reads and does not fit the product's 64 MiB
+boot image. A release ships the artifact's kernel files unchanged.
 
 ## Source and patch ownership
 
