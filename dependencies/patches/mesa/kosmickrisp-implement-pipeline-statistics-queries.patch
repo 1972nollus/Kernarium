@@ -500,7 +500,7 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
        mtl_dispatch_threadgroups_with_indirect_buffer(
           encoder, pInfo->addressRange.address, local_size);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 00d1ef6ddf861361ec45eefeada3b8e7566574ca..6e89501655937b2edf8ddb4bcf1a850343092664 100644
+index 00d1ef6ddf861361ec45eefeada3b8e7566574ca..88c15593c485e525990731f8c1122d7e4d48f039 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1231,14 +1231,22 @@ kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
@@ -604,7 +604,7 @@ index 00d1ef6ddf861361ec45eefeada3b8e7566574ca..6e89501655937b2edf8ddb4bcf1a8503
 +      return true;
 +
 +   struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
-+   const bool geometry = vs && vs->info.vs.geometry_shader_emulation;
++   const bool geometry = vs->info.vs.geometry_shader_emulation;
 +   const bool tessellation =
 +      cmd->state.shaders[MESA_SHADER_TESS_EVAL] != NULL;
 +

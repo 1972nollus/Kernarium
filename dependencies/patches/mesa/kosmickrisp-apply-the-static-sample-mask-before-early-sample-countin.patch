@@ -52,7 +52,7 @@ same mask in pSampleMask and early tests, and with no mask at all.  It reads
 1024/2048/2048 before this change and 1024/1024/2048 after it.
 ---
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   7 +
- src/kosmickrisp/vulkan/kk_cmd_draw.c          |  30 +-
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          |  29 +-
  src/kosmickrisp/vulkan/kk_gpl.h               |  28 ++
  src/kosmickrisp/vulkan/kk_physical_device.c   |   6 +-
  src/kosmickrisp/vulkan/kk_shader.c            |  76 ++-
@@ -68,7 +68,7 @@ same mask in pSampleMask and early tests, and with no mask at all.  It reads
  .../esm_plain.frag.h                          |  19 +
  .../early_sample_mask_shaders/generate.sh     |   7 +
  .../tests/test_early_sample_mask_count.cpp    | 449 ++++++++++++++++++
- 17 files changed, 797 insertions(+), 5 deletions(-)
+ 17 files changed, 796 insertions(+), 5 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert.h
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_early.frag
@@ -99,7 +99,7 @@ index 3761d06afef8be760d62ad76db3bd653e445d60c..1b1b941a091821afbf262375c4941bd7
        struct {
           uint32_t base_group[3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 4228cc6f07fd4b940ae3852b2436df1594820479..be254f03cb4831f75421f9b065013438eecd1600 100644
+index c1c37156776d9297764b8cf91d0670eec0fe1cb8..4fe87dd10ec3d4266a91625ae9256748c18deb21 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1772,8 +1772,17 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
@@ -122,7 +122,7 @@ index 4228cc6f07fd4b940ae3852b2436df1594820479..be254f03cb4831f75421f9b065013438
                                       gfx->occlusion.index * sizeof(uint64_t));
     }
  }
-@@ -1799,6 +1808,23 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+@@ -1799,6 +1808,22 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
        desc->root.draw.clip_statistics != clip_statistics;
     desc->root.draw.clip_statistics = clip_statistics;
  
@@ -133,8 +133,7 @@ index 4228cc6f07fd4b940ae3852b2436df1594820479..be254f03cb4831f75421f9b065013438
 +   struct kk_device *occlusion_dev = kk_cmd_buffer_device(cmd);
 +   const bool count_in_shader =
 +      vs && vs->info.vs.counts_occlusion_samples &&
-+      gfx->occlusion.mode != MTL_VISIBILITY_RESULT_MODE_DISABLED &&
-+      occlusion_dev->occlusion_queries.bo != NULL;
++      gfx->occlusion.mode != MTL_VISIBILITY_RESULT_MODE_DISABLED;
 +   const uint64_t occlusion_counter =
 +      count_in_shader ? occlusion_dev->occlusion_queries.bo->gpu +
 +                           gfx->occlusion.index * sizeof(uint64_t)

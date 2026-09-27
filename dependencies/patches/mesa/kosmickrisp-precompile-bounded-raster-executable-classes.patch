@@ -183,7 +183,7 @@ index 06918dae6c8d4f5d2ad731b4a129123a8da59288..3db643cfd996080847810d9198b1cf41
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 34b46a5707531cfdda5968618d3964f5056d97e2..12e6c061a2b17bd5bc928d62a2d8a159c3225596 100644
+index 06a8350206f43333cfbf9e69d3b5a95d2fe8571b..5907bb25ddeeb596c1271b01ee6f5731fa86ebb9 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -15,6 +15,7 @@

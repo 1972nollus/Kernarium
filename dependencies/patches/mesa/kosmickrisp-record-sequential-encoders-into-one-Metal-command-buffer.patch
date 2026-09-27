@@ -427,10 +427,10 @@ index 1b1b941a091821afbf262375c4941bd7c00d008d..a9d5f2abf81a86799d9ee435dc2858c1
                                          uint64_t addr);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index a3d85b3e6788b8459bf1ec4eda236c60491afaaa..3319ff47688323b83e1454cce21af9d16010ba5b 100644
+index 92840e10b2e8b0dc961018586af0998e95df880e..db9caff5c790342e742b2151c8cb6ce02197af5e 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1880,6 +1880,12 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+@@ -1879,6 +1879,12 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
  #undef IS_SHADER_DIRTY
  #undef IS_DIRTY
  
@@ -443,7 +443,7 @@ index a3d85b3e6788b8459bf1ec4eda236c60491afaaa..3319ff47688323b83e1454cce21af9d1
  /* Returns true if the draw was successfully converted. */
  static bool
  kk_convert_to_indirect_draw(struct kk_cmd_buffer *cmd,
-@@ -3373,20 +3379,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3372,20 +3378,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
  }
  
  static void
@@ -465,7 +465,7 @@ index a3d85b3e6788b8459bf1ec4eda236c60491afaaa..3319ff47688323b83e1454cce21af9d1
     data->restart = cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable;
     data->restart_index =
        cmd->vk.dynamic_graphics_state.ia.primitive_restart_index;
-@@ -3515,6 +3509,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3514,6 +3508,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     }
  }
  
