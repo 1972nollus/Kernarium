@@ -31,6 +31,13 @@ carriers included, so host-side kernel code changes a signal mask only with
 `sigprocmask`, and the console PTY assertion checks that a console write
 leaves another thread's mask unchanged.
 
+Host-side kernel objects pass variadic arguments in registers, while Apple's
+arm64 ABI reads them from the stack, so a direct call to a variadic libc
+function hands it arbitrary arguments. `fcntl()` goes through the fixed-arity
+bridge function `darwin_uml_fcntl()`, and `open()`, `ioctl()` and `printf()`
+through shims in `arch/um/os-Darwin/compat.c`. Every kernel build rejects an
+image that imports `fcntl`.
+
 A Darwin vCPU carrier reports each host signal it takes on stderr, with its
 literal pc and, for a fault, its address and ESR, before Linux handles it. The
 one exception is a fault that a nofault accessor recovers: that is the

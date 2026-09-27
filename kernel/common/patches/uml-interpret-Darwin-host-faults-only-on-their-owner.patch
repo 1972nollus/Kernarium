@@ -231,10 +231,10 @@ index 948a794aa59f264e84dca8515228639d9b7862ec..5ab09240cd08a7785612ca5c4e48f895
  	if (signal == SIGALRM) {
  		if (!previous || state->alarm_active) {
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index 614f086a760a421d8f258f4827e82c87f7a56497..c16721b616e4ff7081b33893cff1a11d47091af3 100644
+index 924893ea980d64f9c9b99758c03842dcb753347f..e4e0b29057eb8a964604a284369b9d4481c083ae 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
-@@ -78,6 +78,39 @@ int uml_curr_cpu(void)
+@@ -77,6 +77,39 @@ int uml_curr_cpu(void)
  	return carrier == NULL ? 0 : carrier->cpu;
  }
  
@@ -274,7 +274,7 @@ index 614f086a760a421d8f258f4827e82c87f7a56497..c16721b616e4ff7081b33893cff1a11d
  void darwin_publish_cpu_thread(int cpu, pthread_t thread)
  {
  	if (cpu < 0 || cpu >= CONFIG_NR_CPUS)
-@@ -546,7 +579,14 @@ static int start_cpu_carrier(int cpu, int primary, void *stack,
+@@ -543,7 +576,14 @@ static int start_cpu_carrier(int cpu, int primary, void *stack,
  
  int darwin_start_primary_cpu_carrier(void *stack, jmp_buf *switch_buffer)
  {

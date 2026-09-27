@@ -175,10 +175,10 @@ index f8068b196c5b1b3ae9ee56ce9b6bb1662b9d57bc..4769a4b962339755c990c02520dbef98
  		if (static_dispatch_trace_enabled())
  			os_warn("Darwin static loop begin cpu=%d pid=%d ip=%#lx generation=%lu\n",
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index c16721b616e4ff7081b33893cff1a11d47091af3..e2e05b841d32ca206955ca5d1a80a66f6939d531 100644
+index e4e0b29057eb8a964604a284369b9d4481c083ae..317f5352447464a788b45bb01cf0901dd3c85d10 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
-@@ -214,6 +214,7 @@ static void drain_ipis(void)
+@@ -213,6 +213,7 @@ static void drain_ipis(void)
  	 * both cases.
  	 */
  	previous = um_set_signals(0);
@@ -186,7 +186,7 @@ index c16721b616e4ff7081b33893cff1a11d47091af3..e2e05b841d32ca206955ca5d1a80a66f
  	/*
  	 * A sender leaves one pipe edge when the target is in host kernel or idle
  	 * code.  Consume that edge whenever the corresponding pending mask is
-@@ -224,6 +225,7 @@ static void drain_ipis(void)
+@@ -223,6 +224,7 @@ static void drain_ipis(void)
  	darwin_ipi_idle_drain();
  	pending = __atomic_exchange_n(&pending_ipis[cpu], 0, __ATOMIC_ACQUIRE);
  	uml_ipi_handler_mask(pending);
@@ -195,10 +195,10 @@ index c16721b616e4ff7081b33893cff1a11d47091af3..e2e05b841d32ca206955ca5d1a80a66f
  }
  
 diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
-index 391cbe2ca5ff9afc491d9745d0ada901cf0011da..5a9ced39de53fa2071617d7c2a7e8d759258b09d 100644
+index de26143a14d5baeeb89987d1e012495473bb6330..6ae8cf24c627e5486b6d775fe69f7b9f7d189e78 100644
 --- a/arch/um/os-Darwin/time.c
 +++ b/arch/um/os-Darwin/time.c
-@@ -180,6 +180,7 @@ void darwin_timer_poll(struct uml_pt_regs *registers)
+@@ -179,6 +179,7 @@ void darwin_timer_poll(struct uml_pt_regs *registers)
  	if (consume_expired_timer(state, now)) {
  		int previous = um_set_signals(0);
  
@@ -206,7 +206,7 @@ index 391cbe2ca5ff9afc491d9745d0ada901cf0011da..5a9ced39de53fa2071617d7c2a7e8d75
  		/*
  		 * Darwin does not provide Linux-style per-thread SIGIO ownership.
  		 * CPU0 therefore owns host descriptor polling.  Do it at the same
-@@ -190,6 +191,7 @@ void darwin_timer_poll(struct uml_pt_regs *registers)
+@@ -189,6 +190,7 @@ void darwin_timer_poll(struct uml_pt_regs *registers)
  		if (cpu == 0)
  			sigio_handler(SIGIO, NULL, registers, NULL);
  		timer_handler(SIGALRM, NULL, registers);

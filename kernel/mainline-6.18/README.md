@@ -151,8 +151,11 @@ constant-time page-to-record index. Reset, disconnect, and release revoke every
 mapping in bounded descriptor batches, and a request-stream lock serializes the
 backend-request IRQ against the drain in every synchronous reply wait
 ([architecture](../../docs/architecture.md)) so two vCPUs cannot split one
-framed request. Virtio-GPU host-visible blobs use the same
-16 KiB granularity without a private userspace ioctl or a bridge ABI change.
+framed request. The virtqueue and config interrupts either path records are
+taken and cleared under the same lock before they are delivered, so a
+recorded interrupt is never lost between two deliverers. Virtio-GPU
+host-visible blobs use the same 16 KiB granularity without a private userspace
+ioctl or a bridge ABI change.
 The ACK line carries the same shared-memory transport, aperture geometry, and
 mapping-capacity policy for its Venus Vulkan HAL. The two maintained kernel
 lines adapt the topic to their own source histories while preserving the same

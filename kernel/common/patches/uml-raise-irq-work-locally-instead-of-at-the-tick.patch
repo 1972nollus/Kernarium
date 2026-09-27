@@ -130,10 +130,10 @@ index ec61427d7257278e9ea61a293403a98066c05291..7ad362329f6efdc3bf180f59b84e9481
  static inline void darwin_ipi_idle_drain(void) { }
  static inline unsigned int darwin_ipi_guest_snapshot(
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index 00a5d2f34a5585a474987fee808924b4981c6ba6..6d15c566a08548ff304d15db2aac3d52794225bd 100644
+index 921edb6c57bd38650cce710b6bbbd8fb38ca0f69..9c5c0c97744e12e4994a930ee897c446cf28a39f 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
-@@ -193,6 +193,24 @@ static void drain_ipis(void)
+@@ -192,6 +192,24 @@ static void drain_ipis(void)
  	um_set_signals(previous);
  }
  
@@ -158,7 +158,7 @@ index 00a5d2f34a5585a474987fee808924b4981c6ba6..6d15c566a08548ff304d15db2aac3d52
  void darwin_ipi_poll(void)
  {
  	int cpu;
-@@ -239,6 +257,24 @@ void darwin_ipi_idle_begin(void)
+@@ -238,6 +256,24 @@ void darwin_ipi_idle_begin(void)
  	__atomic_store_n(&ipi_idle_waiting[uml_curr_cpu()], 1, __ATOMIC_RELEASE);
  }
  
@@ -184,10 +184,10 @@ index 00a5d2f34a5585a474987fee808924b4981c6ba6..6d15c566a08548ff304d15db2aac3d52
  {
  	__atomic_store_n(&ipi_idle_waiting[uml_curr_cpu()], 0, __ATOMIC_RELEASE);
 diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
-index 01b84a0bf5d27e896acceceb1e6b4d79b6015423..391cbe2ca5ff9afc491d9745d0ada901cf0011da 100644
+index cdab8ac92154669e8f38872c16456259fc6215c8..de26143a14d5baeeb89987d1e012495473bb6330 100644
 --- a/arch/um/os-Darwin/time.c
 +++ b/arch/um/os-Darwin/time.c
-@@ -316,6 +316,14 @@ void os_idle_sleep(void)
+@@ -315,6 +315,14 @@ void os_idle_sleep(void)
  		if (deadline_fd > wake_fd)
  			wake_fd = deadline_fd;
  		darwin_ipi_idle_begin();

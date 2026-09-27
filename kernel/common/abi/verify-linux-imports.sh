@@ -151,6 +151,16 @@ if awk '{
 } END { exit !found }' "$WORK_DIRECTORY/nm"; then
 	fail "the Linux image imports the process-wide Darwin sigprocmask"
 fi
+# Apple's arm64 ABI passes variadic arguments on the stack and the kernel's
+# host objects pass them in registers, so a direct fcntl() hands libc an
+# arbitrary third argument; host code calls darwin_uml_fcntl() instead.
+if awk '{
+	for (field = 1; field <= NF; ++field)
+		if ($field ~ /^_?fcntl([$].*)?$/)
+			found = 1
+} END { exit !found }' "$WORK_DIRECTORY/nm"; then
+	fail "the Linux image imports the variadic Darwin fcntl"
+fi
 
 cmp -s "$WORK_DIRECTORY/expected" "$WORK_DIRECTORY/imported" || {
 	printf '%s\n' "active declared-only bridge symbols:" >&2
