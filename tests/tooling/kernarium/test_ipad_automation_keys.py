@@ -44,9 +44,11 @@ class KeyCommandTests(unittest.TestCase):
         self.assertEqual(key_command("\r")["key"], "\n")
 
     def test_named_keys_resolve_to_xcuikeyboardkey_characters(self) -> None:
+        # The arrows are XCUIKeyboardKey's iOS values. Its macOS values,
+        # U+F700 to U+F703, press nothing on a device.
         for name, character in (
-            ("tab", "\t"), ("space", " "), ("up", ""),
-            ("down", ""), ("left", ""), ("right", ""),
+            ("tab", "\t"), ("space", " "), ("up", "\u2191"),
+            ("down", "\u2193"), ("left", "\u2190"), ("right", "\u2192"),
         ):
             with self.subTest(name=name):
                 self.assertEqual(key_command(name)["key"], character)
@@ -71,6 +73,15 @@ class KeyCommandTests(unittest.TestCase):
     def test_unknown_names_are_refused(self) -> None:
         with self.assertRaises(ValueError):
             key_command("enter")
+
+    def test_only_single_utf16_characters_reach_the_host(self) -> None:
+        # XCTest's typeKey raises an Objective-C exception for anything but
+        # one UTF-16 code unit, which a host cannot survive.
+        for key in ("UIKeyInputUpArrow", "", "ab", "\U0001f600", "e\u0301"):
+            with self.subTest(key=repr(key)):
+                with self.assertRaises(ValueError):
+                    key_command(key)
+        self.assertEqual(key_command("\u00e9")["key"], "\u00e9")
 
 
 if __name__ == "__main__":

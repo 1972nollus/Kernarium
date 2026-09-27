@@ -10,8 +10,11 @@ import UIKit
 /// The serial console inside the application: guest output reaches the
 /// Ghostty terminal whole and in order, and keyboard input leaves it as the
 /// bytes a serial terminal sends. Input is captured through the controller's
-/// sink, so no guest runtime is involved.
+/// sink, so no guest runtime is involved. The tests run one at a time:
+/// keyboard notifications reach every console, including one another test
+/// has on screen.
 @MainActor
+@Suite(.serialized)
 struct SerialConsoleTests {
     /// Collects what the terminal sends on Ghostty's I/O thread.
     private final class InputRecorder: @unchecked Sendable {
@@ -420,13 +423,25 @@ struct SerialConsoleTests {
         return nil
     }
 
+    @MainActor
+    private struct ComposedConsole {
+        let controller: SerialConsoleController
+        let window: UIWindow
+        let root: UIView
+        let terminal: TerminalView
+        let previousKeyWindow: UIWindow?
+
+        func remove() {
+            _ = terminal.resignFirstResponder()
+            window.isHidden = true
+            previousKeyWindow?.makeKey()
+        }
+    }
+
     /// The console as the application composes it: a full-screen scene
     /// window whose content ignores the keyboard, which the console itself
-    /// must make room for. With the console focused the key bar is on screen
-    /// in every keyboard state (docked or floating software keyboard, or a
-    /// hardware keyboard), and the terminal's last row must end at its top.
-    @Test(.timeLimit(.minutes(1)))
-    func theKeyBarNeverCoversTheConsole() async throws {
+    /// must make room for.
+    private func compose() async throws -> ComposedConsole {
         #expect(
             try await eventually {
                 UIApplication.shared.applicationState == .active
@@ -450,12 +465,25 @@ struct SerialConsoleTests {
         window.makeKeyAndVisible()
         let root = try #require(window.rootViewController?.view)
         root.layoutIfNeeded()
-        let terminal = try #require(terminalView(in: root))
-        defer {
-            _ = terminal.resignFirstResponder()
-            window.isHidden = true
-            previousKeyWindow?.makeKey()
-        }
+        return ComposedConsole(
+            controller: controller,
+            window: window,
+            root: root,
+            terminal: try #require(terminalView(in: root)),
+            previousKeyWindow: previousKeyWindow
+        )
+    }
+
+    /// With the console focused the key bar is on screen in every keyboard
+    /// state (docked or floating software keyboard, or a hardware keyboard),
+    /// and the terminal's last row must end at its top.
+    @Test(.timeLimit(.minutes(1)))
+    func theKeyBarNeverCoversTheConsole() async throws {
+        let console = try await compose()
+        defer { console.remove() }
+        let (controller, window, root, terminal) = (
+            console.controller, console.window, console.root, console.terminal
+        )
         #expect(try await eventually { terminal.surface != nil })
         let fullHeight = terminal.bounds.height
         var fullRows = 0
@@ -500,5 +528,72 @@ struct SerialConsoleTests {
                 "the grid kept \(rows) of \(fullRows) rows after a \(cut)-point cut"
             )
         }
+    }
+
+    /// Only a focused console makes room for keyboard UI. When a hardware
+    /// keyboard's key bar leaves with focus, UIKit reports the bar's last
+    /// frame as the keyboard's end frame and posts no hide notification: the
+    /// console must still get its rows back. A focus change lays the console
+    /// out again whether or not a keyboard notification follows it.
+    @Test(.timeLimit(.minutes(1)))
+    func anUnfocusedConsoleKeepsEveryRow() async throws {
+        let console = try await compose()
+        let space = console.window.screen.coordinateSpace
+        let screen = space.bounds
+        let bar = CGRect(
+            x: 0, y: screen.maxY - 60, width: screen.width, height: 60
+        )
+        func report(_ frame: CGRect) {
+            for name in [
+                UIResponder.keyboardWillChangeFrameNotification,
+                UIResponder.keyboardDidChangeFrameNotification,
+            ] {
+                NotificationCenter.default.post(
+                    name: name,
+                    object: nil,
+                    userInfo: [
+                        UIResponder.keyboardFrameBeginUserInfoKey: frame,
+                        UIResponder.keyboardFrameEndUserInfoKey: frame,
+                        UIResponder.keyboardAnimationDurationUserInfoKey: 0.0,
+                        UIResponder.keyboardAnimationCurveUserInfoKey:
+                            UIView.AnimationCurve.easeInOut.rawValue,
+                        UIResponder.keyboardIsLocalUserInfoKey: true,
+                    ]
+                )
+            }
+        }
+        defer {
+            // The keyboard is gone again for whoever observes it next.
+            report(bar.offsetBy(dx: 0, dy: bar.height))
+            console.remove()
+        }
+        let terminal = console.terminal
+        let host = try #require(terminal.superview as? SerialConsoleHostView)
+        #expect(try await eventually { terminal.surface != nil })
+        #expect(!terminal.isFirstResponder)
+        console.root.layoutIfNeeded()
+        let fullHeight = terminal.bounds.height
+        try #require(
+            SerialConsoleKeyboardInset.bottomInset(
+                host: host.convert(host.bounds, to: space),
+                screen: screen,
+                obstructions: [bar]
+            ) > 0,
+            "a bar at the bottom of the screen would not cover this console"
+        )
+
+        report(bar)
+        console.root.layoutIfNeeded()
+        #expect(
+            terminal.bounds.height == fullHeight,
+            "the unfocused console gave \(fullHeight - terminal.bounds.height) points to a key bar that has left"
+        )
+
+        #expect(!host.layer.needsLayout())
+        console.controller.terminalDidChangeFocus(false)
+        #expect(
+            host.layer.needsLayout(),
+            "a focus change does not lay the console out again"
+        )
     }
 }

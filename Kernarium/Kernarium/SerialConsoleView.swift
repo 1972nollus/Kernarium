@@ -146,6 +146,14 @@ extension SerialConsoleController: TerminalSurfaceOpenURLDelegate {
     func terminalDidRequestOpenURL(_: String, kind _: TerminalOpenURLKind) {}
 }
 
+extension SerialConsoleController: TerminalSurfaceFocusDelegate {
+    /// The console makes room for keyboard UI only while it has focus, and
+    /// UIKit does not report every focus change as a keyboard change.
+    func terminalDidChangeFocus(_: Bool) {
+        terminalView?.superview?.setNeedsLayout()
+    }
+}
+
 /// How much of the console the keyboard's docked parts cover. The
 /// application's content ignores the keyboard, so the console makes room for
 /// it itself. Everything is in screen coordinates.
@@ -233,15 +241,19 @@ final class SerialConsoleHostView: UIView {
         }
     }
 
+    /// Only a focused terminal has the key bar and a keyboard of its own.
+    /// Any other keyboard UI overlaps the console; so does the console's own
+    /// on its way out, which UIKit may still report where it was: a hardware
+    /// keyboard's bar leaves with focus, reported at its last frame and with
+    /// no hide notification.
     private func coveredHeight() -> CGFloat {
-        guard let window else { return 0 }
+        guard let window, terminal.isFirstResponder else { return 0 }
         let space = window.screen.coordinateSpace
         var obstructions: [CGRect] = []
         if let keyboardFrame {
             obstructions.append(keyboardFrame)
         }
-        if terminal.isFirstResponder,
-           let bar = terminal.inputAccessoryView,
+        if let bar = terminal.inputAccessoryView,
            bar.window != nil, !bar.isHidden {
             obstructions.append(bar.convert(bar.bounds, to: space))
         }

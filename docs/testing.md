@@ -365,10 +365,17 @@ success. The script therefore sends `key return` as `\n`, which produces the
 real Return key with any modifiers, and refuses `delete` and `escape`, naming
 a route that works.
 
+No command ends the host. A thrown error, an XCTest issue, and an
+Objective-C exception XCTest raises, such as `typeKey` given anything but one
+UTF-16 character, each become that command's error. The host keeps a
+command's issues out of XCTest's record, so it prints every failed command to
+its log.
+
 The target has no target application, so starting it installs only its own
 runner, and it is not in the `Kernarium` scheme. Reinstalling Kernarium,
-hosted `Kernarium` test runs, and other UI-test runners leave it running. Keep
-all automation code in the test targets.
+hosted `Kernarium` test runs, and other UI-test runners leave it running; the
+host's log records each such termination as a Kernarium crash. Keep all
+automation code in the test targets.
 
 ## LTP
 

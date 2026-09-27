@@ -51,14 +51,16 @@ CHECKOUT = SCRIPT.parents[2]
 # command still succeeds. "\n" produces the real Return key (HID usage 0x28),
 # modifiers included. Key names therefore resolve to characters that arrive,
 # and the characters that would be dropped are refused with a working route.
+# The arrows are the iOS values of XCUIKeyboardKey, the arrow symbols; the
+# macOS values, U+F700 to U+F703, press nothing on a device.
 KEYS = {
     "return": "\n",
     "tab": "\t",
     "space": " ",
-    "up": "\uf700",
-    "down": "\uf701",
-    "left": "\uf702",
-    "right": "\uf703",
+    "up": "\u2191",
+    "down": "\u2193",
+    "left": "\u2190",
+    "right": "\u2192",
 }
 UNDELIVERABLE = {
     "delete": "XCTest drops a synthesized Delete key; `type $'\\x7f'` deletes "
@@ -355,7 +357,9 @@ def key_character(key):
         raise ValueError(UNDELIVERABLE[key])
     if key in KEYS:
         return KEYS[key]
-    if len(key) != 1:
+    # XCTest's typeKey raises for anything but one UTF-16 code unit, so a
+    # character outside the Basic Multilingual Plane is refused as well.
+    if len(key.encode("utf-16-le")) != 2:
         raise ValueError(f"unknown key {key!r}: name one of "
                          f"{', '.join(sorted(KEYS))} or give one character")
     return key
