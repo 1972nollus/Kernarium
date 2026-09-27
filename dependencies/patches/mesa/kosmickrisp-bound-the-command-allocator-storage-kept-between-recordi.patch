@@ -50,7 +50,7 @@ it in two allocators larger than 16 MiB.
  src/kosmickrisp/bridge/mtl_command_buffer.h   |   2 +
  src/kosmickrisp/bridge/mtl_command_buffer.m   |   9 +
  .../bridge/stubs/mtl_command_buffer.c         |   6 +
- src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 119 +++---
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 121 +++---
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   7 +
  src/kosmickrisp/vulkan/kk_device.c            |  15 +-
  src/kosmickrisp/vulkan/kk_device.h            |  14 +
@@ -61,7 +61,7 @@ it in two allocators larger than 16 MiB.
  .../vulkan/tests/test_command_completion.m    |  57 ++-
  .../vulkan/tests/test_command_pool_release.m  |   4 +-
  .../vulkan/tests/test_command_resubmit.c      | 273 ++++++++++++++
- 14 files changed, 945 insertions(+), 137 deletions(-)
+ 14 files changed, 945 insertions(+), 139 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_allocator_budget.c
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_resubmit.c
 
@@ -116,7 +116,7 @@ index d87a8dc077cdb06eab7902968a3aec805e9bb356..1c5ecad4c45b7daef95a04041addbf91
  mtl_begin_command_buffer(mtl_command_buffer *command_buffer,
                           mtl_command_allocator *allocator)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index d3c22f5a4454b23522d82b76c9d8e67c46a76dde..ef181a7e57132b15cf0c1e7cbf778f3a7d3831a8 100644
+index 9955b59be279b624a586993fc545d57b733b7686..86173ba56df715c8c361a158ed711122718528ce 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -83,6 +83,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
@@ -291,49 +291,50 @@ index d3c22f5a4454b23522d82b76c9d8e67c46a76dde..ef181a7e57132b15cf0c1e7cbf778f3a
     vk_command_buffer_begin(&cmd->vk, pBeginInfo);
     cmd->one_time_submit =
        pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-@@ -320,9 +302,7 @@ static mtl_command_buffer *
+@@ -319,11 +301,8 @@ static void kk_stop_encoder(struct kk_cmd_buffer *cmd,
+ static mtl_command_buffer *
  cs_open_main(struct kk_cmd_buffer *cmd)
  {
-    if (!cmd->main.cmd_buf) {
+-   if (!cmd->main.cmd_buf) {
 -      struct kk_device *dev = kk_cmd_buffer_device(cmd);
 -      cmd->main.cmd_buf = mtl_new_command_buffer(dev->mtl_handle);
 -      mtl_begin_command_buffer(cmd->main.cmd_buf, cmd->gfx.allocator);
+-   }
++   if (!cmd->main.cmd_buf)
 +      cmd->main.cmd_buf = kk_open_command_buffer(cmd, &cmd->gfx);
-       cmd->main.encoder_count = 0u;
-    }
     return cmd->main.cmd_buf;
-@@ -369,6 +349,9 @@ cs_start_render(struct kk_cmd_buffer *cmd)
-    cmd->main.render_needed_pre = false;
+ }
  
+@@ -368,6 +347,9 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+ 
+    cmd->main.render_follows_work = cmd->main.cmd_buf != NULL;
     cmd->gfx.cmd_buf = cs_open_main(cmd);
 +   /* The recording has already failed; its draws record nothing. */
 +   if (!cmd->gfx.cmd_buf)
 +      return;
     cmd->gfx.in_main = true;
-    cmd->main.before_render = cmd->main.encoder_count++;
     cmd->gfx.encoder = mtl_new_render_command_encoder_with_descriptor(
-@@ -436,14 +419,12 @@ static void
+       cmd->gfx.cmd_buf, state->render_pass_descriptor);
+@@ -434,13 +416,10 @@ static void
  kk_start_compute_encoder(struct kk_cmd_buffer *cmd,
                           struct kk_encoder_state *es, bool in_main)
  {
 -   if (in_main) {
 -      es->cmd_buf = cs_open_main(cmd);
-+   es->cmd_buf = in_main ? cs_open_main(cmd) : kk_open_command_buffer(cmd, es);
-+   /* The recording has already failed; its dispatches record nothing. */
-+   if (!es->cmd_buf)
-+      return;
-+   if (in_main)
-       cmd->main.encoder_count++;
 -   } else {
 -      struct kk_device *dev = kk_cmd_buffer_device(cmd);
 -      es->cmd_buf = mtl_new_command_buffer(dev->mtl_handle);
 -      mtl_begin_command_buffer(es->cmd_buf, es->allocator);
 -   }
++   es->cmd_buf = in_main ? cs_open_main(cmd) : kk_open_command_buffer(cmd, es);
++   /* The recording has already failed; its dispatches record nothing. */
++   if (!es->cmd_buf)
++      return;
     es->in_main = in_main;
     es->encoder = mtl_new_compute_command_encoder(es->cmd_buf);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index a9d5f2abf81a86799d9ee435dc2858c1f01b78a1..aacf781b46944ea13e2163eb9df5adc981d2dc53 100644
+index 232cebd9c13edde902af3174d6ebf40a3827dff0..ab7e422b6cb3e661d87d908f0ae60919a370abbe 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -332,6 +332,9 @@ struct kk_ts_sample {
@@ -346,7 +347,7 @@ index a9d5f2abf81a86799d9ee435dc2858c1f01b78a1..aacf781b46944ea13e2163eb9df5adc9
     mtl_command_allocator *allocator;
     mtl_command_buffer *cmd_buf;
     /* Pending timestamp resolves (struct kk_ts_resolve), flushed at cs_end. */
-@@ -408,6 +411,10 @@ struct kk_cmd_buffer {
+@@ -406,6 +409,10 @@ struct kk_cmd_buffer {
     /* Metal command buffers are single-shot: a resubmission must re-record
      * by replaying the enqueued commands (see rerecord_cmd_buffer). */
     bool submitted;
