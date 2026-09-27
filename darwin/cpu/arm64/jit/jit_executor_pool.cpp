@@ -27,8 +27,7 @@ namespace {
              second.enable_guarded_control_flow &&
          first.enable_pointer_authentication ==
              second.enable_pointer_authentication &&
-         ::uml::cpu::same_host_capabilities(first.host_capabilities,
-                                            second.host_capabilities);
+         first.host_capabilities == second.host_capabilities;
 }
 
 [[nodiscard]] constexpr std::uint64_t bit_for(unsigned slot) noexcept {

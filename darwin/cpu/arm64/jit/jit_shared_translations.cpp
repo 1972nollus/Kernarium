@@ -246,8 +246,7 @@ bool SharedTranslationCache::CodegenProfile::operator==(
     const CodegenProfile &other) const noexcept {
   return guarded_control_flow == other.guarded_control_flow &&
          pointer_authentication == other.pointer_authentication &&
-         ::uml::cpu::same_host_capabilities(capabilities,
-                                            other.capabilities);
+         capabilities == other.capabilities;
 }
 
 SharedTranslationCache::Shard *SharedTranslationCache::allocated_shard(
