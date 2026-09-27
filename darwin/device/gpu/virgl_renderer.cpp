@@ -169,7 +169,7 @@ epoxy_resolver_stub_t handleMissingGlEntryPoint(const char* name) noexcept
     return &unavailableGlEntryPoint;
 }
 
-int checkGlDispatchResult(int result)
+int checkGlDispatchResult(int result) noexcept
 {
     if (!missingGlEntryPoint.exchange(false, std::memory_order_acq_rel))
         return result;
@@ -793,45 +793,33 @@ int VirglRenderer::createContextFence(
 
 int VirglRenderer::pollContextFences(std::uint32_t contextId) noexcept
 {
-    try {
-        if (contextId == 0)
-            return EINVAL;
-        if (fenceCallbackFailed_.load(std::memory_order_acquire))
-            return EIO;
-        virgl_renderer_context_poll(contextId);
-        if (checkGlDispatchResult(0) != 0 ||
-            fenceCallbackFailed_.load(std::memory_order_acquire)) {
-            return EIO;
-        }
-        return 0;
-    } catch (...) {
+    if (contextId == 0)
+        return EINVAL;
+    if (fenceCallbackFailed_.load(std::memory_order_acquire))
+        return EIO;
+    virgl_renderer_context_poll(contextId);
+    if (checkGlDispatchResult(0) != 0 ||
+        fenceCallbackFailed_.load(std::memory_order_acquire)) {
         return EIO;
     }
+    return 0;
 }
 
 int VirglRenderer::pollRenderer() noexcept
 {
-    try {
-        if (fenceCallbackFailed_.load(std::memory_order_acquire))
-            return EIO;
-        virgl_renderer_poll();
-        if (checkGlDispatchResult(0) != 0 ||
-            fenceCallbackFailed_.load(std::memory_order_acquire)) {
-            return EIO;
-        }
-        return 0;
-    } catch (...) {
+    if (fenceCallbackFailed_.load(std::memory_order_acquire))
+        return EIO;
+    virgl_renderer_poll();
+    if (checkGlDispatchResult(0) != 0 ||
+        fenceCallbackFailed_.load(std::memory_order_acquire)) {
         return EIO;
     }
+    return 0;
 }
 
 bool VirglRenderer::hasPendingWork() noexcept
 {
-    try {
-        return virgl_renderer_has_pending_work();
-    } catch (...) {
-        return false;
-    }
+    return virgl_renderer_has_pending_work();
 }
 
 int VirglRenderer::contextFenceStatus(

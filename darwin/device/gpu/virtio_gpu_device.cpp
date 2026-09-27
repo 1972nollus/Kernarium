@@ -519,32 +519,14 @@ void VirtioGpuDevice::reset() noexcept
      * returned to the pristine connection state. */
     releaseBlobScanout();
     for (auto& [resourceId, resource] : virglResources_) {
-        if (!resource.vectors.empty()) {
-            try {
-                UML_GPU_RENDERER.detachBacking(resourceId);
-            } catch (...) {
-                // Continue to retire the renderer resource itself.
-            }
-        }
-        try {
-            UML_GPU_RENDERER.unrefResource(resourceId);
-        } catch (...) {
-            // Reset is also used by teardown and must finish clearing owners.
-        }
+        if (!resource.vectors.empty())
+            UML_GPU_RENDERER.detachBacking(resourceId);
+        UML_GPU_RENDERER.unrefResource(resourceId);
     }
-    for (auto& [resourceId, resource] : blobResources_) {
-        try {
-            UML_GPU_RENDERER.unrefResource(resourceId);
-        } catch (...) {
-        }
-    }
-    for (const auto contextId : contexts_) {
-        try {
-            UML_GPU_RENDERER.destroyContext(contextId);
-        } catch (...) {
-            // Continue retiring the remaining independently owned objects.
-        }
-    }
+    for (auto& [resourceId, resource] : blobResources_)
+        UML_GPU_RENDERER.unrefResource(resourceId);
+    for (const auto contextId : contexts_)
+        UML_GPU_RENDERER.destroyContext(contextId);
     UML_GPU_RENDERER.resetFenceState();
     contexts_.clear();
     venusContexts_.clear();
