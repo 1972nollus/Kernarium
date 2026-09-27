@@ -7,6 +7,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import gzip
+import importlib.util
 import io
 import json
 import re
@@ -177,11 +178,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_memfd_policy: bool = False,
                           missing_virtio_console: bool = False,
                           unsupported_hvc: bool = False,
-                          missing_virgl: bool = False,
-                          bad_virgl_elf: bool = False,
-                          bad_virgl_link: bool = False,
-                          missing_virgl_dependency: bool = False,
-                          missing_virgl_runpath: bool = False,
+                          missing_mesa_gles: bool = False,
+                          bad_mesa_gles_elf: bool = False,
+                          missing_gallium_dependency: bool = False,
+                          retired_egl_library: bool = False,
+                          retired_dri_driver: bool = False,
+                          vendor_egl_property: bool = False,
                           system_other: bool = False,
                           missing_sdk_apex: bool = False,
                           removed_payload: bool = False,
@@ -189,7 +191,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           half_preopt_pair: bool = False,
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
-                          virgl_alignment: int = 16384,
+                          mesa_gles_alignment: int = 16384,
                           alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
@@ -410,35 +412,38 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "<compatibility-matrix/>\n",
                 )
                 archive.writestr("VENDOR/etc/vintf/manifest.xml", "<manifest/>\n")
-                virgl_entries = (
-                    "VENDOR/lib64/dri/gallium_dri.so",
-                    "VENDOR/lib64/egl/libEGL_mesa.so",
-                    "VENDOR/lib64/egl/libGLESv1_CM_mesa.so",
-                    "VENDOR/lib64/egl/libGLESv2_mesa.so",
+                mesa_gles_entries = (
+                    "VENDOR/lib64/venus_gallium_dri.so",
+                    "VENDOR/lib64/egl/libEGL_kernarium.so",
+                    "VENDOR/lib64/egl/libGLESv1_CM_kernarium.so",
+                    "VENDOR/lib64/egl/libGLESv2_kernarium.so",
                 )
-                for index, entry in enumerate(virgl_entries):
-                    if missing_virgl and index == 0:
+                for index, entry in enumerate(mesa_gles_entries):
+                    if missing_mesa_gles and index == 0:
                         continue
                     payload = (
                         b"not an ELF"
-                        if bad_virgl_elf and index == 0
+                        if bad_mesa_gles_elf and index == 0
                         else synthetic_aarch64_elf(
-                            virgl_alignment,
+                            mesa_gles_alignment,
                             ()
-                            if missing_virgl_dependency or index == 0
-                            else ("gallium_dri.so",),
-                            None
-                            if missing_virgl_runpath or index == 0
-                            else "$ORIGIN/../dri",
+                            if missing_gallium_dependency or index == 0
+                            else ("venus_gallium_dri.so",),
                         )
                     )
                     archive.writestr(entry, payload)
-                link = zipfile.ZipInfo("VENDOR/lib64/dri/virtio_gpu_dri.so")
-                link.create_system = 3
-                link.external_attr = (stat.S_IFLNK | 0o777) << 16
+                if retired_egl_library:
+                    archive.writestr(
+                        "VENDOR/lib64/egl/libGLES_mesa.so", synthetic_aarch64_elf()
+                    )
+                if retired_dri_driver:
+                    archive.writestr(
+                        "VENDOR/lib64/dri/gallium_dri.so", synthetic_aarch64_elf()
+                    )
                 archive.writestr(
-                    link,
-                    b"wrong_dri.so" if bad_virgl_link else b"gallium_dri.so",
+                    "VENDOR/build.prop",
+                    "ro.hardware.vulkan=virtio\n"
+                    + ("ro.hardware.egl=kernarium\n" if vendor_egl_property else ""),
                 )
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
@@ -512,11 +517,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("memfd-policy", {"missing_memfd_policy": True}),
             ("missing-virtio-console", {"missing_virtio_console": True}),
             ("unsupported-hvc", {"unsupported_hvc": True}),
-            ("missing-virgl", {"missing_virgl": True}),
-            ("virgl-not-elf", {"bad_virgl_elf": True}),
-            ("virgl-link", {"bad_virgl_link": True}),
-            ("virgl-dependency", {"missing_virgl_dependency": True}),
-            ("virgl-runpath", {"missing_virgl_runpath": True}),
+            ("missing-mesa-gles", {"missing_mesa_gles": True}),
+            ("mesa-gles-not-elf", {"bad_mesa_gles_elf": True}),
+            ("gallium-dependency", {"missing_gallium_dependency": True}),
+            ("retired-egl-library", {"retired_egl_library": True}),
+            ("retired-dri-driver", {"retired_dri_driver": True}),
+            ("vendor-egl-property", {"vendor_egl_property": True}),
             ("system-other", {"system_other": True}),
             ("missing-sdk-apex", {"missing_sdk_apex": True}),
             ("removed-payload", {"removed_payload": True}),
@@ -524,7 +530,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("half-preopt-pair", {"half_preopt_pair": True}),
             ("audio-defaults", {"wrong_audio_defaults": True}),
             ("product-model", {"wrong_product_model": True}),
-            ("virgl-alignment", {"virgl_alignment": 4096}),
+            ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)
@@ -544,6 +550,28 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             )
             if result.returncode == 0:
                 fail(f"target-files verifier accepted the {label} fixture")
+
+
+def verify_egl_selection(android_root: Path) -> None:
+    # The boot command line is ro.hardware.egl's one writer, so it must name
+    # the EGL libraries the target-files verifier requires.
+    spec = importlib.util.spec_from_file_location(
+        "verify_target_files", android_root / "tools/verify-target-files.py"
+    )
+    if spec is None or spec.loader is None:
+        fail("cannot load the target-files verifier")
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+    command_line = (
+        android_root / "support/boot/kernel-command-line.txt"
+    ).read_text().split()
+    values = [
+        token.partition("=")[2]
+        for token in command_line
+        if token.partition("=")[0] == "androidboot.hardware.egl"
+    ]
+    if values != [verifier.MESA_EGL_SUFFIX]:
+        fail(f"boot command line selects EGL libraries {values}")
 
 
 def newc_entry(name: str, mode: int, payload: bytes, inode: int) -> bytes:
@@ -1122,6 +1150,7 @@ def main() -> None:
         check=True,
     )
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
+    verify_egl_selection(android_root)
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")
     verify_orangefox_recovery_fixtures(

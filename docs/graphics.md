@@ -336,11 +336,11 @@ refused while its live memory is below the share.
 
 ### Android guest requirements
 
-The Android guest reaches the same renderer by a separate route. Its GLES stack
-is a GLES-only Soong port that installs `gallium_dri`, the Mesa EGL and GLES
-libraries, and a `virtio_gpu_dri.so` symlink; its Vulkan HAL is Mesa's Venus
-driver, built from this project's own guest Mesa source and installed as
-`vulkan.virtio.so`, with gralloc buffers from minigbm and presentation through
+The Android guest reaches the same renderer by a separate route. One Soong port
+of this project's own guest Mesa source provides both of its graphics stacks:
+the Virgl gallium driver behind the `kernarium` EGL and GLES libraries, and
+Mesa's Venus driver installed as the Vulkan HAL `vulkan.virtio.so`, with
+gralloc buffers from minigbm and presentation through
 `VK_ANDROID_native_buffer`. That contract, including which guest epoch the
 hardware-buffer path needs and why no dEQP level is declared, lives in
 [`../android/aosp-17/README.md`](../android/aosp-17/README.md#graphics).
