@@ -23,6 +23,10 @@ recycles only allocators of at most 16 MiB, since a recording that takes a
 grown one keeps all of that storage however little it records. It keeps at
 most 64 MiB in total and releases every other allocator.
 
+A command buffer in the initial state therefore holds no allocator, so the
+driver's vkResetCommandBuffer, which reset initial buffers too so that a
+release reached their allocators, goes, and the common entrypoint applies.
+
 Handing allocators to a shared cache makes one case unsafe that was merely
 wrong before. Vulkan lets a SIMULTANEOUS_USE command buffer be resubmitted
 while its last submission is still running, and Metal cannot run a
@@ -46,7 +50,7 @@ it in two allocators larger than 16 MiB.
  src/kosmickrisp/bridge/mtl_command_buffer.h   |   2 +
  src/kosmickrisp/bridge/mtl_command_buffer.m   |   9 +
  .../bridge/stubs/mtl_command_buffer.c         |   6 +
- src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 106 +++---
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 119 +++---
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   7 +
  src/kosmickrisp/vulkan/kk_device.c            |  15 +-
  src/kosmickrisp/vulkan/kk_device.h            |  14 +
@@ -57,7 +61,7 @@ it in two allocators larger than 16 MiB.
  .../vulkan/tests/test_command_completion.m    |  57 ++-
  .../vulkan/tests/test_command_pool_release.m  |   4 +-
  .../vulkan/tests/test_command_resubmit.c      | 273 ++++++++++++++
- 14 files changed, 944 insertions(+), 125 deletions(-)
+ 14 files changed, 945 insertions(+), 137 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_allocator_budget.c
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_resubmit.c
 
@@ -112,7 +116,7 @@ index d87a8dc077cdb06eab7902968a3aec805e9bb356..1c5ecad4c45b7daef95a04041addbf91
  mtl_begin_command_buffer(mtl_command_buffer *command_buffer,
                           mtl_command_allocator *allocator)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index d3c22f5a4454b23522d82b76c9d8e67c46a76dde..5f66b1f6edf70b8d3ec2ecea0e92536647b8e61e 100644
+index d3c22f5a4454b23522d82b76c9d8e67c46a76dde..ef181a7e57132b15cf0c1e7cbf778f3a7d3831a8 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -83,6 +83,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
@@ -220,7 +224,14 @@ index d3c22f5a4454b23522d82b76c9d8e67c46a76dde..5f66b1f6edf70b8d3ec2ecea0e925366
  
     cmd->uploader.bo = NULL;
     cmd->uploader.offset = 0;
-@@ -233,17 +243,12 @@ kk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
+@@ -227,23 +237,18 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+ 
+ static void
+ kk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
+-                    VkCommandBufferResetFlags flags)
++                    UNUSED VkCommandBufferResetFlags flags)
+ {
+    struct kk_cmd_buffer *cmd =
        container_of(vk_cmd_buffer, struct kk_cmd_buffer, vk);
  
     vk_command_buffer_reset(&cmd->vk);
@@ -243,7 +254,25 @@ index d3c22f5a4454b23522d82b76c9d8e67c46a76dde..5f66b1f6edf70b8d3ec2ecea0e925366
     cmd->submitted = false;
     cmd->one_time_submit = false;
  }
-@@ -272,18 +277,6 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+@@ -254,17 +259,6 @@ const struct vk_command_buffer_ops kk_cmd_buffer_ops = {
+    .destroy = kk_destroy_cmd_buffer,
+ };
+ 
+-VKAPI_ATTR VkResult VKAPI_CALL
+-kk_ResetCommandBuffer(VkCommandBuffer commandBuffer,
+-                      VkCommandBufferResetFlags flags)
+-{
+-   VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
+-
+-   /* INITIAL buffers can retain capacity from an earlier reset without release. */
+-   kk_reset_cmd_buffer(&cmd->vk, flags);
+-   return VK_SUCCESS;
+-}
+-
+ VKAPI_ATTR VkResult VKAPI_CALL
+ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+                       const VkCommandBufferBeginInfo *pBeginInfo)
+@@ -272,18 +266,6 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
     VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
  
     kk_reset_cmd_buffer(&cmd->vk, 0u);
@@ -262,7 +291,7 @@ index d3c22f5a4454b23522d82b76c9d8e67c46a76dde..5f66b1f6edf70b8d3ec2ecea0e925366
     vk_command_buffer_begin(&cmd->vk, pBeginInfo);
     cmd->one_time_submit =
        pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-@@ -320,9 +313,7 @@ static mtl_command_buffer *
+@@ -320,9 +302,7 @@ static mtl_command_buffer *
  cs_open_main(struct kk_cmd_buffer *cmd)
  {
     if (!cmd->main.cmd_buf) {
@@ -273,7 +302,7 @@ index d3c22f5a4454b23522d82b76c9d8e67c46a76dde..5f66b1f6edf70b8d3ec2ecea0e925366
        cmd->main.encoder_count = 0u;
     }
     return cmd->main.cmd_buf;
-@@ -369,6 +360,9 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+@@ -369,6 +349,9 @@ cs_start_render(struct kk_cmd_buffer *cmd)
     cmd->main.render_needed_pre = false;
  
     cmd->gfx.cmd_buf = cs_open_main(cmd);
@@ -283,7 +312,7 @@ index d3c22f5a4454b23522d82b76c9d8e67c46a76dde..5f66b1f6edf70b8d3ec2ecea0e925366
     cmd->gfx.in_main = true;
     cmd->main.before_render = cmd->main.encoder_count++;
     cmd->gfx.encoder = mtl_new_render_command_encoder_with_descriptor(
-@@ -436,14 +430,12 @@ static void
+@@ -436,14 +419,12 @@ static void
  kk_start_compute_encoder(struct kk_cmd_buffer *cmd,
                           struct kk_encoder_state *es, bool in_main)
  {
