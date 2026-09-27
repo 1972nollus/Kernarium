@@ -4,23 +4,23 @@ Date: Fri, 28 Aug 2026 15:31:43 +0900
 Subject: [PATCH] Add file-only GPT core library for iOS
 
 ---
- Makefile.kernarium    |  31 +++++++
+ Makefile.kernarium    |  33 ++++++
  diskio-unix.cc        |  29 +++++-
  guid.cc               |   2 +-
- kernarium_gptfdisk.cc | 200 ++++++++++++++++++++++++++++++++++++++++++
- kernarium_gptfdisk.h  |  52 +++++++++++
+ kernarium_gptfdisk.cc | 231 ++++++++++++++++++++++++++++++++++++++++++
+ kernarium_gptfdisk.h  |  57 +++++++++++
  support.h             |   7 +-
- 6 files changed, 316 insertions(+), 5 deletions(-)
+ 6 files changed, 354 insertions(+), 5 deletions(-)
  create mode 100644 Makefile.kernarium
  create mode 100644 kernarium_gptfdisk.cc
  create mode 100644 kernarium_gptfdisk.h
 
 diff --git a/Makefile.kernarium b/Makefile.kernarium
 new file mode 100644
-index 0000000000000000000000000000000000000000..ff07aae1f57f26bd5c786e591bdcbbe99cd2dc68
+index 0000000000000000000000000000000000000000..108aeeed7fc70084ac99d28ff7b2519f179f8994
 --- /dev/null
 +++ b/Makefile.kernarium
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,33 @@
 +# SPDX-License-Identifier: GPL-2.0-or-later
 +
 +CXX ?= c++
@@ -35,8 +35,10 @@ index 0000000000000000000000000000000000000000..ff07aae1f57f26bd5c786e591bdcbbe9
 +	kernarium_gptfdisk.cc
 +CORE_OBJECTS = $(CORE_SOURCES:%.cc=$(BUILD_DIR)/%.o)
 +
-+CPPFLAGS += -DKERNARIUM_GPTFDISK_FILE_ONLY=1
-+CXXFLAGS += -O2 -fPIC -fvisibility=hidden -std=c++17
++# The file-only core, its language standard and its hidden symbols are what
++# this library is, so they apply on top of whatever flags the caller passes.
++override CPPFLAGS += -DKERNARIUM_GPTFDISK_FILE_ONLY=1
++override CXXFLAGS += -fvisibility=hidden -std=c++17
 +
 +.PHONY: all clean
 +
@@ -149,14 +151,15 @@ index d3e4fd567dbfa3e380ef03a5478d7dfcdf50b407..bdef7501c9d92a9a77bc9d2582dfecf0
             uuidData[4], uuidData[7], uuidData[6], uuidData[8], uuidData[9],
 diff --git a/kernarium_gptfdisk.cc b/kernarium_gptfdisk.cc
 new file mode 100644
-index 0000000000000000000000000000000000000000..8499080944df2c72fdfde882c7df7fb909ac5429
+index 0000000000000000000000000000000000000000..9a66d6bb7e8f23ac569a2e9afaf7f3177b37fdcf
 --- /dev/null
 +++ b/kernarium_gptfdisk.cc
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,231 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later */
 +
 +#include "kernarium_gptfdisk.h"
 +
++#include <cctype>
 +#include <exception>
 +#include <iostream>
 +#include <mutex>
@@ -169,6 +172,9 @@ index 0000000000000000000000000000000000000000..8499080944df2c72fdfde882c7df7fb9
 +
 +std::mutex gptfdiskMutex;
 +
++// The core explains a failure only on std::cout and std::cerr. Both streams
++// belong to the whole process, so while a call runs every thread's output to
++// them lands here; a failed call hands what the core wrote to its caller.
 +class ScopedOutputCapture {
 +public:
 +   ScopedOutputCapture() : oldCout(std::cout.rdbuf(output.rdbuf())),
@@ -178,23 +184,19 @@ index 0000000000000000000000000000000000000000..8499080944df2c72fdfde882c7df7fb9
 +      std::cerr.rdbuf(oldCerr);
 +   }
 +
++   std::string Text() const { return output.str(); }
++
 +private:
 +   std::ostringstream output;
 +   std::streambuf *oldCout;
 +   std::streambuf *oldCerr;
 +};
 +
++// GPTData's operator[] is const, so a partition's end is set here.
 +class KernariumGPTData : public GPTData {
 +public:
-+   bool PartitionIsUsed(uint32_t index) {
-+      return (index < numParts) && partitions[index].IsUsed();
-+   }
-+
-+   bool GrowPartition(uint32_t index, uint64_t newLastLBA) {
-+      if ((index >= numParts) || !partitions[index].IsUsed())
-+         return false;
-+      partitions[index].SetLastLBA(newLastLBA);
-+      return true;
++   void SetPartitionLastLBA(uint32_t index, uint64_t lastLBA) {
++      partitions[index].SetLastLBA(lastLBA);
 +   }
 +};
 +
@@ -207,6 +209,32 @@ index 0000000000000000000000000000000000000000..8499080944df2c72fdfde882c7df7fb9
 +      length++;
 +   }
 +   error[length] = '\0';
++}
++
++// Appends the core's own diagnostics to a failure message, on one line and
++// cut to the caller's buffer.
++void AppendDiagnostics(char *error, size_t errorSize, const std::string &text) {
++   if ((error == NULL) || (errorSize == 0))
++      return;
++   std::string diagnostics;
++   bool space = false;
++   for (const char character : text) {
++      if (std::isspace(static_cast<unsigned char>(character)) ||
++          std::iscntrl(static_cast<unsigned char>(character))) {
++         space = !diagnostics.empty();
++         continue;
++      }
++      if (space)
++         diagnostics += ' ';
++      diagnostics += character;
++      space = false;
++   }
++   if (diagnostics.empty())
++      return;
++   std::string message(error);
++   message += message.empty() ? "" : ": ";
++   message += diagnostics;
++   SetError(error, errorSize, message.c_str());
 +}
 +
 +int Load(const char *path, uint32_t partitionNumber, KernariumGPTData *gpt,
@@ -228,7 +256,7 @@ index 0000000000000000000000000000000000000000..8499080944df2c72fdfde882c7df7fb9
 +   }
 +
 +   *index = partitionNumber - 1;
-+   if (!gpt->ValidPartNum(*index) || !gpt->PartitionIsUsed(*index)) {
++   if (!gpt->ValidPartNum(*index) || !gpt->IsUsedPartNum(*index)) {
 +      SetError(error, errorSize, "requested GPT partition does not exist");
 +      return KERNARIUM_GPTFDISK_INVALID_PARTITION;
 +   }
@@ -296,7 +324,7 @@ index 0000000000000000000000000000000000000000..8499080944df2c72fdfde882c7df7fb9
 +   }
 +
 +   for (uint32_t other = 0; other < gpt.GetNumParts(); other++) {
-+      if ((other == index) || !gpt.PartitionIsUsed(other))
++      if ((other == index) || !gpt.IsUsedPartNum(other))
 +         continue;
 +      if ((gpt[other].GetFirstLBA() <= desiredLastLBA) &&
 +          (gpt[other].GetLastLBA() >= gpt[index].GetFirstLBA())) {
@@ -305,11 +333,10 @@ index 0000000000000000000000000000000000000000..8499080944df2c72fdfde882c7df7fb9
 +      }
 +   }
 +
-+   if ((desiredLastLBA != currentLastLBA) &&
-+       !gpt.GrowPartition(index, desiredLastLBA)) {
-+      SetError(error, errorSize, "could not update requested GPT partition");
-+      return KERNARIUM_GPTFDISK_INTERNAL_ERROR;
-+   }
++   // Load proved the partition exists and is used, and nothing since has
++   // touched the partition array.
++   if (desiredLastLBA != currentLastLBA)
++      gpt.SetPartitionLastLBA(index, desiredLastLBA);
 +   if ((desiredLastLBA != currentLastLBA) ||
 +       (oldBackupHeader != gpt.GetSecondHeaderLBA())) {
 +      if (!gpt.SaveGPTData(1)) {
@@ -328,14 +355,17 @@ index 0000000000000000000000000000000000000000..8499080944df2c72fdfde882c7df7fb9
 +   kernarium_gptfdisk_partition_info *info, char *error, size_t error_size) {
 +   std::lock_guard<std::mutex> lock(gptfdiskMutex);
 +   ScopedOutputCapture capture;
++   int result = KERNARIUM_GPTFDISK_INTERNAL_ERROR;
 +   try {
-+      return ReadPartition(path, partition_number, info, error, error_size);
++      result = ReadPartition(path, partition_number, info, error, error_size);
 +   } catch (const std::exception &exception) {
 +      SetError(error, error_size, exception.what());
 +   } catch (...) {
 +      SetError(error, error_size, "unexpected GPT fdisk failure");
 +   }
-+   return KERNARIUM_GPTFDISK_INTERNAL_ERROR;
++   if (result != KERNARIUM_GPTFDISK_OK)
++      AppendDiagnostics(error, error_size, capture.Text());
++   return result;
 +}
 +
 +int kernarium_gptfdisk_grow_partition_to_fill(
@@ -343,22 +373,25 @@ index 0000000000000000000000000000000000000000..8499080944df2c72fdfde882c7df7fb9
 +   kernarium_gptfdisk_partition_info *info, char *error, size_t error_size) {
 +   std::lock_guard<std::mutex> lock(gptfdiskMutex);
 +   ScopedOutputCapture capture;
++   int result = KERNARIUM_GPTFDISK_INTERNAL_ERROR;
 +   try {
-+      return GrowPartition(path, partition_number, trailing_free_bytes, info,
-+                           error, error_size);
++      result = GrowPartition(path, partition_number, trailing_free_bytes, info,
++                             error, error_size);
 +   } catch (const std::exception &exception) {
 +      SetError(error, error_size, exception.what());
 +   } catch (...) {
 +      SetError(error, error_size, "unexpected GPT fdisk failure");
 +   }
-+   return KERNARIUM_GPTFDISK_INTERNAL_ERROR;
++   if (result != KERNARIUM_GPTFDISK_OK)
++      AppendDiagnostics(error, error_size, capture.Text());
++   return result;
 +}
 diff --git a/kernarium_gptfdisk.h b/kernarium_gptfdisk.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..f1769e3fe67228c4cabb6f8f3108d66aa6b14587
+index 0000000000000000000000000000000000000000..ac1cd2fa79c7b9bec0fe220fe0e0b6d18d42cc08
 --- /dev/null
 +++ b/kernarium_gptfdisk.h
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,57 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later */
 +
 +#ifndef KERNARIUM_GPTFDISK_H
@@ -391,6 +424,11 @@ index 0000000000000000000000000000000000000000..f1769e3fe67228c4cabb6f8f3108d66a
 +   uint32_t block_size;
 +} kernarium_gptfdisk_partition_info;
 +
++/*
++ * Calls are serialized. While one runs, std::cout and std::cerr of the whole
++ * process are redirected, because the GPT fdisk core reports its reasons only
++ * there; a failed call appends that output to the message in error.
++ */
 +int kernarium_gptfdisk_read_partition(
 +   const char *path,
 +   uint32_t partition_number,
