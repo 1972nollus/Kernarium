@@ -22,10 +22,10 @@ inputs are cast the same way and get the same requirement.
  2 files changed, 22 insertions(+), 8 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 2c09dd67ec1c791404aa0bddba1be91d956ea0bf..88f8eaefd2c09615c6ed996448c87a5c4e56e6ce 100644
+index 2a34cfb914b44efdb72c67c0abb84acb358d4c69..ce7a69b379a6ce96820613b7f1fce2830638a6b1 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -7593,6 +7593,14 @@ static bool use_integer(void) {
+@@ -7614,6 +7614,14 @@ static bool use_integer(void) {
     if (getenv("VIRGL_USE_INTEGER"))
        return true;
  

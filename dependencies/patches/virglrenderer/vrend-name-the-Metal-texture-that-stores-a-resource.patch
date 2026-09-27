@@ -63,10 +63,10 @@ index 2229e47acfb0c6acf5b3ea2245b90c4729882e42..1062aa6f2e2e5355917d1e54aa5b4601
        return vrend_winsys_get_attrs_for_texture(info_ext->base.tex_id,
                                                  info_ext->base.virgl_format,
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 8666fcdf68af138e07cce13a52fbb84b130a33ed..56729a64ee053163394f39847c0f1fe831718e6c 100644
+index e373ea1da173119110b585864f26017f1d53b52f..3ec5d2bb4359a69bc415609042aba43b4969d4b6 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -13855,6 +13855,42 @@ vrend_renderer_resource_d3d11_texture2d(struct pipe_resource *pres, void **d3d_t
+@@ -13859,6 +13859,42 @@ vrend_renderer_resource_d3d11_texture2d(struct pipe_resource *pres, void **d3d_t
  #endif
  }
  

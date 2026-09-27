@@ -25,10 +25,10 @@ into an open-ended wait on a GPU timeline.
  1 file changed, 13 insertions(+)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 753e3e883d8882b214765c7aba8e0916e2ff3fa4..2c09dd67ec1c791404aa0bddba1be91d956ea0bf 100644
+index d252379d94de1a64ef78d54923222ea396f577b5..2a34cfb914b44efdb72c67c0abb84acb358d4c69 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -7780,7 +7780,20 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+@@ -7801,7 +7801,20 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
        vrend_state.use_external_blob = true;
  
  #ifdef HAVE_EPOXY_EGL_H

@@ -27,10 +27,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 22 insertions(+), 14 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index ca6945a532da6e9dfed71288c514c68bb5e5cd09..49d35ac807e93ad5f1d1c28be8978ce0d890075d 100644
+index 8d730a011045b81367a5230c88f32c0f1723b27a..f5653dbfad9f66bc389d6f14952cb6a4caea9463 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -9160,19 +9160,29 @@ static void iov_buffer_upload(void *cookie, uint32_t doff, void *src, int len)
+@@ -9172,19 +9172,29 @@ static void iov_buffer_upload(void *cookie, uint32_t doff, void *src, int len)
     glBufferSubData(d->target, d->box->x + doff, len, src);
  }
  
@@ -68,7 +68,7 @@ index ca6945a532da6e9dfed71288c514c68bb5e5cd09..49d35ac807e93ad5f1d1c28be8978ce0
  static void read_transfer_data(const struct iovec *iov,
                                 unsigned int num_iovs,
                                 char *data,
-@@ -9723,7 +9733,7 @@ static int vrend_renderer_transfer_write_iov(struct vrend_context *ctx,
+@@ -9735,7 +9745,7 @@ static int vrend_renderer_transfer_write_iov(struct vrend_context *ctx,
              if (!vrend_state.use_core_profile)
                 glPixelTransferf(GL_DEPTH_SCALE, depth_scale);
              else
@@ -77,7 +77,7 @@ index ca6945a532da6e9dfed71288c514c68bb5e5cd09..49d35ac807e93ad5f1d1c28be8978ce0
           }
           if (res->target == GL_TEXTURE_CUBE_MAP) {
              GLenum ctarget = GL_TEXTURE_CUBE_MAP_POSITIVE_X + info->box->z;
-@@ -10110,7 +10120,7 @@ static int vrend_transfer_send_readpixels(struct vrend_context *ctx,
+@@ -10122,7 +10132,7 @@ static int vrend_transfer_send_readpixels(struct vrend_context *ctx,
        if (!vrend_state.use_core_profile)
           glPixelTransferf(GL_DEPTH_SCALE, 1.0);
        else
@@ -86,7 +86,7 @@ index ca6945a532da6e9dfed71288c514c68bb5e5cd09..49d35ac807e93ad5f1d1c28be8978ce0
     }
  
     if (need_temp) {
-@@ -10706,10 +10716,8 @@ static void vrend_resource_copy_fallback(struct vrend_resource *src_res,
+@@ -10718,10 +10728,8 @@ static void vrend_resource_copy_fallback(struct vrend_resource *src_res,
        /* we get values from the guest as 24-bit scaled integers
           but we give them to the host GL and it interprets them
           as 32-bit scaled integers, so we need to scale them here */

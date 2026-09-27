@@ -27,10 +27,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 23 insertions(+), 2 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 18c9fbdb9136c8b13cef19b16900cbe843ada68d..136d41e7e824439abff2488ea66fc9df722ddeeb 100644
+index 3bb8f27d1e12ef03f12269315b1288f326e9c666..6521db43f3a23ef7d4aaf0a57bcf59a604ac8470 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -5510,8 +5510,7 @@ static void vrend_draw_bind_images_shader(struct vrend_sub_context *sub_ctx, int
+@@ -5531,8 +5531,7 @@ static void vrend_draw_bind_images_shader(struct vrend_sub_context *sub_ctx, int
     struct vrend_image_view *iview;
     uint32_t mask, tex_id, level, first_layer;
  
@@ -40,7 +40,7 @@ index 18c9fbdb9136c8b13cef19b16900cbe843ada68d..136d41e7e824439abff2488ea66fc9df
        return;
  
     if (!sub_ctx->prog->img_locs[shader_type])
-@@ -5520,6 +5519,28 @@ static void vrend_draw_bind_images_shader(struct vrend_sub_context *sub_ctx, int
+@@ -5541,6 +5540,28 @@ static void vrend_draw_bind_images_shader(struct vrend_sub_context *sub_ctx, int
     if (!has_feature(feat_images))
        return;
  

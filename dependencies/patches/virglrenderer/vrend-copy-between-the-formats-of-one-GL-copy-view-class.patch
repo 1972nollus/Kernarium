@@ -96,10 +96,10 @@ index 670b3a4007cd315321c527eae1060754189a6cad..69ceb82a67917034977cd0ea9062897f
        return false;
  
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 88f8eaefd2c09615c6ed996448c87a5c4e56e6ce..ca6945a532da6e9dfed71288c514c68bb5e5cd09 100644
+index ce7a69b379a6ce96820613b7f1fce2830638a6b1..8d730a011045b81367a5230c88f32c0f1723b27a 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -10940,7 +10940,8 @@ void vrend_renderer_resource_copy_region(struct vrend_context *ctx,
+@@ -10952,7 +10952,8 @@ void vrend_renderer_resource_copy_region(struct vrend_context *ctx,
        return;
     }
  
