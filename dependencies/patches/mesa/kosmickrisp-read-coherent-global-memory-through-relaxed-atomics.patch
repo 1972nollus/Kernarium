@@ -70,7 +70,7 @@ index 8248ca1636417559b5ad7f6824277d8e682eba70..4e1a6c004110588e9b28418c0993361c
  ----------------
  | macOS version: 26.x
 diff --git a/src/kosmickrisp/compiler/msl_private.h b/src/kosmickrisp/compiler/msl_private.h
-index 6d57f2760f2dc66d246d44aa756759282d6cf323..01711fa38d314803f8d6b273155066008e0a320a 100644
+index 00577811fdf4a55067d9a8effc891bb269da6650..ba7a292d87de9080797b3487eecfbbde368e39bc 100644
 --- a/src/kosmickrisp/compiler/msl_private.h
 +++ b/src/kosmickrisp/compiler/msl_private.h
 @@ -52,6 +52,11 @@ struct hash_table *msl_infer_types(nir_shader *shader);
@@ -86,7 +86,7 @@ index 6d57f2760f2dc66d246d44aa756759282d6cf323..01711fa38d314803f8d6b27315506600
  
  const char *msl_type_for_src(struct hash_table *types, nir_src *src);
 diff --git a/src/kosmickrisp/compiler/msl_type_inference.c b/src/kosmickrisp/compiler/msl_type_inference.c
-index a65587e0589e4f9509966fb50432ecd8110b4766..9797cad73c2de7a74b9c3a9ff7a727174d1e5e12 100644
+index a419aff0c94ffc328010302bbf7c014189f7996a..9592bc547681efcd8aa88e04a93557e73b32e237 100644
 --- a/src/kosmickrisp/compiler/msl_type_inference.c
 +++ b/src/kosmickrisp/compiler/msl_type_inference.c
 @@ -716,6 +716,20 @@ msl_type_for_def(struct hash_table *types, nir_def *def)

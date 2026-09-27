@@ -26,12 +26,43 @@ the test read back zeroes and reported an invalid result.
 (cherry picked from commit 41d93b279ff8d8dd9f776f13b386f4add2755107)
 (cherry picked from commit df9f8eb5bd5e2f1fa1e086298577886fa1c4fc84)
 ---
+ src/kosmickrisp/compiler/msl_private.h        |   1 -
+ src/kosmickrisp/compiler/msl_type_inference.c |   6 -
  src/kosmickrisp/compiler/nir_to_msl.c         |  13 +-
  src/kosmickrisp/vulkan/meson.build            |  14 ++
  .../vulkan/tests/test_msl_temporaries.c       | 223 ++++++++++++++++++
- 3 files changed, 246 insertions(+), 4 deletions(-)
+ 5 files changed, 246 insertions(+), 11 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
 
+diff --git a/src/kosmickrisp/compiler/msl_private.h b/src/kosmickrisp/compiler/msl_private.h
+index 6d57f2760f2dc66d246d44aa756759282d6cf323..00577811fdf4a55067d9a8effc891bb269da6650 100644
+--- a/src/kosmickrisp/compiler/msl_private.h
++++ b/src/kosmickrisp/compiler/msl_private.h
+@@ -81,7 +81,6 @@ uint32_t msl_output_num_components(struct nir_to_msl_ctx *ctx,
+                                    uint32_t location);
+ 
+ bool msl_src_is_float(struct nir_to_msl_ctx *ctx, nir_src *src);
+-bool msl_def_is_sampler(struct nir_to_msl_ctx *ctx, nir_def *def);
+ bool msl_def_is_texture(struct nir_to_msl_ctx *ctx, nir_def *def);
+ 
+ void msl_nir_lower_subgroups(nir_shader *nir);
+diff --git a/src/kosmickrisp/compiler/msl_type_inference.c b/src/kosmickrisp/compiler/msl_type_inference.c
+index a65587e0589e4f9509966fb50432ecd8110b4766..a419aff0c94ffc328010302bbf7c014189f7996a 100644
+--- a/src/kosmickrisp/compiler/msl_type_inference.c
++++ b/src/kosmickrisp/compiler/msl_type_inference.c
+@@ -882,12 +882,6 @@ msl_src_is_float(struct nir_to_msl_ctx *ctx, nir_src *src)
+    return get_type(ctx->types, src) == TYPE_FLOAT;
+ }
+ 
+-bool
+-msl_def_is_sampler(struct nir_to_msl_ctx *ctx, nir_def *def)
+-{
+-   return get_type(ctx->types, def) == TYPE_SAMPLER;
+-}
+-
+ bool
+ msl_def_is_texture(struct nir_to_msl_ctx *ctx, nir_def *def)
+ {
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
 index cd62fbda0a3c61f641210a44f9869917c468df83..76b3cc9740463a32d5b4dc1ebad096a7bc09fc05 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
