@@ -8,6 +8,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import base64
+from contextlib import AbstractContextManager
 import json
 import math
 import os
@@ -26,6 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import boot_kde_vnc  # noqa: E402
+import guest_process  # noqa: E402
 import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
 import run_vk_gl_cts as cts  # noqa: E402
 import vulkan_cts_receipt as vk_receipt  # noqa: E402
@@ -947,19 +949,24 @@ def wait_for_log(
     raise TimeoutError("Chromium WebGL verification did not finish in time")
 
 
-def start_guest(
+def guest_child(
     command: Sequence[str], log: BinaryIO, **options: Any
-) -> subprocess.Popen[bytes]:
-    """Start the guest harness as the leader of its own session.
+) -> AbstractContextManager[subprocess.Popen[bytes]]:
+    """Own the guest harness, started as the leader of its own session.
 
     stop_guest signals the harness's process group, and a terminal interrupt
-    then reaches only the runner, which stops the guest itself.
+    then reaches only the runner, which stops the guest itself. The shared
+    owner arms that stop before the harness starts, turns the first SIGINT or
+    SIGTERM into KeyboardInterrupt and ignores the rest while the stop runs,
+    so a second Ctrl-C or a pkill of the runner cannot leave the harness and
+    its emulator running detached.
     """
-    return subprocess.Popen(
+    return guest_process.managed_child(
         command,
+        stop=stop_guest,
+        start_new_session=True,
         stdout=log,
         stderr=subprocess.STDOUT,
-        start_new_session=True,
         **options,
     )
 
@@ -1575,8 +1582,7 @@ def main() -> int:
     )
     environment = build_host_environment(options.display)
     with log_path.open("wb") as log:
-        process = start_guest(command, log, env=environment)
-        try:
+        with guest_child(command, log, env=environment) as process:
             try:
                 text, host_measurement = wait_for_log(
                     process,
@@ -1703,8 +1709,6 @@ def main() -> int:
                 encoding="utf-8",
             )
             print(f"Artifacts: {artifact}")
-        finally:
-            stop_guest(process)
     return 0
 
 
