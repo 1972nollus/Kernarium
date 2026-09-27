@@ -62,16 +62,6 @@ protected:
     bool resident{};
   };
 
-  struct GprResidencyPlan final {
-    std::array<unsigned, 8> guests{};
-    std::size_t count{};
-    std::size_t estimated_avoided_accesses{};
-  };
-
-  void begin_gpr_residency_observation(bool enabled) noexcept;
-  [[nodiscard]] GprResidencyPlan
-  finish_gpr_residency_observation() const noexcept;
-  void apply_gpr_residency_plan(const GprResidencyPlan &plan) noexcept;
   [[nodiscard]] bool gpr_slots_unbound() const noexcept;
   [[nodiscard]] constexpr std::size_t gpr_slot_capacity() const noexcept {
     return resident_gpr_hosts.size();
@@ -299,22 +289,6 @@ private:
     bool dirty{};
   };
 
-  struct GprResidencyGuest final {
-    static constexpr std::size_t no_first_access =
-        static_cast<std::size_t>(-1);
-
-    std::size_t first_access{no_first_access};
-    std::size_t reads{};
-    std::size_t writes{};
-    bool written{};
-    bool read_before_write{};
-  };
-
-  void observe_gpr_access(unsigned guest, bool stack_pointer,
-                          bool reads, bool writes) noexcept;
-  [[nodiscard]] static std::size_t
-  residency_benefit(const GprResidencyGuest &guest) noexcept;
-
   struct VectorSlot final {
     unsigned guest{unbound_guest};
     bool loaded{};
@@ -333,9 +307,6 @@ private:
   void flush_vectors(std::uint32_t mask);
 
   std::array<GprSlot, resident_gpr_hosts.size()> gpr_slots_{};
-  std::array<GprResidencyGuest, 32> gpr_residency_guests_{};
-  std::size_t gpr_residency_next_access_{};
-  bool gpr_residency_observation_enabled_{};
   std::array<VectorSlot, resident_vector_hosts.size()> vector_slots_{};
   std::uint16_t exit_gpr_mask_{};
   std::uint32_t exit_vector_mask_{};

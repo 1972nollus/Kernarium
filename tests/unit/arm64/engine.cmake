@@ -856,23 +856,6 @@
     uml_add_unit_test(NAME arm64-jit-table-list-remap-codegen
         COMMAND uml_arm64_jit_table_list_remap_codegen_tests)
 
-    add_executable(uml_arm64_jit_gpr_residency_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_residency_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_gpr_residency_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_gpr_residency_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-gpr-residency-codegen
-        COMMAND uml_arm64_jit_gpr_residency_codegen_tests)
-
     add_executable(uml_arm64_jit_pair_remap_codegen_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_pair_remap_codegen_tests.cpp
         $<TARGET_OBJECTS:uml_runtime_guest_selector>

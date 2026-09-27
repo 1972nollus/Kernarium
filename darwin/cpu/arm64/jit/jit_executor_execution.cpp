@@ -125,7 +125,6 @@ namespace uml::cpu::arm64 {
       };
       // Compile once on a miss. Speculatively lowering the whole block a
       // second time for GPR residency delays cold multi-process workloads.
-      compiler.set_gpr_residency_planning_enabled(false);
       compiler.set_pointer_authentication_enabled(
           enable_pointer_authentication_);
 #if UML_ENABLE_JIT_PROFILE
@@ -197,7 +196,6 @@ namespace uml::cpu::arm64 {
               &Implementation::resolve_block_link, false,
               &Implementation::resolve_indirect_link
           };
-          retry_compiler.set_gpr_residency_planning_enabled(false);
           retry_compiler.set_pointer_authentication_enabled(
               enable_pointer_authentication_);
           const auto retry_compiled = retry_compiler.compile(
@@ -338,7 +336,6 @@ JitExecutor::Implementation::tracked_store_function(CompiledBlock &block, Static
       return nullptr;
   }
   JitCompiler compiler{enable_guarded_control_flow_, nullptr, nullptr, true};
-  compiler.set_gpr_residency_planning_enabled(false);
   compiler.set_pointer_authentication_enabled(
       enable_pointer_authentication_);
   const auto compiled = compiler.compile(
@@ -444,7 +441,6 @@ JitExecutor::Implementation::translate_single_instruction(
     std::uint64_t pc, std::uint32_t instruction, bool track_direct_stores) {
   JitCompiler compiler{enable_guarded_control_flow_, nullptr, nullptr,
                        track_direct_stores};
-  compiler.set_gpr_residency_planning_enabled(false);
   compiler.set_pointer_authentication_enabled(
       enable_pointer_authentication_);
   const auto compiled =
