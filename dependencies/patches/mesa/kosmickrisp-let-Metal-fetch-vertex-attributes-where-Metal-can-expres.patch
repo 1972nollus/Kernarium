@@ -559,7 +559,7 @@ index a31eadde4320459375e9f1e68bb5d39ea24d55d3..4e246852333186c87ebaa80e892f09cc
  #define KK_MAX_PUSH_SIZE                 256
  #define KK_MAX_DYNAMIC_BUFFERS           64
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 48eb424bd3b3bb6086b1b83c4a6673d61af8da60..60a1ed29e9e6aea4a79b174cbc6811fccade6281 100644
+index 2050d442a1f3d81a781d4145467eb892f441bc0f..c5acf82acf3ab9c27fea0cacaf6ce479b296c089 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -368,6 +368,291 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
@@ -909,7 +909,7 @@ index 48eb424bd3b3bb6086b1b83c4a6673d61af8da60..60a1ed29e9e6aea4a79b174cbc6811fc
  
     struct nir_to_msl_options translate_options = {
        .mem_ctx = NULL,
-@@ -4124,6 +4426,29 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
+@@ -4119,6 +4421,29 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
     mtl_render_pipeline_descriptor_set_input_primitive_topology(
        pipeline_descriptor, vs->info.vs.topology);
  

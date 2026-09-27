@@ -526,7 +526,7 @@ index fe1de5ed5aea8a91980dd71163d546051de05580..9a3f458f98a38ced65e9838be6b35a78
  #include "kk_logic_op.h"
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 8161cedc8b2fdcc302ef7893f2c06c044b7b8359..48eb424bd3b3bb6086b1b83c4a6673d61af8da60 100644
+index c8b25bd1796224e300807488767c6e58347e1aaf..2050d442a1f3d81a781d4145467eb892f441bc0f 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -595,6 +595,142 @@ kk_nir_remove_undeclared_fs_output(nir_builder *b,
@@ -732,7 +732,7 @@ index 8161cedc8b2fdcc302ef7893f2c06c044b7b8359..48eb424bd3b3bb6086b1b83c4a6673d6
           }
        }
     }
-@@ -3685,6 +3843,26 @@ kk_compile_depth_stencil_state(struct kk_device *device,
+@@ -3680,6 +3838,26 @@ kk_compile_depth_stencil_state(struct kk_device *device,
     return kk_compile_ds_state(device, &info);
  }
  
@@ -759,7 +759,7 @@ index 8161cedc8b2fdcc302ef7893f2c06c044b7b8359..48eb424bd3b3bb6086b1b83c4a6673d6
  /* Copies all msl shader data to the vertex and gathers information for pipeline
   * compilation. */
  static void
-@@ -3717,6 +3895,40 @@ gather_graphics_pipeline_create_info(
+@@ -3712,6 +3890,40 @@ gather_graphics_pipeline_create_info(
                 ? MTL_PIXEL_FORMAT_INVALID
                 : vk_format_to_mtl_pixel_format(format);
        }
@@ -800,7 +800,7 @@ index 8161cedc8b2fdcc302ef7893f2c06c044b7b8359..48eb424bd3b3bb6086b1b83c4a6673d6
        info->vs.d_format =
           has_depth ? vk_format_to_mtl_pixel_format(rp->depth_attachment_format)
                     : MTL_PIXEL_FORMAT_INVALID;
-@@ -3920,6 +4132,18 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
+@@ -3915,6 +4127,18 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
        assert(vs->info.vs.rt_formats[i] != MTL_PIXEL_FORMAT_INVALID);
        mtl_render_pipeline_descriptor_set_color_attachment_format(
           pipeline_descriptor, i, vs->info.vs.rt_formats[i]);
