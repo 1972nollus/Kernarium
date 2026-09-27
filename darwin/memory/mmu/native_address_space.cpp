@@ -1065,20 +1065,6 @@ bool NativeAddressSpace::contains_shadow(
 	return false;
 }
 
-bool NativeAddressSpace::contains_direct(
-	std::uintptr_t address, std::uint64_t length) const
-{
-	if (length == 0 || address + length < address)
-		return false;
-	std::lock_guard lock{mutex_};
-	const auto first = slot_for(address);
-	const auto end = address + length;
-	for (auto slot = first; slot < end; slot += host_page_size())
-		if (direct_slots_.contains(slot))
-			return true;
-	return false;
-}
-
 NativeAddressSpace::DirectTransitionGuard::DirectTransitionGuard(
 	NativeAddressSpace &owner_value, std::size_t capacity)
 	: owner{owner_value}
