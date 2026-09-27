@@ -37,10 +37,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
  drivers/gpu/drm/virtio/Makefile            |   1 +
  drivers/gpu/drm/virtio/virtgpu_drv.h       |   4 +
- drivers/gpu/drm/virtio/virtgpu_host_blob.c | 247 +++++++++++++++++++++
+ drivers/gpu/drm/virtio/virtgpu_host_blob.c | 230 +++++++++++++++++++++
  drivers/gpu/drm/virtio/virtgpu_kms.c       |   8 +
- include/linux/virtio_gpu_host_blob.h       |  81 +++++++
- 5 files changed, 341 insertions(+)
+ include/linux/virtio_gpu_host_blob.h       |  81 ++++++++
+ 5 files changed, 324 insertions(+)
  create mode 100644 drivers/gpu/drm/virtio/virtgpu_host_blob.c
  create mode 100644 include/linux/virtio_gpu_host_blob.h
 
@@ -73,10 +73,10 @@ index 00c609c3b53a80ee4cd0b03661d3d510246dce1d..1a6b956f090d90e18f974696c8374221
  int virtio_gpu_vram_create(struct virtio_gpu_device *vgdev,
 diff --git a/drivers/gpu/drm/virtio/virtgpu_host_blob.c b/drivers/gpu/drm/virtio/virtgpu_host_blob.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..bbcdafdf8dab6dd007e2f1a78fb676492a040d38
+index 0000000000000000000000000000000000000000..f0184ecec87d872572cd2cc2168b84ba36fa5cc6
 --- /dev/null
 +++ b/drivers/gpu/drm/virtio/virtgpu_host_blob.c
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,230 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Host-visible blobs for in-kernel consumers.
@@ -240,8 +240,7 @@ index 0000000000000000000000000000000000000000..bbcdafdf8dab6dd007e2f1a78fb67649
 +{
 +	struct virtio_gpu_object *bo = (struct virtio_gpu_object *)blob;
 +
-+	if (!IS_ERR_OR_NULL(bo))
-+		drm_gem_object_put(&bo->base.base);
++	drm_gem_object_put(&bo->base.base);
 +}
 +EXPORT_SYMBOL_GPL(virtio_gpu_host_blob_destroy);
 +
@@ -251,9 +250,6 @@ index 0000000000000000000000000000000000000000..bbcdafdf8dab6dd007e2f1a78fb67649
 +	struct virtio_gpu_object *bo = (struct virtio_gpu_object *)blob;
 +	struct virtio_gpu_object_vram *vram;
 +	struct virtio_gpu_device *vgdev;
-+
-+	if (IS_ERR_OR_NULL(bo))
-+		return -EINVAL;
 +
 +	vgdev = bo->base.base.dev->dev_private;
 +	vram = to_virtio_gpu_vram(bo);
@@ -275,9 +271,6 @@ index 0000000000000000000000000000000000000000..bbcdafdf8dab6dd007e2f1a78fb67649
 +{
 +	struct virtio_gpu_object *bo = (struct virtio_gpu_object *)blob;
 +
-+	if (IS_ERR_OR_NULL(bo))
-+		return 0;
-+
 +	/* Every user mapping holds its own reference through the vm ops. */
 +	return kref_read(&bo->base.base.refcount);
 +}
@@ -287,14 +280,7 @@ index 0000000000000000000000000000000000000000..bbcdafdf8dab6dd007e2f1a78fb67649
 +			      struct vm_area_struct *vma)
 +{
 +	struct virtio_gpu_object *bo = (struct virtio_gpu_object *)blob;
-+	struct drm_gem_object *obj;
-+
-+	if (IS_ERR_OR_NULL(bo))
-+		return -EINVAL;
-+
-+	obj = &bo->base.base;
-+	if (!obj->funcs || !obj->funcs->mmap)
-+		return -ENODEV;
++	struct drm_gem_object *obj = &bo->base.base;
 +
 +	/*
 +	 * The object's own mmap subtracts the fake offset a user mapping
@@ -311,9 +297,6 @@ index 0000000000000000000000000000000000000000..bbcdafdf8dab6dd007e2f1a78fb67649
 +					    int flags)
 +{
 +	struct virtio_gpu_object *bo = (struct virtio_gpu_object *)blob;
-+
-+	if (IS_ERR_OR_NULL(bo))
-+		return ERR_PTR(-EINVAL);
 +
 +	/*
 +	 * The driver's own exporter, not the generic one: an importer resolves

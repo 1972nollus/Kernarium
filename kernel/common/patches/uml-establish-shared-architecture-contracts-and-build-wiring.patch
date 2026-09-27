@@ -36,10 +36,10 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/include/shared/longjmp.h        |   3 +-
  arch/um/include/shared/os.h             |  69 ++++++-
  arch/um/include/shared/skas/mm_id.h     |  11 +
- arch/um/include/shared/skas/skas.h      |   8 +
+ arch/um/include/shared/skas/skas.h      |   6 +
  arch/um/include/shared/smp.h            |  21 ++
  arch/um/kernel/dyn.lds.S                |  13 ++
- 34 files changed, 898 insertions(+), 38 deletions(-)
+ 34 files changed, 896 insertions(+), 38 deletions(-)
  create mode 100644 arch/um/Makefile-os-Darwin
  create mode 100644 arch/um/include/asm/hugetlb.h
  create mode 100644 arch/um/include/asm/mm_hooks.h
@@ -1600,18 +1600,16 @@ index 4f977ef5dda554699f3147b395652199c9397b3d..d4a87dfcda17a0e8fb5ea5a54e2c5096
  
  #endif
 diff --git a/arch/um/include/shared/skas/skas.h b/arch/um/include/shared/skas/skas.h
-index 807514e105382b958b27e3bb8ecaaa13afab7a1f..15b8f71bfad4ececfe1b862aa7ba5b0cbe8683af 100644
+index 807514e105382b958b27e3bb8ecaaa13afab7a1f..147a5533909d870606ba4f953d78f29a04374afe 100644
 --- a/arch/um/include/shared/skas/skas.h
 +++ b/arch/um/include/shared/skas/skas.h
-@@ -14,6 +14,14 @@ extern void new_thread_handler(void);
+@@ -14,6 +14,12 @@ extern void new_thread_handler(void);
  extern void handle_syscall(struct uml_pt_regs *regs);
  extern unsigned long current_stub_stack(void);
  extern struct mm_id *current_mm_id(void);
 +extern unsigned long current_tls(void);
 +extern void current_set_tls(unsigned long tls);
  extern void current_mm_sync(void);
-+extern void current_mm_flush(void);
-+extern unsigned long current_mm_brk(void);
 +extern void current_mm_force_sync(unsigned long address);
 +extern int current_mm_prefault_host_slot(unsigned long address, int is_write);
 +void initial_jmpbuf_lock(void);

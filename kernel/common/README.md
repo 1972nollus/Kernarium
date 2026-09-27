@@ -6,12 +6,14 @@ This directory contains only source-family-independent inputs:
   generated-copy authority, and import policy;
 - `config/page-16k.fragment`: shared 16 KiB page and 128 KiB task-stack
   geometry;
-- `artifacts/`: compact prebuilt-kernel bundle schema and verifier;
+- `artifacts/`: compact prebuilt-kernel bundle schema and verifier, plus the
+  shared `KEY='value'` metadata parser in `contract_checks.py`;
 - `patches/`: the generated topic series every maintained line applies
   first, regenerated from the mainline replay and applied unchanged to each
   line's own upstream base; and
 - `tooling/kernel_series.py`: replay, verification, and regeneration of a
-  line's ordered generated series.
+  line's ordered generated series; it reads and writes `metadata.env` through
+  that parser.
 
 Pinned commits, complete configurations, toolchains, source locations, patch
 bytes, and build commands stay in the owning versioned kernel line. The common artifact verifier is local and read-only; it checks semantic

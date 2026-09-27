@@ -19,10 +19,10 @@ on return so no saved or traced register carries it.
  1 file changed, 32 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 2c98e0fb247b72b5d901f5aa82b2e3f2e1991dc0..05a138639d7bb6454a90d0e22141dc6479e28652 100644
+index 079f05488b2999c32b2e15cd8e3d8e44b1b4b0f7..e0affb5787735dcc4e5014b3d9cf97465d5d1e2b 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -60,6 +60,29 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
+@@ -67,6 +67,29 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
  #define DARWIN_GUEST_FPE_FLTRES 6
  #define DARWIN_GUEST_FPE_FLTINV 7
  #define DARWIN_GUEST_FPE_FLTUNK 14
@@ -52,15 +52,15 @@ index 2c98e0fb247b72b5d901f5aa82b2e3f2e1991dc0..05a138639d7bb6454a90d0e22141dc64
  
  static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
-@@ -404,6 +427,7 @@ void userspace(struct uml_pt_regs *registers)
- 		unsigned long long profile_start = 0;
- 		int profiling = boundary_profile_enabled();
+@@ -351,6 +374,7 @@ void userspace(struct uml_pt_regs *registers)
+ 		const unsigned int *guest_ipi_sequence;
+ 		unsigned int guest_ipi_snapshot;
  		int event;
 +		int stepping;
  #ifndef CONFIG_PAGE_SIZE_16KB
  		int snapshots_mm;
  #endif
-@@ -469,12 +493,14 @@ void userspace(struct uml_pt_regs *registers)
+@@ -396,12 +420,14 @@ void userspace(struct uml_pt_regs *registers)
  		if (darwin_uml_static_guest_interrupt_sequence(
  			guest_ipi_sequence, guest_ipi_snapshot) < 0)
  			fatal_userspace(registers, "interrupt registration", -1);
@@ -75,7 +75,7 @@ index 2c98e0fb247b72b5d901f5aa82b2e3f2e1991dc0..05a138639d7bb6454a90d0e22141dc64
  		if (event == DARWIN_UML_EVENT_STOP)
  			darwin_host_stop();
  		/*
-@@ -761,12 +787,17 @@ void userspace(struct uml_pt_regs *registers)
+@@ -637,12 +663,17 @@ void userspace(struct uml_pt_regs *registers)
  		{
  			siginfo_t signal_info = { 0 };
  
