@@ -6,26 +6,20 @@
 
 namespace kernarium::bootstrap {
 
-/* The desktop console bootstrap: it turns the read-only root the kernel
- * mounted into a writable overlay and starts the image's init. A mode may
- * insert its own setup between the two halves. */
-inline constexpr std::string_view desktopPrefix = R"krn(set -eu
-fail()
-{
-    echo "Unable to construct the Kernarium ext4 overlay root: $*" >&2
-    exec /bin/sh
-}
-[ -b /dev/ubdb ] || fail "overlay block device"
+/* The desktop and measured-workload bootstraps first turn the read-only root
+ * the kernel mounted into the lower layer of an overlay, whose upper layer is
+ * a fresh ext4 filesystem on /dev/ubdb, and move into it. The ext4 filesystem
+ * stays mounted at /.uml-lower/mnt. A bootstrap defines `fail` before this
+ * fragment, which calls it with the step that failed. */
+inline constexpr std::string_view overlayRoot = R"krn([ -b /dev/ubdb ] || fail "overlay block device"
 mkfs_ext4=$(command -v mkfs.ext4 || true)
 [ -n "$mkfs_ext4" ] || fail "ext4 formatter"
 "$mkfs_ext4" -F -q -m 0 \
     -E nodiscard,lazy_itable_init=1,lazy_journal_init=1 /dev/ubdb || \
     fail "ext4 format"
 mount -t ext4 -o noatime,nosuid,nodev /dev/ubdb /mnt || fail "ext4 mount"
-mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root \
-    /mnt/state/docker /mnt/state/containerd || fail "overlay workspace"
-chmod 0711 /mnt/state/docker /mnt/state/containerd || \
-    fail "container state directory modes"
+mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root || \
+    fail "overlay workspace"
 mount -o bind / /mnt/lower || fail "read-only lower bind"
 mount -t overlay overlay \
     -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work \
@@ -34,6 +28,32 @@ mount -t devtmpfs devtmpfs /mnt/root/dev || fail "devtmpfs mount"
 mkdir -p /mnt/root/.uml-lower || fail "old-root directory"
 cd /mnt/root || fail "new-root chdir"
 pivot_root . .uml-lower || fail "pivot_root"
+)krn";
+
+/* The kernel and scratch filesystems a workload expects in its new root. */
+inline constexpr std::string_view workloadFilesystems = R"krn(mount -t proc proc /proc || fail "proc mount"
+mount -t sysfs sysfs /sys || fail "sysfs mount"
+mkdir -p /run /tmp
+mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run || fail "run tmpfs mount"
+mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp || \
+    fail "temporary tmpfs mount"
+)krn";
+
+/* The desktop console bootstrap: it builds the overlay root and starts the
+ * image's init. A mode may insert its own setup between the two halves. */
+inline constexpr std::string_view desktopFailure = R"krn(set -eu
+fail()
+{
+    echo "Unable to construct the Kernarium ext4 overlay root: $*" >&2
+    exec /bin/sh
+}
+)krn";
+
+inline constexpr std::string_view desktopPrefix = R"krn(container_state=/.uml-lower/mnt/state
+mkdir -p "$container_state/docker" "$container_state/containerd" || \
+    fail "container state directories"
+chmod 0711 "$container_state/docker" "$container_state/containerd" || \
+    fail "container state directory modes"
 rm -f /etc/resolv.conf
 printf '%s\n' \
     '# Darwin UML user-mode network' \
@@ -42,10 +62,10 @@ printf '%s\n' \
     'nameserver 10.0.2.3' \
     'options timeout:1 attempts:3 rotate' > /etc/resolv.conf
 mkdir -p /var/lib/docker
-mount -o bind /.uml-lower/mnt/state/docker /var/lib/docker || \
+mount -o bind "$container_state/docker" /var/lib/docker || \
     fail "Docker state bind"
 mkdir -p /var/lib/containerd
-mount -o bind /.uml-lower/mnt/state/containerd /var/lib/containerd || \
+mount -o bind "$container_state/containerd" /var/lib/containerd || \
     fail "containerd state bind"
 state_device=$(stat -c %d /.uml-lower/mnt)
 [ -n "$state_device" ] || fail "state block-device discovery"
@@ -237,13 +257,40 @@ fail "supported init executable not found"
 [[nodiscard]] inline std::string desktop(std::string_view modeSetup)
 {
     std::string text;
-    text.reserve(desktopPrefix.size() + modeSetup.size() +
-        desktopSuffix.size() + 4U);
+    text.reserve(desktopFailure.size() + overlayRoot.size() +
+        desktopPrefix.size() + modeSetup.size() + desktopSuffix.size() + 4U);
     text.append("{\n");
+    text.append(desktopFailure);
+    text.append(overlayRoot);
     text.append(desktopPrefix);
     text.append(modeSetup);
     text.append(desktopSuffix);
     text.append("}\n");
+    return text;
+}
+
+/* The start of a measured workload's bootstrap. Nobody attends its console,
+ * so a failed step reports `marker` for the host, which reads the console,
+ * and powers the guest off. */
+[[nodiscard]] inline std::string workloadFailure(std::string_view marker)
+{
+    std::string text("set -eu\nfail()\n{\n    echo \"");
+    text.append(marker);
+    text.append(": $*\" >&2\n    sync\n    poweroff -f\n}\n");
+    return text;
+}
+
+/* A measured workload over the overlay root: `body` runs in the new root with
+ * its kernel and scratch filesystems mounted. */
+[[nodiscard]] inline std::string overlayWorkload(
+    std::string_view marker, std::string_view body)
+{
+    std::string text = workloadFailure(marker);
+    text.reserve(text.size() + overlayRoot.size() +
+        workloadFilesystems.size() + body.size());
+    text.append(overlayRoot);
+    text.append(workloadFilesystems);
+    text.append(body);
     return text;
 }
 

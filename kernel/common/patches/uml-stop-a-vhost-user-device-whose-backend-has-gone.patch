@@ -89,7 +89,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 93 insertions(+), 14 deletions(-)
 
 diff --git a/arch/um/drivers/virtio_uml.c b/arch/um/drivers/virtio_uml.c
-index ae0dc6e77fc656bf6f4e9f3f95439af3dbfdb3e6..a9c9d04d776be7fc02bf208a8d83e3a7f1a98c31 100644
+index a4eb1ce101ab427c58a14bc1568deb1452def089..8facd5d0bf72554b6b73bc76716222f1d338c7de 100644
 --- a/arch/um/drivers/virtio_uml.c
 +++ b/arch/um/drivers/virtio_uml.c
 @@ -68,6 +68,7 @@ struct virtio_uml_device {
@@ -98,9 +98,9 @@ index ae0dc6e77fc656bf6f4e9f3f95439af3dbfdb3e6..a9c9d04d776be7fc02bf208a8d83e3a7
  	u8 has_shmem_region:1;
 +	u8 req_fd_gone:1;
  
- 	u8 config_changed_irq:1;
- 	uint64_t vq_irq_vq_map;
-@@ -82,6 +83,7 @@ struct virtio_uml_vq_info {
+ 	/* Recorded under req_lock, taken and cleared by vu_req_interrupt() */
+ 	bool config_changed_irq;
+@@ -83,6 +84,7 @@ struct virtio_uml_vq_info {
  	int kick_fd, call_fd;
  	char name[32];
  	bool suspended;
@@ -108,7 +108,7 @@ index ae0dc6e77fc656bf6f4e9f3f95439af3dbfdb3e6..a9c9d04d776be7fc02bf208a8d83e3a7
  };
  
  #define vu_err(vu_dev, ...)	dev_err(&(vu_dev)->pdev->dev, ##__VA_ARGS__)
-@@ -186,6 +188,31 @@ static void vhost_user_check_reset(struct virtio_uml_device *vu_dev,
+@@ -187,6 +189,31 @@ static void vhost_user_check_reset(struct virtio_uml_device *vu_dev,
  	schedule_work(&pdata->conn_broken_wk);
  }
  
@@ -140,9 +140,9 @@ index ae0dc6e77fc656bf6f4e9f3f95439af3dbfdb3e6..a9c9d04d776be7fc02bf208a8d83e3a7
  #ifdef UML_HOST_DARWIN
  /*
   * Wait for the backend to answer on the main socket, serving its requests
-@@ -645,6 +672,13 @@ static irqreturn_t vu_req_interrupt(int irq, void *data)
- 	struct virtio_uml_device *vu_dev = data;
- 	irqreturn_t ret = IRQ_HANDLED;
+@@ -650,6 +677,13 @@ static irqreturn_t vu_req_interrupt(int irq, void *data)
+ 	unsigned long flags;
+ 	uint64_t vq_map;
  
 +	/*
 +	 * This device's virtqueues share the irq number with the request
@@ -154,7 +154,7 @@ index ae0dc6e77fc656bf6f4e9f3f95439af3dbfdb3e6..a9c9d04d776be7fc02bf208a8d83e3a7
  #ifdef UML_HOST_DARWIN
  	/*
  	 * Darwin has no time-travel comm-handler dispatcher.  Its request fd is
-@@ -657,8 +691,12 @@ static irqreturn_t vu_req_interrupt(int irq, void *data)
+@@ -662,8 +696,12 @@ static irqreturn_t vu_req_interrupt(int irq, void *data)
  #endif
  
  	if (vu_dev->recv_rc) {
@@ -169,7 +169,7 @@ index ae0dc6e77fc656bf6f4e9f3f95439af3dbfdb3e6..a9c9d04d776be7fc02bf208a8d83e3a7
  	}
  	/*
  	 * Deliver everything recorded. A request another reader drained leaves
-@@ -1051,6 +1089,7 @@ static int vhost_user_set_vring_enable(struct virtio_uml_device *vu_dev,
+@@ -1064,6 +1102,7 @@ static int vhost_user_set_vring_enable(struct virtio_uml_device *vu_dev,
  
  static bool vu_notify(struct virtqueue *vq)
  {
@@ -177,7 +177,7 @@ index ae0dc6e77fc656bf6f4e9f3f95439af3dbfdb3e6..a9c9d04d776be7fc02bf208a8d83e3a7
  	struct virtio_uml_vq_info *info = vq->priv;
  	const uint64_t n = 1;
  	int rc;
-@@ -1058,38 +1097,78 @@ static bool vu_notify(struct virtqueue *vq)
+@@ -1071,38 +1110,78 @@ static bool vu_notify(struct virtqueue *vq)
  	if (info->suspended)
  		return true;
  

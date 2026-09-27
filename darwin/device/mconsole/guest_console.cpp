@@ -81,7 +81,8 @@ std::atomic_uint64_t nextClientId;
  * The reply comes back to the sender's address, so the client has to be bound.
  * Darwin does not autobind a Unix datagram socket, and the application's own
  * temporary directory is far longer than sun_path allows, so this shares the
- * short directory the guest's console already lives in.
+ * short directory the guest's console already lives in. A reply that has not
+ * arrived within two seconds is left pending.
  */
 class Client final {
 public:
@@ -100,7 +101,11 @@ public:
 			    sizeof(address)) != 0) {
 			::close(descriptor_);
 			descriptor_ = -1;
+			return;
 		}
+		const timeval timeout {.tv_sec = 2, .tv_usec = 0};
+		(void)::setsockopt(descriptor_, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+			sizeof(timeout));
 	}
 
 	~Client()
@@ -146,12 +151,16 @@ void adoptConsolePath(const std::string &path)
 	}
 }
 
+/* Sends one command from a client of its own and collects the reply. */
 [[nodiscard]] ExchangeResult exchange(
-	int descriptor,
 	const sockaddr_un &address,
 	std::string_view command,
 	std::string &response)
 {
+	Client client;
+	if (!client.usable())
+		return ExchangeResult::notSent;
+	const int descriptor = client.descriptor();
 	Request request {consoleMagic, consoleVersion,
 		static_cast<std::uint32_t>(command.size()), {}};
 	if (command.size() >= request.data.size())
@@ -180,15 +189,8 @@ void adoptConsolePath(const std::string &path)
 [[nodiscard]] bool requestWriteback(const sockaddr_un &address,
 	unsigned int settleMs)
 {
-	Client client;
-	if (!client.usable())
-		return false;
-	const timeval timeout {.tv_sec = 2, .tv_usec = 0};
-	(void)::setsockopt(client.descriptor(), SOL_SOCKET, SO_RCVTIMEO,
-		&timeout, sizeof(timeout));
 	std::string response;
-	if (exchange(client.descriptor(), address, "sysrq s", response) !=
-	    ExchangeResult::accepted)
+	if (exchange(address, "sysrq s", response) != ExchangeResult::accepted)
 		return false;
 	if (response.find(writebackAcknowledgement) == std::string::npos) {
 		std::fputs(
@@ -241,23 +243,12 @@ GuestSuspension suspend_guest(unsigned int writebackSettleMs,
 		sockaddr_un address {};
 		if (!fillAddress(address, path))
 			return GuestSuspension::none;
-		const auto command = [&address](std::string_view request,
-			std::string &response) {
-			Client client;
-			if (!client.usable())
-				return ExchangeResult::notSent;
-			const timeval timeout {.tv_sec = 2, .tv_usec = 0};
-			(void)::setsockopt(client.descriptor(), SOL_SOCKET,
-				SO_RCVTIMEO, &timeout, sizeof(timeout));
-			return exchange(client.descriptor(), address, request,
-				response);
-		};
 		std::string response;
 		/* A suspend-capable guest replies only after devices, secondary
 		 * CPUs, interrupts, and timekeeping have reached the platform sleep
 		 * boundary. The separate wake request remains queued on the console
 		 * descriptor until the kernel has resumed it. */
-		const auto suspendResult = command("suspend", response);
+		const auto suspendResult = exchange(address, "suspend", response);
 		if (suspendResult == ExchangeResult::accepted) {
 			if (response.find(suspendAcknowledgement) == std::string::npos) {
 				std::fputs("Guest console returned an unexpected suspend reply\n",
@@ -280,7 +271,7 @@ GuestSuspension suspend_guest(unsigned int writebackSettleMs,
 		 * step only on this compatibility path. A suspend-capable kernel performs
 		 * the sync itself and avoids spending the iOS background budget twice. */
 		(void)requestWriteback(address, writebackSettleMs);
-		const auto stopResult = command("stop", response);
+		const auto stopResult = exchange(address, "stop", response);
 		if (stopResult == ExchangeResult::notSent ||
 		    stopResult == ExchangeResult::rejected ||
 		    (stopResult == ExchangeResult::accepted &&
@@ -308,16 +299,10 @@ void resume_guest(GuestSuspension suspension) noexcept
 		sockaddr_un address {};
 		if (!fillAddress(address, consolePath()))
 			return;
-		Client client;
-		if (!client.usable())
-			return;
-		const timeval timeout {.tv_sec = 2, .tv_usec = 0};
-		(void)::setsockopt(client.descriptor(), SOL_SOCKET, SO_RCVTIMEO,
-			&timeout, sizeof(timeout));
 		std::string response;
 		const auto command = suspension == GuestSuspension::system ?
 			"wake" : "go";
-		(void)exchange(client.descriptor(), address, command, response);
+		(void)exchange(address, command, response);
 	} catch (...) {
 	}
 }

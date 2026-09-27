@@ -21,14 +21,6 @@ namespace {
 constexpr std::string_view macos_default_guest_memory{"mem=8G"};
 constexpr std::string_view macos_default_guest_cpus{"ncpus=10"};
 
-bool has_argument(int argc, char *const argv[], std::string_view argument)
-{
-	for (int index = 1; index < argc; ++index)
-		if (argv[index] != nullptr && argument == argv[index])
-			return true;
-	return false;
-}
-
 bool has_prefix(int argc, char *const argv[], std::string_view prefix)
 {
 	for (int index = 1; index < argc; ++index)
@@ -36,13 +28,6 @@ bool has_prefix(int argc, char *const argv[], std::string_view prefix)
 		    std::string_view{argv[index]}.starts_with(prefix))
 			return true;
 	return false;
-}
-
-bool informational(int argc, char *const argv[])
-{
-	return has_argument(argc, argv, "--help") ||
-		has_argument(argc, argv, "--version") ||
-		has_argument(argc, argv, "--showconfig");
 }
 
 bool usable_rootfs(const std::filesystem::path &path)
@@ -96,7 +81,8 @@ std::optional<std::filesystem::path> locate_rootfs()
 int main(int argc, char *argv[], char *envp[])
 {
 	std::string rootfs;
-	if (!informational(argc, argv) && !has_prefix(argc, argv, "ubd0")) {
+	if (!uml::app::informational(argc, argv) &&
+	    !has_prefix(argc, argv, "ubd0")) {
 		auto located = locate_rootfs();
 		if (!located)
 			return 1;

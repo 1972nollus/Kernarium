@@ -13,11 +13,11 @@ Keep carrier lifetime, host-stop wakeup, cross-CPU service, and the hot current-
  arch/um/os-Darwin/signal.c                  |  17 +-
  arch/um/os-Darwin/skas/process.c            | 584 ++------------------
  arch/um/os-Darwin/smp.c                     | 263 +++++++--
- arch/um/os-Darwin/time.c                    | 106 +++-
+ arch/um/os-Darwin/time.c                    | 105 +++-
  arch/um/os-Darwin/uml_darwin_abi.h          |   6 +-
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   4 +-
  arch/um/os-Darwin/uml_darwin_host.h         |   2 +
- 12 files changed, 412 insertions(+), 629 deletions(-)
+ 12 files changed, 411 insertions(+), 629 deletions(-)
 
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
 index 3cf7106cc489ca9442d562b9a938233804f938d6..c113d51b88be1c7c68818bcbce0d4dc78763da46 100644
@@ -939,10 +939,10 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
  		 * Close the guest-to-kernel IPI race before handling an event that
  		 * may block.  A sender can publish an IPI after the translated loop's
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index e05157ba51b59a3cbe7c6acddc66413ca474933a..537eae3b9999c1f54b482d6fa8a0aea903a43e7a 100644
+index 7338cec2518abe186c1be86ca39126e1543380b6..b54e7ca5983b799ba352c13a0ba8bfb8a55d4713 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
-@@ -6,21 +6,28 @@
+@@ -5,21 +5,28 @@
  #include <pthread.h>
  #include <sched.h>
  #include <signal.h>
@@ -972,7 +972,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..537eae3b9999c1f54b482d6fa8a0aea9
  static uintptr_t cpu_threads[CONFIG_NR_CPUS];
  static uintptr_t cpu_thread_hazards[CONFIG_NR_CPUS];
  static unsigned int pending_ipis[CONFIG_NR_CPUS];
-@@ -32,21 +39,44 @@ static int ipi_wake_pipes[CONFIG_NR_CPUS][2] = {
+@@ -31,21 +38,44 @@ static int ipi_wake_pipes[CONFIG_NR_CPUS][2] = {
  };
  static pthread_mutex_t futex_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t futex_condition = PTHREAD_COND_INITIALIZER;
@@ -1023,7 +1023,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..537eae3b9999c1f54b482d6fa8a0aea9
  }
  
  void darwin_publish_cpu_thread(int cpu, pthread_t thread)
-@@ -63,9 +93,9 @@ void darwin_retire_cpu_thread(pthread_t thread)
+@@ -62,9 +92,9 @@ void darwin_retire_cpu_thread(pthread_t thread)
  	int cpu;
  
  	/* Stop new IPI senders from acquiring this pthread before waiting for a
@@ -1036,7 +1036,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..537eae3b9999c1f54b482d6fa8a0aea9
  	 */
  	for (cpu = 0; cpu < uml_ncpus; cpu++) {
  		expected = retiring;
-@@ -84,19 +114,60 @@ void darwin_retire_cpu_thread(pthread_t thread)
+@@ -83,19 +113,60 @@ void darwin_retire_cpu_thread(pthread_t thread)
  	}
  }
  
@@ -1104,7 +1104,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..537eae3b9999c1f54b482d6fa8a0aea9
  static void drain_ipis(void)
  {
  	int cpu = uml_curr_cpu();
-@@ -129,7 +200,7 @@ void darwin_ipi_poll(void)
+@@ -128,7 +199,7 @@ void darwin_ipi_poll(void)
  	int cpu;
  
  	if (darwin_task_shutdown_requested())
@@ -1113,7 +1113,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..537eae3b9999c1f54b482d6fa8a0aea9
  	/* Finishing a reschedule batch may resume this task on another virtual
  	 * CPU.  Recheck there before returning so callers never continue from an
  	 * IPI boundary with a stale CPU identity or an already-pending local
-@@ -141,7 +212,23 @@ void darwin_ipi_poll(void)
+@@ -140,7 +211,23 @@ void darwin_ipi_poll(void)
  			drain_ipis();
  	} while (cpu != uml_curr_cpu());
  	if (darwin_task_shutdown_requested())
@@ -1138,7 +1138,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..537eae3b9999c1f54b482d6fa8a0aea9
  }
  
  int darwin_ipi_idle_fd(void)
-@@ -198,6 +285,10 @@ void darwin_wake_cpu_threads_for_shutdown(void)
+@@ -197,6 +284,10 @@ void darwin_wake_cpu_threads_for_shutdown(void)
  			os_warn("Darwin: unable to wake CPU%d for shutdown: %d\n",
  				cpu, errno);
  	}
@@ -1149,7 +1149,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..537eae3b9999c1f54b482d6fa8a0aea9
  }
  
  void darwin_ipi_idle_drain(void)
-@@ -320,80 +411,138 @@ int os_send_ipi(int cpu, int vector)
+@@ -317,80 +408,138 @@ int os_send_ipi(int cpu, int vector)
  	return pipe_error != 0 ? pipe_error : -error;
  }
  
@@ -1320,7 +1320,7 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..537eae3b9999c1f54b482d6fa8a0aea9
  }
  
  void os_init_smp(void)
-@@ -444,10 +593,20 @@ void os_idle_prepare(void)
+@@ -436,10 +585,20 @@ void os_idle_prepare(void)
  
  int os_futex_wait(void *address, unsigned int value)
  {
@@ -1343,15 +1343,10 @@ index e05157ba51b59a3cbe7c6acddc66413ca474933a..537eae3b9999c1f54b482d6fa8a0aea9
  }
  
 diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
-index 06199debb04605afe3d519c63c9ab0602d462e6b..01b84a0bf5d27e896acceceb1e6b4d79b6015423 100644
+index 06199debb04605afe3d519c63c9ab0602d462e6b..cdab8ac92154669e8f38872c16456259fc6215c8 100644
 --- a/arch/um/os-Darwin/time.c
 +++ b/arch/um/os-Darwin/time.c
-@@ -1,10 +1,12 @@
- // SPDX-License-Identifier: GPL-2.0
- 
- #include <errno.h>
-+#include <fcntl.h>
- #include <pthread.h>
+@@ -5,6 +5,7 @@
  #include <signal.h>
  #include <stdlib.h>
  #include <string.h>
@@ -1359,7 +1354,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..01b84a0bf5d27e896acceceb1e6b4d79
  #include <sys/select.h>
  #include <sys/time.h>
  #include <time.h>
-@@ -13,6 +15,7 @@
+@@ -13,6 +14,7 @@
  #include <kern_util.h>
  #include <os.h>
  #include <smp.h>
@@ -1367,7 +1362,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..01b84a0bf5d27e896acceceb1e6b4d79
  #include "irq.h"
  #include "internal.h"
  
-@@ -21,6 +24,8 @@ struct darwin_cpu_timer {
+@@ -21,6 +23,8 @@ struct darwin_cpu_timer {
  	unsigned long long deadline_ns;
  	int active;
  	int periodic;
@@ -1376,7 +1371,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..01b84a0bf5d27e896acceceb1e6b4d79
  };
  
  static struct darwin_cpu_timer cpu_timers[CONFIG_NR_CPUS];
-@@ -64,8 +69,12 @@ long long os_nsecs(void)
+@@ -64,8 +68,12 @@ long long os_nsecs(void)
  
  int os_timer_create(void)
  {
@@ -1391,7 +1386,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..01b84a0bf5d27e896acceceb1e6b4d79
  	return 0;
  }
  
-@@ -185,6 +194,63 @@ void darwin_timer_poll(struct uml_pt_regs *registers)
+@@ -185,6 +193,63 @@ void darwin_timer_poll(struct uml_pt_regs *registers)
  	}
  }
  
@@ -1418,7 +1413,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..01b84a0bf5d27e896acceceb1e6b4d79
 +			state->deadline_queue = -1;
 +			return -1;
 +		}
-+		(void)fcntl(queue, F_SETFD, FD_CLOEXEC);
++		(void)os_set_exec_close(queue);
 +		state->deadline_queue = queue;
 +	}
 +	EV_SET(&timer, 0, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
@@ -1455,7 +1450,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..01b84a0bf5d27e896acceceb1e6b4d79
  void os_idle_sleep(void)
  {
  	int cpu = uml_curr_cpu();
-@@ -202,6 +268,9 @@ void os_idle_sleep(void)
+@@ -202,6 +267,9 @@ void os_idle_sleep(void)
  		unsigned long long now;
  		unsigned long long remaining;
  		int ipi_fd;
@@ -1465,7 +1460,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..01b84a0bf5d27e896acceceb1e6b4d79
  		int fire_timer = 0;
  
  		if (cpu == 0)
-@@ -226,28 +295,32 @@ void os_idle_sleep(void)
+@@ -226,28 +294,32 @@ void os_idle_sleep(void)
  			timeout.tv_sec = (time_t)(remaining / UM_NSEC_PER_SEC);
  			timeout.tv_nsec = (long)(remaining % UM_NSEC_PER_SEC);
  			timeout_pointer = &timeout;
@@ -1512,7 +1507,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..01b84a0bf5d27e896acceceb1e6b4d79
  		/* Clear before draining.  A sender which observed the idle state has
  		 * already left a pipe byte; a later sender will use the signal wake
  		 * path while this CPU processes the completed wait.
-@@ -260,6 +333,7 @@ void os_idle_sleep(void)
+@@ -260,6 +332,7 @@ void os_idle_sleep(void)
  			darwin_irq_idle_end(&previous_mask);
  		else
  			pthread_sigmask(SIG_SETMASK, &previous_mask, NULL);

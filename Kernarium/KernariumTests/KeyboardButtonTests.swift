@@ -21,36 +21,7 @@ extension SerialConsoleTests {
 
         /// The accessibility element carrying `identifier`.
         func element(_ identifier: String) -> NSObject? {
-            Self.find(identifier, in: window, depth: 0)
-        }
-
-        private static func find(
-            _ identifier: String,
-            in node: NSObject,
-            depth: Int
-        ) -> NSObject? {
-            // SwiftUI's accessibility nodes answer the identifier without
-            // declaring UIAccessibilityIdentification.
-            let getter = NSSelectorFromString("accessibilityIdentifier")
-            if node.responds(to: getter),
-               node.perform(getter)?.takeUnretainedValue() as? String ==
-                   identifier {
-                return node
-            }
-            guard depth < 64 else { return nil }
-            var children: [NSObject] = []
-            if let elements = node.accessibilityElements {
-                children += elements.compactMap { $0 as? NSObject }
-            }
-            if let view = node as? UIView {
-                children += view.subviews
-            }
-            for child in children {
-                if let found = find(identifier, in: child, depth: depth + 1) {
-                    return found
-                }
-            }
-            return nil
+            accessibilityElement(identifier, in: window)
         }
 
         func label(of identifier: String) -> String? {
@@ -76,22 +47,12 @@ extension SerialConsoleTests {
     }
 
     fileprivate func application() throws -> Application {
-        let scene = try #require(
-            UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .first,
-            "the application has no window scene"
-        )
-        func terminal(in view: UIView) -> TerminalView? {
-            if let terminal = view as? TerminalView,
-               terminal.accessibilityIdentifier ==
-                   SerialConsoleView.accessibilityIdentifier {
-                return terminal
-            }
-            return view.subviews.lazy.compactMap(terminal(in:)).first
-        }
-        for window in scene.windows where window.windowLevel == .normal {
-            if let terminal = terminal(in: window) {
+        for window in try windowScene().windows
+        where window.windowLevel == .normal {
+            if let terminal = terminalView(
+                in: window,
+                identifier: SerialConsoleView.accessibilityIdentifier
+            ) {
                 return Application(window: window, terminal: terminal)
             }
         }
@@ -100,24 +61,13 @@ extension SerialConsoleTests {
 
     fileprivate struct ApplicationMissing: Error {}
 
-    /// Polls `condition` on the main actor for at most ten seconds.
-    fileprivate func settles(_ condition: () -> Bool) async throws -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(10))
-        while !condition() {
-            guard clock.now < deadline else { return false }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        return true
-    }
-
     /// Back to the framebuffer, the application's first mode, with no
     /// keyboard up.
     fileprivate func restore(_ app: Application) async throws {
         if app.label(of: "displayModeButton") == "Show Framebuffer" {
             try app.press("displayModeButton")
             #expect(
-                try await settles {
+                try await eventually {
                     app.label(of: "displayModeButton") == "Show Serial Console"
                 }
             )
@@ -125,7 +75,7 @@ extension SerialConsoleTests {
         if app.label(of: "keyboardButton") == "Hide Keyboard" {
             try app.press("keyboardButton")
         }
-        #expect(try await settles { app.firstResponders.isEmpty })
+        #expect(try await eventually { app.firstResponders.isEmpty })
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -153,7 +103,7 @@ extension SerialConsoleTests {
         // The framebuffer takes the keyboard as it always has.
         try app.press("keyboardButton")
         #expect(
-            try await settles {
+            try await eventually {
                 app.firstResponders.count == 1 &&
                     app.firstResponders[0] is MTKView
             },
@@ -165,12 +115,12 @@ extension SerialConsoleTests {
         // hidden.
         try app.press("displayModeButton")
         #expect(
-            try await settles {
+            try await eventually {
                 app.label(of: "displayModeButton") == "Show Framebuffer"
             }
         )
         #expect(
-            try await settles { focused(nil) },
+            try await eventually { focused(nil) },
             "a hidden view kept the keyboard: \(responders)"
         )
         #expect(app.label(of: "keyboardButton") == "Show Keyboard")
@@ -179,21 +129,21 @@ extension SerialConsoleTests {
         // raises its keyboard and key bar, and puts them away again.
         try app.press("keyboardButton")
         #expect(
-            try await settles { focused(app.terminal) },
+            try await eventually { focused(app.terminal) },
             "the console's terminal did not take the keyboard: \(responders)"
         )
         #expect(
-            try await settles {
+            try await eventually {
                 app.label(of: "keyboardButton") == "Hide Keyboard"
             }
         )
         try app.press("keyboardButton")
         #expect(
-            try await settles { focused(nil) },
+            try await eventually { focused(nil) },
             "the console kept the keyboard: \(responders)"
         )
         #expect(
-            try await settles {
+            try await eventually {
                 app.label(of: "keyboardButton") == "Show Keyboard"
             }
         )
@@ -202,19 +152,19 @@ extension SerialConsoleTests {
         // switch back to the framebuffer puts that keyboard away too.
         #expect(app.terminal.becomeFirstResponder())
         #expect(
-            try await settles {
+            try await eventually {
                 app.label(of: "keyboardButton") == "Hide Keyboard"
             },
             "the button does not show the console's keyboard"
         )
         try app.press("displayModeButton")
         #expect(
-            try await settles {
+            try await eventually {
                 app.label(of: "displayModeButton") == "Show Serial Console"
             }
         )
         #expect(
-            try await settles { focused(nil) },
+            try await eventually { focused(nil) },
             "a hidden view kept the keyboard: \(responders)"
         )
         #expect(app.label(of: "keyboardButton") == "Show Keyboard")

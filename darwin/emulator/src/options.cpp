@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "options.hpp"
+#include "guest_memory_argument.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -93,17 +94,6 @@ namespace {
 	return static_cast<std::size_t>(value);
 }
 
-[[nodiscard]] std::size_t configured_guest_memory_bytes(
-	const std::vector<std::string> &arguments)
-{
-	std::size_t bytes = 0;
-	for (const auto &argument : arguments)
-		if (argument.starts_with("mem="))
-			bytes = parse_guest_memory_quantity(
-				std::string_view{argument}.substr(4));
-	return bytes;
-}
-
 [[nodiscard]] std::optional<int> parse_guest_cpu_count(
 	std::string_view text) noexcept
 {
@@ -177,6 +167,17 @@ namespace {
 }
 
 } // namespace
+
+std::size_t configured_guest_memory_bytes(
+	const std::vector<std::string> &arguments)
+{
+	std::size_t bytes = 0;
+	for (const auto &argument : arguments)
+		if (argument.starts_with("mem="))
+			bytes = parse_guest_memory_quantity(
+				std::string_view{argument}.substr(4));
+	return bytes;
+}
 
 EmulatorOptions prepare_emulator_options(
 	int argc, const char *const argv[], std::string_view rootfs,

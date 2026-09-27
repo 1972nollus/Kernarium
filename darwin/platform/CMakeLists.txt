@@ -5,6 +5,14 @@ add_library(UML::PlatformContract ALIAS uml_platform_contract)
 uml_declare_architecture_target(uml_platform_contract platform)
 target_compile_features(uml_platform_contract INTERFACE cxx_std_20)
 
+# Header-only: blocks the guest timer around host thread creation.
+add_library(uml_guest_timer_mask INTERFACE)
+add_library(UML::GuestTimerMask ALIAS uml_guest_timer_mask)
+uml_declare_architecture_target(uml_guest_timer_mask platform)
+target_include_directories(uml_guest_timer_mask INTERFACE
+    ${PROJECT_SOURCE_DIR}/darwin)
+target_compile_features(uml_guest_timer_mask INTERFACE cxx_std_20)
+
 add_library(uml_video_decoder STATIC apple/video_decoder.mm)
 add_library(UML::VideoDecoder ALIAS uml_video_decoder)
 uml_declare_architecture_target(uml_video_decoder platform)

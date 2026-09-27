@@ -5,9 +5,7 @@
 #include "protocol.hpp"
 
 #include <algorithm>
-#include <cstring>
 #include <stdexcept>
-#include <type_traits>
 
 namespace uml::battery {
 namespace {
@@ -27,24 +25,6 @@ protocol::ChargeStatus wireStatus(
     case uml::platform::HostBatteryStatus::unknown:
         return protocol::ChargeStatus::unknown;
     }
-}
-
-template<typename Value>
-Value load(std::span<const std::uint8_t> source)
-{
-    static_assert(std::is_trivially_copyable_v<Value>);
-    Value result {};
-    std::memcpy(&result, source.data(), sizeof(result));
-    return result;
-}
-
-template<typename Value>
-std::vector<std::uint8_t> bytes(const Value& value)
-{
-    static_assert(std::is_trivially_copyable_v<Value>);
-    std::vector<std::uint8_t> result(sizeof(value));
-    std::memcpy(result.data(), &value, sizeof(value));
-    return result;
 }
 
 } // namespace
@@ -93,7 +73,8 @@ uml::virtio::VhostUserQueueResult VirtioBatteryDevice::processQueue(
     if (index != protocol::statusQueue ||
         request.size() != sizeof(protocol::Request) ||
         responseCapacity < sizeof(protocol::State) ||
-        load<protocol::Request>(request).version != protocol::version) {
+        uml::virtio::fromBytes<protocol::Request>(request).version !=
+            protocol::version) {
         return {
             .action = uml::virtio::VhostUserQueueAction::complete,
             .response = {},
@@ -109,7 +90,7 @@ uml::virtio::VhostUserQueueResult VirtioBatteryDevice::processQueue(
     };
     return {
         .action = uml::virtio::VhostUserQueueAction::complete,
-        .response = bytes(response),
+        .response = uml::virtio::toBytes(response),
     };
 }
 

@@ -205,9 +205,7 @@ std::size_t VirtioInputDevice::queueCount() const noexcept
 
 std::vector<std::uint8_t> VirtioInputDevice::configuration() const
 {
-    const auto config = selectedConfiguration();
-    const auto* bytes = reinterpret_cast<const std::uint8_t*>(&config);
-    return {bytes, bytes + sizeof(config)};
+    return uml::virtio::toBytes(selectedConfiguration());
 }
 
 void VirtioInputDevice::writeConfiguration(
@@ -244,14 +242,13 @@ uml::virtio::VhostUserQueueResult VirtioInputDevice::processQueue(
             return {};
         if (responseCapacity < sizeof(event))
             throw std::runtime_error("short virtio-input event buffer");
-        const auto* bytes = reinterpret_cast<const std::uint8_t*>(&event);
         if (!reportedDelivery_) {
             std::fprintf(stdout, "%s event queue active\n", name());
             reportedDelivery_ = true;
         }
         return {
             .action = uml::virtio::VhostUserQueueAction::complete,
-            .response = {bytes, bytes + sizeof(event)},
+            .response = uml::virtio::toBytes(event),
         };
     }
     if (index != protocol::statusQueue)
