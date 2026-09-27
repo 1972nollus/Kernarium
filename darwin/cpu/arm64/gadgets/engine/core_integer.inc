@@ -1658,7 +1658,8 @@ scalar_entry extract_register_\suffix, \forward, 8, .Lsd\@, .Lsn\@, .Lsm\@, scal
 	.endif
 	next_gadget
 	/* Hold this entry's length, and so every later entry's address and
-	 * 64-byte phase, at what it was before the neg. See move_wide_keep. */
+	 * 64-byte phase, at what it was before the neg, so the change was
+	 * measured against an otherwise identical bank (G96). */
 	.if \shift_nonzero
 	.space 4
 	.endif
