@@ -84,3 +84,6 @@ uml_add_unit_test(
 uml_add_unit_test(
     NAME runtime-sequential-run-fresh-handle
     COMMAND uml_runtime_sequential_run_tests fresh-handle)
+uml_add_unit_test(
+    NAME runtime-sequential-run-unclaimed-first-run
+    COMMAND uml_runtime_sequential_run_tests unclaimed-first-run)

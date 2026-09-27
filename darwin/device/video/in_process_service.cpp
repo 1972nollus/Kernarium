@@ -11,7 +11,6 @@
 #include <atomic>
 #include <cerrno>
 #include <condition_variable>
-#include <chrono>
 #include <cstring>
 #include <exception>
 #include <fcntl.h>
@@ -105,12 +104,7 @@ public:
         , thread_([this] { run(); })
     {
         std::unique_lock lock(stateMutex_);
-        if (!stateChanged_.wait_for(lock, std::chrono::seconds(10),
-                [this] { return ready_ || failure_; })) {
-            lock.unlock();
-            stop();
-            throw std::runtime_error("Virtio video service startup timed out");
-        }
+        stateChanged_.wait(lock, [this] { return ready_ || failure_; });
         if (failure_) {
             lock.unlock();
             thread_.join();

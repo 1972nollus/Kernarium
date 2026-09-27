@@ -247,6 +247,18 @@ uml_add_guest_integration_test(
     PROCESSORS 1
     RESOURCE_GROUPS cpus:1)
 
+# Four-vCPU guest: two CPUs draining one serial line must not split its input.
+uml_add_guest_integration_test(
+    NAME guest-console-concurrent-input
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/console/run_guest_console_concurrent_input.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;console;smoke
+    TIMEOUT 420
+    PROCESSORS 4
+    RESOURCE_GROUPS cpus:4)
+
 # The interpreter runs BPF callbacks through its fixed entry-point pool.
 uml_add_guest_integration_test(
     NAME guest-bpf-callbacks

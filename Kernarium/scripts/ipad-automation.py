@@ -41,6 +41,8 @@ TEST = "KernariumAutomation/AutomationHost/testServe"
 HEARTBEAT_STALE = 20
 EXIT_FAILED = 1
 EXIT_NO_HOST = 3
+# How long `stop` lets the supervisor end on its own before signalling it.
+SUPERVISOR_EXIT_WAIT = 60
 SCRIPT = pathlib.Path(__file__).resolve()
 CHECKOUT = SCRIPT.parents[2]
 
@@ -152,14 +154,31 @@ def local_record(options):
         return {}
 
 
-def process_alive(pid):
+def recorded_supervisor(record):
+    """The pid `start` recorded, while that process is still its supervisor.
+
+    Nothing clears the record when the host ends, and by then the pid can
+    name any process, including another agent's process-group leader. The
+    pid is trusted only while its command line still carries `_supervise`
+    and the record's nonce."""
+    pid = record.get("supervisor")
+    nonce = record.get("nonce")
+    if not isinstance(pid, int) or pid <= 0 or not nonce:
+        return None
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+        done = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)], stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    words = done.stdout.split()
+    if done.returncode != 0 or "_supervise" not in words:
+        return None
+    for index, word in enumerate(words[:-1]):
+        if word == "--nonce" and words[index + 1] == nonce:
+            return pid
+    return None
 
 
 def send(options, command, timeout):
@@ -212,7 +231,7 @@ def command_status(options):
         })
     if record:
         summary["xcodebuild_log"] = record.get("log")
-        summary["supervisor_running"] = process_alive(record.get("supervisor", 0))
+        summary["supervisor_running"] = recorded_supervisor(record) is not None
     print(json.dumps(summary, indent=2))
     return 0 if reason is None else EXIT_NO_HOST
 
@@ -329,14 +348,20 @@ def command_stop(options):
         log("the host stopped")
     except NoHost as error:
         log(str(error))
-    supervisor = record.get("supervisor")
-    if supervisor and process_alive(supervisor):
-        deadline = time.monotonic() + 60
-        while process_alive(supervisor) and time.monotonic() < deadline:
-            time.sleep(1)
-        if process_alive(supervisor):
-            log(f"terminating supervisor {supervisor}")
+    supervisor = recorded_supervisor(record)
+    if supervisor is None:
+        return 0
+    deadline = time.monotonic() + SUPERVISOR_EXIT_WAIT
+    while time.monotonic() < deadline:
+        if recorded_supervisor(record) is None:
+            return 0
+        time.sleep(1)
+    if recorded_supervisor(record) is not None:
+        log(f"terminating supervisor {supervisor}")
+        try:
             os.killpg(supervisor, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
     return 0
 
 
