@@ -703,11 +703,14 @@ present exactly once.
 
 Fraction 03 uses 1280 MiB and one planned CTS process restart immediately
 before `dEQP-VK.pipeline.fast_linked_library.render_to_image.core.2d_array.huge.width_height_layers.r8g8b8a8_unorm`.
-After the prefix process exits, the guest waits 20 seconds before starting
-the suffix. The boundary uses the same continuation path as a `ResourceError`:
-it preserves
-the enumerated order and the eight-process limit, so the normal two-process run
-retains six recovery sessions.
+The host releases the prefix process's graphics memory only after that
+process exits, and the balloon mirrors it into the guest as a lower `MemTotal`.
+The guest therefore starts the suffix once `MemTotal` is back within 128 MiB of
+its value before the first CTS process, or after 60 seconds, never past the
+shard deadline; the restart note states which, how long it waited, and the
+three `MemTotal` readings. The boundary uses the same continuation path as a
+`ResourceError`: it preserves the enumerated order and the eight-process limit,
+so the normal two-process run retains six recovery sessions.
 
 An emulator exit -- an abandoned case, a host fault, a
 signal -- aborts the session rather than producing a result: the host invents

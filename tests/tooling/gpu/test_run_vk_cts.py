@@ -1441,7 +1441,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         )
 
         self.assertEqual(profile.guest_memory_mib, 1280)
-        self.assertEqual(profile.restart_settle_seconds, 20)
+        self.assertEqual(profile.restart_settle_limit_seconds, 60)
         self.assertIn(profile.restart_before, launcher)
         self.assertIn("device_memory_mib=%s\\n' 1280", launcher)
         self.assertIn(
@@ -1458,7 +1458,10 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIn(
             'tail -n +$((planned_prefix_count + 1)) "$selected"', launcher
         )
-        self.assertEqual(launcher.count("sleep 20"), 1)
+        self.assertEqual(
+            launcher.count("settle_limit=$((settle_start + 60))"), 1
+        )
+        self.assertNotIn("sleep 20", launcher)
         self.assertIn('[ "$cts_sessions" -lt 8 ] || break', launcher)
         self.assertIn(
             'if [ "$cts_sessions" -eq 1 ] || [ "$status" -eq 0 ]; then\n'
@@ -1570,7 +1573,118 @@ class VulkanCtsToolingTests(unittest.TestCase):
             device_exclusions=cts.DEVICE_EXCLUSIONS,
         )
         self.assertNotIn("planned restart before", ordinary)
-        self.assertNotIn("sleep 20", ordinary)
+        self.assertNotIn("mem_total_kb", ordinary)
+
+    def test_fraction03_restart_waits_for_host_memory_within_a_bound(
+        self,
+    ) -> None:
+        launcher = cts.build_receipt_guest_launcher(
+            self.receipt,
+            cts.resolve_receipt_selection(
+                "current-must-pass", (), None, cts.Fraction(3, 16)
+            ),
+            page_size=16384,
+            timeout=cts.APPLE_MUSTPASS_TIMEOUT,
+            progress_timeout=cts.APPLE_MUSTPASS_PROGRESS_TIMEOUT,
+            device_exclusions=cts.DEVICE_EXCLUSIONS,
+        )
+        baseline_start = launcher.index("mem_total_kb()\n")
+        baseline_end = launcher.index("\nprepare_channel()", baseline_start)
+        baseline = launcher[baseline_start:baseline_end]
+        settle_start = launcher.index(
+            '    if [ "$planned_restart" -eq 1 ]; then\n        settle_start='
+        )
+        settle_end = launcher.index(
+            "\n    else\n        printf 'UML_VK_CTS_NOTE: continuing",
+            settle_start,
+        )
+        settle = launcher[settle_start:settle_end] + "\n    fi\n"
+        limit = cts.APPLE_MUSTPASS_FRACTION03_RESTART_SETTLE_LIMIT_SECONDS
+        baseline_kb = 1_300_000
+        # The balloon holds the prefix's graphics memory out of the guest.
+        held_kb = baseline_kb - 640 * 1024
+        # The residue a Vulkan process leaves behind on macOS, which the
+        # tolerance admits.
+        released_kb = baseline_kb - 48 * 1024
+
+        def settle_after_exit(
+            exit_kb: int, release_after: int | None, deadline: int
+        ) -> tuple[str, int]:
+            """Run the wait on a fake clock that each sleep advances."""
+
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                meminfo = root / "meminfo"
+                clock = root / "clock"
+                clock.write_text("1000\n", encoding="utf-8")
+                bin_directory = root / "bin"
+                bin_directory.mkdir()
+                release_at = (
+                    "" if release_after is None else str(1000 + release_after)
+                )
+                stubs = {
+                    "date": 'cat "$FAKE_CLOCK"',
+                    "sleep": (
+                        'now=$(($(cat "$FAKE_CLOCK") + 1))\n'
+                        'echo "$now" > "$FAKE_CLOCK"\n'
+                        'if [ -n "$FAKE_RELEASE_AT" ] && '
+                        '[ "$now" -ge "$FAKE_RELEASE_AT" ]; then\n'
+                        f"    printf 'MemTotal: {released_kb} kB\\n' "
+                        '> "$FAKE_MEMINFO"\n'
+                        "fi"
+                    ),
+                }
+                for name, body in stubs.items():
+                    stub = bin_directory / name
+                    stub.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+                    stub.chmod(0o755)
+                fake = str(meminfo)
+                script = (
+                    f"printf 'MemTotal: {baseline_kb} kB\\n' > {fake}\n"
+                    + baseline.replace("/proc/meminfo", fake)
+                    + f"\nprintf 'MemTotal: {exit_kb} kB\\n' > {fake}\n"
+                    "planned_restart=1\n"
+                    "selected_count=10\n"
+                    "cts_cases=4\n"
+                    f"deadline={deadline}\n"
+                    + settle.replace("/proc/meminfo", fake)
+                )
+                result = subprocess.run(
+                    ["sh", "-c", script],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=60,
+                    env={
+                        "PATH": f"{bin_directory}:/usr/bin:/bin",
+                        "FAKE_CLOCK": str(clock),
+                        "FAKE_MEMINFO": fake,
+                        "FAKE_RELEASE_AT": release_at,
+                    },
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                elapsed = int(clock.read_text(encoding="utf-8")) - 1000
+                return result.stdout.strip(), elapsed
+
+        note, elapsed = settle_after_exit(released_kb, None, 5000)
+        self.assertEqual(elapsed, 0)
+        self.assertIn("host graphics memory released after 0 s", note)
+        self.assertIn(f"baseline {baseline_kb}, prefix exit {released_kb}", note)
+        self.assertIn("continuing 6 cases", note)
+
+        note, elapsed = settle_after_exit(held_kb, 3, 5000)
+        self.assertEqual(elapsed, 3)
+        self.assertIn("host graphics memory released after 3 s", note)
+        self.assertIn(f"prefix exit {held_kb}, now {released_kb}", note)
+
+        note, elapsed = settle_after_exit(held_kb, None, 5000)
+        self.assertEqual(elapsed, limit)
+        self.assertIn(f"host graphics memory held after {limit} s", note)
+
+        # The wait never runs past the shard's own deadline.
+        note, elapsed = settle_after_exit(held_kb, None, 1010)
+        self.assertEqual(elapsed, 10)
+        self.assertIn("host graphics memory held after 10 s", note)
 
     def test_device_cli_enforces_the_baked_memory_before_launch(self) -> None:
         fraction03 = cts.apple_mustpass_profile(3)

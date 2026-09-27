@@ -107,7 +107,16 @@ APPLE_MUSTPASS_FRACTION03_RESTART_BEFORE = (
     "dEQP-VK.pipeline.fast_linked_library.render_to_image.core.2d_array."
     "huge.width_height_layers.r8g8b8a8_unorm"
 )
-APPLE_MUSTPASS_FRACTION03_RESTART_SETTLE_SECONDS = 20
+# The prefix process's host graphics memory is released after it exits. The
+# balloon mirrors that memory into the guest, so MemTotal falls while the host
+# holds it and recovers as the host lets it go: the suffix starts once MemTotal
+# is back within the tolerance of where it stood before the first CTS process,
+# or at the limit, whichever comes first. Measured on macOS, MemTotal settles
+# 48 MiB below that value once a Vulkan process has run and exited; the
+# tolerance admits that residue while staying far below both the 650 MB
+# render-to-image transient and the device's ~330 MB jetsam margin.
+APPLE_MUSTPASS_FRACTION03_RESTART_SETTLE_LIMIT_SECONDS = 60
+APPLE_MUSTPASS_RESTART_SETTLE_TOLERANCE_KIB = 131072
 # dEQP ends its whole session at the first ResourceError, so one such case
 # otherwise costs a fraction every case after it. The guest continues the
 # remainder in a fresh process, at most this many processes in all.
@@ -152,7 +161,7 @@ class AppleMustpassProfile:
     identifier: str
     guest_memory_mib: int
     restart_before: str | None = None
-    restart_settle_seconds: int = 0
+    restart_settle_limit_seconds: int = 0
 
 
 # What a baked device campaign leaves out, by cause. Nothing here is a verdict:
@@ -178,7 +187,10 @@ def apple_mustpass_profile(index: int) -> AppleMustpassProfile:
     generation that applies ``DEVICE_EXCLUSIONS``, and ``v3`` the first that
     continues a fraction whose CTS session ended before the traversal did.
     Fraction 03's ``v4`` profile is the first to use 1280 MiB and one planned
-    CTS restart before its large render-to-image block.
+    CTS restart before its large render-to-image block. How long the guest
+    waits at that restart for host memory is pacing inside the same plan, not
+    part of the identity: a ``v4`` result means the same thing whichever settle
+    produced it.
     """
 
     if not 0 <= index < APPLE_MUSTPASS_FRACTIONS:
@@ -200,8 +212,8 @@ def apple_mustpass_profile(index: int) -> AppleMustpassProfile:
             if index == 3
             else None
         ),
-        restart_settle_seconds=(
-            APPLE_MUSTPASS_FRACTION03_RESTART_SETTLE_SECONDS
+        restart_settle_limit_seconds=(
+            APPLE_MUSTPASS_FRACTION03_RESTART_SETTLE_LIMIT_SECONDS
             if index == 3
             else 0
         ),
@@ -1157,7 +1169,7 @@ def build_receipt_guest_launcher(
             )
         device_profile = apple_mustpass_profile(selection.fraction.index)
         if bool(device_profile.restart_before) != bool(
-            device_profile.restart_settle_seconds
+            device_profile.restart_settle_limit_seconds
         ):
             raise CampaignError("a planned device restart profile is invalid")
     # Venus reports a stuck wait on the CTS process's own stderr, which is
@@ -1243,6 +1255,12 @@ def build_receipt_guest_launcher(
         restart_case = shlex.quote(device_profile.restart_before)
         planned_restart_state = """planned_restart_pending=1
 planned_prefix_count=0
+mem_total_kb()
+{
+    sed -n 's/^MemTotal:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' /proc/meminfo
+}
+restart_baseline_kb=$(mem_total_kb)
+[ -n "$restart_baseline_kb" ] || restart_baseline_kb=0
 """
         first_session_condition += ' && [ "$planned_restart_pending" -eq 0 ]'
         run_list = '"$continuation"'
@@ -1284,10 +1302,32 @@ chown uml:uml "$continuation"
     chown uml:uml "$continuation"
     run_list="$continuation"
 """
+        settle_floor = (
+            f"$((restart_baseline_kb - "
+            f"{APPLE_MUSTPASS_RESTART_SETTLE_TOLERANCE_KIB}))"
+        )
         continuation_note = f"""    if [ "$planned_restart" -eq 1 ]; then
-        sleep {device_profile.restart_settle_seconds}
-        printf 'UML_VK_CTS_NOTE: planned restart before %s; continuing %s cases\\n' \\
-            {restart_case} \\
+        settle_start=$(date +%s)
+        settle_limit=$((settle_start + {device_profile.restart_settle_limit_seconds}))
+        [ "$settle_limit" -le "$deadline" ] || settle_limit=$deadline
+        settle_exit_kb=$(mem_total_kb)
+        [ -n "$settle_exit_kb" ] || settle_exit_kb=0
+        settle_kb=$settle_exit_kb
+        while [ "$settle_kb" -lt "{settle_floor}" ] && \\
+              [ "$(date +%s)" -lt "$settle_limit" ]; do
+            sleep 1
+            settle_kb=$(mem_total_kb)
+            [ -n "$settle_kb" ] || settle_kb=0
+        done
+        if [ "$settle_kb" -ge "{settle_floor}" ]; then
+            settle_state=released
+        else
+            settle_state=held
+        fi
+        printf 'UML_VK_CTS_NOTE: planned restart before %s; host graphics memory %s after %s s (MemTotal kB: baseline %s, prefix exit %s, now %s); continuing %s cases\\n' \\
+            {restart_case} "$settle_state" \\
+            "$(($(date +%s) - settle_start))" "$restart_baseline_kb" \\
+            "$settle_exit_kb" "$settle_kb" \\
             "$((selected_count - cts_cases))"
     else
         printf 'UML_VK_CTS_NOTE: continuing %s cases in a fresh session\\n' \\
