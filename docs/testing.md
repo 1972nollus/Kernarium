@@ -244,7 +244,9 @@ callback entry-point pool.
 each idle kernel worker reads through a NULL pointer with
 `copy_from_kernel_nofault()`, which must fail quietly: the guest keeps running
 and the emulator prints no host fault report for it. A lost nofault recovery
-point panics the guest instead.
+point panics the guest instead. The same dump must list Call Trace entries,
+which the kernel walks from each blocked task's saved context, and frame
+pointers make every one of them reliable, so none may be marked `?`.
 
 `guest-run-end-stop` boots embedded guests in child processes and stops each
 one at a different point, from CPU bring-up to a guest waiting for its root

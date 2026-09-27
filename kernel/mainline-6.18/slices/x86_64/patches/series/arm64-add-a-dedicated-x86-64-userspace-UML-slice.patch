@@ -250,11 +250,11 @@ index 6fd6da6c5816a452cec29b2cc4fe7605845236ad..7670607444d68b6a76bd5593fd032b0f
  
  #endif
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
-index cc0e19f4217c47239fa6a6eb4ee3da9f35d994bc..0348469704c29f40dd0671fb3dd4ccd5382e62c8 100644
+index edc2f6ffeb77fa3fa4bf27e794eff96d41641c70..ae377e46d4142f49cda73371118e2172807c778c 100644
 --- a/arch/arm64/um/asm/ptrace.h
 +++ b/arch/arm64/um/asm/ptrace.h
-@@ -16,8 +16,8 @@ enum {
- #define PT_REGS_FP(state) UPT_FP(&(state)->regs)
+@@ -18,8 +18,8 @@ enum {
+ #define PT_REGS_BP(state) PT_REGS_FP(state)
  #define PT_REGS_LR(state) UPT_LR(&(state)->regs)
  #define PT_REGS_PSTATE(state) UPT_PSTATE(&(state)->regs)
 -#define PT_REGS_ORIG_SYSCALL(state) PT_REGS_X(state, 8)

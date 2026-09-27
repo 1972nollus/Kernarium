@@ -53,3 +53,5 @@ patch	um-keep-the-line-input-IRQ-registered-across-a-tty-throttle.patch
 patch	bpf-run-callbacks-of-interpreted-programs.patch
 patch	um-arm64-select-HAVE_ALIGNED_STRUCT_PAGE-and-HAVE_CMPXCHG_DOUBLE.patch
 patch	um-report-Darwin-IRQ-state-changes-to-lockdep.patch
+patch	um-walk-the-Darwin-stack-a-trace-starts-on.patch
+patch	lkdtm-build-the-pointer-authentication-test-only-for-native-arm64.patch
