@@ -162,8 +162,8 @@ def main() -> int:
         arguments.rootfs.resolve(),
         arguments.memory,
         "tmpfs",
-        (f"--execution-engine={arguments.engine}",),
         init_shell=True,
+        engine=arguments.engine,
     ) as guest:
         guest.boot_to_shell(180)
         guest.check_command(
