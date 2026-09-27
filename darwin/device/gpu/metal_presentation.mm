@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -48,11 +49,23 @@ vertex RasterData displayVertex(unsigned int vertexId [[vertex_id]])
     return output;
 }
 
-// The low two bits of orientation rotate the guest image onto the display;
-// bit 2 says the texture stores that image bottom row first.
-float2 scanoutCoordinate(float2 coordinate, uint orientation)
+// Where the presenter samples the scanout: origin + point * extent, clamped
+// to the centres of the scanout rectangle's edge texels, maps the guest's
+// top-left-origin unit square onto the rectangle in its texture, with a
+// bottom-up texture's flip folded into a negative vertical extent.
+struct ScanoutSampling {
+    float2 origin;
+    float2 extent;
+    float2 minimum;
+    float2 maximum;
+    uint rotation;
+};
+
+// Rotation turns the guest image onto the display, so a display point maps
+// back through the inverse turn into the guest's unit square.
+float2 scanoutCoordinate(float2 coordinate, constant ScanoutSampling& sampling)
 {
-    switch (orientation & 3u) {
+    switch (sampling.rotation & 3u) {
     case 1u:
         coordinate = float2(coordinate.y, 1.0 - coordinate.x);
         break;
@@ -65,42 +78,92 @@ float2 scanoutCoordinate(float2 coordinate, uint orientation)
     default:
         break;
     }
-    if ((orientation & 4u) != 0u)
-        coordinate.y = 1.0 - coordinate.y;
-    return coordinate;
+    return clamp(
+        sampling.origin + coordinate * sampling.extent,
+        sampling.minimum,
+        sampling.maximum);
 }
+
+// A guest pixel magnified onto the display stays a sharp block, so text and
+// pixel art keep their edges at Retina and integer scales. A scanout larger
+// than its viewport is minified bilinearly, which blends each display pixel's
+// nearest 2x2 texels instead of dropping whole rows and columns. The guest's
+// textures have no mip chain, so a reduction beyond 2:1 still skips texels.
+constexpr sampler scanoutSampler(
+    mag_filter::nearest,
+    min_filter::linear,
+    address::clamp_to_edge);
 
 fragment float4 displayFragment(
     RasterData input [[stage_in]],
     texture2d<float> scanout [[texture(0)]],
-    constant uint& orientation [[buffer(0)]])
+    constant ScanoutSampling& sampling [[buffer(0)]])
 {
-    constexpr sampler textureSampler(
-        mag_filter::nearest,
-        min_filter::nearest,
-        address::clamp_to_edge);
     const float4 color = scanout.sample(
-        textureSampler,
-        scanoutCoordinate(input.textureCoordinate, orientation));
+        scanoutSampler,
+        scanoutCoordinate(input.textureCoordinate, sampling));
     return float4(color.rgb, 1.0);
 }
 
 fragment float4 displayArrayFragment(
     RasterData input [[stage_in]],
     texture2d_array<float> scanout [[texture(0)]],
-    constant uint& orientation [[buffer(0)]])
+    constant ScanoutSampling& sampling [[buffer(0)]])
 {
-    constexpr sampler textureSampler(
-        mag_filter::nearest,
-        min_filter::nearest,
-        address::clamp_to_edge);
     const float4 color = scanout.sample(
-        textureSampler,
-        scanoutCoordinate(input.textureCoordinate, orientation),
+        scanoutSampler,
+        scanoutCoordinate(input.textureCoordinate, sampling),
         0);
     return float4(color.rgb, 1.0);
 }
 )metal";
+
+/* The shader's ScanoutSampling: float2 members are 8-byte aligned, and the
+ * trailing uint pads the struct to a multiple of that alignment. */
+struct ShaderScanoutSampling final {
+    float origin[2];
+    float extent[2];
+    float minimum[2];
+    float maximum[2];
+    std::uint32_t rotation;
+    std::uint32_t padding;
+};
+static_assert(sizeof(ShaderScanoutSampling) == 40);
+
+[[nodiscard]] ShaderScanoutSampling shaderSampling(
+    const ScanoutSampling& sampling,
+    DisplayRotation rotation) noexcept
+{
+    return {
+        .origin = {
+            static_cast<float>(sampling.origin.x),
+            static_cast<float>(sampling.origin.y)},
+        .extent = {
+            static_cast<float>(sampling.extent.x),
+            static_cast<float>(sampling.extent.y)},
+        .minimum = {
+            static_cast<float>(sampling.minimum.x),
+            static_cast<float>(sampling.minimum.y)},
+        .maximum = {
+            static_cast<float>(sampling.maximum.x),
+            static_cast<float>(sampling.maximum.y)},
+        .rotation = static_cast<std::uint32_t>(rotation),
+        .padding = 0,
+    };
+}
+
+/* The CPU fallback texture holds exactly the framebuffer, top row first. */
+[[nodiscard]] std::optional<ScanoutSampling> framebufferSampling(
+    std::uint32_t width,
+    std::uint32_t height) noexcept
+{
+    return scanoutSampling({
+        .texture = {.width = width, .height = height},
+        .source = {.width = width, .height = height},
+        .width = width,
+        .height = height,
+    });
+}
 
 std::string description(NSError* error)
 {
@@ -222,7 +285,6 @@ struct MetalPresentationState final :
             std::lock_guard lock(presentationMutex);
             latestTexture = nil;
             latestIsCpu = true;
-            latestFlipped = false;
             ++latestContentGeneration;
             ++latestPresentationGeneration;
         }
@@ -284,7 +346,6 @@ struct MetalPresentationState final :
                     contentHeight = height;
                     latestTexture = nil;
                     latestIsCpu = true;
-                    latestFlipped = false;
                     ++latestContentGeneration;
                     ++latestPresentationGeneration;
                 }
@@ -306,24 +367,7 @@ struct MetalPresentationState final :
         guestFrames.fetch_add(1, std::memory_order_relaxed);
         try {
             if (!running.load(std::memory_order_acquire) ||
-                scanout.texture == nullptr || scanout.sourceX != 0 ||
-                scanout.sourceY != 0 ||
-                scanout.width != scanout.sourceWidth ||
-                scanout.height != scanout.sourceHeight ||
-                scanout.width != framebuffer.width() ||
-                scanout.height != framebuffer.height()) {
-                displayActivityLog().record(
-                    "present display=native reject=geometry texture=%p "
-                    "source=%ux%u view=%ux%u+%u+%u framebuffer=%ux%u",
-                    scanout.texture,
-                    scanout.sourceWidth,
-                    scanout.sourceHeight,
-                    scanout.width,
-                    scanout.height,
-                    scanout.sourceX,
-                    scanout.sourceY,
-                    framebuffer.width(),
-                    framebuffer.height());
+                scanout.texture == nullptr) {
                 return PresentOutcome::unsupported;
             }
             id<MTLTexture> texture = (__bridge id<MTLTexture>)scanout.texture;
@@ -348,18 +392,42 @@ struct MetalPresentationState final :
                     texture.device == device ? 1 : 0);
                 return PresentOutcome::unsupported;
             }
+            /* The pass scales the scanout rectangle into the drawable at the
+             * rectangle's own aspect, whatever size the framebuffer has. */
+            const auto sampling = scanoutSampling({
+                .texture = {
+                    .width = static_cast<std::uint32_t>(texture.width),
+                    .height = static_cast<std::uint32_t>(texture.height)},
+                .source = {
+                    .width = scanout.sourceWidth,
+                    .height = scanout.sourceHeight},
+                .x = scanout.sourceX,
+                .y = scanout.sourceY,
+                .width = scanout.width,
+                .height = scanout.height,
+                .flipped = scanout.flipped,
+            });
+            if (!sampling) {
+                displayActivityLog().record(
+                    "present display=native reject=geometry texture=%p "
+                    "source=%ux%u view=%ux%u+%u+%u",
+                    scanout.texture,
+                    scanout.sourceWidth,
+                    scanout.sourceHeight,
+                    scanout.width,
+                    scanout.height,
+                    scanout.sourceX,
+                    scanout.sourceY);
+                return PresentOutcome::unsupported;
+            }
             bool superseded = false;
             {
                 std::lock_guard lock(presentationMutex);
-                if (scanout.width != contentWidth ||
-                    scanout.height != contentHeight) {
-                    return PresentOutcome::unsupported;
-                }
                 superseded = latestContentGeneration >
                     presentedContentGeneration;
                 latestTexture = texture;
+                latestSampling = *sampling;
                 latestIsCpu = false;
-                latestFlipped = scanout.flipped;
                 ++latestContentGeneration;
                 ++latestPresentationGeneration;
             }
@@ -403,11 +471,9 @@ struct MetalPresentationState final :
         @autoreleasepool {
             std::uint64_t contentGeneration = 0;
             std::uint64_t presentationGeneration = 0;
-            std::uint32_t activeContentWidth = 0;
-            std::uint32_t activeContentHeight = 0;
+            std::optional<ScanoutSampling> activeSampling;
             DisplayRotation activeRotation = DisplayRotation::upright;
             bool useCpu = false;
-            bool flipped = false;
             id<MTLTexture> sourceTexture;
             try {
                 MTKView* view = (__bridge MTKView*)nativeView;
@@ -422,13 +488,13 @@ struct MetalPresentationState final :
                     }
                     contentGeneration = latestContentGeneration;
                     presentationGeneration = latestPresentationGeneration;
-                    activeContentWidth = contentWidth;
-                    activeContentHeight = contentHeight;
                     activeRotation = displayRotation;
                     useCpu = latestIsCpu;
-                    flipped = !useCpu && latestFlipped;
+                    activeSampling = useCpu ?
+                        framebufferSampling(contentWidth, contentHeight) :
+                        std::optional<ScanoutSampling> {latestSampling};
                     sourceTexture = useCpu ? fallbackTexture : latestTexture;
-                    if (sourceTexture == nil)
+                    if (sourceTexture == nil || !activeSampling)
                         return;
                     presentationInFlight = true;
                 }
@@ -473,9 +539,7 @@ struct MetalPresentationState final :
                     }
                 }
                 const auto presented = presentedDisplaySize(
-                    {.width = activeContentWidth,
-                     .height = activeContentHeight},
-                    activeRotation);
+                    activeSampling->content, activeRotation);
                 const auto fitted = aspectFitRectangle(
                     static_cast<double>(drawable.texture.width),
                     static_cast<double>(drawable.texture.height),
@@ -514,11 +578,10 @@ struct MetalPresentationState final :
                     [encoder setRenderPipelineState:arrayPipeline];
                 [encoder setViewport:viewport];
                 [encoder setFragmentTexture:sourceTexture atIndex:0];
-                const auto shaderOrientation =
-                    static_cast<std::uint32_t>(activeRotation) |
-                    (flipped ? 4U : 0U);
-                [encoder setFragmentBytes:&shaderOrientation
-                                    length:sizeof(shaderOrientation)
+                const auto sampling =
+                    shaderSampling(*activeSampling, activeRotation);
+                [encoder setFragmentBytes:&sampling
+                                    length:sizeof(sampling)
                                    atIndex:0];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangle
                             vertexStart:0
@@ -641,6 +704,7 @@ struct MetalPresentationState final :
     id<MTLRenderPipelineState> arrayPipeline;
     id<MTLTexture> fallbackTexture;
     id<MTLTexture> latestTexture;
+    ScanoutSampling latestSampling;
     std::mutex callbackMutex;
     std::function<void()> redrawCallback;
     mutable std::mutex presentationMutex;
@@ -652,7 +716,6 @@ struct MetalPresentationState final :
     std::uint32_t contentHeight;
     DisplayRotation displayRotation {DisplayRotation::upright};
     bool latestIsCpu {true};
-    bool latestFlipped {};
     bool presentationInFlight {};
     std::atomic_bool running {true};
     std::atomic_bool directPathReported {};

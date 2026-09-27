@@ -2478,9 +2478,14 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
 
     requireFirstAllocationFailsBeforeCommit(device, scanout);
     require(dependencies.createBlobScanoutCount == 0);
+    require(dependencies.guestScanoutChangeCount == 0);
     require(responseType(device.process(requestBytes(scanout), false)) ==
         protocol::GpuResponse::okNoData);
     require(dependencies.createBlobScanoutCount == 1);
+    /* The scanout rectangle is the guest's mode on the native path too. */
+    require(dependencies.guestScanoutChangeCount == 1);
+    require(dependencies.lastGuestScanoutWidth == scanout.rectangle.width);
+    require(dependencies.lastGuestScanoutHeight == scanout.rectangle.height);
     require(dependencies.lastTextureResource == scanout.resourceId);
     require(dependencies.lastBlobScanoutWidth == scanout.width);
     require(dependencies.lastBlobScanoutHeight == scanout.height);
@@ -2535,6 +2540,22 @@ void blobScanoutUsesNativeTextureAndPersistentVncMapping()
         dependencies.blobScanoutTexture);
     require(dependencies.unmapResourceCount == 1);
     require(dependencies.lastUnmappedResource == scanout.resourceId);
+    require(dependencies.guestScanoutChangeCount == 1);
+
+    /* A display that cannot take the mode refuses the scanout, and the
+     * device keeps no texture for it. */
+    dependencies.guestScanoutChangeAccepted = false;
+    require(responseType(device.process(requestBytes(scanout), false)) ==
+        protocol::GpuResponse::errorOutOfMemory);
+    require(dependencies.guestScanoutChangeCount == 2);
+    require(dependencies.releaseBlobScanoutCount == 2);
+    require(dependencies.lastReleasedBlobScanout ==
+        dependencies.blobScanoutTexture);
+    dependencies.guestScanoutChangeAccepted = true;
+    require(responseType(device.process(requestBytes(scanout), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.guestScanoutChangeCount == 3);
+    require(dependencies.releaseBlobScanoutCount == 2);
 }
 
 void virglBlobScanoutPresentsItsGlTexture()

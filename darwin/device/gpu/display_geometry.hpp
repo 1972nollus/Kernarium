@@ -56,6 +56,44 @@ struct ClippedDisplaySegment final {
     DisplayPoint point,
     DisplayRotation rotation) noexcept;
 
+/* A guest scanout as a presenter samples it: the rectangle of the guest's
+ * source image that the scanout shows, and the texture that stores the
+ * source. A flipped texture stores the source bottom row first. */
+struct ScanoutRegion final {
+    DisplaySize texture;
+    DisplaySize source;
+    std::uint32_t x {};
+    std::uint32_t y {};
+    std::uint32_t width {};
+    std::uint32_t height {};
+    bool flipped {};
+};
+
+struct TextureCoordinate final {
+    double x {};
+    double y {};
+};
+
+/* Normalized texture coordinates that stretch a scanout rectangle over a
+ * presenter's top-left-origin unit square: origin + point * extent, clamped
+ * to [minimum, maximum], samples the rectangle, with a flip folded into a
+ * negative vertical extent. The clamp keeps a filtered sample on the centres
+ * of the rectangle's edge texels, so no pixel outside it bleeds in. content is
+ * the rectangle's size, the one a presenter aspect-fits. */
+struct ScanoutSampling final {
+    DisplaySize content;
+    TextureCoordinate origin;
+    TextureCoordinate extent;
+    TextureCoordinate minimum;
+    TextureCoordinate maximum;
+};
+
+/* Returns nothing when the region cannot be sampled: an empty rectangle or
+ * source, a rectangle reaching outside the source, or a texture smaller than
+ * the source. */
+[[nodiscard]] std::optional<ScanoutSampling> scanoutSampling(
+    const ScanoutRegion& region) noexcept;
+
 /* Returns the portion of a pointer path inside a display rectangle. Entry and
  * exit lie exactly on the rectangle boundary when the corresponding endpoint
  * is outside. This lets native touchscreen adapters synthesize contact at the

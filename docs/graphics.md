@@ -187,8 +187,8 @@ exportable Metal texture, and virglrenderer names that texture through
 single-layer 2D texture has none. The device looks the texture up on every
 flush, for classic resources and for the blobs a Virgl context creates alike;
 Android's gralloc allocates the compositor's framebuffers as such blobs. It
-presents the texture only when it holds exactly the scanout, at the scanout's
-size and channel order, and a resource stored bottom row first
+presents the texture only when it holds exactly the scanout's source image, at
+that image's size and channel order, and a resource stored bottom row first
 (`VIRGL_RESOURCE_Y_0_TOP`) is turned the right way up by the presenting shader.
 Presentation needs no host fence of its own: the guest flushes a scanout only
 after the fence of the rendering it shows has retired, and a Virgl context
@@ -219,10 +219,12 @@ choice in its iOS app settings; the macOS executable selects it with
 Virtio-GPU advertised mode and raises one display event. Duplicate callbacks
 for the same settled size do not raise another event. Presentation storage
 remains sized to the active guest scanout until the guest applies its eventual
-mode with `SET_SCANOUT`.
+mode with `SET_SCANOUT` or `SET_SCANOUT_BLOB`.
 
 Every applied guest mode is authoritative for presentation, whether selected
-by the guest or produced by guest-side rounding of a host request. macOS
+by the guest or produced by guest-side rounding of a host request, and whether
+its scanout is a classic resource or a blob shown through its Metal texture.
+The scanout rectangle is the mode. macOS
 resizes its content window to that applied size; the resulting host callback
 does not feed the same size back to the guest. iOS instead aspect-fits every
 guest mode in its view. A guest-initiated mode does not disable later automatic
@@ -239,6 +241,18 @@ host resize dimensions are translated back into guest orientation before they
 are advertised. The inverse presentation transform is applied to pointer and
 touch coordinates. An active contact ends when rotation changes and cannot
 restart until the physical gesture is released.
+
+The native presenter draws a scanout's Metal texture whatever the size of its
+CPU framebuffer: its Metal pass scales the scanout rectangle, which may be any
+part of the source image, into the host view at the rectangle's own aspect
+ratio, and samples no texel outside the rectangle. Magnification uses nearest
+filtering, so guest pixels stay sharp at Retina and integer scales;
+minification is bilinear, blending each host pixel's nearest 2x2 texels rather
+than dropping whole rows and columns. Guest textures carry no mip chain, so a
+reduction beyond 2:1 still skips texels. The display refuses a texture into the
+CPU fallback only when it is not a single-layer 2D texture of the display's
+Metal device, when it is smaller than the source, or when the rectangle is
+empty or reaches outside the source.
 
 Rendering and input use the same centered aspect-fit rectangle. AppKit maps
 that rectangle into the fixed tablet range, while Kernarium maps it into the
