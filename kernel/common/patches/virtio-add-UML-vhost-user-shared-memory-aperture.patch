@@ -5,12 +5,12 @@ Subject: [PATCH] virtio: add UML vhost-user shared-memory aperture
 
 ---
  arch/um/drivers/vhost_user.h          |  36 ++-
- arch/um/drivers/virtio_uml.c          | 311 ++++++++++++++++++++++++--
+ arch/um/drivers/virtio_uml.c          | 334 ++++++++++++++++++++++++--
  arch/um/include/shared/mem.h          |  22 ++
- arch/um/kernel/physmem.c              | 249 +++++++++++++++++++++
+ arch/um/kernel/physmem.c              | 249 +++++++++++++++++++
  arch/um/kernel/um_arch.c              |  20 +-
  drivers/gpu/drm/virtio/virtgpu_vram.c |  16 +-
- 6 files changed, 635 insertions(+), 19 deletions(-)
+ 6 files changed, 653 insertions(+), 24 deletions(-)
 
 diff --git a/arch/um/drivers/vhost_user.h b/arch/um/drivers/vhost_user.h
 index fcfa3b7e021bae961cd76d830929b03b70ac5562..841ae6d730c2c35c815462d3a6c251f5ef140bf8 100644
@@ -99,7 +99,7 @@ index fcfa3b7e021bae961cd76d830929b03b70ac5562..841ae6d730c2c35c815462d3a6c251f5
  
  struct vhost_user_msg {
 diff --git a/arch/um/drivers/virtio_uml.c b/arch/um/drivers/virtio_uml.c
-index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3dbfdb3e6 100644
+index 7b1c3c69b5c396c1def9c8f703dab0d569237138..a4eb1ce101ab427c58a14bc1568deb1452def089 100644
 --- a/arch/um/drivers/virtio_uml.c
 +++ b/arch/um/drivers/virtio_uml.c
 @@ -22,9 +22,11 @@
@@ -122,7 +122,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  #include <os.h>
  #include "vhost_user.h"
  
-@@ -54,18 +57,25 @@ struct virtio_uml_device {
+@@ -54,18 +57,26 @@ struct virtio_uml_device {
  	struct virtio_uml_platform_data *pdata;
  
  	raw_spinlock_t sock_lock;
@@ -138,7 +138,9 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  	u8 no_vq_suspend:1;
 +	u8 has_shmem_region:1;
  
- 	u8 config_changed_irq:1;
+-	u8 config_changed_irq:1;
++	/* Recorded under req_lock, taken and cleared by vu_req_interrupt() */
++	bool config_changed_irq;
  	uint64_t vq_irq_vq_map;
  	int recv_rc;
 +#ifdef UML_HOST_DARWIN
@@ -148,7 +150,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  };
  
  struct virtio_uml_vq_info {
-@@ -76,6 +86,9 @@ struct virtio_uml_vq_info {
+@@ -76,6 +87,9 @@ struct virtio_uml_vq_info {
  
  #define vu_err(vu_dev, ...)	dev_err(&(vu_dev)->pdev->dev, ##__VA_ARGS__)
  
@@ -158,7 +160,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  /* Vhost-user protocol */
  
  static int full_sendmsg_fds(int fd, const void *buf, unsigned int len,
-@@ -173,13 +186,60 @@ static void vhost_user_check_reset(struct virtio_uml_device *vu_dev,
+@@ -173,13 +187,61 @@ static void vhost_user_check_reset(struct virtio_uml_device *vu_dev,
  	schedule_work(&pdata->conn_broken_wk);
  }
  
@@ -197,7 +199,8 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
 +		 * A descriptor edge is reported only while unread data remains,
 +		 * so the request IRQ will not run for what this wait has read.
 +		 */
-+		if (vu_dev->vq_irq_vq_map || vu_dev->config_changed_irq)
++		if (READ_ONCE(vu_dev->vq_irq_vq_map) ||
++		    READ_ONCE(vu_dev->config_changed_irq))
 +			irq_work_queue(&vu_dev->req_irq_work);
 +	}
 +	return 0;
@@ -221,7 +224,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  	if (rc) {
  		vhost_user_check_reset(vu_dev, rc);
  		return rc;
-@@ -208,19 +268,57 @@ static int vhost_user_recv_u64(struct virtio_uml_device *vu_dev,
+@@ -208,19 +270,57 @@ static int vhost_user_recv_u64(struct virtio_uml_device *vu_dev,
  
  static int vhost_user_recv_req(struct virtio_uml_device *vu_dev,
  			       struct vhost_user_msg *msg,
@@ -285,7 +288,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  }
  
  static int vhost_user_send(struct virtio_uml_device *vu_dev,
-@@ -354,6 +452,45 @@ static int vhost_user_get_queue_num(struct virtio_uml_device *vu_dev,
+@@ -354,6 +454,45 @@ static int vhost_user_get_queue_num(struct virtio_uml_device *vu_dev,
  	return vhost_user_recv_u64(vu_dev, queue_num);
  }
  
@@ -331,7 +334,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  static void vhost_user_reply(struct virtio_uml_device *vu_dev,
  			     struct vhost_user_msg *msg, int response)
  {
-@@ -376,22 +513,24 @@ static void vhost_user_reply(struct virtio_uml_device *vu_dev,
+@@ -376,22 +515,24 @@ static void vhost_user_reply(struct virtio_uml_device *vu_dev,
  		       rc, size);
  }
  
@@ -360,7 +363,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  		if (rc)
  			break;
  
-@@ -409,6 +548,54 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
+@@ -409,6 +550,54 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
  				}
  			}
  			break;
@@ -415,7 +418,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  		case VHOST_USER_SLAVE_IOTLB_MSG:
  			/* not supported - VIRTIO_F_ACCESS_PLATFORM */
  		case VHOST_USER_SLAVE_VRING_HOST_NOTIFIER_MSG:
-@@ -418,6 +605,11 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
+@@ -418,6 +607,11 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
  			       msg.msg.header.request);
  		}
  
@@ -427,7 +430,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  		if (ev && !vu_dev->suspended)
  			time_travel_add_irq_event(ev);
  
-@@ -430,6 +622,24 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
+@@ -430,10 +624,31 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
  	return irq_rc;
  }
  
@@ -452,7 +455,14 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  static irqreturn_t vu_req_interrupt(int irq, void *data)
  {
  	struct virtio_uml_device *vu_dev = data;
-@@ -448,7 +658,13 @@ static irqreturn_t vu_req_interrupt(int irq, void *data)
+ 	irqreturn_t ret = IRQ_HANDLED;
++	bool config_changed;
++	unsigned long flags;
++	uint64_t vq_map;
+ 
+ #ifdef UML_HOST_DARWIN
+ 	/*
+@@ -448,22 +663,47 @@ static irqreturn_t vu_req_interrupt(int irq, void *data)
  
  	if (vu_dev->recv_rc) {
  		vhost_user_check_reset(vu_dev, vu_dev->recv_rc);
@@ -462,22 +472,34 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
 +	/*
 +	 * Deliver everything recorded. A request another reader drained leaves
 +	 * no descriptor edge behind, so nothing would deliver a remainder.
++	 * That reader records under req_lock on another CPU, so take and clear
++	 * the records under it too; a record made afterwards stays for the
++	 * next delivery. Deliver unlocked: a callback may send a request,
++	 * whose reply wait takes req_lock.
 +	 */
-+	if (vu_dev->vq_irq_vq_map) {
++	raw_spin_lock_irqsave(&vu_dev->req_lock, flags);
++	vq_map = vu_dev->vq_irq_vq_map;
++	vu_dev->vq_irq_vq_map = 0;
++	config_changed = vu_dev->config_changed_irq;
++	vu_dev->config_changed_irq = false;
++	raw_spin_unlock_irqrestore(&vu_dev->req_lock, flags);
++
++	if (vq_map) {
  		struct virtqueue *vq;
  
  		virtio_device_for_each_vq((&vu_dev->vdev), vq) {
-@@ -456,7 +672,8 @@ static irqreturn_t vu_req_interrupt(int irq, void *data)
+-			if (vu_dev->vq_irq_vq_map & BIT_ULL(vq->index))
++			if (vq_map & BIT_ULL(vq->index))
  				vring_interrupt(0 /* ignored */, vq);
  		}
- 		vu_dev->vq_irq_vq_map = 0;
+-		vu_dev->vq_irq_vq_map = 0;
 -	} else if (vu_dev->config_changed_irq) {
-+	}
-+	if (vu_dev->config_changed_irq) {
- 		virtio_config_changed(&vu_dev->vdev);
- 		vu_dev->config_changed_irq = false;
+-		virtio_config_changed(&vu_dev->vdev);
+-		vu_dev->config_changed_irq = false;
  	}
-@@ -464,6 +681,16 @@ static irqreturn_t vu_req_interrupt(int irq, void *data)
++	if (config_changed)
++		virtio_config_changed(&vu_dev->vdev);
+ 
  	return ret;
  }
  
@@ -494,7 +516,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  #ifndef UML_HOST_DARWIN
  static void vu_req_interrupt_comm_handler(int irq, int fd, void *data,
  					  struct time_travel_event *ev)
-@@ -508,6 +735,7 @@ static int vhost_user_init_slave_req(struct virtio_uml_device *vu_dev)
+@@ -508,6 +748,7 @@ static int vhost_user_init_slave_req(struct virtio_uml_device *vu_dev)
  	um_free_irq(vu_dev->irq, vu_dev);
  err_close:
  	os_close_file(req_fds[0]);
@@ -502,7 +524,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  out:
  	/* Close unused write end of request fds */
  	os_close_file(req_fds[1]);
-@@ -530,6 +758,15 @@ static int vhost_user_init(struct virtio_uml_device *vu_dev)
+@@ -530,6 +771,15 @@ static int vhost_user_init(struct virtio_uml_device *vu_dev)
  		if (rc)
  			return rc;
  		vu_dev->protocol_features &= VHOST_USER_SUPPORTED_PROTOCOL_F;
@@ -518,7 +540,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  		rc = vhost_user_set_protocol_features(vu_dev,
  				vu_dev->protocol_features);
  		if (rc)
-@@ -543,6 +780,15 @@ static int vhost_user_init(struct virtio_uml_device *vu_dev)
+@@ -543,6 +793,15 @@ static int vhost_user_init(struct virtio_uml_device *vu_dev)
  			return rc;
  	}
  
@@ -534,7 +556,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  	if (vu_dev->protocol_features &
  			BIT_ULL(VHOST_USER_PROTOCOL_F_MQ)) {
  		rc = vhost_user_get_queue_num(vu_dev, &vu_dev->max_vqs);
-@@ -881,6 +1127,9 @@ static void vu_reset(struct virtio_device *vdev)
+@@ -881,6 +1140,9 @@ static void vu_reset(struct virtio_device *vdev)
  {
  	struct virtio_uml_device *vu_dev = to_virtio_uml_device(vdev);
  
@@ -544,7 +566,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  	vu_dev->status = 0;
  }
  
-@@ -1124,6 +1373,18 @@ static const char *vu_bus_name(struct virtio_device *vdev)
+@@ -1124,6 +1386,18 @@ static const char *vu_bus_name(struct virtio_device *vdev)
  	return vu_dev->pdev->name;
  }
  
@@ -563,7 +585,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  static const struct virtio_config_ops virtio_uml_config_ops = {
  	.get = vu_get,
  	.set = vu_set,
-@@ -1135,6 +1396,7 @@ static const struct virtio_config_ops virtio_uml_config_ops = {
+@@ -1135,6 +1409,7 @@ static const struct virtio_config_ops virtio_uml_config_ops = {
  	.get_features = vu_get_features,
  	.finalize_features = vu_finalize_features,
  	.bus_name = vu_bus_name,
@@ -571,7 +593,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  };
  
  static void virtio_uml_release_dev(struct device *d)
-@@ -1145,6 +1407,11 @@ static void virtio_uml_release_dev(struct device *d)
+@@ -1145,6 +1420,11 @@ static void virtio_uml_release_dev(struct device *d)
  
  	time_travel_propagate_time();
  
@@ -583,7 +605,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  	/* might not have been opened due to not negotiating the feature */
  	if (vu_dev->req_fd >= 0) {
  		um_free_irq(vu_dev->irq, vu_dev);
-@@ -1177,6 +1444,10 @@ static void vu_of_conn_broken(struct work_struct *wk)
+@@ -1177,6 +1457,10 @@ static void vu_of_conn_broken(struct work_struct *wk)
  
  	vu_dev = platform_get_drvdata(pdata->pdev);
  
@@ -594,7 +616,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  	virtio_break_device(&vu_dev->vdev);
  
  	/*
-@@ -1263,6 +1534,10 @@ static int virtio_uml_probe(struct platform_device *pdev)
+@@ -1263,6 +1547,10 @@ static int virtio_uml_probe(struct platform_device *pdev)
  	vu_dev->sock = rc;
  
  	raw_spin_lock_init(&vu_dev->sock_lock);
@@ -605,7 +627,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3
  
  	rc = vhost_user_init(vu_dev);
  	if (rc)
-@@ -1281,6 +1556,14 @@ static int virtio_uml_probe(struct platform_device *pdev)
+@@ -1281,6 +1569,14 @@ static int virtio_uml_probe(struct platform_device *pdev)
  	return 0;
  
  error_init:
