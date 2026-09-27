@@ -31,6 +31,7 @@ import guest_process  # noqa: E402
 import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
 import run_vk_gl_cts as cts  # noqa: E402
 import vulkan_cts_receipt as vk_receipt  # noqa: E402
+import webgl_launcher  # noqa: E402
 
 
 AQUARIUM_URL = (
@@ -43,9 +44,6 @@ DEFAULT_SAMPLE_SECONDS = 30
 # wait is derived from it, so a guest-side stall ends in a named console error
 # before the runner gives up.
 DEFAULT_TIMEOUT_SECONDS = 360
-# The launcher's own deadline precedes the runner's by this much, leaving room
-# for its diagnostics and error line to reach the console log.
-GUEST_REPORT_MARGIN_SECONDS = 45
 # Chromium start-up and the probe's readiness checks need at least this long
 # beyond the warm-up and sample windows.
 CHROMIUM_MINIMUM_SECONDS = 60
@@ -57,8 +55,6 @@ DBUS_CALL_SECONDS = 10
 # The probe reports this long before the launcher stops Chromium, and keeps as
 # much slack beyond its measurement windows.
 PAGE_MARGIN_SECONDS = 10
-# The boot and the KDE session must keep at least this much guest uptime.
-MINIMUM_SESSION_SECONDS = 60
 # Kernarium reads the probe's console without a host deadline. This bounds
 # the guest waits of that unattended run instead.
 KERNARIUM_TIMEOUT_SECONDS = 1800
@@ -324,14 +320,9 @@ extension=/var/tmp/uml-aquarium-extension
 if [ "$renderer_backend" = zink ]; then
     export MESA_LOADER_DRIVER_OVERRIDE=zink
 fi
-uml_uid="$(id -u uml)"
-runtime="/run/user/$uml_uid"
+@LAUNCHER_FUNCTIONS@
 printf 'UML_AQUARIUM_LAUNCHER|UPTIME=%s|DEADLINE=%s\\n' \\
     "$(cut -d' ' -f1 /proc/uptime)" "$deadline"
-uptime_seconds()
-{
-    cut -d. -f1 /proc/uptime
-}
 emit_session_diagnostics()
 {
     echo 'UML_SESSION_DIAGNOSTICS_BEGIN'
@@ -348,12 +339,6 @@ emit_session_diagnostics()
         true
     echo 'UML_SESSION_DIAGNOSTICS_END'
 }
-fail()
-{
-    emit_session_diagnostics
-    echo "UML_CHROMIUM_ERROR: $*"
-    exit 1
-}
 if [ "$renderer_backend" = zink ]; then
     display_socket="$runtime/wayland-0"
     display_description="KDE Wayland session"
@@ -361,13 +346,7 @@ else
     display_socket=/tmp/.X11-unix/X0
     display_description="KDE X11 bridge"
 fi
-while [ ! -S "$display_socket" ] || [ ! -S "$runtime/bus" ]; do
-    if [ "$(uptime_seconds)" -ge "$session_deadline" ]; then
-        fail "$display_description did not become ready by guest uptime" \\
-            "${session_deadline}s"
-    fi
-    sleep 1
-done
+wait_for_session "$display_socket" "$display_description"
 xauthority=""
 chromium_platform_flags=""
 if [ "$renderer_backend" = zink ]; then
@@ -430,11 +409,7 @@ if [ "$renderer_backend" = zink ]; then
     printf 'UML_KDE_ZINK_READY|KWIN_PID=%s|RENDERER=%s\\n' \\
         "$kwin_pid" "$kwin_renderer"
 else
-    xauthority="$(find "$runtime" -maxdepth 1 -type f -name 'xauth_*' -print |
-        head -n 1)"
-    if [ -z "$xauthority" ]; then
-        fail "Xauthority cookie was not found"
-    fi
+    find_xauthority
     runuser -u uml -- env \\
         DISPLAY=:0 \\
         XAUTHORITY="$xauthority" \\
@@ -500,23 +475,9 @@ if ! grep -q "const pageDeadline = $page_deadline_ms;" "$extension/verify.js"; t
 fi
 {
     chromium_status=0
-    timeout -k 10 "$chromium_seconds" runuser -u uml -- env \\
-        HOME=/home/uml \\
-        DISPLAY=:0 \\
-        WAYLAND_DISPLAY=wayland-0 \\
-        XAUTHORITY="$xauthority" \\
-        XDG_RUNTIME_DIR="$runtime" \\
-        DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \\
-        chromium \\
-        --use-gl=angle \\
-        --use-angle=gles-egl \\
-        --ignore-gpu-blocklist \\
+    run_chromium "$chromium_seconds" \\
         $chromium_platform_flags \\
         @CHROMIUM_EXTRA_FLAGS@ \\
-        --no-first-run \\
-        --disable-crash-reporter \\
-        --enable-logging=stderr \\
-        --start-maximized \\
         --user-data-dir=/tmp/chromium-aquarium \\
         --disable-extensions-except="$extension" \\
         --load-extension="$extension" \\
@@ -529,14 +490,9 @@ fi
         case "$line" in
         UML_CHROMIUM_EXIT\\|STATUS=*)
             status="${line#*STATUS=}"
-            if [ "$reported" = 1 ]; then
-                :
-            elif [ "$status" = 124 ] || [ "$status" = 137 ]; then
-                echo "UML_CHROMIUM_ERROR: Aquarium did not report by guest" \\
-                    "uptime ${deadline}s"
-            else
-                echo "UML_CHROMIUM_ERROR: Chromium exited with status" \\
-                    "$status before Aquarium reported"
+            if [ "$reported" = 0 ]; then
+                echo "UML_CHROMIUM_ERROR:" \\
+                    "$(chromium_exit_reason "$status" Aquarium)"
             fi
             ;;
         *UML_AQUARIUM_MEASURE_BEGIN*)
@@ -657,18 +613,16 @@ def guest_budget(
     """
     if renderer_backend not in ("virgl", "zink"):
         raise ValueError("unsupported Chromium renderer backend")
-    deadline = math.floor(timeout) - GUEST_REPORT_MARGIN_SECONDS
+    deadline = webgl_launcher.guest_deadline(timeout)
     compositor_deadline = deadline - (
         warmup_seconds + sample_seconds + CHROMIUM_MINIMUM_SECONDS
     )
     session_deadline = compositor_deadline - (
         COMPOSITOR_PROBE_SECONDS if renderer_backend == "zink" else 0
     )
-    if session_deadline < MINIMUM_SESSION_SECONDS:
-        raise ValueError(
-            f"a {timeout:g} s deadline leaves the boot and KDE session less "
-            f"than {MINIMUM_SESSION_SECONDS} s"
-        )
+    webgl_launcher.require_session_budget(
+        session_deadline, f"a {timeout:g} s deadline"
+    )
     return GuestBudget(deadline, session_deadline, compositor_deadline)
 
 
@@ -686,6 +640,12 @@ def build_guest_launcher(
         budget = guest_budget(DEFAULT_TIMEOUT_SECONDS, renderer_backend)
     return (
         LAUNCHER.replace(
+            "@LAUNCHER_FUNCTIONS@",
+            webgl_launcher.launcher_functions(
+                "UML_CHROMIUM_ERROR:", "emit_session_diagnostics"
+            ),
+        )
+        .replace(
             "@CHROMIUM_EXTRA_FLAGS@",
             " ".join(shlex.quote(flag) for flag in chromium_flags),
         )
@@ -867,21 +827,11 @@ def summarize_host_measurement(
     }
 
 
-GUEST_RESULT_MARKERS = (
-    "UML_AQUARIUM_OK|",
+GUEST_FAILURE_MARKERS = (
     "UML_AQUARIUM_ERROR|",
     "UML_CHROMIUM_ERROR:",
 )
-
-
-def guest_failure(text: str) -> str:
-    """Return the guest's first named failure, without console decoration."""
-    for line in text.splitlines():
-        for marker in GUEST_RESULT_MARKERS[1:]:
-            index = line.find(marker)
-            if index >= 0:
-                return line[index:].split('", source:', 1)[0].strip()
-    return "the guest reported no failure"
+GUEST_RESULT_MARKERS = ("UML_AQUARIUM_OK|", *GUEST_FAILURE_MARKERS)
 
 
 def describe_missing_report(
@@ -1602,7 +1552,7 @@ def main() -> int:
             if "UML_AQUARIUM_OK|" not in text:
                 raise RuntimeError(
                     "Aquarium did not render with WebGL: "
-                    + guest_failure(text)
+                    + webgl_launcher.guest_failure(text, GUEST_FAILURE_MARKERS)
                 )
             renderer_line = next(
                 line for line in text.splitlines() if "UML_AQUARIUM_OK|" in line

@@ -36,6 +36,7 @@ def load_module(name: str, path: Path):
 
 
 run_chromium_webgl = load_module("run_chromium_webgl", SCRIPT)
+webgl_launcher = run_chromium_webgl.webgl_launcher
 generate_aquarium_header = load_module(
     "generate_aquarium_header", GENERATOR
 )
@@ -542,7 +543,7 @@ class AquariumLauncherBudgetTests(unittest.TestCase):
                 budget = run_chromium_webgl.guest_budget(timeout, backend)
                 self.assertEqual(
                     budget.deadline,
-                    timeout - run_chromium_webgl.GUEST_REPORT_MARGIN_SECONDS,
+                    timeout - webgl_launcher.GUEST_REPORT_MARGIN_SECONDS,
                 )
                 reserve = (
                     run_chromium_webgl.DEFAULT_WARMUP_SECONDS
@@ -574,7 +575,8 @@ class AquariumLauncherBudgetTests(unittest.TestCase):
         self.assertIn("session_deadline=390\n", launcher)
         self.assertIn("compositor_deadline=450\n", launcher)
         self.assertIn('timeout -k 2 "$call_seconds"', launcher)
-        self.assertIn('timeout -k 10 "$chromium_seconds"', launcher)
+        self.assertIn('run_chromium "$chromium_seconds"', launcher)
+        self.assertIn('timeout -k 10 "$chromium_bound"', launcher)
         self.assertIsNone(re.search(r"@[A-Z_]+@", launcher))
         self.assertNotIn("remaining=", launcher)
 
@@ -651,7 +653,9 @@ class AquariumLauncherBudgetTests(unittest.TestCase):
             "guest uptime 150s\n"
         )
         self.assertEqual(
-            run_chromium_webgl.guest_failure(text),
+            webgl_launcher.guest_failure(
+                text, run_chromium_webgl.GUEST_FAILURE_MARKERS
+            ),
             "UML_CHROMIUM_ERROR: KDE Wayland session did not become ready by "
             "guest uptime 150s",
         )
@@ -660,7 +664,9 @@ class AquariumLauncherBudgetTests(unittest.TestCase):
             'not finish", source: chrome-extension://x/verify.js (130)'
         )
         self.assertEqual(
-            run_chromium_webgl.guest_failure(page),
+            webgl_launcher.guest_failure(
+                page, run_chromium_webgl.GUEST_FAILURE_MARKERS
+            ),
             "UML_AQUARIUM_ERROR|document load did not finish",
         )
         budget = run_chromium_webgl.guest_budget(360, "zink")
