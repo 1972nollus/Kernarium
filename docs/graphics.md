@@ -808,7 +808,7 @@ list is `DEVICE_EXCLUSIONS` in `tests/integration/gpu/run_vk_cts.py`.
 
 Native graphics allocations are separate from the configured guest RAM limit.
 KosmicKrisp releases obsolete pipeline resources with their last Vulkan owner
-and one-time recording storage after GPU completion; see the
+and a submission's recording storage after GPU completion; see the
 [dependency ownership contracts](../dependencies/README.md).
 
 Budget campaign concurrency from host physical footprint and the

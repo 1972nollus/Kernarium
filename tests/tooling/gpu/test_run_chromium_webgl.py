@@ -10,6 +10,7 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -231,17 +232,81 @@ class AquariumProbePolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             log_path = Path(directory) / "console.log"
             with log_path.open("wb") as log:
-                process = run_chromium_webgl.start_guest(
+                with run_chromium_webgl.guest_child(
                     [
                         sys.executable,
                         "-c",
                         "import os; print(os.getpgid(0), os.getsid(0))",
                     ],
                     log,
-                )
-                self.assertEqual(process.wait(timeout=30), 0)
+                ) as process:
+                    self.assertEqual(process.wait(timeout=30), 0)
             group, session = map(int, log_path.read_text().split())
         self.assertEqual((group, session), (process.pid, process.pid))
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX sessions")
+    def test_terminated_runner_still_reaps_its_guest(self) -> None:
+        # SIGTERM used to end the runner before its finally clause could stop
+        # a harness in its own session; repeated signals must not skip the
+        # stop either.
+        harness = (
+            "import os, pathlib, signal, sys, time\n"
+            "def stop(*_):\n"
+            "    time.sleep(0.5)\n"
+            "    sys.exit(0)\n"
+            "signal.signal(signal.SIGINT, stop)\n"
+            "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+            "time.sleep(60)\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = root / "harness.pid"
+            runner = (
+                "import sys\n"
+                "sys.dont_write_bytecode = True\n"
+                f"sys.path.insert(0, {str(Path(run_chromium_webgl.__file__).parent)!r})\n"
+                "import run_chromium_webgl as runner\n"
+                f"with open({str(root / 'console.log')!r}, 'wb') as log:\n"
+                "    with runner.guest_child(\n"
+                f"        [sys.executable, '-c', {harness!r}, {str(record)!r}], log\n"
+                "    ) as child:\n"
+                "        child.wait(timeout=60)\n"
+            )
+            process = subprocess.Popen(
+                [sys.executable, "-B", "-c", runner],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            harness_pid = None
+            try:
+                deadline = time.monotonic() + 30
+                while not record.exists() or not record.read_text():
+                    self.assertIsNone(process.poll())
+                    self.assertLess(time.monotonic(), deadline)
+                    time.sleep(0.05)
+                harness_pid = int(record.read_text())
+                process.send_signal(signal.SIGTERM)
+                for _ in range(3):
+                    time.sleep(0.05)
+                    for repeat in (signal.SIGINT, signal.SIGTERM):
+                        try:
+                            process.send_signal(repeat)
+                        except ProcessLookupError:
+                            pass
+                process.wait(timeout=60)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(harness_pid, 0)
+                harness_pid = None
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=10)
+                if harness_pid is not None:
+                    try:
+                        os.kill(harness_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
     def test_guest_shutdown_signals_a_harness_that_leads_no_group(
         self,

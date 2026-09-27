@@ -55,7 +55,7 @@ same mask in pSampleMask and early tests, and with no mask at all.  It reads
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  30 +-
  src/kosmickrisp/vulkan/kk_gpl.h               |  28 ++
  src/kosmickrisp/vulkan/kk_physical_device.c   |   6 +-
- src/kosmickrisp/vulkan/kk_shader.c            |  84 +++-
+ src/kosmickrisp/vulkan/kk_shader.c            |  78 ++-
  src/kosmickrisp/vulkan/kk_shader.h            |   6 +
  src/kosmickrisp/vulkan/meson.build            |  14 +
  .../tests/early_sample_mask_shaders/esm.vert  |  11 +
@@ -68,7 +68,7 @@ same mask in pSampleMask and early tests, and with no mask at all.  It reads
  .../esm_plain.frag.h                          |  19 +
  .../early_sample_mask_shaders/generate.sh     |   7 +
  .../tests/test_early_sample_mask_count.cpp    | 449 ++++++++++++++++++
- 17 files changed, 805 insertions(+), 5 deletions(-)
+ 17 files changed, 799 insertions(+), 5 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert.h
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_early.frag
@@ -203,11 +203,11 @@ index acd2bc3a90ee8f521b3935d260ffbab4a34910a2..d4eeed93b34cf7c9b9b15ae9b691a830
        .polygonModePointSize = true,
        .nonStrictSinglePixelWideLinesUseParallelogram = false,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index a58ffe54c3d02a981ae7a7657f1229ed568af4ac..0d5609f9bb6d64724d576ec0ef7eb475bfc0b983 100644
+index 209dd432a59f6f9e7cd35fd5d73896204c6cd3a4..b1538ef1ce2e67942bff29ae9bf073f02c6caab1 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -752,6 +752,71 @@ kk_nir_lower_fs_pipeline_statistics(nir_shader *nir)
-    nir_progress(true, b.impl, nir_metadata_control_flow);
+@@ -762,6 +762,65 @@ kk_nir_lower_fs_pipeline_statistics(nir_shader *nir)
+    nir_progress(true, b.impl, nir_metadata_none);
  }
  
 +/* The lowering below and the pipeline info the draw path reads must agree
@@ -263,14 +263,8 @@ index a58ffe54c3d02a981ae7a7657f1229ed568af4ac..0d5609f9bb6d64724d576ec0ef7eb475
 +   nir_def *kept =
 +      nir_ine_imm(&b, nir_iand_imm(&b, sample_bit, sample_mask), 0u);
 +
-+   nir_push_if(&b, nir_iand(&b, nir_iand(&b, enabled, non_helper), kept));
-+   nir_def *previous = nir_global_atomic(
-+      &b, 32, address, nir_imm_int(&b, 1), .atomic_op = nir_atomic_op_iadd);
-+   nir_push_if(&b, nir_ieq_imm(&b, previous, UINT32_MAX));
-+   nir_global_atomic(&b, 32, nir_iadd_imm(&b, address, sizeof(uint32_t)),
-+                     nir_imm_int(&b, 1), .atomic_op = nir_atomic_op_iadd);
-+   nir_pop_if(&b, NULL);
-+   nir_pop_if(&b, NULL);
++   kk_nir_count_u64(&b, address,
++                    nir_iand(&b, nir_iand(&b, enabled, non_helper), kept));
 +
 +   nir_progress(true, b.impl, nir_metadata_none);
 +}
@@ -278,7 +272,7 @@ index a58ffe54c3d02a981ae7a7657f1229ed568af4ac..0d5609f9bb6d64724d576ec0ef7eb475
  static void
  kk_lower_fs(struct kk_device *dev, nir_shader *nir,
              const struct vk_graphics_pipeline_state *state, bool writes_depth,
-@@ -1108,7 +1173,6 @@ gather_shader_info(struct kk_shader *shader, nir_shader *nir,
+@@ -1118,7 +1177,6 @@ gather_shader_info(struct kk_shader *shader, nir_shader *nir,
        shader->info.fs.flat_inputs =
           nir->info.inputs_read &
           ~(nir->info.linear_varyings | nir->info.perspective_varyings);
@@ -286,7 +280,7 @@ index a58ffe54c3d02a981ae7a7657f1229ed568af4ac..0d5609f9bb6d64724d576ec0ef7eb475
        /* Some meta shaders like vk-meta-resolve will have depth_layout as NONE
         * which is not a valid Metal layout */
        if (nir->info.fs.depth_layout == FRAG_DEPTH_LAYOUT_NONE)
-@@ -1272,6 +1336,19 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1282,6 +1340,19 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
        msl_nir_lower_clip_cull_distance(nir, num_cull_distances);
     }
  
@@ -306,7 +300,7 @@ index a58ffe54c3d02a981ae7a7657f1229ed568af4ac..0d5609f9bb6d64724d576ec0ef7eb475
     NIR_PASS(_, nir, kk_nir_lower_poly, pipeline_statistics);
  
     msl_optimize_nir(nir);
-@@ -3719,8 +3796,11 @@ gather_graphics_pipeline_create_info(
+@@ -3729,8 +3800,11 @@ gather_graphics_pipeline_create_info(
        if (s->info.stage == MESA_SHADER_TESS_CTRL)
           info->vs.tess_local_thread_size = s->info.tess.tcs_output_patch_size;
  
