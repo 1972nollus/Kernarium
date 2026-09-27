@@ -399,7 +399,7 @@
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>
         $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
+        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
     target_include_directories(uml_arm64_single_step_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/darwin/include
