@@ -131,7 +131,7 @@ BuildResult Builder::build(
 			resolve_link,
 			resolve_indirect_link,
 			options,
-			&suffixes,
+			suffixes,
 		};
 		const auto emitted_start = words.size();
 		DecodeResult decoded = DecodeResult::decoded;
