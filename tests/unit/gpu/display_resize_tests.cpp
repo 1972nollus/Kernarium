@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
@@ -137,6 +138,114 @@ void aspectFitCentersGuestContentWithoutDistortion()
         "invalid host geometry produced an aspect-fit viewport");
     require(aspectFitRectangle(100, 100, 0, 100).height == 0,
         "invalid guest geometry produced an aspect-fit viewport");
+}
+
+[[nodiscard]] bool near(double actual, double expected)
+{
+    return std::abs(actual - expected) < 1e-12;
+}
+
+void scanoutRectanglesSampleOnlyTheirOwnTexels()
+{
+    using uml::gpu::DisplaySize;
+    using uml::gpu::scanoutSampling;
+
+    /* A guest mode larger than the display is sampled whole and scaled by
+     * the presenter; its size is what the presenter aspect-fits. */
+    const auto whole = scanoutSampling({
+        .texture = {.width = 4096, .height = 2160},
+        .source = {.width = 4096, .height = 2160},
+        .width = 4096,
+        .height = 2160,
+    });
+    require(whole.has_value() &&
+            whole->content == DisplaySize {.width = 4096, .height = 2160},
+        "a scanout larger than the display was not sampled at its own size");
+    require(near(whole->origin.x, 0.0) && near(whole->origin.y, 0.0) &&
+            near(whole->extent.x, 1.0) && near(whole->extent.y, 1.0),
+        "a whole scanout did not span its texture");
+    require(near(whole->minimum.x, 0.5 / 4096.0) &&
+            near(whole->minimum.y, 0.5 / 2160.0) &&
+            near(whole->maximum.x, 4095.5 / 4096.0) &&
+            near(whole->maximum.y, 2159.5 / 2160.0),
+        "a whole scanout was not clamped to its edge texel centres");
+
+    /* A rectangle inside a larger source, stored in a larger texture,
+     * samples only its own texels. */
+    const auto panned = scanoutSampling({
+        .texture = {.width = 256, .height = 128},
+        .source = {.width = 200, .height = 100},
+        .x = 40,
+        .y = 20,
+        .width = 80,
+        .height = 60,
+    });
+    require(panned.has_value() &&
+            panned->content == DisplaySize {.width = 80, .height = 60},
+        "a scanout rectangle was not presented at its own size");
+    require(near(panned->origin.x, 40.0 / 256.0) &&
+            near(panned->origin.y, 20.0 / 128.0) &&
+            near(panned->extent.x, 80.0 / 256.0) &&
+            near(panned->extent.y, 60.0 / 128.0),
+        "a scanout rectangle did not map onto its texels");
+    require(near(panned->minimum.x, 40.5 / 256.0) &&
+            near(panned->minimum.y, 20.5 / 128.0) &&
+            near(panned->maximum.x, 119.5 / 256.0) &&
+            near(panned->maximum.y, 79.5 / 128.0),
+        "a scanout rectangle could sample texels outside it");
+
+    /* Stored bottom row first, the rectangle's top guest row is texture row
+     * source height - 1 - y, and the presenter walks it downwards. */
+    const auto flipped = scanoutSampling({
+        .texture = {.width = 256, .height = 128},
+        .source = {.width = 200, .height = 100},
+        .x = 40,
+        .y = 20,
+        .width = 80,
+        .height = 60,
+        .flipped = true,
+    });
+    require(flipped.has_value() &&
+            near(flipped->origin.y, 80.0 / 128.0) &&
+            near(flipped->extent.y, -60.0 / 128.0) &&
+            near(flipped->origin.x, panned->origin.x) &&
+            near(flipped->extent.x, panned->extent.x),
+        "a bottom-up scanout rectangle was not turned the right way up");
+    const double topRowCentre =
+        flipped->origin.y + (0.5 / 60.0) * flipped->extent.y;
+    require(near(topRowCentre, 79.5 / 128.0),
+        "a bottom-up scanout's top row was not texture row 79");
+    require(near(flipped->minimum.y, 20.5 / 128.0) &&
+            near(flipped->maximum.y, 79.5 / 128.0),
+        "a bottom-up scanout rectangle could sample texels outside it");
+
+    const uml::gpu::ScanoutRegion valid {
+        .texture = {.width = 64, .height = 64},
+        .source = {.width = 64, .height = 64},
+        .width = 64,
+        .height = 64,
+    };
+    auto invalid = valid;
+    invalid.width = 0;
+    require(!scanoutSampling(invalid), "an empty scanout was sampled");
+    invalid = valid;
+    invalid.x = 1;
+    require(!scanoutSampling(invalid),
+        "a scanout reaching past its source was sampled");
+    invalid = valid;
+    invalid.y = UINT32_MAX;
+    invalid.height = 2;
+    require(!scanoutSampling(invalid),
+        "a scanout whose rectangle overflows was sampled");
+    invalid = valid;
+    invalid.texture.height = 63;
+    require(!scanoutSampling(invalid),
+        "a texture smaller than its source was sampled");
+    invalid = valid;
+    invalid.source = {};
+    invalid.width = 0;
+    invalid.height = 0;
+    require(!scanoutSampling(invalid), "an empty source was sampled");
 }
 
 void hostRotationSwapsPresentationAndMapsGuestInput()
@@ -390,6 +499,7 @@ int main()
         resizeNotificationsAreCoalescedAndBounded();
         framebufferResizePublishesOneClearedGeometry();
         aspectFitCentersGuestContentWithoutDistortion();
+        scanoutRectanglesSampleOnlyTheirOwnTexels();
         hostRotationSwapsPresentationAndMapsGuestInput();
         pointerPathsClipToExactGuestEdges();
         guestModesetsNeverDisableHostResize();
