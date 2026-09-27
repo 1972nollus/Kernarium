@@ -156,9 +156,6 @@ UAPI_ARCHIVE=$(awk -F '\t' -v name="$UAPI_ARCHIVE_NAME" \
 	'$1 == name { print $3 "-" $1 }' "$ARCHIVE_MANIFEST")
 [ -n "$UAPI_ARCHIVE" ] || fail "$UAPI_ARCHIVE_NAME is absent from $ARCHIVE_MANIFEST"
 UAPI_ARCHIVE="$CACHE_ROOT/archives/$UAPI_ARCHIVE"
-for source in gawk argp-standalone musl-obstack elfutils libbpf dwarves; do
-	[ -d "$SOURCE_ROOT/$source" ] || fail "prepared $source source is missing"
-done
 
 SDK_ROOT=$("$XCRUN" --sdk macosx --show-sdk-path)
 CC=$("$XCRUN" --sdk macosx --find clang)
