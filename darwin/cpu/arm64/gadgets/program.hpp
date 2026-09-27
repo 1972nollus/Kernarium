@@ -20,18 +20,14 @@
 
 namespace uml::cpu::arm64::gadgets {
 
-/* Most translated streams are small, but a pmr::vector gives every one its
- * own pool allocation. Keep the common prefix in the Program itself and use
- * the same allocator, with the builder's former 34-word reservation, only
- * when a stream spills. */
+/* A translated stream's words: either a buffer of its own, taken from the
+ * given resource and grown from the builder's 34-word reservation, or words
+ * it borrows. No words are kept inline. A measured browser-like guest
+ * translates a mean of 37.5 words per block since conditional fall-throughs
+ * are inlined, so a sixteen-word inline array was unused by the 63.5% that
+ * spill while still costing its bytes in every stored program. */
 class ProgramWords final {
 public:
-	/* No words are kept inline. A measured browser-like guest translates a
-	 * mean of 37.5 words per block since conditional fall-throughs are
-	 * inlined, so a sixteen-word inline array was unused by the 63.5% that
-	 * spill while still costing its bytes in every stored program. */
-	static constexpr std::size_t inline_capacity = 0;
-
 	/* Words the program refers to but does not own.
 	 *
 	 * The cache stores a translation as one exact-sized allocation whose
@@ -76,7 +72,7 @@ public:
 		  borrowed_{other.borrowed_}
 	{
 		other.size_ = 0;
-		other.capacity_ = inline_capacity;
+		other.capacity_ = 0;
 		other.heap_ = nullptr;
 		other.borrowed_ = false;
 	}
@@ -92,7 +88,7 @@ public:
 		heap_ = other.heap_;
 		borrowed_ = other.borrowed_;
 		other.size_ = 0;
-		other.capacity_ = inline_capacity;
+		other.capacity_ = 0;
 		other.heap_ = nullptr;
 		other.borrowed_ = false;
 		return *this;
@@ -103,7 +99,7 @@ public:
 	void push_back(std::uintptr_t word)
 	{
 		if (size_ == capacity_)
-			reserve(capacity_ == inline_capacity ? 34 : capacity_ * 2);
+			reserve(capacity_ == 0 ? 34 : capacity_ * 2);
 		data()[size_++] = word;
 	}
 
@@ -129,13 +125,10 @@ public:
 		capacity_ = requested;
 	}
 
-	[[nodiscard]] std::uintptr_t *data() noexcept
-	{
-		return heap_ != nullptr ? heap_ : inline_.data();
-	}
+	[[nodiscard]] std::uintptr_t *data() noexcept { return heap_; }
 	[[nodiscard]] const std::uintptr_t *data() const noexcept
 	{
-		return heap_ != nullptr ? heap_ : inline_.data();
+		return heap_;
 	}
 	[[nodiscard]] std::size_t size() const noexcept { return size_; }
 	[[nodiscard]] bool empty() const noexcept { return size_ == 0; }
@@ -160,10 +153,9 @@ private:
 
 	std::pmr::memory_resource *resource_;
 	std::size_t size_{};
-	std::size_t capacity_{inline_capacity};
+	std::size_t capacity_{};
 	std::uintptr_t *heap_{};
 	bool borrowed_{};
-	std::array<std::uintptr_t, inline_capacity> inline_;
 };
 
 class Program final {
