@@ -6,10 +6,8 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
 import os
 import pathlib
-import shlex
 import sys
 import time
 
@@ -28,22 +26,6 @@ def parse_arguments() -> argparse.Namespace:
         "--root-device",
         default="/dev/ubda",
         help="raw EROFS root device (default: /dev/ubda)",
-    )
-    parser.add_argument(
-        "--overlay-shell",
-        dest="overlay_shell",
-        action="store_true",
-        default=True,
-        help=(
-            "bootstrap the required writable tmpfs OverlayFS shell from "
-            "/bin/sh (default and retained for CLI compatibility)"
-        ),
-    )
-    parser.add_argument(
-        "--systemd-overlay",
-        dest="overlay_shell",
-        action="store_true",
-        help=argparse.SUPPRESS,
     )
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument(
@@ -64,47 +46,15 @@ def parse_arguments() -> argparse.Namespace:
 def run_timed(guest: Guest, name: str, command: str) -> str:
     before_cpu = cpu_time_seconds(guest.process_id)
     before_wall = time.monotonic()
-    result = guest.run_command(command)
+    output = guest.check_command(command)
     elapsed = time.monotonic() - before_wall
     consumed = cpu_time_seconds(guest.process_id) - before_cpu
-    if result.return_code != 0:
-        raise RuntimeError(
-            f"{name} failed ({result.return_code})\n{result.output}"
-        )
     print(
         f"{name}: {elapsed:.3f}s wall, {consumed:.3f}s host CPU "
         f"({consumed / elapsed:.2f} cores)",
         flush=True,
     )
-    return result.output
-
-
-def upload_bytes(guest: Guest, payload: bytes, destination: str) -> None:
-    encoded = base64.b64encode(payload).decode("ascii")
-    staging = f"{destination}.base64"
-    quoted_staging = shlex.quote(staging)
-    quoted_destination = shlex.quote(destination)
-    result = guest.run_command(f": > {quoted_staging}", 30)
-    if result.return_code == 0:
-        for offset in range(0, len(encoded), 512):
-            result = guest.run_command(
-                f"printf %s {shlex.quote(encoded[offset : offset + 512])} "
-                f">> {quoted_staging}",
-                30,
-            )
-            if result.return_code != 0:
-                break
-    if result.return_code == 0:
-        result = guest.run_command(
-            f"base64 -d {quoted_staging} > {quoted_destination} && "
-            f"rm -f {quoted_staging}",
-            30,
-        )
-    if result.return_code != 0:
-        raise RuntimeError(
-            f"failed to upload {destination} ({result.return_code})\n"
-            f"{result.output}"
-        )
+    return output
 
 
 def stage_executable(guest: Guest, binary: pathlib.Path) -> str:
@@ -112,13 +62,7 @@ def stage_executable(guest: Guest, binary: pathlib.Path) -> str:
     if not binary.is_file():
         raise ValueError(f"guest stress binary is not a file: {binary}")
     destination = f"/tmp/{binary.name}"
-    upload_bytes(guest, binary.read_bytes(), destination)
-    result = guest.run_command(f"chmod 755 {shlex.quote(destination)}", 30)
-    if result.return_code != 0:
-        raise RuntimeError(
-            f"could not make {destination} executable ({result.return_code})\n"
-            f"{result.output}"
-        )
+    guest.upload(binary.read_bytes(), destination, 0o755)
     return destination
 
 
@@ -145,7 +89,7 @@ def main() -> int:
         "1024M",
         "tmpfs",
         (f"ncpus={arguments.cpus}", f"root={arguments.root_device}"),
-        overlay_shell=arguments.overlay_shell,
+        overlay_shell=True,
     )
     try:
         guest.boot_and_login()

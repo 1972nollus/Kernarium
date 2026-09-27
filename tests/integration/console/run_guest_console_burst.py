@@ -52,19 +52,16 @@ def main() -> int:
     filler = burst(BURST_LINES)
     if len(filler) <= 2 * N_TTY_BUFFER_BYTES:
         raise SystemExit("the burst must exceed the line discipline buffer")
-    guest = Guest(
+    with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         "512M",
         "tmpfs",
         ("ncpus=1",),
         init_shell=True,
-    )
-    try:
+    ) as guest:
         guest.boot_to_shell(180)
-        mounted = guest.run_command("mount -t proc proc /proc", 20)
-        if mounted.return_code != 0:
-            raise RuntimeError("could not mount /proc:\n" + mounted.output)
+        guest.check_command("mount -t proc proc /proc", 20)
         for round_index in range(ROUNDS):
             result = guest.run_command(
                 "echo BURST-$((6*7))",
@@ -96,11 +93,6 @@ def main() -> int:
                 f"still delivered ({serial_interrupts(guest)})"
             )
         return 0
-    except BaseException:
-        print(guest.output()[-4000:], file=sys.stderr)
-        raise
-    finally:
-        guest.close()
 
 
 if __name__ == "__main__":

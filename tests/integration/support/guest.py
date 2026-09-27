@@ -4,6 +4,7 @@ from __future__ import annotations
 # Imported support must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
+import base64
 import dataclasses
 import os
 import pathlib
@@ -23,6 +24,10 @@ from collections.abc import Sequence
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 BOOT_TIMEOUT_SECONDS = 90
 CONSOLE_WRITE_TIMEOUT_SECONDS = 30
+# One upload command stays well inside the guest console's 4 KiB line.
+UPLOAD_CHUNK_CHARACTERS = 2048
+# A failing session prints this much of its transcript's end.
+FAILURE_TRANSCRIPT_CHARACTERS = 16384
 SIZE_VALUE = re.compile(r"^(\d+)([KMGT]?)$", re.IGNORECASE)
 SWAP_IMAGE = re.compile(r"^uml-ltp-swap-(\d+)-.*\.img$")
 OVERLAY_READY_MARKER = "__UML_OVERLAY_READY__"
@@ -158,13 +163,12 @@ def emulator_arguments(
     init_path: str = "/sbin/init",
     engine: str = "jit",
     core_class: str = "performance",
-    readonly_root: bool = False,
 ) -> list[str]:
     arguments = [
         *core_class_prefix(core_class),
         str(emulator),
         f"--execution-engine={engine}",
-        f"ubd0{'rc' if readonly_root else 'c'}={rootfs}",
+        f"ubd0c={rootfs}",
         "root=/dev/ubda",
         "rootfstype=erofs",
         f"init={init_path}",
@@ -255,27 +259,11 @@ class Guest:
         systemd_overlay: bool = False,
         engine: str = "jit",
         core_class: str = "performance",
-        systemd_overlay_size: str | None = None,
-        systemd_image_init: str | None = None,
         pass_fds: Sequence[int] = (),
     ) -> None:
-        if sum((init_shell, overlay_shell, systemd_overlay, bool(systemd_image_init))) > 1:
+        if sum((init_shell, overlay_shell, systemd_overlay)) > 1:
             raise ValueError("guest boot modes are mutually exclusive")
-        if systemd_overlay_size and not systemd_overlay:
-            raise ValueError("a disk overlay requires systemd overlay boot")
         self._swap_path = None
-        self._overlay_path = None
-        if systemd_overlay_size:
-            descriptor, name = tempfile.mkstemp(prefix="uml-systemd-overlay-", suffix=".ext4")
-            self._overlay_path = pathlib.Path(name)
-            try:
-                os.ftruncate(descriptor, size_bytes(systemd_overlay_size))
-            except BaseException:
-                self._overlay_path.unlink(missing_ok=True)
-                raise
-            finally:
-                os.close(descriptor)
-            kernel_arguments = (*kernel_arguments, f"ubd2={self._overlay_path}")
         self._core_class = core_class
         try:
             self._swap_path = create_swap_image(swap_size) if swap_size else None
@@ -287,7 +275,6 @@ class Guest:
         self._init_shell = init_shell
         self._overlay_shell = overlay_shell
         self._systemd_overlay = systemd_overlay
-        self._systemd_image_init = systemd_image_init
         if init_shell or overlay_shell or systemd_overlay:
             kernel_arguments = (
                 *kernel_arguments,
@@ -297,9 +284,6 @@ class Guest:
             )
         if systemd_overlay:
             kernel_arguments = (*kernel_arguments, "systemd.unit=multi-user.target")
-        if systemd_image_init:
-            kernel_arguments = (*kernel_arguments, "console=ttyS0", "ip=off", "quiet", "loglevel=3",
-                                "systemd.show_status=false", "systemd.unit=multi-user.target")
         try:
             master, slave = pty.openpty()
         except BaseException:
@@ -318,10 +302,9 @@ class Guest:
                     self._swap_path,
                     "/bin/sh"
                     if init_shell or overlay_shell or systemd_overlay
-                    else systemd_image_init or "/sbin/init",
+                    else "/sbin/init",
                     engine,
                     core_class,
-                    bool(systemd_image_init),
                 ),
                 # Darwin can miss PTY readiness while all guest CPUs are
                 # busy. A pipe keeps input pollable at guest timer boundaries;
@@ -344,6 +327,20 @@ class Guest:
         self._input = self._process.stdin
         os.set_blocking(self._input.fileno(), False)
         self._transcript = bytearray()
+
+    def __enter__(self) -> Guest:
+        return self
+
+    def __exit__(self, exception_type, exception, traceback) -> None:
+        """Print the transcript's end when an exception propagates, then close."""
+        try:
+            if exception_type is not None:
+                print(
+                    self.output()[-FAILURE_TRANSCRIPT_CHARACTERS:],
+                    file=sys.stderr,
+                )
+        finally:
+            self.close()
 
     @property
     def process_id(self) -> int:
@@ -393,17 +390,9 @@ class Guest:
             )
 
     def boot_and_login(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
-        if self._systemd_overlay or self._systemd_image_init:
-            if self._systemd_overlay:
-                self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
-                bootstrap = SYSTEMD_OVERLAY_BOOTSTRAP
-                if self._overlay_path is not None:
-                    bootstrap = bootstrap.replace(
-                        "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt",
-                        "mkfs.ext4 -q -E lazy_itable_init=1,lazy_journal_init=1 /dev/ubdc\n"
-                        "mount -t ext4 -o noatime,nosuid,nodev /dev/ubdc /mnt",
-                    )
-                self._write(bootstrap + "\n")
+        if self._systemd_overlay:
+            self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
+            self._write(SYSTEMD_OVERLAY_BOOTSTRAP + "\n")
             login = self._read_until(
                 re.compile(rb" login:\s*uml \(automatic login\)", re.MULTILINE),
                 timeout_seconds,
@@ -428,11 +417,6 @@ class Guest:
                 timeout_seconds,
                 search_from,
             )
-            if self._overlay_path is not None:
-                # The emulator has opened the disk before mounting it. Keep
-                # its sparse backing only through that open descriptor, so
-                # even an abrupt emulator exit releases all allocated blocks.
-                self._overlay_path.unlink(missing_ok=True)
         elif self._init_shell or self._overlay_shell:
             self.boot_to_shell(timeout_seconds)
         else:
@@ -512,6 +496,52 @@ class Guest:
             section = section[begin_at + len(begin) :]
         return CommandResult(int(match.group(1)), self._normal_output(section))
 
+    def check_command(
+        self,
+        command: str,
+        timeout_seconds: int = 30,
+        *,
+        expected: str | None = None,
+    ) -> str:
+        """Run a command, raise unless it exits zero, and return its output.
+
+        With ``expected``, the stripped output must also equal it."""
+        result = self.run_command(command, timeout_seconds)
+        if result.return_code != 0:
+            raise RuntimeError(
+                f"guest command failed ({result.return_code}): {command}\n"
+                f"{result.output}"
+            )
+        if expected is not None and result.output.strip() != expected:
+            raise RuntimeError(
+                f"guest command {command!r} returned {result.output!r}, "
+                f"expected {expected!r}"
+            )
+        return result.output
+
+    def upload(
+        self,
+        payload: bytes,
+        destination: str,
+        mode: int | None = None,
+        timeout_seconds: int = 30,
+    ) -> None:
+        """Write payload to a guest file through the console.
+
+        The bytes travel as base64 in chunks the console line accepts, are
+        decoded in the guest, and get ``mode`` when it is given."""
+        encoded = base64.b64encode(payload).decode("ascii")
+        staging = shlex.quote(f"{destination}.base64")
+        target = shlex.quote(destination)
+        self.check_command(f": > {staging}", timeout_seconds)
+        for offset in range(0, len(encoded), UPLOAD_CHUNK_CHARACTERS):
+            chunk = encoded[offset : offset + UPLOAD_CHUNK_CHARACTERS]
+            self.check_command(f"printf %s {chunk} >> {staging}", timeout_seconds)
+        command = f"base64 -d {staging} > {target} && rm -f {staging}"
+        if mode is not None:
+            command += f" && chmod {mode:o} {target}"
+        self.check_command(command, timeout_seconds)
+
     def shutdown(self, timeout_seconds: int = 30) -> bool:
         """Request an orderly halt and wait for the emulator to exit."""
         if self._process.poll() is not None:
@@ -563,9 +593,6 @@ class Guest:
                     self._remove_swap_image()
 
     def _remove_swap_image(self) -> None:
-        if self._overlay_path is not None:
-            self._overlay_path.unlink(missing_ok=True)
-            self._overlay_path = None
         if self._swap_path is not None:
             self._swap_path.unlink(missing_ok=True)
             self._swap_path = None

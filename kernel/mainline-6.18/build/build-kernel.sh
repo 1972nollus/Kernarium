@@ -127,6 +127,8 @@ source_tree=$(git -C "$SOURCE_DIR" rev-parse HEAD^{tree} 2>/dev/null || true)
 	fail "$UML_KERNEL_SLICE source tree is $source_tree; expected $UML_KERNEL_FINAL_TREE"
 "$COMMON_ROOT/abi/sync.sh" --kernel-source "$SOURCE_DIR" --verify ||
 	fail "kernel ABI copies are stale; replay the tracked series or run kernel/common/abi/sync.sh"
+python3 -B "$COMMON_ROOT/video/sync-protocol.py" --kernel-source "$SOURCE_DIR" --verify ||
+	fail "kernel Virtio video protocol copy is stale; replay the tracked series or run kernel/common/video/sync-protocol.py"
 mkdir -p -- "$BUILD_DIR"
 SOURCE_DIR=$(CDPATH= cd -- "$SOURCE_DIR" && pwd -P)
 BUILD_DIR=$(CDPATH= cd -- "$BUILD_DIR" && pwd -P)
@@ -234,23 +236,15 @@ run_make()
 		set -- "STRIP=$UML_KERNEL_STRIP" "$@"
 	fi
 	if [ -n "$UML_KERNEL_LLVM" ]; then
-		PATH="$host_tool_bin:$PATH" \
-			PKG_CONFIG_LIBDIR="$UML_KERNEL_HOST_TOOLS_PREFIX/lib/pkgconfig" \
-			PKG_CONFIG_PATH= "$UML_KERNEL_MAKE" \
-			-C "$SOURCE_DIR" "O=$BUILD_DIR" \
-			ARCH=um SUBARCH=arm64 UML_HOST_OS=Darwin \
-			"CC=$UML_KERNEL_CC" "HOSTCC=$UML_KERNEL_HOST_CC" \
-			"LD=$UML_KERNEL_LD" "CROSS_COMPILE=$UML_KERNEL_CROSS_COMPILE" \
-			"LLVM=$UML_KERNEL_LLVM" "$@"
-	else
-		PATH="$host_tool_bin:$PATH" \
-			PKG_CONFIG_LIBDIR="$UML_KERNEL_HOST_TOOLS_PREFIX/lib/pkgconfig" \
-			PKG_CONFIG_PATH= "$UML_KERNEL_MAKE" \
-			-C "$SOURCE_DIR" "O=$BUILD_DIR" \
-			ARCH=um SUBARCH=arm64 UML_HOST_OS=Darwin \
-			"CC=$UML_KERNEL_CC" "HOSTCC=$UML_KERNEL_HOST_CC" \
-			"LD=$UML_KERNEL_LD" "CROSS_COMPILE=$UML_KERNEL_CROSS_COMPILE" "$@"
+		set -- "LLVM=$UML_KERNEL_LLVM" "$@"
 	fi
+	PATH="$host_tool_bin:$PATH" \
+		PKG_CONFIG_LIBDIR="$UML_KERNEL_HOST_TOOLS_PREFIX/lib/pkgconfig" \
+		PKG_CONFIG_PATH= "$UML_KERNEL_MAKE" \
+		-C "$SOURCE_DIR" "O=$BUILD_DIR" \
+		ARCH=um SUBARCH=arm64 UML_HOST_OS=Darwin \
+		"CC=$UML_KERNEL_CC" "HOSTCC=$UML_KERNEL_HOST_CC" \
+		"LD=$UML_KERNEL_LD" "CROSS_COMPILE=$UML_KERNEL_CROSS_COMPILE" "$@"
 }
 
 apply_config_fragment()

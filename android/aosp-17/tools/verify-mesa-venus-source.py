@@ -21,11 +21,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"))
+from contract_checks import parse_assignments  # noqa: E402
 import patch_series  # noqa: E402
 
 
 HEX40 = re.compile(r"[0-9a-f]{40}")
-ASSIGNMENT = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([0-9]+))$")
 REQUIRED_METADATA = {
     "MESA_VENUS_SOURCE_SCHEMA",
     "MESA_VENUS_UPSTREAM_REPOSITORY",
@@ -62,20 +63,7 @@ def run(*command: str, cwd: Path | None = None, payload: bytes | None = None) ->
 
 
 def parse_metadata(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line_number, raw in enumerate(path.read_text().splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = ASSIGNMENT.fullmatch(line)
-        if match is None:
-            raise VerificationError(
-                f"{path}:{line_number}: malformed metadata assignment"
-            )
-        key, quoted, numeric = match.groups()
-        if key in values:
-            raise VerificationError(f"{path}:{line_number}: duplicate key {key}")
-        values[key] = quoted if quoted is not None else numeric
+    values = parse_assignments(path, VerificationError)
     if set(values) != REQUIRED_METADATA:
         missing = sorted(REQUIRED_METADATA - set(values))
         extra = sorted(set(values) - REQUIRED_METADATA)

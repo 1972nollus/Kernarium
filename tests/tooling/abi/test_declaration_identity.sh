@@ -175,6 +175,22 @@ if "$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/16k-process-mask.nm" \
 	printf '%s\n' "import audit accepted the process-wide sigprocmask" >&2
 	exit 1
 fi
+# Host code must call darwin_uml_fcntl(); a direct import of the variadic
+# Darwin fcntl, in any of its Mach-O spellings, is refused.
+for symbol in fcntl _fcntl '_fcntl$NOCANCEL'; do
+	{ cat "$WORK_DIRECTORY/16k.nm"; printf '                 U %s\n' "$symbol"; } \
+		> "$WORK_DIRECTORY/16k-fcntl.nm"
+	if "$IMPORT_VERIFY" --nm-output "$WORK_DIRECTORY/16k-fcntl.nm" \
+		--page-size 16k --slice arm64 >/dev/null 2>"$WORK_DIRECTORY/fcntl.err"; then
+		printf '%s\n' "import audit accepted a direct $symbol import" >&2
+		exit 1
+	fi
+	grep -q 'imports the variadic Darwin fcntl' "$WORK_DIRECTORY/fcntl.err" || {
+		printf '%s\n' "import audit rejected $symbol for another reason:" >&2
+		cat "$WORK_DIRECTORY/fcntl.err" >&2
+		exit 1
+	}
+done
 
 printf '%s\n' \
 	"independent ABI identity and page-specific import negative tests passed"

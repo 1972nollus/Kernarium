@@ -99,6 +99,12 @@ def write_fixture(
     tools.mkdir(parents=True)
     shutil.copy2(verifier, tools / "verify-jelly-source.py")
     os.chmod(tools / "verify-jelly-source.py", 0o755)
+    artifacts = root / "kernel/common/artifacts"
+    artifacts.mkdir(parents=True)
+    shutil.copy2(
+        verifier.parents[3] / "kernel/common/artifacts/contract_checks.py",
+        artifacts / "contract_checks.py",
+    )
     (root / "scripts").mkdir()
     shutil.copy2(scripts / "patch_series.py", root / "scripts/patch_series.py")
     (jelly / "metadata.env").write_text(

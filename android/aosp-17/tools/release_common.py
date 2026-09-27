@@ -11,17 +11,28 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
-from typing import NoReturn
 
+_ARTIFACTS = str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts")
+if _ARTIFACTS not in sys.path:
+    sys.path.insert(0, _ARTIFACTS)
+from contract_checks import ContractChecks, parse_config, sha256_path  # noqa: E402
+
+_CHECKS = ContractChecks("Android release verifier")
+fail = _CHECKS.fail
+require_exact_keys = _CHECKS.require_exact_keys
+require_string = _CHECKS.require_string
+require_integer = _CHECKS.require_integer
+require_hex = _CHECKS.require_hex
+safe_relative = _CHECKS.safe_relative
+parse_env = _CHECKS.parse_env
 
 SCHEMA_VERSION = 3
 PRODUCT_FAMILY = "android-17-ack-6.18-16k"
 DIRECTORY_PREFIX = "android17-ack6.18-16k-"
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
-HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 
 PAYLOAD_SPECS = {
     "boot/kernel-command-line.txt": ("kernel-command-line", "utf8-text"),
@@ -180,74 +191,6 @@ ACCEPTANCE_KEYS = {
     "ANDROID17_ACCEPTED_ABI_VERSION",
     "ANDROID17_ACCEPTED_ABI_FINGERPRINT",
 }
-
-
-def fail(message: str) -> NoReturn:
-    raise SystemExit(f"Android release verifier: {message}")
-
-
-def require_exact_keys(value: object, expected: set[str], label: str) -> dict:
-    if not isinstance(value, dict):
-        fail(f"{label} must be an object")
-    keys = set(value)
-    if keys != expected:
-        missing = sorted(expected - keys)
-        extra = sorted(keys - expected)
-        fail(f"{label} keys differ (missing={missing}, extra={extra})")
-    return value
-
-
-def require_string(value: object, label: str, *, nonempty: bool = True) -> str:
-    if not isinstance(value, str) or (nonempty and not value):
-        fail(f"{label} must be a nonempty string")
-    if "\0" in value or "\n" in value or "\r" in value:
-        fail(f"{label} contains a control character")
-    return value
-
-
-def require_integer(value: object, label: str, *, minimum: int = 0) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        fail(f"{label} must be an integer at least {minimum}")
-    return value
-
-
-def require_hex(value: object, length: int, label: str) -> str:
-    result = require_string(value, label)
-    pattern = HEX40_RE if length == 40 else HEX64_RE
-    if pattern.fullmatch(result) is None:
-        fail(f"{label} must be {length} lowercase hexadecimal characters")
-    return result
-
-
-def safe_relative(value: object, label: str) -> str:
-    text = require_string(value, label)
-    if "\\" in text:
-        fail(f"{label} contains a backslash")
-    path = PurePosixPath(text)
-    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
-        fail(f"{label} is not a normalized relative path")
-    if str(path) != text:
-        fail(f"{label} is not normalized")
-    return text
-
-
-def parse_env(path: Path) -> dict[str, str]:
-    if not path.is_file() or path.is_symlink():
-        fail(f"metadata file is missing or unsafe: {path}")
-    values: dict[str, str] = {}
-    assignment = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([0-9]+))$")
-    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = assignment.fullmatch(line)
-        if match is None:
-            fail(f"{path}:{line_number}: malformed metadata assignment")
-        key, quoted, numeric = match.groups()
-        if key in values:
-            fail(f"{path}:{line_number}: duplicate metadata key {key}")
-        values[key] = quoted if quoted is not None else numeric
-    return values
 
 
 def load_manifest(release_root: Path) -> dict:
@@ -458,20 +401,8 @@ def validate_manifest(value: object) -> dict:
     return manifest
 
 
-def sha256_path(path: Path) -> str:
-    import hashlib
-
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1 << 20):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def kernel_series_provenance(outer_root: Path) -> tuple[int, str]:
     """Return the ACK line's patch count and ordered patch-content digest."""
-    import sys
-
     tooling = str(outer_root / "kernel/common/tooling")
     if tooling not in sys.path:
         sys.path.insert(0, tooling)
@@ -487,8 +418,6 @@ def kernel_series_provenance(outer_root: Path) -> tuple[int, str]:
 
 def series_provenance(outer_root: Path, *directories: Path) -> tuple[int, str]:
     """Return the patch count and ordered patch-content digest of generated series."""
-    import sys
-
     scripts = str(outer_root / "scripts")
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
@@ -693,17 +622,6 @@ def verify_inventory(release_root: Path, manifest: dict, *, allow_expanded_disk:
         observed = (release_root / relative).stat().st_size
         if observed != entries[relative]["size"]:
             fail(f"release payload size differs for {relative}")
-
-
-def parse_config(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        if raw.startswith("CONFIG_") and "=" in raw:
-            key, value = raw.split("=", 1)
-            values[key] = value
-        elif raw.startswith("# CONFIG_") and raw.endswith(" is not set"):
-            values[raw[2:-11]] = "n"
-    return values
 
 
 def verify_kernel_config(

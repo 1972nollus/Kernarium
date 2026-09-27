@@ -21,6 +21,12 @@ SPEC.loader.exec_module(run_guest_network_smoke)
 
 
 class FakeGuest:
+    def __enter__(self) -> FakeGuest:
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        self.close()
+
     def boot_to_shell(self, timeout: int) -> None:
         del timeout
 
@@ -56,7 +62,6 @@ class NetworkSmokeTaxonomyTests(unittest.TestCase):
             mock.patch.object(
                 run_guest_network_smoke, "Guest", return_value=FakeGuest()
             ),
-            mock.patch.object(run_guest_network_smoke, "run", return_value=""),
             mock.patch.object(
                 run_guest_network_smoke, "start_guest_dhcp_client"
             ) as start_dhcp,

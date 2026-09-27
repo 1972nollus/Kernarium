@@ -56,6 +56,12 @@ public:
     // The identity of the underlying object, so that a descriptor handed back
     // to the driver can be recognised as one of its own allocations.
     std::uint64_t identity() const noexcept { return identity_; }
+    // Whether a surface of this format and size can use this buffer: a
+    // descriptor imported again reuses its buffer only for the same image.
+    bool holds(std::uint32_t fourcc, unsigned width, unsigned height) const noexcept
+    {
+        return fourcc_ == fourcc && width_ == width && height_ == height;
+    }
 
 private:
     PixelBuffer() = default;
