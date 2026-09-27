@@ -5,6 +5,7 @@
 #include "address_layout.hpp"
 #include "memory/guest_ram_commitment.hpp"
 #if UML_MEMORY_HAS_NATIVE_VM
+#include "bridge_call.hpp"
 #include "native_address_space.hpp"
 #endif
 
@@ -18,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <utility>
 #if UML_MEMORY_HAS_NATIVE_VM
 #if UML_RUNTIME_PROFILING
 #include <cstdio>
@@ -79,24 +81,9 @@ template<typename Function>
 	const std::shared_ptr<uml::memory::NativeAddressSpace> &space,
 	Function &&function) noexcept
 {
-	try {
-		if (!space) {
-			if (errno == 0)
-				errno = ESRCH;
-			return -1;
-		}
-		errno = 0;
-		const int result = function(*space);
-		if (result < 0 && errno == 0)
-			errno = EFAULT;
-		return result;
-	} catch (const std::bad_alloc &) {
-		errno = ENOMEM;
-		return -1;
-	} catch (...) {
-		errno = EIO;
-		return -1;
-	}
+	return uml::memory::bridge_call(
+		[&]() -> const auto & { return space; },
+		std::forward<Function>(function), [] {});
 }
 #else
 [[nodiscard]] int native_vm_unavailable() noexcept

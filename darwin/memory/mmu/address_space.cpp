@@ -5,6 +5,7 @@
 #include "address_layout.hpp"
 #include "address_space_types.hpp"
 #include "allocation_fault.hpp"
+#include "bridge_call.hpp"
 #include "domain_registry_testing.hpp"
 #include "execution_gate.hpp"
 
@@ -1978,27 +1979,10 @@ namespace {
 template<typename Function>
 [[nodiscard]] int with_address_space(Function &&function) noexcept
 {
-	try {
-		auto space = uml::memory::address_space();
-		if (!space) {
-			if (errno == 0)
-				errno = ESRCH;
-			return -1;
-		}
-		errno = 0;
-		const int result = function(*space);
-		if (result < 0 && errno == 0)
-			errno = EFAULT;
-		return result;
-	} catch (const std::bad_alloc &) {
-		uml::memory::reset_mapping_batch();
-		errno = ENOMEM;
-		return -1;
-	} catch (...) {
-		uml::memory::reset_mapping_batch();
-		errno = EIO;
-		return -1;
-	}
+	return uml::memory::bridge_call(
+		[] { return uml::memory::address_space(); },
+		std::forward<Function>(function),
+		[] { uml::memory::reset_mapping_batch(); });
 }
 
 template<typename Function>
