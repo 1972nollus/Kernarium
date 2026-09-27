@@ -25,6 +25,12 @@ The standalone Darwin kernel build verifies this with the actual console
 implementation and a native PTY assertion. This producer check takes explicit
 source/build paths; Apple product configuration still consumes only bundles.
 
+Darwin's `sigprocmask()` sets the mask of every thread in the process, vCPU
+carriers included, so host-side kernel code changes a signal mask only with
+`pthread_sigmask()`. Every kernel build rejects an image that imports
+`sigprocmask`, and the console PTY assertion checks that a console write
+leaves another thread's mask unchanged.
+
 Both maintained kernel lines perform futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value
 observed by that operation, and wake-operation arithmetic retries competing

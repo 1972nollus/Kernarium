@@ -7,7 +7,7 @@ Apply the reviewed final-state topic without intermediate churn.
 ---
  arch/um/drivers/Kconfig           |  41 ++++++-
  arch/um/drivers/Makefile          |   8 +-
- arch/um/drivers/chan_user.c       |  16 ++-
+ arch/um/drivers/chan_user.c       |  32 +++++-
  arch/um/drivers/chan_user.h       |   6 +
  arch/um/drivers/cow_user.c        |   4 +
  arch/um/drivers/darwin_net_kern.c | 166 +++++++++++++++++++++++++++
@@ -19,7 +19,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/drivers/virtio_uml.c      |  39 ++++---
  arch/um/drivers/vnc_input.c       | 185 ++++++++++++++++++++++++++++++
  drivers/video/console/Kconfig     |   3 +-
- 14 files changed, 689 insertions(+), 48 deletions(-)
+ 14 files changed, 702 insertions(+), 51 deletions(-)
  create mode 100644 arch/um/drivers/darwin_net_kern.c
  create mode 100644 arch/um/drivers/vnc_input.c
 
@@ -142,24 +142,43 @@ index 6bf8cbf71d3cab0cc5e485b7644dd2b884be9e40..91ce72a008dac0ab3e0a6dcab8e7e98b
  obj-$(CONFIG_UML_PCI) += virt-pci.o
  obj-$(CONFIG_UML_PCI_OVER_VIRTIO) += virtio_pcidev.o
 diff --git a/arch/um/drivers/chan_user.c b/arch/um/drivers/chan_user.c
-index 35f9beeb19b3fe6761dcd4735690600403ce3e53..63c6141652af696dce1fab70f4640309582ce4b5 100644
+index 35f9beeb19b3fe6761dcd4735690600403ce3e53..c8b84de612665ed93b9fa1472ebd433cacec17e1 100644
 --- a/arch/um/drivers/chan_user.c
 +++ b/arch/um/drivers/chan_user.c
-@@ -14,6 +14,13 @@
+@@ -14,6 +14,23 @@
  #include <os.h>
  #include <um_malloc.h>
  
 +#ifdef UML_HOST_DARWIN
++#include <pthread.h>
++
 +/* Darwin pthreads always share the process file-descriptor table. */
 +#define UML_WINCH_THREAD_FLAGS 0
++/*
++ * Darwin's sigprocmask() sets the mask of every thread in the process, so a
++ * helper blocking its own signals would also block every vCPU carrier's, and
++ * a carrier's synchronous SIGSEGV would then retry its faulting instruction
++ * forever.  pthread_sigmask() changes only the calling thread.
++ */
++#define uml_thread_sigmask pthread_sigmask
 +#else
 +#define UML_WINCH_THREAD_FLAGS CLONE_FILES
++#define uml_thread_sigmask sigprocmask
 +#endif
 +
  void generic_close(int fd, void *unused)
  {
  	close(fd);
-@@ -103,9 +110,11 @@ int generic_console_write(int fd, const char *buf, int n)
+@@ -92,7 +109,7 @@ int generic_console_write(int fd, const char *buf, int n)
+ 	if (isatty(fd)) {
+ 		sigemptyset(&no_sigio);
+ 		sigaddset(&no_sigio, SIGIO);
+-		if (sigprocmask(SIG_BLOCK, &no_sigio, &old))
++		if (uml_thread_sigmask(SIG_BLOCK, &no_sigio, &old))
+ 			goto error;
+ 
+ 		CATCH_EINTR(err = tcgetattr(fd, &save));
+@@ -103,9 +120,11 @@ int generic_console_write(int fd, const char *buf, int n)
  		 * The terminal becomes a bit less raw, to handle \n also as
  		 * "Carriage Return", not only as "New Line". Otherwise, the new
  		 * line won't start at the first column.
@@ -172,16 +191,27 @@ index 35f9beeb19b3fe6761dcd4735690600403ce3e53..63c6141652af696dce1fab70f4640309
  		if (err)
  			goto error;
  	}
-@@ -115,7 +124,7 @@ int generic_console_write(int fd, const char *buf, int n)
+@@ -115,8 +134,8 @@ int generic_console_write(int fd, const char *buf, int n)
  	 * EINTR, except for debug.
  	 */
  	if (isatty(fd)) {
 -		CATCH_EINTR(tcsetattr(fd, TCSAFLUSH, &save));
+-		sigprocmask(SIG_SETMASK, &old, NULL);
 +		CATCH_EINTR(tcsetattr(fd, TCSADRAIN, &save));
- 		sigprocmask(SIG_SETMASK, &old, NULL);
++		uml_thread_sigmask(SIG_SETMASK, &old, NULL);
  	}
  
-@@ -258,7 +267,8 @@ static int winch_tramp(int fd, struct tty_port *port, int *fd_out,
+ 	return err;
+@@ -179,7 +198,7 @@ static __noreturn int winch_thread(void *arg)
+ 	signal(SIGWINCH, winch_handler);
+ 	sigfillset(&sigs);
+ 	/* Block all signals possible. */
+-	if (sigprocmask(SIG_SETMASK, &sigs, NULL) < 0) {
++	if (uml_thread_sigmask(SIG_SETMASK, &sigs, NULL) != 0) {
+ 		os_info("winch_thread : sigprocmask failed, errno = %d\n",
+ 			errno);
+ 		goto wait_kill;
+@@ -258,7 +277,8 @@ static int winch_tramp(int fd, struct tty_port *port, int *fd_out,
  	 * problem with /dev/net/tun, which if held open by this
  	 * thread, prevents the TUN/TAP device from being reused.
  	 */
