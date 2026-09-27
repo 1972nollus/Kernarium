@@ -1,30 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* AVX/AVX2 per-element masked loads and stores. */
 
-.macro vector_map2_mask_translate access, entry_offset, size, fault
-	x86_marks_guest_memory
-	and x9, x7, #0xfffffffffffff000
-	lsr x10, x7, #12
-	eor x10, x10, x10, lsr #15
-	and w10, w10, #0x7fff
-	ldr x11, [_context, #UML_X86_64_CONTEXT_TLB]
-	add x11, x11, x10, lsl #5
-	ldp x12, x13, [x11, #\entry_offset]
-	cmp x9, x12
-	b.eq .Lx86_vector_map2_mask_tlb_hit\@
-	mov x0, _context
-	mov x1, x7
-	mov w2, #\access
-	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_tlb_miss)
-	cbz x0, \fault
-	mov x7, x0
-	b .Lx86_vector_map2_mask_tlb_done\@
-.Lx86_vector_map2_mask_tlb_hit\@:
-	add x7, x13, x7
-.Lx86_vector_map2_mask_tlb_done\@:
-.endm
-
 .macro vector_map2_mask_load element, width
 gadget vector_map2_mask_load_\element\()_\width
 	effective_address
@@ -47,7 +23,7 @@ gadget vector_map2_mask_load_\element\()_\width
 	.endif
 	add x7, x25, x19
 	page_cross_check (\element / 8), .Lx86_vector_map2_mask_load_cross\@
-	vector_map2_mask_translate 0, UML_X86_64_TLB_READ_PAGE, (\element / 8), .Lx86_vector_map2_mask_load_fault\@
+	translate_plain 0, UML_X86_64_TLB_READ_PAGE, (\element / 8), .Lx86_vector_map2_mask_load_fault\@
 	.if \element == 32
 	ldr w24, [x7]
 	str w24, [sp, x19]
@@ -114,7 +90,7 @@ gadget vector_map2_mask_store_\element\()_\width
 	.endif
 	add x7, x25, x19
 	page_cross_check (\element / 8), .Lx86_vector_map2_mask_store_cross\@
-	vector_map2_mask_translate 1, UML_X86_64_TLB_WRITE_PAGE, (\element / 8), .Lx86_memory_fault
+	translate_plain 1, UML_X86_64_TLB_WRITE_PAGE, (\element / 8), .Lx86_memory_fault
 	.if \element == 32
 	str w24, [x7]
 	.else
@@ -144,4 +120,3 @@ vector_map2_mask_store \element, 256
 
 .purgem vector_map2_mask_store
 .purgem vector_map2_mask_load
-.purgem vector_map2_mask_translate

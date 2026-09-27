@@ -35,18 +35,36 @@ EXT4_MAGIC_OFFSET = 1024 + 0x38
 EXT4_MAGIC = b"\x53\xef"
 EROFS_MAGIC_OFFSET = 1024
 EROFS_MAGIC = b"\xe2\xe1\xf5\xe0"
-VIRGL_ELF_ENTRIES = {
-    "VENDOR/lib64/dri/gallium_dri.so",
-    "VENDOR/lib64/egl/libEGL_mesa.so",
-    "VENDOR/lib64/egl/libGLESv1_CM_mesa.so",
-    "VENDOR/lib64/egl/libGLESv2_mesa.so",
+# The Mesa Virgl GLES stack: the EGL and GLES libraries the platform loader
+# finds through ro.hardware.egl, and the gallium driver they link. The boot
+# command line's androidboot.hardware.egl must name the same suffix.
+MESA_EGL_SUFFIX = "kernarium"
+MESA_GALLIUM_DRIVER = "venus_gallium_dri.so"
+MESA_EGL_DIRECTORY = "VENDOR/lib64/egl/"
+MESA_EGL_ENTRIES = {
+    f"{MESA_EGL_DIRECTORY}libEGL_{MESA_EGL_SUFFIX}.so",
+    f"{MESA_EGL_DIRECTORY}libGLESv1_CM_{MESA_EGL_SUFFIX}.so",
+    f"{MESA_EGL_DIRECTORY}libGLESv2_{MESA_EGL_SUFFIX}.so",
 }
-VIRGL_DRI_SYMLINK = "VENDOR/lib64/dri/virtio_gpu_dri.so"
-VIRGL_EGL_ENTRIES = {
-    "VENDOR/lib64/egl/libEGL_mesa.so",
-    "VENDOR/lib64/egl/libGLESv1_CM_mesa.so",
-    "VENDOR/lib64/egl/libGLESv2_mesa.so",
+MESA_ELF_ENTRIES = {f"VENDOR/lib64/{MESA_GALLIUM_DRIVER}", *MESA_EGL_ENTRIES}
+# The graphics HAL selections. The inherited Cuttlefish graphics init script
+# copies each androidboot.hardware.<name> into ro.hardware.<name> at
+# early-init, so the boot command line is each property's one writer and must
+# name these values; a vendor property would make that setprop fail.
+BOOT_HAL_SELECTIONS = {
+    "egl": MESA_EGL_SUFFIX,
+    "vulkan": "virtio",
+    "gralloc": "minigbm",
 }
+# The retired AOSP external/mesa3d stack: its EGL and GLES libraries, and the
+# directory it loaded its driver from.
+RETIRED_EGL_ENTRIES = {
+    f"{MESA_EGL_DIRECTORY}libGLES_mesa.so",
+    f"{MESA_EGL_DIRECTORY}libEGL_mesa.so",
+    f"{MESA_EGL_DIRECTORY}libGLESv1_CM_mesa.so",
+    f"{MESA_EGL_DIRECTORY}libGLESv2_mesa.so",
+}
+RETIRED_DRI_DIRECTORY = "VENDOR/lib64/dri/"
 REQUIRED_SDK_APEX_ENTRIES = {
     "SYSTEM/apex/com.android.bt.apex",
     "SYSTEM/apex/com.android.devicelock.apex",
@@ -100,8 +118,8 @@ REQUIRED_ENTRIES = {
     "VENDOR/etc/vintf/compatibility_matrix.xml",
     "VENDOR/etc/vintf/manifest.xml",
     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
-    *VIRGL_ELF_ENTRIES,
-    VIRGL_DRI_SYMLINK,
+    "VENDOR/build.prop",
+    *MESA_ELF_ENTRIES,
     *REQUIRED_SDK_APEX_ENTRIES,
 }
 REQUIRED_PREOPT_APKS = {
@@ -802,7 +820,7 @@ def elf_dynamic_strings(
                 fail(f"ELF has multiple dynamic segments: {info.filename}")
             dynamic = (file_offset, file_size)
     if dynamic is None:
-        return set()
+        return set(), set()
 
     dynamic_offset, dynamic_size = dynamic
     if dynamic_size % 16:
@@ -856,34 +874,41 @@ def elf_dynamic_strings(
     return needed, runpaths
 
 
-def check_virgl_stack(
+def check_mesa_gles_stack(
     archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]
 ) -> None:
-    for entry in sorted(VIRGL_ELF_ENTRIES):
+    for entry in sorted(MESA_ELF_ENTRIES):
         info = infos[entry]
         payload = read_elf_prefix(archive, info)
         if payload is None:
-            fail(f"Virgl userspace component is not an ELF file: {entry}")
+            fail(f"Mesa GLES component is not an ELF file: {entry}")
         elf_type, machine = struct.unpack_from("<HH", payload, 16)
         if elf_type != ET_DYN or machine != EM_AARCH64:
-            fail(f"Virgl userspace component is not AArch64 ET_DYN: {entry}")
+            fail(f"Mesa GLES component is not AArch64 ET_DYN: {entry}")
         check_target_elf(info, payload)
-        if entry in VIRGL_EGL_ENTRIES:
-            needed, runpaths = elf_dynamic_strings(info, archive.read(info))
-            if "gallium_dri.so" not in needed:
-                fail(
-                    "Virgl EGL component does not bind the packaged DRI driver: "
-                    f"{entry}"
-                )
-            if "$ORIGIN/../dri" not in runpaths:
-                fail(f"Virgl EGL component cannot locate its DRI driver: {entry}")
+        if entry in MESA_EGL_ENTRIES:
+            needed, _ = elf_dynamic_strings(info, archive.read(info))
+            if MESA_GALLIUM_DRIVER not in needed:
+                fail(f"Mesa GLES component does not link the gallium driver: {entry}")
 
-    link = infos[VIRGL_DRI_SYMLINK]
-    mode = link.external_attr >> 16
-    if not stat.S_ISLNK(mode):
-        fail("Virtio-GPU DRI entry is not a symlink")
-    if link.file_size > 256 or archive.read(link) != b"gallium_dri.so":
-        fail("Virtio-GPU DRI symlink does not select gallium_dri.so")
+    for name in infos:
+        if name in RETIRED_EGL_ENTRIES:
+            fail(f"retired AOSP Mesa EGL or GLES library is forbidden: {name}")
+        if name.startswith(RETIRED_DRI_DIRECTORY):
+            fail(f"retired DRI driver payload is forbidden: {name}")
+
+    vendor_properties = {
+        line.partition("=")[0].strip()
+        for line in read_small(archive, infos["VENDOR/build.prop"])
+        .decode("utf-8", errors="strict")
+        .splitlines()
+    }
+    for name in sorted(BOOT_HAL_SELECTIONS):
+        if f"ro.hardware.{name}" in vendor_properties:
+            fail(
+                f"VENDOR/build.prop sets ro.hardware.{name}, which the boot "
+                "command line owns"
+            )
 
 
 def main() -> None:
@@ -955,7 +980,7 @@ def main() -> None:
         check_app_dexpreopt(seen)
         check_hardware_features(archive, infos)
         check_audio_policy(archive, infos)
-        check_virgl_stack(archive, infos)
+        check_mesa_gles_stack(archive, infos)
         check_boot_policy(archive, infos)
         check_kernel_policy(
             archive, infos, kernel_config, kernel_release_file

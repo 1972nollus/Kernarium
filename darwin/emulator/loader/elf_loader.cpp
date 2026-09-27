@@ -49,17 +49,30 @@ struct DynamicInfo final {
 	size_t relaent{};
 };
 
+/* An image placed inside the host's window reservation goes back to that
+ * reservation rather than to the process: the window outlives the run, and a
+ * range freed inside it is where Darwin puts the next unhinted allocation. */
+[[nodiscard]] void *reserve_in_place(void *address, size_t length) noexcept
+{
+	return mmap(address, length, PROT_NONE,
+		MAP_FIXED | MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+}
+
 class Reservation final {
 public:
 	Reservation() = default;
-	Reservation(void *address, size_t length) noexcept
-		: address_{address}, length_{length}
+	Reservation(void *address, size_t length, bool in_window) noexcept
+		: address_{address}, length_{length}, in_window_{in_window}
 	{
 	}
 
 	~Reservation()
 	{
-		if (address_ != MAP_FAILED && address_ != nullptr)
+		if (address_ == MAP_FAILED || address_ == nullptr)
+			return;
+		if (in_window_)
+			(void)reserve_in_place(address_, length_);
+		else
 			(void)munmap(address_, length_);
 	}
 
@@ -71,6 +84,7 @@ public:
 private:
 	void *address_{MAP_FAILED};
 	size_t length_{};
+	bool in_window_{};
 };
 
 [[nodiscard]] bool checked_add(uintptr_t left, uint64_t right,
@@ -460,7 +474,8 @@ private:
 #endif
 
 [[nodiscard]] int run_elf(const void *image, size_t image_size,
-	uintptr_t load_bias, int argc, char **argv, char **envp)
+	uintptr_t load_bias, uintptr_t window_start, uintptr_t window_end,
+	int argc, char **argv, char **envp)
 {
 	if (image == nullptr || image_size < sizeof(uml_elf64_ehdr) ||
 	    reinterpret_cast<uintptr_t>(image) % alignof(uml_elf64_ehdr) != 0) {
@@ -541,16 +556,33 @@ private:
 		return 126;
 	}
 
-	/* A non-fixed hint never replaces an existing host mapping. If Darwin
-	 * chooses another address, release it and fail. The whole ET_DYN image is
-	 * biased as one unit, preserving the UML physical/virtual relationships.
-	 * On iOS, executable pages are replaced with aliases of the framework's
-	 * immutable, code-signed __TEXT carrier; no anonymous page is made code.
+	/* The whole ET_DYN image is biased as one unit, preserving the UML
+	 * physical/virtual relationships. Inside a window the host has already
+	 * reserved, the image replaces that part of the reservation in place.
+	 * Otherwise it is placed by a non-fixed hint, which never replaces an
+	 * existing host mapping; if Darwin chooses another address, release it
+	 * and fail. On iOS, executable pages are replaced with aliases of the
+	 * framework's immutable, code-signed __TEXT carrier; no anonymous page is
+	 * made code.
 	 */
+	const bool in_window = window_end != 0U;
+	if (in_window && (minimum < window_start || maximum > window_end)) {
+		fprintf(stderr,
+			"UML ELF: kernel image %#llx..%#llx lies outside the "
+			"reserved window %#llx..%#llx\n",
+			static_cast<unsigned long long>(minimum),
+			static_cast<unsigned long long>(maximum),
+			static_cast<unsigned long long>(window_start),
+			static_cast<unsigned long long>(window_end));
+		return 126;
+	}
 	const size_t reservation_length = maximum - minimum;
-	void *mapped = mmap(reinterpret_cast<void *>(minimum), reservation_length,
-		PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-	Reservation reservation{mapped, reservation_length};
+	void *mapped = in_window ?
+		reserve_in_place(reinterpret_cast<void *>(minimum),
+			reservation_length) :
+		mmap(reinterpret_cast<void *>(minimum), reservation_length,
+			PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	Reservation reservation{mapped, reservation_length, in_window};
 	if (mapped == MAP_FAILED) {
 		perror("UML ELF mmap");
 		return 126;
@@ -705,10 +737,12 @@ private:
 } // namespace
 
 extern "C" int uml_elf_run(const void *image, size_t image_size,
-	uintptr_t load_bias, int argc, char **argv, char **envp)
+	uintptr_t load_bias, uintptr_t window_start, uintptr_t window_end,
+	int argc, char **argv, char **envp)
 {
 	try {
-		return run_elf(image, image_size, load_bias, argc, argv, envp);
+		return run_elf(image, image_size, load_bias, window_start,
+			window_end, argc, argv, envp);
 	} catch (...) {
 		fprintf(stderr, "UML ELF: loader allocation or host failure\n");
 		return 126;

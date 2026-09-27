@@ -107,6 +107,10 @@ public:
     [[nodiscard]] VirglRenderer::Capset capset(
         std::uint32_t capsetId) const override
     {
+        if (capsetFailures > 0) {
+            --capsetFailures;
+            throw std::runtime_error("forced capset failure");
+        }
         return {
             .maximumVersion = capsetId == protocol::venusCapsetId ? 0U : 1U,
             .data = {0, 0, 0, 0},
@@ -501,6 +505,11 @@ public:
         throwingOperation = operation;
     }
 
+    void failNextCapsets(unsigned count) noexcept
+    {
+        capsetFailures = count;
+    }
+
     void failAllocationNext(Operation operation) noexcept
     {
         allocationFailureOperation = operation;
@@ -622,6 +631,9 @@ private:
 
     Operation rejectedOperation {Operation::none};
     Operation throwingOperation {Operation::none};
+    // Capability queries are const on the renderer, so their failures are
+    // counted apart from the operations above.
+    mutable unsigned capsetFailures {};
     Operation allocationFailureOperation {Operation::none};
     std::unordered_map<std::uint64_t, std::uint64_t>
         retiredContextFences;
@@ -1996,6 +2008,40 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
     require(dependencies.guestSessionResetCount == 1);
 }
 
+// A capability query the renderer cannot answer, as when it has lost its GL
+// context, fails that query and nothing else. Its exception used to escape
+// the device and end the whole vhost-user connection.
+void unanswerableCapabilityQueriesFailOnlyThemselves()
+{
+    FakeGpuDependencies dependencies;
+    const auto reader = [](std::uint64_t, std::span<std::uint8_t>) {
+        return false;
+    };
+    const auto mapper = [](std::uint64_t, std::size_t) {
+        return std::span<std::uint8_t> {};
+    };
+    VirtioGpuDevice device {dependencies, reader, mapper};
+    protocol::GpuGetCapsetInfo information {};
+    information.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::getCapsetInfo);
+    information.capsetIndex = protocol::virgl2CapsetIndex;
+    protocol::GpuGetCapset capset {};
+    capset.header.type = static_cast<std::uint32_t>(
+        protocol::GpuCommand::getCapset);
+    capset.capsetId = protocol::virgl2CapsetId;
+    capset.version = 1;
+
+    dependencies.failNextCapsets(2);
+    require(responseType(device.process(requestBytes(information), false)) ==
+        protocol::GpuResponse::errorUnspecified);
+    require(responseType(device.process(requestBytes(capset), false)) ==
+        protocol::GpuResponse::errorUnspecified);
+    require(responseType(device.process(requestBytes(information), false)) ==
+        protocol::GpuResponse::okCapsetInfo);
+    require(responseType(device.process(requestBytes(capset), false)) ==
+        protocol::GpuResponse::okCapset);
+}
+
 void venusBlobsAndFencesUseStandardWireState()
 {
     FakeGpuDependencies dependencies;
@@ -2738,6 +2784,7 @@ void runVirtioGpuDeviceTests()
     backingRangesAndAttachStateAreValidated();
     failedTransferDoesNotPartiallyCommitPixels();
     setScanoutReplyFailureDoesNotCommitAllocation();
+    unanswerableCapabilityQueriesFailOnlyThemselves();
     venusBlobsAndFencesUseStandardWireState();
     blobMappingCapacityFollowsTheAperture();
     blobScanoutUsesNativeTextureAndPersistentVncMapping();

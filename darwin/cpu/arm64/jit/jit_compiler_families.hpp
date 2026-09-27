@@ -117,8 +117,6 @@ protected:
   void set_exit_gpr_mask(std::uint16_t mask) noexcept;
   void set_exit_vector_mask(std::uint32_t mask) noexcept;
   void flush_exit_gprs();
-  void spill_gprs_for_returning_call();
-  void reload_gprs_after_call();
   void spill_gprs_for_terminal_call();
   void flush_and_invalidate_gprs();
   void flush_link_transition_state();

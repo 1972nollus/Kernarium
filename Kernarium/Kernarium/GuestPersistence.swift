@@ -71,10 +71,19 @@ final class GuestPersistence {
                 queue: .main
             ) { _ in
                 MainActor.assumeIsolated {
-                    kernarium_runtime_loader_resume()
+                    GuestPersistence.shared.resume()
                 }
             }
         )
+    }
+
+    /// Resumes on the flush queue, behind any quiesce still in flight. A quick
+    /// return to the app would otherwise hold the main thread until that
+    /// quiesce finished, and resuming first would leave the guest suspended.
+    private func resume() {
+        queue.async {
+            kernarium_runtime_loader_resume()
+        }
     }
 
     func stopObserving() {

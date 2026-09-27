@@ -20,7 +20,7 @@ publication are offline.
 
 The producer has five independent outputs:
 
-1. a replayed and built ACK 16 KiB kernel;
+1. a replayed and built ACK 16 KiB kernel, published as a kernel artifact;
 2. the `aosp_kernarium_darwin-user` target files;
 3. a kernel-less OrangeFox recovery partition;
 4. one static GPT guest disk containing both boot ramdisks; and
@@ -34,7 +34,11 @@ introduce a second build system.
 Kernel publication is independent of AOSP/rootfs publication. An already-built
 clean ACK result is published with `tools/publish-kernel-artifact.py` and
 installed below `.build/kernel/artifacts`. Updating this artifact must not
-republish the GPT or invalidate a guest bundle.
+republish the GPT or invalidate a guest bundle. The AOSP build, the disk
+assembly and the release publisher take their kernel from such an artifact
+(`--kernel-artifact`). Its `vmlinux` is the runtime image; the build's own
+`vmlinux` keeps the DWARF pahole reads and does not fit the product's 64 MiB
+boot image. A release ships the artifact's kernel files unchanged.
 
 ## Source and patch ownership
 
@@ -136,38 +140,67 @@ remain subject to the pinned platform's own ART policy.
 
 ## Graphics
 
-The GLES stack is the AOSP `external/mesa3d` Virgl port routed through `p0004`.
-The Vulkan HAL is separate: it is Mesa's Venus driver, `VK_DRIVER_ID_MESA_VENUS`
-over Virtio-GPU, built from this project's own guest Mesa source rather than
-from the AOSP Mesa snapshot, so the Android guest and the Linux Venus guest run
-the same driver against the same renderer.
+Both graphics APIs come from one Mesa build of this project's own guest Mesa
+source rather than from the AOSP Mesa snapshot, so the Android guest and the
+Linux guest run the same drivers against the same renderer. GLES is Mesa's
+Virgl gallium driver behind `libEGL_kernarium`, `libGLESv1_CM_kernarium` and
+`libGLESv2_kernarium` in `/vendor/lib64/egl`, which the platform EGL loader
+selects through `ro.hardware.egl=kernarium`; the three libraries link
+`venus_gallium_dri.so` in `/vendor/lib64`. The product excludes the inherited
+Cuttlefish `libGLES_mesa`, and the AOSP `external/mesa3d` project stays at its
+pinned revision. The Vulkan HAL is Mesa's Venus driver,
+`VK_DRIVER_ID_MESA_VENUS` over Virtio-GPU, selected through
+`ro.hardware.vulkan=virtio`.
+
+The boot command line is the only writer of the three graphics HAL selections:
+the inherited Cuttlefish graphics init script copies `androidboot.hardware.egl`,
+`androidboot.hardware.vulkan` and `androidboot.hardware.gralloc` into their
+`ro.hardware` properties at early-init, and that copy fails for a property a
+vendor property has already set. The target-files verifier therefore refuses a
+vendor `ro.hardware.egl`, `ro.hardware.vulkan` or `ro.hardware.gralloc`.
 
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under
 [`../../tools/rootfs/vulkan/`](../../tools/rootfs/vulkan/README.md), and the
-generated Android port series beside the metadata. A guest replay assigns new
+Android port series beside the metadata. The port series carries the generated
+Soong port and the few source changes only Android needs, such as advertising
+`EGL_EXT_pixel_format_float` only with a float config: HWUI takes the extension
+as the promise of a half-float window config, and the Android visuals are all
+fixed-point. A guest replay assigns new
 commit identities each time it is recreated, so the guest half is pinned by
 tree. Moving to a newer guest epoch is a metadata bump, a replay, and a
 regeneration; the verifier refuses a guest series that changed underneath the
 recorded pin.
 
 The port itself is generated. `tools/generate-mesa-venus-port.py` runs AOSP's
-`meson2hermetic` converter with the checked `soong-port.toml`, then scopes every
+`meson2hermetic` converter with the checked `soong-port.toml`, repairs the few
+places where Soong needs more than Meson states, and then scopes every
 generated module name with a `venus_` prefix because `external/mesa3d` already
 defines the same Mesa module names and Soong module names are global at the Make
-layer. The installed HAL module keeps the name `vulkan.virtio`, which is the
-file name the Android Vulkan loader resolves through `ro.hardware.vulkan`.
-Soong has no equivalent of the guest build's out-of-tree
+layer. The installed modules keep the names the platform loaders resolve:
+`vulkan.virtio` through `ro.hardware.vulkan`, and the three EGL and GLES
+libraries through `ro.hardware.egl`. Soong makes every warning an error outside
+`device/` and `vendor/`; a warning Mesa's own build tolerates therefore needs a
+per-module `[[kernarium.warning_exception]]` entry, with its reason, in
+`soong-port.toml`. Soong has no equivalent of the guest build's out-of-tree
 `-Dvenus-protocol-dir`, so the port carries the paired generated Venus protocol
 codec at the tree path the upstream snapshot reserves for it.
 
+The converter is a pinned builder input too:
+`third_party/meson2hermetic/` records its upstream commit and a local series,
+and the generator refuses a converter checkout whose tree is not the recorded
+final tree. The series links a shared library as itself rather than as its
+static closure, so each library links only its direct Meson dependencies, and
+passes Meson's C arguments to C sources only.
+
 `vulkan.virtio.so` is a same-process HAL: it is loaded into every application
-that uses Vulkan, so the product labels it `same_process_hal_file` beside the
-Mesa EGL/GLES libraries.
+that uses Vulkan, so the product labels it `same_process_hal_file`. The platform
+labels `/vendor/lib64/egl` the same way, and the product adds the label for the
+gallium driver those libraries link.
 
 Mesa reads a buffer's DRM format, modifier and plane layout through gralloc, so
-the product installs the allocator's own `gralloc.minigbm` module and sets
-`ro.hardware.gralloc=minigbm`: the passthrough module answers none of those
+the product installs the allocator's own `gralloc.minigbm` module and selects
+it through `ro.hardware.gralloc=minigbm`: the passthrough module answers none of those
 queries and the driver would have to guess the layout of the buffers the window
 system hands it. That module is labelled `same_process_hal_file` too. minigbm
 allocates a GPU-only buffer as a virtio-gpu blob, which is the form the renderer

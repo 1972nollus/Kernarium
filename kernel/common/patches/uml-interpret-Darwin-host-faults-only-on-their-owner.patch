@@ -19,18 +19,79 @@ real thread and address and left to the host disposition, which terminates
 the process on the faulting instruction rather than repairing a guest
 mapping for it.
 
+Refuse a timer tick on such a thread too.  ITIMER_REAL is process-directed,
+so the host hands SIGALRM to any thread that leaves it unblocked, and the
+tick then ran against CPU0's IRQ and timer state while CPU0 ran them itself;
+an embedder's thread with SIGALRM unblocked panicked a 4 KiB guest with
+"BUG!".  The handler reports the tick, blocks SIGALRM on that thread from its
+return on, and raises the tick again for the process, which delivers it to
+CPU0's carrier.
+
 Print those addresses literally.  os_warn() formats through the kernel's
 vsnprintf, where %p is hashed, so the reports hid the fault address they
 exist to show.
----
- arch/um/os-Darwin/internal.h |  6 ++++
- arch/um/os-Darwin/process.c  |  5 +++
- arch/um/os-Darwin/signal.c   | 68 ++++++++++++++++++++++++++++++++----
- arch/um/os-Darwin/smp.c      | 42 +++++++++++++++++++++-
- 4 files changed, 113 insertions(+), 8 deletions(-)
 
+Do not report a fault that segv() resumes at a nofault accessor's recovery
+point.  That fault is the accessor's expected result, yet each one printed
+two lines to the emulator's slow and lossy stderr: a single sysrq t on a
+two-vCPU guest printed 272.  segv_resumes_at_recovery() follows segv()'s own
+first two branches, and every other signal is still reported before it is
+handled, so a handler that wedges still leaves its fault behind.
+---
+ arch/um/include/shared/kern_util.h |  1 +
+ arch/um/kernel/trap.c              | 21 +++++++
+ arch/um/os-Darwin/internal.h       |  6 ++
+ arch/um/os-Darwin/process.c        |  5 ++
+ arch/um/os-Darwin/signal.c         | 98 +++++++++++++++++++++++++++---
+ arch/um/os-Darwin/smp.c            | 42 ++++++++++++-
+ 6 files changed, 163 insertions(+), 10 deletions(-)
+
+diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
+index d36d5b8f77bdc4cc689ee4da965eab07f613ea87..15e501e58d4d2b84c1217e2e60c197a5f72e068c 100644
+--- a/arch/um/include/shared/kern_util.h
++++ b/arch/um/include/shared/kern_util.h
+@@ -30,6 +30,7 @@ extern void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
+ extern unsigned long segv(struct faultinfo fi, unsigned long ip,
+ 			  int is_user, struct uml_pt_regs *regs,
+ 			  void *mc);
++extern int segv_resumes_at_recovery(unsigned long address);
+ extern int handle_page_fault(unsigned long address, unsigned long ip,
+ 			     int is_write, int is_user, int *code_out);
+ 
+diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
+index 31575c43f7e1ffdcfb7070ced4b346324b1d4274..9971a92efe35ce98441ba41601605769861c7cc9 100644
+--- a/arch/um/kernel/trap.c
++++ b/arch/um/kernel/trap.c
+@@ -331,6 +331,27 @@ void segv_handler(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs,
+ 	segv(*fi, UPT_IP(regs), UPT_IS_USER(regs), regs, mc);
+ }
+ 
++#ifdef UML_HOST_DARWIN
++/**
++ * segv_resumes_at_recovery() - whether segv() resumes a kernel-mode fault at
++ * a nofault recovery point
++ * @address:	the faulting address
++ *
++ * This follows the first two branches of segv(): a fault in the lazily
++ * synchronized kernel range is repaired there or panics, and otherwise a fault
++ * taken with page faults disabled resumes at the recovery point its nofault
++ * accessor armed.  The Darwin host signal handler asks before it reports a
++ * fault, since that outcome is the accessor's expected result.
++ */
++int segv_resumes_at_recovery(unsigned long address)
++{
++	if (address >= start_vm && address < end_vm)
++		return 0;
++	return current->pagefault_disabled &&
++	       current->thread.segv_continue != NULL;
++}
++#endif
++
+ /*
+  * We give a *copy* of the faultinfo in the regs to segv.
+  * This must be done, since nesting SEGVs could overwrite
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index 7ad362329f6efdc3bf180f59b84e94813f0d1e93..7448cfbee7812882cc43118f3c2b74c5e23dc7ec 100644
+index 47da8343f0f9e6cf38541b5babe1c357cf02fd1b..529d80f69819dfd9027a5d4534c56588e175f454 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
 @@ -17,6 +17,9 @@ void darwin_host_stop_checkpoint(void);
@@ -43,9 +104,9 @@ index 7ad362329f6efdc3bf180f59b84e94813f0d1e93..7448cfbee7812882cc43118f3c2b74c5
  void darwin_set_current_cpu(int cpu);
  void darwin_publish_cpu_thread(int cpu, pthread_t thread);
  void darwin_retire_cpu_thread(pthread_t thread);
-@@ -33,6 +36,9 @@ void darwin_ipi_guest_begin(void);
- void darwin_ipi_guest_end(void);
+@@ -34,6 +37,9 @@ void darwin_ipi_guest_end(void);
  void darwin_wake_cpu_threads_for_shutdown(void);
+ int darwin_join_cpu_carriers(void);
  #else
 +static inline int darwin_carrier_cpu(void) { return 0; }
 +static inline void darwin_adopt_boot_thread(void) { }
@@ -70,7 +131,7 @@ index 36ee1aa584ef0666d37aea9d979f59b8bafa7abd..8ce3c3ec407e77fb2f4604c7425209c1
  	set_handler(SIGTRAP);
  	set_handler(SIGFPE);
 diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
-index 948a794aa59f264e84dca8515228639d9b7862ec..6d2353ca584788caf98b780d27f58e91d99c0e04 100644
+index 948a794aa59f264e84dca8515228639d9b7862ec..98efc0fd664e4dde1df8bd628c50041212b2d6c7 100644
 --- a/arch/um/os-Darwin/signal.c
 +++ b/arch/um/os-Darwin/signal.c
 @@ -15,6 +15,7 @@
@@ -81,29 +142,38 @@ index 948a794aa59f264e84dca8515228639d9b7862ec..6d2353ca584788caf98b780d27f58e91
  
  #define UML_ARM64_FAULT_PAGE 14
  
-@@ -100,13 +101,16 @@ static void common_signal_handler(int signal, siginfo_t *info,
+@@ -100,14 +101,23 @@ static void common_signal_handler(int signal, siginfo_t *info,
  	struct uml_pt_regs registers;
  
  	registers_from_ucontext(&registers, context);
 -	os_warn("Darwin POSIX signal=%d pc=%p\n", signal,
 -		(void *)UPT_IP(&registers));
-+	/* vsnprintf hashes %p, which hides exactly the addresses a fatal fault
-+	 * report exists to show.  Print every address literally.
-+	 */
-+	os_warn("Darwin POSIX signal=%d pc=%#lx\n", signal,
-+		UPT_IP(&registers));
- 	if (signal == SIGSEGV || signal == SIGBUS) {
+-	if (signal == SIGSEGV || signal == SIGBUS) {
++	if (signal == SIGSEGV || signal == SIGBUS)
  		fault_from_ucontext(&registers.faultinfo, context, info);
 -		os_warn("Darwin POSIX fault signal=%d pc=%p far=%p esr=%#x\n",
 -			signal, (void *)UPT_IP(&registers),
 -			(void *)FAULT_ADDRESS(registers.faultinfo),
-+		os_warn("Darwin POSIX fault signal=%d pc=%#lx far=%#lx esr=%#x\n",
-+			signal, UPT_IP(&registers),
-+			FAULT_ADDRESS(registers.faultinfo),
- 			context->uc_mcontext->__es.__esr);
+-			context->uc_mcontext->__es.__esr);
++	/* A fault that segv() resumes at a nofault accessor's recovery point is
++	 * that accessor's expected result, not a report.  Report every other
++	 * signal before handling it: a handler that wedges leaves nothing else.
++	 * vsnprintf hashes %p, which hides exactly the addresses a fatal fault
++	 * report exists to show.  Print every address literally.
++	 */
++	if (signal != SIGSEGV ||
++	    !segv_resumes_at_recovery(FAULT_ADDRESS(registers.faultinfo))) {
++		os_warn("Darwin POSIX signal=%d pc=%#lx\n", signal,
++			UPT_IP(&registers));
++		if (signal == SIGSEGV || signal == SIGBUS)
++			os_warn("Darwin POSIX fault signal=%d pc=%#lx far=%#lx esr=%#x\n",
++				signal, UPT_IP(&registers),
++				FAULT_ADDRESS(registers.faultinfo),
++				context->uc_mcontext->__es.__esr);
  	}
  	if (sig_info[signal] != NULL)
-@@ -129,12 +133,62 @@ static void run_timer(ucontext_t *context)
+ 		sig_info[signal](signal, (struct siginfo *)info, &registers,
+@@ -129,12 +139,82 @@ static void run_timer(ucontext_t *context)
  	timer_handler(SIGALRM, NULL, &registers);
  }
  
@@ -142,6 +212,21 @@ index 948a794aa59f264e84dca8515228639d9b7862ec..6d2353ca584788caf98b780d27f58e91
 +	(void)sigaction(signal, &restore, NULL);
 +}
 +
++/* ITIMER_REAL is process-directed, so the host may hand SIGALRM to any
++ * emulator thread that leaves it unblocked.  Running the tick there would take
++ * CPU0's IRQ state and timer while CPU0 itself runs them.  Block SIGALRM on that
++ * thread from the handler's return on, and raise the tick again for the
++ * process, which delivers it to CPU0's carrier or keeps it pending until the
++ * carrier unblocks it.
++ */
++static void darwin_refuse_foreign_alarm(ucontext_t *context)
++{
++	os_warn("Darwin host alarm: taken on a host thread which owns no virtual CPU; blocked there and passed to CPU0\n");
++	if (context != NULL)
++		sigaddset(&context->uc_sigmask, SIGALRM);
++	(void)kill(getpid(), SIGALRM);
++}
++
  static void hard_handler(int signal, siginfo_t *info, void *pointer)
  {
  	ucontext_t *context = pointer;
@@ -162,6 +247,11 @@ index 948a794aa59f264e84dca8515228639d9b7862ec..6d2353ca584788caf98b780d27f58e91
 +		errno = saved_errno;
 +		return;
 +	}
++	if (signal == SIGALRM && darwin_carrier_cpu() < 0) {
++		darwin_refuse_foreign_alarm(context);
++		errno = saved_errno;
++		return;
++	}
 +
 +	state = local_signal_state();
 +	previous = state->enabled;
@@ -169,10 +259,10 @@ index 948a794aa59f264e84dca8515228639d9b7862ec..6d2353ca584788caf98b780d27f58e91
  	if (signal == SIGALRM) {
  		if (!previous || state->alarm_active) {
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index 614f086a760a421d8f258f4827e82c87f7a56497..c16721b616e4ff7081b33893cff1a11d47091af3 100644
+index c55a5d7f9d4c39a9db90c178e32472f4110e24d5..5e76510b2345256b300c7fd5c246625ce9739892 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
-@@ -78,6 +78,39 @@ int uml_curr_cpu(void)
+@@ -80,6 +80,39 @@ int uml_curr_cpu(void)
  	return carrier == NULL ? 0 : carrier->cpu;
  }
  
@@ -212,7 +302,7 @@ index 614f086a760a421d8f258f4827e82c87f7a56497..c16721b616e4ff7081b33893cff1a11d
  void darwin_publish_cpu_thread(int cpu, pthread_t thread)
  {
  	if (cpu < 0 || cpu >= CONFIG_NR_CPUS)
-@@ -546,7 +579,14 @@ static int start_cpu_carrier(int cpu, int primary, void *stack,
+@@ -568,7 +601,14 @@ int darwin_join_cpu_carriers(void)
  
  int darwin_start_primary_cpu_carrier(void *stack, jmp_buf *switch_buffer)
  {

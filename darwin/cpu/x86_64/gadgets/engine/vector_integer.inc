@@ -279,33 +279,6 @@
 	tbl v\output\().16b, {v\input\().16b}, v6.16b
 .endm
 
-.macro vector_integer_write width, descriptor
-	and x9, x\descriptor, #0xffff
-	.if \width == 64
-	str d4, [_cpu, x9]
-	sub x10, x9, #UML_X86_64_CPU_MMX
-	lsr x10, x10, #3
-	add x11, _cpu, #UML_X86_64_CPU_X87
-	add x11, x11, x10, lsl #4
-	str d4, [x11]
-	mov w12, #0xffff
-	strh w12, [x11, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
-	.else
-	add x9, _cpu, x9
-	str q4, [x9]
-	.if \width == 256
-	str q5, [x9, #16]
-	.else
-	tbz x\descriptor, #63, .Lx86_vector_integer_write_done\@
-	movi v6.16b, #0
-	str q6, [x9, #16]
-.Lx86_vector_integer_write_done\@:
-	.endif
-	.endif
-.endm
-
 .macro vector_integer_body opcode, width
 	.if \opcode == 0x70
 	.if \width == 64
@@ -388,7 +361,7 @@ gadget vector_integer_\opcode\()_\width\()_rr
 	.endif
 	.endif
 	vector_integer_body 0x\opcode, \width
-	vector_integer_write \width, 23
+	vector_write \width, 23
 	retire_and_next
 .endm
 
@@ -444,7 +417,7 @@ gadget vector_integer_\opcode\()_\width\()_rm
 	.endif
 	.endif
 	vector_integer_body 0x\opcode, \width
-	vector_integer_write \width, 23
+	vector_write \width, 23
 	retire_and_next
 .Lx86_vector_integer_cross_fault\@:
 	add sp, sp, #32
@@ -594,7 +567,7 @@ gadget vector_integer_\opcode\()_g\group\()_\width\()_ri
 	mov w13, w12
 	vector_integer_immediate_lane 0x\opcode, \group, 5, 2
 	.endif
-	vector_integer_write \width, 23
+	vector_write \width, 23
 	retire_and_next
 .endm
 
@@ -624,7 +597,6 @@ vector_integer_immediate 73, 7, 256
 .purgem vector_integer_memory
 .purgem vector_integer_register
 .purgem vector_integer_body
-.purgem vector_integer_write
 .purgem vector_integer_shuffle
 .purgem vector_integer_shuffle_indices_word
 .purgem vector_integer_shuffle_indices_dword

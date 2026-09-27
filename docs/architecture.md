@@ -37,6 +37,11 @@ state, and copied network callback table. A handle admits at most one run at a
 time. Stop requests affect only that handle's current or queued run and are not
 carried into later runs.
 
+A process runs one guest. After a run's kernel has claimed guest RAM, every
+later run in the process, on any handle, returns `UML_EMULATOR_UNSUPPORTED`
+without entering a kernel; see
+[ADR 0002](decisions/0002-emulator-handle-lifetime.md).
+
 Different 16 KiB native-callback handles may run concurrently when their host
 mappings do not overlap. Embedded kernels and 4 KiB native-callback runs use a
 process address-space gate because their fixed host mappings cannot be safely
@@ -178,12 +183,25 @@ Designed for iPad mode, where it reaches the host GPU directly; that mode is
 where iOS behaviour is verified when no physical device is attached. The
 Simulator remains a target of the ordinary, non-GPU iOS libraries.
 
+The library runs one guest per process, so a Kernarium launch runs its guest
+once. When the run returns, whether the guest powered off or the runtime
+failed, the application says how it ended and asks to be relaunched; it never
+starts a second run in the same process.
+
 ## CPU execution and scheduling
 
 Darwin owns one persistent pthread per configured vCPU, including vCPU0.
 Linux task contexts remain on guest kernel stacks and migrate between carriers;
 guest task creation does not create host threads. CPU hotplug reuses carriers,
-and shutdown returns to a native carrier stack before thread teardown.
+and shutdown returns to a native carrier stack before thread teardown. An
+embedded run returns to the loader, which unmaps the image, only after the
+kernel has joined every carrier and stopped its RTC alarm helper; a stop also
+retires carriers parked before CPU bring-up or after hotplug.
+
+A host can call `exit()` while carriers still run, as an iOS application and
+an XCTest host do. The arm64 gadget contract indexes, the shared-backing
+state, and the active-access registry therefore have no exit-time destructor;
+`arm64-gadget-exit` keeps carriers using them through `exit()`.
 
 Carriers are named `uml-vcpu-N-carrier`. The kernels use a 100 Hz tick with
 `NO_HZ_IDLE` and high-resolution timers: the one-shot clock event records a
@@ -278,8 +296,7 @@ its runtime memory domain. Cache and publication contracts are described in
 The gadget cache may retain several address spaces. Cache slots and links are
 tagged by address space, retirement drops one address space's owned state, and
 same-generation stale programs are reused only after exact page-bounded word
-validation. Shared gadget translations remain data-only and relocate every
-executor-owned link cell before use. Cached returns consult a private
+validation. Cached returns consult a private
 per-carrier return-record ring after their site cells miss: linked calls push
 the return PC with its block link, a matching record follows that link and
 trains the cell, and the executor empties the ring on every address-space

@@ -100,7 +100,7 @@ index a52d77379217813115cd017439af5e2f0f5c1544..f504640db6f92c217b934225cfebb482
  
     vk_device_memory_destroy(&dev->vk, pAllocator, &mem->vk);
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 54321d3a5a0f256ab3a06ee428e516a491a30866..549650178c1c4ff2254fad5e065633407591d4fc 100644
+index 0f0e9b52a32d4c7b797fc1b42cecaf2e9bc53ebe..492498c34439aa604262faa81f9221de999c6ea6 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -25,6 +25,12 @@
@@ -116,7 +116,7 @@ index 54321d3a5a0f256ab3a06ee428e516a491a30866..549650178c1c4ff2254fad5e06563340
  #include <vulkan/vulkan_metal.h>
  
  static VkFormatFeatureFlags2
-@@ -801,6 +807,9 @@ kk_DestroyImage(VkDevice device, VkImage _image,
+@@ -800,6 +806,9 @@ kk_DestroyImage(VkDevice device, VkImage _image,
     if (!image)
        return;
  
@@ -126,7 +126,7 @@ index 54321d3a5a0f256ab3a06ee428e516a491a30866..549650178c1c4ff2254fad5e06563340
     kk_image_finish(dev, image, pAllocator);
     vk_free2(&dev->vk.alloc, pAllocator, image);
  }
-@@ -1071,6 +1080,24 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
+@@ -1070,6 +1079,24 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
     return VK_SUCCESS;
  }
  
@@ -151,7 +151,7 @@ index 54321d3a5a0f256ab3a06ee428e516a491a30866..549650178c1c4ff2254fad5e06563340
  static VkResult
  kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
  {
-@@ -1128,6 +1155,9 @@ kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
+@@ -1127,6 +1154,9 @@ kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
        }
     }
  

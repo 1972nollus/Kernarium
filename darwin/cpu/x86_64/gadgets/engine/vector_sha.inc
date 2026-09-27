@@ -9,20 +9,6 @@
  */
 .arch_extension crypto
 
-.macro vector_sha_sigma0 output, input
-	ror w\output, w\input, #7
-	ror w15, w\input, #18
-	eor w\output, w\output, w15
-	eor w\output, w\output, w\input, lsr #3
-.endm
-
-.macro vector_sha_sigma1 output, input
-	ror w\output, w\input, #17
-	ror w15, w\input, #19
-	eor w\output, w\output, w15
-	eor w\output, w\output, w\input, lsr #10
-.endm
-
 .macro vector_sha_sum0 output, input
 	ror w\output, w\input, #2
 	ror w15, w\input, #13
@@ -210,5 +196,3 @@ vector_sha_family cd
 .purgem vector_sha_round
 .purgem vector_sha_sum1
 .purgem vector_sha_sum0
-.purgem vector_sha_sigma1
-.purgem vector_sha_sigma0

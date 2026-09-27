@@ -35,7 +35,9 @@ private:
 	bool owns_mapping_{};
 };
 
+/* A process registers one anonymous guest-RAM token and never releases it. */
 [[nodiscard]] bool register_anonymous_shared_backing(int fd) noexcept;
+[[nodiscard]] bool anonymous_shared_backing_registered() noexcept;
 [[nodiscard]] bool is_anonymous_shared_backing(int fd) noexcept;
 
 /* Guest RAM when (device, inode) identifies the anonymous backing. A caller

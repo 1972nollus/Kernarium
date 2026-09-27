@@ -68,8 +68,8 @@ asks for the address below its ceiling and, when the host declines that hint,
 for wherever a window of that size fits: an iOS app's usable virtual range is
 not guaranteed to contain the compile-time envelope, and iOS 27 moved it out.
 The window is reserved before the guest starts so nothing else can take part of
-it, with only its first pages released for the kernel image and the reserved
-physical prefix, which their loaders place by hint.
+it, and it stays reserved end to end: the kernel image, the reserved physical
+prefix and guest RAM are all mapped over the reservation in place.
 
 Accepted arm64-userspace mainline artifacts are shared by macOS and iOS within
 each page profile. The x86_64-userspace 4 KiB slice has a distinct artifact
@@ -125,9 +125,7 @@ The arm64 engine keeps its own, higher, ARMv8.6-A declaration.
 
 The gadget cache retains a bounded number of tagged address spaces. Retiring an
 address space drops only its owned state, and stale same-generation programs
-must match every consumed guest word before reuse. Shared gadget translations
-contain no executor-owned link pointers after publication; consumers relocate
-links into their own state.
+must match every consumed guest word before reuse.
 
 A cache slot indexes a translation rather than holding one. Each stored program
 is a single exact-sized allocation carrying its stream and the guest words it is

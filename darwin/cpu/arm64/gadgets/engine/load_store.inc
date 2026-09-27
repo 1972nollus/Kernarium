@@ -267,17 +267,37 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, scalar_unsigned_fast, \load, \bits64, \transfer_zero, \base_sp, \suffix, \baked
 .endm
 
-.macro scalar_unsigned_modes load, bits64, name
-scalar_unsigned_fast \load, \bits64, 0, 0, \name\()_r
+/* A word or doubleword transfer of a register takes the in-place family,
+ * which bakes the register, so only XZR still selects these shared entries.
+ * Unreachable padding stands where the register (_r, _r_sp) entries and
+ * their forwarding variants were; the 16 KiB transfer tail is one granule
+ * longer. A store's register entry had three forwarding variants. */
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+.set .Lunsigned_removed_tail, 16
+#else
+.set .Lunsigned_removed_tail, 0
+#endif
+.macro scalar_unsigned_modes load, bits64, name, r_bytes, r_sp_bytes, forward_bytes
+removed_gadget \r_bytes + .Lunsigned_removed_tail
+removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
+	.if !\load
+removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
+removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
+	.endif
 scalar_unsigned_fast \load, \bits64, 1, 0, \name\()_z
-scalar_unsigned_fast \load, \bits64, 0, 1, \name\()_r_sp
+removed_gadget \r_sp_bytes + .Lunsigned_removed_tail
+removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
+	.if !\load
+removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
+removed_forward_gadget \forward_bytes + .Lunsigned_removed_tail
+	.endif
 scalar_unsigned_fast \load, \bits64, 1, 1, \name\()_z_sp
 .endm
 
-scalar_unsigned_modes 1, 0, load32_unsigned_fast
-scalar_unsigned_modes 1, 1, load64_unsigned_fast
-scalar_unsigned_modes 0, 0, store32_unsigned_fast
-scalar_unsigned_modes 0, 1, store64_unsigned_fast
+scalar_unsigned_modes 1, 0, load32_unsigned_fast, 224, 224, 240
+scalar_unsigned_modes 1, 1, load64_unsigned_fast, 224, 224, 240
+scalar_unsigned_modes 0, 0, store32_unsigned_fast, 224, 208, 224
+scalar_unsigned_modes 0, 1, store64_unsigned_fast, 224, 208, 224
 
 .purgem scalar_unsigned_modes
 

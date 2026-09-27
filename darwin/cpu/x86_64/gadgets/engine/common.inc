@@ -384,6 +384,36 @@ NAME(uml_x86_64_gadget_\name):
 	.endif
 .endm
 
+/* A probe that only translates, for the gather and masked-memory loops,
+ * which translate element by element: it neither records the stack entry
+ * nor settles a store's publication, and a miss the MMU refuses branches to
+ * `fault`. A write probe compares the write page with its tag bits intact,
+ * so a store to a page holding code always takes the miss path, where the
+ * helper publishes it. Its index is translate's. */
+.macro translate_plain access, entry_offset, size, fault
+	x86_marks_guest_memory
+	and x9, x7, #0xfffffffffffff000
+	lsr x10, x7, #12
+	eor x10, x10, x10, lsr #15
+	and w10, w10, #0x7fff
+	ldr x11, [_context, #UML_X86_64_CONTEXT_TLB]
+	add x11, x11, x10, lsl #5
+	ldp x12, x13, [x11, #\entry_offset]
+	cmp x9, x12
+	b.eq .Lx86_plain_tlb_hit\@
+	mov x0, _context
+	mov x1, x7
+	mov w2, #\access
+	mov w3, #\size
+	bl NAME(uml_x86_64_gadget_tlb_miss)
+	cbz x0, \fault
+	mov x7, x0
+	b .Lx86_plain_tlb_done\@
+.Lx86_plain_tlb_hit\@:
+	add x7, x13, x7
+.Lx86_plain_tlb_done\@:
+.endm
+
 /* x86 LOCK-prefixed read-modify-write.
  *
  * A locked gadget must be atomic against the other vCPU threads that execute
@@ -1353,3 +1383,72 @@ gadget block_exit_linked
 
 gadget nop
 	retire_and_next
+
+/* Write the vector result in q4 (and q5 for 256 bits) to the register the
+ * descriptor's low half addresses. A 128-bit VEX write, which bit 63 marks,
+ * zeroes the upper half; a legacy SSE write leaves it. */
+.macro vector_write_xmm width, descriptor
+	and x9, x\descriptor, #0xffff
+	add x9, _cpu, x9
+	str q4, [x9]
+	.if \width == 256
+	str q5, [x9, #16]
+	.else
+	tbz x\descriptor, #63, .Lx86_vector_write_done\@
+	movi v6.16b, #0
+	str q6, [x9, #16]
+.Lx86_vector_write_done\@:
+	.endif
+.endm
+
+/* vector_write_xmm, or for a 64-bit width an MMX write, which as on x86
+ * also stores into the aliased x87 register with an all-ones exponent and
+ * clears the x87 tag word and top. */
+.macro vector_write width, descriptor
+	.if \width == 64
+	and x9, x\descriptor, #0xffff
+	str d4, [_cpu, x9]
+	sub x10, x9, #UML_X86_64_CPU_MMX
+	lsr x10, x10, #3
+	add x11, _cpu, #UML_X86_64_CPU_X87
+	add x11, x11, x10, lsl #4
+	str d4, [x11]
+	mov w12, #0xffff
+	strh w12, [x11, #8]
+	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	.else
+	vector_write_xmm \width, \descriptor
+	.endif
+.endm
+
+/* Lane helpers of the three-operand map gadgets: the byte index sequence
+ * 0..15, and a lane mask from bits `first` upward of w13 or x13. */
+.macro vector_map3_index_sequence output
+	mov x14, #0x0100
+	movk x14, #0x0302, lsl #16
+	movk x14, #0x0504, lsl #32
+	movk x14, #0x0706, lsl #48
+	fmov d\output, x14
+	mov x14, #0x0908
+	movk x14, #0x0b0a, lsl #16
+	movk x14, #0x0d0c, lsl #32
+	movk x14, #0x0f0e, lsl #48
+	mov v\output\().d[1], x14
+.endm
+.macro vector_map3_mask_s output, first
+	movi v\output\().16b, #0
+	.irp lane, 0, 1, 2, 3
+	ubfx w14, w13, #(\first + \lane), #1
+	neg w14, w14
+	mov v\output\().s[\lane], w14
+	.endr
+.endm
+.macro vector_map3_mask_d output, first
+	movi v\output\().16b, #0
+	.irp lane, 0, 1
+	ubfx x14, x13, #(\first + \lane), #1
+	neg x14, x14
+	mov v\output\().d[\lane], x14
+	.endr
+.endm

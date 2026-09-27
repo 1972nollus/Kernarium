@@ -26,7 +26,6 @@ target_include_directories(uml_emulator_c_api_boundary_tests PRIVATE
 target_compile_features(uml_emulator_c_api_boundary_tests PRIVATE cxx_std_20)
 target_compile_options(uml_emulator_c_api_boundary_tests PRIVATE
     -Wall -Wextra -Werror)
-add_dependencies(unit-test-binaries uml_emulator_c_api_boundary_tests)
 uml_add_unit_test(
     NAME emulator-c-api-boundary
     COMMAND uml_emulator_c_api_boundary_tests)

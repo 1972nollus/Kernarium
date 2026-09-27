@@ -24,8 +24,6 @@ inline constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 inline constexpr unsigned page_shift = DARWIN_UML_GUEST_PAGE_SHIFT;
 inline constexpr std::uint32_t native_fpsr_mutable_mask = 0x0800'009fU;
 inline constexpr std::size_t maximum_chain_instructions = 4096;
-/* Translation-time only: generated blocks select one ABI shape. */
-inline constexpr bool persistent_linked_block_abi_default = true;
 
 [[nodiscard]] constexpr bool
 floating_or_vector_primary_class(std::uint32_t instruction) noexcept {
@@ -95,17 +93,21 @@ sign_extend(std::uint64_t value, unsigned bits) noexcept {
   return static_cast<std::int64_t>(value << shift) >> shift;
 }
 
-[[nodiscard]] constexpr bool
-terminal_does_not_retire(Event event) noexcept {
-  return event == Event::memory_fault || event == Event::illegal_instruction ||
-         event == Event::gcs_fault ||
-         event == Event::floating_point_trap || event == Event::fatal;
-}
-
 [[nodiscard]] constexpr std::uint64_t
 pack_jit_result(Event event, std::size_t retired) noexcept {
   return static_cast<std::uint32_t>(event) |
          (static_cast<std::uint64_t>(retired) << 32U);
+}
+
+struct JitResult final {
+  Event event;
+  std::size_t retired;
+};
+
+[[nodiscard]] constexpr JitResult
+unpack_jit_result(std::uint64_t result) noexcept {
+  return {static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU)),
+          static_cast<std::size_t>(result >> 32U)};
 }
 
 /*

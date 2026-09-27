@@ -85,14 +85,6 @@ extern "C" void *uml_arm64_jit_tlb_translate(Tlb *tlb, std::uint64_t address,
   return tlb->translate(address, access == 0 ? Access::read : Access::write);
 }
 
-extern "C" void *
-uml_arm64_jit_tlb_translate_preserving(Tlb *tlb, std::uint64_t address,
-                                       unsigned access) noexcept;
-extern "C" void *
-uml_arm64_jit_tlb_translate_preserving_fpmr(Tlb *tlb,
-                                            std::uint64_t address,
-                                            unsigned access) noexcept;
-
 [[nodiscard]] bool jit_pair_read(Tlb &tlb, std::uint64_t address,
                                  std::span<std::byte> bytes) noexcept {
   while (!bytes.empty()) {

@@ -277,6 +277,13 @@ struct HostCapabilities final {
 	{
 		return (supported & requirements) == requirements;
 	}
+
+	/* Two hosts get the same generated code exactly when their profiles
+	 * compare equal, so executors may then share a pool session or a
+	 * translation. Memberwise, so padding cannot tell equal profiles
+	 * apart. */
+	[[nodiscard, gnu::always_inline]] bool operator==(
+		const HostCapabilities &) const noexcept = default;
 };
 
 } // namespace uml::platform

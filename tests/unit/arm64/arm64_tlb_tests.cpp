@@ -2,7 +2,7 @@
 #include "memory/tlb.hpp"
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -12,7 +12,6 @@
 #include <memory>
 #include <source_location>
 #include <sys/mman.h>
-#include <unistd.h>
 
 namespace {
 
@@ -36,16 +35,11 @@ class Mapping final {
 public:
 	Mapping(unsigned long generation, std::uint64_t base, std::size_t pages)
 		: generation_{generation}
+		, backing_{"uml-tlb.XXXXXX", pages * page}
 	{
-		auto path = uml::testing::scratch_template("uml-tlb.XXXXXX");
-		descriptor_ = mkstemp(path.data());
-		require(descriptor_ >= 0);
-		require(unlink(path.c_str()) == 0);
-		require(ftruncate(descriptor_,
-			static_cast<off_t>(pages * page)) == 0);
 		require(darwin_uml_static_vm_map_generation(generation,
-			reinterpret_cast<void *>(base), descriptor_, 0,
-			pages * page, PROT_READ | PROT_WRITE, 0, 1) == 0);
+			reinterpret_cast<void *>(base), backing_.descriptor(),
+			0, pages * page, PROT_READ | PROT_WRITE, 0, 1) == 0);
 	}
 
 	Mapping(const Mapping &) = delete;
@@ -54,12 +48,11 @@ public:
 	~Mapping()
 	{
 		require(darwin_uml_static_vm_destroy(generation_) == 0);
-		close(descriptor_);
 	}
 
 private:
 	unsigned long generation_;
-	int descriptor_{-1};
+	uml::testing::ScratchBacking backing_;
 };
 
 [[nodiscard]] std::uint64_t changes(unsigned long generation)

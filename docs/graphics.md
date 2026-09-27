@@ -12,8 +12,12 @@ guest Mesa -> Virtio-GPU/Virgl -> vhost-user -> virglrenderer
 
 The provider is Mesa's Zink Gallium driver on the packaged KosmicKrisp Vulkan
 driver, reached through Mesa's surfaceless EGL platform; it renders on a
-desktop OpenGL 4.6 core context. virglrenderer and libepoxy are upstream
-releases carrying the maintained host series, not vendor forks. The graphics
+desktop OpenGL 4.6 core context. The provider names its EGL device explicitly,
+so its display is never the default surfaceless display: another client of the
+process's EGL library, such as Kernarium's own graphics check, may initialize
+and terminate that one without touching a guest's contexts. virglrenderer and
+libepoxy are upstream releases carrying the maintained host series, not vendor
+forks. The graphics
 dependencies come from the verified `apple-gpu-vulkan-experiment` prefix. No
 Apple GPU product links CGL, OpenGL.framework, EAGL, MoltenVK, a Vulkan
 loader, or a second ambient libepoxy/virglrenderer family.
@@ -336,11 +340,11 @@ refused while its live memory is below the share.
 
 ### Android guest requirements
 
-The Android guest reaches the same renderer by a separate route. Its GLES stack
-is a GLES-only Soong port that installs `gallium_dri`, the Mesa EGL and GLES
-libraries, and a `virtio_gpu_dri.so` symlink; its Vulkan HAL is Mesa's Venus
-driver, built from this project's own guest Mesa source and installed as
-`vulkan.virtio.so`, with gralloc buffers from minigbm and presentation through
+The Android guest reaches the same renderer by a separate route. One Soong port
+of this project's own guest Mesa source provides both of its graphics stacks:
+the Virgl gallium driver behind the `kernarium` EGL and GLES libraries, and
+Mesa's Venus driver installed as the Vulkan HAL `vulkan.virtio.so`, with
+gralloc buffers from minigbm and presentation through
 `VK_ANDROID_native_buffer`. That contract, including which guest epoch the
 hardware-buffer path needs and why no dEQP level is declared, lives in
 [`../android/aosp-17/README.md`](../android/aosp-17/README.md#graphics).
@@ -804,7 +808,7 @@ list is `DEVICE_EXCLUSIONS` in `tests/integration/gpu/run_vk_cts.py`.
 
 Native graphics allocations are separate from the configured guest RAM limit.
 KosmicKrisp releases obsolete pipeline resources with their last Vulkan owner
-and one-time recording storage after GPU completion; see the
+and a submission's recording storage after GPU completion; see the
 [dependency ownership contracts](../dependencies/README.md).
 
 Budget campaign concurrency from host physical footprint and the

@@ -79,16 +79,21 @@ using Gadget = void (*)();
 		uml_arm64_gadget_##name##_z}, \
 	Registers{uml_arm64_gadget_##name##_r_sp, \
 		uml_arm64_gadget_##name##_z_sp}}
+/* A word or doubleword register transfer takes
+ * scalar_unsigned_memory_inplace_gadget; only XZR has a shared entry. */
+#define UML_SCALAR_UNSIGNED_ZERO_BASES(name) Bases{ \
+	Registers{nullptr, uml_arm64_gadget_##name##_z}, \
+	Registers{nullptr, uml_arm64_gadget_##name##_z_sp}}
 	static constexpr std::array stores{
 		UML_SCALAR_UNSIGNED_BASES(store8_unsigned_fast),
 		UML_SCALAR_UNSIGNED_BASES(store16_unsigned_fast),
-		UML_SCALAR_UNSIGNED_BASES(store32_unsigned_fast),
-		UML_SCALAR_UNSIGNED_BASES(store64_unsigned_fast)};
+		UML_SCALAR_UNSIGNED_ZERO_BASES(store32_unsigned_fast),
+		UML_SCALAR_UNSIGNED_ZERO_BASES(store64_unsigned_fast)};
 	static constexpr std::array loads{
 		UML_SCALAR_UNSIGNED_BASES(load8_unsigned_fast),
 		UML_SCALAR_UNSIGNED_BASES(load16_unsigned_fast),
-		UML_SCALAR_UNSIGNED_BASES(load32_unsigned_fast),
-		UML_SCALAR_UNSIGNED_BASES(load64_unsigned_fast)};
+		UML_SCALAR_UNSIGNED_ZERO_BASES(load32_unsigned_fast),
+		UML_SCALAR_UNSIGNED_ZERO_BASES(load64_unsigned_fast)};
 	static constexpr std::array signed_x{
 		UML_SCALAR_UNSIGNED_BASES(load8_signed_x_fast),
 		UML_SCALAR_UNSIGNED_BASES(load16_signed_x_fast),
@@ -98,17 +103,15 @@ using Gadget = void (*)();
 		UML_SCALAR_UNSIGNED_BASES(load8_signed_w_fast),
 		UML_SCALAR_UNSIGNED_BASES(load16_signed_w_fast),
 		Bases{}, Bases{}};
+#undef UML_SCALAR_UNSIGNED_ZERO_BASES
 #undef UML_SCALAR_UNSIGNED_BASES
 	const auto &gadgets = operation == 0U ? stores : operation == 1U ? loads :
 		operation == 2U ? signed_x : signed_w;
 	return size < 4U ? gadgets[size][base_sp][transfer_zero] : nullptr;
 }
 
-[[nodiscard]] Gadget scalar_unsigned_memory_inplace_gadget(
-	[[maybe_unused]] unsigned size,
-	[[maybe_unused]] unsigned operation,
-	[[maybe_unused]] bool base_sp,
-	[[maybe_unused]] unsigned transferred) noexcept
+[[nodiscard]] Gadget scalar_unsigned_memory_inplace_gadget(unsigned size,
+	unsigned operation, bool base_sp, unsigned transferred) noexcept
 {
 	/* Only the scaled 32- and 64-bit forms are baked, and XZR never reaches
 	 * CpuState, so everything else keeps the established entry. */
@@ -117,8 +120,7 @@ using Gadget = void (*)();
 	const unsigned bits64 = size == 3U ? 1U : 0U;
 	const unsigned index = ((operation * 2U + bits64) * 2U +
 		(base_sp ? 1U : 0U)) * 31U + transferred;
-	return reinterpret_cast<Gadget>(
-		uml_arm64_gadget_scalar_unsigned_inplace_table[index]);
+	return uml_arm64_gadget_scalar_unsigned_inplace_table[index];
 }
 
 [[nodiscard]] Gadget vector_unsigned_memory_gadget(

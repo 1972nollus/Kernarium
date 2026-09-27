@@ -1,60 +1,29 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* SSE4.1/AVX dot products and multiple packed byte sums of differences. */
 
-.macro vector_map3_math_mask_s output, first
-	movi v\output\().16b, #0
-	.irp lane, 0, 1, 2, 3
-	ubfx w14, w13, #(\first + \lane), #1
-	neg w14, w14
-	mov v\output\().s[\lane], w14
-	.endr
-.endm
-
-.macro vector_map3_math_mask_d output, first
-	movi v\output\().16b, #0
-	.irp lane, 0, 1
-	ubfx x14, x13, #(\first + \lane), #1
-	neg x14, x14
-	mov v\output\().d[\lane], x14
-	.endr
-.endm
-
 .macro vector_map3_dpps_lane output, left, right
 	fmul v6.4s, v\left\().4s, v\right\().4s
-	vector_map3_math_mask_s 7, 4
+	vector_map3_mask_s 7, 4
 	and v6.16b, v6.16b, v7.16b
 	faddp v6.4s, v6.4s, v6.4s
 	dup v7.4s, v6.s[1]
 	fadd s6, s6, s7
 	fmov w14, s6
 	dup v\output\().4s, w14
-	vector_map3_math_mask_s 7, 0
+	vector_map3_mask_s 7, 0
 	and v\output\().16b, v\output\().16b, v7.16b
 .endm
 
 .macro vector_map3_dppd_lane output, left, right
 	fmul v6.2d, v\left\().2d, v\right\().2d
-	vector_map3_math_mask_d 7, 4
+	vector_map3_mask_d 7, 4
 	and v6.16b, v6.16b, v7.16b
 	dup v7.2d, v6.d[1]
 	fadd d6, d6, d7
 	fmov x14, d6
 	dup v\output\().2d, x14
-	vector_map3_math_mask_d 7, 0
+	vector_map3_mask_d 7, 0
 	and v\output\().16b, v\output\().16b, v7.16b
-.endm
-
-.macro vector_map3_math_index_sequence output
-	mov x14, #0x0100
-	movk x14, #0x0302, lsl #16
-	movk x14, #0x0504, lsl #32
-	movk x14, #0x0706, lsl #48
-	fmov d\output, x14
-	mov x14, #0x0908
-	movk x14, #0x0b0a, lsl #16
-	movk x14, #0x0d0c, lsl #32
-	movk x14, #0x0f0e, lsl #48
-	mov v\output\().d[1], x14
 .endm
 
 .macro vector_map3_mpsadbw_lane output, left, right, shift
@@ -64,7 +33,7 @@
 	lsl w15, w15, #2
 	ubfx w16, w14, #2, #1
 	lsl w16, w16, #2
-	vector_map3_math_index_sequence 6
+	vector_map3_index_sequence 6
 	dup v7.16b, w15
 	add v7.16b, v6.16b, v7.16b
 	tbl v9.16b, {v\right\().16b}, v7.16b
@@ -103,20 +72,6 @@
 	.endif
 .endm
 
-.macro vector_map3_math_write width, descriptor
-	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
-	str q4, [x9]
-	.if \width == 256
-	str q5, [x9, #16]
-	.else
-	tbz x\descriptor, #63, .Lx86_vector_map3_math_write_done\@
-	movi v6.16b, #0
-	str q6, [x9, #16]
-.Lx86_vector_map3_math_write_done\@:
-	.endif
-.endm
-
 .macro vector_map3_math_register symbol, opcode, width
 gadget vector_map3_math_\symbol\()_\width\()_rr
 	ldp x8, x13, [_stream], #16
@@ -131,7 +86,7 @@ gadget vector_map3_math_\symbol\()_\width\()_rr
 	ldr q3, [x11, #16]
 	.endif
 	vector_map3_math_body \opcode, \width
-	vector_map3_math_write \width, 8
+	vector_write_xmm \width, 8
 	retire_and_next
 .endm
 
@@ -169,7 +124,7 @@ gadget vector_map3_math_\symbol\()_\width\()_rm
 	ldr q2, [x10, #16]
 	.endif
 	vector_map3_math_body \opcode, \width
-	vector_map3_math_write \width, 23
+	vector_write_xmm \width, 23
 	retire_and_next
 .Lx86_vector_map3_math_cross_fault\@:
 	add sp, sp, #32
@@ -190,11 +145,7 @@ vector_map3_math_family 42, 0x42
 .purgem vector_map3_math_family
 .purgem vector_map3_math_memory
 .purgem vector_map3_math_register
-.purgem vector_map3_math_write
 .purgem vector_map3_math_body
 .purgem vector_map3_mpsadbw_lane
-.purgem vector_map3_math_index_sequence
 .purgem vector_map3_dppd_lane
 .purgem vector_map3_dpps_lane
-.purgem vector_map3_math_mask_d
-.purgem vector_map3_math_mask_s

@@ -56,6 +56,8 @@ XCRUN_AR=$(xcrun --find ar)
 [ -x "$XCRUN_AR" ] || fail "xcrun returned an invalid ar build tool"
 XCRUN_OTOOL=$(xcrun --find otool)
 [ -x "$XCRUN_OTOOL" ] || fail "xcrun returned an invalid otool build tool"
+XCRUN_LIPO=$(xcrun --find lipo)
+[ -x "$XCRUN_LIPO" ] || fail "xcrun returned an invalid lipo build tool"
 
 RECEIPT="$PREFIX/share/uml-dependencies/receipt.tsv"
 [ -f "$RECEIPT" ] || fail "build receipt is missing: $RECEIPT"
@@ -74,12 +76,17 @@ if ! awk -F '\t' '
 	fail "build receipt is malformed"
 fi
 
+# The rows were validated above as unique, nonempty key<TAB>value pairs.
+tab=$(printf '\t')
 receipt_value()
 {
-	key=$1
-	value=$(awk -F '\t' -v wanted="$key" '$1 == wanted { print $2; exit }' "$RECEIPT")
-	[ -n "$value" ] || fail "receipt has no $key field"
-	printf '%s\n' "$value"
+	while IFS="$tab" read -r receipt_key receipt_field ||
+		[ -n "$receipt_key" ]; do
+		[ "$receipt_key" = "$1" ] || continue
+		printf '%s\n' "$receipt_field"
+		return 0
+	done <"$RECEIPT"
+	fail "receipt has no $1 field"
 }
 
 # The prefix is current while the macos rows it was built from are unchanged.
@@ -165,20 +172,21 @@ done
 
 find "$PREFIX/lib" -type f -name '*.a' -print |
 while IFS= read -r archive; do
-	case "$(basename "$archive")" in
+	archive_name=${archive##*/}
+	case "$archive_name" in
 	libz.a|libpcre2-8.a|libffi.a|libcharset.a|libiconv.a|libintl.a|\
 	libglib-2.0.a|libslirp.a|libvncserver.a|libvncclient.a|\
 	libsoftfloat_3e.a|libcephes_128bit.a|\
 	libgio-2.0.a|libgirepository-2.0.a|\
 	libgmodule-2.0.a|libgobject-2.0.a|libgthread-2.0.a|libpcre2-posix.a)
 		;;
-	*) fail "undocumented static archive in dependency prefix: $(basename "$archive")" ;;
+	*) fail "undocumented static archive in dependency prefix: $archive_name" ;;
 	esac
 	"$XCRUN_AR" -t "$archive" >/dev/null 2>&1 ||
-		fail "$(basename "$archive") is not a static archive"
-	architectures=$(xcrun lipo -archs "$archive" 2>/dev/null || true)
+		fail "$archive_name is not a static archive"
+	architectures=$("$XCRUN_LIPO" -archs "$archive" 2>/dev/null || true)
 	[ "$architectures" = arm64 ] ||
-		fail "$(basename "$archive") has unexpected architectures: $architectures"
+		fail "$archive_name has unexpected architectures: $architectures"
 done
 
 printf '%s\n' "verified source-built dependency prefix: $PREFIX"

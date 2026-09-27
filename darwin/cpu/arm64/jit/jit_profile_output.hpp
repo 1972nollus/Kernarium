@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <cstdarg>
 #include <cstddef>
 
 namespace uml::cpu::arm64 {
@@ -19,6 +20,8 @@ public:
 
   void append(const char *format, ...) noexcept
       __attribute__((format(printf, 2, 3)));
+  void vappend(const char *format, std::va_list arguments) noexcept
+      __attribute__((format(printf, 2, 0)));
   void emit() noexcept;
 
 private:

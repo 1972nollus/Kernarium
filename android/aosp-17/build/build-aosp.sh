@@ -12,10 +12,13 @@ MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
 ELF_VERIFIER="$SCRIPT_DIR/verify-kernel-elf.py"
 PARTITION_LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
+OUTER_ROOT=$(cd -- "$ANDROID_ROOT/../.." && pwd)
+KERNEL_COMMON_ROOT="$OUTER_ROOT/kernel/common"
+KERNEL_ARTIFACT_VERIFIER="$KERNEL_COMMON_ROOT/artifacts/verify-kernel-artifact.py"
 
 AOSP_SOURCE=
 OUT_DIR=
-KERNEL_ELF=
+KERNEL_ARTIFACT=
 JOBS=
 
 fail()
@@ -30,10 +33,11 @@ usage()
 Usage: android/aosp-17/build/build-aosp.sh \
        --aosp-source ABSOLUTE_PATH \
        --out ABSOLUTE_PATH \
-       --kernel-elf ABSOLUTE_PATH [--jobs N]
+       --kernel-artifact ABSOLUTE_PATH [--jobs N]
 
 Run locally on the x86_64 Linux builder after applying the routed AOSP patch
-series. The output directory must be an ignored directory inside the AOSP Repo
+series. The kernel is a published ACK kernel artifact of the tracked source,
+whose vmlinux is the runtime image without DWARF. The output directory must be an ignored directory inside the AOSP Repo
 workspace; the pinned Android 17 Soong tree rejects generated host-tool paths
 from an external absolute OUT_DIR. Reusing the same output path lets the
 Android build system select and preserve its compatible incremental state; a
@@ -115,9 +119,9 @@ while [[ $# -gt 0 ]]; do
 		OUT_DIR=$2
 		shift 2
 		;;
-	--kernel-elf)
-		[[ $# -ge 2 ]] || fail "--kernel-elf requires a path"
-		KERNEL_ELF=$2
+	--kernel-artifact)
+		[[ $# -ge 2 ]] || fail "--kernel-artifact requires a path"
+		KERNEL_ARTIFACT=$2
 		shift 2
 		;;
 	--jobs)
@@ -135,21 +139,20 @@ done
 
 [[ -n "$AOSP_SOURCE" ]] || fail "--aosp-source is required"
 [[ -n "$OUT_DIR" ]] || fail "--out is required"
-[[ -n "$KERNEL_ELF" ]] || fail "--kernel-elf is required"
+[[ -n "$KERNEL_ARTIFACT" ]] || fail "--kernel-artifact is required"
 absolute_path "AOSP source" "$AOSP_SOURCE"
 absolute_path "output directory" "$OUT_DIR"
-absolute_path "kernel ELF" "$KERNEL_ELF"
+absolute_path "kernel artifact" "$KERNEL_ARTIFACT"
 [[ "$(uname -s)" == Linux ]] || fail "builder host must be Linux"
 [[ "$(uname -m)" == x86_64 ]] || fail "builder host must be x86_64"
 command -v zip >/dev/null 2>&1 || fail "zip is not available on PATH"
 command -v python3 >/dev/null 2>&1 || fail "python3 is not available on PATH"
 [[ -d "$AOSP_SOURCE/.repo/manifests" ]] || fail "AOSP Repo metadata is missing"
-[[ -f "$KERNEL_ELF" ]] || fail "kernel ELF does not exist: $KERNEL_ELF"
-KERNEL_BUILD_DIR=$(dirname -- "$KERNEL_ELF")
-KERNEL_CONFIG="$KERNEL_BUILD_DIR/.config"
-KERNEL_RELEASE_FILE="$KERNEL_BUILD_DIR/include/config/kernel.release"
-[[ -f "$KERNEL_CONFIG" ]] || fail "kernel configuration is missing: $KERNEL_CONFIG"
-[[ -f "$KERNEL_RELEASE_FILE" ]] || fail "kernel release file is missing: $KERNEL_RELEASE_FILE"
+[[ -d "$KERNEL_ARTIFACT" && ! -L "$KERNEL_ARTIFACT" ]] ||
+	fail "kernel artifact must be a regular directory: $KERNEL_ARTIFACT"
+KERNEL_ELF="$KERNEL_ARTIFACT/kernel/vmlinux"
+KERNEL_CONFIG="$KERNEL_ARTIFACT/kernel/config"
+KERNEL_RELEASE_FILE="$KERNEL_ARTIFACT/kernel/kernel.release"
 [[ -f "$PARTITION_LAYOUT" ]] || fail "fixed UBD partition layout is missing"
 case "$OUT_DIR" in
 "$AOSP_SOURCE"/*) ;;
@@ -165,6 +168,7 @@ fi
 [[ -x "$MESA_VENUS_VERIFIER" ]] || fail "Mesa Venus source verifier is missing"
 [[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
 [[ -x "$ELF_VERIFIER" ]] || fail "kernel ELF verifier is missing"
+[[ -f "$KERNEL_ARTIFACT_VERIFIER" ]] || fail "kernel artifact verifier is missing"
 # shellcheck disable=SC1090
 source "$METADATA"
 
@@ -174,6 +178,10 @@ source "$METADATA"
 	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
+python3 -B "$KERNEL_ARTIFACT_VERIFIER" --artifact "$KERNEL_ARTIFACT" \
+	--common-root "$KERNEL_COMMON_ROOT" \
+	--kernel-metadata "$OUTER_ROOT/kernel/android-6.18/patches/metadata.env" \
+	--abi-metadata "$KERNEL_COMMON_ROOT/abi/identity.env"
 "$ELF_VERIFIER" "$KERNEL_ELF"
 SOONG_BUILD_GRAPH="$OUT_DIR/soong/build.${ANDROID17_PRODUCT}.ninja"
 mkdir -p -- "$OUT_DIR"
@@ -462,9 +470,11 @@ for package in \
 		fail "unsupported Cuttlefish HAL package is present: $package"
 done
 
-# target-files always carries a kernel input. Stage only the already-built,
-# verified ACK UML ELF in the output tree; the product's init_boot and recovery
-# images deliberately exclude it, and no AOSP source project owns a copy.
+# target-files always carries a kernel input. Stage only the published ACK
+# artifact's runtime image in the output tree; the product's init_boot and
+# recovery images deliberately exclude it, and no AOSP source project owns a
+# copy. The build's own vmlinux keeps the DWARF that pahole reads and would not
+# fit the boot image.
 PRODUCT_OUT=$(get_build_var PRODUCT_OUT)
 case "$PRODUCT_OUT" in
 "$OUT_DIR"/*) ;;

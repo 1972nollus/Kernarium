@@ -13,7 +13,9 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <limits>
+#include <new>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -724,8 +726,18 @@ std::vector<std::uint8_t> VirtioGpuDevice::capsetInfo(
             : request.capsetIndex == protocol::virgl2CapsetIndex
                 ? protocol::virgl2CapsetId
                 : protocol::venusCapsetId;
-        const auto virglCapset =
-            UML_GPU_RENDERER.capset(information.capsetId);
+        VirglRenderer::Capset virglCapset;
+        try {
+            virglCapset = UML_GPU_RENDERER.capset(information.capsetId);
+        } catch (const std::bad_alloc&) {
+            return response(
+                request.header, protocol::GpuResponse::errorOutOfMemory);
+        } catch (const std::exception&) {
+            /* A capability set the renderer cannot fill, as when it has
+             * lost its GL context, fails this query and nothing else. */
+            return response(
+                request.header, protocol::GpuResponse::errorUnspecified);
+        }
         information.maximumVersion = virglCapset.maximumVersion;
         information.maximumSize =
             static_cast<std::uint32_t>(virglCapset.data.size());
@@ -744,7 +756,16 @@ std::vector<std::uint8_t> VirtioGpuDevice::capset(
         return response(
             request.header, protocol::GpuResponse::errorInvalidParameter);
     }
-    const auto virglCapset = UML_GPU_RENDERER.capset(request.capsetId);
+    VirglRenderer::Capset virglCapset;
+    try {
+        virglCapset = UML_GPU_RENDERER.capset(request.capsetId);
+    } catch (const std::bad_alloc&) {
+        return response(
+            request.header, protocol::GpuResponse::errorOutOfMemory);
+    } catch (const std::exception&) {
+        return response(
+            request.header, protocol::GpuResponse::errorUnspecified);
+    }
     if (request.version > virglCapset.maximumVersion)
         return response(
             request.header, protocol::GpuResponse::errorInvalidParameter);

@@ -105,20 +105,6 @@
 	.endif
 .endm
 
-.macro vector_convert_write output_width, descriptor
-	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
-	str q4, [x9]
-	.if \output_width == 256
-	str q5, [x9, #16]
-	.else
-	tbz x\descriptor, #63, .Lx86_vector_convert_write_done\@
-	movi v6.16b, #0
-	str q6, [x9, #16]
-.Lx86_vector_convert_write_done\@:
-	.endif
-.endm
-
 .macro vector_convert_register name, operation, output_width, input_size, scalar, truncate
 gadget vector_convert_\name\()_rr
 	ldr x8, [_stream], #8
@@ -134,7 +120,7 @@ gadget vector_convert_\name\()_rr
 	ldr q3, [x11, #16]
 	.endif
 	vector_convert_body \operation, \output_width, \input_size, \scalar, \truncate
-	vector_convert_write \output_width, 8
+	vector_write_xmm \output_width, 8
 	retire_and_next
 .endm
 
@@ -189,7 +175,7 @@ gadget vector_convert_\name\()_rm
 	ldr q0, [x10]
 	.endif
 	vector_convert_body \operation, \output_width, \input_size, \scalar, \truncate
-	vector_convert_write \output_width, 23
+	vector_write_xmm \output_width, 23
 	retire_and_next
 	.if \input_size > 8
 .Lx86_vector_convert_cross_fault\@:
@@ -225,7 +211,6 @@ vector_convert_family ttpd_dq_256, pd_dq, 128, 32, 0, 1
 .purgem vector_convert_family
 .purgem vector_convert_memory
 .purgem vector_convert_register
-.purgem vector_convert_write
 .purgem vector_convert_body
 .purgem vector_convert_fp_i32
 .purgem vector_convert_round

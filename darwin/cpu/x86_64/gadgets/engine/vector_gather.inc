@@ -1,30 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* AVX2 vector-indexed gathers with architectural partial-fault updates. */
 
-.macro vector_gather_translate size, fault
-	x86_marks_guest_memory
-	and x9, x7, #0xfffffffffffff000
-	lsr x10, x7, #12
-	eor x10, x10, x10, lsr #15
-	and w10, w10, #0x7fff
-	ldr x11, [_context, #UML_X86_64_CONTEXT_TLB]
-	add x11, x11, x10, lsl #5
-	ldp x12, x13, [x11, #UML_X86_64_TLB_READ_PAGE]
-	cmp x9, x12
-	b.eq .Lx86_vector_gather_tlb_hit\@
-	mov x0, _context
-	mov x1, x7
-	mov w2, #0
-	mov w3, #\size
-	bl NAME(uml_x86_64_gadget_tlb_miss)
-	cbz x0, \fault
-	mov x7, x0
-	b .Lx86_vector_gather_tlb_done\@
-.Lx86_vector_gather_tlb_hit\@:
-	add x7, x13, x7
-.Lx86_vector_gather_tlb_done\@:
-.endm
-
 .macro vector_gather_zero_upper data_bytes
 	.if \data_bytes == 8
 	str xzr, [x19, #8]
@@ -79,7 +55,7 @@ gadget vector_gather_d\data\()_i\index\()_r\register_bytes
 	mov w7, w7
 .Lx86_vector_gather_address_ready\@:
 	page_cross_check (\data), .Lx86_vector_gather_cross\@
-	vector_gather_translate \data, .Lx86_vector_gather_fault\@
+	translate_plain 0, UML_X86_64_TLB_READ_PAGE, \data, .Lx86_vector_gather_fault\@
 	.if \data == 4
 	ldr w14, [x7]
 	str w14, [x19, x26, lsl #2]
@@ -123,4 +99,3 @@ vector_gather_gadget \data, \index, 32
 
 .purgem vector_gather_gadget
 .purgem vector_gather_zero_upper
-.purgem vector_gather_translate

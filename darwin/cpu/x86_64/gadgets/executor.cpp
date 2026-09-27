@@ -1042,7 +1042,7 @@ private:
 	 * one. */
 	[[nodiscard]] bool resident(const Slot &slot) const noexcept
 	{
-		return slot.epoch == epoch_ && slot.translation != nullptr;
+		return slot.epoch == epoch_;
 	}
 
 	/* libc++ keeps one heap node per element -- the value, a next pointer
@@ -1492,8 +1492,7 @@ private:
 
 	void release(Slot &slot, std::uint64_t generation) noexcept
 	{
-		if (slot.epoch != epoch_ || !slot.translation ||
-			slot.generation != generation)
+		if (slot.epoch != epoch_ || slot.generation != generation)
 			return;
 		discard(slot);
 	}

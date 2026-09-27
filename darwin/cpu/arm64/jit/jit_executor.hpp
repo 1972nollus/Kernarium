@@ -20,12 +20,7 @@ namespace uml::cpu::arm64 {
 
 class JitExecutorPool;
 
-struct JitExecutorOptions final {
-	bool enable_guarded_control_flow{};
-	bool enable_pointer_authentication{true};
-	::uml::cpu::HostCapabilities host_capabilities{
-		::uml::cpu::host_capabilities()};
-};
+using JitExecutorOptions = ::uml::cpu::EngineConfiguration;
 
 #if UML_JIT_RUNTIME_DIAGNOSTICS
 struct JitExecutorDiagnosticsOptions final {

@@ -211,7 +211,11 @@ PTY output. This keeps host input pollable when every guest CPU is busy while
 preserving terminal output behavior and bounded writes under backpressure.
 `guest-console-input-burst` writes an 11 KiB burst to `ttyS0` in one host write,
 enough to throttle the tty, and then requires later typed input to reach the
-shell.
+shell. `guest-console-concurrent-input` streams 1 MiB of numbered lines to a
+reader on one of four vCPUs. The reader is slower than the stream, so the line
+throttles repeatedly, and each unthrottle drains the host channel while new
+input raises the line's interrupt on another CPU. Every line must arrive whole
+and in order.
 
 `guest-balloon-config-churn` gives a one-vCPU guest an external balloon backend
 that raises a config change every 2 ms, so config-change requests cross the
@@ -228,8 +232,20 @@ callback entry-point pool.
 
 `guest-kernel-nofault` dumps every task with sysrq t. Its workqueue report for
 each idle kernel worker reads through a NULL pointer with
-`copy_from_kernel_nofault()`, which must fail quietly; a lost nofault recovery
+`copy_from_kernel_nofault()`, which must fail quietly: the guest keeps running
+and the emulator prints no host fault report for it. A lost nofault recovery
 point panics the guest instead.
+
+`guest-run-end-stop` boots embedded guests in child processes and stops each
+one at a different point, from CPU bring-up to a guest waiting for its root
+device. A run must return 0 and leave only the host thread behind. The test
+widens the window between a vCPU carrier signalling the run end and leaving the
+image, by pausing that carrier once it has signalled. A kernel whose run end
+does not wait for every kernel thread faults in the unmapped image or exits
+with status 2. Each attempt also has one host thread that unblocks SIGALRM and
+sends it to itself once the kernel handles the signal. The kernel must refuse
+that tick and leave the signal blocked on the thread, and at least one attempt
+must reach that check.
 
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through

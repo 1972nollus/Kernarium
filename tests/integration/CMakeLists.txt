@@ -247,6 +247,18 @@ uml_add_guest_integration_test(
     PROCESSORS 1
     RESOURCE_GROUPS cpus:1)
 
+# Four-vCPU guest: two CPUs draining one serial line must not split its input.
+uml_add_guest_integration_test(
+    NAME guest-console-concurrent-input
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/console/run_guest_console_concurrent_input.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;console;smoke
+    TIMEOUT 420
+    PROCESSORS 4
+    RESOURCE_GROUPS cpus:4)
+
 # The interpreter runs BPF callbacks through its fixed entry-point pool.
 uml_add_guest_integration_test(
     NAME guest-bpf-callbacks
@@ -270,6 +282,31 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
+
+# A stopped embedded guest returns to its host only after every kernel
+# thread has left the image the loader then unmaps.
+add_executable(uml_run_end_stop_tests kernel/run_end_stop_tests.cpp)
+target_link_libraries(uml_run_end_stop_tests PRIVATE UML::Emulator)
+target_compile_features(uml_run_end_stop_tests PRIVATE cxx_std_20)
+target_compile_options(uml_run_end_stop_tests PRIVATE -Wall -Wextra -Werror)
+# The embedded ELF resolves the host ABI with dlsym(), as in uml-darwin.
+target_link_options(uml_run_end_stop_tests PRIVATE
+    "LINKER:-export_dynamic"
+    "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
+add_dependencies(uml_run_end_stop_tests "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
+add_dependencies(integration-test-binaries uml_run_end_stop_tests)
+get_target_property(_uml_run_end_kernel
+    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_IMAGE)
+uml_add_integration_test(
+    NAME guest-run-end-stop
+    COMMAND uml_run_end_stop_tests
+        ${_uml_run_end_kernel}
+        ${CMAKE_CURRENT_BINARY_DIR}/run-end-stop
+        20
+    LABELS guest;kernel
+    TIMEOUT 600
+    PROCESSORS 4
+    RESOURCE_GROUPS cpus:4)
 
 set(UML_GUEST_SAMPLER_WORKLOAD
     "${CMAKE_CURRENT_BINARY_DIR}/guest-sampler-workload")

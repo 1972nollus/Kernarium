@@ -4,7 +4,7 @@
 #include "domain_registry_testing.hpp"
 #include "native_retry_validation_test_support.hpp"
 #include "native_window_test_support.hpp"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 #include "uml_darwin_abi.h"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
@@ -45,55 +45,24 @@ void require(bool condition, const char *message)
 		throw std::runtime_error{message};
 }
 
-class TemporaryBacking final {
+/* Guest pages whose first bytes start as `page_values`. */
+class TemporaryBacking final : public uml::testing::ScratchBacking {
 public:
 	explicit TemporaryBacking(
 		std::initializer_list<std::uint8_t> page_values)
-		: pages_{page_values.size()}
+		: ScratchBacking{"uml-native-16k-owner-XXXXXX",
+			  page_values.size() * page_size}
 	{
-		auto path = uml::testing::scratch_template(
-			"uml-native-16k-owner-XXXXXX");
-		fd_ = mkstemp(path.data());
-		require(fd_ >= 0, "could not create native ownership backing");
-		require(unlink(path.c_str()) == 0,
-			"could not unlink native ownership backing");
-		require(ftruncate(fd_, static_cast<off_t>(pages_ * page_size)) == 0,
-			"could not size native ownership backing");
 		std::size_t page = 0;
-		for (const auto value : page_values) {
-			require(pwrite(fd_, &value, sizeof(value),
-				static_cast<off_t>(page * page_size)) ==
-				static_cast<ssize_t>(sizeof(value)),
-				"could not initialize native ownership backing");
-			++page;
-		}
+		for (const auto value : page_values)
+			put_byte(page++ * page_size, std::byte{value});
 	}
-
-	~TemporaryBacking()
-	{
-		if (fd_ >= 0)
-			(void)close(fd_);
-	}
-
-	TemporaryBacking(const TemporaryBacking &) = delete;
-	TemporaryBacking &operator=(const TemporaryBacking &) = delete;
-
-	[[nodiscard]] int fd() const noexcept { return fd_; }
 
 	[[nodiscard]] std::uint8_t byte(std::size_t page = 0) const
 	{
-		std::uint8_t value{};
-		require(page < pages_ &&
-			pread(fd_, &value, sizeof(value),
-				static_cast<off_t>(page * page_size)) ==
-				static_cast<ssize_t>(sizeof(value)),
-			"could not read native ownership backing");
-		return value;
+		return std::to_integer<std::uint8_t>(
+			get_byte(page * page_size));
 	}
-
-private:
-	int fd_{-1};
-	std::size_t pages_{};
 };
 
 class NativeWindowArena final {
@@ -263,14 +232,14 @@ void test_nonoverlap_concurrency_and_leaked_cleanup(
 	ConcurrentMapState state_a{
 		.barrier = &barrier,
 		.address = arena.page(0),
-		.fd = backing_a.fd(),
+		.fd = backing_a.descriptor(),
 		.expected = 0x11,
 		.replacement = 0x31,
 	};
 	ConcurrentMapState state_b{
 		.barrier = &barrier,
 		.address = arena.page(2),
-		.fd = backing_b.fd(),
+		.fd = backing_b.descriptor(),
 		.expected = 0x22,
 		.replacement = 0x42,
 	};
@@ -437,13 +406,13 @@ void test_same_address_collision_and_retry(const NativeWindowArena &arena)
 	TemporaryBacking backing_b{0x26};
 	HoldState holder{
 		.address = arena.page(4),
-		.fd = backing_a.fd(),
+		.fd = backing_a.descriptor(),
 		.expected = 0x15,
 		.replacement = 0x35,
 	};
 	CollisionState collision{
 		.address = arena.page(4),
-		.fd = backing_b.fd(),
+		.fd = backing_b.descriptor(),
 	};
 	set_dispatch(dispatch_a, hold_map, &holder);
 	set_dispatch(dispatch_b, collide_with_foreign_owner, &collision);
@@ -477,7 +446,7 @@ void test_same_address_collision_and_retry(const NativeWindowArena &arena)
 
 	SimpleMapState retry{
 		.address = arena.page(4),
-		.fd = backing_b.fd(),
+		.fd = backing_b.descriptor(),
 		.expected = 0x26,
 		.replacement = 0x46,
 	};
@@ -559,13 +528,13 @@ void test_retire_acquire_handoff(const NativeWindowArena &arena)
 	TemporaryBacking backing_b{0x29};
 	HoldState holder{
 		.address = arena.page(6),
-		.fd = backing_a.fd(),
+		.fd = backing_a.descriptor(),
 		.expected = 0x18,
 		.replacement = 0x38,
 	};
 	AcquireRaceState contender{
 		.address = arena.page(6),
-		.fd = backing_b.fd(),
+		.fd = backing_b.descriptor(),
 		.expected = 0x29,
 		.replacement = 0x49,
 	};
@@ -637,8 +606,8 @@ void test_same_owner_replacement(const NativeWindowArena &arena)
 	TemporaryBacking second{0x62};
 	ReplacementState state{
 		.address = arena.page(8),
-		.first_fd = first.fd(),
-		.second_fd = second.fd(),
+		.first_fd = first.descriptor(),
+		.second_fd = second.descriptor(),
 	};
 	set_dispatch(dispatch_a, replace_same_owner, &state);
 	auto handle = make_emulator(kernel_a, "/tmp/native-16k-replace.img");
@@ -713,13 +682,13 @@ void test_mixed_foreign_range_is_atomic(const NativeWindowArena &arena)
 	TemporaryBacking mixed_backing{0x83, 0x94};
 	HoldState holder{
 		.address = arena.page(11),
-		.fd = holder_backing.fd(),
+		.fd = holder_backing.descriptor(),
 		.expected = 0x47,
 		.replacement = 0x57,
 	};
 	MixedState mixed{
 		.address = arena.page(10),
-		.fd = mixed_backing.fd(),
+		.fd = mixed_backing.descriptor(),
 	};
 	set_dispatch(dispatch_a, hold_map, &holder);
 	set_dispatch(dispatch_b, collide_mixed_range, &mixed);
@@ -749,7 +718,7 @@ void test_mixed_foreign_range_is_atomic(const NativeWindowArena &arena)
 
 	TwoPageState retry{
 		.address = arena.page(10),
-		.fd = mixed_backing.fd(),
+		.fd = mixed_backing.descriptor(),
 	};
 	set_dispatch(dispatch_b, map_two_pages, &retry);
 	require(run(handle_b.get()) == 0 && retry.valid,
@@ -814,7 +783,7 @@ void test_unowned_host_mapping_is_replaced(const NativeWindowArena &arena)
 	UnownedState state{
 		.reserved_address = arena.page(14),
 		.absent_address = arena.page(15),
-		.fd = backing.fd(),
+		.fd = backing.descriptor(),
 	};
 	set_dispatch(dispatch_a, test_unowned_operations, &state);
 	auto handle = make_emulator(kernel_a, "/tmp/native-16k-unowned.img");
@@ -864,7 +833,7 @@ void run_failure_retry(const NativeWindowArena &arena, std::size_t page,
 	TemporaryBacking backing{0xd6};
 	FailureRetryState state{
 		.address = arena.page(page),
-		.fd = backing.fd(),
+		.fd = backing.descriptor(),
 		.site = site,
 		.inject = inject,
 	};
@@ -929,7 +898,7 @@ void test_direct_software_publication_is_identity(
 	TemporaryBacking backing{0x12};
 	DirectSoftwarePublicationState state{
 		.native_address = arena.page(23),
-		.fd = backing.fd(),
+		.fd = backing.descriptor(),
 	};
 	set_dispatch(dispatch_a, direct_software_publication, &state);
 	auto handle = make_emulator(
@@ -1025,7 +994,7 @@ void test_owned_bridge_lifecycle(const NativeWindowArena &arena)
 	TemporaryBacking backing{0x31, 0x42};
 	OwnedLifecycleState state{
 		.address = arena.page(21),
-		.fd = backing.fd(),
+		.fd = backing.descriptor(),
 	};
 	set_dispatch(dispatch_a, owned_bridge_lifecycle, &state);
 	auto handle = make_emulator(kernel_a, "/tmp/native-16k-lifecycle.img");
@@ -1040,7 +1009,7 @@ void test_direct_retry_validates_ownership_mapping_and_permissions(
 {
 	TemporaryBacking backing{0x93};
 	uml::testing::exercise_native_retry_direct(arena.page(24),
-		arena.page(25), arena.page(26), page_size, backing.fd(), require);
+		arena.page(25), arena.page(26), page_size, backing.descriptor(), require);
 }
 
 struct TwoPageRollbackState final {
@@ -1138,7 +1107,7 @@ void test_two_page_rollback(const NativeWindowArena &arena)
 		 * test needs a range nothing has mapped: a released range is a
 		 * window reservation, not free address space. */
 		.address = arena.page(12),
-		.fd = backing.fd(),
+		.fd = backing.descriptor(),
 	};
 	set_dispatch(dispatch_a, two_page_rollback, &state);
 	auto handle = make_emulator(kernel_a, "/tmp/native-16k-two-page.img");
@@ -1185,7 +1154,7 @@ int run_registry_oom_child(std::string_view mode)
 		uml::memory::testing::AllocationSite::native_owner_registry;
 	RegistryOomState state{
 		.address = arena.page(0),
-		.fd = backing.fd(),
+		.fd = backing.descriptor(),
 		.site = site,
 	};
 	set_dispatch(dispatch_a, registry_oom, &state);
