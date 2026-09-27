@@ -62,7 +62,7 @@ index 838272e9b62f582c94227f216f0b8ca2943ce8a8..9489651287b3d7fbe264d32eaeeb8977
  
  void arch_cpu_idle_prepare(void)
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index 7448cfbee7812882cc43118f3c2b74c5e23dc7ec..9ecdc925e8b965ad2408f65a28f83088d4b3ef8f 100644
+index 529d80f69819dfd9027a5d4534c56588e175f454..0f216619574435b548cd10a9088e4f65273925bd 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
 @@ -5,9 +5,38 @@
@@ -105,10 +105,10 @@ index 7448cfbee7812882cc43118f3c2b74c5e23dc7ec..9ecdc925e8b965ad2408f65a28f83088
  int darwin_task_shutdown_requested(void);
  int darwin_reserve_embedded_thread(void);
 diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
-index 5ab09240cd08a7785612ca5c4e48f895d0f5b478..7c0703fee2a500d520fd7d00e57e30e7c0e3645d 100644
+index 98efc0fd664e4dde1df8bd628c50041212b2d6c7..f05922fe50de54ca13a1732ccf6a0d77dd8b252c 100644
 --- a/arch/um/os-Darwin/signal.c
 +++ b/arch/um/os-Darwin/signal.c
-@@ -202,14 +202,18 @@ static void hard_handler(int signal, siginfo_t *info, void *pointer)
+@@ -222,14 +222,18 @@ static void hard_handler(int signal, siginfo_t *info, void *pointer)
  			return;
  		}
  		block_signals();
@@ -127,7 +127,7 @@ index 5ab09240cd08a7785612ca5c4e48f895d0f5b478..7c0703fee2a500d520fd7d00e57e30e7
  		um_set_signals(previous);
  	}
  	errno = saved_errno;
-@@ -224,10 +228,12 @@ void deliver_alarm(void)
+@@ -244,10 +248,12 @@ void deliver_alarm(void)
  		return;
  	}
  	block_signals();
@@ -140,7 +140,7 @@ index 5ab09240cd08a7785612ca5c4e48f895d0f5b478..7c0703fee2a500d520fd7d00e57e30e7
  	um_set_signals(1);
  }
  
-@@ -362,7 +368,19 @@ int um_set_signals(int enable)
+@@ -382,7 +388,19 @@ int um_set_signals(int enable)
  
  int um_set_signals_trace(int enable)
  {
@@ -175,10 +175,10 @@ index f8068b196c5b1b3ae9ee56ce9b6bb1662b9d57bc..4769a4b962339755c990c02520dbef98
  		if (static_dispatch_trace_enabled())
  			os_warn("Darwin static loop begin cpu=%d pid=%d ip=%#lx generation=%lu\n",
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index c16721b616e4ff7081b33893cff1a11d47091af3..e2e05b841d32ca206955ca5d1a80a66f6939d531 100644
+index 5e76510b2345256b300c7fd5c246625ce9739892..a34b47b959fa337aecac7d9e96c240a2d747c8f5 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
-@@ -214,6 +214,7 @@ static void drain_ipis(void)
+@@ -216,6 +216,7 @@ static void drain_ipis(void)
  	 * both cases.
  	 */
  	previous = um_set_signals(0);
@@ -186,7 +186,7 @@ index c16721b616e4ff7081b33893cff1a11d47091af3..e2e05b841d32ca206955ca5d1a80a66f
  	/*
  	 * A sender leaves one pipe edge when the target is in host kernel or idle
  	 * code.  Consume that edge whenever the corresponding pending mask is
-@@ -224,6 +225,7 @@ static void drain_ipis(void)
+@@ -226,6 +227,7 @@ static void drain_ipis(void)
  	darwin_ipi_idle_drain();
  	pending = __atomic_exchange_n(&pending_ipis[cpu], 0, __ATOMIC_ACQUIRE);
  	uml_ipi_handler_mask(pending);
