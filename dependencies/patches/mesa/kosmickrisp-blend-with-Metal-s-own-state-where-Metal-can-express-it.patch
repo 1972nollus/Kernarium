@@ -526,7 +526,7 @@ index fe1de5ed5aea8a91980dd71163d546051de05580..9a3f458f98a38ced65e9838be6b35a78
  #include "kk_logic_op.h"
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index c8b25bd1796224e300807488767c6e58347e1aaf..2050d442a1f3d81a781d4145467eb892f441bc0f 100644
+index 017e6bedbb2e19feeffc3c8f4f9601b076e6553b..27da620afee36f2ec2e2aa4611aa57fb390098b9 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -595,6 +595,142 @@ kk_nir_remove_undeclared_fs_output(nir_builder *b,

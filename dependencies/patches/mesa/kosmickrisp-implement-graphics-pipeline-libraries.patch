@@ -241,7 +241,7 @@ index 37ee3d63009edb8bb3ad76699950e228d67d0ad0..09fcec3df77d8b2610d4c72299b3ed0e
  
        /* VK_KHR_line_rasterization */
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 30f3e79e3ed19f91608d9813eaa8625a2af45867..9352afddfcc01b827a3b63ec97193ad9eb62542f 100644
+index 30f3e79e3ed19f91608d9813eaa8625a2af45867..ac6d22f27a732a8449004063446c45cb0a68d2a5 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -12,6 +12,7 @@
@@ -374,7 +374,7 @@ index 30f3e79e3ed19f91608d9813eaa8625a2af45867..9352afddfcc01b827a3b63ec97193ad9
     if (info->vs.has_ds)
        kk_gather_ds_info(state->ds, has_depth, has_stencil, info);
  
-@@ -2298,16 +2258,74 @@ kk_shader_render_pipeline(struct kk_device *dev, struct kk_shader *vs,
+@@ -2298,12 +2258,62 @@ kk_shader_render_pipeline(struct kk_device *dev, struct kk_shader *vs,
  }
  
  static VkResult
@@ -439,23 +439,11 @@ index 30f3e79e3ed19f91608d9813eaa8625a2af45867..9352afddfcc01b827a3b63ec97193ad9
 +                        const struct vk_graphics_pipeline_state *state,
 +                        const struct vk_features *enabled_features,
 +                        const VkAllocationCallbacks *pAllocator,
-+                        struct vk_shader **shaders_out,
-+                        bool defer_library_shaders)
++                        struct vk_shader **shaders_out)
  {
     VkResult result = VK_SUCCESS;
     struct kk_device *dev = container_of(device, struct kk_device, vk);
- 
-+   if (defer_library_shaders && shader_count > 0 &&
-+       infos[0].stage != MESA_SHADER_COMPUTE &&
-+       infos[0].defer_graphics_pipeline_link) {
-+      return kk_defer_graphics_shaders(dev, shader_count, infos, pAllocator,
-+                                       shaders_out);
-+   }
-+
-    /* Vulkan doesn't enforce a fragment shader to build pipelines. We may need
-     * to create one. */
-    nir_shader *nir_shaders[shader_count + 6u];
-@@ -2388,8 +2406,8 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2388,8 +2398,8 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
           NIR_PASS(_, nir, nir_io_add_intrinsic_xfb_info);
     }
  
@@ -466,7 +454,7 @@ index 30f3e79e3ed19f91608d9813eaa8625a2af45867..9352afddfcc01b827a3b63ec97193ad9
      * fragment. */
     uint32_t total_shaders = shader_count;
     if (state && infos[shader_count - 1u].stage != MESA_SHADER_FRAGMENT) {
-@@ -2618,10 +2636,9 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2618,10 +2628,9 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
               sizeof(pre_gs->msl_data[MESA_SHADER_COMPUTE]));
     }
  
@@ -480,7 +468,7 @@ index 30f3e79e3ed19f91608d9813eaa8625a2af45867..9352afddfcc01b827a3b63ec97193ad9
      */
     if (shaders[0]->vk.stage == MESA_SHADER_COMPUTE) {
        struct kk_shader *s = shaders[0];
-@@ -2666,6 +2683,256 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2666,6 +2675,264 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
     return result;
  }
  
@@ -492,9 +480,17 @@ index 30f3e79e3ed19f91608d9813eaa8625a2af45867..9352afddfcc01b827a3b63ec97193ad9
 +                   const VkAllocationCallbacks *pAllocator,
 +                   struct vk_shader **shaders_out)
 +{
++   struct kk_device *dev = container_of(device, struct kk_device, vk);
++
++   /* A pipeline library's stages keep their NIR until the final link. */
++   if (shader_count > 0 && infos[0].stage != MESA_SHADER_COMPUTE &&
++       infos[0].defer_graphics_pipeline_link) {
++      return kk_defer_graphics_shaders(dev, shader_count, infos, pAllocator,
++                                       shaders_out);
++   }
++
 +   return kk_compile_shaders_impl(device, shader_count, infos, state,
-+                                  enabled_features, pAllocator, shaders_out,
-+                                  true);
++                                  enabled_features, pAllocator, shaders_out);
 +}
 +
 +struct kk_linked_graphics_pipeline {
@@ -688,7 +684,7 @@ index 30f3e79e3ed19f91608d9813eaa8625a2af45867..9352afddfcc01b827a3b63ec97193ad9
 +
 +   VkResult result = kk_compile_shaders_impl(
 +      vk_dev, shader_count, infos, state, &vk_dev->enabled_features,
-+      &dev->vk.alloc, compiled, false);
++      &dev->vk.alloc, compiled);
 +   if (result != VK_SUCCESS)
 +      return result;
 +
