@@ -49,6 +49,15 @@ int open_anonymous_backing_token() noexcept
 
 } // namespace
 
+namespace uml::runtime {
+
+bool process_guest_spent() noexcept
+{
+	return ::uml::memory::anonymous_shared_backing_registered();
+}
+
+} // namespace uml::runtime
+
 int darwin_uml_open(const char *path, int flags, int mode)
 {
 	/* Darwin UML kernels request this unlinked sparse descriptor solely as an

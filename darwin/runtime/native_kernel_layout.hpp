@@ -12,6 +12,9 @@ struct NativeKernelLayout final {
 	std::uintptr_t window_start{};
 	std::uintptr_t window_end{};
 	bool valid{};
+	/* The host already holds the whole window as one reservation, so the
+	 * kernel image and guest RAM must be mapped over it in place. */
+	bool reserved{};
 };
 
 template<std::uint64_t LinkAddress, std::uint64_t AddressCeiling,
@@ -105,6 +108,14 @@ public:
 
 [[nodiscard]] NativeKernelLayout prepare_native_kernel_layout(
 	std::size_t guest_memory) noexcept;
+
+/* Reserve a window of the geometry's length as one protectionless mapping,
+ * at the geometry's address when the host still offers it and wherever the
+ * host has room otherwise. The whole window stays reserved: the kernel image,
+ * its physical prefix and guest RAM are all mapped over it in place. Returns
+ * an invalid layout when no suitable window can be reserved. */
+[[nodiscard]] NativeKernelLayout reserve_native_kernel_window(
+	const NativeKernelLayout &geometry) noexcept;
 
 class NativeKernelLayoutScope final {
 public:

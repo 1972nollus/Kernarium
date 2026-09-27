@@ -47,6 +47,15 @@ MESA_EGL_ENTRIES = {
     f"{MESA_EGL_DIRECTORY}libGLESv2_{MESA_EGL_SUFFIX}.so",
 }
 MESA_ELF_ENTRIES = {f"VENDOR/lib64/{MESA_GALLIUM_DRIVER}", *MESA_EGL_ENTRIES}
+# The graphics HAL selections. The inherited Cuttlefish graphics init script
+# copies each androidboot.hardware.<name> into ro.hardware.<name> at
+# early-init, so the boot command line is each property's one writer and must
+# name these values; a vendor property would make that setprop fail.
+BOOT_HAL_SELECTIONS = {
+    "egl": MESA_EGL_SUFFIX,
+    "vulkan": "virtio",
+    "gralloc": "minigbm",
+}
 # The retired AOSP external/mesa3d stack: its EGL and GLES libraries, and the
 # directory it loaded its driver from.
 RETIRED_EGL_ENTRIES = {
@@ -888,20 +897,18 @@ def check_mesa_gles_stack(
         if name.startswith(RETIRED_DRI_DIRECTORY):
             fail(f"retired DRI driver payload is forbidden: {name}")
 
-    # The boot command line owns ro.hardware.egl: the inherited Cuttlefish
-    # graphics init script copies androidboot.hardware.egl into it at
-    # early-init, and a vendor property would make that setprop fail.
-    vendor_properties = read_small(archive, infos["VENDOR/build.prop"]).decode(
-        "utf-8", errors="strict"
-    ).splitlines()
-    if any(
-        line.partition("=")[0].strip() == "ro.hardware.egl"
-        for line in vendor_properties
-    ):
-        fail(
-            "VENDOR/build.prop sets ro.hardware.egl, which the boot command "
-            "line owns"
-        )
+    vendor_properties = {
+        line.partition("=")[0].strip()
+        for line in read_small(archive, infos["VENDOR/build.prop"])
+        .decode("utf-8", errors="strict")
+        .splitlines()
+    }
+    for name in sorted(BOOT_HAL_SELECTIONS):
+        if f"ro.hardware.{name}" in vendor_properties:
+            fail(
+                f"VENDOR/build.prop sets ro.hardware.{name}, which the boot "
+                "command line owns"
+            )
 
 
 def main() -> None:

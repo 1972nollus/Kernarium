@@ -8,5 +8,8 @@ affects only that handle's current or queued run, is a no-op while idle, and is
 cleared at run entry and exit.
 
 Queued address-space-gated runs can be cancelled without entering the shared
-mapping domain. Destroying a handle remains synchronous and requires that no
-thread is inside its run call.
+mapping domain. A cancelled run leaves the process's guest unspent, so a later
+run may still boot it. Stopping a guest that has claimed guest RAM ends the
+process's one guest run; a later run is refused as ADR 0002 describes.
+Destroying a handle remains synchronous and requires that no thread is inside
+its run call.

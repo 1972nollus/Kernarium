@@ -193,7 +193,8 @@ expect_failure "dynamic library" "$CASE_PREFIX"
 CASE_PREFIX="$TEST_ROOT/disguised-dynamic-library"
 copy_fixture "$CASE_PREFIX"
 xcrun --sdk macosx clang -arch arm64 -dynamiclib "$TEST_ROOT/fixture.c" \
-	-o "$CASE_PREFIX/lib/hidden.bundle"
+	-o "$TEST_ROOT/fixture-arm64.dylib"
+cp "$TEST_ROOT/fixture-arm64.dylib" "$CASE_PREFIX/lib/hidden.bundle"
 expect_failure "dynamic library with a nonstandard suffix" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/nested-invalid-archive"
@@ -258,8 +259,7 @@ expect_failure "non-arm64 static archive" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/renamed-dynamic-library"
 copy_fixture "$CASE_PREFIX"
-xcrun --sdk macosx clang -arch arm64 -dynamiclib "$TEST_ROOT/fixture.c" \
-	-o "$CASE_PREFIX/lib/libz.a"
+cp "$TEST_ROOT/fixture-arm64.dylib" "$CASE_PREFIX/lib/libz.a"
 expect_failure "dynamic library renamed as an archive" "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/wrong-deployment-target"

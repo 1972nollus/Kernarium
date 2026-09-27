@@ -1,26 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * A process can boot a guest kernel once. The host accepts one guest-RAM token
- * per process and never releases it, and it names the management console once
- * per process while the guest never removes the socket it binds under that
- * name. These checks pin that behaviour for a second run on the same handle
- * and on a fresh handle. A change that lifts the limit fails here; turn the
- * failing check into a regression test for sequential runs.
+ * A process runs one guest. A kernel claims guest RAM early in its boot, and
+ * the host hands guest RAM out once per process. After a run has claimed it,
+ * every later run in the process, on the same handle or a fresh one, returns
+ * -UML_EMULATOR_UNSUPPORTED without entering a kernel, and the process goes
+ * on. A run whose kernel returns before claiming guest RAM leaves the guest
+ * for a later run.
  *
- * Each mode runs in its own process because the registration outlives every
- * handle.
+ * Each mode runs in its own process because the claim outlives every handle.
  */
 #include "uml/emulator.h"
 #include "uml_darwin_host.h"
 
-#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <fcntl.h>
 #include <memory>
 #include <stdexcept>
-#include <string>
 #include <string_view>
 #include <unistd.h>
 
@@ -28,13 +24,11 @@ namespace {
 
 constexpr int kernel_booted = 41;
 constexpr int kernel_without_memory = 42;
+constexpr int kernel_left_memory = 43;
 
-struct RunRecord final {
-	std::string umid;
-	int memory_error{};
-};
-
-RunRecord last_run;
+/* Kernel entries in this process, and whether the next one claims RAM. */
+int kernel_entries;
+bool claim_guest_ram = true;
 
 void require(bool condition, const char *message)
 {
@@ -42,29 +36,16 @@ void require(bool condition, const char *message)
 		throw std::runtime_error{message};
 }
 
-void require_known_limit(bool still_limited, const char *message)
+/* Stands in for the start of a UML boot: setup_physmem() opens guest RAM. */
+int kernel(int, char *const[], char *const[])
 {
-	if (!still_limited)
-		throw std::runtime_error{std::string{"known limit lifted: "} +
-			message + "; make this a sequential-run regression check"};
-}
-
-/* Stands in for the start of a UML boot: the kernel takes its console name
- * from the command line, and setup_physmem() opens guest RAM. */
-int kernel(int argc, char *const argv[], char *const[])
-{
-	last_run = {};
-	for (int index = 0; index < argc; ++index) {
-		const std::string_view argument{argv[index]};
-		if (argument.starts_with("umid="))
-			last_run.umid = argument.substr(5);
-	}
+	++kernel_entries;
+	if (!claim_guest_ram)
+		return kernel_left_memory;
 	const int memory = darwin_uml_open("uml:anonymous-physical-memory",
 		O_RDWR, 0);
-	if (memory < 0) {
-		last_run.memory_error = errno;
+	if (memory < 0)
 		return kernel_without_memory;
-	}
 	(void)::close(memory);
 	return kernel_booted;
 }
@@ -93,39 +74,51 @@ int run(uml_emulator *emulator)
 	return uml_emulator_run(emulator, 1, arguments, nullptr);
 }
 
-void check_second_run(int result, const std::string &first_umid)
+void require_first_guest(uml_emulator *emulator)
 {
-	require(result == kernel_booted || result == kernel_without_memory,
-		"the second run did not reach the kernel entry");
-	require_known_limit(result == kernel_without_memory &&
-			last_run.memory_error == EBUSY,
-		"a second run opened guest RAM");
-	require(!first_umid.empty() && !last_run.umid.empty(),
-		"a run was not given a management-console name");
-	require_known_limit(last_run.umid == first_umid,
-		"a second run got its own management-console name");
+	const int entries = kernel_entries;
+	require(run(emulator) == kernel_booted,
+		"the first guest in the process could not open guest RAM");
+	require(kernel_entries == entries + 1,
+		"the first guest did not enter its kernel once");
+}
+
+void require_refused(uml_emulator *emulator)
+{
+	const int entries = kernel_entries;
+	require(run(emulator) == -UML_EMULATOR_UNSUPPORTED,
+		"a run after the process's guest did not fail as unsupported");
+	require(kernel_entries == entries,
+		"a run after the process's guest entered its kernel");
 }
 
 void second_run_on_the_same_handle()
 {
 	auto emulator = make_emulator();
-	require(run(emulator.get()) == kernel_booted,
-		"the first run in the process could not open guest RAM");
-	const auto first_umid = last_run.umid;
-	check_second_run(run(emulator.get()), first_umid);
+	require_first_guest(emulator.get());
+	require_refused(emulator.get());
+	require_refused(emulator.get());
 }
 
 void second_run_on_a_fresh_handle()
 {
-	std::string first_umid;
 	{
 		auto first = make_emulator();
-		require(run(first.get()) == kernel_booted,
-			"the first run in the process could not open guest RAM");
-		first_umid = last_run.umid;
+		require_first_guest(first.get());
 	}
 	auto second = make_emulator();
-	check_second_run(run(second.get()), first_umid);
+	require_refused(second.get());
+}
+
+void run_that_left_guest_ram()
+{
+	auto emulator = make_emulator();
+	claim_guest_ram = false;
+	require(run(emulator.get()) == kernel_left_memory,
+		"a kernel that left guest RAM did not return its status");
+	claim_guest_ram = true;
+	require_first_guest(emulator.get());
+	require_refused(make_emulator().get());
 }
 
 } // namespace
@@ -138,10 +131,12 @@ int main(int argc, char **argv)
 			second_run_on_the_same_handle();
 		else if (mode == "fresh-handle")
 			second_run_on_a_fresh_handle();
+		else if (mode == "unclaimed-first-run")
+			run_that_left_guest_ram();
 		else
 			throw std::runtime_error{
 				"usage: uml_runtime_sequential_run_tests "
-				"same-handle|fresh-handle"};
+				"same-handle|fresh-handle|unclaimed-first-run"};
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "%s\n", error.what());
 		return EXIT_FAILURE;

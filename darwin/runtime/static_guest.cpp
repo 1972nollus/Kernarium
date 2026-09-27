@@ -325,122 +325,6 @@ void save_cpu(arm64::CpuState &cpu,
 }
 
 #if DARWIN_UML_X86_64_GUEST
-[[nodiscard]] bool x86_compat_syscall_trace_enabled() noexcept
-{
-	static const bool enabled = [] {
-		const auto *value = std::getenv("UML_X86_COMPAT_SYSCALL_TRACE");
-		return value != nullptr && value[0] != '\0' && value[0] != '0';
-	}();
-	return enabled;
-}
-
-[[nodiscard]] bool x86_write_trace_enabled() noexcept
-{
-	static const bool enabled = [] {
-		const auto *value = std::getenv("UML_X86_WRITE_TRACE");
-		return value != nullptr && value[0] != '\0' && value[0] != '0';
-	}();
-	return enabled;
-}
-
-struct X86Iovec final {
-	std::uint64_t base;
-	std::uint64_t length;
-};
-
-void trace_x86_write(const x86_64::CpuState &cpu,
-	StaticGuestMemory &memory, unsigned long generation) noexcept
-{
-	const auto number = cpu.gpr(x86_64::Register::rax);
-	if (cpu.execution_mode == x86_64::ExecutionMode::compat32 &&
-		cpu.system_call_32bit && (x86_compat_syscall_trace_enabled() ||
-			x86_write_trace_enabled())) {
-		static std::atomic_uint64_t compat_sequence{};
-		const auto current = compat_sequence.fetch_add(
-			1, std::memory_order_relaxed) + 1;
-		std::fprintf(stderr,
-			"Darwin i386 syscall trace sequence=%llu generation=%lu "
-			"nr=%u rip=%#llx args=%#x,%#x,%#x,%#x,%#x,%#x\n",
-			static_cast<unsigned long long>(current), generation,
-			static_cast<unsigned>(number),
-			static_cast<unsigned long long>(cpu.rip),
-			static_cast<unsigned>(cpu.gpr(x86_64::Register::rbx)),
-			static_cast<unsigned>(cpu.gpr(x86_64::Register::rcx)),
-			static_cast<unsigned>(cpu.gpr(x86_64::Register::rdx)),
-			static_cast<unsigned>(cpu.gpr(x86_64::Register::rsi)),
-			static_cast<unsigned>(cpu.gpr(x86_64::Register::rdi)),
-			static_cast<unsigned>(cpu.gpr(x86_64::Register::rbp)));
-		std::fflush(stderr);
-		return;
-	}
-	if (!x86_write_trace_enabled())
-		return;
-	if (number != 1 && number != 20)
-		return;
-	static std::atomic_uint64_t sequence{};
-	const auto current = sequence.fetch_add(1, std::memory_order_relaxed) + 1;
-	const auto descriptor = cpu.gpr(x86_64::Register::rdi);
-	const auto address = cpu.gpr(x86_64::Register::rsi);
-	const auto third = cpu.gpr(x86_64::Register::rdx);
-	std::fprintf(stderr,
-		"Darwin x86 write trace sequence=%llu generation=%lu nr=%llu "
-		"fd=%llu address=%#llx third=%llu rip=%#llx",
-		static_cast<unsigned long long>(current), generation,
-		static_cast<unsigned long long>(number),
-		static_cast<unsigned long long>(descriptor),
-		static_cast<unsigned long long>(address),
-		static_cast<unsigned long long>(third),
-		static_cast<unsigned long long>(cpu.rip));
-	if (number == 1) {
-		std::array<std::byte, 256> sample{};
-		const auto sample_size = std::min<std::uint64_t>(third, sample.size());
-		const bool readable = sample_size == 0 || memory.read(
-			address, std::span{sample}.first(
-				static_cast<std::size_t>(sample_size)));
-		const auto zeros = readable ? std::count(
-			sample.begin(), sample.begin() + static_cast<std::ptrdiff_t>(sample_size),
-			std::byte{}) : 0;
-		std::fprintf(stderr, " sample=%llu zeros=%zu readable=%u",
-			static_cast<unsigned long long>(sample_size),
-			static_cast<std::size_t>(zeros), readable ? 1U : 0U);
-	} else {
-		constexpr std::size_t maximum_iovecs = 16;
-		std::array<X86Iovec, maximum_iovecs> vectors{};
-		const auto count = std::min<std::uint64_t>(third, vectors.size());
-		const bool readable = count == 0 || memory.read(address,
-			std::as_writable_bytes(std::span{vectors}.first(
-				static_cast<std::size_t>(count))));
-		std::uint64_t total{};
-		std::uint64_t sampled{};
-		std::size_t zeros{};
-		if (readable) {
-			for (std::size_t index = 0; index < count; ++index) {
-				total += vectors[index].length;
-				std::array<std::byte, 64> sample{};
-				const auto sample_size = std::min<std::uint64_t>(
-					vectors[index].length, sample.size());
-				if (sample_size != 0 && memory.read(vectors[index].base,
-					std::span{sample}.first(static_cast<std::size_t>(sample_size)))) {
-					sampled += sample_size;
-					zeros += static_cast<std::size_t>(std::count(
-						sample.begin(),
-						sample.begin() + static_cast<std::ptrdiff_t>(sample_size),
-						std::byte{}));
-				}
-			}
-		}
-		std::fprintf(stderr,
-			" iovecs=%llu inspected=%llu total=%llu sample=%llu zeros=%zu readable=%u",
-			static_cast<unsigned long long>(third),
-			static_cast<unsigned long long>(count),
-			static_cast<unsigned long long>(total),
-			static_cast<unsigned long long>(sampled), zeros,
-			readable ? 1U : 0U);
-	}
-	std::fputc('\n', stderr);
-	std::fflush(stderr);
-}
-
 void load_x86_cpu(x86_64::CpuState &cpu,
 	const darwin_uml_guest_registers &registers,
 	const darwin_uml_guest_fp_registers &fp) noexcept
@@ -582,8 +466,6 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		run.execution.reason == uml::cpu::ExitReason::instruction_budget)
 		run.execution.reason = uml::cpu::ExitReason::single_step;
 	const auto &result = run.execution;
-	if (result.reason == uml::cpu::ExitReason::system_call)
-		trace_x86_write(cpu, runtime.memory, generation);
 	save_x86_cpu(cpu, registers, fp);
 	int event = DARWIN_UML_EVENT_FATAL;
 	switch (result.reason) {
