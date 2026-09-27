@@ -9,7 +9,7 @@
 
 namespace uml::gpu {
 
-struct NativeDisplayState;
+struct NativeDisplayStateCore;
 
 class NativeDisplay final : public Display {
 public:
@@ -62,7 +62,7 @@ public:
     void recordCpuFallbackFrame() noexcept override;
 
 private:
-    std::shared_ptr<NativeDisplayState> state_;
+    std::shared_ptr<NativeDisplayStateCore> state_;
 };
 
 } // namespace uml::gpu

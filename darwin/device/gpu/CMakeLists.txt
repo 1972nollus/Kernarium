@@ -53,6 +53,7 @@ set(_uml_gpu_display_sources
     display_resize_notifier.cpp
     display.cpp
     metal_presentation.mm
+    native_display_common.cpp
     scanout_framebuffer.cpp)
 if(UML_TARGET_MACOS)
     list(APPEND _uml_gpu_display_sources
