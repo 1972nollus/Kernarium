@@ -15,10 +15,10 @@ Checkpoint validation: KosmicKrisp provider links; kosmickrisp_line_raster, poly
  src/kosmickrisp/libkk/kk_geometry.cl          |  228 ++-
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   24 +-
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  644 ++++++-
- src/kosmickrisp/vulkan/kk_line_raster.h       |  284 +++
+ src/kosmickrisp/vulkan/kk_line_raster.h       |  277 +++
  .../vulkan/kk_nir_lower_multiview.c           |   65 +-
  src/kosmickrisp/vulkan/kk_physical_device.c   |   13 +-
- src/kosmickrisp/vulkan/kk_shader.c            | 1642 +++++++++++++++--
+ src/kosmickrisp/vulkan/kk_shader.c            | 1648 +++++++++++++++--
  src/kosmickrisp/vulkan/kk_shader.h            |   20 +-
  src/kosmickrisp/vulkan/meson.build            |   49 +
  .../vulkan/tests/line_raster_cache_state.h    |   25 +
@@ -60,7 +60,7 @@ Checkpoint validation: KosmicKrisp provider links; kosmickrisp_line_raster, poly
  src/poly/nir/poly_nir_passthrough_gs.c        |    2 +
  src/poly/nir/tests/test_gs_side_effects.c     |  126 ++
  src/poly/nir/tests/test_passthrough_gs.c      |   72 +
- 50 files changed, 5882 insertions(+), 278 deletions(-)
+ 50 files changed, 5875 insertions(+), 284 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_line_raster.h
  create mode 100644 src/kosmickrisp/vulkan/tests/line_raster_cache_state.h
  create mode 100644 src/kosmickrisp/vulkan/tests/line_raster_cache_state.m
@@ -1550,10 +1550,10 @@ index 57940cbe04195c630b55d3c2ae9ade25cfa0d872..4e1b451c480f636e8c766c19cf0c4ac0
        .predicate_op[0] = cmd->state.cond_render.inverted
 diff --git a/src/kosmickrisp/vulkan/kk_line_raster.h b/src/kosmickrisp/vulkan/kk_line_raster.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4b7b01a2bf32d8e79250aaae0db2acf545ae088
+index 0000000000000000000000000000000000000000..e1490680e8c0a5120d9c55f5c739b51680dad49e
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_line_raster.h
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,277 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -1679,13 +1679,6 @@ index 0000000000000000000000000000000000000000..f4b7b01a2bf32d8e79250aaae0db2acf
 +                                     bool transform_feedback)
 +{
 +   return tessellation || geometry_shader || transform_feedback;
-+}
-+
-+static inline bool
-+kk_line_raster_supersedes_original(bool generated_line,
-+                                   bool original_raster_stage)
-+{
-+   return generated_line && original_raster_stage;
 +}
 +
 +static inline bool
@@ -1969,7 +1962,7 @@ index a7d974c379a5c4fedabea428e04591b1a00a17c5..8b24e4574121c98b309e330c667bb7e6
        .shaderReplicatedComposites = true,
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e1f5a8f55 100644
+index a38457568c7412a5d5646a6c84a5bb3ec69ae345..c8953a65b5b2de27a61d3fdfbb685f9026f561b2 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -14,6 +14,7 @@
@@ -1998,7 +1991,20 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     struct vk_vertex_input_state vi;
  };
  
-@@ -133,28 +140,48 @@ kk_needs_polygon_point_emulation(
+@@ -115,12 +122,6 @@ kk_vk_prim_is_triangles(VkPrimitiveTopology topology)
+           MESA_PRIM_TRIANGLES;
+ }
+ 
+-static bool
+-kk_vk_prim_is_lines(VkPrimitiveTopology topology)
+-{
+-   return u_reduced_prim(vk_topology_to_mesa(topology)) == MESA_PRIM_LINES;
+-}
+-
+ static bool
+ kk_needs_polygon_point_emulation(
+    const struct vk_graphics_pipeline_state *state)
+@@ -133,28 +134,48 @@ kk_needs_polygon_point_emulation(
            state->rs->cull_mode != VK_CULL_MODE_NONE;
  }
  
@@ -2057,7 +2063,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     key->vi = *state->vi;
  }
  
-@@ -183,11 +210,17 @@ kk_hash_graphics_state(struct vk_physical_device *device,
+@@ -183,11 +204,17 @@ kk_hash_graphics_state(struct vk_physical_device *device,
        _mesa_blake3_update(&blake3_ctx, &key, sizeof(key));
     }
  
@@ -2076,7 +2082,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
        _mesa_blake3_update(&blake3_ctx, &state->mv->view_mask,
                            sizeof(state->mv->view_mask));
     }
-@@ -897,6 +930,12 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
+@@ -897,6 +924,12 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
        mtl_release(pipe->cs);
        pipe->cs = NULL;
     } else if (shader->info.stage == MESA_SHADER_VERTEX) {
@@ -2089,7 +2095,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
        /* Pre-render compute pipelines. */
        for (uint32_t i = 0u; i < pipe->gfx.pre_render_count; ++i) {
           mtl_release(pipe->gfx.pre_render[i]);
-@@ -906,6 +945,10 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
+@@ -906,6 +939,10 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
  
        mtl_release(pipe->gfx.transform_feedback_pre_gs);
        pipe->gfx.transform_feedback_pre_gs = NULL;
@@ -2100,7 +2106,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  
        mtl_release(pipe->gfx.geometry_main);
        mtl_release(pipe->gfx.geometry_count);
-@@ -939,6 +982,11 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
+@@ -939,6 +976,11 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
        ralloc_free(
           (void *)shader->transform_feedback_pre_gs_msl.entrypoint_name);
        ralloc_free((void *)shader->transform_feedback_pre_gs_msl.code);
@@ -2112,7 +2118,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
        ralloc_free((void *)shader->geometry_main_msl.entrypoint_name);
        ralloc_free((void *)shader->geometry_main_msl.code);
        ralloc_free((void *)shader->geometry_count_msl.entrypoint_name);
-@@ -1062,6 +1110,7 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1062,6 +1104,7 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
                       const struct vk_pipeline_robustness_state *robustness,
                       const struct vk_graphics_pipeline_state *state,
                       bool force_sw_vs, bool zero_based_instance,
@@ -2120,7 +2126,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
                       const VkAllocationCallbacks *pAllocator,
                       struct kk_shader **shader_out)
  {
-@@ -1093,6 +1142,9 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1093,6 +1136,9 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
         * inputs since we read vertex attributes from UBOs. */
        kk_lower_vs_vbo(nir, state, robustness);
        if (nir->info.next_stage == MESA_SHADER_TESS_CTRL || force_sw_vs) {
@@ -2130,7 +2136,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
           NIR_PASS(_, nir, poly_nir_lower_vs_before_gs);
           NIR_PASS(_, nir, kk_nir_lower_vertex_id_zero_base);
           nir->info.stage = MESA_SHADER_COMPUTE;
-@@ -1193,7 +1245,7 @@ kk_compile_shader(struct kk_device *dev, nir_shader *nir,
+@@ -1193,7 +1239,7 @@ kk_compile_shader(struct kk_device *dev, nir_shader *nir,
                    struct kk_shader **shader_out)
  {
     return kk_compile_shader_as(dev, nir, nir->info.stage, prev_stage,
@@ -2139,7 +2145,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
                                 pAllocator, shader_out);
  }
  
-@@ -1201,6 +1253,8 @@ static void
+@@ -1201,6 +1247,8 @@ static void
  kk_gs_to_compute(nir_shader *nir, uint32_t local_size)
  {
     nir->info.stage = MESA_SHADER_COMPUTE;
@@ -2148,7 +2154,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     memset(&nir->info.cs, 0, sizeof(nir->info.cs));
     nir->info.workgroup_size[0] = local_size;
     nir->info.workgroup_size[1] = 1;
-@@ -1525,31 +1579,562 @@ kk_create_polygon_point_raster_shader(const nir_shader *vs,
+@@ -1525,31 +1573,562 @@ kk_create_polygon_point_raster_shader(const nir_shader *vs,
     return nir;
  }
  
@@ -2719,7 +2725,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  {
     struct kk_polygon_point_output outputs[NUM_TOTAL_VARYING_SLOTS] = {0};
     nir_shader_intrinsics_pass((nir_shader *)vs,
-@@ -1557,70 +2142,114 @@ kk_create_rectangular_line_raster_shader(const nir_shader *vs,
+@@ -1557,70 +2136,114 @@ kk_create_rectangular_line_raster_shader(const nir_shader *vs,
                                nir_metadata_all, outputs);
  
     nir_builder b = nir_builder_init_simple_shader(
@@ -2876,7 +2882,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     nir_def *half_extent = nir_trim_vector(&b, viewport_data, 2);
     nir_def *inv_half_extent = nir_channels(&b, viewport_data, 0xc);
  
-@@ -1639,31 +2268,46 @@ kk_create_rectangular_line_raster_shader(const nir_shader *vs,
+@@ -1639,31 +2262,46 @@ kk_create_rectangular_line_raster_shader(const nir_shader *vs,
     nir_def *inv_length = nir_bcsel(
        &b, nir_fgt_imm(&b, length_sq, 0.0f), nir_frsq(&b, length_sq),
        nir_imm_float(&b, 0.0f));
@@ -2930,7 +2936,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
        const struct kk_polygon_point_output *output = &outputs[location];
        assert(output->type != nir_type_invalid);
        unsigned bit_size = nir_alu_type_get_type_size(output->type);
-@@ -1671,17 +2315,29 @@ kk_create_rectangular_line_raster_shader(const nir_shader *vs,
+@@ -1671,17 +2309,29 @@ kk_create_rectangular_line_raster_shader(const nir_shader *vs,
           (flat_outputs & BITFIELD64_BIT(location)) ? provoking_vertex
                                                    : source_vertex;
  
@@ -2970,7 +2976,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  
           nir_store_output(
              &b, value, zero, .base = 0, .range = 1, .write_mask = 1,
-@@ -1693,10 +2349,229 @@ kk_create_rectangular_line_raster_shader(const nir_shader *vs,
+@@ -1693,10 +2343,229 @@ kk_create_rectangular_line_raster_shader(const nir_shader *vs,
        }
     }
  
@@ -3200,7 +3206,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  static nir_shader *
  kk_create_transform_feedback_passthrough(
     const nir_shader *vs, enum mesa_prim primitive,
-@@ -1713,7 +2588,7 @@ kk_create_transform_feedback_passthrough(
+@@ -1713,7 +2582,7 @@ kk_create_transform_feedback_passthrough(
     struct poly_passthrough_gs_key *key = alloca(key_size);
     memset(key, 0, key_size);
  
@@ -3209,7 +3215,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     key->outputs = vs->info.outputs_written;
     key->clip_distance_array_size = vs->info.clip_distance_array_size;
     key->cull_distance_array_size = vs->info.cull_distance_array_size;
-@@ -1733,11 +2608,17 @@ kk_create_transform_feedback_passthrough(
+@@ -1733,11 +2602,17 @@ kk_create_transform_feedback_passthrough(
     nir_builder builder = nir_builder_init_simple_shader(
        MESA_SHADER_GEOMETRY, vs->options, "transform_feedback_passthrough");
     poly_nir_passthrough_gs(&builder, key);
@@ -3228,7 +3234,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  
     /* A pass-through GS has compile-time output counts.  Keeping this
      * invariant lets the fast path avoid count and prefix-sum dispatches. */
-@@ -2007,11 +2888,15 @@ gather_graphics_pipeline_create_info(
+@@ -2007,11 +2882,15 @@ gather_graphics_pipeline_create_info(
            MTL_PRIMITIVE_TOPOLOGY_CLASS_TRIANGLE)
        topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
  
@@ -3248,7 +3254,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
        const struct poly_gs_info *gsi = info->vs.geometry_shader_emulation
                                            ? &info->vs.geometry
                                            : &info->vs.transform_feedback;
-@@ -2191,13 +3076,30 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -2191,13 +3070,30 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
           return VK_ERROR_INVALID_SHADER_NV;
     }
  
@@ -3280,7 +3286,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
           result = kk_compile_compute_pipeline(
              device, &vs->geometry_count_msl, 64,
              &pipe->gfx.geometry_count);
-@@ -2329,8 +3231,28 @@ kk_defer_graphics_shaders(struct kk_device *dev, uint32_t shader_count,
+@@ -2329,8 +3225,28 @@ kk_defer_graphics_shaders(struct kk_device *dev, uint32_t shader_count,
     return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
  }
  
@@ -3310,7 +3316,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
                          struct vk_shader_compile_info *infos,
                          const struct vk_graphics_pipeline_state *state,
                          const struct vk_features *enabled_features,
-@@ -2350,13 +3272,14 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2350,13 +3266,14 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
  
     /* Vulkan doesn't enforce a fragment shader to build pipelines. We may need
      * to create one. */
@@ -3327,7 +3333,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     for (uint32_t i = 0u; i < shader_count; ++i) {
        const struct vk_shader_compile_info *info = &infos[i];
        if (info->nir->info.stage == MESA_SHADER_TESS_CTRL ||
-@@ -2366,6 +3289,9 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2366,6 +3283,9 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
        if (info->nir->info.stage == MESA_SHADER_GEOMETRY)
           geometry_shader = i;
  
@@ -3337,7 +3343,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
        if (info->nir->info.stage == MESA_SHADER_VERTEX &&
            info->nir->xfb_info != NULL && info->nir->xfb_info->output_count > 0)
           transform_feedback_emulation = true;
-@@ -2380,10 +3306,50 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2380,10 +3300,50 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
     const bool polygon_point_emulation =
        state && !tess && !geometry_shader_emulation &&
        kk_needs_polygon_point_emulation(state);
@@ -3391,7 +3397,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     /* Lower shaders, notably lowering IO. This is a prerequisite for intershader
      * optimization. */
     const struct vk_pipeline_robustness_state *vertex_robustness = &rs_none;
-@@ -2398,7 +3364,9 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2398,7 +3358,9 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
           (geometry_shader_emulation &&
            (nir->info.stage == MESA_SHADER_VERTEX ||
             nir->info.stage == MESA_SHADER_TESS_EVAL)) ||
@@ -3402,7 +3408,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
            nir->info.stage == MESA_SHADER_VERTEX) ||
           (transform_feedback_emulation &&
            nir->info.stage == MESA_SHADER_VERTEX);
-@@ -2415,6 +3383,17 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2415,6 +3377,17 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
           NIR_PASS(_, nir, nir_lower_sysvals_to_varyings, &sysvals);
        }
  
@@ -3420,7 +3426,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
        msl_preprocess_nir_workarounds(nir, dev->disabled_workarounds);
        kk_lower_nir(dev, nir, emulated_stage, info->robustness,
                     info->set_layout_count, info->set_layouts, state);
-@@ -2424,8 +3403,13 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2424,8 +3397,13 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
  
        nir_shaders[i] = nir;
  
@@ -3435,7 +3441,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     }
  
     /* Metal render pipelines require both vertex and fragment stages.  Complete
-@@ -2435,19 +3419,31 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2435,19 +3413,31 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
     if (state && infos[shader_count - 1u].stage != MESA_SHADER_FRAGMENT) {
        nir_shaders[shader_count] =
           get_empty_nir(dev, MESA_SHADER_FRAGMENT, state);
@@ -3470,7 +3476,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     uint32_t transform_feedback_pre_gs_shader = UINT32_MAX;
     uint32_t transform_feedback_raster_shader = UINT32_MAX;
     uint32_t geometry_main_shader = UINT32_MAX;
-@@ -2455,6 +3451,10 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2455,6 +3445,10 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
     uint32_t geometry_pre_gs_shader = UINT32_MAX;
     struct poly_gs_info transform_feedback_info = {0};
     struct poly_gs_info geometry_info = {0};
@@ -3481,7 +3487,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     if (geometry_shader_emulation) {
        const struct vk_shader_compile_info *gs_compile =
           &infos[geometry_shader];
-@@ -2463,7 +3463,13 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2463,7 +3457,13 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
        nir_shader *raster = NULL;
        nir_shader *pre_gs = NULL;
  
@@ -3496,7 +3502,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  
        /* poly creates cross-block raster temporaries as shader temporaries.
         * The application stages were preprocessed before geometry lowering, so
-@@ -2479,11 +3485,26 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2479,11 +3479,26 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
           raster,
           nir_shaders[total_shaders - 1u],
        };
@@ -3528,7 +3534,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  
        msl_preprocess_nir_workarounds(raster, dev->disabled_workarounds);
        kk_lower_gs_raster(raster, state, geometry_info.mode);
-@@ -2523,6 +3544,11 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2523,6 +3538,11 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
           nir_shaders[0],
           vk_topology_to_mesa(state->ia->primitive_topology),
           &transform_feedback_info, &pre_gs);
@@ -3540,7 +3546,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  
        /* The pass-through GS must retain components used only by XFB, while
         * the Metal raster interface must exactly match the components consumed
-@@ -2532,10 +3558,30 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2532,10 +3552,30 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
           raster,
           nir_shaders[total_shaders - 1u],
        };
@@ -3575,7 +3581,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  
        msl_preprocess_nir_workarounds(pre_gs, dev->disabled_workarounds);
        kk_lower_nir(dev, pre_gs, false, infos[0].robustness,
-@@ -2561,44 +3607,109 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2561,44 +3601,109 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
  
        polygon_point_shader = total_shaders;
        nir_shaders[total_shaders++] = point;
@@ -3696,7 +3702,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
           pAllocator, &shaders[i]);
  
        if (result != VK_SUCCESS) {
-@@ -2618,8 +3729,25 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2618,8 +3723,25 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
  
        if (i == 0 && polygon_point_emulation)
           shaders[i]->info.vs.polygon_point_emulation = true;
@@ -3724,7 +3730,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  
        if (i == 0 && transform_feedback_emulation) {
           shaders[i]->info.vs.transform_feedback_emulation = true;
-@@ -2638,6 +3766,23 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2638,6 +3760,23 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
               sizeof(pre_gs->msl_data[MESA_SHADER_COMPUTE]));
     }
  
@@ -3748,7 +3754,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     if (geometry_shader_emulation) {
        struct kk_shader *vs = shaders[0];
        vs->info.vs.geometry_shader_emulation = true;
-@@ -2677,6 +3822,20 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2677,6 +3816,20 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
        uint32_t skipped_shaders = 0;
        if (transform_feedback_pre_gs_shader != UINT32_MAX)
           skipped_shaders |= BITFIELD_BIT(transform_feedback_pre_gs_shader);
@@ -3769,7 +3775,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
        if (geometry_main_shader != UINT32_MAX)
           skipped_shaders |= BITFIELD_BIT(geometry_main_shader);
        if (geometry_count_shader != UINT32_MAX)
-@@ -2686,6 +3845,23 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2686,6 +3839,23 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
  
        gather_graphics_pipeline_create_info(state, shaders, total_shaders,
                                             skipped_shaders);
@@ -3793,7 +3799,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
        result = kk_compile_graphics_pipeline(dev, shaders[0]);
  
        /* Free generated fragment and raster-emulation shaders. Their MSL was
-@@ -2708,6 +3884,117 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -2708,6 +3878,117 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
     return result;
  }
  
@@ -3911,7 +3917,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  static VkResult
  kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
                     struct vk_shader_compile_info *infos,
-@@ -2806,8 +4093,10 @@ kk_linked_graphics_pipeline_key(
+@@ -2806,8 +4087,10 @@ kk_linked_graphics_pipeline_key(
                         sizeof(state->pipeline_flags));
  
     if (state->ia != NULL) {
@@ -3924,7 +3930,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     }
     if (state->cal != NULL)
        _mesa_blake3_update(&hash, state->cal, sizeof(*state->cal));
-@@ -3001,12 +4290,26 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
+@@ -3001,12 +4284,26 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
        if (shader->info.vs.transform_feedback_emulation)
           kk_msl_data_serialize(&shader->transform_feedback_pre_gs_msl, blob);
  
@@ -3952,7 +3958,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     }
  
     return !blob->out_of_memory;
-@@ -3043,18 +4346,26 @@ kk_msl_deserialize(struct blob_reader *blob, mesa_shader_stage stage,
+@@ -3043,18 +4340,26 @@ kk_msl_deserialize(struct blob_reader *blob, mesa_shader_stage stage,
  }
  
  static VkResult
@@ -3982,7 +3988,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     struct kk_shader *shader = vk_shader_zalloc(
        &dev->vk, &kk_shader_ops, info.stage, pAllocator, sizeof(*shader));
     if (shader == NULL)
-@@ -3107,12 +4418,27 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -3107,12 +4412,27 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
              goto fail;
        }
  
@@ -4011,7 +4017,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
              result =
                 kk_msl_data_deserialize(blob, &shader->geometry_count_msl);
              if (result != VK_SUCCESS)
-@@ -3123,6 +4449,22 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -3123,6 +4443,22 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
           if (result != VK_SUCCESS)
              goto fail;
        }
@@ -4034,7 +4040,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
     }
  
     if (info.stage == MESA_SHADER_COMPUTE) {
-@@ -3148,6 +4490,16 @@ fail:
+@@ -3148,6 +4484,16 @@ fail:
     return vk_error(dev, result);
  }
  
@@ -4051,7 +4057,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
  void
  kk_cmd_bind_compute_shader(struct kk_cmd_buffer *cmd, struct kk_shader *shader)
  {
-@@ -3155,7 +4507,7 @@ kk_cmd_bind_compute_shader(struct kk_cmd_buffer *cmd, struct kk_shader *shader)
+@@ -3155,7 +4501,7 @@ kk_cmd_bind_compute_shader(struct kk_cmd_buffer *cmd, struct kk_shader *shader)
  }
  
  static void
@@ -4060,7 +4066,7 @@ index a38457568c7412a5d5646a6c84a5bb3ec69ae345..01e4881228ecb115fe48c8e8932cf68e
                              const mesa_shader_stage stage,
                              struct kk_shader *shader)
  {
-@@ -3184,6 +4536,38 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
+@@ -3184,6 +4530,38 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
     cmd->state.gfx.pipeline_sample_count = shader->info.vs.sample_count;
  }
  
