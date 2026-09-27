@@ -47,6 +47,7 @@ namespace {
 
 namespace arm64 = ::uml::cpu::arm64;
 using ::uml::emulator::tests::first_architecture_difference;
+using ::uml::cpu::ArmFeature;
 using ::uml::cpu::ArmFeatureSet;
 using ::uml::cpu::EngineKind;
 using ::uml::cpu::ExitReason;
@@ -1354,6 +1355,7 @@ struct Counts final {
   std::size_t gadgets{};
   std::size_t jit{};
   std::size_t jit_skipped_host_feature{};
+  std::size_t gadgets_skipped_host_feature{};
   std::size_t jit_unavailable{};
   std::size_t failures{};
   std::map<std::string_view, std::size_t> missing_features;
@@ -1462,8 +1464,20 @@ private:
           region, corpus_.blobs[region.blob]));
 
     for (const auto lane : {Lane::gadgets, Lane::jit}) {
-      if (lane == Lane::gadgets && !options_.run_gadgets)
-        continue;
+      if (lane == Lane::gadgets) {
+        if (!options_.run_gadgets)
+          continue;
+        /* The gadget engine emulates every other feature, but it completes
+         * a misaligned single-copy-atomic access with the host's own
+         * FEAT_LSE2, so a case that needs LSE2 has no gadget result on a
+         * host without it. */
+        if (corpus_.native_sets[test_case.native].test(
+                static_cast<std::size_t>(ArmFeature::lse2)) &&
+            !host_.has(ArmFeature::lse2)) {
+          ++counts_.gadgets_skipped_host_feature;
+          continue;
+        }
+      }
       if (lane == Lane::jit) {
         if (!options_.run_jit)
           continue;
@@ -1737,11 +1751,13 @@ int main(int argc, char **argv) {
                              std::chrono::steady_clock::now() - started)
                              .count();
     std::printf("arm64 instruction corpus (%zu KiB pages): records=%zu "
-                "cases=%zu gadgets=%zu jit=%zu jit-skipped-by-host-feature=%zu "
+                "cases=%zu gadgets=%zu gadgets-skipped-by-host-feature=%zu "
+                "jit=%zu jit-skipped-by-host-feature=%zu "
                 "jit-unavailable=%zu failures=%zu%s %.1fs\n",
                 page_size / 1024U, counts.records, counts.cases, counts.gadgets,
-                counts.jit, counts.jit_skipped_host_feature,
-                counts.jit_unavailable, counts.failures,
+                counts.gadgets_skipped_host_feature, counts.jit,
+                counts.jit_skipped_host_feature, counts.jit_unavailable,
+                counts.failures,
                 completed ? "" : " (stopped at the failure limit)", elapsed);
     if (!counts.missing_features.empty()) {
       std::printf("jit host-feature skips:");

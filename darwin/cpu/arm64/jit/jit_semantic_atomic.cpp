@@ -39,7 +39,7 @@ RunResult load_store_simd_ordered(CpuState &cpu,
 		const auto tagged_address = cpu.read_register(base_register, true);
 		const auto address = cpu.untag_data_address(
 			tagged_address, base_register == 31U);
-		if ((address & 7U) != 0U)
+		if (single_copy_alignment_faults(address, 8))
 			return alignment_fault(address, instruction, !load);
 		const std::size_t lane = instruction >> 30;
 		if (load) {
@@ -77,7 +77,7 @@ RunResult load_store_simd_ordered(CpuState &cpu,
 		static_cast<std::uint64_t>(offset);
 	const auto address = cpu.untag_data_address(
 		tagged_address, base_register == 31U);
-	if ((address & (size - 1U)) != 0U)
+	if (single_copy_alignment_faults(address, size))
 		return alignment_fault(address, instruction, !load);
 
 	if (load) {
@@ -157,7 +157,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 		const std::size_t element_size = std::size_t{1} << size_code;
 		const auto total_size = element_size * 2;
 		if ((base_register == 31U && (address & 15U) != 0) ||
-		    (address & (total_size - 1U)) != 0)
+		    single_copy_alignment_faults(address, total_size))
 			return alignment_fault(address, instruction, !load);
 		if (load) {
 			std::scoped_lock lock{exclusive_memory_mutex};
@@ -238,7 +238,7 @@ RunResult load_store_exclusive(CpuState &cpu,
 		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 	const std::size_t size = std::size_t{1} << size_code;
 	if ((base_register == 31U && (address & 15U) != 0) ||
-	    (address & (size - 1U)) != 0)
+	    single_copy_alignment_faults(address, size))
 		return alignment_fault(address, instruction, !load);
 	if (load) {
 		if (exclusive) {
@@ -348,7 +348,7 @@ RunResult load_store_compare_swap(CpuState &cpu,
 	const auto address = cpu.untag_data_address(
 		tagged_address, base_register == 31U);
 	if ((base_register == 31U && (address & 15U) != 0) ||
-	    (address & (size - 1U)) != 0)
+	    single_copy_alignment_faults(address, size))
 		return alignment_fault(address, instruction, true);
 	const auto compare = cpu.read_register(compare_register, false);
 	const auto replacement = cpu.read_register(replacement_register, false);
@@ -390,7 +390,7 @@ RunResult load_store_compare_swap_pair(CpuState &cpu,
 	const auto address = cpu.untag_data_address(
 		tagged_address, base_register == 31U);
 	if ((base_register == 31U && (address & 15U) != 0) ||
-	    (address & (total_size - 1U)) != 0)
+	    single_copy_alignment_faults(address, total_size))
 		return alignment_fault(address, instruction, true);
 	const auto compare_first = cpu.read_register(compare_register, false);
 	const auto compare_second = cpu.read_register(compare_register + 1, false);
@@ -448,7 +448,7 @@ RunResult load_store_atomic(CpuState &cpu, GuestMemory &memory,
 	const auto address = cpu.untag_data_address(
 		tagged_address, base_register == 31U);
 	if ((base_register == 31U && (address & 15U) != 0) ||
-	    (address & (size - 1U)) != 0)
+	    single_copy_alignment_faults(address, size))
 		return alignment_fault(address, instruction, true);
 	const auto operand = cpu.read_register(source, false);
 	const bool acquire = (instruction & 0x0080'0000U) != 0 &&
@@ -483,7 +483,7 @@ RunResult load_store_atomic_floating(CpuState &cpu,
 	const auto untagged_address =
 		base_register != 31U && cpu.tagged_addresses_enabled() ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
-	if ((untagged_address & (size - 1U)) != 0U)
+	if (single_copy_alignment_faults(untagged_address, size))
 		return alignment_fault(untagged_address, instruction, true);
 	std::uint64_t address{};
 	std::uint64_t tag_fault{};
@@ -693,7 +693,7 @@ RunResult load_store_rcpc(CpuState &cpu, GuestMemory &memory,
 	const auto tagged_address = base + static_cast<std::uint64_t>(offset);
 	const auto address = cpu.untag_data_address(
 		tagged_address, base_register == 31U);
-	if ((address & (size - 1U)) != 0)
+	if (single_copy_alignment_faults(address, size))
 		return alignment_fault(address, instruction, !load);
 
 	if (load) {
@@ -837,7 +837,7 @@ RunResult load_store_ordered_writeback(
 	const auto address = cpu.untag_data_address(
 		tagged_address, base_register == 31U);
 	const auto adjusted = load ? base + size : base - size;
-	if ((address & (size - 1U)) != 0)
+	if (single_copy_alignment_faults(address, size))
 		return alignment_fault(address, instruction, !load);
 
 	if (load) {

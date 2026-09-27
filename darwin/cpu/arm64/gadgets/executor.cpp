@@ -1433,6 +1433,8 @@ GadgetExecutor::GadgetExecutor(arm64::gadgets::BuildOptions build_options)
 	  build_options_{build_options},
 	  sampling_{diagnostics::guest_sampling_register(*this)}
 {
+	tlb_.unaligned_atomics =
+		build_options_.host_capabilities.has(ArmFeature::lse2);
 }
 
 GadgetExecutor::~GadgetExecutor()

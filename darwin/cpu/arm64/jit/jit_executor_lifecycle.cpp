@@ -68,6 +68,7 @@ JitExecutor::Implementation::Implementation(
   // allocation and publication-registry bookkeeping in every build flavor.
   static_assert(sizeof(Implementation) <= sizeof(Tlb) + 48U * 1024U);
   relocated_link_pointers_.reserve(maximum_block_instructions);
+  tlb_.unaligned_atomics = host_capabilities_.has(ArmFeature::lse2);
 #if UML_ENABLE_JIT_PROFILE
   profile_jit_link_table_state(links_.size(), links_.capacity(),
                                indirect_links_.size(),

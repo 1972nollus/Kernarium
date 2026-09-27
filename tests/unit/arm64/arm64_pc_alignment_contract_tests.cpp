@@ -256,16 +256,18 @@ void data_alignment_contract(EngineKind kind, unsigned long generation)
 	::uml::memory::StaticGuestMemory memory;
 	memory.set_generation(generation);
 	auto engine = ::uml::cpu::make_cpu_engine(kind);
+	/* The misaligned address crosses a 16-byte block, so the ordered
+	 * access faults whether or not the host implements FEAT_LSE2. */
 	for (const bool write : {false, true}) {
 		::uml::cpu::arm64::CpuState cpu;
 		cpu.pc = code_base + (write ? 12 : 0);
-		cpu.registers[7] = code_base + 0x102;
+		cpu.registers[7] = code_base + 0x10e;
 		cpu.registers[8] = 40;
 		cpu.registers[21] = 0xaabb'ccdd;
 		const auto result = run(*engine, cpu, memory, generation);
 		require(result.reason == ::uml::cpu::ExitReason::memory_fault &&
 			result.fault.alignment &&
-			result.fault.address == code_base + 0x102 &&
+			result.fault.address == code_base + 0x10e &&
 			result.fault.access == (write ?
 				::uml::memory::MemoryAccess::write :
 				::uml::memory::MemoryAccess::read),
@@ -291,13 +293,13 @@ void data_alignment_contract(EngineKind kind, unsigned long generation)
 	unsigned long tls = 0;
 	darwin_uml_guest_registers registers{};
 	registers.pc = code_base;
-	registers.x[7] = code_base + 0x102;
+	registers.x[7] = code_base + 0x10e;
 	registers.x[21] = 0xaabb'ccdd;
 	engine.reset();
 	const auto event = enter(&registers, &fp, sizeof(fp), generation, &tls);
 	require(event == DARWIN_UML_EVENT_DATA_ALIGNMENT &&
 		registers.pc == code_base + 4 &&
-		registers.fault.address == code_base + 0x102 &&
+		registers.fault.address == code_base + 0x10e &&
 		registers.x[21] == 0xaabb'ccdd,
 		"bridge did not preserve the FEX alignment-fault contract");
 }

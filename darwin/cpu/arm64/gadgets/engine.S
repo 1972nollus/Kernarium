@@ -58,4 +58,7 @@ _\name:
 #include "engine/scalar_forwarding.inc"
 #include "engine/vector_forwarding.inc"
 #include "engine/execution_count.inc"
+/* The cold FEAT_LSE2 alignment stubs of the atomic families go last, in reach
+ * of their conditional branches, so no established gadget moves for them. */
+#include "engine/lse2_alignment.inc"
 	gadget_bank_bounds end

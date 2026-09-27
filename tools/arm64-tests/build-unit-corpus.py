@@ -1294,6 +1294,8 @@ def metadata(corpus: Corpus, pack: bytes) -> dict[str, bytes]:
         "producer_commit": corpus.meta["producer_commit"],
         **({"force_include": corpus.meta["force_include"]}
            if "force_include" in corpus.meta else {}),
+        **({"lse2_alignment": corpus.meta["lse2_alignment"]}
+           if "lse2_alignment" in corpus.meta else {}),
         "sample_limit": corpus.meta["sample_limit"],
         "seed": corpus.meta["seed"],
         "exports": corpus.meta["exports"],

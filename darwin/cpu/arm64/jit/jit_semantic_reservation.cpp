@@ -4,6 +4,8 @@
 #include "cpu/arm64/detail/atomic_floating.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/pointer_auth.hpp"
+#include "cpu/arm64/detail/single_copy_alignment.hpp"
+#include "cpu/host_capabilities.hpp"
 
 #include <algorithm>
 #include <array>
@@ -150,6 +152,21 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 		: "memory");
 }
 
+/*
+ * A direct pointer the LSE2 rule admits although it is not naturally
+ * aligned: the host implements FEAT_LSE2 and the access stays inside one
+ * 16-byte block, so one host LDAR or STLR is single-copy atomic. The
+ * stronger host order is correct for every scalar form routed here.
+ */
+[[nodiscard]] bool lse2_host_pointer(const std::byte *pointer,
+	std::size_t size) noexcept
+{
+	return size <= sizeof(std::uint64_t) &&
+		!arm64::detail::single_copy_alignment_faults(
+			reinterpret_cast<std::uintptr_t>(pointer), size,
+			host_capabilities().has(ArmFeature::lse2));
+}
+
 [[nodiscard]] bool atomic_load_value(GuestMemory &memory,
 	std::uint64_t address, std::size_t size, std::memory_order order,
 	std::uint64_t &value, std::uintptr_t &key)
@@ -165,6 +182,11 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 		case 8: value = atomic_load_at<std::uint64_t>(pointer, order); break;
 		default: return false;
 		}
+		key = host_reservation_key(pointer);
+		return true;
+	}
+	if (pointer != nullptr && lse2_host_pointer(pointer, size)) {
+		value = arm64::detail::lse2_acquire_load(pointer, size);
 		key = host_reservation_key(pointer);
 		return true;
 	}
@@ -198,6 +220,13 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 		case 8: atomic_store_at<std::uint64_t>(pointer, value, order); break;
 		default: return AtomicStoreResult::fault;
 		}
+		return AtomicStoreResult::stored;
+	}
+	if (pointer != nullptr && lse2_host_pointer(pointer, size)) {
+		key = host_reservation_key(pointer);
+		if (expected_key != nullptr && key != *expected_key)
+			return AtomicStoreResult::reservation_mismatch;
+		arm64::detail::lse2_release_store(pointer, size, value);
 		return AtomicStoreResult::stored;
 	}
 

@@ -5,8 +5,9 @@
 [`../instruction_corpus_runner.cpp`](../instruction_corpus_runner.cpp),
 executes every case of the build's page profile through the production gadget
 engine and, when the host implements the case's native features or the case
-is an invalid encoding, through the JIT. The runner needs no Python, network,
-or file other than the pack.
+is an invalid encoding, through the JIT. A case that needs FEAT_LSE2 runs in
+neither lane on a host without it. The runner needs no Python, network, or
+file other than the pack.
 
 A case is one engine-harness check exported from a producer unit test of a
 producer commit (see [Regeneration](#regeneration-and-new-cases)): a program
@@ -212,3 +213,24 @@ and each export directory lists the ordinal of every exported case in
 `build-unit-corpus.py --check` verifies that the metadata and the canonical
 encoding match the pack. `--dump PACK --text FILE` writes a reviewable JSON
 lines form, and `--repack FILE` rebuilds the pack and metadata from it.
+
+## LSE2 alignment cases
+
+The producer checks predate the FEAT_LSE2 alignment rule (see
+[`docs/architecture.md`](../../../../docs/architecture.md)) and expect an
+alignment fault from a misaligned LSE atomic, exclusive, or LSFE access inside
+one 16-byte block, and the producer harness's interpreter lane does not
+implement the rule. [`tools/arm64-tests/lse2-alignment-corpus.py`](../../../../tools/arm64-tests/lse2-alignment-corpus.py)
+therefore rewrites a dump after export: it drops those cases and appends the
+hand-authored `arm64-lse2-alignment` records, whose completing and
+block-crossing cases follow the architecture and match native LSE2 hardware.
+`provenance.json` records its hash and counts under `lse2_alignment`. Run it on
+a `--dump` of every regenerated pack and `--repack` the result:
+
+```sh
+python3 -B tools/arm64-tests/build-unit-corpus.py \
+  --dump tests/unit/arm64/corpus/a64_instruction_corpus.pack --text corpus.jsonl
+python3 -B tools/arm64-tests/lse2-alignment-corpus.py corpus.jsonl lse2.jsonl
+python3 -B tools/arm64-tests/build-unit-corpus.py --repack lse2.jsonl \
+  --output tests/unit/arm64/corpus
+```

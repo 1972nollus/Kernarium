@@ -5,6 +5,7 @@
 #include "cpu/arm64/layout/assembly_layout.hpp"
 
 #include "../detail/atomic_floating.hpp"
+#include "../detail/single_copy_alignment.hpp"
 #include "../detail/floating_compare.hpp"
 #include "../detail/bfloat_conversion.hpp"
 #include "../detail/bfloat_dot.hpp"
@@ -359,6 +360,31 @@ void atomic_floating_transfer(uml::cpu::arm64::CpuState *cpu,
 	const unsigned source = operand & 31U;
 	const auto source_bits = detail::decode_little_endian(
 		std::span{cpu->vectors[source].bytes}.first(sizeof(Integer)));
+	const auto return_old = [&](std::uint64_t observed) {
+		if constexpr (ReturnOld) {
+			const unsigned destination = (operand >> 8) & 31U;
+			cpu->vectors[destination].bytes = {};
+			detail::encode_little_endian(observed,
+				std::span{cpu->vectors[destination].bytes}.first(
+					sizeof(Integer)));
+		}
+	};
+	if (reinterpret_cast<std::uintptr_t>(pointer) % sizeof(Integer) != 0) {
+		/* Admitted by the FEAT_LSE2 rule inside one 16-byte block; the
+		 * host's own LSE2 keeps each CASAL single-copy atomic. */
+		auto expected = detail::lse2_acquire_load(pointer, sizeof(Integer));
+		for (;;) {
+			const auto desired = static_cast<Integer>(
+				detail::atomic_floating_result<Operation>(
+					static_cast<Integer>(expected), source_bits,
+					Width, BFloat, cpu->fpcr));
+			const auto observed = detail::lse2_compare_swap(
+				pointer, sizeof(Integer), expected, desired);
+			if (observed == expected)
+				return return_old(observed);
+			expected = observed;
+		}
+	}
 	auto &location = *reinterpret_cast<Integer *>(pointer);
 	auto reference = std::atomic_ref<Integer>{location};
 	constexpr auto order = Acquire && Release ? std::memory_order_acq_rel :
@@ -375,14 +401,7 @@ void atomic_floating_transfer(uml::cpu::arm64::CpuState *cpu,
 		if (!reference.compare_exchange_weak(
 				expected, desired, order, failure_order))
 			continue;
-		if constexpr (ReturnOld) {
-			const unsigned destination = (operand >> 8) & 31U;
-			cpu->vectors[destination].bytes = {};
-			detail::encode_little_endian(observed,
-				std::span{cpu->vectors[destination].bytes}.first(
-					sizeof(Integer)));
-		}
-		return;
+		return return_old(observed);
 	}
 }
 
