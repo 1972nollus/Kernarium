@@ -225,10 +225,10 @@ index bbb5faa0f7b64f5599eb20540699aad5afee65eb..1dd076eb2782f1b7a10c68299c734fe4
  cs_get_render(struct kk_cmd_buffer *cmd)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 101f364d2e6babbd68b22bf4f4721af421924c54..877307ea2d8b957fc420cda25b981b394b287d91 100644
+index 59a956191742243b3d2de72efcf8d61ea502b2cb..0b06d69a1c7a0c59f819c5260a06a13a63f65dec 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-@@ -207,6 +207,17 @@ struct kk_graphics_state {
+@@ -206,6 +206,17 @@ struct kk_graphics_state {
     bool is_cull_front_and_back;
     bool need_to_start_render_pass;
  
@@ -246,7 +246,7 @@ index 101f364d2e6babbd68b22bf4f4721af421924c54..877307ea2d8b957fc420cda25b981b39
     enum kk_dirty dirty;
     uint32_t pipeline_sample_count;
  
-@@ -397,6 +408,9 @@ kk_get_descriptors_state(struct kk_cmd_buffer *cmd,
+@@ -396,6 +407,9 @@ kk_get_descriptors_state(struct kk_cmd_buffer *cmd,
  void kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd);
  void cs_start_render(struct kk_cmd_buffer *cmd);
  mtl_render_encoder *cs_get_render(struct kk_cmd_buffer *cmd);
@@ -257,7 +257,7 @@ index 101f364d2e6babbd68b22bf4f4721af421924c54..877307ea2d8b957fc420cda25b981b39
  void cs_end(struct kk_cmd_buffer *cmd);
  void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 48a7698490666105611206a876828860c16a57c8..e7c666bf952a0de708a5fec0bbf3ca4361f54462 100644
+index 1f1c6c954542f16d7b3c5f92e2fe8f6f5016daae..52df4c411fbbb16f11762ece56acdc06a03cbf5d 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -354,6 +354,7 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
@@ -303,7 +303,7 @@ index 48a7698490666105611206a876828860c16a57c8..e7c666bf952a0de708a5fec0bbf3ca43
     bool color_map_changed = false;
  
     if (IS_DIRTY(COLOR_ATTACHMENT_MAP)) {
-@@ -2233,6 +2248,8 @@ kk_dispatch_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data data)
+@@ -2241,6 +2256,8 @@ kk_dispatch_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data data)
  {
     mtl_render_encoder *enc = cs_get_render(cmd);
  

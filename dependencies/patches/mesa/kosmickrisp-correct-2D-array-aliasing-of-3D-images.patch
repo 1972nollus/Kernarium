@@ -100,7 +100,7 @@ index ede8d596c2a869005e36da1e8ac38c4c5d8bc7f2..f8ecaffbcaea08539d27f83bf922572c
  mtl_render_pass_attachment_descriptor_set_load_action(
     mtl_render_pass_attachment_descriptor *descriptor,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 639810e98eaa1f4239fbb644972ea255dd96406c..34d0df11225464ca673e1bf7355ddba6eee56683 100644
+index 92de23dbf3aa92b5f3e3555baa88b25ecdfec6e3..4d125c729addf3c201c7370e773903b3ba4c8602 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -130,8 +130,13 @@ kk_fill_common_attachment_description(

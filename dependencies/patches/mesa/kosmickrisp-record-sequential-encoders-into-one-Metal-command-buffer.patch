@@ -361,10 +361,10 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
  kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd, uint64_t addr)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 80895d13997d57eb7ac9dff482762824fb74326d..7340a99ac8266145af197fa78d52a2bfc15cf6e2 100644
+index 98bde4397a1aa88b64c43e2bcb3e6a36e732a299..36516872ba1948cd57ef3ad92f1eaa08d339be9b 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-@@ -214,6 +214,11 @@ struct kk_graphics_state {
+@@ -213,6 +213,11 @@ struct kk_graphics_state {
     bool is_cull_front_and_back;
     bool need_to_start_render_pass;
  
@@ -376,7 +376,7 @@ index 80895d13997d57eb7ac9dff482762824fb74326d..7340a99ac8266145af197fa78d52a2bf
     /* Draws issued into the render encoder that is currently open. Reset every
      * time a render encoder starts. KK_WORKAROUND_18 uses it. */
     uint32_t draws_since_encoder_start;
-@@ -337,6 +342,9 @@ struct kk_encoder_state {
+@@ -336,6 +341,9 @@ struct kk_encoder_state {
     mtl_fence *ts_fences[2];
     /* Render-stage timestamp samples (struct kk_ts_sample). */
     struct util_dynarray ts_samples;
@@ -386,7 +386,7 @@ index 80895d13997d57eb7ac9dff482762824fb74326d..7340a99ac8266145af197fa78d52a2bf
  };
  
  struct kk_cmd_buffer {
-@@ -348,6 +356,28 @@ struct kk_cmd_buffer {
+@@ -347,6 +355,28 @@ struct kk_cmd_buffer {
     struct kk_encoder_state *pre_gfx;
     struct kk_encoder_state *post_gfx;
  
@@ -415,7 +415,7 @@ index 80895d13997d57eb7ac9dff482762824fb74326d..7340a99ac8266145af197fa78d52a2bf
     void *drawable;
     mtl_argument_table *argument_table;
  
-@@ -420,6 +450,10 @@ void kk_cmd_buffer_set_vertex_amplification(struct kk_cmd_buffer *cmd,
+@@ -419,6 +449,10 @@ void kk_cmd_buffer_set_vertex_amplification(struct kk_cmd_buffer *cmd,
                                              uint32_t count);
  mtl_compute_encoder *cs_get_compute(struct kk_cmd_buffer *cmd, bool pre_gfx);
  void cs_end(struct kk_cmd_buffer *cmd);
@@ -427,10 +427,10 @@ index 80895d13997d57eb7ac9dff482762824fb74326d..7340a99ac8266145af197fa78d52a2bf
                                          uint64_t addr);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 77900462fca6f5291de45fff6702996550d3e89d..bcd1a8c3ccc8071cd7b36b6a8b23aef14f422d94 100644
+index 5bca0c94cede67a4a2d26752e78af5e9e26584c8..5175a32628e4be9bf9e36305fd454d2c30dc0918 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1873,6 +1873,12 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+@@ -1881,6 +1881,12 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
  #undef IS_SHADER_DIRTY
  #undef IS_DIRTY
  
@@ -443,7 +443,7 @@ index 77900462fca6f5291de45fff6702996550d3e89d..bcd1a8c3ccc8071cd7b36b6a8b23aef1
  /* Returns true if the draw was successfully converted. */
  static bool
  kk_convert_to_indirect_draw(struct kk_cmd_buffer *cmd,
-@@ -3366,20 +3372,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3374,20 +3380,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
  }
  
  static void
@@ -465,7 +465,7 @@ index 77900462fca6f5291de45fff6702996550d3e89d..bcd1a8c3ccc8071cd7b36b6a8b23aef1
     data->restart = cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable;
     data->restart_index =
        cmd->vk.dynamic_graphics_state.ia.primitive_restart_index;
-@@ -3508,6 +3502,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3516,6 +3510,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     }
  }
  

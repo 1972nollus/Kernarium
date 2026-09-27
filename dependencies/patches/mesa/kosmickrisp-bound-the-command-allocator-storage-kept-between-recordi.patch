@@ -304,10 +304,10 @@ index 91c7366da9840e713e954e55a38f55c815cb08fe..6997a4ee74e9c0b443d55b38464126fa
     es->encoder = mtl_new_compute_command_encoder(es->cmd_buf);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 7340a99ac8266145af197fa78d52a2bfc15cf6e2..3fc50bbf056adf1e203955b06003852ca8f2b28a 100644
+index 36516872ba1948cd57ef3ad92f1eaa08d339be9b..0c51a32f9dae65b0272d8cc56af242f14b1d32e7 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-@@ -333,6 +333,9 @@ struct kk_ts_sample {
+@@ -332,6 +332,9 @@ struct kk_ts_sample {
  struct kk_encoder_state {
     /* either a mtl_compute_encoder or a mtl_render_encoder */
     mtl_command_encoder *encoder;
@@ -317,7 +317,7 @@ index 7340a99ac8266145af197fa78d52a2bfc15cf6e2..3fc50bbf056adf1e203955b06003852c
     mtl_command_allocator *allocator;
     mtl_command_buffer *cmd_buf;
     /* Pending timestamp resolves (struct kk_ts_resolve), flushed at cs_end. */
-@@ -409,6 +412,10 @@ struct kk_cmd_buffer {
+@@ -408,6 +411,10 @@ struct kk_cmd_buffer {
     /* Metal command buffers are single-shot: a resubmission must re-record
      * by replaying the enqueued commands (see rerecord_cmd_buffer). */
     bool submitted;

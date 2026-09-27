@@ -81,7 +81,7 @@ same mask in pSampleMask and early tests, and with no mask at all.  It reads
  create mode 100644 src/kosmickrisp/vulkan/tests/test_early_sample_mask_count.cpp
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 877307ea2d8b957fc420cda25b981b394b287d91..80895d13997d57eb7ac9dff482762824fb74326d 100644
+index 0b06d69a1c7a0c59f819c5260a06a13a63f65dec..98bde4397a1aa88b64c43e2bcb3e6a36e732a299 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -54,6 +54,13 @@ struct kk_root_descriptor_table {
@@ -99,10 +99,10 @@ index 877307ea2d8b957fc420cda25b981b394b287d91..80895d13997d57eb7ac9dff482762824
        struct {
           uint32_t base_group[3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index e7c666bf952a0de708a5fec0bbf3ca4361f54462..b8be0edd6b871c541028c9673ca3eea4dcc3a13a 100644
+index 52df4c411fbbb16f11762ece56acdc06a03cbf5d..6daafc6915210ade8bd19258984df4e1ccc1038d 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1765,8 +1765,17 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1773,8 +1773,17 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
        kk_cmd_bind_root_to_argument_table(cmd, desc->root.addr);
     }
  
@@ -122,7 +122,7 @@ index e7c666bf952a0de708a5fec0bbf3ca4361f54462..b8be0edd6b871c541028c9673ca3eea4
                                       gfx->occlusion.index * sizeof(uint64_t));
     }
  }
-@@ -1792,6 +1801,23 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+@@ -1800,6 +1809,23 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
        desc->root.draw.clip_statistics != clip_statistics;
     desc->root.draw.clip_statistics = clip_statistics;
  
