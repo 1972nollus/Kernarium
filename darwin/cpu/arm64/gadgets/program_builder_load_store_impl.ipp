@@ -39,8 +39,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		emit(words, literal_load_gadget(
 			vector, operation, !vector && destination == 31U));
 		const auto destination_offset = vector ?
-			offsetof(CpuState, vectors) +
-				destination * sizeof(VectorRegister) :
+			vector_operand_offset(destination) :
 			destination < 31U ? destination * sizeof(std::uint64_t) : 0U;
 		const auto displacement =
 			sign_extend((instruction >> 5) & 0x7ffffU, 19) * 4;
@@ -945,8 +944,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const unsigned base = (instruction >> 5) & 31U;
 			emit(words, vector_unsigned_memory_gadget(
 				size_code, operation, base == 31U));
-			const auto transfer_offset = offsetof(CpuState, vectors) +
-				transfer * sizeof(VectorRegister);
+			const auto transfer_offset =
+				vector_operand_offset(transfer);
 			const auto base_offset = base < 31U ?
 				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
 			const unsigned scale = operation >= 2U ? 4U : size_code;
@@ -1041,8 +1040,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 				vector_other_gadgets(size_code, operation);
 			const unsigned transfer = instruction & 31U;
 			const unsigned base = (instruction >> 5) & 31U;
-			const auto transfer_offset = offsetof(CpuState, vectors) +
-				transfer * sizeof(VectorRegister);
+			const auto transfer_offset =
+				vector_operand_offset(transfer);
 			const auto base_offset = base < 31U ?
 				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
 			if (register_offset) {
@@ -1138,10 +1137,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 				mode == 3U ? 1U : 0U;
 			const auto &gadgets =
 				vector_pair_gadgets(operation, load);
-			const auto first_offset = offsetof(CpuState, vectors) +
-				first * sizeof(VectorRegister);
-			const auto second_offset = offsetof(CpuState, vectors) +
-				second * sizeof(VectorRegister);
+			const auto first_offset = vector_operand_offset(first);
+			const auto second_offset = vector_operand_offset(second);
 			const auto base_offset = base < 31U ?
 				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
 			const auto displacement = sign_extend(

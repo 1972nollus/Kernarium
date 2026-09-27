@@ -16,18 +16,6 @@
 
 namespace uml::cpu::arm64::gadgets::builder_detail {
 
-/* The byte offset of a guest vector register inside CpuState, which every
- * SIMD and floating-point operand word in the decode fragments is built from.
- * One helper is the single point where a guest vector operand is named.
- */
-[[nodiscard]] inline std::size_t vector_operand_offset(unsigned index) noexcept
-{
-	return offsetof(CpuState, vectors) + index * sizeof(VectorRegister);
-}
-
-static_assert(offsetof(CpuState, vectors) + 31U * sizeof(VectorRegister) <=
-	0xffffU, "a vector operand offset must fit the 16-bit operand field");
-
 struct DecodeContext final {
 	std::uint64_t guest_address;
 	std::uint64_t address;

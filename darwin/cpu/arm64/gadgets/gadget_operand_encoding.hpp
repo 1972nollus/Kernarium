@@ -45,17 +45,14 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] constexpr std::uintptr_t simd_lut_operand(
 	std::uint32_t instruction, unsigned shape, unsigned part) noexcept
 {
-	const auto vector_offset = [](unsigned index) {
-		return offsetof(CpuState, vectors) +
-			index * sizeof(VectorRegister);
-	};
 	const unsigned table = (instruction >> 5) & 31U;
-	return vector_offset(instruction & 31U) |
-		(static_cast<std::uintptr_t>(vector_offset(table)) << 11) |
+	return vector_operand_offset(instruction & 31U) |
 		(static_cast<std::uintptr_t>(
-			vector_offset((table + 1U) & 31U)) << 22) |
+			vector_operand_offset(table)) << 11) |
 		(static_cast<std::uintptr_t>(
-			vector_offset((instruction >> 16) & 31U)) << 33) |
+			vector_operand_offset((table + 1U) & 31U)) << 22) |
+		(static_cast<std::uintptr_t>(vector_operand_offset(
+			(instruction >> 16) & 31U)) << 33) |
 		(static_cast<std::uintptr_t>(shape) << 44) |
 		(static_cast<std::uintptr_t>(part) << 46);
 }

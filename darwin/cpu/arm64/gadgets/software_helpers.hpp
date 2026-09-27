@@ -4,7 +4,23 @@
 #include "../detail/fp8.hpp"
 #include "../cpu_state.hpp"
 
+#include <cstddef>
 #include <cstdint>
+
+namespace uml::cpu::arm64::gadgets {
+
+/* A guest vector operand in a gadget stream is the byte offset of its register
+ * inside CpuState. Every such offset fits a 16-bit operand field. */
+[[nodiscard]] constexpr std::size_t vector_operand_offset(
+	unsigned index) noexcept
+{
+	return offsetof(CpuState, vectors) + index * sizeof(VectorRegister);
+}
+
+static_assert(vector_operand_offset(31U) <= 0xffffU,
+	"a vector operand offset must fit the 16-bit operand field");
+
+} // namespace uml::cpu::arm64::gadgets
 
 namespace uml::cpu::arm64::gadgets::software {
 

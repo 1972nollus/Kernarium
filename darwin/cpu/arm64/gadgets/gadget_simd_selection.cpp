@@ -438,42 +438,26 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] std::uintptr_t simd_unary_operand(
 	unsigned destination, unsigned source) noexcept
 {
-	const auto vector_offset = [](unsigned index) {
-		return offsetof(CpuState, vectors) +
-			index * sizeof(VectorRegister);
-	};
-	static_assert(offsetof(CpuState, vectors) +
-		31U * sizeof(VectorRegister) <= 0xffffU);
-	return packed_u16_operands(vector_offset(destination),
-		vector_offset(source));
+	return packed_u16_operands(vector_operand_offset(destination),
+		vector_operand_offset(source));
 }
 
 [[nodiscard]] std::uintptr_t simd_ternary_operand(
 	unsigned destination, unsigned first, unsigned second,
 	unsigned descriptor = 0U) noexcept
 {
-	const auto vector_offset = [](unsigned index) {
-		return offsetof(CpuState, vectors) +
-			index * sizeof(VectorRegister);
-	};
-	static_assert(offsetof(CpuState, vectors) +
-		31U * sizeof(VectorRegister) <= 0xffffU);
-	return packed_u16_operands(vector_offset(destination),
-		vector_offset(first), vector_offset(second), descriptor);
+	return packed_u16_operands(vector_operand_offset(destination),
+		vector_operand_offset(first), vector_operand_offset(second),
+		descriptor);
 }
 
 [[nodiscard]] std::uintptr_t simd_quaternary_operand(
 	unsigned destination, unsigned first, unsigned second,
 	unsigned third) noexcept
 {
-	const auto vector_offset = [](unsigned index) {
-		return offsetof(CpuState, vectors) +
-			index * sizeof(VectorRegister);
-	};
-	static_assert(offsetof(CpuState, vectors) +
-		31U * sizeof(VectorRegister) <= 0xffffU);
-	return packed_u16_operands(vector_offset(destination),
-		vector_offset(first), vector_offset(second), vector_offset(third));
+	return packed_u16_operands(vector_operand_offset(destination),
+		vector_operand_offset(first), vector_operand_offset(second),
+		vector_operand_offset(third));
 }
 
 #define UML_SIMD_UNARY_V6(name) SimdUnaryGadgets{ \
@@ -1725,16 +1709,10 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	std::uint32_t instruction,
 	const detail::FloatingComplex &decoded) noexcept
 {
-	const auto vector_offset = [](unsigned index) {
-		return offsetof(CpuState, vectors) +
-			index * sizeof(VectorRegister);
-	};
-	static_assert(offsetof(CpuState, vectors) +
-		31U * sizeof(VectorRegister) <= 0xffffU);
-	return vector_offset(instruction & 31U) |
-		(static_cast<std::uintptr_t>(vector_offset(
+	return vector_operand_offset(instruction & 31U) |
+		(static_cast<std::uintptr_t>(vector_operand_offset(
 			(instruction >> 5) & 31U)) << 16U) |
-		(static_cast<std::uintptr_t>(vector_offset(
+		(static_cast<std::uintptr_t>(vector_operand_offset(
 			decoded.second_register)) << 32U);
 }
 

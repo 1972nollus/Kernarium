@@ -60,15 +60,7 @@ using uml::cpu::host_capabilities;
 
 using uml::cpu::arm64::CpuState;
 using uml::cpu::arm64::detail::Fp8Operation;
-
-[[nodiscard]] constexpr std::uintptr_t fp8_vector_offset(
-	unsigned reg) noexcept
-{
-	return offsetof(CpuState, vectors) +
-		reg * sizeof(uml::cpu::arm64::VectorRegister);
-}
-
-static_assert(fp8_vector_offset(31U) <= 0xffffU);
+using uml::cpu::arm64::gadgets::vector_operand_offset;
 
 [[nodiscard]] constexpr std::uintptr_t fp8_operand(
 	const uml::cpu::arm64::detail::Fp8Instruction &decoded) noexcept
@@ -76,9 +68,10 @@ static_assert(fp8_vector_offset(31U) <= 0xffffU);
 	const bool one_source =
 		decoded.operation == Fp8Operation::convert_to_half ||
 		decoded.operation == Fp8Operation::convert_to_bfloat;
-	return fp8_vector_offset(decoded.destination) |
-		(fp8_vector_offset(decoded.first) << 16) |
-		((one_source ? 0U : fp8_vector_offset(decoded.second)) << 32) |
+	return vector_operand_offset(decoded.destination) |
+		(vector_operand_offset(decoded.first) << 16) |
+		((one_source ? 0U :
+			vector_operand_offset(decoded.second)) << 32) |
 		(static_cast<std::uintptr_t>(
 			decoded.by_element ? decoded.index : 0U) << 48);
 }
