@@ -369,7 +369,10 @@ No command ends the host. A thrown error, an XCTest issue, and an
 Objective-C exception XCTest raises, such as `typeKey` given anything but one
 UTF-16 character, each become that command's error. The host keeps a
 command's issues out of XCTest's record, so it prints every failed command to
-its log.
+its log. XCTest waits for the application to go idle before each command. A
+system keyboard animation can leave that wait's count stuck for the rest of
+the application's life, so every command then takes about 60 s; relaunch the
+application.
 
 The target has no target application, so starting it installs only its own
 runner, and it is not in the `Kernarium` scheme. Reinstalling Kernarium,
