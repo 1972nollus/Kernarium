@@ -305,7 +305,10 @@ excludes every GPT fdisk command-line front end and `popt`. The standalone macOS
 The zstd build contains the streaming decompressor but excludes compression,
 dictionary-builder, legacy-frame, deprecated, and command-line code. Both
 libraries use static framework slices so their Clang module maps remain
-separate when Xcode processes the XCFrameworks.
+separate when Xcode processes the XCFrameworks. The two builders share
+`ios-static-xcframework.sh` for packaging, verification, and publication, and
+their verifiers share `cmake/VerifyIosStaticXCFramework.cmake`; each supplies
+only its library build, headers, provenance, and symbol contract.
 
 Additional build-only archives use
 `dependencies/prepare.sh --archive-manifest PATH --cache CACHE`. The tab-separated
