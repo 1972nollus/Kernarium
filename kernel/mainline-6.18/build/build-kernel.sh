@@ -127,6 +127,8 @@ source_tree=$(git -C "$SOURCE_DIR" rev-parse HEAD^{tree} 2>/dev/null || true)
 	fail "$UML_KERNEL_SLICE source tree is $source_tree; expected $UML_KERNEL_FINAL_TREE"
 "$COMMON_ROOT/abi/sync.sh" --kernel-source "$SOURCE_DIR" --verify ||
 	fail "kernel ABI copies are stale; replay the tracked series or run kernel/common/abi/sync.sh"
+python3 -B "$COMMON_ROOT/video/sync-protocol.py" --kernel-source "$SOURCE_DIR" --verify ||
+	fail "kernel Virtio video protocol copy is stale; replay the tracked series or run kernel/common/video/sync-protocol.py"
 mkdir -p -- "$BUILD_DIR"
 SOURCE_DIR=$(CDPATH= cd -- "$SOURCE_DIR" && pwd -P)
 BUILD_DIR=$(CDPATH= cd -- "$BUILD_DIR" && pwd -P)
