@@ -19,6 +19,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import base64
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -276,15 +277,14 @@ def main() -> int:
     arguments = parser.parse_args()
 
     server = TransferServer()
-    guest = Guest(
+    with contextlib.closing(server), Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         "1024M",
         "tmpfs",
         (),
         init_shell=True,
-    )
-    try:
+    ) as guest:
         guest.boot_to_shell(180)
         start_guest_dhcp_client(guest)
         verify_slirp_lease(*wait_for_slirp_lease(guest))
@@ -303,12 +303,6 @@ def main() -> int:
                                "\n  ".join(failures))
         print("guest uploads reached the host promptly and intact")
         return 0
-    except BaseException:
-        print(guest.output(), file=sys.stderr)
-        raise
-    finally:
-        guest.close()
-        server.close()
 
 
 if __name__ == "__main__":

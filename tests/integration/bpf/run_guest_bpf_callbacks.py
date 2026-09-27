@@ -13,10 +13,8 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
 import pathlib
 import sys
-import zlib
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
@@ -26,21 +24,7 @@ from guest import Guest  # noqa: E402
 
 
 PROBE = pathlib.Path(__file__).with_name("bpf_callbacks_probe.py")
-CHUNK_CHARACTERS = 2048
 PROBE_TIMEOUT_SECONDS = 420
-
-
-def install_probe(guest: Guest) -> None:
-    encoded = base64.b64encode(zlib.compress(PROBE.read_bytes(), 9)).decode()
-    for offset in range(0, len(encoded), CHUNK_CHARACTERS):
-        chunk = encoded[offset : offset + CHUNK_CHARACTERS]
-        guest.check_command(f"printf '%s' '{chunk}' >> /tmp/probe.b64", 30)
-    guest.check_command(
-        "python3 -B -c 'import base64, zlib; "
-        'open("/tmp/probe.py", "wb").write(zlib.decompress('
-        'base64.b64decode(open("/tmp/probe.b64").read())))\'',
-        60,
-    )
 
 
 def main() -> int:
@@ -50,7 +34,7 @@ def main() -> int:
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     arguments = parser.parse_args()
 
-    guest = Guest(
+    with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         "1G",
@@ -58,14 +42,13 @@ def main() -> int:
         ("ncpus=4",),
         init_shell=True,
         engine=arguments.engine,
-    )
-    try:
+    ) as guest:
         guest.boot_to_shell(180)
         guest.check_command(
             "mount -t proc proc /proc && mount -t tmpfs -o mode=1777 tmpfs /tmp",
             20,
         )
-        install_probe(guest)
+        guest.upload(PROBE.read_bytes(), "/tmp/probe.py")
         result = guest.run_command("python3 -B /tmp/probe.py", PROBE_TIMEOUT_SECONDS)
         print(result.output.strip())
         if result.return_code != 0:
@@ -73,11 +56,6 @@ def main() -> int:
                 f"the BPF callback probe reported {result.return_code} failure(s)"
             )
         return 0
-    except BaseException:
-        print(guest.output()[-4000:], file=sys.stderr)
-        raise
-    finally:
-        guest.close()
 
 
 if __name__ == "__main__":

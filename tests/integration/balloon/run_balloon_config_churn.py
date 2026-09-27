@@ -102,13 +102,8 @@ def main() -> int:
             )
         finally:
             guest_end.close()
-        try:
+        with guest:
             churn(guest)
-        except BaseException:
-            print(guest.output()[-4000:], file=sys.stderr)
-            raise
-        finally:
-            guest.close()
         try:
             output, _ = server.communicate(timeout=SERVER_EXIT_SECONDS)
         except subprocess.TimeoutExpired as error:

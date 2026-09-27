@@ -76,15 +76,14 @@ def main() -> int:
         "taskset -c 1 python3 -c "
         f"\"import base64; exec(base64.b64decode('{reader}'))\" {LINES}"
     )
-    guest = Guest(
+    with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         "1G",
         "tmpfs",
         (f"ncpus={CPUS}",),
         init_shell=True,
-    )
-    try:
+    ) as guest:
         guest.boot_to_shell(180)
         for setup in ("mount -t proc proc /proc", "stty -echo"):
             guest.check_command(setup, 20)
@@ -113,11 +112,6 @@ def main() -> int:
                     "while two CPUs drained the serial line"
                 )
         return 0
-    except BaseException:
-        print(guest.output()[-4000:], file=sys.stderr)
-        raise
-    finally:
-        guest.close()
 
 
 if __name__ == "__main__":

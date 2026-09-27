@@ -34,7 +34,7 @@ def main() -> int:
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     arguments = parser.parse_args()
 
-    guest = Guest(
+    with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         "1G",
@@ -42,8 +42,7 @@ def main() -> int:
         ("ncpus=2",),
         init_shell=True,
         engine=arguments.engine,
-    )
-    try:
+    ) as guest:
         guest.boot_to_shell(180)
         guest.check_command("mount -t proc proc /proc", 20)
         # The dump goes to the kernel log only; the console would take minutes.
@@ -70,11 +69,6 @@ def main() -> int:
         if alive.return_code != 0 or "alive" not in alive.output:
             raise RuntimeError("the guest stopped answering after sysrq t")
         return 0
-    except BaseException:
-        print(guest.output()[-4000:], file=sys.stderr)
-        raise
-    finally:
-        guest.close()
 
 
 if __name__ == "__main__":

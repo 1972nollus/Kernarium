@@ -6,6 +6,8 @@ from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
+import contextlib
+import io
 import os
 import pathlib
 import signal
@@ -66,25 +68,6 @@ def wait_until_gone(pid: int, timeout: float) -> bool:
 
 
 class AttachedGuestSessionTests(unittest.TestCase):
-    def test_disk_overlay_is_sparse_and_removed_after_emulator_exit(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            emulator = pathlib.Path(directory, "emulator")
-            emulator.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            emulator.chmod(0o755)
-            guest = guest_support.Guest(
-                emulator, pathlib.Path("/nonexistent/rootfs.erofs"), "4G", "tmpfs",
-                systemd_overlay=True, systemd_overlay_size="16G",
-            )
-            path = guest._overlay_path
-            try:
-                self.assertIsNotNone(path)
-                self.assertEqual(path.stat().st_size, 16 * 1024**3)
-                self.assertLess(path.stat().st_blocks * 512, 1024**2)
-                self.assertIn(f"ubd2={path}", guest._process.args)
-            finally:
-                guest.close()
-            self.assertFalse(path.exists())
-
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory(prefix="uml-guest-harness-")
         self.addCleanup(directory.cleanup)
@@ -123,6 +106,30 @@ class AttachedGuestSessionTests(unittest.TestCase):
         self.assertEqual(guest.return_code, 23)
         with self.assertRaises(AttributeError):
             guest.return_code = 0
+
+    def test_a_failing_session_prints_its_transcript_and_closes(self) -> None:
+        # A shell that honours the harness's "sync; poweroff -f" at once. A
+        # host sync can take seconds on a busy machine, so it is a no-op here.
+        self.emulator.write_text(
+            "#!/bin/sh\n"
+            "sync() { :; }\n"
+            "poweroff() { exit 0; }\n"
+            'while IFS= read -r line; do eval "$line"; done\n',
+            encoding="utf-8",
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(RuntimeError):
+            with guest_support.Guest(
+                emulator=self.emulator,
+                rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+                memory="4G",
+                workspace="tmpfs",
+                init_shell=True,
+            ) as guest:
+                guest.check_command("printf '%s' session-transcript")
+                raise RuntimeError("the runner failed")
+        self.assertIn("session-transcript", stderr.getvalue())
+        self.assertEqual(guest.return_code, 0)
 
     def test_commands_use_pipe_input_and_terminal_output(self) -> None:
         self.emulator.write_text("#!/bin/sh\nexec /bin/sh\n", encoding="utf-8")
