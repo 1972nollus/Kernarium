@@ -14,7 +14,6 @@
 #include <limits>
 #include <memory>
 #include <span>
-#include <stdexcept>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -152,15 +151,10 @@ std::span<const Gadget> Program::replay_instructions() const noexcept
 
 Program::Program(ExecutionMode mode, std::uint64_t address,
 	std::size_t byte_count, std::span<const Gadget> gadgets,
-	std::span<const std::byte> source, ProgramLinkResolver links)
+	std::span<const std::byte> source, std::span<const std::uintptr_t> words)
 	: address_{normalize_instruction_pointer(mode, address)},
 	  byte_count_{byte_count}, mode_{mode}
 {
-	auto &words = native_scratch();
-	words.clear();
-	append_native_stream(words, gadgets,
-		advance_instruction_pointer(mode_, address_, byte_count_), mode_,
-		links);
 	const auto word_bytes = words.size() * sizeof(std::uintptr_t);
 	words_storage_ = std::make_unique_for_overwrite<std::byte[]>(word_bytes);
 	source_storage_ =
@@ -246,15 +240,35 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 		}
 		if (stream.empty())
 			return {BuildStatus::illegal_instruction, {}, address};
+		/* A gadget the bank has no form for ends the block before it, as a
+		 * decode failure does: the prefix retires, and dispatch reports the
+		 * refused instruction at its own address when it starts a block. */
+		auto &words = native_scratch();
+		for (;;) {
+			words.clear();
+			const auto refused = append_native_stream(words,
+				std::span<const Gadget>{stream},
+				advance_instruction_pointer(mode,
+					normalize_instruction_pointer(mode, address), bytes),
+				mode, links);
+			if (!refused)
+				break;
+			if (*refused == 0)
+				return {BuildStatus::illegal_instruction, {}, address};
+			stream.resize(*refused);
+			bytes = 0;
+			for (const auto &gadget : stream)
+				bytes += gadget.instruction.length;
+			source.resize(bytes);
+		}
 		/* The saved bytes are the block: one instruction's encoding after
 		 * another, ending where the block does. */
 		return {BuildStatus::built,
 			Program{mode, address, bytes,
 				std::span<const Gadget>{stream},
-				std::span<const std::byte>{source}, links},
+				std::span<const std::byte>{source},
+				std::span<const std::uintptr_t>{words}},
 			0};
-	} catch (const std::logic_error &) {
-		return {BuildStatus::illegal_instruction, {}, address};
 	} catch (...) {
 		return {BuildStatus::allocation_failure, {}, 0};
 	}

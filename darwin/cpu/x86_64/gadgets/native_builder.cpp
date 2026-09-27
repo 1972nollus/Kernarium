@@ -7065,9 +7065,9 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 
 } // namespace
 
-void append_native_stream(std::vector<std::uintptr_t> &stream,
-	std::span<const Gadget> gadgets, std::uint64_t final_rip,
-	ExecutionMode mode, ProgramLinkResolver links)
+std::optional<std::size_t> append_native_stream(
+	std::vector<std::uintptr_t> &stream, std::span<const Gadget> gadgets,
+	std::uint64_t final_rip, ExecutionMode mode, ProgramLinkResolver links)
 {
 	stream.reserve(stream.size() + gadgets.size() * 3U + 2U);
 	FlagState state{};
@@ -7075,8 +7075,7 @@ void append_native_stream(std::vector<std::uintptr_t> &stream,
 		FlagState produced{};
 		if (!append_native(stream, gadgets[index], mode, links, state,
 			index + 1U < gadgets.size(), produced))
-			throw std::logic_error{
-				"x86-64 operation has no native assembly gadget"};
+			return index;
 		state = produced;
 	}
 	/* Every gadget a terminal instruction selects leaves or follows a link
@@ -7085,7 +7084,7 @@ void append_native_stream(std::vector<std::uintptr_t> &stream,
 	 * fetch window cut short falls off its last instruction.
 	 */
 	if (!gadgets.empty() && gadgets.back().instruction.terminal())
-		return;
+		return std::nullopt;
 	const auto next = normalize_instruction_pointer(mode, final_rip);
 	const auto *link = !gadgets.empty() && links.resolve != nullptr ?
 		links.resolve(links.context, next, mode) : nullptr;
@@ -7093,10 +7092,11 @@ void append_native_stream(std::vector<std::uintptr_t> &stream,
 		stream.push_back(entry_address(
 			native::uml_x86_64_gadget_block_exit_linked));
 		stream.push_back(reinterpret_cast<std::uintptr_t>(link));
-		return;
+		return std::nullopt;
 	}
 	stream.push_back(entry_address(native::uml_x86_64_gadget_block_exit));
 	stream.push_back(next);
+	return std::nullopt;
 }
 
 std::vector<std::uintptr_t> build_native_stream(
@@ -7104,7 +7104,9 @@ std::vector<std::uintptr_t> build_native_stream(
 	ExecutionMode mode, ProgramLinkResolver links)
 {
 	std::vector<std::uintptr_t> stream;
-	append_native_stream(stream, gadgets, final_rip, mode, links);
+	if (append_native_stream(stream, gadgets, final_rip, mode, links))
+		throw std::logic_error{
+			"x86-64 operation has no native assembly gadget"};
 	return stream;
 }
 

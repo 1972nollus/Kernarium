@@ -130,12 +130,12 @@ public:
 	Program() = default;
 	/* `source` is the guest bytes the decoder read for `gadgets`, which is
 	 * what the block is validated against and what a budget-limited replay
-	 * decodes back out of. Every program carries its own, so it is named
-	 * rather than defaulted. */
+	 * decodes back out of, and `words` is the native stream built for
+	 * them. */
 	Program(ExecutionMode mode, std::uint64_t address, std::size_t byte_count,
 		std::span<const Gadget> gadgets,
 		std::span<const std::byte> source,
-		ProgramLinkResolver links = {});
+		std::span<const std::uintptr_t> words);
 
 	[[nodiscard]] ExecutionMode execution_mode() const noexcept { return mode_; }
 	[[nodiscard]] std::uint64_t address() const noexcept { return address_; }
