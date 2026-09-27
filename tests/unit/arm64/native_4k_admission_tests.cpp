@@ -2,7 +2,7 @@
 #include "uml/emulator.h"
 #include "domain_registry_testing.hpp"
 #include "native_window_test_support.hpp"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 #include "testing.hpp"
 #include "uml_darwin_abi.h"
 #include "uml_darwin_memory.h"
@@ -12,12 +12,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <fcntl.h>
 #include <memory>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <mutex>
 #include <stdexcept>
+#include <string_view>
 #include <sys/mman.h>
 #include <thread>
 #include <unistd.h>
@@ -26,52 +26,15 @@ namespace {
 
 using namespace std::chrono_literals;
 
+using uml::testing::ScratchBacking;
+
+constexpr std::string_view backing_name = "uml-native-admission-XXXXXX";
+
 void require(bool condition, const char *message)
 {
 	if (!condition)
 		throw std::runtime_error{message};
 }
-
-class TemporaryBacking final {
-public:
-	explicit TemporaryBacking(std::uint8_t value)
-	{
-		auto path = uml::testing::scratch_template(
-			"uml-native-admission-XXXXXX");
-		fd_ = mkstemp(path.data());
-		require(fd_ >= 0, "could not create native admission backing");
-		require(unlink(path.c_str()) == 0,
-			"could not unlink native admission backing");
-		require(ftruncate(fd_, DARWIN_UML_GUEST_PAGE_SIZE) == 0,
-			"could not size native admission backing");
-		require(pwrite(fd_, &value, sizeof(value), 0) ==
-				static_cast<ssize_t>(sizeof(value)),
-			"could not initialize native admission backing");
-	}
-
-	~TemporaryBacking()
-	{
-		if (fd_ >= 0)
-			close(fd_);
-	}
-
-	TemporaryBacking(const TemporaryBacking &) = delete;
-	TemporaryBacking &operator=(const TemporaryBacking &) = delete;
-
-	[[nodiscard]] int fd() const noexcept { return fd_; }
-
-	[[nodiscard]] std::uint8_t first_byte() const
-	{
-		std::uint8_t value{};
-		require(pread(fd_, &value, sizeof(value), 0) ==
-				static_cast<ssize_t>(sizeof(value)),
-			"could not read native admission backing");
-		return value;
-	}
-
-private:
-	int fd_{-1};
-};
 
 class NativeSlot final {
 public:
@@ -287,10 +250,12 @@ bool wait_for_admission(AdmissionState &state)
 
 void test_same_address_is_serialized_and_isolated(const NativeSlot &slot)
 {
-	TemporaryBacking backing_a{0x19};
-	TemporaryBacking backing_b{0xe3};
-	reset_state(state_a, slot.page(), backing_a.fd(), 0x19, 0x2a, true);
-	reset_state(state_b, slot.page(), backing_b.fd(), 0xe3, 0xf4, false);
+	ScratchBacking backing_a{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing_a.put_byte(0, std::byte{0x19});
+	ScratchBacking backing_b{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing_b.put_byte(0, std::byte{0xe3});
+	reset_state(state_a, slot.page(), backing_a.descriptor(), 0x19, 0x2a, true);
+	reset_state(state_b, slot.page(), backing_b.descriptor(), 0xe3, 0xf4, false);
 	auto handle_a = make_emulator(kernel_a, "/tmp/native-gate-a.img");
 	auto handle_b = make_emulator(kernel_b, "/tmp/native-gate-b.img");
 	const char *arguments[]{"native-4k-same-address"};
@@ -303,7 +268,7 @@ void test_same_address_is_serialized_and_isolated(const NativeSlot &slot)
 
 	AdmissionState admission;
 	admission.retiring_slot = &slot;
-	admission.retiring_fd = backing_a.fd();
+	admission.retiring_fd = backing_a.descriptor();
 	admission.retiring_value = 0x2a;
 	AdmissionHooks hooks{admission};
 	std::thread second{[&] {
@@ -327,8 +292,8 @@ void test_same_address_is_serialized_and_isolated(const NativeSlot &slot)
 	}
 	require(status_a == 0 && status_b == 0 && state_a.valid && state_b.valid,
 		"serialized same-address kernels observed crossed bytes or state");
-	require(backing_a.first_byte() == 0x2a &&
-		backing_b.first_byte() == 0xf4,
+	require(backing_a.get_byte(0) == std::byte{0x2a} &&
+		backing_b.get_byte(0) == std::byte{0xf4},
 		"serialized same-address kernels flushed the wrong backing");
 	require(uml::memory::testing::native_domain_count() == 0,
 		"same-address serialization retained a native MMU domain");
@@ -337,10 +302,12 @@ void test_same_address_is_serialized_and_isolated(const NativeSlot &slot)
 
 void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 {
-	TemporaryBacking backing_a{0x35};
-	TemporaryBacking backing_b{0xa6};
-	reset_state(state_a, slot.page(), backing_a.fd(), 0x35, 0x46, true);
-	reset_state(state_b, slot.page(), backing_b.fd(), 0xa6, 0xb7, false);
+	ScratchBacking backing_a{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing_a.put_byte(0, std::byte{0x35});
+	ScratchBacking backing_b{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing_b.put_byte(0, std::byte{0xa6});
+	reset_state(state_a, slot.page(), backing_a.descriptor(), 0x35, 0x46, true);
+	reset_state(state_b, slot.page(), backing_b.descriptor(), 0xa6, 0xb7, false);
 	auto handle_a = make_emulator(kernel_a, "/tmp/native-gate-stop-a.img");
 	auto handle_b = make_emulator(kernel_b, "/tmp/native-gate-stop-b.img");
 	const char *arguments[]{"native-4k-queued-stop"};
@@ -354,7 +321,7 @@ void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 
 	AdmissionState admission;
 	admission.retiring_slot = &slot;
-	admission.retiring_fd = backing_a.fd();
+	admission.retiring_fd = backing_a.descriptor();
 	admission.retiring_value = 0x46;
 	AdmissionHooks hooks{admission};
 	{
@@ -402,8 +369,8 @@ void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 	require(uml_emulator_run(handle_b.get(), 1, arguments, nullptr) == 0 &&
 		state_b.entered && state_b.valid,
 		"cancelled native handle could not retry with fresh state");
-	require(backing_a.first_byte() == 0x46 &&
-		backing_b.first_byte() == 0xb7,
+	require(backing_a.get_byte(0) == std::byte{0x46} &&
+		backing_b.get_byte(0) == std::byte{0xb7},
 		"queued stop or retry crossed native backing bytes");
 	require(uml::memory::testing::native_domain_count() == 0,
 		"queued stop or retry retained a native MMU domain");

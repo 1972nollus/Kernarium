@@ -4,6 +4,7 @@
  * and JIT engines in one process. tests/unit/arm64/corpus/README.md owns the
  * pack format, the state encoding, and the named validator relations.
  */
+#include "architecture_difference.hpp"
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/engine_execution.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
@@ -45,6 +46,7 @@
 namespace {
 
 namespace arm64 = ::uml::cpu::arm64;
+using ::uml::emulator::tests::first_architecture_difference;
 using ::uml::cpu::ArmFeatureSet;
 using ::uml::cpu::EngineKind;
 using ::uml::cpu::ExitReason;
@@ -569,88 +571,6 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
 /* ------------------------------------------------------------------------ */
 /* Architectural comparison and validator relations                         */
 
-[[nodiscard]] std::optional<std::string>
-compare_architecture(const arm64::CpuState &expected,
-                     const arm64::CpuState &actual) {
-  for (std::size_t index = 0; index < expected.registers.size(); ++index)
-    if (expected.registers[index] != actual.registers[index])
-      return "x" + std::to_string(index) + " expected " +
-             hex(expected.registers[index]) + " actual " +
-             hex(actual.registers[index]);
-  const auto scalar = [](std::string_view field, std::uint64_t want,
-                         std::uint64_t have) -> std::optional<std::string> {
-    if (want == have)
-      return std::nullopt;
-    return std::string{field} + " expected " + hex(want) + " actual " +
-           hex(have);
-  };
-  if (auto failure = scalar("sp", expected.sp, actual.sp))
-    return failure;
-  if (auto failure = scalar("pc", expected.pc, actual.pc))
-    return failure;
-  if (auto failure = scalar("nzcv", expected.nzcv, actual.nzcv))
-    return failure;
-  for (std::size_t index = 0; index < expected.vectors.size(); ++index)
-    for (std::size_t byte = 0; byte < 16U; ++byte)
-      if (expected.vectors[index].bytes[byte] !=
-          actual.vectors[index].bytes[byte])
-        return "v" + std::to_string(index) + "[" + std::to_string(byte) +
-               "] expected " +
-               hex(std::to_integer<unsigned>(
-                   expected.vectors[index].bytes[byte])) +
-               " actual " +
-               hex(std::to_integer<unsigned>(
-                   actual.vectors[index].bytes[byte]));
-  if (auto failure = scalar("fpcr", expected.fpcr, actual.fpcr))
-    return failure;
-  if (auto failure = scalar("fpsr", expected.fpsr, actual.fpsr))
-    return failure;
-  if (auto failure = scalar("fpmr", expected.fpmr, actual.fpmr))
-    return failure;
-  if (auto failure = scalar("tls", expected.tls, actual.tls))
-    return failure;
-  if (!(expected.mte_enabled == actual.mte_enabled &&
-        expected.tbi_enabled == actual.tbi_enabled &&
-        expected.mte_exclude == actual.mte_exclude &&
-        expected.mte_tag_choices == actual.mte_tag_choices &&
-        expected.mte_random_tags == actual.mte_random_tags &&
-        expected.mte_seed == actual.mte_seed &&
-        expected.mte_tag == actual.mte_tag &&
-        expected.mte_random_state == actual.mte_random_state))
-    return std::string{"tag state"};
-  if (!(expected.cpa_enabled == actual.cpa_enabled &&
-        expected.cpa_multiply_enabled == actual.cpa_multiply_enabled &&
-        expected.accdata == actual.accdata))
-    return std::string{"checked arithmetic state"};
-  if (!(expected.pstate_ssbs == actual.pstate_ssbs &&
-        expected.pstate_dit == actual.pstate_dit &&
-        expected.pstate_tco == actual.pstate_tco &&
-        expected.pstate_sm == actual.pstate_sm &&
-        expected.pstate_za == actual.pstate_za &&
-        expected.pstate_daif_access == actual.pstate_daif_access &&
-        expected.pstate_daif == actual.pstate_daif))
-    return std::string{"pstate"};
-  if (!(expected.exclusive_address == actual.exclusive_address &&
-        expected.exclusive_key == actual.exclusive_key &&
-        expected.exclusive_value == actual.exclusive_value &&
-        expected.exclusive_value2 == actual.exclusive_value2 &&
-        expected.exclusive_version == actual.exclusive_version &&
-        expected.exclusive_size == actual.exclusive_size))
-    return std::string{"exclusive monitor"};
-  if (!(expected.gcs_pointer == actual.gcs_pointer &&
-        expected.gcs_implemented == actual.gcs_implemented &&
-        expected.gcs_push_enabled == actual.gcs_push_enabled &&
-        expected.gcs_store_enabled == actual.gcs_store_enabled))
-    return "guarded control stack (pointer expected " +
-           hex(expected.gcs_pointer) + " actual " + hex(actual.gcs_pointer) +
-           ")";
-  if (!(expected.pointer_auth_keys == actual.pointer_auth_keys &&
-        expected.pointer_authentication_enabled ==
-            actual.pointer_authentication_enabled))
-    return std::string{"pointer-authentication state"};
-  return std::nullopt;
-}
-
 struct RelationInput final {
   /* Initial and expected states are normalized exactly like the actual one. */
   const arm64::CpuState &initial;
@@ -708,7 +628,7 @@ std::optional<std::string> exclusive_store_failure(const RelationInput &in) {
   normalized.exclusive_value = in.expected.exclusive_value;
   normalized.exclusive_value2 = in.expected.exclusive_value2;
   normalized.exclusive_version = in.expected.exclusive_version;
-  return compare_architecture(in.expected, normalized);
+  return first_architecture_difference(in.expected, normalized);
 }
 
 /* IRG: the address bits are preserved and the tag is one permitted choice. */
@@ -737,7 +657,7 @@ std::optional<std::string> tag_generator_choice(const RelationInput &in) {
   expected.pc = in.expected.pc;
   write_register(expected, destination, result, true);
   expected.mte_random_state = in.actual.mte_random_state;
-  return compare_architecture(expected, in.actual);
+  return first_architecture_difference(expected, in.actual);
 }
 
 /* PAC*, AUT*, and their HINT aliases: the retained pointer bits follow the
@@ -768,7 +688,7 @@ std::optional<std::string> transformed_code(const RelationInput &in) {
              " does not retain " + hex(before);
     expected.registers[destination] = after;
   }
-  return compare_architecture(expected, in.actual);
+  return first_architecture_difference(expected, in.actual);
 }
 
 /* PACGA: the low half of the generic code is zero. */
@@ -782,7 +702,7 @@ std::optional<std::string> transformed_generic(const RelationInput &in) {
              " has a non-zero low half";
     expected.registers[destination] = in.actual.registers[destination];
   }
-  return compare_architecture(expected, in.actual);
+  return first_architecture_difference(expected, in.actual);
 }
 
 /* A failed authenticated branch or return faults at a transformed target.
@@ -819,7 +739,7 @@ std::optional<std::string> transformed_branch_failure(const RelationInput &in) {
     if ((word & 0x0020'0000U) != 0U)
       expected.registers[30] = code_base + in.program.entry + 4U;
   }
-  return compare_architecture(expected, in.actual);
+  return first_architecture_difference(expected, in.actual);
 }
 
 /* A guarded call with a zero target faults after its link and stack update. */
@@ -828,7 +748,7 @@ std::optional<std::string> guarded_zero_target(const RelationInput &in) {
     return "failed target " + hex(in.actual.pc) + " is not a zero address";
   auto expected = in.expected;
   expected.pc = in.actual.pc;
-  return compare_architecture(expected, in.actual);
+  return first_architecture_difference(expected, in.actual);
 }
 
 /* A guarded call whose record store faults leaves only the signed target
@@ -844,7 +764,7 @@ std::optional<std::string> guarded_call_fault(const RelationInput &in) {
   auto expected = in.initial;
   expected.pc = in.expected.pc;
   expected.registers[target] = in.actual.registers[target];
-  return compare_architecture(expected, in.actual);
+  return first_architecture_difference(expected, in.actual);
 }
 
 /* A guarded return that faults leaves only the signed link register
@@ -856,7 +776,7 @@ std::optional<std::string> guarded_return_fault(const RelationInput &in) {
   auto expected = in.initial;
   expected.pc = in.expected.pc;
   expected.registers[30] = in.actual.registers[30];
-  return compare_architecture(expected, in.actual);
+  return first_architecture_difference(expected, in.actual);
 }
 
 /* An authenticated load through a signed base faults with only that base
@@ -871,7 +791,7 @@ std::optional<std::string> transformed_address_fault(const RelationInput &in) {
   auto expected = in.initial;
   expected.pc = in.expected.pc;
   expected.registers[base] = in.actual.registers[base];
-  return compare_architecture(expected, in.actual);
+  return first_architecture_difference(expected, in.actual);
 }
 
 /* A system-register read of the host counter is excluded from equality. */
@@ -882,7 +802,7 @@ std::optional<std::string> ignore_counter_register(const RelationInput &in) {
     if ((word.word & 0xfff0'0000U) == 0xd530'0000U && destination != 31U)
       expected.registers[destination] = in.actual.registers[destination];
   }
-  return compare_architecture(expected, in.actual);
+  return first_architecture_difference(expected, in.actual);
 }
 
 [[nodiscard]] Relation relation_for(std::string_view name) {
@@ -1621,7 +1541,7 @@ private:
     compared_actual.access_fp_state();
     const auto state_failure =
         test_case.validator == no_validator
-            ? compare_architecture(compared_expected, compared_actual)
+            ? first_architecture_difference(compared_expected, compared_actual)
             : corpus_.relations[test_case.validator](
                   {.initial = compared_initial,
                    .expected = compared_expected,

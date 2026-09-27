@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "../cpu_state.hpp"
+#include "software_helpers.hpp"
 
 #include "../detail/instruction_primitives.hpp"
 
@@ -11,6 +12,8 @@
 #include <span>
 
 namespace uml::cpu::arm64 {
+
+using gadgets::vector_at;
 
 namespace {
 
@@ -277,12 +280,8 @@ void execute_aes_software_direct(
 	CpuState *cpu, std::uintptr_t destination_offset,
 	std::uintptr_t source_offset) noexcept
 {
-	auto *bytes = reinterpret_cast<std::byte *>(cpu);
-	auto *destination =
-		reinterpret_cast<VectorRegister *>(bytes + destination_offset);
-	const auto *source =
-		reinterpret_cast<const VectorRegister *>(bytes + source_offset);
-	execute_aes_software<operation>(*destination, *source);
+	execute_aes_software<operation>(vector_at(cpu, destination_offset),
+		vector_at(cpu, source_offset));
 }
 
 extern "C" void uml_arm64_simd_aese_software(
@@ -341,12 +340,6 @@ void uml_arm64_simd_pmull_software(
 }
 
 namespace {
-
-[[nodiscard]] VectorRegister &vector_at(CpuState *cpu,
-                                        std::uintptr_t offset) noexcept {
-  return *reinterpret_cast<VectorRegister *>(
-      reinterpret_cast<std::byte *>(cpu) + offset);
-}
 
 template <unsigned operation>
 void execute_sha12_three_software(CpuState *cpu,

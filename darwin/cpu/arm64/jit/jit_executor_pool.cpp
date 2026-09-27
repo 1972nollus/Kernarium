@@ -20,21 +20,6 @@
 namespace uml::cpu::arm64 {
 namespace {
 
-[[nodiscard]] bool same_capabilities(
-    const ::uml::cpu::HostCapabilities &first,
-    const ::uml::cpu::HostCapabilities &second) noexcept {
-  return first.supported == second.supported &&
-         first.floating_point == second.floating_point &&
-         first.advanced_simd == second.advanced_simd &&
-         first.fp16 == second.fp16 && first.cssc == second.cssc &&
-         first.aes == second.aes && first.pmull == second.pmull &&
-         first.sha1 == second.sha1 && first.sha2 == second.sha2 &&
-         first.crc32 == second.crc32 && first.sha3 == second.sha3 &&
-         first.sha512 == second.sha512 && first.afp == second.afp &&
-         first.jscvt_subnormal_flags_correct ==
-             second.jscvt_subnormal_flags_correct;
-}
-
 [[nodiscard]] bool same_configuration(
     const JitExecutorOptions &first,
     const JitExecutorOptions &second) noexcept {
@@ -42,8 +27,7 @@ namespace {
              second.enable_guarded_control_flow &&
          first.enable_pointer_authentication ==
              second.enable_pointer_authentication &&
-         same_capabilities(first.host_capabilities,
-                           second.host_capabilities);
+         first.host_capabilities == second.host_capabilities;
 }
 
 [[nodiscard]] constexpr std::uint64_t bit_for(unsigned slot) noexcept {

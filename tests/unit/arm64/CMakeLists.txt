@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-if(UML_BUILD_UNIT_TESTS)
-    # ARM64 white-box tests compose the MMU OBJECT carriers directly. Carry
-    # the shared-backing archive that MappedBacking references so those raw
-    # compositions retain the production memory component's link contract.
-    link_libraries(UML::MemorySharedBacking)
-endif()
+# ARM64 white-box tests compose the MMU OBJECT carriers directly. Carry the
+# shared-backing archive that MappedBacking references so those raw
+# compositions retain the production memory component's link contract.
+link_libraries(UML::MemorySharedBacking)
 
-if(UML_BUILD_UNIT_TESTS AND NOT UML_GUEST_16K_PAGES)
+if(NOT UML_GUEST_16K_PAGES)
     add_executable(uml_native_mmu_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_mmu_tests.cpp
         $<TARGET_OBJECTS:uml_native_mmu_test_variant>
@@ -46,7 +44,7 @@ if(UML_BUILD_UNIT_TESTS AND NOT UML_GUEST_16K_PAGES)
 		LABELS tsan)
 endif()
 
-if(UML_BUILD_UNIT_TESTS AND UML_GUEST_16K_PAGES AND UML_TARGET_MACOS)
+if(UML_GUEST_16K_PAGES AND UML_TARGET_MACOS)
 	add_executable(uml_native_16k_ownership_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_16k_ownership_tests.cpp)
 	target_link_libraries(uml_native_16k_ownership_tests PRIVATE
@@ -63,29 +61,47 @@ if(UML_BUILD_UNIT_TESTS AND UML_GUEST_16K_PAGES AND UML_TARGET_MACOS)
 		LABELS tsan)
 endif()
 
-if(UML_BUILD_UNIT_TESTS)
-    include("${CMAKE_CURRENT_LIST_DIR}/engine.cmake")
-    include("${CMAKE_CURRENT_LIST_DIR}/base.cmake")
-    include("${CMAKE_CURRENT_LIST_DIR}/memory.cmake")
-    include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-a.cmake")
-    include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-b.cmake")
-    include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-c.cmake")
-endif()
-
-get_property(_uml_unit_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-set(_uml_unit_binary_targets)
-foreach(_target IN LISTS _uml_unit_targets)
-    if(_target MATCHES "_tests$")
-        list(APPEND _uml_unit_binary_targets "${_target}")
-        # TARGET_OBJECTS deliberately bypasses an object's usage requirements.
-        # Direct MMU test consumers still need its shared-backing library.
-        get_target_property(_uml_test_sources "${_target}" SOURCES)
-        if("$<TARGET_OBJECTS:uml_static_mmu>" IN_LIST _uml_test_sources OR
-           "$<TARGET_OBJECTS:uml_static_mmu_test_variant>" IN_LIST _uml_test_sources)
-            target_link_libraries("${_target}" PRIVATE UML::MemorySharedBacking)
-        endif()
+# uml_add_arm64_unit_test(<stem> [NAME <test>] [WITHOUT_HARNESS]
+#     [SOURCES <sources>...] [OBJECTS <sources>...] [LABELS <labels>...])
+#
+# Builds uml_arm64_<stem>_tests from arm64_<stem>_tests.cpp and any SOURCES,
+# composed with the static MMU and gadget engine objects (or OBJECTS instead)
+# and linked to the engine test harness unless WITHOUT_HARNESS, then registers
+# it as arm64-<stem with dashes>, or as NAME.
+function(uml_add_arm64_unit_test STEM)
+    cmake_parse_arguments(PARSE_ARGV 1 _arm64_test "WITHOUT_HARNESS" "NAME"
+        "SOURCES;OBJECTS;LABELS")
+    set(_target uml_arm64_${STEM}_tests)
+    if(NOT DEFINED _arm64_test_OBJECTS)
+        set(_arm64_test_OBJECTS
+            $<TARGET_OBJECTS:uml_static_mmu>
+            $<TARGET_OBJECTS:uml_arm64_gadgets>
+            $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     endif()
-endforeach()
-if(_uml_unit_binary_targets)
-    add_dependencies(unit-test-binaries ${_uml_unit_binary_targets})
-endif()
+    add_executable(${_target}
+        ${CMAKE_CURRENT_SOURCE_DIR}/arm64_${STEM}_tests.cpp
+        ${_arm64_test_SOURCES}
+        ${_arm64_test_OBJECTS})
+    target_include_directories(${_target} PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_options(${_target} PRIVATE -Wall -Wextra -Werror)
+    if(NOT _arm64_test_WITHOUT_HARNESS)
+        target_link_libraries(${_target} PRIVATE uml_arm64_engine_test_support)
+    endif()
+    if(NOT DEFINED _arm64_test_NAME)
+        string(REPLACE "_" "-" _arm64_test_NAME "arm64-${STEM}")
+    endif()
+    set(_labels)
+    if(DEFINED _arm64_test_LABELS)
+        set(_labels LABELS ${_arm64_test_LABELS})
+    endif()
+    uml_add_unit_test(NAME ${_arm64_test_NAME} COMMAND ${_target} ${_labels})
+endfunction()
+
+include("${CMAKE_CURRENT_LIST_DIR}/engine.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/base.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/memory.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-a.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-b.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-c.cmake")

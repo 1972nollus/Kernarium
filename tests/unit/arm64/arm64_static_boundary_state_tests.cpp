@@ -3,7 +3,8 @@
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
 #include "runtime/execution_engine.hpp"
-#include "scratch_directory.hpp"
+#include "jit_test_support.hpp"
+#include "scratch_backing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -11,12 +12,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <source_location>
-#include <sys/mman.h>
-#include <unistd.h>
+#include <string_view>
 
 namespace {
+
+using uml::emulator::tests::JitMapping;
+using uml::testing::ScratchBacking;
+
+constexpr std::string_view backing_name = "uml-static-boundary.XXXXXX";
 
 void require(bool condition,
 	const std::source_location location = std::source_location::current())
@@ -27,83 +31,6 @@ void require(bool condition,
 		std::abort();
 	}
 }
-
-class TemporaryBacking final {
-public:
-	TemporaryBacking()
-	{
-		auto path = uml::testing::scratch_template(
-			"uml-static-boundary.XXXXXX");
-		descriptor_ = mkstemp(path.data());
-		require(descriptor_ >= 0);
-		require(unlink(path.c_str()) == 0);
-		require(ftruncate(descriptor_, DARWIN_UML_GUEST_PAGE_SIZE) == 0);
-	}
-
-	TemporaryBacking(const TemporaryBacking &) = delete;
-	TemporaryBacking &operator=(const TemporaryBacking &) = delete;
-
-	~TemporaryBacking()
-	{
-		if (descriptor_ >= 0)
-			close(descriptor_);
-	}
-
-	void put32(std::size_t offset, std::uint32_t value)
-	{
-		put(offset, value);
-	}
-
-	void put64(std::size_t offset, std::uint64_t value)
-	{
-		put(offset, value);
-	}
-
-	[[nodiscard]] std::uint64_t get64(std::size_t offset) const
-	{
-		std::uint64_t value{};
-		require(pread(descriptor_, &value, sizeof(value), offset) ==
-			static_cast<ssize_t>(sizeof(value)));
-		return value;
-	}
-
-	[[nodiscard]] int descriptor() const noexcept { return descriptor_; }
-
-private:
-	template<typename Value>
-	void put(std::size_t offset, Value value)
-	{
-		require(pwrite(descriptor_, &value, sizeof(value), offset) ==
-			static_cast<ssize_t>(sizeof(value)));
-	}
-
-	int descriptor_{-1};
-};
-
-class Mapping final {
-public:
-	Mapping(unsigned long generation, std::uint64_t base,
-		TemporaryBacking &backing)
-		: generation_{generation}
-	{
-		require(darwin_uml_static_vm_activate(generation) == 0);
-		require(darwin_uml_static_vm_map(
-			reinterpret_cast<void *>(base), backing.descriptor(), 0,
-			DARWIN_UML_GUEST_PAGE_SIZE,
-			PROT_READ | PROT_WRITE | PROT_EXEC, 1, 1) == 0);
-	}
-
-	Mapping(const Mapping &) = delete;
-	Mapping &operator=(const Mapping &) = delete;
-
-	~Mapping()
-	{
-		require(darwin_uml_static_vm_destroy(generation_) == 0);
-	}
-
-private:
-	unsigned long generation_;
-};
 
 [[nodiscard]] constexpr std::uint32_t pstate(
 	unsigned immediate, unsigned op2)
@@ -136,12 +63,12 @@ void fpmr_survives_boundary()
 	constexpr std::uint64_t base = 0x50'0000;
 	constexpr std::uint64_t source = 0xffff'ffff'ffff'ffffULL;
 	constexpr std::uint64_t expected = 0x0000'003f'ff7f'c1ffULL;
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, 0xd51b'4440U);  // msr fpmr, x0
 	backing.put32(4, 0xd400'0001U);  // svc #0
 	backing.put32(8, 0xd53b'4441U);  // mrs x1, fpmr
 	backing.put32(12, 0xd400'0001U); // svc #0
-	Mapping mapping{generation, base, backing};
+	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
 	darwin_uml_guest_fp_registers fp{};
 	registers.pc = base;
@@ -159,7 +86,7 @@ void pstate_and_svcr_survive_boundary()
 {
 	constexpr unsigned long generation = 201;
 	constexpr std::uint64_t base = 0x51'0000;
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, pstate(1, 1));  // msr ssbs, #1
 	backing.put32(4, pstate(1, 2));  // msr dit, #1
 	backing.put32(8, pstate(1, 4));  // msr tco, #1
@@ -167,7 +94,7 @@ void pstate_and_svcr_survive_boundary()
 	backing.put32(16, 0xd400'0001U); // svc #0
 	backing.put32(20, pstate(0, 1)); // msr ssbs, #0
 	backing.put32(24, 0xd400'0001U); // svc #0
-	Mapping mapping{generation, base, backing};
+	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
 	darwin_uml_guest_fp_registers fp{};
 	registers.pc = base;
@@ -190,13 +117,13 @@ void exclusive_monitor_is_cleared_at_boundary()
 	constexpr std::uint64_t data = base + 0x800;
 	constexpr std::uint64_t original = 0x1122'3344'5566'7788ULL;
 	constexpr std::uint64_t replacement = 0x8877'6655'4433'2211ULL;
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, 0xc85f'7c22U);  // ldxr x2, [x1]
 	backing.put32(4, 0xd400'0001U);  // svc #0
 	backing.put32(8, 0xc805'fc23U);  // stlxr w5, x3, [x1]
 	backing.put32(12, 0xd400'0001U); // svc #0
 	backing.put64(0x800, original);
-	Mapping mapping{generation, base, backing};
+	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
 	darwin_uml_guest_fp_registers fp{};
 	registers.pc = base;
@@ -214,11 +141,11 @@ void deferred_fp_source_is_refreshed_at_boundary()
 {
 	constexpr unsigned long generation = 203;
 	constexpr std::uint64_t base = 0x53'0000;
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, 0x4f00'041fU); // movi v31.4s, #0
 	backing.put32(4, 0xd400'0001U); // svc #0
 	backing.put32(8, 0xd400'0001U); // svc #0
-	Mapping mapping{generation, base, backing};
+	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
 	darwin_uml_guest_fp_registers fp{};
 	registers.pc = base;
@@ -239,11 +166,11 @@ void deferred_fp_source_is_materialized_on_linked_target()
 	constexpr std::uint64_t base = 0x54'0000;
 	constexpr std::uint64_t first_value = 0x0123'4567'89ab'cdefULL;
 	constexpr std::uint64_t second_value = 0xfedc'ba98'7654'3210ULL;
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, 0x1400'0004U);  // b base + 16
 	backing.put32(16, 0x9e66'0000U); // fmov x0, d0
 	backing.put32(20, 0xd400'0001U); // svc #0
-	Mapping mapping{generation, base, backing};
+	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
 	darwin_uml_guest_fp_registers fp{};
 
@@ -276,7 +203,8 @@ void guest_keys_survive_every_engine_boundary()
 		require(uml::runtime::execution_engine_available(
 			uml::runtime::ExecutionEngine::jit));
 		for (const auto engine : engines) {
-			TemporaryBacking backing;
+			ScratchBacking backing{
+				backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 			/*
 			 * The production profile deliberately does not advertise
 			 * pointer authentication. Dedicated feature-enabled engine
@@ -288,7 +216,7 @@ void guest_keys_survive_every_engine_boundary()
 			backing.put32(4, 0xd400'0001U);  // svc #0
 			backing.put32(8, 0xd280'0043U);  // movz x3, #2
 			backing.put32(12, 0xd400'0001U); // svc #0
-		Mapping mapping{engine.generation, engine.base, backing};
+		JitMapping mapping{engine.generation, engine.base, backing, 1};
 		darwin_uml_guest_registers registers{};
 		darwin_uml_guest_fp_registers fp{};
 		constexpr std::uint64_t pointer = 0x0000'1234'5678'9abcULL;

@@ -173,7 +173,6 @@ void catalog()
 	std::set<std::uintptr_t> entries;
 	std::size_t variants{};
 	for (const auto &contract : g::scalar_contracts()) {
-		require(contract.family < g::scalar_family_names.size());
 		require(contract.operand_words >= 1 && contract.operand_words <= 3);
 		require(contract.reserved == 0 && entries.insert(contract.entries[0]).second);
 		[[maybe_unused]] unsigned available{};

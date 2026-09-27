@@ -5,6 +5,7 @@
 #include "cpu/arm64/detail/atomic_floating.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/pointer_auth.hpp"
+#include "cpu/arm64/detail/read_check_write.hpp"
 
 #include <algorithm>
 #include <array>
@@ -561,16 +562,13 @@ RunResult load_store_rcw(CpuState &cpu, GuestMemory &memory,
 	std::uint32_t instruction)
 {
 	const auto pc = cpu.pc;
-	const bool compare_swap =
-		(instruction & 0xbf20'fc00U) == 0x1920'0800U;
-	const bool modify =
-		(instruction & 0xbf20'8c00U) == 0x3820'8000U;
-	const unsigned encoded_operation = (instruction >> 12) & 7U;
-	if ((!compare_swap && !modify) ||
-	    (modify && (encoded_operation < 1U || encoded_operation > 3U)))
+	const auto decoded = detail::decode_read_check_write(instruction);
+	if (!decoded.recognized || decoded.pair)
 		return {StopReason::illegal_instruction, pc, instruction, 0, false};
+	const bool compare_swap = decoded.compare_swap;
+	const unsigned encoded_operation = decoded.operation;
 
-	const bool soft = (instruction & 0x4000'0000U) != 0;
+	const bool soft = decoded.soft != 0U;
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const auto tagged_address = cpu.read_register(base_register, true);
 	const auto address = cpu.untag_data_address(
@@ -608,12 +606,11 @@ RunResult load_store_rcw_pair(CpuState &cpu,
 	GuestMemory &memory, std::uint32_t instruction)
 {
 	const auto pc = cpu.pc;
-	const bool compare_swap =
-		(instruction & 0xbf20'fc00U) == 0x1920'0c00U;
-	const bool modify =
-		(instruction & 0xbf20'8c00U) == 0x1920'8000U;
-	const unsigned encoded_operation = (instruction >> 12) & 7U;
-	if ((!compare_swap && !modify) ||
+	const auto decoded = detail::decode_read_check_write(instruction);
+	const bool compare_swap = decoded.compare_swap;
+	const bool modify = !compare_swap;
+	const unsigned encoded_operation = decoded.operation;
+	if (!decoded.recognized || !decoded.pair ||
 	    (modify && (encoded_operation < 1U || encoded_operation > 3U)))
 		return {StopReason::illegal_instruction, pc, instruction, 0, false};
 

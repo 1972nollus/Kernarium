@@ -74,6 +74,11 @@ public:
 		std::span<std::byte> destination) override
 	{
 		++fetches_;
+		if (fetches_fail_) {
+			fault_ = {address, uml::memory::MemoryAccess::execute};
+			faulted_ = true;
+			return false;
+		}
 		if (!read(address, destination)) {
 			fault_.access = uml::memory::MemoryAccess::execute;
 			return false;
@@ -213,6 +218,9 @@ public:
 	{
 		code_stamps_available_ = available;
 	}
+	/* An instruction fetch that faults everywhere, as one does after the
+	 * block's page was unmapped. */
+	void set_fetches_fail(bool fail) noexcept { fetches_fail_ = fail; }
 	[[nodiscard]] std::size_t code_stamp_queries() const noexcept
 	{
 		return code_stamp_queries_;
@@ -295,6 +303,7 @@ private:
 	std::size_t invalidations_{};
 	std::atomic<std::size_t> atomic_pointers_{};
 	bool atomic_pointer_available_{true};
+	bool fetches_fail_{};
 	std::atomic<std::size_t> executable_queries_{};
 	std::size_t code_stamp_queries_{};
 	std::vector<std::uint64_t> code_stamp_versions_;
@@ -493,6 +502,61 @@ read_moving_code_sequences(void *opaque) noexcept
 			after.validation_mismatches - before.validation_mismatches ==
 				sizes.size(),
 		"inline source comparison diagnostics are incomplete");
+}
+
+/* Revalidation abandons a block whose source it cannot read, and a check it
+ * made while the address space's mappings moved; each outcome is counted. */
+[[nodiscard]] bool cache_counts_validation_faults_and_races()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xb8, 0x01, 0x00, 0x00, 0x00,
+		0x0f, 0x05,
+	});
+	TestCodeSequences sequences;
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, sequences.mapping_changes, 1, &sequences,
+		read_test_code_sequences);
+	const auto cold = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(cold.status == gadgets::BuildStatus::built &&
+			!cold.cache_hit,
+		"validation-outcome source did not populate the cache"))
+		return false;
+	const auto before = executor.cache_diagnostics();
+
+	/* The page stamps still match, but the mapping sequence the reader
+	 * reports is not the one the executor was prepared for. */
+	++sequences.mapping_changes;
+	executor.prepare(memory, 42, 1, 2, &sequences,
+		read_test_code_sequences);
+	const auto raced = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	const auto races = executor.cache_diagnostics().validation_sequence_races -
+		before.validation_sequence_races;
+	if (!expect(raced.status == gadgets::BuildStatus::built &&
+			!raced.cache_hit && races == 1,
+		"a moving mapping did not abandon and count the validation"))
+		return false;
+
+	/* Without stamps or a direct mapping, validation fetches the source,
+	 * and the fetch faults. */
+	executor.prepare(memory, 42, sequences.mapping_changes, 3, &sequences,
+		read_test_code_sequences);
+	memory.set_code_stamps_available(false);
+	memory.set_atomic_pointer_available(false);
+	memory.set_fetches_fail(true);
+	const auto faulted = executor.select_program(
+		memory, 0, ExecutionMode::long64);
+	memory.set_fetches_fail(false);
+	memory.set_atomic_pointer_available(true);
+	memory.set_code_stamps_available(true);
+	const auto faults = executor.cache_diagnostics().validation_faults -
+		before.validation_faults;
+	return expect(faulted.status == gadgets::BuildStatus::fetch_fault &&
+			faults == 1,
+		"an unreadable cached source was not counted as a fault");
 }
 
 [[nodiscard]] bool cache_rejects_unrelated_code_pages_by_stamp()
@@ -6240,6 +6304,7 @@ int main()
 	const bool passed = decode_scaled_address() &&
 		cache_reuses_and_revalidates_programs() &&
 		cache_validates_inline_source_spans() &&
+		cache_counts_validation_faults_and_races() &&
 		cache_rejects_unrelated_code_pages_by_stamp() &&
 		a_moving_code_sequence_keeps_unchanged_programs() &&
 		slow_executable_writes_publish_every_code_page() &&

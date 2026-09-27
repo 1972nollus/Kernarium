@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Host issue-ratio measurement (plan item B-7).
+ * Host issue-ratio measurement.
  *
  * The most transferable result in the RPCS3 talk came from reading the
  * microarchitecture rather than guessing at it: Cortex-A7xx mid-cores issue
  * three 128-bit loads per clock but only two vector operations, which is
  * backwards from every x86 core and inverts what "expensive" means in a hot
  * loop. That number is not ours to reuse. This measures the equivalent ratios
- * on the cores we actually run on, so G-1, G-3, G-5 and B-5 can argue from a
- * model instead of from trial and error.
+ * on the cores we actually run on, so lowering choices can argue from a model
+ * instead of from trial and error.
  *
  * Everything is reported in operations per cycle, and the cycle is measured
  * rather than assumed: a dependent chain of ADDs retires exactly one per cycle
@@ -22,11 +22,9 @@
  * one 4 KiB page so loads hit L1 and measure the load units rather than the
  * memory system.
  *
- * Build:
- *   c++ -O2 -o host_issue_ratio tests/perf/host_issue_ratio.cpp
- * Run:
- *   ./host_issue_ratio                     # performance cores
- *   taskpolicy -c background ./host_issue_ratio   # efficiency cores
+ * Build the uml-host-issue-ratio target, then run it once per core class:
+ *   bin/uml-host-issue-ratio                            # performance cores
+ *   taskpolicy -c background bin/uml-host-issue-ratio   # efficiency cores
  */
 
 #include <pthread.h>

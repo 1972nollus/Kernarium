@@ -108,38 +108,27 @@ JitBlockLinkTable::~JitBlockLinkTable() {
   deallocate_records(records_);
 }
 
+/* Publishing the bucket before the record's link is safe because one
+ * executor is used by only one host thread at a time. */
 JitBlockLink *JitBlockLinkTable::find_or_create(
     std::uint64_t pc, unsigned long generation) noexcept {
-  if (auto *existing = find(pc, generation); existing != nullptr)
-    return existing;
+  if (index_capacity_ == 0)
+    return nullptr;
+  const auto slot = hash_link_key(pc ^ generation, index_capacity_ - 1U);
+  auto *previous = index_[slot];
+  for (auto *link = previous; link != nullptr; link = link->next_target)
+    if (link->guest_pc == pc && link->generation == generation)
+      return link;
   if (size_ >= capacity_)
     return nullptr;
   auto *record = std::construct_at(
       records_ + owned_size_,
       JitBlockLink{.guest_pc = pc, .generation = generation});
-  const auto insertion = insert(*record);
-  record->next_target = insertion.previous;
+  index_[slot] = record;
+  ++size_;
+  record->next_target = previous;
   ++owned_size_;
   return record;
-}
-
-JitBlockLinkTable::Insertion
-JitBlockLinkTable::insert(JitBlockLink &record) noexcept {
-  if (index_capacity_ == 0)
-    return {};
-  const auto mask = index_capacity_ - 1U;
-  const auto slot = hash_link_key(record.guest_pc ^ record.generation, mask);
-  auto *previous = index_[slot];
-  for (auto *link = previous; link != nullptr;
-       link = link->next_target)
-    if (link->guest_pc == record.guest_pc &&
-        link->generation == record.generation)
-      return {.previous = link, .inserted = false};
-  if (size_ >= capacity_)
-    return {};
-  index_[slot] = &record;
-  ++size_;
-  return {.previous = previous, .inserted = true};
 }
 
 JitBlockLink *JitBlockLinkTable::find(

@@ -60,7 +60,7 @@ namespace uml::cpu::arm64 {
    * JIT form; it merely limits the boundary to one guest instruction so a
    * register-only FP/SIMD operation can be committed transactionally.
    */
-  const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
+  const auto guest_fpcr = cpu.effective_fpcr();
   if (single_step_ ||
       arm64::detail::enabled_exception_flags(guest_fpcr) != 0U) {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -267,10 +267,7 @@ namespace uml::cpu::arm64 {
       jit::semantic::invalidate_store_ranges(
           std::span<const JitStoreRange>{tracked_store_ranges_}.first(
               block->instruction_count));
-    const auto current_executed =
-        static_cast<std::size_t>(result >> 32);
-    const auto event =
-        static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU));
+    const auto [event, current_executed] = unpack_jit_result(result);
     deferred_exclusive = chain.deferred_exclusive_instruction;
     executed = maximum_chain_instructions -
                    static_cast<std::size_t>(chain.remaining_instructions) +
@@ -376,7 +373,7 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
   if (!fetch_instruction(memory, cpu.pc, instruction))
     return Event::memory_fault;
 
-  const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
+  const auto guest_fpcr = cpu.effective_fpcr();
   if (!arm64::detail::needs_floating_exception_transaction(guest_fpcr,
                                                            instruction))
     return run_single_instruction(cpu, instruction, executed);
@@ -506,10 +503,10 @@ JitExecutor::Implementation::translate_single_instruction(
   if (tracked_stores)
     jit::semantic::invalidate_store_ranges(
         std::span<const JitStoreRange>{tracked_store_ranges_}.first(1U));
-  executed = static_cast<std::size_t>(result >> 32U);
+  const auto unpacked = unpack_jit_result(result);
+  executed = unpacked.retired;
   deferred_exclusive = chain.deferred_exclusive_instruction;
-  const auto event =
-      static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU));
+  const auto event = unpacked.event;
   if (event == Event::memory_fault)
     tlb_.discard(tlb_.fault_address);
   return event;
@@ -592,9 +589,8 @@ JitExecutor::Implementation::run_deferred_exclusive_instruction(
     CpuState &cpu, std::uint32_t instruction, std::size_t &executed) {
   const auto result =
       uml_arm64_jit_execute_exclusive(&cpu, &tlb_, instruction);
-  executed = static_cast<std::size_t>(result >> 32U);
-  const auto event =
-      static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU));
+  const auto [event, retired] = unpack_jit_result(result);
+  executed = retired;
   if (event == Event::memory_fault)
     tlb_.discard(tlb_.fault_address);
   return event;

@@ -85,9 +85,12 @@ struct CpuState final {
 	std::array<std::uint64_t, 8> mmx{};
 	std::array<X87Register, 8> x87{};
 	std::array<std::uint16_t, 6> segment_selectors{};
-	/* Compat mode uses user GDT slots 6 through 10. Linux normally consumes
-	 * the first three; Windows on ARM64 uses slot 10 (selector 0x53) for the
-	 * 32-bit TEB. */
+	/* Compat-mode TLS bases for GDT entries 6 onward. Linux has three TLS
+	 * entries (6 to 8, selectors 0x33 to 0x43), and the runtime fills and
+	 * marks present only those. The array and the refresh gadget's bound
+	 * still admit entries 9 and 10; a selector for either finds its present
+	 * bit clear, and trimming them would move every later CpuState offset
+	 * and change the bank. */
 	std::array<std::uint32_t, 5> compat_tls_bases{};
 	std::uint8_t compat_tls_present{};
 	std::uint64_t rip{};

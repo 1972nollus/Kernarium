@@ -115,6 +115,14 @@ set_target_properties(uml-gadget-ceiling-native PROPERTIES
 add_custom_target(gadget-ceiling-binaries
     DEPENDS uml-gadget-ceiling-bench uml-gadget-ceiling-native)
 
+# Manual host microbenchmark: 128-bit load and vector-ALU issue rates per
+# cycle on whichever core class runs it. It uses no project code.
+add_executable(uml-host-issue-ratio EXCLUDE_FROM_ALL host_issue_ratio.cpp)
+target_compile_features(uml-host-issue-ratio PRIVATE cxx_std_20)
+target_compile_options(uml-host-issue-ratio PRIVATE -Wall -Wextra -Werror)
+set_target_properties(uml-host-issue-ratio PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
+
 add_subdirectory(scalar_ceiling EXCLUDE_FROM_ALL)
 
 # Manual native GPU benchmark: not a CTest or a suite-binary dependency.

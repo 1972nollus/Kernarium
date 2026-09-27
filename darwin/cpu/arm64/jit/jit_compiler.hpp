@@ -27,10 +27,7 @@ public:
                        LinkResolver link_resolver = nullptr,
                        bool track_direct_stores = false,
                        IndirectLinkResolver indirect_link_resolver =
-                           nullptr,
-                       bool persistent_linked_block_abi =
-                           persistent_linked_block_abi_default
-                       ) noexcept;
+                           nullptr) noexcept;
 
   JitCompiler(bool enable_guarded_control_flow,
               const ArmFeatureSet &translation_features) noexcept;
@@ -347,8 +344,6 @@ private:
   void *configured_link_context_{};
   LinkResolver configured_link_resolver_{};
   IndirectLinkResolver configured_indirect_link_resolver_{};
-  bool configured_persistent_linked_block_abi_{
-      persistent_linked_block_abi_default};
   bool track_direct_stores_{};
   bool enable_guarded_control_flow_{};
   bool enable_pointer_authentication_{true};

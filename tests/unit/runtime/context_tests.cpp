@@ -4,7 +4,7 @@
 #include "memory/domain_contract.hpp"
 #include "runtime/context.hpp"
 #include "runtime/execution_state.hpp"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
@@ -96,41 +96,6 @@ public:
 
 private:
 	std::atomic_uint64_t &observed_;
-};
-
-class TemporaryBacking final {
-public:
-	explicit TemporaryBacking(std::uint8_t value)
-	{
-		auto path = uml::testing::scratch_template(
-			"uml-runtime-context-XXXXXX");
-		fd_ = mkstemp(path.data());
-		require(fd_ >= 0, "temporary backing could not be created");
-		require(unlink(path.c_str()) == 0,
-			"temporary backing path could not be removed");
-		require(ftruncate(fd_, DARWIN_UML_GUEST_PAGE_SIZE) == 0,
-			"temporary backing could not be sized");
-		require(pwrite(fd_, &value, sizeof(value), 0) ==
-			static_cast<ssize_t>(sizeof(value)),
-			"temporary backing could not be initialized");
-	}
-
-	TemporaryBacking(const TemporaryBacking &) = delete;
-	TemporaryBacking &operator=(const TemporaryBacking &) = delete;
-
-	~TemporaryBacking()
-	{
-		if (fd_ >= 0)
-			close(fd_);
-	}
-
-	[[nodiscard]] int fd() const noexcept
-	{
-		return fd_;
-	}
-
-private:
-	int fd_{-1};
 };
 
 [[nodiscard]] bool read_guest_byte(
@@ -286,8 +251,12 @@ void test_pre_run_execution_states_do_not_cross_run_boundary()
 
 	uml::runtime::Context context;
 	uml::runtime::ActiveContextScope active{context};
-	TemporaryBacking pre_run_backing{pre_run_value};
-	TemporaryBacking run_backing{run_value};
+	uml::testing::ScratchBacking pre_run_backing{
+		"uml-runtime-context-XXXXXX", DARWIN_UML_GUEST_PAGE_SIZE};
+	uml::testing::ScratchBacking run_backing{
+		"uml-runtime-context-XXXXXX", DARWIN_UML_GUEST_PAGE_SIZE};
+	pre_run_backing.put_byte(0, std::byte{pre_run_value});
+	run_backing.put_byte(0, std::byte{run_value});
 
 	unsigned int main_interrupt = 41;
 	uml::testing::fail_next_allocation();
@@ -302,7 +271,7 @@ void test_pre_run_execution_states_do_not_cross_run_boundary()
 
 	const bool pre_run_mapped = darwin_uml_static_vm_map_generation(
 		generation, reinterpret_cast<void *>(guest_address),
-		pre_run_backing.fd(), 0, DARWIN_UML_GUEST_PAGE_SIZE,
+		pre_run_backing.descriptor(), 0, DARWIN_UML_GUEST_PAGE_SIZE,
 		PROT_READ, 0, 0) == 0;
 	const auto pre_run_sequences =
 		darwin_uml_static_vm_sequences(generation);
@@ -396,7 +365,7 @@ void test_pre_run_execution_states_do_not_cross_run_boundary()
 	if (admitted) {
 		run_mapped = darwin_uml_static_vm_map_generation(
 			generation, reinterpret_cast<void *>(guest_address),
-			run_backing.fd(), 0, DARWIN_UML_GUEST_PAGE_SIZE,
+			run_backing.descriptor(), 0, DARWIN_UML_GUEST_PAGE_SIZE,
 			PROT_READ, 0, 0) == 0;
 		const auto run_sequences =
 			darwin_uml_static_vm_sequences(generation);

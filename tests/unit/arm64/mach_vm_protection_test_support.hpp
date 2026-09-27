@@ -8,28 +8,6 @@
 
 namespace uml::testing {
 
-[[nodiscard]] inline bool vm_address_is_mapped(const void *pointer)
-{
-	const auto queried = reinterpret_cast<std::uintptr_t>(pointer);
-	vm_address_t address = static_cast<vm_address_t>(queried);
-	vm_size_t size = 0;
-	vm_region_basic_info_data_64_t info{};
-	mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-	mach_port_t object = MACH_PORT_NULL;
-	const auto result = vm_region_64(mach_task_self(), &address, &size,
-		VM_REGION_BASIC_INFO_64,
-		reinterpret_cast<vm_region_info_t>(&info), &count, &object);
-	if (object != MACH_PORT_NULL)
-		(void)mach_port_deallocate(mach_task_self(), object);
-	if (result == KERN_INVALID_ADDRESS)
-		return false;
-	if (result != KERN_SUCCESS || count < VM_REGION_BASIC_INFO_COUNT_64 ||
-	    size == 0)
-		throw std::runtime_error{"cannot query Darwin VM mapping"};
-	const auto start = static_cast<std::uintptr_t>(address);
-	return start <= queried && size != 0 && queried - start < size;
-}
-
 [[nodiscard]] inline vm_prot_t current_vm_protection(const void *pointer)
 {
 	vm_address_t address = reinterpret_cast<vm_address_t>(pointer);

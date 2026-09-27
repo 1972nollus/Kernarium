@@ -12,8 +12,9 @@ namespace uml::cpu::x86_64 {
  * read. A guest has two ways to ask what this CPU is: it can execute CPUID,
  * or it can read what the kernel wrote into /proc/cpuinfo, and those two must
  * agree. Only the gadget can answer the first, so this table exists to answer
- * the second, and `x86-64-cpuid-identity` executes the gadget for every leaf
- * below and fails if the two ever disagree.
+ * the second, and `cpuid_table_matches_the_gadget` in the
+ * `x86-64-gadget-bootstrap` test executes the gadget for every leaf below and
+ * fails if the two ever disagree.
  *
  * The same contract governs arm64's identification registers; see the comment
  * on `emulated_id_register_value` in cpu/arm64/id_registers.hpp. A capability

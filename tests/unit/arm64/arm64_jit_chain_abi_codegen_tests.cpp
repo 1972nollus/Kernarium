@@ -291,8 +291,6 @@ void frame_shape_saves_and_restores_host_chain_registers() {
       0xd65f'03c0U, // ret
   };
 
-  require(jit_test::persistent_linked_block_abi_enabled(),
-          "persistent linked-block ABI is not the translation default");
   require(compiled.internal_entry_word == prologue.size(),
           "internal entry does not skip setup");
   require(std::equal(prologue.begin(), prologue.end(),
@@ -302,21 +300,6 @@ void frame_shape_saves_and_restores_host_chain_registers() {
                       epilogue.begin(), epilogue.end()) !=
               compiled.words.end(),
           "persistent linked-block epilogue changed");
-
-  const auto memory_abi =
-      jit_test::compile_linked_block_memory_abi(pc, guest);
-  constexpr std::array memory_prologue{
-      0xa9bd'7bfdU, // stp x29, x30, [sp, #-48]!
-      0x9100'03fdU, // mov x29, sp
-      0xa901'07e0U, // stp x0, x1, [sp, #16]
-      0xf900'13e2U, // str x2, [sp, #32]
-      0xaa00'03efU, // mov x15, x0
-      0xaa01'03eeU, // mov x14, x1
-  };
-  require(memory_abi.internal_entry_word == memory_prologue.size() &&
-              std::equal(memory_prologue.begin(), memory_prologue.end(),
-                         memory_abi.words.begin()),
-          "nonpersistent ABI changed");
 }
 
 void ls64_x8_group_keeps_its_native_operation() {
@@ -355,24 +338,14 @@ void direct_success_path_has_scheduled_remaining_budget() {
   constexpr std::uint64_t pc = 0x5a01'0000;
   constexpr std::array guest{0x1400'0001U}; // b pc + 4
   const auto resident_code = jit_test::compile_linked_block(pc, guest);
-  const auto memory_code =
-      jit_test::compile_linked_block_memory_abi(pc, guest);
   const auto resident = hot_code(resident_code);
-  const auto memory = hot_code(memory_code);
   const auto resident_literal =
       require_single_literal_pointer(resident_code, 12);
-  const auto memory_literal =
-      require_single_literal_pointer(memory_code, 12);
 
   const auto resident_words =
       successful_path_words(resident, resident_literal.source);
-  const auto memory_words =
-      successful_path_words(memory, memory_literal.source);
-  require(memory_words == 15 && resident_words == 11,
+  require(resident_words == 11,
           "direct successful path word count changed");
-  require(memory_words - resident_words ==
-              jit_test::persistent_link_successful_path_word_savings(),
-          "direct persistent-path saving is not exactly four words");
   require(resident_literal.source + 2U < resident.size() &&
               resident[resident_literal.source + 1U] == 0xd100'0694U &&
               resident[resident_literal.source + 2U] == 0xa940'2590U,
@@ -396,10 +369,6 @@ void direct_success_path_has_scheduled_remaining_budget() {
   require(selector_target == fairness_target &&
               resident[selector_target] == 0x9100'0694U,
           "direct selector and fairness exits do not share the cold undo");
-  require(count_word(memory, 0xd100'054aU) == 1 &&
-              count_word(memory, 0xeb09'015fU) == 1 &&
-              count_word(memory, 0xf900'016aU) == 1,
-          "memory ABI does not subtract, compare, and commit remaining budget");
   require(count_word(resident, 0x9100'068aU) == 0 &&
               count_word(resident, 0x8b09'0148U) == 0 &&
               count_word(resident, 0xf140'051fU) == 0 &&
@@ -411,9 +380,7 @@ void direct_success_path_has_scheduled_remaining_budget() {
               count_word(resident, 0xf900'016aU) == 0,
           "direct path still accesses memory-backed chain state");
   require(count_word(resident, 0xf900'0a69U) == 0 &&
-              count_word(resident, 0xf900'0670U) == 0 &&
-              count_word(memory, 0xf900'0969U) == 0 &&
-              count_word(memory, 0xf900'0570U) == 0,
+              count_word(resident, 0xf900'0670U) == 0,
           "direct success still publishes obsolete terminal metadata");
   require_only_native_br_x13(resident, 1);
 }
@@ -483,23 +450,14 @@ void pic_success_path_has_scheduled_remaining_budget() {
   constexpr std::array guest{0xd61f'00a0U}; // br x5
   const auto resident_code =
       jit_test::compile_indirect_linked_block(pc, guest);
-  const auto memory_code =
-      jit_test::compile_indirect_linked_block_memory_abi(pc, guest);
   const auto resident = hot_code(resident_code);
-  const auto memory = hot_code(memory_code);
   const auto resident_literal =
       require_single_literal_pointer(resident_code, 13);
-  const auto memory_literal =
-      require_single_literal_pointer(memory_code, 13);
 
   const auto resident_words =
       successful_path_words(resident, resident_literal.source);
-  const auto memory_words =
-      successful_path_words(memory, memory_literal.source);
-  require(memory_words == 21 && resident_words == 17,
+  require(resident_words == 17,
           "PIC successful path word count changed");
-  require(memory_words - resident_words == 4,
-          "PIC persistent-path saving is not exactly four words");
   require(resident_literal.source + 2U < resident.size() &&
               resident[resident_literal.source + 1U] == 0xd100'0694U &&
               resident[resident_literal.source + 2U] == 0xa940'31a9U,
@@ -530,15 +488,8 @@ void pic_success_path_has_scheduled_remaining_budget() {
       resident, selector_fallback, "PIC fallback target is invalid");
   require(fallback_target + 1U == undo,
           "PIC matched fallback does not fall through to the shared undo");
-  require(count_word(memory, 0xd100'054aU) == 1 &&
-              count_word(memory, 0xeb09'015fU) == 1 &&
-              count_word(memory, 0xf900'016aU) == 1 &&
-              count_word(memory, 0x9100'0694U) == 0,
-          "PIC memory ABI remaining-budget sequence changed");
   require(count_word(resident, 0xf900'0a69U) == 0 &&
-              count_word(resident, 0xf900'0670U) == 0 &&
-              count_word(memory, 0xf900'0969U) == 0 &&
-              count_word(memory, 0xf900'0570U) == 0,
+              count_word(resident, 0xf900'0670U) == 0,
           "PIC success still publishes obsolete terminal metadata");
   for (const auto word : resident)
     if ((word & 0xffff'fc1fU) == 0xd61f'0000U)

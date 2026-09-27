@@ -6,6 +6,7 @@
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/detail/fp_state_access.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
+#include "cpu/arm64/detail/read_check_write.hpp"
 #include "cpu/arm64/id_registers.hpp"
 
 #include <algorithm>
@@ -18,15 +19,12 @@ JitCompiler::JitCompiler(bool enable_guarded_control_flow,
                        void *link_context,
                        LinkResolver link_resolver,
                        bool track_direct_stores,
-                       IndirectLinkResolver indirect_link_resolver,
-                       bool persistent_linked_block_abi
-                       ) noexcept
-      : emitter_{persistent_linked_block_abi, std::size_t{1} << 18U},
+                       IndirectLinkResolver indirect_link_resolver) noexcept
+      : emitter_{std::size_t{1} << 18U},
         cold_{this},
         configured_link_context_{link_context},
         configured_link_resolver_{link_resolver},
         configured_indirect_link_resolver_{indirect_link_resolver},
-        configured_persistent_linked_block_abi_{persistent_linked_block_abi},
         track_direct_stores_{track_direct_stores},
         enable_guarded_control_flow_{enable_guarded_control_flow} {
     attach_family_emitter(&emitter_, &native_fp_, &native_fpmr_,
@@ -74,9 +72,7 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
       JitCompiler candidate_compiler{
           enable_guarded_control_flow_, configured_link_context_,
           configured_link_resolver_, track_direct_stores_,
-          configured_indirect_link_resolver_,
-          configured_persistent_linked_block_abi_
-      };
+          configured_indirect_link_resolver_};
       candidate_compiler.translation_features_ = translation_features_;
       candidate_compiler.table_list_planning_enabled_ =
           table_list_planning_enabled_;
@@ -369,14 +365,7 @@ void JitCompiler::select_consecutive_vector_lists(
     if (native_scalar_lse)
       return false;
     const bool read_check_write =
-        (instruction & 0xbf20'fc00U) == 0x1920'0800U ||
-        ((instruction & 0xbf20'8c00U) == 0x3820'8000U &&
-         ((instruction >> 12) & 7U) >= 1U &&
-         ((instruction >> 12) & 7U) <= 3U) ||
-        (instruction & 0xbf20'fc00U) == 0x1920'0c00U ||
-        ((instruction & 0xbf20'8c00U) == 0x1920'8000U &&
-         (((instruction >> 12) & 7U) != 0U ||
-          (instruction & 0x4000'0000U) != 0U));
+        detail::decode_read_check_write(instruction).recognized;
     const bool pair_atomic =
         (instruction & 0xbf20'0c00U) == 0x1920'0000U;
     const bool scalar_atomic =

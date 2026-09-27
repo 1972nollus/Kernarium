@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/layout/assembly_offsets.h"
 
@@ -63,5 +64,23 @@ static_assert(offsetof(CpuState, deferred_flags) +
 static_assert(offsetof(CpuState, deferred_flags) +
 	offsetof(DeferredFlags, override_value) ==
 	UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE);
+
+/* Gadgets return these in w0 and the executor casts them to EngineEvent. */
+static_assert(UML_X86_64_EVENT_CONTINUED ==
+	static_cast<int>(EngineEvent::continued));
+static_assert(UML_X86_64_EVENT_SYSCALL ==
+	static_cast<int>(EngineEvent::system_call));
+static_assert(UML_X86_64_EVENT_MEMORY_FAULT ==
+	static_cast<int>(EngineEvent::memory_fault));
+static_assert(UML_X86_64_EVENT_BREAKPOINT ==
+	static_cast<int>(EngineEvent::breakpoint));
+static_assert(UML_X86_64_EVENT_FLOATING_POINT_TRAP ==
+	static_cast<int>(EngineEvent::floating_point_trap));
+static_assert(UML_X86_64_EVENT_OVERFLOW ==
+	static_cast<int>(EngineEvent::overflow));
+static_assert(UML_X86_64_EVENT_GENERAL_PROTECTION ==
+	static_cast<int>(EngineEvent::general_protection));
+static_assert(UML_X86_64_EVENT_TRAP_FLAG ==
+	static_cast<int>(EngineEvent::trap_flag));
 
 } // namespace uml::cpu::x86_64::layout

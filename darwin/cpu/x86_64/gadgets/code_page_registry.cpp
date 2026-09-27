@@ -11,11 +11,16 @@
 namespace uml::cpu::x86_64::gadgets {
 namespace {
 
-std::mutex table_mutex;
-std::unordered_map<std::uint64_t, std::weak_ptr<CodePageRegistry>> &table()
+/* Never destroyed, so a registry released during process teardown still
+ * finds its entry and its lock. */
+struct Table final {
+	std::mutex mutex;
+	std::unordered_map<std::uint64_t, std::weak_ptr<CodePageRegistry>>
+		entries;
+};
+Table &table()
 {
-	static auto *instance = new std::unordered_map<
-		std::uint64_t, std::weak_ptr<CodePageRegistry>>{};
+	static auto *instance = new Table{};
 	return *instance;
 }
 
@@ -29,13 +34,14 @@ constexpr auto quiescence_bound = std::chrono::milliseconds{200};
 std::shared_ptr<CodePageRegistry> CodePageRegistry::acquire(
 	std::uint64_t generation)
 {
-	const std::lock_guard lock{table_mutex};
-	auto &entries = table();
-	auto [entry, inserted] = entries.try_emplace(generation);
+	auto &shared = table();
+	const std::lock_guard lock{shared.mutex};
+	auto [entry, inserted] = shared.entries.try_emplace(generation);
 	if (!inserted)
 		if (auto existing = entry->second.lock())
 			return existing;
 	auto created = std::make_shared<CodePageRegistry>();
+	created->generation_ = generation;
 	entry->second = created;
 	return created;
 }
@@ -49,7 +55,19 @@ CodePageRegistry::CodePageRegistry()
 	std::fill_n(counts_.get(), bit_count, std::uint8_t{0});
 }
 
-CodePageRegistry::~CodePageRegistry() = default;
+/* Generations are never reused, so the entry of a released registry would
+ * otherwise stay behind for the life of the process. A registry acquired for
+ * the same generation after this one expired owns the entry now and keeps it. */
+CodePageRegistry::~CodePageRegistry()
+{
+	if (!generation_)
+		return;
+	auto &shared = table();
+	const std::lock_guard lock{shared.mutex};
+	const auto entry = shared.entries.find(*generation_);
+	if (entry != shared.entries.end() && entry->second.expired())
+		shared.entries.erase(entry);
+}
 
 void CodePageRegistry::join(Participant &participant)
 {

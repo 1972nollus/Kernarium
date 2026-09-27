@@ -16,6 +16,9 @@ namespace uml::cpu::arm64::gadgets::selection {
 	return first | (second << 16) | (third << 32) | (fourth << 48);
 }
 
+/* The composers' own copy of detail::sign_extend: this shift form folds to
+ * SBFX, while detail's xor/subtract form costs a few more instructions at
+ * every decode. Both agree for the masked fields the composers pass. */
 [[nodiscard]] constexpr std::int64_t sign_extend(std::uint64_t value,
 						 unsigned bits) noexcept
 {
@@ -42,17 +45,14 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] constexpr std::uintptr_t simd_lut_operand(
 	std::uint32_t instruction, unsigned shape, unsigned part) noexcept
 {
-	const auto vector_offset = [](unsigned index) {
-		return offsetof(CpuState, vectors) +
-			index * sizeof(VectorRegister);
-	};
 	const unsigned table = (instruction >> 5) & 31U;
-	return vector_offset(instruction & 31U) |
-		(static_cast<std::uintptr_t>(vector_offset(table)) << 11) |
+	return vector_operand_offset(instruction & 31U) |
 		(static_cast<std::uintptr_t>(
-			vector_offset((table + 1U) & 31U)) << 22) |
+			vector_operand_offset(table)) << 11) |
 		(static_cast<std::uintptr_t>(
-			vector_offset((instruction >> 16) & 31U)) << 33) |
+			vector_operand_offset((table + 1U) & 31U)) << 22) |
+		(static_cast<std::uintptr_t>(vector_operand_offset(
+			(instruction >> 16) & 31U)) << 33) |
 		(static_cast<std::uintptr_t>(shape) << 44) |
 		(static_cast<std::uintptr_t>(part) << 46);
 }

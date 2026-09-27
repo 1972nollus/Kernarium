@@ -31,7 +31,7 @@ using ::uml::emulator::tests::JitBacking;
 using ::uml::emulator::tests::JitMapping;
 
 constexpr std::uint64_t code_base = 0x5d00'0000;
-constexpr std::uint64_t carried_source = code_base + 0x40;
+constexpr std::uint64_t predecessor_source = code_base + 0x40;
 constexpr std::uint32_t indirect_branch_x0 = 0xd61f'0000U;
 constexpr std::uint32_t system_call = 0xd400'0001U;
 
@@ -117,11 +117,11 @@ void direct_engine_contract(EngineKind kind, unsigned long generation)
 	JitBacking backing{1};
 	backing.put32(0, indirect_branch_x0);
 	backing.put32(4, system_call);
-	backing.put32(carried_source - code_base,
+	backing.put32(predecessor_source - code_base,
 		0x9100'0508U); // add x8, x8, #1
-	backing.put32(carried_source - code_base + 4,
+	backing.put32(predecessor_source - code_base + 4,
 		0x9100'0929U); // add x9, x9, #2
-	backing.put32(carried_source - code_base + 8,
+	backing.put32(predecessor_source - code_base + 8,
 		indirect_branch_x0);
 	JitMapping mapping{generation, code_base, backing, 1,
 		PROT_READ | PROT_EXEC};
@@ -161,21 +161,18 @@ void direct_engine_contract(EngineKind kind, unsigned long generation)
 		cpu.pc == code_base + 8,
 		"engine cache/link state was not reusable after a bad target");
 
-	if (kind == EngineKind::jit) {
-		/* Immediate branches cannot create a misaligned AArch64 PC. A BR miss
-		 * therefore owns the only carried-predecessor path to the common outer
-		 * alignment check, which must observe its canonicalized x8/x9 prefix.
-		 */
-		cpu = {};
-		cpu.pc = carried_source;
-		cpu.registers[0] = code_base + 2;
-		cpu.registers[8] = 10;
-		cpu.registers[9] = 20;
-		const auto carried = run(*engine, cpu, memory, generation);
-		require_alignment_result(carried, cpu, code_base + 2, 3);
-		require(cpu.registers[8] == 11 && cpu.registers[9] == 22,
-			"PC-alignment exit lost carried x8/x9 state");
-	}
+	/* Immediate branches cannot create a misaligned AArch64 PC, so only a
+	 * BR reaches the alignment check after earlier instructions of its block
+	 * have written registers. The exit must report those x8/x9 writes. */
+	cpu = {};
+	cpu.pc = predecessor_source;
+	cpu.registers[0] = code_base + 2;
+	cpu.registers[8] = 10;
+	cpu.registers[9] = 20;
+	const auto predecessor = run(*engine, cpu, memory, generation);
+	require_alignment_result(predecessor, cpu, code_base + 2, 3);
+	require(cpu.registers[8] == 11 && cpu.registers[9] == 22,
+		"PC-alignment exit lost the block's x8/x9 writes");
 }
 
 void bridge_contract(EngineKind kind, unsigned long generation)
@@ -183,11 +180,11 @@ void bridge_contract(EngineKind kind, unsigned long generation)
 	JitBacking backing{1};
 	backing.put32(0, indirect_branch_x0);
 	backing.put32(4, system_call);
-	backing.put32(carried_source - code_base,
+	backing.put32(predecessor_source - code_base,
 		0x9100'0508U); // add x8, x8, #1
-	backing.put32(carried_source - code_base + 4,
+	backing.put32(predecessor_source - code_base + 4,
 		0x9100'0929U); // add x9, x9, #2
-	backing.put32(carried_source - code_base + 8,
+	backing.put32(predecessor_source - code_base + 8,
 		indirect_branch_x0);
 	JitMapping mapping{generation, code_base, backing, 1,
 		PROT_READ | PROT_EXEC};
@@ -232,20 +229,18 @@ void bridge_contract(EngineKind kind, unsigned long generation)
 		registers.pc == code_base + 8,
 		"C bridge cache/link state was not reusable after a bad target");
 
-	if (kind == EngineKind::jit) {
-		registers = {};
-		registers.pc = carried_source;
-		registers.x[0] = code_base + 2;
-		registers.x[8] = 30;
-		registers.x[9] = 40;
-		const auto carried = enter(
-			&registers, &fp, sizeof(fp), generation, &tls);
-		require(carried == DARWIN_UML_EVENT_PC_ALIGNMENT &&
-			registers.pc == code_base + 2 &&
-			registers.fault.address == code_base + 2 &&
-			registers.x[8] == 31 && registers.x[9] == 42,
-			"C bridge lost carried state at a PC-alignment exit");
-	}
+	registers = {};
+	registers.pc = predecessor_source;
+	registers.x[0] = code_base + 2;
+	registers.x[8] = 30;
+	registers.x[9] = 40;
+	const auto predecessor = enter(
+		&registers, &fp, sizeof(fp), generation, &tls);
+	require(predecessor == DARWIN_UML_EVENT_PC_ALIGNMENT &&
+		registers.pc == code_base + 2 &&
+		registers.fault.address == code_base + 2 &&
+		registers.x[8] == 31 && registers.x[9] == 42,
+		"C bridge lost the block's x8/x9 writes at a PC-alignment exit");
 }
 
 void data_alignment_contract(EngineKind kind, unsigned long generation)

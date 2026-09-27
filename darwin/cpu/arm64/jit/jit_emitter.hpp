@@ -69,11 +69,8 @@ public:
   };
 
   explicit Arm64Emitter(
-      bool persistent_linked_block_abi =
-          persistent_linked_block_abi_default,
       std::size_t literal_range_words = std::size_t{1} << 18U) noexcept;
 
-  [[nodiscard]] bool persistent_linked_block_abi() const noexcept;
   [[nodiscard]] Label make_label();
   void bind(Label label);
   void emit(std::uint32_t instruction);
@@ -85,11 +82,8 @@ public:
   void compare_zero(Label label, unsigned reg, bool is_64_bit, bool nonzero);
   void test_zero(Label label, unsigned reg, unsigned bit, bool nonzero);
   void load_x(unsigned destination, unsigned base, std::size_t offset);
-  void load_x_indexed_8(unsigned destination, unsigned base, unsigned index);
   void load_pair_x(unsigned first, unsigned second, unsigned base,
                    std::ptrdiff_t offset);
-  void store_pair_x(unsigned first, unsigned second, unsigned base,
-                    std::ptrdiff_t offset);
   void store_x(unsigned source, unsigned base, std::size_t offset);
   void load_w(unsigned destination, unsigned base, std::size_t offset);
   void store_w(unsigned source, unsigned base, std::size_t offset);
@@ -100,7 +94,6 @@ public:
   void store_q(unsigned source, unsigned base, std::size_t offset);
   void move_q(unsigned destination, unsigned source);
   void move_x(unsigned destination, unsigned source);
-  void move_w(unsigned destination, unsigned source);
   void load_constant(unsigned destination, std::uint64_t value);
   void load_literal_constant(unsigned destination, std::uint64_t value);
   void load_stable_pointer(unsigned destination, std::uintptr_t value);
@@ -117,15 +110,12 @@ public:
   void ubfm(unsigned destination, unsigned source, unsigned rotate,
             unsigned mask);
   void compare_register(unsigned left, unsigned right);
-  void compare_immediate(unsigned source, unsigned immediate,
-                         bool shift_12 = false);
   void emit_internal_flag_clobber(std::uint32_t instruction);
   void call(const void *function);
   void call_preserving_flags(const void *function);
   void branch_register(unsigned reg);
   void prologue();
   void epilogue();
-  void reload_context();
   void return_constant(Event event, std::size_t instructions);
   void return_dynamic(std::size_t instructions);
   [[nodiscard]] std::span<const std::uint32_t> finish();
@@ -159,7 +149,6 @@ private:
   std::vector<JitRelocation> relocations_;
   bool relocatable_{true};
   std::size_t literal_range_words_{};
-  bool persistent_linked_block_abi_{};
   bool valid_{true};
   void *exit_context_{};
   ExitFlush exit_flush_{};
