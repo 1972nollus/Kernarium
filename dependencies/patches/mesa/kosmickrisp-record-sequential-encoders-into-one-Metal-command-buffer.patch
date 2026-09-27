@@ -475,7 +475,7 @@ index d9ec6876dd0c8ed8e6a63a9ba4a6c67c458ba4fe..9fdf50c6326832640fb43fc07985a81e
  kk_CmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount,
             uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance)
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 4f3dab6394397f62a20e53ad5bde32518c8a6d1d..9ec6c4baa5c939acf4c33be005d5e22c35bf1779 100644
+index 26f73b167d9f0828582b8c3a5a7d2041467d8865..0c5ed7a758caf14db5458e5972fd28c179458a90 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -426,6 +426,7 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
@@ -497,10 +497,10 @@ index 4f3dab6394397f62a20e53ad5bde32518c8a6d1d..9ec6c4baa5c939acf4c33be005d5e22c
     /* Need to ensure the new buffers allocated at record are resident. */
     kk_device_make_resources_resident(dev);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index ae0be76a401a4cb2ae37f13c5782410f638b1563..ccbc71b437c8dc023c5f8ef2f2bd478cc0801d6a 100644
+index a5af599dc199dff01eb64dcb7e3274861287a0f4..bed031ca7a633fc5058ae155411a29da81bda4e3 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -864,6 +864,26 @@ if with_tests
+@@ -881,6 +881,26 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )

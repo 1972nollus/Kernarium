@@ -42,7 +42,7 @@ so.
  4 files changed, 109 insertions(+), 25 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index e073e6bf01da98cc30b0e18ff0afcf86785db2dc..50f4336e75a0083893cf7b26085d2dae9ed4f5d3 100644
+index 9c85dec7f615e352aa8ab41a8275f854a4d756e3..635b85799bf79ab145f0c1334f6461d1eff9b1bc 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -187,6 +187,68 @@ kk_queue_resolve_if_drained(struct kk_queue_feedback *feedback)
@@ -177,10 +177,10 @@ index e073e6bf01da98cc30b0e18ff0afcf86785db2dc..50f4336e75a0083893cf7b26085d2dae
                              *end = submit->waits + submit->wait_count;
          wait != end; ++wait) {
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index da5cfbc176d7e1cec93756f17379ff9228eb7cd8..614257a5426df1fb3880dd4abb6e7f362135fb2e 100644
+index ae0a65d8b2223d23eaaf1be9c6c18b0459f004a7..015e724e083ea39ca33200b0f709dca558b12d2e 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
-@@ -46,7 +46,10 @@ struct kk_queue_feedback {
+@@ -47,7 +47,10 @@ struct kk_queue_feedback {
     struct util_dynarray signals;
     /* How many failures Metal has reported against this queue. A queue that
      * has never failed owes nothing it has not delivered, so the recovery

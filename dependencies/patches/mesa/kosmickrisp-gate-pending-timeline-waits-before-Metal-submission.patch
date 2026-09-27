@@ -8,21 +8,23 @@ Use on-demand common submission for unsatisfied timeline waits so Metal cannot r
 
 Answer VK_SYNC_WAIT_PENDING with whether a signal operation has been submitted rather than whether it completed. Track the highest value already signalled on the CPU or enqueued on the queue's Metal timeline, and treat a binary semaphore wait as pending because its signal must have been submitted first. Otherwise the common runtime reads every unfinished dependency as unsubmitted: it turns the assisted submission worker on for the life of the device and blocks the caller of vkQueueSubmit, which on a virtualized device is the thread that must deliver the release the worker is waiting for.
 
+The queue publishes that value just before it enqueues the signal, not after. Every later submission to the device's one queue runs after this one, so nothing can order native work behind the value before the signal is in place, and nothing may touch the sync once the signal is enqueued: Metal can deliver it at once, and whoever sees it delivered may destroy the fence or semaphore straight away, as vkQueueWaitIdle does with its own.
+
 In a threaded queue a binary payload moves when the worker reaches the wait, not inside vkQueueSubmit. The signal that payload waits for may still be queued ahead of the wait, and the worker unwraps it against whatever payload the semaphore holds when it runs, so a move made at once handed that signal the fresh payload and left the wait on a point nothing signals until Metal abandoned the native wait seconds later.
 
 Keep absolute CPU wait deadlines while observing device loss, wake queue drains when submission fails, and allow lost-device cleanup of pending submissions. Cover delayed host signals, mixed binary waits with every signalled stage bounded to a second, loss during waits and drain, a binary wait queued behind a host-gated batch, and submission that outruns a long GPU dependency.
 ---
  src/kosmickrisp/vulkan/kk_device.c            |  18 +-
  src/kosmickrisp/vulkan/kk_physical_device.c   |   2 +
- src/kosmickrisp/vulkan/kk_queue.c             |   7 +-
- src/kosmickrisp/vulkan/kk_sync.c              | 200 +++++++++-
- src/kosmickrisp/vulkan/kk_sync.h              |  19 +
+ src/kosmickrisp/vulkan/kk_queue.c             |  12 +-
+ src/kosmickrisp/vulkan/kk_sync.c              | 203 +++++++++-
+ src/kosmickrisp/vulkan/kk_sync.h              |  20 +
  src/kosmickrisp/vulkan/meson.build            |  75 ++++
  .../vulkan/tests/test_timeline_host_wait.cpp  | 364 +++++++++++++++++
  .../tests/test_timeline_pending_wait.cpp      | 372 ++++++++++++++++++
  .../vulkan/tests/test_timeline_wait_loss.c    | 182 +++++++++
  src/vulkan/runtime/vk_queue.c                 |  25 +-
- 10 files changed, 1231 insertions(+), 33 deletions(-)
+ 10 files changed, 1240 insertions(+), 33 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
@@ -84,20 +86,25 @@ index b83269f2bd0a2159cdffcb9518c3472d92f5f281..82f5d4aff2015f1e0bb72a28ec399f8a
     pdev->sync_types[st_idx++] = &kk_sync_type;
     pdev->sync_types[st_idx++] = &pdev->sync_binary_type.sync;
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 64922e8a766daa526a11d61d096fcf78d71b248e..f7f30265b4c5081b797211980fe077a876160ad7 100644
+index 64922e8a766daa526a11d61d096fcf78d71b248e..4a7026def9df81ec12bbb7678d56165c5c284d02 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
-@@ -225,6 +225,9 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+@@ -223,6 +223,14 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+       struct vk_sync_signal *signal = &submit->signals[i];
+       struct kk_sync_timeline *sync =
           container_of(signal->sync, struct kk_sync_timeline, base);
++      /* Later waits on this value are pending and need no CPU gating: any
++       * native work they order behind it comes from a later submission to
++       * this device's one queue, which runs only after this one has enqueued
++       * the signal. Publish that before the enqueue, because Metal can deliver
++       * the signal at once and whoever sees it delivered may destroy the sync
++       * straight away, as vkQueueWaitIdle does with its own. Nothing may touch
++       * the sync once its signal is enqueued. */
++      kk_timeline_mark_pending(signal->sync, signal->signal_value);
        mtl_signal_event(queue->mtl_handle, sync->mtl_handle,
                         signal->signal_value);
-+      /* The signal is now ordered on the native timeline, so later waits on
-+       * this value are pending and need no CPU gating. */
-+      kk_timeline_mark_pending(signal->sync, signal->signal_value);
     }
- 
-    return VK_SUCCESS;
-@@ -295,6 +298,9 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
+@@ -295,6 +303,9 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
  void
  kk_queue_finish(struct kk_device *dev, struct kk_queue *queue)
  {
@@ -107,14 +114,14 @@ index 64922e8a766daa526a11d61d096fcf78d71b248e..f7f30265b4c5081b797211980fe077a8
     simple_mtx_lock(&queue->feedback->mutex);
     queue->feedback->device = NULL;
     simple_mtx_unlock(&queue->feedback->mutex);
-@@ -304,5 +310,4 @@ kk_queue_finish(struct kk_device *dev, struct kk_queue *queue)
+@@ -304,5 +315,4 @@ kk_queue_finish(struct kk_device *dev, struct kk_queue *queue)
     mtl_command_queue_remove_residency_set(queue->mtl_handle,
                                            dev->residency_set.handle);
     mtl_release(queue->mtl_handle);
 -   vk_queue_finish(&queue->vk);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index f44200c379e50a828161b257313a2e7a2c5a42e6..4f7dd2068c13371959ef59ee683bf2776a067d84 100644
+index f44200c379e50a828161b257313a2e7a2c5a42e6..e0377497850cb629abde25478d077d1101528b33 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
 @@ -7,6 +7,11 @@
@@ -138,7 +145,7 @@ index f44200c379e50a828161b257313a2e7a2c5a42e6..4f7dd2068c13371959ef59ee683bf277
  
     return VK_SUCCESS;
  }
-@@ -39,9 +46,30 @@ kk_timeline_signal(struct vk_device *device, struct vk_sync *sync,
+@@ -39,9 +46,33 @@ kk_timeline_signal(struct vk_device *device, struct vk_sync *sync,
     struct kk_sync_timeline *timeline =
        container_of(sync, struct kk_sync_timeline, base);
     mtl_shared_event_set_signaled_value(timeline->mtl_handle, value);
@@ -146,10 +153,13 @@ index f44200c379e50a828161b257313a2e7a2c5a42e6..4f7dd2068c13371959ef59ee683bf277
     return VK_SUCCESS;
  }
  
-+/* Record that a signal operation for this value has reached the CPU or the
-+ * queue's Metal timeline. Callers publish it after the signal itself, so an
-+ * observer that sees the value also sees a signal ordered ahead of any work
-+ * it submits next. */
++/* Record that a signal operation for this value has been performed on the CPU
++ * or taken by the queue for its Metal timeline, so an observer that sees the
++ * value also sees a signal ordered ahead of any work it submits next. A CPU
++ * signal publishes it after the signal itself. The queue publishes it just
++ * before the enqueue, which orders the same because every later submission to
++ * the device's one queue runs after it, and which it must do because the
++ * enqueued signal can be delivered and its sync destroyed at once. */
 +void
 +kk_timeline_mark_pending(struct vk_sync *sync, uint64_t value)
 +{
@@ -169,7 +179,7 @@ index f44200c379e50a828161b257313a2e7a2c5a42e6..4f7dd2068c13371959ef59ee683bf277
  static VkResult
  kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
                        uint64_t *value)
-@@ -60,34 +88,166 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
+@@ -60,34 +91,166 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
     struct kk_sync_timeline *timeline =
        container_of(sync, struct kk_sync_timeline, base);
  
@@ -357,16 +367,17 @@ index f44200c379e50a828161b257313a2e7a2c5a42e6..4f7dd2068c13371959ef59ee683bf277
     .finish = kk_timeline_finish,
     .signal = kk_timeline_signal,
 diff --git a/src/kosmickrisp/vulkan/kk_sync.h b/src/kosmickrisp/vulkan/kk_sync.h
-index da4f149918dfa99b63618adc67ba3bf7be786d92..45aa22c6ecec6a4676172c5a79a168bc2dc71c47 100644
+index da4f149918dfa99b63618adc67ba3bf7be786d92..ec5b69b396ba441e0df0228e1ee7ea8462041ded 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.h
 +++ b/src/kosmickrisp/vulkan/kk_sync.h
-@@ -16,8 +16,27 @@ struct kk_queue;
+@@ -16,8 +16,28 @@ struct kk_queue;
  struct kk_sync_timeline {
     struct vk_sync base;
     mtl_shared_event *mtl_handle;
 +   /* Highest value whose signal operation has already been performed on the
-+    * CPU or enqueued on the queue's Metal timeline. Any wait at or below it
-+    * is pending in the common runtime's sense. */
++    * CPU or taken by the queue for its Metal timeline; see
++    * kk_timeline_mark_pending(). Any wait at or below it is pending in the
++    * common runtime's sense. */
 +   uint64_t pending_value;
 +   /* The permanent binary semaphore a temporary still has to take its
 +    * payload from, once the submit worker reaches it; see
