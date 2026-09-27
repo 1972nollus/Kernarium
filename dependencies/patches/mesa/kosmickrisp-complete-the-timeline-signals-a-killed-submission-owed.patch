@@ -65,12 +65,17 @@ runs to completion on the tightest device this driver targets, whose GPU stops
 a command buffer after tens of milliseconds, and it costs nothing on a queue
 that has never failed.
 
-That bound is timed by the caller that wants the value, and only by one that
-is waiting for the value to arrive. A caller asking whether the signal has
-been submitted is answered from what the queue has enqueued and never reaches
-the wait, and a caller that arrives wanting a different value starts its own
-clock rather than inheriting one an earlier waiter left behind, so the elapsed
-time always belongs to the value being recovered.
+That bound is timed only by a caller waiting for a value to arrive. A caller
+asking whether the signal has been submitted is answered from what the queue
+has enqueued and never reaches the wait. What the bound times is the timeline
+standing still while it owes a signal, not one waiter's patience: the clock
+restarts only when the timeline advances, and every waiter behind the stall
+shares it. The renderer waits in slices of a few seconds, so a clock kept per
+call would never reach the bound, and a clock kept per value would be
+restarted by every waiter on another value of the same stalled timeline, so
+two such waiters would keep each other waiting forever. The clock has its own
+lock, and what it decides is acted on outside that lock, so it never nests
+inside the queue's.
 
 Waiting out that bound is the last resort and not the common case, because
 Metal reports every submission it is given exactly once. When the number of
@@ -90,10 +95,10 @@ paying that is not going to finish.
 ---
  src/kosmickrisp/vulkan/kk_queue.c             | 236 +++++++++++++++++-
  src/kosmickrisp/vulkan/kk_queue.h             |  39 +++
- src/kosmickrisp/vulkan/kk_sync.c              |  70 ++++++
- src/kosmickrisp/vulkan/kk_sync.h              |   6 +
+ src/kosmickrisp/vulkan/kk_sync.c              |  89 +++++++
+ src/kosmickrisp/vulkan/kk_sync.h              |  11 +
  .../vulkan/tests/test_command_completion.m    |  31 ++-
- 5 files changed, 372 insertions(+), 10 deletions(-)
+ 5 files changed, 396 insertions(+), 10 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
 index f7f30265b4c5081b797211980fe077a876160ad7..e073e6bf01da98cc30b0e18ff0afcf86785db2dc 100644
@@ -480,7 +485,7 @@ index f35020cb5adbcbbe7d92e0a9b95963824629eabb..da5cfbc176d7e1cec93756f17379ff92
                         const VkDeviceQueueCreateInfo *pCreateInfo,
                         uint32_t index_in_family);
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index 4f7dd2068c13371959ef59ee683bf2776a067d84..abb6820665846e810707e66d2a2275841f4f6de8 100644
+index 4f7dd2068c13371959ef59ee683bf2776a067d84..2d97c1969c9c6dac825ed8b1a758f2d9e772b34b 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
 @@ -11,8 +11,12 @@
@@ -496,16 +501,39 @@ index 4f7dd2068c13371959ef59ee683bf2776a067d84..abb6820665846e810707e66d2a227584
  #include "kosmickrisp/bridge/mtl_bridge.h"
  
  static VkResult
-@@ -26,6 +30,8 @@ kk_timeline_init(struct vk_device *device, struct vk_sync *sync,
+@@ -26,6 +30,9 @@ kk_timeline_init(struct vk_device *device, struct vk_sync *sync,
     timeline->mtl_handle = mtl_new_shared_event(dev->mtl_handle);
     mtl_shared_event_set_signaled_value(timeline->mtl_handle, initial_value);
     timeline->pending_value = initial_value;
-+   timeline->overdue_value = 0u;
++   simple_mtx_init(&timeline->overdue_mutex, mtx_plain);
++   timeline->stalled_value = 0u;
 +   timeline->overdue_since = 0u;
     timeline->moved_from = NULL;
  
     return VK_SUCCESS;
-@@ -80,6 +86,59 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
+@@ -36,9 +43,21 @@ kk_timeline_finish(struct vk_device *device, struct vk_sync *sync)
+ {
+    struct kk_sync_timeline *timeline =
+       container_of(sync, struct kk_sync_timeline, base);
++   simple_mtx_destroy(&timeline->overdue_mutex);
+    mtl_release(timeline->mtl_handle);
+ }
+ 
++/* Stop the timeline's stall clock. The payload a binary semaphore moves takes
++ * its value with it, so the time a waiter spent watching the old payload says
++ * nothing about the new one. */
++static void
++kk_timeline_stop_overdue_clock(struct kk_sync_timeline *timeline)
++{
++   simple_mtx_lock(&timeline->overdue_mutex);
++   timeline->overdue_since = 0u;
++   simple_mtx_unlock(&timeline->overdue_mutex);
++}
++
+ static VkResult
+ kk_timeline_signal(struct vk_device *device, struct vk_sync *sync,
+                    uint64_t value)
+@@ -80,6 +99,68 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
     return VK_SUCCESS;
  }
  
@@ -528,29 +556,38 @@ index 4f7dd2068c13371959ef59ee683bf2776a067d84..abb6820665846e810707e66d2a227584
 +                                struct kk_sync_timeline *timeline,
 +                                uint64_t wait_value)
 +{
-+   if (mtl_shared_event_get_signaled_value(timeline->mtl_handle) >=
-+       wait_value) {
-+      timeline->overdue_since = 0u;
++   const uint64_t signaled =
++      mtl_shared_event_get_signaled_value(timeline->mtl_handle);
++   if (signaled >= wait_value)
 +      return;
-+   }
 +
 +   /* Only a value the queue took responsibility for can be owed. */
 +   if (p_atomic_read(&timeline->pending_value) < wait_value || !dev->has_queue)
 +      return;
 +
-+   /* The elapsed time belongs to one value, not to the timeline. A waiter
-+    * that arrives wanting a different value starts its own clock rather than
-+    * inheriting one an earlier waiter left behind. */
-+   uint64_t now = os_time_get_nano();
-+   if (timeline->overdue_since == 0u || timeline->overdue_value != wait_value) {
-+      timeline->overdue_value = wait_value;
++   /* The clock times the timeline, not a waiter: it measures how long the
++    * timeline has stood still while it owes a signal, and it restarts only
++    * when the timeline advances. Waiters on different values of one stalled
++    * timeline therefore share it instead of restarting each other's, and a
++    * waiter that arrives behind a stall inherits the time already spent in
++    * it. A waiter whose value has arrived leaves it alone, because the
++    * timeline standing still says nothing about that waiter. */
++   bool expired = false;
++   simple_mtx_lock(&timeline->overdue_mutex);
++   /* Read the time under the lock: another waiter may start the clock after
++    * an earlier reading, and the elapsed time must never go negative. */
++   const uint64_t now = os_time_get_nano();
++   if (timeline->overdue_since == 0u || timeline->stalled_value != signaled) {
++      timeline->stalled_value = signaled;
 +      timeline->overdue_since = now;
-+      return;
++   } else if (now - timeline->overdue_since >= kk_lost_signal_timeout_ns) {
++      timeline->overdue_since = 0u;
++      expired = true;
 +   }
-+   if (now - timeline->overdue_since < kk_lost_signal_timeout_ns)
++   simple_mtx_unlock(&timeline->overdue_mutex);
++   if (!expired)
 +      return;
 +
-+   timeline->overdue_since = 0u;
 +   uint64_t completed =
 +      kk_queue_complete_owed_signals(&dev->queue, timeline->mtl_handle);
 +   if (completed) {
@@ -565,7 +602,7 @@ index 4f7dd2068c13371959ef59ee683bf2776a067d84..abb6820665846e810707e66d2a227584
  static VkResult
  kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
                   uint64_t wait_value, enum vk_sync_wait_flags wait_flags,
-@@ -87,6 +146,7 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
+@@ -87,6 +168,7 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
  {
     struct kk_sync_timeline *timeline =
        container_of(sync, struct kk_sync_timeline, base);
@@ -573,7 +610,7 @@ index 4f7dd2068c13371959ef59ee683bf2776a067d84..abb6820665846e810707e66d2a227584
  
     for (;;) {
        if (vk_device_is_lost_no_report(device))
-@@ -106,6 +166,11 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
+@@ -106,6 +188,11 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
            p_atomic_read(&timeline->pending_value) >= wait_value)
           return VK_SUCCESS;
  
@@ -585,31 +622,40 @@ index 4f7dd2068c13371959ef59ee683bf2776a067d84..abb6820665846e810707e66d2a227584
        /* Metal takes relative milliseconds; Vulkan provides an absolute
         * nanosecond deadline. Recompute after every pending-wait slice. */
        uint64_t timeout_ms;
-@@ -150,6 +215,11 @@ kk_sync_binary_take_payload(struct vk_device *device, struct vk_sync *dst_sync,
+@@ -150,6 +237,8 @@ kk_sync_binary_take_payload(struct vk_device *device, struct vk_sync *dst_sync,
      * headers. Reset the recycled destination payload for future source use. */
     SWAP(dst_timeline->mtl_handle, src_timeline->mtl_handle);
     SWAP(dst_timeline->pending_value, src_timeline->pending_value);
-+   /* The payload moves, but how long a waiter has been watching it does not. */
-+   dst_timeline->overdue_value = 0u;
-+   dst_timeline->overdue_since = 0u;
-+   src_timeline->overdue_value = 0u;
-+   src_timeline->overdue_since = 0u;
++   kk_timeline_stop_overdue_clock(dst_timeline);
++   kk_timeline_stop_overdue_clock(src_timeline);
     SWAP(dst->next_point, src->next_point);
     return vk_sync_reset(device, src_sync);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_sync.h b/src/kosmickrisp/vulkan/kk_sync.h
-index 45aa22c6ecec6a4676172c5a79a168bc2dc71c47..08b99c127e7c3c084aaf5a47f35044dcb928efb1 100644
+index 45aa22c6ecec6a4676172c5a79a168bc2dc71c47..a9f9a8a0952ff3679f28ece6310f117b9bdb9d42 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.h
 +++ b/src/kosmickrisp/vulkan/kk_sync.h
-@@ -20,6 +20,12 @@ struct kk_sync_timeline {
+@@ -11,6 +11,8 @@
+ 
+ #include "vk_sync.h"
+ 
++#include "util/simple_mtx.h"
++
+ struct kk_queue;
+ 
+ struct kk_sync_timeline {
+@@ -20,6 +22,15 @@ struct kk_sync_timeline {
      * CPU or enqueued on the queue's Metal timeline. Any wait at or below it
      * is pending in the common runtime's sense. */
     uint64_t pending_value;
-+   /* The value a waiter is watching for, and when it first found the
-+    * timeline short of it with the signal already accepted, so a signal that
-+    * never arrives can be told from one that is merely slow. Zero while
-+    * nothing is outstanding. */
-+   uint64_t overdue_value;
++   /* How long the timeline has stood still while it owes a waiter a signal
++    * the queue already accepted, so a signal that never arrives can be told
++    * from one that is merely slow: the value it stood at when the clock
++    * started, and when that was. Every waiter behind the stall shares this one
++    * clock, which restarts only when the timeline advances. overdue_since is
++    * zero while no clock runs. Both are guarded by overdue_mutex. */
++   simple_mtx_t overdue_mutex;
++   uint64_t stalled_value;
 +   uint64_t overdue_since;
     /* The permanent binary semaphore a temporary still has to take its
      * payload from, once the submit worker reaches it; see

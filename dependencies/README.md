@@ -271,8 +271,12 @@ Sequential encoders of one recording share a Metal command buffer. Only
 compute that must run before or after a whole render pass, and each encoder of
 a layered or multiview pass, gets a Metal command buffer of its own. A command
 buffer takes a native command allocator for a lane only when that lane
-records, and hands it to the device's allocator cache when it is reset or, for
-a one-time submission, when the GPU finishes. An allocator keeps its
+records. Every submission takes its allocators and Metal command buffers with
+it and hands the allocators to the device's allocator cache when the GPU
+finishes; a reset hands over only allocators that were never submitted. A
+resubmitted command buffer is recorded again, so its re-record first waits
+for the GPU to finish its last submission, which a `SIMULTANEOUS_USE` buffer
+may still be running. An allocator keeps its
 high-water storage until it is released, and a recording that takes a grown
 one keeps all of it, so the cache recycles only allocators of at most 16 MiB,
 keeps at most 64 MiB in total, and releases every other allocator. Feedback
@@ -294,8 +298,10 @@ batch. It is not a Vulkan timestamp-query result, adds no GPU commands, and is
 absent from the disabled path.
 
 The iOS storage build exports only the two file-oriented C entry points used by
-Kernarium. Its archive excludes every GPT fdisk command-line front end and
-`popt`. The standalone macOS Android launcher invokes an installed Homebrew
+Kernarium. They run one at a time, and while one runs they redirect the whole
+process's `std::cout` and `std::cerr`, where the core reports its reasons; a
+failed call appends that output to its error message. The storage archive
+excludes every GPT fdisk command-line front end and `popt`. The standalone macOS Android launcher invokes an installed Homebrew
 `sgdisk` executable instead; it does not link or discover a Homebrew library.
 The zstd build contains the streaming decompressor but excludes compression,
 dictionary-builder, legacy-frame, deprecated, and command-line code. Both

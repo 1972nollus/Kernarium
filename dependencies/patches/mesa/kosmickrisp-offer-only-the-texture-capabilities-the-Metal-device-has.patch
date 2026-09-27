@@ -99,7 +99,7 @@ index 7ccf20bbd91e086443efbabfe385ee6f39deda30..52a8e8ca5473abf30bc63e7d5a91db4b
  mtl_device_max_threads_per_threadgroup(mtl_device *dev)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 549650178c1c4ff2254fad5e065633407591d4fc..58bc24e9cc8eab38b8b867957c6adc15e26aa7b3 100644
+index 492498c34439aa604262faa81f9221de999c6ea6..9d7183dab1fb072cefe5ca670b96f0891976aa4d 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -33,6 +33,19 @@ static void kk_image_report_address_binding(struct kk_device *dev,

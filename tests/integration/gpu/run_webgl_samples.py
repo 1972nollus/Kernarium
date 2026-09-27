@@ -28,10 +28,9 @@ from run_chromium_webgl import (  # noqa: E402
     MINIMUM_SESSION_SECONDS,
     announced_vnc_port,
     git_state,
+    guest_child,
     install_text,
     rootfs_contract_metadata,
-    start_guest,
-    stop_guest,
 )
 
 
@@ -710,8 +709,7 @@ def main() -> int:
     deadline = time.monotonic() + options.timeout
     first_sample_deadline = time.monotonic() + options.first_sample_timeout
 
-    with log_path.open("wb") as log:
-        process = start_guest(command, log)
+    with log_path.open("wb") as log, guest_child(command, log) as process:
         try:
             while time.monotonic() < deadline:
                 text = log_path.read_text(encoding="utf-8", errors="replace")
@@ -829,8 +827,6 @@ def main() -> int:
                 encoding="utf-8",
             )
             raise
-        finally:
-            stop_guest(process)
 
 
 if __name__ == "__main__":

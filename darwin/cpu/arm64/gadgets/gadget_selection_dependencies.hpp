@@ -33,6 +33,7 @@
 #include "../detail/instruction_primitives.hpp"
 #include "../detail/integer_multiply.hpp"
 #include "../detail/pointer_auth.hpp"
+#include "../detail/read_check_write.hpp"
 #include "cpu/host_capabilities.hpp"
 #include "uml_darwin_static_mmu.h"
 

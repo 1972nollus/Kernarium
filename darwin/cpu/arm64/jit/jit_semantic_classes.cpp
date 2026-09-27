@@ -4,6 +4,7 @@
 
 #include "cpu/arm64/detail/atomic_floating.hpp"
 #include "cpu/arm64/detail/gcs.hpp"
+#include "cpu/arm64/detail/read_check_write.hpp"
 
 #include <cstdint>
 
@@ -34,18 +35,14 @@ namespace {
 
 [[nodiscard]] constexpr bool read_check_write_pair(
     std::uint32_t instruction) noexcept {
-  const unsigned operation = (instruction >> 12) & 7U;
-  return matches(instruction, 0xbf20'fc00U, 0x1920'0c00U) ||
-         (matches(instruction, 0xbf20'8c00U, 0x1920'8000U) &&
-          (operation != 0U || (instruction & 0x4000'0000U) != 0U));
+  const auto decoded = detail::decode_read_check_write(instruction);
+  return decoded.recognized && decoded.pair;
 }
 
 [[nodiscard]] constexpr bool read_check_write_scalar(
     std::uint32_t instruction) noexcept {
-  const unsigned operation = (instruction >> 12) & 7U;
-  return matches(instruction, 0xbf20'fc00U, 0x1920'0800U) ||
-         (matches(instruction, 0xbf20'8c00U, 0x3820'8000U) &&
-          operation >= 1U && operation <= 3U);
+  const auto decoded = detail::decode_read_check_write(instruction);
+  return decoded.recognized && !decoded.pair;
 }
 
 } // namespace

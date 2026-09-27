@@ -39,8 +39,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 		emit(words, literal_load_gadget(
 			vector, operation, !vector && destination == 31U));
 		const auto destination_offset = vector ?
-			offsetof(CpuState, vectors) +
-				destination * sizeof(VectorRegister) :
+			vector_operand_offset(destination) :
 			destination < 31U ? destination * sizeof(std::uint64_t) : 0U;
 		const auto displacement =
 			sign_extend((instruction >> 5) & 0x7ffffU, 19) * 4;
@@ -234,16 +233,13 @@ DecodeResult decode_load_store(DecodeContext &context)
 			opcode == 0xb900'0000U ? 2U : 3U;
 		const auto operation = opcode == 0xb940'0000U ||
 			opcode == 0xf940'0000U ? 1U : 0U;
-		Gadget transfer = nullptr;
-		if (!transfer_zero) {
-			transfer = scalar_unsigned_memory_inplace_gadget(
-				scale, operation, base == 31U, reg);
-		}
-		if (transfer == nullptr) {
-			transfer = scalar_unsigned_memory_gadget(
-				scale, operation, base == 31U, transfer_zero);
-		}
-		emit(words, transfer);
+		/* A register transfer takes the entry that bakes it; only XZR
+		 * has a shared entry. */
+		emit(words, transfer_zero ?
+			scalar_unsigned_memory_gadget(
+				scale, operation, base == 31U, true) :
+			scalar_unsigned_memory_inplace_gadget(
+				scale, operation, base == 31U, reg));
 		const auto offset = ((instruction >> 10) & 0xfffU) << scale;
 		const auto reg_offset = reg < 31U ?
 			reg * sizeof(std::uint64_t) : 0U;
@@ -416,14 +412,10 @@ DecodeResult decode_load_store(DecodeContext &context)
 			++compiled;
 			return DecodeResult::terminal;
 		}
-	} else if ((instruction & 0xbf20'fc00U) == 0x1920'0800U ||
-		   ((instruction & 0xbf20'8c00U) == 0x3820'8000U &&
-		    ((instruction >> 12) & 7U) >= 1U &&
-		    ((instruction >> 12) & 7U) <= 3U)) {
-		const bool compare_swap =
-			(instruction & 0xbf20'fc00U) == 0x1920'0800U;
-		const unsigned encoded_operation =
-			(instruction >> 12) & 7U;
+	} else if (const auto rcw = detail::decode_read_check_write(instruction);
+		   rcw.recognized && !rcw.pair) {
+		const bool compare_swap = rcw.compare_swap;
+		const unsigned encoded_operation = rcw.operation;
 		const bool valid = compare_swap ||
 			(encoded_operation >= 1U && encoded_operation <= 3U);
 		if (!valid) {
@@ -446,7 +438,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			(result == 31U ? 1U : 0U);
 		const unsigned operation = compare_swap ? 0U :
 			encoded_operation;
-		const unsigned soft = (instruction >> 30) & 1U;
+		const unsigned soft = rcw.soft;
 		const unsigned base = (instruction >> 5) & 31U;
 		if (base == 31U)
 			emit(words,
@@ -455,13 +447,9 @@ DecodeResult decode_load_store(DecodeContext &context)
 			[registers]);
 		emit(words, rcw_scalar_operand(instruction, compare_swap));
 		emit(words, address);
-	} else if ((instruction & 0xbf20'fc00U) == 0x1920'0c00U ||
-		   ((instruction & 0xbf20'8c00U) == 0x1920'8000U &&
-		    (((instruction >> 12) & 7U) != 0U ||
-		     (instruction & 0x4000'0000U) != 0U))) {
-		const bool compare_swap =
-			(instruction & 0xbf20'fc00U) == 0x1920'0c00U;
-		const unsigned operation = (instruction >> 12) & 7U;
+	} else if (rcw.recognized) {
+		const bool compare_swap = rcw.compare_swap;
+		const unsigned operation = rcw.operation;
 		const unsigned first = instruction & 31U;
 		const unsigned second = (instruction >> 16) & 31U;
 		const bool valid_operation = compare_swap ||
@@ -481,7 +469,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			(instruction & 0x0040'0000U) != 0;
 		const unsigned ordering =
 			(acquire ? 2U : 0U) | (release ? 1U : 0U);
-		const unsigned soft = (instruction >> 30) & 1U;
+		const unsigned soft = rcw.soft;
 		const unsigned base = (instruction >> 5) & 31U;
 		if (base == 31U)
 			emit(words,
@@ -948,8 +936,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			const unsigned base = (instruction >> 5) & 31U;
 			emit(words, vector_unsigned_memory_gadget(
 				size_code, operation, base == 31U));
-			const auto transfer_offset = offsetof(CpuState, vectors) +
-				transfer * sizeof(VectorRegister);
+			const auto transfer_offset =
+				vector_operand_offset(transfer);
 			const auto base_offset = base < 31U ?
 				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
 			const unsigned scale = operation >= 2U ? 4U : size_code;
@@ -1044,8 +1032,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 				vector_other_gadgets(size_code, operation);
 			const unsigned transfer = instruction & 31U;
 			const unsigned base = (instruction >> 5) & 31U;
-			const auto transfer_offset = offsetof(CpuState, vectors) +
-				transfer * sizeof(VectorRegister);
+			const auto transfer_offset =
+				vector_operand_offset(transfer);
 			const auto base_offset = base < 31U ?
 				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
 			if (register_offset) {
@@ -1141,10 +1129,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 				mode == 3U ? 1U : 0U;
 			const auto &gadgets =
 				vector_pair_gadgets(operation, load);
-			const auto first_offset = offsetof(CpuState, vectors) +
-				first * sizeof(VectorRegister);
-			const auto second_offset = offsetof(CpuState, vectors) +
-				second * sizeof(VectorRegister);
+			const auto first_offset = vector_operand_offset(first);
+			const auto second_offset = vector_operand_offset(second);
 			const auto base_offset = base < 31U ?
 				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
 			const auto displacement = sign_extend(

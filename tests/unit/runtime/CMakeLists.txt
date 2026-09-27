@@ -22,7 +22,6 @@ target_compile_definitions(uml_run_routing_tests PRIVATE
 target_compile_features(uml_run_routing_tests PRIVATE cxx_std_20)
 target_compile_options(uml_run_routing_tests PRIVATE
     -Wall -Wextra -Werror)
-add_dependencies(unit-test-binaries uml_run_routing_tests)
 uml_add_unit_test(
     NAME runtime-route-transaction
     COMMAND uml_run_routing_tests
@@ -38,7 +37,6 @@ target_include_directories(uml_runtime_context_tests PRIVATE
 target_compile_features(uml_runtime_context_tests PRIVATE cxx_std_20)
 target_compile_options(uml_runtime_context_tests PRIVATE
     -Wall -Wextra -Werror)
-add_dependencies(unit-test-binaries uml_runtime_context_tests)
 uml_add_unit_test(
     NAME runtime-context-lifecycle
     COMMAND uml_runtime_context_tests
@@ -52,7 +50,6 @@ target_include_directories(uml_runtime_exit_order_tests PRIVATE
 target_compile_features(uml_runtime_exit_order_tests PRIVATE cxx_std_20)
 target_compile_options(uml_runtime_exit_order_tests PRIVATE
     -Wall -Wextra -Werror)
-add_dependencies(unit-test-binaries uml_runtime_exit_order_tests)
 uml_add_unit_test(
     NAME runtime-exit-order
     COMMAND uml_runtime_exit_order_tests)
@@ -65,7 +62,6 @@ target_compile_features(uml_runtime_kernel_signal_scope_tests PRIVATE
     cxx_std_20)
 target_compile_options(uml_runtime_kernel_signal_scope_tests PRIVATE
     -Wall -Wextra -Werror)
-add_dependencies(unit-test-binaries uml_runtime_kernel_signal_scope_tests)
 uml_add_unit_test(
     NAME runtime-kernel-signal-scope
     COMMAND uml_runtime_kernel_signal_scope_tests)
@@ -77,7 +73,6 @@ target_include_directories(uml_runtime_sequential_run_tests PRIVATE
 target_compile_features(uml_runtime_sequential_run_tests PRIVATE cxx_std_20)
 target_compile_options(uml_runtime_sequential_run_tests PRIVATE
     -Wall -Wextra -Werror)
-add_dependencies(unit-test-binaries uml_runtime_sequential_run_tests)
 uml_add_unit_test(
     NAME runtime-sequential-run-same-handle
     COMMAND uml_runtime_sequential_run_tests same-handle)

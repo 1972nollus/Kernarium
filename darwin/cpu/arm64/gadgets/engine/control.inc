@@ -150,6 +150,19 @@ gadget return
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
+/* Store the target in x10 and its BlockLink in x12 into the next cell of the
+ * site whose cells x9 addresses, round-robin, as the cold helper trains a
+ * miss. */
+.macro train_indirect_cell
+	ldrb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
+	add x14, x9, x13, lsl #4
+	stp x10, x12, [x14]
+	add w13, w13, #1
+	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
+	strb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+.endm
+
 /* Two-entry data-only indirect target caches. Translation fixes the source
  * register offset and cache-cell address. A hit immediately follows the
  * already-safe BlockLink; only a miss commits the target and identifies the
@@ -176,13 +189,7 @@ gadget return
 	/* Train the site's next cell as the cold helper would, so the ordinary
 	 * cell path hits this target from now on and the ring is consulted
 	 * only when the site is more polymorphic than its cells. */
-	ldrb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	add x14, x9, x13, lsl #4
-	stp x10, x12, [x14]
-	add w13, w13, #1
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	strb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+	train_indirect_cell
 	b 98f
 97:
 	.endif
@@ -215,13 +222,7 @@ gadget return
 	ldp x11, x12, [x13]
 	cmp x10, x11
 	b.ne .Ltarget_tier_miss\@
-	ldrb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	add x14, x9, x13, lsl #4
-	stp x10, x12, [x14]
-	add w13, w13, #1
-	and w13, w13, #(UML_GADGET_INDIRECT_ENTRIES - 1)
-	strb w13, [x9, #(16 * UML_GADGET_INDIRECT_ENTRIES)]
+	train_indirect_cell
 	follow_block_link x12
 .Ltarget_tier_miss\@:
 	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
@@ -253,13 +254,15 @@ gadget return_cached
 	follow_indirect_link 1
 
 .purgem follow_indirect_link
+.purgem train_indirect_cell
 .purgem push_return_record
 
-/* Authenticated indirect branches. Key, link behavior, zero modifier, and
- * XZR target are fixed by the builder. The ordinary register/register path
- * is straight-line and contains no guest-state validity branch. */
-.macro pauth_branch name, operation, link, target_zero, modifier_zero
-gadget pauth_branch_\name
+/* Load the branch target into x9 and authenticate it with the key
+ * `operation` names, against the modifier register or zero. The stream word
+ * is the CpuState byte offset of the one register operand, or with two, the
+ * target's in bits 0-15 and the modifier's in bits 16-31; with neither there
+ * is no word. */
+.macro pauth_target_operands operation, target_zero, modifier_zero
 	.if !\target_zero || !\modifier_zero
 	ldr x8, [_stream], #8
 	.endif
@@ -281,6 +284,14 @@ gadget pauth_branch_\name
 	ldr x12, [_cpu, x11]
 	software_pointer_auth x9, x12, \operation
 	.endif
+.endm
+
+/* Authenticated indirect branches. Key, link behavior, zero modifier, and
+ * XZR target are fixed by the builder. The ordinary register/register path
+ * is straight-line and contains no guest-state validity branch. */
+.macro pauth_branch name, operation, link, target_zero, modifier_zero
+gadget pauth_branch_\name
+	pauth_target_operands \operation, \target_zero, \modifier_zero
 	.if \link
 	ldr x13, [_stream]
 	str x13, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
@@ -316,27 +327,7 @@ pauth_branch blra_b_zz, 5, 1, 1, 1
  */
 .macro pauth_guarded_call name, operation, target_zero, modifier_zero
 gadget pauth_branch_blra_gcs_\name
-	.if !\target_zero || !\modifier_zero
-	ldr x8, [_stream], #8
-	.endif
-	.if \target_zero
-	mov x9, xzr
-	.elseif \modifier_zero
-	ldr x9, [_cpu, x8]
-	.else
-	and w10, w8, #0xffff
-	ldr x9, [_cpu, x10]
-	.endif
-	.if \modifier_zero
-	software_pointer_auth x9, xzr, \operation
-	.elseif \target_zero
-	ldr x12, [_cpu, x8]
-	software_pointer_auth x9, x12, \operation
-	.else
-	ubfx w11, w8, #16, #16
-	ldr x12, [_cpu, x11]
-	software_pointer_auth x9, x12, \operation
-	.endif
+	pauth_target_operands \operation, \target_zero, \modifier_zero
 	str x9, [_cpu, #UML_GADGET_CPU_ZERO]
 	ldr x13, [_stream]
 	stp x1, x2, [sp, #-16]!
@@ -374,6 +365,7 @@ pauth_guarded_call b_zr, 5, 1, 0
 pauth_guarded_call b_zz, 5, 1, 1
 
 .purgem pauth_guarded_call
+.purgem pauth_target_operands
 
 /* Guarded authenticated returns always use LR and SP. The checked target is
  * kept in the private zero slot across the helper call. On a failed read or
@@ -473,8 +465,12 @@ gadget branch_\name\()_inline
  * words. Only the unshifted register-register form with an XZR destination is
  * fused; a shift, an extension or a real destination falls through to the pair.
  */
-.macro compare_register_branch bits64, width, name, condition
+.macro compare_register_branch bits64, width, name, condition, linked
+	.if \linked
+gadget compare_register_branch_\width\()_\name\()_linked
+	.else
 gadget compare_register_branch_\width\()_\name
+	.endif
 	ldr x8, [_stream], #8
 	ldr x19, [_stream], #8
 	ldr x20, [_stream]
@@ -488,29 +484,15 @@ gadget compare_register_branch_\width\()_\name
 	subs wzr, w15, w16
 	.endif
 	mrs x27, nzcv
+	.if \linked
+	csel x8, x19, x20, \condition
+	follow_block_link x8
+	.else
 	csel x9, x19, x20, \condition
 	str x9, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
-.endm
-
-.macro compare_register_branch_linked bits64, width, name, condition
-gadget compare_register_branch_\width\()_\name\()_linked
-	ldr x8, [_stream], #8
-	ldr x19, [_stream], #8
-	ldr x20, [_stream]
-	ubfx x10, x8, #16, #16
-	ldr x15, [_cpu, x10]
-	ubfx x11, x8, #32, #16
-	ldr x16, [_cpu, x11]
-	.if \bits64
-	subs xzr, x15, x16
-	.else
-	subs wzr, w15, w16
 	.endif
-	mrs x27, nzcv
-	csel x8, x19, x20, \condition
-	follow_block_link x8
 .endm
 
 /* Fall-through translated inline; see conditional_branch_inline. */
@@ -537,10 +519,10 @@ gadget compare_register_branch_\width\()_\name\()_inline
 .endm
 
 .macro compare_register_branch_pair name, condition
-compare_register_branch 1, x, \name, \condition
-compare_register_branch 0, w, \name, \condition
-compare_register_branch_linked 1, x, \name, \condition
-compare_register_branch_linked 0, w, \name, \condition
+compare_register_branch 1, x, \name, \condition, 0
+compare_register_branch 0, w, \name, \condition, 0
+compare_register_branch 1, x, \name, \condition, 1
+compare_register_branch 0, w, \name, \condition, 1
 compare_register_branch_inline 1, x, \name, \condition
 compare_register_branch_inline 0, w, \name, \condition
 .endm
@@ -562,7 +544,6 @@ compare_register_branch_pair le, le
 
 .purgem compare_register_branch_pair
 .purgem compare_register_branch
-.purgem compare_register_branch_linked
 .purgem compare_register_branch_inline
 
 /* G-2 superinstruction: guest CMP-immediate immediately followed by B.cond.
@@ -584,8 +565,12 @@ compare_register_branch_pair le, le
  * branch already took. Rn == 31 means SP for this instruction class and is left
  * to the unfused path rather than given a variant.
  */
-.macro compare_immediate_branch bits64, width, name, condition
+.macro compare_immediate_branch bits64, width, name, condition, linked
+	.if \linked
+gadget compare_immediate_branch_\width\()_\name\()_linked
+	.else
 gadget compare_immediate_branch_\width\()_\name
+	.endif
 	ldr x8, [_stream], #8
 	ldr x19, [_stream], #8
 	ldr x20, [_stream]
@@ -598,28 +583,15 @@ gadget compare_immediate_branch_\width\()_\name
 	subs wzr, w15, w11
 	.endif
 	mrs x27, nzcv
+	.if \linked
+	csel x8, x19, x20, \condition
+	follow_block_link x8
+	.else
 	csel x9, x19, x20, \condition
 	str x9, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
-.endm
-
-.macro compare_immediate_branch_linked bits64, width, name, condition
-gadget compare_immediate_branch_\width\()_\name\()_linked
-	ldr x8, [_stream], #8
-	ldr x19, [_stream], #8
-	ldr x20, [_stream]
-	ubfx w10, w8, #8, #5
-	ldr x15, [_cpu, x10, lsl #3]
-	lsr x11, x8, #16
-	.if \bits64
-	subs xzr, x15, x11
-	.else
-	subs wzr, w15, w11
 	.endif
-	mrs x27, nzcv
-	csel x8, x19, x20, \condition
-	follow_block_link x8
 .endm
 
 /* Fall-through translated inline; see conditional_branch_inline. */
@@ -645,10 +617,10 @@ gadget compare_immediate_branch_\width\()_\name\()_inline
 .endm
 
 .macro compare_immediate_branch_pair name, condition
-compare_immediate_branch 1, x, \name, \condition
-compare_immediate_branch 0, w, \name, \condition
-compare_immediate_branch_linked 1, x, \name, \condition
-compare_immediate_branch_linked 0, w, \name, \condition
+compare_immediate_branch 1, x, \name, \condition, 0
+compare_immediate_branch 0, w, \name, \condition, 0
+compare_immediate_branch 1, x, \name, \condition, 1
+compare_immediate_branch 0, w, \name, \condition, 1
 compare_immediate_branch_inline 1, x, \name, \condition
 compare_immediate_branch_inline 0, w, \name, \condition
 .endm
@@ -670,7 +642,6 @@ compare_immediate_branch_pair le, le
 
 .purgem compare_immediate_branch_pair
 .purgem compare_immediate_branch
-.purgem compare_immediate_branch_linked
 .purgem compare_immediate_branch_inline
 
 conditional_branch eq, eq

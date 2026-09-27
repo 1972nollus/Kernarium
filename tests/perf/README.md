@@ -270,6 +270,12 @@ application/native ratio. The same two sources also compile native-only on
 AArch64 Linux; that binary can run through `run_guest_command_bench.py` for
 the real-guest comparison. See the executable's `--help` for workload selection.
 
+This bench stays separate from the [ideal gadget ceiling](#ideal-gadget-ceiling):
+it measures what forwarding changes, swapping forwarding-off and forwarding-on
+streams in place so both run at the same addresses, while the ceiling compares
+the native control with one ideal stream of the bodies it shares with the
+guest probes.
+
 ## Execution histogram
 
 A separate `UML_GADGET_EXECUTION_HISTOGRAM=ON` build counts every executed
@@ -370,6 +376,13 @@ per workload and round. A workload the rootfs cannot run prints
 skips the C front end. `CORPUS_ROUNDS` and `CORPUS_ONLY` select the work.
 Each workload is sized to about two seconds on a gadgets guest, so compare
 arms round by round rather than across launches.
+
+## Host issue ratios
+
+`uml-host-issue-ratio` measures how many 128-bit loads and vector ALU
+operations the host core issues per cycle, alone and mixed, calibrating the
+cycle against a dependent ADD chain. Run it once as built for the performance
+cores and once under `taskpolicy -c background` for the efficiency cores.
 
 ## Ideal gadget ceiling
 

@@ -6,7 +6,7 @@
  * releasing its own memory.
  */
 #include "native_window_test_support.hpp"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 #include "uml_darwin_memory.h"
 
 #include <array>
@@ -18,6 +18,7 @@
 #include <mach/mach_vm.h>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -135,34 +136,9 @@ private:
 	std::size_t length_{};
 };
 
-class Backing final {
-public:
-	explicit Backing(std::size_t pages)
-	{
-		auto path = uml::testing::scratch_template(
-			"uml-window-reserve.XXXXXX");
-		fd_ = mkstemp(path.data());
-		require(fd_ >= 0, "could not create the window test backing");
-		require(unlink(path.data()) == 0,
-			"could not unlink the window test backing");
-		require(ftruncate(fd_, static_cast<off_t>(pages * host_page())) == 0,
-			"could not size the window test backing");
-	}
+using uml::testing::ScratchBacking;
 
-	~Backing()
-	{
-		if (fd_ >= 0)
-			(void)close(fd_);
-	}
-
-	Backing(const Backing &) = delete;
-	Backing &operator=(const Backing &) = delete;
-
-	[[nodiscard]] int fd() const noexcept { return fd_; }
-
-private:
-	int fd_{-1};
-};
+constexpr std::string_view backing_name = "uml-window-reserve.XXXXXX";
 
 /* The window as the product builds it: one reservation, no protections, no
  * committed pages, with guest pages mapped over it. */
@@ -200,11 +176,11 @@ private:
 	std::size_t length_{};
 };
 
-void map_pages(const WindowArena &arena, const Backing &backing,
-	std::size_t first, std::size_t count)
+void map_pages(const WindowArena &arena,
+	const ScratchBacking &backing, std::size_t first, std::size_t count)
 {
 	require(darwin_uml_vm_map(reinterpret_cast<void *>(arena.page(first)),
-		backing.fd(), first * host_page(), count * host_page(),
+		backing.descriptor(), first * host_page(), count * host_page(),
 		PROT_READ | PROT_WRITE, 0, 1) == 0,
 		"the guest could not map " + describe(arena.page(first),
 			count * host_page()));
@@ -234,7 +210,7 @@ void test_released_window_pages_are_never_free()
 	constexpr std::size_t arena_pages = 8;
 	constexpr std::size_t hole_first = 2;
 	constexpr std::size_t hole_pages = 4;
-	const Backing backing{arena_pages};
+	const ScratchBacking backing{backing_name, arena_pages * host_page()};
 	const WindowArena arena{arena_pages};
 	map_pages(arena, backing, 0, arena_pages);
 	unmap_pages(arena, hole_first, hole_pages);
@@ -293,7 +269,7 @@ void test_live_mapping_survives_an_unrelated_allocation_cycle()
 	constexpr std::size_t arena_pages = 8;
 	constexpr std::size_t hole_first = 2;
 	constexpr std::size_t hole_pages = 4;
-	const Backing backing{arena_pages};
+	const ScratchBacking backing{backing_name, arena_pages * host_page()};
 	const WindowArena arena{arena_pages};
 	map_pages(arena, backing, 0, arena_pages);
 	for (std::size_t index = 0; index < arena_pages; ++index)

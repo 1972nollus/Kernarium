@@ -4,6 +4,7 @@
 #include "cpu/floating_point_contract.hpp"
 
 #include <cstdint>
+#include <type_traits>
 
 namespace uml::cpu::arm64::detail {
 
@@ -16,10 +17,43 @@ inline constexpr std::uint32_t fpcr_exception_enable_mask = 0x0000'9f00U;
 inline constexpr std::uint32_t fpsr_exception_cumulative_mask =
 	::uml::cpu::floating_point_status_exception_mask;
 
+/* The FPSR bits a natively executed operation reports: the condition flags,
+ * QC, and the cumulative exception flags including IDC. */
+inline constexpr std::uint32_t fpsr_reported_mask = 0xf800'009fU;
+
 [[nodiscard]] constexpr std::uint32_t host_fpcr(
 	std::uint32_t guest_fpcr) noexcept
 {
 	return guest_fpcr & ~fpcr_exception_enable_mask;
+}
+
+template<typename Value>
+struct LocalFpcrResult final {
+	Value value;
+	std::uint32_t fpsr;
+};
+
+/* Run operation() with local_fpcr installed and FPSR clear, then restore the
+ * host FPCR and FPSR and return its value with the FPSR bits it raised. The
+ * operation must issue its floating-point instructions as asm volatile so
+ * that they stay between the control-register accesses. */
+template<typename Operation>
+[[nodiscard]] inline auto run_with_local_fpcr(std::uint64_t local_fpcr,
+	Operation &&operation) noexcept
+{
+	std::uint64_t saved_fpcr;
+	std::uint64_t saved_fpsr;
+	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
+	__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
+	__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
+	__asm__ volatile("msr fpsr, xzr" : : : "memory");
+	const auto value = operation();
+	std::uint64_t raised;
+	__asm__ volatile("mrs %0, fpsr" : "=r"(raised) : : "memory");
+	__asm__ volatile("msr fpcr, %0" : : "r"(saved_fpcr) : "memory");
+	__asm__ volatile("msr fpsr, %0" : : "r"(saved_fpsr) : "memory");
+	return LocalFpcrResult<std::remove_cv_t<decltype(value)>>{value,
+		static_cast<std::uint32_t>(raised) & fpsr_reported_mask};
 }
 
 [[nodiscard]] constexpr std::uint32_t enabled_exception_flags(

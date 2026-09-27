@@ -3,11 +3,13 @@
 
 #include <cstddef>
 
+/* darwin/cpu/CMakeLists.txt defines both for every includer. A default here
+ * would let a translation unit see a geometry other engines do not. */
 #ifndef UML_GADGET_CACHE_SLOTS
-#define UML_GADGET_CACHE_SLOTS 65536
+#error "UML_GADGET_CACHE_SLOTS must come from the build"
 #endif
 #ifndef UML_GADGET_RESIDENT_GENERATIONS
-#define UML_GADGET_RESIDENT_GENERATIONS 8
+#error "UML_GADGET_RESIDENT_GENERATIONS must come from the build"
 #endif
 
 namespace uml::cpu::gadget_cache {
