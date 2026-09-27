@@ -162,7 +162,11 @@ vendor `ro.hardware.egl`, `ro.hardware.vulkan` or `ro.hardware.gralloc`.
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under
 [`../../tools/rootfs/vulkan/`](../../tools/rootfs/vulkan/README.md), and the
-generated Android port series beside the metadata. A guest replay assigns new
+Android port series beside the metadata. The port series carries the generated
+Soong port and the few source changes only Android needs, such as advertising
+`EGL_EXT_pixel_format_float` only with a float config: HWUI takes the extension
+as the promise of a half-float window config, and the Android visuals are all
+fixed-point. A guest replay assigns new
 commit identities each time it is recreated, so the guest half is pinned by
 tree. Moving to a newer guest epoch is a metadata bump, a replay, and a
 regeneration; the verifier refuses a guest series that changed underneath the
