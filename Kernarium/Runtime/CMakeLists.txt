@@ -141,9 +141,12 @@ set(_kernarium_aquarium_runner
     "${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_chromium_webgl.py")
 set(_kernarium_aquarium_header
     "${CMAKE_CURRENT_BINARY_DIR}/KernariumAquarium.hpp")
+# The runner builds its launcher from the shared WebGL launcher helper, whose
+# text is part of the generated setup.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${_kernarium_aquarium_generator}"
-    "${_kernarium_aquarium_runner}")
+    "${_kernarium_aquarium_runner}"
+    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/webgl_launcher.py")
 execute_process(
     COMMAND "${_kernarium_python3}" -B "${_kernarium_aquarium_generator}"
         --runner "${_kernarium_aquarium_runner}"

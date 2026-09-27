@@ -2159,7 +2159,9 @@ native_display_cleanup
                 "huge.width_height_layers.r8g8b8a8_unorm",
                 venus_generated,
             )
-            self.assertIn("sleep 20", venus_generated)
+            self.assertIn(
+                "settle_limit=$((settle_start + 60))", venus_generated
+            )
 
     def test_signed_apple_matrix_freezes_complete_current_geometry(self) -> None:
         shards = cts.load_apple_matrix_shards()

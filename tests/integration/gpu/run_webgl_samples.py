@@ -8,7 +8,6 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import json
-import math
 from pathlib import Path
 import re
 import shlex
@@ -23,9 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import boot_kde_vnc  # noqa: E402
 import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
 import run_vk_gl_cts as cts  # noqa: E402
+import webgl_launcher  # noqa: E402
 from run_chromium_webgl import (  # noqa: E402
-    GUEST_REPORT_MARGIN_SECONDS,
-    MINIMUM_SESSION_SECONDS,
     announced_vnc_port,
     git_state,
     guest_child,
@@ -322,30 +320,11 @@ set -eu
 session_deadline=@SESSION_DEADLINE@
 fetch_deadline=@FETCH_DEADLINE@
 deadline=@GUEST_DEADLINE@
-runtime="/run/user/$(id -u uml)"
+@LAUNCHER_FUNCTIONS@
 printf 'UML_WEBGL_LAUNCHER|UPTIME=%s|DEADLINE=%s\\n' \\
     "$(cut -d' ' -f1 /proc/uptime)" "$deadline"
-uptime_seconds()
-{
-    cut -d. -f1 /proc/uptime
-}
-fail()
-{
-    echo "UML_WEBGL_RUNNER_ERROR: $*"
-    exit 1
-}
-while [ ! -S /tmp/.X11-unix/X0 ] || [ ! -S "$runtime/bus" ]; do
-    if [ "$(uptime_seconds)" -ge "$session_deadline" ]; then
-        fail "KDE display did not become ready by guest uptime" \\
-            "${session_deadline}s"
-    fi
-    sleep 1
-done
-xauthority="$(find "$runtime" -maxdepth 1 -type f -name 'xauth_*' -print |
-    head -n 1)"
-if [ -z "$xauthority" ]; then
-    fail "Xauthority cookie was not found"
-fi
+wait_for_session /tmp/.X11-unix/X0 "KDE display"
+find_xauthority
 rm -rf /tmp/chromium-webgl-samples
 first_url="https://webglsamples.org@FIRST_PATH@"
 fetch_seconds=$((fetch_deadline - $(uptime_seconds)))
@@ -371,31 +350,14 @@ if ! runuser -u uml -- env \\
     fail "glxinfo could not query the KDE display"
 fi
 chromium_status=0
-timeout -k 10 "$((deadline - $(uptime_seconds)))" runuser -u uml -- env \\
-    HOME=/home/uml \\
-    DISPLAY=:0 \\
-    WAYLAND_DISPLAY=wayland-0 \\
-    XAUTHORITY="$xauthority" \\
-    XDG_RUNTIME_DIR="$runtime" \\
-    DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \\
-    chromium \\
-    @CHROMIUM_EXTRA_FLAGS@ \\
-    --use-gl=angle \\
-    --use-angle=gles-egl \\
-    --ignore-gpu-blocklist \\
+run_chromium "$((deadline - $(uptime_seconds)))" \\
     --disable-quic \\
-    --no-first-run \\
-    --disable-crash-reporter \\
-    --enable-logging=stderr \\
-    --start-maximized \\
+    @CHROMIUM_EXTRA_FLAGS@ \\
     --user-data-dir=/tmp/chromium-webgl-samples \\
     --disable-extensions-except=/var/tmp/uml-webgl-samples-extension \\
     --load-extension=/var/tmp/uml-webgl-samples-extension \\
     "$first_url" || chromium_status=$?
-if [ "$chromium_status" = 124 ] || [ "$chromium_status" = 137 ]; then
-    fail "WebGL samples did not finish by guest uptime ${deadline}s"
-fi
-fail "Chromium exited with status $chromium_status"
+fail "$(chromium_exit_reason "$chromium_status" "WebGL samples")"
 """
 
 
@@ -403,19 +365,18 @@ def launcher_deadlines(
     first_sample_timeout: float, timeout: float
 ) -> dict[str, int]:
     """Derive the launcher's guest-uptime deadlines from the runner's."""
-    deadline = math.floor(timeout) - GUEST_REPORT_MARGIN_SECONDS
-    first_sample = math.floor(first_sample_timeout) - GUEST_REPORT_MARGIN_SECONDS
+    deadline = webgl_launcher.guest_deadline(timeout)
+    first_sample = webgl_launcher.guest_deadline(first_sample_timeout)
     fetch_deadline = (
         min(first_sample, deadline)
         - FIRST_CONTEXT_SECONDS
         - CHROMIUM_START_SECONDS
     )
     session_deadline = fetch_deadline - FETCH_MINIMUM_SECONDS
-    if session_deadline < MINIMUM_SESSION_SECONDS:
-        raise ValueError(
-            f"a {first_sample_timeout:g} s first-sample deadline leaves the "
-            f"boot and KDE session less than {MINIMUM_SESSION_SECONDS} s"
-        )
+    webgl_launcher.require_session_budget(
+        session_deadline,
+        f"a {first_sample_timeout:g} s first-sample deadline",
+    )
     return {
         "session_deadline": session_deadline,
         "fetch_deadline": fetch_deadline,
@@ -429,7 +390,11 @@ def build_launcher(
     deadlines: dict[str, int],
 ) -> str:
     return (
-        LAUNCHER_TEMPLATE.replace("@FIRST_PATH@", first_path)
+        LAUNCHER_TEMPLATE.replace(
+            "@LAUNCHER_FUNCTIONS@",
+            webgl_launcher.launcher_functions("UML_WEBGL_RUNNER_ERROR:"),
+        )
+        .replace("@FIRST_PATH@", first_path)
         .replace(
             "@CHROMIUM_EXTRA_FLAGS@",
             " ".join(shlex.quote(flag) for flag in chromium_flags),
@@ -457,6 +422,7 @@ StandardError=journal+console
 WantedBy=graphical.target
 """
 
+FAILURE_MARKERS = ("UML_WEBGL_SAMPLE_ERROR|", "UML_WEBGL_RUNNER_ERROR:")
 OK_PATTERN = re.compile(
     r"UML_WEBGL_SAMPLE_OK\|(\d+)/(\d+)\|([^|]+)\|"
     r"CONTEXT=([^|]+)\|FRAMES=(\d+)\|RENDERER=([^\r\n\"]+)"
@@ -500,29 +466,14 @@ def capture_has_demo_pixels(path: Path) -> bool:
 
 
 def capture_sample(client: Path, password: str, port: int, path: Path) -> None:
-    for attempt in range(3):
-        try:
-            subprocess.run(
-                [
-                    str(client.resolve()),
-                    "--password",
-                    password,
-                    "--capture",
-                    str(path),
-                    str(port),
-                ],
-                check=True,
-                timeout=30,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            if not capture_has_demo_pixels(path):
-                raise RuntimeError(f"capture is visually blank: {path}")
-            return
-        except (OSError, RuntimeError, subprocess.SubprocessError):
-            if attempt == 2:
-                raise
-            time.sleep(0.5)
+    """Capture the sample on screen now, once.
+
+    The verifier moves on four seconds after it reports a sample, so a second
+    attempt could save the next page under this sample's name.
+    """
+    webgl_launcher.capture_rendered_frame(client, password, port, path)
+    if not capture_has_demo_pixels(path):
+        raise RuntimeError(f"capture is visually blank: {path}")
 
 
 def main() -> int:
@@ -713,20 +664,10 @@ def main() -> int:
         try:
             while time.monotonic() < deadline:
                 text = log_path.read_text(encoding="utf-8", errors="replace")
-                if "UML_WEBGL_SAMPLE_ERROR|" in text:
-                    marker = next(
-                        line
-                        for line in text.splitlines()
-                        if "UML_WEBGL_SAMPLE_ERROR|" in line
+                if any(marker in text for marker in FAILURE_MARKERS):
+                    raise RuntimeError(
+                        webgl_launcher.guest_failure(text, FAILURE_MARKERS)
                     )
-                    raise RuntimeError(marker)
-                if "UML_WEBGL_RUNNER_ERROR:" in text:
-                    marker = next(
-                        line[line.index("UML_WEBGL_RUNNER_ERROR:") :].strip()
-                        for line in text.splitlines()
-                        if "UML_WEBGL_RUNNER_ERROR:" in line
-                    )
-                    raise RuntimeError(marker)
                 failure = graphics_failure(text)
                 if failure is not None:
                     raise RuntimeError(

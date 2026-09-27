@@ -7,10 +7,14 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
+#include <vector>
 
 #ifndef UML_GPU_VNC_STARTUP_TESTING
 #define UML_GPU_VNC_STARTUP_TESTING 0
@@ -18,6 +22,8 @@
 
 struct _rfbScreenInfo;
 using rfbScreenInfoPtr = _rfbScreenInfo*;
+struct _rfbClientRec;
+using rfbClientPtr = _rfbClientRec*;
 
 namespace uml::gpu {
 
@@ -70,10 +76,18 @@ public:
 #endif
 
 private:
+    struct HeldClient {
+        rfbClientPtr client {};
+        std::uint32_t epoch {};
+        std::chrono::steady_clock::time_point deadline {};
+    };
+
     void publishMetalFrame(const MetalReadbackFrame& frame) noexcept;
     void eventLoop();
-    [[nodiscard]] bool clientConnected() noexcept;
-    void clientDisconnected() noexcept;
+    [[nodiscard]] std::optional<std::uint32_t> clientConnected() noexcept;
+    void clientDisconnected(rfbClientPtr client) noexcept;
+    void holdFirstUpdate(rfbClientPtr client) noexcept;
+    void releaseHeldClients() noexcept;
     void handleKey(bool down, std::uint32_t keySymbol) noexcept;
     void handlePointer(int buttonMask, int x, int y) noexcept;
     void reportInputFailure() noexcept;
@@ -93,6 +107,15 @@ private:
     std::atomic<std::uint64_t> clientState_ {};
     std::atomic<std::uint32_t> fullFrameEpoch_ {};
     std::atomic<std::uint64_t> cpuFallbackExtent_ {};
+    /* Orders the GPU thread's "remember, then see no client" against the
+     * event thread's "count the first client, then refresh what was
+     * remembered", so no scanout dropped for lack of a client escapes both. */
+    std::mutex scanoutMutex_;
+    bool idleFramesDropped_ {};
+    /* Event-thread state: the newest connection epoch that began with a
+     * stale framebuffer, and the clients whose first update waits for it. */
+    std::uint32_t staleEpoch_ {};
+    std::vector<HeldClient> heldClients_;
     std::atomic_bool running_ {true};
     std::atomic_bool inputFailureReported_ {};
     std::thread eventThread_;

@@ -6,7 +6,9 @@
  * the display source into a test target with its own definitions, so it
  * cannot tell whether the shipped emulator contains that path at all. This
  * test links the production display library and reads the pixels back over a
- * real RFB connection, which is the contract a guest actually depends on. */
+ * real RFB connection, which is the contract a guest actually depends on. It
+ * also pins what a client sees when it connects after scanouts were dropped
+ * because nobody was watching: the newest scanout, never an older frame. */
 
 #include "display.hpp"
 
@@ -31,8 +33,9 @@ namespace {
 
 constexpr std::uint32_t displayExtent = 64;
 constexpr std::uint32_t cursorExtent = 32;
-constexpr std::array<std::uint8_t, 4> expectedPixel {
-    0x19U, 0x38U, 0x57U, 0xffU};
+using Pixel = std::array<std::uint8_t, 4>;
+constexpr Pixel expectedPixel {0x19U, 0x38U, 0x57U, 0xffU};
+constexpr Pixel idlePixel {0x6aU, 0x21U, 0xc4U, 0xffU};
 constexpr int timeoutSeconds = 10;
 constexpr auto operationTimeout = std::chrono::seconds(timeoutSeconds);
 
@@ -210,7 +213,9 @@ private:
     std::uint32_t height_ {};
 };
 
-id<MTLTexture> makePrivateScanoutTexture(id<MTLDevice> device)
+id<MTLTexture> makePrivateScanoutTexture(
+    id<MTLDevice> device,
+    const Pixel& pixel)
 {
     const auto rowBytes = static_cast<std::size_t>(displayExtent) *
         uml::gpu::protocol::gpuBytesPerPixel;
@@ -221,10 +226,10 @@ id<MTLTexture> makePrivateScanoutTexture(id<MTLDevice> device)
     require(upload != nil, "Metal upload buffer creation failed");
     auto* bytes = static_cast<std::uint8_t*>(upload.contents);
     for (std::size_t offset = 0; offset < byteCount; offset += 4U) {
-        bytes[offset] = expectedPixel[0];
-        bytes[offset + 1U] = expectedPixel[1];
-        bytes[offset + 2U] = expectedPixel[2];
-        bytes[offset + 3U] = expectedPixel[3];
+        bytes[offset] = pixel[0];
+        bytes[offset + 1U] = pixel[1];
+        bytes[offset + 2U] = pixel[2];
+        bytes[offset + 3U] = pixel[3];
     }
 
     /* A Venus scanout is an optimal render target in a private Metal heap;
@@ -264,6 +269,62 @@ id<MTLTexture> makePrivateScanoutTexture(id<MTLDevice> device)
     return texture;
 }
 
+[[nodiscard]] uml::gpu::MetalScanout wholeScanout(id<MTLTexture> texture)
+{
+    return uml::gpu::MetalScanout {
+        .texture = (__bridge void*)texture,
+        .sourceWidth = displayExtent,
+        .sourceHeight = displayExtent,
+        .sourceX = 0,
+        .sourceY = 0,
+        .width = displayExtent,
+        .height = displayExtent,
+        .damageX = 0,
+        .damageY = 0,
+        .damageWidth = displayExtent,
+        .damageHeight = displayExtent,
+    };
+}
+
+void requireImage(
+    const std::vector<std::uint8_t>& image,
+    const Pixel& pixel,
+    const char* message)
+{
+    for (std::uint32_t y = 0; y < displayExtent; ++y) {
+        for (std::uint32_t x = 0; x < displayExtent; ++x) {
+            /* LibVNCServer composites its default cursor into the pixels it
+             * sends a client that asked for no cursor encoding, so the
+             * top-left corner is the server's, not the scanout's. */
+            if (x < cursorExtent && y < cursorExtent)
+                continue;
+            const auto offset =
+                (static_cast<std::size_t>(y) * displayExtent + x) * 4U;
+            if (image[offset] == pixel[0] &&
+                image[offset + 1U] == pixel[1] &&
+                image[offset + 2U] == pixel[2]) {
+                continue;
+            }
+            std::fprintf(
+                stderr,
+                "VNC pixel at %u,%u is %02x%02x%02x, expected %02x%02x%02x\n",
+                x, y, image[offset], image[offset + 1U],
+                image[offset + 2U], pixel[0], pixel[1], pixel[2]);
+            require(false, message);
+        }
+    }
+}
+
+template<typename Predicate>
+void waitFor(Predicate predicate, const char* message)
+{
+    const auto deadline = std::chrono::steady_clock::now() + operationTimeout;
+    while (!predicate()) {
+        require(std::chrono::steady_clock::now() < deadline, message);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
 void shippedVncDisplayReadsBackAVenusScanout()
 {
     @autoreleasepool {
@@ -289,62 +350,90 @@ void shippedVncDisplayReadsBackAVenusScanout()
         }
         require(display->needsFullCpuFallback(), "no VNC client was counted");
 
-        id<MTLTexture> texture = makePrivateScanoutTexture(device);
-        const auto outcome = display->presentMetal(uml::gpu::MetalScanout {
-            .texture = (__bridge void*)texture,
-            .sourceWidth = displayExtent,
-            .sourceHeight = displayExtent,
-            .sourceX = 0,
-            .sourceY = 0,
-            .width = displayExtent,
-            .height = displayExtent,
-            .damageX = 0,
-            .damageY = 0,
-            .damageWidth = displayExtent,
-            .damageHeight = displayExtent,
-        });
+        id<MTLTexture> texture =
+            makePrivateScanoutTexture(device, expectedPixel);
+        const auto outcome = display->presentMetal(wholeScanout(texture));
         require(
             outcome == uml::gpu::PresentOutcome::presented,
             "the shipped VNC display refused a native Metal scanout");
         require(
             display->statistics().guestFrames == 1,
             "the shipped VNC display did not count the guest frame");
-        const auto published =
-            std::chrono::steady_clock::now() + operationTimeout;
-        while (display->statistics().presentedFrames == 0 &&
-               std::chrono::steady_clock::now() < published) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
+        waitFor(
+            [&] { return display->statistics().presentedFrames != 0; },
+            "the native Metal readback never completed");
         require(
             display->statistics().presentedFrames == 1,
-            "the native Metal readback never completed");
+            "the native Metal readback completed more than once");
 
-        const auto image = connection.readFramebuffer();
-        for (std::uint32_t y = 0; y < displayExtent; ++y) {
-            for (std::uint32_t x = 0; x < displayExtent; ++x) {
-                /* LibVNCServer composites its default cursor into the pixels
-                 * it sends a client that asked for no cursor encoding, so the
-                 * top-left corner is the server's, not the scanout's. */
-                if (x < cursorExtent && y < cursorExtent)
-                    continue;
-                const auto offset =
-                    (static_cast<std::size_t>(y) * displayExtent + x) * 4U;
-                if (image[offset] == expectedPixel[0] &&
-                    image[offset + 1U] == expectedPixel[1] &&
-                    image[offset + 2U] == expectedPixel[2]) {
-                    continue;
-                }
-                std::fprintf(
-                    stderr,
-                    "VNC pixel at %u,%u is %02x%02x%02x, expected %02x%02x%02x\n",
-                    x, y, image[offset], image[offset + 1U],
-                    image[offset + 2U], expectedPixel[0], expectedPixel[1],
-                    expectedPixel[2]);
-                require(
-                    false,
-                    "the VNC framebuffer did not carry the scanout's pixels");
-            }
+        requireImage(
+            connection.readFramebuffer(),
+            expectedPixel,
+            "the VNC framebuffer did not carry the scanout's pixels");
+    }
+}
+
+/* With no client the display drops each scanout without reading it back, so
+ * its framebuffer keeps the last frame an earlier client saw. A client that
+ * connects later must still receive the scanout current at its connection,
+ * even when the guest does not flush again. */
+void clientAfterAnIdleIntervalSeesTheNewestScanout()
+{
+    @autoreleasepool {
+        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+        require(device != nil, "Metal device unavailable");
+
+        auto display = uml::gpu::makeDisplay(
+            uml::gpu::DisplayMode::vnc, "127.0.0.1", 0, {}, displayExtent,
+            displayExtent);
+        require(display != nullptr, "VNC display creation failed");
+        const auto port = display->vncPort();
+        require(port.has_value() && *port != 0, "VNC display has no port");
+
+        id<MTLTexture> seen = makePrivateScanoutTexture(device, expectedPixel);
+        id<MTLTexture> idle = makePrivateScanoutTexture(device, idlePixel);
+        {
+            Connection watching(*port);
+            watching.handshake();
+            waitFor(
+                [&] { return display->needsFullCpuFallback(); },
+                "no VNC client was counted");
+            require(
+                display->presentMetal(wholeScanout(seen)) ==
+                    uml::gpu::PresentOutcome::presented,
+                "the shipped VNC display refused a native Metal scanout");
+            waitFor(
+                [&] { return display->statistics().presentedFrames != 0; },
+                "the native Metal readback never completed");
+            requireImage(
+                watching.readFramebuffer(),
+                expectedPixel,
+                "the watching client did not see the scanout");
         }
+
+        /* Presenting the frame the framebuffer already holds is harmless
+         * while the departed client is still counted. Only a display with no
+         * client drops a frame without offering it to the readback, which
+         * counts every frame it is offered. */
+        waitFor(
+            [&] {
+                const auto offered = display->statistics().guestFrames;
+                return display->presentMetal(wholeScanout(seen)) ==
+                        uml::gpu::PresentOutcome::dropped &&
+                    display->statistics().guestFrames == offered;
+            },
+            "the display kept counting a departed client");
+        require(
+            display->presentMetal(wholeScanout(idle)) ==
+                uml::gpu::PresentOutcome::dropped,
+            "the display read back a scanout with no client");
+
+        Connection late(*port);
+        late.handshake();
+        requireImage(
+            late.readFramebuffer(),
+            idlePixel,
+            "a client connecting after an idle interval saw an older frame");
     }
 }
 
@@ -354,6 +443,7 @@ int main()
 {
     try {
         shippedVncDisplayReadsBackAVenusScanout();
+        clientAfterAnIdleIntervalSeesTheNewestScanout();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "VNC product display test: %s\n", error.what());
         return 1;

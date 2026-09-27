@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import re
 import signal
+import socket
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -24,6 +26,72 @@ boot_kde_vnc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(boot_kde_vnc)
 sys.path.insert(0, str(GPU_INTEGRATION))
 import run_webgl_samples  # noqa: E402
+
+
+def run_samples_launcher(
+    deadlines: dict[str, int], chromium: str
+) -> subprocess.CompletedProcess[str]:
+    """Run the samples launcher on this host against stub guest commands."""
+
+    launcher = run_webgl_samples.build_launcher(
+        "/aquarium/aquarium.html", [], deadlines
+    )
+    stubs = {
+        "id": "echo 1001",
+        "sleep": ":",
+        # Run the bounded command without its bound; the stubs never block.
+        "timeout": (
+            'while :; do case "$1" in -k) shift 2 ;; -*) shift ;; *) break ;; '
+            'esac; done\nshift\nexec "$@"'
+        ),
+        "runuser": 'shift 3\nexec "$@"',
+        "glxinfo": "echo stub-glxinfo",
+        "curl": (
+            'while [ "$1" != --output ]; do shift; done\n'
+            'echo "<html>" > "$2"'
+        ),
+        "chromium": chromium,
+    }
+    with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        root = Path(directory)
+        uptime = root / "uptime"
+        uptime.write_text("5.00 0\n", encoding="utf-8")
+        runtime = root / "run"
+        x11 = root / "x11"
+        for path in (runtime, x11):
+            path.mkdir()
+        (runtime / "xauth_test").write_text("", encoding="utf-8")
+        listeners = []
+        for path in (runtime / "bus", x11 / "X0"):
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(str(path))
+            listeners.append(listener)
+        bin_directory = root / "bin"
+        bin_directory.mkdir()
+        for name, body in stubs.items():
+            stub = bin_directory / name
+            stub.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+            stub.chmod(0o755)
+        script = root / "launcher"
+        script.write_text(
+            launcher.replace("/proc/uptime", str(uptime))
+            .replace("/run/user/$uml_uid", str(runtime))
+            .replace("/tmp/.X11-unix", str(x11))
+            .replace("/tmp/chromium-webgl-samples", str(root / "profile"))
+            .replace("/run/uml-webgl-first.html", str(root / "first.html")),
+            encoding="utf-8",
+        )
+        try:
+            return subprocess.run(
+                ["/bin/sh", str(script)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env={"PATH": f"{bin_directory}:/usr/bin:/bin"},
+            )
+        finally:
+            for listener in listeners:
+                listener.close()
 
 
 class KdeVncLauncherTests(unittest.TestCase):
@@ -183,10 +251,15 @@ class KdeVncLauncherTests(unittest.TestCase):
         runner = (
             GPU_INTEGRATION / "run_webgl_samples.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("--use-gl=angle", runner)
-        self.assertIn("--use-angle=gles-egl", runner)
-        self.assertIn("--ignore-gpu-blocklist", runner)
-        self.assertIn("--disable-quic", runner)
+        launcher = run_webgl_samples.build_launcher(
+            "/aquarium/aquarium.html",
+            [],
+            run_webgl_samples.launcher_deadlines(300, 900),
+        )
+        self.assertIn("--use-gl=angle", launcher)
+        self.assertIn("--use-angle=gles-egl", launcher)
+        self.assertIn("--ignore-gpu-blocklist", launcher)
+        self.assertIn("--disable-quic", launcher)
         self.assertIn("curl --fail --location", runner)
         self.assertIn("UML_WEBGL_FETCH_OK|BYTES=", runner)
         self.assertIn("first page fetch failed", runner)
@@ -211,13 +284,53 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIn('--max-time "$fetch_seconds"', launcher)
         self.assertIn("timeout 30 glxinfo -B", launcher)
         self.assertIn(
-            'timeout -k 10 "$((deadline - $(uptime_seconds)))"', launcher
+            'run_chromium "$((deadline - $(uptime_seconds)))"', launcher
         )
+        self.assertIn('timeout -k 10 "$chromium_bound"', launcher)
         self.assertIn("Chromium exited with status", launcher)
         self.assertIn("Xauthority cookie was not found", launcher)
         self.assertNotIn("exec runuser", launcher)
         with self.assertRaises(ValueError):
             run_webgl_samples.launcher_deadlines(200, 900)
+
+    def test_webgl_samples_launcher_names_how_chromium_stopped(self) -> None:
+        deadlines = run_webgl_samples.launcher_deadlines(300, 900)
+        for status, expected in (
+            ("3", "Chromium exited with status 3 before WebGL samples "
+             "reported"),
+            ("124", "WebGL samples did not report by guest uptime 855s"),
+        ):
+            with self.subTest(status=status):
+                self.assertEqual(
+                    run_samples_launcher(
+                        deadlines, f"echo started\nexit {status}"
+                    ).stdout.strip().splitlines()[-1],
+                    "UML_WEBGL_RUNNER_ERROR: " + expected,
+                )
+
+    def test_webgl_samples_capture_once_and_name_the_failure(self) -> None:
+        # A stand-in capture client that counts its runs and fails the way
+        # the real one does when no rendered frame arrives.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs = root / "runs"
+            client = root / "client"
+            client.write_text(
+                "#!/bin/sh\n"
+                f"echo run >> {runs}\n"
+                "echo 'uml-vnc-smoke-client: VNC framebuffer remained blank' "
+                ">&2\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            client.chmod(0o755)
+            with self.assertRaisesRegex(
+                RuntimeError, "VNC framebuffer remained blank"
+            ):
+                run_webgl_samples.capture_sample(
+                    client, "webgl", 5900, root / "sample.ppm"
+                )
+            self.assertEqual(runs.read_text().splitlines(), ["run"])
 
     def test_webgl_samples_reject_poisoned_virgl_contexts(self) -> None:
         clean = "UML_WEBGL_SAMPLE_OK|1/2|Aquarium"
