@@ -21,12 +21,11 @@ using uml::virtio::VhostUserQueueResult;
 constexpr std::size_t maximumPacket = 8 * 1024 * 1024;
 constexpr std::size_t maximumResource = 128 * 1024 * 1024;
 
+using uml::virtio::toBytes;
 template<class T> T load(std::span<const std::uint8_t> bytes)
 {
     if (bytes.size() < sizeof(T)) throw std::invalid_argument("short video command");
-    T value;
-    std::memcpy(&value, bytes.data(), sizeof(value));
-    return value;
+    return uml::virtio::fromBytes<T>(bytes);
 }
 /* A frame that was decoded before the client negotiated a packed capture
  * format still has to be delivered in it, and a decoder that will not emit
@@ -83,15 +82,9 @@ std::vector<std::uint8_t> packBgra(const uml::platform::DecodedVideoFrame& frame
     return pixels;
 }
 
-template<class T> std::vector<std::uint8_t> bytes(const T& value)
-{
-    std::vector<std::uint8_t> result(sizeof(value));
-    std::memcpy(result.data(), &value, sizeof(value));
-    return result;
-}
 std::vector<std::uint8_t> reply(std::uint32_t stream, std::uint32_t type = VIRTIO_VIDEO_RESP_OK_NODATA)
 {
-    return bytes(virtio_video_cmd_hdr{type, stream});
+    return toBytes(virtio_video_cmd_hdr{type, stream});
 }
 /* The capture format a stream has before its client negotiates one. It is the
  * head of the raw list `capabilityResponse()` publishes: packed BGRA for an
@@ -362,7 +355,7 @@ public:
         if (events.size() >= 64) throw std::runtime_error("video event queue is full");
         events.push_back({type, stream});
         while (!events.empty() && !eventBuffers.empty()) {
-            completions.push_back({eventBuffers.front(), bytes(events.front())});
+            completions.push_back({eventBuffers.front(), toBytes(events.front())});
             eventBuffers.pop_front();
             events.pop_front();
         }
@@ -376,7 +369,7 @@ public:
         r.timestamp = timestamp;
         r.flags = flags;
         if (p) for (unsigned i = 0; i < p->num_planes; ++i) r.data_sizes[i] = p->plane_formats[i].plane_size;
-        return bytes(r);
+        return toBytes(r);
     }
 
     void cancelOutputs(std::uint32_t id, Stream& stream)
@@ -486,7 +479,7 @@ public:
             stream.packetBytes += held.size;
             auto result = load<virtio_video_resource_queue_resp>(queued(id, held.timestamp, 0));
             result.data_sizes[0] = held.size;
-            completions.push_back({held.request, bytes(result)});
+            completions.push_back({held.request, toBytes(result)});
             refreshFormat(id, stream);
             for (auto& frame : stream.decoder->takeFrames()) stream.frames.push_back(std::move(frame));
         }
@@ -579,10 +572,10 @@ public:
                         values.push_back(level);
             } else return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
             auto result = reply(id, VIRTIO_VIDEO_RESP_OK_QUERY_CONTROL);
-            const auto count = bytes(virtio_video_query_control_resp_profile{std::uint32_t(values.size()), {}});
+            const auto count = toBytes(virtio_video_query_control_resp_profile{std::uint32_t(values.size()), {}});
             result.insert(result.end(), count.begin(), count.end());
             for (auto value : values) {
-                const auto data = bytes(value);
+                const auto data = toBytes(value);
                 result.insert(result.end(), data.begin(), data.end());
             }
             return done(std::move(result));
@@ -618,7 +611,7 @@ public:
         case VIRTIO_VIDEO_CMD_GET_PARAMS: {
             const auto q = load<virtio_video_get_params>(request);
             if (!validQueue(q.queue_type)) throw std::invalid_argument("invalid parameter queue");
-            return done(bytes(virtio_video_get_params_resp{{VIRTIO_VIDEO_RESP_OK_GET_PARAMS, id},
+            return done(toBytes(virtio_video_get_params_resp{{VIRTIO_VIDEO_RESP_OK_GET_PARAMS, id},
                 q.queue_type == VIRTIO_VIDEO_QUEUE_TYPE_INPUT ? stream.input : stream.output}));
         }
         case VIRTIO_VIDEO_CMD_SET_PARAMS: {
@@ -760,7 +753,7 @@ public:
                 collect(id, stream);
                 auto result = load<virtio_video_resource_queue_resp>(queued(id, q.timestamp, 0));
                 result.data_sizes[0] = q.data_sizes[0];
-                return done(bytes(result));
+                return done(toBytes(result));
             }
             if (stream.outputs.size() >= 32) throw std::invalid_argument("video capture queue is full");
             /* Starting the capture queue settles the format as surely as
@@ -827,7 +820,7 @@ public:
             else if (q.control == VIRTIO_VIDEO_CONTROL_LEVEL && stream.coded == VIRTIO_VIDEO_FORMAT_HEVC)
                 value = VIRTIO_VIDEO_LEVEL_HEVC_6_2;
             else return done(reply(id, VIRTIO_VIDEO_RESP_ERR_UNSUPPORTED_CONTROL));
-            const auto data = bytes(virtio_video_control_val_profile{value, {}});
+            const auto data = toBytes(virtio_video_control_val_profile{value, {}});
             result.insert(result.end(), data.begin(), data.end());
             return done(std::move(result));
         }
@@ -861,7 +854,7 @@ std::uint64_t VirtioVideoDevice::features() const noexcept
 std::size_t VirtioVideoDevice::queueCount() const noexcept { return 2; }
 std::vector<std::uint8_t> VirtioVideoDevice::configuration() const
 {
-    return bytes(virtio_video_config{UML_VIRTIO_VIDEO_VERSION, 4096, 512});
+    return toBytes(virtio_video_config{UML_VIRTIO_VIDEO_VERSION, 4096, 512});
 }
 void VirtioVideoDevice::writeConfiguration(std::uint32_t, std::uint32_t, std::span<const std::uint8_t>) {}
 void VirtioVideoDevice::setGuestMapper(GuestMapper mapper) { implementation_->mapper = std::move(mapper); }
@@ -878,7 +871,7 @@ VhostUserQueueResult VirtioVideoDevice::processQueue(std::uint32_t index, std::u
         if (!request.empty() || capacity < sizeof(virtio_video_event))
             return {VhostUserQueueAction::complete, {}};
         if (!impl.events.empty()) {
-            auto result = bytes(impl.events.front()); impl.events.pop_front();
+            auto result = toBytes(impl.events.front()); impl.events.pop_front();
             return {VhostUserQueueAction::complete, std::move(result)};
         }
         if (impl.eventBuffers.size() >= uml::gpu::protocol::maximumVirtqueueSize)

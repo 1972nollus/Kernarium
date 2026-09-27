@@ -21,13 +21,6 @@ namespace {
 
 constexpr std::uintptr_t timerIdentifier = 1;
 
-std::vector<std::uint8_t> bytes(const protocol::Configuration& value)
-{
-    std::vector<std::uint8_t> result(sizeof(value));
-    std::memcpy(result.data(), &value, sizeof(value));
-    return result;
-}
-
 uml::gpu::UniqueDescriptor makeTimer(std::chrono::milliseconds interval)
 {
     uml::gpu::UniqueDescriptor queue {::kqueue()};
@@ -119,7 +112,7 @@ std::size_t VirtioBalloonDevice::queueCount() const noexcept
 
 std::vector<std::uint8_t> VirtioBalloonDevice::configuration() const
 {
-    return bytes(protocol::Configuration {
+    return uml::virtio::toBytes(protocol::Configuration {
         .numPages = targetPages_,
         .actual = actualPages_,
         .freePageHintCommandId = 0,
