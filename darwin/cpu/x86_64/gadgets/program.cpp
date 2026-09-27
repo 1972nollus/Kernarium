@@ -155,12 +155,12 @@ Program::Program(ExecutionMode mode, std::uint64_t address,
 	: address_{normalize_instruction_pointer(mode, address)},
 	  byte_count_{byte_count}, mode_{mode}
 {
-	const auto word_bytes = words.size() * sizeof(std::uintptr_t);
-	words_storage_ = std::make_unique_for_overwrite<std::byte[]>(word_bytes);
+	words_storage_ =
+		std::make_unique_for_overwrite<std::uintptr_t[]>(words.size());
 	source_storage_ =
 		std::make_unique_for_overwrite<std::byte[]>(source.size());
-	if (word_bytes != 0)
-		std::memcpy(words_storage_.get(), words.data(), word_bytes);
+	if (!words.empty())
+		std::memcpy(words_storage_.get(), words.data(), words.size_bytes());
 	if (!source.empty())
 		std::memcpy(source_storage_.get(), source.data(), source.size());
 	words_ = static_cast<std::uint32_t>(words.size());

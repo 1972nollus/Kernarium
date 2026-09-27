@@ -142,8 +142,7 @@ public:
 	[[nodiscard]] std::size_t byte_count() const noexcept { return byte_count_; }
 	[[nodiscard]] std::span<const std::uintptr_t> native_stream() const noexcept
 	{
-		return {reinterpret_cast<const std::uintptr_t *>(words_storage_.get()),
-			words_};
+		return {words_storage_.get(), words_};
 	}
 	[[nodiscard]] std::size_t instruction_count() const noexcept
 	{
@@ -191,7 +190,7 @@ private:
 	/* The words the engine runs, alone. Holding them in one allocation with
 	 * the cold data behind them put every hot stream a cold kilobyte or two
 	 * away from the next and cost the workloads with the widest code. */
-	std::unique_ptr<std::byte[]> words_storage_;
+	std::unique_ptr<std::uintptr_t[]> words_storage_;
 	/* The guest bytes the decoder read, untouched while the block runs. */
 	std::unique_ptr<std::byte[]> source_storage_;
 	/* What one budget-limited replay decoded, kept for the next one. Null
