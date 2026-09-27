@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "kosmickrisp_capability_probe.hpp"
+#include "kosmickrisp_capability_test_support.hpp"
 
 #include <vulkan/vulkan_core.h>
 
@@ -8,40 +8,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <source_location>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
 
+using namespace uml::gpu::testing;
+
 namespace {
-
-void require(
-    bool condition,
-    const std::source_location location = std::source_location::current())
-{
-    if (condition)
-        return;
-    std::fprintf(
-        stderr,
-        "require failed at %s:%u\n",
-        location.file_name(),
-        location.line());
-    std::abort();
-}
-
-std::size_t countOccurrences(
-    std::string_view text,
-    std::string_view needle)
-{
-    std::size_t count = 0;
-    for (std::size_t position = 0;
-         (position = text.find(needle, position)) != std::string_view::npos;
-         position += needle.size()) {
-        ++count;
-    }
-    return count;
-}
 
 std::vector<std::uint64_t> bufferFeatures(
     std::string_view report,
@@ -92,10 +65,7 @@ void requireRgb32UniformOnly(
 
 int main()
 {
-    std::ostringstream output;
-    require(uml::gpu::run_kosmickrisp_capability_probe(output) == 0);
-
-    const auto report = output.str();
+    const auto report = probeReport();
     const auto deviceCount =
         countOccurrences(report, "\"supported_core_formats\":[");
     require(deviceCount != 0);
