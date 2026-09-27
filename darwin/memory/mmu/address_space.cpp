@@ -353,16 +353,19 @@ struct ActiveAccessSlot final {
 	std::atomic<const void *> space{};
 };
 
+/* Intentionally leaked, as the address-space registry is: a thread can leave
+ * its slot, and a domain can retire, after exit() has begun destroying static
+ * storage. */
 std::mutex &active_access_registry_mutex()
 {
-	static std::mutex mutex;
-	return mutex;
+	static auto *mutex = new std::mutex;
+	return *mutex;
 }
 
 std::vector<ActiveAccessSlot *> &active_access_registry()
 {
-	static std::vector<ActiveAccessSlot *> slots;
-	return slots;
+	static auto *slots = new std::vector<ActiveAccessSlot *>;
+	return *slots;
 }
 
 ActiveAccessSlot &active_access_slot()
