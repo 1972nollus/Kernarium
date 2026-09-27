@@ -200,8 +200,8 @@ executable mappings. Links are tagged by address space, and each executor
 retains activation contexts for up to 64 address spaces. Switching back to an
 unchanged context preserves trained links; code publication or context
 eviction deactivates that context before reuse. Stale blocks still require
-exact guest-word validation. Runtime native compilations use one lowering pass,
-avoiding speculative GPR residency recompilation during process startup.
+exact guest-word validation. Native compilation is one lowering pass; there is
+no speculative GPR residency recompilation.
 
 On a private miss, executors first try an exact shared translation, then
 compile eagerly.

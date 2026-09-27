@@ -32,7 +32,6 @@ public:
   JitCompiler(bool enable_guarded_control_flow,
               const ArmFeatureSet &translation_features) noexcept;
 
-  void set_gpr_residency_planning_enabled(bool enabled) noexcept;
   void set_table_list_planning_enabled(bool enabled) noexcept;
   void set_pointer_authentication_enabled(bool enabled) noexcept;
 
@@ -62,15 +61,13 @@ public:
     bool native_fp{};
     bool native_fpmr{};
     bool guest_illegal{};
-    GprResidencyPlan gpr_residency_plan{};
   };
 
   Result compile(std::uint64_t guest_pc,
                  std::span<const std::uint32_t> instructions);
 
   Result compile_once(std::uint64_t guest_pc,
-                      std::span<const std::uint32_t> instructions,
-                      bool observe_gpr_residency);
+                      std::span<const std::uint32_t> instructions);
 
 private:
   enum class Action {
@@ -347,11 +344,8 @@ private:
   bool track_direct_stores_{};
   bool enable_guarded_control_flow_{};
   bool enable_pointer_authentication_{true};
-  bool gpr_residency_planning_enabled_{true};
   bool table_list_planning_enabled_{true};
   const ArmFeatureSet *translation_features_{};
-  std::vector<std::uint32_t> selected_words_;
-  std::vector<JitRelocation> selected_relocations_;
 };
 
 using JitFunction = std::uint64_t (*)(CpuState *, Tlb *, JitChainState *);

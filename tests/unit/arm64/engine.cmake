@@ -631,8 +631,6 @@
         SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/arm64_jit_vector_remap_pressure_tests.cpp)
     uml_add_arm64_unit_test(jit_table_list_remap_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
-    uml_add_arm64_unit_test(jit_gpr_residency_codegen WITHOUT_HARNESS
-        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_pair_remap_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_control_remap_codegen WITHOUT_HARNESS

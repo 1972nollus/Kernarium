@@ -46,10 +46,6 @@ JitCompiler::JitCompiler(bool enable_guarded_control_flow,
     translation_features_ = &translation_features;
   }
 
-void JitCompiler::set_gpr_residency_planning_enabled(bool enabled) noexcept {
-    gpr_residency_planning_enabled_ = enabled;
-  }
-
 void JitCompiler::set_table_list_planning_enabled(bool enabled) noexcept {
     table_list_planning_enabled_ = enabled;
   }
@@ -60,63 +56,7 @@ void JitCompiler::set_pointer_authentication_enabled(bool enabled) noexcept {
 
 JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
                  std::span<const std::uint32_t> instructions) {
-    const bool can_plan_gpr_residency =
-        gpr_residency_planning_enabled_
-        ;
-    auto selected =
-        compile_once(guest_pc, instructions, can_plan_gpr_residency);
-    bool retained_gpr_plan = false;
-    const auto plan = selected.gpr_residency_plan;
-    if (can_plan_gpr_residency &&
-        plan.count != 0U && !selected.words.empty()) {
-      JitCompiler candidate_compiler{
-          enable_guarded_control_flow_, configured_link_context_,
-          configured_link_resolver_, track_direct_stores_,
-          configured_indirect_link_resolver_};
-      candidate_compiler.translation_features_ = translation_features_;
-      candidate_compiler.table_list_planning_enabled_ =
-          table_list_planning_enabled_;
-      candidate_compiler.enable_pointer_authentication_ =
-          enable_pointer_authentication_;
-      candidate_compiler.gpr_residency_planning_enabled_ = false;
-      candidate_compiler.apply_gpr_residency_plan(plan);
-      auto candidate =
-          candidate_compiler.compile_once(guest_pc, instructions, false);
-      const bool same_metadata =
-          candidate.guest_instructions == selected.guest_instructions &&
-          candidate.internal_entry_word == selected.internal_entry_word &&
-          candidate.memory_write_mask == selected.memory_write_mask &&
-          candidate.direct_memory_write_mask ==
-              selected.direct_memory_write_mask &&
-          candidate.direct_link_refusals == selected.direct_link_refusals &&
-          candidate.indirect_link_refusals ==
-              selected.indirect_link_refusals &&
-          candidate.accesses_fp_state == selected.accesses_fp_state &&
-          candidate.link_target_safe == selected.link_target_safe &&
-          candidate.native_fp == selected.native_fp &&
-          candidate.native_fpmr == selected.native_fpmr &&
-          candidate.guest_illegal == selected.guest_illegal
-          ;
-      if (same_metadata && !candidate.words.empty() &&
-          candidate.hot_words < selected.hot_words &&
-          candidate.words.size() <= selected.words.size()) {
-        selected_words_.assign(candidate.words.begin(),
-                               candidate.words.end());
-        candidate.words = selected_words_;
-        /* The candidate's emitter dies with candidate_compiler, so its
-         * relocation offsets must be owned here alongside its words.
-         */
-        selected_relocations_.assign(candidate.relocations.begin(),
-                                     candidate.relocations.end());
-        candidate.relocations = selected_relocations_;
-        candidate.gpr_residency_plan = plan;
-        selected = candidate;
-        retained_gpr_plan = true;
-      }
-    }
-    if (!retained_gpr_plan)
-      selected.gpr_residency_plan = {};
-
+    const auto selected = compile_once(guest_pc, instructions);
     profile_jit_compilation(
         guest_pc,
         instructions.first(
@@ -128,10 +68,8 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
   }
 
 JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
-                      std::span<const std::uint32_t> instructions,
-                      bool observe_gpr_residency) {
+                      std::span<const std::uint32_t> instructions) {
     begin_link_observation();
-    begin_gpr_residency_observation(observe_gpr_residency);
     select_constrained_vector_pins(instructions);
     if (table_list_planning_enabled_)
       select_consecutive_vector_lists(instructions);
@@ -217,9 +155,6 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
       emitter_.return_constant(Event::continued, count_);
     }
     const auto hot_words = emitter_.size();
-    const auto gpr_residency_plan =
-        finish_gpr_residency_observation();
-    begin_gpr_residency_observation(false);
     for (const auto &translation : translation_cold_)
       emit_translation_cold(translation);
     for (const auto &cold : cold_) {
@@ -287,7 +222,6 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
         .native_fp = native_fp_,
         .native_fpmr = native_fpmr_,
         .guest_illegal = guest_illegal_,
-        .gpr_residency_plan = gpr_residency_plan,
     };
     return result;
   }
