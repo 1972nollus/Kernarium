@@ -18,6 +18,7 @@
 #include <mutex>
 #include <pthread.h>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 extern "C" {
@@ -33,6 +34,23 @@ namespace vnc_input = uml::input::vnc;
 constexpr std::uint64_t clientCountMask =
     std::numeric_limits<std::uint32_t>::max();
 constexpr unsigned connectionEpochShift = 32;
+
+/* A scanout only the CPU path can read refreshes on the guest's next flush,
+ * which a static screen never sends. */
+constexpr auto freshFrameHoldLimit = std::chrono::seconds(2);
+
+/* A client's clientData holds its connection epoch, with the low bit set
+ * until its first framebuffer update request has been checked. */
+static_assert(sizeof(std::uintptr_t) >= sizeof(std::uint64_t));
+
+[[nodiscard]] void* makeClientData(
+    const std::uint32_t epoch,
+    const bool firstUpdatePending) noexcept
+{
+    return reinterpret_cast<void*>(
+        static_cast<std::uintptr_t>(epoch) << 1U |
+        (firstUpdatePending ? 1U : 0U));
+}
 
 [[nodiscard]] constexpr std::uint32_t stateClientCount(
     const std::uint64_t state) noexcept
@@ -148,12 +166,20 @@ VncDisplay::VncDisplay(
     screen_->newClientHook = [](rfbClientPtr client) noexcept {
         auto* display =
             static_cast<VncDisplay*>(client->screen->screenData);
-        if (!display->clientConnected())
+        const auto epoch = display->clientConnected();
+        if (!epoch)
             return RFB_CLIENT_REFUSE;
+        client->clientData = makeClientData(*epoch, true);
         client->clientGoneHook = [](rfbClientPtr disconnected) noexcept {
             static_cast<VncDisplay*>(disconnected->screen->screenData)
-                ->clientDisconnected();
+                ->clientDisconnected(disconnected);
         };
+        client->clientFramebufferUpdateRequestHook =
+            [](rfbClientPtr requesting,
+               rfbFramebufferUpdateRequestMsg*) noexcept {
+                static_cast<VncDisplay*>(requesting->screen->screenData)
+                    ->holdFirstUpdate(requesting);
+            };
         return RFB_CLIENT_ACCEPT;
     };
     screen_->kbdAddEvent = [](
@@ -257,6 +283,11 @@ std::optional<std::uint16_t> VncDisplay::vncPort() const noexcept
 
 void VncDisplay::clear() noexcept
 {
+    {
+        std::lock_guard scanoutLock(scanoutMutex_);
+        idleFramesDropped_ = false;
+        metalReadback_->forget();
+    }
     std::lock_guard lock(framebuffer_);
     framebuffer_.clearLocked();
     // Scaled client framebuffers are derived synchronously by this call, so
@@ -281,6 +312,9 @@ void VncDisplay::update(
     const auto updateEpoch = connectionEpoch();
     const auto expectedExtent =
         cpuFallbackExtent_.load(std::memory_order_acquire);
+    /* The CPU path now owns the image, so a remembered native scanout would
+     * only overwrite it with an older one. */
+    metalReadback_->forget();
     const auto rectangle = framebuffer_.update(
         source,
         sourceWidth,
@@ -295,17 +329,23 @@ void VncDisplay::update(
         height);
     if (rectangle.width == 0 || rectangle.height == 0)
         return;
-    std::lock_guard lock(framebuffer_);
-    rfbMarkRectAsModified(
-        screen_,
-        static_cast<int>(rectangle.x),
-        static_cast<int>(rectangle.y),
-        static_cast<int>(rectangle.x + rectangle.width),
-        static_cast<int>(rectangle.y + rectangle.height));
-    if (rectangle.x == 0 && rectangle.y == 0 &&
+    const bool complete = rectangle.x == 0 && rectangle.y == 0 &&
         rectangle.width == extentWidth(expectedExtent) &&
-        rectangle.height == extentHeight(expectedExtent)) {
-        recordFullFrame(updateEpoch);
+        rectangle.height == extentHeight(expectedExtent);
+    {
+        std::lock_guard lock(framebuffer_);
+        rfbMarkRectAsModified(
+            screen_,
+            static_cast<int>(rectangle.x),
+            static_cast<int>(rectangle.y),
+            static_cast<int>(rectangle.x + rectangle.width),
+            static_cast<int>(rectangle.y + rectangle.height));
+        if (complete)
+            recordFullFrame(updateEpoch);
+    }
+    if (complete) {
+        std::lock_guard scanoutLock(scanoutMutex_);
+        idleFramesDropped_ = false;
     }
 }
 
@@ -320,11 +360,18 @@ void VncDisplay::fillSelfTestPattern()
 PresentOutcome VncDisplay::presentMetal(
     const MetalScanout& scanout) noexcept
 {
+    std::unique_lock scanoutLock(scanoutMutex_);
+    const auto state = clientState_.load(std::memory_order_acquire);
     /* With no remote consumer, accepting and dropping the scanout avoids the
-     * Metal-to-CPU readback entirely. */
-    if (stateClientCount(
-            clientState_.load(std::memory_order_acquire)) == 0) {
-        displayActivityLog().record("present display=vnc drop=no-client");
+     * Metal-to-CPU readback entirely. The framebuffer falls behind, so keep
+     * the scanout for the next client to read back when it connects. */
+    if (stateClientCount(state) == 0) {
+        idleFramesDropped_ = true;
+        const bool remembered = metalReadback_->remember(scanout);
+        scanoutLock.unlock();
+        displayActivityLog().record(
+            "present display=vnc drop=no-client remembered=%d",
+            remembered ? 1 : 0);
         return PresentOutcome::dropped;
     }
     /* A Venus scanout is a Metal texture with no guest-visible virgl
@@ -332,7 +379,9 @@ PresentOutcome VncDisplay::presentMetal(
      * converts it off the guest timeline; a scanout it cannot convert
      * returns unsupported, which deliberately selects the ordinary CPU
      * framebuffer path at the scanout's extent. */
-    const auto outcome = metalReadback_->present(scanout);
+    const auto outcome =
+        metalReadback_->present(scanout, stateConnectionEpoch(state));
+    scanoutLock.unlock();
     if (outcome != PresentOutcome::unsupported)
         return outcome;
     displayActivityLog().record("present display=vnc readback=rejected");
@@ -352,29 +401,91 @@ bool VncDisplay::needsFullCpuFallback() const noexcept
             stateConnectionEpoch(state);
 }
 
-bool VncDisplay::clientConnected() noexcept
+std::optional<std::uint32_t> VncDisplay::clientConnected() noexcept
 {
+    std::lock_guard scanoutLock(scanoutMutex_);
     auto state = clientState_.load(std::memory_order_relaxed);
     while (true) {
         const auto count = stateClientCount(state);
         const auto epoch = stateConnectionEpoch(state);
         if (count == std::numeric_limits<std::uint32_t>::max())
-            return false;
+            return std::nullopt;
         const auto desired = makeClientState(
             count == 0 ? epoch + 1U : epoch,
             count + 1U);
-        if (clientState_.compare_exchange_weak(
+        if (!clientState_.compare_exchange_weak(
                 state,
                 desired,
                 std::memory_order_release,
                 std::memory_order_relaxed)) {
-            return true;
+            continue;
         }
+        const auto connected = stateConnectionEpoch(desired);
+        /* Frames dropped while nobody watched never reached the
+         * framebuffer. The first client of this epoch waits for a complete
+         * frame newer than its connection, which a remembered native
+         * scanout provides at once and the CPU path provides on the
+         * guest's next flush. */
+        if (count == 0 && std::exchange(idleFramesDropped_, false)) {
+            staleEpoch_ = connected;
+            const bool refreshing = metalReadback_->refresh(connected);
+            displayActivityLog().record(
+                "vnc connect epoch=%u stale=1 refresh=%s",
+                connected,
+                refreshing ? "metal" : "next-flush");
+        }
+        return connected;
     }
 }
 
-void VncDisplay::clientDisconnected() noexcept
+void VncDisplay::holdFirstUpdate(rfbClientPtr client) noexcept
 {
+    const auto data = reinterpret_cast<std::uintptr_t>(client->clientData);
+    if ((data & 1U) == 0)
+        return;
+    const auto epoch = static_cast<std::uint32_t>(data >> 1U);
+    client->clientData = makeClientData(epoch, false);
+    if (epoch != staleEpoch_ ||
+        fullFrameEpoch_.load(std::memory_order_acquire) >= epoch) {
+        return;
+    }
+    /* A held client's messages and updates wait in LibVNCServer; this
+     * request is answered once it is released. */
+    client->onHold = TRUE;
+    try {
+        heldClients_.push_back(HeldClient {
+            .client = client,
+            .epoch = epoch,
+            .deadline =
+                std::chrono::steady_clock::now() + freshFrameHoldLimit,
+        });
+    } catch (...) {
+        rfbStartOnHoldClient(client);
+    }
+}
+
+void VncDisplay::releaseHeldClients() noexcept
+{
+    const auto now = std::chrono::steady_clock::now();
+    const auto fresh = fullFrameEpoch_.load(std::memory_order_acquire);
+    std::erase_if(heldClients_, [&](const HeldClient& held) {
+        const bool current = fresh >= held.epoch;
+        if (!current && now < held.deadline)
+            return false;
+        if (!current) {
+            displayActivityLog().record(
+                "vnc hold expired epoch=%u", held.epoch);
+        }
+        rfbStartOnHoldClient(held.client);
+        return true;
+    });
+}
+
+void VncDisplay::clientDisconnected(rfbClientPtr client) noexcept
+{
+    std::erase_if(heldClients_, [client](const HeldClient& held) {
+        return held.client == client;
+    });
     auto state = clientState_.load(std::memory_order_relaxed);
     while (stateClientCount(state) != 0) {
         const auto desired = makeClientState(
@@ -437,13 +548,17 @@ void VncDisplay::publishMetalFrame(
             frame.height);
         if (rectangle.width == 0 || rectangle.height == 0)
             return;
-        std::lock_guard lock(framebuffer_);
-        rfbMarkRectAsModified(
-            screen_,
-            static_cast<int>(rectangle.x),
-            static_cast<int>(rectangle.y),
-            static_cast<int>(rectangle.x + rectangle.width),
-            static_cast<int>(rectangle.y + rectangle.height));
+        {
+            std::lock_guard lock(framebuffer_);
+            rfbMarkRectAsModified(
+                screen_,
+                static_cast<int>(rectangle.x),
+                static_cast<int>(rectangle.y),
+                static_cast<int>(rectangle.x + rectangle.width),
+                static_cast<int>(rectangle.y + rectangle.height));
+        }
+        if (frame.complete)
+            recordFullFrame(frame.generation);
     } catch (...) {
     }
 }
@@ -562,8 +677,17 @@ void VncDisplay::reportInputFailure() noexcept
 void VncDisplay::eventLoop()
 {
     (void)::pthread_setname_np("uml-vnc");
-    while (running_.load(std::memory_order_acquire) && rfbIsActive(screen_))
-        rfbProcessEvents(screen_, 10'000);
+    while (running_.load(std::memory_order_acquire) &&
+           rfbIsActive(screen_)) {
+        rfbProcessEvents(screen_, heldClients_.empty() ? 10'000 : 1'000);
+        if (heldClients_.empty())
+            continue;
+        releaseHeldClients();
+        /* LibVNCServer still polls a held client's socket without reading
+         * it, so pace the loop while any client waits. */
+        if (!heldClients_.empty())
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 
 } // namespace uml::gpu

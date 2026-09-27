@@ -28,7 +28,66 @@ struct ReadbackRequest {
     std::uint32_t height {};
     std::uint32_t destinationX {};
     std::uint32_t destinationY {};
+    /* The scanout's view of the texture, which damage never leaves. */
+    std::uint32_t viewX {};
+    std::uint32_t viewY {};
+    std::uint32_t viewWidth {};
+    std::uint32_t viewHeight {};
+    std::uint32_t generation {};
 };
+
+[[nodiscard]] bool coversView(const ReadbackRequest& request) noexcept
+{
+    return request.sourceX == request.viewX &&
+        request.sourceY == request.viewY &&
+        request.width == request.viewWidth &&
+        request.height == request.viewHeight;
+}
+
+void coverView(ReadbackRequest& request) noexcept
+{
+    request.sourceX = request.viewX;
+    request.sourceY = request.viewY;
+    request.width = request.viewWidth;
+    request.height = request.viewHeight;
+    request.destinationX = 0;
+    request.destinationY = 0;
+}
+
+/* A newer request replaces one still waiting for the in-flight readback. Its
+ * texture holds the whole newest image, so reading the union of both damages
+ * from it shows everything the replaced request would have. A different view
+ * has no common damage, so the newer request reads its whole view. */
+void absorb(ReadbackRequest& next, const ReadbackRequest& replaced) noexcept
+{
+    if (next.viewX != replaced.viewX || next.viewY != replaced.viewY ||
+        next.viewWidth != replaced.viewWidth ||
+        next.viewHeight != replaced.viewHeight) {
+        coverView(next);
+        return;
+    }
+    const auto left = std::min(next.sourceX, replaced.sourceX);
+    const auto top = std::min(next.sourceY, replaced.sourceY);
+    const auto right = std::max(
+        next.sourceX + next.width, replaced.sourceX + replaced.width);
+    const auto bottom = std::max(
+        next.sourceY + next.height, replaced.sourceY + replaced.height);
+    next.sourceX = left;
+    next.sourceY = top;
+    next.width = right - left;
+    next.height = bottom - top;
+    next.destinationX = left - next.viewX;
+    next.destinationY = top - next.viewY;
+}
+
+[[nodiscard]] MetalScanout wholeView(MetalScanout scanout) noexcept
+{
+    scanout.damageX = scanout.sourceX;
+    scanout.damageY = scanout.sourceY;
+    scanout.damageWidth = scanout.width;
+    scanout.damageHeight = scanout.height;
+    return scanout;
+}
 
 [[nodiscard]] std::optional<protocol::GpuFormat>
 readbackFormat(MTLPixelFormat format) noexcept
@@ -180,6 +239,10 @@ struct MetalReadbackState final :
             .height = scanout.damageHeight,
             .destinationX = scanout.damageX - scanout.sourceX,
             .destinationY = scanout.damageY - scanout.sourceY,
+            .viewX = scanout.sourceX,
+            .viewY = scanout.sourceY,
+            .viewWidth = scanout.width,
+            .viewHeight = scanout.height,
         };
     }
 
@@ -288,6 +351,8 @@ struct MetalReadbackState final :
                         .height = request.height,
                         .destinationX = request.destinationX,
                         .destinationY = request.destinationY,
+                        .generation = request.generation,
+                        .complete = coversView(request),
                     });
                     presentedFrames.fetch_add(1, std::memory_order_relaxed);
                 } catch (...) {
@@ -317,17 +382,21 @@ struct MetalReadbackState final :
         }
     }
 
-    PresentOutcome present(const MetalScanout& scanout) noexcept
+    PresentOutcome present(
+        const MetalScanout& scanout,
+        std::uint32_t generation) noexcept
     {
         guestFrames.fetch_add(1, std::memory_order_relaxed);
         auto next = request(scanout);
         if (!next)
             return PresentOutcome::unsupported;
+        next->generation = generation;
 
         std::lock_guard lock(mutex);
         reportStatisticsLocked(false);
         if (!running)
             return PresentOutcome::unsupported;
+        latest.reset();
         if (!inFlight) {
             if (!scheduleLocked(std::move(*next))) {
                 displayActivityLog().record("readback reject=schedule");
@@ -343,11 +412,49 @@ struct MetalReadbackState final :
         }
 
         const bool superseded = pending.has_value();
+        if (superseded)
+            absorb(*next, *pending);
         pending = std::move(*next);
         if (superseded)
             droppedFrames.fetch_add(1, std::memory_order_relaxed);
         return superseded ? PresentOutcome::dropped
                           : PresentOutcome::presented;
+    }
+
+    bool remember(const MetalScanout& scanout) noexcept
+    {
+        auto next = request(wholeView(scanout));
+        std::lock_guard lock(mutex);
+        latest.reset();
+        if (running)
+            latest = std::move(next);
+        return latest.has_value();
+    }
+
+    bool refresh(std::uint32_t generation) noexcept
+    {
+        std::lock_guard lock(mutex);
+        if (!running || !latest)
+            return false;
+        auto next = std::move(*latest);
+        latest.reset();
+        next.generation = generation;
+        if (!inFlight) {
+            if (scheduleLocked(std::move(next)))
+                return true;
+            displayActivityLog().record("readback reject=schedule");
+            return false;
+        }
+        if (pending)
+            absorb(next, *pending);
+        pending = std::move(next);
+        return true;
+    }
+
+    void forget() noexcept
+    {
+        std::lock_guard lock(mutex);
+        latest.reset();
     }
 
     void reportFailure() noexcept
@@ -401,6 +508,7 @@ struct MetalReadbackState final :
                 return;
             running = false;
             pending.reset();
+            latest.reset();
             commands = activeCommands;
         }
         [commands waitUntilCompleted];
@@ -420,6 +528,8 @@ struct MetalReadbackState final :
     id<MTLBuffer> buffer;
     id<MTLCommandBuffer> activeCommands;
     std::optional<ReadbackRequest> pending;
+    /* The whole view of the newest scanout nobody read back. */
+    std::optional<ReadbackRequest> latest;
     bool running {true};
     bool inFlight {};
     bool callbackActive {};
@@ -442,9 +552,26 @@ MetalReadback::~MetalReadback()
     shutdown();
 }
 
-PresentOutcome MetalReadback::present(const MetalScanout& scanout) noexcept
+PresentOutcome MetalReadback::present(
+    const MetalScanout& scanout,
+    std::uint32_t generation) noexcept
 {
-    return state_->present(scanout);
+    return state_->present(scanout, generation);
+}
+
+bool MetalReadback::remember(const MetalScanout& scanout) noexcept
+{
+    return state_->remember(scanout);
+}
+
+bool MetalReadback::refresh(std::uint32_t generation) noexcept
+{
+    return state_->refresh(generation);
+}
+
+void MetalReadback::forget() noexcept
+{
+    state_->forget();
 }
 
 DisplayStatistics MetalReadback::statistics() const noexcept
