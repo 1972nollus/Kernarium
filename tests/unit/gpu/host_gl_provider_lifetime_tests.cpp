@@ -3,6 +3,18 @@
 #include "host_gl_provider.hpp"
 #include "virgl_renderer.hpp"
 
+#include <epoxy/egl.h>
+#include <epoxy/gl.h>
+
+// Another client of the process's EGL library opens the default surfaceless
+// display the way the provider bootstraps its own, before libepoxy knows of any
+// display.
+#undef eglGetPlatformDisplay
+extern "C" EGLDisplay eglGetPlatformDisplay(
+    EGLenum platform,
+    void* nativeDisplay,
+    const EGLAttrib* attributes);
+
 extern "C" {
 #include <virglrenderer.h>
 }
@@ -10,9 +22,11 @@ extern "C" {
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -36,6 +50,8 @@ void require(
 // for every sub-context it creates.
 constexpr int kProbedMajor = 4;
 constexpr int kProbedMinor = 6;
+// The capability set a Linux guest's Virgl contexts use.
+constexpr std::uint32_t kVirgl2CapsetId = 2;
 
 void providerOwnsOneSharedContextTopology()
 {
@@ -173,6 +189,68 @@ void rendererRetiresFencesThroughTheExternalProvider()
     renderer.destroyContext(1);
 }
 
+// Stands in for any other client of the process's EGL library, such as the
+// application's own graphics self-test: it opens the default surfaceless
+// display, initializes it and terminates it again. EGL does not count
+// initializations, so that terminate retires the display for everyone it was
+// handed to.
+void terminateTheDefaultSurfacelessDisplay()
+{
+    const EGLDisplay other = eglGetPlatformDisplay(
+        EGL_PLATFORM_SURFACELESS_MESA, nullptr, nullptr);
+    require(other != EGL_NO_DISPLAY);
+    EGLint major = 0;
+    EGLint minor = 0;
+    require(eglInitialize(other, &major, &minor) == EGL_TRUE);
+    require(eglTerminate(other) == EGL_TRUE);
+}
+
+// The provider's display is its own. Once another client had terminated the
+// default surfaceless display, which the provider used to share, every guest
+// context creation failed with EGL_NOT_INITIALIZED and the running guest lost
+// OpenGL.
+void providerKeepsItsDisplayWhenAnotherClientTerminatesTheDefaultOne()
+{
+    uml::gpu::HostGlProvider provider;
+    virgl_renderer_gl_ctx_param parameters {
+        .version = 2,
+        .shared = false,
+        .major_ver = kProbedMajor,
+        .minor_ver = kProbedMinor,
+        .compat_ctx = 0,
+    };
+    void* root = provider.createContext(parameters);
+    require(root != nullptr);
+    require(provider.display() != eglGetPlatformDisplay(
+        EGL_PLATFORM_SURFACELESS_MESA, nullptr, nullptr));
+
+    terminateTheDefaultSurfacelessDisplay();
+
+    require(provider.makeCurrent(root) == 0);
+    const auto* renderer =
+        reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+    require(renderer != nullptr);
+    // Naming the device must still reach the packaged zink driver.
+    require(std::string_view(renderer).find("zink") != std::string_view::npos);
+    parameters.shared = true;
+    void* shared = provider.createContext(parameters);
+    require(shared != nullptr);
+    require(provider.makeCurrent(shared) == 0);
+    require(provider.makeCurrent(nullptr) == 0);
+    provider.destroyContext(shared);
+    provider.destroyContext(root);
+}
+
+void rendererCreatesContextsAfterAnotherClientTerminatesTheDefaultDisplay()
+{
+    uml::gpu::VirglRenderer renderer;
+    require(renderer.createContext(1, kVirgl2CapsetId, "before") == 0);
+    terminateTheDefaultSurfacelessDisplay();
+    require(renderer.createContext(2, kVirgl2CapsetId, "after") == 0);
+    renderer.destroyContext(2);
+    renderer.destroyContext(1);
+}
+
 } // namespace
 
 int main()
@@ -182,6 +260,8 @@ int main()
     providerOwnsOneSharedContextTopology();
     providerCreatesSharedContextsOnAnyThread();
     rendererRetiresFencesThroughTheExternalProvider();
+    providerKeepsItsDisplayWhenAnotherClientTerminatesTheDefaultOne();
+    rendererCreatesContextsAfterAnotherClientTerminatesTheDefaultDisplay();
     std::puts("host GL provider lifetime tests passed");
     return 0;
 }
