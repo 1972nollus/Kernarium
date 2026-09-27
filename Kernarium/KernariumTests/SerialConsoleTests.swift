@@ -57,12 +57,7 @@ struct SerialConsoleTests {
         _ controller: SerialConsoleController,
         visible: Bool = false
     ) throws -> HostedConsole {
-        let scene = try #require(
-            UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .first,
-            "the application has no window scene"
-        )
+        let scene = try windowScene()
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 800, height: 480)
         window.windowLevel = .alert
@@ -74,8 +69,18 @@ struct SerialConsoleTests {
         return HostedConsole(controller: controller, window: window, view: view)
     }
 
+    /// The application's window scene.
+    func windowScene() throws -> UIWindowScene {
+        try #require(
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first,
+            "the application has no window scene"
+        )
+    }
+
     /// Polls `condition` on the main actor for at most ten seconds.
-    private func eventually(_ condition: () -> Bool) async throws -> Bool {
+    func eventually(_ condition: () -> Bool) async throws -> Bool {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(10))
         while !condition() {
@@ -414,11 +419,20 @@ struct SerialConsoleTests {
         )
     }
 
-    /// The first `TerminalView` below `view`.
-    private func terminalView(in view: UIView) -> TerminalView? {
-        if let terminal = view as? TerminalView { return terminal }
+    /// The first `TerminalView` below `view`, or the first one carrying
+    /// `identifier`.
+    func terminalView(
+        in view: UIView,
+        identifier: String? = nil
+    ) -> TerminalView? {
+        if let terminal = view as? TerminalView,
+           identifier == nil || terminal.accessibilityIdentifier == identifier {
+            return terminal
+        }
         for child in view.subviews {
-            if let terminal = terminalView(in: child) { return terminal }
+            if let terminal = terminalView(in: child, identifier: identifier) {
+                return terminal
+            }
         }
         return nil
     }
@@ -448,12 +462,7 @@ struct SerialConsoleTests {
             },
             "an inactive application shows no keyboard"
         )
-        let scene = try #require(
-            UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .first,
-            "the application has no window scene"
-        )
+        let scene = try windowScene()
         let previousKeyWindow = scene.keyWindow
         let controller = SerialConsoleController(input: { _ in })
         let window = UIWindow(windowScene: scene)
