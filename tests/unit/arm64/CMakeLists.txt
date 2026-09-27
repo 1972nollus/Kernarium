@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-if(UML_BUILD_UNIT_TESTS)
-    # ARM64 white-box tests compose the MMU OBJECT carriers directly. Carry
-    # the shared-backing archive that MappedBacking references so those raw
-    # compositions retain the production memory component's link contract.
-    link_libraries(UML::MemorySharedBacking)
-endif()
+# ARM64 white-box tests compose the MMU OBJECT carriers directly. Carry the
+# shared-backing archive that MappedBacking references so those raw
+# compositions retain the production memory component's link contract.
+link_libraries(UML::MemorySharedBacking)
 
-if(UML_BUILD_UNIT_TESTS AND NOT UML_GUEST_16K_PAGES)
+if(NOT UML_GUEST_16K_PAGES)
     add_executable(uml_native_mmu_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_mmu_tests.cpp
         $<TARGET_OBJECTS:uml_native_mmu_test_variant>
@@ -46,7 +44,7 @@ if(UML_BUILD_UNIT_TESTS AND NOT UML_GUEST_16K_PAGES)
 		LABELS tsan)
 endif()
 
-if(UML_BUILD_UNIT_TESTS AND UML_GUEST_16K_PAGES AND UML_TARGET_MACOS)
+if(UML_GUEST_16K_PAGES AND UML_TARGET_MACOS)
 	add_executable(uml_native_16k_ownership_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/native_16k_ownership_tests.cpp)
 	target_link_libraries(uml_native_16k_ownership_tests PRIVATE
@@ -63,14 +61,12 @@ if(UML_BUILD_UNIT_TESTS AND UML_GUEST_16K_PAGES AND UML_TARGET_MACOS)
 		LABELS tsan)
 endif()
 
-if(UML_BUILD_UNIT_TESTS)
-    include("${CMAKE_CURRENT_LIST_DIR}/engine.cmake")
-    include("${CMAKE_CURRENT_LIST_DIR}/base.cmake")
-    include("${CMAKE_CURRENT_LIST_DIR}/memory.cmake")
-    include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-a.cmake")
-    include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-b.cmake")
-    include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-c.cmake")
-endif()
+include("${CMAKE_CURRENT_LIST_DIR}/engine.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/base.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/memory.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-a.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-b.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/fp-simd-c.cmake")
 
 get_property(_uml_unit_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 set(_uml_unit_binary_targets)
