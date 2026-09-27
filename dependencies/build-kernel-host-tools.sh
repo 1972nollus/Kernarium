@@ -207,10 +207,9 @@ private_env()
 		"$@"
 }
 
-# Each step logs below the work root, which survives a failed build.
-LOG_DIR="$WORK_ROOT/logs"
-"$CMAKE" -E remove_directory "$LOG_DIR"
-mkdir -p -- "$LOG_DIR"
+# Each step logs to a directory of this run's own below the work root. It
+# survives a failed build and is removed once the output is published.
+LOG_DIR=$(mktemp -d "$WORK_ROOT/logs.XXXXXX")
 logged()
 {
 	step=$1
@@ -383,3 +382,4 @@ case $status in
 	;;
 *) fail "could not publish kernel host tools: $OUTPUT" ;;
 esac
+"$CMAKE" -E remove_directory "$LOG_DIR"
