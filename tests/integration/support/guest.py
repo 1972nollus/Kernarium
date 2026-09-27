@@ -4,6 +4,7 @@ from __future__ import annotations
 # Imported support must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
+import base64
 import dataclasses
 import os
 import pathlib
@@ -23,6 +24,8 @@ from collections.abc import Sequence
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 BOOT_TIMEOUT_SECONDS = 90
 CONSOLE_WRITE_TIMEOUT_SECONDS = 30
+# One upload command stays well inside the guest console's 4 KiB line.
+UPLOAD_CHUNK_CHARACTERS = 2048
 SIZE_VALUE = re.compile(r"^(\d+)([KMGT]?)$", re.IGNORECASE)
 SWAP_IMAGE = re.compile(r"^uml-ltp-swap-(\d+)-.*\.img$")
 OVERLAY_READY_MARKER = "__UML_OVERLAY_READY__"
@@ -499,6 +502,29 @@ class Guest:
                 f"expected {expected!r}"
             )
         return result.output
+
+    def upload(
+        self,
+        payload: bytes,
+        destination: str,
+        mode: int | None = None,
+        timeout_seconds: int = 30,
+    ) -> None:
+        """Write payload to a guest file through the console.
+
+        The bytes travel as base64 in chunks the console line accepts, are
+        decoded in the guest, and get ``mode`` when it is given."""
+        encoded = base64.b64encode(payload).decode("ascii")
+        staging = shlex.quote(f"{destination}.base64")
+        target = shlex.quote(destination)
+        self.check_command(f": > {staging}", timeout_seconds)
+        for offset in range(0, len(encoded), UPLOAD_CHUNK_CHARACTERS):
+            chunk = encoded[offset : offset + UPLOAD_CHUNK_CHARACTERS]
+            self.check_command(f"printf %s {chunk} >> {staging}", timeout_seconds)
+        command = f"base64 -d {staging} > {target} && rm -f {staging}"
+        if mode is not None:
+            command += f" && chmod {mode:o} {target}"
+        self.check_command(command, timeout_seconds)
 
     def shutdown(self, timeout_seconds: int = 30) -> bool:
         """Request an orderly halt and wait for the emulator to exit."""

@@ -6,10 +6,8 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
 import os
 import pathlib
-import shlex
 import sys
 import time
 
@@ -75,32 +73,12 @@ def run_timed(guest: Guest, name: str, command: str) -> str:
     return output
 
 
-def upload_bytes(guest: Guest, payload: bytes, destination: str) -> None:
-    encoded = base64.b64encode(payload).decode("ascii")
-    staging = f"{destination}.base64"
-    quoted_staging = shlex.quote(staging)
-    quoted_destination = shlex.quote(destination)
-    guest.check_command(f": > {quoted_staging}", 30)
-    for offset in range(0, len(encoded), 512):
-        guest.check_command(
-            f"printf %s {shlex.quote(encoded[offset : offset + 512])} "
-            f">> {quoted_staging}",
-            30,
-        )
-    guest.check_command(
-        f"base64 -d {quoted_staging} > {quoted_destination} && "
-        f"rm -f {quoted_staging}",
-        30,
-    )
-
-
 def stage_executable(guest: Guest, binary: pathlib.Path) -> str:
     binary = binary.resolve()
     if not binary.is_file():
         raise ValueError(f"guest stress binary is not a file: {binary}")
     destination = f"/tmp/{binary.name}"
-    upload_bytes(guest, binary.read_bytes(), destination)
-    guest.check_command(f"chmod 755 {shlex.quote(destination)}", 30)
+    guest.upload(binary.read_bytes(), destination, 0o755)
     return destination
 
 
