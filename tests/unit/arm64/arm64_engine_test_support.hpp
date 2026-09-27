@@ -151,18 +151,6 @@ struct ProgramWord final {
   std::uint32_t instruction{};
 };
 
-/*
- * Some architecturally valid programs contain retry loops whose number of
- * iterations may differ between implementations (for example, an exclusive
- * store is permitted to fail spuriously). Each engine must still produce a
- * specification-valid retired count: minimum + N * step.
- */
-struct InstructionCountPattern final {
-  std::size_t minimum{};
-  std::size_t step{1};
-  std::optional<std::size_t> maximum{};
-};
-
 struct ProgramCase final {
   std::string_view name;
   std::span<const ProgramWord> code;
@@ -190,7 +178,6 @@ struct ProgramCase final {
    * accounting deliberately uses different boundary quanta.
    */
   std::optional<std::size_t> expected_instructions{};
-  std::optional<InstructionCountPattern> expected_instruction_pattern{};
 };
 
 struct EngineTestCounts final {

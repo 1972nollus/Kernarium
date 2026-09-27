@@ -713,20 +713,6 @@ public:
 
   void check_program(const ProgramCase &test_case,
                      const std::source_location &location) {
-    if (test_case.expected_instructions.has_value() &&
-        test_case.expected_instruction_pattern.has_value())
-      fail(test_case.name, "setup", 0,
-           "conflicting retired instruction expectations", location);
-    if (test_case.expected_instruction_pattern.has_value() &&
-        test_case.expected_instruction_pattern->step == 0)
-      fail(test_case.name, "setup", 0,
-           "zero retired instruction-count pattern step", location);
-    if (test_case.expected_instruction_pattern.has_value() &&
-        test_case.expected_instruction_pattern->maximum.has_value() &&
-        *test_case.expected_instruction_pattern->maximum <
-            test_case.expected_instruction_pattern->minimum)
-      fail(test_case.name, "setup", 0,
-           "invalid retired instruction-count pattern range", location);
     if (test_case.entry_offset % sizeof(std::uint32_t) != 0 ||
         test_case.entry_offset >
             DARWIN_UML_GUEST_PAGE_SIZE - sizeof(std::uint32_t))
@@ -847,25 +833,6 @@ public:
                        outcome.instructions);
           fail(test_case.name, current_engine, diagnostic_instruction,
                "retired instruction count", location);
-        }
-      } else if (test_case.expected_instruction_pattern.has_value()) {
-        const auto &pattern = *test_case.expected_instruction_pattern;
-        const bool below_minimum = outcome.instructions < pattern.minimum;
-        const bool above_maximum =
-            pattern.maximum.has_value() &&
-            outcome.instructions > *pattern.maximum;
-        const bool wrong_step =
-            !below_minimum &&
-            (outcome.instructions - pattern.minimum) % pattern.step != 0;
-        if (below_minimum || above_maximum || wrong_step) {
-          std::fprintf(
-              stderr,
-              "expected instructions=%zu+N*%zu maximum=%zu actual=%zu\n",
-              pattern.minimum, pattern.step,
-              pattern.maximum.value_or(std::numeric_limits<std::size_t>::max()),
-              outcome.instructions);
-          fail(test_case.name, current_engine, diagnostic_instruction,
-               "retired instruction-count pattern", location);
         }
       } else if (test_case.event != ExpectedEvent::instruction_budget &&
                  engine == Engine::gadgets) {
