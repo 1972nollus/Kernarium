@@ -4,6 +4,7 @@
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/decoder.hpp"
+#include "cpu/x86_64/layout/assembly_offsets.h"
 #include "memory/guest_address_space.hpp"
 
 #include <array>
@@ -88,8 +89,11 @@ static_assert(offsetof(TargetLinkEntry, guest_rip) == 0);
 static_assert(offsetof(TargetLinkEntry, link) == 8);
 static_assert(sizeof(TargetLinkEntry) == 16);
 
-inline constexpr std::size_t target_link_entries = 4096;
-inline constexpr unsigned target_link_fold = 12;
+/* follow_target_link in engine/common.inc probes with the same fold and
+ * mask. */
+inline constexpr std::size_t target_link_entries =
+	std::size_t{UML_X86_64_TARGET_LINK_MASK} + 1U;
+inline constexpr unsigned target_link_fold = UML_X86_64_TARGET_LINK_FOLD;
 static_assert((target_link_entries & (target_link_entries - 1U)) == 0,
 	"the translated tier masks the guest RIP fold");
 
