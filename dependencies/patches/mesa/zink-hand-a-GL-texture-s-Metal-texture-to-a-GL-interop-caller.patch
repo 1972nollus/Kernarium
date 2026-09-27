@@ -26,14 +26,52 @@ VK_EXT_metal_objects lets a driver refuse the export of an image that
 did not declare it at creation, so every image zink creates on such a
 device chains VkExportMetalObjectCreateInfoEXT for its texture.
 
+The struct is installed as GL/zink_interop_public.h, and
+GL/mesa_glinterop.h, which upstream leaves uninstalled, is installed
+with EGL or GLX, so a caller compiles the export against both headers
+instead of copying their layouts.
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
+ include/meson.build                           |  6 ++
+ src/gallium/drivers/zink/meson.build          |  3 +
  src/gallium/drivers/zink/zink_device_info.py  |  5 ++
  .../drivers/zink/zink_interop_public.h        | 38 +++++++++++
  src/gallium/drivers/zink/zink_resource.c      | 65 +++++++++++++++++++
- 3 files changed, 108 insertions(+)
+ 5 files changed, 117 insertions(+)
  create mode 100644 src/gallium/drivers/zink/zink_interop_public.h
 
+diff --git a/include/meson.build b/include/meson.build
+index 397d4b424d9d6e4a100576981ce232928acee51f..6af163b44d2e2ba6912c6bfa500c324235fc879d 100644
+--- a/include/meson.build
++++ b/include/meson.build
+@@ -82,6 +82,12 @@ if with_dri
+   install_headers('GL/internal/dri_interface.h', subdir : 'GL/internal')
+ endif
+ 
++# The MESA_GLINTEROP entry points are exported by EGL and GLX; a caller built
++# against this installation takes their ABI from here rather than a copy.
++if with_egl or with_glx != 'disabled'
++  install_headers('GL/mesa_glinterop.h', subdir : 'GL')
++endif
++
+ opencl_headers = files(
+   'CL/cl.h',
+   'CL/cl_d3d10.h',
+diff --git a/src/gallium/drivers/zink/meson.build b/src/gallium/drivers/zink/meson.build
+index e42275e80c979ea2c2d60959fdd0f790b16d8df6..11fd8efd2f144fbcf6bd0df7b60ad6bc0e432983 100644
+--- a/src/gallium/drivers/zink/meson.build
++++ b/src/gallium/drivers/zink/meson.build
+@@ -103,6 +103,9 @@ endif
+ 
+ subdir('nir_to_spirv')
+ 
++# The driver data of a MESA_GLINTEROP export, beside GL/mesa_glinterop.h.
++install_headers('zink_interop_public.h', subdir : 'GL')
++
+ libzink = static_library(
+   'zink',
+   [files_libzink, zink_device_info, zink_instance, zink_nir_algebraic_c, vk_dispatch_table, spirv_info_h],
 diff --git a/src/gallium/drivers/zink/zink_device_info.py b/src/gallium/drivers/zink/zink_device_info.py
 index 4a6a1c416dc496fc94fab3ab9e86a7c3e7022bdd..8ac654a0d68d8948321e7c32a42dfeeece49e0b3 100644
 --- a/src/gallium/drivers/zink/zink_device_info.py
