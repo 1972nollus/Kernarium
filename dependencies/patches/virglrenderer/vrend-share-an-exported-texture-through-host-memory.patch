@@ -49,11 +49,11 @@ keeps ordinary texture storage and an unchanged code path, and the whole
 export conversion is Metal-host only, so a host with dma-buf keeps its GBM
 export untouched.
 ---
- src/proxy/proxy_context.c  |  23 +++-
+ src/proxy/proxy_context.c  |  23 ++++-
  src/vrend/vrend_decode.c   |   4 +
- src/vrend/vrend_renderer.c | 209 ++++++++++++++++++++++++++++++++-----
+ src/vrend/vrend_renderer.c | 201 ++++++++++++++++++++++++++++++++-----
  src/vrend/vrend_renderer.h |  12 +++
- 4 files changed, 219 insertions(+), 29 deletions(-)
+ 4 files changed, 211 insertions(+), 29 deletions(-)
 
 diff --git a/src/proxy/proxy_context.c b/src/proxy/proxy_context.c
 index 2780a540f7994bce0cf13deb5128761485b1c937..0caf74e955ac1aa19a35c126fc8dc19ab67fbfdf 100644
@@ -116,10 +116,10 @@ index 46d1eb19e3df38d53eb33496f28bd5e3f9a4302e..f70eda6f737e2fab568d98813ebed518
     /* One drain per command buffer still reports a host GL error and still
      * keeps the driver's error queue bounded; only the name of the command
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index b9de14c331c62a291ae29bf8f84c2ee31742f9c7..b804d25fd88e2c31a0a99ec351e3c1ae48d7a939 100644
+index ea75064cd5141274814ad58d15378b645634417d..3bb8f27d1e12ef03f12269315b1288f326e9c666 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -3102,6 +3102,8 @@ static void vrend_hw_set_zsurf_texture(struct vrend_context *ctx)
+@@ -3123,6 +3123,8 @@ static void vrend_hw_set_zsurf_texture(struct vrend_context *ctx)
     }
  }
  
@@ -128,7 +128,7 @@ index b9de14c331c62a291ae29bf8f84c2ee31742f9c7..b804d25fd88e2c31a0a99ec351e3c1ae
  static void vrend_hw_set_color_surface(struct vrend_sub_context *sub_ctx, GLuint index)
  {
     struct vrend_surface *surf = sub_ctx->surf[index];
-@@ -3118,6 +3120,8 @@ static void vrend_hw_set_color_surface(struct vrend_sub_context *sub_ctx, GLuint
+@@ -3139,6 +3141,8 @@ static void vrend_hw_set_color_surface(struct vrend_sub_context *sub_ctx, GLuint
        vrend_fb_bind_texture_id(surf->texture, surf->gl_id, index, surf->level,
                                 first_layer != last_layer ? -1 : (GLint)first_layer,
                                 surf->nr_samples);
@@ -137,7 +137,7 @@ index b9de14c331c62a291ae29bf8f84c2ee31742f9c7..b804d25fd88e2c31a0a99ec351e3c1ae
     }
  }
  
-@@ -7588,12 +7592,181 @@ static void vrend_pipe_resource_detach_iov(struct pipe_resource *pres,
+@@ -7609,12 +7613,173 @@ static void vrend_pipe_resource_detach_iov(struct pipe_resource *pres,
     res->num_iovs = 0;
  }
  
@@ -168,17 +168,9 @@ index b9de14c331c62a291ae29bf8f84c2ee31742f9c7..b804d25fd88e2c31a0a99ec351e3c1ae
 +
 +   GLuint pbo = 0;
 +   glGenBuffers(1, &pbo);
-+   while (glGetError() != GL_NO_ERROR)
-+      ;
-+   glBindBufferARB(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, pbo);
-+   glBufferData(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, size, map, GL_DYNAMIC_DRAW);
-+   const GLenum pin_error = glGetError();
-+   glBindBufferARB(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, 0);
-+   if (pin_error == GL_NO_ERROR)
++   if (vrend_pin_host_pages(pbo, map, size))
 +      return pbo;
 +
-+   virgl_warn("%s: pinning a %" PRIu64 " byte segment failed with GL error %d\n",
-+              __func__, size, pin_error);
 +   glDeleteBuffers(1, &pbo);
 +   return 0;
 +}
@@ -321,7 +313,7 @@ index b9de14c331c62a291ae29bf8f84c2ee31742f9c7..b804d25fd88e2c31a0a99ec351e3c1ae
        *fd = os_dupfd_cloexec(shm_res->host_shm->fd);
        return *fd >= 0 ? VIRGL_RESOURCE_FD_SHM : VIRGL_RESOURCE_FD_INVALID;
     }
-@@ -9264,28 +9437,10 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
+@@ -9276,28 +9441,10 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
                   offset);
     }
  
@@ -354,7 +346,7 @@ index b9de14c331c62a291ae29bf8f84c2ee31742f9c7..b804d25fd88e2c31a0a99ec351e3c1ae
  
     gr->shm_import_map = map;
     gr->shm_import_size = res->map_size;
-@@ -9341,7 +9496,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+@@ -9353,7 +9500,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
     if (res->shm_import_image)
        virgl_egl_host_pointer_image_destroy(egl, res->shm_import_image);
  #endif

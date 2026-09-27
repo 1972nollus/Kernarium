@@ -14,6 +14,22 @@ struct DisplaySize final {
     [[nodiscard]] bool operator==(const DisplaySize&) const noexcept = default;
 };
 
+/* One 64-bit word holding both dimensions, so a std::atomic_uint64_t publishes
+ * a size without tearing it. */
+[[nodiscard]] constexpr std::uint64_t packDisplaySize(DisplaySize size) noexcept
+{
+    return static_cast<std::uint64_t>(size.width) << 32U | size.height;
+}
+
+[[nodiscard]] constexpr DisplaySize unpackDisplaySize(
+    std::uint64_t packed) noexcept
+{
+    return {
+        .width = static_cast<std::uint32_t>(packed >> 32U),
+        .height = static_cast<std::uint32_t>(packed),
+    };
+}
+
 struct AspectFitRectangle final {
     double x {};
     double y {};
@@ -134,9 +150,6 @@ public:
     void resetGuestSession(DisplaySize activeSize) noexcept;
 
 private:
-    [[nodiscard]] static std::uint64_t encode(DisplaySize size) noexcept;
-    [[nodiscard]] static DisplaySize decode(std::uint64_t size) noexcept;
-
     const bool autoResizeGuest_;
     std::atomic_uint64_t advertisedSize_;
     std::atomic_uint64_t activeGuestSize_;

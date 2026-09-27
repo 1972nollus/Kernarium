@@ -18,6 +18,7 @@
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -234,15 +235,17 @@ void readbackTracksClientDemandAndReconnects()
     });
     require(display.needsFullCpuFallback());
 
-    std::vector<std::uint8_t> frame(
-        static_cast<std::size_t>(extent) * extent *
-        uml::gpu::protocol::gpuBytesPerPixel,
-        0x5aU);
+    const std::size_t frameRowBytes =
+        static_cast<std::size_t>(extent) * uml::gpu::protocol::gpuBytesPerPixel;
+    std::vector<std::uint8_t> frame(frameRowBytes * extent, 0x5aU);
     display.update(
         frame,
         extent,
         extent,
+        frameRowBytes,
         uml::gpu::protocol::GpuFormat::b8g8r8a8Unorm,
+        0,
+        0,
         0,
         0,
         scanoutWidth - 1U,
@@ -252,7 +255,10 @@ void readbackTracksClientDemandAndReconnects()
         frame,
         extent,
         extent,
+        frameRowBytes,
         uml::gpu::protocol::GpuFormat::b8g8r8a8Unorm,
+        0,
+        0,
         0,
         0,
         scanoutWidth,

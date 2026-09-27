@@ -17,13 +17,14 @@ memory still backs at most one resource of its own context at a time. A
 resource that another context imported from the export holds its own
 reference to the storage and is unaffected.
 ---
- src/venus/vkr_context.c       | 53 ++++++++++++++++++++++++++++++-----
+ src/venus/vkr_context.c       | 53 +++++++++++++++++++++++++++--------
  src/venus/vkr_context.h       |  3 ++
+ src/venus/vkr_device_memory.c |  4 +--
  src/venus/vkr_device_memory.h |  4 +++
- 3 files changed, 53 insertions(+), 7 deletions(-)
+ 4 files changed, 50 insertions(+), 14 deletions(-)
 
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index e969d9e337ad79816f8bdb58a6c769cea76d466f..58d8c745842e0ef5a840f1361b5bfdffcabc0e8c 100644
+index e969d9e337ad79816f8bdb58a6c769cea76d466f..d10989a134247025e9c63d6adda39e7b7e5e1566 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
 @@ -247,6 +247,7 @@ vkr_context_import_resource_internal(struct vkr_context *ctx,
@@ -34,69 +35,61 @@ index e969d9e337ad79816f8bdb58a6c769cea76d466f..58d8c745842e0ef5a840f1361b5bfdff
  
     /* fd and mmap_ptr cannot be valid at the same time, but allowed to be -1 and NULL */
     assert(fd < 0 || !mmap_ptr);
-@@ -355,6 +356,9 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
-    if (!vkr_device_memory_export_blob(mem, blob_size, blob_flags, &blob))
-       return false;
- 
-+   /* An export that yields no resource leaves the memory exportable. */
-+   bool imported;
-+
-    /* SHM resources are consumed as host pointers, so retain a mapping in the
-     * context instead of retaining an fd in the union.  This also covers
-     * ordinary mappable allocations, which need a context resource even when
-@@ -366,14 +370,19 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
-       void *native_handle = NULL;
-       uint64_t native_resource_id = virgl_resource_native_acquire(
-          blob.u.fd, &native_handle_type, &native_handle);
--      if (!vkr_context_import_resource_from_shm(ctx, res_id, blob_size,
--                                                blob.u.fd, native_resource_id,
--                                                native_handle_type,
+@@ -369,13 +370,10 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
+       if (!vkr_context_import_resource_from_shm(ctx, res_id, blob_size,
+                                                 blob.u.fd, native_resource_id,
+                                                 native_handle_type,
 -                                                native_handle)) {
-+      imported = vkr_context_import_resource_from_shm(ctx, res_id, blob_size,
-+                                                      blob.u.fd,
-+                                                      native_resource_id,
-+                                                      native_handle_type,
-+                                                      native_handle);
-+      if (!imported) {
-          close(blob.u.fd);
-+         mem->exported = false;
-          return false;
-       }
+-         close(blob.u.fd);
+-         return false;
+-      }
++                                                native_handle))
++         goto fail;
  
-+      vkr_context_get_resource(ctx, res_id)->exported_memory_id = blob_id;
-+      mem->export_res_id = res_id;
-       *out_blob = blob;
-       return true;
+-      *out_blob = blob;
+-      return true;
++      goto exported;
     }
-@@ -387,19 +396,24 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
+ 
+    /* If memory might get exported, store a dup'ed fd in vkr_resource for:
+@@ -385,10 +383,8 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
+    int res_fd = -1;
+    if (mem->might_export) {
        res_fd = os_dupfd_cloexec(blob.u.fd);
-       if (res_fd < 0) {
-          close(blob.u.fd);
-+         mem->exported = false;
-          return false;
-       }
+-      if (res_fd < 0) {
+-         close(blob.u.fd);
+-         return false;
+-      }
++      if (res_fd < 0)
++         goto fail;
     }
  
--   if (!vkr_context_import_resource_internal(
--          ctx, res_id, blob_size, blob.type, res_fd, NULL, 0,
--          VIRGL_RESOURCE_NATIVE_HANDLE_NONE, NULL)) {
-+   imported = vkr_context_import_resource_internal(
-+      ctx, res_id, blob_size, blob.type, res_fd, NULL, 0,
-+      VIRGL_RESOURCE_NATIVE_HANDLE_NONE, NULL);
-+   if (!imported) {
+    if (!vkr_context_import_resource_internal(
+@@ -396,13 +392,21 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
+           VIRGL_RESOURCE_NATIVE_HANDLE_NONE, NULL)) {
        if (res_fd >= 0)
           close(res_fd);
-       close(blob.u.fd);
-+      mem->exported = false;
-       return false;
+-      close(blob.u.fd);
+-      return false;
++      goto fail;
     }
  
++exported:
 +   vkr_context_get_resource(ctx, res_id)->exported_memory_id = blob_id;
 +   mem->export_res_id = res_id;
     *out_blob = blob;
  
     return true;
-@@ -446,6 +460,28 @@ vkr_context_import_resource(struct vkr_context *ctx,
++
++fail:
++   /* An export that yields no resource leaves the memory exportable. */
++   close(blob.u.fd);
++   mem->exported = false;
++   return false;
+ }
+ 
+ bool
+@@ -446,6 +450,28 @@ vkr_context_import_resource(struct vkr_context *ctx,
        VIRGL_RESOURCE_NATIVE_HANDLE_NONE, NULL);
  }
  
@@ -125,7 +118,7 @@ index e969d9e337ad79816f8bdb58a6c769cea76d466f..58d8c745842e0ef5a840f1361b5bfdff
  void
  vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id)
  {
-@@ -472,6 +508,9 @@ vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id)
+@@ -472,6 +498,9 @@ vkr_context_destroy_resource(struct vkr_context *ctx, uint32_t res_id)
     }
     mtx_unlock(&ctx->ring_mutex);
  
@@ -149,6 +142,21 @@ index f0acdd4ad629fdf983e916b23f21d7ff623b0157..010a7d3dfbc9868f27be653fa7b91865
  };
  
  enum vkr_context_validate_level {
+diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
+index 2ab7bb5aef9c1296e0b8e7970847776d415d7404..6f15496cc005421955fcc93b10f6d9c19d7f798e 100644
+--- a/src/venus/vkr_device_memory.c
++++ b/src/venus/vkr_device_memory.c
+@@ -764,8 +764,8 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+ {
+    TRACE_FUNC();
+ 
+-   /* a memory can only be exported once; we don't want two resources to point
+-    * to the same storage.
++   /* a memory backs at most one resource at a time; we don't want two
++    * resources to point to the same storage.
+     */
+    if (mem->exported) {
+       vkr_log("mem has been exported");
 diff --git a/src/venus/vkr_device_memory.h b/src/venus/vkr_device_memory.h
 index aab490e77cc47e3d4ac48c28679d15f6621d5f6d..5276fa11a48349ec90e3cd54daa0958ec2c13f5f 100644
 --- a/src/venus/vkr_device_memory.h

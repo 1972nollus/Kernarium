@@ -157,7 +157,7 @@ index 6266ea01088e45dddf5c79ff8a6ec1ca5d20e0e2..d1560ce07d34859397a4ddd56d4552ff
  #define ZINK_EXTERNAL_MEMORY_HANDLE 999
  
 diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
-index 0b2342c445d344fffbea0625fbe94644b877be7b..d0de69cd4f6bee320002141399cf009b2b3dd54a 100644
+index 9ef460398cefca47fb312c49129ca8479bcd472b..9e14c278c5a3db46c5e444f547edef4beaf26121 100644
 --- a/src/gallium/drivers/zink/zink_screen.c
 +++ b/src/gallium/drivers/zink/zink_screen.c
 @@ -80,14 +80,14 @@ bool zink_tracing = false;

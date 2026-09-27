@@ -22,20 +22,20 @@ offset word carries the format flag, which puts the unconditional read's
 coordinate far outside it. Metal's own robustness returns zero there and the
 format test discards it.
 ---
- src/kosmickrisp/vulkan/kk_buffer_view.c       |  47 ++-
+ src/kosmickrisp/vulkan/kk_buffer_view.c       |  44 ++-
  src/kosmickrisp/vulkan/kk_buffer_view.h       |   3 +
  src/kosmickrisp/vulkan/kk_descriptor_set.c    |   3 +-
- src/kosmickrisp/vulkan/kk_descriptor_types.h  |  81 ++++-
+ src/kosmickrisp/vulkan/kk_descriptor_types.h  |  53 ++-
  .../vulkan/kk_nir_lower_descriptors.c         | 180 +++++++++-
  src/kosmickrisp/vulkan/meson.build            |  35 ++
- .../vulkan/tests/test_rgb32_texel_format.c    |  80 +++++
+ .../vulkan/tests/test_rgb32_texel_format.c    |  71 ++++
  .../vulkan/tests/test_rgb32_texel_lowering.c  | 310 ++++++++++++++++++
- 8 files changed, 719 insertions(+), 20 deletions(-)
+ 8 files changed, 680 insertions(+), 19 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_rgb32_texel_format.c
  create mode 100644 src/kosmickrisp/vulkan/tests/test_rgb32_texel_lowering.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
-index 2a1694487bb8386b87234ddd68c4c406d051c0a6..4cde058ce96268e949509eb7f8f06cc91abb6737 100644
+index 2a1694487bb8386b87234ddd68c4c406d051c0a6..a00bcebba203801ba4965be0200de10b70e2b392 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.c
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
 @@ -8,6 +8,7 @@
@@ -58,14 +58,13 @@ index 2a1694487bb8386b87234ddd68c4c406d051c0a6..4cde058ce96268e949509eb7f8f06cc9
     if (kk_vbo_supports_format(p_format))
        features |= VK_FORMAT_FEATURE_2_VERTEX_BUFFER_BIT;
  
-@@ -67,6 +73,28 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
+@@ -67,6 +73,27 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
     enum pipe_format p_format = vk_format_to_pipe_format(view->vk.format);
     const struct kk_va_format *supported_format = kk_get_va_format(p_format);
  
 +   struct kk_buffer *buffer =
 +      container_of(view->vk.buffer, struct kk_buffer, vk);
-+   const enum kk_raw_texel_buffer_format raw_format =
-+      kk_raw_texel_buffer_format(view->vk.format);
++   const bool raw = kk_is_raw_texel_buffer_format(view->vk.format);
 +
 +   /* A view whose format Metal cannot express keeps the address a shader
 +    * reads its texels from, and is still described to Metal by a texture in
@@ -75,7 +74,7 @@ index 2a1694487bb8386b87234ddd68c4c406d051c0a6..4cde058ce96268e949509eb7f8f06cc9
 +    * own memory rather than cover every component.
 +    */
 +   VkFormat texture_format = view->vk.format;
-+   if (raw_format != KK_RAW_TEXEL_BUFFER_FORMAT_NONE) {
++   if (raw) {
 +      view->raw_address = vk_buffer_address(&buffer->vk, view->vk.offset);
 +      texture_format = kk_raw_texel_buffer_sibling_format(view->vk.format);
 +      p_format = vk_format_to_pipe_format(texture_format);
@@ -87,7 +86,7 @@ index 2a1694487bb8386b87234ddd68c4c406d051c0a6..4cde058ce96268e949509eb7f8f06cc9
     /* If we reached here, we support reading at least */
     enum mtl_texture_usage usage = MTL_TEXTURE_USAGE_SHADER_READ;
     if (supported_format->texel_buffer.write)
-@@ -77,7 +105,7 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
+@@ -77,7 +104,7 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
         view->vk.format == VK_FORMAT_R32_SINT)
        usage |= MTL_TEXTURE_USAGE_SHADER_ATOMIC;
  
@@ -96,7 +95,7 @@ index 2a1694487bb8386b87234ddd68c4c406d051c0a6..4cde058ce96268e949509eb7f8f06cc9
     const uint64_t mtl_alignment_B =
        mtl_minimum_texture_buffer_alignment_for_pixel_format(
           kk_device_physical(dev)->mtl_dev_handle,
-@@ -85,8 +113,6 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
+@@ -85,8 +112,6 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
     assert(util_is_power_of_two_or_zero64(mtl_alignment_B));
     assert(mtl_alignment_B > 0);
  
@@ -105,31 +104,29 @@ index 2a1694487bb8386b87234ddd68c4c406d051c0a6..4cde058ce96268e949509eb7f8f06cc9
     const uint64_t absolute_offset_B =
        kk_buffer_absolute_offset(buffer, view->vk.offset);
     const uint64_t aligned_offset_B = absolute_offset_B & ~(mtl_alignment_B - 1);
-@@ -117,7 +143,11 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
+@@ -117,7 +142,9 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
              .blue = supported_format->unswizzle.blue,
              .alpha = supported_format->unswizzle.alpha,
           },
 -      .linear_stride_B = view->vk.range + tail_offset_B,
 +      .linear_stride_B =
-+         (raw_format != KK_RAW_TEXEL_BUFFER_FORMAT_NONE
-+             ? view->vk.elements * element_size_B
-+             : view->vk.range) +
++         (raw ? view->vk.elements * element_size_B : view->vk.range) +
 +         tail_offset_B,
     };
     view->mtl_texel_buffer_handle = mtl_new_texture_with_descriptor_linear(
        buffer->mtl_handle, &layout, aligned_offset_B);
-@@ -128,6 +158,15 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
+@@ -128,6 +155,15 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
     view->texel_buffer_gpu_id =
        mtl_texture_get_gpu_resource_id(view->mtl_texel_buffer_handle);
  
 +   /* The sibling texture exists only to keep the native fetch issuable, so
-+    * the descriptor's offset word carries the raw format instead of a texel
++    * the descriptor's offset word carries the raw flag instead of a texel
 +    * offset.  The coordinate that word produces lands far outside the
 +    * sibling texture, and Metal's own robustness returns zero for the value
 +    * the format branch discards.
 +    */
-+   if (raw_format != KK_RAW_TEXEL_BUFFER_FORMAT_NONE)
-+      view->texel_offset = kk_pack_raw_texel_buffer_format(raw_format);
++   if (raw)
++      view->texel_offset = KK_TEXEL_BUFFER_RAW_FORMAT_FLAG;
 +
     /* Heap residency covers the storage, but Metal shader validation also needs
      * the native texture view identity registered for its lifetime.
@@ -166,41 +163,19 @@ index 50045f7f5d9c99e8c06abdcfc6ff0138185f4c1e..66505561a19c2f4e575528d86650c0b9
        desc.element_count = view->vk.elements;
     }
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-index 9b4a16dfd7288d13c0257b747b7260ae6d102dcf..649b2dec5e669ffd8f734de5647dbc3b48b77c61 100644
+index 1962ba6a1ccd8ed65d83593d1325dbba58800e28..b33c61bf1afd20684add23e18f76cb6e1c018928 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-@@ -77,13 +77,90 @@ struct kk_storage_image_descriptor {
+@@ -77,13 +77,64 @@ struct kk_storage_image_descriptor {
  static_assert(sizeof(struct kk_storage_image_descriptor) == 8,
                "kk_storage_image_descriptor has no holes");
  
-+enum kk_raw_texel_buffer_format {
-+   KK_RAW_TEXEL_BUFFER_FORMAT_NONE = 0,
-+   KK_RAW_TEXEL_BUFFER_FORMAT_R32G32B32_FLOAT = 1,
-+   KK_RAW_TEXEL_BUFFER_FORMAT_R32G32B32_SINT = 2,
-+   KK_RAW_TEXEL_BUFFER_FORMAT_R32G32B32_UINT = 3,
-+};
-+
 +/* Native texel buffers use this word as a small Metal texture offset.  A high
-+ * bit therefore distinguishes raw-buffer formats without growing the 16-byte
-+ * descriptor or specializing pipelines for a particular view format.
++ * bit therefore marks a raw-buffer view without growing the descriptor or
++ * specializing pipelines for a particular view format: the fetch itself says
++ * how to interpret the texels it reads.
 + */
 +#define KK_TEXEL_BUFFER_RAW_FORMAT_FLAG BITFIELD_BIT(31)
-+#define KK_TEXEL_BUFFER_RAW_FORMAT_MASK BITFIELD_MASK(8)
-+
-+static inline enum kk_raw_texel_buffer_format
-+kk_raw_texel_buffer_format(VkFormat format)
-+{
-+   switch (format) {
-+   case VK_FORMAT_R32G32B32_SFLOAT:
-+      return KK_RAW_TEXEL_BUFFER_FORMAT_R32G32B32_FLOAT;
-+   case VK_FORMAT_R32G32B32_SINT:
-+      return KK_RAW_TEXEL_BUFFER_FORMAT_R32G32B32_SINT;
-+   case VK_FORMAT_R32G32B32_UINT:
-+      return KK_RAW_TEXEL_BUFFER_FORMAT_R32G32B32_UINT;
-+   default:
-+      return KK_RAW_TEXEL_BUFFER_FORMAT_NONE;
-+   }
-+}
 +
 +/* Metal has no three-component 32-bit texture-buffer format, so such a view
 + * is described by a single-component sibling texture over the same memory.
@@ -220,21 +195,18 @@ index 9b4a16dfd7288d13c0257b747b7260ae6d102dcf..649b2dec5e669ffd8f734de5647dbc3b
 +   }
 +}
 +
++static inline bool
++kk_is_raw_texel_buffer_format(VkFormat format)
++{
++   return kk_raw_texel_buffer_sibling_format(format) != VK_FORMAT_UNDEFINED;
++}
++
 +static inline VkFormatFeatureFlags2
 +kk_raw_texel_buffer_format_features(VkFormat format)
 +{
-+   return kk_raw_texel_buffer_format(format) !=
-+             KK_RAW_TEXEL_BUFFER_FORMAT_NONE
++   return kk_is_raw_texel_buffer_format(format)
 +             ? VK_FORMAT_FEATURE_2_UNIFORM_TEXEL_BUFFER_BIT
 +             : 0;
-+}
-+
-+static inline uint32_t
-+kk_pack_raw_texel_buffer_format(enum kk_raw_texel_buffer_format format)
-+{
-+   assert(format != KK_RAW_TEXEL_BUFFER_FORMAT_NONE);
-+   assert((format & ~KK_TEXEL_BUFFER_RAW_FORMAT_MASK) == 0);
-+   return KK_TEXEL_BUFFER_RAW_FORMAT_FLAG | format;
 +}
 +
  struct kk_texel_buffer_descriptor {
@@ -245,14 +217,12 @@ index 9b4a16dfd7288d13c0257b747b7260ae6d102dcf..649b2dec5e669ffd8f734de5647dbc3b
 +    * flow.
 +    */
     uint64_t image_gpu_resource_id;
--   uint32_t texel_offset;
 +   /* First texel of a view whose format Metal cannot express, and zero
 +    * otherwise. */
 +   uint64_t raw_address;
-+   union {
-+      uint32_t texel_offset;
-+      uint32_t raw_format;
-+   };
++   /* The texel offset of a native view, and KK_TEXEL_BUFFER_RAW_FORMAT_FLAG
++    * for a raw one. */
+    uint32_t texel_offset;
     uint32_t element_count;
 +   uint64_t pad_to_power_2;
  };
@@ -263,7 +233,7 @@ index 9b4a16dfd7288d13c0257b747b7260ae6d102dcf..649b2dec5e669ffd8f734de5647dbc3b
  
  /* This has to match nir_address_format_64bit_bounded_global */
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d694481f1e2 100644
+index 918d3ef08f0f945d3d05714aa856abf51b168287..5824faf645e9d70a87dcfaf117b31effd807506f 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -31,6 +31,11 @@ struct lower_descriptors_ctx {
@@ -278,7 +248,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
  };
  
  enum non_seamless_cube_mode {
-@@ -526,6 +531,138 @@ lower_image_intrin(nir_builder *b, nir_intrinsic_instr *intr,
+@@ -533,6 +538,138 @@ lower_image_intrin(nir_builder *b, nir_intrinsic_instr *intr,
     return true;
  }
  
@@ -350,11 +320,11 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
 +   assert(coord_src_idx >= 0);
 +   nir_def *coord = tex->src[coord_src_idx].src.ssa;
 +
-+   nir_def *offset_or_format = load_resource_deref_desc(
++   nir_def *offset_or_raw = load_resource_deref_desc(
 +      b, 1, 32, texture_deref,
-+      offsetof(struct kk_texel_buffer_descriptor, raw_format), ctx);
++      offsetof(struct kk_texel_buffer_descriptor, texel_offset), ctx);
 +   nir_def *is_raw = nir_ine_imm(
-+      b, nir_iand_imm(b, offset_or_format, KK_TEXEL_BUFFER_RAW_FORMAT_FLAG),
++      b, nir_iand_imm(b, offset_or_raw, KK_TEXEL_BUFFER_RAW_FORMAT_FLAG),
 +      0);
 +
 +   /* Every descriptor names a Metal texture buffer, so the native fetch is
@@ -364,13 +334,13 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
 +    * fetches depends on: it doubles the GPU time of a descriptor-indexing
 +    * loop even when no descriptor is ever raw.
 +    *
-+    * A raw descriptor's offset word carries the high format flag, so its
++    * A raw descriptor's offset word carries the high raw flag, so its
 +    * coordinate lands far outside the single-component sibling texture and
 +    * Metal's own robustness returns zero for the value the branch below
 +    * discards.
 +    */
 +   nir_src_rewrite(&tex->src[coord_src_idx].src,
-+                   nir_iadd(b, coord, offset_or_format));
++                   nir_iadd(b, coord, offset_or_raw));
 +
 +   nir_def *resource_addr = load_resource_addr(
 +      b, 1, 64, texture_deref,
@@ -417,7 +387,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
  static bool
  try_lower_intrin(nir_builder *b, nir_intrinsic_instr *intrin,
                   const struct lower_descriptors_ctx *ctx)
-@@ -572,7 +709,7 @@ try_lower_intrin(nir_builder *b, nir_intrinsic_instr *intrin,
+@@ -579,7 +716,7 @@ try_lower_intrin(nir_builder *b, nir_intrinsic_instr *intrin,
  
  static bool
  lower_tex(nir_builder *b, nir_tex_instr *tex,
@@ -426,7 +396,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
  {
     b->cursor = nir_before_instr(&tex->instr);
  
-@@ -598,6 +735,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -605,6 +742,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
                      : NON_SEAMLESS_CUBE_NATIVE;
     if (tex->sampler_dim == GLSL_SAMPLER_DIM_BUF) {
        assert(plane == 0);
@@ -434,7 +404,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
        if (tex->op == nir_texop_txs) {
           nir_def *element_count = load_resource_deref_desc(
              b, 1, 32, texture_deref,
-@@ -606,15 +744,8 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -613,15 +751,8 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
           return true;
        }
  
@@ -452,7 +422,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
     }
  
     /* LOD bias is passed in the descriptor set, rather than embedded into
-@@ -846,7 +977,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -853,7 +984,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
  static bool
  try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
  {
@@ -461,7 +431,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
  
     switch (instr->type) {
     case nir_instr_type_tex:
-@@ -858,6 +989,28 @@ try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
+@@ -865,6 +996,28 @@ try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
     }
  }
  
@@ -490,7 +460,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
  static bool
  lower_ssbo_resource_index(nir_builder *b, nir_intrinsic_instr *intrin,
                            const struct lower_descriptors_ctx *ctx)
-@@ -1041,8 +1194,9 @@ kk_nir_lower_descriptors(nir_shader *nir,
+@@ -1048,8 +1201,9 @@ kk_nir_lower_descriptors(nir_shader *nir,
      * TODO: See if we can unify this, not sure if the fast path matters on
      * Apple. This is inherited from NVK.
      */
@@ -555,10 +525,10 @@ index 122a0f6bfe6908ee0613e61a0cb7cfa4080aa891..be0938b83742398b5a41f1592fbc68a4
  endif
 diff --git a/src/kosmickrisp/vulkan/tests/test_rgb32_texel_format.c b/src/kosmickrisp/vulkan/tests/test_rgb32_texel_format.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..8823e3edb0863dbec815b8ecff3176240ef6a997
+index 0000000000000000000000000000000000000000..3847fe0854d010f745ee69f1bba2cc4cf00d3628
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_rgb32_texel_format.c
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,71 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -579,19 +549,14 @@ index 0000000000000000000000000000000000000000..8823e3edb0863dbec815b8ecff317624
 +   } while (0)
 +
 +static void
-+check_raw_format(VkFormat vk_format,
-+                 enum kk_raw_texel_buffer_format expected_format)
++check_raw_format(VkFormat vk_format)
 +{
-+   CHECK(kk_raw_texel_buffer_format(vk_format) == expected_format);
++   CHECK(kk_is_raw_texel_buffer_format(vk_format));
 +
 +   const VkFormatFeatureFlags2 features =
 +      kk_raw_texel_buffer_format_features(vk_format);
 +   CHECK(features == VK_FORMAT_FEATURE_2_UNIFORM_TEXEL_BUFFER_BIT);
 +   CHECK(!(features & VK_FORMAT_FEATURE_2_STORAGE_TEXEL_BUFFER_BIT));
-+
-+   const uint32_t packed = kk_pack_raw_texel_buffer_format(expected_format);
-+   CHECK(packed & KK_TEXEL_BUFFER_RAW_FORMAT_FLAG);
-+   CHECK((packed & KK_TEXEL_BUFFER_RAW_FORMAT_MASK) == expected_format);
 +
 +   /* A raw view keeps both a Metal texture, so the native fetch stays
 +    * issuable, and the address its texels are read from.
@@ -599,12 +564,12 @@ index 0000000000000000000000000000000000000000..8823e3edb0863dbec815b8ecff317624
 +   const struct kk_texel_buffer_descriptor desc = {
 +      .image_gpu_resource_id = 0x0fedcba987654321ull,
 +      .raw_address = 0x123456789abcdef0ull,
-+      .raw_format = packed,
++      .texel_offset = KK_TEXEL_BUFFER_RAW_FORMAT_FLAG,
 +      .element_count = 37,
 +   };
 +   CHECK(desc.image_gpu_resource_id == 0x0fedcba987654321ull);
 +   CHECK(desc.raw_address == 0x123456789abcdef0ull);
-+   CHECK(desc.texel_offset == packed);
++   CHECK(desc.texel_offset == KK_TEXEL_BUFFER_RAW_FORMAT_FLAG);
 +   CHECK(desc.element_count == 37);
 +
 +   CHECK(kk_raw_texel_buffer_sibling_format(vk_format) != VK_FORMAT_UNDEFINED);
@@ -613,15 +578,11 @@ index 0000000000000000000000000000000000000000..8823e3edb0863dbec815b8ecff317624
 +int
 +main(void)
 +{
-+   check_raw_format(VK_FORMAT_R32G32B32_SFLOAT,
-+                    KK_RAW_TEXEL_BUFFER_FORMAT_R32G32B32_FLOAT);
-+   check_raw_format(VK_FORMAT_R32G32B32_SINT,
-+                    KK_RAW_TEXEL_BUFFER_FORMAT_R32G32B32_SINT);
-+   check_raw_format(VK_FORMAT_R32G32B32_UINT,
-+                    KK_RAW_TEXEL_BUFFER_FORMAT_R32G32B32_UINT);
++   check_raw_format(VK_FORMAT_R32G32B32_SFLOAT);
++   check_raw_format(VK_FORMAT_R32G32B32_SINT);
++   check_raw_format(VK_FORMAT_R32G32B32_UINT);
 +
-+   CHECK(kk_raw_texel_buffer_format(VK_FORMAT_R32G32B32A32_SFLOAT) ==
-+         KK_RAW_TEXEL_BUFFER_FORMAT_NONE);
++   CHECK(!kk_is_raw_texel_buffer_format(VK_FORMAT_R32G32B32A32_SFLOAT));
 +   CHECK(kk_raw_texel_buffer_format_features(
 +            VK_FORMAT_R32G32B32A32_SFLOAT) == 0);
 +   CHECK(kk_raw_texel_buffer_sibling_format(VK_FORMAT_R32G32B32A32_SFLOAT) ==

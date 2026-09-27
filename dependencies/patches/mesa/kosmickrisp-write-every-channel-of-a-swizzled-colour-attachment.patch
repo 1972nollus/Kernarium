@@ -164,10 +164,10 @@ index 0000000000000000000000000000000000000000..a99be20458da387cf5b3d63187d3564a
 +                                     nir_metadata_control_flow, (void *)state);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index e97737125cac524ecc629c2284c8ff45488dfae3..30f9824b40b94a20b5d628ec5ae3bf34c2fedbbc 100644
+index 2d0468f1a6eca1d72f63addd44de68c8dff29ad8..d4072cc5da2a9ab34d2123c4d6f46f41e1d5eb64 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -296,57 +296,6 @@ type_size_vec4(const struct glsl_type *type, bool bindless)
+@@ -280,57 +280,6 @@ type_size_vec4(const struct glsl_type *type, bool bindless)
     return glsl_count_attribute_slots(type, false);
  }
  
@@ -225,7 +225,7 @@ index e97737125cac524ecc629c2284c8ff45488dfae3..30f9824b40b94a20b5d628ec5ae3bf34
  static void
  kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
                  const struct vk_pipeline_robustness_state *rs,
-@@ -1317,8 +1266,7 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
+@@ -1295,8 +1244,7 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
              NULL);
  
     /* Swizzle non-native formats' outputs */
@@ -236,12 +236,12 @@ index e97737125cac524ecc629c2284c8ff45488dfae3..30f9824b40b94a20b5d628ec5ae3bf34
     NIR_PASS(_, nir, msl_nir_fs_io_types);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 2d6510a86805bef78ca3e56ad421ef3e91802fbb..ae5f1af93c3724fcc4ed19a6b08cf27039faa0b1 100644
+index c509672590c4a72327b1ee377d73c3418386d0db..0b0730a1e934098b002520d919db4611b30af656 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
-@@ -279,6 +279,10 @@ bool kk_nir_lower_null_images(nir_shader *nir);
- 
- bool kk_nir_lower_custom_border(nir_shader *nir);
+@@ -290,6 +290,10 @@ nir_def *kk_nir_border_compare(struct nir_builder *b, nir_def *op,
+ nir_def *kk_nir_border_probe_reference(struct nir_builder *b, nir_def *op,
+                                        unsigned bit_size);
  
 +struct vk_graphics_pipeline_state;
 +bool kk_nir_lower_fragment_output_swizzle(

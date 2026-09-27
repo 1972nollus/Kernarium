@@ -56,7 +56,7 @@ index 99ec8dd9d71a8319298f320cd3d4ec006f55231e..d4d23097d94637ae990c9f5aa1f4990a
  
  void
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index a8dd8fcd31d026d10aee5f7cde329ebe74288922..a3336e159eebd55b8c55fc5ca6c1ef634ac5de5b 100644
+index 4517cb3513bb16510770e73b70cd32aad88b2544..82acbc43a7c0a465a1f6050dc46869889cfa883a 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -254,11 +254,16 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
@@ -153,7 +153,7 @@ index 97c0ec0d934c17ab9710c283e91ded4d91878bd1..9148f317ff15817e8250883c23278c71
  
  static void
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index d59aade3269af4fc67cb94e17ecb3c7a85a2909d..ca4cf38757e77ca2005dea1162d8494a4c334bd9 100644
+index f4037789a7de6efc133d7f1c1ddd99a7cdbd5279..7cd2c6dfbae9be0903d7ad96df122b1d4f686d0c 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -171,7 +171,43 @@ vkr_physical_device_init_memory_properties(struct vkr_physical_device *physical_
@@ -244,7 +244,7 @@ index d59aade3269af4fc67cb94e17ecb3c7a85a2909d..ca4cf38757e77ca2005dea1162d8494a
  static void
  vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
  {
-@@ -710,16 +782,16 @@ vkr_dispatch_vkGetPhysicalDeviceMemoryProperties2(
+@@ -714,16 +786,16 @@ vkr_dispatch_vkGetPhysicalDeviceMemoryProperties2(
        vkr_physical_device_from_handle(args->physicalDevice);
     struct vn_physical_device_proc_table *vk = &physical_dev->proc_table;
  
@@ -268,12 +268,12 @@ index d59aade3269af4fc67cb94e17ecb3c7a85a2909d..ca4cf38757e77ca2005dea1162d8494a
  
  static void
 diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index bd2a4748ad41da7b454b51cbabfd3ebe5263335f..6923db49960474e9ea86d85811a4d5d4c676eaa6 100644
+index 77fc62510cce22e88cd0c272094064c52f6c4e09..7bda834024d5d73640873e25d4a74955fd259b46 100644
 --- a/src/venus/vkr_physical_device.h
 +++ b/src/venus/vkr_physical_device.h
-@@ -31,7 +31,11 @@ struct vkr_physical_device {
-    bool EXT_external_memory_host;
-    VkDeviceSize min_imported_host_pointer_alignment;
+@@ -33,7 +33,11 @@ struct vkr_physical_device {
+    bool EXT_external_memory_metal;
+    bool EXT_metal_objects;
  
 +   VkPhysicalDeviceMemoryProperties host_memory_properties;
     VkPhysicalDeviceMemoryProperties memory_properties;
@@ -283,7 +283,7 @@ index bd2a4748ad41da7b454b51cbabfd3ebe5263335f..6923db49960474e9ea86d85811a4d5d4
     VkPhysicalDeviceIDProperties id_properties;
     bool is_dma_buf_fd_export_supported;
     bool is_opaque_fd_export_supported;
-@@ -52,4 +56,15 @@ void
+@@ -54,4 +58,15 @@ void
  vkr_physical_device_destroy(struct vkr_context *ctx,
                              struct vkr_physical_device *physical_dev);
  

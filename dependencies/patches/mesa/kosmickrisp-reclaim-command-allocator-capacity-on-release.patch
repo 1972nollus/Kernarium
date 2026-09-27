@@ -15,7 +15,7 @@ Add native coverage for release, reset, recycling and trim, with real GPU fill r
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_pool_release.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index a4d3adf7856e8cf60806fcf7682dbbe47a92598e..5d025ea6200a5ccc13140542764be1ebb6e4f177 100644
+index d16ad5e9c03d980228f2ee737a85d0e8435fae44..668bbcaba279b59826318b3d0e06d0999d83af13 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -176,7 +176,8 @@ alloc_fail:

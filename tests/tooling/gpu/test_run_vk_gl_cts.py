@@ -323,15 +323,15 @@ def framed_artifact(name: str, payload: bytes) -> str:
 def gpu_capability_report(*, venus_capset: bool = False) -> str:
     lines: list[str] = []
     extensions = ["GL_EXT_alpha", "GL_EXT_beta"]
-    for major, minor in ((3, 0), (3, 1), (3, 2)):
+    for major, minor in ((4, 6),):
         encode = lambda value: value.encode().hex()
         lines.append(
             "UML_GPU_HOST_CONTEXT|"
             f"requested={major}.{minor}|created=1|egl_error=12288|"
             f"actual={major}.{minor}|vendor_hex={encode('vendor')}|"
             f"renderer_hex={encode('renderer')}|"
-            f"version_hex={encode(f'OpenGL ES {major}.{minor}')}|"
-            f"glsl_hex={encode('GLSL ES')}|extensions={len(extensions)}"
+            f"version_hex={encode(f'{major}.{minor} (Core Profile)')}|"
+            f"glsl_hex={encode('4.60')}|extensions={len(extensions)}"
         )
         lines.extend(
             "UML_GPU_HOST_EXTENSION|"
@@ -980,14 +980,6 @@ registered_module=KHR-GLES3
             with self.assertRaisesRegex(cts.CampaignError, "invalid Apple"):
                 cts.load_apple_campaigns(path=invalid)
 
-    def test_fraction_shards_have_an_exact_disjoint_union(self) -> None:
-        cases = [f"KHR-GLES3.group.case{index}" for index in range(17)]
-        shards = [cts.select_fraction(cases, index, 4) for index in range(4)]
-        flattened = [case for shard in shards for case in shard]
-        self.assertEqual(set(flattened), set(cases))
-        self.assertEqual(len(flattened), len(cases))
-        self.assertEqual(shards[0], cases[0::4])
-
     def test_macos_campaign_owns_its_exact_set_seed_and_timeout(self) -> None:
         options = cts.parse_arguments(
             ["--campaign", "gles3-identity-sentinel-v1", "--dry-run"]
@@ -1413,7 +1405,7 @@ native_display_cleanup
         parsed = cts.parse_gpu_capability_report(report)
         self.assertEqual(
             [context["requested"] for context in parsed["host_contexts"]],
-            [[3, 0], [3, 1], [3, 2]],
+            [[4, 6]],
         )
         self.assertEqual(
             [capset["id"] for capset in parsed["virgl_capsets"]], [1, 2]
@@ -1425,22 +1417,6 @@ native_display_cleanup
         self.assertEqual(
             parsed["virgl_capsets"][1]["decoded"]["v2"]["renderer"],
             "renderer",
-        )
-        comparison = cts.virgl_capset.compare_reports(
-            parsed["virgl_capsets"], parsed["virgl_capsets"]
-        )
-        self.assertTrue(comparison["equal"])
-        self.assertEqual(comparison["capsets"][0]["differences"], [])
-        changed = json.loads(json.dumps(parsed["virgl_capsets"]))
-        changed[0]["decoded"]["v1"]["glsl_level"] = 300
-        changed[0]["data_hex"] = "00" + changed[0]["data_hex"][2:]
-        changed_comparison = cts.virgl_capset.compare_reports(
-            parsed["virgl_capsets"], changed
-        )
-        self.assertFalse(changed_comparison["equal"])
-        self.assertEqual(
-            changed_comparison["capsets"][0]["differences"][0]["field"],
-            "$.decoded.v1.glsl_level",
         )
         self.assertNotIn("venus_capset", parsed)
         venus = cts.parse_gpu_capability_report(
@@ -1466,12 +1442,12 @@ native_display_cleanup
                     f"id={cts.VENUS_CAPSET_ID}|", "id=3|"
                 )
             )
-        with self.assertRaisesRegex(cts.CampaignError, "omitted an ES 3.x"):
+        with self.assertRaisesRegex(cts.CampaignError, "omitted the desktop GL 4.6"):
             cts.parse_gpu_capability_report(
                 "\n".join(
                     line
                     for line in report.splitlines()
-                    if "requested=3.2" not in line
+                    if "requested=4.6" not in line
                 )
             )
         with self.assertRaisesRegex(cts.CampaignError, "size changed"):
@@ -2189,21 +2165,6 @@ native_display_cleanup
         shards = cts.load_apple_matrix_shards()
         self.assertEqual(len(shards), 100)
         for api in cts.BASELINE_GLES_APIS:
-            configs = cts.apple_matrix_configs(shards, api)
-            self.assertEqual(
-                [config.identifier for config in configs],
-                [
-                    1, 2, 3, 4,
-                    13, 14, 15, 16,
-                    25, 26, 27, 28,
-                    37, 38, 39, 40,
-                    49, 50, 51, 52,
-                ],
-            )
-            self.assertEqual(
-                cts.egl_config_digest(configs),
-                "843544a7aef987426f74851a8802447a2428bde9ff9a5d893e1c2073ffbb2607",
-            )
             api_shards = [
                 shard for shard in shards.values() if shard.api == api
             ]

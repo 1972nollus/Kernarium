@@ -27,42 +27,6 @@ if(TARGET uml_third_party_kosmickrisp)
         "-framework Metal")
     add_dependencies(uml_gpu_kosmickrisp_capability_probe
         uml_dependency_prefix_verify)
-
-    add_executable(uml-kosmickrisp-capability-probe
-        kosmickrisp_capability_probe_main.cpp)
-    uml_declare_architecture_target(
-        uml-kosmickrisp-capability-probe device)
-    target_compile_features(uml-kosmickrisp-capability-probe PRIVATE
-        cxx_std_20)
-    target_compile_options(uml-kosmickrisp-capability-probe PRIVATE
-        -Wall -Wextra -Werror)
-    target_link_libraries(uml-kosmickrisp-capability-probe PRIVATE
-        UML::GpuKosmicKrispCapabilityProbe)
-    add_dependencies(uml-kosmickrisp-capability-probe
-        uml_dependency_prefix_verify)
-    set_property(TARGET uml-kosmickrisp-capability-probe APPEND PROPERTY
-        LINK_DEPENDS
-        ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}/KosmicKrisp
-        ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}/Info.plist)
-    set_target_properties(uml-kosmickrisp-capability-probe PROPERTIES
-        BUILD_WITH_INSTALL_RPATH TRUE
-        INSTALL_RPATH "@executable_path/Frameworks"
-        INSTALL_RPATH_USE_LINK_PATH FALSE)
-    set_target_properties(uml-kosmickrisp-capability-probe PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY
-            ${PROJECT_BINARY_DIR}/probes/kosmickrisp)
-    set(_uml_kosmickrisp_probe_frameworks
-        $<TARGET_FILE_DIR:uml-kosmickrisp-capability-probe>/Frameworks)
-    add_custom_command(TARGET uml-kosmickrisp-capability-probe POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E remove_directory
-            ${_uml_kosmickrisp_probe_frameworks}/KosmicKrisp.framework
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            ${_uml_kosmickrisp_probe_frameworks}
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}
-            ${_uml_kosmickrisp_probe_frameworks}/KosmicKrisp.framework
-        COMMENT "Staging the maintained KosmicKrisp probe framework"
-        VERBATIM)
 endif()
 
 # Keep the renderer, display, protocol device, transport, and in-process
@@ -84,59 +48,12 @@ target_link_libraries(uml_gpu_renderer PRIVATE
     "-framework QuartzCore")
 add_dependencies(uml_gpu_renderer uml_dependency_prefix_verify)
 
-if(TARGET uml_third_party_kosmickrisp)
-    add_executable(uml-venus-backend-probe
-        venus_backend_probe_main.cpp)
-    uml_declare_architecture_target(uml-venus-backend-probe device)
-    target_compile_features(uml-venus-backend-probe PRIVATE cxx_std_20)
-    target_compile_options(uml-venus-backend-probe PRIVATE
-        -Wall -Wextra -Werror)
-    target_link_libraries(uml-venus-backend-probe PRIVATE
-        UML::ThirdPartyVirglrenderer
-        UML::GpuKosmicKrispCapabilityProbe
-        "-framework Foundation"
-        "-framework Metal"
-        "-framework QuartzCore")
-    add_dependencies(uml-venus-backend-probe
-        uml_dependency_prefix_verify)
-    set_property(TARGET uml-venus-backend-probe APPEND PROPERTY
-        LINK_DEPENDS
-        ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}/KosmicKrisp
-        ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}/Info.plist)
-    set_target_properties(uml-venus-backend-probe PROPERTIES
-        BUILD_WITH_INSTALL_RPATH TRUE
-        INSTALL_RPATH "@executable_path/Frameworks"
-        INSTALL_RPATH_USE_LINK_PATH FALSE)
-    set_target_properties(uml-venus-backend-probe PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY
-            ${PROJECT_BINARY_DIR}/probes/venus)
-    set(_uml_venus_probe_frameworks
-        $<TARGET_FILE_DIR:uml-venus-backend-probe>/Frameworks)
-    set(_uml_venus_probe_gl_stage_commands)
-    foreach(_uml_gl_framework IN LISTS UML_APPLE_GPU_GL_FRAMEWORK_NAMES)
-        list(APPEND _uml_venus_probe_gl_stage_commands
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                ${UML_APPLE_GPU_FRAMEWORK_DIRECTORY}/${_uml_gl_framework}.framework
-                ${_uml_venus_probe_frameworks}/${_uml_gl_framework}.framework)
-    endforeach()
-    add_custom_command(TARGET uml-venus-backend-probe POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E remove_directory
-            ${_uml_venus_probe_frameworks}
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            ${_uml_venus_probe_frameworks}
-        ${_uml_venus_probe_gl_stage_commands}
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${UML_APPLE_GPU_KOSMICKRISP_FRAMEWORK}
-            ${_uml_venus_probe_frameworks}/KosmicKrisp.framework
-        COMMENT "Staging the maintained Venus backend probe frameworks"
-        VERBATIM)
-endif()
-
 set(_uml_gpu_display_sources
     display_geometry.cpp
     display_resize_notifier.cpp
     display.cpp
     metal_presentation.mm
+    native_display_common.cpp
     scanout_framebuffer.cpp)
 if(UML_TARGET_MACOS)
     list(APPEND _uml_gpu_display_sources
@@ -157,6 +74,7 @@ target_compile_definitions(uml_gpu_display PRIVATE
 target_include_directories(uml_gpu_display PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
 target_link_libraries(uml_gpu_display PUBLIC UML::VncInput)
+target_link_libraries(uml_gpu_display PRIVATE UML::GuestTimerMask)
 if(UML_TARGET_MACOS)
     target_link_libraries(uml_gpu_display PRIVATE
         UML::ThirdPartyVncServer

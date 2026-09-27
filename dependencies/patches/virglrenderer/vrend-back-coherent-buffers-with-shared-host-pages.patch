@@ -21,12 +21,12 @@ memory keep the previous storage paths.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_renderer.c | 159 ++++++++++++++++++++++++++++++++++++-
+ src/vrend/vrend_renderer.c | 171 ++++++++++++++++++++++++++++++++++++-
  src/vrend/vrend_renderer.h |   5 ++
- 2 files changed, 162 insertions(+), 2 deletions(-)
+ 2 files changed, 174 insertions(+), 2 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..634e4a28d1955f7a5c03c2115e05cb68a5881a80 100644
+index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..4869b94ccf7ebe8f8b7bc395b1fe6b34f2f474ed 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -41,6 +41,7 @@
@@ -61,7 +61,35 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..634e4a28d1955f7a5c03c2115e05cb68
     FEAT(arb_or_gles_ext_texture_buffer, 31, UNAVAIL, "GL_ARB_texture_buffer_object", "GL_EXT_texture_buffer", NULL),
     FEAT(arb_robustness, UNAVAIL, UNAVAIL,  "GL_ARB_robustness" ),
     FEAT(arb_buffer_storage, 44, UNAVAIL, "GL_ARB_buffer_storage", "GL_EXT_buffer_storage"),
-@@ -7501,6 +7505,12 @@ static enum virgl_resource_fd_type vrend_pipe_resource_export_fd(UNUSED struct p
+@@ -443,6 +447,27 @@ static inline void clear_feature(enum features_id feature_id)
+    vrend_state.features[slot] &= ~mask;
+ }
+ 
++/* Pin host pages the caller allocated as a buffer object's storage through
++ * GL_AMD_pinned_memory; the caller checks feat_amd_pinned_memory. Returns
++ * false, having logged the GL error, when the driver refuses the pages. The
++ * buffer is unbound either way.
++ */
++static bool vrend_pin_host_pages(GLuint buffer, void *ptr, uint64_t size)
++{
++   while (glGetError() != GL_NO_ERROR)
++      ;
++   glBindBufferARB(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, buffer);
++   glBufferData(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, size, ptr, GL_DYNAMIC_DRAW);
++   const GLenum error = glGetError();
++   glBindBufferARB(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, 0);
++   if (error == GL_NO_ERROR)
++      return true;
++
++   virgl_warn("Pinning %" PRIu64 " bytes of host memory failed with GL error %d\n",
++              size, error);
++   return false;
++}
++
+ 
+ struct vrend_linked_shader_program {
+    struct list_head head;
+@@ -7501,6 +7526,12 @@ static enum virgl_resource_fd_type vrend_pipe_resource_export_fd(UNUSED struct p
                                                                   UNUSED int *fd,
                                                                   UNUSED void *data)
  {
@@ -74,7 +102,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..634e4a28d1955f7a5c03c2115e05cb68
  #if defined(HAVE_EPOXY_EGL_H) && defined(ENABLE_GBM_ALLOCATION)
     struct vrend_resource *res = (struct vrend_resource *)pres;
  
-@@ -7785,6 +7795,90 @@ fail:
+@@ -7785,6 +7816,90 @@ fail:
     return EINVAL;
  }
  
@@ -165,7 +193,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..634e4a28d1955f7a5c03c2115e05cb68
  void
  vrend_renderer_fini(void)
  {
-@@ -7806,6 +7900,11 @@ vrend_renderer_fini(void)
+@@ -7806,6 +7921,11 @@ vrend_renderer_fini(void)
  
     vrend_destroy_context(vrend_state.ctx0);
  
@@ -177,7 +205,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..634e4a28d1955f7a5c03c2115e05cb68
     vrend_state.current_ctx = NULL;
     vrend_state.current_hw_ctx = NULL;
  
-@@ -8295,6 +8394,46 @@ static int check_resource_valid(const struct vrend_renderer_resource_create_args
+@@ -8295,6 +8415,37 @@ static int check_resource_valid(const struct vrend_renderer_resource_create_args
     return 0;
  }
  
@@ -200,16 +228,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..634e4a28d1955f7a5c03c2115e05cb68
 +   if (!shm)
 +      return false;
 +
-+   while (glGetError() != GL_NO_ERROR)
-+      ;
-+   glBindBufferARB(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, gr->gl_id);
-+   glBufferData(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, shm->size, shm->ptr,
-+                GL_DYNAMIC_DRAW);
-+   const GLenum error = glGetError();
-+   glBindBufferARB(GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, 0);
-+   if (error != GL_NO_ERROR) {
-+      virgl_warn("Pinning %u bytes of host memory failed with GL error %d\n",
-+                 width, error);
++   if (!vrend_pin_host_pages(gr->gl_id, shm->ptr, shm->size)) {
 +      virgl_host_shm_free(shm);
 +      return false;
 +   }
@@ -224,7 +243,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..634e4a28d1955f7a5c03c2115e05cb68
  static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint32_t flags)
  {
  
-@@ -8317,7 +8456,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
+@@ -8317,7 +8468,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
     glBindBufferARB(gr->target, gr->gl_id);
  
     if (buffer_storage_flags) {
@@ -235,7 +254,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..634e4a28d1955f7a5c03c2115e05cb68
           glBufferStorage(gr->target, width, NULL, buffer_storage_flags);
           gr->map_info = vrend_state.inferred_gl_caching_type;
        }
-@@ -8355,7 +8496,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
+@@ -8355,7 +8508,9 @@ static void vrend_create_buffer(struct vrend_resource *gr, uint32_t width, uint3
           return;
        }
  
@@ -246,7 +265,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..634e4a28d1955f7a5c03c2115e05cb68
        gr->buffer_storage_flags = buffer_storage_flags;
        gr->size = width;
     } else
-@@ -8935,6 +9078,9 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+@@ -8935,6 +9090,9 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
        glDeleteMemoryObjectsEXT(1, &res->memobj);
     }
  
@@ -256,7 +275,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..634e4a28d1955f7a5c03c2115e05cb68
  #ifdef ENABLE_GBM
     if (res->egl_image) {
        virgl_egl_image_destroy(egl, res->egl_image);
-@@ -13551,6 +13697,12 @@ uint32_t vrend_renderer_resource_get_map_info(struct pipe_resource *pres)
+@@ -13551,6 +13709,12 @@ uint32_t vrend_renderer_resource_get_map_info(struct pipe_resource *pres)
  int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t *out_size)
  {
     struct vrend_resource *res = (struct vrend_resource *)pres;
@@ -269,7 +288,7 @@ index 3bdb490a2124eca7a5a5c5db8b9f990c0228f178..634e4a28d1955f7a5c03c2115e05cb68
     if (!has_bits(res->storage_bits, VREND_STORAGE_GL_BUFFER | VREND_STORAGE_GL_IMMUTABLE))
        return -EINVAL;
  
-@@ -13567,6 +13719,9 @@ int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t
+@@ -13567,6 +13731,9 @@ int vrend_renderer_resource_map(struct pipe_resource *pres, void **map, uint64_t
  int vrend_renderer_resource_unmap(struct pipe_resource *pres)
  {
     struct vrend_resource *res = (struct vrend_resource *)pres;

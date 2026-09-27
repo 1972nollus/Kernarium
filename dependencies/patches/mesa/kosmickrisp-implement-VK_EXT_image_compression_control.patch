@@ -104,7 +104,7 @@ index 8f4e3b4e689969ce8ffe9a9179953b291af0010b..b96eeec993ce569cd356babceec69104
     for (uint32_t ndx = region->subresource_member.baseArrayLayer;              \
          ndx < (region->subresource_member.baseArrayLayer +                     \
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 5749fb5e97ab743f4d58440e94dc258234ab876a..cb199e698c4809eedc676819f6355bf48dc2386b 100644
+index 2710b0b940ccdd3d2c59cb43ff11edaeb6e0350f..f2c96dbea7462a7fa3f73354c844b483bee82f3c 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -181,6 +181,8 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -116,7 +116,7 @@ index 5749fb5e97ab743f4d58440e94dc258234ab876a..cb199e698c4809eedc676819f6355bf4
        .EXT_image_drm_format_modifier = true,
        .EXT_legacy_vertex_attributes = true,
        .EXT_load_store_op_none = true,
-@@ -495,6 +497,14 @@ kk_get_device_features(
+@@ -493,6 +495,14 @@ kk_get_device_features(
        .image2DViewOf3D = true,
        .sampler2DViewOf3D = true,
  

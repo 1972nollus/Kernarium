@@ -4,19 +4,18 @@ Date: Fri, 4 Sep 2026 12:17:23 +0900
 Subject: [PATCH] venus: bridge host memory through guest dma-bufs
 
 ---
- src/venus/vkr_context.c         |  78 +++++++++--
+ src/venus/vkr_context.c         |  78 ++++++++++--
  src/venus/vkr_context.h         |   5 +
- src/venus/vkr_device.c          |  22 ++++
+ src/venus/vkr_device.c          |  12 ++
  src/venus/vkr_device.h          |   2 +
- src/venus/vkr_device_memory.c   | 221 +++++++++++++++++++++++++++-----
+ src/venus/vkr_device_memory.c   | 217 +++++++++++++++++++++++++++-----
  src/venus/vkr_device_memory.h   |   4 +
- src/venus/vkr_physical_device.c |  20 +++
- src/venus/vkr_physical_device.h |   1 +
+ src/venus/vkr_physical_device.c |  17 +++
  src/venus/vkr_renderer.c        |   3 +-
- src/virgl_resource.c            | 171 ++++++++++++++++++++++++
- src/virgl_resource.h            |  39 ++++++
+ src/virgl_resource.c            | 171 +++++++++++++++++++++++++
+ src/virgl_resource.h            |  25 ++++
  src/virglrenderer.c             |   2 +-
- 12 files changed, 521 insertions(+), 47 deletions(-)
+ 11 files changed, 493 insertions(+), 43 deletions(-)
 
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
 index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..e0457772cd51394d61833d276b9199784f7db063 100644
@@ -190,52 +189,28 @@ index 3867f138fdfd6cedca49c7de4ceca01d76546d43..7383f9249c4a943c24d8e346faf473c5
  
  enum vkr_context_validate_level {
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
-index 66e20d39b9ce0321e5f346deaa2b14d0325a0797..59c77952a8c825bae4cf8adc2770dd5831e3f01b 100644
+index caa4ce691f8270877be222b752260bc1f269fc65..ace87a08779068a7c0db24c4d0abe048c2311e95 100644
 --- a/src/venus/vkr_device.c
 +++ b/src/venus/vkr_device.c
-@@ -131,6 +131,7 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
-    const char **exts = NULL;
-    uint32_t ext_count = args->pCreateInfo->enabledExtensionCount;
-    ext_count += physical_dev->EXT_external_memory_host;
-+   ext_count += physical_dev->EXT_external_memory_metal;
-    ext_count += physical_dev->KHR_portability_subset;
-    ext_count += physical_dev->KHR_external_memory_fd;
-    ext_count += physical_dev->EXT_external_memory_dma_buf;
-@@ -148,6 +149,8 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
- 
-       if (physical_dev->EXT_external_memory_host)
-          exts[ext_count++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
-+      if (physical_dev->EXT_external_memory_metal)
-+         exts[ext_count++] = VK_EXT_EXTERNAL_MEMORY_METAL_EXTENSION_NAME;
-       if (physical_dev->KHR_portability_subset)
-          exts[ext_count++] = "VK_KHR_portability_subset";
-       if (physical_dev->KHR_external_memory_fd)
-@@ -198,6 +201,25 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
-       }
+@@ -95,6 +95,18 @@ vkr_device_init_renderer_procs(struct vkr_device *dev)
+          return false;
     }
  
 +   if (physical_dev->EXT_external_memory_metal) {
 +      dev->GetMemoryMetalHandlePropertiesEXT =
 +         (PFN_vkGetMemoryMetalHandlePropertiesEXT)vk->GetDeviceProcAddr(
-+            dev->base.handle.device,
-+            "vkGetMemoryMetalHandlePropertiesEXT");
++            handle, "vkGetMemoryMetalHandlePropertiesEXT");
 +      dev->GetMemoryMetalHandleEXT =
 +         (PFN_vkGetMemoryMetalHandleEXT)vk->GetDeviceProcAddr(
-+            dev->base.handle.device, "vkGetMemoryMetalHandleEXT");
++            handle, "vkGetMemoryMetalHandleEXT");
 +      if (!dev->GetMemoryMetalHandlePropertiesEXT ||
-+          !dev->GetMemoryMetalHandleEXT) {
-+         struct vn_device_proc_table *dev_vk = &dev->proc_table;
-+         dev_vk->DestroyDevice(dev->base.handle.device, NULL);
-+         free(exts);
-+         free(dev);
-+         args->ret = VK_ERROR_EXTENSION_NOT_PRESENT;
-+         return;
-+      }
++          !dev->GetMemoryMetalHandleEXT)
++         return false;
 +   }
 +
-    free(exts);
+    return true;
+ }
  
-    args->ret = vkr_device_create_queues(ctx, dev, args->pCreateInfo->queueCreateInfoCount,
 diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
 index a8c185c6807c5ffc8be7b01b9d23a5b58ea4dc39..fcf875c2c3fcc242342034a04ad1ab1bd0e81673 100644
 --- a/src/venus/vkr_device.h
@@ -250,7 +225,7 @@ index a8c185c6807c5ffc8be7b01b9d23a5b58ea4dc39..fcf875c2c3fcc242342034a04ad1ab1b
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index a3336e159eebd55b8c55fc5ca6c1ef634ac5de5b..4c8286c7896d7c374c0ee29073c0652b88e58d24 100644
+index 82acbc43a7c0a465a1f6050dc46869889cfa883a..4c8286c7896d7c374c0ee29073c0652b88e58d24 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -7,6 +7,7 @@
@@ -521,18 +496,7 @@ index a3336e159eebd55b8c55fc5ca6c1ef634ac5de5b..4c8286c7896d7c374c0ee29073c0652b
     vkr_host_shm_free(mem->host_shm);
     if (mem->gbm_bo)
        vkr_gbm_bo_destroy(mem->gbm_bo);
-@@ -598,10 +716,6 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
-    }
- 
-    if (mem->host_shm && mem->host_shm->fd >= 0) {
--      if (blob_flags & VIRGL_RENDERER_BLOB_FLAG_USE_CROSS_DEVICE) {
--         vkr_log("host allocation cannot support cross-device blob sharing");
--         return false;
--      }
-       *out_blob = (struct virgl_context_blob){
-          .type = VIRGL_RESOURCE_FD_SHM,
-          .u.fd = os_dupfd_cloexec(mem->host_shm->fd),
-@@ -613,6 +727,45 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+@@ -609,6 +727,45 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
        return true;
     }
  
@@ -594,20 +558,10 @@ index b82e8786c059919c83d06eeb961ac1a3b315cb44..e25198b50a0e89efd2a0473b0c128971
     uint32_t memory_type_index;
  
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index ca4cf38757e77ca2005dea1162d8494a4c334bd9..cb6fdfe965a78c285efdfc2c86214586c7efd9b9 100644
+index 7cd2c6dfbae9be0903d7ad96df122b1d4f686d0c..6581f97ba214b3b73fac503f19f1685e7959b740 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
-@@ -356,6 +356,9 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
-          physical_dev->KHR_external_fence_fd = true;
-       else if (!strcmp(props->extensionName, "VK_EXT_external_memory_host"))
-          physical_dev->EXT_external_memory_host = true;
-+      else if (!strcmp(props->extensionName,
-+                       VK_EXT_EXTERNAL_MEMORY_METAL_EXTENSION_NAME))
-+         physical_dev->EXT_external_memory_metal = true;
-       else if (!strcmp(props->extensionName, "VK_KHR_portability_subset"))
-          physical_dev->KHR_portability_subset = true;
- 
-@@ -364,6 +367,23 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+@@ -368,6 +368,23 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
           if (props->specVersion > spec_ver)
              props->specVersion = spec_ver;
           exts[advertised_count++] = exts[i];
@@ -631,18 +585,6 @@ index ca4cf38757e77ca2005dea1162d8494a4c334bd9..cb6fdfe965a78c285efdfc2c86214586
        }
     }
  
-diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index 6923db49960474e9ea86d85811a4d5d4c676eaa6..ad07431aedb94ef4d0b7971a12fb21e214baf112 100644
---- a/src/venus/vkr_physical_device.h
-+++ b/src/venus/vkr_physical_device.h
-@@ -30,6 +30,7 @@ struct vkr_physical_device {
- 
-    bool EXT_external_memory_host;
-    VkDeviceSize min_imported_host_pointer_alignment;
-+   bool EXT_external_memory_metal;
- 
-    VkPhysicalDeviceMemoryProperties host_memory_properties;
-    VkPhysicalDeviceMemoryProperties memory_properties;
 diff --git a/src/venus/vkr_renderer.c b/src/venus/vkr_renderer.c
 index 8aae92419da38b5be295cf5c6e478e9b3c3edaa8..3a69b928c507bb87ab0b8af5f7eac49d3fb53897 100644
 --- a/src/venus/vkr_renderer.c
@@ -871,7 +813,7 @@ index 0ee546883a982c54a328179b77a11dc45496c3f0..dbc803cfc50910e474e481cdeeec87a2
     res->iov = iov;
     res->iov_count = iov_count;
 diff --git a/src/virgl_resource.h b/src/virgl_resource.h
-index 8eb770e78e69dffd54746cd89ffdd8816c2be329..d21fc0bced31b86cfc7cdfdf599edf64808471b5 100644
+index 8eb770e78e69dffd54746cd89ffdd8816c2be329..5d90e60f4429e2f31094141c2850334ea893391b 100644
 --- a/src/virgl_resource.h
 +++ b/src/virgl_resource.h
 @@ -60,6 +60,11 @@ struct virgl_resource_vulkan_info {
@@ -886,31 +828,17 @@ index 8eb770e78e69dffd54746cd89ffdd8816c2be329..d21fc0bced31b86cfc7cdfdf599edf64
  /**
   * A global cross-context resource.  A virgl_resource is not directly usable
   * by renderer contexts, but must be attached and imported into renderer
-@@ -105,6 +110,23 @@ struct virgl_resource {
+@@ -105,6 +110,9 @@ struct virgl_resource {
  
     struct virgl_resource_vulkan_info vulkan_info;
  
-+   /**
-+    * For a blob exported by a Venus context, the enum
-+    * virgl_formats the exporter created the texture with, or 0 if
-+    * unknown.
-+    *
-+    * Not redundant with the format an importer supplies: a cross-process
-+    * blob reaches its importer as a bare dmabuf, and DRI3's
-+    * PixmapFromBuffer carries only depth/bpp -- no fourcc, no channel
-+    * order -- so the importer can only guess, and always guesses the
-+    * screen visual's BGRA.  Consumers that build a texture over these
-+    * bytes need this instead.
-+    */
-+   uint32_t export_format;
-+
 +   /* Reference into the same-process native-resource registry, or zero. */
 +   uint64_t native_resource_id;
 +
     void *private_data;
  };
  
-@@ -174,4 +196,21 @@ virgl_resource_detach_iov(struct virgl_resource *res);
+@@ -174,4 +182,21 @@ virgl_resource_detach_iov(struct virgl_resource *res);
  enum virgl_resource_fd_type
  virgl_resource_export_fd(struct virgl_resource *res, int *fd);
  

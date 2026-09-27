@@ -33,7 +33,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 17 insertions(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 813ef0d94f8e703dc89b2eb26782fb11d2e754fe..0099ae110880c4e7e101896ba405326ff13b72a7 100644
+index d63f71d45122df8396c2e5044fe140b56c704619..52114fe03f98bd24c4e8d18760f8275cacf293d7 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -122,6 +122,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -44,7 +44,7 @@ index 813ef0d94f8e703dc89b2eb26782fb11d2e754fe..0099ae110880c4e7e101896ba405326f
        .KHR_maintenance6 = true,
        .KHR_map_memory2 = true,
        .KHR_push_descriptor = true,
-@@ -501,6 +502,9 @@ kk_get_device_features(
+@@ -499,6 +500,9 @@ kk_get_device_features(
        /* VK_EXT_device_address_binding_report */
        .reportAddressBinding = true,
  
@@ -54,7 +54,7 @@ index 813ef0d94f8e703dc89b2eb26782fb11d2e754fe..0099ae110880c4e7e101896ba405326f
        /* VK_EXT_image_compression_control and its swapchain companion.
         * Metal never tells the driver whether it compressed a texture and
         * offers no fixed-rate control, so every query answers "no
-@@ -835,6 +839,19 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
+@@ -833,6 +837,19 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
        /* VK_KHR_line_rasterization */
        .lineSubPixelPrecisionBits = 8,
  

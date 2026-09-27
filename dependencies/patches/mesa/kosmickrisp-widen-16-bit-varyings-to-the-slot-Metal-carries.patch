@@ -170,7 +170,7 @@ index a983cade8d4598b19e33fcfd514040df93b4ceb6..5c7792db8611a74fde73af5f7ad03ac7
  
  bool msl_gather_uses_per_draw_data(nir_shader *nir);
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index ce2b4046920271cceb4ba6d17d14f8a6405579dd..5749fb5e97ab743f4d58440e94dc258234ab876a 100644
+index 42716090f5c48b55a0081ec11684e307622b7498..2710b0b940ccdd3d2c59cb43ff11edaeb6e0350f 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -269,11 +269,10 @@ kk_get_device_features(
@@ -190,10 +190,10 @@ index ce2b4046920271cceb4ba6d17d14f8a6405579dd..5749fb5e97ab743f4d58440e94dc2582
        .uniformAndStorageBuffer16BitAccess = true,
        .variablePointers = true,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 30f9824b40b94a20b5d628ec5ae3bf34c2fedbbc..31de25d01bc37c95d6052443e3519ee1d31df82b 100644
+index d4072cc5da2a9ab34d2123c4d6f46f41e1d5eb64..5282044299e069282cf05a7c88f35b0ad1880809 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -5267,6 +5267,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -5193,6 +5193,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        nir_shader_gather_info(fs, nir_shader_get_entrypoint(fs));
     }
  
