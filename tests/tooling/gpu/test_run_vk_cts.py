@@ -115,7 +115,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
             "dEQP-VK.wsi.xlib.synthetic",
         )
         selected = (cases[0], cases[2], cases[3])
-        receipt_digest = cts._sha256_file(cts.RECEIPT_PATH)
+        receipt_digest = cts.common.sha256_file(cts.RECEIPT_PATH)
         artifacts = {
             "renderer.txt": (
                 "x11_server=xorg\n"
@@ -406,7 +406,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 )
             )
         qpa_payload = qpa(*results).encode()
-        receipt_digest = cts._sha256_file(cts.RECEIPT_PATH)
+        receipt_digest = cts.common.sha256_file(cts.RECEIPT_PATH)
         artifacts = {
             "renderer.txt": (
                 "vk_driver_files=/usr/share/vulkan/icd.d/virtio_icd.json\n"
@@ -473,7 +473,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
             ),
             qpa_result(cases[1], status="Fail"),
         ).encode()
-        receipt_digest = cts._sha256_file(cts.RECEIPT_PATH)
+        receipt_digest = cts.common.sha256_file(cts.RECEIPT_PATH)
         artifacts = {
             "renderer.txt": (
                 "x11_server=xorg\n"

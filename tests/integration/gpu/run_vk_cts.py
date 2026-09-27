@@ -490,20 +490,11 @@ def receipt_mandatory_cases() -> tuple[str, ...]:
     return cases
 
 
-def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise CampaignError(f"duplicate JSON key: {key}")
-        value[key] = item
-    return value
-
-
 def load_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(
             path.read_text(encoding="utf-8"),
-            object_pairs_hook=_reject_duplicate_keys,
+            object_pairs_hook=common.reject_duplicate_keys,
         )
     except (OSError, json.JSONDecodeError) as error:
         raise CampaignError(f"cannot read JSON contract {path}: {error}") from error
@@ -1441,7 +1432,7 @@ chown uml:uml \"$selected\"
         + "'; exit 1; }"
         for row in verified_files
     )
-    receipt_digest = _sha256_file(receipt_path)
+    receipt_digest = common.sha256_file(receipt_path)
     # The skip list and its per-reason counts exist from the first line, so the
     # exit trap can report them even when the enumeration itself failed.
     skipped_state = (
@@ -2101,7 +2092,7 @@ def validate_receipt_attempt(
         if selected != expected_selected:
             raise CampaignError("receipt-backed CTS selection drifted")
         expected_cases = selection.expected_cases
-    receipt_digest = _sha256_file(RECEIPT_PATH)
+    receipt_digest = common.sha256_file(RECEIPT_PATH)
     summary = _summary(artifacts["summary.txt"])
     expected_summary = {
         "mode": selection.mode,
@@ -2284,14 +2275,6 @@ def validate_receipt_attempt(
     }
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def verify_staged_kosmickrisp(emulator: Path) -> str:
     return common.verify_staged_kosmickrisp(emulator)
 
@@ -2349,7 +2332,7 @@ def verify_only(path: Path, identity: dict[str, Any]) -> dict[str, Any]:
             raise CampaignError(f"Vulkan CTS artifact digest changed: {name}")
         artifacts[name] = payload
     console = path / "console.log"
-    if metadata.get("console_sha256") != _sha256_file(console):
+    if metadata.get("console_sha256") != common.sha256_file(console):
         raise CampaignError("Vulkan CTS console digest changed")
     result = validate_attempt(
         identity,
@@ -2373,7 +2356,7 @@ def verify_receipt_only(
         or metadata.get("qualification") is not True
         or metadata.get("formal_conformance") is not False
         or metadata.get("experimental_venus") is not True
-        or metadata.get("receipt_sha256") != _sha256_file(RECEIPT_PATH)
+        or metadata.get("receipt_sha256") != common.sha256_file(RECEIPT_PATH)
         or metadata.get("rootfs_sha256") != receipt["derivative"]["sha256"]
     ):
         raise CampaignError("receipt-backed Vulkan CTS metadata changed")
@@ -2422,7 +2405,7 @@ def verify_receipt_only(
             raise CampaignError(f"receipt-backed artifact digest changed: {name}")
         artifacts[name] = payload
     console = path / "console.log"
-    if metadata.get("console_sha256") != _sha256_file(console):
+    if metadata.get("console_sha256") != common.sha256_file(console):
         raise CampaignError("receipt-backed console digest changed")
     sessions = metadata.get("sessions")
     transcript = console.read_text(encoding="utf-8", errors="replace")
@@ -2488,9 +2471,9 @@ def run_receipt_campaign(
         "qualification": True,
         "formal_conformance": False,
         "experimental_venus": True,
-        "emulator_sha256": _sha256_file(emulator),
+        "emulator_sha256": common.sha256_file(emulator),
         "kosmickrisp_sha256": provider_sha256,
-        "receipt_sha256": _sha256_file(RECEIPT_PATH),
+        "receipt_sha256": common.sha256_file(RECEIPT_PATH),
         "git": common.git_state(),
         "page_profile": options.page_profile,
         "engine": options.engine,
@@ -2620,8 +2603,8 @@ def run_receipt_campaign(
         raise CampaignError("merged Vulkan shard results left the released order")
     record_sessions(sessions)
     immutable_evidence = {
-        "console_sha256": _sha256_file(console_path),
-        "serial_sha256": _sha256_file(serial_path),
+        "console_sha256": common.sha256_file(console_path),
+        "serial_sha256": common.sha256_file(serial_path),
         "artifact_sha256": {
             name: hashlib.sha256(payload).hexdigest()
             for name, payload in sorted(artifacts.items())
@@ -2878,8 +2861,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     metadata.update(
         {
             "state": "verified",
-            "console_sha256": _sha256_file(console_path),
-            "serial_sha256": _sha256_file(serial_path),
+            "console_sha256": common.sha256_file(console_path),
+            "serial_sha256": common.sha256_file(serial_path),
             "artifact_sha256": {
                 name: hashlib.sha256(payload).hexdigest()
                 for name, payload in sorted(artifacts.items())

@@ -28,7 +28,6 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import hashlib
 import os
 import plistlib
 import shutil
@@ -64,14 +63,6 @@ TEST_TARGET = "KernariumTests/GuestSessionTests"
 
 def fail(message: str) -> None:
     raise cts.CampaignError(message)
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def data_container(identifier: str = BUNDLE_ID) -> Path:
@@ -114,7 +105,7 @@ def stage_image(image: Path, documents: Path, expected_sha256: str) -> Path:
     """
     staged = documents / STAGED_IMAGE
     if staged.is_file() and staged.stat().st_size == image.stat().st_size:
-        if sha256_file(staged) == expected_sha256:
+        if cts.sha256_file(staged) == expected_sha256:
             print(f"reusing the staged image: {staged}")
             return staged
     documents.mkdir(parents=True, exist_ok=True)
@@ -130,7 +121,7 @@ def stage_image(image: Path, documents: Path, expected_sha256: str) -> Path:
         staged.unlink()
     print(f"copying {image} -> {staged}")
     shutil.copyfile(image, staged)
-    landed = sha256_file(staged)
+    landed = cts.sha256_file(staged)
     if landed != expected_sha256:
         fail(f"the staged image hashes {landed}, not {expected_sha256}")
     return staged
@@ -354,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
     checked, image_size, image_sha256, receipt = rootfs_identity(
         options.campaign, options.rootfs_receipt
     )
-    if sha256_file(options.rootfs_receipt) != sha256_file(checked):
+    if cts.sha256_file(options.rootfs_receipt) != cts.sha256_file(checked):
         fail(
             "the receipt does not match the one the application was built "
             f"with ({checked})"
