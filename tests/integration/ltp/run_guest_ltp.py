@@ -59,15 +59,11 @@ VALID_EXPECTATIONS = {
     "static-kernel-exempt",
     "userspace-exempt",
     "userspace-broken-exempt",
-    "userspace-error-exempt",
     "userspace-failure-exempt",
     "userspace-flaky-exempt",
     "userspace-legacy-matrix-exempt",
-    "userspace-matrix-exempt",
     "userspace-missing-exempt",
-    "userspace-partial-broken-exempt",
     "userspace-variable-matrix-exempt",
-    "userspace-warning-exempt",
 }
 VALID_WORKSPACES = {"tmpfs", "ext2"}
 HOST_PRESSURE_OPTION = "host-pressure"
@@ -903,7 +899,7 @@ def accepted(result: Result) -> bool:
     skipped = result.summary.get("skipped", 0)
     warnings = result.summary.get("warnings", 0)
     expectation = result.case.expectation
-    # The outcomes several expectations accept.
+    # Outcomes more than one expectation accepts.
     clean_pass = (
         code == 0 and passed > 0 and failed == 0 and broken == 0 and skipped == 0
     )
@@ -915,34 +911,26 @@ def accepted(result: Result) -> bool:
         and skipped == 0
         and warnings > 0
     )
-    partial_break = code != 0 and passed > 0 and failed == 0 and broken > 0
     if expectation == "exit-zero":
         return code == 0 and failed == 0 and broken == 0 and skipped == 0
     if expectation == "pass":
         return clean_pass or warning_only
     if expectation in ("userspace-failure-exempt", "hardware-failure-exempt"):
         return code != 0 and failed > 0 and broken == 0
-    if expectation == "userspace-matrix-exempt":
-        return code != 0 and failed > 0 and broken > 0
     if expectation == "userspace-legacy-matrix-exempt":
         return (
             code == 0 and passed > 0 and failed > 0 and broken == 0 and skipped == 0
         )
-    if expectation == "userspace-partial-broken-exempt":
-        return partial_break
     if expectation == "userspace-variable-matrix-exempt":
         mixed_result = code != 0 and passed > 0 and (failed > 0 or broken > 0)
         return (clean_pass and warnings == 0) or warning_only or mixed_result
-    if expectation == "userspace-warning-exempt":
-        return warning_only
     if expectation == "userspace-flaky-exempt":
+        partial_break = code != 0 and passed > 0 and failed == 0 and broken > 0
         return clean_pass or warning_only or partial_break
     if expectation == "userspace-broken-exempt":
         return (
             code == 2 and passed == 0 and failed == 0 and broken > 0 and skipped == 0
         )
-    if expectation == "userspace-error-exempt":
-        return code not in (0, 124) and not result.summary
     if expectation == "userspace-missing-exempt":
         return code == 127 and not result.summary
     if failed != 0 or broken != 0:

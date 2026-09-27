@@ -1600,21 +1600,6 @@ page dumped because: still mapped when deleted
                 runner.accepted(runner.Result(case, return_code, summary, ""))
             )
 
-    def test_raw_userspace_error_requires_nonzero_without_result_tags(self) -> None:
-        case = runner.Case(
-            "commands", "df01_sh", "df01.sh",
-            "userspace-error-exempt", 60,
-            "missing stat causes a shell arithmetic error",
-        )
-        self.assertTrue(runner.accepted(
-            runner.Result(case, 2, {}, "arithmetic syntax error")
-        ))
-        self.assertFalse(runner.accepted(runner.Result(case, 0, {}, "")))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 2, {"broken": 1}, "")
-        ))
-        self.assertFalse(runner.accepted(runner.Result(case, 124, {}, "")))
-
     def test_static_kernel_module_case_is_accepted_as_not_applicable(self) -> None:
         case = runner.Case(
             "syscalls", "delete_module01", "delete_module01",
@@ -1635,31 +1620,6 @@ page dumped because: still mapped when deleted
         self.assertTrue(runner.accepted(stale))
         self.assertFalse(runner.accepted(fixed))
         self.assertFalse(runner.accepted(broken))
-
-    def test_userspace_matrix_exemption_requires_failure_and_break(self) -> None:
-        case = runner.Case(
-            "controllers", "memcg_stat_rss", "memcg_stat_rss.sh",
-            "userspace-matrix-exempt", 60,
-            "fixed-size test reads batched counters before periodic flush",
-        )
-        stale = runner.Result(
-            case, 7,
-            {"passed": 2, "failed": 3, "broken": 1, "skipped": 0},
-            "",
-        )
-        self.assertTrue(runner.accepted(stale))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 0, {"passed": 10}, "")
-        ))
-        self.assertTrue(runner.accepted(
-            runner.Result(case, 1, {"failed": 3, "broken": 1}, "")
-        ))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 1, {"passed": 2, "failed": 3}, "")
-        ))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 2, {"broken": 1}, "")
-        ))
 
     def test_legacy_zero_exit_matrix_requires_mixed_results(self) -> None:
         case = runner.Case(
@@ -1683,52 +1643,6 @@ page dumped because: still mapped when deleted
         ))
         self.assertFalse(runner.accepted(
             runner.Result(case, 1, {"passed": 14, "failed": 9}, "")
-        ))
-
-    def test_partial_userspace_break_requires_pass_and_break(self) -> None:
-        case = runner.Case(
-            "commands", "mv01_sh", "mv_tests.sh",
-            "userspace-partial-broken-exempt", 60,
-            "supported BusyBox operation passes before an unsupported option",
-        )
-        self.assertTrue(runner.accepted(runner.Result(
-            case, 2,
-            {"passed": 1, "failed": 0, "broken": 1, "skipped": 0},
-            "",
-        )))
-        self.assertTrue(runner.accepted(runner.Result(
-            case, 34,
-            {"passed": 5, "failed": 0, "broken": 1, "skipped": 1},
-            "",
-        )))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 0, {"passed": 1, "broken": 1}, "")
-        ))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 2, {"broken": 1}, "")
-        ))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 3, {"passed": 1, "failed": 1, "broken": 1}, "")
-        ))
-
-    def test_userspace_warning_exemption_requires_warning_only_result(self) -> None:
-        case = runner.Case(
-            "controllers", "memcg_failcnt", "memcg_failcnt.sh",
-            "userspace-warning-exempt", 60,
-            "functional assertions pass before BusyBox cleanup warns",
-        )
-        warning = runner.Result(
-            case, 4,
-            {"passed": 3, "failed": 0, "broken": 0,
-             "skipped": 0, "warnings": 1},
-            "",
-        )
-        self.assertTrue(runner.accepted(warning))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 0, {"passed": 3}, "")
-        ))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 5, {"passed": 3, "failed": 1, "warnings": 1}, "")
         ))
 
     def test_flaky_userspace_exemption_accepts_only_known_outcomes(self) -> None:
