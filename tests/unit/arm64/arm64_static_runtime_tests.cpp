@@ -4,7 +4,7 @@
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_host.h"
 #include "uml_darwin_static_mmu.h"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,6 +19,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <source_location>
+#include <string_view>
 #include <sys/mman.h>
 #include <thread>
 #include <unistd.h>
@@ -37,54 +38,9 @@ void require(bool condition,
 	}
 }
 
-class TemporaryBacking final {
-public:
-	explicit TemporaryBacking(std::size_t size)
-	{
-		auto path = uml::testing::scratch_template(
-			"uml-static-mmu.XXXXXX");
-		fd_ = mkstemp(path.data());
-		require(fd_ >= 0);
-		require(unlink(path.c_str()) == 0);
-		require(ftruncate(fd_, static_cast<off_t>(size)) == 0);
-	}
+using uml::testing::ScratchBacking;
 
-	TemporaryBacking(const TemporaryBacking &) = delete;
-	TemporaryBacking &operator=(const TemporaryBacking &) = delete;
-
-	~TemporaryBacking()
-	{
-		if (fd_ >= 0)
-			close(fd_);
-	}
-
-	[[nodiscard]] int fd() const noexcept { return fd_; }
-
-	void put32(std::size_t offset, std::uint32_t instruction)
-	{
-		std::array<std::byte, 4> encoded{};
-		for (std::size_t index = 0; index < encoded.size(); ++index)
-			encoded[index] = static_cast<std::byte>(instruction >> (index * 8));
-		require(pwrite(fd_, encoded.data(), encoded.size(),
-				offset) == static_cast<ssize_t>(encoded.size()));
-	}
-
-	void put64(std::size_t offset, std::uint64_t value)
-	{
-		require(pwrite(fd_, &value, sizeof(value), offset) ==
-			static_cast<ssize_t>(sizeof(value)));
-	}
-
-	template<std::size_t Size>
-	void put_bytes(std::size_t offset, const std::array<std::byte, Size> &bytes)
-	{
-		require(pwrite(fd_, bytes.data(), bytes.size(), offset) ==
-			static_cast<ssize_t>(bytes.size()));
-	}
-
-private:
-	int fd_{-1};
-};
+constexpr std::string_view backing_name = "uml-static-mmu.XXXXXX";
 
 class PosixSharedMemoryBacking final {
 public:
@@ -128,7 +84,7 @@ static void uml_static_entry_bridge()
 {
 	constexpr unsigned long generation = 77;
 	constexpr std::uint64_t base = 0x1'0000;
-	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, 0xd280'00a0U);  // movz x0, #5
 	backing.put32(4, 0x9100'1c01U);  // add x1, x0, #7
 	backing.put32(8, 0xf900'07e1U);  // str x1, [sp, #8]
@@ -136,7 +92,7 @@ static void uml_static_entry_bridge()
 
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(base), backing.fd(), 0,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
 		1, 1) == 0);
 	darwin_uml_guest_registers registers{};
@@ -178,11 +134,11 @@ static void uml_static_x86_64_entry_bridge()
 		std::byte{'x'}, std::byte{'8'}, std::byte{'6'}, std::byte{'!'},
 		std::byte{'\n'},
 	};
-	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
-	backing.put_bytes(0, program);
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put(0, program);
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(base), backing.fd(), 0,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
 
 	darwin_uml_guest_registers registers{};
@@ -223,12 +179,12 @@ static void uml_static_x86_compat32_entry_bridge()
 		std::byte{0xc3},             // ret
 	};
 	constexpr std::size_t syscall_return_offset = 16;
-	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
-	backing.put_bytes(0, program);
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put(0, program);
 	backing.put32(0x100, 0x5566'7788);
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(base), backing.fd(), 0,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
 		1, 1) == 0);
 
@@ -266,11 +222,12 @@ static void uml_static_x86_exception_bridge()
 		constexpr std::array program{
 			std::byte{0x48}, std::byte{0xf7}, std::byte{0xf1}, // div rcx
 		};
-		TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
-		backing.put_bytes(0, program);
+		ScratchBacking backing{backing_name,
+			DARWIN_UML_GUEST_PAGE_SIZE};
+		backing.put(0, program);
 		require(darwin_uml_static_vm_activate(generation) == 0);
 		require(darwin_uml_static_vm_map(
-			reinterpret_cast<void *>(base), backing.fd(), 0,
+			reinterpret_cast<void *>(base), backing.descriptor(), 0,
 			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC,
 			1, 0) == 0);
 		darwin_uml_guest_registers registers{};
@@ -294,11 +251,12 @@ static void uml_static_x86_exception_bridge()
 	{
 		constexpr unsigned long generation = 136;
 		constexpr std::array program{std::byte{0xce}}; // into
-		TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
-		backing.put_bytes(0, program);
+		ScratchBacking backing{backing_name,
+			DARWIN_UML_GUEST_PAGE_SIZE};
+		backing.put(0, program);
 		require(darwin_uml_static_vm_activate(generation) == 0);
 		require(darwin_uml_static_vm_map(
-			reinterpret_cast<void *>(base), backing.fd(), 0,
+			reinterpret_cast<void *>(base), backing.descriptor(), 0,
 			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC,
 			1, 0) == 0);
 		darwin_uml_guest_registers registers{};
@@ -325,12 +283,12 @@ static void uml_static_x86_64_signal_return_bridge()
 	constexpr std::uint64_t base = 0x1'c000;
 	constexpr std::uint64_t stack = base + 0x800;
 	constexpr std::array program{std::byte{0xc3}}; // ret
-	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
-	backing.put_bytes(0, program);
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put(0, program);
 	backing.put64(stack - base, DARWIN_UML_SIGRETURN_TRAMPOLINE);
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(base), backing.fd(), 0,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
 		1, 1) == 0);
 
@@ -369,12 +327,12 @@ static void uml_static_x86_64_x87_task_state()
 		std::byte{0xdb}, std::byte{0xe3},             // fninit
 		std::byte{0x0f}, std::byte{0x05},             // syscall
 	};
-	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
-	backing.put_bytes(0, first_task);
-	backing.put_bytes(0x100, second_task);
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put(0, first_task);
+	backing.put(0x100, second_task);
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(base), backing.fd(), 0,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
 		1, 1) == 0);
 
@@ -507,11 +465,11 @@ static void uml_static_host_interrupt_sequence()
 	using namespace std::chrono_literals;
 	constexpr unsigned long generation = 106;
 	constexpr std::uint64_t base = 0x3'c000;
-	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, 0x1400'0000U); // b .
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(base), backing.fd(), 0,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
 
 	unsigned int sequence = 0;
@@ -539,7 +497,8 @@ static void uml_static_signal_return_bridge()
 	constexpr std::uint64_t base = 0x1'4000;
 	for (const auto [generation, fallback] :
 	     std::array<std::pair<unsigned long, bool>, 2>{{{78, false}, {79, true}}}) {
-		TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+		ScratchBacking backing{backing_name,
+			DARWIN_UML_GUEST_PAGE_SIZE};
 		if (fallback) {
 			backing.put32(0, 0x8b01'0000U); // add x0, x0, x1
 			backing.put32(4, 0xd65f'03c0U); // ret
@@ -549,7 +508,7 @@ static void uml_static_signal_return_bridge()
 
 		require(darwin_uml_static_vm_activate(generation) == 0);
 		require(darwin_uml_static_vm_map(
-			reinterpret_cast<void *>(base), backing.fd(), 0,
+			reinterpret_cast<void *>(base), backing.descriptor(), 0,
 			DARWIN_UML_GUEST_PAGE_SIZE,
 			PROT_READ | PROT_EXEC, 1, 0) == 0);
 		darwin_uml_guest_registers registers{};
@@ -574,18 +533,18 @@ static void uml_static_permission_fault()
 {
 	constexpr unsigned long generation = 91;
 	constexpr std::uint64_t base = 0x2'0000;
-	TemporaryBacking backing{2 * DARWIN_UML_GUEST_PAGE_SIZE};
+	ScratchBacking backing{backing_name, 2 * DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, 0xd280'0aa0U);  // movz x0, #0x55
 	backing.put32(4, 0xf900'0020U);  // str x0, [x1]
 	backing.put32(8, 0xd400'0001U);  // svc #0
 
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(base), backing.fd(), 0,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
 	require(darwin_uml_static_vm_map(
 		reinterpret_cast<void *>(base + DARWIN_UML_GUEST_PAGE_SIZE),
-		backing.fd(), DARWIN_UML_GUEST_PAGE_SIZE,
+		backing.descriptor(), DARWIN_UML_GUEST_PAGE_SIZE,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ, 0, 1) == 0);
 	darwin_uml_guest_registers registers{};
 	darwin_uml_guest_fp_registers fp{};
@@ -606,12 +565,12 @@ static void uml_static_illegal_instruction()
 {
 	constexpr unsigned long generation = 109;
 	constexpr std::uint64_t base = 0x2'4000;
-	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, 0x0000'0000U); // udf #0
 
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(base), backing.fd(), 0,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_EXEC, 1, 0) == 0);
 	darwin_uml_guest_registers registers{};
 	darwin_uml_guest_fp_registers fp{};
@@ -628,7 +587,7 @@ static void uml_static_mapping_change_ranges()
 {
 	constexpr unsigned long generation = 97;
 	constexpr std::uint64_t base = 0x2'4000;
-	TemporaryBacking backing{2 * DARWIN_UML_GUEST_PAGE_SIZE};
+	ScratchBacking backing{backing_name, 2 * DARWIN_UML_GUEST_PAGE_SIZE};
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	const auto initial = darwin_uml_static_vm_changes(generation);
 	const auto initial_sequences =
@@ -637,7 +596,7 @@ static void uml_static_mapping_change_ranges()
 	require(initial_sequences.code_changes ==
 		darwin_uml_static_vm_code_changes(generation));
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(base), backing.fd(), 0,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		2 * DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
 	std::array<darwin_uml_static_mapping_change, 4> ranges{};
 	std::uint64_t current = 0;
@@ -653,7 +612,7 @@ static void uml_static_mapping_change_ranges()
 
 	/* Replaying an unchanged Linux PTE batch must not invalidate the TLB. */
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(base), backing.fd(), 0,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		2 * DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
 	require(darwin_uml_static_vm_changes(generation) == current);
 
@@ -674,14 +633,13 @@ static void uml_static_partial_uaccess_copy_preserves_sibling_writes()
 	constexpr std::uint64_t base = 0x2'8000;
 	constexpr std::size_t write_offset = 32;
 	constexpr std::size_t concurrent_offset = 512;
-	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	std::array<std::byte, DARWIN_UML_GUEST_PAGE_SIZE> stale_shadow{};
 	stale_shadow.fill(std::byte{0x11});
-	require(pwrite(backing.fd(), stale_shadow.data(), stale_shadow.size(), 0) ==
-		static_cast<ssize_t>(stale_shadow.size()));
+	backing.put(0, stale_shadow);
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(base), backing.fd(), 0,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
 	void *translated = nullptr;
 	require(darwin_uml_static_vm_translate(generation, base,
@@ -709,12 +667,12 @@ static void uml_static_code_page_stamps_follow_physical_aliases()
 	constexpr unsigned long generation = 131;
 	constexpr std::uint64_t first = 0x2'c000;
 	constexpr std::uint64_t second = first + DARWIN_UML_GUEST_PAGE_SIZE;
-	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	for (const auto address : {first, second})
 		require(darwin_uml_static_vm_map(
-			reinterpret_cast<void *>(address), backing.fd(), 0,
-			DARWIN_UML_GUEST_PAGE_SIZE,
+			reinterpret_cast<void *>(address),
+			backing.descriptor(), 0, DARWIN_UML_GUEST_PAGE_SIZE,
 			PROT_READ | PROT_WRITE | PROT_EXEC, 1, 1) == 0);
 
 	void *first_handle = nullptr;
@@ -751,7 +709,8 @@ static void uml_static_code_pages_are_distinct_across_the_index()
 	/* One page past the first index leaf, which covers 512 backing pages. */
 	constexpr std::uint64_t distant_page = 512;
 	constexpr std::size_t pages = distant_page + 1U;
-	TemporaryBacking backing{pages * DARWIN_UML_GUEST_PAGE_SIZE};
+	ScratchBacking backing{backing_name,
+		pages * DARWIN_UML_GUEST_PAGE_SIZE};
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	const std::uint64_t offsets[] = {
 		0, DARWIN_UML_GUEST_PAGE_SIZE,
@@ -761,7 +720,7 @@ static void uml_static_code_pages_are_distinct_across_the_index()
 	for (std::size_t index = 0; index < 3; ++index) {
 		const auto address = base + index * DARWIN_UML_GUEST_PAGE_SIZE;
 		require(darwin_uml_static_vm_map(
-			reinterpret_cast<void *>(address), backing.fd(),
+			reinterpret_cast<void *>(address), backing.descriptor(),
 			offsets[index], DARWIN_UML_GUEST_PAGE_SIZE,
 			PROT_READ | PROT_WRITE | PROT_EXEC, 1, 1) == 0);
 		require(darwin_uml_static_vm_code_page(generation, address,
@@ -797,12 +756,9 @@ static void uml_static_thread_local_generations()
 	constexpr std::uint64_t base = 0x3'0000;
 	constexpr std::uint64_t first_value = 0x1111'2222'3333'4444ULL;
 	constexpr std::uint64_t second_value = 0xaaaa'bbbb'cccc'ddddULL;
-	TemporaryBacking backing{2 * DARWIN_UML_GUEST_PAGE_SIZE};
-	require(pwrite(backing.fd(), &first_value, sizeof(first_value), 0) ==
-		static_cast<ssize_t>(sizeof(first_value)));
-	require(pwrite(backing.fd(), &second_value, sizeof(second_value),
-		DARWIN_UML_GUEST_PAGE_SIZE) ==
-		static_cast<ssize_t>(sizeof(second_value)));
+	ScratchBacking backing{backing_name, 2 * DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put64(0, first_value);
+	backing.put64(DARWIN_UML_GUEST_PAGE_SIZE, second_value);
 	std::barrier first_activated{2};
 	std::barrier second_activated{2};
 	std::thread first{[&] {
@@ -810,7 +766,7 @@ static void uml_static_thread_local_generations()
 		first_activated.arrive_and_wait();
 		second_activated.arrive_and_wait();
 		require(darwin_uml_static_vm_map(reinterpret_cast<void *>(base),
-			backing.fd(), 0, DARWIN_UML_GUEST_PAGE_SIZE,
+			backing.descriptor(), 0, DARWIN_UML_GUEST_PAGE_SIZE,
 			PROT_READ | PROT_WRITE, 0, 1) == 0);
 	}};
 	std::thread second{[&] {
@@ -818,7 +774,7 @@ static void uml_static_thread_local_generations()
 		require(darwin_uml_static_vm_activate(second_generation) == 0);
 		second_activated.arrive_and_wait();
 		require(darwin_uml_static_vm_map(reinterpret_cast<void *>(base),
-			backing.fd(), DARWIN_UML_GUEST_PAGE_SIZE,
+			backing.descriptor(), DARWIN_UML_GUEST_PAGE_SIZE,
 			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
 	}};
 	first.join();
@@ -881,17 +837,15 @@ static void uml_static_concurrent_translation_readers()
 	constexpr unsigned long writer_generation =
 		first_generation + reader_count;
 	constexpr std::uint64_t base = 0x3'0000;
-	TemporaryBacking backing{(reader_count + 1) *
+	ScratchBacking backing{backing_name, (reader_count + 1) *
 		DARWIN_UML_GUEST_PAGE_SIZE};
 
 	for (std::size_t index = 0; index <= reader_count; ++index) {
 		const std::uint64_t value = 0x5a5a'0000'0000'0000ULL + index;
-		require(pwrite(backing.fd(), &value, sizeof(value),
-			index * DARWIN_UML_GUEST_PAGE_SIZE) ==
-			static_cast<ssize_t>(sizeof(value)));
+		backing.put64(index * DARWIN_UML_GUEST_PAGE_SIZE, value);
 		const auto generation = first_generation + index;
 		require(darwin_uml_static_vm_map_generation(generation,
-			reinterpret_cast<void *>(base), backing.fd(),
+			reinterpret_cast<void *>(base), backing.descriptor(),
 			index * DARWIN_UML_GUEST_PAGE_SIZE,
 			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE,
 			0, 1) == 0);
@@ -948,10 +902,10 @@ static void uml_static_tlb_shootdown_quiesces_execution()
 	using namespace std::chrono_literals;
 	constexpr unsigned long generation = 103;
 	constexpr std::uint64_t base = 0x3'4000;
-	TemporaryBacking backing{DARWIN_UML_GUEST_PAGE_SIZE};
+	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(reinterpret_cast<void *>(base),
-		backing.fd(), 0, DARWIN_UML_GUEST_PAGE_SIZE,
+		backing.descriptor(), 0, DARWIN_UML_GUEST_PAGE_SIZE,
 		PROT_READ | PROT_WRITE, 0, 1) == 0);
 
 	std::barrier execution_entered{2};
@@ -1050,12 +1004,9 @@ static void uml_static_batch_targets_explicit_generation()
 	constexpr std::uint64_t base = 0x3'8000;
 	constexpr std::uint64_t value = 0x1234'5678'9abc'def0ULL;
 	constexpr std::uint64_t replacement = 0x0fed'cba9'8765'4321ULL;
-	TemporaryBacking backing{2 * DARWIN_UML_GUEST_PAGE_SIZE};
-	require(pwrite(backing.fd(), &value, sizeof(value), 0) ==
-		static_cast<ssize_t>(sizeof(value)));
-	require(pwrite(backing.fd(), &replacement, sizeof(replacement),
-		DARWIN_UML_GUEST_PAGE_SIZE) ==
-		static_cast<ssize_t>(sizeof(replacement)));
+	ScratchBacking backing{backing_name, 2 * DARWIN_UML_GUEST_PAGE_SIZE};
+	backing.put64(0, value);
+	backing.put64(DARWIN_UML_GUEST_PAGE_SIZE, replacement);
 	require(darwin_uml_static_vm_activate(active_generation) == 0);
 
 	/* Page-table synchronization may run on behalf of an mm other than the
@@ -1065,8 +1016,8 @@ static void uml_static_batch_targets_explicit_generation()
 	 */
 	require(darwin_uml_static_vm_batch_begin(target_generation) == 0);
 	require(darwin_uml_static_vm_batch_begin(active_generation) == -1);
-	require(darwin_uml_static_vm_map_generation(
-		target_generation, reinterpret_cast<void *>(base), backing.fd(), 0,
+	require(darwin_uml_static_vm_map_generation(target_generation,
+		reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) == 0);
 	void *target_host = nullptr;
 	require(darwin_uml_static_vm_translate(target_generation, base,
@@ -1087,8 +1038,8 @@ static void uml_static_batch_targets_explicit_generation()
 	 * resurrecting its old physical mapping.
 	 */
 	require(darwin_uml_static_vm_batch_begin(target_generation) == 0);
-	require(darwin_uml_static_vm_map_generation(
-		target_generation, reinterpret_cast<void *>(base), backing.fd(),
+	require(darwin_uml_static_vm_map_generation(target_generation,
+		reinterpret_cast<void *>(base), backing.descriptor(),
 		DARWIN_UML_GUEST_PAGE_SIZE, DARWIN_UML_GUEST_PAGE_SIZE,
 		PROT_READ | PROT_WRITE, 0, 1) == 0);
 	std::thread invalidation{[&] {

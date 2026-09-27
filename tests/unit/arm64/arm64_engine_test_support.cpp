@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 
 #include "cpu/engine.hpp"
 #include "cpu/arm64/engine_execution.hpp"
@@ -154,61 +154,9 @@ event_for(::uml::cpu::ExitReason reason) noexcept {
 	return ExpectedEvent::fatal;
 }
 
-class Backing final {
-public:
-  explicit Backing(std::size_t size) {
-    auto path = ::uml::testing::scratch_template("uml-engine-test.XXXXXX");
-    descriptor_ = mkstemp(path.data());
-    if (descriptor_ < 0)
-      fail("fixture", "setup", 0, std::strerror(errno));
-    if (unlink(path.c_str()) != 0 ||
-        ftruncate(descriptor_, static_cast<off_t>(size)) != 0)
-      fail("fixture", "setup", 0, std::strerror(errno));
-  }
+using ::uml::testing::ScratchBacking;
 
-  ~Backing() {
-    if (descriptor_ >= 0)
-      (void)close(descriptor_);
-  }
-
-  Backing(const Backing &) = delete;
-  Backing &operator=(const Backing &) = delete;
-
-  [[nodiscard]] int descriptor() const noexcept { return descriptor_; }
-
-  void read(std::span<std::byte> bytes, std::size_t offset = 0) const {
-    std::size_t completed = 0;
-    while (completed != bytes.size()) {
-      const auto result =
-          pread(descriptor_, bytes.data() + completed, bytes.size() - completed,
-                static_cast<off_t>(offset + completed));
-      if (result < 0 && errno == EINTR)
-        continue;
-      if (result <= 0)
-        fail("fixture", "snapshot", 0,
-             result < 0 ? std::strerror(errno) : "short backing read");
-      completed += static_cast<std::size_t>(result);
-    }
-  }
-
-  void write(std::span<const std::byte> bytes, std::size_t offset = 0) const {
-    std::size_t completed = 0;
-    while (completed != bytes.size()) {
-      const auto result = pwrite(descriptor_, bytes.data() + completed,
-                                 bytes.size() - completed,
-                                 static_cast<off_t>(offset + completed));
-      if (result < 0 && errno == EINTR)
-        continue;
-      if (result <= 0)
-        fail("fixture", "restore", 0,
-             result < 0 ? std::strerror(errno) : "short backing write");
-      completed += static_cast<std::size_t>(result);
-    }
-  }
-
-private:
-  int descriptor_{-1};
-};
+constexpr std::string_view backing_name = "uml-engine-test.XXXXXX";
 
 class AddressSpace final {
 public:
@@ -231,9 +179,9 @@ private:
 
 class Mapping final {
 public:
-  Mapping(unsigned long generation, std::uint64_t address, Backing &backing,
-          std::size_t size, int protection, bool guest_code,
-          bool guest_writable)
+  Mapping(unsigned long generation, std::uint64_t address,
+          const ScratchBacking &backing, std::size_t size, int protection,
+          bool guest_code, bool guest_writable)
       : generation_{generation}, address_{address}, size_{size} {
     if (darwin_uml_static_vm_map_generation(
             generation_, reinterpret_cast<void *>(address_),
@@ -267,13 +215,14 @@ class CaseRegion final {
 public:
   CaseRegion(unsigned long generation, const MemoryRegion &region)
       : generation_{generation}, region_{region},
-        backing_{region.initial.size()}, mapping_{generation,
-                                                  region.address,
-                                                  backing_,
-                                                  region.initial.size(),
-                                                  region_protection(region),
-                                                  region.guest_code,
-                                                  region.guest_writable},
+        backing_{backing_name, region.initial.size()},
+        mapping_{generation,
+                 region.address,
+                 backing_,
+                 region.initial.size(),
+                 region_protection(region),
+                 region.guest_code,
+                 region.guest_writable},
         actual_(region.initial.size()),
         initial_tags_(region.initial.size() / 16),
         expected_tags_(region.initial.size() / 16) {
@@ -288,8 +237,8 @@ public:
   CaseRegion(const CaseRegion &) = delete;
   CaseRegion &operator=(const CaseRegion &) = delete;
 
-  void restore() const {
-    backing_.write(region_.initial);
+  void restore() {
+    backing_.put(0, region_.initial);
     if (region_.initial_tags.empty() && region_.expected_tags.empty())
       return;
     for (std::size_t index = 0; index < initial_tags_.size(); ++index)
@@ -302,7 +251,7 @@ public:
 
   void require_expected(std::string_view test_name, std::string_view engine,
                         std::uint32_t instruction) {
-    backing_.read(actual_);
+    backing_.get(0, actual_);
     const auto expected =
         region_.expected.empty() ? region_.initial : region_.expected;
     for (std::size_t offset = 0; offset < actual_.size(); ++offset) {
@@ -338,7 +287,7 @@ public:
 private:
   unsigned long generation_;
   MemoryRegion region_;
-  Backing backing_;
+  ScratchBacking backing_;
   Mapping mapping_;
   std::vector<std::byte> actual_;
   std::vector<std::uint8_t> initial_tags_;
@@ -629,7 +578,7 @@ public:
   explicit Implementation(EngineHarnessOptions options)
       : generation_{next_generation()},
         address_space_{generation_},
-        backing_{DARWIN_UML_GUEST_PAGE_SIZE},
+        backing_{backing_name, DARWIN_UML_GUEST_PAGE_SIZE},
         mapping_{generation_,
                  code_base,
                  backing_,
@@ -915,7 +864,7 @@ private:
 
   unsigned long generation_;
   AddressSpace address_space_;
-  Backing backing_;
+  ScratchBacking backing_;
   Mapping mapping_;
   std::array<std::byte, DARWIN_UML_GUEST_PAGE_SIZE> installed_page_{};
   std::unique_ptr<::uml::cpu::CpuEngine> gadget_engine_;
