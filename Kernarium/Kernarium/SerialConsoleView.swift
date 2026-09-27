@@ -23,7 +23,7 @@ final class SerialConsoleController: ObservableObject {
     static let terminalConfiguration = TerminalConfiguration { builder in
         builder.withFontSize(12)
         builder.withCursorStyle(.block)
-        builder.withCursorStyleBlink(false)
+        builder.withCursorStyleBlink(true)
         builder.withCustom("clipboard-read", "deny")
         builder.withCustom("clipboard-write", "deny")
         // Ghostty's 50 MB default keeps about 49,000 lines of a full-screen
