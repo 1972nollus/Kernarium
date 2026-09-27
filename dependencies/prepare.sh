@@ -7,6 +7,7 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$ROOT_DIR/dependencies/series-field.sh"
 PATCH_SERIES="$ROOT_DIR/scripts/patch_series.py"
 MANIFEST=${UML_DEPENDENCY_MANIFEST:-"$ROOT_DIR/dependencies/manifest.tsv"}
 PATCH_ROOT=${UML_DEPENDENCY_PATCH_ROOT:-"$ROOT_DIR/dependencies"}
@@ -197,9 +198,10 @@ PY_ARCHIVES
 				fail "downloaded dependency archive hash differs: $archive_name"
 			}
 			mv -- "$temporary_archive" "$archive"
+		else
+			[ "$(sha256_file "$archive")" = "$archive_sha256" ] ||
+				fail "cached dependency archive hash differs: $archive_name"
 		fi
-		[ "$(sha256_file "$archive")" = "$archive_sha256" ] ||
-			fail "cached dependency archive hash differs: $archive_name"
 		printf 'verified dependency archive: %s\n' "$archive"
 	done < "$ARCHIVE_MANIFEST"
 	exit 0
@@ -325,23 +327,17 @@ safe_relative_path()
 	return 0
 }
 
-# A patch-series field names one generated series, or ordered layers joined
-# by "+": each layer applies to the tree the layers before it produce, and the
-# last one, which this directory owns, records the tree of the whole stack.
-# A series that the paired Vulkan guest owns is named through the explicit
-# rootfs-vulkan namespace, which grants no general parent-directory access.
+# series-field.sh owns the field grammar. The last layer of a stack records
+# the tree of the whole stack.
 resolve_series_layer()
 {
 	case "$1" in
 	rootfs-vulkan:*)
 		series_relative=${1#rootfs-vulkan:}
-		case "$name:$series_relative" in
-		venus-protocol:patches/venus-protocol/series.tsv|\
-		mesa:patches/mesa/series.tsv) ;;
-		*) fail "$name has an unsupported rootfs-vulkan series: $1" ;;
-		esac
+		series_field_rootfs_vulkan_allowed "$name" "$series_relative" ||
+			fail "$name has an unsupported rootfs-vulkan series: $1"
 		metadata_outer=$(CDPATH= cd -- "$PATCH_ROOT/.." && pwd -P)
-		series_owner="$metadata_outer/tools/rootfs/vulkan"
+		series_owner="$metadata_outer/$SERIES_FIELD_ROOTFS_VULKAN"
 		;;
 	*:*) fail "$name has an unknown patch-series owner: $1" ;;
 	*)
@@ -370,7 +366,6 @@ resolve_series()
 		fail "$name has a malformed patch-series field: $patch_series" ;;
 	esac
 	SERIES_PATHS=
-	series_layer_count=0
 	old_ifs=$IFS
 	IFS=+
 	set -f
@@ -379,13 +374,12 @@ resolve_series()
 		resolve_series_layer "$series_layer"
 		SERIES_PATHS="${SERIES_PATHS}${SERIES_PATHS:+
 }$series_path"
-		series_layer_count=$((series_layer_count + 1))
-		last_series_layer=$series_layer
 	done
 	set +f
 	IFS=$old_ifs
-	if [ "$series_layer_count" -gt 1 ]; then
-		case "$last_series_layer" in
+	series_field_split "$patch_series"
+	if [ -n "$SERIES_FIELD_LOWER" ]; then
+		case "$SERIES_FIELD_OWNED" in
 		*:*) fail "$name must own the last layer of its patch series" ;;
 		esac
 	fi
@@ -899,22 +893,22 @@ prepare_repository()
 	git -C "$staged_repository" config uml.source.commit "$commit"
 	git -C "$staged_repository" config uml.source.paths "$source_paths"
 	git -C "$staged_repository" config uml.source.patchSeries "$patch_series"
+	# The staged repository is verified once: a rename does not change it.
 	verify_repository "$staged_repository"
 	if [ "$replacing" -eq 1 ]; then
 		swap_atomically "$staged_repository" "$directory" ||
 			fail "$name stale source could not be replaced atomically"
 		rm -rf -- "$staged_repository"
-		verify_repository "$directory"
 		printf '%s\n' "recreated $name in $directory"
 		return
 	fi
-	if ! publish_exclusively "$staged_repository" "$directory"; then
-		if [ -e "$directory" ] || [ -L "$directory" ]; then
-			verify_repository "$directory"
-		else
-			fail "$name source repository could not be published atomically"
-		fi
+	if publish_exclusively "$staged_repository" "$directory"; then
+		return
 	fi
+	# Another preparation published first; accept its repository only once
+	# it verifies.
+	[ -e "$directory" ] || [ -L "$directory" ] ||
+		fail "$name source repository could not be published atomically"
 	verify_repository "$directory"
 }
 

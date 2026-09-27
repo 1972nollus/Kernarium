@@ -24,7 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Any, Sequence
+from typing import Any, NamedTuple, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests/integration/gpu"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
@@ -47,6 +47,11 @@ INSTALL_ROOT = "/opt/vk-gl-cts/vulkan"
 OPENGL_INSTALL_ROOT = "/opt/vk-gl-cts/openglcts"
 GUEST_RECEIPT = "/usr/share/uml-vulkan/rootfs-build-receipt.json"
 GUEST_ORACLE = "/usr/share/uml-vulkan/status-oracle.json"
+ICD_MANIFEST = "/usr/share/vulkan/icd.d/virtio_icd.json"
+EXPECTED_ICD_MANIFEST = {
+    "ICD": {"api_version": "1.4.354", "library_path": "libvulkan_virtio.so"},
+    "file_format_version": "1.0.1",
+}
 MULTIARCH_TRIPLETS = {
     "amd64": "x86_64-linux-gnu",
     "arm64": "aarch64-linux-gnu",
@@ -651,6 +656,95 @@ def verify_mesa_build_stage(
             f"-Dvenus-protocol-dir={protocol_build}"]
 
 
+class RuntimeStages(NamedTuple):
+    headers_build_root: Path
+    headers_install: Path
+    loader_build_root: Path
+    loader_stage: Path
+    loader_library: Path
+    loader_build_id: str
+
+
+def verify_runtime_stages(
+    work_root: Path,
+    headers_tree: Path,
+    mesa_stage: Path,
+    profile: dict[str, Any] = ARCHITECTURE,
+) -> RuntimeStages:
+    """Check the staged ICD, Mesa ELFs, Vulkan-Headers and Vulkan-Loader."""
+    manifest = json.loads(
+        (mesa_stage / ICD_MANIFEST.lstrip("/")).read_text(encoding="utf-8")
+    )
+    if manifest != EXPECTED_ICD_MANIFEST:
+        fail("staged Virtio ICD manifest changed")
+    for relative in sorted(profile["mesa_elf_stage_files"]):
+        read_build_id(mesa_stage / relative, profile)
+
+    headers_build_root = work_root / "build/Vulkan-Headers"
+    headers_install = work_root / "stage/vulkan-headers"
+    headers_cache = (headers_build_root / "CMakeCache.txt").read_text(
+        encoding="utf-8"
+    )
+    for exact in (
+        "CMAKE_BUILD_TYPE:STRING=Release",
+        f"CMAKE_INSTALL_PREFIX:PATH={headers_install}",
+    ):
+        if exact not in headers_cache:
+            fail(f"Vulkan-Headers configuration cache lacks {exact}")
+    installed_registry = headers_install / "share/vulkan/registry/vk.xml"
+    source_registry = headers_tree / "registry/vk.xml"
+    if (
+        not installed_registry.is_file()
+        or not source_registry.is_file()
+        or sha256(installed_registry) != sha256(source_registry)
+    ):
+        fail("installed Vulkan-Headers registry differs from its pinned source")
+
+    loader_build_root = work_root / "build/Vulkan-Loader"
+    loader_stage = work_root / "stage/vulkan-loader"
+    loader_cache = (loader_build_root / "CMakeCache.txt").read_text(
+        encoding="utf-8"
+    )
+    for exact in (
+        "BUILD_TESTS:BOOL=OFF",
+        "CMAKE_BUILD_TYPE:STRING=Release",
+        f"CMAKE_INSTALL_LIBDIR:PATH={profile['libdir']}",
+        "CMAKE_INSTALL_PREFIX:PATH=/usr",
+        "UPDATE_DEPS:BOOL=OFF",
+        f"VULKAN_HEADERS_INSTALL_DIR:UNINITIALIZED={headers_install}",
+    ):
+        if exact not in loader_cache:
+            fail(f"Vulkan-Loader configuration cache lacks {exact}")
+    loader_inventory = {
+        path.relative_to(loader_stage).as_posix()
+        for path in loader_stage.rglob("*")
+        if path.is_file() or path.is_symlink()
+    }
+    if loader_inventory != profile["loader_stage"]:
+        fail(
+            "Vulkan-Loader install inventory changed: "
+            f"{sorted(loader_inventory ^ profile['loader_stage'])}"
+        )
+    loader_library = loader_stage / profile["loader_runtime"].lstrip("/")
+    loader_build_id = read_build_id(loader_library, profile)
+    if "Library soname: [libvulkan.so.1]" not in output(
+        ("readelf", "-d", loader_library)
+    ):
+        fail("staged Vulkan-Loader SONAME changed")
+    for path_in_guest, target in profile["loader_symlinks"].items():
+        link = loader_stage / path_in_guest.lstrip("/")
+        if not link.is_symlink() or os.readlink(link) != target:
+            fail(f"staged Vulkan-Loader symlink changed: {link}")
+    return RuntimeStages(
+        headers_build_root,
+        headers_install,
+        loader_build_root,
+        loader_stage,
+        loader_library,
+        loader_build_id,
+    )
+
+
 def guest_path(root: Path, value: str) -> Path:
     if not value.startswith("/") or "\x00" in value:
         fail(f"not an absolute guest path: {value!r}")
@@ -1084,79 +1178,14 @@ def seal(options: argparse.Namespace) -> None:
     mesa_configure_argv = verify_mesa_build_stage(
         mesa_tree, mesa_build_root, mesa_stage, protocol_build
     )
-    mesa_manifest = json.loads(
-        (mesa_stage / "usr/share/vulkan/icd.d/virtio_icd.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    if mesa_manifest != {
-        "ICD": {
-            "api_version": "1.4.354",
-            "library_path": "libvulkan_virtio.so",
-        },
-        "file_format_version": "1.0.1",
-    }:
-        fail("staged Virtio ICD manifest changed")
-    mesa_library = mesa_stage / "usr/lib/aarch64-linux-gnu/libvulkan_virtio.so"
-    for relative in sorted(MESA_ELF_STAGE_FILES):
-        read_build_id(mesa_stage / relative)
-
-    headers_build_root = work_root / "build/Vulkan-Headers"
-    headers_install = work_root / "stage/vulkan-headers"
-    headers_cache = (headers_build_root / "CMakeCache.txt").read_text(
-        encoding="utf-8"
-    )
-    for exact in (
-        "CMAKE_BUILD_TYPE:STRING=Release",
-        f"CMAKE_INSTALL_PREFIX:PATH={headers_install}",
-    ):
-        if exact not in headers_cache:
-            fail(f"Vulkan-Headers configuration cache lacks {exact}")
-    installed_registry = headers_install / "share/vulkan/registry/vk.xml"
-    source_registry = headers_tree / "registry/vk.xml"
-    if (
-        not installed_registry.is_file()
-        or not source_registry.is_file()
-        or sha256(installed_registry) != sha256(source_registry)
-    ):
-        fail("installed Vulkan-Headers registry differs from its pinned source")
-
-    loader_build_root = work_root / "build/Vulkan-Loader"
-    loader_stage = work_root / "stage/vulkan-loader"
-    loader_cache = (loader_build_root / "CMakeCache.txt").read_text(
-        encoding="utf-8"
-    )
-    for exact in (
-        "BUILD_TESTS:BOOL=OFF",
-        "CMAKE_BUILD_TYPE:STRING=Release",
-        f"CMAKE_INSTALL_LIBDIR:PATH={ARCHITECTURE['libdir']}",
-        "CMAKE_INSTALL_PREFIX:PATH=/usr",
-        "UPDATE_DEPS:BOOL=OFF",
-        f"VULKAN_HEADERS_INSTALL_DIR:UNINITIALIZED={headers_install}",
-    ):
-        if exact not in loader_cache:
-            fail(f"Vulkan-Loader configuration cache lacks {exact}")
-    loader_inventory = {
-        path.relative_to(loader_stage).as_posix()
-        for path in loader_stage.rglob("*")
-        if path.is_file() or path.is_symlink()
-    }
-    if loader_inventory != EXPECTED_LOADER_STAGE:
-        fail(
-            "Vulkan-Loader install inventory changed: "
-            f"{sorted(loader_inventory ^ EXPECTED_LOADER_STAGE)}"
-        )
-    loader_library = loader_stage / LOADER_RUNTIME_GUEST_PATH[1:]
-    loader_build_id = read_build_id(loader_library)
-    loader_dynamic = output(("readelf", "-d", loader_library))
-    if "Library soname: [libvulkan.so.1]" not in loader_dynamic:
-        fail("staged Vulkan-Loader SONAME changed")
-    for link, target in (
-        (loader_library.parent / "libvulkan.so", "libvulkan.so.1"),
-        (loader_library.parent / "libvulkan.so.1", "libvulkan.so.1.4.357"),
-    ):
-        if not link.is_symlink() or os.readlink(link) != target:
-            fail(f"staged Vulkan-Loader symlink changed: {link}")
+    (
+        headers_build_root,
+        headers_install,
+        loader_build_root,
+        loader_stage,
+        loader_library,
+        loader_build_id,
+    ) = verify_runtime_stages(work_root, headers_tree, mesa_stage)
 
     cts_build_root = work_root / (
         "build/VK-GL-CTS-1.4.6.2-vulkan-gl"

@@ -64,7 +64,10 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--shell-init",
         action="store_true",
-        help="boot /bin/sh directly from the EROFS image",
+        help=(
+            "boot /bin/sh directly from the EROFS image instead of the "
+            "default writable tmpfs OverlayFS shell"
+        ),
     )
     return parser.parse_args()
 
@@ -91,7 +94,7 @@ def main() -> int:
         "tmpfs",
         tuple(extra_arguments),
         init_shell=arguments.shell_init,
-        systemd_overlay=not arguments.shell_init,
+        overlay_shell=not arguments.shell_init,
         engine=arguments.engine,
         core_class=arguments.core_class,
     ) as guest:

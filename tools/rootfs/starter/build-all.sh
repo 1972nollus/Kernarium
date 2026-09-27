@@ -613,7 +613,15 @@ build_alpine
 build_debian_minimal
 build_debian_plasma
 python3 "$SCRIPT_DIR/write-manifest.py" \
-	--output "$output_dir" --debian-version "$(cat "$work_dir/debian.version")"
+	--output "$output_dir" \
+	--buildroot-version "$BUILDROOT_VERSION" \
+	--buildroot-sha256 "$BUILDROOT_SHA256" \
+	--busybox-version "$BUSYBOX_VERSION" \
+	--busybox-sha256 "$BUSYBOX_SHA256" \
+	--alpine-version "$ALPINE_VERSION" \
+	--alpine-sha256 "$ALPINE_SHA256" \
+	--debian-suite "$DEBIAN_SUITE" \
+	--debian-version "$(cat "$work_dir/debian.version")"
 mv -T -n -- "$output_dir" "$final_output_dir"
 [ ! -e "$output_dir" ] || fail "output directory appeared during publication"
 staging_output_dir=

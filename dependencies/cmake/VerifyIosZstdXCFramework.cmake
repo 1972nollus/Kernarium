@@ -34,11 +34,7 @@ set(_provenance_files
     "ios-device-compression-arm64.tsv"
     "ios-simulator-compression-arm64.tsv")
 foreach(_relative IN LISTS _provenance_files)
-    if(_relative MATCHES "^ios-.*-compression-arm64\\.tsv$")
-        set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
-    else()
-        set(_source "${SOURCE_ROOT}/dependencies/${_relative}")
-    endif()
+    set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
     set(_installed "${PREFIX}/share/uml-dependencies/${_relative}")
     if(NOT EXISTS "${_installed}" OR IS_SYMLINK "${_installed}")
         message(FATAL_ERROR

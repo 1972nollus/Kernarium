@@ -31,11 +31,6 @@ from typing import Any
 SCRIPT_ROOT = Path(__file__).resolve().parent
 ARTIFACT = "uml-vulkan-guest-runtime"
 SCHEMA_VERSION = 1
-ICD_MANIFEST = "/usr/share/vulkan/icd.d/virtio_icd.json"
-EXPECTED_ICD_MANIFEST = {
-    "ICD": {"api_version": "1.4.354", "library_path": "libvulkan_virtio.so"},
-    "file_format_version": "1.0.1",
-}
 RUNTIME_COMPONENTS = ("venus-protocol", "mesa", "vulkan-headers", "vulkan-loader")
 
 
@@ -166,51 +161,16 @@ def stage(options: argparse.Namespace) -> dict[str, Any]:
     mesa_configure_argv = sealer.verify_mesa_build_stage(
         trees["mesa"], mesa_build_root, mesa_stage, protocol_build, profile
     )
-    manifest = json.loads(
-        (mesa_stage / ICD_MANIFEST.lstrip("/")).read_text(encoding="utf-8")
+    (
+        headers_build_root,
+        headers_install,
+        loader_build_root,
+        loader_stage,
+        loader_library,
+        loader_build_id,
+    ) = sealer.verify_runtime_stages(
+        work_root, trees["vulkan-headers"], mesa_stage, profile
     )
-    if manifest != EXPECTED_ICD_MANIFEST:
-        sealer.fail("staged Virtio ICD manifest changed")
-    for relative in sorted(profile["mesa_elf_stage_files"]):
-        sealer.read_build_id(mesa_stage / relative, profile)
-
-    headers_build_root = work_root / "build/Vulkan-Headers"
-    headers_install = work_root / "stage/vulkan-headers"
-    headers_cache = (headers_build_root / "CMakeCache.txt").read_text(encoding="utf-8")
-    for exact in ("CMAKE_BUILD_TYPE:STRING=Release",
-                  f"CMAKE_INSTALL_PREFIX:PATH={headers_install}"):
-        if exact not in headers_cache:
-            sealer.fail(f"Vulkan-Headers configuration cache lacks {exact}")
-    installed_registry = headers_install / "share/vulkan/registry/vk.xml"
-    source_registry = trees["vulkan-headers"] / "registry/vk.xml"
-    if (not installed_registry.is_file() or not source_registry.is_file()
-            or sealer.sha256(installed_registry) != sealer.sha256(source_registry)):
-        sealer.fail("installed Vulkan-Headers registry differs from its pinned source")
-
-    loader_build_root = work_root / "build/Vulkan-Loader"
-    loader_stage = work_root / "stage/vulkan-loader"
-    loader_cache = (loader_build_root / "CMakeCache.txt").read_text(encoding="utf-8")
-    for exact in ("BUILD_TESTS:BOOL=OFF", "CMAKE_BUILD_TYPE:STRING=Release",
-                  f"CMAKE_INSTALL_LIBDIR:PATH={profile['libdir']}",
-                  "CMAKE_INSTALL_PREFIX:PATH=/usr", "UPDATE_DEPS:BOOL=OFF",
-                  f"VULKAN_HEADERS_INSTALL_DIR:UNINITIALIZED={headers_install}"):
-        if exact not in loader_cache:
-            sealer.fail(f"Vulkan-Loader configuration cache lacks {exact}")
-    loader_inventory = {path.relative_to(loader_stage).as_posix()
-                        for path in loader_stage.rglob("*")
-                        if path.is_file() or path.is_symlink()}
-    if loader_inventory != profile["loader_stage"]:
-        sealer.fail("Vulkan-Loader install inventory changed: "
-                    f"{sorted(loader_inventory ^ profile['loader_stage'])}")
-    loader_library = loader_stage / profile["loader_runtime"].lstrip("/")
-    loader_build_id = sealer.read_build_id(loader_library, profile)
-    if "Library soname: [libvulkan.so.1]" not in sealer.output(
-            ("readelf", "-d", loader_library)):
-        sealer.fail("staged Vulkan-Loader SONAME changed")
-    for path_in_guest, target in profile["loader_symlinks"].items():
-        link = loader_stage / path_in_guest.lstrip("/")
-        if not link.is_symlink() or os.readlink(link) != target:
-            sealer.fail(f"staged Vulkan-Loader symlink changed: {link}")
 
     runtime_root.mkdir(parents=True)
     install_runtime_files(profile, mesa_stage, loader_library, runtime_root)
@@ -268,7 +228,7 @@ def stage(options: argparse.Namespace) -> dict[str, Any]:
                               "-C", str(mesa_build_root), "--tags", "runtime"],
             "install_prefix": "/usr",
             "files": mesa_files,
-            "reported_api_version": EXPECTED_ICD_MANIFEST["ICD"]["api_version"],
+            "reported_api_version": sealer.EXPECTED_ICD_MANIFEST["ICD"]["api_version"],
             "portability_driver": False,
         },
         "vulkan_headers": {
@@ -302,7 +262,7 @@ def stage(options: argparse.Namespace) -> dict[str, Any]:
             "reported_api_version": "1.4.357",
         },
         "symlinks": symlinks,
-        "selected_icd_manifest": ICD_MANIFEST,
+        "selected_icd_manifest": sealer.ICD_MANIFEST,
         "toolchain": sealer.toolchain_record(profile["debian_architecture"]),
         "install_closure": closure,
         "closure_base": {

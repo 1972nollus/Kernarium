@@ -10,6 +10,7 @@ DEPENDENCY_DIR="$TEST_ROOT/dependencies"
 mkdir -p "$DEPENDENCY_DIR" "$TEST_ROOT/scripts"
 cp "$SOURCE_DEPENDENCY_DIR/verify-prefix.sh" \
 	"$SOURCE_DEPENDENCY_DIR/prepare.sh" \
+	"$SOURCE_DEPENDENCY_DIR/series-field.sh" \
 	"$DEPENDENCY_DIR/"
 # Preparation resolves its series tooling from the tree it ships in, so the
 # fixture tree carries the real helper too.
