@@ -809,6 +809,34 @@ if(TARGET uml_gpu_display)
             TIMEOUT 90)
         set_tests_properties(gpu-native-display-menu-teardown PROPERTIES
             SKIP_RETURN_CODE 77)
+
+        # The native presenter must scale a scanout whose size or rectangle
+        # differs from its framebuffer. It draws into an offscreen view and
+        # skips on a host without a Metal device or offscreen drawables.
+        add_executable(uml_gpu_metal_presentation_tests
+            metal_presentation_tests.mm)
+        target_link_libraries(uml_gpu_metal_presentation_tests PRIVATE
+            uml_gpu_display
+            "-framework AppKit"
+            "-framework Metal"
+            "-framework MetalKit"
+            "-framework QuartzCore")
+        target_include_directories(uml_gpu_metal_presentation_tests
+            PRIVATE ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+        target_compile_features(uml_gpu_metal_presentation_tests
+            PRIVATE cxx_std_20)
+        set_target_properties(uml_gpu_metal_presentation_tests
+            PROPERTIES OBJCXX_STANDARD 20)
+        target_compile_options(uml_gpu_metal_presentation_tests PRIVATE
+            $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
+            -Wall -Wextra -Werror)
+        uml_add_unit_test(NAME gpu-native-metal-presentation
+            COMMAND uml_gpu_metal_presentation_tests
+            WORKING_DIRECTORY "${_uml_unit_binary_directory}"
+            LABELS gpu
+            TIMEOUT 90)
+        set_tests_properties(gpu-native-metal-presentation PROPERTIES
+            SKIP_RETURN_CODE 77)
     endif()
 endif()
 
