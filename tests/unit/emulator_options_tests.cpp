@@ -7,8 +7,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
 #include <stdexcept>
 #include <string_view>
+#include <sys/mman.h>
 #include <unistd.h>
 
 namespace {
@@ -333,6 +336,52 @@ void test_scalable_native_kernel_layout_geometry()
 #endif
 }
 
+/* A reserved native window must reach the loader whole. Darwin places its
+ * next unhinted allocation in a range freed inside it, which the guest's next
+ * fixed mapping would then replace without telling either owner. */
+void test_reserved_native_window_has_no_gap()
+{
+	constexpr std::uint64_t gib = 1024ULL * 1024ULL * 1024ULL;
+	constexpr std::uintptr_t start = DARWIN_UML_MACOS_NATIVE_ADDRESS;
+	constexpr std::uintptr_t length = 2U * gib +
+		DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION +
+		DARWIN_UML_NATIVE_STUB_PAGES * DARWIN_UML_GUEST_PAGE_SIZE;
+	const auto window = uml::runtime::reserve_native_kernel_window({
+		.load_bias = start - DARWIN_UML_NATIVE_LINK_ADDRESS,
+		.window_start = start,
+		.window_end = start + length,
+		.valid = true,
+	});
+	require(window.valid && window.reserved &&
+		window.window_start == start &&
+		window.window_end == start + length &&
+		window.load_bias == start - DARWIN_UML_NATIVE_LINK_ADDRESS,
+		"the native window was not reserved where the host offered it");
+	mach_vm_address_t cursor = window.window_start;
+	while (cursor < window.window_end) {
+		mach_vm_address_t region = cursor;
+		mach_vm_size_t size = 0;
+		vm_region_basic_info_data_64_t information{};
+		mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+		mach_port_t object = MACH_PORT_NULL;
+		const kern_return_t result = mach_vm_region(mach_task_self(),
+			&region, &size, VM_REGION_BASIC_INFO_64,
+			reinterpret_cast<vm_region_info_t>(&information), &count,
+			&object);
+		if (object != MACH_PORT_NULL)
+			(void)mach_port_deallocate(mach_task_self(), object);
+		require(result == KERN_SUCCESS && region == cursor && size != 0,
+			"the reserved native window has a gap");
+		require(information.protection == VM_PROT_NONE,
+			"the reserved native window is accessible");
+		cursor = region + size;
+	}
+	require(munmap(reinterpret_cast<void *>(window.window_start),
+		length) == 0, "the reserved native window could not be released");
+	require(!uml::runtime::reserve_native_kernel_window({}).valid,
+		"an invalid geometry reserved a native window");
+}
+
 void test_guest_cpu_count_matches_kernel_policy()
 {
 	const auto online = sysconf(_SC_NPROCESSORS_ONLN);
@@ -440,6 +489,7 @@ int main()
 		test_x86_64_kernel_memory_accounting_policy();
 		test_guest_memory_budget_matches_kernel_memparse();
 		test_scalable_native_kernel_layout_geometry();
+		test_reserved_native_window_has_no_gap();
 		test_guest_cpu_count_matches_kernel_policy();
 		test_invalid_and_informational_inputs();
 		return EXIT_SUCCESS;

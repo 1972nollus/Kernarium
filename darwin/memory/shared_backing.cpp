@@ -182,11 +182,18 @@ struct AnonymousTail final {
 	return true;
 }
 
+/* The physical window begins with the signed kernel image, which the loader
+ * maps through its final ELF segment. UML rounds its reserved physical prefix
+ * farther, so one tail lies between the image and the allocatable suffix.
+ * Where the host reserved the guest window (iOS), that tail is still part of
+ * the reservation and is mapped over it in place; elsewhere it is unmapped and
+ * is placed by a hint that must be honoured. Nothing else may lie in it. */
 [[nodiscard]] bool materialize_anonymous_tail_locked(
 	std::uintptr_t root, std::uintptr_t limit,
 	AnonymousTail &tail) noexcept
 {
 	vm_address_t cursor = root;
+	bool reserved = false;
 	while (cursor < limit) {
 		vm_address_t region = cursor;
 		vm_size_t region_size = 0;
@@ -212,18 +219,24 @@ struct AnonymousTail final {
 				limit - cursor, errno);
 			return false;
 		}
+		/* The window's reservation is protectionless and runs on past the
+		 * suffix. A protectionless alignment gap inside the image does not:
+		 * the image resumes after it, and its last page always belongs to a
+		 * segment. */
+		if (information.protection == VM_PROT_NONE &&
+		    region + region_size >= limit) {
+			reserved = true;
+			break;
+		}
 		cursor = region + region_size;
 	}
 	if (cursor >= limit)
 		return true;
 
-	/* The signed loader reserves through the final ELF segment. UML rounds
-	 * its reserved physical prefix farther, leaving one unmapped tail before
-	 * the allocatable suffix. Materialize only that verified hole, without
-	 * replacing any signed or anonymous kernel segment. */
 	const auto length = static_cast<std::size_t>(limit - cursor);
 	void *mapping = mmap(reinterpret_cast<void *>(cursor), length,
-		PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+		PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANON | (reserved ? MAP_FIXED : 0), -1, 0);
 	if (mapping == MAP_FAILED)
 		return false;
 	if (mapping != reinterpret_cast<void *>(cursor)) {

@@ -359,6 +359,8 @@ public:
 #if UML_EMULATOR_HAS_KERNEL_RUNNER
 		const auto result = uml_elf_run(kernel_.data(), kernel_.size(),
 			native_layout.load_bias,
+			native_layout.reserved ? native_layout.window_start : 0U,
+			native_layout.reserved ? native_layout.window_end : 0U,
 			static_cast<int>(arguments.size()), argument_pointers.data(),
 			environment_pointers.data());
 #if UML_ENABLE_JIT_PROFILE
