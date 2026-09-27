@@ -226,6 +226,11 @@ calls into callback programs. It checks that the verifier's frame, stack, and
 tail-call limits still reject, and exhausts and refills the interpreter's
 callback entry-point pool.
 
+`guest-kernel-nofault` dumps every task with sysrq t. Its workqueue report for
+each idle kernel worker reads through a NULL pointer with
+`copy_from_kernel_nofault()`, which must fail quietly; a lost nofault recovery
+point panics the guest instead.
+
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
 `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; do not override individual files.

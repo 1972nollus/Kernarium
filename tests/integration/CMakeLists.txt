@@ -259,6 +259,18 @@ uml_add_guest_integration_test(
     PROCESSORS 4
     RESOURCE_GROUPS cpus:4)
 
+# A faulting nofault kernel read resumes at its recovery point.
+uml_add_guest_integration_test(
+    NAME guest-kernel-nofault
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_kernel_nofault.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
 set(UML_GUEST_SAMPLER_WORKLOAD
     "${CMAKE_CURRENT_BINARY_DIR}/guest-sampler-workload")
 add_custom_command(

@@ -41,7 +41,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/registers.c                    |  51 ++++++
  arch/arm64/um/setjmp.S                       |  43 +++++
  arch/arm64/um/shared/sysdep/archsetjmp.h     |  29 ++++
- arch/arm64/um/shared/sysdep/faultinfo.h      |  32 ++++
+ arch/arm64/um/shared/sysdep/faultinfo.h      |  41 +++++
  arch/arm64/um/shared/sysdep/kernel-offsets.h |  16 ++
  arch/arm64/um/shared/sysdep/ptrace.h         |  74 +++++++++
  arch/arm64/um/shared/sysdep/ptrace_user.h    |  14 ++
@@ -52,7 +52,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/sysrq.c                        |  18 ++
  arch/arm64/um/tls.c                          |  22 +++
  arch/arm64/um/user-offsets.c                 |  63 +++++++
- 47 files changed, 1495 insertions(+)
+ 47 files changed, 1504 insertions(+)
  create mode 100644 arch/arm64/Makefile.um
  create mode 100644 arch/arm64/um/Kconfig
  create mode 100644 arch/arm64/um/Makefile
@@ -1343,10 +1343,10 @@ index 0000000000000000000000000000000000000000..4bd330e1ca9a161d3964d45823700a6f
 +#endif
 diff --git a/arch/arm64/um/shared/sysdep/faultinfo.h b/arch/arm64/um/shared/sysdep/faultinfo.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..457f2410c60a1c343cb0d82d11b4d667b1d4852b
+index 0000000000000000000000000000000000000000..46a97ca78c94bf3dd7d2658becfb68260512d833
 --- /dev/null
 +++ b/arch/arm64/um/shared/sysdep/faultinfo.h
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,41 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef _SYSDEP_UM_ARM64_FAULTINFO_H
 +#define _SYSDEP_UM_ARM64_FAULTINFO_H
@@ -1367,15 +1367,24 @@ index 0000000000000000000000000000000000000000..457f2410c60a1c343cb0d82d11b4d667
 +#define SEGV_IS_FIXABLE(fi) ((fi)->trap_no == UML_ARM64_FAULT_PAGE)
 +#define PTRACE_FULL_FAULTINFO 1
 +
++/*
++ * Record where a faulting nofault access resumes, with faulted set.  Only the
++ * fault handler reaches that point, so it is defined in assembly: a C label
++ * whose sole use is its address is dead code to the compiler, which deletes it
++ * and records the constant 1 instead.
++ */
 +#define ___backtrack_faulted(faulted) do { \
-+	__label__ uml_fault, uml_done; \
-+	current->thread.segv_continue = &&uml_fault; \
-+	(faulted) = 0; \
-+	goto uml_done; \
-+uml_fault: \
-+	(faulted) = 1; \
-+uml_done: \
-+	; \
++	unsigned long __uml_resume; \
++	asm volatile( \
++		"	mov	%w0, #0\n" \
++		"	adr	%1, 1f\n" \
++		"	str	%1, %2\n" \
++		"	b	2f\n" \
++		"1:	mov	%w0, #1\n" \
++		"2:\n" \
++		: "=&r" (faulted), "=&r" (__uml_resume), \
++		  "=m" (current->thread.segv_continue) \
++		: : "memory"); \
 +} while (0)
 +
 +#endif
