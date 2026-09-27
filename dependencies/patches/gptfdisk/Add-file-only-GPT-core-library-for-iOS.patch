@@ -4,23 +4,23 @@ Date: Fri, 28 Aug 2026 15:31:43 +0900
 Subject: [PATCH] Add file-only GPT core library for iOS
 
 ---
- Makefile.kernarium    |  31 ++++++
+ Makefile.kernarium    |  33 ++++++
  diskio-unix.cc        |  29 +++++-
  guid.cc               |   2 +-
  kernarium_gptfdisk.cc | 231 ++++++++++++++++++++++++++++++++++++++++++
  kernarium_gptfdisk.h  |  57 +++++++++++
  support.h             |   7 +-
- 6 files changed, 352 insertions(+), 5 deletions(-)
+ 6 files changed, 354 insertions(+), 5 deletions(-)
  create mode 100644 Makefile.kernarium
  create mode 100644 kernarium_gptfdisk.cc
  create mode 100644 kernarium_gptfdisk.h
 
 diff --git a/Makefile.kernarium b/Makefile.kernarium
 new file mode 100644
-index 0000000000000000000000000000000000000000..ff07aae1f57f26bd5c786e591bdcbbe99cd2dc68
+index 0000000000000000000000000000000000000000..108aeeed7fc70084ac99d28ff7b2519f179f8994
 --- /dev/null
 +++ b/Makefile.kernarium
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,33 @@
 +# SPDX-License-Identifier: GPL-2.0-or-later
 +
 +CXX ?= c++
@@ -35,8 +35,10 @@ index 0000000000000000000000000000000000000000..ff07aae1f57f26bd5c786e591bdcbbe9
 +	kernarium_gptfdisk.cc
 +CORE_OBJECTS = $(CORE_SOURCES:%.cc=$(BUILD_DIR)/%.o)
 +
-+CPPFLAGS += -DKERNARIUM_GPTFDISK_FILE_ONLY=1
-+CXXFLAGS += -O2 -fPIC -fvisibility=hidden -std=c++17
++# The file-only core, its language standard and its hidden symbols are what
++# this library is, so they apply on top of whatever flags the caller passes.
++override CPPFLAGS += -DKERNARIUM_GPTFDISK_FILE_ONLY=1
++override CXXFLAGS += -fvisibility=hidden -std=c++17
 +
 +.PHONY: all clean
 +
