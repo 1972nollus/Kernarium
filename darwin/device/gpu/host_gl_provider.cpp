@@ -39,6 +39,8 @@ namespace {
 constexpr EGLenum kClientApi = EGL_OPENGL_API;
 constexpr EGLint kRenderableType = EGL_OPENGL_BIT;
 constexpr const char* kProviderName = "Zink/KosmicKrisp";
+constexpr const char* kDriverOverrideVariable = "MESA_LOADER_DRIVER_OVERRIDE";
+constexpr const char* kDriverOverride = "zink";
 constexpr const char* kProviderMarker =
     "Virgl Zink/KosmicKrisp provider: hardware\n";
 
@@ -169,8 +171,15 @@ void* HostGlProvider::display() noexcept
         }
         // Mesa selects its Gallium driver from the process environment before
         // the display is created, and the packaged provider offers exactly one
-        // driver. Set it here rather than inheriting an ambient choice.
-        ::setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1);
+        // driver. Set it here rather than inheriting an ambient choice, but
+        // leave a value that already names it alone: another component may
+        // hold a copy of the environment taken earlier, and an application
+        // that has one sets this value at launch for that reason.
+        const char* driverOverride = std::getenv(kDriverOverrideVariable);
+        if (driverOverride == nullptr ||
+            std::string_view(driverOverride) != kDriverOverride) {
+            ::setenv(kDriverOverrideVariable, kDriverOverride, 1);
+        }
         const EGLDeviceEXT device = softwareDevice();
         if (device == EGL_NO_DEVICE_EXT)
             return nullptr;
@@ -344,16 +353,10 @@ void* HostGlProvider::createContext(
             parameters.major_ver > 4) {
             return nullptr;
         }
+        // display() also binds the calling thread to the desktop API, which a
+        // core profile mask needs: it is a bad attribute under OpenGL ES.
         if (display() == nullptr)
             return nullptr;
-        // The client API is a property of the calling thread and defaults to
-        // OpenGL ES. display() binds it only on the thread that initializes
-        // the display, and a desktop profile mask is a bad attribute under
-        // the ES binding, so bind it wherever a context is created.
-        if (eglBindAPI(kClientApi) != EGL_TRUE) {
-            reportEglFailure("API binding");
-            return nullptr;
-        }
         std::lock_guard lock(mutex_);
         const auto eglDisplay = static_cast<EGLDisplay>(
             display_.load(std::memory_order_acquire));

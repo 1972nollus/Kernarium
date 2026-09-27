@@ -52,10 +52,10 @@ same mask in pSampleMask and early tests, and with no mask at all.  It reads
 1024/2048/2048 before this change and 1024/1024/2048 after it.
 ---
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   7 +
- src/kosmickrisp/vulkan/kk_cmd_draw.c          |  30 +-
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          |  29 +-
  src/kosmickrisp/vulkan/kk_gpl.h               |  28 ++
  src/kosmickrisp/vulkan/kk_physical_device.c   |   6 +-
- src/kosmickrisp/vulkan/kk_shader.c            |  78 ++-
+ src/kosmickrisp/vulkan/kk_shader.c            |  76 ++-
  src/kosmickrisp/vulkan/kk_shader.h            |   6 +
  src/kosmickrisp/vulkan/meson.build            |  14 +
  .../tests/early_sample_mask_shaders/esm.vert  |  11 +
@@ -68,7 +68,7 @@ same mask in pSampleMask and early tests, and with no mask at all.  It reads
  .../esm_plain.frag.h                          |  19 +
  .../early_sample_mask_shaders/generate.sh     |   7 +
  .../tests/test_early_sample_mask_count.cpp    | 449 ++++++++++++++++++
- 17 files changed, 799 insertions(+), 5 deletions(-)
+ 17 files changed, 796 insertions(+), 5 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert.h
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_early.frag
@@ -81,7 +81,7 @@ same mask in pSampleMask and early tests, and with no mask at all.  It reads
  create mode 100644 src/kosmickrisp/vulkan/tests/test_early_sample_mask_count.cpp
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 877307ea2d8b957fc420cda25b981b394b287d91..80895d13997d57eb7ac9dff482762824fb74326d 100644
+index 3761d06afef8be760d62ad76db3bd653e445d60c..1b1b941a091821afbf262375c4941bd7c00d008d 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -54,6 +54,13 @@ struct kk_root_descriptor_table {
@@ -99,10 +99,10 @@ index 877307ea2d8b957fc420cda25b981b394b287d91..80895d13997d57eb7ac9dff482762824
        struct {
           uint32_t base_group[3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index e7c666bf952a0de708a5fec0bbf3ca4361f54462..b8be0edd6b871c541028c9673ca3eea4dcc3a13a 100644
+index fb42389c5db398474c15ca1756179fc1b731b819..ae4a663430352c2e835a12ce439146f0b5c5fdbb 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1765,8 +1765,17 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1772,8 +1772,17 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
        kk_cmd_bind_root_to_argument_table(cmd, desc->root.addr);
     }
  
@@ -122,7 +122,7 @@ index e7c666bf952a0de708a5fec0bbf3ca4361f54462..b8be0edd6b871c541028c9673ca3eea4
                                       gfx->occlusion.index * sizeof(uint64_t));
     }
  }
-@@ -1792,6 +1801,23 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+@@ -1799,6 +1808,22 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
        desc->root.draw.clip_statistics != clip_statistics;
     desc->root.draw.clip_statistics = clip_statistics;
  
@@ -133,8 +133,7 @@ index e7c666bf952a0de708a5fec0bbf3ca4361f54462..b8be0edd6b871c541028c9673ca3eea4
 +   struct kk_device *occlusion_dev = kk_cmd_buffer_device(cmd);
 +   const bool count_in_shader =
 +      vs && vs->info.vs.counts_occlusion_samples &&
-+      gfx->occlusion.mode != MTL_VISIBILITY_RESULT_MODE_DISABLED &&
-+      occlusion_dev->occlusion_queries.bo != NULL;
++      gfx->occlusion.mode != MTL_VISIBILITY_RESULT_MODE_DISABLED;
 +   const uint64_t occlusion_counter =
 +      count_in_shader ? occlusion_dev->occlusion_queries.bo->gpu +
 +                           gfx->occlusion.index * sizeof(uint64_t)
@@ -186,10 +185,10 @@ index de3e4d7158ce0e569afd1c490d3d632c150a483a..fe1de5ed5aea8a91980dd71163d54605
   * is cached device-wide under this key, so it must describe every attachment
   * the compiled Metal pipeline and its depth-stencil state are built from.
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index acd2bc3a90ee8f521b3935d260ffbab4a34910a2..d4eeed93b34cf7c9b9b15ae9b691a830df0d2881 100644
+index 82f5d4aff2015f1e0bb72a28ec399f8a69d6a141..50f97c4fb549e15259ad97b1855ed13e8491a75c 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
-@@ -807,7 +807,11 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
+@@ -805,7 +805,11 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
  
        /* VK_KHR_maintenance5 */
        .earlyFragmentMultisampleCoverageAfterSampleCounting = true,
@@ -203,10 +202,10 @@ index acd2bc3a90ee8f521b3935d260ffbab4a34910a2..d4eeed93b34cf7c9b9b15ae9b691a830
        .polygonModePointSize = true,
        .nonStrictSinglePixelWideLinesUseParallelogram = false,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 209dd432a59f6f9e7cd35fd5d73896204c6cd3a4..b1538ef1ce2e67942bff29ae9bf073f02c6caab1 100644
+index fe73960ffb93e3dd2cc0dd56bfd6b656c57d4105..85e8a714d95ffb68810e674c441930e28e09eb19 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -762,6 +762,65 @@ kk_nir_lower_fs_pipeline_statistics(nir_shader *nir)
+@@ -742,6 +742,63 @@ kk_nir_lower_fs_pipeline_statistics(nir_shader *nir)
     nir_progress(true, b.impl, nir_metadata_none);
  }
  
@@ -248,13 +247,11 @@ index 209dd432a59f6f9e7cd35fd5d73896204c6cd3a4..b1538ef1ce2e67942bff29ae9bf073f0
 +   nir_builder b =
 +      nir_builder_at(nir_before_impl(nir_shader_get_entrypoint(nir)));
 +
-+   nir_def *root = nir_load_buffer_ptr_kk(&b, 1, 64, .binding = 0);
-+   nir_def *address = nir_load_global_constant(
++   nir_def *address = kk_nir_load_root(
 +      &b, 1, 64,
-+      nir_iadd_imm(&b, root,
-+                   offsetof(struct kk_root_descriptor_table,
-+                            draw.occlusion_counter)),
-+      .align_mul = 8, .align_offset = 0);
++      nir_imm_int(&b, offsetof(struct kk_root_descriptor_table,
++                               draw.occlusion_counter)),
++      8);
 +
 +   nir_def *enabled = nir_ine_imm(&b, address, 0);
 +   nir_def *non_helper = nir_inot(&b, nir_load_helper_invocation(&b, 1));
@@ -272,7 +269,7 @@ index 209dd432a59f6f9e7cd35fd5d73896204c6cd3a4..b1538ef1ce2e67942bff29ae9bf073f0
  static void
  kk_lower_fs(struct kk_device *dev, nir_shader *nir,
              const struct vk_graphics_pipeline_state *state, bool writes_depth,
-@@ -1118,7 +1177,6 @@ gather_shader_info(struct kk_shader *shader, nir_shader *nir,
+@@ -1098,7 +1155,6 @@ gather_shader_info(struct kk_shader *shader, nir_shader *nir,
        shader->info.fs.flat_inputs =
           nir->info.inputs_read &
           ~(nir->info.linear_varyings | nir->info.perspective_varyings);
@@ -280,7 +277,7 @@ index 209dd432a59f6f9e7cd35fd5d73896204c6cd3a4..b1538ef1ce2e67942bff29ae9bf073f0
        /* Some meta shaders like vk-meta-resolve will have depth_layout as NONE
         * which is not a valid Metal layout */
        if (nir->info.fs.depth_layout == FRAG_DEPTH_LAYOUT_NONE)
-@@ -1282,6 +1340,19 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1262,6 +1318,19 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
        msl_nir_lower_clip_cull_distance(nir, num_cull_distances);
     }
  
@@ -300,7 +297,7 @@ index 209dd432a59f6f9e7cd35fd5d73896204c6cd3a4..b1538ef1ce2e67942bff29ae9bf073f0
     NIR_PASS(_, nir, kk_nir_lower_poly, pipeline_statistics);
  
     msl_optimize_nir(nir);
-@@ -3729,8 +3800,11 @@ gather_graphics_pipeline_create_info(
+@@ -3694,8 +3763,11 @@ gather_graphics_pipeline_create_info(
        if (s->info.stage == MESA_SHADER_TESS_CTRL)
           info->vs.tess_local_thread_size = s->info.tess.tcs_output_patch_size;
  
@@ -314,7 +311,7 @@ index 209dd432a59f6f9e7cd35fd5d73896204c6cd3a4..b1538ef1ce2e67942bff29ae9bf073f0
  
     uint8_t topology = state->ia->primitive_topology;
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index de64dbe312d762d71148d9c003d8d8eb7f1e59a2..86f08e230d2a8c1edd651ff9beb7453cb851949a 100644
+index 6a439054966ff29eb571fbaa222117909a0c6e2d..d20bf2c9fbc6d2c75a6b302941b06277cdd30e4f 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -125,6 +125,9 @@ struct kk_shader_info {
@@ -327,7 +324,7 @@ index de64dbe312d762d71148d9c003d8d8eb7f1e59a2..86f08e230d2a8c1edd651ff9beb7453c
        } vs;
  
        struct {
-@@ -141,6 +144,9 @@ struct kk_shader_info {
+@@ -139,6 +142,9 @@ struct kk_shader_info {
  
        struct {
           uint64_t flat_inputs;

@@ -9,7 +9,7 @@ Subject: [PATCH] kosmickrisp: support incremental present
  2 files changed, 7 insertions(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index c48462c450b5d947584e120d750eca48612049a5..a12cc8301d30a9ebd90f85d836e0550d60ea0513 100644
+index 073e9adb13971b84a3f97b15d987b57d9998bd8f..3b6abef5623321c2b01e71da3b36abcf613c8111 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -150,6 +150,7 @@ kk_get_device_extensions(const struct kk_instance *instance,

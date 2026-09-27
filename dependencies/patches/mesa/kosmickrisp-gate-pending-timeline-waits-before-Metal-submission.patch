@@ -71,10 +71,10 @@ index 175b4edc72bcda3381c7ff20bb6eb0d6de5b66d3..64d690c9942e8821acb159b9addb84dc
     kk_command_allocator_cache_unref(dev->allocator_cache);
  
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 28294b604b2b5d942a8de1e2f208764c6523ddc6..acd2bc3a90ee8f521b3935d260ffbab4a34910a2 100644
+index b83269f2bd0a2159cdffcb9518c3472d92f5f281..82f5d4aff2015f1e0bb72a28ec399f8a69d6a141 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
-@@ -1188,6 +1188,8 @@ kk_enumerate_physical_devices(struct vk_instance *_instance)
+@@ -1186,6 +1186,8 @@ kk_enumerate_physical_devices(struct vk_instance *_instance)
     assert(pdev->queue_family_count <= ARRAY_SIZE(pdev->queue_families));
  
     pdev->sync_binary_type = vk_sync_binary_get_type(&kk_sync_type);

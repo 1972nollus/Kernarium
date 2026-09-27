@@ -192,25 +192,25 @@ DisplayGeometryPolicy::DisplayGeometryPolicy(
     std::uint32_t height,
     bool autoResizeGuest) noexcept
     : autoResizeGuest_(autoResizeGuest)
-    , advertisedSize_(encode({width, height}))
-    , activeGuestSize_(encode({width, height}))
-    , settledHostSize_(encode({width, height}))
+    , advertisedSize_(packDisplaySize({width, height}))
+    , activeGuestSize_(packDisplaySize({width, height}))
+    , settledHostSize_(packDisplaySize({width, height}))
 {
 }
 
 DisplaySize DisplayGeometryPolicy::advertisedSize() const noexcept
 {
-    return decode(advertisedSize_.load(std::memory_order_acquire));
+    return unpackDisplaySize(advertisedSize_.load(std::memory_order_acquire));
 }
 
 DisplaySize DisplayGeometryPolicy::activeGuestSize() const noexcept
 {
-    return decode(activeGuestSize_.load(std::memory_order_acquire));
+    return unpackDisplaySize(activeGuestSize_.load(std::memory_order_acquire));
 }
 
 DisplaySize DisplayGeometryPolicy::settledHostSize() const noexcept
 {
-    return decode(settledHostSize_.load(std::memory_order_acquire));
+    return unpackDisplaySize(settledHostSize_.load(std::memory_order_acquire));
 }
 
 bool DisplayGeometryPolicy::autoResizeGuestEnabled() const noexcept
@@ -222,7 +222,7 @@ bool DisplayGeometryPolicy::hostSizeSettled(
     std::uint32_t width,
     std::uint32_t height) noexcept
 {
-    const auto encoded = encode({width, height});
+    const auto encoded = packDisplaySize({width, height});
     settledHostSize_.store(encoded, std::memory_order_release);
     if (!autoResizeGuestEnabled())
         return false;
@@ -243,7 +243,7 @@ bool DisplayGeometryPolicy::guestScanoutChanged(
 {
     if (width == 0 || height == 0)
         return false;
-    const auto encoded = encode({width, height});
+    const auto encoded = packDisplaySize({width, height});
     return activeGuestSize_.exchange(encoded, std::memory_order_acq_rel) !=
         encoded;
 }
@@ -253,21 +253,8 @@ void DisplayGeometryPolicy::resetGuestSession(DisplaySize activeSize) noexcept
     const auto settled = settledHostSize_.load(std::memory_order_acquire);
     advertisedSize_.store(settled, std::memory_order_release);
     const auto active = activeSize.width == 0 || activeSize.height == 0 ?
-        settled : encode(activeSize);
+        settled : packDisplaySize(activeSize);
     activeGuestSize_.store(active, std::memory_order_release);
-}
-
-std::uint64_t DisplayGeometryPolicy::encode(DisplaySize size) noexcept
-{
-    return static_cast<std::uint64_t>(size.width) << 32U | size.height;
-}
-
-DisplaySize DisplayGeometryPolicy::decode(std::uint64_t size) noexcept
-{
-    return {
-        .width = static_cast<std::uint32_t>(size >> 32U),
-        .height = static_cast<std::uint32_t>(size),
-    };
 }
 
 } // namespace uml::gpu

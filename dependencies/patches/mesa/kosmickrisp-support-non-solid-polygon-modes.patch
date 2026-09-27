@@ -873,7 +873,7 @@ index 59cfd521770bb5034f3b8687966d75b5e296c45a..567530c14de14102639b6d07eb565ba3
  
     if (result != VK_SUCCESS) {
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 6e092ef0f7e828ad2c106c3277d12d9ae575a4a5..b0d3ecf5122ab08b77a74c08a14b858c6484c87b 100644
+index 09ce7cdaf7c0567dbb050e7ba5be4ae4a8e2efec..1855d68866a862f0f0cf1ba72b81961869a21434 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -69,6 +69,7 @@ struct kk_shader_info {

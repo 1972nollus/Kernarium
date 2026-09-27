@@ -227,7 +227,6 @@ constexpr std::size_t maximumEdidSize = 1024;
 constexpr std::size_t baseEdidSize = 128;
 constexpr std::uint32_t maximumEdidDimension = 4095;
 constexpr std::uint32_t maximumDisplayDimension = 8192;
-constexpr std::uint32_t referenceDotsPerInch = 96;
 // Defensive bound for the variable-size RESOURCE_ATTACH_BACKING request.
 constexpr std::uint32_t maximumResourceBackingEntries = 16'384;
 constexpr std::uint32_t blobMemoryGuest = 0x0001;

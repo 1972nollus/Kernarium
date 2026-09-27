@@ -54,7 +54,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_completion.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 5d025ea6200a5ccc13140542764be1ebb6e4f177..bbb5faa0f7b64f5599eb20540699aad5afee65eb 100644
+index 668bbcaba279b59826318b3d0e06d0999d83af13..4ffa19612d69f8ddfac66ef88083408cd01c3eed 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -94,10 +94,21 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)

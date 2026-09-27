@@ -34,10 +34,10 @@ can be left holding a pointer to a resource another context destroyed.
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
  src/gallium/drivers/zink/zink_batch.c         |   2 +-
- src/gallium/drivers/zink/zink_context.c       | 116 +++++++++++++++---
+ src/gallium/drivers/zink/zink_context.c       | 125 +++++++++++++++---
  src/gallium/drivers/zink/zink_context.h       |   6 +
  .../drivers/zink/zink_synchronization.cpp     |   8 +-
- 4 files changed, 112 insertions(+), 20 deletions(-)
+ 4 files changed, 119 insertions(+), 22 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
 index e984830ef7f5852ee8a3238bb2d3e3650166323c..058e80dccf2126a194a1ad7dc0708a749bcc8f93 100644
@@ -53,7 +53,7 @@ index e984830ef7f5852ee8a3238bb2d3e3650166323c..058e80dccf2126a194a1ad7dc0708a74
  
        for (; res; res = zink_resource(res->base.b.next)) {
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b3c44129c 100644
+index 57449111063850fafdd2fa00afe9e134d7141aa0..26f9e29caeddce689fd4a6fadd975dc563727ec7 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
 @@ -97,6 +97,8 @@ check_resource_for_batch_ref(struct zink_context *ctx, struct zink_resource *res
@@ -93,7 +93,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
  #if HAVE_RENDERDOC_INTEGRATION
     if (screen->base.num_contexts == 1 && screen->renderdoc_capturing) {
        ctx->bs->has_work = true;
-@@ -1350,13 +1373,68 @@ zink_set_polygon_stipple(struct pipe_context *pctx,
+@@ -1350,13 +1373,69 @@ zink_set_polygon_stipple(struct pipe_context *pctx,
  {
  }
  
@@ -111,17 +111,15 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
 + * owning context drains the queue and drops it again, so a resource is held no
 + * longer than the barrier that names it.
 + */
-+bool
++void
 +zink_queue_barrier(struct zink_context *ctx, bool is_compute, struct zink_resource *res)
 +{
 +   struct set *set = ctx->need_barriers[is_compute];
 +   uint32_t entries = set->entries;
 +
 +   _mesa_set_add(set, res);
-+   if (set->entries == entries)
-+      return false;
-+   pipe_reference(NULL, &res->base.b.reference);
-+   return true;
++   if (set->entries != entries)
++      pipe_reference(NULL, &res->base.b.reference);
 +}
 +
 +static bool
@@ -146,9 +144,12 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
 +void
 +zink_unqueue_barrier(struct zink_context *ctx, bool is_compute, struct zink_resource *res)
 +{
-+   if (!_mesa_set_search(ctx->need_barriers[is_compute], res))
++   struct set_entry *entry =
++      _mesa_set_search(ctx->need_barriers[is_compute], res);
++
++   if (!entry)
 +      return;
-+   _mesa_set_remove_key(ctx->need_barriers[is_compute], res);
++   _mesa_set_remove(ctx->need_barriers[is_compute], entry);
 +   drop_queued_barrier_reference(res);
 +}
 +
@@ -164,7 +165,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
     zink_resource_reference(&res, NULL);
  }
  
-@@ -1367,7 +1445,7 @@ update_img_bind_count(struct zink_context *ctx, struct zink_resource *res, bool
+@@ -1367,7 +1446,7 @@ update_img_bind_count(struct zink_context *ctx, struct zink_resource *res, bool
     if (decrement) {
        assert(res->bind_count[is_compute]);
        if (p_atomic_dec_zero(&res->bind_count[is_compute]))
@@ -173,7 +174,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
        check_resource_for_batch_ref(ctx, res);
     } else
        p_atomic_inc(&res->bind_count[is_compute]);
-@@ -2016,9 +2094,9 @@ update_binds_for_samplerviews(struct zink_context *ctx, struct zink_resource *re
+@@ -2008,9 +2087,9 @@ update_binds_for_samplerviews(struct zink_context *ctx, struct zink_resource *re
        }
      }
      if (gfx_rebind)
@@ -185,7 +186,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
  }
  
  static void
-@@ -2049,14 +2127,15 @@ check_for_layout_update(struct zink_context *ctx, struct zink_resource *res, boo
+@@ -2041,14 +2120,19 @@ check_for_layout_update(struct zink_context *ctx, struct zink_resource *res, boo
     bool ret = false;
     if (!is_compute && res->fb_binds && !(ctx->feedback_loops & res->fb_binds)) {
        /* always double check feedback loops */
@@ -195,16 +196,22 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
     } else {
        if (res->bind_count[is_compute] && ((layout && res->layout != layout) ||
                                            /* Check if we need a queue family transfer */
-                                           (res->queue != zink_screen(ctx->base.screen)->gfx_queue && res->queue != VK_QUEUE_FAMILY_IGNORED)))
+-                                          (res->queue != zink_screen(ctx->base.screen)->gfx_queue && res->queue != VK_QUEUE_FAMILY_IGNORED)))
 -         ret = !!_mesa_set_add(ctx->need_barriers[is_compute], res);
-+         ret = (zink_queue_barrier(ctx, is_compute, res), true);
-       if (res->bind_count[!is_compute] && other_layout && (layout != other_layout || res->layout != other_layout))
+-      if (res->bind_count[!is_compute] && other_layout && (layout != other_layout || res->layout != other_layout))
 -         ret = !!_mesa_set_add(ctx->need_barriers[!is_compute], res);
-+         ret = (zink_queue_barrier(ctx, !is_compute, res), true);
++                                          (res->queue != zink_screen(ctx->base.screen)->gfx_queue && res->queue != VK_QUEUE_FAMILY_IGNORED))) {
++         zink_queue_barrier(ctx, is_compute, res);
++         ret = true;
++      }
++      if (res->bind_count[!is_compute] && other_layout && (layout != other_layout || res->layout != other_layout)) {
++         zink_queue_barrier(ctx, !is_compute, res);
++         ret = true;
++      }
     }
     return ret;
  }
-@@ -2078,7 +2157,7 @@ unbind_shader_image(struct zink_context *ctx, mesa_shader_stage stage, unsigned
+@@ -2070,7 +2154,7 @@ unbind_shader_image(struct zink_context *ctx, mesa_shader_stage stage, unsigned
     if (image_view->import2d) {
        unbind_buffer_descriptor_stage(res, stage);
        unbind_buffer_descriptor_reads(res, stage == MESA_SHADER_COMPUTE);
@@ -213,7 +220,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
     } else if (image_view->base.resource->target == PIPE_BUFFER) {
        unbind_buffer_descriptor_stage(res, stage);
        unbind_buffer_descriptor_reads(res, stage == MESA_SHADER_COMPUTE);
-@@ -4142,7 +4221,7 @@ unbind_fb_surface(struct zink_context *ctx, const struct pipe_surface *surf, uns
+@@ -4134,7 +4218,7 @@ unbind_fb_surface(struct zink_context *ctx, const struct pipe_surface *surf, uns
     }
     res->fb_bind_count--;
     if (!res->fb_bind_count && !res->bind_count[0])
@@ -222,7 +229,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
     unsigned feedback_loops = ctx->feedback_loops;
     if (!general_layout && ctx->feedback_loops & BITFIELD_BIT(idx)) {
        ctx->dynamic_fb.attachments[idx].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-@@ -4170,7 +4249,7 @@ unbind_fb_surface(struct zink_context *ctx, const struct pipe_surface *surf, uns
+@@ -4162,7 +4246,7 @@ unbind_fb_surface(struct zink_context *ctx, const struct pipe_surface *surf, uns
        if (!general_layout && res->sampler_bind_count[0]) {
           update_res_sampler_layouts(ctx, res);
           if (res->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && !ctx->blitting)
@@ -231,7 +238,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
        }
     }
  }
-@@ -5617,7 +5696,7 @@ rebind_image(struct zink_context *ctx, struct zink_resource *res)
+@@ -5609,7 +5693,7 @@ rebind_image(struct zink_context *ctx, struct zink_resource *res)
              ctx->invalidate_descriptor_state(ctx, i, ZINK_DESCRIPTOR_TYPE_IMAGE, j, 1);
              update_descriptor_state_image(ctx, i, j, res);
              if (!general_layout)
@@ -240,7 +247,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
           }
        }
     }
-@@ -5728,7 +5807,7 @@ zink_rebind_all_images(struct zink_context *ctx)
+@@ -5720,7 +5804,7 @@ zink_rebind_all_images(struct zink_context *ctx)
              ctx->invalidate_descriptor_state(ctx, i, ZINK_DESCRIPTOR_TYPE_IMAGE, j, 1);
              update_descriptor_state_image(ctx, i, j, res);
              if (!general_layout)
@@ -249,7 +256,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
           }
        }
     }
-@@ -6399,9 +6478,14 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
+@@ -6391,9 +6475,14 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
     ASSERTED bool check_rp = ctx->in_rp && ctx->dynamic_fb.tc_info.zsbuf_invalidate;
     set_foreach(need_barriers, he) {
        struct zink_resource *res = (struct zink_resource *)he->key;
@@ -265,7 +272,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
           if (!need_barriers->entries)
              break;
           continue;
-@@ -6432,9 +6516,11 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
+@@ -6424,9 +6513,11 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
            * image write binds and image read binds
            */
           if (res->write_bind_count[is_compute] && res->bind_count[is_compute] > 1)
@@ -279,14 +286,14 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..4899a5e51da9a0e572498d490fd2620b
           break;
     }
 diff --git a/src/gallium/drivers/zink/zink_context.h b/src/gallium/drivers/zink/zink_context.h
-index c4ef260f3ab4539af0bb5edbb0289b72768ee8b2..eb40023d40ea6de3a41eeeb4bcbe9ea21ac8bf25 100644
+index 4945d2ccd0f2cd93a73115f68bd055f2f1621bea..48118086c84eadb25a482fb09748e0a2565ba46a 100644
 --- a/src/gallium/drivers/zink/zink_context.h
 +++ b/src/gallium/drivers/zink/zink_context.h
 @@ -224,6 +224,12 @@ zink_init_grid_functions(struct zink_context *ctx);
  struct zink_context *
  zink_tc_context_unwrap(struct pipe_context *pctx);
  
-+bool
++void
 +zink_queue_barrier(struct zink_context *ctx, bool is_compute, struct zink_resource *res);
 +
 +void

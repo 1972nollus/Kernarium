@@ -9,11 +9,11 @@ Use one tessellator index winding for native and software consumers. Match indir
 ---
  src/kosmickrisp/libkk/kk_tessellation.cl |  23 +++-
  src/kosmickrisp/vulkan/kk_cmd_draw.c     |  55 ++++----
- src/kosmickrisp/vulkan/kk_shader.c       | 155 +++++++++++++++++++----
+ src/kosmickrisp/vulkan/kk_shader.c       | 162 ++++++++++++++++++-----
  src/poly/cl/tessellation.cl              |   2 +-
  src/poly/cl/tessellator.h                |   7 +-
  src/poly/tessellator.h                   |  15 ++-
- 6 files changed, 192 insertions(+), 65 deletions(-)
+ 6 files changed, 193 insertions(+), 71 deletions(-)
 
 diff --git a/src/kosmickrisp/libkk/kk_tessellation.cl b/src/kosmickrisp/libkk/kk_tessellation.cl
 index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..abc66ebb70f22a7a821acfb4867327d1fdff8f85 100644
@@ -59,10 +59,10 @@ index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..abc66ebb70f22a7a821acfb4867327d1
 +   grids[17] = 1;
  }
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255dd96406c 100644
+index 03c9be79c5316bcaca19607ecbc991c393a71d6c..236274e961f0b41844a1225e02d71095ccb2bb4c 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1464,6 +1464,7 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+@@ -1471,6 +1471,7 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
        .partitioning = partitioning,
        .points_mode = gfx->tess.info.points,
        .isolines = gfx->tess.info.mode == TESS_PRIMITIVE_ISOLINES,
@@ -70,7 +70,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
     };
  
     if (!args.points_mode && gfx->tess.info.mode != TESS_PRIMITIVE_ISOLINES) {
-@@ -1507,8 +1508,8 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+@@ -1514,8 +1515,8 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
        args.out_draws = addr + draw_offs;
        args.counts = addr + count_offs;
     } else {
@@ -81,7 +81,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
        gfx->tess.indirect_ptr = kk_pool_alloc(cmd, grid_stride * 3, 4);
  
        struct kk_ptr ptr = kk_pool_alloc(cmd, draw_stride_B, 4);
-@@ -1637,15 +1638,6 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1644,15 +1645,6 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
         IS_SHADER_DIRTY(TESS_CTRL) || IS_SHADER_DIRTY(TESS_EVAL) ||
         IS_SHADER_DIRTY(VERTEX)) {
        bool front_face_ccw = dyn->rs.front_face != VK_FRONT_FACE_CLOCKWISE;
@@ -97,7 +97,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
        mtl_set_front_face_winding(enc, front_face_ccw
                                           ? MTL_WINDING_COUNTER_CLOCKWISE
                                           : MTL_WINDING_CLOCKWISE);
-@@ -2427,8 +2419,9 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2434,8 +2426,9 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
     }
  
     if (transform_feedback) {
@@ -108,7 +108,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
                                     &vs->info.vs.transform_feedback, false);
        if (!gfx->per_draw_data.geometry_params)
           return false;
-@@ -2474,10 +2467,6 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2481,10 +2474,6 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
        gfx->per_draw_data.polygon_point_clip_flags =
           (vk_rasterization_state_depth_clip_enable(&dyn->rs) ? 1u : 0u) |
           (dyn->vp.depth_clip_negative_one_to_one ? 2u : 0u) |
@@ -119,7 +119,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
           (dyn->rs.depth_bias.enable ? 8u : 0u) |
           (dyn->rs.depth_clamp_enable ? 16u : 0u);
        gfx->per_draw_data.polygon_depth_bias_constant =
-@@ -2566,8 +2555,7 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
+@@ -2573,8 +2562,7 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
     if (grid.mode == KK_GRID_DIRECT)
        mtl_dispatch_threads(enc, grid.size, local_size);
     else
@@ -129,7 +129,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
  }
  
  static struct kk_draw_data
-@@ -2593,6 +2581,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2600,6 +2588,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
        &gfx->descriptors, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT);
  
     if (vs->info.vs.geometry_shader_emulation ||
@@ -137,7 +137,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
         dyn->rs.rasterizer_discard_enable) {
        c_primitives = 0;
        c_invocations = 0;
-@@ -2618,7 +2607,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2625,7 +2614,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  
        libkk_tess_setup_indirect_struct(cmd, kk_grid_1d(1), true, args);
  
@@ -146,7 +146,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
        grid_vs = kk_grid_indirect(gfx->tess.indirect_ptr.gpu + 0u * grid_stride);
        grid_tcs =
           kk_grid_indirect(gfx->tess.indirect_ptr.gpu + 1u * grid_stride);
-@@ -2936,6 +2925,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2961,6 +2950,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                               struct kk_draw_data draw, enum mesa_prim prim)
  {
     struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
@@ -154,7 +154,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
     struct kk_graphics_state *gfx = &cmd->state.gfx;
     const struct poly_gs_info *gsi = &vs->info.vs.transform_feedback;
     bool indirect = kk_grid_is_indirect(draw.grid);
-@@ -2956,7 +2946,8 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2981,7 +2971,8 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
           .vp = gfx->per_draw_data.vertex_params,
           .p = gfx->per_draw_data.geometry_params,
           .heap = kk_heap(cmd),
@@ -164,7 +164,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
           .index_size_B = draw.index.el_size_B,
           .index_buffer_range_el =
              draw.index.el_size_B
-@@ -2971,7 +2962,11 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2996,7 +2987,11 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
     }
  
     mtl_compute_encoder *enc = cs_get_compute(cmd, true);
@@ -177,7 +177,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
     struct mtl_size vs_local_size = {64, 1, 1};
  
     mtl_barrier_after_encoder_stages(enc, MTL_STAGE_DISPATCH,
-@@ -3336,15 +3331,24 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3324,15 +3319,24 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
                                     data->prim))
           return;
  
@@ -205,7 +205,7 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
  
        const enum mesa_prim source_raster_prim =
           emulate_geometry ? vs->info.vs.geometry.mode
-@@ -3368,7 +3372,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3356,7 +3360,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
         * requested provoking vertex itself.  Keep its non-indexed vertex IDs
         * intact: they also address the generated XFB records. */
        if (rasterize && provoking_last && !emulate_line_raster &&
@@ -216,10 +216,10 @@ index c3fa39bbf5b046aded386419a949be64c8dede0c..639810e98eaa1f4239fbb644972ea255
              kk_rewrite_raster_provoking(cmd, draw_data, raster_prim);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a80569eca0 100644
+index aed781e4926b73c38e19e5b14146c5eaa4d7292e..70cf3eed0bb94b2b9d5d6dc2951516db7b075081 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -1238,6 +1238,7 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1218,6 +1218,7 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
           NIR_PASS(_, nir, poly_nir_lower_vs_before_gs);
           nir->info.stage = MESA_SHADER_COMPUTE;
           memset(&nir->info.cs, 0, sizeof(nir->info.cs));
@@ -227,7 +227,21 @@ index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a8
        }
     }
  
-@@ -2445,10 +2446,8 @@ kk_create_line_materialize_shader(const nir_shader *source)
+@@ -1484,12 +1485,7 @@ kk_polygon_area(nir_builder *b, nir_def *positions[3],
+       nir_fmul(b, nir_channel(b, a, 1), nir_channel(b, c, 0)));
+    /* Vulkan framebuffer Y points down. A negative viewport height reverses
+     * facingness. Perspective division is required before the area test. */
+-   nir_def *area = nir_fmul(b, nir_fneg(b, cross),
+-                            nir_channel(b, viewport_data, 1));
+-   nir_def *flags = kk_load_polygon_point_per_draw(
+-      b, offsetof(struct kk_per_draw_data, polygon_point_clip_flags), 32);
+-   return nir_bcsel(b, nir_ine_imm(b, nir_iand_imm(b, flags, 4), 0),
+-                     nir_fneg(b, area), area);
++   return nir_fmul(b, nir_fneg(b, cross), nir_channel(b, viewport_data, 1));
+ }
+ 
+ static nir_def *
+@@ -2415,10 +2411,8 @@ kk_create_line_materialize_shader(const nir_shader *source)
  {
     nir_shader *nir = nir_shader_clone(NULL, source);
     if (nir->info.stage == MESA_SHADER_TESS_EVAL) {
@@ -240,7 +254,7 @@ index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a8
        NIR_PASS(_, nir, poly_nir_lower_tes, true);
     }
  
-@@ -3301,6 +3300,82 @@ kk_lower_xfb_raster_flat_outputs(nir_shader *raster, const nir_shader *vs,
+@@ -3271,6 +3265,82 @@ kk_lower_xfb_raster_flat_outputs(nir_shader *raster, const nir_shader *vs,
                                nir_metadata_control_flow, &state);
  }
  
@@ -323,7 +337,7 @@ index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a8
  static nir_shader *
  kk_create_transform_feedback_passthrough(
     const nir_shader *vs, enum mesa_prim primitive,
-@@ -3355,6 +3430,13 @@ kk_create_transform_feedback_passthrough(
+@@ -3325,6 +3395,13 @@ kk_create_transform_feedback_passthrough(
            !gs_info->prefix_sum);
     ralloc_free(builder.shader);
  
@@ -337,7 +351,7 @@ index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a8
     *pre_gs_out = pre_gs;
     return raster;
  }
-@@ -4026,16 +4108,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -3987,16 +4064,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        if (info->nir->info.stage == MESA_SHADER_TESS_EVAL)
           tess_eval_shader = i;
  
@@ -360,7 +374,7 @@ index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a8
  
     const enum mesa_prim line_raster_prim =
        state ? kk_graphics_raster_primitive(shader_count, infos, state)
-@@ -4108,7 +4189,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4069,7 +4145,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
           ((polygon_point_emulation || line_raster_emulation) &&
            nir->info.stage == MESA_SHADER_VERTEX) ||
           (transform_feedback_emulation &&
@@ -370,7 +384,7 @@ index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a8
  
        /* With a geometry shader, fragment PrimitiveID is the value authored by
         * that shader, not Metal's rasterizer-generated primitive ID.  Expose it
-@@ -4290,16 +4372,16 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4251,16 +4328,16 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        geometry_pre_gs_shader = total_shaders;
        nir_shaders[total_shaders++] = pre_gs;
     } else if (transform_feedback_emulation) {
@@ -392,7 +406,7 @@ index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a8
           &transform_feedback_info);
        NIR_PASS(_, raster, kk_nir_lower_poly, pipeline_statistics);
  
-@@ -4312,6 +4394,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4273,6 +4350,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
           nir_shaders[total_shaders - 1u],
        };
        if (!line_raster_materialize) {
@@ -400,7 +414,7 @@ index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a8
           nir_opt_varyings_bulk(raster_stages, ARRAY_SIZE(raster_stages), true,
                                 UINT32_MAX, UINT32_MAX, nir_opts, NULL);
        }
-@@ -4319,6 +4402,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4280,6 +4358,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        if (line_raster_materialize) {
           line_source_clone = nir_shader_clone(NULL, raster);
           line_source = line_source_clone;
@@ -408,7 +422,7 @@ index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a8
           nir_shader *materialize =
              kk_create_line_materialize_shader(line_source);
           NIR_PASS(_, materialize, kk_nir_lower_poly, pipeline_statistics);
-@@ -4326,8 +4410,10 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4287,8 +4366,10 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                                          dev->disabled_workarounds);
           /* Unlike application GS/TES NIR, the synthetic XFB pass-through
            * has not passed through the driver's IO/descriptor lowering. */
@@ -421,7 +435,7 @@ index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a8
           line_raster_materialize_shader = total_shaders;
           nir_shaders[total_shaders++] = materialize;
        }
-@@ -4337,19 +4423,38 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4298,19 +4379,38 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        }
  
        msl_preprocess_nir_workarounds(pre_gs, dev->disabled_workarounds);
@@ -465,7 +479,7 @@ index 240dd8d2b94c632622f5cb439b20c18884ad0330..d3c16adb553610484c4c85c4bee054a8
        line_source = nir_shaders[tess_eval_shader];
        line_source_compile = &infos[tess_eval_shader];
        nir_shader *materialize =
-@@ -4450,7 +4555,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4411,7 +4511,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        force_sw_vs |= geometry_shader_emulation &&
                       (i == 0 ||
                        nir_shaders[i]->info.stage == MESA_SHADER_TESS_EVAL);

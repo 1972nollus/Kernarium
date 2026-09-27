@@ -100,7 +100,7 @@ index 72fdab49f59df4fe328e36154ff32f4ce3de99c3..9c5e85dddc44696e96d6cc022e5ca956
  
  static int vrend_decode_ctx_get_fencing_fd(UNUSED struct virgl_context *ctx)
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 72e6770fb617d963f0479f8117aae6a386555395..753e3e883d8882b214765c7aba8e0916e2ff3fa4 100644
+index 2ac1a1aa3bdd680995422b7538e7db02c7bee912..d252379d94de1a64ef78d54923222ea396f577b5 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -126,6 +126,9 @@ struct vrend_query {
@@ -113,7 +113,7 @@ index 72e6770fb617d963f0479f8117aae6a386555395..753e3e883d8882b214765c7aba8e0916
  };
  
  struct global_error_state {
-@@ -1137,6 +1140,19 @@ void vrend_report_context_error_internal(const char *fname, struct vrend_context
+@@ -1158,6 +1161,19 @@ void vrend_report_context_error_internal(const char *fname, struct vrend_context
                 value);
  }
  
@@ -133,7 +133,7 @@ index 72e6770fb617d963f0479f8117aae6a386555395..753e3e883d8882b214765c7aba8e0916
  #define CORE_PROFILE_WARN_NONE 0
  #define CORE_PROFILE_WARN_STIPPLE 1
  #define CORE_PROFILE_WARN_POLYGON_MODE 2
-@@ -11716,7 +11732,7 @@ static bool vrend_check_query(struct vrend_query *query)
+@@ -11728,7 +11744,7 @@ static bool vrend_check_query(struct vrend_query *query)
     /* We got a boolean, but the client wanted the actual number of samples
      * blow the number up so that the client doesn't think it was just one pixel
      * and discards an object that might be bigger */
@@ -142,7 +142,7 @@ index 72e6770fb617d963f0479f8117aae6a386555395..753e3e883d8882b214765c7aba8e0916
        vrend_update_oq_samples_multiplier(query->ctx);
        state.result *= query->ctx->sub->fake_occlusion_query_samples_passed_multiplier;
     }
-@@ -11787,6 +11803,14 @@ static void vrend_renderer_check_queries(void)
+@@ -11799,6 +11815,14 @@ static void vrend_renderer_check_queries(void)
        if (!vrend_hw_switch_context_with_sub(query->ctx, query->sub_ctx_id)) {
           virgl_warn("Failed to switch to context (%d) with sub (%d) for query %u\n",
                        query->ctx->ctx_id, query->sub_ctx_id, query->id);

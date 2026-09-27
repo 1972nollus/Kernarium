@@ -110,10 +110,10 @@ index ef37fc4ced61fbfc79bc84c0e7b5a79419c0ecd0..3a7408608df069d4761c4b999a6ad228
  ----------------
  | macOS version: 27.0
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index b1208f349badd7dbe793e7ca4fbcc4466a056eff..85eee5f44340a67377889a29fef14755d660cd58 100644
+index d77537c3ea6bf584640b043f0b0d553d144e35ad..a920e1d0375935d395c8a8e79c4ca0d5b6143520 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
-@@ -258,6 +258,37 @@ msl_coherent_workaround(const struct nir_to_msl_ctx *ctx,
+@@ -278,6 +278,37 @@ msl_coherent_workaround(const struct nir_to_msl_ctx *ctx,
     return msl_instr_in_loop(instr);
  }
  
@@ -151,7 +151,7 @@ index b1208f349badd7dbe793e7ca4fbcc4466a056eff..85eee5f44340a67377889a29fef14755
  /* KK_WORKAROUND_17 */
  static bool
  msl_coherent_scalar_is_atomic(const char *scalar_type)
-@@ -1777,16 +1808,14 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1797,16 +1828,14 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
        ctx->indentlevel--;
        break;
     case nir_intrinsic_terminate:

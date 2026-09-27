@@ -26,11 +26,21 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
-import hashlib
 import re
 import shlex
 from typing import Any, Callable
 from xml.etree import ElementTree
+
+# The OpenGL plan owns the helpers both plans share, and the runner source
+# both are derived from.
+from opengl_cts_plan import (
+    RUNNER_SOURCE,
+    PlanError,
+    file_identity,
+    require,
+    uses_fbo_surface,
+    validate_egl_configs,
+)
 
 
 ROOT = "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass"
@@ -73,29 +83,7 @@ ES3_BIT = "EGL_OPENGL_ES3_BIT_KHR"
 ATTRIBUTE_KEYS = {"id", "red", "green", "blue", "alpha", "depth", "stencil",
                   "samples", "renderable", "conformant", "surface_types"}
 SCHEMA = 1
-RUNNER_SOURCE = {
-    "path": "external/openglcts/modules/runner/glcTestRunner.cpp",
-    "size": 33982,
-    "sha256": "85b56c755c4e615ed8bf8b9fd6ee43abf3dc03a879352a68a83c08b13f950426",
-}
 LEAF_KEYS = {"id", "path", "size", "case_count", "sha256"}
-
-
-class PlanError(ValueError):
-    """An XML, identity, or runtime configuration does not match the contract."""
-
-
-def require(condition: bool, message: str) -> None:
-    if not condition:
-        raise PlanError(message)
-
-
-def digest(payload: bytes) -> str:
-    return hashlib.sha256(payload).hexdigest()
-
-
-def file_identity(path: str, payload: bytes) -> dict[str, Any]:
-    return {"path": path, "size": len(payload), "sha256": digest(payload)}
 
 
 def command_values(arguments: list[str], predicate: str) -> dict[str, Any]:
@@ -211,16 +199,6 @@ def aosp_config_list(attributes: Any) -> list[dict[str, Any]]:
                                           "depth", "stencil", "samples"))})
     require(bool(result), "no EGL configuration renders and conforms to ES 3")
     return result
-
-
-def uses_fbo_surface(configuration: dict[str, Any]) -> bool:
-    """Whether a run record draws into the framework-owned framebuffer object.
-
-    appendConfigArgs adds ``--deqp-surface-type=fbo`` only where the generated
-    RunParams table carries an fboConfig, which it does for the records whose
-    command line already names that surface.
-    """
-    return "--deqp-surface-type=fbo" in configuration["xml_arguments"]
 
 
 def selected(version: str, predicate: str) -> bool:
@@ -397,20 +375,7 @@ def expand_runs(manifest: dict[str, Any], configs: list[dict[str, Any]],
     (TCU_FAIL) and the EGL record is simply omitted.
     """
     validate_manifest(manifest)
-    require(isinstance(configs, list) and bool(configs),
-            "OpenGL ES run plan has no EGL configurations")
-    seen = set()
-    for config in configs:
-        require(isinstance(config, dict) and set(config) == {"id", "surface_types"},
-                "invalid OpenGL ES EGL configuration")
-        require(type(config["id"]) is int and config["id"] > 0 and config["id"] not in seen,
-                "duplicate or invalid OpenGL ES EGL config ID")
-        seen.add(config["id"])
-        surfaces = config["surface_types"]
-        require(isinstance(surfaces, list) and bool(surfaces)
-                and all(value in {"window", "pbuffer", "pixmap"} for value in surfaces)
-                and len(surfaces) == len(set(surfaces)),
-                "invalid OpenGL ES EGL surface list")
+    validate_egl_configs(configs, "OpenGL ES")
     runs: list[dict[str, Any]] = []
 
     def append(configuration: dict[str, Any], config_index: int) -> None:

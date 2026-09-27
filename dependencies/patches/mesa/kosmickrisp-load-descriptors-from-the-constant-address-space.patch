@@ -24,10 +24,10 @@ device, where the constant space is not addressable.
  1 file changed, 8 insertions(+), 2 deletions(-)
 
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 85eee5f44340a67377889a29fef14755d660cd58..0c9b4d05af51e0c11458b8fa45fd814c248b6263 100644
+index a920e1d0375935d395c8a8e79c4ca0d5b6143520..943bdf2d4d8aeb9f4f4d7d60745a111fe03dc1dd 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
-@@ -1676,12 +1676,18 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1696,12 +1696,18 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
     case nir_intrinsic_load_global_constant_offset: {
        enum gl_access_qualifier access = nir_intrinsic_access(instr);
        const char *type = msl_type_for_def(ctx->types, &instr->def);

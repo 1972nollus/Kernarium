@@ -30,8 +30,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/gallium/drivers/zink/zink_device_info.py  |  5 ++
  .../drivers/zink/zink_interop_public.h        | 38 +++++++++++
- src/gallium/drivers/zink/zink_resource.c      | 64 +++++++++++++++++++
- 3 files changed, 107 insertions(+)
+ src/gallium/drivers/zink/zink_resource.c      | 65 +++++++++++++++++++
+ 3 files changed, 108 insertions(+)
  create mode 100644 src/gallium/drivers/zink/zink_interop_public.h
 
 diff --git a/src/gallium/drivers/zink/zink_device_info.py b/src/gallium/drivers/zink/zink_device_info.py
@@ -102,7 +102,7 @@ index 0000000000000000000000000000000000000000..6eb378dd54a748d0a773b193641072ec
 +
 +#endif
 diff --git a/src/gallium/drivers/zink/zink_resource.c b/src/gallium/drivers/zink/zink_resource.c
-index 296683f6ad06e6858e55d8781dd9233a1f804262..b0357982009a320b1ad1ae2463d69b8dbfe599da 100644
+index 296683f6ad06e6858e55d8781dd9233a1f804262..be721a447f1dc51e025f13306a5ef455276f6b18 100644
 --- a/src/gallium/drivers/zink/zink_resource.c
 +++ b/src/gallium/drivers/zink/zink_resource.c
 @@ -32,6 +32,7 @@
@@ -133,7 +133,7 @@ index 296683f6ad06e6858e55d8781dd9233a1f804262..b0357982009a320b1ad1ae2463d69b8d
     VkResult result = VKSCR(CreateImage)(screen->dev, &ici, NULL, &obj->image);
     if (result != VK_SUCCESS) {
        mesa_loge("ZINK: vkCreateImage failed (%s)", vk_Result_to_str(result));
-@@ -3676,6 +3690,52 @@ static const struct u_transfer_vtbl transfer_vtbl = {
+@@ -3676,6 +3690,53 @@ static const struct u_transfer_vtbl transfer_vtbl = {
     .get_stencil           = zink_resource_get_separate_stencil,
  };
  
@@ -157,8 +157,9 @@ index 296683f6ad06e6858e55d8781dd9233a1f804262..b0357982009a320b1ad1ae2463d69b8d
 +   struct zink_resource *res = zink_resource(pres);
 +   struct zink_interop_metal_texture *info = data;
 +
-+   if (!info || in_data_size < sizeof(*info) ||
-+       pres->target == PIPE_BUFFER || res->obj->is_buffer ||
++   /* A display target has no image until it acquires one, and an auxiliary
++    * plane never has its own. */
++   if (!info || in_data_size < sizeof(*info) || pres->target == PIPE_BUFFER ||
 +       !res->obj->image || util_format_get_num_planes(pres->format) != 1)
 +      return 0;
 +
@@ -186,7 +187,7 @@ index 296683f6ad06e6858e55d8781dd9233a1f804262..b0357982009a320b1ad1ae2463d69b8d
  bool
  zink_screen_resource_init(struct pipe_screen *pscreen)
  {
-@@ -3697,6 +3757,10 @@ zink_screen_resource_init(struct pipe_screen *pscreen)
+@@ -3697,6 +3758,10 @@ zink_screen_resource_init(struct pipe_screen *pscreen)
     if (screen->info.have_EXT_external_memory_host) {
        pscreen->resource_from_user_memory = zink_resource_from_user_memory;
     }

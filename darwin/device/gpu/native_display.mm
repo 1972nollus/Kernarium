@@ -2,19 +2,16 @@
 
 #include "native_display.hpp"
 
-#include "display_geometry.hpp"
-#include "display_resize_notifier.hpp"
-#include "metal_presentation.hpp"
+#include "native_display_state.hpp"
 #include "native_display_application.hpp"
+#include "platform/guest_timer_mask.hpp"
 
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 
-#include <algorithm>
 #include <array>
 #include <atomic>
-#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <memory>
@@ -80,16 +77,6 @@ std::optional<std::uint16_t> linuxKeyCode(unsigned short keyCode) noexcept
         if (native == keyCode)
             return linux;
     return std::nullopt;
-}
-
-std::optional<std::uint32_t> displayDimension(
-    CGFloat dimension,
-    std::uint32_t maximum) noexcept
-{
-    if (!std::isfinite(dimension) || dimension < 1.0)
-        return std::nullopt;
-    return static_cast<std::uint32_t>(std::min<CGFloat>(
-        std::floor(dimension), maximum));
 }
 
 // Device-dependent modifier bits from IOKit's IOLLEvent.h. NSEvent carries
@@ -223,45 +210,25 @@ private:
     id ended_ = nil;
 };
 
-class ScopedSignalMask final {
-public:
-    ScopedSignalMask()
-    {
-        sigset_t blocked;
-        sigemptyset(&blocked);
-        sigaddset(&blocked, SIGALRM);
-        const int error = ::pthread_sigmask(SIG_BLOCK, &blocked, &previous_);
-        if (error != 0) {
-            throw std::system_error(
-                error,
-                std::generic_category(),
-                "blocking the UML timer on the AppKit thread");
-        }
-        active_ = true;
+/* The mask the calling thread has now, which the guest's own thread keeps
+ * while the AppKit thread blocks the guest timer. */
+sigset_t currentSignalMask()
+{
+    sigset_t mask;
+    const int error = ::pthread_sigmask(SIG_SETMASK, nullptr, &mask);
+    if (error != 0) {
+        throw std::system_error(
+            error,
+            std::generic_category(),
+            "reading the AppKit thread's signal mask");
     }
-
-    ScopedSignalMask(const ScopedSignalMask&) = delete;
-    ScopedSignalMask& operator=(const ScopedSignalMask&) = delete;
-
-    ~ScopedSignalMask()
-    {
-        if (active_)
-            (void)::pthread_sigmask(SIG_SETMASK, &previous_, nullptr);
-    }
-
-    [[nodiscard]] const sigset_t& previous() const noexcept
-    {
-        return previous_;
-    }
-
-private:
-    sigset_t previous_ {};
-    bool active_ {};
-};
+    return mask;
+}
 
 } // namespace
 
 struct NativeDisplayState final :
+    public NativeDisplayStateCore,
     public std::enable_shared_from_this<NativeDisplayState> {
     NativeDisplayState(
         std::uint32_t width,
@@ -270,18 +237,8 @@ struct NativeDisplayState final :
         native_input::PointerMode mode,
         std::uint32_t maximumDimension,
         bool autoResizeGuest)
-        : presentation(
-              DisplayResizeNotifier::clampDimension(
-                  width, maximumDimension),
-              DisplayResizeNotifier::clampDimension(
-                  height, maximumDimension))
-        , resizeNotifier(width, height, maximumDimension)
-        , geometryPolicy(
-              DisplayResizeNotifier::clampDimension(
-                  width, maximumDimension),
-              DisplayResizeNotifier::clampDimension(
-                  height, maximumDimension),
-              autoResizeGuest)
+        : NativeDisplayStateCore(
+              width, height, maximumDimension, autoResizeGuest)
         , inputSink(std::move(sink))
         , pointerMode(mode)
     {
@@ -292,11 +249,10 @@ struct NativeDisplayState final :
     void beginResize() noexcept;
     void commitResize(NSSize size) noexcept;
     void cancelResize() noexcept;
-    [[nodiscard]] bool drainResizeEvent();
     [[nodiscard]] bool guestScanoutChanged(
         std::uint32_t width,
-        std::uint32_t height) noexcept;
-    void resetGuestSession() noexcept;
+        std::uint32_t height) noexcept override;
+    void resetGuestSession() noexcept override;
     void scheduleGuestWindowResize(DisplaySize size) noexcept;
     void applyPendingGuestWindowResize() noexcept;
     void rotatePresentation(int quarterTurns) noexcept;
@@ -324,11 +280,8 @@ struct NativeDisplayState final :
         double verticalWheel) noexcept;
     void reportInputFailure() noexcept;
     void reportRenderFailure(const char* message) noexcept;
-    void shutdown() noexcept;
+    void shutdown() noexcept override;
 
-    MetalPresentation presentation;
-    DisplayResizeNotifier resizeNotifier;
-    DisplayGeometryPolicy geometryPolicy;
     native_input::VncInputSink inputSink;
     __weak MTKView* view {};
     NSWindow* window {};
@@ -337,10 +290,7 @@ struct NativeDisplayState final :
     std::atomic_bool redrawScheduled {};
     std::atomic_bool inputFailureReported {};
     std::atomic_bool renderFailureReported {};
-    std::atomic_bool resizeInProgress {};
-    std::atomic_bool resizeCommitPending {};
     std::atomic_uint64_t resizeGeneration {};
-    std::mutex resizeLifecycleMutex;
     std::uint32_t resizeTransitionDepth {};
     std::optional<DisplaySize> pendingGuestWindowSize;
     native_input::PointerMode pointerMode;
@@ -799,18 +749,6 @@ void NativeDisplayState::commitResize(NSSize size) noexcept
 void NativeDisplayState::cancelResize() noexcept
 {
     resizeGeneration.fetch_add(1, std::memory_order_acq_rel);
-}
-
-bool NativeDisplayState::drainResizeEvent()
-{
-    std::lock_guard lock(resizeLifecycleMutex);
-    const auto size = resizeNotifier.drain();
-    if (resizeInProgress.load(std::memory_order_acquire))
-        return false;
-    const bool changed = geometryPolicy.hostSizeSettled(
-        size.width, size.height);
-    resizeCommitPending.store(false, std::memory_order_release);
-    return changed;
 }
 
 bool NativeDisplayState::guestScanoutChanged(
@@ -1321,150 +1259,16 @@ NativeDisplay::NativeDisplay(
     native_input::PointerMode pointerMode,
     std::uint32_t maximumDimension,
     bool autoResizeGuest)
-    : state_(std::make_shared<NativeDisplayState>(
-          width,
-          height,
-          std::move(inputSink),
-          pointerMode,
-          maximumDimension,
-          autoResizeGuest))
 {
-    state_->scheduleWindow();
-}
-
-NativeDisplay::~NativeDisplay()
-{
-    state_->shutdown();
-}
-
-std::uint32_t NativeDisplay::width() const noexcept
-{
-    return state_->geometryPolicy.advertisedSize().width;
-}
-
-std::uint32_t NativeDisplay::height() const noexcept
-{
-    return state_->geometryPolicy.advertisedSize().height;
-}
-
-int NativeDisplay::resizeEventDescriptor() const noexcept
-{
-    return state_->resizeNotifier.descriptor();
-}
-
-bool NativeDisplay::drainResizeEvent()
-{
-    return state_->drainResizeEvent();
-}
-
-bool NativeDisplay::guestScanoutChanged(
-    std::uint32_t width,
-    std::uint32_t height) noexcept
-{
-    return state_->guestScanoutChanged(width, height);
-}
-
-void NativeDisplay::resetGuestSession() noexcept
-{
-    state_->resetGuestSession();
-}
-
-bool NativeDisplay::claimResizeNotification() noexcept
-{
-    state_->resizeLifecycleMutex.lock();
-    if (state_->resizeInProgress.load(std::memory_order_acquire) ||
-        state_->resizeCommitPending.load(std::memory_order_acquire) ||
-        !state_->geometryPolicy.autoResizeGuestEnabled()) {
-        state_->resizeLifecycleMutex.unlock();
-        return false;
-    }
-    return true;
-}
-
-void NativeDisplay::releaseResizeNotification() noexcept
-{
-    state_->resizeLifecycleMutex.unlock();
-}
-
-void NativeDisplay::clear() noexcept
-{
-    state_->presentation.framebuffer().clear();
-    state_->presentation.publishCpuFrame();
-}
-
-void NativeDisplay::update(
-    const std::vector<std::uint8_t>& source,
-    std::uint32_t sourceWidth,
-    std::uint32_t sourceHeight,
-    protocol::GpuFormat sourceFormat,
-    std::uint32_t x,
-    std::uint32_t y,
-    std::uint32_t width,
-    std::uint32_t height)
-{
-    update(
-        std::span<const std::uint8_t>(source),
-        sourceWidth,
-        sourceHeight,
-        static_cast<std::size_t>(sourceWidth) * protocol::gpuBytesPerPixel,
-        sourceFormat,
-        x,
-        y,
-        x,
-        y,
+    auto state = std::make_shared<NativeDisplayState>(
         width,
-        height);
-}
-
-void NativeDisplay::update(
-    std::span<const std::uint8_t> source,
-    std::uint32_t sourceWidth,
-    std::uint32_t sourceHeight,
-    std::size_t sourceRowBytes,
-    protocol::GpuFormat sourceFormat,
-    std::uint32_t sourceX,
-    std::uint32_t sourceY,
-    std::uint32_t destinationX,
-    std::uint32_t destinationY,
-    std::uint32_t width,
-    std::uint32_t height)
-{
-    const auto rectangle = state_->presentation.framebuffer().update(
-        source,
-        sourceWidth,
-        sourceHeight,
-        sourceRowBytes,
-        sourceFormat,
-        sourceX,
-        sourceY,
-        destinationX,
-        destinationY,
-        width,
-        height);
-    if (rectangle.width != 0 && rectangle.height != 0)
-        state_->presentation.publishCpuFrame();
-}
-
-void NativeDisplay::fillSelfTestPattern()
-{
-    state_->presentation.framebuffer().fillSelfTestPattern();
-    state_->presentation.publishCpuFrame();
-}
-
-PresentOutcome NativeDisplay::presentMetal(
-    const MetalScanout& scanout) noexcept
-{
-    return state_->presentation.present(scanout);
-}
-
-DisplayStatistics NativeDisplay::statistics() const noexcept
-{
-    return state_->presentation.statistics();
-}
-
-void NativeDisplay::recordCpuFallbackFrame() noexcept
-{
-    state_->presentation.recordCpuFallbackFrame();
+        height,
+        std::move(inputSink),
+        pointerMode,
+        maximumDimension,
+        autoResizeGuest);
+    state->scheduleWindow();
+    state_ = std::move(state);
 }
 
 int runNativeDisplayApplication(
@@ -1476,7 +1280,9 @@ int runNativeDisplayApplication(
     if (::pthread_main_np() == 0)
         throw std::logic_error("AppKit must run on the process main thread");
 
-    ScopedSignalMask mainThreadSignalMask;
+    const sigset_t workerMask = currentSignalMask();
+    const uml::platform::ScopedGuestTimerBlock mainThreadTimerBlock(
+        "blocking the UML timer on the AppKit thread");
     NSApplication* application = NSApplication.sharedApplication;
     [application setActivationPolicy:NSApplicationActivationPolicyRegular];
 
@@ -1484,7 +1290,6 @@ int runNativeDisplayApplication(
     int result = 1;
     std::exception_ptr failure;
     MenuTrackingRelease menuTracking;
-    const sigset_t workerMask = mainThreadSignalMask.previous();
     std::thread worker([&] {
         (void)::pthread_sigmask(SIG_SETMASK, &workerMask, nullptr);
         try {

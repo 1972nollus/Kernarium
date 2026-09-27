@@ -177,7 +177,7 @@ index 6e6db1a949cfd4ceb75eff44e3a98b2ed6fb1dd1..828830d07b8254d3a83de820b240b5c8
        *stride = *alignment = sizeof(struct kk_storage_image_descriptor);
        break;
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-index 88a8176ad329368ad32ae349de3d35f253005854..9c2620f7d323207cccf4b2abf72ab22326a9166c 100644
+index 0dee65bc71a37905d5fb2baadf89380533066fe4..c0f74932a0392030c5e16a324068b7ebd7f31edf 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
 @@ -74,6 +74,15 @@ struct kk_storage_image_descriptor {
