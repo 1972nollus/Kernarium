@@ -975,7 +975,7 @@ index 0000000000000000000000000000000000000000..9b21bfd9fdc6a6a11859d163b4e37e8a
 +   return mask;
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 194a533b4907af019b1e4641736c5a923d9719b4..8452c599c1b40fcf4d4895506c9b333b7a5c4f41 100644
+index 7921bb848dff728ab06adc2af69b9eea17cfc33a..040e915000b63ee3a2d912585be5738581bef53d 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -15,6 +15,7 @@
@@ -1838,12 +1838,8 @@ index 194a533b4907af019b1e4641736c5a923d9719b4..8452c599c1b40fcf4d4895506c9b333b
 +      b, nir_u2u64(b, viewport),
 +      sizeof(((struct kk_per_draw_data *)0)->line_raster_viewports[0])));
 +   return nir_load_global_constant(b, 2, 32, address, .align_mul = 4);
- }
- 
--/* Build one linear GPU scan per strip instance.  The final raster vertex
-- * shader then performs an O(1) phase lookup for every emitted line vertex,
-- * avoiding the quadratic prefix rescan that is especially costly on long
-- * CAD-style line strips. */
++}
++
 +static void
 +kk_raster_source_vertices(nir_builder *b, const nir_shader *source,
 +                           nir_def *vertex_params, nir_def *topology,
@@ -1942,8 +1938,12 @@ index 194a533b4907af019b1e4641736c5a923d9719b4..8452c599c1b40fcf4d4895506c9b333b
 +   nir_def *floor = nir_ffloor(b, coordinate);
 +   /* The diamond-exit endpoint perturbation is negative in both axes. */
 +   return nir_isub(b, nir_f2i32(b, floor), nir_b2i32(b, nir_feq(b, coordinate, floor)));
-+}
-+
+ }
+ 
+-/* Build one linear GPU scan per strip instance.  The final raster vertex
+- * shader then performs an O(1) phase lookup for every emitted line vertex,
+- * avoiding the quadratic prefix rescan that is especially costly on long
+- * CAD-style line strips. */
 +/* Return the unique candidate in a major-axis column/row. At an exact minor
 + * boundary, apply the symbolic (-epsilon, -epsilon^2) perturbation rather
 + * than choosing an epsilon which loses precision for large viewports. */

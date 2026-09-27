@@ -1126,7 +1126,7 @@ index 3dfa8f1bc15b82e12a99a7dcfa452fff15440041..c89dc217e8d05102b3259d239d6988f6
        .dst_stride = dstRange->stride,
        .first_query = firstQuery,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 5850aa2c239b7faeebe966a2522df2731ebcbf0f..aec29e930c578421a09934dd1c68fc2121218efc 100644
+index 78bae5558fa4357353018d17ba70b4465645ad95..75299386c5e2f82f26d39d8f6abeaffe029d5b5b 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -34,6 +34,8 @@

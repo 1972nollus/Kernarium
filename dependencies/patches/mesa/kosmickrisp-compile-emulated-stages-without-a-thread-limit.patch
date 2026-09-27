@@ -138,7 +138,7 @@ index 92c532e4137a6ee7e8e71881d4745b34252fb0e4..87e93c0a930beb883b7f3ddbd05d3b9c
        NSError *error;
        id<MTLComputePipelineState> pipeline = [comp newComputePipelineStateWithDescriptor:desc compilerTaskOptions:nil
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index dd49c8b8f31f7186937bded13bd08ed315a1b4ec..f568e6513537d830b7c4567911b1a57c5d47c99e 100644
+index 7809f7a2b7e005f7888f29853b6a7b49947b9ef3..756c8ef7a6eda147260095126c37333e6e419d0e 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -3462,10 +3462,32 @@ get_empty_nir(struct kk_device *dev, mesa_shader_stage stage,

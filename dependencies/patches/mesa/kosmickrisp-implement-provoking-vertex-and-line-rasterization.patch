@@ -1962,7 +1962,7 @@ index 7e4a984f44ce2e8bc82a921d86b58cdaed039232..c568b0d18315b968d1651e1b3b9eee26
        .shaderReplicatedComposites = true,
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index f1e043a2c6f3857542f822d1f9defcf0dcb49a76..bf578d478dd639d99c5f82fde57109ac4c7c5659 100644
+index 098851ad6006b139ef206974a1c336333b9f40e7..0dbfa12aff724ca2d618220b556e0cca7da386e1 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -14,6 +14,7 @@
@@ -3934,7 +3934,7 @@ index f1e043a2c6f3857542f822d1f9defcf0dcb49a76..bf578d478dd639d99c5f82fde57109ac
  static VkResult
  kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
                     struct vk_shader_compile_info *infos,
-@@ -2799,8 +4071,10 @@ kk_linked_graphics_pipeline_key(
+@@ -2843,8 +4115,10 @@ kk_linked_graphics_pipeline_key(
                         sizeof(state->pipeline_flags));
  
     if (state->ia != NULL) {
@@ -3947,7 +3947,7 @@ index f1e043a2c6f3857542f822d1f9defcf0dcb49a76..bf578d478dd639d99c5f82fde57109ac
     }
     if (state->cal != NULL)
        _mesa_blake3_update(&hash, state->cal, sizeof(*state->cal));
-@@ -2994,12 +4268,26 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
+@@ -3013,12 +4287,26 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
        if (shader->info.vs.transform_feedback_emulation)
           kk_msl_data_serialize(&shader->transform_feedback_pre_gs_msl, blob);
  
@@ -3975,7 +3975,7 @@ index f1e043a2c6f3857542f822d1f9defcf0dcb49a76..bf578d478dd639d99c5f82fde57109ac
     }
  
     return !blob->out_of_memory;
-@@ -3036,18 +4324,26 @@ kk_msl_deserialize(struct blob_reader *blob, mesa_shader_stage stage,
+@@ -3055,18 +4343,26 @@ kk_msl_deserialize(struct blob_reader *blob, mesa_shader_stage stage,
  }
  
  static VkResult
@@ -4005,7 +4005,7 @@ index f1e043a2c6f3857542f822d1f9defcf0dcb49a76..bf578d478dd639d99c5f82fde57109ac
     struct kk_shader *shader = vk_shader_zalloc(
        &dev->vk, &kk_shader_ops, info.stage, pAllocator, sizeof(*shader));
     if (shader == NULL)
-@@ -3100,12 +4396,27 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -3119,12 +4415,27 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
              goto fail;
        }
  
@@ -4034,7 +4034,7 @@ index f1e043a2c6f3857542f822d1f9defcf0dcb49a76..bf578d478dd639d99c5f82fde57109ac
              result =
                 kk_msl_data_deserialize(blob, &shader->geometry_count_msl);
              if (result != VK_SUCCESS)
-@@ -3116,6 +4427,22 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -3135,6 +4446,22 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
           if (result != VK_SUCCESS)
              goto fail;
        }
@@ -4057,7 +4057,7 @@ index f1e043a2c6f3857542f822d1f9defcf0dcb49a76..bf578d478dd639d99c5f82fde57109ac
     }
  
     if (info.stage == MESA_SHADER_COMPUTE) {
-@@ -3141,6 +4468,16 @@ fail:
+@@ -3160,6 +4487,16 @@ fail:
     return vk_error(dev, result);
  }
  
@@ -4074,7 +4074,7 @@ index f1e043a2c6f3857542f822d1f9defcf0dcb49a76..bf578d478dd639d99c5f82fde57109ac
  void
  kk_cmd_bind_compute_shader(struct kk_cmd_buffer *cmd, struct kk_shader *shader)
  {
-@@ -3148,7 +4485,7 @@ kk_cmd_bind_compute_shader(struct kk_cmd_buffer *cmd, struct kk_shader *shader)
+@@ -3167,7 +4504,7 @@ kk_cmd_bind_compute_shader(struct kk_cmd_buffer *cmd, struct kk_shader *shader)
  }
  
  static void
@@ -4083,7 +4083,7 @@ index f1e043a2c6f3857542f822d1f9defcf0dcb49a76..bf578d478dd639d99c5f82fde57109ac
                              const mesa_shader_stage stage,
                              struct kk_shader *shader)
  {
-@@ -3177,6 +4514,38 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
+@@ -3196,6 +4533,38 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
     cmd->state.gfx.pipeline_sample_count = shader->info.vs.sample_count;
  }
  

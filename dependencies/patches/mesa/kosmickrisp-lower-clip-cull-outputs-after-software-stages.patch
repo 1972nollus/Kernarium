@@ -24,7 +24,7 @@ Lower the final Metal vertex/fragment interface only after software-stage conver
  create mode 100644 src/kosmickrisp/vulkan/tests/xfb_builtin_shaders/generate.sh
 
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index aec29e930c578421a09934dd1c68fc2121218efc..194a533b4907af019b1e4641736c5a923d9719b4 100644
+index 75299386c5e2f82f26d39d8f6abeaffe029d5b5b..7921bb848dff728ab06adc2af69b9eea17cfc33a 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -1169,10 +1169,6 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,

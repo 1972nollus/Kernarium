@@ -162,7 +162,7 @@ index 803ee64b6e6203315855cf4085832738b18553af..a983cade8d4598b19e33fcfd514040df
  bool msl_ensure_vertex_position_output(nir_shader *nir);
  bool msl_ensure_vertex_point_size_output(nir_shader *nir);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index ae00bf263a7359d8e608dee2b34f0e4b0f8d477f..dd49c8b8f31f7186937bded13bd08ed315a1b4ec 100644
+index b13ac2393381a6bcccd763d0985e7f6c3d12963e..7809f7a2b7e005f7888f29853b6a7b49947b9ef3 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -545,6 +545,30 @@ kk_get_logical_color_att_index(const struct vk_graphics_pipeline_state *state,
