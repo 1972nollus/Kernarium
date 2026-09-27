@@ -12,7 +12,7 @@ import UIKit
 /// bytes a serial terminal sends. Input is captured through the controller's
 /// sink, so no guest runtime is involved. The tests run one at a time:
 /// keyboard notifications reach every console, including one another test
-/// has on screen.
+/// has on screen, and keyboard focus is one per application.
 @MainActor
 @Suite(.serialized)
 struct SerialConsoleTests {

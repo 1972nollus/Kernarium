@@ -5,7 +5,9 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var serialConsole = SerialConsoleController()
     @State private var guestViewMode = GuestViewMode.defaultMode
-    @State private var keyboardVisible = false
+    /// Whether the framebuffer holds the keyboard. Only the framebuffer
+    /// mode sets it; the serial console's keyboard is its terminal's focus.
+    @State private var framebufferKeyboardVisible = false
     @State private var specialKeysExpanded = false
     @State private var presentedSheet: PresentedSheet?
     @Namespace private var floatingButtonNamespace
@@ -14,7 +16,7 @@ struct ContentView: View {
         ZStack(alignment: .trailing) {
             ZStack {
                 GuestDisplayView(
-                    keyboardVisible: $keyboardVisible,
+                    keyboardVisible: $framebufferKeyboardVisible,
                     retinaMode: EmulatorLauncher.shared.retinaMode
                 ) { view, geometry in
                     EmulatorLauncher.shared.start(view: view, geometry: geometry)
@@ -86,6 +88,14 @@ struct ContentView: View {
             identifier: "settingsButton"
         ) {
             presentedSheet = .settings
+        }
+    }
+
+    /// Whether the view on screen holds the keyboard.
+    private var keyboardVisible: Bool {
+        switch guestViewMode {
+        case .framebuffer: framebufferKeyboardVisible
+        case .serialConsole: serialConsole.isFocused
         }
     }
 
@@ -162,14 +172,27 @@ struct ContentView: View {
             .contentShape(Circle())
     }
 
+    /// Raises or puts away the keyboard of the view on screen, so typed
+    /// text reaches what the user is looking at.
     private func toggleKeyboard() {
-        keyboardVisible.toggle()
+        switch guestViewMode {
+        case .framebuffer:
+            framebufferKeyboardVisible.toggle()
+        case .serialConsole:
+            if serialConsole.isFocused {
+                serialConsole.resignFirstResponder()
+            } else {
+                serialConsole.becomeFirstResponder()
+            }
+        }
     }
 
+    /// A mode switch puts the keyboard away: the view that held it is
+    /// hidden, and no hidden view keeps keyboard focus.
     private func toggleGuestViewMode() {
         switch guestViewMode {
         case .framebuffer:
-            keyboardVisible = false
+            framebufferKeyboardVisible = false
             guestViewMode = .serialConsole
         case .serialConsole:
             serialConsole.resignFirstResponder()
