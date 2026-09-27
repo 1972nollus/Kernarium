@@ -6,6 +6,7 @@
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/detail/fp_state_access.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
+#include "cpu/arm64/detail/read_check_write.hpp"
 #include "cpu/arm64/id_registers.hpp"
 
 #include <algorithm>
@@ -298,14 +299,7 @@ void JitCompiler::select_consecutive_vector_lists(
     if (native_scalar_lse)
       return false;
     const bool read_check_write =
-        (instruction & 0xbf20'fc00U) == 0x1920'0800U ||
-        ((instruction & 0xbf20'8c00U) == 0x3820'8000U &&
-         ((instruction >> 12) & 7U) >= 1U &&
-         ((instruction >> 12) & 7U) <= 3U) ||
-        (instruction & 0xbf20'fc00U) == 0x1920'0c00U ||
-        ((instruction & 0xbf20'8c00U) == 0x1920'8000U &&
-         (((instruction >> 12) & 7U) != 0U ||
-          (instruction & 0x4000'0000U) != 0U));
+        detail::decode_read_check_write(instruction).recognized;
     const bool pair_atomic =
         (instruction & 0xbf20'0c00U) == 0x1920'0000U;
     const bool scalar_atomic =
