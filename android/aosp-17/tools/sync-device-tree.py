@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Synchronize a checked Kernarium device tree into an AOSP or OrangeFox workspace."""
 
 from __future__ import annotations
