@@ -28,7 +28,7 @@ Bridge ABI 9.
  7 files changed, 34 insertions(+), 7 deletions(-)
 
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index b54cab5d1499bc56128a0186d6f64ee33c995fc6..da7f6996f5698ea02488186bb5232b647b744c9b 100644
+index 68afa1e2dc55b61a7c99d5c8cc64ad0f006f8801..f964ac7633b3d76bd15e166dcb2256d64beb4d4c 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
 @@ -190,6 +190,9 @@ extern void check_host_supports_tls(int *supports_tls, int *tls_min);
@@ -39,8 +39,8 @@ index b54cab5d1499bc56128a0186d6f64ee33c995fc6..da7f6996f5698ea02488186bb5232b64
 +extern const char *os_guest_cpu_model_name(void);
 +#endif
  
- /* mem.c */
- extern int create_mem_file(unsigned long long len);
+ #ifdef UML_HOST_DARWIN
+ /* drivers/rtc_user.c */
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
 index 9a865342cef8e0cd3d84fb63c31672ff9f2c924c..a9e6e103038680f439da26dc4d012d0d1e3f9395 100644
 --- a/arch/um/kernel/um_arch.c

@@ -193,7 +193,10 @@ starts a second run in the same process.
 Darwin owns one persistent pthread per configured vCPU, including vCPU0.
 Linux task contexts remain on guest kernel stacks and migrate between carriers;
 guest task creation does not create host threads. CPU hotplug reuses carriers,
-and shutdown returns to a native carrier stack before thread teardown.
+and shutdown returns to a native carrier stack before thread teardown. An
+embedded run returns to the loader, which unmaps the image, only after the
+kernel has joined every carrier and stopped its RTC alarm helper; a stop also
+retires carriers parked before CPU bring-up or after hotplug.
 
 A host can call `exit()` while carriers still run, as an iOS application and
 an XCTest host do. The arm64 gadget contract indexes, the shared-backing
