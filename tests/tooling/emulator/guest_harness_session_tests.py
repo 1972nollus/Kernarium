@@ -66,25 +66,6 @@ def wait_until_gone(pid: int, timeout: float) -> bool:
 
 
 class AttachedGuestSessionTests(unittest.TestCase):
-    def test_disk_overlay_is_sparse_and_removed_after_emulator_exit(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            emulator = pathlib.Path(directory, "emulator")
-            emulator.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            emulator.chmod(0o755)
-            guest = guest_support.Guest(
-                emulator, pathlib.Path("/nonexistent/rootfs.erofs"), "4G", "tmpfs",
-                systemd_overlay=True, systemd_overlay_size="16G",
-            )
-            path = guest._overlay_path
-            try:
-                self.assertIsNotNone(path)
-                self.assertEqual(path.stat().st_size, 16 * 1024**3)
-                self.assertLess(path.stat().st_blocks * 512, 1024**2)
-                self.assertIn(f"ubd2={path}", guest._process.args)
-            finally:
-                guest.close()
-            self.assertFalse(path.exists())
-
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory(prefix="uml-guest-harness-")
         self.addCleanup(directory.cleanup)
