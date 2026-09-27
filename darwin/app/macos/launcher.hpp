@@ -18,4 +18,11 @@ struct LaunchConfiguration {
 int runEmbeddedKernel(int argc, char *argv[], char *envp[],
 		      const LaunchConfiguration &configuration);
 
+/* Whether one of argv[1..argc) is exactly `argument`. */
+[[nodiscard]] bool has_argument(
+	int argc, char *const argv[], std::string_view argument);
+/* Whether the run only prints information (--help, --version or
+ * --showconfig) and boots no guest. */
+[[nodiscard]] bool informational(int argc, char *const argv[]);
+
 } // namespace uml::app

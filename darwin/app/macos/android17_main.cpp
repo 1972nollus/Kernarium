@@ -47,21 +47,6 @@ uml::android::BootMode parse_boot_mode(std::string_view value)
 	throw std::invalid_argument("Android boot mode must be auto, normal, or recovery");
 }
 
-bool has_argument(int argc, char *const argv[], std::string_view argument)
-{
-	for (int index = 1; index < argc; ++index)
-		if (argv[index] != nullptr && argument == argv[index])
-			return true;
-	return false;
-}
-
-bool informational(int argc, char *const argv[])
-{
-	return has_argument(argc, argv, "--help") ||
-		has_argument(argc, argv, "--version") ||
-		has_argument(argc, argv, "--showconfig");
-}
-
 std::string environment_value(const char *name)
 {
 	const char *value = std::getenv(name);
@@ -261,8 +246,8 @@ void print_usage()
 int main(int argc, char *argv[], char *envp[])
 {
 	try {
-		const bool information_only = informational(argc, argv);
-		if (has_argument(argc, argv, "--help"))
+		const bool information_only = uml::app::informational(argc, argv);
+		if (uml::app::has_argument(argc, argv, "--help"))
 			print_usage();
 		auto options = parse_options(argc, argv);
 		if (!information_only) {
