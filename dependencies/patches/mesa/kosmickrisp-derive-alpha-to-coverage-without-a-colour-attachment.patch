@@ -162,7 +162,7 @@ index 803ee64b6e6203315855cf4085832738b18553af..a983cade8d4598b19e33fcfd514040df
  bool msl_ensure_vertex_position_output(nir_shader *nir);
  bool msl_ensure_vertex_point_size_output(nir_shader *nir);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 7c50bfe1409750de474e18c4a0d1dee49b8ae162..c1c985d7cb4555eaf215bbc8d524c2b7f1037544 100644
+index d3c16adb553610484c4c85c4bee054a80569eca0..6359cc145be60579d951af3587d98503d252d285 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -565,6 +565,30 @@ kk_get_logical_color_att_index(const struct vk_graphics_pipeline_state *state,
@@ -196,7 +196,7 @@ index 7c50bfe1409750de474e18c4a0d1dee49b8ae162..c1c985d7cb4555eaf215bbc8d524c2b7
  static bool
  kk_nir_remove_undeclared_fs_output(nir_builder *b,
                                     nir_intrinsic_instr *intrin, void *data)
-@@ -733,14 +757,6 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
+@@ -743,14 +767,6 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
              const struct vk_graphics_pipeline_state *state, bool writes_depth,
              bool pipeline_statistics)
  {
@@ -211,7 +211,7 @@ index 7c50bfe1409750de474e18c4a0d1dee49b8ae162..c1c985d7cb4555eaf215bbc8d524c2b7
     nir->info.fs.uses_sample_shading |=
        state->ms && state->ms->sample_shading_enable;
  
-@@ -751,6 +767,20 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
+@@ -761,6 +777,20 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
     if (nir->info.fs.uses_sample_shading)
        NIR_PASS(_, nir, msl_nir_lower_sample_shading);
  
@@ -232,7 +232,7 @@ index 7c50bfe1409750de474e18c4a0d1dee49b8ae162..c1c985d7cb4555eaf215bbc8d524c2b7
     if (state->cb)
        kk_lower_fs_blend(nir, state);
  
-@@ -3634,7 +3664,11 @@ gather_graphics_pipeline_create_info(
+@@ -3644,7 +3674,11 @@ gather_graphics_pipeline_create_info(
     if (info->vs.has_ms) {
        const struct vk_multisample_state *ms = state->ms;
        info->vs.sample_count = ms->rasterization_samples;

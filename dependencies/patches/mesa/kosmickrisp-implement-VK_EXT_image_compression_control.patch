@@ -13,7 +13,9 @@ texture's contents are compressed, never reports it, and offers no fixed-rate
 control, so this driver answers every compression query with
 VK_IMAGE_COMPRESSION_DISABLED_EXT and VK_IMAGE_COMPRESSION_FIXED_RATE_NONE_EXT
 from one helper, and refuses a format query that insists on an explicit fixed
-rate. A VkImageCompressionControlEXT asking for the default or for compression
+rate. The answer is one link of the caller's output chain, so the helper sets
+only those two flags and leaves sType and pNext alone; a test checks that the
+format and subresource layout queries both keep the chain intact. A VkImageCompressionControlEXT asking for the default or for compression
 to be disabled is accepted, because there is nothing to turn off; the common
 runtime already reads it out of the image creation chain.
 
@@ -23,13 +25,16 @@ of a surface format as soon as the device advertises the first extension.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/kosmickrisp/vulkan/kk_image.c           | 19 +++++++++++++++++++
- src/kosmickrisp/vulkan/kk_image.h           | 17 +++++++++++++++++
- src/kosmickrisp/vulkan/kk_physical_device.c | 10 ++++++++++
- 3 files changed, 46 insertions(+)
+ src/kosmickrisp/vulkan/kk_image.c             |  18 +++
+ src/kosmickrisp/vulkan/kk_image.h             |  16 ++
+ src/kosmickrisp/vulkan/kk_physical_device.c   |  10 ++
+ src/kosmickrisp/vulkan/meson.build            |  20 +++
+ .../tests/test_image_compression_chain.c      | 147 ++++++++++++++++++
+ 5 files changed, 211 insertions(+)
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_image_compression_chain.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index b2d12e269c53b88f8c070827519d0322a541901c..54321d3a5a0f256ab3a06ee428e516a491a30866 100644
+index b2d12e269c53b88f8c070827519d0322a541901c..0f0e9b52a32d4c7b797fc1b42cecaf2e9bc53ebe 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -251,6 +251,15 @@ kk_GetPhysicalDeviceImageFormatProperties2(
@@ -48,19 +53,18 @@ index b2d12e269c53b88f8c070827519d0322a541901c..54321d3a5a0f256ab3a06ee428e516a4
     /* A modifier image is a linear image with an agreed layout, and
      * DRM_FORMAT_MOD_LINEAR is the only modifier this driver offers. Every
      * limit a linear image has applies, so ask the rest of this function about
-@@ -548,6 +557,11 @@ kk_GetPhysicalDeviceImageFormatProperties2(
+@@ -548,6 +557,10 @@ kk_GetPhysicalDeviceImageFormatProperties2(
           host_props->identicalMemoryLayout = host_props->optimalDeviceAccess;
           break;
        }
 +      case VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT: {
-+         VkImageCompressionPropertiesEXT *compression_props = (void *)s;
-+         *compression_props = kk_image_compression_properties();
++         kk_image_report_compression((void *)s);
 +         break;
 +      }
        default:
           vk_debug_ignored_stype(s->sType);
           break;
-@@ -950,6 +964,11 @@ kk_get_image_subresource_layout(struct kk_device *dev, struct kk_image *image,
+@@ -950,6 +963,11 @@ kk_get_image_subresource_layout(struct kk_device *dev, struct kk_image *image,
     if (memcpy_size) {
        memcpy_size->size = pLayout->subresourceLayout.size;
     }
@@ -68,15 +72,15 @@ index b2d12e269c53b88f8c070827519d0322a541901c..54321d3a5a0f256ab3a06ee428e516a4
 +   VkImageCompressionPropertiesEXT *compression_props =
 +      vk_find_struct(pLayout, IMAGE_COMPRESSION_PROPERTIES_EXT);
 +   if (compression_props)
-+      *compression_props = kk_image_compression_properties();
++      kk_image_report_compression(compression_props);
  }
  
  VKAPI_ATTR void VKAPI_CALL
 diff --git a/src/kosmickrisp/vulkan/kk_image.h b/src/kosmickrisp/vulkan/kk_image.h
-index 8f4e3b4e689969ce8ffe9a9179953b291af0010b..9b9e92802196d28758a8b6d09975a7cc9326a1db 100644
+index 8f4e3b4e689969ce8ffe9a9179953b291af0010b..b96eeec993ce569cd356babceec691048608d933 100644
 --- a/src/kosmickrisp/vulkan/kk_image.h
 +++ b/src/kosmickrisp/vulkan/kk_image.h
-@@ -62,6 +62,23 @@ struct kk_image {
+@@ -62,6 +62,22 @@ struct kk_image {
     uint64_t drm_format_mod;
  };
  
@@ -87,14 +91,13 @@ index 8f4e3b4e689969ce8ffe9a9179953b291af0010b..9b9e92802196d28758a8b6d09975a7cc
 + * answers reports the same thing: no compression the application can observe
 + * or ask for.
 + */
-+static inline VkImageCompressionPropertiesEXT
-+kk_image_compression_properties(void)
++static inline void
++kk_image_report_compression(VkImageCompressionPropertiesEXT *props)
 +{
-+   return (VkImageCompressionPropertiesEXT){
-+      .sType = VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT,
-+      .imageCompressionFlags = VK_IMAGE_COMPRESSION_DISABLED_EXT,
-+      .imageCompressionFixedRateFlags = VK_IMAGE_COMPRESSION_FIXED_RATE_NONE_EXT,
-+   };
++   /* Only the answer: sType and pNext belong to the caller's output chain. */
++   props->imageCompressionFlags = VK_IMAGE_COMPRESSION_DISABLED_EXT;
++   props->imageCompressionFixedRateFlags =
++      VK_IMAGE_COMPRESSION_FIXED_RATE_NONE_EXT;
 +}
 +
  #define kk_foreach_slice(ndx, image, subresource_member)                       \
@@ -128,3 +131,187 @@ index 5749fb5e97ab743f4d58440e94dc258234ab876a..cb199e698c4809eedc676819f6355bf4
        /* VK_EXT_legacy_vertex_attributes */
        .legacyVertexAttributes = true,
  
+diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
+index 59abebe618ec7bb7ca2fda3b6c2a73ba33202e8f..e9857ff902b86558edafdaa3a80f67313df87dc0 100644
+--- a/src/kosmickrisp/vulkan/meson.build
++++ b/src/kosmickrisp/vulkan/meson.build
+@@ -405,6 +405,26 @@ if with_tests
+       env : ['MESA_SHADER_CACHE_DISABLE=true'],
+       timeout : 120,
+     )
++    test(
++      'kosmickrisp_image_compression_chain',
++      executable(
++        'test_kosmickrisp_image_compression_chain',
++        files('tests/test_image_compression_chain.c'),
++        include_directories : kk_test_include_directories,
++        dependencies : [
++          idep_nir,
++          idep_vulkan_runtime_headers,
++          idep_vulkan_util_headers,
++          idep_vulkan_wsi_headers,
++          idep_libkk_shaders_h,
++        ],
++        link_whole : libkk,
++        link_args : ['-Wl,-undefined,dynamic_lookup'],
++      ),
++      suite : ['kosmickrisp'],
++      env : ['MESA_SHADER_CACHE_DISABLE=true'],
++      timeout : 60,
++    )
+     test(
+       'kosmickrisp_integer_point_target',
+       executable(
+diff --git a/src/kosmickrisp/vulkan/tests/test_image_compression_chain.c b/src/kosmickrisp/vulkan/tests/test_image_compression_chain.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..90aeec8925caa42e1a9eecdf15a9c477c539f4ed
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_image_compression_chain.c
+@@ -0,0 +1,147 @@
++/*
++ * Copyright 2026 Google LLC
++ * SPDX-License-Identifier: MIT
++ */
++
++/* A VkImageCompressionPropertiesEXT is one link of the caller's output chain.
++ * Answering it must fill in the two flags and leave sType and pNext alone, or
++ * the query cuts the chain and every structure behind it goes unanswered. */
++#define VK_NO_PROTOTYPES
++#include <vulkan/vulkan.h>
++
++#include <stdio.h>
++#include <stdlib.h>
++
++extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
++#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
++#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
++#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++
++static void
++check_answer(const VkImageCompressionPropertiesEXT *props, const void *next)
++{
++   CHECK(props->sType == VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT);
++   CHECK(props->pNext == next);
++   CHECK(props->imageCompressionFlags == VK_IMAGE_COMPRESSION_DISABLED_EXT);
++   CHECK(props->imageCompressionFixedRateFlags ==
++         VK_IMAGE_COMPRESSION_FIXED_RATE_NONE_EXT);
++}
++
++int
++main(void)
++{
++   VkInstance instance = VK_NULL_HANDLE;
++   LOAD_I(vkCreateInstance);
++   VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
++                            .apiVersion = VK_API_VERSION_1_3};
++   VkInstanceCreateInfo instance_info = {
++      .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
++      .pApplicationInfo = &app,
++   };
++   CHECK(vkCreateInstance(&instance_info, NULL, &instance) == VK_SUCCESS);
++   LOAD_I(vkDestroyInstance);
++   LOAD_I(vkEnumeratePhysicalDevices);
++   LOAD_I(vkGetPhysicalDeviceImageFormatProperties2);
++   LOAD_I(vkCreateDevice);
++   LOAD_I(vkGetDeviceProcAddr);
++   uint32_t count = 1;
++   VkPhysicalDevice physical = VK_NULL_HANDLE;
++   CHECK(vkEnumeratePhysicalDevices(instance, &count, &physical) == VK_SUCCESS);
++   CHECK(count == 1);
++
++   /* The format query walks the output chain, so a cut chain also leaves the
++    * structure behind the compression properties unvisited. */
++   VkSamplerYcbcrConversionImageFormatProperties behind = {
++      .sType =
++         VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_IMAGE_FORMAT_PROPERTIES,
++      .combinedImageSamplerDescriptorCount = 0xdeadu,
++   };
++   VkImageCompressionPropertiesEXT compression = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT,
++      .pNext = &behind,
++   };
++   VkImageFormatProperties2 format_props = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
++      .pNext = &compression,
++   };
++   VkPhysicalDeviceImageFormatInfo2 format_info = {
++      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
++      .format = VK_FORMAT_R8G8B8A8_UNORM,
++      .type = VK_IMAGE_TYPE_2D,
++      .tiling = VK_IMAGE_TILING_OPTIMAL,
++      .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
++   };
++   CHECK(vkGetPhysicalDeviceImageFormatProperties2(physical, &format_info,
++                                                   &format_props) ==
++         VK_SUCCESS);
++   check_answer(&compression, &behind);
++   CHECK(behind.combinedImageSamplerDescriptorCount == 1u);
++
++   VkPhysicalDeviceImageCompressionControlFeaturesEXT compression_feature = {
++      .sType =
++         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_COMPRESSION_CONTROL_FEATURES_EXT,
++      .imageCompressionControl = VK_TRUE,
++   };
++   const char *extensions[] = {VK_EXT_IMAGE_COMPRESSION_CONTROL_EXTENSION_NAME};
++   float priority = 1.0f;
++   VkDeviceQueueCreateInfo queue_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
++      .queueCount = 1,
++      .pQueuePriorities = &priority,
++   };
++   VkDeviceCreateInfo device_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
++      .pNext = &compression_feature,
++      .queueCreateInfoCount = 1,
++      .pQueueCreateInfos = &queue_info,
++      .enabledExtensionCount = 1,
++      .ppEnabledExtensionNames = extensions,
++   };
++   VkDevice device = VK_NULL_HANDLE;
++   CHECK(vkCreateDevice(physical, &device_info, NULL, &device) == VK_SUCCESS);
++   LOAD_D(vkDestroyDevice);
++   LOAD_D(vkCreateImage);
++   LOAD_D(vkDestroyImage);
++   LOAD_D(vkGetImageSubresourceLayout2EXT);
++
++   VkImageCreateInfo image_info = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
++      .imageType = VK_IMAGE_TYPE_2D,
++      .format = VK_FORMAT_R8G8B8A8_UNORM,
++      .extent = {16, 16, 1},
++      .mipLevels = 1,
++      .arrayLayers = 1,
++      .samples = VK_SAMPLE_COUNT_1_BIT,
++      .tiling = VK_IMAGE_TILING_LINEAR,
++      .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
++      .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
++   };
++   VkImage image = VK_NULL_HANDLE;
++   CHECK(vkCreateImage(device, &image_info, NULL, &image) == VK_SUCCESS);
++
++   /* The layout query finds each output by type, so the only thing a cut
++    * chain leaves behind here is the caller's own pNext overwritten. */
++   VkSubresourceHostMemcpySizeEXT memcpy_size = {
++      .sType = VK_STRUCTURE_TYPE_SUBRESOURCE_HOST_MEMCPY_SIZE_EXT,
++   };
++   compression = (VkImageCompressionPropertiesEXT){
++      .sType = VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT,
++      .pNext = &memcpy_size,
++   };
++   VkSubresourceLayout2EXT layout = {
++      .sType = VK_STRUCTURE_TYPE_SUBRESOURCE_LAYOUT_2_EXT,
++      .pNext = &compression,
++   };
++   VkImageSubresource2EXT subresource = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_SUBRESOURCE_2_EXT,
++      .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT},
++   };
++   vkGetImageSubresourceLayout2EXT(device, image, &subresource, &layout);
++   check_answer(&compression, &memcpy_size);
++
++   vkDestroyImage(device, image, NULL);
++   vkDestroyDevice(device, NULL);
++   vkDestroyInstance(instance, NULL);
++   printf("image compression properties keep the caller's output chain\n");
++   return 0;
++}

@@ -37,10 +37,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  2 files changed, 85 insertions(+), 70 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72eb0d85a5 100644
+index f24e24518d7614b683883ed1b6b2b77ef64ad384..bceca090bba4082c92e0e1b85df9297c001d69f5 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
-@@ -631,6 +631,25 @@ kk_GetPhysicalDeviceSparseImageFormatProperties2(
+@@ -630,6 +630,25 @@ kk_GetPhysicalDeviceSparseImageFormatProperties2(
     return;
  }
  
@@ -66,7 +66,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
  static VkResult
  kk_image_init(struct kk_device *dev, struct kk_image *image,
                const VkImageCreateInfo *pCreateInfo)
-@@ -731,11 +750,12 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
+@@ -730,11 +749,12 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
        }
     }
  
@@ -84,7 +84,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
     if (mod_explicit != NULL) {
        if (mod_explicit->drmFormatModifierPlaneCount != image->plane_count) {
           vk_image_finish(&image->vk);
-@@ -749,21 +769,37 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
+@@ -748,21 +768,37 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
           const struct kk_image_layout *layout = &image->planes[plane].layout;
           const VkSubresourceLayout *given = &mod_explicit->pPlaneLayouts[plane];
  
@@ -127,7 +127,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
     return VK_SUCCESS;
  }
  
-@@ -780,15 +816,6 @@ kk_GetImageDrmFormatModifierPropertiesEXT(
+@@ -779,15 +815,6 @@ kk_GetImageDrmFormatModifierPropertiesEXT(
     return VK_SUCCESS;
  }
  
@@ -143,7 +143,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
  static void
  kk_image_plane_finish(struct kk_device *dev, struct kk_image_plane *plane,
                        VkImageCreateFlags create_flags,
-@@ -858,21 +885,6 @@ kk_DestroyImage(VkDevice device, VkImage _image,
+@@ -857,21 +884,6 @@ kk_DestroyImage(VkDevice device, VkImage _image,
     vk_free2(&dev->vk.alloc, pAllocator, image);
  }
  
@@ -165,7 +165,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
  static void
  kk_get_image_memory_requirements(struct kk_device *dev, struct kk_image *image,
                                   VkImageAspectFlags aspects,
-@@ -894,17 +906,18 @@ kk_get_image_memory_requirements(struct kk_device *dev, struct kk_image *image,
+@@ -893,17 +905,18 @@ kk_get_image_memory_requirements(struct kk_device *dev, struct kk_image *image,
  
     // TODO hope for the best?
  
@@ -193,7 +193,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
     }
  
     pMemoryRequirements->memoryRequirements.memoryTypeBits = memory_types;
-@@ -995,14 +1008,7 @@ kk_get_image_subresource_layout(struct kk_device *dev, struct kk_image *image,
+@@ -994,14 +1007,7 @@ kk_get_image_subresource_layout(struct kk_device *dev, struct kk_image *image,
     const uint8_t p = kk_image_memory_aspects_to_plane(image, isr->aspectMask);
     const struct kk_image_plane *plane = &image->planes[p];
  
@@ -209,7 +209,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
  
     pLayout->subresourceLayout = (VkSubresourceLayout){
        .offset = offset_B,
-@@ -1071,13 +1077,8 @@ kk_image_plane_create_texture(struct kk_image_plane *plane,
+@@ -1070,13 +1076,8 @@ kk_image_plane_create_texture(struct kk_image_plane *plane,
  static VkResult
  kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
                      struct kk_image_plane *plane, struct kk_device_memory *mem,
@@ -224,7 +224,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
     if (!plane->layout.linear && !mem->bo->mtl_handle) {
        return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
                         "optimal image memory has no Metal heap");
-@@ -1085,7 +1086,7 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
+@@ -1084,7 +1085,7 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
  
     /* Linear textures in Metal need to be allocated through a buffer... */
     plane->mem = mem;
@@ -233,7 +233,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
     plane->mtl_handle = kk_image_plane_create_texture(plane, &plane->layout, 0u);
     if (!plane->mtl_handle) {
        plane->mem = NULL;
-@@ -1093,7 +1094,7 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
+@@ -1092,7 +1093,7 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
        return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
                         "Metal refused the image texture");
     }
@@ -242,7 +242,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
  
     /* Create auxiliary 2D array texture for 3D images so we can use 2D views of
      * it */
-@@ -1107,7 +1108,7 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
+@@ -1106,7 +1107,7 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
        array_layout.depth_px = 1u;
        array_layout.levels = kk_image_layout_array_alias_levels(&plane->layout);
        plane->mtl_handle_array = mtl_new_texture_with_descriptor(
@@ -251,7 +251,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
        if (!plane->mtl_handle_array) {
           mtl_release(plane->mtl_handle);
           plane->mtl_handle = NULL;
-@@ -1119,8 +1120,6 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
+@@ -1118,8 +1119,6 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
        }
     }
  
@@ -260,7 +260,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
     return VK_SUCCESS;
  }
  
-@@ -1180,20 +1179,21 @@ kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
+@@ -1179,20 +1178,21 @@ kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
     }
  #endif
  
@@ -287,7 +287,7 @@ index ca26fbf1467f9f47b1b9c12b0be54e157b8541a1..9c2fcf0a2f1372a243fcde6651ea6b72
              return result;
        }
 diff --git a/src/kosmickrisp/vulkan/kk_image.h b/src/kosmickrisp/vulkan/kk_image.h
-index 9b9e92802196d28758a8b6d09975a7cc9326a1db..0a9f8d3d1eb04120840384fae842a31c6cb3ed51 100644
+index b96eeec993ce569cd356babceec691048608d933..f5a849c8120e591bcfda885f31a8e24b2f82954b 100644
 --- a/src/kosmickrisp/vulkan/kk_image.h
 +++ b/src/kosmickrisp/vulkan/kk_image.h
 @@ -32,6 +32,11 @@ uint32_t kk_image_max_dimension(const struct kk_physical_device *pdev,
@@ -302,7 +302,7 @@ index 9b9e92802196d28758a8b6d09975a7cc9326a1db..0a9f8d3d1eb04120840384fae842a31c
     uint64_t mem_offset_B;
     // TODO_KOSMICKRISP Only have one handle since we will only create 2D arrays
     // anyway
-@@ -146,11 +151,21 @@ kk_image_memory_aspects_to_plane(ASSERTED const struct kk_image *image,
+@@ -145,11 +150,21 @@ kk_image_memory_aspects_to_plane(ASSERTED const struct kk_image *image,
                       VK_IMAGE_ASPECT_MEMORY_PLANE_1_BIT_EXT |
                       VK_IMAGE_ASPECT_MEMORY_PLANE_2_BIT_EXT |
                       VK_IMAGE_ASPECT_MEMORY_PLANE_3_BIT_EXT)) {

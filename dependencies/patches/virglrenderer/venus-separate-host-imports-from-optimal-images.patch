@@ -117,10 +117,10 @@ index a8dd8fcd31d026d10aee5f7cde329ebe74288922..a3336e159eebd55b8c55fc5ca6c1ef63
     VkMemoryResourceAllocationSizePropertiesMESA *alloc_size_props =
        vkr_find_struct(args->pMemoryResourceProperties->pNext,
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index 5634aa74b67ba0ffed00b04210de22eb5755c1f1..75166040ee6b4e699965b79bb39d733ce0b38a9e 100644
+index 97c0ec0d934c17ab9710c283e91ded4d91878bd1..9148f317ff15817e8250883c23278c719a25698e 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
-@@ -51,6 +51,9 @@ vkr_dispatch_vkGetImageMemoryRequirements(
+@@ -57,6 +57,9 @@ vkr_dispatch_vkGetImageMemoryRequirements(
  
     vn_replace_vkGetImageMemoryRequirements_args_handle(args);
     vk->GetImageMemoryRequirements(args->device, args->image, args->pMemoryRequirements);
@@ -130,7 +130,7 @@ index 5634aa74b67ba0ffed00b04210de22eb5755c1f1..75166040ee6b4e699965b79bb39d733c
  }
  
  static void
-@@ -63,6 +66,10 @@ vkr_dispatch_vkGetImageMemoryRequirements2(
+@@ -69,6 +72,10 @@ vkr_dispatch_vkGetImageMemoryRequirements2(
  
     vn_replace_vkGetImageMemoryRequirements2_args_handle(args);
     vk->GetImageMemoryRequirements2(args->device, args->pInfo, args->pMemoryRequirements);
@@ -141,7 +141,7 @@ index 5634aa74b67ba0ffed00b04210de22eb5755c1f1..75166040ee6b4e699965b79bb39d733c
  }
  
  static void
-@@ -229,6 +236,10 @@ vkr_dispatch_vkGetDeviceImageMemoryRequirements(
+@@ -235,6 +242,10 @@ vkr_dispatch_vkGetDeviceImageMemoryRequirements(
     vn_replace_vkGetDeviceImageMemoryRequirements_args_handle(args);
     vk->GetDeviceImageMemoryRequirements(args->device, args->pInfo,
                                          args->pMemoryRequirements);
