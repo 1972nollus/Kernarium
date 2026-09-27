@@ -4,6 +4,7 @@
 #include "cpu/engine_factory.hpp"
 #include "execution_state.hpp"
 #include "memory/domain_contract.hpp"
+#include "memory/process_singleton.hpp"
 #include "platform/host_topology.hpp"
 #include "uml_darwin_guest.h"
 
@@ -214,26 +215,9 @@ std::atomic_flag legacy_context_initialization = ATOMIC_FLAG_INIT;
 	 * registry it addresses. A transient first allocation failure must remain
 	 * retryable rather than permanently caching an unavailable compatibility
 	 * context. */
-	if (auto *context = published_legacy_context.load(
-		    std::memory_order_acquire); context != nullptr)
-		return context;
-	while (legacy_context_initialization.test_and_set(
-		       std::memory_order_acquire))
-		std::this_thread::yield();
-	struct InitializationUnlock final {
-		~InitializationUnlock()
-		{
-			legacy_context_initialization.clear(std::memory_order_release);
-		}
-	};
-	[[maybe_unused]] InitializationUnlock unlock;
-	if (auto *context = published_legacy_context.load(
-		    std::memory_order_acquire); context != nullptr)
-		return context;
-	auto *context = new (std::nothrow) Context;
-	if (context != nullptr)
-		published_legacy_context.store(context, std::memory_order_release);
-	return context;
+	return uml::memory::process_singleton(published_legacy_context,
+		legacy_context_initialization,
+		[]() noexcept { return new (std::nothrow) Context; });
 }
 
 } // namespace

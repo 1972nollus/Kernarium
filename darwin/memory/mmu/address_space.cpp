@@ -2,6 +2,7 @@
 #include "uml_darwin_static_mmu.h"
 #include "uml_darwin_guest.h"
 #include "../domain_contract.hpp"
+#include "../process_singleton.hpp"
 #include "address_layout.hpp"
 #include "address_space_types.hpp"
 #include "allocation_fault.hpp"
@@ -1853,32 +1854,17 @@ AddressSpaceRegistry *address_space_registry() noexcept
 	 * process lifetime so a late legacy-context destructor never calls through
 	 * an already destroyed mutex or container. Initialization is retryable: a
 	 * transient allocation failure must not permanently cache a null registry. */
-	if (auto *registry = existing_address_space_registry(); registry != nullptr)
-		return registry;
-	while (address_space_registry_initialization.test_and_set(
-		       std::memory_order_acquire))
-		std::this_thread::yield();
-	struct InitializationUnlock final {
-		~InitializationUnlock()
-		{
-			address_space_registry_initialization.clear(
-				std::memory_order_release);
-		}
-	};
-	[[maybe_unused]] InitializationUnlock unlock;
-	if (auto *registry = existing_address_space_registry(); registry != nullptr)
-		return registry;
-	try {
-		UML_MEMORY_ALLOCATION_CHECKPOINT(
-			testing::AllocationSite::software_domain_registry);
-		auto *registry = new (std::nothrow) AddressSpaceRegistry;
-		if (registry != nullptr)
-			published_address_space_registry.store(
-				registry, std::memory_order_release);
-		return registry;
-	} catch (...) {
-		return nullptr;
-	}
+	return process_singleton(published_address_space_registry,
+		address_space_registry_initialization,
+		[]() noexcept -> AddressSpaceRegistry * {
+			try {
+				UML_MEMORY_ALLOCATION_CHECKPOINT(
+					testing::AllocationSite::software_domain_registry);
+				return new (std::nothrow) AddressSpaceRegistry;
+			} catch (...) {
+				return nullptr;
+			}
+		});
 }
 
 [[nodiscard]] AddressSpaceAccess address_space() noexcept

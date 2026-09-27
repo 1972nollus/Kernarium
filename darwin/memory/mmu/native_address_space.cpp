@@ -4,6 +4,7 @@
 #include "domain_registry_testing.hpp"
 #include "word_shared_mutex.hpp"
 #include "../domain_contract.hpp"
+#include "../process_singleton.hpp"
 #include "../shared_backing.hpp"
 
 #include <algorithm>
@@ -758,34 +759,17 @@ std::atomic_flag host_ownership_registry_initialization = ATOMIC_FLAG_INIT;
 
 HostOwnershipRegistry *host_ownership_registry() noexcept
 {
-	if (auto *registry = published_host_ownership_registry.load(
-		    std::memory_order_acquire); registry != nullptr)
-		return registry;
-	while (host_ownership_registry_initialization.test_and_set(
-		       std::memory_order_acquire))
-		std::this_thread::yield();
-	struct InitializationUnlock final {
-		~InitializationUnlock()
-		{
-			host_ownership_registry_initialization.clear(
-				std::memory_order_release);
-		}
-	};
-	[[maybe_unused]] InitializationUnlock unlock;
-	if (auto *registry = published_host_ownership_registry.load(
-		    std::memory_order_acquire); registry != nullptr)
-		return registry;
-	try {
-		UML_MEMORY_ALLOCATION_CHECKPOINT(
-			testing::AllocationSite::native_owner_registry);
-		auto *registry = new (std::nothrow) HostOwnershipRegistry;
-		if (registry != nullptr)
-			published_host_ownership_registry.store(
-				registry, std::memory_order_release);
-		return registry;
-	} catch (...) {
-		return nullptr;
-	}
+	return process_singleton(published_host_ownership_registry,
+		host_ownership_registry_initialization,
+		[]() noexcept -> HostOwnershipRegistry * {
+			try {
+				UML_MEMORY_ALLOCATION_CHECKPOINT(
+					testing::AllocationSite::native_owner_registry);
+				return new (std::nothrow) HostOwnershipRegistry;
+			} catch (...) {
+				return nullptr;
+			}
+		});
 }
 
 std::atomic_uint64_t next_ownership_id{1};
@@ -2577,38 +2561,24 @@ std::atomic_flag native_address_space_registry_initialization = ATOMIC_FLAG_INIT
 
 NativeAddressSpaceRegistry *native_address_space_registry() noexcept
 {
-	if (auto *registry = published_native_address_space_registry.load(
-		    std::memory_order_acquire); registry != nullptr)
-		return registry;
-	while (native_address_space_registry_initialization.test_and_set(
-		       std::memory_order_acquire))
-		std::this_thread::yield();
-	struct InitializationUnlock final {
-		~InitializationUnlock()
-		{
-			native_address_space_registry_initialization.clear(
-				std::memory_order_release);
-		}
-	};
-	[[maybe_unused]] InitializationUnlock unlock;
-	if (auto *registry = published_native_address_space_registry.load(
-		    std::memory_order_acquire); registry != nullptr)
-		return registry;
-	try {
-		UML_MEMORY_ALLOCATION_CHECKPOINT(
-			testing::AllocationSite::native_domain_registry);
-		auto *registry = new (std::nothrow) NativeAddressSpaceRegistry;
-		if (registry != nullptr) {
-			/* Publish the retirement callback first. A concurrent retirement
-			 * then waits for this initializer and cannot miss the registry. */
-			set_domain_retire_observer(&retire_native_domain);
-			published_native_address_space_registry.store(
-				registry, std::memory_order_release);
-		}
-		return registry;
-	} catch (...) {
-		return nullptr;
-	}
+	return process_singleton(published_native_address_space_registry,
+		native_address_space_registry_initialization,
+		[]() noexcept -> NativeAddressSpaceRegistry * {
+			try {
+				UML_MEMORY_ALLOCATION_CHECKPOINT(
+					testing::AllocationSite::native_domain_registry);
+				auto *registry = new (std::nothrow)
+					NativeAddressSpaceRegistry;
+				/* Publish the retirement callback first. A concurrent
+				 * retirement then waits for this initializer and cannot
+				 * miss the registry. */
+				if (registry != nullptr)
+					set_domain_retire_observer(&retire_native_domain);
+				return registry;
+			} catch (...) {
+				return nullptr;
+			}
+		});
 }
 
 void retire_native_domain(std::uint64_t domain) noexcept
