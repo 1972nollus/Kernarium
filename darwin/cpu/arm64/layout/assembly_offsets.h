@@ -2,7 +2,8 @@
 /*
  * Neutral, assembly-visible ARM64 layout contract.  Both translated engines
  * consume this file; assembly_layout.hpp verifies every relevant offset
- * against the C++ CpuState and memory::Tlb definitions at compile time.
+ * against the C++ CpuState and memory::Tlb definitions, and every event code
+ * a gadget returns against EngineEvent, at compile time.
  */
 #define UML_ARM64_ASSEMBLY_LAYOUT_VERSION 1
 #define UML_GADGET_CPU_X0 0

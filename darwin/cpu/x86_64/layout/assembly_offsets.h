@@ -2,7 +2,8 @@
 #pragma once
 
 /* Assembly-visible x86-64 CPU state. Keep synchronized with cpu_state.hpp;
- * assembly_layout.hpp verifies every offset from C++.
+ * assembly_layout.hpp verifies every offset, and every event code a gadget
+ * returns against EngineEvent, from C++.
  */
 #define UML_X86_64_CPU_REGISTERS 0
 #define UML_X86_64_CPU_VECTORS 128
