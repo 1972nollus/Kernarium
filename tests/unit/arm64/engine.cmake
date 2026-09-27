@@ -292,8 +292,6 @@
     target_include_directories(uml_arm64_static_runtime_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_link_libraries(uml_arm64_static_runtime_tests PRIVATE
-        UML::MemorySharedBacking)
     target_compile_options(uml_arm64_static_runtime_tests PRIVATE
         -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-static-runtime COMMAND uml_arm64_static_runtime_tests

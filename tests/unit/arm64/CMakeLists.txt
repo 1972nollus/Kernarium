@@ -77,13 +77,6 @@ set(_uml_unit_binary_targets)
 foreach(_target IN LISTS _uml_unit_targets)
     if(_target MATCHES "_tests$")
         list(APPEND _uml_unit_binary_targets "${_target}")
-        # TARGET_OBJECTS deliberately bypasses an object's usage requirements.
-        # Direct MMU test consumers still need its shared-backing library.
-        get_target_property(_uml_test_sources "${_target}" SOURCES)
-        if("$<TARGET_OBJECTS:uml_static_mmu>" IN_LIST _uml_test_sources OR
-           "$<TARGET_OBJECTS:uml_static_mmu_test_variant>" IN_LIST _uml_test_sources)
-            target_link_libraries("${_target}" PRIVATE UML::MemorySharedBacking)
-        endif()
     endif()
 endforeach()
 if(_uml_unit_binary_targets)
