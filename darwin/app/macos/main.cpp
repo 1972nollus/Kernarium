@@ -558,6 +558,34 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 	}
+	std::unique_ptr<uml::battery::InProcessBatteryService> battery_service;
+	if (prepared.battery && !information_only) {
+		if (has_virtio_device_argument(
+			prepared.kernel, uml::battery::protocol::deviceId)) {
+			std::fputs("--battery cannot be combined with an explicit "
+				   "Virtio battery transport argument\n",
+				   stderr);
+			return 1;
+		}
+		try {
+			battery_service =
+				std::make_unique<uml::battery::InProcessBatteryService>();
+			/* Android's vendor policy labels the battery's sysfs
+			 * path by its position among the Virtio devices
+			 * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts).
+			 * Straight after the GPU it is always virtio-uml.1/virtio1,
+			 * whatever optional devices follow. */
+			prepared.kernel.emplace_back(
+				"virtio_uml.device=" +
+				battery_service->takeConnectionName() + ":" +
+				std::to_string(uml::battery::protocol::deviceId));
+		} catch (const std::exception &error) {
+			std::fprintf(stderr,
+				"Unable to start in-process Virtio battery: %s\n",
+				error.what());
+			return 1;
+		}
+	}
 	std::unique_ptr<uml::balloon::InProcessBalloonService> balloon_service;
 	if (gpu_service && device_memory_limit != 0 &&
 	    !has_virtio_device_argument(
@@ -618,33 +646,6 @@ int uml::app::runEmbeddedKernel(
 		} catch (const std::exception &error) {
 			std::fprintf(stderr,
 				"Unable to start in-process Virtio Sound: %s\n",
-				error.what());
-			return 1;
-		}
-	}
-	std::unique_ptr<uml::battery::InProcessBatteryService> battery_service;
-	if (prepared.battery && !information_only) {
-		if (has_virtio_device_argument(
-			prepared.kernel, uml::battery::protocol::deviceId)) {
-			std::fputs("--battery cannot be combined with an explicit "
-				   "Virtio battery transport argument\n",
-				   stderr);
-			return 1;
-		}
-		try {
-			battery_service =
-				std::make_unique<uml::battery::InProcessBatteryService>();
-			/* The Android vendor policy labels the battery's sysfs
-			 * path by its position among these Virtio devices
-			 * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts);
-			 * a device added before it must extend that range. */
-			prepared.kernel.emplace_back(
-				"virtio_uml.device=" +
-				battery_service->takeConnectionName() + ":" +
-				std::to_string(uml::battery::protocol::deviceId));
-		} catch (const std::exception &error) {
-			std::fprintf(stderr,
-				"Unable to start in-process Virtio battery: %s\n",
 				error.what());
 			return 1;
 		}

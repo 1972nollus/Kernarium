@@ -1448,6 +1448,16 @@ int runtimeRun(
         arguments.emplace_back(
             "virtio_uml.device=" + gpuService.takeConnectionName() + ":" +
             std::to_string(uml::gpu::protocol::virtioGpuDeviceId));
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+        /* Android's vendor policy labels the battery's sysfs path by its
+         * position among the Virtio devices
+         * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts). Straight
+         * after the GPU it is always virtio-uml.1/virtio1, whatever optional
+         * devices follow. */
+        arguments.emplace_back(
+            "virtio_uml.device=" + batteryService.takeConnectionName() + ":" +
+            std::to_string(uml::battery::protocol::deviceId));
+#endif
         arguments.emplace_back(
             "virtio_uml.device=" + balloonService.takeConnectionName() + ":" +
             std::to_string(uml::balloon::protocol::deviceId));
@@ -1472,13 +1482,6 @@ int runtimeRun(
                 std::to_string(uml::console::protocol::deviceId));
         }
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-        /* The Android vendor policy labels the battery's sysfs path by its
-         * position among these Virtio devices
-         * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts); a device
-         * added before it must extend that range. */
-        arguments.emplace_back(
-            "virtio_uml.device=" + batteryService.takeConnectionName() + ":" +
-            std::to_string(uml::battery::protocol::deviceId));
         /* The bundle GPT is the directly writable persistent disk. Its selected
          * ramdisk is exposed from the same file without a standalone image. */
         arguments.emplace_back("ubd0=" + androidDisk.string());
