@@ -1265,7 +1265,7 @@ private:
 		StaticGuestMemory &memory, void *execution_context,
 		GadgetCacheDiagnostics &diagnostics)
 	{
-		if (slot.body == nullptr || slot.body->source_word_count == 0 ||
+		if (slot.body->source_word_count == 0 ||
 		    slot.body->source_word_count > block_instruction_count) {
 			++diagnostics.validation_mismatches;
 			discard(slot);
