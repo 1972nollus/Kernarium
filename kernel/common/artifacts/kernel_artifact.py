@@ -5,6 +5,7 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import datetime
 import json
 import os
 import re
@@ -12,7 +13,11 @@ import shutil
 import stat
 import struct
 import subprocess
+import sys
+import tempfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
+from typing import NoReturn
 
 from contract_checks import ContractChecks, parse_config
 
@@ -668,3 +673,169 @@ def verify_compatible_artifact(
         artifact_root / "kernel/vmlinux", artifact_root / "kernel/config"
     )
     return manifest
+
+
+def publish_artifact(
+    fail_publish: Callable[[str], NoReturn],
+    *,
+    family: str,
+    kernel_slice: str,
+    page_size: int,
+    source: Path,
+    source_label: str,
+    build: Path,
+    output_root: Path,
+    release_id: str,
+    objcopy: Path,
+    common_root: Path,
+    metadata_path: Path,
+    check_release: Callable[[str, dict[str, str]], None],
+    verify_staged: Callable[[Path], None] | None = None,
+) -> Path:
+    """Publish one built kernel as a new artifact directory in output_root.
+
+    The source must be a clean checkout of the line's tracked final tree, and
+    the checked-in series must still produce that tree. Each line's publisher
+    validates its own arguments and supplies its release check and any extra
+    check of the staged payloads, which runs before the manifest is written.
+    """
+
+    def git(*arguments: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(source), *arguments],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            fail_publish(f"Git failed in the {source_label}: {result.stderr.strip()}")
+        return result.stdout.strip()
+
+    metadata = parse_env(metadata_path)
+    abi_metadata_path = common_root / "abi/identity.env"
+    abi = parse_env(abi_metadata_path)
+    if git("status", "--porcelain=v1", "--untracked-files=all"):
+        fail_publish(f"{source_label} worktree is dirty")
+    if git("rev-parse", "HEAD^{tree}") != metadata["UML_KERNEL_FINAL_TREE"]:
+        fail_publish(f"{source_label} tree differs from the tracked final tree")
+    # The recorded final tree must still be what the checked-in series
+    # produce, so a line left stale by a change below it cannot publish.
+    series_check = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(common_root / "tooling/kernel_series.py"),
+            "tree",
+            "--metadata",
+            str(metadata_path),
+            "--source",
+            str(source),
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+    )
+    if series_check.returncode != 0:
+        fail_publish("the checked-in series do not produce the tracked final tree")
+
+    source_paths = {
+        "kernel/System.map": build / "System.map",
+        "kernel/config": build / ".config",
+        "kernel/kernel.release": build / "include/config/kernel.release",
+        "kernel/modules.builtin": build / "modules.builtin",
+        "kernel/modules.builtin.modinfo": build / "modules.builtin.modinfo",
+        "kernel/vmlinux": build / "vmlinux",
+    }
+    for relative, path in source_paths.items():
+        if not path.is_file() or path.is_symlink():
+            fail_publish(f"build payload is missing or unsafe for {relative}: {path}")
+    for root, directories, files in os.walk(build, followlinks=False):
+        directories[:] = [
+            name for name in directories if not (Path(root) / name).is_symlink()
+        ]
+        for name in files:
+            if name.endswith(".ko") or ".ko." in name:
+                fail_publish(
+                    f"loadable module output is forbidden: {Path(root) / name}"
+                )
+
+    verify_config(source_paths["kernel/config"], page_size, kernel_slice)
+    verify_elf(source_paths["kernel/vmlinux"], page_size, common_root, kernel_slice)
+    release = source_paths["kernel/kernel.release"].read_text(
+        encoding="utf-8"
+    ).strip()
+    check_release(release, metadata)
+
+    page_label = "16k" if page_size == 16384 else "4k"
+    directory_name = f"{family}-{kernel_slice}-{page_label}-{release_id}"
+    output_root.mkdir(parents=True, exist_ok=True)
+    if output_root.is_symlink():
+        fail_publish("output root must not be a symlink")
+    destination = output_root / directory_name
+    if destination.exists() or destination.is_symlink():
+        fail_publish("kernel artifact destination already exists")
+    staging_parent = Path(
+        tempfile.mkdtemp(prefix=f".{directory_name}.", dir=output_root)
+    )
+    staging = staging_parent / directory_name
+    staging.mkdir()
+    try:
+        inventory = []
+        for relative, (role, file_format) in sorted(PAYLOAD_SPECS.items()):
+            destination_path = staging / relative
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            if relative == "kernel/vmlinux":
+                # DWARF is only pahole's input. verify_artifact below proves
+                # that the image keeps .BTF and carries no DWARF.
+                publish_runtime_image(
+                    objcopy, source_paths[relative], destination_path
+                )
+            else:
+                shutil.copyfile(source_paths[relative], destination_path)
+                shutil.copymode(source_paths[relative], destination_path)
+            inventory.append(
+                {
+                    "path": relative,
+                    "role": role,
+                    "format": file_format,
+                    "size": destination_path.stat().st_size,
+                }
+            )
+        if verify_staged is not None:
+            verify_staged(staging)
+        manifest = {
+            "schema_version": SCHEMA_VERSION,
+            "release_id": release_id,
+            "directory_name": directory_name,
+            "family": family,
+            "slice": kernel_slice,
+            "published_at_utc": datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "release": release,
+            "page_size": page_size,
+            "elf_role": "darwin-uml",
+            "source": {
+                "repository": metadata["UML_KERNEL_UPSTREAM_REPOSITORY"],
+                "branch": metadata["UML_KERNEL_UPSTREAM_BRANCH"],
+                "base_commit": metadata["UML_KERNEL_UPSTREAM_COMMIT"],
+                "base_tree": metadata["UML_KERNEL_UPSTREAM_TREE"],
+                "final_tree": metadata["UML_KERNEL_FINAL_TREE"],
+            },
+            "abi": {
+                "version": int(abi["DARWIN_UML_ABI_VERSION"]),
+                "fingerprint": abi["DARWIN_UML_ABI_FINGERPRINT"],
+            },
+            "inventory": inventory,
+        }
+        (staging / "kernel-artifact.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        verify_artifact(staging, common_root, metadata_path, abi_metadata_path)
+        os.replace(staging, destination)
+        staging_parent.rmdir()
+    except BaseException:
+        shutil.rmtree(staging_parent, ignore_errors=True)
+        raise
+    return destination
