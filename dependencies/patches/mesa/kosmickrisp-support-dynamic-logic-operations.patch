@@ -188,7 +188,7 @@ index 45366615a4d8ddc61e4491ae1dfbe7420b24a7a5..1bf8c0d9138340ff3731f273930f52a1
        struct {
           uint32_t base_group[3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index d0433630c9be584c29f260ceaef0c588d70953db..57940cbe04195c630b55d3c2ae9ade25cfa0d872 100644
+index 795a8785e53288fe6dca7351c5fd4c33d68cf8b9..6dd695360b265f2cf72f5be2265bdf537edd4275 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -14,6 +14,7 @@
@@ -205,9 +205,9 @@ index d0433630c9be584c29f260ceaef0c588d70953db..57940cbe04195c630b55d3c2ae9ade25
  
 +#include "vulkan/runtime/vk_blend.h"
  #include "vulkan/runtime/vk_render_pass.h"
- #include "vk_common_entrypoints.h"
  #include "vulkan/util/vk_format.h"
-@@ -1512,8 +1514,13 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+ 
+@@ -1511,8 +1513,13 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
           desc->root.draw.depth_clamp_ranges[i] =
              kk_depth_clamp_range(min_depth, max_depth);
        }
@@ -223,7 +223,7 @@ index d0433630c9be584c29f260ceaef0c588d70953db..57940cbe04195c630b55d3c2ae9ade25
        desc->root_dirty = true;
     }
  
-@@ -1557,6 +1564,14 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1556,6 +1563,14 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
        desc->root_dirty = true;
     }
  

@@ -8,14 +8,14 @@ Subject: [PATCH] kosmickrisp: implement GPU transform feedback
  src/kosmickrisp/libkk/kk_geometry.cl          |  22 ++
  src/kosmickrisp/libkk/kk_query.cl             |   9 +
  src/kosmickrisp/libkk/kk_query.h              |   6 +
- src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  20 +
- src/kosmickrisp/vulkan/kk_cmd_draw.c          | 359 +++++++++++++++++-
- .../vulkan/kk_nir_lower_descriptors.c         |  20 +
+ src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  20 ++
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          | 310 +++++++++++++++++-
+ .../vulkan/kk_nir_lower_descriptors.c         |  20 ++
  src/kosmickrisp/vulkan/kk_physical_device.c   |   9 +-
- src/kosmickrisp/vulkan/kk_query_pool.c        |  96 +++--
- src/kosmickrisp/vulkan/kk_shader.c            | 208 +++++++++-
+ src/kosmickrisp/vulkan/kk_query_pool.c        |  96 ++++--
+ src/kosmickrisp/vulkan/kk_shader.c            | 208 +++++++++++-
  src/kosmickrisp/vulkan/kk_shader.h            |   6 +
- 11 files changed, 722 insertions(+), 45 deletions(-)
+ 11 files changed, 673 insertions(+), 45 deletions(-)
 
 diff --git a/src/kosmickrisp/libkk/kk_draws.cl b/src/kosmickrisp/libkk/kk_draws.cl
 index 2ebed45accc9c67bf7a0add59e4ccd1e03a15fdf..cd9f13f1072f00e36e05416f09ffd1fae3d325ff 100644
@@ -162,18 +162,10 @@ index 7a81fee4c623710686a0afb16ce0b8ff37f1c59e..7c5630495be20864352fab36d9f8c9d6
     struct vk_vertex_input_state _dynamic_vi;
     struct vk_sample_locations_state _dynamic_sl;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 783c5e30d13860a6e518f89b9b54d7c6be0a7eb1..3e1da33a2006290fd4d3a74b709912238e88fa49 100644
+index 783c5e30d13860a6e518f89b9b54d7c6be0a7eb1..8398a108ea820b45b02345f33c733b527744502f 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -24,6 +24,7 @@
- #include "poly/tessellator.h"
- 
- #include "vulkan/runtime/vk_render_pass.h"
-+#include "vk_common_entrypoints.h"
- #include "vulkan/util/vk_format.h"
- 
- static void
-@@ -1107,6 +1108,85 @@ kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
+@@ -1107,6 +1107,85 @@ kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
     return kk_pool_upload(cmd, &params, sizeof(params), 8).gpu;
  }
  
@@ -259,7 +251,7 @@ index 783c5e30d13860a6e518f89b9b54d7c6be0a7eb1..3e1da33a2006290fd4d3a74b70991223
  static void
  kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
                        const struct kk_draw_data *draw)
-@@ -1531,7 +1611,8 @@ build_per_draw_upload_mask(struct kk_cmd_buffer *cmd)
+@@ -1531,7 +1610,8 @@ build_per_draw_upload_mask(struct kk_cmd_buffer *cmd)
     struct kk_shader *vertex = cmd->state.shaders[MESA_SHADER_VERTEX];
     if (vertex && (vertex->info.uses_per_draw_data ||
                    vertex->info.vs.polygon_point_emulation ||
@@ -269,7 +261,7 @@ index 783c5e30d13860a6e518f89b9b54d7c6be0a7eb1..3e1da33a2006290fd4d3a74b70991223
        mask |= BITFIELD_BIT(MESA_SHADER_VERTEX);
     }
  
-@@ -1768,16 +1849,27 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -1768,16 +1848,27 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
     bool tess = upload_mask & BITFIELD_BIT(MESA_SHADER_TESS_EVAL);
     bool polygon_points = vs && vs->info.vs.polygon_point_emulation;
     bool rectangular_lines = vs && vs->info.vs.rectangular_line_emulation;
@@ -298,7 +290,7 @@ index 783c5e30d13860a6e518f89b9b54d7c6be0a7eb1..3e1da33a2006290fd4d3a74b70991223
     /* Prepare emulation data for tessellation. */
     if (tess) {
        struct kk_ptr tess_args =
-@@ -2055,6 +2147,83 @@ kk_launch_rectangular_lines(struct kk_cmd_buffer *cmd,
+@@ -2055,6 +2146,83 @@ kk_launch_rectangular_lines(struct kk_cmd_buffer *cmd,
     return draw;
  }
  
@@ -382,7 +374,7 @@ index 783c5e30d13860a6e518f89b9b54d7c6be0a7eb1..3e1da33a2006290fd4d3a74b70991223
  /* Get modifiable per draw data. */
  static struct kk_draw_data
  build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
-@@ -2114,12 +2283,15 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -2114,12 +2282,15 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        !tess && polygon_as_points && vs->info.vs.polygon_point_emulation;
     const bool emulate_rectangular_lines =
        !tess && vs->info.vs.rectangular_line_emulation;
@@ -398,7 +390,7 @@ index 783c5e30d13860a6e518f89b9b54d7c6be0a7eb1..3e1da33a2006290fd4d3a74b70991223
         (!emulate_polygon_points && polygon_as_points &&
          is_polygon_primitive(data->prim) &&
          data->prim != MESA_PRIM_TRIANGLES) ||
-@@ -2137,15 +2309,21 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -2137,15 +2308,21 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
  
        if (tess)
           draw_data = kk_launch_tess(cmd, draw_data);
@@ -423,7 +415,7 @@ index 783c5e30d13860a6e518f89b9b54d7c6be0a7eb1..3e1da33a2006290fd4d3a74b70991223
           draw_data.primitive_type = MTL_PRIMITIVE_TYPE_POINT;
  
        kk_dispatch_draw(cmd, draw_data);
-@@ -2463,3 +2641,174 @@ kk_CmdDrawIndexedIndirectCount2KHR(VkCommandBuffer commandBuffer,
+@@ -2463,3 +2640,126 @@ kk_CmdDrawIndexedIndirectCount2KHR(VkCommandBuffer commandBuffer,
  
     kk_draw(cmd, &data);
  }
@@ -549,54 +541,6 @@ index 783c5e30d13860a6e518f89b9b54d7c6be0a7eb1..3e1da33a2006290fd4d3a74b70991223
 +      .indirect_command.stride = sizeof(VkDrawIndirectCommand),
 +   };
 +   kk_draw(cmd, &data);
-+}
-+
-+VKAPI_ATTR void VKAPI_CALL
-+kk_CmdBindTransformFeedbackBuffersEXT(VkCommandBuffer commandBuffer,
-+                                      uint32_t firstBinding,
-+                                      uint32_t bindingCount,
-+                                      const VkBuffer *pBuffers,
-+                                      const VkDeviceSize *pOffsets,
-+                                      const VkDeviceSize *pSizes)
-+{
-+   vk_common_CmdBindTransformFeedbackBuffersEXT(
-+      commandBuffer, firstBinding, bindingCount, pBuffers, pOffsets, pSizes);
-+}
-+
-+VKAPI_ATTR void VKAPI_CALL
-+kk_CmdBeginTransformFeedbackEXT(
-+   VkCommandBuffer commandBuffer, uint32_t firstCounterBuffer,
-+   uint32_t counterBufferCount, const VkBuffer *pCounterBuffers,
-+   const VkDeviceSize *pCounterBufferOffsets)
-+{
-+   vk_common_CmdBeginTransformFeedbackEXT(
-+      commandBuffer, firstCounterBuffer, counterBufferCount, pCounterBuffers,
-+      pCounterBufferOffsets);
-+}
-+
-+VKAPI_ATTR void VKAPI_CALL
-+kk_CmdEndTransformFeedbackEXT(
-+   VkCommandBuffer commandBuffer, uint32_t firstCounterBuffer,
-+   uint32_t counterBufferCount, const VkBuffer *pCounterBuffers,
-+   const VkDeviceSize *pCounterBufferOffsets)
-+{
-+   vk_common_CmdEndTransformFeedbackEXT(
-+      commandBuffer, firstCounterBuffer, counterBufferCount, pCounterBuffers,
-+      pCounterBufferOffsets);
-+}
-+
-+VKAPI_ATTR void VKAPI_CALL
-+kk_CmdDrawIndirectByteCountEXT(VkCommandBuffer commandBuffer,
-+                               uint32_t instanceCount,
-+                               uint32_t firstInstance,
-+                               VkBuffer counterBuffer,
-+                               VkDeviceSize counterBufferOffset,
-+                               uint32_t counterOffset,
-+                               uint32_t vertexStride)
-+{
-+   vk_common_CmdDrawIndirectByteCountEXT(
-+      commandBuffer, instanceCount, firstInstance, counterBuffer,
-+      counterBufferOffset, counterOffset, vertexStride);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 index 2a78510347829bd4e05061187204f7711d1a2fc3..50a1b08765392618508d048b2422de552a587176 100644

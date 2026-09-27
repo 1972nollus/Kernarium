@@ -37,10 +37,10 @@ index 46a45bce227fa7ae459b636ddbde7aa7e1ceedb7..3fa01aeff965059195da06ba85887442
     struct kk_attachment stencil_att;
     struct kk_attachment fsr_att;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c046c29e5 100644
+index 86ed6c42a64f3099ae19294b46ad6e0414389c51..1b263112c867c6b1b217bf3bc62246effcc7cbe9 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -186,6 +186,7 @@ static void
+@@ -185,6 +185,7 @@ static void
  kk_set_color_attachments(mtl_render_pass_descriptor *pass_descriptor,
                           struct kk_rendering_state *render,
                           const struct vk_dynamic_graphics_state *dyn,
@@ -48,7 +48,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
                           bool force_attachment_load)
  {
     for (uint32_t i = 0; i < ARRAY_SIZE(render->color_att); i++) {
-@@ -199,7 +200,8 @@ kk_set_color_attachments(mtl_render_pass_descriptor *pass_descriptor,
+@@ -198,7 +199,8 @@ kk_set_color_attachments(mtl_render_pass_descriptor *pass_descriptor,
        uint8_t logical_index = dyn->cal.color_map[i];
        render->color_map[i] = logical_index;
  
@@ -58,7 +58,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
           continue;
        }
        mtl_render_pass_attachment_descriptor *attachment_descriptor =
-@@ -223,6 +225,83 @@ kk_set_color_attachments(mtl_render_pass_descriptor *pass_descriptor,
+@@ -222,6 +224,83 @@ kk_set_color_attachments(mtl_render_pass_descriptor *pass_descriptor,
     }
  }
  
@@ -142,7 +142,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
  VKAPI_ATTR void VKAPI_CALL
  kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
                       const VkRenderingInfo *pRenderingInfo)
-@@ -301,13 +380,15 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
+@@ -300,13 +379,15 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
     if (no_framebuffer) {
        framebuffer_extent.width = render->area.extent.width;
        framebuffer_extent.height = render->area.extent.height;
@@ -164,7 +164,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
  
     /* Check if we are rendering to the whole framebuffer. Required to understand
      * if we need to load to avoid clearing all attachment when loading.
-@@ -341,43 +422,12 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
+@@ -340,43 +421,12 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
        (!is_whole_framebuffer && does_any_attachment_clear) ||
        (render->flags & VK_RENDERING_RESUMING_BIT);
  
@@ -213,7 +213,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
  
     /* Render targets are always arrays */
     mtl_render_pass_descriptor_set_render_target_array_length(
-@@ -396,29 +446,12 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
+@@ -395,29 +445,12 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
     if (!no_framebuffer)
        cs_start_render(cmd);
  
@@ -249,7 +249,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
     cmd->state.gfx.need_to_start_render_pass = no_framebuffer;
  
     kk_cmd_buffer_dirty_all_gfx(cmd);
-@@ -864,22 +897,27 @@ kk_force_attachment_load(struct kk_cmd_buffer *cmd)
+@@ -863,22 +896,27 @@ kk_force_attachment_load(struct kk_cmd_buffer *cmd)
     struct kk_rendering_state *render = &cmd->state.gfx.render;
  
     for (uint32_t i = 0; i < render->color_att_count; i++) {
@@ -281,7 +281,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
        mtl_render_pass_attachment_descriptor *att =
           mtl_render_pass_descriptor_get_stencil_attachment(
              cmd->state.gfx.render_pass_descriptor);
-@@ -891,31 +929,52 @@ kk_force_attachment_load(struct kk_cmd_buffer *cmd)
+@@ -890,31 +928,52 @@ kk_force_attachment_load(struct kk_cmd_buffer *cmd)
  static void
  kk_flush_render_pass(struct kk_cmd_buffer *cmd)
  {
@@ -344,7 +344,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
     }
  }
  
-@@ -945,7 +1004,16 @@ kk_flush_pipeline(struct kk_cmd_buffer *cmd)
+@@ -944,7 +1003,16 @@ kk_flush_pipeline(struct kk_cmd_buffer *cmd)
  
     if (IS_SHADER_DIRTY(VERTEX)) {
        struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];

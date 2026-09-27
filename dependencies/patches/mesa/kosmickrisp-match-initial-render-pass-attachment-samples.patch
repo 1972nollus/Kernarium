@@ -14,10 +14,10 @@ Add a native GPU regression for single-sample controls, default and maintenance1
  create mode 100644 src/kosmickrisp/vulkan/tests/test_maintenance10_resolve.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 95d8acf2ffb90dac3e33a5f3080871a018225840..33fb7378d65f329e6a5a6c77275136e6e789a455 100644
+index e23d0691c2415c2fe4f8527a904317afa89e79d6..2015686c33eb5914205bce4b2b135ea3ab323cbc 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -391,8 +391,6 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
+@@ -390,8 +390,6 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
        pass_descriptor, framebuffer_extent.width);
     mtl_render_pass_descriptor_set_render_target_height(
        pass_descriptor, framebuffer_extent.height);
@@ -26,7 +26,7 @@ index 95d8acf2ffb90dac3e33a5f3080871a018225840..33fb7378d65f329e6a5a6c77275136e6
  
     /* Check if we are rendering to the whole framebuffer. Required to understand
      * if we need to load to avoid clearing all attachment when loading.
-@@ -432,6 +430,10 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
+@@ -431,6 +429,10 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
     kk_set_depth_stencil_attachments(
        pass_descriptor, render, render->bound_attachments,
        force_attachment_load);

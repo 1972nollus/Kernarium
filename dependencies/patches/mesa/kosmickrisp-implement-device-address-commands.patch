@@ -465,10 +465,10 @@ index a5fcf3768d00cbc93e1896f002379687519a52e1..7d1f6cd824af9ff9cc1209a2c0bec12f
   * buffer offset for subsequent copies. */
  static size_t
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 9b3be74c8386a6c7b376860ac6692d33f59ad2ad..d0433630c9be584c29f260ceaef0c588d70953db 100644
+index e5e5fe454b6b69bcb695d711dbd522685ddd3fc1..795a8785e53288fe6dca7351c5fd4c33d68cf8b9 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -3025,6 +3025,7 @@ kk_begin_end_transform_feedback(
+@@ -3024,6 +3024,7 @@ kk_begin_end_transform_feedback(
  
        for (uint32_t i = 0; pCounterInfos && i < counterRangeCount; ++i) {
           uint32_t index = firstCounterRange + i;
@@ -476,7 +476,7 @@ index 9b3be74c8386a6c7b376860ac6692d33f59ad2ad..d0433630c9be584c29f260ceaef0c588
           copy.src[index] = pCounterInfos[i].addressRange.address;
        }
        copies = POLY_MAX_SO_BUFFERS;
-@@ -3034,6 +3035,7 @@ kk_begin_end_transform_feedback(
+@@ -3033,6 +3034,7 @@ kk_begin_end_transform_feedback(
           if (!dst)
              continue;
  
@@ -484,7 +484,7 @@ index 9b3be74c8386a6c7b376860ac6692d33f59ad2ad..d0433630c9be584c29f260ceaef0c588
           copy.dest[copies] = dst;
           copy.src[copies] =
              offsets + (firstCounterRange + i) * sizeof(uint32_t);
-@@ -3082,6 +3084,7 @@ kk_CmdDrawIndirectByteCount2EXT(
+@@ -3081,6 +3083,7 @@ kk_CmdDrawIndirectByteCount2EXT(
        return;
  
     VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);

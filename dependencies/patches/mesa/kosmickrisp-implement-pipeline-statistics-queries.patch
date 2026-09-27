@@ -500,10 +500,10 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
        mtl_dispatch_threadgroups_with_indirect_buffer(
           encoder, pInfo->addressRange.address, local_size);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a018225840 100644
+index b2280a592ae3a26ffbcf376ef17f56bffa4161c9..e23d0691c2415c2fe4f8527a904317afa89e79d6 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1232,14 +1232,22 @@ kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
+@@ -1231,14 +1231,22 @@ kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
     return *params_out != 0;
  }
  
@@ -528,7 +528,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
           gfx->xfb.sink = sink.gpu;
        }
     }
-@@ -1300,9 +1308,10 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
+@@ -1299,9 +1307,10 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
        params.xfb_prims_generated_counter[i] = query ? query : sink;
        params.prims_generated_counter[i] =
           query ? query + sizeof(uint64_t) : sink;
@@ -541,7 +541,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
  
     params.count_buffer_stride = gsi->count_words * sizeof(uint32_t);
     if (!gsi->prefix_sum && params.count_buffer_stride) {
-@@ -1403,7 +1412,6 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
+@@ -1402,7 +1411,6 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
        gfx->xfb.raster_instance_count = params.draw.instance_count;
     }
  
@@ -549,7 +549,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
     return kk_pool_upload(cmd, &params, sizeof(params), 8).gpu;
  }
  
-@@ -1426,7 +1434,9 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+@@ -1425,7 +1433,9 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
     struct poly_tess_params args = {
        .heap = kk_heap(cmd),
        .tcs_stride_el = tcs->info.tess.tcs_output_stride / 4,
@@ -560,7 +560,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
        .input_patch_size = dyn->ts.patch_control_points,
        .output_patch_size = tcs->info.tess.tcs_output_patch_size,
        .tcs_patch_constants = tcs->info.tess.tcs_nr_patch_outputs,
-@@ -1690,6 +1700,18 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+@@ -1689,6 +1699,18 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
     kk_flush_render_pass(cmd);
     kk_flush_pipeline(cmd);
  
@@ -579,7 +579,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
     if (desc->push_dirty)
        kk_cmd_buffer_flush_push_descriptors(cmd, desc);
  
-@@ -1788,6 +1810,95 @@ kk_predicate_draws(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -1787,6 +1809,95 @@ kk_predicate_draws(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     return true;
  }
  
@@ -675,7 +675,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
  /* Unrolling will always be done through indirect rendering, so if this is
   * called from non-indirect calls, we will fake it. */
  static bool
-@@ -2396,6 +2507,19 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2395,6 +2506,19 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     uint32_t input_patch_size = dyn->ts.patch_control_points;
     uint64_t state = gfx->per_draw_data.tess_params;
     struct kk_tess_info info = gfx->tess.info;
@@ -695,7 +695,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
  
     /* Setup grids */
     if (kk_grid_is_indirect(draw.grid)) {
-@@ -2405,7 +2529,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2404,7 +2528,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
           .indirect = draw.grid.addr,
           .vp = gfx->per_draw_data.vertex_params,
           .vertex_outputs = vs->info.vs.outputs_written,
@@ -704,7 +704,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
        };
  
        if (draw.index.el_size_B) {
-@@ -2429,6 +2553,11 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2428,6 +2552,11 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  
        grid_tcs.size.x = patches * tcs->info.tess.tcs_output_patch_size;
        grid_tess = kk_grid_1d(patches * draw.grid.size.y);
@@ -716,7 +716,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
     }
  
     /* First launch the VS and TCS */
-@@ -2459,7 +2588,9 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2458,7 +2587,9 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     libkk_tessellate(cmd, grid_tess, true, info.mode, POLY_TESS_MODE_COUNT,
                      state);
  
@@ -727,7 +727,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
  
     libkk_tessellate(cmd, grid_tess, true, info.mode, POLY_TESS_MODE_WITH_COUNTS,
                      state);
-@@ -2831,6 +2962,23 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2830,6 +2961,23 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
     for (uint32_t i = 0; i < POLY_MAX_VERTEX_STREAMS; ++i)
        query_active |= gfx->xfb.query[i] != 0;
  
@@ -751,7 +751,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
     if (gfx->xfb.enabled || query_active) {
        mtl_barrier_after_encoder_stages(enc, MTL_STAGE_DISPATCH,
                                         MTL_STAGE_DISPATCH);
-@@ -2964,6 +3112,22 @@ kk_launch_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
+@@ -2963,6 +3111,22 @@ kk_launch_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
           enc, vs->pipeline.gfx.geometry_main, grid_gs,
           gs_group_grid, 64, true);
     }
@@ -774,7 +774,7 @@ index b64a46383dd904d77aefb2dec98b4669d18e7cc0..95d8acf2ffb90dac3e33a5f3080871a0
  
     if (gsi->xfb || query_active) {
        if (gsi->count_words > 0 && !gsi->output_vertex_stride) {
-@@ -3077,6 +3241,9 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3076,6 +3240,9 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     if (data->predicate_count > 0 && !kk_predicate_draws(cmd, data))
        return;
  

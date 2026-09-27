@@ -52,7 +52,7 @@ index 3fa01aeff965059195da06ba85887442b87f3b0f..67b5d26da894c31e17116c7d185b1f8c
        struct {
           uint32_t base_group[3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 132aa31a89b7867a73b5bde19cea076c046c29e5..9b3be74c8386a6c7b376860ac6692d33f59ad2ad 100644
+index 1b263112c867c6b1b217bf3bc62246effcc7cbe9..e5e5fe454b6b69bcb695d711dbd522685ddd3fc1 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -11,6 +11,7 @@
@@ -63,7 +63,7 @@ index 132aa31a89b7867a73b5bde19cea076c046c29e5..9b3be74c8386a6c7b376860ac6692d33
  #include "kk_format.h"
  #include "kk_image_view.h"
  #include "kk_query_pool.h"
-@@ -708,6 +709,7 @@ kk_flush_vp_state(struct kk_cmd_buffer *cmd)
+@@ -707,6 +708,7 @@ kk_flush_vp_state(struct kk_cmd_buffer *cmd)
  {
     const struct vk_dynamic_graphics_state *dyn =
        &cmd->vk.dynamic_graphics_state;
@@ -71,7 +71,7 @@ index 132aa31a89b7867a73b5bde19cea076c046c29e5..9b3be74c8386a6c7b376860ac6692d33
  
     /* We always need at least 1 viewport for the hardware. With rasterizer
      * discard the app may not supply any, but we can just program garbage.
-@@ -754,8 +756,8 @@ kk_flush_vp_state(struct kk_cmd_buffer *cmd)
+@@ -753,8 +755,8 @@ kk_flush_vp_state(struct kk_cmd_buffer *cmd)
        viewports[i].width = vp->width;
        viewports[i].height = -vp->height;
  
@@ -82,7 +82,7 @@ index 132aa31a89b7867a73b5bde19cea076c046c29e5..9b3be74c8386a6c7b376860ac6692d33
     }
  
     mtl_set_viewports(encoder, viewports, count);
-@@ -1487,7 +1489,8 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1486,7 +1488,8 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
     /* We enable raster discard by setting scissor to size (0, 0) */
     if (!(kk_rast_discard(cmd) || gfx->is_cull_front_and_back) &&
         (IS_DIRTY(VP_VIEWPORT_COUNT) || IS_DIRTY(VP_VIEWPORTS) ||
@@ -92,7 +92,7 @@ index 132aa31a89b7867a73b5bde19cea076c046c29e5..9b3be74c8386a6c7b376860ac6692d33
        kk_flush_vp_state(cmd);
  
     if (IS_DIRTY(VP_DEPTH_CLIP_NEGATIVE_ONE_TO_ONE)) {
-@@ -1496,6 +1499,24 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1495,6 +1498,24 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
        desc->root_dirty = true;
     }
  
@@ -117,7 +117,7 @@ index 132aa31a89b7867a73b5bde19cea076c046c29e5..9b3be74c8386a6c7b376860ac6692d33
     if (IS_DIRTY(RS_FRONT_FACE) || IS_DIRTY(TS_DOMAIN_ORIGIN) ||
         IS_SHADER_DIRTY(TESS_CTRL) || IS_SHADER_DIRTY(TESS_EVAL)) {
        bool front_face_ccw = dyn->rs.front_face != VK_FRONT_FACE_CLOCKWISE;
-@@ -1518,12 +1539,8 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1517,12 +1538,8 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
           mtl_set_depth_bias(enc, 0.0f, 0.0f, 0.0f);
     }
  

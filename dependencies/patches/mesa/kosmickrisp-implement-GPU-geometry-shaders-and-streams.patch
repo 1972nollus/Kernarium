@@ -70,10 +70,10 @@ index 7c5630495be20864352fab36d9f8c9d698fe9c0d..46a45bce227fa7ae459b636ddbde7aa7
     struct vk_vertex_input_state _dynamic_vi;
     struct vk_sample_locations_state _dynamic_sl;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44c22f3c94 100644
+index 8398a108ea820b45b02345f33c733b527744502f..86ed6c42a64f3099ae19294b46ad6e0414389c51 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1065,7 +1065,7 @@ static uint64_t
+@@ -1064,7 +1064,7 @@ static uint64_t
  kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
                          const struct kk_draw_data *data)
  {
@@ -82,7 +82,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
  
     struct poly_vertex_params params;
     poly_vertex_params_init(&params, 0, wg_size);
-@@ -1141,13 +1141,15 @@ kk_transform_feedback_offsets(struct kk_cmd_buffer *cmd)
+@@ -1140,13 +1140,15 @@ kk_transform_feedback_offsets(struct kk_cmd_buffer *cmd)
  }
  
  static uint64_t
@@ -102,7 +102,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
     const uint32_t wg_size[3] = {64, 1, 1};
     uint64_t sink = kk_transform_feedback_sink(cmd);
     uint64_t offsets = kk_transform_feedback_offsets(cmd);
-@@ -1157,6 +1159,7 @@ kk_upload_transform_feedback_params(struct kk_cmd_buffer *cmd,
+@@ -1156,6 +1158,7 @@ kk_upload_transform_feedback_params(struct kk_cmd_buffer *cmd,
  
     struct poly_geometry_params params;
     poly_geometry_params_init(&params, prim, wg_size);
@@ -110,7 +110,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
  
     for (uint32_t i = 0; i < POLY_MAX_SO_BUFFERS; ++i) {
        params.xfb_offs_ptrs[i] = offsets + i * sizeof(uint32_t);
-@@ -1175,10 +1178,80 @@ kk_upload_transform_feedback_params(struct kk_cmd_buffer *cmd,
+@@ -1174,10 +1177,80 @@ kk_upload_transform_feedback_params(struct kk_cmd_buffer *cmd,
     }
     params.xfb_any_overflow = sink + 20;
  
@@ -192,7 +192,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
        gfx->xfb.raster_vertex_count = params.draw.vertex_count;
        gfx->xfb.raster_instance_count = params.draw.instance_count;
     }
-@@ -1269,6 +1342,20 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+@@ -1268,6 +1341,20 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
     memcpy(out, &args, sizeof(args));
  }
  
@@ -213,7 +213,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
  static void
  kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
  {
-@@ -1287,8 +1374,9 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1286,8 +1373,9 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
        desc->root_dirty = true;
     }
  
@@ -225,7 +225,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
           set_empty_scissor(enc);
        } else {
           /* Enforce setting the correct scissors */
-@@ -1329,7 +1417,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1328,7 +1416,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
     }
  
     /* We enable raster discard by setting scissor to size (0, 0) */
@@ -234,7 +234,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
         (IS_DIRTY(VP_VIEWPORT_COUNT) || IS_DIRTY(VP_VIEWPORTS) ||
          IS_DIRTY(VP_SCISSOR_COUNT) || IS_DIRTY(VP_SCISSORS)))
        kk_flush_vp_state(cmd);
-@@ -1556,7 +1644,9 @@ kk_unroll_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -1555,7 +1643,9 @@ kk_unroll_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
                         : 0u,
        .in_el_size_B = data->index_buffer_el_size_B,
        .out_el_size_B = 4u,
@@ -245,7 +245,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
        .mode = data->prim,
     };
  
-@@ -1612,7 +1702,8 @@ build_per_draw_upload_mask(struct kk_cmd_buffer *cmd)
+@@ -1611,7 +1701,8 @@ build_per_draw_upload_mask(struct kk_cmd_buffer *cmd)
     if (vertex && (vertex->info.uses_per_draw_data ||
                    vertex->info.vs.polygon_point_emulation ||
                    vertex->info.vs.rectangular_line_emulation ||
@@ -255,7 +255,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
        mask |= BITFIELD_BIT(MESA_SHADER_VERTEX);
     }
  
-@@ -1851,10 +1942,12 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -1850,10 +1941,12 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
     bool rectangular_lines = vs && vs->info.vs.rectangular_line_emulation;
     bool transform_feedback =
        vs && vs->info.vs.transform_feedback_emulation;
@@ -269,7 +269,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
        gfx->per_draw_data.index_size = draw->index.el_size_B;
        gfx->per_draw_data.base_vertex_addr = upload_base_vertex(cmd, draw);
        gfx->per_draw_data.base_instance_addr = upload_base_instance(cmd, draw);
-@@ -1863,13 +1956,26 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -1862,13 +1955,26 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
  
     if (transform_feedback) {
        gfx->per_draw_data.geometry_params =
@@ -297,7 +297,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
     /* Prepare emulation data for tessellation. */
     if (tess) {
        struct kk_ptr tess_args =
-@@ -2173,6 +2279,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2172,6 +2278,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                 ? draw.index.gpu.range / draw.index.el_size_B
                 : 0,
           .prim = prim,
@@ -305,7 +305,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
           .max_indices = gsi->max_indices,
           .shape = gsi->shape,
        };
-@@ -2224,16 +2331,161 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2223,16 +2330,161 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
     return draw;
  }
  
@@ -468,7 +468,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
     };
  
     if (data->indirect) {
-@@ -2285,14 +2537,17 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -2284,14 +2536,17 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        !tess && vs->info.vs.rectangular_line_emulation;
     const bool emulate_transform_feedback =
        !tess && vs->info.vs.transform_feedback_emulation;
@@ -489,7 +489,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
          is_polygon_primitive(data->prim) &&
          data->prim != MESA_PRIM_TRIANGLES) ||
         requires_index_promotion(data) || requires_unroll_robustness(cmd, data) ||
-@@ -2309,7 +2564,11 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -2308,7 +2563,11 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
  
        if (tess)
           draw_data = kk_launch_tess(cmd, draw_data);
@@ -502,7 +502,7 @@ index 3e1da33a2006290fd4d3a74b709912238e88fa49..1c46a182831d551dcc075d2d83593a44
           draw_data =
              kk_launch_transform_feedback(cmd, draw_data, data->prim);
        else if (emulate_polygon_points)
-@@ -2319,7 +2578,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -2318,7 +2577,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
              kk_launch_rectangular_lines(cmd, draw_data, data->prim);
  
        const enum mesa_prim raster_prim =
