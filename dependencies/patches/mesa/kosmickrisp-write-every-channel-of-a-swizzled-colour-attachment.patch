@@ -164,10 +164,10 @@ index 0000000000000000000000000000000000000000..a99be20458da387cf5b3d63187d3564a
 +                                     nir_metadata_control_flow, (void *)state);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index de9ef6c53ef4a08a4fb9236a17fc7f435b1a1c35..8cf15551a5d59ab94f65527772b7b59bf5c987f5 100644
+index 5ace58079fbcd2adf55d44e5d75fe60f560fc3ab..79d9e5b53285e22e2e8b82e114020db3e707e732 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -290,57 +290,6 @@ type_size_vec4(const struct glsl_type *type, bool bindless)
+@@ -280,57 +280,6 @@ type_size_vec4(const struct glsl_type *type, bool bindless)
     return glsl_count_attribute_slots(type, false);
  }
  
@@ -225,7 +225,7 @@ index de9ef6c53ef4a08a4fb9236a17fc7f435b1a1c35..8cf15551a5d59ab94f65527772b7b59b
  static void
  kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
                  const struct vk_pipeline_robustness_state *rs,
-@@ -1311,8 +1260,7 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
+@@ -1301,8 +1250,7 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
              NULL);
  
     /* Swizzle non-native formats' outputs */

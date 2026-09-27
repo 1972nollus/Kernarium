@@ -172,10 +172,10 @@ index d4eeed93b34cf7c9b9b15ae9b691a830df0d2881..aee0b3050254148b456bffe7e5bb30a3
  
        /* VK_KHR_line_rasterization */
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f435b1a1c35 100644
+index 023f356025435f655837b2f0d3f55f020076e6b9..5ace58079fbcd2adf55d44e5d75fe60f560fc3ab 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -1498,6 +1498,9 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
+@@ -1488,6 +1488,9 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
  
  static const struct vk_shader_ops kk_shader_ops;
  
@@ -185,7 +185,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  static void
  kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
                    const VkAllocationCallbacks *pAllocator)
-@@ -1507,6 +1510,10 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
+@@ -1497,6 +1500,10 @@ kk_shader_destroy(struct vk_device *vk_dev, struct kk_shader *shader,
     if (shader->info.deferred)
        blob_finish(&shader->deferred_nir);
  
@@ -196,7 +196,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
     struct kk_pipeline_handles *pipe = &shader->pipeline;
  
     if (shader->info.stage == MESA_SHADER_COMPUTE) {
-@@ -4360,6 +4367,152 @@ gather_graphics_pipeline_create_info(
+@@ -4350,6 +4357,152 @@ gather_graphics_pipeline_create_info(
     }
  }
  
@@ -349,7 +349,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  /* Guards every shader's Metal render pipelines trimmed to the colour
   * attachments a render pass bound.  Nothing but
   * VK_EXT_dynamic_rendering_unused_attachments reaches it, and Metal never
-@@ -4402,16 +4555,19 @@ kk_render_pipeline_vertex_stage(const struct kk_shader *vs)
+@@ -4392,16 +4545,19 @@ kk_render_pipeline_vertex_stage(const struct kk_shader *vs)
   * pass actually bound. */
  static VkResult
  kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
@@ -373,7 +373,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
     if (vertex_library == NULL)
        return VK_ERROR_INVALID_SHADER_NV;
  
-@@ -4420,9 +4576,12 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
+@@ -4410,9 +4566,12 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
                                            vs_data->entrypoint_name);
  
     const struct msl_compile_data *fs_data = &vs->msl_data[MESA_SHADER_FRAGMENT];
@@ -389,7 +389,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
     if (fragment_library == NULL) {
        result = VK_ERROR_INVALID_SHADER_NV;
        goto destroy_vertex;
-@@ -4502,8 +4661,8 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
+@@ -4492,8 +4651,8 @@ kk_new_render_pipeline_state(struct kk_device *device, struct kk_shader *vs,
           pipeline_descriptor, vs->info.vs.has_alpha_to_one_enabled);
     }
  
@@ -400,7 +400,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
     if (*state_out == NULL)
        result = VK_ERROR_INVALID_SHADER_NV;
  
-@@ -4517,8 +4676,11 @@ destroy_vertex:
+@@ -4507,8 +4666,11 @@ destroy_vertex:
     return result;
  }
  
@@ -413,7 +413,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  {
     VkResult result = VK_SUCCESS;
     struct kk_pipeline_handles *pipe = &vs->pipeline;
-@@ -4597,7 +4759,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
+@@ -4587,7 +4749,7 @@ kk_compile_graphics_pipeline(struct kk_device *device, struct kk_shader *vs)
  
     return kk_new_render_pipeline_state(device, vs,
                                         kk_shader_color_attachment_mask(vs),
@@ -422,7 +422,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  }
  
  mtl_render_pipeline_state *
-@@ -4629,7 +4791,7 @@ kk_shader_render_pipeline(struct kk_device *dev, struct kk_shader *vs,
+@@ -4619,7 +4781,7 @@ kk_shader_render_pipeline(struct kk_device *dev, struct kk_shader *vs,
      * for different attachment masks must not serialize on it. */
     mtl_render_pipeline_state *state = NULL;
     VkResult result =
@@ -431,7 +431,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
     if (result != VK_SUCCESS)
        return NULL;
  
-@@ -4658,9 +4820,201 @@ kk_shader_render_pipeline(struct kk_device *dev, struct kk_shader *vs,
+@@ -4648,9 +4810,201 @@ kk_shader_render_pipeline(struct kk_device *dev, struct kk_shader *vs,
     return state;
  }
  
@@ -633,7 +633,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
                            const VkAllocationCallbacks *pAllocator,
                            struct vk_shader **shaders_out)
  {
-@@ -4683,8 +5037,6 @@ kk_defer_graphics_shaders(struct kk_device *dev, uint32_t shader_count,
+@@ -4673,8 +5027,6 @@ kk_defer_graphics_shaders(struct kk_device *dev, uint32_t shader_count,
        shader->deferred_robustness = *compile->robustness;
        blob_init(&shader->deferred_nir);
        nir_serialize(&shader->deferred_nir, compile->nir, false);
@@ -642,7 +642,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  
        if (shader->deferred_nir.out_of_memory) {
           kk_shader_destroy(&dev->vk, shader, pAllocator);
-@@ -4694,8 +5046,18 @@ kk_defer_graphics_shaders(struct kk_device *dev, uint32_t shader_count,
+@@ -4684,8 +5036,18 @@ kk_defer_graphics_shaders(struct kk_device *dev, uint32_t shader_count,
        shaders_out[shader_index] = &shader->vk;
     }
  
@@ -662,7 +662,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  
     for (uint32_t i = shader_index; i < shader_count; i++) {
        ralloc_free(infos[i].nir);
-@@ -4738,7 +5100,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4728,7 +5090,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                          const struct vk_features *enabled_features,
                          const VkAllocationCallbacks *pAllocator,
                          struct vk_shader **shaders_out,
@@ -672,7 +672,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  {
     VkResult result = VK_SUCCESS;
     struct kk_device *dev = container_of(device, struct kk_device, vk);
-@@ -4748,8 +5111,14 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4738,8 +5101,14 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
     if (defer_library_shaders && shader_count > 0 &&
         infos[0].stage != MESA_SHADER_COMPUTE &&
         (infos[0].defer_graphics_pipeline_link || dynamic_vertex_input)) {
@@ -689,7 +689,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
     }
  
     /* Vulkan doesn't enforce a fragment shader to build pipelines. We may need
-@@ -4788,7 +5157,13 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4778,7 +5147,13 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
        state ? kk_graphics_raster_primitive(shader_count, infos, state)
              : MESA_PRIM_POINTS;
  
@@ -704,7 +704,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
     const bool polygon_point_emulation =
        rasterize && state->rs->polygon_mode == VK_POLYGON_MODE_POINT &&
        u_reduced_prim(line_raster_prim) == MESA_PRIM_TRIANGLES;
-@@ -4905,7 +5280,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4895,7 +5270,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
      * pipelines, including final GPL links, may therefore need a pass-through
      * fragment. */
     uint32_t total_shaders = shader_count;
@@ -714,7 +714,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
        nir_shaders[shader_count] =
           get_empty_nir(dev, MESA_SHADER_FRAGMENT, state);
        if (line_raster_emulation) {
-@@ -4932,13 +5308,25 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4922,13 +5298,25 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
      * unmatched internal line input to the old final stage would discard it. */
     uint32_t initial_link_count =
        generated_raster ? total_shaders - 1u : total_shaders;
@@ -747,7 +747,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  
     uint32_t line_raster_shader = UINT32_MAX;
     uint32_t line_raster_materialize_shader = UINT32_MAX;
-@@ -5340,6 +5728,13 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -5330,6 +5718,13 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
               sizeof(pre_gs->msl_data[MESA_SHADER_COMPUTE]));
     }
  
@@ -761,7 +761,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
     /* Compile compute directly.  Graphics stages are complete here: GPL
      * libraries defer this call until the common runtime has linked all state
      * and shader subsets.
-@@ -5397,7 +5792,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -5387,7 +5782,7 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                      BITFIELD_BIT(MESA_SHADER_COMPUTE)) == 0);
           }
        }
@@ -770,7 +770,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  
        /* Free generated fragment and raster-emulation shaders. Their MSL was
         * copied into the vertex shader that owns the complete pipeline. */
-@@ -5426,7 +5821,8 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
+@@ -5416,7 +5811,8 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
                          const struct vk_features *enabled_features,
                          const VkAllocationCallbacks *pAllocator,
                          struct vk_shader **shaders_out,
@@ -780,7 +780,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  {
     /* Incomplete GPL subsets and dynamic vertex inputs retain NIR. Reachable
      * classes are compiled once at complete creation or the final-link/vertex
-@@ -5439,7 +5835,7 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
+@@ -5429,7 +5825,7 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
        return kk_compile_shaders_single(device, shader_count, infos, state,
                                         enabled_features, pAllocator,
                                         shaders_out, defer_library_shaders,
@@ -789,7 +789,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  
     struct vk_input_assembly_state ia = *state->ia;
     if (BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_IA_PRIMITIVE_TOPOLOGY))
-@@ -5512,7 +5908,7 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
+@@ -5502,7 +5898,7 @@ kk_compile_line_variants(struct vk_device *device, uint32_t shader_count,
        struct vk_shader *compiled[shader_count];
        result = kk_compile_shaders_single(
           device, shader_count, variant_infos, &executable, enabled_features,
@@ -798,7 +798,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
        if (result != VK_SUCCESS)
           goto fail;
  
-@@ -5558,7 +5954,7 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -5548,7 +5944,7 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
                          const struct vk_features *enabled_features,
                          const VkAllocationCallbacks *pAllocator,
                          struct vk_shader **shaders_out,
@@ -807,7 +807,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  {
     /* Query masks and result addresses are draw data. Compile their guards
      * into the executable once, so beginning or ending a query does not need
-@@ -5574,7 +5970,8 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -5564,7 +5960,8 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
  
     return kk_compile_line_variants(device, shader_count, infos, state,
                                     enabled_features, pAllocator, shaders_out,
@@ -817,7 +817,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  }
  
  static VkResult
-@@ -5587,7 +5984,7 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -5577,7 +5974,7 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
  {
     return kk_compile_shaders_impl(device, shader_count, infos, state,
                                    enabled_features, pAllocator, shaders_out,
@@ -826,7 +826,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  }
  
  struct kk_deferred_graphics_shader {
-@@ -5797,6 +6194,17 @@ kk_linked_graphics_pipeline_cache_init(struct kk_device *dev)
+@@ -5787,6 +6184,17 @@ kk_linked_graphics_pipeline_cache_init(struct kk_device *dev)
        return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
  
     simple_mtx_init(&dev->linked_graphics_pipelines_lock, mtx_plain);
@@ -844,7 +844,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
     return VK_SUCCESS;
  }
  
-@@ -5810,6 +6218,15 @@ kk_linked_graphics_pipeline_cache_finish(struct kk_device *dev)
+@@ -5800,6 +6208,15 @@ kk_linked_graphics_pipeline_cache_finish(struct kk_device *dev)
     _mesa_hash_table_destroy(dev->linked_graphics_pipelines, NULL);
     dev->linked_graphics_pipelines = NULL;
     simple_mtx_destroy(&dev->linked_graphics_pipelines_lock);
@@ -860,7 +860,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
  }
  
  static VkResult
-@@ -5865,7 +6282,7 @@ kk_compile_dynamic_vertex_input_variant(
+@@ -5855,7 +6272,7 @@ kk_compile_dynamic_vertex_input_variant(
     enabled_features.legacyVertexAttributes = byte_strides;
     VkResult result = kk_compile_shaders_impl(
        &dev->vk, linked->dynamic.shader_count, infos, &state,
@@ -869,7 +869,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
     if (result != VK_SUCCESS)
        return result;
  
-@@ -6098,50 +6515,78 @@ kk_link_graphics_pipeline(
+@@ -6088,50 +6505,78 @@ kk_link_graphics_pipeline(
        {0};
     struct vk_shader *compiled[MESA_VK_MAX_GRAPHICS_PIPELINE_STAGES] = {0};
  
@@ -986,7 +986,7 @@ index e0099cc06e70d3f9ac958add0b4b63bfd33221b4..de9ef6c53ef4a08a4fb9236a17fc7f43
     if (result != VK_SUCCESS)
        return result;
  
-@@ -6427,7 +6872,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -6417,7 +6862,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
           dev, &shader->msl_data[MESA_SHADER_COMPUTE], local_size_threads,
           false, &shader->pipeline.cs);
     } else if (info.stage == MESA_SHADER_VERTEX) {
