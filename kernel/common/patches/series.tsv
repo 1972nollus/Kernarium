@@ -22,7 +22,7 @@ patch	uml-raise-irq-work-locally-instead-of-at-the-tick.patch
 patch	service-cooperative-progress-at-kernel-quiescent-points.patch
 patch	um-present-the-Darwin-pointer-as-a-direct-touchscreen.patch
 patch	um-receive-Darwin-user-network-frames-with-NAPI.patch
-patch	reclaim-anonymous-Darwin-physical-RAM.patch
+patch	uml-back-Darwin-physical-RAM-with-anonymous-host-memory.patch
 patch	suspend-guests-through-mconsole.patch
 patch	um-batch-UBD-discard-ranges.patch
 patch	um-never-walk-another-task-s-userspace-stack.patch

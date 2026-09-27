@@ -676,18 +676,18 @@ index 98aacd54410801551d3b887e1181a9e7b0f7429f..952b871ea04bf65e28379adcbe3788cd
  static inline unsigned long uml_to_phys(void *virt)
  {
 diff --git a/arch/um/kernel/physmem.c b/arch/um/kernel/physmem.c
-index 20d326d8f8764bbabedbe60891efa78ff7593811..4862ee81cc6d5496227d6d4a3425acfbb2db5705 100644
+index af02b5f9911d343b3089f40aea3d6d595b47f7f4..e739fa5ab8f956ab8802ee7a759eb2134a03be4b 100644
 --- a/arch/um/kernel/physmem.c
 +++ b/arch/um/kernel/physmem.c
-@@ -9,6 +9,7 @@
- #include <linux/page_reporting.h>
+@@ -7,6 +7,7 @@
+ #include <linux/memblock.h>
+ #include <linux/mm.h>
  #include <linux/pfn.h>
- #include <linux/scatterlist.h>
 +#include <linux/spinlock.h>
  #include <asm/page.h>
  #include <asm/sections.h>
  #include <as-layout.h>
-@@ -20,6 +21,250 @@
+@@ -18,6 +19,250 @@
  
  static int physmem_fd = -1;
  
@@ -938,7 +938,7 @@ index 20d326d8f8764bbabedbe60891efa78ff7593811..4862ee81cc6d5496227d6d4a3425acfb
  /* Changed during early boot */
  unsigned long high_physmem;
  EXPORT_SYMBOL(high_physmem);
-@@ -208,6 +453,10 @@ int phys_mapping(unsigned long phys, unsigned long long *offset_out)
+@@ -117,6 +362,10 @@ int phys_mapping(unsigned long phys, unsigned long long *offset_out)
  			}
  			region = region->next;
  		}

@@ -28,7 +28,7 @@ Bridge ABI 9.
  7 files changed, 34 insertions(+), 7 deletions(-)
 
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index 68afa1e2dc55b61a7c99d5c8cc64ad0f006f8801..f964ac7633b3d76bd15e166dcb2256d64beb4d4c 100644
+index adfebfa05c59914c8d4622bceea47d9e42c8840c..2dde638d10d910fcc9a9110793c36f5c29495e66 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
 @@ -190,6 +190,9 @@ extern void check_host_supports_tls(int *supports_tls, int *tls_min);
