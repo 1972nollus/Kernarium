@@ -1118,16 +1118,22 @@ class ResultParsingTests(unittest.TestCase):
         # what the `[^\r\n]*` bound is there to prevent.
         self.assertIsNone(root_prompt.search(b"\r\nnot a prompt # yet\r\n"))
 
-    def test_guest_shell_boot_modes_are_mutually_exclusive(self) -> None:
-        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
-            runner.Guest(
-                pathlib.Path("uml-darwin"),
-                pathlib.Path("rootfs.erofs"),
-                "1G",
-                "tmpfs",
-                init_shell=True,
-                overlay_shell=True,
-            )
+    def test_guest_boots_exactly_one_shell_mode(self) -> None:
+        for modes in (
+            {"init_shell": True, "overlay_shell": True},
+            {},
+        ):
+            with (
+                self.subTest(modes=modes),
+                self.assertRaisesRegex(ValueError, "exactly one"),
+            ):
+                runner.Guest(
+                    pathlib.Path("uml-darwin"),
+                    pathlib.Path("rootfs.erofs"),
+                    "1G",
+                    "tmpfs",
+                    **modes,
+                )
 
     def test_guest_termination_signals_the_child_directly(self) -> None:
         # The emulator shares this runner's process group, so terminate must

@@ -235,8 +235,12 @@ class Guest:
         core_class: str = "performance",
         pass_fds: Sequence[int] = (),
     ) -> None:
-        if init_shell and overlay_shell:
-            raise ValueError("guest boot modes are mutually exclusive")
+        # The image locks root, so a guest is only reachable through one of
+        # the two /bin/sh init modes.
+        if init_shell == overlay_shell:
+            raise ValueError(
+                "a guest boots exactly one of init_shell or overlay_shell"
+            )
         self._swap_path = None
         self._core_class = core_class
         try:
@@ -246,15 +250,13 @@ class Guest:
             raise
         self._cgroup1 = cgroup1
         self._cgroup2_nsdelegate = cgroup2_nsdelegate
-        self._init_shell = init_shell
         self._overlay_shell = overlay_shell
-        if init_shell or overlay_shell:
-            kernel_arguments = (
-                *kernel_arguments,
-                "console=tty0",
-                "console=ttyS0",
-                "ip=dhcp",
-            )
+        kernel_arguments = (
+            *kernel_arguments,
+            "console=tty0",
+            "console=ttyS0",
+            "ip=dhcp",
+        )
         try:
             master, slave = pty.openpty()
         except BaseException:
@@ -271,9 +273,7 @@ class Guest:
                     workspace,
                     kernel_arguments,
                     self._swap_path,
-                    "/bin/sh"
-                    if init_shell or overlay_shell
-                    else "/sbin/init",
+                    "/bin/sh",
                     engine,
                     core_class,
                 ),
@@ -343,9 +343,7 @@ class Guest:
                 pass
 
     def boot_to_shell(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
-        """Reach a root shell supplied by an explicit init-shell boot mode."""
-        if not (self._init_shell or self._overlay_shell):
-            raise RuntimeError("Guest was not constructed with an init-shell mode")
+        """Reach the root shell that init=/bin/sh starts."""
         self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
         if self._overlay_shell:
             search_from = len(self._transcript)
@@ -361,14 +359,7 @@ class Guest:
             )
 
     def boot_and_login(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
-        if self._init_shell or self._overlay_shell:
-            self.boot_to_shell(timeout_seconds)
-        else:
-            self._read_until(
-                re.compile(rb" login:\s*$", re.MULTILINE), timeout_seconds
-            )
-            self._write("root\n")
-            self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
+        self.boot_to_shell(timeout_seconds)
         if self._swap_path is not None:
             result = self.run_command(
                 "mkswap /dev/ubdb >/dev/null && swapon /dev/ubdb",
