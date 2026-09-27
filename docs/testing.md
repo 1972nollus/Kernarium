@@ -236,6 +236,17 @@ each idle kernel worker reads through a NULL pointer with
 and the emulator prints no host fault report for it. A lost nofault recovery
 point panics the guest instead.
 
+`guest-run-end-stop` boots embedded guests in child processes and stops each
+one at a different point, from CPU bring-up to a guest waiting for its root
+device. A run must return 0 and leave only the host thread behind. The test
+widens the window between a vCPU carrier signalling the run end and leaving the
+image, by pausing that carrier once it has signalled. A kernel whose run end
+does not wait for every kernel thread faults in the unmapped image or exits
+with status 2. Each attempt also has one host thread that unblocks SIGALRM and
+sends it to itself once the kernel handles the signal. The kernel must refuse
+that tick and leave the signal blocked on the thread, and at least one attempt
+must reach that check.
+
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
 `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; do not override individual files.

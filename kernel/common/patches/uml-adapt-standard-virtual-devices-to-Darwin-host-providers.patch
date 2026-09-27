@@ -12,14 +12,15 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/drivers/cow_user.c        |   4 +
  arch/um/drivers/darwin_net_kern.c | 166 +++++++++++++++++++++++++++
  arch/um/drivers/rtc_kern.c        |  30 ++++-
- arch/um/drivers/rtc_user.c        | 104 ++++++++++++++++-
+ arch/um/drivers/rtc_user.c        | 119 ++++++++++++++++++-
  arch/um/drivers/ssl.c             |   2 +-
  arch/um/drivers/ubd_kern.c        | 129 ++++++++++++++++++---
  arch/um/drivers/ubd_user.c        |   4 -
  arch/um/drivers/virtio_uml.c      |  39 ++++---
  arch/um/drivers/vnc_input.c       | 185 ++++++++++++++++++++++++++++++
+ arch/um/include/shared/os.h       |   5 +
  drivers/video/console/Kconfig     |   3 +-
- 14 files changed, 702 insertions(+), 51 deletions(-)
+ 15 files changed, 722 insertions(+), 51 deletions(-)
  create mode 100644 arch/um/drivers/darwin_net_kern.c
  create mode 100644 arch/um/drivers/vnc_input.c
 
@@ -514,7 +515,7 @@ index 9158c936c1281441a4e5880e0fc9a22fc9e85212..77295f0444d1a859aa8b64143e914410
  {
  	int err;
 diff --git a/arch/um/drivers/rtc_user.c b/arch/um/drivers/rtc_user.c
-index 67912fcf7b2864daa6539eaeaaa61f14dd08b4b7..e934f7f947d18b31a7047d74ed8bf87962853102 100644
+index 67912fcf7b2864daa6539eaeaaa61f14dd08b4b7..dfc7cafc52123d05064f41ce5b4eb9ce9fd254e9 100644
 --- a/arch/um/drivers/rtc_user.c
 +++ b/arch/um/drivers/rtc_user.c
 @@ -11,10 +11,57 @@
@@ -642,19 +643,36 @@ index 67912fcf7b2864daa6539eaeaaa61f14dd08b4b7..e934f7f947d18b31a7047d74ed8bf879
  }
  
  void uml_rtc_disable_alarm(void)
-@@ -73,9 +158,26 @@ void uml_rtc_disable_alarm(void)
+@@ -71,11 +156,43 @@ void uml_rtc_disable_alarm(void)
+ 	uml_rtc_enable_alarm(0);
+ }
  
++#ifdef UML_HOST_DARWIN
++/*
++ * Stops the alarm helper and waits until it has left this image.  The RTC
++ * exitcall reaches this through uml_rtc_stop(); a run end the host stops
++ * skips exitcalls and calls it directly, so a later call finds nothing to do.
++ */
++void uml_rtc_stop_alarm_thread(void)
++{
++	bool running;
++
++	pthread_mutex_lock(&uml_rtc_lock);
++	running = uml_rtc_thread_running;
++	uml_rtc_alarm_armed = false;
++	uml_rtc_thread_running = false;
++	pthread_cond_signal(&uml_rtc_condition);
++	pthread_mutex_unlock(&uml_rtc_lock);
++	if (running)
++		(void)pthread_join(uml_rtc_thread, NULL);
++}
++#endif
++
  void uml_rtc_stop(bool timetravel)
  {
 +#ifdef UML_HOST_DARWIN
-+	if (!timetravel && uml_rtc_thread_running) {
-+		pthread_mutex_lock(&uml_rtc_lock);
-+		uml_rtc_alarm_armed = false;
-+		uml_rtc_thread_running = false;
-+		pthread_cond_signal(&uml_rtc_condition);
-+		pthread_mutex_unlock(&uml_rtc_lock);
-+		(void)pthread_join(uml_rtc_thread, NULL);
-+	}
++	(void)timetravel;
++	uml_rtc_stop_alarm_thread();
 +	if (uml_rtc_irq_fds[1] >= 0)
 +		os_close_file(uml_rtc_irq_fds[1]);
 +	if (uml_rtc_irq_fds[0] >= 0)
@@ -1232,6 +1250,22 @@ index 0000000000000000000000000000000000000000..6fafe8c1c4133066abd57665856ab09f
 +	}
 +}
 +__uml_exitcall(vnc_input_cleanup);
+diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
+index 972ac5c73aa6956a2ee45b2463f6f77bd0fe5657..fdf83b9b617ca7df5dbe2065fc69d5fc2a3f750d 100644
+--- a/arch/um/include/shared/os.h
++++ b/arch/um/include/shared/os.h
+@@ -191,6 +191,11 @@ extern void get_host_cpu_features(
+ 	void (*flags_helper_func)(char *line),
+ 	void (*cache_helper_func)(char *line));
+ 
++#ifdef UML_HOST_DARWIN
++/* drivers/rtc_user.c */
++extern void uml_rtc_stop_alarm_thread(void);
++#endif
++
+ /* mem.c */
+ extern int create_mem_file(unsigned long long len);
+ 
 diff --git a/drivers/video/console/Kconfig b/drivers/video/console/Kconfig
 index 12f54480f57f8995b125db726f89c2d10ad67e6a..ee238467ee8d423a9137f62bb1fab33e0f590119 100644
 --- a/drivers/video/console/Kconfig
