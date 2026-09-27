@@ -11,6 +11,7 @@
 
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
+#include <atomic>
 #include <dispatch/dispatch.h>
 #else
 #import <IOKit/ps/IOPowerSources.h>
@@ -62,18 +63,85 @@ HostBatteryState readIOSBattery() noexcept
     return result;
 }
 
+/*
+ * UIDevice may only be read on the main thread, and the guest asks for the
+ * battery from the device's service thread while a vCPU waits on the answer.
+ * Waiting for the main thread there chains the guest to it: a main thread that
+ * is itself waiting for the guest, as it does while quiescing on the way to
+ * the background, then holds both until a timeout breaks the chain. The main
+ * thread therefore keeps a copy of the state current from UIKit's battery
+ * notifications, and the service thread only reads that copy.
+ */
+struct BatteryStateCache final {
+    static_assert(std::atomic<HostBatteryState>::is_always_lock_free);
+
+    std::atomic<HostBatteryState> state {fallbackState()};
+    id levelObserver;
+    id stateObserver;
+
+    /* Main thread only. */
+    void refresh() noexcept
+    {
+        state.store(readIOSBattery(), std::memory_order_relaxed);
+    }
+};
+
 class AppleHostBatteryProvider final : public HostBatteryProvider {
 public:
+    /* Until the main thread first reads the battery, the state is the
+     * documented fallback; that read is queued here and lands within one
+     * pass of the main run loop. */
+    AppleHostBatteryProvider()
+        : cache_(std::make_shared<BatteryStateCache>())
+    {
+        const std::shared_ptr<BatteryStateCache> cache = cache_;
+        dispatch_async(dispatch_get_main_queue(), ^{
+          NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
+          NSOperationQueue* main = NSOperationQueue.mainQueue;
+          cache->refresh();
+          cache->levelObserver = [center
+              addObserverForName:UIDeviceBatteryLevelDidChangeNotification
+                          object:nil
+                           queue:main
+                      usingBlock:^(NSNotification*) {
+                        cache->refresh();
+                      }];
+          cache->stateObserver = [center
+              addObserverForName:UIDeviceBatteryStateDidChangeNotification
+                          object:nil
+                           queue:main
+                      usingBlock:^(NSNotification*) {
+                        cache->refresh();
+                      }];
+        });
+    }
+
+    ~AppleHostBatteryProvider() override
+    {
+        /* Queued behind the registration above, so it always finds it. */
+        const std::shared_ptr<BatteryStateCache> cache = cache_;
+        dispatch_async(dispatch_get_main_queue(), ^{
+          NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
+          if (cache->levelObserver != nil)
+              [center removeObserver:cache->levelObserver];
+          if (cache->stateObserver != nil)
+              [center removeObserver:cache->stateObserver];
+          cache->levelObserver = nil;
+          cache->stateObserver = nil;
+        });
+    }
+
+    AppleHostBatteryProvider(const AppleHostBatteryProvider&) = delete;
+    AppleHostBatteryProvider& operator=(
+        const AppleHostBatteryProvider&) = delete;
+
     HostBatteryState state() noexcept override
     {
-        if (NSThread.isMainThread)
-            return readIOSBattery();
-        __block HostBatteryState result = fallbackState();
-        dispatch_sync(dispatch_get_main_queue(), ^{
-          result = readIOSBattery();
-        });
-        return result;
+        return cache_->state.load(std::memory_order_relaxed);
     }
+
+private:
+    std::shared_ptr<BatteryStateCache> cache_;
 };
 
 #else

@@ -114,11 +114,23 @@ private:
 };
 
 std::atomic_bool runtimeActive;
+/*
+ * Each registration has its own mutex, and a call through a registered pointer
+ * holds the mutex that registration's destructor takes, so the pointer stays
+ * valid for that call. Sync, quiesce and resume can take seconds, so they
+ * serialize on a lifecycle mutex of their own rather than stall a stop request
+ * or main-thread touch and key input; the emulator registration takes both.
+ * Console input can block on a guest that stops reading, so it does not share
+ * a mutex with touch and key input either.
+ */
+std::mutex emulatorLifecycleMutex;
 std::mutex activeEmulatorMutex;
 uml_emulator* activeEmulator;
+std::mutex activeInputMutex;
 uml::input::virtio::InProcessInputService* activeTouchscreen;
 uml::input::virtio::InProcessInputService* activeKeyboard;
 class ConsoleBridge;
+std::mutex activeConsoleMutex;
 ConsoleBridge* activeConsoleBridge;
 std::mutex consoleOutputCallbackMutex;
 std::mutex consoleStdoutMutex;
@@ -467,13 +479,13 @@ class ActiveEmulatorRegistration final {
 public:
     explicit ActiveEmulatorRegistration(uml_emulator* emulator)
     {
-        std::lock_guard lock(activeEmulatorMutex);
+        std::scoped_lock lock(emulatorLifecycleMutex, activeEmulatorMutex);
         activeEmulator = emulator;
     }
 
     ~ActiveEmulatorRegistration()
     {
-        std::lock_guard lock(activeEmulatorMutex);
+        std::scoped_lock lock(emulatorLifecycleMutex, activeEmulatorMutex);
         activeEmulator = nullptr;
     }
 
@@ -488,14 +500,14 @@ public:
         uml::input::virtio::InProcessInputService& touchscreen,
         uml::input::virtio::InProcessInputService& keyboard)
     {
-        std::lock_guard lock(activeEmulatorMutex);
+        std::lock_guard lock(activeInputMutex);
         activeTouchscreen = &touchscreen;
         activeKeyboard = &keyboard;
     }
 
     ~ActiveInputRegistration()
     {
-        std::lock_guard lock(activeEmulatorMutex);
+        std::lock_guard lock(activeInputMutex);
         activeTouchscreen = nullptr;
         activeKeyboard = nullptr;
     }
@@ -1002,13 +1014,13 @@ class ActiveConsoleRegistration final {
 public:
     explicit ActiveConsoleRegistration(ConsoleBridge& console)
     {
-        std::lock_guard lock(activeEmulatorMutex);
+        std::lock_guard lock(activeConsoleMutex);
         activeConsoleBridge = &console;
     }
 
     ~ActiveConsoleRegistration()
     {
-        std::lock_guard lock(activeEmulatorMutex);
+        std::lock_guard lock(activeConsoleMutex);
         activeConsoleBridge = nullptr;
     }
 
@@ -1668,7 +1680,7 @@ void runtimeRequestStop(void)
  */
 int runtimeSync(void)
 {
-    std::lock_guard lock(activeEmulatorMutex);
+    std::lock_guard lock(emulatorLifecycleMutex);
     if (activeEmulator == nullptr)
         return 0;
     return uml_emulator_sync(activeEmulator);
@@ -1682,7 +1694,7 @@ int runtimeSync(void)
  */
 int runtimeQuiesce(void)
 {
-    std::lock_guard lock(activeEmulatorMutex);
+    std::lock_guard lock(emulatorLifecycleMutex);
     if (activeEmulator == nullptr)
         return 0;
     return uml_emulator_quiesce(activeEmulator);
@@ -1690,7 +1702,7 @@ int runtimeQuiesce(void)
 
 void runtimeResume(void)
 {
-    std::lock_guard lock(activeEmulatorMutex);
+    std::lock_guard lock(emulatorLifecycleMutex);
     if (activeEmulator != nullptr)
         uml_emulator_resume(activeEmulator);
 }
@@ -1723,7 +1735,7 @@ void runtimeSendTouch(
             .value = 0,
         },
     };
-    std::lock_guard lock(activeEmulatorMutex);
+    std::lock_guard lock(activeInputMutex);
     if (activeTouchscreen != nullptr)
         activeTouchscreen->send(events);
 }
@@ -1743,7 +1755,7 @@ void runtimeSendKey(uint16_t code, int pressed)
             .value = 0,
         },
     };
-    std::lock_guard lock(activeEmulatorMutex);
+    std::lock_guard lock(activeInputMutex);
     if (activeKeyboard != nullptr)
         activeKeyboard->send(events);
 }
@@ -1759,7 +1771,7 @@ void runtimeSetConsoleOutputCallback(
 
 int runtimeSendConsoleInput(const void* buffer, std::size_t length)
 {
-    std::lock_guard lock(activeEmulatorMutex);
+    std::lock_guard lock(activeConsoleMutex);
     if (activeConsoleBridge == nullptr)
         return -ENOTCONN;
     const int error = activeConsoleBridge->sendInput(buffer, length);
