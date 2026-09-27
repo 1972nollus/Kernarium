@@ -819,7 +819,7 @@ index e90366d9bd08f38dcca88bc6a6c49b25c2eb4634..c1c5bd4c75048ee0fc4fc698ee768f3e
  
     if (save->desc0) {
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 3b682a746b590eb8d64519faeaed46ecee5b1f5b..31d4e744d8caa3f20d963c47a5cf901470474886 100644
+index 5824faf645e9d70a87dcfaf117b31effd807506f..e9720bc07fa359109754a09d11908c38a1c51a89 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -20,6 +20,7 @@

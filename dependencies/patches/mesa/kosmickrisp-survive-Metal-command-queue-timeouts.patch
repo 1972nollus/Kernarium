@@ -98,7 +98,7 @@ submission, so the timeout is still survived.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_queue_error.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
-index 4cde058ce96268e949509eb7f8f06cc91abb6737..6e41aecf5078e655be7581aabb3ecb6495d2ba88 100644
+index a00bcebba203801ba4965be0200de10b70e2b392..dc3d39977a31268a5c6c9eddb959153d537bb0a6 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.c
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
 @@ -12,6 +12,7 @@
@@ -109,8 +109,8 @@ index 4cde058ce96268e949509eb7f8f06cc91abb6737..6e41aecf5078e655be7581aabb3ecb64
  #include "kk_image_layout.h"
  #include "kk_nir_lower_vbo.h"
  #include "kk_physical_device.h"
-@@ -149,6 +150,26 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
-              : view->vk.range) +
+@@ -146,6 +147,26 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
+          (raw ? view->vk.elements * element_size_B : view->vk.range) +
           tail_offset_B,
     };
 +
