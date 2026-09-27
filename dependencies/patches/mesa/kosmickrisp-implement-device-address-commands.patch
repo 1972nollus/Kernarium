@@ -7,10 +7,9 @@ Subject: [PATCH] kosmickrisp: implement device address commands
  src/kosmickrisp/bridge/mtl_encoder.h          |   3 +
  src/kosmickrisp/bridge/mtl_encoder.m          |  11 ++
  src/kosmickrisp/bridge/stubs/mtl_encoder.c    |   6 +
- src/kosmickrisp/vulkan/kk_cmd_buffer.c        |  36 ++++
- src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  11 ++
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c        |  13 ++
+ src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   5 +
  src/kosmickrisp/vulkan/kk_cmd_copy.c          | 186 ++++++++++++++++++
- src/kosmickrisp/vulkan/kk_cmd_draw.c          |   3 +
  src/kosmickrisp/vulkan/kk_device.c            |   6 +
  src/kosmickrisp/vulkan/kk_device.h            |  11 ++
  src/kosmickrisp/vulkan/kk_device_address.h    |  28 +++
@@ -18,10 +17,10 @@ Subject: [PATCH] kosmickrisp: implement device address commands
  src/kosmickrisp/vulkan/kk_device_memory.h     |  11 ++
  src/kosmickrisp/vulkan/kk_event.c             |  10 +-
  src/kosmickrisp/vulkan/kk_physical_device.c   |   4 +
- src/kosmickrisp/vulkan/kk_query_pool.c        |  62 +++++-
+ src/kosmickrisp/vulkan/kk_query_pool.c        |  53 ++++-
  src/kosmickrisp/vulkan/meson.build            |  12 ++
  .../vulkan/tests/test_device_address.c        |  47 +++++
- 17 files changed, 470 insertions(+), 12 deletions(-)
+ 16 files changed, 429 insertions(+), 12 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_device_address.h
  create mode 100644 src/kosmickrisp/vulkan/tests/test_device_address.c
 
@@ -79,7 +78,7 @@ index b984fd54f57b0ff0600ff7bcac27fa852e23932c..108d2e6be4ab0f19d844048a581393be
  mtl_copy_from_buffer_to_texture(mtl_compute_encoder *encoder,
                                  struct mtl_buffer_image_copy *data)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 737a004dec067eaab53686761b41c7ea0a543fa5..a4d3adf7856e8cf60806fcf7682dbbe47a92598e 100644
+index 737a004dec067eaab53686761b41c7ea0a543fa5..d16ad5e9c03d980228f2ee737a85d0e8435fae44 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -10,6 +10,7 @@
@@ -90,7 +89,7 @@ index 737a004dec067eaab53686761b41c7ea0a543fa5..a4d3adf7856e8cf60806fcf7682dbbe4
  #include "kk_entrypoints.h"
  
  #include "kosmickrisp/bridge/mtl_bridge.h"
-@@ -440,12 +441,47 @@ kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd, uint64_t addr)
+@@ -440,6 +441,18 @@ kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd, uint64_t addr)
     cmd->state.root_addr = addr;
  }
  
@@ -106,40 +105,11 @@ index 737a004dec067eaab53686761b41c7ea0a543fa5..a4d3adf7856e8cf60806fcf7682dbbe4
 +   return false;
 +}
 +
-+void
-+kk_cmd_reference_address(struct kk_cmd_buffer *cmd,
-+                         VkDeviceAddressRangeKHR range)
-+{
-+   struct kk_device_address resolved;
-+   kk_cmd_resolve_address(cmd, range, &resolved);
-+}
-+
-+void
-+kk_cmd_reference_dependency_info(struct kk_cmd_buffer *cmd,
-+                                 const VkDependencyInfo *dependency)
-+{
-+   const VkMemoryRangeBarriersInfoKHR *ranges = vk_find_struct_const(
-+      dependency->pNext, MEMORY_RANGE_BARRIERS_INFO_KHR);
-+   if (!ranges)
-+      return;
-+
-+   for (uint32_t i = 0; i < ranges->memoryRangeBarrierCount; i++)
-+      kk_cmd_reference_address(cmd, ranges->pMemoryRangeBarriers[i].addressRange);
-+}
-+
  VKAPI_ATTR void VKAPI_CALL
  kk_CmdPipelineBarrier2(VkCommandBuffer commandBuffer,
                         const VkDependencyInfo *pDependencyInfo)
- {
-    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
- 
-+   kk_cmd_reference_dependency_info(cmd, pDependencyInfo);
-+
-    /* TODO_KOSMICKRISP Don't break the render pass and add a single encoder
-     * barrier. This requires to read directly from the framebuffer which
-     * requires not reading input attachments as textures.
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 67b5d26da894c31e17116c7d185b1f8ccfe3967f..45366615a4d8ddc61e4491ae1dfbe7420b24a7a5 100644
+index 67b5d26da894c31e17116c7d185b1f8ccfe3967f..0a33032fb4b2d4ef9226f4d06f8c49fea2029ba6 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -27,6 +27,7 @@
@@ -150,19 +120,13 @@ index 67b5d26da894c31e17116c7d185b1f8ccfe3967f..45366615a4d8ddc61e4491ae1dfbe742
  
  struct kk_root_descriptor_table {
     uint64_t addr;
-@@ -392,6 +393,16 @@ struct kk_ptr kk_pool_alloc(struct kk_cmd_buffer *cmd, uint32_t size,
+@@ -392,6 +393,10 @@ struct kk_ptr kk_pool_alloc(struct kk_cmd_buffer *cmd, uint32_t size,
  struct kk_ptr kk_pool_upload(struct kk_cmd_buffer *cmd, const void *data,
                               uint32_t size, uint32_t alignment);
  
 +bool kk_cmd_resolve_address(struct kk_cmd_buffer *cmd,
 +                            VkDeviceAddressRangeKHR range,
 +                            struct kk_device_address *resolved);
-+
-+void kk_cmd_reference_address(struct kk_cmd_buffer *cmd,
-+                              VkDeviceAddressRangeKHR range);
-+
-+void kk_cmd_reference_dependency_info(struct kk_cmd_buffer *cmd,
-+                                      const VkDependencyInfo *dependency);
 +
  uint64_t kk_upload_descriptor_root(struct kk_cmd_buffer *cmd,
                                     VkPipelineBindPoint bind_point);
@@ -378,34 +342,6 @@ index a5fcf3768d00cbc93e1896f002379687519a52e1..7d1f6cd824af9ff9cc1209a2c0bec12f
  /* Copies images by doing a texture->buffer->texture transfer. Returns the new
   * buffer offset for subsequent copies. */
  static size_t
-diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index e5e5fe454b6b69bcb695d711dbd522685ddd3fc1..795a8785e53288fe6dca7351c5fd4c33d68cf8b9 100644
---- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
-+++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -3024,6 +3024,7 @@ kk_begin_end_transform_feedback(
- 
-       for (uint32_t i = 0; pCounterInfos && i < counterRangeCount; ++i) {
-          uint32_t index = firstCounterRange + i;
-+         kk_cmd_reference_address(cmd, pCounterInfos[i].addressRange);
-          copy.src[index] = pCounterInfos[i].addressRange.address;
-       }
-       copies = POLY_MAX_SO_BUFFERS;
-@@ -3033,6 +3034,7 @@ kk_begin_end_transform_feedback(
-          if (!dst)
-             continue;
- 
-+         kk_cmd_reference_address(cmd, pCounterInfos[i].addressRange);
-          copy.dest[copies] = dst;
-          copy.src[copies] =
-             offsets + (firstCounterRange + i) * sizeof(uint32_t);
-@@ -3081,6 +3083,7 @@ kk_CmdDrawIndirectByteCount2EXT(
-       return;
- 
-    VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
-+   kk_cmd_reference_address(cmd, pCounterInfo->addressRange);
-    struct kk_ptr indirect =
-       kk_pool_alloc(cmd, sizeof(VkDrawIndirectCommand), 4);
-    if (!indirect.gpu)
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
 index a7e752317e629beb401313bcb3b24122c00be89b..09c0985e13c5487b23c21aaa218f82fc1c8d6ad3 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
@@ -647,18 +583,10 @@ index 09fcec3df77d8b2610d4c72299b3ed0efcecc99b..64a69a57e7c23abe5d9215ec419f101a
        .customBorderColors = true,
        .customBorderColorWithoutFormat = true,
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index fa93d36a3a0dffd775b993507cdf91e4b3350e4c..b30e07c77f3c65df4091927dd1058240566f9e06 100644
+index fa93d36a3a0dffd775b993507cdf91e4b3350e4c..3dfa8f1bc15b82e12a99a7dcfa452fff15440041 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
-@@ -13,6 +13,7 @@
- #include "kk_buffer.h"
- #include "kk_cmd_buffer.h"
- #include "kk_device.h"
-+#include "kk_device_memory.h"
- #include "kk_entrypoints.h"
- #include "kk_physical_device.h"
- #include "kk_query_table.h"
-@@ -591,15 +592,23 @@ kk_GetQueryPoolResults(VkDevice device, VkQueryPool queryPool,
+@@ -591,15 +591,15 @@ kk_GetQueryPoolResults(VkDevice device, VkQueryPool queryPool,
     return status;
  }
  
@@ -679,18 +607,10 @@ index fa93d36a3a0dffd775b993507cdf91e4b3350e4c..b30e07c77f3c65df4091927dd1058240
 +   if (queryCount == 0)
 +      return;
 +
-+   struct kk_device_address dst;
-+   const VkDeviceAddressRangeKHR range = {
-+      .address = dstRange->address,
-+      .size = dstRange->size,
-+   };
-+   if (!kk_cmd_resolve_address(cmd, range, &dst))
-+      return;
-+
     struct kk_device *dev = kk_cmd_buffer_device(cmd);
  
     /* Timestamp results are resolved into the pool BO on a deferred command
-@@ -621,11 +630,44 @@ kk_CmdCopyQueryPoolResults(VkCommandBuffer commandBuffer, VkQueryPool queryPool,
+@@ -621,11 +621,44 @@ kk_CmdCopyQueryPoolResults(VkCommandBuffer commandBuffer, VkQueryPool queryPool,
        .availability = pool->bo->gpu,
        .results = results_bo->gpu + pool->query_start,
        .oq_index = pool->bo->gpu + pool->index_start,

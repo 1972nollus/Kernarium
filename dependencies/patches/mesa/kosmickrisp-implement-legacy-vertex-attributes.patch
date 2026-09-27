@@ -44,7 +44,7 @@ index dbeac584cb80354a0ff30d821bb9f17ba17f381f..14770e63fa4974e23da92856cddcd176
           P(ctx, "%s(*(constant packed_%s*)(((constant %s*)", type, type,
             no_component_type);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index d1905a75b7ed03d14feb086770140ca533e9b8b2..df91bf4433cc1d9ce69138f6b3fe25ec0770886c 100644
+index 464722d26af8418990f135f83a3a893fe9caa4df..53ff8384555b9380d118955e1468b45dad5ecbf4 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -309,6 +309,7 @@ struct kk_cmd_buffer {
@@ -56,7 +56,7 @@ index d1905a75b7ed03d14feb086770140ca533e9b8b2..df91bf4433cc1d9ce69138f6b3fe25ec
         * We are trying to be nice to ourselves. */
        uint64_t root_addr;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 600d5db67a475aa755105b242959b590e67b163a..b2280a592ae3a26ffbcf376ef17f56bffa4161c9 100644
+index d7b9c3fccbe9f66aa368ccf657c5e84d1884d94a..00d1ef6ddf861361ec45eefeada3b8e7566574ca 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -3056,6 +3056,14 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,

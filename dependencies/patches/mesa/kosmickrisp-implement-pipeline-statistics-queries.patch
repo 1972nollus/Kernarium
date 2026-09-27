@@ -359,7 +359,7 @@ index bb2d06e169516bd0b40e927b631a271a6994fd12..0e8c1a91ac9c44e0d171a36fc287baba
  
     size_t draw_stride = 5 * sizeof(uint32_t);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index df91bf4433cc1d9ce69138f6b3fe25ec0770886c..80cba2694e137c3362dae043071d7df0981d8d6f 100644
+index 53ff8384555b9380d118955e1468b45dad5ecbf4..06918dae6c8d4f5d2ad731b4a129123a8da59288 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -14,6 +14,7 @@
@@ -500,7 +500,7 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
        mtl_dispatch_threadgroups_with_indirect_buffer(
           encoder, pInfo->addressRange.address, local_size);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index b2280a592ae3a26ffbcf376ef17f56bffa4161c9..e23d0691c2415c2fe4f8527a904317afa89e79d6 100644
+index 00d1ef6ddf861361ec45eefeada3b8e7566574ca..6e89501655937b2edf8ddb4bcf1a850343092664 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1231,14 +1231,22 @@ kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
@@ -1024,10 +1024,10 @@ index 0000000000000000000000000000000000000000..1679c31d9d53cb3beca549d3266db482
 +
 +#endif /* KK_PIPELINE_STATISTICS_H */
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index b30e07c77f3c65df4091927dd1058240566f9e06..89f96972ec4e56752bf02b95717df8fe5a044d22 100644
+index 3dfa8f1bc15b82e12a99a7dcfa452fff15440041..c89dc217e8d05102b3259d239d6988f608fc17af 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
-@@ -40,6 +40,8 @@ kk_reports_per_query(struct kk_query_pool *pool)
+@@ -39,6 +39,8 @@ kk_reports_per_query(struct kk_query_pool *pool)
     case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT:
        /* Primitives written and primitives needed. */
        return 2;
@@ -1036,7 +1036,7 @@ index b30e07c77f3c65df4091927dd1058240566f9e06..89f96972ec4e56752bf02b95717df8fe
     default:
        UNREACHABLE("Unsupported query type");
     }
-@@ -259,7 +261,8 @@ emit_zero_queries(struct kk_cmd_buffer *cmd, struct kk_query_pool *pool,
+@@ -258,7 +260,8 @@ emit_zero_queries(struct kk_cmd_buffer *cmd, struct kk_query_pool *pool,
     struct libkk_reset_query_args info = {
        .availability = pool->bo->gpu,
        .results = results_bo->gpu + pool->query_start,
@@ -1046,7 +1046,7 @@ index b30e07c77f3c65df4091927dd1058240566f9e06..89f96972ec4e56752bf02b95717df8fe
  
        .first_query = first_index,
        .reports_per_query = kk_reports_per_query(pool),
-@@ -272,9 +275,9 @@ static uint32_t
+@@ -271,9 +274,9 @@ static uint32_t
  kk_mv_query_count(struct kk_cmd_buffer *cmd)
  {
     struct kk_rendering_state *render = &cmd->state.gfx.render;
@@ -1059,7 +1059,7 @@ index b30e07c77f3c65df4091927dd1058240566f9e06..89f96972ec4e56752bf02b95717df8fe
  }
  
  VKAPI_ATTR void VKAPI_CALL
-@@ -443,6 +446,25 @@ kk_cmd_begin_end_query(struct kk_cmd_buffer *cmd, struct kk_query_pool *pool,
+@@ -442,6 +445,25 @@ kk_cmd_begin_end_query(struct kk_cmd_buffer *cmd, struct kk_query_pool *pool,
        cmd->state.gfx.xfb.query[index] =
           end ? 0 : kk_query_report_addr(dev, pool, query);
        break;
@@ -1085,7 +1085,7 @@ index b30e07c77f3c65df4091927dd1058240566f9e06..89f96972ec4e56752bf02b95717df8fe
     default:
        UNREACHABLE("Unsupported query type");
     }
-@@ -510,24 +532,22 @@ kk_query_is_available(struct kk_device *dev, struct kk_query_pool *pool,
+@@ -509,24 +531,22 @@ kk_query_is_available(struct kk_device *dev, struct kk_query_pool *pool,
     return p_atomic_read(available) != 0;
  }
  
@@ -1115,7 +1115,7 @@ index b30e07c77f3c65df4091927dd1058240566f9e06..89f96972ec4e56752bf02b95717df8fe
  }
  
  static void
-@@ -629,7 +649,8 @@ kk_cmd_copy_query_pool_results(
+@@ -620,7 +640,8 @@ kk_cmd_copy_query_pool_results(
     struct libkk_copy_queries_args args = {
        .availability = pool->bo->gpu,
        .results = results_bo->gpu + pool->query_start,

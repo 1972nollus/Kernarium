@@ -59,7 +59,7 @@ index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..abc66ebb70f22a7a821acfb4867327d1
 +   grids[17] = 1;
  }
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 5d16d59d3ad7eb8ca5bc3a978a60554fdfc07ed7..e14d2d9bea94ee66e0219a119dde0df90c6aeaeb 100644
+index 12e6c061a2b17bd5bc928d62a2d8a159c3225596..efb314b0f51cc7b1d911283f971da2f57b1ab9c3 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1471,6 +1471,7 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,

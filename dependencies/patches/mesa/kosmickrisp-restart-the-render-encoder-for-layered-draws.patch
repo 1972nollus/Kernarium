@@ -167,7 +167,7 @@ index 4e1a6c004110588e9b28418c0993361cf94c7121..ea56c611c0e5d1062f03df579a40b42f
  ----------------
  | macOS version: 27.0
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index bbb5faa0f7b64f5599eb20540699aad5afee65eb..1dd076eb2782f1b7a10c68299c734fe46b098628 100644
+index 4ffa19612d69f8ddfac66ef88083408cd01c3eed..d59915c5db630849184ea7208b5820843d4992df 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -316,14 +316,20 @@ cs_start_render(struct kk_cmd_buffer *cmd)
@@ -225,7 +225,7 @@ index bbb5faa0f7b64f5599eb20540699aad5afee65eb..1dd076eb2782f1b7a10c68299c734fe4
  cs_get_render(struct kk_cmd_buffer *cmd)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 59a956191742243b3d2de72efcf8d61ea502b2cb..0b06d69a1c7a0c59f819c5260a06a13a63f65dec 100644
+index 3db643cfd996080847810d9198b1cf4134077a2f..3761d06afef8be760d62ad76db3bd653e445d60c 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -206,6 +206,17 @@ struct kk_graphics_state {
@@ -257,7 +257,7 @@ index 59a956191742243b3d2de72efcf8d61ea502b2cb..0b06d69a1c7a0c59f819c5260a06a13a
  void cs_end(struct kk_cmd_buffer *cmd);
  void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 8593cc1fa4c5fe60aef1c63bdd5977354c6437f8..cd4fd7e84c882ad248c14abecaf428903801f8a8 100644
+index fc7c8c73b92d45955a30e226f34960a532f55334..4228cc6f07fd4b940ae3852b2436df1594820479 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -353,6 +353,7 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,

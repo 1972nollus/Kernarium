@@ -429,7 +429,7 @@ index b09a76d3b6220a88cddf39dbc0ce44978b1d4625..d77537c3ea6bf584640b043f0b0d553d
        P_IND(ctx, "FragmentIn in [[stage_in]],\n");
        break;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 1dd076eb2782f1b7a10c68299c734fe46b098628..23b1a175097e7f9132094a72db74a808c6702054 100644
+index d59915c5db630849184ea7208b5820843d4992df..f021f797231748d65960d14ac6fec34063e008b8 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -153,7 +153,17 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
@@ -452,7 +452,7 @@ index 1dd076eb2782f1b7a10c68299c734fe46b098628..23b1a175097e7f9132094a72db74a808
        mtl_set_address(cmd->argument_table, dev->samplers.table.bo->gpu, 1u);
        mtl_release(desc);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 90dea05410a9291710a449166de65f0646f6b4be..71043964bbc55d69deb8b9685c9a87614ca65e8d 100644
+index ef75bc59f20a5d40314462dc78eca9da8dab9832..4b2a64e3da9745741652f4522afbb3cf538b9bf9 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1756,8 +1756,20 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)

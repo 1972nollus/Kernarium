@@ -87,7 +87,7 @@ index 3a7408608df069d4761c4b999a6ad228bc62316f..82bb255db89732f917f5839107fecbdf
  The cost is one attachment load and store per such draw; a pass that never
  writes the layer, or is not layered, is untouched. The
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c815cb08fe 100644
+index f021f797231748d65960d14ac6fec34063e008b8..d3c22f5a4454b23522d82b76c9d8e67c46a76dde 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -79,6 +79,9 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
@@ -361,7 +361,7 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
  kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd, uint64_t addr)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 98bde4397a1aa88b64c43e2bcb3e6a36e732a299..36516872ba1948cd57ef3ad92f1eaa08d339be9b 100644
+index 1b1b941a091821afbf262375c4941bd7c00d008d..a9d5f2abf81a86799d9ee435dc2858c1f01b78a1 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -213,6 +213,11 @@ struct kk_graphics_state {
@@ -427,7 +427,7 @@ index 98bde4397a1aa88b64c43e2bcb3e6a36e732a299..36516872ba1948cd57ef3ad92f1eaa08
                                          uint64_t addr);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 432f54255b6cec9647617d878db5e22b9e9318fa..253e4701fedbee955588c7fe7a2280699af5b77d 100644
+index a3d85b3e6788b8459bf1ec4eda236c60491afaaa..3319ff47688323b83e1454cce21af9d16010ba5b 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1880,6 +1880,12 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)

@@ -418,7 +418,7 @@ index 2d05d94a51ab4c0f37084af26e8df2e7ea90d4ee..799efd4c7fb5279f7d5838ee3d2871c9
     out_draw[2] = 0;
     out_draw[3] = in_draw[index_size_B ? 4 : 3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 1bf8c0d9138340ff3731f273930f52a11f7fdd55..d1905a75b7ed03d14feb086770140ca533e9b8b2 100644
+index b90249f161787d726cc311730450f809bd986051..464722d26af8418990f135f83a3a893fe9caa4df 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -83,6 +83,9 @@ struct kk_per_draw_data {
@@ -479,7 +479,7 @@ index 1bf8c0d9138340ff3731f273930f52a11f7fdd55..d1905a75b7ed03d14feb086770140ca5
     struct kk_descriptor_state descriptors;
     struct kk_per_draw_data per_draw_data;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 6dd695360b265f2cf72f5be2265bdf537edd4275..600d5db67a475aa755105b242959b590e67b163a 100644
+index 2306015d3bad72ba98566fb39f76c24a8015c097..d7b9c3fccbe9f66aa368ccf657c5e84d1884d94a 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -14,6 +14,7 @@
@@ -1540,7 +1540,7 @@ index 6dd695360b265f2cf72f5be2265bdf537edd4275..600d5db67a475aa755105b242959b590
        .index_buffer = cmd->state.gfx.index.gpu,
        .index_buffer_el_size_B = cmd->state.gfx.index.bytes_per_index,
        .indirect = true,
-@@ -3113,7 +3590,6 @@ kk_CmdDrawIndirectByteCount2EXT(
+@@ -3110,7 +3587,6 @@ kk_CmdDrawIndirectByteCount2EXT(
        &cmd->vk.dynamic_graphics_state;
     struct kk_draw_command data = {
        .prim = vk_topology_to_mesa(dyn->ia.primitive_topology),
