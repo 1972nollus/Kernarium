@@ -1132,43 +1132,6 @@ const char* selectedExecutionEngine()
 }
 
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-std::size_t checkedRegularFileSize(const std::filesystem::path& path)
-{
-    struct stat details {};
-    if (lstat(path.c_str(), &details) != 0 || !S_ISREG(details.st_mode) ||
-        details.st_size < 0) {
-        throw std::runtime_error(
-            "bundle payload is missing or unexpected: " + std::string {path});
-    }
-    return static_cast<std::size_t>(details.st_size);
-}
-
-std::vector<unsigned char> readRegularFile(
-    const std::filesystem::path& path)
-{
-    const auto size = checkedRegularFileSize(path);
-    std::FILE* file = std::fopen(path.c_str(), "rb");
-    if (file == nullptr)
-        throw std::runtime_error("cannot open " + std::string {path});
-    std::vector<unsigned char> payload(size);
-    const auto read = std::fread(payload.data(), 1, payload.size(), file);
-    const int closeResult = std::fclose(file);
-    if (read != payload.size() || closeResult != 0)
-        throw std::runtime_error("cannot read " + std::string {path});
-    return payload;
-}
-
-/* A UBD specification is comma and colon delimited, so a path carrying either
- * would silently become a different device configuration. */
-void validateUbdPath(const std::filesystem::path& path, const char* label)
-{
-    const auto value = path.string();
-    if (value.empty() || value.find_first_of(",:") != std::string::npos) {
-        throw std::invalid_argument(
-            std::string {label} + " path is unusable as a UBD device");
-    }
-}
-
 void appendKernelCommandLine(
     std::vector<std::string>& arguments,
     const std::filesystem::path& path,
@@ -1178,36 +1141,11 @@ void appendKernelCommandLine(
         "androidboot.lcd_density="};
     constexpr std::string_view adbAuthorizationPrefix {
         "androidboot.kernarium.adb_auth="};
-    const auto payload = readRegularFile(path);
-    const std::string text(payload.begin(), payload.end());
-    std::size_t cursor = 0;
-    std::size_t appended = 0;
-    while (cursor < text.size()) {
-        while (cursor < text.size() &&
-               (text[cursor] == ' ' || text[cursor] == '\n' ||
-                text[cursor] == '\t'))
-            ++cursor;
-        const auto begin = cursor;
-        while (cursor < text.size() && text[cursor] != ' ' &&
-               text[cursor] != '\n' && text[cursor] != '\t')
-            ++cursor;
-        if (cursor != begin) {
-            const std::string_view argument {
-                text.data() + begin, cursor - begin};
-            if (argument.starts_with(densityPrefix)) {
-                throw std::invalid_argument(
-                    "the bundle kernel command line fixes the display density");
-            }
-            if (argument.starts_with(adbAuthorizationPrefix)) {
-                throw std::invalid_argument(
-                    "the bundle kernel command line fixes ADB authorization");
-            }
-            arguments.emplace_back(argument);
-            ++appended;
-        }
-    }
-    if (appended == 0U)
-        throw std::invalid_argument("the bundle kernel command line is empty");
+    constexpr std::array launcherPrefixes {
+        densityPrefix, adbAuthorizationPrefix};
+    for (auto& argument :
+         uml::android::readKernelCommandLine(path, launcherPrefixes))
+        arguments.push_back(std::move(argument));
 
     /* Android init imports this as ro.boot.lcd_density. Cuttlefish graphics
      * init then publishes the same value as ro.sf.lcd_density, keeping the
@@ -1220,14 +1158,6 @@ void appendKernelCommandLine(
     arguments.emplace_back(std::string {adbAuthorizationPrefix} + "1");
 }
 
-void prepareAndroidDisk(const std::filesystem::path& disk)
-{
-    struct stat details {};
-    if (lstat(disk.c_str(), &details) != 0 || !S_ISREG(details.st_mode))
-        throw std::invalid_argument("the Android disk is not a regular file");
-    if (::access(disk.c_str(), R_OK | W_OK) != 0)
-        throw std::invalid_argument("the Android disk is not writable");
-}
 #endif
 
 #if !KERNARIUM_RUNTIME_ANDROID_GUEST
@@ -1296,8 +1226,7 @@ int runtimeRun(
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
         const std::filesystem::path androidDisk {boot->android_disk_path};
-        validateUbdPath(androidDisk, "Android disk");
-        prepareAndroidDisk(androidDisk);
+        uml::android::validateWritableDisk(androidDisk);
         const auto androidBoot = uml::android::selectBoot(
             androidDisk,
             static_cast<uml::android::BootMode>(boot->android_boot_mode));

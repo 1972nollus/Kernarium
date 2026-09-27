@@ -7,11 +7,13 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -217,10 +219,74 @@ void requestRecovery(const std::filesystem::path &disk)
 
 } // namespace
 
+void writeText(const std::filesystem::path &path, std::string_view text)
+{
+	std::FILE *file = std::fopen(path.c_str(), "wb");
+	require(file != nullptr);
+	require(std::fwrite(text.data(), 1, text.size(), file) == text.size());
+	require(std::fclose(file) == 0);
+}
+
+/* Both launchers read the release's kernel command line through one
+ * tokenizer and refuse an argument that they set themselves. */
+void testKernelCommandLine(const std::filesystem::path &directory)
+{
+	constexpr std::array<std::string_view, 1> launcherPrefixes{
+		"androidboot.kernarium.adb_auth="};
+	const auto path = directory / "kernel-command-line.txt";
+	writeText(path,
+		"  console=ttyS0\tandroidboot.hardware=kernarium\n\nquiet \n");
+	require(uml::android::readKernelCommandLine(path, launcherPrefixes) ==
+		std::vector<std::string>{
+			"console=ttyS0", "androidboot.hardware=kernarium", "quiet"});
+
+	writeText(path, "quiet androidboot.kernarium.adb_auth=0\n");
+	requireThrows([&] {
+		(void)uml::android::readKernelCommandLine(path, launcherPrefixes);
+	});
+	writeText(path, " \n\t\n");
+	requireThrows([&] {
+		(void)uml::android::readKernelCommandLine(path, launcherPrefixes);
+	});
+	const auto link = directory / "kernel-command-line-link.txt";
+	writeText(path, "quiet\n");
+	std::filesystem::create_symlink(path, link);
+	requireThrows([&] {
+		(void)uml::android::readKernelCommandLine(link, launcherPrefixes);
+	});
+	requireThrows([&] {
+		(void)uml::android::readKernelCommandLine(
+			directory / "missing.txt", launcherPrefixes);
+	});
+}
+
+/* The writable disk is named in a UBD specification and opened read-write. */
+void testWritableDisk(const std::filesystem::path &directory)
+{
+	requireThrows([] { uml::android::validateUbdPath("", "disk"); });
+	requireThrows([] { uml::android::validateUbdPath("/a,b.img", "disk"); });
+	requireThrows([] { uml::android::validateUbdPath("/a:b.img", "disk"); });
+	uml::android::validateUbdPath("/a/b.img", "disk");
+
+	const auto disk = directory / "writable.img";
+	writeText(disk, "disk");
+	uml::android::validateWritableDisk(disk);
+	const auto link = directory / "writable-link.img";
+	std::filesystem::create_symlink(disk, link);
+	requireThrows([&] { uml::android::validateWritableDisk(link); });
+	requireThrows([&] { uml::android::validateWritableDisk(directory); });
+	require(chmod(disk.c_str(), S_IRUSR) == 0);
+	requireThrows([&] { uml::android::validateWritableDisk(disk); });
+	require(chmod(disk.c_str(), S_IRUSR | S_IWUSR) == 0);
+}
+
 int main()
 {
 	const auto directory = scratchDirectory();
 	try {
+		testKernelCommandLine(directory);
+		testWritableDisk(directory);
+
 		const auto stale = makeDisk(directory, seedDiskSize);
 		std::filesystem::resize_file(stale, expandedDiskSize);
 		requireThrows([&] {
