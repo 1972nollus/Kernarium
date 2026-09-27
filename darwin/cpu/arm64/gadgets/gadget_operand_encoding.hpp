@@ -16,12 +16,7 @@ namespace uml::cpu::arm64::gadgets::selection {
 	return first | (second << 16) | (third << 32) | (fourth << 48);
 }
 
-[[nodiscard]] constexpr std::int64_t sign_extend(std::uint64_t value,
-						 unsigned bits) noexcept
-{
-	const auto shift = 64U - bits;
-	return static_cast<std::int64_t>(value << shift) >> shift;
-}
+using ::uml::cpu::arm64::detail::sign_extend;
 
 [[nodiscard]] constexpr std::uintptr_t rcpc_memory_operand(
 	std::uint32_t instruction, std::int64_t offset) noexcept
