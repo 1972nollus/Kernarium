@@ -1500,18 +1500,7 @@ void VhostUserServer::signalQueue(std::uint32_t index)
         state,
         connectionStopRequested_);
 
-    const VhostUserMessage reply =
-        receiveBackendReply("in-band completion");
-    constexpr std::uint32_t expectedReplyFlags =
-        protocol::vhostUserVersion | protocol::vhostUserReply;
-    if (reply.header.request != header.request ||
-        reply.header.flags != expectedReplyFlags ||
-        reply.payload.size() != sizeof(std::uint64_t) ||
-        !reply.descriptors.empty() ||
-        payloadAs<std::uint64_t>(reply.payload) != 0) {
-        throw std::runtime_error(
-            "invalid vhost-user in-band completion acknowledgement");
-    }
+    awaitBackendAcknowledgement(header, "in-band completion");
 }
 
 void VhostUserServer::signalPendingConfigChange()
@@ -1550,21 +1539,13 @@ void VhostUserServer::signalPendingConfigChange()
      * potentially slow frontend acknowledgement. */
     device_->releaseConfigChange();
 
-    const VhostUserMessage reply = receiveBackendReply("config-change");
-    constexpr std::uint32_t expectedReplyFlags =
-        protocol::vhostUserVersion | protocol::vhostUserReply;
-    if (reply.header.request != header.request ||
-        reply.header.flags != expectedReplyFlags ||
-        reply.payload.size() != sizeof(std::uint64_t) ||
-        !reply.descriptors.empty() ||
-        payloadAs<std::uint64_t>(reply.payload) != 0) {
-        throw std::runtime_error(
-            "invalid vhost-user config-change acknowledgement");
-    }
+    awaitBackendAcknowledgement(header, "config-change");
     device_->clearConfigChange();
 }
 
-VhostUserMessage VhostUserServer::receiveBackendReply(const char* channel)
+void VhostUserServer::awaitBackendAcknowledgement(
+    const protocol::VhostHeader& request,
+    const char* channel)
 {
     /* The front-end reads the reply to a query such as GET_CONFIG from the
      * main socket without draining this backend channel, and on UML the CPU
@@ -1625,7 +1606,18 @@ VhostUserMessage VhostUserServer::receiveBackendReply(const char* channel)
                 throw std::runtime_error(
                     std::string("closed vhost-user ") + channel + " channel");
             }
-            return reply;
+            constexpr std::uint32_t expectedReplyFlags =
+                protocol::vhostUserVersion | protocol::vhostUserReply;
+            if (reply.header.request != request.request ||
+                reply.header.flags != expectedReplyFlags ||
+                reply.payload.size() != sizeof(std::uint64_t) ||
+                !reply.descriptors.empty() ||
+                payloadAs<std::uint64_t>(reply.payload) != 0) {
+                throw std::runtime_error(
+                    std::string("invalid vhost-user ") + channel +
+                    " acknowledgement");
+            }
+            return;
         }
         if (descriptors[1].revents == 0)
             continue;
@@ -1860,18 +1852,7 @@ void VhostUserServer::dispatchSharedMemoryActions()
 
             // Do not expose the Virtio-GPU mapping transition until the
             // front-end has installed or revoked the corresponding GPA range.
-            const VhostUserMessage reply =
-                receiveBackendReply("shared-memory acknowledgement");
-            constexpr std::uint32_t expectedReplyFlags =
-                protocol::vhostUserVersion | protocol::vhostUserReply;
-            if (reply.header.request != header.request ||
-                reply.header.flags != expectedReplyFlags ||
-                reply.payload.size() != sizeof(std::uint64_t) ||
-                !reply.descriptors.empty() ||
-                payloadAs<std::uint64_t>(reply.payload) != 0) {
-                throw std::runtime_error(
-                    "invalid vhost-user shared-memory acknowledgement");
-            }
+            awaitBackendAcknowledgement(header, "shared-memory");
             if (sharedMemoryRegions_ && map &&
                 !sharedMemoryRegions_->publish(
                     action.regionId,

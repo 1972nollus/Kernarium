@@ -133,10 +133,14 @@ private:
         std::span<const std::uint8_t> response);
     void notifyQueue(std::uint32_t index);
     void signalQueue(std::uint32_t index);
-    /* Waits for the front-end's answer to a backend request while still
-     * answering every front-end request whose reply it awaits without
-     * reading the backend channel; other requests are deferred. */
-    [[nodiscard]] VhostUserMessage receiveBackendReply(const char* channel);
+    /* Waits for the front-end's acknowledgement of the backend request
+     * `request` while still answering every front-end request whose reply
+     * it awaits without reading the backend channel; other requests are
+     * deferred. Throws unless the reply acknowledges `request` with a zero
+     * status. */
+    void awaitBackendAcknowledgement(
+        const protocol::VhostHeader& request,
+        const char* channel);
     void handleDeferredFrontendMessages(int socket);
     void serveConnection(
         int connection,
