@@ -53,18 +53,6 @@ function(uml_finalize_suite_binary_target SUITE AGGREGATE_TARGET)
         endif()
         add_dependencies("${AGGREGATE_TARGET}" "${_command_target}")
     endforeach()
-
-    get_property(_aggregate_dependencies TARGET "${AGGREGATE_TARGET}"
-        PROPERTY MANUALLY_ADDED_DEPENDENCIES)
-    foreach(_command_target IN LISTS _command_targets)
-        list(FIND _aggregate_dependencies "${_command_target}"
-            _dependency_index)
-        if(_dependency_index EQUAL -1)
-            message(FATAL_ERROR
-                "${AGGREGATE_TARGET} does not build registered ${SUITE} "
-                "command target ${_command_target}")
-        endif()
-    endforeach()
 endfunction()
 
 function(uml_apply_test_properties NAME)
