@@ -403,17 +403,24 @@ round trip once, naming the queue and the error, and retires the device by the
 same path as a lost descriptor, so a failed kick never leaves a silently broken
 virtqueue behind.
 
+Neither side of a vhost-user connection waits on one channel alone. Only CPU 0
+polls host descriptors, and a request on either channel can need an answer
+before its sender reads the other channel again, so a side that waited on one
+channel would leave both blocked. The guest serves the backend request stream
+during every synchronous wait on the control socket, for a `GET_CONFIG` reply
+or a kick's acknowledgement alike. Serving a request inside a wait records its
+interrupt and replies on the request stream without touching the control
+socket. Darwin drops a read edge whose data is gone before it is collected, so
+a request read there leaves no edge for the request IRQ; the interrupts it
+recorded are delivered through `irq_work` instead.
+
 A backend request that needs an acknowledgement (an in-band completion, a
 config change, or a shared-memory map or unmap) waits for it while still
-answering the guest's queries. The guest reads the answer to a query such as
-`GET_CONFIG` from the control socket without draining the backend channel, and
-on UML the CPU that would drain it can be the one waiting for that answer, so a
-backend that waited on its channel alone would leave each side waiting for the
-other. The feature, queue-size, shared-memory-configuration, and config queries
-are answered during the wait. Any other request is held until the
-acknowledgement arrives and is then handled before anything still unread,
-because its sender drains the backend channel while it waits, and handling it
-early could start a second backend request inside the first.
+answering the guest's feature, queue-size, shared-memory-configuration, and
+config queries. Any other request is held until the acknowledgement arrives and
+is then handled before anything still unread, because its sender drains the
+backend channel while it waits, and handling it early could start a second
+backend request inside the first.
 
 Retiring the device is where the guest's recovery ends. virtio-gpu has no
 broken-device handling of its own: it never tests `virtqueue_is_broken()`, so a
