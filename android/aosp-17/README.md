@@ -156,14 +156,25 @@ regeneration; the verifier refuses a guest series that changed underneath the
 recorded pin.
 
 The port itself is generated. `tools/generate-mesa-venus-port.py` runs AOSP's
-`meson2hermetic` converter with the checked `soong-port.toml`, then scopes every
+`meson2hermetic` converter with the checked `soong-port.toml`, repairs the few
+places where Soong needs more than Meson states, and then scopes every
 generated module name with a `venus_` prefix because `external/mesa3d` already
 defines the same Mesa module names and Soong module names are global at the Make
-layer. The installed HAL module keeps the name `vulkan.virtio`, which is the
-file name the Android Vulkan loader resolves through `ro.hardware.vulkan`.
-Soong has no equivalent of the guest build's out-of-tree
+layer. The installed modules keep the names the platform loaders resolve:
+`vulkan.virtio` through `ro.hardware.vulkan`, and the three EGL and GLES
+libraries through `ro.hardware.egl`. Soong makes every warning an error outside
+`device/` and `vendor/`; a warning Mesa's own build tolerates therefore needs a
+per-module `[[kernarium.warning_exception]]` entry, with its reason, in
+`soong-port.toml`. Soong has no equivalent of the guest build's out-of-tree
 `-Dvenus-protocol-dir`, so the port carries the paired generated Venus protocol
 codec at the tree path the upstream snapshot reserves for it.
+
+The converter is a pinned builder input too:
+`third_party/meson2hermetic/` records its upstream commit and a local series,
+and the generator refuses a converter checkout whose tree is not the recorded
+final tree. The series links a shared library as itself rather than as its
+static closure, so each library links only its direct Meson dependencies, and
+passes Meson's C arguments to C sources only.
 
 `vulkan.virtio.so` is a same-process HAL: it is loaded into every application
 that uses Vulkan, so the product labels it `same_process_hal_file` beside the
