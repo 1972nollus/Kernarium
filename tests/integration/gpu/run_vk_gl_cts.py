@@ -2094,22 +2094,6 @@ def append_apple_opengl_matrix_shards(
     return len(backends)
 
 
-def apple_matrix_configs(
-    shards: dict[str, AppleMatrixShard], api: str
-) -> tuple[EglConfig, ...]:
-    rows = sorted(
-        (
-            shard.matrix.egl_config_index,
-            shard.matrix.egl_config,
-        )
-        for shard in shards.values()
-        if shard.api == api and shard.selection.fraction_index == 0
-    )
-    if [index for index, _ in rows] != list(range(len(rows))):
-        raise CampaignError(f"Apple CTS matrix config indices changed for {api}")
-    return tuple(config for _, config in rows)
-
-
 def parse_fraction(value: str) -> tuple[int, int]:
     match = re.fullmatch(r"([0-9]+),([0-9]+)", value)
     if match is None:
@@ -2164,15 +2148,6 @@ def parse_case_list(text: str) -> list[str]:
     if not cases:
         raise CampaignError("selected caselist is empty")
     return cases
-
-
-def select_fraction(cases: Sequence[str], index: int, count: int) -> list[str]:
-    if count < 1 or index < 0 or index >= count:
-        raise CampaignError("invalid fraction")
-    selected = list(cases[index::count])
-    if not selected:
-        raise CampaignError("fraction selects no cases")
-    return selected
 
 
 def decode_qpa(payload: bytes) -> str:

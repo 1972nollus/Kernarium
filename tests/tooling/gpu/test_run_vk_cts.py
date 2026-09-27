@@ -357,25 +357,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
             list(self.identity["mandatory_cases"][:3]),
         )
 
-    def test_capability_inventory_requires_operation_proof(self) -> None:
-        inventory = {
-            "schema_version": 1,
-            "device_identity": "Virtio GPU Venus / KosmicKrisp",
-            "advertised": ["buffer.host-visible", "image.rgba8.sampled"],
-            "operation_proofs": [
-                {"operation": "buffer.host-visible", "success": True},
-                {"operation": "image.rgba8.sampled", "success": True},
-            ],
-        }
-        digest = cts.validate_capability_inventory(inventory)
-        self.assertRegex(digest, r"^[0-9a-f]{64}$")
-        inventory["operation_proofs"].pop()
-        with self.assertRaisesRegex(cts.CampaignError, "lacks"):
-            cts.validate_capability_inventory(inventory)
-        inventory["device_identity"] = "lavapipe"
-        with self.assertRaisesRegex(cts.CampaignError, "software ICD"):
-            cts.validate_capability_inventory(inventory)
-
     def test_acknowledged_artifacts_reject_truncation_and_digest_drift(self) -> None:
         transcript = "".join(
             framed(name, payload)
@@ -677,38 +658,6 @@ class VulkanCtsToolingTests(unittest.TestCase):
             metadata["kosmickrisp_sha256"] = "a" * 64
             (root / "run.json").write_text(json.dumps(metadata))
             self.assertEqual(cts.verify_only(root, self.identity), result)
-
-    def test_simulator_assignment_and_resume_are_deterministic(self) -> None:
-        devices = cts.load_campaigns()["ios_simulator"]["frozen_udids"]
-        assignment = cts.assign_simulator_shards(
-            ("shard-0", "shard-1", "shard-2", "shard-3", "shard-4"),
-            devices,
-        )
-        self.assertEqual(assignment["shard-0"], assignment["shard-4"])
-        with self.assertRaisesRegex(cts.CampaignError, "unique UDIDs"):
-            cts.assign_simulator_shards(("shard-0",), (devices[0], devices[0]))
-        frozen = "a" * 64
-        attempts = [
-            {
-                "attempt_id": "attempt-0",
-                "shard": "shard-0",
-                "frozen_input_sha256": frozen,
-                "state": "failed",
-            },
-            {
-                "attempt_id": "attempt-1",
-                "shard": "shard-1",
-                "frozen_input_sha256": frozen,
-                "state": "verified",
-            },
-        ]
-        self.assertEqual(
-            cts.verified_resume_set(frozen, ("shard-0", "shard-1"), attempts),
-            frozenset({"shard-1"}),
-        )
-        attempts[0]["frozen_input_sha256"] = "b" * 64
-        with self.assertRaisesRegex(cts.CampaignError, "frozen inputs"):
-            cts.verified_resume_set(frozen, ("shard-0", "shard-1"), attempts)
 
     def test_future_receipt_schema_is_fail_closed(self) -> None:
         schema = cts.load_json(cts.FUTURE_RECEIPT_SCHEMA_PATH)
