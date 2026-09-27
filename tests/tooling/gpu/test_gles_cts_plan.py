@@ -202,7 +202,7 @@ class GlesCtsPlanTests(unittest.TestCase):
             document["text"] = document["text"].replace(old, new, 1)
             payload = document["text"].encode("utf-8")
             document["size"] = len(payload)
-            document["sha256"] = plan.digest(payload)
+            document["sha256"] = gl_plan.digest(payload)
             with self.subTest(old=old), self.assertRaises(plan.PlanError):
                 plan.validate_manifest(broken)
 

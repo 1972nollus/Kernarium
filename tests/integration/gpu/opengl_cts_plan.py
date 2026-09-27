@@ -231,16 +231,24 @@ def validate_manifest(manifest: Any) -> dict[str, Any]:
     return manifest
 
 
-def expand_runs(manifest: dict[str, Any], configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    validate_manifest(manifest)
-    require(isinstance(configs, list) and bool(configs), "OpenGL run plan has no EGL configurations")
+def validate_egl_configs(configs: Any, api: str) -> None:
+    """Check the ordered EGL configuration list a run plan expands over.
+
+    api names the plan ("OpenGL" or "OpenGL ES") in the error messages.
+    """
+    require(isinstance(configs, list) and bool(configs), f"{api} run plan has no EGL configurations")
     seen = set()
     for config in configs:
-        require(isinstance(config, dict) and set(config) == {"id", "surface_types"}, "invalid OpenGL EGL configuration")
-        require(type(config["id"]) is int and config["id"] > 0 and config["id"] not in seen, "duplicate or invalid OpenGL EGL config ID")
+        require(isinstance(config, dict) and set(config) == {"id", "surface_types"}, f"invalid {api} EGL configuration")
+        require(type(config["id"]) is int and config["id"] > 0 and config["id"] not in seen, f"duplicate or invalid {api} EGL config ID")
         seen.add(config["id"])
         surfaces = config["surface_types"]
-        require(isinstance(surfaces, list) and bool(surfaces) and all(value in {"window", "pbuffer", "pixmap"} for value in surfaces) and len(surfaces) == len(set(surfaces)), "invalid OpenGL EGL surface list")
+        require(isinstance(surfaces, list) and bool(surfaces) and all(value in {"window", "pbuffer", "pixmap"} for value in surfaces) and len(surfaces) == len(set(surfaces)), f"invalid {api} EGL surface list")
+
+
+def expand_runs(manifest: dict[str, Any], configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    validate_manifest(manifest)
+    validate_egl_configs(configs, "OpenGL")
     runs = []
 
     def append(configuration: dict[str, Any], config_index: int) -> None:
