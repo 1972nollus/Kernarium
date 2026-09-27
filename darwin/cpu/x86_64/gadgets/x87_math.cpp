@@ -197,6 +197,10 @@ enum class TranscendentalOperation : std::uint8_t {
 {
 	if (is_infinity(value))
 		return invalid_result(cpu);
+	/* FSIN and FPTAN return a zero operand unchanged, sign included; the
+	 * 128-bit sine does not keep a negative zero's sign. */
+	if (is_zero(value) && operation != TranscendentalOperation::cosine)
+		return value;
 	if (cpu.x87_reduced_precision) {
 		const auto input = to_double(cpu, value);
 		double result{};
@@ -364,6 +368,11 @@ enum class TranscendentalOperation : std::uint8_t {
 		} else {
 			result = extF80_sub(&state, to_soft(dividend),
 				extF80_mul(&state, integer, to_soft(divisor)));
+			/* An exact remainder of zero takes the dividend's sign;
+			 * the subtraction alone would give +0. */
+			if (is_zero(from_soft(result)))
+				result.signExp = static_cast<std::uint16_t>(
+					dividend.sign_exponent & 0x8000U);
 		}
 	}
 	commit_exceptions(cpu, state);
