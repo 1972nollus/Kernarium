@@ -311,15 +311,11 @@ def main() -> None:
     ])
     kernel_patch_count, kernel_manifest_sha = kernel_series_provenance(outer_root)
 
+    # verify-kernel-artifact.py has checked the payload files and the ELF.
     kernel_payload = kernel_artifact / "kernel"
-    kernel_elf = regular_file(kernel_payload / "vmlinux", "ACK UML ELF")
-    kernel_config = regular_file(kernel_payload / "config", "ACK configuration")
-    kernel_release_file = regular_file(
-        kernel_payload / "kernel.release", "ACK kernel release"
-    )
-    for name in ("System.map", "modules.builtin", "modules.builtin.modinfo"):
-        regular_file(kernel_payload / name, f"ACK {name}")
-    run([str(android_root / "build/verify-kernel-elf.py"), str(kernel_elf)])
+    kernel_elf = kernel_payload / "vmlinux"
+    kernel_config = kernel_payload / "config"
+    kernel_release_file = kernel_payload / "kernel.release"
     verify_kernel_config(kernel_artifact, android_root, enforce_tracked_policy=True)
     run([
         str(android_root / "tools/verify-target-files.py"),
