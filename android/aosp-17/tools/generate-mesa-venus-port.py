@@ -8,7 +8,9 @@ with the checked project configuration, repairs the converter's output where
 Soong needs more than Meson does, and then scopes every generated module name
 so the port cannot collide with the AOSP `external/mesa3d` project, whose module
 names are otherwise identical and global at the Make layer. The port builds the
-Venus Vulkan HAL and the Virgl EGL and GLES libraries.
+Venus Vulkan HAL and the Virgl EGL and GLES libraries. It also deletes Mesa's
+legacy Android.mk makefiles: Soong refuses a makefile under a denylisted
+directory, and the Android.bp files alone describe the port.
 
 The converter is a builder toolchain input pinned by `third_party/meson2hermetic`:
 an upstream commit and a local series. This tool refuses a converter checkout
@@ -79,12 +81,24 @@ COMPAT_FLAGS = [
 BLOCK_TYPE = re.compile(r"^([a-z_0-9]+)\s*\{\s*$")
 
 
-def bp_files(root: Path) -> list[Path]:
+def checkout_files(root: Path, name: str) -> list[Path]:
     return [
         path
-        for path in sorted(root.rglob("Android.bp"))
+        for path in sorted(root.rglob(name))
         if ".git" not in path.parts
     ]
+
+
+def bp_files(root: Path) -> list[Path]:
+    return checkout_files(root, "Android.bp")
+
+
+def remove_makefiles(root: Path) -> None:
+    """Delete the checkout's legacy Android.mk makefiles."""
+    makefiles = checkout_files(root, "Android.mk")
+    for path in makefiles:
+        path.unlink()
+    print(f"removed {len(makefiles)} Android.mk files")
 
 
 def block_tools(block: list[str]) -> set[str]:
@@ -666,6 +680,7 @@ def main() -> None:
     port = Port(args.config, metadata.get("MESA_VENUS_HAL_MODULE", ""))
     verify_converter(args.android_root, args.converter)
     convert(args)
+    remove_makefiles(args.checkout)
     blueprints = load(args.checkout)
     repair(args.checkout, blueprints, port)
     scope(args.checkout, blueprints, port.keep)
