@@ -559,7 +559,7 @@ index a31eadde4320459375e9f1e68bb5d39ea24d55d3..4e246852333186c87ebaa80e892f09cc
  #define KK_MAX_PUSH_SIZE                 256
  #define KK_MAX_DYNAMIC_BUFFERS           64
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 016363cb23082defbbe37a26f9810bedba58ced9..06294868b4198bd05ac1354a751a19b48180e56d 100644
+index 466d8cb38a1fb03859b2111b0b9716a69187625e..03f650713298a89e0b607e6d85ec65f5c3c332aa 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -368,6 +368,291 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,

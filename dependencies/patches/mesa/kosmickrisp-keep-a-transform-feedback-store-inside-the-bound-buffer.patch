@@ -21,7 +21,7 @@ of reaching memory the driver was never given.
  3 files changed, 41 insertions(+), 3 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 67276505ab15a077972566e443e726dfbb87af11..c2ff91085b6ceb2b898ae5c168436a2c527e0c25 100644
+index e2af16a8dec4599725596c159e458a1217e02859..47d916ec764b0dcfc89a1eebbd8fb67205710b34 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -3878,7 +3878,9 @@ kk_create_tes_transform_feedback_raster(
