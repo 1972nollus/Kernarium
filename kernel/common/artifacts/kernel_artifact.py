@@ -5,6 +5,7 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import datetime
 import json
 import os
 import re
@@ -12,8 +13,13 @@ import shutil
 import stat
 import struct
 import subprocess
+import sys
+import tempfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import NoReturn
+from typing import NamedTuple, NoReturn
+
+from contract_checks import ContractChecks, parse_config
 
 
 SCHEMA_VERSION = 3
@@ -21,8 +27,6 @@ SCHEMA_VERSION = 3
 # manifest. Both are still accepted; the final tree is the source identity.
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
-HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 ABI_FINGERPRINT_RE = re.compile(r"^0x[0-9a-f]{16}$")
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -73,6 +77,15 @@ PAYLOAD_SPECS = {
     "kernel/vmlinux": ("kernel-elf", "elf64-aarch64-et-dyn"),
 }
 
+_CHECKS = ContractChecks("kernel artifact verifier")
+fail = _CHECKS.fail
+require_exact_keys = _CHECKS.require_exact_keys
+require_string = _CHECKS.require_string
+require_integer = _CHECKS.require_integer
+require_hex = _CHECKS.require_hex
+safe_relative = _CHECKS.safe_relative
+parse_env = _CHECKS.parse_env
+
 ET_DYN = 3
 EM_AARCH64 = 183
 PT_LOAD = 1
@@ -85,85 +98,6 @@ SHT_DYNSYM = 11
 SHN_UNDEF = 0
 SHF_ALLOC = 2
 DWARF_SECTION_PREFIXES = (".debug_", ".zdebug_")
-
-
-def fail(message: str) -> NoReturn:
-    raise SystemExit(f"kernel artifact verifier: {message}")
-
-
-def require_exact_keys(value: object, expected: set[str], label: str) -> dict:
-    if not isinstance(value, dict):
-        fail(f"{label} must be an object")
-    keys = set(value)
-    if keys != expected:
-        fail(
-            f"{label} keys differ "
-            f"(missing={sorted(expected - keys)}, extra={sorted(keys - expected)})"
-        )
-    return value
-
-
-def require_string(value: object, label: str) -> str:
-    if not isinstance(value, str) or not value:
-        fail(f"{label} must be a nonempty string")
-    if any(character in value for character in ("\0", "\n", "\r")):
-        fail(f"{label} contains a control character")
-    return value
-
-
-def require_integer(value: object, label: str, *, minimum: int = 0) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        fail(f"{label} must be an integer at least {minimum}")
-    return value
-
-
-def require_hex(value: object, length: int, label: str) -> str:
-    result = require_string(value, label)
-    pattern = HEX40_RE if length == 40 else HEX64_RE
-    if pattern.fullmatch(result) is None:
-        fail(f"{label} must be {length} lowercase hexadecimal characters")
-    return result
-
-
-def safe_relative(value: object, label: str) -> str:
-    text = require_string(value, label)
-    if "\\" in text:
-        fail(f"{label} contains a backslash")
-    path = PurePosixPath(text)
-    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
-        fail(f"{label} is not a normalized relative path")
-    if str(path) != text:
-        fail(f"{label} is not normalized")
-    return text
-
-
-def parse_env(path: Path) -> dict[str, str]:
-    if not path.is_file() or path.is_symlink():
-        fail(f"metadata file is missing or unsafe: {path}")
-    values: dict[str, str] = {}
-    assignment = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([0-9]+))$")
-    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = assignment.fullmatch(line)
-        if match is None:
-            fail(f"{path}:{line_number}: malformed metadata assignment")
-        key, quoted, numeric = match.groups()
-        if key in values:
-            fail(f"{path}:{line_number}: duplicate metadata key {key}")
-        values[key] = quoted if quoted is not None else numeric
-    return values
-
-
-def sha256_path(path: Path) -> str:
-    import hashlib
-
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1 << 20):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def validate_manifest(value: object) -> dict:
@@ -296,17 +230,6 @@ def verify_inventory(artifact_root: Path, manifest: dict) -> None:
             fail(f"artifact payload size differs for {relative}")
 
 
-def parse_config(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        if raw.startswith("CONFIG_") and "=" in raw:
-            key, value = raw.split("=", 1)
-            values[key] = value
-        elif raw.startswith("# CONFIG_") and raw.endswith(" is not set"):
-            values[raw[2:-11]] = "n"
-    return values
-
-
 def verify_config(path: Path, page_size: int, kernel_slice: str) -> None:
     if kernel_slice not in ("arm64", "x86_64"):
         fail("kernel config slice is unsupported")
@@ -344,7 +267,18 @@ def bounded_slice(payload: bytes, offset: int, size: int, label: str) -> bytes:
     return payload[offset : offset + size]
 
 
-def elf_imports(payload: bytes) -> set[str]:
+class SectionHeader(NamedTuple):
+    name: int
+    kind: int
+    flags: int
+    offset: int
+    size: int
+    link: int
+    entry_size: int
+
+
+def section_headers(payload: bytes) -> list[SectionHeader]:
+    """Return every ELF64 section header, each with contents inside the file."""
     section_offset = struct.unpack_from("<Q", payload, 40)[0]
     section_entry_size, section_count = struct.unpack_from("<HH", payload, 58)
     if section_entry_size < 64 or section_count == 0:
@@ -355,33 +289,40 @@ def elf_imports(payload: bytes) -> set[str]:
         section_entry_size * section_count,
         "section-header table",
     )
-    sections: list[tuple[int, int, int, int]] = []
+    headers = []
     for index in range(section_count):
         offset = section_offset + index * section_entry_size
-        kind = struct.unpack_from("<I", payload, offset + 4)[0]
+        name, kind, flags = struct.unpack_from("<IIQ", payload, offset)
         file_offset, size = struct.unpack_from("<QQ", payload, offset + 24)
         link = struct.unpack_from("<I", payload, offset + 40)[0]
         entry_size = struct.unpack_from("<Q", payload, offset + 56)[0]
         if kind != SHT_NOBITS:
             bounded_slice(payload, file_offset, size, f"section {index}")
-        sections.append((kind, file_offset, size, link if entry_size else -1))
+        headers.append(
+            SectionHeader(name, kind, flags, file_offset, size, link, entry_size)
+        )
+    return headers
 
+
+def elf_imports(payload: bytes) -> set[str]:
+    sections = section_headers(payload)
     imported: set[str] = set()
     found_symbol_table = False
-    for index, (kind, file_offset, size, link) in enumerate(sections):
-        if kind not in (SHT_SYMTAB, SHT_DYNSYM):
+    for index, section in enumerate(sections):
+        if section.kind not in (SHT_SYMTAB, SHT_DYNSYM):
             continue
         found_symbol_table = True
-        entry_size = struct.unpack_from(
-            "<Q", payload, section_offset + index * section_entry_size + 56
-        )[0]
-        if entry_size < 24 or size % entry_size != 0:
+        entry_size = section.entry_size
+        if entry_size < 24 or section.size % entry_size != 0:
             fail(f"ELF symbol table {index} is malformed")
-        if link < 0 or link >= len(sections):
+        if section.link >= len(sections):
             fail(f"ELF symbol table {index} has an invalid string table")
-        _, string_offset, string_size, _ = sections[link]
-        strings = bounded_slice(payload, string_offset, string_size, "string table")
-        for symbol_offset in range(file_offset, file_offset + size, entry_size):
+        string_table = sections[section.link]
+        strings = bounded_slice(
+            payload, string_table.offset, string_table.size, "string table"
+        )
+        end = section.offset + section.size
+        for symbol_offset in range(section.offset, end, entry_size):
             name_offset = struct.unpack_from("<I", payload, symbol_offset)[0]
             section_index = struct.unpack_from("<H", payload, symbol_offset + 6)[0]
             if section_index != SHN_UNDEF or name_offset >= len(strings):
@@ -445,7 +386,8 @@ def expected_imports(
 
 def verify_elf(
     path: Path, page_size: int, common_root: Path, kernel_slice: str
-) -> None:
+) -> bytes:
+    """Check the kernel's ELF geometry and bridge imports; return its bytes."""
     payload = path.read_bytes()
     if len(payload) < 64 or payload[:7] != b"\x7fELF\x02\x01\x01":
         fail("kernel is not a little-endian ELF64 image")
@@ -497,60 +439,53 @@ def verify_elf(
             "kernel bridge imports differ "
             f"(missing={sorted(expected - imported)}, extra={sorted(imported - expected)})"
         )
+    return payload
 
 
 def elf_sections(payload: bytes) -> list[tuple[str, int, int, int]]:
     """Return (name, type, flags, size) for every ELF64 section."""
-    section_offset = struct.unpack_from("<Q", payload, 40)[0]
-    section_entry_size, section_count, names_index = struct.unpack_from(
-        "<HHH", payload, 58
-    )
-    if section_entry_size < 64 or section_count == 0 or names_index >= section_count:
+    names_index = struct.unpack_from("<H", payload, 62)[0]
+    headers = section_headers(payload)
+    if names_index >= len(headers):
         fail("ELF section-header table is missing or malformed")
-    bounded_slice(
-        payload,
-        section_offset,
-        section_entry_size * section_count,
-        "section-header table",
-    )
-    headers = []
-    for index in range(section_count):
-        offset = section_offset + index * section_entry_size
-        name, kind, flags = struct.unpack_from("<IIQ", payload, offset)
-        file_offset, size = struct.unpack_from("<QQ", payload, offset + 24)
-        headers.append((name, kind, flags, file_offset, size))
-    _, names_kind, _, names_offset, names_size = headers[names_index]
-    if names_kind == SHT_NOBITS:
+    names_header = headers[names_index]
+    if names_header.kind == SHT_NOBITS:
         fail("ELF section-name table has no contents")
-    names = bounded_slice(payload, names_offset, names_size, "section-name table")
+    names = bounded_slice(
+        payload, names_header.offset, names_header.size, "section-name table"
+    )
     sections = []
-    for name, kind, flags, _, size in headers:
-        terminator = names.find(b"\0", name)
-        if name >= len(names) or terminator < 0:
+    for header in headers:
+        terminator = names.find(b"\0", header.name)
+        if header.name >= len(names) or terminator < 0:
             fail("ELF section name is outside its string table")
         sections.append(
-            (names[name:terminator].decode("ascii", "replace"), kind, flags, size)
+            (
+                names[header.name : terminator].decode("ascii", "replace"),
+                header.kind,
+                header.flags,
+                header.size,
+            )
         )
     return sections
 
 
-def verify_runtime_image(vmlinux: Path, config: Path) -> None:
-    """Check the shipped kernel carries BTF and no DWARF.
+def verify_runtime_image(payload: bytes) -> None:
+    """Check the shipped kernel image carries BTF and no DWARF.
 
     DWARF is only pahole's input for BTF; nothing at runtime reads it.
-    .BTF is allocated kernel data behind /sys/kernel/btf/vmlinux.
+    .BTF is allocated kernel data behind /sys/kernel/btf/vmlinux, which
+    verify_config requires on every line.
     """
     sections = {
         name: (kind, flags, size)
-        for name, kind, flags, size in elf_sections(vmlinux.read_bytes())
+        for name, kind, flags, size in elf_sections(payload)
     }
     dwarf = sorted(
         name for name in sections if name.startswith(DWARF_SECTION_PREFIXES)
     )
     if dwarf:
         fail(f"kernel image carries DWARF sections: {', '.join(dwarf[:8])}")
-    if parse_config(config).get("CONFIG_DEBUG_INFO_BTF", "n") != "y":
-        return
     btf = sections.get(".BTF")
     if btf is None or btf[0] == SHT_NOBITS or btf[2] == 0:
         fail("kernel config enables BTF but the image has no .BTF contents")
@@ -693,15 +628,13 @@ def verify_artifact(
         manifest["page_size"],
         manifest["slice"],
     )
-    verify_elf(
+    payload = verify_elf(
         artifact_root / "kernel/vmlinux",
         manifest["page_size"],
         common_root,
         manifest["slice"],
     )
-    verify_runtime_image(
-        artifact_root / "kernel/vmlinux", artifact_root / "kernel/config"
-    )
+    verify_runtime_image(payload)
     return manifest
 
 
@@ -740,13 +673,180 @@ def verify_compatible_artifact(
         manifest["page_size"],
         manifest["slice"],
     )
-    verify_elf(
+    payload = verify_elf(
         artifact_root / "kernel/vmlinux",
         manifest["page_size"],
         common_root,
         manifest["slice"],
     )
-    verify_runtime_image(
-        artifact_root / "kernel/vmlinux", artifact_root / "kernel/config"
-    )
+    verify_runtime_image(payload)
     return manifest
+
+
+def publish_artifact(
+    fail_publish: Callable[[str], NoReturn],
+    *,
+    family: str,
+    kernel_slice: str,
+    page_size: int,
+    source: Path,
+    source_label: str,
+    build: Path,
+    output_root: Path,
+    release_id: str,
+    objcopy: Path,
+    common_root: Path,
+    metadata_path: Path,
+    check_release: Callable[[str, dict[str, str]], None],
+    verify_staged: Callable[[Path], None] | None = None,
+) -> Path:
+    """Publish one built kernel as a new artifact directory in output_root.
+
+    The source must be a clean checkout of the line's tracked final tree, and
+    the checked-in series must still produce that tree. Each line's publisher
+    validates its own arguments and supplies its release check and any extra
+    check of the staged payloads, which runs before the manifest is written.
+    """
+
+    def git(*arguments: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(source), *arguments],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            fail_publish(f"Git failed in the {source_label}: {result.stderr.strip()}")
+        return result.stdout.strip()
+
+    metadata = parse_env(metadata_path)
+    abi_metadata_path = common_root / "abi/identity.env"
+    abi = parse_env(abi_metadata_path)
+    if git("status", "--porcelain=v1", "--untracked-files=all"):
+        fail_publish(f"{source_label} worktree is dirty")
+    if git("rev-parse", "HEAD^{tree}") != metadata["UML_KERNEL_FINAL_TREE"]:
+        fail_publish(f"{source_label} tree differs from the tracked final tree")
+    # The recorded final tree must still be what the checked-in series
+    # produce, so a line left stale by a change below it cannot publish.
+    series_check = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(common_root / "tooling/kernel_series.py"),
+            "tree",
+            "--metadata",
+            str(metadata_path),
+            "--source",
+            str(source),
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+    )
+    if series_check.returncode != 0:
+        fail_publish("the checked-in series do not produce the tracked final tree")
+
+    source_paths = {
+        "kernel/System.map": build / "System.map",
+        "kernel/config": build / ".config",
+        "kernel/kernel.release": build / "include/config/kernel.release",
+        "kernel/modules.builtin": build / "modules.builtin",
+        "kernel/modules.builtin.modinfo": build / "modules.builtin.modinfo",
+        "kernel/vmlinux": build / "vmlinux",
+    }
+    for relative, path in source_paths.items():
+        if not path.is_file() or path.is_symlink():
+            fail_publish(f"build payload is missing or unsafe for {relative}: {path}")
+    for root, directories, files in os.walk(build, followlinks=False):
+        directories[:] = [
+            name for name in directories if not (Path(root) / name).is_symlink()
+        ]
+        for name in files:
+            if name.endswith(".ko") or ".ko." in name:
+                fail_publish(
+                    f"loadable module output is forbidden: {Path(root) / name}"
+                )
+
+    # A config check is cheap, so a wrong configuration fails before the copy.
+    # The image is checked once, as published, by verify_artifact below:
+    # stripping DWARF changes nothing verify_elf reads, and the unstripped
+    # build image carries the full DWARF.
+    verify_config(source_paths["kernel/config"], page_size, kernel_slice)
+    release = source_paths["kernel/kernel.release"].read_text(
+        encoding="utf-8"
+    ).strip()
+    check_release(release, metadata)
+
+    page_label = "16k" if page_size == 16384 else "4k"
+    directory_name = f"{family}-{kernel_slice}-{page_label}-{release_id}"
+    output_root.mkdir(parents=True, exist_ok=True)
+    if output_root.is_symlink():
+        fail_publish("output root must not be a symlink")
+    destination = output_root / directory_name
+    if destination.exists() or destination.is_symlink():
+        fail_publish("kernel artifact destination already exists")
+    staging_parent = Path(
+        tempfile.mkdtemp(prefix=f".{directory_name}.", dir=output_root)
+    )
+    staging = staging_parent / directory_name
+    staging.mkdir()
+    try:
+        inventory = []
+        for relative, (role, file_format) in sorted(PAYLOAD_SPECS.items()):
+            destination_path = staging / relative
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            if relative == "kernel/vmlinux":
+                # DWARF is only pahole's input. verify_artifact below proves
+                # that the image keeps .BTF and carries no DWARF.
+                publish_runtime_image(
+                    objcopy, source_paths[relative], destination_path
+                )
+            else:
+                shutil.copyfile(source_paths[relative], destination_path)
+                shutil.copymode(source_paths[relative], destination_path)
+            inventory.append(
+                {
+                    "path": relative,
+                    "role": role,
+                    "format": file_format,
+                    "size": destination_path.stat().st_size,
+                }
+            )
+        if verify_staged is not None:
+            verify_staged(staging)
+        manifest = {
+            "schema_version": SCHEMA_VERSION,
+            "release_id": release_id,
+            "directory_name": directory_name,
+            "family": family,
+            "slice": kernel_slice,
+            "published_at_utc": datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "release": release,
+            "page_size": page_size,
+            "elf_role": "darwin-uml",
+            "source": {
+                "repository": metadata["UML_KERNEL_UPSTREAM_REPOSITORY"],
+                "branch": metadata["UML_KERNEL_UPSTREAM_BRANCH"],
+                "base_commit": metadata["UML_KERNEL_UPSTREAM_COMMIT"],
+                "base_tree": metadata["UML_KERNEL_UPSTREAM_TREE"],
+                "final_tree": metadata["UML_KERNEL_FINAL_TREE"],
+            },
+            "abi": {
+                "version": int(abi["DARWIN_UML_ABI_VERSION"]),
+                "fingerprint": abi["DARWIN_UML_ABI_FINGERPRINT"],
+            },
+            "inventory": inventory,
+        }
+        (staging / "kernel-artifact.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        verify_artifact(staging, common_root, metadata_path, abi_metadata_path)
+        os.replace(staging, destination)
+        staging_parent.rmdir()
+    except BaseException:
+        shutil.rmtree(staging_parent, ignore_errors=True)
+        raise
+    return destination

@@ -31,7 +31,6 @@ sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 from guest import Guest  # noqa: E402
 from slirp_network import (  # noqa: E402
     NODE,
-    run,
     start_guest_dhcp_client,
     verify_slirp_lease,
     wait_for_slirp_lease,
@@ -59,7 +58,7 @@ SLIRP_DNS_PROBE = (
 
 
 def run_node(guest: Guest, script: str, timeout: int = 30) -> str:
-    return run(guest, f"{NODE} -e {shlex.quote(script)}", timeout)
+    return guest.check_command(f"{NODE} -e {shlex.quote(script)}", timeout)
 
 
 def external_probe(host: str) -> str:
@@ -88,7 +87,7 @@ def main() -> int:
     parser.add_argument("--external-host", default="example.com")
     arguments = parser.parse_args()
 
-    guest = Guest(
+    with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         "1024M",
@@ -100,8 +99,7 @@ def main() -> int:
         # guest-overlay-systemd-smoke separately proves the overlay pivot and
         # a real systemd boot.
         init_shell=True,
-    )
-    try:
+    ) as guest:
         guest.boot_to_shell(180)
         start_guest_dhcp_client(guest)
         verify_slirp_lease(*wait_for_slirp_lease(guest))
@@ -121,11 +119,6 @@ def main() -> int:
         else:
             print("deterministic SLiRP gateway connectivity verified")
         return 0
-    except BaseException:
-        print(guest.output(), file=sys.stderr)
-        raise
-    finally:
-        guest.close()
 
 
 if __name__ == "__main__":

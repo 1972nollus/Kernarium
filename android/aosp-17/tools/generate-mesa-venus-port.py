@@ -31,15 +31,10 @@ import sys
 import tomllib
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"))
+from contract_checks import parse_assignments  # noqa: E402
+
 PREFIX = "venus_"
-# The EGL and GLES libraries the Android EGL loader resolves through
-# ro.hardware.egl, by the names it looks for.
-GL_FRONT_ENDS = {
-    "libEGL_kernarium",
-    "libGLESv1_CM_kernarium",
-    "libGLESv2_kernarium",
-}
-KEEP = {"vulkan.virtio"} | GL_FRONT_ENDS
 REF_FIELDS = {
     "defaults",
     "header_libs",
@@ -92,16 +87,6 @@ def bp_files(root: Path) -> list[Path]:
     ]
 
 
-def collect(root: Path) -> set[str]:
-    names: set[str] = set()
-    for path in bp_files(root):
-        for line in path.read_text().splitlines():
-            match = NAME_LINE.match(line)
-            if match is not None:
-                names.add(match.group(2))
-    return names
-
-
 def block_tools(block: list[str]) -> set[str]:
     tools: set[str] = set()
     field: str | None = None
@@ -116,36 +101,6 @@ def block_tools(block: list[str]) -> set[str]:
         if field in TOOL_FIELDS:
             tools.update(QUOTED.findall(line))
     return {tool.lstrip(":") for tool in tools}
-
-
-def apply_compat(block: list[str]) -> list[str]:
-    """Append the port's AOSP-strictness defaults to every compiled module."""
-    kind = None
-    for line in block:
-        match = BLOCK_TYPE.match(line)
-        if match is not None:
-            kind = match.group(1)
-            break
-    if kind not in COMPAT_TYPES:
-        return block
-    out: list[str] = []
-    field = None
-    inserted = False
-    for line in block:
-        opened = LIST_OPEN.match(line)
-        if opened is not None:
-            field = opened.group(1)
-            out.append(line)
-            continue
-        if LIST_CLOSE.match(line):
-            if field == "defaults" and not inserted:
-                out.append(f'        "{COMPAT}",')
-                inserted = True
-            field = None
-            out.append(line)
-            continue
-        out.append(line)
-    return out
 
 
 def rewrite_block(
@@ -197,26 +152,6 @@ def rewrite_block(
     return out
 
 
-def rewrite(
-    path: Path, names: set[str], colon: re.Pattern[str], label: re.Pattern[str]
-) -> bool:
-    original = path.read_text()
-    lines = original.splitlines()
-    result: list[str] = []
-    block: list[str] = []
-    for line in lines:
-        block.append(line)
-        if BLOCK_END.match(line):
-            result.extend(apply_compat(rewrite_block(block, names, colon, label)))
-            block = []
-    result.extend(apply_compat(rewrite_block(block, names, colon, label)))
-    updated = "\n".join(result) + "\n"
-    if updated == original:
-        return False
-    path.write_text(updated)
-    return True
-
-
 # The converter's output for Mesa's GL path needs repairs that Soong requires
 # and Meson does not. Each is a generic rule about the converter's output,
 # never a Mesa source change, and runs before the names are scoped so the
@@ -246,6 +181,8 @@ class Blueprint:
             if BLOCK_END.match(line):
                 self.blocks.append(current)
                 current = None
+        if current is not None:
+            raise SystemExit(f"generate-mesa-venus-port.py: {path} ends inside a block")
 
     def text(self) -> str:
         lines = list(self.head)
@@ -327,13 +264,6 @@ def set_list(block: list[str], field: str, items: list[str]) -> list[str]:
 
 def load(root: Path) -> list[Blueprint]:
     return [Blueprint(path) for path in bp_files(root)]
-
-
-def license_name(config: Path) -> str:
-    match = re.search(r'^license_name\s*=\s*"([^"]+)"', config.read_text(), re.M)
-    if match is None:
-        raise SystemExit("generate-mesa-venus-port.py: the port names no license")
-    return match.group(1)
 
 
 def resolve_source(directory: Path, entry: str) -> str | None:
@@ -518,7 +448,7 @@ def repair_nativebase(blueprints: list[Blueprint]) -> int:
     return repaired
 
 
-def repair_install(blueprints: list[Blueprint]) -> int:
+def repair_install(blueprints: list[Blueprint], gl_front_ends: set[str]) -> int:
     """Install each shared library where the loader that opens it looks.
 
     The converter installs every shared library in hw/, which is right for a
@@ -538,7 +468,7 @@ def repair_install(blueprints: list[Blueprint]) -> int:
             if block_kind(block) != "cc_library_shared":
                 continue
             name = block_name(block)
-            if name in GL_FRONT_ENDS:
+            if name in gl_front_ends:
                 wanted = '"egl"'
             elif name in linked:
                 wanted = None
@@ -557,39 +487,41 @@ def repair_install(blueprints: list[Blueprint]) -> int:
     return repaired
 
 
-def repair(root: Path, config: Path) -> None:
-    blueprints = load(root)
-    python = repair_python(root, blueprints, license_name(config))
+class Port:
+    """The parts of soong-port.toml this tool reads; the converter reads the rest."""
+
+    def __init__(self, config: Path, hal_module: str) -> None:
+        table = tomllib.loads(config.read_text())
+        license = table.get("copyright", {}).get("license_name")
+        if not isinstance(license, str) or not license:
+            raise SystemExit("generate-mesa-venus-port.py: the port names no license")
+        self.license = license
+        # The renamed targets keep their names unscoped: the HAL module that
+        # ro.hardware.vulkan names, and the EGL and GLES libraries the Android
+        # EGL loader resolves through ro.hardware.egl.
+        self.keep = set(table.get("target_renames", {}).values())
+        if hal_module not in self.keep:
+            raise SystemExit(
+                f"generate-mesa-venus-port.py: the port does not rename a target to {hal_module}"
+            )
+        self.gl_front_ends = self.keep - {hal_module}
+        self.warning_exceptions = warning_exceptions(table)
+
+
+def repair(root: Path, blueprints: list[Blueprint], port: Port) -> None:
+    python = repair_python(root, blueprints, port.license)
     needed = repair_needed(blueprints)
     nativebase = repair_nativebase(blueprints)
-    installs = repair_install(blueprints)
-    warnings = repair_warnings(blueprints, warning_exceptions(config))
-    saved = sum(1 for bp in blueprints if bp.save())
+    installs = repair_install(blueprints, port.gl_front_ends)
+    warnings = repair_warnings(blueprints, port.warning_exceptions)
     print(
         f"repaired {python} Python modules, {needed} disabled libraries, "
         f"{nativebase} nativewindow users, {installs} install paths and "
-        f"{warnings} warning exceptions in {saved} Android.bp files"
+        f"{warnings} warning exceptions"
     )
 
 
-ASSIGNMENT = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([0-9]+))$")
 FLAG_FIELDS = ("cflags", "conlyflags", "cppflags")
-
-
-def parse_metadata(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line_number, raw in enumerate(path.read_text().splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = ASSIGNMENT.fullmatch(line)
-        if match is None:
-            raise SystemExit(
-                f"generate-mesa-venus-port.py: {path} line {line_number} is malformed"
-            )
-        key, quoted, numeric = match.groups()
-        values[key] = quoted if quoted is not None else numeric
-    return values
 
 
 def git(directory: Path, *arguments: str) -> str:
@@ -609,7 +541,10 @@ def git(directory: Path, *arguments: str) -> str:
 
 def verify_converter(android_root: Path, converter: Path) -> None:
     """Refuse any converter but the pinned upstream commit plus the series."""
-    metadata = parse_metadata(android_root / "third_party/meson2hermetic/metadata.env")
+    metadata = parse_assignments(
+        android_root / "third_party/meson2hermetic/metadata.env",
+        lambda message: SystemExit(f"generate-mesa-venus-port.py: {message}"),
+    )
     expected = metadata["MESON2HERMETIC_FINAL_TREE"]
     checkout = converter.resolve().parent
     tree = git(checkout, "rev-parse", "HEAD^{tree}")
@@ -625,11 +560,9 @@ def verify_converter(android_root: Path, converter: Path) -> None:
         )
 
 
-def warning_exceptions(config: Path) -> list[dict[str, object]]:
+def warning_exceptions(table: dict[str, object]) -> list[dict[str, object]]:
     """The port's per-module warning exceptions, which the converter ignores."""
-    entries = tomllib.loads(config.read_text()).get("kernarium", {}).get(
-        "warning_exception", []
-    )
+    entries = table.get("kernarium", {}).get("warning_exception", [])
     for entry in entries:
         if not isinstance(entry.get("module"), str) or not entry.get("reason"):
             raise SystemExit(
@@ -684,9 +617,8 @@ def convert(args: argparse.Namespace) -> None:
         f"--platforms={args.platforms}",
         f"--project-dir={args.checkout}",
         f"--output-dir={args.checkout}",
+        f"--dependencies={args.dependencies}",
     ]
-    if args.dependencies is not None:
-        command.append(f"--dependencies={args.dependencies}")
     subprocess.run(command, cwd=args.checkout, check=True)
 
 
@@ -727,14 +659,30 @@ def main() -> None:
         )
     if not args.dependencies.is_file():
         raise SystemExit("generate-mesa-venus-port.py: the dependency map is missing")
+    metadata = parse_assignments(
+        args.android_root / "third_party/mesa-venus/metadata.env",
+        lambda message: SystemExit(f"generate-mesa-venus-port.py: {message}"),
+    )
+    port = Port(args.config, metadata.get("MESA_VENUS_HAL_MODULE", ""))
     verify_converter(args.android_root, args.converter)
     convert(args)
-    repair(args.checkout, args.config)
-    scope(args.checkout)
+    blueprints = load(args.checkout)
+    repair(args.checkout, blueprints, port)
+    scope(args.checkout, blueprints, port.keep)
+    saved = sum(1 for bp in blueprints if bp.save())
+    print(f"wrote {saved} Android.bp files")
 
 
-def scope(root: Path) -> None:
-    names = {name for name in collect(root) if name not in KEEP}
+def scope(root: Path, blueprints: list[Blueprint], keep: set[str]) -> None:
+    """Prefix every generated module name, and every reference to one.
+
+    Each compiled module also gains the port's AOSP-strictness defaults."""
+    names = {
+        name
+        for bp in blueprints
+        for block in bp.blocks
+        if (name := block_name(block)) is not None and name not in keep
+    }
     already = {name for name in names if name.startswith(PREFIX)}
     if already:
         raise SystemExit(
@@ -744,12 +692,22 @@ def scope(root: Path) -> None:
     alternation = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
     colon = re.compile(r":(" + alternation + r")(?![A-Za-z0-9_.])")
     label = re.compile(r"\$\((locations?)\s+(" + alternation + r")\)")
-    changed = sum(1 for path in bp_files(root) if rewrite(path, names, colon, label))
-    top = root / "Android.bp"
-    text = top.read_text()
-    if COMPAT not in text:
+    changed = 0
+    for bp in blueprints:
+        before = bp.text()
+        bp.head = rewrite_block(bp.head, names, colon, label)
+        for index, block in enumerate(bp.blocks):
+            block = rewrite_block(block, names, colon, label)
+            if block_kind(block) in COMPAT_TYPES:
+                block = set_list(block, "defaults", list_items(block, "defaults") + [COMPAT])
+            bp.blocks[index] = block
+        changed += bp.text() != before
+    top = next((bp for bp in blueprints if bp.path == root / "Android.bp"), None)
+    if top is None:
+        raise SystemExit("generate-mesa-venus-port.py: the port has no top-level Android.bp")
+    if not any(block_name(block) == COMPAT for block in top.blocks):
         flags = "".join(f'        "{flag}",\n' for flag in COMPAT_FLAGS)
-        top.write_text(text + COMPAT_BLOCK % (COMPAT, flags, flags))
+        top.blocks.append((COMPAT_BLOCK % (COMPAT, flags, flags)).split("\n")[:-1])
     print(f"scoped {len(names)} module names in {changed} Android.bp files")
 
 

@@ -122,6 +122,12 @@ def write_fixture(
     tools.mkdir(parents=True)
     shutil.copy2(verifier, tools / "verify-mesa-venus-source.py")
     os.chmod(tools / "verify-mesa-venus-source.py", 0o755)
+    artifacts = source_root / "kernel/common/artifacts"
+    artifacts.mkdir(parents=True)
+    shutil.copy2(
+        verifier.parents[3] / "kernel/common/artifacts/contract_checks.py",
+        artifacts / "contract_checks.py",
+    )
     (venus / "metadata.env").write_text(
         "# SPDX-License-Identifier: Apache-2.0\n"
         "MESA_VENUS_SOURCE_SCHEMA=1\n"

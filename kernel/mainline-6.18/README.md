@@ -366,8 +366,7 @@ compiler with `__counted_by` type-expression support; the preflight checks this
 before Kbuild. Select a compatible upstream LLVM toolchain explicitly when the
 default Apple compiler lacks the feature.
 
-`UML_KERNEL_TOOLCHAIN_ROOT` and the documented `UML_KERNEL_*` variables may
-override compiler, host compiler, linker, binutils, make, cross prefix, and job
+The documented `UML_KERNEL_*` variables may override compiler, host compiler, linker, binutils, make, cross prefix, and job
 count. Companion LLVM tools must match the selected compiler family.
 
 Every kernel generates BTF, so the build also needs pahole and a static

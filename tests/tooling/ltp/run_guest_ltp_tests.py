@@ -1127,7 +1127,6 @@ class ResultParsingTests(unittest.TestCase):
         guest._init_shell = False
         guest._overlay_shell = False
         guest._swap_path = None
-        guest._overlay_path = None
         guest._cgroup1 = None
         guest._cgroup2_nsdelegate = False
         guest._transcript = bytearray(b"x" * 101)
@@ -1208,7 +1207,6 @@ class ResultParsingTests(unittest.TestCase):
         guest._init_shell = False
         guest._overlay_shell = False
         guest._swap_path = None
-        guest._overlay_path = None
         guest._cgroup1 = None
         guest._cgroup2_nsdelegate = False
 

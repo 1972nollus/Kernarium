@@ -152,21 +152,20 @@ foreach(PATH IN LISTS LAYER_SOURCES)
     endif()
     # Sandboxed iOS can execute the precompiled gadget engine without a
     # dynamic-code entitlement. Keep executable allocation and
-    # publication primitives confined to the explicitly selected JIT module;
-    # merely avoiding a simultaneous W+X mapping is not sufficient because an
-    # RW-to-RX transition is also dynamic code publication.
-    if(SOURCE_PATH MATCHES "^darwin/cpu/arm64/gadgets/" AND
-       CONTENT MATCHES
-       "(MAP_JIT|PROT_EXEC|VM_PROT_EXECUTE|mprotect[ \t]*\\(|mach_vm_protect[ \t]*\\(|vm_protect[ \t]*\\(|pthread_jit_write_protect|sys_icache_invalidate[ \t]*\\()")
-        list(APPEND VIOLATIONS
-            "${PATH}: non-JIT engine uses an executable-memory or code-publication primitive")
-    endif()
+    # publication primitives confined to the JIT arena; merely avoiding a
+    # simultaneous W+X mapping is not sufficient because an RW-to-RX
+    # transition is also dynamic code publication.
     if(SOURCE_PATH MATCHES "^darwin/cpu/" AND
        NOT SOURCE_PATH MATCHES "^darwin/cpu/arm64/jit/jit_arena\.cpp$" AND
        CONTENT MATCHES
        "(MAP_JIT|PROT_EXEC|VM_PROT_EXECUTE|mprotect[ \t]*\\(|mach_vm_protect[ \t]*\\(|vm_protect[ \t]*\\(|pthread_jit_write_protect|sys_icache_invalidate[ \t]*\\()")
-        list(APPEND VIOLATIONS
-            "${PATH}: CPU executable-memory primitives must be owned by the JIT arena")
+        if(SOURCE_PATH MATCHES "^darwin/cpu/arm64/gadgets/")
+            list(APPEND VIOLATIONS
+                "${PATH}: non-JIT engine uses an executable-memory or code-publication primitive")
+        else()
+            list(APPEND VIOLATIONS
+                "${PATH}: CPU executable-memory primitives must be owned by the JIT arena")
+        endif()
     endif()
 endforeach()
 

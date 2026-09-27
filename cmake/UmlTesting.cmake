@@ -2,10 +2,11 @@
 
 include_guard(GLOBAL)
 
-function(uml_record_registered_test NAME SUITE)
+function(uml_record_registered_test SUITE NAME)
     string(TOUPPER "${SUITE}" _suite_upper)
     set(_target_property "UML_${_suite_upper}_COMMAND_TARGETS")
     get_property(_command_targets GLOBAL PROPERTY "${_target_property}")
+    set(_test_targets "")
     foreach(_argument IN LISTS ARGN)
         set(_command_target "")
         if(_argument MATCHES "^\\$<TARGET_FILE:([^>]+)>$")
@@ -31,11 +32,15 @@ function(uml_record_registered_test NAME SUITE)
         get_target_property(_command_target_type "${_command_target}" TYPE)
         if(NOT _command_target_imported AND
            NOT _command_target_type STREQUAL "INTERFACE_LIBRARY")
-            list(APPEND _command_targets "${_command_target}")
+            list(APPEND _test_targets "${_command_target}")
         endif()
     endforeach()
+    list(APPEND _command_targets ${_test_targets})
     list(REMOVE_DUPLICATES _command_targets)
     set_property(GLOBAL PROPERTY "${_target_property}" "${_command_targets}")
+    set_property(GLOBAL APPEND PROPERTY UML_REGISTERED_TESTS "${NAME}")
+    set_property(GLOBAL APPEND PROPERTY "UML_TEST_${NAME}_COMMAND_TARGETS"
+        ${_test_targets})
 endfunction()
 
 function(uml_finalize_suite_binary_target SUITE AGGREGATE_TARGET)
@@ -45,7 +50,6 @@ function(uml_finalize_suite_binary_target SUITE AGGREGATE_TARGET)
     string(TOUPPER "${SUITE}" _suite_upper)
     get_property(_command_targets GLOBAL PROPERTY
         "UML_${_suite_upper}_COMMAND_TARGETS")
-    list(REMOVE_DUPLICATES _command_targets)
     foreach(_command_target IN LISTS _command_targets)
         if(NOT TARGET "${_command_target}")
             message(FATAL_ERROR
@@ -53,23 +57,105 @@ function(uml_finalize_suite_binary_target SUITE AGGREGATE_TARGET)
         endif()
         add_dependencies("${AGGREGATE_TARGET}" "${_command_target}")
     endforeach()
+endfunction()
 
-    get_property(_aggregate_dependencies TARGET "${AGGREGATE_TARGET}"
-        PROPERTY MANUALLY_ADDED_DEPENDENCIES)
-    foreach(_command_target IN LISTS _command_targets)
-        list(FIND _aggregate_dependencies "${_command_target}"
-            _dependency_index)
-        if(_dependency_index EQUAL -1)
+# A test preset that selects its tests by name alone owns that list. Build the
+# command targets of exactly the registered tests it selects, so the build
+# presets paired with it name one aggregate instead of repeating the list.
+# CTest and if(MATCHES) share one regular-expression engine. A preset that
+# inherits the list must not replace it, or it would run another test set.
+function(uml_finalize_test_preset_binary_target TEST_PRESET AGGREGATE_TARGET)
+    set(_presets_file "${PROJECT_SOURCE_DIR}/CMakePresets.json")
+    set_property(DIRECTORY "${PROJECT_SOURCE_DIR}" APPEND PROPERTY
+        CMAKE_CONFIGURE_DEPENDS "${_presets_file}")
+    file(READ "${_presets_file}" _presets)
+    string(JSON _preset_count LENGTH "${_presets}" testPresets)
+    math(EXPR _last_preset "${_preset_count} - 1")
+    set(_filtered "")
+    set(_selector "")
+    foreach(_index RANGE ${_last_preset})
+        string(JSON _preset GET "${_presets}" testPresets ${_index})
+        string(JSON _name GET "${_preset}" name)
+        set("_parents_${_name}" "")
+        string(JSON _inherits_type ERROR_VARIABLE _inherits_error
+            TYPE "${_preset}" inherits)
+        if(_inherits_type STREQUAL "STRING")
+            string(JSON _parent GET "${_preset}" inherits)
+            list(APPEND "_parents_${_name}" "${_parent}")
+        elseif(_inherits_type STREQUAL "ARRAY")
+            string(JSON _parent_count LENGTH "${_preset}" inherits)
+            set(_parent_index 0)
+            while(_parent_index LESS _parent_count)
+                string(JSON _parent GET "${_preset}" inherits ${_parent_index})
+                list(APPEND "_parents_${_name}" "${_parent}")
+                math(EXPR _parent_index "${_parent_index} + 1")
+            endwhile()
+        endif()
+        string(JSON _filter ERROR_VARIABLE _error GET "${_preset}" filter)
+        if(NOT _error)
+            list(APPEND _filtered "${_name}")
+        endif()
+        if(NOT _name STREQUAL TEST_PRESET)
+            continue()
+        endif()
+        if(NOT _error)
+            string(JSON _filter_keys LENGTH "${_filter}")
+            string(JSON _include ERROR_VARIABLE _error GET "${_filter}" include)
+        endif()
+        if(NOT _error)
+            string(JSON _include_keys LENGTH "${_include}")
+            string(JSON _selector ERROR_VARIABLE _error GET "${_include}" name)
+        endif()
+        if(_error OR NOT _filter_keys EQUAL 1 OR NOT _include_keys EQUAL 1 OR
+           NOT "${_parents_${_name}}" STREQUAL "")
             message(FATAL_ERROR
-                "${AGGREGATE_TARGET} does not build registered ${SUITE} "
-                "command target ${_command_target}")
+                "test preset ${TEST_PRESET} must select its tests by "
+                "filter.include.name alone")
         endif()
     endforeach()
+    if(NOT _selector)
+        message(FATAL_ERROR "test preset ${TEST_PRESET} is not defined")
+    endif()
+    foreach(_name IN LISTS _filtered)
+        set(_pending "${_parents_${_name}}")
+        set(_seen "")
+        while(NOT "${_pending}" STREQUAL "")
+            list(POP_FRONT _pending _parent)
+            if(_parent STREQUAL TEST_PRESET)
+                message(FATAL_ERROR
+                    "test preset ${_name} inherits ${TEST_PRESET} but sets its "
+                    "own filter, which ${AGGREGATE_TARGET} does not follow")
+            endif()
+            if(NOT _parent IN_LIST _seen)
+                list(APPEND _seen "${_parent}")
+                list(APPEND _pending ${_parents_${_parent}})
+            endif()
+        endwhile()
+    endforeach()
+
+    add_custom_target("${AGGREGATE_TARGET}")
+    get_property(_tests GLOBAL PROPERTY UML_REGISTERED_TESTS)
+    set(_selected_tests "")
+    foreach(_test IN LISTS _tests)
+        if(NOT _test MATCHES "${_selector}")
+            continue()
+        endif()
+        list(APPEND _selected_tests "${_test}")
+        get_property(_test_targets GLOBAL PROPERTY
+            "UML_TEST_${_test}_COMMAND_TARGETS")
+        foreach(_command_target IN LISTS _test_targets)
+            add_dependencies("${AGGREGATE_TARGET}" "${_command_target}")
+        endforeach()
+    endforeach()
+    if(NOT _selected_tests)
+        message(FATAL_ERROR
+            "test preset ${TEST_PRESET} selects no registered test")
+    endif()
 endfunction()
 
 function(uml_apply_test_properties NAME)
-    cmake_parse_arguments(TEST "" "WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
-        "LABELS;RESOURCE_GROUPS;FIXTURES_SETUP;FIXTURES_CLEANUP;FIXTURES_REQUIRED" ${ARGN})
+    cmake_parse_arguments(TEST "" "WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
+        "LABELS;RESOURCE_GROUPS" ${ARGN})
 
     if(NOT TEST_LABELS)
         message(FATAL_ERROR "${NAME}: a suite label is required")
@@ -85,26 +171,14 @@ function(uml_apply_test_properties NAME)
     if(TEST_PROCESSORS)
         set_tests_properties("${NAME}" PROPERTIES PROCESSORS "${TEST_PROCESSORS}")
     endif()
-    if(TEST_RESOURCE_LOCK)
-        set_tests_properties("${NAME}" PROPERTIES RESOURCE_LOCK "${TEST_RESOURCE_LOCK}")
-    endif()
     if(TEST_RESOURCE_GROUPS)
         set_tests_properties("${NAME}" PROPERTIES RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
-    endif()
-    if(TEST_FIXTURES_SETUP)
-        set_tests_properties("${NAME}" PROPERTIES FIXTURES_SETUP "${TEST_FIXTURES_SETUP}")
-    endif()
-    if(TEST_FIXTURES_CLEANUP)
-        set_tests_properties("${NAME}" PROPERTIES FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}")
-    endif()
-    if(TEST_FIXTURES_REQUIRED)
-        set_tests_properties("${NAME}" PROPERTIES FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
     endif()
 endfunction()
 
 function(uml_add_unit_test)
-    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
-        "COMMAND;LABELS;RESOURCE_GROUPS;FIXTURES_SETUP;FIXTURES_CLEANUP;FIXTURES_REQUIRED" ${ARGN})
+    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
+        "COMMAND;LABELS;RESOURCE_GROUPS" ${ARGN})
     if(NOT TEST_NAME OR NOT TEST_COMMAND)
         message(FATAL_ERROR
             "uml_add_unit_test requires NAME and COMMAND")
@@ -132,23 +206,19 @@ function(uml_add_unit_test)
         WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
         TIMEOUT "${TEST_TIMEOUT}"
         PROCESSORS "${TEST_PROCESSORS}"
-        RESOURCE_LOCK "${TEST_RESOURCE_LOCK}"
-        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}"
-        FIXTURES_SETUP "${TEST_FIXTURES_SETUP}"
-        FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}"
-        FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
+        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
     # Scratch files stay in a per-test build-tree directory; see
     # tests/unit/scratch/scratch_directory.hpp. UML_UNIT_TEST_NAME gives each
     # test its registered name.
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT
         "UML_UNIT_TEST_NAME=${TEST_NAME}"
         "UML_TEST_SCRATCH_DIRECTORY=${CMAKE_BINARY_DIR}/test-scratch/${TEST_NAME}")
-    uml_record_registered_test("${TEST_NAME}" unit ${TEST_COMMAND})
+    uml_record_registered_test(unit "${TEST_NAME}" ${TEST_COMMAND})
 endfunction()
 
 function(uml_add_tooling_test)
-    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
-        "COMMAND;LABELS;RESOURCE_GROUPS;FIXTURES_SETUP;FIXTURES_CLEANUP;FIXTURES_REQUIRED" ${ARGN})
+    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
+        "COMMAND;LABELS;RESOURCE_GROUPS" ${ARGN})
     if(NOT TEST_NAME OR NOT TEST_COMMAND)
         message(FATAL_ERROR
             "uml_add_tooling_test requires NAME and COMMAND")
@@ -164,19 +234,15 @@ function(uml_add_tooling_test)
         WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
         TIMEOUT "${TEST_TIMEOUT}"
         PROCESSORS "${TEST_PROCESSORS}"
-        RESOURCE_LOCK "${TEST_RESOURCE_LOCK}"
-        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}"
-        FIXTURES_SETUP "${TEST_FIXTURES_SETUP}"
-        FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}"
-        FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
+        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY
         ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
-    uml_record_registered_test("${TEST_NAME}" tooling ${TEST_COMMAND})
+    uml_record_registered_test(tooling "${TEST_NAME}" ${TEST_COMMAND})
 endfunction()
 
 function(uml_add_integration_test)
-    cmake_parse_arguments(TEST "ROOTFS" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
-        "COMMAND;LABELS;RESOURCE_GROUPS;FIXTURES_SETUP;FIXTURES_CLEANUP;FIXTURES_REQUIRED" ${ARGN})
+    cmake_parse_arguments(TEST "ROOTFS" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
+        "COMMAND;LABELS;RESOURCE_GROUPS" ${ARGN})
     if(NOT TEST_NAME OR NOT TEST_COMMAND)
         message(FATAL_ERROR
             "uml_add_integration_test requires NAME and COMMAND")
@@ -200,16 +266,12 @@ function(uml_add_integration_test)
         WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
         TIMEOUT "${TEST_TIMEOUT}"
         PROCESSORS "${TEST_PROCESSORS}"
-        RESOURCE_LOCK "${TEST_RESOURCE_LOCK}"
-        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}"
-        FIXTURES_SETUP "${TEST_FIXTURES_SETUP}"
-        FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}"
-        FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
+        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
     # Integration runners import helpers from neighboring source directories.
     # Keep validation from recreating source-adjacent __pycache__ debris.
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY
         ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
-    uml_record_registered_test("${TEST_NAME}" integration ${_command})
+    uml_record_registered_test(integration "${TEST_NAME}" ${_command})
 endfunction()
 
 function(uml_add_guest_integration_test)
