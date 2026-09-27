@@ -2,10 +2,11 @@
 
 include_guard(GLOBAL)
 
-function(uml_record_registered_test SUITE)
+function(uml_record_registered_test SUITE NAME)
     string(TOUPPER "${SUITE}" _suite_upper)
     set(_target_property "UML_${_suite_upper}_COMMAND_TARGETS")
     get_property(_command_targets GLOBAL PROPERTY "${_target_property}")
+    set(_test_targets "")
     foreach(_argument IN LISTS ARGN)
         set(_command_target "")
         if(_argument MATCHES "^\\$<TARGET_FILE:([^>]+)>$")
@@ -31,11 +32,15 @@ function(uml_record_registered_test SUITE)
         get_target_property(_command_target_type "${_command_target}" TYPE)
         if(NOT _command_target_imported AND
            NOT _command_target_type STREQUAL "INTERFACE_LIBRARY")
-            list(APPEND _command_targets "${_command_target}")
+            list(APPEND _test_targets "${_command_target}")
         endif()
     endforeach()
+    list(APPEND _command_targets ${_test_targets})
     list(REMOVE_DUPLICATES _command_targets)
     set_property(GLOBAL PROPERTY "${_target_property}" "${_command_targets}")
+    set_property(GLOBAL APPEND PROPERTY UML_REGISTERED_TESTS "${NAME}")
+    set_property(GLOBAL APPEND PROPERTY "UML_TEST_${NAME}_COMMAND_TARGETS"
+        ${_test_targets})
 endfunction()
 
 function(uml_finalize_suite_binary_target SUITE AGGREGATE_TARGET)
@@ -52,6 +57,66 @@ function(uml_finalize_suite_binary_target SUITE AGGREGATE_TARGET)
         endif()
         add_dependencies("${AGGREGATE_TARGET}" "${_command_target}")
     endforeach()
+endfunction()
+
+# A test preset that selects its tests by name alone owns that list. Build the
+# command targets of exactly the registered tests it selects, so the build
+# presets paired with it name one aggregate instead of repeating the list.
+# CTest and if(MATCHES) share one regular-expression engine.
+function(uml_finalize_test_preset_binary_target TEST_PRESET AGGREGATE_TARGET)
+    set(_presets_file "${PROJECT_SOURCE_DIR}/CMakePresets.json")
+    set_property(DIRECTORY "${PROJECT_SOURCE_DIR}" APPEND PROPERTY
+        CMAKE_CONFIGURE_DEPENDS "${_presets_file}")
+    file(READ "${_presets_file}" _presets)
+    string(JSON _preset_count LENGTH "${_presets}" testPresets)
+    math(EXPR _last_preset "${_preset_count} - 1")
+    set(_selector "")
+    foreach(_index RANGE ${_last_preset})
+        string(JSON _name GET "${_presets}" testPresets ${_index} name)
+        if(NOT _name STREQUAL TEST_PRESET)
+            continue()
+        endif()
+        string(JSON _preset GET "${_presets}" testPresets ${_index})
+        string(JSON _filter ERROR_VARIABLE _error GET "${_preset}" filter)
+        if(NOT _error)
+            string(JSON _filter_keys LENGTH "${_filter}")
+            string(JSON _include ERROR_VARIABLE _error GET "${_filter}" include)
+        endif()
+        if(NOT _error)
+            string(JSON _include_keys LENGTH "${_include}")
+            string(JSON _selector ERROR_VARIABLE _error GET "${_include}" name)
+        endif()
+        string(JSON _inherits ERROR_VARIABLE _inherits_error GET "${_preset}"
+            inherits)
+        if(_error OR NOT _filter_keys EQUAL 1 OR NOT _include_keys EQUAL 1 OR
+           NOT _inherits_error)
+            message(FATAL_ERROR
+                "test preset ${TEST_PRESET} must select its tests by "
+                "filter.include.name alone")
+        endif()
+    endforeach()
+    if(NOT _selector)
+        message(FATAL_ERROR "test preset ${TEST_PRESET} is not defined")
+    endif()
+
+    add_custom_target("${AGGREGATE_TARGET}")
+    get_property(_tests GLOBAL PROPERTY UML_REGISTERED_TESTS)
+    set(_selected_tests "")
+    foreach(_test IN LISTS _tests)
+        if(NOT _test MATCHES "${_selector}")
+            continue()
+        endif()
+        list(APPEND _selected_tests "${_test}")
+        get_property(_test_targets GLOBAL PROPERTY
+            "UML_TEST_${_test}_COMMAND_TARGETS")
+        foreach(_command_target IN LISTS _test_targets)
+            add_dependencies("${AGGREGATE_TARGET}" "${_command_target}")
+        endforeach()
+    endforeach()
+    if(NOT _selected_tests)
+        message(FATAL_ERROR
+            "test preset ${TEST_PRESET} selects no registered test")
+    endif()
 endfunction()
 
 function(uml_apply_test_properties NAME)
@@ -114,7 +179,7 @@ function(uml_add_unit_test)
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT
         "UML_UNIT_TEST_NAME=${TEST_NAME}"
         "UML_TEST_SCRATCH_DIRECTORY=${CMAKE_BINARY_DIR}/test-scratch/${TEST_NAME}")
-    uml_record_registered_test(unit ${TEST_COMMAND})
+    uml_record_registered_test(unit "${TEST_NAME}" ${TEST_COMMAND})
 endfunction()
 
 function(uml_add_tooling_test)
@@ -138,7 +203,7 @@ function(uml_add_tooling_test)
         RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY
         ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
-    uml_record_registered_test(tooling ${TEST_COMMAND})
+    uml_record_registered_test(tooling "${TEST_NAME}" ${TEST_COMMAND})
 endfunction()
 
 function(uml_add_integration_test)
@@ -172,7 +237,7 @@ function(uml_add_integration_test)
     # Keep validation from recreating source-adjacent __pycache__ debris.
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY
         ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
-    uml_record_registered_test(integration ${_command})
+    uml_record_registered_test(integration "${TEST_NAME}" ${_command})
 endfunction()
 
 function(uml_add_guest_integration_test)

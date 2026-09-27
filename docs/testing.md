@@ -62,6 +62,11 @@ cmake --workflow --preset check-loader-asan-ubsan
 cmake --workflow --preset check-jitprof
 ```
 
+The `unit-gpu` test preset's name filter is the one list of GPU workflow unit
+tests, and the other `unit-gpu*` test presets inherit it. Configure derives the
+`gpu-unit-test-binaries` target from that filter, so adding a test to the
+filter also adds its binary to every GPU build preset.
+
 The experimental macOS Vulkan lane is separately named and opt-in. It needs the
 `apple-gpu-vulkan-experiment` dependency prefix and a private prefix built at
 its raised deployment target, and it is required only when a change crosses the
