@@ -138,6 +138,19 @@ def verify_offline_geekbench_contract() -> None:
         raise RuntimeError("Geekbench must disable the upload prompt")
 
 
+def session_guest() -> mock.MagicMock:
+    """A Guest stand-in that, like Guest, closes when its session ends."""
+    guest = mock.MagicMock()
+    guest.__enter__.return_value = guest
+
+    def exit_session(*_exception: object) -> bool:
+        guest.close()
+        return False
+
+    guest.__exit__.side_effect = exit_session
+    return guest
+
+
 def run_geekbench_shutdown_case(
     command_status: int,
     shutdown_ok: bool,
@@ -160,7 +173,7 @@ def run_geekbench_shutdown_case(
         sample_seconds=1,
         sample_command="/usr/bin/sample",
     )
-    guest = mock.Mock()
+    guest = session_guest()
     guest.run_command.return_value = types.SimpleNamespace(
         return_code=command_status, output="benchmark"
     )

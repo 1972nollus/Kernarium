@@ -111,7 +111,7 @@ def main() -> int:
     if arguments.profile_dir is not None:
         arguments.profile_dir.mkdir(parents=True, exist_ok=True)
     arguments.console_log.parent.mkdir(parents=True, exist_ok=True)
-    guest = Guest(
+    with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         arguments.memory,
@@ -124,75 +124,74 @@ def main() -> int:
         overlay_shell=True,
         engine=arguments.engine,
         core_class=arguments.core_class,
-    )
-    mirror_stop = threading.Event()
-    mirror_ready = threading.Event()
-    mirror: threading.Thread | None = None
-    profiler: subprocess.Popen[bytes] | None = None
-    try:
-        mirror = threading.Thread(
-            target=mirror_transcript,
-            args=(
-                guest,
-                arguments.console_log.resolve(),
-                mirror_ready,
-                mirror_stop,
-            ),
-            name="geekbench-console-mirror",
-        )
-        mirror.start()
-        mirror_ready.wait()
-        guest.boot_and_login(180)
-        if arguments.profile_dir is not None:
-            profiler = subprocess.Popen(
-                (
-                    sys.executable,
-                    str(pathlib.Path(__file__).with_name("profile_geekbench.py")),
-                    "--pid",
-                    str(guest.process_id),
-                    "--console-log",
-                    str(arguments.console_log.resolve()),
-                    "--output-dir",
-                    str(arguments.profile_dir.resolve()),
-                    "--sample-seconds",
-                    str(arguments.sample_seconds),
-                    "--sample-command",
-                    arguments.sample_command,
+    ) as guest:
+        mirror_stop = threading.Event()
+        mirror_ready = threading.Event()
+        mirror: threading.Thread | None = None
+        profiler: subprocess.Popen[bytes] | None = None
+        try:
+            mirror = threading.Thread(
+                target=mirror_transcript,
+                args=(
+                    guest,
+                    arguments.console_log.resolve(),
+                    mirror_ready,
+                    mirror_stop,
+                ),
+                name="geekbench-console-mirror",
+            )
+            mirror.start()
+            mirror_ready.wait()
+            guest.boot_and_login(180)
+            if arguments.profile_dir is not None:
+                profiler = subprocess.Popen(
+                    (
+                        sys.executable,
+                        str(pathlib.Path(__file__).with_name("profile_geekbench.py")),
+                        "--pid",
+                        str(guest.process_id),
+                        "--console-log",
+                        str(arguments.console_log.resolve()),
+                        "--output-dir",
+                        str(arguments.profile_dir.resolve()),
+                        "--sample-seconds",
+                        str(arguments.sample_seconds),
+                        "--sample-command",
+                        arguments.sample_command,
+                    )
                 )
+            command = (
+                "printf '\\nGB_BEGIN\\n'; "
+                f"{arguments.command}; benchmark_rc=$?; "
+                "printf '\\nGB_END\\n'; (exit \"$benchmark_rc\")"
             )
-        command = (
-            "printf '\\nGB_BEGIN\\n'; "
-            f"{arguments.command}; benchmark_rc=$?; "
-            "printf '\\nGB_END\\n'; (exit \"$benchmark_rc\")"
-        )
-        result = guest.run_command(command, arguments.timeout)
-        print(result.output, flush=True)
-        shutdown_ok = guest.shutdown(60)
-        if result.return_code != 0:
-            raise RuntimeError(
-                f"Geekbench exited with status {result.return_code}"
-            )
-        if not shutdown_ok:
-            raise RuntimeError(
-                "guest did not halt cleanly after Geekbench"
-            )
-        emulator_status = guest.return_code
-        if emulator_status != 0:
-            raise RuntimeError(
-                f"emulator exited with status {emulator_status} after Geekbench"
-            )
-    finally:
-        if profiler is not None and profiler.poll() is None:
-            profiler.terminate()
-            try:
-                profiler.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                profiler.kill()
-                profiler.wait()
-        mirror_stop.set()
-        if mirror is not None:
-            mirror.join(timeout=5)
-        guest.close()
+            result = guest.run_command(command, arguments.timeout)
+            print(result.output, flush=True)
+            shutdown_ok = guest.shutdown(60)
+            if result.return_code != 0:
+                raise RuntimeError(
+                    f"Geekbench exited with status {result.return_code}"
+                )
+            if not shutdown_ok:
+                raise RuntimeError(
+                    "guest did not halt cleanly after Geekbench"
+                )
+            emulator_status = guest.return_code
+            if emulator_status != 0:
+                raise RuntimeError(
+                    f"emulator exited with status {emulator_status} after Geekbench"
+                )
+        finally:
+            if profiler is not None and profiler.poll() is None:
+                profiler.terminate()
+                try:
+                    profiler.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    profiler.kill()
+                    profiler.wait()
+            mirror_stop.set()
+            if mirror is not None:
+                mirror.join(timeout=5)
     return 0
 
 

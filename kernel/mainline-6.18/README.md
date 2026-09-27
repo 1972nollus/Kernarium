@@ -171,6 +171,14 @@ refused every transfer that named such a buffer. Android's gralloc mapper reads
 an imported buffer exactly that way, which blanked every screenshot. The ACK
 line carries the same change.
 
+The Virtio-GPU primary plane accepts ARGB8888 as well as XRGB8888, so a GBM
+client whose EGL config has alpha can set a mode. XRGB8888 stays the first
+format, the one fbdev takes. The plane has no blend-mode property. The host
+presents a scanout's colour channels and ignores its alpha byte, which is what
+premultiplied alpha over the CRTC's black background shows. Only this line
+carries the topic, because the ACK base already offers ARGB8888 and the other
+32-bit RGB orders on the plane.
+
 Both page profiles request the runtime's anonymous physical-memory token. The
 kernel's linear physical window becomes the RAM root, so MMU and host-service
 consumers do not retain a second full-span mapping. Guest RAM is committed on
