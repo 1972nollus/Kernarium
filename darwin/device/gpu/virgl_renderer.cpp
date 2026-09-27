@@ -312,20 +312,6 @@ VirglRenderer::Capset VirglRenderer::capset(std::uint32_t capsetId) const
         throw std::runtime_error(
             "Virgl capset requested an unavailable host GL entry point");
     }
-    /*
-     * Capability discovery intentionally probes optional GL entry points and
-     * formats. Apple's core driver reports GL_INVALID_ENUM for some of those
-     * probes. Drain the probe errors here before CHECK_GL_ERRORS can
-     * misattribute them to the next command on the root context.
-     */
-    for (GLenum error = glGetError();
-         error != GL_NO_ERROR;
-         error = glGetError()) {
-        std::fprintf(
-            stderr,
-            "Virgl capset probe GL error (cleared): %u\n",
-            static_cast<unsigned int>(error));
-    }
     return result;
 }
 
@@ -351,28 +337,6 @@ int VirglRenderer::createContext(
     if ((flags & VIRGL_RENDERER_CONTEXT_FLAG_CAPSET_ID_MASK) ==
         venusCapsetId) {
         return 0;
-    }
-
-    /*
-     * virglrenderer creates a fresh shared EGL context here and assumes that
-     * it is returned with a clean GL error state. A host driver may leave
-     * GL_INVALID_ENUM behind while virglrenderer probes that context;
-     * CHECK_GL_ERRORS would otherwise attribute the probe error to the first
-     * real guest command and permanently poison the context.
-     */
-    bool unexpectedError = false;
-    for (GLenum error = glGetError();
-         error != GL_NO_ERROR;
-         error = glGetError()) {
-        std::fprintf(
-            stderr,
-            "Virgl context initialization GL error: %u\n",
-            static_cast<unsigned int>(error));
-        unexpectedError |= error != GL_INVALID_ENUM;
-    }
-    if (unexpectedError) {
-        virgl_renderer_context_destroy(contextId);
-        return EIO;
     }
 
     /*
