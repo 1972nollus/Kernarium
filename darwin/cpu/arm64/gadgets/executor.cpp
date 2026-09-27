@@ -164,34 +164,6 @@ constexpr std::size_t uml_gadget_resident_generations =
 extern "C" void uml_arm64_gadget_link_exit();
 extern "C" void uml_arm64_gadget_fp_link_entry();
 
-class CountingResource final : public std::pmr::memory_resource {
-public:
-	[[nodiscard]] std::size_t bytes() const noexcept { return bytes_; }
-
-private:
-	void *do_allocate(std::size_t bytes, std::size_t alignment) override
-	{
-		bytes_ += bytes;
-		return std::pmr::new_delete_resource()->allocate(bytes, alignment);
-	}
-
-	void do_deallocate(void *pointer, std::size_t bytes,
-			   std::size_t alignment) override
-	{
-		bytes_ -= bytes;
-		std::pmr::new_delete_resource()->deallocate(
-			pointer, bytes, alignment);
-	}
-
-	[[nodiscard]] bool do_is_equal(
-		const std::pmr::memory_resource &other) const noexcept override
-	{
-		return this == &other;
-	}
-
-	std::size_t bytes_{};
-};
-
 /* Storage for stored translations.
  *
  * A translation is one allocation: its body, the stream words behind it, and
@@ -436,7 +408,7 @@ class GadgetExecutor::ProgramCache final {
 
 public:
 	ProgramCache()
-		: bodies_{&counted_},
+		: bodies_{std::pmr::new_delete_resource()},
 		  build_scratch_{scratch_.data(), scratch_.size()}
 	{}
 
@@ -1429,7 +1401,6 @@ public:
 	}
 private:
 #endif
-	CountingResource counted_;
 	BodyArena bodies_;
 	/* Large enough that an ordinary build never reaches the upstream: a
 	 * stream that doubles its way to 272 words consumes 510 words of
