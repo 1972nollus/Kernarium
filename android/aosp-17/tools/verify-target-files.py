@@ -8,7 +8,6 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import hashlib
 import io
-import stat
 import struct
 import sys
 import zipfile
@@ -32,7 +31,6 @@ DT_NULL = 0
 DT_NEEDED = 1
 DT_STRTAB = 5
 DT_STRSZ = 10
-DT_RUNPATH = 29
 PAGE_SIZE = 16384
 MAX_PROGRAM_HEADERS_SIZE = 1 << 20
 APEX_PAYLOAD_MAGIC_SIZE = 1024 + 0x38 + 2
@@ -789,9 +787,7 @@ def check_target_elf(info: zipfile.ZipInfo, payload: bytes) -> None:
             fail(f"target ELF load alignment is incongruent: {info.filename}")
 
 
-def elf_dynamic_strings(
-    info: zipfile.ZipInfo, payload: bytes
-) -> tuple[set[str], set[str]]:
+def elf_needed(info: zipfile.ZipInfo, payload: bytes) -> set[str]:
     program_offset = struct.unpack_from("<Q", payload, 32)[0]
     entry_size, entry_count = struct.unpack_from("<HH", payload, 54)
     loads: list[tuple[int, int, int]] = []
@@ -817,7 +813,7 @@ def elf_dynamic_strings(
                 fail(f"ELF has multiple dynamic segments: {info.filename}")
             dynamic = (file_offset, file_size)
     if dynamic is None:
-        return set(), set()
+        return set()
 
     dynamic_offset, dynamic_size = dynamic
     if dynamic_size % 16:
@@ -825,7 +821,6 @@ def elf_dynamic_strings(
     string_address: int | None = None
     string_size: int | None = None
     needed_offsets: list[int] = []
-    runpath_offsets: list[int] = []
     terminated = False
     for offset in range(dynamic_offset, dynamic_offset + dynamic_size, 16):
         tag, value = struct.unpack_from("<qQ", payload, offset)
@@ -838,12 +833,10 @@ def elf_dynamic_strings(
             string_address = value
         elif tag == DT_STRSZ:
             string_size = value
-        elif tag == DT_RUNPATH:
-            runpath_offsets.append(value)
     if not terminated:
         fail(f"ELF dynamic segment lacks DT_NULL: {info.filename}")
-    if not needed_offsets and not runpath_offsets:
-        return set(), set()
+    if not needed_offsets:
+        return set()
     if string_address is None or string_size is None:
         fail(f"ELF dynamic string table is incomplete: {info.filename}")
 
@@ -855,20 +848,18 @@ def elf_dynamic_strings(
     if string_offset is None or string_offset + string_size > len(payload):
         fail(f"ELF dynamic string table is outside a load segment: {info.filename}")
     string_table = payload[string_offset : string_offset + string_size]
-    def decode(offset: int, label: str) -> str:
+    needed: set[str] = set()
+    for offset in needed_offsets:
         if offset >= len(string_table):
-            fail(f"ELF {label} offset is out of bounds: {info.filename}")
+            fail(f"ELF DT_NEEDED offset is out of bounds: {info.filename}")
         end = string_table.find(b"\0", offset)
         if end < 0:
-            fail(f"ELF {label} string is unterminated: {info.filename}")
+            fail(f"ELF DT_NEEDED string is unterminated: {info.filename}")
         try:
-            return string_table[offset:end].decode("utf-8", errors="strict")
+            needed.add(string_table[offset:end].decode("utf-8", errors="strict"))
         except UnicodeDecodeError as error:
-            fail(f"ELF {label} string is not UTF-8: {info.filename}: {error}")
-
-    needed = {decode(offset, "DT_NEEDED") for offset in needed_offsets}
-    runpaths = {decode(offset, "DT_RUNPATH") for offset in runpath_offsets}
-    return needed, runpaths
+            fail(f"ELF DT_NEEDED string is not UTF-8: {info.filename}: {error}")
+    return needed
 
 
 def check_mesa_gles_stack(
@@ -884,7 +875,7 @@ def check_mesa_gles_stack(
             fail(f"Mesa GLES component is not AArch64 ET_DYN: {entry}")
         check_target_elf(info, payload)
         if entry in MESA_EGL_ENTRIES:
-            needed, _ = elf_dynamic_strings(info, archive.read(info))
+            needed = elf_needed(info, archive.read(info))
             if MESA_GALLIUM_DRIVER not in needed:
                 fail(f"Mesa GLES component does not link the gallium driver: {entry}")
 

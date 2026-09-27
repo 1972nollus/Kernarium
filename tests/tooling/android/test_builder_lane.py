@@ -11,7 +11,6 @@ import importlib.util
 import io
 import json
 import re
-import stat
 import struct
 import subprocess
 import sys
@@ -27,15 +26,13 @@ def fail(message: str) -> None:
 def synthetic_aarch64_elf(
     alignment: int = 16384,
     needed: tuple[str, ...] = (),
-    runpath: str | None = None,
 ) -> bytes:
-    has_dynamic = bool(needed or runpath)
-    program_headers = 2 if has_dynamic else 1
-    dynamic_entries = 3 + len(needed) + (1 if runpath else 0) if has_dynamic else 0
+    program_headers = 2 if needed else 1
+    dynamic_entries = 3 + len(needed) if needed else 0
     dynamic_offset = 64 + 56 * program_headers
     string_table = bytearray(b"\0")
     string_offsets: dict[str, int] = {}
-    for item in needed + ((runpath,) if runpath else ()):
+    for item in needed:
         string_offsets[item] = len(string_table)
         string_table.extend(item.encode())
         string_table.append(0)
@@ -82,8 +79,6 @@ def synthetic_aarch64_elf(
         entries = [(5, string_offset), (10, len(string_table))]
         for name in needed:
             entries.append((1, string_offsets[name]))
-        if runpath:
-            entries.append((29, string_offsets[runpath]))
         entries.append((0, 0))
         for index, (tag, value) in enumerate(entries):
             struct.pack_into("<qQ", payload, dynamic_offset + index * 16, tag, value)
