@@ -33,10 +33,10 @@ the test read back zeroes and reported an invalid result.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_msl_temporaries.c
 
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index c16c4e9f99cd86d76f2c5d69b9f7035649b7e3ac..92be4b42325f940c1a2ee0e05d884bb2381e99d7 100644
+index cd62fbda0a3c61f641210a44f9869917c468df83..76b3cc9740463a32d5b4dc1ebad096a7bc09fc05 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
-@@ -2513,6 +2513,14 @@ msl_gather_info(struct nir_to_msl_ctx *ctx, struct nir_to_msl_options *options)
+@@ -2533,6 +2533,14 @@ msl_gather_info(struct nir_to_msl_ctx *ctx, struct nir_to_msl_options *options)
     }
  }
  
@@ -51,7 +51,7 @@ index c16c4e9f99cd86d76f2c5d69b9f7035649b7e3ac..92be4b42325f940c1a2ee0e05d884bb2
  static void
  predeclare_ssa_values(struct nir_to_msl_ctx *ctx, nir_function_impl *impl)
  {
-@@ -2548,10 +2556,7 @@ predeclare_ssa_values(struct nir_to_msl_ctx *ctx, nir_function_impl *impl)
+@@ -2568,10 +2576,7 @@ predeclare_ssa_values(struct nir_to_msl_ctx *ctx, nir_function_impl *impl)
              const char *type = msl_type_for_def(ctx->types, def);
              if (!type)
                 continue;

@@ -111,10 +111,10 @@ index a65587e0589e4f9509966fb50432ecd8110b4766..9797cad73c2de7a74b9c3a9ff7a72717
  msl_type_for_src(struct hash_table *types, nir_src *src)
  {
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 01019686c12f1b15ec5f7b5f68abd013466574dd..d679a62a0c2c7f5a281861914d8641e7cfe4e1c1 100644
+index 318a0cbd32a608cab739ff7ebc066b1b1c052af3..b09a76d3b6220a88cddf39dbc0ce44978b1d4625 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
-@@ -252,6 +252,82 @@ msl_coherent_workaround(const struct nir_to_msl_ctx *ctx,
+@@ -272,6 +272,82 @@ msl_coherent_workaround(const struct nir_to_msl_ctx *ctx,
     return msl_instr_in_loop(instr);
  }
  
@@ -197,7 +197,7 @@ index 01019686c12f1b15ec5f7b5f68abd013466574dd..d679a62a0c2c7f5a281861914d8641e7
  static void
  emit_local_vars(struct nir_to_msl_ctx *ctx, nir_shader *shader)
  {
-@@ -1030,6 +1106,61 @@ src_to_packed_load_offset(struct nir_to_msl_ctx *ctx, nir_src *src,
+@@ -1050,6 +1126,61 @@ src_to_packed_load_offset(struct nir_to_msl_ctx *ctx, nir_src *src,
     P(ctx, "))");
  }
  
@@ -259,7 +259,7 @@ index 01019686c12f1b15ec5f7b5f68abd013466574dd..d679a62a0c2c7f5a281861914d8641e7
  /* Non-packed types have stricter alignment requirements that packed types.
   * This helps us cast the pointer to a packed type for storage.
   */
-@@ -1473,6 +1604,13 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1493,6 +1624,13 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
           P(ctx, "atomic_load_explicit((%s atomic_%s*)", addressing, type);
           src_to_msl(ctx, &instr->src[0]);
           P(ctx, ", memory_order_relaxed);\n");
@@ -273,7 +273,7 @@ index 01019686c12f1b15ec5f7b5f68abd013466574dd..d679a62a0c2c7f5a281861914d8641e7
        } else {
           src_to_packed_load(ctx, &instr->src[0], addressing, type,
                              instr->def.num_components);
-@@ -1549,6 +1687,14 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1569,6 +1707,14 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
           src_to_packed(ctx, &instr->src[0], type,
                         instr->src[0].ssa->num_components);
           P(ctx, ", memory_order_relaxed);\n");
@@ -288,10 +288,10 @@ index 01019686c12f1b15ec5f7b5f68abd013466574dd..d679a62a0c2c7f5a281861914d8641e7
        } else {
           src_to_packed_store(ctx, &instr->src[1], addressing, type,
                               instr->src[0].ssa->num_components);
-@@ -2611,6 +2757,9 @@ nir_to_msl(nir_shader *shader, struct nir_to_msl_options *options)
-    P(&ctx, "#include <metal_stdlib>\n");
+@@ -2632,6 +2778,9 @@ nir_to_msl(nir_shader *shader, struct nir_to_msl_options *options)
     P(&ctx, "using namespace metal;\n");
-    emit_fp32_fma_helpers(&ctx);
+    if (msl_shader_has_fp32_ffma(shader))
+       emit_fp32_fma_helpers(&ctx);
 +   /* KK_WORKAROUND_17 */
 +   if (msl_shader_has_atomic_coherent_access(&ctx))
 +      emit_coherent_access_helpers(&ctx);

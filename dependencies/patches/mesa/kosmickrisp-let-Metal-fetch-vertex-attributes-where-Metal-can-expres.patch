@@ -412,10 +412,10 @@ index b3f40aab031d50e5143965b27288234a03f4fe80..01f8997d145686eb1c30118b0a8c57f0
     else
        return ctx->inputs_info[location].num_components;
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index d679a62a0c2c7f5a281861914d8641e7cfe4e1c1..b1208f349badd7dbe793e7ca4fbcc4466a056eff 100644
+index b09a76d3b6220a88cddf39dbc0ce44978b1d4625..d77537c3ea6bf584640b043f0b0d553d144e35ad 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
-@@ -197,6 +197,12 @@ static void
+@@ -217,6 +217,12 @@ static void
  emit_inputs(struct nir_to_msl_ctx *ctx, nir_shader *shader)
  {
     switch (shader->info.stage) {

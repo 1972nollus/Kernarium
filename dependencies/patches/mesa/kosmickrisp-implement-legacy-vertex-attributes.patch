@@ -31,10 +31,10 @@ Subject: [PATCH] kosmickrisp: implement legacy vertex attributes
  create mode 100644 src/kosmickrisp/vulkan/tests/test_legacy_vertex_attributes.c
 
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 2ca8a7b2cfc2bac826966015f69bbe64faeaa992..056a86032de07665537a6a74239b43695c73f518 100644
+index dbeac584cb80354a0ff30d821bb9f17ba17f381f..14770e63fa4974e23da92856cddcd176dffca313 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
-@@ -1678,7 +1678,7 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1698,7 +1698,7 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
        const char *no_component_type =
           msl_pipe_format_to_msl_type(nir_intrinsic_format(instr));
        if (instr->def.num_components == 1) {

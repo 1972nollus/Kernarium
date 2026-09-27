@@ -4,17 +4,37 @@ Date: Thu, 3 Sep 2026 18:52:26 +0900
 Subject: [PATCH] kosmickrisp: preserve fused fp32 semantics
 
 ---
- src/kosmickrisp/compiler/nir_to_msl.c | 112 +++++++++++++++++++++++++-
- 1 file changed, 111 insertions(+), 1 deletion(-)
+ src/kosmickrisp/compiler/nir_to_msl.c | 133 +++++++++++++++++++++++++-
+ 1 file changed, 132 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 975c7237b61428dee0e47c80dc2ef2294674b6f1..2ca8a7b2cfc2bac826966015f69bbe64faeaa992 100644
+index 975c7237b61428dee0e47c80dc2ef2294674b6f1..dbeac584cb80354a0ff30d821bb9f17ba17f381f 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
-@@ -32,6 +32,111 @@ get_entrypoint_name(nir_shader *shader)
+@@ -32,6 +32,131 @@ get_entrypoint_name(nir_shader *shader)
     return nir_shader_get_entrypoint(shader)->function->name;
  }
  
++/* Only a 32-bit ffma calls kk_fma32, so a shader without one is translated
++ * without the helpers. */
++static bool
++msl_shader_has_fp32_ffma(nir_shader *shader)
++{
++   nir_foreach_function_impl(impl, shader) {
++      nir_foreach_block(block, impl) {
++         nir_foreach_instr(instr, block) {
++            if (instr->type != nir_instr_type_alu)
++               continue;
++            nir_alu_instr *alu = nir_instr_as_alu(instr);
++            if (alu->op == nir_op_ffma && alu->def.bit_size == 32)
++               return true;
++         }
++      }
++   }
++
++   return false;
++}
++
 +static void
 +emit_fp32_fma_helpers(struct nir_to_msl_ctx *ctx)
 +{
@@ -123,7 +143,7 @@ index 975c7237b61428dee0e47c80dc2ef2294674b6f1..2ca8a7b2cfc2bac826966015f69bbe64
  static const char *sysval_table[SYSTEM_VALUE_MAX] = {
     [SYSTEM_VALUE_SUBGROUP_SIZE] =
        "uint gl_SubGroupSize [[threads_per_simdgroup]]",
-@@ -456,7 +561,11 @@ alu_to_msl(struct nir_to_msl_ctx *ctx, nir_alu_instr *instr)
+@@ -456,7 +581,11 @@ alu_to_msl(struct nir_to_msl_ctx *ctx, nir_alu_instr *instr)
        alu_funclike_precise(ctx, instr, "floor");
        break;
     case nir_op_ffma:
@@ -136,11 +156,12 @@ index 975c7237b61428dee0e47c80dc2ef2294674b6f1..2ca8a7b2cfc2bac826966015f69bbe64
        break;
     case nir_op_ffract:
        /* Metal's fract returns values [0, 1] disregarding INFs and NANs */
-@@ -2465,6 +2574,7 @@ nir_to_msl(nir_shader *shader, struct nir_to_msl_options *options)
+@@ -2465,6 +2594,8 @@ nir_to_msl(nir_shader *shader, struct nir_to_msl_options *options)
        P(&ctx, "#include <metal_compute>\n");
     P(&ctx, "#include <metal_stdlib>\n");
     P(&ctx, "using namespace metal;\n");
-+   emit_fp32_fma_helpers(&ctx);
++   if (msl_shader_has_fp32_ffma(shader))
++      emit_fp32_fma_helpers(&ctx);
  
     msl_emit_io_blocks(&ctx, shader);
     if (shader->info.stage == MESA_SHADER_FRAGMENT &&

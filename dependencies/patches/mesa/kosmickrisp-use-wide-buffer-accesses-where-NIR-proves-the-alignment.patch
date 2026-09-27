@@ -31,10 +31,10 @@ i64vec4, whose std430 alignment is the full 32 bytes.
  1 file changed, 140 insertions(+), 21 deletions(-)
 
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 0c9b4d05af51e0c11458b8fa45fd814c248b6263..f04d5dbdf8adb83a21e72443f5ea38a0fd5a3328 100644
+index 943bdf2d4d8aeb9f4f4d7d60745a111fe03dc1dd..cabdea4f4132f0e53b5dbb2bb7abfef93a556486 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
-@@ -1089,14 +1089,69 @@ image_coord_swizzle(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1109,14 +1109,69 @@ image_coord_swizzle(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
     texture_src_coord_swizzle(ctx, &instr->src[1], comps, is_cube, is_array);
  }
  
@@ -106,7 +106,7 @@ index 0c9b4d05af51e0c11458b8fa45fd814c248b6263..f04d5dbdf8adb83a21e72443f5ea38a0
        P(ctx, "%s(", type);
     } else {
        P(ctx, "packed_%s(", type);
-@@ -1112,10 +1167,23 @@ src_to_packed(struct nir_to_msl_ctx *ctx, nir_src *src, const char *type,
+@@ -1132,10 +1187,23 @@ src_to_packed(struct nir_to_msl_ctx *ctx, nir_src *src, const char *type,
  static void
  src_to_packed_load(struct nir_to_msl_ctx *ctx, nir_src *src,
                     const char *addressing, const char *type,
@@ -131,7 +131,7 @@ index 0c9b4d05af51e0c11458b8fa45fd814c248b6263..f04d5dbdf8adb83a21e72443f5ea38a0
     } else {
        P(ctx, "%s(*(%s packed_%s*)", type, addressing, type);
     }
-@@ -1130,10 +1198,28 @@ src_to_packed_load(struct nir_to_msl_ctx *ctx, nir_src *src,
+@@ -1150,10 +1218,28 @@ src_to_packed_load(struct nir_to_msl_ctx *ctx, nir_src *src,
  static void
  src_to_packed_load_offset(struct nir_to_msl_ctx *ctx, nir_src *src,
                            nir_src *offset, const char *addressing,
@@ -161,7 +161,7 @@ index 0c9b4d05af51e0c11458b8fa45fd814c248b6263..f04d5dbdf8adb83a21e72443f5ea38a0
     } else {
        P(ctx, "%s(*(%s packed_%s*)(", type, addressing, type);
     }
-@@ -1204,9 +1290,9 @@ src_to_coherent_store(struct nir_to_msl_ctx *ctx, nir_src *address,
+@@ -1224,9 +1310,9 @@ src_to_coherent_store(struct nir_to_msl_ctx *ctx, nir_src *address,
  static void
  src_to_packed_store(struct nir_to_msl_ctx *ctx, nir_src *src,
                      const char *addressing, const char *type,
@@ -173,7 +173,7 @@ index 0c9b4d05af51e0c11458b8fa45fd814c248b6263..f04d5dbdf8adb83a21e72443f5ea38a0
        P_IND(ctx, "(*(%s %s*)", addressing, type);
     } else {
        P_IND(ctx, "(*(%s packed_%s*)", addressing, type);
-@@ -1649,16 +1735,32 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1669,16 +1755,32 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
                                type, instr->def.num_components);
           P(ctx, ";\n");
        } else {
@@ -211,7 +211,7 @@ index 0c9b4d05af51e0c11458b8fa45fd814c248b6263..f04d5dbdf8adb83a21e72443f5ea38a0
        P(ctx, ";\n");
        break;
     }
-@@ -1667,9 +1769,17 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1687,9 +1789,17 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
        P(ctx, " < ");
        src_to_msl(ctx, &instr->src[2]);
        P(ctx, " ? ");
@@ -232,7 +232,7 @@ index 0c9b4d05af51e0c11458b8fa45fd814c248b6263..f04d5dbdf8adb83a21e72443f5ea38a0
        P(ctx, " : 0;\n");
        break;
     }
-@@ -1693,10 +1803,15 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1713,10 +1823,15 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
           src_to_msl(ctx, &instr->src[1]);
           P(ctx, ", memory_order_relaxed);\n");
        } else {
@@ -252,7 +252,7 @@ index 0c9b4d05af51e0c11458b8fa45fd814c248b6263..f04d5dbdf8adb83a21e72443f5ea38a0
        }
        P(ctx, ";\n");
        break;
-@@ -1728,7 +1843,7 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1748,7 +1863,7 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
           src_to_msl(ctx, &instr->src[1]);
           P(ctx, ", ")
           src_to_packed(ctx, &instr->src[0], type,
@@ -261,7 +261,7 @@ index 0c9b4d05af51e0c11458b8fa45fd814c248b6263..f04d5dbdf8adb83a21e72443f5ea38a0
           P(ctx, ", memory_order_relaxed);\n");
        } else if (msl_coherent_access_is_atomic(ctx->disabled_workarounds,
                                                 ctx->types, instr)) {
-@@ -1739,13 +1854,17 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1759,13 +1874,17 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
              nir_intrinsic_write_mask(instr),
              instr->src[0].ssa->num_components);
        } else {

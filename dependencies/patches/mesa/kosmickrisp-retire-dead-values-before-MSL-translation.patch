@@ -48,10 +48,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_integer_point_target.c
 
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 056a86032de07665537a6a74239b43695c73f518..c16c4e9f99cd86d76f2c5d69b9f7035649b7e3ac 100644
+index 14770e63fa4974e23da92856cddcd176dffca313..cd62fbda0a3c61f641210a44f9869917c468df83 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
-@@ -2420,6 +2420,11 @@ msl_optimize_nir(struct nir_shader *nir)
+@@ -2440,6 +2440,11 @@ msl_optimize_nir(struct nir_shader *nir)
     NIR_PASS(_, nir, nir_convert_from_ssa, true, false);
     NIR_PASS(_, nir, nir_trivialize_registers);
     NIR_PASS(_, nir, nir_opt_copy_prop);
