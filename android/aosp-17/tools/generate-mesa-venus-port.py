@@ -673,9 +673,8 @@ def convert(args: argparse.Namespace) -> None:
         f"--platforms={args.platforms}",
         f"--project-dir={args.checkout}",
         f"--output-dir={args.checkout}",
+        f"--dependencies={args.dependencies}",
     ]
-    if args.dependencies is not None:
-        command.append(f"--dependencies={args.dependencies}")
     subprocess.run(command, cwd=args.checkout, check=True)
 
 
