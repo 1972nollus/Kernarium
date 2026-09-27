@@ -425,7 +425,8 @@ private struct Executor {
                 default: throw Failure(message: "unknown modifier \(name)")
                 }
             }
-            application(command).typeKey(Self.keyName(key), modifierFlags: flags)
+            // The script resolves key names to characters XCTest delivers.
+            application(command).typeKey(key, modifierFlags: flags)
             return [:]
 
         case "tree":
@@ -442,22 +443,6 @@ private struct Executor {
 
         default:
             throw Failure(message: "unknown op \(op)")
-        }
-    }
-
-    /// Named keys map to XCUIKeyboardKey; anything else is typed as given.
-    private static func keyName(_ key: String) -> String {
-        switch key {
-        case "escape": XCUIKeyboardKey.escape.rawValue
-        case "tab": XCUIKeyboardKey.tab.rawValue
-        case "return": XCUIKeyboardKey.return.rawValue
-        case "delete": XCUIKeyboardKey.delete.rawValue
-        case "up": XCUIKeyboardKey.upArrow.rawValue
-        case "down": XCUIKeyboardKey.downArrow.rawValue
-        case "left": XCUIKeyboardKey.leftArrow.rawValue
-        case "right": XCUIKeyboardKey.rightArrow.rawValue
-        case "space": XCUIKeyboardKey.space.rawValue
-        default: key
         }
     }
 }

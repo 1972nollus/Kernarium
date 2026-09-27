@@ -44,6 +44,31 @@ EXIT_NO_HOST = 3
 SCRIPT = pathlib.Path(__file__).resolve()
 CHECKOUT = SCRIPT.parents[2]
 
+# XCTest types a key from the character it produces. On a device it delivers
+# nothing for the characters of XCUIKeyboardKey.return ("\r"), .delete
+# ("\x7f") and .escape ("\x1b"), or for a backspace ("\b"): no event reaches
+# any responder of the application, a plain UITextField included, and the
+# command still succeeds. "\n" produces the real Return key (HID usage 0x28),
+# modifiers included. Key names therefore resolve to characters that arrive,
+# and the characters that would be dropped are refused with a working route.
+KEYS = {
+    "return": "\n",
+    "tab": "\t",
+    "space": " ",
+    "up": "\uf700",
+    "down": "\uf701",
+    "left": "\uf702",
+    "right": "\uf703",
+}
+UNDELIVERABLE = {
+    "delete": "XCTest drops a synthesized Delete key; `type $'\\x7f'` deletes "
+              "through the text input system instead",
+    "escape": "XCTest drops a synthesized Escape key; the terminal's key bar "
+              "sends one with `tap --label Escape`",
+}
+# The key each dropped character stands for.
+DROPPED = {"\r": "return", "\x7f": "delete", "\b": "delete", "\x1b": "escape"}
+
 
 class NoHost(Exception):
     pass
@@ -322,7 +347,22 @@ def element_fields(options):
     return fields
 
 
-def run_op(options):
+def key_character(key):
+    """The character the host types for a `key` argument: a key name or one
+    character. Raises ValueError for a key XCTest would silently drop."""
+    key = DROPPED.get(key, key)
+    if key in UNDELIVERABLE:
+        raise ValueError(UNDELIVERABLE[key])
+    if key in KEYS:
+        return KEYS[key]
+    if len(key) != 1:
+        raise ValueError(f"unknown key {key!r}: name one of "
+                         f"{', '.join(sorted(KEYS))} or give one character")
+    return key
+
+
+def build_command(options):
+    """The host command for an application operation."""
     op = options.command
     command = {"op": op}
     if op == "launch":
@@ -338,8 +378,18 @@ def run_op(options):
     elif op == "type":
         command["text"] = options.text
     elif op == "key":
-        command["key"] = options.key
+        command["key"] = key_character(options.key)
         command["modifiers"] = [item for item in options.modifiers.split(",") if item]
+    return command
+
+
+def run_op(options):
+    op = options.command
+    try:
+        command = build_command(options)
+    except ValueError as error:
+        log(str(error))
+        return EXIT_FAILED
     reply = send(options, command, options.timeout)
     data = reply.pop("data", None)
     if op == "screenshot" and data is not None:
@@ -409,7 +459,8 @@ def parse(argv):
     type_ = commands.add_parser("type", help="type text into the focused element")
     type_.add_argument("text")
     key = commands.add_parser("key", help="press one hardware-keyboard key")
-    key.add_argument("key", help="a character, or escape, tab, return, delete, up, down, left, right, space")
+    key.add_argument("key", help="one character, or return, tab, space, up, down, left, "
+                                 "right; XCTest cannot press delete or escape")
     key.add_argument("--modifiers", default="", help="comma list of shift, control, option, command")
     shot = commands.add_parser("screenshot", help="save a screenshot of the device")
     shot.add_argument("-o", "--output", required=True)
