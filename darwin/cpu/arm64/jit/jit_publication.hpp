@@ -121,10 +121,6 @@ template <typename T>
   return value.load(std::memory_order_relaxed) != expected;
 }
 alignas(128) extern std::atomic<unsigned> jit_exclusive_operation_count;
-[[nodiscard]] inline unsigned
-jit_waiting_store_count(unsigned) noexcept {
-  return jit_waiting_store_count_value.load(std::memory_order_seq_cst);
-}
 extern std::mutex jit_reservations_mutex;
 extern std::unordered_set<CpuState *> jit_reservations;
 extern thread_local JitStoreParticipant *current_jit_store_participant;
