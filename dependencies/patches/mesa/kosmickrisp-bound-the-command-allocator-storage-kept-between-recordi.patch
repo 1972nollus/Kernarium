@@ -675,10 +675,10 @@ index 9ec6c4baa5c939acf4c33be005d5e22c35bf1779..4751478a01a123017c2b0068c5937112
  
        if (cmd_buffer->drawable) {
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index 0d9a2cb7827558186196207ec64cd6a102b8bff4..7e39a4e7a8f0b91d7e8b748d8da8e9454f928f9b 100644
+index 42568a562769e81c65c1bfb8aca5167ede2a9e28..d04f38dc7957b72b8dd71267ea7f0e93a95681f8 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
-@@ -166,6 +166,12 @@ kk_queue_has_stopped(const struct kk_queue_progress *progress,
+@@ -176,6 +176,12 @@ kk_queue_has_stopped(const struct kk_queue_progress *progress,
     return now - clock->since >= KK_STOPPED_QUEUE_TIMEOUT_NS;
  }
  
