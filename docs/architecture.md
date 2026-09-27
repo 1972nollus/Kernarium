@@ -283,8 +283,7 @@ its runtime memory domain. Cache and publication contracts are described in
 The gadget cache may retain several address spaces. Cache slots and links are
 tagged by address space, retirement drops one address space's owned state, and
 same-generation stale programs are reused only after exact page-bounded word
-validation. Shared gadget translations remain data-only and relocate every
-executor-owned link cell before use. Cached returns consult a private
+validation. Cached returns consult a private
 per-carrier return-record ring after their site cells miss: linked calls push
 the return PC with its block link, a matching record follows that link and
 trains the cell, and the executor empties the ring on every address-space
