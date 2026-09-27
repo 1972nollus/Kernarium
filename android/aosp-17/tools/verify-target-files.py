@@ -46,7 +46,14 @@ MESA_EGL_ENTRIES = {
     f"{MESA_EGL_DIRECTORY}libGLESv2_{MESA_EGL_SUFFIX}.so",
 }
 MESA_ELF_ENTRIES = {f"VENDOR/lib64/{MESA_GALLIUM_DRIVER}", *MESA_EGL_ENTRIES}
-# The retired AOSP external/mesa3d stack loaded its driver from here.
+# The retired AOSP external/mesa3d stack: its EGL and GLES libraries, and the
+# directory it loaded its driver from.
+RETIRED_EGL_ENTRIES = {
+    f"{MESA_EGL_DIRECTORY}libGLES_mesa.so",
+    f"{MESA_EGL_DIRECTORY}libEGL_mesa.so",
+    f"{MESA_EGL_DIRECTORY}libGLESv1_CM_mesa.so",
+    f"{MESA_EGL_DIRECTORY}libGLESv2_mesa.so",
+}
 RETIRED_DRI_DIRECTORY = "VENDOR/lib64/dri/"
 REQUIRED_SDK_APEX_ENTRIES = {
     "SYSTEM/apex/com.android.bt.apex",
@@ -875,8 +882,8 @@ def check_mesa_gles_stack(
                 fail(f"Mesa GLES component does not link the gallium driver: {entry}")
 
     for name in infos:
-        if name.startswith(MESA_EGL_DIRECTORY) and name not in MESA_EGL_ENTRIES:
-            fail(f"unexpected EGL or GLES library beside the Mesa stack: {name}")
+        if name in RETIRED_EGL_ENTRIES:
+            fail(f"retired AOSP Mesa EGL or GLES library is forbidden: {name}")
         if name.startswith(RETIRED_DRI_DIRECTORY):
             fail(f"retired DRI driver payload is forbidden: {name}")
 

@@ -180,7 +180,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_mesa_gles: bool = False,
                           bad_mesa_gles_elf: bool = False,
                           missing_gallium_dependency: bool = False,
-                          stray_egl_library: bool = False,
+                          retired_egl_library: bool = False,
                           retired_dri_driver: bool = False,
                           wrong_egl_property: bool = False,
                           system_other: bool = False,
@@ -431,7 +431,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                         )
                     )
                     archive.writestr(entry, payload)
-                if stray_egl_library:
+                if retired_egl_library:
                     archive.writestr(
                         "VENDOR/lib64/egl/libGLES_mesa.so", synthetic_aarch64_elf()
                     )
@@ -518,7 +518,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("missing-mesa-gles", {"missing_mesa_gles": True}),
             ("mesa-gles-not-elf", {"bad_mesa_gles_elf": True}),
             ("gallium-dependency", {"missing_gallium_dependency": True}),
-            ("stray-egl-library", {"stray_egl_library": True}),
+            ("retired-egl-library", {"retired_egl_library": True}),
             ("retired-dri-driver", {"retired_dri_driver": True}),
             ("egl-property", {"wrong_egl_property": True}),
             ("system-other", {"system_other": True}),
