@@ -769,32 +769,6 @@ void JitCompilerFamilies::flush_link_transition_state() {
   exit_vector_mask_set_ = false;
 }
 
-void JitCompilerFamilies::spill_gprs_for_returning_call() {
-  flush_gprs(dirty_gpr_mask());
-  flush_vectors(dirty_vector_mask());
-  spill_flags_for_internal_clobber();
-}
-
-void JitCompilerFamilies::reload_gprs_after_call() {
-  auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
-  for (std::size_t index = 0; index < gpr_slots_.size(); ++index) {
-    const auto &slot = gpr_slots_[index];
-    if (slot.guest == unbound_guest)
-      continue;
-    emitter.load_x(resident_gpr_hosts[index], 15,
-                   register_offset(slot.guest, slot.stack_pointer));
-  }
-  for (std::size_t index = 0; index < vector_slots_.size(); ++index) {
-    const auto &slot = vector_slots_[index];
-    if (slot.guest == unbound_guest || !slot.loaded)
-      continue;
-    emitter.load_q(
-        resident_vector_hosts[index], 15,
-        offsetof(arm64::CpuState, vectors) +
-            slot.guest * sizeof(arm64::VectorRegister));
-  }
-}
-
 void JitCompilerFamilies::spill_gprs_for_terminal_call() {
   const auto gpr_mask =
       exit_gpr_mask_set_ ? exit_gpr_mask_ : dirty_gpr_mask();
