@@ -143,14 +143,8 @@ def cpuinfo_features(guest: Guest) -> set[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--emulator",
-        type=pathlib.Path,
-        default=REPOSITORY / ".build" / "cmake-macos" / "bin" / "uml-darwin",
-    )
-    parser.add_argument(
-        "--rootfs", type=pathlib.Path, default=REPOSITORY / "rootfs.erofs"
-    )
+    parser.add_argument("--emulator", type=pathlib.Path, required=True)
+    parser.add_argument("--rootfs", type=pathlib.Path, required=True)
     parser.add_argument("--memory", default="8G")
     parser.add_argument(
         "--engine", choices=("jit", "gadgets"), default="jit"

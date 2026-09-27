@@ -27,22 +27,6 @@ def parse_arguments() -> argparse.Namespace:
         default="/dev/ubda",
         help="raw EROFS root device (default: /dev/ubda)",
     )
-    parser.add_argument(
-        "--overlay-shell",
-        dest="overlay_shell",
-        action="store_true",
-        default=True,
-        help=(
-            "bootstrap the required writable tmpfs OverlayFS shell from "
-            "/bin/sh (default and retained for CLI compatibility)"
-        ),
-    )
-    parser.add_argument(
-        "--systemd-overlay",
-        dest="overlay_shell",
-        action="store_true",
-        help=argparse.SUPPRESS,
-    )
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument(
         "--shared-mmap-binary",
@@ -105,7 +89,7 @@ def main() -> int:
         "1024M",
         "tmpfs",
         (f"ncpus={arguments.cpus}", f"root={arguments.root_device}"),
-        overlay_shell=arguments.overlay_shell,
+        overlay_shell=True,
     )
     try:
         guest.boot_and_login()
