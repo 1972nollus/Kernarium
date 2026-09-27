@@ -27,7 +27,6 @@ sys.path.insert(0, str(SUPPORT))
 from guest import (  # noqa: E402
     BOOT_TIMEOUT_SECONDS,
     OVERLAY_SHELL_BOOTSTRAP,
-    SYSTEMD_OVERLAY_BOOTSTRAP,
     CommandResult,
     Guest as GuestHarness,
     cleanup_stale_swap_images,

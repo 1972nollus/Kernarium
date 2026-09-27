@@ -97,31 +97,6 @@ OVERLAY_SHELL_BOOTSTRAP = "\n".join(
         f"printf '\\n{OVERLAY_READY_MARKER}\\n'",
     )
 )
-SYSTEMD_OVERLAY_BOOTSTRAP = "\n".join(
-    (
-        "{",
-        "set -eu",
-        "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt",
-        "mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root",
-        "mount -o bind / /mnt/lower",
-        "mount -t overlay overlay "
-        "-o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root",
-        "mount -t devtmpfs devtmpfs /mnt/root/dev",
-        "mkdir -p /mnt/root/.uml-lower",
-        "cd /mnt/root",
-        "pivot_root . .uml-lower",
-        "rm -f /etc/resolv.conf",
-        "printf '%s\\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' "
-        "'nameserver 10.0.2.3' > /etc/resolv.conf",
-        "mkdir -p /var/lib/docker",
-        "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker",
-        "mkdir -p /var/lib/containerd",
-        "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/containerd",
-        "if [ -x /lib/systemd/systemd ]; then exec /lib/systemd/systemd; fi",
-        "exec /usr/lib/systemd/systemd",
-        "}",
-    )
-)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -256,12 +231,11 @@ class Guest:
         cgroup2_nsdelegate: bool = False,
         init_shell: bool = False,
         overlay_shell: bool = False,
-        systemd_overlay: bool = False,
         engine: str = "jit",
         core_class: str = "performance",
         pass_fds: Sequence[int] = (),
     ) -> None:
-        if sum((init_shell, overlay_shell, systemd_overlay)) > 1:
+        if init_shell and overlay_shell:
             raise ValueError("guest boot modes are mutually exclusive")
         self._swap_path = None
         self._core_class = core_class
@@ -274,16 +248,13 @@ class Guest:
         self._cgroup2_nsdelegate = cgroup2_nsdelegate
         self._init_shell = init_shell
         self._overlay_shell = overlay_shell
-        self._systemd_overlay = systemd_overlay
-        if init_shell or overlay_shell or systemd_overlay:
+        if init_shell or overlay_shell:
             kernel_arguments = (
                 *kernel_arguments,
                 "console=tty0",
                 "console=ttyS0",
                 "ip=dhcp",
             )
-        if systemd_overlay:
-            kernel_arguments = (*kernel_arguments, "systemd.unit=multi-user.target")
         try:
             master, slave = pty.openpty()
         except BaseException:
@@ -301,7 +272,7 @@ class Guest:
                     kernel_arguments,
                     self._swap_path,
                     "/bin/sh"
-                    if init_shell or overlay_shell or systemd_overlay
+                    if init_shell or overlay_shell
                     else "/sbin/init",
                     engine,
                     core_class,
@@ -390,34 +361,7 @@ class Guest:
             )
 
     def boot_and_login(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
-        if self._systemd_overlay:
-            self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
-            self._write(SYSTEMD_OVERLAY_BOOTSTRAP + "\n")
-            login = self._read_until(
-                re.compile(rb" login:\s*uml \(automatic login\)", re.MULTILINE),
-                timeout_seconds,
-            )
-            self._read_until(
-                re.compile(LINE_START + rb"[^\r\n]*\$ $"),
-                timeout_seconds,
-                login.end(),
-            )
-            sudo = self.run_command(
-                'test "$(id -un)" = uml && sudo -n true', timeout_seconds
-            )
-            if sudo.return_code != 0:
-                raise RuntimeError(
-                    "image-owned uml login lacks noninteractive sudo: "
-                    + sudo.output
-                )
-            search_from = len(self._transcript)
-            self._write("exec sudo -n /bin/sh\n")
-            self._read_until(
-                re.compile(LINE_START + rb"[^\r\n]*# $"),
-                timeout_seconds,
-                search_from,
-            )
-        elif self._init_shell or self._overlay_shell:
+        if self._init_shell or self._overlay_shell:
             self.boot_to_shell(timeout_seconds)
         else:
             self._read_until(

@@ -85,11 +85,6 @@ def verify_engine_forwarding(runner: str) -> None:
             raise RuntimeError(
                 f"{runner}: Geekbench must enable overlay_shell=True"
             )
-        if any(
-            keyword.arg == "systemd_overlay"
-            for keyword in guest_calls[0].keywords
-        ):
-            raise RuntimeError(f"{runner}: Geekbench must not boot systemd")
 
 
 def load_runner_module(runner: str):
