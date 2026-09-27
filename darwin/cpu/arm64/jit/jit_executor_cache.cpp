@@ -192,10 +192,6 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
 #if !UML_JIT_RUNTIME_DIAGNOSTICS
   (void)direct_link_refusals;
 #endif
-  /* Native FP/FPMR state always implies materialization. The executor already
-   * validates compiler metadata before installation; keep this boundary safe
-   * as well if a future caller omits that validation. */
-  accesses_fp_state = accesses_fp_state || native_fp || native_fpmr;
   const auto selected = replacement(generation, changes, pc);
   auto &block = *selected.block;
 #if UML_JIT_RUNTIME_DIAGNOSTICS
