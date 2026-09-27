@@ -102,7 +102,6 @@ public:
     const std::string& captureLayout() const noexcept { return layout_; }
     unsigned width() const noexcept { return width_; }
     unsigned height() const noexcept { return height_; }
-    bool streaming() const noexcept { return captureStreaming_; }
 
 private:
     struct Plane {
@@ -146,7 +145,6 @@ private:
     std::vector<Buffer> capture_;
     bool outputStreaming_ {};
     bool captureStreaming_ {};
-    bool sawEos_ {};
 };
 
 // The device node the driver talks to, honouring UML_VA_V4L2_DEVICE and
@@ -171,10 +169,10 @@ RgbCapture rgbCaptureRequest(const char* request) noexcept;
 bool useRgbCapture(RgbCapture policy, bool deviceOffers) noexcept;
 
 // Whether to lend the decoder the driver's own surfaces for its decoded
-// pictures. `automatic` does whenever a surface of the kind this graphics
-// stack makes is one the capture queue accepts; `device` always leaves the
-// decoder its own buffers, and `lend` tries regardless of the probe.
-enum class CaptureMemory { automatic, lend, device };
+// pictures. `automatic` does whenever the surfaces are dma-bufs, which is to
+// say GBM, and falls back to the decoder's own buffers for a queue that
+// refuses one; `device` always leaves the decoder its own buffers.
+enum class CaptureMemory { automatic, device };
 
 // Parses UML_VA_V4L2_CAPTURE. An unset or unrecognised request is `automatic`.
 CaptureMemory captureMemoryRequest(const char* request) noexcept;

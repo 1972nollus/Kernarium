@@ -3,10 +3,10 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 22:03:00 +0900
 Subject: [PATCH] Build libelf and libdw on Darwin
 
-Mach-O has no alias attribute, so strong_alias and internal_strong_alias
-give the definition a second global name with the assembler's .set
-directive there. The backends and libebl use strong_alias or small wrappers
-instead of spelling the attribute themselves.
+Mach-O has no alias attribute, so strong_alias gives the definition a
+second global name with the assembler's .set directive there. The backends
+and libebl use strong_alias or small wrappers instead of spelling the
+attribute themselves.
 
 Darwin's C library lacks several GNU extensions. configure now detects
 tdestroy, posix_fallocate and program_invocation_short_name:
@@ -27,12 +27,12 @@ printf format attribute so -Wformat-nonliteral accepts its callers.
  backends/ppc_regs.c     |  3 +--
  configure.ac            |  5 ++++-
  lib/error.c             |  3 +++
- lib/eu-config.h         | 20 +++++++++++++++++++-
+ lib/eu-config.h         | 14 +++++++++++++-
  lib/eu-search.c         | 21 +++++++++++++++++++++
  lib/system.h            |  8 +++++++-
  libebl/eblopenbackend.c | 14 ++++++++++++--
  libelf/elf_update.c     |  2 ++
- 13 files changed, 75 insertions(+), 23 deletions(-)
+ 13 files changed, 69 insertions(+), 23 deletions(-)
 
 diff --git a/backends/i386_auxv.c b/backends/i386_auxv.c
 index dba63fe085cb561c93831bc90f637b1411b4c45d..83bbbcc6c80c69bfb1fc9ae832dc6741a9ec1f96 100644
@@ -145,7 +145,7 @@ index 75c9eafb58baebefdf1b97452c8295e32b7bd6c4..e427a19864345fd3f1e952712eb2f0a5
    va_list argp;
    int saved_errno = errno;
 diff --git a/lib/eu-config.h b/lib/eu-config.h
-index 0bf2aa76e756b5a458ded06fb423494f2e0df2ef..e66479013e99ec520edb83a4751aaeb4d25d5fe8 100644
+index 0bf2aa76e756b5a458ded06fb423494f2e0df2ef..689017a95ef48ccdc9b5b0510736f2640463404e 100644
 --- a/lib/eu-config.h
 +++ b/lib/eu-config.h
 @@ -31,14 +31,26 @@
@@ -176,21 +176,6 @@ index 0bf2aa76e756b5a458ded06fb423494f2e0df2ef..e66479013e99ec520edb83a4751aaeb4
  
  #ifdef __i386__
  # define internal_function __attribute__ ((regparm (3), stdcall))
-@@ -46,8 +58,14 @@
- # define internal_function /* nothing */
- #endif
- 
-+#ifdef __APPLE__
-+#define internal_strong_alias(name, aliasname) \
-+  extern __typeof (name) aliasname internal_function; \
-+  __asm__ (".globl _" #aliasname "\n\t.set _" #aliasname ", _" #name);
-+#else
- #define internal_strong_alias(name, aliasname) \
-   extern __typeof (name) aliasname __attribute__ ((alias (#name))) internal_function;
-+#endif
- 
- #ifdef HAVE_VISIBILITY
- #define attribute_hidden \
 diff --git a/lib/eu-search.c b/lib/eu-search.c
 index fc31fe878405ad427767c4fd950b968c7089a916..fb92ed03745df5f8729ee9671582e6016e97f981 100644
 --- a/lib/eu-search.c

@@ -12,6 +12,7 @@ import io
 import pathlib
 import subprocess
 import sys
+import tempfile
 import types
 from unittest import mock
 
@@ -152,11 +153,13 @@ def run_geekbench_shutdown_case(
     emulator_status: int | None,
 ) -> tuple[int | None, RuntimeError | None, mock.Mock]:
     module = load_runner_module("run_guest_geekbench.py")
+    directory = tempfile.TemporaryDirectory(prefix="uml-geekbench-cli-")
+    console_log = pathlib.Path(directory.name, "console.log")
     arguments = types.SimpleNamespace(
         emulator=pathlib.Path("emulator"),
         rootfs=pathlib.Path("rootfs.erofs"),
         profile_dir=None,
-        console_log=pathlib.Path("console.log"),
+        console_log=console_log,
         command="geekbench6 --no-upload",
         root_device="/dev/ubda",
         kernel_argument=[],
@@ -175,22 +178,12 @@ def run_geekbench_shutdown_case(
     guest.shutdown.return_value = shutdown_ok
     guest.return_code = emulator_status
 
-    class MirrorThread:
-        def __init__(self, *, args, **_kwargs):
-            self._ready = args[2]
-
-        def start(self) -> None:
-            self._ready.set()
-
-        def join(self, timeout=None) -> None:
-            del timeout
-
     status: int | None = None
     error: RuntimeError | None = None
     with (
+        directory,
         mock.patch.object(module, "parse_arguments", return_value=arguments),
-        mock.patch.object(module, "Guest", return_value=guest),
-        mock.patch.object(module.threading, "Thread", MirrorThread),
+        mock.patch.object(module, "Guest", return_value=guest) as constructor,
         contextlib.redirect_stdout(io.StringIO()),
     ):
         try:
@@ -198,6 +191,13 @@ def run_geekbench_shutdown_case(
         except RuntimeError as caught:
             error = caught
     guest.close.assert_called_once_with()
+    # The console streams into the log the profiler follows.
+    sink = constructor.call_args.kwargs["console_sink"]
+    if sink.name != str(console_log) or not sink.closed:
+        raise RuntimeError(
+            f"Geekbench runner did not stream the console into {console_log}: "
+            f"{sink!r}"
+        )
     return status, error, guest
 
 

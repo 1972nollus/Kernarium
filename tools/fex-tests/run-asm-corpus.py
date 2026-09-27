@@ -13,7 +13,6 @@ import os
 import pathlib
 import re
 import subprocess
-import sys
 import tempfile
 import time
 from collections import Counter

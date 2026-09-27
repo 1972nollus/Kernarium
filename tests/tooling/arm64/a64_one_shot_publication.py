@@ -91,20 +91,6 @@ class OneShotPublication:
         rendered = self._render_tsv_outputs(outputs)
         self.publish_payloads(rendered)
 
-    def publish_tsvs_locked(
-        self,
-        outputs: Sequence[
-            tuple[Path, Sequence[str], Sequence[Mapping[str, str]]]
-        ],
-        *,
-        before_replace: Callable[[], None] | None = None,
-    ) -> None:
-        """Publish while the caller holds every target-parent lock."""
-        rendered = self._render_tsv_outputs(outputs)
-        self.publish_payloads_locked(
-            rendered, before_replace=before_replace
-        )
-
     def _render_tsv_outputs(
         self,
         outputs: Sequence[
@@ -131,15 +117,7 @@ class OneShotPublication:
         self,
         outputs: Sequence[tuple[Path, bytes, Callable[[bytes], None]]],
     ) -> None:
-        self.publish_payloads_locked(outputs)
-
-    def publish_payloads_locked(
-        self,
-        outputs: Sequence[tuple[Path, bytes, Callable[[bytes], None]]],
-        *,
-        before_replace: Callable[[], None] | None = None,
-    ) -> None:
-        """Publish exact validated payloads while target parents are locked."""
+        """Validate each payload, then publish the set atomically."""
         if tuple(path for path, _payload, _validator in outputs) != self.targets:
             raise ValueError("publication outputs differ from prepared targets")
 
@@ -158,8 +136,6 @@ class OneShotPublication:
             )
 
         self.recheck()
-        if before_replace is not None:
-            before_replace()
         atomic_publish_bytes(
             [(path, payload) for path, payload, _validator in outputs],
         )

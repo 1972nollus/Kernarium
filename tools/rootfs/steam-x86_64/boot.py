@@ -11,11 +11,11 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "steam-common"))
 import launcher  # noqa: E402
-from launcher import NEW_DISK, disk_command, launch, parser, prepare_disk  # noqa: E402,F401
+from launcher import launch, parser  # noqa: E402
 
-# The x86-64 guest has one execution engine; it is named explicitly so both
-# appliances present the same launch contract. Virtio sound plays through the
-# Apple audio output.
+# The x86-64 guest has one execution engine, named explicitly so the launch
+# contract never depends on the emulator's default. Virtio sound plays through
+# the Apple audio output.
 OPTIONS = ("--execution-engine=gadgets", "--audio")
 
 

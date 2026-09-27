@@ -32,7 +32,6 @@ struct Vp9FrameHeader {
 // frame size has to follow the slots across frames.
 class Vp9Context {
 public:
-    void reset() noexcept;
     // Parses one complete VP9 frame and, unless the frame only asks for an
     // already decoded one to be shown, updates the reference slot sizes.
     Vp9FrameHeader parse(std::span<const std::uint8_t> frame) noexcept;

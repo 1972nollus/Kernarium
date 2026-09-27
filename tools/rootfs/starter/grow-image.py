@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from gpt import SECTOR_SIZE, ImageError, inspect
+from gpt import ImageError, inspect
 
 GIB = 1024 * 1024 * 1024
 
@@ -74,8 +74,6 @@ def main() -> int:
     current = int(before["size"])
     if requested <= current:
         fail(f"target must grow the image beyond {current} bytes")
-    if requested % SECTOR_SIZE:
-        fail("target size must be sector aligned")
     if shutil.which("sgdisk") is None:
         fail("sgdisk is required on the host")
 

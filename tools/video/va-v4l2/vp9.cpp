@@ -75,12 +75,6 @@ void readRenderSize(BitReader& reader) noexcept
 
 }
 
-void Vp9Context::reset() noexcept
-{
-    std::fill(std::begin(width_), std::end(width_), 0u);
-    std::fill(std::begin(height_), std::end(height_), 0u);
-}
-
 Vp9FrameHeader Vp9Context::parse(std::span<const std::uint8_t> frame) noexcept
 {
     Vp9FrameHeader header;
