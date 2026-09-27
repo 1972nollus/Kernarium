@@ -300,8 +300,9 @@ def verify_checkout(
             raise VerificationError(f"route {route.route_id} is not based on its pinned base")
     if expect == "final":
         command = [
-            str(root / "tools/sync-orangefox-device.py"),
-            "--android-root", str(root), "--orangefox-source", str(source), "--verify",
+            str(root / "tools/sync-device-tree.py"),
+            "--android-root", str(root), "--tree", "orangefox",
+            "--workspace", str(source), "--verify",
         ]
         if allow_kernel:
             command.append("--allow-prebuilt-kernel")

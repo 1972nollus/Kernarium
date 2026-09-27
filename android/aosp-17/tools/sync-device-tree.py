@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: GPL-3.0-or-later
-"""Synchronize the checked Kernarium device tree into an OrangeFox workspace."""
+# SPDX-License-Identifier: Apache-2.0
+"""Synchronize a checked Kernarium device tree into an AOSP or OrangeFox workspace."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import argparse
 import os
 import shutil
 import stat
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 
@@ -17,8 +18,24 @@ DESTINATION = PurePosixPath("device/kernarium/darwin")
 GENERATED_KERNEL = PurePosixPath("prebuilt/kernel")
 
 
+@dataclass(frozen=True)
+class Tree:
+    source: str
+    workspace: str
+    label: str
+    prebuilt_kernel: bool
+
+
+TREES = {
+    "overlay": Tree("overlay", "AOSP source", "device overlay", False),
+    "orangefox": Tree(
+        "third_party/orangefox/device", "OrangeFox source", "OrangeFox device tree", True
+    ),
+}
+
+
 def fail(message: str) -> None:
-    raise SystemExit(f"OrangeFox device sync: {message}")
+    raise SystemExit(f"device-tree sync: {message}")
 
 
 def checked_root(path: Path, label: str) -> Path:
@@ -63,13 +80,16 @@ def verify(source: Path, destination: Path, allow_kernel: bool) -> None:
         kind, mode, payload = destination_entries.pop(GENERATED_KERNEL)
         if kind != "file" or not mode & 0o111 or not payload:
             fail("generated prebuilt kernel is not a nonempty executable regular file")
-        prebuilt = PurePosixPath("prebuilt")
-        if prebuilt in destination_entries:
-            destination_entries.pop(prebuilt)
+        destination_entries.pop(GENERATED_KERNEL.parent, None)
     if source_entries.keys() != destination_entries.keys():
         missing = sorted(str(path) for path in source_entries.keys() - destination_entries.keys())
         extra = sorted(str(path) for path in destination_entries.keys() - source_entries.keys())
-        fail(f"destination inventory differs (missing={missing[:8]}, extra={extra[:8]})")
+        detail = []
+        if missing:
+            detail.append(f"missing={','.join(missing[:8])}")
+        if extra:
+            detail.append(f"extra={','.join(extra[:8])}")
+        fail(f"destination inventory differs ({'; '.join(detail)})")
     for relative, source_entry in source_entries.items():
         if destination_entries[relative] != source_entry:
             fail(f"destination entry differs: {relative}")
@@ -79,6 +99,8 @@ def synchronize(source: Path, destination: Path) -> None:
     if destination.exists() or destination.is_symlink():
         if destination.is_symlink() or not destination.is_dir():
             fail(f"destination is not a regular directory: {destination}")
+        # Inspect before removing so a stale symbolic link cannot redirect any
+        # operation outside the one exact device subtree.
         inventory(destination)
         shutil.rmtree(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -89,32 +111,36 @@ def synchronize(source: Path, destination: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--android-root", type=Path, required=True)
-    parser.add_argument("--orangefox-source", type=Path, required=True)
+    parser.add_argument("--tree", choices=sorted(TREES), required=True)
+    parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--allow-prebuilt-kernel", action="store_true")
     args = parser.parse_args()
+    tree = TREES[args.tree]
+    if args.allow_prebuilt_kernel and not tree.prebuilt_kernel:
+        fail(f"--allow-prebuilt-kernel is invalid for the {args.tree} tree")
+    if args.allow_prebuilt_kernel and not args.verify:
+        fail("--allow-prebuilt-kernel is valid only with --verify")
 
     android_root = checked_root(args.android_root, "Android policy root")
-    orangefox_source = checked_root(args.orangefox_source, "OrangeFox source")
-    if not (orangefox_source / ".repo/manifests").is_dir():
-        fail("OrangeFox source lacks Repo metadata")
-    source = android_root / "third_party/orangefox/device"
+    workspace = checked_root(args.workspace, tree.workspace)
+    if not (workspace / ".repo/manifests").is_dir():
+        fail(f"{tree.workspace} lacks Repo metadata")
+    source = android_root / tree.source
     if not source.is_dir() or source.is_symlink():
-        fail("checked OrangeFox device tree is missing or unsafe")
-    destination = orangefox_source / Path(DESTINATION)
+        fail(f"checked {tree.label} is missing or unsafe")
+    destination = workspace / Path(DESTINATION)
     try:
-        destination.parent.resolve().relative_to(orangefox_source)
+        destination.parent.resolve().relative_to(workspace)
     except ValueError:
-        fail("device destination escapes the OrangeFox source")
+        fail(f"device destination escapes the {tree.workspace}")
 
     if args.verify:
         verify(source, destination, args.allow_prebuilt_kernel)
-        print(f"verified exact OrangeFox device tree: {destination}")
+        print(f"verified exact {tree.label}: {destination}")
     else:
-        if args.allow_prebuilt_kernel:
-            fail("--allow-prebuilt-kernel is valid only with --verify")
         synchronize(source, destination)
-        print(f"synchronized exact OrangeFox device tree: {destination}")
+        print(f"synchronized exact {tree.label}: {destination}")
 
 
 if __name__ == "__main__":

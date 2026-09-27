@@ -9,7 +9,7 @@ ROOT_DIR=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
 PATCH_SERIES="$ROOT_DIR/scripts/patch_series.py"
 PROJECTS="$ANDROID_ROOT/patches/projects.tsv"
 VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
-OVERLAY_SYNC="$ANDROID_ROOT/tools/sync-device-overlay.py"
+DEVICE_SYNC="$ANDROID_ROOT/tools/sync-device-tree.py"
 JELLY_VERIFIER="$ANDROID_ROOT/tools/verify-jelly-source.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
 AOSP_SOURCE=
@@ -61,7 +61,7 @@ esac
 [ "$(uname -m)" = x86_64 ] || fail "builder host must be x86_64"
 [ -d "$AOSP_SOURCE/.repo/manifests" ] || fail "AOSP Repo metadata is missing"
 [ -x "$VERIFIER" ] || fail "AOSP patch verifier is missing"
-[ -x "$OVERLAY_SYNC" ] || fail "device-overlay sync tool is missing"
+[ -x "$DEVICE_SYNC" ] || fail "device-tree sync tool is missing"
 [ -x "$JELLY_VERIFIER" ] || fail "Jelly source verifier is missing"
 [ -x "$MESA_VENUS_VERIFIER" ] || fail "Mesa Venus source verifier is missing"
 [ -f "$PROJECTS" ] || fail "AOSP route table is missing"
@@ -81,7 +81,8 @@ while IFS="$(printf '\t')" read -r route_id checkout_path final_tree series_dir;
 		fail "could not apply the $route_id series"
 done
 
-"$OVERLAY_SYNC" --android-root "$ANDROID_ROOT" --aosp-source "$AOSP_SOURCE"
+"$DEVICE_SYNC" --android-root "$ANDROID_ROOT" --tree overlay \
+	--workspace "$AOSP_SOURCE"
 "$JELLY_VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \

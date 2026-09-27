@@ -234,14 +234,16 @@ def verify_source(
             fail(f"route {route.route_id} is not based on its pinned base")
 
     if expect == "final":
-        sync_tool = android_root / "tools/sync-device-overlay.py"
+        sync_tool = android_root / "tools/sync-device-tree.py"
         if not sync_tool.is_file():
-            fail("device-overlay sync tool is missing")
+            fail("device-tree sync tool is missing")
         run(
             str(sync_tool),
             "--android-root",
             str(android_root),
-            "--aosp-source",
+            "--tree",
+            "overlay",
+            "--workspace",
             str(source),
             "--verify",
         )
