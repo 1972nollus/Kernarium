@@ -5894,8 +5894,9 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	const Gadget &gadget, const FlagState &state, FlagState &produced)
 {
 	const auto &instruction = gadget.instruction;
+	/* A locked instruction has a memory destination, so it has no slot. */
 	const auto d = baked_register_slot(instruction.destination);
-	if (!d || instruction.locked)
+	if (!d)
 		return false;
 	const bool wide = instruction.destination.width == OperandWidth::dword ||
 		instruction.destination.width == OperandWidth::qword;
@@ -6071,55 +6072,9 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 	ExecutionMode mode, ProgramLinkResolver links, const FlagState &state,
 	bool has_following, FlagState &produced)
 {
+	/* The decoder admits LOCK only on memory-destination read-modify-write
+	 * operations (lock_allowed), and each of those has an atomic gadget. */
 	const auto &instruction = gadget.instruction;
-	const bool native_locked_scalar =
-		instruction.operation == Operation::move ||
-		instruction.operation == Operation::add ||
-		instruction.operation == Operation::subtract ||
-		instruction.operation == Operation::bit_and ||
-		instruction.operation == Operation::bit_or ||
-		instruction.operation == Operation::bit_xor ||
-		instruction.operation == Operation::compare ||
-		instruction.operation == Operation::test ||
-		instruction.operation == Operation::add_carry ||
-		instruction.operation == Operation::subtract_borrow ||
-		instruction.operation == Operation::exchange ||
-		instruction.operation == Operation::increment ||
-		instruction.operation == Operation::decrement ||
-		instruction.operation == Operation::negate ||
-		instruction.operation == Operation::bit_not ||
-		instruction.operation == Operation::shift_left ||
-		instruction.operation == Operation::shift_right ||
-		instruction.operation == Operation::shift_arithmetic_right ||
-		instruction.operation == Operation::rotate_left ||
-		instruction.operation == Operation::rotate_right ||
-		instruction.operation == Operation::rotate_carry_left ||
-		instruction.operation == Operation::rotate_carry_right ||
-		instruction.operation == Operation::double_shift_left ||
-		instruction.operation == Operation::double_shift_right ||
-		instruction.operation == Operation::multiply ||
-		instruction.operation == Operation::multiply_signed ||
-		instruction.operation == Operation::divide ||
-		instruction.operation == Operation::divide_signed ||
-		instruction.operation == Operation::bit_test ||
-		instruction.operation == Operation::bit_set ||
-		instruction.operation == Operation::bit_reset ||
-		instruction.operation == Operation::bit_complement ||
-		instruction.operation == Operation::bit_scan_forward ||
-		instruction.operation == Operation::bit_scan_reverse ||
-		instruction.operation == Operation::count_trailing_zeros ||
-		instruction.operation == Operation::count_leading_zeros ||
-		instruction.operation == Operation::population_count;
-	const bool native_locked_atomic =
-		instruction.operation == Operation::compare_exchange ||
-		instruction.operation == Operation::compare_exchange_pair ||
-		instruction.operation == Operation::exchange_add ||
-		instruction.operation == Operation::move_byte_swap ||
-		instruction.operation == Operation::crc32 ||
-		instruction.operation == Operation::adx ||
-		instruction.operation == Operation::scalar_bmi;
-	if (instruction.locked && !native_locked_scalar && !native_locked_atomic)
-		return false;
 	if (append_baked(stream, gadget, mode, state, produced)) {
 		/* A baked entry that executes no flag-setting host instruction
 		 * leaves the producer's NZCV for a later consumer. The bank's
