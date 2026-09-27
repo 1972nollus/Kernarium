@@ -221,6 +221,12 @@ struct CpuState final {
 		fp_dirty = true;
 	}
 
+	/* The guest FPCR, whether or not the deferred image is loaded yet. */
+	[[nodiscard]] std::uint32_t effective_fpcr() const noexcept
+	{
+		return fp_loaded ? fpcr : deferred_fpcr;
+	}
+
 	[[nodiscard]] std::uint64_t read_register(unsigned index,
 					     bool stack_pointer) const noexcept
 	{

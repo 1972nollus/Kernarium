@@ -68,12 +68,6 @@ constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 	return count;
 }
 
-[[nodiscard]] std::uint32_t effective_fpcr(
-	const arm64::CpuState &cpu) noexcept
-{
-	return cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
-}
-
 void correct_terminal_instruction_count(
 	const arm64::gadgets::Program &program, ::uml::cpu::EngineEvent event,
 	std::uint64_t fault_pc, std::size_t &executed) noexcept
@@ -101,7 +95,7 @@ void correct_fpcr_enable_instruction_count(
 	const arm64::CpuState &cpu, std::size_t &executed) noexcept
 {
 	if (event != ::uml::cpu::EngineEvent::continued ||
-	    (effective_fpcr(cpu) &
+	    (cpu.effective_fpcr() &
 	     arm64::detail::fpcr_exception_enable_mask) == 0U)
 		return;
 
@@ -1564,7 +1558,7 @@ BuildResult GadgetExecutor::translate(
 		mapping_changes_ = sequences.mapping_changes;
 	}
 	tlb_.tagged_addresses = cpu.tagged_addresses_enabled();
-	const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
+	const auto guest_fpcr = cpu.effective_fpcr();
 	if (single_step_ || (guest_fpcr &
 	     arm64::detail::fpcr_exception_enable_mask) != 0U)
 		return run_trap_enabled_instruction(cpu, memory, executed);
@@ -1607,7 +1601,7 @@ BuildResult GadgetExecutor::translate(
 			built.program, cpu, tlb_, executed);
 	const bool fpcr_enable_exit =
 		event == ::uml::cpu::EngineEvent::continued &&
-		(effective_fpcr(cpu) &
+		(cpu.effective_fpcr() &
 		 arm64::detail::fpcr_exception_enable_mask) != 0U;
 	const bool count_exit =
 		terminal_does_not_retire(event) || fpcr_enable_exit;
@@ -1701,7 +1695,7 @@ BuildResult GadgetExecutor::translate(
 
 	const bool transactional =
 		arm64::detail::needs_floating_exception_transaction(
-			cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr,
+			cpu.effective_fpcr(),
 			instruction);
 	if (!transactional) {
 		const auto event = arm64::gadgets::execute(

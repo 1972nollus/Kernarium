@@ -60,7 +60,7 @@ namespace uml::cpu::arm64 {
    * JIT form; it merely limits the boundary to one guest instruction so a
    * register-only FP/SIMD operation can be committed transactionally.
    */
-  const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
+  const auto guest_fpcr = cpu.effective_fpcr();
   if (single_step_ ||
       arm64::detail::enabled_exception_flags(guest_fpcr) != 0U) {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -373,7 +373,7 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
   if (!fetch_instruction(memory, cpu.pc, instruction))
     return Event::memory_fault;
 
-  const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
+  const auto guest_fpcr = cpu.effective_fpcr();
   if (!arm64::detail::needs_floating_exception_transaction(guest_fpcr,
                                                            instruction))
     return run_single_instruction(cpu, instruction, executed);
