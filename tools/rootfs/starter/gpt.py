@@ -9,8 +9,8 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import binascii
 import json
-import os
 import struct
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -251,7 +251,7 @@ def main() -> int:
     try:
         result = inspect(arguments.image.resolve())
     except (ImageError, OSError, UnicodeDecodeError) as error:
-        print(f"starter image verification failed: {error}", file=__import__("sys").stderr)
+        print(f"starter image verification failed: {error}", file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

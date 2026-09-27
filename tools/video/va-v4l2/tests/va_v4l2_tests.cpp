@@ -283,8 +283,8 @@ void testCapturePolicy()
           "an empty capture request leaves the choice to the probe");
     check(uml::va::captureMemoryRequest("device") == CaptureMemory::device,
           "a capture request can leave the decoder its own buffers");
-    check(uml::va::captureMemoryRequest("lend") == CaptureMemory::lend,
-          "a capture request can lend the decoder this driver's buffers");
+    check(uml::va::captureMemoryRequest("lend") == CaptureMemory::automatic,
+          "a request to lend is the automatic choice, which already lends wherever it can");
     check(uml::va::captureMemoryRequest("nonsense") == CaptureMemory::automatic,
           "an unrecognised capture request leaves the choice to the probe");
 }

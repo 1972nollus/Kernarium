@@ -25,8 +25,8 @@ endif()
 set(UML_V4L2_PROBE_BINARY "" CACHE FILEPATH
     "Static guest V4L2 regression executable built from tests/integration/video/v4l2_decode_probe.cpp")
 if(UML_V4L2_PROBE_BINARY)
-    if(NOT EXISTS "${UML_V4L2_PROBE_BINARY}" OR NOT TARGET uml_video_device)
-        message(FATAL_ERROR "V4L2 qualification requires its guest probe and video provider")
+    if(NOT EXISTS "${UML_V4L2_PROBE_BINARY}")
+        message(FATAL_ERROR "V4L2 qualification requires its guest probe")
     endif()
     if(UML_GUEST_16K_PAGES)
         set(_uml_video_page_size 16384)
@@ -230,9 +230,7 @@ uml_add_guest_integration_test(
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
 
-if(TARGET uml_balloon_device)
-    add_subdirectory(balloon)
-endif()
+add_subdirectory(balloon)
 
 # One-vCPU guest: an input burst past the tty buffer must not end console input.
 uml_add_guest_integration_test(

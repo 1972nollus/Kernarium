@@ -14,21 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-
-def run(*command: str, cwd: Path | None = None) -> str:
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise SystemExit(
-            f"AOSP patch-regenerator fixture command failed: {' '.join(command)}\n"
-            f"{result.stderr}"
-        )
-    return result.stdout.strip()
+from source_fixture import run
 
 
 def write_fixture(

@@ -13,7 +13,6 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import re
-import hashlib
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -573,26 +572,6 @@ class ArchitectureCatalog:
                 )
             )
         return result
-
-    def form_metadata(self, section: str, form: str) -> tuple[str, str]:
-        """Return digests of operational pseudocode and alias declarations."""
-        filename = self._files.get((section, form))
-        if filename is None:
-            raise ValueError(f"Arm {RELEASE} XML has no {section} form {form!r}")
-        root = self._tree(filename)
-        operations = b"".join(
-            ET.tostring(element, encoding="utf-8")
-            for element in root.findall(".//ps_section")
-        )
-        aliases = b"".join(
-            ET.tostring(element, encoding="utf-8")
-            for expression in ("./alias_list", "./aliasto")
-            for element in root.findall(expression)
-        )
-        return (
-            hashlib.sha256(operations).hexdigest(),
-            hashlib.sha256(aliases).hexdigest(),
-        )
 
     def _shared_features(self) -> dict[str, frozenset[str]]:
         """Return transitive feature predicates for shared ASL definitions."""

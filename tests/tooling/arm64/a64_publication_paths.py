@@ -10,7 +10,7 @@ import os
 import stat
 import tempfile
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Sequence
 
 
 def lexical_absolute_path(path: Path) -> Path:
@@ -176,13 +176,7 @@ def validate_publication_topology(
     return files, directories, reads
 
 
-def atomic_publish_bytes(
-    outputs: Sequence[tuple[Path, bytes]],
-    *,
-    validate_staged: Callable[[Sequence[tuple[Path, Path]]], None] | None = None,
-    before_replace: Callable[[], None] | None = None,
-    validate_published: Callable[[], None] | None = None,
-) -> None:
+def atomic_publish_bytes(outputs: Sequence[tuple[Path, bytes]]) -> None:
     """Write validated bytes through temporary files and atomic replacement."""
     staged: list[tuple[Path, Path]] = []
     try:
@@ -197,14 +191,8 @@ def atomic_publish_bytes(
             with os.fdopen(descriptor, "wb") as destination:
                 destination.write(payload)
                 destination.flush()
-        if validate_staged is not None:
-            validate_staged(staged)
-        if before_replace is not None:
-            before_replace()
         for path, temporary in staged:
             os.replace(temporary, path)
-        if validate_published is not None:
-            validate_published()
     finally:
         for _path, temporary in staged:
             if temporary.exists():

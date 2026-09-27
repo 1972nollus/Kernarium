@@ -49,19 +49,27 @@ int write_frame(void *network)
 	return result;
 }
 
-/* A resumed loop still has the frames of the last fill to take. A pause
- * requested before it has taken them all parks it with some still queued,
- * and the ring can then no longer hold its capacity. */
-bool wait_for_drained_ring(SlirpProvider &provider)
+/* Poll a condition the event loop makes true, for at most two seconds. */
+template <class Ready> bool wait_until(Ready ready)
 {
 	const auto deadline = Clock::now() + std::chrono::seconds{2};
-	while (provider.processed_transmits_for_testing() !=
-	       accepted_frames.load(std::memory_order_relaxed)) {
+	while (!ready()) {
 		if (Clock::now() >= deadline)
 			return false;
 		std::this_thread::sleep_for(std::chrono::milliseconds{1});
 	}
 	return true;
+}
+
+/* A resumed loop still has the frames of the last fill to take. A pause
+ * requested before it has taken them all parks it with some still queued,
+ * and the ring can then no longer hold its capacity. */
+bool wait_for_drained_ring(SlirpProvider &provider)
+{
+	return wait_until([&provider] {
+		return provider.processed_transmits_for_testing() ==
+		       accepted_frames.load(std::memory_order_relaxed);
+	});
 }
 
 /* Park the event loop and leave the ring holding its capacity. */
@@ -85,13 +93,9 @@ bool fill_parked_ring(void *network, SlirpProvider &provider)
 
 bool wait_for_one_waiter(SlirpProvider &provider)
 {
-	const auto deadline = Clock::now() + std::chrono::seconds{2};
-	while (provider.transmit_space_waiters_for_testing() != 1) {
-		if (Clock::now() >= deadline)
-			return false;
-		std::this_thread::sleep_for(std::chrono::milliseconds{1});
-	}
-	return true;
+	return wait_until([&provider] {
+		return provider.transmit_space_waiters_for_testing() == 1;
+	});
 }
 
 bool fail(const char *message)
