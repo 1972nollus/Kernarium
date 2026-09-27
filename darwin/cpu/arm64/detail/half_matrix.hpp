@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_bits.hpp"
 #include "floating_exception.hpp"
 #include "half_fused_long.hpp"
 #include "instruction_primitives.hpp"
@@ -40,54 +41,9 @@ struct HalfMatrixResult final {
 
 namespace half_matrix_detail {
 
+using namespace floating_bits;
+
 constexpr std::uint32_t fp_exception_mask = 0xf800'009fU;
-
-[[nodiscard]] constexpr bool half_nan(std::uint16_t value) noexcept
-{
-	return (value & 0x7c00U) == 0x7c00U && (value & 0x03ffU) != 0U;
-}
-
-[[nodiscard]] constexpr bool half_signaling_nan(std::uint16_t value) noexcept
-{
-	return half_nan(value) && (value & 0x0200U) == 0U;
-}
-
-[[nodiscard]] constexpr bool half_infinity(std::uint16_t value) noexcept
-{
-	return (value & 0x7fffU) == 0x7c00U;
-}
-
-[[nodiscard]] constexpr bool half_zero(std::uint16_t value) noexcept
-{
-	return (value & 0x7fffU) == 0U;
-}
-
-[[nodiscard]] constexpr bool half_subnormal(std::uint16_t value) noexcept
-{
-	return (value & 0x7c00U) == 0U && (value & 0x03ffU) != 0U;
-}
-
-[[nodiscard]] constexpr bool single_nan(std::uint32_t value) noexcept
-{
-	return (value & 0x7f80'0000U) == 0x7f80'0000U &&
-		(value & 0x007f'ffffU) != 0U;
-}
-
-[[nodiscard]] constexpr bool single_signaling_nan(std::uint32_t value) noexcept
-{
-	return single_nan(value) && (value & 0x0040'0000U) == 0U;
-}
-
-[[nodiscard]] constexpr bool single_infinity(std::uint32_t value) noexcept
-{
-	return (value & 0x7fff'ffffU) == 0x7f80'0000U;
-}
-
-[[nodiscard]] constexpr bool single_subnormal(std::uint32_t value) noexcept
-{
-	return (value & 0x7f80'0000U) == 0U &&
-		(value & 0x007f'ffffU) != 0U;
-}
 
 [[nodiscard]] constexpr std::uint16_t default_half_nan(
 	std::uint32_t fpcr) noexcept
@@ -158,24 +114,24 @@ struct BinaryResult final {
 	if (!alternative)
 		return captured_half_binary(left, right, fpcr, multiply);
 	if ((fpcr & (1U << 19)) != 0U) {
-		if (half_subnormal(left))
+		if (is_subnormal<std::uint16_t>(left))
 			left &= 0x8000U;
-		if (half_subnormal(right))
+		if (is_subnormal<std::uint16_t>(right))
 			right &= 0x8000U;
 	}
 
-	const bool left_nan = half_nan(left);
-	const bool right_nan = half_nan(right);
+	const bool left_nan = is_nan<std::uint16_t>(left);
+	const bool right_nan = is_nan<std::uint16_t>(right);
 	if (left_nan || right_nan) {
-		const bool any_signaling = half_signaling_nan(left) ||
-			half_signaling_nan(right);
+		const bool any_signaling = is_signaling_nan<std::uint16_t>(left) ||
+			is_signaling_nan<std::uint16_t>(right);
 		const std::uint16_t selected = left_nan ? left : right;
 		return {process_half_nan(selected, fpcr), any_signaling ? 1U : 0U};
 	}
 	const bool invalid = multiply ?
-		((half_infinity(left) && half_zero(right)) ||
-		 (half_zero(left) && half_infinity(right))) :
-		(half_infinity(left) && half_infinity(right) &&
+		((is_infinity<std::uint16_t>(left) && is_zero<std::uint16_t>(right)) ||
+		 (is_zero<std::uint16_t>(left) && is_infinity<std::uint16_t>(right))) :
+		(is_infinity<std::uint16_t>(left) && is_infinity<std::uint16_t>(right) &&
 		 ((left ^ right) & 0x8000U) != 0U);
 	if (invalid)
 		return {default_half_nan(fpcr), 1U};
@@ -187,7 +143,7 @@ struct BinaryResult final {
 	auto result = captured_half_binary(left, right,
 		fpcr & ~(2U | (1U << 19)), multiply);
 	const auto bits = static_cast<std::uint16_t>(result.bits);
-	if (half_subnormal(bits)) {
+	if (is_subnormal<std::uint16_t>(bits)) {
 		if (flush_output) {
 			result.bits = bits & 0x8000U;
 			result.exceptions |= (1U << 3) | (1U << 4);
@@ -230,34 +186,34 @@ struct BinaryResult final {
 	const bool flush_output = (fpcr & (1U << 24)) != 0U;
 	if (!alternative) {
 		if (flush_input && !flush_output) {
-			if (single_subnormal(left))
+			if (is_subnormal<std::uint32_t>(left))
 				left &= 0x8000'0000U;
-			if (single_subnormal(right))
+			if (is_subnormal<std::uint32_t>(right))
 				right &= 0x8000'0000U;
 			return captured_single_add(left, right, fpcr & ~1U);
 		}
 		return captured_single_add(left, right, fpcr);
 	}
 
-	const bool left_denormal = single_subnormal(left);
-	const bool right_denormal = single_subnormal(right);
+	const bool left_denormal = is_subnormal<std::uint32_t>(left);
+	const bool right_denormal = is_subnormal<std::uint32_t>(right);
 	if (flush_input) {
 		if (left_denormal)
 			left &= 0x8000'0000U;
 		if (right_denormal)
 			right &= 0x8000'0000U;
 	}
-	const bool left_nan = single_nan(left);
-	const bool right_nan = single_nan(right);
+	const bool left_nan = is_nan<std::uint32_t>(left);
+	const bool right_nan = is_nan<std::uint32_t>(right);
 	if (left_nan || right_nan) {
-		const bool any_signaling = single_signaling_nan(left) ||
-			single_signaling_nan(right);
+		const bool any_signaling = is_signaling_nan<std::uint32_t>(left) ||
+			is_signaling_nan<std::uint32_t>(right);
 		const auto selected = left_nan ? left : right;
 		const auto result = (fpcr & (1U << 25)) != 0U ?
 			default_single_nan(fpcr) : selected | 0x0040'0000U;
 		return {result, any_signaling ? 1U : 0U};
 	}
-	if (single_infinity(left) && single_infinity(right) &&
+	if (is_infinity<std::uint32_t>(left) && is_infinity<std::uint32_t>(right) &&
 	    ((left ^ right) & 0x8000'0000U) != 0U)
 		return {default_single_nan(fpcr), 1U};
 
@@ -266,7 +222,7 @@ struct BinaryResult final {
 	if (!flush_input && (left_denormal || right_denormal))
 		result.exceptions |= 1U << 7;
 	const auto bits = static_cast<std::uint32_t>(result.bits);
-	if (single_subnormal(bits)) {
+	if (is_subnormal<std::uint32_t>(bits)) {
 		if (flush_output) {
 			result.bits = bits & 0x8000'0000U;
 			result.exceptions |= (1U << 3) | (1U << 4);
@@ -317,7 +273,7 @@ struct BinaryResult final {
 {
 	if ((fpcr & (1U << 19)) != 0U) {
 		auto flush = [](std::uint16_t value) {
-			return half_subnormal(value) ?
+			return is_subnormal<std::uint16_t>(value) ?
 				static_cast<std::uint16_t>(value & 0x8000U) : value;
 		};
 		left_a = flush(left_a);
@@ -328,15 +284,15 @@ struct BinaryResult final {
 	const std::array values{left_a, left_b, right_a, right_b};
 	for (bool signaling : {true, false}) {
 		for (const auto value : values) {
-			if (half_nan(value) &&
-			    half_signaling_nan(value) == signaling)
+			if (is_nan<std::uint16_t>(value) &&
+			    is_signaling_nan<std::uint16_t>(value) == signaling)
 				return {convert_half_nan(value, fpcr), signaling ? 1U : 0U};
 		}
 	}
-	const bool zero_a = half_zero(left_a) || half_zero(right_a);
-	const bool zero_b = half_zero(left_b) || half_zero(right_b);
-	const bool infinity_a = half_infinity(left_a) || half_infinity(right_a);
-	const bool infinity_b = half_infinity(left_b) || half_infinity(right_b);
+	const bool zero_a = is_zero<std::uint16_t>(left_a) || is_zero<std::uint16_t>(right_a);
+	const bool zero_b = is_zero<std::uint16_t>(left_b) || is_zero<std::uint16_t>(right_b);
+	const bool infinity_a = is_infinity<std::uint16_t>(left_a) || is_infinity<std::uint16_t>(right_a);
+	const bool infinity_b = is_infinity<std::uint16_t>(left_b) || is_infinity<std::uint16_t>(right_b);
 	const bool sign_a = ((left_a ^ right_a) & 0x8000U) != 0U;
 	const bool sign_b = ((left_b ^ right_b) & 0x8000U) != 0U;
 	if ((zero_a && infinity_a) || (zero_b && infinity_b) ||

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "bfloat_multiply.hpp"
+#include "floating_bits.hpp"
 #include "floating_exception.hpp"
 
 #include <bit>
@@ -62,11 +63,6 @@ struct HalfFusedLongResult final {
 
 namespace half_fused_long_detail {
 
-[[nodiscard]] constexpr bool half_nan(std::uint16_t bits) noexcept
-{
-	return (bits & 0x7c00U) == 0x7c00U && (bits & 0x03ffU) != 0U;
-}
-
 [[nodiscard]] constexpr std::uint32_t expand_half(std::uint16_t bits,
 	std::uint32_t fpcr) noexcept
 {
@@ -111,12 +107,6 @@ namespace half_fused_long_detail {
 	return {result, static_cast<std::uint32_t>(exceptions) & 0xf800'009fU};
 }
 
-[[nodiscard]] constexpr bool subnormal_single(std::uint32_t bits) noexcept
-{
-	return (bits & 0x7f80'0000U) == 0U &&
-		(bits & 0x007f'ffffU) != 0U;
-}
-
 } // namespace half_fused_long_detail
 
 [[nodiscard]] inline HalfFusedLongResult half_fused_multiply_add(
@@ -125,7 +115,7 @@ namespace half_fused_long_detail {
 {
 	using namespace bfloat_multiply_detail;
 	using namespace half_fused_long_detail;
-	if (subtract && !((fpcr & 2U) != 0U && half_nan(left_half)))
+	if (subtract && !((fpcr & 2U) != 0U && is_nan<std::uint16_t>(left_half)))
 		left_half ^= 0x8000U;
 	std::uint32_t left = expand_half(left_half, fpcr);
 	std::uint32_t right = expand_half(right_half, fpcr);
@@ -138,7 +128,7 @@ namespace half_fused_long_detail {
 		return captured_fmadd(addend, left, right, fpcr);
 	}
 
-	const bool addend_denormal = subnormal_single(addend) &&
+	const bool addend_denormal = is_subnormal<std::uint32_t>(addend) &&
 		(fpcr & 1U) == 0U;
 	if ((fpcr & 1U) != 0U)
 		addend = flush_subnormal(addend);
@@ -193,7 +183,7 @@ namespace half_fused_long_detail {
 	auto result = captured_fmadd(addend, left, right, local_fpcr);
 	if (addend_denormal)
 		result.exceptions |= 1U << 7;
-	const bool result_subnormal = subnormal_single(result.bits);
+	const bool result_subnormal = is_subnormal<std::uint32_t>(result.bits);
 	const bool result_zero = (result.bits & 0x7fff'ffffU) == 0U;
 	if (!result_subnormal)
 		result.exceptions &= ~(1U << 3);
