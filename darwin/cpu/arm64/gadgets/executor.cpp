@@ -1536,18 +1536,12 @@ std::optional<BuildResult> GadgetExecutor::find(
 		cache_diagnostics_);
 }
 
-/* Produce a translation the cache did not hold. */
+/* Produce and store a translation the cache did not hold. */
 BuildResult GadgetExecutor::translate(
 	std::uint64_t pc, std::span<const std::uint32_t> window)
 {
 	++cache_diagnostics_.translations;
-	return build(pc, window);
-}
-
-BuildResult GadgetExecutor::build(
-	std::uint64_t pc, std::span<const std::uint32_t> window)
-{
-	auto decoded = arm64::gadgets::Builder{}.build(
+	const auto decoded = arm64::gadgets::Builder{}.build(
 		pc, window,
 		[this](std::uint64_t target) {
 			return programs_->link(target);
@@ -1557,14 +1551,7 @@ BuildResult GadgetExecutor::build(
 			return programs_->indirect_link(source_pc);
 		},
 		build_options_);
-	return store(pc, decoded, window);
-}
-
-BuildResult GadgetExecutor::store(
-	std::uint64_t pc, const BuildResult &result,
-	std::span<const std::uint32_t> guest_words)
-{
-	return programs_->store(pc, result, guest_words, cache_changes_);
+	return programs_->store(pc, decoded, window, cache_changes_);
 }
 
 ::uml::cpu::EngineEvent GadgetExecutor::run_block(

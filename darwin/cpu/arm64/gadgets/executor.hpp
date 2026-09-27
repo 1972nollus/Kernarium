@@ -86,11 +86,6 @@ private:
 		::uml::memory::StaticGuestMemory &memory);
 	[[nodiscard]] BuildResult translate(
 		std::uint64_t pc, std::span<const std::uint32_t> window);
-	[[nodiscard]] BuildResult build(
-		std::uint64_t pc, std::span<const std::uint32_t> window);
-	[[nodiscard]] BuildResult store(
-		std::uint64_t pc, const BuildResult &result,
-		std::span<const std::uint32_t> guest_words);
 	[[nodiscard]] void *execution_context(unsigned long generation);
 	[[nodiscard]] ::uml::cpu::EngineEvent run_trap_enabled_instruction(
 		CpuState &cpu, ::uml::memory::StaticGuestMemory &memory,
