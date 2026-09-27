@@ -44,7 +44,7 @@ leaking its open command buffers.
  docs/drivers/kosmickrisp/workarounds.rst      |   7 +-
  src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 168 ++++--
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  32 ++
- src/kosmickrisp/vulkan/kk_cmd_draw.c          |  40 +-
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          |  36 +-
  src/kosmickrisp/vulkan/kk_queue.c             |   4 +-
  src/kosmickrisp/vulkan/meson.build            |  20 +
  .../tests/command_buffer_shaders/color.frag   |   7 +
@@ -53,7 +53,7 @@ leaking its open command buffers.
  .../tests/command_buffer_shaders/color.vert.h |  47 ++
  .../tests/command_buffer_shaders/generate.sh  |   7 +
  .../tests/test_command_buffer_consolidation.c | 526 ++++++++++++++++++
- 12 files changed, 831 insertions(+), 56 deletions(-)
+ 12 files changed, 826 insertions(+), 57 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag.h
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.vert
@@ -87,7 +87,7 @@ index 3a7408608df069d4761c4b999a6ad228bc62316f..82bb255db89732f917f5839107fecbdf
  The cost is one attachment load and store per such draw; a pass that never
  writes the layer, or is not layered, is untouched. The
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index f021f797231748d65960d14ac6fec34063e008b8..9955b59be279b624a586993fc545d57b733b7686 100644
+index f021f797231748d65960d14ac6fec34063e008b8..9619f9d99f14b8b0ffa7f562cba11b171e365035 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -79,6 +79,9 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
@@ -239,7 +239,7 @@ index f021f797231748d65960d14ac6fec34063e008b8..9955b59be279b624a586993fc545d57b
 +    * yet, a dynamic vertex input for one, and starting the encoder has
 +    * marked all of it dirty for the next draw to flush. */
 +   if (cmd->state.gfx.draw_state_flushed)
-+      kk_cmd_buffer_flush_gfx_state(cmd);
++      kk_flush_gfx_state(cmd);
  }
  
  mtl_compute_encoder *
@@ -349,7 +349,7 @@ index f021f797231748d65960d14ac6fec34063e008b8..9955b59be279b624a586993fc545d57b
  kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd, uint64_t addr)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 1b1b941a091821afbf262375c4941bd7c00d008d..232cebd9c13edde902af3174d6ebf40a3827dff0 100644
+index 1b1b941a091821afbf262375c4941bd7c00d008d..e0bca96fa29bc9247fee77fe998308b55ae91d04 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -213,6 +213,11 @@ struct kk_graphics_state {
@@ -408,28 +408,24 @@ index 1b1b941a091821afbf262375c4941bd7c00d008d..232cebd9c13edde902af3174d6ebf40a
 +void cs_flush(struct kk_cmd_buffer *cmd);
 +/* Re-emits the graphics state of the draw being recorded into a render
 + * encoder that restarted after the draw flushed it. */
-+void kk_cmd_buffer_flush_gfx_state(struct kk_cmd_buffer *cmd);
++void kk_flush_gfx_state(struct kk_cmd_buffer *cmd);
  void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
                                          uint64_t addr);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index d9ec6876dd0c8ed8e6a63a9ba4a6c67c458ba4fe..537e056d5d75e8652fb8f3a37c2b3c0078f82471 100644
+index d9ec6876dd0c8ed8e6a63a9ba4a6c67c458ba4fe..9fdf50c6326832640fb43fc07985a81ea5cf9f16 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1879,6 +1879,12 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
- #undef IS_SHADER_DIRTY
- #undef IS_DIRTY
+@@ -1830,7 +1830,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+    }
+ }
  
+-static void
 +void
-+kk_cmd_buffer_flush_gfx_state(struct kk_cmd_buffer *cmd)
-+{
-+   kk_flush_gfx_state(cmd);
-+}
-+
- /* Returns true if the draw was successfully converted. */
- static bool
- kk_convert_to_indirect_draw(struct kk_cmd_buffer *cmd,
-@@ -3353,20 +3359,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+ {
+    struct kk_graphics_state *gfx = &cmd->state.gfx;
+@@ -3353,20 +3353,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
  }
  
  static void
@@ -451,7 +447,7 @@ index d9ec6876dd0c8ed8e6a63a9ba4a6c67c458ba4fe..537e056d5d75e8652fb8f3a37c2b3c00
     data->restart = cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable;
     data->restart_index =
        cmd->vk.dynamic_graphics_state.ia.primitive_restart_index;
-@@ -3495,6 +3489,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3495,6 +3483,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     }
  }
  

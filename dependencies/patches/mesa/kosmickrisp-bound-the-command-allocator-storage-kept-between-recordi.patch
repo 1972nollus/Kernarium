@@ -116,7 +116,7 @@ index d87a8dc077cdb06eab7902968a3aec805e9bb356..1c5ecad4c45b7daef95a04041addbf91
  mtl_begin_command_buffer(mtl_command_buffer *command_buffer,
                           mtl_command_allocator *allocator)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 9955b59be279b624a586993fc545d57b733b7686..86173ba56df715c8c361a158ed711122718528ce 100644
+index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16cec0b6fb5 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -83,6 +83,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
@@ -334,7 +334,7 @@ index 9955b59be279b624a586993fc545d57b733b7686..86173ba56df715c8c361a158ed711122
     es->encoder = mtl_new_compute_command_encoder(es->cmd_buf);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 232cebd9c13edde902af3174d6ebf40a3827dff0..ab7e422b6cb3e661d87d908f0ae60919a370abbe 100644
+index e0bca96fa29bc9247fee77fe998308b55ae91d04..8546213f6b3dad81bdce8f2a446e69f5f5b92495 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -332,6 +332,9 @@ struct kk_ts_sample {
