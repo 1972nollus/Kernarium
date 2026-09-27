@@ -172,7 +172,6 @@ private:
   std::size_t index_capacity_{};
   std::unique_ptr<JitBlockLink *[]> index_;
   JitBlockLink *records_{};
-  std::size_t owned_size_{};
 };
 
 /*
