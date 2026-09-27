@@ -9,8 +9,6 @@ import argparse
 import pathlib
 import subprocess
 import sys
-import threading
-import time
 
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
@@ -76,28 +74,6 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def mirror_transcript(
-    guest: Guest,
-    output_path: pathlib.Path,
-    ready: threading.Event,
-    stop: threading.Event,
-) -> None:
-    """Append new raw console bytes while Guest owns the PTY reader."""
-    offset = 0
-    with output_path.open("wb") as output:
-        ready.set()
-        while True:
-            available = len(guest._transcript)
-            if available > offset:
-                chunk = bytes(guest._transcript[offset:available])
-                output.write(chunk)
-                output.flush()
-                offset = available
-            if stop.is_set() and offset == len(guest._transcript):
-                return
-            time.sleep(0.1)
-
-
 def main() -> int:
     arguments = parse_arguments()
     if arguments.cpus < 1 or arguments.cpus > 64:
@@ -111,7 +87,7 @@ def main() -> int:
     if arguments.profile_dir is not None:
         arguments.profile_dir.mkdir(parents=True, exist_ok=True)
     arguments.console_log.parent.mkdir(parents=True, exist_ok=True)
-    with Guest(
+    with arguments.console_log.open("wb") as console_log, Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         arguments.memory,
@@ -124,24 +100,10 @@ def main() -> int:
         overlay_shell=True,
         engine=arguments.engine,
         core_class=arguments.core_class,
+        console_sink=console_log,
     ) as guest:
-        mirror_stop = threading.Event()
-        mirror_ready = threading.Event()
-        mirror: threading.Thread | None = None
         profiler: subprocess.Popen[bytes] | None = None
         try:
-            mirror = threading.Thread(
-                target=mirror_transcript,
-                args=(
-                    guest,
-                    arguments.console_log.resolve(),
-                    mirror_ready,
-                    mirror_stop,
-                ),
-                name="geekbench-console-mirror",
-            )
-            mirror.start()
-            mirror_ready.wait()
             guest.boot_and_login(180)
             if arguments.profile_dir is not None:
                 profiler = subprocess.Popen(
@@ -189,9 +151,6 @@ def main() -> int:
                 except subprocess.TimeoutExpired:
                     profiler.kill()
                     profiler.wait()
-            mirror_stop.set()
-            if mirror is not None:
-                mirror.join(timeout=5)
     return 0
 
 

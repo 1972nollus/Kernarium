@@ -19,6 +19,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Sequence
+from typing import BinaryIO
 
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -234,6 +235,7 @@ class Guest:
         engine: str = "jit",
         core_class: str = "performance",
         pass_fds: Sequence[int] = (),
+        console_sink: BinaryIO | None = None,
     ) -> None:
         # The image locks root, so a guest is only reachable through one of
         # the two /bin/sh init modes.
@@ -298,6 +300,9 @@ class Guest:
         self._input = self._process.stdin
         os.set_blocking(self._input.fileno(), False)
         self._transcript = bytearray()
+        # Receives every console byte as the harness reads it, so a caller
+        # can stream a long command's output instead of waiting for its end.
+        self._console_sink = console_sink
 
     def __enter__(self) -> Guest:
         return self
@@ -612,6 +617,9 @@ class Guest:
             if not chunk:
                 return
             self._transcript.extend(chunk)
+            if self._console_sink is not None:
+                self._console_sink.write(chunk)
+                self._console_sink.flush()
 
     @staticmethod
     def _normal_output(output: bytes) -> str:

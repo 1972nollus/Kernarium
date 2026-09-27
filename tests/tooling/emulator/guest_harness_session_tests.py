@@ -150,6 +150,23 @@ class AttachedGuestSessionTests(unittest.TestCase):
         guest._write("exit\n")
         guest._process.wait(timeout=5)
 
+    def test_a_console_sink_receives_every_byte_the_harness_reads(self) -> None:
+        self.emulator.write_text("#!/bin/sh\nexec /bin/sh\n", encoding="utf-8")
+        sink = io.BytesIO()
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+            console_sink=sink,
+        )
+        self.addCleanup(guest.close)
+        result = guest.run_command("printf '%s' sink-marker")
+        self.assertEqual(result.output, "sink-marker")
+        self.assertIn(b"sink-marker", sink.getvalue())
+        self.assertEqual(sink.getvalue(), bytes(guest._transcript))
+
     def test_a_command_reads_the_input_that_follows_it(self) -> None:
         self.emulator.write_text("#!/bin/sh\nexec /bin/sh\n", encoding="utf-8")
         guest = guest_support.Guest(
