@@ -55,7 +55,7 @@ same mask in pSampleMask and early tests, and with no mask at all.  It reads
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  30 +-
  src/kosmickrisp/vulkan/kk_gpl.h               |  28 ++
  src/kosmickrisp/vulkan/kk_physical_device.c   |   6 +-
- src/kosmickrisp/vulkan/kk_shader.c            |  78 ++-
+ src/kosmickrisp/vulkan/kk_shader.c            |  76 ++-
  src/kosmickrisp/vulkan/kk_shader.h            |   6 +
  src/kosmickrisp/vulkan/meson.build            |  14 +
  .../tests/early_sample_mask_shaders/esm.vert  |  11 +
@@ -68,7 +68,7 @@ same mask in pSampleMask and early tests, and with no mask at all.  It reads
  .../esm_plain.frag.h                          |  19 +
  .../early_sample_mask_shaders/generate.sh     |   7 +
  .../tests/test_early_sample_mask_count.cpp    | 449 ++++++++++++++++++
- 17 files changed, 799 insertions(+), 5 deletions(-)
+ 17 files changed, 797 insertions(+), 5 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm.vert.h
  create mode 100644 src/kosmickrisp/vulkan/tests/early_sample_mask_shaders/esm_early.frag
@@ -203,10 +203,10 @@ index 82f5d4aff2015f1e0bb72a28ec399f8a69d6a141..50f97c4fb549e15259ad97b1855ed13e
        .polygonModePointSize = true,
        .nonStrictSinglePixelWideLinesUseParallelogram = false,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 59560b2803f211e7ba6d4f14c4b8111c8ac8b14b..9cfde746355f5f9f336f77d3e7ed81d95b3d56eb 100644
+index d59ade5305d913cda049362d42dede62620f869b..8161cedc8b2fdcc302ef7893f2c06c044b7b8359 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -746,6 +746,65 @@ kk_nir_lower_fs_pipeline_statistics(nir_shader *nir)
+@@ -742,6 +742,63 @@ kk_nir_lower_fs_pipeline_statistics(nir_shader *nir)
     nir_progress(true, b.impl, nir_metadata_none);
  }
  
@@ -248,13 +248,11 @@ index 59560b2803f211e7ba6d4f14c4b8111c8ac8b14b..9cfde746355f5f9f336f77d3e7ed81d9
 +   nir_builder b =
 +      nir_builder_at(nir_before_impl(nir_shader_get_entrypoint(nir)));
 +
-+   nir_def *root = nir_load_buffer_ptr_kk(&b, 1, 64, .binding = 0);
-+   nir_def *address = nir_load_global_constant(
++   nir_def *address = kk_nir_load_root(
 +      &b, 1, 64,
-+      nir_iadd_imm(&b, root,
-+                   offsetof(struct kk_root_descriptor_table,
-+                            draw.occlusion_counter)),
-+      .align_mul = 8, .align_offset = 0);
++      nir_imm_int(&b, offsetof(struct kk_root_descriptor_table,
++                               draw.occlusion_counter)),
++      8);
 +
 +   nir_def *enabled = nir_ine_imm(&b, address, 0);
 +   nir_def *non_helper = nir_inot(&b, nir_load_helper_invocation(&b, 1));
@@ -272,7 +270,7 @@ index 59560b2803f211e7ba6d4f14c4b8111c8ac8b14b..9cfde746355f5f9f336f77d3e7ed81d9
  static void
  kk_lower_fs(struct kk_device *dev, nir_shader *nir,
              const struct vk_graphics_pipeline_state *state, bool writes_depth,
-@@ -1102,7 +1161,6 @@ gather_shader_info(struct kk_shader *shader, nir_shader *nir,
+@@ -1098,7 +1155,6 @@ gather_shader_info(struct kk_shader *shader, nir_shader *nir,
        shader->info.fs.flat_inputs =
           nir->info.inputs_read &
           ~(nir->info.linear_varyings | nir->info.perspective_varyings);
@@ -280,7 +278,7 @@ index 59560b2803f211e7ba6d4f14c4b8111c8ac8b14b..9cfde746355f5f9f336f77d3e7ed81d9
        /* Some meta shaders like vk-meta-resolve will have depth_layout as NONE
         * which is not a valid Metal layout */
        if (nir->info.fs.depth_layout == FRAG_DEPTH_LAYOUT_NONE)
-@@ -1266,6 +1324,19 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1262,6 +1318,19 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
        msl_nir_lower_clip_cull_distance(nir, num_cull_distances);
     }
  
@@ -300,7 +298,7 @@ index 59560b2803f211e7ba6d4f14c4b8111c8ac8b14b..9cfde746355f5f9f336f77d3e7ed81d9
     NIR_PASS(_, nir, kk_nir_lower_poly, pipeline_statistics);
  
     msl_optimize_nir(nir);
-@@ -3703,8 +3774,11 @@ gather_graphics_pipeline_create_info(
+@@ -3699,8 +3768,11 @@ gather_graphics_pipeline_create_info(
        if (s->info.stage == MESA_SHADER_TESS_CTRL)
           info->vs.tess_local_thread_size = s->info.tess.tcs_output_patch_size;
  
@@ -314,7 +312,7 @@ index 59560b2803f211e7ba6d4f14c4b8111c8ac8b14b..9cfde746355f5f9f336f77d3e7ed81d9
  
     uint8_t topology = state->ia->primitive_topology;
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index efd92952ec3851e09a2c4bf8632c7a4d9e0d5dd8..c508dbbfa6405f8eda0de393ac17c292a36c9717 100644
+index 52a458129777acc963c77ab59e948039ecd287b9..09add93f3c4a0164c74bd5cb77d89880e2aab09e 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -125,6 +125,9 @@ struct kk_shader_info {

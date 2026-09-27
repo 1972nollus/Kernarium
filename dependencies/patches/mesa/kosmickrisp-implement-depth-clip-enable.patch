@@ -8,11 +8,13 @@ Subject: [PATCH] kosmickrisp: implement depth clip enable
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   4 +
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  35 ++-
  src/kosmickrisp/vulkan/kk_depth_clip.h        | 117 +++++++++
+ .../vulkan/kk_nir_lower_descriptors.c         |   7 +
  src/kosmickrisp/vulkan/kk_physical_device.c   |   5 +
- src/kosmickrisp/vulkan/kk_shader.c            | 174 +++++++++++++-
+ src/kosmickrisp/vulkan/kk_shader.c            | 170 ++++++++++++-
+ src/kosmickrisp/vulkan/kk_shader.h            |   5 +
  src/kosmickrisp/vulkan/meson.build            |  12 +
  .../vulkan/tests/test_depth_clip.c            | 223 ++++++++++++++++++
- 8 files changed, 560 insertions(+), 12 deletions(-)
+ 10 files changed, 568 insertions(+), 12 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_depth_clip.h
  create mode 100644 src/kosmickrisp/vulkan/tests/test_depth_clip.c
 
@@ -255,6 +257,24 @@ index 0000000000000000000000000000000000000000..8b698c583019baad22275dfd358aacb4
 +}
 +
 +#endif /* KK_DEPTH_CLIP_H */
+diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
+index af7c0cea6d136fbce0eec160c207e65655c8a5c8..648adc8c36364ba3ff32d5c37382b1902c18b5a8 100644
+--- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
++++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
+@@ -65,6 +65,13 @@ load_root(nir_builder *b, unsigned num_components, unsigned bit_size,
+    return load_speculatable(b, num_components, bit_size, addr, align);
+ }
+ 
++nir_def *
++kk_nir_load_root(nir_builder *b, unsigned num_components, unsigned bit_size,
++                 nir_def *offset, unsigned align)
++{
++   return load_root(b, num_components, bit_size, offset, align);
++}
++
+ static nir_def *
+ load_per_draw(nir_builder *b, unsigned num_components, unsigned bit_size,
+               nir_def *offset, unsigned align)
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
 index 628b8e8bdb3411697499a8207ea0f13d97580fd8..073e9adb13971b84a3f97b15d987b57d9998bd8f 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
@@ -286,7 +306,7 @@ index 628b8e8bdb3411697499a8207ea0f13d97580fd8..073e9adb13971b84a3f97b15d987b57d
        /* Rectangular-line expansion is selected at pipeline compile time. */
        .extendedDynamicState3LineRasterizationMode = false,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..62d19d267a968f5cdafcc9719105a3f5f182fdc1 100644
+index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..93b77ae4a35eb7d96c3667d5d3de34ac9fc6b600 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -117,6 +117,7 @@ struct kk_vs_key {
@@ -322,7 +342,7 @@ index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..62d19d267a968f5cdafcc9719105a3f5
  }
  
  static void
-@@ -372,6 +377,111 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
+@@ -372,6 +377,107 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
     NIR_PASS(_, nir, kk_nir_lower_vbo, attributes, robustness2);
  }
  
@@ -335,10 +355,7 @@ index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..62d19d267a968f5cdafcc9719105a3f5
 +   nir_def *byte_offset = nir_imul_imm(b, viewport, element_size);
 +   byte_offset = nir_iadd_imm(b, byte_offset, array_offset);
 +
-+   nir_def *root = nir_load_buffer_ptr_kk(b, 1, 64, .binding = 0);
-+   nir_def *addr = nir_iadd(b, root, nir_u2u64(b, byte_offset));
-+   return nir_load_global_constant(b, 2, 32, addr, .align_mul = 4,
-+                                   .align_offset = 0);
++   return kk_nir_load_root(b, 2, 32, byte_offset, 4);
 +}
 +
 +static nir_def *
@@ -362,12 +379,11 @@ index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..62d19d267a968f5cdafcc9719105a3f5
 +static nir_def *
 +kk_load_manual_depth_clamp_enable(nir_builder *b)
 +{
-+   nir_def *root = nir_load_buffer_ptr_kk(b, 1, 64, .binding = 0);
-+   nir_def *addr = nir_iadd_imm(b, root,
-+                                offsetof(struct kk_root_descriptor_table,
-+                                         draw.manual_depth_clamp_enable));
-+   return nir_load_global_constant(b, 1, 32, addr, .align_mul = 4,
-+                                   .align_offset = 0);
++   return kk_nir_load_root(
++      b, 1, 32,
++      nir_imm_int(b, offsetof(struct kk_root_descriptor_table,
++                              draw.manual_depth_clamp_enable)),
++      4);
 +}
 +
 +static bool
@@ -434,7 +450,7 @@ index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..62d19d267a968f5cdafcc9719105a3f5
  /* Lowering for the stage which ends up as the vertex stage on hardware */
  static void
  kk_lower_hw_vs(nir_shader *nir, const struct vk_graphics_pipeline_state *state)
-@@ -392,6 +502,14 @@ kk_lower_hw_vs(nir_shader *nir, const struct vk_graphics_pipeline_state *state)
+@@ -392,6 +498,14 @@ kk_lower_hw_vs(nir_shader *nir, const struct vk_graphics_pipeline_state *state)
  
     NIR_PASS(_, nir, msl_ensure_vertex_position_output);
     NIR_PASS(_, nir, nir_lower_clip_halfz_dynamic);
@@ -449,7 +465,7 @@ index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..62d19d267a968f5cdafcc9719105a3f5
     NIR_PASS(_, nir, msl_nir_vs_io_types);
  }
  
-@@ -525,9 +643,46 @@ lower_subpass_dim(nir_builder *b, nir_tex_instr *tex, UNUSED void *_data)
+@@ -525,9 +639,46 @@ lower_subpass_dim(nir_builder *b, nir_tex_instr *tex, UNUSED void *_data)
     return true;
  }
  
@@ -497,7 +513,7 @@ index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..62d19d267a968f5cdafcc9719105a3f5
  {
     /* Metal pipelines must not expose fragment outputs for attachments that
      * were not declared by the Vulkan pipeline.  In particular, an extra
-@@ -567,6 +722,17 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
+@@ -567,6 +718,17 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
        NIR_PASS(_, nir, nir_shader_intrinsics_pass,
                 msl_nir_fs_remove_depth_write, nir_metadata_control_flow, NULL);
  
@@ -515,7 +531,7 @@ index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..62d19d267a968f5cdafcc9719105a3f5
     /* Input attachments are treated as 2D textures. Fixes sampler dimension */
     NIR_PASS(_, nir, nir_shader_tex_pass, lower_subpass_dim, nir_metadata_all,
              NULL);
-@@ -621,6 +787,10 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
+@@ -621,6 +783,10 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
     if (nir->info.io_lowered)
        return;
  
@@ -526,7 +542,7 @@ index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..62d19d267a968f5cdafcc9719105a3f5
     if (KK_DEBUG(FORCE_ROBUSTNESS))
        rs = &rs_all_supported;
  
-@@ -718,7 +888,7 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
+@@ -718,7 +884,7 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
         !emulated_stage) {
        kk_lower_hw_vs(nir, state);
     } else if (nir->info.stage == MESA_SHADER_FRAGMENT) {
@@ -535,6 +551,22 @@ index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..62d19d267a968f5cdafcc9719105a3f5
     }
  
     /* Descriptor lowering needs to happen after lowering blend since we will
+diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
+index 28354a818d875175c596ae8cb308b839da7d9914..112511fefa0fdd8d6b8a031bc0c34780aace01f4 100644
+--- a/src/kosmickrisp/vulkan/kk_shader.h
++++ b/src/kosmickrisp/vulkan/kk_shader.h
+@@ -195,6 +195,11 @@ kk_nir_lower_descriptors(nir_shader *nir,
+                          uint32_t set_layout_count,
+                          struct vk_descriptor_set_layout *const *set_layouts);
+ 
++/* Loads from the root descriptor table the way the descriptor lowering does,
++ * for the other passes that read it. */
++nir_def *kk_nir_load_root(struct nir_builder *b, unsigned num_components,
++                          unsigned bit_size, nir_def *offset, unsigned align);
++
+ bool kk_nir_lower_poly(struct nir_shader *nir);
+ bool kk_nir_lower_null_images(nir_shader *nir);
+ 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
 index 5259c0d61989d2304d17a2a7220a7bf1e8fdd5ec..cfd82532b641b9944163bb9ee82b03c2ee38f1c9 100644
 --- a/src/kosmickrisp/vulkan/meson.build

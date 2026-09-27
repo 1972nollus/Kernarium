@@ -24,10 +24,10 @@ size query per access is not free.
  1 file changed, 31 insertions(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index e1c6895e1620a32019a1d59f9000ce95afd87270..789663e5f2c5863f55520912fb21c61c221ba1ca 100644
+index e69d9f1f34909ef0937c79615c57a27adc2ed2d7..b7dc449f5f49329d917428806706a72414a36abc 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -1305,6 +1305,24 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
+@@ -1299,6 +1299,24 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
     }
  }
  
@@ -52,7 +52,7 @@ index e1c6895e1620a32019a1d59f9000ce95afd87270..789663e5f2c5863f55520912fb21c61c
  static void
  kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
               bool pipeline_statistics,
-@@ -1420,6 +1438,19 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
+@@ -1414,6 +1432,19 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
        kk_lower_fs(dev, nir, state, writes_depth, pipeline_statistics);
     }
  

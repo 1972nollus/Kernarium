@@ -135,7 +135,7 @@ index e9927f93d22154d59bcd752edbd97c93739e641e..3c4447d2d953a23a81ed43a7d1017937
        uint64_t input_gpu_resource_id;
     } planes[3];
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index af7c0cea6d136fbce0eec160c207e65655c8a5c8..df16b9e623baeee4b17245c92b05156546dd0aae 100644
+index 648adc8c36364ba3ff32d5c37382b1902c18b5a8..918d3ef08f0f945d3d05714aa856abf51b168287 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -10,6 +10,7 @@
@@ -181,7 +181,7 @@ index af7c0cea6d136fbce0eec160c207e65655c8a5c8..df16b9e623baeee4b17245c92b051565
  static const struct kk_descriptor_set_binding_layout *
  get_binding_layout(uint32_t set, uint32_t binding,
                     const struct lower_descriptors_ctx *ctx)
-@@ -346,6 +373,53 @@ get_resource_deref_binding(nir_builder *b, nir_deref_instr *deref,
+@@ -353,6 +380,53 @@ get_resource_deref_binding(nir_builder *b, nir_deref_instr *deref,
     *binding = var->data.binding;
  }
  
@@ -235,7 +235,7 @@ index af7c0cea6d136fbce0eec160c207e65655c8a5c8..df16b9e623baeee4b17245c92b051565
  static nir_def *
  load_resource_addr(nir_builder *b, unsigned num_components, unsigned bit_size,
                     nir_deref_instr *deref, unsigned offset_B,
-@@ -517,6 +591,11 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -524,6 +598,11 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
  
     nir_deref_instr *texture_deref =
        nir_src_as_deref(nir_src_for_ssa(texture));
@@ -247,7 +247,7 @@ index af7c0cea6d136fbce0eec160c207e65655c8a5c8..df16b9e623baeee4b17245c92b051565
     if (tex->sampler_dim == GLSL_SAMPLER_DIM_BUF) {
        assert(plane == 0);
        if (tex->op == nir_texop_txs) {
-@@ -658,8 +737,13 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -665,8 +744,13 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
     }
  
     {
@@ -263,7 +263,7 @@ index af7c0cea6d136fbce0eec160c207e65655c8a5c8..df16b9e623baeee4b17245c92b051565
  
        nir_def *resource_addr = load_resource_addr(
           b, 1, 64, nir_src_as_deref(nir_src_for_ssa(texture)),
-@@ -667,15 +751,52 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -674,15 +758,52 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
  
        nir_def *handle = NULL;
        if (tex->is_shadow) {
@@ -320,7 +320,7 @@ index af7c0cea6d136fbce0eec160c207e65655c8a5c8..df16b9e623baeee4b17245c92b051565
     }
  
     if (sampler != NULL) {
-@@ -894,7 +1015,8 @@ bool
+@@ -901,7 +1022,8 @@ bool
  kk_nir_lower_descriptors(nir_shader *nir,
                           const struct vk_pipeline_robustness_state *rs,
                           uint32_t set_layout_count,
@@ -330,7 +330,7 @@ index af7c0cea6d136fbce0eec160c207e65655c8a5c8..df16b9e623baeee4b17245c92b051565
  {
     struct lower_descriptors_ctx ctx = {
        .clamp_desc_array_bounds =
-@@ -905,6 +1027,7 @@ kk_nir_lower_descriptors(nir_shader *nir,
+@@ -912,6 +1034,7 @@ kk_nir_lower_descriptors(nir_shader *nir,
           rs->images != VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_DISABLED,
        .ssbo_addr_format = kk_buffer_addr_format(rs->storage_buffers),
        .ubo_addr_format = kk_buffer_addr_format(rs->uniform_buffers),
@@ -691,10 +691,10 @@ index 3b6abef5623321c2b01e71da3b36abcf613c8111..37ee3d63009edb8bb3ad76699950e228
        .primitiveRestartIndex = true,
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 62d19d267a968f5cdafcc9719105a3f5f182fdc1..b9e0f0b9e9f1b84b295241da7d4de13ab093b7da 100644
+index 93b77ae4a35eb7d96c3667d5d3de34ac9fc6b600..30f3e79e3ed19f91608d9813eaa8625a2af45867 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -896,7 +896,7 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
+@@ -892,7 +892,7 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
      * the lower descriptor pass
      */
     NIR_PASS(_, nir, kk_nir_lower_descriptors, rs, set_layout_count,
@@ -703,7 +703,7 @@ index 62d19d267a968f5cdafcc9719105a3f5f182fdc1..b9e0f0b9e9f1b84b295241da7d4de13a
     NIR_PASS(_, nir, kk_nir_lower_textures);
  
     if (dev->vk.enabled_features.nullDescriptor)
-@@ -2454,7 +2454,8 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2450,7 +2450,8 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
        /* Dynamic half-Z lowering above introduces load_clip_z_coeff after the
         * application GS has already completed descriptor lowering. */
        NIR_PASS(_, raster, kk_nir_lower_descriptors, gs_compile->robustness,
@@ -714,7 +714,7 @@ index 62d19d267a968f5cdafcc9719105a3f5f182fdc1..b9e0f0b9e9f1b84b295241da7d4de13a
  
        kk_gs_to_compute(main, 64);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 28354a818d875175c596ae8cb308b839da7d9914..fd8048d9ee555e6505daedb59d9b92c14573463d 100644
+index 112511fefa0fdd8d6b8a031bc0c34780aace01f4..801e70cab4bb6287c01ced03220dac802059b662 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -25,6 +25,8 @@ struct kk_cmd_buffer;
@@ -734,8 +734,8 @@ index 28354a818d875175c596ae8cb308b839da7d9914..fd8048d9ee555e6505daedb59d9b92c1
 +                         struct vk_descriptor_set_layout *const *set_layouts,
 +                         bool lower_non_seamless_cube);
  
- bool kk_nir_lower_poly(struct nir_shader *nir);
- bool kk_nir_lower_null_images(nir_shader *nir);
+ /* Loads from the root descriptor table the way the descriptor lowering does,
+  * for the other passes that read it. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
 index cfd82532b641b9944163bb9ee82b03c2ee38f1c9..122a0f6bfe6908ee0613e61a0cb7cfa4080aa891 100644
 --- a/src/kosmickrisp/vulkan/meson.build

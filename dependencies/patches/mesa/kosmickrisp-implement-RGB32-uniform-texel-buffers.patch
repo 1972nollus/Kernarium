@@ -263,7 +263,7 @@ index 9b4a16dfd7288d13c0257b747b7260ae6d102dcf..649b2dec5e669ffd8f734de5647dbc3b
  
  /* This has to match nir_address_format_64bit_bounded_global */
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d694481f1e2 100644
+index 918d3ef08f0f945d3d05714aa856abf51b168287..3b682a746b590eb8d64519faeaed46ecee5b1f5b 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -31,6 +31,11 @@ struct lower_descriptors_ctx {
@@ -278,7 +278,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
  };
  
  enum non_seamless_cube_mode {
-@@ -526,6 +531,138 @@ lower_image_intrin(nir_builder *b, nir_intrinsic_instr *intr,
+@@ -533,6 +538,138 @@ lower_image_intrin(nir_builder *b, nir_intrinsic_instr *intr,
     return true;
  }
  
@@ -417,7 +417,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
  static bool
  try_lower_intrin(nir_builder *b, nir_intrinsic_instr *intrin,
                   const struct lower_descriptors_ctx *ctx)
-@@ -572,7 +709,7 @@ try_lower_intrin(nir_builder *b, nir_intrinsic_instr *intrin,
+@@ -579,7 +716,7 @@ try_lower_intrin(nir_builder *b, nir_intrinsic_instr *intrin,
  
  static bool
  lower_tex(nir_builder *b, nir_tex_instr *tex,
@@ -426,7 +426,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
  {
     b->cursor = nir_before_instr(&tex->instr);
  
-@@ -598,6 +735,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -605,6 +742,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
                      : NON_SEAMLESS_CUBE_NATIVE;
     if (tex->sampler_dim == GLSL_SAMPLER_DIM_BUF) {
        assert(plane == 0);
@@ -434,7 +434,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
        if (tex->op == nir_texop_txs) {
           nir_def *element_count = load_resource_deref_desc(
              b, 1, 32, texture_deref,
-@@ -606,15 +744,8 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -613,15 +751,8 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
           return true;
        }
  
@@ -452,7 +452,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
     }
  
     /* LOD bias is passed in the descriptor set, rather than embedded into
-@@ -846,7 +977,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -853,7 +984,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
  static bool
  try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
  {
@@ -461,7 +461,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
  
     switch (instr->type) {
     case nir_instr_type_tex:
-@@ -858,6 +989,28 @@ try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
+@@ -865,6 +996,28 @@ try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
     }
  }
  
@@ -490,7 +490,7 @@ index df16b9e623baeee4b17245c92b05156546dd0aae..426b2899af4afdc4d7c8bd2e154b3d69
  static bool
  lower_ssbo_resource_index(nir_builder *b, nir_intrinsic_instr *intrin,
                            const struct lower_descriptors_ctx *ctx)
-@@ -1041,8 +1194,9 @@ kk_nir_lower_descriptors(nir_shader *nir,
+@@ -1048,8 +1201,9 @@ kk_nir_lower_descriptors(nir_shader *nir,
      * TODO: See if we can unify this, not sure if the fast path matters on
      * Apple. This is inherited from NVK.
      */

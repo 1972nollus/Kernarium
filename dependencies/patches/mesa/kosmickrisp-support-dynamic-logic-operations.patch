@@ -331,7 +331,7 @@ index 64a69a57e7c23abe5d9215ec419f101ac483d157..7e4a984f44ce2e8bc82a921d86b58cda
        .graphicsPipelineLibrary = true,
        .inlineUniformBlock = true,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 6c06cd1d31b527e56f3ae3d5678cf32ff451d152..375bdae183e14c406a447715ecffd6b80998ed4f 100644
+index 9352afddfcc01b827a3b63ec97193ad9eb62542f..c7aecab54ac3a8b3433b931ed468ab915f20c20d 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -13,6 +13,7 @@
@@ -342,20 +342,19 @@ index 6c06cd1d31b527e56f3ae3d5678cf32ff451d152..375bdae183e14c406a447715ecffd6b8
  #include "kk_nir_lower_vbo.h"
  #include "kk_physical_device.h"
  #include "kk_sampler.h"
-@@ -368,16 +369,31 @@ kk_load_depth_clamp_range(nir_builder *b, nir_def *viewport)
+@@ -365,15 +366,30 @@ kk_load_depth_clamp_range(nir_builder *b, nir_def *viewport)
  }
  
  static nir_def *
 -kk_load_manual_depth_clamp_enable(nir_builder *b)
 +kk_load_fragment_dynamic_state(nir_builder *b)
  {
-    nir_def *root = nir_load_buffer_ptr_kk(b, 1, 64, .binding = 0);
-    nir_def *addr = nir_iadd_imm(b, root,
-                                 offsetof(struct kk_root_descriptor_table,
--                                         draw.manual_depth_clamp_enable));
-+                                         draw.fragment_dynamic_state));
-    return nir_load_global_constant(b, 1, 32, addr, .align_mul = 4,
-                                    .align_offset = 0);
+    return kk_nir_load_root(
+       b, 1, 32,
+       nir_imm_int(b, offsetof(struct kk_root_descriptor_table,
+-                              draw.manual_depth_clamp_enable)),
++                              draw.fragment_dynamic_state)),
+       4);
  }
  
 +static nir_def *
@@ -376,7 +375,7 @@ index 6c06cd1d31b527e56f3ae3d5678cf32ff451d152..375bdae183e14c406a447715ecffd6b8
  static bool
  kk_nir_lower_depth_clip_position(nir_shader *nir)
  {
-@@ -534,6 +550,8 @@ kk_lower_fs_blend(nir_shader *nir,
+@@ -530,6 +546,8 @@ kk_lower_fs_blend(nir_shader *nir,
        .scalar_blend_const = false,
        .logicop_enable = state->cb->logic_op_enable,
        .logicop_func = vk_logic_op_to_pipe(state->cb->logic_op),

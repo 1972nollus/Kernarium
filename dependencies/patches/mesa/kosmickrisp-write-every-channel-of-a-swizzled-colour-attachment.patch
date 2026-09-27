@@ -164,7 +164,7 @@ index 0000000000000000000000000000000000000000..a99be20458da387cf5b3d63187d3564a
 +                                     nir_metadata_control_flow, (void *)state);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 666ff2bef9a7e8e424bbf73f8dc5a41c84a9f65e..54f4e35301b3a5fe28ae648060c5b2ed66617914 100644
+index 38f777799a6aa1f3752face93ed60e1e37107a56..ec376ac52ed48fa5768ce8749e23e5c0c2c53076 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -280,57 +280,6 @@ type_size_vec4(const struct glsl_type *type, bool bindless)
@@ -225,7 +225,7 @@ index 666ff2bef9a7e8e424bbf73f8dc5a41c84a9f65e..54f4e35301b3a5fe28ae648060c5b2ed
  static void
  kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
                  const struct vk_pipeline_robustness_state *rs,
-@@ -1301,8 +1250,7 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
+@@ -1295,8 +1244,7 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
              NULL);
  
     /* Swizzle non-native formats' outputs */
@@ -236,10 +236,10 @@ index 666ff2bef9a7e8e424bbf73f8dc5a41c84a9f65e..54f4e35301b3a5fe28ae648060c5b2ed
     NIR_PASS(_, nir, msl_nir_fs_io_types);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 7d3e8fe5e6676e8ae885f732824a0e24f2827cbd..e78bf3e7348fb585991e5a2c045e6d3b16401617 100644
+index 5a40c4ea6ab955843012d00e3489c3caa1b83341..dbc31d6194ae5b3d26ae05568a2c55353dbdaec3 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
-@@ -277,6 +277,10 @@ bool kk_nir_lower_null_images(nir_shader *nir);
+@@ -282,6 +282,10 @@ bool kk_nir_lower_null_images(nir_shader *nir);
  
  bool kk_nir_lower_custom_border(nir_shader *nir);
  
