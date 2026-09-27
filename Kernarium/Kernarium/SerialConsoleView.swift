@@ -146,26 +146,137 @@ extension SerialConsoleController: TerminalSurfaceOpenURLDelegate {
     func terminalDidRequestOpenURL(_: String, kind _: TerminalOpenURLKind) {}
 }
 
+/// How much of the console the keyboard's docked parts cover. The
+/// application's content ignores the keyboard, so the console makes room for
+/// it itself. Everything is in screen coordinates.
+enum SerialConsoleKeyboardInset {
+    /// The height at the bottom of `host` covered by keyboard UI docked at the
+    /// bottom of the screen: the key bar, and a docked software keyboard with
+    /// the bar on top of it. A floating keyboard, and a bar riding on one, is
+    /// not docked. It overlaps the console wherever the user puts it, as it
+    /// does every application, and leaves the rows alone.
+    static func bottomInset(
+        host: CGRect,
+        screen: CGRect,
+        obstructions: [CGRect]
+    ) -> CGFloat {
+        let tops = obstructions.filter { frame in
+            !frame.isNull && !frame.isEmpty &&
+                frame.maxY >= screen.maxY - 1 &&
+                frame.minX < host.maxX && frame.maxX > host.minX
+        }.map(\.minY)
+        guard let top = tops.min() else { return 0 }
+        return min(max(0, host.maxY - top), host.height)
+    }
+}
+
+/// The console's terminal, sized to end where the keyboard's docked parts
+/// begin, so its last row stays visible. The key bar is the terminal's input
+/// accessory: it sits on a docked keyboard, and at the bottom of the screen
+/// when the software keyboard floats or a hardware keyboard replaces it.
+/// Keyboard notifications report a floating keyboard but not the bar below
+/// it, so the bar is measured where it is.
+final class SerialConsoleHostView: UIView {
+    let terminal: TerminalView
+    /// The keyboard's frame as last reported, in screen coordinates.
+    private var keyboardFrame: CGRect?
+
+    init(terminal: TerminalView) {
+        self.terminal = terminal
+        super.init(frame: .zero)
+        addSubview(terminal)
+        for name in [
+            UIResponder.keyboardWillChangeFrameNotification,
+            UIResponder.keyboardDidChangeFrameNotification,
+            UIResponder.keyboardDidShowNotification,
+            UIResponder.keyboardDidHideNotification,
+        ] {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(keyboardDidMove(_:)),
+                name: name,
+                object: nil
+            )
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func keyboardDidMove(_ notification: Notification) {
+        if let frame = notification.userInfo?[
+            UIResponder.keyboardFrameEndUserInfoKey
+        ] as? CGRect {
+            keyboardFrame = frame
+        }
+        setNeedsLayout()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let frame = CGRect(
+            x: 0,
+            y: 0,
+            width: bounds.width,
+            height: max(0, bounds.height - coveredHeight())
+        )
+        // Each change resizes the terminal's grid.
+        if terminal.frame != frame {
+            terminal.frame = frame
+        }
+    }
+
+    private func coveredHeight() -> CGFloat {
+        guard let window else { return 0 }
+        let space = window.screen.coordinateSpace
+        var obstructions: [CGRect] = []
+        if let keyboardFrame {
+            obstructions.append(keyboardFrame)
+        }
+        if terminal.isFirstResponder,
+           let bar = terminal.inputAccessoryView,
+           bar.window != nil, !bar.isHidden {
+            obstructions.append(bar.convert(bar.bounds, to: space))
+        }
+        return SerialConsoleKeyboardInset.bottomInset(
+            host: convert(bounds, to: space),
+            screen: space.bounds,
+            obstructions: obstructions
+        )
+    }
+}
+
 struct SerialConsoleView: UIViewRepresentable {
+    /// Carried by the terminal itself, the element that takes keyboard focus.
+    static let accessibilityIdentifier = "serialConsoleView"
+
     let controller: SerialConsoleController
     /// A hidden console keeps parsing guest output but stops drawing.
     let isVisible: Bool
 
-    func makeUIView(context: Context) -> TerminalView {
-        let view = controller.makeTerminalView()
-        view.setSurfaceVisible(isVisible)
+    func makeUIView(context: Context) -> SerialConsoleHostView {
+        let view = SerialConsoleHostView(terminal: controller.makeTerminalView())
+        view.terminal.accessibilityIdentifier = Self.accessibilityIdentifier
+        view.terminal.setSurfaceVisible(isVisible)
         return view
     }
 
-    func updateUIView(_ view: TerminalView, context: Context) {
-        controller.attach(view)
-        view.setSurfaceVisible(isVisible)
+    func updateUIView(_ view: SerialConsoleHostView, context: Context) {
+        controller.attach(view.terminal)
+        view.terminal.setSurfaceVisible(isVisible)
     }
 
     static func dismantleUIView(
-        _ view: TerminalView,
+        _ view: SerialConsoleHostView,
         coordinator: ()
     ) {
-        (view.delegate as? SerialConsoleController)?.detach(view)
+        (view.terminal.delegate as? SerialConsoleController)?.detach(view.terminal)
     }
 }

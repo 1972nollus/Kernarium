@@ -2,6 +2,7 @@
 import CoreGraphics
 import Foundation
 import GhosttyTerminal
+import SwiftUI
 import Testing
 import UIKit
 @testable import Kernarium
@@ -345,5 +346,159 @@ struct SerialConsoleTests {
         // The theme's own background and its SGR 41 red.
         #expect(pixelCount(in: image, red: 0x21, green: 0x21, blue: 0x21) > 1000)
         #expect(pixelCount(in: image, red: 0xac, green: 0x41, blue: 0x42) > 100)
+    }
+
+    /// The console ends where the keyboard's docked parts begin, in every
+    /// keyboard state. Frames are an iPad mini in landscape, in screen
+    /// coordinates, as UIKit reported them there; the console fills the safe
+    /// area, 32 to 719.
+    @Test
+    func theConsoleEndsAboveTheDockedKeyboard() {
+        let screen = CGRect(x: 0, y: 0, width: 1133, height: 744)
+        let console = CGRect(x: 0, y: 32, width: 1133, height: 687)
+        let bottomBar = CGRect(x: 0, y: 684, width: 1133, height: 60)
+        let floatingKeyboard = CGRect(x: 628, y: 288, width: 334, height: 341)
+        func inset(
+            _ obstructions: [CGRect],
+            host: CGRect = console
+        ) -> CGFloat {
+            SerialConsoleKeyboardInset.bottomInset(
+                host: host, screen: screen, obstructions: obstructions
+            )
+        }
+
+        // No keyboard, or one that has left the screen.
+        #expect(inset([]) == 0)
+        #expect(inset([CGRect(x: 0, y: 744, width: 1133, height: 374)]) == 0)
+        // A hardware keyboard: the key bar alone, at the bottom.
+        #expect(inset([bottomBar]) == 35)
+        // A docked software keyboard, reported with the bar on top of it.
+        #expect(
+            inset([
+                CGRect(x: 0, y: 370, width: 1133, height: 374),
+                CGRect(x: 0, y: 370, width: 1133, height: 60),
+            ]) == 349
+        )
+        // A floating keyboard leaves the bar at the bottom of the screen.
+        #expect(inset([floatingKeyboard, bottomBar]) == 35)
+        #expect(inset([floatingKeyboard]) == 0)
+        // A bar riding on a floating keyboard is not docked either.
+        #expect(
+            inset([
+                floatingKeyboard,
+                CGRect(x: 628, y: 228, width: 334, height: 60),
+            ]) == 0
+        )
+        // A window the bar does not reach, below or beside it.
+        #expect(
+            inset(
+                [bottomBar],
+                host: CGRect(x: 100, y: 50, width: 600, height: 400)
+            ) == 0
+        )
+        #expect(
+            inset(
+                [CGRect(x: 0, y: 684, width: 500, height: 60)],
+                host: CGRect(x: 567, y: 32, width: 566, height: 687)
+            ) == 0
+        )
+        // Never more than the whole console.
+        #expect(
+            inset(
+                [CGRect(x: 0, y: 0, width: 1133, height: 744)],
+                host: console
+            ) == 687
+        )
+    }
+
+    /// The first `TerminalView` below `view`.
+    private func terminalView(in view: UIView) -> TerminalView? {
+        if let terminal = view as? TerminalView { return terminal }
+        for child in view.subviews {
+            if let terminal = terminalView(in: child) { return terminal }
+        }
+        return nil
+    }
+
+    /// The console as the application composes it: a full-screen scene
+    /// window whose content ignores the keyboard, which the console itself
+    /// must make room for. With the console focused the key bar is on screen
+    /// in every keyboard state (docked or floating software keyboard, or a
+    /// hardware keyboard), and the terminal's last row must end at its top.
+    @Test(.timeLimit(.minutes(1)))
+    func theKeyBarNeverCoversTheConsole() async throws {
+        #expect(
+            try await eventually {
+                UIApplication.shared.applicationState == .active
+            },
+            "an inactive application shows no keyboard"
+        )
+        let scene = try #require(
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first,
+            "the application has no window scene"
+        )
+        let previousKeyWindow = scene.keyWindow
+        let controller = SerialConsoleController(input: { _ in })
+        let window = UIWindow(windowScene: scene)
+        window.windowLevel = .alert
+        window.rootViewController = UIHostingController(
+            rootView: SerialConsoleView(controller: controller, isVisible: true)
+                .ignoresSafeArea(.keyboard)
+        )
+        window.makeKeyAndVisible()
+        let root = try #require(window.rootViewController?.view)
+        root.layoutIfNeeded()
+        let terminal = try #require(terminalView(in: root))
+        defer {
+            _ = terminal.resignFirstResponder()
+            window.isHidden = true
+            previousKeyWindow?.makeKey()
+        }
+        #expect(try await eventually { terminal.surface != nil })
+        let fullHeight = terminal.bounds.height
+        var fullRows = 0
+        #expect(try await eventually {
+            fullRows = controller.session.readViewportText()?
+                .components(separatedBy: "\n").count ?? 0
+            return fullRows > 0
+        })
+        #expect(terminal.becomeFirstResponder())
+        let bar = try #require(terminal.inputAccessoryView, "the console has no key bar")
+
+        let space = window.screen.coordinateSpace
+        var geometry = ""
+        let clear = try await eventually {
+            root.layoutIfNeeded()
+            guard bar.window != nil, !bar.isHidden else {
+                geometry = "the key bar is not on screen"
+                return false
+            }
+            let barFrame = bar.convert(bar.bounds, to: space)
+            let terminalFrame = terminal.convert(terminal.bounds, to: space)
+            let hostBottom = root.convert(root.bounds, to: space).maxY -
+                root.safeAreaInsets.bottom
+            let expectedBottom = min(hostBottom, barFrame.minY)
+            geometry = "terminal \(terminalFrame), key bar \(barFrame), " +
+                "expected bottom \(expectedBottom)"
+            return abs(terminalFrame.maxY - expectedBottom) <= 1
+        }
+        #expect(clear, "the console does not end at the key bar: \(geometry)")
+
+        // The grid follows: a cut of at least one cell's height, which is at
+        // most the full height over the full row count, costs a row.
+        let cut = fullHeight - terminal.bounds.height
+        if clear, fullRows > 0, cut >= fullHeight / CGFloat(fullRows) {
+            var rows = fullRows
+            #expect(
+                try await eventually {
+                    rows = controller.session.readViewportText()?
+                        .components(separatedBy: "\n").count ?? 0
+                    return rows > 0 && rows < fullRows
+                },
+                "the grid kept \(rows) of \(fullRows) rows after a \(cut)-point cut"
+            )
+        }
     }
 }

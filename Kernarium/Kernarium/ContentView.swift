@@ -31,7 +31,6 @@ struct ContentView: View {
                     .opacity(guestViewMode == .serialConsole ? 1 : 0)
                     .allowsHitTesting(guestViewMode == .serialConsole)
                     .accessibilityHidden(guestViewMode != .serialConsole)
-                    .accessibilityIdentifier("serialConsoleView")
             }
             floatingButtons
         }
