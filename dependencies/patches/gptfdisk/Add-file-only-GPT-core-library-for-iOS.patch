@@ -5,12 +5,12 @@ Subject: [PATCH] Add file-only GPT core library for iOS
 
 ---
  Makefile.kernarium    |  31 ++++++
- diskio-unix.cc        |  29 ++++-
+ diskio-unix.cc        |  29 +++++-
  guid.cc               |   2 +-
- kernarium_gptfdisk.cc | 238 ++++++++++++++++++++++++++++++++++++++++++
- kernarium_gptfdisk.h  |  57 ++++++++++
+ kernarium_gptfdisk.cc | 231 ++++++++++++++++++++++++++++++++++++++++++
+ kernarium_gptfdisk.h  |  57 +++++++++++
  support.h             |   7 +-
- 6 files changed, 359 insertions(+), 5 deletions(-)
+ 6 files changed, 352 insertions(+), 5 deletions(-)
  create mode 100644 Makefile.kernarium
  create mode 100644 kernarium_gptfdisk.cc
  create mode 100644 kernarium_gptfdisk.h
@@ -149,10 +149,10 @@ index d3e4fd567dbfa3e380ef03a5478d7dfcdf50b407..bdef7501c9d92a9a77bc9d2582dfecf0
             uuidData[4], uuidData[7], uuidData[6], uuidData[8], uuidData[9],
 diff --git a/kernarium_gptfdisk.cc b/kernarium_gptfdisk.cc
 new file mode 100644
-index 0000000000000000000000000000000000000000..bc87177e93b2115e22450a1c1a5f072756687bc5
+index 0000000000000000000000000000000000000000..9a66d6bb7e8f23ac569a2e9afaf7f3177b37fdcf
 --- /dev/null
 +++ b/kernarium_gptfdisk.cc
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,231 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later */
 +
 +#include "kernarium_gptfdisk.h"
@@ -190,17 +190,11 @@ index 0000000000000000000000000000000000000000..bc87177e93b2115e22450a1c1a5f0727
 +   std::streambuf *oldCerr;
 +};
 +
++// GPTData's operator[] is const, so a partition's end is set here.
 +class KernariumGPTData : public GPTData {
 +public:
-+   bool PartitionIsUsed(uint32_t index) {
-+      return (index < numParts) && partitions[index].IsUsed();
-+   }
-+
-+   bool GrowPartition(uint32_t index, uint64_t newLastLBA) {
-+      if ((index >= numParts) || !partitions[index].IsUsed())
-+         return false;
-+      partitions[index].SetLastLBA(newLastLBA);
-+      return true;
++   void SetPartitionLastLBA(uint32_t index, uint64_t lastLBA) {
++      partitions[index].SetLastLBA(lastLBA);
 +   }
 +};
 +
@@ -260,7 +254,7 @@ index 0000000000000000000000000000000000000000..bc87177e93b2115e22450a1c1a5f0727
 +   }
 +
 +   *index = partitionNumber - 1;
-+   if (!gpt->ValidPartNum(*index) || !gpt->PartitionIsUsed(*index)) {
++   if (!gpt->ValidPartNum(*index) || !gpt->IsUsedPartNum(*index)) {
 +      SetError(error, errorSize, "requested GPT partition does not exist");
 +      return KERNARIUM_GPTFDISK_INVALID_PARTITION;
 +   }
@@ -328,7 +322,7 @@ index 0000000000000000000000000000000000000000..bc87177e93b2115e22450a1c1a5f0727
 +   }
 +
 +   for (uint32_t other = 0; other < gpt.GetNumParts(); other++) {
-+      if ((other == index) || !gpt.PartitionIsUsed(other))
++      if ((other == index) || !gpt.IsUsedPartNum(other))
 +         continue;
 +      if ((gpt[other].GetFirstLBA() <= desiredLastLBA) &&
 +          (gpt[other].GetLastLBA() >= gpt[index].GetFirstLBA())) {
@@ -337,11 +331,10 @@ index 0000000000000000000000000000000000000000..bc87177e93b2115e22450a1c1a5f0727
 +      }
 +   }
 +
-+   if ((desiredLastLBA != currentLastLBA) &&
-+       !gpt.GrowPartition(index, desiredLastLBA)) {
-+      SetError(error, errorSize, "could not update requested GPT partition");
-+      return KERNARIUM_GPTFDISK_INTERNAL_ERROR;
-+   }
++   // Load proved the partition exists and is used, and nothing since has
++   // touched the partition array.
++   if (desiredLastLBA != currentLastLBA)
++      gpt.SetPartitionLastLBA(index, desiredLastLBA);
 +   if ((desiredLastLBA != currentLastLBA) ||
 +       (oldBackupHeader != gpt.GetSecondHeaderLBA())) {
 +      if (!gpt.SaveGPTData(1)) {
