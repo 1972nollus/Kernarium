@@ -186,11 +186,9 @@ std::size_t VirtioConsoleDevice::queueCount() const noexcept
 
 std::vector<std::uint8_t> VirtioConsoleDevice::configuration() const
 {
-    const protocol::Configuration configuration {
+    return uml::virtio::toBytes(protocol::Configuration {
         .maximumPorts = portName_.empty() ? 0U : 1U,
-    };
-    const auto* bytes = reinterpret_cast<const std::uint8_t*>(&configuration);
-    return {bytes, bytes + sizeof(configuration)};
+    });
 }
 
 void VirtioConsoleDevice::writeConfiguration(

@@ -69,16 +69,6 @@ endif()
 
 if(UML_BUILD_TOOLING_TESTS)
     add_subdirectory(tooling)
-    add_custom_target(tooling-test-binaries)
-    add_dependencies(tooling-test-binaries
-        uml_arm64_execution_helpers
-        uml_arm64_gadgets
-        uml_arm64_jit
-        uml_arm64_jit_executor)
-    if(TARGET uml_arm64_engine_test_support_tests)
-        add_dependencies(tooling-test-binaries
-            uml_arm64_engine_test_support_tests)
-    endif()
 endif()
 
 if(UML_BUILD_INTEGRATION_TESTS)

@@ -4,6 +4,7 @@
 #include "cpu/execution_types.hpp"
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/decoder.hpp"
+#include "cpu/x86_64/layout/assembly_offsets.h"
 #include "memory/guest_address_space.hpp"
 
 #include <array>
@@ -88,8 +89,11 @@ static_assert(offsetof(TargetLinkEntry, guest_rip) == 0);
 static_assert(offsetof(TargetLinkEntry, link) == 8);
 static_assert(sizeof(TargetLinkEntry) == 16);
 
-inline constexpr std::size_t target_link_entries = 4096;
-inline constexpr unsigned target_link_fold = 12;
+/* follow_target_link in engine/common.inc probes with the same fold and
+ * mask. */
+inline constexpr std::size_t target_link_entries =
+	std::size_t{UML_X86_64_TARGET_LINK_MASK} + 1U;
+inline constexpr unsigned target_link_fold = UML_X86_64_TARGET_LINK_FOLD;
 static_assert((target_link_entries & (target_link_entries - 1U)) == 0,
 	"the translated tier masks the guest RIP fold");
 
@@ -126,20 +130,19 @@ public:
 	Program() = default;
 	/* `source` is the guest bytes the decoder read for `gadgets`, which is
 	 * what the block is validated against and what a budget-limited replay
-	 * decodes back out of. Every program carries its own, so it is named
-	 * rather than defaulted. */
+	 * decodes back out of, and `words` is the native stream built for
+	 * them. */
 	Program(ExecutionMode mode, std::uint64_t address, std::size_t byte_count,
 		std::span<const Gadget> gadgets,
 		std::span<const std::byte> source,
-		ProgramLinkResolver links = {});
+		std::span<const std::uintptr_t> words);
 
 	[[nodiscard]] ExecutionMode execution_mode() const noexcept { return mode_; }
 	[[nodiscard]] std::uint64_t address() const noexcept { return address_; }
 	[[nodiscard]] std::size_t byte_count() const noexcept { return byte_count_; }
 	[[nodiscard]] std::span<const std::uintptr_t> native_stream() const noexcept
 	{
-		return {reinterpret_cast<const std::uintptr_t *>(words_storage_.get()),
-			words_};
+		return {words_storage_.get(), words_};
 	}
 	[[nodiscard]] std::size_t instruction_count() const noexcept
 	{
@@ -187,7 +190,7 @@ private:
 	/* The words the engine runs, alone. Holding them in one allocation with
 	 * the cold data behind them put every hot stream a cold kilobyte or two
 	 * away from the next and cost the workloads with the widest code. */
-	std::unique_ptr<std::byte[]> words_storage_;
+	std::unique_ptr<std::uintptr_t[]> words_storage_;
 	/* The guest bytes the decoder read, untouched while the block runs. */
 	std::unique_ptr<std::byte[]> source_storage_;
 	/* What one budget-limited replay decoded, kept for the next one. Null

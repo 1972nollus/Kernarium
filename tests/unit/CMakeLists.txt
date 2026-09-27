@@ -10,7 +10,6 @@ target_compile_options(uml_test_allocation_failure PRIVATE
 # CPU conformance and engine/runtime tests have their own directory scope.
 # This keeps the suite entry point small while preserving one explicit source
 # manifest per test domain.
-add_custom_target(unit-test-binaries)
 add_subdirectory(arm64)
 if(TARGET uml_x86_64_gadgets)
     add_subdirectory(x86_64)
@@ -26,7 +25,6 @@ target_include_directories(uml_emulator_c_api_boundary_tests PRIVATE
 target_compile_features(uml_emulator_c_api_boundary_tests PRIVATE cxx_std_20)
 target_compile_options(uml_emulator_c_api_boundary_tests PRIVATE
     -Wall -Wextra -Werror)
-add_dependencies(unit-test-binaries uml_emulator_c_api_boundary_tests)
 uml_add_unit_test(
     NAME emulator-c-api-boundary
     COMMAND uml_emulator_c_api_boundary_tests)

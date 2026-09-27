@@ -22,7 +22,7 @@
 #include "cpu/arm64/gadgets/scalar_forwarding.hpp"
 #include "memory/domain_contract.hpp"
 #include "memory/shared_backing.hpp"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 #include "uml_darwin_static_mmu.h"
 
 #include <atomic>
@@ -32,7 +32,6 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <signal.h>
-#include <string>
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <thread>
@@ -140,18 +139,8 @@ int main()
 		std::fputs("cannot register the exit hold\n", stderr);
 		return 1;
 	}
-	std::string path =
-		uml::testing::scratch_template("gadget-exit-backing-XXXXXX");
-	const int backing = mkstemp(path.data());
-	if (backing < 0) {
-		std::perror("mkstemp");
-		return 1;
-	}
-	(void)unlink(path.c_str());
-	if (ftruncate(backing, getpagesize()) != 0) {
-		std::perror("ftruncate");
-		return 1;
-	}
+	const uml::testing::ScratchBacking backing{"gadget-exit-backing-XXXXXX",
+		static_cast<std::size_t>(getpagesize())};
 
 	const pid_t child = fork();
 	if (child < 0) {
@@ -159,8 +148,7 @@ int main()
 		return 1;
 	}
 	if (child == 0)
-		run_carriers_through_exit(backing);
-	(void)close(backing);
+		run_carriers_through_exit(backing.descriptor());
 
 	const auto deadline =
 		std::chrono::steady_clock::now() + std::chrono::seconds{30};

@@ -28,6 +28,23 @@ enum class EngineEvent : int {
 	trap_flag = 11,
 };
 
+/* An exit of one of these kinds reports the instruction that raised it rather
+ * than its successor, so that instruction did not retire. This is the arm64
+ * engines' classification; it does not cover the x86-only exits. */
+[[nodiscard]] constexpr bool terminal_does_not_retire(EngineEvent event) noexcept
+{
+	switch (event) {
+	case EngineEvent::fatal:
+	case EngineEvent::memory_fault:
+	case EngineEvent::illegal_instruction:
+	case EngineEvent::gcs_fault:
+	case EngineEvent::floating_point_trap:
+		return true;
+	default:
+		return false;
+	}
+}
+
 enum class ExitReason {
 	system_call,
 	memory_fault,

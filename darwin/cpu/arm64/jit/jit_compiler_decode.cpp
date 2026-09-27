@@ -22,6 +22,7 @@
 #include "cpu/arm64/detail/half_fused_long.hpp"
 #include "cpu/arm64/detail/half_matrix.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
+#include "cpu/arm64/detail/read_check_write.hpp"
 #include "cpu/arm64/detail/simd_floating_classes.hpp"
 
 namespace uml::cpu::arm64 {
@@ -1732,27 +1733,15 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
      * which preserves exact guest-memory fault metadata; unsupported native
      * features and reserved register/operation cells terminate as undefined.
      */
-    const bool rcw_scalar_compare =
-        (instruction & 0xbf20'fc00U) == 0x1920'0800U;
-    const bool rcw_scalar_modify =
-        (instruction & 0xbf20'8c00U) == 0x3820'8000U &&
-        ((instruction >> 12) & 7U) >= 1U &&
-        ((instruction >> 12) & 7U) <= 3U;
-    const bool rcw_pair_compare =
-        (instruction & 0xbf20'fc00U) == 0x1920'0c00U;
-    const bool rcw_pair_allocation =
-        (instruction & 0xbf20'8c00U) == 0x1920'8000U &&
-        (((instruction >> 12) & 7U) != 0U ||
-         (instruction & 0x4000'0000U) != 0U);
-    if (rcw_scalar_compare || rcw_scalar_modify || rcw_pair_compare ||
-        rcw_pair_allocation) {
-      const bool pair = rcw_pair_compare || rcw_pair_allocation;
+    if (const auto rcw = detail::decode_read_check_write(instruction);
+        rcw.recognized) {
+      const bool pair = rcw.pair;
       const unsigned first = instruction & 31U;
       const unsigned second = (instruction >> 16) & 31U;
-      const unsigned operation = (instruction >> 12) & 7U;
+      const unsigned operation = rcw.operation;
       const bool valid =
           pair
-              ? (rcw_pair_compare
+              ? (rcw.compare_swap
                      ? (first & 1U) == 0U && (second & 1U) == 0U
                      : operation >= 1U && operation <= 3U && first != 31U &&
                            second != 31U && first != second)

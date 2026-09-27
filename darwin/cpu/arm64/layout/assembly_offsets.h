@@ -2,7 +2,8 @@
 /*
  * Neutral, assembly-visible ARM64 layout contract.  Both translated engines
  * consume this file; assembly_layout.hpp verifies every relevant offset
- * against the C++ CpuState and memory::Tlb definitions at compile time.
+ * against the C++ CpuState and memory::Tlb definitions, and every event code
+ * a gadget returns against EngineEvent, at compile time.
  */
 #define UML_ARM64_ASSEMBLY_LAYOUT_VERSION 1
 #define UML_GADGET_CPU_X0 0
@@ -65,20 +66,16 @@
 #define UML_GADGET_TLB_ENTRY_WRITE_PAGE 16
 #define UML_GADGET_TLB_ENTRY_WRITE_DATA_MINUS_ADDRESS 24
 #define UML_GADGET_TLB_SECOND_READ_PAGE 32
-#define UML_GADGET_TLB_SECOND_READ_DATA_MINUS_ADDRESS 40
 #define UML_GADGET_TLB_SECOND_WRITE_PAGE 48
-#define UML_GADGET_TLB_SECOND_WRITE_DATA_MINUS_ADDRESS 56
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 #define UML_GADGET_GUEST_PAGE_SHIFT 14
-#define UML_GADGET_GUEST_PAGE_BASE_MASK 0xffffffffffffc000
 #define UML_GADGET_TLB_INDEX_BITS 14
 #define UML_GADGET_TLB_INDEX_MASK 0x3fff
 #define UML_GADGET_TLB_FAULT_ADDRESS 1048592
 #define UML_GADGET_TLB_FAULT_ACCESS 1048600
 #elif DARWIN_UML_GUEST_PAGE_SIZE == 4096
 #define UML_GADGET_GUEST_PAGE_SHIFT 12
-#define UML_GADGET_GUEST_PAGE_BASE_MASK 0xfffffffffffff000
 #define UML_GADGET_TLB_INDEX_BITS 13
 #define UML_GADGET_TLB_INDEX_MASK 0x1fff
 #define UML_GADGET_TLB_FAULT_ADDRESS 262160
@@ -89,14 +86,12 @@
 #define UML_GADGET_TLB_FOLD_SHIFT \
 	(UML_GADGET_GUEST_PAGE_SHIFT + 13)
 
-#define UML_GADGET_EVENT_FATAL -1
 #define UML_GADGET_EVENT_SYSCALL 1
 #define UML_GADGET_EVENT_MEMORY_FAULT 2
 #define UML_GADGET_EVENT_INTERRUPT 3
 #define UML_GADGET_EVENT_ILLEGAL 4
 #define UML_GADGET_EVENT_BREAKPOINT 5
 #define UML_GADGET_EVENT_GCS_FAULT 6
-#define UML_GADGET_EVENT_FLOATING_POINT_TRAP 7
 
 /* Engine-neutral aliases for code that is not part of gadget translation. */
 #define UML_ARM64_CPU_FP_ACTIVE UML_GADGET_CPU_FP_ACTIVE

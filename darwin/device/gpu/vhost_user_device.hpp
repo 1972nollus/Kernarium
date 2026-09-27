@@ -7,10 +7,12 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 namespace uml::virtio {
@@ -30,6 +32,31 @@ struct VhostUserQueueCompletion final {
     std::uint64_t requestId {};
     std::vector<std::uint8_t> response;
 };
+
+/* The bytes of trivially copyable values laid end to end, as a response or
+ * a configuration carries them. */
+template<typename... Values>
+[[nodiscard]] std::vector<std::uint8_t> toBytes(const Values&... values)
+{
+    static_assert((std::is_trivially_copyable_v<Values> && ...));
+    std::vector<std::uint8_t> result((sizeof(Values) + ... + 0U));
+    std::size_t offset = 0;
+    ((std::memcpy(result.data() + offset, &values, sizeof(Values)),
+      offset += sizeof(Values)),
+     ...);
+    return result;
+}
+
+/* The trivially copyable value at the start of `bytes`. The caller has
+ * checked that `bytes` holds at least sizeof(Value). */
+template<typename Value>
+[[nodiscard]] Value fromBytes(std::span<const std::uint8_t> bytes)
+{
+    static_assert(std::is_trivially_copyable_v<Value>);
+    Value value {};
+    std::memcpy(&value, bytes.data(), sizeof(value));
+    return value;
+}
 
 struct VhostUserSharedMemoryRegion final {
     std::uint8_t id {};

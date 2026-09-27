@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
-#include "scratch_directory.hpp"
+#include "architecture_difference.hpp"
+#include "scratch_backing.hpp"
 
 #include "cpu/engine.hpp"
 #include "cpu/arm64/engine_execution.hpp"
@@ -154,61 +155,9 @@ event_for(::uml::cpu::ExitReason reason) noexcept {
 	return ExpectedEvent::fatal;
 }
 
-class Backing final {
-public:
-  explicit Backing(std::size_t size) {
-    auto path = ::uml::testing::scratch_template("uml-engine-test.XXXXXX");
-    descriptor_ = mkstemp(path.data());
-    if (descriptor_ < 0)
-      fail("fixture", "setup", 0, std::strerror(errno));
-    if (unlink(path.c_str()) != 0 ||
-        ftruncate(descriptor_, static_cast<off_t>(size)) != 0)
-      fail("fixture", "setup", 0, std::strerror(errno));
-  }
+using ::uml::testing::ScratchBacking;
 
-  ~Backing() {
-    if (descriptor_ >= 0)
-      (void)close(descriptor_);
-  }
-
-  Backing(const Backing &) = delete;
-  Backing &operator=(const Backing &) = delete;
-
-  [[nodiscard]] int descriptor() const noexcept { return descriptor_; }
-
-  void read(std::span<std::byte> bytes, std::size_t offset = 0) const {
-    std::size_t completed = 0;
-    while (completed != bytes.size()) {
-      const auto result =
-          pread(descriptor_, bytes.data() + completed, bytes.size() - completed,
-                static_cast<off_t>(offset + completed));
-      if (result < 0 && errno == EINTR)
-        continue;
-      if (result <= 0)
-        fail("fixture", "snapshot", 0,
-             result < 0 ? std::strerror(errno) : "short backing read");
-      completed += static_cast<std::size_t>(result);
-    }
-  }
-
-  void write(std::span<const std::byte> bytes, std::size_t offset = 0) const {
-    std::size_t completed = 0;
-    while (completed != bytes.size()) {
-      const auto result = pwrite(descriptor_, bytes.data() + completed,
-                                 bytes.size() - completed,
-                                 static_cast<off_t>(offset + completed));
-      if (result < 0 && errno == EINTR)
-        continue;
-      if (result <= 0)
-        fail("fixture", "restore", 0,
-             result < 0 ? std::strerror(errno) : "short backing write");
-      completed += static_cast<std::size_t>(result);
-    }
-  }
-
-private:
-  int descriptor_{-1};
-};
+constexpr std::string_view backing_name = "uml-engine-test.XXXXXX";
 
 class AddressSpace final {
 public:
@@ -231,9 +180,9 @@ private:
 
 class Mapping final {
 public:
-  Mapping(unsigned long generation, std::uint64_t address, Backing &backing,
-          std::size_t size, int protection, bool guest_code,
-          bool guest_writable)
+  Mapping(unsigned long generation, std::uint64_t address,
+          const ScratchBacking &backing, std::size_t size, int protection,
+          bool guest_code, bool guest_writable)
       : generation_{generation}, address_{address}, size_{size} {
     if (darwin_uml_static_vm_map_generation(
             generation_, reinterpret_cast<void *>(address_),
@@ -267,13 +216,14 @@ class CaseRegion final {
 public:
   CaseRegion(unsigned long generation, const MemoryRegion &region)
       : generation_{generation}, region_{region},
-        backing_{region.initial.size()}, mapping_{generation,
-                                                  region.address,
-                                                  backing_,
-                                                  region.initial.size(),
-                                                  region_protection(region),
-                                                  region.guest_code,
-                                                  region.guest_writable},
+        backing_{backing_name, region.initial.size()},
+        mapping_{generation,
+                 region.address,
+                 backing_,
+                 region.initial.size(),
+                 region_protection(region),
+                 region.guest_code,
+                 region.guest_writable},
         actual_(region.initial.size()),
         initial_tags_(region.initial.size() / 16),
         expected_tags_(region.initial.size() / 16) {
@@ -288,8 +238,8 @@ public:
   CaseRegion(const CaseRegion &) = delete;
   CaseRegion &operator=(const CaseRegion &) = delete;
 
-  void restore() const {
-    backing_.write(region_.initial);
+  void restore() {
+    backing_.put(0, region_.initial);
     if (region_.initial_tags.empty() && region_.expected_tags.empty())
       return;
     for (std::size_t index = 0; index < initial_tags_.size(); ++index)
@@ -302,7 +252,7 @@ public:
 
   void require_expected(std::string_view test_name, std::string_view engine,
                         std::uint32_t instruction) {
-    backing_.read(actual_);
+    backing_.get(0, actual_);
     const auto expected =
         region_.expected.empty() ? region_.initial : region_.expected;
     for (std::size_t offset = 0; offset < actual_.size(); ++offset) {
@@ -338,7 +288,7 @@ public:
 private:
   unsigned long generation_;
   MemoryRegion region_;
-  Backing backing_;
+  ScratchBacking backing_;
   Mapping mapping_;
   std::vector<std::byte> actual_;
   std::vector<std::uint8_t> initial_tags_;
@@ -480,74 +430,6 @@ void install_program(
   return outcome;
 }
 
-void require_equal(bool equal, const arm64::CpuState &expected,
-                   const arm64::CpuState &actual, std::string_view field,
-                   std::string_view test_name, std::string_view engine,
-                   std::uint32_t instruction) {
-  if (equal)
-    return;
-  if (field == "general registers") {
-    for (std::size_t index = 0; index < expected.registers.size(); ++index)
-      if (expected.registers[index] != actual.registers[index]) {
-        std::fprintf(
-            stderr, "expected x%zu=%#llx actual=%#llx\n", index,
-            static_cast<unsigned long long>(expected.registers[index]),
-            static_cast<unsigned long long>(actual.registers[index]));
-        break;
-      }
-  } else if (field == "vector registers") {
-    bool reported = false;
-    for (std::size_t index = 0;
-         index < expected.vectors.size() && !reported; ++index)
-      for (std::size_t byte = 0;
-           byte < expected.vectors[index].bytes.size(); ++byte)
-        if (expected.vectors[index].bytes[byte] !=
-            actual.vectors[index].bytes[byte]) {
-          std::fprintf(stderr,
-                       "expected v%zu[%zu]=%02x actual=%02x\n", index, byte,
-                       std::to_integer<unsigned>(
-                           expected.vectors[index].bytes[byte]),
-                       std::to_integer<unsigned>(
-                           actual.vectors[index].bytes[byte]));
-          reported = true;
-          break;
-        }
-  } else if (field == "pc")
-    std::fprintf(stderr, "expected pc=%#llx actual=%#llx\n",
-                 static_cast<unsigned long long>(expected.pc),
-                 static_cast<unsigned long long>(actual.pc));
-  else if (field == "sp")
-    std::fprintf(stderr, "expected sp=%#llx actual=%#llx\n",
-                 static_cast<unsigned long long>(expected.sp),
-                 static_cast<unsigned long long>(actual.sp));
-  else if (field == "nzcv")
-    std::fprintf(stderr, "expected nzcv=%#x actual=%#x\n", expected.nzcv,
-                 actual.nzcv);
-  else if (field == "fpcr")
-    std::fprintf(stderr, "expected fpcr=%#x actual=%#x\n", expected.fpcr,
-                 actual.fpcr);
-  else if (field == "fpsr")
-    std::fprintf(stderr, "expected fpsr=%#x actual=%#x\n", expected.fpsr,
-                 actual.fpsr);
-  else if (field == "fpmr")
-    std::fprintf(stderr, "expected fpmr=%#llx actual=%#llx\n",
-                 static_cast<unsigned long long>(expected.fpmr),
-                 static_cast<unsigned long long>(actual.fpmr));
-  else if (field == "tls")
-    std::fprintf(stderr, "expected tls=%#llx actual=%#llx\n",
-                 static_cast<unsigned long long>(expected.tls),
-                 static_cast<unsigned long long>(actual.tls));
-  fail(test_name, engine, instruction, field);
-}
-
-[[nodiscard]] bool vectors_equal(const arm64::CpuState &expected,
-                                 const arm64::CpuState &actual) noexcept {
-  for (std::size_t index = 0; index < expected.vectors.size(); ++index)
-    if (expected.vectors[index].bytes != actual.vectors[index].bytes)
-      return false;
-  return true;
-}
-
 } // namespace
 
 bool host_supports(NativeRequirements requirements) noexcept {
@@ -560,68 +442,8 @@ void require_architecture_equal(const arm64::CpuState &expected,
                                 std::string_view engine,
                                 std::uint32_t instruction,
                                 const std::source_location location) {
-  (void)location;
-  require_equal(expected.registers == actual.registers, expected, actual,
-                "general registers", case_name, engine, instruction);
-  require_equal(expected.sp == actual.sp, expected, actual, "sp", case_name,
-                engine, instruction);
-  require_equal(expected.pc == actual.pc, expected, actual, "pc", case_name,
-                engine, instruction);
-  require_equal(expected.nzcv == actual.nzcv, expected, actual, "nzcv",
-                case_name, engine, instruction);
-  require_equal(vectors_equal(expected, actual), expected, actual,
-                "vector registers", case_name, engine, instruction);
-  require_equal(expected.fpcr == actual.fpcr, expected, actual, "fpcr",
-                case_name, engine, instruction);
-  require_equal(expected.fpsr == actual.fpsr, expected, actual, "fpsr",
-                case_name, engine, instruction);
-  require_equal(expected.fpmr == actual.fpmr, expected, actual, "fpmr",
-                case_name, engine, instruction);
-  require_equal(expected.tls == actual.tls, expected, actual, "tls", case_name,
-                engine, instruction);
-  require_equal(expected.mte_enabled == actual.mte_enabled &&
-                    expected.tbi_enabled == actual.tbi_enabled &&
-                    expected.mte_exclude == actual.mte_exclude &&
-                    expected.mte_tag_choices == actual.mte_tag_choices &&
-                    expected.mte_random_tags == actual.mte_random_tags &&
-                    expected.mte_seed == actual.mte_seed &&
-                    expected.mte_tag == actual.mte_tag &&
-                    expected.mte_random_state == actual.mte_random_state,
-                expected, actual, "tag state", case_name, engine, instruction);
-  require_equal(expected.cpa_enabled == actual.cpa_enabled &&
-                    expected.cpa_multiply_enabled ==
-                        actual.cpa_multiply_enabled &&
-                    expected.accdata == actual.accdata,
-                expected, actual, "checked arithmetic state", case_name, engine,
-                instruction);
-  require_equal(expected.pstate_ssbs == actual.pstate_ssbs &&
-                    expected.pstate_dit == actual.pstate_dit &&
-                    expected.pstate_tco == actual.pstate_tco &&
-                    expected.pstate_sm == actual.pstate_sm &&
-                    expected.pstate_za == actual.pstate_za &&
-                    expected.pstate_daif_access == actual.pstate_daif_access &&
-                    expected.pstate_daif == actual.pstate_daif,
-                expected, actual, "pstate", case_name, engine, instruction);
-  require_equal(expected.exclusive_address == actual.exclusive_address &&
-                    expected.exclusive_key == actual.exclusive_key &&
-                    expected.exclusive_value == actual.exclusive_value &&
-                    expected.exclusive_value2 == actual.exclusive_value2 &&
-                    expected.exclusive_version == actual.exclusive_version &&
-                    expected.exclusive_size == actual.exclusive_size,
-                expected, actual, "exclusive monitor", case_name, engine,
-                instruction);
-  require_equal(expected.gcs_pointer == actual.gcs_pointer &&
-                    expected.gcs_implemented == actual.gcs_implemented &&
-                    expected.gcs_push_enabled == actual.gcs_push_enabled &&
-                    expected.gcs_store_enabled == actual.gcs_store_enabled,
-                expected, actual, "guarded control stack", case_name, engine,
-                instruction);
-  require_equal(
-      expected.pointer_auth_keys == actual.pointer_auth_keys &&
-          expected.pointer_authentication_enabled ==
-              actual.pointer_authentication_enabled,
-      expected, actual, "pointer-authentication state", case_name, engine,
-      instruction);
+  if (const auto difference = first_architecture_difference(expected, actual))
+    fail(case_name, engine, instruction, *difference, location);
 }
 
 class EngineHarness::Implementation final {
@@ -629,7 +451,7 @@ public:
   explicit Implementation(EngineHarnessOptions options)
       : generation_{next_generation()},
         address_space_{generation_},
-        backing_{DARWIN_UML_GUEST_PAGE_SIZE},
+        backing_{backing_name, DARWIN_UML_GUEST_PAGE_SIZE},
         mapping_{generation_,
                  code_base,
                  backing_,
@@ -713,20 +535,6 @@ public:
 
   void check_program(const ProgramCase &test_case,
                      const std::source_location &location) {
-    if (test_case.expected_instructions.has_value() &&
-        test_case.expected_instruction_pattern.has_value())
-      fail(test_case.name, "setup", 0,
-           "conflicting retired instruction expectations", location);
-    if (test_case.expected_instruction_pattern.has_value() &&
-        test_case.expected_instruction_pattern->step == 0)
-      fail(test_case.name, "setup", 0,
-           "zero retired instruction-count pattern step", location);
-    if (test_case.expected_instruction_pattern.has_value() &&
-        test_case.expected_instruction_pattern->maximum.has_value() &&
-        *test_case.expected_instruction_pattern->maximum <
-            test_case.expected_instruction_pattern->minimum)
-      fail(test_case.name, "setup", 0,
-           "invalid retired instruction-count pattern range", location);
     if (test_case.entry_offset % sizeof(std::uint32_t) != 0 ||
         test_case.entry_offset >
             DARWIN_UML_GUEST_PAGE_SIZE - sizeof(std::uint32_t))
@@ -848,25 +656,6 @@ public:
           fail(test_case.name, current_engine, diagnostic_instruction,
                "retired instruction count", location);
         }
-      } else if (test_case.expected_instruction_pattern.has_value()) {
-        const auto &pattern = *test_case.expected_instruction_pattern;
-        const bool below_minimum = outcome.instructions < pattern.minimum;
-        const bool above_maximum =
-            pattern.maximum.has_value() &&
-            outcome.instructions > *pattern.maximum;
-        const bool wrong_step =
-            !below_minimum &&
-            (outcome.instructions - pattern.minimum) % pattern.step != 0;
-        if (below_minimum || above_maximum || wrong_step) {
-          std::fprintf(
-              stderr,
-              "expected instructions=%zu+N*%zu maximum=%zu actual=%zu\n",
-              pattern.minimum, pattern.step,
-              pattern.maximum.value_or(std::numeric_limits<std::size_t>::max()),
-              outcome.instructions);
-          fail(test_case.name, current_engine, diagnostic_instruction,
-               "retired instruction-count pattern", location);
-        }
       } else if (test_case.event != ExpectedEvent::instruction_budget &&
                  engine == Engine::gadgets) {
         gadget_instructions = outcome.instructions;
@@ -898,7 +687,7 @@ public:
       else
         require_architecture_equal(compared_expected, compared_actual,
                                    test_case.name, current_engine,
-                                   diagnostic_instruction);
+                                   diagnostic_instruction, location);
       if (test_case.compare_fault &&
           (outcome.fault.address != test_case.fault.address ||
            outcome.fault.access != test_case.fault.access)) {
@@ -948,7 +737,7 @@ private:
 
   unsigned long generation_;
   AddressSpace address_space_;
-  Backing backing_;
+  ScratchBacking backing_;
   Mapping mapping_;
   std::array<std::byte, DARWIN_UML_GUEST_PAGE_SIZE> installed_page_{};
   std::unique_ptr<::uml::cpu::CpuEngine> gadget_engine_;

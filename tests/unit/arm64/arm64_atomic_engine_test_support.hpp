@@ -21,10 +21,6 @@ inline constexpr std::uint64_t data_page = engine::engine_test_data_base;
 inline constexpr std::size_t data_offset = 0x100;
 inline constexpr std::uint64_t data_address = data_page + data_offset;
 inline constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
-inline constexpr engine::InstructionCountPattern exclusive_retry_count{
-	.minimum = 7,
-	.step = 3,
-};
 
 inline void put(Page &page, std::size_t offset, std::uint64_t value,
 	std::size_t size)

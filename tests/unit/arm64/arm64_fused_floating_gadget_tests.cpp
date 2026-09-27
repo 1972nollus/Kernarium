@@ -26,16 +26,6 @@ DECLARE_SCALAR(msub)
 DECLARE_SCALAR(nmadd)
 DECLARE_SCALAR(nmsub)
 #undef DECLARE_SCALAR
-
-#define DECLARE_VECTOR(operation) \
-	void uml_arm64_gadget_simd_fused_##operation##_4h(); \
-	void uml_arm64_gadget_simd_fused_##operation##_8h(); \
-	void uml_arm64_gadget_simd_fused_##operation##_2s(); \
-	void uml_arm64_gadget_simd_fused_##operation##_4s(); \
-	void uml_arm64_gadget_simd_fused_##operation##_2d();
-DECLARE_VECTOR(fmla)
-DECLARE_VECTOR(fmls)
-#undef DECLARE_VECTOR
 }
 
 template<typename Function>
@@ -61,36 +51,19 @@ template<typename Function>
 	return table[operation][width];
 }
 
+/* Every vector FMLA/FMLS accumulates into Vd, so the translator always
+ * reaches the baked-accumulator entry for that register. */
 [[nodiscard]] std::uintptr_t vector_entry(const test::Form &form,
-	[[maybe_unused]] unsigned destination = 0U)
+	unsigned destination)
 {
-	/* Every vector FMLA/FMLS accumulates into Vd, so the translator always
-	 * reaches the baked-accumulator entry for that register. */
-	{
-		const unsigned baked_shape = form.width == 16U ?
-			(form.vector_bytes == 16U ? 1U : 0U) :
-			form.width == 32U ?
-			(form.vector_bytes == 16U ? 3U : 2U) : 4U;
-		const unsigned row = (form.subtract ? 5U : 0U) + baked_shape;
-		return reinterpret_cast<std::uintptr_t>(
-			gadgets::selection::uml_arm64_gadget_simd_fused_inplace_table[
-				row * 32U + destination]);
-	}
 	const unsigned shape = form.width == 16U ?
 		(form.vector_bytes == 16U ? 1U : 0U) :
 		form.width == 32U ?
 		(form.vector_bytes == 16U ? 3U : 2U) : 4U;
-#define VECTOR_ROW(operation) std::array<std::uintptr_t, 5>{ \
-	address(uml_arm64_gadget_simd_fused_##operation##_4h), \
-	address(uml_arm64_gadget_simd_fused_##operation##_8h), \
-	address(uml_arm64_gadget_simd_fused_##operation##_2s), \
-	address(uml_arm64_gadget_simd_fused_##operation##_4s), \
-	address(uml_arm64_gadget_simd_fused_##operation##_2d)}
-	static const std::array table{
-		VECTOR_ROW(fmla), VECTOR_ROW(fmls),
-	};
-#undef VECTOR_ROW
-	return table[form.subtract][shape];
+	const unsigned row = (form.subtract ? 5U : 0U) + shape;
+	return reinterpret_cast<std::uintptr_t>(
+		gadgets::selection::uml_arm64_gadget_simd_fused_inplace_table[
+			row * 32U + destination]);
 }
 
 [[nodiscard]] std::uintptr_t vector_offset(unsigned reg)

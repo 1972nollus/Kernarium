@@ -157,10 +157,10 @@ index ad0d6ab60e10e9b1118532b0cff0cea991ff35ee..aefa0b506abce18dc81b3576cd65e8eb
  	}
  }
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index ad6c4105bc4bab7f1a593e7eb7faa813e849156c..c55a5d7f9d4c39a9db90c178e32472f4110e24d5 100644
+index a35a5a4dcb5e790a81c572ad6965605cefddf9a8..ad4667cb05383559e781fac47306b9a57eafa019 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
-@@ -33,6 +33,7 @@ static uintptr_t cpu_thread_hazards[CONFIG_NR_CPUS];
+@@ -32,6 +32,7 @@ static uintptr_t cpu_thread_hazards[CONFIG_NR_CPUS];
  static unsigned int pending_ipis[CONFIG_NR_CPUS];
  static unsigned int guest_ipi_sequences[CONFIG_NR_CPUS];
  static unsigned char guest_executing[CONFIG_NR_CPUS];
@@ -168,7 +168,7 @@ index ad6c4105bc4bab7f1a593e7eb7faa813e849156c..c55a5d7f9d4c39a9db90c178e32472f4
  static unsigned char ipi_idle_waiting[CONFIG_NR_CPUS];
  static int ipi_wake_pipes[CONFIG_NR_CPUS][2] = {
  	[0 ... CONFIG_NR_CPUS - 1] = { -1, -1 },
-@@ -235,18 +236,30 @@ void darwin_ipi_poll(void)
+@@ -234,18 +235,30 @@ void darwin_ipi_poll(void)
  
  void darwin_cpu_relax(void)
  {

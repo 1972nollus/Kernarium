@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <span>
@@ -284,6 +285,70 @@ bool recoveryRequested(const File &disk)
 }
 
 } // namespace
+
+void validateUbdPath(const std::filesystem::path &path, std::string_view label)
+{
+	const auto value = path.string();
+	if (value.empty() || value.find_first_of(",:") != std::string::npos)
+		throw std::invalid_argument(std::string{label} +
+			" path is unusable as a UBD device");
+}
+
+void validateWritableDisk(const std::filesystem::path &disk)
+{
+	struct stat details {};
+	if (lstat(disk.c_str(), &details) != 0 || !S_ISREG(details.st_mode))
+		throw std::invalid_argument(
+			"the Android disk is not a regular file");
+	if (access(disk.c_str(), R_OK | W_OK) != 0)
+		throw std::invalid_argument("the Android disk is not writable");
+	validateUbdPath(disk, "Android disk");
+}
+
+std::vector<std::string> readKernelCommandLine(
+	const std::filesystem::path &path,
+	std::span<const std::string_view> launcherPrefixes)
+{
+	struct stat details {};
+	if (lstat(path.c_str(), &details) != 0 || !S_ISREG(details.st_mode) ||
+	    details.st_size < 0)
+		throw std::runtime_error(
+			"the kernel command line is missing or unsafe: " +
+			path.string());
+	std::string text(static_cast<std::size_t>(details.st_size), '\0');
+	std::FILE *file = std::fopen(path.c_str(), "rb");
+	if (file == nullptr)
+		throw std::system_error(errno, std::generic_category(),
+			"cannot open " + path.string());
+	const auto read = std::fread(text.data(), 1, text.size(), file);
+	const int closed = std::fclose(file);
+	if (read != text.size() || closed != 0)
+		throw std::runtime_error("cannot read " + path.string());
+
+	std::vector<std::string> arguments;
+	constexpr std::string_view separators{" \n\t"};
+	std::size_t cursor = 0;
+	while (cursor < text.size()) {
+		const auto begin = text.find_first_not_of(separators, cursor);
+		if (begin == std::string::npos)
+			break;
+		cursor = std::min(text.find_first_of(separators, begin),
+			text.size());
+		const std::string_view argument{text.data() + begin,
+			cursor - begin};
+		for (const auto prefix : launcherPrefixes)
+			if (argument.starts_with(prefix))
+				throw std::invalid_argument(
+					"the release kernel command line sets " +
+					std::string{prefix} +
+					", which the launcher fixes");
+		arguments.emplace_back(argument);
+	}
+	if (arguments.empty())
+		throw std::invalid_argument(
+			"the release kernel command line is empty");
+	return arguments;
+}
 
 BootSelection selectBoot(const std::filesystem::path &diskPath,
 			 BootMode requestedMode)

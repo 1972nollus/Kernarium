@@ -20,6 +20,7 @@
 #include "input/virtio/in_process_service.hpp"
 #include "block/android_boot.hpp"
 #include "uml/emulator.h"
+#include "uml_slirp_net.h"
 
 #import <Foundation/Foundation.h>
 #include <algorithm>
@@ -64,14 +65,6 @@ extern const unsigned char uml_elf_start[]
 extern const unsigned char uml_elf_end[]
     __asm("section$end$__DATA$__uml_elf");
 #endif
-int uml_slirp_net_open(void*, unsigned char[6], unsigned int*);
-int uml_slirp_net_irq_fd(void*);
-int uml_slirp_net_read(void*, void*, std::size_t);
-int uml_slirp_net_write(void*, const void*, std::size_t);
-int uml_slirp_net_add_forward(void*, const char*);
-void uml_slirp_net_stop(void*);
-void* uml_slirp_net_create(void) noexcept;
-void uml_slirp_net_destroy(void*) noexcept;
 }
 
 namespace {
@@ -198,39 +191,9 @@ private:
 };
 
 
-constexpr std::string_view geekbenchBootstrap = R"krn(set -eu
-benchmark_fail()
-{
-    echo "KERNARIUM_GEEKBENCH_ERROR: $*" >&2
-    sync
-    poweroff -f
-}
-[ -b /dev/ubdb ] || benchmark_fail "overlay block device is unavailable"
-/usr/sbin/mkfs.ext4 -F -q -m 0 \
-    -E nodiscard,lazy_itable_init=1,lazy_journal_init=1 /dev/ubdb || \
-    benchmark_fail "ext4 format failed"
-mount -t ext4 -o noatime,nosuid,nodev /dev/ubdb /mnt || \
-    benchmark_fail "ext4 mount failed"
-mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root || \
-    benchmark_fail "overlay workspace failed"
-mount -o bind / /mnt/lower || benchmark_fail "EROFS lower bind failed"
-mount -t overlay overlay \
-    -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work \
-    /mnt/root || benchmark_fail "overlay mount failed"
-mount -t devtmpfs devtmpfs /mnt/root/dev || \
-    benchmark_fail "devtmpfs mount failed"
-mkdir -p /mnt/root/.uml-lower || benchmark_fail "old-root directory failed"
-cd /mnt/root || benchmark_fail "new-root chdir failed"
-pivot_root . .uml-lower || benchmark_fail "pivot_root failed"
-mount -t proc proc /proc || benchmark_fail "proc mount failed"
-mount -t sysfs sysfs /sys || benchmark_fail "sysfs mount failed"
-mkdir -p /run /tmp
-mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run || \
-    benchmark_fail "run tmpfs mount failed"
-mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp || \
-    benchmark_fail "temporary tmpfs mount failed"
-benchmark=/opt/geekbench/release/geekbench6
-[ -x "$benchmark" ] || benchmark_fail "Geekbench payload is unavailable"
+/* Geekbench over the overlay root; see kernarium::bootstrap::overlayWorkload. */
+constexpr std::string_view geekbenchWorkload = R"krn(benchmark=/opt/geekbench/release/geekbench6
+[ -x "$benchmark" ] || fail "Geekbench payload is unavailable"
 export HOME=/root
 echo "KERNARIUM_GEEKBENCH_READY"
 set +e
@@ -248,17 +211,12 @@ poweroff -f
 exit "$benchmark_rc"
 )krn";
 
-constexpr std::string_view discardBenchmarkBootstrap = R"krn(set -eu
-discard_fail()
-{
-    echo "KERNARIUM_DISCARD_ERROR: $*" >&2
-    sync
-    poweroff -f
-}
-[ -b /dev/ubdb ] || discard_fail "overlay block device is unavailable"
-mount -t proc proc /proc || discard_fail "proc mount failed"
-mount -t sysfs sysfs /sys || discard_fail "sysfs mount failed"
-[ -x /usr/sbin/blkdiscard ] || discard_fail "blkdiscard is unavailable"
+/* The discard benchmark writes /dev/ubdb itself, so it builds no overlay root.
+ * It follows kernarium::bootstrap::workloadFailure. */
+constexpr std::string_view discardBenchmarkWorkload = R"krn([ -b /dev/ubdb ] || fail "overlay block device is unavailable"
+mount -t proc proc /proc || fail "proc mount failed"
+mount -t sysfs sysfs /sys || fail "sysfs mount failed"
+[ -x /usr/sbin/blkdiscard ] || fail "blkdiscard is unavailable"
 case "$KERNARIUM_DISCARD_MODE" in
 batched-128m)
     expected_max=134217728
@@ -266,27 +224,27 @@ batched-128m)
 fragmented-32k)
     expected_max=32768
     echo "$expected_max" > /sys/block/ubdb/queue/discard_max_bytes ||
-        discard_fail "discard limit update failed"
+        fail "discard limit update failed"
     ;;
 *)
-    discard_fail "invalid benchmark mode"
+    fail "invalid benchmark mode"
     ;;
 esac
 actual_max=$(cat /sys/block/ubdb/queue/discard_max_bytes)
 [ "$actual_max" = "$expected_max" ] ||
-    discard_fail "unexpected discard limit $actual_max"
+    fail "unexpected discard limit $actual_max"
 echo "KERNARIUM_DISCARD_READY:$KERNARIUM_DISCARD_MODE:$actual_max"
 run=1
 while [ "$run" -le 7 ]; do
     dd if=/dev/zero of=/dev/ubdb bs=1M count=512 conv=fsync status=none ||
-        discard_fail "payload write failed"
+        fail "payload write failed"
     set -- $(cat /sys/block/ubdb/stat)
     requests_before=${12}
     sectors_before=${14}
     ticks_before=${15}
     started=$(date +%s%N)
     /usr/sbin/blkdiscard -o 0 -l 536870912 /dev/ubdb ||
-        discard_fail "discard failed"
+        fail "discard failed"
     sync
     finished=$(date +%s%N)
     set -- $(cat /sys/block/ubdb/stat)
@@ -308,42 +266,11 @@ poweroff -f
  * The connected-device benchmarks need the same guest work the macOS probe and
  * Geekbench runners drive through a command line, which no fixed bootstrap can
  * express. The script arrives in the shell variable the relay assigns before
- * this text, so no line carries the whole payload, and it runs over the same
- * writable overlay the Geekbench bootstrap establishes.
+ * the bootstrap, so no line carries the whole payload, and it runs over the
+ * same writable overlay root as Geekbench.
  */
-constexpr std::string_view guestScriptBootstrap = R"krn(set -eu
-script_fail()
-{
-    echo "KERNARIUM_GUEST_SCRIPT_ERROR: $*" >&2
-    sync
-    poweroff -f
-}
-[ -b /dev/ubdb ] || script_fail "overlay block device is unavailable"
-/usr/sbin/mkfs.ext4 -F -q -m 0 \
-    -E nodiscard,lazy_itable_init=1,lazy_journal_init=1 /dev/ubdb || \
-    script_fail "ext4 format failed"
-mount -t ext4 -o noatime,nosuid,nodev /dev/ubdb /mnt || \
-    script_fail "ext4 mount failed"
-mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root || \
-    script_fail "overlay workspace failed"
-mount -o bind / /mnt/lower || script_fail "EROFS lower bind failed"
-mount -t overlay overlay \
-    -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work \
-    /mnt/root || script_fail "overlay mount failed"
-mount -t devtmpfs devtmpfs /mnt/root/dev || \
-    script_fail "devtmpfs mount failed"
-mkdir -p /mnt/root/.uml-lower || script_fail "old-root directory failed"
-cd /mnt/root || script_fail "new-root chdir failed"
-pivot_root . .uml-lower || script_fail "pivot_root failed"
-mount -t proc proc /proc || script_fail "proc mount failed"
-mount -t sysfs sysfs /sys || script_fail "sysfs mount failed"
-mkdir -p /run /tmp
-mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run || \
-    script_fail "run tmpfs mount failed"
-mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp || \
-    script_fail "temporary tmpfs mount failed"
-printf %s "$KERNARIUM_GUEST_SCRIPT" | base64 -d >/tmp/kernarium-guest-script ||
-    script_fail "guest script decode failed"
+constexpr std::string_view guestScriptWorkload = R"krn(printf %s "$KERNARIUM_GUEST_SCRIPT" | base64 -d >/tmp/kernarium-guest-script ||
+    fail "guest script decode failed"
 unset KERNARIUM_GUEST_SCRIPT
 export HOME=/root
 echo "KERNARIUM_GUEST_SCRIPT_READY"
@@ -362,7 +289,7 @@ enum class ConsoleBootMode {
     cts,
     geekbench,
     discardBenchmark,
-    /* A host-supplied measured payload; see guestScriptBootstrap. */
+    /* A host-supplied measured payload; see guestScriptWorkload. */
     guestScript,
     /* Android brings up its own init from the selected GPT ramdisk range. The
      * relay carries its console in both directions and injects nothing. */
@@ -406,12 +333,8 @@ public:
             return;
         interval_ = std::chrono::milliseconds {interval};
         /* The guest's timer signal must never land on this thread. */
-        sigset_t all;
-        sigset_t previous;
-        sigfillset(&all);
-        (void)pthread_sigmask(SIG_BLOCK, &all, &previous);
+        const ScopedGuestTimerBlock guestTimerBlock;
         thread_ = std::thread([this] { run(); });
-        (void)pthread_sigmask(SIG_SETMASK, &previous, nullptr);
     }
 
     ~FootprintReporter()
@@ -607,7 +530,9 @@ public:
                                     bootstrap.append(discardBenchmarkMode);
                                     bootstrap.push_back('\n');
                                     bootstrap.append(
-                                        discardBenchmarkBootstrap);
+                                        kernarium::bootstrap::workloadFailure(
+                                            "KERNARIUM_DISCARD_ERROR"));
+                                    bootstrap.append(discardBenchmarkWorkload);
                                 } else if (
                                     bootMode ==
                                     ConsoleBootMode::guestScript) {
@@ -631,7 +556,10 @@ public:
                                     }
                                     bootstrap.append(
                                         "export KERNARIUM_GUEST_SCRIPT\n");
-                                    bootstrap.append(guestScriptBootstrap);
+                                    bootstrap.append(
+                                        kernarium::bootstrap::overlayWorkload(
+                                            "KERNARIUM_GUEST_SCRIPT_ERROR",
+                                            guestScriptWorkload));
                                 } else if (
                                     bootMode == ConsoleBootMode::geekbench) {
                                     if (!geekbenchWorkloads.empty()) {
@@ -640,7 +568,10 @@ public:
                                         bootstrap.append(geekbenchWorkloads);
                                         bootstrap.push_back('\n');
                                     }
-                                    bootstrap.append(geekbenchBootstrap);
+                                    bootstrap.append(
+                                        kernarium::bootstrap::overlayWorkload(
+                                            "KERNARIUM_GEEKBENCH_ERROR",
+                                            geekbenchWorkload));
                                 } else {
                                     std::string_view modeSetup;
                                     if (bootMode == ConsoleBootMode::aquarium)
@@ -1143,43 +1074,6 @@ const char* selectedExecutionEngine()
 }
 
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-std::size_t checkedRegularFileSize(const std::filesystem::path& path)
-{
-    struct stat details {};
-    if (lstat(path.c_str(), &details) != 0 || !S_ISREG(details.st_mode) ||
-        details.st_size < 0) {
-        throw std::runtime_error(
-            "bundle payload is missing or unexpected: " + std::string {path});
-    }
-    return static_cast<std::size_t>(details.st_size);
-}
-
-std::vector<unsigned char> readRegularFile(
-    const std::filesystem::path& path)
-{
-    const auto size = checkedRegularFileSize(path);
-    std::FILE* file = std::fopen(path.c_str(), "rb");
-    if (file == nullptr)
-        throw std::runtime_error("cannot open " + std::string {path});
-    std::vector<unsigned char> payload(size);
-    const auto read = std::fread(payload.data(), 1, payload.size(), file);
-    const int closeResult = std::fclose(file);
-    if (read != payload.size() || closeResult != 0)
-        throw std::runtime_error("cannot read " + std::string {path});
-    return payload;
-}
-
-/* A UBD specification is comma and colon delimited, so a path carrying either
- * would silently become a different device configuration. */
-void validateUbdPath(const std::filesystem::path& path, const char* label)
-{
-    const auto value = path.string();
-    if (value.empty() || value.find_first_of(",:") != std::string::npos) {
-        throw std::invalid_argument(
-            std::string {label} + " path is unusable as a UBD device");
-    }
-}
-
 void appendKernelCommandLine(
     std::vector<std::string>& arguments,
     const std::filesystem::path& path,
@@ -1189,36 +1083,11 @@ void appendKernelCommandLine(
         "androidboot.lcd_density="};
     constexpr std::string_view adbAuthorizationPrefix {
         "androidboot.kernarium.adb_auth="};
-    const auto payload = readRegularFile(path);
-    const std::string text(payload.begin(), payload.end());
-    std::size_t cursor = 0;
-    std::size_t appended = 0;
-    while (cursor < text.size()) {
-        while (cursor < text.size() &&
-               (text[cursor] == ' ' || text[cursor] == '\n' ||
-                text[cursor] == '\t'))
-            ++cursor;
-        const auto begin = cursor;
-        while (cursor < text.size() && text[cursor] != ' ' &&
-               text[cursor] != '\n' && text[cursor] != '\t')
-            ++cursor;
-        if (cursor != begin) {
-            const std::string_view argument {
-                text.data() + begin, cursor - begin};
-            if (argument.starts_with(densityPrefix)) {
-                throw std::invalid_argument(
-                    "the bundle kernel command line fixes the display density");
-            }
-            if (argument.starts_with(adbAuthorizationPrefix)) {
-                throw std::invalid_argument(
-                    "the bundle kernel command line fixes ADB authorization");
-            }
-            arguments.emplace_back(argument);
-            ++appended;
-        }
-    }
-    if (appended == 0U)
-        throw std::invalid_argument("the bundle kernel command line is empty");
+    constexpr std::array launcherPrefixes {
+        densityPrefix, adbAuthorizationPrefix};
+    for (auto& argument :
+         uml::android::readKernelCommandLine(path, launcherPrefixes))
+        arguments.push_back(std::move(argument));
 
     /* Android init imports this as ro.boot.lcd_density. Cuttlefish graphics
      * init then publishes the same value as ro.sf.lcd_density, keeping the
@@ -1231,14 +1100,6 @@ void appendKernelCommandLine(
     arguments.emplace_back(std::string {adbAuthorizationPrefix} + "1");
 }
 
-void prepareAndroidDisk(const std::filesystem::path& disk)
-{
-    struct stat details {};
-    if (lstat(disk.c_str(), &details) != 0 || !S_ISREG(details.st_mode))
-        throw std::invalid_argument("the Android disk is not a regular file");
-    if (::access(disk.c_str(), R_OK | W_OK) != 0)
-        throw std::invalid_argument("the Android disk is not writable");
-}
 #endif
 
 #if !KERNARIUM_RUNTIME_ANDROID_GUEST
@@ -1307,8 +1168,7 @@ int runtimeRun(
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
         const std::filesystem::path androidDisk {boot->android_disk_path};
-        validateUbdPath(androidDisk, "Android disk");
-        prepareAndroidDisk(androidDisk);
+        uml::android::validateWritableDisk(androidDisk);
         const auto androidBoot = uml::android::selectBoot(
             androidDisk,
             static_cast<uml::android::BootMode>(boot->android_boot_mode));
@@ -1530,6 +1390,16 @@ int runtimeRun(
         arguments.emplace_back(
             "virtio_uml.device=" + gpuService.takeConnectionName() + ":" +
             std::to_string(uml::gpu::protocol::virtioGpuDeviceId));
+#if KERNARIUM_RUNTIME_ANDROID_GUEST
+        /* Android's vendor policy labels the battery's sysfs path by its
+         * position among the Virtio devices
+         * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts). Straight
+         * after the GPU it is always virtio-uml.1/virtio1, whatever optional
+         * devices follow. */
+        arguments.emplace_back(
+            "virtio_uml.device=" + batteryService.takeConnectionName() + ":" +
+            std::to_string(uml::battery::protocol::deviceId));
+#endif
         arguments.emplace_back(
             "virtio_uml.device=" + balloonService.takeConnectionName() + ":" +
             std::to_string(uml::balloon::protocol::deviceId));
@@ -1554,13 +1424,6 @@ int runtimeRun(
                 std::to_string(uml::console::protocol::deviceId));
         }
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-        /* The Android vendor policy labels the battery's sysfs path by its
-         * position among these Virtio devices
-         * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts); a device
-         * added before it must extend that range. */
-        arguments.emplace_back(
-            "virtio_uml.device=" + batteryService.takeConnectionName() + ":" +
-            std::to_string(uml::battery::protocol::deviceId));
         /* The bundle GPT is the directly writable persistent disk. Its selected
          * ramdisk is exposed from the same file without a standalone image. */
         arguments.emplace_back("ubd0=" + androidDisk.string());

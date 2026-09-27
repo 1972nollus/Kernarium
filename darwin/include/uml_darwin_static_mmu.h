@@ -132,10 +132,6 @@ uint64_t darwin_uml_static_vm_code_changes(unsigned long generation);
  * their count.  A negative result means the caller must retire every
  * translation it holds for the address space.
  */
-int darwin_uml_static_vm_code_change_ranges(
-	unsigned long generation, uint64_t sequence,
-	struct darwin_uml_static_code_change *changes, size_t capacity,
-	uint64_t *current_sequence);
 int darwin_uml_static_vm_execution_context_code_change_ranges(
 	void *context, uint64_t sequence,
 	struct darwin_uml_static_code_change *changes, size_t capacity,

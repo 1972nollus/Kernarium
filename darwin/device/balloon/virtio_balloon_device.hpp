@@ -81,6 +81,13 @@ private:
     void inflate(std::span<const std::uint8_t> frames);
     void deflate(std::span<const std::uint8_t> frames);
     void apply(bool release, std::vector<std::uint64_t>& hostPages);
+    /* Releases or commits `count` host pages from `firstHostPage` on. */
+    void applyRun(bool release, std::uint64_t firstHostPage,
+        std::uint64_t count) noexcept;
+    [[nodiscard]] bool frameBallooned(std::uint64_t frame) const noexcept;
+    /* Whether the guest has handed over every frame of the host page. */
+    [[nodiscard]] bool hostPageBallooned(
+        std::uint64_t hostPage) const noexcept;
 
     BalloonOptions options_;
     std::unique_ptr<BalloonMemory> memory_;

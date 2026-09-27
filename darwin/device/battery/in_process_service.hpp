@@ -4,6 +4,10 @@
 #include <memory>
 #include <string>
 
+namespace uml::gpu {
+class InProcessVhostUserService;
+}
+
 namespace uml::battery {
 
 class InProcessBatteryService final {
@@ -18,8 +22,7 @@ public:
     void stop() noexcept;
 
 private:
-    class Implementation;
-    std::unique_ptr<Implementation> implementation_;
+    std::unique_ptr<uml::gpu::InProcessVhostUserService> service_;
 };
 
 } // namespace uml::battery

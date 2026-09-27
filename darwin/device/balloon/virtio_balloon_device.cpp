@@ -21,13 +21,6 @@ namespace {
 
 constexpr std::uintptr_t timerIdentifier = 1;
 
-std::vector<std::uint8_t> bytes(const protocol::Configuration& value)
-{
-    std::vector<std::uint8_t> result(sizeof(value));
-    std::memcpy(result.data(), &value, sizeof(value));
-    return result;
-}
-
 uml::gpu::UniqueDescriptor makeTimer(std::chrono::milliseconds interval)
 {
     uml::gpu::UniqueDescriptor queue {::kqueue()};
@@ -119,7 +112,7 @@ std::size_t VirtioBalloonDevice::queueCount() const noexcept
 
 std::vector<std::uint8_t> VirtioBalloonDevice::configuration() const
 {
-    return bytes(protocol::Configuration {
+    return uml::virtio::toBytes(protocol::Configuration {
         .numPages = targetPages_,
         .actual = actualPages_,
         .freePageHintCommandId = 0,
@@ -161,24 +154,12 @@ void VirtioBalloonDevice::inflate(std::span<const std::uint8_t> frames)
          at += sizeof(std::uint32_t)) {
         std::uint32_t frame;
         std::memcpy(&frame, frames.data() + at, sizeof(frame));
-        if (frame >= frameCount_)
+        if (frame >= frameCount_ || frameBallooned(frame))
             continue;
-        auto& word = frames_[frame / 64];
-        const std::uint64_t bit = 1ULL << (frame % 64);
-        if ((word & bit) != 0)
-            continue;
-        word |= bit;
+        frames_[frame / 64] |= 1ULL << (frame % 64);
         /* The host page leaves only once every frame of it is ballooned. */
         const std::uint64_t hostPage = frame / framesPerHostPage_;
-        bool full = true;
-        for (std::uint64_t sibling = hostPage * framesPerHostPage_;
-             sibling < (hostPage + 1) * framesPerHostPage_; ++sibling) {
-            if ((frames_[sibling / 64] & (1ULL << (sibling % 64))) == 0) {
-                full = false;
-                break;
-            }
-        }
-        if (full)
+        if (hostPageBallooned(hostPage))
             released.push_back(hostPage);
     }
     apply(true, released);
@@ -191,22 +172,11 @@ void VirtioBalloonDevice::deflate(std::span<const std::uint8_t> frames)
          at += sizeof(std::uint32_t)) {
         std::uint32_t frame;
         std::memcpy(&frame, frames.data() + at, sizeof(frame));
-        if (frame >= frameCount_)
-            continue;
-        auto& word = frames_[frame / 64];
-        const std::uint64_t bit = 1ULL << (frame % 64);
-        if ((word & bit) == 0)
+        if (frame >= frameCount_ || !frameBallooned(frame))
             continue;
         const std::uint64_t hostPage = frame / framesPerHostPage_;
-        bool wasFull = true;
-        for (std::uint64_t sibling = hostPage * framesPerHostPage_;
-             sibling < (hostPage + 1) * framesPerHostPage_; ++sibling) {
-            if ((frames_[sibling / 64] & (1ULL << (sibling % 64))) == 0) {
-                wasFull = false;
-                break;
-            }
-        }
-        word &= ~bit;
+        const bool wasFull = hostPageBallooned(hostPage);
+        frames_[frame / 64] &= ~(1ULL << (frame % 64));
         if (wasFull)
             committed.push_back(hostPage);
     }
@@ -218,18 +188,12 @@ void VirtioBalloonDevice::apply(bool release, std::vector<std::uint64_t>& hostPa
     std::sort(hostPages.begin(), hostPages.end());
     hostPages.erase(std::unique(hostPages.begin(), hostPages.end()),
         hostPages.end());
-    const std::uint64_t pageSize = options_.hostPageSize;
     for (std::size_t first = 0; first < hostPages.size();) {
         std::size_t last = first + 1;
         while (last < hostPages.size() &&
                hostPages[last] == hostPages[last - 1] + 1)
             ++last;
-        const std::uint64_t offset = hostPages[first] * pageSize;
-        const std::uint64_t length = (last - first) * pageSize;
-        /* A host that cannot release or wire a page leaves the guest's view
-         * correct either way; the page is only counted differently. */
-        (void)(release ? memory_->release(offset, length) :
-                         memory_->commit(offset, length));
+        applyRun(release, hostPages[first], last - first);
         first = last;
     }
     if (release)
@@ -239,27 +203,51 @@ void VirtioBalloonDevice::apply(bool release, std::vector<std::uint64_t>& hostPa
             releasedHostPages_, hostPages.size());
 }
 
+void VirtioBalloonDevice::applyRun(
+    bool release,
+    std::uint64_t firstHostPage,
+    std::uint64_t count) noexcept
+{
+    const std::uint64_t pageSize = options_.hostPageSize;
+    const std::uint64_t offset = firstHostPage * pageSize;
+    const std::uint64_t length = count * pageSize;
+    /* A host that cannot release or wire a page leaves the guest's view
+     * correct either way; the page is only counted differently. */
+    (void)(release ? memory_->release(offset, length) :
+                     memory_->commit(offset, length));
+}
+
+bool VirtioBalloonDevice::frameBallooned(std::uint64_t frame) const noexcept
+{
+    return (frames_[frame / 64] & (1ULL << (frame % 64))) != 0;
+}
+
+bool VirtioBalloonDevice::hostPageBallooned(
+    std::uint64_t hostPage) const noexcept
+{
+    for (std::uint64_t frame = hostPage * framesPerHostPage_;
+         frame < (hostPage + 1) * framesPerHostPage_; ++frame) {
+        if (!frameBallooned(frame))
+            return false;
+    }
+    return true;
+}
+
 void VirtioBalloonDevice::reset() noexcept
 {
     /* A driver that goes away takes every page back without telling the
-     * host, so give them all back first. */
-    std::vector<std::uint64_t> committed;
+     * host, so give them all back first, one run of pages at a time. */
     const std::uint64_t hostPages = frameCount_ / framesPerHostPage_;
-    for (std::uint64_t hostPage = 0; hostPage < hostPages; ++hostPage) {
-        bool full = true;
-        for (std::uint64_t frame = hostPage * framesPerHostPage_;
-             frame < (hostPage + 1) * framesPerHostPage_; ++frame) {
-            if ((frames_[frame / 64] & (1ULL << (frame % 64))) == 0) {
-                full = false;
-                break;
-            }
+    for (std::uint64_t first = 0; first < hostPages;) {
+        if (!hostPageBallooned(first)) {
+            ++first;
+            continue;
         }
-        if (full)
-            committed.push_back(hostPage);
-    }
-    try {
-        apply(false, committed);
-    } catch (...) {
+        std::uint64_t last = first + 1;
+        while (last < hostPages && hostPageBallooned(last))
+            ++last;
+        applyRun(false, first, last - first);
+        first = last;
     }
     std::fill(frames_.begin(), frames_.end(), 0);
     releasedHostPages_ = 0;

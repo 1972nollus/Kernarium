@@ -17,13 +17,7 @@ namespace {
 class JitEngine final : public CpuEngine {
 public:
 	explicit JitEngine(EngineConfiguration configuration)
-		: options_{JitExecutorOptions{
-			.enable_guarded_control_flow =
-				configuration.enable_guarded_control_flow,
-			.enable_pointer_authentication =
-				configuration.enable_pointer_authentication,
-			.host_capabilities = configuration.host_capabilities,
-		}}, session_{active_jit_executor_pool_session()}
+		: options_{configuration}, session_{active_jit_executor_pool_session()}
 #if UML_ENABLE_JIT_PROFILE
 		, pool_profile_{session_}
 #endif

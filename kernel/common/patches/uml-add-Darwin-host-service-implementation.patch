@@ -21,13 +21,13 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/os-Darwin/skas/Makefile  |    7 +
  arch/um/os-Darwin/skas/mem.c     |   33 +
  arch/um/os-Darwin/skas/process.c | 1264 ++++++++++++++++++++++++++++++
- arch/um/os-Darwin/smp.c          |  461 +++++++++++
+ arch/um/os-Darwin/smp.c          |  453 +++++++++++
  arch/um/os-Darwin/start_up.c     |   72 ++
  arch/um/os-Darwin/time.c         |  280 +++++++
  arch/um/os-Darwin/tty.c          |   22 +
  arch/um/os-Darwin/umid.c         |   40 +
  arch/um/os-Darwin/util.c         |  133 ++++
- 22 files changed, 4181 insertions(+)
+ 22 files changed, 4173 insertions(+)
  create mode 100644 arch/um/os-Darwin/Makefile
  create mode 100644 arch/um/os-Darwin/bridge.h
  create mode 100644 arch/um/os-Darwin/compat.c
@@ -219,7 +219,7 @@ index 0000000000000000000000000000000000000000..12d70d6cb35c1e20f51fed4a0ec8fa38
 +}
 diff --git a/arch/um/os-Darwin/file.c b/arch/um/os-Darwin/file.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..9e5398437403b11c8a7475a4101608744a397d1e
+index 0000000000000000000000000000000000000000..83c173bc699249c5bd40502a7d68ce48a7a81e4b
 --- /dev/null
 +++ b/arch/um/os-Darwin/file.c
 @@ -0,0 +1,544 @@
@@ -393,7 +393,7 @@ index 0000000000000000000000000000000000000000..9e5398437403b11c8a7475a410160874
 +		if (errno || *end || inherited < 0 || inherited > INT_MAX)
 +			return -EINVAL;
 +		fd = (int)inherited;
-+		if (fcntl(fd, F_GETFD) < 0)
++		if (darwin_uml_fcntl(fd, F_GETFD, 0) < 0)
 +			return -errno;
 +		return fd;
 +	}
@@ -3322,14 +3322,13 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +}
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..e05157ba51b59a3cbe7c6acddc66413ca474933a
+index 0000000000000000000000000000000000000000..7338cec2518abe186c1be86ca39126e1543380b6
 --- /dev/null
 +++ b/arch/um/os-Darwin/smp.c
-@@ -0,0 +1,461 @@
+@@ -0,0 +1,453 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
-+#include <fcntl.h>
 +#include <poll.h>
 +#include <pthread.h>
 +#include <sched.h>
@@ -3537,10 +3536,8 @@ index 0000000000000000000000000000000000000000..e05157ba51b59a3cbe7c6acddc66413c
 +
 +	if (fd < 0)
 +		return;
-+	/* Do not rely solely on O_NONBLOCK here.  Darwin accepted F_SETFL for
-+	 * these early-boot pipe descriptors but an empty follow-up read could
-+	 * still sleep.  Polling before every bounded drain makes this helper
-+	 * unconditionally nonblocking.
++	/* Poll before every bounded read, so the drain never waits whatever
++	 * the descriptor's status flags are.
 +	 */
 +	while (poll(&ready, 1, 0) > 0 && (ready.revents & POLLIN)) {
 +		if (read(fd, bytes, sizeof(bytes)) <= 0)
@@ -3729,22 +3726,17 @@ index 0000000000000000000000000000000000000000..e05157ba51b59a3cbe7c6acddc66413c
 +	struct sigaction action = { };
 +	sigset_t unblock;
 +	int cpu;
-+	int flags;
 +
 +	for (cpu = 0; cpu < uml_ncpus; cpu++) {
 +		if (pipe(ipi_wake_pipes[cpu]) < 0)
 +			panic("Darwin: unable to create CPU%d IPI wake pipe: %d",
 +			      cpu, errno);
-+		flags = fcntl(ipi_wake_pipes[cpu][0], F_GETFL);
-+		if (flags < 0 || fcntl(ipi_wake_pipes[cpu][0], F_SETFL,
-+					flags | O_NONBLOCK) < 0)
++		if (os_set_fd_block(ipi_wake_pipes[cpu][0], 0) < 0)
 +			panic("Darwin: unable to configure CPU%d IPI read pipe", cpu);
-+		flags = fcntl(ipi_wake_pipes[cpu][1], F_GETFL);
-+		if (flags < 0 || fcntl(ipi_wake_pipes[cpu][1], F_SETFL,
-+					flags | O_NONBLOCK) < 0)
++		if (os_set_fd_block(ipi_wake_pipes[cpu][1], 0) < 0)
 +			panic("Darwin: unable to configure CPU%d IPI write pipe", cpu);
-+		(void)fcntl(ipi_wake_pipes[cpu][0], F_SETFD, FD_CLOEXEC);
-+		(void)fcntl(ipi_wake_pipes[cpu][1], F_SETFD, FD_CLOEXEC);
++		(void)os_set_exec_close(ipi_wake_pipes[cpu][0]);
++		(void)os_set_exec_close(ipi_wake_pipes[cpu][1]);
 +	}
 +
 +	action.sa_handler = ipi_signal_handler;

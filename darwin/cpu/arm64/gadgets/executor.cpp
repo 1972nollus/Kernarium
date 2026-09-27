@@ -68,27 +68,6 @@ constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 	return count;
 }
 
-[[nodiscard]] constexpr bool terminal_does_not_retire(
-	::uml::cpu::EngineEvent event) noexcept
-{
-	switch (event) {
-	case ::uml::cpu::EngineEvent::fatal:
-	case ::uml::cpu::EngineEvent::memory_fault:
-	case ::uml::cpu::EngineEvent::illegal_instruction:
-	case ::uml::cpu::EngineEvent::gcs_fault:
-	case ::uml::cpu::EngineEvent::floating_point_trap:
-		return true;
-	default:
-		return false;
-	}
-}
-
-[[nodiscard]] std::uint32_t effective_fpcr(
-	const arm64::CpuState &cpu) noexcept
-{
-	return cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
-}
-
 void correct_terminal_instruction_count(
 	const arm64::gadgets::Program &program, ::uml::cpu::EngineEvent event,
 	std::uint64_t fault_pc, std::size_t &executed) noexcept
@@ -116,7 +95,7 @@ void correct_fpcr_enable_instruction_count(
 	const arm64::CpuState &cpu, std::size_t &executed) noexcept
 {
 	if (event != ::uml::cpu::EngineEvent::continued ||
-	    (effective_fpcr(cpu) &
+	    (cpu.effective_fpcr() &
 	     arm64::detail::fpcr_exception_enable_mask) == 0U)
 		return;
 
@@ -970,11 +949,6 @@ private:
 			return allocation_bytes(entry_words() + word_count,
 				source_word_count);
 		}
-		[[nodiscard]] std::span<const std::uintptr_t> stream() const noexcept
-		{
-			return {words(), word_count};
-		}
-
 		/* The stored block as the builder produced it. The program
 		 * refers to the words behind this header rather than copying
 		 * them, so it is valid exactly as long as the body is. */
@@ -1319,7 +1293,7 @@ private:
 		StaticGuestMemory &memory, void *execution_context,
 		GadgetCacheDiagnostics &diagnostics)
 	{
-		if (slot.body == nullptr || slot.body->source_word_count == 0 ||
+		if (slot.body->source_word_count == 0 ||
 		    slot.body->source_word_count > block_instruction_count) {
 			++diagnostics.validation_mismatches;
 			discard(slot);
@@ -1570,18 +1544,13 @@ std::optional<BuildResult> GadgetExecutor::find(
 		cache_diagnostics_);
 }
 
-/* Produce a translation the cache did not hold. */
+/* Produce and store a translation the cache did not hold. run_block
+ * counts it: with the count in here, run_block's per-dispatch cache lookup
+ * compiles differently. */
 BuildResult GadgetExecutor::translate(
 	std::uint64_t pc, std::span<const std::uint32_t> window)
 {
-	++cache_diagnostics_.translations;
-	return build(pc, window);
-}
-
-BuildResult GadgetExecutor::build(
-	std::uint64_t pc, std::span<const std::uint32_t> window)
-{
-	auto decoded = arm64::gadgets::Builder{}.build(
+	const auto decoded = arm64::gadgets::Builder{}.build(
 		pc, window,
 		[this](std::uint64_t target) {
 			return programs_->link(target);
@@ -1591,14 +1560,7 @@ BuildResult GadgetExecutor::build(
 			return programs_->indirect_link(source_pc);
 		},
 		build_options_);
-	return store(pc, decoded, window);
-}
-
-BuildResult GadgetExecutor::store(
-	std::uint64_t pc, const BuildResult &result,
-	std::span<const std::uint32_t> guest_words)
-{
-	return programs_->store(pc, result, guest_words, cache_changes_);
+	return programs_->store(pc, decoded, window, cache_changes_);
 }
 
 ::uml::cpu::EngineEvent GadgetExecutor::run_block(
@@ -1626,6 +1588,9 @@ BuildResult GadgetExecutor::store(
 		mapping_changes_ = sequences.mapping_changes;
 	}
 	tlb_.tagged_addresses = cpu.tagged_addresses_enabled();
+	/* CpuState::effective_fpcr(), open-coded: through the member this
+	 * block-entry test lowers to a word load and mask instead of a byte
+	 * test, and run_block inlines more around it. */
 	const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
 	if (single_step_ || (guest_fpcr &
 	     arm64::detail::fpcr_exception_enable_mask) != 0U)
@@ -1654,6 +1619,7 @@ BuildResult GadgetExecutor::store(
 			return ::uml::cpu::EngineEvent::memory_fault;
 		}
 		const auto window = std::span{instructions}.first(count);
+		++cache_diagnostics_.translations;
 		selected.emplace(translate(cpu.pc, window));
 	}
 	const auto &built = *selected;
@@ -1669,7 +1635,7 @@ BuildResult GadgetExecutor::store(
 			built.program, cpu, tlb_, executed);
 	const bool fpcr_enable_exit =
 		event == ::uml::cpu::EngineEvent::continued &&
-		(effective_fpcr(cpu) &
+		(cpu.effective_fpcr() &
 		 arm64::detail::fpcr_exception_enable_mask) != 0U;
 	const bool count_exit =
 		terminal_does_not_retire(event) || fpcr_enable_exit;
@@ -1763,7 +1729,7 @@ BuildResult GadgetExecutor::store(
 
 	const bool transactional =
 		arm64::detail::needs_floating_exception_transaction(
-			cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr,
+			cpu.effective_fpcr(),
 			instruction);
 	if (!transactional) {
 		const auto event = arm64::gadgets::execute(

@@ -5,11 +5,14 @@
 #include "native_window_test_support.hpp"
 #include "platform/run_routing.hpp"
 #include "runtime/context.hpp"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_network.h"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
+#if UML_EMULATOR_TEST_HAS_SLIRP
+#include "uml_slirp_net.h"
+#endif
 
 #include <algorithm>
 #include <cerrno>
@@ -33,18 +36,12 @@ extern "C" int darwin_uml_net_open(unsigned char mac[6], unsigned int *mtu);
 extern "C" int darwin_uml_net_irq_fd(void);
 extern "C" int darwin_uml_net_read(void *buffer, unsigned long capacity);
 extern "C" int darwin_uml_net_write(const void *buffer, unsigned long length);
-#if UML_EMULATOR_TEST_HAS_SLIRP
-extern "C" int uml_slirp_net_open(
-	void *, unsigned char[6], unsigned int *);
-extern "C" int uml_slirp_net_irq_fd(void *);
-extern "C" int uml_slirp_net_read(void *, void *, std::size_t);
-extern "C" int uml_slirp_net_write(void *, const void *, std::size_t);
-extern "C" void uml_slirp_net_stop(void *);
-extern "C" void *uml_slirp_net_create(void) noexcept;
-extern "C" void uml_slirp_net_destroy(void *) noexcept;
-#endif
 
 namespace {
+
+using uml::testing::ScratchBacking;
+
+constexpr std::string_view backing_name = "uml-emulator-mmu-domain-XXXXXX";
 
 template<typename Provider>
 concept HasStopCallback = requires(Provider provider) { provider.stop; };
@@ -193,38 +190,6 @@ void test_memory_bridge_rejects_split_address_space_ranges()
 	return context == nullptr ? -1 : context->set_execution_engine(engine);
 }
 #endif
-
-class TemporaryBacking final {
-public:
-	explicit TemporaryBacking(std::uint8_t value)
-	{
-		auto path = uml::testing::scratch_template(
-			"uml-emulator-mmu-domain-XXXXXX");
-		fd_ = mkstemp(path.data());
-		require(fd_ >= 0, "could not create MMU backing");
-		require(unlink(path.c_str()) == 0,
-			"could not unlink MMU backing");
-		require(ftruncate(fd_, DARWIN_UML_GUEST_PAGE_SIZE) == 0,
-			"could not size MMU backing");
-		require(pwrite(fd_, &value, sizeof(value), 0) ==
-			static_cast<ssize_t>(sizeof(value)),
-			"could not initialize MMU backing");
-	}
-
-	~TemporaryBacking()
-	{
-		if (fd_ >= 0)
-			close(fd_);
-	}
-
-	TemporaryBacking(const TemporaryBacking &) = delete;
-	TemporaryBacking &operator=(const TemporaryBacking &) = delete;
-
-	[[nodiscard]] int fd() const noexcept { return fd_; }
-
-private:
-	int fd_{-1};
-};
 
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 class ReservedNativeSlot final {
@@ -790,10 +755,12 @@ void test_handle_lifetime_isolation()
 
 void test_concurrent_handles_have_distinct_software_mmu_domains()
 {
-	TemporaryBacking backing_a{0x2a};
-	TemporaryBacking backing_b{0xb7};
-	mmu_a = {.fd = backing_a.fd(), .expected = 0x2a};
-	mmu_b = {.fd = backing_b.fd(), .expected = 0xb7};
+	ScratchBacking backing_a{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing_a.put_byte(0, std::byte{0x2a});
+	ScratchBacking backing_b{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing_b.put_byte(0, std::byte{0xb7});
+	mmu_a = {.fd = backing_a.descriptor(), .expected = 0x2a};
+	mmu_b = {.fd = backing_b.descriptor(), .expected = 0xb7};
 	{
 		std::lock_guard lock{mmu_concurrent.mutex};
 		mmu_concurrent.mapped = 0;
@@ -840,19 +807,21 @@ void test_concurrent_handles_have_distinct_software_mmu_domains()
 void test_native_shadow_domains_retire_on_every_handle_exit(
 	ReservedNativeSlot &slot)
 {
-	TemporaryBacking backing_a{0x31};
-	TemporaryBacking backing_b{0xa7};
+	ScratchBacking backing_a{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing_a.put_byte(0, std::byte{0x31});
+	ScratchBacking backing_b{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	backing_b.put_byte(0, std::byte{0xa7});
 	slot.release();
 	native_shadow_a = {
 		.address = slot.page(),
-		.fd = backing_a.fd(),
+		.fd = backing_a.descriptor(),
 		.expected = 0x31,
 		.replacement = 0x42,
 		.status = 0,
 	};
 	native_shadow_b = {
 		.address = slot.page(),
-		.fd = backing_b.fd(),
+		.fd = backing_b.descriptor(),
 		.expected = 0xa7,
 		.replacement = 0xb8,
 		.status = 37,
@@ -885,7 +854,7 @@ void test_native_shadow_domains_retire_on_every_handle_exit(
 	require(native_shadow_absent(slot.page()),
 		"normal run retained native-shadow mapping or protection state");
 	std::uint8_t backing_value{};
-	require(pread(backing_a.fd(), &backing_value, sizeof(backing_value), 0) ==
+	require(pread(backing_a.descriptor(), &backing_value, sizeof(backing_value), 0) ==
 			static_cast<ssize_t>(sizeof(backing_value)) &&
 		backing_value == 0x42,
 		"normal native-shadow retirement did not flush backing state");
@@ -895,7 +864,7 @@ void test_native_shadow_domains_retire_on_every_handle_exit(
 		"abnormal-return native-shadow run failed");
 	require(native_shadow_absent(slot.page()),
 		"abnormal return retained native-shadow state");
-	require(pread(backing_b.fd(), &backing_value, sizeof(backing_value), 0) ==
+	require(pread(backing_b.descriptor(), &backing_value, sizeof(backing_value), 0) ==
 			static_cast<ssize_t>(sizeof(backing_value)) &&
 		backing_value == 0xb8,
 		"abnormal native-shadow retirement did not flush backing state");

@@ -2,9 +2,11 @@
 #include "uml_darwin_static_mmu.h"
 #include "uml_darwin_guest.h"
 #include "../domain_contract.hpp"
+#include "../process_singleton.hpp"
 #include "address_layout.hpp"
 #include "address_space_types.hpp"
 #include "allocation_fault.hpp"
+#include "bridge_call.hpp"
 #include "domain_registry_testing.hpp"
 #include "execution_gate.hpp"
 
@@ -353,19 +355,19 @@ struct ActiveAccessSlot final {
 	std::atomic<const void *> space{};
 };
 
-/* Intentionally leaked, as the address-space registry is: a thread can leave
- * its slot, and a domain can retire, after exit() has begun destroying static
- * storage. */
+/* Never destroyed, under the exit contract in docs/architecture.md: a thread
+ * can leave its slot, and a domain can retire, after exit() has begun
+ * destroying static storage. Both are constant-initialized. */
 std::mutex &active_access_registry_mutex()
 {
-	static auto *mutex = new std::mutex;
-	return *mutex;
+	[[clang::no_destroy]] static std::mutex mutex;
+	return mutex;
 }
 
 std::vector<ActiveAccessSlot *> &active_access_registry()
 {
-	static auto *slots = new std::vector<ActiveAccessSlot *>;
-	return *slots;
+	[[clang::no_destroy]] static std::vector<ActiveAccessSlot *> slots;
+	return slots;
 }
 
 ActiveAccessSlot &active_access_slot()
@@ -893,20 +895,6 @@ public:
 			output[count++] = {change.address, change.length};
 		}
 		return static_cast<int>(count);
-	}
-
-	int code_changes(std::uint64_t generation, std::uint64_t sequence,
-		struct darwin_uml_static_code_change *output,
-		std::size_t capacity, std::uint64_t *current_sequence)
-	{
-		if (current_sequence == nullptr || (capacity != 0 && output == nullptr))
-			return -1;
-		static_assert(sizeof(darwin_uml_static_code_change) ==
-			sizeof(CodeChangeRange));
-		auto reference = reference_for(generation);
-		return code_changes_since(*reference.state, sequence,
-			reinterpret_cast<CodeChangeRange *>(output), capacity,
-			current_sequence);
 	}
 
 	void invalidate_code(std::uint64_t address)
@@ -1866,32 +1854,17 @@ AddressSpaceRegistry *address_space_registry() noexcept
 	 * process lifetime so a late legacy-context destructor never calls through
 	 * an already destroyed mutex or container. Initialization is retryable: a
 	 * transient allocation failure must not permanently cache a null registry. */
-	if (auto *registry = existing_address_space_registry(); registry != nullptr)
-		return registry;
-	while (address_space_registry_initialization.test_and_set(
-		       std::memory_order_acquire))
-		std::this_thread::yield();
-	struct InitializationUnlock final {
-		~InitializationUnlock()
-		{
-			address_space_registry_initialization.clear(
-				std::memory_order_release);
-		}
-	};
-	[[maybe_unused]] InitializationUnlock unlock;
-	if (auto *registry = existing_address_space_registry(); registry != nullptr)
-		return registry;
-	try {
-		UML_MEMORY_ALLOCATION_CHECKPOINT(
-			testing::AllocationSite::software_domain_registry);
-		auto *registry = new (std::nothrow) AddressSpaceRegistry;
-		if (registry != nullptr)
-			published_address_space_registry.store(
-				registry, std::memory_order_release);
-		return registry;
-	} catch (...) {
-		return nullptr;
-	}
+	return process_singleton(published_address_space_registry,
+		address_space_registry_initialization,
+		[]() noexcept -> AddressSpaceRegistry * {
+			try {
+				UML_MEMORY_ALLOCATION_CHECKPOINT(
+					testing::AllocationSite::software_domain_registry);
+				return new (std::nothrow) AddressSpaceRegistry;
+			} catch (...) {
+				return nullptr;
+			}
+		});
 }
 
 [[nodiscard]] AddressSpaceAccess address_space() noexcept
@@ -1992,27 +1965,10 @@ namespace {
 template<typename Function>
 [[nodiscard]] int with_address_space(Function &&function) noexcept
 {
-	try {
-		auto space = uml::memory::address_space();
-		if (!space) {
-			if (errno == 0)
-				errno = ESRCH;
-			return -1;
-		}
-		errno = 0;
-		const int result = function(*space);
-		if (result < 0 && errno == 0)
-			errno = EFAULT;
-		return result;
-	} catch (const std::bad_alloc &) {
-		uml::memory::reset_mapping_batch();
-		errno = ENOMEM;
-		return -1;
-	} catch (...) {
-		uml::memory::reset_mapping_batch();
-		errno = EIO;
-		return -1;
-	}
+	return uml::memory::bridge_call(
+		[] { return uml::memory::address_space(); },
+		std::forward<Function>(function),
+		[] { uml::memory::reset_mapping_batch(); });
 }
 
 template<typename Function>
@@ -2248,17 +2204,6 @@ extern "C" int darwin_uml_static_vm_mapping_changes(
 {
 	return with_address_space([&](auto &space) {
 		return space.mapping_changes(
-			generation, sequence, changes, capacity, current_sequence);
-	});
-}
-
-extern "C" int darwin_uml_static_vm_code_change_ranges(
-	unsigned long generation, uint64_t sequence,
-	struct darwin_uml_static_code_change *changes, size_t capacity,
-	uint64_t *current_sequence)
-{
-	return with_address_space([&](auto &space) {
-		return space.code_changes(
 			generation, sequence, changes, capacity, current_sequence);
 	});
 }

@@ -133,12 +133,6 @@ void StaticGuestMemory::invalidate_code(
 	invalidate_code(address);
 }
 
-bool StaticGuestMemory::validate_write(
-	std::uint64_t address, std::size_t size)
-{
-	return validate_access(address, size, ::uml::memory::MemoryAccess::write);
-}
-
 bool StaticGuestMemory::validate_access(
 	std::uint64_t address, std::size_t size, ::uml::memory::MemoryAccess access)
 {

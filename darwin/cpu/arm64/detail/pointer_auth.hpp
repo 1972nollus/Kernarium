@@ -389,13 +389,6 @@ generic_pointer_authentication(std::uint64_t source,
 	return qarma5(source, modifier, key) & 0xffff'ffff'0000'0000ULL;
 }
 
-[[nodiscard]] constexpr bool
-pointer_auth_operation_valid(PointerAuthOperation operation) noexcept
-{
-	return static_cast<unsigned>(operation) <=
-		static_cast<unsigned>(PointerAuthOperation::strip_data);
-}
-
 [[nodiscard]] constexpr std::uint64_t
 execute_pointer_auth(const CpuState &cpu, std::uint64_t value,
 		     std::uint64_t modifier,

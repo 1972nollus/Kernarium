@@ -312,7 +312,7 @@ def refresh(line: Line, repository: Path) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("check", "layers", "tree", "replay", "verify-branch", "regenerate", "refresh"):
+    for name in ("check", "tree", "replay", "verify-branch", "regenerate", "refresh"):
         command = commands.add_parser(name)
         command.add_argument("--metadata", type=Path, required=True)
         if name in ("tree", "replay", "verify-branch", "regenerate", "refresh"):
@@ -325,16 +325,12 @@ def main(argv: list[str] | None = None) -> int:
         if name == "verify-branch":
             command.add_argument("--mark", action="store_true",
                                  help="create missing series branches once verified")
-        if name == "verify-branch":
             command.add_argument("--tip", required=True)
     arguments = parser.parse_args(argv)
     try:
         line = load_line(arguments.metadata)
         if arguments.command == "check":
             check(line)
-        elif arguments.command == "layers":
-            for layer in line.layers:
-                print(f"{layer.relative}\t{layer.branch}\t{'owned' if layer.owned else 'inherited'}")
         elif arguments.command == "tree":
             tree = line_tree(line, arguments.source)
             print(tree)

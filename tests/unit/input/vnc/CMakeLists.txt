@@ -12,7 +12,6 @@ target_include_directories(uml_vnc_input_tests PRIVATE
 target_compile_features(uml_vnc_input_tests PRIVATE cxx_std_20)
 target_compile_options(uml_vnc_input_tests PRIVATE
     -Wall -Wextra -Werror)
-add_dependencies(unit-test-binaries uml_vnc_input_tests)
 uml_add_unit_test(NAME vnc-input-boundary COMMAND uml_vnc_input_tests
     WORKING_DIRECTORY "${_uml_unit_binary_directory}"
     LABELS input)

@@ -9,8 +9,6 @@ target_include_directories(uml_memory_domain_lifetime_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin/memory
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
-target_link_libraries(uml_memory_domain_lifetime_tests PRIVATE
-    UML::MemorySharedBacking)
 target_compile_features(uml_memory_domain_lifetime_tests PRIVATE cxx_std_20)
 target_compile_definitions(uml_memory_domain_lifetime_tests PRIVATE
     UML_MEMORY_ALLOCATION_TESTING=1)
@@ -27,7 +25,6 @@ else()
 endif()
 uml_add_unit_test(NAME memory-domain-lifetime
     COMMAND uml_memory_domain_lifetime_tests LABELS tsan)
-add_dependencies(unit-test-binaries uml_memory_domain_lifetime_tests)
 
 add_executable(uml_execution_gate_profile_tests
     execution_gate_profile_tests.cpp
@@ -42,7 +39,6 @@ target_compile_options(uml_execution_gate_profile_tests PRIVATE
     -Wall -Wextra -Werror)
 uml_add_unit_test(NAME memory-execution-gate-profile
     COMMAND uml_execution_gate_profile_tests)
-add_dependencies(unit-test-binaries uml_execution_gate_profile_tests)
 
 if(TARGET uml_native_mmu_test_variant)
     add_executable(uml_native_window_reservation_tests
@@ -65,7 +61,6 @@ if(TARGET uml_native_mmu_test_variant)
         COMMAND uml_native_window_reservation_tests)
     set_tests_properties(memory-native-window-reservation PROPERTIES
         RUN_SERIAL TRUE)
-    add_dependencies(unit-test-binaries uml_native_window_reservation_tests)
 endif()
 
 add_executable(uml_shared_backing_view_tests shared_backing_view_tests.cpp)
@@ -76,7 +71,6 @@ target_compile_options(uml_shared_backing_view_tests PRIVATE
     -Wall -Wextra -Werror)
 uml_add_unit_test(NAME memory-shared-backing-view
     COMMAND uml_shared_backing_view_tests)
-add_dependencies(unit-test-binaries uml_shared_backing_view_tests)
 
 add_executable(uml_word_shared_mutex_tests word_shared_mutex_tests.cpp)
 target_include_directories(uml_word_shared_mutex_tests PRIVATE
@@ -86,7 +80,6 @@ target_compile_options(uml_word_shared_mutex_tests PRIVATE
     -Wall -Wextra -Werror)
 uml_add_unit_test(NAME memory-word-shared-mutex
     COMMAND uml_word_shared_mutex_tests LABELS tsan)
-add_dependencies(unit-test-binaries uml_word_shared_mutex_tests)
 
 add_executable(uml_guest_ram_commitment_tests guest_ram_commitment_tests.cpp)
 target_link_libraries(uml_guest_ram_commitment_tests PRIVATE
@@ -99,4 +92,3 @@ target_compile_options(uml_guest_ram_commitment_tests PRIVATE
 uml_add_unit_test(NAME memory-guest-ram-commitment
     COMMAND uml_guest_ram_commitment_tests)
 set_tests_properties(memory-guest-ram-commitment PROPERTIES RUN_SERIAL TRUE)
-add_dependencies(unit-test-binaries uml_guest_ram_commitment_tests)

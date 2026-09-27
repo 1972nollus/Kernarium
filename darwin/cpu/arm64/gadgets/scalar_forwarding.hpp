@@ -8,17 +8,14 @@
 namespace uml::cpu::arm64::gadgets {
 
 inline constexpr std::uint16_t scalar_no_register = 0xffff;
-/* Numeric order shared with scalar_entry declarations in assembly. */
-inline constexpr std::array scalar_family_names{
-	"move", "add_imm", "add_shifted", "add_extended", "carry", "multiply",
-	"shift", "divide", "extract", "select", "compare", "logical_shifted",
-	"logical_imm", "bitfield", "unary", "minmax", "load", "store", "crc",
-};
 
 struct ScalarContract final {
 	std::array<std::uintptr_t, 8> entries;
 	std::uint16_t destination;
 	std::array<std::uint16_t, 3> sources;
+	/* The family number each scalar_entry declaration records. It named
+	 * a bucket of the removed dependency coverage and nothing reads it;
+	 * the slot keeps the row at its fixed size. */
 	std::uint16_t family;
 	std::uint16_t operand_words;
 	std::uint32_t reserved;

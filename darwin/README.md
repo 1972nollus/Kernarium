@@ -125,9 +125,7 @@ The arm64 engine keeps its own, higher, ARMv8.6-A declaration.
 
 The gadget cache retains a bounded number of tagged address spaces. Retiring an
 address space drops only its owned state, and stale same-generation programs
-must match every consumed guest word before reuse. Shared gadget translations
-contain no executor-owned link pointers after publication; consumers relocate
-links into their own state.
+must match every consumed guest word before reuse.
 
 A cache slot indexes a translation rather than holding one. Each stored program
 is a single exact-sized allocation carrying its stream and the guest words it is

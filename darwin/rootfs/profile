@@ -1,3 +1,0 @@
-export PATH='/bin:/sbin:/usr/bin:/usr/sbin'
-export EDITOR='/bin/vi'
-export PS1='# '

@@ -23,6 +23,7 @@ if(UML_BUILD_NETWORK_PROVIDER)
     target_include_directories(uml_network_provider
         PUBLIC
             ${PROJECT_SOURCE_DIR}/darwin/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/slirp/include
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/slirp)
@@ -34,6 +35,7 @@ if(UML_BUILD_NETWORK_PROVIDER)
         POSITION_INDEPENDENT_CODE ON)
 
     target_link_libraries(uml_network_provider PRIVATE
+        UML::GuestTimerMask
         UML::ThirdPartySlirp)
     if(TARGET uml_dependency_prefix_verify)
         add_dependencies(uml_network_provider uml_dependency_prefix_verify)

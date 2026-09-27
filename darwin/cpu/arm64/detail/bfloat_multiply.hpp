@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_bits.hpp"
 #include "floating_exception.hpp"
 
 #include <bit>
@@ -30,6 +31,8 @@ struct BFloatMultiplyLong final {
 
 namespace bfloat_multiply_detail {
 
+using namespace floating_bits;
+
 [[nodiscard]] inline std::uint32_t fmadd(std::uint32_t addend,
 	std::uint32_t left, std::uint32_t right) noexcept
 {
@@ -40,34 +43,6 @@ namespace bfloat_multiply_detail {
 	__asm__ volatile("fmadd %s0, %s1, %s2, %s3" : "=w"(result) :
 		"w"(left_value), "w"(right_value), "w"(addend_value));
 	return std::bit_cast<std::uint32_t>(result);
-}
-
-[[nodiscard]] constexpr bool is_nan(std::uint32_t value) noexcept
-{
-	return (value & 0x7f80'0000U) == 0x7f80'0000U &&
-		(value & 0x007f'ffffU) != 0U;
-}
-
-[[nodiscard]] constexpr bool is_signaling_nan(std::uint32_t value) noexcept
-{
-	return is_nan(value) && (value & 0x0040'0000U) == 0U;
-}
-
-[[nodiscard]] constexpr bool is_infinity(std::uint32_t value) noexcept
-{
-	return (value & 0x7fff'ffffU) == 0x7f80'0000U;
-}
-
-[[nodiscard]] constexpr bool is_zero(std::uint32_t value) noexcept
-{
-	return (value & 0x7fff'ffffU) == 0U;
-}
-
-[[nodiscard]] constexpr std::uint32_t flush_subnormal(
-	std::uint32_t value) noexcept
-{
-	return (value & 0x7f80'0000U) == 0U &&
-		(value & 0x007f'ffffU) != 0U ? value & 0x8000'0000U : value;
 }
 
 [[nodiscard]] constexpr std::uint32_t process_alternative_nan(

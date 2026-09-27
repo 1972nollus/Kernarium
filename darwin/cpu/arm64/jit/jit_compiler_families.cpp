@@ -769,32 +769,6 @@ void JitCompilerFamilies::flush_link_transition_state() {
   exit_vector_mask_set_ = false;
 }
 
-void JitCompilerFamilies::spill_gprs_for_returning_call() {
-  flush_gprs(dirty_gpr_mask());
-  flush_vectors(dirty_vector_mask());
-  spill_flags_for_internal_clobber();
-}
-
-void JitCompilerFamilies::reload_gprs_after_call() {
-  auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
-  for (std::size_t index = 0; index < gpr_slots_.size(); ++index) {
-    const auto &slot = gpr_slots_[index];
-    if (slot.guest == unbound_guest)
-      continue;
-    emitter.load_x(resident_gpr_hosts[index], 15,
-                   register_offset(slot.guest, slot.stack_pointer));
-  }
-  for (std::size_t index = 0; index < vector_slots_.size(); ++index) {
-    const auto &slot = vector_slots_[index];
-    if (slot.guest == unbound_guest || !slot.loaded)
-      continue;
-    emitter.load_q(
-        resident_vector_hosts[index], 15,
-        offsetof(arm64::CpuState, vectors) +
-            slot.guest * sizeof(arm64::VectorRegister));
-  }
-}
-
 void JitCompilerFamilies::spill_gprs_for_terminal_call() {
   const auto gpr_mask =
       exit_gpr_mask_set_ ? exit_gpr_mask_ : dirty_gpr_mask();
@@ -934,50 +908,35 @@ void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,
   emitter.load_relocatable_pointer(
       12, reinterpret_cast<std::uintptr_t>(link),
       JitRelocationKind::direct_link, target);
-  if (emitter.persistent_linked_block_abi()) {
-    /*
-     * Subtract the completed source while the descriptor pointer load is in
-     * flight. Both a missing capability and a full fairness window take the
-     * shared cold undo below, so only successful links commit the decrement.
-     * x21 is initialized once from the host-owned capability selector; guest
-     * data never contributes to the indexed native branch target.
-     */
-    emitter.subtract_immediate(20, 20, static_cast<unsigned>(count));
-  } else {
-    emitter.load_x(11, 31, 32); // Saved JitChainState *.
-    emitter.load_b(10, 11, offsetof(JitChainState, link_selector));
-  }
-  const auto selector = emitter.persistent_linked_block_abi() ? 21U : 10U;
+  /*
+   * Subtract the completed source while the descriptor pointer load is in
+   * flight. Both a missing capability and a full fairness window take the
+   * shared cold undo below, so only successful links commit the decrement.
+   * x21 is initialized once from the host-owned capability selector; guest
+   * data never contributes to the indexed native branch target.
+   */
+  emitter.subtract_immediate(20, 20, static_cast<unsigned>(count));
   emitter.load_pair_x(16, 9, 12, 0);
   emitter.load_w(13, 12, offsetof(JitBlockLink, allowed_selectors));
-  emitter.logical_shift_right_variable(13, 13, selector);
+  emitter.logical_shift_right_variable(13, 13, 21);
   emitter.test_zero(fallback, 13, 0, false);
   emitter.load_x(13, 12, offsetof(JitBlockLink, internal_entry));
   emitter.compare_zero(fallback, 13, true, false);
 
-  if (emitter.persistent_linked_block_abi()) {
-    emitter.compare_register(20, 9);
-  } else {
-    emitter.load_x(10, 11, offsetof(JitChainState, remaining_instructions));
-    emitter.subtract_immediate(10, 10, static_cast<unsigned>(count));
-    emitter.compare_register(10, 9);
-  }
+  emitter.compare_register(20, 9);
   emitter.branch_condition(fallback, 3); // LO
 
-  if (!emitter.persistent_linked_block_abi())
-    emitter.store_x(10, 11, offsetof(JitChainState, remaining_instructions));
   /*
-   * x15/x14 still hold CpuState/TLB, and the outer frame owns all chain state
-   * for both generated ABI variants. Enter the successor after its external
-   * prologue so a successful link executes no argument reload and creates no
-   * extra native frame. Every successor exit therefore returns through the
-   * one frame established by the initial C++ entry.
+   * x15/x14 still hold CpuState/TLB, and the outer frame owns all chain
+   * state. Enter the successor after its external prologue so a successful
+   * link executes no argument reload and creates no extra native frame.
+   * Every successor exit therefore returns through the one frame established
+   * by the initial C++ entry.
    */
   emitter.branch_register(13);
 
   emitter.bind(fallback);
-  if (emitter.persistent_linked_block_abi())
-    emitter.add_immediate(20, 20, static_cast<unsigned>(count));
+  emitter.add_immediate(20, 20, static_cast<unsigned>(count));
   store_pc(target);
   emitter.return_constant(Event::continued, count);
 }
@@ -1032,8 +991,7 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
    * Hide the independent budget update under the dependent PIC descriptor
    * load. Every miss or rejected matched entry rejoins at the one cold undo.
    */
-  if (emitter.persistent_linked_block_abi())
-    emitter.subtract_immediate(20, 20, static_cast<unsigned>(count));
+  emitter.subtract_immediate(20, 20, static_cast<unsigned>(count));
   const auto load_entry = [&](std::size_t offset) {
     /* ldp x9, x12, [x13, #offset]: {guest target, host entry table}. */
     emitter.load_pair_x(9, 12, 13,
@@ -1052,49 +1010,29 @@ void JitCompilerFamilies::emit_indirect_linked_exit(
    * x12 is a stable host record selected by a guest-target equality test.
    * Only its host-published internal entry can reach BR below.
    */
-  if (!emitter.persistent_linked_block_abi()) {
-    emitter.load_x(11, 31, 32);
-    emitter.load_b(10, 11, offsetof(JitChainState, link_selector));
-  }
-  const auto selector = emitter.persistent_linked_block_abi() ? 21U : 10U;
   emitter.load_pair_x(16, 9, 12, 0);
   emitter.load_w(13, 12, offsetof(JitBlockLink, allowed_selectors));
-  emitter.logical_shift_right_variable(13, 13, selector);
+  emitter.logical_shift_right_variable(13, 13, 21);
   emitter.test_zero(fallback, 13, 0, false);
   emitter.load_x(13, 12, offsetof(JitBlockLink, internal_entry));
   emitter.compare_zero(fallback, 13, true, false);
 
-  if (emitter.persistent_linked_block_abi()) {
-    emitter.compare_register(20, 9);
-  } else {
-    emitter.load_x(10, 11, offsetof(JitChainState, remaining_instructions));
-    emitter.subtract_immediate(10, 10, static_cast<unsigned>(count));
-    emitter.compare_register(10, 9);
-  }
+  emitter.compare_register(20, 9);
   emitter.branch_condition(fallback, 3); // LO
 
-  if (!emitter.persistent_linked_block_abi())
-    emitter.store_x(10, 11, offsetof(JitChainState, remaining_instructions));
   emitter.branch_register(13);
 
   emitter.bind(miss);
   emitter.store_x(8, 15, offsetof(CpuState, pc));
-  const unsigned miss_chain_state =
-      emitter.persistent_linked_block_abi() ? 19U : 11U;
-  if (!emitter.persistent_linked_block_abi())
-    emitter.load_x(11, 31, 32);
-  emitter.store_x(13, miss_chain_state,
-                  offsetof(JitChainState, indirect_miss));
+  emitter.store_x(13, 19, offsetof(JitChainState, indirect_miss));
   emitter.load_literal_constant(9, source_pc);
-  emitter.store_x(9, miss_chain_state,
-                  offsetof(JitChainState, indirect_source_pc));
+  emitter.store_x(9, 19, offsetof(JitChainState, indirect_source_pc));
   emitter.branch(undo_and_return_to_cpp);
 
   emitter.bind(fallback);
   emitter.store_x(16, 15, offsetof(CpuState, pc));
   emitter.bind(undo_and_return_to_cpp);
-  if (emitter.persistent_linked_block_abi())
-    emitter.add_immediate(20, 20, static_cast<unsigned>(count));
+  emitter.add_immediate(20, 20, static_cast<unsigned>(count));
   emitter.return_constant(Event::continued, count);
 }
 

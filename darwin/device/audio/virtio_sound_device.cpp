@@ -5,35 +5,13 @@
 #include "protocol.hpp"
 
 #include <array>
-#include <cstring>
 #include <stdexcept>
-#include <type_traits>
 
 namespace uml::audio {
 namespace {
 
-template<typename Value>
-[[nodiscard]] Value load(std::span<const std::uint8_t> bytes)
-{
-    static_assert(std::is_trivially_copyable_v<Value>);
-    Value value {};
-    std::memcpy(&value, bytes.data(), sizeof(value));
-    return value;
-}
-
-template<typename... Values>
-[[nodiscard]] std::vector<std::uint8_t> bytes(const Values&... values)
-{
-    const std::size_t size = (sizeof(values) + ... + 0U);
-    std::vector<std::uint8_t> result(size);
-    std::size_t offset = 0;
-    const auto append = [&](const auto& value) {
-        std::memcpy(result.data() + offset, &value, sizeof(value));
-        offset += sizeof(value);
-    };
-    (append(values), ...);
-    return result;
-}
+using uml::virtio::fromBytes;
+using uml::virtio::toBytes;
 
 [[nodiscard]] uml::virtio::VhostUserQueueResult complete(
     std::vector<std::uint8_t> response)
@@ -50,7 +28,7 @@ template<typename... Values>
 {
     if (responseCapacity < sizeof(protocol::Header))
         return complete({});
-    return complete(bytes(protocol::Header {
+    return complete(toBytes(protocol::Header {
         .code = static_cast<std::uint32_t>(value),
     }));
 }
@@ -95,7 +73,7 @@ std::vector<std::uint8_t> VirtioSoundDevice::configuration() const
         .channelMaps = 1,
         .controls = 0,
     };
-    return bytes(configuration);
+    return toBytes(configuration);
 }
 
 void VirtioSoundDevice::writeConfiguration(
@@ -113,12 +91,12 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
 {
     if (request.size() < sizeof(protocol::Header))
         return status(protocol::Status::badMessage, responseCapacity);
-    const auto header = load<protocol::Header>(request);
+    const auto header = fromBytes<protocol::Header>(request);
     switch (static_cast<protocol::Request>(header.code)) {
     case protocol::Request::pcmInfo: {
         if (request.size() != sizeof(protocol::QueryInfo))
             return status(protocol::Status::badMessage, responseCapacity);
-        const auto query = load<protocol::QueryInfo>(request);
+        const auto query = fromBytes<protocol::QueryInfo>(request);
         if (query.startId != protocol::streamId || query.count != 1 ||
             query.size != sizeof(protocol::PcmInfo)) {
             return status(protocol::Status::badMessage, responseCapacity);
@@ -137,7 +115,7 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
         };
         if (responseCapacity < sizeof(protocol::Header) + sizeof(info))
             return status(protocol::Status::badMessage, responseCapacity);
-        return complete(bytes(
+        return complete(toBytes(
             protocol::Header {
                 .code = static_cast<std::uint32_t>(protocol::Status::ok),
             },
@@ -146,7 +124,7 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
     case protocol::Request::channelMapInfo: {
         if (request.size() != sizeof(protocol::QueryInfo))
             return status(protocol::Status::badMessage, responseCapacity);
-        const auto query = load<protocol::QueryInfo>(request);
+        const auto query = fromBytes<protocol::QueryInfo>(request);
         if (query.startId != protocol::channelMapId || query.count != 1 ||
             query.size != sizeof(protocol::ChannelMapInfo)) {
             return status(protocol::Status::badMessage, responseCapacity);
@@ -163,7 +141,7 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
             protocol::ChannelPosition::frontRight);
         if (responseCapacity < sizeof(protocol::Header) + sizeof(info))
             return status(protocol::Status::badMessage, responseCapacity);
-        return complete(bytes(
+        return complete(toBytes(
             protocol::Header {
                 .code = static_cast<std::uint32_t>(protocol::Status::ok),
             },
@@ -172,7 +150,7 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
     case protocol::Request::pcmSetParameters: {
         if (request.size() != sizeof(protocol::PcmSetParameters))
             return status(protocol::Status::badMessage, responseCapacity);
-        const auto parameters = load<protocol::PcmSetParameters>(request);
+        const auto parameters = fromBytes<protocol::PcmSetParameters>(request);
         if (!validStreamHeader(parameters.header))
             return status(protocol::Status::badMessage, responseCapacity);
         if (state_ == StreamState::running ||
@@ -209,7 +187,7 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
     case protocol::Request::pcmStop: {
         if (request.size() != sizeof(protocol::PcmHeader))
             return status(protocol::Status::badMessage, responseCapacity);
-        const auto pcm = load<protocol::PcmHeader>(request);
+        const auto pcm = fromBytes<protocol::PcmHeader>(request);
         if (!validStreamHeader(pcm))
             return status(protocol::Status::badMessage, responseCapacity);
         const auto command = static_cast<protocol::Request>(header.code);
@@ -256,17 +234,17 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processTransmit(
     if (responseCapacity < sizeof(protocol::PcmStatus))
         return complete({});
     if (request.size() < sizeof(protocol::PcmTransfer))
-        return complete(bytes(protocol::PcmStatus {
+        return complete(toBytes(protocol::PcmStatus {
             .status = protocol::Status::badMessage,
             .latencyBytes = 0,
         }));
-    const auto transfer = load<protocol::PcmTransfer>(request);
+    const auto transfer = fromBytes<protocol::PcmTransfer>(request);
     const auto pcm = request.subspan(sizeof(transfer));
     if (transfer.streamId != protocol::streamId ||
         (state_ != StreamState::prepared &&
          state_ != StreamState::running) ||
         pcm.size() != parameters_.periodBytes) {
-        return complete(bytes(protocol::PcmStatus {
+        return complete(toBytes(protocol::PcmStatus {
             .status = protocol::Status::badMessage,
             .latencyBytes = 0,
         }));
@@ -275,7 +253,7 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processTransmit(
     if (enqueueResult == PlaybackEnqueueResult::retry)
         return {};
     if (enqueueResult == PlaybackEnqueueResult::failed) {
-        return complete(bytes(protocol::PcmStatus {
+        return complete(toBytes(protocol::PcmStatus {
             .status = protocol::Status::ioError,
             .latencyBytes = 0,
         }));
@@ -331,7 +309,7 @@ bool VirtioSoundDevice::takeQueueCompletion(
         return false;
     completion = {
         .requestId = playback.requestId,
-        .response = bytes(protocol::PcmStatus {
+        .response = toBytes(protocol::PcmStatus {
             .status = playback.success ? protocol::Status::ok
                                        : protocol::Status::ioError,
             .latencyBytes = playback.latencyBytes,

@@ -438,42 +438,26 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] std::uintptr_t simd_unary_operand(
 	unsigned destination, unsigned source) noexcept
 {
-	const auto vector_offset = [](unsigned index) {
-		return offsetof(CpuState, vectors) +
-			index * sizeof(VectorRegister);
-	};
-	static_assert(offsetof(CpuState, vectors) +
-		31U * sizeof(VectorRegister) <= 0xffffU);
-	return packed_u16_operands(vector_offset(destination),
-		vector_offset(source));
+	return packed_u16_operands(vector_operand_offset(destination),
+		vector_operand_offset(source));
 }
 
 [[nodiscard]] std::uintptr_t simd_ternary_operand(
 	unsigned destination, unsigned first, unsigned second,
 	unsigned descriptor = 0U) noexcept
 {
-	const auto vector_offset = [](unsigned index) {
-		return offsetof(CpuState, vectors) +
-			index * sizeof(VectorRegister);
-	};
-	static_assert(offsetof(CpuState, vectors) +
-		31U * sizeof(VectorRegister) <= 0xffffU);
-	return packed_u16_operands(vector_offset(destination),
-		vector_offset(first), vector_offset(second), descriptor);
+	return packed_u16_operands(vector_operand_offset(destination),
+		vector_operand_offset(first), vector_operand_offset(second),
+		descriptor);
 }
 
 [[nodiscard]] std::uintptr_t simd_quaternary_operand(
 	unsigned destination, unsigned first, unsigned second,
 	unsigned third) noexcept
 {
-	const auto vector_offset = [](unsigned index) {
-		return offsetof(CpuState, vectors) +
-			index * sizeof(VectorRegister);
-	};
-	static_assert(offsetof(CpuState, vectors) +
-		31U * sizeof(VectorRegister) <= 0xffffU);
-	return packed_u16_operands(vector_offset(destination),
-		vector_offset(first), vector_offset(second), vector_offset(third));
+	return packed_u16_operands(vector_operand_offset(destination),
+		vector_operand_offset(first), vector_operand_offset(second),
+		vector_operand_offset(third));
 }
 
 #define UML_SIMD_UNARY_V6(name) SimdUnaryGadgets{ \
@@ -1725,16 +1709,10 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	std::uint32_t instruction,
 	const detail::FloatingComplex &decoded) noexcept
 {
-	const auto vector_offset = [](unsigned index) {
-		return offsetof(CpuState, vectors) +
-			index * sizeof(VectorRegister);
-	};
-	static_assert(offsetof(CpuState, vectors) +
-		31U * sizeof(VectorRegister) <= 0xffffU);
-	return vector_offset(instruction & 31U) |
-		(static_cast<std::uintptr_t>(vector_offset(
+	return vector_operand_offset(instruction & 31U) |
+		(static_cast<std::uintptr_t>(vector_operand_offset(
 			(instruction >> 5) & 31U)) << 16U) |
-		(static_cast<std::uintptr_t>(vector_offset(
+		(static_cast<std::uintptr_t>(vector_operand_offset(
 			decoded.second_register)) << 32U);
 }
 
@@ -1790,8 +1768,19 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		uml_arm64_gadget_floating_nmsub_single;
 }
 
+/* fmla/fmls Vd, Vn, Vm: rows are 4h 8h 2s 4s 2d per operation. */
+[[nodiscard]] Gadget simd_fused_inplace_gadget(bool subtract,
+	unsigned int arrangement, unsigned int vector_index) noexcept
+{
+	const auto row = static_cast<unsigned>(subtract) * 5U + arrangement;
+	return uml_arm64_gadget_simd_fused_inplace_table[row * 32U + vector_index];
+}
+
+/* A vector FMLA/FMLS accumulates into Vd, so its destination is also its
+ * third source and every one takes the entry that bakes Vd. */
 [[nodiscard]] Gadget fused_floating_arithmetic_gadget(
-	const detail::FusedFloatingArithmetic &decoded) noexcept
+	const detail::FusedFloatingArithmetic &decoded,
+	unsigned int destination) noexcept
 {
 	if (decoded.scalar) {
 #define UML_SCALAR_FUSED_WIDTH(name) \
@@ -1811,39 +1800,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		(decoded.vector_bytes == 16U ? 1U : 0U) :
 		decoded.width == 32U ?
 		(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
-#define UML_SIMD_FUSED_ARRAY(name) std::array<Gadget, 5>{ \
-	uml_arm64_gadget_simd_fused_##name##_4h, \
-	uml_arm64_gadget_simd_fused_##name##_8h, \
-	uml_arm64_gadget_simd_fused_##name##_2s, \
-	uml_arm64_gadget_simd_fused_##name##_4s, \
-	uml_arm64_gadget_simd_fused_##name##_2d}
-	static constexpr auto fmla = UML_SIMD_FUSED_ARRAY(fmla);
-	static constexpr auto fmls = UML_SIMD_FUSED_ARRAY(fmls);
-#undef UML_SIMD_FUSED_ARRAY
-	return (decoded.subtract ? fmls : fmla)[shape];
-}
-
-/* fmla/fmls Vd, Vn, Vm: rows are 4h 8h 2s 4s 2d per operation. */
-[[nodiscard]] Gadget simd_fused_inplace_gadget(bool subtract,
-	unsigned int arrangement, unsigned int vector_index) noexcept
-{
-	const auto row = static_cast<unsigned>(subtract) * 5U + arrangement;
-	return uml_arm64_gadget_simd_fused_inplace_table[row * 32U + vector_index];
-}
-
-/* Same shape decision as above, for the baked-accumulator entries. Only the
- * vector forms have them; a scalar FMADD names a separate destination. */
-[[nodiscard]] Gadget fused_floating_inplace_gadget(
-	const detail::FusedFloatingArithmetic &decoded,
-	unsigned int vector_index) noexcept
-{
-	if (decoded.scalar)
-		return nullptr;
-	const unsigned shape = decoded.width == 16U ?
-		(decoded.vector_bytes == 16U ? 1U : 0U) :
-		decoded.width == 32U ?
-		(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
-	return simd_fused_inplace_gadget(decoded.subtract, shape, vector_index);
+	return simd_fused_inplace_gadget(decoded.subtract, shape, destination);
 }
 
 [[nodiscard]] Gadget simd_bitwise_gadget(unsigned operation, bool q) noexcept
