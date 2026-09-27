@@ -9,7 +9,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <vector>
 
 namespace uml::gpu {
 
@@ -110,15 +109,6 @@ public:
         return std::nullopt;
     }
     virtual void clear() noexcept = 0;
-    virtual void update(
-        const std::vector<std::uint8_t>& source,
-        std::uint32_t sourceWidth,
-        std::uint32_t sourceHeight,
-        protocol::GpuFormat sourceFormat,
-        std::uint32_t x,
-        std::uint32_t y,
-        std::uint32_t width,
-        std::uint32_t height) = 0;
     virtual void update(
         std::span<const std::uint8_t> source,
         std::uint32_t sourceWidth,

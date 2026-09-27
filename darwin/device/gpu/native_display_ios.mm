@@ -477,30 +477,6 @@ void NativeDisplay::clear() noexcept
 }
 
 void NativeDisplay::update(
-    const std::vector<std::uint8_t>& source,
-    std::uint32_t sourceWidth,
-    std::uint32_t sourceHeight,
-    protocol::GpuFormat sourceFormat,
-    std::uint32_t x,
-    std::uint32_t y,
-    std::uint32_t width,
-    std::uint32_t height)
-{
-    update(
-        std::span<const std::uint8_t>(source),
-        sourceWidth,
-        sourceHeight,
-        static_cast<std::size_t>(sourceWidth) * protocol::gpuBytesPerPixel,
-        sourceFormat,
-        x,
-        y,
-        x,
-        y,
-        width,
-        height);
-}
-
-void NativeDisplay::update(
     std::span<const std::uint8_t> source,
     std::uint32_t sourceWidth,
     std::uint32_t sourceHeight,

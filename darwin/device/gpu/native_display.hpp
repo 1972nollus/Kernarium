@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <vector>
 
 namespace uml::gpu {
 
@@ -40,15 +39,6 @@ public:
     [[nodiscard]] bool claimResizeNotification() noexcept override;
     void releaseResizeNotification() noexcept override;
     void clear() noexcept override;
-    void update(
-        const std::vector<std::uint8_t>& source,
-        std::uint32_t sourceWidth,
-        std::uint32_t sourceHeight,
-        protocol::GpuFormat sourceFormat,
-        std::uint32_t x,
-        std::uint32_t y,
-        std::uint32_t width,
-        std::uint32_t height) override;
     void update(
         std::span<const std::uint8_t> source,
         std::uint32_t sourceWidth,
