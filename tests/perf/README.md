@@ -270,6 +270,12 @@ application/native ratio. The same two sources also compile native-only on
 AArch64 Linux; that binary can run through `run_guest_command_bench.py` for
 the real-guest comparison. See the executable's `--help` for workload selection.
 
+This bench stays separate from the [ideal gadget ceiling](#ideal-gadget-ceiling):
+it measures what forwarding changes, swapping forwarding-off and forwarding-on
+streams in place so both run at the same addresses, while the ceiling compares
+the native control with one ideal stream of the bodies it shares with the
+guest probes.
+
 ## Execution histogram
 
 A separate `UML_GADGET_EXECUTION_HISTOGRAM=ON` build counts every executed
