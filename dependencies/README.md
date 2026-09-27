@@ -271,8 +271,12 @@ Sequential encoders of one recording share a Metal command buffer. Only
 compute that must run before or after a whole render pass, and each encoder of
 a layered or multiview pass, gets a Metal command buffer of its own. A command
 buffer takes a native command allocator for a lane only when that lane
-records, and hands it to the device's allocator cache when it is reset or, for
-a one-time submission, when the GPU finishes. An allocator keeps its
+records. Every submission takes its allocators and Metal command buffers with
+it and hands the allocators to the device's allocator cache when the GPU
+finishes; a reset hands over only allocators that were never submitted. A
+resubmitted command buffer is recorded again, so its re-record first waits
+for the GPU to finish its last submission, which a `SIMULTANEOUS_USE` buffer
+may still be running. An allocator keeps its
 high-water storage until it is released, and a recording that takes a grown
 one keeps all of it, so the cache recycles only allocators of at most 16 MiB,
 keeps at most 64 MiB in total, and releases every other allocator. Feedback

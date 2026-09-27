@@ -46,19 +46,19 @@ answered and unanswered submissions under one lock. The wait test's new
 query mode holds a query behind a submission the queue never answers for and
 requires the device lost between 30 and 45 s.
 ---
- src/kosmickrisp/vulkan/kk_query_pool.c        |  59 ++++++++--
+ src/kosmickrisp/vulkan/kk_query_pool.c        |  52 +++++++--
  src/kosmickrisp/vulkan/kk_queue.c             |  28 ++++-
- src/kosmickrisp/vulkan/kk_queue.h             |  51 +++++++-
+ src/kosmickrisp/vulkan/kk_queue.h             |  78 ++++++++++++-
  src/kosmickrisp/vulkan/kk_sync.c              |  33 +++++-
  src/kosmickrisp/vulkan/meson.build            |  10 ++
  .../vulkan/tests/test_timeline_wait_loss.c    | 109 +++++++++++++++++-
- 6 files changed, 263 insertions(+), 27 deletions(-)
+ 6 files changed, 283 insertions(+), 27 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index 9253e654e1a111b490e3997f4033998263be0f14..d3db04dcc394d077a6cc9c70f8240a50d14c3542 100644
+index 9253e654e1a111b490e3997f4033998263be0f14..58b6637ca8d9f090d21500d68d865622305f163e 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
-@@ -555,9 +555,14 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
+@@ -555,9 +555,13 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
     /* WAIT has no timeout of its own. The queue's native completion handler
      * reports an actual device failure; a slow submission must not manufacture
      * one. What it cannot report is a GPU write it destroyed, so a queue that
@@ -70,12 +70,11 @@ index 9253e654e1a111b490e3997f4033998263be0f14..d3db04dcc394d077a6cc9c70f8240a50
 +    * waits as long as it takes, since the query may belong to work that has
 +    * not been submitted yet. */
     uint64_t unavailable_since = 0u;
-+   uint64_t stalled_since = 0u;
-+   uint64_t stalled_reported = 0u;
++   struct kk_queue_stall_clock stall = {0};
  
     for (;;) {
        if (kk_query_is_available(dev, pool, query))
-@@ -567,17 +572,47 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
+@@ -567,17 +571,41 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
        if (status != VK_SUCCESS)
           return status;
  
@@ -99,13 +98,7 @@ index 9253e654e1a111b490e3997f4033998263be0f14..d3db04dcc394d077a6cc9c70f8240a50
 +                       kk_lost_query_timeout_ns / 1000000000ull);
 +               return VK_ERROR_DEVICE_LOST;
 +            }
-+         } else if (progress.unreported == 0u) {
-+            stalled_since = 0u;
-+         } else if (stalled_since == 0u ||
-+                    progress.reported != stalled_reported) {
-+            stalled_since = now;
-+            stalled_reported = progress.reported;
-+         } else if (now - stalled_since >= KK_STOPPED_QUEUE_TIMEOUT_NS) {
++         } else if (kk_queue_has_stopped(&progress, &stall, now)) {
 +            /* Say this on stderr as well as through the device, as the
 +             * timeline wait does: the runtime's own report goes to the Mesa
 +             * log, which this product leaves muted. */
@@ -181,10 +174,10 @@ index 20ab672850c64e19b844451e99c5bff21abcbde7..2567bb2ed8048de8165d10ab51359eff
  
  /* Metal reports a failure against one submission, but the work it kills
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index 5e3f724b1cae465ef2512d0d120b9a7a299546a8..bc7df38ef14f814ce8163480cf2b0b17feb3e9d6 100644
+index 5e3f724b1cae465ef2512d0d120b9a7a299546a8..d7dfd4c1df657c9344c1eeb69bd8b1d1e088dd35 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
-@@ -93,13 +93,52 @@ kk_queue_device(struct kk_queue *queue)
+@@ -93,13 +93,79 @@ kk_queue_device(struct kk_queue *queue)
  uint64_t kk_queue_complete_owed_signals(struct kk_queue *queue,
                                          mtl_shared_event *event);
  
@@ -240,6 +233,33 @@ index 5e3f724b1cae465ef2512d0d120b9a7a299546a8..bc7df38ef14f814ce8163480cf2b0b17
 + * process is waiting on this queue by then either, because a KosmicKrisp
 + * device submits from one queue in order. */
 +#define KK_STOPPED_QUEUE_TIMEOUT_NS (30ull * 1000000000ull)
++
++/* When a caller waiting on the queue's work in slices last saw the queue
++ * answer for any of it, and how many submissions it had answered for then.
++ * Zero-initialize one per wait. */
++struct kk_queue_stall_clock {
++   uint64_t since;
++   uint64_t reported;
++};
++
++/* Whether, as of now, the queue has held work it has not answered for and
++ * answered for none of it for KK_STOPPED_QUEUE_TIMEOUT_NS. Any answer, or a
++ * queue holding nothing, restarts the clock. */
++static inline bool
++kk_queue_has_stopped(const struct kk_queue_progress *progress,
++                     struct kk_queue_stall_clock *clock, uint64_t now)
++{
++   if (progress->unreported == 0u) {
++      clock->since = 0u;
++      return false;
++   }
++   if (clock->since == 0u || progress->reported != clock->reported) {
++      clock->since = now;
++      clock->reported = progress->reported;
++      return false;
++   }
++   return now - clock->since >= KK_STOPPED_QUEUE_TIMEOUT_NS;
++}
  
  VkResult kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
                         const VkDeviceQueueCreateInfo *pCreateInfo,
