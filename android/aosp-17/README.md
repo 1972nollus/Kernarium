@@ -146,13 +146,18 @@ Linux guest run the same drivers against the same renderer. GLES is Mesa's
 Virgl gallium driver behind `libEGL_kernarium`, `libGLESv1_CM_kernarium` and
 `libGLESv2_kernarium` in `/vendor/lib64/egl`, which the platform EGL loader
 selects through `ro.hardware.egl=kernarium`; the three libraries link
-`venus_gallium_dri.so` in `/vendor/lib64`. The boot command line's
-`androidboot.hardware.egl` is that property's only writer, copied at early-init
-by the inherited Cuttlefish graphics init script, so no vendor property may set
-it. The product excludes the inherited
+`venus_gallium_dri.so` in `/vendor/lib64`. The product excludes the inherited
 Cuttlefish `libGLES_mesa`, and the AOSP `external/mesa3d` project stays at its
 pinned revision. The Vulkan HAL is Mesa's Venus driver,
-`VK_DRIVER_ID_MESA_VENUS` over Virtio-GPU.
+`VK_DRIVER_ID_MESA_VENUS` over Virtio-GPU, selected through
+`ro.hardware.vulkan=virtio`.
+
+The boot command line is the only writer of the three graphics HAL selections:
+the inherited Cuttlefish graphics init script copies `androidboot.hardware.egl`,
+`androidboot.hardware.vulkan` and `androidboot.hardware.gralloc` into their
+`ro.hardware` properties at early-init, and that copy fails for a property a
+vendor property has already set. The target-files verifier therefore refuses a
+vendor `ro.hardware.egl`, `ro.hardware.vulkan` or `ro.hardware.gralloc`.
 
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under
@@ -190,8 +195,8 @@ labels `/vendor/lib64/egl` the same way, and the product adds the label for the
 gallium driver those libraries link.
 
 Mesa reads a buffer's DRM format, modifier and plane layout through gralloc, so
-the product installs the allocator's own `gralloc.minigbm` module and sets
-`ro.hardware.gralloc=minigbm`: the passthrough module answers none of those
+the product installs the allocator's own `gralloc.minigbm` module and selects
+it through `ro.hardware.gralloc=minigbm`: the passthrough module answers none of those
 queries and the driver would have to guess the layout of the buffers the window
 system hands it. That module is labelled `same_process_hal_file` too. minigbm
 allocates a GPU-only buffer as a virtio-gpu blob, which is the form the renderer
