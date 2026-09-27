@@ -535,3 +535,20 @@ belongs in translation and validation rather than in the count of returns.
 | Attempt | Disposition and lesson |
 | --- | --- |
 | Replace direct Python/Cairo window drawing with C++ GPU composition | Accepted. Cache glyphs and scene geometry, animate through shader parameters, and publish complete EGL/GBM frames. Unchanged determinate progress needs no redraw; keep status polling separate from animation cadence to avoid unnecessary guest work. |
+
+## Layout-sensitive cleanups
+
+Cleanups that move data layout on the dispatch path were held back until
+measured: gadget changes on an iPad mini 6 (four vCPUs, 16 KiB, eight launches
+an arm over two counterbalanced rounds, fastest block per launch), JIT changes
+on the Mac (one vCPU, eight counterbalanced launches an arm), each against a
+same-day control, landing only when every probe was neutral or faster.
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Remove the gadget body arena's counting resource | Rejected. The wrapper's only reader had moved to the arena's own count, but it is `ProgramCache`'s first member, and removing it shifts every member's cache-line phase by 16 bytes. The indirect-link probe was slower in both rounds, about 5 percent at the median: that probe is bimodal, and none of the candidate's launches reached the fast mode that half the control's did. The member stays; a dead member at the head of a page-aligned hot structure is layout, not dead code. |
+| Drop `ProgramWords`' zero-length inline buffer | Accepted. It removed a word from every program and moved displacements through `ProgramCache::find`, `store` and `run_block`, with the gadget bank unchanged; every probe stayed within 0.3 percent of the control. |
+| Read host capability flags from the feature set | Accepted. Twelve booleans duplicated bits of the supported set; accessors shrank the profile from 32 to 24 bytes and moved JIT engine members. Gadget probes were level with the indirect link about 5 percent faster, and every JIT probe 2-3 percent faster. |
+| Remove the JIT's unused GPR residency planner | Accepted. Production never planned, but the planner's members made `JitCompiler` large enough that `run_block`, which holds one for a miss, called the stack probe on every entry. Without them the polymorphic-indirect probe ran 15 percent faster, link 7 and syscall 5, with generated code unchanged. A large object on the dispatcher's stack costs every block entry, not just the miss that uses it. |
+| Count JIT block links once | Accepted as level. Dropping a counter that always equalled the size left every probe within about 2 percent, with no consistent sign across wall and host CPU time. |
+| Recycle the JIT cache when a link table fills | Accepted. Link records are keyed by address space and were reclaimed only with a full arena, so short-lived processes filled the tables first and every later block published unlinked exits: a one-vCPU probe loop ran ten times slower about 300 processes into each launch, with the vCPU in `run_block` instead of generated code. Recycling the cache on a full table held steady speed past 580 processes and was level before that point. A bounded table keyed by a transient identity needs a reclamation path of its own; exhaustion that degrades quietly shows up only as a performance cliff. |
