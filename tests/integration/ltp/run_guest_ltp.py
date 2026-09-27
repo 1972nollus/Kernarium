@@ -890,15 +890,7 @@ def run_cases(
         for index, case in enumerate(regular_cases, 1):
             case = limit_parallel_guest_cpus(case, parallel_guest_cpus)
             yield index, worker(emulator, rootfs, case.memory or memory, case)
-        first_serial_index = len(regular_cases) + 1
-        for index, case in enumerate(serial_cases, first_serial_index):
-            yield index, worker(emulator, rootfs, case.memory or memory, case)
-        first_pressure_index = len(regular_cases) + len(serial_cases) + 1
-        for index, case in enumerate(pressure_cases, first_pressure_index):
-            yield index, worker(emulator, rootfs, case.memory or memory, case)
-        return
-
-    if regular_cases:
+    elif regular_cases:
         executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=jobs, thread_name_prefix="guest-ltp"
         )
@@ -933,129 +925,60 @@ def run_cases(
 def accepted(result: Result) -> bool:
     if result.error is not None or result.return_code is None:
         return False
+    code = result.return_code
+    passed = result.summary.get("passed", 0)
     failed = result.summary.get("failed", 0)
     broken = result.summary.get("broken", 0)
     skipped = result.summary.get("skipped", 0)
-    if result.case.expectation == "exit-zero":
+    warnings = result.summary.get("warnings", 0)
+    expectation = result.case.expectation
+    # The outcomes several expectations accept.
+    clean_pass = (
+        code == 0 and passed > 0 and failed == 0 and broken == 0 and skipped == 0
+    )
+    warning_only = (
+        code == 4
+        and passed > 0
+        and failed == 0
+        and broken == 0
+        and skipped == 0
+        and warnings > 0
+    )
+    partial_break = code != 0 and passed > 0 and failed == 0 and broken > 0
+    if expectation == "exit-zero":
+        return code == 0 and failed == 0 and broken == 0 and skipped == 0
+    if expectation == "pass":
+        return clean_pass or warning_only
+    if expectation in ("userspace-failure-exempt", "hardware-failure-exempt"):
+        return code != 0 and failed > 0 and broken == 0
+    if expectation == "userspace-matrix-exempt":
+        return code != 0 and failed > 0 and broken > 0
+    if expectation == "userspace-legacy-matrix-exempt":
         return (
-            result.return_code == 0
-            and failed == 0
-            and broken == 0
-            and skipped == 0
+            code == 0 and passed > 0 and failed > 0 and broken == 0 and skipped == 0
         )
-    if result.case.expectation == "pass":
-        warnings = result.summary.get("warnings", 0)
-        warning_only_status = (
-            result.return_code == 4 and warnings > 0
-        )
+    if expectation == "userspace-partial-broken-exempt":
+        return partial_break
+    if expectation == "userspace-variable-matrix-exempt":
+        mixed_result = code != 0 and passed > 0 and (failed > 0 or broken > 0)
+        return (clean_pass and warnings == 0) or warning_only or mixed_result
+    if expectation == "userspace-warning-exempt":
+        return warning_only
+    if expectation == "userspace-flaky-exempt":
+        return clean_pass or warning_only or partial_break
+    if expectation == "userspace-broken-exempt":
         return (
-            (result.return_code == 0 or warning_only_status)
-            and failed == 0
-            and broken == 0
-            and skipped == 0
-            and result.summary.get("passed", 0) > 0
+            code == 2 and passed == 0 and failed == 0 and broken > 0 and skipped == 0
         )
-    if result.case.expectation == "userspace-failure-exempt":
-        return result.return_code != 0 and failed > 0 and broken == 0
-    if result.case.expectation == "hardware-failure-exempt":
-        return result.return_code != 0 and failed > 0 and broken == 0
-    if result.case.expectation == "userspace-matrix-exempt":
-        return (
-            result.return_code != 0
-            and failed > 0
-            and broken > 0
-        )
-    if result.case.expectation == "userspace-legacy-matrix-exempt":
-        return (
-            result.return_code == 0
-            and result.summary.get("passed", 0) > 0
-            and failed > 0
-            and broken == 0
-            and skipped == 0
-        )
-    if result.case.expectation == "userspace-partial-broken-exempt":
-        return (
-            result.return_code != 0
-            and result.summary.get("passed", 0) > 0
-            and failed == 0
-            and broken > 0
-        )
-    if result.case.expectation == "userspace-variable-matrix-exempt":
-        clean_pass = (
-            result.return_code == 0
-            and result.summary.get("passed", 0) > 0
-            and failed == 0
-            and broken == 0
-            and skipped == 0
-            and result.summary.get("warnings", 0) == 0
-        )
-        warning_only = (
-            result.return_code == 4
-            and result.summary.get("passed", 0) > 0
-            and failed == 0
-            and broken == 0
-            and skipped == 0
-            and result.summary.get("warnings", 0) > 0
-        )
-        mixed_result = (
-            result.return_code != 0
-            and result.summary.get("passed", 0) > 0
-            and (failed > 0 or broken > 0)
-        )
-        return clean_pass or warning_only or mixed_result
-    if result.case.expectation == "userspace-warning-exempt":
-        return (
-            result.return_code == 4
-            and result.summary.get("passed", 0) > 0
-            and failed == 0
-            and broken == 0
-            and skipped == 0
-            and result.summary.get("warnings", 0) > 0
-        )
-    if result.case.expectation == "userspace-flaky-exempt":
-        clean = (
-            result.return_code == 0
-            and result.summary.get("passed", 0) > 0
-            and failed == 0
-            and broken == 0
-            and skipped == 0
-        )
-        warning_only = (
-            result.return_code == 4
-            and result.summary.get("passed", 0) > 0
-            and failed == 0
-            and broken == 0
-            and skipped == 0
-            and result.summary.get("warnings", 0) > 0
-        )
-        partial_break = (
-            result.return_code != 0
-            and result.summary.get("passed", 0) > 0
-            and failed == 0
-            and broken > 0
-        )
-        return clean or warning_only or partial_break
-    if result.case.expectation == "userspace-broken-exempt":
-        return (
-            result.return_code == 2
-            and result.summary.get("passed", 0) == 0
-            and failed == 0
-            and broken > 0
-            and skipped == 0
-        )
-    if result.case.expectation == "userspace-error-exempt":
-        return result.return_code not in (0, 124) and not result.summary
-    if result.case.expectation == "userspace-missing-exempt":
-        return result.return_code == 127 and not result.summary
+    if expectation == "userspace-error-exempt":
+        return code not in (0, 124) and not result.summary
+    if expectation == "userspace-missing-exempt":
+        return code == 127 and not result.summary
     if failed != 0 or broken != 0:
         return False
     if skipped > 0:
-        return result.return_code in (0, 32)
-    return (
-        result.case.expectation == "userspace-exempt"
-        and result.return_code == 0
-        and not result.summary
-    )
+        return code in (0, 32)
+    return expectation == "userspace-exempt" and code == 0 and not result.summary
 
 
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
