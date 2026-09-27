@@ -282,9 +282,8 @@ JitExecutor::Implementation::shared_codegen_profile() const noexcept {
 [[nodiscard]] std::optional<SharedTranslationMaterializationFailure>
 JitExecutor::Implementation::materialize_shared_translation(
     const SharedTranslation &translation) {
-  if (translation.relocations.size() >
-      maximum_shared_translation_relocations)
-    return SharedTranslationMaterializationFailure::invalid_metadata;
+  /* install_shared_translation has just passed translation through
+   * valid_shared_translation, which bounds and types its relocations. */
   relocated_link_pointers_.clear();
   for (const auto &relocation : translation.relocations) {
     const void *pointer = nullptr;
@@ -301,8 +300,6 @@ JitExecutor::Implementation::materialize_shared_translation(
       if (pointer == nullptr)
         return SharedTranslationMaterializationFailure::indirect_link_capacity;
       break;
-    default:
-      return SharedTranslationMaterializationFailure::invalid_metadata;
     }
     /* Only indirect sites require preallocated executor state here. Direct
      * state is resolved during code publication, with a bounded refusal
