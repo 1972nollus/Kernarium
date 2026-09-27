@@ -16,12 +16,12 @@ tty_open() and every other carrier asleep.  A task that is about to block
 needs no poll: it leaves the CPU to the idle loop or to another task.
 ---
  arch/um/include/shared/kern_util.h |  3 +++
- arch/um/kernel/skas/uaccess.c      | 36 +++++++++++++++++++++++++++++-
- arch/um/kernel/time.c              | 15 +++++++++++++
- arch/um/kernel/tlb.c               | 10 +++++++++
- arch/um/os-Darwin/smp.c            | 23 ++++++++++++++-----
- kernel/sched/core.c                | 27 ++++++++++++++++++++++
- 6 files changed, 108 insertions(+), 6 deletions(-)
+ arch/um/kernel/skas/uaccess.c      | 37 +++++++++++++++++++++++++++++-
+ arch/um/kernel/time.c              | 15 ++++++++++++
+ arch/um/kernel/tlb.c               | 10 ++++++++
+ arch/um/os-Darwin/smp.c            | 23 +++++++++++++++----
+ kernel/sched/core.c                | 29 +++++++++++++++++++++++
+ 6 files changed, 111 insertions(+), 6 deletions(-)
 
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
 index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b5e2662e1 100644
@@ -38,10 +38,10 @@ index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 1b4ec301bed1df9d3c32babd98ff8c286c32ad95..be1a236d3f0be513e71cd0a12563060a0012b390 100644
+index 1b4ec301bed1df9d3c32babd98ff8c286c32ad95..fd0c48b58e4d077cb425d7b0ce7ba418a1d33243 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -176,6 +176,30 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+@@ -176,6 +176,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)
  #endif
  }
  
@@ -57,14 +57,15 @@ index 1b4ec301bed1df9d3c32babd98ff8c286c32ad95..be1a236d3f0be513e71cd0a12563060a
 +	 * kernel loop.  Darwin's cooperative PREEMPT_NONE carriers instead need
 +	 * an explicit safe point after all mmap and page-table locks have gone.
 +	 *
-+	 * Poll the per-CPU deadline before testing need_resched: the cooperative
-+	 * timer is what raises that request and wakes the RCU grace-period thread.
 +	 * The may_resched and logical-IRQ gates exclude atomic futex operations and
-+	 * any caller that cannot safely enter Linux interrupt code.  Afterwards,
-+	 * cond_resched() both schedules when requested and reports an urgent RCU
-+	 * quiescent state when no task switch is required.
++	 * any caller that cannot safely enter Linux interrupt code.  Without
++	 * CONFIG_PREEMPTION, cond_resched() polls the per-CPU deadline before
++	 * testing need_resched, because the cooperative timer is what raises that
++	 * request and wakes the RCU grace-period thread.  It then schedules when
++	 * requested and reports an urgent RCU quiescent state when no task switch
++	 * is required.
 +	 */
-+	darwin_timer_kernel_checkpoint();
++	BUILD_BUG_ON(IS_ENABLED(CONFIG_PREEMPTION));
 +	cond_resched();
 +}
 +#endif
@@ -72,7 +73,7 @@ index 1b4ec301bed1df9d3c32babd98ff8c286c32ad95..be1a236d3f0be513e71cd0a12563060a
  static int do_op_one_page(unsigned long addr, int len, int is_write,
  		 int (*op)(unsigned long addr, int len, void *arg), void *arg)
  {
-@@ -184,10 +208,17 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -184,10 +209,17 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	unsigned long user_addr = addr;
  #endif
  	int n = -1;
@@ -91,7 +92,7 @@ index 1b4ec301bed1df9d3c32babd98ff8c286c32ad95..be1a236d3f0be513e71cd0a12563060a
  
  #ifdef CONFIG_64BIT
  #if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
-@@ -228,6 +259,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -228,6 +260,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  		set_page_dirty_lock(page);
  out_put:
  	put_page(page);
@@ -135,24 +136,24 @@ index b46649f2ea64a6d4b289cb0d9ab8c164da804ba1..8b8a647f44ee690582f1f6b4aabb6d3e
  {
  	int cpu = evt - &timer_clockevent[0];
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index ad0d6ab60e10e9b1118532b0cff0cea991ff35ee..aefa0b506abce18dc81b3576cd65e8eb5eb5773a 100644
+index 9fd280bc968e0b66661b0c87a84b2d6ee747ed25..9d7c3297dc83f0fded54efe9673131f1875dde0a 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
-@@ -745,7 +745,17 @@ void flush_tlb_mm(struct mm_struct *mm)
+@@ -734,7 +734,17 @@ void flush_tlb_mm(struct mm_struct *mm)
  	for_each_vma(vmi, vma) {
  		um_tlb_mark_sync(mm, vma->vm_start, vma->vm_end);
  #ifdef UML_HOST_DARWIN
 +		/*
 +		 * The host invalidation may quiesce every sibling executor.  Once it
 +		 * returns, no page-table lock or thread-local mapping batch is live.
-+		 * With logical IRQs enabled, service an expired per-CPU deadline before
-+		 * the PREEMPT_NONE scheduling and RCU boundary during a large VMA walk.
++		 * With logical IRQs enabled, cond_resched() services an expired
++		 * per-CPU deadline at the PREEMPT_NONE scheduling and RCU boundary
++		 * during a large VMA walk.
 +		 */
++		BUILD_BUG_ON(IS_ENABLED(CONFIG_PREEMPTION));
  		darwin_tlb_invalidate_range(mm, vma->vm_start, vma->vm_end);
-+		if (um_get_signals()) {
-+			darwin_timer_kernel_checkpoint();
++		if (um_get_signals())
 +			cond_resched();
-+		}
  #endif
  	}
  }
@@ -205,7 +206,7 @@ index a35a5a4dcb5e790a81c572ad6965605cefddf9a8..ad4667cb05383559e781fac47306b9a5
  
  int darwin_ipi_idle_fd(void)
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index aad9813bd61713b60cdd8b13bd97103c34e179d4..c09922cb6fd70142a1dbc3fa28e44db4a6707d19 100644
+index aad9813bd61713b60cdd8b13bd97103c34e179d4..b605d7d2986576011ca0321b99ec3fd020454339 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
 @@ -82,6 +82,10 @@
@@ -238,7 +239,7 @@ index aad9813bd61713b60cdd8b13bd97103c34e179d4..c09922cb6fd70142a1dbc3fa28e44db4
  	__schedule_loop(SM_NONE);
  	sched_update_worker(tsk);
  }
-@@ -7469,6 +7485,17 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
+@@ -7469,6 +7485,19 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
  #if !defined(CONFIG_PREEMPTION) || defined(CONFIG_PREEMPT_DYNAMIC)
  int __sched __cond_resched(void)
  {
@@ -247,7 +248,9 @@ index aad9813bd61713b60cdd8b13bd97103c34e179d4..c09922cb6fd70142a1dbc3fa28e44db4
 +	 * Darwin's per-CPU timer deadlines are cooperative.  Poll at the
 +	 * scheduler's central lock-free kernel boundary before testing
 +	 * TIF_NEED_RESCHED, because the expired clock event is what raises that
-+	 * flag.  IRQ-disabled callers retain the ordinary no-op behavior.
++	 * flag.  IRQ-disabled callers retain the ordinary no-op behavior.  The
++	 * Darwin safe points in uaccess.c and tlb.c rely on this poll and
++	 * assert that the kernel is built without CONFIG_PREEMPTION.
 +	 */
 +	if (!irqs_disabled())
 +		darwin_timer_kernel_checkpoint();

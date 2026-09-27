@@ -245,7 +245,7 @@ index 57b834791c66f9c7bb1beae8cfceb212adf00b48..61a22bf85f676d1445d66d09f1da8e0b
  #define ELF_NGREG 27
  typedef elf_greg_t elf_gregset_t[ELF_NGREG];
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
-index b34556b3ba47a1c94130e12431e264ac70e6aaa9..2a4755e9eb680d9de4ceaa9ace4df5037f69b90d 100644
+index 0348469704c29f40dd0671fb3dd4ccd5382e62c8..ce78a37990bdadb471bfdc2d0b3b46a30fc6a57f 100644
 --- a/arch/arm64/um/asm/ptrace.h
 +++ b/arch/arm64/um/asm/ptrace.h
 @@ -19,6 +19,12 @@ enum {
@@ -258,9 +258,9 @@ index b34556b3ba47a1c94130e12431e264ac70e6aaa9..2a4755e9eb680d9de4ceaa9ace4df503
 +	(UPT_X86_64_COMPAT_SYSCALL(&(state)->regs) ? 0 : 219)
 +#endif
 +
- #define PT_FIX_EXEC_STACK(sp) do { } while (0)
  #define PT_REGS_SET_SYSCALL_RETURN(state, result) \
  	(PT_REGS_SYSCALL_RET(state) = (result))
+ 
 diff --git a/arch/arm64/um/asm/seccomp.h b/arch/arm64/um/asm/seccomp.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..0a18146580cafbf787d4480fc359077713feccde
@@ -2936,7 +2936,7 @@ index a56b44522766fec85a945ad8788b2b3019b4673b..6b47c070ba5187841e244107a754b48f
  			break;
  		}
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
-index 0469be5b9e70b97547ad6d64564cf358d3f98803..ae64d6d9acf346e3d01b316e55c1af422d680783 100644
+index 8cb774915731e131352e9f9e3249ac8422faa293..0a1b285326fccffdd15435ead9b6f69591faf844 100644
 --- a/arch/um/kernel/skas/process.c
 +++ b/arch/um/kernel/skas/process.c
 @@ -67,6 +67,15 @@ unsigned long current_tls(void)
@@ -3042,7 +3042,7 @@ index f4f5b15abfa71285cc30126b64bfa396f19e0850..300039328b3b4a426d8baa6f2eaebe45
  
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 7cccc32c065260d31b7bdb0f1c23a615be4f445f..08ab5b2e09f71d080e784a061a290229c908b75a 100644
+index 3834e5c57680d9222c884256c1ecec3f76593502..bc879b800185d9d9b85947122263c1aa79c5fe6d 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -11,6 +11,9 @@
@@ -3055,7 +3055,7 @@ index 7cccc32c065260d31b7bdb0f1c23a615be4f445f..08ab5b2e09f71d080e784a061a290229
  #include <mem_user.h>
  #include <os.h>
  #include <skas.h>
-@@ -1019,6 +1022,19 @@ void darwin_tlb_invalidate_range(struct mm_struct *mm, unsigned long start,
+@@ -1007,6 +1010,19 @@ void darwin_tlb_invalidate_range(struct mm_struct *mm, unsigned long start,
  		return;
  	start &= PAGE_MASK;
  	end = PAGE_ALIGN(end);
@@ -3076,10 +3076,10 @@ index 7cccc32c065260d31b7bdb0f1c23a615be4f445f..08ab5b2e09f71d080e784a061a290229
  			mm->context.id.darwin_generation, (void *)start,
  			end - start) < 0)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 21ec4ccf5dc03b6fce831ad82ccdc35317d94986..3d004bfd84df305a608d294364f813db754bf3cf 100644
+index a6d67db93b18e28918afdb74b5cdcbe684b18812..b0c5c699aa24e0259550683923c218aa27b5c177 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -474,6 +474,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -401,6 +401,10 @@ void userspace(struct uml_pt_regs *registers)
  		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
  		 */
  		registers->is_user = 1;

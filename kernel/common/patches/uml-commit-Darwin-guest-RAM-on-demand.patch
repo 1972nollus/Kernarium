@@ -381,10 +381,10 @@ index 9d21f0a1a45407b6c9b24f9b58b38bafbc4cc5fe..12e4934ffda251dc11e4aaefde4bd645
  	return 0;
  }
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 8cfd9f19c65dd4c2dd708ba615cdee06a7285a5b..f8068b196c5b1b3ae9ee56ce9b6bb1662b9d57bc 100644
+index 326a0dc9db221ce9fdaf8653256d559a0b4c93fb..0d57cc6869baf11dbaef7dbe6d5df28998119edf 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -24,8 +24,8 @@
+@@ -23,8 +23,8 @@
   * These checks make an ABI drift fail at the kernel compiler rather than at a
   * guest boundary after register state has been reinterpreted. */
  _Static_assert(sizeof(unsigned long) == 8, "Darwin UML ABI requires LP64");

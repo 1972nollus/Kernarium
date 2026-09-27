@@ -75,7 +75,7 @@ index 3c0e879c2f05ee0098c2975c3ed56112d4826177..e24f9d1d63d764d4028b2f51fa5ef3b7
  
  obj-$(CONFIG_BLK_DEV_INITRD) += initrd.o
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index ce2f8bf2082e88b405d4ad9d4cfa3c047911c7d3..25b6d55f4c52fdc67f1a1763fb4894cf53c75808 100644
+index d652bc357fc73b734fea7f25ebda7b316f385312..469121147eb3838e8572040a1777ebab474e3404 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -85,6 +85,57 @@ static const char *uml_cpu_model_name(void)
@@ -154,7 +154,7 @@ index ce2f8bf2082e88b405d4ad9d4cfa3c047911c7d3..25b6d55f4c52fdc67f1a1763fb4894cf
  	seq_printf(m, "mode\t\t: skas\n");
  	seq_printf(m, "host\t\t: %s\n", host_info);
  	seq_printf(m, "fpu\t\t: %s\n", str_yes_no(cpu_has(&boot_cpu_data, X86_FEATURE_FPU)));
-@@ -442,7 +502,11 @@ int __init linux_main(int argc, char **argv, char **envp)
+@@ -434,7 +494,11 @@ int __init linux_main(int argc, char **argv, char **envp)
  	/* OS sanity checks that need to happen before the kernel runs */
  	os_early_checks();
  

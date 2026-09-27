@@ -78,10 +78,10 @@ index f964ac7633b3d76bd15e166dcb2256d64beb4d4c..aae65897f9f64c828de831876c7aa20b
  					  void *address,
  					  unsigned long length);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index ef849ea266f5250f6b80946ce43559afa7e7dcae..7cccc32c065260d31b7bdb0f1c23a615be4f445f 100644
+index b0f2e74633e8623cf016fd31d229409a3ef7c302..3834e5c57680d9222c884256c1ecec3f76593502 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
-@@ -1025,6 +1025,27 @@ void darwin_tlb_invalidate_range(struct mm_struct *mm, unsigned long start,
+@@ -1013,6 +1013,27 @@ void darwin_tlb_invalidate_range(struct mm_struct *mm, unsigned long start,
  		panic("Darwin: unable to invalidate guest mm %lu range %#lx-%#lx",
  		      mm->context.id.darwin_generation, start, end);
  }
@@ -110,10 +110,10 @@ index ef849ea266f5250f6b80946ce43559afa7e7dcae..7cccc32c065260d31b7bdb0f1c23a615
  
  void flush_tlb_mm(struct mm_struct *mm)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 05a138639d7bb6454a90d0e22141dc6479e28652..8cfd9f19c65dd4c2dd708ba615cdee06a7285a5b 100644
+index e0affb5787735dcc4e5014b3d9cf97465d5d1e2b..326a0dc9db221ce9fdaf8653256d559a0b4c93fb 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -24,8 +24,8 @@
+@@ -23,8 +23,8 @@
   * These checks make an ABI drift fail at the kernel compiler rather than at a
   * guest boundary after register state has been reinterpreted. */
  _Static_assert(sizeof(unsigned long) == 8, "Darwin UML ABI requires LP64");

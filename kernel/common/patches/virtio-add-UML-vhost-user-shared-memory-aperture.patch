@@ -950,7 +950,7 @@ index 20d326d8f8764bbabedbe60891efa78ff7593811..4862ee81cc6d5496227d6d4a3425acfb
  
  	return fd;
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index a9e6e103038680f439da26dc4d012d0d1e3f9395..ce2f8bf2082e88b405d4ad9d4cfa3c047911c7d3 100644
+index 88bcf643cf90d6dfc800ee2ec1f39c1fea8ad8b5..d652bc357fc73b734fea7f25ebda7b316f385312 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -31,6 +31,7 @@
@@ -961,7 +961,7 @@ index a9e6e103038680f439da26dc4d012d0d1e3f9395..ce2f8bf2082e88b405d4ad9d4cfa3c04
  #include <mem_user.h>
  #include <os.h>
  #include <skas.h>
-@@ -333,7 +334,16 @@ static unsigned long __init darwin_native_auxiliary_size(
+@@ -331,7 +332,16 @@ static unsigned long __init darwin_native_auxiliary_size(
  	 */
  	if (size > UML_DARWIN_NATIVE_AUXILIARY_MAXIMUM)
  		size = UML_DARWIN_NATIVE_AUXILIARY_MAXIMUM;
@@ -976,10 +976,10 @@ index a9e6e103038680f439da26dc4d012d0d1e3f9395..ce2f8bf2082e88b405d4ad9d4cfa3c04
 +		return ULONG_MAX;
 +	return PAGE_ALIGN(size + UML_VHOST_USER_SHMEM_RESERVATION_SIZE +
 +		STUB_SIZE);
- #else
- 	(void)memory;
- 	return 0;
-@@ -460,6 +470,14 @@ int __init linux_main(int argc, char **argv, char **envp)
+ }
+ #endif
+ 
+@@ -452,6 +462,14 @@ int __init linux_main(int argc, char **argv, char **envp)
  
  	setup_machinename(init_utsname()->machine);
  

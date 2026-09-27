@@ -20,11 +20,11 @@ capability.
 
 struct page is already 64 bytes, so its size does not change. The FLATMEM
 memory map is allocated with SMP_CACHE_BYTES alignment; assert at build
-time that this covers struct page, and check the map at boot.
+time that this covers struct page.
 ---
  arch/arm64/um/Kconfig |  2 ++
- arch/um/kernel/mem.c  | 11 +++++++++++
- 2 files changed, 13 insertions(+)
+ arch/um/kernel/mem.c  | 10 ++++++++++
+ 2 files changed, 12 insertions(+)
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
 index 2b518b23fbe29da511c84051c58db647b1a80734..06086feb226da3a2012f1ca2cfb0dec9bb63f69d 100644
@@ -41,10 +41,10 @@ index 2b518b23fbe29da511c84051c58db647b1a80734..06086feb226da3a2012f1ca2cfb0dec9
  	select HAVE_PERF_EVENTS
  	select MODULES_USE_ELF_RELA
 diff --git a/arch/um/kernel/mem.c b/arch/um/kernel/mem.c
-index e2b7dd38000bebf08b907bfc21eabd75655f557d..a0aaf2751aaee3fd81bc6ee7a52788fddfe4b5c9 100644
+index e2b7dd38000bebf08b907bfc21eabd75655f557d..65d77c7b02f89c5817747e08021237403dd1de45 100644
 --- a/arch/um/kernel/mem.c
 +++ b/arch/um/kernel/mem.c
-@@ -215,6 +215,17 @@ void __init paging_init(void)
+@@ -215,6 +215,16 @@ void __init paging_init(void)
  	max_zone_pfn[ZONE_NORMAL] = end_iomem >> PAGE_SHIFT;
  	free_area_init(max_zone_pfn);
  
@@ -56,7 +56,6 @@ index e2b7dd38000bebf08b907bfc21eabd75655f557d..a0aaf2751aaee3fd81bc6ee7a52788fd
 +	 * alignment, so that must cover it.
 +	 */
 +	BUILD_BUG_ON(SMP_CACHE_BYTES < __alignof__(struct page));
-+	WARN_ON(!IS_ALIGNED((unsigned long)mem_map, __alignof__(struct page)));
 +#endif
 +
  #if IS_ENABLED(CONFIG_ARCH_REUSE_HOST_VSYSCALL_AREA)

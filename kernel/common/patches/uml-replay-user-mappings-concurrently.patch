@@ -74,10 +74,10 @@ one thread and 325 -> 995 on eight; multi-core File Compression 584 ->
  arch/um/include/asm/tlbflush.h     |   5 +-
  arch/um/include/shared/skas/skas.h |   1 +
  arch/um/kernel/skas/mmu_darwin.c   |  28 ---
- arch/um/kernel/skas/process.c      |  66 +++++---
- arch/um/kernel/tlb.c               | 263 ++++++++++++++++++++++++-----
+ arch/um/kernel/skas/process.c      |  62 ++++---
+ arch/um/kernel/tlb.c               | 262 ++++++++++++++++++++++++-----
  arch/um/os-Darwin/skas/process.c   |  14 +-
- 7 files changed, 295 insertions(+), 111 deletions(-)
+ 7 files changed, 293 insertions(+), 108 deletions(-)
 
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
 index ec490ced2163af7fbdc5d6bbf7ab8b74be8c8d27..8d02b821d4bfaeef86e1a6f7896190fbaca8e692 100644
@@ -153,12 +153,12 @@ index 1e7594036606ee51401df5750cb83863ebec9871..f2010ae962c677ad6ae6e7b5a05d0fd9
  					unsigned long start,
  					unsigned long end);
 diff --git a/arch/um/include/shared/skas/skas.h b/arch/um/include/shared/skas/skas.h
-index 15b8f71bfad4ececfe1b862aa7ba5b0cbe8683af..404b800886bd3633b3320695bb279913d574162a 100644
+index 147a5533909d870606ba4f953d78f29a04374afe..16a9b0f8f228fc0b0bac09d5b77aff057fb1a310 100644
 --- a/arch/um/include/shared/skas/skas.h
 +++ b/arch/um/include/shared/skas/skas.h
-@@ -20,6 +20,7 @@ extern void current_mm_sync(void);
- extern void current_mm_flush(void);
- extern unsigned long current_mm_brk(void);
+@@ -18,6 +18,7 @@ extern unsigned long current_tls(void);
+ extern void current_set_tls(unsigned long tls);
+ extern void current_mm_sync(void);
  extern void current_mm_force_sync(unsigned long address);
 +extern int current_mm_access_granted(unsigned long address, int is_write);
  extern int current_mm_prefault_host_slot(unsigned long address, int is_write);
@@ -204,10 +204,10 @@ index 5ad85f4e04e6fb438998e6b0891fb55070741774..112d9734f69b3b87ca06288fab39279b
  {
  #ifndef CONFIG_PAGE_SIZE_16KB
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
-index 64b45ceee19d24bb51dd736faa6c87df2c7ca40c..0469be5b9e70b97547ad6d64564cf358d3f98803 100644
+index 5e153236cbc104c5ac60297c9de16773e1a325dd..8cb774915731e131352e9f9e3249ac8422faa293 100644
 --- a/arch/um/kernel/skas/process.c
 +++ b/arch/um/kernel/skas/process.c
-@@ -92,21 +92,18 @@ void current_mm_sync(void)
+@@ -92,49 +92,68 @@ void current_mm_sync(void)
  		return;
  	mm = current->mm;
  #ifdef UML_HOST_DARWIN
@@ -234,20 +234,7 @@ index 64b45ceee19d24bb51dd736faa6c87df2c7ca40c..0469be5b9e70b97547ad6d64564cf358
  	mmap_read_unlock(mm);
  #else
  	um_tlb_sync(mm);
-@@ -122,10 +119,8 @@ void current_mm_flush(void)
- 	mm = current->mm;
- #ifdef UML_HOST_DARWIN
- 	mmap_read_lock(mm);
--	enter_turnstile(&mm->context.id);
- 	flush_tlb_mm(mm);
--	um_tlb_sync_locked(mm);
--	exit_turnstile(&mm->context.id);
-+	um_tlb_sync_locked(mm, 0, 0);
- 	mmap_read_unlock(mm);
- #else
- 	flush_tlb_mm(mm);
-@@ -138,28 +133,50 @@ unsigned long current_mm_brk(void)
- 	return current->mm == NULL ? 0 : current->mm->brk;
+ #endif
  }
  
 -void current_mm_force_sync(unsigned long address)
@@ -309,7 +296,7 @@ index 64b45ceee19d24bb51dd736faa6c87df2c7ca40c..0469be5b9e70b97547ad6d64564cf358
  int current_mm_prefault_host_slot(unsigned long address, int is_write)
  {
  	if (current->mm == NULL)
-@@ -168,6 +185,7 @@ int current_mm_prefault_host_slot(unsigned long address, int is_write)
+@@ -143,6 +162,7 @@ int current_mm_prefault_host_slot(unsigned long address, int is_write)
  	 * granularity. The fault handler has already resolved the addressed page;
  	 * synchronize only it so demand paging and MLOCK_ONFAULT remain observable.
  	 */
@@ -319,7 +306,7 @@ index 64b45ceee19d24bb51dd736faa6c87df2c7ca40c..0469be5b9e70b97547ad6d64564cf358
  	return 0;
  }
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c012b4ff28c 100644
+index 9d7c3297dc83f0fded54efe9673131f1875dde0a..35367b69563740cffdb3dcae0cd174f5a7b5597a 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -25,9 +25,33 @@ struct vm_ops {
@@ -356,7 +343,7 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
  static spinlock_t *darwin_pte_lockptr(struct mm_struct *mm, pmd_t *pmd)
  {
  	/*
-@@ -303,6 +327,10 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
+@@ -310,6 +334,10 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
  			ret = ops->unmap(ops->mm_idp, addr, PAGE_SIZE);
  
  #ifdef UML_HOST_DARWIN
@@ -367,7 +354,7 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
  	} while (addr += PAGE_SIZE, ((addr < end) && !ret));
  #else
  		*pte = pte_mkuptodate(*pte);
-@@ -514,15 +542,104 @@ static int update_mm_range(struct mm_struct *mm, struct vm_ops *ops,
+@@ -503,15 +531,103 @@ static int update_mm_range(struct mm_struct *mm, struct vm_ops *ops,
  	return ret;
  }
  
@@ -377,12 +364,11 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
 +	/* No page-table lock, host batch or walker binding is live here, and the
 +	 * mmap_read_lock() the walk runs under may be slept on.  A long or a
 +	 * contested replay must not keep this CPU's clock event, its pending IPI
-+	 * vectors and its RCU quiescent state waiting for the last batch.
++	 * vectors and its RCU quiescent state waiting for the last batch, and
++	 * cond_resched() services all three (see flush_tlb_mm()).
 +	 */
-+	if (!um_get_signals())
-+		return;
-+	darwin_timer_kernel_checkpoint();
-+	cond_resched();
++	if (um_get_signals())
++		cond_resched();
 +}
 +
 +/* Replay the snapshot of a user mm in bounded host batches.  A batch spans
@@ -474,7 +460,7 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
  	int mmap_lock_owned = 0;
  	unsigned long flags;
  	unsigned int sync_count;
-@@ -533,7 +650,6 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -522,7 +638,6 @@ static int __um_tlb_sync(struct mm_struct *mm,
  
  #ifdef UML_HOST_DARWIN
  retry:
@@ -482,7 +468,7 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
  	mmap_lock_owned = 0;
  	/*
  	 * set_ptes() records pending work while the fault path still holds the
-@@ -541,12 +657,31 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -530,12 +645,31 @@ static int __um_tlb_sync(struct mm_struct *mm,
  	 * mmap_read_lock(), which would invert that order and deadlock concurrent
  	 * faults in a shared mm.
  	 *
@@ -518,7 +504,7 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
  	sync_count = mm->context.sync_tlb_range_count;
  	if (sync_count == 0) {
  		spin_unlock_irqrestore(&mm->context.sync_tlb_lock, flags);
-@@ -568,27 +703,25 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -557,27 +691,25 @@ static int __um_tlb_sync(struct mm_struct *mm,
  #ifdef UML_HOST_DARWIN
  	/*
  	 * macOS/arm64 maps memory in 16 KiB host pages. um_tlb_mark_sync() has
@@ -558,7 +544,7 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
  	if (mm == &init_mm) {
  		ops.mmap = kern_map;
  		ops.unmap = kern_unmap;
-@@ -597,7 +730,10 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -586,7 +718,10 @@ static int __um_tlb_sync(struct mm_struct *mm,
  		ops.unmap = unmap;
  	}
  #ifdef UML_HOST_DARWIN
@@ -570,7 +556,7 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
  		addr = sync_ranges[sync_index].from;
  		sync_end = sync_ranges[sync_index].to;
  		ret = update_mm_range(mm, &ops, addr, sync_end);
-@@ -607,18 +743,6 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -596,18 +731,6 @@ static int __um_tlb_sync(struct mm_struct *mm,
  #endif
  
  #ifdef UML_HOST_DARWIN
@@ -589,7 +575,7 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
  	if (mmap_lock_owned) {
  		mmap_read_unlock(mm);
  		mmap_lock_owned = 0;
-@@ -667,7 +791,7 @@ static noinline int um_tlb_sync_init_mm(void)
+@@ -656,7 +779,7 @@ static noinline int um_tlb_sync_init_mm(void)
  		goto clear_owner;
  	}
  	WRITE_ONCE(init_mm_tlb_owner, current);
@@ -598,7 +584,7 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
  clear_owner:
  	WRITE_ONCE(init_mm_tlb_owner, NULL);
  	mutex_unlock(&init_mm.context.turnstile);
-@@ -681,7 +805,7 @@ int um_tlb_sync(struct mm_struct *mm)
+@@ -670,7 +793,7 @@ int um_tlb_sync(struct mm_struct *mm)
  	if (unlikely(mm == &init_mm))
  		return um_tlb_sync_init_mm();
  #endif
@@ -607,7 +593,7 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
  }
  
  #ifdef UML_HOST_DARWIN
-@@ -696,16 +820,69 @@ bool um_tlb_sync_pending(struct mm_struct *mm)
+@@ -685,16 +808,69 @@ bool um_tlb_sync_pending(struct mm_struct *mm)
  	return pending;
  }
  
@@ -685,12 +671,12 @@ index aefa0b506abce18dc81b3576cd65e8eb5eb5773a..6c65b2b7bdce2a2c2f172645833d9c01
  #endif
  
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 15c41d52f659892fdba982af5b3afb24f7839f1a..2c98e0fb247b72b5d901f5aa82b2e3f2e1991dc0 100644
+index ba51d9f2dd935366a555c2bee0784d6ec35d316e..079f05488b2999c32b2e15cd8e3d8e44b1b4b0f7 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -566,12 +566,16 @@ void userspace(struct uml_pt_regs *registers)
- 			if (profiling)
- 				profile_start = os_nsecs();
+@@ -455,12 +455,16 @@ void userspace(struct uml_pt_regs *registers)
+ 			unsigned long fault = FAULT_ADDRESS(registers->faultinfo);
+ 			int retry;
  
 -			/* A valid 4 KiB Linux PTE may still be an unmaterialized
 -			 * quarter of a 16 KiB Darwin VM slot.  Force all four PTEs
@@ -707,6 +693,6 @@ index 15c41d52f659892fdba982af5b3afb24f7839f1a..2c98e0fb247b72b5d901f5aa82b2e3f2
 +			if (fault >= 4096 && uml_darwin_guest_range(fault, 1) &&
 +			    current_mm_access_granted(fault,
 +					FAULT_WRITE(registers->faultinfo))) {
- 				if (static_dispatch_trace_enabled())
- 					os_warn("Darwin static fault sync begin address=%#lx execute=%d write=%d\n",
- 						fault, FAULT_EXECUTE(registers->faultinfo),
+ 				current_mm_force_sync(fault);
+ 				retry = darwin_uml_vm_retry_fault(fault,
+ 					FAULT_EXECUTE(registers->faultinfo),
