@@ -382,8 +382,8 @@ void misordered_drain_is_safe_stale_and_recoverable() {
       EngineConfiguration{.enable_pointer_authentication = false},
       "a pointer-authentication mismatch borrowed another profile's executor");
   auto capability_mismatch = EngineConfiguration{};
-  capability_mismatch.host_capabilities.cssc =
-      !capability_mismatch.host_capabilities.cssc;
+  capability_mismatch.host_capabilities.supported.flip(
+      static_cast<std::size_t>(uml::platform::ArmFeature::cssc));
   require_incompatible(
       capability_mismatch,
       "a host-capability mismatch borrowed another profile's executor");

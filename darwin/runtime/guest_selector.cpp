@@ -50,21 +50,21 @@ constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 	 * return here are built from the same host predicates as the feature bits
 	 * below, so both ways of asking give a guest the same answer. */
 	unsigned long result = hwcap_fp | hwcap_asimd | hwcap_cpuid;
-	if (host.aes)
+	if (host.aes())
 		result |= hwcap_aes;
-	if (host.pmull)
+	if (host.pmull())
 		result |= hwcap_pmull;
-	if (host.sha1)
+	if (host.sha1())
 		result |= hwcap_sha1;
-	if (host.sha2)
+	if (host.sha2())
 		result |= hwcap_sha2;
-	if (host.crc32)
+	if (host.crc32())
 		result |= hwcap_crc32;
 	if (host.has(::uml::platform::ArmFeature::lse))
 		result |= hwcap_atomics;
-	if (host.sha3)
+	if (host.sha3())
 		result |= hwcap_sha3;
-	if (host.sha512)
+	if (host.sha512())
 		result |= hwcap_sha512;
 	/* SDOT/UDOT/USDOT. Both engines execute this family: the gadget bank
 	 * selects native dot gadgets behind `ArmFeature::dotprod`
@@ -81,7 +81,7 @@ constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 	 * jit_compiler_floating.cpp). FPHP and ASIMDHP move together on this host
 	 * because one probe answers for both.
 	 */
-	if (host.fp16)
+	if (host.fp16())
 		result |= hwcap_fphp | hwcap_asimdhp;
 	/* SQRDMLAH/SQRDMLSH. */
 	if (host.has(::uml::platform::ArmFeature::rdm))

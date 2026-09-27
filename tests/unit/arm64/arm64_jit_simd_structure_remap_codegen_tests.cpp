@@ -459,7 +459,7 @@ void multi_register_wrapping_forms_remain_staged() {
 } // namespace
 
 int main() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd) {
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd()) {
     std::puts("arm64-jit-simd-structure-remap-codegen: skipped "
               "(host lacks Advanced SIMD)");
     return 0;

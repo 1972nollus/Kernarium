@@ -554,7 +554,7 @@ DecodeResult decode_data_processing(DecodeContext &context)
 					left == 31U, right == 31U,
 					left == right && left != 31U,
 					!options.force_software_checksum &&
-						host_capabilities().crc32));
+						host_capabilities().crc32()));
 				emit(words, arithmetic_binary_operand(instruction));
 			}
 		} else {

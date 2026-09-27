@@ -534,7 +534,7 @@ JitCompilerFamilies::valid_multiply_add(std::uint32_t instruction) noexcept {
     return false;
   if (operation <= 5U)
     return true;
-  return operation <= 8U && host_capabilities().cssc;
+  return operation <= 8U && host_capabilities().cssc();
 }
 
 } // namespace uml::cpu::arm64::jit

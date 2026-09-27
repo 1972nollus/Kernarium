@@ -253,24 +253,38 @@ using ArmFeatureSet = std::bitset<arm_feature_count>;
 
 struct HostCapabilities final {
 	ArmFeatureSet supported;
-	bool floating_point{};
-	bool advanced_simd{};
-	bool fp16{};
-	bool cssc{};
-	bool aes{};
-	bool pmull{};
-	bool sha1{};
-	bool sha2{};
-	bool crc32{};
-	bool sha3{};
-	bool sha512{};
-	bool afp{};
 	bool jscvt_subnormal_flags_correct{};
 
 	[[nodiscard]] bool has(ArmFeature feature) const noexcept
 	{
 		return supported.test(static_cast<std::size_t>(feature));
 	}
+
+	/* The features translation asks about most, read from the set. */
+	[[nodiscard]] bool floating_point() const noexcept
+	{
+		return has(ArmFeature::floating_point);
+	}
+	[[nodiscard]] bool advanced_simd() const noexcept
+	{
+		return has(ArmFeature::advanced_simd);
+	}
+	[[nodiscard]] bool fp16() const noexcept { return has(ArmFeature::fp16); }
+	[[nodiscard]] bool cssc() const noexcept { return has(ArmFeature::cssc); }
+	[[nodiscard]] bool aes() const noexcept { return has(ArmFeature::aes); }
+	[[nodiscard]] bool pmull() const noexcept { return has(ArmFeature::pmull); }
+	[[nodiscard]] bool sha1() const noexcept { return has(ArmFeature::sha1); }
+	[[nodiscard]] bool sha2() const noexcept
+	{
+		return has(ArmFeature::sha256);
+	}
+	[[nodiscard]] bool crc32() const noexcept { return has(ArmFeature::crc32); }
+	[[nodiscard]] bool sha3() const noexcept { return has(ArmFeature::sha3); }
+	[[nodiscard]] bool sha512() const noexcept
+	{
+		return has(ArmFeature::sha512);
+	}
+	[[nodiscard]] bool afp() const noexcept { return has(ArmFeature::afp); }
 
 	[[nodiscard]] bool supports(
 		const ArmFeatureSet &requirements) const noexcept

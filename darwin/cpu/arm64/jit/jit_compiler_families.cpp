@@ -297,7 +297,7 @@ std::optional<unsigned> JitCompilerFamilies::constrained_vector_source(
 
   const unsigned size = (instruction >> 22U) & 3U;
   if (size == 1U && valid_simd_integer_indexed(instruction) &&
-      host.advanced_simd) {
+      host.advanced_simd()) {
     const bool unsigned_group =
         (instruction & 0x2000'0000U) != 0U;
     const unsigned operation = (instruction >> 12U) & 15U;
@@ -308,7 +308,7 @@ std::optional<unsigned> JitCompilerFamilies::constrained_vector_source(
   }
 
   if (size == 0U && valid_simd_floating_indexed(instruction) &&
-      host.floating_point && host.advanced_simd && host.fp16)
+      host.floating_point() && host.advanced_simd() && host.fp16())
     return (instruction >> 16U) & 15U;
 
   return std::nullopt;
@@ -332,7 +332,7 @@ std::optional<JitCompilerFamilies::ConsecutiveVectorList>
 JitCompilerFamilies::consecutive_vector_list(
     std::uint32_t instruction) const noexcept {
   const auto &host = host_capabilities();
-  if (!host.advanced_simd)
+  if (!host.advanced_simd())
     return std::nullopt;
 
   if ((instruction & 0xff20'8c00U) == 0x4e00'0000U &&

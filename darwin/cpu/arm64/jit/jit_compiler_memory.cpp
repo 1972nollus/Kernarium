@@ -685,7 +685,7 @@ void JitCompiler::emit_atomic_floating_memory(
     const bool vector = (instruction & 0x0400'0000U) != 0;
     const bool load = (instruction & 0x0040'0000U) != 0;
     const unsigned operation = instruction >> 30;
-    if (vector && !host_capabilities().floating_point)
+    if (vector && !host_capabilities().floating_point())
       return false;
     if (vector && operation == 3U &&
         !host_capabilities().has(ArmFeature::lsui))
@@ -817,7 +817,7 @@ void JitCompiler::emit_atomic_floating_memory(
 
 [[nodiscard]] bool JitCompiler::emit_simd_structure_memory(std::uint32_t instruction,
                                                 std::uint64_t pc, bool single) {
-    if (!host_capabilities().advanced_simd)
+    if (!host_capabilities().advanced_simd())
       return false;
     const bool load = (instruction & 0x0040'0000U) != 0;
     const bool post_index = (instruction & 0x0080'0000U) != 0;
@@ -960,7 +960,7 @@ void JitCompiler::emit_atomic_floating_memory(
 [[nodiscard]] bool JitCompiler::emit_other_memory(std::uint32_t instruction,
                                        std::uint64_t pc) {
     const bool vector = (instruction & 0x0400'0000U) != 0;
-    if (vector && !host_capabilities().floating_point)
+    if (vector && !host_capabilities().floating_point())
       return false;
     const unsigned size_shift = instruction >> 30;
     const unsigned opc = (instruction >> 22) & 3U;
@@ -1076,7 +1076,7 @@ void JitCompiler::emit_atomic_floating_memory(
       return false;
     const bool vector = (instruction & 0x0400'0000U) != 0;
     const unsigned operation = instruction >> 30;
-    if ((vector && !host_capabilities().floating_point) ||
+    if ((vector && !host_capabilities().floating_point()) ||
         (vector && operation == 3U))
       return false;
     const std::size_t bytes = vector            ? std::size_t{4} << operation
@@ -1148,7 +1148,7 @@ void JitCompiler::emit_atomic_floating_memory(
 [[nodiscard]] std::size_t JitCompiler::try_emit_simd_unsigned_run(
       std::span<const std::uint32_t> instructions, std::uint64_t pc) {
     constexpr std::size_t maximum_run = 8;
-    if (track_direct_stores_ || !host_capabilities().floating_point ||
+    if (track_direct_stores_ || !host_capabilities().floating_point() ||
         instructions.size() < 2)
       return 0;
 
@@ -1517,7 +1517,7 @@ void JitCompiler::emit_atomic_floating_memory(
 [[nodiscard]] bool JitCompiler::emit_unsigned_memory(std::uint32_t instruction,
                                           std::uint64_t pc) {
     const bool vector = (instruction & 0x0400'0000U) != 0;
-    if (vector && !host_capabilities().floating_point)
+    if (vector && !host_capabilities().floating_point())
       return false;
     const unsigned size_shift = instruction >> 30;
     const unsigned opc = (instruction >> 22) & 3U;

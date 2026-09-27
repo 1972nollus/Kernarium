@@ -24,8 +24,6 @@ using ::uml::platform::arm_inventory_feature_count;
 			static_cast<std::size_t>(ArmFeature::floating_point));
 		result.supported.set(
 			static_cast<std::size_t>(ArmFeature::advanced_simd));
-		result.floating_point = true;
-		result.advanced_simd = true;
 		return result;
 	}();
 	return capabilities;
