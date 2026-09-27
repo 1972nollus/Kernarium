@@ -87,16 +87,6 @@ def bp_files(root: Path) -> list[Path]:
     ]
 
 
-def collect(root: Path) -> set[str]:
-    names: set[str] = set()
-    for path in bp_files(root):
-        for line in path.read_text().splitlines():
-            match = NAME_LINE.match(line)
-            if match is not None:
-                names.add(match.group(2))
-    return names
-
-
 def block_tools(block: list[str]) -> set[str]:
     tools: set[str] = set()
     field: str | None = None
@@ -111,36 +101,6 @@ def block_tools(block: list[str]) -> set[str]:
         if field in TOOL_FIELDS:
             tools.update(QUOTED.findall(line))
     return {tool.lstrip(":") for tool in tools}
-
-
-def apply_compat(block: list[str]) -> list[str]:
-    """Append the port's AOSP-strictness defaults to every compiled module."""
-    kind = None
-    for line in block:
-        match = BLOCK_TYPE.match(line)
-        if match is not None:
-            kind = match.group(1)
-            break
-    if kind not in COMPAT_TYPES:
-        return block
-    out: list[str] = []
-    field = None
-    inserted = False
-    for line in block:
-        opened = LIST_OPEN.match(line)
-        if opened is not None:
-            field = opened.group(1)
-            out.append(line)
-            continue
-        if LIST_CLOSE.match(line):
-            if field == "defaults" and not inserted:
-                out.append(f'        "{COMPAT}",')
-                inserted = True
-            field = None
-            out.append(line)
-            continue
-        out.append(line)
-    return out
 
 
 def rewrite_block(
@@ -192,26 +152,6 @@ def rewrite_block(
     return out
 
 
-def rewrite(
-    path: Path, names: set[str], colon: re.Pattern[str], label: re.Pattern[str]
-) -> bool:
-    original = path.read_text()
-    lines = original.splitlines()
-    result: list[str] = []
-    block: list[str] = []
-    for line in lines:
-        block.append(line)
-        if BLOCK_END.match(line):
-            result.extend(apply_compat(rewrite_block(block, names, colon, label)))
-            block = []
-    result.extend(apply_compat(rewrite_block(block, names, colon, label)))
-    updated = "\n".join(result) + "\n"
-    if updated == original:
-        return False
-    path.write_text(updated)
-    return True
-
-
 # The converter's output for Mesa's GL path needs repairs that Soong requires
 # and Meson does not. Each is a generic rule about the converter's output,
 # never a Mesa source change, and runs before the names are scoped so the
@@ -241,6 +181,8 @@ class Blueprint:
             if BLOCK_END.match(line):
                 self.blocks.append(current)
                 current = None
+        if current is not None:
+            raise SystemExit(f"generate-mesa-venus-port.py: {path} ends inside a block")
 
     def text(self) -> str:
         lines = list(self.head)
@@ -566,18 +508,16 @@ class Port:
         self.warning_exceptions = warning_exceptions(table)
 
 
-def repair(root: Path, port: Port) -> None:
-    blueprints = load(root)
+def repair(root: Path, blueprints: list[Blueprint], port: Port) -> None:
     python = repair_python(root, blueprints, port.license)
     needed = repair_needed(blueprints)
     nativebase = repair_nativebase(blueprints)
     installs = repair_install(blueprints, port.gl_front_ends)
     warnings = repair_warnings(blueprints, port.warning_exceptions)
-    saved = sum(1 for bp in blueprints if bp.save())
     print(
         f"repaired {python} Python modules, {needed} disabled libraries, "
         f"{nativebase} nativewindow users, {installs} install paths and "
-        f"{warnings} warning exceptions in {saved} Android.bp files"
+        f"{warnings} warning exceptions"
     )
 
 
@@ -726,12 +666,23 @@ def main() -> None:
     port = Port(args.config, metadata.get("MESA_VENUS_HAL_MODULE", ""))
     verify_converter(args.android_root, args.converter)
     convert(args)
-    repair(args.checkout, port)
-    scope(args.checkout, port.keep)
+    blueprints = load(args.checkout)
+    repair(args.checkout, blueprints, port)
+    scope(args.checkout, blueprints, port.keep)
+    saved = sum(1 for bp in blueprints if bp.save())
+    print(f"wrote {saved} Android.bp files")
 
 
-def scope(root: Path, keep: set[str]) -> None:
-    names = {name for name in collect(root) if name not in keep}
+def scope(root: Path, blueprints: list[Blueprint], keep: set[str]) -> None:
+    """Prefix every generated module name, and every reference to one.
+
+    Each compiled module also gains the port's AOSP-strictness defaults."""
+    names = {
+        name
+        for bp in blueprints
+        for block in bp.blocks
+        if (name := block_name(block)) is not None and name not in keep
+    }
     already = {name for name in names if name.startswith(PREFIX)}
     if already:
         raise SystemExit(
@@ -741,12 +692,22 @@ def scope(root: Path, keep: set[str]) -> None:
     alternation = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
     colon = re.compile(r":(" + alternation + r")(?![A-Za-z0-9_.])")
     label = re.compile(r"\$\((locations?)\s+(" + alternation + r")\)")
-    changed = sum(1 for path in bp_files(root) if rewrite(path, names, colon, label))
-    top = root / "Android.bp"
-    text = top.read_text()
-    if COMPAT not in text:
+    changed = 0
+    for bp in blueprints:
+        before = bp.text()
+        bp.head = rewrite_block(bp.head, names, colon, label)
+        for index, block in enumerate(bp.blocks):
+            block = rewrite_block(block, names, colon, label)
+            if block_kind(block) in COMPAT_TYPES:
+                block = set_list(block, "defaults", list_items(block, "defaults") + [COMPAT])
+            bp.blocks[index] = block
+        changed += bp.text() != before
+    top = next((bp for bp in blueprints if bp.path == root / "Android.bp"), None)
+    if top is None:
+        raise SystemExit("generate-mesa-venus-port.py: the port has no top-level Android.bp")
+    if not any(block_name(block) == COMPAT for block in top.blocks):
         flags = "".join(f'        "{flag}",\n' for flag in COMPAT_FLAGS)
-        top.write_text(text + COMPAT_BLOCK % (COMPAT, flags, flags))
+        top.blocks.append((COMPAT_BLOCK % (COMPAT, flags, flags)).split("\n")[:-1])
     print(f"scoped {len(names)} module names in {changed} Android.bp files")
 
 
