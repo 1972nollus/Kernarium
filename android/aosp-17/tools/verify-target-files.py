@@ -903,15 +903,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-files", type=Path, required=True)
     parser.add_argument("--kernel-elf", type=Path, required=True)
-    parser.add_argument("--kernel-config", type=Path)
-    parser.add_argument("--kernel-release-file", type=Path)
+    parser.add_argument("--kernel-config", type=Path, required=True)
+    parser.add_argument("--kernel-release-file", type=Path, required=True)
     args = parser.parse_args()
 
-    kernel_config = args.kernel_config or args.kernel_elf.parent / ".config"
-    kernel_release_file = (
-        args.kernel_release_file
-        or args.kernel_elf.parent / "include/config/kernel.release"
-    )
+    kernel_config = args.kernel_config
+    kernel_release_file = args.kernel_release_file
 
     if not args.target_files.is_file():
         fail(f"target-files archive does not exist: {args.target_files}")

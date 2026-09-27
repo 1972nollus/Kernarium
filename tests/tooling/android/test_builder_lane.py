@@ -146,15 +146,23 @@ def synthetic_apex(filesystem: str = "ext4") -> bytes:
 def verify_target_files_fixtures(verifier: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="android-target-files-") as temporary:
         root = Path(temporary)
-        kernel = root / "vmlinux"
+        (root / "kernel").mkdir()
+        kernel = root / "kernel/vmlinux"
         kernel.write_bytes(synthetic_aarch64_elf())
-        kernel_config = root / ".config"
+        kernel_config = root / "kernel/config"
         kernel_config.write_text(
             "CONFIG_ARM64_16K_PAGES=y\n# CONFIG_MODULES is not set\n"
         )
-        kernel_release = root / "include/config/kernel.release"
-        kernel_release.parent.mkdir(parents=True)
+        kernel_release = root / "kernel/kernel.release"
         kernel_release.write_text("6.18.21-uml-fixture\n")
+        kernel_options = [
+            "--kernel-elf",
+            str(kernel),
+            "--kernel-config",
+            str(kernel_config),
+            "--kernel-release-file",
+            str(kernel_release),
+        ]
 
         def write_fixture(path: Path, *, module: bool = False,
                           module_loader: bool = False, dlkm_image: bool = False,
@@ -487,8 +495,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 str(verifier),
                 "--target-files",
                 str(good),
-                "--kernel-elf",
-                str(kernel),
+                *kernel_options,
             ],
             check=True,
         )
@@ -542,8 +549,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     str(verifier),
                     "--target-files",
                     str(fixture),
-                    "--kernel-elf",
-                    str(kernel),
+                    *kernel_options,
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -551,6 +557,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             )
             if result.returncode == 0:
                 fail(f"target-files verifier accepted the {label} fixture")
+            if result.returncode != 1:
+                fail(f"target-files verifier did not reject the {label} fixture: {result.stdout}")
 
 
 def verify_hal_selections(android_root: Path) -> None:
