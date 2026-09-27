@@ -233,13 +233,11 @@ if(ARCHITECTURE_TARGET_COUNT GREATER 0)
         endif()
         string(REPLACE "," ";" DECLARED_DEPENDENCIES "${DEPENDENCY_TEXT}")
         foreach(DEPENDENCY IN LISTS DECLARED_DEPENDENCIES)
-            if(NOT DEPENDENCY MATCHES
-               "^(link|include)@([A-Za-z0-9_.+-]+)$")
+            if(NOT DEPENDENCY MATCHES "^link@([A-Za-z0-9_.+-]+)$")
                 message(FATAL_ERROR
                     "Malformed architecture dependency for ${TARGET_NAME}: ${DEPENDENCY}")
             endif()
-            set(DEPENDENCY_KIND "${CMAKE_MATCH_1}")
-            set(DEPENDENCY_NAME "${CMAKE_MATCH_2}")
+            set(DEPENDENCY_NAME "${CMAKE_MATCH_1}")
             uml_architecture_layer("${DEPENDENCY_NAME}" DEPENDENCY_LAYER)
             if(NOT DEPENDENCY_LAYER)
                 message(FATAL_ERROR
@@ -250,14 +248,14 @@ if(ARCHITECTURE_TARGET_COUNT GREATER 0)
                 "${TARGET_NAME}" "${DEPENDENCY_NAME}" ENGINE_EDGE_ALLOWED)
             if(NOT ENGINE_EDGE_ALLOWED)
                 message(FATAL_ERROR
-                    "Forbidden cross-engine ${DEPENDENCY_KIND} edge: "
+                    "Forbidden cross-engine link edge: "
                     "${TARGET_NAME} -> ${DEPENDENCY_NAME}")
             endif()
             uml_architecture_edge_allowed(
                 "${TARGET_LAYER}" "${DEPENDENCY_LAYER}" EDGE_ALLOWED)
             if(NOT EDGE_ALLOWED)
                 message(FATAL_ERROR
-                    "Forbidden declared ${DEPENDENCY_KIND} architecture edge: "
+                    "Forbidden declared link architecture edge: "
                     "${TARGET_NAME} (${TARGET_LAYER}) -> "
                     "${DEPENDENCY_NAME} (${DEPENDENCY_LAYER})")
             endif()
@@ -297,10 +295,9 @@ if(ARCHITECTURE_TARGET_COUNT GREATER 0)
         if(NOT DEPENDENCY_TEXT STREQUAL "-")
             string(REPLACE "," ";" DECLARED_DEPENDENCIES "${DEPENDENCY_TEXT}")
             foreach(DEPENDENCY IN LISTS DECLARED_DEPENDENCIES)
-                if(DEPENDENCY MATCHES
-                   "^(link|include)@([A-Za-z0-9_.+-]+)$")
+                if(DEPENDENCY MATCHES "^link@([A-Za-z0-9_.+-]+)$")
                     list(APPEND DECLARED_TARGET_DEPENDENCIES
-                        "${CMAKE_MATCH_2}")
+                        "${CMAKE_MATCH_1}")
                 endif()
             endforeach()
         endif()
