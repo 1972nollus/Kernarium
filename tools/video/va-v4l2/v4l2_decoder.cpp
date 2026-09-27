@@ -79,7 +79,6 @@ CaptureMemory captureMemoryRequest(const char* request) noexcept
     const std::string wanted = request;
     if (wanted == "device" || wanted == "mmap" || wanted == "off" || wanted == "0")
         return CaptureMemory::device;
-    if (wanted == "lend" || wanted == "dmabuf" || wanted == "1") return CaptureMemory::lend;
     return CaptureMemory::automatic;
 }
 

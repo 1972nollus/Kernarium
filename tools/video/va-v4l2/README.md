@@ -21,7 +21,7 @@ that guest's own libva and libdrm, and is never part of the Apple host build.
 | video processing | `VAProfileNone` + `VAEntrypointVideoProc`: NV12 or ARGB in, NV12 or ARGB out, cropping and nearest-neighbour scaling |
 | surfaces | driver-allocated NV12 and ARGB, or a client buffer imported through `VASurfaceAttribExternalBufferDescriptor` (`DRM_PRIME` and `DRM_PRIME_2`) |
 | export | `vaExportSurfaceHandle` with `DRM_PRIME_2`, **one object** holding every plane at its own offset, separate or composed layers |
-| images | `vaDeriveImage` (maps the surface itself), `vaCreateImage` + `vaGetImage` + `vaPutImage` for NV12, I420 and ARGB |
+| images | `vaDeriveImage` (maps the surface itself), `vaCreateImage` + `vaGetImage` for NV12, I420 and ARGB; `vaPutImage` of an image in its surface's own format |
 
 The maximum picture size is whatever the device reports through
 `VIDIOC_ENUM_FRAMESIZES`. Everything else in VA-API answers
@@ -139,8 +139,7 @@ client, and the guest never copies the picture at all.
 | `UML_VA_V4L2_CAPTURE` | the decoded pictures' memory |
 | --- | --- |
 | `device` | the decoder's own buffers, mapped and copied out. Always available |
-| `lend` | this driver's surfaces, falling back to `device` for any queue that refuses one |
-| `auto` (default) | `lend` wherever the surfaces are dma-bufs at all, which is to say GBM |
+| `auto` (default) | this driver's surfaces wherever they are dma-bufs at all, which is to say GBM, falling back to `device` for any queue that refuses one |
 
 Whether a queue takes a buffer is settled by offering it one, not by asking
 whether it supports the memory type: a queue accepts `V4L2_MEMORY_DMABUF` and
@@ -195,7 +194,7 @@ converts never pays for that.
 | `UML_VA_V4L2_SURFACES` | the backing store, as above |
 | `UML_VA_V4L2_HIDDEN` | `show` (default) or `skip`, as above |
 | `UML_VA_V4L2_RGB` | `auto` (default), `off` or `force`, as above |
-| `UML_VA_V4L2_CAPTURE` | `auto` (default), `lend` or `device`: who owns the decoded pictures' memory, as above |
+| `UML_VA_V4L2_CAPTURE` | `auto` (default) or `device`: who owns the decoded pictures' memory, as above |
 | `UML_VA_DRM_DEVICE` | the render node for GBM surfaces, instead of `/dev/dri/renderD128` |
 | `UML_VA_V4L2_LOG` | a file to append diagnostics to; unset, the driver writes nothing |
 | `UML_VA_V4L2_REPORT` | how many captured pictures to report to the log, exactly as the capture queue delivered them (default one) |
