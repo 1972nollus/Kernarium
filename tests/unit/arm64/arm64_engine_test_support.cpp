@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
+#include "architecture_difference.hpp"
 #include "scratch_backing.hpp"
 
 #include "cpu/engine.hpp"
@@ -429,74 +430,6 @@ void install_program(
   return outcome;
 }
 
-void require_equal(bool equal, const arm64::CpuState &expected,
-                   const arm64::CpuState &actual, std::string_view field,
-                   std::string_view test_name, std::string_view engine,
-                   std::uint32_t instruction) {
-  if (equal)
-    return;
-  if (field == "general registers") {
-    for (std::size_t index = 0; index < expected.registers.size(); ++index)
-      if (expected.registers[index] != actual.registers[index]) {
-        std::fprintf(
-            stderr, "expected x%zu=%#llx actual=%#llx\n", index,
-            static_cast<unsigned long long>(expected.registers[index]),
-            static_cast<unsigned long long>(actual.registers[index]));
-        break;
-      }
-  } else if (field == "vector registers") {
-    bool reported = false;
-    for (std::size_t index = 0;
-         index < expected.vectors.size() && !reported; ++index)
-      for (std::size_t byte = 0;
-           byte < expected.vectors[index].bytes.size(); ++byte)
-        if (expected.vectors[index].bytes[byte] !=
-            actual.vectors[index].bytes[byte]) {
-          std::fprintf(stderr,
-                       "expected v%zu[%zu]=%02x actual=%02x\n", index, byte,
-                       std::to_integer<unsigned>(
-                           expected.vectors[index].bytes[byte]),
-                       std::to_integer<unsigned>(
-                           actual.vectors[index].bytes[byte]));
-          reported = true;
-          break;
-        }
-  } else if (field == "pc")
-    std::fprintf(stderr, "expected pc=%#llx actual=%#llx\n",
-                 static_cast<unsigned long long>(expected.pc),
-                 static_cast<unsigned long long>(actual.pc));
-  else if (field == "sp")
-    std::fprintf(stderr, "expected sp=%#llx actual=%#llx\n",
-                 static_cast<unsigned long long>(expected.sp),
-                 static_cast<unsigned long long>(actual.sp));
-  else if (field == "nzcv")
-    std::fprintf(stderr, "expected nzcv=%#x actual=%#x\n", expected.nzcv,
-                 actual.nzcv);
-  else if (field == "fpcr")
-    std::fprintf(stderr, "expected fpcr=%#x actual=%#x\n", expected.fpcr,
-                 actual.fpcr);
-  else if (field == "fpsr")
-    std::fprintf(stderr, "expected fpsr=%#x actual=%#x\n", expected.fpsr,
-                 actual.fpsr);
-  else if (field == "fpmr")
-    std::fprintf(stderr, "expected fpmr=%#llx actual=%#llx\n",
-                 static_cast<unsigned long long>(expected.fpmr),
-                 static_cast<unsigned long long>(actual.fpmr));
-  else if (field == "tls")
-    std::fprintf(stderr, "expected tls=%#llx actual=%#llx\n",
-                 static_cast<unsigned long long>(expected.tls),
-                 static_cast<unsigned long long>(actual.tls));
-  fail(test_name, engine, instruction, field);
-}
-
-[[nodiscard]] bool vectors_equal(const arm64::CpuState &expected,
-                                 const arm64::CpuState &actual) noexcept {
-  for (std::size_t index = 0; index < expected.vectors.size(); ++index)
-    if (expected.vectors[index].bytes != actual.vectors[index].bytes)
-      return false;
-  return true;
-}
-
 } // namespace
 
 bool host_supports(NativeRequirements requirements) noexcept {
@@ -509,68 +442,8 @@ void require_architecture_equal(const arm64::CpuState &expected,
                                 std::string_view engine,
                                 std::uint32_t instruction,
                                 const std::source_location location) {
-  (void)location;
-  require_equal(expected.registers == actual.registers, expected, actual,
-                "general registers", case_name, engine, instruction);
-  require_equal(expected.sp == actual.sp, expected, actual, "sp", case_name,
-                engine, instruction);
-  require_equal(expected.pc == actual.pc, expected, actual, "pc", case_name,
-                engine, instruction);
-  require_equal(expected.nzcv == actual.nzcv, expected, actual, "nzcv",
-                case_name, engine, instruction);
-  require_equal(vectors_equal(expected, actual), expected, actual,
-                "vector registers", case_name, engine, instruction);
-  require_equal(expected.fpcr == actual.fpcr, expected, actual, "fpcr",
-                case_name, engine, instruction);
-  require_equal(expected.fpsr == actual.fpsr, expected, actual, "fpsr",
-                case_name, engine, instruction);
-  require_equal(expected.fpmr == actual.fpmr, expected, actual, "fpmr",
-                case_name, engine, instruction);
-  require_equal(expected.tls == actual.tls, expected, actual, "tls", case_name,
-                engine, instruction);
-  require_equal(expected.mte_enabled == actual.mte_enabled &&
-                    expected.tbi_enabled == actual.tbi_enabled &&
-                    expected.mte_exclude == actual.mte_exclude &&
-                    expected.mte_tag_choices == actual.mte_tag_choices &&
-                    expected.mte_random_tags == actual.mte_random_tags &&
-                    expected.mte_seed == actual.mte_seed &&
-                    expected.mte_tag == actual.mte_tag &&
-                    expected.mte_random_state == actual.mte_random_state,
-                expected, actual, "tag state", case_name, engine, instruction);
-  require_equal(expected.cpa_enabled == actual.cpa_enabled &&
-                    expected.cpa_multiply_enabled ==
-                        actual.cpa_multiply_enabled &&
-                    expected.accdata == actual.accdata,
-                expected, actual, "checked arithmetic state", case_name, engine,
-                instruction);
-  require_equal(expected.pstate_ssbs == actual.pstate_ssbs &&
-                    expected.pstate_dit == actual.pstate_dit &&
-                    expected.pstate_tco == actual.pstate_tco &&
-                    expected.pstate_sm == actual.pstate_sm &&
-                    expected.pstate_za == actual.pstate_za &&
-                    expected.pstate_daif_access == actual.pstate_daif_access &&
-                    expected.pstate_daif == actual.pstate_daif,
-                expected, actual, "pstate", case_name, engine, instruction);
-  require_equal(expected.exclusive_address == actual.exclusive_address &&
-                    expected.exclusive_key == actual.exclusive_key &&
-                    expected.exclusive_value == actual.exclusive_value &&
-                    expected.exclusive_value2 == actual.exclusive_value2 &&
-                    expected.exclusive_version == actual.exclusive_version &&
-                    expected.exclusive_size == actual.exclusive_size,
-                expected, actual, "exclusive monitor", case_name, engine,
-                instruction);
-  require_equal(expected.gcs_pointer == actual.gcs_pointer &&
-                    expected.gcs_implemented == actual.gcs_implemented &&
-                    expected.gcs_push_enabled == actual.gcs_push_enabled &&
-                    expected.gcs_store_enabled == actual.gcs_store_enabled,
-                expected, actual, "guarded control stack", case_name, engine,
-                instruction);
-  require_equal(
-      expected.pointer_auth_keys == actual.pointer_auth_keys &&
-          expected.pointer_authentication_enabled ==
-              actual.pointer_authentication_enabled,
-      expected, actual, "pointer-authentication state", case_name, engine,
-      instruction);
+  if (const auto difference = first_architecture_difference(expected, actual))
+    fail(case_name, engine, instruction, *difference, location);
 }
 
 class EngineHarness::Implementation final {
@@ -814,7 +687,7 @@ public:
       else
         require_architecture_equal(compared_expected, compared_actual,
                                    test_case.name, current_engine,
-                                   diagnostic_instruction);
+                                   diagnostic_instruction, location);
       if (test_case.compare_fault &&
           (outcome.fault.address != test_case.fault.address ||
            outcome.fault.access != test_case.fault.access)) {
