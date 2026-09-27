@@ -10,3 +10,10 @@ A handle admits one run at a time. Independent 16 KiB native-callback handles
 may run concurrently when their mappings do not overlap. Embedded and 4 KiB
 native runs serialize through the process address-space gate. An unbound
 callback that cannot identify one active context fails closed.
+
+A process runs one guest. A kernel claims guest RAM early in its boot, and a
+process hands guest RAM out once. After a run has claimed it, every later run
+in the process, on any handle, returns `UML_EMULATOR_UNSUPPORTED` before it
+names a console, maps a kernel window or enters a kernel. A run that ends
+before its kernel claims guest RAM leaves the process's guest unspent. A host
+that wants another guest starts another process.

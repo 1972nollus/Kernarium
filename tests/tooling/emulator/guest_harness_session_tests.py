@@ -143,6 +143,22 @@ class AttachedGuestSessionTests(unittest.TestCase):
         guest._write("exit\n")
         guest._process.wait(timeout=5)
 
+    def test_a_command_reads_the_input_that_follows_it(self) -> None:
+        self.emulator.write_text("#!/bin/sh\nexec /bin/sh\n", encoding="utf-8")
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        self.addCleanup(guest.close)
+        result = guest.run_command("head -n 2", stdin="first line\nsecond line\n")
+        self.assertEqual(result.return_code, 0)
+        self.assertEqual(result.output, "first line\nsecond line")
+        follow = guest.run_command("printf '%s' after")
+        self.assertEqual(follow.output, "after")
+
     def test_a_killed_harness_group_takes_its_guest_with_it(self) -> None:
         harness = subprocess.Popen(
             [sys.executable, "-c", HARNESS, str(self.emulator)],

@@ -164,4 +164,8 @@ private:
  * retain the process-local compatibility context. */
 [[nodiscard]] Context *current_context() noexcept;
 
+/* A process runs one guest. Its guest is spent once a run's kernel has claimed
+ * guest RAM, which the host hands out once per process and never takes back. */
+[[nodiscard]] bool process_guest_spent() noexcept;
+
 } // namespace uml::runtime
