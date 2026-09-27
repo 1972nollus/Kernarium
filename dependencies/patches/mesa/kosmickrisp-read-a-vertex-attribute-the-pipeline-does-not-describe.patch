@@ -140,7 +140,7 @@ index 7cb1ed3d6b09257d160faf1dc5949eef4c358415..ee5af3521b809c3823b7040f5fcf75fa
  
  unsigned kk_vbo_interchange_alignment(enum pipe_format format);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 5282044299e069282cf05a7c88f35b0ad1880809..3f057badc7f7a35f735d31f47852625f5851927b 100644
+index f4703f13d6526f07034a75fcd0a7ca3a9387c791..29dc2dfb6fe5c5a9ed6364ae867bc364827285d5 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -1657,6 +1657,18 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
