@@ -29,11 +29,12 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "kernel/common/artifacts"))
 
 import patch_series  # noqa: E402
+from contract_checks import parse_assignments, replace_assignment  # noqa: E402
 from patch_series import SeriesError, git  # noqa: E402
 
-ASSIGNMENT = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([^#\s]*))\s*(?:#.*)?$")
 BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 
 
@@ -72,25 +73,9 @@ class Line:
         return tuple(layer for layer in self.layers if not layer.owned)
 
 
-def parse_env(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = ASSIGNMENT.fullmatch(line)
-        if match is None:
-            raise SeriesError(f"{path}:{number}: malformed assignment")
-        key, quoted, bare = match.groups()
-        if key in values:
-            raise SeriesError(f"{path}:{number}: duplicate assignment {key}")
-        values[key] = quoted if quoted is not None else bare
-    return values
-
-
 def load_line(metadata: Path) -> Line:
     metadata = metadata if metadata.is_absolute() else ROOT / metadata
-    values = parse_env(metadata)
+    values = parse_assignments(metadata, SeriesError)
     for key in ("UML_KERNEL_UPSTREAM_COMMIT", "UML_KERNEL_SERIES",
                 "UML_KERNEL_OWNED_SERIES", "UML_KERNEL_FINAL_TREE"):
         if not values.get(key):
@@ -228,10 +213,9 @@ def verify_branch(line: Line, repository: Path, tip: str, *,
 
 def _write_final_tree(line: Line, tree: str) -> None:
     text = line.metadata.read_text(encoding="utf-8")
-    updated, count = re.subn(r"^UML_KERNEL_FINAL_TREE=.*$",
-                             f"UML_KERNEL_FINAL_TREE='{tree}'", text, flags=re.MULTILINE)
-    if count != 1:
-        raise SeriesError(f"{line.metadata}: UML_KERNEL_FINAL_TREE is not set exactly once")
+    updated = replace_assignment(
+        text, "UML_KERNEL_FINAL_TREE", f"'{tree}'",
+        lambda message: SeriesError(f"{line.metadata}: {message}"))
     line.metadata.write_text(updated, encoding="utf-8")
 
 

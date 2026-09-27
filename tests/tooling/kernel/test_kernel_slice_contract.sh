@@ -112,6 +112,7 @@ mkdir -p \
 	"$PREPARE_PATCH_DIR" \
 	"$PREPARE_FIXTURE/kernel/mainline-6.18/scripts" \
 	"$PREPARE_FIXTURE/kernel/common/abi" \
+	"$PREPARE_FIXTURE/kernel/common/artifacts" \
 	"$PREPARE_FIXTURE/kernel/common/tooling" \
 	"$PREPARE_FIXTURE/scripts" \
 	"$PREPARE_GIT_BIN"
@@ -120,6 +121,8 @@ cp "$PREPARE_SOURCE" "$PREPARE_SCRIPT"
 # so the fixture tree carries the real helpers.
 cp "$ROOT_DIR/scripts/patch_series.py" "$PREPARE_FIXTURE/scripts/"
 cp "$KERNEL_SERIES" "$PREPARE_FIXTURE/kernel/common/tooling/kernel_series.py"
+cp "$ROOT_DIR/kernel/common/artifacts/contract_checks.py" \
+	"$PREPARE_FIXTURE/kernel/common/artifacts/contract_checks.py"
 cp "$LINE_ROOT/scripts/select-slice.sh" \
 	"$PREPARE_FIXTURE/kernel/mainline-6.18/scripts/select-slice.sh"
 for stub in \
