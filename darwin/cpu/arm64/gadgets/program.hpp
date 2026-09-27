@@ -17,7 +17,6 @@
 #include <optional>
 #include <span>
 #include <utility>
-#include <vector>
 
 namespace uml::cpu::arm64::gadgets {
 
@@ -52,14 +51,6 @@ public:
 		  capacity_{borrowed.size}, heap_{borrowed.data},
 		  borrowed_{true}
 	{}
-
-	explicit ProgramWords(std::pmr::vector<std::uintptr_t> words)
-		: resource_{words.get_allocator().resource()}
-	{
-		reserve(words.size());
-		std::copy(words.begin(), words.end(), data());
-		size_ = words.size();
-	}
 
 	ProgramWords(const ProgramWords &other)
 		: resource_{std::pmr::get_default_resource()}
@@ -114,12 +105,6 @@ public:
 		if (size_ == capacity_)
 			reserve(capacity_ == inline_capacity ? 34 : capacity_ * 2);
 		data()[size_++] = word;
-	}
-
-	void pop_back() noexcept
-	{
-		if (size_ != 0)
-			--size_;
 	}
 
 	void reserve(std::size_t requested)
@@ -186,9 +171,6 @@ public:
 	Program(std::uint64_t guest_address, std::size_t instruction_count,
 		ProgramWords words,
 		bool accesses_fp_state) noexcept;
-	Program(std::uint64_t guest_address, std::size_t instruction_count,
-		std::pmr::vector<std::uintptr_t> words,
-		bool accesses_fp_state);
 
 	/* Where the block starts; its instructions are contiguous from here. */
 	[[nodiscard]] std::uint64_t guest_address() const noexcept
