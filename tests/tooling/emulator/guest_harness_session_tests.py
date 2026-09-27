@@ -108,9 +108,11 @@ class AttachedGuestSessionTests(unittest.TestCase):
             guest.return_code = 0
 
     def test_a_failing_session_prints_its_transcript_and_closes(self) -> None:
-        # A shell that honours the harness's poweroff, so close() returns at once.
+        # A shell that honours the harness's "sync; poweroff -f" at once. A
+        # host sync can take seconds on a busy machine, so it is a no-op here.
         self.emulator.write_text(
             "#!/bin/sh\n"
+            "sync() { :; }\n"
             "poweroff() { exit 0; }\n"
             'while IFS= read -r line; do eval "$line"; done\n',
             encoding="utf-8",
