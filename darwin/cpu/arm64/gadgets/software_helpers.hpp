@@ -20,6 +20,14 @@ namespace uml::cpu::arm64::gadgets {
 static_assert(vector_operand_offset(31U) <= 0xffffU,
 	"a vector operand offset must fit the 16-bit operand field");
 
+/* The register such an offset names, as a software helper resolves it. */
+[[nodiscard]] inline VectorRegister &vector_at(CpuState *cpu,
+	std::uintptr_t offset) noexcept
+{
+	return *reinterpret_cast<VectorRegister *>(
+		reinterpret_cast<std::byte *>(cpu) + offset);
+}
+
 } // namespace uml::cpu::arm64::gadgets
 
 namespace uml::cpu::arm64::gadgets::software {

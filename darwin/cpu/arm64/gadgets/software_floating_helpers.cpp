@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "program.hpp"
+#include "software_helpers.hpp"
 
 #include "cpu/arm64/layout/assembly_layout.hpp"
 
@@ -43,6 +44,8 @@
 #include <utility>
 
 namespace {
+
+using uml::cpu::arm64::gadgets::vector_at;
 
 template<typename Floating>
 using HorizontalInteger = std::conditional_t<sizeof(Floating) == 2,
@@ -446,12 +449,8 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_conversion_software(
 	const auto source_offset = (operand >> 16) & 0xffffU;
 	const bool scalar = (operand & (std::uintptr_t{1} << 32)) != 0U;
 	const bool upper = (operand & (std::uintptr_t{1} << 33)) != 0U;
-	auto *const base = reinterpret_cast<std::byte *>(cpu);
-	auto &destination = *reinterpret_cast<
-		uml::cpu::arm64::VectorRegister *>(base + destination_offset);
-	const auto source = reinterpret_cast<
-		const uml::cpu::arm64::VectorRegister *>(
-			base + source_offset)->bytes;
+	auto &destination = vector_at(cpu, destination_offset);
+	const auto source = vector_at(cpu, source_offset).bytes;
 	auto result = scalar && (cpu->fpcr & 4U) != 0U ?
 		destination.bytes :
 		upper ? destination.bytes :
@@ -476,9 +475,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_multiply_long_software(
 {
 	const auto vector = [cpu, operand](unsigned shift)
 		-> uml::cpu::arm64::VectorRegister & {
-		const auto offset = (operand >> shift) & 0xffffU;
-		return *reinterpret_cast<uml::cpu::arm64::VectorRegister *>(
-			reinterpret_cast<std::byte *>(cpu) + offset);
+		return vector_at(cpu, (operand >> shift) & 0xffffU);
 	};
 	auto &destination = vector(0U);
 	const auto addends = destination.bytes;
@@ -513,9 +510,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_dot_software(
 {
 	const auto vector = [cpu, operand](unsigned shift)
 		-> uml::cpu::arm64::VectorRegister & {
-		const auto offset = (operand >> shift) & 0xffffU;
-		return *reinterpret_cast<uml::cpu::arm64::VectorRegister *>(
-			reinterpret_cast<std::byte *>(cpu) + offset);
+		return vector_at(cpu, (operand >> shift) & 0xffffU);
 	};
 	auto &destination = vector(0U);
 	const auto addends = destination.bytes;
@@ -553,9 +548,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_matrix_software(
 {
 	const auto vector = [cpu, operand](unsigned shift)
 		-> uml::cpu::arm64::VectorRegister & {
-		const auto offset = (operand >> shift) & 0xffffU;
-		return *reinterpret_cast<uml::cpu::arm64::VectorRegister *>(
-			reinterpret_cast<std::byte *>(cpu) + offset);
+		return vector_at(cpu, (operand >> shift) & 0xffffU);
 	};
 	auto &destination = vector(0U);
 	const auto addends = destination.bytes;
@@ -571,9 +564,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_half_fused_long_software(
 {
 	const auto vector = [cpu, operand](unsigned shift)
 		-> uml::cpu::arm64::VectorRegister & {
-		const auto offset = (operand >> shift) & 0xffffU;
-		return *reinterpret_cast<uml::cpu::arm64::VectorRegister *>(
-			reinterpret_cast<std::byte *>(cpu) + offset);
+		return vector_at(cpu, (operand >> shift) & 0xffffU);
 	};
 	const unsigned descriptor = operand >> 48U;
 	const bool by_element = (descriptor & 1U) != 0U;
@@ -613,9 +604,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_half_matrix_software(
 {
 	const auto vector = [cpu, operand](unsigned shift)
 		-> uml::cpu::arm64::VectorRegister & {
-		const auto offset = (operand >> shift) & 0xffffU;
-		return *reinterpret_cast<uml::cpu::arm64::VectorRegister *>(
-			reinterpret_cast<std::byte *>(cpu) + offset);
+		return vector_at(cpu, (operand >> shift) & 0xffffU);
 	};
 	auto &destination = vector(0U);
 	const auto addends = destination.bytes;
@@ -633,8 +622,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_half_dot_software(
 {
 	const auto vector = [cpu](unsigned offset)
 		-> uml::cpu::arm64::VectorRegister & {
-		return *reinterpret_cast<uml::cpu::arm64::VectorRegister *>(
-			reinterpret_cast<std::byte *>(cpu) + offset);
+		return vector_at(cpu, offset);
 	};
 	const unsigned destination = operand & 0xffffU;
 	const unsigned first_offset = (operand >> 16U) & 0xffffU;

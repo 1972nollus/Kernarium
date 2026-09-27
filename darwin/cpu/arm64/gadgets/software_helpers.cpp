@@ -60,6 +60,7 @@ using uml::cpu::host_capabilities;
 
 using uml::cpu::arm64::CpuState;
 using uml::cpu::arm64::detail::Fp8Operation;
+using uml::cpu::arm64::gadgets::vector_at;
 using uml::cpu::arm64::gadgets::vector_operand_offset;
 
 [[nodiscard]] constexpr std::uintptr_t fp8_operand(
@@ -166,17 +167,9 @@ template<Fp8Operation Operation, bool Upper = false, bool Source2 = false,
 	const auto first_offset = (operand >> 16) & 0xffffU;
 	const auto second_offset = (operand >> 32) & 0xffffU;
 	const unsigned index = (operand >> 48) & 15U;
-	const auto *base = reinterpret_cast<const std::byte *>(cpu);
-	auto *writable_base = reinterpret_cast<std::byte *>(cpu);
-	const auto first = reinterpret_cast<
-		const uml::cpu::arm64::VectorRegister *>(
-			base + first_offset)->bytes;
-	const auto second = reinterpret_cast<
-		const uml::cpu::arm64::VectorRegister *>(
-			base + second_offset)->bytes;
-	auto &destination = *reinterpret_cast<
-		uml::cpu::arm64::VectorRegister *>(
-			writable_base + destination_offset);
+	const auto first = vector_at(cpu, first_offset).bytes;
+	const auto second = vector_at(cpu, second_offset).bytes;
+	auto &destination = vector_at(cpu, destination_offset);
 	auto result = destination.bytes;
 
 	if constexpr (Operation == Fp8Operation::convert_to_half ||
@@ -447,26 +440,18 @@ UML_ATOMIC_FLOATING_TRANSFER_OPERATIONS(d, std::uint64_t, 64U, false)
 extern "C" [[gnu::noinline]] void uml_arm64_simd_lut_software(
 	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
 {
-	const auto vector_at = [cpu, operand](unsigned shift)
-		-> const uml::cpu::arm64::VectorRegister & {
-		const auto offset = (operand >> shift) & 0x7ffU;
-		return *reinterpret_cast<const uml::cpu::arm64::VectorRegister *>(
-			reinterpret_cast<const std::byte *>(cpu) + offset);
-	};
-	const auto vector_at_mutable = [cpu, operand](unsigned shift)
+	const auto vector = [cpu, operand](unsigned shift)
 		-> uml::cpu::arm64::VectorRegister & {
-		const auto offset = (operand >> shift) & 0x7ffU;
-		return *reinterpret_cast<uml::cpu::arm64::VectorRegister *>(
-			reinterpret_cast<std::byte *>(cpu) + offset);
+		return vector_at(cpu, (operand >> shift) & 0x7ffU);
 	};
 	const unsigned shape = (operand >> 44) & 3U;
 	const unsigned part = (operand >> 46) & 7U;
 	const unsigned index_bits = shape < 2U ? 2U : 4U;
 	const unsigned element_bytes = (shape & 1U) != 0U ? 2U : 1U;
 	const unsigned elements = 16U / element_bytes;
-	const auto indices = vector_at(33).bytes;
-	const auto table1 = vector_at(11).bytes;
-	const auto table2 = vector_at(22).bytes;
+	const auto indices = vector(33).bytes;
+	const auto table1 = vector(11).bytes;
+	const auto table2 = vector(22).bytes;
 	std::array<std::byte, 16> result{};
 	const unsigned mask = (1U << index_bits) - 1U;
 	const unsigned first_index = elements * part;
@@ -481,7 +466,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_simd_lut_software(
 		std::copy_n(table.begin() + table_index * element_bytes,
 			element_bytes, result.begin() + element * element_bytes);
 	}
-	vector_at_mutable(0).bytes = result;
+	vector(0).bytes = result;
 }
 
 extern "C" [[gnu::noinline]] void uml_arm64_floating_round_sized_software(
