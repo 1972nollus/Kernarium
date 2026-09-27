@@ -296,8 +296,8 @@ absent from the disabled path.
 The iOS storage build exports only the two file-oriented C entry points used by
 Kernarium. They run one at a time, and while one runs they redirect the whole
 process's `std::cout` and `std::cerr`, where the core reports its reasons; a
-failed call appends that output to its error message. Its archive excludes
-every GPT fdisk command-line front end and `popt`. The standalone macOS Android launcher invokes an installed Homebrew
+failed call appends that output to its error message. The storage archive
+excludes every GPT fdisk command-line front end and `popt`. The standalone macOS Android launcher invokes an installed Homebrew
 `sgdisk` executable instead; it does not link or discover a Homebrew library.
 The zstd build contains the streaming decompressor but excludes compression,
 dictionary-builder, legacy-frame, deprecated, and command-line code. Both
