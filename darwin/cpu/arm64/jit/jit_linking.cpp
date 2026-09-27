@@ -104,7 +104,7 @@ JitBlockLinkTable::JitBlockLinkTable(std::size_t capacity)
 }
 
 JitBlockLinkTable::~JitBlockLinkTable() {
-  destroy_records(records_, owned_size_);
+  destroy_records(records_, size_);
   deallocate_records(records_);
 }
 
@@ -122,12 +122,11 @@ JitBlockLink *JitBlockLinkTable::find_or_create(
   if (size_ >= capacity_)
     return nullptr;
   auto *record = std::construct_at(
-      records_ + owned_size_,
+      records_ + size_,
       JitBlockLink{.guest_pc = pc, .generation = generation});
   index_[slot] = record;
   ++size_;
   record->next_target = previous;
-  ++owned_size_;
   return record;
 }
 
@@ -143,8 +142,7 @@ JitBlockLink *JitBlockLinkTable::find(
 }
 
 void JitBlockLinkTable::clear() noexcept {
-  destroy_records(records_, owned_size_);
-  owned_size_ = 0;
+  destroy_records(records_, size_);
   size_ = 0;
   if (index_ != nullptr)
     std::fill_n(index_.get(), index_capacity_, nullptr);

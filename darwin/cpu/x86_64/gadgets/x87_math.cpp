@@ -8,9 +8,6 @@ extern "C" {
 #include <SoftFloat-3e/softfloat.h>
 }
 
-#include <array>
-#include <bit>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -134,16 +131,6 @@ void commit_exceptions(CpuState &cpu,
 	return result.v;
 }
 
-[[nodiscard]] double to_double(CpuState &cpu, X87Register value) noexcept
-{
-	return std::bit_cast<double>(to_float64(cpu, value));
-}
-
-[[nodiscard]] X87Register from_double(CpuState &cpu, double value) noexcept
-{
-	return from_float64(cpu, std::bit_cast<std::uint64_t>(value));
-}
-
 [[nodiscard]] constexpr bool is_zero(const X87Register &value) noexcept
 {
 	return (value.sign_exponent & 0x7fffU) == 0 && value.significand == 0;
@@ -197,16 +184,10 @@ enum class TranscendentalOperation : std::uint8_t {
 {
 	if (is_infinity(value))
 		return invalid_result(cpu);
-	if (cpu.x87_reduced_precision) {
-		const auto input = to_double(cpu, value);
-		double result{};
-		switch (operation) {
-		case TranscendentalOperation::sine: result = std::sin(input); break;
-		case TranscendentalOperation::cosine: result = std::cos(input); break;
-		case TranscendentalOperation::tangent: result = std::tan(input); break;
-		}
-		return from_double(cpu, result);
-	}
+	/* FSIN and FPTAN return a zero operand unchanged, sign included; the
+	 * 128-bit sine does not keep a negative zero's sign. */
+	if (is_zero(value) && operation != TranscendentalOperation::cosine)
+		return value;
 	auto state = soft_state(cpu, true);
 	const auto input = to_float128(state, value);
 	float128_t result{};
@@ -229,33 +210,6 @@ enum class TranscendentalOperation : std::uint8_t {
 [[nodiscard]] X87Register f2xm1(CpuState &cpu,
 	X87Register value) noexcept
 {
-	if (cpu.x87_reduced_precision) {
-		const auto input = to_double(cpu, value);
-		if (std::abs(input) > 1.0)
-			return from_double(cpu, std::exp2(input) - 1.0);
-		const auto integral = std::round(input);
-		const auto remainder = input - integral;
-		const auto scale_bits = static_cast<std::uint64_t>(
-			static_cast<std::int64_t>(integral) + 1023) << 52U;
-		const auto scale = std::bit_cast<double>(scale_bits);
-		constexpr std::array<std::uint64_t, 13> coefficient_bits{
-			0x3fe62e42fefa39efULL, 0x3fcebfbdff82c58eULL,
-			0x3fac6b08d704a0beULL, 0x3f83b2ab6fba4e76ULL,
-			0x3f55d87fe78a672fULL, 0x3f2430912f86c785ULL,
-			0x3eeffcbfc588b0c2ULL, 0x3eb62c0223a5c821ULL,
-			0x3e7b5253d395e7c0ULL, 0x3e3e4cf5158b8ec5ULL,
-			0x3dfe8cac7351bb20ULL, 0x3dbc3bd650fc2981ULL,
-			0x3d7816193166d0f5ULL,
-		};
-		auto polynomial = std::bit_cast<double>(coefficient_bits.back());
-		for (std::size_t index = coefficient_bits.size() - 1; index != 0;
-			--index) {
-			polynomial = std::fma(remainder, polynomial,
-				std::bit_cast<double>(coefficient_bits[index - 1]));
-		}
-		return from_double(cpu, std::fma(scale,
-			remainder * polynomial, scale - 1.0));
-	}
 	auto state = soft_state(cpu, true);
 	const float128_t one{0, 0x3fff000000000000ULL};
 	const auto result = f128_sub(&state,
@@ -268,12 +222,6 @@ enum class TranscendentalOperation : std::uint8_t {
 [[nodiscard]] X87Register fyl2x(CpuState &cpu, X87Register value,
 	X87Register multiplier, bool plus_one) noexcept
 {
-	if (cpu.x87_reduced_precision) {
-		const auto input = to_double(cpu, value);
-		const auto right = to_double(cpu, multiplier);
-		return from_double(cpu, right * std::log2(
-			plus_one ? input + 1.0 : input));
-	}
 	auto state = soft_state(cpu, true);
 	auto input = to_float128(state, value);
 	if (plus_one) {
@@ -290,9 +238,6 @@ enum class TranscendentalOperation : std::uint8_t {
 [[nodiscard]] X87Register fpatan(CpuState &cpu, X87Register y,
 	X87Register x) noexcept
 {
-	if (cpu.x87_reduced_precision)
-		return from_double(cpu,
-			std::atan2(to_double(cpu, y), to_double(cpu, x)));
 	auto state = soft_state(cpu, true);
 	const auto result = FEXCore::cephes_128bit::atan2l(
 		to_float128(state, y), to_float128(state, x));
@@ -304,12 +249,6 @@ enum class TranscendentalOperation : std::uint8_t {
 [[nodiscard]] X87Register scale(CpuState &cpu, X87Register value,
 	X87Register exponent) noexcept
 {
-	if (cpu.x87_reduced_precision) {
-		if (is_zero(value))
-			return value;
-		return from_double(cpu, to_double(cpu, value) *
-			std::exp2(std::trunc(to_double(cpu, exponent))));
-	}
 	auto state = soft_state(cpu, true);
 	const extFloat80_t zero{};
 	if (extF80_eq(&state, to_soft(value), zero)) {
@@ -335,12 +274,6 @@ enum class TranscendentalOperation : std::uint8_t {
 [[nodiscard]] X87Register remainder(CpuState &cpu, X87Register dividend,
 	X87Register divisor, bool nearest) noexcept
 {
-	if (cpu.x87_reduced_precision) {
-		const auto left = to_double(cpu, dividend);
-		const auto right = to_double(cpu, divisor);
-		return from_double(cpu, nearest ? std::remainder(left, right) :
-			std::fmod(left, right));
-	}
 	auto state = soft_state(cpu, true);
 	extFloat80_t result{};
 	if (nearest) {
@@ -364,6 +297,11 @@ enum class TranscendentalOperation : std::uint8_t {
 		} else {
 			result = extF80_sub(&state, to_soft(dividend),
 				extF80_mul(&state, integer, to_soft(divisor)));
+			/* An exact remainder of zero takes the dividend's sign;
+			 * the subtraction alone would give +0. */
+			if (is_zero(from_soft(result)))
+				result.signExp = static_cast<std::uint16_t>(
+					dividend.sign_exponent & 0x8000U);
 		}
 	}
 	commit_exceptions(cpu, state);

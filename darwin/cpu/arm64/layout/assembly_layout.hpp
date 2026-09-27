@@ -73,6 +73,7 @@ static_assert(offsetof(::uml::memory::TlbEntry, write_page) == UML_GADGET_TLB_EN
 static_assert(offsetof(::uml::memory::TlbEntry, write_data_minus_address) == UML_GADGET_TLB_ENTRY_WRITE_DATA_MINUS_ADDRESS);
 static_assert(offsetof(::uml::memory::Tlb, fault_address) == UML_GADGET_TLB_FAULT_ADDRESS);
 static_assert(offsetof(::uml::memory::Tlb, fault_access) == UML_GADGET_TLB_FAULT_ACCESS);
+static_assert(offsetof(::uml::memory::Tlb, unaligned_atomics) == UML_GADGET_TLB_UNALIGNED_ATOMICS);
 
 /* Gadgets return these in w0 and the executor casts them to EngineEvent. */
 static_assert(UML_GADGET_EVENT_SYSCALL == static_cast<int>(EngineEvent::system_call));

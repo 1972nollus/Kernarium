@@ -688,11 +688,12 @@ void trap_mode_runs_a_deferred_atomic() {
   require(cpu.registers[2] == 40);
   require(backing.get64(page) == 42);
 
-  cpu.registers[0] = base + page + 1;
+  /* Across a 16-byte block, so the alignment fault stands under LSE2. */
+  cpu.registers[0] = base + page + 9;
   run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::memory_fault && run.executed == 0);
   require(cpu.pc == base + 4);
-  require(executor.fault_address() == base + page + 1);
+  require(executor.fault_address() == base + page + 9);
   require(backing.get64(page) == 42);
   executor.end_execution();
 }

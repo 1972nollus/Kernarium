@@ -2,7 +2,9 @@
 #pragma once
 
 #include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/detail/single_copy_alignment.hpp"
 #include "cpu/arm64/memory.hpp"
+#include "cpu/host_capabilities.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -46,6 +48,15 @@ struct RunResult final {
                                                   std::uint32_t instruction,
                                                   bool write) noexcept {
   return {StopReason::memory_fault, address, instruction, 0, write, true};
+}
+
+/* The FEAT_LSE2 alignment rule for atomic, exclusive and ordered accesses,
+ * under the executor's host-capability scope. */
+[[nodiscard]] inline bool single_copy_alignment_faults(std::uint64_t address,
+                                                       std::size_t size) noexcept {
+  return arm64::detail::single_copy_alignment_faults(
+      address, size,
+      ::uml::cpu::host_capabilities().has(::uml::cpu::ArmFeature::lse2));
 }
 
 [[nodiscard]] constexpr RunResult continue_after(std::uint64_t address,

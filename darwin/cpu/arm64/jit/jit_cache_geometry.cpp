@@ -49,9 +49,9 @@ constexpr std::size_t minimum_tracked_store_bytes = 16U * 1024U;
 constexpr std::size_t maximum_tracked_store_bytes = 32U * 1024U * 1024U;
 /* Each registered target consumes a stable data record and reverse-index
  * storage, while a useful linked source also consumes code and alignment.
- * This stride funds both within the private budget. If an unusually
- * link-dense workload reaches the table capacity first, bounded
- * refusal retains the semantic unlinked path.
+ * This stride funds both within the private budget. Records are keyed by
+ * address space and reclaimed with the whole cache, so a workload that
+ * reaches the table capacity first recycles the cache as a full arena does.
  */
 constexpr std::size_t direct_link_record_budget_stride = 256U;
 
@@ -244,7 +244,7 @@ JitCacheGeometry derive_jit_cache_geometry(std::size_t total_bytes,
 	auto geometry = JitCacheGeometry{
 		.cache_sets = sets,
 		/* Bound stable records in proportion to code capacity. Exhaustion
-		 * retains the supported unlinked fallback.
+		 * recycles the cache like a full arena.
 		 */
 		.block_links = arena / direct_link_record_budget_stride,
 		.indirect_links = sets * cache_ways,

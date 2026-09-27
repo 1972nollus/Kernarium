@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "memory_transfer.hpp"
+#include "detail/single_copy_alignment.hpp"
 
 #include "uml_darwin_guest.h"
 
@@ -130,7 +131,8 @@ extern "C" std::byte *uml_arm64_atomic_floating_pointer(
 	const bool tagged = base_sp == 0U && cpu->tagged_addresses_enabled();
 	const auto address = tagged ?
 		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
-	if ((address & (size - 1U)) != 0U) {
+	if (uml::cpu::arm64::detail::single_copy_alignment_faults(
+		    address, size, tlb->unaligned_atomics)) {
 		tlb->fault_alignment = 1;
 		tlb->fault_address = address;
 		tlb->fault_access = Access::write;

@@ -384,6 +384,7 @@ struct JitCompileProfile final {
   std::uint64_t indirect_link_table_capacity{};
   std::uint64_t evictions{};
   std::uint64_t arena_resets{};
+  std::uint64_t link_table_resets{};
   std::uint64_t code_sequence_transitions{};
   std::uint64_t generation_transitions{};
   std::uint64_t sequence_discarded_blocks{};
@@ -454,6 +455,7 @@ void merge_jit_compile_profile(JitCompileProfile &destination,
       source.indirect_link_table_capacity);
   destination.evictions += source.evictions;
   destination.arena_resets += source.arena_resets;
+  destination.link_table_resets += source.link_table_resets;
   destination.code_sequence_transitions += source.code_sequence_transitions;
   destination.generation_transitions += source.generation_transitions;
   destination.sequence_discarded_blocks += source.sequence_discarded_blocks;
@@ -645,7 +647,7 @@ void report_jit_compile_profile(const JitCompileProfile &profile,
       "direct-link-table-high-water=%llu direct-link-table-capacity=%llu "
       "indirect-link-table-high-water=%llu "
       "indirect-link-table-capacity=%llu "
-      "arena-resets=%llu "
+      "arena-resets=%llu link-table-resets=%llu "
       "code-sequence-transitions=%llu "
       "generation-transitions=%llu sequence-discarded-blocks=%llu "
       "validation-attempts=%llu validation-hits=%llu "
@@ -674,6 +676,7 @@ void report_jit_compile_profile(const JitCompileProfile &profile,
       static_cast<unsigned long long>(profile.indirect_link_table_high_water),
       static_cast<unsigned long long>(profile.indirect_link_table_capacity),
       static_cast<unsigned long long>(profile.arena_resets),
+      static_cast<unsigned long long>(profile.link_table_resets),
       static_cast<unsigned long long>(profile.code_sequence_transitions),
       static_cast<unsigned long long>(profile.generation_transitions),
       static_cast<unsigned long long>(profile.sequence_discarded_blocks),
@@ -763,6 +766,11 @@ void profile_jit_cache_replacement(bool eviction) noexcept {
 void profile_jit_arena_reset() noexcept {
   if (jit_compile_profile_enabled())
     ++jit_compile_profile().arena_resets;
+}
+
+void profile_jit_link_table_reset() noexcept {
+  if (jit_compile_profile_enabled())
+    ++jit_compile_profile().link_table_resets;
 }
 
 void profile_jit_link_table_state(

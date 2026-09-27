@@ -5,6 +5,7 @@
 #include "jit_semantic_instructions.hpp"
 
 #include "cpu/arm64/detail/floating_exception.hpp"
+#include "cpu/arm64/detail/single_copy_alignment.hpp"
 #include "cpu/arm64/fp_environment.hpp"
 #include "cpu/arm64/memory_transfer.hpp"
 
@@ -201,7 +202,8 @@ public:
                             ::uml::memory::MemoryAccess access) override {
     if (!scalar_ordered_atomics_ || size == 0 ||
         size > sizeof(std::uint64_t) || (size & (size - 1U)) != 0 ||
-        (address & (size - 1U)) != 0)
+        arm64::detail::single_copy_alignment_faults(address, size,
+                                                    tlb_.unaligned_atomics))
       return nullptr;
     const auto direction = ::uml::memory::translated_access(access);
     /*
@@ -532,7 +534,8 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
   const unsigned transfer = instruction & 31U;
   const auto tagged_address = cpu->read_register(base, true);
   const auto address = cpu->untag_data_address(tagged_address, base == 31U);
-  if ((address & (size - 1U)) != 0) {
+  if (arm64::detail::single_copy_alignment_faults(address, size,
+                                                  tlb->unaligned_atomics)) {
     tlb->fault_alignment = 1;
     tlb->fault_address = address;
     tlb->fault_access = Access::read;
@@ -549,6 +552,9 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
     case 4: value = ordered_load_at<std::uint32_t>(source); break;
     default: value = ordered_load_at<std::uint64_t>(source); break;
     }
+  } else if (tlb->unaligned_atomics) {
+    /* Admitted misaligned inside one 16-byte block: the host has LSE2. */
+    value = arm64::detail::lse2_acquire_load(source, size);
   } else {
     std::memcpy(&value, source, size);
     std::atomic_thread_fence(std::memory_order_acquire);

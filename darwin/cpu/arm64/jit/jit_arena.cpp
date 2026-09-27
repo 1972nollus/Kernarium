@@ -130,6 +130,9 @@ ExecutableArena::StoredBlock ExecutableArena::store_block(
 	if (mapping_ == nullptr || bytes == 0 || aligned > size_ ||
 	    bytes > size_ - aligned)
 		return {};
+	if (links.size() != 0 &&
+	    missing_count > links.capacity() - links.size())
+		return {.links_exhausted = true};
 	const auto code_end = aligned + bytes;
 	for (std::size_t index = 0; index < missing_count; ++index)
 		(void)links.find_or_create(missing_keys[index], generation);

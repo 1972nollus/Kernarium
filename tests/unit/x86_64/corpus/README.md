@@ -22,6 +22,12 @@ sign choices are compared by IEEE NaN class only for the explicitly classified
 floating-point programs where Intel permits multiple quiet-NaN results; every
 other K trace remains bit-exact. Focused unit cases retain exact x86
 indefinite-NaN checks.
+
+x87 is emulated only at full 80-bit precision. The producer drops FEX's
+`FEX_X87REDUCEDPRECISION` request, which only FEX's own translator honours,
+and keeps those programs' expected registers: FEX's x86-64 host runner checks
+every ASM program natively, so they are full-precision hardware results. The
+test runner rejects a case that still carries the request.
 The upstream license notices are retained alongside the pack.
 
 Regenerate only from verified producer inputs:

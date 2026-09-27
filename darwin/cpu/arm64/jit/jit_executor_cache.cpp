@@ -302,8 +302,8 @@ JitExecutor::Implementation::materialize_shared_translation(
       break;
     }
     /* Only indirect sites require preallocated executor state here. Direct
-     * state is resolved during code publication, with a bounded refusal
-     * retaining the unlinked fallback when the table is full.
+     * state is resolved during code publication. A table that is full fails
+     * the materialization, and the local compile that follows recycles it.
      */
     relocated_link_pointers_.push_back(
         reinterpret_cast<std::uintptr_t>(pointer));
@@ -336,8 +336,11 @@ JitExecutor::Implementation::install_shared_translation(
       pc, translation->words, translation->relocations,
       relocated_link_pointers_, links_, empty_link_, generation);
   if (!stored) {
+    /* The local compile that follows recycles the cache. */
     cache.record_materialization_failure(
-        SharedTranslationMaterializationFailure::arena_exhaustion);
+        stored.links_exhausted
+            ? SharedTranslationMaterializationFailure::direct_link_capacity
+            : SharedTranslationMaterializationFailure::arena_exhaustion);
     return nullptr;
   }
   const auto internal_entry =

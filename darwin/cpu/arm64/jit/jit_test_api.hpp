@@ -24,8 +24,6 @@ struct CompiledCode final {
   bool native_fp{};
   bool native_fpmr{};
   bool guest_illegal{};
-  bool gpr_residency_planned{};
-  std::size_t gpr_estimated_avoided_accesses{};
 };
 
 [[nodiscard]] CompiledCode
@@ -34,10 +32,6 @@ compile_block(std::uint64_t pc,
 
 [[nodiscard]] CompiledCode
 compile_block_without_table_list_planning(
-    std::uint64_t pc, std::span<const std::uint32_t> instructions);
-
-[[nodiscard]] CompiledCode
-compile_block_without_gpr_residency_planning(
     std::uint64_t pc, std::span<const std::uint32_t> instructions);
 
 [[nodiscard]] CompiledCode

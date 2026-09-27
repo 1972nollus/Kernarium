@@ -7,6 +7,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import hashlib
 import importlib.util
 import pathlib
 import sys
@@ -33,6 +34,13 @@ def main() -> int:
     # The reviewable text form must reproduce the binary form exactly.
     pack = (builder.CORPUS / builder.PACK_NAME).read_bytes()
     corpus, tokens = builder.decode_pack(pack)
+
+    # The pack carries the LSE2 alignment rewrite of the current script.
+    step = corpus.meta.get("lse2_alignment")
+    if step is None or hashlib.sha256(
+            (REPOSITORY / step["script"]).read_bytes()).hexdigest() != \
+            step["sha256"]:
+        raise SystemExit("corpus lacks the current LSE2 alignment rewrite")
     step = max(1, len(corpus.records) // ROUND_TRIP_RECORDS)
     records = corpus.records[::step]
     used = {region.blob for record in records for _program, case in record.cases

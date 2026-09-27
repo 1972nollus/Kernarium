@@ -1457,6 +1457,27 @@ simd_lane_counts d, 8
 .purgem simd_lane_transfer
 .purgem simd_lane_one
 
+/* The alignment check of a single-copy-atomic access of \mask + 1 bytes at
+ * x7: an LSE atomic, an exclusive, or a load-acquire/store-release form.
+ * The hot path keeps its one test and branch. A misaligned address leaves for
+ * the gadget's stub in lse2_alignment.inc, which resumes at the label below
+ * when the host implements FEAT_LSE2 and the access stays inside one 16-byte
+ * block, and otherwise delivers the alignment fault. A misaligned 16-byte
+ * access always crosses a block, so it faults directly. */
+.macro single_copy_alignment name, mask, write
+	tst x7, #\mask
+	.if \mask == 15
+		.if \write
+	b.ne uml_arm64_gadget_atomic_alignment_fault_write
+		.else
+	b.ne uml_arm64_gadget_atomic_alignment_fault_read
+		.endif
+	.else
+	b.ne .Llse2_stub_\name
+.Llse2_resume_\name:
+	.endif
+.endm
+
 /* FEAT_LRCPC3 ordered SIMD&FP transfers. Translation specializes SP versus
  * GPR addressing, width, direction, and lane, leaving only alignment/fault
  * branches on a valid hot path. Scalar widths deliberately use the older
@@ -1464,7 +1485,7 @@ simd_lane_counts d, 8
  * materializing a full host vector. A host-RCPC3 Q transfer is selected at
  * build time; the portable Q fallback uses one stronger barrier. Stream:
  * packed destination/source, base, signed byte offset; guest PC. */
-.macro simd_ordered_address sp_base, alignment, write
+.macro simd_ordered_address name, sp_base, alignment, write
 	ldr x19, [_stream], #8
 	.if \sp_base
 	ldr x7, [_cpu, #UML_GADGET_CPU_SP]
@@ -1476,18 +1497,13 @@ simd_lane_counts d, 8
 	asr x8, x19, #10
 	add x7, x7, x8
 	.if \alignment
-	tst x7, #\alignment
-		.if \write
-		b.ne uml_arm64_gadget_atomic_alignment_fault_write
-		.else
-		b.ne uml_arm64_gadget_atomic_alignment_fault_read
-		.endif
+	single_copy_alignment \name, \alignment, \write
 	.endif
 .endm
 
 .macro simd_ordered_load_scalar name, instruction, host_register, alignment, sp_base
 gadget simd_ordered_load_\name
-	simd_ordered_address \sp_base, \alignment, 0
+	simd_ordered_address simd_ordered_load_\name, \sp_base, \alignment, 0
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()9, [x7]
 	and w8, w19, #0x1f
@@ -1500,7 +1516,7 @@ gadget simd_ordered_load_\name
 
 .macro simd_ordered_store_scalar name, instruction, host_register, alignment, sp_base
 gadget simd_ordered_store_\name
-	simd_ordered_address \sp_base, \alignment, 1
+	simd_ordered_address simd_ordered_store_\name, \sp_base, \alignment, 1
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	and w8, w19, #0x1f
 	add x10, _cpu, #UML_GADGET_CPU_V0
@@ -1529,7 +1545,7 @@ simd_ordered_scalar_modes d, ldapr, stlr, x, 7
 
 .macro simd_ordered_load_q name, sp_base, native
 gadget simd_ordered_load_q_\name
-	simd_ordered_address \sp_base, 15, 0
+	simd_ordered_address simd_ordered_load_q_\name, \sp_base, 15, 0
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	.if \native
 	/* LDAPUR Q0, [X7] (FEAT_LRCPC3). */
@@ -1552,7 +1568,7 @@ gadget simd_ordered_load_q_\name
 
 .macro simd_ordered_store_q name, sp_base, native
 gadget simd_ordered_store_q_\name
-	simd_ordered_address \sp_base, 15, 1
+	simd_ordered_address simd_ordered_store_q_\name, \sp_base, 15, 1
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	and w8, w19, #0x1f
 	add x11, _cpu, #UML_GADGET_CPU_V0
@@ -1584,7 +1600,7 @@ simd_ordered_store_q s_native, 1, 1
 
 .macro simd_ordered_lane name, load, lane, sp_base
 gadget simd_ordered_\name
-	simd_ordered_address \sp_base, 7, (1 - \load)
+	simd_ordered_address simd_ordered_\name, \sp_base, 7, (1 - \load)
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	ldapr x9, [x7]
@@ -1636,12 +1652,7 @@ gadget ordered_writeback_\name
 	mov x25, x7
 	.endif
 	.if \bytes > 1
-	tst x7, #(\bytes - 1)
-		.if \load
-		b.ne uml_arm64_gadget_atomic_alignment_fault_read
-		.else
-		b.ne uml_arm64_gadget_atomic_alignment_fault_write
-		.endif
+	single_copy_alignment ordered_writeback_\name, (\bytes - 1), (1 - \load)
 	.endif
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
@@ -1687,7 +1698,7 @@ ordered_writeback_fast load_x_suppress, 1, ldapr, x, 8, 0, 1
  * bridge; SP variants perform CheckSPAlignment without carrying that branch.
  * Stream: packed source/destination/base, guest PC.
  */
-.macro atomic_floating_address bytes, alignment, base_sp
+.macro atomic_floating_address name, bytes, alignment, base_sp
 	ldr x19, [_stream], #8
 	.if \base_sp
 	ldr x7, [_cpu, #UML_GADGET_CPU_SP]
@@ -1701,8 +1712,7 @@ ordered_writeback_fast load_x_suppress, 1, ldapr, x, 8, 0, 1
 	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
 	cbnz w8, 89f
 		.if \alignment
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_write
+	single_copy_alignment \name, \alignment, 1
 		.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	b 90f
@@ -1727,7 +1737,7 @@ gadget atomic_floating_software_\name\()_sp
 	.else
 gadget atomic_floating_software_\name
 	.endif
-	atomic_floating_address \bytes, \alignment, \base_sp
+	atomic_floating_address atomic_floating_software_\name, \bytes, \alignment, \base_sp
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x7
@@ -1744,7 +1754,7 @@ gadget atomic_floating_native_\name\()_sp
 	.else
 gadget atomic_floating_native_\name
 	.endif
-	atomic_floating_address \bytes, \alignment, \base_sp
+	atomic_floating_address atomic_floating_native_\name, \bytes, \alignment, \base_sp
 	and w20, w19, #0x1f
 	add x8, _cpu, #UML_GADGET_CPU_V0
 	add x8, x8, x20, lsl #4
@@ -1883,8 +1893,7 @@ gadget atomic_\name
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
 	.if \alignment
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_write
+	single_copy_alignment atomic_\name, \alignment, 1
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \source_zero
@@ -1947,8 +1956,7 @@ gadget compare_swap_\name
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
 	.if \alignment
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_write
+	single_copy_alignment compare_swap_\name, \alignment, 1
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \compare_zero
@@ -2261,8 +2269,7 @@ gadget compare_swap_pair_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_write
+	single_copy_alignment compare_swap_pair_\name, \alignment, 1
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	and x20, x19, #0xffff
 	ubfx x21, x19, #16, #16
@@ -2319,8 +2326,7 @@ gadget exclusive_load_\name
 	ubfx x20, x19, #16, #16
 	ldr x7, [_cpu, x20]
 	.if \alignment
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_read
+	single_copy_alignment exclusive_load_\name, \alignment, 0
 	.endif
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()15, [x7]
@@ -2357,8 +2363,7 @@ gadget exclusive_store_\name
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
 	.if \alignment
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_write
+	single_copy_alignment exclusive_store_\name, \alignment, 1
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \source_zero
@@ -2405,8 +2410,7 @@ gadget exclusive_pair_load_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #32, #16
 	ldr x7, [_cpu, x20]
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_read
+	single_copy_alignment exclusive_pair_load_\name, \alignment, 0
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()15, \host_register\()16, [x7]
 	.if !\discard_first
@@ -2445,8 +2449,7 @@ gadget exclusive_pair_store_\name
 	ldr x19, [_stream], #8
 	ubfx x20, x19, #48, #16
 	ldr x7, [_cpu, x20]
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_write
+	single_copy_alignment exclusive_pair_store_\name, \alignment, 1
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \first_zero
 	mov x15, xzr
@@ -2499,8 +2502,7 @@ gadget ordered_load_\name
 	ubfx x20, x19, #16, #16
 	ldr x7, [_cpu, x20]
 	.if \alignment
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_read
+	single_copy_alignment ordered_load_\name, \alignment, 0
 	.endif
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()15, [x7]
@@ -2537,8 +2539,7 @@ gadget ordered_store_\name
 	ubfx x20, x19, #16, #16
 	ldr x7, [_cpu, x20]
 	.if \alignment
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_write
+	single_copy_alignment ordered_store_\name, \alignment, 1
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \source_zero
@@ -2585,8 +2586,7 @@ gadget rcpc_load_\name
 	asr x9, x19, #10
 	add x7, x7, x9
 	.if \alignment
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_read
+	single_copy_alignment rcpc_load_\name, \alignment, 0
 	.endif
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	\instruction \host_register\()15, [x7]
@@ -2637,8 +2637,7 @@ gadget rcpc_store_\name
 	asr x9, x19, #10
 	add x7, x7, x9
 	.if \alignment
-	tst x7, #\alignment
-	b.ne uml_arm64_gadget_atomic_alignment_fault_write
+	single_copy_alignment rcpc_store_\name, \alignment, 1
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
 	.if \source_zero

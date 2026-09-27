@@ -19,6 +19,9 @@ public:
 		void *code{};
 		JitBlockLink *target_link{};
 		std::size_t direct_link_refusals{};
+		/* Set on a failed store that recycling the link table would let
+		 * succeed, as opposed to a full arena. */
+		bool links_exhausted{};
 
 		[[nodiscard]] explicit operator bool() const noexcept
 		{
@@ -40,7 +43,11 @@ public:
 	 * indirect literals
 	 * retain their compiler value for a local translation or use the supplied
 	 * executor-private value for a shared translation. Literal patching happens
-	 * in the same JIT write window as code publication.
+	 * in the same JIT write window as code publication. Records of exited
+	 * address spaces stay in the table until the caller recycles it, so a
+	 * table that holds records but has no room for this block's fails the
+	 * store; only an empty table too small for the block publishes unlinked
+	 * exits.
 	 */
 	[[nodiscard]] StoredBlock store_block(
 		std::uint64_t pc,

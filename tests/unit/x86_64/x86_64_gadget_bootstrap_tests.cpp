@@ -7,6 +7,7 @@
 #include "cpu/x86_64/gadgets/native_entry.hpp"
 #include "cpu/x86_64/gadgets/native_symbols.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
+#include "cpu/x86_64/gadgets/x87_math.hpp"
 #include "memory/guest_address_space.hpp"
 #include "platform/apple/host_features.hpp"
 
@@ -4714,6 +4715,63 @@ read_test_sequences(void *context) noexcept
  * conclusions about the same machine. Nothing keeps the table and the gadget
  * together except this test, so it walks every leaf either one claims.
  */
+/* An exact zero keeps its sign where the SDM gives one: FSIN and FPTAN
+ * return a zero operand unchanged, and an FPREM or FPREM1 remainder of zero
+ * takes the dividend's sign. */
+[[nodiscard]] bool x87_zero_results_keep_their_sign()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr X87Register positive_zero{0, 0x0000U};
+	constexpr X87Register negative_zero{0, 0x8000U};
+	constexpr X87Register three{0xc000000000000000ULL, 0x4000U};
+	constexpr X87Register five{0xa000000000000000ULL, 0x4001U};
+	constexpr X87Register negative_five{0xa000000000000000ULL, 0xc001U};
+	constexpr X87Register six{0xc000000000000000ULL, 0x4001U};
+	constexpr X87Register negative_six{0xc000000000000000ULL, 0xc001U};
+	const auto same = [](const X87Register &left, const X87Register &right) {
+		return left.significand == right.significand &&
+			left.sign_exponent == right.sign_exponent;
+	};
+	CpuState cpu{};
+	X87Register result{};
+	X87Register cosine{};
+	for (const auto &zero : {positive_zero, negative_zero}) {
+		gadgets::uml_x86_64_x87_sine(&cpu, &zero, &result);
+		if (!expect(same(result, zero), "FSIN changed a zero's sign"))
+			return false;
+		gadgets::uml_x86_64_x87_sincos(&cpu, &zero, &result, &cosine);
+		if (!expect(same(result, zero),
+			"FSINCOS changed a zero sine's sign"))
+			return false;
+		gadgets::uml_x86_64_x87_tangent(&cpu, &zero, &result);
+		if (!expect(same(result, zero), "FPTAN changed a zero's sign"))
+			return false;
+	}
+	struct Remainder final {
+		X87Register dividend;
+		X87Register divisor;
+		X87Register expected;
+	};
+	for (const auto &[dividend, divisor, expected] : {
+		Remainder{six, three, positive_zero},
+		Remainder{negative_six, three, negative_zero},
+		Remainder{five, five, positive_zero},
+		Remainder{negative_five, five, negative_zero},
+	}) {
+		gadgets::uml_x86_64_x87_fprem(&cpu, &dividend, &divisor, &result);
+		if (!expect(same(result, expected),
+			"FPREM gave a zero remainder the wrong sign"))
+			return false;
+		gadgets::uml_x86_64_x87_fprem1(&cpu, &dividend, &divisor,
+			&result);
+		if (!expect(same(result, expected),
+			"FPREM1 gave a zero remainder the wrong sign"))
+			return false;
+	}
+	return expect((cpu.x87_status & 0x7fU) == 0,
+		"an exact zero result raised an x87 exception");
+}
+
 [[nodiscard]] bool cpuid_table_matches_the_gadget()
 {
 	using namespace uml::cpu::x86_64;
@@ -6374,6 +6432,7 @@ int main()
 		conditional_moves_write_the_destination_either_way() &&
 		fused_conditional_jumps_take_the_same_edge() &&
 		cpuid_table_matches_the_gadget() &&
+		x87_zero_results_keep_their_sign() &&
 		preserve_precise_memory_fault() &&
 		retire_valid_prefix_before_decode_fault() &&
 		migrated_gadgets_are_native_only() &&

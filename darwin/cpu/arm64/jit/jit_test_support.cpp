@@ -37,10 +37,6 @@ namespace {
       .native_fp = compiled.native_fp,
       .native_fpmr = compiled.native_fpmr,
       .guest_illegal = compiled.guest_illegal,
-      .gpr_residency_planned =
-          compiled.gpr_residency_plan.count != 0U,
-      .gpr_estimated_avoided_accesses =
-          compiled.gpr_residency_plan.estimated_avoided_accesses,
   };
   return result;
 }
@@ -668,14 +664,6 @@ CompiledCode compile_block_without_table_list_planning(
     std::span<const std::uint32_t> instructions) {
   JitCompiler compiler{/*enable_guarded_control_flow=*/false};
   compiler.set_table_list_planning_enabled(false);
-  return copied_code(compiler.compile(pc, instructions));
-}
-
-CompiledCode compile_block_without_gpr_residency_planning(
-    std::uint64_t pc,
-    std::span<const std::uint32_t> instructions) {
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false};
-  compiler.set_gpr_residency_planning_enabled(false);
   return copied_code(compiler.compile(pc, instructions));
 }
 

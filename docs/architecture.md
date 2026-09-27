@@ -246,6 +246,21 @@ The host exports a distinct bridge event, and both kernel lines deliver
 `SIGBUS/BUS_ADRALN` so a guest handler can repair the access and resume. They
 do not enter page-fault repair or retire the faulting instruction.
 
+Both engines advertise USCAT exactly when the host implements FEAT_LSE2, and
+then follow its alignment rule: an LSE atomic, an exclusive, or a
+load-acquire/store-release access that is misaligned but lies inside one
+16-byte block completes single-copy atomically, and only one that crosses a
+block takes the alignment fault. A pair counts as one access of its total
+size. Without host LSE2 every misaligned such access faults. Each executor
+records the choice in its TLB. Gadgets execute the native host instruction on
+an admitted address, and a host CASAL loop for software floating-point
+atomics; the JIT applies the same rule in its semantic path, whose direct
+ordered forms use host LDAR and STLR. The rule matches native
+LSE2 hardware for the LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2 forms. The
+LRCPC3 and LSFE forms follow the architecture's rule, which current hosts
+cannot execute natively. LDIAPP/STILP and the LSCP pairs keep their element
+alignment, and LSE128, RCW, GCS, and LS64 accesses stay naturally aligned.
+
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address

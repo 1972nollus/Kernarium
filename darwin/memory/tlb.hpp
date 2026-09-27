@@ -86,6 +86,10 @@ struct alignas(32) Tlb final {
 	 * from its guest state; consumers that never present tagged addresses
 	 * leave it false. */
 	bool tagged_addresses{};
+	/* Whether the host completes a misaligned atomic, exclusive or
+	 * ordered access inside one 16-byte block (FEAT_LSE2), which the guest
+	 * then sees as USCAT. Set once by the executor that owns the TLB. */
+	bool unaligned_atomics{};
 	/* Sets filled since the last flush; a count above the capacity means the
 	 * next flush clears the whole table. Not read by generated code. */
 	std::uint32_t dirty_count{};

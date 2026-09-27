@@ -28,6 +28,7 @@ fex	3DNow/BB.asm	obsolete AMD-only 3DNow extension
 fex	3DNow/BF.asm	obsolete AMD-only 3DNow extension
 fex	DAZTest.asm	AMD floating-point extension outside v3
 fex	FEX_bugs/3DNow_ModRMSIBDecode.asm	obsolete AMD-only 3DNow extension
+fex	FEX_bugs/FXTRACT_nan_f64.asm	exact duplicate normalized case
 fex	FEX_bugs/H0F3AREXBug.asm	post-AVX2 SHA extension
 fex	FEX_bugs/REX/DDDNow.asm	obsolete AMD-only 3DNow extension
 fex	FEX_bugs/fxsave_bug.asm	exact duplicate normalized case
@@ -76,9 +77,26 @@ fex	X87/D9_F2.asm	upstream marks this source unsupported
 fex	X87/D9_F8.asm	upstream marks this source unsupported
 fex	X87/D9_F9.asm	upstream marks this source unsupported
 fex	X87/invalid_simple_test.asm	exact duplicate normalized case
+fex	X87_F64/D8_F0_2_F64.asm	exact duplicate normalized case
+fex	X87_F64/D9_05_F64.asm	exact duplicate normalized case
+fex	X87_F64/D9_07_F64.asm	exact duplicate normalized case
+fex	X87_F64/D9_D0_F64.asm	exact duplicate normalized case
+fex	X87_F64/DA_02_F64.asm	exact duplicate normalized case
+fex	X87_F64/DB_E3.asm	exact duplicate normalized case
+fex	X87_F64/DD_07_F64.asm	exact duplicate normalized case
+fex	X87_F64/DD_C0_F64.asm	exact duplicate normalized case
+fex	X87_F64/DE_02_F64.asm	exact duplicate normalized case
+fex	X87_F64/DF_E0_F64.asm	exact duplicate normalized case
+fex	X87_F64/FPREM1_Flags_F64.asm	exact duplicate normalized case
+fex	X87_F64/FPREM_Flags_F64.asm	exact duplicate normalized case
+fex	X87_F64/FScaleFXtract_F64.asm	exact duplicate normalized case
+fex	X87_F64/FXAM_Push_2_F64.asm	exact duplicate normalized case
+fex	X87_F64/FXAM_Push_F64.asm	exact duplicate normalized case
+fex	X87_F64/Rounding_F64.asm	exact duplicate normalized case
 fex	modrm_oob/SecondaryModRM.asm	AMD-only cache-zero extension
 fex	modrm_oob/SecondaryREP.asm	AMD-only extension outside x86-64-v3
 fex	modrm_oob/SecondaryREPNE.asm	AMD-only extension outside x86-64-v3
+fex	modrm_oob/X87_Reduced.asm	exact duplicate normalized case
 k	tests/mcsema-unit-tests/binary/addsd/test.s	upstream source contains invalid x86-64 operand forms
 k	tests/mcsema-unit-tests/binary/addss/test.s	upstream source contains invalid x86-64 operand forms
 k	tests/mcsema-unit-tests/binary/divpd/test.s	upstream test source is empty

@@ -1,18 +1,18 @@
 {
-  "cases": 171836,
+  "cases": 171306,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
     "gcs-fault": 14,
     "illegal-instruction": 24616,
     "instruction-budget": 863,
-    "memory-fault": 17462,
-    "system-call": 128785
+    "memory-fault": 16852,
+    "system-call": 128865
   },
   "cases_by_profile": {
-    "16k": 37503,
+    "16k": 37238,
     "16k+4k": 96818,
-    "4k": 37515
+    "4k": 37250
   },
   "coverage": {
     "entries": 983,
@@ -67,19 +67,25 @@
     "file": "tests/unit/arm64/corpus/forced-cases.tsv",
     "sha256": "123cd7f0950983d858b577a972819fd79577635596eed0b9b3bd7f1aab354c34"
   },
-  "memory_blobs": 3346,
-  "pack_bytes": 14892664,
-  "pack_sha256": "24863a0b25e70452b00383b0f7f6cddf5d5d66093a80e6ece2712b2612ef56cc",
+  "lse2_alignment": {
+    "added_cases": 138,
+    "removed_cases": 668,
+    "script": "tools/arm64-tests/lse2-alignment-corpus.py",
+    "sha256": "7930348c920a379aea8484c922d55e93d68bfdac9746580c3ffe83816a839316"
+  },
+  "memory_blobs": 3348,
+  "pack_bytes": 14887191,
+  "pack_sha256": "3d05af17d2f52b26712e82dd5573765a897661f5f0421510afb9791839ac1ade",
   "producer_commit": "ab2344676255d39d793186fd63b29a7a85995f2e",
-  "programs": 147178,
-  "records": 1334,
+  "programs": 147216,
+  "records": 1332,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
     "broad": 63,
-    "full": 1176,
-    "narrow": 170597
+    "full": 1314,
+    "narrow": 169929
   },
   "validator_cases": {
     "guarded-control-call-fault-atomicity/v1": 8,
