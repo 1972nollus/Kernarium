@@ -32,50 +32,181 @@ Both bounds run on the one clock the timeline keeps while it stands still
 owing a signal, so waiters on different values of a stopped queue's timeline
 reach the bound together; the new stall mode of the timeline wait test holds
 two such waiters and requires both to see the device lost.
----
- src/kosmickrisp/vulkan/kk_queue.c             | 17 ++++++
- src/kosmickrisp/vulkan/kk_queue.h             | 11 ++++
- src/kosmickrisp/vulkan/kk_sync.c              | 49 +++++++++++++++-
- src/kosmickrisp/vulkan/meson.build            |  8 +++
- .../vulkan/tests/test_timeline_wait_loss.c    | 58 ++++++++++++++++++-
- 5 files changed, 138 insertions(+), 5 deletions(-)
 
+A query wait had the same blind spot. vkGetQueryPoolResults with WAIT
+observes a GPU write directly in memory and bounded that wait only once the
+queue had failed, so a query behind a queue that stopped without failing
+spun forever. It now loses the device at the same stopped-queue bound,
+counted from the last submission the queue answered for, while the queue
+holds work it has not answered for; a queue holding nothing still waits as
+long as it takes, because the query may belong to work not yet submitted.
+The bound moves to kk_queue.h for both waits, and kk_queue_get_progress,
+which replaces kk_queue_has_failed, reads the queue's failure history and its
+answered and unanswered submissions under one lock. The wait test's new
+query mode holds a query behind a submission the queue never answers for and
+requires the device lost between 30 and 45 s.
+---
+ src/kosmickrisp/vulkan/kk_query_pool.c        |  59 ++++++++--
+ src/kosmickrisp/vulkan/kk_queue.c             |  28 ++++-
+ src/kosmickrisp/vulkan/kk_queue.h             |  51 +++++++-
+ src/kosmickrisp/vulkan/kk_sync.c              |  33 +++++-
+ src/kosmickrisp/vulkan/meson.build            |  10 ++
+ .../vulkan/tests/test_timeline_wait_loss.c    | 109 +++++++++++++++++-
+ 6 files changed, 263 insertions(+), 27 deletions(-)
+
+diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
+index 9253e654e1a111b490e3997f4033998263be0f14..d3db04dcc394d077a6cc9c70f8240a50d14c3542 100644
+--- a/src/kosmickrisp/vulkan/kk_query_pool.c
++++ b/src/kosmickrisp/vulkan/kk_query_pool.c
+@@ -555,9 +555,14 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
+    /* WAIT has no timeout of its own. The queue's native completion handler
+     * reports an actual device failure; a slow submission must not manufacture
+     * one. What it cannot report is a GPU write it destroyed, so a queue that
+-    * has failed bounds the wait and a queue that has not waits as long as it
+-    * takes. */
++    * has failed bounds the wait. Nor does a queue report that it stopped: one
++    * that has never failed and holds work it answers for none of loses the
++    * device after the bound a timeline wait gives it. A queue holding nothing
++    * waits as long as it takes, since the query may belong to work that has
++    * not been submitted yet. */
+    uint64_t unavailable_since = 0u;
++   uint64_t stalled_since = 0u;
++   uint64_t stalled_reported = 0u;
+ 
+    for (;;) {
+       if (kk_query_is_available(dev, pool, query))
+@@ -567,17 +572,47 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
+       if (status != VK_SUCCESS)
+          return status;
+ 
+-      if (dev->has_queue && kk_queue_has_failed(&dev->queue)) {
+-         uint64_t now = os_time_get_nano();
+-         if (unavailable_since == 0u) {
+-            unavailable_since = now;
+-         } else if (now - unavailable_since >= kk_lost_query_timeout_ns) {
++      if (dev->has_queue) {
++         const struct kk_queue_progress progress =
++            kk_queue_get_progress(&dev->queue);
++         const uint64_t now = os_time_get_nano();
++         if (progress.ever_failed) {
++            if (unavailable_since == 0u) {
++               unavailable_since = now;
++            } else if (now - unavailable_since >= kk_lost_query_timeout_ns) {
++               fprintf(stderr,
++                       "KosmicKrisp gave up on a query a failed Metal "
++                       "submission never made available after %" PRIu64
++                       " s, so its caller is not held forever\n",
++                       kk_lost_query_timeout_ns / 1000000000ull);
++               return VK_ERROR_DEVICE_LOST;
++            }
++         } else if (progress.unreported == 0u) {
++            stalled_since = 0u;
++         } else if (stalled_since == 0u ||
++                    progress.reported != stalled_reported) {
++            stalled_since = now;
++            stalled_reported = progress.reported;
++         } else if (now - stalled_since >= KK_STOPPED_QUEUE_TIMEOUT_NS) {
++            /* Say this on stderr as well as through the device, as the
++             * timeline wait does: the runtime's own report goes to the Mesa
++             * log, which this product leaves muted. */
+             fprintf(stderr,
+-                    "KosmicKrisp gave up on a query a failed Metal submission "
+-                    "never made available after %" PRIu64
+-                    " s, so its caller is not held forever\n",
+-                    kk_lost_query_timeout_ns / 1000000000ull);
+-            return VK_ERROR_DEVICE_LOST;
++                    "KosmicKrisp the Metal command queue stopped making "
++                    "progress: a query stayed unavailable for %" PRIu64
++                    " s while the queue answered for none of the %" PRIu64
++                    " submission(s) it holds and reported no failure. Losing "
++                    "the device\n",
++                    KK_STOPPED_QUEUE_TIMEOUT_NS / 1000000000ull,
++                    progress.unreported);
++            return vk_device_set_lost(
++               &dev->vk,
++               "the Metal command queue stopped making progress: a query "
++               "stayed unavailable for %" PRIu64
++               " s while the queue answered for none of the %" PRIu64
++               " submission(s) it holds and reported no failure",
++               KK_STOPPED_QUEUE_TIMEOUT_NS / 1000000000ull,
++               progress.unreported);
+          }
+       }
+ 
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 20ab672850c64e19b844451e99c5bff21abcbde7..60f612e4fa5d3581d6fc89f37f1eecc6cc76a8a7 100644
+index 20ab672850c64e19b844451e99c5bff21abcbde7..2567bb2ed8048de8165d10ab51359eff628f348f 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
-@@ -92,6 +92,23 @@ kk_queue_has_failed(struct kk_queue *queue)
-    return failed;
+@@ -78,18 +78,38 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
+    return made_good;
  }
  
+-bool
+-kk_queue_has_failed(struct kk_queue *queue)
++struct kk_queue_progress
++kk_queue_get_progress(struct kk_queue *queue)
+ {
++   struct kk_queue_progress progress = {0};
+    struct kk_queue_feedback *feedback = queue->feedback;
+    if (!feedback)
++      return progress;
++
++   simple_mtx_lock(&feedback->signal_mutex);
++   progress.ever_failed = feedback->ever_failed;
++   progress.reported = feedback->reported;
++   progress.unreported = feedback->last_serial - feedback->reported;
++   simple_mtx_unlock(&feedback->signal_mutex);
++
++   return progress;
++}
++
 +bool
 +kk_queue_failure_outstanding(struct kk_queue *queue, uint64_t *unreported)
 +{
 +   struct kk_queue_feedback *feedback = queue->feedback;
 +   if (!feedback) {
 +      *unreported = 0u;
-+      return false;
+       return false;
 +   }
-+
-+   simple_mtx_lock(&feedback->signal_mutex);
+ 
+    simple_mtx_lock(&feedback->signal_mutex);
+-   bool failed = feedback->ever_failed;
 +   bool outstanding = feedback->failures > 0u;
 +   *unreported = feedback->last_serial - feedback->reported;
-+   simple_mtx_unlock(&feedback->signal_mutex);
-+
+    simple_mtx_unlock(&feedback->signal_mutex);
+ 
+-   return failed;
 +   return outstanding;
-+}
-+
+ }
+ 
  /* Metal reports a failure against one submission, but the work it kills
-  * behind that submission does not always arrive as a report of its own. A
-  * signal enqueued after the reported one can therefore go missing with
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index 5e3f724b1cae465ef2512d0d120b9a7a299546a8..97b17238af3e4922d541a3bfdb5434c8e5fa6ebf 100644
+index 5e3f724b1cae465ef2512d0d120b9a7a299546a8..bc7df38ef14f814ce8163480cf2b0b17feb3e9d6 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
-@@ -101,6 +101,17 @@ uint64_t kk_queue_complete_owed_signals(struct kk_queue *queue,
-  * so it needs this to know that waiting longer cannot produce it. */
- bool kk_queue_has_failed(struct kk_queue *queue);
+@@ -93,13 +93,52 @@ kk_queue_device(struct kk_queue *queue)
+ uint64_t kk_queue_complete_owed_signals(struct kk_queue *queue,
+                                         mtl_shared_event *event);
  
+-/* Whether Metal has ever failed a submission on this queue.
++/* What a caller waiting to observe a GPU write directly in memory, rather
++ * than through a timeline, can learn about whether the write is still coming.
++ * Nothing names such a write, so the queue's history is all it has. */
++struct kk_queue_progress {
++   /* Whether Metal has ever failed a submission on this queue. A failure
++    * destroys the work the submission had not run, so waiting longer cannot
++    * produce a write it took. */
++   bool ever_failed;
++   /* How many submissions the queue has answered for, and how many it has
++    * taken and not answered for yet. A queue that has never failed and holds
++    * unanswered work without answering for any more of it has stopped. */
++   uint64_t reported;
++   uint64_t unreported;
++};
++
++/* All three read together, so they describe one moment of the queue. */
++struct kk_queue_progress kk_queue_get_progress(struct kk_queue *queue);
++
 +/* Whether Metal has reported a failure this queue has not been retired for
 + * yet, and, through unreported, how many submissions it has taken and not
 + * answered for.
@@ -87,14 +218,36 @@ index 5e3f724b1cae465ef2512d0d120b9a7a299546a8..97b17238af3e4922d541a3bfdb5434c8
 +bool kk_queue_failure_outstanding(struct kk_queue *queue,
 +                                  uint64_t *unreported);
 +
++/* How long a queue that has reported no failure may hold work it does not
++ * answer for before a waiter on that work concludes the queue has stopped.
++ * Such a queue destroyed nothing; it stopped running work. Nothing restarts a
++ * Metal command queue and nothing else will notice: the queue reports nothing
++ * further, so the retirement that replaces a failed queue never triggers, and
++ * every waiter - on a timeline or a query here, in the renderer's per-ring
++ * sync thread, and through the guest protocol in another process - waits on it
++ * forever. That is device loss, and it is the disposition kk_queue_error.h
++ * already gives a queue that stops reporting.
+  *
+- * A failure destroys the work the submission had not run, including GPU writes
+- * a caller is waiting to observe directly in memory rather than through a
+- * timeline. Such a caller cannot be told the write is gone - nothing names it -
+- * so it needs this to know that waiting longer cannot produce it. */
+-bool kk_queue_has_failed(struct kk_queue *queue);
++ * Losing a device ends a workload, so this bound is three times the one for
++ * completing a signal a failure destroyed (see kk_sync.c): that repair
++ * completes one value and the queue carries on, while this one is final and
++ * must not be reached by a queue that is merely busy. Nothing else in the
++ * process is waiting on this queue by then either, because a KosmicKrisp
++ * device submits from one queue in order. */
++#define KK_STOPPED_QUEUE_TIMEOUT_NS (30ull * 1000000000ull)
+ 
  VkResult kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
                         const VkDeviceQueueCreateInfo *pCreateInfo,
-                        uint32_t index_in_family);
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index 2d97c1969c9c6dac825ed8b1a758f2d9e772b34b..95dfbcf56fb8c77fe1a5f3b2ab00357da0be1ce7 100644
+index 2d97c1969c9c6dac825ed8b1a758f2d9e772b34b..bcc8fad68c98e609d57130e35ad0837f02221c86 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
-@@ -109,10 +109,25 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
+@@ -109,8 +109,7 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
   *
   * The bound is two orders of magnitude over any submission that runs to
   * completion on the tightest device this driver targets, whose GPU stops a
@@ -103,26 +256,8 @@ index 2d97c1969c9c6dac825ed8b1a758f2d9e772b34b..95dfbcf56fb8c77fe1a5f3b2ab00357d
 + * command buffer after tens of milliseconds. */
  static const uint64_t kk_lost_signal_timeout_ns = 10ull * 1000000000ull;
  
-+/* A queue that has reported no failure destroyed nothing, so a signal it
-+ * accepted and has not delivered means it has stopped running work rather than
-+ * that something took the signal away. Nothing restarts a Metal command queue
-+ * and nothing else will notice: the queue reports nothing further, so the
-+ * retirement that replaces a failed queue never triggers, and every waiter -
-+ * here, in the renderer's per-ring sync thread, and through the guest protocol
-+ * in another process - waits on it forever. That is device loss, and it is the
-+ * disposition kk_queue_error.h already gives a queue that stops reporting.
-+ *
-+ * Losing a device ends a workload, so this bound is three times the one above:
-+ * the repair there completes one value and the queue carries on, while this
-+ * one is final and must not be reached by a queue that is merely busy. Nothing
-+ * else in the process is waiting on this queue by then either, because a
-+ * KosmicKrisp device submits from one queue in order. */
-+static const uint64_t kk_stopped_queue_timeout_ns = 30ull * 1000000000ull;
-+
  static void
- kk_timeline_recover_lost_signal(struct kk_device *dev,
-                                 struct kk_sync_timeline *timeline,
-@@ -134,6 +149,11 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+@@ -134,6 +133,11 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
      * waiter that arrives behind a stall inherits the time already spent in
      * it. A waiter whose value has arrived leaves it alone, because the
      * timeline standing still says nothing about that waiter. */
@@ -130,11 +265,11 @@ index 2d97c1969c9c6dac825ed8b1a758f2d9e772b34b..95dfbcf56fb8c77fe1a5f3b2ab00357d
 +   const bool failure_outstanding =
 +      kk_queue_failure_outstanding(&dev->queue, &unreported);
 +   const uint64_t bound = failure_outstanding ? kk_lost_signal_timeout_ns
-+                                              : kk_stopped_queue_timeout_ns;
++                                              : KK_STOPPED_QUEUE_TIMEOUT_NS;
     bool expired = false;
     simple_mtx_lock(&timeline->overdue_mutex);
     /* Read the time under the lock: another waiter may start the clock after
-@@ -142,7 +162,7 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+@@ -142,7 +146,7 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
     if (timeline->overdue_since == 0u || timeline->stalled_value != signaled) {
        timeline->stalled_value = signaled;
        timeline->overdue_since = now;
@@ -143,7 +278,7 @@ index 2d97c1969c9c6dac825ed8b1a758f2d9e772b34b..95dfbcf56fb8c77fe1a5f3b2ab00357d
        timeline->overdue_since = 0u;
        expired = true;
     }
-@@ -150,6 +170,29 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+@@ -150,6 +154,29 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
     if (!expired)
        return;
  
@@ -157,7 +292,7 @@ index 2d97c1969c9c6dac825ed8b1a758f2d9e772b34b..95dfbcf56fb8c77fe1a5f3b2ab00357d
 +              ", has not delivered it in %" PRIu64
 +              " s, has reported no failure, and holds %" PRIu64
 +              " submission(s) it has not answered for. Losing the device\n",
-+              wait_value, kk_stopped_queue_timeout_ns / 1000000000ull,
++              wait_value, KK_STOPPED_QUEUE_TIMEOUT_NS / 1000000000ull,
 +              unreported);
 +      vk_device_set_lost(
 +         &dev->vk,
@@ -166,7 +301,7 @@ index 2d97c1969c9c6dac825ed8b1a758f2d9e772b34b..95dfbcf56fb8c77fe1a5f3b2ab00357d
 +         ", has not delivered it in %" PRIu64
 +         " s, has reported no failure, and holds %" PRIu64
 +         " submission(s) it has not answered for",
-+         wait_value, kk_stopped_queue_timeout_ns / 1000000000ull, unreported);
++         wait_value, KK_STOPPED_QUEUE_TIMEOUT_NS / 1000000000ull, unreported);
 +      return;
 +   }
 +
@@ -174,26 +309,28 @@ index 2d97c1969c9c6dac825ed8b1a758f2d9e772b34b..95dfbcf56fb8c77fe1a5f3b2ab00357d
        kk_queue_complete_owed_signals(&dev->queue, timeline->mtl_handle);
     if (completed) {
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index d30e57641f305bfdd405ea3c90b029c39d67c4c6..47673058289867282ea5e2ffd06dbf0a1901fc7b 100644
+index d30e57641f305bfdd405ea3c90b029c39d67c4c6..17b039b66e38e390d708f3855a8d40982f1d61f2 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -664,6 +664,14 @@ if with_tests
+@@ -664,6 +664,16 @@ if with_tests
          timeout : 15,
        )
      endforeach
-+    test(
-+      'kosmickrisp_timeline_wait_loss_stall',
-+      timeline_wait_loss_test,
-+      args : ['stall'],
-+      suite : ['kosmickrisp'],
-+      env : ['MESA_SHADER_CACHE_DISABLE=true'],
-+      timeout : 90,
-+    )
++    foreach wait_mode : ['stall', 'query']
++      test(
++        'kosmickrisp_timeline_wait_loss_' + wait_mode,
++        timeline_wait_loss_test,
++        args : [wait_mode],
++        suite : ['kosmickrisp'],
++        env : ['MESA_SHADER_CACHE_DISABLE=true'],
++        timeout : 90,
++      )
++    endforeach
      timeline_host_wait_test = executable(
        'test_kosmickrisp_timeline_host_wait',
        files('tests/test_timeline_host_wait.cpp'),
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c b/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
-index 7b8dd8bcb60bd1051f698a13ed8314483556d136..5572c39f381ce216fdafe0bc3e86e54885e1c326 100644
+index 7b8dd8bcb60bd1051f698a13ed8314483556d136..c83a22dcbe01e2832a88fcd6b77be6f966aca326 100644
 --- a/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 +++ b/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 @@ -3,6 +3,7 @@
@@ -228,20 +365,40 @@ index 7b8dd8bcb60bd1051f698a13ed8314483556d136..5572c39f381ce216fdafe0bc3e86e548
  static void *
  finish_queue(void *data)
  {
-@@ -46,9 +64,10 @@ main(int argc, char **argv)
+@@ -46,9 +64,11 @@ main(int argc, char **argv)
     CHECK(argc == 2);
     bool idle = strcmp(argv[1], "idle") == 0;
     bool drain = strcmp(argv[1], "drain") == 0;
 -   CHECK(idle || drain || strcmp(argv[1], "pending") == 0);
 +   bool stall = strcmp(argv[1], "stall") == 0;
-+   CHECK(idle || drain || stall || strcmp(argv[1], "pending") == 0);
++   bool query = strcmp(argv[1], "query") == 0;
++   CHECK(idle || drain || stall || query || strcmp(argv[1], "pending") == 0);
     /* In particular, a failed worker join must not strand the test runner. */
 -   alarm(10);
-+   alarm(stall ? 60 : 10);
++   alarm(stall || query ? 60 : 10);
     VkInstance instance = VK_NULL_HANDLE;
     LOAD_I(vkCreateInstance);
     VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-@@ -137,6 +156,41 @@ main(int argc, char **argv)
+@@ -87,6 +107,7 @@ main(int argc, char **argv)
+    };
+    VkPhysicalDeviceVulkan12Features features = {
+       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
++      .hostQueryReset = VK_TRUE,
+       .timelineSemaphore = VK_TRUE,
+    };
+    VkDeviceCreateInfo device_info = {
+@@ -104,6 +125,10 @@ main(int argc, char **argv)
+    LOAD_D(vkSignalSemaphore);
+    LOAD_D(vkQueueSubmit);
+    LOAD_D(vkQueueWaitIdle);
++   LOAD_D(vkCreateQueryPool);
++   LOAD_D(vkDestroyQueryPool);
++   LOAD_D(vkResetQueryPool);
++   LOAD_D(vkGetQueryPoolResults);
+    VkQueue queue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(device, family, 0, &queue);
+    VkSemaphoreTypeCreateInfo type = {
+@@ -137,6 +162,86 @@ main(int argc, char **argv)
     CHECK(vk_sync_wait(&dev->vk, sync, 1, VK_SYNC_WAIT_PENDING, 0) == VK_SUCCESS);
     CHECK(vk_sync_wait(&dev->vk, sync, 1, VK_SYNC_WAIT_COMPLETE, 0) == VK_SUCCESS);
  
@@ -277,6 +434,51 @@ index 7b8dd8bcb60bd1051f698a13ed8314483556d136..5572c39f381ce216fdafe0bc3e86e548
 +      vkDestroyInstance(instance, NULL);
 +      alarm(0);
 +      printf("stall: waiters on two values of a stopped timeline lost the device\n");
++      return 0;
++   }
++
++   if (query) {
++      /* A query no submission has made available, on a queue that holds one
++       * submission it never answers for and reports no failure: it has
++       * stopped, so the wait for the query loses the device at the
++       * stopped-queue bound rather than spinning forever. */
++      VkQueryPoolCreateInfo pool_info = {
++         .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
++         .queryType = VK_QUERY_TYPE_OCCLUSION,
++         .queryCount = 1,
++      };
++      VkQueryPool pool = VK_NULL_HANDLE;
++      CHECK(vkCreateQueryPool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
++      vkResetQueryPool(device, pool, 0, 1);
++      uint64_t result = 0;
++      CHECK(vkGetQueryPoolResults(device, pool, 0, 1, sizeof(result), &result,
++                                  sizeof(result), VK_QUERY_RESULT_64_BIT) ==
++            VK_NOT_READY);
++      struct kk_queue_feedback *feedback = dev->queue.feedback;
++      simple_mtx_lock(&feedback->signal_mutex);
++      feedback->last_serial++;
++      simple_mtx_unlock(&feedback->signal_mutex);
++      uint64_t start = os_time_get_nano();
++      CHECK(vkGetQueryPoolResults(device, pool, 0, 1, sizeof(result), &result,
++                                  sizeof(result),
++                                  VK_QUERY_RESULT_64_BIT |
++                                     VK_QUERY_RESULT_WAIT_BIT) ==
++            VK_ERROR_DEVICE_LOST);
++      uint64_t elapsed = os_time_get_nano() - start;
++      CHECK(vk_device_is_lost(&dev->vk));
++      CHECK(elapsed >= 30000000000ull);
++      CHECK(elapsed < 45000000000ull);
++      simple_mtx_lock(&feedback->signal_mutex);
++      feedback->last_serial--;
++      simple_mtx_unlock(&feedback->signal_mutex);
++      vkDestroyQueryPool(device, pool, NULL);
++      kk_queue_finish(dev, &dev->queue);
++      dev->has_queue = false;
++      vkDestroySemaphore(device, semaphore, NULL);
++      vkDestroyDevice(device, NULL);
++      vkDestroyInstance(instance, NULL);
++      alarm(0);
++      printf("query: a query wait on a stopped queue lost the device\n");
 +      return 0;
 +   }
 +
