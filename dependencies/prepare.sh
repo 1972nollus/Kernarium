@@ -197,9 +197,10 @@ PY_ARCHIVES
 				fail "downloaded dependency archive hash differs: $archive_name"
 			}
 			mv -- "$temporary_archive" "$archive"
+		else
+			[ "$(sha256_file "$archive")" = "$archive_sha256" ] ||
+				fail "cached dependency archive hash differs: $archive_name"
 		fi
-		[ "$(sha256_file "$archive")" = "$archive_sha256" ] ||
-			fail "cached dependency archive hash differs: $archive_name"
 		printf 'verified dependency archive: %s\n' "$archive"
 	done < "$ARCHIVE_MANIFEST"
 	exit 0
