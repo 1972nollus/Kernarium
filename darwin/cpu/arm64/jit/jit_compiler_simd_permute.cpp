@@ -18,7 +18,7 @@ namespace uml::cpu::arm64::jit {
 
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_extract(std::uint32_t instruction) {
-  if (!host_capabilities().advanced_simd() ||
+  if (!host_capabilities().advanced_simd ||
       (instruction & 0xbfe0'8400U) != 0x2e00'0000U)
     return false;
   const bool q = (instruction & 0x4000'0000U) != 0;
@@ -42,7 +42,7 @@ JitCompilerFamilies::emit_simd_extract(std::uint32_t instruction) {
 
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_table_lookup(std::uint32_t instruction) {
-  if (!host_capabilities().advanced_simd() ||
+  if (!host_capabilities().advanced_simd ||
       (instruction & 0xbfe0'8c00U) != 0x0e00'0000U)
     return false;
   const unsigned destination = instruction & 31U;
@@ -85,7 +85,7 @@ JitCompilerFamilies::emit_simd_table_lookup(std::uint32_t instruction) {
 
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_lut(std::uint32_t instruction) {
-  if (!host_capabilities().advanced_simd() ||
+  if (!host_capabilities().advanced_simd ||
       !host_capabilities().has(ArmFeature::lut))
     return false;
   const unsigned destination = instruction & 31U;
@@ -130,7 +130,7 @@ JitCompilerFamilies::emit_simd_lut(std::uint32_t instruction) {
 
 [[nodiscard]] bool
 JitCompilerFamilies::emit_simd_permute(std::uint32_t instruction) {
-  if (!host_capabilities().advanced_simd())
+  if (!host_capabilities().advanced_simd)
     return false;
   const auto operation = instruction & 0xbf20'fc00U;
   if (operation != 0x0e00'1800U && operation != 0x0e00'2800U &&

@@ -504,7 +504,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::keep_going;
     }
     if ((instruction & 0x7ff0'0000U) == 0x11c0'0000U) {
-      if (!host_capabilities().cssc())
+      if (!host_capabilities().cssc)
         return Action::unsupported;
       emit_integer_min_max(instruction, true);
       return Action::keep_going;
@@ -626,7 +626,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::keep_going;
     }
     if ((instruction & 0x7fe0'f000U) == 0x1ac0'6000U) {
-      if (!host_capabilities().cssc())
+      if (!host_capabilities().cssc)
         return Action::unsupported;
       emit_integer_min_max(instruction, false);
       return Action::keep_going;
@@ -827,7 +827,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
                                  resulting_count);
         return Action::terminate;
       }
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_integer_reduce(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1145,7 +1145,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;
       }
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_extract(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1336,7 +1336,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
                                  resulting_count);
         return Action::terminate;
       }
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_two_register_integer(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1357,7 +1357,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
                                  resulting_count);
         return Action::terminate;
       }
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_unsigned_estimate(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1444,7 +1444,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;
       }
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_three_same_integer(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1457,7 +1457,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;
       }
-      if (!host_capabilities().advanced_simd())
+      if (!host_capabilities().advanced_simd)
         return Action::unsupported;
       emit_simd_modified_immediate(instruction, decoded->action != 0U);
       return Action::keep_going;
@@ -1471,7 +1471,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;
       }
-      if (!host_capabilities().advanced_simd())
+      if (!host_capabilities().advanced_simd)
         return Action::unsupported;
       emit_simd_duplicate_general(instruction);
       return Action::keep_going;
@@ -1487,7 +1487,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;
       }
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_insert(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1507,7 +1507,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;
       }
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_duplicate_element(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1532,7 +1532,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
                                  resulting_count);
         return Action::terminate;
       }
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_bit_unary(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1548,7 +1548,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;
       }
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_shift_left_long(instruction))
         return Action::unsupported;
       return Action::keep_going;
@@ -1590,7 +1590,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           opcode == 8U || opcode == 9U || (opcode == 10U && !alternate);
       const bool valid_shape =
           (!scalar || size == 3U) && (scalar || q || size != 3U);
-      if (!valid_opcode || !valid_shape || !host_capabilities().advanced_simd()) {
+      if (!valid_opcode || !valid_shape || !host_capabilities().advanced_simd) {
         store_pc(pc);
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;
@@ -1613,7 +1613,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         simd_general_opcode == 0x9eae'0000U ||
         simd_general_opcode == 0x9eaf'0000U;
     if (simd_general_class) {
-      if (!host_capabilities().advanced_simd() ||
+      if (!host_capabilities().advanced_simd ||
           !emit_simd_general_move(instruction)) {
         store_pc(pc);
         emitter_.return_constant(Event::illegal_instruction, resulting_count);

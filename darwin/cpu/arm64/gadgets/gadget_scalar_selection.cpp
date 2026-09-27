@@ -1730,7 +1730,7 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 [[nodiscard]] Gadget bit_reverse_count_gadget(bool is_64_bit,
 	unsigned operation) noexcept
 {
-	const bool native = operation >= 6U && host_capabilities().cssc();
+	const bool native = operation >= 6U && host_capabilities().cssc;
 	if (is_64_bit) {
 		switch (operation) {
 		case 0: return uml_arm64_gadget_bit_reverse_count_x_rbit;

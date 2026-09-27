@@ -157,7 +157,7 @@ void remaining_floating_families_name_resident_vectors_directly() {
 
 void remaining_simd_arithmetic_families_name_resident_vectors_directly() {
   const auto &host = ::uml::platform::apple::probed_host_capabilities();
-  if (!host.advanced_simd())
+  if (!host.advanced_simd)
     return;
 
   require_direct_three_vector_operation(
@@ -173,7 +173,7 @@ void remaining_simd_arithmetic_families_name_resident_vectors_directly() {
       "vector permute", 0x4e00'2800U,
       code_base + 0x2c'000U);
 
-  if (host.floating_point())
+  if (host.floating_point)
     require_direct_three_vector_operation(
         "word indexed floating accumulator", 0x4f80'1000U,
         code_base + 0x2d'000U);
@@ -191,7 +191,7 @@ void remaining_simd_arithmetic_families_name_resident_vectors_directly() {
         "bfloat matrix accumulator", 0x6e40'ec00U,
         code_base + 0x31'000U);
   }
-  if (host.has(::uml::cpu::ArmFeature::f16f32dot) && host.afp()) {
+  if (host.has(::uml::cpu::ArmFeature::f16f32dot) && host.afp) {
     require_direct_three_vector_operation(
         "half vector dot accumulator", 0x4e80'fc00U,
         code_base + 0x32'000U);
@@ -199,11 +199,11 @@ void remaining_simd_arithmetic_families_name_resident_vectors_directly() {
         "half indexed dot accumulator", 0x4f40'9000U,
         code_base + 0x33'000U);
   }
-  if (host.has(::uml::cpu::ArmFeature::fhm) && host.afp())
+  if (host.has(::uml::cpu::ArmFeature::fhm) && host.afp)
     require_direct_three_vector_operation(
         "half vector fused-long accumulator", 0x4e20'ec00U,
         code_base + 0x34'000U);
-  if (host.has(::uml::cpu::ArmFeature::f16f32mm) && host.afp())
+  if (host.has(::uml::cpu::ArmFeature::f16f32mm) && host.afp)
     require_direct_three_vector_operation(
         "half widening matrix accumulator", 0x4e40'ec00U,
         code_base + 0x35'000U);
@@ -289,17 +289,17 @@ void require_restricted_element_operation(std::string_view name,
 
 void restricted_element_families_use_the_low_resident_bank() {
   const auto &host = ::uml::platform::apple::probed_host_capabilities();
-  if (!host.advanced_simd())
+  if (!host.advanced_simd)
     return;
 
   require_restricted_element_operation(
       "halfword indexed integer accumulator", 0x6f40'0000U,
       code_base + 0x3a'000U);
-  if (host.fp16() && host.floating_point())
+  if (host.fp16 && host.floating_point)
     require_restricted_element_operation(
         "half indexed floating accumulator", 0x4f00'1000U,
         code_base + 0x3b'000U);
-  if (host.has(::uml::cpu::ArmFeature::fhm) && host.afp())
+  if (host.has(::uml::cpu::ArmFeature::fhm) && host.afp)
     require_restricted_element_operation(
         "half indexed fused-long accumulator", 0x4f80'0000U,
         code_base + 0x3c'000U);
@@ -322,7 +322,7 @@ void restricted_element_families_use_the_low_resident_bank() {
 }
 
 void constrained_frequency_selects_two_stable_pins() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
     return;
 
   constexpr std::uint32_t operand_mask =
@@ -367,7 +367,7 @@ void constrained_frequency_selects_two_stable_pins() {
 }
 
 void constrained_pin_is_visible_to_an_earlier_producer() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
     return;
 
   constexpr auto producer = bitwise(4U, 9U, 1U, 2U);
@@ -407,7 +407,7 @@ void constrained_pin_is_visible_to_an_earlier_producer() {
 }
 
 void third_constrained_identity_uses_q2_when_high_bank_is_full() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
     return;
 
   constexpr std::uint32_t constrained_mask =
@@ -448,7 +448,7 @@ void third_constrained_identity_uses_q2_when_high_bank_is_full() {
 }
 
 void constrained_planning_stops_at_a_terminal() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
     return;
 
   constexpr std::uint32_t constrained_mask =
@@ -480,7 +480,7 @@ void constrained_planning_stops_at_a_terminal() {
 }
 
 void future_constrained_word_does_not_expand_a_terminal_prefix() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
     return;
 
   constexpr auto ordinary = bitwise(4U, 9U, 1U, 2U);

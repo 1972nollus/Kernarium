@@ -75,7 +75,7 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 		/* ID_AA64PFR0_EL1. An FP or AdvSIMD field of zero already means
 		 * "implemented"; one additionally means half precision. */
 		std::uint64_t value = 0;
-		if (host.fp16())
+		if (host.fp16)
 			value |= field(1, 16) | field(1, 20);
 		if (host.has(ArmFeature::dit))
 			value |= field(1, 48);
@@ -84,19 +84,19 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 	if (group == 6U && selector == 0U) {
 		/* ID_AA64ISAR0_EL1. */
 		std::uint64_t value = 0;
-		if (host.aes())
-			value |= field(host.pmull() ? 2 : 1, 4);
-		if (host.sha1())
+		if (host.aes)
+			value |= field(host.pmull ? 2 : 1, 4);
+		if (host.sha1)
 			value |= field(1, 8);
-		if (host.sha2() || host.sha512())
-			value |= field(host.sha512() ? 2 : 1, 12);
-		if (host.crc32())
+		if (host.sha2 || host.sha512)
+			value |= field(host.sha512 ? 2 : 1, 12);
+		if (host.crc32)
 			value |= field(1, 16);
 		if (host.has(ArmFeature::lse))
 			value |= field(2, 20);
 		if (host.has(ArmFeature::rdm))
 			value |= field(1, 28);
-		if (host.sha3())
+		if (host.sha3)
 			value |= field(1, 32);
 		if (host.has(ArmFeature::dotprod))
 			value |= field(1, 44);

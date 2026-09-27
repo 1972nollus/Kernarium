@@ -185,7 +185,7 @@ void translation_selects_every_shape_and_direct_offset()
 		test::engine_tests::engine_test_code_base;
 	constexpr std::array code_tail{std::uint32_t{0xd400'0001U}};
 	const unsigned host_variant =
-		::uml::platform::apple::probed_host_capabilities().afp() ? 0U : 1U;
+		::uml::platform::apple::probed_host_capabilities().afp ? 0U : 1U;
 	std::set<std::uintptr_t> selected;
 	std::set<std::uintptr_t> expected;
 	test::for_each_form([&](const test::Form &form) {

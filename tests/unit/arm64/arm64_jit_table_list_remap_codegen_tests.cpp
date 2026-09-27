@@ -116,7 +116,7 @@ count_if(std::span<const std::uint32_t> words,
 }
 
 void single_four_member_list_is_planned() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
     return;
   constexpr auto target = table_lookup(false, 4U, 0U, 1U, 5U);
   constexpr std::array guest{target};
@@ -138,7 +138,7 @@ void single_four_member_list_is_planned() {
 }
 
 void interleaved_members_are_prebound_before_first_use() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
     return;
   constexpr auto target = table_lookup(false, 4U, 0U, 1U, 5U);
   constexpr std::array guest{
@@ -183,7 +183,7 @@ void interleaved_members_are_prebound_before_first_use() {
 }
 
 void wrapped_aliases_use_one_consecutive_native_list() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
     return;
   constexpr auto target = table_lookup(true, 4U, 31U, 31U, 0U);
   constexpr std::array guest{target};
@@ -204,7 +204,7 @@ void wrapped_aliases_use_one_consecutive_native_list() {
 }
 
 void independent_lists_receive_disjoint_runs() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
     return;
   constexpr auto first_target =
       table_lookup(false, 4U, 0U, 1U, 5U);
@@ -235,7 +235,7 @@ void independent_lists_receive_disjoint_runs() {
 
 void two_member_lut_is_planned() {
   const auto &host = ::uml::platform::apple::probed_host_capabilities();
-  if (!host.advanced_simd() ||
+  if (!host.advanced_simd ||
       !host.has(::uml::cpu::ArmFeature::lut))
     return;
   constexpr auto target = two_table_lut(0U, 1U, 3U);
@@ -254,7 +254,7 @@ void two_member_lut_is_planned() {
 }
 
 void planning_stops_at_a_translated_terminal() {
-  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd())
+  if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
     return;
   constexpr auto ordinary = bitwise_xor(0U, 1U, 2U);
   constexpr std::uint32_t system_call = 0xd400'0001U;

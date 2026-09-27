@@ -662,7 +662,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] Gadget floating_to_integer_gadget(
 	const detail::FloatingToIntegerDecode &decoded, bool discard) noexcept
 {
-	if (decoded.source_width == 16U && !host_capabilities().fp16())
+	if (decoded.source_width == 16U && !host_capabilities().fp16)
 		return uml_arm64_gadget_floating_to_integer_software_fallback;
 	const auto fixed_table_entry = [](Gadget begin, Gadget end,
 		unsigned count, unsigned index) noexcept {
@@ -825,7 +825,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		decoded.integer_width != decoded.destination_width;
 	const auto &host = host_capabilities();
 	if ((cross_width && !host.has(ArmFeature::fprcvt)) ||
-	    (!cross_width && decoded.destination_width == 16U && !host.fp16()))
+	    (!cross_width && decoded.destination_width == 16U && !host.fp16))
 		return uml_arm64_gadget_integer_to_floating_software_fallback;
 	const auto fixed_table_entry = [](Gadget begin, Gadget end,
 		unsigned count, unsigned index) noexcept {
