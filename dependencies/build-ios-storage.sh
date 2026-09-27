@@ -155,11 +155,12 @@ build_slice()
 	ar=$($XCRUN --sdk "$sdk_name" --find ar)
 	ranlib=$($XCRUN --sdk "$sdk_name" --find ranlib)
 
+	# Makefile.kernarium adds the file-only define, the language standard
+	# and hidden visibility itself.
 	"$MAKE" -C "$SOURCE" -f Makefile.kernarium \
 		BUILD_DIR="$build_dir" LIBRARY="$library" \
 		CXX="$cxx" AR="$ar" RANLIB="$ranlib" \
-		CPPFLAGS=-DKERNARIUM_GPTFDISK_FILE_ONLY=1 \
-		CXXFLAGS="-target $target -isysroot $sdk_root -O2 -fPIC -fvisibility=hidden -ffunction-sections -fdata-sections -std=c++17 -Wall -Wextra -Werror" \
+		CXXFLAGS="-target $target -isysroot $sdk_root -O2 -fPIC -ffunction-sections -fdata-sections -Wall -Wextra -Werror" \
 		-j "$JOBS"
 	mkdir -p -- "$framework/Headers" "$framework/Modules"
 	cp "$library" "$framework/GPTFDisk"
