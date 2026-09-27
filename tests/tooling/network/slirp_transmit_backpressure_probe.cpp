@@ -6,6 +6,7 @@
  * makes a full ring deterministic.
  */
 #include "provider.hpp"
+#include "uml_slirp_net.h"
 
 #include <array>
 #include <atomic>
@@ -14,14 +15,6 @@
 #include <cstdio>
 #include <errno.h>
 #include <thread>
-
-extern "C" int uml_slirp_net_open(
-	void *, unsigned char mac[6], unsigned int *mtu);
-extern "C" int uml_slirp_net_write(
-	void *, const void *buffer, size_t length);
-extern "C" void uml_slirp_net_stop(void *);
-extern "C" void *uml_slirp_net_create(void) noexcept;
-extern "C" void uml_slirp_net_destroy(void *) noexcept;
 
 namespace {
 

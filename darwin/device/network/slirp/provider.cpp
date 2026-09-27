@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "provider.hpp"
+#include "uml_slirp_net.h"
 
 #include <arpa/inet.h>
 #include <cerrno>
@@ -592,12 +593,12 @@ extern "C" void uml_slirp_net_stop(void *context)
 		static_cast<uml::network::SlirpProvider *>(context)->stop();
 }
 
-extern "C" void *uml_slirp_net_create(void) noexcept
+extern "C" void *uml_slirp_net_create(void)
 {
 	return new (std::nothrow) uml::network::SlirpProvider;
 }
 
-extern "C" void uml_slirp_net_destroy(void *context) noexcept
+extern "C" void uml_slirp_net_destroy(void *context)
 {
 	delete static_cast<uml::network::SlirpProvider *>(context);
 }

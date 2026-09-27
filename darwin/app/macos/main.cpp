@@ -16,6 +16,9 @@
 #include "profile_reporter.hpp"
 #include "sockets/socket_paths.hpp"
 #include "uml/emulator.h"
+#if UML_APP_HAS_SLIRP
+#include "uml_slirp_net.h"
+#endif
 
 #include <array>
 #include <cerrno>
@@ -44,16 +47,6 @@ extern const unsigned char uml_elf_start[]
 	__asm("section$start$__DATA$__uml_elf");
 extern const unsigned char uml_elf_end[]
 	__asm("section$end$__DATA$__uml_elf");
-#if UML_APP_HAS_SLIRP
-int uml_slirp_net_open(void *, unsigned char[6], unsigned int *);
-int uml_slirp_net_irq_fd(void *);
-int uml_slirp_net_read(void *, void *, std::size_t);
-int uml_slirp_net_write(void *, const void *, std::size_t);
-int uml_slirp_net_add_forward(void *, const char *);
-void uml_slirp_net_stop(void *);
-void *uml_slirp_net_create(void) noexcept;
-void uml_slirp_net_destroy(void *) noexcept;
-#endif
 }
 
 namespace {

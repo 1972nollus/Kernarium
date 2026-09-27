@@ -8,6 +8,7 @@ if(UML_BUILD_NETWORK_PROVIDER)
     target_include_directories(uml_network_provider_test_variant
         PUBLIC
             ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp
+            ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp/include
             ${PROJECT_SOURCE_DIR}/darwin/include
         PRIVATE
             ${PROJECT_SOURCE_DIR}/darwin/device/network)

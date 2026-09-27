@@ -23,6 +23,7 @@ if(UML_BUILD_NETWORK_PROVIDER)
     target_include_directories(uml_network_provider
         PUBLIC
             ${PROJECT_SOURCE_DIR}/darwin/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/slirp/include
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/slirp)

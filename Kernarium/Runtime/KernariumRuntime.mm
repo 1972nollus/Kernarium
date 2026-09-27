@@ -20,6 +20,7 @@
 #include "input/virtio/in_process_service.hpp"
 #include "block/android_boot.hpp"
 #include "uml/emulator.h"
+#include "uml_slirp_net.h"
 
 #import <Foundation/Foundation.h>
 #include <algorithm>
@@ -64,14 +65,6 @@ extern const unsigned char uml_elf_start[]
 extern const unsigned char uml_elf_end[]
     __asm("section$end$__DATA$__uml_elf");
 #endif
-int uml_slirp_net_open(void*, unsigned char[6], unsigned int*);
-int uml_slirp_net_irq_fd(void*);
-int uml_slirp_net_read(void*, void*, std::size_t);
-int uml_slirp_net_write(void*, const void*, std::size_t);
-int uml_slirp_net_add_forward(void*, const char*);
-void uml_slirp_net_stop(void*);
-void* uml_slirp_net_create(void) noexcept;
-void uml_slirp_net_destroy(void*) noexcept;
 }
 
 namespace {
