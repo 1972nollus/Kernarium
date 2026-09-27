@@ -62,6 +62,17 @@ hotplug, which reach no IPI boundary. A host stop skips Linux exitcalls, so the
 run end stops the RTC alarm helper itself. `guest-run-end-stop` stops guests
 throughout their boot and requires each run to end with no kernel thread left.
 
+A Darwin kernel stack trace walks the stack its starting stack pointer lies
+on: a task's own stack in guest memory or, on the current vCPU carrier, the
+carrier's native stack or the signal stack its interrupts run on. An
+interrupt's trace continues on the task stack it interrupted, a kernel fault's
+starts at the faulting instruction, and a blocked task's starts at the context
+it saved when it switched away. A task running on another vCPU still prints no
+trace. Every maintained kernel builds with frame pointers, so the walk
+follows frame records and every WARN, BUG and sysrq trace lists only reliable
+entries; they cost about 1% on the iPad. `guest-kernel-nofault` requires its
+sysrq t dump to list entries and to mark none of them unreliable (`?`).
+
 Both maintained kernel lines perform futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value
 observed by that operation, and wake-operation arithmetic retries competing
