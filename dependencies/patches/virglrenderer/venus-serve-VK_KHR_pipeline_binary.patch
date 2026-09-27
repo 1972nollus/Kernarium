@@ -51,13 +51,13 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  6 files changed, 191 insertions(+)
 
 diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
-index 7d6fb0f501a48c11c41aa7ced1686aef202a0f12..d84de61746ecaae1d0b1c4bd0052ecccf60a48ee 100644
+index 83b925ea665393b031c9196e9fdb187649bd12a6..6b1866d1394b2e7aa97ec72b88ca7cbdef6ccc57 100644
 --- a/src/venus/vkr_common.c
 +++ b/src/venus/vkr_common.c
-@@ -126,6 +126,7 @@ static const struct vn_info_extension_table vkr_extension_table = {
-    .KHR_maintenance8 = true,
+@@ -127,6 +127,7 @@ static const struct vn_info_extension_table vkr_extension_table = {
     .KHR_maintenance9 = true,
     .KHR_maintenance10 = true,
+    .KHR_maintenance11 = true,
 +   .KHR_pipeline_binary = true,
     .KHR_pipeline_library = true,
     .KHR_ray_query = true,

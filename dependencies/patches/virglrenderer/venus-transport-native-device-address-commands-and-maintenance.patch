@@ -9,8 +9,8 @@ Subject: [PATCH] venus: transport native device-address commands and
  meson_options.txt                      |   7 +
  src/venus/vkr_acceleration_structure.c |  12 +-
  src/venus/vkr_allocator.c              |   1 +
- src/venus/vkr_command_buffer.c         | 221 ++++++++++++++++++++++++-
- src/venus/vkr_common.c                 |   5 +-
+ src/venus/vkr_command_buffer.c         | 219 ++++++++++++++++++++++++-
+ src/venus/vkr_common.c                 |   3 +-
  src/venus/vkr_common.h                 |   2 +
  src/venus/vkr_context.c                |   2 +-
  src/venus/vkr_context.h                |   4 +-
@@ -31,7 +31,7 @@ Subject: [PATCH] venus: transport native device-address commands and
  src/venus/vkr_ring.c                   |   2 +-
  src/venus/vkr_ring.h                   |   2 +-
  src/venus/vkr_transport.c              |   4 +-
- 26 files changed, 330 insertions(+), 43 deletions(-)
+ 26 files changed, 334 insertions(+), 35 deletions(-)
 
 diff --git a/meson.build b/meson.build
 index ced2650e49382de395bd5db90b04c66b59daf803..96c8c887eb88c6f70c73a55e39a9a246622bc136 100644
@@ -204,10 +204,10 @@ index 47ec24022d88c315e200575bee56535ece0e23ca..e42935a0dc5da090ca24770cca2edb5e
  #include "vulkan/vulkan.h"
  
 diff --git a/src/venus/vkr_command_buffer.c b/src/venus/vkr_command_buffer.c
-index 766c5c7184f3221770fcbd83bf4dbad322e73612..146a047e97fd6702fd665ebd3305435030e4c98f 100644
+index 766c5c7184f3221770fcbd83bf4dbad322e73612..d47214b1b2873683764124e3d871e1ec88fbfe2b 100644
 --- a/src/venus/vkr_command_buffer.c
 +++ b/src/venus/vkr_command_buffer.c
-@@ -1268,18 +1268,181 @@ vkr_dispatch_vkCmdPushDataEXT(UNUSED struct vn_dispatch_context *dispatch,
+@@ -1268,12 +1268,183 @@ vkr_dispatch_vkCmdPushDataEXT(UNUSED struct vn_dispatch_context *dispatch,
  }
  
  static void
@@ -220,10 +220,7 @@ index 766c5c7184f3221770fcbd83bf4dbad322e73612..146a047e97fd6702fd665ebd33054350
     VKR_CMD_CALL(CmdEndRendering2KHR, args, args->pRenderingEndInfo);
  }
  
- static void
--vkr_dispatch_vkCmdSetPrimitiveRestartIndexEXT(
--   UNUSED struct vn_dispatch_context *ctx,
--   struct vn_command_vkCmdSetPrimitiveRestartIndexEXT *args)
++static void
 +vkr_dispatch_vkCmdBindIndexBuffer3KHR(
 +   UNUSED struct vn_dispatch_context *dispatch,
 +   struct vn_command_vkCmdBindIndexBuffer3KHR *args)
@@ -327,8 +324,7 @@ index 766c5c7184f3221770fcbd83bf4dbad322e73612..146a047e97fd6702fd665ebd33054350
 +vkr_dispatch_vkCmdDrawIndexedIndirectCount2KHR(
 +   UNUSED struct vn_dispatch_context *dispatch,
 +   struct vn_command_vkCmdDrawIndexedIndirectCount2KHR *args)
- {
--   VKR_CMD_CALL(CmdSetPrimitiveRestartIndexEXT, args, args->primitiveRestartIndex);
++{
 +   VKR_CMD_CALL(CmdDrawIndexedIndirectCount2KHR, args, args->pInfo);
 +}
 +
@@ -392,10 +388,12 @@ index 766c5c7184f3221770fcbd83bf4dbad322e73612..146a047e97fd6702fd665ebd33054350
 +   struct vn_command_vkCmdDrawMeshTasksIndirectCount2EXT *args)
 +{
 +   VKR_CMD_CALL(CmdDrawMeshTasksIndirectCount2EXT, args, args->pInfo);
- }
- 
- void
-@@ -1538,6 +1701,50 @@ vkr_context_init_command_buffer_dispatch(struct vkr_context *ctx)
++}
++
+ static void
+ vkr_dispatch_vkCmdSetPrimitiveRestartIndexEXT(
+    UNUSED struct vn_dispatch_context *ctx,
+@@ -1538,6 +1709,50 @@ vkr_context_init_command_buffer_dispatch(struct vkr_context *ctx)
     dispatch->dispatch_vkCmdDrawMeshTasksIndirectCountEXT =
        vkr_dispatch_vkCmdDrawMeshTasksIndirectCountEXT;
  
@@ -446,15 +444,8 @@ index 766c5c7184f3221770fcbd83bf4dbad322e73612..146a047e97fd6702fd665ebd33054350
     /* VK_EXT_descriptor_heap */
     dispatch->dispatch_vkCmdBindSamplerHeapEXT = vkr_dispatch_vkCmdBindSamplerHeapEXT;
     dispatch->dispatch_vkCmdBindResourceHeapEXT = vkr_dispatch_vkCmdBindResourceHeapEXT;
-@@ -1547,6 +1754,4 @@ vkr_context_init_command_buffer_dispatch(struct vkr_context *ctx)
-    dispatch->dispatch_vkCmdEndRendering2KHR = vkr_dispatch_vkCmdEndRendering2KHR;
- 
-    /* VK_EXT_primitive_restart_index */
--   dispatch->dispatch_vkCmdSetPrimitiveRestartIndexEXT =
--      vkr_dispatch_vkCmdSetPrimitiveRestartIndexEXT;
- }
 diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
-index 0a5c9e8cdb1625216b8d48a3e591df2fa339e8c0..0694d4ca7d8b7a6c0cd3f0880e6328bc21e4c748 100644
+index 0a5c9e8cdb1625216b8d48a3e591df2fa339e8c0..d156682bf26689a8764611473e983e72c8fb5cf1 100644
 --- a/src/venus/vkr_common.c
 +++ b/src/venus/vkr_common.c
 @@ -9,7 +9,7 @@
@@ -474,16 +465,6 @@ index 0a5c9e8cdb1625216b8d48a3e591df2fa339e8c0..0694d4ca7d8b7a6c0cd3f0880e6328bc
     .KHR_external_fence_fd = true,
     .KHR_external_memory_fd = true,
     .KHR_external_semaphore_fd = true,
-@@ -123,9 +124,7 @@ static const struct vn_info_extension_table vkr_extension_table = {
-    .KHR_fragment_shading_rate = true,
-    .KHR_maintenance7 = true,
-    .KHR_maintenance8 = true,
--   .KHR_maintenance9 = true,
-    .KHR_maintenance10 = true,
--   .KHR_maintenance11 = true,
-    .KHR_pipeline_library = true,
-    .KHR_ray_query = true,
-    .KHR_ray_tracing_maintenance1 = true,
 diff --git a/src/venus/vkr_common.h b/src/venus/vkr_common.h
 index 00a42529070517976d00235ed48d3e8a6143258b..439b36d32e4989b25ee87ec3bf523a76b9f7f122 100644
 --- a/src/venus/vkr_common.h
