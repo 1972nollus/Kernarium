@@ -183,7 +183,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_gallium_dependency: bool = False,
                           retired_egl_library: bool = False,
                           retired_dri_driver: bool = False,
-                          vendor_egl_property: bool = False,
+                          vendor_hal_property: str | None = None,
                           system_other: bool = False,
                           missing_sdk_apex: bool = False,
                           removed_payload: bool = False,
@@ -442,8 +442,12 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                 archive.writestr(
                     "VENDOR/build.prop",
-                    "ro.hardware.vulkan=virtio\n"
-                    + ("ro.hardware.egl=kernarium\n" if vendor_egl_property else ""),
+                    "ro.vendor.build.fingerprint=kernarium\n"
+                    + (
+                        f"ro.hardware.{vendor_hal_property}=selected\n"
+                        if vendor_hal_property
+                        else ""
+                    ),
                 )
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
@@ -522,7 +526,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("gallium-dependency", {"missing_gallium_dependency": True}),
             ("retired-egl-library", {"retired_egl_library": True}),
             ("retired-dri-driver", {"retired_dri_driver": True}),
-            ("vendor-egl-property", {"vendor_egl_property": True}),
+            ("vendor-egl-property", {"vendor_hal_property": "egl"}),
+            ("vendor-vulkan-property", {"vendor_hal_property": "vulkan"}),
+            ("vendor-gralloc-property", {"vendor_hal_property": "gralloc"}),
             ("system-other", {"system_other": True}),
             ("missing-sdk-apex", {"missing_sdk_apex": True}),
             ("removed-payload", {"removed_payload": True}),
@@ -552,9 +558,9 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 fail(f"target-files verifier accepted the {label} fixture")
 
 
-def verify_egl_selection(android_root: Path) -> None:
-    # The boot command line is ro.hardware.egl's one writer, so it must name
-    # the EGL libraries the target-files verifier requires.
+def verify_hal_selections(android_root: Path) -> None:
+    # The boot command line is the one writer of each graphics HAL selection,
+    # so it must name the modules the target-files verifier expects.
     spec = importlib.util.spec_from_file_location(
         "verify_target_files", android_root / "tools/verify-target-files.py"
     )
@@ -565,13 +571,18 @@ def verify_egl_selection(android_root: Path) -> None:
     command_line = (
         android_root / "support/boot/kernel-command-line.txt"
     ).read_text().split()
-    values = [
-        token.partition("=")[2]
-        for token in command_line
-        if token.partition("=")[0] == "androidboot.hardware.egl"
-    ]
-    if values != [verifier.MESA_EGL_SUFFIX]:
-        fail(f"boot command line selects EGL libraries {values}")
+    for name, expected in verifier.BOOT_HAL_SELECTIONS.items():
+        values = [
+            token.partition("=")[2]
+            for token in command_line
+            if token.partition("=")[0] == f"androidboot.hardware.{name}"
+        ]
+        if values != [expected]:
+            fail(f"boot command line selects {name} HAL {values}, not {expected}")
+    metadata = (android_root / "third_party/mesa-venus/metadata.env").read_text()
+    module = f"vulkan.{verifier.BOOT_HAL_SELECTIONS['vulkan']}"
+    if f"MESA_VENUS_HAL_MODULE='{module}'" not in metadata.splitlines():
+        fail(f"the Vulkan HAL selection does not name the Venus module {module}")
 
 
 def newc_entry(name: str, mode: int, payload: bytes, inode: int) -> bytes:
@@ -1150,7 +1161,7 @@ def main() -> None:
         check=True,
     )
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
-    verify_egl_selection(android_root)
+    verify_hal_selections(android_root)
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")
     verify_orangefox_recovery_fixtures(

@@ -356,6 +356,9 @@ resolve_series_layer()
 	esac
 	series_path="$series_owner/$series_relative"
 	verify_metadata_path "$series_path"
+	[ "${series_relative##*/}" = series.tsv ] ||
+		fail "$name patch series must name series.tsv files: $patch_series"
+	[ -f "$series_path" ] || fail "$name patch series is missing: $series_path"
 }
 
 # Sets SERIES_PATHS to the layers' series.tsv paths, one per line in
@@ -469,7 +472,8 @@ series_tool()
 }
 
 # A generated series records the tree it produces on the pinned commit. That
-# tree, not the patch bytes, identifies the prepared source.
+# tree, not the patch bytes, identifies the prepared source. Reading it checks
+# every layer's files.
 series_values()
 {
 	SERIES_COUNT=0
@@ -479,8 +483,8 @@ series_values()
 	SERIES_COUNT=$(printf '%s\n' "$SERIES_PATHS" | while IFS= read -r layer_path; do
 		awk -F '\t' '$1 == "patch" { count++ } END { print count + 0 }' "$layer_path"
 	done | awk '{ total += $1 } END { print total + 0 }')
-	SERIES_TREE=$(series_tool recorded-tree --series-dir "$(dirname -- "$series_path")") ||
-		fail "$name patch series records no tree"
+	SERIES_TREE=$(series_tool_layers recorded-tree) ||
+		fail "$name patch series is invalid: $patch_series"
 }
 
 # Runs the series tool with one --series-dir per layer, in order, after the
@@ -502,14 +506,6 @@ series_tool_layers()
 validate_series()
 {
 	[ "$patch_series" != '-' ] || return 0
-	resolve_series
-	printf '%s\n' "$SERIES_PATHS" | while IFS= read -r layer_path; do
-		[ "$(basename -- "$layer_path")" = series.tsv ] ||
-			fail "$name patch series must name series.tsv files: $patch_series"
-		[ -f "$layer_path" ] || fail "$name patch series is missing: $layer_path"
-		series_tool verify --series-dir "$(dirname -- "$layer_path")" ||
-			fail "$name patch series is invalid: $layer_path"
-	done || exit 1
 	series_values
 	[ "$SERIES_COUNT" -gt 0 ] || fail "$name patch series is empty"
 }

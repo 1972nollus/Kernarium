@@ -260,6 +260,18 @@ def run(scratch: Path) -> None:
     wrong = subprocess.run(verify + ["--expect-tree", base], capture_output=True, check=False)
     assert wrong.returncode == 1 and b"expected" in wrong.stderr, wrong.stderr
 
+    # recorded-tree checks every layer and prints the last one's tree.
+    recorded = [sys.executable, "-B", str(TOOL), "recorded-tree",
+                "--series-dir", str(common), "--series-dir", str(overlay)]
+    printed = subprocess.run(recorded, capture_output=True, check=False)
+    assert printed.returncode == 0 and printed.stdout.decode() == head_tree + "\n", printed
+    (common / "stray.patch").write_bytes(patch_series.ZERO_FROM)
+    stray = subprocess.run(recorded, capture_output=True, check=False)
+    assert stray.returncode == 1 and b"unlisted=['stray.patch']" in stray.stderr, stray.stderr
+    (common / "stray.patch").unlink()
+    treeless = subprocess.run(recorded[:-2], capture_output=True, check=False)
+    assert treeless.returncode == 1 and b"records no tree" in treeless.stderr, treeless.stderr
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
