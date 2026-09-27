@@ -83,11 +83,6 @@ constexpr std::uint32_t fp_exception_mask = 0xf800'009fU;
 	return (value & 0x7fff'ffffU) == 0x7f80'0000U;
 }
 
-[[nodiscard]] constexpr bool single_zero(std::uint32_t value) noexcept
-{
-	return (value & 0x7fff'ffffU) == 0U;
-}
-
 [[nodiscard]] constexpr bool single_subnormal(std::uint32_t value) noexcept
 {
 	return (value & 0x7f80'0000U) == 0U &&
