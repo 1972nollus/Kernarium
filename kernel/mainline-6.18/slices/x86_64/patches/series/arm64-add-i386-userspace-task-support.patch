@@ -244,10 +244,10 @@ index 57b834791c66f9c7bb1beae8cfceb212adf00b48..61a22bf85f676d1445d66d09f1da8e0b
  #define ELF_NGREG 27
  typedef elf_greg_t elf_gregset_t[ELF_NGREG];
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
-index 0348469704c29f40dd0671fb3dd4ccd5382e62c8..ce78a37990bdadb471bfdc2d0b3b46a30fc6a57f 100644
+index ae377e46d4142f49cda73371118e2172807c778c..2673eb7fe531dae40b5b733d43a02ffa87770075 100644
 --- a/arch/arm64/um/asm/ptrace.h
 +++ b/arch/arm64/um/asm/ptrace.h
-@@ -19,6 +19,12 @@ enum {
+@@ -21,6 +21,12 @@ enum {
  #define PT_REGS_ORIG_SYSCALL(state) ((state)->regs.orig_x0)
  #define PT_REGS_SYSCALL_RET(state) UPT_SYSCALL_RETURN(&(state)->regs)
  

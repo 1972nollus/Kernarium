@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yi Xie <imxieyi@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 05:31:40 +0900
+Subject: [PATCH] lkdtm: build the pointer-authentication test only for native
+ arm64
+
+CORRUPT_PAC calls the arm64 pointer-authentication key helpers, which
+exist only in the native architecture. User-Mode Linux on an arm64 host
+also defines CONFIG_ARM64, so LKDTM failed to build there. Exclude UML
+as the x86-only tests in the same file already do; the test then
+reports XFAIL like any other kernel without the feature.
+---
+ drivers/misc/lkdtm/bugs.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/misc/lkdtm/bugs.c b/drivers/misc/lkdtm/bugs.c
+index 376047beea3d64e63a9986ed715b1233d278717e..5ee04b110c2f55d8c91fa31d4fcc4d8c31f0b830 100644
+--- a/drivers/misc/lkdtm/bugs.c
++++ b/drivers/misc/lkdtm/bugs.c
+@@ -653,7 +653,7 @@ static void lkdtm_DOUBLE_FAULT(void)
+ #endif
+ }
+ 
+-#ifdef CONFIG_ARM64
++#if IS_ENABLED(CONFIG_ARM64) && !IS_ENABLED(CONFIG_UML)
+ static noinline void change_pac_parameters(void)
+ {
+ 	if (IS_ENABLED(CONFIG_ARM64_PTR_AUTH_KERNEL)) {
+@@ -666,7 +666,7 @@ static noinline void change_pac_parameters(void)
+ 
+ static noinline void lkdtm_CORRUPT_PAC(void)
+ {
+-#ifdef CONFIG_ARM64
++#if IS_ENABLED(CONFIG_ARM64) && !IS_ENABLED(CONFIG_UML)
+ #define CORRUPT_PAC_ITERATE	10
+ 	int i;
+ 

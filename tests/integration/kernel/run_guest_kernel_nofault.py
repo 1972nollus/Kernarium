@@ -9,6 +9,13 @@ read must fail quietly: the guest keeps running and the host reports no fault
 for it, since a recovered nofault read is expected kernel behaviour. A lost
 recovery point panics the guest instead. The kernel has no BPF tracing, so
 bpf_probe_read_kernel() cannot reach this path.
+
+The same dump checks the stack walker: a task blocked in the scheduler is
+walked from the context it saved, so the dump's Call Traces list entries. A
+walk bounded by the wrong stack prints every Call Trace empty. The kernel
+follows frame records, so no entry may be marked unreliable ("?"); a kernel
+without frame pointers would guess every one. The log buffer is enlarged so
+the dump cannot overwrite its own header.
 """
 
 from __future__ import annotations
@@ -39,7 +46,7 @@ def main() -> int:
         arguments.rootfs.resolve(),
         "1G",
         "tmpfs",
-        ("ncpus=2",),
+        ("ncpus=2", "log_buf_len=1M"),
         init_shell=True,
         engine=arguments.engine,
     ) as guest:
@@ -49,18 +56,33 @@ def main() -> int:
         dumped = guest.run_command(
             "echo 1 > /proc/sys/kernel/printk && echo t > /proc/sysrq-trigger && "
             "echo dumps=$(dmesg | grep -c 'sysrq: Show State') "
-            "workers=$(dmesg | grep -c ' task:kworker/')",
+            "workers=$(dmesg | grep -c ' task:kworker/') "
+            "traces=$(dmesg | grep -c 'Call Trace:') "
+            "entries=$(dmesg | grep -c -E '\\] +\\[<[0-9a-f]+>\\] ') "
+            "unreliable=$(dmesg | grep -c -E '\\] +\\[<[0-9a-f]+>\\] \\? ')",
             120,
         )
-        found = re.search(r"dumps=(\d+) workers=(\d+)", dumped.output)
-        dumps, workers = (int(found[1]), int(found[2])) if found else (0, 0)
+        found = re.search(
+            r"dumps=(\d+) workers=(\d+) traces=(\d+) entries=(\d+) "
+            r"unreliable=(\d+)", dumped.output)
+        dumps, workers, traces, entries, unreliable = (
+            tuple(int(found[index]) for index in range(1, 6))
+            if found else (0, 0, 0, 0, 0))
         # The emulator's stderr shares the console, so a host fault report
         # made during the dump lands inside the command's output.
         reports = len(re.findall(r"^Darwin POSIX ", dumped.output, re.MULTILINE))
         print(f"sysrq t ran {dumps} time(s), listed {workers} kernel workers "
+              f"with {entries} entries ({unreliable} unreliable) in {traces} "
+              f"Call Traces "
               f"and printed {reports} host fault report line(s)")
         if dumped.return_code != 0 or dumps != 1 or workers < 1:
             raise RuntimeError("sysrq t did not dump the kernel workers:\n"
+                               + dumped.output)
+        if traces < 1 or entries < 1:
+            raise RuntimeError("sysrq t printed only empty Call Traces:\n"
+                               + dumped.output)
+        if unreliable:
+            raise RuntimeError("sysrq t marked Call Trace entries unreliable:\n"
                                + dumped.output)
         if reports:
             raise RuntimeError("the host reported recovered nofault reads:\n"
