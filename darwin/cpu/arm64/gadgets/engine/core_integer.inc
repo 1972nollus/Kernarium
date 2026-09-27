@@ -25,6 +25,25 @@ _stream .req x28
 NAME(uml_arm64_gadget_\name):
 .endm
 
+/* Unreachable padding in place of a removed entry, or of a removed entry's
+ * forwarding variant, so every later entry keeps the address and 64-byte
+ * phase it was measured at. The size is the removed entry's distance to the
+ * next one. */
+.macro removed_gadget bytes
+	.p2align 4
+	.space \bytes
+.endm
+
+.macro removed_forward_gadget bytes
+#if __APPLE__
+	.pushsection __TEXT,__gadget_forward,regular,pure_instructions
+#else
+	.pushsection .text.gadget_forward,"ax"
+#endif
+	removed_gadget \bytes
+	.popsection
+.endm
+
 #include "scalar_contract.inc"
 #include "vector_contract.inc"
 
@@ -373,64 +392,20 @@ scalar_entry move_wide_constant, 0, 0, scalar_offset0, scalar_none, scalar_none,
 	str _scalar_x11, [x13, x8]
 	next_gadget
 
-/* MOVK keeps only Rd and imm16 in the stream. Width and halfword position are
- * separate entries; invalid 32-bit halfwords and XZR were rejected/folded by
- * the translator. */
-/* BFI is exactly MOVK's semantics: insert 16 bits at a fixed position, leave
- * the rest. The mask-shift-clear-insert sequence it replaces was three to five
- * instructions with a bic->orr dependency three deep. For the 32-bit entries it
- * also subsumes the zero-extend, because BFI on a w register writes bits 63:32
- * as zero on its own.
- *
- * The trailing .space keeps every later gadget at the address and 64-byte phase
- * it had before, so this is measured against an otherwise identical bank - the
- * G96 rule, after G17 and G36 were discarded for what turned out to be layout
- * movement. Removing the padding to collect the I-cache saving is a separate
- * trial with its own measurement. */
-.macro move_wide_keep bits64, shift, suffix, forward=0
-	.set .Lsd\@, scalar_register0
-	.set .Lsn\@, scalar_register0
-scalar_entry move_wide_keep_\suffix, \forward, 0, .Lsd\@, .Lsn\@, scalar_none, scalar_none, 1
-	ldr x8, [_stream], #8
-	and w9, w8, #0x1f
-	ubfx x11, x8, #8, #16
-	add x13, _cpu, #UML_GADGET_CPU_X0
-	.if \forward & 1
-	mov _scalar_x14, x0
-	.else
-	ldr _scalar_x14, [x13, x9, lsl #3]
-	.endif
-	.if \bits64
-	bfi _scalar_x14, x11, #\shift, #16
-	.else
-	bfi _scalar_w14, w11, #\shift, #16
-	.endif
-	str _scalar_x14, [x13, x9, lsl #3]
-	next_gadget
-	.if \bits64
-		.if \shift
-	.space 16
-		.else
-	.space 8
-		.endif
-	.else
-		.if \shift
-	.space 20
-		.else
-	.space 12
-		.endif
-	.endif
-	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, move_wide_keep, \bits64, \shift, \suffix
-.endm
-
-move_wide_keep 0, 0, w0
-move_wide_keep 0, 16, w1
-move_wide_keep 1, 0, x0
-move_wide_keep 1, 16, x1
-move_wide_keep 1, 32, x2
-move_wide_keep 1, 48, x3
-
-.purgem move_wide_keep
+/* Unreachable padding where the ordinary MOVK entries and their forwarding
+ * variants were: every MOVK takes the in-place family, which bakes Rd. */
+removed_gadget 48	/* move_wide_keep_w0 */
+removed_gadget 64	/* move_wide_keep_w1 */
+removed_gadget 48	/* move_wide_keep_x0 */
+removed_gadget 64	/* move_wide_keep_x1 */
+removed_gadget 64	/* move_wide_keep_x2 */
+removed_gadget 64	/* move_wide_keep_x3 */
+removed_forward_gadget 48
+removed_forward_gadget 64
+removed_forward_gadget 48
+removed_forward_gadget 64
+removed_forward_gadget 64
+removed_forward_gadget 64
 
 /* Production ADD/SUB-immediate entries.  Width, operation, flag update and
  * both architectural register-31 meanings are fixed by the translator.  The

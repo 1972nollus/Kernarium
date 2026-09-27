@@ -14,11 +14,13 @@ namespace arm64 = uml::cpu::arm64;
 namespace gadgets = uml::cpu::arm64::gadgets;
 
 extern "C" {
+#define DECLARE_ZERO_UNSIGNED(name) \
+	void uml_arm64_gadget_##name##_z(); \
+	void uml_arm64_gadget_##name##_z_sp();
 #define DECLARE_UNSIGNED(name) \
 	void uml_arm64_gadget_##name##_r(); \
-	void uml_arm64_gadget_##name##_z(); \
 	void uml_arm64_gadget_##name##_r_sp(); \
-	void uml_arm64_gadget_##name##_z_sp();
+	DECLARE_ZERO_UNSIGNED(name)
 DECLARE_UNSIGNED(store8_unsigned_fast)
 DECLARE_UNSIGNED(load8_unsigned_fast)
 DECLARE_UNSIGNED(load8_signed_x_fast)
@@ -27,12 +29,13 @@ DECLARE_UNSIGNED(store16_unsigned_fast)
 DECLARE_UNSIGNED(load16_unsigned_fast)
 DECLARE_UNSIGNED(load16_signed_x_fast)
 DECLARE_UNSIGNED(load16_signed_w_fast)
-DECLARE_UNSIGNED(store32_unsigned_fast)
-DECLARE_UNSIGNED(load32_unsigned_fast)
+DECLARE_ZERO_UNSIGNED(store32_unsigned_fast)
+DECLARE_ZERO_UNSIGNED(load32_unsigned_fast)
 DECLARE_UNSIGNED(load32_signed_x_fast)
-DECLARE_UNSIGNED(store64_unsigned_fast)
-DECLARE_UNSIGNED(load64_unsigned_fast)
+DECLARE_ZERO_UNSIGNED(store64_unsigned_fast)
+DECLARE_ZERO_UNSIGNED(load64_unsigned_fast)
 #undef DECLARE_UNSIGNED
+#undef DECLARE_ZERO_UNSIGNED
 
 extern void (*const uml_arm64_gadget_scalar_unsigned_inplace_table[])();
 
@@ -90,6 +93,11 @@ struct GadgetRow final {
 		uml_arm64_gadget_##prefix##_##mode##_r_sp, \
 		uml_arm64_gadget_##prefix##_##mode##_z_sp}}
 #define UNSIGNED_CHOICES(name) BASE_CHOICES(name, fast)
+/* A word or doubleword register transfer has no shared entry; the
+ * translator bakes the register (unsigned_offset_entry). */
+#define ZERO_UNSIGNED_CHOICES(name) BaseChoices{ \
+	RegisterChoices{nullptr, uml_arm64_gadget_##name##_fast_z}, \
+	RegisterChoices{nullptr, uml_arm64_gadget_##name##_fast_z_sp}}
 #define OTHER_ADDRESS_CHOICES(name) AddressChoices{ \
 	BASE_CHOICES(scalar_other_##name, offset), \
 	BASE_CHOICES(scalar_other_##name, pre), \
@@ -99,6 +107,13 @@ struct GadgetRow final {
 	OTHER_ADDRESS_CHOICES(other_name), nullptr}
 #define LOAD_ROW(unsigned_name, other_name) GadgetRow{ \
 	UNSIGNED_CHOICES(unsigned_name), \
+	OTHER_ADDRESS_CHOICES(other_name), \
+	uml_arm64_gadget_scalar_other_##other_name##_post_suppress_r}
+#define ZERO_STORE_ROW(unsigned_name, other_name) GadgetRow{ \
+	ZERO_UNSIGNED_CHOICES(unsigned_name), \
+	OTHER_ADDRESS_CHOICES(other_name), nullptr}
+#define ZERO_LOAD_ROW(unsigned_name, other_name) GadgetRow{ \
+	ZERO_UNSIGNED_CHOICES(unsigned_name), \
 	OTHER_ADDRESS_CHOICES(other_name), \
 	uml_arm64_gadget_scalar_other_##other_name##_post_suppress_r}
 
@@ -111,16 +126,19 @@ const std::array<GadgetRow, test::variants.size()> rows{
 	LOAD_ROW(load16_unsigned, load16u),
 	LOAD_ROW(load16_signed_x, load16sx),
 	LOAD_ROW(load16_signed_w, load16sw),
-	STORE_ROW(store32_unsigned, store32),
-	LOAD_ROW(load32_unsigned, load32u),
+	ZERO_STORE_ROW(store32_unsigned, store32),
+	ZERO_LOAD_ROW(load32_unsigned, load32u),
 	LOAD_ROW(load32_signed_x, load32sx),
-	STORE_ROW(store64_unsigned, store64),
-	LOAD_ROW(load64_unsigned, load64u),
+	ZERO_STORE_ROW(store64_unsigned, store64),
+	ZERO_LOAD_ROW(load64_unsigned, load64u),
 };
 
+#undef ZERO_LOAD_ROW
+#undef ZERO_STORE_ROW
 #undef LOAD_ROW
 #undef STORE_ROW
 #undef OTHER_ADDRESS_CHOICES
+#undef ZERO_UNSIGNED_CHOICES
 #undef UNSIGNED_CHOICES
 #undef BASE_CHOICES
 #undef REGISTER_CHOICES
@@ -339,10 +357,14 @@ void hot_path_branch_audit()
 		const auto &row = rows[index];
 		for (unsigned transfer_zero = 0;
 		     transfer_zero < 2; ++transfer_zero) {
-			const auto unsigned_gpr =
-				row.unsigned_offset[0][transfer_zero];
-			const auto unsigned_sp =
-				row.unsigned_offset[1][transfer_zero];
+			/* The baked entries come from the same template, so
+			 * a representative register stands for its row. */
+			const auto unsigned_gpr = unsigned_offset_entry(
+				row.unsigned_offset[0][transfer_zero], index,
+				0U, transfer_zero, 5U);
+			const auto unsigned_sp = unsigned_offset_entry(
+				row.unsigned_offset[1][transfer_zero], index,
+				1U, transfer_zero, 5U);
 			test::require(
 				instruction_count(unsigned_gpr, tbi_state_load) == 1U &&
 				instruction_count(unsigned_sp, tbi_state_load) == 0U,

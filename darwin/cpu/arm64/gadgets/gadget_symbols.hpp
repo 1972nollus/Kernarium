@@ -7,12 +7,6 @@ namespace uml::cpu::arm64::gadgets::selection {
 
 extern "C" {
 void uml_arm64_gadget_move_wide_constant();
-void uml_arm64_gadget_move_wide_keep_w0();
-void uml_arm64_gadget_move_wide_keep_w1();
-void uml_arm64_gadget_move_wide_keep_x0();
-void uml_arm64_gadget_move_wide_keep_x1();
-void uml_arm64_gadget_move_wide_keep_x2();
-void uml_arm64_gadget_move_wide_keep_x3();
 #define UML_DECLARE_ADD_SUB_IMMEDIATE_MODES(prefix) \
 	void uml_arm64_gadget_add_sub_immediate_##prefix##_rr(); \
 	void uml_arm64_gadget_add_sub_immediate_##prefix##_rs(); \
@@ -1934,17 +1928,21 @@ void uml_arm64_gadget_csdb();
 void uml_arm64_gadget_dgh();
 void uml_arm64_gadget_clrbhb();
 void uml_arm64_gadget_nop();
-#define UML_DECLARE_SCALAR_UNSIGNED(name) \
+/* A word or doubleword register transfer takes the in-place family; only
+ * XZR keeps a shared entry. */
+#define UML_DECLARE_SCALAR_UNSIGNED_ZERO(name) \
+	void uml_arm64_gadget_##name##_z(); \
+	void uml_arm64_gadget_##name##_z_sp();
+UML_DECLARE_SCALAR_UNSIGNED_ZERO(load32_unsigned_fast)
+UML_DECLARE_SCALAR_UNSIGNED_ZERO(load64_unsigned_fast)
+UML_DECLARE_SCALAR_UNSIGNED_ZERO(store32_unsigned_fast)
+UML_DECLARE_SCALAR_UNSIGNED_ZERO(store64_unsigned_fast)
+#undef UML_DECLARE_SCALAR_UNSIGNED_ZERO
+#define UML_DECLARE_SCALAR_UNSIGNED_NARROW(name) \
 	void uml_arm64_gadget_##name##_r(); \
 	void uml_arm64_gadget_##name##_z(); \
 	void uml_arm64_gadget_##name##_r_sp(); \
 	void uml_arm64_gadget_##name##_z_sp();
-UML_DECLARE_SCALAR_UNSIGNED(load32_unsigned_fast)
-UML_DECLARE_SCALAR_UNSIGNED(load64_unsigned_fast)
-UML_DECLARE_SCALAR_UNSIGNED(store32_unsigned_fast)
-UML_DECLARE_SCALAR_UNSIGNED(store64_unsigned_fast)
-#define UML_DECLARE_SCALAR_UNSIGNED_NARROW(name) \
-	UML_DECLARE_SCALAR_UNSIGNED(name)
 UML_DECLARE_SCALAR_UNSIGNED_NARROW(load8_unsigned_fast)
 UML_DECLARE_SCALAR_UNSIGNED_NARROW(load16_unsigned_fast)
 UML_DECLARE_SCALAR_UNSIGNED_NARROW(load8_signed_w_fast)
@@ -1955,7 +1953,6 @@ UML_DECLARE_SCALAR_UNSIGNED_NARROW(load32_signed_x_fast)
 UML_DECLARE_SCALAR_UNSIGNED_NARROW(store8_unsigned_fast)
 UML_DECLARE_SCALAR_UNSIGNED_NARROW(store16_unsigned_fast)
 #undef UML_DECLARE_SCALAR_UNSIGNED_NARROW
-#undef UML_DECLARE_SCALAR_UNSIGNED
 #define UML_DECLARE_VECTOR_UNSIGNED(width) \
 	void uml_arm64_gadget_vector_load##width##_unsigned_fast(); \
 	void uml_arm64_gadget_vector_load##width##_unsigned_fast_sp(); \
