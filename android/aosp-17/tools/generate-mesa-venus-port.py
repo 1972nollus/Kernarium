@@ -35,14 +35,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/arti
 from contract_checks import parse_assignments  # noqa: E402
 
 PREFIX = "venus_"
-# The EGL and GLES libraries the Android EGL loader resolves through
-# ro.hardware.egl, by the names it looks for.
-GL_FRONT_ENDS = {
-    "libEGL_kernarium",
-    "libGLESv1_CM_kernarium",
-    "libGLESv2_kernarium",
-}
-KEEP = {"vulkan.virtio"} | GL_FRONT_ENDS
 REF_FIELDS = {
     "defaults",
     "header_libs",
@@ -332,13 +324,6 @@ def load(root: Path) -> list[Blueprint]:
     return [Blueprint(path) for path in bp_files(root)]
 
 
-def license_name(config: Path) -> str:
-    match = re.search(r'^license_name\s*=\s*"([^"]+)"', config.read_text(), re.M)
-    if match is None:
-        raise SystemExit("generate-mesa-venus-port.py: the port names no license")
-    return match.group(1)
-
-
 def resolve_source(directory: Path, entry: str) -> str | None:
     """A source path as it exists below its module's directory.
 
@@ -521,7 +506,7 @@ def repair_nativebase(blueprints: list[Blueprint]) -> int:
     return repaired
 
 
-def repair_install(blueprints: list[Blueprint]) -> int:
+def repair_install(blueprints: list[Blueprint], gl_front_ends: set[str]) -> int:
     """Install each shared library where the loader that opens it looks.
 
     The converter installs every shared library in hw/, which is right for a
@@ -541,7 +526,7 @@ def repair_install(blueprints: list[Blueprint]) -> int:
             if block_kind(block) != "cc_library_shared":
                 continue
             name = block_name(block)
-            if name in GL_FRONT_ENDS:
+            if name in gl_front_ends:
                 wanted = '"egl"'
             elif name in linked:
                 wanted = None
@@ -560,13 +545,34 @@ def repair_install(blueprints: list[Blueprint]) -> int:
     return repaired
 
 
-def repair(root: Path, config: Path) -> None:
+class Port:
+    """The parts of soong-port.toml this tool reads; the converter reads the rest."""
+
+    def __init__(self, config: Path, hal_module: str) -> None:
+        table = tomllib.loads(config.read_text())
+        license = table.get("copyright", {}).get("license_name")
+        if not isinstance(license, str) or not license:
+            raise SystemExit("generate-mesa-venus-port.py: the port names no license")
+        self.license = license
+        # The renamed targets keep their names unscoped: the HAL module that
+        # ro.hardware.vulkan names, and the EGL and GLES libraries the Android
+        # EGL loader resolves through ro.hardware.egl.
+        self.keep = set(table.get("target_renames", {}).values())
+        if hal_module not in self.keep:
+            raise SystemExit(
+                f"generate-mesa-venus-port.py: the port does not rename a target to {hal_module}"
+            )
+        self.gl_front_ends = self.keep - {hal_module}
+        self.warning_exceptions = warning_exceptions(table)
+
+
+def repair(root: Path, port: Port) -> None:
     blueprints = load(root)
-    python = repair_python(root, blueprints, license_name(config))
+    python = repair_python(root, blueprints, port.license)
     needed = repair_needed(blueprints)
     nativebase = repair_nativebase(blueprints)
-    installs = repair_install(blueprints)
-    warnings = repair_warnings(blueprints, warning_exceptions(config))
+    installs = repair_install(blueprints, port.gl_front_ends)
+    warnings = repair_warnings(blueprints, port.warning_exceptions)
     saved = sum(1 for bp in blueprints if bp.save())
     print(
         f"repaired {python} Python modules, {needed} disabled libraries, "
@@ -614,11 +620,9 @@ def verify_converter(android_root: Path, converter: Path) -> None:
         )
 
 
-def warning_exceptions(config: Path) -> list[dict[str, object]]:
+def warning_exceptions(table: dict[str, object]) -> list[dict[str, object]]:
     """The port's per-module warning exceptions, which the converter ignores."""
-    entries = tomllib.loads(config.read_text()).get("kernarium", {}).get(
-        "warning_exception", []
-    )
+    entries = table.get("kernarium", {}).get("warning_exception", [])
     for entry in entries:
         if not isinstance(entry.get("module"), str) or not entry.get("reason"):
             raise SystemExit(
@@ -715,14 +719,19 @@ def main() -> None:
         )
     if not args.dependencies.is_file():
         raise SystemExit("generate-mesa-venus-port.py: the dependency map is missing")
+    metadata = parse_assignments(
+        args.android_root / "third_party/mesa-venus/metadata.env",
+        lambda message: SystemExit(f"generate-mesa-venus-port.py: {message}"),
+    )
+    port = Port(args.config, metadata.get("MESA_VENUS_HAL_MODULE", ""))
     verify_converter(args.android_root, args.converter)
     convert(args)
-    repair(args.checkout, args.config)
-    scope(args.checkout)
+    repair(args.checkout, port)
+    scope(args.checkout, port.keep)
 
 
-def scope(root: Path) -> None:
-    names = {name for name in collect(root) if name not in KEEP}
+def scope(root: Path, keep: set[str]) -> None:
+    names = {name for name in collect(root) if name not in keep}
     already = {name for name in names if name.startswith(PREFIX)}
     if already:
         raise SystemExit(
