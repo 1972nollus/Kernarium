@@ -21,6 +21,12 @@ SPEC.loader.exec_module(run_guest_network_smoke)
 
 
 class FakeGuest:
+    def __enter__(self) -> FakeGuest:
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        self.close()
+
     def boot_to_shell(self, timeout: int) -> None:
         del timeout
 
