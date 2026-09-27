@@ -72,6 +72,54 @@ DisplayPoint guestPointFromPresentedPoint(
     return point;
 }
 
+std::optional<ScanoutSampling> scanoutSampling(
+    const ScanoutRegion& region) noexcept
+{
+    const auto fits = [](std::uint32_t offset,
+                          std::uint32_t length,
+                          std::uint32_t limit) {
+        return length != 0 &&
+            static_cast<std::uint64_t>(offset) + length <= limit;
+    };
+    if (region.source.width == 0 || region.source.height == 0 ||
+        region.texture.width < region.source.width ||
+        region.texture.height < region.source.height ||
+        !fits(region.x, region.width, region.source.width) ||
+        !fits(region.y, region.height, region.source.height)) {
+        return std::nullopt;
+    }
+    const double textureWidth = region.texture.width;
+    const double textureHeight = region.texture.height;
+    const double left = region.x;
+    const double right = left + region.width;
+    /* Texture rows holding the rectangle's top and bottom edges. A flipped
+     * source keeps its bottom row in texture row 0, so its top edge is the
+     * higher row. */
+    const double top = region.flipped ?
+        static_cast<double>(region.source.height) - region.y :
+        static_cast<double>(region.y);
+    const double bottom = region.flipped ?
+        top - region.height : top + region.height;
+    const double lowRow = std::min(top, bottom);
+    const double highRow = std::max(top, bottom);
+    return ScanoutSampling {
+        .content = {.width = region.width, .height = region.height},
+        .origin = {.x = left / textureWidth, .y = top / textureHeight},
+        .extent = {
+            .x = (right - left) / textureWidth,
+            .y = (bottom - top) / textureHeight,
+        },
+        .minimum = {
+            .x = (left + 0.5) / textureWidth,
+            .y = (lowRow + 0.5) / textureHeight,
+        },
+        .maximum = {
+            .x = (right - 0.5) / textureWidth,
+            .y = (highRow - 0.5) / textureHeight,
+        },
+    };
+}
+
 std::optional<ClippedDisplaySegment> clipDisplaySegment(
     AspectFitRectangle rectangle,
     DisplayPoint start,
