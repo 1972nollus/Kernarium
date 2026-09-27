@@ -185,6 +185,11 @@ Linux task contexts remain on guest kernel stacks and migrate between carriers;
 guest task creation does not create host threads. CPU hotplug reuses carriers,
 and shutdown returns to a native carrier stack before thread teardown.
 
+A host can call `exit()` while carriers still run, as an iOS application and
+an XCTest host do. The arm64 gadget contract indexes, the shared-backing
+state, and the active-access registry therefore have no exit-time destructor;
+`arm64-gadget-exit` keeps carriers using them through `exit()`.
+
 Carriers are named `uml-vcpu-N-carrier`. The kernels use a 100 Hz tick with
 `NO_HZ_IDLE` and high-resolution timers: the one-shot clock event records a
 per-CPU deadline that idle carriers wait on and busy carriers poll, so an
