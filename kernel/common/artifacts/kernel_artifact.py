@@ -759,8 +759,11 @@ def publish_artifact(
                     f"loadable module output is forbidden: {Path(root) / name}"
                 )
 
+    # A config check is cheap, so a wrong configuration fails before the copy.
+    # The image is checked once, as published, by verify_artifact below:
+    # stripping DWARF changes nothing verify_elf reads, and the unstripped
+    # build image carries the full DWARF.
     verify_config(source_paths["kernel/config"], page_size, kernel_slice)
-    verify_elf(source_paths["kernel/vmlinux"], page_size, common_root, kernel_slice)
     release = source_paths["kernel/kernel.release"].read_text(
         encoding="utf-8"
     ).strip()
