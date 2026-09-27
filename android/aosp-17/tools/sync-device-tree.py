@@ -96,6 +96,8 @@ def verify(source: Path, destination: Path, allow_kernel: bool) -> None:
 
 
 def synchronize(source: Path, destination: Path) -> None:
+    # copytree follows links, so reject a linked source entry before copying.
+    inventory(source)
     if destination.exists() or destination.is_symlink():
         if destination.is_symlink() or not destination.is_dir():
             fail(f"destination is not a regular directory: {destination}")
