@@ -39,6 +39,8 @@ namespace {
 constexpr EGLenum kClientApi = EGL_OPENGL_API;
 constexpr EGLint kRenderableType = EGL_OPENGL_BIT;
 constexpr const char* kProviderName = "Zink/KosmicKrisp";
+constexpr const char* kDriverOverrideVariable = "MESA_LOADER_DRIVER_OVERRIDE";
+constexpr const char* kDriverOverride = "zink";
 constexpr const char* kProviderMarker =
     "Virgl Zink/KosmicKrisp provider: hardware\n";
 
@@ -169,8 +171,15 @@ void* HostGlProvider::display() noexcept
         }
         // Mesa selects its Gallium driver from the process environment before
         // the display is created, and the packaged provider offers exactly one
-        // driver. Set it here rather than inheriting an ambient choice.
-        ::setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1);
+        // driver. Set it here rather than inheriting an ambient choice, but
+        // leave a value that already names it alone: another component may
+        // hold a copy of the environment taken earlier, and an application
+        // that has one sets this value at launch for that reason.
+        const char* driverOverride = std::getenv(kDriverOverrideVariable);
+        if (driverOverride == nullptr ||
+            std::string_view(driverOverride) != kDriverOverride) {
+            ::setenv(kDriverOverrideVariable, kDriverOverride, 1);
+        }
         const EGLDeviceEXT device = softwareDevice();
         if (device == EGL_NO_DEVICE_EXT)
             return nullptr;
