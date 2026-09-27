@@ -400,23 +400,6 @@ set_target_properties(uml_cpu_engine_factory PROPERTIES
 # OBJECT libraries avoid duplicate compilation, but CMake does not propagate
 # their contents transitively. These link components expose the supported
 # adapter graph for consumers that select one engine or the factory.
-add_library(uml_cpu_gadget_component INTERFACE)
-uml_declare_architecture_target(uml_cpu_gadget_component cpu gadget)
-target_link_libraries(uml_cpu_gadget_component INTERFACE
-    UML::CpuContract
-    UML::MemoryComponent)
-target_sources(uml_cpu_gadget_component INTERFACE
-    $<TARGET_OBJECTS:uml_arm64_gadget_engine>
-    $<TARGET_OBJECTS:uml_arm64_gadget_executor>
-    $<TARGET_OBJECTS:uml_arm64_gadgets>
-    $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-if(TARGET uml_x86_64_gadgets)
-    target_link_libraries(uml_cpu_gadget_component INTERFACE
-        UML::ThirdPartyCephes128)
-    target_sources(uml_cpu_gadget_component INTERFACE
-        $<TARGET_OBJECTS:uml_x86_64_gadgets>)
-endif()
-
 add_library(uml_cpu_jit_component INTERFACE)
 uml_declare_architecture_target(uml_cpu_jit_component cpu native)
 target_link_libraries(uml_cpu_jit_component INTERFACE
