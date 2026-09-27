@@ -276,12 +276,22 @@ KosmicKrisp on Metal, and the guest reaches the host ring through the kernel's
 vhost-user shared-memory aperture. The device always offers the Venus capset,
 blob resources, and that aperture; no runtime switch withholds them.
 
+Venus exposes KosmicKrisp's real version, extensions, features, properties,
+formats, queues, limits, and memory model, with no injected extension or forced
+version, and only what runs reliably through the whole guest-to-Metal path is
+advertised. No advertised capability depends on CPU shader interpretation, CPU
+rasterization, resource-sized steady-state copies, or readback-driven command
+decisions. Functionality Metal or KosmicKrisp cannot run reliably is reported
+unsupported instead, as `shaderFloat16` is below.
+
 That route makes no conformance claim. Support is asserted only by the
 receipt-bound guest CTS campaigns described in
 [`testing.md`](testing.md#graphics-conformance-campaigns), which bind a run to
 its sealed image receipt, its CTS and Mesa source locks, and the staged
 provider digest. Accepted `NotSupported`, warning, and `Waiver` results are not
-passes.
+passes. The last complete Vulkan CTS 1.4.6.2 campaign, on Mesa 26.2.1 in
+September 2026, ran all 16 fractions of the mandatory list with no disallowed
+result.
 
 ### Guest memory boundary
 
