@@ -2665,33 +2665,16 @@ floating_fused floating_nmsub_double, d0, d1, d2, d3, d, fnmsub
 
 .purgem floating_fused
 
-.macro simd_fused name, operation, arrangement, forward=0
-vector_entry simd_fused_\name, \forward, scalar_offset0, scalar_offset16, scalar_offset32, scalar_offset0, 1
-	ensure_fp_environment
-	ldr x11, [_stream], #8
-	unpack_u16_3 x11, x8, x9, x10
-	vector_read \forward, 1, q0, [_cpu, x9]
-	vector_read \forward, 2, q1, [_cpu, x10]
-	vector_read \forward, 4, q2, [_cpu, x8]
-	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
-	str q2, [_cpu, x8]
-	next_gadget
-	vector_variants \forward, scalar_offset16, scalar_offset32, scalar_offset0, simd_fused, \name, \operation, \arrangement
-.endm
-
-.macro simd_fused_shapes name, operation
-	simd_fused \name\()_4h, \operation, 4h
-	simd_fused \name\()_8h, \operation, 8h
-	simd_fused \name\()_2s, \operation, 2s
-	simd_fused \name\()_4s, \operation, 4s
-	simd_fused \name\()_2d, \operation, 2d
-.endm
-
-simd_fused_shapes fmla, fmla
-simd_fused_shapes fmls, fmls
-
-.purgem simd_fused_shapes
-.purgem simd_fused
+/* Unreachable padding where the ordinary vector FMLA/FMLS entries (4h, 8h,
+ * 2s, 4s and 2d of each) and their seven forwarding variants each were:
+ * FMLA/FMLS accumulate into Vd, so every one takes the in-place family,
+ * which bakes Vd. */
+.rept 10
+removed_gadget 64
+.endr
+.rept 70
+removed_vector_forward_gadget 64
+.endr
 
 /* Translation-specialized vector FABS/FNEG. Valid guest programs execute with
  * no opcode, precision, or Q decode branches. Only FPCR.AH selects the rare

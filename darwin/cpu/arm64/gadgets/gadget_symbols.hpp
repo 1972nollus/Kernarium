@@ -504,15 +504,6 @@ void uml_arm64_gadget_floating_nmadd_double();
 void uml_arm64_gadget_floating_nmsub_half();
 void uml_arm64_gadget_floating_nmsub_single();
 void uml_arm64_gadget_floating_nmsub_double();
-#define UML_DECLARE_SIMD_FUSED(operation) \
-	void uml_arm64_gadget_simd_fused_##operation##_4h(); \
-	void uml_arm64_gadget_simd_fused_##operation##_8h(); \
-	void uml_arm64_gadget_simd_fused_##operation##_2s(); \
-	void uml_arm64_gadget_simd_fused_##operation##_4s(); \
-	void uml_arm64_gadget_simd_fused_##operation##_2d();
-UML_DECLARE_SIMD_FUSED(fmla)
-UML_DECLARE_SIMD_FUSED(fmls)
-#undef UML_DECLARE_SIMD_FUSED
 #define UML_DECLARE_FLOATING_CONVERT(source, destination) \
 	void uml_arm64_gadget_floating_convert_##source##_to_##destination();
 UML_DECLARE_FLOATING_CONVERT(h, s)

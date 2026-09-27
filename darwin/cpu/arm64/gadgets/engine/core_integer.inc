@@ -44,6 +44,16 @@ NAME(uml_arm64_gadget_\name):
 	.popsection
 .endm
 
+.macro removed_vector_forward_gadget bytes
+#if __APPLE__
+	.pushsection __TEXT,__vector_forward,regular,pure_instructions
+#else
+	.pushsection .text.vector_forward,"ax"
+#endif
+	removed_gadget \bytes
+	.popsection
+.endm
+
 #include "scalar_contract.inc"
 #include "vector_contract.inc"
 
