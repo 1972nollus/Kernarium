@@ -20,10 +20,9 @@
 
 namespace uml::cpu::arm64::gadgets {
 
-/* Most translated streams are small, but a pmr::vector gives every one its
- * own pool allocation. Keep the common prefix in the Program itself and use
- * the same allocator, with the builder's former 34-word reservation, only
- * when a stream spills. */
+/* A translated stream's words: either a buffer of its own, taken from the
+ * given resource and grown from the builder's 34-word reservation, or words
+ * it borrows. */
 class ProgramWords final {
 public:
 	/* No words are kept inline. A measured browser-like guest translates a
