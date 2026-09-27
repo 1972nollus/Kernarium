@@ -33,8 +33,6 @@ static_assert(offsetof(CpuState, x87_control) == UML_X86_64_CPU_X87_CONTROL);
 static_assert(offsetof(CpuState, x87_status) == UML_X86_64_CPU_X87_STATUS);
 static_assert(offsetof(CpuState, x87_tag) == UML_X86_64_CPU_X87_TAG);
 static_assert(offsetof(CpuState, x87_top) == UML_X86_64_CPU_X87_TOP);
-static_assert(offsetof(CpuState, x87_reduced_precision) ==
-	UML_X86_64_CPU_X87_REDUCED_PRECISION);
 static_assert(offsetof(CpuState, system_call_32bit) ==
 	UML_X86_64_CPU_SYSTEM_CALL_32BIT);
 static_assert(offsetof(CpuState, execution_mode) ==

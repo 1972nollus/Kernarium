@@ -1034,6 +1034,50 @@ def collect_k_records(
     return records
 
 
+# FEX's configuration record: four u64 and three u32 header fields, then
+# offset/count pairs for memory regions, registers, memory data and the
+# environment, whose NUL-terminated key/value pairs end the record.
+FEX_CONFIG_HEADER_SIZE = 76
+FEX_CONFIG_ENVIRONMENT = 68
+FEX_REDUCED_PRECISION = b"FEX_X87REDUCEDPRECISION"
+
+
+def full_precision_config(config: bytes, source: str) -> bytes:
+    """Drop FEX's reduced-precision x87 request from one FEX configuration.
+
+    That mode makes FEX compute x87 in doubles; the engine has only full
+    80-bit x87. FEX's x86-64 host runner executes every ASM test natively,
+    where the request has no effect, so these programs' expected registers
+    are already full-precision hardware results and stay as they are.
+    """
+    if len(config) < FEX_CONFIG_HEADER_SIZE:
+        fail(f"FEX configuration header is truncated: {source}")
+    offset, count = struct.unpack_from("<II", config, FEX_CONFIG_ENVIRONMENT)
+    if not FEX_CONFIG_HEADER_SIZE <= offset <= len(config):
+        fail(f"FEX configuration environment is out of range: {source}")
+    entries: list[tuple[bytes, bytes]] = []
+    cursor = offset
+    for _ in range(count):
+        key_end = config.find(b"\0", cursor)
+        value_end = config.find(b"\0", key_end + 1) if key_end >= 0 else -1
+        if value_end < 0:
+            fail(f"FEX configuration environment is truncated: {source}")
+        entries.append((config[cursor:key_end], config[key_end + 1 : value_end]))
+        cursor = value_end + 1
+    if cursor != len(config):
+        fail(f"FEX configuration has bytes after its environment: {source}")
+    kept = [entry for entry in entries if entry[0] != FEX_REDUCED_PRECISION]
+    if len(kept) == len(entries):
+        return config
+    if any(value != b"1" for key, value in entries if key == FEX_REDUCED_PRECISION):
+        fail(f"unexpected FEX reduced-precision setting: {source}")
+    rebuilt = bytearray(config[:offset])
+    struct.pack_into("<II", rebuilt, FEX_CONFIG_ENVIRONMENT, offset, len(kept))
+    for key, value in kept:
+        rebuilt += key + b"\0" + value + b"\0"
+    return bytes(rebuilt)
+
+
 def collect_fex_records(
     corpus: pathlib.Path,
     llvm_mc: str,
@@ -1071,6 +1115,7 @@ def collect_fex_records(
         config = config_path.read_bytes()
         if sha256_bytes(code) != item["binary_sha256"] or sha256_bytes(config) != item["config_sha256"]:
             fail(f"FEX corpus hash mismatch: {source}")
+        config = full_precision_config(config, source)
         instructions = disassemble_raw(code, llvm_mc)
         reason = profile_exclusion(instructions)
         if reason is not None:

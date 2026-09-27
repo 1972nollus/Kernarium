@@ -230,7 +230,6 @@ struct Configuration final {
 	std::vector<MemoryData> memory_data;
 	uml::cpu::x86_64::ExecutionMode mode{
 		uml::cpu::x86_64::ExecutionMode::long64};
-	bool x87_reduced_precision{};
 };
 
 [[nodiscard]] bool range_valid(std::span<const std::byte> bytes,
@@ -371,8 +370,14 @@ template<std::unsigned_integral Value>
 			static_cast<std::size_t>(key_end - begin));
 		const std::string value(reinterpret_cast<const char *>(&*value_begin),
 			static_cast<std::size_t>(value_end - value_begin));
-		if (key == "FEX_X87REDUCEDPRECISION")
-			configuration.x87_reduced_precision = value != "0";
+		/* FEX's reduced-precision x87 mode computes in doubles; the
+		 * engine has only full 80-bit x87, so a case asking for it
+		 * could not mean what it says. */
+		if (key == "FEX_X87REDUCEDPRECISION" && value != "0") {
+			error = "FEX_X87REDUCEDPRECISION selects a reduced-precision "
+				"x87 mode the engine does not implement";
+			return false;
+		}
 		cursor = static_cast<std::size_t>(value_end - bytes.begin()) + 1U;
 	}
 	return true;
@@ -596,7 +601,6 @@ void print_result(std::string_view status, std::size_t retired,
 		cpu.segment_selectors[1] = 0x23;
 		cpu.segment_selectors[2] = 0x2b;
 	}
-	cpu.x87_reduced_precision = configuration.x87_reduced_precision;
 	std::size_t retired{};
 	while (retired < instruction_limit) {
 		const auto opcode = memory.snapshot(cpu.rip, 15);

@@ -107,7 +107,9 @@ struct CpuState final {
 	std::uint16_t x87_status{};
 	std::uint16_t x87_tag{0xffff};
 	std::uint8_t x87_top{};
-	bool x87_reduced_precision{};
+	/* Unused. It keeps system_call_32bit, execution_mode and every later
+	 * member at the offsets the gadget bank bakes in. */
+	std::uint8_t reserved{};
 	bool system_call_32bit{};
 	ExecutionMode execution_mode{ExecutionMode::long64};
 	/* PR_SET_TSC(PR_TSC_SIGSEGV): RDTSC and RDTSCP raise #GP. */
