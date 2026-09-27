@@ -26,13 +26,20 @@ the commit callback publishes a submission's report and the failure it
 carries in the same critical section. Otherwise a failing queue would
 look drained and healthy in between, and a later failing submission
 could find the earlier one's report already counted, retire the queue,
-clear its failure state, and let the first callback poison the queue
-that replaced it. The error is described before the lock is taken so
+clear its failure count, and let the first callback fail the queue that
+replaced it. The error is described before the lock is taken so
 nothing unbounded runs inside it.
+
+The timeout contract in kk_queue_error.h said a device survives a
+timeout because the queue keeps working. The device still survives, but
+now because the queue that reported it is retired, and the contract says
+so.
 ---
- src/kosmickrisp/vulkan/kk_queue.c | 104 ++++++++++++++++++++++++++----
- src/kosmickrisp/vulkan/kk_queue.h |   5 +-
- 2 files changed, 96 insertions(+), 13 deletions(-)
+ src/kosmickrisp/vulkan/kk_queue.c       | 104 +++++++++++++++++++++---
+ src/kosmickrisp/vulkan/kk_queue.h       |   5 +-
+ src/kosmickrisp/vulkan/kk_queue_error.c |  11 +--
+ src/kosmickrisp/vulkan/kk_queue_error.h |  14 ++--
+ 4 files changed, 109 insertions(+), 25 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
 index e073e6bf01da98cc30b0e18ff0afcf86785db2dc..50f4336e75a0083893cf7b26085d2dae9ed4f5d3 100644
@@ -185,3 +192,56 @@ index da5cfbc176d7e1cec93756f17379ff9228eb7cd8..614257a5426df1fb3880dd4abb6e7f36
     uint32_t failures;
  };
  
+diff --git a/src/kosmickrisp/vulkan/kk_queue_error.c b/src/kosmickrisp/vulkan/kk_queue_error.c
+index 4a8e6459aa9e58a0a61cb5880fbffd72fc616735..e07e75b33811dc0ebbb18ad18c543f1efc92bd33 100644
+--- a/src/kosmickrisp/vulkan/kk_queue_error.c
++++ b/src/kosmickrisp/vulkan/kk_queue_error.c
+@@ -65,17 +65,18 @@ kk_queue_error_is_device_lost(const struct mtl_feedback_data *data)
+    if (data->error == MTL_COMMAND_QUEUE_ERROR_NONE)
+       return false;
+ 
+-   /* A timeout is the one failure that leaves a live queue behind. Anything
+-    * else stopped the queue. */
++   /* A timeout is the one failure the device survives, by retiring the queue
++    * that reported it. Anything else stopped the queue. */
+    if (data->error != MTL_COMMAND_QUEUE_ERROR_TIMEOUT)
+       return true;
+ 
+    /* A start timestamp means Metal admitted the submission. Admitting it and
+     * reporting no execution for it is the queue killing work it had already
+     * taken, which is what it does to whatever is queued behind a submission
+-    * that has just timed out; the queue is running, not stopped. Only a
+-    * submission the queue never admitted, or one it started and abandoned
+-    * without ever timestamping an end, says the queue itself stopped. */
++    * that has just timed out; the queue is retired, not lost with the
++    * device. Only a submission the queue never admitted, or one it started
++    * and abandoned without ever timestamping an end, says the queue itself
++    * stopped. */
+    return !kk_queue_error_admitted_submission(data);
+ }
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_queue_error.h b/src/kosmickrisp/vulkan/kk_queue_error.h
+index 60415bc7dbb4ae115af3da7df4770685814509ac..734ea775206d8d338e915a19b635e80987c0eb37 100644
+--- a/src/kosmickrisp/vulkan/kk_queue_error.h
++++ b/src/kosmickrisp/vulkan/kk_queue_error.h
+@@ -28,13 +28,13 @@ kk_queue_error_has_execution_interval(const struct mtl_feedback_data *data);
+ /* Whether this failure destroyed the device.
+  *
+  * A Metal command queue timeout says one submission exceeded the time the
+- * system allows, not that the device is broken. On a contended host the queue
+- * keeps accepting and completing work after such a report, and how long the
+- * GPU ran does not predict it: a submission executing for a fraction of a
+- * second is reported while a longer one on the same GPU succeeds. Losing the
+- * device would throw away a live queue and every result that would follow it,
+- * so a timeout for a submission Metal admitted is reported and survived. What
+- * such a report puts in doubt is that one submission's contents, which the
++ * system allows, not that the device is broken, and how long the GPU ran does
++ * not predict it: a submission executing for a fraction of a second is
++ * reported while a longer one on the same GPU succeeds. The queue that reported
++ * it runs nothing more, so the driver retires that queue for a new one (see
++ * kk_queue.c) rather than losing the device and every result that would
++ * follow; a timeout for a submission Metal admitted is reported and survived.
++ * What such a report puts in doubt is that one submission's contents, which the
+  * driver cannot repair and Vulkan cannot express short of device loss; the
+  * work itself is where that shows.
+  *
