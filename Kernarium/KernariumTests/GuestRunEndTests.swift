@@ -33,11 +33,17 @@ struct GuestRunEndTests {
     func anEndedRunIsNeverStartedAgain() async throws {
         let launcher = EmulatorLauncher.shared
         try #require(
-            await settles(within: 90) { launcher.phase == .running },
+            try await eventually(within: .seconds(90)) {
+                launcher.phase == .running
+            },
             "the application's guest did not start: \(launcher.phase)"
         )
         try await Task.sleep(for: .seconds(5))
-        let ended = await settles(within: 90) {
+        // Each poll repeats the stop request, so it polls four times a second.
+        let ended = try await eventually(
+            within: .seconds(90),
+            every: .milliseconds(250)
+        ) {
             if launcher.phase == .running { launcher.stop() }
             return launcher.phase == .ended(result: 0)
         }
@@ -45,7 +51,11 @@ struct GuestRunEndTests {
 
         // Each layout of the guest display asks the launcher to start a run;
         // once the run has ended, none may start.
-        let window = try #require(Self.applicationWindow())
+        let window = try #require(
+            try windowScene().windows.first {
+                $0.rootViewController != nil && !$0.isHidden
+            }
+        )
         let display = try #require(Self.guestDisplay(in: window))
         for _ in 0..<3 {
             display.setNeedsLayout()
@@ -56,31 +66,12 @@ struct GuestRunEndTests {
             #expect(launcher.phase == .ended(result: 0))
         }
         #expect(
-            await settles(within: 10) {
-                Self.element("guestEndedNotice", in: window, depth: 0) != nil
+            try await eventually {
+                accessibilityElement("guestEndedNotice", in: window) != nil
             },
             "the application does not say that the guest has ended"
         )
         #expect(launcher.phase == .ended(result: 0))
-    }
-
-    private func settles(
-        within seconds: Double,
-        _ condition: () -> Bool
-    ) async -> Bool {
-        let deadline = Date().addingTimeInterval(seconds)
-        while Date() < deadline {
-            if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(250))
-        }
-        return condition()
-    }
-
-    private static func applicationWindow() -> UIWindow? {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first { $0.rootViewController != nil && !$0.isHidden }
     }
 
     /// The guest display is private to the application; it is the Metal view
@@ -91,34 +82,6 @@ struct GuestRunEndTests {
         }
         for child in view.subviews {
             if let found = guestDisplay(in: child) { return found }
-        }
-        return nil
-    }
-
-    private static func element(
-        _ identifier: String,
-        in node: NSObject,
-        depth: Int
-    ) -> NSObject? {
-        // SwiftUI's accessibility nodes answer the identifier without
-        // declaring UIAccessibilityIdentification.
-        let getter = NSSelectorFromString("accessibilityIdentifier")
-        if node.responds(to: getter),
-           node.perform(getter)?.takeUnretainedValue() as? String == identifier {
-            return node
-        }
-        guard depth < 64 else { return nil }
-        var children: [NSObject] = []
-        if let elements = node.accessibilityElements {
-            children += elements.compactMap { $0 as? NSObject }
-        }
-        if let view = node as? UIView {
-            children += view.subviews
-        }
-        for child in children {
-            if let found = element(identifier, in: child, depth: depth + 1) {
-                return found
-            }
         }
         return nil
     }

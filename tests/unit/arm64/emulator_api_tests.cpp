@@ -10,6 +10,9 @@
 #include "uml_darwin_network.h"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
+#if UML_EMULATOR_TEST_HAS_SLIRP
+#include "uml_slirp_net.h"
+#endif
 
 #include <algorithm>
 #include <cerrno>
@@ -33,16 +36,6 @@ extern "C" int darwin_uml_net_open(unsigned char mac[6], unsigned int *mtu);
 extern "C" int darwin_uml_net_irq_fd(void);
 extern "C" int darwin_uml_net_read(void *buffer, unsigned long capacity);
 extern "C" int darwin_uml_net_write(const void *buffer, unsigned long length);
-#if UML_EMULATOR_TEST_HAS_SLIRP
-extern "C" int uml_slirp_net_open(
-	void *, unsigned char[6], unsigned int *);
-extern "C" int uml_slirp_net_irq_fd(void *);
-extern "C" int uml_slirp_net_read(void *, void *, std::size_t);
-extern "C" int uml_slirp_net_write(void *, const void *, std::size_t);
-extern "C" void uml_slirp_net_stop(void *);
-extern "C" void *uml_slirp_net_create(void) noexcept;
-extern "C" void uml_slirp_net_destroy(void *) noexcept;
-#endif
 
 namespace {
 
