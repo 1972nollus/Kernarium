@@ -350,10 +350,10 @@ index 16ec133e7201e835ec4678e0340a00a572616b12..a9635df0591c0604cb4981db654b585e
  
  struct kk_command_allocator_cache *kk_command_allocator_cache_create(void);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 5d43911e20aa6639e7d5868ff6aa5c6e7e8918f1..f25bfa26938933178a12c15a1b259fda13ea3fa3 100644
+index edeca30c8adc93dceb1db18901dfa05329df79dd..6eaa4c94a3a96e804b63c06f0ac8479c21def6a0 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -834,6 +834,26 @@ if with_tests
+@@ -842,6 +842,26 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )

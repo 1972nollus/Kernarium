@@ -27,11 +27,18 @@ stops reporting, and the device is lost, with a report naming the value, the
 bound and how many submissions the queue has not answered for.  The bound for
 losing a device is three times the one for completing a value, because it is
 final and must not be reached by a queue that is merely busy.
+
+Both bounds run on the one clock the timeline keeps while it stands still
+owing a signal, so waiters on different values of a stopped queue's timeline
+reach the bound together; the new stall mode of the timeline wait test holds
+two such waiters and requires both to see the device lost.
 ---
- src/kosmickrisp/vulkan/kk_queue.c | 17 +++++++++++
- src/kosmickrisp/vulkan/kk_queue.h | 11 ++++++++
- src/kosmickrisp/vulkan/kk_sync.c  | 47 +++++++++++++++++++++++++++++--
- 3 files changed, 73 insertions(+), 2 deletions(-)
+ src/kosmickrisp/vulkan/kk_queue.c             | 17 ++++++
+ src/kosmickrisp/vulkan/kk_queue.h             | 11 ++++
+ src/kosmickrisp/vulkan/kk_sync.c              | 49 +++++++++++++++-
+ src/kosmickrisp/vulkan/meson.build            |  8 +++
+ .../vulkan/tests/test_timeline_wait_loss.c    | 58 ++++++++++++++++++-
+ 5 files changed, 138 insertions(+), 5 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
 index 20ab672850c64e19b844451e99c5bff21abcbde7..60f612e4fa5d3581d6fc89f37f1eecc6cc76a8a7 100644
@@ -84,10 +91,10 @@ index 5e3f724b1cae465ef2512d0d120b9a7a299546a8..97b17238af3e4922d541a3bfdb5434c8
                         const VkDeviceQueueCreateInfo *pCreateInfo,
                         uint32_t index_in_family);
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index abb6820665846e810707e66d2a2275841f4f6de8..af9580ca62353e52255e58ea5f3ec49a4c83bc17 100644
+index 2d97c1969c9c6dac825ed8b1a758f2d9e772b34b..95dfbcf56fb8c77fe1a5f3b2ab00357da0be1ce7 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
-@@ -96,10 +96,25 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
+@@ -109,10 +109,25 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
   *
   * The bound is two orders of magnitude over any submission that runs to
   * completion on the tightest device this driver targets, whose GPU stops a
@@ -115,16 +122,32 @@ index abb6820665846e810707e66d2a2275841f4f6de8..af9580ca62353e52255e58ea5f3ec49a
  static void
  kk_timeline_recover_lost_signal(struct kk_device *dev,
                                  struct kk_sync_timeline *timeline,
-@@ -124,6 +139,34 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
-       timeline->overdue_since = now;
-       return;
-    }
+@@ -134,6 +149,11 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+     * waiter that arrives behind a stall inherits the time already spent in
+     * it. A waiter whose value has arrived leaves it alone, because the
+     * timeline standing still says nothing about that waiter. */
 +   uint64_t unreported = 0u;
-+   if (!kk_queue_failure_outstanding(&dev->queue, &unreported)) {
-+      if (now - timeline->overdue_since < kk_stopped_queue_timeout_ns)
-+         return;
-+
-+      timeline->overdue_since = 0u;
++   const bool failure_outstanding =
++      kk_queue_failure_outstanding(&dev->queue, &unreported);
++   const uint64_t bound = failure_outstanding ? kk_lost_signal_timeout_ns
++                                              : kk_stopped_queue_timeout_ns;
+    bool expired = false;
+    simple_mtx_lock(&timeline->overdue_mutex);
+    /* Read the time under the lock: another waiter may start the clock after
+@@ -142,7 +162,7 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+    if (timeline->overdue_since == 0u || timeline->stalled_value != signaled) {
+       timeline->stalled_value = signaled;
+       timeline->overdue_since = now;
+-   } else if (now - timeline->overdue_since >= kk_lost_signal_timeout_ns) {
++   } else if (now - timeline->overdue_since >= bound) {
+       timeline->overdue_since = 0u;
+       expired = true;
+    }
+@@ -150,6 +170,29 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+    if (!expired)
+       return;
+ 
++   if (!failure_outstanding) {
 +      /* Say this on stderr as well as through the device. Losing a device is
 +       * the one disposition a run cannot recover from, and the runtime's own
 +       * report goes to the Mesa log, which this product leaves muted. */
@@ -147,6 +170,116 @@ index abb6820665846e810707e66d2a2275841f4f6de8..af9580ca62353e52255e58ea5f3ec49a
 +      return;
 +   }
 +
-    if (now - timeline->overdue_since < kk_lost_signal_timeout_ns)
-       return;
+    uint64_t completed =
+       kk_queue_complete_owed_signals(&dev->queue, timeline->mtl_handle);
+    if (completed) {
+diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
+index d30e57641f305bfdd405ea3c90b029c39d67c4c6..47673058289867282ea5e2ffd06dbf0a1901fc7b 100644
+--- a/src/kosmickrisp/vulkan/meson.build
++++ b/src/kosmickrisp/vulkan/meson.build
+@@ -664,6 +664,14 @@ if with_tests
+         timeout : 15,
+       )
+     endforeach
++    test(
++      'kosmickrisp_timeline_wait_loss_stall',
++      timeline_wait_loss_test,
++      args : ['stall'],
++      suite : ['kosmickrisp'],
++      env : ['MESA_SHADER_CACHE_DISABLE=true'],
++      timeout : 90,
++    )
+     timeline_host_wait_test = executable(
+       'test_kosmickrisp_timeline_host_wait',
+       files('tests/test_timeline_host_wait.cpp'),
+diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c b/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
+index 7b8dd8bcb60bd1051f698a13ed8314483556d136..5572c39f381ce216fdafe0bc3e86e54885e1c326 100644
+--- a/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
++++ b/src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
+@@ -3,6 +3,7 @@
+ #define VK_NO_PROTOTYPES
+ #include "kk_device.h"
+ #include "kk_queue.h"
++#include "kk_sync.h"
+ #include "vk_semaphore.h"
+ #include "vk_sync.h"
+ #include "util/os_time.h"
+@@ -32,6 +33,23 @@ wait_idle(void *data)
+    return NULL;
+ }
  
++struct stalled_wait {
++   struct kk_device *dev;
++   struct vk_sync *sync;
++   uint64_t value;
++   uint64_t deadline;
++   VkResult result;
++};
++
++static void *
++wait_stalled(void *data)
++{
++   struct stalled_wait *wait = data;
++   wait->result = vk_sync_wait(&wait->dev->vk, wait->sync, wait->value,
++                               VK_SYNC_WAIT_COMPLETE, wait->deadline);
++   return NULL;
++}
++
+ static void *
+ finish_queue(void *data)
+ {
+@@ -46,9 +64,10 @@ main(int argc, char **argv)
+    CHECK(argc == 2);
+    bool idle = strcmp(argv[1], "idle") == 0;
+    bool drain = strcmp(argv[1], "drain") == 0;
+-   CHECK(idle || drain || strcmp(argv[1], "pending") == 0);
++   bool stall = strcmp(argv[1], "stall") == 0;
++   CHECK(idle || drain || stall || strcmp(argv[1], "pending") == 0);
+    /* In particular, a failed worker join must not strand the test runner. */
+-   alarm(10);
++   alarm(stall ? 60 : 10);
+    VkInstance instance = VK_NULL_HANDLE;
+    LOAD_I(vkCreateInstance);
+    VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+@@ -137,6 +156,41 @@ main(int argc, char **argv)
+    CHECK(vk_sync_wait(&dev->vk, sync, 1, VK_SYNC_WAIT_PENDING, 0) == VK_SUCCESS);
+    CHECK(vk_sync_wait(&dev->vk, sync, 1, VK_SYNC_WAIT_COMPLETE, 0) == VK_SUCCESS);
+ 
++   if (stall) {
++      /* The queue has taken responsibility for values up to 3 and delivers
++       * none of them, while it reports no failure: it has stopped. Two
++       * waiters on different values of the stalled timeline share one clock,
++       * so the stopped-queue bound ends both waits well before their own
++       * deadline instead of each waiter restarting the other's clock. */
++      kk_timeline_mark_pending(sync, 3);
++      uint64_t start = os_time_get_nano();
++      struct stalled_wait waits[2] = {
++         {.dev = dev, .sync = sync, .value = 2,
++          .deadline = start + 50000000000ull},
++         {.dev = dev, .sync = sync, .value = 3,
++          .deadline = start + 50000000000ull},
++      };
++      pthread_t threads[2];
++      for (unsigned i = 0; i < 2; i++)
++         CHECK(pthread_create(&threads[i], NULL, wait_stalled, &waits[i]) == 0);
++      for (unsigned i = 0; i < 2; i++) {
++         CHECK(pthread_join(threads[i], NULL) == 0);
++         CHECK(waits[i].result == VK_ERROR_DEVICE_LOST);
++      }
++      /* The loss comes from the bound, not from a clock that raced. */
++      uint64_t elapsed = os_time_get_nano() - start;
++      CHECK(elapsed >= 30000000000ull);
++      CHECK(elapsed < 45000000000ull);
++      kk_queue_finish(dev, &dev->queue);
++      dev->has_queue = false;
++      vkDestroySemaphore(device, semaphore, NULL);
++      vkDestroyDevice(device, NULL);
++      vkDestroyInstance(instance, NULL);
++      alarm(0);
++      printf("stall: waiters on two values of a stopped timeline lost the device\n");
++      return 0;
++   }
++
+    uint64_t value = 2;
+    VkTimelineSemaphoreSubmitInfo timeline = {
+       .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
