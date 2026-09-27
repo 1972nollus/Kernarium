@@ -1544,11 +1544,12 @@ std::optional<BuildResult> GadgetExecutor::find(
 		cache_diagnostics_);
 }
 
-/* Produce and store a translation the cache did not hold. */
+/* Produce and store a translation the cache did not hold. run_block
+ * counts it: with the count in here, run_block's per-dispatch cache lookup
+ * compiles differently. */
 BuildResult GadgetExecutor::translate(
 	std::uint64_t pc, std::span<const std::uint32_t> window)
 {
-	++cache_diagnostics_.translations;
 	const auto decoded = arm64::gadgets::Builder{}.build(
 		pc, window,
 		[this](std::uint64_t target) {
@@ -1618,6 +1619,7 @@ BuildResult GadgetExecutor::translate(
 			return ::uml::cpu::EngineEvent::memory_fault;
 		}
 		const auto window = std::span{instructions}.first(count);
+		++cache_diagnostics_.translations;
 		selected.emplace(translate(cpu.pc, window));
 	}
 	const auto &built = *selected;
