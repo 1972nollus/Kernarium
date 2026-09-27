@@ -85,11 +85,11 @@ submission, so the timeout is still survived.
  src/kosmickrisp/vulkan/kk_image_layout.h      |  12 +-
  src/kosmickrisp/vulkan/kk_queue.c             |  24 +-
  src/kosmickrisp/vulkan/kk_queue_error.c       | 137 +++++++
- src/kosmickrisp/vulkan/kk_queue_error.h       |  68 ++++
+ src/kosmickrisp/vulkan/kk_queue_error.h       |  70 ++++
  src/kosmickrisp/vulkan/meson.build            |  30 ++
  .../vulkan/tests/test_image_extent.c          | 112 ++++++
  .../vulkan/tests/test_queue_error.c           | 363 ++++++++++++++++++
- 12 files changed, 853 insertions(+), 23 deletions(-)
+ 12 files changed, 855 insertions(+), 23 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_image_extent.c
  create mode 100644 src/kosmickrisp/vulkan/kk_image_extent.h
  create mode 100644 src/kosmickrisp/vulkan/kk_queue_error.c
@@ -98,7 +98,7 @@ submission, so the timeout is still survived.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_queue_error.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_buffer_view.c b/src/kosmickrisp/vulkan/kk_buffer_view.c
-index 4cde058ce96268e949509eb7f8f06cc91abb6737..6e41aecf5078e655be7581aabb3ecb6495d2ba88 100644
+index a00bcebba203801ba4965be0200de10b70e2b392..dc3d39977a31268a5c6c9eddb959153d537bb0a6 100644
 --- a/src/kosmickrisp/vulkan/kk_buffer_view.c
 +++ b/src/kosmickrisp/vulkan/kk_buffer_view.c
 @@ -12,6 +12,7 @@
@@ -109,8 +109,8 @@ index 4cde058ce96268e949509eb7f8f06cc91abb6737..6e41aecf5078e655be7581aabb3ecb64
  #include "kk_image_layout.h"
  #include "kk_nir_lower_vbo.h"
  #include "kk_physical_device.h"
-@@ -149,6 +150,26 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
-              : view->vk.range) +
+@@ -146,6 +147,26 @@ kk_CreateBufferView(VkDevice _device, const VkBufferViewCreateInfo *pCreateInfo,
+          (raw ? view->vk.elements * element_size_B : view->vk.range) +
           tail_offset_B,
     };
 +
@@ -380,7 +380,7 @@ index c9d180dcf7481440bfc4cc6b0c9ce09b675f5a2c..52f85b400486afc6cef134f8a1d819db
  static void
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.c b/src/kosmickrisp/vulkan/kk_queue_error.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..e10beac63fd813e1efc684dad928520f0e1d12cf
+index 0000000000000000000000000000000000000000..4a8e6459aa9e58a0a61cb5880fbffd72fc616735
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.c
 @@ -0,0 +1,137 @@
@@ -426,8 +426,8 @@ index 0000000000000000000000000000000000000000..e10beac63fd813e1efc684dad928520f
 + * execution is not a duration. Metal puts a fixed placeholder in the end
 + * timestamp of a submission it has no end for -- 6148826548.220315 on every
 + * report an A15 has produced, nine orders of magnitude past this bound -- and
-+ * reading that as execution turned a hung submission into a claim that the GPU
-+ * ran it for 195 years. */
++ * reading that as execution turned a submission with no reported end into a
++ * claim that the GPU ran it for 195 years. */
 +static const double kk_longest_credible_execution_s = 60.0;
 +
 +bool
@@ -484,8 +484,8 @@ index 0000000000000000000000000000000000000000..e10beac63fd813e1efc684dad928520f
 +   } else if (kk_queue_error_admitted_submission(data) &&
 +              data->gpu_end > data->gpu_start) {
 +      /* Admitted, and the end is the placeholder rather than a time, so the
-+       * submission was still running when the queue gave up on it. This is the
-+       * hang: the report that names a submission whose own work never
++       * submission was still running when the queue gave up on it: admitted,
++       * no end reported. This names a submission whose own work never
 +       * finished, as opposed to one the queue killed on entry. */
 +      snprintf(execution, sizeof(execution),
 +               "the GPU started this submission and never reported it "
@@ -523,10 +523,10 @@ index 0000000000000000000000000000000000000000..e10beac63fd813e1efc684dad928520f
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_queue_error.h b/src/kosmickrisp/vulkan/kk_queue_error.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..a6fb7ee13fbd7474266f77ba1e3b45d47d8db275
+index 0000000000000000000000000000000000000000..60415bc7dbb4ae115af3da7df4770685814509ac
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_queue_error.h
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,70 @@
 +/*
 + * Copyright 2026 LunarG, Inc.
 + * Copyright 2026 Google LLC
@@ -549,8 +549,8 @@ index 0000000000000000000000000000000000000000..a6fb7ee13fbd7474266f77ba1e3b45d4
 +/* Whether Metal accounted for this submission from a start to a credible later
 + * end. Metal leaves both timestamps at zero for a submission the GPU never
 + * scheduled, reports a start without a later end for one it abandoned, and puts
-+ * a fixed placeholder in the end timestamp of one it has no end for at all,
-+ * which is the hang. None of those is a measurement. */
++ * a fixed placeholder in the end timestamp of one it admitted and reported no
++ * end for. None of those is a measurement. */
 +bool
 +kk_queue_error_has_execution_interval(const struct mtl_feedback_data *data);
 +
@@ -569,7 +569,9 @@ index 0000000000000000000000000000000000000000..a6fb7ee13fbd7474266f77ba1e3b45d4
 + *
 + * Every other error, and a timeout for a submission the queue never admitted
 + * or started and abandoned without an end timestamp, means the queue stopped
-+ * making progress. That is the hang, and it stays device loss.
++ * making progress. That is a hang, and it stays device loss. A submission
++ * whose end is only Metal's placeholder is not one: it was admitted, no end
++ * was reported, and its timeout is survived like any other admitted one.
 + */
 +bool kk_queue_error_is_device_lost(const struct mtl_feedback_data *data);
 +

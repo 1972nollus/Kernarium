@@ -27,7 +27,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 1 insertion(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 2404c1a414e842553af2be5a59b75e4b78efa1f1..0d716fc1cca065c68348c8b3ce565dab278cde8c 100644
+index 5fdcf54b2a2c3e1c0b9a97a8a72eb6ca5f1ca5db..fb3cd714bb3a433a3413a1ce6160011528322886 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -192,6 +192,7 @@ kk_get_device_extensions(const struct kk_instance *instance,

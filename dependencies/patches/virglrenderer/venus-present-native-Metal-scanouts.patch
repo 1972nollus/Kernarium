@@ -4,62 +4,108 @@ Date: Fri, 4 Sep 2026 18:25:14 +0900
 Subject: [PATCH] venus: present native Metal scanouts
 
 ---
- src/venus/vkr_device.c          |  17 ++++
- src/venus/vkr_device.h          |   6 ++
- src/venus/vkr_device_memory.c   | 126 ++++++++++++++++++++-----
- src/venus/vkr_device_memory.h   |   4 +
- src/venus/vkr_image.c           | 155 ++++++++++++++++++++++++++++++
- src/venus/vkr_image.h           |   2 +
- src/venus/vkr_physical_device.c |   3 +
- src/venus/vkr_physical_device.h |   1 +
- src/virgl_resource.c            | 162 ++++++++++++++++++++++++++++++++
- src/virgl_resource.h            |  16 ++++
- src/virglrenderer.c             |  57 +++++++++++
- src/virglrenderer.h             |  54 ++++++++++-
- 12 files changed, 580 insertions(+), 23 deletions(-)
+ src/mesa/util/anon_file.c     |  40 +++++++++
+ src/mesa/util/anon_file.h     |   2 +
+ src/venus/vkr_device.c        |   8 ++
+ src/venus/vkr_device.h        |   6 ++
+ src/venus/vkr_device_memory.c |  88 +++++++++++++-----
+ src/venus/vkr_device_memory.h |   4 +
+ src/venus/vkr_image.c         | 156 ++++++++++++++++++++++++++++++++
+ src/venus/vkr_image.h         |   2 +
+ src/virgl_resource.c          | 162 ++++++++++++++++++++++++++++++++++
+ src/virgl_resource.h          |  16 ++++
+ src/virglrenderer.c           |  57 ++++++++++++
+ src/virglrenderer.h           |  54 +++++++++++-
+ 12 files changed, 572 insertions(+), 23 deletions(-)
 
+diff --git a/src/mesa/util/anon_file.c b/src/mesa/util/anon_file.c
+index 1c22514f9ab6c5cbaa35b576fc0a901d299f2725..062f3ced7e9e2fea3a4feb7a84bc15b242d0ebdf 100644
+--- a/src/mesa/util/anon_file.c
++++ b/src/mesa/util/anon_file.c
+@@ -31,6 +31,8 @@
+ 
+ #include <errno.h>
+ #include <fcntl.h>
++#include <limits.h>
++#include <string.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <unistd.h>
+@@ -96,6 +98,44 @@ create_tmpfile_cloexec(char *tmpname)
+ }
+ #endif
+ 
++/*
++ * Create an unlinked regular file of the given size under TMPDIR, or /tmp
++ * when TMPDIR is unset, and return a close-on-exec descriptor for it. Unlike
++ * anonymous shared memory it has a real vnode identity (st_dev, st_ino), and
++ * it maps MAP_SHARED like any file. The tag prefixes the temporary name.
++ * Returns -1 with errno set on failure.
++ */
++int
++os_create_unlinked_file(off_t size, const char *tag)
++{
++   const char *tmpdir = getenv("TMPDIR");
++   if (!tmpdir || !tmpdir[0])
++      tmpdir = "/tmp";
++   const char *separator = tmpdir[strlen(tmpdir) - 1] == '/' ? "" : "/";
++   char path[PATH_MAX];
++   const int written =
++      snprintf(path, sizeof(path), "%s%s%s-XXXXXX", tmpdir, separator, tag);
++   if (written < 0 || (size_t)written >= sizeof(path)) {
++      errno = ENAMETOOLONG;
++      return -1;
++   }
++
++   const int fd = mkstemp(path);
++   if (fd < 0)
++      return -1;
++
++   int flags;
++   if (unlink(path) < 0 || (flags = fcntl(fd, F_GETFD)) < 0 ||
++       fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0 || ftruncate(fd, size) < 0) {
++      const int saved_errno = errno;
++      close(fd);
++      errno = saved_errno;
++      return -1;
++   }
++
++   return fd;
++}
++
+ /*
+  * Create a new, unique, anonymous file of the given size, and
+  * return the file descriptor for it. The file descriptor is set
+diff --git a/src/mesa/util/anon_file.h b/src/mesa/util/anon_file.h
+index 790537b7aee6f27f9d34d06e0e5c746a8d016453..25d2481e88132f6f226da83ef84db8d775b6c52e 100644
+--- a/src/mesa/util/anon_file.h
++++ b/src/mesa/util/anon_file.h
+@@ -30,4 +30,6 @@
+ 
+ int os_create_anonymous_file(off_t size, const char *debug_name);
+ 
++int os_create_unlinked_file(off_t size, const char *tag);
++
+ #endif
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
-index 59c77952a8c825bae4cf8adc2770dd5831e3f01b..bdd2ab82c7581846abc1c986b5928b59859f07be 100644
+index ace87a08779068a7c0db24c4d0abe048c2311e95..4445734e763f7101ba3750df7dba029927a5a95c 100644
 --- a/src/venus/vkr_device.c
 +++ b/src/venus/vkr_device.c
-@@ -132,6 +132,7 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
-    uint32_t ext_count = args->pCreateInfo->enabledExtensionCount;
-    ext_count += physical_dev->EXT_external_memory_host;
-    ext_count += physical_dev->EXT_external_memory_metal;
-+   ext_count += physical_dev->EXT_metal_objects;
-    ext_count += physical_dev->KHR_portability_subset;
-    ext_count += physical_dev->KHR_external_memory_fd;
-    ext_count += physical_dev->EXT_external_memory_dma_buf;
-@@ -151,6 +152,8 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
-          exts[ext_count++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
-       if (physical_dev->EXT_external_memory_metal)
-          exts[ext_count++] = VK_EXT_EXTERNAL_MEMORY_METAL_EXTENSION_NAME;
-+      if (physical_dev->EXT_metal_objects)
-+         exts[ext_count++] = VK_EXT_METAL_OBJECTS_EXTENSION_NAME;
-       if (physical_dev->KHR_portability_subset)
-          exts[ext_count++] = "VK_KHR_portability_subset";
-       if (physical_dev->KHR_external_memory_fd)
-@@ -220,6 +223,20 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
-       }
+@@ -107,6 +107,14 @@ vkr_device_init_renderer_procs(struct vkr_device *dev)
+          return false;
     }
  
 +   if (physical_dev->EXT_metal_objects) {
 +      dev->ExportMetalObjectsEXT =
 +         (PFN_vkExportMetalObjectsEXT)vk->GetDeviceProcAddr(
-+            dev->base.handle.device, "vkExportMetalObjectsEXT");
-+      if (!dev->ExportMetalObjectsEXT) {
-+         struct vn_device_proc_table *dev_vk = &dev->proc_table;
-+         dev_vk->DestroyDevice(dev->base.handle.device, NULL);
-+         free(exts);
-+         free(dev);
-+         args->ret = VK_ERROR_EXTENSION_NOT_PRESENT;
-+         return;
-+      }
++            handle, "vkExportMetalObjectsEXT");
++      if (!dev->ExportMetalObjectsEXT)
++         return false;
 +   }
 +
-    free(exts);
+    return true;
+ }
  
-    args->ret = vkr_device_create_queues(ctx, dev, args->pCreateInfo->queueCreateInfoCount,
 diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
 index fcf875c2c3fcc242342034a04ad1ab1bd0e81673..980b6877f18409fe5cc5e4e99d1febc30796e480 100644
 --- a/src/venus/vkr_device.h
@@ -78,69 +124,10 @@ index fcf875c2c3fcc242342034a04ad1ab1bd0e81673..980b6877f18409fe5cc5e4e99d1febc3
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 4c8286c7896d7c374c0ee29073c0652b88e58d24..8e3f118ab8f7ea31c3e72a24dc2511e939770593 100644
+index 4c8286c7896d7c374c0ee29073c0652b88e58d24..ac57f335e64cd0beffd6fe1b7dd85a81ba44a8b4 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
-@@ -5,7 +5,10 @@
- 
- #include "vkr_device_memory.h"
- 
-+#include <fcntl.h>
- #include <math.h>
-+#include <stdio.h>
-+#include <stdlib.h>
- 
- #include "util/anon_file.h"
- #include "vn_protocol_renderer_transport.h"
-@@ -14,6 +17,47 @@
- #include "vkr_host_memory.h"
- #include "vkr_physical_device.h"
- 
-+static int
-+vkr_create_metal_heap_identity_file(off_t size)
-+{
-+#ifdef __APPLE__
-+   /* macOS reports st_dev == st_ino == 0 for every POSIX shared-memory
-+    * descriptor.  Native resources use that identity to reconnect the fd
-+    * returned to virtio-gpu with its in-process Metal object, so give these
-+    * small identity files real vnode identities instead.  The file is
-+    * unlinked immediately and is never used for the image payload.
-+    */
-+   const char *tmpdir = getenv("TMPDIR");
-+   if (!tmpdir || !tmpdir[0]) {
-+      errno = ENOENT;
-+      return -1;
-+   }
-+
-+   const char *separator = tmpdir[strlen(tmpdir) - 1] == '/' ? "" : "/";
-+   char *path = NULL;
-+   if (asprintf(&path, "%s%svkr-metal-heap-XXXXXX", tmpdir, separator) < 0)
-+      return -1;
-+
-+   int fd = mkstemp(path);
-+   if (fd >= 0) {
-+      const int flags = fcntl(fd, F_GETFD);
-+      if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0 ||
-+          unlink(path) || ftruncate(fd, size)) {
-+         const int saved_errno = errno;
-+         close(fd);
-+         fd = -1;
-+         errno = saved_errno;
-+      }
-+   }
-+   const int saved_errno = errno;
-+   free(path);
-+   errno = saved_errno;
-+   return fd;
-+#else
-+   return os_create_anonymous_file(size, "vkr-metal-heap");
-+#endif
-+}
-+
- static bool
- vkr_get_fd_info_from_resource(const struct vkr_resource *res,
-                               const void *pnext,
-@@ -268,6 +312,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -268,6 +268,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
        .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_METAL_HANDLE_INFO_EXT,
     };
     VkImportMemoryResourceInfoMESA *res_info = NULL;
@@ -148,7 +135,7 @@ index 4c8286c7896d7c374c0ee29073c0652b88e58d24..8e3f118ab8f7ea31c3e72a24dc2511e9
     void *prev_of_res_info = vkr_find_prev_struct(
        alloc_info, VK_STRUCTURE_TYPE_IMPORT_MEMORY_RESOURCE_INFO_MESA);
     if (prev_of_res_info) {
-@@ -311,6 +356,12 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -311,6 +312,12 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
           local_metal_import.handle = res->native_handle;
           vkr_pnext_set_next(prev_of_res_info, &local_metal_import);
           alloc_info->allocationSize = res->size;
@@ -161,7 +148,7 @@ index 4c8286c7896d7c374c0ee29073c0652b88e58d24..8e3f118ab8f7ea31c3e72a24dc2511e9
        } else if (res->fd_type == VIRGL_RESOURCE_FD_SHM) {
           if (!physical_dev->EXT_external_memory_host || !res->u.data ||
               alloc_info->allocationSize > res->size ||
-@@ -524,6 +575,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -524,6 +531,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
  
     struct vkr_device_memory *mem = vkr_device_memory_create_and_add(ctx, args);
     if (!mem) {
@@ -169,7 +156,7 @@ index 4c8286c7896d7c374c0ee29073c0652b88e58d24..8e3f118ab8f7ea31c3e72a24dc2511e9
        if (local_import_info.fd >= 0)
           close(local_import_info.fd);
        if (gbm_bo)
-@@ -540,6 +592,8 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -540,6 +548,8 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
     mem->gbm_bo = gbm_bo;
     mem->host_shm = host_shm;
     mem->metal_heap_exportable = export_metal_heap;
@@ -178,7 +165,7 @@ index 4c8286c7896d7c374c0ee29073c0652b88e58d24..8e3f118ab8f7ea31c3e72a24dc2511e9
     mem->allocation_size = alloc_info->allocationSize;
     mem->memory_type_index = host_mem_type_index;
  }
-@@ -677,6 +731,8 @@ void
+@@ -677,6 +687,8 @@ void
  vkr_device_memory_release(struct vkr_device_memory *mem)
  {
     virgl_resource_native_release(mem->native_resource_id);
@@ -187,7 +174,7 @@ index 4c8286c7896d7c374c0ee29073c0652b88e58d24..8e3f118ab8f7ea31c3e72a24dc2511e9
     vkr_host_shm_free(mem->host_shm);
     if (mem->gbm_bo)
        vkr_gbm_bo_destroy(mem->gbm_bo);
-@@ -684,6 +740,50 @@ vkr_device_memory_release(struct vkr_device_memory *mem)
+@@ -684,6 +696,56 @@ vkr_device_memory_release(struct vkr_device_memory *mem)
        close(mem->udmabuf_fd);
  }
  
@@ -216,7 +203,13 @@ index 4c8286c7896d7c374c0ee29073c0652b88e58d24..8e3f118ab8f7ea31c3e72a24dc2511e9
 +   if (mem->allocation_size > INT64_MAX - (page_size - 1))
 +      return false;
 +   const uint64_t fd_size = align64(mem->allocation_size, page_size);
-+   int fd = vkr_create_metal_heap_identity_file((off_t)fd_size);
++   /* macOS reports st_dev == st_ino == 0 for every POSIX shared-memory
++    * descriptor.  Native resources use that identity to reconnect the fd
++    * returned to virtio-gpu with its in-process Metal object, so the fd is an
++    * unlinked file with a real vnode identity instead.  It is sized to the
++    * allocation but never holds the image payload.
++    */
++   int fd = os_create_unlinked_file((off_t)fd_size, "vkr-metal-heap");
 +   if (fd < 0) {
 +      vkr_log("Metal heap identity file creation failed (%s)", strerror(errno));
 +      return false;
@@ -238,7 +231,7 @@ index 4c8286c7896d7c374c0ee29073c0652b88e58d24..8e3f118ab8f7ea31c3e72a24dc2511e9
  bool
  vkr_device_memory_export_blob(struct vkr_device_memory *mem,
                                uint64_t blob_size,
-@@ -728,35 +828,19 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+@@ -728,35 +790,19 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
     }
  
     if (mem->metal_heap_exportable) {
@@ -302,10 +295,10 @@ index e25198b50a0e89efd2a0473b0c1289710915bec1..02e2ebf330b54be4baffb494f75732ce
  vkr_device_memory_export_blob(struct vkr_device_memory *mem,
                                uint64_t blob_size,
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..219e570edcfdf4548987499797901fb76493b34a 100644
+index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..0ec9ccc144668c58f5fefc6a0c32e9f05e6ab491 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
-@@ -6,13 +6,131 @@
+@@ -6,13 +6,132 @@
  #include "vkr_image.h"
  
  #include "vkr_image_gen.h"
@@ -371,11 +364,12 @@ index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..219e570edcfdf4548987499797901fb7
 +      return;
 +
 +   if (!mem->native_resource_id) {
-+      /* Optimal color targets are marked exportable up front, but only an
-+       * allocation the guest asked to export as an MTLHeap owns one.  An
-+       * ordinary render target on ordinary device memory is the designed
-+       * outcome of that marking, not a failure, and it is the common case:
-+       * a conformance run binds one for every test.
++      /* Color targets vkr_image_should_export_metal_texture marks are
++       * exportable up front, but only an allocation the guest asked to
++       * export as an MTLHeap owns one.  An ordinary render target on
++       * ordinary device memory is the designed outcome of that marking, not
++       * a failure, and it is the common case: a conformance run binds one
++       * for every test.
 +       */
 +      if (!mem->metal_heap_exportable)
 +         return;
@@ -437,7 +431,7 @@ index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..219e570edcfdf4548987499797901fb7
     /* XXX If VkExternalMemoryImageCreateInfo is chained by the app, all is
      * good.  If it is not chained, we might still bind an external memory to
      * the image, because vkr_dispatch_vkAllocateMemory makes any HOST_VISIBLE
-@@ -39,6 +157,8 @@ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,
+@@ -39,6 +158,8 @@ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,
        image->format = format;
        image->array_layers = array_layers;
        image->tiling = tiling;
@@ -446,7 +440,7 @@ index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..219e570edcfdf4548987499797901fb7
     }
  }
  
-@@ -118,12 +238,24 @@ vkr_dispatch_vkBindImageMemory(UNUSED struct vn_dispatch_context *dispatch,
+@@ -118,12 +239,24 @@ vkr_dispatch_vkBindImageMemory(UNUSED struct vn_dispatch_context *dispatch,
  {
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
@@ -471,7 +465,7 @@ index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..219e570edcfdf4548987499797901fb7
  static void
  vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
                                  struct vn_command_vkBindImageMemory2 *args)
-@@ -131,8 +263,31 @@ vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
+@@ -131,8 +264,31 @@ vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
  
@@ -516,32 +510,6 @@ index f098dc3ccbf5093c370d3d843f0fcd880745bbd9..886ed62a32fbe8082b425dd0bdc11df8
  };
  VKR_DEFINE_OBJECT_CAST(image, VK_OBJECT_TYPE_IMAGE, VkImage)
  
-diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index cb6fdfe965a78c285efdfc2c86214586c7efd9b9..fd79413df1fd6844fe071b41deb4abc598b19510 100644
---- a/src/venus/vkr_physical_device.c
-+++ b/src/venus/vkr_physical_device.c
-@@ -359,6 +359,9 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
-       else if (!strcmp(props->extensionName,
-                        VK_EXT_EXTERNAL_MEMORY_METAL_EXTENSION_NAME))
-          physical_dev->EXT_external_memory_metal = true;
-+      else if (!strcmp(props->extensionName,
-+                       VK_EXT_METAL_OBJECTS_EXTENSION_NAME))
-+         physical_dev->EXT_metal_objects = true;
-       else if (!strcmp(props->extensionName, "VK_KHR_portability_subset"))
-          physical_dev->KHR_portability_subset = true;
- 
-diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index ad07431aedb94ef4d0b7971a12fb21e214baf112..7bda834024d5d73640873e25d4a74955fd259b46 100644
---- a/src/venus/vkr_physical_device.h
-+++ b/src/venus/vkr_physical_device.h
-@@ -31,6 +31,7 @@ struct vkr_physical_device {
-    bool EXT_external_memory_host;
-    VkDeviceSize min_imported_host_pointer_alignment;
-    bool EXT_external_memory_metal;
-+   bool EXT_metal_objects;
- 
-    VkPhysicalDeviceMemoryProperties host_memory_properties;
-    VkPhysicalDeviceMemoryProperties memory_properties;
 diff --git a/src/virgl_resource.c b/src/virgl_resource.c
 index dbc803cfc50910e474e481cdeeec87a26a1f7183..e555eda8f16a55e7719d359bdcc734bcafd75503 100644
 --- a/src/virgl_resource.c
@@ -737,10 +705,10 @@ index dbc803cfc50910e474e481cdeeec87a26a1f7183..e555eda8f16a55e7719d359bdcc734bc
        free(released);
     }
 diff --git a/src/virgl_resource.h b/src/virgl_resource.h
-index d21fc0bced31b86cfc7cdfdf599edf64808471b5..50cd86253b38a473d8720fb3fa8a197315fd1469 100644
+index 5d90e60f4429e2f31094141c2850334ea893391b..e0339eff62b0db4742b973adc63e68db3c9eec8b 100644
 --- a/src/virgl_resource.h
 +++ b/src/virgl_resource.h
-@@ -210,6 +210,22 @@ virgl_resource_native_acquire(int fd,
+@@ -196,6 +196,22 @@ virgl_resource_native_acquire(int fd,
                                enum virgl_resource_native_handle_type *out_type,
                                void **out_handle);
  

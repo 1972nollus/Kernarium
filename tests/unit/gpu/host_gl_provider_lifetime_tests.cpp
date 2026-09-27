@@ -55,6 +55,40 @@ constexpr int kProbedMinor = 6;
 // The capability set a Linux guest's Virgl contexts use.
 constexpr std::uint32_t kVirgl2CapsetId = 2;
 
+// A component that copies the process environment early leaves that copy
+// pointing at freed memory once the environment is rewritten, so an
+// application with one sets Mesa's driver override at launch. The provider
+// must leave such a value where it is, and still set the override where it
+// is missing or names another driver.
+void providerLeavesAMatchingDriverOverrideInPlace()
+{
+    constexpr std::string_view variable = "MESA_LOADER_DRIVER_OVERRIDE";
+    static char launchEntry[] = "MESA_LOADER_DRIVER_OVERRIDE=zink";
+    require(::putenv(launchEntry) == 0);
+    const char* launchValue = std::getenv(variable.data());
+    require(launchValue == launchEntry + variable.size() + 1);
+    {
+        uml::gpu::HostGlProvider provider;
+        require(provider.display() != nullptr);
+    }
+    require(std::getenv(variable.data()) == launchValue);
+
+    require(::setenv(variable.data(), "softpipe", 1) == 0);
+    {
+        uml::gpu::HostGlProvider provider;
+        require(provider.display() != nullptr);
+    }
+    require(std::string_view(std::getenv(variable.data())) == "zink");
+
+    require(::unsetenv(variable.data()) == 0);
+    {
+        uml::gpu::HostGlProvider provider;
+        require(provider.display() != nullptr);
+    }
+    const char* value = std::getenv(variable.data());
+    require(value != nullptr && std::string_view(value) == "zink");
+}
+
 void providerOwnsOneSharedContextTopology()
 {
     uml::gpu::HostGlProvider provider;
@@ -501,6 +535,7 @@ void rendererFailsCleanlyAfterLosingItsDisplay()
 
 int main()
 {
+    providerLeavesAMatchingDriverOverrideInPlace();
     providerRejectsUnsupportedContexts();
     providerReportsExplicitEsVersionRequests();
     providerOwnsOneSharedContextTopology();

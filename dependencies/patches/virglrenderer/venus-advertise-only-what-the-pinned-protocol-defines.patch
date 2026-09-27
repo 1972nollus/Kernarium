@@ -23,10 +23,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
  1 file changed, 5 deletions(-)
 
 diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
-index 0694d4ca7d8b7a6c0cd3f0880e6328bc21e4c748..2b60d1587bc57d58fadb737ae67900f4168eab57 100644
+index d156682bf26689a8764611473e983e72c8fb5cf1..f55935c0c8f871a2afd461764b1a2bcf17564b0a 100644
 --- a/src/venus/vkr_common.c
 +++ b/src/venus/vkr_common.c
-@@ -133,7 +133,6 @@ static const struct vn_info_extension_table vkr_extension_table = {
+@@ -135,7 +135,6 @@ static const struct vn_info_extension_table vkr_extension_table = {
     .KHR_robustness2 = true,
     .KHR_shader_bfloat16 = true,
     .KHR_shader_clock = true,
@@ -34,7 +34,7 @@ index 0694d4ca7d8b7a6c0cd3f0880e6328bc21e4c748..2b60d1587bc57d58fadb737ae67900f4
     .KHR_shader_fma = true,
     .KHR_shader_maximal_reconvergence = true,
     .KHR_shader_quad_control = true,
-@@ -194,7 +193,6 @@ static const struct vn_info_extension_table vkr_extension_table = {
+@@ -196,7 +195,6 @@ static const struct vn_info_extension_table vkr_extension_table = {
     .EXT_provoking_vertex = true,
     .EXT_queue_family_foreign = true,
     .EXT_rasterization_order_attachment_access = true,
@@ -42,7 +42,7 @@ index 0694d4ca7d8b7a6c0cd3f0880e6328bc21e4c748..2b60d1587bc57d58fadb737ae67900f4
     .EXT_robustness2 = true,
     .EXT_sample_locations = true,
     .EXT_shader_atomic_float = true,
-@@ -202,18 +200,15 @@ static const struct vn_info_extension_table vkr_extension_table = {
+@@ -204,18 +202,15 @@ static const struct vn_info_extension_table vkr_extension_table = {
     .EXT_shader_float8 = true,
     .EXT_shader_image_atomic_int64 = true,
     .EXT_shader_replicated_composites = true,

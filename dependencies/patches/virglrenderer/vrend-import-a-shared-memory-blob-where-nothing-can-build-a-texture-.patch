@@ -35,14 +35,14 @@ could not alias is not served by it.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_renderer.c   | 216 +++++++++++++++++++++++++++++++++++
- src/vrend/vrend_renderer.h   |  19 +++
+ src/vrend/vrend_renderer.c   | 211 +++++++++++++++++++++++++++++++++++
+ src/vrend/vrend_renderer.h   |  19 ++++
  src/vrend/vrend_winsys_egl.c |  42 +++++++
  src/vrend/vrend_winsys_egl.h |  10 ++
- 4 files changed, 287 insertions(+)
+ 4 files changed, 282 insertions(+)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index aaf1c5ad174c7c5d5669e029d015219a342b0f87..b78206b2a5dfe98b4a8551f9187dd763caea8c8e 100644
+index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..dabd18add048435c81f7181db321c4a0bcbff671 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -29,6 +29,8 @@
@@ -54,7 +54,7 @@ index aaf1c5ad174c7c5d5669e029d015219a342b0f87..b78206b2a5dfe98b4a8551f9187dd763
  #include "pipe/p_shader_tokens.h"
  
  #include "pipe/p_defines.h"
-@@ -1038,6 +1040,11 @@ static inline bool
+@@ -1059,6 +1061,11 @@ static inline bool
  vrend_resource_needs_redblue_swizzle(struct vrend_resource *res,
                                       enum virgl_formats view_format)
  {
@@ -66,7 +66,7 @@ index aaf1c5ad174c7c5d5669e029d015219a342b0f87..b78206b2a5dfe98b4a8551f9187dd763
     return !vrend_resource_supports_view(res, view_format) &&
           vrend_format_is_bgra(res->base.format) ^ vrend_format_is_bgra(view_format);
  }
-@@ -5366,6 +5373,7 @@ static GLuint vrend_draw_bind_samplers_shader(struct vrend_sub_context *sub_ctx,
+@@ -5387,6 +5394,7 @@ static GLuint vrend_draw_bind_samplers_shader(struct vrend_sub_context *sub_ctx,
                 target = GL_TEXTURE_BUFFER;
              }
  
@@ -74,7 +74,7 @@ index aaf1c5ad174c7c5d5669e029d015219a342b0f87..b78206b2a5dfe98b4a8551f9187dd763
              glBindTexture(target, id);
              vrend_apply_sampler_state(sub_ctx, tview->texture,
                                        shader_view->samplers[i],
-@@ -9162,8 +9170,182 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
+@@ -9174,8 +9182,182 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
     return &gr->base;
  }
  
@@ -257,7 +257,7 @@ index aaf1c5ad174c7c5d5669e029d015219a342b0f87..b78206b2a5dfe98b4a8551f9187dd763
     if (has_bit(res->storage_bits, VREND_STORAGE_GL_TEXTURE)) {
        glDeleteTextures(1, &res->gl_id);
     } else if (has_bit(res->storage_bits, VREND_STORAGE_GL_BUFFER)) {
-@@ -11458,6 +11640,9 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
+@@ -11470,6 +11652,9 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
        .swizzle =  {0, 1, 2, 3}
     };
  
@@ -267,7 +267,7 @@ index aaf1c5ad174c7c5d5669e029d015219a342b0f87..b78206b2a5dfe98b4a8551f9187dd763
     /* We create the texture views in this function instead of doing it in
      * vrend_renderer_prepare_blit_extra_info because we also delete them here */
     if ((src_res->base.format != info->src.format) && has_feature(feat_texture_view) &&
-@@ -13711,8 +13896,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -13723,8 +13908,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
        };
        struct vrend_resource *gr;
  
@@ -283,7 +283,7 @@ index aaf1c5ad174c7c5d5669e029d015219a342b0f87..b78206b2a5dfe98b4a8551f9187dd763
  
        gr = vrend_resource_create(&create_args);
        if (!gr)
-@@ -13761,6 +13953,30 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -13773,6 +13965,25 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
              return ret;
           }
  
@@ -299,12 +299,7 @@ index aaf1c5ad174c7c5d5669e029d015219a342b0f87..b78206b2a5dfe98b4a8551f9187dd763
 +            virgl_warn("%s: ignoring plane_count = %d and using the first one\n",
 +                       __func__, args->plane_count);
 +         }
-+         /* args->format is the importer's guess -- always the screen visual's
-+          * BGRA, since DRI3 carries no channel order -- so the exporter's own
-+          * format wins where it is known. */
-+         int ret = vrend_resource_import_shm(gr, res,
-+                                             res->export_format ? res->export_format
-+                                                                : args->format,
++         int ret = vrend_resource_import_shm(gr, res, args->format,
 +                                             args->plane_strides[0],
 +                                             args->plane_offsets[0]);
 +         if (ret) {
@@ -350,7 +345,7 @@ index 8bac5d847fabb363291c94e03e0e6250af2158ab..0290460cb0d212ae8d6ab55d2948b600
  #define VIRGL_TEXTURE_CAN_TEXTURE_STORAGE (1 << 1)
  #define VIRGL_TEXTURE_CAN_READBACK        (1 << 2)
 diff --git a/src/vrend/vrend_winsys_egl.c b/src/vrend/vrend_winsys_egl.c
-index 9f93e77ead6ffe16a08e536d827aba9c2ef6f7be..dd5d15c8d0832ca8b37c0acbffa934e8af06f0dc 100644
+index c15f6b61407c9137221e6efe03be85b036f7e14c..527b12050d11970bf2b926b4831fed86a5733546 100644
 --- a/src/vrend/vrend_winsys_egl.c
 +++ b/src/vrend/vrend_winsys_egl.c
 @@ -69,6 +69,7 @@

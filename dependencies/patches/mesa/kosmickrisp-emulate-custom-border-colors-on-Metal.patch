@@ -6,16 +6,16 @@ Subject: [PATCH] kosmickrisp: emulate custom border colors on Metal
 (cherry picked from commit a89fd62d3eeb828371891de5eb940b64c80a956f)
 ---
  src/kosmickrisp/vulkan/kk_descriptor_set.c    |  19 +-
- src/kosmickrisp/vulkan/kk_descriptor_types.h  |  73 ++++++-
- .../vulkan/kk_nir_lower_custom_border.c       | 202 ++++++++++++++++++
+ src/kosmickrisp/vulkan/kk_descriptor_types.h  |  38 ++-
+ .../vulkan/kk_nir_lower_custom_border.c       | 217 ++++++++++++++++++
  .../vulkan/kk_nir_lower_descriptors.c         |  41 +++-
  src/kosmickrisp/vulkan/kk_physical_device.c   |   5 +
  src/kosmickrisp/vulkan/kk_sampler.c           |  44 +++-
  src/kosmickrisp/vulkan/kk_sampler.h           |   2 +
  src/kosmickrisp/vulkan/kk_shader.c            |   4 +
- src/kosmickrisp/vulkan/kk_shader.h            |   6 +
+ src/kosmickrisp/vulkan/kk_shader.h            |  14 ++
  src/kosmickrisp/vulkan/meson.build            |   1 +
- 10 files changed, 378 insertions(+), 19 deletions(-)
+ 10 files changed, 366 insertions(+), 19 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_set.c b/src/kosmickrisp/vulkan/kk_descriptor_set.c
@@ -63,7 +63,7 @@ index 570d4eeb85b00255b32632b1dcb6fa836268a387..df5a21d42cfd861cab2da0b9fd114a29
  
     assert(sizeof(desc[0]) * plane_count <= dst_size);
 diff --git a/src/kosmickrisp/vulkan/kk_descriptor_types.h b/src/kosmickrisp/vulkan/kk_descriptor_types.h
-index 5296366c8c68455cc055e906b500f84d6714c048..6f5d2040e49b7c6afc89f7755bacfd5afb9649c7 100644
+index 5296366c8c68455cc055e906b500f84d6714c048..8cd9f485f258d52cd8d57e3ae50b52b6eaebd156 100644
 --- a/src/kosmickrisp/vulkan/kk_descriptor_types.h
 +++ b/src/kosmickrisp/vulkan/kk_descriptor_types.h
 @@ -16,7 +16,11 @@ struct kk_sampled_image_descriptor {
@@ -79,7 +79,7 @@ index 5296366c8c68455cc055e906b500f84d6714c048..6f5d2040e49b7c6afc89f7755bacfd5a
     uint32_t pad_to_64_bits;
     uint32_t border[4];
     uint64_t pad_to_power_2[3];
-@@ -42,4 +46,71 @@ struct kk_buffer_address {
+@@ -42,4 +46,36 @@ struct kk_buffer_address {
  static_assert(sizeof(struct kk_buffer_address) == 16,
                "kk_buffer_address has no holes");
  
@@ -115,48 +115,13 @@ index 5296366c8c68455cc055e906b500f84d6714c048..6f5d2040e49b7c6afc89f7755bacfd5a
 +                    ((uint32_t)compare_op << KK_BORDER_COMPARE_OP_SHIFT));
 +}
 +
-+static inline uint32_t
-+kk_border_sampler_index(int32_t packed)
-+{
-+   return (uint32_t)packed & KK_BORDER_SAMPLER_INDEX_MASK;
-+}
-+
-+static inline VkCompareOp
-+kk_border_compare_op(int32_t packed)
-+{
-+   return (VkCompareOp)(((uint32_t)packed >> KK_BORDER_COMPARE_OP_SHIFT) &
-+                        KK_BORDER_COMPARE_OP_MASK);
-+}
-+
-+/* Evaluate a sampler comparison the way the shader reconstruction does. */
-+static inline bool
-+kk_border_compare(VkCompareOp op, float reference, float value)
-+{
-+   const uint32_t mask = (uint32_t)op;
-+
-+   return (((mask & KK_COMPARE_LESS) && reference < value) ||
-+           ((mask & KK_COMPARE_EQUAL) && reference == value) ||
-+           ((mask & KK_COMPARE_GREATER) && reference > value));
-+}
-+
-+/* Metal only offers a 0.0 and a 1.0 border, so the emulation recovers the
-+ * border's filter weight from two probes taken at a reference value those two
-+ * borders answer differently.  Every operation except the constant ones has
-+ * such a reference. */
-+static inline float
-+kk_border_probe_reference(VkCompareOp op)
-+{
-+   return (op == VK_COMPARE_OP_EQUAL || op == VK_COMPARE_OP_NOT_EQUAL) ? 0.0f
-+                                                                      : 0.5f;
-+}
-+
  #endif /* KK_DESCRIPTOR_TYPES */
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c b/src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..fd69d736a4aea0d2dc9f068dce6f57ea88022058
+index 0000000000000000000000000000000000000000..179808d489c6f9f1bc56624023e13ed79fb5c204
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_custom_border.c
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,217 @@
 +/*
 + * Copyright 2025 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -189,6 +154,14 @@ index 0000000000000000000000000000000000000000..fd69d736a4aea0d2dc9f068dce6f57ea
 +                                  1, nir_type_bool1, false, false);
 +}
 +
++nir_def *
++kk_nir_border_compare_op(nir_builder *b, nir_def *packed)
++{
++   return nir_iand_imm(
++      b, nir_ushr_imm(b, packed, KK_BORDER_COMPARE_OP_SHIFT),
++      KK_BORDER_COMPARE_OP_MASK);
++}
++
 +/* The raw sampler descriptor carries the packed border word in its third
 + * dword.  Keep the has-custom-border query boolean and extract the integer
 + * compare operation from the descriptor instead.
@@ -199,17 +172,14 @@ index 0000000000000000000000000000000000000000..fd69d736a4aea0d2dc9f068dce6f57ea
 +   nir_def *descriptor = nir_build_texture_query(
 +      b, tex, nir_texop_sampler_descriptor_amd, 4, nir_type_uint32,
 +      false, false);
-+   nir_def *packed = nir_channel(b, descriptor, 2);
-+   return nir_iand_imm(
-+      b, nir_ushr_imm(b, packed, KK_BORDER_COMPARE_OP_SHIFT),
-+      KK_BORDER_COMPARE_OP_MASK);
++   return kk_nir_border_compare_op(b, nir_channel(b, descriptor, 2));
 +}
 +
-+/* Evaluate "reference <op> value" the way the sampler's compare operation
-+ * would.  VkCompareOp is a three-bit mask of the orderings that pass, so the
-+ * dynamic operation costs three comparisons rather than a switch. */
-+static nir_def *
-+compare_border(nir_builder *b, nir_def *op, nir_def *reference, nir_def *value)
++/* VkCompareOp is a three-bit mask of the orderings that pass, so the dynamic
++ * operation costs three comparisons rather than a switch. */
++nir_def *
++kk_nir_border_compare(nir_builder *b, nir_def *op, nir_def *reference,
++                      nir_def *value)
 +{
 +   nir_def *passes = nir_iand(
 +      b, nir_ine_imm(b, nir_iand_imm(b, op, KK_COMPARE_LESS), 0),
@@ -226,6 +196,20 @@ index 0000000000000000000000000000000000000000..fd69d736a4aea0d2dc9f068dce6f57ea
 +               nir_flt(b, value, reference)));
 +
 +   return nir_b2fN(b, passes, reference->bit_size);
++}
++
++/* Metal only offers a 0.0 and a 1.0 border, so the emulation recovers the
++ * border's filter weight from two probes taken at a reference value those two
++ * borders answer differently.  Every operation except the constant ones has
++ * such a reference. */
++nir_def *
++kk_nir_border_probe_reference(nir_builder *b, nir_def *op, unsigned bit_size)
++{
++   nir_def *equality =
++      nir_ior(b, nir_ieq_imm(b, op, VK_COMPARE_OP_EQUAL),
++              nir_ieq_imm(b, op, VK_COMPARE_OP_NOT_EQUAL));
++   return nir_bcsel(b, equality, nir_imm_floatN_t(b, 0.0, bit_size),
++                    nir_imm_floatN_t(b, 0.5, bit_size));
 +}
 +
 +static nir_tex_instr *
@@ -291,19 +275,15 @@ index 0000000000000000000000000000000000000000..fd69d736a4aea0d2dc9f068dce6f57ea
 +                                       reference->bit_size);
 +   }
 +
-+   nir_def *equality =
-+      nir_ior(b, nir_ieq_imm(b, op, VK_COMPARE_OP_EQUAL),
-+              nir_ieq_imm(b, op, VK_COMPARE_OP_NOT_EQUAL));
 +   nir_def *probe_reference =
-+      nir_bcsel(b, equality, nir_imm_floatN_t(b, 0.0, reference->bit_size),
-+                nir_imm_floatN_t(b, 0.5, reference->bit_size));
++      kk_nir_border_probe_reference(b, op, reference->bit_size);
 +
 +   nir_def *white = &clone_probe(b, tex, probe_reference, false)->def;
 +   nir_def *black = &clone_probe(b, tex, probe_reference, true)->def;
 +   nir_def *weight = nir_fabs(b, nir_fsub(b, white, black));
 +
-+   nir_def *emulated = compare_border(b, op, reference, border);
-+   nir_def *opaque_white = compare_border(
++   nir_def *emulated = kk_nir_border_compare(b, op, reference, border);
++   nir_def *opaque_white = kk_nir_border_compare(
 +      b, op, reference, nir_imm_floatN_t(b, 1.0, reference->bit_size));
 +   nir_def *delta = nir_fsub(b, emulated, opaque_white);
 +   if (delta->bit_size != clamp_to_1->bit_size) {
@@ -571,7 +551,7 @@ index 9c2fe2b63c86a07b6d803937a354b52aedea7abb..59cfd521770bb5034f3b8687966d75b5
     NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_push_const,
              nir_address_format_32bit_offset);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 123bf0479139086901b8abd19342eff2a910f661..6e092ef0f7e828ad2c106c3277d12d9ae575a4a5 100644
+index 123bf0479139086901b8abd19342eff2a910f661..09ce7cdaf7c0567dbb050e7ba5be4ae4a8e2efec 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -19,6 +19,10 @@
@@ -585,11 +565,19 @@ index 123bf0479139086901b8abd19342eff2a910f661..6e092ef0f7e828ad2c106c3277d12d9a
  struct kk_tess_info {
     enum tess_primitive_mode mode : 8;
     enum gl_tess_spacing spacing  : 8;
-@@ -160,6 +164,8 @@ kk_nir_lower_descriptors(nir_shader *nir,
+@@ -160,6 +164,16 @@ kk_nir_lower_descriptors(nir_shader *nir,
  bool kk_nir_lower_poly(struct nir_shader *nir);
  bool kk_nir_lower_null_images(nir_shader *nir);
  
 +bool kk_nir_lower_custom_border(nir_shader *nir);
++/* The pieces of the shadow border reconstruction, for its tests: the compare
++ * operation of a packed border word, "reference <op> value" as the sampler
++ * evaluates it, and the reference the two weight probes are taken at. */
++nir_def *kk_nir_border_compare_op(struct nir_builder *b, nir_def *packed);
++nir_def *kk_nir_border_compare(struct nir_builder *b, nir_def *op,
++                               nir_def *reference, nir_def *value);
++nir_def *kk_nir_border_probe_reference(struct nir_builder *b, nir_def *op,
++                                       unsigned bit_size);
 +
  bool kk_nir_lower_textures(nir_shader *nir);
  

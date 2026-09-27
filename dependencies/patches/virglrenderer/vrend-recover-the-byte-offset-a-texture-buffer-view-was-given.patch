@@ -31,7 +31,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 39 insertions(+), 9 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 49d35ac807e93ad5f1d1c28be8978ce0d890075d..e3725d7a16731469f17732c252579fafd9b4d97c 100644
+index f5653dbfad9f66bc389d6f14952cb6a4caea9463..a0e49262e0fb24cc632674359da86cfc1060abbf 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -382,6 +382,7 @@ struct global_renderer_state {
@@ -42,7 +42,7 @@ index 49d35ac807e93ad5f1d1c28be8978ce0d890075d..e3725d7a16731469f17732c252579faf
     uint32_t max_texture_2d_size;
     uint32_t max_texture_3d_size;
     uint32_t max_texture_cube_size;
-@@ -3684,6 +3685,31 @@ static GLenum vrend_get_arb_format(enum virgl_formats format)
+@@ -3705,6 +3706,31 @@ static GLenum vrend_get_arb_format(enum virgl_formats format)
     }
  }
  
@@ -74,7 +74,7 @@ index 49d35ac807e93ad5f1d1c28be8978ce0d890075d..e3725d7a16731469f17732c252579faf
  void vrend_set_single_sampler_view(struct vrend_context *ctx,
                                     uint32_t shader_type,
                                     uint32_t index,
-@@ -3777,15 +3803,15 @@ void vrend_set_single_sampler_view(struct vrend_context *ctx,
+@@ -3798,15 +3824,15 @@ void vrend_set_single_sampler_view(struct vrend_context *ctx,
           }
  
           if (has_feature(feat_texture_buffer_range)) {
@@ -99,7 +99,7 @@ index 49d35ac807e93ad5f1d1c28be8978ce0d890075d..e3725d7a16731469f17732c252579faf
           } else
              glTexBuffer(GL_TEXTURE_BUFFER, internalformat, view->texture->gl_id);
        }
-@@ -7718,6 +7744,10 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+@@ -7739,6 +7765,10 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS,
                   (GLint*)&vrend_state.max_texture_units);
  

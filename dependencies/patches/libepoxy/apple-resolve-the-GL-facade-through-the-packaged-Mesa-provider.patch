@@ -8,20 +8,21 @@ libepoxy assumes an Apple host reaches GL through CGL and
 OpenGL.framework, and it compiles EGL out of the platform entirely.
 linux-um-darwin packages exactly one GL provider per Apple product --
 Mesa, built as MesaEGL.framework -- and that build is EGL-only: it
-exports no desktop GL or GLES entry points of its own, and every GL API
-is reached through eglGetProcAddress.
+exports no desktop GL, GLX or GLES entry points of its own, and every GL
+API is reached through eglGetProcAddress.
 
-Let EGL exist on Apple, point every library name at the packaged
-provider's rpath so no system OpenGL is retained as a hidden fallback,
-and resolve the GL, GLES1, GLES2 and GLES3 facades through EGL rather
-than through dlsym on a library that exports nothing.
+Let EGL exist on Apple, open only the packaged provider's EGL library so
+no system OpenGL is retained as a hidden fallback, and resolve the GL,
+GLES1, GLES2 and GLES3 facades through EGL rather than through dlsym on
+a library that exports nothing. An Apple build without EGL, or with GLX,
+fails to compile instead of opening a library that cannot serve it.
 ---
- src/dispatch_common.c | 32 ++++++++++++++++++++++++++++----
+ src/dispatch_common.c | 34 ++++++++++++++++++++++++++++++----
  src/dispatch_common.h |  4 +++-
- 2 files changed, 31 insertions(+), 5 deletions(-)
+ 2 files changed, 33 insertions(+), 5 deletions(-)
 
 diff --git a/src/dispatch_common.c b/src/dispatch_common.c
-index 153eb7c5f485224610f8e8c962e82d30c5b42206..dc649cd96b5857c97884fb9230896d1629f2c802 100644
+index 153eb7c5f485224610f8e8c962e82d30c5b42206..b663a8e09f7b39eccb9a66748f2b0c2222731d85 100644
 --- a/src/dispatch_common.c
 +++ b/src/dispatch_common.c
 @@ -174,10 +174,16 @@
@@ -35,21 +36,34 @@ index 153eb7c5f485224610f8e8c962e82d30c5b42206..dc649cd96b5857c97884fb9230896d16
 +/* linux-um-darwin packages exactly one GL provider per Apple product and
 + * resolves every GL API through that product's rpath; CGL and
 + * OpenGL.framework are never retained as a hidden fallback. Mesa's Apple
-+ * build is EGL-only and exports no desktop GL entry points of its own, so
-+ * its GL facade is resolved through eglGetProcAddress instead. */
++ * build is EGL-only and exports no GL, GLX or GLES entry points of its own,
++ * so EGL is the one library an Apple build opens and every other API is
++ * resolved through eglGetProcAddress. */
++#if !PLATFORM_HAS_EGL || PLATFORM_HAS_GLX
++#error "an Apple build of libepoxy needs EGL and no GLX"
++#endif
 +#define EGL_LIB "@rpath/MesaEGL.framework/MesaEGL"
-+#define GLX_LIB "@rpath/MesaEGL.framework/MesaEGL"
-+#define OPENGL_LIB "@rpath/MesaEGL.framework/MesaEGL"
-+#define GLES1_LIB "@rpath/MesaEGL.framework/MesaEGL"
-+#define GLES2_LIB "@rpath/MesaEGL.framework/MesaEGL"
  #elif defined(__ANDROID__)
  #define GLX_LIB "libGLESv2.so"
  #define EGL_LIB "libEGL.so"
-@@ -697,31 +703,45 @@ epoxy_load_gl(void)
+@@ -660,6 +666,7 @@ epoxy_glx_dlsym(const char *name)
+     return epoxy_conservative_glx_dlsym(name, true);
+ }
+ 
++#if !defined(__APPLE__)
+ static void
+ epoxy_load_gl(void)
+ {
+@@ -693,35 +700,50 @@ epoxy_load_gl(void)
+ 
+ #endif
+ }
++#endif /* !__APPLE__ */
+ 
  void *
  epoxy_gl_dlsym(const char *name)
  {
-+#if defined(__APPLE__) && PLATFORM_HAS_EGL
++#if defined(__APPLE__)
 +    /* The packaged Mesa provider exposes desktop GL only through its EGL
 +     * entry point; the library exports no GL symbols to resolve. */
 +    return eglGetProcAddress(name);
@@ -63,7 +77,7 @@ index 153eb7c5f485224610f8e8c962e82d30c5b42206..dc649cd96b5857c97884fb9230896d16
  void *
  epoxy_gles1_dlsym(const char *name)
  {
-+#if defined(__APPLE__) && PLATFORM_HAS_EGL
++#if defined(__APPLE__)
 +    return epoxy_get_proc_address(name);
 +#else
      if (epoxy_current_context_is_glx()) {
@@ -78,7 +92,7 @@ index 153eb7c5f485224610f8e8c962e82d30c5b42206..dc649cd96b5857c97884fb9230896d16
  void *
  epoxy_gles2_dlsym(const char *name)
  {
-+#if defined(__APPLE__) && PLATFORM_HAS_EGL
++#if defined(__APPLE__)
 +    return epoxy_get_proc_address(name);
 +#else
      if (epoxy_current_context_is_glx()) {
@@ -91,17 +105,17 @@ index 153eb7c5f485224610f8e8c962e82d30c5b42206..dc649cd96b5857c97884fb9230896d16
  }
  
  /**
-@@ -737,6 +757,9 @@ epoxy_gles2_dlsym(const char *name)
+@@ -737,6 +759,9 @@ epoxy_gles2_dlsym(const char *name)
  void *
  epoxy_gles3_dlsym(const char *name)
  {
-+#if defined(__APPLE__) && PLATFORM_HAS_EGL
++#if defined(__APPLE__)
 +    return epoxy_get_proc_address(name);
 +#else
      if (epoxy_current_context_is_glx()) {
          return epoxy_get_proc_address(name);
      } else {
-@@ -749,6 +772,7 @@ epoxy_gles3_dlsym(const char *name)
+@@ -749,6 +774,7 @@ epoxy_gles3_dlsym(const char *name)
  
          return epoxy_get_proc_address(name);
      }

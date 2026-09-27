@@ -13,6 +13,7 @@
 #include <span>
 #include <unordered_set>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 #include <sys/uio.h>
 
@@ -171,6 +172,10 @@ private:
         std::uint32_t entryCount,
         std::vector<BackingEntry>& backing,
         std::vector<iovec>& vectors) const;
+    /* The renderer's capability set, or the response a query for it fails
+     * with. */
+    [[nodiscard]] std::variant<VirglRenderer::Capset, protocol::GpuResponse>
+    rendererCapset(std::uint32_t capsetId) const;
     [[nodiscard]] std::vector<std::uint8_t> capsetInfo(
         const protocol::GpuGetCapsetInfo& request) const;
     [[nodiscard]] std::vector<std::uint8_t> capset(

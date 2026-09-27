@@ -14,8 +14,9 @@ uml_add_unit_test(
     LABELS gpu;vulkan)
 
 # The balloon follows host GPU memory that Metal's allocated size omits.
-# Both libraries exist only in GPU builds.
-if(TARGET uml_balloon_device AND TARGET uml_host_gpu_memory)
+# The balloon device exists only in GPU builds; the platform's host GPU
+# memory library is always built.
+if(TARGET uml_balloon_device)
     add_executable(uml_gpu_host_graphics_footprint_tests
         host_graphics_footprint_tests.mm)
     target_link_libraries(uml_gpu_host_graphics_footprint_tests PRIVATE
@@ -84,81 +85,29 @@ if(TARGET uml_gpu_kosmickrisp_capability_probe)
         COMMAND uml_gpu_kosmickrisp_line_multiview_tests
         LABELS gpu;vulkan)
 
-    add_executable(uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests
-        kosmickrisp_dynamic_logic_op_capability_tests.cpp)
-    target_link_libraries(
-        uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests PRIVATE
-        UML::GpuKosmicKrispCapabilityProbe)
-    target_include_directories(
-        uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(
-        uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(
-        uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(
-        NAME gpu-kosmickrisp-dynamic-logic-op-capabilities
-        COMMAND uml_gpu_kosmickrisp_dynamic_logic_op_capability_tests
-        LABELS gpu;vulkan)
-
-    add_executable(uml_gpu_kosmickrisp_device_address_commands_capability_tests
-        kosmickrisp_device_address_commands_capability_tests.cpp)
-    target_link_libraries(
-        uml_gpu_kosmickrisp_device_address_commands_capability_tests PRIVATE
-        UML::GpuKosmicKrispCapabilityProbe)
-    target_include_directories(
-        uml_gpu_kosmickrisp_device_address_commands_capability_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(
-        uml_gpu_kosmickrisp_device_address_commands_capability_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(
-        uml_gpu_kosmickrisp_device_address_commands_capability_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(
-        NAME gpu-kosmickrisp-device-address-commands-capabilities
-        COMMAND uml_gpu_kosmickrisp_device_address_commands_capability_tests
-        LABELS gpu;vulkan)
-
-    add_executable(uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests
-        kosmickrisp_graphics_pipeline_library_capability_tests.cpp)
-    target_link_libraries(
-        uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests PRIVATE
-        UML::GpuKosmicKrispCapabilityProbe)
-    target_include_directories(
-        uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(
-        uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(
-        uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(
-        NAME gpu-kosmickrisp-graphics-pipeline-library-capabilities
-        COMMAND uml_gpu_kosmickrisp_graphics_pipeline_library_capability_tests
-        LABELS gpu;vulkan)
-
-    add_executable(uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests
-        kosmickrisp_legacy_vertex_attribute_capability_tests.cpp)
-    target_link_libraries(
-        uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests PRIVATE
-        UML::GpuKosmicKrispCapabilityProbe)
-    target_include_directories(
-        uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(
-        uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(
-        uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(
-        NAME gpu-kosmickrisp-legacy-vertex-attribute-capabilities
-        COMMAND uml_gpu_kosmickrisp_legacy_vertex_attribute_capability_tests
-        LABELS gpu;vulkan)
+    # Each runs the KosmicKrisp capability probe and checks one capability in
+    # its report.
+    foreach(capability
+            dynamic_logic_op device_address_commands graphics_pipeline_library
+            legacy_vertex_attribute rgb32_texel non_seamless_cube
+            incremental_present unused_attachments)
+        set(target uml_gpu_kosmickrisp_${capability}_capability_tests)
+        string(REPLACE "_" "-" test_name "${capability}")
+        add_executable(${target}
+            kosmickrisp_${capability}_capability_tests.cpp)
+        target_link_libraries(${target} PRIVATE
+            UML::GpuKosmicKrispCapabilityProbe)
+        target_include_directories(${target} PRIVATE
+            ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+        target_compile_features(${target} PRIVATE cxx_std_20)
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Werror)
+        uml_add_unit_test(
+            NAME gpu-kosmickrisp-${test_name}-capabilities
+            COMMAND ${target}
+            LABELS gpu;vulkan)
+    endforeach()
+    target_link_libraries(uml_gpu_kosmickrisp_rgb32_texel_capability_tests
+        PRIVATE UML::ThirdPartyKosmicKrisp)
 
     add_executable(uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests
         kosmickrisp_legacy_vertex_input_draw_tests.cpp)
@@ -169,83 +118,6 @@ if(TARGET uml_gpu_kosmickrisp_capability_probe)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-legacy-vertex-input-draws
         COMMAND uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests
-        LABELS gpu;vulkan)
-
-    add_executable(uml_gpu_kosmickrisp_rgb32_texel_capability_tests
-        kosmickrisp_rgb32_texel_capability_tests.cpp)
-    target_link_libraries(
-        uml_gpu_kosmickrisp_rgb32_texel_capability_tests PRIVATE
-        UML::GpuKosmicKrispCapabilityProbe
-        UML::ThirdPartyKosmicKrisp)
-    target_include_directories(
-        uml_gpu_kosmickrisp_rgb32_texel_capability_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(
-        uml_gpu_kosmickrisp_rgb32_texel_capability_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(
-        uml_gpu_kosmickrisp_rgb32_texel_capability_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(
-        NAME gpu-kosmickrisp-rgb32-texel-capabilities
-        COMMAND uml_gpu_kosmickrisp_rgb32_texel_capability_tests
-        LABELS gpu;vulkan)
-
-    add_executable(uml_gpu_kosmickrisp_non_seamless_cube_capability_tests
-        kosmickrisp_non_seamless_cube_capability_tests.cpp)
-    target_link_libraries(
-        uml_gpu_kosmickrisp_non_seamless_cube_capability_tests PRIVATE
-        UML::GpuKosmicKrispCapabilityProbe)
-    target_include_directories(
-        uml_gpu_kosmickrisp_non_seamless_cube_capability_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(
-        uml_gpu_kosmickrisp_non_seamless_cube_capability_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(
-        uml_gpu_kosmickrisp_non_seamless_cube_capability_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(
-        NAME gpu-kosmickrisp-non-seamless-cube-capabilities
-        COMMAND uml_gpu_kosmickrisp_non_seamless_cube_capability_tests
-        LABELS gpu;vulkan)
-
-    add_executable(uml_gpu_kosmickrisp_incremental_present_capability_tests
-        kosmickrisp_incremental_present_capability_tests.cpp)
-    target_link_libraries(
-        uml_gpu_kosmickrisp_incremental_present_capability_tests PRIVATE
-        UML::GpuKosmicKrispCapabilityProbe)
-    target_include_directories(
-        uml_gpu_kosmickrisp_incremental_present_capability_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(
-        uml_gpu_kosmickrisp_incremental_present_capability_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(
-        uml_gpu_kosmickrisp_incremental_present_capability_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(
-        NAME gpu-kosmickrisp-incremental-present-capabilities
-        COMMAND uml_gpu_kosmickrisp_incremental_present_capability_tests
-        LABELS gpu;vulkan)
-
-    add_executable(uml_gpu_kosmickrisp_unused_attachments_capability_tests
-        kosmickrisp_unused_attachments_capability_tests.cpp)
-    target_link_libraries(
-        uml_gpu_kosmickrisp_unused_attachments_capability_tests PRIVATE
-        UML::GpuKosmicKrispCapabilityProbe)
-    target_include_directories(
-        uml_gpu_kosmickrisp_unused_attachments_capability_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(
-        uml_gpu_kosmickrisp_unused_attachments_capability_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(
-        uml_gpu_kosmickrisp_unused_attachments_capability_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(
-        NAME gpu-kosmickrisp-unused-attachments-capabilities
-        COMMAND uml_gpu_kosmickrisp_unused_attachments_capability_tests
         LABELS gpu;vulkan)
 endif()
 

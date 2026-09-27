@@ -159,7 +159,7 @@ index 492498c34439aa604262faa81f9221de999c6ea6..9d7183dab1fb072cefe5ca670b96f089
        features |=
           VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_MINMAX_BIT; // TODO_KOSMICKRISP
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 0099ae110880c4e7e101896ba405326ff13b72a7..cb1eb6290e170272777690b27cb650785e27490e 100644
+index 52114fe03f98bd24c4e8d18760f8275cacf293d7..b8132353702e9af3ae4020679ba71755bef6e825 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -223,6 +223,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -183,7 +183,7 @@ index 0099ae110880c4e7e101896ba405326ff13b72a7..cb1eb6290e170272777690b27cb65078
        .textureCompressionETC2 = true,
        .vertexPipelineStoresAndAtomics = true,
  
-@@ -1149,6 +1154,10 @@ get_metal_limits(struct kk_physical_device *pdev)
+@@ -1147,6 +1152,10 @@ get_metal_limits(struct kk_physical_device *pdev)
        mtl_device_max_buffer_length(pdev->mtl_dev_handle);
     pdev->info.gpu_apple_family =
        mtl_device_get_gpu_apple_family(pdev->mtl_dev_handle);
@@ -194,7 +194,7 @@ index 0099ae110880c4e7e101896ba405326ff13b72a7..cb1eb6290e170272777690b27cb65078
  
     pdev->supported_sample_counts = VK_SAMPLE_COUNT_1_BIT;
     for (uint32_t sample_count = VK_SAMPLE_COUNT_2_BIT;
-@@ -1190,7 +1199,7 @@ kk_enumerate_physical_devices(struct vk_instance *_instance)
+@@ -1188,7 +1197,7 @@ kk_enumerate_physical_devices(struct vk_instance *_instance)
     kk_get_device_extensions(instance, &supported_extensions);
  
     struct vk_features supported_features;

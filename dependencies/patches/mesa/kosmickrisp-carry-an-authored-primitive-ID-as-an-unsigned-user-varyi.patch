@@ -57,7 +57,7 @@ translator test builds a vertex shader that stores the position, primitive
 ID, layer and viewport and a fragment shader that reads the last three, all
 as signed integers, and checks the declarations of both structs.
 ---
- src/kosmickrisp/compiler/msl_iomap.c          |  72 +-
+ src/kosmickrisp/compiler/msl_iomap.c          |  67 +-
  src/kosmickrisp/vulkan/meson.build            |  14 +
  .../primitive_id_link_shaders/copy_id.geom    |  17 +
  .../primitive_id_link_shaders/copy_id.geom.h  | 102 +++
@@ -70,7 +70,7 @@ as signed integers, and checks the declarations of both structs.
  .../passthrough.vert.h                        |  49 ++
  .../tests/test_geometry_primitive_id_link.cpp | 638 ++++++++++++++++++
  .../vulkan/tests/test_msl_temporaries.c       |  97 +++
- 13 files changed, 1069 insertions(+), 20 deletions(-)
+ 13 files changed, 1064 insertions(+), 20 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/copy_id.geom
  create mode 100644 src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/copy_id.geom.h
  create mode 100755 src/kosmickrisp/vulkan/tests/primitive_id_link_shaders/generate.sh
@@ -83,7 +83,7 @@ as signed integers, and checks the declarations of both structs.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_geometry_primitive_id_link.cpp
 
 diff --git a/src/kosmickrisp/compiler/msl_iomap.c b/src/kosmickrisp/compiler/msl_iomap.c
-index f0cf216fd0db5b7b7170738d8c0541a72978c787..861f1fb3f0ae4bba7eaa0310be706911a4589b94 100644
+index f0cf216fd0db5b7b7170738d8c0541a72978c787..45bb7b7ecb42236676c3be8a60835e20f913d45b 100644
 --- a/src/kosmickrisp/compiler/msl_iomap.c
 +++ b/src/kosmickrisp/compiler/msl_iomap.c
 @@ -62,7 +62,15 @@ static const struct {
@@ -164,27 +164,22 @@ index f0cf216fd0db5b7b7170738d8c0541a72978c787..861f1fb3f0ae4bba7eaa0310be706911
     }
  }
  
-@@ -507,6 +525,20 @@ pin_metal_builtin_slot_shapes(struct io_slot_info *slots)
-       if (slot->num_components)
-          slot->type = nir_type_float32;
-    }
-+
-+   /* An authored primitive ID travels as a user varying, so Metal does not fix
-+    * its type, but the two ends of it are not written by the same party: the
-+    * generated raster stages store it unsigned, a geometry shader stores
-+    * gl_PrimitiveID signed, and the fragment shader reads it signed. Declare
-+    * both ends as the unsigned scalar of the Metal value it stands in for, so
-+    * that the interface never depends on how Metal links integer varyings
-+    * whose signedness differs.
-+    */
-+   struct io_slot_info *primitive_id = &slots[VARYING_SLOT_PRIMITIVE_ID];
-+   if (primitive_id->num_components) {
-+      primitive_id->type = nir_type_uint32;
-+      primitive_id->num_components = 1u;
-+   }
- }
+@@ -485,6 +503,15 @@ pin_metal_builtin_slot_shapes(struct io_slot_info *slots)
+       {VARYING_SLOT_PSIZ, nir_type_float32, 1u},
+       {VARYING_SLOT_LAYER, nir_type_uint32, 1u},
+       {VARYING_SLOT_VIEWPORT, nir_type_uint32, 1u},
++      /* An authored primitive ID travels as a user varying, so Metal does not
++       * fix its type, but the two ends of it are not written by the same
++       * party: the generated raster stages store it unsigned, a geometry
++       * shader stores gl_PrimitiveID signed, and the fragment shader reads it
++       * signed. Declare both ends as the unsigned scalar of the Metal value it
++       * stands in for, so that the interface never depends on how Metal links
++       * integer varyings whose signedness differs.
++       */
++      {VARYING_SLOT_PRIMITIVE_ID, nir_type_uint32, 1u},
+    };
  
- void
+    for (unsigned i = 0u; i < ARRAY_SIZE(fixed); ++i) {
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
 index 20cf206b4123826786f9493cced007e0e260284a..8cb7b23a7288a80e6de35511c0e5557759639b2f 100644
 --- a/src/kosmickrisp/vulkan/meson.build

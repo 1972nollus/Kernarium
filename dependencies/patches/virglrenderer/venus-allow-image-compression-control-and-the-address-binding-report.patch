@@ -23,10 +23,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 3 insertions(+)
 
 diff --git a/src/venus/vkr_common.c b/src/venus/vkr_common.c
-index 6a33f99e272f2f93f48423b04d33070349be1d2a..7d6fb0f501a48c11c41aa7ced1686aef202a0f12 100644
+index f55935c0c8f871a2afd461764b1a2bcf17564b0a..83b925ea665393b031c9196e9fdb187649bd12a6 100644
 --- a/src/venus/vkr_common.c
 +++ b/src/venus/vkr_common.c
-@@ -160,6 +160,7 @@ static const struct vn_info_extension_table vkr_extension_table = {
+@@ -161,6 +161,7 @@ static const struct vn_info_extension_table vkr_extension_table = {
     .EXT_depth_clip_enable = true,
     .EXT_depth_range_unrestricted = true,
     .EXT_descriptor_heap = true,
@@ -34,7 +34,7 @@ index 6a33f99e272f2f93f48423b04d33070349be1d2a..7d6fb0f501a48c11c41aa7ced1686aef
     .EXT_dynamic_rendering_unused_attachments = true,
     .EXT_extended_dynamic_state3 = true,
     .EXT_external_memory_acquire_unmodified = true,
-@@ -170,6 +171,8 @@ static const struct vn_info_extension_table vkr_extension_table = {
+@@ -171,6 +172,8 @@ static const struct vn_info_extension_table vkr_extension_table = {
     .EXT_global_priority_query = true,
     .EXT_graphics_pipeline_library = true,
     .EXT_image_2d_view_of_3d = true,
