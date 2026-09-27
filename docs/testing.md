@@ -51,7 +51,11 @@ cmake --workflow --preset check-unit-4k
 
 Use both profiles for page-size-sensitive CPU, memory, ABI, kernel, or guest
 changes. A change confined to a page-independent host tool usually needs only
-its owning workflow.
+its owning workflow; for tooling tests alone that is:
+
+```sh
+cmake --workflow --preset check-tooling
+```
 
 Specialized workflows are:
 

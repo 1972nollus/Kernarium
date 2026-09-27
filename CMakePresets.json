@@ -672,6 +672,14 @@
   ],
   "workflowPresets": [
     {
+      "name": "check-tooling",
+      "steps": [
+        {"type": "configure", "name": "macos-tooling"},
+        {"type": "build", "name": "tooling-test-binaries"},
+        {"type": "test", "name": "tooling"}
+      ]
+    },
+    {
       "name": "check-unit",
       "steps": [
         {"type": "configure", "name": "macos-unit-16k"},
