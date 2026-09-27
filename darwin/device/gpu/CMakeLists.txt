@@ -157,6 +157,7 @@ target_compile_definitions(uml_gpu_display PRIVATE
 target_include_directories(uml_gpu_display PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
 target_link_libraries(uml_gpu_display PUBLIC UML::VncInput)
+target_link_libraries(uml_gpu_display PRIVATE UML::GuestTimerMask)
 if(UML_TARGET_MACOS)
     target_link_libraries(uml_gpu_display PRIVATE
         UML::ThirdPartyVncServer

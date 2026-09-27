@@ -6,6 +6,7 @@
 #include "display_resize_notifier.hpp"
 #include "metal_presentation.hpp"
 #include "native_display_application.hpp"
+#include "platform/guest_timer_mask.hpp"
 
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
@@ -223,41 +224,20 @@ private:
     id ended_ = nil;
 };
 
-class ScopedSignalMask final {
-public:
-    ScopedSignalMask()
-    {
-        sigset_t blocked;
-        sigemptyset(&blocked);
-        sigaddset(&blocked, SIGALRM);
-        const int error = ::pthread_sigmask(SIG_BLOCK, &blocked, &previous_);
-        if (error != 0) {
-            throw std::system_error(
-                error,
-                std::generic_category(),
-                "blocking the UML timer on the AppKit thread");
-        }
-        active_ = true;
+/* The mask the calling thread has now, which the guest's own thread keeps
+ * while the AppKit thread blocks the guest timer. */
+sigset_t currentSignalMask()
+{
+    sigset_t mask;
+    const int error = ::pthread_sigmask(SIG_SETMASK, nullptr, &mask);
+    if (error != 0) {
+        throw std::system_error(
+            error,
+            std::generic_category(),
+            "reading the AppKit thread's signal mask");
     }
-
-    ScopedSignalMask(const ScopedSignalMask&) = delete;
-    ScopedSignalMask& operator=(const ScopedSignalMask&) = delete;
-
-    ~ScopedSignalMask()
-    {
-        if (active_)
-            (void)::pthread_sigmask(SIG_SETMASK, &previous_, nullptr);
-    }
-
-    [[nodiscard]] const sigset_t& previous() const noexcept
-    {
-        return previous_;
-    }
-
-private:
-    sigset_t previous_ {};
-    bool active_ {};
-};
+    return mask;
+}
 
 } // namespace
 
@@ -1476,7 +1456,9 @@ int runNativeDisplayApplication(
     if (::pthread_main_np() == 0)
         throw std::logic_error("AppKit must run on the process main thread");
 
-    ScopedSignalMask mainThreadSignalMask;
+    const sigset_t workerMask = currentSignalMask();
+    const uml::platform::ScopedGuestTimerBlock mainThreadTimerBlock(
+        "blocking the UML timer on the AppKit thread");
     NSApplication* application = NSApplication.sharedApplication;
     [application setActivationPolicy:NSApplicationActivationPolicyRegular];
 
@@ -1484,7 +1466,6 @@ int runNativeDisplayApplication(
     int result = 1;
     std::exception_ptr failure;
     MenuTrackingRelease menuTracking;
-    const sigset_t workerMask = mainThreadSignalMask.previous();
     std::thread worker([&] {
         (void)::pthread_sigmask(SIG_SETMASK, &workerMask, nullptr);
         try {
