@@ -10,9 +10,14 @@ import hashlib
 import io
 import stat
 import struct
+import sys
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from release_common import sha256_path  # noqa: E402
 
 
 ELF_MAGIC = b"\x7fELF"
@@ -377,14 +382,6 @@ UML_INIT_FORBIDDEN = (
 
 def fail(message: str) -> None:
     raise SystemExit(f"Android target-files verifier: {message}")
-
-
-def sha256_path(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1 << 20):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def sha256_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> str:
