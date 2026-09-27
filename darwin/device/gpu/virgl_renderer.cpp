@@ -288,6 +288,23 @@ VirglRenderer::Capset VirglRenderer::capset(std::uint32_t capsetId) const
         capsetId, &result.maximumVersion, &maximumSize);
     if (maximumSize == 0)
         throw std::runtime_error("Virgl renderer returned an empty capset");
+    if (capsetId == virglCapsetId || capsetId == virgl2CapsetId) {
+        /*
+         * vrend fills the Virgl capsets from whatever GL context is current
+         * on this thread, and reads its vendor and renderer strings without
+         * checking them. A guest context whose creation failed can leave the
+         * thread with none, and the next GET_CAPSET then dereferenced a null
+         * string. Fill them from the renderer's root context, and refuse the
+         * query when even that cannot be made current, as when the display
+         * under it has been terminated.
+         */
+        virgl_renderer_force_ctx_0();
+        if (glGetString(GL_VENDOR) == nullptr ||
+            glGetString(GL_RENDERER) == nullptr) {
+            throw std::runtime_error(
+                "Virgl capset has no current host GL context");
+        }
+    }
     result.data.resize(maximumSize);
     virgl_renderer_fill_caps(
         capsetId, result.maximumVersion, result.data.data());
@@ -298,9 +315,8 @@ VirglRenderer::Capset VirglRenderer::capset(std::uint32_t capsetId) const
     /*
      * Capability discovery intentionally probes optional GL entry points and
      * formats. Apple's core driver reports GL_INVALID_ENUM for some of those
-     * probes. GET_CAPSET may run after a guest context becomes current, so
-     * drain probe errors here before CHECK_GL_ERRORS can misattribute them to
-     * the guest's next command.
+     * probes. Drain the probe errors here before CHECK_GL_ERRORS can
+     * misattribute them to the next command on the root context.
      */
     for (GLenum error = glGetError();
          error != GL_NO_ERROR;

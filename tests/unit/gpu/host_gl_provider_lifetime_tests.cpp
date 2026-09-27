@@ -26,6 +26,7 @@ extern "C" {
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <stdexcept>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -251,6 +252,36 @@ void rendererCreatesContextsAfterAnotherClientTerminatesTheDefaultDisplay()
     renderer.destroyContext(1);
 }
 
+// A renderer whose own display is terminated under it can create no guest
+// context, and a capability query that follows such a failure finds no GL
+// context on its thread. Both must fail as errors: the query used to read the
+// host renderer string through a null pointer and take the process down.
+void rendererFailsCleanlyAfterLosingItsDisplay()
+{
+    uml::gpu::VirglRenderer renderer;
+    require(renderer.createContext(1, kVirgl2CapsetId, "before") == 0);
+    // The renderer's root context is current on the thread that created it.
+    const EGLDisplay display = eglGetCurrentDisplay();
+    require(display != EGL_NO_DISPLAY);
+    require(eglTerminate(display) == EGL_TRUE);
+
+    int created = 0;
+    bool capsetRefused = false;
+    // vrend serves the guest queue on a thread of its own.
+    std::thread guestQueue([&] {
+        created = renderer.createContext(2, kVirgl2CapsetId, "after");
+        try {
+            (void)renderer.capset(kVirgl2CapsetId);
+        } catch (const std::runtime_error&) {
+            capsetRefused = true;
+        }
+    });
+    guestQueue.join();
+    require(created != 0);
+    require(capsetRefused);
+    renderer.destroyContext(1);
+}
+
 } // namespace
 
 int main()
@@ -262,6 +293,8 @@ int main()
     rendererRetiresFencesThroughTheExternalProvider();
     providerKeepsItsDisplayWhenAnotherClientTerminatesTheDefaultOne();
     rendererCreatesContextsAfterAnotherClientTerminatesTheDefaultDisplay();
+    // Last: it terminates the display every renderer in this process uses.
+    rendererFailsCleanlyAfterLosingItsDisplay();
     std::puts("host GL provider lifetime tests passed");
     return 0;
 }
