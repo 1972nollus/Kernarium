@@ -30,7 +30,6 @@ struct Gbm {
     void* library {};
     void* device {};
     void* (*createDevice)(int) {};
-    void (*destroyDevice)(void*) {};
     void* (*boCreate)(void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {};
     void (*boDestroy)(void*) {};
     int (*boGetFd)(void*) {};
@@ -65,7 +64,6 @@ Gbm& gbm()
         if (!instance.library) return;
         const auto symbol = [](void* library, const char* name) { return dlsym(library, name); };
         instance.createDevice = reinterpret_cast<void* (*)(int)>(symbol(instance.library, "gbm_create_device"));
-        instance.destroyDevice = reinterpret_cast<void (*)(void*)>(symbol(instance.library, "gbm_device_destroy"));
         instance.boCreate = reinterpret_cast<void* (*)(void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t)>(
             symbol(instance.library, "gbm_bo_create"));
         instance.boDestroy = reinterpret_cast<void (*)(void*)>(symbol(instance.library, "gbm_bo_destroy"));
@@ -116,13 +114,6 @@ std::uint32_t drmFormat(std::uint32_t fourcc) noexcept
     }
 }
 
-std::uint64_t identityOf(int fd) noexcept
-{
-    struct stat status {};
-    if (fd < 0 || fstat(fd, &status) < 0) return 0;
-    return std::uint64_t(status.st_ino);
-}
-
 StorageKind& selection() noexcept
 {
     static StorageKind kind = StorageKind::memory;
@@ -135,6 +126,13 @@ bool& selectionDone() noexcept
     return done;
 }
 
+}
+
+std::uint64_t descriptorIdentity(int fd) noexcept
+{
+    struct stat status {};
+    if (fd < 0 || fstat(fd, &status) < 0) return 0;
+    return std::uint64_t(status.st_ino);
 }
 
 bool planeLayout(std::uint32_t fourcc, unsigned width, unsigned height, unsigned& planes,
@@ -307,7 +305,7 @@ std::unique_ptr<PixelBuffer> PixelBuffer::allocate(std::uint32_t fourcc, unsigne
                         buffer->boHeight_ = requestHeight;
                         if (loader.boGetModifier) buffer->modifier_ = loader.boGetModifier(bo);
                         buffer->fd_ = loader.boGetFd(bo);
-                        buffer->identity_ = identityOf(buffer->fd_);
+                        buffer->identity_ = descriptorIdentity(buffer->fd_);
                         if (buffer->fd_ >= 0) return buffer;
                     }
                 }
@@ -338,7 +336,7 @@ std::unique_ptr<PixelBuffer> PixelBuffer::allocate(std::uint32_t fourcc, unsigne
         error = std::string("size surface memory: ") + std::strerror(errno);
         return nullptr;
     }
-    buffer->identity_ = identityOf(buffer->fd_);
+    buffer->identity_ = descriptorIdentity(buffer->fd_);
     if (!buffer->map()) { error = "cannot map surface memory"; return nullptr; }
     std::memset(buffer->map_, 0, size);
     return buffer;
@@ -382,7 +380,7 @@ std::unique_ptr<PixelBuffer> PixelBuffer::adopt(int fd, std::uint32_t fourcc, un
     if (size && size < end) { error = "imported surface is smaller than its planes"; return nullptr; }
     buffer->size_ = size ? size : end;
     buffer->fd_ = fd;
-    buffer->identity_ = identityOf(fd);
+    buffer->identity_ = descriptorIdentity(fd);
     return buffer;
 }
 

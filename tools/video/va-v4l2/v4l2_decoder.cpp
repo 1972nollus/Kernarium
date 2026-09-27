@@ -79,7 +79,6 @@ CaptureMemory captureMemoryRequest(const char* request) noexcept
     const std::string wanted = request;
     if (wanted == "device" || wanted == "mmap" || wanted == "off" || wanted == "0")
         return CaptureMemory::device;
-    if (wanted == "lend" || wanted == "dmabuf" || wanted == "1") return CaptureMemory::lend;
     return CaptureMemory::automatic;
 }
 
@@ -467,7 +466,6 @@ bool V4l2Decoder::submit(std::span<const std::uint8_t> packet, std::uint64_t tim
     planes[0].bytesused = unsigned(packet.size());
     if (call(fd_, VIDIOC_QBUF, &buffer) < 0) { error = reason("queue a compressed frame"); return false; }
     free->queued = true;
-    sawEos_ = false;
     if (!captureStreaming_) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         bool changed = pendingSourceChange(error);
@@ -505,7 +503,6 @@ bool V4l2Decoder::collect(DecodedPicture& picture, std::chrono::milliseconds wai
             if (buffer.index >= capture_.size()) { error = "decoder returned an unknown buffer"; return false; }
             capture_[buffer.index].queued = false;
             const bool last = (buffer.flags & V4L2_BUF_FLAG_LAST) != 0;
-            if (last) sawEos_ = true;
             if (last && !planes[0].bytesused) {
                 // An empty last buffer carries no picture: give it straight
                 // back, lending another one when the queue imports.
@@ -537,7 +534,7 @@ bool V4l2Decoder::collect(DecodedPicture& picture, std::chrono::milliseconds wai
             return true;
         }
         // EPIPE is how a drained stateful decoder says there is nothing more.
-        if (errno == EPIPE) { sawEos_ = true; return false; }
+        if (errno == EPIPE) return false;
         if (errno != EAGAIN) { error = reason("collect a decoded picture"); return false; }
         if (std::chrono::steady_clock::now() >= deadline) return false;
         pollfd waiting {fd_, POLLIN | POLLPRI, 0};

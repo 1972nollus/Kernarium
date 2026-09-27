@@ -135,11 +135,11 @@ class ImageAudit(unittest.TestCase):
 
 class SeedPinning(unittest.TestCase):
     def test_pinned_manifest_matches_the_lock(self) -> None:
-        # The seeded client manifest is the release the lock names.
+        # The seeded client manifest is the release the lock names:
+        # validate_policy raises unless its checksum, platform and version
+        # all match the lock.
         lock = json.loads((ROOT / PRODUCER / "sources.json").read_text())
-        self.assertEqual(inputs.validate_policy(lock), inputs.validate_policy(lock))
-        manifest = (ROOT / PRODUCER / "steam-client.manifest").read_text()
-        self.assertIn(f'"{lock["steam_client_version"]}"', manifest)
+        inputs.validate_policy(lock)
 
     def test_package_names_must_be_plain_filenames(self) -> None:
         packages = inputs.client_packages((ROOT / PRODUCER / "steam-client.manifest").read_text())

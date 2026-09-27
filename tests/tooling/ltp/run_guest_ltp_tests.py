@@ -6,7 +6,9 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import base64
+import contextlib
 import gzip
+import io
 import pathlib
 import re
 import shlex
@@ -1328,6 +1330,49 @@ WARNINGS 0
              "warnings": 0},
         )
 
+    def test_a_timed_out_case_keeps_its_partial_output(self) -> None:
+        guest = object.__new__(runner.Guest)
+        guest.run_command = mock.Mock(
+            side_effect=runner.CommandTimeout(
+                "guest operation exceeded 5s", "partial output"
+            )
+        )
+        case = runner.Case("syscalls", "slow01", "slow01", "pass", 5, "")
+        result = guest.run(case)
+        self.assertEqual(
+            result,
+            runner.Result(
+                case, None, {}, "partial output", "guest operation exceeded 5s"
+            ),
+        )
+        guest.run_command.assert_called_once_with(
+            runner.ltp_guest_command("slow01"), 5
+        )
+
+    def test_a_finished_case_reports_counts_and_guest_health(self) -> None:
+        output = "SUMMARY:\nPASSED   1\nFAILED   0\n"
+        case = runner.Case("syscalls", "quick01", "quick01", "pass", 5, "")
+        for health, expected_error in (
+            (0, None),
+            (
+                1,
+                "post-test guest health check failed: "
+                "zcat /proc/config.gz exited 1",
+            ),
+        ):
+            guest = object.__new__(runner.Guest)
+            guest.run_command = mock.Mock(
+                side_effect=(
+                    runner.CommandResult(0, output),
+                    runner.CommandResult(health, ""),
+                )
+            )
+            result = guest.run(case)
+            self.assertEqual(result.return_code, 0)
+            self.assertEqual(result.summary, {"passed": 1, "failed": 0})
+            self.assertEqual(result.output, output)
+            self.assertEqual(result.error, expected_error)
+
     def test_protocol_marker_tolerates_tty_case_conversion(self) -> None:
         pattern = runner.marker_pattern("__UML_LTP_END_deadbeef__")
         match = pattern.search(b"__UML_LTP_END_DEADBEEF__:0\r\n")
@@ -1555,21 +1600,6 @@ page dumped because: still mapped when deleted
                 runner.accepted(runner.Result(case, return_code, summary, ""))
             )
 
-    def test_raw_userspace_error_requires_nonzero_without_result_tags(self) -> None:
-        case = runner.Case(
-            "commands", "df01_sh", "df01.sh",
-            "userspace-error-exempt", 60,
-            "missing stat causes a shell arithmetic error",
-        )
-        self.assertTrue(runner.accepted(
-            runner.Result(case, 2, {}, "arithmetic syntax error")
-        ))
-        self.assertFalse(runner.accepted(runner.Result(case, 0, {}, "")))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 2, {"broken": 1}, "")
-        ))
-        self.assertFalse(runner.accepted(runner.Result(case, 124, {}, "")))
-
     def test_static_kernel_module_case_is_accepted_as_not_applicable(self) -> None:
         case = runner.Case(
             "syscalls", "delete_module01", "delete_module01",
@@ -1590,31 +1620,6 @@ page dumped because: still mapped when deleted
         self.assertTrue(runner.accepted(stale))
         self.assertFalse(runner.accepted(fixed))
         self.assertFalse(runner.accepted(broken))
-
-    def test_userspace_matrix_exemption_requires_failure_and_break(self) -> None:
-        case = runner.Case(
-            "controllers", "memcg_stat_rss", "memcg_stat_rss.sh",
-            "userspace-matrix-exempt", 60,
-            "fixed-size test reads batched counters before periodic flush",
-        )
-        stale = runner.Result(
-            case, 7,
-            {"passed": 2, "failed": 3, "broken": 1, "skipped": 0},
-            "",
-        )
-        self.assertTrue(runner.accepted(stale))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 0, {"passed": 10}, "")
-        ))
-        self.assertTrue(runner.accepted(
-            runner.Result(case, 1, {"failed": 3, "broken": 1}, "")
-        ))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 1, {"passed": 2, "failed": 3}, "")
-        ))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 2, {"broken": 1}, "")
-        ))
 
     def test_legacy_zero_exit_matrix_requires_mixed_results(self) -> None:
         case = runner.Case(
@@ -1638,52 +1643,6 @@ page dumped because: still mapped when deleted
         ))
         self.assertFalse(runner.accepted(
             runner.Result(case, 1, {"passed": 14, "failed": 9}, "")
-        ))
-
-    def test_partial_userspace_break_requires_pass_and_break(self) -> None:
-        case = runner.Case(
-            "commands", "mv01_sh", "mv_tests.sh",
-            "userspace-partial-broken-exempt", 60,
-            "supported BusyBox operation passes before an unsupported option",
-        )
-        self.assertTrue(runner.accepted(runner.Result(
-            case, 2,
-            {"passed": 1, "failed": 0, "broken": 1, "skipped": 0},
-            "",
-        )))
-        self.assertTrue(runner.accepted(runner.Result(
-            case, 34,
-            {"passed": 5, "failed": 0, "broken": 1, "skipped": 1},
-            "",
-        )))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 0, {"passed": 1, "broken": 1}, "")
-        ))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 2, {"broken": 1}, "")
-        ))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 3, {"passed": 1, "failed": 1, "broken": 1}, "")
-        ))
-
-    def test_userspace_warning_exemption_requires_warning_only_result(self) -> None:
-        case = runner.Case(
-            "controllers", "memcg_failcnt", "memcg_failcnt.sh",
-            "userspace-warning-exempt", 60,
-            "functional assertions pass before BusyBox cleanup warns",
-        )
-        warning = runner.Result(
-            case, 4,
-            {"passed": 3, "failed": 0, "broken": 0,
-             "skipped": 0, "warnings": 1},
-            "",
-        )
-        self.assertTrue(runner.accepted(warning))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 0, {"passed": 3}, "")
-        ))
-        self.assertFalse(runner.accepted(
-            runner.Result(case, 5, {"passed": 3, "failed": 1, "warnings": 1}, "")
         ))
 
     def test_flaky_userspace_exemption_accepts_only_known_outcomes(self) -> None:
@@ -1829,14 +1788,15 @@ page dumped because: still mapped when deleted
         self.assertFalse(defaults.run_host_pressure)
         self.assertTrue(explicit.run_host_pressure)
 
-    def test_ltp_cmake_campaign_feeds_exact_kernel_metadata(self) -> None:
-        cmake = (LTP_ROOT.parent / "CMakeLists.txt").read_text(encoding="utf-8")
-        self.assertIn(
-            "--modules-builtin ${_uml_integration_modules_builtin}",
-            cmake,
-        )
-        self.assertNotIn('command -v modprobe', cmake)
-        self.assertNotIn('command -v rmmod', cmake)
+    def test_campaign_requires_the_kernel_builds_modules_builtin(self) -> None:
+        arguments = [
+            "--emulator", "uml-darwin",
+            "--rootfs", "rootfs.erofs",
+            "--manifest", "verified-tests.tsv",
+        ]
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                runner.parse_arguments(arguments)
 
     def test_explicit_host_pressure_selection_preserves_all_cases(self) -> None:
         ordinary = runner.Case(

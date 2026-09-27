@@ -13,61 +13,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+from source_fixture import commit, parse_env, run
+
 
 REPOSITORY = "https://github.com/LineageOS/android_packages_apps_Jelly"
-
-
-def run(
-    *command: str,
-    cwd: Path | None = None,
-    payload: bytes | None = None,
-    env: dict[str, str] | None = None,
-) -> str:
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        input=payload,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode != 0:
-        raise SystemExit(
-            f"Jelly source fixture command failed: {' '.join(command)}\n"
-            f"{result.stderr.decode(errors='replace')}"
-        )
-    return result.stdout.decode(errors="strict").strip()
-
-
-def commit(topic: Path, path: str, payload: str, subject: str, timestamp: int) -> None:
-    destination = topic / path
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(payload)
-    run("git", "add", path, cwd=topic)
-    environment = os.environ.copy()
-    date = f"{timestamp} +0000"
-    environment["GIT_AUTHOR_DATE"] = date
-    environment["GIT_COMMITTER_DATE"] = date
-    run(
-        "git",
-        "commit",
-        "-q",
-        "-m",
-        subject,
-        cwd=topic,
-        env=environment,
-    )
-
-
-def parse_env(path: Path) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for raw in path.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        key, value = line.split("=", 1)
-        result[key] = value.strip("'")
-    return result
 
 
 def write_fixture(

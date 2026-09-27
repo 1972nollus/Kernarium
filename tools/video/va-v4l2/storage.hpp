@@ -54,7 +54,8 @@ public:
     std::size_t size() const noexcept { return size_; }
     std::uint64_t modifier() const noexcept { return modifier_; }
     // The identity of the underlying object, so that a descriptor handed back
-    // to the driver can be recognised as one of its own allocations.
+    // to the driver can be recognised as one of its own allocations. It is
+    // descriptorIdentity() of the buffer's descriptor.
     std::uint64_t identity() const noexcept { return identity_; }
     // Whether a surface of this format and size can use this buffer: a
     // descriptor imported again reuses its buffer only for the same image.
@@ -95,6 +96,10 @@ const char* storageName(StorageKind kind) noexcept;
 // Why the choice came out that way, for the log: a client that cannot import
 // an exported surface needs to know which step of the probe declined.
 const char* storageReason() noexcept;
+
+// The identity of the object a descriptor refers to, as PixelBuffer::identity()
+// records it; zero for a descriptor that is not open.
+std::uint64_t descriptorIdentity(int fd) noexcept;
 
 // The DRM device a client passed to vaGetDisplayDRM. It is already open and
 // already permitted, which a node this driver opens itself need not be, so the

@@ -19,6 +19,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Sequence
+from typing import BinaryIO
 
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -103,6 +104,16 @@ OVERLAY_SHELL_BOOTSTRAP = "\n".join(
 class CommandResult:
     return_code: int
     output: str
+
+
+class CommandTimeout(TimeoutError):
+    """A command's end marker did not arrive in time.
+
+    ``output`` holds what the command printed before the deadline."""
+
+    def __init__(self, message: str, output: str) -> None:
+        super().__init__(message)
+        self.output = output
 
 
 CORE_CLASSES = ("performance", "efficiency")
@@ -234,6 +245,7 @@ class Guest:
         engine: str = "jit",
         core_class: str = "performance",
         pass_fds: Sequence[int] = (),
+        console_sink: BinaryIO | None = None,
     ) -> None:
         # The image locks root, so a guest is only reachable through one of
         # the two /bin/sh init modes.
@@ -298,6 +310,9 @@ class Guest:
         self._input = self._process.stdin
         os.set_blocking(self._input.fileno(), False)
         self._transcript = bytearray()
+        # Receives every console byte as the harness reads it, so a caller
+        # can stream a long command's output instead of waiting for its end.
+        self._console_sink = console_sink
 
     def __enter__(self) -> Guest:
         return self
@@ -410,7 +425,8 @@ class Guest:
         its output is not captured. ``stdin`` follows the command line, so the
         command reads it from the console. ``single_write`` delivers all of
         that input in one host write, so the guest receives it as one burst
-        rather than as the pipe accepts it.
+        rather than as the pipe accepts it. A command still running after
+        ``timeout_seconds`` raises CommandTimeout with what it printed.
         """
         token = uuid.uuid4().hex
         begin = f"__UML_COMMAND_BEGIN_{token}__"
@@ -424,12 +440,23 @@ class Guest:
             self._write_once(wrapped + stdin)
         else:
             self._write(wrapped + stdin)
-        match = self._read_until(marker_pattern(end), timeout_seconds, start)
-        section = bytes(self._transcript[start : match.start()])
-        begin_at = section.rfind(begin.encode())
-        if begin_at >= 0:
-            section = section[begin_at + len(begin) :]
-        return CommandResult(int(match.group(1)), self._normal_output(section))
+
+        def output(section: bytes) -> str:
+            begin_at = section.rfind(begin.encode())
+            if begin_at >= 0:
+                section = section[begin_at + len(begin) :]
+            return self._normal_output(section)
+
+        try:
+            match = self._read_until(marker_pattern(end), timeout_seconds, start)
+        except TimeoutError as error:
+            raise CommandTimeout(
+                str(error), output(bytes(self._transcript[start:]))
+            ) from error
+        return CommandResult(
+            int(match.group(1)),
+            output(bytes(self._transcript[start : match.start()])),
+        )
 
     def check_command(
         self,
@@ -612,6 +639,9 @@ class Guest:
             if not chunk:
                 return
             self._transcript.extend(chunk)
+            if self._console_sink is not None:
+                self._console_sink.write(chunk)
+                self._console_sink.flush()
 
     @staticmethod
     def _normal_output(output: bytes) -> str:
