@@ -6,8 +6,8 @@
 #include <epoxy/gl.h>
 
 // EGL display creation must precede libepoxy's version discovery. The packaged
-// provider exports this platform bootstrap entry point directly; all later EGL
-// and GL dispatch continues through libepoxy.
+// provider exports these platform bootstrap entry points directly; all later
+// EGL and GL dispatch continues through libepoxy.
 #undef eglGetError
 extern "C" EGLint eglGetError(void);
 #undef eglGetPlatformDisplay
@@ -15,6 +15,11 @@ extern "C" EGLDisplay eglGetPlatformDisplay(
     EGLenum platform,
     void* nativeDisplay,
     const EGLAttrib* attributes);
+#undef eglGetProcAddress
+extern "C" __eglMustCastToProperFunctionPointerType eglGetProcAddress(
+    const char* name);
+#undef eglQueryString
+extern "C" const char* eglQueryString(EGLDisplay display, EGLint name);
 
 extern "C" {
 #include <virglrenderer.h>
@@ -25,6 +30,8 @@ extern "C" {
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace uml::gpu {
 namespace {
@@ -58,6 +65,70 @@ bool bindClientApi() noexcept
         return true;
     reportEglFailure("API binding");
     return false;
+}
+
+bool hasExtension(const char* extensions, std::string_view name) noexcept
+{
+    if (extensions == nullptr)
+        return false;
+    std::string_view remaining(extensions);
+    while (!remaining.empty()) {
+        const auto end = remaining.find(' ');
+        if (remaining.substr(0, end) == name)
+            return true;
+        if (end == std::string_view::npos)
+            break;
+        remaining.remove_prefix(end + 1);
+    }
+    return false;
+}
+
+// The device this provider renders on, named explicitly so that its display is
+// its own. EGL keeps one display per platform, native display and attribute
+// list, and does not count eglInitialize calls on it: any other client in the
+// process that opens the default surfaceless display gets the same display,
+// and its eglTerminate would retire it under every guest context. A display
+// keyed by an explicit device is one such a client never obtains. Apple hosts
+// have no DRM devices, so Mesa's surfaceless platform renders zink on its
+// software device, and that is the device to name.
+EGLDeviceEXT softwareDevice()
+{
+    const char* clientExtensions =
+        eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+    if (!hasExtension(clientExtensions, "EGL_EXT_device_enumeration") ||
+        !hasExtension(clientExtensions, "EGL_EXT_explicit_device")) {
+        std::fprintf(
+            stderr,
+            "%s EGL offers no explicit device selection\n",
+            kProviderName);
+        return EGL_NO_DEVICE_EXT;
+    }
+    const auto queryDevices = reinterpret_cast<PFNEGLQUERYDEVICESEXTPROC>(
+        eglGetProcAddress("eglQueryDevicesEXT"));
+    const auto queryDeviceString =
+        reinterpret_cast<PFNEGLQUERYDEVICESTRINGEXTPROC>(
+            eglGetProcAddress("eglQueryDeviceStringEXT"));
+    EGLint count = 0;
+    if (queryDevices == nullptr || queryDeviceString == nullptr ||
+        queryDevices(0, nullptr, &count) != EGL_TRUE || count <= 0) {
+        reportEglFailure("device enumeration");
+        return EGL_NO_DEVICE_EXT;
+    }
+    std::vector<EGLDeviceEXT> devices(static_cast<std::size_t>(count));
+    if (queryDevices(count, devices.data(), &count) != EGL_TRUE) {
+        reportEglFailure("device enumeration");
+        return EGL_NO_DEVICE_EXT;
+    }
+    devices.resize(static_cast<std::size_t>(std::max(count, 0)));
+    for (const auto device : devices) {
+        if (hasExtension(
+                queryDeviceString(device, EGL_EXTENSIONS),
+                "EGL_MESA_device_software")) {
+            return device;
+        }
+    }
+    std::fprintf(stderr, "%s EGL has no software device\n", kProviderName);
+    return EGL_NO_DEVICE_EXT;
 }
 
 std::string glString(GLenum name)
@@ -100,8 +171,15 @@ void* HostGlProvider::display() noexcept
         // the display is created, and the packaged provider offers exactly one
         // driver. Set it here rather than inheriting an ambient choice.
         ::setenv("MESA_LOADER_DRIVER_OVERRIDE", "zink", 1);
+        const EGLDeviceEXT device = softwareDevice();
+        if (device == EGL_NO_DEVICE_EXT)
+            return nullptr;
+        const EGLAttrib displayAttributes[] {
+            EGL_DEVICE_EXT, reinterpret_cast<EGLAttrib>(device),
+            EGL_NONE,
+        };
         const auto eglDisplay = eglGetPlatformDisplay(
-            EGL_PLATFORM_SURFACELESS_MESA, nullptr, nullptr);
+            EGL_PLATFORM_SURFACELESS_MESA, nullptr, displayAttributes);
         if (eglDisplay == EGL_NO_DISPLAY) {
             reportEglFailure("display creation");
             return nullptr;

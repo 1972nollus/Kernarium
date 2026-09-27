@@ -140,16 +140,16 @@ bool& selectionDone() noexcept
 bool planeLayout(std::uint32_t fourcc, unsigned width, unsigned height, unsigned& planes,
                  std::size_t* pitch, std::size_t* offset, std::size_t& size) noexcept
 {
-    const unsigned even = (width + 1u) & ~1u;
-    const unsigned rows = (height + 1u) & ~1u;
+    const std::size_t even = (std::size_t(width) + 1) & ~std::size_t(1);
+    const std::size_t rows = (std::size_t(height) + 1) & ~std::size_t(1);
     switch (fourcc) {
     case VA_FOURCC_NV12:
         planes = 2;
         pitch[0] = even;
         offset[0] = 0;
         pitch[1] = even;
-        offset[1] = std::size_t(pitch[0]) * rows;
-        size = offset[1] + std::size_t(pitch[1]) * (rows / 2);
+        offset[1] = pitch[0] * rows;
+        size = offset[1] + pitch[1] * (rows / 2);
         return true;
     case VA_FOURCC_BGRA:
     case VA_FOURCC_RGBA:
@@ -184,8 +184,10 @@ void selectStorage(const char* request)
     else if (!loader.device) reason() = "no DRM device";
     else {
         auto probe = PixelBuffer::allocate(VA_FOURCC_NV12, 64, 64, error);
+        const int exported = probe && probe->kind() == StorageKind::gbm ? probe->exportDescriptor() : -1;
+        if (exported >= 0) ::close(exported);
         if (!probe || probe->kind() != StorageKind::gbm) reason() = "no GBM allocation";
-        else if (probe->exportDescriptor() < 0) reason() = "no dma-buf export";
+        else if (exported < 0) reason() = "no dma-buf export";
         else if (errno = 0, !probe->map()) {
             // The exact refusal matters to whoever owns the graphics stack:
             // a dma-buf that cannot be mapped cannot carry a decoded picture.
@@ -347,7 +349,18 @@ std::unique_ptr<PixelBuffer> PixelBuffer::adopt(int fd, std::uint32_t fourcc, un
                                                 const std::uint32_t* offset, std::uint64_t modifier,
                                                 std::size_t size, std::string& error)
 {
-    if (fd < 0 || !planes || planes > 4) { error = "imported surface has no usable planes"; return nullptr; }
+    // The driver copies whole rows of this driver's own layout into and out
+    // of an imported surface, so each plane it uses needs rows at least that
+    // long, and the object has to hold every plane the descriptor places.
+    unsigned needed = 0;
+    std::size_t rowBytes[4] {};
+    std::size_t ownOffset[4] {};
+    std::size_t ownSize = 0;
+    if (fd < 0 || planes > 4 || !planeLayout(fourcc, width, height, needed, rowBytes, ownOffset, ownSize) ||
+        planes < needed) {
+        error = "imported surface has no usable planes";
+        return nullptr;
+    }
     std::unique_ptr<PixelBuffer> buffer(new PixelBuffer);
     buffer->kind_ = StorageKind::imported;
     buffer->fourcc_ = fourcc;
@@ -357,11 +370,16 @@ std::unique_ptr<PixelBuffer> PixelBuffer::adopt(int fd, std::uint32_t fourcc, un
     buffer->modifier_ = modifier;
     std::size_t end = 0;
     for (unsigned plane = 0; plane < planes; ++plane) {
+        if (plane < needed && pitch[plane] < rowBytes[plane]) {
+            error = "imported surface rows are shorter than its width";
+            return nullptr;
+        }
         buffer->pitch_[plane] = pitch[plane];
         buffer->offset_[plane] = offset[plane];
         const unsigned rows = plane && fourcc == VA_FOURCC_NV12 ? (height + 1u) / 2u : height;
         end = std::max(end, std::size_t(offset[plane]) + std::size_t(pitch[plane]) * rows);
     }
+    if (size && size < end) { error = "imported surface is smaller than its planes"; return nullptr; }
     buffer->size_ = size ? size : end;
     buffer->fd_ = fd;
     buffer->identity_ = identityOf(fd);

@@ -86,8 +86,9 @@ A synchronous host fault is interpreted only by its owner. Signal dispositions
 are process-wide, so the emulator's device and renderer threads share UML's
 `SIGSEGV` and `SIGBUS` handlers even though they own no Linux task; such a fault
 now leaves the guest path, is reported with its real host thread and literal
-addresses, and terminates under the default host disposition. This too is the
-same source change the mainline line carries.
+addresses, and terminates under the default host disposition. A vCPU
+carrier's fault that a nofault accessor recovers is not reported at all. This
+too is the same source change the mainline line carries.
 
 A guest data-alignment exception is not a translation fault and cannot be
 repaired by mapping a page. It crosses the versioned bridge as its own event

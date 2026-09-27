@@ -228,7 +228,8 @@ callback entry-point pool.
 
 `guest-kernel-nofault` dumps every task with sysrq t. Its workqueue report for
 each idle kernel worker reads through a NULL pointer with
-`copy_from_kernel_nofault()`, which must fail quietly; a lost nofault recovery
+`copy_from_kernel_nofault()`, which must fail quietly: the guest keeps running
+and the emulator prints no host fault report for it. A lost nofault recovery
 point panics the guest instead.
 
 The checked acceptance descriptors select complete kernel bundles. A local

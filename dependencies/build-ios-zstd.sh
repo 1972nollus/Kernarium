@@ -121,6 +121,7 @@ if [ -e "$OUTPUT" ] || [ -L "$OUTPUT" ]; then
 	exit 0
 fi
 
+find_tool PYTHON python3
 "$ROOT_DIR/dependencies/prepare.sh" --product ios-compression \
 	--root "$SOURCE_ROOT" --verify
 SOURCE="$SOURCE_ROOT/zstd"
@@ -195,6 +196,18 @@ cp "$ROOT_DIR/dependencies/platforms/ios-simulator-compression-arm64.tsv" \
 	"$PROVENANCE/ios-simulator-compression-arm64.tsv"
 
 verify_output "$STAGE"
-mv "$STAGE" "$OUTPUT"
-STAGE=
-printf '%s\n' "published iOS zstd XCFramework: $OUTPUT"
+status=0
+"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$STAGE" "$OUTPUT" ||
+	status=$?
+case $status in
+0)
+	STAGE=
+	printf '%s\n' "published iOS zstd XCFramework: $OUTPUT"
+	;;
+1)
+	verify_output "$OUTPUT" ||
+		fail "concurrently published output is invalid: $OUTPUT"
+	printf '%s\n' "reusing concurrently published iOS zstd XCFramework: $OUTPUT"
+	;;
+*) fail "could not publish iOS zstd XCFramework: $OUTPUT" ;;
+esac

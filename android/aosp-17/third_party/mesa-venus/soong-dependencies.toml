@@ -26,9 +26,6 @@ log = [
 nativewindow = [
     { target_name = "libnativewindow" }
 ]
-libclc = [
-    { target_name = "libclc_aosp_mesa", pkgconfig = {'libexecdir' = 'external/mesa3d/llvm-fake/clc-dir'}}
-]
 android-utils = [
     { target_name = "libutils" }
 ]
@@ -40,9 +37,6 @@ android-aemu-gl-codec = [
 ]
 
 [static_libraries]
-llvm = [
-    { target_name = "libLLVM16_swiftshader", version = "16.0", configtool = { "has-rtti" = "YES", "libdir" = "/tmp/" } }
-]
 android-aemu-ringbuffer = [
     { target_name = "libringbuffer" }
 ]

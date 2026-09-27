@@ -50,6 +50,10 @@ struct Buffer {
     // surface that decodes again may be handed a different buffer.
     std::shared_ptr<PixelBuffer> pin;
     std::uint8_t* data() { return external ? external : owned.data(); }
+    // How many bytes data() addresses. An application may resize a buffer it
+    // was handed, so an image's buffer is checked against the image's size
+    // before every copy.
+    std::size_t bytes() const noexcept { return external ? externalSize : owned.size(); }
 };
 
 struct Surface {

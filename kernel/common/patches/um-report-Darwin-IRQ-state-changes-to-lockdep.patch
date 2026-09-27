@@ -105,10 +105,10 @@ index 7448cfbee7812882cc43118f3c2b74c5e23dc7ec..9ecdc925e8b965ad2408f65a28f83088
  int darwin_task_shutdown_requested(void);
  int darwin_reserve_embedded_thread(void);
 diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
-index 6d2353ca584788caf98b780d27f58e91d99c0e04..b4bbda815fa6fc3660f739aeb76c76376c53b9ba 100644
+index 5ab09240cd08a7785612ca5c4e48f895d0f5b478..7c0703fee2a500d520fd7d00e57e30e7c0e3645d 100644
 --- a/arch/um/os-Darwin/signal.c
 +++ b/arch/um/os-Darwin/signal.c
-@@ -196,14 +196,18 @@ static void hard_handler(int signal, siginfo_t *info, void *pointer)
+@@ -202,14 +202,18 @@ static void hard_handler(int signal, siginfo_t *info, void *pointer)
  			return;
  		}
  		block_signals();
@@ -127,7 +127,7 @@ index 6d2353ca584788caf98b780d27f58e91d99c0e04..b4bbda815fa6fc3660f739aeb76c7637
  		um_set_signals(previous);
  	}
  	errno = saved_errno;
-@@ -218,10 +222,12 @@ void deliver_alarm(void)
+@@ -224,10 +228,12 @@ void deliver_alarm(void)
  		return;
  	}
  	block_signals();
@@ -140,7 +140,7 @@ index 6d2353ca584788caf98b780d27f58e91d99c0e04..b4bbda815fa6fc3660f739aeb76c7637
  	um_set_signals(1);
  }
  
-@@ -356,7 +362,19 @@ int um_set_signals(int enable)
+@@ -362,7 +368,19 @@ int um_set_signals(int enable)
  
  int um_set_signals_trace(int enable)
  {

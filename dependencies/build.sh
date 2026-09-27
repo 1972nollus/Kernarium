@@ -163,10 +163,15 @@ find_tool AUTOPOINT autopoint
 find_tool LIBTOOLIZE glibtoolize libtoolize
 find_tool GPERF gperf
 
-if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
+verify_prefix()
+{
 	"$ROOT_DIR/dependencies/verify-prefix.sh" \
-		--prefix "$PREFIX" --manifest "$MANIFEST" \
-		--deployment-target "$DEPLOYMENT_TARGET" ||
+		--prefix "$1" --manifest "$MANIFEST" \
+		--deployment-target "$DEPLOYMENT_TARGET"
+}
+
+if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
+	verify_prefix "$PREFIX" ||
 		fail "existing prefix is invalid and was left untouched: $PREFIX"
 	printf '%s\n' "reusing verified dependency prefix: $PREFIX"
 	exit 0
@@ -303,35 +308,6 @@ require_private_pkg_config()
 	*" -L$STAGE/lib "*) ;;
 	*) fail "$package library flags do not use the staged image: $package_libs" ;;
 	esac
-}
-
-atomic_publish()
-{
-	source=$1
-	destination=$2
-	if ! "$PYTHON" - "$source" "$destination" <<'PY'
-import ctypes
-import os
-import sys
-
-
-source = os.fsencode(sys.argv[1])
-destination = os.fsencode(sys.argv[2])
-libc = ctypes.CDLL(None, use_errno=True)
-rename_exclusive = libc.renamex_np
-rename_exclusive.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-rename_exclusive.restype = ctypes.c_int
-
-# RENAME_EXCL from the Darwin rename(2) interface makes target creation and
-# the rename one operation.  It cannot replace or move below an existing path.
-if rename_exclusive(source, destination, 0x00000004) != 0:
-    error = ctypes.get_errno()
-    print(f"renamex_np: {os.strerror(error)}", file=sys.stderr)
-    raise SystemExit(1)
-PY
-	then
-		fail "could not atomically publish dependency prefix: $destination"
-	fi
 }
 
 cmake_setup()
@@ -518,8 +494,18 @@ manifest_sha256=$($SHASUM -a 256 "$MANIFEST" | awk '{print $1}')
 	printf 'compiler\t%s\n' "$($CC --version | sed -n '1p')"
 } > "$RECEIPT_DIR/receipt.tsv"
 
-"$ROOT_DIR/dependencies/verify-prefix.sh" \
-	--prefix "$STAGE" --manifest "$MANIFEST" \
-	--deployment-target "$DEPLOYMENT_TARGET"
-atomic_publish "$STAGE" "$PREFIX"
-printf '%s\n' "built private dependency prefix: $PREFIX"
+verify_prefix "$STAGE"
+# The exclusive rename never replaces, or moves below, a prefix that a
+# concurrent build published first; that winner is verified and reused.
+status=0
+"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$STAGE" "$PREFIX" ||
+	status=$?
+case $status in
+0) printf '%s\n' "built private dependency prefix: $PREFIX" ;;
+1)
+	verify_prefix "$PREFIX" ||
+		fail "concurrently published prefix is invalid: $PREFIX"
+	printf '%s\n' "reusing concurrently published dependency prefix: $PREFIX"
+	;;
+*) fail "could not atomically publish dependency prefix: $PREFIX" ;;
+esac

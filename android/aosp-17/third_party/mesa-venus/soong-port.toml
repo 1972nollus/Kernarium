@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
-# meson2hermetic project configuration for the Kernarium Venus Soong port.
+# meson2hermetic project configuration for the Kernarium Mesa Soong port: the
+# Venus Vulkan HAL and the Virgl EGL and GLES libraries.
 [project]
 project_name = "aosp_mesa_venus"
 project_path = "external/mesa3d-venus"
@@ -12,6 +13,9 @@ license_texts = ["licenses/MIT", "licenses/Apache-2.0", "licenses/GPL-1.0-or-lat
 
 [target_renames]
 vulkan_virtio = "vulkan.virtio"
+EGL_kernarium = "libEGL_kernarium"
+GLESv1_CM_kernarium = "libGLESv1_CM_kernarium"
+GLESv2_kernarium = "libGLESv2_kernarium"
 
 [[config]]
 config_name = "kernarium_venus"
@@ -27,14 +31,27 @@ platforms = "android"
 android-strict = false
 android-libbacktrace = "disabled"
 vulkan-drivers = "virtio"
-gallium-drivers = ""
-opengl = false
-egl = "disabled"
-gles1 = "disabled"
-gles2 = "disabled"
+gallium-drivers = "virgl"
+opengl = true
+egl = "enabled"
+gles1 = "enabled"
+gles2 = "enabled"
 gbm = "disabled"
 llvm = "disabled"
 libunwind = "disabled"
 valgrind = "disabled"
 xmlconfig = "disabled"
 venus-protocol-dir = ""
+egl-lib-suffix = "_kernarium"
+gles-lib-suffix = "_kernarium"
+
+# Read by generate-mesa-venus-port.py; the converter ignores this table. Soong
+# makes every warning an error in a project outside device/ and vendor/, which
+# Meson's build of Mesa does not. An exception keeps one warning that Mesa's
+# own build tolerates from failing one module.
+[[kernarium.warning_exception]]
+module = "virgl"
+conlyflags = ["-Wno-error=sometimes-uninitialized"]
+reason = """virgl_encoder_transfer3d_common() leaves stride and layer_stride unset
+only on the path its enum rules out, which ends in an assert that release builds
+compile away."""

@@ -606,36 +606,19 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 
-rename_atomically()
-{
-	python3 - "$1" "$2" "$3" <<'PY'
-import ctypes
-import os
-import sys
+PUBLISHER="$ROOT_DIR/dependencies/publish-prefix.py"
 
-
-flags = int(sys.argv[1], 0)
-source = os.fsencode(sys.argv[2])
-destination = os.fsencode(sys.argv[3])
-libc = ctypes.CDLL(None, use_errno=True)
-renamex_np = libc.renamex_np
-renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
-renamex_np.restype = ctypes.c_int
-if renamex_np(source, destination, flags) != 0:
-    raise SystemExit(1)
-PY
-}
-
-# RENAME_EXCL: never replace a destination another process published.
+# RENAME_EXCL: never replace a destination another process published. The
+# publisher exits with status 1 when that destination already exists.
 publish_exclusively()
 {
-	rename_atomically 0x00000004 "$1" "$2"
+	python3 "$PUBLISHER" "$1" "$2"
 }
 
 # RENAME_SWAP: exchange a verified replacement with the stale repository.
 swap_atomically()
 {
-	rename_atomically 0x00000002 "$1" "$2"
+	python3 "$PUBLISHER" --swap "$1" "$2"
 }
 
 selected_product()

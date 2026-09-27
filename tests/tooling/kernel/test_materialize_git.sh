@@ -176,6 +176,36 @@ expect_failure "missing offline Git cache" materialize_with_metadata \
 [ ! -e "$TEST_ROOT/missing-cache" ] ||
 	fail "missing-cache failure left a source checkout"
 
+# A checkout another run publishes while this one stages is left untouched:
+# the staged checkout is never moved below it.
+RACE_BIN="$TEST_ROOT/race-bin"
+mkdir "$RACE_BIN"
+{
+	printf '%s\n' '#!/bin/sh'
+	printf '%s\n' 'if [ "$1" = clone ]; then'
+	printf '%s\n' '	mkdir "$UML_TEST_RACE_SOURCE"'
+	printf '%s\n' '	printf "%s\n" winner >"$UML_TEST_RACE_SOURCE/identity"'
+	printf '%s\n' 'fi'
+	printf 'exec %s "$@"\n' "$(command -v git)"
+} >"$RACE_BIN/git"
+chmod +x "$RACE_BIN/git"
+materialize_during_race()
+{
+	(
+		PATH="$RACE_BIN:$PATH"
+		UML_TEST_RACE_SOURCE=$1
+		export PATH UML_TEST_RACE_SOURCE
+		materialize "$1"
+	)
+}
+RACE_SOURCE="$TEST_ROOT/race-source"
+expect_failure "publication over a concurrently published checkout" \
+	materialize_during_race "$RACE_SOURCE"
+grep -F 'published concurrently' "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" \
+	>/dev/null || fail "concurrent publication was not diagnosed"
+[ "$(find "$RACE_SOURCE" -mindepth 1 -print)" = "$RACE_SOURCE/identity" ] ||
+	fail "a staged checkout was moved into a concurrently published one"
+
 [ -z "$(find "$TEST_ROOT" -maxdepth 1 -name '.uml-kernel-source.*' -print -quit)" ] ||
 	fail "failed materialization left a staging directory"
 printf '%s\n' "kernel Git materialization tests passed"
