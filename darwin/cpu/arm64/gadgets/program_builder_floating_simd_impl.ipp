@@ -63,10 +63,7 @@ struct ResidentMla final {
 	for (std::size_t index = 0; index < run_length; ++index) {
 		const auto instruction = index == 0 ? context.instruction :
 			context.following[index - 1];
-		const bool valid = decode_resident_mla(instruction, decoded);
-		(void)valid;
-		if (index != 0)
-			(void)vector_operand_offset(decoded.destination);
+		(void)decode_resident_mla(instruction, decoded);
 		emit(context.words, decoded.gadget);
 		emit(context.words,
 			vector_operand_offset(decoded.left) |
