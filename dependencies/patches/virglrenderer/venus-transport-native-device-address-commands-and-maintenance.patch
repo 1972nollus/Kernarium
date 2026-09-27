@@ -520,7 +520,7 @@ index 6b2f3479789dffed4990d3c9fa85d4c356088c3c..0c9212502b7bd50889ae1ac047afc3cc
  #include "vkr_context.h"
  #include "vkr_device.h"
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
-index bdd2ab82c7581846abc1c986b5928b59859f07be..c2870a0f72e22e36ccc0b4ac32358dd1555a8d46 100644
+index 4445734e763f7101ba3750df7dba029927a5a95c..0711db10d5a38eca6a049a654a5c86b7861cad40 100644
 --- a/src/venus/vkr_device.c
 +++ b/src/venus/vkr_device.c
 @@ -5,7 +5,7 @@
@@ -643,7 +643,7 @@ index 12aebf9657c0050a85c929fdfd178125bf6c28dd..d279891933bae72725b435b25a69fcc0
  struct vulkan_library {
     void *handle;
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index fd79413df1fd6844fe071b41deb4abc598b19510..bdc96c9398c36e15f8a3c59a1e24c441bd2c559b 100644
+index 6581f97ba214b3b73fac503f19f1685e7959b740..5208a671d0c4389320fa59cbd6b5db05aa6767bd 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -5,7 +5,7 @@

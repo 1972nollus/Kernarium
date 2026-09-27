@@ -4,62 +4,37 @@ Date: Fri, 4 Sep 2026 18:25:14 +0900
 Subject: [PATCH] venus: present native Metal scanouts
 
 ---
- src/venus/vkr_device.c          |  17 ++++
- src/venus/vkr_device.h          |   6 ++
- src/venus/vkr_device_memory.c   | 126 ++++++++++++++++++++-----
- src/venus/vkr_device_memory.h   |   4 +
- src/venus/vkr_image.c           | 156 ++++++++++++++++++++++++++++++
- src/venus/vkr_image.h           |   2 +
- src/venus/vkr_physical_device.c |   3 +
- src/venus/vkr_physical_device.h |   1 +
- src/virgl_resource.c            | 162 ++++++++++++++++++++++++++++++++
- src/virgl_resource.h            |  16 ++++
- src/virglrenderer.c             |  57 +++++++++++
- src/virglrenderer.h             |  54 ++++++++++-
- 12 files changed, 581 insertions(+), 23 deletions(-)
+ src/venus/vkr_device.c        |   8 ++
+ src/venus/vkr_device.h        |   6 ++
+ src/venus/vkr_device_memory.c | 126 +++++++++++++++++++++-----
+ src/venus/vkr_device_memory.h |   4 +
+ src/venus/vkr_image.c         | 156 ++++++++++++++++++++++++++++++++
+ src/venus/vkr_image.h         |   2 +
+ src/virgl_resource.c          | 162 ++++++++++++++++++++++++++++++++++
+ src/virgl_resource.h          |  16 ++++
+ src/virglrenderer.c           |  57 ++++++++++++
+ src/virglrenderer.h           |  54 +++++++++++-
+ 10 files changed, 568 insertions(+), 23 deletions(-)
 
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
-index 59c77952a8c825bae4cf8adc2770dd5831e3f01b..bdd2ab82c7581846abc1c986b5928b59859f07be 100644
+index ace87a08779068a7c0db24c4d0abe048c2311e95..4445734e763f7101ba3750df7dba029927a5a95c 100644
 --- a/src/venus/vkr_device.c
 +++ b/src/venus/vkr_device.c
-@@ -132,6 +132,7 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
-    uint32_t ext_count = args->pCreateInfo->enabledExtensionCount;
-    ext_count += physical_dev->EXT_external_memory_host;
-    ext_count += physical_dev->EXT_external_memory_metal;
-+   ext_count += physical_dev->EXT_metal_objects;
-    ext_count += physical_dev->KHR_portability_subset;
-    ext_count += physical_dev->KHR_external_memory_fd;
-    ext_count += physical_dev->EXT_external_memory_dma_buf;
-@@ -151,6 +152,8 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
-          exts[ext_count++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
-       if (physical_dev->EXT_external_memory_metal)
-          exts[ext_count++] = VK_EXT_EXTERNAL_MEMORY_METAL_EXTENSION_NAME;
-+      if (physical_dev->EXT_metal_objects)
-+         exts[ext_count++] = VK_EXT_METAL_OBJECTS_EXTENSION_NAME;
-       if (physical_dev->KHR_portability_subset)
-          exts[ext_count++] = "VK_KHR_portability_subset";
-       if (physical_dev->KHR_external_memory_fd)
-@@ -220,6 +223,20 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
-       }
+@@ -107,6 +107,14 @@ vkr_device_init_renderer_procs(struct vkr_device *dev)
+          return false;
     }
  
 +   if (physical_dev->EXT_metal_objects) {
 +      dev->ExportMetalObjectsEXT =
 +         (PFN_vkExportMetalObjectsEXT)vk->GetDeviceProcAddr(
-+            dev->base.handle.device, "vkExportMetalObjectsEXT");
-+      if (!dev->ExportMetalObjectsEXT) {
-+         struct vn_device_proc_table *dev_vk = &dev->proc_table;
-+         dev_vk->DestroyDevice(dev->base.handle.device, NULL);
-+         free(exts);
-+         free(dev);
-+         args->ret = VK_ERROR_EXTENSION_NOT_PRESENT;
-+         return;
-+      }
++            handle, "vkExportMetalObjectsEXT");
++      if (!dev->ExportMetalObjectsEXT)
++         return false;
 +   }
 +
-    free(exts);
+    return true;
+ }
  
-    args->ret = vkr_device_create_queues(ctx, dev, args->pCreateInfo->queueCreateInfoCount,
 diff --git a/src/venus/vkr_device.h b/src/venus/vkr_device.h
 index fcf875c2c3fcc242342034a04ad1ab1bd0e81673..980b6877f18409fe5cc5e4e99d1febc30796e480 100644
 --- a/src/venus/vkr_device.h
@@ -517,32 +492,6 @@ index f098dc3ccbf5093c370d3d843f0fcd880745bbd9..886ed62a32fbe8082b425dd0bdc11df8
  };
  VKR_DEFINE_OBJECT_CAST(image, VK_OBJECT_TYPE_IMAGE, VkImage)
  
-diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index cb6fdfe965a78c285efdfc2c86214586c7efd9b9..fd79413df1fd6844fe071b41deb4abc598b19510 100644
---- a/src/venus/vkr_physical_device.c
-+++ b/src/venus/vkr_physical_device.c
-@@ -359,6 +359,9 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
-       else if (!strcmp(props->extensionName,
-                        VK_EXT_EXTERNAL_MEMORY_METAL_EXTENSION_NAME))
-          physical_dev->EXT_external_memory_metal = true;
-+      else if (!strcmp(props->extensionName,
-+                       VK_EXT_METAL_OBJECTS_EXTENSION_NAME))
-+         physical_dev->EXT_metal_objects = true;
-       else if (!strcmp(props->extensionName, "VK_KHR_portability_subset"))
-          physical_dev->KHR_portability_subset = true;
- 
-diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index ad07431aedb94ef4d0b7971a12fb21e214baf112..7bda834024d5d73640873e25d4a74955fd259b46 100644
---- a/src/venus/vkr_physical_device.h
-+++ b/src/venus/vkr_physical_device.h
-@@ -31,6 +31,7 @@ struct vkr_physical_device {
-    bool EXT_external_memory_host;
-    VkDeviceSize min_imported_host_pointer_alignment;
-    bool EXT_external_memory_metal;
-+   bool EXT_metal_objects;
- 
-    VkPhysicalDeviceMemoryProperties host_memory_properties;
-    VkPhysicalDeviceMemoryProperties memory_properties;
 diff --git a/src/virgl_resource.c b/src/virgl_resource.c
 index dbc803cfc50910e474e481cdeeec87a26a1f7183..e555eda8f16a55e7719d359bdcc734bcafd75503 100644
 --- a/src/virgl_resource.c

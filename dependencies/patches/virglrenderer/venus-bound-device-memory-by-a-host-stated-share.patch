@@ -50,7 +50,7 @@ index 0991d5da146c89e5a1f3551c532a1b31e00770fc..2e12e9c6316c6e3ede6be4b6626f1a59
     VkImportMemoryFdInfoKHR local_import_info = { .fd = -1 };
     VkImportMemoryHostPointerInfoEXT local_host_import = {
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index b045ef82ab1069249ef71db02df226632f85890d..00959d190a51de04b27cc5d1b5bcd6b6dc9bc5e9 100644
+index 2f06b6c40508de401931c15fd82120a807fd7b5c..6d1e421587f7e0467266da2d67b0e86fe8681c13 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -240,6 +240,20 @@ vkr_physical_device_init_memory_properties(struct vkr_physical_device *physical_
@@ -74,7 +74,7 @@ index b045ef82ab1069249ef71db02df226632f85890d..00959d190a51de04b27cc5d1b5bcd6b6
     /* XXX When a VkMemoryType has VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, we
      * assume any VkDeviceMemory with the memory type can be made external and
      * be exportable.  That is incorrect but is what we have to live with with
-@@ -829,13 +843,16 @@ vkr_dispatch_vkGetPhysicalDeviceQueueFamilyProperties2(
+@@ -827,13 +841,16 @@ vkr_dispatch_vkGetPhysicalDeviceQueueFamilyProperties2(
  
  /* A budget the host reported is indexed by its own heaps. Where the guest sees
   * an extra heap that names the blob aperture, that heap's budget and usage are
@@ -93,7 +93,7 @@ index b045ef82ab1069249ef71db02df226632f85890d..00959d190a51de04b27cc5d1b5bcd6b6
        return;
  
     VkPhysicalDeviceMemoryBudgetPropertiesEXT *budget = vkr_find_struct(
-@@ -850,12 +867,22 @@ vkr_physical_device_map_memory_budget(
+@@ -848,12 +865,22 @@ vkr_physical_device_map_memory_budget(
     memcpy(heap_budget, budget->heapBudget, sizeof(heap_budget));
     memcpy(heap_usage, budget->heapUsage, sizeof(heap_usage));
  

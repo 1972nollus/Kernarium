@@ -96,10 +96,10 @@ index 48d3b52298df0073d9ad78dc0e5bfde0f77cb48b..e969d9e337ad79816f8bdb58a6c769ce
     vkr_context_init_command_pool_dispatch(ctx);
     vkr_context_init_command_buffer_dispatch(ctx);
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
-index c2870a0f72e22e36ccc0b4ac32358dd1555a8d46..3dce07d62d4d1a3fc9d24f75c81f963db81489b2 100644
+index 0711db10d5a38eca6a049a654a5c86b7861cad40..9343e4d77c5433eff6aeca41c135622bed6ac74f 100644
 --- a/src/venus/vkr_device.c
 +++ b/src/venus/vkr_device.c
-@@ -340,6 +340,9 @@ vkr_device_object_destroy(struct vkr_context *ctx,
+@@ -343,6 +343,9 @@ vkr_device_object_destroy(struct vkr_context *ctx,
           vk->DestroyAccelerationStructureKHR(device, obj->handle.acceleration_structure,
                                               NULL);
           break;
