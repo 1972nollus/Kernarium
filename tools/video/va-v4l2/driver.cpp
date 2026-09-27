@@ -3,7 +3,6 @@
 
 #include <drm_fourcc.h>
 #include <linux/videodev2.h>
-#include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -65,13 +64,6 @@ bool resizeOwned(std::vector<std::uint8_t>& owned, std::uint64_t size) noexcept
     } catch (const std::length_error&) {
     }
     return false;
-}
-
-std::uint64_t identityOfDescriptor(int fd) noexcept
-{
-    struct stat status {};
-    if (fd < 0 || fstat(fd, &status) < 0) return 0;
-    return std::uint64_t(status.st_ino);
 }
 
 }
@@ -279,7 +271,6 @@ void Driver::reportPicture(const DecodedPicture& picture, bool packed)
 
 std::shared_ptr<PixelBuffer> Driver::captureBuffer(Context& context)
 {
-    if (!context.decoder) return nullptr;
     const bool packed = context.decoder->captureFormat() == V4L2_PIX_FMT_ABGR32;
     const std::uint32_t fourcc = packed ? VA_FOURCC_ARGB : VA_FOURCC_NV12;
     const unsigned width = context.decoder->width();
@@ -371,7 +362,6 @@ bool Driver::fillFromLent(Surface& target, PixelBuffer& lent, bool packed)
 
 void Driver::harvest(Context& context, std::chrono::milliseconds wait)
 {
-    if (!context.decoder) return;
     if (context.reportLayout && !context.decoder->captureLayout().empty()) {
         context.reportLayout = false;
         const bool packed = context.decoder->captureFormat() == V4L2_PIX_FMT_ABGR32;
@@ -931,7 +921,7 @@ VAStatus createSurfaces2(VADriverContextP ctx, unsigned format, unsigned width, 
             surface->fourcc = fourcc;
             // The same memory imported as another image gets its own checked
             // layout rather than the earlier import's.
-            auto shared = driver.knownBuffer(identityOfDescriptor(fd));
+            auto shared = driver.knownBuffer(descriptorIdentity(fd));
             if (shared && shared->holds(fourcc, width, height)) {
                 surface->buffer = std::move(shared);
             } else {

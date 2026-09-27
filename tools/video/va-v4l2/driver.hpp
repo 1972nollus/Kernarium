@@ -150,12 +150,14 @@ public:
     // Decode plumbing.
     VAStatus submitFrame(Context& context, VASurfaceID id, Surface& target);
     VAStatus waitFor(Surface& surface, std::chrono::milliseconds wait);
+    // Collects decoded pictures; the context must have a decoder.
     void harvest(Context& context, std::chrono::milliseconds wait);
     // Lends the decoder a buffer for one capture slot, and keeps a pool of the
     // ones it has given back.
     // `fresh` starts a new queue: the buffers lent to the old one go back to
     // the pool first. Refilling one slot of a live queue never does that.
     bool provideCapture(Context& context, unsigned index, CaptureTarget& target, bool fresh);
+    // A buffer for one capture slot; the context must have a decoder.
     std::shared_ptr<PixelBuffer> captureBuffer(Context& context);
     void recycleCapture(Context& context, std::shared_ptr<PixelBuffer> buffer);
     // Copies a lent buffer's picture into a surface that has to keep its own
