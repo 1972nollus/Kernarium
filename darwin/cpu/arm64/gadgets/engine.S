@@ -49,8 +49,8 @@ _\name:
 #include "engine/system_atomic.inc"
 #include "engine/load_store.inc"
 #include "engine/control.inc"
-/* Experimental entries are appended so adding a candidate cannot move or
- * rephase any established gadget. */
+/* Families accepted after the bank's layout was measured are appended, so
+ * adding one did not move or rephase any established gadget. */
 #include "engine/experimental.inc"
 #include "engine/inplace_immediate.inc"
 #include "engine/inplace_extended.inc"

@@ -272,8 +272,7 @@ struct InlineSuffixes final {
 };
 
 struct BuildOptions final {
-	/* Select adjacent write-through forwarding for this program. Has no
-	 * effect for a register bank excluded from the engine build. */
+	/* Select adjacent write-through forwarding for this program. */
 	bool scalar_forwarding{true};
 	bool vector_forwarding{true};
 	/*

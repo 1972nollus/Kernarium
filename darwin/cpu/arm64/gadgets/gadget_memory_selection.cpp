@@ -110,11 +110,8 @@ using Gadget = void (*)();
 	return size < 4U ? gadgets[size][base_sp][transfer_zero] : nullptr;
 }
 
-[[nodiscard]] Gadget scalar_unsigned_memory_inplace_gadget(
-	[[maybe_unused]] unsigned size,
-	[[maybe_unused]] unsigned operation,
-	[[maybe_unused]] bool base_sp,
-	[[maybe_unused]] unsigned transferred) noexcept
+[[nodiscard]] Gadget scalar_unsigned_memory_inplace_gadget(unsigned size,
+	unsigned operation, bool base_sp, unsigned transferred) noexcept
 {
 	/* Only the scaled 32- and 64-bit forms are baked, and XZR never reaches
 	 * CpuState, so everything else keeps the established entry. */
@@ -123,8 +120,7 @@ using Gadget = void (*)();
 	const unsigned bits64 = size == 3U ? 1U : 0U;
 	const unsigned index = ((operation * 2U + bits64) * 2U +
 		(base_sp ? 1U : 0U)) * 31U + transferred;
-	return reinterpret_cast<Gadget>(
-		uml_arm64_gadget_scalar_unsigned_inplace_table[index]);
+	return uml_arm64_gadget_scalar_unsigned_inplace_table[index];
 }
 
 [[nodiscard]] Gadget vector_unsigned_memory_gadget(

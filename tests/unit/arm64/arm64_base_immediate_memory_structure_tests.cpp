@@ -164,10 +164,8 @@ template<typename Function>
  * register, so for those the translator selects a per-register entry rather
  * than the shared one. Rows 8 and 11 are the stores, 9 and 12 the loads. */
 [[nodiscard]] Gadget unsigned_offset_entry(Gadget shared,
-	[[maybe_unused]] unsigned row_index,
-	[[maybe_unused]] unsigned base_sp,
-	[[maybe_unused]] unsigned transfer_zero,
-	[[maybe_unused]] unsigned transferred)
+	unsigned row_index, unsigned base_sp, unsigned transfer_zero,
+	unsigned transferred)
 {
 	if (transfer_zero == 0U) {
 		unsigned operation = 2U;
@@ -182,8 +180,7 @@ template<typename Function>
 		if (operation < 2U) {
 			const unsigned slot = ((operation * 2U + bits64) * 2U +
 				base_sp) * 31U + transferred;
-			return reinterpret_cast<Gadget>(
-				uml_arm64_gadget_scalar_unsigned_inplace_table[slot]);
+			return uml_arm64_gadget_scalar_unsigned_inplace_table[slot];
 		}
 	}
 	return shared;

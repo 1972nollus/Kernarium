@@ -91,7 +91,9 @@ BuildResult Builder::build(
 		return Program{guest_address, retired, std::move(words),
 			program_accesses_fp_state};
 	};
-	[[maybe_unused]] const void *previous_gadget = nullptr;
+#if UML_GADGET_EXECUTION_HISTOGRAM
+	const void *previous_gadget = nullptr;
+#endif
 	std::uint16_t previous_scalar = scalar_no_register;
 	std::uint16_t previous_vector = scalar_no_register;
 	/* Indexed rather than ranged, because a decoder that fuses a pair needs to
@@ -182,12 +184,12 @@ BuildResult Builder::build(
 				compiled - compiled_before +
 				(decoded == DecodeResult::decoded));
 		}
-#endif
 		/* The first word a decode emits is its gadget pointer, which the
 		 * execution histogram pairs with its predecessor. */
 		if (words.size() > emitted_start)
 			previous_gadget = reinterpret_cast<const void *>(
 				words[emitted_start]);
+#endif
 		if (decoded != DecodeResult::decoded)
 			return {finish(compiled), decoded == DecodeResult::terminal,
 				address, instruction};
