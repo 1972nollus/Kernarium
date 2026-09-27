@@ -35,13 +35,13 @@ and let the CPU copy, which honours it, take those reads.
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 ---
  src/gallium/auxiliary/meson.build             |  13 +
- .../util/u_blitter_transfer_test.cpp          | 307 ++++++++++++++++++
- src/mesa/state_tracker/st_cb_readpixels.c     |  47 +--
+ .../util/u_blitter_transfer_test.cpp          | 249 ++++++++++++++++++
+ src/mesa/state_tracker/st_cb_readpixels.c     |  47 ++--
  src/mesa/state_tracker/st_cb_texture.c        |  21 ++
  src/mesa/state_tracker/st_pbo_compute.c       |   7 +
  src/util/format/u_format.c                    |   9 +
  src/util/format/u_format.h                    |  13 +
- 7 files changed, 387 insertions(+), 30 deletions(-)
+ 7 files changed, 329 insertions(+), 30 deletions(-)
  create mode 100644 src/gallium/auxiliary/util/u_blitter_transfer_test.cpp
 
 diff --git a/src/gallium/auxiliary/meson.build b/src/gallium/auxiliary/meson.build
@@ -70,10 +70,10 @@ index f975629a019145de04f991960511e14f51d4fbc5..b9385528911d1e5df6519b05f469c336
  
 diff --git a/src/gallium/auxiliary/util/u_blitter_transfer_test.cpp b/src/gallium/auxiliary/util/u_blitter_transfer_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..bcb68994fe3a1638975b70a89c2af750c1158bac
+index 0000000000000000000000000000000000000000..6ef00acfd41c911070b3a42dc58c9207104739b7
 --- /dev/null
 +++ b/src/gallium/auxiliary/util/u_blitter_transfer_test.cpp
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,249 @@
 +/* SPDX-License-Identifier: MIT */
 +
 +/* A pixel transfer saturates an integer into the destination range. The
@@ -84,46 +84,12 @@ index 0000000000000000000000000000000000000000..bcb68994fe3a1638975b70a89c2af750
 + */
 +
 +#include "compiler/nir/nir_builder.h"
-+#include "pipe/p_context.h"
-+#include "pipe/p_screen.h"
-+#include "pipe/p_state.h"
 +#include "util/format/u_format.h"
++#include "util/u_blit_shader_test.h"
 +#include "util/u_simple_shaders.h"
-+#include <gtest/gtest.h>
-+#include <utility>
 +#include <vector>
 +
 +namespace {
-+
-+pipe_caps
-+transfer_caps()
-+{
-+   pipe_caps caps = {};
-+   caps.nir_samplers_as_deref = true;
-+   caps.texrect = true;
-+   return caps;
-+}
-+
-+pipe_shader_caps
-+transfer_shader_caps(unsigned stage)
-+{
-+   pipe_shader_caps caps = {};
-+   if (stage == MESA_SHADER_FRAGMENT) {
-+      caps.integers = true;
-+      caps.supported_irs = 1 << PIPE_SHADER_IR_NIR;
-+   }
-+   return caps;
-+}
-+
-+template<unsigned... Stages>
-+pipe_screen
-+transfer_screen(std::integer_sequence<unsigned, Stages...>)
-+{
-+   return {.caps = transfer_caps(),
-+           .shader_caps = {transfer_shader_caps(Stages)...}};
-+}
-+
-+using shader_stages = std::make_integer_sequence<unsigned, MESA_SHADER_MESH_STAGES>;
 +
 +const struct util_format_channel_description &
 +first_channel(const struct util_format_description *desc)
@@ -198,32 +164,8 @@ index 0000000000000000000000000000000000000000..bcb68994fe3a1638975b70a89c2af750
 +   {PIPE_FORMAT_Z24_UNORM_S8_UINT, PIPE_FORMAT_Z24_UNORM_S8_UINT, "depth24_stencil8 staging copy"},
 +};
 +
-+class integer_transfer : public ::testing::Test {
++class integer_transfer : public blit_shader_fixture {
 +protected:
-+   pipe_screen screen = transfer_screen(shader_stages{});
-+   pipe_context pipe = {};
-+   nir_shader_compiler_options options = {};
-+   nir_shader *shader = nullptr;
-+
-+   void SetUp() override
-+   {
-+      glsl_type_singleton_init_or_ref();
-+      screen.nir_options[MESA_SHADER_FRAGMENT] = &options;
-+      pipe.screen = &screen;
-+      pipe.priv = this;
-+      pipe.create_fs_state = [](pipe_context *ctx, const pipe_shader_state *state) -> void * {
-+         auto *test = static_cast<integer_transfer *>(ctx->priv);
-+         test->shader = state->ir.nir;
-+         return test->shader;
-+      };
-+   }
-+
-+   void TearDown() override
-+   {
-+      ralloc_free(shader);
-+      glsl_type_singleton_decref();
-+   }
-+
 +   /* Run one source value through the generated blit shader and return what
 +    * the destination attachment ends up holding.
 +    */

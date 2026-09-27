@@ -102,7 +102,7 @@ index 0000000000000000000000000000000000000000..6eb378dd54a748d0a773b193641072ec
 +
 +#endif
 diff --git a/src/gallium/drivers/zink/zink_resource.c b/src/gallium/drivers/zink/zink_resource.c
-index 296683f6ad06e6858e55d8781dd9233a1f804262..be721a447f1dc51e025f13306a5ef455276f6b18 100644
+index d1560ce07d34859397a4ddd56d4552ffed163564..b9d3d2a6c8dd93aae06b99ab21b0cc1fdd7b88a4 100644
 --- a/src/gallium/drivers/zink/zink_resource.c
 +++ b/src/gallium/drivers/zink/zink_resource.c
 @@ -32,6 +32,7 @@
@@ -113,7 +113,7 @@ index 296683f6ad06e6858e55d8781dd9233a1f804262..be721a447f1dc51e025f13306a5ef455
  
  #ifdef VK_USE_PLATFORM_METAL_EXT
  #include "QuartzCore/CAMetalLayer.h"
-@@ -1758,6 +1759,19 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
+@@ -1755,6 +1756,19 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
        obj->plane_strides[alloc_info->whandle->plane] = alloc_info->whandle->stride;
     }
  
@@ -133,7 +133,7 @@ index 296683f6ad06e6858e55d8781dd9233a1f804262..be721a447f1dc51e025f13306a5ef455
     VkResult result = VKSCR(CreateImage)(screen->dev, &ici, NULL, &obj->image);
     if (result != VK_SUCCESS) {
        mesa_loge("ZINK: vkCreateImage failed (%s)", vk_Result_to_str(result));
-@@ -3676,6 +3690,53 @@ static const struct u_transfer_vtbl transfer_vtbl = {
+@@ -3673,6 +3687,53 @@ static const struct u_transfer_vtbl transfer_vtbl = {
     .get_stencil           = zink_resource_get_separate_stencil,
  };
  
@@ -187,7 +187,7 @@ index 296683f6ad06e6858e55d8781dd9233a1f804262..be721a447f1dc51e025f13306a5ef455
  bool
  zink_screen_resource_init(struct pipe_screen *pscreen)
  {
-@@ -3697,6 +3758,10 @@ zink_screen_resource_init(struct pipe_screen *pscreen)
+@@ -3694,6 +3755,10 @@ zink_screen_resource_init(struct pipe_screen *pscreen)
     if (screen->info.have_EXT_external_memory_host) {
        pscreen->resource_from_user_memory = zink_resource_from_user_memory;
     }

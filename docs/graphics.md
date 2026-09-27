@@ -422,23 +422,22 @@ array view of it, which Metal does make of a texture over a buffer. A layout
 Metal could not represent becomes a Vulkan error before Metal sees the
 descriptor.
 
-The guest's common WSI does not take that path where the renderer can share a
-native Metal heap. A surface offers DRM format modifiers only when there is no
-native heap to share, so a Wayland compositor advertising
-`DRM_FORMAT_MOD_LINEAR` still presents through the MTLHeap scanout the
-renderer and the compositor already agree on, rather than through a linear
-image each of them has to reinterpret. Conformance checks that a swapchain is
-created and reads back what was drawn, which both paths satisfy; what only the
-scanout path gives is a presented image with no copy in it. The modifier path
-stays for an application that asks for a modifier image directly and for a
-renderer that has no native heap. A compositor's own scanout buffer is such an
-image when Zink allocates it through GBM: Zink gives every shareable image
-`DRM_FORMAT_MOD_LINEAR` on Venus, while the guest still allocates the image's
-device-local memory as an MTLHeap. The renderer publishes the Metal texture of
-every colour target created for external memory, whatever its tiling, once it
-is bound to a native heap, so the compositor's linear texture over that heap
-also reaches the display with no copy. The guest Venus driver's two conditions
-for `VK_ANDROID_native_buffer` and
+The guest's common WSI takes that path as well. A dma-buf shared without a
+modifier names no layout, and once the renderer has modifiers every guest
+importer reads one as linear: Zink gives every shareable image
+`DRM_FORMAT_MOD_LINEAR` on Venus and imports an implicit dma-buf as linear, as
+upstream Venus does. A swapchain whose surface offers modifiers is therefore a
+`DRM_FORMAT_MOD_LINEAR` image, and one whose surface offers none renders
+optimally and reaches the window system through common WSI's linear prime
+blit. The implicit native-heap share, an optimal image whose dma-buf names only
+its MTLHeap, is made only for a renderer with a native heap and no modifiers,
+the one configuration in which Zink imports it as that image. Either way the
+guest allocates a shared image's device-local memory as an MTLHeap, as it does
+for a compositor's own scanout buffer that Zink allocates through GBM. The
+renderer publishes the Metal texture of every colour target created for
+external memory, whatever its tiling, once it is bound to a native heap, so a
+linear texture over that heap reaches the display with no copy. The guest
+Venus driver's two conditions for `VK_ANDROID_native_buffer` and
 `VK_ANDROID_external_memory_android_hardware_buffer` are therefore met, and an
 Android guest presents its swapchain through them.
 

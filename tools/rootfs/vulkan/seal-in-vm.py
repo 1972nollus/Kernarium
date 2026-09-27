@@ -301,8 +301,6 @@ VULKAN_HEADERS_OPTIONS = (
     "-DCMAKE_BUILD_TYPE=Release",
 )
 VULKAN_LOADER_OPTIONS = ARCHITECTURE["loader_options"]
-SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-GIT_OBJECT = re.compile(r"[0-9a-f]{40}\Z")
 
 
 class SealError(RuntimeError):

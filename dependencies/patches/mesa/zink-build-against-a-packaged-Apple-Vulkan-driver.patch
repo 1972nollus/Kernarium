@@ -139,7 +139,7 @@ index 234d0ec02cd6e754aae0127ea33595a3167f9400..79dee0f117e189fdae626d58e1ea3bb3
             mesa_loge("ZINK: vkEnumerateInstanceLayerProperties failed");
      } else {
 diff --git a/src/gallium/drivers/zink/zink_resource.c b/src/gallium/drivers/zink/zink_resource.c
-index 48201b53b8f076c705c5734b862e4f7ed2e1717b..296683f6ad06e6858e55d8781dd9233a1f804262 100644
+index 6266ea01088e45dddf5c79ff8a6ec1ca5d20e0e2..d1560ce07d34859397a4ddd56d4552ffed163564 100644
 --- a/src/gallium/drivers/zink/zink_resource.c
 +++ b/src/gallium/drivers/zink/zink_resource.c
 @@ -60,11 +60,11 @@

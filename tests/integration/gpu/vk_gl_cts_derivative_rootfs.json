@@ -30,7 +30,7 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source30-20260926-v1/build/VK-GL-CTS-1.4.6.2-vulkan-gl",
+      "/home/vm/uml-source31-20260927-v1/build/VK-GL-CTS-1.4.6.2-vulkan-gl",
       "--target",
       "deqp-vk",
       "glcts"
@@ -39,9 +39,9 @@
       "cmake",
       "--fresh",
       "-S",
-      "/home/vm/uml-source30-20260926-v1/sources/VK-GL-CTS",
+      "/home/vm/uml-source31-20260927-v1/sources/VK-GL-CTS",
       "-B",
-      "/home/vm/uml-source30-20260926-v1/build/VK-GL-CTS-1.4.6.2-vulkan-gl",
+      "/home/vm/uml-source31-20260927-v1/build/VK-GL-CTS-1.4.6.2-vulkan-gl",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
@@ -91,7 +91,7 @@
     "filesystem": "ext4",
     "filesystem_uuid": "3b59fbc9-4b35-4a2b-890d-286a77b04afd",
     "read_only": true,
-    "sha256": "e919fd40b5386f0b84067ef5aedec547e3ed5eca7f6751933b1c4e5559a4144d",
+    "sha256": "eaccfe89eab5f7391b4990a4a17db5b66cb6896bb6f1bf2b089f48b820640d81",
     "size": 8589934592
   },
   "exclusions": [
@@ -124,7 +124,7 @@
   ],
   "guest_receipt": {
     "path": "/usr/share/uml-vulkan/rootfs-build-receipt.json",
-    "sha256": "315cc675f7e38a567630e01e97d8125f7cb8394bc0c018b50c746ce77adad345",
+    "sha256": "94aa633b0355d30903a811621fa234c9d9f2bc9b4321bd74460de869d7b44f85",
     "size": 138636
   },
   "install_closure": [
@@ -422,8 +422,8 @@
       "consumer": "/usr/lib/aarch64-linux-gnu/gbm/dri_gbm.so",
       "file": {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.3.so",
-        "sha256": "0a36e44551d04ba191cfd73aaf4690cd9fe68c36c90d570c378643888dfdaefc",
-        "size": 24310352
+        "sha256": "3885236dd291314832f17c19510130ac35770378e13b87a4289f0ffc5f8b23c2",
+        "size": 24310336
       },
       "needed": "libgallium-26.2.3.so",
       "resolved_path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.3.so"
@@ -612,8 +612,8 @@
       "consumer": "/usr/lib/aarch64-linux-gnu/libEGL_mesa.so.0.0.0",
       "file": {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.3.so",
-        "sha256": "0a36e44551d04ba191cfd73aaf4690cd9fe68c36c90d570c378643888dfdaefc",
-        "size": 24310352
+        "sha256": "3885236dd291314832f17c19510130ac35770378e13b87a4289f0ffc5f8b23c2",
+        "size": 24310336
       },
       "needed": "libgallium-26.2.3.so",
       "resolved_path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.3.so"
@@ -862,8 +862,8 @@
       "consumer": "/usr/lib/aarch64-linux-gnu/libGLX_mesa.so.0.0.0",
       "file": {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.3.so",
-        "sha256": "0a36e44551d04ba191cfd73aaf4690cd9fe68c36c90d570c378643888dfdaefc",
-        "size": 24310352
+        "sha256": "3885236dd291314832f17c19510130ac35770378e13b87a4289f0ffc5f8b23c2",
+        "size": 24310336
       },
       "needed": "libgallium-26.2.3.so",
       "resolved_path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.3.so"
@@ -1704,19 +1704,19 @@
     "base_tree": "7f4340843f646b83e354e94efb4f2205af97a7fe",
     "build_targets": [
       "env",
-      "DESTDIR=/home/vm/uml-source30-20260926-v1/stage/mesa",
+      "DESTDIR=/home/vm/uml-source31-20260927-v1/stage/mesa",
       "meson",
       "install",
       "-C",
-      "/home/vm/uml-source30-20260926-v1/build/mesa",
+      "/home/vm/uml-source31-20260927-v1/build/mesa",
       "--tags",
       "runtime"
     ],
     "configure_argv": [
       "meson",
       "setup",
-      "/home/vm/uml-source30-20260926-v1/build/mesa",
-      "/home/vm/uml-source30-20260926-v1/sources/mesa",
+      "/home/vm/uml-source31-20260927-v1/build/mesa",
+      "/home/vm/uml-source31-20260927-v1/sources/mesa",
       "--wrap-mode=nofallback",
       "--prefix=/usr",
       "--libdir=lib/aarch64-linux-gnu",
@@ -1746,7 +1746,7 @@
       "-Dxmlconfig=enabled",
       "-Dshader-cache=enabled",
       "-Dzstd=enabled",
-      "-Dvenus-protocol-dir=/home/vm/uml-source30-20260926-v1/build/venus-protocol"
+      "-Dvenus-protocol-dir=/home/vm/uml-source31-20260927-v1/build/venus-protocol"
     ],
     "files": [
       {
@@ -1771,8 +1771,8 @@
       },
       {
         "path": "/usr/lib/aarch64-linux-gnu/libgallium-26.2.3.so",
-        "sha256": "0a36e44551d04ba191cfd73aaf4690cd9fe68c36c90d570c378643888dfdaefc",
-        "size": 24310352
+        "sha256": "3885236dd291314832f17c19510130ac35770378e13b87a4289f0ffc5f8b23c2",
+        "size": 24310336
       },
       {
         "path": "/usr/lib/aarch64-linux-gnu/libgbm.so.1.0.0",
@@ -1781,7 +1781,7 @@
       },
       {
         "path": "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so",
-        "sha256": "aa28c62465cdf789c118626d873a84c80577aaf3e7654edb10bda104ad43f6de",
+        "sha256": "f22c029e93f626fa1e3f802087cec617065e4e6eb11410be8ac62b0960ad8a1e",
         "size": 2154072
       },
       {
@@ -1816,7 +1816,7 @@
       }
     ],
     "install_prefix": "/usr",
-    "patched_tree": "7059336f8075f678b4556dfbed555a3254cd9ea0",
+    "patched_tree": "3a57677ba01c26a41f0da1c188162c7c38964ecb",
     "portability_driver": false,
     "release": "mesa-26.2.3",
     "release_object": "c031451717e082180c08969d4ef8c4ab751e6f80",
@@ -2338,7 +2338,7 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source30-20260926-v1/build/VK-GL-CTS-1.4.6.2-vulkan-gl",
+      "/home/vm/uml-source31-20260927-v1/build/VK-GL-CTS-1.4.6.2-vulkan-gl",
       "--target",
       "glcts"
     ],
@@ -2346,9 +2346,9 @@
       "cmake",
       "--fresh",
       "-S",
-      "/home/vm/uml-source30-20260926-v1/sources/VK-GL-CTS",
+      "/home/vm/uml-source31-20260927-v1/sources/VK-GL-CTS",
       "-B",
-      "/home/vm/uml-source30-20260926-v1/build/VK-GL-CTS-1.4.6.2-vulkan-gl",
+      "/home/vm/uml-source31-20260927-v1/build/VK-GL-CTS-1.4.6.2-vulkan-gl",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
@@ -2767,10 +2767,10 @@
       "configure_argv": [
         "meson",
         "setup",
-        "/home/vm/uml-source30-20260926-v1/build/venus-protocol",
-        "/home/vm/uml-source30-20260926-v1/sources/venus-protocol",
+        "/home/vm/uml-source31-20260927-v1/build/venus-protocol",
+        "/home/vm/uml-source31-20260927-v1/sources/venus-protocol",
         "--wrap-mode=nofallback",
-        "-Dvulkan-headers-dir=/home/vm/uml-source30-20260926-v1/sources/Vulkan-Headers"
+        "-Dvulkan-headers-dir=/home/vm/uml-source31-20260927-v1/sources/Vulkan-Headers"
       ],
       "driver_headers": {
         "vn_protocol_driver.h": "f6a5522530a059ce1f93c738463bf9552c7e58411ee1b89eff2decbce94a48e1",
@@ -2861,20 +2861,20 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source30-20260926-v1/build/Vulkan-Headers",
+      "/home/vm/uml-source31-20260927-v1/build/Vulkan-Headers",
       "--target",
       "install"
     ],
     "configure_argv": [
       "cmake",
       "-S",
-      "/home/vm/uml-source30-20260926-v1/sources/Vulkan-Headers",
+      "/home/vm/uml-source31-20260927-v1/sources/Vulkan-Headers",
       "-B",
-      "/home/vm/uml-source30-20260926-v1/build/Vulkan-Headers",
+      "/home/vm/uml-source31-20260927-v1/build/Vulkan-Headers",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
-      "-DCMAKE_INSTALL_PREFIX=/home/vm/uml-source30-20260926-v1/stage/vulkan-headers"
+      "-DCMAKE_INSTALL_PREFIX=/home/vm/uml-source31-20260927-v1/stage/vulkan-headers"
     ],
     "installed_in_guest": false,
     "patched": false,
@@ -2890,14 +2890,14 @@
     "build_targets": [
       "cmake",
       "--build",
-      "/home/vm/uml-source30-20260926-v1/build/Vulkan-Loader"
+      "/home/vm/uml-source31-20260927-v1/build/Vulkan-Loader"
     ],
     "configure_argv": [
       "cmake",
       "-S",
-      "/home/vm/uml-source30-20260926-v1/sources/Vulkan-Loader",
+      "/home/vm/uml-source31-20260927-v1/sources/Vulkan-Loader",
       "-B",
-      "/home/vm/uml-source30-20260926-v1/build/Vulkan-Loader",
+      "/home/vm/uml-source31-20260927-v1/build/Vulkan-Loader",
       "-G",
       "Ninja",
       "-DCMAKE_BUILD_TYPE=Release",
@@ -2905,14 +2905,14 @@
       "-DCMAKE_INSTALL_LIBDIR=lib/aarch64-linux-gnu",
       "-DUPDATE_DEPS=OFF",
       "-DBUILD_TESTS=OFF",
-      "-DVULKAN_HEADERS_INSTALL_DIR=/home/vm/uml-source30-20260926-v1/stage/vulkan-headers"
+      "-DVULKAN_HEADERS_INSTALL_DIR=/home/vm/uml-source31-20260927-v1/stage/vulkan-headers"
     ],
     "install_argv": [
       "env",
-      "DESTDIR=/home/vm/uml-source30-20260926-v1/stage/vulkan-loader",
+      "DESTDIR=/home/vm/uml-source31-20260927-v1/stage/vulkan-loader",
       "cmake",
       "--install",
-      "/home/vm/uml-source30-20260926-v1/build/Vulkan-Loader"
+      "/home/vm/uml-source31-20260927-v1/build/Vulkan-Loader"
     ],
     "install_prefix": "/usr",
     "patched": false,

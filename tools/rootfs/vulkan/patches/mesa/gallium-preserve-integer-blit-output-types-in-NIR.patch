@@ -8,11 +8,13 @@ Generated color blits already know their integer destination type. Carry it into
 Exercise all signedness pairs across sample, texel-fetch, and multisample paths, including backends that lower output IO during finalization.
 ---
  src/gallium/auxiliary/meson.build             |  15 ++
- src/gallium/auxiliary/nir/tgsi_to_nir.c       |  48 +++-
+ src/gallium/auxiliary/nir/tgsi_to_nir.c       |  48 ++++-
  src/gallium/auxiliary/nir/tgsi_to_nir.h       |   7 +
- src/gallium/auxiliary/util/u_simple_shaders.c |  57 ++++-
- .../auxiliary/util/u_simple_shaders_test.cpp  | 229 ++++++++++++++++++
- 5 files changed, 342 insertions(+), 14 deletions(-)
+ .../auxiliary/util/u_blit_shader_test.h       |  79 +++++++++
+ src/gallium/auxiliary/util/u_simple_shaders.c |  57 +++++-
+ .../auxiliary/util/u_simple_shaders_test.cpp  | 167 ++++++++++++++++++
+ 6 files changed, 359 insertions(+), 14 deletions(-)
+ create mode 100644 src/gallium/auxiliary/util/u_blit_shader_test.h
  create mode 100644 src/gallium/auxiliary/util/u_simple_shaders_test.cpp
 
 diff --git a/src/gallium/auxiliary/meson.build b/src/gallium/auxiliary/meson.build
@@ -132,6 +134,91 @@ index f1ba44d4010dc163b263d41848f84c9e9af6e270..3938a2e9e1d00aff63a55766afadce93
  struct nir_shader *
  tgsi_to_nir_noscreen(const void *tgsi_tokens,
                       const nir_shader_compiler_options *options);
+diff --git a/src/gallium/auxiliary/util/u_blit_shader_test.h b/src/gallium/auxiliary/util/u_blit_shader_test.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..81880a9c827226247ba22586cf662bd58398573b
+--- /dev/null
++++ b/src/gallium/auxiliary/util/u_blit_shader_test.h
+@@ -0,0 +1,79 @@
++/* SPDX-License-Identifier: MIT */
++
++/* A pipe screen and context for the tests of the generated blit shaders. The
++ * screen's fragment stage takes integers and one shader IR, and the fixture
++ * keeps the fragment shader the context is handed, as NIR.
++ */
++
++#ifndef U_BLIT_SHADER_TEST_H
++#define U_BLIT_SHADER_TEST_H
++
++#include "compiler/nir/nir.h"
++#include "nir/tgsi_to_nir.h"
++#include "pipe/p_context.h"
++#include "pipe/p_screen.h"
++#include "pipe/p_state.h"
++#include <gtest/gtest.h>
++#include <utility>
++
++static inline pipe_caps
++blit_caps()
++{
++   pipe_caps caps = {};
++   caps.nir_samplers_as_deref = true;
++   caps.texrect = true;
++   return caps;
++}
++
++static inline pipe_shader_caps
++blit_shader_caps(unsigned stage, bool use_nir)
++{
++   pipe_shader_caps caps = {};
++   if (stage == MESA_SHADER_FRAGMENT) {
++      caps.integers = true;
++      caps.supported_irs = 1 << (use_nir ? PIPE_SHADER_IR_NIR : PIPE_SHADER_IR_TGSI);
++   }
++   return caps;
++}
++
++template<unsigned... Stages>
++static pipe_screen
++blit_screen(bool use_nir, std::integer_sequence<unsigned, Stages...>)
++{
++   return {.caps = blit_caps(),
++           .shader_caps = {blit_shader_caps(Stages, use_nir)...}};
++}
++
++using shader_stages = std::make_integer_sequence<unsigned, MESA_SHADER_MESH_STAGES>;
++
++class blit_shader_fixture : public ::testing::Test {
++protected:
++   pipe_screen screen = blit_screen(true, shader_stages{});
++   pipe_context pipe = {};
++   nir_shader_compiler_options options = {};
++   nir_shader *shader = nullptr;
++   pipe_shader_ir received_ir = PIPE_SHADER_IR_TGSI;
++
++   void SetUp() override
++   {
++      glsl_type_singleton_init_or_ref();
++      screen.nir_options[MESA_SHADER_FRAGMENT] = &options;
++      pipe.screen = &screen;
++      pipe.priv = this;
++      pipe.create_fs_state = [](pipe_context *ctx, const pipe_shader_state *state) -> void * {
++         auto *test = static_cast<blit_shader_fixture *>(ctx->priv);
++         test->received_ir = state->type;
++         test->shader = state->type == PIPE_SHADER_IR_NIR ? state->ir.nir :
++            tgsi_to_nir(state->tokens, ctx->screen, false);
++         return test->shader;
++      };
++   }
++
++   void TearDown() override
++   {
++      ralloc_free(shader);
++      glsl_type_singleton_decref();
++   }
++};
++
++#endif /* U_BLIT_SHADER_TEST_H */
 diff --git a/src/gallium/auxiliary/util/u_simple_shaders.c b/src/gallium/auxiliary/util/u_simple_shaders.c
 index 6aea3648349b84a461414a241c07692865083031..a9e8898eef86e9d5db5f6090300fac456577a3de 100644
 --- a/src/gallium/auxiliary/util/u_simple_shaders.c
@@ -257,80 +344,18 @@ index 6aea3648349b84a461414a241c07692865083031..a9e8898eef86e9d5db5f6090300fac45
  
 diff --git a/src/gallium/auxiliary/util/u_simple_shaders_test.cpp b/src/gallium/auxiliary/util/u_simple_shaders_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b998759155ae406b619a42efb80ac5b04c0f5a97
+index 0000000000000000000000000000000000000000..75f7e56bfaccab0eb016e7940e8b74a4c5d93903
 --- /dev/null
 +++ b/src/gallium/auxiliary/util/u_simple_shaders_test.cpp
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,167 @@
 +/* SPDX-License-Identifier: MIT */
 +
 +#include "compiler/nir/nir_builder.h"
-+#include "nir/tgsi_to_nir.h"
-+#include "pipe/p_context.h"
-+#include "pipe/p_screen.h"
-+#include "pipe/p_state.h"
++#include "util/u_blit_shader_test.h"
 +#include "util/u_simple_shaders.h"
-+#include <gtest/gtest.h>
-+#include <utility>
 +
-+static pipe_caps
-+blit_caps()
-+{
-+   pipe_caps caps = {};
-+   caps.nir_samplers_as_deref = true;
-+   caps.texrect = true;
-+   return caps;
-+}
-+
-+static pipe_shader_caps
-+blit_shader_caps(unsigned stage, bool use_nir)
-+{
-+   pipe_shader_caps caps = {};
-+   if (stage == MESA_SHADER_FRAGMENT) {
-+      caps.integers = true;
-+      caps.supported_irs = 1 << (use_nir ? PIPE_SHADER_IR_NIR : PIPE_SHADER_IR_TGSI);
-+   }
-+   return caps;
-+}
-+
-+template<unsigned... Stages>
-+static pipe_screen
-+blit_screen(bool use_nir, std::integer_sequence<unsigned, Stages...>)
-+{
-+   return {.caps = blit_caps(),
-+           .shader_caps = {blit_shader_caps(Stages, use_nir)...}};
-+}
-+
-+using shader_stages = std::make_integer_sequence<unsigned, MESA_SHADER_MESH_STAGES>;
-+
-+class typed_blit : public ::testing::Test {
++class typed_blit : public blit_shader_fixture {
 +protected:
-+   pipe_screen screen = blit_screen(true, shader_stages{});
-+   pipe_context pipe = {};
-+   nir_shader_compiler_options options = {};
-+   nir_shader *shader = nullptr;
-+   pipe_shader_ir received_ir = PIPE_SHADER_IR_TGSI;
-+
-+   void SetUp() override
-+   {
-+      glsl_type_singleton_init_or_ref();
-+      screen.nir_options[MESA_SHADER_FRAGMENT] = &options;
-+      pipe.screen = &screen;
-+      pipe.priv = this;
-+      pipe.create_fs_state = [](pipe_context *ctx, const pipe_shader_state *state) -> void * {
-+         auto *test = static_cast<typed_blit *>(ctx->priv);
-+         test->received_ir = state->type;
-+         test->shader = state->type == PIPE_SHADER_IR_NIR ? state->ir.nir :
-+            tgsi_to_nir(state->tokens, ctx->screen, false);
-+         return test->shader;
-+      };
-+   }
-+
-+   void TearDown() override
-+   {
-+      ralloc_free(shader);
-+      glsl_type_singleton_decref();
-+   }
-+
 +   void check(tgsi_return_type src_type, tgsi_return_type dst_type,
 +              unsigned mode)
 +   {

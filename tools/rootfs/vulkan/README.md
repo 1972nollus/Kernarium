@@ -63,13 +63,15 @@ object and a later fatal command stream. The second prevents the renderer from
 writing beyond a guest-sized reply for formats absent from Gallium's table.
 The reporting fix keeps KosmicKrisp's CTS-recognized `1.4.3.2` value visible
 through Venus. The external-memory fixes virtualize only the fd handles that
-virtio-gpu can genuinely export and re-import. On Metal, an implicit guest fd
-names the same native MTLHeap used by both optimal Vulkan image aliases, so
-rendering and display scanout remain zero-copy without advertising a fictitious
-DRM modifier. Native presentation matches the window system's character-device
-fd to the renderer's exact guest DRM primary or render identity, including
-non-PCI virtio devices. Different devices retain the cross-device path; an
-import cannot grow the exported allocation.
+virtio-gpu can genuinely export and re-import. On Metal without DRM format
+modifiers, an implicit guest fd names the same native MTLHeap used by both
+optimal Vulkan image aliases, so rendering and display scanout remain zero-copy
+without advertising a fictitious DRM modifier. A renderer with modifiers shares
+swapchain images as `DRM_FORMAT_MOD_LINEAR`, because guest Zink then reads an
+implicit fd as linear. Native presentation matches the window system's
+character-device fd to the renderer's exact guest DRM primary or render
+identity, including non-PCI virtio devices. Different devices retain the
+cross-device path; an import cannot grow the exported allocation.
 For single-plane native-heap WSI images, the private implicit-import metadata
 supplies a logical row pitch required by DRI3. Its envelope bounds the image's
 width, height and total allocation, and the pitch itself is a 32-bit value that
