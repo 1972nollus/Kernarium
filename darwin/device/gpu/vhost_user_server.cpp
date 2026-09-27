@@ -7,6 +7,7 @@
 #include "socket_paths.hpp"
 #include "memory/shared_backing.hpp"
 #include "platform/apple/autorelease_scope.hpp"
+#include "platform/guest_timer_mask.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,6 +20,7 @@
 #include <limits>
 #include <mutex>
 #include <poll.h>
+#include <pthread.h>
 #include <stdexcept>
 #include <string>
 #include <sys/mman.h>
@@ -2715,6 +2717,95 @@ void VhostUserServer::run(
             continue;
         }
         serveConnection(connection.release(), stopRequested);
+    }
+}
+
+InProcessVhostUserService::InProcessVhostUserService(
+    std::string label,
+    std::string threadName,
+    DeviceFactory makeDevice,
+    std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions)
+    : label_(std::move(label))
+    , threadName_(std::move(threadName))
+    , makeDevice_(std::move(makeDevice))
+    , sharedMemoryRegions_(std::move(sharedMemoryRegions))
+{
+    /* The service thread inherits this mask. The timer stays blocked here
+     * too until the service has started, as it always has. */
+    const uml::platform::ScopedGuestTimerBlock timerBlock(
+        "blocking the UML timer around an in-process device thread");
+    std::array<int, 2> descriptors {-1, -1};
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors.data()) != 0) {
+        throw std::runtime_error(
+            "in-process " + label_ + " socketpair failed: " +
+            std::string(std::strerror(errno)));
+    }
+    descriptors_[0].reset(descriptors[0]);
+    descriptors_[1].reset(descriptors[1]);
+    setCloseOnExec(descriptors_[0].get());
+    setCloseOnExec(descriptors_[1].get());
+    stopDescriptor_.reset(::fcntl(descriptors_[0].get(), F_DUPFD_CLOEXEC, 0));
+    if (stopDescriptor_.get() < 0) {
+        throw std::runtime_error(
+            "duplicating in-process " + label_ + " stop descriptor failed: " +
+            std::string(std::strerror(errno)));
+    }
+    connectionName_ = "fd=" + std::to_string(descriptors_[1].get());
+    thread_ = std::thread([this] { run(); });
+
+    std::unique_lock lock(stateMutex_);
+    stateChanged_.wait(lock, [this] { return ready_ || failure_; });
+    if (failure_) {
+        lock.unlock();
+        thread_.join();
+        std::rethrow_exception(failure_);
+    }
+}
+
+InProcessVhostUserService::~InProcessVhostUserService()
+{
+    stop();
+}
+
+std::string InProcessVhostUserService::takeConnectionName()
+{
+    if (descriptors_[1].get() < 0)
+        throw std::logic_error(label_ + " endpoint already transferred");
+    auto name = connectionName_;
+    (void)descriptors_[1].release();
+    return name;
+}
+
+void InProcessVhostUserService::stop() noexcept
+{
+    stopRequested_.store(true, std::memory_order_release);
+    if (stopDescriptor_.get() >= 0)
+        (void)::shutdown(stopDescriptor_.get(), SHUT_RDWR);
+    if (thread_.joinable())
+        thread_.join();
+}
+
+void InProcessVhostUserService::run() noexcept
+{
+    (void)::pthread_setname_np(threadName_.c_str());
+    try {
+        VhostUserServer server(makeDevice_());
+        if (sharedMemoryRegions_)
+            server.setSharedMemoryRegions(sharedMemoryRegions_);
+        server.runConnected(
+            descriptors_[0].release(), stopRequested_, [this] {
+                {
+                    std::lock_guard lock(stateMutex_);
+                    ready_ = true;
+                }
+                stateChanged_.notify_one();
+            });
+    } catch (...) {
+        {
+            std::lock_guard lock(stateMutex_);
+            failure_ = std::current_exception();
+        }
+        stateChanged_.notify_one();
     }
 }
 

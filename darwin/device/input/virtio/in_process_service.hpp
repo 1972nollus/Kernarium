@@ -9,6 +9,10 @@
 #include <span>
 #include <string>
 
+namespace uml::gpu {
+class InProcessVhostUserService;
+}
+
 namespace uml::input::virtio {
 
 class InProcessInputService final {
@@ -27,8 +31,8 @@ public:
     void stop() noexcept;
 
 private:
-    class Implementation;
-    std::unique_ptr<Implementation> implementation_;
+    std::shared_ptr<EventQueue> events_;
+    std::unique_ptr<uml::gpu::InProcessVhostUserService> service_;
 };
 
 } // namespace uml::input::virtio
