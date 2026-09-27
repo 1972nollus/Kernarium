@@ -877,28 +877,21 @@ bool invalid_emitter_metadata_is_rejected_for_testing() {
 
 bool block_link_table_is_bounded(std::size_t capacity) {
   JitBlockLinkTable table{capacity};
-  std::vector<JitBlockLink> records(capacity + 1U);
-  const auto insert = [&](std::size_t index, std::uint64_t pc) {
-    records[index].guest_pc = pc;
-    const auto result = table.insert(records[index]);
-    if (result.inserted)
-      records[index].next_target = result.previous;
-    return result.inserted;
-  };
   if (capacity == 0)
-    return !insert(0, 1) && table.size() == 0;
-  if (!insert(0, 0x1000))
+    return table.find_or_create(1) == nullptr && table.size() == 0;
+  auto *first = table.find_or_create(0x1000);
+  if (first == nullptr || first->guest_pc != 0x1000)
     return false;
-  records[0].internal_entry = 0x1234;
-  records[0].allowed_selectors = 1U << 1U;
+  first->internal_entry = 0x1234;
+  first->allowed_selectors = 1U << 1U;
   for (std::size_t index = 1; index < capacity; ++index)
-    if (!insert(index, 0x1000 + index * 4U))
+    if (table.find_or_create(0x1000 + index * 4U) == nullptr)
       return false;
-  auto *first = table.find(0x1000);
-  return table.size() == capacity && first == &records[0] &&
+  return table.size() == capacity && table.find(0x1000) == first &&
+         table.find_or_create(0x1000) == first &&
          first->internal_entry == 0x1234 &&
          first->allowed_selectors == (1U << 1U) &&
-         !insert(capacity, 0x8000'0000) &&
+         table.find_or_create(0x8000'0000) == nullptr &&
          table.size() == capacity;
 }
 

@@ -146,11 +146,6 @@ struct JitIndirectLink final {
  */
 class JitBlockLinkTable final {
 public:
-  struct Insertion final {
-    JitBlockLink *previous{};
-    bool inserted{};
-  };
-
   explicit JitBlockLinkTable(std::size_t capacity);
   ~JitBlockLinkTable();
 
@@ -160,12 +155,6 @@ public:
   JitBlockLinkTable(const JitBlockLinkTable &) = delete;
   JitBlockLinkTable &operator=(const JitBlockLinkTable &) = delete;
 
-  /* The caller owns record and writes previous into record.next_target.
-   * A duplicate generation/PC returns the existing anchor without
-   * inserting record. Publishing the bucket first is safe because one
-   * executor is used by only one host thread at a time.
-   */
-  [[nodiscard]] Insertion insert(JitBlockLink &record) noexcept;
   [[nodiscard]] JitBlockLink *find(
       std::uint64_t pc, unsigned long generation = 0) const noexcept;
   void clear() noexcept;
