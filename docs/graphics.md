@@ -47,6 +47,12 @@ Images shared through native Metal heaps retain tiled storage but disable
 usage-dependent lossless compression. A compositor can therefore import a
 render target for sampling without reinterpreting its compression metadata as
 pixels. Ordinary Vulkan images keep their eligible texture optimizations.
+A compositor on Virgl imports such an image as well. Its blob reaches vrend as
+a shared-memory file that only names the heap, so vrend reads the pixels where
+they are: the rows of a linear image or a buffer from the heap's shared
+storage, which it aliases like any shared-memory segment, and an optimal image
+through the Metal texture its exporter published for scanout, which it reads
+into pages of its own before each read.
 
 The macOS native display turns the emulator into an AppKit application, which
 makes the whole process eligible for App Nap whenever its window is occluded or
