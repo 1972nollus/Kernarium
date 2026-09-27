@@ -28,9 +28,9 @@ retired queue is replaced while a write the old queue destroyed stays
 destroyed.
 ---
  src/kosmickrisp/vulkan/kk_query_pool.c | 39 ++++++++++++++++++++++++--
- src/kosmickrisp/vulkan/kk_queue.c      | 15 ++++++++++
+ src/kosmickrisp/vulkan/kk_queue.c      | 18 +++++++++++-
  src/kosmickrisp/vulkan/kk_queue.h      | 12 ++++++++
- 3 files changed, 64 insertions(+), 2 deletions(-)
+ 3 files changed, 66 insertions(+), 3 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
 index 89f96972ec4e56752bf02b95717df8fe5a044d22..9253e654e1a111b490e3997f4033998263be0f14 100644
@@ -104,7 +104,7 @@ index 89f96972ec4e56752bf02b95717df8fe5a044d22..9253e654e1a111b490e3997f40339982
     }
  }
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 9933c76ba316d818b0196a59174ffea99cd2d28a..20ab672850c64e19b844451e99c5bff21abcbde7 100644
+index 50f4336e75a0083893cf7b26085d2dae9ed4f5d3..da0dfd088ee3efb1a56328a0cdac5958ba0a81d7 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -78,6 +78,20 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
@@ -128,22 +128,26 @@ index 9933c76ba316d818b0196a59174ffea99cd2d28a..20ab672850c64e19b844451e99c5bff2
  /* Metal reports a failure against one submission, but the work it kills
   * behind that submission does not always arrive as a report of its own. A
   * signal enqueued after the reported one can therefore go missing with
-@@ -294,6 +308,7 @@ commit_callback(struct mtl_feedback_data *data)
+@@ -290,8 +304,10 @@ commit_callback(struct mtl_feedback_data *data)
+    simple_mtx_lock(&feedback->signal_mutex);
+    ++feedback->reported;
+    /* Survived or not, a failed queue runs nothing more that can be trusted. */
+-   if (failed)
++   if (failed) {
        ++feedback->failures;
-       /* Survived or not, this queue runs nothing more that can be trusted. */
-       feedback->poisoned = true;
 +      feedback->ever_failed = true;
-    }
++   }
     simple_mtx_unlock(&feedback->signal_mutex);
  
+    if (failed) {
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index 573787d4c7399ff5ddc14b46683b10abbf9d3d18..5e3f724b1cae465ef2512d0d120b9a7a299546a8 100644
+index 614257a5426df1fb3880dd4abb6e7f362135fb2e..6d57d398f43e305dbc05cbf668aa8a3e48b236db 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
-@@ -52,6 +52,10 @@ struct kk_queue_feedback {
-     * has killed one, so a survived failure retires the native queue. Set by
-     * the report, acted on by the submit thread. */
-    bool poisoned;
+@@ -51,6 +51,10 @@ struct kk_queue_feedback {
+     * any failure, survived or not, also retires the native queue: the report
+     * counts it, the submit thread acts on it and clears the count. */
+    uint32_t failures;
 +   /* Whether Metal has ever failed a submission on this device's queue.
 +    * Unlike failures, this is never cleared: a GPU write destroyed by a
 +    * failure stays destroyed after the queue that lost it is retired. */
@@ -151,7 +155,7 @@ index 573787d4c7399ff5ddc14b46683b10abbf9d3d18..5e3f724b1cae465ef2512d0d120b9a7a
  };
  
  /* Per-submission feedback payload. Metal reports a failure against one
-@@ -89,6 +93,14 @@ kk_queue_device(struct kk_queue *queue)
+@@ -88,6 +92,14 @@ kk_queue_device(struct kk_queue *queue)
  uint64_t kk_queue_complete_owed_signals(struct kk_queue *queue,
                                          mtl_shared_event *event);
  
