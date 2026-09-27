@@ -254,11 +254,15 @@ void rendererCreatesContextsAfterAnotherClientTerminatesTheDefaultDisplay()
 }
 
 // Serves virglrenderer from a provider the way the product's renderer does,
-// and can refuse the next GL context vrend asks for, as a host whose GL stack
-// has run out does.
+// and can refuse the next GL context vrend asks for, or every one, as a host
+// whose GL stack has run out does.
 struct RefusingHost {
     uml::gpu::HostGlProvider provider;
+    // virglrenderer keeps a pointer to its callbacks until cleanup.
+    virgl_renderer_callbacks callbacks {};
     bool refuseNextContext {};
+    bool refuseEveryContext {};
+    int createdContexts {};
     int refusedContexts {};
     int nullMakeCurrents {};
 };
@@ -269,12 +273,15 @@ void* refusingHostCreateContext(
     virgl_renderer_gl_ctx_param* parameters)
 {
     auto& host = *static_cast<RefusingHost*>(cookie);
-    if (host.refuseNextContext) {
+    if (host.refuseNextContext || host.refuseEveryContext) {
         host.refuseNextContext = false;
         ++host.refusedContexts;
         return nullptr;
     }
-    return host.provider.createContext(*parameters);
+    void* const context = host.provider.createContext(*parameters);
+    if (context != nullptr)
+        ++host.createdContexts;
+    return context;
 }
 
 void refusingHostDestroyContext(void* cookie, void* context)
@@ -297,6 +304,18 @@ void* refusingHostDisplay(void* cookie)
 
 void refusingHostIgnoresFence(void*, std::uint32_t) {}
 
+void initialiseRenderer(RefusingHost& host)
+{
+    auto& callbacks = host.callbacks;
+    callbacks.version = VIRGL_RENDERER_CALLBACKS_VERSION;
+    callbacks.write_fence = &refusingHostIgnoresFence;
+    callbacks.create_gl_context = &refusingHostCreateContext;
+    callbacks.destroy_gl_context = &refusingHostDestroyContext;
+    callbacks.make_current = &refusingHostMakeCurrent;
+    callbacks.get_egl_display = &refusingHostDisplay;
+    require(virgl_renderer_init(&host, 0, &callbacks) == 0);
+}
+
 // Virgl's wire encoding of a one-argument context command, from
 // virgl_protocol.h: the command in the low byte, the payload length in dwords
 // in the high half.
@@ -318,14 +337,7 @@ std::array<std::uint32_t, 2> virglCommand(
 void rendererRefusesASubContextWithoutAGlContext()
 {
     RefusingHost host;
-    virgl_renderer_callbacks callbacks {};
-    callbacks.version = VIRGL_RENDERER_CALLBACKS_VERSION;
-    callbacks.write_fence = &refusingHostIgnoresFence;
-    callbacks.create_gl_context = &refusingHostCreateContext;
-    callbacks.destroy_gl_context = &refusingHostDestroyContext;
-    callbacks.make_current = &refusingHostMakeCurrent;
-    callbacks.get_egl_display = &refusingHostDisplay;
-    require(virgl_renderer_init(&host, 0, &callbacks) == 0);
+    initialiseRenderer(host);
 
     constexpr std::uint32_t context = 1;
     require(virgl_renderer_context_create_with_flags(
@@ -354,6 +366,103 @@ void rendererRefusesASubContextWithoutAGlContext()
     require(host.refusedContexts == 2);
     require(host.nullMakeCurrents == nullMakeCurrents);
 
+    virgl_renderer_context_destroy(context);
+    virgl_renderer_cleanup(&host);
+}
+
+// Virgl's blit command and its length in dwords, from virgl_protocol.h, and
+// the texture target, format and bind numbering, from virgl_hw.h.
+constexpr std::uint32_t kVirglBlit = 16;
+constexpr std::uint32_t kVirglBlitLength = 21;
+constexpr std::uint32_t kPipeTexture3d = 3;
+constexpr std::uint32_t kVirglFormatB8G8R8A8Unorm = 1;
+constexpr std::uint32_t kVirglBindRenderTarget = 1U << 1U;
+constexpr std::uint32_t kVirglBindSamplerView = 1U << 3U;
+constexpr std::uint32_t kVolumeSide = 4;
+
+void createVolume(std::uint32_t context, std::uint32_t handle, std::uint32_t depth)
+{
+    virgl_renderer_resource_create_args arguments {};
+    arguments.handle = handle;
+    arguments.target = kPipeTexture3d;
+    arguments.format = kVirglFormatB8G8R8A8Unorm;
+    arguments.bind = kVirglBindRenderTarget | kVirglBindSamplerView;
+    arguments.width = kVolumeSide;
+    arguments.height = kVolumeSide;
+    arguments.depth = depth;
+    arguments.array_size = 1;
+    require(virgl_renderer_resource_create(&arguments, nullptr, 0) == 0);
+    virgl_renderer_ctx_attach_resource(
+        static_cast<int>(context), static_cast<int>(handle));
+}
+
+// A blit that halves a volume's depth, which vrend cannot express as a
+// framebuffer blit and draws with its blitter instead.
+std::array<std::uint32_t, kVirglBlitLength + 1> depthHalvingBlit(
+    std::uint32_t destination,
+    std::uint32_t source)
+{
+    constexpr std::uint32_t rgbaMaskNearest = 0xfU;
+    return {
+        kVirglBlit | (kVirglBlitLength << 16U),
+        rgbaMaskNearest,
+        0,
+        0,
+        destination,
+        0,
+        kVirglFormatB8G8R8A8Unorm,
+        0,
+        0,
+        0,
+        kVolumeSide,
+        kVolumeSide,
+        1,
+        source,
+        0,
+        kVirglFormatB8G8R8A8Unorm,
+        0,
+        0,
+        0,
+        kVolumeSide,
+        kVolumeSide,
+        2,
+    };
+}
+
+// vrend creates the one GL context its blitter shares on the first blit that
+// needs it. A host that cannot create that context must cost the blit, not the
+// process: vrend used to abort. The next blit asks for the context again.
+void rendererSkipsABlitItHasNoGlContextFor()
+{
+    RefusingHost host;
+    initialiseRenderer(host);
+
+    constexpr std::uint32_t context = 1;
+    require(virgl_renderer_context_create_with_flags(
+        context, kVirgl2CapsetId, 5, "guest") == 0);
+    constexpr std::uint32_t source = 1;
+    constexpr std::uint32_t destination = 2;
+    createVolume(context, source, 2);
+    createVolume(context, destination, 1);
+    auto blit = depthHalvingBlit(destination, source);
+
+    host.refuseEveryContext = true;
+    require(virgl_renderer_submit_cmd(
+        blit.data(), context, static_cast<int>(blit.size())) == 0);
+    host.refuseEveryContext = false;
+    require(host.refusedContexts > 0);
+    require(glGetString(GL_RENDERER) != nullptr);
+
+    const int refused = host.refusedContexts;
+    const int created = host.createdContexts;
+    require(virgl_renderer_submit_cmd(
+        blit.data(), context, static_cast<int>(blit.size())) == 0);
+    require(host.refusedContexts == refused);
+    require(host.createdContexts == created + 1);
+    require(glGetString(GL_RENDERER) != nullptr);
+
+    virgl_renderer_resource_unref(destination);
+    virgl_renderer_resource_unref(source);
     virgl_renderer_context_destroy(context);
     virgl_renderer_cleanup(&host);
 }
@@ -400,6 +509,7 @@ int main()
     providerKeepsItsDisplayWhenAnotherClientTerminatesTheDefaultOne();
     rendererCreatesContextsAfterAnotherClientTerminatesTheDefaultDisplay();
     rendererRefusesASubContextWithoutAGlContext();
+    rendererSkipsABlitItHasNoGlContextFor();
     // Last: it terminates the display every renderer in this process uses.
     rendererFailsCleanlyAfterLosingItsDisplay();
     std::puts("host GL provider lifetime tests passed");
