@@ -28,7 +28,7 @@ metallib.
  src/kosmickrisp/bridge/mtl_compiler.h         |   9 ++
  src/kosmickrisp/bridge/mtl_compiler.m         |  24 +++-
  src/kosmickrisp/bridge/stubs/mtl_compiler.c   |   6 +
- src/kosmickrisp/clc/kk_clc.c                  |  26 +++-
+ src/kosmickrisp/clc/kk_clc.c                  |  24 +++-
  src/kosmickrisp/libkk/kk_metallib.h           |  22 +++
  src/kosmickrisp/libkk/kk_metallib.py          | 129 ++++++++++++++++++
  src/kosmickrisp/libkk/meson.build             |  26 +++-
@@ -36,7 +36,7 @@ metallib.
  src/kosmickrisp/vulkan/kk_device_lib.c        |  74 ++++++++--
  src/kosmickrisp/vulkan/meson.build            |  21 +++
  .../tests/test_offline_device_library.c       | 101 ++++++++++++++
- 11 files changed, 419 insertions(+), 21 deletions(-)
+ 11 files changed, 417 insertions(+), 21 deletions(-)
  create mode 100644 src/kosmickrisp/libkk/kk_metallib.h
  create mode 100755 src/kosmickrisp/libkk/kk_metallib.py
  create mode 100644 src/kosmickrisp/vulkan/tests/test_offline_device_library.c
@@ -132,7 +132,7 @@ index 4e5b3411927b467b6d2271f852fb81d5598ea7e2..f4f18a45af364c25d6d576052fc58e99
  mtl_new_library_function_descriptor(mtl_library *library,
                                      const char *entry_point)
 diff --git a/src/kosmickrisp/clc/kk_clc.c b/src/kosmickrisp/clc/kk_clc.c
-index 12bf85162697b03d62e52755e4bb04ec2ead1507..24f7319df37427ffdf67a38d6520ca0a39c8dba3 100644
+index 12bf85162697b03d62e52755e4bb04ec2ead1507..d2bd34371b19e0f12e4e49fba2e97c5e43d5db8e 100644
 --- a/src/kosmickrisp/clc/kk_clc.c
 +++ b/src/kosmickrisp/clc/kk_clc.c
 @@ -186,6 +186,15 @@ print_shader(FILE *fp, const char *name, const char *suffix, uint32_t variant,
@@ -157,7 +157,7 @@ index 12bf85162697b03d62e52755e4bb04ec2ead1507..24f7319df37427ffdf67a38d6520ca0a
  {
 -   if (argc != 4) {
 -      fprintf(stderr, "Usage: %s [input spir-v] [output header] [output C]\n",
-+   if (argc != 4 && argc != 5) {
++   if (argc != 5) {
 +      fprintf(stderr,
 +              "Usage: %s [input spir-v] [output header] [output C] "
 +              "[output MSL bundle]\n",
@@ -168,7 +168,7 @@ index 12bf85162697b03d62e52755e4bb04ec2ead1507..24f7319df37427ffdf67a38d6520ca0a
     const char *infile = argv[1];
     const char *outh_file = argv[2];
     const char *outc_file = argv[3];
-+   const char *outmsl_file = argc == 5 ? argv[4] : NULL;
++   const char *outmsl_file = argv[4];
  
     void *mem_ctx = ralloc_context(NULL);
  
@@ -176,8 +176,8 @@ index 12bf85162697b03d62e52755e4bb04ec2ead1507..24f7319df37427ffdf67a38d6520ca0a
  
     FILE *fp_h = fopen(outh_file, "w");
     FILE *fp_c = fopen(outc_file, "w");
-+   FILE *fp_msl = outmsl_file ? fopen(outmsl_file, "w") : NULL;
-+   if (!fp_h || !fp_c || (outmsl_file && !fp_msl)) {
++   FILE *fp_msl = fopen(outmsl_file, "w");
++   if (!fp_h || !fp_c || !fp_msl) {
 +      fprintf(stderr, "Failed to open the outputs\n");
 +      ralloc_free(mem_ctx);
 +      return 1;
@@ -185,21 +185,19 @@ index 12bf85162697b03d62e52755e4bb04ec2ead1507..24f7319df37427ffdf67a38d6520ca0a
     glsl_type_singleton_init_or_ref();
  
     nir_precomp_print_header(fp_c, fp_h, "KosmicKrisp Contributors",
-@@ -314,6 +332,8 @@ main(int argc, char **argv)
+@@ -314,6 +332,7 @@ main(int argc, char **argv)
           struct nir_to_msl_options options = {};
           const char *msl = nir_to_msl(s, &options);
           print_shader(fp_c, libfunc->name, target, v, msl, s);
-+         if (fp_msl)
-+            print_msl_bundle(fp_msl, nir_precomp_index(nir, libfunc) + v, msl);
++         print_msl_bundle(fp_msl, nir_precomp_index(nir, libfunc) + v, msl);
           ralloc_free((void *)msl);
  
           ralloc_free(s);
-@@ -331,6 +351,8 @@ main(int argc, char **argv)
+@@ -331,6 +350,7 @@ main(int argc, char **argv)
     glsl_type_singleton_decref();
     fclose(fp_c);
     fclose(fp_h);
-+   if (fp_msl)
-+      fclose(fp_msl);
++   fclose(fp_msl);
     ralloc_free(mem_ctx);
     return 0;
  }
