@@ -308,6 +308,30 @@ class KdeVncLauncherTests(unittest.TestCase):
                     "UML_WEBGL_RUNNER_ERROR: " + expected,
                 )
 
+    def test_webgl_samples_capture_once_and_name_the_failure(self) -> None:
+        # A stand-in capture client that counts its runs and fails the way
+        # the real one does when no rendered frame arrives.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs = root / "runs"
+            client = root / "client"
+            client.write_text(
+                "#!/bin/sh\n"
+                f"echo run >> {runs}\n"
+                "echo 'uml-vnc-smoke-client: VNC framebuffer remained blank' "
+                ">&2\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            client.chmod(0o755)
+            with self.assertRaisesRegex(
+                RuntimeError, "VNC framebuffer remained blank"
+            ):
+                run_webgl_samples.capture_sample(
+                    client, "webgl", 5900, root / "sample.ppm"
+                )
+            self.assertEqual(runs.read_text().splitlines(), ["run"])
+
     def test_webgl_samples_reject_poisoned_virgl_contexts(self) -> None:
         clean = "UML_WEBGL_SAMPLE_OK|1/2|Aquarium"
         self.assertIsNone(run_webgl_samples.graphics_failure(clean))

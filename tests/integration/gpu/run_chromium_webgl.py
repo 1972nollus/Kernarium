@@ -1587,19 +1587,11 @@ def main() -> int:
                 validate_native_shutdown(text)
                 native_display = parse_native_display_final(text)
             else:
-                port = announced_vnc_port(text)
-                time.sleep(2)
-                subprocess.run(
-                    [
-                        str(options.client.resolve()),
-                        "--password",
-                        password,
-                        "--capture",
-                        str(capture_path),
-                        str(port),
-                    ],
-                    check=True,
-                    timeout=120,
+                webgl_launcher.capture_rendered_frame(
+                    options.client,
+                    password,
+                    announced_vnc_port(text),
+                    capture_path,
                 )
                 if not raster_marker_visible(capture_path):
                     raise RuntimeError(

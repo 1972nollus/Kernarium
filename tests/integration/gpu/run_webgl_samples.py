@@ -466,29 +466,14 @@ def capture_has_demo_pixels(path: Path) -> bool:
 
 
 def capture_sample(client: Path, password: str, port: int, path: Path) -> None:
-    for attempt in range(3):
-        try:
-            subprocess.run(
-                [
-                    str(client.resolve()),
-                    "--password",
-                    password,
-                    "--capture",
-                    str(path),
-                    str(port),
-                ],
-                check=True,
-                timeout=30,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            if not capture_has_demo_pixels(path):
-                raise RuntimeError(f"capture is visually blank: {path}")
-            return
-        except (OSError, RuntimeError, subprocess.SubprocessError):
-            if attempt == 2:
-                raise
-            time.sleep(0.5)
+    """Capture the sample on screen now, once.
+
+    The verifier moves on four seconds after it reports a sample, so a second
+    attempt could save the next page under this sample's name.
+    """
+    webgl_launcher.capture_rendered_frame(client, password, port, path)
+    if not capture_has_demo_pixels(path):
+        raise RuntimeError(f"capture is visually blank: {path}")
 
 
 def main() -> int:

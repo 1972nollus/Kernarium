@@ -6,8 +6,8 @@ launcher that waits for the KDE session, starts Chromium as the session user
 under a guest-uptime deadline, and names every failure on the console before
 the runner gives up. This module owns what the two share: the deadline
 arithmetic, the shell functions for the session wait, the Xauthority lookup,
-the Chromium command and the reason Chromium stopped, and the extraction of a
-named failure from the console.
+the Chromium command and the reason Chromium stopped, the extraction of a
+named failure from the console, and the VNC capture of what was rendered.
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import math
+from pathlib import Path
+import subprocess
 from typing import Sequence
 
 
@@ -23,6 +25,9 @@ from typing import Sequence
 GUEST_REPORT_MARGIN_SECONDS = 45
 # The boot and the KDE session must keep at least this much guest uptime.
 MINIMUM_SESSION_SECONDS = 60
+# The capture client waits up to 90 s for a rendered frame and names its own
+# failure; the host bound lies beyond that wait.
+CAPTURE_TIMEOUT_SECONDS = 120
 
 # A launcher defines $session_deadline and $deadline (guest uptime, in
 # seconds) before it calls these. fail() runs the launcher's diagnostics, if
@@ -123,6 +128,39 @@ def require_session_budget(session_deadline: int, budget: str) -> None:
             f"{budget} leaves the boot and KDE session less than "
             f"{MINIMUM_SESSION_SECONDS} s"
         )
+
+
+def capture_rendered_frame(
+    client: Path, password: str, port: int, path: Path
+) -> None:
+    """Save the display's first rendered frame to ``path``, in one attempt.
+
+    The client connects to the port the display announced once it was bound,
+    and waits for a rendered frame itself. A capture that fails anyway is the
+    result: another attempt would pass over a blank or stale first frame after
+    a zero-client interval, which is the display regression a capture exists
+    to catch.
+    """
+
+    try:
+        subprocess.run(
+            [
+                str(client.resolve()),
+                "--password",
+                password,
+                "--capture",
+                str(path),
+                str(port),
+            ],
+            check=True,
+            timeout=CAPTURE_TIMEOUT_SECONDS,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except subprocess.CalledProcessError as error:
+        reason = (error.stderr or "").strip() or f"status {error.returncode}"
+        raise RuntimeError(f"VNC capture of {path} failed: {reason}") from error
 
 
 def guest_failure(text: str, markers: Sequence[str]) -> str:
