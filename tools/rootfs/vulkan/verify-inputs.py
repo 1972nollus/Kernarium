@@ -227,7 +227,7 @@ def verify(metadata_root: Path, outer_root: Path) -> None:
             "vulkan-library-file",
             "VK_EXT_external_memory_host",
             "vkr_pipeline_add_array",
-            "host image copy wrote",
+            "vkr_host_copy_footprint",
         ),
         "host renderer series",
     )
