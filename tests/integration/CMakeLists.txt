@@ -142,6 +142,28 @@ add_custom_target(uml-docker-hello-world
     DEPENDS "${UML_DOCKER_HELLO_WORLD}")
 add_dependencies(integration-test-binaries uml-docker-hello-world)
 
+set(UML_GUEST_HWCAP_SANITY
+    "${CMAKE_CURRENT_BINARY_DIR}/guest-hwcap-sanity")
+add_custom_command(
+    OUTPUT "${UML_GUEST_HWCAP_SANITY}"
+    COMMAND "${CMAKE_CXX_COMPILER}"
+        --target=aarch64-unknown-linux-gnu
+        -nostdlib
+        -static
+        -fuse-ld=lld
+        -Wl,-e,_start
+        "${CMAKE_CURRENT_SOURCE_DIR}/features/guest_hwcap_sanity.S"
+        -o "${UML_GUEST_HWCAP_SANITY}"
+    COMMAND ${CMAKE_COMMAND}
+        -DOUTPUT=${UML_GUEST_HWCAP_SANITY}
+        -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/guest_hwcap_sanity.S"
+    COMMENT "Building the arm64 guest HWCAP sanity payload"
+    VERBATIM)
+add_custom_target(uml-guest-hwcap-sanity
+    DEPENDS "${UML_GUEST_HWCAP_SANITY}")
+add_dependencies(integration-test-binaries uml-guest-hwcap-sanity)
+
 # Guest campaigns share the EROFS image directly. The filesystem supplies the
 # read-only contract; writable guest state lives in disposable overlays. The
 # fast suite contains short real boots; full adds topology, MMU, and rendering.
@@ -199,6 +221,7 @@ function(uml_add_guest_engine_smoke ENGINE)
             --emulator $<TARGET_FILE:${_uml_integration_emulator}>
             --rootfs ${UML_INTEGRATION_ROOTFS}
             --engine ${ENGINE}
+            --hwcap-sanity-binary ${UML_GUEST_HWCAP_SANITY}
         LABELS ${_labels}
         TIMEOUT 420
         PROCESSORS 2
