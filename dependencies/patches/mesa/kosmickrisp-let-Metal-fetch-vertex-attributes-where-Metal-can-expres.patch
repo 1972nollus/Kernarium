@@ -559,7 +559,7 @@ index a31eadde4320459375e9f1e68bb5d39ea24d55d3..4e246852333186c87ebaa80e892f09cc
  #define KK_MAX_PUSH_SIZE                 256
  #define KK_MAX_DYNAMIC_BUFFERS           64
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index ea2f30905f3f9da344bd62d4e1b5a5d8e36a7b92..023f356025435f655837b2f0d3f55f020076e6b9 100644
+index 80efd9935fffa7fd5145c61270e3179a23353d01..fa496e491c9afb90c280c454c0804b8a1c48661a 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -368,6 +368,291 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
@@ -940,7 +940,7 @@ index ea2f30905f3f9da344bd62d4e1b5a5d8e36a7b92..023f356025435f655837b2f0d3f55f02
      * in the array so need to check them all, not just first
      * color_attachment_count entries.
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 1f624b6b266f4c0e6600be54ab35011ab112798d..749204dd84391453a33ed9270fef3d497f2b9769 100644
+index 5b78eeaccc6852a9206ba45018e0fd1b1068d19e..9468ad9b75d309a100c71e24e8bf5ef35e599c80 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -9,6 +9,7 @@

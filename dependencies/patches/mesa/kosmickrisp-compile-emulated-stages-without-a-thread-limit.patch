@@ -138,7 +138,7 @@ index 92c532e4137a6ee7e8e71881d4745b34252fb0e4..87e93c0a930beb883b7f3ddbd05d3b9c
        NSError *error;
        id<MTLComputePipelineState> pipeline = [comp newComputePipelineStateWithDescriptor:desc compilerTaskOptions:nil
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 1b5cc569c35b656be038df208b7f049dc347f593..e2c77cbc4b5eb071df66436d96d2b2bff27d0e96 100644
+index 1e976fb0e99663644f11f6ca2013cd9912cbc038..59560b2803f211e7ba6d4f14c4b8111c8ac8b14b 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -3471,10 +3471,32 @@ get_empty_nir(struct kk_device *dev, mesa_shader_stage stage,
@@ -248,7 +248,7 @@ index 1b5cc569c35b656be038df208b7f049dc347f593..e2c77cbc4b5eb071df66436d96d2b2bf
        if (result != VK_SUCCESS)
           return VK_ERROR_INVALID_SHADER_NV;
     }
-@@ -4693,7 +4718,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
+@@ -4690,7 +4715,8 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
                                      s->info.cs.local_size.z;
        result =
           kk_compile_compute_pipeline(dev, &s->msl_data[MESA_SHADER_COMPUTE],
@@ -258,7 +258,7 @@ index 1b5cc569c35b656be038df208b7f049dc347f593..e2c77cbc4b5eb071df66436d96d2b2bf
     } else {
        uint32_t skipped_shaders = 0;
        if (transform_feedback_pre_gs_shader != UINT32_MAX)
-@@ -5766,7 +5792,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -5763,7 +5789,7 @@ kk_deserialize_shader_impl(struct vk_device *vk_dev, struct blob_reader *blob,
                                      shader->info.cs.local_size.z;
        result = kk_compile_compute_pipeline(
           dev, &shader->msl_data[MESA_SHADER_COMPUTE], local_size_threads,

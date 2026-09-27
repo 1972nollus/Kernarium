@@ -286,7 +286,7 @@ index 628b8e8bdb3411697499a8207ea0f13d97580fd8..073e9adb13971b84a3f97b15d987b57d
        /* Rectangular-line expansion is selected at pipeline compile time. */
        .extendedDynamicState3LineRasterizationMode = false,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 77bb894fea70f63e25081f7aa08ab26656cdcbf1..d23acd5a03213c23a8712182c694eee81dc28828 100644
+index 4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a..62d19d267a968f5cdafcc9719105a3f5f182fdc1 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -117,6 +117,7 @@ struct kk_vs_key {

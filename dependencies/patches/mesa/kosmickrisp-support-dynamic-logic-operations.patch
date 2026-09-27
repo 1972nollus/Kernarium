@@ -331,7 +331,7 @@ index 64a69a57e7c23abe5d9215ec419f101ac483d157..7e4a984f44ce2e8bc82a921d86b58cda
        .graphicsPipelineLibrary = true,
        .inlineUniformBlock = true,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index ea3fe3512d8706e293fe8e8568e5a724affc215b..a38457568c7412a5d5646a6c84a5bb3ec69ae345 100644
+index 6c06cd1d31b527e56f3ae3d5678cf32ff451d152..375bdae183e14c406a447715ecffd6b80998ed4f 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -13,6 +13,7 @@

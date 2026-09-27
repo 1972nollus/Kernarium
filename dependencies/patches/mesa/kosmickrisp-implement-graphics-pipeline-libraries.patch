@@ -241,7 +241,7 @@ index 37ee3d63009edb8bb3ad76699950e228d67d0ad0..09fcec3df77d8b2610d4c72299b3ed0e
  
        /* VK_KHR_line_rasterization */
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 7f0ff51e65de33c916cd507229dcb7b2e85d564b..ea3fe3512d8706e293fe8e8568e5a724affc215b 100644
+index b9e0f0b9e9f1b84b295241da7d4de13ab093b7da..6c06cd1d31b527e56f3ae3d5678cf32ff451d152 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -12,6 +12,7 @@
@@ -466,7 +466,7 @@ index 7f0ff51e65de33c916cd507229dcb7b2e85d564b..ea3fe3512d8706e293fe8e8568e5a724
      * fragment. */
     uint32_t total_shaders = shader_count;
     if (state && infos[shader_count - 1u].stage != MESA_SHADER_FRAGMENT) {
-@@ -2625,10 +2643,9 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2622,10 +2640,9 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
               sizeof(pre_gs->msl_data[MESA_SHADER_COMPUTE]));
     }
  
@@ -480,7 +480,7 @@ index 7f0ff51e65de33c916cd507229dcb7b2e85d564b..ea3fe3512d8706e293fe8e8568e5a724
      */
     if (shaders[0]->vk.stage == MESA_SHADER_COMPUTE) {
        struct kk_shader *s = shaders[0];
-@@ -2673,6 +2690,256 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2670,6 +2687,256 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
     return result;
  }
  
@@ -737,7 +737,7 @@ index 7f0ff51e65de33c916cd507229dcb7b2e85d564b..ea3fe3512d8706e293fe8e8568e5a724
  static void
  kk_msl_data_serialize(const struct msl_compile_data *data, struct blob *blob)
  {
-@@ -2698,6 +2965,15 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
+@@ -2695,6 +2962,15 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
     struct kk_shader *shader = container_of(vk_shader, struct kk_shader, vk);
  
     blob_write_bytes(blob, &shader->info, sizeof(shader->info));
@@ -753,7 +753,7 @@ index 7f0ff51e65de33c916cd507229dcb7b2e85d564b..ea3fe3512d8706e293fe8e8568e5a724
     kk_msl_serialize(shader, shader->info.stage, blob);
     if (shader->info.stage == MESA_SHADER_VERTEX) {
        u_foreach_bit(stage, shader->info.vs.additional_stages_bits) {
-@@ -2766,12 +3042,39 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -2763,12 +3039,39 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
     if (shader == NULL)
        return vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
  
@@ -796,7 +796,7 @@ index 7f0ff51e65de33c916cd507229dcb7b2e85d564b..ea3fe3512d8706e293fe8e8568e5a724
     if (shader->info.stage == MESA_SHADER_VERTEX) {
        u_foreach_bit(stage, shader->info.vs.additional_stages_bits) {
           result = kk_msl_deserialize(blob, stage, shader);
-@@ -2863,6 +3166,21 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
+@@ -2860,6 +3163,21 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
     cmd->state.gfx.pipeline_sample_count = shader->info.vs.sample_count;
  }
  
@@ -818,7 +818,7 @@ index 7f0ff51e65de33c916cd507229dcb7b2e85d564b..ea3fe3512d8706e293fe8e8568e5a724
  static void
  kk_cmd_bind_shaders(struct vk_command_buffer *cmd_buffer, uint32_t stage_count,
                      const mesa_shader_stage *stages,
-@@ -2934,9 +3252,12 @@ const struct vk_device_shader_ops kk_device_shader_ops = {
+@@ -2931,9 +3249,12 @@ const struct vk_device_shader_ops kk_device_shader_ops = {
     .get_spirv_options = kk_get_spirv_options,
     .preprocess_nir = kk_preprocess_nir,
     .hash_state = kk_hash_graphics_state,
@@ -835,7 +835,7 @@ index 7f0ff51e65de33c916cd507229dcb7b2e85d564b..ea3fe3512d8706e293fe8e8568e5a724
     .cmd_set_dynamic_graphics_state = vk_cmd_set_dynamic_graphics_state,
     .cmd_bind_shaders = kk_cmd_bind_shaders,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 0d7587941e7b7b84c1dce6df48c57960a329efd0..bc206eba2d8f03fd89fac124fb97ac2e0fa8c35b 100644
+index fd8048d9ee555e6505daedb59d9b92c14573463d..a42e19fedd149e1101eddf443ae4eba3182e1c5d 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -14,6 +14,7 @@
@@ -854,7 +854,7 @@ index 0d7587941e7b7b84c1dce6df48c57960a329efd0..bc206eba2d8f03fd89fac124fb97ac2e
  
     /* Required for fragment shader cull distance discards. */
     uint8_t num_cull_distances;
-@@ -167,6 +169,8 @@ struct kk_shader {
+@@ -165,6 +167,8 @@ struct kk_shader {
     /* struct kk_attachment_variant, owned by this shader. */
     struct util_dynarray attachment_variants;
     struct kk_shader_info info;

@@ -9,13 +9,13 @@ Lower application geometry shaders through the shared GPU poly pipeline, includi
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   7 +
  src/kosmickrisp/vulkan/kk_cmd_draw.c          | 298 ++++++++++++++-
  src/kosmickrisp/vulkan/kk_physical_device.c   |   9 +-
- src/kosmickrisp/vulkan/kk_shader.c            | 354 ++++++++++++++++--
- src/kosmickrisp/vulkan/kk_shader.h            |  16 +
+ src/kosmickrisp/vulkan/kk_shader.c            | 353 ++++++++++++++++--
+ src/kosmickrisp/vulkan/kk_shader.h            |  14 +
  src/kosmickrisp/vulkan/meson.build            |  32 ++
  .../vulkan/tests/test_geometry_setup_gpu.c    | 195 ++++++++++
  src/poly/nir/poly_nir_lower_gs.c              |  58 ++-
  src/poly/nir/tests/test_gs_invocations.c      | 105 ++++++
- 10 files changed, 1016 insertions(+), 75 deletions(-)
+ 10 files changed, 1012 insertions(+), 76 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_geometry_setup_gpu.c
  create mode 100644 src/poly/nir/tests/test_gs_invocations.c
 
@@ -553,7 +553,7 @@ index b268e5553007604186944d4c16445c15ef49242b..89de07801dbc3b00614c023a1005ff2e
  
        /* VK_KHR_vertex_attribute_divisor */
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 91b3cee96ee2ad651a11960643274bf6c53f9213..a1d1b5b54468efa2e5f09e5abc9fc63bd7041d77 100644
+index 91b3cee96ee2ad651a11960643274bf6c53f9213..fc2bb0a0e5e09869b8a3727cd56d9f8c09620f0a 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -22,6 +22,7 @@
@@ -1038,10 +1038,11 @@ index 91b3cee96ee2ad651a11960643274bf6c53f9213..a1d1b5b54468efa2e5f09e5abc9fc63b
  
        if (result != VK_SUCCESS) {
           /* Clean up all the shaders before this point */
-@@ -2045,14 +2268,8 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2044,15 +2267,6 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+          shaders[i]->info.vs.transform_feedback_emulation = true;
           shaders[i]->info.vs.transform_feedback = transform_feedback_info;
        }
- 
+-
 -      if (i == polygon_point_shader || i == rectangular_line_shader ||
 -          i == transform_feedback_raster_shader) {
 -         shaders[i]->msl_data[MESA_SHADER_GEOMETRY] =
@@ -1050,12 +1051,10 @@ index 91b3cee96ee2ad651a11960643274bf6c53f9213..a1d1b5b54468efa2e5f09e5abc9fc63b
 -                sizeof(shaders[i]->msl_data[MESA_SHADER_VERTEX]));
 -         shaders[i]->info.stage = MESA_SHADER_GEOMETRY;
 -      }
-+      if (i == geometry_shader)
-+         shaders[i]->info.gs = geometry_info;
     }
  
     if (transform_feedback_emulation) {
-@@ -2063,6 +2280,29 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2063,6 +2277,29 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
               sizeof(pre_gs->msl_data[MESA_SHADER_COMPUTE]));
     }
  
@@ -1085,7 +1084,7 @@ index 91b3cee96ee2ad651a11960643274bf6c53f9213..a1d1b5b54468efa2e5f09e5abc9fc63b
     /* Compile pipeline:
      * 1. Compute pipeline
      * 2. Graphics with all stages (since we don't support GPL nor shader
-@@ -2077,8 +2317,18 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -2077,8 +2314,18 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
           kk_compile_compute_pipeline(dev, &s->msl_data[MESA_SHADER_COMPUTE],
                                       local_size_threads, &s->pipeline.cs);
     } else {
@@ -1106,7 +1105,7 @@ index 91b3cee96ee2ad651a11960643274bf6c53f9213..a1d1b5b54468efa2e5f09e5abc9fc63b
        result = kk_compile_graphics_pipeline(dev, shaders[0]);
  
        /* Free generated fragment and raster-emulation shaders. Their MSL was
-@@ -2134,6 +2384,13 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
+@@ -2134,6 +2381,13 @@ kk_shader_serialize(struct vk_device *vk_dev, const struct vk_shader *vk_shader,
  
        if (shader->info.vs.transform_feedback_emulation)
           kk_msl_data_serialize(&shader->transform_feedback_pre_gs_msl, blob);
@@ -1120,7 +1119,7 @@ index 91b3cee96ee2ad651a11960643274bf6c53f9213..a1d1b5b54468efa2e5f09e5abc9fc63b
     }
  
     return !blob->out_of_memory;
-@@ -2206,6 +2463,23 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
+@@ -2206,6 +2460,23 @@ kk_deserialize_shader(struct vk_device *vk_dev, struct blob_reader *blob,
           if (result != VK_SUCCESS)
              goto fail;
        }
@@ -1145,7 +1144,7 @@ index 91b3cee96ee2ad651a11960643274bf6c53f9213..a1d1b5b54468efa2e5f09e5abc9fc63b
  
     if (info.stage == MESA_SHADER_COMPUTE) {
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 15d27ab9b5dbb68de3e0460fd8460252543610e2..2d0d0f2bcd3f3a7b7942c07fa8c212e29e7ea884 100644
+index 15d27ab9b5dbb68de3e0460fd8460252543610e2..233b8a0e12a34369c1547ba5bb7fda3804564d8d 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -74,7 +74,10 @@ struct kk_shader_info {
@@ -1167,12 +1166,10 @@ index 15d27ab9b5dbb68de3e0460fd8460252543610e2..2d0d0f2bcd3f3a7b7942c07fa8c212e2
           uint32_t tcs_output_stride;
           uint8_t tcs_output_patch_size;
           uint8_t tcs_nr_patch_outputs;
-@@ -109,6 +113,12 @@ struct kk_shader_info {
+@@ -109,6 +113,10 @@ struct kk_shader_info {
           struct kk_tess_info info;
        } tess;
  
-+      struct poly_gs_info gs;
-+
 +      struct {
 +         uint64_t flat_inputs;
 +      } fs;
@@ -1180,7 +1177,7 @@ index 15d27ab9b5dbb68de3e0460fd8460252543610e2..2d0d0f2bcd3f3a7b7942c07fa8c212e2
        struct {
           struct mtl_size local_size;
        } cs;
-@@ -123,6 +133,9 @@ struct kk_pipeline_handles {
+@@ -123,6 +131,9 @@ struct kk_pipeline_handles {
           /* Vertex, tess ctrl and tess eval at most needed before pre-render. */
           mtl_compute_pipeline_state *pre_render[3];
           mtl_compute_pipeline_state *transform_feedback_pre_gs;
@@ -1190,7 +1187,7 @@ index 15d27ab9b5dbb68de3e0460fd8460252543610e2..2d0d0f2bcd3f3a7b7942c07fa8c212e2
           mtl_depth_stencil_state *ds_handle;
           uint32_t pre_render_count;
        } gfx;
-@@ -142,6 +155,9 @@ struct kk_shader {
+@@ -142,6 +153,9 @@ struct kk_shader {
     struct kk_shader_info info;
     struct msl_compile_data msl_data[MESA_SHADER_STAGES];
     struct msl_compile_data transform_feedback_pre_gs_msl;

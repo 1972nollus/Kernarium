@@ -691,7 +691,7 @@ index 3b6abef5623321c2b01e71da3b36abcf613c8111..37ee3d63009edb8bb3ad76699950e228
        .primitiveRestartIndex = true,
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index d23acd5a03213c23a8712182c694eee81dc28828..7f0ff51e65de33c916cd507229dcb7b2e85d564b 100644
+index 62d19d267a968f5cdafcc9719105a3f5f182fdc1..b9e0f0b9e9f1b84b295241da7d4de13ab093b7da 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -896,7 +896,7 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
@@ -714,7 +714,7 @@ index d23acd5a03213c23a8712182c694eee81dc28828..7f0ff51e65de33c916cd507229dcb7b2
  
        kk_gs_to_compute(main, 64);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index ef0c4563a1a766887f0b51c68ef10250727723c0..0d7587941e7b7b84c1dce6df48c57960a329efd0 100644
+index 28354a818d875175c596ae8cb308b839da7d9914..fd8048d9ee555e6505daedb59d9b92c14573463d 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -25,6 +25,8 @@ struct kk_cmd_buffer;
@@ -726,7 +726,7 @@ index ef0c4563a1a766887f0b51c68ef10250727723c0..0d7587941e7b7b84c1dce6df48c57960
  };
  
  struct kk_tess_info {
-@@ -195,7 +197,8 @@ bool
+@@ -193,7 +195,8 @@ bool
  kk_nir_lower_descriptors(nir_shader *nir,
                           const struct vk_pipeline_robustness_state *rs,
                           uint32_t set_layout_count,

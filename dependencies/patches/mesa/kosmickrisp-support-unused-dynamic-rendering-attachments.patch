@@ -391,7 +391,7 @@ index 0c11b757d1e2436617c73cd802f53a0da5b873bc..628b8e8bdb3411697499a8207ea0f13d
        .extendedDynamicState3DepthClampEnable = true,
        .extendedDynamicState3DepthClipNegativeOneToOne = true,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index a1d1b5b54468efa2e5f09e5abc9fc63bd7041d77..77bb894fea70f63e25081f7aa08ab26656cdcbf1 100644
+index fc2bb0a0e5e09869b8a3727cd56d9f8c09620f0a..4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -425,6 +425,32 @@ kk_get_logical_color_att_index(const struct vk_graphics_pipeline_state *state,
@@ -718,7 +718,7 @@ index a1d1b5b54468efa2e5f09e5abc9fc63bd7041d77..77bb894fea70f63e25081f7aa08ab266
  kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
                     struct vk_shader_compile_info *infos,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 2d0d0f2bcd3f3a7b7942c07fa8c212e29e7ea884..ef0c4563a1a766887f0b51c68ef10250727723c0 100644
+index 233b8a0e12a34369c1547ba5bb7fda3804564d8d..28354a818d875175c596ae8cb308b839da7d9914 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -19,6 +19,8 @@
@@ -730,7 +730,7 @@ index 2d0d0f2bcd3f3a7b7942c07fa8c212e29e7ea884..ef0c4563a1a766887f0b51c68ef10250
  struct kk_cmd_buffer;
  
  enum kk_texture_flags {
-@@ -148,10 +150,20 @@ struct msl_compile_data {
+@@ -146,10 +148,20 @@ struct msl_compile_data {
     char *entrypoint_name;
  };
  
@@ -751,7 +751,7 @@ index 2d0d0f2bcd3f3a7b7942c07fa8c212e29e7ea884..ef0c4563a1a766887f0b51c68ef10250
     struct kk_shader_info info;
     struct msl_compile_data msl_data[MESA_SHADER_STAGES];
     struct msl_compile_data transform_feedback_pre_gs_msl;
-@@ -199,6 +211,16 @@ VkResult kk_compile_nir_shader(struct kk_device *dev, nir_shader *nir,
+@@ -197,6 +209,16 @@ VkResult kk_compile_nir_shader(struct kk_device *dev, nir_shader *nir,
                                 const VkAllocationCallbacks *alloc,
                                 struct kk_shader **shader_out);
  

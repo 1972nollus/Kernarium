@@ -203,7 +203,7 @@ index 82f5d4aff2015f1e0bb72a28ec399f8a69d6a141..50f97c4fb549e15259ad97b1855ed13e
        .polygonModePointSize = true,
        .nonStrictSinglePixelWideLinesUseParallelogram = false,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index e2c77cbc4b5eb071df66436d96d2b2bff27d0e96..d44c3374986009f59eba12253ea1ac4f08be3f48 100644
+index 59560b2803f211e7ba6d4f14c4b8111c8ac8b14b..9cfde746355f5f9f336f77d3e7ed81d95b3d56eb 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -746,6 +746,65 @@ kk_nir_lower_fs_pipeline_statistics(nir_shader *nir)
@@ -314,7 +314,7 @@ index e2c77cbc4b5eb071df66436d96d2b2bff27d0e96..d44c3374986009f59eba12253ea1ac4f
  
     uint8_t topology = state->ia->primitive_topology;
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index de64dbe312d762d71148d9c003d8d8eb7f1e59a2..86f08e230d2a8c1edd651ff9beb7453cb851949a 100644
+index efd92952ec3851e09a2c4bf8632c7a4d9e0d5dd8..c508dbbfa6405f8eda0de393ac17c292a36c9717 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -125,6 +125,9 @@ struct kk_shader_info {
@@ -327,7 +327,7 @@ index de64dbe312d762d71148d9c003d8d8eb7f1e59a2..86f08e230d2a8c1edd651ff9beb7453c
        } vs;
  
        struct {
-@@ -141,6 +144,9 @@ struct kk_shader_info {
+@@ -139,6 +142,9 @@ struct kk_shader_info {
  
        struct {
           uint64_t flat_inputs;

@@ -265,7 +265,7 @@ index c568b0d18315b968d1651e1b3b9eee26c8892cb8..5c2a9df8e02d05e0f6d37264589ea1b1
        /* VK_EXT_map_memory_placed */
        .minPlacedMemoryMapAlignment = os_page_size,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604e1c523bb 100644
+index c4dcf71a9a78dc8db12654f7fdf00a989e574de5..81de490db68a8118471fb1572583d744d8cea65b 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -18,6 +18,7 @@
@@ -437,7 +437,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
           pAllocator, &shaders[i]);
  
        if (result != VK_SUCCESS) {
-@@ -3880,13 +3886,16 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
+@@ -3877,13 +3883,16 @@ kk_compile_shaders_impl(struct vk_device *device, uint32_t shader_count,
                          struct vk_shader **shaders_out,
                          bool defer_library_shaders)
  {
@@ -456,7 +456,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
        return kk_compile_shaders_single(device, shader_count, infos, state,
                                         enabled_features, pAllocator,
                                         shaders_out, defer_library_shaders);
-@@ -3995,9 +4004,35 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
+@@ -3992,9 +4001,35 @@ kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
                                    true);
  }
  
@@ -492,7 +492,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
  };
  
  static void
-@@ -4008,9 +4043,30 @@ kk_free_linked_graphics_pipeline(
+@@ -4005,9 +4040,30 @@ kk_free_linked_graphics_pipeline(
     struct kk_device *dev = container_of(vk_dev, struct kk_device, vk);
     struct kk_linked_graphics_pipeline *linked = linked_data;
  
@@ -526,7 +526,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
     }
  
     vk_free2(&dev->vk.alloc, pAllocator, linked);
-@@ -4028,6 +4084,123 @@ kk_linked_graphics_pipeline_equal(const void *a, const void *b)
+@@ -4025,6 +4081,123 @@ kk_linked_graphics_pipeline_equal(const void *a, const void *b)
     return memcmp(a, b, sizeof(blake3_hash)) == 0;
  }
  
@@ -650,7 +650,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
  VkResult
  kk_linked_graphics_pipeline_cache_init(struct kk_device *dev)
  {
-@@ -4053,6 +4226,85 @@ kk_linked_graphics_pipeline_cache_finish(struct kk_device *dev)
+@@ -4050,6 +4223,85 @@ kk_linked_graphics_pipeline_cache_finish(struct kk_device *dev)
     simple_mtx_destroy(&dev->linked_graphics_pipelines_lock);
  }
  
@@ -736,7 +736,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
  static void
  kk_linked_graphics_pipeline_key(
     struct vk_device *vk_dev, uint32_t shader_count,
-@@ -4091,12 +4343,57 @@ kk_linked_graphics_pipeline_key(
+@@ -4088,12 +4340,57 @@ kk_linked_graphics_pipeline_key(
     _mesa_blake3_final(&hash, key);
  }
  
@@ -796,7 +796,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
  }
  
  static VkResult
-@@ -4117,6 +4414,74 @@ kk_link_graphics_pipeline(
+@@ -4114,6 +4411,74 @@ kk_link_graphics_pipeline(
        has_deferred |= shader->info.deferred;
     }
  
@@ -871,7 +871,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
     /* Monolithic pipelines and complete libraries already own their native
      * Metal pipeline in the vertex shader.
      */
-@@ -4131,7 +4496,9 @@ kk_link_graphics_pipeline(
+@@ -4128,7 +4493,9 @@ kk_link_graphics_pipeline(
     struct hash_entry *cached =
        _mesa_hash_table_search(dev->linked_graphics_pipelines, key);
     if (cached != NULL) {
@@ -882,7 +882,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
        simple_mtx_unlock(&dev->linked_graphics_pipelines_lock);
        return VK_SUCCESS;
     }
-@@ -4205,6 +4572,7 @@ kk_link_graphics_pipeline(
+@@ -4202,6 +4569,7 @@ kk_link_graphics_pipeline(
     }
  
     memcpy(linked->key, key, sizeof(linked->key));
@@ -890,7 +890,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
  
     for (uint32_t i = 0; i < shader_count; i++) {
        struct kk_shader *shader =
-@@ -4219,7 +4587,9 @@ kk_link_graphics_pipeline(
+@@ -4216,7 +4584,9 @@ kk_link_graphics_pipeline(
                                linked);
        *linked_data_out = linked;
     } else {
@@ -901,7 +901,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
     }
     simple_mtx_unlock(&dev->linked_graphics_pipelines_lock);
  
-@@ -4532,6 +4902,99 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
+@@ -4529,6 +4899,99 @@ kk_cmd_bind_graphics_shader(struct kk_cmd_buffer *cmd,
     kk_cmd_use_graphics_shader(cmd, stage, shader);
  }
  
@@ -1001,7 +1001,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
  void
  kk_cmd_select_line_raster_variant(struct kk_cmd_buffer *cmd)
  {
-@@ -4563,6 +5026,11 @@ kk_cmd_bind_linked_graphics_pipeline(struct vk_command_buffer *cmd_buffer,
+@@ -4560,6 +5023,11 @@ kk_cmd_bind_linked_graphics_pipeline(struct vk_command_buffer *cmd_buffer,
        container_of(cmd_buffer, struct kk_cmd_buffer, vk);
     struct kk_linked_graphics_pipeline *linked = linked_data;
  
@@ -1013,7 +1013,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
     for (uint32_t stage = 0; stage < MESA_SHADER_STAGES; stage++) {
        if (linked->shaders[stage] != NULL) {
           kk_cmd_bind_graphics_shader(cmd, stage, linked->shaders[stage]);
-@@ -4578,6 +5046,13 @@ kk_cmd_bind_shaders(struct vk_command_buffer *cmd_buffer, uint32_t stage_count,
+@@ -4575,6 +5043,13 @@ kk_cmd_bind_shaders(struct vk_command_buffer *cmd_buffer, uint32_t stage_count,
     struct kk_cmd_buffer *cmd =
        container_of(cmd_buffer, struct kk_cmd_buffer, vk);
  
@@ -1028,7 +1028,7 @@ index ca38ba794d8c290ad1c8b45905b4095b0dfaf61d..d251178493bcd0d999d4506d890b6604
        struct kk_shader *shader = container_of(shaders[i], struct kk_shader, vk);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 04fc7113012031a5be38a1bbdf5cf39b596a35c5..2ef4f12a5de95dc955d214b2e2dff725afaa87df 100644
+index 21c3b3431a97fd208d5e1fd386a4e4b0baf69ccc..b630f7eb57e8e49235e9349070e24cab12ff3f9c 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -23,6 +23,7 @@
@@ -1039,7 +1039,7 @@ index 04fc7113012031a5be38a1bbdf5cf39b596a35c5..2ef4f12a5de95dc955d214b2e2dff725
  
  enum kk_texture_flags {
     KK_TEXTURE_FLAG_CLAMP_TO_0 = 1u << 0,
-@@ -248,5 +249,7 @@ void kk_cmd_bind_compute_shader(struct kk_cmd_buffer *cmd,
+@@ -246,5 +247,7 @@ void kk_cmd_bind_compute_shader(struct kk_cmd_buffer *cmd,
                                  struct kk_shader *shader);
  
  void kk_cmd_select_line_raster_variant(struct kk_cmd_buffer *cmd);
