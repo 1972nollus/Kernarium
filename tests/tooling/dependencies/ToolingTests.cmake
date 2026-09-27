@@ -37,6 +37,12 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME dependency-prefix-publisher
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_publish_prefix.sh
+    LABELS dependency
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME dependency-apple-gpu-vulkan-prefix-verifier
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_apple_gpu_vulkan_prefix.sh
     LABELS dependency gpu

@@ -11,6 +11,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <new>
+#include <stdexcept>
 
 #include <va/va_dec_vp9.h>
 #include <va/va_drmcommon.h>
@@ -48,6 +51,20 @@ unsigned lowestSlot(unsigned mask) noexcept
     for (unsigned slot = 0; slot < 8; ++slot)
         if (mask & (1u << slot)) return slot;
     return 8;
+}
+
+// Sizes a buffer whose size the application chose. An impossible size is an
+// allocation failure; an exception must not unwind through libva's C
+// interface into the calling process.
+bool resizeOwned(std::vector<std::uint8_t>& owned, std::uint64_t size) noexcept
+{
+    try {
+        owned.resize(size);
+        return true;
+    } catch (const std::bad_alloc&) {
+    } catch (const std::length_error&) {
+    }
+    return false;
 }
 
 std::uint64_t identityOfDescriptor(int fd) noexcept
@@ -453,8 +470,9 @@ void Driver::harvest(Context& context, std::chrono::milliseconds wait)
                 context.failure = requeue.empty() ? "no buffer to lend the decoder" : requeue;
                 note(context.failure.c_str());
             }
-        } else {
-            context.decoder->release(picture.index);
+        } else if (std::string requeue; !context.decoder->release(picture.index, requeue)) {
+            context.failure = requeue;
+            note(context.failure.c_str());
         }
         picture = {};
     }
@@ -588,18 +606,19 @@ VAStatus Driver::process(Context& owner, Surface& target)
     std::uint8_t* to = target.buffer->map();
     if (!from || !to) return VA_STATUS_ERROR_OPERATION_FAILED;
     Region sourceRegion {0, 0, source->width, source->height};
-    if (owner.pipelineSourceValid)
-        sourceRegion = {unsigned(owner.pipelineSource.x), unsigned(owner.pipelineSource.y),
-                        owner.pipelineSource.width, owner.pipelineSource.height};
+    if (owner.pipelineSourceValid) {
+        const VARectangle& asked = owner.pipelineSource;
+        const auto region = regionWithin(asked.x, asked.y, asked.width, asked.height, source->width, source->height);
+        if (!region) return VA_STATUS_ERROR_INVALID_PARAMETER;
+        sourceRegion = *region;
+    }
     Region targetRegion {0, 0, target.width, target.height};
-    if (owner.pipelineDestinationValid)
-        targetRegion = {unsigned(owner.pipelineDestination.x), unsigned(owner.pipelineDestination.y),
-                        owner.pipelineDestination.width, owner.pipelineDestination.height};
-    if (sourceRegion.x + sourceRegion.width > source->width ||
-        sourceRegion.y + sourceRegion.height > source->height ||
-        targetRegion.x + targetRegion.width > target.width ||
-        targetRegion.y + targetRegion.height > target.height)
-        return VA_STATUS_ERROR_INVALID_PARAMETER;
+    if (owner.pipelineDestinationValid) {
+        const VARectangle& asked = owner.pipelineDestination;
+        const auto region = regionWithin(asked.x, asked.y, asked.width, asked.height, target.width, target.height);
+        if (!region) return VA_STATUS_ERROR_INVALID_PARAMETER;
+        targetRegion = *region;
+    }
 
     if (source->shadow && !source->nativeValid && target.buffer->planes() == 1 &&
         (target.fourcc == VA_FOURCC_ARGB || target.fourcc == VA_FOURCC_BGRA ||
@@ -881,7 +900,11 @@ VAStatus createSurfaces2(VADriverContextP ctx, unsigned format, unsigned width, 
             std::size_t size = 0;
             if (memoryType == VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2) {
                 const auto* prime = static_cast<const VADRMPRIMESurfaceDescriptor*>(descriptor);
-                if (!prime->num_objects || !prime->num_layers) return VA_STATUS_ERROR_INVALID_PARAMETER;
+                constexpr std::uint32_t kObjects = sizeof(prime->objects) / sizeof(prime->objects[0]);
+                constexpr std::uint32_t kLayers = sizeof(prime->layers) / sizeof(prime->layers[0]);
+                if (!prime->num_objects || !prime->num_layers || prime->num_objects > kObjects ||
+                    prime->num_layers > kLayers)
+                    return VA_STATUS_ERROR_INVALID_PARAMETER;
                 fourcc = prime->fourcc;
                 fd = prime->objects[0].fd;
                 modifier = prime->objects[0].drm_format_modifier;
@@ -906,6 +929,9 @@ VAStatus createSurfaces2(VADriverContextP ctx, unsigned format, unsigned width, 
             } else {
                 return VA_STATUS_ERROR_UNSUPPORTED_MEMORY_TYPE;
             }
+            // The descriptor names the format, which has to be one this
+            // driver can read and write as well.
+            if (!supportedFourcc(fourcc)) return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
             surface->fourcc = fourcc;
             if (auto shared = driver.knownBuffer(identityOfDescriptor(fd))) {
                 surface->buffer = std::move(shared);
@@ -1027,7 +1053,7 @@ VAStatus createBuffer(VADriverContextP ctx, VAContextID, VABufferType type, unsi
     buffer->type = type;
     buffer->size = size;
     buffer->elements = elements;
-    buffer->owned.resize(std::size_t(size) * elements);
+    if (!resizeOwned(buffer->owned, std::uint64_t(size) * elements)) return VA_STATUS_ERROR_ALLOCATION_FAILED;
     if (data) std::memcpy(buffer->owned.data(), data, buffer->owned.size());
     *id = driver.nextBuffer++;
     driver.buffers.emplace(*id, std::move(buffer));
@@ -1040,8 +1066,8 @@ VAStatus bufferSetNumElements(VADriverContextP ctx, VABufferID id, unsigned elem
     std::lock_guard guard(driver.lock());
     Buffer* buffer = driver.buffer(id);
     if (!buffer || buffer->external) return VA_STATUS_ERROR_INVALID_BUFFER;
+    if (!resizeOwned(buffer->owned, std::uint64_t(buffer->size) * elements)) return VA_STATUS_ERROR_ALLOCATION_FAILED;
     buffer->elements = elements;
-    buffer->owned.resize(std::size_t(buffer->size) * elements);
     return VA_STATUS_SUCCESS;
 }
 
@@ -1233,56 +1259,71 @@ VAStatus queryImageFormats(VADriverContextP, VAImageFormat* formats, int* count)
     return VA_STATUS_SUCCESS;
 }
 
-bool imageLayout(std::uint32_t fourcc, unsigned width, unsigned height, VAImage& image) noexcept
+// Lays out a driver-allocated image. VAImage keeps every size and offset in
+// 32 bits, so a layout that does not fit is refused instead of wrapping.
+VAStatus imageLayout(std::uint32_t fourcc, unsigned width, unsigned height, VAImage& image) noexcept
 {
-    const unsigned even = (width + 1u) & ~1u;
-    const unsigned rows = (height + 1u) & ~1u;
+    const std::uint64_t even = (std::uint64_t(width) + 1) & ~std::uint64_t(1);
+    const std::uint64_t rows = (std::uint64_t(height) + 1) & ~std::uint64_t(1);
+    std::uint64_t pitches[3] {};
+    std::uint64_t offsets[3] {};
+    std::uint64_t size = 0;
+    unsigned planes = 0;
     switch (fourcc) {
     case VA_FOURCC_NV12:
-        image.num_planes = 2;
-        image.pitches[0] = even;
-        image.offsets[0] = 0;
-        image.pitches[1] = even;
-        image.offsets[1] = even * rows;
-        image.data_size = image.offsets[1] + even * (rows / 2);
-        return true;
+        planes = 2;
+        pitches[0] = even;
+        pitches[1] = even;
+        offsets[1] = even * rows;
+        size = offsets[1] + even * (rows / 2);
+        break;
     case VA_FOURCC_I420:
-        image.num_planes = 3;
-        image.pitches[0] = even;
-        image.offsets[0] = 0;
-        image.pitches[1] = even / 2;
-        image.offsets[1] = even * rows;
-        image.pitches[2] = even / 2;
-        image.offsets[2] = image.offsets[1] + (even / 2) * (rows / 2);
-        image.data_size = image.offsets[2] + (even / 2) * (rows / 2);
-        return true;
+        planes = 3;
+        pitches[0] = even;
+        pitches[1] = even / 2;
+        offsets[1] = even * rows;
+        pitches[2] = even / 2;
+        offsets[2] = offsets[1] + (even / 2) * (rows / 2);
+        size = offsets[2] + (even / 2) * (rows / 2);
+        break;
     case VA_FOURCC_ARGB:
-        image.num_planes = 1;
-        image.pitches[0] = width * 4;
-        image.offsets[0] = 0;
-        image.data_size = image.pitches[0] * height;
-        return true;
+        planes = 1;
+        pitches[0] = std::uint64_t(width) * 4;
+        size = pitches[0] * height;
+        break;
     default:
-        return false;
+        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     }
+    if (size > std::numeric_limits<std::uint32_t>::max()) return VA_STATUS_ERROR_ALLOCATION_FAILED;
+    image.num_planes = planes;
+    for (unsigned plane = 0; plane < planes; ++plane) {
+        image.pitches[plane] = std::uint32_t(pitches[plane]);
+        image.offsets[plane] = std::uint32_t(offsets[plane]);
+    }
+    image.data_size = std::uint32_t(size);
+    return VA_STATUS_SUCCESS;
 }
 
 VAStatus createImage(VADriverContextP ctx, VAImageFormat* format, int width, int height, VAImage* out)
 {
     auto& driver = driverOf(ctx);
     std::lock_guard guard(driver.lock());
-    if (!format || width <= 0 || height <= 0) return VA_STATUS_ERROR_INVALID_PARAMETER;
+    // VAImage records the extent in 16 bits.
+    constexpr int kLargest = std::numeric_limits<unsigned short>::max();
+    if (!format || width <= 0 || height <= 0 || width > kLargest || height > kLargest)
+        return VA_STATUS_ERROR_INVALID_PARAMETER;
     VAImage image {};
     image.format = *format;
     image.width = static_cast<unsigned short>(width);
     image.height = static_cast<unsigned short>(height);
-    if (!imageLayout(format->fourcc, unsigned(width), unsigned(height), image))
-        return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
+    if (const auto status = imageLayout(format->fourcc, unsigned(width), unsigned(height), image);
+        status != VA_STATUS_SUCCESS)
+        return status;
     auto buffer = std::make_unique<Buffer>();
     buffer->type = VAImageBufferType;
     buffer->size = image.data_size;
     buffer->elements = 1;
-    buffer->owned.resize(image.data_size);
+    if (!resizeOwned(buffer->owned, image.data_size)) return VA_STATUS_ERROR_ALLOCATION_FAILED;
     const auto bufferId = driver.nextBuffer++;
     driver.buffers.emplace(bufferId, std::move(buffer));
     image.buf = bufferId;
@@ -1354,7 +1395,8 @@ VAStatus readSurface(Driver& driver, Surface& surface, const Region& region, Ima
 {
     driver.materialise(surface);
     std::uint8_t* destination = nullptr;
-    if (Buffer* buffer = driver.buffer(target.image.buf)) destination = buffer->data();
+    if (Buffer* buffer = driver.buffer(target.image.buf); buffer && buffer->bytes() >= target.image.data_size)
+        destination = buffer->data();
     const std::uint8_t* source = surface.buffer ? surface.buffer->map() : nullptr;
     if (!destination || !source) return VA_STATUS_ERROR_OPERATION_FAILED;
     const auto width = std::min<unsigned>(region.width, target.image.width);
@@ -1412,12 +1454,11 @@ VAStatus getImage(VADriverContextP ctx, VASurfaceID id, int x, int y, unsigned w
     Surface* surface = driver.surface(id);
     const auto found = driver.images.find(imageId);
     if (!surface || found == driver.images.end()) return VA_STATUS_ERROR_INVALID_IMAGE;
-    if (x < 0 || y < 0) return VA_STATUS_ERROR_INVALID_PARAMETER;
-    if (unsigned(x) + width > surface->width || unsigned(y) + height > surface->height)
-        return VA_STATUS_ERROR_INVALID_PARAMETER;
+    const auto region = regionWithin(x, y, width, height, surface->width, surface->height);
+    if (!region) return VA_STATUS_ERROR_INVALID_PARAMETER;
     const auto status = driver.waitFor(*surface, kDecodeWait);
     if (status != VA_STATUS_SUCCESS) return status;
-    return readSurface(driver, *surface, Region {unsigned(x), unsigned(y), width, height}, *found->second);
+    return readSurface(driver, *surface, *region, *found->second);
 }
 
 VAStatus putImage(VADriverContextP ctx, VASurfaceID id, VAImageID imageId, int sourceX, int sourceY,
@@ -1429,38 +1470,36 @@ VAStatus putImage(VADriverContextP ctx, VASurfaceID id, VAImageID imageId, int s
     Surface* surface = driver.surface(id);
     const auto found = driver.images.find(imageId);
     if (!surface || found == driver.images.end() || !surface->buffer) return VA_STATUS_ERROR_INVALID_IMAGE;
-    if (sourceX < 0 || sourceY < 0 || destinationX < 0 || destinationY < 0) return VA_STATUS_ERROR_INVALID_PARAMETER;
-    if (sourceWidth != destinationWidth || sourceHeight != destinationHeight) return VA_STATUS_ERROR_UNIMPLEMENTED;
     const VAImage& image = found->second->image;
+    const auto from = regionWithin(sourceX, sourceY, sourceWidth, sourceHeight, image.width, image.height);
+    const auto to = regionWithin(destinationX, destinationY, destinationWidth, destinationHeight, surface->width,
+                                 surface->height);
+    if (!from || !to) return VA_STATUS_ERROR_INVALID_PARAMETER;
+    if (sourceWidth != destinationWidth || sourceHeight != destinationHeight) return VA_STATUS_ERROR_UNIMPLEMENTED;
     if (image.format.fourcc != surface->fourcc) return VA_STATUS_ERROR_UNIMPLEMENTED;
     Buffer* buffer = driver.buffer(image.buf);
     std::uint8_t* destination = surface->buffer->map();
-    if (!buffer || !destination) return VA_STATUS_ERROR_OPERATION_FAILED;
+    if (!buffer || !destination || buffer->bytes() < image.data_size) return VA_STATUS_ERROR_OPERATION_FAILED;
     const std::uint8_t* source = buffer->data();
-    if (unsigned(destinationX) + destinationWidth > surface->width ||
-        unsigned(destinationY) + destinationHeight > surface->height)
-        return VA_STATUS_ERROR_INVALID_PARAMETER;
     // Whatever the decoder left in a shadow is now stale.
     surface->shadow.reset();
     surface->nativeValid = true;
     if (surface->fourcc == VA_FOURCC_NV12) {
         const ConstPlaneView in[2] {
-            {source + image.offsets[0] + std::size_t(sourceY) * image.pitches[0] + sourceX, image.pitches[0]},
-            {source + image.offsets[1] + std::size_t(sourceY / 2) * image.pitches[1] + (unsigned(sourceX) & ~1u),
+            {source + image.offsets[0] + std::size_t(from->y) * image.pitches[0] + from->x, image.pitches[0]},
+            {source + image.offsets[1] + std::size_t(from->y / 2) * image.pitches[1] + (from->x & ~1u),
              image.pitches[1]}};
         const PlaneView out[2] {
-            {destination + surface->buffer->offset(0) + std::size_t(destinationY) * surface->buffer->pitch(0) +
-                 destinationX,
+            {destination + surface->buffer->offset(0) + std::size_t(to->y) * surface->buffer->pitch(0) + to->x,
              surface->buffer->pitch(0)},
-            {destination + surface->buffer->offset(1) +
-                 std::size_t(destinationY / 2) * surface->buffer->pitch(1) + (unsigned(destinationX) & ~1u),
+            {destination + surface->buffer->offset(1) + std::size_t(to->y / 2) * surface->buffer->pitch(1) +
+                 (to->x & ~1u),
              surface->buffer->pitch(1)}};
-        copyNv12(in, out, destinationWidth, destinationHeight);
+        copyNv12(in, out, to->width, to->height);
     } else {
         const ConstPlaneView in {source + image.offsets[0], image.pitches[0]};
         const PlaneView out {destination + surface->buffer->offset(0), surface->buffer->pitch(0)};
-        copyPacked32(in, Region {unsigned(sourceX), unsigned(sourceY), sourceWidth, sourceHeight}, out,
-                     Region {unsigned(destinationX), unsigned(destinationY), destinationWidth, destinationHeight});
+        copyPacked32(in, *from, out, *to);
     }
     surface->state = Surface::State::ready;
     return VA_STATUS_SUCCESS;

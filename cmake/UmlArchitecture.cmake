@@ -59,8 +59,12 @@ function(uml_write_architecture_manifest)
             PROPERTY SOURCE_DIR)
         cmake_path(IS_PREFIX PROJECT_SOURCE_DIR "${_source_directory}"
             NORMALIZE _first_party_target)
+        # Match inside the tree, so that a checkout below a directory named
+        # darwin does not make every target a Darwin one.
+        file(RELATIVE_PATH _relative_directory "${PROJECT_SOURCE_DIR}"
+            "${_source_directory}")
         if(_first_party_target AND
-           _source_directory MATCHES "/darwin(/|$)")
+           _relative_directory MATCHES "^darwin(/|$)")
             list(FIND _targets "${_configured_target}" _declared_index)
             if(_declared_index EQUAL -1)
                 message(FATAL_ERROR

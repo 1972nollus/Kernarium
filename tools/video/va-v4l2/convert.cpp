@@ -28,6 +28,14 @@ inline std::uint8_t clamp(int value) noexcept
 
 }
 
+std::optional<Region> regionWithin(std::int64_t x, std::int64_t y, std::uint64_t width, std::uint64_t height,
+                                   unsigned limitWidth, unsigned limitHeight) noexcept
+{
+    if (x < 0 || y < 0 || std::uint64_t(x) > limitWidth || std::uint64_t(y) > limitHeight) return std::nullopt;
+    if (width > limitWidth - std::uint64_t(x) || height > limitHeight - std::uint64_t(y)) return std::nullopt;
+    return Region {unsigned(x), unsigned(y), unsigned(width), unsigned(height)};
+}
+
 void copyNv12(const ConstPlaneView source[2], const PlaneView destination[2], unsigned width, unsigned height) noexcept
 {
     const unsigned chromaRows = (height + 1u) / 2u;

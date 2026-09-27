@@ -146,6 +146,7 @@ find_tool FLEX flex
 find_tool M4 m4
 find_tool RSYNC rsync
 find_tool TAR tar
+find_tool PYTHON python3
 
 "$ROOT_DIR/dependencies/prepare.sh" --product kernel-host-tools \
 	--root "$SOURCE_ROOT" --verify
@@ -206,10 +207,9 @@ private_env()
 		"$@"
 }
 
-# Each step logs below the work root, which survives a failed build.
-LOG_DIR="$WORK_ROOT/logs"
-"$CMAKE" -E remove_directory "$LOG_DIR"
-mkdir -p -- "$LOG_DIR"
+# Each step logs to a directory of this run's own below the work root. It
+# survives a failed build and is removed once the output is published.
+LOG_DIR=$(mktemp -d "$WORK_ROOT/logs.XXXXXX")
 logged()
 {
 	step=$1
@@ -367,6 +367,19 @@ cp "$ARCHIVE_MANIFEST" "$PROVENANCE/kernel-host-tools-archives.tsv"
 } > "$PROVENANCE/source-trees.tsv"
 
 verify_output "$STAGE"
-mv "$STAGE" "$OUTPUT"
-STAGE=
-printf '%s\n' "published kernel host tools: $OUTPUT"
+status=0
+"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$STAGE" "$OUTPUT" ||
+	status=$?
+case $status in
+0)
+	STAGE=
+	printf '%s\n' "published kernel host tools: $OUTPUT"
+	;;
+1)
+	verify_output "$OUTPUT" ||
+		fail "concurrently published output is invalid: $OUTPUT"
+	printf '%s\n' "reusing concurrently published kernel host tools: $OUTPUT"
+	;;
+*) fail "could not publish kernel host tools: $OUTPUT" ;;
+esac
+"$CMAKE" -E remove_directory "$LOG_DIR"
