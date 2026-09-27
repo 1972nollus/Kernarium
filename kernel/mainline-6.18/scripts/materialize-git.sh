@@ -10,6 +10,7 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 METADATA_PATH=${UML_KERNEL_METADATA_PATH:-"$LINE_ROOT/patches/metadata.env"}
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
+PUBLISHER="$ROOT_DIR/dependencies/publish-prefix.py"
 REQUESTED_SOURCE_DIR=
 CACHE_ROOT=${UML_KERNEL_CACHE_DIR:-"$ROOT_DIR/.build/kernel-cache/mainline-6.18"}
 FETCH=1
@@ -85,6 +86,7 @@ fi
 [ -n "${UML_KERNEL_BASE_REF:-}" ] || fail "local base ref is missing"
 
 command -v git >/dev/null 2>&1 || fail "git build tool is required"
+command -v python3 >/dev/null 2>&1 || fail "python3 build tool is required"
 
 case "$UML_KERNEL_UPSTREAM_REPOSITORY" in
 https://*.git) ;;
@@ -134,8 +136,15 @@ if [ ! -e "$CACHE_REPOSITORY" ] && [ ! -L "$CACHE_REPOSITORY" ]; then
 		"$UML_KERNEL_UPSTREAM_COMMIT" >/dev/null
 	git -C "$TEMPORARY_CACHE" update-ref refs/heads/uml-pin \
 		"$UML_KERNEL_UPSTREAM_COMMIT"
-	mv -- "$TEMPORARY_CACHE" "$CACHE_REPOSITORY"
-	TEMPORARY_CACHE=
+	# An exclusive rename never moves the cache below one that a concurrent
+	# run published first; that winner is checked below like any cache.
+	status=0
+	python3 "$PUBLISHER" "$TEMPORARY_CACHE" "$CACHE_REPOSITORY" || status=$?
+	case $status in
+	0) TEMPORARY_CACHE= ;;
+	1) ;;
+	*) fail "upstream Git cache could not be published: $CACHE_REPOSITORY" ;;
+	esac
 fi
 [ -d "$CACHE_REPOSITORY/.git" ] || fail "upstream Git cache is malformed"
 [ "$(git -C "$CACHE_REPOSITORY" remote get-url origin 2>/dev/null || true)" = \
@@ -178,5 +187,11 @@ git -C "$STAGED_SOURCE" config uml.source.baseRef "$UML_KERNEL_BASE_REF"
 	fail "staged checkout is dirty"
 [ "$(git -C "$STAGED_SOURCE" rev-parse HEAD)" = "$UML_KERNEL_UPSTREAM_COMMIT" ] ||
 	fail "staged checkout is not at the pinned upstream commit"
-mv -- "$STAGED_SOURCE" "$SOURCE_DIR"
+status=0
+python3 "$PUBLISHER" "$STAGED_SOURCE" "$SOURCE_DIR" || status=$?
+case $status in
+0) ;;
+1) fail "destination was published concurrently: $SOURCE_DIR" ;;
+*) fail "source checkout could not be published: $SOURCE_DIR" ;;
+esac
 printf '%s\n' "materialized Linux $UML_KERNEL_RELEASE_VERSION stable commit in $SOURCE_DIR"

@@ -20,7 +20,7 @@ if pid_file.exists():
             arguments = command.read_bytes().split(b"\0")
         except FileNotFoundError:
             break
-        if b"/usr/local/libexec/kernarium-screen.py" not in arguments or b"--framebuffer" not in arguments:
+        if b"/usr/local/libexec/kernarium-screen" not in arguments or b"--framebuffer" not in arguments:
             break
         if time.monotonic() >= deadline:
             raise SystemExit("Kernarium splash did not release the display within 10 seconds")

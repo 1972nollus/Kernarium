@@ -121,6 +121,7 @@ if [ -e "$OUTPUT" ] || [ -L "$OUTPUT" ]; then
 	exit 0
 fi
 
+find_tool PYTHON python3
 "$ROOT_DIR/dependencies/prepare.sh" --product ios-storage \
 	--root "$SOURCE_ROOT" --verify
 SOURCE="$SOURCE_ROOT/gptfdisk"
@@ -191,6 +192,18 @@ printf 'source\ttree\ngptfdisk\t%s\n' \
 	> "$PROVENANCE/source-trees.tsv"
 
 verify_output "$STAGE"
-mv "$STAGE" "$OUTPUT"
-STAGE=
-printf '%s\n' "published iOS storage XCFramework: $OUTPUT"
+status=0
+"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$STAGE" "$OUTPUT" ||
+	status=$?
+case $status in
+0)
+	STAGE=
+	printf '%s\n' "published iOS storage XCFramework: $OUTPUT"
+	;;
+1)
+	verify_output "$OUTPUT" ||
+		fail "concurrently published output is invalid: $OUTPUT"
+	printf '%s\n' "reusing concurrently published iOS storage XCFramework: $OUTPUT"
+	;;
+*) fail "could not publish iOS storage XCFramework: $OUTPUT" ;;
+esac

@@ -22,7 +22,6 @@ UML_ANDROID_SECURITY_HALS := nonsecure
 UML_ANDROID_BUILTIN_KERNEL := true
 UML_ANDROID_STATIC_STORAGE := true
 UML_ANDROID_DISABLE_PROJECT_QUOTAS := true
-UML_ANDROID_SOURCE_MESA := true
 UML_ANDROID_DISABLE_AVF := true
 UML_ANDROID_DISABLE_IDENTITY := true
 UML_ANDROID_DISABLE_REBOOT_ESCROW := true
@@ -258,13 +257,27 @@ PRODUCT_COPY_FILES += \
 
 # The Vulkan HAL is Mesa's Venus driver built from this project's pinned guest
 # Mesa source. Its generated Soong module names are scoped with a venus_
-# prefix so they cannot collide with the AOSP external/mesa3d GLES port. The
+# prefix so they cannot collide with the AOSP external/mesa3d modules. The
 # feature declarations the removed Cuttlefish Vulkan APEX used to install
 # come from the device tree instead, at the level this driver supports. No
 # Vulkan dEQP level is declared: the driver has not been qualified.
 PRODUCT_PACKAGES_EXCLUDE += com.google.cf.vulkan
 PRODUCT_PACKAGES += vulkan.virtio
 PRODUCT_VENDOR_PROPERTIES += ro.hardware.vulkan=virtio
+
+# The EGL and GLES libraries are Mesa's Virgl driver from the same source and
+# generated port. The platform EGL loader finds them in /vendor/lib64/egl by the
+# ro.hardware.egl suffix; the gallium driver they link lies in /vendor/lib64.
+# The inherited Cuttlefish Virgl configuration would add the AOSP
+# external/mesa3d libGLES_mesa instead. The boot command line's
+# androidboot.hardware.egl is the property's one writer: the inherited
+# init_graphics.vendor.rc copies it at early-init, and that setprop fails if a
+# vendor property has already set it.
+PRODUCT_PACKAGES_EXCLUDE += libGLES_mesa
+PRODUCT_PACKAGES += \
+    libEGL_kernarium \
+    libGLESv1_CM_kernarium \
+    libGLESv2_kernarium
 
 # Mesa reads a buffer's DRM format, modifier and plane layout through the
 # gralloc0 interface of minigbm, the product's allocator. The passthrough

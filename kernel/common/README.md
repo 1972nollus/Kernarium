@@ -31,6 +31,12 @@ carriers included, so host-side kernel code changes a signal mask only with
 `sigprocmask`, and the console PTY assertion checks that a console write
 leaves another thread's mask unchanged.
 
+A Darwin vCPU carrier reports each host signal it takes on stderr, with its
+literal pc and, for a fault, its address and ESR, before Linux handles it. The
+one exception is a fault that a nofault accessor recovers: that is the
+accessor's expected result and prints nothing. `guest-kernel-nofault` checks
+that its sysrq t dump prints no report.
+
 Both maintained kernel lines perform futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value
 observed by that operation, and wake-operation arithmetic retries competing

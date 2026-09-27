@@ -79,6 +79,9 @@ endforeach()
 file(GLOB_RECURSE LAYER_SOURCES LIST_DIRECTORIES false ${LAYER_GLOBS})
 foreach(PATH IN LISTS LAYER_SOURCES)
     file(READ "${PATH}" CONTENT)
+    # Classify by the path inside the tree, so a checkout below a directory
+    # named like a layer is not mistaken for one.
+    file(RELATIVE_PATH SOURCE_PATH "${SOURCE_ROOT}" "${PATH}")
     set(NORMALIZED_INCLUDES)
     string(REGEX MATCHALL
         "#[ \\t]*include[ \\t]*[\"<][^\">]+[\">]"
@@ -104,28 +107,28 @@ foreach(PATH IN LISTS LAYER_SOURCES)
         list(APPEND NORMALIZED_INCLUDES "${NORMALIZED_INCLUDE}")
     endforeach()
     string(JOIN "\n" NORMALIZED_INCLUDE_TEXT ${NORMALIZED_INCLUDES})
-    if(PATH MATCHES "/darwin/cpu/")
+    if(SOURCE_PATH MATCHES "^darwin/cpu/")
         if(NORMALIZED_INCLUDE_TEXT MATCHES
            "(^|\n)(darwin/)?(runtime|device|app)/")
             list(APPEND VIOLATIONS
                 "${PATH}: CPU layer includes runtime, device, or application implementation")
         endif()
     endif()
-    if(PATH MATCHES "/darwin/memory/")
+    if(SOURCE_PATH MATCHES "^darwin/memory/")
         if(NORMALIZED_INCLUDE_TEXT MATCHES
            "(^|\n)(darwin/)?(runtime|device|app)/")
             list(APPEND VIOLATIONS
                 "${PATH}: memory layer includes runtime, device, or application implementation")
         endif()
     endif()
-    if(PATH MATCHES "/darwin/device/")
+    if(SOURCE_PATH MATCHES "^darwin/device/")
         if(NORMALIZED_INCLUDE_TEXT MATCHES
            "(^|\n)(darwin/)?(runtime|app)/")
             list(APPEND VIOLATIONS
                 "${PATH}: device layer includes runtime or application implementation")
         endif()
     endif()
-    if(PATH MATCHES "/darwin/platform/" AND
+    if(SOURCE_PATH MATCHES "^darwin/platform/" AND
        NORMALIZED_INCLUDE_TEXT MATCHES "(^|\n)(darwin/)?cpu/")
         list(APPEND VIOLATIONS
             "${PATH}: platform layer includes a CPU-owned contract")
@@ -134,12 +137,12 @@ foreach(PATH IN LISTS LAYER_SOURCES)
     # The JIT owns arm64/jit/, the gadget engines own arm64/gadgets/ and
     # x86_64/, and the engine factory is the one source that composes both.
     set(FOREIGN_ENGINE_INCLUDE "")
-    if(PATH MATCHES "/darwin/cpu/arm64/jit/")
+    if(SOURCE_PATH MATCHES "^darwin/cpu/arm64/jit/")
         set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/gadgets|x86_64)/")
-    elseif(PATH MATCHES "/darwin/cpu/(arm64/gadgets|x86_64)/")
+    elseif(SOURCE_PATH MATCHES "^darwin/cpu/(arm64/gadgets|x86_64)/")
         set(FOREIGN_ENGINE_INCLUDE "cpu/arm64/jit/")
-    elseif(PATH MATCHES "/darwin/cpu/" AND
-           NOT PATH MATCHES "/darwin/cpu/engine_factory\\.cpp$")
+    elseif(SOURCE_PATH MATCHES "^darwin/cpu/" AND
+           NOT SOURCE_PATH MATCHES "^darwin/cpu/engine_factory\\.cpp$")
         set(FOREIGN_ENGINE_INCLUDE "cpu/(arm64/jit|arm64/gadgets|x86_64)/")
     endif()
     if(FOREIGN_ENGINE_INCLUDE AND NORMALIZED_INCLUDE_TEXT MATCHES
@@ -152,14 +155,14 @@ foreach(PATH IN LISTS LAYER_SOURCES)
     # publication primitives confined to the explicitly selected JIT module;
     # merely avoiding a simultaneous W+X mapping is not sufficient because an
     # RW-to-RX transition is also dynamic code publication.
-    if(PATH MATCHES "/darwin/cpu/arm64/gadgets/" AND
+    if(SOURCE_PATH MATCHES "^darwin/cpu/arm64/gadgets/" AND
        CONTENT MATCHES
        "(MAP_JIT|PROT_EXEC|VM_PROT_EXECUTE|mprotect[ \t]*\\(|mach_vm_protect[ \t]*\\(|vm_protect[ \t]*\\(|pthread_jit_write_protect|sys_icache_invalidate[ \t]*\\()")
         list(APPEND VIOLATIONS
             "${PATH}: non-JIT engine uses an executable-memory or code-publication primitive")
     endif()
-    if(PATH MATCHES "/darwin/cpu/" AND
-       NOT PATH MATCHES "/darwin/cpu/arm64/jit/jit_arena\.cpp$" AND
+    if(SOURCE_PATH MATCHES "^darwin/cpu/" AND
+       NOT SOURCE_PATH MATCHES "^darwin/cpu/arm64/jit/jit_arena\.cpp$" AND
        CONTENT MATCHES
        "(MAP_JIT|PROT_EXEC|VM_PROT_EXECUTE|mprotect[ \t]*\\(|mach_vm_protect[ \t]*\\(|vm_protect[ \t]*\\(|pthread_jit_write_protect|sys_icache_invalidate[ \t]*\\()")
         list(APPEND VIOLATIONS
@@ -183,12 +186,13 @@ file(GLOB_RECURSE CXX_SOURCES LIST_DIRECTORIES false
     "${SOURCE_ROOT}/tests/*.h")
 foreach(PATH IN LISTS CXX_SOURCES)
     file(READ "${PATH}" CONTENT)
+    file(RELATIVE_PATH SOURCE_PATH "${SOURCE_ROOT}" "${PATH}")
     if(CONTENT MATCHES
        "(^|\\n)[ \\t]*#[ \\t]*include[ \\t]+[^\\n]*(\\.(cpp|cc|cxx|inc)|_impl\\.hpp)[\">]")
         list(APPEND VIOLATIONS
             "${PATH}: C/C++ source includes an implementation fragment")
     endif()
-    if(PATH MATCHES "/darwin/cpu/.*\\.(h|hh|hpp|hxx)$" AND
+    if(SOURCE_PATH MATCHES "^darwin/cpu/.*\\.(h|hh|hpp|hxx)$" AND
        CONTENT MATCHES "(^|\\n)[ \\t]*namespace[ \\t]*\\{")
         list(APPEND VIOLATIONS
             "${PATH}: CPU header creates anonymous per-translation-unit ownership")

@@ -1011,6 +1011,18 @@
     target_compile_options(uml_arm64_gadget_dependency_tests PRIVATE -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-dependencies COMMAND uml_arm64_gadget_dependency_tests)
 
+    # The test's exit hold must be registered before any destructor it
+    # outlasts: keep engine state lazy or in libraries linked after it.
+    add_executable(uml_arm64_gadget_exit_tests
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_exit_tests.cpp
+        $<TARGET_OBJECTS:uml_static_mmu>
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
+    target_include_directories(uml_arm64_gadget_exit_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_compile_options(uml_arm64_gadget_exit_tests PRIVATE -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME arm64-gadget-exit COMMAND uml_arm64_gadget_exit_tests)
+
     add_executable(uml_arm64_gadget_link_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_link_tests.cpp
 		$<TARGET_OBJECTS:uml_static_mmu>

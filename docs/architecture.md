@@ -178,12 +178,21 @@ Designed for iPad mode, where it reaches the host GPU directly; that mode is
 where iOS behaviour is verified when no physical device is attached. The
 Simulator remains a target of the ordinary, non-GPU iOS libraries.
 
+A Kernarium launch runs its guest once. When the run returns, whether the
+guest powered off or the runtime failed, the application says how it ended
+and asks to be relaunched; it never starts a second run in the same process.
+
 ## CPU execution and scheduling
 
 Darwin owns one persistent pthread per configured vCPU, including vCPU0.
 Linux task contexts remain on guest kernel stacks and migrate between carriers;
 guest task creation does not create host threads. CPU hotplug reuses carriers,
 and shutdown returns to a native carrier stack before thread teardown.
+
+A host can call `exit()` while carriers still run, as an iOS application and
+an XCTest host do. The arm64 gadget contract indexes, the shared-backing
+state, and the active-access registry therefore have no exit-time destructor;
+`arm64-gadget-exit` keeps carriers using them through `exit()`.
 
 Carriers are named `uml-vcpu-N-carrier`. The kernels use a 100 Hz tick with
 `NO_HZ_IDLE` and high-resolution timers: the one-shot clock event records a

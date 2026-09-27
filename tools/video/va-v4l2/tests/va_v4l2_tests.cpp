@@ -2,6 +2,8 @@
 // Host-independent checks for the parts of the VA-API backend that do not need
 // a decoder: the VP9 header reader, the superframe assembly the hidden-frame
 // rule depends on, and the pixel paths. Runs natively on any Linux build host.
+#include <fcntl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -396,6 +398,54 @@ void testArgbToNv12()
           "the packed fast path copies the picture unchanged");
 }
 
+// Rectangles come from the application: a negative corner, a size past the
+// edge and a sum that would wrap 32 bits are refused, and the edges are in.
+void testRegionBounds()
+{
+    using uml::va::regionWithin;
+    const auto whole = regionWithin(0, 0, 64, 48, 64, 48);
+    check(whole && whole->width == 64 && whole->height == 48, "an image is a region of itself");
+    const auto corner = regionWithin(60, 40, 4, 8, 64, 48);
+    check(corner && corner->x == 60 && corner->y == 40, "a region may touch the far edges");
+    check(regionWithin(64, 48, 0, 0, 64, 48).has_value(), "an empty region at the far corner is inside");
+    check(!regionWithin(-2, 0, 10, 10, 64, 48), "a negative x is refused");
+    check(!regionWithin(0, -1, 10, 10, 64, 48), "a negative y is refused");
+    check(!regionWithin(65, 0, 0, 0, 64, 48), "a corner past the edge is refused");
+    check(!regionWithin(61, 0, 4, 1, 64, 48), "a region past the right edge is refused");
+    check(!regionWithin(0, 45, 1, 4, 64, 48), "a region past the bottom edge is refused");
+    check(!regionWithin(8, 0, 0xfffffffcu, 1, 64, 48), "a width that would wrap past the edge is refused");
+    check(!regionWithin(0, 8, 1, 0xfffffffcu, 64, 48), "a height that would wrap past the edge is refused");
+}
+
+// An imported descriptor is the application's, so its layout is checked
+// against the format before the driver maps and copies through it.
+void testImportedLayout()
+{
+    constexpr unsigned width = 64;
+    constexpr unsigned height = 48;
+    constexpr std::size_t size = std::size_t(width) * height * 3 / 2;
+    const int fd = memfd_create("va-v4l2-import", MFD_CLOEXEC);
+    check(fd >= 0 && ftruncate(fd, off_t(size)) == 0, "an import fixture exists");
+    if (fd < 0) return;
+    const std::uint32_t offset[2] {0, width * height};
+    auto adopted = [fd, &offset](unsigned planes, const std::uint32_t* pitch, std::size_t bytes) {
+        std::string error;
+        const int duplicate = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+        auto buffer = uml::va::PixelBuffer::adopt(duplicate, VA_FOURCC_NV12, width, height, planes, pitch, offset,
+                                                  0, bytes, error);
+        if (!buffer) ::close(duplicate);
+        return buffer != nullptr;
+    };
+    const std::uint32_t pitch[2] {width, width};
+    check(adopted(2, pitch, size), "a tightly packed NV12 descriptor is adopted");
+    check(adopted(2, pitch, 0), "a descriptor without a size is adopted at its planes' extent");
+    check(!adopted(2, pitch, size - 1), "a descriptor smaller than its planes is refused");
+    check(!adopted(1, pitch, 0), "an NV12 descriptor without its chroma plane is refused");
+    const std::uint32_t narrow[2] {width / 2, width};
+    check(!adopted(2, narrow, 0), "rows shorter than the surface width are refused");
+    ::close(fd);
+}
+
 }
 
 int main()
@@ -410,6 +460,8 @@ int main()
     testCapturePool();
     testPlanarCarrier();
     testArgbToNv12();
+    testRegionBounds();
+    testImportedLayout();
     if (failures) {
         std::fprintf(stderr, "UML_VA_V4L2_TESTS: FAIL (%d)\n", failures);
         return 1;

@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace uml::va {
 
@@ -24,6 +25,12 @@ struct Region {
     unsigned width {};
     unsigned height {};
 };
+
+// The rectangle an application asked for at (x, y), when it lies inside a
+// limitWidth by limitHeight image. Application coordinates may be negative
+// and sizes arbitrary, so the test is written so that no sum can wrap.
+std::optional<Region> regionWithin(std::int64_t x, std::int64_t y, std::uint64_t width, std::uint64_t height,
+                                   unsigned limitWidth, unsigned limitHeight) noexcept;
 
 // Copies one NV12 image, honouring differing pitches.
 void copyNv12(const ConstPlaneView source[2], const PlaneView destination[2], unsigned width, unsigned height) noexcept;

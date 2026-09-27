@@ -165,6 +165,7 @@ find_tool PKG_CONFIG pkg-config
 find_tool RSYNC rsync
 find_tool XCRUN xcrun
 find_tool AUTORECONF autoreconf
+find_tool PYTHON python3
 
 SDK_ROOT=$($XCRUN --sdk "$SDK_NAME" --show-sdk-path)
 [ -d "$SDK_ROOT" ] || fail "xcrun returned an invalid $PLATFORM SDK"
@@ -316,6 +317,18 @@ printf 'source\ttree\nglib-ios\t%s\n' \
 	"$(git -C "$SOURCE_ROOT/glib-ios" rev-parse 'HEAD^{tree}')" \
 	> "$STAGE/share/uml-dependencies/source-trees.tsv"
 verify_prefix "$STAGE"
-mv "$STAGE" "$PREFIX"
-STAGE=
-printf '%s\n' "published iOS network dependency prefix: $PREFIX"
+status=0
+"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$STAGE" "$PREFIX" ||
+	status=$?
+case $status in
+0)
+	STAGE=
+	printf '%s\n' "published iOS network dependency prefix: $PREFIX"
+	;;
+1)
+	verify_prefix "$PREFIX" ||
+		fail "concurrently published prefix is invalid: $PREFIX"
+	printf '%s\n' "reusing concurrently published iOS network dependency prefix: $PREFIX"
+	;;
+*) fail "could not publish iOS network dependency prefix: $PREFIX" ;;
+esac

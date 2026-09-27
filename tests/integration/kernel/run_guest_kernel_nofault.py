@@ -5,8 +5,10 @@ copy_from_kernel_nofault() and the other nofault accessors resume a faulting
 access at a recovery point that only the fault handler reaches. sysrq t dumps
 every task, and its workqueue report for each idle kernel worker reads through
 that worker's NULL pool-workqueue pointer with copy_from_kernel_nofault(). The
-read must fail quietly; a lost recovery point panics the guest instead. The
-kernel has no BPF tracing, so bpf_probe_read_kernel() cannot reach this path.
+read must fail quietly: the guest keeps running and the host reports no fault
+for it, since a recovered nofault read is expected kernel behaviour. A lost
+recovery point panics the guest instead. The kernel has no BPF tracing, so
+bpf_probe_read_kernel() cannot reach this path.
 """
 
 from __future__ import annotations
@@ -55,9 +57,16 @@ def main() -> int:
         )
         found = re.search(r"dumps=(\d+) workers=(\d+)", dumped.output)
         dumps, workers = (int(found[1]), int(found[2])) if found else (0, 0)
-        print(f"sysrq t ran {dumps} time(s) and listed {workers} kernel workers")
+        # The emulator's stderr shares the console, so a host fault report
+        # made during the dump lands inside the command's output.
+        reports = len(re.findall(r"^Darwin POSIX ", dumped.output, re.MULTILINE))
+        print(f"sysrq t ran {dumps} time(s), listed {workers} kernel workers "
+              f"and printed {reports} host fault report line(s)")
         if dumped.return_code != 0 or dumps != 1 or workers < 1:
             raise RuntimeError("sysrq t did not dump the kernel workers:\n"
+                               + dumped.output)
+        if reports:
+            raise RuntimeError("the host reported recovered nofault reads:\n"
                                + dumped.output)
         alive = guest.run_command("echo alive", 30)
         if alive.return_code != 0 or "alive" not in alive.output:

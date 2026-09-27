@@ -201,14 +201,6 @@ def verify_kernel_config(config_path: Path, android_root: Path) -> None:
         shutil.rmtree(temporary_parent, ignore_errors=True)
 
 
-def check_no_module_output(kernel_build: Path) -> None:
-    for root, _directories, files in os.walk(kernel_build, followlinks=False):
-        for name in files:
-            lowered = name.lower()
-            if lowered.endswith(".ko") or ".ko." in lowered:
-                fail(f"loadable kernel module output is forbidden: {Path(root) / name}")
-
-
 def sdk_identity(darwin_sdk: Path) -> str:
     settings = darwin_sdk / "SDKSettings.json"
     if settings.is_file():
@@ -237,8 +229,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--aosp-source", type=Path, required=True)
     parser.add_argument("--orangefox-source", type=Path, required=True)
-    parser.add_argument("--kernel-source", type=Path, required=True)
-    parser.add_argument("--kernel-build", type=Path, required=True)
+    parser.add_argument(
+        "--kernel-artifact",
+        type=Path,
+        required=True,
+        help="published ACK kernel artifact of the tracked kernel source",
+    )
     parser.add_argument("--target-files", type=Path, required=True)
     parser.add_argument("--disk", type=Path, required=True)
     parser.add_argument("--darwin-sdk", type=Path, required=True)
@@ -259,8 +255,7 @@ def main() -> None:
     outer_root = android_root.parents[1]
     aosp_source = regular_directory(args.aosp_source, "AOSP source")
     orangefox_source = regular_directory(args.orangefox_source, "OrangeFox source")
-    kernel_source = regular_directory(args.kernel_source, "ACK source")
-    kernel_build = regular_directory(args.kernel_build, "ACK build")
+    kernel_artifact = regular_directory(args.kernel_artifact, "ACK kernel artifact")
     darwin_sdk = regular_directory(args.darwin_sdk, "Darwin SDK")
     release_root = regular_directory(args.release_root, "release root")
     target_files = regular_file(args.target_files, "target-files archive")
@@ -284,11 +279,21 @@ def main() -> None:
     kernel_metadata = parse_env(kernel_root / "patches/metadata.env")
     abi_metadata = parse_env(outer_root / "kernel/common/abi/identity.env")
     outer_revision = verify_clean_git(outer_root, "outer project")
-    verify_clean_git(
-        kernel_source,
-        "replayed ACK source",
-        kernel_metadata["UML_KERNEL_FINAL_TREE"],
-    )
+    # The release ships the kernel as its published artifact: the tracked
+    # source's runtime image, without the DWARF the build's vmlinux keeps.
+    run([
+        sys.executable,
+        "-B",
+        str(outer_root / "kernel/common/artifacts/verify-kernel-artifact.py"),
+        "--artifact",
+        str(kernel_artifact),
+        "--common-root",
+        str(outer_root / "kernel/common"),
+        "--kernel-metadata",
+        str(kernel_root / "patches/metadata.env"),
+        "--abi-metadata",
+        str(outer_root / "kernel/common/abi/identity.env"),
+    ])
 
     run([
         str(android_root / "tools/verify-jelly-source.py"),
@@ -318,16 +323,16 @@ def main() -> None:
     ])
     kernel_patch_count, kernel_manifest_sha = kernel_series_provenance(outer_root)
 
-    kernel_elf = regular_file(kernel_build / "vmlinux", "ACK UML ELF")
-    kernel_config = regular_file(kernel_build / ".config", "ACK configuration")
+    kernel_payload = kernel_artifact / "kernel"
+    kernel_elf = regular_file(kernel_payload / "vmlinux", "ACK UML ELF")
+    kernel_config = regular_file(kernel_payload / "config", "ACK configuration")
     kernel_release_file = regular_file(
-        kernel_build / "include/config/kernel.release", "ACK kernel release"
+        kernel_payload / "kernel.release", "ACK kernel release"
     )
     for name in ("System.map", "modules.builtin", "modules.builtin.modinfo"):
-        regular_file(kernel_build / name, f"ACK {name}")
+        regular_file(kernel_payload / name, f"ACK {name}")
     run([str(android_root / "build/verify-kernel-elf.py"), str(kernel_elf)])
     verify_kernel_config(kernel_config, android_root)
-    check_no_module_output(kernel_build)
     run([
         str(android_root / "tools/verify-target-files.py"),
         "--target-files",
@@ -400,9 +405,9 @@ def main() -> None:
             for name, source in (
                 ("vmlinux", kernel_elf),
                 ("config", kernel_config),
-                ("System.map", kernel_build / "System.map"),
-                ("modules.builtin", kernel_build / "modules.builtin"),
-                ("modules.builtin.modinfo", kernel_build / "modules.builtin.modinfo"),
+                ("System.map", kernel_payload / "System.map"),
+                ("modules.builtin", kernel_payload / "modules.builtin"),
+                ("modules.builtin.modinfo", kernel_payload / "modules.builtin.modinfo"),
             ):
                 copy_regular(source, staging / "kernel" / name)
             copy_regular(

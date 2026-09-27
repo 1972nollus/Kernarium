@@ -1,9 +1,11 @@
+import Combine
 import Foundation
 import MetalKit
 import SwiftUI
 
 struct ContentView: View {
     @StateObject private var serialConsole = SerialConsoleController()
+    @ObservedObject private var launcher = EmulatorLauncher.shared
     @State private var guestViewMode = GuestViewMode.defaultMode
     /// Whether the framebuffer holds the keyboard. Only the framebuffer
     /// mode sets it; the serial console's keyboard is its terminal's focus.
@@ -33,6 +35,11 @@ struct ContentView: View {
                     .opacity(guestViewMode == .serialConsole ? 1 : 0)
                     .allowsHitTesting(guestViewMode == .serialConsole)
                     .accessibilityHidden(guestViewMode != .serialConsole)
+
+                if case let .ended(result) = launcher.phase {
+                    GuestEndedNotice(end: GuestRunEnd(result: result))
+                        .padding()
+                }
             }
             floatingButtons
         }
@@ -51,6 +58,13 @@ struct ContentView: View {
             serialConsole.stopObserving()
             GuestPersistence.shared.stopObserving()
             EmulatorLauncher.shared.stop()
+        }
+        .onChange(of: launcher.phase) { _, phase in
+            // Nothing is left to type into, and the keyboard would cover
+            // the notice.
+            guard case .ended = phase else { return }
+            framebufferKeyboardVisible = false
+            serialConsole.resignFirstResponder()
         }
     }
 
@@ -211,6 +225,51 @@ enum GuestViewMode {
     case serialConsole
 
     static let defaultMode: Self = .framebuffer
+}
+
+/// How this launch's guest run ended, as the application reports it.
+struct GuestRunEnd: Equatable {
+    let result: Int32
+
+    var title: String {
+        result == 0 ? "Guest Shut Down" : "Guest Stopped with an Error"
+    }
+
+    var message: String {
+        let relaunch = "Relaunch Kernarium to start it again."
+        return result == 0
+            ? relaunch
+            : "The runtime returned \(result). \(relaunch)"
+    }
+
+    var systemName: String {
+        result == 0 ? "power" : "exclamationmark.triangle"
+    }
+}
+
+/// Shown over the guest views once the run has ended. The guest's last frame
+/// and console stay readable behind it, and the floating controls still
+/// switch between them.
+private struct GuestEndedNotice: View {
+    let end: GuestRunEnd
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: end.systemName)
+                .font(.title)
+            Text(end.title)
+                .font(.headline)
+            Text(end.message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(20)
+        .frame(maxWidth: 320)
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("guestEndedNotice")
+    }
 }
 
 enum FloatingControlMetrics {
@@ -1170,12 +1229,24 @@ private func runGuest(
     }
 }
 
+/// Where this launch's guest is. A launch runs its guest at most once: the
+/// runtime cannot boot a second guest in the same process, so once the run
+/// returns the application can only ask to be relaunched.
+enum GuestRunPhase: Equatable {
+    /// No run has started. A failure before the run begins, such as a
+    /// missing rootfs, leaves the launch here, and a later layout retries.
+    case idle
+    case running
+    /// The run returned `result`; nothing starts another in this process.
+    case ended(result: Int32)
+}
+
 @MainActor
-private final class EmulatorLauncher {
+final class EmulatorLauncher: ObservableObject {
     static let shared = EmulatorLauncher(configuration: .load())
 
     private let configuration: EmulatorConfiguration
-    private var started = false
+    @Published private(set) var phase = GuestRunPhase.idle
     private var thermalObserver: NSObjectProtocol?
 
     var retinaMode: Bool { configuration.retinaMode }
@@ -1184,12 +1255,15 @@ private final class EmulatorLauncher {
         self.configuration = configuration
     }
 
-    func start(view: GuestMetalView, geometry: GuestDisplayGeometry) {
-        guard !started else { return }
+    fileprivate func start(
+        view: GuestMetalView,
+        geometry: GuestDisplayGeometry
+    ) {
+        guard phase == .idle else { return }
         if ProcessInfo.processInfo.environment[
             "KERNARIUM_THERMAL_PROBE_ONLY"
         ] == "1" {
-            started = true
+            phase = .running
             print(
                 ThermalStateReport.probeLine(
                     state: ProcessInfo.processInfo.thermalState,
@@ -1228,7 +1302,7 @@ private final class EmulatorLauncher {
             guard let prepared = prepareBundleBoot(bundle: bundle) else { return }
             boot = prepared
         }
-        started = true
+        phase = .running
         startThermalObservation()
         let size = GuestInputCoordinateSpace.boundedDisplaySize(
             geometry.pixelSize
@@ -1330,7 +1404,7 @@ private final class EmulatorLauncher {
 
     fileprivate func finished(result: Int32) {
         stopThermalObservation()
-        started = false
+        phase = .ended(result: result)
         UIApplication.shared.isIdleTimerDisabled = false
         print("Kernarium: runtime returned \(result)")
     }
