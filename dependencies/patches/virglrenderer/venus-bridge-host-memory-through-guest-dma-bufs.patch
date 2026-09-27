@@ -14,9 +14,9 @@ Subject: [PATCH] venus: bridge host memory through guest dma-bufs
  src/venus/vkr_physical_device.h |   1 +
  src/venus/vkr_renderer.c        |   3 +-
  src/virgl_resource.c            | 171 ++++++++++++++++++++++++
- src/virgl_resource.h            |  39 ++++++
+ src/virgl_resource.h            |  25 ++++
  src/virglrenderer.c             |   2 +-
- 12 files changed, 521 insertions(+), 47 deletions(-)
+ 12 files changed, 507 insertions(+), 47 deletions(-)
 
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
 index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..e0457772cd51394d61833d276b9199784f7db063 100644
@@ -871,7 +871,7 @@ index 0ee546883a982c54a328179b77a11dc45496c3f0..dbc803cfc50910e474e481cdeeec87a2
     res->iov = iov;
     res->iov_count = iov_count;
 diff --git a/src/virgl_resource.h b/src/virgl_resource.h
-index 8eb770e78e69dffd54746cd89ffdd8816c2be329..d21fc0bced31b86cfc7cdfdf599edf64808471b5 100644
+index 8eb770e78e69dffd54746cd89ffdd8816c2be329..5d90e60f4429e2f31094141c2850334ea893391b 100644
 --- a/src/virgl_resource.h
 +++ b/src/virgl_resource.h
 @@ -60,6 +60,11 @@ struct virgl_resource_vulkan_info {
@@ -886,31 +886,17 @@ index 8eb770e78e69dffd54746cd89ffdd8816c2be329..d21fc0bced31b86cfc7cdfdf599edf64
  /**
   * A global cross-context resource.  A virgl_resource is not directly usable
   * by renderer contexts, but must be attached and imported into renderer
-@@ -105,6 +110,23 @@ struct virgl_resource {
+@@ -105,6 +110,9 @@ struct virgl_resource {
  
     struct virgl_resource_vulkan_info vulkan_info;
  
-+   /**
-+    * For a blob exported by a Venus context, the enum
-+    * virgl_formats the exporter created the texture with, or 0 if
-+    * unknown.
-+    *
-+    * Not redundant with the format an importer supplies: a cross-process
-+    * blob reaches its importer as a bare dmabuf, and DRI3's
-+    * PixmapFromBuffer carries only depth/bpp -- no fourcc, no channel
-+    * order -- so the importer can only guess, and always guesses the
-+    * screen visual's BGRA.  Consumers that build a texture over these
-+    * bytes need this instead.
-+    */
-+   uint32_t export_format;
-+
 +   /* Reference into the same-process native-resource registry, or zero. */
 +   uint64_t native_resource_id;
 +
     void *private_data;
  };
  
-@@ -174,4 +196,21 @@ virgl_resource_detach_iov(struct virgl_resource *res);
+@@ -174,4 +182,21 @@ virgl_resource_detach_iov(struct virgl_resource *res);
  enum virgl_resource_fd_type
  virgl_resource_export_fd(struct virgl_resource *res, int *fd);
  

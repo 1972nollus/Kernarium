@@ -35,14 +35,14 @@ could not alias is not served by it.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_renderer.c   | 216 +++++++++++++++++++++++++++++++++++
- src/vrend/vrend_renderer.h   |  19 +++
+ src/vrend/vrend_renderer.c   | 211 +++++++++++++++++++++++++++++++++++
+ src/vrend/vrend_renderer.h   |  19 ++++
  src/vrend/vrend_winsys_egl.c |  42 +++++++
  src/vrend/vrend_winsys_egl.h |  10 ++
- 4 files changed, 287 insertions(+)
+ 4 files changed, 282 insertions(+)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index aaf1c5ad174c7c5d5669e029d015219a342b0f87..b78206b2a5dfe98b4a8551f9187dd763caea8c8e 100644
+index aaf1c5ad174c7c5d5669e029d015219a342b0f87..db2d1c38117ffe5c5c43d934eca6b8d84bb2938d 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -29,6 +29,8 @@
@@ -283,7 +283,7 @@ index aaf1c5ad174c7c5d5669e029d015219a342b0f87..b78206b2a5dfe98b4a8551f9187dd763
  
        gr = vrend_resource_create(&create_args);
        if (!gr)
-@@ -13761,6 +13953,30 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -13761,6 +13953,25 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
              return ret;
           }
  
@@ -299,12 +299,7 @@ index aaf1c5ad174c7c5d5669e029d015219a342b0f87..b78206b2a5dfe98b4a8551f9187dd763
 +            virgl_warn("%s: ignoring plane_count = %d and using the first one\n",
 +                       __func__, args->plane_count);
 +         }
-+         /* args->format is the importer's guess -- always the screen visual's
-+          * BGRA, since DRI3 carries no channel order -- so the exporter's own
-+          * format wins where it is known. */
-+         int ret = vrend_resource_import_shm(gr, res,
-+                                             res->export_format ? res->export_format
-+                                                                : args->format,
++         int ret = vrend_resource_import_shm(gr, res, args->format,
 +                                             args->plane_strides[0],
 +                                             args->plane_offsets[0]);
 +         if (ret) {

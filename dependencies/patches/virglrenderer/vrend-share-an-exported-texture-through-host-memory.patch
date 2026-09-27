@@ -116,7 +116,7 @@ index 46d1eb19e3df38d53eb33496f28bd5e3f9a4302e..f70eda6f737e2fab568d98813ebed518
     /* One drain per command buffer still reports a host GL error and still
      * keeps the driver's error queue bounded; only the name of the command
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index b9de14c331c62a291ae29bf8f84c2ee31742f9c7..b804d25fd88e2c31a0a99ec351e3c1ae48d7a939 100644
+index ab64e17327f0ce1186d7909f5f61da9fe4b4106f..18c9fbdb9136c8b13cef19b16900cbe843ada68d 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -3102,6 +3102,8 @@ static void vrend_hw_set_zsurf_texture(struct vrend_context *ctx)

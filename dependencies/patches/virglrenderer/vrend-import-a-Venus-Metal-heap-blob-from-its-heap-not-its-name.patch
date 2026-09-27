@@ -25,9 +25,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/virgl_metal.h          |  27 ++++++
  src/virgl_metal.m          |  47 +++++++++
- src/vrend/vrend_renderer.c | 193 +++++++++++++++++++++++++++++++------
+ src/vrend/vrend_renderer.c | 189 +++++++++++++++++++++++++++++++------
  src/vrend/vrend_renderer.h |   7 ++
- 4 files changed, 242 insertions(+), 32 deletions(-)
+ 4 files changed, 240 insertions(+), 30 deletions(-)
 
 diff --git a/src/virgl_metal.h b/src/virgl_metal.h
 index e1894e4c988a40668fc31073517293d106566255..5ff41395ca8d8d84353d18f030928b900d0e685a 100644
@@ -135,7 +135,7 @@ index 214cc92fad41187f41186f01d6ae7c5d606a433e..f5ac6f698afdbd8e5171839b4ca6c77f
 +   return true;
 +}
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 6d30872d45d4605823e7c2bd00d786d606bf73da..0c74f2a3882cc79d909936cc5e97517140814254 100644
+index ce020f591a17d300622e272dd64079cf05ea3484..2e3e2dfd2eebfdde84a60a0ea91faec7f34f1294 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -64,6 +64,9 @@
@@ -374,24 +374,20 @@ index 6d30872d45d4605823e7c2bd00d786d606bf73da..0c74f2a3882cc79d909936cc5e975171
  
     if (has_bit(res->storage_bits, VREND_STORAGE_GL_TEXTURE)) {
        glDeleteTextures(1, &res->gl_id);
-@@ -14244,11 +14367,17 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
-          /* args->format is the importer's guess -- always the screen visual's
-           * BGRA, since DRI3 carries no channel order -- so the exporter's own
-           * format wins where it is known. */
--         int ret = vrend_resource_import_shm(gr, res,
--                                             res->export_format ? res->export_format
--                                                                : args->format,
+@@ -14241,9 +14364,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+             virgl_warn("%s: ignoring plane_count = %d and using the first one\n",
+                        __func__, args->plane_count);
+          }
+-         int ret = vrend_resource_import_shm(gr, res, args->format,
 -                                             args->plane_strides[0],
 -                                             args->plane_offsets[0]);
-+         const uint32_t import_format =
-+            res->export_format ? res->export_format : args->format;
 +         int ret = ENOTSUP;
 +         if (res->native_resource_id)
-+            ret = vrend_resource_import_native(gr, res, import_format,
++            ret = vrend_resource_import_native(gr, res, args->format,
 +                                               args->plane_strides[0],
 +                                               args->plane_offsets[0]);
 +         if (ret == ENOTSUP)
-+            ret = vrend_resource_import_shm(gr, res, import_format,
++            ret = vrend_resource_import_shm(gr, res, args->format,
 +                                            args->plane_strides[0],
 +                                            args->plane_offsets[0]);
           if (ret) {

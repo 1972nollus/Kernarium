@@ -737,10 +737,10 @@ index dbc803cfc50910e474e481cdeeec87a26a1f7183..e555eda8f16a55e7719d359bdcc734bc
        free(released);
     }
 diff --git a/src/virgl_resource.h b/src/virgl_resource.h
-index d21fc0bced31b86cfc7cdfdf599edf64808471b5..50cd86253b38a473d8720fb3fa8a197315fd1469 100644
+index 5d90e60f4429e2f31094141c2850334ea893391b..e0339eff62b0db4742b973adc63e68db3c9eec8b 100644
 --- a/src/virgl_resource.h
 +++ b/src/virgl_resource.h
-@@ -210,6 +210,22 @@ virgl_resource_native_acquire(int fd,
+@@ -196,6 +196,22 @@ virgl_resource_native_acquire(int fd,
                                enum virgl_resource_native_handle_type *out_type,
                                void **out_handle);
  

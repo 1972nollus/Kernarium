@@ -28,7 +28,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 31 insertions(+)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 68c2c1680ba904afaf098dc283e74817ce6a533d..7b6e5a8e0763ec98a2d525a0fcf57bf95cf2d95b 100644
+index 136d41e7e824439abff2488ea66fc9df722ddeeb..f50df362562ba99e608ac498aab27795b5031547 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -10303,6 +10303,37 @@ static int vrend_transfer_send_getteximage(struct vrend_resource *res,
