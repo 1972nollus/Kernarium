@@ -493,10 +493,10 @@ index b7906019f9f140a266945357340e97ac7634240d..34a90051f3e65696d6ee47186c7310f6
        mtl_release(dev->precompiled_cache.shaders[j].pipeline);
     return vk_error(dev, VK_ERROR_INVALID_SHADER_NV);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 4c7264c0ea6de1038050c3473efcb08b4db02d01..edf47c83051cf164caea6366901ec231b1cf1a17 100644
+index c9c2153a726c50ea6eda47276714070684c0f533..4c25a5db58c293e2445c39fb6218512db4dcaf7d 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -864,6 +864,27 @@ if with_tests
+@@ -884,6 +884,27 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )

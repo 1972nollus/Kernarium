@@ -29,7 +29,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 7 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 75b4fc71fc3a1a90ed2503bbfaa9390d33c7d667..ca26fbf1467f9f47b1b9c12b0be54e157b8541a1 100644
+index 23e46067edee66284359bc55c81c69edb68c7a2b..f24e24518d7614b683883ed1b6b2b77ef64ad384 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -497,7 +497,13 @@ kk_GetPhysicalDeviceImageFormatProperties2(
