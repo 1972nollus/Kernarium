@@ -34,17 +34,13 @@ def install_probe(guest: Guest) -> None:
     encoded = base64.b64encode(zlib.compress(PROBE.read_bytes(), 9)).decode()
     for offset in range(0, len(encoded), CHUNK_CHARACTERS):
         chunk = encoded[offset : offset + CHUNK_CHARACTERS]
-        result = guest.run_command(f"printf '%s' '{chunk}' >> /tmp/probe.b64", 30)
-        if result.return_code != 0:
-            raise RuntimeError("could not copy the probe:\n" + result.output)
-    result = guest.run_command(
+        guest.check_command(f"printf '%s' '{chunk}' >> /tmp/probe.b64", 30)
+    guest.check_command(
         "python3 -B -c 'import base64, zlib; "
         'open("/tmp/probe.py", "wb").write(zlib.decompress('
         'base64.b64decode(open("/tmp/probe.b64").read())))\'',
         60,
     )
-    if result.return_code != 0:
-        raise RuntimeError("could not unpack the probe:\n" + result.output)
 
 
 def main() -> int:
@@ -65,12 +61,10 @@ def main() -> int:
     )
     try:
         guest.boot_to_shell(180)
-        mounted = guest.run_command(
+        guest.check_command(
             "mount -t proc proc /proc && mount -t tmpfs -o mode=1777 tmpfs /tmp",
             20,
         )
-        if mounted.return_code != 0:
-            raise RuntimeError("could not prepare the guest:\n" + mounted.output)
         install_probe(guest)
         result = guest.run_command("python3 -B /tmp/probe.py", PROBE_TIMEOUT_SECONDS)
         print(result.output.strip())

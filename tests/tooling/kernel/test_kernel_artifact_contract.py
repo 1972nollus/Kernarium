@@ -10,6 +10,7 @@ import argparse
 import importlib.util
 import json
 import struct
+import sys
 import tempfile
 from pathlib import Path
 from types import ModuleType
@@ -29,6 +30,8 @@ def require(condition: bool, message: str) -> None:
 
 
 def load_artifact_module(path: Path) -> ModuleType:
+    # The module imports its sibling contract_checks the way its callers do.
+    sys.path.insert(0, str(path.parent))
     spec = importlib.util.spec_from_file_location("kernel_artifact_contract", path)
     require(spec is not None and spec.loader is not None, "cannot load artifact module")
     module = importlib.util.module_from_spec(spec)

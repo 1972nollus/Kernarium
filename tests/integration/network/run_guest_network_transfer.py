@@ -37,7 +37,6 @@ sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 from guest import Guest  # noqa: E402
 from slirp_network import (  # noqa: E402
     NODE,
-    run,
     start_guest_dhcp_client,
     verify_slirp_lease,
     wait_for_slirp_lease,
@@ -220,9 +219,11 @@ def guest_command(port: int) -> str:
 
 
 def interface_counters(guest: Guest) -> dict[str, int]:
-    statistics = run(guest, "cat /sys/class/net/eth0/statistics/tx_dropped "
-                     "/sys/class/net/eth0/statistics/rx_dropped")
-    tcp = run(guest, "grep '^Tcp:' /proc/net/snmp")
+    statistics = guest.check_command(
+        "cat /sys/class/net/eth0/statistics/tx_dropped "
+        "/sys/class/net/eth0/statistics/rx_dropped"
+    )
+    tcp = guest.check_command("grep '^Tcp:' /proc/net/snmp")
     tx_dropped, rx_dropped = (int(v) for v in statistics.split()[:2])
     header, values = (line.split() for line in tcp.strip().splitlines()[:2])
     return {
@@ -288,7 +289,7 @@ def main() -> int:
         start_guest_dhcp_client(guest)
         verify_slirp_lease(*wait_for_slirp_lease(guest))
         before = interface_counters(guest)
-        output = run(guest, guest_command(server.port), 180)
+        output = guest.check_command(guest_command(server.port), 180)
         after = interface_counters(guest)
         match = re.search(re.escape(RESULT_MARKER) + r"(\[.*\])", output)
         if match is None:

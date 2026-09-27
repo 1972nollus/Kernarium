@@ -933,7 +933,10 @@ VAStatus createSurfaces2(VADriverContextP ctx, unsigned format, unsigned width, 
             // driver can read and write as well.
             if (!supportedFourcc(fourcc)) return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
             surface->fourcc = fourcc;
-            if (auto shared = driver.knownBuffer(identityOfDescriptor(fd))) {
+            // The same memory imported as another image gets its own checked
+            // layout rather than the earlier import's.
+            auto shared = driver.knownBuffer(identityOfDescriptor(fd));
+            if (shared && shared->holds(fourcc, width, height)) {
                 surface->buffer = std::move(shared);
             } else {
                 const int duplicate = fd >= 0 ? fcntl(fd, F_DUPFD_CLOEXEC, 0) : -1;

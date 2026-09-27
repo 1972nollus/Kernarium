@@ -46,15 +46,6 @@ def load_symbolizer():
     return module
 
 
-def run(guest: Guest, command: str, timeout: int = 60) -> str:
-    result = guest.run_command(command, timeout)
-    if result.return_code != 0:
-        raise RuntimeError(
-            f"guest command failed ({result.return_code}): {command}\n"
-            f"{result.output}")
-    return result.output
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
@@ -81,9 +72,11 @@ def main() -> int:
             guest.boot_and_login()
             # The workload is about a kilobyte, well inside one console line.
             payload = base64.b64encode(workload.read_bytes()).decode()
-            run(guest, f"echo {payload} | base64 -d > /tmp/workload && "
-                       "chmod 755 /tmp/workload")
-            output = run(guest, "/tmp/workload", 300)
+            guest.check_command(
+                f"echo {payload} | base64 -d > /tmp/workload && chmod 755 /tmp/workload",
+                60,
+            )
+            output = guest.check_command("/tmp/workload", 300)
             if "OK" not in output.splitlines():
                 raise RuntimeError(f"workload did not finish:\n{output}")
             if not guest.shutdown(60):

@@ -31,7 +31,6 @@ sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 from guest import Guest  # noqa: E402
 from slirp_network import (  # noqa: E402
     NODE,
-    run,
     start_guest_dhcp_client,
     verify_slirp_lease,
     wait_for_slirp_lease,
@@ -59,7 +58,7 @@ SLIRP_DNS_PROBE = (
 
 
 def run_node(guest: Guest, script: str, timeout: int = 30) -> str:
-    return run(guest, f"{NODE} -e {shlex.quote(script)}", timeout)
+    return guest.check_command(f"{NODE} -e {shlex.quote(script)}", timeout)
 
 
 def external_probe(host: str) -> str:

@@ -11,7 +11,6 @@ import importlib.util
 import io
 import json
 import re
-import stat
 import struct
 import subprocess
 import sys
@@ -27,15 +26,13 @@ def fail(message: str) -> None:
 def synthetic_aarch64_elf(
     alignment: int = 16384,
     needed: tuple[str, ...] = (),
-    runpath: str | None = None,
 ) -> bytes:
-    has_dynamic = bool(needed or runpath)
-    program_headers = 2 if has_dynamic else 1
-    dynamic_entries = 3 + len(needed) + (1 if runpath else 0) if has_dynamic else 0
+    program_headers = 2 if needed else 1
+    dynamic_entries = 3 + len(needed) if needed else 0
     dynamic_offset = 64 + 56 * program_headers
     string_table = bytearray(b"\0")
     string_offsets: dict[str, int] = {}
-    for item in needed + ((runpath,) if runpath else ()):
+    for item in needed:
         string_offsets[item] = len(string_table)
         string_table.extend(item.encode())
         string_table.append(0)
@@ -82,8 +79,6 @@ def synthetic_aarch64_elf(
         entries = [(5, string_offset), (10, len(string_table))]
         for name in needed:
             entries.append((1, string_offsets[name]))
-        if runpath:
-            entries.append((29, string_offsets[runpath]))
         entries.append((0, 0))
         for index, (tag, value) in enumerate(entries):
             struct.pack_into("<qQ", payload, dynamic_offset + index * 16, tag, value)
@@ -151,15 +146,23 @@ def synthetic_apex(filesystem: str = "ext4") -> bytes:
 def verify_target_files_fixtures(verifier: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="android-target-files-") as temporary:
         root = Path(temporary)
-        kernel = root / "vmlinux"
+        (root / "kernel").mkdir()
+        kernel = root / "kernel/vmlinux"
         kernel.write_bytes(synthetic_aarch64_elf())
-        kernel_config = root / ".config"
+        kernel_config = root / "kernel/config"
         kernel_config.write_text(
             "CONFIG_ARM64_16K_PAGES=y\n# CONFIG_MODULES is not set\n"
         )
-        kernel_release = root / "include/config/kernel.release"
-        kernel_release.parent.mkdir(parents=True)
+        kernel_release = root / "kernel/kernel.release"
         kernel_release.write_text("6.18.21-uml-fixture\n")
+        kernel_options = [
+            "--kernel-elf",
+            str(kernel),
+            "--kernel-config",
+            str(kernel_config),
+            "--kernel-release-file",
+            str(kernel_release),
+        ]
 
         def write_fixture(path: Path, *, module: bool = False,
                           module_loader: bool = False, dlkm_image: bool = False,
@@ -492,8 +495,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                 str(verifier),
                 "--target-files",
                 str(good),
-                "--kernel-elf",
-                str(kernel),
+                *kernel_options,
             ],
             check=True,
         )
@@ -547,8 +549,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     str(verifier),
                     "--target-files",
                     str(fixture),
-                    "--kernel-elf",
-                    str(kernel),
+                    *kernel_options,
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -556,6 +557,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             )
             if result.returncode == 0:
                 fail(f"target-files verifier accepted the {label} fixture")
+            if result.returncode != 1:
+                fail(f"target-files verifier did not reject the {label} fixture: {result.stdout}")
 
 
 def verify_hal_selections(android_root: Path) -> None:

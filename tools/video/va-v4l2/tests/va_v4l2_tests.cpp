@@ -443,6 +443,20 @@ void testImportedLayout()
     check(!adopted(1, pitch, 0), "an NV12 descriptor without its chroma plane is refused");
     const std::uint32_t narrow[2] {width / 2, width};
     check(!adopted(2, narrow, 0), "rows shorter than the surface width are refused");
+
+    // A descriptor imported again is reused only for the same image.
+    std::string error;
+    const int duplicate = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+    auto buffer = uml::va::PixelBuffer::adopt(duplicate, VA_FOURCC_NV12, width, height, 2, pitch, offset, 0,
+                                              size, error);
+    check(buffer != nullptr, "the reuse fixture is adopted");
+    if (!buffer) ::close(duplicate);
+    else {
+        check(buffer->holds(VA_FOURCC_NV12, width, height), "the same image reuses the buffer");
+        check(!buffer->holds(VA_FOURCC_NV12, width * 2, height), "a wider image does not reuse the buffer");
+        check(!buffer->holds(VA_FOURCC_NV12, width, height * 2), "a taller image does not reuse the buffer");
+        check(!buffer->holds(VA_FOURCC_I420, width, height), "another format does not reuse the buffer");
+    }
     ::close(fd);
 }
 

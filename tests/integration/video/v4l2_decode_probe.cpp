@@ -433,7 +433,8 @@ void ringCycle(const char* device, const std::string& directory, const char* nam
     deadline = std::chrono::steady_clock::now() + std::chrono::seconds(180);
     while (produced < pictures && std::chrono::steady_clock::now() < deadline) {
         while (free_inputs && sequence < pictures + slots) {
-            feed(unsigned(sequence % inputs.size()), ++sequence);
+            const auto index = unsigned(sequence % inputs.size());
+            feed(index, ++sequence);
             --free_inputs;
         }
         pollfd p {fd, POLLIN | POLLOUT, 0};

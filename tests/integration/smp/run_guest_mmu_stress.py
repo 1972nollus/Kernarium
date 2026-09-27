@@ -64,19 +64,15 @@ def parse_arguments() -> argparse.Namespace:
 def run_timed(guest: Guest, name: str, command: str) -> str:
     before_cpu = cpu_time_seconds(guest.process_id)
     before_wall = time.monotonic()
-    result = guest.run_command(command)
+    output = guest.check_command(command)
     elapsed = time.monotonic() - before_wall
     consumed = cpu_time_seconds(guest.process_id) - before_cpu
-    if result.return_code != 0:
-        raise RuntimeError(
-            f"{name} failed ({result.return_code})\n{result.output}"
-        )
     print(
         f"{name}: {elapsed:.3f}s wall, {consumed:.3f}s host CPU "
         f"({consumed / elapsed:.2f} cores)",
         flush=True,
     )
-    return result.output
+    return output
 
 
 def upload_bytes(guest: Guest, payload: bytes, destination: str) -> None:
@@ -84,27 +80,18 @@ def upload_bytes(guest: Guest, payload: bytes, destination: str) -> None:
     staging = f"{destination}.base64"
     quoted_staging = shlex.quote(staging)
     quoted_destination = shlex.quote(destination)
-    result = guest.run_command(f": > {quoted_staging}", 30)
-    if result.return_code == 0:
-        for offset in range(0, len(encoded), 512):
-            result = guest.run_command(
-                f"printf %s {shlex.quote(encoded[offset : offset + 512])} "
-                f">> {quoted_staging}",
-                30,
-            )
-            if result.return_code != 0:
-                break
-    if result.return_code == 0:
-        result = guest.run_command(
-            f"base64 -d {quoted_staging} > {quoted_destination} && "
-            f"rm -f {quoted_staging}",
+    guest.check_command(f": > {quoted_staging}", 30)
+    for offset in range(0, len(encoded), 512):
+        guest.check_command(
+            f"printf %s {shlex.quote(encoded[offset : offset + 512])} "
+            f">> {quoted_staging}",
             30,
         )
-    if result.return_code != 0:
-        raise RuntimeError(
-            f"failed to upload {destination} ({result.return_code})\n"
-            f"{result.output}"
-        )
+    guest.check_command(
+        f"base64 -d {quoted_staging} > {quoted_destination} && "
+        f"rm -f {quoted_staging}",
+        30,
+    )
 
 
 def stage_executable(guest: Guest, binary: pathlib.Path) -> str:
@@ -113,12 +100,7 @@ def stage_executable(guest: Guest, binary: pathlib.Path) -> str:
         raise ValueError(f"guest stress binary is not a file: {binary}")
     destination = f"/tmp/{binary.name}"
     upload_bytes(guest, binary.read_bytes(), destination)
-    result = guest.run_command(f"chmod 755 {shlex.quote(destination)}", 30)
-    if result.return_code != 0:
-        raise RuntimeError(
-            f"could not make {destination} executable ({result.return_code})\n"
-            f"{result.output}"
-        )
+    guest.check_command(f"chmod 755 {shlex.quote(destination)}", 30)
     return destination
 
 

@@ -13,7 +13,8 @@ import stat
 import struct
 import subprocess
 from pathlib import Path, PurePosixPath
-from typing import NoReturn
+
+from contract_checks import ContractChecks, parse_config
 
 
 SCHEMA_VERSION = 3
@@ -21,8 +22,6 @@ SCHEMA_VERSION = 3
 # manifest. Both are still accepted; the final tree is the source identity.
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
 RELEASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
-HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 ABI_FINGERPRINT_RE = re.compile(r"^0x[0-9a-f]{16}$")
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -73,6 +72,15 @@ PAYLOAD_SPECS = {
     "kernel/vmlinux": ("kernel-elf", "elf64-aarch64-et-dyn"),
 }
 
+_CHECKS = ContractChecks("kernel artifact verifier")
+fail = _CHECKS.fail
+require_exact_keys = _CHECKS.require_exact_keys
+require_string = _CHECKS.require_string
+require_integer = _CHECKS.require_integer
+require_hex = _CHECKS.require_hex
+safe_relative = _CHECKS.safe_relative
+parse_env = _CHECKS.parse_env
+
 ET_DYN = 3
 EM_AARCH64 = 183
 PT_LOAD = 1
@@ -85,85 +93,6 @@ SHT_DYNSYM = 11
 SHN_UNDEF = 0
 SHF_ALLOC = 2
 DWARF_SECTION_PREFIXES = (".debug_", ".zdebug_")
-
-
-def fail(message: str) -> NoReturn:
-    raise SystemExit(f"kernel artifact verifier: {message}")
-
-
-def require_exact_keys(value: object, expected: set[str], label: str) -> dict:
-    if not isinstance(value, dict):
-        fail(f"{label} must be an object")
-    keys = set(value)
-    if keys != expected:
-        fail(
-            f"{label} keys differ "
-            f"(missing={sorted(expected - keys)}, extra={sorted(keys - expected)})"
-        )
-    return value
-
-
-def require_string(value: object, label: str) -> str:
-    if not isinstance(value, str) or not value:
-        fail(f"{label} must be a nonempty string")
-    if any(character in value for character in ("\0", "\n", "\r")):
-        fail(f"{label} contains a control character")
-    return value
-
-
-def require_integer(value: object, label: str, *, minimum: int = 0) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        fail(f"{label} must be an integer at least {minimum}")
-    return value
-
-
-def require_hex(value: object, length: int, label: str) -> str:
-    result = require_string(value, label)
-    pattern = HEX40_RE if length == 40 else HEX64_RE
-    if pattern.fullmatch(result) is None:
-        fail(f"{label} must be {length} lowercase hexadecimal characters")
-    return result
-
-
-def safe_relative(value: object, label: str) -> str:
-    text = require_string(value, label)
-    if "\\" in text:
-        fail(f"{label} contains a backslash")
-    path = PurePosixPath(text)
-    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
-        fail(f"{label} is not a normalized relative path")
-    if str(path) != text:
-        fail(f"{label} is not normalized")
-    return text
-
-
-def parse_env(path: Path) -> dict[str, str]:
-    if not path.is_file() or path.is_symlink():
-        fail(f"metadata file is missing or unsafe: {path}")
-    values: dict[str, str] = {}
-    assignment = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([0-9]+))$")
-    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = assignment.fullmatch(line)
-        if match is None:
-            fail(f"{path}:{line_number}: malformed metadata assignment")
-        key, quoted, numeric = match.groups()
-        if key in values:
-            fail(f"{path}:{line_number}: duplicate metadata key {key}")
-        values[key] = quoted if quoted is not None else numeric
-    return values
-
-
-def sha256_path(path: Path) -> str:
-    import hashlib
-
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1 << 20):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def validate_manifest(value: object) -> dict:
@@ -294,17 +223,6 @@ def verify_inventory(artifact_root: Path, manifest: dict) -> None:
     for relative in PAYLOAD_SPECS:
         if (artifact_root / relative).stat().st_size != entries[relative]["size"]:
             fail(f"artifact payload size differs for {relative}")
-
-
-def parse_config(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        if raw.startswith("CONFIG_") and "=" in raw:
-            key, value = raw.split("=", 1)
-            values[key] = value
-        elif raw.startswith("# CONFIG_") and raw.endswith(" is not set"):
-            values[raw[2:-11]] = "n"
-    return values
 
 
 def verify_config(path: Path, page_size: int, kernel_slice: str) -> None:

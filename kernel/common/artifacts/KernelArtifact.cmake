@@ -156,6 +156,7 @@ function(uml_import_kernel_artifact)
         "${_uml_manifest}"
         "${_uml_abi_metadata}"
         "${_uml_verifier}"
+        "${ARTIFACT_COMMON_ROOT}/artifacts/contract_checks.py"
         "${ARTIFACT_COMMON_ROOT}/artifacts/kernel_artifact.py"
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/vmlinux"
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/config"
