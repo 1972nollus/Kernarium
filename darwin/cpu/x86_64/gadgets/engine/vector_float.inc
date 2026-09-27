@@ -423,20 +423,6 @@
 	.endif
 .endm
 
-.macro vector_fp_write width, descriptor
-	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
-	str q4, [x9]
-	.if \width == 256
-	str q5, [x9, #16]
-	.else
-	tbz x\descriptor, #63, .Lx86_vector_fp_write_done\@
-	movi v6.16b, #0
-	str q6, [x9, #16]
-.Lx86_vector_fp_write_done\@:
-	.endif
-.endm
-
 .macro vector_fp_register name, operation, element, shape, width, scalar, predicate
 gadget vector_fp_\name\()_\element\()_\shape\()_rr
 	ldr x8, [_stream], #8
@@ -451,7 +437,7 @@ gadget vector_fp_\name\()_\element\()_\shape\()_rr
 	ldr q3, [x11, #16]
 	.endif
 	vector_fp_compute \operation, \element, \width, \scalar, \predicate
-	vector_fp_write \width, 8
+	vector_write_xmm \width, 8
 	retire_and_next
 .endm
 
@@ -514,7 +500,7 @@ gadget vector_fp_\name\()_\element\()_\shape\()_rm
 	ldr q2, [x10, #16]
 	.endif
 	vector_fp_compute \operation, \element, \width, \scalar, \predicate
-	vector_fp_write \width, 23
+	vector_write_xmm \width, 23
 	retire_and_next
 	.if !\scalar
 .Lx86_vector_fp_cross_fault\@:
@@ -578,7 +564,6 @@ vector_fp_predicate 15
 .purgem vector_fp_family
 .purgem vector_fp_memory
 .purgem vector_fp_register
-.purgem vector_fp_write
 .purgem vector_fp_compute
 .purgem vector_fp_fix_generated_nan
 .purgem vector_fp_fix_indefinite

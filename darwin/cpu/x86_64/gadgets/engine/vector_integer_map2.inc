@@ -313,33 +313,6 @@
 	.endif
 .endm
 
-.macro vector_map2_write width, descriptor
-	and x9, x\descriptor, #0xffff
-	.if \width == 64
-	str d4, [_cpu, x9]
-	sub x10, x9, #UML_X86_64_CPU_MMX
-	lsr x10, x10, #3
-	add x11, _cpu, #UML_X86_64_CPU_X87
-	add x11, x11, x10, lsl #4
-	str d4, [x11]
-	mov w12, #0xffff
-	strh w12, [x11, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
-	.else
-	add x9, _cpu, x9
-	str q4, [x9]
-	.if \width == 256
-	str q5, [x9, #16]
-	.else
-	tbz x\descriptor, #63, .Lx86_vector_map2_write_done\@
-	movi v6.16b, #0
-	str q6, [x9, #16]
-.Lx86_vector_map2_write_done\@:
-	.endif
-	.endif
-.endm
-
 .macro vector_map2_input_size opcode, width
 	.set .Lx86_vector_map2_input_size, (\width / 8)
 	.if \opcode == 0x20 || \opcode == 0x30 || \opcode == 0x23 || \opcode == 0x33
@@ -393,7 +366,7 @@ gadget vector_integer_map2_\symbol\()_\width\()_rr
 		(\opcode >= 0x30 && \opcode <= 0x35))
 	vector_map2_lane \opcode, 128, 5, 2, 3
 	.endif
-	vector_map2_write \width, 23
+	vector_write \width, 23
 	retire_and_next
 .endm
 
@@ -458,7 +431,7 @@ gadget vector_integer_map2_\symbol\()_\width\()_rm
 		(\opcode >= 0x30 && \opcode <= 0x35))
 	vector_map2_lane \opcode, 128, 5, 2, 3
 	.endif
-	vector_map2_write \width, 23
+	vector_write \width, 23
 	retire_and_next
 .Lx86_vector_map2_cross_fault\@:
 	add sp, sp, #32
@@ -523,7 +496,6 @@ vector_map2_family 41
 .purgem vector_map2_memory
 .purgem vector_map2_register
 .purgem vector_map2_input_size
-.purgem vector_map2_write
 .purgem vector_map2_lane
 .purgem vector_map2_minpos
 .purgem vector_map2_packusdw

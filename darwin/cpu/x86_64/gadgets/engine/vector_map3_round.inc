@@ -103,20 +103,6 @@
 	.endif
 .endm
 
-.macro vector_map3_round_write width, descriptor
-	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
-	str q4, [x9]
-	.if \width == 256
-	str q5, [x9, #16]
-	.else
-	tbz x\descriptor, #63, .Lx86_vector_map3_round_write_done\@
-	movi v6.16b, #0
-	str q6, [x9, #16]
-.Lx86_vector_map3_round_write_done\@:
-	.endif
-.endm
-
 .macro vector_map3_round_register symbol, opcode, width
 gadget vector_map3_round_\symbol\()_\width\()_rr
 	ldp x8, x13, [_stream], #16
@@ -130,7 +116,7 @@ gadget vector_map3_round_\symbol\()_\width\()_rr
 	ldr q3, [x11, #16]
 	.endif
 	vector_map3_round_body \opcode, \width
-	vector_map3_round_write \width, 8
+	vector_write_xmm \width, 8
 	retire_and_next
 .endm
 
@@ -184,7 +170,7 @@ gadget vector_map3_round_\symbol\()_\width\()_rm
 	add x10, _cpu, x10
 	ldr q0, [x10]
 	vector_map3_round_body \opcode, \width
-	vector_map3_round_write \width, 23
+	vector_write_xmm \width, 23
 	retire_and_next
 	.if \input_size > 8
 .Lx86_vector_map3_round_cross_fault\@:
@@ -208,7 +194,6 @@ vector_map3_round_memory 0b, 0x0b, 128, 8
 
 .purgem vector_map3_round_memory
 .purgem vector_map3_round_register
-.purgem vector_map3_round_write
 .purgem vector_map3_round_body
 .purgem vector_map3_round_apply
 

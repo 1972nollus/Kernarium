@@ -154,20 +154,6 @@
 	.endif
 .endm
 
-.macro vector_shuffle_write width, descriptor
-	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
-	str q4, [x9]
-	.if \width == 256
-	str q5, [x9, #16]
-	.else
-	tbz x\descriptor, #63, .Lx86_vector_shuffle_write_done\@
-	movi v6.16b, #0
-	str q6, [x9, #16]
-.Lx86_vector_shuffle_write_done\@:
-	.endif
-.endm
-
 .macro vector_shuffle_register operation, element, width, control
 gadget vector_\operation\()_\element\()_\width\()_rr
 	ldr x8, [_stream], #8
@@ -185,7 +171,7 @@ gadget vector_\operation\()_\element\()_\width\()_rr
 	ldr q3, [x11, #16]
 	.endif
 	vector_shuffle_body \operation, \element, \width
-	vector_shuffle_write \width, 8
+	vector_write_xmm \width, 8
 	retire_and_next
 .endm
 
@@ -225,7 +211,7 @@ gadget vector_\operation\()_\element\()_\width\()_rm
 	ubfx x13, x26, #16, #8
 	.endif
 	vector_shuffle_body \operation, \element, \width
-	vector_shuffle_write \width, 23
+	vector_write_xmm \width, 23
 	retire_and_next
 .Lx86_vector_shuffle_cross_fault\@:
 	add sp, sp, #32
@@ -265,6 +251,5 @@ vector_shuffle_family addsub, 64, 256
 .purgem vector_shuffle_family
 .purgem vector_shuffle_memory
 .purgem vector_shuffle_register
-.purgem vector_shuffle_write
 .purgem vector_shuffle_body
 .purgem vector_shuffle_ps_index
