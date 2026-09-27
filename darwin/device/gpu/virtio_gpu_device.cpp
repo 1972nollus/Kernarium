@@ -1881,10 +1881,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
          * this way once blobs exist. Each flush presents the Metal texture
          * that stores the GL texture, and reads the blob back into the CPU
          * framebuffer only when there is none, so keep that fallback's
-         * staging ready and the display sized to the scanout.
+         * staging ready.
          */
+        std::vector<std::uint8_t> replacementReadback;
         if (readback) {
-            std::vector<std::uint8_t> replacementReadback;
             const auto byteCount = pixelBufferSize(
                 scanout->rectangle.width, scanout->rectangle.height);
             if (!byteCount) {
@@ -1899,24 +1899,29 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                         *header, protocol::GpuResponse::errorOutOfMemory);
                 }
             }
-            const bool dimensionsChanged =
-                scanoutRectangle_.width != scanout->rectangle.width ||
-                scanoutRectangle_.height != scanout->rectangle.height;
-            if (dimensionsChanged &&
-                !UML_GPU_DISPLAY.guestScanoutChanged(
-                    scanout->rectangle.width,
-                    scanout->rectangle.height)) {
-                protocol::GpuControlHeader failure = *header;
-                failure.type = static_cast<std::uint32_t>(
-                    protocol::GpuResponse::errorOutOfMemory);
-                failure.flags &=
-                    protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
-                std::memcpy(success.data(), &failure, sizeof(failure));
-                return success;
-            }
-            if (!replacementReadback.empty())
-                readbackStaging_.swap(replacementReadback);
         }
+        /* The scanout rectangle is the guest mode whichever path shows it,
+         * so the display sizes presentation, input and its window to it as
+         * it does for a classic scanout. */
+        const bool dimensionsChanged =
+            scanoutRectangle_.width != scanout->rectangle.width ||
+            scanoutRectangle_.height != scanout->rectangle.height;
+        if (dimensionsChanged &&
+            !UML_GPU_DISPLAY.guestScanoutChanged(
+                scanout->rectangle.width,
+                scanout->rectangle.height)) {
+            if (texture != nullptr)
+                UML_GPU_RENDERER.releaseBlobScanout(texture);
+            protocol::GpuControlHeader failure = *header;
+            failure.type = static_cast<std::uint32_t>(
+                protocol::GpuResponse::errorOutOfMemory);
+            failure.flags &=
+                protocol::gpuFlagFence | protocol::gpuFlagInfoRingIndex;
+            std::memcpy(success.data(), &failure, sizeof(failure));
+            return success;
+        }
+        if (!replacementReadback.empty())
+            readbackStaging_.swap(replacementReadback);
         displayActivityLog().record(
             "scanout set kind=blob resource=%u source=%ux%u rect=%ux%u+%u+%u "
             "format=%u stride=%u offset=%u texture=%p path=%s",

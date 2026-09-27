@@ -219,10 +219,12 @@ choice in its iOS app settings; the macOS executable selects it with
 Virtio-GPU advertised mode and raises one display event. Duplicate callbacks
 for the same settled size do not raise another event. Presentation storage
 remains sized to the active guest scanout until the guest applies its eventual
-mode with `SET_SCANOUT`.
+mode with `SET_SCANOUT` or `SET_SCANOUT_BLOB`.
 
 Every applied guest mode is authoritative for presentation, whether selected
-by the guest or produced by guest-side rounding of a host request. macOS
+by the guest or produced by guest-side rounding of a host request, and whether
+its scanout is a classic resource or a blob shown through its Metal texture.
+The scanout rectangle is the mode. macOS
 resizes its content window to that applied size; the resulting host callback
 does not feed the same size back to the guest. iOS instead aspect-fits every
 guest mode in its view. A guest-initiated mode does not disable later automatic
