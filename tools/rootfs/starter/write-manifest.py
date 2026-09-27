@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Write the release manifest for a completed starter-image build."""
+"""Write the release manifest for a completed starter-image build.
+
+build-all.sh owns the source pins and passes them here, so the manifest
+records the sources the build actually verified."""
 
 from __future__ import annotations
 
@@ -15,13 +18,6 @@ from pathlib import Path
 
 from gpt import inspect
 
-ARTIFACTS = (
-    "uml-resize-initramfs.cpio.gz",
-    "alpine-3.24.2-minimal.img",
-    "debian-13-minimal.img",
-    "debian-13-plasma-wayland.img",
-)
-
 
 def digest(path: Path) -> str:
     value = hashlib.sha256()
@@ -34,11 +30,21 @@ def digest(path: Path) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
+    for source in ("buildroot", "busybox", "alpine"):
+        parser.add_argument(f"--{source}-version", required=True)
+        parser.add_argument(f"--{source}-sha256", required=True)
+    parser.add_argument("--debian-suite", required=True)
     parser.add_argument("--debian-version", required=True)
     arguments = parser.parse_args()
     output = arguments.output.resolve()
+    artifacts = (
+        "uml-resize-initramfs.cpio.gz",
+        f"alpine-{arguments.alpine_version}-minimal.img",
+        "debian-13-minimal.img",
+        "debian-13-plasma-wayland.img",
+    )
     products: dict[str, object] = {}
-    for name in ARTIFACTS:
+    for name in artifacts:
         path = output / name
         if not path.is_file() or path.is_symlink():
             raise SystemExit(f"starter manifest: missing artifact: {path}")
@@ -76,19 +82,19 @@ def main() -> int:
         },
         "sources": {
             "buildroot": {
-                "version": "2026.05.3",
-                "sha256": "f43f1627082a45848f73083b3b8d59f32bb4c77a449a8ead8a2a1f91849dea00",
+                "version": arguments.buildroot_version,
+                "sha256": arguments.buildroot_sha256,
             },
             "busybox": {
-                "version": "1.38.0",
-                "sha256": "34f9ea6ff8636f2c9241153b9114eefa9e65674a45318ae1ef95bb5f31c53bb2",
+                "version": arguments.busybox_version,
+                "sha256": arguments.busybox_sha256,
             },
             "alpine": {
-                "version": "3.24.2",
-                "sha256": "9bf70a7f18ea44094cbb5f70c58f9af129c8214745743db0e68e5502cc2ce773",
+                "version": arguments.alpine_version,
+                "sha256": arguments.alpine_sha256,
             },
             "debian": {
-                "suite": "trixie",
+                "suite": arguments.debian_suite,
                 "version": arguments.debian_version,
             },
         },

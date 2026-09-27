@@ -162,7 +162,7 @@ index 0f0e9b52a32d4c7b797fc1b42cecaf2e9bc53ebe..492498c34439aa604262faa81f9221de
  }
  
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index cb199e698c4809eedc676819f6355bf48dc2386b..813ef0d94f8e703dc89b2eb26782fb11d2e754fe 100644
+index f2c96dbea7462a7fa3f73354c844b483bee82f3c..d63f71d45122df8396c2e5044fe140b56c704619 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -181,6 +181,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -173,7 +173,7 @@ index cb199e698c4809eedc676819f6355bf48dc2386b..813ef0d94f8e703dc89b2eb26782fb11
        .EXT_image_compression_control = true,
        .EXT_image_compression_control_swapchain = true,
        .EXT_image_drm_format_modifier = true,
-@@ -497,6 +498,9 @@ kk_get_device_features(
+@@ -495,6 +496,9 @@ kk_get_device_features(
        .image2DViewOf3D = true,
        .sampler2DViewOf3D = true,
  

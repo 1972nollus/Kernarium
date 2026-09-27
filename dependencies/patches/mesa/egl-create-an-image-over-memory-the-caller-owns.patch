@@ -37,11 +37,11 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  src/egl/drivers/dri2/egl_dri2.c      | 47 ++++++++++++++++
  src/egl/main/eglapi.c                |  4 +-
  src/egl/main/egldisplay.h            |  1 +
- src/egl/main/eglimage.c              | 44 +++++++++++++++
+ src/egl/main/eglimage.c              | 42 ++++++++++++++
  src/egl/main/eglimage.h              |  4 ++
  src/gallium/frontends/dri/dri2.c     | 84 ++++++++++++++++++++++++++++
  src/gallium/frontends/dri/dri_util.h |  5 ++
- 8 files changed, 197 insertions(+), 1 deletion(-)
+ 8 files changed, 195 insertions(+), 1 deletion(-)
 
 diff --git a/include/EGL/eglmesaext.h b/include/EGL/eglmesaext.h
 index f0395a8a58c605b41dab90825ea903da49eff840..f446bfc3efb2f95f0c97302546552e1d1ce1ae40 100644
@@ -170,7 +170,7 @@ index 6178140e7e74764bb8c6c11e15afb3fe3aa38de2..d081422d32dc55a8fc85d3aad2848ed0
     EGLBoolean MESA_x11_native_visual_id;
  
 diff --git a/src/egl/main/eglimage.c b/src/egl/main/eglimage.c
-index 4ff1f96478f7d4e4f83fcc4a05774f3feeadd23e..f0cca4859e8974a47a860c1e235cb029c84dc8e2 100644
+index 4ff1f96478f7d4e4f83fcc4a05774f3feeadd23e..7b2cfe4673ba28f1bcb6817b5d30d3036ff4e8c6 100644
 --- a/src/egl/main/eglimage.c
 +++ b/src/egl/main/eglimage.c
 @@ -243,6 +243,44 @@ _eglParseEXTImageDmaBufImportModifiersAttribs(_EGLImageAttribs *attrs,
@@ -218,15 +218,13 @@ index 4ff1f96478f7d4e4f83fcc4a05774f3feeadd23e..f0cca4859e8974a47a860c1e235cb029
  /**
   * Parse the list of image attributes.
   *
-@@ -290,6 +328,12 @@ _eglParseImageAttribList(_EGLImageAttribs *attrs, _EGLDisplay *disp,
+@@ -290,6 +328,10 @@ _eglParseImageAttribList(_EGLImageAttribs *attrs, _EGLDisplay *disp,
        if (err == EGL_SUCCESS)
           continue;
  
 +      err = _eglParseMESAImageHostPointerAttribs(attrs, disp, attr, val);
 +      if (err == EGL_SUCCESS)
 +         continue;
-+      if (err == EGL_BAD_ATTRIBUTE)
-+         return _eglError(err, __func__);
 +
        return _eglError(err, __func__);
     }

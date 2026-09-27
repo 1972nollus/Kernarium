@@ -184,10 +184,10 @@ index b54e7ca5983b799ba352c13a0ba8bfb8a55d4713..a35a5a4dcb5e790a81c572ad6965605c
  {
  	__atomic_store_n(&ipi_idle_waiting[uml_curr_cpu()], 0, __ATOMIC_RELEASE);
 diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
-index cdab8ac92154669e8f38872c16456259fc6215c8..de26143a14d5baeeb89987d1e012495473bb6330 100644
+index 50c8f60d0412c1948fc618a899cc87572e865179..b21584641a57a3033c85f577b38e80a532063009 100644
 --- a/arch/um/os-Darwin/time.c
 +++ b/arch/um/os-Darwin/time.c
-@@ -315,6 +315,14 @@ void os_idle_sleep(void)
+@@ -298,6 +298,14 @@ void os_idle_sleep(void)
  		if (deadline_fd > wake_fd)
  			wake_fd = deadline_fd;
  		darwin_ipi_idle_begin();

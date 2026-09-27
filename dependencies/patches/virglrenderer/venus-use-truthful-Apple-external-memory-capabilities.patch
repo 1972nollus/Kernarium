@@ -6,9 +6,9 @@ Subject: [PATCH] venus: use truthful Apple external-memory capabilities
 ---
  src/meson.build                 |  4 +-
  src/venus/vkr_buffer.c          |  1 -
- src/venus/vkr_device.c          | 26 +++++----
+ src/venus/vkr_device.c          | 36 ++++++++++--
  src/venus/vkr_device.h          |  2 +-
- src/venus/vkr_device_memory.c   | 94 ++++++++++++++++++++-----------
+ src/venus/vkr_device_memory.c   | 90 +++++++++++++++++++-----------
  src/venus/vkr_device_memory.h   |  6 +-
  src/venus/vkr_host_memory.c     | 68 ++++++++++++++++++++++
  src/venus/vkr_host_memory.h     | 24 ++++++++
@@ -16,9 +16,9 @@ Subject: [PATCH] venus: use truthful Apple external-memory capabilities
  src/venus/vkr_instance.c        | 11 ----
  src/venus/vkr_metal_helpers.h   | 72 ------------------------
  src/venus/vkr_metal_helpers.m   | 99 ---------------------------------
- src/venus/vkr_physical_device.c | 60 +++++++++-----------
- src/venus/vkr_physical_device.h |  4 +-
- 14 files changed, 211 insertions(+), 267 deletions(-)
+ src/venus/vkr_physical_device.c | 56 +++++++++----------
+ src/venus/vkr_physical_device.h |  2 +
+ 14 files changed, 223 insertions(+), 255 deletions(-)
  create mode 100644 src/venus/vkr_host_memory.c
  create mode 100644 src/venus/vkr_host_memory.h
  delete mode 100644 src/venus/vkr_metal_helpers.h
@@ -59,7 +59,7 @@ index 9e466f832eeef1607413223b65addf484b201240..99ec8dd9d71a8319298f320cd3d4ec00
  static void
  vkr_dispatch_vkCreateBuffer(struct vn_dispatch_context *dispatch,
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
-index 603f45b8f3c5f240def85449b7bd45957030ca01..66e20d39b9ce0321e5f346deaa2b14d0325a0797 100644
+index 603f45b8f3c5f240def85449b7bd45957030ca01..caa4ce691f8270877be222b752260bc1f269fc65 100644
 --- a/src/venus/vkr_device.c
 +++ b/src/venus/vkr_device.c
 @@ -11,7 +11,6 @@
@@ -70,48 +70,65 @@ index 603f45b8f3c5f240def85449b7bd45957030ca01..66e20d39b9ce0321e5f346deaa2b14d0
  #include "vkr_physical_device.h"
  #include "vkr_queue.h"
  
-@@ -131,8 +130,7 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
+@@ -78,6 +77,27 @@ vkr_device_init_proc_table(struct vkr_device *dev,
+                                   api_version, &ext_table, &dev->proc_table);
+ }
+ 
++/* Look up the entry points of the extensions the renderer enabled for its own
++ * use. Returns false when the driver lacks one of them.
++ */
++static bool
++vkr_device_init_renderer_procs(struct vkr_device *dev)
++{
++   const struct vkr_physical_device *physical_dev = dev->physical_device;
++   const struct vn_physical_device_proc_table *vk = &physical_dev->proc_table;
++   VkDevice handle = dev->base.handle.device;
++
++   if (physical_dev->EXT_external_memory_host) {
++      dev->GetMemoryHostPointerPropertiesEXT =
++         (PFN_vkGetMemoryHostPointerPropertiesEXT)vk->GetDeviceProcAddr(
++            handle, "vkGetMemoryHostPointerPropertiesEXT");
++      if (!dev->GetMemoryHostPointerPropertiesEXT)
++         return false;
++   }
++
++   return true;
++}
++
+ static void
+ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
+                             struct vn_command_vkCreateDevice *args)
+@@ -131,6 +151,7 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
     /* append extensions for our own use */
     const char **exts = NULL;
     uint32_t ext_count = args->pCreateInfo->enabledExtensionCount;
--   ext_count += physical_dev->EXT_external_memory_metal;
--   ext_count += physical_dev->EXT_metal_objects;
 +   ext_count += physical_dev->EXT_external_memory_host;
+    ext_count += physical_dev->EXT_external_memory_metal;
+    ext_count += physical_dev->EXT_metal_objects;
     ext_count += physical_dev->KHR_portability_subset;
-    ext_count += physical_dev->KHR_external_memory_fd;
-    ext_count += physical_dev->EXT_external_memory_dma_buf;
-@@ -148,10 +146,8 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
+@@ -148,6 +169,8 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
        for (uint32_t i = 0; i < args->pCreateInfo->enabledExtensionCount; i++)
           exts[ext_count++] = args->pCreateInfo->ppEnabledExtensionNames[i];
  
--      if (physical_dev->EXT_external_memory_metal)
--         exts[ext_count++] = "VK_EXT_external_memory_metal";
--      if (physical_dev->EXT_metal_objects)
--         exts[ext_count++] = "VK_EXT_metal_objects";
 +      if (physical_dev->EXT_external_memory_host)
 +         exts[ext_count++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
-       if (physical_dev->KHR_portability_subset)
-          exts[ext_count++] = "VK_KHR_portability_subset";
-       if (physical_dev->KHR_external_memory_fd)
-@@ -188,9 +184,19 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
+       if (physical_dev->EXT_external_memory_metal)
+          exts[ext_count++] = "VK_EXT_external_memory_metal";
+       if (physical_dev->EXT_metal_objects)
+@@ -188,9 +211,14 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
                                args->pCreateInfo->ppEnabledExtensionNames,
                                args->pCreateInfo->enabledExtensionCount);
  
 -   if (physical_dev->EXT_external_memory_metal)
 -      dev->mtl_device =
 -         vkr_metal_get_device(dev->base.handle.device, vk->GetDeviceProcAddr);
-+   if (physical_dev->EXT_external_memory_host) {
-+      dev->GetMemoryHostPointerPropertiesEXT =
-+         (PFN_vkGetMemoryHostPointerPropertiesEXT)vk->GetDeviceProcAddr(
-+            dev->base.handle.device, "vkGetMemoryHostPointerPropertiesEXT");
-+      if (!dev->GetMemoryHostPointerPropertiesEXT) {
-+         struct vn_device_proc_table *dev_vk = &dev->proc_table;
-+         dev_vk->DestroyDevice(dev->base.handle.device, NULL);
-+         free(exts);
-+         free(dev);
-+         args->ret = VK_ERROR_EXTENSION_NOT_PRESENT;
-+         return;
-+      }
++   if (!vkr_device_init_renderer_procs(dev)) {
++      struct vn_device_proc_table *dev_vk = &dev->proc_table;
++      dev_vk->DestroyDevice(dev->base.handle.device, NULL);
++      free(exts);
++      free(dev);
++      args->ret = VK_ERROR_EXTENSION_NOT_PRESENT;
++      return;
 +   }
  
     free(exts);
@@ -130,7 +147,7 @@ index c71f08537b434fc3db6e382bd13111c5486a97f0..a8c185c6807c5ffc8be7b01b9d23a5b5
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 1abc23a8aef6cfe4905697144709e30c0e971433..a8dd8fcd31d026d10aee5f7cde329ebe74288922 100644
+index 1abc23a8aef6cfe4905697144709e30c0e971433..4517cb3513bb16510770e73b70cd32aad88b2544 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -10,7 +10,7 @@
@@ -267,17 +284,13 @@ index 1abc23a8aef6cfe4905697144709e30c0e971433..a8dd8fcd31d026d10aee5f7cde329ebe
     if (mem->gbm_bo)
        vkr_gbm_bo_destroy(mem->gbm_bo);
     if (mem->udmabuf_fd >= 0)
-@@ -566,14 +590,20 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+@@ -566,14 +590,16 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
                                        : VIRGL_RENDERER_MAP_CACHE_WC;
     }
  
 -   if (mem->mtl_shm && mem->mtl_shm->shm_fd >= 0) {
 -      mem->exported = true;
 +   if (mem->host_shm && mem->host_shm->fd >= 0) {
-+      if (blob_flags & VIRGL_RENDERER_BLOB_FLAG_USE_CROSS_DEVICE) {
-+         vkr_log("host allocation cannot support cross-device blob sharing");
-+         return false;
-+      }
        *out_blob = (struct virgl_context_blob){
           .type = VIRGL_RESOURCE_FD_SHM,
 -         .u.fd = os_dupfd_cloexec(mem->mtl_shm->shm_fd),
@@ -644,23 +657,19 @@ index f0373ed10bf23bc0a8dde6e9a6a542325b93a4aa..00000000000000000000000000000000
 -
 -#endif /* __APPLE__ */
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index bc387548a5fd5f4a0bd667f2d0443a5a4e168786..d59aade3269af4fc67cb94e17ecb3c7a85a2909d 100644
+index bc387548a5fd5f4a0bd667f2d0443a5a4e168786..f4037789a7de6efc133d7f1c1ddd99a7cdbd5279 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
-@@ -282,10 +282,8 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+@@ -282,6 +282,8 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
           physical_dev->EXT_external_memory_dma_buf = true;
        else if (!strcmp(props->extensionName, "VK_KHR_external_fence_fd"))
           physical_dev->KHR_external_fence_fd = true;
--      else if (!strcmp(props->extensionName, "VK_EXT_external_memory_metal"))
--         physical_dev->EXT_external_memory_metal = true;
--      else if (!strcmp(props->extensionName, "VK_EXT_metal_objects"))
--         physical_dev->EXT_metal_objects = true;
 +      else if (!strcmp(props->extensionName, "VK_EXT_external_memory_host"))
 +         physical_dev->EXT_external_memory_host = true;
-       else if (!strcmp(props->extensionName, "VK_KHR_portability_subset"))
-          physical_dev->KHR_portability_subset = true;
- 
-@@ -311,39 +309,34 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
+       else if (!strcmp(props->extensionName, "VK_EXT_external_memory_metal"))
+          physical_dev->EXT_external_memory_metal = true;
+       else if (!strcmp(props->extensionName, "VK_EXT_metal_objects"))
+@@ -311,39 +313,34 @@ vkr_physical_device_init_extensions(struct vkr_physical_device *physical_dev)
           physical_dev->KHR_external_fence_fd = false;
     }
  
@@ -724,7 +733,7 @@ index bc387548a5fd5f4a0bd667f2d0443a5a4e168786..d59aade3269af4fc67cb94e17ecb3c7a
  static void
  vkr_physical_device_init_properties(struct vkr_physical_device *physical_dev)
  {
-@@ -444,6 +437,7 @@ vkr_dispatch_vkEnumeratePhysicalDevices(struct vn_dispatch_context *dispatch,
+@@ -444,6 +441,7 @@ vkr_dispatch_vkEnumeratePhysicalDevices(struct vn_dispatch_context *dispatch,
        physical_dev->api_version =
           MIN2(physical_dev->properties.apiVersion, instance->api_version);
        vkr_physical_device_init_extensions(physical_dev);
@@ -733,17 +742,15 @@ index bc387548a5fd5f4a0bd667f2d0443a5a4e168786..d59aade3269af4fc67cb94e17ecb3c7a
        vkr_physical_device_init_id_properties(physical_dev);
        vkr_physical_device_init_queue_family_properties(physical_dev);
 diff --git a/src/venus/vkr_physical_device.h b/src/venus/vkr_physical_device.h
-index 371899b3982c23c8410eed1d18370bf6d2ebd728..bd2a4748ad41da7b454b51cbabfd3ebe5263335f 100644
+index 371899b3982c23c8410eed1d18370bf6d2ebd728..77fc62510cce22e88cd0c272094064c52f6c4e09 100644
 --- a/src/venus/vkr_physical_device.h
 +++ b/src/venus/vkr_physical_device.h
-@@ -28,8 +28,8 @@ struct vkr_physical_device {
+@@ -28,6 +28,8 @@ struct vkr_physical_device {
     bool KHR_external_fence_fd;
     bool KHR_external_semaphore_fd;
  
--   bool EXT_external_memory_metal;
--   bool EXT_metal_objects;
 +   bool EXT_external_memory_host;
 +   VkDeviceSize min_imported_host_pointer_alignment;
+    bool EXT_external_memory_metal;
+    bool EXT_metal_objects;
  
-    VkPhysicalDeviceMemoryProperties memory_properties;
-    VkPhysicalDeviceIDProperties id_properties;

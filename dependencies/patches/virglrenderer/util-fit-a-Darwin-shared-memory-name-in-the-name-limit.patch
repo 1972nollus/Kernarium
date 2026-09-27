@@ -24,10 +24,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 11 insertions(+), 2 deletions(-)
 
 diff --git a/src/mesa/util/anon_file.c b/src/mesa/util/anon_file.c
-index 1c22514f9ab6c5cbaa35b576fc0a901d299f2725..2cf3b9ed421726ac3f99f5559316a97e1c2215a8 100644
+index 062f3ced7e9e2fea3a4feb7a84bc15b242d0ebdf..4a48ef2db4ef0c6cfa2ca905dc9ec0c35b158c9f 100644
 --- a/src/mesa/util/anon_file.c
 +++ b/src/mesa/util/anon_file.c
-@@ -133,8 +133,17 @@ os_create_anonymous_file(off_t size, const char *debug_name)
+@@ -173,8 +173,17 @@ os_create_anonymous_file(off_t size, const char *debug_name)
     const unsigned int nonce = arc4random();
     for (unsigned int i = 0; i < 32; i++) {
       char shm_name[64];

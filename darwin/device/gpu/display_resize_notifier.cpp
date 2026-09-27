@@ -41,9 +41,10 @@ DisplayResizeNotifier::DisplayResizeNotifier(
           maximumDimension,
           minimumDimension,
           protocol::maximumDisplayDimension))
-    , requested_(encode(
+    , requested_(packDisplaySize({
           clampDimension(width, maximumDimension_),
-          clampDimension(height, maximumDimension_)))
+          clampDimension(height, maximumDimension_),
+      }))
 {
     std::array<int, 2> descriptors {-1, -1};
     if (::socketpair(AF_UNIX, SOCK_DGRAM, 0, descriptors.data()) != 0) {
@@ -101,7 +102,7 @@ void DisplayResizeNotifier::publish(
         return;
     width = clampDimension(width, maximumDimension_);
     height = clampDimension(height, maximumDimension_);
-    const auto encoded = encode(width, height);
+    const auto encoded = packDisplaySize({width, height});
     if (requested_.exchange(encoded, std::memory_order_acq_rel) == encoded &&
         !ensureNotification) {
         return;
@@ -120,22 +121,7 @@ DisplaySize DisplayResizeNotifier::drain() noexcept
     while (::recv(
                read_.get(), bytes.data(), bytes.size(), MSG_DONTWAIT) > 0) {
     }
-    return decode(requested_.load(std::memory_order_acquire));
-}
-
-std::uint64_t DisplayResizeNotifier::encode(
-    std::uint32_t width,
-    std::uint32_t height) noexcept
-{
-    return static_cast<std::uint64_t>(width) << 32U | height;
-}
-
-DisplaySize DisplayResizeNotifier::decode(std::uint64_t size) noexcept
-{
-    return {
-        .width = static_cast<std::uint32_t>(size >> 32U),
-        .height = static_cast<std::uint32_t>(size),
-    };
+    return unpackDisplaySize(requested_.load(std::memory_order_acquire));
 }
 
 } // namespace uml::gpu

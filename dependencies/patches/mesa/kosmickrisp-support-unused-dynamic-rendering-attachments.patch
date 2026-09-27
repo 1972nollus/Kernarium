@@ -6,7 +6,7 @@ Subject: [PATCH] kosmickrisp: support unused dynamic-rendering attachments
 ---
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   1 +
  src/kosmickrisp/vulkan/kk_cmd_draw.c          | 230 ++++---
- src/kosmickrisp/vulkan/kk_physical_device.c   |  12 +
+ src/kosmickrisp/vulkan/kk_physical_device.c   |  10 +
  src/kosmickrisp/vulkan/kk_shader.c            | 267 +++++++--
  src/kosmickrisp/vulkan/kk_shader.h            |  22 +
  src/kosmickrisp/vulkan/meson.build            |  14 +
@@ -16,7 +16,7 @@ Subject: [PATCH] kosmickrisp: support unused dynamic-rendering attachments
  .../unused_att.frag.h                         |  37 ++
  .../unused_attachment_shaders/unused_att.vert |  10 +
  .../unused_att.vert.h                         |  57 ++
- 12 files changed, 1099 insertions(+), 139 deletions(-)
+ 12 files changed, 1097 insertions(+), 139 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_unused_attachment_gaps.cpp
  create mode 100755 src/kosmickrisp/vulkan/tests/unused_attachment_shaders/generate.sh
  create mode 100644 src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.frag
@@ -37,10 +37,10 @@ index 46a45bce227fa7ae459b636ddbde7aa7e1ceedb7..3fa01aeff965059195da06ba85887442
     struct kk_attachment stencil_att;
     struct kk_attachment fsr_att;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c046c29e5 100644
+index 86ed6c42a64f3099ae19294b46ad6e0414389c51..1b263112c867c6b1b217bf3bc62246effcc7cbe9 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -186,6 +186,7 @@ static void
+@@ -185,6 +185,7 @@ static void
  kk_set_color_attachments(mtl_render_pass_descriptor *pass_descriptor,
                           struct kk_rendering_state *render,
                           const struct vk_dynamic_graphics_state *dyn,
@@ -48,7 +48,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
                           bool force_attachment_load)
  {
     for (uint32_t i = 0; i < ARRAY_SIZE(render->color_att); i++) {
-@@ -199,7 +200,8 @@ kk_set_color_attachments(mtl_render_pass_descriptor *pass_descriptor,
+@@ -198,7 +199,8 @@ kk_set_color_attachments(mtl_render_pass_descriptor *pass_descriptor,
        uint8_t logical_index = dyn->cal.color_map[i];
        render->color_map[i] = logical_index;
  
@@ -58,7 +58,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
           continue;
        }
        mtl_render_pass_attachment_descriptor *attachment_descriptor =
-@@ -223,6 +225,83 @@ kk_set_color_attachments(mtl_render_pass_descriptor *pass_descriptor,
+@@ -222,6 +224,83 @@ kk_set_color_attachments(mtl_render_pass_descriptor *pass_descriptor,
     }
  }
  
@@ -142,7 +142,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
  VKAPI_ATTR void VKAPI_CALL
  kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
                       const VkRenderingInfo *pRenderingInfo)
-@@ -301,13 +380,15 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
+@@ -300,13 +379,15 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
     if (no_framebuffer) {
        framebuffer_extent.width = render->area.extent.width;
        framebuffer_extent.height = render->area.extent.height;
@@ -164,7 +164,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
  
     /* Check if we are rendering to the whole framebuffer. Required to understand
      * if we need to load to avoid clearing all attachment when loading.
-@@ -341,43 +422,12 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
+@@ -340,43 +421,12 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
        (!is_whole_framebuffer && does_any_attachment_clear) ||
        (render->flags & VK_RENDERING_RESUMING_BIT);
  
@@ -213,7 +213,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
  
     /* Render targets are always arrays */
     mtl_render_pass_descriptor_set_render_target_array_length(
-@@ -396,29 +446,12 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
+@@ -395,29 +445,12 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
     if (!no_framebuffer)
        cs_start_render(cmd);
  
@@ -249,7 +249,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
     cmd->state.gfx.need_to_start_render_pass = no_framebuffer;
  
     kk_cmd_buffer_dirty_all_gfx(cmd);
-@@ -864,22 +897,27 @@ kk_force_attachment_load(struct kk_cmd_buffer *cmd)
+@@ -863,22 +896,27 @@ kk_force_attachment_load(struct kk_cmd_buffer *cmd)
     struct kk_rendering_state *render = &cmd->state.gfx.render;
  
     for (uint32_t i = 0; i < render->color_att_count; i++) {
@@ -281,7 +281,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
        mtl_render_pass_attachment_descriptor *att =
           mtl_render_pass_descriptor_get_stencil_attachment(
              cmd->state.gfx.render_pass_descriptor);
-@@ -891,31 +929,52 @@ kk_force_attachment_load(struct kk_cmd_buffer *cmd)
+@@ -890,31 +928,52 @@ kk_force_attachment_load(struct kk_cmd_buffer *cmd)
  static void
  kk_flush_render_pass(struct kk_cmd_buffer *cmd)
  {
@@ -344,7 +344,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
     }
  }
  
-@@ -945,7 +1004,16 @@ kk_flush_pipeline(struct kk_cmd_buffer *cmd)
+@@ -944,7 +1003,16 @@ kk_flush_pipeline(struct kk_cmd_buffer *cmd)
  
     if (IS_SHADER_DIRTY(VERTEX)) {
        struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
@@ -363,7 +363,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
           mtl_set_depth_stencil_state(enc, gfx->depth_stencil_state);
     }
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 0c11b757d1e2436617c73cd802f53a0da5b873bc..1f396d5546761608835ed882005f77f5afffc188 100644
+index 0c11b757d1e2436617c73cd802f53a0da5b873bc..628b8e8bdb3411697499a8207ea0f13d97580fd8 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -167,6 +167,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -374,18 +374,16 @@ index 0c11b757d1e2436617c73cd802f53a0da5b873bc..1f396d5546761608835ed882005f77f5
        .EXT_extended_dynamic_state3 = true,
        .EXT_external_memory_metal = true,
        .EXT_external_memory_host = true,
-@@ -433,6 +434,17 @@ kk_get_device_features(
+@@ -433,6 +434,15 @@ kk_get_device_features(
        /* VK_EXT_depth_clip_control */
        .depthClipControl = true,
  
 +      /* VK_EXT_dynamic_rendering_unused_attachments
 +       *
-+       * Metal keeps render-pass attachments independent from the pixel
-+       * formats declared by the bound pipeline.  A missing attachment drops
-+       * the corresponding output, while an attachment omitted by the
-+       * pipeline still receives its render-pass load and store actions.  Keep
-+       * using the application's pipeline object directly; no attachment-mask
-+       * pipeline variants are needed.
++       * A render pass may leave some of the pipeline's colour attachments
++       * unbound. A Metal render pipeline must describe the attachments the
++       * pass binds, so such a draw uses one created for the bound colour
++       * mask; see kk_shader_render_pipeline().
 +       */
 +      .dynamicRenderingUnusedAttachments = true,
 +
@@ -393,7 +391,7 @@ index 0c11b757d1e2436617c73cd802f53a0da5b873bc..1f396d5546761608835ed882005f77f5
        .extendedDynamicState3DepthClampEnable = true,
        .extendedDynamicState3DepthClipNegativeOneToOne = true,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index a1d1b5b54468efa2e5f09e5abc9fc63bd7041d77..77bb894fea70f63e25081f7aa08ab26656cdcbf1 100644
+index fc2bb0a0e5e09869b8a3727cd56d9f8c09620f0a..4f27d90b90c088abe8dad9b6ee5fa6e1aeeff41a 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -425,6 +425,32 @@ kk_get_logical_color_att_index(const struct vk_graphics_pipeline_state *state,
@@ -720,7 +718,7 @@ index a1d1b5b54468efa2e5f09e5abc9fc63bd7041d77..77bb894fea70f63e25081f7aa08ab266
  kk_compile_shaders(struct vk_device *device, uint32_t shader_count,
                     struct vk_shader_compile_info *infos,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 2d0d0f2bcd3f3a7b7942c07fa8c212e29e7ea884..ef0c4563a1a766887f0b51c68ef10250727723c0 100644
+index e16fb1986b75e96894487112796b5bd1286a8487..c14ac9789877ffc1fe6b8b4253c51e83a72a2017 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -19,6 +19,8 @@
@@ -732,7 +730,7 @@ index 2d0d0f2bcd3f3a7b7942c07fa8c212e29e7ea884..ef0c4563a1a766887f0b51c68ef10250
  struct kk_cmd_buffer;
  
  enum kk_texture_flags {
-@@ -148,10 +150,20 @@ struct msl_compile_data {
+@@ -146,10 +148,20 @@ struct msl_compile_data {
     char *entrypoint_name;
  };
  
@@ -753,7 +751,7 @@ index 2d0d0f2bcd3f3a7b7942c07fa8c212e29e7ea884..ef0c4563a1a766887f0b51c68ef10250
     struct kk_shader_info info;
     struct msl_compile_data msl_data[MESA_SHADER_STAGES];
     struct msl_compile_data transform_feedback_pre_gs_msl;
-@@ -199,6 +211,16 @@ VkResult kk_compile_nir_shader(struct kk_device *dev, nir_shader *nir,
+@@ -205,6 +217,16 @@ VkResult kk_compile_nir_shader(struct kk_device *dev, nir_shader *nir,
                                 const VkAllocationCallbacks *alloc,
                                 struct kk_shader **shader_out);
  

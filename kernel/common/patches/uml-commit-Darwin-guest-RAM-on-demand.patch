@@ -3,41 +3,38 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 24 Sep 2026 11:27:10 +0900
 Subject: [PATCH] uml: commit Darwin guest RAM on demand
 
-Free-page reporting was written against a sparse physical-memory file,
-punching reported ranges out of it. The Darwin runtime now backs guest
-RAM with anonymous memory, has nothing to punch, and refuses the
-request, so the reporter disabled itself on its first attempt and a
-guest that once peaked kept that memory for the rest of the boot. On
-physical iOS the whole of mem= was wired before the guest started, so
-the footprint never moved at all.
+The Darwin runtime backs guest RAM with anonymous memory, and nothing
+gives it back, so a guest that once peaked keeps that memory for the rest
+of the boot. On physical iOS the whole of mem= is wired before the guest
+starts, so the footprint never moves at all.
 
 Make the guest tell the host which RAM it uses. Guest RAM starts
 uncommitted; mem_init() commits what memblock handed out before the page
 allocator existed, and arch_alloc_page() commits a chunk the first time
 the allocator hands out one of its pages, outside the zone lock and
 before the caller can touch it. A host that wires guest RAM wires it
-then. Free-page reporting releases free chunks again: the host drops
-them from the process footprint and unwires them on iOS. The host keeps
-a released range's contents only until it wants the memory and does not
-count it, so it has to be committed again before reuse; skipping that
-would let the emulator exceed its memory limit unseen and leave reused
-guest pages unwired. One bit per 32-page chunk records what the host
-holds, and the hook costs the allocation fast path one load once every
-chunk is committed.
+then. Free-page reporting releases free chunks: the host drops them from
+the process footprint and unwires them on iOS. The host keeps a released
+range's contents only until it wants the memory and does not count it,
+so it has to be committed again before reuse; skipping that would let
+the emulator exceed its memory limit unseen and leave reused guest pages
+unwired. One bit per 32-page chunk records what the host holds, and the
+hook costs the allocation fast path one load once every chunk is
+committed.
 
 This adds darwin_uml_physmem_release() and darwin_uml_physmem_commit()
-to the bridge, version 12, and retires the file hole-punch path.
+to the bridge, version 12.
 ---
  arch/um/include/asm/page.h                  |  11 ++
- arch/um/include/shared/os.h                 |   7 +-
+ arch/um/include/shared/os.h                 |   4 +
  arch/um/kernel/mem.c                        |   2 +
- arch/um/kernel/physmem.c                    | 180 ++++++++++++++++----
- arch/um/os-Darwin/mem.c                     |  34 ++--
+ arch/um/kernel/physmem.c                    | 199 ++++++++++++++++++++
+ arch/um/os-Darwin/mem.c                     |  24 +++
  arch/um/os-Darwin/skas/process.c            |   4 +-
  arch/um/os-Darwin/uml_darwin_abi.h          |   4 +-
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   4 +-
  arch/um/os-Darwin/uml_darwin_memory.h       |   9 +
- 9 files changed, 190 insertions(+), 65 deletions(-)
+ 9 files changed, 255 insertions(+), 6 deletions(-)
 
 diff --git a/arch/um/include/asm/page.h b/arch/um/include/asm/page.h
 index 2c49472072cfc3d7d78e352abdd0e67bda2c3401..fbf0e8e340e09075f4383f1133f5aafe14a41f7d 100644
@@ -62,16 +59,13 @@ index 2c49472072cfc3d7d78e352abdd0e67bda2c3401..fbf0e8e340e09075f4383f1133f5aafe
  #include <linux/types.h>
  #include <asm/vm-flags.h>
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index aae65897f9f64c828de831876c7aa20b8cf63664..b9fcc80df13687109f1c737b98db5672a4b85395 100644
+index 6cd49a51fd6ac538b1406af80c2222a82fa2830d..b9fcc80df13687109f1c737b98db5672a4b85395 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
-@@ -201,9 +201,10 @@ extern void uml_rtc_stop_alarm_thread(void);
+@@ -201,6 +201,10 @@ extern void uml_rtc_stop_alarm_thread(void);
  
  /* mem.c */
  extern int create_mem_file(unsigned long long len);
--extern int os_discard_file_range(int fd,
--				 unsigned long long offset,
--				 unsigned long long length);
 +extern int os_physmem_release(unsigned long long offset,
 +			      unsigned long long length);
 +extern int os_physmem_commit(unsigned long long offset,
@@ -97,47 +91,43 @@ index 94ab67fa3b6aca2c966b5ab8df6ad8ec54cd84f2..e2b7dd38000bebf08b907bfc21eabd75
  }
  
 diff --git a/arch/um/kernel/physmem.c b/arch/um/kernel/physmem.c
-index 4862ee81cc6d5496227d6d4a3425acfbb2db5705..551df349835fdcfc22139481962fce15184f2bee 100644
+index e739fa5ab8f956ab8802ee7a759eb2134a03be4b..551df349835fdcfc22139481962fce15184f2bee 100644
 --- a/arch/um/kernel/physmem.c
 +++ b/arch/um/kernel/physmem.c
-@@ -4,6 +4,7 @@
+@@ -4,9 +4,12 @@
   */
  
  #include <linux/module.h>
 +#include <linux/bitmap.h>
  #include <linux/memblock.h>
  #include <linux/mm.h>
- #include <linux/page_reporting.h>
-@@ -346,27 +347,127 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
++#include <linux/page_reporting.h>
+ #include <linux/pfn.h>
++#include <linux/scatterlist.h>
+ #include <linux/spinlock.h>
+ #include <asm/page.h>
+ #include <asm/sections.h>
+@@ -342,6 +345,202 @@ void __init setup_physmem(unsigned long start, unsigned long reserve_end,
+ 	max_low_pfn = min_low_pfn + (map_size >> PAGE_SHIFT);
+ }
  
- #ifdef CONFIG_PAGE_REPORTING
- /*
-- * Free-page reporting for the Darwin host.
++#ifdef CONFIG_PAGE_REPORTING
++/*
 + * Guest RAM on demand.
-  *
-- * mem= is a ceiling, not a reservation: the physical-memory file is sparse and
-- * host pages appear on first touch. Nothing ever gave them back, though, so a
-- * guest that once peaked stayed expensive for the rest of its life. That is
-- * the wrong shape for a phone, where the host may have 2 GiB in total.
++ *
 + * mem= is a ceiling, not a reservation. The host backs guest RAM with
 + * anonymous memory: macOS faults it in on first touch, and physical iOS wires
 + * it so that it is never compressed. Either way nothing gave pages back, so a
 + * guest that once peaked stayed expensive for the rest of its life, which is
 + * the wrong shape for a phone.
-  *
-- * The buddy allocator already knows which pages are free. Report them and
-- * punch the matching range out of the backing file, which drops the resident
-- * host pages at once. The range keeps reading as zero and re-materializes on
-- * the next write, so a reported page needs no fault-in handshake to be usable
-- * again.
++ *
 + * Guest RAM therefore starts uncommitted. mem_init() commits what memblock
 + * handed out before the page allocator existed, and arch_alloc_page() commits
 + * a chunk the first time the allocator hands out one of its pages, outside
 + * the zone lock and before the caller can touch it. A host that wires guest
 + * RAM wires it then, so the footprint follows what the guest has used rather
 + * than what it was offered.
-  *
-- * The minimum order is deliberately well below pageblock_order. A 16 KiB
++ *
 + * The buddy allocator also knows which pages are free again. Free-page
 + * reporting hands them back to the host, which drops them from the process
 + * footprint and, on iOS, unwires them. A released range has to be committed
@@ -147,14 +137,12 @@ index 4862ee81cc6d5496227d6d4a3425acfbb2db5705..551df349835fdcfc22139481962fce15
 + * Releases and commits cover whole chunks of 2^UML_PHYSMEM_CHUNK_ORDER pages,
 + * the minimum reporting order, so one bit per chunk records what the host
 + * holds. The order is deliberately well below pageblock_order. A 16 KiB
-  * profile makes a pageblock 32 MiB, and a busy guest rarely has a whole one
-- * free; 512 KiB still amortizes one host call over 32 pages. Override it with
-- * page_reporting.page_reporting_order= when a workload wants otherwise.
++ * profile makes a pageblock 32 MiB, and a busy guest rarely has a whole one
 + * free; 512 KiB still amortizes one host call over 32 pages. A larger
 + * page_reporting.page_reporting_order= still works. A smaller one reports
 + * ranges this code leaves committed.
-  */
- #define UML_PAGE_REPORTING_ORDER 5
++ */
++#define UML_PAGE_REPORTING_ORDER 5
 +#define UML_PHYSMEM_CHUNK_ORDER UML_PAGE_REPORTING_ORDER
 +#define UML_PHYSMEM_CHUNK_PAGES (1UL << UML_PHYSMEM_CHUNK_ORDER)
 +
@@ -163,8 +151,7 @@ index 4862ee81cc6d5496227d6d4a3425acfbb2db5705..551df349835fdcfc22139481962fce15
 +static unsigned long physmem_chunks;
 +static atomic_long_t physmem_uncommitted_chunks = ATOMIC_LONG_INIT(0);
 +static bool physmem_release_failed;
- 
--static bool physmem_discard_failed;
++
 +static void physmem_commit(unsigned long chunk, unsigned long count)
 +{
 +	unsigned long long offset = PFN_PHYS(chunk << UML_PHYSMEM_CHUNK_ORDER);
@@ -247,48 +234,27 @@ index 4862ee81cc6d5496227d6d4a3425acfbb2db5705..551df349835fdcfc22139481962fce15
 +		physmem_commit(chunk, 1);
 +	}
 +}
- 
- static int uml_report_free_pages(struct page_reporting_dev_info *prdev,
- 				 struct scatterlist *sgl, unsigned int nents)
-@@ -374,31 +475,29 @@ static int uml_report_free_pages(struct page_reporting_dev_info *prdev,
- 	struct scatterlist *sg;
- 	unsigned int index;
- 
--	if (physmem_discard_failed)
++
++static int uml_report_free_pages(struct page_reporting_dev_info *prdev,
++				 struct scatterlist *sgl, unsigned int nents)
++{
++	struct scatterlist *sg;
++	unsigned int index;
++
 +	if (READ_ONCE(physmem_release_failed))
- 		return 0;
- 	for_each_sg(sgl, sg, nents, index) {
--		unsigned long long offset;
--		unsigned long phys;
--		int fd, err;
--
--		phys = page_to_pfn(sg_page(sg)) << PAGE_SHIFT;
--		fd = phys_mapping(phys, &offset);
--		/* Only the physical-memory file is ours to punch. */
--		if (fd != physmem_fd)
--			continue;
++		return 0;
++	for_each_sg(sgl, sg, nents, index) {
 +		unsigned long pfn = page_to_pfn(sg_page(sg));
 +		unsigned long pages = sg->length >> PAGE_SHIFT;
 +		unsigned long chunk, count;
 +		unsigned long long offset = PFN_PHYS(pfn);
 +		int err;
 +
- 		/*
--		 * A range that is not page aligned did not come from the free
--		 * lists, and punching the wrong offset would discard live
--		 * guest memory. Refuse rather than trust it.
++		/*
 +		 * Only whole chunks of guest RAM are released. A reported range
 +		 * is a free buddy block, so it is aligned to its own size; a
 +		 * smaller one than a chunk stays committed.
- 		 */
--		if (!IS_ALIGNED(offset, PAGE_SIZE) ||
--		    !IS_ALIGNED(sg->length, PAGE_SIZE)) {
--			physmem_discard_failed = true;
--			pr_warn("Darwin free-page reporting disabled: misaligned range offset=%llx length=%x\n",
--				offset, sg->length);
--			return 0;
--		}
--		err = os_discard_file_range(fd, offset, sg->length);
++		 */
 +		if (!IS_ALIGNED(pfn, UML_PHYSMEM_CHUNK_PAGES) ||
 +		    !IS_ALIGNED(pages, UML_PHYSMEM_CHUNK_PAGES) ||
 +		    offset + sg->length > physmem_size)
@@ -298,19 +264,18 @@ index 4862ee81cc6d5496227d6d4a3425acfbb2db5705..551df349835fdcfc22139481962fce15
 +		if (chunk + count > physmem_chunks)
 +			continue;
 +		err = os_physmem_release(offset, sg->length);
- 		if (err) {
- 			/*
- 			 * Stop trying rather than failing a reporting cycle
-@@ -406,11 +505,20 @@ static int uml_report_free_pages(struct page_reporting_dev_info *prdev,
- 			 * the optimization must not cost the guest anything
- 			 * else.
- 			 */
--			physmem_discard_failed = true;
++		if (err) {
++			/*
++			 * Stop trying rather than failing a reporting cycle
++			 * every two seconds for the rest of the boot. Losing
++			 * the optimization must not cost the guest anything
++			 * else.
++			 */
 +			WRITE_ONCE(physmem_release_failed, true);
- 			pr_warn("Darwin free-page reporting disabled: host refused to release %x bytes at %llx (%d)\n",
- 				sg->length, offset, err);
- 			return 0;
- 		}
++			pr_warn("Darwin free-page reporting disabled: host refused to release %x bytes at %llx (%d)\n",
++				sg->length, offset, err);
++			return 0;
++		}
 +		/*
 +		 * The pages are isolated from the free lists until this callback
 +		 * returns, and the zone lock orders these bits before any
@@ -320,71 +285,68 @@ index 4862ee81cc6d5496227d6d4a3425acfbb2db5705..551df349835fdcfc22139481962fce15
 +			if (!test_and_set_bit(chunk, physmem_uncommitted))
 +				atomic_long_inc(&physmem_uncommitted_chunks);
 +		}
- 	}
- 	return 0;
- }
++	}
++	return 0;
++}
++
++static struct page_reporting_dev_info uml_page_reporting = {
++	.report = uml_report_free_pages,
++	.order = UML_PAGE_REPORTING_ORDER,
++};
++
++static int __init uml_page_reporting_init(void)
++{
++	int err = page_reporting_register(&uml_page_reporting);
++
++	if (err)
++		pr_warn("Darwin free-page reporting unavailable (%d)\n", err);
++	else
++		pr_info("Darwin free-page reporting returns free guest memory to the host\n");
++	return 0;
++}
++late_initcall(uml_page_reporting_init);
++#endif /* CONFIG_PAGE_REPORTING */
++
+ int phys_mapping(unsigned long phys, unsigned long long *offset_out)
+ {
+ 	int fd = -1;
 diff --git a/arch/um/os-Darwin/mem.c b/arch/um/os-Darwin/mem.c
-index 9d21f0a1a45407b6c9b24f9b58b38bafbc4cc5fe..12e4934ffda251dc11e4aaefde4bd645f6cfbe78 100644
+index 182e71b7517618d359bdb9a25526d18c5dc7951c..12e4934ffda251dc11e4aaefde4bd645f6cfbe78 100644
 --- a/arch/um/os-Darwin/mem.c
 +++ b/arch/um/os-Darwin/mem.c
-@@ -2,7 +2,6 @@
- 
- #include <errno.h>
- #include <fcntl.h>
--#include <string.h>
- #include <unistd.h>
- #include <os.h>
- #include "bridge.h"
-@@ -25,30 +24,25 @@ int create_mem_file(unsigned long long length)
+@@ -22,3 +22,27 @@ int create_mem_file(unsigned long long length)
+ 	}
+ 	return fd;
  }
- 
- /*
-- * Return a range of the physical-memory file to the host. The file is sparse
-- * and mapped MAP_SHARED, so punching a hole drops the resident pages
-- * immediately; the range keeps reading as zero and re-materializes on the next
-- * write, which is exactly the contract a freed guest page needs.
++
++/*
 + * Hand a free range of guest RAM back to the host, or take a released one
 + * back before the guest uses it. The offsets are physical addresses, which is
 + * what the physical-memory backing is indexed by; the host decides what
 + * releasing and committing mean for its memory (iOS also unwires and wires).
-  */
--int os_discard_file_range(int fd, unsigned long long offset,
--			  unsigned long long length)
++ */
 +int os_physmem_release(unsigned long long offset, unsigned long long length)
- {
--	fpunchhole_t hole;
++{
 +	if (length == 0)
 +		return 0;
 +	if (darwin_uml_physmem_release(offset, length) < 0)
 +		return -errno;
 +	return 0;
 +}
- 
++
 +int os_physmem_commit(unsigned long long offset, unsigned long long length)
 +{
- 	if (length == 0)
- 		return 0;
--	memset(&hole, 0, sizeof(hole));
--	hole.fp_offset = (off_t)offset;
--	hole.fp_length = (off_t)length;
--	/*
--	 * Through the fixed-arity bridge rather than fcntl() directly. fcntl()
--	 * is variadic, and Apple's arm64 ABI passes variadic arguments on the
--	 * stack while this translation unit passes them in registers, so a
--	 * direct call hands libc a garbage third argument - observed as EINVAL
--	 * and EFAULT from the same code on consecutive builds. Every other
--	 * fcntl() in os-Darwin that has a real argument goes the same way.
--	 */
--	if (darwin_uml_fcntl(fd, F_PUNCHHOLE, (long)&hole) < 0)
++	if (length == 0)
++		return 0;
 +	if (darwin_uml_physmem_commit(offset, length) < 0)
- 		return -errno;
- 	return 0;
- }
++		return -errno;
++	return 0;
++}
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 8cfd9f19c65dd4c2dd708ba615cdee06a7285a5b..f8068b196c5b1b3ae9ee56ce9b6bb1662b9d57bc 100644
+index 326a0dc9db221ce9fdaf8653256d559a0b4c93fb..0d57cc6869baf11dbaef7dbe6d5df28998119edf 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -24,8 +24,8 @@
+@@ -23,8 +23,8 @@
   * These checks make an ABI drift fail at the kernel compiler rather than at a
   * guest boundary after register state has been reinterpreted. */
  _Static_assert(sizeof(unsigned long) == 8, "Darwin UML ABI requires LP64");

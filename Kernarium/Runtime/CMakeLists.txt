@@ -99,15 +99,12 @@ set(_kernarium_vulkan_cts_mandatory
     "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vulkan_cts_mandatory_1_4_6_2.txt")
 set(_kernarium_cts_header
     "${CMAKE_CURRENT_BINARY_DIR}/KernariumCtsCampaigns.hpp")
-set(_kernarium_vulkan_cts_options)
-if(UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
-    list(APPEND _kernarium_vulkan_cts_options
-        --experimental-venus
-        --vulkan-receipt "${_kernarium_vulkan_cts_receipt}")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${_kernarium_vulkan_cts_receipt}"
-        "${_kernarium_vulkan_cts_mandatory}")
-endif()
+set(_kernarium_vulkan_cts_options
+    --experimental-venus
+    --vulkan-receipt "${_kernarium_vulkan_cts_receipt}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${_kernarium_vulkan_cts_receipt}"
+    "${_kernarium_vulkan_cts_mandatory}")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${_kernarium_cts_generator}"
     "${_kernarium_cts_runner}"

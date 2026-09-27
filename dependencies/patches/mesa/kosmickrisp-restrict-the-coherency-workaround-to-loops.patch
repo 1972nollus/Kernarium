@@ -101,10 +101,10 @@ index bb69632610518a9419bf7a4aee2d455a124ca18c..0f2057716dadb7792a1940fb3b5a777a
  KK_WORKAROUND_5
  ---------------
 diff --git a/src/kosmickrisp/compiler/nir_to_msl.c b/src/kosmickrisp/compiler/nir_to_msl.c
-index 92be4b42325f940c1a2ee0e05d884bb2381e99d7..01019686c12f1b15ec5f7b5f68abd013466574dd 100644
+index 76b3cc9740463a32d5b4dc1ebad096a7bc09fc05..318a0cbd32a608cab739ff7ebc066b1b1c052af3 100644
 --- a/src/kosmickrisp/compiler/nir_to_msl.c
 +++ b/src/kosmickrisp/compiler/nir_to_msl.c
-@@ -226,6 +226,32 @@ output_type(nir_shader *shader)
+@@ -246,6 +246,32 @@ output_type(nir_shader *shader)
     }
  }
  
@@ -137,7 +137,7 @@ index 92be4b42325f940c1a2ee0e05d884bb2381e99d7..01019686c12f1b15ec5f7b5f68abd013
  static void
  emit_local_vars(struct nir_to_msl_ctx *ctx, nir_shader *shader)
  {
-@@ -1436,8 +1462,8 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1456,8 +1482,8 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
     case nir_intrinsic_load_global: {
        enum gl_access_qualifier access = nir_intrinsic_access(instr);
        const char *type = msl_type_for_def(ctx->types, &instr->def);
@@ -148,7 +148,7 @@ index 92be4b42325f940c1a2ee0e05d884bb2381e99d7..01019686c12f1b15ec5f7b5f68abd013
        const char *addressing = apply_workaround || (access & ACCESS_COHERENT)
                                    ? "coherent device"
                                    : "device";
-@@ -1509,8 +1535,8 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
+@@ -1529,8 +1555,8 @@ intrinsic_to_msl(struct nir_to_msl_ctx *ctx, nir_intrinsic_instr *instr)
     case nir_intrinsic_store_global: {
        enum gl_access_qualifier access = nir_intrinsic_access(instr);
        const char *type = msl_type_for_src(ctx->types, &instr->src[0]);

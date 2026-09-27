@@ -17,9 +17,9 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/asm/memory.h                   |   8 +
  arch/arm64/um/asm/mman.h                     |   7 +
  arch/arm64/um/asm/perf_event.h               |  19 +++
- arch/arm64/um/asm/processor.h                |  55 +++++++
+ arch/arm64/um/asm/processor.h                |  51 ++++++
  arch/arm64/um/asm/ptrace-abi.h               |  15 ++
- arch/arm64/um/asm/ptrace.h                   |  48 ++++++
+ arch/arm64/um/asm/ptrace.h                   |  47 ++++++
  arch/arm64/um/asm/rqspinlock.h               |  10 ++
  arch/arm64/um/asm/segment.h                  |   8 +
  arch/arm64/um/asm/set_memory.h               |  53 ++++++
@@ -52,7 +52,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/sysrq.c                        |  18 ++
  arch/arm64/um/tls.c                          |  22 +++
  arch/arm64/um/user-offsets.c                 |  63 +++++++
- 47 files changed, 1504 insertions(+)
+ 47 files changed, 1499 insertions(+)
  create mode 100644 arch/arm64/Makefile.um
  create mode 100644 arch/arm64/um/Kconfig
  create mode 100644 arch/arm64/um/Makefile
@@ -506,10 +506,10 @@ index 0000000000000000000000000000000000000000..26374c04b7f3e50c59c9b870e9c3f4ff
 +#endif /* _ASM_UM_ARM64_PERF_EVENT_H */
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..3cf7106cc489ca9442d562b9a938233804f938d6
+index 0000000000000000000000000000000000000000..f503747b0908286678542c2c57ae58d536f3726d
 --- /dev/null
 +++ b/arch/arm64/um/asm/processor.h
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,51 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef _ASM_UM_ARM64_PROCESSOR_H
 +#define _ASM_UM_ARM64_PROCESSOR_H
@@ -546,10 +546,6 @@ index 0000000000000000000000000000000000000000..3cf7106cc489ca9442d562b9a9382338
 +#define KSTK_EIP(task) UPT_IP(&(task)->thread.regs.regs)
 +#define KSTK_ESP(task) KSTK_REG(task, HOST_SP)
 +#define KSTK_EBP(task) KSTK_REG(task, HOST_FP)
-+
-+#define ARCH_IS_STACKGROW(address) \
-+	((address) + 65536 + 32 * sizeof(unsigned long) >= \
-+	 UPT_SP(&current->thread.regs.regs))
 +
 +static __always_inline void cpu_relax(void)
 +{
@@ -588,10 +584,10 @@ index 0000000000000000000000000000000000000000..3afa6ed84585b358f068303471d9b3d6
 +#endif
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..dd7a005f3ce8b2653f6bceeed00bf672151c126d
+index 0000000000000000000000000000000000000000..cc0e19f4217c47239fa6a6eb4ee3da9f35d994bc
 --- /dev/null
 +++ b/arch/arm64/um/asm/ptrace.h
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,47 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef _ASM_UM_ARM64_PTRACE_H
 +#define _ASM_UM_ARM64_PTRACE_H
@@ -613,7 +609,6 @@ index 0000000000000000000000000000000000000000..dd7a005f3ce8b2653f6bceeed00bf672
 +#define PT_REGS_ORIG_SYSCALL(state) PT_REGS_X(state, 8)
 +#define PT_REGS_SYSCALL_RET(state) PT_REGS_X(state, 0)
 +
-+#define PT_FIX_EXEC_STACK(sp) do { } while (0)
 +#define PT_REGS_SET_SYSCALL_RETURN(state, result) \
 +	(PT_REGS_SYSCALL_RET(state) = (result))
 +

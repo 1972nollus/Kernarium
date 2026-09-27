@@ -7,27 +7,27 @@ Apply the reviewed final-state topic without intermediate churn.
 ---
  arch/um/os-Darwin/Makefile       |   15 +
  arch/um/os-Darwin/bridge.h       |    8 +
- arch/um/os-Darwin/compat.c       |  125 +++
- arch/um/os-Darwin/file.c         |  544 +++++++++++++
- arch/um/os-Darwin/helper.c       |  204 +++++
+ arch/um/os-Darwin/compat.c       |  125 ++++
+ arch/um/os-Darwin/file.c         |  544 +++++++++++++++
+ arch/um/os-Darwin/helper.c       |  204 ++++++
  arch/um/os-Darwin/internal.h     |   61 ++
- arch/um/os-Darwin/irq.c          |  351 +++++++++
+ arch/um/os-Darwin/irq.c          |  351 ++++++++++
  arch/um/os-Darwin/irq.h          |   10 +
  arch/um/os-Darwin/main.c         |   56 ++
- arch/um/os-Darwin/mem.c          |   41 +
+ arch/um/os-Darwin/mem.c          |   41 ++
  arch/um/os-Darwin/process.c      |  105 +++
  arch/um/os-Darwin/sigio.c        |   34 +
- arch/um/os-Darwin/signal.c       |  315 ++++++++
+ arch/um/os-Darwin/signal.c       |  313 +++++++++
  arch/um/os-Darwin/skas/Makefile  |    7 +
  arch/um/os-Darwin/skas/mem.c     |   33 +
- arch/um/os-Darwin/skas/process.c | 1264 ++++++++++++++++++++++++++++++
- arch/um/os-Darwin/smp.c          |  453 +++++++++++
+ arch/um/os-Darwin/skas/process.c | 1123 ++++++++++++++++++++++++++++++
+ arch/um/os-Darwin/smp.c          |  453 ++++++++++++
  arch/um/os-Darwin/start_up.c     |   72 ++
- arch/um/os-Darwin/time.c         |  280 +++++++
+ arch/um/os-Darwin/time.c         |  262 +++++++
  arch/um/os-Darwin/tty.c          |   22 +
- arch/um/os-Darwin/umid.c         |   40 +
+ arch/um/os-Darwin/umid.c         |   40 ++
  arch/um/os-Darwin/util.c         |  133 ++++
- 22 files changed, 4173 insertions(+)
+ 22 files changed, 4012 insertions(+)
  create mode 100644 arch/um/os-Darwin/Makefile
  create mode 100644 arch/um/os-Darwin/bridge.h
  create mode 100644 arch/um/os-Darwin/compat.c
@@ -1679,10 +1679,10 @@ index 0000000000000000000000000000000000000000..af15cfb1cea085afb42d9f8ab678d32f
 +}
 diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..297d5b15b40a1235b8dfbaa9e3b6958073668ab1
+index 0000000000000000000000000000000000000000..6e3c0a96f14dc0e1ad14177011a2aab126dd3584
 --- /dev/null
 +++ b/arch/um/os-Darwin/signal.c
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,313 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
@@ -1700,8 +1700,6 @@ index 0000000000000000000000000000000000000000..297d5b15b40a1235b8dfbaa9e3b69580
 +#include <sysdep/faultinfo.h>
 +#include <sysdep/ptrace.h>
 +#include <smp.h>
-+
-+#define UML_ARM64_FAULT_PAGE 14
 +
 +struct darwin_signal_state {
 +	volatile sig_atomic_t enabled;
@@ -2052,10 +2050,10 @@ index 0000000000000000000000000000000000000000..66322482ae2fc166561d4fd0bc3f3651
 +}
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c5e7609b7
+index 0000000000000000000000000000000000000000..888bdf3d858c1076a643ee3ec6571c197c3dfed6
 --- /dev/null
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -0,0 +1,1264 @@
+@@ -0,0 +1,1123 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
@@ -2101,6 +2099,14 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +_Static_assert(offsetof(struct uml_pt_regs, fp) ==
 +	      DARWIN_UML_ABI_GUEST_REGISTERS_SIZE,
 +	       "uml_pt_regs ABI prefix size drift");
++/* The host encodes guest faults with the bridge values that faultinfo.h
++ * decodes. */
++_Static_assert(UML_ARM64_FAULT_WRITE == DARWIN_UML_FAULT_WRITE,
++	       "fault write bit drift");
++_Static_assert(UML_ARM64_FAULT_EXECUTE == DARWIN_UML_FAULT_EXECUTE,
++	       "fault execute bit drift");
++_Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
++	       "fault page trap drift");
 +
 +#define DARWIN_CLONE_VM 0x00000100UL
 +#define DARWIN_TASK_HASH_BUCKETS 4096
@@ -2144,29 +2150,9 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +static int shutdown_mode = -1;
 +static unsigned int live_embedded_threads;
 +static volatile sig_atomic_t cooperative_timers;
-+static unsigned long long profile_activate_ns;
-+static unsigned long long profile_sync_ns;
-+static unsigned long long profile_guest_ns;
-+static unsigned long long profile_stack_ns;
-+static unsigned long long profile_syscall_ns;
-+static unsigned long long profile_fault_ns;
-+static unsigned long long profile_boundaries;
-+static unsigned long long profile_thread_create_ns;
-+static unsigned long long profile_thread_creates;
 +static void timer_signal_mask(int how, sigset_t *old_mask);
 +static void remove_task(struct darwin_task_thread *task);
 +static void task_put(struct darwin_task_thread *task);
-+
-+static void profile_add(unsigned long long *counter,
-+			unsigned long long value)
-+{
-+	__atomic_fetch_add(counter, value, __ATOMIC_RELAXED);
-+}
-+
-+static unsigned long long profile_read(unsigned long long *counter)
-+{
-+	return __atomic_load_n(counter, __ATOMIC_RELAXED);
-+}
 +
 +static void create_current_host_task_key(void)
 +{
@@ -2296,34 +2282,6 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +					 0, __ATOMIC_RELEASE,
 +					 __ATOMIC_RELAXED))
 +		panic("Darwin: CPU%d execution carrier ownership was lost", cpu);
-+}
-+
-+static int boundary_profile_enabled(void)
-+{
-+	static int enabled = -1;
-+
-+	if (enabled < 0)
-+		enabled = getenv("UML_PROFILE_TRAPS") != NULL;
-+	return enabled;
-+}
-+
-+static int static_dispatch_trace_enabled(void)
-+{
-+	static int enabled = -1;
-+	static int minimum_pid = -1;
-+	static int exact_pid = -1;
-+
-+	if (enabled < 0) {
-+		const char *minimum;
-+
-+		enabled = getenv("UML_STATIC_TRACE") != NULL;
-+		minimum = getenv("UML_STATIC_TRACE_MIN_PID");
-+		minimum_pid = minimum == NULL ? 0 : atoi(minimum);
-+		minimum = getenv("UML_STATIC_TRACE_PID");
-+		exact_pid = minimum == NULL ? 0 : atoi(minimum);
-+	}
-+	return enabled && get_current_pid() >= minimum_pid &&
-+		(exact_pid == 0 || get_current_pid() == exact_pid);
 +}
 +
 +void darwin_enable_cooperative_timers(void)
@@ -2526,7 +2484,6 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +	struct darwin_task_thread *task = calloc(1, sizeof(*task));
 +	pthread_attr_t attributes;
 +	sigset_t previous_mask;
-+	unsigned long long create_start = 0;
 +	int error;
 +
 +	if (task == NULL)
@@ -2584,14 +2541,7 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +	 * pre-SMP asynchronous source is still in use.
 +	 */
 +	timer_signal_mask(SIG_BLOCK, &previous_mask);
-+	if (boundary_profile_enabled())
-+		create_start = os_nsecs();
 +	error = pthread_create(&task->thread, &attributes, task_entry, task);
-+	if (boundary_profile_enabled()) {
-+		profile_add(&profile_thread_create_ns,
-+			    os_nsecs() - create_start);
-+		profile_add(&profile_thread_creates, 1);
-+	}
 +	if (pthread_sigmask(SIG_SETMASK, &previous_mask, NULL) != 0)
 +		panic("Darwin: unable to restore creator timer signal mask");
 +	pthread_attr_destroy(&attributes);
@@ -2798,20 +2748,6 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +	struct darwin_task_thread *task;
 +	struct darwin_task_thread *current_task;
 +
-+	if (boundary_profile_enabled())
-+		os_warn("Darwin boundary ns: count=%llu activate=%llu sync=%llu "
-+			"guest=%llu stack=%llu syscall=%llu "
-+			"fault=%llu thread_creates=%llu thread_create=%llu\n",
-+			profile_read(&profile_boundaries),
-+			profile_read(&profile_activate_ns),
-+			profile_read(&profile_sync_ns),
-+			profile_read(&profile_guest_ns),
-+			profile_read(&profile_stack_ns),
-+			profile_read(&profile_syscall_ns),
-+			profile_read(&profile_fault_ns),
-+			profile_read(&profile_thread_creates),
-+			profile_read(&profile_thread_create_ns));
-+
 +	current_task = get_current_host_task();
 +	if (current_task != NULL) {
 +		pthread_mutex_lock(&current_task->lock);
@@ -2950,8 +2886,6 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +		unsigned long guest_tls;
 +		const unsigned int *guest_ipi_sequence;
 +		unsigned int guest_ipi_snapshot;
-+		unsigned long long profile_start = 0;
-+		int profiling = boundary_profile_enabled();
 +		int event;
 +#ifndef CONFIG_PAGE_SIZE_16KB
 +		int snapshots_mm;
@@ -2967,32 +2901,12 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +		 */
 +		unblock_signals();
 +
-+		if (static_dispatch_trace_enabled())
-+			os_warn("Darwin static loop begin cpu=%d pid=%d ip=%#lx generation=%lu\n",
-+				uml_curr_cpu(), get_current_pid(), UPT_IP(registers),
-+				mm_id == NULL ? 0 :
-+				mm_id->darwin_generation);
-+
-+		if (profiling) {
-+			profile_add(&profile_boundaries, 1);
-+			profile_start = os_nsecs();
-+		}
 +		int result = darwin_uml_vm_activate(mm_id == NULL ? 0 :
 +						    mm_id->darwin_generation);
-+		if (profiling) {
-+			profile_add(&profile_activate_ns,
-+				    os_nsecs() - profile_start);
-+			profile_start = os_nsecs();
-+		}
 +
 +		if (result < 0)
 +			fatal_userspace(registers, "VM activation", result);
 +		current_mm_sync();
-+		if (profiling) {
-+			profile_add(&profile_sync_ns,
-+				    os_nsecs() - profile_start);
-+			profile_start = os_nsecs();
-+		}
 +		/* The active mapping generation is the process's live address space. Linux
 +		 * copy_{to,from}_user accesses these same host addresses, and mapping
 +		 * changes enter the runtime through current_mm_sync().  Rebuilding and
@@ -3032,23 +2946,6 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +		 * is responsible for consuming the pending vector.
 +		 */
 +		darwin_ipi_poll();
-+		if (static_dispatch_trace_enabled())
-+			os_warn("Darwin static boundary cpu=%d pid=%d event=%d ip=%#lx sp=%#lx nr=%#lx x0=%#lx x1=%#lx x2=%#lx x19=%#lx x25=%#lx fault=%#lx execute=%d write=%d\n",
-+				uml_curr_cpu(), get_current_pid(), event,
-+				UPT_IP(registers), UPT_SP(registers),
-+				UPT_X(registers, 8), UPT_X(registers, 0),
-+				UPT_X(registers, 1), UPT_X(registers, 2),
-+				UPT_X(registers, 19), UPT_X(registers, 25),
-+				FAULT_ADDRESS(registers->faultinfo),
-+				event == DARWIN_UML_EVENT_FAULT ?
-+					FAULT_EXECUTE(registers->faultinfo) : 0,
-+				event == DARWIN_UML_EVENT_FAULT ?
-+					FAULT_WRITE(registers->faultinfo) : 0);
-+		if (profiling) {
-+			profile_add(&profile_guest_ns,
-+				    os_nsecs() - profile_start);
-+			profile_start = os_nsecs();
-+		}
 +		current_set_tls(guest_tls);
 +		/*
 +		 * Sample an expired cooperative deadline before changing the frame
@@ -3064,23 +2961,14 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +		 */
 +		darwin_timer_poll(registers);
 +		registers->is_user = 0;
-+		if (static_dispatch_trace_enabled())
-+			os_warn("Darwin static boundary TLS reconciled\n");
 +#ifndef CONFIG_PAGE_SIZE_16KB
 +		result = reconcile_implicit_stack_quarter(registers);
-+		if (static_dispatch_trace_enabled())
-+			os_warn("Darwin static boundary stack result=%d\n", result);
-+		if (profiling)
-+			profile_add(&profile_stack_ns,
-+				    os_nsecs() - profile_start);
 +		if (result < 0)
 +			fatal_userspace(registers, "stack-quarter reconciliation",
 +					result);
 +#endif
 +		switch (event) {
 +		case DARWIN_UML_EVENT_SYSCALL:
-+			if (profiling)
-+				profile_start = os_nsecs();
 +			registers->orig_x0 = UPT_X(registers, 0);
 +#ifndef CONFIG_PAGE_SIZE_16KB
 +			snapshots_mm = syscall_snapshots_address_space(registers);
@@ -3088,15 +2976,6 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +				fatal_userspace(registers, "pre-clone VM snapshot", -1);
 +#endif
 +			handle_syscall(registers);
-+			if (static_dispatch_trace_enabled())
-+				os_warn("Darwin static syscall cpu=%d pid=%d nr=%ld ret=%#lx\n",
-+					uml_curr_cpu(), get_current_pid(),
-+					(long)UPT_SYSCALL_NR(registers),
-+					UPT_X(registers, 0));
-+			if (profiling) {
-+				profile_add(&profile_syscall_ns,
-+					    os_nsecs() - profile_start);
-+			}
 +			/* copy_mm() records the parent's COW protection changes in
 +			 * UML's normal TLB synchronization state.  The next userspace
 +			 * boundary replays those changes, and Darwin's mixed-slot write
@@ -3110,29 +2989,16 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +			unsigned long fault = FAULT_ADDRESS(registers->faultinfo);
 +			int retry;
 +
-+			if (profiling)
-+				profile_start = os_nsecs();
-+
 +			/* A valid 4 KiB Linux PTE may still be an unmaterialized
 +			 * quarter of a 16 KiB Darwin VM slot.  Force all four PTEs
 +			 * into the shadow MMU before asking Linux to resolve a real
 +			 * guest page fault.
 +			 */
 +			if (fault >= 4096 && fault < 0x600000000000UL) {
-+				if (static_dispatch_trace_enabled())
-+					os_warn("Darwin static fault sync begin address=%#lx execute=%d write=%d\n",
-+						fault, FAULT_EXECUTE(registers->faultinfo),
-+						FAULT_WRITE(registers->faultinfo));
 +				current_mm_force_sync(fault);
-+				if (static_dispatch_trace_enabled())
-+					os_warn("Darwin static fault sync complete address=%#lx\n",
-+						fault);
 +				retry = darwin_uml_vm_retry_fault(fault,
 +					FAULT_EXECUTE(registers->faultinfo),
 +					FAULT_WRITE(registers->faultinfo));
-+				if (static_dispatch_trace_enabled())
-+					os_warn("Darwin static fault retry address=%#lx result=%d\n",
-+						fault, retry);
 +				if (retry < 0)
 +					fatal_userspace(registers, "fault retry", retry);
 +				/* A 16 KiB host slot can combine writable and Linux-COW
@@ -3187,9 +3053,6 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +							"post-store breakpoint", -1);
 +				}
 +			}
-+			if (profiling)
-+				profile_add(&profile_fault_ns,
-+					    os_nsecs() - profile_start);
 +			break;
 +		}
 +		case DARWIN_UML_EVENT_INTERRUPT:
@@ -3306,14 +3169,8 @@ index 0000000000000000000000000000000000000000..8591d5a58460b8fb08b615469a88663c
 +				event, UPT_IP(registers));
 +			fatal_sigsegv();
 +		}
-+		if (static_dispatch_trace_enabled())
-+			os_warn("Darwin static epilogue timer begin\n");
 +		darwin_timer_poll(registers);
-+		if (static_dispatch_trace_enabled())
-+			os_warn("Darwin static epilogue timer complete\n");
 +		interrupt_end();
-+		if (static_dispatch_trace_enabled())
-+			os_warn("Darwin static epilogue interrupt complete\n");
 +		if (!darwin_timers_cooperative()) {
 +			change_sig(SIGALRM, 1);
 +			change_sig(SIGALRM, 0);
@@ -3859,16 +3716,15 @@ index 0000000000000000000000000000000000000000..623321096c9f33390e1810039ad69090
 +}
 diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..06199debb04605afe3d519c63c9ab0602d462e6b
+index 0000000000000000000000000000000000000000..cda7615a807973776493c66797ec477f007daca6
 --- /dev/null
 +++ b/arch/um/os-Darwin/time.c
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,262 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
 +#include <pthread.h>
 +#include <signal.h>
-+#include <stdlib.h>
 +#include <string.h>
 +#include <sys/select.h>
 +#include <sys/time.h>
@@ -3900,15 +3756,6 @@ index 0000000000000000000000000000000000000000..06199debb04605afe3d519c63c9ab060
 +static long long timespec_to_ns(const struct timespec *time)
 +{
 +	return (long long)time->tv_sec * UM_NSEC_PER_SEC + time->tv_nsec;
-+}
-+
-+static int timer_trace_enabled(void)
-+{
-+	static int enabled = -1;
-+
-+	if (enabled < 0)
-+		enabled = getenv("UML_TIMER_TRACE") != NULL;
-+	return enabled;
 +}
 +
 +long long os_persistent_clock_emulation(void)
@@ -3950,9 +3797,6 @@ index 0000000000000000000000000000000000000000..06199debb04605afe3d519c63c9ab060
 +	timer.it_value.tv_usec = usecs % 1000000;
 +	if (periodic)
 +		timer.it_interval = timer.it_value;
-+	if (timer_trace_enabled())
-+		os_warn("Darwin timer CPU%d: set %s %llu ns\n", cpu,
-+			periodic ? "periodic" : "one-shot", nsecs);
 +	if (darwin_timers_cooperative() || cpu != 0)
 +		return 0;
 +	if (setitimer(ITIMER_REAL, &timer, NULL) < 0)
@@ -3977,8 +3821,6 @@ index 0000000000000000000000000000000000000000..06199debb04605afe3d519c63c9ab060
 +
 +	state->active = 0;
 +	state->deadline_ns = 0;
-+	if (timer_trace_enabled())
-+		os_warn("Darwin timer CPU%d: disable\n", cpu);
 +	if (cpu == 0 && !darwin_timers_cooperative())
 +		setitimer(ITIMER_REAL, &timer, NULL);
 +}
@@ -4000,8 +3842,6 @@ index 0000000000000000000000000000000000000000..06199debb04605afe3d519c63c9ab060
 +		if (cpu_timers[cpu].active)
 +			cpu_timers[cpu].deadline_ns = now +
 +				cpu_timers[cpu].delay_ns;
-+	if (timer_trace_enabled())
-+		os_warn("Darwin timer: cooperative deadline enabled\n");
 +}
 +
 +static int consume_expired_timer(struct darwin_cpu_timer *state,
@@ -4133,10 +3973,9 @@ index 0000000000000000000000000000000000000000..06199debb04605afe3d519c63c9ab060
 +		darwin_ipi_poll();
 +		if (fire_timer)
 +			timer_handler(SIGALRM, NULL, &registers);
-+		/* Darwin's poll(2) does not report tty readiness reliably while
-+		 * running on the interrupted signal frame.  Re-poll after returning
-+		 * to the idle kernel context so console and network fd IRQs wake their
-+		 * wait queues.
++		/* CPU0 dispatches descriptor IRQs here, from idle kernel context.
++		 * The kqueue notification thread's SIGUSR2 only ends the wait
++		 * above; its handler does no work.
 +		 */
 +		memset(&registers, 0, sizeof(registers));
 +		if (cpu == 0)

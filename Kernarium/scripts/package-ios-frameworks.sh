@@ -11,18 +11,7 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-PRODUCT=${UML_APPLE_GPU_PRODUCT:-apple-gpu-vulkan-experiment}
-case "$PRODUCT" in
-apple-gpu-vulkan-experiment)
-	DEFAULT_OUTPUT="$ROOT_DIR/.build/kernarium-xcframeworks"
-	;;
-*)
-	printf '%s\n' \
-		"Kernarium/scripts/package-ios-frameworks.sh: unsupported Apple GPU product: $PRODUCT" >&2
-	exit 1
-	;;
-esac
-OUTPUT=${KERNARIUM_XCFRAMEWORK_OUTPUT:-"$DEFAULT_OUTPUT"}
+OUTPUT=${KERNARIUM_XCFRAMEWORK_OUTPUT:-"$ROOT_DIR/.build/kernarium-xcframeworks"}
 
 fail()
 {
@@ -63,7 +52,7 @@ RUNTIME_ANDROID_16K="KRuntime_ACK_6_18_16K"
 DEVICE_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-device-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
 DEVICE_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-device-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
-DEVICE_GPU="$ROOT_DIR/.build/dependencies/$PRODUCT/ios-device-arm64/Frameworks"
+DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64/Frameworks"
 STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
 ZSTD="$ROOT_DIR/.build/dependencies/ios-zstd/LibZstd.xcframework"
 
@@ -74,8 +63,7 @@ GPU_FRAMEWORKS="MesaEGL MesaGallium KosmicKrisp"
 # Packaging is an independent trust boundary: revalidate the complete source,
 # contract, provenance, binary-platform, and provider-negative policy before
 # consuming the device prefix.
-"$ROOT_DIR/dependencies/build-apple-gpu.sh" \
-	--product "$PRODUCT" --platform ios --verify-only
+"$ROOT_DIR/dependencies/build-apple-gpu.sh" --platform ios --verify-only
 "$ROOT_DIR/dependencies/build-ios-storage.sh"
 "$ROOT_DIR/dependencies/build-ios-zstd.sh"
 

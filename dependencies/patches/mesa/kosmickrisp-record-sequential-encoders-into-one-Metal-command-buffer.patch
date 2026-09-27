@@ -42,9 +42,9 @@ A pool may now be destroyed with a command buffer still recording without
 leaking its open command buffers.
 ---
  docs/drivers/kosmickrisp/workarounds.rst      |   7 +-
- src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 173 ++++--
- src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  34 ++
- src/kosmickrisp/vulkan/kk_cmd_draw.c          |  40 +-
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 168 ++++--
+ src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  32 ++
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          |  36 +-
  src/kosmickrisp/vulkan/kk_queue.c             |   4 +-
  src/kosmickrisp/vulkan/meson.build            |  20 +
  .../tests/command_buffer_shaders/color.frag   |   7 +
@@ -53,7 +53,7 @@ leaking its open command buffers.
  .../tests/command_buffer_shaders/color.vert.h |  47 ++
  .../tests/command_buffer_shaders/generate.sh  |   7 +
  .../tests/test_command_buffer_consolidation.c | 526 ++++++++++++++++++
- 12 files changed, 838 insertions(+), 56 deletions(-)
+ 12 files changed, 826 insertions(+), 57 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag.h
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.vert
@@ -87,7 +87,7 @@ index 3a7408608df069d4761c4b999a6ad228bc62316f..82bb255db89732f917f5839107fecbdf
  The cost is one attachment load and store per such draw; a pass that never
  writes the layer, or is not layered, is untouched. The
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c815cb08fe 100644
+index f021f797231748d65960d14ac6fec34063e008b8..9619f9d99f14b8b0ffa7f562cba11b171e365035 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -79,6 +79,9 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
@@ -132,7 +132,7 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
  
     return vk_command_buffer_end(&cmd->vk);
  }
-@@ -313,16 +313,64 @@ kk_can_ignore_barrier(VkAccessFlags2 access, VkPipelineStageFlags2 stage)
+@@ -313,16 +313,62 @@ kk_can_ignore_barrier(VkAccessFlags2 access, VkPipelineStageFlags2 stage)
     return (!(access ^ ignore_access)) || (!(stage ^ ignore_stage));
  }
  
@@ -146,7 +146,6 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
 +      struct kk_device *dev = kk_cmd_buffer_device(cmd);
 +      cmd->main.cmd_buf = mtl_new_command_buffer(dev->mtl_handle);
 +      mtl_begin_command_buffer(cmd->main.cmd_buf, cmd->gfx.allocator);
-+      cmd->main.encoder_count = 0u;
 +   }
 +   return cmd->main.cmd_buf;
 +}
@@ -164,7 +163,6 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
 +   mtl_end_command_buffer(cmd->main.cmd_buf);
 +   util_dynarray_append(&cmd->submit_cmd_bufs, cmd->main.cmd_buf);
 +   cmd->main.cmd_buf = NULL;
-+   cmd->main.encoder_count = 0u;
 +}
 +
  void
@@ -194,13 +192,13 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
 +      cs_end_main(cmd);
 +   cmd->main.render_needed_pre = false;
 +
++   cmd->main.render_follows_work = cmd->main.cmd_buf != NULL;
 +   cmd->gfx.cmd_buf = cs_open_main(cmd);
 +   cmd->gfx.in_main = true;
-+   cmd->main.before_render = cmd->main.encoder_count++;
     cmd->gfx.encoder = mtl_new_render_command_encoder_with_descriptor(
        cmd->gfx.cmd_buf, state->render_pass_descriptor);
  
-@@ -385,38 +433,68 @@ cs_get_render(struct kk_cmd_buffer *cmd)
+@@ -385,38 +431,67 @@ cs_get_render(struct kk_cmd_buffer *cmd)
  }
  
  static void
@@ -213,7 +211,6 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
 -   mtl_begin_command_buffer(es->cmd_buf, es->allocator);
 +   if (in_main) {
 +      es->cmd_buf = cs_open_main(cmd);
-+      cmd->main.encoder_count++;
 +   } else {
 +      struct kk_device *dev = kk_cmd_buffer_device(cmd);
 +      es->cmd_buf = mtl_new_command_buffer(dev->mtl_handle);
@@ -242,7 +239,7 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
 +    * yet, a dynamic vertex input for one, and starting the encoder has
 +    * marked all of it dirty for the next draw to flush. */
 +   if (cmd->state.gfx.draw_state_flushed)
-+      kk_cmd_buffer_flush_gfx_state(cmd);
++      kk_flush_gfx_state(cmd);
  }
  
  mtl_compute_encoder *
@@ -266,7 +263,7 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
 -                                  cmd->argument_table);
 +         /* Its own command buffer runs before the whole main one, which is
 +          * sound only while the render encoder is the main one's first. */
-+         if (cmd->main.before_render > 0u)
++         if (cmd->main.render_follows_work)
 +            cs_split_render(cmd);
 +         kk_start_compute_encoder(cmd, cmd->pre_gfx, false);
        }
@@ -288,16 +285,7 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
  }
  
  static void
-@@ -462,6 +540,8 @@ kk_stop_encoder(struct kk_cmd_buffer *cmd, struct kk_encoder_state *es)
- 
-       mtl_compute_encoder *publish =
-          mtl_new_compute_command_encoder(es->cmd_buf);
-+      if (es->in_main)
-+         cmd->main.encoder_count++;
-       if (publish == NULL) {
-          vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-       } else {
-@@ -481,9 +561,12 @@ kk_stop_encoder(struct kk_cmd_buffer *cmd, struct kk_encoder_state *es)
+@@ -481,9 +556,12 @@ kk_stop_encoder(struct kk_cmd_buffer *cmd, struct kk_encoder_state *es)
     util_dynarray_clear(&es->ts_resolves);
     util_dynarray_clear(&es->ts_samples);
  
@@ -313,7 +301,7 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
     es->cmd_buf = NULL;
  }
  
-@@ -493,27 +576,39 @@ cs_end(struct kk_cmd_buffer *cmd)
+@@ -493,27 +571,39 @@ cs_end(struct kk_cmd_buffer *cmd)
     assert(cmd);
  
     if (cmd->pre_gfx->encoder) {
@@ -361,10 +349,10 @@ index 23b1a175097e7f9132094a72db74a808c6702054..91c7366da9840e713e954e55a38f55c8
  kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd, uint64_t addr)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 80895d13997d57eb7ac9dff482762824fb74326d..7340a99ac8266145af197fa78d52a2bfc15cf6e2 100644
+index 1b1b941a091821afbf262375c4941bd7c00d008d..e0bca96fa29bc9247fee77fe998308b55ae91d04 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-@@ -214,6 +214,11 @@ struct kk_graphics_state {
+@@ -213,6 +213,11 @@ struct kk_graphics_state {
     bool is_cull_front_and_back;
     bool need_to_start_render_pass;
  
@@ -376,7 +364,7 @@ index 80895d13997d57eb7ac9dff482762824fb74326d..7340a99ac8266145af197fa78d52a2bf
     /* Draws issued into the render encoder that is currently open. Reset every
      * time a render encoder starts. KK_WORKAROUND_18 uses it. */
     uint32_t draws_since_encoder_start;
-@@ -337,6 +342,9 @@ struct kk_encoder_state {
+@@ -336,6 +341,9 @@ struct kk_encoder_state {
     mtl_fence *ts_fences[2];
     /* Render-stage timestamp samples (struct kk_ts_sample). */
     struct util_dynarray ts_samples;
@@ -386,7 +374,7 @@ index 80895d13997d57eb7ac9dff482762824fb74326d..7340a99ac8266145af197fa78d52a2bf
  };
  
  struct kk_cmd_buffer {
-@@ -348,6 +356,28 @@ struct kk_cmd_buffer {
+@@ -347,6 +355,26 @@ struct kk_cmd_buffer {
     struct kk_encoder_state *pre_gfx;
     struct kk_encoder_state *post_gfx;
  
@@ -404,10 +392,8 @@ index 80895d13997d57eb7ac9dff482762824fb74326d..7340a99ac8266145af197fa78d52a2bf
 +    * holds; see cs_end_main. */
 +   struct {
 +      mtl_command_buffer *cmd_buf;
-+      /* Encoders recorded into cmd_buf. */
-+      uint32_t encoder_count;
-+      /* Encoders recorded into cmd_buf before the open render encoder. */
-+      uint32_t before_render;
++      /* The open render encoder follows other encoders in cmd_buf. */
++      bool render_follows_work;
 +      /* The last render encoder needed compute before its pass. */
 +      bool render_needed_pre;
 +   } main;
@@ -415,35 +401,31 @@ index 80895d13997d57eb7ac9dff482762824fb74326d..7340a99ac8266145af197fa78d52a2bf
     void *drawable;
     mtl_argument_table *argument_table;
  
-@@ -420,6 +450,10 @@ void kk_cmd_buffer_set_vertex_amplification(struct kk_cmd_buffer *cmd,
+@@ -419,6 +447,10 @@ void kk_cmd_buffer_set_vertex_amplification(struct kk_cmd_buffer *cmd,
                                              uint32_t count);
  mtl_compute_encoder *cs_get_compute(struct kk_cmd_buffer *cmd, bool pre_gfx);
  void cs_end(struct kk_cmd_buffer *cmd);
 +void cs_flush(struct kk_cmd_buffer *cmd);
 +/* Re-emits the graphics state of the draw being recorded into a render
 + * encoder that restarted after the draw flushed it. */
-+void kk_cmd_buffer_flush_gfx_state(struct kk_cmd_buffer *cmd);
++void kk_flush_gfx_state(struct kk_cmd_buffer *cmd);
  void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
                                          uint64_t addr);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 77900462fca6f5291de45fff6702996550d3e89d..bcd1a8c3ccc8071cd7b36b6a8b23aef14f422d94 100644
+index d9ec6876dd0c8ed8e6a63a9ba4a6c67c458ba4fe..9fdf50c6326832640fb43fc07985a81ea5cf9f16 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1873,6 +1873,12 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
- #undef IS_SHADER_DIRTY
- #undef IS_DIRTY
+@@ -1830,7 +1830,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+    }
+ }
  
+-static void
 +void
-+kk_cmd_buffer_flush_gfx_state(struct kk_cmd_buffer *cmd)
-+{
-+   kk_flush_gfx_state(cmd);
-+}
-+
- /* Returns true if the draw was successfully converted. */
- static bool
- kk_convert_to_indirect_draw(struct kk_cmd_buffer *cmd,
-@@ -3366,20 +3372,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+ {
+    struct kk_graphics_state *gfx = &cmd->state.gfx;
+@@ -3353,20 +3353,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
  }
  
  static void
@@ -465,7 +447,7 @@ index 77900462fca6f5291de45fff6702996550d3e89d..bcd1a8c3ccc8071cd7b36b6a8b23aef1
     data->restart = cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable;
     data->restart_index =
        cmd->vk.dynamic_graphics_state.ia.primitive_restart_index;
-@@ -3508,6 +3502,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3495,6 +3483,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     }
  }
  
@@ -493,10 +475,10 @@ index 77900462fca6f5291de45fff6702996550d3e89d..bcd1a8c3ccc8071cd7b36b6a8b23aef1
  kk_CmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount,
             uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance)
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 2567bb2ed8048de8165d10ab51359eff628f348f..ebf40517b90a1c5490face607ff72b721ef30a59 100644
+index 4f3dab6394397f62a20e53ad5bde32518c8a6d1d..9ec6c4baa5c939acf4c33be005d5e22c35bf1779 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
-@@ -428,6 +428,7 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
+@@ -426,6 +426,7 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
     recording->queue = mtl_retain(queue);
     recording->allocator_cache = kk_command_allocator_cache_ref(
        kk_cmd_buffer_device(cmd)->allocator_cache);
@@ -504,7 +486,7 @@ index 2567bb2ed8048de8165d10ab51359eff628f348f..ebf40517b90a1c5490face607ff72b72
     recording->command_buffers = cmd->submit_cmd_bufs;
     cmd->submit_cmd_bufs = UTIL_DYNARRAY_INIT;
  
-@@ -450,8 +451,7 @@ rerecord_cmd_buffer(struct kk_cmd_buffer *cmd)
+@@ -448,8 +449,7 @@ rerecord_cmd_buffer(struct kk_cmd_buffer *cmd)
     vk_cmd_queue_execute(&cmd->vk.cmd_queue, kk_cmd_buffer_to_handle(cmd),
                          &dev->vk.dispatch_table);
  

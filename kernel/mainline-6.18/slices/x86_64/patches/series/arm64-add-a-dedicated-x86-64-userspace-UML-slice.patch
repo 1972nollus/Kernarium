@@ -8,10 +8,11 @@ dedicated 4 KiB Darwin compatibility slice accept only EM_X86_64
 userspace. Expose fixed x86-64 ELF, ptrace, core-register, TLS, syscall,
 and signal semantics without per-task architecture selection.
 
-Route native x86-64 and long-mode INT 0x80 entries through the gadget
-syscall adapters and construct native x86-64 signal and XSAVE frames.
-Add the slice-scoped MAP_32BIT and MAP_ABOVE4G flags plus low-window and
-above-4-GiB unmapped-area allocation.
+Generate the x86-64 dispatch table from the canonical Linux 6.18
+syscall_64.tbl. Route native x86-64 and long-mode INT 0x80 entries
+through the gadget syscall adapters and construct native x86-64 signal
+and XSAVE frames. Add the slice-scoped MAP_32BIT and MAP_ABOVE4G flags
+plus low-window and above-4-GiB unmapped-area allocation.
 
 Leave the shared host/kernel ABI, the native arm64 slice, and Android
 unchanged. Syscalls whose compat argument layouts require explicit
@@ -19,34 +20,38 @@ adapters remain rejected.
 
 Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
 ---
- arch/arm64/um/Kconfig                 |    9 +
- arch/arm64/um/Makefile                |    4 +-
- arch/arm64/um/asm/elf.h               |   66 +-
- arch/arm64/um/asm/mman.h              |    5 +
- arch/arm64/um/asm/processor.h         |   13 +-
- arch/arm64/um/asm/ptrace.h            |    4 +-
- arch/arm64/um/asm/syscall.h           |   12 +-
- arch/arm64/um/asm/user.h              |   29 +-
- arch/arm64/um/mmap.c                  |  128 +++
- arch/arm64/um/ptrace.c                |  108 ++-
- arch/arm64/um/shared/sysdep/ptrace.h  |  140 +++-
- arch/arm64/um/signal.c                |  540 ++++++++++--
- arch/arm64/um/tls.c                   |    3 +-
- arch/arm64/um/x86_64_syscalls.c       | 1088 +++++++++++++++++++++++++
- arch/um/include/asm/pgtable.h         |    5 +
- arch/um/include/asm/syscall-generic.h |    2 +-
- arch/um/kernel/exec.c                 |    5 +
- arch/um/kernel/process.c              |    2 +-
- arch/um/kernel/skas/syscall.c         |   23 +-
- arch/um/kernel/trap.c                 |    3 +
- arch/um/os-Darwin/skas/process.c      |   84 +-
- fs/eventpoll.c                        |    2 +-
- fs/open.c                             |    4 +-
- include/linux/eventpoll.h             |   24 +
- include/linux/fs.h                    |    2 +
- 25 files changed, 2127 insertions(+), 178 deletions(-)
+ arch/arm64/um/Kconfig                 |   9 +
+ arch/arm64/um/Makefile                |  19 +-
+ arch/arm64/um/asm/elf.h               |  66 ++-
+ arch/arm64/um/asm/mman.h              |   5 +
+ arch/arm64/um/asm/processor.h         |  13 +-
+ arch/arm64/um/asm/ptrace.h            |   4 +-
+ arch/arm64/um/asm/syscall.h           |  12 +-
+ arch/arm64/um/asm/unistd.h            |  33 ++
+ arch/arm64/um/asm/user.h              |  29 +-
+ arch/arm64/um/mmap.c                  | 128 ++++
+ arch/arm64/um/ptrace.c                | 108 +++-
+ arch/arm64/um/shared/sysdep/ptrace.h  | 140 ++++-
+ arch/arm64/um/signal.c                | 540 ++++++++++++++---
+ arch/arm64/um/tls.c                   |   3 +-
+ arch/arm64/um/x86_64_syscalls.c       | 806 ++++++++++++++++++++++++++
+ arch/arm64/um/x86_syscall_tables.c    |  32 +
+ arch/um/include/asm/pgtable.h         |   5 +
+ arch/um/include/asm/syscall-generic.h |   2 +-
+ arch/um/kernel/exec.c                 |   5 +
+ arch/um/kernel/process.c              |   2 +-
+ arch/um/kernel/skas/syscall.c         |  31 +-
+ arch/um/kernel/trap.c                 |   3 +
+ arch/um/os-Darwin/skas/process.c      |  82 ++-
+ fs/eventpoll.c                        |   2 +-
+ fs/open.c                             |   4 +-
+ include/linux/eventpoll.h             |  24 +
+ include/linux/fs.h                    |   2 +
+ 27 files changed, 1929 insertions(+), 180 deletions(-)
+ create mode 100644 arch/arm64/um/asm/unistd.h
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
+ create mode 100644 arch/arm64/um/x86_syscall_tables.c
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
 index 06086feb226da3a2012f1ca2cfb0dec9bb63f69d..8b11524ed704297ef448fc36bdf785f9763e451c 100644
@@ -69,17 +74,32 @@ index 06086feb226da3a2012f1ca2cfb0dec9bb63f69d..8b11524ed704297ef448fc36bdf785f9
  	int
  	default 18
 diff --git a/arch/arm64/um/Makefile b/arch/arm64/um/Makefile
-index b3bbae6cd5a149976a91c3df809f696e79d83ef0..eaf07b7cd8e73c3518a58986abd5e255fbf0ddc8 100644
+index b3bbae6cd5a149976a91c3df809f696e79d83ef0..476b8f2426167dd2d1c07c0f7b7d3a6075453492 100644
 --- a/arch/arm64/um/Makefile
 +++ b/arch/arm64/um/Makefile
-@@ -1,7 +1,9 @@
+@@ -1,7 +1,24 @@
  # SPDX-License-Identifier: GPL-2.0
  
  obj-y := bugs.o delay.o fault.o mem.o ptrace.o registers.o setjmp.o \
 -	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o
 +	signal.o subarch.o syscall_table.o syscalls.o sysrq.o tls.o \
 +	x86_64_syscalls.o
-+obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += mmap.o
++obj-$(CONFIG_UML_X86_64_USERSPACE_ONLY) += mmap.o x86_syscall_tables.o
++
++x86-syscalltbl := $(srctree)/scripts/syscalltbl.sh
++x86-syscall-64 := $(srctree)/arch/x86/entry/syscalls/syscall_64.tbl
++
++quiet_cmd_x86_systbl = X86SYSTBL $@
++      cmd_x86_systbl = $(CONFIG_SHELL) $(x86-syscalltbl) \
++		--abis $(abis) $< $@
++
++$(obj)/x86_syscalls_64.h: abis := common,64
++$(obj)/x86_syscalls_64.h: $(x86-syscall-64) $(x86-syscalltbl) FORCE
++	$(call if_changed,x86_systbl)
++
++$(obj)/x86_syscall_tables.o: $(obj)/x86_syscalls_64.h
++
++targets += x86_syscalls_64.h
  
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
@@ -199,7 +219,7 @@ index 2a075458f6d6e6a70a6c3429ab0aa809048ef4ae..f188b1fb4cd91c918ba1b4301edd8c80
  
  #ifdef UML_HOST_DARWIN
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
-index c113d51b88be1c7c68818bcbce0d4dc78763da46..9eb7d52d372c6a50a5c6ce8f34061320d5fa513d 100644
+index 6fd6da6c5816a452cec29b2cc4fe7605845236ad..7670607444d68b6a76bd5593fd032b0fa5cb81fb 100644
 --- a/arch/arm64/um/asm/processor.h
 +++ b/arch/arm64/um/asm/processor.h
 @@ -32,8 +32,9 @@ static inline void arch_copy_thread(struct arch_thread *from,
@@ -212,9 +232,9 @@ index c113d51b88be1c7c68818bcbce0d4dc78763da46..9eb7d52d372c6a50a5c6ce8f34061320
 +#define KSTK_EBP(task) \
 +	UPT_X86_64(&(task)->thread.regs.regs, UML_X86_64_RBP)
  
- #define ARCH_IS_STACKGROW(address) \
- 	((address) + 65536 + 32 * sizeof(unsigned long) >= \
-@@ -59,6 +60,14 @@ static __always_inline void cpu_relax(void)
+ #ifdef UML_HOST_DARWIN
+ void darwin_cpu_relax(void);
+@@ -55,6 +56,14 @@ static __always_inline void cpu_relax(void)
  
  #define task_pt_regs(task) (&(task)->thread.regs)
  
@@ -230,7 +250,7 @@ index c113d51b88be1c7c68818bcbce0d4dc78763da46..9eb7d52d372c6a50a5c6ce8f34061320
  
  #endif
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
-index dd7a005f3ce8b2653f6bceeed00bf672151c126d..b34556b3ba47a1c94130e12431e264ac70e6aaa9 100644
+index cc0e19f4217c47239fa6a6eb4ee3da9f35d994bc..0348469704c29f40dd0671fb3dd4ccd5382e62c8 100644
 --- a/arch/arm64/um/asm/ptrace.h
 +++ b/arch/arm64/um/asm/ptrace.h
 @@ -16,8 +16,8 @@ enum {
@@ -242,10 +262,10 @@ index dd7a005f3ce8b2653f6bceeed00bf672151c126d..b34556b3ba47a1c94130e12431e264ac
 +#define PT_REGS_ORIG_SYSCALL(state) ((state)->regs.orig_x0)
 +#define PT_REGS_SYSCALL_RET(state) UPT_SYSCALL_RETURN(&(state)->regs)
  
- #define PT_FIX_EXEC_STACK(sp) do { } while (0)
  #define PT_REGS_SET_SYSCALL_RETURN(state, result) \
+ 	(PT_REGS_SYSCALL_RET(state) = (result))
 diff --git a/arch/arm64/um/asm/syscall.h b/arch/arm64/um/asm/syscall.h
-index 9dfdeb2cc681efb4bcb590e7737e8f9ac9fb4c44..583e2b09186e4a2d24e8c938c38aa13d7af372f4 100644
+index 9dfdeb2cc681efb4bcb590e7737e8f9ac9fb4c44..ac47265672c80b9f30b18270b40e98ad1159a67b 100644
 --- a/arch/arm64/um/asm/syscall.h
 +++ b/arch/arm64/um/asm/syscall.h
 @@ -12,7 +12,17 @@ extern const sys_call_ptr_t sys_call_table[];
@@ -260,13 +280,52 @@ index 9dfdeb2cc681efb4bcb590e7737e8f9ac9fb4c44..583e2b09186e4a2d24e8c938c38aa13d
 +	return AUDIT_ARCH_X86_64;
  }
  
-+int uml_x86_64_syscall_number(int syscall);
++extern const sys_call_ptr_t uml_x86_64_sys_call_table[];
 +int uml_x86_32_syscall_number(int syscall);
 +int uml_x86_64_special_syscall(struct uml_pt_regs *regs, long *result);
 +long uml_x86_64_arch_prctl(struct uml_pt_regs *regs);
 +long uml_x86_64_fixup_uname(struct uml_pt_regs *regs, long result);
 +
  #endif
+diff --git a/arch/arm64/um/asm/unistd.h b/arch/arm64/um/asm/unistd.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..aae92d57f7410f6408f0acbc9675069ac15d9a03
+--- /dev/null
++++ b/arch/arm64/um/asm/unistd.h
+@@ -0,0 +1,33 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _ASM_UM_ARM64_UNISTD_H
++#define _ASM_UM_ARM64_UNISTD_H
++
++#define __ARCH_WANT_SYS_FORK
++#define __ARCH_WANT_SYS_GETPGRP
++#define __ARCH_WANT_SYS_CLONE
++#define __ARCH_WANT_SYS_PAUSE
++#define __ARCH_WANT_SYS_TIME
++#define __ARCH_WANT_SYS_UTIME
++#define __ARCH_WANT_SYS_VFORK
++#define __ARCH_WANT_NEW_STAT
++
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++/* These legacy entry points remain part of the x86 syscall tables even
++ * though native arm64 does not request their generic implementations.
++ */
++#define __ARCH_WANT_SYS_ALARM
++#define __ARCH_WANT_SYS_FADVISE64
++#endif
++
++#include <asm/unistd_64.h>
++
++#define NR_syscalls (__NR_syscalls)
++
++/*
++ * scripts/syscalltbl.sh emits every slot through the last entry in the Linux
++ * 6.18 x86 tables.  Keep these bounds synchronized with those generated
++ * tables; an out-of-range generated initializer makes the build fail.
++ */
++#define UML_X86_64_NR_SYSCALLS 470
++
++#endif
 diff --git a/arch/arm64/um/asm/user.h b/arch/arm64/um/asm/user.h
 index 5a52cb113531e762ff1ae11cd4eb829faa959b48..df4bc4b93f2e4bf46d06cc7b4e17350d27673ae6 100644
 --- a/arch/arm64/um/asm/user.h
@@ -1404,10 +1463,10 @@ index 0bc12342ef6b089a8f3622bc774757f3c2be8970..cfbf7f47ac4cd06b5ec5c20b664c59ff
  
 diff --git a/arch/arm64/um/x86_64_syscalls.c b/arch/arm64/um/x86_64_syscalls.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..cf93d90d126e6984b7fd90612242d8c5eaaec42a
+index 0000000000000000000000000000000000000000..080245ce771a548546b79b6139a60b036d418907
 --- /dev/null
 +++ b/arch/arm64/um/x86_64_syscalls.c
-@@ -0,0 +1,1088 @@
+@@ -0,0 +1,806 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <linux/errno.h>
@@ -1430,288 +1489,6 @@ index 0000000000000000000000000000000000000000..cf93d90d126e6984b7fd90612242d8c5
 +#include <asm/ptrace.h>
 +#include <asm/syscall.h>
 +#include <asm/unistd.h>
-+
-+/* x86-64 and asm-generic assign different numbers to the same six-argument
-+ * syscall ABI. Keep the translation explicit; calls with architecture-specific
-+ * structures or argument order stay rejected until they have a real adapter.
-+ */
-+int uml_x86_64_syscall_number(int syscall)
-+{
-+	switch (syscall) {
-+	case 0: return __NR_read;
-+	case 1: return __NR_write;
-+	case 3: return __NR_close;
-+	case 8: return __NR_lseek;
-+	case 9: return __NR_mmap;
-+	case 10: return __NR_mprotect;
-+	case 11: return __NR_munmap;
-+	case 12: return __NR_brk;
-+	case 13: return __NR_rt_sigaction;
-+	case 14: return __NR_rt_sigprocmask;
-+	case 15: return __NR_rt_sigreturn;
-+	case 16: return __NR_ioctl;
-+	case 17: return __NR_pread64;
-+	case 18: return __NR_pwrite64;
-+	case 19: return __NR_readv;
-+	case 20: return __NR_writev;
-+	case 24: return __NR_sched_yield;
-+	case 25: return __NR_mremap;
-+	case 26: return __NR_msync;
-+	case 27: return __NR_mincore;
-+	case 28: return __NR_madvise;
-+	case 32: return __NR_dup;
-+	case 35: return __NR_nanosleep;
-+	case 36: return __NR_getitimer;
-+	case 38: return __NR_setitimer;
-+	case 39: return __NR_getpid;
-+	case 40: return __NR_sendfile;
-+	case 41: return __NR_socket;
-+	case 42: return __NR_connect;
-+	case 43: return __NR_accept;
-+	case 44: return __NR_sendto;
-+	case 45: return __NR_recvfrom;
-+	case 46: return __NR_sendmsg;
-+	case 47: return __NR_recvmsg;
-+	case 48: return __NR_shutdown;
-+	case 49: return __NR_bind;
-+	case 50: return __NR_listen;
-+	case 51: return __NR_getsockname;
-+	case 52: return __NR_getpeername;
-+	case 53: return __NR_socketpair;
-+	case 54: return __NR_setsockopt;
-+	case 55: return __NR_getsockopt;
-+	case 59: return __NR_execve;
-+	case 60: return __NR_exit;
-+	case 61: return __NR_wait4;
-+	case 62: return __NR_kill;
-+	case 63: return __NR_uname;
-+	case 73: return __NR_flock;
-+	case 74: return __NR_fsync;
-+	case 75: return __NR_fdatasync;
-+	case 76: return __NR_truncate;
-+	case 77: return __NR_ftruncate;
-+	case 79: return __NR_getcwd;
-+	case 80: return __NR_chdir;
-+	case 81: return __NR_fchdir;
-+	case 95: return __NR_umask;
-+	case 96: return __NR_gettimeofday;
-+	case 97: return __NR_getrlimit;
-+	case 98: return __NR_getrusage;
-+	case 99: return __NR_sysinfo;
-+	case 100: return __NR_times;
-+	case 101: return __NR_ptrace;
-+	case 102: return __NR_getuid;
-+	case 103: return __NR_syslog;
-+	case 104: return __NR_getgid;
-+	case 105: return __NR_setuid;
-+	case 106: return __NR_setgid;
-+	case 107: return __NR_geteuid;
-+	case 108: return __NR_getegid;
-+	case 109: return __NR_setpgid;
-+	case 110: return __NR_getppid;
-+	case 112: return __NR_setsid;
-+	case 113: return __NR_setreuid;
-+	case 114: return __NR_setregid;
-+	case 115: return __NR_getgroups;
-+	case 116: return __NR_setgroups;
-+	case 117: return __NR_setresuid;
-+	case 118: return __NR_getresuid;
-+	case 119: return __NR_setresgid;
-+	case 120: return __NR_getresgid;
-+	case 121: return __NR_getpgid;
-+	case 122: return __NR_setfsuid;
-+	case 123: return __NR_setfsgid;
-+	case 124: return __NR_getsid;
-+	case 125: return __NR_capget;
-+	case 126: return __NR_capset;
-+	case 127: return __NR_rt_sigpending;
-+	case 128: return __NR_rt_sigtimedwait;
-+	case 129: return __NR_rt_sigqueueinfo;
-+	case 130: return __NR_rt_sigsuspend;
-+	case 131: return __NR_sigaltstack;
-+	case 135: return __NR_personality;
-+	case 137: return __NR_statfs;
-+	case 138: return __NR_fstatfs;
-+	case 140: return __NR_getpriority;
-+	case 141: return __NR_setpriority;
-+	case 142: return __NR_sched_setparam;
-+	case 143: return __NR_sched_getparam;
-+	case 144: return __NR_sched_setscheduler;
-+	case 145: return __NR_sched_getscheduler;
-+	case 146: return __NR_sched_get_priority_max;
-+	case 147: return __NR_sched_get_priority_min;
-+	case 148: return __NR_sched_rr_get_interval;
-+	case 149: return __NR_mlock;
-+	case 150: return __NR_munlock;
-+	case 151: return __NR_mlockall;
-+	case 152: return __NR_munlockall;
-+	case 153: return __NR_vhangup;
-+	case 155: return __NR_pivot_root;
-+	case 157: return __NR_prctl;
-+	case 160: return __NR_setrlimit;
-+	case 161: return __NR_chroot;
-+	case 162: return __NR_sync;
-+	case 163: return __NR_acct;
-+	case 164: return __NR_settimeofday;
-+	case 165: return __NR_mount;
-+	case 166: return __NR_umount2;
-+	case 167: return __NR_swapon;
-+	case 168: return __NR_swapoff;
-+	case 169: return __NR_reboot;
-+	case 170: return __NR_sethostname;
-+	case 171: return __NR_setdomainname;
-+	case 175: return __NR_init_module;
-+	case 176: return __NR_delete_module;
-+	case 179: return __NR_quotactl;
-+	case 186: return __NR_gettid;
-+	case 187: return __NR_readahead;
-+	case 188: return __NR_setxattr;
-+	case 189: return __NR_lsetxattr;
-+	case 190: return __NR_fsetxattr;
-+	case 191: return __NR_getxattr;
-+	case 192: return __NR_lgetxattr;
-+	case 193: return __NR_fgetxattr;
-+	case 194: return __NR_listxattr;
-+	case 195: return __NR_llistxattr;
-+	case 196: return __NR_flistxattr;
-+	case 197: return __NR_removexattr;
-+	case 198: return __NR_lremovexattr;
-+	case 199: return __NR_fremovexattr;
-+	case 200: return __NR_tkill;
-+	case 202: return __NR_futex;
-+	case 203: return __NR_sched_setaffinity;
-+	case 204: return __NR_sched_getaffinity;
-+	case 206: return __NR_io_setup;
-+	case 207: return __NR_io_destroy;
-+	case 208: return __NR_io_getevents;
-+	case 209: return __NR_io_submit;
-+	case 210: return __NR_io_cancel;
-+	case 217: return __NR_getdents64;
-+	case 218: return __NR_set_tid_address;
-+	case 219: return __NR_restart_syscall;
-+	case 221: return __NR_fadvise64;
-+	case 222: return __NR_timer_create;
-+	case 223: return __NR_timer_settime;
-+	case 224: return __NR_timer_gettime;
-+	case 225: return __NR_timer_getoverrun;
-+	case 226: return __NR_timer_delete;
-+	case 227: return __NR_clock_settime;
-+	case 228: return __NR_clock_gettime;
-+	case 229: return __NR_clock_getres;
-+	case 230: return __NR_clock_nanosleep;
-+	case 231: return __NR_exit_group;
-+	case 234: return __NR_tgkill;
-+	case 241: return __NR_mq_unlink;
-+	case 242: return __NR_mq_timedsend;
-+	case 243: return __NR_mq_timedreceive;
-+	case 244: return __NR_mq_notify;
-+	case 245: return __NR_mq_getsetattr;
-+	case 247: return __NR_waitid;
-+	case 248: return __NR_add_key;
-+	case 249: return __NR_request_key;
-+	case 250: return __NR_keyctl;
-+	case 251: return __NR_ioprio_set;
-+	case 252: return __NR_ioprio_get;
-+	case 254: return __NR_inotify_add_watch;
-+	case 255: return __NR_inotify_rm_watch;
-+	case 258: return __NR_mkdirat;
-+	case 259: return __NR_mknodat;
-+	case 260: return __NR_fchownat;
-+	case 263: return __NR_unlinkat;
-+	case 264: return __NR_renameat;
-+	case 265: return __NR_linkat;
-+	case 266: return __NR_symlinkat;
-+	case 267: return __NR_readlinkat;
-+	case 268: return __NR_fchmodat;
-+	case 269: return __NR_faccessat;
-+	case 270: return __NR_pselect6;
-+	case 271: return __NR_ppoll;
-+	case 272: return __NR_unshare;
-+	case 273: return __NR_set_robust_list;
-+	case 274: return __NR_get_robust_list;
-+	case 275: return __NR_splice;
-+	case 276: return __NR_tee;
-+	case 277: return __NR_sync_file_range;
-+	case 278: return __NR_vmsplice;
-+	case 280: return __NR_utimensat;
-+	case 281: return __NR_epoll_pwait;
-+	case 283: return __NR_timerfd_create;
-+	case 285: return __NR_fallocate;
-+	case 286: return __NR_timerfd_settime;
-+	case 287: return __NR_timerfd_gettime;
-+	case 288: return __NR_accept4;
-+	case 289: return __NR_signalfd4;
-+	case 290: return __NR_eventfd2;
-+	case 291: return __NR_epoll_create1;
-+	case 292: return __NR_dup3;
-+	case 294: return __NR_inotify_init1;
-+	case 295: return __NR_preadv;
-+	case 296: return __NR_pwritev;
-+	case 297: return __NR_rt_tgsigqueueinfo;
-+	case 298: return __NR_perf_event_open;
-+	case 299: return __NR_recvmmsg;
-+	case 301: return __NR_fanotify_mark;
-+	case 302: return __NR_prlimit64;
-+	case 303: return __NR_name_to_handle_at;
-+	case 305: return __NR_clock_adjtime;
-+	case 306: return __NR_syncfs;
-+	case 307: return __NR_sendmmsg;
-+	case 308: return __NR_setns;
-+	case 309: return __NR_getcpu;
-+	case 310: return __NR_process_vm_readv;
-+	case 311: return __NR_process_vm_writev;
-+	case 312: return __NR_kcmp;
-+	case 313: return __NR_finit_module;
-+	case 314: return __NR_sched_setattr;
-+	case 315: return __NR_sched_getattr;
-+	case 316: return __NR_renameat2;
-+	case 317: return __NR_seccomp;
-+	case 318: return __NR_getrandom;
-+	case 319: return __NR_memfd_create;
-+	case 321: return __NR_bpf;
-+	case 322: return __NR_execveat;
-+	case 323: return __NR_userfaultfd;
-+	case 324: return __NR_membarrier;
-+	case 325: return __NR_mlock2;
-+	case 326: return __NR_copy_file_range;
-+	case 327: return __NR_preadv2;
-+	case 328: return __NR_pwritev2;
-+	case 329: return __NR_pkey_mprotect;
-+	case 330: return __NR_pkey_alloc;
-+	case 331: return __NR_pkey_free;
-+	case 332: return __NR_statx;
-+	case 333: return __NR_io_pgetevents;
-+	case 334: return __NR_rseq;
-+	case 424: return __NR_pidfd_send_signal;
-+	/* io_uring SQEs embed x86 open flags and need a task-ISA adapter. */
-+	case 428: return __NR_open_tree;
-+	case 429: return __NR_move_mount;
-+	case 430: return __NR_fsopen;
-+	case 431: return __NR_fsconfig;
-+	case 432: return __NR_fsmount;
-+	case 433: return __NR_fspick;
-+	case 434: return __NR_pidfd_open;
-+	case 435: return __NR_clone3;
-+	case 436: return __NR_close_range;
-+	case 438: return __NR_pidfd_getfd;
-+	case 439: return __NR_faccessat2;
-+	case 440: return __NR_process_madvise;
-+	case 441: return __NR_epoll_pwait2;
-+	case 442: return __NR_mount_setattr;
-+	case 443: return __NR_quotactl_fd;
-+	case 444: return __NR_landlock_create_ruleset;
-+	case 445: return __NR_landlock_add_rule;
-+	case 446: return __NR_landlock_restrict_self;
-+	case 447: return __NR_memfd_secret;
-+	case 448: return __NR_process_mrelease;
-+	case 449: return __NR_futex_waitv;
-+	case 450: return __NR_set_mempolicy_home_node;
-+	case 451: return __NR_cachestat;
-+	case 452: return __NR_fchmodat2;
-+	case 462: return __NR_mseal;
-+	default: return -1;
-+	}
-+}
 +
 +struct uml_x86_64_epoll_event {
 +	__u32 events;
@@ -2496,6 +2273,44 @@ index 0000000000000000000000000000000000000000..cf93d90d126e6984b7fd90612242d8c5
 +	return copy_to_user(name->machine, machine, sizeof(machine)) ?
 +		-EFAULT : 0;
 +}
+diff --git a/arch/arm64/um/x86_syscall_tables.c b/arch/arm64/um/x86_syscall_tables.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..eee25b1ba9e6fc18f88a0f1312f76d25a931a598
+--- /dev/null
++++ b/arch/arm64/um/x86_syscall_tables.c
+@@ -0,0 +1,32 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <linux/cache.h>
++#include <linux/linkage.h>
++#include <linux/sys.h>
++#include <asm/syscall.h>
++#include <asm/unistd.h>
++
++extern asmlinkage long sys_ni_syscall(unsigned long, unsigned long,
++		unsigned long, unsigned long, unsigned long, unsigned long);
++
++/* UML cannot grant x86 I/O-port privilege, and arch_prctl is handled before
++ * table dispatch because its state belongs to the translated register file.
++ */
++#define sys_iopl sys_ni_syscall
++#define sys_ioperm sys_ni_syscall
++#define sys_arch_prctl sys_ni_syscall
++
++#define __SYSCALL_NORETURN __SYSCALL
++#define __SYSCALL(nr, sym) \
++	extern asmlinkage long sym(unsigned long, unsigned long, unsigned long, \
++		unsigned long, unsigned long, unsigned long);
++#include "x86_syscalls_64.h"
++#undef __SYSCALL
++
++#define __SYSCALL(nr, sym) [nr] = sym,
++const sys_call_ptr_t
++uml_x86_64_sys_call_table[UML_X86_64_NR_SYSCALLS] ____cacheline_aligned = {
++#include "x86_syscalls_64.h"
++};
++#undef __SYSCALL
++#undef __SYSCALL_NORETURN
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
 index 8d02b821d4bfaeef86e1a6f7896190fbaca8e692..ee771f98afcd9085be7d7b9a45fbb980f0afcd3d 100644
 --- a/arch/um/include/asm/pgtable.h
@@ -2556,11 +2371,14 @@ index 9489651287b3d7fbe264d32eaeeb8977954a5a95..d254768e088ea9b85658600344bc3036
  		handler = fork_handler;
  
 diff --git a/arch/um/kernel/skas/syscall.c b/arch/um/kernel/skas/syscall.c
-index ba7494f9bfe41254a0c5987fe50c1d073668130d..f4f5b15abfa71285cc30126b64bfa396f19e0850 100644
+index ba7494f9bfe41254a0c5987fe50c1d073668130d..bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e 100644
 --- a/arch/um/kernel/skas/syscall.c
 +++ b/arch/um/kernel/skas/syscall.c
-@@ -20,7 +20,7 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -18,9 +18,10 @@ void handle_syscall(struct uml_pt_regs *r)
+ {
+ 	struct pt_regs *regs = container_of(r, struct pt_regs, regs);
  	int syscall;
++	bool compat;
  
  	/* Initialize the syscall number and default return value. */
 -	UPT_SYSCALL_NR(r) = PT_SYSCALL_NR(r->gp);
@@ -2568,11 +2386,12 @@ index ba7494f9bfe41254a0c5987fe50c1d073668130d..f4f5b15abfa71285cc30126b64bfa396
  	PT_REGS_SET_SYSCALL_RETURN(regs, -ENOSYS);
  
  	if (syscall_trace_enter(regs))
-@@ -31,6 +31,22 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -31,6 +32,21 @@ void handle_syscall(struct uml_pt_regs *r)
  		goto out;
  
  	syscall = UPT_SYSCALL_NR(r);
-+	if (!UPT_X86_64_COMPAT_SYSCALL(r)) {
++	compat = UPT_X86_64_COMPAT_SYSCALL(r);
++	if (!compat) {
 +		long result;
 +
 +		if (uml_x86_64_special_syscall(r, &result)) {
@@ -2580,25 +2399,40 @@ index ba7494f9bfe41254a0c5987fe50c1d073668130d..f4f5b15abfa71285cc30126b64bfa396
 +			goto out;
 +		}
 +	}
-+	if (!UPT_X86_64_COMPAT_SYSCALL(r) && syscall == 158) {
++	if (!compat && syscall == 158) {
 +		PT_REGS_SET_SYSCALL_RETURN(regs, uml_x86_64_arch_prctl(r));
 +		goto out;
 +	}
-+	if (UPT_X86_64_COMPAT_SYSCALL(r))
++	if (compat)
 +		syscall = uml_x86_32_syscall_number(syscall);
-+	else
-+		syscall = uml_x86_64_syscall_number(syscall);
  
  	/*
  	 * If no time passes, then sched_yield may not actually yield, causing
-@@ -51,6 +67,11 @@ void handle_syscall(struct uml_pt_regs *r)
+@@ -39,18 +55,25 @@ void handle_syscall(struct uml_pt_regs *r)
+ 	 */
+ 	if ((time_travel_mode == TT_MODE_INFCPU ||
+ 	     time_travel_mode == TT_MODE_EXTERNAL) &&
+-	    syscall == __NR_sched_yield)
++	    ((!compat && syscall == 24) ||
++	     (compat && syscall == __NR_sched_yield)))
+ 		tt_extra_sched_jiffies += 1;
+ 
+-	if (syscall >= 0 && syscall < __NR_syscalls) {
++	if (syscall >= 0 && syscall < (compat ? __NR_syscalls :
++					       UML_X86_64_NR_SYSCALLS)) {
+ 		unsigned long ret;
++		const sys_call_ptr_t *table = compat ? sys_call_table :
++			uml_x86_64_sys_call_table;
+ 
+-		ret = (*sys_call_table[syscall])(UPT_SYSCALL_ARG1(&regs->regs),
++		ret = (*table[syscall])(UPT_SYSCALL_ARG1(&regs->regs),
+ 						 UPT_SYSCALL_ARG2(&regs->regs),
+ 						 UPT_SYSCALL_ARG3(&regs->regs),
  						 UPT_SYSCALL_ARG4(&regs->regs),
  						 UPT_SYSCALL_ARG5(&regs->regs),
  						 UPT_SYSCALL_ARG6(&regs->regs));
-+		if ((!UPT_X86_64_COMPAT_SYSCALL(r) &&
-+		     UPT_SYSCALL_NR(r) == 63) ||
-+		    (UPT_X86_64_COMPAT_SYSCALL(r) &&
-+		     UPT_SYSCALL_NR(r) == 122))
++		if ((!compat && UPT_SYSCALL_NR(r) == 63) ||
++		    (compat && UPT_SYSCALL_NR(r) == 122))
 +			ret = uml_x86_64_fixup_uname(r, ret);
  
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
@@ -2618,10 +2452,10 @@ index 9971a92efe35ce98441ba41601605769861c7cc9..31545ef9eaa69122a291677c85d7d60b
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 4769a4b962339755c990c02520dbef982408ff97..21ec4ccf5dc03b6fce831ad82ccdc35317d94986 100644
+index b41d2ba7dc31b3aee976a1cff392e1dfed0b67ed..a6d67db93b18e28918afdb74b5cdcbe684b18812 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -54,6 +54,7 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
+@@ -61,6 +61,7 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
  #define DARWIN_GUEST_SEGV_CPERR 10
  /* Linux asm-generic/siginfo.h values differ from Darwin's floating-point
   * si_code values, so keep the guest ABI numbers explicit at this boundary. */
@@ -2629,7 +2463,7 @@ index 4769a4b962339755c990c02520dbef982408ff97..21ec4ccf5dc03b6fce831ad82ccdc353
  #define DARWIN_GUEST_FPE_FLTDIV 3
  #define DARWIN_GUEST_FPE_FLTOVF 4
  #define DARWIN_GUEST_FPE_FLTUND 5
-@@ -334,28 +335,25 @@ static int reconcile_implicit_stack_quarter(struct uml_pt_regs *registers)
+@@ -283,28 +284,25 @@ static int reconcile_implicit_stack_quarter(struct uml_pt_regs *registers)
  
  static int syscall_snapshots_address_space(struct uml_pt_regs *registers)
  {
@@ -2676,25 +2510,16 @@ index 4769a4b962339755c990c02520dbef982408ff97..21ec4ccf5dc03b6fce831ad82ccdc353
  		 */
  		return 1;
  	default:
-@@ -560,7 +558,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -461,7 +459,7 @@ void userspace(struct uml_pt_regs *registers)
+ #endif
+ 		switch (event) {
  		case DARWIN_UML_EVENT_SYSCALL:
- 			if (profiling)
- 				profile_start = os_nsecs();
 -			registers->orig_x0 = UPT_X(registers, 0);
 +			UPT_SAVE_ORIGINAL_SYSCALL(registers);
  #ifndef CONFIG_PAGE_SIZE_16KB
  			snapshots_mm = syscall_snapshots_address_space(registers);
  			if (snapshots_mm && darwin_uml_vm_flush_active() < 0)
-@@ -571,7 +569,7 @@ void userspace(struct uml_pt_regs *registers)
- 				os_warn("Darwin static syscall cpu=%d pid=%d nr=%ld ret=%#lx\n",
- 					uml_curr_cpu(), get_current_pid(),
- 					(long)UPT_SYSCALL_NR(registers),
--					UPT_X(registers, 0));
-+					UPT_SYSCALL_RETURN(registers));
- 			if (profiling) {
- 				profile_add(&profile_syscall_ns,
- 					    os_nsecs() - profile_start);
-@@ -680,13 +678,20 @@ void userspace(struct uml_pt_regs *registers)
+@@ -556,13 +554,20 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_FLOATING_POINT_TRAP:
  		{
  			siginfo_t signal_info = { 0 };
@@ -2715,7 +2540,7 @@ index 4769a4b962339755c990c02520dbef982408ff97..21ec4ccf5dc03b6fce831ad82ccdc353
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -794,14 +799,45 @@ void userspace(struct uml_pt_regs *registers)
+@@ -670,14 +675,45 @@ void userspace(struct uml_pt_regs *registers)
  
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);

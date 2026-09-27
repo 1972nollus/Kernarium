@@ -33,7 +33,7 @@ heaps, so they are mapped onto the guest's heaps and bounded by them.
  6 files changed, 126 insertions(+)
 
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
-index bdc96c9398c36e15f8a3c59a1e24c441bd2c559b..b045ef82ab1069249ef71db02df226632f85890d 100644
+index 5208a671d0c4389320fa59cbd6b5db05aa6767bd..2f06b6c40508de401931c15fd82120a807fd7b5c 100644
 --- a/src/venus/vkr_physical_device.c
 +++ b/src/venus/vkr_physical_device.c
 @@ -177,6 +177,8 @@ vkr_physical_device_init_memory_properties(struct vkr_physical_device *physical_
@@ -81,7 +81,7 @@ index bdc96c9398c36e15f8a3c59a1e24c441bd2c559b..b045ef82ab1069249ef71db02df22663
        }
     }
  
-@@ -796,6 +827,42 @@ vkr_dispatch_vkGetPhysicalDeviceQueueFamilyProperties2(
+@@ -794,6 +825,42 @@ vkr_dispatch_vkGetPhysicalDeviceQueueFamilyProperties2(
                                                 args->pQueueFamilyProperties);
  }
  
@@ -124,7 +124,7 @@ index bdc96c9398c36e15f8a3c59a1e24c441bd2c559b..b045ef82ab1069249ef71db02df22663
  static void
  vkr_dispatch_vkGetPhysicalDeviceMemoryProperties2(
     UNUSED struct vn_dispatch_context *dispatch,
-@@ -809,6 +876,8 @@ vkr_dispatch_vkGetPhysicalDeviceMemoryProperties2(
+@@ -807,6 +874,8 @@ vkr_dispatch_vkGetPhysicalDeviceMemoryProperties2(
        vn_replace_vkGetPhysicalDeviceMemoryProperties2_args_handle(args);
        vk->GetPhysicalDeviceMemoryProperties2(args->physicalDevice,
                                               args->pMemoryProperties);

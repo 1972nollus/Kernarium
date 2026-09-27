@@ -7,7 +7,6 @@
 #include "protocol.hpp"
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cerrno>
@@ -19,7 +18,6 @@
 #include <stdexcept>
 #include <string>
 #include <sys/uio.h>
-#include <utility>
 #include <unistd.h>
 
 extern "C" {
@@ -169,7 +167,7 @@ epoxy_resolver_stub_t handleMissingGlEntryPoint(const char* name) noexcept
     return &unavailableGlEntryPoint;
 }
 
-int checkGlDispatchResult(int result)
+int checkGlDispatchResult(int result) noexcept
 {
     if (!missingGlEntryPoint.exchange(false, std::memory_order_acq_rel))
         return result;
@@ -255,13 +253,8 @@ VirglRenderer::VirglRenderer()
         }
         initialized = true;
         if (capabilityReportEnabled()) {
-            constexpr std::array versions {
-                std::pair {3U, 0U},
-                std::pair {3U, 1U},
-                std::pair {3U, 2U},
-            };
-            for (const auto [major, minor] : versions)
-                reportContextProbe(provider_->probeContext(major, minor));
+            // vrend asks for 4.6 first, the core context this provider serves.
+            reportContextProbe(provider_->probeContext(4, 6));
             reportCapset(virglCapsetId, capset(virglCapsetId));
             reportCapset(virgl2CapsetId, capset(virgl2CapsetId));
             reportCapset(venusCapsetId, capset(venusCapsetId));
@@ -312,20 +305,6 @@ VirglRenderer::Capset VirglRenderer::capset(std::uint32_t capsetId) const
         throw std::runtime_error(
             "Virgl capset requested an unavailable host GL entry point");
     }
-    /*
-     * Capability discovery intentionally probes optional GL entry points and
-     * formats. Apple's core driver reports GL_INVALID_ENUM for some of those
-     * probes. Drain the probe errors here before CHECK_GL_ERRORS can
-     * misattribute them to the next command on the root context.
-     */
-    for (GLenum error = glGetError();
-         error != GL_NO_ERROR;
-         error = glGetError()) {
-        std::fprintf(
-            stderr,
-            "Virgl capset probe GL error (cleared): %u\n",
-            static_cast<unsigned int>(error));
-    }
     return result;
 }
 
@@ -351,28 +330,6 @@ int VirglRenderer::createContext(
     if ((flags & VIRGL_RENDERER_CONTEXT_FLAG_CAPSET_ID_MASK) ==
         venusCapsetId) {
         return 0;
-    }
-
-    /*
-     * virglrenderer creates a fresh shared EGL context here and assumes that
-     * it is returned with a clean GL error state. A host driver may leave
-     * GL_INVALID_ENUM behind while virglrenderer probes that context;
-     * CHECK_GL_ERRORS would otherwise attribute the probe error to the first
-     * real guest command and permanently poison the context.
-     */
-    bool unexpectedError = false;
-    for (GLenum error = glGetError();
-         error != GL_NO_ERROR;
-         error = glGetError()) {
-        std::fprintf(
-            stderr,
-            "Virgl context initialization GL error: %u\n",
-            static_cast<unsigned int>(error));
-        unexpectedError |= error != GL_INVALID_ENUM;
-    }
-    if (unexpectedError) {
-        virgl_renderer_context_destroy(contextId);
-        return EIO;
     }
 
     /*
@@ -793,45 +750,33 @@ int VirglRenderer::createContextFence(
 
 int VirglRenderer::pollContextFences(std::uint32_t contextId) noexcept
 {
-    try {
-        if (contextId == 0)
-            return EINVAL;
-        if (fenceCallbackFailed_.load(std::memory_order_acquire))
-            return EIO;
-        virgl_renderer_context_poll(contextId);
-        if (checkGlDispatchResult(0) != 0 ||
-            fenceCallbackFailed_.load(std::memory_order_acquire)) {
-            return EIO;
-        }
-        return 0;
-    } catch (...) {
+    if (contextId == 0)
+        return EINVAL;
+    if (fenceCallbackFailed_.load(std::memory_order_acquire))
+        return EIO;
+    virgl_renderer_context_poll(contextId);
+    if (checkGlDispatchResult(0) != 0 ||
+        fenceCallbackFailed_.load(std::memory_order_acquire)) {
         return EIO;
     }
+    return 0;
 }
 
 int VirglRenderer::pollRenderer() noexcept
 {
-    try {
-        if (fenceCallbackFailed_.load(std::memory_order_acquire))
-            return EIO;
-        virgl_renderer_poll();
-        if (checkGlDispatchResult(0) != 0 ||
-            fenceCallbackFailed_.load(std::memory_order_acquire)) {
-            return EIO;
-        }
-        return 0;
-    } catch (...) {
+    if (fenceCallbackFailed_.load(std::memory_order_acquire))
+        return EIO;
+    virgl_renderer_poll();
+    if (checkGlDispatchResult(0) != 0 ||
+        fenceCallbackFailed_.load(std::memory_order_acquire)) {
         return EIO;
     }
+    return 0;
 }
 
 bool VirglRenderer::hasPendingWork() noexcept
 {
-    try {
-        return virgl_renderer_has_pending_work();
-    } catch (...) {
-        return false;
-    }
+    return virgl_renderer_has_pending_work();
 }
 
 int VirglRenderer::contextFenceStatus(

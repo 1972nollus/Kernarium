@@ -19,16 +19,16 @@ that share one dma-buf follow one another at their negotiated sizes.
  drivers/media/virtio/Kconfig                |    9 +
  drivers/media/virtio/Makefile               |    6 +
  drivers/media/virtio/README                 |   11 +
- drivers/media/virtio/virtio_video.h         |  456 ++++++
- drivers/media/virtio/virtio_video_blob.c    |  157 ++
- drivers/media/virtio/virtio_video_caps.c    |  466 ++++++
- drivers/media/virtio/virtio_video_dec.c     |  485 ++++++
- drivers/media/virtio/virtio_video_device.c  | 1534 +++++++++++++++++++
- drivers/media/virtio/virtio_video_driver.c  |  242 +++
- drivers/media/virtio/virtio_video_helpers.c |  308 ++++
- drivers/media/virtio/virtio_video_vq.c      |  981 ++++++++++++
- include/uapi/linux/virtio_video.h           |  539 +++++++
- 14 files changed, 5198 insertions(+)
+ drivers/media/virtio/virtio_video.h         |  426 ++++++
+ drivers/media/virtio/virtio_video_blob.c    |  157 +++
+ drivers/media/virtio/virtio_video_caps.c    |  466 +++++++
+ drivers/media/virtio/virtio_video_dec.c     |  479 +++++++
+ drivers/media/virtio/virtio_video_device.c  | 1283 +++++++++++++++++++
+ drivers/media/virtio/virtio_video_driver.c  |  215 ++++
+ drivers/media/virtio/virtio_video_helpers.c |  253 ++++
+ drivers/media/virtio/virtio_video_vq.c      |  970 ++++++++++++++
+ include/uapi/linux/virtio_video.h           |  539 ++++++++
+ 14 files changed, 4818 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -111,10 +111,10 @@ index 0000000000000000000000000000000000000000..90e8a3531bb86bec3aca28050a7e4950
 +in the owning Darwin host repository.
 diff --git a/drivers/media/virtio/virtio_video.h b/drivers/media/virtio/virtio_video.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..32fd5d87f4e5824a906e388e226b3cb7b1788692
+index 0000000000000000000000000000000000000000..084e154a44403edd24a4a3f82ae789003c5718bb
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video.h
-@@ -0,0 +1,456 @@
+@@ -0,0 +1,426 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/* Common header for virtio video driver.
 + *
@@ -152,8 +152,6 @@ index 0000000000000000000000000000000000000000..32fd5d87f4e5824a906e388e226b3cb7
 +#define DRIVER_NAME "virtio-video"
 +
 +#define VIRTIO_ID_VIDEO_DECODER 31
-+#define VIRTIO_ID_VIDEO_ENCODER 30
-+#define VIRTIO_ID_VIDEO_CAM 100
 +
 +#define MIN_BUFS_MIN 0
 +#define MIN_BUFS_MAX VIDEO_MAX_FRAME
@@ -251,11 +249,10 @@ index 0000000000000000000000000000000000000000..32fd5d87f4e5824a906e388e226b3cb7
 +enum video_stream_state {
 +	STREAM_STATE_IDLE = 0,
 +	STREAM_STATE_INIT,
-+	STREAM_STATE_DYNAMIC_RES_CHANGE, /* specific to decoder */
++	STREAM_STATE_DYNAMIC_RES_CHANGE,
 +	STREAM_STATE_RUNNING,
 +	STREAM_STATE_DRAIN,
 +	STREAM_STATE_STOPPED,
-+	STREAM_STATE_RESET, /* specific to encoder */
 +	STREAM_STATE_ERROR,
 +};
 +
@@ -302,28 +299,13 @@ index 0000000000000000000000000000000000000000..32fd5d87f4e5824a906e388e226b3cb7
 +	struct video_device video_dev;
 +	struct mutex video_dev_mutex;
 +
-+	bool is_m2m_dev;
 +	struct v4l2_m2m_dev *m2m_dev;
-+
-+	/* non-m2m queue (camera) */
-+	struct vb2_queue vb2_output_queue;
-+	struct list_head pending_buf_list;
-+	spinlock_t pending_buf_list_lock;
 +
 +	uint32_t vbufs_sent;
 +	struct list_head pending_vbuf_list;
 +
-+	/* device_busy - to block multiple opens for non-m2m (camera) */
-+	bool device_busy;
-+
 +	/* vid_dev_nr - try register starting at video device number */
 +	int vid_dev_nr;
-+
-+	/* is_mplane_cam - camera has multiplanar capabilities (default true) */
-+	bool is_mplane_cam;
-+
-+	/* VIRTIO_VIDEO_FUNC_ */
-+	uint32_t type;
 +
 +	uint32_t num_input_fmts;
 +	struct list_head input_fmt_list;
@@ -346,7 +328,6 @@ index 0000000000000000000000000000000000000000..32fd5d87f4e5824a906e388e226b3cb7
 +	struct v4l2_m2m_buffer v4l2_m2m_vb;
 +	uint32_t resource_id;
 +	bool queued;
-+	struct list_head list;
 +};
 +
 +static inline gfp_t
@@ -435,8 +416,6 @@ index 0000000000000000000000000000000000000000..32fd5d87f4e5824a906e388e226b3cb7
 +void virtio_video_device_deinit(struct virtio_video_device *vvd);
 +
 +int virtio_video_dec_init(struct virtio_video_device *vvd);
-+int virtio_video_enc_init(struct virtio_video_device *vvd);
-+int virtio_video_cam_init(struct virtio_video_device *vvd);
 +
 +void virtio_video_stream_id_get(struct virtio_video_device *vvd,
 +				struct virtio_video_stream *stream,
@@ -504,12 +483,7 @@ index 0000000000000000000000000000000000000000..32fd5d87f4e5824a906e388e226b3cb7
 +void virtio_video_process_events(struct work_struct *work);
 +
 +void virtio_video_buf_done(struct virtio_video_buffer *virtio_vb,
-+			   uint32_t flags, uint64_t timestamp,
-+			   uint32_t data_sizes[]);
-+int virtio_video_buf_plane_init(uint32_t idx,uint32_t resource_id,
-+				struct virtio_video_device *vvd,
-+				struct virtio_video_stream *stream,
-+				struct vb2_buffer *vb);
++			   uint32_t flags, uint64_t timestamp);
 +int virtio_video_queue_setup(struct vb2_queue *vq, unsigned int *num_buffers,
 +			     unsigned int *num_planes, unsigned int sizes[],
 +			     struct device *alloc_devs[]);
@@ -557,10 +531,6 @@ index 0000000000000000000000000000000000000000..32fd5d87f4e5824a906e388e226b3cb7
 +				   struct v4l2_pix_format_mplane *pix_mp);
 +void virtio_video_format_fill_default_info(struct video_format_info *dst_info,
 +                                          struct video_format_info *src_info);
-+void virtio_video_pix_fmt_sp2mp(const struct v4l2_pix_format *pix,
-+				struct v4l2_pix_format_mplane *pix_mp);
-+void virtio_video_pix_fmt_mp2sp(const struct v4l2_pix_format_mplane *pix_mp,
-+				struct v4l2_pix_format *pix);
 +
 +int virtio_video_g_selection(struct file *file, void *fh,
 +			     struct v4l2_selection *sel);
@@ -1208,10 +1178,10 @@ index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f
 +}
 diff --git a/drivers/media/virtio/virtio_video_dec.c b/drivers/media/virtio/virtio_video_dec.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..8bfd2706d1344e1b5344dd42f0a5b80dc5bf8590
+index 0000000000000000000000000000000000000000..d3ec77840dc7e7e2d2265dac1e15ea0e593f0fe8
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_dec.c
-@@ -0,0 +1,485 @@
+@@ -0,0 +1,479 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Decoder for virtio video device.
 + *
@@ -1231,7 +1201,6 @@ index 0000000000000000000000000000000000000000..8bfd2706d1344e1b5344dd42f0a5b80d
 + * along with this program; if not, see <http://www.gnu.org/licenses/>.
 + */
 +
-+#include <linux/version.h>
 +#include <media/v4l2-event.h>
 +#include <media/v4l2-ioctl.h>
 +
@@ -1634,13 +1603,8 @@ index 0000000000000000000000000000000000000000..8bfd2706d1344e1b5344dd42f0a5b80d
 +static const struct v4l2_ioctl_ops virtio_video_dec_ioctl_ops = {
 +	.vidioc_querycap	= virtio_video_querycap,
 +
-+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0))
 +	.vidioc_enum_fmt_vid_cap        = virtio_video_dec_enum_fmt_vid_cap,
 +	.vidioc_enum_fmt_vid_out        = virtio_video_dec_enum_fmt_vid_out,
-+#else
-+	.vidioc_enum_fmt_vid_cap_mplane = virtio_video_dec_enum_fmt_vid_cap,
-+	.vidioc_enum_fmt_vid_out_mplane = virtio_video_dec_enum_fmt_vid_out,
-+#endif
 +	.vidioc_g_fmt_vid_cap_mplane	= virtio_video_g_fmt,
 +	.vidioc_s_fmt_vid_cap_mplane	= virtio_video_dec_s_fmt,
 +	.vidioc_try_fmt_vid_cap_mplane	= virtio_video_dec_try_fmt,
@@ -1699,10 +1663,10 @@ index 0000000000000000000000000000000000000000..8bfd2706d1344e1b5344dd42f0a5b80d
 +}
 diff --git a/drivers/media/virtio/virtio_video_device.c b/drivers/media/virtio/virtio_video_device.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab086022756a
+index 0000000000000000000000000000000000000000..c05088522b01e8ff75a256832e9a6aef1e8608f5
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_device.c
-@@ -0,0 +1,1534 @@
+@@ -0,0 +1,1283 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -1723,7 +1687,6 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 + */
 +
 +#include <linux/dma-buf.h>
-+#include <linux/version.h>
 +#include <linux/virtio_dma_buf.h>
 +#include <media/v4l2-common.h>
 +#include <media/v4l2-event.h>
@@ -1753,91 +1716,6 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +		    return;
 +	} while (atomic_cmpxchg(&stream->state, prev_state, new_state) !=
 +		 prev_state);
-+}
-+
-+int virtio_video_pending_buf_list_empty(struct virtio_video_device *vvd)
-+{
-+	int ret = 0;
-+
-+	if (vvd->is_m2m_dev) {
-+		v4l2_err(&vvd->v4l2_dev, "Unexpected call for m2m device!\n");
-+		return -EPERM;
-+	}
-+
-+	spin_lock(&vvd->pending_buf_list_lock);
-+	if (list_empty(&vvd->pending_buf_list))
-+		ret = 1;
-+	spin_unlock(&vvd->pending_buf_list_lock);
-+
-+	return ret;
-+}
-+
-+int virtio_video_pending_buf_list_pop(struct virtio_video_device *vvd,
-+				      struct virtio_video_buffer **virtio_vb)
-+{
-+	struct virtio_video_buffer *retbuf;
-+
-+	if (vvd->is_m2m_dev) {
-+		v4l2_err(&vvd->v4l2_dev, "Unexpected call for m2m device!\n");
-+		return -EPERM;
-+	}
-+
-+	spin_lock(&vvd->pending_buf_list_lock);
-+	if (list_empty(&vvd->pending_buf_list)) {
-+		spin_unlock(&vvd->pending_buf_list_lock);
-+		return -EAGAIN;
-+	}
-+
-+	retbuf = list_first_entry(&vvd->pending_buf_list,
-+				  struct virtio_video_buffer, list);
-+	spin_unlock(&vvd->pending_buf_list_lock);
-+
-+	*virtio_vb = retbuf;
-+	return 0;
-+}
-+
-+int virtio_video_pending_buf_list_add(struct virtio_video_device *vvd,
-+				      struct virtio_video_buffer *virtio_vb)
-+{
-+	if (vvd->is_m2m_dev) {
-+		v4l2_err(&vvd->v4l2_dev, "Unexpected call for m2m device!\n");
-+		return -EPERM;
-+	}
-+
-+	spin_lock(&vvd->pending_buf_list_lock);
-+	list_add_tail(&virtio_vb->list, &vvd->pending_buf_list);
-+	spin_unlock(&vvd->pending_buf_list_lock);
-+
-+	return 0;
-+}
-+
-+int virtio_video_pending_buf_list_del(struct virtio_video_device *vvd,
-+				      struct virtio_video_buffer *virtio_vb)
-+{
-+	struct virtio_video_buffer *vb, *vb_tmp;
-+	int ret = -EINVAL;
-+
-+	if (vvd->is_m2m_dev) {
-+		v4l2_err(&vvd->v4l2_dev, "Unexpected call for m2m device!\n");
-+		return -EPERM;
-+	}
-+
-+	spin_lock(&vvd->pending_buf_list_lock);
-+	if (list_empty(&vvd->pending_buf_list)) {
-+		spin_unlock(&vvd->pending_buf_list_lock);
-+		return -EAGAIN;
-+	}
-+
-+	list_for_each_entry_safe(vb, vb_tmp, &vvd->pending_buf_list, list) {
-+		if (vb->resource_id == virtio_vb->resource_id) {
-+			list_del(&vb->list);
-+			ret = 0;
-+			break;
-+		}
-+	}
-+	spin_unlock(&vvd->pending_buf_list_lock);
-+
-+	return ret;
 +}
 +
 +int virtio_video_queue_setup(struct vb2_queue *vq, unsigned int *num_buffers,
@@ -2214,9 +2092,6 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +
 +	virtio_vb = to_virtio_vb(vb);
 +
-+	if (!vvd->is_m2m_dev)
-+		virtio_video_pending_buf_list_add(vvd, virtio_vb);
-+
 +	ret = virtio_video_cmd_resource_queue(vvd, stream->stream_id,
 +					      virtio_vb, data_size,
 +					      vb->num_planes,
@@ -2233,30 +2108,22 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +		      struct v4l2_buffer *buf)
 +{
 +	struct virtio_video_stream *stream = file2stream(file);
-+	struct virtio_video_device *vvd = video_drvdata(file);
 +
 +	if (virtio_video_state(stream) == STREAM_STATE_ERROR)
 +		return -EIO;
 +
-+	if (vvd->is_m2m_dev)
-+		return v4l2_m2m_ioctl_qbuf(file, priv, buf);
-+
-+	return vb2_ioctl_qbuf(file, priv, buf);
++	return v4l2_m2m_ioctl_qbuf(file, priv, buf);
 +}
 +
 +int virtio_video_dqbuf(struct file *file, void *priv,
 +		       struct v4l2_buffer *buf)
 +{
 +	struct virtio_video_stream *stream = file2stream(file);
-+	struct virtio_video_device *vvd = video_drvdata(file);
 +
 +	if (virtio_video_state(stream) == STREAM_STATE_ERROR)
 +		return -EIO;
 +
-+	if (vvd->is_m2m_dev)
-+		return v4l2_m2m_ioctl_dqbuf(file, priv, buf);
-+
-+	return vb2_ioctl_dqbuf(file, priv, buf);
++	return v4l2_m2m_ioctl_dqbuf(file, priv, buf);
 +}
 +
 +int virtio_video_querycap(struct file *file, void *fh,
@@ -2396,14 +2263,11 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +{
 +	int ret;
 +
-+	if (vvd->is_m2m_dev) {
-+		ret = virtio_video_cmd_get_params(vvd, stream,
-+						VIRTIO_VIDEO_QUEUE_TYPE_INPUT);
-+		if (ret) {
-+			v4l2_err(&vvd->v4l2_dev,
-+				 "failed to get stream in params\n");
-+			goto err_get_parms;
-+		}
++	ret = virtio_video_cmd_get_params(vvd, stream,
++					  VIRTIO_VIDEO_QUEUE_TYPE_INPUT);
++	if (ret) {
++		v4l2_err(&vvd->v4l2_dev, "failed to get stream in params\n");
++		return ret;
 +	}
 +
 +	ret = virtio_video_cmd_get_params(vvd, stream,
@@ -2411,7 +2275,6 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	if (ret)
 +		v4l2_err(&vvd->v4l2_dev, "failed to get stream out params\n");
 +
-+err_get_parms:
 +	return ret;
 +}
 +
@@ -2513,22 +2376,9 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	struct virtio_video_stream *stream = file2stream(file);
 +	struct virtio_video_device *vvd = video_drvdata(file);
 +
-+	switch (vvd->type) {
-+	case VIRTIO_VIDEO_DEVICE_ENCODER:
-+		if (!V4L2_TYPE_IS_OUTPUT(sel->type))
-+			return -EINVAL;
-+		info = &stream->in_info;
-+		break;
-+	case VIRTIO_VIDEO_DEVICE_DECODER:
-+	case VIRTIO_VIDEO_DEVICE_CAMERA:
-+		if (V4L2_TYPE_IS_OUTPUT(sel->type))
-+			return -EINVAL;
-+		info = &stream->out_info;
-+		break;
-+	default:
-+		v4l2_err(&vvd->v4l2_dev, "unsupported device type\n");
++	if (V4L2_TYPE_IS_OUTPUT(sel->type))
 +		return -EINVAL;
-+	}
++	info = &stream->out_info;
 +
 +	switch (sel->target) {
 +	case V4L2_SEL_TGT_COMPOSE:
@@ -2683,13 +2533,7 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	struct virtio_video_stream *stream = file2stream(file);
 +	struct v4l2_m2m_ctx *m2m_ctx = stream->fh.m2m_ctx;
 +	struct virtio_video_device *vvd = video_drvdata(file);
-+	struct video_device *vdev = video_devdata(file);
-+	struct vb2_queue *vq;
-+
-+	if (vvd->is_m2m_dev)
-+		vq = v4l2_m2m_get_vq(m2m_ctx, rb->type);
-+	else
-+		vq = vdev->queue;
++	struct vb2_queue *vq = v4l2_m2m_get_vq(m2m_ctx, rb->type);
 +
 +	if (rb->count == 0) {
 +		ret = virtio_video_queue_free(vvd, stream, vq->type);
@@ -2697,10 +2541,7 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +			return ret;
 +	}
 +
-+	if (vvd->is_m2m_dev)
-+		return v4l2_m2m_reqbufs(file, m2m_ctx, rb);
-+	else
-+		return vb2_ioctl_reqbufs(file, priv, rb);
++	return v4l2_m2m_reqbufs(file, m2m_ctx, rb);
 +}
 +
 +int virtio_video_subscribe_event(struct v4l2_fh *fh,
@@ -2736,11 +2577,8 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +
 +void virtio_video_handle_error(struct virtio_video_stream *stream)
 +{
-+	struct virtio_video_device *vvd = to_virtio_vd(stream->video_dev);
-+
-+	if (vvd->is_m2m_dev)
-+		virtio_video_queue_release_buffers
-+			(stream, VIRTIO_VIDEO_QUEUE_TYPE_INPUT);
++	virtio_video_queue_release_buffers
++		(stream, VIRTIO_VIDEO_QUEUE_TYPE_INPUT);
 +
 +	virtio_video_queue_release_buffers
 +		(stream, VIRTIO_VIDEO_QUEUE_TYPE_OUTPUT);
@@ -2752,20 +2590,11 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	int ret;
 +	struct virtio_video_device *vvd = to_virtio_vd(stream->video_dev);
 +	struct vb2_v4l2_buffer *v4l2_vb;
-+	struct virtio_video_buffer *vvb;
 +
 +	ret = virtio_video_cmd_queue_clear(vvd, stream, queue_type);
 +	if (ret) {
 +		v4l2_err(&vvd->v4l2_dev, "failed to clear queue\n");
 +		return ret;
-+	}
-+
-+	if (!vvd->is_m2m_dev) {
-+		while (!virtio_video_pending_buf_list_pop(vvd, &vvb) && vvb) {
-+			v4l2_vb = &vvb->v4l2_m2m_vb.vb;
-+			v4l2_m2m_buf_done(v4l2_vb, VB2_BUF_STATE_ERROR);
-+		}
-+		return 0;
 +	}
 +
 +	for (;;) {
@@ -2782,8 +2611,7 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +}
 +
 +void virtio_video_buf_done(struct virtio_video_buffer *virtio_vb,
-+			   uint32_t flags, uint64_t timestamp,
-+			   uint32_t data_sizes[])
++			   uint32_t flags, uint64_t timestamp)
 +{
 +	int i;
 +	enum vb2_buffer_state done_state = VB2_BUF_STATE_DONE;
@@ -2791,7 +2619,6 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	struct vb2_buffer *vb = &v4l2_vb->vb2_buf;
 +	struct vb2_queue *vb2_queue = vb->vb2_queue;
 +	struct virtio_video_stream *stream = vb2_get_drv_priv(vb2_queue);
-+	struct virtio_video_device *vvd = to_virtio_vd(stream->video_dev);
 +	struct video_format_info *p_info;
 +
 +	virtio_vb->queued = false;
@@ -2818,73 +2645,20 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	    (flags & VIRTIO_VIDEO_DEQUEUE_FLAG_EOS)) {
 +		vb->planes[0].bytesused = 0;
 +
-+		if (!vvd->is_m2m_dev)
-+			virtio_video_pending_buf_list_del(vvd, virtio_vb);
-+
 +		v4l2_m2m_buf_done(v4l2_vb, done_state);
 +		return;
 +	}
 +
 +	if (!V4L2_TYPE_IS_OUTPUT(vb2_queue->type)) {
-+		switch (vvd->type) {
-+		case VIRTIO_VIDEO_DEVICE_ENCODER:
-+			for (i = 0; i < vb->num_planes; i++)
-+				vb->planes[i].bytesused =
-+					le32_to_cpu(data_sizes[i]);
-+			break;
-+		case VIRTIO_VIDEO_DEVICE_CAMERA:
-+		case VIRTIO_VIDEO_DEVICE_DECODER:
-+			p_info = &stream->out_info;
-+			for (i = 0; i < p_info->num_planes; i++)
-+				vb->planes[i].bytesused =
-+					p_info->plane_format[i].plane_size;
-+			break;
-+		}
++		p_info = &stream->out_info;
++		for (i = 0; i < p_info->num_planes; i++)
++			vb->planes[i].bytesused =
++				p_info->plane_format[i].plane_size;
 +
 +		vb->timestamp = timestamp;
 +	}
 +
-+	if (!vvd->is_m2m_dev)
-+		virtio_video_pending_buf_list_del(vvd, virtio_vb);
-+
 +	v4l2_m2m_buf_done(v4l2_vb, done_state);
-+}
-+
-+static int virtio_video_set_device_busy(struct virtio_video_device *vvd)
-+{
-+	struct video_device *vd = &vvd->video_dev;
-+	int ret = 0;
-+
-+	/* Multiple open is allowed for m2m device */
-+	if (vvd->is_m2m_dev)
-+		return 0;
-+
-+	mutex_lock(vd->lock);
-+
-+	if (vvd->device_busy)
-+		ret = -EBUSY;
-+	else
-+		vvd->device_busy = true;
-+
-+	mutex_unlock(vd->lock);
-+
-+	return ret;
-+}
-+
-+static void virtio_video_clear_device_busy(struct virtio_video_device *vvd,
-+					   struct mutex *lock)
-+{
-+	/* Nothing to do for m2m device */
-+	if (vvd->is_m2m_dev)
-+		return;
-+
-+	if (lock)
-+		mutex_lock(lock);
-+
-+	vvd->device_busy = false;
-+
-+	if (lock)
-+		mutex_unlock(lock);
 +}
 +
 +static int virtio_video_device_open(struct file *file)
@@ -2898,26 +2672,17 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	struct video_device *video_dev = video_devdata(file);
 +	struct virtio_video_device *vvd = video_drvdata(file);
 +
-+	ret = virtio_video_set_device_busy(vvd);
-+	if (ret) {
-+		v4l2_err(&vvd->v4l2_dev, "device already in use.\n");
-+		return ret;
-+	}
-+
 +	default_fmt = list_first_entry_or_null(vvd->ops->get_fmt_list(vvd),
 +					       struct video_format,
 +					       formats_list_entry);
 +	if (!default_fmt) {
 +		v4l2_err(&vvd->v4l2_dev, "device failed to start\n");
-+		ret = -EIO;
-+		goto err;
++		return -EIO;
 +	}
 +
 +	stream = kzalloc(sizeof(*stream), GFP_KERNEL);
-+	if (!stream) {
-+		ret = -ENOMEM;
-+		goto err;
-+	}
++	if (!stream)
++		return -ENOMEM;
 +
 +	get_task_comm(name, current);
 +	format = virtio_video_v4l2_format_to_virtio(default_fmt->desc.format);
@@ -2948,21 +2713,15 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	v4l2_fh_init(&stream->fh, video_dev);
 +	stream->fh.ctrl_handler = &stream->ctrl_handler;
 +
-+	if (vvd->is_m2m_dev) {
-+		stream->fh.m2m_ctx = v4l2_m2m_ctx_init(vvd->m2m_dev, stream,
-+						       vvd->ops->init_queues);
-+		if (IS_ERR(stream->fh.m2m_ctx)) {
-+			ret = PTR_ERR(stream->fh.m2m_ctx);
-+			goto err_init_ctx;
-+		}
-+
-+		v4l2_m2m_set_src_buffered(stream->fh.m2m_ctx, true);
-+		v4l2_m2m_set_dst_buffered(stream->fh.m2m_ctx, true);
-+	} else {
-+		vvd->ops->init_queues(stream, NULL, &vvd->vb2_output_queue);
-+		/* Video dev queue is required for vb2 ioctl wrappers */
-+		video_dev->queue = &vvd->vb2_output_queue;
++	stream->fh.m2m_ctx = v4l2_m2m_ctx_init(vvd->m2m_dev, stream,
++					       vvd->ops->init_queues);
++	if (IS_ERR(stream->fh.m2m_ctx)) {
++		ret = PTR_ERR(stream->fh.m2m_ctx);
++		goto err_init_ctx;
 +	}
++
++	v4l2_m2m_set_src_buffered(stream->fh.m2m_ctx, true);
++	v4l2_m2m_set_dst_buffered(stream->fh.m2m_ctx, true);
 +
 +	file->private_data = &stream->fh;
 +	v4l2_fh_add(&stream->fh, file);
@@ -2979,16 +2738,13 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +err_init_ctrls:
 +	v4l2_fh_del(&stream->fh, file);
 +	mutex_lock(video_dev->lock);
-+	if (vvd->is_m2m_dev)
-+		v4l2_m2m_ctx_release(stream->fh.m2m_ctx);
++	v4l2_m2m_ctx_release(stream->fh.m2m_ctx);
 +	mutex_unlock(video_dev->lock);
 +err_init_ctx:
 +	v4l2_fh_exit(&stream->fh);
 +err_stream_create:
 +	virtio_video_stream_id_put(vvd, stream_id);
 +	kfree(stream);
-+err:
-+	virtio_video_clear_device_busy(vvd, video_dev->lock);
 +	return ret;
 +}
 +
@@ -3001,12 +2757,7 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	mutex_lock(video_dev->lock);
 +
 +	v4l2_fh_del(&stream->fh, file);
-+	if (vvd->is_m2m_dev) {
-+		v4l2_m2m_ctx_release(stream->fh.m2m_ctx);
-+	} else if (file->private_data == video_dev->queue->owner) {
-+		vb2_queue_release(&vvd->vb2_output_queue);
-+		video_dev->queue->owner = NULL;
-+	}
++	v4l2_m2m_ctx_release(stream->fh.m2m_ctx);
 +
 +	v4l2_fh_exit(&stream->fh);
 +
@@ -3014,9 +2765,6 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	virtio_video_stream_id_put(vvd, stream->stream_id);
 +
 +	kfree(stream);
-+
-+	/* Mutex already locked here, passing NULL */
-+	virtio_video_clear_device_busy(vvd, NULL);
 +
 +	mutex_unlock(video_dev->lock);
 +
@@ -3030,15 +2778,6 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	.poll		= v4l2_m2m_fop_poll,
 +	.unlocked_ioctl	= video_ioctl2,
 +	.mmap		= v4l2_m2m_fop_mmap,
-+};
-+
-+static const struct v4l2_file_operations virtio_video_device_fops = {
-+	.owner		= THIS_MODULE,
-+	.open		= virtio_video_device_open,
-+	.release	= virtio_video_device_release,
-+	.poll		= vb2_fop_poll,
-+	.unlocked_ioctl	= video_ioctl2,
-+	.mmap		= vb2_fop_mmap,
 +};
 +
 +static void virtio_video_device_run(void *priv)
@@ -3066,11 +2805,7 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +
 +	vd = &vvd->video_dev;
 +
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,7,0)
 +	ret = video_register_device(vd, VFL_TYPE_VIDEO, vvd->vid_dev_nr);
-+#else
-+	ret = video_register_device(vd, VFL_TYPE_GRABBER, vvd->vid_dev_nr);
-+#endif
 +	if (ret) {
 +		v4l2_err(&vvd->v4l2_dev, "failed to register video device\n");
 +		return ret;
@@ -3106,11 +2841,8 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +int virtio_video_device_init(struct virtio_video_device *vvd)
 +{
 +	int ret;
-+	int vfl_dir;
-+	u32 dev_caps;
 +	struct video_device *vd;
 +	struct v4l2_m2m_dev *m2m_dev;
-+	const struct v4l2_file_operations *fops;
 +	void *input_resp_buf, *output_resp_buf;
 +
 +	output_resp_buf = kzalloc(vvd->max_caps_len, GFP_KERNEL);
@@ -3124,49 +2856,34 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +		goto err_output_cap;
 +	}
 +
-+	if (vvd->is_m2m_dev) {
-+		input_resp_buf = kzalloc(vvd->max_caps_len, GFP_KERNEL);
-+		if (!input_resp_buf) {
-+			ret = -ENOMEM;
-+			goto err_input_buf;
-+		}
++	input_resp_buf = kzalloc(vvd->max_caps_len, GFP_KERNEL);
++	if (!input_resp_buf) {
++		ret = -ENOMEM;
++		goto err_input_buf;
++	}
 +
-+		ret = virtio_video_query_capability(vvd, input_resp_buf,
-+						VIRTIO_VIDEO_QUEUE_TYPE_INPUT);
-+		if (ret) {
-+			v4l2_err(&vvd->v4l2_dev, "failed to get input caps\n");
-+			goto err_input_cap;
-+		}
++	ret = virtio_video_query_capability(vvd, input_resp_buf,
++					    VIRTIO_VIDEO_QUEUE_TYPE_INPUT);
++	if (ret) {
++		v4l2_err(&vvd->v4l2_dev, "failed to get input caps\n");
++		goto err_input_cap;
++	}
 +
-+		m2m_dev = v4l2_m2m_init(&virtio_video_device_m2m_ops);
-+		if (IS_ERR(m2m_dev)) {
-+			v4l2_err(&vvd->v4l2_dev, "failed to init m2m device\n");
-+			ret = PTR_ERR(m2m_dev);
-+			goto err_m2m_dev;
-+		}
-+		vfl_dir = VFL_DIR_M2M;
-+		fops = &virtio_video_device_m2m_fops;
-+		dev_caps = V4L2_CAP_STREAMING | V4L2_CAP_VIDEO_M2M_MPLANE;
-+	} else {
-+		input_resp_buf = NULL;
-+		m2m_dev = NULL;
-+		vfl_dir = VFL_DIR_RX;
-+		fops = &virtio_video_device_fops;
-+		dev_caps = V4L2_CAP_STREAMING;
-+		if (vvd->is_mplane_cam)
-+			dev_caps |= V4L2_CAP_VIDEO_CAPTURE_MPLANE;
-+		else
-+			dev_caps |= V4L2_CAP_VIDEO_CAPTURE;
++	m2m_dev = v4l2_m2m_init(&virtio_video_device_m2m_ops);
++	if (IS_ERR(m2m_dev)) {
++		v4l2_err(&vvd->v4l2_dev, "failed to init m2m device\n");
++		ret = PTR_ERR(m2m_dev);
++		goto err_m2m_dev;
 +	}
 +
 +	vvd->m2m_dev = m2m_dev;
 +	vd = &vvd->video_dev;
 +	vd->lock = &vvd->video_dev_mutex;
 +	vd->v4l2_dev = &vvd->v4l2_dev;
-+	vd->vfl_dir = vfl_dir;
++	vd->vfl_dir = VFL_DIR_M2M;
 +	vd->ioctl_ops = NULL;
-+	vd->fops = fops;
-+	vd->device_caps = dev_caps;
++	vd->fops = &virtio_video_device_m2m_fops;
++	vd->device_caps = V4L2_CAP_STREAMING | V4L2_CAP_VIDEO_M2M_MPLANE;
 +	vd->release = video_device_release_empty;
 +
 +	/* Use the selection API instead */
@@ -3178,7 +2895,6 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	INIT_LIST_HEAD(&vvd->input_fmt_list);
 +	INIT_LIST_HEAD(&vvd->output_fmt_list);
 +	INIT_LIST_HEAD(&vvd->controls_fmt_list);
-+	INIT_LIST_HEAD(&vvd->pending_buf_list);
 +
 +	vvd->num_output_fmts = 0;
 +	vvd->num_input_fmts = 0;
@@ -3212,13 +2928,11 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +parse_ctrl_err:
 +	virtio_video_clean_capability(vvd);
 +parse_cap_err:
-+	if (vvd->is_m2m_dev)
-+		v4l2_m2m_release(vvd->m2m_dev);
++	v4l2_m2m_release(vvd->m2m_dev);
 +err_m2m_dev:
 +err_input_cap:
 +out_cleanup:
-+	if (vvd->is_m2m_dev)
-+		kfree(input_resp_buf);
++	kfree(input_resp_buf);
 +err_input_buf:
 +err_output_cap:
 +	kfree(output_resp_buf);
@@ -3232,17 +2946,16 @@ index 0000000000000000000000000000000000000000..23014affe3a64b7b25a385eaa019ab08
 +	vvd->eventq.ready = false;
 +
 +	virtio_video_device_unregister(vvd);
-+	if (vvd->is_m2m_dev)
-+		v4l2_m2m_release(vvd->m2m_dev);
++	v4l2_m2m_release(vvd->m2m_dev);
 +	virtio_video_clean_control(vvd);
 +	virtio_video_clean_capability(vvd);
 +}
 diff --git a/drivers/media/virtio/virtio_video_driver.c b/drivers/media/virtio/virtio_video_driver.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..79d2c8f5aa78495adce2ca2788d3dd83bf0f7051
+index 0000000000000000000000000000000000000000..ceb11bb46bd0e2c7cf1a5c0d853471bd7545cbe0
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_driver.c
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,215 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -3262,12 +2975,7 @@ index 0000000000000000000000000000000000000000..79d2c8f5aa78495adce2ca2788d3dd83
 + * along with this program; if not, see <http://www.gnu.org/licenses/>.
 + */
 +#include <linux/module.h>
-+#include <linux/version.h>
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)
 +#include <linux/dma-map-ops.h>
-+#else
-+#include <linux/dma-mapping.h>
-+#endif
 +
 +#include "virtio_video.h"
 +
@@ -3281,10 +2989,6 @@ index 0000000000000000000000000000000000000000..79d2c8f5aa78495adce2ca2788d3dd83
 +static int vid_nr_dec = -1;
 +module_param(vid_nr_dec, int, 0644);
 +MODULE_PARM_DESC(vid_nr_dec, "videoN start number, -1 is autodetect");
-+
-+static int vid_nr_enc = -1;
-+module_param(vid_nr_enc, int, 0644);
-+MODULE_PARM_DESC(vid_nr_enc, "videoN start number, -1 is autodetect");
 +
 +static int virtio_video_probe(struct virtio_device *vdev)
 +{
@@ -3309,20 +3013,7 @@ index 0000000000000000000000000000000000000000..79d2c8f5aa78495adce2ca2788d3dd83
 +	if (!vvd)
 +		return -ENOMEM;
 +
-+	vvd->is_m2m_dev = true;
-+
-+	switch (vdev->id.device) {
-+	case VIRTIO_ID_VIDEO_ENCODER:
-+		vvd->vid_dev_nr = vid_nr_enc;
-+		vvd->type = VIRTIO_VIDEO_DEVICE_ENCODER;
-+		break;
-+	case VIRTIO_ID_VIDEO_DECODER:
-+	default:
-+		vvd->vid_dev_nr = vid_nr_dec;
-+		vvd->type = VIRTIO_VIDEO_DEVICE_DECODER;
-+		break;
-+	}
-+
++	vvd->vid_dev_nr = vid_nr_dec;
 +	vvd->vdev = vdev;
 +	vvd->debug = debug;
 +	vvd->use_dma_mem = use_dma_mem;
@@ -3330,7 +3021,6 @@ index 0000000000000000000000000000000000000000..79d2c8f5aa78495adce2ca2788d3dd83
 +	mutex_init(&vvd->video_dev_mutex);
 +	vvd->video_dev.lock = &vvd->video_dev_mutex;
 +
-+	spin_lock_init(&vvd->pending_buf_list_lock);
 +	spin_lock_init(&vvd->resource_idr_lock);
 +	idr_init(&vvd->resource_idr);
 +	spin_lock_init(&vvd->stream_idr_lock);
@@ -3346,11 +3036,7 @@ index 0000000000000000000000000000000000000000..79d2c8f5aa78495adce2ca2788d3dd83
 +	if (virtio_has_feature(vdev, VIRTIO_VIDEO_F_RESOURCE_SHM_REGION))
 +		vvd->supp_shm_region = true;
 +
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
 +	vvd->has_iommu = !virtio_has_dma_quirk(vdev);
-+#else
-+	vvd->has_iommu = !virtio_has_iommu_quirk(vdev);
-+#endif
 +
 +	if (!get_dma_ops(dev))
 +		set_dma_ops(dev, get_dma_ops(pdev));
@@ -3487,10 +3173,10 @@ index 0000000000000000000000000000000000000000..79d2c8f5aa78495adce2ca2788d3dd83
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/virtio/virtio_video_helpers.c b/drivers/media/virtio/virtio_video_helpers.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..1900b8797fee4c0d85ffa098ab62a8e72c5d6025
+index 0000000000000000000000000000000000000000..2ccfa84c3d1ae9525e0c7c92341aec07ad4074b0
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_helpers.c
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,253 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -3699,24 +3385,6 @@ index 0000000000000000000000000000000000000000..1900b8797fee4c0d85ffa098ab62a8e7
 +	return 0;
 +}
 +
-+uint32_t virtio_video_get_format_from_virtio_profile(uint32_t virtio_profile)
-+{
-+	if (virtio_profile >= VIRTIO_VIDEO_PROFILE_H264_MIN &&
-+	    virtio_profile <= VIRTIO_VIDEO_PROFILE_H264_MAX)
-+		return VIRTIO_VIDEO_FORMAT_H264;
-+	else if (virtio_profile >= VIRTIO_VIDEO_PROFILE_HEVC_MIN &&
-+		 virtio_profile <= VIRTIO_VIDEO_PROFILE_HEVC_MAX)
-+		return VIRTIO_VIDEO_FORMAT_HEVC;
-+	else if (virtio_profile >= VIRTIO_VIDEO_PROFILE_VP8_MIN &&
-+		 virtio_profile <= VIRTIO_VIDEO_PROFILE_VP8_MAX)
-+		return VIRTIO_VIDEO_FORMAT_VP8;
-+	else if (virtio_profile >= VIRTIO_VIDEO_PROFILE_VP9_MIN &&
-+		 virtio_profile <= VIRTIO_VIDEO_PROFILE_VP9_MAX)
-+		return VIRTIO_VIDEO_FORMAT_VP9;
-+
-+	return 0;
-+}
-+
 +struct video_format *virtio_video_find_video_format(struct list_head *fmts_list,
 +						    uint32_t format)
 +{
@@ -3762,49 +3430,12 @@ index 0000000000000000000000000000000000000000..1900b8797fee4c0d85ffa098ab62a8e7
 +{
 +	memcpy(dst_info, src_info, sizeof(*dst_info));
 +}
-+
-+void virtio_video_pix_fmt_sp2mp(const struct v4l2_pix_format *pix,
-+				struct v4l2_pix_format_mplane *pix_mp)
-+{
-+	memset(pix_mp->reserved, 0, sizeof(pix_mp->reserved));
-+	memset(&pix_mp->plane_fmt[0].reserved, 0,
-+	       sizeof(pix_mp->plane_fmt[0].reserved));
-+	pix_mp->num_planes = 1;
-+	pix_mp->width = pix->width;
-+	pix_mp->height = pix->height;
-+	pix_mp->pixelformat = pix->pixelformat;
-+	pix_mp->field = pix->field;
-+	pix_mp->plane_fmt[0].bytesperline = pix->bytesperline;
-+	pix_mp->plane_fmt[0].sizeimage = pix->sizeimage;
-+	pix_mp->colorspace = pix->colorspace;
-+	pix_mp->flags = pix->flags;
-+	pix_mp->ycbcr_enc = pix->ycbcr_enc;
-+	pix_mp->quantization = pix->quantization;
-+	pix_mp->xfer_func = pix->xfer_func;
-+}
-+
-+void virtio_video_pix_fmt_mp2sp(const struct v4l2_pix_format_mplane *pix_mp,
-+				struct v4l2_pix_format *pix)
-+{
-+	pix->width = pix_mp->width;
-+	pix->height = pix_mp->height;
-+	pix->pixelformat = pix_mp->pixelformat;
-+	pix->field = pix_mp->field;
-+	pix->bytesperline = pix_mp->plane_fmt[0].bytesperline;
-+	pix->sizeimage = pix_mp->plane_fmt[0].sizeimage;
-+	pix->colorspace = pix_mp->colorspace;
-+	pix->priv = 0;
-+	pix->flags = pix_mp->flags;
-+	pix->ycbcr_enc = pix_mp->ycbcr_enc;
-+	pix->quantization = pix_mp->quantization;
-+	pix->xfer_func = pix_mp->xfer_func;
-+}
 diff --git a/drivers/media/virtio/virtio_video_vq.c b/drivers/media/virtio/virtio_video_vq.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685d97f1042
+index 0000000000000000000000000000000000000000..d03234c6277ee29addfcda93a55fae76dc11b231
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_vq.c
-@@ -0,0 +1,981 @@
+@@ -0,0 +1,970 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -4235,7 +3866,6 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	return 0;
 +}
 +
-+// TODO: replace virtio_video_cmd_hdr accoring to specification v4
 +int virtio_video_cmd_stream_create(struct virtio_video_device *vvd,
 +				   uint32_t stream_id,
 +				   enum virtio_video_format format,
@@ -4260,7 +3890,6 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	return virtio_video_queue_cmd_buffer(vvd, vbuf);
 +}
 +
-+// TODO: replace virtio_video_cmd_hdr accoring to specification v4
 +int virtio_video_cmd_stream_destroy(struct virtio_video_device *vvd,
 +				    uint32_t stream_id)
 +{
@@ -4277,7 +3906,6 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	return virtio_video_queue_cmd_buffer(vvd, vbuf);
 +}
 +
-+// TODO: replace virtio_video_cmd_hdr accoring to specification v4
 +int virtio_video_cmd_stream_drain(struct virtio_video_device *vvd,
 +				  uint32_t stream_id)
 +{
@@ -4355,7 +3983,7 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	flags = le32_to_cpu(resp->flags);
 +	timestamp = le64_to_cpu(resp->timestamp);
 +
-+	virtio_video_buf_done(virtio_vb, flags, timestamp, resp->data_sizes);
++	virtio_video_buf_done(virtio_vb, flags, timestamp);
 +}
 +
 +int virtio_video_cmd_resource_queue(struct virtio_video_device *vvd,
@@ -4397,7 +4025,6 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	return virtio_video_queue_cmd_buffer(vvd, vbuf);
 +}
 +
-+// TODO: replace virtio_video_cmd_hdr accoring to specification v4
 +int virtio_video_cmd_queue_clear(struct virtio_video_device *vvd,
 +				 struct virtio_video_stream *stream,
 +				 enum virtio_video_queue_type queue_type)
@@ -4423,7 +4050,6 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	return ret;
 +}
 +
-+// TODO: replace virtio_video_cmd_hdr accoring to specification v4
 +int virtio_video_cmd_query_capability(struct virtio_video_device *vvd,
 +				      void *resp_buf, size_t resp_size,
 +				      enum virtio_video_queue_type queue_type)
@@ -4449,7 +4075,6 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	return ret;
 +}
 +
-+// TODO: replace virtio_video_cmd_hdr accoring to specification v4
 +int virtio_video_query_control_level(struct virtio_video_device *vvd,
 +				     void *resp_buf, size_t resp_size,
 +				     enum virtio_video_format format)
@@ -4481,7 +4106,6 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	return ret;
 +}
 +
-+// TODO: replace virtio_video_cmd_hdr accoring to specification v4
 +int virtio_video_query_control_profile(struct virtio_video_device *vvd,
 +				       void *resp_buf, size_t resp_size,
 +				       enum virtio_video_format format)
@@ -4557,7 +4181,6 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	}
 +}
 +
-+// TODO: replace virtio_video_cmd_hdr accoring to specification v4
 +int virtio_video_cmd_get_params(struct virtio_video_device *vvd,
 +				struct virtio_video_stream *stream,
 +				enum virtio_video_queue_type queue_type)
@@ -4590,7 +4213,6 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	return ret;
 +}
 +
-+// TODO: replace virtio_video_cmd_hdr accoring to specification v4
 +int
 +virtio_video_cmd_set_params(struct virtio_video_device *vvd,
 +			    struct virtio_video_stream *stream,
@@ -4678,7 +4300,6 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	control->bitrate = le32_to_cpu(resp_p->bitrate);
 +}
 +
-+// TODO: replace virtio_video_cmd_hdr accoring to specification v4
 +int virtio_video_cmd_get_control(struct virtio_video_device *vvd,
 +				 struct virtio_video_stream *stream,
 +				 enum virtio_video_control_type control)
@@ -4727,7 +4348,6 @@ index 0000000000000000000000000000000000000000..abbabfafb2dfd0c332514b99dea8a685
 +	return ret;
 +}
 +
-+// TODO: replace virtio_video_cmd_hdr accoring to specification v4
 +int virtio_video_cmd_set_control(struct virtio_video_device *vvd,
 +				 uint32_t stream_id,
 +				 enum virtio_video_control_type control,

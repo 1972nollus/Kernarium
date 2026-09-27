@@ -11,7 +11,6 @@
 #include <span>
 #include <string>
 #include <thread>
-#include <vector>
 
 #ifndef UML_GPU_VNC_STARTUP_TESTING
 #define UML_GPU_VNC_STARTUP_TESTING 0
@@ -47,15 +46,6 @@ public:
     // Return the published scanout to a blank device-reset state. This is
     // allocation-free so transport teardown can call it from a noexcept reset.
     void clear() noexcept override;
-    void update(
-        const std::vector<std::uint8_t>& source,
-        std::uint32_t sourceWidth,
-        std::uint32_t sourceHeight,
-        protocol::GpuFormat sourceFormat,
-        std::uint32_t x,
-        std::uint32_t y,
-        std::uint32_t width,
-        std::uint32_t height) override;
     void update(
         std::span<const std::uint8_t> source,
         std::uint32_t sourceWidth,

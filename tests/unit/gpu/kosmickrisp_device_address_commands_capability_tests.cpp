@@ -1,63 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "kosmickrisp_capability_probe.hpp"
+#include "kosmickrisp_capability_test_support.hpp"
 
-#include <charconv>
 #include <cstdio>
-#include <cstdint>
 #include <cstdlib>
-#include <source_location>
-#include <sstream>
 #include <string_view>
-#include <system_error>
 
-namespace {
-
-void require(
-    bool condition,
-    const std::source_location location = std::source_location::current())
-{
-    if (condition)
-        return;
-    std::fprintf(
-        stderr,
-        "require failed at %s:%u\n",
-        location.file_name(),
-        location.line());
-    std::abort();
-}
-
-std::size_t countOccurrences(
-    std::string_view text,
-    std::string_view needle)
-{
-    std::size_t count = 0;
-    for (std::size_t position = 0;
-         (position = text.find(needle, position)) != std::string_view::npos;
-         position += needle.size()) {
-        ++count;
-    }
-    return count;
-}
-
-uint32_t parseUnsigned(std::string_view text, std::size_t position)
-{
-    uint32_t value = 0;
-    const char *first = text.data() + position;
-    const char *last = text.data() + text.size();
-    const auto result = std::from_chars(first, last, value);
-    require(result.ec == std::errc{});
-    return value;
-}
-
-} // namespace
+using namespace uml::gpu::testing;
 
 int main()
 {
-    std::ostringstream output;
-    require(uml::gpu::run_kosmickrisp_capability_probe(output) == 0);
-
-    const auto report = output.str();
+    const auto report = probeReport();
     constexpr std::string_view extensionProperty =
         "{\"name\":\"VK_KHR_device_address_commands\","
         "\"spec_version\":1}";
@@ -83,7 +36,7 @@ int main()
         position = report.find(executionPrefix, position);
         require(position != std::string_view::npos);
         position += executionPrefix.size();
-        require(parseUnsigned(report, position) >= 11);
+        require(unsignedAt(report, position) >= 11);
     }
 
     require(report.find(

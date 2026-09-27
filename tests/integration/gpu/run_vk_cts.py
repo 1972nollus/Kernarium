@@ -490,20 +490,11 @@ def receipt_mandatory_cases() -> tuple[str, ...]:
     return cases
 
 
-def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, item in pairs:
-        if key in value:
-            raise CampaignError(f"duplicate JSON key: {key}")
-        value[key] = item
-    return value
-
-
 def load_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(
             path.read_text(encoding="utf-8"),
-            object_pairs_hook=_reject_duplicate_keys,
+            object_pairs_hook=common.reject_duplicate_keys,
         )
     except (OSError, json.JSONDecodeError) as error:
         raise CampaignError(f"cannot read JSON contract {path}: {error}") from error
@@ -938,119 +929,6 @@ def validate_virtio_qpa_identity(qpa: str) -> None:
         raise CampaignError("Vulkan QPA selected lavapipe or another software ICD")
     if VIRTIO_IDENTITY.search(qpa) is None:
         raise CampaignError("Vulkan QPA does not identify a Virtio/Venus device")
-
-
-def validate_capability_inventory(value: Any) -> str:
-    """Validate a synthetic/guest capability report and return its digest.
-
-    Every advertised item must name a successful representative operation.
-    This intentionally small schema is an input gate, not an API-version claim.
-    """
-    if not isinstance(value, dict) or set(value) != {
-        "schema_version",
-        "device_identity",
-        "advertised",
-        "operation_proofs",
-    }:
-        raise CampaignError("capability inventory has an invalid top-level shape")
-    if value["schema_version"] != 1:
-        raise CampaignError("unsupported capability-inventory schema")
-    identity = value["device_identity"]
-    advertised = value["advertised"]
-    proofs = value["operation_proofs"]
-    if not isinstance(identity, str) or FORBIDDEN_SOFTWARE_ICD.search(identity):
-        raise CampaignError("capability inventory selected a software ICD")
-    if VIRTIO_IDENTITY.search(identity) is None:
-        raise CampaignError("capability inventory is not a Virtio/Venus device")
-    if not isinstance(advertised, list) or not advertised:
-        raise CampaignError("capability inventory advertises no operations")
-    if not isinstance(proofs, list):
-        raise CampaignError("capability inventory has no operation proofs")
-    advertised_set: set[str] = set()
-    for item in advertised:
-        if not isinstance(item, str) or CASE_NAME.fullmatch(item) is None:
-            raise CampaignError("capability inventory has an invalid operation key")
-        if item in advertised_set:
-            raise CampaignError("capability inventory repeats an advertised item")
-        advertised_set.add(item)
-    proof_map: dict[str, bool] = {}
-    for row in proofs:
-        if not isinstance(row, dict) or set(row) != {"operation", "success"}:
-            raise CampaignError("capability inventory has an invalid proof")
-        operation = row["operation"]
-        success = row["success"]
-        if (
-            not isinstance(operation, str)
-            or operation not in advertised_set
-            or operation in proof_map
-            or type(success) is not bool
-        ):
-            raise CampaignError("capability inventory proof does not match one claim")
-        proof_map[operation] = success
-    missing = advertised_set - set(proof_map)
-    failed = {name for name, success in proof_map.items() if not success}
-    if missing or failed:
-        raise CampaignError("advertised capability lacks a successful operation proof")
-    canonical = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(canonical).hexdigest()
-
-
-def assign_simulator_shards(
-    shard_names: Sequence[str], device_udids: Sequence[str]
-) -> dict[str, str]:
-    """Deterministically assign one shard stream per unique Simulator."""
-    if not shard_names or len(shard_names) != len(set(shard_names)):
-        raise CampaignError("Simulator shard names must be nonempty and unique")
-    if (
-        not device_udids
-        or len(device_udids) > 4
-        or len(device_udids) != len(set(device_udids))
-    ):
-        raise CampaignError("Simulator assignment requires one to four unique UDIDs")
-    ordered_devices = tuple(device_udids)
-    return {
-        shard: ordered_devices[index % len(ordered_devices)]
-        for index, shard in enumerate(shard_names)
-    }
-
-
-def verified_resume_set(
-    frozen_input_sha256: str,
-    shard_names: Sequence[str],
-    attempts: Sequence[dict[str, Any]],
-) -> frozenset[str]:
-    """Return only shards with one immutable, fully verified attempt."""
-    _sha256(frozen_input_sha256, "frozen_input_sha256")
-    expected = set(shard_names)
-    if not expected or len(expected) != len(shard_names):
-        raise CampaignError("resume manifest has duplicate or empty shards")
-    completed: set[str] = set()
-    seen_attempts: set[str] = set()
-    for attempt in attempts:
-        if not isinstance(attempt, dict) or set(attempt) != {
-            "attempt_id",
-            "shard",
-            "frozen_input_sha256",
-            "state",
-        }:
-            raise CampaignError("resume attempt has an invalid shape")
-        attempt_id = attempt["attempt_id"]
-        shard = attempt["shard"]
-        if (
-            not isinstance(attempt_id, str)
-            or not attempt_id
-            or attempt_id in seen_attempts
-            or shard not in expected
-            or attempt["frozen_input_sha256"] != frozen_input_sha256
-            or attempt["state"] not in {"started", "failed", "verified"}
-        ):
-            raise CampaignError("resume attempt does not match frozen inputs")
-        seen_attempts.add(attempt_id)
-        if attempt["state"] == "verified":
-            if shard in completed:
-                raise CampaignError("resume history has two verified attempts for a shard")
-            completed.add(shard)
-    return frozenset(completed)
 
 
 def _selected_payload(selection: DevelopmentSelection) -> str:
@@ -1554,7 +1432,7 @@ chown uml:uml \"$selected\"
         + "'; exit 1; }"
         for row in verified_files
     )
-    receipt_digest = _sha256_file(receipt_path)
+    receipt_digest = common.sha256_file(receipt_path)
     # The skip list and its per-reason counts exist from the first line, so the
     # exit trap can report them even when the enumeration itself failed.
     skipped_state = (
@@ -2214,7 +2092,7 @@ def validate_receipt_attempt(
         if selected != expected_selected:
             raise CampaignError("receipt-backed CTS selection drifted")
         expected_cases = selection.expected_cases
-    receipt_digest = _sha256_file(RECEIPT_PATH)
+    receipt_digest = common.sha256_file(RECEIPT_PATH)
     summary = _summary(artifacts["summary.txt"])
     expected_summary = {
         "mode": selection.mode,
@@ -2397,14 +2275,6 @@ def validate_receipt_attempt(
     }
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def verify_staged_kosmickrisp(emulator: Path) -> str:
     return common.verify_staged_kosmickrisp(emulator)
 
@@ -2462,7 +2332,7 @@ def verify_only(path: Path, identity: dict[str, Any]) -> dict[str, Any]:
             raise CampaignError(f"Vulkan CTS artifact digest changed: {name}")
         artifacts[name] = payload
     console = path / "console.log"
-    if metadata.get("console_sha256") != _sha256_file(console):
+    if metadata.get("console_sha256") != common.sha256_file(console):
         raise CampaignError("Vulkan CTS console digest changed")
     result = validate_attempt(
         identity,
@@ -2486,7 +2356,7 @@ def verify_receipt_only(
         or metadata.get("qualification") is not True
         or metadata.get("formal_conformance") is not False
         or metadata.get("experimental_venus") is not True
-        or metadata.get("receipt_sha256") != _sha256_file(RECEIPT_PATH)
+        or metadata.get("receipt_sha256") != common.sha256_file(RECEIPT_PATH)
         or metadata.get("rootfs_sha256") != receipt["derivative"]["sha256"]
     ):
         raise CampaignError("receipt-backed Vulkan CTS metadata changed")
@@ -2535,7 +2405,7 @@ def verify_receipt_only(
             raise CampaignError(f"receipt-backed artifact digest changed: {name}")
         artifacts[name] = payload
     console = path / "console.log"
-    if metadata.get("console_sha256") != _sha256_file(console):
+    if metadata.get("console_sha256") != common.sha256_file(console):
         raise CampaignError("receipt-backed console digest changed")
     sessions = metadata.get("sessions")
     transcript = console.read_text(encoding="utf-8", errors="replace")
@@ -2601,9 +2471,9 @@ def run_receipt_campaign(
         "qualification": True,
         "formal_conformance": False,
         "experimental_venus": True,
-        "emulator_sha256": _sha256_file(emulator),
+        "emulator_sha256": common.sha256_file(emulator),
         "kosmickrisp_sha256": provider_sha256,
-        "receipt_sha256": _sha256_file(RECEIPT_PATH),
+        "receipt_sha256": common.sha256_file(RECEIPT_PATH),
         "git": common.git_state(),
         "page_profile": options.page_profile,
         "engine": options.engine,
@@ -2733,8 +2603,8 @@ def run_receipt_campaign(
         raise CampaignError("merged Vulkan shard results left the released order")
     record_sessions(sessions)
     immutable_evidence = {
-        "console_sha256": _sha256_file(console_path),
-        "serial_sha256": _sha256_file(serial_path),
+        "console_sha256": common.sha256_file(console_path),
+        "serial_sha256": common.sha256_file(serial_path),
         "artifact_sha256": {
             name: hashlib.sha256(payload).hexdigest()
             for name, payload in sorted(artifacts.items())
@@ -2991,8 +2861,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     metadata.update(
         {
             "state": "verified",
-            "console_sha256": _sha256_file(console_path),
-            "serial_sha256": _sha256_file(serial_path),
+            "console_sha256": common.sha256_file(console_path),
+            "serial_sha256": common.sha256_file(serial_path),
             "artifact_sha256": {
                 name: hashlib.sha256(payload).hexdigest()
                 for name, payload in sorted(artifacts.items())

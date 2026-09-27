@@ -162,10 +162,10 @@ index 803ee64b6e6203315855cf4085832738b18553af..a983cade8d4598b19e33fcfd514040df
  bool msl_ensure_vertex_position_output(nir_shader *nir);
  bool msl_ensure_vertex_point_size_output(nir_shader *nir);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index d3c16adb553610484c4c85c4bee054a80569eca0..6359cc145be60579d951af3587d98503d252d285 100644
+index 70cf3eed0bb94b2b9d5d6dc2951516db7b075081..741cc89d60ea929819b28450a23b1947a10d591c 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -565,6 +565,30 @@ kk_get_logical_color_att_index(const struct vk_graphics_pipeline_state *state,
+@@ -545,6 +545,30 @@ kk_get_logical_color_att_index(const struct vk_graphics_pipeline_state *state,
     return (state->cal) ? state->cal->color_map[i] : i;
  }
  
@@ -196,7 +196,7 @@ index d3c16adb553610484c4c85c4bee054a80569eca0..6359cc145be60579d951af3587d98503
  static bool
  kk_nir_remove_undeclared_fs_output(nir_builder *b,
                                     nir_intrinsic_instr *intrin, void *data)
-@@ -743,14 +767,6 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
+@@ -723,14 +747,6 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
              const struct vk_graphics_pipeline_state *state, bool writes_depth,
              bool pipeline_statistics)
  {
@@ -211,7 +211,7 @@ index d3c16adb553610484c4c85c4bee054a80569eca0..6359cc145be60579d951af3587d98503
     nir->info.fs.uses_sample_shading |=
        state->ms && state->ms->sample_shading_enable;
  
-@@ -761,6 +777,20 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
+@@ -741,6 +757,20 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
     if (nir->info.fs.uses_sample_shading)
        NIR_PASS(_, nir, msl_nir_lower_sample_shading);
  
@@ -232,7 +232,7 @@ index d3c16adb553610484c4c85c4bee054a80569eca0..6359cc145be60579d951af3587d98503
     if (state->cb)
        kk_lower_fs_blend(nir, state);
  
-@@ -3644,7 +3674,11 @@ gather_graphics_pipeline_create_info(
+@@ -3609,7 +3639,11 @@ gather_graphics_pipeline_create_info(
     if (info->vs.has_ms) {
        const struct vk_multisample_state *ms = state->ms;
        info->vs.sample_count = ms->rasterization_samples;

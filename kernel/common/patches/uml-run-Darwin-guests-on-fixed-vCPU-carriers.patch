@@ -11,21 +11,21 @@ Keep carrier lifetime, host-stop wakeup, cross-CPU service, and the hot current-
  arch/um/os-Darwin/internal.h                |  22 +-
  arch/um/os-Darwin/main.c                    |  12 +-
  arch/um/os-Darwin/signal.c                  |  17 +-
- arch/um/os-Darwin/skas/process.c            | 584 ++------------------
+ arch/um/os-Darwin/skas/process.c            | 569 ++------------------
  arch/um/os-Darwin/smp.c                     | 263 +++++++--
  arch/um/os-Darwin/time.c                    | 105 +++-
  arch/um/os-Darwin/uml_darwin_abi.h          |   6 +-
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   4 +-
  arch/um/os-Darwin/uml_darwin_host.h         |   2 +
- 12 files changed, 411 insertions(+), 629 deletions(-)
+ 12 files changed, 409 insertions(+), 616 deletions(-)
 
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
-index 3cf7106cc489ca9442d562b9a938233804f938d6..c113d51b88be1c7c68818bcbce0d4dc78763da46 100644
+index f503747b0908286678542c2c57ae58d536f3726d..6fd6da6c5816a452cec29b2cc4fe7605845236ad 100644
 --- a/arch/arm64/um/asm/processor.h
 +++ b/arch/arm64/um/asm/processor.h
-@@ -39,13 +39,22 @@ static inline void arch_copy_thread(struct arch_thread *from,
- 	((address) + 65536 + 32 * sizeof(unsigned long) >= \
- 	 UPT_SP(&current->thread.regs.regs))
+@@ -35,13 +35,22 @@ static inline void arch_copy_thread(struct arch_thread *from,
+ #define KSTK_ESP(task) KSTK_REG(task, HOST_SP)
+ #define KSTK_EBP(task) KSTK_REG(task, HOST_FP)
  
 +#ifdef UML_HOST_DARWIN
 +void darwin_cpu_relax(void);
@@ -79,7 +79,7 @@ index 9dcd8758ffb3648b055b801886c121e8c5002355..838272e9b62f582c94227f216f0b8ca2
  #endif
  
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
-index b53004892d3424457ba0bd5ed3c7c31b84a6e4e1..64b45ceee19d24bb51dd736faa6c87df2c7ca40c 100644
+index 3273efe8362a19ed8434f51c21e672d2d96592a2..5e153236cbc104c5ac60297c9de16773e1a325dd 100644
 --- a/arch/um/kernel/skas/process.c
 +++ b/arch/um/kernel/skas/process.c
 @@ -34,7 +34,9 @@ char cpu_irqstacks[NR_CPUS][THREAD_SIZE] __aligned(THREAD_SIZE);
@@ -189,10 +189,10 @@ index cf597442f04361423a906926d07df47e28cac18a..cbaf450b37873a730a7928f190a819c5
  	if (error != 0)
  		os_warn("Darwin UML: deactivate_all_fds failed: %d\n", error);
 diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
-index 297d5b15b40a1235b8dfbaa9e3b6958073668ab1..948a794aa59f264e84dca8515228639d9b7862ec 100644
+index 6e3c0a96f14dc0e1ad14177011a2aab126dd3584..20c840f9c1f9e5ff1179ede34e13412ec79e2a30 100644
 --- a/arch/um/os-Darwin/signal.c
 +++ b/arch/um/os-Darwin/signal.c
-@@ -29,12 +29,11 @@ struct darwin_signal_state {
+@@ -27,12 +27,11 @@ struct darwin_signal_state {
   * state.  The outgoing task leaves that state on the CPU and the incoming
   * task continues with it until the architecture return path restores IRQs.
   *
@@ -210,7 +210,7 @@ index 297d5b15b40a1235b8dfbaa9e3b6958073668ab1..948a794aa59f264e84dca8515228639d
   */
  static struct darwin_signal_state signal_states[CONFIG_NR_CPUS];
  
-@@ -230,6 +229,12 @@ void set_handler(int signal)
+@@ -228,6 +227,12 @@ void set_handler(int signal)
  		action.sa_flags |= SA_RESTART;
  	if (sigaction(signal, &action, NULL) < 0)
  		panic("Darwin sigaction failed: %d", errno);
@@ -224,10 +224,15 @@ index 297d5b15b40a1235b8dfbaa9e3b6958073668ab1..948a794aa59f264e84dca8515228639d
  	sigaddset(&unblock, signal);
  	if (pthread_sigmask(SIG_UNBLOCK, &unblock, NULL) != 0)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2daf886a0 100644
+index 82c516e0c4d51e8e34e5640ffe37853578244e1a..6461c46c41fe0a278318c14ab51fdca497acda65 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -10,6 +10,7 @@
+@@ -5,11 +5,11 @@
+ #include <signal.h>
+ #include <stddef.h>
+ #include <stdint.h>
+-#include <stdlib.h>
+ #include <time.h>
  #include <as-layout.h>
  #include <asm/unistd.h>
  #include <kern_util.h>
@@ -235,7 +240,7 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
  #include <os.h>
  #include <darwin-address-space.h>
  #include <skas.h>
-@@ -23,8 +24,8 @@
+@@ -23,8 +23,8 @@
   * These checks make an ABI drift fail at the kernel compiler rather than at a
   * guest boundary after register state has been reinterpreted. */
  _Static_assert(sizeof(unsigned long) == 8, "Darwin UML ABI requires LP64");
@@ -246,15 +251,15 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
  	       "unexpected ABI fingerprint");
  _Static_assert(offsetof(struct uml_pt_regs, orig_x0) ==
  	      DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET,
-@@ -46,7 +47,6 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
- 	       "uml_pt_regs ABI prefix size drift");
+@@ -54,7 +54,6 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
+ 	       "fault page trap drift");
  
  #define DARWIN_CLONE_VM 0x00000100UL
 -#define DARWIN_TASK_HASH_BUCKETS 4096
  /* Linux asm-generic/siginfo.h ABI value.  This host-side file includes
   * Darwin's signal.h, where the guest-only SEGV_CPERR name is unavailable. */
  #define DARWIN_GUEST_SEGV_CPERR 10
-@@ -59,31 +59,8 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
+@@ -67,59 +66,12 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
  #define DARWIN_GUEST_FPE_FLTINV 7
  #define DARWIN_GUEST_FPE_FLTUNK 14
  
@@ -286,22 +291,10 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
  static int shutdown_mode = -1;
  static unsigned int live_embedded_threads;
  static volatile sig_atomic_t cooperative_timers;
-@@ -94,11 +71,7 @@ static unsigned long long profile_stack_ns;
- static unsigned long long profile_syscall_ns;
- static unsigned long long profile_fault_ns;
- static unsigned long long profile_boundaries;
--static unsigned long long profile_thread_create_ns;
--static unsigned long long profile_thread_creates;
  static void timer_signal_mask(int how, sigset_t *old_mask);
 -static void remove_task(struct darwin_task_thread *task);
 -static void task_put(struct darwin_task_thread *task);
- 
- static void profile_add(unsigned long long *counter,
- 			unsigned long long value)
-@@ -111,28 +84,6 @@ static unsigned long long profile_read(unsigned long long *counter)
- 	return __atomic_load_n(counter, __ATOMIC_RELAXED);
- }
- 
+-
 -static void create_current_host_task_key(void)
 -{
 -	if (pthread_key_create(&current_host_task_key, NULL) != 0)
@@ -323,11 +316,10 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
 -	    pthread_setspecific(current_host_task_key, task) != 0)
 -		panic("Darwin: unable to set scheduler task key");
 -}
--
+ 
  int darwin_reserve_embedded_thread(void)
  {
- 	int reserved = 0;
-@@ -159,36 +110,6 @@ void darwin_release_embedded_thread(void)
+@@ -147,36 +99,6 @@ void darwin_release_embedded_thread(void)
  	pthread_mutex_unlock(&shutdown_lock);
  }
  
@@ -364,7 +356,7 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
  int darwin_task_shutdown_requested(void)
  {
  	return __atomic_load_n(&shutdown_mode, __ATOMIC_ACQUIRE) >= 0;
-@@ -218,29 +139,6 @@ int darwin_wait_for_embedded_threads(unsigned int timeout_ms)
+@@ -206,29 +128,6 @@ int darwin_wait_for_embedded_threads(unsigned int timeout_ms)
  	return error == 0 ? 0 : -error;
  }
  
@@ -391,10 +383,10 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
 -		panic("Darwin: CPU%d execution carrier ownership was lost", cpu);
 -}
 -
- static int boundary_profile_enabled(void)
+ void darwin_enable_cooperative_timers(void)
  {
- 	static int enabled = -1;
-@@ -294,351 +192,32 @@ static void timer_signal_mask(int how, sigset_t *old_mask)
+ 	/* Stop the process-wide source and initialize every per-CPU deadline
+@@ -254,343 +153,32 @@ static void timer_signal_mask(int how, sigset_t *old_mask)
  		panic("Darwin: unable to update task timer signal mask");
  }
  
@@ -527,14 +519,19 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
 -}
 -
 -static void *task_entry_main(void *argument)
--{
++void new_thread(void *stack, jmp_buf *buffer, void (*handler)(void))
+ {
 -	struct darwin_task_thread *task = argument;
 -	int cpu;
 -
 -	set_current_host_task(task);
 -	/* Every new carrier starts with the process-wide timer blocked.  It is
 -	 * unblocked only while running before the SMP-wide cooperative switch.
--	 */
++	/* Linux task state is stackful guest-kernel state.  A runnable task borrows
++	 * its selected vCPU's one persistent Darwin carrier; creating a guest task
++	 * therefore consumes no host thread and is not constrained by iOS's process
++	 * thread ceiling.
+ 	 */
 -	timer_signal_mask(SIG_BLOCK, NULL);
 -	os_local_ipi_disable();
 -	pthread_mutex_lock(&task->lock);
@@ -548,7 +545,11 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
 -	darwin_set_current_cpu(cpu);
 -	/* Before the SMP-wide cooperative transition, the sole process timer is
 -	 * CPU0's clockevent and must never execute on a secondary carrier.
--	 */
++	(*buffer)[0].JB_IP = (unsigned long)handler;
++	/* kernel_longjmp branches directly to handler rather than returning
++	 * through a synthetic frame.  AAPCS64 therefore requires the initial
++	 * function-entry stack pointer itself to remain 16-byte aligned.
+ 	 */
 -	if (!darwin_timers_cooperative() && cpu == 0)
 -		timer_signal_mask(SIG_UNBLOCK, NULL);
 -	if (__atomic_load_n(&shutdown_mode, __ATOMIC_ACQUIRE) < 0) {
@@ -569,12 +570,10 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
 -
 -static struct darwin_task_thread *create_task(void *stack, jmp_buf *key,
 -					      void (*entry)(void))
-+void new_thread(void *stack, jmp_buf *buffer, void (*handler)(void))
- {
+-{
 -	struct darwin_task_thread *task = calloc(1, sizeof(*task));
 -	pthread_attr_t attributes;
 -	sigset_t previous_mask;
--	unsigned long long create_start = 0;
 -	int error;
 -
 -	if (task == NULL)
@@ -626,28 +625,13 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
 -	 * current is maintained by cpu_tasks[] on UML, so a Darwin-managed native
 -	 * stack does not change Linux task identity.  switch_buf still records the
 -	 * corresponding Linux stack for the kernel's task bookkeeping.
-+	/* Linux task state is stackful guest-kernel state.  A runnable task borrows
-+	 * its selected vCPU's one persistent Darwin carrier; creating a guest task
-+	 * therefore consumes no host thread and is not constrained by iOS's process
-+	 * thread ceiling.
- 	 */
+-	 */
 -	/* pthread signal masks are inherited.  Always create the new carrier with
 -	 * the process-wide timer blocked, then let task_entry decide whether the
 -	 * pre-SMP asynchronous source is still in use.
-+	(*buffer)[0].JB_IP = (unsigned long)handler;
-+	/* kernel_longjmp branches directly to handler rather than returning
-+	 * through a synthetic frame.  AAPCS64 therefore requires the initial
-+	 * function-entry stack pointer itself to remain 16-byte aligned.
- 	 */
+-	 */
 -	timer_signal_mask(SIG_BLOCK, &previous_mask);
--	if (boundary_profile_enabled())
--		create_start = os_nsecs();
 -	error = pthread_create(&task->thread, &attributes, task_entry, task);
--	if (boundary_profile_enabled()) {
--		profile_add(&profile_thread_create_ns,
--			    os_nsecs() - create_start);
--		profile_add(&profile_thread_creates, 1);
--	}
 -	if (pthread_sigmask(SIG_SETMASK, &previous_mask, NULL) != 0)
 -		panic("Darwin: unable to restore creator timer signal mask");
 -	pthread_attr_destroy(&attributes);
@@ -679,11 +663,7 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
 -	/* A carrier must not receive the process-wide timer after it gives up its
 -	 * virtual CPU.  If cooperative mode becomes active while this task waits,
 -	 * leave the timer blocked permanently when it resumes.
-+	/* The scheduler enters with local IRQs disabled.  Keep the logical IRQ/TLS
-+	 * state on this vCPU carrier while only the stackful Linux task context
-+	 * moves.  Dead tasks are never resumed, so their final stack need not be
-+	 * saved.
- 	 */
+-	 */
 -	timer_signal_mask(SIG_BLOCK, NULL);
 -	from = get_current_host_task();
 -	if (from == NULL || from->key != from_key) {
@@ -754,7 +734,11 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
 -	/* Timer signal state belongs to the virtual CPU, not to the Linux task's
 -	 * pthread.  A task may resume on a different CPU, so derive the native mask
 -	 * from its new CPU rather than restoring the mask it had before migration.
--	 */
++	/* The scheduler enters with local IRQs disabled.  Keep the logical IRQ/TLS
++	 * state on this vCPU carrier while only the stackful Linux task context
++	 * moves.  Dead tasks are never resumed, so their final stack need not be
++	 * saved.
+ 	 */
 -	if (!darwin_timers_cooperative() && cpu == 0)
 -		timer_signal_mask(SIG_UNBLOCK, NULL);
 +	if (from_dead)
@@ -764,7 +748,7 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
  }
  
  void switch_threads(jmp_buf *from_key, jmp_buf *to_key)
-@@ -648,19 +227,10 @@ void switch_threads(jmp_buf *from_key, jmp_buf *to_key)
+@@ -600,19 +188,10 @@ void switch_threads(jmp_buf *from_key, jmp_buf *to_key)
  
  int start_idle_thread(void *stack, jmp_buf *switch_buffer)
  {
@@ -785,7 +769,7 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
  	pthread_mutex_lock(&shutdown_lock);
  	while (__atomic_load_n(&shutdown_mode, __ATOMIC_ACQUIRE) < 0)
  		pthread_cond_wait(&shutdown_condition, &shutdown_lock);
-@@ -668,69 +238,6 @@ int start_idle_thread(void *stack, jmp_buf *switch_buffer)
+@@ -620,69 +199,6 @@ int start_idle_thread(void *stack, jmp_buf *switch_buffer)
  	return __atomic_load_n(&shutdown_mode, __ATOMIC_ACQUIRE);
  }
  
@@ -855,29 +839,13 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
  void initial_thread_cb_skas(void (*procedure)(void *), void *argument)
  {
  	procedure(argument);
-@@ -738,43 +245,41 @@ void initial_thread_cb_skas(void (*procedure)(void *), void *argument)
+@@ -690,29 +206,29 @@ void initial_thread_cb_skas(void (*procedure)(void *), void *argument)
  
  static void shutdown_kernel(int reboot)
  {
 -	struct darwin_task_thread *task;
 -	struct darwin_task_thread *current_task;
 -
- 	if (boundary_profile_enabled())
- 		os_warn("Darwin boundary ns: count=%llu activate=%llu sync=%llu "
- 			"guest=%llu stack=%llu syscall=%llu "
--			"fault=%llu thread_creates=%llu thread_create=%llu\n",
-+			"fault=%llu\n",
- 			profile_read(&profile_boundaries),
- 			profile_read(&profile_activate_ns),
- 			profile_read(&profile_sync_ns),
- 			profile_read(&profile_guest_ns),
- 			profile_read(&profile_stack_ns),
- 			profile_read(&profile_syscall_ns),
--			profile_read(&profile_fault_ns),
--			profile_read(&profile_thread_creates),
--			profile_read(&profile_thread_create_ns));
-+			profile_read(&profile_fault_ns));
- 
 -	current_task = get_current_host_task();
 -	if (current_task != NULL) {
 -		pthread_mutex_lock(&current_task->lock);
@@ -919,7 +887,7 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
  }
  
  #ifndef CONFIG_PAGE_SIZE_16KB
-@@ -882,7 +387,8 @@ void userspace(struct uml_pt_regs *registers)
+@@ -820,7 +336,8 @@ void userspace(struct uml_pt_regs *registers)
  {
  	/* Deliver the host timer only at kernel/guest boundaries.  Allowing a
  	 * POSIX handler to schedule from the native guest register window would
@@ -929,7 +897,7 @@ index 670642c881364fa0c14e9a2530b7780928b68dde..fe8e7d48e59b7e18a5900eacea5216d2
  	 */
  	if (!darwin_timers_cooperative())
  		change_sig(SIGALRM, 0);
-@@ -967,6 +473,8 @@ void userspace(struct uml_pt_regs *registers)
+@@ -883,6 +400,8 @@ void userspace(struct uml_pt_regs *registers)
  				mm_id == NULL ? 0 : mm_id->darwin_generation,
  				&guest_tls);
  		darwin_ipi_guest_end();
@@ -1343,18 +1311,18 @@ index 7338cec2518abe186c1be86ca39126e1543380b6..b54e7ca5983b799ba352c13a0ba8bfb8
  }
  
 diff --git a/arch/um/os-Darwin/time.c b/arch/um/os-Darwin/time.c
-index 06199debb04605afe3d519c63c9ab0602d462e6b..cdab8ac92154669e8f38872c16456259fc6215c8 100644
+index cda7615a807973776493c66797ec477f007daca6..50c8f60d0412c1948fc618a899cc87572e865179 100644
 --- a/arch/um/os-Darwin/time.c
 +++ b/arch/um/os-Darwin/time.c
-@@ -5,6 +5,7 @@
+@@ -4,6 +4,7 @@
+ #include <pthread.h>
  #include <signal.h>
- #include <stdlib.h>
  #include <string.h>
 +#include <sys/event.h>
  #include <sys/select.h>
  #include <sys/time.h>
  #include <time.h>
-@@ -13,6 +14,7 @@
+@@ -12,6 +13,7 @@
  #include <kern_util.h>
  #include <os.h>
  #include <smp.h>
@@ -1362,7 +1330,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..cdab8ac92154669e8f38872c16456259
  #include "irq.h"
  #include "internal.h"
  
-@@ -21,6 +23,8 @@ struct darwin_cpu_timer {
+@@ -20,6 +22,8 @@ struct darwin_cpu_timer {
  	unsigned long long deadline_ns;
  	int active;
  	int periodic;
@@ -1371,7 +1339,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..cdab8ac92154669e8f38872c16456259
  };
  
  static struct darwin_cpu_timer cpu_timers[CONFIG_NR_CPUS];
-@@ -64,8 +68,12 @@ long long os_nsecs(void)
+@@ -54,8 +58,12 @@ long long os_nsecs(void)
  
  int os_timer_create(void)
  {
@@ -1386,7 +1354,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..cdab8ac92154669e8f38872c16456259
  	return 0;
  }
  
-@@ -185,6 +193,63 @@ void darwin_timer_poll(struct uml_pt_regs *registers)
+@@ -168,6 +176,63 @@ void darwin_timer_poll(struct uml_pt_regs *registers)
  	}
  }
  
@@ -1450,7 +1418,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..cdab8ac92154669e8f38872c16456259
  void os_idle_sleep(void)
  {
  	int cpu = uml_curr_cpu();
-@@ -202,6 +267,9 @@ void os_idle_sleep(void)
+@@ -185,6 +250,9 @@ void os_idle_sleep(void)
  		unsigned long long now;
  		unsigned long long remaining;
  		int ipi_fd;
@@ -1460,7 +1428,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..cdab8ac92154669e8f38872c16456259
  		int fire_timer = 0;
  
  		if (cpu == 0)
-@@ -226,28 +294,32 @@ void os_idle_sleep(void)
+@@ -209,28 +277,32 @@ void os_idle_sleep(void)
  			timeout.tv_sec = (time_t)(remaining / UM_NSEC_PER_SEC);
  			timeout.tv_nsec = (long)(remaining % UM_NSEC_PER_SEC);
  			timeout_pointer = &timeout;
@@ -1507,7 +1475,7 @@ index 06199debb04605afe3d519c63c9ab0602d462e6b..cdab8ac92154669e8f38872c16456259
  		/* Clear before draining.  A sender which observed the idle state has
  		 * already left a pipe byte; a later sender will use the signal wake
  		 * path while this CPU processes the completed wait.
-@@ -260,6 +332,7 @@ void os_idle_sleep(void)
+@@ -243,6 +315,7 @@ void os_idle_sleep(void)
  			darwin_irq_idle_end(&previous_mask);
  		else
  			pthread_sigmask(SIG_SETMASK, &previous_mask, NULL);

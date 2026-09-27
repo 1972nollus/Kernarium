@@ -69,13 +69,10 @@ def parse_arguments() -> argparse.Namespace:
         "--overlay-shell",
         dest="overlay_shell",
         action="store_true",
-        help="boot the EROFS root through a writable tmpfs OverlayFS shell",
-    )
-    boot_mode.add_argument(
-        "--systemd-overlay",
-        dest="overlay_shell",
-        action="store_true",
-        help=argparse.SUPPRESS,
+        help=(
+            "boot the EROFS root through a writable tmpfs OverlayFS shell "
+            "(default)"
+        ),
     )
     return parser.parse_args()
 
@@ -126,8 +123,7 @@ def main() -> int:
               if arguments.guest_top_byte_ignore else ()),
         ),
         init_shell=arguments.shell_init,
-        overlay_shell=arguments.overlay_shell,
-        systemd_overlay=not (arguments.shell_init or arguments.overlay_shell),
+        overlay_shell=not arguments.shell_init,
         engine=arguments.engine,
         core_class=arguments.core_class,
     ) as guest:

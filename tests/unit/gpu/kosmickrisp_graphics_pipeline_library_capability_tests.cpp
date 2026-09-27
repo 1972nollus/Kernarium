@@ -1,64 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "kosmickrisp_capability_probe.hpp"
+#include "kosmickrisp_capability_test_support.hpp"
 
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <source_location>
-#include <sstream>
 #include <string_view>
 
-namespace {
-
-void require(
-    bool condition,
-    const std::source_location location = std::source_location::current())
-{
-    if (condition)
-        return;
-    std::fprintf(stderr, "require failed at %s:%u\n", location.file_name(),
-                 location.line());
-    std::abort();
-}
-
-std::size_t countOccurrences(std::string_view text, std::string_view needle)
-{
-    std::size_t count = 0;
-    for (std::size_t position = 0;
-         (position = text.find(needle, position)) != std::string_view::npos;
-         position += needle.size()) {
-        ++count;
-    }
-    return count;
-}
-
-uint64_t unsignedField(std::string_view report, std::string_view field)
-{
-    const auto position = report.find(field);
-    require(position != std::string_view::npos);
-    const auto first = position + field.size();
-    auto last = first;
-    while (last < report.size() && report[last] >= '0' &&
-           report[last] <= '9') {
-        ++last;
-    }
-    require(last != first);
-    uint64_t value = 0;
-    for (auto index = first; index < last; ++index) {
-        value = value * 10U + static_cast<uint64_t>(report[index] - '0');
-    }
-    return value;
-}
-
-} // namespace
+using namespace uml::gpu::testing;
 
 int main()
 {
-    std::ostringstream output;
-    require(uml::gpu::run_kosmickrisp_capability_probe(output) == 0);
-
-    const auto report = output.str();
+    const auto report = probeReport();
     constexpr std::string_view pipelineLibrary =
         "{\"name\":\"VK_KHR_pipeline_library\",\"spec_version\":1}";
     constexpr std::string_view graphicsPipelineLibrary =

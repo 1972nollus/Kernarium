@@ -134,7 +134,6 @@ verify_vulkan_runtime()
 {
 	"$VERIFIER" --binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
 		--apple-gpu-prefix "$PREFIX" \
-		--apple-gpu-product apple-gpu-vulkan-experiment \
 		--framework-directory "$VULKAN_RUNTIME/Frameworks"
 }
 verify_vulkan_runtime >/dev/null
@@ -142,7 +141,6 @@ verify_vulkan_runtime >/dev/null
 expect_rejection 'host GL provider marker' \
 	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client-missing-marker" \
 	--apple-gpu-prefix "$PREFIX" \
-	--apple-gpu-product apple-gpu-vulkan-experiment \
 	--framework-directory "$VULKAN_RUNTIME/Frameworks"
 
 mkdir -p -- "$VULKAN_RUNTIME/duplicate"
@@ -150,7 +148,6 @@ cp -R "$PREFIX/Frameworks/MesaEGL.framework" "$VULKAN_RUNTIME/duplicate/"
 expect_rejection 'exactly one MesaEGL.framework copy' \
 	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
 	--apple-gpu-prefix "$PREFIX" \
-	--apple-gpu-product apple-gpu-vulkan-experiment \
 	--framework-directory "$VULKAN_RUNTIME/Frameworks"
 rm -rf -- "$VULKAN_RUNTIME/duplicate"
 
@@ -158,7 +155,6 @@ touch "$VULKAN_RUNTIME/Frameworks/MesaGallium.framework/unexpected"
 expect_rejection 'payload is not exact' \
 	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
 	--apple-gpu-prefix "$PREFIX" \
-	--apple-gpu-product apple-gpu-vulkan-experiment \
 	--framework-directory "$VULKAN_RUNTIME/Frameworks"
 rm -- "$VULKAN_RUNTIME/Frameworks/MesaGallium.framework/unexpected"
 verify_vulkan_runtime >/dev/null
@@ -167,7 +163,6 @@ printf '\0' >>"$VULKAN_RUNTIME/Frameworks/KosmicKrisp.framework/KosmicKrisp"
 expect_rejection 'does not match the authenticated prefix' \
 	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
 	--apple-gpu-prefix "$PREFIX" \
-	--apple-gpu-product apple-gpu-vulkan-experiment \
 	--framework-directory "$VULKAN_RUNTIME/Frameworks"
 
 printf '%s\n' 'runtime dependency closure fixture passed'
