@@ -273,8 +273,6 @@ bool SharedTranslationCache::CodegenProfile::operator==(
     const CodegenProfile &other) const noexcept {
   return guarded_control_flow == other.guarded_control_flow &&
          pointer_authentication == other.pointer_authentication &&
-         persistent_linked_block_abi ==
-             other.persistent_linked_block_abi &&
          capabilities.supported == other.capabilities.supported &&
          capabilities.floating_point == other.capabilities.floating_point &&
          capabilities.advanced_simd == other.capabilities.advanced_simd &&

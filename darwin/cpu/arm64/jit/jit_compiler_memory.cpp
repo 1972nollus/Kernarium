@@ -129,8 +129,7 @@ void JitCompiler::clear_local_exclusive_monitor() {
 [[nodiscard]] std::size_t
   JitCompiler::try_emit_native_exclusive_run(
       std::span<const std::uint32_t> instructions, std::uint64_t pc) {
-    if (!emitter_.persistent_linked_block_abi() ||
-        count_ != 0U || !gpr_slots_unbound() || instructions.size() < 2U)
+    if (count_ != 0U || !gpr_slots_unbound() || instructions.size() < 2U)
       return 0;
 
     const auto load_instruction = instructions[0];

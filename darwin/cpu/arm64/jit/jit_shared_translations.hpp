@@ -167,7 +167,6 @@ public:
     ::uml::cpu::HostCapabilities capabilities{};
     bool guarded_control_flow{};
     bool pointer_authentication{};
-    bool persistent_linked_block_abi{persistent_linked_block_abi_default};
 
     /* Compared field by field rather than by bytes so padding cannot make
      * two identical configurations look different.

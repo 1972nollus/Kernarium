@@ -280,9 +280,7 @@ void JitExecutor::Implementation::clear_cache() noexcept {
 JitExecutor::Implementation::shared_codegen_profile() const noexcept {
   return {.capabilities = host_capabilities_,
           .guarded_control_flow = enable_guarded_control_flow_,
-          .pointer_authentication = enable_pointer_authentication_,
-          .persistent_linked_block_abi =
-              persistent_linked_block_abi_default};
+          .pointer_authentication = enable_pointer_authentication_};
 }
 
 [[nodiscard]] std::optional<SharedTranslationMaterializationFailure>

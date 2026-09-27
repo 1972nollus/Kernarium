@@ -157,28 +157,20 @@ void successful_links_do_not_publish_terminal_metadata() {
   constexpr std::array direct{0x1400'0001U}; // b pc + 4
   const auto direct_persistent =
       jit_test::compile_linked_block(direct_pc, direct);
-  const auto direct_memory =
-      jit_test::compile_linked_block_memory_abi(direct_pc, direct);
 
   /*
    * These were STRs of target instruction_count and guest_pc through the
-   * persistent x19 and memory-backed x11 chain-state pointers.
+   * x19 chain-state pointer.
    */
   require(count(hot(direct_persistent), 0xf900'0a69U) == 0);
   require(count(hot(direct_persistent), 0xf900'0670U) == 0);
-  require(count(hot(direct_memory), 0xf900'0969U) == 0);
-  require(count(hot(direct_memory), 0xf900'0570U) == 0);
 
   constexpr std::uint64_t pic_pc = 0x5b02'0000;
   constexpr std::array indirect{0xd61f'00a0U}; // br x5
   const auto pic_persistent =
       jit_test::compile_indirect_linked_block(pic_pc, indirect);
-  const auto pic_memory =
-      jit_test::compile_indirect_linked_block_memory_abi(pic_pc, indirect);
   require(count(hot(pic_persistent), 0xf900'0a69U) == 0);
   require(count(hot(pic_persistent), 0xf900'0670U) == 0);
-  require(count(hot(pic_memory), 0xf900'0969U) == 0);
-  require(count(hot(pic_memory), 0xf900'0570U) == 0);
 }
 
 void exclusive_counter_loop_retains_one_translated_address() {

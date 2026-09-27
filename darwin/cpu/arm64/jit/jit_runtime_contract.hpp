@@ -24,8 +24,6 @@ inline constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 inline constexpr unsigned page_shift = DARWIN_UML_GUEST_PAGE_SHIFT;
 inline constexpr std::uint32_t native_fpsr_mutable_mask = 0x0800'009fU;
 inline constexpr std::size_t maximum_chain_instructions = 4096;
-/* Translation-time only: generated blocks select one ABI shape. */
-inline constexpr bool persistent_linked_block_abi_default = true;
 
 [[nodiscard]] constexpr bool
 floating_or_vector_primary_class(std::uint32_t instruction) noexcept {

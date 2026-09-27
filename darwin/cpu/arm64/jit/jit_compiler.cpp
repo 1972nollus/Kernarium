@@ -18,15 +18,12 @@ JitCompiler::JitCompiler(bool enable_guarded_control_flow,
                        void *link_context,
                        LinkResolver link_resolver,
                        bool track_direct_stores,
-                       IndirectLinkResolver indirect_link_resolver,
-                       bool persistent_linked_block_abi
-                       ) noexcept
-      : emitter_{persistent_linked_block_abi, std::size_t{1} << 18U},
+                       IndirectLinkResolver indirect_link_resolver) noexcept
+      : emitter_{std::size_t{1} << 18U},
         cold_{this},
         configured_link_context_{link_context},
         configured_link_resolver_{link_resolver},
         configured_indirect_link_resolver_{indirect_link_resolver},
-        configured_persistent_linked_block_abi_{persistent_linked_block_abi},
         track_direct_stores_{track_direct_stores},
         enable_guarded_control_flow_{enable_guarded_control_flow} {
     attach_family_emitter(&emitter_, &native_fp_, &native_fpmr_,
@@ -74,9 +71,7 @@ JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
       JitCompiler candidate_compiler{
           enable_guarded_control_flow_, configured_link_context_,
           configured_link_resolver_, track_direct_stores_,
-          configured_indirect_link_resolver_,
-          configured_persistent_linked_block_abi_
-      };
+          configured_indirect_link_resolver_};
       candidate_compiler.translation_features_ = translation_features_;
       candidate_compiler.table_list_planning_enabled_ =
           table_list_planning_enabled_;

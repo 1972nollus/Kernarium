@@ -745,22 +745,6 @@ CompiledCode compile_linked_block_with_capacity(
   return copied_code(compiler.compile(pc, instructions));
 }
 
-CompiledCode compile_linked_block_memory_abi(
-    std::uint64_t pc,
-    std::span<const std::uint32_t> instructions) {
-  JitBlockLink link{};
-  const auto resolver = +[](void *context, std::uint64_t target) -> const void * {
-    auto &resolved = *static_cast<JitBlockLink *>(context);
-    resolved.guest_pc = target;
-    return &resolved;
-  };
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false, &link, resolver,
-                       /*track_direct_stores=*/false,
-                       /*indirect_link_resolver=*/nullptr,
-                       /*persistent_linked_block_abi=*/false};
-  return copied_code(compiler.compile(pc, instructions));
-}
-
 CompiledCode compile_indirect_linked_block(
     std::uint64_t pc,
     std::span<const std::uint32_t> instructions) {
@@ -798,34 +782,10 @@ CompiledCode compile_indirect_linked_block_with_capacity(
   return copied_code(compiler.compile(pc, instructions));
 }
 
-CompiledCode compile_indirect_linked_block_memory_abi(
-    std::uint64_t pc,
-    std::span<const std::uint32_t> instructions) {
-  struct Context final {
-    JitBlockLink empty{.guest_pc = 1};
-    JitIndirectLink site{};
-  } context;
-  context.site.source_pc = pc;
-  for (auto &entry : context.site.entries) {
-    entry.guest_pc = 1;
-    entry.link = &context.empty;
-  }
-  const auto resolver =
-      +[](void *opaque, std::uint64_t) -> const void * {
-    return &static_cast<Context *>(opaque)->site;
-  };
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false, &context,
-                       /*link_resolver=*/nullptr,
-                       /*track_direct_stores=*/false, resolver,
-                       /*persistent_linked_block_abi=*/false};
-  return copied_code(compiler.compile(pc, instructions));
-}
-
 std::vector<std::uint32_t>
 compile_stable_pointer_load_for_testing(std::uintptr_t value,
                                         std::size_t literal_range_words) {
-  Arm64Emitter emitter{persistent_linked_block_abi_default,
-                       literal_range_words};
+  Arm64Emitter emitter{literal_range_words};
   emitter.load_stable_pointer(12, value);
   emitter.emit(0xd65f'03c0U); // ret
   const auto words = emitter.finish();
@@ -835,8 +795,7 @@ compile_stable_pointer_load_for_testing(std::uintptr_t value,
 std::vector<std::uint32_t> compile_two_stable_pointer_loads_for_testing(
     std::uintptr_t first, std::uintptr_t second,
     std::size_t literal_range_words) {
-  Arm64Emitter emitter{persistent_linked_block_abi_default,
-                       literal_range_words};
+  Arm64Emitter emitter{literal_range_words};
   emitter.load_stable_pointer(12, first);
   emitter.load_stable_pointer(13, second);
   emitter.emit(0xd65f'03c0U); // ret
@@ -852,19 +811,6 @@ materialize_constant_for_testing(unsigned destination, std::uint64_t value) {
   return {words.begin(), words.end()};
 }
 
-bool persistent_linked_block_abi_enabled() noexcept {
-  return persistent_linked_block_abi_default;
-}
-
-std::size_t persistent_link_successful_path_word_savings() noexcept {
-  /*
-   * Each successful edge removes the chain-pointer, selector-byte, and
-   * remaining-count loads plus the remaining-count store. The persistent
-   * subtract itself is shared with the memory-backed sequence.
-   */
-  return 4;
-}
-
 std::size_t successful_link_host_word_savings() noexcept {
   /*
    * The common basic-frame transition would reload x0/x1/x2 and unwind
@@ -873,10 +819,7 @@ std::size_t successful_link_host_word_savings() noexcept {
    * existing one-word BR.
    */
   constexpr std::size_t legacy_tail_words = 5;
-  constexpr std::size_t external_prologue_words =
-      persistent_linked_block_abi_default
-          ? 10
-          : 6;
+  constexpr std::size_t external_prologue_words = 10;
   constexpr std::size_t internal_tail_words = 1;
   return legacy_tail_words + external_prologue_words - internal_tail_words;
 }
