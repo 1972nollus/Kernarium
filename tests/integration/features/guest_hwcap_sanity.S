@@ -12,8 +12,10 @@
  *
  * This executes one instance of each advertised family with inputs whose
  * results are checked against constants derived by hand from DDI0487, and
- * exits with a distinct status per family so a failure names itself. It is a
- * correctness check, not a benchmark.
+ * exits with a distinct status per family so a failure names itself. It reads
+ * AT_HWCAP and AT_HWCAP2 from its auxiliary vector and skips each family the
+ * kernel does not advertise, so an engine is held to exactly what it
+ * advertises. It is a correctness check, not a benchmark.
  *
  * Exit status: 0 all families correct, otherwise the failing family's number.
  */
@@ -50,9 +52,32 @@
 	.equ E_USCAT,		18
 	.equ E_SB,		19
 	.equ E_DIT,		20
+	.equ E_AUXV,		21
 
-	/* The shared probe runner accepts a payload only when it prints exactly
-	 * "OK" and exits zero, so a failure reports the family by name on stdout
+	.equ AT_HWCAP,		16
+	.equ AT_HWCAP2,		26
+
+	/* Bit numbers in AT_HWCAP and AT_HWCAP2, from arm64 Linux's uapi hwcap.h. */
+	.equ HWCAP_FP,		0
+	.equ HWCAP_ASIMD,	1
+	.equ HWCAP_ATOMICS,	8
+	.equ HWCAP_FPHP,	9
+	.equ HWCAP_ASIMDRDM,	12
+	.equ HWCAP_JSCVT,	13
+	.equ HWCAP_FCMA,	14
+	.equ HWCAP_LRCPC,	15
+	.equ HWCAP_ASIMDDP,	20
+	.equ HWCAP_ASIMDFHM,	23
+	.equ HWCAP_DIT,		24
+	.equ HWCAP_USCAT,	25
+	.equ HWCAP_ILRCPC,	26
+	.equ HWCAP_FLAGM,	27
+	.equ HWCAP_SB,		29
+	.equ HWCAP2_FLAGM2,	7
+	.equ HWCAP2_FRINT,	8
+
+	/* The engine smoke accepts the payload only when it prints exactly "OK"
+	 * and exits zero, so a failure reports the family by name on stdout
 	 * where the runner will echo it, rather than by exit status alone. */
 	.macro fail code, label
 	adrp	x1, \label
@@ -69,9 +94,36 @@
 	.global _start
 	.type _start, %function
 _start:
+	/* A static program starts with sp at argc, then argv[] and its NULL,
+	 * envp[] and its NULL, and the auxiliary vector's (type, value) pairs up
+	 * to AT_NULL. x28 and x29 keep AT_HWCAP and AT_HWCAP2. */
+	ldr	x0, [sp]
+	mov	x1, sp
+	add	x1, x1, x0, lsl #3
+	add	x1, x1, #16
+.Lskip_environment:
+	ldr	x2, [x1], #8
+	cbnz	x2, .Lskip_environment
+	mov	x28, #0
+	mov	x29, #0
+.Lread_auxv:
+	ldp	x2, x3, [x1], #16
+	cbz	x2, .Lread_auxv_done
+	cmp	x2, #AT_HWCAP
+	csel	x28, x3, x28, eq
+	cmp	x2, #AT_HWCAP2
+	csel	x29, x3, x29, eq
+	b	.Lread_auxv
+.Lread_auxv_done:
+	/* Every arm64 kernel advertises FP and ASIMD, so without them the walk
+	 * did not find AT_HWCAP and every family would be skipped. */
+	tbz	x28, #HWCAP_FP, .Lfail_auxv
+	tbz	x28, #HWCAP_ASIMD, .Lfail_auxv
+
 	adrp	x19, scratch
 	add	x19, x19, :lo12:scratch
 
+	tbz	x28, #HWCAP_LRCPC, .Lskip_lrcpc
 	/* FEAT_LRCPC: LDAPR returns the value most recently stored. */
 	movz	x1, #0x7788
 	movk	x1, #0x5566, lsl #16
@@ -81,7 +133,9 @@ _start:
 	ldapr	x2, [x19]
 	cmp	x2, x1
 	b.ne	.Lfail_ldapr
+.Lskip_lrcpc:
 
+	tbz	x28, #HWCAP_ILRCPC, .Lskip_ilrcpc
 	/* FEAT_LRCPC2: STLUR writes at an unscaled offset, LDAPUR reads it back.
 	 * Offset 12 is deliberately unaligned to the 8-byte access size, which is
 	 * the case the unscaled form exists to serve. */
@@ -94,7 +148,9 @@ _start:
 	ldr	w5, [x19, #12]
 	cmp	w5, w3
 	b.ne	.Lfail_ldapur
+.Lskip_ilrcpc:
 
+	tbz	x28, #HWCAP_FCMA, .Lskip_fcma
 	/* FEAT_FCMA: FCADD Vd.2S, Vn.2S, Vm.2S, #90 computes, per complex pair,
 	 * d.re = n.re - m.im and d.im = n.im + m.re. With n = (1.0, 2.0) and
 	 * m = (3.0, 4.0) that is (1 - 4, 2 + 3) = (-3.0, 5.0). */
@@ -129,7 +185,9 @@ _start:
 	mov	v17.s[0], v7.s[1]
 	fcmp	s16, s17
 	b.ne	.Lfail_fcmla
+.Lskip_fcma:
 
+	tbz	x28, #HWCAP_ASIMDDP, .Lskip_asimddp
 	/* FEAT_DotProd: SDOT Vd.2S, Vn.8B, Vm.8B sums four signed byte products
 	 * into each 32-bit lane. Bytes 1,2,3,4 against 5,6,7,8 give
 	 * 5 + 12 + 21 + 32 = 70 in lane 0. */
@@ -148,7 +206,9 @@ _start:
 	umov	w11, v21.s[0]
 	cmp	w11, #70
 	b.ne	.Lfail_udot
+.Lskip_asimddp:
 
+	tbz	x28, #HWCAP_ASIMDRDM, .Lskip_asimdrdm
 	/* FEAT_RDM: SQRDMLAH Vd.4H, Vn.4H, Vm.4H rounds and doubles the product
 	 * before accumulating. With d = 0 and n = m = 0x4000 (0.5 in Q15) the
 	 * saturating doubled rounded product is 0x2000. */
@@ -161,7 +221,9 @@ _start:
 	mov	w14, #0x2000
 	cmp	w13, w14
 	b.ne	.Lfail_sqrdmlah
+.Lskip_asimdrdm:
 
+	tbz	x28, #HWCAP_JSCVT, .Lskip_jscvt
 	/* FEAT_JSCVT: FJCVTZS truncates a double toward zero into a 32-bit
 	 * result. -2.5 becomes -2. */
 	adrp	x15, jscvt_input
@@ -170,7 +232,9 @@ _start:
 	fjcvtzs	w16, d24
 	cmn	w16, #2
 	b.ne	.Lfail_fjcvtzs
+.Lskip_jscvt:
 
+	tbz	x29, #HWCAP2_FRINT, .Lskip_frint
 	/* FEAT_FRINTTS: FRINT32Z rounds toward zero to a 32-bit integral float.
 	 * 2.7 becomes 2.0. */
 	adrp	x17, frint_input
@@ -182,7 +246,9 @@ _start:
 	ldr	d27, [x18]
 	fcmp	d26, d27
 	b.ne	.Lfail_frint32z
+.Lskip_frint:
 
+	tbz	x28, #HWCAP_FPHP, .Lskip_fphp
 	/* FEAT_FP16: half-precision scalar add, 1.5 + 2.5 = 4.0. */
 	adrp	x20, fp16_input
 	add	x20, x20, :lo12:fp16_input
@@ -192,7 +258,9 @@ _start:
 	ldr	h31, [x20, #4]
 	fcmp	h30, h31
 	b.ne	.Lfail_fp16
+.Lskip_fphp:
 
+	tbz	x28, #HWCAP_ASIMDFHM, .Lskip_asimdfhm
 	/* FEAT_FHM: FMLAL Vd.4S, Vn.4H, Vm.4H widens half-precision products into
 	 * single precision and accumulates. 1.5 * 2.5 = 3.75 from zero. */
 	adrp	x21, fhm_input
@@ -206,7 +274,9 @@ _start:
 	ldr	s3, [x22]
 	fcmp	s2, s3
 	b.ne	.Lfail_fmlal
+.Lskip_asimdfhm:
 
+	tbz	x28, #HWCAP_FLAGM, .Lskip_flagm
 	/* FEAT_FlagM: CFINV inverts PSTATE.C and leaves the rest alone, so from
 	 * all-clear the result is C set. Every expected NZCV word below was taken
 	 * from running the same instruction natively on an arm64 host rather than
@@ -246,7 +316,9 @@ _start:
 	mrs	x23, nzcv
 	cmp	x23, x24
 	b.ne	.Lfail_setf
+.Lskip_flagm:
 
+	tbz	x29, #HWCAP2_FLAGM2, .Lskip_flagm2
 	/* FEAT_FlagM2: AXFLAG rewrites the Arm floating-point unordered encoding
 	 * (C and V set) into the alternate form (Z set). */
 	movz	x27, #0x3000, lsl #16
@@ -265,7 +337,10 @@ _start:
 	movz	x24, #0x3000, lsl #16
 	cmp	x23, x24
 	b.ne	.Lfail_xaflag
+.Lskip_flagm2:
 
+	tbz	x28, #HWCAP_USCAT, .Lskip_uscat
+	tbz	x28, #HWCAP_ATOMICS, .Lskip_uscat
 	/* FEAT_LSE2 (HWCAP_USCAT): an LSE atomic on an address that is not
 	 * naturally aligned must still complete single-copy atomically rather than
 	 * fault. Offset 4 from a 16-byte aligned base is 4-byte aligned and so is
@@ -284,10 +359,14 @@ _start:
 	add	x24, x24, #1
 	cmp	x27, x24
 	b.ne	.Lfail_uscat
+.Lskip_uscat:
 
+	tbz	x28, #HWCAP_SB, .Lskip_sb
 	/* FEAT_SB: the speculation barrier must execute and retire. */
 	sb
+.Lskip_sb:
 
+	tbz	x28, #HWCAP_DIT, .Lskip_dit
 	/* FEAT_DIT: setting PSTATE.DIT must be observable through MRS. */
 	msr	dit, #1
 	mrs	x23, dit
@@ -295,6 +374,7 @@ _start:
 	cmp	x23, x24
 	b.ne	.Lfail_dit
 	msr	dit, #0
+.Lskip_dit:
 
 	adrp	x1, success_message
 	add	x1, x1, :lo12:success_message
@@ -324,6 +404,7 @@ _start:
 .Lfail_xaflag:		fail E_XAFLAG, msg_xaflag
 .Lfail_uscat:		fail E_USCAT, msg_uscat
 .Lfail_dit:		fail E_DIT, msg_dit
+.Lfail_auxv:		fail E_AUXV, msg_auxv
 
 .Lexit:
 	mov	x8, #NR_EXIT_GROUP
@@ -400,6 +481,8 @@ msg_uscat:
 	.ascii "FAIL uscat      \n"
 msg_dit:
 	.ascii "FAIL dit        \n"
+msg_auxv:
+	.ascii "FAIL auxv       \n"
 success_message:
 	.ascii "OK\n"
 

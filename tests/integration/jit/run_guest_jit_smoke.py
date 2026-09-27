@@ -149,7 +149,11 @@ def main() -> int:
     parser.add_argument(
         "--engine", choices=("jit", "gadgets"), default="jit"
     )
+    parser.add_argument(
+        "--hwcap-sanity-binary", type=pathlib.Path, required=True
+    )
     arguments = parser.parse_args()
+    hwcap_sanity = arguments.hwcap_sanity_binary.read_bytes()
 
     with Guest(
         arguments.emulator.resolve(),
@@ -204,6 +208,11 @@ def main() -> int:
                 f"expected {sorted(expected_cpuinfo)}, "
                 f"got {sorted(actual_cpuinfo)}"
             )
+
+        # Every advertised family must also execute correctly. The payload
+        # reads the auxiliary vector itself and skips what is not advertised.
+        guest.upload(hwcap_sanity, "/tmp/guest-hwcap-sanity", 0o755)
+        guest.check_command("/tmp/guest-hwcap-sanity", 60, expected="OK")
 
         node = "/opt/node/bin/node"
         node_path = guest.check_command(f"test -x {shlex.quote(node)} && echo present", 60)
