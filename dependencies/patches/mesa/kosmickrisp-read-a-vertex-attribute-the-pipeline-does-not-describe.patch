@@ -140,10 +140,10 @@ index 7cb1ed3d6b09257d160faf1dc5949eef4c358415..ee5af3521b809c3823b7040f5fcf75fa
  
  unsigned kk_vbo_interchange_alignment(enum pipe_format format);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index bb548fa96eecb5152a4e21c14da9360ea5defd83..98e76fc242e8d8178be9e8434439c39add32755c 100644
+index 31de25d01bc37c95d6052443e3519ee1d31df82b..6ac80711aa383e4d217d0ca6a63a1e17b6b43beb 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -1675,6 +1675,18 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
+@@ -1679,6 +1679,18 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
        const bool emulated_vs =
           nir->info.next_stage == MESA_SHADER_TESS_CTRL || force_sw_vs;
  
