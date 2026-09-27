@@ -1,40 +1,19 @@
 # Label the complete Virtio-GPU sysfs device used by Mesa enumeration.
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.0 u:object_r:sysfs_gpu:s0
 # The Virtio battery's sysfs path carries its position among the Virtio devices
-# the host passes on the kernel command line, and that position depends on
-# which devices precede it. The standalone macOS launcher (darwin/app/macos/
-# main.cpp) orders GPU, balloon, video, sound, battery, so the battery is
-# device 1 to 4; the Kernarium iOS runtime (Kernarium/Runtime/
-# KernariumRuntime.mm) orders GPU, balloon, touchscreen, keyboard, sound,
-# video, conformance bridge, battery, so it is device 5 to 7. Only the battery
-# has a power_supply subtree, so labelling every reachable position is exact.
+# the host passes on the kernel command line. The standalone macOS launcher
+# (darwin/app/macos/main.cpp) and the Kernarium iOS runtime
+# (Kernarium/Runtime/KernariumRuntime.mm) both pass it straight after the GPU,
+# so it is always device 1.
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.1/virtio1/power_supply u:object_r:sysfs_batteryinfo:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.2/virtio2/power_supply u:object_r:sysfs_batteryinfo:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.3/virtio3/power_supply u:object_r:sysfs_batteryinfo:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.4/virtio4/power_supply u:object_r:sysfs_batteryinfo:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.5/virtio5/power_supply u:object_r:sysfs_batteryinfo:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.6/virtio6/power_supply u:object_r:sysfs_batteryinfo:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.7/virtio7/power_supply u:object_r:sysfs_batteryinfo:s0
 # system_suspend reads every wakeup source through /sys/class/wakeup. A wakeup
 # source is a "wakeupN" child of the device that owns it, numbered in
 # registration order, so each entry is a prefix that covers any N: the UML RTC,
-# its alarm timer, and the battery's two supplies at each position above.
+# its alarm timer, and the battery's two supplies.
 genfscon sysfs /devices/platform/uml-rtc.0/wakeup/wakeup u:object_r:sysfs_wakeup:s0
 genfscon sysfs /devices/platform/uml-rtc.0/rtc/rtc0/alarmtimer.0.auto/wakeup/wakeup u:object_r:sysfs_wakeup:s0
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.1/virtio1/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
 genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.1/virtio1/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.2/virtio2/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.2/virtio2/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.3/virtio3/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.3/virtio3/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.4/virtio4/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.4/virtio4/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.5/virtio5/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.5/virtio5/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.6/virtio6/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.6/virtio6/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.7/virtio7/power_supply/battery/wakeup u:object_r:sysfs_wakeup:s0
-genfscon sysfs /devices/virtio-uml-cmdline/virtio-uml.7/virtio7/power_supply/kernarium-mains/wakeup u:object_r:sysfs_wakeup:s0
 # The UBD disk is the root disk whose discard limit AOSP's init.rc sets through
 # /dev/sys/block/by-name/rootdisk. It gets the type AOSP gives virtual block
 # devices, which the inherited Cuttlefish policy lets init tune.

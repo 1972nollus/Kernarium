@@ -5,27 +5,17 @@ Subject: [PATCH] build: omit OTA-only outputs when OTA is skipped
 
 A non-A/B product that sets TARGET_SKIP_OTA_PACKAGE builds no OTA package,
 so the steps that exist only to feed one have nothing to serve. Leave the
-legacy updater out of the target-files OTA tools, and skip the
-recovery-from-boot patch and its reconstruction into target-files.
+legacy updater out of the target-files OTA tools, and do not reconstruct the
+recovery-from-boot patch into target-files.
 ---
- core/Makefile | 8 +++++++-
- 1 file changed, 7 insertions(+), 1 deletion(-)
+ core/Makefile | 5 +++++
+ 1 file changed, 5 insertions(+)
 
 diff --git a/core/Makefile b/core/Makefile
-index 39cad66a4443bfe6cf8d06e53e82e53bb0e30ae5..9050a1b18b564451c41d30f2a546708f10547e24 100644
+index 39cad66a4443bfe6cf8d06e53e82e53bb0e30ae5..5e8481e16d85e07ee355a55bd5679575d62a70bb 100644
 --- a/core/Makefile
 +++ b/core/Makefile
-@@ -2638,7 +2638,8 @@ endif
- #      install
- #      (BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT = true).
- 
--ifeq (,$(filter true, $(BOARD_USES_FULL_RECOVERY_IMAGE) $(BOARD_USES_RECOVERY_AS_BOOT) \
-+ifeq (,$(filter true, $(TARGET_SKIP_OTA_PACKAGE) $(BOARD_USES_FULL_RECOVERY_IMAGE) \
-+  $(BOARD_USES_RECOVERY_AS_BOOT) \
-   $(BOARD_INCLUDE_RECOVERY_DTBO) $(BOARD_INCLUDE_RECOVERY_ACPIO) \
-   $(BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT)))
- # Named '.dat' so we don't attempt to use imgdiff for patching it.
-@@ -6356,10 +6357,13 @@ built_ota_tools :=
+@@ -6356,10 +6356,13 @@ built_ota_tools :=
  # We can't build static executables when SANITIZE_TARGET=address
  ifeq (,$(filter address, $(SANITIZE_TARGET)))
  ifeq (false,$(AB_OTA_UPDATER))
@@ -39,7 +29,7 @@ index 39cad66a4443bfe6cf8d06e53e82e53bb0e30ae5..9050a1b18b564451c41d30f2a546708f
  
  $(BUILT_TARGET_FILES_DIR): PRIVATE_OTA_TOOLS := $(built_ota_tools)
  
-@@ -6969,11 +6973,13 @@ ifneq ($(PRODUCT_SYSTEM_DLKM_BASE_FS_PATH),)
+@@ -6969,11 +6972,13 @@ ifneq ($(PRODUCT_SYSTEM_DLKM_BASE_FS_PATH),)
  	  $(zip_root)/META/$(notdir $(PRODUCT_SYSTEM_DLKM_BASE_FS_PATH))
  endif
  ifeq ($(TARGET_OTA_ALLOW_NON_AB),true)
