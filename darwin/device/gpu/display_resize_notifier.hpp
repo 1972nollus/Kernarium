@@ -41,10 +41,6 @@ private:
         std::uint32_t width,
         std::uint32_t height,
         bool ensureNotification) noexcept;
-    [[nodiscard]] static std::uint64_t encode(
-        std::uint32_t width,
-        std::uint32_t height) noexcept;
-    [[nodiscard]] static DisplaySize decode(std::uint64_t size) noexcept;
 
     UniqueDescriptor read_;
     UniqueDescriptor write_;
