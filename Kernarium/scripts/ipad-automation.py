@@ -357,7 +357,9 @@ def key_character(key):
         raise ValueError(UNDELIVERABLE[key])
     if key in KEYS:
         return KEYS[key]
-    if len(key) != 1:
+    # XCTest's typeKey raises for anything but one UTF-16 code unit, so a
+    # character outside the Basic Multilingual Plane is refused as well.
+    if len(key.encode("utf-16-le")) != 2:
         raise ValueError(f"unknown key {key!r}: name one of "
                          f"{', '.join(sorted(KEYS))} or give one character")
     return key

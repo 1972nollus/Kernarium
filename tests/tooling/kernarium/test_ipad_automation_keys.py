@@ -74,6 +74,15 @@ class KeyCommandTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             key_command("enter")
 
+    def test_only_single_utf16_characters_reach_the_host(self) -> None:
+        # XCTest's typeKey raises an Objective-C exception for anything but
+        # one UTF-16 code unit, which a host cannot survive.
+        for key in ("UIKeyInputUpArrow", "", "ab", "\U0001f600", "e\u0301"):
+            with self.subTest(key=repr(key)):
+                with self.assertRaises(ValueError):
+                    key_command(key)
+        self.assertEqual(key_command("\u00e9")["key"], "\u00e9")
+
 
 if __name__ == "__main__":
     unittest.main()

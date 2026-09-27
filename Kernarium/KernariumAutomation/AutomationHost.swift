@@ -296,16 +296,28 @@ private struct Executor {
         let message: String
     }
 
+    /// Runs one command. Nothing a command does ends the host: a thrown
+    /// error, an XCTest issue, and an Objective-C exception XCTest raises all
+    /// become the command's error. An exception left to unwind the serve
+    /// loop would end the test, and with it the host.
     mutating func run(_ command: [String: Any], id: String, channel: Channel) -> [String: Any] {
         issues.begin()
-        var result: [String: Any]
-        do {
-            result = try perform(command, id: id, channel: channel)
-            result["ok"] = true
-        } catch let failure as Failure {
-            result = ["ok": false, "error": failure.message]
-        } catch {
-            result = ["ok": false, "error": "\(error)"]
+        var result: [String: Any] = [:]
+        let exception = KernariumAutomationCatchException {
+            do {
+                result = try perform(command, id: id, channel: channel)
+                result["ok"] = true
+            } catch let failure as Failure {
+                result = ["ok": false, "error": failure.message]
+            } catch {
+                result = ["ok": false, "error": "\(error)"]
+            }
+        }
+        if let exception {
+            result = [
+                "ok": false,
+                "error": "XCTest raised \(exception.name.rawValue): \(exception.reason ?? "no reason")",
+            ]
         }
         let raised = issues.end()
         if !raised.isEmpty {
@@ -314,6 +326,11 @@ private struct Executor {
             if result["error"] == nil {
                 result["error"] = raised.joined(separator: "; ")
             }
+        }
+        // Issues a command raises are taken from XCTest's record, so the
+        // host's log is the only place a failure stays visible.
+        if result["ok"] as? Bool != true {
+            print("AutomationHost: \(command["op"] as? String ?? "?") \(id) failed: \(result["error"] ?? "")")
         }
         return result
     }
@@ -414,6 +431,10 @@ private struct Executor {
         case "key":
             guard let key = command["key"] as? String else {
                 throw Failure(message: "the command names no key")
+            }
+            // typeKey raises for anything but one UTF-16 code unit.
+            guard key.utf16.count == 1 else {
+                throw Failure(message: "a key is one UTF-16 character, not \(key.debugDescription); type text with the type command")
             }
             var flags: XCUIElement.KeyModifierFlags = []
             for name in command["modifiers"] as? [String] ?? [] {
