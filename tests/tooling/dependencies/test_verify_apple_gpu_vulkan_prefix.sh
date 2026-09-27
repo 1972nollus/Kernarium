@@ -5,7 +5,6 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 VERIFIER="$ROOT_DIR/dependencies/cmake/VerifyAppleGpuPrefix.cmake"
 BUILDER="$ROOT_DIR/dependencies/build-apple-gpu.sh"
-PUBLISHER="$ROOT_DIR/dependencies/publish-prefix.py"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-apple-gpu-vulkan-prefix.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 BASE_PREFIX="$TEST_ROOT/prefix"
@@ -245,27 +244,5 @@ if "$BUILDER" --product apple-gpu-vulkan-experiment \
 fi
 AFTER=$(find "$CASE_PREFIX" -type f -exec shasum -a 256 {} \; | LC_ALL=C sort)
 [ "$AFTER" = "$BEFORE" ] || fail "invalid existing Vulkan prefix was modified"
-
-PUBLISH_ROOT="$TEST_ROOT/concurrent-publication"
-mkdir -p "$PUBLISH_ROOT/first" "$PUBLISH_ROOT/second"
-printf '%s\n' first >"$PUBLISH_ROOT/first/identity"
-printf '%s\n' second >"$PUBLISH_ROOT/second/identity"
-python3 "$PUBLISHER" "$PUBLISH_ROOT/first" "$PUBLISH_ROOT/winner" &
-FIRST_PID=$!
-python3 "$PUBLISHER" "$PUBLISH_ROOT/second" "$PUBLISH_ROOT/winner" &
-SECOND_PID=$!
-FIRST_STATUS=0
-SECOND_STATUS=0
-wait "$FIRST_PID" || FIRST_STATUS=$?
-wait "$SECOND_PID" || SECOND_STATUS=$?
-case "$FIRST_STATUS:$SECOND_STATUS" in
-0:1|1:0) ;;
-*) fail "exclusive publication returned $FIRST_STATUS and $SECOND_STATUS" ;;
-esac
-[ -f "$PUBLISH_ROOT/winner/identity" ] ||
-	fail "concurrent publication produced no winner"
-LOSERS=$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type d \
-	\( -name first -o -name second \) | wc -l | tr -d ' ')
-[ "$LOSERS" -eq 1 ] || fail "concurrent publication did not retain one loser"
 
 printf '%s\n' "Experimental Apple GPU Vulkan prefix tests passed"

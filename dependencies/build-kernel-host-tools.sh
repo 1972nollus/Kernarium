@@ -146,6 +146,7 @@ find_tool FLEX flex
 find_tool M4 m4
 find_tool RSYNC rsync
 find_tool TAR tar
+find_tool PYTHON python3
 
 "$ROOT_DIR/dependencies/prepare.sh" --product kernel-host-tools \
 	--root "$SOURCE_ROOT" --verify
@@ -367,6 +368,18 @@ cp "$ARCHIVE_MANIFEST" "$PROVENANCE/kernel-host-tools-archives.tsv"
 } > "$PROVENANCE/source-trees.tsv"
 
 verify_output "$STAGE"
-mv "$STAGE" "$OUTPUT"
-STAGE=
-printf '%s\n' "published kernel host tools: $OUTPUT"
+status=0
+"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$STAGE" "$OUTPUT" ||
+	status=$?
+case $status in
+0)
+	STAGE=
+	printf '%s\n' "published kernel host tools: $OUTPUT"
+	;;
+1)
+	verify_output "$OUTPUT" ||
+		fail "concurrently published output is invalid: $OUTPUT"
+	printf '%s\n' "reusing concurrently published kernel host tools: $OUTPUT"
+	;;
+*) fail "could not publish kernel host tools: $OUTPUT" ;;
+esac
