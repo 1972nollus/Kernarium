@@ -125,17 +125,8 @@ def expected_hwcap(
     return result
 
 
-def command(guest: Guest, value: str, timeout: int = 60) -> str:
-    result = guest.run_command(value, timeout)
-    if result.return_code != 0:
-        raise RuntimeError(
-            f"guest command exited {result.return_code}: {value}\n{result.output}"
-        )
-    return result.output
-
-
 def auxiliary_vector(guest: Guest) -> dict[int, int]:
-    output = command(guest, "od -An -v -t u8 /proc/self/auxv")
+    output = guest.check_command("od -An -v -t u8 /proc/self/auxv", 60)
     words = [int(value) for value in re.findall(r"\b[0-9]+\b", output)]
     if len(words) % 2:
         raise RuntimeError(f"malformed auxiliary vector output:\n{output}")
@@ -143,7 +134,7 @@ def auxiliary_vector(guest: Guest) -> dict[int, int]:
 
 
 def cpuinfo_features(guest: Guest) -> set[str]:
-    output = command(guest, "grep '^flags' /proc/cpuinfo | head -n 1")
+    output = guest.check_command("grep '^flags' /proc/cpuinfo | head -n 1", 60)
     match = re.search(r"flags\s*:\s*(.*)", output)
     if match is None:
         raise RuntimeError(f"/proc/cpuinfo flags are missing:\n{output}")
@@ -176,10 +167,10 @@ def main() -> int:
     )
     try:
         guest.boot_to_shell(180)
-        command(
-            guest,
+        guest.check_command(
             "mount -t proc proc /proc && "
             "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp",
+            60,
         )
 
         auxv = auxiliary_vector(guest)
@@ -222,12 +213,11 @@ def main() -> int:
             )
 
         node = "/opt/node/bin/node"
-        node_path = command(guest, f"test -x {shlex.quote(node)} && echo present")
+        node_path = guest.check_command(f"test -x {shlex.quote(node)} && echo present", 60)
         if "present" not in node_path:
             raise RuntimeError(f"Node executable is missing: {node}")
 
-        dynamic_output = command(
-            guest,
+        dynamic_output = guest.check_command(
             f"{shlex.quote(node)} -e "
             + shlex.quote(
                 'const f=new Function("x","return (x+1)|0");'
@@ -240,8 +230,7 @@ def main() -> int:
         if "v8-jit-ok" not in dynamic_output:
             raise RuntimeError(f"Node JIT smoke marker is missing:\n{dynamic_output}")
 
-        wasm_output = command(
-            guest,
+        wasm_output = guest.check_command(
             f"{shlex.quote(node)} -e "
             + shlex.quote(
                 "const b=Buffer.from("
@@ -258,8 +247,8 @@ def main() -> int:
             raise RuntimeError(f"WebAssembly smoke marker is missing:\n{wasm_output}")
 
         for repetition in range(2):
-            teardown_output = command(
-                guest, f"{shlex.quote(node)} -p " + shlex.quote("6*7"), 60
+            teardown_output = guest.check_command(
+                f"{shlex.quote(node)} -p " + shlex.quote("6*7"), 60
             )
             if not re.search(r"(?:^|\n)42(?:\n|$)", teardown_output):
                 raise RuntimeError(

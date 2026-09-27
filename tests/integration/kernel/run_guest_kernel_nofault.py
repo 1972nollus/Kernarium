@@ -45,9 +45,7 @@ def main() -> int:
     )
     try:
         guest.boot_to_shell(180)
-        mounted = guest.run_command("mount -t proc proc /proc", 20)
-        if mounted.return_code != 0:
-            raise RuntimeError("could not mount /proc:\n" + mounted.output)
+        guest.check_command("mount -t proc proc /proc", 20)
         # The dump goes to the kernel log only; the console would take minutes.
         dumped = guest.run_command(
             "echo 1 > /proc/sys/kernel/printk && echo t > /proc/sysrq-trigger && "

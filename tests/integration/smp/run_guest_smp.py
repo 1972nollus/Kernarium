@@ -19,20 +19,6 @@ from guest import Guest  # noqa: E402
 from host_metrics import cpu_time_seconds  # noqa: E402
 
 
-def require_command(guest: Guest, command: str, expected: str | None = None) -> str:
-    result = guest.run_command(command)
-    if result.return_code != 0:
-        raise RuntimeError(
-            f"guest command failed ({result.return_code}): {command}\n{result.output}"
-        )
-    if expected is not None and result.output.strip() != expected:
-        raise RuntimeError(
-            f"guest command {command!r} returned {result.output!r}, "
-            f"expected {expected!r}"
-        )
-    return result.output
-
-
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
@@ -87,14 +73,12 @@ def main() -> int:
     )
     try:
         guest.boot_and_login()
-        require_command(guest, "nproc", str(expected_cpus))
-        require_command(
-            guest,
+        guest.check_command("nproc", expected=str(expected_cpus))
+        guest.check_command(
             "cat /sys/devices/system/cpu/online",
-            "0" if expected_cpus == 1 else f"0-{expected_cpus - 1}",
+            expected="0" if expected_cpus == 1 else f"0-{expected_cpus - 1}",
         )
-        require_command(
-            guest,
+        guest.check_command(
             "for cpu in /sys/devices/system/cpu/cpu[0-9]*; do "
             "id=${cpu##*cpu}; "
             "test \"$(cat \"$cpu/topology/physical_package_id\")\" = 0 || exit 1; "
@@ -102,10 +86,9 @@ def main() -> int:
             "test \"$(cat \"$cpu/topology/thread_siblings_list\")\" = \"$id\" "
             "|| exit 1; "
             "done; echo TOPOLOGY_OK",
-            "TOPOLOGY_OK",
+            expected="TOPOLOGY_OK",
         )
-        require_command(
-            guest,
+        guest.check_command(
             ": >/tmp/uml-smp-pids; i=0; "
             f"while [ \"$i\" -lt {expected_cpus} ]; do "
             "sh -c 'while :; do :; done' & "
@@ -118,8 +101,7 @@ def main() -> int:
         time.sleep(4)
         elapsed = time.monotonic() - started
         consumed = cpu_time_seconds(guest.process_id) - before
-        require_command(
-            guest,
+        guest.check_command(
             "pids=$(cat /tmp/uml-smp-pids); kill $pids; "
             "wait $pids 2>/dev/null; rm /tmp/uml-smp-pids",
         )
@@ -143,27 +125,24 @@ def main() -> int:
             pathlib.Path(__file__).with_name("guest_ipi_wakeup.py").read_text()
         )
         wakeup_command = shlex.quote(f"exec({wakeup_payload!r})")
-        require_command(
-            guest,
+        guest.check_command(
             f"python3 -c {wakeup_command} {expected_cpus}",
-            f"IPI_WAKEUP_OK {expected_cpus * 2000}\n"
+            expected=f"IPI_WAKEUP_OK {expected_cpus * 2000}\n"
             f"IPI_WAKEUP_OK {expected_cpus * 8000}",
         )
         if expected_cpus > 1:
-            require_command(
-                guest,
+            guest.check_command(
                 "i=0; while [ $i -lt 5 ]; do "
                 "echo 0 >/sys/devices/system/cpu/cpu1/online || exit 1; "
                 "echo 1 >/sys/devices/system/cpu/cpu1/online || exit 1; "
                 "i=$((i + 1)); done; echo HOTPLUG_OK",
-                "HOTPLUG_OK",
+                expected="HOTPLUG_OK",
             )
-            require_command(
-                guest,
+            guest.check_command(
                 "cat /sys/devices/system/cpu/online",
-                f"0-{expected_cpus - 1}",
+                expected=f"0-{expected_cpus - 1}",
             )
-        require_command(guest, "nproc", str(expected_cpus))
+        guest.check_command("nproc", expected=str(expected_cpus))
         return 0
     finally:
         guest.close()

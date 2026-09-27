@@ -62,9 +62,7 @@ def main() -> int:
     )
     try:
         guest.boot_to_shell(180)
-        mounted = guest.run_command("mount -t proc proc /proc", 20)
-        if mounted.return_code != 0:
-            raise RuntimeError("could not mount /proc:\n" + mounted.output)
+        guest.check_command("mount -t proc proc /proc", 20)
         for round_index in range(ROUNDS):
             result = guest.run_command(
                 "echo BURST-$((6*7))",
