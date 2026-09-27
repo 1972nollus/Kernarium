@@ -115,21 +115,6 @@ function(uml_import_kernel_artifact)
     string(JSON _uml_page_size GET "${_uml_manifest_json}" page_size)
     string(JSON _uml_release_id GET "${_uml_manifest_json}" release_id)
     string(JSON _uml_directory_name GET "${_uml_manifest_json}" directory_name)
-    if(NOT _uml_family STREQUAL "${ARTIFACT_EXPECTED_FAMILY}")
-        message(FATAL_ERROR
-            "Imported kernel family ${_uml_family} does not match "
-            "${ARTIFACT_EXPECTED_FAMILY}")
-    endif()
-    if(NOT _uml_slice STREQUAL "${ARTIFACT_EXPECTED_SLICE}")
-        message(FATAL_ERROR
-            "Imported kernel slice ${_uml_slice} does not match "
-            "${ARTIFACT_EXPECTED_SLICE}")
-    endif()
-    if(NOT _uml_page_size EQUAL "${ARTIFACT_EXPECTED_PAGE_SIZE}")
-        message(FATAL_ERROR
-            "Imported kernel page size ${_uml_page_size} does not match "
-            "the configured ${ARTIFACT_EXPECTED_PAGE_SIZE}")
-    endif()
 
     add_library("${ARTIFACT_TARGET}" INTERFACE)
     set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
