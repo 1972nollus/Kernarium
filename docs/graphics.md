@@ -12,8 +12,12 @@ guest Mesa -> Virtio-GPU/Virgl -> vhost-user -> virglrenderer
 
 The provider is Mesa's Zink Gallium driver on the packaged KosmicKrisp Vulkan
 driver, reached through Mesa's surfaceless EGL platform; it renders on a
-desktop OpenGL 4.6 core context. virglrenderer and libepoxy are upstream
-releases carrying the maintained host series, not vendor forks. The graphics
+desktop OpenGL 4.6 core context. The provider names its EGL device explicitly,
+so its display is never the default surfaceless display: another client of the
+process's EGL library, such as Kernarium's own graphics check, may initialize
+and terminate that one without touching a guest's contexts. virglrenderer and
+libepoxy are upstream releases carrying the maintained host series, not vendor
+forks. The graphics
 dependencies come from the verified `apple-gpu-vulkan-experiment` prefix. No
 Apple GPU product links CGL, OpenGL.framework, EAGL, MoltenVK, a Vulkan
 loader, or a second ambient libepoxy/virglrenderer family.

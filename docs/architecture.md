@@ -178,6 +178,10 @@ Designed for iPad mode, where it reaches the host GPU directly; that mode is
 where iOS behaviour is verified when no physical device is attached. The
 Simulator remains a target of the ordinary, non-GPU iOS libraries.
 
+A Kernarium launch runs its guest once. When the run returns, whether the
+guest powered off or the runtime failed, the application says how it ended
+and asks to be relaunched; it never starts a second run in the same process.
+
 ## CPU execution and scheduling
 
 Darwin owns one persistent pthread per configured vCPU, including vCPU0.
