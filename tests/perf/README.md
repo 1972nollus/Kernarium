@@ -371,6 +371,13 @@ skips the C front end. `CORPUS_ROUNDS` and `CORPUS_ONLY` select the work.
 Each workload is sized to about two seconds on a gadgets guest, so compare
 arms round by round rather than across launches.
 
+## Host issue ratios
+
+`uml-host-issue-ratio` measures how many 128-bit loads and vector ALU
+operations the host core issues per cycle, alone and mixed, calibrating the
+cycle against a dependent ADD chain. Run it once as built for the performance
+cores and once under `taskpolicy -c background` for the efficiency cores.
+
 ## Ideal gadget ceiling
 
 `gadget-ceiling-binaries` builds a matched native/ideal benchmark with three
