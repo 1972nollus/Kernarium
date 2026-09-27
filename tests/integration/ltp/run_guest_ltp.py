@@ -30,7 +30,6 @@ from guest import (  # noqa: E402
     CommandTimeout,
     Guest as GuestHarness,
     cleanup_stale_swap_images,
-    create_swap_image,
     emulator_arguments,
     marker_pattern,
     size_bytes,
