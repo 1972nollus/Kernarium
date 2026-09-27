@@ -46,10 +46,10 @@ mask after publishing the idle state and polls instead of blocking.
  6 files changed, 82 insertions(+)
 
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index 972ac5c73aa6956a2ee45b2463f6f77bd0fe5657..316574f493669db8b8ce78197ca7606814ffd11e 100644
+index fdf83b9b617ca7df5dbe2065fc69d5fc2a3f750d..adfebfa05c59914c8d4622bceea47d9e42c8840c 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
-@@ -393,6 +393,7 @@ void __attribute__((noreturn)) os_restart_secondary(void *stack,
+@@ -398,6 +398,7 @@ void __attribute__((noreturn)) os_restart_secondary(void *stack,
  						     jmp_buf *switch_buf);
  #endif
  int os_send_ipi(int cpu, int vector);
@@ -110,7 +110,7 @@ index cc0c6c58a384ebdf37713d4fa7e09deef3b505a5..afbd7c2728430ab2119ba07251b8a7b6
  		pr_err("CPU#%d received unknown IPI (vector=%d)!\n", cpu, vector);
  		break;
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index ec61427d7257278e9ea61a293403a98066c05291..7ad362329f6efdc3bf180f59b84e94813f0d1e93 100644
+index afbf1cb0661f5e92c90f9d0674dc2eda9c5dbbb4..47da8343f0f9e6cf38541b5babe1c357cf02fd1b 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
 @@ -25,6 +25,7 @@ void __attribute__((noreturn)) darwin_exit_cpu_carrier(void);
@@ -121,7 +121,7 @@ index ec61427d7257278e9ea61a293403a98066c05291..7ad362329f6efdc3bf180f59b84e9481
  void darwin_ipi_idle_end(void);
  void darwin_ipi_idle_drain(void);
  unsigned int darwin_ipi_guest_snapshot(const unsigned int **sequence);
-@@ -57,6 +58,7 @@ static inline void __attribute__((noreturn)) darwin_exit_cpu_carrier(void)
+@@ -58,6 +59,7 @@ static inline void __attribute__((noreturn)) darwin_exit_cpu_carrier(void)
  static inline void darwin_ipi_poll(void) { }
  static inline int darwin_ipi_idle_fd(void) { return -1; }
  static inline void darwin_ipi_idle_begin(void) { }
@@ -130,10 +130,10 @@ index ec61427d7257278e9ea61a293403a98066c05291..7ad362329f6efdc3bf180f59b84e9481
  static inline void darwin_ipi_idle_drain(void) { }
  static inline unsigned int darwin_ipi_guest_snapshot(
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index 921edb6c57bd38650cce710b6bbbd8fb38ca0f69..9c5c0c97744e12e4994a930ee897c446cf28a39f 100644
+index b54e7ca5983b799ba352c13a0ba8bfb8a55d4713..a35a5a4dcb5e790a81c572ad6965605cefddf9a8 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
-@@ -192,6 +192,24 @@ static void drain_ipis(void)
+@@ -194,6 +194,24 @@ static void drain_ipis(void)
  	um_set_signals(previous);
  }
  
@@ -158,7 +158,7 @@ index 921edb6c57bd38650cce710b6bbbd8fb38ca0f69..9c5c0c97744e12e4994a930ee897c446
  void darwin_ipi_poll(void)
  {
  	int cpu;
-@@ -238,6 +256,24 @@ void darwin_ipi_idle_begin(void)
+@@ -240,6 +258,24 @@ void darwin_ipi_idle_begin(void)
  	__atomic_store_n(&ipi_idle_waiting[uml_curr_cpu()], 1, __ATOMIC_RELEASE);
  }
  

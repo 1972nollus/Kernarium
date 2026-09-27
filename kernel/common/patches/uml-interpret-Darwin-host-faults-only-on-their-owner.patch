@@ -19,6 +19,14 @@ real thread and address and left to the host disposition, which terminates
 the process on the faulting instruction rather than repairing a guest
 mapping for it.
 
+Refuse a timer tick on such a thread too.  ITIMER_REAL is process-directed,
+so the host hands SIGALRM to any thread that leaves it unblocked, and the
+tick then ran against CPU0's IRQ and timer state while CPU0 ran them itself;
+an embedder's thread with SIGALRM unblocked panicked a 4 KiB guest with
+"BUG!".  The handler reports the tick, blocks SIGALRM on that thread from its
+return on, and raises the tick again for the process, which delivers it to
+CPU0's carrier.
+
 Print those addresses literally.  os_warn() formats through the kernel's
 vsnprintf, where %p is hashed, so the reports hid the fault address they
 exist to show.
@@ -31,12 +39,12 @@ first two branches, and every other signal is still reported before it is
 handled, so a handler that wedges still leaves its fault behind.
 ---
  arch/um/include/shared/kern_util.h |  1 +
- arch/um/kernel/trap.c              | 21 ++++++++
- arch/um/os-Darwin/internal.h       |  6 +++
+ arch/um/kernel/trap.c              | 21 +++++++
+ arch/um/os-Darwin/internal.h       |  6 ++
  arch/um/os-Darwin/process.c        |  5 ++
- arch/um/os-Darwin/signal.c         | 78 ++++++++++++++++++++++++++----
- arch/um/os-Darwin/smp.c            | 42 +++++++++++++++-
- 6 files changed, 143 insertions(+), 10 deletions(-)
+ arch/um/os-Darwin/signal.c         | 98 +++++++++++++++++++++++++++---
+ arch/um/os-Darwin/smp.c            | 42 ++++++++++++-
+ 6 files changed, 163 insertions(+), 10 deletions(-)
 
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
 index d36d5b8f77bdc4cc689ee4da965eab07f613ea87..15e501e58d4d2b84c1217e2e60c197a5f72e068c 100644
@@ -83,7 +91,7 @@ index 31575c43f7e1ffdcfb7070ced4b346324b1d4274..9971a92efe35ce98441ba41601605769
   * We give a *copy* of the faultinfo in the regs to segv.
   * This must be done, since nesting SEGVs could overwrite
 diff --git a/arch/um/os-Darwin/internal.h b/arch/um/os-Darwin/internal.h
-index 7ad362329f6efdc3bf180f59b84e94813f0d1e93..7448cfbee7812882cc43118f3c2b74c5e23dc7ec 100644
+index 47da8343f0f9e6cf38541b5babe1c357cf02fd1b..529d80f69819dfd9027a5d4534c56588e175f454 100644
 --- a/arch/um/os-Darwin/internal.h
 +++ b/arch/um/os-Darwin/internal.h
 @@ -17,6 +17,9 @@ void darwin_host_stop_checkpoint(void);
@@ -96,9 +104,9 @@ index 7ad362329f6efdc3bf180f59b84e94813f0d1e93..7448cfbee7812882cc43118f3c2b74c5
  void darwin_set_current_cpu(int cpu);
  void darwin_publish_cpu_thread(int cpu, pthread_t thread);
  void darwin_retire_cpu_thread(pthread_t thread);
-@@ -33,6 +36,9 @@ void darwin_ipi_guest_begin(void);
- void darwin_ipi_guest_end(void);
+@@ -34,6 +37,9 @@ void darwin_ipi_guest_end(void);
  void darwin_wake_cpu_threads_for_shutdown(void);
+ int darwin_join_cpu_carriers(void);
  #else
 +static inline int darwin_carrier_cpu(void) { return 0; }
 +static inline void darwin_adopt_boot_thread(void) { }
@@ -123,7 +131,7 @@ index 36ee1aa584ef0666d37aea9d979f59b8bafa7abd..8ce3c3ec407e77fb2f4604c7425209c1
  	set_handler(SIGTRAP);
  	set_handler(SIGFPE);
 diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
-index 948a794aa59f264e84dca8515228639d9b7862ec..5ab09240cd08a7785612ca5c4e48f895d0f5b478 100644
+index 948a794aa59f264e84dca8515228639d9b7862ec..98efc0fd664e4dde1df8bd628c50041212b2d6c7 100644
 --- a/arch/um/os-Darwin/signal.c
 +++ b/arch/um/os-Darwin/signal.c
 @@ -15,6 +15,7 @@
@@ -165,7 +173,7 @@ index 948a794aa59f264e84dca8515228639d9b7862ec..5ab09240cd08a7785612ca5c4e48f895
  	}
  	if (sig_info[signal] != NULL)
  		sig_info[signal](signal, (struct siginfo *)info, &registers,
-@@ -129,12 +139,62 @@ static void run_timer(ucontext_t *context)
+@@ -129,12 +139,82 @@ static void run_timer(ucontext_t *context)
  	timer_handler(SIGALRM, NULL, &registers);
  }
  
@@ -204,6 +212,21 @@ index 948a794aa59f264e84dca8515228639d9b7862ec..5ab09240cd08a7785612ca5c4e48f895
 +	(void)sigaction(signal, &restore, NULL);
 +}
 +
++/* ITIMER_REAL is process-directed, so the host may hand SIGALRM to any
++ * emulator thread that leaves it unblocked.  Running the tick there would take
++ * CPU0's IRQ state and timer while CPU0 itself runs them.  Block SIGALRM on that
++ * thread from the handler's return on, and raise the tick again for the
++ * process, which delivers it to CPU0's carrier or keeps it pending until the
++ * carrier unblocks it.
++ */
++static void darwin_refuse_foreign_alarm(ucontext_t *context)
++{
++	os_warn("Darwin host alarm: taken on a host thread which owns no virtual CPU; blocked there and passed to CPU0\n");
++	if (context != NULL)
++		sigaddset(&context->uc_sigmask, SIGALRM);
++	(void)kill(getpid(), SIGALRM);
++}
++
  static void hard_handler(int signal, siginfo_t *info, void *pointer)
  {
  	ucontext_t *context = pointer;
@@ -224,6 +247,11 @@ index 948a794aa59f264e84dca8515228639d9b7862ec..5ab09240cd08a7785612ca5c4e48f895
 +		errno = saved_errno;
 +		return;
 +	}
++	if (signal == SIGALRM && darwin_carrier_cpu() < 0) {
++		darwin_refuse_foreign_alarm(context);
++		errno = saved_errno;
++		return;
++	}
 +
 +	state = local_signal_state();
 +	previous = state->enabled;
@@ -231,10 +259,10 @@ index 948a794aa59f264e84dca8515228639d9b7862ec..5ab09240cd08a7785612ca5c4e48f895
  	if (signal == SIGALRM) {
  		if (!previous || state->alarm_active) {
 diff --git a/arch/um/os-Darwin/smp.c b/arch/um/os-Darwin/smp.c
-index 924893ea980d64f9c9b99758c03842dcb753347f..e4e0b29057eb8a964604a284369b9d4481c083ae 100644
+index ad4667cb05383559e781fac47306b9a57eafa019..fdcd611582555b1b5427e47f8af1de790c4821cf 100644
 --- a/arch/um/os-Darwin/smp.c
 +++ b/arch/um/os-Darwin/smp.c
-@@ -77,6 +77,39 @@ int uml_curr_cpu(void)
+@@ -79,6 +79,39 @@ int uml_curr_cpu(void)
  	return carrier == NULL ? 0 : carrier->cpu;
  }
  
@@ -274,7 +302,7 @@ index 924893ea980d64f9c9b99758c03842dcb753347f..e4e0b29057eb8a964604a284369b9d44
  void darwin_publish_cpu_thread(int cpu, pthread_t thread)
  {
  	if (cpu < 0 || cpu >= CONFIG_NR_CPUS)
-@@ -543,7 +576,14 @@ static int start_cpu_carrier(int cpu, int primary, void *stack,
+@@ -565,7 +598,14 @@ int darwin_join_cpu_carriers(void)
  
  int darwin_start_primary_cpu_carrier(void *stack, jmp_buf *switch_buffer)
  {

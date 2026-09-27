@@ -44,6 +44,22 @@ one exception is a fault that a nofault accessor recovers: that is the
 accessor's expected result and prints nothing. `guest-kernel-nofault` checks
 that its sysrq t dump prints no report.
 
+Signal dispositions are process-wide, so a host thread that carries no vCPU
+can take UML's handlers too. Its SIGSEGV or SIGBUS is reported and left to the
+host's default action. SIGALRM, which the process-directed ITIMER_REAL may hand
+to any thread that leaves it unblocked, never runs a guest tick there: the
+kernel reports it once, keeps SIGALRM blocked on that thread afterwards, and
+raises it again for the process, where CPU0's carrier takes it. Embedders
+should still keep SIGALRM blocked on their own threads.
+
+An embedded run returns to its host only once no kernel thread can execute
+the image, which the loader unmaps right after. Each vCPU carrier still runs
+image code after it has signalled the run end, so the run end joins every
+carrier. A stop also wakes carriers parked before CPU bring-up or after
+hotplug, which reach no IPI boundary. A host stop skips Linux exitcalls, so the
+run end stops the RTC alarm helper itself. `guest-run-end-stop` stops guests
+throughout their boot and requires each run to end with no kernel thread left.
+
 Both maintained kernel lines perform futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value
 observed by that operation, and wake-operation arithmetic retries competing
