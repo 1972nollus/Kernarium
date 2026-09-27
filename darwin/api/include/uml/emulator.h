@@ -83,11 +83,17 @@ int uml_emulator_get_capabilities(const struct uml_emulator *emulator,
  * build when their native mappings do not overlap; an overlapping mapping
  * fails instead of replacing another run's mapping. Native mappings belong
  * to the run and are flushed and unmapped before that run returns. The 4 KiB
- * compatibility build serializes native callbacks
- * process-wide because identical guest addresses materialize in one host
- * address space. Embedded ELF kernel runs are also serialized process-wide
- * because they occupy one relocated native-runtime window at a time and use
- * process-global Linux state. */
+ * compatibility build admits one native callback run at a time because
+ * identical guest addresses materialize in one host address space. An
+ * embedded ELF kernel run is admitted only while no other run is active.
+ *
+ * A process runs one guest. A kernel claims guest RAM early in its boot, and
+ * a process hands guest RAM out once. After a run has claimed it, every later
+ * run in the process, on this handle or another, returns
+ * -UML_EMULATOR_UNSUPPORTED before it names a console, maps a kernel window
+ * or enters a kernel. A run that ends before its kernel claims guest RAM,
+ * such as one refused for its arguments or cancelled while queued, leaves the
+ * process's guest unspent. */
 int uml_emulator_run(struct uml_emulator *emulator, int argc,
 		    const char *const argv[], const char *const envp[]);
 /* This and uml_emulator_sync are the operations intended to overlap

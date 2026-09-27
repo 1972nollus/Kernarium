@@ -283,6 +283,11 @@ public:
 		TranslationCacheRunScope translation_cache_run;
 		if (!run_scope.entered())
 			return -UML_EMULATOR_RUNTIME_ERROR;
+		/* A process runs one guest. Refuse a later run before it names the
+		 * console, maps a kernel window or reaches a kernel that would find no
+		 * guest RAM left to claim. */
+		if (::uml::runtime::process_guest_spent())
+			return -UML_EMULATOR_UNSUPPORTED;
 #if UML_EMULATOR_ADMISSION_TESTING
 		if (address_space_admission_mode() !=
 		    AddressSpaceAdmissionMode::none)
@@ -334,6 +339,10 @@ public:
 		environment_pointers.push_back(nullptr);
 		if (!process_admission.enter(runtime_))
 			return -UML_EMULATOR_RUNTIME_ERROR;
+		/* Another run may have claimed the guest while this one waited for
+		 * admission. */
+		if (::uml::runtime::process_guest_spent())
+			return -UML_EMULATOR_UNSUPPORTED;
 		::uml::runtime::NativeKernelLayout native_layout;
 		std::optional<::uml::runtime::NativeKernelLayoutScope> layout_scope;
 		if (native_kernel_entry_ == nullptr) {

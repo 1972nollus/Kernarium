@@ -494,6 +494,12 @@ bool register_anonymous_shared_backing(int fd) noexcept
 	return true;
 }
 
+bool anonymous_shared_backing_registered() noexcept
+{
+	std::lock_guard lock{anonymous_backing.mutex};
+	return anonymous_backing.registered;
+}
+
 bool is_anonymous_shared_backing(int fd) noexcept
 {
 	struct stat status {};
