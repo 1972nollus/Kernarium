@@ -48,6 +48,135 @@ void JitCompilerFamilies::attach_indirect_link_resolver(
   indirect_link_resolver_ = resolver;
 }
 
+void JitCompilerFamilies::begin_gpr_residency_observation(
+    bool enabled) noexcept {
+  gpr_residency_observation_enabled_ = enabled && gpr_cache_enabled_;
+  gpr_residency_next_access_ = 0;
+  gpr_residency_guests_.fill(GprResidencyGuest{});
+}
+
+void JitCompilerFamilies::observe_gpr_access(
+    unsigned guest, bool stack_pointer, bool reads, bool writes) noexcept {
+  if (!gpr_residency_observation_enabled_ || guest > 31U ||
+      (guest == 31U && !stack_pointer) || (!reads && !writes))
+    return;
+
+  auto &observation = gpr_residency_guests_[guest];
+  if (observation.first_access == GprResidencyGuest::no_first_access)
+    observation.first_access = gpr_residency_next_access_;
+  ++gpr_residency_next_access_;
+  if (reads) {
+    ++observation.reads;
+    if (!observation.written)
+      observation.read_before_write = true;
+  }
+  if (writes) {
+    ++observation.writes;
+    observation.written = true;
+  }
+}
+
+std::size_t JitCompilerFamilies::residency_benefit(
+    const GprResidencyGuest &guest) noexcept {
+  if (guest.first_access == GprResidencyGuest::no_first_access)
+    return 0;
+  const auto fallback_accesses = guest.reads + guest.writes;
+  const auto resident_accesses =
+      (guest.read_before_write ? 1U : 0U) +
+      (guest.written ? 1U : 0U);
+  return fallback_accesses > resident_accesses
+             ? fallback_accesses - resident_accesses
+             : 0U;
+}
+
+JitCompilerFamilies::GprResidencyPlan
+JitCompilerFamilies::finish_gpr_residency_observation() const noexcept {
+  GprResidencyPlan result{};
+  if (!gpr_residency_observation_enabled_)
+    return result;
+
+  std::size_t observed_guests = 0;
+  for (const auto &guest : gpr_residency_guests_)
+    observed_guests +=
+        guest.first_access != GprResidencyGuest::no_first_access;
+  if (observed_guests <= resident_gpr_hosts.size())
+    return result;
+
+  std::array<bool, 32> selected{};
+  std::size_t selected_benefit = 0;
+  for (std::size_t slot = 0; slot < resident_gpr_hosts.size(); ++slot) {
+    unsigned best = unbound_guest;
+    for (unsigned guest = 0; guest < gpr_residency_guests_.size(); ++guest) {
+      const auto &candidate = gpr_residency_guests_[guest];
+      if (selected[guest] ||
+          candidate.first_access == GprResidencyGuest::no_first_access)
+        continue;
+      if (best == unbound_guest ||
+          residency_benefit(candidate) >
+              residency_benefit(gpr_residency_guests_[best]) ||
+          (residency_benefit(candidate) ==
+               residency_benefit(gpr_residency_guests_[best]) &&
+           candidate.first_access <
+               gpr_residency_guests_[best].first_access))
+        best = guest;
+    }
+    if (best == unbound_guest)
+      break;
+    selected[best] = true;
+    selected_benefit += residency_benefit(gpr_residency_guests_[best]);
+    ++result.count;
+  }
+
+  if (result.count != resident_gpr_hosts.size())
+    return {};
+
+  std::size_t current_benefit = 0;
+  for (const auto &slot : gpr_slots_)
+    if (slot.guest != unbound_guest)
+      current_benefit +=
+          residency_benefit(gpr_residency_guests_[slot.guest]);
+  if (selected_benefit <= current_benefit)
+    return {};
+
+  /*
+   * Assign the selected identities in encounter order. This keeps the host
+   * register numbering deterministic and preserves the existing first-use
+   * shape among identities that survive the pressure decision.
+   */
+  for (std::size_t index = 0; index < result.count; ++index) {
+    unsigned first = unbound_guest;
+    for (unsigned guest = 0; guest < selected.size(); ++guest) {
+      if (!selected[guest])
+        continue;
+      if (first == unbound_guest ||
+          gpr_residency_guests_[guest].first_access <
+              gpr_residency_guests_[first].first_access)
+        first = guest;
+    }
+    result.guests[index] = first;
+    selected[first] = false;
+  }
+  result.estimated_avoided_accesses =
+      selected_benefit - current_benefit;
+  return result;
+}
+
+void JitCompilerFamilies::apply_gpr_residency_plan(
+    const GprResidencyPlan &plan) noexcept {
+  if (!gpr_cache_enabled_ || plan.count != resident_gpr_hosts.size())
+    return;
+  std::array<bool, 32> seen{};
+  for (std::size_t index = 0; index < plan.count; ++index) {
+    if (plan.guests[index] >= seen.size() || seen[plan.guests[index]])
+      return;
+    seen[plan.guests[index]] = true;
+  }
+  for (std::size_t index = 0; index < plan.count; ++index) {
+    gpr_slots_[index].guest = plan.guests[index];
+    gpr_slots_[index].stack_pointer = plan.guests[index] == 31U;
+  }
+}
+
 bool JitCompilerFamilies::gpr_slots_unbound() const noexcept {
   return gpr_cache_enabled_ &&
          std::ranges::all_of(gpr_slots_, [](const auto &slot) {
@@ -201,6 +330,8 @@ JitCompilerFamilies::allocate_gpr_slot(unsigned guest,
 JitCompilerFamilies::NativeGpr
 JitCompilerFamilies::read_native_gpr(unsigned guest, bool stack_pointer,
                                      unsigned fallback) {
+  observe_gpr_access(guest, stack_pointer, /*reads=*/true,
+                     /*writes=*/false);
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
   if (guest == 31U && !stack_pointer)
     return {31U, true};
@@ -223,6 +354,7 @@ JitCompilerFamilies::read_native_gpr(unsigned guest, bool stack_pointer,
 JitCompilerFamilies::NativeGpr
 JitCompilerFamilies::write_native_gpr(unsigned guest, bool stack_pointer,
                                       bool reads_old, unsigned fallback) {
+  observe_gpr_access(guest, stack_pointer, reads_old, /*writes=*/true);
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
   if (guest == 31U && !stack_pointer)
     return {31U, true};
@@ -517,6 +649,8 @@ void JitCompilerFamilies::commit_native_vector(NativeVector value,
 
 void JitCompilerFamilies::load_gpr(unsigned host, unsigned guest,
                                    bool stack_pointer) {
+  observe_gpr_access(guest, stack_pointer, /*reads=*/true,
+                     /*writes=*/false);
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
   if (guest == 31U && !stack_pointer) {
     emitter.move_x(host, 31);
@@ -538,6 +672,8 @@ void JitCompilerFamilies::load_gpr(unsigned host, unsigned guest,
 
 void JitCompilerFamilies::store_gpr(unsigned host, unsigned guest,
                                     bool stack_pointer) {
+  observe_gpr_access(guest, stack_pointer, /*reads=*/false,
+                     /*writes=*/true);
   if (guest == 31U && !stack_pointer)
     return;
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
