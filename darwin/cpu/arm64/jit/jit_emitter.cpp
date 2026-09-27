@@ -64,15 +64,6 @@ void Arm64Emitter::load_x(unsigned destination, unsigned base, std::size_t offse
          ((base & 31U) << 5) | (destination & 31U));
   }
 
-void Arm64Emitter::load_x_indexed_8(unsigned destination, unsigned base, unsigned index) {
-    /*
-     * LDR Xd, [Xn, Xm, LSL #3]. The caller supplies a zero-extended
-     * host-owned selector for the contiguous 64-bit entry table.
-     */
-    emit(0xf860'7800U | ((index & 31U) << 16U) | ((base & 31U) << 5U) |
-         (destination & 31U));
-  }
-
 void Arm64Emitter::load_pair_x(unsigned first, unsigned second, unsigned base,
                    std::ptrdiff_t offset) {
     if ((offset % 8) != 0 || offset < -512 || offset > 504) {
@@ -86,18 +77,6 @@ void Arm64Emitter::load_pair_x(unsigned first, unsigned second, unsigned base,
     const auto scaled =
         static_cast<std::uint32_t>(offset / 8) & 0x7fU;
     emit(0xa940'0000U | (scaled << 15U) | ((second & 31U) << 10U) |
-         ((base & 31U) << 5U) | (first & 31U));
-  }
-
-void Arm64Emitter::store_pair_x(unsigned first, unsigned second,
-                                unsigned base, std::ptrdiff_t offset) {
-    if ((offset % 8) != 0 || offset < -512 || offset > 504) {
-      valid_ = false;
-      return;
-    }
-    const auto scaled =
-        static_cast<std::uint32_t>(offset / 8) & 0x7fU;
-    emit(0xa900'0000U | (scaled << 15U) | ((second & 31U) << 10U) |
          ((base & 31U) << 5U) | (first & 31U));
   }
 
@@ -149,10 +128,6 @@ void Arm64Emitter::move_q(unsigned destination, unsigned source) {
 
 void Arm64Emitter::move_x(unsigned destination, unsigned source) {
     emit(0xaa00'03e0U | ((source & 31U) << 16) | (destination & 31U));
-  }
-
-void Arm64Emitter::move_w(unsigned destination, unsigned source) {
-    emit(0x2a00'03e0U | ((source & 31U) << 16) | (destination & 31U));
   }
 
 void Arm64Emitter::load_constant(unsigned destination, std::uint64_t value) {
@@ -260,14 +235,6 @@ void Arm64Emitter::compare_register(unsigned left, unsigned right) {
          ((left & 31U) << 5));
   }
 
-void Arm64Emitter::compare_immediate(unsigned source, unsigned immediate,
-                         bool shift_12) {
-    if (flag_clobber_ != nullptr)
-      flag_clobber_(flag_context_);
-    emit(0xf100'001fU | (shift_12 ? 1U << 22 : 0U) |
-         ((immediate & 0xfffU) << 10) | ((source & 31U) << 5));
-  }
-
 void Arm64Emitter::emit_internal_flag_clobber(std::uint32_t instruction) {
     /*
      * This callback runs while translating. The generated instruction remains
@@ -344,11 +311,6 @@ void Arm64Emitter::epilogue() {
     }
     emit(0xa8c3'7bfdU); // ldp x29, x30, [sp], #48
     emit(0xd65f'03c0U);
-  }
-
-void Arm64Emitter::reload_context() {
-    load_x(15, 31, 16);
-    load_x(14, 31, 24);
   }
 
 void Arm64Emitter::return_constant(Event event, std::size_t instructions) {
