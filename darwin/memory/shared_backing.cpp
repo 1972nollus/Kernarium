@@ -71,7 +71,11 @@ struct AnonymousSharedBacking final {
 	std::size_t retained_pages{};
 };
 
-AnonymousSharedBacking anonymous_backing;
+/* Never destroyed. Carriers map through it until their process ends, and a
+ * host application can call exit() while they still run. It stays constant-
+ * initialized, so a mapping made during another object's initialization still
+ * finds it. */
+[[clang::no_destroy]] constinit AnonymousSharedBacking anonymous_backing;
 
 [[nodiscard]] bool root_page_index_locked(std::uintptr_t address,
 	std::size_t &index) noexcept

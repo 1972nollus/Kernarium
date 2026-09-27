@@ -49,9 +49,12 @@ std::span<const ScalarContract> scalar_contracts() noexcept
 	return {uml_arm64_scalar_contract_begin, bytes / sizeof(ScalarContract)};
 }
 
+/* Intentionally leaked. Carriers translate with it until their process ends,
+ * and a host application can call exit() while they still run: exit-time
+ * destruction would free the map under them. */
 ScalarAccess scalar_access(std::span<const std::uintptr_t> words)
 {
-	static const ContractIndex index{scalar_contracts()};
+	static const auto &index = *new ContractIndex{scalar_contracts()};
 	return index.access(words);
 }
 
@@ -63,9 +66,11 @@ std::span<const ScalarContract> vector_contracts() noexcept
 		reinterpret_cast<std::uintptr_t>(uml_arm64_vector_contract_begin);
 	return {uml_arm64_vector_contract_begin, bytes / sizeof(ScalarContract)};
 }
+
+/* Intentionally leaked, as the scalar index is. */
 ScalarAccess vector_access(std::span<const std::uintptr_t> words)
 {
-	static const ContractIndex index{vector_contracts()};
+	static const auto &index = *new ContractIndex{vector_contracts()};
 	return index.access(words);
 }
 } // namespace uml::cpu::arm64::gadgets
