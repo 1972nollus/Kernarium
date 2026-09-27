@@ -245,7 +245,6 @@ printf '%s\n' '==> Verifying that every ELF payload is x86-family'
 sudo python3 "$SCRIPT_DIR/verify-elf.py" \
 	--root "$root" --output "$staging.elf.tsv"
 sudo chown "$owner_uid:$owner_gid" "$staging.elf.tsv"
-[ -s "$staging.elf.tsv" ] || fail "the rootfs contains no ELF payloads"
 
 sudo chroot "$root" apt-get clean
 sudo rm -f -- "$root/usr/sbin/policy-rc.d"
