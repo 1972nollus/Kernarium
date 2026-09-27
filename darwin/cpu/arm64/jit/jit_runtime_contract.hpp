@@ -93,13 +93,6 @@ sign_extend(std::uint64_t value, unsigned bits) noexcept {
   return static_cast<std::int64_t>(value << shift) >> shift;
 }
 
-[[nodiscard]] constexpr bool
-terminal_does_not_retire(Event event) noexcept {
-  return event == Event::memory_fault || event == Event::illegal_instruction ||
-         event == Event::gcs_fault ||
-         event == Event::floating_point_trap || event == Event::fatal;
-}
-
 [[nodiscard]] constexpr std::uint64_t
 pack_jit_result(Event event, std::size_t retired) noexcept {
   return static_cast<std::uint32_t>(event) |

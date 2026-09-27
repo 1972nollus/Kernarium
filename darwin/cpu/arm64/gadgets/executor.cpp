@@ -68,21 +68,6 @@ constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 	return count;
 }
 
-[[nodiscard]] constexpr bool terminal_does_not_retire(
-	::uml::cpu::EngineEvent event) noexcept
-{
-	switch (event) {
-	case ::uml::cpu::EngineEvent::fatal:
-	case ::uml::cpu::EngineEvent::memory_fault:
-	case ::uml::cpu::EngineEvent::illegal_instruction:
-	case ::uml::cpu::EngineEvent::gcs_fault:
-	case ::uml::cpu::EngineEvent::floating_point_trap:
-		return true;
-	default:
-		return false;
-	}
-}
-
 [[nodiscard]] std::uint32_t effective_fpcr(
 	const arm64::CpuState &cpu) noexcept
 {
