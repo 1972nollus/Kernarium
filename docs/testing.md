@@ -361,9 +361,11 @@ four tests fail because of how the Mac hosts an iPad app:
 - `theKeyboardButtonFocusesTheViewOnScreen` and
   `anEndedRunIsNeverStartedAgain` find SwiftUI controls by walking the
   window's accessibility elements. On the iPad a test run has UIKit
-  application accessibility on, and the walk finds every control. On the Mac
-  it is off, and SwiftUI's hosting view then exposes no elements. Turning it
-  on in the process makes the same walk find them.
+  application accessibility on, and the walk finds every control. That was
+  observed while the `KernariumAutomation` host was serving; a run with no
+  automation session on the device has not been measured. On the Mac it is
+  off, and SwiftUI's hosting view then exposes no elements. Turning it on in
+  the process makes the same walk find them.
 - `theKeyBarNeverCoversTheConsole` and `anUnfocusedConsoleKeepsEveryRow`
   model the key bar docked at the bottom of the screen, which is where the
   console looks for it. On the Mac the window ends above the bottom of the
