@@ -386,7 +386,8 @@ def expected_imports(
 
 def verify_elf(
     path: Path, page_size: int, common_root: Path, kernel_slice: str
-) -> None:
+) -> bytes:
+    """Check the kernel's ELF geometry and bridge imports; return its bytes."""
     payload = path.read_bytes()
     if len(payload) < 64 or payload[:7] != b"\x7fELF\x02\x01\x01":
         fail("kernel is not a little-endian ELF64 image")
@@ -438,6 +439,7 @@ def verify_elf(
             "kernel bridge imports differ "
             f"(missing={sorted(expected - imported)}, extra={sorted(imported - expected)})"
         )
+    return payload
 
 
 def elf_sections(payload: bytes) -> list[tuple[str, int, int, int]]:
@@ -468,23 +470,22 @@ def elf_sections(payload: bytes) -> list[tuple[str, int, int, int]]:
     return sections
 
 
-def verify_runtime_image(vmlinux: Path, config: Path) -> None:
-    """Check the shipped kernel carries BTF and no DWARF.
+def verify_runtime_image(payload: bytes) -> None:
+    """Check the shipped kernel image carries BTF and no DWARF.
 
     DWARF is only pahole's input for BTF; nothing at runtime reads it.
-    .BTF is allocated kernel data behind /sys/kernel/btf/vmlinux.
+    .BTF is allocated kernel data behind /sys/kernel/btf/vmlinux, which
+    verify_config requires on every line.
     """
     sections = {
         name: (kind, flags, size)
-        for name, kind, flags, size in elf_sections(vmlinux.read_bytes())
+        for name, kind, flags, size in elf_sections(payload)
     }
     dwarf = sorted(
         name for name in sections if name.startswith(DWARF_SECTION_PREFIXES)
     )
     if dwarf:
         fail(f"kernel image carries DWARF sections: {', '.join(dwarf[:8])}")
-    if parse_config(config).get("CONFIG_DEBUG_INFO_BTF", "n") != "y":
-        return
     btf = sections.get(".BTF")
     if btf is None or btf[0] == SHT_NOBITS or btf[2] == 0:
         fail("kernel config enables BTF but the image has no .BTF contents")
@@ -627,15 +628,13 @@ def verify_artifact(
         manifest["page_size"],
         manifest["slice"],
     )
-    verify_elf(
+    payload = verify_elf(
         artifact_root / "kernel/vmlinux",
         manifest["page_size"],
         common_root,
         manifest["slice"],
     )
-    verify_runtime_image(
-        artifact_root / "kernel/vmlinux", artifact_root / "kernel/config"
-    )
+    verify_runtime_image(payload)
     return manifest
 
 
@@ -674,15 +673,13 @@ def verify_compatible_artifact(
         manifest["page_size"],
         manifest["slice"],
     )
-    verify_elf(
+    payload = verify_elf(
         artifact_root / "kernel/vmlinux",
         manifest["page_size"],
         common_root,
         manifest["slice"],
     )
-    verify_runtime_image(
-        artifact_root / "kernel/vmlinux", artifact_root / "kernel/config"
-    )
+    verify_runtime_image(payload)
     return manifest
 
 
