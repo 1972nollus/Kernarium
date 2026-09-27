@@ -15,3 +15,10 @@ uml_add_tooling_test(
         --printer $<TARGET_FILE:kernarium_print_desktop_bootstrap>
     LABELS kernarium
     TIMEOUT 60)
+
+uml_add_tooling_test(
+    NAME kernarium-ipad-automation-keys
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/kernarium/test_ipad_automation_keys.py
+    LABELS kernarium
+    TIMEOUT 30)

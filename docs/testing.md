@@ -359,6 +359,12 @@ wait, type, key, element tree, screenshot, and stop, which refuses without
 means no host is serving. The host recreates its channel folders if another
 tool clears the container.
 
+XCTest on a device delivers nothing to the application for a synthesized
+Return typed as `\r`, or for Delete, Escape, or Backspace, yet reports
+success. The script therefore sends `key return` as `\n`, which produces the
+real Return key with any modifiers, and refuses `delete` and `escape`, naming
+a route that works.
+
 The target has no target application, so starting it installs only its own
 runner, and it is not in the `Kernarium` scheme. Reinstalling Kernarium,
 hosted `Kernarium` test runs, and other UI-test runners leave it running. Keep
