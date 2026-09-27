@@ -44,6 +44,10 @@ final class SerialConsoleController: ObservableObject {
     /// itself would keep only the newest 1 MiB of it.
     private var pendingOutput = Data()
     private var isObserving = false
+    /// Whether the terminal has keyboard focus, and with it the key bar and
+    /// any software keyboard. A tap on the terminal changes it as well as
+    /// the application's keyboard button.
+    @Published private(set) var isFocused = false
 
     convenience init() {
         self.init(input: { SerialConsoleController.sendToGuest($0) })
@@ -104,6 +108,10 @@ final class SerialConsoleController: ObservableObject {
         }
     }
 
+    func becomeFirstResponder() {
+        _ = terminalView?.acquireProgrammaticFocus()
+    }
+
     func resignFirstResponder() {
         _ = terminalView?.resignFirstResponder()
     }
@@ -147,9 +155,16 @@ extension SerialConsoleController: TerminalSurfaceOpenURLDelegate {
 }
 
 extension SerialConsoleController: TerminalSurfaceFocusDelegate {
-    /// The console makes room for keyboard UI only while it has focus, and
-    /// UIKit does not report every focus change as a keyboard change.
+    /// Focus is the console's keyboard: the application's keyboard button
+    /// follows it, and the console makes room for keyboard UI only while it
+    /// has focus. UIKit does not report every focus change as a keyboard
+    /// change.
     func terminalDidChangeFocus(_: Bool) {
+        // Ghostty reports a loss of focus even when resigning failed.
+        let focused = terminalView?.isFirstResponder ?? false
+        if isFocused != focused {
+            isFocused = focused
+        }
         terminalView?.superview?.setNeedsLayout()
     }
 }

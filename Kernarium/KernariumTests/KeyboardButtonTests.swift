@@ -1,0 +1,222 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+import Foundation
+import GhosttyTerminal
+import MetalKit
+import Testing
+import UIKit
+@testable import Kernarium
+
+/// The floating keyboard button of the application's own window. It raises
+/// the keyboard for the view on screen, so typed text reaches what the user
+/// is looking at: the framebuffer, or the serial console's terminal. The
+/// floating buttons are pressed through accessibility, as VoiceOver presses
+/// them. These tests belong to the serialized console suite: keyboard focus
+/// is one per application.
+extension SerialConsoleTests {
+    /// The application's window and the controls in it.
+    @MainActor
+    fileprivate struct Application {
+        let window: UIWindow
+        let terminal: TerminalView
+
+        /// The accessibility element carrying `identifier`.
+        func element(_ identifier: String) -> NSObject? {
+            Self.find(identifier, in: window, depth: 0)
+        }
+
+        private static func find(
+            _ identifier: String,
+            in node: NSObject,
+            depth: Int
+        ) -> NSObject? {
+            // SwiftUI's accessibility nodes answer the identifier without
+            // declaring UIAccessibilityIdentification.
+            let getter = NSSelectorFromString("accessibilityIdentifier")
+            if node.responds(to: getter),
+               node.perform(getter)?.takeUnretainedValue() as? String ==
+                   identifier {
+                return node
+            }
+            guard depth < 64 else { return nil }
+            var children: [NSObject] = []
+            if let elements = node.accessibilityElements {
+                children += elements.compactMap { $0 as? NSObject }
+            }
+            if let view = node as? UIView {
+                children += view.subviews
+            }
+            for child in children {
+                if let found = find(identifier, in: child, depth: depth + 1) {
+                    return found
+                }
+            }
+            return nil
+        }
+
+        func label(of identifier: String) -> String? {
+            element(identifier)?.accessibilityLabel
+        }
+
+        func press(_ identifier: String) throws {
+            let button = try #require(
+                element(identifier),
+                "the application shows no \(identifier)"
+            )
+            #expect(button.accessibilityActivate(), "\(identifier) did not act")
+        }
+
+        /// The views in the window that hold keyboard focus.
+        var firstResponders: [UIView] {
+            func walk(_ view: UIView) -> [UIView] {
+                (view.isFirstResponder ? [view] : []) +
+                    view.subviews.flatMap(walk)
+            }
+            return walk(window)
+        }
+    }
+
+    fileprivate func application() throws -> Application {
+        let scene = try #require(
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first,
+            "the application has no window scene"
+        )
+        func terminal(in view: UIView) -> TerminalView? {
+            if let terminal = view as? TerminalView,
+               terminal.accessibilityIdentifier ==
+                   SerialConsoleView.accessibilityIdentifier {
+                return terminal
+            }
+            return view.subviews.lazy.compactMap(terminal(in:)).first
+        }
+        for window in scene.windows where window.windowLevel == .normal {
+            if let terminal = terminal(in: window) {
+                return Application(window: window, terminal: terminal)
+            }
+        }
+        throw ApplicationMissing()
+    }
+
+    fileprivate struct ApplicationMissing: Error {}
+
+    /// Polls `condition` on the main actor for at most ten seconds.
+    fileprivate func settles(_ condition: () -> Bool) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while !condition() {
+            guard clock.now < deadline else { return false }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return true
+    }
+
+    /// Back to the framebuffer, the application's first mode, with no
+    /// keyboard up.
+    fileprivate func restore(_ app: Application) async throws {
+        if app.label(of: "displayModeButton") == "Show Framebuffer" {
+            try app.press("displayModeButton")
+            #expect(
+                try await settles {
+                    app.label(of: "displayModeButton") == "Show Serial Console"
+                }
+            )
+        }
+        if app.label(of: "keyboardButton") == "Hide Keyboard" {
+            try app.press("keyboardButton")
+        }
+        #expect(try await settles { app.firstResponders.isEmpty })
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func theKeyboardButtonFocusesTheViewOnScreen() async throws {
+        let app = try application()
+        try await restore(app)
+        do {
+            try await pressTheKeyboardButton(in: app)
+        } catch {
+            try? await restore(app)
+            throw error
+        }
+        try await restore(app)
+    }
+
+    fileprivate func pressTheKeyboardButton(in app: Application) async throws {
+        var responders = ""
+        func focused(_ view: UIView?) -> Bool {
+            let found = app.firstResponders
+            responders = found.map { "\(type(of: $0))" }.description
+            if let view { return found.count == 1 && found[0] === view }
+            return found.isEmpty
+        }
+
+        // The framebuffer takes the keyboard as it always has.
+        try app.press("keyboardButton")
+        #expect(
+            try await settles {
+                app.firstResponders.count == 1 &&
+                    app.firstResponders[0] is MTKView
+            },
+            "the framebuffer did not take the keyboard: \(app.firstResponders)"
+        )
+        #expect(app.label(of: "keyboardButton") == "Hide Keyboard")
+
+        // A mode switch puts the keyboard away; the view that had it is
+        // hidden.
+        try app.press("displayModeButton")
+        #expect(
+            try await settles {
+                app.label(of: "displayModeButton") == "Show Framebuffer"
+            }
+        )
+        #expect(
+            try await settles { focused(nil) },
+            "a hidden view kept the keyboard: \(responders)"
+        )
+        #expect(app.label(of: "keyboardButton") == "Show Keyboard")
+
+        // On the console, the button focuses the console's terminal, which
+        // raises its keyboard and key bar, and puts them away again.
+        try app.press("keyboardButton")
+        #expect(
+            try await settles { focused(app.terminal) },
+            "the console's terminal did not take the keyboard: \(responders)"
+        )
+        #expect(
+            try await settles {
+                app.label(of: "keyboardButton") == "Hide Keyboard"
+            }
+        )
+        try app.press("keyboardButton")
+        #expect(
+            try await settles { focused(nil) },
+            "the console kept the keyboard: \(responders)"
+        )
+        #expect(
+            try await settles {
+                app.label(of: "keyboardButton") == "Show Keyboard"
+            }
+        )
+
+        // Focus taken on the console itself shows on the button, and a
+        // switch back to the framebuffer puts that keyboard away too.
+        #expect(app.terminal.becomeFirstResponder())
+        #expect(
+            try await settles {
+                app.label(of: "keyboardButton") == "Hide Keyboard"
+            },
+            "the button does not show the console's keyboard"
+        )
+        try app.press("displayModeButton")
+        #expect(
+            try await settles {
+                app.label(of: "displayModeButton") == "Show Serial Console"
+            }
+        )
+        #expect(
+            try await settles { focused(nil) },
+            "a hidden view kept the keyboard: \(responders)"
+        )
+        #expect(app.label(of: "keyboardButton") == "Show Keyboard")
+    }
+}
