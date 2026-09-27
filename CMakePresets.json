@@ -58,7 +58,6 @@
       "cacheVariables": {
         "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
         "UML_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/macos-arm64-26",
-        "UML_APPLE_GPU_PRODUCT": "apple-gpu-vulkan-experiment",
         "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu-vulkan-experiment/macos-arm64"
       }
     },
@@ -132,7 +131,6 @@
       "cacheVariables": {
         "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
         "UML_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/macos-arm64-26",
-        "UML_APPLE_GPU_PRODUCT": "apple-gpu-vulkan-experiment",
         "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu-vulkan-experiment/macos-arm64",
         "UML_KERNEL_PRODUCT": "mainline-6.18-vulkan-experiment"
       }
@@ -234,7 +232,6 @@
         "UML_BUILD_NETWORK_PROVIDER": true,
         "UML_BUILD_GPU": true,
         "UML_BUILD_KERNARIUM_RUNTIME": true,
-        "UML_APPLE_GPU_PRODUCT": "apple-gpu-vulkan-experiment",
         "UML_APPLE_GPU_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64",
         "UML_IOS_NETWORK_DEPENDENCY_PREFIX": "${sourceDir}/.build/dependencies/ios-device-arm64/network",
         "UML_KERNEL_PRODUCT": "mainline-6.18-vulkan-experiment"

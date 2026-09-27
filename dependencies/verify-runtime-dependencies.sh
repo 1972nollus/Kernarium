@@ -4,7 +4,6 @@ set -eu
 
 BINARY=
 APPLE_GPU_PREFIX=
-APPLE_GPU_PRODUCT=apple-gpu-vulkan-experiment
 FRAMEWORK_DIRECTORY=
 
 fail()
@@ -25,11 +24,6 @@ while [ "$#" -gt 0 ]; do
 		APPLE_GPU_PREFIX=$2
 		shift 2
 		;;
-	--apple-gpu-product)
-		[ "$#" -ge 2 ] || fail "--apple-gpu-product requires a value"
-		APPLE_GPU_PRODUCT=$2
-		shift 2
-		;;
 	--framework-directory)
 		[ "$#" -ge 2 ] || fail "--framework-directory requires a path"
 		FRAMEWORK_DIRECTORY=$2
@@ -39,12 +33,8 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
-# Every Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on
-# the KosmicKrisp Vulkan driver. Only macOS has a build of that stack.
-case "$APPLE_GPU_PRODUCT" in
-apple-gpu-vulkan-experiment) ;;
-*) fail "unsupported Apple GPU product: $APPLE_GPU_PRODUCT" ;;
-esac
+# The Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on the
+# KosmicKrisp Vulkan driver.
 GL_FRAMEWORKS='MesaEGL MesaGallium'
 HOST_GL_MARKER='Virgl Zink/KosmicKrisp provider: hardware'
 

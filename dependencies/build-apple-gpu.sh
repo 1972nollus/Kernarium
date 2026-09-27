@@ -13,6 +13,7 @@ PREFIX=${UML_APPLE_GPU_DEPENDENCY_PREFIX:-}
 WORK_ROOT=${UML_APPLE_GPU_DEPENDENCY_BUILD_ROOT:-}
 JOBS=${UML_APPLE_GPU_DEPENDENCY_JOBS:-8}
 PLATFORM=macos
+# The one Apple GPU product names the source matrix, the prefix and the receipt.
 PRODUCT=apple-gpu-vulkan-experiment
 VERIFY_ONLY=0
 
@@ -29,7 +30,6 @@ usage()
 		"" \
 		"Options:" \
 		"  --platform NAME      macos (default) or ios" \
-		"  --product NAME       apple-gpu-vulkan-experiment (default)" \
 		"  --source-root PATH   Verified dependency source trees" \
 		"  --prefix PATH        Output prefix" \
 		"  --work-root PATH     Build parent directory" \
@@ -38,7 +38,8 @@ usage()
 		"  -h, --help           Show this help" \
 		"" \
 		"The build performs no network access. Run dependencies/prepare.sh" \
-		"--product NAME first to materialize the pinned source matrix."
+		"--product apple-gpu-vulkan-experiment first to materialize the" \
+		"pinned source matrix."
 }
 
 while [ "$#" -gt 0 ]; do
@@ -46,11 +47,6 @@ while [ "$#" -gt 0 ]; do
 	--platform)
 		[ "$#" -ge 2 ] || fail "--platform requires a value"
 		PLATFORM=$2
-		shift 2
-		;;
-	--product)
-		[ "$#" -ge 2 ] || fail "--product requires a value"
-		PRODUCT=$2
 		shift 2
 		;;
 	--source-root)
@@ -89,10 +85,6 @@ case "$JOBS" in
 ''|*[!0-9]*) fail "jobs must be a positive integer" ;;
 esac
 [ "$JOBS" -gt 0 ] || fail "jobs must be a positive integer"
-case "$PRODUCT" in
-apple-gpu-vulkan-experiment) ;;
-*) fail "product must be apple-gpu-vulkan-experiment" ;;
-esac
 [ "$(uname -s)" = Darwin ] || fail "the Apple GPU build requires macOS"
 case "$(uname -m)" in
 arm64|aarch64) ;;
@@ -102,11 +94,11 @@ esac
 case "$PLATFORM" in
 macos)
 	SDK_NAME=macosx
-	TARGET=arm64-apple-macos14.0
+	TARGET=arm64-apple-macos26.0
 	EPOXY_SYSTEM=darwin
 	SUBSYSTEM=macos
-	DEPLOYMENT_TARGET=14.0
-	VULKAN_CONTRACT_NAME=macos-gpu-vulkan-arm64.tsv
+	DEPLOYMENT_TARGET=26.0
+	CONTRACT_NAME=macos-gpu-vulkan-arm64.tsv
 	MINIMUM_OS_KEY=LSMinimumSystemVersion
 	PREFIX_PLATFORM=macos-arm64
 	;;
@@ -116,23 +108,11 @@ ios)
 	EPOXY_SYSTEM=ios
 	SUBSYSTEM=ios
 	DEPLOYMENT_TARGET=26.0
-	VULKAN_CONTRACT_NAME=ios-device-gpu-vulkan-arm64.tsv
+	CONTRACT_NAME=ios-device-gpu-vulkan-arm64.tsv
 	MINIMUM_OS_KEY=MinimumOSVersion
 	PREFIX_PLATFORM=ios-device-arm64
 	;;
 *) fail "platform must be macos or ios" ;;
-esac
-
-# Every Apple product renders OpenGL with Mesa's Zink Gallium driver on the
-# same in-process Vulkan driver Venus uses.
-case "$PRODUCT" in
-apple-gpu-vulkan-experiment)
-	CONTRACT_NAME=$VULKAN_CONTRACT_NAME
-	if [ "$PLATFORM" = macos ]; then
-		TARGET=arm64-apple-macos26.0
-	fi
-	DEPLOYMENT_TARGET=26.0
-	;;
 esac
 
 # An iOS prefix is cross compiled: its binaries cannot run on the build
@@ -162,7 +142,7 @@ PREFIX="$PREFIX_PARENT/$(basename -- "$PREFIX")"
 verify_prefix()
 {
 	cmake -DPREFIX="$1" -DSOURCE_ROOT="$ROOT_DIR" \
-		-DPLATFORM="$PLATFORM" -DPRODUCT="$PRODUCT" -P "$VERIFY_SCRIPT"
+		-DPLATFORM="$PLATFORM" -P "$VERIFY_SCRIPT"
 }
 
 if [ "$VERIFY_ONLY" -eq 1 ]; then

@@ -12,15 +12,6 @@ endif()
 include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/VerifySourceTrees.cmake")
 
-if(NOT DEFINED PRODUCT)
-    set(PRODUCT apple-gpu-vulkan-experiment)
-endif()
-# Every Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on
-# the KosmicKrisp Vulkan driver.
-if(NOT PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
-    message(FATAL_ERROR "Unsupported Apple GPU product: ${PRODUCT}")
-endif()
-
 if(PLATFORM STREQUAL "macos")
     set(_platform_contract macos-gpu-vulkan-arm64.tsv)
     set(_mach_platform 1)
@@ -148,7 +139,7 @@ _contract_expect(source_manifest dependencies/manifest.tsv)
 uml_verify_dependency_manifest_product(
     SOURCE "${SOURCE_ROOT}/dependencies/manifest.tsv"
     INSTALLED "${PREFIX}/share/uml-dependencies/manifest.tsv"
-    PRODUCT "${PRODUCT}"
+    PRODUCT apple-gpu-vulkan-experiment
     LABEL "Apple GPU")
 set(_provenance_files manifest.tsv "${_platform_contract}" source-trees.tsv)
 uml_verify_source_trees(
@@ -591,4 +582,5 @@ if(NOT _module_map MATCHES "framework module KosmicKrisp" OR
 endif()
 
 message(STATUS
-    "Verified ${PRODUCT}/${PLATFORM} Apple GPU dependency prefix: ${PREFIX}")
+    "Verified apple-gpu-vulkan-experiment/${PLATFORM} Apple GPU dependency "
+    "prefix: ${PREFIX}")
