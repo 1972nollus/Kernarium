@@ -106,6 +106,16 @@ class CommandResult:
     output: str
 
 
+class CommandTimeout(TimeoutError):
+    """A command's end marker did not arrive in time.
+
+    ``output`` holds what the command printed before the deadline."""
+
+    def __init__(self, message: str, output: str) -> None:
+        super().__init__(message)
+        self.output = output
+
+
 CORE_CLASSES = ("performance", "efficiency")
 TASKPOLICY = "/usr/sbin/taskpolicy"
 
@@ -415,7 +425,8 @@ class Guest:
         its output is not captured. ``stdin`` follows the command line, so the
         command reads it from the console. ``single_write`` delivers all of
         that input in one host write, so the guest receives it as one burst
-        rather than as the pipe accepts it.
+        rather than as the pipe accepts it. A command still running after
+        ``timeout_seconds`` raises CommandTimeout with what it printed.
         """
         token = uuid.uuid4().hex
         begin = f"__UML_COMMAND_BEGIN_{token}__"
@@ -429,12 +440,23 @@ class Guest:
             self._write_once(wrapped + stdin)
         else:
             self._write(wrapped + stdin)
-        match = self._read_until(marker_pattern(end), timeout_seconds, start)
-        section = bytes(self._transcript[start : match.start()])
-        begin_at = section.rfind(begin.encode())
-        if begin_at >= 0:
-            section = section[begin_at + len(begin) :]
-        return CommandResult(int(match.group(1)), self._normal_output(section))
+
+        def output(section: bytes) -> str:
+            begin_at = section.rfind(begin.encode())
+            if begin_at >= 0:
+                section = section[begin_at + len(begin) :]
+            return self._normal_output(section)
+
+        try:
+            match = self._read_until(marker_pattern(end), timeout_seconds, start)
+        except TimeoutError as error:
+            raise CommandTimeout(
+                str(error), output(bytes(self._transcript[start:]))
+            ) from error
+        return CommandResult(
+            int(match.group(1)),
+            output(bytes(self._transcript[start : match.start()])),
+        )
 
     def check_command(
         self,

@@ -19,7 +19,6 @@ import signal
 import sys
 import threading
 import time
-import uuid
 
 
 SUPPORT = pathlib.Path(__file__).resolve().parents[1] / "support"
@@ -28,6 +27,7 @@ from guest import (  # noqa: E402
     BOOT_TIMEOUT_SECONDS,
     OVERLAY_SHELL_BOOTSTRAP,
     CommandResult,
+    CommandTimeout,
     Guest as GuestHarness,
     cleanup_stale_swap_images,
     create_swap_image,
@@ -560,63 +560,35 @@ class Guest(GuestHarness):
             raise RuntimeError(f"LTP metadata finalization failed: {details}")
 
     def run(self, case: Case) -> Result:
-        token = uuid.uuid4().hex
-        begin = f"__UML_LTP_BEGIN_{token}__"
-        end = f"__UML_LTP_END_{token}__"
-        guest_command = ltp_guest_command(case.command)
-        wrapped = (
-            f"printf '\\n{begin}\\n'; {guest_command}; rc=$?; "
-            f"printf '\\n{end}:%s\\n' \"$rc\"\n"
-        )
-        start = len(self._transcript)
-        self._write(wrapped)
         try:
-            match = self._read_until(
-                marker_pattern(end),
-                case.timeout_seconds,
-                start,
+            result = self.run_command(
+                ltp_guest_command(case.command), case.timeout_seconds
             )
-        except TimeoutError as error:
-            output = self._normal_output(bytes(self._transcript[start:]))
-            return Result(case, None, {}, output, str(error))
-
-        section = bytes(self._transcript[start : match.end()])
-        begin_at = section.rfind(begin.encode(), 0, match.start() - start)
-        if begin_at >= 0:
-            section = section[begin_at + len(begin) :]
-        output = self._normal_output(section)
-        summary = parse_result_counts(output)
-        health_error = kernel_failure(output) or self._health_check()
+        except CommandTimeout as error:
+            return Result(case, None, {}, error.output, str(error))
+        summary = parse_result_counts(result.output)
+        health_error = kernel_failure(result.output) or self._health_check()
         return Result(
             case,
-            int(match.group(1)),
+            result.return_code,
             summary,
-            output,
+            result.output,
             health_error,
         )
 
     def _health_check(self, timeout_seconds: int = 30) -> str | None:
         """Verify that a completed test did not damage later guest execution."""
-        token = uuid.uuid4().hex
-        marker = f"__UML_HEALTH_{token}__"
-        start = len(self._transcript)
-        self._write(
-            "stty sane 2>/dev/null; zcat /proc/config.gz >/dev/null; rc=$?; "
-            f"printf '\\n{marker}:%s\\n' \"$rc\"\n"
-        )
         try:
-            match = self._read_until(
-                marker_pattern(marker),
+            result = self.run_command(
+                "stty sane 2>/dev/null; zcat /proc/config.gz >/dev/null",
                 timeout_seconds,
-                start,
             )
         except (RuntimeError, TimeoutError) as error:
             return f"post-test guest health check failed: {error}"
-        return_code = int(match.group(1))
-        if return_code != 0:
+        if result.return_code != 0:
             return (
                 "post-test guest health check failed: "
-                f"zcat /proc/config.gz exited {return_code}"
+                f"zcat /proc/config.gz exited {result.return_code}"
             )
         return None
 

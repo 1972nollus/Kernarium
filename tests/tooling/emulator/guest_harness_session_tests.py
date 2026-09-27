@@ -167,6 +167,23 @@ class AttachedGuestSessionTests(unittest.TestCase):
         self.assertIn(b"sink-marker", sink.getvalue())
         self.assertEqual(sink.getvalue(), bytes(guest._transcript))
 
+    def test_a_timed_out_command_keeps_what_it_printed(self) -> None:
+        self.emulator.write_text("#!/bin/sh\nexec /bin/sh\n", encoding="utf-8")
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        self.addCleanup(guest.close)
+        with self.assertRaises(guest_support.CommandTimeout) as raised:
+            guest.run_command("printf '%s' partial-output; sleep 2", 1)
+        self.assertEqual(raised.exception.output, "partial-output")
+        self.assertIn("exceeded 1s", str(raised.exception))
+        guest._write("exit\n")
+        guest._process.wait(timeout=10)
+
     def test_a_command_reads_the_input_that_follows_it(self) -> None:
         self.emulator.write_text("#!/bin/sh\nexec /bin/sh\n", encoding="utf-8")
         guest = guest_support.Guest(

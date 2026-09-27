@@ -1330,6 +1330,49 @@ WARNINGS 0
              "warnings": 0},
         )
 
+    def test_a_timed_out_case_keeps_its_partial_output(self) -> None:
+        guest = object.__new__(runner.Guest)
+        guest.run_command = mock.Mock(
+            side_effect=runner.CommandTimeout(
+                "guest operation exceeded 5s", "partial output"
+            )
+        )
+        case = runner.Case("syscalls", "slow01", "slow01", "pass", 5, "")
+        result = guest.run(case)
+        self.assertEqual(
+            result,
+            runner.Result(
+                case, None, {}, "partial output", "guest operation exceeded 5s"
+            ),
+        )
+        guest.run_command.assert_called_once_with(
+            runner.ltp_guest_command("slow01"), 5
+        )
+
+    def test_a_finished_case_reports_counts_and_guest_health(self) -> None:
+        output = "SUMMARY:\nPASSED   1\nFAILED   0\n"
+        case = runner.Case("syscalls", "quick01", "quick01", "pass", 5, "")
+        for health, expected_error in (
+            (0, None),
+            (
+                1,
+                "post-test guest health check failed: "
+                "zcat /proc/config.gz exited 1",
+            ),
+        ):
+            guest = object.__new__(runner.Guest)
+            guest.run_command = mock.Mock(
+                side_effect=(
+                    runner.CommandResult(0, output),
+                    runner.CommandResult(health, ""),
+                )
+            )
+            result = guest.run(case)
+            self.assertEqual(result.return_code, 0)
+            self.assertEqual(result.summary, {"passed": 1, "failed": 0})
+            self.assertEqual(result.output, output)
+            self.assertEqual(result.error, expected_error)
+
     def test_protocol_marker_tolerates_tty_case_conversion(self) -> None:
         pattern = runner.marker_pattern("__UML_LTP_END_deadbeef__")
         match = pattern.search(b"__UML_LTP_END_DEADBEEF__:0\r\n")
