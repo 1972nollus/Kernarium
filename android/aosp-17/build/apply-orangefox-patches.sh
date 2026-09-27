@@ -9,7 +9,7 @@ ROOT_DIR=$(CDPATH= cd -- "$ANDROID_ROOT/../.." && pwd)
 PATCH_SERIES="$ROOT_DIR/scripts/patch_series.py"
 PROJECTS="$ANDROID_ROOT/third_party/orangefox/patches/projects.tsv"
 VERIFIER="$ANDROID_ROOT/tools/verify-orangefox-source.py"
-DEVICE_SYNC="$ANDROID_ROOT/tools/sync-orangefox-device.py"
+DEVICE_SYNC="$ANDROID_ROOT/tools/sync-device-tree.py"
 ORANGEFOX_SOURCE=
 
 fail()
@@ -59,7 +59,7 @@ esac
 [ -d "$ORANGEFOX_SOURCE/.repo/manifests" ] || fail "OrangeFox Repo metadata is missing"
 [ -f "$PROJECTS" ] || fail "OrangeFox route table is missing"
 [ -x "$VERIFIER" ] || fail "OrangeFox source verifier is missing"
-[ -x "$DEVICE_SYNC" ] || fail "OrangeFox device sync tool is missing"
+[ -x "$DEVICE_SYNC" ] || fail "device-tree sync tool is missing"
 
 "$VERIFIER" --android-root "$ANDROID_ROOT"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
@@ -73,8 +73,8 @@ while IFS="$(printf '\t')" read -r route_id checkout_path final_tree series_dir;
 		fail "could not apply the $route_id series"
 done
 
-"$DEVICE_SYNC" --android-root "$ANDROID_ROOT" \
-	--orangefox-source "$ORANGEFOX_SOURCE"
+"$DEVICE_SYNC" --android-root "$ANDROID_ROOT" --tree orangefox \
+	--workspace "$ORANGEFOX_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--orangefox-source "$ORANGEFOX_SOURCE" --expect final
 printf '%s\n' "applied routed OrangeFox patches and device tree"

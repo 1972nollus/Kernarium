@@ -49,7 +49,7 @@ def churn(guest: Guest) -> None:
     try:
         guest.boot_to_shell(180)
         # poweroff refuses to run without /proc.
-        mounted = guest.run_command("mount -t proc proc /proc", 20)
+        guest.check_command("mount -t proc proc /proc", 20)
         churned = guest.run_command(
             f"sleep {CHURN_SECONDS}; echo CHURN-$((6*7))",
             CHURN_SECONDS + 60,
@@ -59,8 +59,6 @@ def churn(guest: Guest) -> None:
             "the guest stopped while its balloon config churned: a "
             "config-change request and a config read waited for each other"
         ) from error
-    if mounted.return_code != 0:
-        raise RuntimeError("could not mount /proc:\n" + mounted.output)
     if churned.return_code != 0 or "CHURN-42" not in churned.output:
         raise RuntimeError("the churn command failed:\n" + churned.output)
     if not guest.shutdown(30):

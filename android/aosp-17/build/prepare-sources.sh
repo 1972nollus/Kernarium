@@ -15,8 +15,7 @@ MESA_VENUS_VERIFIER="$ROOT_DIR/android/aosp-17/tools/verify-mesa-venus-source.py
 AOSP_SOURCE=
 ACK_WORKSPACE=
 JOBS=
-JELLY_STAGING=
-MESA_VENUS_STAGING=
+STAGING=
 
 fail()
 {
@@ -42,11 +41,8 @@ EOF
 
 cleanup()
 {
-	if [ -n "${JELLY_STAGING:-}" ] && [ -d "$JELLY_STAGING" ]; then
-		rm -rf -- "$JELLY_STAGING"
-	fi
-	if [ -n "${MESA_VENUS_STAGING:-}" ] && [ -d "$MESA_VENUS_STAGING" ]; then
-		rm -rf -- "$MESA_VENUS_STAGING"
+	if [ -n "${STAGING:-}" ] && [ -d "$STAGING" ]; then
+		rm -rf -- "$STAGING"
 	fi
 }
 trap cleanup EXIT HUP INT TERM
@@ -77,89 +73,58 @@ dirty_repo_projects()
 	)
 }
 
-prepare_jelly()
+pinned_git()
 {
-	destination="$AOSP_SOURCE/$JELLY_DESTINATION"
-	if [ -e "$destination" ] || [ -L "$destination" ]; then
-		"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
-			--aosp-source "$AOSP_SOURCE"
-		printf '%s\n' "reusing pinned Jelly checkout: $destination"
-		return
-	fi
-
-	parent=$(dirname -- "$destination")
-	mkdir -p -- "$parent"
-	JELLY_STAGING=$(mktemp -d "$parent/.Jelly.prepare.XXXXXX")
-	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$JELLY_STAGING" init --quiet
-	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$JELLY_STAGING" remote add origin \
-		"$JELLY_UPSTREAM_REPOSITORY"
-	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$JELLY_STAGING" fetch --no-tags --depth=1 origin \
-		"$JELLY_UPSTREAM_COMMIT"
-	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$JELLY_STAGING" switch --detach "$JELLY_UPSTREAM_COMMIT"
-	actual_tree=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$JELLY_STAGING" rev-parse HEAD^{tree})
-	[ "$actual_tree" = "$JELLY_UPSTREAM_TREE" ] ||
-		fail "fetched Jelly tree is $actual_tree, expected $JELLY_UPSTREAM_TREE"
-
-	python3 -B "$ROOT_DIR/scripts/patch_series.py" apply \
-		--repo "$JELLY_STAGING" \
-		--series-dir "$ROOT_DIR/android/aosp-17/third_party/jelly/series" \
-		--expect-tree "$JELLY_FINAL_TREE" >/dev/null ||
-		fail "the Jelly series does not replay to $JELLY_FINAL_TREE"
-	mv -- "$JELLY_STAGING" "$destination"
-	JELLY_STAGING=
-	"$JELLY_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
-		--aosp-source "$AOSP_SOURCE"
+	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C "$STAGING" "$@"
 }
 
-prepare_mesa_venus()
+# materialize_pinned LABEL DESTINATION VERIFIER REPOSITORY COMMIT TREE BRANCH \
+#     [SERIES_DIR FINAL_TREE]...
+# Fetch one pinned commit beside DESTINATION, detached when BRANCH is empty,
+# replay each series in order, publish it, and verify the result. An existing
+# destination is verified and reused.
+materialize_pinned()
 {
-	destination="$AOSP_SOURCE/$MESA_VENUS_DESTINATION"
+	label=$1
+	destination=$2
+	verifier=$3
+	repository=$4
+	commit=$5
+	upstream_tree=$6
+	branch=$7
+	shift 7
 	if [ -e "$destination" ] || [ -L "$destination" ]; then
-		"$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
+		"$verifier" --android-root "$ROOT_DIR/android/aosp-17" \
 			--aosp-source "$AOSP_SOURCE"
-		printf '%s\n' "reusing pinned Mesa Venus checkout: $destination"
+		printf '%s\n' "reusing pinned $label checkout: $destination"
 		return
 	fi
 
 	parent=$(dirname -- "$destination")
 	mkdir -p -- "$parent"
-	MESA_VENUS_STAGING=$(mktemp -d "$parent/.mesa-venus.prepare.XXXXXX")
-	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$MESA_VENUS_STAGING" init --quiet
-	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$MESA_VENUS_STAGING" remote add origin \
-		"$MESA_VENUS_UPSTREAM_REPOSITORY"
-	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$MESA_VENUS_STAGING" fetch --no-tags --depth=1 origin \
-		"$MESA_VENUS_UPSTREAM_COMMIT"
-	GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$MESA_VENUS_STAGING" switch --create \
-		"$MESA_VENUS_PATCH_BRANCH" "$MESA_VENUS_UPSTREAM_COMMIT"
-	actual_tree=$(GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-		git -C "$MESA_VENUS_STAGING" rev-parse HEAD^{tree})
-	[ "$actual_tree" = "$MESA_VENUS_UPSTREAM_TREE" ] ||
-		fail "fetched Mesa tree is $actual_tree, expected $MESA_VENUS_UPSTREAM_TREE"
+	STAGING=$(mktemp -d "$parent/.$(basename -- "$destination").prepare.XXXXXX")
+	pinned_git init --quiet
+	pinned_git remote add origin "$repository"
+	pinned_git fetch --no-tags --depth=1 origin "$commit"
+	if [ -n "$branch" ]; then
+		pinned_git switch --create "$branch" "$commit"
+	else
+		pinned_git switch --detach "$commit"
+	fi
+	actual_tree=$(pinned_git rev-parse HEAD^{tree})
+	[ "$actual_tree" = "$upstream_tree" ] ||
+		fail "fetched $label tree is $actual_tree, expected $upstream_tree"
 
-	python3 -B "$ROOT_DIR/scripts/patch_series.py" apply \
-		--repo "$MESA_VENUS_STAGING" \
-		--series-dir "$ROOT_DIR/$MESA_VENUS_GUEST_SERIES" \
-		--expect-tree "$MESA_VENUS_GUEST_TREE" >/dev/null ||
-		fail "the guest Mesa series does not replay to $MESA_VENUS_GUEST_TREE"
-
-	python3 -B "$ROOT_DIR/scripts/patch_series.py" apply \
-		--repo "$MESA_VENUS_STAGING" \
-		--series-dir "$ROOT_DIR/android/aosp-17/third_party/mesa-venus/series" \
-		--expect-tree "$MESA_VENUS_FINAL_TREE" >/dev/null ||
-		fail "the Mesa Venus port does not replay to $MESA_VENUS_FINAL_TREE"
-
-	mv -- "$MESA_VENUS_STAGING" "$destination"
-	MESA_VENUS_STAGING=
-	"$MESA_VENUS_VERIFIER" --android-root "$ROOT_DIR/android/aosp-17" \
+	while [ "$#" -ge 2 ]; do
+		python3 -B "$ROOT_DIR/scripts/patch_series.py" apply \
+			--repo "$STAGING" --series-dir "$ROOT_DIR/$1" \
+			--expect-tree "$2" >/dev/null ||
+			fail "the $label series $1 does not replay to $2"
+		shift 2
+	done
+	mv -- "$STAGING" "$destination"
+	STAGING=
+	"$verifier" --android-root "$ROOT_DIR/android/aosp-17" \
 		--aosp-source "$AOSP_SOURCE"
 }
 
@@ -249,8 +214,16 @@ git -C "$ACK_WORKSPACE/common" fetch --no-tags \
 git -C "$ACK_WORKSPACE/common" checkout --detach \
 	"$UML_KERNEL_UPSTREAM_COMMIT"
 
-prepare_jelly
-prepare_mesa_venus
+materialize_pinned Jelly "$AOSP_SOURCE/$JELLY_DESTINATION" "$JELLY_VERIFIER" \
+	"$JELLY_UPSTREAM_REPOSITORY" "$JELLY_UPSTREAM_COMMIT" \
+	"$JELLY_UPSTREAM_TREE" "" \
+	android/aosp-17/third_party/jelly/series "$JELLY_FINAL_TREE"
+materialize_pinned "Mesa Venus" "$AOSP_SOURCE/$MESA_VENUS_DESTINATION" \
+	"$MESA_VENUS_VERIFIER" "$MESA_VENUS_UPSTREAM_REPOSITORY" \
+	"$MESA_VENUS_UPSTREAM_COMMIT" "$MESA_VENUS_UPSTREAM_TREE" \
+	"$MESA_VENUS_PATCH_BRANCH" \
+	"$MESA_VENUS_GUEST_SERIES" "$MESA_VENUS_GUEST_TREE" \
+	android/aosp-17/third_party/mesa-venus/series "$MESA_VENUS_FINAL_TREE"
 
 "$SCRIPT_DIR/preflight.sh" \
 	--aosp-source "$AOSP_SOURCE" \

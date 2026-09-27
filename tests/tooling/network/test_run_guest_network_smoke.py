@@ -56,7 +56,6 @@ class NetworkSmokeTaxonomyTests(unittest.TestCase):
             mock.patch.object(
                 run_guest_network_smoke, "Guest", return_value=FakeGuest()
             ),
-            mock.patch.object(run_guest_network_smoke, "run", return_value=""),
             mock.patch.object(
                 run_guest_network_smoke, "start_guest_dhcp_client"
             ) as start_dhcp,

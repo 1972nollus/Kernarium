@@ -10,7 +10,6 @@ VERIFIER="$ANDROID_ROOT/tools/verify-aosp-patches.py"
 JELLY_VERIFIER="$ANDROID_ROOT/tools/verify-jelly-source.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
 TARGET_FILES_VERIFIER="$ANDROID_ROOT/tools/verify-target-files.py"
-ELF_VERIFIER="$SCRIPT_DIR/verify-kernel-elf.py"
 PARTITION_LAYOUT="$ANDROID_ROOT/support/image/partition-layout.json"
 OUTER_ROOT=$(cd -- "$ANDROID_ROOT/../.." && pwd)
 KERNEL_COMMON_ROOT="$OUTER_ROOT/kernel/common"
@@ -167,7 +166,6 @@ fi
 [[ -x "$JELLY_VERIFIER" ]] || fail "Jelly source verifier is missing"
 [[ -x "$MESA_VENUS_VERIFIER" ]] || fail "Mesa Venus source verifier is missing"
 [[ -x "$TARGET_FILES_VERIFIER" ]] || fail "target-files verifier is missing"
-[[ -x "$ELF_VERIFIER" ]] || fail "kernel ELF verifier is missing"
 [[ -f "$KERNEL_ARTIFACT_VERIFIER" ]] || fail "kernel artifact verifier is missing"
 # shellcheck disable=SC1090
 source "$METADATA"
@@ -182,7 +180,6 @@ python3 -B "$KERNEL_ARTIFACT_VERIFIER" --artifact "$KERNEL_ARTIFACT" \
 	--common-root "$KERNEL_COMMON_ROOT" \
 	--kernel-metadata "$OUTER_ROOT/kernel/android-6.18/patches/metadata.env" \
 	--abi-metadata "$KERNEL_COMMON_ROOT/abi/identity.env"
-"$ELF_VERIFIER" "$KERNEL_ELF"
 SOONG_BUILD_GRAPH="$OUT_DIR/soong/build.${ANDROID17_PRODUCT}.ninja"
 mkdir -p -- "$OUT_DIR"
 if [[ -f "$SOONG_BUILD_GRAPH" ]]; then

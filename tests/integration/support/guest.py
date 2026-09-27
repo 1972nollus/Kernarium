@@ -512,6 +512,29 @@ class Guest:
             section = section[begin_at + len(begin) :]
         return CommandResult(int(match.group(1)), self._normal_output(section))
 
+    def check_command(
+        self,
+        command: str,
+        timeout_seconds: int = 30,
+        *,
+        expected: str | None = None,
+    ) -> str:
+        """Run a command, raise unless it exits zero, and return its output.
+
+        With ``expected``, the stripped output must also equal it."""
+        result = self.run_command(command, timeout_seconds)
+        if result.return_code != 0:
+            raise RuntimeError(
+                f"guest command failed ({result.return_code}): {command}\n"
+                f"{result.output}"
+            )
+        if expected is not None and result.output.strip() != expected:
+            raise RuntimeError(
+                f"guest command {command!r} returned {result.output!r}, "
+                f"expected {expected!r}"
+            )
+        return result.output
+
     def shutdown(self, timeout_seconds: int = 30) -> bool:
         """Request an orderly halt and wait for the emulator to exit."""
         if self._process.poll() is not None:

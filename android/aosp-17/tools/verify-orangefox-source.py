@@ -17,12 +17,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"))
+from contract_checks import parse_assignments  # noqa: E402
 import patch_series  # noqa: E402
 
 
 HEX40 = re.compile(r"[0-9a-f]{40}")
 HEX64 = re.compile(r"[0-9a-f]{64}")
-ASSIGNMENT = re.compile(r"^([A-Z][A-Z0-9_]*)=(?:'([^']*)'|([0-9]+))$")
 PROJECT_HEADER = (
     "order", "route_id", "manifest_project", "checkout_path",
     "manifest_upstream", "base_commit", "base_tree", "final_tree", "series_dir",
@@ -86,22 +87,6 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def assignments(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        match = ASSIGNMENT.fullmatch(line)
-        if match is None:
-            raise VerificationError(f"{path}:{number}: malformed assignment")
-        key, quoted, numeric = match.groups()
-        if key in values:
-            raise VerificationError(f"{path}:{number}: duplicate assignment {key}")
-        values[key] = quoted if quoted is not None else numeric
-    return values
-
-
 def table(path: Path, expected: tuple[str, ...]) -> list[tuple[str, ...]]:
     lines = [
         line for line in path.read_text(encoding="utf-8").splitlines()
@@ -141,7 +126,7 @@ def manifest_projects(root: ET.Element) -> dict[str, ET.Element]:
 
 
 def verify_metadata(root: Path) -> tuple[dict[str, str], dict[str, ET.Element]]:
-    values = assignments(root / "third_party/orangefox/metadata.env")
+    values = parse_assignments(root / "third_party/orangefox/metadata.env", VerificationError)
     required = {
         "ORANGEFOX_SOURCE_SCHEMA", "ORANGEFOX_SYNC_REPOSITORY",
         "ORANGEFOX_SYNC_BRANCH", "ORANGEFOX_SYNC_COMMIT", "ORANGEFOX_SYNC_TREE",
@@ -300,8 +285,9 @@ def verify_checkout(
             raise VerificationError(f"route {route.route_id} is not based on its pinned base")
     if expect == "final":
         command = [
-            str(root / "tools/sync-orangefox-device.py"),
-            "--android-root", str(root), "--orangefox-source", str(source), "--verify",
+            str(root / "tools/sync-device-tree.py"),
+            "--android-root", str(root), "--tree", "orangefox",
+            "--workspace", str(source), "--verify",
         ]
         if allow_kernel:
             command.append("--allow-prebuilt-kernel")

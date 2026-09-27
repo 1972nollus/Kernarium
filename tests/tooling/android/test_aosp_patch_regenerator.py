@@ -53,6 +53,12 @@ def write_fixture(
     (android_root / "tools").mkdir()
     shutil.copy2(verifier, android_root / "tools/verify-aosp-patches.py")
     os.chmod(android_root / "tools/verify-aosp-patches.py", 0o755)
+    artifacts = root / "kernel/common/artifacts"
+    artifacts.mkdir(parents=True)
+    shutil.copy2(
+        verifier.parents[3] / "kernel/common/artifacts/contract_checks.py",
+        artifacts / "contract_checks.py",
+    )
     (root / "scripts").mkdir()
     shutil.copy2(scripts / "patch_series.py", root / "scripts/patch_series.py")
     manifest = (

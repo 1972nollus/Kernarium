@@ -33,6 +33,7 @@ from release_common import (  # noqa: E402
     resolve_zstd,
     sha256_path,
     verify_disk_boot_payloads,
+    verify_kernel_config,
     verify_release,
 )
 
@@ -188,19 +189,6 @@ def verify_clean_git(repository: Path, label: str, expected_tree: str | None = N
     return revision
 
 
-def verify_kernel_config(config_path: Path, android_root: Path) -> None:
-    from release_common import verify_kernel_config as verify_config
-
-    temporary_parent = Path(tempfile.mkdtemp(prefix="android17-config-check-"))
-    try:
-        release = temporary_parent / "release"
-        (release / "kernel").mkdir(parents=True)
-        shutil.copyfile(config_path, release / "kernel/config")
-        verify_config(release, android_root, enforce_tracked_policy=True)
-    finally:
-        shutil.rmtree(temporary_parent, ignore_errors=True)
-
-
 def sdk_identity(darwin_sdk: Path) -> str:
     settings = darwin_sdk / "SDKSettings.json"
     if settings.is_file():
@@ -323,16 +311,12 @@ def main() -> None:
     ])
     kernel_patch_count, kernel_manifest_sha = kernel_series_provenance(outer_root)
 
+    # verify-kernel-artifact.py has checked the payload files and the ELF.
     kernel_payload = kernel_artifact / "kernel"
-    kernel_elf = regular_file(kernel_payload / "vmlinux", "ACK UML ELF")
-    kernel_config = regular_file(kernel_payload / "config", "ACK configuration")
-    kernel_release_file = regular_file(
-        kernel_payload / "kernel.release", "ACK kernel release"
-    )
-    for name in ("System.map", "modules.builtin", "modules.builtin.modinfo"):
-        regular_file(kernel_payload / name, f"ACK {name}")
-    run([str(android_root / "build/verify-kernel-elf.py"), str(kernel_elf)])
-    verify_kernel_config(kernel_config, android_root)
+    kernel_elf = kernel_payload / "vmlinux"
+    kernel_config = kernel_payload / "config"
+    kernel_release_file = kernel_payload / "kernel.release"
+    verify_kernel_config(kernel_artifact, android_root, enforce_tracked_policy=True)
     run([
         str(android_root / "tools/verify-target-files.py"),
         "--target-files",

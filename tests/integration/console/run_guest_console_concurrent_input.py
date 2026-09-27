@@ -87,9 +87,7 @@ def main() -> int:
     try:
         guest.boot_to_shell(180)
         for setup in ("mount -t proc proc /proc", "stty -echo"):
-            result = guest.run_command(setup, 20)
-            if result.return_code != 0:
-                raise RuntimeError(f"{setup!r} failed:\n{result.output}")
+            guest.check_command(setup, 20)
         for round_index in range(ROUNDS):
             try:
                 result = guest.run_command(
