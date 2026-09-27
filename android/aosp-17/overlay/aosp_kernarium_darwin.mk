@@ -260,10 +260,11 @@ PRODUCT_COPY_FILES += \
 # prefix so they cannot collide with the AOSP external/mesa3d modules. The
 # feature declarations the removed Cuttlefish Vulkan APEX used to install
 # come from the device tree instead, at the level this driver supports. No
-# Vulkan dEQP level is declared: the driver has not been qualified.
+# Vulkan dEQP level is declared: the driver has not been qualified. The
+# loader finds the module by ro.hardware.vulkan, whose one writer is the boot
+# command line's androidboot.hardware.vulkan, as for ro.hardware.egl below.
 PRODUCT_PACKAGES_EXCLUDE += com.google.cf.vulkan
 PRODUCT_PACKAGES += vulkan.virtio
-PRODUCT_VENDOR_PROPERTIES += ro.hardware.vulkan=virtio
 
 # The EGL and GLES libraries are Mesa's Virgl driver from the same source and
 # generated port. The platform EGL loader finds them in /vendor/lib64/egl by the
@@ -271,8 +272,9 @@ PRODUCT_VENDOR_PROPERTIES += ro.hardware.vulkan=virtio
 # The inherited Cuttlefish Virgl configuration would add the AOSP
 # external/mesa3d libGLES_mesa instead. The boot command line's
 # androidboot.hardware.egl is the property's one writer: the inherited
-# init_graphics.vendor.rc copies it at early-init, and that setprop fails if a
-# vendor property has already set it.
+# init_graphics.vendor.rc copies it, like the Vulkan and gralloc selections,
+# at early-init, and that setprop fails if a vendor property has already set
+# it. No vendor property may name any of the three.
 PRODUCT_PACKAGES_EXCLUDE += libGLES_mesa
 PRODUCT_PACKAGES += \
     libEGL_kernarium \
@@ -283,9 +285,9 @@ PRODUCT_PACKAGES += \
 # gralloc0 interface of minigbm, the product's allocator. The passthrough
 # gralloc.default module cannot answer those queries, so Mesa would fall
 # back to guessing and the driver could not describe the buffers the window
-# system hands it. The module is a same-process HAL like the driver above.
+# system hands it. The module is a same-process HAL like the driver above,
+# selected through ro.hardware.gralloc by androidboot.hardware.gralloc.
 PRODUCT_PACKAGES += gralloc.minigbm
-PRODUCT_VENDOR_PROPERTIES += ro.hardware.gralloc=minigbm
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.vulkan.level-1.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.level-1.xml \
     frameworks/native/data/etc/android.hardware.vulkan.compute-0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.compute-0.xml \
