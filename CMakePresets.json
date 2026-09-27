@@ -321,17 +321,17 @@
     {
       "name": "gpu-venus-test-binaries",
       "configurePreset": "macos-unit-gpu-venus",
-      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "gpu-unit-test-binaries", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "gpu-unit-test-binaries", "architecture-audit"]
     },
     {
       "name": "gpu-venus-test-binaries-4k",
       "configurePreset": "macos-unit-gpu-venus-4k",
-      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "gpu-unit-test-binaries", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "gpu-unit-test-binaries", "architecture-audit"]
     },
     {
       "name": "gpu-venus-test-binaries-asan-ubsan",
       "configurePreset": "macos-unit-gpu-venus-asan-ubsan",
-      "targets": ["tooling-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "gpu-unit-test-binaries", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "gpu-unit-test-binaries", "architecture-audit"]
     },
     {
       "name": "macos-integration",
@@ -351,12 +351,12 @@
     {
       "name": "macos-integration-venus",
       "configurePreset": "macos-integration-venus",
-      "targets": ["tooling-test-binaries", "integration-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
     },
     {
       "name": "macos-integration-venus-4k",
       "configurePreset": "macos-integration-venus-4k",
-      "targets": ["tooling-test-binaries", "integration-test-binaries", "uml-kosmickrisp-capability-probe", "uml-venus-backend-probe", "architecture-audit"]
+      "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
     },
     {
       "name": "macos-jitprof",
