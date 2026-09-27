@@ -25,7 +25,9 @@ killed. Five such wedges are recorded in the OpenGL/GLES conformance campaigns
 of 2026-09-14 and 2026-09-15, each one costing the run it was in.
 
 Bound the wait. A flush that is on its way lands in microseconds, so ten
-seconds without one means no thread is coming; report it once and continue.
+seconds without one means no thread is coming; report it and continue. Every
+expiry is reported, because the read that follows misses that context's last
+write.
 Giving up returns false, the same answer the existing `trywait` path returns,
 so the caller skips only the batch wait it asked for. Re-check the flag around
 `cnd_timedwait()` as well: the previous single `cnd_wait()` also returned on a
@@ -33,11 +35,11 @@ spurious wakeup.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
- src/gallium/drivers/zink/zink_batch.c | 48 +++++++++++++++++++++++++--
- 1 file changed, 46 insertions(+), 2 deletions(-)
+ src/gallium/drivers/zink/zink_batch.c | 46 +++++++++++++++++++++++++--
+ 1 file changed, 44 insertions(+), 2 deletions(-)
 
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index 058e80dccf2126a194a1ad7dc0708a749bcc8f93..6ffe07d344f8887bb9408d7895e3207d71ac3b98 100644
+index 058e80dccf2126a194a1ad7dc0708a749bcc8f93..c7aed21c0f917a79bdea36e5ff9a7f1a231ae2d8 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
 @@ -8,6 +8,8 @@
@@ -49,7 +51,7 @@ index 058e80dccf2126a194a1ad7dc0708a749bcc8f93..6ffe07d344f8887bb9408d7895e3207d
  #ifdef VK_USE_PLATFORM_METAL_EXT
  #include "QuartzCore/CAMetalLayer.h"
  #endif
-@@ -1194,6 +1196,35 @@ zink_batch_usage_check_completion(struct zink_context *ctx, const struct zink_ba
+@@ -1194,6 +1196,33 @@ zink_batch_usage_check_completion(struct zink_context *ctx, const struct zink_ba
     return zink_check_batch_completion(ctx, u->usage);
  }
  
@@ -61,23 +63,21 @@ index 058e80dccf2126a194a1ad7dc0708a749bcc8f93..6ffe07d344f8887bb9408d7895e3207d
 + * thread with it.  Put a generous deadline on the wait instead: a flush that is
 + * on its way lands in microseconds, so an expiry means none is coming.  Giving
 + * up costs the caller the ordering it asked for; blocking costs the process.
++ * Every expiry is reported, because the caller then reads the resource without
++ * that context's last write.
 + */
 +#define ZINK_UNFLUSHED_WAIT_NS (10ull * 1000 * 1000 * 1000)
 +
 +static void
 +unflushed_wait_expired(const struct zink_batch_usage *u)
 +{
-+   static bool reported = false;
-+
-+   if (reported)
-+      return;
-+   reported = true;
 +   /* An unflushed batch has no id yet -- submit_queue assigns it -- so name
 +    * the batch by the submission it is waiting to become.
 +    */
 +   mesa_logw("zink: submission %u of another context stayed unflushed for %u "
-+             "seconds; continuing without it (a single-threaded multi-context "
-+             "caller cannot flush it from here)",
++             "seconds; continuing without it, so this read misses its writes "
++             "(a single-threaded multi-context caller cannot flush it from "
++             "here)",
 +             u->submit_count + 1u,
 +             (unsigned)(ZINK_UNFLUSHED_WAIT_NS / 1000000000ull));
 +}
@@ -85,7 +85,7 @@ index 058e80dccf2126a194a1ad7dc0708a749bcc8f93..6ffe07d344f8887bb9408d7895e3207d
  bool
  zink_batch_usage_unflushed_wait(struct zink_context *ctx, struct zink_batch_usage *u, unsigned submit_count, bool trywait)
  {
-@@ -1212,8 +1243,21 @@ zink_batch_usage_unflushed_wait(struct zink_context *ctx, struct zink_batch_usag
+@@ -1212,8 +1241,21 @@ zink_batch_usage_unflushed_wait(struct zink_context *ctx, struct zink_batch_usag
           if (trywait) {
              struct timespec ts = {0, 10000};
              cnd_timedwait(&u->flush, &u->mtx, &ts);
@@ -95,14 +95,14 @@ index 058e80dccf2126a194a1ad7dc0708a749bcc8f93..6ffe07d344f8887bb9408d7895e3207d
 +            struct timespec now, deadline;
 +
 +            timespec_get(&now, TIME_UTC);
-+            if (timespec_add_nsec(&deadline, &now, ZINK_UNFLUSHED_WAIT_NS)) {
-+               cnd_wait(&u->flush, &u->mtx);
-+            } else {
-+               while (zink_batch_usage_is_unflushed(u)) {
-+                  if (cnd_timedwait(&u->flush, &u->mtx, &deadline) != thrd_success) {
-+                     unflushed_wait_expired(u);
-+                     break;
-+                  }
++            /* Ten seconds from now cannot overflow a 64-bit time_t. */
++            ASSERTED bool overflow =
++               timespec_add_nsec(&deadline, &now, ZINK_UNFLUSHED_WAIT_NS);
++            assert(!overflow);
++            while (zink_batch_usage_is_unflushed(u)) {
++               if (cnd_timedwait(&u->flush, &u->mtx, &deadline) != thrd_success) {
++                  unflushed_wait_expired(u);
++                  break;
 +               }
 +            }
 +         }
