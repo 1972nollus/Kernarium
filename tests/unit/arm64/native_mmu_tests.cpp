@@ -4,7 +4,7 @@
 #include "mach_vm_protection_test_support.hpp"
 #include "allocation_fault.hpp"
 #include "native_window_test_support.hpp"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 #include "memory/shared_backing.hpp"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
@@ -22,6 +22,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <sys/mman.h>
 #include <thread>
 #include <unistd.h>
@@ -30,66 +31,15 @@ namespace {
 
 constexpr std::size_t guest_page_size = 4096;
 
+using uml::testing::ScratchBacking;
+
+constexpr std::string_view backing_name = "uml-native-mmu.XXXXXX";
+
 void require(bool condition, const char *message)
 {
 	if (!condition)
 		throw std::runtime_error{message};
 }
-
-class TemporaryBacking final {
-public:
-	explicit TemporaryBacking(std::uint64_t pages = 4)
-	{
-		auto path = uml::testing::scratch_template(
-			"uml-native-mmu.XXXXXX");
-		fd_ = mkstemp(path.data());
-		require(fd_ >= 0, "mkstemp failed");
-		(void)unlink(path.data());
-		require(ftruncate(fd_, static_cast<off_t>(
-			pages * guest_page_size)) == 0,
-			"ftruncate failed");
-	}
-
-	~TemporaryBacking()
-	{
-		if (fd_ >= 0)
-			(void)close(fd_);
-	}
-
-	TemporaryBacking(const TemporaryBacking &) = delete;
-	TemporaryBacking &operator=(const TemporaryBacking &) = delete;
-
-	[[nodiscard]] int fd() const noexcept { return fd_; }
-
-	void write_byte(std::uint64_t offset, std::byte value)
-	{
-		require(pwrite(fd_, &value, sizeof(value),
-			static_cast<off_t>(offset)) == static_cast<ssize_t>(sizeof(value)),
-			"backing byte write failed");
-	}
-
-	[[nodiscard]] std::byte read_byte(std::uint64_t offset) const
-	{
-		std::byte value{};
-		require(pread(fd_, &value, sizeof(value),
-			static_cast<off_t>(offset)) == static_cast<ssize_t>(sizeof(value)),
-			"backing byte read failed");
-		return value;
-	}
-
-	[[nodiscard]] std::uint64_t read64(std::uint64_t offset) const
-	{
-		std::uint64_t value{};
-		require(pread(fd_, &value, sizeof(value),
-			static_cast<off_t>(offset)) ==
-				static_cast<ssize_t>(sizeof(value)),
-			"backing word read failed");
-		return value;
-	}
-
-private:
-	int fd_{-1};
-};
 
 class ReservedSlot final {
 public:
@@ -140,12 +90,12 @@ void test_shadow_publication_precedes_software_mapping()
 	constexpr unsigned long generation = 0x401;
 	constexpr std::uintptr_t guest_address = 0x40'0000;
 	constexpr std::size_t marker_offset = 37;
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot{true};
 	const auto base = slot.address();
 	for (std::size_t quarter = 0; quarter < 4; ++quarter)
 		require(darwin_uml_vm_map(reinterpret_cast<void *>(base +
-			quarter * guest_page_size), backing.fd(),
+			quarter * guest_page_size), backing.descriptor(),
 			quarter * guest_page_size, guest_page_size,
 			PROT_READ | PROT_WRITE, 0, 1) == 0,
 			"publication fixture native shadow map failed");
@@ -156,7 +106,7 @@ void test_shadow_publication_precedes_software_mapping()
 			quarter * guest_page_size + marker_offset) = markers[quarter];
 	/* The shared page's untouched neighbors must survive publication of a
 	 * dirty quarter and the other dirty quarters in its 16 KiB host slot. */
-	backing.write_byte(2 * guest_page_size + marker_offset + 1,
+	backing.put_byte(2 * guest_page_size + marker_offset + 1,
 		std::byte{0x5a});
 	require(darwin_uml_vm_protect(reinterpret_cast<void *>(base), slot.size(),
 		PROT_READ) == 0, "publication fixture protect failed");
@@ -164,7 +114,7 @@ void test_shadow_publication_precedes_software_mapping()
 	fail_next_allocation(AllocationSite::native_backing_index);
 	errno = 0;
 	require(darwin_uml_vm_map_generation(generation,
-		reinterpret_cast<void *>(guest_address), backing.fd(),
+		reinterpret_cast<void *>(guest_address), backing.descriptor(),
 		2 * guest_page_size, guest_page_size, PROT_READ | PROT_EXEC, 1, 0) ==
 		-1 && errno == ENOMEM,
 		"backing-index allocation failure escaped or published a mapping");
@@ -173,19 +123,19 @@ void test_shadow_publication_precedes_software_mapping()
 		DARWIN_UML_STATIC_READ, &translated) == DARWIN_UML_STATIC_UNMAPPED,
 		"failed native publication left a software mapping");
 	for (std::size_t quarter = 0; quarter < markers.size(); ++quarter)
-		require(backing.read_byte(
+		require(backing.get_byte(
 			quarter * guest_page_size + marker_offset) == std::byte{0},
 			"failed native publication partially changed shared backing");
 
 	require(darwin_uml_vm_map_generation(generation,
-		reinterpret_cast<void *>(guest_address), backing.fd(),
+		reinterpret_cast<void *>(guest_address), backing.descriptor(),
 		2 * guest_page_size, guest_page_size, PROT_READ | PROT_EXEC, 1, 0) == 0,
 		"software mapping retry after native publication failed");
 	for (std::size_t quarter = 0; quarter < markers.size(); ++quarter)
-		require(backing.read_byte(
+		require(backing.get_byte(
 			quarter * guest_page_size + marker_offset) == markers[quarter],
 			"publication omitted a dirty sibling quarter");
-	require(backing.read_byte(
+	require(backing.get_byte(
 		2 * guest_page_size + marker_offset + 1) == std::byte{0x5a},
 		"publication damaged an untouched partial-page neighbor");
 	const auto restored = uml::testing::current_vm_protection(
@@ -200,7 +150,7 @@ void test_shadow_publication_precedes_software_mapping()
 		"translated execution did not observe the published native bytes");
 
 	const std::byte replacement{0x6e};
-	backing.write_byte(2 * guest_page_size + marker_offset, replacement);
+	backing.put_byte(2 * guest_page_size + marker_offset, replacement);
 	require(darwin_uml_vm_sync_from_backing(
 		base + 2 * guest_page_size) == 0,
 		"reverse backing-to-shadow synchronization failed");
@@ -218,51 +168,51 @@ void test_shadow_publication_precedes_software_mapping()
 
 void test_backing_index_tracks_rebind_unmap_and_retire()
 {
-	TemporaryBacking first;
-	TemporaryBacking second;
+	ScratchBacking first{backing_name, 4 * guest_page_size};
+	ScratchBacking second{backing_name, 4 * guest_page_size};
 	ReservedSlot slot;
 	uml::memory::NativeAddressSpace space;
 	const auto base = slot.address();
-	require(space.map(base, first.fd(), 0, guest_page_size,
+	require(space.map(base, first.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0, "index rebind fixture map failed");
 	*reinterpret_cast<volatile std::byte *>(base) = std::byte{0x31};
-	require(space.publish_backing(first.fd(), 0, guest_page_size) == 0 &&
-		first.read_byte(0) == std::byte{0x31},
+	require(space.publish_backing(first.descriptor(), 0, guest_page_size) == 0 &&
+		first.get_byte(0) == std::byte{0x31},
 		"initial indexed publication failed");
 
 	*reinterpret_cast<volatile std::byte *>(base) = std::byte{0x41};
-	require(space.map(base, second.fd(), 0, guest_page_size,
+	require(space.map(base, second.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0 &&
-		first.read_byte(0) == std::byte{0x41},
+		first.get_byte(0) == std::byte{0x41},
 		"native rebind did not finish the old backing");
 	*reinterpret_cast<volatile std::byte *>(base) = std::byte{0x52};
-	require(space.publish_backing(first.fd(), 0, guest_page_size) == 0 &&
-		first.read_byte(0) == std::byte{0x41} &&
-		second.read_byte(0) == std::byte{0},
+	require(space.publish_backing(first.descriptor(), 0, guest_page_size) == 0 &&
+		first.get_byte(0) == std::byte{0x41} &&
+		second.get_byte(0) == std::byte{0},
 		"rebind left the native page indexed under its old backing");
-	require(space.publish_backing(second.fd(), 0, guest_page_size) == 0 &&
-		second.read_byte(0) == std::byte{0x52},
+	require(space.publish_backing(second.descriptor(), 0, guest_page_size) == 0 &&
+		second.get_byte(0) == std::byte{0x52},
 		"rebind did not index the replacement backing");
 
 	*reinterpret_cast<volatile std::byte *>(base) = std::byte{0x63};
 	require(space.unmap(base, guest_page_size) == 0 &&
-		second.read_byte(0) == std::byte{0x63},
+		second.get_byte(0) == std::byte{0x63},
 		"indexed unmap did not finish the native page");
-	second.write_byte(0, std::byte{0x74});
-	require(space.publish_backing(second.fd(), 0, guest_page_size) == 0 &&
-		second.read_byte(0) == std::byte{0x74},
+	second.put_byte(0, std::byte{0x74});
+	require(space.publish_backing(second.descriptor(), 0, guest_page_size) == 0 &&
+		second.get_byte(0) == std::byte{0x74},
 		"unmap retained a stale backing-index alias");
 
-	require(space.map(base + guest_page_size, second.fd(), guest_page_size,
+	require(space.map(base + guest_page_size, second.descriptor(), guest_page_size,
 		guest_page_size, PROT_READ | PROT_WRITE) == 0,
 		"index retirement fixture map failed");
 	*reinterpret_cast<volatile std::byte *>(base + guest_page_size) =
 		std::byte{0x85};
 	space.retire();
-	require(second.read_byte(guest_page_size) == std::byte{0x85},
+	require(second.get_byte(guest_page_size) == std::byte{0x85},
 		"retirement did not finish an indexed native page");
 	errno = 0;
-	require(space.publish_backing(second.fd(), guest_page_size,
+	require(space.publish_backing(second.descriptor(), guest_page_size,
 		guest_page_size) == -1 && errno == ESHUTDOWN,
 		"retired backing index accepted a publication");
 }
@@ -276,26 +226,27 @@ void test_backing_index_tracks_rebind_unmap_and_retire()
 void test_publication_filter_survives_its_rebuilds()
 {
 	constexpr std::uint64_t churned_pages = 10000;
-	TemporaryBacking backing{churned_pages + 1};
+	ScratchBacking backing{
+		backing_name, (churned_pages + 1) * guest_page_size};
 	ReservedSlot slot;
 	uml::memory::NativeAddressSpace space;
 	const auto base = slot.address();
 	const auto churned = base + guest_page_size;
-	require(space.map(base, backing.fd(), 0, guest_page_size,
+	require(space.map(base, backing.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0, "filter fixture map failed");
 	for (std::uint64_t page = 1; page <= churned_pages; ++page) {
 		const auto offset = page * guest_page_size;
 		const auto marker = static_cast<std::byte>(page % 251 + 1);
-		require(space.map(churned, backing.fd(), offset, guest_page_size,
+		require(space.map(churned, backing.descriptor(), offset, guest_page_size,
 			PROT_READ | PROT_WRITE) == 0, "filter churn map failed");
 		*reinterpret_cast<volatile std::byte *>(churned) = marker;
-		require(space.publish_backing(backing.fd(), offset,
-			guest_page_size) == 0 && backing.read_byte(offset) == marker,
+		require(space.publish_backing(backing.descriptor(), offset,
+			guest_page_size) == 0 && backing.get_byte(offset) == marker,
 			"a new alias was not published");
 	}
 	*reinterpret_cast<volatile std::byte *>(base) = std::byte{0x5a};
-	require(space.publish_backing(backing.fd(), 0, guest_page_size) == 0 &&
-		backing.read_byte(0) == std::byte{0x5a},
+	require(space.publish_backing(backing.descriptor(), 0, guest_page_size) == 0 &&
+		backing.get_byte(0) == std::byte{0x5a},
 		"a filter rebuild lost a live alias");
 	require(space.unmap(base, 2 * guest_page_size) == 0,
 		"filter fixture cleanup failed");
@@ -303,7 +254,7 @@ void test_publication_filter_survives_its_rebuilds()
 
 void test_absent_quarter_and_alias_coherency()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot;
 	require(slot.size() >= 4 * guest_page_size,
 		"host page is smaller than the emulated slot");
@@ -311,7 +262,7 @@ void test_absent_quarter_and_alias_coherency()
 	require(space_owner != nullptr, "native address-space domain unavailable");
 	auto &space = *space_owner;
 	const auto base = slot.address();
-	require(space.map(base, backing.fd(), 0, guest_page_size,
+	require(space.map(base, backing.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0, "first quarter map failed");
 	auto page = std::span{
 		reinterpret_cast<std::byte *>(base), guest_page_size};
@@ -324,17 +275,17 @@ void test_absent_quarter_and_alias_coherency()
 		"absent sibling unmap discarded the live quarter");
 
 	/* An identical PTE synchronization must preserve live shadow bytes. */
-	require(space.map(base, backing.fd(), 0, guest_page_size,
+	require(space.map(base, backing.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0, "duplicate map failed");
 	require(page[0] == std::byte{0x11},
 		"duplicate map rebuilt an unchanged quarter");
 
-	require(space.map(base + 2 * guest_page_size, backing.fd(),
+	require(space.map(base + 2 * guest_page_size, backing.descriptor(),
 		2 * guest_page_size, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0, "third quarter map failed");
 	page[1] = std::byte{0x22};
 	const std::byte authoritative{0x33};
-	require(pwrite(backing.fd(), &authoritative, 1, 2) == 1,
+	require(pwrite(backing.descriptor(), &authoritative, 1, 2) == 1,
 		"authoritative alias write failed");
 	require(space.unmap(base + 2 * guest_page_size, guest_page_size) == 0,
 		"third quarter unmap failed");
@@ -352,16 +303,16 @@ void test_absent_quarter_and_alias_coherency()
 
 void test_authoritative_reload_discards_stale_shadow_bytes()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot;
 	uml::memory::NativeAddressSpace space;
 	const auto address = slot.address() + guest_page_size;
 	constexpr std::size_t marker_offset = 97;
 	const std::byte authoritative{0x5a};
-	require(space.map(address, backing.fd(), 0, guest_page_size,
+	require(space.map(address, backing.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0,
 		"authoritative reload fixture map failed");
-	backing.write_byte(marker_offset, authoritative);
+	backing.put_byte(marker_offset, authoritative);
 	require(space.reload_from_backing(address, guest_page_size) == 0 &&
 		*reinterpret_cast<volatile std::byte *>(address + marker_offset) ==
 			authoritative,
@@ -371,7 +322,7 @@ void test_authoritative_reload_discards_stale_shadow_bytes()
 	require(space.reload_from_backing(address, guest_page_size) == 0 &&
 		*reinterpret_cast<volatile std::byte *>(address + marker_offset) ==
 			authoritative &&
-		backing.read_byte(marker_offset) == authoritative,
+		backing.get_byte(marker_offset) == authoritative,
 		"authoritative reload published a stale shadow byte");
 	require(space.unmap(address, guest_page_size) == 0,
 		"authoritative reload fixture cleanup failed");
@@ -379,29 +330,29 @@ void test_authoritative_reload_discards_stale_shadow_bytes()
 
 void test_duplicate_map_reconciles_reused_backing_page()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot;
 	uml::memory::NativeAddressSpace space;
 	const auto address = slot.address() + guest_page_size;
 	constexpr std::size_t marker_offset = 113;
 	const std::byte stale{0x6b};
-	require(space.map(address, backing.fd(), 0, guest_page_size,
+	require(space.map(address, backing.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0,
 		"duplicate-map reuse fixture map failed");
 	auto *page = reinterpret_cast<volatile std::byte *>(address);
 	page[marker_offset] = stale;
 	require(space.flush(address, guest_page_size) == 0 &&
-		backing.read_byte(marker_offset) == stale,
+		backing.get_byte(marker_offset) == stale,
 		"duplicate-map reuse fixture did not publish its old object");
 
 	/* Model the allocator zeroing a freed physical page through the shared
 	 * direct alias before vmalloc installs the same physical page and PTE at
 	 * the same virtual address. */
-	backing.write_byte(marker_offset, std::byte{});
-	require(space.map(address, backing.fd(), 0, guest_page_size,
+	backing.put_byte(marker_offset, std::byte{});
+	require(space.map(address, backing.descriptor(), 0, guest_page_size,
 		PROT_READ) == 0 &&
 		page[marker_offset] == std::byte{} &&
-		backing.read_byte(marker_offset) == std::byte{},
+		backing.get_byte(marker_offset) == std::byte{},
 		"same-backing remap retained the previous object's private shadow");
 	require(space.unmap(address, guest_page_size) == 0,
 		"duplicate-map reuse fixture cleanup failed");
@@ -409,7 +360,7 @@ void test_duplicate_map_reconciles_reused_backing_page()
 
 void test_prot_none_shadow_flush_and_release()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot{true};
 	auto space = uml::memory::native_address_space();
 	require(space != nullptr, "PROT_NONE shadow domain unavailable");
@@ -423,7 +374,7 @@ void test_prot_none_shadow_flush_and_release()
 			(PROT_READ | PROT_WRITE | PROT_EXEC)) == 0;
 	};
 
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.fd(),
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.descriptor(),
 		guest_page_size, guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0,
 		"PROT_NONE dirty-drop fixture map failed");
 	*reinterpret_cast<volatile std::byte *>(address + marker_offset) =
@@ -434,7 +385,7 @@ void test_prot_none_shadow_flush_and_release()
 	require(darwin_uml_vm_drop(reinterpret_cast<void *>(address),
 		guest_page_size) == 0,
 		"PROT_NONE dirty shadow drop failed");
-	require(backing.read_byte(guest_page_size + marker_offset) ==
+	require(backing.get_byte(guest_page_size + marker_offset) ==
 			std::byte{0x6b},
 		"PROT_NONE dirty shadow drop omitted the modified byte");
 	require(no_access(),
@@ -443,7 +394,7 @@ void test_prot_none_shadow_flush_and_release()
 		guest_page_size) == 0,
 		"PROT_NONE dirty-drop fixture cleanup failed");
 
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.fd(),
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.descriptor(),
 		guest_page_size, guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0 &&
 		darwin_uml_vm_protect(reinterpret_cast<void *>(address),
 			guest_page_size, PROT_NONE) == 0,
@@ -457,7 +408,7 @@ void test_prot_none_shadow_flush_and_release()
 			address, guest_page_size),
 		"PROT_NONE all-absent unmap retained its host slot");
 
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.fd(),
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.descriptor(),
 		2 * guest_page_size, guest_page_size,
 		PROT_READ | PROT_WRITE, 0, 1) == 0,
 		"PROT_NONE flush-error fixture map failed");
@@ -466,7 +417,7 @@ void test_prot_none_shadow_flush_and_release()
 	require(darwin_uml_vm_protect(reinterpret_cast<void *>(address),
 		guest_page_size, PROT_NONE) == 0,
 		"PROT_NONE flush-error fixture protect failed");
-	const int backing_fd = backing.fd();
+	const int backing_fd = backing.descriptor();
 	const int rescue_fd = dup(backing_fd);
 	require(rescue_fd >= 0, "PROT_NONE flush-error rescue dup failed");
 	if (close(backing_fd) != 0) {
@@ -487,7 +438,7 @@ void test_prot_none_shadow_flush_and_release()
 		"failed PROT_NONE shadow drop did not restore exact protection");
 	require(darwin_uml_vm_drop(reinterpret_cast<void *>(address),
 		guest_page_size) == 0 &&
-		backing.read_byte(2 * guest_page_size + marker_offset) ==
+		backing.get_byte(2 * guest_page_size + marker_offset) ==
 			std::byte{0x7c} && no_access(),
 		"PROT_NONE shadow drop did not retry after protection restoration");
 	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(address),
@@ -514,7 +465,7 @@ void test_active_kernel_stack_defers_shadow_synchronization()
 {
 	constexpr std::uintptr_t kernel_stack_size = 128 * 1024;
 	constexpr std::size_t marker_offset = 91;
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot arena{true, 16};
 	const auto stack = (arena.address() + kernel_stack_size - 1) &
 		~(kernel_stack_size - 1);
@@ -522,7 +473,7 @@ void test_active_kernel_stack_defers_shadow_synchronization()
 	require(stack >= arena.address() &&
 		stack + kernel_stack_size <= arena.address() + arena.size(),
 		"active-stack fixture alignment escaped its reservation");
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.fd(),
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.descriptor(),
 		guest_page_size, guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0,
 		"active-stack fixture map failed");
 	auto *page = reinterpret_cast<volatile std::byte *>(address);
@@ -533,11 +484,11 @@ void test_active_kernel_stack_defers_shadow_synchronization()
 
 	require(darwin_uml_vm_drop(reinterpret_cast<void *>(address),
 		guest_page_size) == 0 &&
-		backing.read_byte(guest_page_size + marker_offset) == std::byte{0},
+		backing.get_byte(guest_page_size + marker_offset) == std::byte{0},
 		"active stack was written back while its carrier could mutate it");
-	backing.write_byte(guest_page_size + marker_offset + 1,
+	backing.put_byte(guest_page_size + marker_offset + 1,
 		std::byte{0x52});
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.fd(),
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.descriptor(),
 		guest_page_size, guest_page_size, PROT_READ, 0, 0) == 0 &&
 		page[marker_offset] == std::byte{0x41} &&
 		page[marker_offset + 1] == std::byte{0},
@@ -557,9 +508,9 @@ void test_active_kernel_stack_defers_shadow_synchronization()
 		guest_page_size) == 0 &&
 		darwin_uml_vm_sync_from_backing(address) == 0,
 		"inactive stack did not reconcile deferred shadow changes");
-	require(backing.read_byte(guest_page_size + marker_offset) ==
+	require(backing.get_byte(guest_page_size + marker_offset) ==
 			std::byte{0x41} &&
-		backing.read_byte(guest_page_size + marker_offset + 1) ==
+		backing.get_byte(guest_page_size + marker_offset + 1) ==
 			std::byte{0x52} &&
 		page[marker_offset] == std::byte{0x41} &&
 		page[marker_offset + 1] == std::byte{0x52},
@@ -574,10 +525,10 @@ void test_shadow_sync_publishes_stable_machine_words()
 	constexpr std::size_t marker_offset = 128;
 	constexpr std::uint64_t first = 0x1122'3344'5566'7788ULL;
 	constexpr std::uint64_t second = 0x8877'6655'4433'2211ULL;
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot{true};
 	const auto address = slot.address() + guest_page_size;
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.fd(),
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.descriptor(),
 		guest_page_size, guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0,
 		"stable-shadow fixture map failed");
 	auto &word = *reinterpret_cast<std::uint64_t *>(address + marker_offset);
@@ -604,7 +555,7 @@ void test_shadow_sync_publishes_stable_machine_words()
 			sync_failure = "stable-shadow flush failed";
 			break;
 		}
-		const auto backing_value = backing.read64(
+		const auto backing_value = backing.get64(
 			guest_page_size + marker_offset);
 		if (backing_value != first && backing_value != second) {
 			sync_ok = false;
@@ -623,7 +574,7 @@ void test_shadow_sync_publishes_stable_machine_words()
 
 void test_bridge_uses_direct_shared_mapping_for_aligned_ranges()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot{true};
 	auto space = uml::memory::native_address_space();
 	require(space != nullptr, "native address-space domain unavailable");
@@ -631,7 +582,7 @@ void test_bridge_uses_direct_shared_mapping_for_aligned_ranges()
 	const auto initial_mappings = space->mapping_count_for_testing();
 	const auto initial_slots = space->materialized_slot_count_for_testing();
 	const auto initial_direct = space->direct_mapping_count_for_testing();
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.fd(), 0,
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		slot.size(), PROT_READ | PROT_WRITE, 0, 1) == 0,
 		"host-page-aligned native bridge map failed");
 	require(space->mapping_count_for_testing() == initial_mappings &&
@@ -639,7 +590,7 @@ void test_bridge_uses_direct_shared_mapping_for_aligned_ranges()
 		space->direct_mapping_count_for_testing() == initial_direct + 1,
 		"aligned native bridge map did not select MAP_SHARED direct mode");
 	require(darwin_uml_vm_map(reinterpret_cast<void *>(
-		base + guest_page_size), backing.fd(), guest_page_size,
+		base + guest_page_size), backing.descriptor(), guest_page_size,
 		guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0 &&
 		space->mapping_count_for_testing() == initial_mappings &&
 		space->materialized_slot_count_for_testing() == initial_slots &&
@@ -649,11 +600,11 @@ void test_bridge_uses_direct_shared_mapping_for_aligned_ranges()
 		const auto marker = static_cast<std::byte>(0x31 + quarter);
 		*reinterpret_cast<volatile std::byte *>(
 			base + quarter * guest_page_size + 17) = marker;
-		require(backing.read_byte(quarter * guest_page_size + 17) == marker,
+		require(backing.get_byte(quarter * guest_page_size + 17) == marker,
 			"direct native write was not immediately shared");
 	}
 	const std::byte replacement{0x6d};
-	backing.write_byte(2 * guest_page_size + 29, replacement);
+	backing.put_byte(2 * guest_page_size + 29, replacement);
 	require(*reinterpret_cast<volatile std::byte *>(
 		base + 2 * guest_page_size + 29) == replacement,
 		"shared backing write was not immediately visible in direct mode");
@@ -681,19 +632,19 @@ void test_bridge_uses_direct_shared_mapping_for_aligned_ranges()
 
 void test_direct_retry_validates_ownership_mapping_and_permissions()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot arena{true, 4};
 	const auto host_page_size = static_cast<std::size_t>(getpagesize());
 	uml::testing::exercise_native_retry_direct(arena.address(),
 		arena.address() + host_page_size,
 		arena.address() + 2 * host_page_size, host_page_size,
-		backing.fd(), require);
+		backing.descriptor(), require);
 }
 
 void test_direct_mapping_transitions_to_isolated_quarters()
 {
-	TemporaryBacking first;
-	TemporaryBacking second;
+	ScratchBacking first{backing_name, 4 * guest_page_size};
+	ScratchBacking second{backing_name, 4 * guest_page_size};
 	ReservedSlot slot{true};
 	auto space = uml::memory::native_address_space();
 	require(space != nullptr, "hybrid transition domain unavailable");
@@ -701,7 +652,7 @@ void test_direct_mapping_transitions_to_isolated_quarters()
 	const auto initial_mappings = space->mapping_count_for_testing();
 	const auto initial_slots = space->materialized_slot_count_for_testing();
 	const auto initial_direct = space->direct_mapping_count_for_testing();
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), first.fd(), 0,
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), first.descriptor(), 0,
 		slot.size(), PROT_READ | PROT_WRITE, 0, 1) == 0,
 		"hybrid transition direct map failed");
 	const std::array markers{
@@ -731,9 +682,9 @@ void test_direct_mapping_transitions_to_isolated_quarters()
 	require(*reinterpret_cast<volatile std::byte *>(
 		base + 3 * guest_page_size + 11) == markers[3],
 		"partial unmap damaged a live sibling quarter");
-	second.write_byte(guest_page_size + 11, std::byte{0x7e});
+	second.put_byte(guest_page_size + 11, std::byte{0x7e});
 	require(darwin_uml_vm_map(reinterpret_cast<void *>(
-		base + 2 * guest_page_size), second.fd(), guest_page_size,
+		base + 2 * guest_page_size), second.descriptor(), guest_page_size,
 		guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0,
 		"partial quarter rebind after direct transition failed");
 	require(*reinterpret_cast<volatile std::byte *>(
@@ -745,7 +696,7 @@ void test_direct_mapping_transitions_to_isolated_quarters()
 		base + 2 * guest_page_size + 13) = std::byte{0x6c};
 	require(darwin_uml_vm_drop(reinterpret_cast<void *>(
 		base + 2 * guest_page_size), guest_page_size) == 0 &&
-		second.read_byte(guest_page_size + 13) == std::byte{0x6c},
+		second.get_byte(guest_page_size + 13) == std::byte{0x6c},
 		"partial shadow drop did not publish the rebound quarter");
 
 	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(base),
@@ -760,7 +711,7 @@ void test_failed_direct_transition_is_atomic_and_retryable()
 {
 	using uml::memory::testing::AllocationSite;
 	using uml::memory::testing::fail_next_allocation;
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot{true};
 	auto space = uml::memory::native_address_space();
 	require(space != nullptr, "transition failure domain unavailable");
@@ -768,7 +719,7 @@ void test_failed_direct_transition_is_atomic_and_retryable()
 	const auto initial_mappings = space->mapping_count_for_testing();
 	const auto initial_slots = space->materialized_slot_count_for_testing();
 	const auto initial_direct = space->direct_mapping_count_for_testing();
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.fd(), 0,
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.descriptor(), 0,
 		slot.size(), PROT_READ | PROT_WRITE, 0, 1) == 0,
 		"transition failure direct map failed");
 	*reinterpret_cast<volatile std::byte *>(base + guest_page_size + 19) =
@@ -785,7 +736,7 @@ void test_failed_direct_transition_is_atomic_and_retryable()
 	require(space->mapping_count_for_testing() == initial_mappings &&
 		space->materialized_slot_count_for_testing() == initial_slots &&
 		space->direct_mapping_count_for_testing() == initial_direct + 1 &&
-		backing.read_byte(guest_page_size + 19) == std::byte{0x5d},
+		backing.get_byte(guest_page_size + 19) == std::byte{0x5d},
 		"failed direct transition changed ownership or shared bytes");
 	const auto failed_protection = uml::testing::current_vm_protection(
 		reinterpret_cast<void *>(base));
@@ -821,11 +772,11 @@ void test_failed_direct_transition_is_atomic_and_retryable()
 
 void test_shadow_protect_rejects_holes_without_mutation()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot;
 	uml::memory::NativeAddressSpace space;
 	const auto base = slot.address();
-	require(space.map(base, backing.fd(), 0, guest_page_size,
+	require(space.map(base, backing.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0,
 		"protect-hole fixture map failed");
 	errno = 0;
@@ -847,15 +798,15 @@ void test_shadow_protect_rejects_holes_without_mutation()
 
 void test_sibling_churn_keeps_live_quarter_stable()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot;
 	auto space_owner = uml::memory::native_address_space();
 	require(space_owner != nullptr, "native address-space domain unavailable");
 	auto &space = *space_owner;
 	const auto base = slot.address();
-	require(space.map(base, backing.fd(), 0, guest_page_size,
+	require(space.map(base, backing.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0, "live quarter map failed");
-	require(space.map(base + 2 * guest_page_size, backing.fd(),
+	require(space.map(base + 2 * guest_page_size, backing.descriptor(),
 		2 * guest_page_size, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0, "churn quarter map failed");
 
@@ -876,7 +827,7 @@ void test_sibling_churn_keeps_live_quarter_stable()
 	for (int iteration = 0; iteration < 2000; ++iteration) {
 		require(space.unmap(base + 2 * guest_page_size,
 			guest_page_size) == 0, "churn quarter unmap failed");
-		require(space.map(base + 2 * guest_page_size, backing.fd(),
+		require(space.map(base + 2 * guest_page_size, backing.descriptor(),
 			2 * guest_page_size, guest_page_size,
 			PROT_READ | PROT_WRITE) == 0,
 			"churn quarter remap failed");
@@ -893,7 +844,7 @@ void test_sibling_churn_keeps_live_quarter_stable()
 
 void test_native_shadows_are_data_only()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot;
 	require(slot.size() >= 4 * guest_page_size,
 		"host page is smaller than the emulated slot");
@@ -901,9 +852,9 @@ void test_native_shadows_are_data_only()
 	require(space_owner != nullptr, "native address-space domain unavailable");
 	auto &space = *space_owner;
 	const auto base = slot.address();
-	require(space.map(base, backing.fd(), 0, guest_page_size,
+	require(space.map(base, backing.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_EXEC) == 0, "executable quarter map failed");
-	require(space.map(base + guest_page_size, backing.fd(), guest_page_size,
+	require(space.map(base + guest_page_size, backing.descriptor(), guest_page_size,
 		guest_page_size, PROT_READ | PROT_WRITE) == 0,
 		"writable sibling map failed");
 
@@ -930,13 +881,13 @@ void test_native_shadows_are_data_only()
 
 void test_writable_kernel_alias_does_not_gain_execute()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot;
 	auto space_owner = uml::memory::native_address_space();
 	require(space_owner != nullptr, "native address-space domain unavailable");
 	auto &space = *space_owner;
 	const auto base = slot.address();
-	require(space.map(base, backing.fd(), 0, guest_page_size,
+	require(space.map(base, backing.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_WRITE | PROT_EXEC) == 0,
 		"writable kernel alias map failed");
 	const auto initial = uml::testing::current_vm_protection(
@@ -961,7 +912,7 @@ void test_allocation_failures_leave_no_native_slot_or_partial_pages()
 	using uml::memory::testing::AllocationSite;
 	using uml::memory::testing::fail_allocation_at;
 	using uml::memory::testing::fail_next_allocation;
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot{true};
 	auto space_owner = uml::memory::native_address_space();
 	require(space_owner != nullptr, "native address-space domain unavailable");
@@ -971,7 +922,7 @@ void test_allocation_failures_leave_no_native_slot_or_partial_pages()
 	const auto initial_slots = space.materialized_slot_count_for_testing();
 
 	fail_next_allocation(AllocationSite::native_after_mmap);
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.fd(),
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.descriptor(),
 		0, guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == -1,
 		"post-mmap allocation failure escaped or succeeded");
 	require(space.mapping_count_for_testing() == initial_mappings &&
@@ -981,7 +932,7 @@ void test_allocation_failures_leave_no_native_slot_or_partial_pages()
 	for (const auto occurrence : {std::size_t{1}, std::size_t{2}}) {
 		fail_allocation_at(AllocationSite::native_slot, occurrence);
 		require(darwin_uml_vm_map(reinterpret_cast<void *>(base),
-			backing.fd(), 0, guest_page_size,
+			backing.descriptor(), 0, guest_page_size,
 			PROT_READ | PROT_WRITE, 0, 1) == -1,
 			"native slot-container failure escaped or succeeded");
 		require(space.mapping_count_for_testing() == initial_mappings &&
@@ -989,7 +940,7 @@ void test_allocation_failures_leave_no_native_slot_or_partial_pages()
 			"slot-container failure retained bookkeeping or a host slot");
 	}
 
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.fd(),
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.descriptor(),
 		0, guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0,
 		"live sibling setup failed after injected failures");
 	*reinterpret_cast<volatile std::byte *>(base) = std::byte{0x6d};
@@ -998,7 +949,7 @@ void test_allocation_failures_leave_no_native_slot_or_partial_pages()
 
 	fail_allocation_at(AllocationSite::native_operation, 2);
 	require(darwin_uml_vm_map(
-		reinterpret_cast<void *>(base + guest_page_size), backing.fd(),
+		reinterpret_cast<void *>(base + guest_page_size), backing.descriptor(),
 		guest_page_size, 2 * guest_page_size,
 		PROT_READ | PROT_WRITE, 0, 1) == -1,
 		"Nth native-page failure escaped or partially succeeded");
@@ -1009,7 +960,7 @@ void test_allocation_failures_leave_no_native_slot_or_partial_pages()
 
 	fail_allocation_at(AllocationSite::native_mapping, 2);
 	require(darwin_uml_vm_map(
-		reinterpret_cast<void *>(base + guest_page_size), backing.fd(),
+		reinterpret_cast<void *>(base + guest_page_size), backing.descriptor(),
 		guest_page_size, 2 * guest_page_size,
 		PROT_READ | PROT_WRITE, 0, 1) == -1,
 		"Nth native mapping-container failure partially succeeded");
@@ -1019,7 +970,7 @@ void test_allocation_failures_leave_no_native_slot_or_partial_pages()
 		"mapping-container rollback damaged a live sibling");
 
 	require(darwin_uml_vm_map(
-		reinterpret_cast<void *>(base + guest_page_size), backing.fd(),
+		reinterpret_cast<void *>(base + guest_page_size), backing.descriptor(),
 		guest_page_size, 2 * guest_page_size,
 		PROT_READ | PROT_WRITE, 0, 1) == 0,
 		"multi-page native retry failed");
@@ -1034,7 +985,7 @@ void test_non_map_wrapper_allocation_failures_are_transactional()
 {
 	using uml::memory::testing::AllocationSite;
 	using uml::memory::testing::fail_allocation_at;
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot{true};
 	auto space_owner = uml::memory::native_address_space();
 	require(space_owner != nullptr, "native address-space domain unavailable");
@@ -1043,7 +994,7 @@ void test_non_map_wrapper_allocation_failures_are_transactional()
 	const auto initial_mappings = space.mapping_count_for_testing();
 	const auto initial_slots = space.materialized_slot_count_for_testing();
 	const auto map_pages = [&] {
-		require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.fd(),
+		require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.descriptor(),
 			0, 2 * guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == 0,
 			"non-map failure fixture mapping failed");
 		*reinterpret_cast<volatile std::byte *>(base) = std::byte{0x41};
@@ -1103,7 +1054,7 @@ void test_non_map_wrapper_allocation_failures_are_transactional()
 	}
 
 	const std::byte authoritative{0x7c};
-	require(pwrite(backing.fd(), &authoritative, 1, 0) == 1,
+	require(pwrite(backing.descriptor(), &authoritative, 1, 0) == 1,
 		"refresh fixture backing write failed");
 	fail_allocation_at(AllocationSite::native_operation, 1);
 	errno = 0;
@@ -1126,18 +1077,18 @@ void test_non_map_wrapper_allocation_failures_are_transactional()
 
 void test_shadow_slots_and_direct_maps_share_global_ownership()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot{true};
 	const auto base = slot.address();
 	uml::memory::NativeAddressSpace shadow_owner;
 	uml::memory::NativeAddressSpace direct_owner;
-	require(shadow_owner.map(base + guest_page_size, backing.fd(), 0,
+	require(shadow_owner.map(base + guest_page_size, backing.descriptor(), 0,
 		guest_page_size, PROT_READ | PROT_WRITE) == 0,
 		"shadow ownership fixture map failed");
 	*reinterpret_cast<volatile std::byte *>(base + guest_page_size) =
 		std::byte{0x65};
 	errno = 0;
-	require(direct_owner.map_direct(base, backing.fd(), 0, slot.size(),
+	require(direct_owner.map_direct(base, backing.descriptor(), 0, slot.size(),
 		PROT_READ | PROT_WRITE) == -1 && errno == EBUSY,
 		"foreign direct map replaced a shadow slot");
 	errno = 0;
@@ -1152,7 +1103,7 @@ void test_shadow_slots_and_direct_maps_share_global_ownership()
 			std::byte{0x65},
 		"foreign direct operation damaged the shadow owner");
 	shadow_owner.retire();
-	require(direct_owner.map_direct(base, backing.fd(), 0, slot.size(),
+	require(direct_owner.map_direct(base, backing.descriptor(), 0, slot.size(),
 		PROT_READ | PROT_WRITE) == 0,
 		"direct owner could not acquire a retired shadow slot");
 	auto *first = reinterpret_cast<volatile std::byte *>(base);
@@ -1161,7 +1112,7 @@ void test_shadow_slots_and_direct_maps_share_global_ownership()
 	*first = std::byte{0x71};
 	*second = std::byte{0x82};
 	errno = 0;
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.fd(),
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(base), backing.descriptor(),
 		0, guest_page_size, PROT_READ | PROT_WRITE, 0, 1) == -1 &&
 		errno == EBUSY,
 		"foreign bridge remap replaced a direct slot");
@@ -1193,7 +1144,7 @@ void test_shadow_slots_and_direct_maps_share_global_ownership()
 	constexpr auto overflowing_length =
 		std::numeric_limits<std::uint64_t>::max();
 	errno = 0;
-	require(direct_owner.map_direct(base, backing.fd(), 0,
+	require(direct_owner.map_direct(base, backing.descriptor(), 0,
 		overflowing_length, PROT_READ | PROT_WRITE) == -1 &&
 		errno == EINVAL,
 		"overflowing direct map did not report EINVAL");
@@ -1212,7 +1163,7 @@ void test_shadow_slots_and_direct_maps_share_global_ownership()
 	require(*first == std::byte{0x71} && *second == std::byte{0x82},
 		"rejected overflowing direct operation damaged a sibling");
 	errno = 0;
-	require(direct_owner.map_direct(base, backing.fd(), 0, 0,
+	require(direct_owner.map_direct(base, backing.descriptor(), 0, 0,
 		PROT_READ | PROT_WRITE) == -1 && errno == EINVAL,
 		"zero-length direct map did not report EINVAL");
 	errno = 0;
@@ -1222,7 +1173,7 @@ void test_shadow_slots_and_direct_maps_share_global_ownership()
 	errno = 0;
 	require(direct_owner.unmap_direct(base, 0) == -1 && errno == EINVAL,
 		"zero-length direct unmap did not report EINVAL");
-	require(direct_owner.map(base + guest_page_size, backing.fd(), 0,
+	require(direct_owner.map(base + guest_page_size, backing.descriptor(), 0,
 		guest_page_size, PROT_READ | PROT_WRITE) == 0 &&
 		direct_owner.direct_mapping_count_for_testing() == 0 &&
 		direct_owner.mapping_count_for_testing() == 4,
@@ -1233,7 +1184,7 @@ void test_shadow_slots_and_direct_maps_share_global_ownership()
 
 void test_shadow_failures_report_errno()
 {
-	TemporaryBacking backing;
+	ScratchBacking backing{backing_name, 4 * guest_page_size};
 	ReservedSlot slot{true};
 	const auto address = slot.address() + guest_page_size;
 	errno = 0;
@@ -1246,7 +1197,7 @@ void test_shadow_failures_report_errno()
 		errno == EINVAL,
 		"unaligned zero-length shadow unmap did not report EINVAL");
 	errno = 0;
-	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.fd(),
+	require(darwin_uml_vm_map(reinterpret_cast<void *>(address), backing.descriptor(),
 		0, 0, PROT_READ, 0, 0) == -1 && errno == EINVAL,
 		"invalid shadow map returned a zero or stale errno");
 	errno = 0;
@@ -1265,13 +1216,13 @@ void test_shadow_failures_report_errno()
 
 void test_anonymous_backing_shadow_uses_root_memory()
 {
-	TemporaryBacking token;
+	ScratchBacking token{backing_name, 4 * guest_page_size};
 	ReservedSlot physical;
-	require(uml::memory::register_anonymous_shared_backing(token.fd()),
+	require(uml::memory::register_anonymous_shared_backing(token.descriptor()),
 		"anonymous backing registration failed");
 	void *root = uml::memory::map_shared_backing(
 		reinterpret_cast<void *>(physical.address()), physical.size(),
-		PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, token.fd(), 0);
+		PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, token.descriptor(), 0);
 	require(root == reinterpret_cast<void *>(physical.address()),
 		"anonymous backing root establishment failed");
 
@@ -1283,31 +1234,31 @@ void test_anonymous_backing_shadow_uses_root_memory()
 		physical.address());
 	physical_page[marker_offset] = std::byte{0x31};
 	auto root_view = uml::memory::acquire_shared_backing_view(
-		token.fd(), 0, physical.size(), PROT_READ | PROT_WRITE);
+		token.descriptor(), 0, physical.size(), PROT_READ | PROT_WRITE);
 	require(root_view && root_view.data() == root &&
 		static_cast<const std::byte *>(root_view.data())[marker_offset] ==
 			std::byte{0x31},
 		"anonymous backing view did not borrow the established root");
-	require(space.map(address, token.fd(), 0, guest_page_size,
+	require(space.map(address, token.descriptor(), 0, guest_page_size,
 		PROT_READ | PROT_WRITE) == 0,
 		"anonymous-root shadow map failed");
 	auto *shadow_page = reinterpret_cast<volatile std::byte *>(address);
 	require(shadow_page[marker_offset] == std::byte{0x31},
 		"anonymous-root shadow did not load root memory");
-	require(token.read_byte(marker_offset) == std::byte{},
+	require(token.get_byte(marker_offset) == std::byte{},
 		"anonymous-root shadow read modified the descriptor token");
 
 	shadow_page[marker_offset] = std::byte{0x42};
 	require(space.flush(address, guest_page_size) == 0 &&
 		physical_page[marker_offset] == std::byte{0x42} &&
-		token.read_byte(marker_offset) == std::byte{},
+		token.get_byte(marker_offset) == std::byte{},
 		"anonymous-root shadow flush updated the descriptor token");
 
 	physical_page[marker_offset] = std::byte{0x53};
-	require(space.map(address, token.fd(), 0, guest_page_size,
+	require(space.map(address, token.descriptor(), 0, guest_page_size,
 		PROT_READ) == 0 &&
 		shadow_page[marker_offset] == std::byte{0x53} &&
-		token.read_byte(marker_offset) == std::byte{},
+		token.get_byte(marker_offset) == std::byte{},
 		"anonymous-root same-backing remap retained stale shadow data");
 	require(space.unmap(address, guest_page_size) == 0,
 		"anonymous-root shadow cleanup failed");

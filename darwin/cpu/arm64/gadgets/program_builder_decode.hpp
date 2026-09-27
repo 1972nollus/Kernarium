@@ -16,18 +16,6 @@
 
 namespace uml::cpu::arm64::gadgets::builder_detail {
 
-/* The byte offset of a guest vector register inside CpuState, which every
- * SIMD and floating-point operand word in the decode fragments is built from.
- * One helper is the single point where a guest vector operand is named.
- */
-[[nodiscard]] inline std::size_t vector_operand_offset(unsigned index) noexcept
-{
-	return offsetof(CpuState, vectors) + index * sizeof(VectorRegister);
-}
-
-static_assert(offsetof(CpuState, vectors) + 31U * sizeof(VectorRegister) <=
-	0xffffU, "a vector operand offset must fit the 16-bit operand field");
-
 struct DecodeContext final {
 	std::uint64_t guest_address;
 	std::uint64_t address;
@@ -46,7 +34,7 @@ struct DecodeContext final {
 	/* Where the suffix operands of inlined conditional branches are
 	 * recorded, so `build` can fill them in once it knows how long the block
 	 * turned out to be. */
-	InlineSuffixes *suffixes;
+	InlineSuffixes &suffixes;
 };
 
 /* The top 16 bits of the operand of a transfer that carries no PC word: the
@@ -100,12 +88,11 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 	DecodeContext &context, selection::Gadget gadget, std::uint64_t target,
 	std::size_t retires = 1)
 {
-	if (gadget == nullptr || context.suffixes == nullptr ||
-	    context.suffixes->full())
+	if (gadget == nullptr || context.suffixes.full())
 		return false;
 	selection::emit(context.words, gadget);
 	emit_link(context, target);
-	context.suffixes->add(context.words.size(), context.compiled + retires);
+	context.suffixes.add(context.words.size(), context.compiled + retires);
 	context.words.push_back(0);
 	return true;
 }
@@ -123,11 +110,10 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 	if (gadget == nullptr || suffix_shift == 0 ||
 	    (operand >> suffix_shift) != 0 ||
 	    context.following.size() > suffix_maximum ||
-	    context.suffixes == nullptr ||
-	    context.suffixes->full())
+	    context.suffixes.full())
 		return false;
 	selection::emit(context.words, gadget);
-	context.suffixes->add(context.words.size(),
+	context.suffixes.add(context.words.size(),
 		context.compiled + retires, suffix_shift);
 	selection::emit(context.words, operand);
 	emit_link(context, target);
@@ -148,11 +134,10 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 	std::size_t retires = 1)
 {
 	if (gadget == nullptr || operand > 0xffffU ||
-	    context.suffixes == nullptr ||
-	    context.suffixes->full())
+	    context.suffixes.full())
 		return false;
 	selection::emit(context.words, gadget);
-	context.suffixes->add(context.words.size(),
+	context.suffixes.add(context.words.size(),
 		context.compiled + retires, 16);
 	selection::emit(context.words, operand);
 	selection::emit(context.words, mask);

@@ -59,10 +59,6 @@ compile_linked_block_with_capacity(
     std::size_t capacity);
 
 [[nodiscard]] CompiledCode
-compile_linked_block_memory_abi(
-    std::uint64_t pc, std::span<const std::uint32_t> instructions);
-
-[[nodiscard]] CompiledCode
 compile_indirect_linked_block(
     std::uint64_t pc, std::span<const std::uint32_t> instructions);
 
@@ -70,10 +66,6 @@ compile_indirect_linked_block(
 compile_indirect_linked_block_with_capacity(
     std::uint64_t pc, std::span<const std::uint32_t> instructions,
     std::size_t capacity);
-
-[[nodiscard]] CompiledCode
-compile_indirect_linked_block_memory_abi(
-    std::uint64_t pc, std::span<const std::uint32_t> instructions);
 
 [[nodiscard]] std::vector<std::uint32_t>
 compile_stable_pointer_load_for_testing(std::uintptr_t value,
@@ -91,9 +83,6 @@ materialize_constant_for_testing(unsigned destination, std::uint64_t value);
 lower_memory_barrier_for_testing(std::uint32_t instruction, bool native_sb,
                                  bool native_xs);
 
-[[nodiscard]] bool persistent_linked_block_abi_enabled() noexcept;
-[[nodiscard]] std::size_t
-persistent_link_successful_path_word_savings() noexcept;
 [[nodiscard]] std::size_t successful_link_host_word_savings() noexcept;
 [[nodiscard]] std::size_t link_chain_instruction_limit() noexcept;
 [[nodiscard]] std::size_t link_capability_selector_count() noexcept;

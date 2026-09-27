@@ -13,7 +13,6 @@ namespace gadgets = uml::cpu::arm64::gadgets;
 namespace engine = uml::emulator::tests;
 
 extern "C" {
-void uml_arm64_gadget_illegal();
 void uml_arm64_gadget_code_synchronize_r();
 void uml_arm64_gadget_code_synchronize_z();
 }

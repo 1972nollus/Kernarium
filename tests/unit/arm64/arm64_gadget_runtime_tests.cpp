@@ -5,7 +5,7 @@
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
 #include "mach_vm_protection_test_support.hpp"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -152,19 +152,15 @@ void emulated_identification_registers_read_sanitized_values()
 
 void code_synchronization_is_a_precise_execution_boundary()
 {
-	auto path = uml::testing::scratch_template(
-		"uml-gadget-code-sync-test.XXXXXX");
-	const int fd = mkstemp(path.data());
-	require(fd >= 0);
-	require(unlink(path.c_str()) == 0);
-	require(ftruncate(fd, DARWIN_UML_GUEST_PAGE_SIZE) == 0);
+	const uml::testing::ScratchBacking backing{
+		"uml-gadget-code-sync-test.XXXXXX", DARWIN_UML_GUEST_PAGE_SIZE};
 
 	constexpr unsigned long generation = 18;
 	constexpr std::uint64_t guest_page = 0xf'0000;
 	constexpr std::uint64_t code_pc = 0x8200;
 	require(darwin_uml_static_vm_activate(generation) == 0);
 	require(darwin_uml_static_vm_map(
-		reinterpret_cast<void *>(guest_page), fd, 0,
+		reinterpret_cast<void *>(guest_page), backing.descriptor(), 0,
 		DARWIN_UML_GUEST_PAGE_SIZE,
 		PROT_READ | PROT_WRITE | PROT_EXEC, 0, 1) == 0);
 
@@ -193,17 +189,13 @@ void code_synchronization_is_a_precise_execution_boundary()
 	require(darwin_uml_static_vm_code_changes(generation) == before + 1);
 
 	require(darwin_uml_static_vm_destroy(generation) == 0);
-	require(close(fd) == 0);
 }
 
 void mapped_memory_runtime_boundaries()
 {
-	auto path = uml::testing::scratch_template(
-		"uml-gadget-runtime-test.XXXXXX");
-	const int fd = mkstemp(path.data());
-	require(fd >= 0);
-	require(unlink(path.c_str()) == 0);
-	require(ftruncate(fd, 2 * DARWIN_UML_GUEST_PAGE_SIZE) == 0);
+	uml::testing::ScratchBacking backing{
+		"uml-gadget-runtime-test.XXXXXX", 2 * DARWIN_UML_GUEST_PAGE_SIZE};
+	const int fd = backing.descriptor();
 
 	constexpr std::uint64_t guest_page = 0x1'0000;
 	constexpr unsigned long generation = 19;
@@ -232,8 +224,7 @@ void mapped_memory_runtime_boundaries()
 	constexpr std::uint64_t crossing_value =
 		0x8877'6655'4433'2211ULL;
 	std::array<std::byte, 8> zero_bytes{};
-	require(pwrite(fd, zero_bytes.data(), zero_bytes.size(), crossing_offset) ==
-		static_cast<ssize_t>(zero_bytes.size()));
+	backing.put(crossing_offset, zero_bytes);
 	uml::cpu::arm64::CpuState cpu{};
 	cpu.registers[0] = crossing_value;
 	cpu.registers[2] = crossing_address;
@@ -243,9 +234,7 @@ void mapped_memory_runtime_boundaries()
 		::uml::cpu::EngineEvent::memory_fault);
 	require(cpu.pc == 0x8400);
 	std::array<std::byte, 8> crossing_bytes{};
-	require(pread(fd, crossing_bytes.data(), crossing_bytes.size(),
-		crossing_offset) ==
-		static_cast<ssize_t>(crossing_bytes.size()));
+	backing.get(crossing_offset, crossing_bytes);
 	require(crossing_bytes == zero_bytes);
 
 	require(darwin_uml_static_vm_map(
@@ -261,11 +250,7 @@ void mapped_memory_runtime_boundaries()
 	require(gadgets::execute(cross_page_program.program, cpu, *tlb) ==
 		::uml::cpu::EngineEvent::system_call);
 	require(cpu.registers[5] == crossing_value);
-	std::uint64_t crossing_stored = 0;
-	require(pread(fd, &crossing_stored, sizeof(crossing_stored),
-		crossing_offset) ==
-		static_cast<ssize_t>(sizeof(crossing_stored)));
-	require(crossing_stored == crossing_value);
+	require(backing.get64(crossing_offset) == crossing_value);
 
 	/*
 	 * Select two guest pages in the same build-specific set. Loading A, B,
@@ -283,11 +268,8 @@ void mapped_memory_runtime_boundaries()
 	constexpr std::uint64_t first_value = 0x1111'2222'3333'4444ULL;
 	constexpr std::uint64_t collision_value =
 		0xaaaa'bbbb'cccc'ddddULL;
-	require(pwrite(fd, &first_value, sizeof(first_value), 0) ==
-		static_cast<ssize_t>(sizeof(first_value)));
-	require(pwrite(fd, &collision_value, sizeof(collision_value),
-		DARWIN_UML_GUEST_PAGE_SIZE) ==
-		static_cast<ssize_t>(sizeof(collision_value)));
+	backing.put64(0, first_value);
+	backing.put64(DARWIN_UML_GUEST_PAGE_SIZE, collision_value);
 	require(darwin_uml_static_vm_map(
 		reinterpret_cast<void *>(collision_page), fd,
 		DARWIN_UML_GUEST_PAGE_SIZE, DARWIN_UML_GUEST_PAGE_SIZE,
@@ -383,7 +365,6 @@ void mapped_memory_runtime_boundaries()
 		collision_value);
 
 	require(darwin_uml_static_vm_destroy(generation) == 0);
-	require(close(fd) == 0);
 }
 
 } // namespace

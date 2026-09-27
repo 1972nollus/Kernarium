@@ -17,14 +17,12 @@
 #include <optional>
 #include <span>
 #include <utility>
-#include <vector>
 
 namespace uml::cpu::arm64::gadgets {
 
-/* Most translated streams are small, but a pmr::vector gives every one its
- * own pool allocation. Keep the common prefix in the Program itself and use
- * the same allocator, with the builder's former 34-word reservation, only
- * when a stream spills. */
+/* A translated stream's words: either a buffer of its own, taken from the
+ * given resource and grown from the builder's 34-word reservation, or words
+ * it borrows. */
 class ProgramWords final {
 public:
 	/* No words are kept inline. A measured browser-like guest translates a
@@ -52,14 +50,6 @@ public:
 		  capacity_{borrowed.size}, heap_{borrowed.data},
 		  borrowed_{true}
 	{}
-
-	explicit ProgramWords(std::pmr::vector<std::uintptr_t> words)
-		: resource_{words.get_allocator().resource()}
-	{
-		reserve(words.size());
-		std::copy(words.begin(), words.end(), data());
-		size_ = words.size();
-	}
 
 	ProgramWords(const ProgramWords &other)
 		: resource_{std::pmr::get_default_resource()}
@@ -114,12 +104,6 @@ public:
 		if (size_ == capacity_)
 			reserve(capacity_ == inline_capacity ? 34 : capacity_ * 2);
 		data()[size_++] = word;
-	}
-
-	void pop_back() noexcept
-	{
-		if (size_ != 0)
-			--size_;
 	}
 
 	void reserve(std::size_t requested)
@@ -186,9 +170,6 @@ public:
 	Program(std::uint64_t guest_address, std::size_t instruction_count,
 		ProgramWords words,
 		bool accesses_fp_state) noexcept;
-	Program(std::uint64_t guest_address, std::size_t instruction_count,
-		std::pmr::vector<std::uintptr_t> words,
-		bool accesses_fp_state);
 
 	/* Where the block starts; its instructions are contiguous from here. */
 	[[nodiscard]] std::uint64_t guest_address() const noexcept
@@ -298,8 +279,7 @@ struct InlineSuffixes final {
 };
 
 struct BuildOptions final {
-	/* Select adjacent write-through forwarding for this program. Has no
-	 * effect for a register bank excluded from the engine build. */
+	/* Select adjacent write-through forwarding for this program. */
 	bool scalar_forwarding{true};
 	bool vector_forwarding{true};
 	/*

@@ -280,15 +280,6 @@ void fixed_link_tables_are_stable_bounded_and_reusable()
 	arm64::JitBlockLink empty{.guest_pc = 1};
 	arm64::JitBlockLinkTable direct{3};
 	arm64::JitIndirectLinkTable indirect{3, &empty};
-	std::array<arm64::JitBlockLink, 4> direct_records{};
-	const auto insert_direct = [&](std::size_t index, std::uint64_t pc) {
-		auto &record = direct_records[index];
-		record.guest_pc = pc;
-		const auto insertion = direct.insert(record);
-		if (insertion.inserted)
-			record.next_target = insertion.previous;
-		return insertion.inserted;
-	};
 	require(direct.capacity() == 3 && indirect.capacity() == 3,
 		"fixed link-table capacity changed");
 	require(arm64::JitBlockLinkTable::allocation_bytes(3) >
@@ -297,13 +288,14 @@ void fixed_link_tables_are_stable_bounded_and_reusable()
 	require(arm64::JitIndirectLinkTable::allocation_bytes(3) >
 			3 * sizeof(arm64::JitIndirectLink),
 		"indirect-link index/allocation bytes were not charged");
-	require(insert_direct(0, 0x1000) && insert_direct(1, 0x2000) &&
-		insert_direct(2, 0x3000) && !insert_direct(3, 0x4000) &&
-		direct.size() == 3,
+	auto *first = direct.find_or_create(0x1000);
+	require(first != nullptr && direct.find(0x1000) == first &&
+		direct.find_or_create(0x1000) == first,
+		"direct-link address was not stable");
+	require(direct.find_or_create(0x2000) != nullptr &&
+		direct.find_or_create(0x3000) != nullptr &&
+		direct.find_or_create(0x4000) == nullptr && direct.size() == 3,
 		"direct-link table did not stop at fixed capacity");
-	auto *first = direct.find(0x1000);
-	require(first == &direct_records[0],
-		"direct-link reverse index lost its caller-owned record");
 	auto *site = indirect.find_or_create(0x5000);
 	require(site != nullptr && indirect.find(0x5000) == site &&
 		indirect.find_or_create(0x5000) == site,
@@ -315,7 +307,7 @@ void fixed_link_tables_are_stable_bounded_and_reusable()
 	direct.clear();
 	indirect.clear();
 	require(direct.size() == 0 && indirect.size() == 0 &&
-		insert_direct(3, 0x9000) &&
+		direct.find_or_create(0x9000) != nullptr &&
 		indirect.find_or_create(0xa000) != nullptr,
 		"fixed link tables could not reuse storage after clear");
 }

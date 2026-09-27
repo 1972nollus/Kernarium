@@ -2,7 +2,8 @@
 #pragma once
 
 /* Assembly-visible x86-64 CPU state. Keep synchronized with cpu_state.hpp;
- * assembly_layout.hpp verifies every offset from C++.
+ * assembly_layout.hpp verifies every offset, and every event code a gadget
+ * returns against EngineEvent, from C++.
  */
 #define UML_X86_64_CPU_REGISTERS 0
 #define UML_X86_64_CPU_VECTORS 128
@@ -59,7 +60,6 @@
 #define UML_X86_64_CONTEXT_PROGRAM_BEGIN 16
 #define UML_X86_64_CONTEXT_PROGRAM_END 24
 #define UML_X86_64_CONTEXT_FAULT_ADDRESS 32
-#define UML_X86_64_CONTEXT_FAULT_ACCESS 40
 #define UML_X86_64_CONTEXT_WRITE_CODE 48
 #define UML_X86_64_CONTEXT_UNALIGNED_EXCLUSIVES 49
 #define UML_X86_64_CONTEXT_SPLIT_LOCK 50
@@ -71,12 +71,9 @@
 #define UML_X86_64_TARGET_LINK_FOLD 12
 #define UML_X86_64_TARGET_LINK_MASK 4095
 
-#define UML_X86_64_EVENT_FATAL -1
 #define UML_X86_64_EVENT_CONTINUED 0
 #define UML_X86_64_EVENT_SYSCALL 1
 #define UML_X86_64_EVENT_MEMORY_FAULT 2
-#define UML_X86_64_EVENT_INTERRUPT 3
-#define UML_X86_64_EVENT_ILLEGAL 4
 #define UML_X86_64_EVENT_BREAKPOINT 5
 #define UML_X86_64_EVENT_FLOATING_POINT_TRAP 7
 #define UML_X86_64_EVENT_OVERFLOW 9

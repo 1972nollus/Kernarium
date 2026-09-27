@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -238,29 +239,19 @@ struct Configuration final {
 	return offset <= bytes.size() && size <= bytes.size() - offset;
 }
 
-[[nodiscard]] bool read_u32(std::span<const std::byte> bytes,
-	std::size_t offset, std::uint32_t &value) noexcept
+/* Reads a little-endian `Value` at `offset`, or fails when it would extend
+ * past the end of `bytes`. */
+template<std::unsigned_integral Value>
+[[nodiscard]] bool read_le(std::span<const std::byte> bytes,
+	std::size_t offset, Value &value) noexcept
 {
 	if (!range_valid(bytes, offset, sizeof(value)))
 		return false;
 	value = 0;
-	for (unsigned index = 0; index < 4; ++index)
-		value |= static_cast<std::uint32_t>(
-			std::to_integer<std::uint8_t>(bytes[offset + index])) <<
-			(index * 8U);
-	return true;
-}
-
-[[nodiscard]] bool read_u64(std::span<const std::byte> bytes,
-	std::size_t offset, std::uint64_t &value) noexcept
-{
-	if (!range_valid(bytes, offset, sizeof(value)))
-		return false;
-	value = 0;
-	for (unsigned index = 0; index < 8; ++index)
-		value |= static_cast<std::uint64_t>(
-			std::to_integer<std::uint8_t>(bytes[offset + index])) <<
-			(index * 8U);
+	for (std::size_t index = 0; index < sizeof(value); ++index)
+		value |= static_cast<Value>(static_cast<Value>(
+			std::to_integer<std::uint8_t>(bytes[offset + index]))
+			<< (index * 8U));
 	return true;
 }
 
@@ -281,14 +272,14 @@ struct Configuration final {
 	std::uint32_t memory_count{};
 	std::uint32_t environment_offset{};
 	std::uint32_t environment_count{};
-	if (!read_u32(bytes, 36, mode) || !read_u32(bytes, 44, region_offset) ||
-		!read_u32(bytes, 48, region_count) ||
-		!read_u32(bytes, 52, register_offset) ||
-		!read_u32(bytes, 56, register_count) ||
-		!read_u32(bytes, 60, memory_offset) ||
-		!read_u32(bytes, 64, memory_count) ||
-		!read_u32(bytes, 68, environment_offset) ||
-		!read_u32(bytes, 72, environment_count)) {
+	if (!read_le(bytes, 36, mode) || !read_le(bytes, 44, region_offset) ||
+		!read_le(bytes, 48, region_count) ||
+		!read_le(bytes, 52, register_offset) ||
+		!read_le(bytes, 56, register_count) ||
+		!read_le(bytes, 60, memory_offset) ||
+		!read_le(bytes, 64, memory_count) ||
+		!read_le(bytes, 68, environment_offset) ||
+		!read_le(bytes, 72, environment_count)) {
 		error = "configuration header fields are truncated";
 		return false;
 	}
@@ -304,8 +295,8 @@ struct Configuration final {
 	for (std::uint32_t index = 0; index < region_count; ++index) {
 		Region region{};
 		std::uint64_t size{};
-		if (!read_u64(bytes, cursor, region.begin) ||
-			!read_u64(bytes, cursor + 8, size) || size == 0 ||
+		if (!read_le(bytes, cursor, region.begin) ||
+			!read_le(bytes, cursor + 8, size) || size == 0 ||
 			region.begin > std::numeric_limits<std::uint64_t>::max() - size) {
 			error = "invalid memory-region record";
 			return false;
@@ -319,8 +310,8 @@ struct Configuration final {
 	for (std::uint32_t index = 0; index < register_count; ++index) {
 		std::uint32_t value_count{};
 		RegisterExpectation expectation{};
-		if (!read_u32(bytes, cursor, value_count) ||
-			!read_u64(bytes, cursor + 4, expectation.key) ||
+		if (!read_le(bytes, cursor, value_count) ||
+			!read_le(bytes, cursor + 4, expectation.key) ||
 			expectation.key == 0 ||
 			(expectation.key & (expectation.key - 1U)) != 0 ||
 			value_count == 0 || value_count > 4) {
@@ -331,7 +322,7 @@ struct Configuration final {
 		for (std::uint32_t value_index = 0;
 			value_index < value_count; ++value_index) {
 			std::uint64_t value{};
-			if (!read_u64(bytes, cursor, value)) {
+			if (!read_le(bytes, cursor, value)) {
 				error = "truncated register-data value";
 				return false;
 			}
@@ -345,8 +336,8 @@ struct Configuration final {
 	for (std::uint32_t index = 0; index < memory_count; ++index) {
 		MemoryData data{};
 		std::uint32_t size{};
-		if (!read_u64(bytes, cursor, data.address) ||
-			!read_u32(bytes, cursor + 8, size) ||
+		if (!read_le(bytes, cursor, data.address) ||
+			!read_le(bytes, cursor + 8, size) ||
 			!range_valid(bytes, cursor + 12, size)) {
 			error = "invalid memory-data record";
 			return false;
@@ -718,50 +709,12 @@ public:
 	{
 	}
 
-	[[nodiscard]] bool read_u8(std::uint8_t &value) noexcept
+	template<std::unsigned_integral Value>
+	[[nodiscard]] bool read(Value &value) noexcept
 	{
-		if (remaining() < 1)
+		if (!read_le(bytes_, offset_, value))
 			return false;
-		value = std::to_integer<std::uint8_t>(bytes_[offset_++]);
-		return true;
-	}
-
-	[[nodiscard]] bool read_u16(std::uint16_t &value) noexcept
-	{
-		if (remaining() < 2)
-			return false;
-		value = 0;
-		for (unsigned index = 0; index < 2; ++index)
-			value |= static_cast<std::uint16_t>(
-				std::to_integer<std::uint8_t>(bytes_[offset_ + index])) <<
-				(index * 8U);
-		offset_ += 2;
-		return true;
-	}
-
-	[[nodiscard]] bool read_u32(std::uint32_t &value) noexcept
-	{
-		if (remaining() < 4)
-			return false;
-		value = 0;
-		for (unsigned index = 0; index < 4; ++index)
-			value |= static_cast<std::uint32_t>(
-				std::to_integer<std::uint8_t>(bytes_[offset_ + index])) <<
-				(index * 8U);
-		offset_ += 4;
-		return true;
-	}
-
-	[[nodiscard]] bool read_u64(std::uint64_t &value) noexcept
-	{
-		if (remaining() < 8)
-			return false;
-		value = 0;
-		for (unsigned index = 0; index < 8; ++index)
-			value |= static_cast<std::uint64_t>(
-				std::to_integer<std::uint8_t>(bytes_[offset_ + index])) <<
-				(index * 8U);
-		offset_ += 8;
+		offset_ += sizeof(value);
 		return true;
 	}
 
@@ -802,15 +755,15 @@ struct KExpectedState final {
 	std::uint16_t gpr_changed{};
 	std::uint16_t vector_changed{};
 	std::uint8_t flag_changed{};
-	if (!cursor.read_u32(state.rip_index) ||
-		!cursor.read_u16(state.gpr_valid) ||
-		!cursor.read_u16(gpr_changed) ||
-		!cursor.read_u16(state.vector_valid) ||
-		!cursor.read_u16(vector_changed) ||
-		!cursor.read_u8(state.flag_valid) ||
-		!cursor.read_u8(flag_changed) ||
-		!cursor.read_u8(state.flag_values) ||
-		!cursor.read_u8(state.expected_event)) {
+	if (!cursor.read(state.rip_index) ||
+		!cursor.read(state.gpr_valid) ||
+		!cursor.read(gpr_changed) ||
+		!cursor.read(state.vector_valid) ||
+		!cursor.read(vector_changed) ||
+		!cursor.read(state.flag_valid) ||
+		!cursor.read(flag_changed) ||
+		!cursor.read(state.flag_values) ||
+		!cursor.read(state.expected_event)) {
 		error = "truncated K state header";
 		return false;
 	}
@@ -823,7 +776,7 @@ struct KExpectedState final {
 	}
 	for (unsigned index = 0; index < state.gprs.size(); ++index) {
 		if ((gpr_changed & (1U << index)) != 0 &&
-			!cursor.read_u64(state.gprs[index])) {
+			!cursor.read(state.gprs[index])) {
 			error = "truncated K general-register state";
 			return false;
 		}
@@ -1020,8 +973,8 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 	std::uint32_t instruction_count{};
 	std::uint32_t state_count{};
 	std::uint32_t offset_count{};
-	if (!cursor.read_u32(instruction_count) || !cursor.read_u32(state_count) ||
-		!cursor.read_u32(offset_count) || state_count < 2 ||
+	if (!cursor.read(instruction_count) || !cursor.read(state_count) ||
+		!cursor.read(offset_count) || state_count < 2 ||
 		offset_count != instruction_count + 1U ||
 		expected_cases != state_count - 1U) {
 		print_result("malformed_input", 0, 0, {},
@@ -1030,7 +983,7 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 	}
 	std::vector<std::uint32_t> offsets(offset_count);
 	for (auto &offset : offsets) {
-		if (!cursor.read_u32(offset) || offset > binary.size()) {
+		if (!cursor.read(offset) || offset > binary.size()) {
 			print_result("malformed_input", 0, 0, {},
 				"invalid K instruction offset", test);
 			return 2;
@@ -1119,8 +1072,8 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 	std::uint32_t record_count{};
 	if (!cursor.take(corpus_magic.size(), magic) ||
 		!std::equal(magic.begin(), magic.end(), corpus_magic.begin()) ||
-		!cursor.read_u32(version) || version != corpus_version ||
-		!cursor.read_u32(record_count)) {
+		!cursor.read(version) || version != corpus_version ||
+		!cursor.read(record_count)) {
 		print_result("malformed_input", 0, 0, {}, "invalid corpus header");
 		return 2;
 	}
@@ -1136,10 +1089,10 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 		std::uint32_t code_size{};
 		std::uint32_t payload_size{};
 		std::uint32_t case_count{};
-		if (!cursor.read_u8(kind) || !cursor.read_u8(flags) ||
-			!cursor.read_u16(reserved) || !cursor.read_u16(name_size) ||
-			!cursor.read_u16(source_size) || !cursor.read_u32(code_size) ||
-			!cursor.read_u32(payload_size) || !cursor.read_u32(case_count) ||
+		if (!cursor.read(kind) || !cursor.read(flags) ||
+			!cursor.read(reserved) || !cursor.read(name_size) ||
+			!cursor.read(source_size) || !cursor.read(code_size) ||
+			!cursor.read(payload_size) || !cursor.read(case_count) ||
 			reserved != 0 || (flags & ~std::uint8_t{3}) != 0 ||
 			(kind != 1 && kind != 2) ||
 			(kind == 1 && (flags & 2U) != 0) ||

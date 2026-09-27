@@ -182,8 +182,6 @@ void ExecutableArena::activate_link(
 void ExecutableArena::deactivate_links(
 	std::span<JitBlockLink *const> active_targets) noexcept
 {
-	if (active_targets.empty())
-		return;
 	for (auto *link : active_targets) {
 		link->instruction_count = 0;
 		link->internal_entry = 0;

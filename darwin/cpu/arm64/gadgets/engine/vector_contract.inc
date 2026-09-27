@@ -38,7 +38,7 @@ NAME(uml_arm64_vector_contract_begin):
  vector_pointer \name, \mask, .Lvector_sources\@
  .endr
  .short \destination, \first, \second, \third
- /* Vector contracts have one family, numbered apart from the scalar ones. */
+ /* Vector contracts leave the unread family slot zero. */
  .short 0, \words
  .long 0
  .popsection

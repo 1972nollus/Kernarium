@@ -192,10 +192,6 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
 #if !UML_JIT_RUNTIME_DIAGNOSTICS
   (void)direct_link_refusals;
 #endif
-  /* Native FP/FPMR state always implies materialization. The executor already
-   * validates compiler metadata before installation; keep this boundary safe
-   * as well if a future caller omits that validation. */
-  accesses_fp_state = accesses_fp_state || native_fp || native_fpmr;
   const auto selected = replacement(generation, changes, pc);
   auto &block = *selected.block;
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -280,17 +276,14 @@ void JitExecutor::Implementation::clear_cache() noexcept {
 JitExecutor::Implementation::shared_codegen_profile() const noexcept {
   return {.capabilities = host_capabilities_,
           .guarded_control_flow = enable_guarded_control_flow_,
-          .pointer_authentication = enable_pointer_authentication_,
-          .persistent_linked_block_abi =
-              persistent_linked_block_abi_default};
+          .pointer_authentication = enable_pointer_authentication_};
 }
 
 [[nodiscard]] std::optional<SharedTranslationMaterializationFailure>
 JitExecutor::Implementation::materialize_shared_translation(
     const SharedTranslation &translation) {
-  if (translation.relocations.size() >
-      maximum_shared_translation_relocations)
-    return SharedTranslationMaterializationFailure::invalid_metadata;
+  /* install_shared_translation has just passed translation through
+   * valid_shared_translation, which bounds and types its relocations. */
   relocated_link_pointers_.clear();
   for (const auto &relocation : translation.relocations) {
     const void *pointer = nullptr;
@@ -307,8 +300,6 @@ JitExecutor::Implementation::materialize_shared_translation(
       if (pointer == nullptr)
         return SharedTranslationMaterializationFailure::indirect_link_capacity;
       break;
-    default:
-      return SharedTranslationMaterializationFailure::invalid_metadata;
     }
     /* Only indirect sites require preallocated executor state here. Direct
      * state is resolved during code publication, with a bounded refusal

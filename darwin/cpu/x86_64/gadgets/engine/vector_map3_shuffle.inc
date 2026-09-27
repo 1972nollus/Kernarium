@@ -1,19 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Immediate shuffle, blend, align, and 128-bit lane-control operations. */
 
-.macro vector_map3_index_sequence output
-	mov x14, #0x0100
-	movk x14, #0x0302, lsl #16
-	movk x14, #0x0504, lsl #32
-	movk x14, #0x0706, lsl #48
-	fmov d\output, x14
-	mov x14, #0x0908
-	movk x14, #0x0b0a, lsl #16
-	movk x14, #0x0d0c, lsl #32
-	movk x14, #0x0f0e, lsl #48
-	mov v\output\().d[1], x14
-.endm
-
 .macro vector_map3_qword_indices output, first
 	mov x16, #0x0101
 	movk x16, #0x0101, lsl #16
@@ -45,24 +32,6 @@
 	mul w14, w14, w16
 	add w14, w14, w17
 	mov v6.s[\lane], w14
-	.endr
-.endm
-
-.macro vector_map3_mask_s output, first
-	movi v\output\().16b, #0
-	.irp lane, 0, 1, 2, 3
-	ubfx w14, w13, #(\first + \lane), #1
-	neg w14, w14
-	mov v\output\().s[\lane], w14
-	.endr
-.endm
-
-.macro vector_map3_mask_d output, first
-	movi v\output\().16b, #0
-	.irp lane, 0, 1
-	ubfx x14, x13, #(\first + \lane), #1
-	neg x14, x14
-	mov v\output\().d[\lane], x14
 	.endr
 .endm
 
@@ -249,33 +218,6 @@
 	.endif
 .endm
 
-.macro vector_map3_shuffle_write width, descriptor
-	and x9, x\descriptor, #0xffff
-	.if \width == 64
-	str d4, [_cpu, x9]
-	sub x10, x9, #UML_X86_64_CPU_MMX
-	lsr x10, x10, #3
-	add x11, _cpu, #UML_X86_64_CPU_X87
-	add x11, x11, x10, lsl #4
-	str d4, [x11]
-	mov w12, #0xffff
-	strh w12, [x11, #8]
-	strh wzr, [_cpu, #UML_X86_64_CPU_X87_TAG]
-	strb wzr, [_cpu, #UML_X86_64_CPU_X87_TOP]
-	.else
-	add x9, _cpu, x9
-	str q4, [x9]
-	.if \width == 256
-	str q5, [x9, #16]
-	.else
-	tbz x\descriptor, #63, .Lx86_vector_map3_shuffle_write_done\@
-	movi v6.16b, #0
-	str q6, [x9, #16]
-.Lx86_vector_map3_shuffle_write_done\@:
-	.endif
-	.endif
-.endm
-
 .macro vector_map3_shuffle_input_size opcode, width
 	.set .Lx86_vector_map3_shuffle_input_size, (\width / 8)
 	.if \opcode == 0x18 || \opcode == 0x38
@@ -308,7 +250,7 @@ gadget vector_map3_shuffle_\symbol\()_\width\()_rr
 	.endif
 	.endif
 	vector_map3_shuffle_lane \opcode, \width
-	vector_map3_shuffle_write \width, 23
+	vector_write \width, 23
 	retire_and_next
 .endm
 
@@ -363,7 +305,7 @@ gadget vector_map3_shuffle_\symbol\()_\width\()_rm
 	.endif
 	.endif
 	vector_map3_shuffle_lane \opcode, \width
-	vector_map3_shuffle_write \width, 23
+	vector_write \width, 23
 	retire_and_next
 .Lx86_vector_map3_shuffle_cross_fault\@:
 	add sp, sp, #32
@@ -400,13 +342,9 @@ vector_map3_shuffle_family 4c
 .purgem vector_map3_shuffle_memory
 .purgem vector_map3_shuffle_register
 .purgem vector_map3_shuffle_input_size
-.purgem vector_map3_shuffle_write
 .purgem vector_map3_shuffle_lane
 .purgem vector_map3_variable_blend
 .purgem vector_map3_select_128
 .purgem vector_map3_mask_h
-.purgem vector_map3_mask_d
-.purgem vector_map3_mask_s
 .purgem vector_map3_shuffle_dword_indices
 .purgem vector_map3_qword_indices
-.purgem vector_map3_index_sequence

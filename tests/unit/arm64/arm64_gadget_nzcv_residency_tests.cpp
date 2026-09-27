@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cpu/arm64/gadgets/program.hpp"
-#include "scratch_directory.hpp"
+#include "scratch_backing.hpp"
 
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
@@ -10,11 +10,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <fcntl.h>
 #include <memory>
 #include <source_location>
 #include <sys/mman.h>
-#include <unistd.h>
 
 namespace arm64 = uml::cpu::arm64;
 namespace gadgets = uml::cpu::arm64::gadgets;
@@ -35,17 +33,10 @@ class Mapping final {
 public:
 	Mapping()
 	{
-		auto path = uml::testing::scratch_template(
-			"uml-nzcv-residency.XXXXXX");
-		fd_ = mkstemp(path.data());
-		require(fd_ >= 0);
-		require(unlink(path.c_str()) == 0);
-		require(ftruncate(fd_, DARWIN_UML_GUEST_PAGE_SIZE) == 0);
-		constexpr std::uint64_t value = 0x0123'4567'89ab'cdefULL;
-		require(pwrite(fd_, &value, sizeof(value), 0) ==
-			static_cast<ssize_t>(sizeof(value)));
+		backing_.put64(0, 0x0123'4567'89ab'cdefULL);
 		require(darwin_uml_static_vm_map_generation(generation,
-				reinterpret_cast<void *>(guest), fd_, 0,
+				reinterpret_cast<void *>(guest),
+				backing_.descriptor(), 0,
 				DARWIN_UML_GUEST_PAGE_SIZE,
 				PROT_READ | PROT_WRITE, 0, 1) == 0);
 	}
@@ -56,14 +47,14 @@ public:
 	~Mapping()
 	{
 		require(darwin_uml_static_vm_destroy(generation) == 0);
-		require(close(fd_) == 0);
 	}
 
 	static constexpr unsigned long generation = 412;
 	static constexpr std::uint64_t guest = 0x1240'000;
 
 private:
-	int fd_{-1};
+	uml::testing::ScratchBacking backing_{
+		"uml-nzcv-residency.XXXXXX", DARWIN_UML_GUEST_PAGE_SIZE};
 };
 
 template<std::size_t Size>

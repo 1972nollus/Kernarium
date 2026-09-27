@@ -3,6 +3,7 @@
 
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/layout/assembly_offsets.h"
+#include "cpu/execution_types.hpp"
 #include "memory/tlb.hpp"
 
 #include <cstddef>
@@ -72,5 +73,13 @@ static_assert(offsetof(::uml::memory::TlbEntry, write_page) == UML_GADGET_TLB_EN
 static_assert(offsetof(::uml::memory::TlbEntry, write_data_minus_address) == UML_GADGET_TLB_ENTRY_WRITE_DATA_MINUS_ADDRESS);
 static_assert(offsetof(::uml::memory::Tlb, fault_address) == UML_GADGET_TLB_FAULT_ADDRESS);
 static_assert(offsetof(::uml::memory::Tlb, fault_access) == UML_GADGET_TLB_FAULT_ACCESS);
+
+/* Gadgets return these in w0 and the executor casts them to EngineEvent. */
+static_assert(UML_GADGET_EVENT_SYSCALL == static_cast<int>(EngineEvent::system_call));
+static_assert(UML_GADGET_EVENT_MEMORY_FAULT == static_cast<int>(EngineEvent::memory_fault));
+static_assert(UML_GADGET_EVENT_INTERRUPT == static_cast<int>(EngineEvent::interrupt));
+static_assert(UML_GADGET_EVENT_ILLEGAL == static_cast<int>(EngineEvent::illegal_instruction));
+static_assert(UML_GADGET_EVENT_BREAKPOINT == static_cast<int>(EngineEvent::breakpoint));
+static_assert(UML_GADGET_EVENT_GCS_FAULT == static_cast<int>(EngineEvent::gcs_fault));
 
 } // namespace uml::cpu::arm64::layout

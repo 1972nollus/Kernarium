@@ -129,8 +129,7 @@ void JitExecutor::Implementation::deactivate_indirect_links() noexcept {
       .instruction_count = block.instruction_count,
       .epoch = link_epoch_,
   };
-  const auto first_activation =
-      block.link != nullptr && block.link->activation_epoch != link_epoch_;
+  const auto first_activation = block.link->activation_epoch != link_epoch_;
   if (block.link_target_safe) {
     const auto requirements =
         link_state_requirements(block.accesses_fp_state, block.native_fp,

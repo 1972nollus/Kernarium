@@ -3,20 +3,6 @@
 
 .arch_extension crypto
 
-.macro vector_map3_crypto_write width, descriptor
-	and x9, x\descriptor, #0xffff
-	add x9, _cpu, x9
-	str q4, [x9]
-	.if \width == 256
-	str q5, [x9, #16]
-	.else
-	tbz x\descriptor, #63, .Lx86_vector_map3_crypto_write_done\@
-	movi v6.16b, #0
-	str q6, [x9, #16]
-.Lx86_vector_map3_crypto_write_done\@:
-	.endif
-.endm
-
 .macro vector_map3_pclmul_lane output, left, right
 	tbz w13, #0, .Lx86_vector_map3_pclmul_left_low\@
 	dup v6.2d, v\left\().d[1]
@@ -54,7 +40,7 @@ gadget vector_map3_pclmul_\width\()_rr
 	ldr q3, [x11, #16]
 	.endif
 	vector_map3_pclmul_body \width
-	vector_map3_crypto_write \width, 8
+	vector_write_xmm \width, 8
 	retire_and_next
 .endm
 
@@ -92,7 +78,7 @@ gadget vector_map3_pclmul_\width\()_rm
 	ldr q2, [x10, #16]
 	.endif
 	vector_map3_pclmul_body \width
-	vector_map3_crypto_write \width, 23
+	vector_write_xmm \width, 23
 	retire_and_next
 .Lx86_vector_map3_pclmul_cross_fault\@:
 	add sp, sp, #32
@@ -191,7 +177,7 @@ gadget vector_map3_sha1rnds4_rr
 	ldr q0, [_cpu, x10]
 	ldr q1, [_cpu, x11]
 	vector_map3_sha1_body
-	vector_map3_crypto_write 128, 8
+	vector_write_xmm 128, 8
 	retire_and_next
 
 gadget vector_map3_sha1rnds4_rm
@@ -217,7 +203,7 @@ gadget vector_map3_sha1rnds4_rm
 	and x10, x26, #0xffff
 	ldr q0, [_cpu, x10]
 	vector_map3_sha1_body
-	vector_map3_crypto_write 128, 23
+	vector_write_xmm 128, 23
 	retire_and_next
 .Lx86_vector_map3_sha1_cross_fault:
 	add sp, sp, #16
@@ -255,7 +241,7 @@ gadget vector_map3_aeskeygen_rr
 	ubfx x10, x8, #16, #16
 	ldr q1, [_cpu, x10]
 	vector_map3_aeskeygen_body
-	vector_map3_crypto_write 128, 8
+	vector_write_xmm 128, 8
 	retire_and_next
 
 gadget vector_map3_aeskeygen_rm
@@ -279,11 +265,10 @@ gadget vector_map3_aeskeygen_rm
 .Lx86_vector_map3_aeskeygen_loaded:
 	mov w13, w27
 	vector_map3_aeskeygen_body
-	vector_map3_crypto_write 128, 23
+	vector_write_xmm 128, 23
 	retire_and_next
 .Lx86_vector_map3_aeskeygen_cross_fault:
 	add sp, sp, #16
 	b .Lx86_memory_fault
 
 .purgem vector_map3_aeskeygen_body
-.purgem vector_map3_crypto_write

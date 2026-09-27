@@ -529,7 +529,7 @@ void lookup_identity_stops_at_the_compiled_prefix()
 	cache.remove_executor();
 }
 
-void codegen_abi_shape_partitions_the_cache_identity()
+void codegen_profile_partitions_the_cache_identity()
 {
 	arm64::SharedTranslationCache cache;
 	cache.add_executor();
@@ -538,27 +538,25 @@ void codegen_abi_shape_partitions_the_cache_identity()
 	const std::array guest_words{0xd400'0001U};
 
 	const arm64::SharedTranslationCache::CodegenProfile compiled{};
-	require(compiled.persistent_linked_block_abi ==
-		arm64::persistent_linked_block_abi_default);
 	auto same = compiled;
 	require(same == compiled);
 
-	auto memory_abi = compiled;
-	memory_abi.persistent_linked_block_abi =
-		!compiled.persistent_linked_block_abi;
-	require(!(memory_abi == compiled));
+	auto authenticated = compiled;
+	authenticated.pointer_authentication =
+		!compiled.pointer_authentication;
+	require(!(authenticated == compiled));
 
 	const auto compiled_entry = cache.insert(
 		compiled, guest_pc, guest_words,
 		make_translation(guest_words, 1));
-	const auto memory_abi_entry = cache.insert(
-		memory_abi, guest_pc, guest_words,
+	const auto authenticated_entry = cache.insert(
+		authenticated, guest_pc, guest_words,
 		make_translation(guest_words, 2));
-	require(compiled_entry != nullptr && memory_abi_entry != nullptr);
-	require(compiled_entry != memory_abi_entry);
+	require(compiled_entry != nullptr && authenticated_entry != nullptr);
+	require(compiled_entry != authenticated_entry);
 	require(cache.find(compiled, guest_pc, guest_words) == compiled_entry);
-	require(cache.find(memory_abi, guest_pc, guest_words) ==
-		memory_abi_entry);
+	require(cache.find(authenticated, guest_pc, guest_words) ==
+		authenticated_entry);
 	require(cache.statistics().entries == 2);
 	cache.remove_executor();
 	cache.remove_executor();
@@ -896,7 +894,7 @@ int main()
 	private_validation_words_and_materialization_owners_pin_entries();
 	capacity_degraded_translation_leaves_the_key_publishable();
 	lookup_identity_stops_at_the_compiled_prefix();
-	codegen_abi_shape_partitions_the_cache_identity();
+	codegen_profile_partitions_the_cache_identity();
 	concurrent_publication_keeps_one_canonical_owner();
 	return 0;
 }

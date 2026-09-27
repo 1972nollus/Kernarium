@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /*
+ * An accepted family, appended after the established bank for layout
+ * stability; the file name records where it entered the bank.
+ *
  * Bounded destination residency for non-faulting integer vector MLA runs.
  * q24 is caller-saved by AAPCS64 and otherwise unused by the gadget engine.
  * The builder emits load and flush inside the same translated block, and it

@@ -207,21 +207,14 @@ template<typename Floating>
 	std::uint64_t second, std::uint32_t fpcr) noexcept
 {
 	using Integer = FloatingInteger<Floating>;
-	std::uint64_t saved_fpcr{};
-	std::uint64_t saved_fpsr{};
-	__asm__ volatile("mrs %0, fpcr\n\tmrs %1, fpsr" :
-		"=r"(saved_fpcr), "=r"(saved_fpsr) : : "memory");
-	const std::uint64_t local_fpcr = host_fpcr(fpcr) & ~fpcr_nep;
-	__asm__ volatile("msr fpcr, %0\n\tmsr fpsr, xzr" : :
-		"r"(local_fpcr) : "memory");
-	const auto result = native_operation(operation,
-		std::bit_cast<Floating>(static_cast<Integer>(first)),
-		std::bit_cast<Floating>(static_cast<Integer>(second)));
-	std::uint64_t exceptions{};
-	__asm__ volatile("mrs %0, fpsr\n\tmsr fpcr, %1\n\tmsr fpsr, %2" :
-		"=r"(exceptions) : "r"(saved_fpcr), "r"(saved_fpsr) : "memory");
-	return {std::bit_cast<Integer>(result),
-		static_cast<std::uint32_t>(exceptions) & 0xf800'009fU};
+	const auto captured =
+		run_with_local_fpcr(host_fpcr(fpcr) & ~fpcr_nep, [&] {
+			return native_operation(operation,
+				std::bit_cast<Floating>(static_cast<Integer>(first)),
+				std::bit_cast<Floating>(
+					static_cast<Integer>(second)));
+		});
+	return {std::bit_cast<Integer>(captured.value), captured.fpsr};
 }
 
 [[nodiscard]] inline FloatingReciprocalLaneResult captured_operation(

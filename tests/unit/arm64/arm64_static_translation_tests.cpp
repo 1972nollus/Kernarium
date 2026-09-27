@@ -2,18 +2,19 @@
 #include "uml_darwin_guest.h"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
-#include "scratch_directory.hpp"
+#include "jit_test_support.hpp"
+#include "scratch_backing.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <fcntl.h>
 #include <source_location>
-#include <sys/mman.h>
-#include <unistd.h>
 
 namespace {
+
+using uml::emulator::tests::JitMapping;
+using uml::testing::ScratchBacking;
 
 void require(bool condition,
 	const std::source_location location = std::source_location::current())
@@ -24,65 +25,6 @@ void require(bool condition,
 		location.file_name(), location.line());
 	std::abort();
 }
-
-class TemporaryBacking final {
-public:
-	explicit TemporaryBacking(std::size_t pages)
-	{
-		auto path = uml::testing::scratch_template(
-			"uml-static-translation.XXXXXX");
-		descriptor_ = mkstemp(path.data());
-		require(descriptor_ >= 0);
-		require(unlink(path.c_str()) == 0);
-		require(ftruncate(descriptor_,
-			static_cast<off_t>(pages * DARWIN_UML_GUEST_PAGE_SIZE)) == 0);
-	}
-
-	TemporaryBacking(const TemporaryBacking &) = delete;
-	TemporaryBacking &operator=(const TemporaryBacking &) = delete;
-
-	~TemporaryBacking()
-	{
-		if (descriptor_ >= 0)
-			close(descriptor_);
-	}
-
-	void put32(std::size_t offset, std::uint32_t value)
-	{
-		require(pwrite(descriptor_, &value, sizeof(value), offset) ==
-			static_cast<ssize_t>(sizeof(value)));
-	}
-
-	[[nodiscard]] int descriptor() const noexcept { return descriptor_; }
-
-private:
-	int descriptor_{-1};
-};
-
-class Mapping final {
-public:
-	Mapping(unsigned long generation, std::uint64_t base,
-		TemporaryBacking &backing, std::size_t pages)
-		: generation_{generation}
-	{
-		require(darwin_uml_static_vm_activate(generation) == 0);
-		require(darwin_uml_static_vm_map(
-			reinterpret_cast<void *>(base), backing.descriptor(), 0,
-			pages * DARWIN_UML_GUEST_PAGE_SIZE,
-			PROT_READ | PROT_WRITE | PROT_EXEC, 1, 1) == 0);
-	}
-
-	Mapping(const Mapping &) = delete;
-	Mapping &operator=(const Mapping &) = delete;
-
-	~Mapping()
-	{
-		require(darwin_uml_static_vm_destroy(generation_) == 0);
-	}
-
-private:
-	unsigned long generation_;
-};
 
 int enter(darwin_uml_guest_registers &registers,
 	darwin_uml_guest_fp_registers &fp, unsigned long generation)
@@ -97,10 +39,10 @@ void translation_window_crosses_a_page()
 	constexpr unsigned long generation = 210;
 	constexpr std::uint64_t base = 0x60'0000;
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
-	TemporaryBacking backing{2};
+	ScratchBacking backing{"uml-static-translation.XXXXXX", 2 * page};
 	backing.put32(page - 4, 0xd280'0540U); // mov x0, #42
 	backing.put32(page, 0xd400'0001U);     // svc #0
-	Mapping mapping{generation, base, backing, 2};
+	JitMapping mapping{generation, base, backing, 2};
 	darwin_uml_guest_registers registers{};
 	darwin_uml_guest_fp_registers fp{};
 	registers.pc = base + page - 4;
@@ -115,9 +57,9 @@ void translation_window_preserves_a_second_page_fault()
 	constexpr unsigned long generation = 211;
 	constexpr std::uint64_t base = 0x61'0000;
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
-	TemporaryBacking backing{1};
+	ScratchBacking backing{"uml-static-translation.XXXXXX", page};
 	backing.put32(page - 4, 0xd280'0540U); // mov x0, #42
-	Mapping mapping{generation, base, backing, 1};
+	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
 	darwin_uml_guest_fp_registers fp{};
 	registers.pc = base + page - 4;
