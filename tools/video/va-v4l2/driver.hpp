@@ -59,7 +59,6 @@ struct Buffer {
 struct Surface {
     unsigned width {};
     unsigned height {};
-    unsigned rtFormat {};
     std::uint32_t fourcc {};
     std::shared_ptr<PixelBuffer> buffer;
     // When the decoder delivers packed RGB, the picture lands here and the
@@ -91,7 +90,6 @@ struct Context {
     VASurfaceID target {VA_INVALID_SURFACE};
     bool picture {};
     std::vector<std::uint8_t> sliceData;
-    bool haveSliceData {};
     // Which surface last wrote each VP9 reference slot, so that a
     // show_existing_frame submission can be served without the decoder.
     VASurfaceID slot[8] {};
@@ -113,7 +111,6 @@ struct Context {
 
 struct Image {
     VAImage image {};
-    VASurfaceID derivedFrom {VA_INVALID_SURFACE};
 };
 
 class Driver {
@@ -126,7 +123,6 @@ public:
     const std::vector<CodecSupport>& codecs() const noexcept { return codecs_; }
     const CodecSupport* codec(VAProfile profile) const noexcept;
     const std::string& device() const noexcept { return device_; }
-    bool videoProcess() const noexcept { return true; }
 
     std::map<VAConfigID, Config> configs;
     std::map<VAContextID, std::unique_ptr<Context>> contexts;
@@ -191,7 +187,6 @@ private:
     void probeCapture();
 
     std::mutex lock_;
-    VADriverContextP driverContext_;
     std::vector<CodecSupport> codecs_;
     std::string device_;
     RgbCapture rgbPolicy_ {RgbCapture::automatic};

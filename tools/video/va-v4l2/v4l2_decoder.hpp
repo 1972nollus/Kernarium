@@ -102,7 +102,6 @@ public:
     const std::string& captureLayout() const noexcept { return layout_; }
     unsigned width() const noexcept { return width_; }
     unsigned height() const noexcept { return height_; }
-    bool streaming() const noexcept { return captureStreaming_; }
 
 private:
     struct Plane {
@@ -146,7 +145,6 @@ private:
     std::vector<Buffer> capture_;
     bool outputStreaming_ {};
     bool captureStreaming_ {};
-    bool sawEos_ {};
 };
 
 // The device node the driver talks to, honouring UML_VA_V4L2_DEVICE and

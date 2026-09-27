@@ -30,7 +30,6 @@ struct Gbm {
     void* library {};
     void* device {};
     void* (*createDevice)(int) {};
-    void (*destroyDevice)(void*) {};
     void* (*boCreate)(void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {};
     void (*boDestroy)(void*) {};
     int (*boGetFd)(void*) {};
@@ -65,7 +64,6 @@ Gbm& gbm()
         if (!instance.library) return;
         const auto symbol = [](void* library, const char* name) { return dlsym(library, name); };
         instance.createDevice = reinterpret_cast<void* (*)(int)>(symbol(instance.library, "gbm_create_device"));
-        instance.destroyDevice = reinterpret_cast<void (*)(void*)>(symbol(instance.library, "gbm_device_destroy"));
         instance.boCreate = reinterpret_cast<void* (*)(void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t)>(
             symbol(instance.library, "gbm_bo_create"));
         instance.boDestroy = reinterpret_cast<void (*)(void*)>(symbol(instance.library, "gbm_bo_destroy"));

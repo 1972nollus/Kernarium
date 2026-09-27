@@ -76,7 +76,7 @@ std::uint64_t identityOfDescriptor(int fd) noexcept
 
 }
 
-Driver::Driver(VADriverContextP context) : driverContext_(context)
+Driver::Driver(VADriverContextP context)
 {
     if (const auto* state = static_cast<const drm_state*>(context->drm_state))
         useClientDrmDescriptor(state->fd);
@@ -506,7 +506,7 @@ VAStatus Driver::waitFor(Surface& target, std::chrono::milliseconds wait)
 VAStatus Driver::submitFrame(Context& owner, VASurfaceID id, Surface& target)
 {
     if (!owner.decoder) return VA_STATUS_ERROR_INVALID_CONTEXT;
-    if (!owner.haveSliceData || owner.sliceData.empty()) return VA_STATUS_ERROR_INVALID_PARAMETER;
+    if (owner.sliceData.empty()) return VA_STATUS_ERROR_INVALID_PARAMETER;
     if (target.fourcc != VA_FOURCC_NV12) return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
     const std::span<const std::uint8_t> frame(owner.sliceData);
     const auto header = owner.vp9.parse(frame);
@@ -712,7 +712,7 @@ VAStatus queryConfigProfiles(VADriverContextP ctx, VAProfile* profiles, int* cou
     std::lock_guard guard(driver.lock());
     int written = 0;
     for (const auto& codec : driver.codecs()) profiles[written++] = codec.profile;
-    if (driver.videoProcess()) profiles[written++] = VAProfileNone;
+    profiles[written++] = VAProfileNone;
     *count = written;
     return VA_STATUS_SUCCESS;
 }
@@ -722,7 +722,6 @@ VAStatus queryConfigEntrypoints(VADriverContextP ctx, VAProfile profile, VAEntry
     auto& driver = driverOf(ctx);
     std::lock_guard guard(driver.lock());
     if (profile == VAProfileNone) {
-        if (!driver.videoProcess()) return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
         entrypoints[0] = VAEntrypointVideoProc;
         *count = 1;
         return VA_STATUS_SUCCESS;
@@ -806,9 +805,7 @@ VAStatus queryConfigAttributes(VADriverContextP ctx, VAConfigID id, VAProfile* p
     *profile = found->second.profile;
     *entrypoint = found->second.entrypoint;
     attributes[0].type = VAConfigAttribRTFormat;
-    attributes[0].value = found->second.entrypoint == VAEntrypointVideoProc
-        ? (VA_RT_FORMAT_YUV420 | VA_RT_FORMAT_RGB32)
-        : VA_RT_FORMAT_YUV420;
+    attributes[0].value = found->second.rtFormat;
     *count = 1;
     return VA_STATUS_SUCCESS;
 }
@@ -889,7 +886,6 @@ VAStatus createSurfaces2(VADriverContextP ctx, unsigned format, unsigned width, 
         auto surface = std::make_unique<Surface>();
         surface->width = width;
         surface->height = height;
-        surface->rtFormat = format;
         surface->fourcc = fourcc;
         if (descriptor) {
             int fd = -1;
@@ -1126,7 +1122,6 @@ VAStatus beginPicture(VADriverContextP ctx, VAContextID id, VASurfaceID target)
     if (!driver.surface(target)) return VA_STATUS_ERROR_INVALID_SURFACE;
     context->target = target;
     context->picture = true;
-    context->haveSliceData = false;
     context->sliceData.clear();
     context->havePipeline = false;
     context->pipelineSourceValid = false;
@@ -1148,7 +1143,6 @@ VAStatus renderPicture(VADriverContextP ctx, VAContextID id, VABufferID* ids, in
             const std::uint8_t* data = buffer->data();
             const std::size_t size = std::size_t(buffer->size) * buffer->elements;
             context->sliceData.insert(context->sliceData.end(), data, data + size);
-            context->haveSliceData = true;
             break;
         }
         case VAProcPipelineParameterBufferType: {
@@ -1193,7 +1187,6 @@ VAStatus endPicture(VADriverContextP ctx, VAContextID id)
         ? driver.process(*context, *target)
         : driver.submitFrame(*context, context->target, *target);
     context->sliceData.clear();
-    context->haveSliceData = false;
     return status;
 }
 
@@ -1375,7 +1368,6 @@ VAStatus deriveImage(VADriverContextP ctx, VASurfaceID id, VAImage* out)
     image.image_id = driver.nextImage++;
     auto record = std::make_unique<Image>();
     record->image = image;
-    record->derivedFrom = id;
     driver.images.emplace(image.image_id, std::move(record));
     *out = image;
     return VA_STATUS_SUCCESS;
