@@ -211,7 +211,11 @@ PTY output. This keeps host input pollable when every guest CPU is busy while
 preserving terminal output behavior and bounded writes under backpressure.
 `guest-console-input-burst` writes an 11 KiB burst to `ttyS0` in one host write,
 enough to throttle the tty, and then requires later typed input to reach the
-shell.
+shell. `guest-console-concurrent-input` streams 1 MiB of numbered lines to a
+reader on one of four vCPUs. The reader is slower than the stream, so the line
+throttles repeatedly, and each unthrottle drains the host channel while new
+input raises the line's interrupt on another CPU. Every line must arrive whole
+and in order.
 
 `guest-balloon-config-churn` gives a one-vCPU guest an external balloon backend
 that raises a config change every 2 ms, so config-change requests cross the
