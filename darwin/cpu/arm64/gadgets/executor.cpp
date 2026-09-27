@@ -942,11 +942,6 @@ private:
 			return allocation_bytes(entry_words() + word_count,
 				source_word_count);
 		}
-		[[nodiscard]] std::span<const std::uintptr_t> stream() const noexcept
-		{
-			return {words(), word_count};
-		}
-
 		/* The stored block as the builder produced it. The program
 		 * refers to the words behind this header rather than copying
 		 * them, so it is valid exactly as long as the body is. */
