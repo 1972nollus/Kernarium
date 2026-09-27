@@ -1,3 +1,0 @@
-::sysinit:/etc/init.d/rcS
-console::respawn:/bin/login
-::shutdown:/bin/umount -a -r
