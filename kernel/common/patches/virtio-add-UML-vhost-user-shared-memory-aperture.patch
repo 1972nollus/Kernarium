@@ -4,13 +4,13 @@ Date: Sun, 23 Aug 2026 08:02:37 +0900
 Subject: [PATCH] virtio: add UML vhost-user shared-memory aperture
 
 ---
- arch/um/drivers/vhost_user.h          |  36 +++-
- arch/um/drivers/virtio_uml.c          | 267 ++++++++++++++++++++++++--
- arch/um/include/shared/mem.h          |  22 +++
- arch/um/kernel/physmem.c              | 249 ++++++++++++++++++++++++
+ arch/um/drivers/vhost_user.h          |  36 ++-
+ arch/um/drivers/virtio_uml.c          | 311 ++++++++++++++++++++++++--
+ arch/um/include/shared/mem.h          |  22 ++
+ arch/um/kernel/physmem.c              | 249 +++++++++++++++++++++
  arch/um/kernel/um_arch.c              |  20 +-
  drivers/gpu/drm/virtio/virtgpu_vram.c |  16 +-
- 6 files changed, 594 insertions(+), 16 deletions(-)
+ 6 files changed, 635 insertions(+), 19 deletions(-)
 
 diff --git a/arch/um/drivers/vhost_user.h b/arch/um/drivers/vhost_user.h
 index fcfa3b7e021bae961cd76d830929b03b70ac5562..841ae6d730c2c35c815462d3a6c251f5ef140bf8 100644
@@ -99,10 +99,14 @@ index fcfa3b7e021bae961cd76d830929b03b70ac5562..841ae6d730c2c35c815462d3a6c251f5
  
  struct vhost_user_msg {
 diff --git a/arch/um/drivers/virtio_uml.c b/arch/um/drivers/virtio_uml.c
-index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f990a948b9 100644
+index 7b1c3c69b5c396c1def9c8f703dab0d569237138..ae0dc6e77fc656bf6f4e9f3f95439af3dbfdb3e6 100644
 --- a/arch/um/drivers/virtio_uml.c
 +++ b/arch/um/drivers/virtio_uml.c
-@@ -25,6 +25,7 @@
+@@ -22,9 +22,11 @@
+  */
+ #include <linux/module.h>
+ #include <linux/dma-mapping.h>
++#include <linux/irq_work.h>
  #include <linux/of.h>
  #include <linux/platform_device.h>
  #include <linux/slab.h>
@@ -110,7 +114,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  #include <linux/virtio.h>
  #include <linux/virtio_config.h>
  #include <linux/virtio_ring.h>
-@@ -33,6 +34,7 @@
+@@ -33,6 +35,7 @@
  #include <shared/as-layout.h>
  #include <irq_kern.h>
  #include <init.h>
@@ -118,7 +122,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  #include <os.h>
  #include "vhost_user.h"
  
-@@ -54,14 +56,17 @@ struct virtio_uml_device {
+@@ -54,18 +57,25 @@ struct virtio_uml_device {
  	struct virtio_uml_platform_data *pdata;
  
  	raw_spinlock_t sock_lock;
@@ -136,7 +140,15 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  
  	u8 config_changed_irq:1;
  	uint64_t vq_irq_vq_map;
-@@ -76,6 +81,9 @@ struct virtio_uml_vq_info {
+ 	int recv_rc;
++#ifdef UML_HOST_DARWIN
++	/* Delivers what a reply wait recorded while serving backend requests */
++	struct irq_work req_irq_work;
++#endif
+ };
+ 
+ struct virtio_uml_vq_info {
+@@ -76,6 +86,9 @@ struct virtio_uml_vq_info {
  
  #define vu_err(vu_dev, ...)	dev_err(&(vu_dev)->pdev->dev, ##__VA_ARGS__)
  
@@ -146,7 +158,70 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  /* Vhost-user protocol */
  
  static int full_sendmsg_fds(int fd, const void *buf, unsigned int len,
-@@ -208,19 +216,93 @@ static int vhost_user_recv_u64(struct virtio_uml_device *vu_dev,
+@@ -173,13 +186,60 @@ static void vhost_user_check_reset(struct virtio_uml_device *vu_dev,
+ 	schedule_work(&pdata->conn_broken_wk);
+ }
+ 
++#ifdef UML_HOST_DARWIN
++/*
++ * Wait for the backend to answer on the main socket, serving its requests
++ * meanwhile. Darwin delivers the backend-request socket through an ordinary
++ * SIGIO IRQ, which only CPU 0 polls. A backend may send a request that needs
++ * a reply, such as a config change or a SHMEM_MAP, and wait for that reply
++ * before it reads its next frontend message. A frontend that waited on the
++ * main socket alone, for a GET_CONFIG answer or an acknowledgement, would
++ * then leave both channels blocked, and a CPU 0 blocked in that read could
++ * never take the IRQ that answers. Serving a request here only records its
++ * Virtio interrupt and replies on the request socket; it sends nothing on the
++ * main socket. The recorded interrupts are delivered from interrupt context
++ * once this CPU can take interrupts again.
++ */
++static int vhost_user_wait_resp(struct virtio_uml_device *vu_dev)
++{
++	while (vu_dev->req_fd >= 0) {
++		const int poll_fds[] = { vu_dev->req_fd, vu_dev->sock };
++		int ready;
++
++		do {
++			ready = os_poll(ARRAY_SIZE(poll_fds), poll_fds);
++		} while (ready == -EINTR);
++		if (ready < 0)
++			return ready;
++		if (ready == 1)
++			break;
++
++		vu_req_read_message(vu_dev, NULL);
++		if (vu_dev->recv_rc)
++			return vu_dev->recv_rc;
++		/*
++		 * A descriptor edge is reported only while unread data remains,
++		 * so the request IRQ will not run for what this wait has read.
++		 */
++		if (vu_dev->vq_irq_vq_map || vu_dev->config_changed_irq)
++			irq_work_queue(&vu_dev->req_irq_work);
++	}
++	return 0;
++}
++#endif
++
+ static int vhost_user_recv_resp(struct virtio_uml_device *vu_dev,
+ 				struct vhost_user_msg *msg,
+ 				size_t max_payload_size)
+ {
+-	int rc = vhost_user_recv(vu_dev, vu_dev->sock, msg,
+-				 max_payload_size, true);
++	int rc = 0;
+ 
++#ifdef UML_HOST_DARWIN
++	rc = vhost_user_wait_resp(vu_dev);
++#endif
++	if (!rc)
++		rc = vhost_user_recv(vu_dev, vu_dev->sock, msg,
++				     max_payload_size, true);
+ 	if (rc) {
+ 		vhost_user_check_reset(vu_dev, rc);
+ 		return rc;
+@@ -208,19 +268,57 @@ static int vhost_user_recv_u64(struct virtio_uml_device *vu_dev,
  
  static int vhost_user_recv_req(struct virtio_uml_device *vu_dev,
  			       struct vhost_user_msg *msg,
@@ -207,55 +282,10 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
 +	fds[0] = -1;
 +	fds[1] = -1;
 +	return rc;
-+}
-+
-+static int vhost_user_recv_ack(struct virtio_uml_device *vu_dev, u64 *status)
-+{
-+#ifdef UML_HOST_DARWIN
-+	/*
-+	 * The main socket is serialized with local IRQs masked, while Darwin
-+	 * delivers the backend-request socket through a normal SIGIO IRQ.  A
-+	 * backend may acknowledge one kick, issue a SHMEM_MAP, and wait for its
-+	 * reply before reading the next kick.  If another CPU submitted that next
-+	 * kick first, waiting only on the main socket would leave both channels
-+	 * blocked.  Drain backend requests without delivering their recorded
-+	 * Virtio interrupts until the ordinary IRQ runs after irqrestore.
-+	 */
-+	while (vu_dev->req_fd >= 0) {
-+		const int poll_fds[] = { vu_dev->req_fd, vu_dev->sock };
-+		int ready;
-+
-+		do {
-+			ready = os_poll(ARRAY_SIZE(poll_fds), poll_fds);
-+		} while (ready == -EINTR);
-+		if (ready < 0)
-+			return ready;
-+		if (ready == 1)
-+			break;
-+
-+		vu_req_read_message(vu_dev, NULL);
-+		if (vu_dev->recv_rc) {
-+			int rc = vu_dev->recv_rc;
-+
-+			vhost_user_check_reset(vu_dev, rc);
-+			return rc;
-+		}
-+	}
-+#endif
-+	return vhost_user_recv_u64(vu_dev, status);
  }
  
  static int vhost_user_send(struct virtio_uml_device *vu_dev,
-@@ -255,7 +337,7 @@ static int vhost_user_send(struct virtio_uml_device *vu_dev,
- 	if (request_ack) {
- 		uint64_t status;
- 
--		rc = vhost_user_recv_u64(vu_dev, &status);
-+		rc = vhost_user_recv_ack(vu_dev, &status);
- 		if (rc)
- 			goto out;
- 
-@@ -354,6 +436,45 @@ static int vhost_user_get_queue_num(struct virtio_uml_device *vu_dev,
+@@ -354,6 +452,45 @@ static int vhost_user_get_queue_num(struct virtio_uml_device *vu_dev,
  	return vhost_user_recv_u64(vu_dev, queue_num);
  }
  
@@ -301,7 +331,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  static void vhost_user_reply(struct virtio_uml_device *vu_dev,
  			     struct vhost_user_msg *msg, int response)
  {
-@@ -376,22 +497,24 @@ static void vhost_user_reply(struct virtio_uml_device *vu_dev,
+@@ -376,22 +513,24 @@ static void vhost_user_reply(struct virtio_uml_device *vu_dev,
  		       rc, size);
  }
  
@@ -330,7 +360,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  		if (rc)
  			break;
  
-@@ -409,6 +532,54 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
+@@ -409,6 +548,54 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
  				}
  			}
  			break;
@@ -385,7 +415,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  		case VHOST_USER_SLAVE_IOTLB_MSG:
  			/* not supported - VIRTIO_F_ACCESS_PLATFORM */
  		case VHOST_USER_SLAVE_VRING_HOST_NOTIFIER_MSG:
-@@ -418,6 +589,11 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
+@@ -418,6 +605,11 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
  			       msg.msg.header.request);
  		}
  
@@ -397,7 +427,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  		if (ev && !vu_dev->suspended)
  			time_travel_add_irq_event(ev);
  
-@@ -430,6 +606,24 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
+@@ -430,6 +622,24 @@ static irqreturn_t vu_req_read_message(struct virtio_uml_device *vu_dev,
  	return irq_rc;
  }
  
@@ -422,7 +452,49 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  static irqreturn_t vu_req_interrupt(int irq, void *data)
  {
  	struct virtio_uml_device *vu_dev = data;
-@@ -508,6 +702,7 @@ static int vhost_user_init_slave_req(struct virtio_uml_device *vu_dev)
+@@ -448,7 +658,13 @@ static irqreturn_t vu_req_interrupt(int irq, void *data)
+ 
+ 	if (vu_dev->recv_rc) {
+ 		vhost_user_check_reset(vu_dev, vu_dev->recv_rc);
+-	} else if (vu_dev->vq_irq_vq_map) {
++		return ret;
++	}
++	/*
++	 * Deliver everything recorded. A request another reader drained leaves
++	 * no descriptor edge behind, so nothing would deliver a remainder.
++	 */
++	if (vu_dev->vq_irq_vq_map) {
+ 		struct virtqueue *vq;
+ 
+ 		virtio_device_for_each_vq((&vu_dev->vdev), vq) {
+@@ -456,7 +672,8 @@ static irqreturn_t vu_req_interrupt(int irq, void *data)
+ 				vring_interrupt(0 /* ignored */, vq);
+ 		}
+ 		vu_dev->vq_irq_vq_map = 0;
+-	} else if (vu_dev->config_changed_irq) {
++	}
++	if (vu_dev->config_changed_irq) {
+ 		virtio_config_changed(&vu_dev->vdev);
+ 		vu_dev->config_changed_irq = false;
+ 	}
+@@ -464,6 +681,16 @@ static irqreturn_t vu_req_interrupt(int irq, void *data)
+ 	return ret;
+ }
+ 
++#ifdef UML_HOST_DARWIN
++static void vu_req_irq_work(struct irq_work *work)
++{
++	struct virtio_uml_device *vu_dev =
++		container_of(work, struct virtio_uml_device, req_irq_work);
++
++	vu_req_interrupt(vu_dev->irq, vu_dev);
++}
++#endif
++
+ #ifndef UML_HOST_DARWIN
+ static void vu_req_interrupt_comm_handler(int irq, int fd, void *data,
+ 					  struct time_travel_event *ev)
+@@ -508,6 +735,7 @@ static int vhost_user_init_slave_req(struct virtio_uml_device *vu_dev)
  	um_free_irq(vu_dev->irq, vu_dev);
  err_close:
  	os_close_file(req_fds[0]);
@@ -430,7 +502,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  out:
  	/* Close unused write end of request fds */
  	os_close_file(req_fds[1]);
-@@ -530,6 +725,15 @@ static int vhost_user_init(struct virtio_uml_device *vu_dev)
+@@ -530,6 +758,15 @@ static int vhost_user_init(struct virtio_uml_device *vu_dev)
  		if (rc)
  			return rc;
  		vu_dev->protocol_features &= VHOST_USER_SUPPORTED_PROTOCOL_F;
@@ -446,7 +518,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  		rc = vhost_user_set_protocol_features(vu_dev,
  				vu_dev->protocol_features);
  		if (rc)
-@@ -543,6 +747,15 @@ static int vhost_user_init(struct virtio_uml_device *vu_dev)
+@@ -543,6 +780,15 @@ static int vhost_user_init(struct virtio_uml_device *vu_dev)
  			return rc;
  	}
  
@@ -462,7 +534,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  	if (vu_dev->protocol_features &
  			BIT_ULL(VHOST_USER_PROTOCOL_F_MQ)) {
  		rc = vhost_user_get_queue_num(vu_dev, &vu_dev->max_vqs);
-@@ -881,6 +1094,9 @@ static void vu_reset(struct virtio_device *vdev)
+@@ -881,6 +1127,9 @@ static void vu_reset(struct virtio_device *vdev)
  {
  	struct virtio_uml_device *vu_dev = to_virtio_uml_device(vdev);
  
@@ -472,7 +544,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  	vu_dev->status = 0;
  }
  
-@@ -1124,6 +1340,18 @@ static const char *vu_bus_name(struct virtio_device *vdev)
+@@ -1124,6 +1373,18 @@ static const char *vu_bus_name(struct virtio_device *vdev)
  	return vu_dev->pdev->name;
  }
  
@@ -491,7 +563,7 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  static const struct virtio_config_ops virtio_uml_config_ops = {
  	.get = vu_get,
  	.set = vu_set,
-@@ -1135,6 +1363,7 @@ static const struct virtio_config_ops virtio_uml_config_ops = {
+@@ -1135,6 +1396,7 @@ static const struct virtio_config_ops virtio_uml_config_ops = {
  	.get_features = vu_get_features,
  	.finalize_features = vu_finalize_features,
  	.bus_name = vu_bus_name,
@@ -499,18 +571,19 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  };
  
  static void virtio_uml_release_dev(struct device *d)
-@@ -1145,6 +1374,10 @@ static void virtio_uml_release_dev(struct device *d)
+@@ -1145,6 +1407,11 @@ static void virtio_uml_release_dev(struct device *d)
  
  	time_travel_propagate_time();
  
 +#ifdef UML_HOST_DARWIN
++	irq_work_sync(&vu_dev->req_irq_work);
 +	uml_vhost_user_shmem_release(vu_dev);
 +#endif
 +
  	/* might not have been opened due to not negotiating the feature */
  	if (vu_dev->req_fd >= 0) {
  		um_free_irq(vu_dev->irq, vu_dev);
-@@ -1177,6 +1410,10 @@ static void vu_of_conn_broken(struct work_struct *wk)
+@@ -1177,6 +1444,10 @@ static void vu_of_conn_broken(struct work_struct *wk)
  
  	vu_dev = platform_get_drvdata(pdata->pdev);
  
@@ -521,19 +594,23 @@ index 7b1c3c69b5c396c1def9c8f703dab0d569237138..555b1029bacf874ae2fe1ec0ce7f38f9
  	virtio_break_device(&vu_dev->vdev);
  
  	/*
-@@ -1263,6 +1500,7 @@ static int virtio_uml_probe(struct platform_device *pdev)
+@@ -1263,6 +1534,10 @@ static int virtio_uml_probe(struct platform_device *pdev)
  	vu_dev->sock = rc;
  
  	raw_spin_lock_init(&vu_dev->sock_lock);
 +	raw_spin_lock_init(&vu_dev->req_lock);
++#ifdef UML_HOST_DARWIN
++	init_irq_work(&vu_dev->req_irq_work, vu_req_irq_work);
++#endif
  
  	rc = vhost_user_init(vu_dev);
  	if (rc)
-@@ -1281,6 +1519,13 @@ static int virtio_uml_probe(struct platform_device *pdev)
+@@ -1281,6 +1556,14 @@ static int virtio_uml_probe(struct platform_device *pdev)
  	return 0;
  
  error_init:
 +#ifdef UML_HOST_DARWIN
++	irq_work_sync(&vu_dev->req_irq_work);
 +	uml_vhost_user_shmem_release(vu_dev);
 +#endif
 +	if (vu_dev->req_fd >= 0) {

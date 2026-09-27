@@ -403,6 +403,19 @@ round trip once, naming the queue and the error, and retires the device by the
 same path as a lost descriptor, so a failed kick never leaves a silently broken
 virtqueue behind.
 
+Every synchronous wait on the control socket also serves the backend request
+stream. Only CPU 0 polls host descriptors, and a backend may send a request
+that needs an answer, such as a config change or a `SHMEM_MAP`, and wait for
+that answer before it reads its next control message. A guest that waited on
+the control socket alone, for a `GET_CONFIG` reply or a kick's
+acknowledgement, would leave both sides blocked, and a CPU 0 blocked in that
+read could never take the interrupt that answers: a balloon target that moved
+while the guest was inflating stopped CPU 0 this way. Serving a request inside
+a wait records its interrupt and replies on the request stream without
+touching the control socket. Darwin drops a read edge whose data is gone before
+it is collected, so a request read there leaves no edge for the request IRQ;
+the interrupts it recorded are delivered through `irq_work` instead.
+
 Retiring the device is where the guest's recovery ends. virtio-gpu has no
 broken-device handling of its own: it never tests `virtqueue_is_broken()`, so a
 submitter already parked waiting for control-queue space is not woken, and
