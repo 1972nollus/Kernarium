@@ -106,10 +106,10 @@ radio-backed media manager. A dedicated Virtio
 battery device reports the Apple host's percentage and charging state through
 the generic Android Health service; hosts without readable battery data report
 an always-present battery at 100 percent and charging. The battery's sysfs path
-carries its position among the Virtio devices each host composes, so the vendor
-policy labels every position the standalone macOS launcher and the Kernarium
-iOS runtime can give it; a new Virtio device placed before the battery in
-either composer must extend that range.
+carries its position among the Virtio devices each host composes. The
+standalone macOS launcher and the Kernarium iOS runtime both pass it straight
+after the GPU, and the vendor policy labels only that position, so a host that
+places another Virtio device before the battery leaves it unlabelled.
 
 Both the framework and SettingsProvider defaults disable the non-secure
 keyguard, set the screen-off timeout to the maximum supported value, and keep
