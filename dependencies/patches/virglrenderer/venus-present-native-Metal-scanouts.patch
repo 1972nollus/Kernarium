@@ -8,7 +8,7 @@ Subject: [PATCH] venus: present native Metal scanouts
  src/venus/vkr_device.h          |   6 ++
  src/venus/vkr_device_memory.c   | 126 ++++++++++++++++++++-----
  src/venus/vkr_device_memory.h   |   4 +
- src/venus/vkr_image.c           | 155 ++++++++++++++++++++++++++++++
+ src/venus/vkr_image.c           | 156 ++++++++++++++++++++++++++++++
  src/venus/vkr_image.h           |   2 +
  src/venus/vkr_physical_device.c |   3 +
  src/venus/vkr_physical_device.h |   1 +
@@ -16,7 +16,7 @@ Subject: [PATCH] venus: present native Metal scanouts
  src/virgl_resource.h            |  16 ++++
  src/virglrenderer.c             |  57 +++++++++++
  src/virglrenderer.h             |  54 ++++++++++-
- 12 files changed, 580 insertions(+), 23 deletions(-)
+ 12 files changed, 581 insertions(+), 23 deletions(-)
 
 diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
 index 59c77952a8c825bae4cf8adc2770dd5831e3f01b..bdd2ab82c7581846abc1c986b5928b59859f07be 100644
@@ -302,10 +302,10 @@ index e25198b50a0e89efd2a0473b0c1289710915bec1..02e2ebf330b54be4baffb494f75732ce
  vkr_device_memory_export_blob(struct vkr_device_memory *mem,
                                uint64_t blob_size,
 diff --git a/src/venus/vkr_image.c b/src/venus/vkr_image.c
-index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..219e570edcfdf4548987499797901fb76493b34a 100644
+index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..0ec9ccc144668c58f5fefc6a0c32e9f05e6ab491 100644
 --- a/src/venus/vkr_image.c
 +++ b/src/venus/vkr_image.c
-@@ -6,13 +6,131 @@
+@@ -6,13 +6,132 @@
  #include "vkr_image.h"
  
  #include "vkr_image_gen.h"
@@ -371,11 +371,12 @@ index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..219e570edcfdf4548987499797901fb7
 +      return;
 +
 +   if (!mem->native_resource_id) {
-+      /* Optimal color targets are marked exportable up front, but only an
-+       * allocation the guest asked to export as an MTLHeap owns one.  An
-+       * ordinary render target on ordinary device memory is the designed
-+       * outcome of that marking, not a failure, and it is the common case:
-+       * a conformance run binds one for every test.
++      /* Color targets vkr_image_should_export_metal_texture marks are
++       * exportable up front, but only an allocation the guest asked to
++       * export as an MTLHeap owns one.  An ordinary render target on
++       * ordinary device memory is the designed outcome of that marking, not
++       * a failure, and it is the common case: a conformance run binds one
++       * for every test.
 +       */
 +      if (!mem->metal_heap_exportable)
 +         return;
@@ -437,7 +438,7 @@ index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..219e570edcfdf4548987499797901fb7
     /* XXX If VkExternalMemoryImageCreateInfo is chained by the app, all is
      * good.  If it is not chained, we might still bind an external memory to
      * the image, because vkr_dispatch_vkAllocateMemory makes any HOST_VISIBLE
-@@ -39,6 +157,8 @@ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,
+@@ -39,6 +158,8 @@ vkr_dispatch_vkCreateImage(struct vn_dispatch_context *dispatch,
        image->format = format;
        image->array_layers = array_layers;
        image->tiling = tiling;
@@ -446,7 +447,7 @@ index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..219e570edcfdf4548987499797901fb7
     }
  }
  
-@@ -118,12 +238,24 @@ vkr_dispatch_vkBindImageMemory(UNUSED struct vn_dispatch_context *dispatch,
+@@ -118,12 +239,24 @@ vkr_dispatch_vkBindImageMemory(UNUSED struct vn_dispatch_context *dispatch,
  {
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
@@ -471,7 +472,7 @@ index bb0e867cbc7b4ffd1a262555a4c4d3b1ad9b7f5a..219e570edcfdf4548987499797901fb7
  static void
  vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
                                  struct vn_command_vkBindImageMemory2 *args)
-@@ -131,8 +263,31 @@ vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
+@@ -131,8 +264,31 @@ vkr_dispatch_vkBindImageMemory2(UNUSED struct vn_dispatch_context *dispatch,
     struct vkr_device *dev = vkr_device_from_handle(args->device);
     struct vn_device_proc_table *vk = &dev->proc_table;
  
