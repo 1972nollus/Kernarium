@@ -126,7 +126,7 @@ index 85ae6022da13af4ab24809de8b68fe75a949a36c..a8072a9286e3794ec62036a316d0d115
  vrend_renderer_pipe_resource_get_layout(struct vrend_context *ctx,
                                          uint32_t out_res_id, uint32_t res_id);
 diff --git a/src/vrend/vrend_winsys_egl.c b/src/vrend/vrend_winsys_egl.c
-index dd5d15c8d0832ca8b37c0acbffa934e8af06f0dc..2a76b60fd4567106b1b47caa27ff5e308c2aa623 100644
+index 527b12050d11970bf2b926b4831fed86a5733546..28bbf3d1dbf6a5eff1f55376c65a9ef7b779fe4d 100644
 --- a/src/vrend/vrend_winsys_egl.c
 +++ b/src/vrend/vrend_winsys_egl.c
 @@ -70,6 +70,7 @@

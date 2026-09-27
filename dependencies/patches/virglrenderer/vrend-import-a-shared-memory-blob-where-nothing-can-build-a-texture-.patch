@@ -345,7 +345,7 @@ index 8bac5d847fabb363291c94e03e0e6250af2158ab..0290460cb0d212ae8d6ab55d2948b600
  #define VIRGL_TEXTURE_CAN_TEXTURE_STORAGE (1 << 1)
  #define VIRGL_TEXTURE_CAN_READBACK        (1 << 2)
 diff --git a/src/vrend/vrend_winsys_egl.c b/src/vrend/vrend_winsys_egl.c
-index 9f93e77ead6ffe16a08e536d827aba9c2ef6f7be..dd5d15c8d0832ca8b37c0acbffa934e8af06f0dc 100644
+index c15f6b61407c9137221e6efe03be85b036f7e14c..527b12050d11970bf2b926b4831fed86a5733546 100644
 --- a/src/vrend/vrend_winsys_egl.c
 +++ b/src/vrend/vrend_winsys_egl.c
 @@ -69,6 +69,7 @@

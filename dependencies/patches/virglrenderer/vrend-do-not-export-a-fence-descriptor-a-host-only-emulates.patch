@@ -15,6 +15,11 @@ eglCreateSyncKHR.
 The renderer only ever asks a fence whether its work has finished, and
 the GL sync object answers that. Leave the native fence to the hosts
 whose fence descriptor is a real one.
+
+The sync object also keeps a poll from blocking the thread that decodes
+the guest's command stream: a driver that emulates the descriptor waits
+for the fence before handing it back, which turned a zero-timeout check
+into an open-ended wait on a GPU timeline.
 ---
  src/vrend/vrend_renderer.c | 13 +++++++++++++
  1 file changed, 13 insertions(+)
