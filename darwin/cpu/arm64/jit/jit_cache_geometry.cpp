@@ -11,6 +11,7 @@
 #include "memory/tlb.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cstdint>
 #include <limits>
@@ -90,17 +91,6 @@ struct JitCacheBudgetRegistry final {
 {
 	static JitCacheBudgetRegistry registry;
 	return registry;
-}
-
-[[nodiscard]] std::size_t round_down_to_power_of_two(
-	std::size_t value) noexcept
-{
-	if (value == 0)
-		return 0;
-	std::size_t result = 1;
-	while (result <= value / 2U)
-		result *= 2U;
-	return result;
 }
 
 [[nodiscard]] std::size_t share_of(
@@ -242,7 +232,7 @@ JitCacheGeometry derive_jit_cache_geometry(std::size_t total_bytes,
 	const auto per_set = sizeof(CacheSet) + sizeof(SavedGuestWordSet);
 	const auto lookup_bytes = share_of(budget, lookup_share);
 	auto sets = std::clamp(
-		round_down_to_power_of_two(lookup_bytes / per_set),
+		std::bit_floor(lookup_bytes / per_set),
 		minimum_cache_sets, maximum_cache_sets);
 
 	auto arena = std::clamp(share_of(budget, arena_share),

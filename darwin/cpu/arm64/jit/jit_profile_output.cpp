@@ -64,15 +64,20 @@ JitProfileRecord::JitProfileRecord() noexcept {
 }
 
 void JitProfileRecord::append(const char *format, ...) noexcept {
+  std::va_list arguments;
+  va_start(arguments, format);
+  vappend(format, arguments);
+  va_end(arguments);
+}
+
+void JitProfileRecord::vappend(const char *format,
+                               std::va_list arguments) noexcept {
   if (!valid_ || format == nullptr)
     return;
   const int saved_errno = errno;
-  std::va_list arguments;
-  va_start(arguments, format);
   const auto available = storage_.size() - size_;
   const int formatted = std::vsnprintf(storage_.data() + size_, available,
                                        format, arguments);
-  va_end(arguments);
   if (formatted < 0 || static_cast<std::size_t>(formatted) >= available) {
     /* Never publish a partial logical record. Callers that can exceed this
      * fixed bound split their evidence into independently parseable records.
@@ -97,32 +102,12 @@ void JitProfileRecord::emit() noexcept {
 }
 
 void write_jit_profile_record(const char *format, ...) noexcept {
-  if (format != nullptr) {
-    const int saved_errno = errno;
-    std::va_list arguments;
-    va_start(arguments, format);
-    char buffer[2048];
-    buffer[0] = record_leading_separator;
-    const int formatted = std::vsnprintf(
-        buffer + record_leading_separator_size,
-        sizeof(buffer) - record_leading_separator_size, format, arguments);
-    va_end(arguments);
-    if (formatted > 0 &&
-        static_cast<std::size_t>(formatted) <
-            sizeof(buffer) - record_leading_separator_size) {
-      auto size = record_leading_separator_size +
-                  static_cast<std::size_t>(formatted);
-      if (buffer[size - 1U] != '\n') {
-        if (size == sizeof(buffer)) {
-          errno = saved_errno;
-          return;
-        }
-        buffer[size++] = '\n';
-      }
-      write_record(buffer, size);
-    }
-    errno = saved_errno;
-  }
+  JitProfileRecord record;
+  std::va_list arguments;
+  va_start(arguments, format);
+  record.vappend(format, arguments);
+  va_end(arguments);
+  record.emit();
 }
 
 } // namespace uml::cpu::arm64

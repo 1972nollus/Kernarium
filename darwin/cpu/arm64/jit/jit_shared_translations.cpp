@@ -142,33 +142,6 @@ translation_payload_bytes(const SharedTranslation &translation) noexcept {
 }
 
 #if UML_ENABLE_JIT_PROFILE
-[[nodiscard]] bool same_shared_translation_statistics(
-    const SharedTranslationStatistics &first,
-    const SharedTranslationStatistics &second) noexcept {
-  return first.matches == second.matches && first.reuses == second.reuses &&
-         first.misses == second.misses &&
-         first.insertions == second.insertions &&
-         first.evictions == second.evictions &&
-         first.rejected == second.rejected &&
-         first.degraded_rejected == second.degraded_rejected &&
-         first.malformed_rejected == second.malformed_rejected &&
-         first.insertion_failures == second.insertion_failures &&
-         first.failed_insertion_retained_accounted_bytes ==
-             second.failed_insertion_retained_accounted_bytes &&
-         first.materialization_invalid_metadata_failures ==
-             second.materialization_invalid_metadata_failures &&
-         first.materialization_direct_link_failures ==
-             second.materialization_direct_link_failures &&
-         first.materialization_indirect_link_failures ==
-             second.materialization_indirect_link_failures &&
-         first.materialization_arena_failures ==
-             second.materialization_arena_failures &&
-         first.entries == second.entries &&
-         first.payload_bytes == second.payload_bytes &&
-         first.accounted_bytes == second.accounted_bytes &&
-         first.maximum_accounted_bytes == second.maximum_accounted_bytes;
-}
-
 struct SharedTranslationFinalReportState final {
   std::mutex mutex;
   SharedTranslationStatistics statistics;
@@ -235,7 +208,7 @@ void report_final_shared_translation_statistics() noexcept {
   {
     const std::scoped_lock state_lock{state.mutex};
     if (state.reported &&
-        same_shared_translation_statistics(state.statistics, statistics))
+        state.statistics == statistics)
       return;
     state.statistics = statistics;
     state.reported = true;

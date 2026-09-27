@@ -106,6 +106,9 @@ struct SharedTranslationStatistics final {
   std::uint64_t accounted_bytes{};
   std::uint64_t maximum_accounted_bytes{};
 
+  [[nodiscard]] bool
+  operator==(const SharedTranslationStatistics &) const noexcept = default;
+
   [[nodiscard]] std::uint64_t materialization_failures() const noexcept {
     return materialization_invalid_metadata_failures +
            materialization_direct_link_failures +
