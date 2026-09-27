@@ -35,8 +35,8 @@ metallib.
  src/kosmickrisp/vulkan/kk_device.h            |   2 +
  src/kosmickrisp/vulkan/kk_device_lib.c        |  74 ++++++++--
  src/kosmickrisp/vulkan/meson.build            |  21 +++
- .../tests/test_offline_device_library.c       | 128 +++++++++++++++++
- 11 files changed, 446 insertions(+), 21 deletions(-)
+ .../tests/test_offline_device_library.c       | 101 ++++++++++++++
+ 11 files changed, 419 insertions(+), 21 deletions(-)
  create mode 100644 src/kosmickrisp/libkk/kk_metallib.h
  create mode 100755 src/kosmickrisp/libkk/kk_metallib.py
  create mode 100644 src/kosmickrisp/vulkan/tests/test_offline_device_library.c
@@ -574,10 +574,10 @@ index ed401f7120d46b92ce216d51a247b6245d19e1b1..c84bb222cf8416443df2c5d5d395dcdf
        executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_offline_device_library.c b/src/kosmickrisp/vulkan/tests/test_offline_device_library.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..98225e1fb14ee77d8997328b9b0bc05f537d49cb
+index 0000000000000000000000000000000000000000..c38c625e376b5df167b1763f5fa340c7fd2dc41f
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_offline_device_library.c
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,101 @@
 +/* SPDX-License-Identifier: MIT */
 +/* The device library compiled offline must hold every program the driver
 + * dispatches, each named after its program index, and every one must build
@@ -587,9 +587,6 @@ index 0000000000000000000000000000000000000000..98225e1fb14ee77d8997328b9b0bc05f
 + */
 +#define VK_NO_PROTOTYPES
 +#include "kosmickrisp/vulkan/kk_device.h"
-+#include "kosmickrisp/bridge/mtl_bridge.h"
-+#include "kosmickrisp/bridge/mtl_compiler.h"
-+#include "kosmickrisp/clc/kk_precompiled_shader.h"
 +
 +#include "kk_metallib.h"
 +#include "libkk_shaders.h"
@@ -667,38 +664,14 @@ index 0000000000000000000000000000000000000000..98225e1fb14ee77d8997328b9b0bc05f
 +   CHECK(vkCreateDevice(physical, &dci, NULL, &device) == VK_SUCCESS);
 +   printf("vkCreateDevice took %.1f ms\n", now_ms() - start);
 +   struct kk_device *dev = kk_device_from_handle(device);
-+   /* Creating the device compiled no program's MSL. */
++   /* Creating the device compiled no program's MSL: each program's kernel is
++    * in the metallib under its index and built its pipeline from there. */
 +   CHECK(dev->precompiled_cache.offline_count == LIBKK_NUM_PROGRAMS);
++   printf("%u offline programs, %zu bytes\n", LIBKK_NUM_PROGRAMS,
++          libkk_metallib_size);
 +   PFN_vkDestroyDevice vkDestroyDevice =
 +      (PFN_vkDestroyDevice)vkGetDeviceProcAddr(device, "vkDestroyDevice");
 +   CHECK(vkDestroyDevice);
-+
-+   start = now_ms();
-+   mtl_library *library = mtl_new_library_with_data(
-+      dev->mtl_handle, libkk_metallib, libkk_metallib_size);
-+   CHECK(library);
-+   for (unsigned i = 0; i < LIBKK_NUM_PROGRAMS; i++) {
-+      const struct kk_precompiled_info *info =
-+         (const void *)libkk_AppleSilicon[i];
-+      char entry_point[32];
-+      snprintf(entry_point, sizeof(entry_point), "libkk_%u", i);
-+      mtl_function_descriptor *function =
-+         mtl_new_library_function_descriptor(library, entry_point);
-+      CHECK(function);
-+      mtl_compute_pipeline_state *pipeline = mtl_new_compute_pipeline_state(
-+         dev->mtl_compiler_handle, function,
-+         info->workgroup_size[0] * info->workgroup_size[1] *
-+            info->workgroup_size[2]);
-+      if (!pipeline)
-+         fprintf(stderr, "offline program %u builds no pipeline\n", i);
-+      CHECK(pipeline);
-+      mtl_release(pipeline);
-+      mtl_release(function);
-+      CHECK(dev->precompiled_cache.shaders[i].pipeline);
-+   }
-+   mtl_release(library);
-+   printf("%u offline programs, %zu bytes, built in %.1f ms\n",
-+          LIBKK_NUM_PROGRAMS, libkk_metallib_size, now_ms() - start);
 +
 +   vkDestroyDevice(device, NULL);
 +   vkDestroyInstance(instance, NULL);
