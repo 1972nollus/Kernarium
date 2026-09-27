@@ -895,20 +895,6 @@ public:
 		return static_cast<int>(count);
 	}
 
-	int code_changes(std::uint64_t generation, std::uint64_t sequence,
-		struct darwin_uml_static_code_change *output,
-		std::size_t capacity, std::uint64_t *current_sequence)
-	{
-		if (current_sequence == nullptr || (capacity != 0 && output == nullptr))
-			return -1;
-		static_assert(sizeof(darwin_uml_static_code_change) ==
-			sizeof(CodeChangeRange));
-		auto reference = reference_for(generation);
-		return code_changes_since(*reference.state, sequence,
-			reinterpret_cast<CodeChangeRange *>(output), capacity,
-			current_sequence);
-	}
-
 	void invalidate_code(std::uint64_t address)
 	{
 		const auto &active = active_thread_generation();
@@ -2248,17 +2234,6 @@ extern "C" int darwin_uml_static_vm_mapping_changes(
 {
 	return with_address_space([&](auto &space) {
 		return space.mapping_changes(
-			generation, sequence, changes, capacity, current_sequence);
-	});
-}
-
-extern "C" int darwin_uml_static_vm_code_change_ranges(
-	unsigned long generation, uint64_t sequence,
-	struct darwin_uml_static_code_change *changes, size_t capacity,
-	uint64_t *current_sequence)
-{
-	return with_address_space([&](auto &space) {
-		return space.code_changes(
 			generation, sequence, changes, capacity, current_sequence);
 	});
 }
