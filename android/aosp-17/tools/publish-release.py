@@ -33,6 +33,7 @@ from release_common import (  # noqa: E402
     resolve_zstd,
     sha256_path,
     verify_disk_boot_payloads,
+    verify_kernel_config,
     verify_release,
 )
 
@@ -188,19 +189,6 @@ def verify_clean_git(repository: Path, label: str, expected_tree: str | None = N
     return revision
 
 
-def verify_kernel_config(config_path: Path, android_root: Path) -> None:
-    from release_common import verify_kernel_config as verify_config
-
-    temporary_parent = Path(tempfile.mkdtemp(prefix="android17-config-check-"))
-    try:
-        release = temporary_parent / "release"
-        (release / "kernel").mkdir(parents=True)
-        shutil.copyfile(config_path, release / "kernel/config")
-        verify_config(release, android_root, enforce_tracked_policy=True)
-    finally:
-        shutil.rmtree(temporary_parent, ignore_errors=True)
-
-
 def sdk_identity(darwin_sdk: Path) -> str:
     settings = darwin_sdk / "SDKSettings.json"
     if settings.is_file():
@@ -332,7 +320,7 @@ def main() -> None:
     for name in ("System.map", "modules.builtin", "modules.builtin.modinfo"):
         regular_file(kernel_payload / name, f"ACK {name}")
     run([str(android_root / "build/verify-kernel-elf.py"), str(kernel_elf)])
-    verify_kernel_config(kernel_config, android_root)
+    verify_kernel_config(kernel_artifact, android_root, enforce_tracked_policy=True)
     run([
         str(android_root / "tools/verify-target-files.py"),
         "--target-files",
