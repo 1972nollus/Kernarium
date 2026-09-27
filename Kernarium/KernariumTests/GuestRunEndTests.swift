@@ -4,9 +4,9 @@ import Testing
 import UIKit
 @testable import Kernarium
 
-/// A launch runs its guest once. The runtime cannot boot a second guest in the
-/// same process, and an attempt ends the application, so after the run returns
-/// the application reports how the guest ended and asks to be relaunched.
+/// A launch runs its guest once. The runtime runs one guest per process and
+/// refuses a second run, so after the run returns the application reports how
+/// the guest ended and asks to be relaunched.
 @MainActor
 struct GuestRunEndTests {
     @Test

@@ -37,6 +37,11 @@ state, and copied network callback table. A handle admits at most one run at a
 time. Stop requests affect only that handle's current or queued run and are not
 carried into later runs.
 
+A process runs one guest. After a run's kernel has claimed guest RAM, every
+later run in the process, on any handle, returns `UML_EMULATOR_UNSUPPORTED`
+without entering a kernel; see
+[ADR 0002](decisions/0002-emulator-handle-lifetime.md).
+
 Different 16 KiB native-callback handles may run concurrently when their host
 mappings do not overlap. Embedded kernels and 4 KiB native-callback runs use a
 process address-space gate because their fixed host mappings cannot be safely
@@ -178,9 +183,10 @@ Designed for iPad mode, where it reaches the host GPU directly; that mode is
 where iOS behaviour is verified when no physical device is attached. The
 Simulator remains a target of the ordinary, non-GPU iOS libraries.
 
-A Kernarium launch runs its guest once. When the run returns, whether the
-guest powered off or the runtime failed, the application says how it ended
-and asks to be relaunched; it never starts a second run in the same process.
+The library runs one guest per process, so a Kernarium launch runs its guest
+once. When the run returns, whether the guest powered off or the runtime
+failed, the application says how it ended and asks to be relaunched; it never
+starts a second run in the same process.
 
 ## CPU execution and scheduling
 
