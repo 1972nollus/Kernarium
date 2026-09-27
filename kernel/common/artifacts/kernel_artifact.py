@@ -17,7 +17,7 @@ import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import NoReturn
+from typing import NamedTuple, NoReturn
 
 from contract_checks import ContractChecks, parse_config
 
@@ -267,7 +267,18 @@ def bounded_slice(payload: bytes, offset: int, size: int, label: str) -> bytes:
     return payload[offset : offset + size]
 
 
-def elf_imports(payload: bytes) -> set[str]:
+class SectionHeader(NamedTuple):
+    name: int
+    kind: int
+    flags: int
+    offset: int
+    size: int
+    link: int
+    entry_size: int
+
+
+def section_headers(payload: bytes) -> list[SectionHeader]:
+    """Return every ELF64 section header, each with contents inside the file."""
     section_offset = struct.unpack_from("<Q", payload, 40)[0]
     section_entry_size, section_count = struct.unpack_from("<HH", payload, 58)
     if section_entry_size < 64 or section_count == 0:
@@ -278,33 +289,40 @@ def elf_imports(payload: bytes) -> set[str]:
         section_entry_size * section_count,
         "section-header table",
     )
-    sections: list[tuple[int, int, int, int]] = []
+    headers = []
     for index in range(section_count):
         offset = section_offset + index * section_entry_size
-        kind = struct.unpack_from("<I", payload, offset + 4)[0]
+        name, kind, flags = struct.unpack_from("<IIQ", payload, offset)
         file_offset, size = struct.unpack_from("<QQ", payload, offset + 24)
         link = struct.unpack_from("<I", payload, offset + 40)[0]
         entry_size = struct.unpack_from("<Q", payload, offset + 56)[0]
         if kind != SHT_NOBITS:
             bounded_slice(payload, file_offset, size, f"section {index}")
-        sections.append((kind, file_offset, size, link if entry_size else -1))
+        headers.append(
+            SectionHeader(name, kind, flags, file_offset, size, link, entry_size)
+        )
+    return headers
 
+
+def elf_imports(payload: bytes) -> set[str]:
+    sections = section_headers(payload)
     imported: set[str] = set()
     found_symbol_table = False
-    for index, (kind, file_offset, size, link) in enumerate(sections):
-        if kind not in (SHT_SYMTAB, SHT_DYNSYM):
+    for index, section in enumerate(sections):
+        if section.kind not in (SHT_SYMTAB, SHT_DYNSYM):
             continue
         found_symbol_table = True
-        entry_size = struct.unpack_from(
-            "<Q", payload, section_offset + index * section_entry_size + 56
-        )[0]
-        if entry_size < 24 or size % entry_size != 0:
+        entry_size = section.entry_size
+        if entry_size < 24 or section.size % entry_size != 0:
             fail(f"ELF symbol table {index} is malformed")
-        if link < 0 or link >= len(sections):
+        if section.link >= len(sections):
             fail(f"ELF symbol table {index} has an invalid string table")
-        _, string_offset, string_size, _ = sections[link]
-        strings = bounded_slice(payload, string_offset, string_size, "string table")
-        for symbol_offset in range(file_offset, file_offset + size, entry_size):
+        string_table = sections[section.link]
+        strings = bounded_slice(
+            payload, string_table.offset, string_table.size, "string table"
+        )
+        end = section.offset + section.size
+        for symbol_offset in range(section.offset, end, entry_size):
             name_offset = struct.unpack_from("<I", payload, symbol_offset)[0]
             section_index = struct.unpack_from("<H", payload, symbol_offset + 6)[0]
             if section_index != SHN_UNDEF or name_offset >= len(strings):
@@ -424,35 +442,28 @@ def verify_elf(
 
 def elf_sections(payload: bytes) -> list[tuple[str, int, int, int]]:
     """Return (name, type, flags, size) for every ELF64 section."""
-    section_offset = struct.unpack_from("<Q", payload, 40)[0]
-    section_entry_size, section_count, names_index = struct.unpack_from(
-        "<HHH", payload, 58
-    )
-    if section_entry_size < 64 or section_count == 0 or names_index >= section_count:
+    names_index = struct.unpack_from("<H", payload, 62)[0]
+    headers = section_headers(payload)
+    if names_index >= len(headers):
         fail("ELF section-header table is missing or malformed")
-    bounded_slice(
-        payload,
-        section_offset,
-        section_entry_size * section_count,
-        "section-header table",
-    )
-    headers = []
-    for index in range(section_count):
-        offset = section_offset + index * section_entry_size
-        name, kind, flags = struct.unpack_from("<IIQ", payload, offset)
-        file_offset, size = struct.unpack_from("<QQ", payload, offset + 24)
-        headers.append((name, kind, flags, file_offset, size))
-    _, names_kind, _, names_offset, names_size = headers[names_index]
-    if names_kind == SHT_NOBITS:
+    names_header = headers[names_index]
+    if names_header.kind == SHT_NOBITS:
         fail("ELF section-name table has no contents")
-    names = bounded_slice(payload, names_offset, names_size, "section-name table")
+    names = bounded_slice(
+        payload, names_header.offset, names_header.size, "section-name table"
+    )
     sections = []
-    for name, kind, flags, _, size in headers:
-        terminator = names.find(b"\0", name)
-        if name >= len(names) or terminator < 0:
+    for header in headers:
+        terminator = names.find(b"\0", header.name)
+        if header.name >= len(names) or terminator < 0:
             fail("ELF section name is outside its string table")
         sections.append(
-            (names[name:terminator].decode("ascii", "replace"), kind, flags, size)
+            (
+                names[header.name : terminator].decode("ascii", "replace"),
+                header.kind,
+                header.flags,
+                header.size,
+            )
         )
     return sections
 
