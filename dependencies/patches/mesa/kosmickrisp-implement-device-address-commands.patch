@@ -4,10 +4,6 @@ Date: Sat, 5 Sep 2026 04:14:50 +0900
 Subject: [PATCH] kosmickrisp: implement device address commands
 
 ---
- src/gallium/drivers/zink/zink_context.c       |  18 +-
- src/gallium/drivers/zink/zink_context.h       |   2 +-
- src/gallium/drivers/zink/zink_draw.cpp        |   6 +-
- src/gallium/drivers/zink/zink_screen.c        |   2 +-
  src/kosmickrisp/bridge/mtl_encoder.h          |   3 +
  src/kosmickrisp/bridge/mtl_encoder.m          |  11 ++
  src/kosmickrisp/bridge/stubs/mtl_encoder.c    |   6 +
@@ -25,92 +21,10 @@ Subject: [PATCH] kosmickrisp: implement device address commands
  src/kosmickrisp/vulkan/kk_query_pool.c        |  62 +++++-
  src/kosmickrisp/vulkan/meson.build            |  12 ++
  .../vulkan/tests/test_device_address.c        |  47 +++++
- 21 files changed, 490 insertions(+), 20 deletions(-)
+ 17 files changed, 470 insertions(+), 12 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_device_address.h
  create mode 100644 src/kosmickrisp/vulkan/tests/test_device_address.c
 
-diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index 88d87b8bfa2a7c76f2d0ac02c3fdf0e76a63e596..509ac80de576024c9ceb4a34868215f523c194c6 100644
---- a/src/gallium/drivers/zink/zink_context.c
-+++ b/src/gallium/drivers/zink/zink_context.c
-@@ -1613,10 +1613,10 @@ zink_bind_vertex_buffers(struct zink_context *ctx, const struct pipe_vertex_buff
- }
- 
- void
--zink_bind_vertex_addresses(struct zink_context *ctx)
-+zink_bind_vertex_addresses(struct zink_context *ctx, bool set_stride)
- {
- #define DAC_VB_INIT \
--      {.sType = VK_STRUCTURE_TYPE_BIND_VERTEX_BUFFER_3_INFO_KHR, .setStride = VK_FALSE, \
-+      {.sType = VK_STRUCTURE_TYPE_BIND_VERTEX_BUFFER_3_INFO_KHR, .setStride = set_stride, \
-        .addressFlags = (VK_ADDRESS_COMMAND_STORAGE_BUFFER_USAGE_BIT_KHR | VK_ADDRESS_COMMAND_TRANSFORM_FEEDBACK_BUFFER_USAGE_BIT_KHR)}
-    VkBindVertexBuffer3InfoKHR dac_vbs[PIPE_MAX_ATTRIBS] = {
-       DAC_VB_INIT, DAC_VB_INIT, DAC_VB_INIT, DAC_VB_INIT, DAC_VB_INIT, DAC_VB_INIT, DAC_VB_INIT, DAC_VB_INIT,
-@@ -1633,10 +1633,18 @@ zink_bind_vertex_addresses(struct zink_context *ctx)
-       const struct pipe_vertex_buffer *vb = &ctx->vertex_buffers[elems->hw_state.binding_map[i]];
-       if (vb->buffer.resource) {
-          struct zink_resource *res = zink_resource(vb->buffer.resource);
--         int offset = vb->buffer_offset;
-+         int32_t offset = vb->buffer_offset;
-          assert(res->obj->buffer);
--         dac_vbs[i].addressRange.address = res->obj->bda + offset;
--         dac_vbs[i].addressRange.size = res->base.b.width0 - offset;
-+         if (offset < 0) {
-+            const uint32_t prefix = -(uint32_t)offset;
-+            dac_vbs[i].addressRange.address = res->obj->bda - prefix;
-+            dac_vbs[i].addressRange.size = res->base.b.width0 + prefix;
-+         } else {
-+            dac_vbs[i].addressRange.address = res->obj->bda + offset;
-+            dac_vbs[i].addressRange.size = res->base.b.width0 - offset;
-+         }
-+         dac_vbs[i].addressRange.stride =
-+            set_stride ? elems->hw_state.b.strides[i] : 0;
-          if (res->base.b.flags & PIPE_RESOURCE_FLAG_SPARSE)
-             dac_vbs[i].addressFlags &= ~VK_ADDRESS_COMMAND_FULLY_BOUND_BIT_KHR;
-          else
-diff --git a/src/gallium/drivers/zink/zink_context.h b/src/gallium/drivers/zink/zink_context.h
-index 4945d2ccd0f2cd93a73115f68bd055f2f1621bea..c4ef260f3ab4539af0bb5edbb0289b72768ee8b2 100644
---- a/src/gallium/drivers/zink/zink_context.h
-+++ b/src/gallium/drivers/zink/zink_context.h
-@@ -242,7 +242,7 @@ zink_bind_vertex_buffers_dynamic(struct zink_context *ctx, const struct pipe_ver
- void
- zink_bind_vertex_buffers(struct zink_context *ctx, const struct pipe_vertex_buffer *vbuffers);
- void
--zink_bind_vertex_addresses(struct zink_context *ctx);
-+zink_bind_vertex_addresses(struct zink_context *ctx, bool set_stride);
- 
- #ifdef __cplusplus
- }
-diff --git a/src/gallium/drivers/zink/zink_draw.cpp b/src/gallium/drivers/zink/zink_draw.cpp
-index 5cdb36e91e2c476b842d7fd32f20a9e1425264ca..43979ac150e0e7110ae9a9ebbd6ad83cfbfe0488 100644
---- a/src/gallium/drivers/zink/zink_draw.cpp
-+++ b/src/gallium/drivers/zink/zink_draw.cpp
-@@ -722,7 +722,11 @@ zink_draw(struct pipe_context *pctx,
-    if (!DRAW_STATE) {
-       if (BATCH_CHANGED || ctx->vertex_buffers_dirty) {
-          if (screen->info.have_KHR_device_address_commands)
--            zink_bind_vertex_addresses(ctx);
-+            zink_bind_vertex_addresses(
-+               ctx, DYNAMIC_STATE != ZINK_DYNAMIC_VERTEX_INPUT &&
-+                       DYNAMIC_STATE != ZINK_DYNAMIC_VERTEX_INPUT2 &&
-+                       DYNAMIC_STATE != ZINK_NO_DYNAMIC_STATE &&
-+                       ctx->gfx_pipeline_state.uses_dynamic_stride);
-          else if (DYNAMIC_STATE == ZINK_DYNAMIC_VERTEX_INPUT || DYNAMIC_STATE == ZINK_DYNAMIC_VERTEX_INPUT2 ||
-              DYNAMIC_STATE == ZINK_NO_DYNAMIC_STATE || !ctx->gfx_pipeline_state.uses_dynamic_stride)
-             zink_bind_vertex_buffers(ctx, ctx->vertex_buffers);
-diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
-index 9ef460398cefca47fb312c49129ca8479bcd472b..0b2342c445d344fffbea0625fbe94644b877be7b 100644
---- a/src/gallium/drivers/zink/zink_screen.c
-+++ b/src/gallium/drivers/zink/zink_screen.c
-@@ -3190,7 +3190,7 @@ init_driver_workarounds(struct zink_screen *screen)
-    if (zink_debug & ZINK_DEBUG_NOGENERAL)
-       screen->driver_workarounds.general_layout = false;
- 
--   if (!screen->info.have_EXT_vertex_input_dynamic_state || !screen->info.have_EXT_transform_feedback)
-+   if (!screen->info.have_EXT_transform_feedback)
-       screen->info.have_KHR_device_address_commands = false;
- 
-    if (!screen->resizable_bar)
 diff --git a/src/kosmickrisp/bridge/mtl_encoder.h b/src/kosmickrisp/bridge/mtl_encoder.h
 index 23efebf7f99149c004363fa56a346c0208dc54d7..1d6ea7188b6c46cef7310f9d7fb5cae64da035f3 100644
 --- a/src/kosmickrisp/bridge/mtl_encoder.h

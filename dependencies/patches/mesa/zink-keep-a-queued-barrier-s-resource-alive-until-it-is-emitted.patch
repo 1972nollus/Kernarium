@@ -53,7 +53,7 @@ index e984830ef7f5852ee8a3238bb2d3e3650166323c..058e80dccf2126a194a1ad7dc0708a74
  
        for (; res; res = zink_resource(res->base.b.next)) {
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..6e8af2dedac396bb3483399d9a340b4939a3e9d8 100644
+index 57449111063850fafdd2fa00afe9e134d7141aa0..26f9e29caeddce689fd4a6fadd975dc563727ec7 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
 @@ -97,6 +97,8 @@ check_resource_for_batch_ref(struct zink_context *ctx, struct zink_resource *res
@@ -174,7 +174,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..6e8af2dedac396bb3483399d9a340b49
        check_resource_for_batch_ref(ctx, res);
     } else
        p_atomic_inc(&res->bind_count[is_compute]);
-@@ -2016,9 +2095,9 @@ update_binds_for_samplerviews(struct zink_context *ctx, struct zink_resource *re
+@@ -2008,9 +2087,9 @@ update_binds_for_samplerviews(struct zink_context *ctx, struct zink_resource *re
        }
      }
      if (gfx_rebind)
@@ -186,7 +186,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..6e8af2dedac396bb3483399d9a340b49
  }
  
  static void
-@@ -2049,14 +2128,19 @@ check_for_layout_update(struct zink_context *ctx, struct zink_resource *res, boo
+@@ -2041,14 +2120,19 @@ check_for_layout_update(struct zink_context *ctx, struct zink_resource *res, boo
     bool ret = false;
     if (!is_compute && res->fb_binds && !(ctx->feedback_loops & res->fb_binds)) {
        /* always double check feedback loops */
@@ -211,7 +211,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..6e8af2dedac396bb3483399d9a340b49
     }
     return ret;
  }
-@@ -2078,7 +2162,7 @@ unbind_shader_image(struct zink_context *ctx, mesa_shader_stage stage, unsigned
+@@ -2070,7 +2154,7 @@ unbind_shader_image(struct zink_context *ctx, mesa_shader_stage stage, unsigned
     if (image_view->import2d) {
        unbind_buffer_descriptor_stage(res, stage);
        unbind_buffer_descriptor_reads(res, stage == MESA_SHADER_COMPUTE);
@@ -220,7 +220,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..6e8af2dedac396bb3483399d9a340b49
     } else if (image_view->base.resource->target == PIPE_BUFFER) {
        unbind_buffer_descriptor_stage(res, stage);
        unbind_buffer_descriptor_reads(res, stage == MESA_SHADER_COMPUTE);
-@@ -4142,7 +4226,7 @@ unbind_fb_surface(struct zink_context *ctx, const struct pipe_surface *surf, uns
+@@ -4134,7 +4218,7 @@ unbind_fb_surface(struct zink_context *ctx, const struct pipe_surface *surf, uns
     }
     res->fb_bind_count--;
     if (!res->fb_bind_count && !res->bind_count[0])
@@ -229,7 +229,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..6e8af2dedac396bb3483399d9a340b49
     unsigned feedback_loops = ctx->feedback_loops;
     if (!general_layout && ctx->feedback_loops & BITFIELD_BIT(idx)) {
        ctx->dynamic_fb.attachments[idx].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-@@ -4170,7 +4254,7 @@ unbind_fb_surface(struct zink_context *ctx, const struct pipe_surface *surf, uns
+@@ -4162,7 +4246,7 @@ unbind_fb_surface(struct zink_context *ctx, const struct pipe_surface *surf, uns
        if (!general_layout && res->sampler_bind_count[0]) {
           update_res_sampler_layouts(ctx, res);
           if (res->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && !ctx->blitting)
@@ -238,7 +238,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..6e8af2dedac396bb3483399d9a340b49
        }
     }
  }
-@@ -5617,7 +5701,7 @@ rebind_image(struct zink_context *ctx, struct zink_resource *res)
+@@ -5609,7 +5693,7 @@ rebind_image(struct zink_context *ctx, struct zink_resource *res)
              ctx->invalidate_descriptor_state(ctx, i, ZINK_DESCRIPTOR_TYPE_IMAGE, j, 1);
              update_descriptor_state_image(ctx, i, j, res);
              if (!general_layout)
@@ -247,7 +247,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..6e8af2dedac396bb3483399d9a340b49
           }
        }
     }
-@@ -5728,7 +5812,7 @@ zink_rebind_all_images(struct zink_context *ctx)
+@@ -5720,7 +5804,7 @@ zink_rebind_all_images(struct zink_context *ctx)
              ctx->invalidate_descriptor_state(ctx, i, ZINK_DESCRIPTOR_TYPE_IMAGE, j, 1);
              update_descriptor_state_image(ctx, i, j, res);
              if (!general_layout)
@@ -256,7 +256,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..6e8af2dedac396bb3483399d9a340b49
           }
        }
     }
-@@ -6399,9 +6483,14 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
+@@ -6391,9 +6475,14 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
     ASSERTED bool check_rp = ctx->in_rp && ctx->dynamic_fb.tc_info.zsbuf_invalidate;
     set_foreach(need_barriers, he) {
        struct zink_resource *res = (struct zink_resource *)he->key;
@@ -272,7 +272,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..6e8af2dedac396bb3483399d9a340b49
           if (!need_barriers->entries)
              break;
           continue;
-@@ -6432,9 +6521,11 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
+@@ -6424,9 +6513,11 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
            * image write binds and image read binds
            */
           if (res->write_bind_count[is_compute] && res->bind_count[is_compute] > 1)
@@ -286,7 +286,7 @@ index 3fa5a32a6d1f69933c69514c47bcb87866bd30ca..6e8af2dedac396bb3483399d9a340b49
           break;
     }
 diff --git a/src/gallium/drivers/zink/zink_context.h b/src/gallium/drivers/zink/zink_context.h
-index c4ef260f3ab4539af0bb5edbb0289b72768ee8b2..b3cc5e8c8696b00417f4d3ab6c1811e3b055f29c 100644
+index 4945d2ccd0f2cd93a73115f68bd055f2f1621bea..48118086c84eadb25a482fb09748e0a2565ba46a 100644
 --- a/src/gallium/drivers/zink/zink_context.h
 +++ b/src/gallium/drivers/zink/zink_context.h
 @@ -224,6 +224,12 @@ zink_init_grid_functions(struct zink_context *ctx);

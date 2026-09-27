@@ -31,10 +31,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 55 insertions(+)
 
 diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
-index 509ac80de576024c9ceb4a34868215f523c194c6..3fa5a32a6d1f69933c69514c47bcb87866bd30ca 100644
+index 88d87b8bfa2a7c76f2d0ac02c3fdf0e76a63e596..57449111063850fafdd2fa00afe9e134d7141aa0 100644
 --- a/src/gallium/drivers/zink/zink_context.c
 +++ b/src/gallium/drivers/zink/zink_context.c
-@@ -6337,6 +6337,54 @@ add_implicit_feedback_loop(struct zink_context *ctx, struct zink_resource *res)
+@@ -6329,6 +6329,54 @@ add_implicit_feedback_loop(struct zink_context *ctx, struct zink_resource *res)
     return true;
  }
  
@@ -89,7 +89,7 @@ index 509ac80de576024c9ceb4a34868215f523c194c6..3fa5a32a6d1f69933c69514c47bcb878
  void
  zink_update_barriers(struct zink_context *ctx, bool is_compute,
                       struct pipe_resource *index, struct pipe_resource *indirect, struct pipe_resource *indirect_draw_count)
-@@ -6351,6 +6399,13 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
+@@ -6343,6 +6391,13 @@ zink_update_barriers(struct zink_context *ctx, bool is_compute,
     ASSERTED bool check_rp = ctx->in_rp && ctx->dynamic_fb.tc_info.zsbuf_invalidate;
     set_foreach(need_barriers, he) {
        struct zink_resource *res = (struct zink_resource *)he->key;
