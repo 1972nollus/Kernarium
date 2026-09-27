@@ -99,6 +99,17 @@ pack_jit_result(Event event, std::size_t retired) noexcept {
          (static_cast<std::uint64_t>(retired) << 32U);
 }
 
+struct JitResult final {
+  Event event;
+  std::size_t retired;
+};
+
+[[nodiscard]] constexpr JitResult
+unpack_jit_result(std::uint64_t result) noexcept {
+  return {static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU)),
+          static_cast<std::size_t>(result >> 32U)};
+}
+
 /*
  * A translation has two executor-owned link operands: a direct successor key
  * whose mutable descriptor is regenerated beside the installed code, and an

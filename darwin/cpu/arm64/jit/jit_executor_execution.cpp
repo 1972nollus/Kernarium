@@ -123,8 +123,6 @@ namespace uml::cpu::arm64 {
           &Implementation::resolve_block_link, false,
           &Implementation::resolve_indirect_link
       };
-      // Compile once on a miss. Speculatively lowering the whole block a
-      // second time for GPR residency delays cold multi-process workloads.
       compiler.set_pointer_authentication_enabled(
           enable_pointer_authentication_);
 #if UML_ENABLE_JIT_PROFILE
@@ -265,10 +263,7 @@ namespace uml::cpu::arm64 {
       jit::semantic::invalidate_store_ranges(
           std::span<const JitStoreRange>{tracked_store_ranges_}.first(
               block->instruction_count));
-    const auto current_executed =
-        static_cast<std::size_t>(result >> 32);
-    const auto event =
-        static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU));
+    const auto [event, current_executed] = unpack_jit_result(result);
     deferred_exclusive = chain.deferred_exclusive_instruction;
     executed = maximum_chain_instructions -
                    static_cast<std::size_t>(chain.remaining_instructions) +
@@ -502,10 +497,10 @@ JitExecutor::Implementation::translate_single_instruction(
   if (tracked_stores)
     jit::semantic::invalidate_store_ranges(
         std::span<const JitStoreRange>{tracked_store_ranges_}.first(1U));
-  executed = static_cast<std::size_t>(result >> 32U);
+  const auto unpacked = unpack_jit_result(result);
+  executed = unpacked.retired;
   deferred_exclusive = chain.deferred_exclusive_instruction;
-  const auto event =
-      static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU));
+  const auto event = unpacked.event;
   if (event == Event::memory_fault)
     tlb_.discard(tlb_.fault_address);
   return event;
@@ -588,9 +583,8 @@ JitExecutor::Implementation::run_deferred_exclusive_instruction(
     CpuState &cpu, std::uint32_t instruction, std::size_t &executed) {
   const auto result =
       uml_arm64_jit_execute_exclusive(&cpu, &tlb_, instruction);
-  executed = static_cast<std::size_t>(result >> 32U);
-  const auto event =
-      static_cast<Event>(static_cast<std::int32_t>(result & 0xffff'ffffU));
+  const auto [event, retired] = unpack_jit_result(result);
+  executed = retired;
   if (event == Event::memory_fault)
     tlb_.discard(tlb_.fault_address);
   return event;
