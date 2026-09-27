@@ -452,7 +452,7 @@ index d59915c5db630849184ea7208b5820843d4992df..f021f797231748d65960d14ac6fec340
        mtl_set_address(cmd->argument_table, dev->samplers.table.bo->gpu, 1u);
        mtl_release(desc);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index ca045be614562fb1c07d12ec58a700bff4783643..67dd9e4ddca659df11a7b6a0b8ca2f34c70acca8 100644
+index 856ed152d0f487642a016b672055376dd8659dbe..1a8e77c26e3f4a88fd08ad8b029025f2794c3a4a 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1756,8 +1756,20 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)

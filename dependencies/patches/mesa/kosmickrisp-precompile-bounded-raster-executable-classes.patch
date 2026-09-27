@@ -28,7 +28,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
  src/kosmickrisp/libkk/kk_geometry.cl          |   20 +-
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   10 +
- src/kosmickrisp/vulkan/kk_cmd_draw.c          |  259 ++-
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          |  267 ++-
  src/kosmickrisp/vulkan/kk_cmd_meta.c          |   12 +
  src/kosmickrisp/vulkan/kk_line_raster.h       |   35 +-
  src/kosmickrisp/vulkan/kk_physical_device.c   |    4 +-
@@ -52,7 +52,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  .../vulkan/tests/test_line_raster_cache.cpp   |    2 +
  .../vulkan/tests/test_raster_discard.cpp      |  500 +++++
  .../vulkan/tests/test_raster_variant.c        |   80 +
- 26 files changed, 2736 insertions(+), 820 deletions(-)
+ 26 files changed, 2749 insertions(+), 815 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_raster_edge.h
  create mode 100644 src/kosmickrisp/vulkan/kk_raster_variant.h
  create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag
@@ -183,7 +183,7 @@ index 06918dae6c8d4f5d2ad731b4a129123a8da59288..3db643cfd996080847810d9198b1cf41
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c393a71d6c 100644
+index d671d21a89188d3f18044db7199021369e3f9a09..0929417987eafc2c88251e2321a66313bd7599e4 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -15,6 +15,7 @@
@@ -344,7 +344,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
  
     if (IS_DIRTY(DS_STENCIL_REFERENCE))
        mtl_set_stencil_references(
-@@ -2374,7 +2417,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2381,7 +2424,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
                                     &gfx->per_draw_data.vertex_params))
           return false;
  
@@ -353,7 +353,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
           const uint32_t wg_size[3] = {64, 1, 1};
           struct poly_vertex_params line_params;
           poly_vertex_params_init(&line_params,
-@@ -2426,8 +2469,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2433,8 +2476,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
        kk_upload_tess_params(cmd, tess_args.cpu, draw);
     }
  
@@ -363,7 +363,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
        const struct vk_dynamic_graphics_state *dyn =
           &cmd->vk.dynamic_graphics_state;
        gfx->per_draw_data.polygon_point_cull_mode = dyn->rs.cull_mode;
-@@ -2436,9 +2478,27 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2443,9 +2485,27 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
        gfx->per_draw_data.polygon_point_provoking_last =
           dyn->rs.provoking_vertex ==
           VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
@@ -394,7 +394,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
        const struct vk_dynamic_graphics_state *dyn =
           &cmd->vk.dynamic_graphics_state;
        gfx->per_draw_data.line_raster_topology =
-@@ -2457,6 +2517,18 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2464,6 +2524,18 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
           dyn->rs.line.stipple.pattern;
        gfx->per_draw_data.line_raster_run_starts_addr =
           draw->line_raster_run_starts_addr;
@@ -413,7 +413,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
  
        for (uint32_t i = 0; i < KK_MAX_VIEWPORTS; ++i) {
           const VkViewport *viewport =
-@@ -2471,6 +2543,17 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2478,6 +2550,17 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
              half_width != 0.0f ? 1.0f / half_width : 0.0f;
           gfx->per_draw_data.line_raster_viewports[i].inv_half_height =
              half_height != 0.0f ? 1.0f / half_height : 0.0f;
@@ -431,7 +431,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
        }
     }
  
-@@ -2605,65 +2688,6 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2612,69 +2695,36 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     return draw;
  }
  
@@ -448,17 +448,14 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
 -         kk_pool_alloc(cmd, sizeof(VkDrawIndirectCommand), 4);
 -      if (unlikely(!out_draw.gpu))
 -         return (struct kk_draw_data){.grid = kk_grid_1d(0)};
--
+ 
 -      struct libkk_polygon_point_setup_indirect_args args = {
 -         .heap = kk_heap(cmd),
 -         .vp = gfx->per_draw_data.vertex_params,
 -         .in_draw = draw.grid.addr,
 -         .out_draw = out_draw.gpu,
 -         .index_buffer = draw.index.gpu.addr,
--         .index_buffer_range_el =
--            draw.index.el_size_B
--               ? draw.index.gpu.range / draw.index.el_size_B
--               : 0,
+-         .index_buffer_range_el = kk_draw_index_range_el(&draw),
 -         .index_size_B = draw.index.el_size_B,
 -         .vertex_outputs = vs->info.vs.outputs_written,
 -         .mode = prim,
@@ -493,13 +490,51 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
 -   draw.vertex_offset = 0;
 -   draw.primitive_type = MTL_PRIMITIVE_TYPE_POINT;
 -   return draw;
--}
++/* The vertices the generated line stage writes per line: none for the
++ * procedural stage, which expands each edge itself, otherwise a quad for
++ * rectangular coverage or the two endpoints. */
++static uint32_t
++kk_line_vertices_per_line(const struct kk_shader *vs)
++{
++   return vs->info.vs.line_raster_procedural ? 0
++          : vs->info.vs.line_raster_triangles ? 6 : 2;
+ }
  
- static struct kk_draw_data
- kk_launch_line_raster(struct kk_cmd_buffer *cmd,
-@@ -2675,10 +2699,10 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
+-/* The vertices the generated line stage writes per line: a quad for
+- * rectangular coverage, otherwise the two endpoints. */
++/* The per-line record the setup kernel reserves beside each line: the
++ * procedural stage's edge, a continuous stipple pattern's starting phase, or
++ * nothing. */
+ static uint32_t
+-kk_line_vertices_per_line(const struct kk_shader *vs)
++kk_line_aux_stride(const struct kk_shader *vs, bool continuous)
++{
++   return vs->info.vs.line_raster_procedural ? sizeof(struct kk_raster_edge)
++          : continuous ? sizeof(float) : 0;
++}
++
++/* Where the line setup kernel writes the raster draw: the procedural stage
++ * reads it from per-draw data, every other stage from a pool slot. */
++static uint64_t
++kk_line_raster_out_draw(struct kk_cmd_buffer *cmd,
++                        const struct kk_shader *vs)
+ {
+-   return vs->info.vs.line_raster_triangles ? 6 : 2;
++   return vs->info.vs.line_raster_procedural
++             ? cmd->state.gfx.per_draw_data.line_raster_draw
++             : kk_pool_alloc(cmd, sizeof(VkDrawIndirectCommand), 4).gpu;
+ }
+ 
+ /* A continuous stipple pattern crosses line boundaries, so each line's
+@@ -2720,31 +2770,31 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
     const uint32_t view_count = kk_line_view_count(vs->info.vs.view_mask);
     uint32_t raster_vertex_count = 0;
+    const bool line_stipple_continuous =
++      vs->info.vs.line_raster_procedural ||
+       kk_line_stipple_prefix_required(
+          vs->info.vs.line_raster_stipple,
+          gfx->per_draw_data.line_stipple_enable, prim,
+          draw.line_raster_run_starts_addr);
  
 -   if (!indirect &&
 +   if (!indirect && !vs->info.vs.line_raster_procedural &&
@@ -507,19 +542,16 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
            prim, draw.grid.size.x,
 -          vs->info.vs.line_raster_polygon_edges ? 3 : 1,
 +          kk_raster_elements_per_primitive(vs),
-           vs->info.vs.line_raster_triangles ? 6 : 2,
-           &raster_vertex_count)) {
+           kk_line_vertices_per_line(vs), &raster_vertex_count)) {
        vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-@@ -2686,16 +2710,17 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
+       return (struct kk_draw_data){.grid = kk_grid_1d(0)};
     }
  
     if (indirect) {
 -      struct kk_ptr out_draw =
 -         kk_pool_alloc(cmd, sizeof(VkDrawIndirectCommand), 4);
 -      if (unlikely(!out_draw.gpu))
-+      uint64_t out_draw = vs->info.vs.line_raster_procedural
-+         ? gfx->per_draw_data.line_raster_draw
-+         : kk_pool_alloc(cmd, sizeof(VkDrawIndirectCommand), 4).gpu;
++      uint64_t out_draw = kk_line_raster_out_draw(cmd, vs);
 +      if (unlikely(!out_draw))
           return (struct kk_draw_data){.grid = kk_grid_1d(0)};
  
@@ -530,27 +562,16 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
 -         .out_draw = out_draw.gpu,
 +         .out_draw = out_draw,
           .index_buffer = draw.index.gpu.addr,
-          .index_buffer_range_el =
-             draw.index.el_size_B
-@@ -2705,20 +2730,22 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
-          .vertex_outputs = vs->info.vs.outputs_written,
+          .index_buffer_range_el = kk_draw_index_range_el(&draw),
+          .index_size_B = draw.index.el_size_B,
+@@ -2752,14 +2802,14 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
           .mode = prim,
-          .vertices_per_line =
--            vs->info.vs.line_raster_triangles ? 6 : 2,
-+            vs->info.vs.line_raster_procedural ? 0
-+            : vs->info.vs.line_raster_triangles ? 6 : 2,
+          .vertices_per_line = kk_line_vertices_per_line(vs),
           .lines_per_primitive =
 -            vs->info.vs.line_raster_polygon_edges ? 3 : 1,
--         .line_stipple_continuous =
--            kk_line_stipple_prefix_required(
+-         .line_stipple_continuous = line_stipple_continuous,
 +            kk_raster_elements_per_primitive(vs),
-+         .line_aux_stride = vs->info.vs.line_raster_procedural
-+            ? sizeof(struct kk_raster_edge)
-+            : kk_line_stipple_prefix_required(
-                vs->info.vs.line_raster_stipple,
-                gfx->per_draw_data.line_stipple_enable, prim,
--               draw.line_raster_run_starts_addr),
-+               draw.line_raster_run_starts_addr) ? sizeof(float) : 0,
++         .line_aux_stride = kk_line_aux_stride(vs, line_stipple_continuous),
           .line_run_starts_addr = draw.line_raster_run_starts_addr,
        };
  
@@ -561,34 +582,24 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
     }
  
     mtl_compute_encoder *enc = cs_get_compute(cmd, true);
-@@ -2741,6 +2768,7 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
-    }
- 
-    const bool line_stipple_continuous =
-+      vs->info.vs.line_raster_procedural ||
-       kk_line_stipple_prefix_required(
-          vs->info.vs.line_raster_stipple,
-          gfx->per_draw_data.line_stipple_enable, prim,
-@@ -2761,6 +2789,9 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
-       }
+@@ -2789,6 +2839,9 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
+                                       indirect ? NULL : &prefix_grid);
     }
  
 +   if (vs->info.vs.line_raster_procedural)
 +      draw.grid = kk_grid_indirect(gfx->per_draw_data.line_raster_draw);
 +
-    draw.index.gpu = (struct kk_addr_range){0};
-    draw.index.el_size_B = 0;
-    draw.vertex_offset = 0;
-@@ -2851,12 +2882,14 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+    kk_draw_line_raster_output(&draw, vs);
+    return draw;
+ }
+@@ -2871,12 +2924,12 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
        lines.line_raster_run_starts_addr = source.line_raster_run_starts_addr;
     enum mesa_prim line_prim = u_decomposed_prim(source_prim);
  
 -   struct kk_ptr out_draw =
 -      kk_pool_alloc(cmd, sizeof(VkDrawIndirectCommand), 4);
 -   if (unlikely(!out_draw.gpu))
-+   uint64_t out_draw = vs->info.vs.line_raster_procedural
-+      ? gfx->per_draw_data.line_raster_draw
-+      : kk_pool_alloc(cmd, sizeof(VkDrawIndirectCommand), 4).gpu;
++   uint64_t out_draw = kk_line_raster_out_draw(cmd, vs);
 +   if (unlikely(!out_draw))
        return (struct kk_draw_data){.grid = kk_grid_1d(0)};
  
@@ -597,41 +608,35 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
        kk_line_stipple_prefix_required(
           vs->info.vs.line_raster_stipple,
           gfx->per_draw_data.line_stipple_enable,
-@@ -2866,7 +2899,7 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2886,15 +2939,15 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
        .heap = kk_heap(cmd),
        .vp = line_vp,
        .in_draw = lines.grid.addr,
 -      .out_draw = out_draw.gpu,
 +      .out_draw = out_draw,
        .index_buffer = lines.index.gpu.addr,
-       .index_buffer_range_el =
-          lines.index.el_size_B
-@@ -2874,10 +2907,12 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
-             : 0,
+       .index_buffer_range_el = kk_draw_index_range_el(&lines),
        .index_size_B = lines.index.el_size_B,
        .mode = line_prim,
--      .vertices_per_line = vs->info.vs.line_raster_triangles ? 6 : 2,
-+      .vertices_per_line = vs->info.vs.line_raster_procedural ? 0
-+         : vs->info.vs.line_raster_triangles ? 6 : 2,
+       .vertices_per_line = kk_line_vertices_per_line(vs),
        .lines_per_primitive =
 -         vs->info.vs.line_raster_polygon_edges ? 3 : 1,
 -      .line_stipple_continuous = continuous,
 +         kk_raster_elements_per_primitive(vs),
-+      .line_aux_stride = vs->info.vs.line_raster_procedural
-+         ? sizeof(struct kk_raster_edge) : continuous ? sizeof(float) : 0,
++      .line_aux_stride = kk_line_aux_stride(vs, continuous),
        .line_run_starts_addr = lines.line_raster_run_starts_addr,
     };
     libkk_line_raster_setup_indirect_struct(cmd, kk_grid_1d(1), true, setup);
-@@ -2893,7 +2928,7 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
-          line_vp + offsetof(struct poly_vertex_params, line_stipple_grid));
+@@ -2904,7 +2957,7 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+       kk_dispatch_line_stipple_prefix(enc, vs, line_vp, NULL);
     }
  
 -   lines.grid = kk_grid_indirect(out_draw.gpu);
 +   lines.grid = kk_grid_indirect(out_draw);
-    lines.index.gpu = (struct kk_addr_range){0};
-    lines.index.el_size_B = 0;
-    lines.vertex_offset = 0;
-@@ -3159,7 +3194,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+    kk_draw_line_raster_output(&lines, vs);
+    return lines;
+ }
+@@ -3159,7 +3212,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
     bool tess = cmd->state.shaders[MESA_SHADER_TESS_EVAL];
     struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
     bool geometry = vs && vs->info.vs.geometry_shader_emulation;
@@ -641,7 +646,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
     struct kk_draw_data draw = {
        .index.gpu = data->index_buffer,
        .index.el_size_B = data->index_buffer_el_size_B,
-@@ -3185,7 +3221,7 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3185,7 +3239,7 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
        draw.vertex_offset = draw_cmd.vertexOffset;
  
        uint64_t index_offset =
@@ -650,7 +655,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
        draw.index.gpu.addr += index_offset;
        draw.index.gpu.range = index_offset < draw.index.gpu.range
                                  ? draw.index.gpu.range - index_offset
-@@ -3227,11 +3263,12 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3227,11 +3281,12 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        return;
  
     bool tess = cmd->state.shaders[MESA_SHADER_TESS_EVAL];
@@ -665,7 +670,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
     const bool emulate_line_raster = vs->info.vs.line_raster_emulation;
     const bool materialize_line_raster =
        vs->info.vs.line_raster_materialize;
-@@ -3242,7 +3279,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3242,7 +3297,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        cmd->vk.dynamic_graphics_state.rs.provoking_vertex ==
        VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
     const bool rewrite_direct_provoking =
@@ -674,7 +679,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
        !emulate_transform_feedback && !emulate_polygon_points &&
        !emulate_line_raster &&
        u_reduced_prim(data->prim) != MESA_PRIM_POINTS;
-@@ -3259,7 +3296,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3259,7 +3314,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
          data->prim == MESA_PRIM_TRIANGLE_FAN) ||
         (emulate_transform_feedback && data->indexed && data->restart) ||
         (emulate_geometry && data->indexed && data->restart) ||
@@ -684,7 +689,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
          data->restart) ||
         (!emulate_geometry && !emulate_polygon_points && polygon_as_points &&
          is_polygon_primitive(data->prim) &&
-@@ -3295,8 +3333,6 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3295,8 +3351,6 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        } else if (emulate_transform_feedback)
           draw_data =
              kk_launch_transform_feedback(cmd, draw_data, data->prim);
@@ -693,7 +698,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
  
        const enum mesa_prim source_raster_prim =
           emulate_geometry ? vs->info.vs.geometry.mode
-@@ -3306,7 +3342,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3306,7 +3360,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        if (materialize_line_raster) {
           draw_data = kk_launch_materialized_line_raster(
              cmd, draw_data, source_raster_prim);
@@ -702,7 +707,7 @@ index 93f7572fcfeea6fd8b10dda589c8953c58d1ffe6..03c9be79c5316bcaca19607ecbc991c3
           draw_data =
              kk_launch_line_raster(cmd, draw_data, data->prim);
        }
-@@ -3319,12 +3355,13 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3319,12 +3373,13 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        /* The XFB pass-through raster shader sources flat outputs from the
         * requested provoking vertex itself.  Keep its non-indexed vertex IDs
         * intact: they also address the generated XFB records. */

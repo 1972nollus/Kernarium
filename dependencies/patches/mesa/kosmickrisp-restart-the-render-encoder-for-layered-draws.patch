@@ -257,7 +257,7 @@ index 3db643cfd996080847810d9198b1cf4134077a2f..3761d06afef8be760d62ad76db3bd653
  void cs_end(struct kk_cmd_buffer *cmd);
  void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 87cf8e5cc3485e42c08c47ef9fce84c955766f29..fb42389c5db398474c15ca1756179fc1b731b819 100644
+index b34b6f88ea40a761cbc0b90038d71a9452622be9..c6382bdd3aabc52354c846b8aefa06d162e305b6 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -353,6 +353,7 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
@@ -303,7 +303,7 @@ index 87cf8e5cc3485e42c08c47ef9fce84c955766f29..fb42389c5db398474c15ca1756179fc1
     bool color_map_changed = false;
  
     if (IS_DIRTY(COLOR_ATTACHMENT_MAP)) {
-@@ -2240,6 +2255,8 @@ kk_dispatch_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data data)
+@@ -2247,6 +2262,8 @@ kk_dispatch_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data data)
  {
     mtl_render_encoder *enc = cs_get_render(cmd);
  

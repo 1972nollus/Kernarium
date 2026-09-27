@@ -500,7 +500,7 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
        mtl_dispatch_threadgroups_with_indirect_buffer(
           encoder, pInfo->addressRange.address, local_size);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 00d1ef6ddf861361ec45eefeada3b8e7566574ca..8d678acfc3c7a73aac5ec181d6c7fb5c852c0af6 100644
+index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90727ab396 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1231,14 +1231,22 @@ kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
@@ -675,7 +675,7 @@ index 00d1ef6ddf861361ec45eefeada3b8e7566574ca..8d678acfc3c7a73aac5ec181d6c7fb5c
  /* Unrolling will always be done through indirect rendering, so if this is
   * called from non-indirect calls, we will fake it. */
  static bool
-@@ -2395,6 +2506,19 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2402,6 +2513,19 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     uint32_t input_patch_size = dyn->ts.patch_control_points;
     uint64_t state = gfx->per_draw_data.tess_params;
     struct kk_tess_info info = gfx->tess.info;
@@ -695,7 +695,7 @@ index 00d1ef6ddf861361ec45eefeada3b8e7566574ca..8d678acfc3c7a73aac5ec181d6c7fb5c
  
     /* Setup grids */
     if (kk_grid_is_indirect(draw.grid)) {
-@@ -2404,7 +2528,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2411,7 +2535,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
           .indirect = draw.grid.addr,
           .vp = gfx->per_draw_data.vertex_params,
           .vertex_outputs = vs->info.vs.outputs_written,
@@ -704,7 +704,7 @@ index 00d1ef6ddf861361ec45eefeada3b8e7566574ca..8d678acfc3c7a73aac5ec181d6c7fb5c
        };
  
        if (draw.index.el_size_B) {
-@@ -2428,6 +2552,11 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2435,6 +2559,11 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  
        grid_tcs.size.x = patches * tcs->info.tess.tcs_output_patch_size;
        grid_tess = kk_grid_1d(patches * draw.grid.size.y);
@@ -716,7 +716,7 @@ index 00d1ef6ddf861361ec45eefeada3b8e7566574ca..8d678acfc3c7a73aac5ec181d6c7fb5c
     }
  
     /* First launch the VS and TCS */
-@@ -2458,7 +2587,9 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2465,7 +2594,9 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     libkk_tessellate(cmd, grid_tess, true, info.mode, POLY_TESS_MODE_COUNT,
                      state);
  
@@ -727,7 +727,7 @@ index 00d1ef6ddf861361ec45eefeada3b8e7566574ca..8d678acfc3c7a73aac5ec181d6c7fb5c
  
     libkk_tessellate(cmd, grid_tess, true, info.mode, POLY_TESS_MODE_WITH_COUNTS,
                      state);
-@@ -2770,6 +2901,24 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2776,6 +2907,24 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
     return lines;
  }
  
@@ -752,7 +752,7 @@ index 00d1ef6ddf861361ec45eefeada3b8e7566574ca..8d678acfc3c7a73aac5ec181d6c7fb5c
  static struct kk_draw_data
  kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                               struct kk_draw_data draw, enum mesa_prim prim)
-@@ -2826,9 +2975,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2829,9 +2978,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                            vs_local_size);
     }
  
