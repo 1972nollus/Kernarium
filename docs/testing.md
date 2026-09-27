@@ -354,6 +354,22 @@ userdata/metadata mount and format behavior, backup/restore, file manager,
 terminal, battery display, and normal/recovery reboot paths. Never run wipe or
 restore checks against an existing user bundle.
 
+`KernariumTests` runs on the iPad and, as an iPad app, on an Apple silicon
+Mac. The iPad is the reference, and the whole suite passes there. On the Mac
+four tests fail because of how the Mac hosts an iPad app:
+
+- `theKeyboardButtonFocusesTheViewOnScreen` and
+  `anEndedRunIsNeverStartedAgain` find SwiftUI controls by walking the
+  window's accessibility elements. On the iPad a test run has UIKit
+  application accessibility on, and the walk finds every control. On the Mac
+  it is off, and SwiftUI's hosting view then exposes no elements. Turning it
+  on in the process makes the same walk find them.
+- `theKeyBarNeverCoversTheConsole` and `anUnfocusedConsoleKeepsEveryRow`
+  model the key bar docked at the bottom of the screen, which is where the
+  console looks for it. On the Mac the window ends above the bottom of the
+  screen and the bar sits at the bottom of the window, so the console does
+  not make room for it.
+
 When copying a `.kern` bundle to a device, target the complete
 `Documents/<name>.kern` destination. Never copy into or replace the Documents
 directory itself, because doing so can flatten the bundle or destroy unrelated
