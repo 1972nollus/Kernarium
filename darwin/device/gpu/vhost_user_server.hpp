@@ -186,6 +186,7 @@ class InProcessVhostUserService final {
 public:
     using DeviceFactory =
         std::function<std::unique_ptr<uml::virtio::VhostUserDevice>()>;
+    using ServerFactory = std::function<std::unique_ptr<VhostUserServer>()>;
 
     /* Starts the service thread with the guest timer blocked, creates the
      * device on it, and returns once the server is ready. An exception the
@@ -196,6 +197,15 @@ public:
         std::string label,
         std::string threadName,
         DeviceFactory makeDevice,
+        std::shared_ptr<uml::virtio::SharedMemoryRegions>
+            sharedMemoryRegions = {});
+    /* The same, for a device whose server needs more than the device, such
+     * as the GPU's display: `makeServer` builds the whole server on the
+     * service thread. */
+    InProcessVhostUserService(
+        std::string label,
+        std::string threadName,
+        ServerFactory makeServer,
         std::shared_ptr<uml::virtio::SharedMemoryRegions>
             sharedMemoryRegions = {});
     ~InProcessVhostUserService();
@@ -215,7 +225,7 @@ private:
 
     std::string label_;
     std::string threadName_;
-    DeviceFactory makeDevice_;
+    ServerFactory makeServer_;
     std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions_;
     std::array<UniqueDescriptor, 2> descriptors_;
     UniqueDescriptor stopDescriptor_;

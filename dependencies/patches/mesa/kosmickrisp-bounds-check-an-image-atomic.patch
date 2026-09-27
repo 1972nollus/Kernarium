@@ -24,7 +24,7 @@ size query per access is not free.
  1 file changed, 31 insertions(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 3f057badc7f7a35f735d31f47852625f5851927b..c65a0b1d9cd6c4476de6e872f5d370bfbcc09887 100644
+index 93f79cd1fa43f72f0ee2fc62dbe8dfa77e2f91e5..e2af16a8dec4599725596c159e458a1217e02859 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -1299,6 +1299,24 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,

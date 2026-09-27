@@ -413,7 +413,7 @@ index 1b1b941a091821afbf262375c4941bd7c00d008d..e0bca96fa29bc9247fee77fe998308b5
                                          uint64_t addr);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index d9ec6876dd0c8ed8e6a63a9ba4a6c67c458ba4fe..9fdf50c6326832640fb43fc07985a81ea5cf9f16 100644
+index 66bed8a3d75b8c52e12a7bdc88d6967aaccacb05..17128c7b4d35874839c500466d36dcc6e1ce5c71 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1830,7 +1830,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
@@ -425,7 +425,7 @@ index d9ec6876dd0c8ed8e6a63a9ba4a6c67c458ba4fe..9fdf50c6326832640fb43fc07985a81e
  kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
  {
     struct kk_graphics_state *gfx = &cmd->state.gfx;
-@@ -3353,20 +3353,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3371,20 +3371,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
  }
  
  static void
@@ -447,7 +447,7 @@ index d9ec6876dd0c8ed8e6a63a9ba4a6c67c458ba4fe..9fdf50c6326832640fb43fc07985a81e
     data->restart = cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable;
     data->restart_index =
        cmd->vk.dynamic_graphics_state.ia.primitive_restart_index;
-@@ -3495,6 +3483,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3513,6 +3501,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     }
  }
  
@@ -475,7 +475,7 @@ index d9ec6876dd0c8ed8e6a63a9ba4a6c67c458ba4fe..9fdf50c6326832640fb43fc07985a81e
  kk_CmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount,
             uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance)
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 4f3dab6394397f62a20e53ad5bde32518c8a6d1d..9ec6c4baa5c939acf4c33be005d5e22c35bf1779 100644
+index 26f73b167d9f0828582b8c3a5a7d2041467d8865..0c5ed7a758caf14db5458e5972fd28c179458a90 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -426,6 +426,7 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
@@ -497,10 +497,10 @@ index 4f3dab6394397f62a20e53ad5bde32518c8a6d1d..9ec6c4baa5c939acf4c33be005d5e22c
     /* Need to ensure the new buffers allocated at record are resident. */
     kk_device_make_resources_resident(dev);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index ae0be76a401a4cb2ae37f13c5782410f638b1563..ccbc71b437c8dc023c5f8ef2f2bd478cc0801d6a 100644
+index a5af599dc199dff01eb64dcb7e3274861287a0f4..bed031ca7a633fc5058ae155411a29da81bda4e3 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -864,6 +864,26 @@ if with_tests
+@@ -881,6 +881,26 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )

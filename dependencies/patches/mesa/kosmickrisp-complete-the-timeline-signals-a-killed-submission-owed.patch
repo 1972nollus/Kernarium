@@ -38,8 +38,14 @@ Carrying the serial needs the report to name one submission rather than the
 queue, so the commit feedback payload becomes per-submission: it holds the
 serial and a reference to the queue's shared feedback record, which already
 outlives the Vulkan device for exactly this reason. The native event is
-referenced rather than borrowed, because the vk_sync that enqueued a signal
-can be destroyed before the signal comes due.
+referenced rather than borrowed, and the reference is taken before the signal
+is enqueued, because the vk_sync that carried the signal can be destroyed as
+soon as the signal is delivered. vkQueueWaitIdle destroys its own the moment
+its wait returns, while the submit worker may still be inside the submit that
+enqueued it; a record taken after the enqueue retained an event that was
+already gone and crashed the device teardown that released it. A test holds
+the worker inside Metal's enqueue while the fence or semaphore it signaled is
+destroyed.
 
 Two things still go missing after that. Metal reports a failure against one
 submission, but the work it kills behind that submission does not always
@@ -93,15 +99,18 @@ its first hour, and the bound alone left 155 of them to be waited out, which
 is 1550 of the 1877 seconds that hour spent past its first failure. A fraction
 paying that is not going to finish.
 ---
- src/kosmickrisp/vulkan/kk_queue.c             | 236 +++++++++++++++++-
- src/kosmickrisp/vulkan/kk_queue.h             |  39 +++
- src/kosmickrisp/vulkan/kk_sync.c              |  89 +++++++
+ src/kosmickrisp/vulkan/kk_queue.c             | 238 +++++++++++++-
+ src/kosmickrisp/vulkan/kk_queue.h             |  40 +++
+ src/kosmickrisp/vulkan/kk_sync.c              |  89 ++++++
  src/kosmickrisp/vulkan/kk_sync.h              |  11 +
- .../vulkan/tests/test_command_completion.m    |  31 ++-
- 5 files changed, 396 insertions(+), 10 deletions(-)
+ src/kosmickrisp/vulkan/meson.build            |  17 +
+ .../vulkan/tests/test_command_completion.m    |  31 +-
+ .../vulkan/tests/test_signal_lifetime.m       | 299 ++++++++++++++++++
+ 7 files changed, 715 insertions(+), 10 deletions(-)
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_signal_lifetime.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index f7f30265b4c5081b797211980fe077a876160ad7..e073e6bf01da98cc30b0e18ff0afcf86785db2dc 100644
+index 4a7026def9df81ec12bbb7678d56165c5c284d02..9c85dec7f615e352aa8ab41a8275f854a4d756e3 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -21,35 +21,238 @@
@@ -390,17 +399,21 @@ index f7f30265b4c5081b797211980fe077a876160ad7..e073e6bf01da98cc30b0e18ff0afcf86
           mtl_command_queue_commit(queue->mtl_handle, cmds, count, options);
           mtl_release(options);
           if (recording)
-@@ -225,11 +442,20 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+@@ -223,6 +440,12 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+       struct vk_sync_signal *signal = &submit->signals[i];
+       struct kk_sync_timeline *sync =
           container_of(signal->sync, struct kk_sync_timeline, base);
-       mtl_signal_event(queue->mtl_handle, sync->mtl_handle,
-                        signal->signal_value);
-+      /* Metal owes this value now, and drops what it owes behind a submission
-+       * it kills, so the queue keeps the debt until the event reaches it. */
++      /* Metal owes this value once it has the signal, and drops what it owes
++       * behind a submission it kills, so the queue keeps the debt until the
++       * event reaches it. The record takes its own reference to the event
++       * before the enqueue, for the reason below. */
 +      kk_queue_record_signal(queue->feedback, sync->mtl_handle,
 +                             signal->signal_value);
-       /* The signal is now ordered on the native timeline, so later waits on
-        * this value are pending and need no CPU gating. */
-       kk_timeline_mark_pending(signal->sync, signal->signal_value);
+       /* Later waits on this value are pending and need no CPU gating: any
+        * native work they order behind it comes from a later submission to
+        * this device's one queue, which runs only after this one has enqueued
+@@ -235,6 +458,11 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+                        signal->signal_value);
     }
  
 +   /* The records for this submit exist only now, so a report that emptied the
@@ -411,7 +424,7 @@ index f7f30265b4c5081b797211980fe077a876160ad7..e073e6bf01da98cc30b0e18ff0afcf86
     return VK_SUCCESS;
  }
  
-@@ -273,6 +499,8 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
+@@ -278,6 +506,8 @@ kk_queue_init(struct kk_device *dev, struct kk_queue *queue,
     }
     queue->feedback->refcount = 1;
     simple_mtx_init(&queue->feedback->mutex, mtx_plain);
@@ -421,18 +434,19 @@ index f7f30265b4c5081b797211980fe077a876160ad7..e073e6bf01da98cc30b0e18ff0afcf86
     queue->feedback->device_id = (uintptr_t)dev;
     queue->feedback->submit_timing = KK_DEBUG(SUBMIT_TIMING);
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index f35020cb5adbcbbe7d92e0a9b95963824629eabb..da5cfbc176d7e1cec93756f17379ff9228eb7cd8 100644
+index f35020cb5adbcbbe7d92e0a9b95963824629eabb..ae0a65d8b2223d23eaaf1be9c6c18b0459f004a7 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
-@@ -14,6 +14,16 @@
+@@ -14,6 +14,17 @@
  
  #include "vk_queue.h"
  #include "util/simple_mtx.h"
 +#include "util/u_dynarray.h"
 +
 +/* A timeline signal this queue handed to Metal, and the submission it is
-+ * ordered behind. The native event is referenced, not borrowed, because the
-+ * vk_sync that enqueued it can be destroyed before the signal comes due. */
++ * ordered behind. The native event is referenced, not borrowed, and the
++ * reference is taken before the signal is enqueued: the vk_sync that carried
++ * the signal can be destroyed as soon as the signal is delivered. */
 +struct kk_queue_signal {
 +   mtl_shared_event *event;
 +   uint64_t value;
@@ -441,7 +455,7 @@ index f35020cb5adbcbbe7d92e0a9b95963824629eabb..da5cfbc176d7e1cec93756f17379ff92
  
  /* Feedback can run after Vulkan device teardown. Only access device while
   * holding mutex; device_id is an immutable identifier for independent logs. */
-@@ -24,6 +34,28 @@ struct kk_queue_feedback {
+@@ -24,6 +35,28 @@ struct kk_queue_feedback {
     mtl_command_queue *queue;
     uintptr_t device_id;
     bool submit_timing;
@@ -470,7 +484,7 @@ index f35020cb5adbcbbe7d92e0a9b95963824629eabb..da5cfbc176d7e1cec93756f17379ff92
  };
  
  static inline struct kk_queue_feedback *
-@@ -46,6 +78,13 @@ kk_queue_device(struct kk_queue *queue)
+@@ -46,6 +79,13 @@ kk_queue_device(struct kk_queue *queue)
     return (struct kk_device *)queue->vk.base.device;
  }
  
@@ -485,7 +499,7 @@ index f35020cb5adbcbbe7d92e0a9b95963824629eabb..da5cfbc176d7e1cec93756f17379ff92
                         const VkDeviceQueueCreateInfo *pCreateInfo,
                         uint32_t index_in_family);
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index 4f7dd2068c13371959ef59ee683bf2776a067d84..2d97c1969c9c6dac825ed8b1a758f2d9e772b34b 100644
+index e0377497850cb629abde25478d077d1101528b33..2f8f5f8c79d08865c8c32ade36d906d428900614 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
 @@ -11,8 +11,12 @@
@@ -533,7 +547,7 @@ index 4f7dd2068c13371959ef59ee683bf2776a067d84..2d97c1969c9c6dac825ed8b1a758f2d9
  static VkResult
  kk_timeline_signal(struct vk_device *device, struct vk_sync *sync,
                     uint64_t value)
-@@ -80,6 +99,68 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
+@@ -83,6 +102,68 @@ kk_timeline_get_value(struct vk_device *device, struct vk_sync *sync,
     return VK_SUCCESS;
  }
  
@@ -602,7 +616,7 @@ index 4f7dd2068c13371959ef59ee683bf2776a067d84..2d97c1969c9c6dac825ed8b1a758f2d9
  static VkResult
  kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
                   uint64_t wait_value, enum vk_sync_wait_flags wait_flags,
-@@ -87,6 +168,7 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
+@@ -90,6 +171,7 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
  {
     struct kk_sync_timeline *timeline =
        container_of(sync, struct kk_sync_timeline, base);
@@ -610,7 +624,7 @@ index 4f7dd2068c13371959ef59ee683bf2776a067d84..2d97c1969c9c6dac825ed8b1a758f2d9
  
     for (;;) {
        if (vk_device_is_lost_no_report(device))
-@@ -106,6 +188,11 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
+@@ -109,6 +191,11 @@ kk_timeline_wait(struct vk_device *device, struct vk_sync *sync,
            p_atomic_read(&timeline->pending_value) >= wait_value)
           return VK_SUCCESS;
  
@@ -622,7 +636,7 @@ index 4f7dd2068c13371959ef59ee683bf2776a067d84..2d97c1969c9c6dac825ed8b1a758f2d9
        /* Metal takes relative milliseconds; Vulkan provides an absolute
         * nanosecond deadline. Recompute after every pending-wait slice. */
        uint64_t timeout_ms;
-@@ -150,6 +237,8 @@ kk_sync_binary_take_payload(struct vk_device *device, struct vk_sync *dst_sync,
+@@ -153,6 +240,8 @@ kk_sync_binary_take_payload(struct vk_device *device, struct vk_sync *dst_sync,
      * headers. Reset the recycled destination payload for future source use. */
     SWAP(dst_timeline->mtl_handle, src_timeline->mtl_handle);
     SWAP(dst_timeline->pending_value, src_timeline->pending_value);
@@ -632,7 +646,7 @@ index 4f7dd2068c13371959ef59ee683bf2776a067d84..2d97c1969c9c6dac825ed8b1a758f2d9
     return vk_sync_reset(device, src_sync);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_sync.h b/src/kosmickrisp/vulkan/kk_sync.h
-index 45aa22c6ecec6a4676172c5a79a168bc2dc71c47..a9f9a8a0952ff3679f28ece6310f117b9bdb9d42 100644
+index ec5b69b396ba441e0df0228e1ee7ea8462041ded..8a32ee5240bb943452af8f73313900cf8d015474 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.h
 +++ b/src/kosmickrisp/vulkan/kk_sync.h
 @@ -11,6 +11,8 @@
@@ -644,9 +658,9 @@ index 45aa22c6ecec6a4676172c5a79a168bc2dc71c47..a9f9a8a0952ff3679f28ece6310f117b
  struct kk_queue;
  
  struct kk_sync_timeline {
-@@ -20,6 +22,15 @@ struct kk_sync_timeline {
-     * CPU or enqueued on the queue's Metal timeline. Any wait at or below it
-     * is pending in the common runtime's sense. */
+@@ -21,6 +23,15 @@ struct kk_sync_timeline {
+     * kk_timeline_mark_pending(). Any wait at or below it is pending in the
+     * common runtime's sense. */
     uint64_t pending_value;
 +   /* How long the timeline has stood still while it owes a waiter a signal
 +    * the queue already accepted, so a signal that never arrives can be told
@@ -660,6 +674,34 @@ index 45aa22c6ecec6a4676172c5a79a168bc2dc71c47..a9f9a8a0952ff3679f28ece6310f117b
     /* The permanent binary semaphore a temporary still has to take its
      * payload from, once the submit worker reaches it; see
      * kk_sync_binary_move(). Null everywhere else. */
+diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
+index f90e2f4e915ea662e17cfa5ccbd77eb87f3e3117..e42808b1c7952665e342340f2fca336ddd62707a 100644
+--- a/src/kosmickrisp/vulkan/meson.build
++++ b/src/kosmickrisp/vulkan/meson.build
+@@ -734,6 +734,23 @@ if with_tests
+         timeout : 60,
+       )
+     endforeach
++    test(
++      'kosmickrisp_signal_lifetime',
++      executable(
++        'test_kosmickrisp_signal_lifetime',
++        files('tests/test_signal_lifetime.m'),
++        include_directories : kk_test_include_directories,
++        dependencies : [
++          idep_vulkan_runtime_headers,
++          idep_vulkan_util_headers,
++          dependency('appleframeworks', modules : ['Foundation', 'Metal']),
++        ],
++        link_with : libvulkan_kosmickrisp,
++      ),
++      suite : ['kosmickrisp'],
++      env : ['MESA_SHADER_CACHE_DISABLE=true'],
++      timeout : 60,
++    )
+     test(
+       'kosmickrisp_command_completion',
+       executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_command_completion.m b/src/kosmickrisp/vulkan/tests/test_command_completion.m
 index 64fe5be52a0f9eef421d96436cee089040af8520..66bf5fd313c15c11024f646f2f5be68a7d8ed707 100644
 --- a/src/kosmickrisp/vulkan/tests/test_command_completion.m
@@ -718,3 +760,308 @@ index 64fe5be52a0f9eef421d96436cee089040af8520..66bf5fd313c15c11024f646f2f5be68a
              CHECK(live_objects(weak_queue) == 1);
              struct mtl_feedback_data success = {.user_data = late_success,
                 .error = MTL_COMMAND_QUEUE_ERROR_NONE};
+diff --git a/src/kosmickrisp/vulkan/tests/test_signal_lifetime.m b/src/kosmickrisp/vulkan/tests/test_signal_lifetime.m
+new file mode 100644
+index 0000000000000000000000000000000000000000..ce20df8e1d3777075cbb5f19014cd3e27843650f
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_signal_lifetime.m
+@@ -0,0 +1,299 @@
++/* SPDX-License-Identifier: MIT */
++
++/* Whoever sees a signal delivered may destroy the fence or semaphore that
++ * carried it at once: an application may destroy a fence it has read as
++ * signaled, and vkQueueWaitIdle destroys its own sync as soon as its wait
++ * returns. With the assisted submission worker, the worker can still be inside
++ * the driver's submit when that happens, so the driver must take everything it
++ * needs from a signal's sync before handing the signal to Metal.
++ *
++ * The window after the enqueue is a few instructions wide, so the test widens
++ * it. It interposes the Metal queue's signalEvent:value: to hold the submitting
++ * thread once Metal has the signal, and destroys each fence and semaphore as
++ * soon as it reads it signaled. Those objects come from an allocator that
++ * poisons freed memory and never hands it out again, so a driver that reads
++ * one after the enqueue dereferences a poisoned event pointer instead of stale
++ * data or a newer object that reused the memory. */
++
++#define VK_NO_PROTOTYPES
++#include "vk_queue.h"
++
++#include <Metal/Metal.h>
++#include <malloc/malloc.h>
++#include <objc/runtime.h>
++
++#include <stdatomic.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++
++extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
++#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
++#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
++#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++
++/* How long an interposed signal holds the submitting thread once Metal has
++ * the signal: far longer than Metal takes to deliver a signal on an idle
++ * queue, so the destroy lands inside the hold. */
++static const uint64_t hold_ns = 20ull * 1000000ull;
++static const uint64_t observe_timeout_ns = 10ull * 1000000000ull;
++static const unsigned rounds = 8u;
++
++typedef void (*signal_event_fn)(id, SEL, id, uint64_t);
++static signal_event_fn original_signal_event;
++static atomic_bool hold_signals;
++static atomic_bool holding;
++static atomic_uint held;
++
++static uint64_t
++now_ns(void)
++{
++   return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
++}
++
++static void
++held_signal_event(id queue, SEL selector, id event, uint64_t value)
++{
++   original_signal_event(queue, selector, event, value);
++   if (!atomic_load(&hold_signals))
++      return;
++   atomic_store(&holding, true);
++   atomic_fetch_add(&held, 1u);
++   struct timespec rest = {0, (long)hold_ns};
++   while (nanosleep(&rest, &rest) != 0)
++      ;
++   atomic_store(&holding, false);
++}
++
++/* The pattern is not an Objective-C tagged pointer, so retaining or releasing
++ * a poisoned event faults rather than being ignored. */
++static void *VKAPI_PTR
++quarantine_alloc(void *data, size_t size, size_t alignment,
++                 VkSystemAllocationScope scope)
++{
++   (void)data; (void)scope;
++   void *p = NULL;
++   if (posix_memalign(&p, alignment < sizeof(void *) ? sizeof(void *) : alignment,
++                      size) != 0)
++      return NULL;
++   return p;
++}
++
++static void VKAPI_PTR
++quarantine_free(void *data, void *p)
++{
++   (void)data;
++   if (p)
++      memset(p, 0x55, malloc_size(p));
++}
++
++static void *VKAPI_PTR
++quarantine_realloc(void *data, void *old, size_t size, size_t alignment,
++                   VkSystemAllocationScope scope)
++{
++   if (!size) {
++      quarantine_free(data, old);
++      return NULL;
++   }
++   void *p = quarantine_alloc(data, size, alignment, scope);
++   if (p && old) {
++      size_t kept = malloc_size(old);
++      memcpy(p, old, kept < size ? kept : size);
++      quarantine_free(data, old);
++   }
++   return p;
++}
++
++static const VkAllocationCallbacks quarantine = {
++   .pfnAllocation = quarantine_alloc,
++   .pfnReallocation = quarantine_realloc,
++   .pfnFree = quarantine_free,
++};
++
++static void
++interpose_queue_signal(void)
++{
++   @autoreleasepool {
++      id<MTLDevice> mtl = MTLCreateSystemDefaultDevice();
++      CHECK(mtl);
++      id<MTL4CommandQueue> probe = [mtl newMTL4CommandQueue];
++      CHECK(probe);
++      Method method = class_getInstanceMethod(object_getClass(probe),
++                                              @selector(signalEvent:value:));
++      CHECK(method);
++      original_signal_event = (signal_event_fn)method_getImplementation(method);
++      method_setImplementation(method, (IMP)held_signal_event);
++      [probe release];
++      [mtl release];
++   }
++}
++
++int
++main(void)
++{
++   setvbuf(stdout, NULL, _IONBF, 0);
++   interpose_queue_signal();
++
++   VkInstance instance = VK_NULL_HANDLE;
++   LOAD_I(vkCreateInstance);
++   VkApplicationInfo app = {
++      .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
++      .pApplicationName = "signal-lifetime",
++      .apiVersion = VK_API_VERSION_1_3,
++   };
++   VkInstanceCreateInfo instance_info = {
++      .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
++      .pApplicationInfo = &app,
++   };
++   CHECK(vkCreateInstance(&instance_info, NULL, &instance) == VK_SUCCESS);
++   LOAD_I(vkDestroyInstance);
++   LOAD_I(vkEnumeratePhysicalDevices);
++   LOAD_I(vkCreateDevice);
++   LOAD_I(vkGetDeviceProcAddr);
++
++   uint32_t physical_count = 1;
++   VkPhysicalDevice physical = VK_NULL_HANDLE;
++   VkResult result = vkEnumeratePhysicalDevices(instance, &physical_count,
++                                                &physical);
++   CHECK((result == VK_SUCCESS || result == VK_INCOMPLETE) && physical);
++
++   float priority = 1.0f;
++   VkDeviceQueueCreateInfo queue_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
++      .queueFamilyIndex = 0,
++      .queueCount = 1,
++      .pQueuePriorities = &priority,
++   };
++   VkPhysicalDeviceVulkan12Features features12 = {
++      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
++      .timelineSemaphore = VK_TRUE,
++   };
++   VkDeviceCreateInfo device_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
++      .pNext = &features12,
++      .queueCreateInfoCount = 1,
++      .pQueueCreateInfos = &queue_info,
++   };
++   VkDevice device = VK_NULL_HANDLE;
++   CHECK(vkCreateDevice(physical, &device_info, NULL, &device) == VK_SUCCESS);
++
++   LOAD_D(vkDestroyDevice);
++   LOAD_D(vkGetDeviceQueue);
++   LOAD_D(vkCreateSemaphore);
++   LOAD_D(vkDestroySemaphore);
++   LOAD_D(vkSignalSemaphore);
++   LOAD_D(vkGetSemaphoreCounterValue);
++   LOAD_D(vkCreateFence);
++   LOAD_D(vkDestroyFence);
++   LOAD_D(vkGetFenceStatus);
++   LOAD_D(vkQueueSubmit);
++   LOAD_D(vkQueueWaitIdle);
++
++   VkQueue queue = VK_NULL_HANDLE;
++   vkGetDeviceQueue(device, 0, 0, &queue);
++
++   VkSemaphoreTypeCreateInfo timeline_type = {
++      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
++      .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
++   };
++   VkSemaphoreCreateInfo timeline_info = {
++      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
++      .pNext = &timeline_type,
++   };
++   VkPipelineStageFlags top = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
++
++   /* A wait only the host can release turns the submission worker on, and it
++    * stays on for the life of the device. */
++   VkSemaphore gate = VK_NULL_HANDLE;
++   CHECK(vkCreateSemaphore(device, &timeline_info, NULL, &gate) == VK_SUCCESS);
++   uint64_t gate_value = 1;
++   VkTimelineSemaphoreSubmitInfo gate_values = {
++      .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
++      .waitSemaphoreValueCount = 1,
++      .pWaitSemaphoreValues = &gate_value,
++   };
++   VkSubmitInfo gated = {
++      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++      .pNext = &gate_values,
++      .waitSemaphoreCount = 1,
++      .pWaitSemaphores = &gate,
++      .pWaitDstStageMask = &top,
++   };
++   CHECK(vkQueueSubmit(queue, 1, &gated, VK_NULL_HANDLE) == VK_SUCCESS);
++   VkSemaphoreSignalInfo release = {
++      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,
++      .semaphore = gate,
++      .value = 1,
++   };
++   CHECK(vkSignalSemaphore(device, &release) == VK_SUCCESS);
++   CHECK(vkQueueWaitIdle(queue) == VK_SUCCESS);
++   vkDestroySemaphore(device, gate, NULL);
++   {
++      VK_FROM_HANDLE(vk_queue, runtime_queue, queue);
++      CHECK(runtime_queue->submit.mode == VK_QUEUE_SUBMIT_MODE_THREADED);
++   }
++
++   atomic_store(&hold_signals, true);
++   unsigned inside = 0u;
++   for (unsigned round = 0u; round < rounds; ++round) {
++      /* A binary payload, which vkQueueWaitIdle's own sync also uses. */
++      VkFenceCreateInfo fence_info = {
++         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
++      };
++      VkFence fence = VK_NULL_HANDLE;
++      CHECK(vkCreateFence(device, &fence_info, &quarantine, &fence) ==
++            VK_SUCCESS);
++      CHECK(vkQueueSubmit(queue, 0, NULL, fence) == VK_SUCCESS);
++      const uint64_t fence_deadline = now_ns() + observe_timeout_ns;
++      while ((result = vkGetFenceStatus(device, fence)) == VK_NOT_READY)
++         CHECK(now_ns() < fence_deadline);
++      CHECK(result == VK_SUCCESS);
++      vkDestroyFence(device, fence, &quarantine);
++      inside += atomic_load(&holding);
++      /* The worker reaches this submit only after leaving the last one. */
++      CHECK(vkQueueWaitIdle(queue) == VK_SUCCESS);
++
++      /* A timeline payload. */
++      VkSemaphore timeline = VK_NULL_HANDLE;
++      CHECK(vkCreateSemaphore(device, &timeline_info, &quarantine,
++                              &timeline) == VK_SUCCESS);
++      uint64_t signal_value = 1;
++      VkTimelineSemaphoreSubmitInfo signal_values = {
++         .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
++         .signalSemaphoreValueCount = 1,
++         .pSignalSemaphoreValues = &signal_value,
++      };
++      VkSubmitInfo signal = {
++         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++         .pNext = &signal_values,
++         .signalSemaphoreCount = 1,
++         .pSignalSemaphores = &timeline,
++      };
++      CHECK(vkQueueSubmit(queue, 1, &signal, VK_NULL_HANDLE) == VK_SUCCESS);
++      const uint64_t timeline_deadline = now_ns() + observe_timeout_ns;
++      uint64_t value = 0;
++      while (vkGetSemaphoreCounterValue(device, timeline, &value) ==
++                VK_SUCCESS &&
++             value < signal_value)
++         CHECK(now_ns() < timeline_deadline);
++      CHECK(value == signal_value);
++      vkDestroySemaphore(device, timeline, &quarantine);
++      inside += atomic_load(&holding);
++      CHECK(vkQueueWaitIdle(queue) == VK_SUCCESS);
++   }
++   atomic_store(&hold_signals, false);
++
++   /* Otherwise the interposer never ran, or no destroy landed inside a hold,
++    * and a pass would prove nothing. */
++   CHECK(atomic_load(&held) > 0u);
++   CHECK(inside > 0u);
++   printf("signal lifetime: %u of %u syncs destroyed while the submit worker "
++          "was still inside the submit that signaled them\n",
++          inside, 2u * rounds);
++
++   vkDestroyDevice(device, NULL);
++   vkDestroyInstance(instance, NULL);
++   return 0;
++}

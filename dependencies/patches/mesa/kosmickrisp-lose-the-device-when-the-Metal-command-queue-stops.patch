@@ -127,7 +127,7 @@ index d6e9e68c944ff85471d405ecc8c3bff51b33a2aa..806ddf4e84df05d3c6361468452eb783
        }
  
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index da0dfd088ee3efb1a56328a0cdac5958ba0a81d7..4f3dab6394397f62a20e53ad5bde32518c8a6d1d 100644
+index 780958f26e9c6ec1332640fa9dd81d27deddcbe0..26f73b167d9f0828582b8c3a5a7d2041467d8865 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -78,18 +78,38 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
@@ -174,10 +174,10 @@ index da0dfd088ee3efb1a56328a0cdac5958ba0a81d7..4f3dab6394397f62a20e53ad5bde3251
  
  /* Metal reports a failure against one submission, but the work it kills
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index cc70e97d5b0e3e4102927a3f84fca8cff4cf51ac..42568a562769e81c65c1bfb8aca5167ede2a9e28 100644
+index c9cce94231c0b907df59c535ba5859968b60b00a..d33225848e610e7f93746cb46d86556bde7e2b86 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
-@@ -92,13 +92,34 @@ kk_queue_device(struct kk_queue *queue)
+@@ -93,13 +93,34 @@ kk_queue_device(struct kk_queue *queue)
  uint64_t kk_queue_complete_owed_signals(struct kk_queue *queue,
                                          mtl_shared_event *event);
  
@@ -218,7 +218,7 @@ index cc70e97d5b0e3e4102927a3f84fca8cff4cf51ac..42568a562769e81c65c1bfb8aca5167e
  
  /* How long a waiter gives work a failed queue still owes it - a timeline
   * signal (kk_sync.c) or a query's availability write (kk_query_pool.c) -
-@@ -110,6 +131,51 @@ bool kk_queue_has_failed(struct kk_queue *queue);
+@@ -111,6 +132,51 @@ bool kk_queue_has_failed(struct kk_queue *queue);
   * failed. */
  #define KK_LOST_WORK_TIMEOUT_NS (10ull * 1000000000ull)
  
@@ -271,10 +271,10 @@ index cc70e97d5b0e3e4102927a3f84fca8cff4cf51ac..42568a562769e81c65c1bfb8aca5167e
                         const VkDeviceQueueCreateInfo *pCreateInfo,
                         uint32_t index_in_family);
 diff --git a/src/kosmickrisp/vulkan/kk_sync.c b/src/kosmickrisp/vulkan/kk_sync.c
-index e5a3ed927e52a9342d738d847ad661f69c344f64..60eeb2a31e505230b04a75fba2b0b9f595db9ea2 100644
+index 0effa2e9054d3a8f979b4d24f488751529f89505..24c13070a3d16bc3f9ef0b10f5eb0120e1729e35 100644
 --- a/src/kosmickrisp/vulkan/kk_sync.c
 +++ b/src/kosmickrisp/vulkan/kk_sync.c
-@@ -129,6 +129,11 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+@@ -132,6 +132,11 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
      * waiter that arrives behind a stall inherits the time already spent in
      * it. A waiter whose value has arrived leaves it alone, because the
      * timeline standing still says nothing about that waiter. */
@@ -286,7 +286,7 @@ index e5a3ed927e52a9342d738d847ad661f69c344f64..60eeb2a31e505230b04a75fba2b0b9f5
     bool expired = false;
     simple_mtx_lock(&timeline->overdue_mutex);
     /* Read the time under the lock: another waiter may start the clock after
-@@ -137,7 +142,7 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+@@ -140,7 +145,7 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
     if (timeline->overdue_since == 0u || timeline->stalled_value != signaled) {
        timeline->stalled_value = signaled;
        timeline->overdue_since = now;
@@ -295,7 +295,7 @@ index e5a3ed927e52a9342d738d847ad661f69c344f64..60eeb2a31e505230b04a75fba2b0b9f5
        timeline->overdue_since = 0u;
        expired = true;
     }
-@@ -145,6 +150,29 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
+@@ -148,6 +153,29 @@ kk_timeline_recover_lost_signal(struct kk_device *dev,
     if (!expired)
        return;
  
@@ -326,7 +326,7 @@ index e5a3ed927e52a9342d738d847ad661f69c344f64..60eeb2a31e505230b04a75fba2b0b9f5
        kk_queue_complete_owed_signals(&dev->queue, timeline->mtl_handle);
     if (completed) {
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index f90e2f4e915ea662e17cfa5ccbd77eb87f3e3117..20cf206b4123826786f9493cced007e0e260284a 100644
+index e42808b1c7952665e342340f2fca336ddd62707a..e52240c67061ecd395c8703b5f21e02afa1afe7f 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -684,6 +684,16 @@ if with_tests

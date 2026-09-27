@@ -449,11 +449,34 @@ if(TARGET uml_gpu_service)
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
 
-    add_library(uml_gpu_service_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/in_process_service.cpp
+    # The shared service scaffold in the transport has a startup checkpoint
+    # of its own, so the startup tests build the transport with it.
+    add_library(uml_gpu_transport_startup_test_variant STATIC
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/shared_memory_regions.cpp
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_server.cpp
         in_process_service_testing.cpp)
-    target_link_libraries(uml_gpu_service_test_variant PRIVATE
-        uml_gpu_transport)
+    target_include_directories(uml_gpu_transport_startup_test_variant PUBLIC
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(uml_gpu_transport_startup_test_variant PRIVATE
+        UML_GPU_STARTUP_TESTING=1)
+    target_compile_features(uml_gpu_transport_startup_test_variant PUBLIC
+        cxx_std_20)
+    target_compile_options(uml_gpu_transport_startup_test_variant PRIVATE
+        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+    target_link_libraries(uml_gpu_transport_startup_test_variant PUBLIC
+        UML::DeviceSocketPaths
+        UML::MemorySharedBacking
+        uml_gpu_transport_wire
+        uml_gpu_protocol_device
+        UML::VncInput)
+    target_link_libraries(uml_gpu_transport_startup_test_variant PRIVATE
+        UML::GuestTimerMask)
+
+    add_library(uml_gpu_service_test_variant STATIC
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/in_process_service.cpp)
+    target_link_libraries(uml_gpu_service_test_variant PUBLIC
+        uml_gpu_transport_startup_test_variant)
     target_include_directories(uml_gpu_service_test_variant PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${CMAKE_CURRENT_SOURCE_DIR})

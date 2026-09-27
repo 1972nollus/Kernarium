@@ -436,7 +436,7 @@ index 16ec133e7201e835ec4678e0340a00a572616b12..a9635df0591c0604cb4981db654b585e
  
  struct kk_command_allocator_cache *kk_command_allocator_cache_create(void);
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 9ec6c4baa5c939acf4c33be005d5e22c35bf1779..4751478a01a123017c2b0068c5937112613c4a0c 100644
+index 0c5ed7a758caf14db5458e5972fd28c179458a90..59621775d508bad920396bc0154937ab4ef796e9 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -19,6 +19,11 @@
@@ -705,10 +705,10 @@ index 9ec6c4baa5c939acf4c33be005d5e22c35bf1779..4751478a01a123017c2b0068c5937112
  
        if (cmd_buffer->drawable) {
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index 42568a562769e81c65c1bfb8aca5167ede2a9e28..d04f38dc7957b72b8dd71267ea7f0e93a95681f8 100644
+index d33225848e610e7f93746cb46d86556bde7e2b86..9c014699d4c9ddda040d181c4cdd35ccaad62a2b 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
-@@ -176,6 +176,12 @@ kk_queue_has_stopped(const struct kk_queue_progress *progress,
+@@ -177,6 +177,12 @@ kk_queue_has_stopped(const struct kk_queue_progress *progress,
     return now - clock->since >= KK_STOPPED_QUEUE_TIMEOUT_NS;
  }
  
@@ -722,10 +722,10 @@ index 42568a562769e81c65c1bfb8aca5167ede2a9e28..d04f38dc7957b72b8dd71267ea7f0e93
                         const VkDeviceQueueCreateInfo *pCreateInfo,
                         uint32_t index_in_family);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index ccbc71b437c8dc023c5f8ef2f2bd478cc0801d6a..99f722afd7538c1f31e721b8bfc40adc6f38dd89 100644
+index bed031ca7a633fc5058ae155411a29da81bda4e3..ed401f7120d46b92ce216d51a247b6245d19e1b1 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -864,6 +864,47 @@ if with_tests
+@@ -881,6 +881,47 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )

@@ -37,6 +37,14 @@
 #define UML_RUNTIME_PROFILING 0
 #endif
 
+#ifndef UML_GPU_STARTUP_TESTING
+#define UML_GPU_STARTUP_TESTING 0
+#endif
+
+#if UML_GPU_STARTUP_TESTING
+#include "in_process_service_testing.hpp"
+#endif
+
 namespace uml::gpu {
 namespace {
 
@@ -2706,9 +2714,24 @@ InProcessVhostUserService::InProcessVhostUserService(
     std::string threadName,
     DeviceFactory makeDevice,
     std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions)
+    : InProcessVhostUserService(
+          std::move(label),
+          std::move(threadName),
+          ServerFactory([makeDevice = std::move(makeDevice)] {
+              return std::make_unique<VhostUserServer>(makeDevice());
+          }),
+          std::move(sharedMemoryRegions))
+{
+}
+
+InProcessVhostUserService::InProcessVhostUserService(
+    std::string label,
+    std::string threadName,
+    ServerFactory makeServer,
+    std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions)
     : label_(std::move(label))
     , threadName_(std::move(threadName))
-    , makeDevice_(std::move(makeDevice))
+    , makeServer_(std::move(makeServer))
     , sharedMemoryRegions_(std::move(sharedMemoryRegions))
 {
     /* The service thread inherits this mask. The timer stays blocked here
@@ -2725,6 +2748,10 @@ InProcessVhostUserService::InProcessVhostUserService(
     descriptors_[1].reset(descriptors[1]);
     setCloseOnExec(descriptors_[0].get());
     setCloseOnExec(descriptors_[1].get());
+#if UML_GPU_STARTUP_TESTING
+    testing::startupCheckpoint(
+        testing::StartupFailure::afterTransportSocketPair);
+#endif
     stopDescriptor_.reset(::fcntl(descriptors_[0].get(), F_DUPFD_CLOEXEC, 0));
     if (stopDescriptor_.get() < 0) {
         throw std::runtime_error(
@@ -2770,10 +2797,10 @@ void InProcessVhostUserService::run() noexcept
 {
     (void)::pthread_setname_np(threadName_.c_str());
     try {
-        VhostUserServer server(makeDevice_());
+        const auto server = makeServer_();
         if (sharedMemoryRegions_)
-            server.setSharedMemoryRegions(sharedMemoryRegions_);
-        server.runConnected(
+            server->setSharedMemoryRegions(sharedMemoryRegions_);
+        server->runConnected(
             descriptors_[0].release(), stopRequested_, [this] {
                 {
                     std::lock_guard lock(stateMutex_);

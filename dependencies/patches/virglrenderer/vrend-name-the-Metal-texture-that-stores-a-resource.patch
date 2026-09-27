@@ -29,14 +29,17 @@ is completed before the texture is handed out.
 
 The lookup runs in context 0, as host-initiated transfers do.
 
+The export's layouts come from GL/mesa_glinterop.h and
+GL/zink_interop_public.h, which the host Mesa installs.
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/virglrenderer.c          | 13 ++++++
- src/vrend/vrend_renderer.c   | 36 +++++++++++++++
- src/vrend/vrend_renderer.h   |  5 ++
- src/vrend/vrend_winsys_egl.c | 88 ++++++++++++++++++++++++++++++++++++
- src/vrend/vrend_winsys_egl.h |  6 +++
- 5 files changed, 148 insertions(+)
+ src/virglrenderer.c          | 13 +++++++++
+ src/vrend/vrend_renderer.c   | 36 ++++++++++++++++++++++++
+ src/vrend/vrend_renderer.h   |  5 ++++
+ src/vrend/vrend_winsys_egl.c | 53 ++++++++++++++++++++++++++++++++++++
+ src/vrend/vrend_winsys_egl.h |  6 ++++
+ 5 files changed, 113 insertions(+)
 
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
 index 2229e47acfb0c6acf5b3ea2245b90c4729882e42..1062aa6f2e2e5355917d1e54aa5b46013f94177e 100644
@@ -126,10 +129,21 @@ index 85ae6022da13af4ab24809de8b68fe75a949a36c..a8072a9286e3794ec62036a316d0d115
  vrend_renderer_pipe_resource_get_layout(struct vrend_context *ctx,
                                          uint32_t out_res_id, uint32_t res_id);
 diff --git a/src/vrend/vrend_winsys_egl.c b/src/vrend/vrend_winsys_egl.c
-index 527b12050d11970bf2b926b4831fed86a5733546..28bbf3d1dbf6a5eff1f55376c65a9ef7b779fe4d 100644
+index 527b12050d11970bf2b926b4831fed86a5733546..d58254194f1750e3af47d06cd24589d71f1ac71f 100644
 --- a/src/vrend/vrend_winsys_egl.c
 +++ b/src/vrend/vrend_winsys_egl.c
-@@ -70,6 +70,7 @@
+@@ -55,6 +55,10 @@
+ #include "vrend_winsys_gbm.h"
+ #endif
+ #include "virgl_util.h"
++#ifdef ENABLE_METAL
++#include <GL/mesa_glinterop.h>
++#include <GL/zink_interop_public.h>
++#endif
+ 
+ #define EGL_KHR_SURFACELESS_CONTEXT            BIT(0)
+ #define EGL_KHR_CREATE_CONTEXT                 BIT(1)
+@@ -70,6 +74,7 @@
  #define EGL_EXT_DEVICE_QUERY                   BIT(11)
  #define EGL_EXT_PLATFORM_DEVICE                BIT(12)
  #define EGL_MESA_IMAGE_HOST_POINTER            BIT(13)
@@ -137,7 +151,7 @@ index 527b12050d11970bf2b926b4831fed86a5733546..28bbf3d1dbf6a5eff1f55376c65a9ef7
  
  static const struct {
     uint32_t bit;
-@@ -88,6 +89,7 @@ static const struct {
+@@ -88,6 +93,7 @@ static const struct {
     { EGL_EXT_DEVICE_QUERY, "EGL_EXT_device_query" },
     { EGL_EXT_PLATFORM_DEVICE, "EGL_EXT_platform_device" },
     { EGL_MESA_IMAGE_HOST_POINTER, "EGL_MESA_image_host_pointer" },
@@ -145,52 +159,11 @@ index 527b12050d11970bf2b926b4831fed86a5733546..28bbf3d1dbf6a5eff1f55376c65a9ef7
  };
  
  struct egl_funcs {
-@@ -964,6 +966,92 @@ void virgl_egl_host_pointer_image_destroy(struct virgl_egl *egl, void *image)
+@@ -964,6 +970,53 @@ void virgl_egl_host_pointer_image_destroy(struct virgl_egl *egl, void *image)
     eglDestroyImageKHR(egl->egl_display, image);
  }
  
 +#ifdef ENABLE_METAL
-+/* The MESA_GLINTEROP export interface is versioned ABI; these are its
-+ * version-2 input and version-1 output layouts from GL/mesa_glinterop.h,
-+ * which the provider does not install. */
-+struct virgl_egl_interop_export_in {
-+   uint32_t version;
-+   unsigned target;
-+   unsigned obj;
-+   unsigned miplevel;
-+   uint32_t access;
-+   uint32_t out_driver_data_size;
-+   void *out_driver_data;
-+};
-+
-+struct virgl_egl_interop_export_out {
-+   uint32_t version;
-+   int dmabuf_fd;
-+   unsigned internal_format;
-+   ptrdiff_t buf_offset;
-+   ptrdiff_t buf_size;
-+   unsigned view_minlevel;
-+   unsigned view_numlevels;
-+   unsigned view_minlayer;
-+   unsigned view_numlayers;
-+   uint32_t out_driver_data_written;
-+};
-+
-+/* Zink's driver data for a texture export on a Vulkan driver with
-+ * VK_EXT_metal_objects: struct zink_interop_metal_texture. */
-+struct virgl_egl_zink_metal_texture {
-+   uint32_t version;
-+   uint32_t reserved;
-+   void *texture;
-+};
-+
-+#define VIRGL_EGL_INTEROP_ACCESS_READ_ONLY 1
-+
-+typedef int (*virgl_egl_interop_export_object_proc)(
-+   EGLDisplay display, EGLContext context,
-+   struct virgl_egl_interop_export_in *in,
-+   struct virgl_egl_interop_export_out *out);
-+
 +/* The Metal texture that stores a GL texture, or NULL where the driver has
 + * none to give. It is borrowed: it lives as long as the GL texture keeps its
 + * current storage. The texture is looked up in the current context's share
@@ -199,12 +172,12 @@ index 527b12050d11970bf2b926b4831fed86a5733546..28bbf3d1dbf6a5eff1f55376c65a9ef7
 +                                     uint32_t target,
 +                                     uint32_t texture)
 +{
-+   static virgl_egl_interop_export_object_proc export_object;
++   static PFNMESAGLINTEROPEGLEXPORTOBJECTPROC export_object;
 +
 +   if (!egl || !has_bit(egl->extension_bits, EGL_MESA_GL_INTEROP))
 +      return NULL;
 +   if (!export_object) {
-+      export_object = (virgl_egl_interop_export_object_proc)
++      export_object = (PFNMESAGLINTEROPEGLEXPORTOBJECTPROC)
 +         eglGetProcAddress("eglGLInteropExportObjectMESA");
 +      if (!export_object)
 +         return NULL;
@@ -214,20 +187,22 @@ index 527b12050d11970bf2b926b4831fed86a5733546..28bbf3d1dbf6a5eff1f55376c65a9ef7
 +   if (context == EGL_NO_CONTEXT)
 +      return NULL;
 +
-+   struct virgl_egl_zink_metal_texture metal = { 0 };
-+   struct virgl_egl_interop_export_in in = {
++   struct zink_interop_metal_texture metal = { 0 };
++   struct mesa_glinterop_export_in in = {
 +      .version = 2,
 +      .target = target,
 +      .obj = texture,
-+      .access = VIRGL_EGL_INTEROP_ACCESS_READ_ONLY,
++      .access = MESA_GLINTEROP_ACCESS_READ_ONLY,
 +      .out_driver_data_size = sizeof(metal),
 +      .out_driver_data = &metal,
 +   };
-+   struct virgl_egl_interop_export_out out = {
++   /* Version 1 ends at out_driver_data_written, the last field read here. */
++   struct mesa_glinterop_export_out out = {
 +      .version = 1,
 +      .dmabuf_fd = -1,
 +   };
-+   if (export_object(egl->egl_display, context, &in, &out) != 0 ||
++   int result = export_object(egl->egl_display, context, &in, &out);
++   if (result != MESA_GLINTEROP_SUCCESS ||
 +       out.out_driver_data_written < sizeof(metal) ||
 +       metal.version < 1)
 +      return NULL;
