@@ -1558,7 +1558,10 @@ BuildResult GadgetExecutor::translate(
 		mapping_changes_ = sequences.mapping_changes;
 	}
 	tlb_.tagged_addresses = cpu.tagged_addresses_enabled();
-	const auto guest_fpcr = cpu.effective_fpcr();
+	/* CpuState::effective_fpcr(), open-coded: through the member this
+	 * block-entry test lowers to a word load and mask instead of a byte
+	 * test, and run_block inlines more around it. */
+	const auto guest_fpcr = cpu.fp_loaded ? cpu.fpcr : cpu.deferred_fpcr;
 	if (single_step_ || (guest_fpcr &
 	     arm64::detail::fpcr_exception_enable_mask) != 0U)
 		return run_trap_enabled_instruction(cpu, memory, executed);
