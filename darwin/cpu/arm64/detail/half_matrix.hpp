@@ -43,8 +43,6 @@ namespace half_matrix_detail {
 
 using namespace floating_bits;
 
-constexpr std::uint32_t fp_exception_mask = 0xf800'009fU;
-
 [[nodiscard]] constexpr std::uint16_t default_half_nan(
 	std::uint32_t fpcr) noexcept
 {
@@ -82,29 +80,19 @@ struct BinaryResult final {
 [[nodiscard]] inline BinaryResult captured_half_binary(std::uint16_t left,
 	std::uint16_t right, std::uint32_t fpcr, bool multiply) noexcept
 {
-	std::uint64_t saved_fpcr;
-	std::uint64_t saved_fpsr;
-	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
-	__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
-	const std::uint64_t local_fpcr = host_fpcr(fpcr);
-	const std::uint64_t clear = 0U;
-	__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
-	__asm__ volatile("msr fpsr, %0" : : "r"(clear) : "memory");
 	const auto left_value = std::bit_cast<_Float16>(left);
 	const auto right_value = std::bit_cast<_Float16>(right);
-	_Float16 result;
-	if (multiply)
-		__asm__ volatile("fmul %h0, %h1, %h2" : "=w"(result) :
-			"w"(left_value), "w"(right_value));
-	else
-		__asm__ volatile("fadd %h0, %h1, %h2" : "=w"(result) :
-			"w"(left_value), "w"(right_value));
-	std::uint64_t exceptions;
-	__asm__ volatile("mrs %0, fpsr" : "=r"(exceptions) : : "memory");
-	__asm__ volatile("msr fpcr, %0" : : "r"(saved_fpcr) : "memory");
-	__asm__ volatile("msr fpsr, %0" : : "r"(saved_fpsr) : "memory");
-	return {std::bit_cast<std::uint16_t>(result),
-		static_cast<std::uint32_t>(exceptions) & fp_exception_mask};
+	const auto captured = run_with_local_fpcr(host_fpcr(fpcr), [&] {
+		_Float16 result;
+		if (multiply)
+			__asm__ volatile("fmul %h0, %h1, %h2" : "=w"(result) :
+				"w"(left_value), "w"(right_value));
+		else
+			__asm__ volatile("fadd %h0, %h1, %h2" : "=w"(result) :
+				"w"(left_value), "w"(right_value));
+		return result;
+	});
+	return {std::bit_cast<std::uint16_t>(captured.value), captured.fpsr};
 }
 
 [[nodiscard]] inline BinaryResult half_binary(std::uint16_t left,
@@ -157,25 +145,15 @@ struct BinaryResult final {
 [[nodiscard]] inline BinaryResult captured_single_add(std::uint32_t left,
 	std::uint32_t right, std::uint32_t fpcr) noexcept
 {
-	std::uint64_t saved_fpcr;
-	std::uint64_t saved_fpsr;
-	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
-	__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
-	const std::uint64_t local_fpcr = host_fpcr(fpcr);
-	const std::uint64_t clear = 0U;
-	__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
-	__asm__ volatile("msr fpsr, %0" : : "r"(clear) : "memory");
 	const auto left_value = std::bit_cast<float>(left);
 	const auto right_value = std::bit_cast<float>(right);
-	float result;
-	__asm__ volatile("fadd %s0, %s1, %s2" : "=w"(result) :
-		"w"(left_value), "w"(right_value));
-	std::uint64_t exceptions;
-	__asm__ volatile("mrs %0, fpsr" : "=r"(exceptions) : : "memory");
-	__asm__ volatile("msr fpcr, %0" : : "r"(saved_fpcr) : "memory");
-	__asm__ volatile("msr fpsr, %0" : : "r"(saved_fpsr) : "memory");
-	return {std::bit_cast<std::uint32_t>(result),
-		static_cast<std::uint32_t>(exceptions) & fp_exception_mask};
+	const auto captured = run_with_local_fpcr(host_fpcr(fpcr), [&] {
+		float result;
+		__asm__ volatile("fadd %s0, %s1, %s2" : "=w"(result) :
+			"w"(left_value), "w"(right_value));
+		return result;
+	});
+	return {std::bit_cast<std::uint32_t>(captured.value), captured.fpsr};
 }
 
 [[nodiscard]] inline BinaryResult single_add(std::uint32_t left,
@@ -244,27 +222,18 @@ struct BinaryResult final {
 	const auto lb = std::bit_cast<float>(expand(left_b));
 	const auto ra = std::bit_cast<float>(expand(right_a));
 	const auto rb = std::bit_cast<float>(expand(right_b));
-	std::uint64_t saved_fpcr;
-	std::uint64_t saved_fpsr;
-	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
-	__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
 	const std::uint64_t local_fpcr =
 		host_fpcr(fpcr) & ~(2U | 1U | (1U << 24));
-	const std::uint64_t clear = 0U;
-	__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
-	__asm__ volatile("msr fpsr, %0" : : "r"(clear) : "memory");
-	float product_b;
-	float result;
-	__asm__ volatile("fmul %s0, %s1, %s2" : "=w"(product_b) :
-		"w"(lb), "w"(rb));
-	__asm__ volatile("fmadd %s0, %s1, %s2, %s3" : "=w"(result) :
-		"w"(la), "w"(ra), "w"(product_b));
-	std::uint64_t exceptions;
-	__asm__ volatile("mrs %0, fpsr" : "=r"(exceptions) : : "memory");
-	__asm__ volatile("msr fpcr, %0" : : "r"(saved_fpcr) : "memory");
-	__asm__ volatile("msr fpsr, %0" : : "r"(saved_fpsr) : "memory");
-	return {std::bit_cast<std::uint32_t>(result),
-		static_cast<std::uint32_t>(exceptions) & fp_exception_mask};
+	const auto captured = run_with_local_fpcr(local_fpcr, [&] {
+		float product_b;
+		float result;
+		__asm__ volatile("fmul %s0, %s1, %s2" : "=w"(product_b) :
+			"w"(lb), "w"(rb));
+		__asm__ volatile("fmadd %s0, %s1, %s2, %s3" : "=w"(result) :
+			"w"(la), "w"(ra), "w"(product_b));
+		return result;
+	});
+	return {std::bit_cast<std::uint32_t>(captured.value), captured.fpsr};
 }
 
 [[nodiscard]] inline BinaryResult half_dot(std::uint16_t left_a,

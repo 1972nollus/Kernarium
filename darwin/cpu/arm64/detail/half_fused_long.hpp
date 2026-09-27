@@ -91,20 +91,10 @@ namespace half_fused_long_detail {
 	std::uint32_t addend, std::uint32_t left, std::uint32_t right,
 	std::uint32_t fpcr) noexcept
 {
-	std::uint64_t saved_fpcr;
-	std::uint64_t saved_fpsr;
-	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
-	__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
-	const std::uint64_t local_fpcr = host_fpcr(fpcr);
-	const std::uint64_t clear = 0U;
-	__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
-	__asm__ volatile("msr fpsr, %0" : : "r"(clear) : "memory");
-	const auto result = bfloat_multiply_detail::fmadd(addend, left, right);
-	std::uint64_t exceptions;
-	__asm__ volatile("mrs %0, fpsr" : "=r"(exceptions) : : "memory");
-	__asm__ volatile("msr fpcr, %0" : : "r"(saved_fpcr) : "memory");
-	__asm__ volatile("msr fpsr, %0" : : "r"(saved_fpsr) : "memory");
-	return {result, static_cast<std::uint32_t>(exceptions) & 0xf800'009fU};
+	const auto captured = run_with_local_fpcr(host_fpcr(fpcr), [&] {
+		return bfloat_multiply_detail::fmadd(addend, left, right);
+	});
+	return {captured.value, captured.fpsr};
 }
 
 } // namespace half_fused_long_detail

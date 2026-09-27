@@ -146,23 +146,12 @@ template<typename Floating, typename Integer>
 	Integer addend, Integer left, Integer right,
 	IndexedFloatingOperation operation, std::uint32_t fpcr) noexcept
 {
-	std::uint64_t saved_fpcr;
-	std::uint64_t saved_fpsr;
-	__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
-	__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
-	const std::uint64_t local_fpcr = host_fpcr(fpcr);
-	const std::uint64_t clear = 0U;
-	__asm__ volatile("msr fpcr, %0" : : "r"(local_fpcr) : "memory");
-	__asm__ volatile("msr fpsr, %0" : : "r"(clear) : "memory");
-	const auto value = native_operation(std::bit_cast<Floating>(addend),
-		std::bit_cast<Floating>(left), std::bit_cast<Floating>(right),
-		operation);
-	std::uint64_t exceptions;
-	__asm__ volatile("mrs %0, fpsr" : "=r"(exceptions) : : "memory");
-	__asm__ volatile("msr fpcr, %0" : : "r"(saved_fpcr) : "memory");
-	__asm__ volatile("msr fpsr, %0" : : "r"(saved_fpsr) : "memory");
-	return {std::bit_cast<Integer>(value),
-		static_cast<std::uint32_t>(exceptions) & 0xf800'009fU};
+	const auto captured = run_with_local_fpcr(host_fpcr(fpcr), [&] {
+		return native_operation(std::bit_cast<Floating>(addend),
+			std::bit_cast<Floating>(left),
+			std::bit_cast<Floating>(right), operation);
+	});
+	return {std::bit_cast<Integer>(captured.value), captured.fpsr};
 }
 
 } // namespace indexed_floating_detail
