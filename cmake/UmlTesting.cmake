@@ -2,7 +2,7 @@
 
 include_guard(GLOBAL)
 
-function(uml_record_registered_test NAME SUITE)
+function(uml_record_registered_test SUITE)
     string(TOUPPER "${SUITE}" _suite_upper)
     set(_target_property "UML_${_suite_upper}_COMMAND_TARGETS")
     get_property(_command_targets GLOBAL PROPERTY "${_target_property}")
@@ -45,7 +45,6 @@ function(uml_finalize_suite_binary_target SUITE AGGREGATE_TARGET)
     string(TOUPPER "${SUITE}" _suite_upper)
     get_property(_command_targets GLOBAL PROPERTY
         "UML_${_suite_upper}_COMMAND_TARGETS")
-    list(REMOVE_DUPLICATES _command_targets)
     foreach(_command_target IN LISTS _command_targets)
         if(NOT TARGET "${_command_target}")
             message(FATAL_ERROR
@@ -56,8 +55,8 @@ function(uml_finalize_suite_binary_target SUITE AGGREGATE_TARGET)
 endfunction()
 
 function(uml_apply_test_properties NAME)
-    cmake_parse_arguments(TEST "" "WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
-        "LABELS;RESOURCE_GROUPS;FIXTURES_SETUP;FIXTURES_CLEANUP;FIXTURES_REQUIRED" ${ARGN})
+    cmake_parse_arguments(TEST "" "WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
+        "LABELS;RESOURCE_GROUPS" ${ARGN})
 
     if(NOT TEST_LABELS)
         message(FATAL_ERROR "${NAME}: a suite label is required")
@@ -73,26 +72,14 @@ function(uml_apply_test_properties NAME)
     if(TEST_PROCESSORS)
         set_tests_properties("${NAME}" PROPERTIES PROCESSORS "${TEST_PROCESSORS}")
     endif()
-    if(TEST_RESOURCE_LOCK)
-        set_tests_properties("${NAME}" PROPERTIES RESOURCE_LOCK "${TEST_RESOURCE_LOCK}")
-    endif()
     if(TEST_RESOURCE_GROUPS)
         set_tests_properties("${NAME}" PROPERTIES RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
-    endif()
-    if(TEST_FIXTURES_SETUP)
-        set_tests_properties("${NAME}" PROPERTIES FIXTURES_SETUP "${TEST_FIXTURES_SETUP}")
-    endif()
-    if(TEST_FIXTURES_CLEANUP)
-        set_tests_properties("${NAME}" PROPERTIES FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}")
-    endif()
-    if(TEST_FIXTURES_REQUIRED)
-        set_tests_properties("${NAME}" PROPERTIES FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
     endif()
 endfunction()
 
 function(uml_add_unit_test)
-    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
-        "COMMAND;LABELS;RESOURCE_GROUPS;FIXTURES_SETUP;FIXTURES_CLEANUP;FIXTURES_REQUIRED" ${ARGN})
+    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
+        "COMMAND;LABELS;RESOURCE_GROUPS" ${ARGN})
     if(NOT TEST_NAME OR NOT TEST_COMMAND)
         message(FATAL_ERROR
             "uml_add_unit_test requires NAME and COMMAND")
@@ -120,23 +107,19 @@ function(uml_add_unit_test)
         WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
         TIMEOUT "${TEST_TIMEOUT}"
         PROCESSORS "${TEST_PROCESSORS}"
-        RESOURCE_LOCK "${TEST_RESOURCE_LOCK}"
-        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}"
-        FIXTURES_SETUP "${TEST_FIXTURES_SETUP}"
-        FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}"
-        FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
+        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
     # Scratch files stay in a per-test build-tree directory; see
     # tests/unit/scratch/scratch_directory.hpp. UML_UNIT_TEST_NAME gives each
     # test its registered name.
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT
         "UML_UNIT_TEST_NAME=${TEST_NAME}"
         "UML_TEST_SCRATCH_DIRECTORY=${CMAKE_BINARY_DIR}/test-scratch/${TEST_NAME}")
-    uml_record_registered_test("${TEST_NAME}" unit ${TEST_COMMAND})
+    uml_record_registered_test(unit ${TEST_COMMAND})
 endfunction()
 
 function(uml_add_tooling_test)
-    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
-        "COMMAND;LABELS;RESOURCE_GROUPS;FIXTURES_SETUP;FIXTURES_CLEANUP;FIXTURES_REQUIRED" ${ARGN})
+    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
+        "COMMAND;LABELS;RESOURCE_GROUPS" ${ARGN})
     if(NOT TEST_NAME OR NOT TEST_COMMAND)
         message(FATAL_ERROR
             "uml_add_tooling_test requires NAME and COMMAND")
@@ -152,19 +135,15 @@ function(uml_add_tooling_test)
         WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
         TIMEOUT "${TEST_TIMEOUT}"
         PROCESSORS "${TEST_PROCESSORS}"
-        RESOURCE_LOCK "${TEST_RESOURCE_LOCK}"
-        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}"
-        FIXTURES_SETUP "${TEST_FIXTURES_SETUP}"
-        FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}"
-        FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
+        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY
         ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
-    uml_record_registered_test("${TEST_NAME}" tooling ${TEST_COMMAND})
+    uml_record_registered_test(tooling ${TEST_COMMAND})
 endfunction()
 
 function(uml_add_integration_test)
-    cmake_parse_arguments(TEST "ROOTFS" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS;RESOURCE_LOCK"
-        "COMMAND;LABELS;RESOURCE_GROUPS;FIXTURES_SETUP;FIXTURES_CLEANUP;FIXTURES_REQUIRED" ${ARGN})
+    cmake_parse_arguments(TEST "ROOTFS" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
+        "COMMAND;LABELS;RESOURCE_GROUPS" ${ARGN})
     if(NOT TEST_NAME OR NOT TEST_COMMAND)
         message(FATAL_ERROR
             "uml_add_integration_test requires NAME and COMMAND")
@@ -188,16 +167,12 @@ function(uml_add_integration_test)
         WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
         TIMEOUT "${TEST_TIMEOUT}"
         PROCESSORS "${TEST_PROCESSORS}"
-        RESOURCE_LOCK "${TEST_RESOURCE_LOCK}"
-        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}"
-        FIXTURES_SETUP "${TEST_FIXTURES_SETUP}"
-        FIXTURES_CLEANUP "${TEST_FIXTURES_CLEANUP}"
-        FIXTURES_REQUIRED "${TEST_FIXTURES_REQUIRED}")
+        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
     # Integration runners import helpers from neighboring source directories.
     # Keep validation from recreating source-adjacent __pycache__ debris.
     set_property(TEST "${TEST_NAME}" APPEND PROPERTY
         ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
-    uml_record_registered_test("${TEST_NAME}" integration ${_command})
+    uml_record_registered_test(integration ${_command})
 endfunction()
 
 function(uml_add_guest_integration_test)
