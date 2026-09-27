@@ -43,10 +43,10 @@ index 6d1ce14b423e62ffc5188dbf00c2bf27ba1d1be2..4aca6a18881be8c7ca97a5cb74e18b6a
     'venus/vkr_image.c',
     'venus/vkr_instance.c',
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 84e6ab9482c62d0ab6185bf6e7e139a516c24519..9d90664ded16dcdbd0535c4a729a1ea4cc017be3 100644
+index 11ccd776df012a886c8763ad0a1533545343a929..3f33a7044db96d704f96e78d972d81ad82f2b316 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
-@@ -14,7 +14,7 @@
+@@ -11,7 +11,7 @@
  #include <vn_protocol_renderer_transport.h>
  
  #include "vkr_device_memory_gen.h"
@@ -54,8 +54,8 @@ index 84e6ab9482c62d0ab6185bf6e7e139a516c24519..9d90664ded16dcdbd0535c4a729a1ea4
 +#include "virgl_host_memory.h"
  #include "vkr_physical_device.h"
  
- static int
-@@ -434,7 +434,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+ static bool
+@@ -390,7 +390,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
     uint32_t valid_fd_types = 0;
     int udmabuf_fd = -1;
     void *gbm_bo = NULL;
@@ -64,7 +64,7 @@ index 84e6ab9482c62d0ab6185bf6e7e139a516c24519..9d90664ded16dcdbd0535c4a729a1ea4
     VkExportMemoryAllocateInfo local_export_info;
     /* VK_EXT_external_memory_host is renderer-internal.  It gives a unified-memory
      * host a real Vulkan import of the same anonymous file that virtio-gpu maps into
-@@ -457,7 +457,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -413,7 +413,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
           export_info = NULL;
        }
  
@@ -73,7 +73,7 @@ index 84e6ab9482c62d0ab6185bf6e7e139a516c24519..9d90664ded16dcdbd0535c4a729a1ea4
           alloc_info->allocationSize,
           physical_dev->min_imported_host_pointer_alignment);
        if (!host_shm) {
-@@ -475,7 +475,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -431,7 +431,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
            !(host_props.memoryTypeBits & (1u << host_mem_type_index))) {
           if (args->ret == VK_SUCCESS)
              args->ret = VK_ERROR_INVALID_EXTERNAL_HANDLE;
@@ -82,7 +82,7 @@ index 84e6ab9482c62d0ab6185bf6e7e139a516c24519..9d90664ded16dcdbd0535c4a729a1ea4
           return;
        }
  
-@@ -580,7 +580,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -536,7 +536,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
           close(local_import_info.fd);
        if (gbm_bo)
           vkr_gbm_bo_destroy(gbm_bo);
@@ -91,7 +91,7 @@ index 84e6ab9482c62d0ab6185bf6e7e139a516c24519..9d90664ded16dcdbd0535c4a729a1ea4
        return;
     }
  
-@@ -733,7 +733,7 @@ vkr_device_memory_release(struct vkr_device_memory *mem)
+@@ -689,7 +689,7 @@ vkr_device_memory_release(struct vkr_device_memory *mem)
     virgl_resource_native_release(mem->native_resource_id);
     if (mem->metal_heap_fd >= 0)
        close(mem->metal_heap_fd);

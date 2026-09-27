@@ -143,10 +143,10 @@ index f0acdd4ad629fdf983e916b23f21d7ff623b0157..010a7d3dfbc9868f27be653fa7b91865
  
  enum vkr_context_validate_level {
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 2e12e9c6316c6e3ede6be4b6626f1a59a8a3bb7f..2dea6c57fa96280da8b898d141e5aa4acad007c9 100644
+index 2ab7bb5aef9c1296e0b8e7970847776d415d7404..6f15496cc005421955fcc93b10f6d9c19d7f798e 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
-@@ -802,8 +802,8 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+@@ -764,8 +764,8 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
  {
     TRACE_FUNC();
  
