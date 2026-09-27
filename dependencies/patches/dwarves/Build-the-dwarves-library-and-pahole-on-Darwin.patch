@@ -8,19 +8,19 @@ Subject: [PATCH] Build the dwarves library and pahole on Darwin
 extern fls() in <strings.h>, which conflicts with the static helper of the
 same name in dutil.h, so the helper is now dwarves__fls().
 
-The argp hook and bug-address definitions name their symbols with an
-assembler label. Prefix it with __USER_LABEL_PREFIX__, so on Mach-O, where C
-symbols start with an underscore, the definitions still replace argp's and
---version remains available.
+The argp version-hook definition names its symbol with an assembler label.
+Prefix it with __USER_LABEL_PREFIX__, so on Mach-O, where C symbols start
+with an underscore, the definition still replaces argp's and --version
+remains available.
 ---
  btf_loader.c |  1 -
  ctf_loader.c |  1 -
- dutil.h      | 28 +++++++++++++++++-----------
+ dutil.h      | 26 ++++++++++++++++----------
  elf_symtab.c |  2 +-
  libctf.c     |  1 -
  pdwtags.c    |  1 -
  pglobal.c    |  1 -
- 7 files changed, 18 insertions(+), 17 deletions(-)
+ 7 files changed, 17 insertions(+), 16 deletions(-)
 
 diff --git a/btf_loader.c b/btf_loader.c
 index 66ffd1a0b5ad73a3f2c8f0e9409c094a1aa32b4e..0a3f9f3fdabd9cf2c5ac66b3f6ce86b512547787 100644
@@ -47,7 +47,7 @@ index 39aef17893da5314b637a93fe156e12e9c80bf9b..680bce15ee714897bdfe405e9573f72b
  #include <limits.h>
  #include <libgen.h>
 diff --git a/dutil.h b/dutil.h
-index 603556fa03085abf163d10fb4f1f4a2dac7466a3..efb43547c33ea395e5406a55a5b8cbea24b384c2 100644
+index 603556fa03085abf163d10fb4f1f4a2dac7466a3..890cf19de9e44205d1125c516012abbbe612afd6 100644
 --- a/dutil.h
 +++ b/dutil.h
 @@ -52,13 +52,14 @@ static inline __attribute__((const)) bool is_power_of_2(unsigned long n)
@@ -105,7 +105,7 @@ index 603556fa03085abf163d10fb4f1f4a2dac7466a3..efb43547c33ea395e5406a55a5b8cbea
  }
  
  static inline __attribute__((const))
-@@ -277,11 +278,16 @@ int ____ilog2_NaN(void);
+@@ -277,9 +278,14 @@ int ____ilog2_NaN(void);
     variables as non-const (which is correct in general).  But we can
     do better, it is not going to change.  So we want to move them into
     the .rodata section.  Define macros to do the trick.  */
@@ -119,11 +119,8 @@ index 603556fa03085abf163d10fb4f1f4a2dac7466a3..efb43547c33ea395e5406a55a5b8cbea
 -	__asm ("argp_program_version_hook")
 +	__asm (ARGP_ASM_NAME("argp_program_version_hook"))
  #define ARGP_PROGRAM_BUG_ADDRESS_DEF \
--	const char *const apba__ __asm ("argp_program_bug_address")
-+	const char *const apba__ __asm (ARGP_ASM_NAME("argp_program_bug_address"))
+ 	const char *const apba__ __asm ("argp_program_bug_address")
  
- // Use a list_head so that we keep the original order when iterating in
- // the strlist.
 diff --git a/elf_symtab.c b/elf_symtab.c
 index 3a31d643b420c0fee4044cec62f746c8e9dbe2f5..5c5e24ef11f58241c4bc771b055b458c0d5a7ec9 100644
 --- a/elf_symtab.c
