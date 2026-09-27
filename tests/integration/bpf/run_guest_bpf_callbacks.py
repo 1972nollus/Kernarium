@@ -34,7 +34,7 @@ def main() -> int:
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
     arguments = parser.parse_args()
 
-    guest = Guest(
+    with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         "1G",
@@ -42,8 +42,7 @@ def main() -> int:
         ("ncpus=4",),
         init_shell=True,
         engine=arguments.engine,
-    )
-    try:
+    ) as guest:
         guest.boot_to_shell(180)
         guest.check_command(
             "mount -t proc proc /proc && mount -t tmpfs -o mode=1777 tmpfs /tmp",
@@ -57,11 +56,6 @@ def main() -> int:
                 f"the BPF callback probe reported {result.return_code} failure(s)"
             )
         return 0
-    except BaseException:
-        print(guest.output()[-4000:], file=sys.stderr)
-        raise
-    finally:
-        guest.close()
 
 
 if __name__ == "__main__":

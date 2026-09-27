@@ -26,6 +26,8 @@ BOOT_TIMEOUT_SECONDS = 90
 CONSOLE_WRITE_TIMEOUT_SECONDS = 30
 # One upload command stays well inside the guest console's 4 KiB line.
 UPLOAD_CHUNK_CHARACTERS = 2048
+# A failing session prints this much of its transcript's end.
+FAILURE_TRANSCRIPT_CHARACTERS = 16384
 SIZE_VALUE = re.compile(r"^(\d+)([KMGT]?)$", re.IGNORECASE)
 SWAP_IMAGE = re.compile(r"^uml-ltp-swap-(\d+)-.*\.img$")
 OVERLAY_READY_MARKER = "__UML_OVERLAY_READY__"
@@ -325,6 +327,20 @@ class Guest:
         self._input = self._process.stdin
         os.set_blocking(self._input.fileno(), False)
         self._transcript = bytearray()
+
+    def __enter__(self) -> Guest:
+        return self
+
+    def __exit__(self, exception_type, exception, traceback) -> None:
+        """Print the transcript's end when an exception propagates, then close."""
+        try:
+            if exception_type is not None:
+                print(
+                    self.output()[-FAILURE_TRANSCRIPT_CHARACTERS:],
+                    file=sys.stderr,
+                )
+        finally:
+            self.close()
 
     @property
     def process_id(self) -> int:

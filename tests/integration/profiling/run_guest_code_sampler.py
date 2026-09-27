@@ -56,7 +56,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="uml-guest-samples-") as directory:
         samples = pathlib.Path(directory) / "samples.tsv"
         os.environ["DARWIN_UML_GUEST_SAMPLES"] = f"{samples}:{SAMPLES_PER_SECOND}"
-        guest = Guest(
+        with Guest(
             arguments.emulator.resolve(),
             arguments.rootfs.resolve(),
             "512M",
@@ -65,8 +65,7 @@ def main() -> int:
             overlay_shell=True,
             # Only the gadgets engine carries the sampler.
             engine="gadgets",
-        )
-        try:
+        ) as guest:
             guest.boot_and_login()
             guest.upload(workload.read_bytes(), "/tmp/workload", 0o755)
             output = guest.check_command("/tmp/workload", 300)
@@ -74,11 +73,6 @@ def main() -> int:
                 raise RuntimeError(f"workload did not finish:\n{output}")
             if not guest.shutdown(60):
                 raise RuntimeError("guest did not power off")
-        except BaseException:
-            print(guest.output(), file=sys.stderr)
-            raise
-        finally:
-            guest.close()
 
         if not samples.is_file():
             raise RuntimeError("the emulator wrote no guest sample profile")
