@@ -6,7 +6,7 @@ Subject: [PATCH] kosmickrisp: support unused dynamic-rendering attachments
 ---
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   1 +
  src/kosmickrisp/vulkan/kk_cmd_draw.c          | 230 ++++---
- src/kosmickrisp/vulkan/kk_physical_device.c   |  12 +
+ src/kosmickrisp/vulkan/kk_physical_device.c   |  10 +
  src/kosmickrisp/vulkan/kk_shader.c            | 267 +++++++--
  src/kosmickrisp/vulkan/kk_shader.h            |  22 +
  src/kosmickrisp/vulkan/meson.build            |  14 +
@@ -16,7 +16,7 @@ Subject: [PATCH] kosmickrisp: support unused dynamic-rendering attachments
  .../unused_att.frag.h                         |  37 ++
  .../unused_attachment_shaders/unused_att.vert |  10 +
  .../unused_att.vert.h                         |  57 ++
- 12 files changed, 1099 insertions(+), 139 deletions(-)
+ 12 files changed, 1097 insertions(+), 139 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_unused_attachment_gaps.cpp
  create mode 100755 src/kosmickrisp/vulkan/tests/unused_attachment_shaders/generate.sh
  create mode 100644 src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.frag
@@ -363,7 +363,7 @@ index 1c46a182831d551dcc075d2d83593a44c22f3c94..132aa31a89b7867a73b5bde19cea076c
           mtl_set_depth_stencil_state(enc, gfx->depth_stencil_state);
     }
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 0c11b757d1e2436617c73cd802f53a0da5b873bc..1f396d5546761608835ed882005f77f5afffc188 100644
+index 0c11b757d1e2436617c73cd802f53a0da5b873bc..628b8e8bdb3411697499a8207ea0f13d97580fd8 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -167,6 +167,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -374,18 +374,16 @@ index 0c11b757d1e2436617c73cd802f53a0da5b873bc..1f396d5546761608835ed882005f77f5
        .EXT_extended_dynamic_state3 = true,
        .EXT_external_memory_metal = true,
        .EXT_external_memory_host = true,
-@@ -433,6 +434,17 @@ kk_get_device_features(
+@@ -433,6 +434,15 @@ kk_get_device_features(
        /* VK_EXT_depth_clip_control */
        .depthClipControl = true,
  
 +      /* VK_EXT_dynamic_rendering_unused_attachments
 +       *
-+       * Metal keeps render-pass attachments independent from the pixel
-+       * formats declared by the bound pipeline.  A missing attachment drops
-+       * the corresponding output, while an attachment omitted by the
-+       * pipeline still receives its render-pass load and store actions.  Keep
-+       * using the application's pipeline object directly; no attachment-mask
-+       * pipeline variants are needed.
++       * A render pass may leave some of the pipeline's colour attachments
++       * unbound. A Metal render pipeline must describe the attachments the
++       * pass binds, so such a draw uses one created for the bound colour
++       * mask; see kk_shader_render_pipeline().
 +       */
 +      .dynamicRenderingUnusedAttachments = true,
 +

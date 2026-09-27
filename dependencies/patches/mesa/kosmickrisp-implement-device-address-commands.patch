@@ -711,7 +711,7 @@ index 3e6db313375cdcc79ff65e1022288c3563223f1a..88ba3f81d0a641c6e9bfde72e2d84b34
 +      kk_CmdPipelineBarrier2(commandBuffer, &pDependencyInfos[i]);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index cb59b6d14d427b19c8d2784d79abb1eb8a796106..f61a7b6e881912f71fdfa57baf2ceff65de7ffa7 100644
+index 09fcec3df77d8b2610d4c72299b3ed0efcecc99b..64a69a57e7c23abe5d9215ec419f101ac483d157 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -139,6 +139,7 @@ kk_get_device_extensions(const struct kk_instance *instance,

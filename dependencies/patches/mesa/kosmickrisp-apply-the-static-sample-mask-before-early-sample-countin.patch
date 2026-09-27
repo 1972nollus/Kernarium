@@ -186,10 +186,10 @@ index de3e4d7158ce0e569afd1c490d3d632c150a483a..fe1de5ed5aea8a91980dd71163d54605
   * is cached device-wide under this key, so it must describe every attachment
   * the compiled Metal pipeline and its depth-stencil state are built from.
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index acd2bc3a90ee8f521b3935d260ffbab4a34910a2..d4eeed93b34cf7c9b9b15ae9b691a830df0d2881 100644
+index 82f5d4aff2015f1e0bb72a28ec399f8a69d6a141..50f97c4fb549e15259ad97b1855ed13e8491a75c 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
-@@ -807,7 +807,11 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
+@@ -805,7 +805,11 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
  
        /* VK_KHR_maintenance5 */
        .earlyFragmentMultisampleCoverageAfterSampleCounting = true,

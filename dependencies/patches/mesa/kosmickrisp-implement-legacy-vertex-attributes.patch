@@ -216,7 +216,7 @@ index af47837e1f6638c899f0c1a0c6cab0e6233ede24..7cb1ed3d6b09257d160faf1dc5949eef
 \ No newline at end of file
 +#endif
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 8b24e4574121c98b309e330c667bb7e63c8c3603..6425c91ab31d884e962760c3842335677d78773d 100644
+index c568b0d18315b968d1651e1b3b9eee26c8892cb8..5c2a9df8e02d05e0f6d37264589ea1b13eee9885 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -179,6 +179,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -235,7 +235,7 @@ index 8b24e4574121c98b309e330c667bb7e63c8c3603..6425c91ab31d884e962760c384233567
  
        .GOOGLE_decorate_string = true,
        .GOOGLE_hlsl_functionality1 = true,
-@@ -478,6 +480,9 @@ kk_get_device_features(
+@@ -476,6 +478,9 @@ kk_get_device_features(
        .image2DViewOf3D = true,
        .sampler2DViewOf3D = true,
  
@@ -245,7 +245,7 @@ index 8b24e4574121c98b309e330c667bb7e63c8c3603..6425c91ab31d884e962760c384233567
        /* VK_EXT_multi_draw */
        .multiDraw = true,
  
-@@ -518,6 +523,9 @@ kk_get_device_features(
+@@ -516,6 +521,9 @@ kk_get_device_features(
        /* VK_EXT_vertex_attribute_robustness */
        .vertexAttributeRobustness = true,
  
@@ -255,7 +255,7 @@ index 8b24e4574121c98b309e330c667bb7e63c8c3603..6425c91ab31d884e962760c384233567
        /* EXT_ycbcr_2plane_444_formats */
        .ycbcr2plane444Formats = true,
     };
-@@ -833,7 +841,7 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
+@@ -831,7 +839,7 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
        .resolveSrgbFormatSupportsTransferFunctionControl = true,
  
        /* VK_EXT_legacy_vertex_attributes */

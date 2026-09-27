@@ -807,10 +807,10 @@ index e1490680e8c0a5120d9c55f5c739b51680dad49e..2c10386ddda0aee3c7ab19f23015f86d
  }
  
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 957eb2f9074bb57b548b80244b8dcf53ff61a68e..28294b604b2b5d942a8de1e2f208764c6523ddc6 100644
+index 2691fb8aa60db4120d280846050f0aefe4ea9773..b83269f2bd0a2159cdffcb9518c3472d92f5f281 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
-@@ -471,8 +471,8 @@ kk_get_device_features(
+@@ -469,8 +469,8 @@ kk_get_device_features(
        .extendedDynamicState3DepthClipEnable = true,
        .extendedDynamicState3DepthClipNegativeOneToOne = true,
        .extendedDynamicState3ProvokingVertexMode = true,

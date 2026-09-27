@@ -170,7 +170,7 @@ index a983cade8d4598b19e33fcfd514040df93b4ceb6..5c7792db8611a74fde73af5f7ad03ac7
  
  bool msl_gather_uses_per_draw_data(nir_shader *nir);
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index ce2b4046920271cceb4ba6d17d14f8a6405579dd..5749fb5e97ab743f4d58440e94dc258234ab876a 100644
+index 42716090f5c48b55a0081ec11684e307622b7498..2710b0b940ccdd3d2c59cb43ff11edaeb6e0350f 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -269,11 +269,10 @@ kk_get_device_features(

@@ -152,10 +152,10 @@ index 3300cbe5ddd0024dff0ed1a477f4a492b7e2baa0..16ec133e7201e835ec4678e0340a00a5
     struct kk_command_allocator_cache *allocator_cache;
  
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index d4eeed93b34cf7c9b9b15ae9b691a830df0d2881..aee0b3050254148b456bffe7e5bb30a35437e924 100644
+index 50f97c4fb549e15259ad97b1855ed13e8491a75c..d9f4ceb20d7acb3bf7409fa7af6bac4e2ad409ef 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
-@@ -796,10 +796,12 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
+@@ -794,10 +794,12 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
        .minImportedHostPointerAlignment = os_page_size,
  
        /* VK_EXT_graphics_pipeline_library */

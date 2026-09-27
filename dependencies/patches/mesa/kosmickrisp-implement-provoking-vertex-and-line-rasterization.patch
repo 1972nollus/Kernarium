@@ -1916,7 +1916,7 @@ index 12fd5806ef8f6cd1d509afd8ef5e6d5e737d00c5..8d11b518c97ff2217888e487ce6ee902
  }
  
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index a7d974c379a5c4fedabea428e04591b1a00a17c5..8b24e4574121c98b309e330c667bb7e63c8c3603 100644
+index 7e4a984f44ce2e8bc82a921d86b58cdaed039232..c568b0d18315b968d1651e1b3b9eee26c8892cb8 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -188,6 +188,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -1938,7 +1938,7 @@ index a7d974c379a5c4fedabea428e04591b1a00a17c5..8b24e4574121c98b309e330c667bb7e6
        .dynamicRenderingLocalRead = true,
        .globalPriorityQuery = true,
        .hostImageCopy = true,
-@@ -462,8 +467,10 @@ kk_get_device_features(
+@@ -460,8 +465,10 @@ kk_get_device_features(
        .extendedDynamicState3DepthClampEnable = true,
        .extendedDynamicState3DepthClipEnable = true,
        .extendedDynamicState3DepthClipNegativeOneToOne = true,
@@ -1950,7 +1950,7 @@ index a7d974c379a5c4fedabea428e04591b1a00a17c5..8b24e4574121c98b309e330c667bb7e6
        .extendedDynamicState3SampleLocationsEnable = true,
        .extendedDynamicState3TessellationDomainOrigin = true,
  
-@@ -489,6 +496,10 @@ kk_get_device_features(
+@@ -487,6 +494,10 @@ kk_get_device_features(
        .primitiveTopologyListRestart = true,
        .primitiveTopologyPatchListRestart = false,
  

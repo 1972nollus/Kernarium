@@ -669,7 +669,7 @@ index 4e77b4de2d79158856908ad27c3e3bd89ddbb91c..b492059e869c2e95d39ca8b765633c40
        nir_foreach_block_safe(block, impl) {
           nir_builder b = nir_builder_create(impl);
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index a12cc8301d30a9ebd90f85d836e0550d60ea0513..9b5aa165c75f9cb04a2ef56bb79b8a77d20550cc 100644
+index 3b6abef5623321c2b01e71da3b36abcf613c8111..37ee3d63009edb8bb3ad76699950e228d67d0ad0 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -181,6 +181,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -680,7 +680,7 @@ index a12cc8301d30a9ebd90f85d836e0550d60ea0513..9b5aa165c75f9cb04a2ef56bb79b8a77
        .EXT_post_depth_coverage = true,
        .EXT_primitive_restart_index = true,
        .EXT_primitive_topology_list_restart = true,
-@@ -471,6 +472,9 @@ kk_get_device_features(
+@@ -469,6 +470,9 @@ kk_get_device_features(
        .nestedCommandBufferRendering = true,
        .nestedCommandBufferSimultaneousUse = true,
  

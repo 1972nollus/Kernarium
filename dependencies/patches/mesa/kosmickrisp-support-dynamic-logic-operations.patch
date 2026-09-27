@@ -318,7 +318,7 @@ index 0000000000000000000000000000000000000000..c3b85e7f09becb7312ff056380725810
 +
 +#endif
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index f61a7b6e881912f71fdfa57baf2ceff65de7ffa7..a7d974c379a5c4fedabea428e04591b1a00a17c5 100644
+index 64a69a57e7c23abe5d9215ec419f101ac483d157..7e4a984f44ce2e8bc82a921d86b58cdaed039232 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -322,7 +322,7 @@ kk_get_device_features(

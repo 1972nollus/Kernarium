@@ -256,7 +256,7 @@ index 0000000000000000000000000000000000000000..8b698c583019baad22275dfd358aacb4
 +
 +#endif /* KK_DEPTH_CLIP_H */
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 1f396d5546761608835ed882005f77f5afffc188..c48462c450b5d947584e120d750eca48612049a5 100644
+index 628b8e8bdb3411697499a8207ea0f13d97580fd8..073e9adb13971b84a3f97b15d987b57d9998bd8f 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -167,6 +167,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -276,8 +276,8 @@ index 1f396d5546761608835ed882005f77f5afffc188..c48462c450b5d947584e120d750eca48
 +
        /* VK_EXT_dynamic_rendering_unused_attachments
         *
-        * Metal keeps render-pass attachments independent from the pixel
-@@ -447,6 +451,7 @@ kk_get_device_features(
+        * A render pass may leave some of the pipeline's colour attachments
+@@ -445,6 +449,7 @@ kk_get_device_features(
  
        /* VK_EXT_extended_dynamic_state3 */
        .extendedDynamicState3DepthClampEnable = true,

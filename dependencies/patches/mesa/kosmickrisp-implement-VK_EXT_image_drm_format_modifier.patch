@@ -492,7 +492,7 @@ index 0000000000000000000000000000000000000000..3e3033f8b37b45eb83f5ea105cdf492c
 +
 +#endif /* KK_LINEAR_LAYOUT_H */
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 0d716fc1cca065c68348c8b3ce565dab278cde8c..ce2b4046920271cceb4ba6d17d14f8a6405579dd 100644
+index fb3cd714bb3a433a3413a1ce6160011528322886..42716090f5c48b55a0081ec11684e307622b7498 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -181,6 +181,7 @@ kk_get_device_extensions(const struct kk_instance *instance,

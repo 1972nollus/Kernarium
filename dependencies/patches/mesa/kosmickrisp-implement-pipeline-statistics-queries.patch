@@ -927,7 +927,7 @@ index 426b2899af4afdc4d7c8bd2e154b3d694481f1e2..89639588e6b03297123e7e451ffd75a0
 +                                     &options);
  }
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 6425c91ab31d884e962760c3842335677d78773d..957eb2f9074bb57b548b80244b8dcf53ff61a68e 100644
+index 5c2a9df8e02d05e0f6d37264589ea1b13eee9885..2691fb8aa60db4120d280846050f0aefe4ea9773 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -236,6 +236,7 @@ kk_get_device_features(

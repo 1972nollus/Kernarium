@@ -201,7 +201,7 @@ index 0000000000000000000000000000000000000000..6ffdd35f9b902675129f89b523e89eb1
 +
 +#endif /* KK_GPL_H */
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index 9b5aa165c75f9cb04a2ef56bb79b8a77d20550cc..cb59b6d14d427b19c8d2784d79abb1eb8a796106 100644
+index 37ee3d63009edb8bb3ad76699950e228d67d0ad0..09fcec3df77d8b2610d4c72299b3ed0efcecc99b 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
 @@ -143,6 +143,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
@@ -228,7 +228,7 @@ index 9b5aa165c75f9cb04a2ef56bb79b8a77d20550cc..cb59b6d14d427b19c8d2784d79abb1eb
        .inlineUniformBlock = true,
        .maintenance4 = true,
        .pipelineCreationCacheControl = true,
-@@ -769,7 +772,10 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
+@@ -767,7 +770,10 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
        .minImportedHostPointerAlignment = os_page_size,
  
        /* VK_EXT_graphics_pipeline_library */
