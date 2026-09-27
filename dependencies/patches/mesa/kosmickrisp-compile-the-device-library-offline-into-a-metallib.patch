@@ -365,10 +365,10 @@ index 0000000000000000000000000000000000000000..0da26e4a2b42b2e7b874587336b8ccf2
 +if __name__ == '__main__':
 +    main()
 diff --git a/src/kosmickrisp/libkk/meson.build b/src/kosmickrisp/libkk/meson.build
-index ff7ec272fbd36c87e738b88c0df45d3e3aed027c..a945bf5a7dacb4734da78f75a50dc3e55b23b321 100644
+index ccc7dc76e4f0f507337acf32e7574d39fb631a90..7c4ba78825041e686fb8834e6ea7ca679aa263f9 100644
 --- a/src/kosmickrisp/libkk/meson.build
 +++ b/src/kosmickrisp/libkk/meson.build
-@@ -28,14 +28,33 @@ idep_libkk = declare_dependency(
+@@ -31,14 +31,33 @@ idep_libkk = declare_dependency(
  
  libkk_shaders = custom_target(
    input : libkk_spv,
@@ -405,7 +405,7 @@ index ff7ec272fbd36c87e738b88c0df45d3e3aed027c..a945bf5a7dacb4734da78f75a50dc3e5
    link_with : [libpoly_nir],
    dependencies : [idep_nir, idep_mesautil, idep_libpoly],
  )
-@@ -43,5 +62,6 @@ libkk_shaders_lib = static_library(
+@@ -46,5 +65,6 @@ libkk_shaders_lib = static_library(
  idep_libkk_shaders_h = declare_dependency(
    sources : [libkk_shaders[0]],
    include_directories : include_directories('.'),
