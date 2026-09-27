@@ -6,10 +6,8 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
 import os
 import pathlib
-import shlex
 import subprocess
 import statistics
 import sys
@@ -66,7 +64,10 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--shell-init",
         action="store_true",
-        help="boot /bin/sh directly from the EROFS image",
+        help=(
+            "boot /bin/sh directly from the EROFS image instead of the "
+            "default writable tmpfs OverlayFS shell"
+        ),
     )
     return parser.parse_args()
 
@@ -84,20 +85,19 @@ def main() -> int:
         f"ncpus={arguments.cpus}",
         f"root={arguments.root_device}",
     ]
-    guest = Guest(
+    elapsed_samples: list[float] = []
+    utilization_samples: list[float] = []
+    with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         arguments.memory,
         "tmpfs",
         tuple(extra_arguments),
         init_shell=arguments.shell_init,
-        systemd_overlay=not arguments.shell_init,
+        overlay_shell=not arguments.shell_init,
         engine=arguments.engine,
         core_class=arguments.core_class,
-    )
-    elapsed_samples: list[float] = []
-    utilization_samples: list[float] = []
-    try:
+    ) as guest:
         if arguments.shell_init:
             guest.boot_to_shell(180)
             mounts = guest.run_command(
@@ -125,31 +125,7 @@ def main() -> int:
                 and pathlib.PurePosixPath("/tmp") not in guest_path.parents
             ):
                 raise ValueError("upload destination must be below /tmp")
-            encoded = base64.b64encode(host_path.read_bytes()).decode("ascii")
-            encoded_path = f"{guest_path}.base64"
-            quoted_encoded_path = shlex.quote(encoded_path)
-            quoted_guest_path = shlex.quote(str(guest_path))
-            initialize = guest.run_command(f": > {quoted_encoded_path}", 10)
-            if initialize.return_code != 0:
-                raise RuntimeError(
-                    f"failed to initialize upload\n{initialize.output}"
-                )
-            # Stay comfortably below the guest console's canonical line limit.
-            for offset in range(0, len(encoded), 512):
-                chunk = shlex.quote(encoded[offset : offset + 512])
-                append = guest.run_command(
-                    f"printf %s {chunk} >> {quoted_encoded_path}", 10
-                )
-                if append.return_code != 0:
-                    raise RuntimeError(f"failed to upload chunk\n{append.output}")
-            finalize = guest.run_command(
-                f"base64 -d {quoted_encoded_path} > {quoted_guest_path} && "
-                f"chmod 755 {quoted_guest_path} && "
-                f"rm -f {quoted_encoded_path}",
-                10,
-            )
-            if finalize.return_code != 0:
-                raise RuntimeError(f"failed to finalize upload\n{finalize.output}")
+            guest.upload(host_path.read_bytes(), str(guest_path), 0o755)
         for repetition in range(arguments.repetitions):
             sampler = None
             if arguments.sample_output is not None:
@@ -204,11 +180,6 @@ def main() -> int:
             raise RuntimeError(
                 f"emulator exited with status {emulator_status}"
             )
-    except BaseException:
-        print(guest.output(), file=sys.stderr, flush=True)
-        raise
-    finally:
-        guest.close()
 
     print(
         f"median: {statistics.median(elapsed_samples):.3f}s wall, "

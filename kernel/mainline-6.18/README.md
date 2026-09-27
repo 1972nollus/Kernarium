@@ -171,6 +171,14 @@ refused every transfer that named such a buffer. Android's gralloc mapper reads
 an imported buffer exactly that way, which blanked every screenshot. The ACK
 line carries the same change.
 
+The Virtio-GPU primary plane accepts ARGB8888 as well as XRGB8888, so a GBM
+client whose EGL config has alpha can set a mode. XRGB8888 stays the first
+format, the one fbdev takes. The plane has no blend-mode property. The host
+presents a scanout's colour channels and ignores its alpha byte, which is what
+premultiplied alpha over the CRTC's black background shows. Only this line
+carries the topic, because the ACK base already offers ARGB8888 and the other
+32-bit RGB orders on the plane.
+
 Both page profiles request the runtime's anonymous physical-memory token. The
 kernel's linear physical window becomes the RAM root, so MMU and host-service
 consumers do not retain a second full-span mapping. Guest RAM is committed on
@@ -191,13 +199,16 @@ Every slice selects `HAVE_ALIGNED_STRUCT_PAGE` and `HAVE_CMPXCHG_DOUBLE`, as
 native arm64 does; the x86-64 userspace slice keeps the arm64 kernel. SLUB
 therefore updates a slab's freelist and counters with one CASP, which runs
 directly on the host CPU, and `kmalloc_nolock()`, which BPF timers allocate
-with, can use every cache. `paging_init()` checks that the FLATMEM memory map
-keeps the double-word alignment this needs. The ACK line carries the same
-change.
+with, can use every cache. A build assertion checks that the FLATMEM memory
+map's `SMP_CACHE_BYTES` allocation alignment covers the double-word alignment
+this needs. The ACK line carries the same change.
 
 Darwin's cooperative scheduler services timer deadlines and pending IPI vectors
 at safe kernel spin, retry, TLB-walk, and `cond_resched()` boundaries, and in
-`schedule()` when the caller stays runnable. Every path that changes a CPU's
+`schedule()` when the caller stays runnable. The uaccess retry and TLB-walk
+safe points poll through `cond_resched()`, which does so only without
+`CONFIG_PREEMPTION`; both assert that at build time.
+Every path that changes a CPU's
 logical IRQ state outside `local_irq_*()`, including interrupt work run from an
 idle wait, reports the change to lockdep as interrupt entry would; without
 `CONFIG_TRACE_IRQFLAGS` the reports compile away. The IPI signal is only a
@@ -363,8 +374,7 @@ compiler with `__counted_by` type-expression support; the preflight checks this
 before Kbuild. Select a compatible upstream LLVM toolchain explicitly when the
 default Apple compiler lacks the feature.
 
-`UML_KERNEL_TOOLCHAIN_ROOT` and the documented `UML_KERNEL_*` variables may
-override compiler, host compiler, linker, binutils, make, cross prefix, and job
+The documented `UML_KERNEL_*` variables may override compiler, host compiler, linker, binutils, make, cross prefix, and job
 count. Companion LLVM tools must match the selected compiler family.
 
 Every kernel generates BTF, so the build also needs pahole and a static

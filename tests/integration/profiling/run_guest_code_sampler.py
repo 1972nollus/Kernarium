@@ -13,11 +13,9 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
 import importlib.util
 import os
 import pathlib
-import shlex
 import sys
 import tempfile
 
@@ -58,7 +56,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="uml-guest-samples-") as directory:
         samples = pathlib.Path(directory) / "samples.tsv"
         os.environ["DARWIN_UML_GUEST_SAMPLES"] = f"{samples}:{SAMPLES_PER_SECOND}"
-        guest = Guest(
+        with Guest(
             arguments.emulator.resolve(),
             arguments.rootfs.resolve(),
             "512M",
@@ -67,25 +65,14 @@ def main() -> int:
             overlay_shell=True,
             # Only the gadgets engine carries the sampler.
             engine="gadgets",
-        )
-        try:
+        ) as guest:
             guest.boot_and_login()
-            # The workload is about a kilobyte, well inside one console line.
-            payload = base64.b64encode(workload.read_bytes()).decode()
-            guest.check_command(
-                f"echo {payload} | base64 -d > /tmp/workload && chmod 755 /tmp/workload",
-                60,
-            )
+            guest.upload(workload.read_bytes(), "/tmp/workload", 0o755)
             output = guest.check_command("/tmp/workload", 300)
             if "OK" not in output.splitlines():
                 raise RuntimeError(f"workload did not finish:\n{output}")
             if not guest.shutdown(60):
                 raise RuntimeError("guest did not power off")
-        except BaseException:
-            print(guest.output(), file=sys.stderr)
-            raise
-        finally:
-            guest.close()
 
         if not samples.is_file():
             raise RuntimeError("the emulator wrote no guest sample profile")

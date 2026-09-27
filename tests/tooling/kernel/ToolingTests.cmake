@@ -39,13 +39,6 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
-    NAME kernel-compiler-selection
-    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_toolchain.sh
-        ${PROJECT_SOURCE_DIR}/kernel/mainline-6.18/build/KernelToolchain.cmake
-    LABELS kernel;audit
-    TIMEOUT 30)
-
-uml_add_tooling_test(
     NAME kernel-darwin-host-compat
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_darwin_host_compat.sh
     LABELS kernel;audit

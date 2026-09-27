@@ -6,10 +6,8 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
 import os
 import pathlib
-import shlex
 import statistics
 import sys
 import time
@@ -71,35 +69,12 @@ def parse_arguments() -> argparse.Namespace:
         "--overlay-shell",
         dest="overlay_shell",
         action="store_true",
-        help="boot the EROFS root through a writable tmpfs OverlayFS shell",
-    )
-    boot_mode.add_argument(
-        "--systemd-overlay",
-        dest="overlay_shell",
-        action="store_true",
-        help=argparse.SUPPRESS,
+        help=(
+            "boot the EROFS root through a writable tmpfs OverlayFS shell "
+            "(default)"
+        ),
     )
     return parser.parse_args()
-
-
-def upload(guest: Guest, binary: pathlib.Path) -> None:
-    payload = base64.b64encode(binary.resolve().read_bytes()).decode("ascii")
-    result = guest.run_command("rm -f /tmp/guest-link-loop.b64")
-    if result.return_code == 0:
-        for offset in range(0, len(payload), 512):
-            chunk = payload[offset : offset + 512]
-            result = guest.run_command(
-                f"printf %s {shlex.quote(chunk)} >>/tmp/guest-link-loop.b64"
-            )
-            if result.return_code != 0:
-                break
-    if result.return_code == 0:
-        result = guest.run_command(
-            "base64 -d /tmp/guest-link-loop.b64 >/tmp/guest-link-loop && "
-            "chmod 755 /tmp/guest-link-loop"
-        )
-    if result.return_code != 0:
-        raise RuntimeError(f"guest upload failed\n{result.output}")
 
 
 def workload_command(workers: int) -> str:
@@ -134,7 +109,9 @@ def main() -> int:
     if arguments.command_timeout < 1:
         raise ValueError("--command-timeout must be positive")
 
-    guest = Guest(
+    elapsed_samples: list[float] = []
+    utilization_samples: list[float] = []
+    with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         arguments.memory,
@@ -146,14 +123,10 @@ def main() -> int:
               if arguments.guest_top_byte_ignore else ()),
         ),
         init_shell=arguments.shell_init,
-        overlay_shell=arguments.overlay_shell,
-        systemd_overlay=not (arguments.shell_init or arguments.overlay_shell),
+        overlay_shell=not arguments.shell_init,
         engine=arguments.engine,
         core_class=arguments.core_class,
-    )
-    elapsed_samples: list[float] = []
-    utilization_samples: list[float] = []
-    try:
+    ) as guest:
         if arguments.shell_init:
             guest.boot_to_shell(arguments.boot_timeout)
             mounts = guest.run_command(
@@ -167,7 +140,9 @@ def main() -> int:
                 )
         else:
             guest.boot_and_login(arguments.boot_timeout)
-        upload(guest, arguments.binary)
+        guest.upload(
+            arguments.binary.resolve().read_bytes(), "/tmp/guest-link-loop", 0o755
+        )
         command = workload_command(arguments.workers)
         for repetition in range(arguments.repetitions):
             before_cpu = cpu_time_seconds(guest.process_id)
@@ -210,8 +185,6 @@ def main() -> int:
             raise RuntimeError(
                 f"emulator exited with status {emulator_status}"
             )
-    finally:
-        guest.close()
 
     print(
         f"median: {statistics.median(elapsed_samples):.3f}s wall, "

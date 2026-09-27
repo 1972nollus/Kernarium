@@ -201,15 +201,12 @@ def require_runtime_image(
     root: Path,
     label: str,
     sections: list[tuple[str, int, int]],
-    btf: str,
     diagnostic: str | None,
 ) -> None:
     image = root / f"{label}.elf"
-    config = root / f"{label}.config"
     write_elf(image, sections)
-    write_config(config, {"CONFIG_DEBUG_INFO_BTF": btf})
     try:
-        module.verify_runtime_image(image, config)
+        module.verify_runtime_image(image.read_bytes())
     except SystemExit as error:
         require(
             diagnostic is not None and diagnostic in str(error),
@@ -333,13 +330,12 @@ def main() -> int:
 
         text = (".text", SHT_PROGBITS, SHF_ALLOC)
         btf = (".BTF", SHT_PROGBITS, SHF_ALLOC)
-        require_runtime_image(module, root, "btf", [text, btf], "y", None)
+        require_runtime_image(module, root, "btf", [text, btf], None)
         require_runtime_image(
             module,
             root,
             "dwarf",
             [text, btf, (".debug_info", SHT_PROGBITS, 0)],
-            "y",
             "kernel image carries DWARF sections: .debug_info",
         )
         require_runtime_image(
@@ -347,7 +343,6 @@ def main() -> int:
             root,
             "missing-btf",
             [text],
-            "y",
             "kernel config enables BTF but the image has no .BTF contents",
         )
         require_runtime_image(
@@ -355,10 +350,8 @@ def main() -> int:
             root,
             "unallocated-btf",
             [text, (".BTF", SHT_PROGBITS, 0)],
-            "y",
             "kernel .BTF section is not allocated",
         )
-        require_runtime_image(module, root, "no-btf", [text], "n", None)
 
     print("kernel artifact family/slice/page contract verified")
     return 0

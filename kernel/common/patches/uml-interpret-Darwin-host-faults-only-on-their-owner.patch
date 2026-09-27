@@ -131,7 +131,7 @@ index 36ee1aa584ef0666d37aea9d979f59b8bafa7abd..8ce3c3ec407e77fb2f4604c7425209c1
  	set_handler(SIGTRAP);
  	set_handler(SIGFPE);
 diff --git a/arch/um/os-Darwin/signal.c b/arch/um/os-Darwin/signal.c
-index 948a794aa59f264e84dca8515228639d9b7862ec..98efc0fd664e4dde1df8bd628c50041212b2d6c7 100644
+index 20c840f9c1f9e5ff1179ede34e13412ec79e2a30..28ab8dbe589f95dfba5654a2fb08c756c190bf19 100644
 --- a/arch/um/os-Darwin/signal.c
 +++ b/arch/um/os-Darwin/signal.c
 @@ -15,6 +15,7 @@
@@ -140,9 +140,9 @@ index 948a794aa59f264e84dca8515228639d9b7862ec..98efc0fd664e4dde1df8bd628c500412
  #include <smp.h>
 +#include "internal.h"
  
- #define UML_ARM64_FAULT_PAGE 14
- 
-@@ -100,14 +101,23 @@ static void common_signal_handler(int signal, siginfo_t *info,
+ struct darwin_signal_state {
+ 	volatile sig_atomic_t enabled;
+@@ -98,14 +99,23 @@ static void common_signal_handler(int signal, siginfo_t *info,
  	struct uml_pt_regs registers;
  
  	registers_from_ucontext(&registers, context);
@@ -173,7 +173,7 @@ index 948a794aa59f264e84dca8515228639d9b7862ec..98efc0fd664e4dde1df8bd628c500412
  	}
  	if (sig_info[signal] != NULL)
  		sig_info[signal](signal, (struct siginfo *)info, &registers,
-@@ -129,12 +139,82 @@ static void run_timer(ucontext_t *context)
+@@ -127,12 +137,82 @@ static void run_timer(ucontext_t *context)
  	timer_handler(SIGALRM, NULL, &registers);
  }
  

@@ -111,43 +111,15 @@ function(uml_import_kernel_artifact)
     set(_uml_manifest "${ARTIFACT_ARTIFACT_ROOT}/kernel-artifact.json")
     file(READ "${_uml_manifest}" _uml_manifest_json)
     string(JSON _uml_family GET "${_uml_manifest_json}" family)
-    string(JSON _uml_slice GET "${_uml_manifest_json}" slice)
     string(JSON _uml_page_size GET "${_uml_manifest_json}" page_size)
-    string(JSON _uml_release_id GET "${_uml_manifest_json}" release_id)
-    string(JSON _uml_directory_name GET "${_uml_manifest_json}" directory_name)
-    if(NOT _uml_family STREQUAL "${ARTIFACT_EXPECTED_FAMILY}")
-        message(FATAL_ERROR
-            "Imported kernel family ${_uml_family} does not match "
-            "${ARTIFACT_EXPECTED_FAMILY}")
-    endif()
-    if(NOT _uml_slice STREQUAL "${ARTIFACT_EXPECTED_SLICE}")
-        message(FATAL_ERROR
-            "Imported kernel slice ${_uml_slice} does not match "
-            "${ARTIFACT_EXPECTED_SLICE}")
-    endif()
-    if(NOT _uml_page_size EQUAL "${ARTIFACT_EXPECTED_PAGE_SIZE}")
-        message(FATAL_ERROR
-            "Imported kernel page size ${_uml_page_size} does not match "
-            "the configured ${ARTIFACT_EXPECTED_PAGE_SIZE}")
-    endif()
 
     add_library("${ARTIFACT_TARGET}" INTERFACE)
     set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
         UML_ARTIFACT_FAMILY "${_uml_family}")
     set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
-        UML_ARTIFACT_SLICE "${_uml_slice}")
-    set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
-        UML_ARTIFACT_DIRECTORY "${ARTIFACT_ARTIFACT_ROOT}")
-    set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
-        UML_ARTIFACT_DIRECTORY_NAME "${_uml_directory_name}")
-    set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
-        UML_ARTIFACT_RELEASE_ID "${_uml_release_id}")
-    set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
         UML_KERNEL_PAGE_SIZE "${_uml_page_size}")
     set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
         UML_KERNEL_IMAGE "${ARTIFACT_ARTIFACT_ROOT}/kernel/vmlinux")
-    set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
-        UML_KERNEL_CONFIG "${ARTIFACT_ARTIFACT_ROOT}/kernel/config")
     set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
         UML_KERNEL_MODULES_BUILTIN
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/modules.builtin")

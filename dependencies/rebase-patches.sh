@@ -7,6 +7,7 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$ROOT_DIR/dependencies/series-field.sh"
 MANIFEST=${UML_DEPENDENCY_MANIFEST:-"$ROOT_DIR/dependencies/manifest.tsv"}
 METADATA_ROOT=${UML_DEPENDENCY_METADATA_ROOT:-"$ROOT_DIR/dependencies"}
 DEPENDENCY=
@@ -77,9 +78,9 @@ $row
 EOF
 [ "$name" = "$DEPENDENCY" ] || fail "could not parse dependency row"
 [ "$series" != '-' ] || fail "$DEPENDENCY has no maintained patch series"
-owned=${series##*+}
-lower=
-[ "$owned" = "$series" ] || lower=${series%+*}
+series_field_split "$series"
+owned=$SERIES_FIELD_OWNED
+lower=$SERIES_FIELD_LOWER
 case "$owned" in
 rootfs-vulkan:*)
 	fail "$DEPENDENCY is owned by tools/rootfs/vulkan/rebase-patches.sh"
@@ -94,14 +95,16 @@ series_tool()
 
 export_base=$base
 if [ -n "$lower" ]; then
-	# The lower layers belong to the paired Vulkan guest, which owns the only
-	# layer the manifest may name below a dependency's own.
-	case "$DEPENDENCY:$lower" in
-	mesa:rootfs-vulkan:patches/mesa/series.tsv) ;;
-	*) fail "$DEPENDENCY has an unsupported lower patch-series layer: $lower" ;;
+	# The only layer the manifest may name below a dependency's own is one
+	# series the paired Vulkan guest owns.
+	case "$lower" in
+	rootfs-vulkan:*) lower_relative=${lower#rootfs-vulkan:} ;;
+	*) lower_relative= ;;
 	esac
+	series_field_rootfs_vulkan_allowed "$DEPENDENCY" "$lower_relative" ||
+		fail "$DEPENDENCY has an unsupported lower patch-series layer: $lower"
 	lower_directory=$(dirname -- \
-		"$METADATA_ROOT/../tools/rootfs/vulkan/${lower#rootfs-vulkan:}")
+		"$METADATA_ROOT/../$SERIES_FIELD_ROOTFS_VULKAN/$lower_relative")
 	lower_tree=$(series_tool recorded-tree --series-dir "$lower_directory") ||
 		fail "the lower layer records no tree: $lower"
 	boundaries=$(git -C "$SOURCE" rev-list --format='%T %H' --no-commit-header \

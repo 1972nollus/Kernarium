@@ -28,7 +28,7 @@ Bridge ABI 9.
  7 files changed, 34 insertions(+), 7 deletions(-)
 
 diff --git a/arch/um/include/shared/os.h b/arch/um/include/shared/os.h
-index 68afa1e2dc55b61a7c99d5c8cc64ad0f006f8801..f964ac7633b3d76bd15e166dcb2256d64beb4d4c 100644
+index adfebfa05c59914c8d4622bceea47d9e42c8840c..2dde638d10d910fcc9a9110793c36f5c29495e66 100644
 --- a/arch/um/include/shared/os.h
 +++ b/arch/um/include/shared/os.h
 @@ -190,6 +190,9 @@ extern void check_host_supports_tls(int *supports_tls, int *tls_min);
@@ -42,7 +42,7 @@ index 68afa1e2dc55b61a7c99d5c8cc64ad0f006f8801..f964ac7633b3d76bd15e166dcb2256d6
  #ifdef UML_HOST_DARWIN
  /* drivers/rtc_user.c */
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index 9a865342cef8e0cd3d84fb63c31672ff9f2c924c..a9e6e103038680f439da26dc4d012d0d1e3f9395 100644
+index c2b65fc0f146e951e76f7a8e678451d717dbde01..88bcf643cf90d6dfc800ee2ec1f39c1fea8ad8b5 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
 @@ -69,6 +69,21 @@ EXPORT_SYMBOL(boot_cpu_data);
@@ -77,10 +77,10 @@ index 9a865342cef8e0cd3d84fb63c31672ff9f2c924c..a9e6e103038680f439da26dc4d012d0d
  	seq_printf(m, "host\t\t: %s\n", host_info);
  	seq_printf(m, "fpu\t\t: %s\n", str_yes_no(cpu_has(&boot_cpu_data, X86_FEATURE_FPU)));
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index fe8e7d48e59b7e18a5900eacea5216d2daf886a0..15cd5f645408b6d61dba3f4286c99b5a5180505a 100644
+index 6461c46c41fe0a278318c14ab51fdca497acda65..a78bfa1ab6dea0bf5b019ea6dbbce591d8699c53 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -24,8 +24,8 @@
+@@ -23,8 +23,8 @@
   * These checks make an ABI drift fail at the kernel compiler rather than at a
   * guest boundary after register state has been reinterpreted. */
  _Static_assert(sizeof(unsigned long) == 8, "Darwin UML ABI requires LP64");

@@ -143,29 +143,22 @@ def cpuinfo_features(guest: Guest) -> set[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--emulator",
-        type=pathlib.Path,
-        default=REPOSITORY / ".build" / "cmake-macos" / "bin" / "uml-darwin",
-    )
-    parser.add_argument(
-        "--rootfs", type=pathlib.Path, default=REPOSITORY / "rootfs.erofs"
-    )
+    parser.add_argument("--emulator", type=pathlib.Path, required=True)
+    parser.add_argument("--rootfs", type=pathlib.Path, required=True)
     parser.add_argument("--memory", default="8G")
     parser.add_argument(
         "--engine", choices=("jit", "gadgets"), default="jit"
     )
     arguments = parser.parse_args()
 
-    guest = Guest(
+    with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         arguments.memory,
         "tmpfs",
-        (f"--execution-engine={arguments.engine}",),
         init_shell=True,
-    )
-    try:
+        engine=arguments.engine,
+    ) as guest:
         guest.boot_to_shell(180)
         guest.check_command(
             "mount -t proc proc /proc && "
@@ -261,11 +254,6 @@ def main() -> int:
             f"AT_HWCAP=0x{actual_hwcap:x} AT_HWCAP2=0x{actual_hwcap2:x}"
         )
         return 0
-    except BaseException:
-        print(guest.output(), file=sys.stderr)
-        raise
-    finally:
-        guest.close()
 
 
 if __name__ == "__main__":

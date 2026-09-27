@@ -7,33 +7,15 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import datetime
-import json
 import os
 import platform
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 
 def fail(message: str) -> None:
     raise SystemExit(f"Android ACK kernel artifact publisher: {message}")
-
-
-def git(source: Path, *arguments: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(source), *arguments],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if result.returncode != 0:
-        fail(f"Git failed in the ACK source: {result.stderr.strip()}")
-    return result.stdout.strip()
 
 
 def absolute_directory(path: Path, label: str) -> Path:
@@ -70,14 +52,8 @@ def main() -> None:
     sys.path.insert(0, str(common_root / "artifacts"))
     from release_common import verify_kernel_config  # noqa: PLC0415
     from kernel_artifact import (  # noqa: PLC0415
-        PAYLOAD_SPECS,
         RELEASE_ID_RE,
-        SCHEMA_VERSION,
-        parse_env,
-        publish_runtime_image,
-        verify_artifact,
-        verify_config,
-        verify_elf,
+        publish_artifact,
     )
 
     source = absolute_directory(args.source, "ACK source")
@@ -92,122 +68,28 @@ def main() -> None:
             not os.access(objcopy, os.X_OK):
         fail("--objcopy must name an absolute executable")
 
-    metadata_path = line_root / "patches/metadata.env"
-    abi_metadata_path = common_root / "abi/identity.env"
-    metadata = parse_env(metadata_path)
-    abi = parse_env(abi_metadata_path)
-    if git(source, "status", "--porcelain=v1", "--untracked-files=all"):
-        fail("ACK source worktree is dirty")
-    if git(source, "rev-parse", "HEAD^{tree}") != metadata["UML_KERNEL_FINAL_TREE"]:
-        fail("ACK source tree differs from the tracked final tree")
+    def check_release(release: str, metadata: dict[str, str]) -> None:
+        if re.match(r"^6\.18(?:\.|-)", release) is None:
+            fail("built kernel release is not ACK 6.18")
 
-    page_size = 16384
-    kernel_slice = "arm64"
-    source_paths = {
-        "kernel/System.map": build / "System.map",
-        "kernel/config": build / ".config",
-        "kernel/kernel.release": build / "include/config/kernel.release",
-        "kernel/modules.builtin": build / "modules.builtin",
-        "kernel/modules.builtin.modinfo": build / "modules.builtin.modinfo",
-        "kernel/vmlinux": build / "vmlinux",
-    }
-    for relative, path in source_paths.items():
-        if not path.is_file() or path.is_symlink():
-            fail(f"build payload is missing or unsafe for {relative}: {path}")
-    for root, directories, files in os.walk(build, followlinks=False):
-        directories[:] = [
-            name for name in directories if not (Path(root) / name).is_symlink()
-        ]
-        for name in files:
-            if name.endswith(".ko") or ".ko." in name:
-                fail(f"loadable module output is forbidden: {Path(root) / name}")
-
-    verify_config(source_paths["kernel/config"], page_size, kernel_slice)
-    verify_elf(
-        source_paths["kernel/vmlinux"], page_size, common_root, kernel_slice
+    destination = publish_artifact(
+        fail,
+        family="android-6.18",
+        kernel_slice="arm64",
+        page_size=16384,
+        source=source,
+        source_label="ACK source",
+        build=build,
+        output_root=output_root,
+        release_id=args.release_id,
+        objcopy=objcopy,
+        common_root=common_root,
+        metadata_path=line_root / "patches/metadata.env",
+        check_release=check_release,
+        verify_staged=lambda staging: verify_kernel_config(
+            staging, android_root, enforce_tracked_policy=True
+        ),
     )
-    release = source_paths["kernel/kernel.release"].read_text(
-        encoding="utf-8"
-    ).strip()
-    if re.match(r"^6\.18(?:\.|-)", release) is None:
-        fail("built kernel release is not ACK 6.18")
-
-    family = "android-6.18"
-    directory_name = f"{family}-{kernel_slice}-16k-{args.release_id}"
-    output_root.mkdir(parents=True, exist_ok=True)
-    if output_root.is_symlink():
-        fail("output root must not be a symlink")
-    destination = output_root / directory_name
-    if destination.exists() or destination.is_symlink():
-        fail("kernel artifact destination already exists")
-
-    staging_parent = Path(
-        tempfile.mkdtemp(prefix=f".{directory_name}.", dir=output_root)
-    )
-    staging = staging_parent / directory_name
-    staging.mkdir()
-    try:
-        inventory = []
-        for relative, (role, file_format) in sorted(PAYLOAD_SPECS.items()):
-            destination_path = staging / relative
-            destination_path.parent.mkdir(parents=True, exist_ok=True)
-            if relative == "kernel/vmlinux":
-                # DWARF is only pahole's input. verify_artifact below proves
-                # that the image keeps .BTF and carries no DWARF.
-                publish_runtime_image(
-                    objcopy, source_paths[relative], destination_path
-                )
-            else:
-                shutil.copyfile(source_paths[relative], destination_path)
-                shutil.copymode(source_paths[relative], destination_path)
-            inventory.append({
-                "path": relative,
-                "role": role,
-                "format": file_format,
-                "size": destination_path.stat().st_size,
-            })
-        verify_kernel_config(staging, android_root, enforce_tracked_policy=True)
-        manifest = {
-            "schema_version": SCHEMA_VERSION,
-            "release_id": args.release_id,
-            "directory_name": directory_name,
-            "family": family,
-            "slice": kernel_slice,
-            "published_at_utc": datetime.datetime.now(
-                datetime.timezone.utc
-            ).isoformat(timespec="seconds").replace("+00:00", "Z"),
-            "release": release,
-            "page_size": page_size,
-            "elf_role": "darwin-uml",
-            "source": {
-                "repository": metadata["UML_KERNEL_UPSTREAM_REPOSITORY"],
-                "branch": metadata["UML_KERNEL_UPSTREAM_BRANCH"],
-                "base_commit": metadata["UML_KERNEL_UPSTREAM_COMMIT"],
-                "base_tree": metadata["UML_KERNEL_UPSTREAM_TREE"],
-                "final_tree": metadata["UML_KERNEL_FINAL_TREE"],
-            },
-            "abi": {
-                "version": int(abi["DARWIN_UML_ABI_VERSION"]),
-                "fingerprint": abi["DARWIN_UML_ABI_FINGERPRINT"],
-            },
-            "inventory": inventory,
-        }
-        (staging / "kernel-artifact.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        verify_artifact(
-            staging,
-            common_root,
-            metadata_path,
-            abi_metadata_path,
-        )
-        os.replace(staging, destination)
-        staging_parent.rmdir()
-    except BaseException:
-        shutil.rmtree(staging_parent, ignore_errors=True)
-        raise
-
     print(f"published Android ACK kernel artifact: {destination}")
 
 

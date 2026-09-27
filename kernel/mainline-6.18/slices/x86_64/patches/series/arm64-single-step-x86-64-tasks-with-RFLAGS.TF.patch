@@ -67,10 +67,10 @@ index a64194ef882d68724511eb377d29b04aaba5d3ab..84ff5d15e33d4ec7ba3e4a06a55e138f
  {
  	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 3d004bfd84df305a608d294364f813db754bf3cf..d2e43684788440f86defc317bde532ca88d38a41 100644
+index b0c5c699aa24e0259550683923c218aa27b5c177..b76c1d093e35629e8928c8afea21be7a557c8fe8 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -71,6 +71,32 @@ _Static_assert(offsetof(struct uml_pt_regs, fp) ==
+@@ -78,6 +78,32 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
   * set.  The bit exists only for the entry, so saved, traced and signal-frame
   * registers never carry it.  Returns whether the bit was set for this entry.
   */
@@ -103,7 +103,7 @@ index 3d004bfd84df305a608d294364f813db754bf3cf..d2e43684788440f86defc317bde532ca
  static int begin_guest_step(struct uml_pt_regs *regs)
  {
  	if (!singlestepping())
-@@ -84,6 +110,7 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
+@@ -91,6 +117,7 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
  	if (stepping)
  		UPT_PSTATE(regs) &= ~DARWIN_GUEST_PSTATE_SS;
  }
@@ -111,7 +111,7 @@ index 3d004bfd84df305a608d294364f813db754bf3cf..d2e43684788440f86defc317bde532ca
  
  static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
-@@ -795,16 +822,24 @@ void userspace(struct uml_pt_regs *registers)
+@@ -671,16 +698,24 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_BREAKPOINT:
  		{
  			siginfo_t signal_info = { 0 };

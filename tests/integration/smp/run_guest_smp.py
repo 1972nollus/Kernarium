@@ -31,22 +31,6 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--overlay-shell",
-        dest="overlay_shell",
-        action="store_true",
-        default=True,
-        help=(
-            "bootstrap the required writable tmpfs OverlayFS shell from "
-            "/bin/sh (default and retained for CLI compatibility)"
-        ),
-    )
-    parser.add_argument(
-        "--systemd-overlay",
-        dest="overlay_shell",
-        action="store_true",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
         "--cpus",
         type=int,
         default=10,
@@ -69,7 +53,7 @@ def main() -> int:
         "1024M",
         "tmpfs",
         tuple(kernel_arguments),
-        overlay_shell=arguments.overlay_shell,
+        overlay_shell=True,
     )
     try:
         guest.boot_and_login()

@@ -1083,97 +1083,13 @@ class ResultParsingTests(unittest.TestCase):
         commands = [call.args[0] for call in guest.run_command.call_args_list]
         self.assertEqual(commands[-2:], [transport.cleanup, "stty echo"])
 
-    def test_systemd_overlay_bootstrap_mounts_only_disposable_writable_state(self) -> None:
-        bootstrap = runner.SYSTEMD_OVERLAY_BOOTSTRAP
-        self.assertEqual(bootstrap.splitlines()[0], "{")
-        self.assertEqual(bootstrap.splitlines()[-1], "}")
-        self.assertLessEqual(max(map(len, bootstrap.splitlines())), 512)
-        docker_tmpfs = (
-            "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker"
-        )
-        containerd_tmpfs = (
-            "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/containerd"
-        )
-        self.assertIn("lowerdir=/mnt/lower,upperdir=/mnt/upper", bootstrap)
-        self.assertIn("pivot_root . .uml-lower", bootstrap)
-        self.assertIn("mkdir -p /var/lib/docker", bootstrap)
-        self.assertIn(docker_tmpfs, bootstrap)
-        self.assertIn("mkdir -p /var/lib/containerd", bootstrap)
-        self.assertIn(containerd_tmpfs, bootstrap)
-        self.assertNotIn("getty@tty0.service", bootstrap)
-        self.assertNotIn("agetty --autologin", bootstrap)
-        self.assertNotIn("useradd", bootstrap)
-        self.assertNotIn("groupadd", bootstrap)
-        self.assertIn("exec /lib/systemd/systemd", bootstrap)
-        self.assertLess(
-            bootstrap.index("pivot_root . .uml-lower"),
-            bootstrap.index(docker_tmpfs),
-        )
-        self.assertLess(
-            bootstrap.index(docker_tmpfs),
-            bootstrap.index(containerd_tmpfs),
-        )
-        self.assertLess(
-            bootstrap.index(containerd_tmpfs),
-            bootstrap.index("exec /lib/systemd/systemd"),
-        )
-        self.assertNotIn("mount -o remount,rw", bootstrap)
-
-    def test_systemd_overlay_login_reuses_uml_and_requires_noninteractive_sudo(
-        self,
-    ) -> None:
-        guest = object.__new__(runner.Guest)
-        guest._systemd_overlay = True
-        guest._init_shell = False
-        guest._overlay_shell = False
-        guest._swap_path = None
-        guest._overlay_path = None
-        guest._cgroup1 = None
-        guest._cgroup2_nsdelegate = False
-        guest._transcript = bytearray(b"x" * 101)
-        patterns = []
-        writes = []
-        commands = []
-        search_offsets = []
-
-        class Match:
-            @staticmethod
-            def end():
-                return 73
-
-        def read_until(pattern, _timeout_seconds, _search_from=0):
-            patterns.append(pattern.pattern)
-            search_offsets.append(_search_from)
-            return Match()
-
-        def run_command(command, _timeout_seconds=30):
-            commands.append(command)
-            return runner.CommandResult(0, "")
-
-        guest._read_until = read_until
-        guest._write = writes.append
-        guest.run_command = run_command
-
-        guest.boot_and_login()
-
-        self.assertEqual(writes[0], runner.SYSTEMD_OVERLAY_BOOTSTRAP + "\n")
-        self.assertIn(rb" login:\s*uml \(automatic login\)", patterns)
-        self.assertNotIn(rb" login:\s*root \(automatic login\)", patterns)
-        self.assertIn(guest_support.LINE_START + rb"[^\r\n]*\$ $", patterns)
-        self.assertIn(73, search_offsets)
-        self.assertEqual(search_offsets[-1], len(guest._transcript))
-        self.assertEqual(patterns[-1], guest_support.LINE_START + rb"[^\r\n]*# $")
-        self.assertEqual(commands, ['test "$(id -un)" = uml && sudo -n true'])
-        self.assertEqual(writes[-1], "exec sudo -n /bin/sh\n")
-
     def test_prompt_patterns_match_the_bytes_a_real_console_emits(self) -> None:
-        """Pin the prompt matchers against transcripts, not against themselves.
+        """Pin the login prompt matchers against transcripts.
 
-        The sibling test above mocks `_read_until`, so it only compares pattern
-        strings and cannot tell a working matcher from a broken one. A Geekbench
-        run timed out with `# ` already on screen because bash emits its
-        bracketed-paste reset and a bare carriage return when it execs a
-        replacement shell, and `[^\\r\\n]*` may not cross that carriage return.
+        The Steam boot bench logs in as uml and execs a root shell through
+        sudo. bash emits its bracketed-paste reset and a bare carriage return
+        when it execs a replacement shell, and `[^\\r\\n]*` may not cross that
+        carriage return, so a matcher must be proven against real bytes.
         """
         root_prompt = re.compile(guest_support.LINE_START + rb"[^\r\n]*# $")
         user_prompt = re.compile(guest_support.LINE_START + rb"[^\r\n]*\$ $")
@@ -1202,49 +1118,22 @@ class ResultParsingTests(unittest.TestCase):
         # what the `[^\r\n]*` bound is there to prevent.
         self.assertIsNone(root_prompt.search(b"\r\nnot a prompt # yet\r\n"))
 
-    def test_systemd_overlay_login_rejects_missing_noninteractive_sudo(self) -> None:
-        guest = object.__new__(runner.Guest)
-        guest._systemd_overlay = True
-        guest._init_shell = False
-        guest._overlay_shell = False
-        guest._swap_path = None
-        guest._overlay_path = None
-        guest._cgroup1 = None
-        guest._cgroup2_nsdelegate = False
-
-        class Match:
-            @staticmethod
-            def end():
-                return 0
-
-        guest._read_until = lambda *_args, **_kwargs: Match()
-        guest._write = lambda _text: None
-        guest.run_command = lambda *_args, **_kwargs: runner.CommandResult(
-            1, "sudo: a password is required"
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "noninteractive sudo"):
-            guest.boot_and_login()
-
-    def test_guest_shell_boot_modes_are_mutually_exclusive(self) -> None:
-        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
-            runner.Guest(
-                pathlib.Path("uml-darwin"),
-                pathlib.Path("rootfs.erofs"),
-                "1G",
-                "tmpfs",
-                init_shell=True,
-                overlay_shell=True,
-            )
-        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
-            runner.Guest(
-                pathlib.Path("uml-darwin"),
-                pathlib.Path("rootfs.erofs"),
-                "1G",
-                "tmpfs",
-                overlay_shell=True,
-                systemd_overlay=True,
-            )
+    def test_guest_boots_exactly_one_shell_mode(self) -> None:
+        for modes in (
+            {"init_shell": True, "overlay_shell": True},
+            {},
+        ):
+            with (
+                self.subTest(modes=modes),
+                self.assertRaisesRegex(ValueError, "exactly one"),
+            ):
+                runner.Guest(
+                    pathlib.Path("uml-darwin"),
+                    pathlib.Path("rootfs.erofs"),
+                    "1G",
+                    "tmpfs",
+                    **modes,
+                )
 
     def test_guest_termination_signals_the_child_directly(self) -> None:
         # The emulator shares this runner's process group, so terminate must
