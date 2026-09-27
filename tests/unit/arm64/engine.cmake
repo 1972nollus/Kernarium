@@ -30,6 +30,19 @@
     set(UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS
         ${UML_STATIC_RUNTIME_TEST_BASE_OBJECTS}
         $<TARGET_OBJECTS:uml_arm64_jit_diagnostics_executor>)
+    # uml_add_arm64_unit_test() OBJECTS for tests that enter the static
+    # runtime, with and without the guest engine selector.
+    set(UML_ARM64_RUNTIME_TEST_OBJECTS
+        $<TARGET_OBJECTS:uml_runtime_guest_selector>
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+        $<TARGET_OBJECTS:uml_static_mmu>
+        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
+    set(UML_ARM64_STATIC_TEST_OBJECTS
+        $<TARGET_OBJECTS:uml_arm64_gadgets>
+        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+        $<TARGET_OBJECTS:uml_static_mmu>
+        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
 
     # The instruction corpus is zlib-compressed. Reuse the checked private
     # zlib when desktop dependencies are enabled; otherwise import only the
@@ -216,26 +229,7 @@
     uml_add_unit_test(NAME arm64-floating-exception
         COMMAND uml_arm64_floating_exception_tests)
 
-    foreach(floating_trap_suite IN ITEMS control)
-        add_executable(uml_arm64_floating_trap_${floating_trap_suite}_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_trap_${floating_trap_suite}_tests.cpp
-            $<TARGET_OBJECTS:uml_static_mmu>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-        target_include_directories(
-            uml_arm64_floating_trap_${floating_trap_suite}_tests PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin
-            ${PROJECT_SOURCE_DIR}/darwin/include)
-        target_compile_options(
-            uml_arm64_floating_trap_${floating_trap_suite}_tests PRIVATE
-            -Wall -Wextra -Werror)
-        target_link_libraries(
-            uml_arm64_floating_trap_${floating_trap_suite}_tests PRIVATE
-            uml_arm64_engine_test_support)
-        uml_add_unit_test(NAME arm64-floating-trap-${floating_trap_suite}
-            COMMAND
-                uml_arm64_floating_trap_${floating_trap_suite}_tests)
-    endforeach()
+    uml_add_arm64_unit_test(floating_trap_control)
 
     add_executable(uml_arm64_floating_trap_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_trap_runtime_tests.cpp
@@ -268,75 +262,15 @@
     uml_add_unit_test(NAME arm64-gadget-terminal-count
         COMMAND uml_arm64_gadget_terminal_count_tests)
 
-    add_executable(uml_arm64_gadget_successor_hoist_structure_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_successor_hoist_structure_tests.cpp
-        $<TARGET_OBJECTS:uml_static_mmu>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(
-        uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_gadget_successor_hoist_structure_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-gadget-successor-hoist-structure
-        COMMAND uml_arm64_gadget_successor_hoist_structure_tests)
-
-    add_executable(uml_arm64_static_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_static_runtime_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(uml_arm64_static_runtime_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_static_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-static-runtime COMMAND uml_arm64_static_runtime_tests
-        LABELS tsan)
-
-    add_executable(uml_arm64_static_boundary_state_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_static_boundary_state_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(uml_arm64_static_boundary_state_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_static_boundary_state_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-static-boundary-state
-        COMMAND uml_arm64_static_boundary_state_tests)
-
-    add_executable(uml_arm64_static_translation_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_static_translation_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(uml_arm64_static_translation_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_static_translation_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-static-translation
-        COMMAND uml_arm64_static_translation_tests)
-
-    add_executable(uml_arm64_tlb_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_tlb_tests.cpp
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(uml_arm64_tlb_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_tlb_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-tlb COMMAND uml_arm64_tlb_tests)
+    uml_add_arm64_unit_test(gadget_successor_hoist_structure WITHOUT_HARNESS)
+    uml_add_arm64_unit_test(static_runtime WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS} LABELS tsan)
+    uml_add_arm64_unit_test(static_boundary_state WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
+    uml_add_arm64_unit_test(static_translation WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
+    uml_add_arm64_unit_test(tlb WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
 
     add_executable(uml_arm64_jit_cache_geometry_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_cache_geometry_tests.cpp)
@@ -469,39 +403,10 @@
     endforeach()
     set_property(TEST arm64-jit-publication_gate APPEND PROPERTY LABELS tsan)
 
-    add_executable(uml_arm64_jit_lazy_flags_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_lazy_flags_runtime_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_lazy_flags_runtime_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_lazy_flags_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-lazy-flags-runtime
-        COMMAND uml_arm64_jit_lazy_flags_runtime_tests)
-
-    add_executable(uml_arm64_jit_lazy_flags_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_lazy_flags_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_lazy_flags_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_lazy_flags_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-lazy-flags-codegen
-        COMMAND uml_arm64_jit_lazy_flags_codegen_tests)
+    uml_add_arm64_unit_test(jit_lazy_flags_runtime WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_lazy_flags_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
     foreach(JIT_INDIRECT_LINK_TEST IN ITEMS codegen runtime)
         set(_jit_indirect_runtime_objects ${UML_STATIC_RUNTIME_TEST_OBJECTS})
@@ -615,20 +520,8 @@
     uml_add_unit_test(NAME arm64-jit-fp-link-runtime
         COMMAND uml_arm64_jit_fp_link_runtime_tests)
 
-    add_executable(uml_arm64_counter_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_counter_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(uml_arm64_counter_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_counter_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-counter-codegen
-        COMMAND uml_arm64_counter_codegen_tests)
+    uml_add_arm64_unit_test(counter_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
     add_executable(uml_arm64_jit_counter_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_counter_runtime_tests.cpp
@@ -646,22 +539,8 @@
     uml_add_unit_test(NAME arm64-jit-counter-runtime
         COMMAND uml_arm64_jit_counter_runtime_tests)
 
-    add_executable(uml_arm64_jit_register_remap_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_register_remap_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_register_remap_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_register_remap_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-register-remap-codegen
-        COMMAND uml_arm64_jit_register_remap_codegen_tests)
+    uml_add_arm64_unit_test(jit_register_remap_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
     foreach(JIT_ONE_TO_ONE_TEST IN ITEMS base fp_simd)
         add_executable(
@@ -701,22 +580,8 @@
     uml_add_unit_test(NAME arm64-jit-tlb-miss-preservation
         COMMAND uml_arm64_jit_tlb_miss_preservation_tests)
 
-    add_executable(uml_arm64_jit_sp_memory_run_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_sp_memory_run_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_sp_memory_run_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_sp_memory_run_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-sp-memory-run-codegen
-        COMMAND uml_arm64_jit_sp_memory_run_codegen_tests)
+    uml_add_arm64_unit_test(jit_sp_memory_run_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
     add_executable(uml_arm64_jit_sp_memory_run_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_sp_memory_run_runtime_tests.cpp)
@@ -729,22 +594,8 @@
     uml_add_unit_test(NAME arm64-jit-sp-memory-run-runtime
         COMMAND uml_arm64_jit_sp_memory_run_runtime_tests)
 
-    add_executable(uml_arm64_jit_gpr_memory_run_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_memory_run_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_gpr_memory_run_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_gpr_memory_run_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-gpr-memory-run-codegen
-        COMMAND uml_arm64_jit_gpr_memory_run_codegen_tests)
+    uml_add_arm64_unit_test(jit_gpr_memory_run_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
     add_executable(uml_arm64_jit_gpr_memory_run_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_memory_run_runtime_tests.cpp)
@@ -757,22 +608,8 @@
     uml_add_unit_test(NAME arm64-jit-gpr-memory-run-runtime
         COMMAND uml_arm64_jit_gpr_memory_run_runtime_tests)
 
-    add_executable(uml_arm64_jit_simd_memory_run_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_simd_memory_run_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_simd_memory_run_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_simd_memory_run_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-simd-memory-run-codegen
-        COMMAND uml_arm64_jit_simd_memory_run_codegen_tests)
+    uml_add_arm64_unit_test(jit_simd_memory_run_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
     add_executable(uml_arm64_jit_simd_memory_run_runtime_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_simd_memory_run_runtime_tests.cpp)
@@ -785,138 +622,22 @@
     uml_add_unit_test(NAME arm64-jit-simd-memory-run-runtime
         COMMAND uml_arm64_jit_simd_memory_run_runtime_tests)
 
-    add_executable(uml_arm64_jit_scalar_atomic_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_scalar_atomic_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_scalar_atomic_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_scalar_atomic_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-scalar-atomic-codegen
-        COMMAND uml_arm64_jit_scalar_atomic_codegen_tests)
-
-    add_executable(uml_arm64_jit_simd_structure_remap_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_simd_structure_remap_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_simd_structure_remap_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_simd_structure_remap_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-simd-structure-remap-codegen
-        COMMAND uml_arm64_jit_simd_structure_remap_codegen_tests)
-
-    add_executable(uml_arm64_jit_vector_remap_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_vector_remap_codegen_tests.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_vector_remap_pressure_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_vector_remap_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_vector_remap_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-vector-remap-codegen
-        COMMAND uml_arm64_jit_vector_remap_codegen_tests)
-
-    add_executable(uml_arm64_jit_table_list_remap_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_table_list_remap_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_table_list_remap_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_table_list_remap_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-table-list-remap-codegen
-        COMMAND uml_arm64_jit_table_list_remap_codegen_tests)
-
-    add_executable(uml_arm64_jit_gpr_residency_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_residency_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_gpr_residency_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_gpr_residency_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-gpr-residency-codegen
-        COMMAND uml_arm64_jit_gpr_residency_codegen_tests)
-
-    add_executable(uml_arm64_jit_pair_remap_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_pair_remap_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_pair_remap_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_pair_remap_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-pair-remap-codegen
-        COMMAND uml_arm64_jit_pair_remap_codegen_tests)
-
-    add_executable(uml_arm64_jit_control_remap_codegen_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_control_remap_codegen_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_include_directories(
-        uml_arm64_jit_control_remap_codegen_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(
-        uml_arm64_jit_control_remap_codegen_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-jit-control-remap-codegen
-        COMMAND uml_arm64_jit_control_remap_codegen_tests)
-
-    add_executable(uml_arm64_gadget_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_runtime_tests.cpp
-        $<TARGET_OBJECTS:uml_static_mmu>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_gadget_runtime_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_gadget_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-gadget-runtime
-        COMMAND uml_arm64_gadget_runtime_tests)
+    uml_add_arm64_unit_test(jit_scalar_atomic_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_simd_structure_remap_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_vector_remap_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS}
+        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/arm64_jit_vector_remap_pressure_tests.cpp)
+    uml_add_arm64_unit_test(jit_table_list_remap_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_gpr_residency_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_pair_remap_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_control_remap_codegen WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(gadget_runtime WITHOUT_HARNESS)
 
     add_executable(uml_arm64_gadget_cache_validation_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_cache_validation_tests.cpp
@@ -956,43 +677,9 @@
     uml_add_unit_test(NAME arm64-gadget-inline-fallthrough
         COMMAND uml_arm64_gadget_inline_fallthrough_tests)
 
-    add_executable(uml_arm64_gadget_hot_path_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_hot_path_tests.cpp
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_gadget_hot_path_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_gadget_hot_path_tests PRIVATE
-		-Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-gadget-hot-path COMMAND uml_arm64_gadget_hot_path_tests)
-
-    add_executable(uml_arm64_gadget_nzcv_residency_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_nzcv_residency_tests.cpp
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_gadget_nzcv_residency_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_gadget_nzcv_residency_tests PRIVATE
-		-Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-gadget-nzcv-residency
-		COMMAND uml_arm64_gadget_nzcv_residency_tests)
-
-    add_executable(uml_arm64_gadget_fp_environment_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_fp_environment_tests.cpp
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_gadget_fp_environment_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_gadget_fp_environment_tests PRIVATE
-		-Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-gadget-fp-environment
-		COMMAND uml_arm64_gadget_fp_environment_tests)
+    uml_add_arm64_unit_test(gadget_hot_path WITHOUT_HARNESS)
+    uml_add_arm64_unit_test(gadget_nzcv_residency WITHOUT_HARNESS)
+    uml_add_arm64_unit_test(gadget_fp_environment WITHOUT_HARNESS)
 
     add_executable(uml_arm64_gadget_dependency_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_tests.cpp
@@ -1011,40 +698,10 @@
 
     # The test's exit hold must be registered before any destructor it
     # outlasts: keep engine state lazy or in libraries linked after it.
-    add_executable(uml_arm64_gadget_exit_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_exit_tests.cpp
-        $<TARGET_OBJECTS:uml_static_mmu>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_gadget_exit_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin ${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_gadget_exit_tests PRIVATE -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-gadget-exit COMMAND uml_arm64_gadget_exit_tests)
-
-    add_executable(uml_arm64_gadget_link_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_link_tests.cpp
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_gadget_link_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_gadget_link_tests PRIVATE
-		-Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-gadget-links COMMAND uml_arm64_gadget_link_tests)
-
-    add_executable(uml_arm64_gadget_indirect_link_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_indirect_link_tests.cpp
-		$<TARGET_OBJECTS:uml_static_mmu>
-		$<TARGET_OBJECTS:uml_arm64_gadgets>
-		$<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_include_directories(uml_arm64_gadget_indirect_link_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/include)
-    target_compile_options(uml_arm64_gadget_indirect_link_tests PRIVATE
-		-Wall -Wextra -Werror)
-    uml_add_unit_test(NAME arm64-gadget-indirect-links
-		COMMAND uml_arm64_gadget_indirect_link_tests)
+    uml_add_arm64_unit_test(gadget_exit WITHOUT_HARNESS)
+    uml_add_arm64_unit_test(gadget_link NAME arm64-gadget-links WITHOUT_HARNESS)
+    uml_add_arm64_unit_test(gadget_indirect_link NAME arm64-gadget-indirect-links
+        WITHOUT_HARNESS)
 
     add_executable(uml_gadget_record_table_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/gadget_record_table_tests.cpp)
