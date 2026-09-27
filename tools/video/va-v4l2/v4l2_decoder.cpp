@@ -550,17 +550,19 @@ bool V4l2Decoder::collect(DecodedPicture& picture, std::chrono::milliseconds wai
     }
 }
 
-void V4l2Decoder::release(unsigned index)
+bool V4l2Decoder::release(unsigned index, std::string& error)
 {
-    std::string ignored;
     if (captureImports_) {
         // A queue that imports needs a buffer with the descriptor, so a caller
         // that asks for a plain release gets the one it lent before.
         CaptureTarget target {};
-        if (captureSource_ && captureSource_(index, false, target)) queueImported(index, target, ignored);
-        return;
+        if (!captureSource_ || !captureSource_(index, false, target)) {
+            error = "no buffer to lend the decoder";
+            return false;
+        }
+        return queueImported(index, target, error);
     }
-    queueCapture(index, ignored);
+    return queueCapture(index, error);
 }
 
 bool V4l2Decoder::drain(std::string& error)

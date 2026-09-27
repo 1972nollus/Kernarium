@@ -470,8 +470,9 @@ void Driver::harvest(Context& context, std::chrono::milliseconds wait)
                 context.failure = requeue.empty() ? "no buffer to lend the decoder" : requeue;
                 note(context.failure.c_str());
             }
-        } else {
-            context.decoder->release(picture.index);
+        } else if (std::string requeue; !context.decoder->release(picture.index, requeue)) {
+            context.failure = requeue;
+            note(context.failure.c_str());
         }
         picture = {};
     }

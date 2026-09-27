@@ -73,8 +73,9 @@ public:
     // Returns a collected picture's buffer to the CAPTURE queue. A queue that
     // imports the caller's buffers takes a descriptor back, which need not be
     // the one the picture arrived in: the caller keeps that one for as long as
-    // something is still looking at the picture.
-    void release(unsigned index);
+    // something is still looking at the picture. False leaves the slot out of
+    // the queue, so the capture pool is one buffer short from then on.
+    bool release(unsigned index, std::string& error);
     bool release(unsigned index, const CaptureTarget& target, std::string& error);
 
     // Lends the decoder the caller's own buffers, when the device's capture
