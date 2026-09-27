@@ -900,22 +900,22 @@ prepare_repository()
 	git -C "$staged_repository" config uml.source.commit "$commit"
 	git -C "$staged_repository" config uml.source.paths "$source_paths"
 	git -C "$staged_repository" config uml.source.patchSeries "$patch_series"
+	# The staged repository is verified once: a rename does not change it.
 	verify_repository "$staged_repository"
 	if [ "$replacing" -eq 1 ]; then
 		swap_atomically "$staged_repository" "$directory" ||
 			fail "$name stale source could not be replaced atomically"
 		rm -rf -- "$staged_repository"
-		verify_repository "$directory"
 		printf '%s\n' "recreated $name in $directory"
 		return
 	fi
-	if ! publish_exclusively "$staged_repository" "$directory"; then
-		if [ -e "$directory" ] || [ -L "$directory" ]; then
-			verify_repository "$directory"
-		else
-			fail "$name source repository could not be published atomically"
-		fi
+	if publish_exclusively "$staged_repository" "$directory"; then
+		return
 	fi
+	# Another preparation published first; accept its repository only once
+	# it verifies.
+	[ -e "$directory" ] || [ -L "$directory" ] ||
+		fail "$name source repository could not be published atomically"
 	verify_repository "$directory"
 }
 
