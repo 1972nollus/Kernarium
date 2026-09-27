@@ -269,13 +269,15 @@ PRODUCT_VENDOR_PROPERTIES += ro.hardware.vulkan=virtio
 # generated port. The platform EGL loader finds them in /vendor/lib64/egl by the
 # ro.hardware.egl suffix; the gallium driver they link lies in /vendor/lib64.
 # The inherited Cuttlefish Virgl configuration would add the AOSP
-# external/mesa3d libGLES_mesa instead.
+# external/mesa3d libGLES_mesa instead. The boot command line's
+# androidboot.hardware.egl is the property's one writer: the inherited
+# init_graphics.vendor.rc copies it at early-init, and that setprop fails if a
+# vendor property has already set it.
 PRODUCT_PACKAGES_EXCLUDE += libGLES_mesa
 PRODUCT_PACKAGES += \
     libEGL_kernarium \
     libGLESv1_CM_kernarium \
     libGLESv2_kernarium
-PRODUCT_VENDOR_PROPERTIES += ro.hardware.egl=kernarium
 
 # Mesa reads a buffer's DRM format, modifier and plane layout through the
 # gralloc0 interface of minigbm, the product's allocator. The passthrough

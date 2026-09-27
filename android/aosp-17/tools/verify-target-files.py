@@ -36,7 +36,8 @@ EXT4_MAGIC = b"\x53\xef"
 EROFS_MAGIC_OFFSET = 1024
 EROFS_MAGIC = b"\xe2\xe1\xf5\xe0"
 # The Mesa Virgl GLES stack: the EGL and GLES libraries the platform loader
-# finds through ro.hardware.egl, and the gallium driver they link.
+# finds through ro.hardware.egl, and the gallium driver they link. The boot
+# command line's androidboot.hardware.egl must name the same suffix.
 MESA_EGL_SUFFIX = "kernarium"
 MESA_GALLIUM_DRIVER = "venus_gallium_dri.so"
 MESA_EGL_DIRECTORY = "VENDOR/lib64/egl/"
@@ -887,16 +888,20 @@ def check_mesa_gles_stack(
         if name.startswith(RETIRED_DRI_DIRECTORY):
             fail(f"retired DRI driver payload is forbidden: {name}")
 
+    # The boot command line owns ro.hardware.egl: the inherited Cuttlefish
+    # graphics init script copies androidboot.hardware.egl into it at
+    # early-init, and a vendor property would make that setprop fail.
     vendor_properties = read_small(archive, infos["VENDOR/build.prop"]).decode(
         "utf-8", errors="strict"
     ).splitlines()
-    values = [
-        line.partition("=")[2].strip()
+    if any(
+        line.partition("=")[0].strip() == "ro.hardware.egl"
         for line in vendor_properties
-        if line.partition("=")[0] == "ro.hardware.egl"
-    ]
-    if values != [MESA_EGL_SUFFIX]:
-        fail(f"unexpected vendor property ro.hardware.egl: {values}")
+    ):
+        fail(
+            "VENDOR/build.prop sets ro.hardware.egl, which the boot command "
+            "line owns"
+        )
 
 
 def main() -> None:

@@ -7,6 +7,7 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import gzip
+import importlib.util
 import io
 import json
 import re
@@ -182,7 +183,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           missing_gallium_dependency: bool = False,
                           retired_egl_library: bool = False,
                           retired_dri_driver: bool = False,
-                          wrong_egl_property: bool = False,
+                          vendor_egl_property: bool = False,
                           system_other: bool = False,
                           missing_sdk_apex: bool = False,
                           removed_payload: bool = False,
@@ -441,7 +442,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     )
                 archive.writestr(
                     "VENDOR/build.prop",
-                    f"ro.hardware.egl={'mesa' if wrong_egl_property else 'kernarium'}\n",
+                    "ro.hardware.vulkan=virtio\n"
+                    + ("ro.hardware.egl=kernarium\n" if vendor_egl_property else ""),
                 )
                 if module:
                     archive.writestr("VENDOR/lib/modules/forbidden.ko", b"module")
@@ -520,7 +522,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("gallium-dependency", {"missing_gallium_dependency": True}),
             ("retired-egl-library", {"retired_egl_library": True}),
             ("retired-dri-driver", {"retired_dri_driver": True}),
-            ("egl-property", {"wrong_egl_property": True}),
+            ("vendor-egl-property", {"vendor_egl_property": True}),
             ("system-other", {"system_other": True}),
             ("missing-sdk-apex", {"missing_sdk_apex": True}),
             ("removed-payload", {"removed_payload": True}),
@@ -548,6 +550,28 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             )
             if result.returncode == 0:
                 fail(f"target-files verifier accepted the {label} fixture")
+
+
+def verify_egl_selection(android_root: Path) -> None:
+    # The boot command line is ro.hardware.egl's one writer, so it must name
+    # the EGL libraries the target-files verifier requires.
+    spec = importlib.util.spec_from_file_location(
+        "verify_target_files", android_root / "tools/verify-target-files.py"
+    )
+    if spec is None or spec.loader is None:
+        fail("cannot load the target-files verifier")
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+    command_line = (
+        android_root / "support/boot/kernel-command-line.txt"
+    ).read_text().split()
+    values = [
+        token.partition("=")[2]
+        for token in command_line
+        if token.partition("=")[0] == "androidboot.hardware.egl"
+    ]
+    if values != [verifier.MESA_EGL_SUFFIX]:
+        fail(f"boot command line selects EGL libraries {values}")
 
 
 def newc_entry(name: str, mode: int, payload: bytes, inode: int) -> bytes:
@@ -1126,6 +1150,7 @@ def main() -> None:
         check=True,
     )
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
+    verify_egl_selection(android_root)
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
     verify_boot_image_fixtures(android_root / "tools/boot-image.py")
     verify_orangefox_recovery_fixtures(

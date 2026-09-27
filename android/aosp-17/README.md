@@ -146,7 +146,10 @@ Linux guest run the same drivers against the same renderer. GLES is Mesa's
 Virgl gallium driver behind `libEGL_kernarium`, `libGLESv1_CM_kernarium` and
 `libGLESv2_kernarium` in `/vendor/lib64/egl`, which the platform EGL loader
 selects through `ro.hardware.egl=kernarium`; the three libraries link
-`venus_gallium_dri.so` in `/vendor/lib64`. The product excludes the inherited
+`venus_gallium_dri.so` in `/vendor/lib64`. The boot command line's
+`androidboot.hardware.egl` is that property's only writer, copied at early-init
+by the inherited Cuttlefish graphics init script, so no vendor property may set
+it. The product excludes the inherited
 Cuttlefish `libGLES_mesa`, and the AOSP `external/mesa3d` project stays at its
 pinned revision. The Vulkan HAL is Mesa's Venus driver,
 `VK_DRIVER_ID_MESA_VENUS` over Virtio-GPU.
