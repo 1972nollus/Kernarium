@@ -42,7 +42,7 @@ renderer still offers common WSI no DRM format modifiers.
  5 files changed, 79 insertions(+), 8 deletions(-)
 
 diff --git a/src/virtio/vulkan/tests/vn_wsi_native_test.c b/src/virtio/vulkan/tests/vn_wsi_native_test.c
-index dbce9e346dde395dd3689fb0fd5acca3f319d02c..f766dfe833d00b4d12a3ffb533d412da24646159 100644
+index 01c76b2e1a1af8acaf718cc07a873e1e8846fb3c..bb939aa0468bb2d82acdac324424ecbb8ece871f 100644
 --- a/src/virtio/vulkan/tests/vn_wsi_native_test.c
 +++ b/src/virtio/vulkan/tests/vn_wsi_native_test.c
 @@ -6,6 +6,7 @@
@@ -54,8 +54,8 @@ index dbce9e346dde395dd3689fb0fd5acca3f319d02c..f766dfe833d00b4d12a3ffb533d412da
  #define CHECK(expr)                                                           \
     do {                                                                      \
 @@ -166,6 +167,33 @@ main(void)
-    CHECK(!vn_wsi_native_offers_modifiers(false, false));
-    CHECK(!vn_wsi_native_offers_modifiers(false, true));
+    CHECK(!vn_wsi_native_heap_scanout(false, false));
+    CHECK(!vn_wsi_native_heap_scanout(true, false));
  
 +   /* Legacy scanout obtains a nonzero stride without changing offset, size,
 +    * array pitch or depth pitch. Public queries and other subresources stay
@@ -183,10 +183,10 @@ index 143971103dd0b74fa9bd64bfea71045fbd989969..76b37f052bb95562714e2bbf2c586d33
        /* Logical DRI3 envelope, not the native heap's physical row layout. */
        uint32_t native_heap_row_pitch;
 diff --git a/src/virtio/vulkan/vn_wsi.c b/src/virtio/vulkan/vn_wsi.c
-index a099602dda274b1b2110717413eeb75a6d1f68b1..6f5bb509e9d467c3b78be0af0c01b2272088bad4 100644
+index 5993eca5e5458e82c41cee812ac4bf6c605b55d3..8b278e1070f695ea365e6ae2061d41a67d248daf 100644
 --- a/src/virtio/vulkan/vn_wsi.c
 +++ b/src/virtio/vulkan/vn_wsi.c
-@@ -151,10 +151,8 @@ vn_wsi_get_image_subresource_layout(VkDevice device, VkImage image,
+@@ -152,10 +152,8 @@ vn_wsi_get_image_subresource_layout(VkDevice device, VkImage image,
  {
     vn_GetImageSubresourceLayout(device, image, subresource, layout);
     const struct vn_image *img = vn_image_from_handle(image);
@@ -199,9 +199,9 @@ index a099602dda274b1b2110717413eeb75a6d1f68b1..6f5bb509e9d467c3b78be0af0c01b227
  }
  
  VkResult
-@@ -223,8 +221,9 @@ vn_wsi_init(struct vn_physical_device *physical_dev)
-    physical_dev->wsi_device.supports_scanout =
-       physical_dev->external_memory.renderer_supports_metal_heap;
+@@ -232,8 +230,9 @@ vn_wsi_init(struct vn_physical_device *physical_dev)
+       supports_drm_format_modifier,
+       physical_dev->external_memory.renderer_supports_metal_heap);
     if (physical_dev->external_memory.renderer_supports_metal_heap) {
 -      /* Only common WSI sees the logical implicit-import envelope.  Public
 -       * Vulkan layout queries still return the renderer's actual result.
@@ -212,11 +212,11 @@ index a099602dda274b1b2110717413eeb75a6d1f68b1..6f5bb509e9d467c3b78be0af0c01b227
        physical_dev->wsi_device.GetImageSubresourceLayout =
           vn_wsi_get_image_subresource_layout;
 diff --git a/src/virtio/vulkan/vn_wsi_native.h b/src/virtio/vulkan/vn_wsi_native.h
-index 25aa7f11075cd47d909786f4609c2c9af2715d78..745d1b24d77f95e1b8468f6fb3c9206442e00491 100644
+index 4b234327e3f72ffe3ccb23e4ba5ae51e844d2fd8..312f20c6b3eb7aef4c1e8152fd7eca84671d7ab0 100644
 --- a/src/virtio/vulkan/vn_wsi_native.h
 +++ b/src/virtio/vulkan/vn_wsi_native.h
-@@ -112,4 +112,19 @@ vn_wsi_native_offers_modifiers(bool supports_drm_format_modifier,
-    return supports_drm_format_modifier && !renderer_supports_metal_heap;
+@@ -115,4 +115,19 @@ vn_wsi_native_heap_scanout(bool supports_drm_format_modifier,
+    return renderer_supports_metal_heap && !supports_drm_format_modifier;
  }
  
 +/* A private MESA scanout image carries an implicit dma-buf envelope even
