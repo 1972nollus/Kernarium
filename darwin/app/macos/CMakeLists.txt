@@ -86,7 +86,6 @@ function(uml_add_macos_embedded_kernel_app
         COMMAND ${PROJECT_SOURCE_DIR}/dependencies/verify-runtime-dependencies.sh
             --binary $<TARGET_FILE:${TARGET_NAME}>
             --apple-gpu-prefix ${UML_APPLE_GPU_DEPENDENCY_PREFIX}
-            --apple-gpu-product ${UML_APPLE_GPU_PRODUCT}
             --framework-directory $<TARGET_FILE_DIR:${TARGET_NAME}>/Frameworks
         COMMENT "Staging and checking the ${TARGET_NAME} Apple GPU runtime closure"
         VERBATIM)

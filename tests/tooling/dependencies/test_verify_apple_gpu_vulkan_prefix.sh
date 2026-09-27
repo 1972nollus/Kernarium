@@ -20,8 +20,7 @@ verify()
 {
 	platform=${2:-macos}
 	cmake -DPREFIX="$1" -DSOURCE_ROOT="$ROOT_DIR" \
-		-DPLATFORM="$platform" \
-		-DPRODUCT=apple-gpu-vulkan-experiment -P "$VERIFIER"
+		-DPLATFORM="$platform" -P "$VERIFIER"
 }
 
 copy_fixture()
@@ -237,8 +236,7 @@ CASE_PREFIX="$TEST_ROOT/invalid-existing-prefix"
 copy_fixture "$CASE_PREFIX"
 printf '%s\n' ambient >"$CASE_PREFIX/lib/unexpected"
 BEFORE=$(find "$CASE_PREFIX" -type f -exec shasum -a 256 {} \; | LC_ALL=C sort)
-if "$BUILDER" --product apple-gpu-vulkan-experiment \
-	--platform macos --prefix "$CASE_PREFIX" --verify-only \
+if "$BUILDER" --platform macos --prefix "$CASE_PREFIX" --verify-only \
 	>"$TEST_ROOT/builder-rejected.out" 2>"$TEST_ROOT/builder-rejected.err"; then
 	fail "invalid existing Vulkan prefix was incorrectly accepted"
 fi

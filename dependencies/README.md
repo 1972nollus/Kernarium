@@ -84,8 +84,7 @@ dependencies/prepare.sh
 dependencies/build.sh
 
 dependencies/prepare.sh --product apple-gpu-vulkan-experiment
-dependencies/build-apple-gpu.sh \
-  --product apple-gpu-vulkan-experiment --platform macos
+dependencies/build-apple-gpu.sh --platform macos
 
 dependencies/prepare.sh --product ios-network
 dependencies/build-ios-network.sh

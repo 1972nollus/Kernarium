@@ -2,23 +2,14 @@
 
 include_guard(GLOBAL)
 
-set(UML_APPLE_GPU_PRODUCT "apple-gpu-vulkan-experiment" CACHE STRING
-    "Verified Apple GPU dependency product")
-set_property(CACHE UML_APPLE_GPU_PRODUCT PROPERTY STRINGS
-    apple-gpu-vulkan-experiment)
-# Every Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on
-# the KosmicKrisp Vulkan driver.
-if(NOT UML_APPLE_GPU_PRODUCT STREQUAL "apple-gpu-vulkan-experiment")
-    message(FATAL_ERROR
-        "Unsupported Apple GPU dependency product: ${UML_APPLE_GPU_PRODUCT}")
-endif()
-
+# The Apple GPU product renders OpenGL with Mesa's Zink Gallium driver on the
+# KosmicKrisp Vulkan driver.
 if(UML_APPLE_PLATFORM STREQUAL "macos")
     set(_uml_apple_gpu_default_prefix
-        "${PROJECT_SOURCE_DIR}/.build/dependencies/${UML_APPLE_GPU_PRODUCT}/macos-arm64")
+        "${PROJECT_SOURCE_DIR}/.build/dependencies/apple-gpu-vulkan-experiment/macos-arm64")
 elseif(UML_APPLE_PLATFORM STREQUAL "ios")
     set(_uml_apple_gpu_default_prefix
-        "${PROJECT_SOURCE_DIR}/.build/dependencies/${UML_APPLE_GPU_PRODUCT}/ios-device-arm64")
+        "${PROJECT_SOURCE_DIR}/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64")
 elseif(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
     # KosmicKrisp is a Metal 4 driver and the iOS Simulator exposes no Metal 4
     # device, so the Simulator has no build of this stack. An iOS application
@@ -70,7 +61,6 @@ execute_process(
         -DPREFIX=${UML_APPLE_GPU_DEPENDENCY_PREFIX}
         -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
         -DPLATFORM=${UML_APPLE_PLATFORM}
-        -DPRODUCT=${UML_APPLE_GPU_PRODUCT}
         -P ${CMAKE_CURRENT_LIST_DIR}/VerifyAppleGpuPrefix.cmake
     COMMAND_ERROR_IS_FATAL ANY)
 
@@ -126,7 +116,6 @@ add_custom_target(uml_apple_gpu_prefix_verify
         -DPREFIX=${UML_APPLE_GPU_DEPENDENCY_PREFIX}
         -DSOURCE_ROOT=${PROJECT_SOURCE_DIR}
         -DPLATFORM=${UML_APPLE_PLATFORM}
-        -DPRODUCT=${UML_APPLE_GPU_PRODUCT}
         -P ${CMAKE_CURRENT_LIST_DIR}/VerifyAppleGpuPrefix.cmake
     DEPENDS ${_uml_apple_gpu_inputs}
     COMMENT "Checking the common ${UML_APPLE_PLATFORM} Apple GPU prefix"
