@@ -273,21 +273,8 @@ bool SharedTranslationCache::CodegenProfile::operator==(
     const CodegenProfile &other) const noexcept {
   return guarded_control_flow == other.guarded_control_flow &&
          pointer_authentication == other.pointer_authentication &&
-         capabilities.supported == other.capabilities.supported &&
-         capabilities.floating_point == other.capabilities.floating_point &&
-         capabilities.advanced_simd == other.capabilities.advanced_simd &&
-         capabilities.fp16 == other.capabilities.fp16 &&
-         capabilities.cssc == other.capabilities.cssc &&
-         capabilities.aes == other.capabilities.aes &&
-         capabilities.pmull == other.capabilities.pmull &&
-         capabilities.sha1 == other.capabilities.sha1 &&
-         capabilities.sha2 == other.capabilities.sha2 &&
-         capabilities.crc32 == other.capabilities.crc32 &&
-         capabilities.sha3 == other.capabilities.sha3 &&
-         capabilities.sha512 == other.capabilities.sha512 &&
-         capabilities.afp == other.capabilities.afp &&
-         capabilities.jscvt_subnormal_flags_correct ==
-             other.capabilities.jscvt_subnormal_flags_correct;
+         ::uml::cpu::same_host_capabilities(capabilities,
+                                            other.capabilities);
 }
 
 SharedTranslationCache::Shard *SharedTranslationCache::allocated_shard(

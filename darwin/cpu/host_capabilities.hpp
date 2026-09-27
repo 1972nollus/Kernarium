@@ -13,6 +13,25 @@ using ::uml::platform::arm_feature_labels;
 using ::uml::platform::arm_feature_tokens;
 using ::uml::platform::arm_inventory_feature_count;
 
+/* Whether two hosts get the same generated code, so their executors may share
+ * a pool session or a translation. Compared member by member rather than by
+ * bytes so padding cannot tell equal profiles apart; a member added to
+ * HostCapabilities must be added here. */
+[[nodiscard]] inline bool same_host_capabilities(
+	const HostCapabilities &first, const HostCapabilities &second) noexcept
+{
+	return first.supported == second.supported &&
+		first.floating_point == second.floating_point &&
+		first.advanced_simd == second.advanced_simd &&
+		first.fp16 == second.fp16 && first.cssc == second.cssc &&
+		first.aes == second.aes && first.pmull == second.pmull &&
+		first.sha1 == second.sha1 && first.sha2 == second.sha2 &&
+		first.crc32 == second.crc32 && first.sha3 == second.sha3 &&
+		first.sha512 == second.sha512 && first.afp == second.afp &&
+		first.jscvt_subnormal_flags_correct ==
+			second.jscvt_subnormal_flags_correct;
+}
+
 /* Direct CPU unit tests intentionally use only the Apple arm64 ABI baseline.
  * Production engines always receive the complete probed profile from runtime.
  */
