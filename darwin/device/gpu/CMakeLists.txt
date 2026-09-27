@@ -196,6 +196,7 @@ target_link_libraries(uml_gpu_transport PUBLIC
     uml_gpu_transport_wire
     uml_gpu_protocol_device
     UML::VncInput)
+target_link_libraries(uml_gpu_transport PRIVATE UML::GuestTimerMask)
 
 add_library(uml_gpu_service STATIC in_process_service.cpp)
 uml_configure_gpu_component(uml_gpu_service)

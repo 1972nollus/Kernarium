@@ -13,9 +13,13 @@
 #include "gpu/native_display_application.hpp"
 #include "gpu/protocol.hpp"
 #include "launcher.hpp"
+#include "guest_memory_argument.hpp"
 #include "profile_reporter.hpp"
 #include "sockets/socket_paths.hpp"
 #include "uml/emulator.h"
+#if UML_APP_HAS_SLIRP
+#include "uml_slirp_net.h"
+#endif
 
 #include <array>
 #include <cerrno>
@@ -44,16 +48,6 @@ extern const unsigned char uml_elf_start[]
 	__asm("section$start$__DATA$__uml_elf");
 extern const unsigned char uml_elf_end[]
 	__asm("section$end$__DATA$__uml_elf");
-#if UML_APP_HAS_SLIRP
-int uml_slirp_net_open(void *, unsigned char[6], unsigned int *);
-int uml_slirp_net_irq_fd(void *);
-int uml_slirp_net_read(void *, void *, std::size_t);
-int uml_slirp_net_write(void *, const void *, std::size_t);
-int uml_slirp_net_add_forward(void *, const char *);
-void uml_slirp_net_stop(void *);
-void *uml_slirp_net_create(void) noexcept;
-void uml_slirp_net_destroy(void *) noexcept;
-#endif
 }
 
 namespace {
@@ -215,21 +209,6 @@ void install_host_faults()
 	for (const int signal : signals)
 		if (sigaction(signal, &action, nullptr) < 0)
 			std::abort();
-}
-
-bool has_argument(int argc, char *const argv[], std::string_view argument)
-{
-	for (int index = 1; index < argc; ++index)
-		if (argv[index] != nullptr && argument == argv[index])
-			return true;
-	return false;
-}
-
-bool informational(int argc, char *const argv[])
-{
-	return has_argument(argc, argv, "--help") ||
-		has_argument(argc, argv, "--version") ||
-		has_argument(argc, argv, "--showconfig");
 }
 
 struct HostGpuOptions {
@@ -431,31 +410,6 @@ bool has_virtio_device_argument(const std::vector<std::string> &arguments,
 	return false;
 }
 
-/* The last mem= as Linux memparse() reads it: a base-0 integer and one
- * optional binary suffix, with any further text ignored. */
-std::uint64_t guest_memory_bytes(const std::vector<std::string> &arguments)
-{
-	std::uint64_t bytes = 0;
-	for (const auto &argument : arguments) {
-		if (!argument.starts_with("mem="))
-			continue;
-		char *end = nullptr;
-		bytes = std::strtoull(argument.c_str() + 4, &end, 0);
-		unsigned shifts = 0;
-		switch (*end) {
-		case 'E': case 'e': ++shifts; [[fallthrough]];
-		case 'P': case 'p': ++shifts; [[fallthrough]];
-		case 'T': case 't': ++shifts; [[fallthrough]];
-		case 'G': case 'g': ++shifts; [[fallthrough]];
-		case 'M': case 'm': ++shifts; [[fallthrough]];
-		case 'K': case 'k': ++shifts; break;
-		default: break;
-		}
-		bytes <<= 10U * shifts;
-	}
-	return bytes;
-}
-
 bool host_has_lse_atomics()
 {
 	int supported = 0;
@@ -466,6 +420,22 @@ bool host_has_lse_atomics()
 }
 
 } // namespace
+
+bool uml::app::has_argument(
+	int argc, char *const argv[], std::string_view argument)
+{
+	for (int index = 1; index < argc; ++index)
+		if (argv[index] != nullptr && argument == argv[index])
+			return true;
+	return false;
+}
+
+bool uml::app::informational(int argc, char *const argv[])
+{
+	return has_argument(argc, argv, "--help") ||
+		has_argument(argc, argv, "--version") ||
+		has_argument(argc, argv, "--showconfig");
+}
 
 int uml::app::runEmbeddedKernel(
 	int argc, char *argv[], char *envp[],
@@ -481,7 +451,8 @@ int uml::app::runEmbeddedKernel(
 			     error.what());
 		return 1;
 	}
-	if (!informational(argc, argv) && !host_has_lse_atomics()) {
+	const bool information_only = informational(argc, argv);
+	if (!information_only && !host_has_lse_atomics()) {
 		std::fputs("This Darwin UML kernel requires Armv8.1 atomic "
 			   "instructions on the host\n", stderr);
 		return 1;
@@ -538,9 +509,10 @@ int uml::app::runEmbeddedKernel(
 	/* GPU memory is charged to the process like guest RAM, so the GPU may
 	 * use at most half of the guest's allocation and the balloon takes what
 	 * it uses out of the guest. */
-	const std::uint64_t guest_memory = guest_memory_bytes(prepared.kernel);
+	const std::uint64_t guest_memory =
+		uml::emulator::configured_guest_memory_bytes(prepared.kernel);
 	const std::uint64_t device_memory_limit = guest_memory / 2;
-	if (prepared.gpu.enabled && !informational(argc, argv)) {
+	if (prepared.gpu.enabled && !information_only) {
 		if (has_virtio_device_argument(
 			prepared.kernel, uml::gpu::protocol::virtioGpuDeviceId)) {
 			std::fputs("--gpu cannot be combined with an explicit "
@@ -586,6 +558,34 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 	}
+	std::unique_ptr<uml::battery::InProcessBatteryService> battery_service;
+	if (prepared.battery && !information_only) {
+		if (has_virtio_device_argument(
+			prepared.kernel, uml::battery::protocol::deviceId)) {
+			std::fputs("--battery cannot be combined with an explicit "
+				   "Virtio battery transport argument\n",
+				   stderr);
+			return 1;
+		}
+		try {
+			battery_service =
+				std::make_unique<uml::battery::InProcessBatteryService>();
+			/* Android's vendor policy labels the battery's sysfs
+			 * path by its position among the Virtio devices
+			 * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts).
+			 * Straight after the GPU it is always virtio-uml.1/virtio1,
+			 * whatever optional devices follow. */
+			prepared.kernel.emplace_back(
+				"virtio_uml.device=" +
+				battery_service->takeConnectionName() + ":" +
+				std::to_string(uml::battery::protocol::deviceId));
+		} catch (const std::exception &error) {
+			std::fprintf(stderr,
+				"Unable to start in-process Virtio battery: %s\n",
+				error.what());
+			return 1;
+		}
+	}
 	std::unique_ptr<uml::balloon::InProcessBalloonService> balloon_service;
 	if (gpu_service && device_memory_limit != 0 &&
 	    !has_virtio_device_argument(
@@ -612,7 +612,7 @@ int uml::app::runEmbeddedKernel(
 		}
 	}
 	std::unique_ptr<uml::video::InProcessVideoService> video_service;
-	if (prepared.video && !informational(argc, argv)) {
+	if (prepared.video && !information_only) {
 		if (has_virtio_device_argument(prepared.kernel, uml::video::deviceId)) {
 			std::fputs("--video cannot be combined with an explicit Virtio video transport argument\n", stderr);
 			return 1;
@@ -628,7 +628,7 @@ int uml::app::runEmbeddedKernel(
 		}
 	}
 	std::unique_ptr<uml::audio::InProcessAudioService> audio_service;
-	if (prepared.audio && !informational(argc, argv)) {
+	if (prepared.audio && !information_only) {
 		if (has_virtio_device_argument(
 			prepared.kernel, uml::audio::protocol::deviceId)) {
 			std::fputs("--audio cannot be combined with an explicit "
@@ -650,36 +650,9 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 	}
-	std::unique_ptr<uml::battery::InProcessBatteryService> battery_service;
-	if (prepared.battery && !informational(argc, argv)) {
-		if (has_virtio_device_argument(
-			prepared.kernel, uml::battery::protocol::deviceId)) {
-			std::fputs("--battery cannot be combined with an explicit "
-				   "Virtio battery transport argument\n",
-				   stderr);
-			return 1;
-		}
-		try {
-			battery_service =
-				std::make_unique<uml::battery::InProcessBatteryService>();
-			/* The Android vendor policy labels the battery's sysfs
-			 * path by its position among these Virtio devices
-			 * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts);
-			 * a device added before it must extend that range. */
-			prepared.kernel.emplace_back(
-				"virtio_uml.device=" +
-				battery_service->takeConnectionName() + ":" +
-				std::to_string(uml::battery::protocol::deviceId));
-		} catch (const std::exception &error) {
-			std::fprintf(stderr,
-				"Unable to start in-process Virtio battery: %s\n",
-				error.what());
-			return 1;
-		}
-	}
 	std::unique_ptr<uml::console::InProcessConsoleService> console_service;
 	if ((!prepared.console_socket.empty() || !prepared.serial_socket.empty()) &&
-	    !informational(argc, argv)) {
+	    !information_only) {
 		const bool named_serial = !prepared.serial_socket.empty();
 		if (has_virtio_device_argument(
 			prepared.kernel, uml::console::protocol::deviceId)) {

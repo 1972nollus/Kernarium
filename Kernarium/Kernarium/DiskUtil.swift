@@ -74,31 +74,6 @@ final class DiskUtil: DiskCapacityManaging {
         return value * bytesPerGiB
     }
 
-    func androidImageIsPrepared(
-        at image: URL,
-        forGiB capacity: Int
-    ) throws -> Bool {
-        let requested = try Self.byteCount(forGiB: capacity)
-        guard try imageSize(at: image) == requested else {
-            return false
-        }
-        let info = try readAndroidPartition(at: image)
-        guard info.block_size != 0,
-              Self.androidTrailingFreeBytes % UInt64(info.block_size) == 0
-        else {
-            throw ResizeError.gptLayoutMismatch
-        }
-        let expectedDiskLBAs = requested / UInt64(info.block_size)
-        let trailingLBAs = Self.androidTrailingFreeBytes /
-            UInt64(info.block_size)
-        guard expectedDiskLBAs > trailingLBAs else {
-            throw ResizeError.invalidCapacity(capacity)
-        }
-        return info.disk_lbas == expectedDiskLBAs &&
-            info.backup_header_lba + 1 == expectedDiskLBAs &&
-            info.last_lba == expectedDiskLBAs - trailingLBAs - 1
-    }
-
     /// Expands a regular image sparsely. Shrinking is deliberately rejected
     /// because it can discard guest data.
     @discardableResult

@@ -3,7 +3,7 @@
 #include "launcher.hpp"
 #include "block/android_boot.hpp"
 
-#include <cerrno>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -34,8 +34,6 @@ struct AndroidOptions {
 	std::vector<std::string> forwarded;
 };
 
-void validate_ubd_path(const std::filesystem::path &path, const char *label);
-
 uml::android::BootMode parse_boot_mode(std::string_view value)
 {
 	if (value == "auto")
@@ -45,21 +43,6 @@ uml::android::BootMode parse_boot_mode(std::string_view value)
 	if (value == "recovery")
 		return uml::android::BootMode::recovery;
 	throw std::invalid_argument("Android boot mode must be auto, normal, or recovery");
-}
-
-bool has_argument(int argc, char *const argv[], std::string_view argument)
-{
-	for (int index = 1; index < argc; ++index)
-		if (argv[index] != nullptr && argument == argv[index])
-			return true;
-	return false;
-}
-
-bool informational(int argc, char *const argv[])
-{
-	return has_argument(argc, argv, "--help") ||
-		has_argument(argc, argv, "--version") ||
-		has_argument(argc, argv, "--showconfig");
 }
 
 std::string environment_value(const char *name)
@@ -144,38 +127,8 @@ std::filesystem::path validated_disk(
 {
 	if (!candidate.is_absolute())
 		throw std::invalid_argument("--android-disk must be absolute");
-	struct stat details {};
-	if (lstat(candidate.c_str(), &details) != 0 ||
-	    !S_ISREG(details.st_mode) || access(candidate.c_str(), R_OK | W_OK) != 0)
-		throw std::invalid_argument("Android disk is unsafe or not writable");
-	validate_ubd_path(candidate, "Android disk");
+	uml::android::validateWritableDisk(candidate);
 	return candidate;
-}
-
-std::size_t checked_regular_file_size(const std::filesystem::path &path)
-{
-	struct stat details {};
-	if (lstat(path.c_str(), &details) != 0 || !S_ISREG(details.st_mode) ||
-	    details.st_size < 0)
-		throw std::runtime_error("release payload is missing or unsafe: " +
-					 std::string{path});
-	return static_cast<std::size_t>(details.st_size);
-}
-
-std::vector<unsigned char> read_regular_file(const std::filesystem::path &path)
-{
-	const auto size = checked_regular_file_size(path);
-	FILE *file = std::fopen(path.c_str(), "rb");
-	if (file == nullptr)
-		throw std::system_error(errno, std::generic_category(),
-					"cannot open " + std::string{path});
-	std::vector<unsigned char> payload(size);
-	const auto read = std::fread(payload.data(), 1, payload.size(), file);
-	const int close_result = std::fclose(file);
-	if (read != payload.size() || close_result != 0)
-		throw std::runtime_error("cannot read release payload: " +
-					 std::string{path});
-	return payload;
 }
 
 std::filesystem::path validated_release_root(
@@ -193,44 +146,6 @@ std::filesystem::path validated_release_root(
 	if (error)
 		throw std::invalid_argument("Android release cannot be resolved");
 	return release;
-}
-
-void validate_ubd_path(const std::filesystem::path &path, const char *label)
-{
-	const auto value = path.string();
-	if (value.find_first_of(",:") != std::string::npos)
-		throw std::invalid_argument(std::string{label} +
-			" path contains a UBD delimiter");
-}
-
-void append_kernel_command_line(
-	std::vector<std::string> &arguments, const std::filesystem::path &path)
-{
-	const auto payload = read_regular_file(path);
-	const std::string text(payload.begin(), payload.end());
-	std::size_t cursor = 0;
-	std::size_t appended = 0;
-	while (cursor < text.size()) {
-		while (cursor < text.size() &&
-		       (text[cursor] == ' ' || text[cursor] == '\n' ||
-			text[cursor] == '\t'))
-			++cursor;
-		const auto begin = cursor;
-		while (cursor < text.size() && text[cursor] != ' ' &&
-		       text[cursor] != '\n' && text[cursor] != '\t')
-			++cursor;
-		if (cursor != begin) {
-			const std::string_view argument{text.data() + begin,
-							cursor - begin};
-			if (argument.starts_with(adb_authorization_prefix))
-				throw std::invalid_argument(
-					"release kernel command line fixes ADB authorization");
-			arguments.emplace_back(argument);
-			++appended;
-		}
-	}
-	if (appended == 0)
-		throw std::invalid_argument("Android kernel command line is empty");
 }
 
 std::vector<char *> argument_pointers(std::vector<std::string> &arguments)
@@ -261,8 +176,8 @@ void print_usage()
 int main(int argc, char *argv[], char *envp[])
 {
 	try {
-		const bool information_only = informational(argc, argv);
-		if (has_argument(argc, argv, "--help"))
+		const bool information_only = uml::app::informational(argc, argv);
+		if (uml::app::has_argument(argc, argv, "--help"))
 			print_usage();
 		auto options = parse_options(argc, argv);
 		if (!information_only) {
@@ -281,9 +196,12 @@ int main(int argc, char *argv[], char *envp[])
 				"initrd_size=" + std::to_string(boot.ramdisk.size));
 			options.forwarded.emplace_back("root=/dev/ram0");
 			options.forwarded.emplace_back("rootfstype=ramfs");
-			append_kernel_command_line(
-				options.forwarded,
-				release / "boot/kernel-command-line.txt");
+			constexpr std::array launcher_prefixes{
+				adb_authorization_prefix};
+			for (auto &argument : uml::android::readKernelCommandLine(
+				     release / "boot/kernel-command-line.txt",
+				     launcher_prefixes))
+				options.forwarded.push_back(std::move(argument));
 			options.forwarded.emplace_back(
 				std::string{adb_authorization_prefix} + "0");
 			std::fprintf(

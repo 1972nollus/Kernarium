@@ -20,7 +20,6 @@ constexpr uint32_t sixteenKiB = 16384U;
 
 std::mutex selectionMutex;
 std::atomic<const kernarium_runtime_api*> selectedApi;
-void* selectedHandle;
 uint32_t selectedPageSize;
 uint32_t selectedFlavor;
 bool selectionAttempted;
@@ -127,13 +126,12 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
 }
 
 [[nodiscard]] NSURL* findRuntimeFramework(
-    uint32_t guestFlavor,
-    uint32_t guestPageSize)
+    NSString* prefix,
+    NSString* variant,
+    uint32_t guestFlavor)
 {
-    NSString* variant = pageVariant(guestPageSize);
-    NSString* prefix = flavorPrefix(guestFlavor);
     NSURL* frameworks = NSBundle.mainBundle.privateFrameworksURL;
-    if (variant == nil || prefix == nil || frameworks == nil)
+    if (frameworks == nil)
         return nil;
 
     NSError* error = nil;
@@ -199,9 +197,16 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     return true;
 }
 
-[[nodiscard]] int loadRuntime(uint32_t guestFlavor, uint32_t guestPageSize)
+/* `prefix` and `variant` name the framework for `guestFlavor` and
+ * `guestPageSize`; the caller has resolved both. The handle stays loaded for
+ * the life of the process. */
+[[nodiscard]] int loadRuntime(
+    NSString* prefix,
+    NSString* variant,
+    uint32_t guestFlavor,
+    uint32_t guestPageSize)
 {
-    NSURL* framework = findRuntimeFramework(guestFlavor, guestPageSize);
+    NSURL* framework = findRuntimeFramework(prefix, variant, guestFlavor);
     NSBundle* bundle = framework == nil ? nil : [NSBundle bundleWithURL:framework];
     NSString* executable = bundle.executablePath;
     if (executable == nil) {
@@ -240,7 +245,6 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     updateConsoleOutputForwarder(api);
-    selectedHandle = handle;
     selectedPageSize = guestPageSize;
     selectedFlavor = guestFlavor;
     selectedApi.store(api, std::memory_order_release);
@@ -261,8 +265,9 @@ extern "C" int kernarium_runtime_loader_select(
     uint32_t guestFlavor,
     uint32_t guestPageSize)
 {
-    if (pageVariant(guestPageSize) == nil ||
-        flavorPrefix(guestFlavor) == nil) {
+    NSString* variant = pageVariant(guestPageSize);
+    NSString* prefix = flavorPrefix(guestFlavor);
+    if (variant == nil || prefix == nil) {
         std::fprintf(
             stderr,
             "Kernarium: unsupported guest flavour %u or page size %u\n",
@@ -280,7 +285,7 @@ extern "C" int kernarium_runtime_loader_select(
     if (selectionAttempted)
         return -1;
     selectionAttempted = true;
-    return loadRuntime(guestFlavor, guestPageSize);
+    return loadRuntime(prefix, variant, guestFlavor, guestPageSize);
 }
 
 extern "C" int kernarium_runtime_loader_run(

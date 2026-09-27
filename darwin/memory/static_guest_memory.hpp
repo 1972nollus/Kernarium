@@ -40,8 +40,6 @@ public:
 	void invalidate_code(std::uint64_t address) override;
 	void invalidate_code(
 		std::uint64_t address, void *execution_context) override;
-	[[nodiscard]] bool validate_write(
-		std::uint64_t address, std::size_t size);
 	[[nodiscard]] ::uml::memory::MemoryFault last_fault() const noexcept override;
 	[[nodiscard]] bool has_fault() const noexcept override;
 

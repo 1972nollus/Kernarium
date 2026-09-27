@@ -44,8 +44,6 @@ public:
 		std::uint64_t length) noexcept;
 	[[nodiscard]] bool contains_shadow(
 		std::uintptr_t address, std::uint64_t length) const;
-	[[nodiscard]] bool contains_direct(
-		std::uintptr_t address, std::uint64_t length) const;
 	int map(std::uintptr_t address, int fd, std::uint64_t offset,
 		std::uint64_t length, int protection);
 	int publish_backing(int fd, std::uint64_t offset, std::uint64_t length);
