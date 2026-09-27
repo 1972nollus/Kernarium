@@ -345,7 +345,8 @@ or `series.tsv` by hand.
 
 A manifest series field may join ordered layers with `+`. Each layer applies
 to the tree the layers before it produce, and the last layer, which
-`patches/` owns, records the tree of the whole stack. The only lower layer
+`patches/` owns, records the tree of the whole stack. `series-field.sh` holds
+this grammar for `prepare.sh` and the regenerator. The only lower layer
 allowed is the paired guest's Mesa series, named
 `rootfs-vulkan:patches/mesa/series.tsv`, whose source pin must equal the
 host's; Mesa's row uses it. Its topic checkout carries the guest topics

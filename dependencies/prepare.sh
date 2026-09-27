@@ -7,6 +7,7 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$ROOT_DIR/dependencies/series-field.sh"
 PATCH_SERIES="$ROOT_DIR/scripts/patch_series.py"
 MANIFEST=${UML_DEPENDENCY_MANIFEST:-"$ROOT_DIR/dependencies/manifest.tsv"}
 PATCH_ROOT=${UML_DEPENDENCY_PATCH_ROOT:-"$ROOT_DIR/dependencies"}
@@ -326,23 +327,17 @@ safe_relative_path()
 	return 0
 }
 
-# A patch-series field names one generated series, or ordered layers joined
-# by "+": each layer applies to the tree the layers before it produce, and the
-# last one, which this directory owns, records the tree of the whole stack.
-# A series that the paired Vulkan guest owns is named through the explicit
-# rootfs-vulkan namespace, which grants no general parent-directory access.
+# series-field.sh owns the field grammar. The last layer of a stack records
+# the tree of the whole stack.
 resolve_series_layer()
 {
 	case "$1" in
 	rootfs-vulkan:*)
 		series_relative=${1#rootfs-vulkan:}
-		case "$name:$series_relative" in
-		venus-protocol:patches/venus-protocol/series.tsv|\
-		mesa:patches/mesa/series.tsv) ;;
-		*) fail "$name has an unsupported rootfs-vulkan series: $1" ;;
-		esac
+		series_field_rootfs_vulkan_allowed "$name" "$series_relative" ||
+			fail "$name has an unsupported rootfs-vulkan series: $1"
 		metadata_outer=$(CDPATH= cd -- "$PATCH_ROOT/.." && pwd -P)
-		series_owner="$metadata_outer/tools/rootfs/vulkan"
+		series_owner="$metadata_outer/$SERIES_FIELD_ROOTFS_VULKAN"
 		;;
 	*:*) fail "$name has an unknown patch-series owner: $1" ;;
 	*)
@@ -371,7 +366,6 @@ resolve_series()
 		fail "$name has a malformed patch-series field: $patch_series" ;;
 	esac
 	SERIES_PATHS=
-	series_layer_count=0
 	old_ifs=$IFS
 	IFS=+
 	set -f
@@ -380,13 +374,12 @@ resolve_series()
 		resolve_series_layer "$series_layer"
 		SERIES_PATHS="${SERIES_PATHS}${SERIES_PATHS:+
 }$series_path"
-		series_layer_count=$((series_layer_count + 1))
-		last_series_layer=$series_layer
 	done
 	set +f
 	IFS=$old_ifs
-	if [ "$series_layer_count" -gt 1 ]; then
-		case "$last_series_layer" in
+	series_field_split "$patch_series"
+	if [ -n "$SERIES_FIELD_LOWER" ]; then
+		case "$SERIES_FIELD_OWNED" in
 		*:*) fail "$name must own the last layer of its patch series" ;;
 		esac
 	fi
