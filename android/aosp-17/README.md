@@ -174,10 +174,11 @@ recorded pin.
 
 The port itself is generated. `tools/generate-mesa-venus-port.py` runs AOSP's
 `meson2hermetic` converter with the checked `soong-port.toml`, repairs the few
-places where Soong needs more than Meson states, and then scopes every
-generated module name with a `venus_` prefix because `external/mesa3d` already
-defines the same Mesa module names and Soong module names are global at the Make
-layer. The installed modules keep the names the platform loaders resolve:
+places where Soong needs more than Meson states, drops every module the
+installed modules neither build from nor link, and then scopes every remaining
+module name with a `venus_` prefix because `external/mesa3d` already defines
+the same Mesa module names and Soong module names are global at the Make layer.
+The installed modules keep the names the platform loaders resolve:
 `vulkan.virtio` through `ro.hardware.vulkan`, and the three EGL and GLES
 libraries through `ro.hardware.egl`. Soong makes every warning an error outside
 `device/` and `vendor/`; a warning Mesa's own build tolerates therefore needs a

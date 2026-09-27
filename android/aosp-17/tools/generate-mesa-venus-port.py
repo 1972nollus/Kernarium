@@ -5,9 +5,10 @@
 AOSP builds Mesa through `meson2hermetic`, the upstream Meson fork that
 transpiles a meson build into Android.bp files. This tool runs that converter
 with the checked project configuration, repairs the converter's output where
-Soong needs more than Meson does, and then scopes every generated module name
-so the port cannot collide with the AOSP `external/mesa3d` project, whose module
-names are otherwise identical and global at the Make layer. The port builds the
+Soong needs more than Meson does, drops every module the installed modules do
+not need, and then scopes every remaining module name so the port cannot
+collide with the AOSP `external/mesa3d` project, whose module names are
+otherwise identical and global at the Make layer. The port builds the
 Venus Vulkan HAL and the Virgl EGL and GLES libraries. It also deletes Mesa's
 legacy Android.mk makefiles: Soong refuses a makefile under a denylisted
 directory, and the Android.bp files alone describe the port.
@@ -683,9 +684,77 @@ def main() -> None:
     remove_makefiles(args.checkout)
     blueprints = load(args.checkout)
     repair(args.checkout, blueprints, port)
+    blueprints = prune(blueprints, port.keep)
     scope(args.checkout, blueprints, port.keep)
     saved = sum(1 for bp in blueprints if bp.save())
     print(f"wrote {saved} Android.bp files")
+
+
+LABEL = re.compile(r":([A-Za-z0-9_.+-]+)")
+LOCATION = re.compile(r"\$\(locations?\s+([^)\s]+)\)")
+
+
+def block_refs(block: list[str]) -> set[str]:
+    """Every name a block could refer to: a quoted string, a `:name` label or a
+    `$(location name)` in a genrule command. Any other string that happens to
+    equal a module name only keeps that module."""
+    text = "\n".join(line for line in block if NAME_LINE.match(line) is None)
+    return (
+        set(QUOTED.findall(text))
+        | set(LABEL.findall(text))
+        | set(LOCATION.findall(text))
+    )
+
+
+def prune(blueprints: list[Blueprint], keep: set[str]) -> list[Blueprint]:
+    """Delete every module that no installed module needs.
+
+    The converter describes each Meson target it meets, among them tools,
+    tests, Windows module definitions and GLX tables the product never builds
+    or links. A module stays when a kept module or a package declaration
+    refers to it, directly or through another module that stays; a file left
+    without modules is deleted."""
+    modules: dict[str, set[str]] = {}
+    roots = set(keep)
+    for bp in blueprints:
+        for block in bp.blocks:
+            name = block_name(block)
+            if name is None:
+                roots |= block_refs(block)
+            else:
+                modules[name] = block_refs(block)
+    missing = keep - modules.keys()
+    if missing:
+        raise SystemExit(
+            f"generate-mesa-venus-port.py: the converter defined no {sorted(missing)[0]}"
+        )
+    reached: set[str] = set()
+    pending = [name for name in roots if name in modules]
+    while pending:
+        name = pending.pop()
+        if name not in reached:
+            reached.add(name)
+            pending.extend(ref for ref in modules[name] if ref in modules)
+    kept: list[Blueprint] = []
+    removed = 0
+    for bp in blueprints:
+        bp.blocks = [
+            block for block in bp.blocks
+            if (name := block_name(block)) is None or name in reached
+        ]
+        if any(block_name(block) is not None for block in bp.blocks):
+            # A block carries the blank lines that follow it.
+            while not bp.blocks[-1][-1].strip():
+                bp.blocks[-1].pop()
+            kept.append(bp)
+        else:
+            bp.path.unlink(missing_ok=True)
+            removed += 1
+    print(
+        f"pruned {len(modules) - len(reached)} of {len(modules)} modules and "
+        f"{removed} Android.bp files"
+    )
+    return kept
 
 
 def scope(root: Path, blueprints: list[Blueprint], keep: set[str]) -> None:
