@@ -69,27 +69,6 @@ struct SerialConsoleTests {
         return HostedConsole(controller: controller, window: window, view: view)
     }
 
-    /// The application's window scene.
-    func windowScene() throws -> UIWindowScene {
-        try #require(
-            UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .first,
-            "the application has no window scene"
-        )
-    }
-
-    /// Polls `condition` on the main actor for at most ten seconds.
-    func eventually(_ condition: () -> Bool) async throws -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(10))
-        while !condition() {
-            guard clock.now < deadline else { return false }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        return true
-    }
-
     private func viewportLines(
         of controller: SerialConsoleController,
         once marker: String

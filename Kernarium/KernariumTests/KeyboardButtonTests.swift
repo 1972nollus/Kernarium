@@ -21,36 +21,7 @@ extension SerialConsoleTests {
 
         /// The accessibility element carrying `identifier`.
         func element(_ identifier: String) -> NSObject? {
-            Self.find(identifier, in: window, depth: 0)
-        }
-
-        private static func find(
-            _ identifier: String,
-            in node: NSObject,
-            depth: Int
-        ) -> NSObject? {
-            // SwiftUI's accessibility nodes answer the identifier without
-            // declaring UIAccessibilityIdentification.
-            let getter = NSSelectorFromString("accessibilityIdentifier")
-            if node.responds(to: getter),
-               node.perform(getter)?.takeUnretainedValue() as? String ==
-                   identifier {
-                return node
-            }
-            guard depth < 64 else { return nil }
-            var children: [NSObject] = []
-            if let elements = node.accessibilityElements {
-                children += elements.compactMap { $0 as? NSObject }
-            }
-            if let view = node as? UIView {
-                children += view.subviews
-            }
-            for child in children {
-                if let found = find(identifier, in: child, depth: depth + 1) {
-                    return found
-                }
-            }
-            return nil
+            accessibilityElement(identifier, in: window)
         }
 
         func label(of identifier: String) -> String? {
