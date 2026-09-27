@@ -920,8 +920,9 @@ void shared_translation_payload_bytes_are_bounded()
  * the reusing executor. The first executor is destroyed before the second
  * runs: a missed relocation therefore branches through freed memory, which
  * the sanitizer gates catch rather than silently taking another executor's
- * link. The source and reused target also exchange modified x8/x9 state, so
- * the successful relocated edge pins the fixed carry-bank contract.
+ * link. The source modifies x8/x9 and the reused target consumes them, so the
+ * successful relocated edge also proves that guest register values survive
+ * the link.
  */
 void a_second_executor_reuses_the_first_translation_safely()
 {
@@ -1037,7 +1038,8 @@ void a_second_executor_reuses_the_first_translation_safely()
  * through the publisher's freed target record/code. The surviving executor
  * must instead observe a cold miss, train its own site, and then take its own
  * hot PIC path. Its source modifies x8/x9 and its target consumes both, so the
- * final run also proves carried state across that relocated successful edge.
+ * final run also proves that guest x8/x9 values survive that relocated
+ * successful edge.
  */
 void a_second_executor_reuses_an_indirect_translation_safely()
 {
