@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -136,6 +137,9 @@ private:
 	std::atomic<std::uint64_t> changes_{0};
 	/* A page count could not be allocated, so the bits answer alone again. */
 	std::atomic<bool> inexact_{false};
+	/* The generation whose shared table entry this registry owns; empty for
+	 * a registry constructed directly. */
+	std::optional<std::uint64_t> generation_;
 };
 
 } // namespace uml::cpu::x86_64::gadgets

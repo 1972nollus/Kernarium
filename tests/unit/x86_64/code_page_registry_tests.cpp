@@ -2,7 +2,10 @@
 #include "cpu/x86_64/gadgets/code_page_registry.hpp"
 #include "cpu/x86_64/gadgets/native_entry.hpp"
 
+#include <malloc/malloc.h>
+
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -149,6 +152,39 @@ void test_concurrent_holders_stay_exact()
 	require(registry.holds(pinned), "the pinned page was released");
 }
 
+std::size_t heap_in_use() noexcept
+{
+	malloc_statistics_t statistics{};
+	malloc_zone_statistics(nullptr, &statistics);
+	return statistics.size_in_use;
+}
+
+/* Executors of one address space share its registry, and a guest process
+ * never reuses a generation. The registry of an address space nobody runs any
+ * more must be released in full, or a guest that runs many short processes
+ * grows the host without bound.
+ */
+void test_acquired_registries_are_released()
+{
+	constexpr std::uint64_t first = std::uint64_t{1} << 40U;
+	constexpr unsigned generations = 4096;
+	{
+		const auto held = CodePageRegistry::acquire(first);
+		require(CodePageRegistry::acquire(first) == held,
+			"two holders of a generation got different registries");
+	}
+	/* Warm the allocator's size classes before measuring. */
+	for (unsigned index = 1; index <= 64; ++index)
+		(void)CodePageRegistry::acquire(first + index);
+	const auto before = heap_in_use();
+	for (unsigned index = 0; index < generations; ++index)
+		(void)CodePageRegistry::acquire(first + 65 + index);
+	const auto after = heap_in_use();
+	/* A retained registry costs more than 4 KiB. */
+	require(after < before + (std::size_t{1} << 20U),
+		"registries of released generations stayed allocated");
+}
+
 } // namespace
 
 int main()
@@ -157,5 +193,6 @@ int main()
 	test_membership_is_exact_behind_a_shared_bit();
 	test_membership_retires_write_translations();
 	test_concurrent_holders_stay_exact();
+	test_acquired_registries_are_released();
 	return 0;
 }
