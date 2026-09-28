@@ -198,15 +198,10 @@ Update documentation in the same change whenever its current contract changes.
 
 - Do not commit build trees, kernel replay checkouts, rootfs images, caches,
   IDE state, temporary reports, or generated runtime output.
-- After validating a replacement Android release, remove superseded Android
-  build, release, transfer, and Simulator-bundle artifacts from the local
-  `.build` tree, local temporary directories, the Android build machine, and
-  local iOS Simulators. Resolve releases and bundles from their manifests;
-  resolve build outputs from their recorded invocation and canonical output
-  root; and delete only explicit Android paths. Preserve the current accepted
-  release and its active writable bundle, Android source and patch-producer
-  checkouts, accepted kernel inputs, dependency prefixes, non-Android guests, and
-  unrelated Simulator Documents siblings.
+- After validating a replacement Android release, remove the superseded
+  artifacts that
+  [`android/aosp-17/README.md`](android/aosp-17/README.md#superseded-releases)
+  names, deleting only explicit paths.
 - Do not delete or overwrite a rootfs, dependency prefix, replay checkout, or
   another developer's artifacts without explicit authorization.
 - Remove a worktree and delete its branch as soon as their work is merged,

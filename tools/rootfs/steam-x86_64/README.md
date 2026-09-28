@@ -99,31 +99,14 @@ when the X window `Steam Big Picture Mode` becomes viewable.
 
 ## Video decode boundary
 
-Big Picture plays `steamui/movies/bigpicture_startup.webm` on every start, and
-the [shared assets](../steam-common/README.md) record why it is not decoded in
-hardware. Two things are specific to this client:
-
-- Valve's x86-64 CEF has no stateful V4L2 decoder, so the image's
-  `/dev/video-dec0` is never a candidate for it. Its only hardware decode path
-  is VA-API, which it does attempt: `libva.so.2` and `libva-drm.so.2` are
-  mapped into its GPU process during a session.
-- Neither Debian nor upstream has a VA driver for this device, so the image
-  builds and installs its own: [`tools/video/va-v4l2`](../../video/va-v4l2/README.md),
-  a libva backend over the Virtio video stateful decoder advertising
-  `VAProfileVP9Profile0` with `VAEntrypointVLD` and a VA-API video-processing
-  entry point. It is compiled in the builder root against the libva the image
-  ships, installed as `/usr/lib/x86_64-linux-gnu/dri/uml_drv_video.so`, and
-  selected by the session through `LIBVA_DRIVER_NAME=uml`. The session sets
-  `KERNARIUM_CEF_VAAPI=1` only when both the module and `/dev/video-dec0` are
-  present, and the shared launcher then starts the client with Valve's
-  `-cef-enable-vaapi` option, which is how this client asks Chromium for the
-  `VaapiVideoDecodeLinuxGL` and `VaapiIgnoreDriverChecks` features its GPU
-  process needs.
-
-The client can still decode in software: Chromium's decode pipeline requires
-dma-buf-backed NV12 buffers, which this guest's Zink-on-Venus GBM does not yet
-export. The backend then falls back to memfd-backed surfaces, which satisfy
-`vainfo` and a VA-API client but not Chromium's import path.
+Big Picture's startup movie is decoded in software; the
+[shared assets](../steam-common/README.md#the-startup-movie-is-decoded-in-software)
+record why. Valve's x86-64 CEF has no stateful V4L2 decoder, so
+`/dev/video-dec0` is never a candidate for it and its only hardware path is
+VA-API. Neither Debian nor upstream has a VA driver for this device, so the
+image builds and installs its own,
+[`tools/video/va-v4l2`](../../video/va-v4l2/README.md#in-the-steam-x86-64-image),
+which also records how the session selects it.
 
 ## Interactive boot
 

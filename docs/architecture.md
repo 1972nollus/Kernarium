@@ -61,8 +61,11 @@ allowance bounded between 1 GiB and 4 GiB, plus the fixed guarded aperture the
 kernel reserves for negotiated vhost-user shared-memory regions and its stub
 pages. The host and the kernel derive that reservation from the same constants,
 so a host window smaller than the kernel's expectation faults on the kernel's
-own stub write. macOS places the window at 96 TiB; iOS top-packs it below the
-physical-device address ceiling. The iOS slice also runs on an Apple silicon
+own stub write. macOS places the window at 96 TiB. iOS first asks for the
+address that top-packs it below the physical-device address ceiling and, when
+the host declines that hint, for wherever a window of that size fits, because
+an iOS app's usable virtual range is not guaranteed to contain that envelope
+(iOS 27's does not). The iOS slice also runs on an Apple silicon
 Mac in Designed for iPad mode, where the process is a macOS process; placement
 follows the address space the process actually has, so that mode takes the
 macOS window.
@@ -96,6 +99,7 @@ after the run returns, and a host stop leaves their queues started.
 Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create
 non-copying Mach aliases; no separate full-span guest-RAM mapping is retained.
+Disk and image descriptors remain file-backed.
 
 `mem=` is a ceiling, not a reservation. The guest commits guest RAM before
 using it and releases what it frees, through the bridge's
@@ -165,8 +169,9 @@ cache.
 
 Ordinary iOS libraries exclude native-VM and embedded-ELF execution. Kernarium
 uses versioned runtime frameworks whose kernel ELF is carried in signed Mach-O
-`__TEXT`. Its loader aliases immutable executable pages from that mapping and
-rejects writable executable segments or relocations into signed text. The app
+`__TEXT`. Its loader aliases immutable executable pages from that mapping,
+copies only data and BSS into anonymous storage, and rejects a carrier
+mismatch, writable executable segments, or relocations into signed text. The app
 embeds every selectable framework, links none at launch, and loads exactly one
 guest flavour/page profile for the process lifetime. macOS retains its
 unsigned embedded-loader path.
@@ -183,18 +188,11 @@ artifact on macOS and on the iOS device. The macOS x86_64 userspace
 product uses a separately identified 4 KiB mainline slice. Android uses a
 separate accepted 16 KiB ACK artifact.
 
-Kernarium is an iOS device product only. Its GPU stack renders through
-KosmicKrisp, which requires Metal 4, and the iOS Simulator exposes no Metal 4
-device, so the Simulator has no build of the application or of the Apple GPU
-prefix. The unmodified iOS device slice runs on an Apple silicon Mac in
-Designed for iPad mode, where it reaches the host GPU directly; that mode is
-where iOS behaviour is verified when no physical device is attached. The
-Simulator remains a target of the ordinary, non-GPU iOS libraries.
-
-The library runs one guest per process, so a Kernarium launch runs its guest
-once. When the run returns, whether the guest powered off or the runtime
-failed, the application says how it ended and asks to be relaunched; it never
-starts a second run in the same process.
+Kernarium is an iOS device product only; [`graphics.md`](graphics.md)
+gives the Metal 4 reason the Simulator has no build of it or of the Apple GPU
+prefix, and how the device slice runs on an Apple silicon Mac. The application,
+including its one run per launch, is described in
+[`../Kernarium/README.md`](../Kernarium/README.md).
 
 ## CPU execution and scheduling
 
@@ -275,7 +273,9 @@ The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
 width. As on x86 Linux, a task always runs with RFLAGS.IF set: the host sets it
-on entry, whatever the kernel's register image holds. The host routes userspace instruction execution through immutable,
+on entry, whatever the kernel's register image holds. Register, YMM, MMX, and
+x87 state is serialized in the task-owned bridge frame across carrier
+scheduling. The host routes userspace instruction execution through immutable,
 data-only streams of pointers to precompiled handwritten arm64 assembly
 gadgets. There is no semantic C++ execution fallback. Two gadget banks serve
 scalar integer instructions: an ordinary bank that decodes its operands from
@@ -376,26 +376,13 @@ independently. Apple emulator builds consume only the ACK ELF artifact; rootfs
 and command-line paths are launch inputs. The `uml-darwin-android17` product
 opens one directly writable supplied GPT and has no 4 KiB variant.
 
-A Kernarium `.kern` bundle contains one guest's persistent rootfs payload.
-Android bundles provide a kernel command line and one directly writable GPT
-image; a release
-manifest may accompany them as provenance. The kernel comes from the selected
-runtime framework. Launch does not compare kernel, runtime, or rootfs release
-identities; missing or malformed inputs fail at their ordinary file or image
-boundary. The app's `DiskUtil` owns raw-file capacity before launch and
-dispatches any format-specific partition-table update. Android GPT growth uses
-the verified static GPT fdisk core linked into the app; the standalone macOS
-launcher copies a changed release to its persistent 8 GiB disk and uses
-Homebrew `sgdisk`. Runtime frameworks receive no capacity policy
-and reject a GPT whose declared extent differs from its file. The guest only
-grows a filesystem after observing that its containing partition is larger.
-This keeps the same host-capacity workflow available to later Linux image
-formats without putting disk policy back into a kernel runtime.
-
-Compressed rootfs delivery is also an app boundary. `ZstdUtil` streams a zstd
-source into an adjacent temporary file, optionally represents zero regions as
-sparse holes, and publishes the destination only after a complete decode.
-Runtime frameworks receive only the resulting ordinary disk image.
+Guest bundles, disk capacity, and compressed rootfs delivery belong to the
+application ([`../Kernarium/README.md`](../Kernarium/README.md)). Runtime
+frameworks receive an ordinary disk image and no capacity policy, and reject a
+GPT whose declared extent differs from its file; the guest only grows a
+filesystem after observing that its containing partition is larger. This keeps
+one host-capacity workflow for every image format without putting disk policy
+into a kernel runtime.
 
 ## Devices and graphics
 
@@ -549,20 +536,21 @@ guest's own fences; the renderer adds none. A resource no other context
 imports keeps ordinary texture storage, and a host with dma-buf shares through
 that instead.
 
-Kernarium exposes an absolute touchscreen, keyboard, one 48 kHz stereo
-Virtio-Sound playback stream, SLiRP networking, a Metal framebuffer, and a
-serial terminal view. Android additionally receives the Apple host's battery
-percentage and charging state through a dedicated Virtio device, falling back
-to 100 percent and charging when the host has no readable battery. Point
-mode maps safe-area points to guest pixels at 160 DPI; Retina mode multiplies
-both size and density by `nativeScale`. Android's logical density is derived
-from the same launch value.
+The devices Kernarium attaches and its display geometry are listed in
+[`../Kernarium/README.md`](../Kernarium/README.md).
 
-Writable host files are tracked by the platform layer. Emulator sync asks the
-guest to write back through the management console and then flushes host files.
-Quiesce enters full Linux system suspend and waits for the platform sleep
-boundary before flushing host files; resume sends the console wake edge.
-Accepted kernels without system suspend retain a stop/go fallback.
+## Guest lifecycle
+
+The platform layer tracks every writable host descriptor opened for the guest.
+`uml_emulator_sync()` asks the guest to write back through its management
+console, then flushes those host descriptors. `uml_emulator_quiesce()` enters
+full Linux system suspend and waits until devices, secondary CPUs, interrupts,
+and timekeeping have reached the platform sleep boundary before flushing the
+host. `uml_emulator_resume()` sends the console wake edge. A kernel without the
+suspend command falls back to the stop/go pair. Guests that need writeback
+requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
+the console, host-file flushing still runs but guest writeback and freeze are
+unavailable.
 
 The guest binds the management console as a Unix datagram socket and replies
 to each request's own bound socket, which the host places beside it. On macOS

@@ -6,13 +6,13 @@ completion events. It reuses the common vhost-user transport; decoding belongs
 to `UML::VideoDecoder` in the platform layer. No GPU context is required.
 
 macOS enables the service with `--video`. Kernarium supplies it to each supported
-kernel profile on iOS 17 and newer when hardware decoding is available.
+kernel profile when hardware decoding is available.
 The shared mainline and Android driver creates `/dev/video0`;
 the Steam image provides the `/dev/video-dec0` udev alias used by CEF.
 
-The Apple backend requires VideoToolbox hardware decoding. Capabilities match
-the maintained Virgl video backend: H.264 Baseline, Constrained Baseline, Main,
-and High; HEVC Main and Main10; and baseline JPEG, subject to host availability.
+The Apple backend requires VideoToolbox hardware decoding. Its capabilities are
+H.264 Baseline, Constrained Baseline, Main, and High; HEVC Main and Main10; and
+baseline JPEG, subject to host availability.
 H.264 High10 is conditional on the iOS profile probe and is excluded on macOS.
 VP9 Profile 0 is added where VideoToolbox offers it as a supplemental decoder,
 which every Apple silicon host does; the wire contract and the maintained
@@ -65,7 +65,8 @@ completes with an error rather than reaching memory the guest no longer has.
 The guest chooses the plane layout it negotiated: planes packed into one
 dma-buf follow one another at their negotiated sizes.
 
-Input uses complete Annex B H.264/HEVC access units or complete JPEG frames.
+Input uses complete Annex B H.264/HEVC access units, complete JPEG frames, or
+complete VP9 frames.
 Streams retain timestamps, signal format changes, drain delayed output, and
 complete cancellation and EOS through the command and event queues. Pending
 event buffers are bounded by the transport's maximum virtqueue size; full
