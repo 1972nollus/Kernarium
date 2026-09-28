@@ -35,10 +35,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 10 insertions(+), 1 deletion(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index ef77db68477d42f016b3ec4ad0a77b71614c043e..e29aef33dddff0f41e17f4f64038420103e31014 100644
+index aabf699bd33c2eca30711b7aea2d83cbcad50f49..80fdebc881ffdab0625dfa7547aa68407edc87ba 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
-@@ -6209,7 +6209,16 @@ iter_instruction(struct tgsi_iterate_context *iter,
+@@ -6210,7 +6210,16 @@ iter_instruction(struct tgsi_iterate_context *iter,
           struct immed *imd = &ctx->imm[inst->Src[0].Register.Index];
           if (ctx->so && ctx->key->gs_present)
              emit_so_movs(ctx, &ctx->glsl_strbufs, &ctx->has_clipvertex_so);
