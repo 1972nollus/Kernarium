@@ -7,26 +7,26 @@ Produce ordered TES records once, then pull raw capture and raster outputs witho
 
 Use one tessellator index winding for native and software consumers. Match indirect VS/TCS launches to the exact-thread Metal dispatch ABI.
 
-Size the buffers and grids a tessellated draw takes from application draw words with checked 32-bit arithmetic, one helper for the host and the indirect setup kernel: the TCS outputs, each patch's coordinate allocation and index count, the TCS grid and, for an indirect draw, the vertex outputs. A wrapped size would hand the TCS and the tessellator a small allocation to write far past. A direct draw that does not fit fails the recording with VK_ERROR_OUT_OF_DEVICE_MEMORY; an indirect one launches nothing, counts no statistic and draws nothing. The index prefix sum refuses a total that wrapped or that its 32-bit heap cannot address the same way: it draws nothing and clears the patch count, which the tessellator kernels respect. A reservation the heap cannot hold is refused the same way rather than aborted, since the MSL backend's abort() ends only the calling invocation and would leave the grids, patch count and draw words it had not cleared: the setup and the prefix sum launch nothing, and a tessellator that cannot place a patch's points empties the whole draw, whose other patches' indices are then never drawn, and counts no TES invocations for that patch. kosmickrisp_tess_draw_size records the direct refusal, and kosmickrisp_tess_setup_gpu launches the setup and prefix-sum kernels on bounded heaps with sizes that wrap or that the heap cannot hold.
+Size the buffers and grids a tessellated draw takes from application draw words with checked 32-bit arithmetic, one helper for the host and the indirect setup kernel: the TCS outputs, each patch's coordinate allocation and index count, the TCS grid and, for an indirect draw, the vertex outputs. A wrapped size would hand the TCS and the tessellator a small allocation to write far past. A direct draw that does not fit fails the recording with VK_ERROR_OUT_OF_DEVICE_MEMORY; an indirect one launches nothing, counts no statistic and draws nothing. The index prefix sum refuses a total that wrapped or that its 32-bit heap cannot address the same way: it draws nothing and clears the patch count, which the tessellator kernels respect. A reservation the heap cannot hold is refused the same way rather than aborted, since the MSL backend's abort() ends only the calling invocation and would leave the grids, patch count and draw words it had not cleared: the setup and the prefix sum launch nothing, and a tessellator that cannot place a patch's points empties the whole draw, whose other patches' indices are then never drawn, and counts no TES invocations for that patch. kosmickrisp_tess_draw_size records the direct refusal, and kosmickrisp_tess_setup_gpu launches the setup and prefix-sum kernels on bounded heaps with sizes that wrap or that the heap cannot hold. It also runs the tessellator on one quad patch at level 64 over a heap that holds the patch's indices but not its points, which must empty the draw and leave the heap's bottom after the indices.
 ---
  src/kosmickrisp/libkk/kk_geometry.cl          |  28 +-
  src/kosmickrisp/libkk/kk_tessellation.cl      |  51 ++-
  src/kosmickrisp/libkk/kk_tessellator.cl       |  10 +
  src/kosmickrisp/libkk/kk_tessellator.h        |  34 ++
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  81 ++--
- src/kosmickrisp/vulkan/kk_shader.c            | 151 ++++++--
+ src/kosmickrisp/vulkan/kk_shader.c            | 151 +++++--
  src/kosmickrisp/vulkan/meson.build            |  34 ++
  .../tests/tess_draw_size_shaders/generate.sh  |   7 +
  .../tests/tess_draw_size_shaders/wide.tesc    |  20 +
  .../tests/tess_draw_size_shaders/wide.tesc.h  | 114 ++++++
  .../tests/tess_draw_size_shaders/wide.tese    |   8 +
  .../tests/tess_draw_size_shaders/wide.tese.h  |  50 +++
- .../vulkan/tests/test_tess_draw_size.cpp      | 354 ++++++++++++++++++
- .../vulkan/tests/test_tess_setup_gpu.c        | 297 +++++++++++++++
+ .../vulkan/tests/test_tess_draw_size.cpp      | 354 ++++++++++++++++
+ .../vulkan/tests/test_tess_setup_gpu.c        | 380 ++++++++++++++++++
  src/poly/cl/tessellation.cl                   |   2 +-
  src/poly/cl/tessellator.h                     |  30 +-
  src/poly/tessellator.h                        |  15 +-
- 17 files changed, 1204 insertions(+), 82 deletions(-)
+ 17 files changed, 1287 insertions(+), 82 deletions(-)
  create mode 100755 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/generate.sh
  create mode 100644 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc
  create mode 100644 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc.h
@@ -1383,10 +1383,10 @@ index 0000000000000000000000000000000000000000..64c467737fab0ca914bc6d904fe65838
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b7232bb259192887564d9db21ee77cd6662de7ec
+index 0000000000000000000000000000000000000000..4e3788765c9a29ae21213572b87720803b820c27
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
-@@ -0,0 +1,297 @@
+@@ -0,0 +1,380 @@
 +/* SPDX-License-Identifier: MIT */
 +
 +/* Launch only the production tessellation setup and index prefix sum. An
@@ -1399,6 +1399,7 @@ index 0000000000000000000000000000000000000000..b7232bb259192887564d9db21ee77cd6
 +#include "kosmickrisp/vulkan/kk_cmd_buffer.h"
 +#include "kosmickrisp/vulkan/kk_device.h"
 +#include "kosmickrisp/vulkan/kk_entrypoints.h"
++#include "kosmickrisp/libkk/kk_tessellator.h"
 +#include "poly/tessellator.h"
 +
 +#include <stdlib.h>
@@ -1595,6 +1596,79 @@ index 0000000000000000000000000000000000000000..b7232bb259192887564d9db21ee77cd6
 +   printf("tessellation prefix sum PASS %s\n", test->name);
 +}
 +
++/* One quad patch at level 64 has 4225 domain points and 24576 indices. The
++ * tessellator reserves each patch's points after the prefix sum has placed
++ * the indices, so on a heap that holds the indices but not the points the
++ * patch would leave its share of the draw unwritten; the whole draw has to
++ * become empty instead. */
++struct points_case {
++   const char *name;
++   uint32_t heap_size;
++   bool fits;
++};
++
++static void
++check_points(struct context *ctx, const struct points_case *test)
++{
++   const uint32_t indices = 24576, index_B = indices * 4;
++   const uint32_t points_B = align(4225 * 8, 16);
++   struct kk_cmd_buffer *cmd = begin(ctx);
++   struct kk_ptr storage = kk_pool_alloc(cmd, test->heap_size, 16);
++   CHECK(storage.gpu);
++   const struct poly_heap heap_data = {
++      .base = storage.gpu,
++      .bottom = HEAP_BOTTOM,
++      .size = test->heap_size,
++   };
++   struct kk_ptr heap_ptr =
++      kk_pool_upload(cmd, &heap_data, sizeof(heap_data), 4);
++   const float factors[8] = {64, 64, 64, 64, 64, 64, 0, 0};
++   struct kk_ptr tcs = kk_pool_upload(cmd, factors, sizeof(factors), 4);
++   struct kk_ptr counts = kk_pool_alloc(cmd, sizeof(uint32_t), 4);
++   struct kk_ptr coord_allocs = kk_pool_alloc(cmd, sizeof(uint32_t), 4);
++   struct kk_ptr out_draw = kk_pool_alloc(cmd, 5 * sizeof(uint32_t), 4);
++   CHECK(heap_ptr.cpu && tcs.cpu && counts.cpu && coord_allocs.cpu &&
++         out_draw.cpu);
++   memset(out_draw.cpu, 0xa5, 5 * sizeof(uint32_t));
++   const struct poly_tess_params tess = {
++      .heap = heap_ptr.gpu,
++      .patch_coord_buffer = storage.gpu,
++      .coord_allocs = coord_allocs.gpu,
++      .out_draws = out_draw.gpu,
++      .tcs_buffer = tcs.gpu,
++      .counts = counts.gpu,
++      .input_patch_size = 4,
++      .output_patch_size = 4,
++      .patches_per_instance = 1,
++      .tcs_stride_el = 8,
++      .nr_patches = 1,
++      .partitioning = POLY_TESS_PARTITIONING_INTEGER,
++      .winding_in_index_buffer = true,
++   };
++   struct kk_ptr p = kk_pool_upload(cmd, &tess, sizeof(tess), 8);
++   CHECK(p.cpu);
++   libkk_tessellate(cmd, kk_grid_1d(1), true, TESS_PRIMITIVE_QUADS,
++                    POLY_TESS_MODE_COUNT, p.gpu);
++   libkk_prefix_sum_tess(cmd, kk_grid_1d(1024u), true, p.gpu, 0, 0, false);
++   libkk_tessellate(cmd, kk_grid_1d(1), true, TESS_PRIMITIVE_QUADS,
++                    POLY_TESS_MODE_WITH_COUNTS, p.gpu);
++   submit(ctx);
++
++   const uint32_t *desc = out_draw.cpu;
++   const struct poly_heap *actual_heap = heap_ptr.cpu;
++   CHECK(*(const uint32_t *)counts.cpu == indices);
++   if (test->fits) {
++      CHECK(desc[0] == indices && desc[1] == 1);
++      CHECK(*(const uint32_t *)coord_allocs.cpu * 8 ==
++            HEAP_BOTTOM + index_B);
++      CHECK(actual_heap->bottom == HEAP_BOTTOM + index_B + points_B);
++   } else {
++      CHECK(desc[0] == 0);
++      CHECK(actual_heap->bottom == HEAP_BOTTOM + index_B);
++   }
++   printf("tessellator points PASS %s\n", test->name);
++}
++
 +int
 +main(void)
 +{
@@ -1677,6 +1751,15 @@ index 0000000000000000000000000000000000000000..b7232bb259192887564d9db21ee77cd6
 +   for (unsigned i = 0; i < ARRAY_SIZE(sums); i++) {
 +      VK_CHECK(ctx.api->ResetCommandPool(ctx.device, pool, 0));
 +      check_sum(&ctx, &sums[i]);
++   }
++
++   const struct points_case points[] = {
++      {"points-fit", HEAP_SIZE, true},
++      {"points-overflow", 100 * 1024, false},
++   };
++   for (unsigned i = 0; i < ARRAY_SIZE(points); i++) {
++      VK_CHECK(ctx.api->ResetCommandPool(ctx.device, pool, 0));
++      check_points(&ctx, &points[i]);
 +   }
 +
 +   ctx.api->DestroyCommandPool(ctx.device, pool, NULL);

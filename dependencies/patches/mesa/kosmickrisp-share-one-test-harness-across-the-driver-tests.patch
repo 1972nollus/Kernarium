@@ -3,9 +3,9 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 05:04:07 +0900
 Subject: [PATCH] kosmickrisp: share one test harness across the driver tests
 
-Every KosmicKrisp test carried its own copy of the same checks.  38 C and
+Every KosmicKrisp test carried its own copy of the same checks.  39 C and
 Objective-C tests defined CHECK in three shapes (two boolean messages and a
-VkResult form), eighteen of them the same LOAD_I and LOAD_D, 29 C++ tests
+VkResult form), nineteen of them the same LOAD_I and LOAD_D, 29 C++ tests
 and benchmarks the same require() and load<>(), and the line-planner helper
 its own KK_TEST_CHECK.  tests/kk_test.h now holds one boolean CHECK, one
 VK_CHECK and the C and C++ loaders; the VkResult-form tests and the one
@@ -49,6 +49,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_geometry_draw_size.cpp  |  20 +-
  .../tests/test_geometry_primitive_id_link.cpp |  20 +-
  .../vulkan/tests/test_geometry_setup_gpu.c    |  28 +-
+ .../vulkan/tests/test_heap_growth.c           |   5 +-
  .../vulkan/tests/test_heap_overflow_gpu.c     |  19 +-
  .../vulkan/tests/test_heap_size_override.c    |   4 +-
  .../tests/test_helper_invocation_demote.cpp   |  20 +-
@@ -95,14 +96,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_timeline_wait_loss.c    |   4 +-
  .../test_transform_feedback_builtins.cpp      |  20 +-
  .../tests/test_unused_attachment_gaps.cpp     |  20 +-
- 73 files changed, 548 insertions(+), 2285 deletions(-)
+ 74 files changed, 549 insertions(+), 2289 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/kk_test.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 978eaf042af0a4defc608f8ab96eb3344937df58..f9cfb77db5c28690bbf6f207af8e4af28926afad 100644
+index 3b324816c88af4d1193fc97f55285c92902fe89d..004eb6d0dde787825eaa88a4d9eedf17048762b4 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -227,20 +227,62 @@ if with_tests
@@ -670,7 +671,7 @@ index 978eaf042af0a4defc608f8ab96eb3344937df58..f9cfb77db5c28690bbf6f207af8e4af2
      timeline_wait_loss_test = executable(
        'test_kosmickrisp_timeline_wait_loss',
        files('tests/test_timeline_wait_loss.c'),
-@@ -1225,16 +898,25 @@ if with_tests
+@@ -1245,16 +918,25 @@ if with_tests
      )
    endif
  
@@ -706,7 +707,7 @@ index 978eaf042af0a4defc608f8ab96eb3344937df58..f9cfb77db5c28690bbf6f207af8e4af2
  
    test(
      'kosmickrisp_queue_error',
-@@ -1272,49 +954,6 @@ if with_tests
+@@ -1292,49 +974,6 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -756,7 +757,7 @@ index 978eaf042af0a4defc608f8ab96eb3344937df58..f9cfb77db5c28690bbf6f207af8e4af2
    test(
      'kosmickrisp_logic_op',
      executable(
-@@ -1472,75 +1111,28 @@ if with_tests
+@@ -1492,75 +1131,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -1996,8 +1997,24 @@ index 305053fb641d13373146d19fdd38ad8f923bb97a..ba0683573f2371b26507633c2d0643c4
        check_setup(device, queue, command, &cases[i]);
     }
     api->DestroyCommandPool(device, commands, NULL);
+diff --git a/src/kosmickrisp/vulkan/tests/test_heap_growth.c b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
+index 1ce1e45a684237ea6b30cb85ec1577161f9aa883..ac257c1eac495cd43f9e681ec699b4684bc43523 100644
+--- a/src/kosmickrisp/vulkan/tests/test_heap_growth.c
++++ b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
+@@ -19,10 +19,7 @@
+ #include <string.h>
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define VK_CHECK(x) CHECK((x) == VK_SUCCESS)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ static const uint32_t fullscreen_spirv[] =
+ #include "statistics_shaders/fullscreen.vert.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
-index d017499cb4f70f25cfc3359c0135e8b7bedd732f..f437d3e7b090024a303b996f53368fbc773f79af 100644
+index d3506201ea34afd78da0b4c4e922428982fbf50b..4c3142e9efcb7ab5e4ed09bb9405df1c74eae078 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
 @@ -14,24 +14,7 @@
@@ -2027,7 +2044,7 @@ index d017499cb4f70f25cfc3359c0135e8b7bedd732f..f437d3e7b090024a303b996f53368fbc
  enum { HEAP_SIZE = 4096, HEAP_BOTTOM = 16, CANARY = 0xa5a5a5a5 };
  
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
-index b4e9eba04e54889b0fc360acd4dfab93aec645d4..a495f325b639cff5ed12ccf549976a6309e59593 100644
+index 74f4550aa8d23cdff7c39cc3e36adde362e813e0..72c3424705ddfaa9ef9555bff816f1eddddc7871 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 @@ -17,9 +17,7 @@
@@ -4505,10 +4522,10 @@ index d7de8f71429df79685386b49762e196236b046bd..3bc621cee4fdc3ddd2c941d3b5491b24
  static const uint32_t vertex_spirv[] =
  #include "tess_passthrough_shaders/passthrough.vert.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
-index b7232bb259192887564d9db21ee77cd6662de7ec..cc87939575063f8e6e99d24209c412c3da4e3e50 100644
+index 4e3788765c9a29ae21213572b87720803b820c27..437e1b2636f491c56dc5e0f9ea35de5179b63069 100644
 --- a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
 +++ b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
-@@ -15,24 +15,7 @@
+@@ -16,24 +16,7 @@
  #include <stdlib.h>
  #include <string.h>
  

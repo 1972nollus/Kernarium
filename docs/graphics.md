@@ -948,21 +948,34 @@ that before the brief `IOAccelerator` transient of `render_to_image` cases with
 huge attachments, so guest RAM cannot be raised to make room for a workload.
 Two consequences follow.
 
-The per-device geometry heap is 16 MiB rather than a fixed 128 MiB, because a
-Venus host pays it once per guest `VkDevice`. The heaviest command buffer in the
-CTS tessellation, geometry, draw and rasterization groups asks it for
-1.53 MiB; `MESA_KK_HEAP_SIZE_MIB` sets it from 1 to 4095 MiB without a
-rebuild, and any other value keeps 16 MiB. If Metal refuses the heap, a draw
-that needs it is not recorded and its command buffer ends with
-`VK_ERROR_OUT_OF_DEVICE_MEMORY`. An overflow is not diagnosable: the device
-library is compiled without `printf`, and its `abort()` would end only the
-allocating kernel invocation, so every kernel that reserves heap space checks
-the reservation instead and, when it is refused, empties its draw. The stages
-after it launch nothing and the command buffer completes. The draw loses its
-output, and so does every later draw in the same command buffer that needs the
-heap, because the refused reservation leaves it exhausted. Real
-draws can exceed the default: 130 quad patches at tessellation level 64 lose
-patches. A smaller size is therefore validated only by a conformance run.
+The per-device geometry heap starts at 16 MiB rather than a fixed 128 MiB,
+because a Venus host pays it once per guest `VkDevice` that draws through it;
+a device that never does allocates none. The heaviest command buffer in the CTS
+tessellation, geometry, draw and rasterization groups asks it for 1.53 MiB, but
+that under-measures real demand, which is linear in patches and primitives: 130
+quad patches at tessellation level 64 need 17.2 MB. The heap therefore grows,
+at least doubling, up to 128 MiB or its starting size, whichever is larger.
+`MESA_KK_HEAP_SIZE_MIB` sets the start from 1 to 4095 MiB without a rebuild,
+and any other value keeps 16 MiB.
+
+A direct draw whose reservations the driver can bound, the restart unroll or
+tessellation at the level-64 maximum, grows the heap before it is recorded and
+renders on its first submission. A reservation only the GPU can size, from an
+indirect draw or a stage after tessellation or geometry, is refused when it
+does not fit. The device library is compiled without `printf`, and its
+`abort()` would end only the allocating kernel invocation, so every kernel
+that reserves heap space checks the reservation instead and, when it is
+refused, empties its draw; the command buffer completes. The heap header counts
+refusals, and the driver reads them at the next draw and when the recording is
+reset, grows the heap for later command buffers and logs the first loss once
+per device. Reservations advance the heap by compare-exchange and never past
+its end, so a refused one leaves the heap as it was. A recording keeps every
+heap it used until it is reset or freed. If Metal refuses the first heap, a
+draw that needs it is not recorded and its command buffer ends with
+`VK_ERROR_OUT_OF_DEVICE_MEMORY`; if it refuses a larger one, the device keeps
+the heap it has. The level-64 bound is conservative, so the heap grows with
+the patches a render pass draws directly, whatever their levels: past about a
+thousand quad patches it reaches the cap.
 
 An uninterrupted released mustpass fraction runs about 200,000 cases in one
 `deqp-vk` process, and a 1536 MiB guest cannot hold every group in that
