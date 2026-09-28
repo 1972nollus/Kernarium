@@ -209,6 +209,9 @@ private:
     std::unordered_set<std::uint32_t> contexts_;
     std::unordered_set<std::uint32_t> venusContexts_;
     std::vector<std::uint8_t> transferStaging_;
+    /* A Virgl scanout's CPU readback. The first flush that reads back sizes
+     * it to the whole scanout; it is released when the scanout changes size,
+     * becomes a 2D or native Metal scanout, or is disabled. */
     std::vector<std::uint8_t> readbackStaging_;
     const std::atomic_bool* stopRequested_ {};
     std::uint64_t displayGeneration_ {};

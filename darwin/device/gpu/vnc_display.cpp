@@ -108,7 +108,7 @@ VncDisplay::VncDisplay(
     vnc_input::VncInputSink inputSink,
     vnc_input::PointerMode pointerMode)
     : inputSink_(std::move(inputSink))
-    , framebuffer_(width, height)
+    , framebuffer_(width, height, FramebufferStorage::retained)
     , geometry_(width, height, false)
     , password_(std::move(password))
     , pointerMode_(pointerMode)

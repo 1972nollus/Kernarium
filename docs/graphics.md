@@ -291,28 +291,33 @@ CPU fallback only when it is not a single-layer 2D texture of the display's
 Metal device, when it is smaller than the source, or when the rectangle is
 empty or reaches outside the source.
 
-Presentation storage follows the applied guest mode, not the host view. The
-host keeps three copies of the scanout rectangle at four bytes per pixel: the
-display's CPU framebuffer, the shared Metal texture the CPU path uploads it
-into, and the Virtio-GPU device's readback staging for a Virgl scanout. A
-4096x2160 mode therefore holds about 107 MB even while every frame takes the
-direct Metal path, where none of the three is used after the first frame. The
-view's drawables, three on iOS, stay sized to the view. A smaller applied mode
-frees the framebuffer and its texture within a second of the resize. The
-readback staging changes size only at the next Virgl scanout, so it keeps the
-larger size while a classic resource such as the fbcon framebuffer is shown.
-The balloon target follows the process's Metal and graphics memory, so growth
-there, including the guest's own scanout buffers, comes out of guest RAM, while
-the two CPU copies add to the footprint.
+Apart from the VNC display's fixed framebuffer, only the CPU path keeps host
+copies of a guest mode's pixels, and only once it uses them. The native display
+has three, each the whole scanout rectangle at four bytes per pixel: its CPU
+framebuffer, the shared Metal texture that framebuffer is uploaded into, and
+the Virtio-GPU device's readback staging for a Virgl scanout. An applied mode
+and a cleared display start without any of them. The first CPU write allocates
+the framebuffer, zeroed, and the first draw that shows it creates the texture;
+the first flush that reads a Virgl scanout back allocates the staging. Each is
+then reused for the CPU frames that follow. A mode change releases the
+framebuffer and its texture, and a clear releases the framebuffer at once and
+its texture at the next draw. The staging is released when the scanout changes
+size, becomes a 2D or native Metal scanout, or is disabled. A mode shown only
+through Metal textures therefore holds none of them, and neither does the frame
+that follows each mode change, which presents the view's clear colour alone. A
+direct frame leaves any copies an earlier CPU frame made, because a later
+partial CPU update writes into them. Failing to allocate the framebuffer or the
+staging is reported to the flush that needed it, as an out-of-memory response,
+rather than to the mode set. The view's drawables, three on iOS, stay sized to
+the view. The balloon target follows the process's Metal and graphics memory,
+so growth there, including the guest's own scanout buffers and the CPU path's
+texture, comes out of guest RAM, while the framebuffer and the staging add to
+the footprint.
 
 Kernarium's EDID lists only the host's preferred mode, so a guest reaches a
-larger one, such as 4096x2160, by setting a user-defined mode. On the iPad mini
-6 with a 2048 MiB guest, a double-buffered GBM client at 4096x2160 raised the
-physical footprint by about 250 MiB, and the balloon returned about 96 MiB of
-guest RAM, leaving about 470 MiB of the 2867 MiB process limit for further
-growth. The renderer can hold a finished client's scanout buffers for a minute
-or more, until later rendering releases them; repeated mode cycles do not
-accumulate them.
+larger one, such as 4096x2160, by setting a user-defined mode. The renderer can
+hold a finished client's scanout buffers for a minute or more, until later
+rendering releases them; repeated mode cycles do not accumulate them.
 
 Rendering and input use the same centered aspect-fit rectangle. AppKit and VNC
 map that rectangle into the fixed tablet range, while Kernarium maps it into
