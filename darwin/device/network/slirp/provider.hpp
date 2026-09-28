@@ -27,7 +27,6 @@ namespace uml::network {
 
 inline constexpr std::size_t frame_size = 2048;
 inline constexpr std::size_t ring_size = 256;
-inline constexpr std::size_t max_poll_descriptors = 512;
 /* How long a guest transmit waits for the event loop to free a ring slot
  * before the frame is refused (see SlirpProvider::write). The loop frees one
  * within its next pass; the bound only stops a wedged loop holding a vCPU, so
@@ -90,9 +89,11 @@ struct Timer final {
 	std::int64_t expires_ms{-1};
 };
 
+/* The descriptors one event-loop pass polls: the wake pipe first, then one
+ * per socket SLiRP asks for, however many flows the guest has open. The
+ * vector is kept across passes, so a steady flow count allocates nothing. */
 struct PollState final {
-	std::array<pollfd, max_poll_descriptors + 1> descriptors{};
-	nfds_t count{};
+	std::vector<pollfd> descriptors;
 };
 
 struct SlirpDeleter final {
