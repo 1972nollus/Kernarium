@@ -274,8 +274,8 @@ is executable. The registry guarantees:
   translation of the page in every executor is unlinked or invalidated;
 - when a page enters the set, every participating executor's write-side TLB
   entry for it is retired before the registration returns, and an executor
-  inside the engine is waited for until it leaves or passes a checkpoint,
-  bounded at 200 ms, so no executor keeps a stale "publishes nothing" entry;
+  inside the engine is waited for until it leaves the engine, bounded at
+  200 ms, so no executor keeps a stale "publishes nothing" entry;
 - a TLB fill that raced a registration retries: the fill re-reads the
   registry's change counter after publishing its entry;
 - counting a page in or out never sleeps: the counts are guarded in 64 stripes
