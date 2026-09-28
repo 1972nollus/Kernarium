@@ -38,14 +38,16 @@ through the vhost-user shared-memory aperture only that line carries.
 The GPU transport thread owns renderer creation, context use, reset, and
 teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS
 consumer of the same renderer and is intended for diagnostics and remote
-display, not as a second graphics backend. With no connected VNC client,
-scanout flushes retire without any GPU-to-CPU readback. A client that connects
-after such an interval dropped frames receives its first framebuffer update
-only once a complete scanout newer than its connection is published: the
-display reads the newest native Metal scanout back at once, and a scanout only
-the CPU path can read refreshes in full on the guest's next flush. The client
-waits at most 2 s for it, so a static CPU-path scanout then arrives as last
-published.
+display, not as a second graphics backend. With no connected VNC client, a
+native Metal scanout's flushes retire without any GPU-to-CPU readback; a
+scanout only the CPU path can read is still read back from the renderer on
+each flush. A client that connects after such an interval dropped frames
+receives its first framebuffer update only once a complete scanout newer than
+its connection is published. The display reads the newest native Metal
+scanout back at once, and a CPU-path scanout shown scaled as well, since it is
+kept in a host texture of the whole mode; a CPU-path scanout shown pixel for
+pixel refreshes in full on the guest's next flush. The client waits at most
+2 s for that flush, so a static one then arrives as last published.
 The VNC display converts native Metal scanouts with an asynchronous Metal
 readback. A readback requested before the framebuffer was cleared, re-placed
 for a new mode, or written by a CPU-path copy is discarded when it completes,

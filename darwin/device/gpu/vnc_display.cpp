@@ -584,9 +584,10 @@ std::optional<std::uint32_t> VncDisplay::clientConnected() noexcept
         const auto connected = stateConnectionEpoch(desired);
         /* Frames dropped while nobody watched never reached the
          * framebuffer. The first client of this epoch waits for a complete
-         * frame newer than its connection, which a remembered native
-         * scanout provides at once and the CPU path provides on the
-         * guest's next flush. */
+         * frame newer than its connection. A remembered native scanout
+         * provides it at once, and so does a remembered staged image of a
+         * CPU-path scanout shown scaled; a CPU-path scanout shown pixel for
+         * pixel provides it on the guest's next flush. */
         if (count == 0 && std::exchange(idleFramesDropped_, false)) {
             staleEpoch_ = connected;
             const bool refreshing = metalReadback_->refresh(connected);
