@@ -44,7 +44,7 @@ kosmickrisp_query_pool_lifetime throws such a recording away, and resets,
 begins or frees one, after destroying the timestamp query pool it wrote to:
 closing its encoders must not reach the pool's released Metal objects.
 ---
- docs/drivers/kosmickrisp/workarounds.rst      |   7 +-
+ docs/drivers/kosmickrisp/workarounds.rst      |   8 +-
  src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 168 ++++--
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  32 ++
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  36 +-
@@ -57,7 +57,7 @@ closing its encoders must not reach the pool's released Metal objects.
  .../tests/command_buffer_shaders/generate.sh  |   7 +
  .../tests/test_command_buffer_consolidation.c | 526 ++++++++++++++++++
  .../vulkan/tests/test_query_pool_lifetime.c   | 224 ++++++++
- 13 files changed, 1063 insertions(+), 57 deletions(-)
+ 13 files changed, 1064 insertions(+), 57 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag.h
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.vert
@@ -67,7 +67,7 @@ closing its encoders must not reach the pool's released Metal objects.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_query_pool_lifetime.c
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index 3a7408608df069d4761c4b999a6ad228bc62316f..82bb255db89732f917f5839107fecbdf7f93d6b7 100644
+index d159845738a21e4c650d6e297393e06316794f8c..eb98498a257aadc04914669a0f5ad22ba2d145ad 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
 @@ -128,7 +128,9 @@ the documented requirements for layered rendering are unmet. Neither an
@@ -81,13 +81,14 @@ index 3a7408608df069d4761c4b999a6ad228bc62316f..82bb255db89732f917f5839107fecbdf
  
  Splitting the draws into smaller ones does not avoid the loss either: 1048576
  points issued as four draws of 262144 still lose 653984 of them, so there is no
-@@ -137,7 +139,8 @@ gated on a draw size.
- 
- The workaround therefore restarts the render command encoder before any draw
- that is not the first in the current encoder, whenever the pass is layered and
--the bound vertex shader writes the layer. Restarting reuses the existing
-+the bound vertex shader writes the layer, and every render encoder of a layered
-+or multiview pass starts a command buffer of its own. Restarting reuses the existing
+@@ -140,7 +142,9 @@ draw that is not the first in the current encoder, whenever the pass is layered
+ and the stage that feeds the rasterizer writes the layer: the emulated geometry
+ shader's raster draw, else the tessellation evaluation shader, else the vertex
+ shader. Each entry of a multi-draw is a Metal draw of its own, so every entry
+-after the first restarts the encoder as a separate draw call would. Restarting reuses the existing
++after the first restarts the encoder as a separate draw call would. Every
++render encoder of a layered or multiview pass also starts a command buffer of
++its own. Restarting reuses the existing
  render-pass flush path, so the attachments are reloaded and nothing is lost.
  The cost is one attachment load and store per such draw; a pass that never
  writes the layer, or is not layered, is untouched. The
@@ -418,10 +419,10 @@ index 06fbde5af1864840fa2c3b1d06762836bd37b527..7bbf86802f2816c62dd9e31d6904b6d2
                                          uint64_t addr);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 45bc47def4964cb9352f3a35515be779c181f456..efa087026ea64a7ab879c5b01bcc51e1ff870e1a 100644
+index 139ec5bcb4932829d0b775499d4267ec7267e33a..3cfeef7829ac928ce70b9721fce2ca94aacea2bb 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1848,7 +1848,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1865,7 +1865,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
     }
  }
  
@@ -430,7 +431,7 @@ index 45bc47def4964cb9352f3a35515be779c181f456..efa087026ea64a7ab879c5b01bcc51e1
  kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
  {
     struct kk_graphics_state *gfx = &cmd->state.gfx;
-@@ -3389,20 +3389,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3406,20 +3406,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
  }
  
  static void
@@ -452,7 +453,7 @@ index 45bc47def4964cb9352f3a35515be779c181f456..efa087026ea64a7ab879c5b01bcc51e1
     data->restart = cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable;
     data->restart_index =
        cmd->vk.dynamic_graphics_state.ia.primitive_restart_index;
-@@ -3531,6 +3519,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3554,6 +3542,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     }
  }
  
@@ -502,10 +503,10 @@ index 681be0d9eb9fc2087f4bb32bf0062c7fd5b42aef..8087aeb090f7a451e67d6aa2fd0bee91
     /* Need to ensure the new buffers allocated at record are resident. */
     kk_device_make_resources_resident(dev);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 7b704e23aeadef13bd95428d955ca89cdfc13f56..82a54d87027b4f33fdbf7e4400edc5b53a474d06 100644
+index a12dff951a146d31516c6af76be5fb432cdb76f4..6fc05764413a68604dd19812501a3ed6fd728b43 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -964,6 +964,39 @@ if with_tests
+@@ -982,6 +982,39 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )

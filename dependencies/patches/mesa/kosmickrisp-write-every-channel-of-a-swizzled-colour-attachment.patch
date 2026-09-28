@@ -164,7 +164,7 @@ index 0000000000000000000000000000000000000000..a99be20458da387cf5b3d63187d3564a
 +                                     nir_metadata_control_flow, (void *)state);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 78a12f1c485684f8bca5b9ce10d815f38450b723..1e35bdfef5686b3a725a9ef019fdceaf0dba7170 100644
+index 003ad1737fc26c487329be927b294b2f64ad0808..ebe4c7597832353ff6742acfc4f442f7c5969b23 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -280,57 +280,6 @@ type_size_vec4(const struct glsl_type *type, bool bindless)
@@ -236,10 +236,10 @@ index 78a12f1c485684f8bca5b9ce10d815f38450b723..1e35bdfef5686b3a725a9ef019fdceaf
     NIR_PASS(_, nir, msl_nir_fs_io_types);
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index c509672590c4a72327b1ee377d73c3418386d0db..0b0730a1e934098b002520d919db4611b30af656 100644
+index b43552a06ed4954cae4c693c4af027c4517a86ad..a80f55c257a7b855517fe8f6f9e76e888bc48f15 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
-@@ -290,6 +290,10 @@ nir_def *kk_nir_border_compare(struct nir_builder *b, nir_def *op,
+@@ -293,6 +293,10 @@ nir_def *kk_nir_border_compare(struct nir_builder *b, nir_def *op,
  nir_def *kk_nir_border_probe_reference(struct nir_builder *b, nir_def *op,
                                         unsigned bit_size);
  
@@ -251,7 +251,7 @@ index c509672590c4a72327b1ee377d73c3418386d0db..0b0730a1e934098b002520d919db4611
  
  bool kk_nir_lower_vs_multiview(nir_shader *nir, uint32_t view_mask);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 91c4f7efe4e139e7490737c70ee20ad9f56955dd..fd55ff1d6b6b1ddb423bd190e5f64dbe9f24c75a 100644
+index a164d9b09fa1617717d2c31da8063fa2d1f33189..2d9754af98e046b1e08728e17b001f210c58fb74 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -98,6 +98,7 @@ kk_files = files(
@@ -262,7 +262,7 @@ index 91c4f7efe4e139e7490737c70ee20ad9f56955dd..fd55ff1d6b6b1ddb423bd190e5f64dbe
    'kk_nir_lower_descriptors.c',
    'kk_nir_lower_multiview.c',
    'kk_nir_lower_null_images.c',
-@@ -996,6 +997,26 @@ if with_tests
+@@ -1014,6 +1015,26 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

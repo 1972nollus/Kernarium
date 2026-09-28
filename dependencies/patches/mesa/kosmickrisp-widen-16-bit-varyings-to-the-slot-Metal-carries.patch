@@ -190,7 +190,7 @@ index 42716090f5c48b55a0081ec11684e307622b7498..2710b0b940ccdd3d2c59cb43ff11edae
        .uniformAndStorageBuffer16BitAccess = true,
        .variablePointers = true,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 1e35bdfef5686b3a725a9ef019fdceaf0dba7170..afce3bf3e5fd1cf3a6fa048f34a98b279af46af5 100644
+index ebe4c7597832353ff6742acfc4f442f7c5969b23..4b842d270ee594b0de76146f8908fc3c78825bca 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -5220,6 +5220,15 @@ kk_compile_shaders_single(struct vk_device *device, uint32_t shader_count,
@@ -210,10 +210,10 @@ index 1e35bdfef5686b3a725a9ef019fdceaf0dba7170..afce3bf3e5fd1cf3a6fa048f34a98b27
      * path, link only the application pre-raster chain now; linking an
      * unmatched internal line input to the old final stage would discard it. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 5eb02e1bbcd063ddf13af66d66d8a9b522060f57..6c0944e606cd111db068e7e144fa7c90c440e443 100644
+index 0366f0f640e31bb50c86559ae58f2fbecb925449..11801e8ea8dfad968c575d28c137a299aebbf54f 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1083,6 +1083,20 @@ if with_tests
+@@ -1101,6 +1101,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

@@ -187,10 +187,10 @@ index 87a46649370856ba4fdf2c801dcab1b574f555bd..01bfbe41a9bda83c48a2e3d8f66a309a
              nir_metadata_control_flow, NULL);
  }
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 373837d38cedd7479fcb1e449b3833eb18487242..59744c3cef5f756a34558df86b9b3e844d84bb0c 100644
+index 8688c11a7a466dd0c517b2b819a9c3acb5a8ce2a..24c460feb5bef8f093e718bb66bb85064318ffb3 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -991,6 +991,20 @@ if with_tests
+@@ -1009,6 +1009,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

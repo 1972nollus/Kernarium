@@ -99,10 +99,10 @@ index db3dda0283125fed23d4e82d9fbf66e68943e65e..06fbde5af1864840fa2c3b1d06762836
        struct {
           uint32_t base_group[3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index dd9ac4b6ca7bf65c61cbe58de96e83096fa1447a..ffafb5400c722e9e049a512e05b74f906f48f0fd 100644
+index 16fe5d709c41f98f71c7134be045a5e943e53f0e..4fcc7474de4585b72102e62b1d2b6a16582c9945 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1790,8 +1790,17 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1807,8 +1807,17 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
        kk_cmd_bind_root_to_argument_table(cmd, desc->root.addr);
     }
  
@@ -122,7 +122,7 @@ index dd9ac4b6ca7bf65c61cbe58de96e83096fa1447a..ffafb5400c722e9e049a512e05b74f90
                                       gfx->occlusion.index * sizeof(uint64_t));
     }
  }
-@@ -1817,6 +1826,22 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+@@ -1834,6 +1843,22 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
        desc->root.draw.clip_statistics != clip_statistics;
     desc->root.draw.clip_statistics = clip_statistics;
  
@@ -202,7 +202,7 @@ index 82f5d4aff2015f1e0bb72a28ec399f8a69d6a141..50f97c4fb549e15259ad97b1855ed13e
        .polygonModePointSize = true,
        .nonStrictSinglePixelWideLinesUseParallelogram = false,
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 7cd60977abe8119d28fc8a7112813ed0091ac4c6..c3c827157f4c6ec03f55bc76c7ada79ec9c310ab 100644
+index 96795accac170427271b9dcd80e2a6fbc3367f65..cfe4f3f7bb6513ea9a5aecd85649d9bc6fdaae96 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -742,6 +742,63 @@ kk_nir_lower_fs_pipeline_statistics(nir_shader *nir)
@@ -311,10 +311,10 @@ index 7cd60977abe8119d28fc8a7112813ed0091ac4c6..c3c827157f4c6ec03f55bc76c7ada79e
  
     uint8_t topology = state->ia->primitive_topology;
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index 6a439054966ff29eb571fbaa222117909a0c6e2d..d20bf2c9fbc6d2c75a6b302941b06277cdd30e4f 100644
+index 8b278af2c7575dbc170b1c945be114c93deefbc7..ef1aed242386292a86b14e08f2c36b242560b676 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
-@@ -125,6 +125,9 @@ struct kk_shader_info {
+@@ -128,6 +128,9 @@ struct kk_shader_info {
           bool has_ds;
           bool has_depth_write;
           bool has_stencil_test;
@@ -324,7 +324,7 @@ index 6a439054966ff29eb571fbaa222117909a0c6e2d..d20bf2c9fbc6d2c75a6b302941b06277
        } vs;
  
        struct {
-@@ -139,6 +142,9 @@ struct kk_shader_info {
+@@ -142,6 +145,9 @@ struct kk_shader_info {
  
        struct {
           uint64_t flat_inputs;
@@ -335,10 +335,10 @@ index 6a439054966ff29eb571fbaa222117909a0c6e2d..d20bf2c9fbc6d2c75a6b302941b06277
  
        struct {
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index a13ca70d406bfc41848c4b58fce609078e2e9722..36a8aa21c2dcfab0c4d82f4e0ac845fda358b1c9 100644
+index 372ff8aebe815cade28b334067b1164a6c9ed1cc..fe0d930c770c37c6eee13c1418cb933766dac09c 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -548,6 +548,20 @@ if with_tests
+@@ -566,6 +566,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

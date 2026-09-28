@@ -22,7 +22,7 @@ without a rebuild.
  1 file changed, 20 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index dfeda87c6e3e0183b8273a26fff2325b9a4730e7..45bc47def4964cb9352f3a35515be779c181f456 100644
+index b52724ef87ff428719140404ebffd4076753faad..139ec5bcb4932829d0b775499d4267ec7267e33a 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -27,6 +27,8 @@
@@ -34,7 +34,7 @@ index dfeda87c6e3e0183b8273a26fff2325b9a4730e7..45bc47def4964cb9352f3a35515be779
  #include "poly/geometry.h"
  #include "poly/tessellator.h"
  
-@@ -1117,7 +1119,24 @@ kk_init_heap(const void *data)
+@@ -1134,7 +1136,24 @@ kk_init_heap(const void *data)
     struct kk_cmd_buffer *cmd = (struct kk_cmd_buffer *)data;
     struct kk_device *dev = kk_cmd_buffer_device(cmd);
  

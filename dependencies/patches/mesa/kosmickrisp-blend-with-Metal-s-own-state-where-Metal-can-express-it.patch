@@ -452,10 +452,10 @@ index fa4b9cde1df9456a76b4fa4066081d08bf6cbfed..8319e2d10da17d3dfb4275500076fda5
  vk_compare_op_to_mtl_compare_function(enum VkCompareOp op);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index ffafb5400c722e9e049a512e05b74f906f48f0fd..cc73fe23faa240a8642c1dd4201dde435f4d7093 100644
+index 4fcc7474de4585b72102e62b1d2b6a16582c9945..3c64052a0f387db905837826ed9f894dbef7c1fd 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1744,14 +1744,25 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1761,14 +1761,25 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
           enc, cmd->vk.dynamic_graphics_state.ds.stencil.front.reference,
           cmd->vk.dynamic_graphics_state.ds.stencil.back.reference);
  
@@ -526,7 +526,7 @@ index fe1de5ed5aea8a91980dd71163d546051de05580..9a3f458f98a38ced65e9838be6b35a78
  #include "kk_logic_op.h"
  
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index c3c827157f4c6ec03f55bc76c7ada79ec9c310ab..466d8cb38a1fb03859b2111b0b9716a69187625e 100644
+index cfe4f3f7bb6513ea9a5aecd85649d9bc6fdaae96..8d5fa3570c8ec451d377f52408eb2bac83c05d31 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -595,6 +595,142 @@ kk_nir_remove_undeclared_fs_output(nir_builder *b,
@@ -820,10 +820,10 @@ index c3c827157f4c6ec03f55bc76c7ada79ec9c310ab..466d8cb38a1fb03859b2111b0b9716a6
  
     if (vs->info.vs.view_mask) {
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index d20bf2c9fbc6d2c75a6b302941b06277cdd30e4f..ed7fd4d5aa75d68a9fc45f1edff6d66f3a19108f 100644
+index ef1aed242386292a86b14e08f2c36b242560b676..889ecc06804ac229cbfca446cabb3e74187ba26d 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
-@@ -119,6 +119,20 @@ struct kk_shader_info {
+@@ -122,6 +122,20 @@ struct kk_shader_info {
              uint8_t write_mask;
           } stencil_front, stencil_back;
           uint8_t color_attachment_count;
@@ -845,10 +845,10 @@ index d20bf2c9fbc6d2c75a6b302941b06277cdd30e4f..ed7fd4d5aa75d68a9fc45f1edff6d66f
           bool has_alpha_to_coverage_enabled;
           bool has_alpha_to_one_enabled;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 9cd6fb7e0697461976cac6dcd354c82ca3818632..897eeb721e58740b3ce850fea2287ca778e35877 100644
+index 10dc449778cc2075bb4ace112dc8613c241f9d94..8a4c3d2cd53bfe2305fa0fb8ec2c4d41f1757ca4 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -562,6 +562,30 @@ if with_tests
+@@ -580,6 +580,30 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

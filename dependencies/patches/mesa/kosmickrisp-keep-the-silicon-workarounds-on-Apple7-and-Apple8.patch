@@ -59,10 +59,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_helper_invocation_demote.cpp
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index ea56c611c0e5d1062f03df579a40b42fb015a3a4..ef37fc4ced61fbfc79bc84c0e7b5a79419c0ecd0 100644
+index 8137ea4564d99f43f80fc29a3a63ecd33039ea88..60dada78662945fefca66d07fff714a353ff0e7c 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
-@@ -445,9 +445,17 @@ as a non-helper thread, even after ``discard_fragment()`` is called. The
+@@ -451,9 +451,17 @@ as a non-helper thread, even after ``discard_fragment()`` is called. The
  workaround is to have a variable tracking this state and update it when the
  fragment is discarded. This issue is present in M1 and M2 chips.
  
@@ -80,7 +80,7 @@ index ea56c611c0e5d1062f03df579a40b42fb015a3a4..ef37fc4ced61fbfc79bc84c0e7b5a794
  
  KK_WORKAROUND_3
  ---------------
-@@ -500,10 +508,19 @@ Alternatively, the conditional can be changed to include ``simd_ballot(true)``:
+@@ -506,10 +514,19 @@ Alternatively, the conditional can be changed to include ``simd_ballot(true)``:
        temp = 2u;
  
  
@@ -127,10 +127,10 @@ index 64d690c9942e8821acb159b9addb84dc84a89cc4..4a8f20b4abc0b07a2a234a55dfdd3a7a
  }
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 59744c3cef5f756a34558df86b9b3e844d84bb0c..a13ca70d406bfc41848c4b58fce609078e2e9722 100644
+index 24c460feb5bef8f093e718bb66bb85064318ffb3..372ff8aebe815cade28b334067b1164a6c9ed1cc 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -548,6 +548,20 @@ if with_tests
+@@ -566,6 +566,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
