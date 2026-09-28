@@ -97,19 +97,7 @@ arm64|aarch64) ;;
 *) fail "the kernel host tools require an arm64 host" ;;
 esac
 
-find_tool()
-{
-	variable=$1
-	shift
-	for candidate in "$@"; do
-		tool_path=$(command -v "$candidate" 2>/dev/null || true)
-		if [ -n "$tool_path" ]; then
-			eval "$variable=\$tool_path"
-			return
-		fi
-	done
-	fail "required build tool is unavailable: $*"
-}
+. "$ROOT_DIR/dependencies/build-common.sh"
 
 find_tool CMAKE cmake
 find_tool XCRUN xcrun
@@ -363,20 +351,5 @@ cp "$ARCHIVE_MANIFEST" "$PROVENANCE/kernel-host-tools-archives.tsv"
 	done
 } > "$PROVENANCE/source-trees.tsv"
 
-verify_output "$STAGE"
-status=0
-"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$STAGE" "$OUTPUT" ||
-	status=$?
-case $status in
-0)
-	STAGE=
-	printf '%s\n' "published kernel host tools: $OUTPUT"
-	;;
-1)
-	verify_output "$OUTPUT" ||
-		fail "concurrently published output is invalid: $OUTPUT"
-	printf '%s\n' "reusing concurrently published kernel host tools: $OUTPUT"
-	;;
-*) fail "could not publish kernel host tools: $OUTPUT" ;;
-esac
+publish_verified "$STAGE" "$OUTPUT" verify_output "kernel host tools"
 "$CMAKE" -E remove_directory "$LOG_DIR"
