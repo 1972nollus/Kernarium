@@ -78,11 +78,10 @@ option(UML_BUILD_NETWORK_PROVIDER
     "Build the optional SLiRP network provider"
     ${UML_BUILD_KERNEL_RUNNER})
 
-if(UML_BUILD_GPU OR UML_BUILD_AUDIO)
-    # Both native display implementations are Objective-C++. Keep that
-    # language out of ordinary CPU/library-only configurations.
-    enable_language(OBJCXX)
-endif()
+# darwin/platform compiles Objective-C++ in every configuration. Without the
+# language its .mm sources fall to the C++ rule, which drops their
+# OBJCXX-only options, among them -fobjc-arc.
+enable_language(OBJCXX)
 
 option(UML_GUEST_16K_PAGES
     "Build the kernel and static userspace MMU for 16 KiB guest pages" ON)

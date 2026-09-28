@@ -14,8 +14,6 @@ uml_add_unit_test(
     LABELS gpu;vulkan)
 
 # The balloon follows host GPU memory that Metal's allocated size omits.
-# The balloon device exists only in GPU builds; the platform's host GPU
-# memory library is always built.
 if(TARGET uml_balloon_device)
     add_executable(uml_gpu_host_graphics_footprint_tests
         host_graphics_footprint_tests.mm)
