@@ -123,7 +123,7 @@ index 56ab3b4245323f6a57b73cef75b801c55aa5fd76..2a075458f6d6e6a70a6c3429ab0aa809
 +
  #endif
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 5abf1641a0c2ec6163e38160ec73d3acbf74f711..5df9d3a0e736f20fab5848ff103bfd4c41abf0b3 100644
+index 51c5ab74921ce0cfc43bde262e71670e1fa03b1d..b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -22,7 +22,8 @@ struct uml_arm64_rt_sigframe {

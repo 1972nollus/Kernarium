@@ -110,7 +110,7 @@ index 89e36c2a8c6d4eeeb44192b2b5808199b75dd9ad..5632609a6eff63569d953ffc72688b62
  
  void flush_tlb_mm(struct mm_struct *mm)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index e0affb5787735dcc4e5014b3d9cf97465d5d1e2b..326a0dc9db221ce9fdaf8653256d559a0b4c93fb 100644
+index b53e2549277b01d8c3a0fc1ef1b7f72bfeee7652..63d41bc992da2208e953c3ebfb51a072c2ee2608 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -23,8 +23,8 @@

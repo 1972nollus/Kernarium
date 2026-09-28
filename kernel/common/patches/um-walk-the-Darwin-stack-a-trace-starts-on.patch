@@ -32,10 +32,10 @@ its skip count.
  5 files changed, 144 insertions(+), 15 deletions(-)
 
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
-index cc0e19f4217c47239fa6a6eb4ee3da9f35d994bc..edc2f6ffeb77fa3fa4bf27e794eff96d41641c70 100644
+index 06ae614ff420b1b811457fa8e2f3a5f67b088ee0..e25a782dc897099cd0224b6f3c2db3e46a3b5e88 100644
 --- a/arch/arm64/um/asm/ptrace.h
 +++ b/arch/arm64/um/asm/ptrace.h
-@@ -14,6 +14,8 @@ enum {
+@@ -15,6 +15,8 @@ enum {
  
  #define PT_REGS_X(state, n) UPT_X(&(state)->regs, n)
  #define PT_REGS_FP(state) UPT_FP(&(state)->regs)

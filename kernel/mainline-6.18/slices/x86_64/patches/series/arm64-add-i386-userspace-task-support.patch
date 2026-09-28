@@ -243,10 +243,10 @@ index 57b834791c66f9c7bb1beae8cfceb212adf00b48..61a22bf85f676d1445d66d09f1da8e0b
  #define ELF_NGREG 27
  typedef elf_greg_t elf_gregset_t[ELF_NGREG];
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
-index ae377e46d4142f49cda73371118e2172807c778c..2673eb7fe531dae40b5b733d43a02ffa87770075 100644
+index b132ad664ae559e1adf5bf0f63d65c7b55eea115..50bb312cff0f0d9e22d268238c92cc5e6aa1a5be 100644
 --- a/arch/arm64/um/asm/ptrace.h
 +++ b/arch/arm64/um/asm/ptrace.h
-@@ -21,6 +21,12 @@ enum {
+@@ -22,6 +22,12 @@ enum {
  #define PT_REGS_ORIG_SYSCALL(state) ((state)->regs.orig_x0)
  #define PT_REGS_SYSCALL_RET(state) UPT_SYSCALL_RETURN(&(state)->regs)
  
@@ -2690,10 +2690,10 @@ index bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e..300039328b3b4a426d8baa6f2eaebe45
  
  		ret = (*table[syscall])(UPT_SYSCALL_ARG1(&regs->regs),
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index a6d67db93b18e28918afdb74b5cdcbe684b18812..b0c5c699aa24e0259550683923c218aa27b5c177 100644
+index 227949cc58a4591c5ef7b55ba15eb5836dfc5c92..7d5f62ebcb86dadfe2fe538c106052c6edc0c8bb 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -401,6 +401,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -403,6 +403,10 @@ void userspace(struct uml_pt_regs *registers)
  		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
  		 */
  		registers->is_user = 1;
