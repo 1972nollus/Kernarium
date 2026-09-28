@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
+#include "static_mmu_test_support.hpp"
 #include "address_layout.hpp"
 #include "address_space_types.hpp"
 #include "allocation_fault.hpp"
@@ -705,7 +706,7 @@ void test_empty_range_unmap_rejects_an_older_batch()
  * sibling's copy-on-write may have replaced the page in between.  The repair
  * discards the mapping and never installs the caller's backing, and it rejects
  * an older walk as any other invalidation does. */
-void test_rebind_discards_a_mapping_instead_of_installing_one()
+void test_a_stale_mapping_is_discarded_instead_of_replaced()
 {
 	constexpr unsigned long generation = 318;
 	constexpr unsigned long base = 0x60'0000;
@@ -718,12 +719,12 @@ void test_rebind_discards_a_mapping_instead_of_installing_one()
 	};
 
 	require(darwin_uml_static_vm_activate(generation) == 0);
-	require(darwin_uml_static_vm_rebind(base, pinned.descriptor(), 0) == 0);
+	require(darwin_uml_static_vm_discard_if_stale(base, pinned.descriptor(), 0) == 0);
 	require_unmapped(generation, base);
 
 	require(map_published() == 0);
 	require(darwin_uml_static_vm_mapping_matches(base, published.descriptor(), 0) == 1);
-	require(darwin_uml_static_vm_rebind(base, published.descriptor(), 0) == 0);
+	require(darwin_uml_static_vm_discard_if_stale(base, published.descriptor(), 0) == 0);
 	require(darwin_uml_static_vm_mapping_matches(base, published.descriptor(), 0) == 1);
 
 	require(darwin_uml_static_vm_batch_begin(generation) == 0);
@@ -732,7 +733,7 @@ void test_rebind_discards_a_mapping_instead_of_installing_one()
 		require(darwin_uml_static_vm_activate(generation) == 0);
 		require(darwin_uml_static_vm_mapping_matches(
 			base, pinned.descriptor(), 0) == 0);
-		require(darwin_uml_static_vm_rebind(base, pinned.descriptor(), 0) == 0);
+		require(darwin_uml_static_vm_discard_if_stale(base, pinned.descriptor(), 0) == 0);
 		require(darwin_uml_static_vm_mapping_matches(
 			base, pinned.descriptor(), 0) == -1);
 	}};
@@ -969,7 +970,7 @@ int main()
 	test_generation_flush_is_complete_and_reusable();
 	test_empty_generation_flush_rejects_an_older_batch();
 	test_empty_range_unmap_rejects_an_older_batch();
-	test_rebind_discards_a_mapping_instead_of_installing_one();
+	test_a_stale_mapping_is_discarded_instead_of_replaced();
 	test_sibling_walkers_publish_side_by_side();
 	test_page_index_hash_spreads_page_aligned_addresses();
 	test_page_index_reservation_never_shrinks_or_rehashes_needlessly();

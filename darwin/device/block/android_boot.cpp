@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "android_boot.hpp"
+#include "ubd_path.hpp"
 
 #include <algorithm>
 #include <array>
@@ -288,8 +289,7 @@ bool recoveryRequested(const File &disk)
 
 void validateUbdPath(const std::filesystem::path &path, std::string_view label)
 {
-	const auto value = path.string();
-	if (value.empty() || value.find_first_of(",:") != std::string::npos)
+	if (!::uml::block::usable_ubd_path(path.native()))
 		throw std::invalid_argument(std::string{label} +
 			" path is unusable as a UBD device");
 }

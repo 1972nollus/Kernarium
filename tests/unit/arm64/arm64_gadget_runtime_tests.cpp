@@ -4,6 +4,7 @@
 
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
+#include "static_mmu_test_support.hpp"
 #include "mach_vm_protection_test_support.hpp"
 #include "scratch_backing.hpp"
 

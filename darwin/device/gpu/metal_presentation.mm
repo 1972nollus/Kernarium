@@ -70,10 +70,6 @@ struct MetalPresentationState final :
             throw std::runtime_error("Metal command queue creation failed");
 
         pipelines = makeScanoutPipelines(device, MTLPixelFormatBGRA8Unorm);
-
-        fallbackTexture = makeFallbackTexture(width, height);
-        if (fallbackTexture == nil)
-            throw std::runtime_error("Metal fallback texture creation failed");
     }
 
     [[nodiscard]] id<MTLTexture> makeFallbackTexture(
@@ -159,18 +155,15 @@ struct MetalPresentationState final :
                     height == framebuffer.height()) {
                     return false;
                 }
-                id<MTLTexture> replacement =
-                    makeFallbackTexture(width, height);
-                if (replacement == nil)
-                    throw std::runtime_error(
-                        "Metal fallback resize allocation failed");
                 {
-                    /* A CPU draw verifies and uploads its fallback texture
-                     * under this same lock, so framebuffer storage and the
-                     * matching Metal allocation change as one snapshot. */
+                    /* A CPU draw makes, verifies and uploads its fallback
+                     * texture under this same lock, so framebuffer storage
+                     * and the matching Metal allocation change as one
+                     * snapshot. A new mode has neither until the CPU path
+                     * writes to it. */
                     std::lock_guard lock(presentationMutex);
                     framebuffer.resize(width, height);
-                    fallbackTexture = replacement;
+                    fallbackTexture = nil;
                     contentWidth = width;
                     contentHeight = height;
                     latestTexture = nil;
@@ -279,6 +272,47 @@ struct MetalPresentationState final :
             requestRedraw();
     }
 
+    /* The texture showing the framebuffer, freshly uploaded, or nil when
+     * there is nothing to upload. Called with presentationMutex held, which
+     * keeps the framebuffer at contentWidth by contentHeight. */
+    [[nodiscard]] id<MTLTexture> uploadFallbackLocked() noexcept
+    {
+        std::lock_guard framebufferLock(framebuffer);
+        if (!framebuffer.hasStorage()) {
+            /* Cleared: the pass's clear is the whole picture. The texture
+             * goes with the storage, and the first draw after the next
+             * write makes another. */
+            fallbackTexture = nil;
+            return nil;
+        }
+        if (fallbackTexture == nil ||
+            fallbackTexture.width != framebuffer.width() ||
+            fallbackTexture.height != framebuffer.height()) {
+            /* Made here, under the same locks as the upload, so that the
+             * framebuffer and its texture stay one snapshot. Creating it
+             * costs far less than the upload this thread makes anyway. */
+            fallbackTexture = makeFallbackTexture(
+                framebuffer.width(), framebuffer.height());
+            if (fallbackTexture == nil) {
+                if (!fallbackFailureReported.exchange(
+                        true, std::memory_order_relaxed)) {
+                    std::fputs(
+                        "Native Metal display could not allocate its CPU "
+                        "fallback texture\n",
+                        stderr);
+                }
+                return nil;
+            }
+        }
+        [fallbackTexture
+            replaceRegion:MTLRegionMake2D(
+                0, 0, framebuffer.width(), framebuffer.height())
+            mipmapLevel:0
+            withBytes:framebuffer.pixels().data()
+            bytesPerRow:framebuffer.rowBytes()];
+        return fallbackTexture;
+    }
+
     void draw(void* nativeView) noexcept
     {
         @autoreleasepool {
@@ -287,6 +321,8 @@ struct MetalPresentationState final :
             std::optional<ScanoutSampling> activeSampling;
             DisplayRotation activeRotation = DisplayRotation::upright;
             bool useCpu = false;
+            std::uint32_t cpuWidth = 0;
+            std::uint32_t cpuHeight = 0;
             id<MTLTexture> sourceTexture;
             try {
                 MTKView* view = (__bridge MTKView*)nativeView;
@@ -303,11 +339,15 @@ struct MetalPresentationState final :
                     presentationGeneration = latestPresentationGeneration;
                     activeRotation = displayRotation;
                     useCpu = latestIsCpu;
+                    cpuWidth = contentWidth;
+                    cpuHeight = contentHeight;
                     activeSampling = useCpu ?
-                        framebufferSampling(contentWidth, contentHeight) :
+                        framebufferSampling(cpuWidth, cpuHeight) :
                         std::optional<ScanoutSampling> {latestSampling};
-                    sourceTexture = useCpu ? fallbackTexture : latestTexture;
-                    if (sourceTexture == nil || !activeSampling)
+                    /* A CPU frame finds its texture below, once the
+                     * framebuffer is locked; it may have none. */
+                    sourceTexture = useCpu ? nil : latestTexture;
+                    if (!activeSampling || (!useCpu && sourceTexture == nil))
                         return;
                     presentationInFlight = true;
                 }
@@ -327,41 +367,48 @@ struct MetalPresentationState final :
                     return;
                 }
                 if (useCpu) {
-                    bool currentFallback = false;
+                    bool current = false;
                     {
                         std::lock_guard presentationLock(presentationMutex);
-                        currentFallback = sourceTexture == fallbackTexture;
-                        if (currentFallback) {
-                            std::lock_guard framebufferLock(framebuffer);
-                            const MTLRegion region = MTLRegionMake2D(
-                                0,
-                                0,
-                                framebuffer.width(),
-                                framebuffer.height());
-                            [sourceTexture
-                                replaceRegion:region
-                                mipmapLevel:0
-                                withBytes:framebuffer.pixels().data()
-                                bytesPerRow:framebuffer.rowBytes()];
-                        }
+                        /* A resize since the claim is shown by its own
+                         * generation. */
+                        current = contentWidth == cpuWidth &&
+                            contentHeight == cpuHeight;
+                        if (current)
+                            sourceTexture = uploadFallbackLocked();
                     }
-                    if (!currentFallback) {
+                    if (!current) {
                         finishPresentation(
                             contentGeneration, presentationGeneration);
                         return;
                     }
                 }
-                const auto presented = presentedDisplaySize(
-                    activeSampling->content, activeRotation);
-                const auto fitted = aspectFitRectangle(
-                    static_cast<double>(drawable.texture.width),
-                    static_cast<double>(drawable.texture.height),
-                    static_cast<double>(presented.width),
-                    static_cast<double>(presented.height));
-                if (fitted.width <= 0.0 || fitted.height <= 0.0) {
-                    finishPresentation(
-                        contentGeneration, presentationGeneration);
-                    return;
+                /* A CPU frame with no pixels, the first after a resize or a
+                 * clear, presents the pass's clear alone. It still retires
+                 * its generation through the completed handler below. */
+                const bool drawSource = sourceTexture != nil;
+                MTLViewport viewport {};
+                if (drawSource) {
+                    const auto presented = presentedDisplaySize(
+                        activeSampling->content, activeRotation);
+                    const auto fitted = aspectFitRectangle(
+                        static_cast<double>(drawable.texture.width),
+                        static_cast<double>(drawable.texture.height),
+                        static_cast<double>(presented.width),
+                        static_cast<double>(presented.height));
+                    if (fitted.width <= 0.0 || fitted.height <= 0.0) {
+                        finishPresentation(
+                            contentGeneration, presentationGeneration);
+                        return;
+                    }
+                    viewport = {
+                        .originX = fitted.x,
+                        .originY = fitted.y,
+                        .width = fitted.width,
+                        .height = fitted.height,
+                        .znear = 0.0,
+                        .zfar = 1.0,
+                    };
                 }
                 id<MTLCommandBuffer> buffer = [commandQueue commandBuffer];
                 if (buffer == nil) {
@@ -378,26 +425,20 @@ struct MetalPresentationState final :
                         contentGeneration, presentationGeneration);
                     return;
                 }
-                const MTLViewport viewport {
-                    .originX = fitted.x,
-                    .originY = fitted.y,
-                    .width = fitted.width,
-                    .height = fitted.height,
-                    .znear = 0.0,
-                    .zfar = 1.0,
-                };
-                [encoder setRenderPipelineState:
-                    pipelines.forTexture(sourceTexture)];
-                [encoder setViewport:viewport];
-                [encoder setFragmentTexture:sourceTexture atIndex:0];
-                const auto sampling =
-                    shaderSampling(*activeSampling, activeRotation);
-                [encoder setFragmentBytes:&sampling
-                                    length:sizeof(sampling)
-                                   atIndex:0];
-                [encoder drawPrimitives:MTLPrimitiveTypeTriangle
-                            vertexStart:0
-                            vertexCount:3];
+                if (drawSource) {
+                    [encoder setRenderPipelineState:
+                        pipelines.forTexture(sourceTexture)];
+                    [encoder setViewport:viewport];
+                    [encoder setFragmentTexture:sourceTexture atIndex:0];
+                    const auto sampling =
+                        shaderSampling(*activeSampling, activeRotation);
+                    [encoder setFragmentBytes:&sampling
+                                        length:sizeof(sampling)
+                                       atIndex:0];
+                    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                                vertexStart:0
+                                vertexCount:3];
+                }
                 [encoder endEncoding];
                 [buffer presentDrawable:drawable];
                 auto state = shared_from_this();
@@ -531,6 +572,7 @@ struct MetalPresentationState final :
     std::atomic_bool running {true};
     std::atomic_bool directPathReported {};
     std::atomic_bool renderFailureReported {};
+    std::atomic_bool fallbackFailureReported {};
     std::atomic_bool resizeFailureReported {};
     std::atomic_uint64_t guestFrames {};
     std::atomic_uint64_t presentedFrames {};

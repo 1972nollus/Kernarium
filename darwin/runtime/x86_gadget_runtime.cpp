@@ -83,12 +83,8 @@ bool execution_interrupt_boundary(void *context) noexcept
 	x86_64::gadgets::ProgramCodeChange *changes, std::size_t capacity,
 	std::uint64_t *current_sequence) noexcept
 {
-	static_assert(sizeof(x86_64::gadgets::ProgramCodeChange) ==
-		sizeof(darwin_uml_static_code_change));
 	return darwin_uml_static_vm_execution_context_code_change_ranges(
-		context, sequence,
-		reinterpret_cast<darwin_uml_static_code_change *>(changes),
-		capacity, current_sequence);
+		context, sequence, changes, capacity, current_sequence);
 }
 
 /* The same history for mappings: a reader that is only a few changes behind
@@ -98,11 +94,8 @@ bool execution_interrupt_boundary(void *context) noexcept
 	std::uint64_t sequence, x86_64::gadgets::ProgramMappingChange *changes,
 	std::size_t capacity, std::uint64_t *current_sequence) noexcept
 {
-	static_assert(sizeof(x86_64::gadgets::ProgramMappingChange) ==
-		sizeof(darwin_uml_static_mapping_change));
 	return darwin_uml_static_vm_mapping_changes(generation, sequence,
-		reinterpret_cast<darwin_uml_static_mapping_change *>(changes),
-		capacity, current_sequence);
+		changes, capacity, current_sequence);
 }
 
 [[nodiscard]] bool fatal_trace_enabled() noexcept

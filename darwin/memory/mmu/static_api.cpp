@@ -445,12 +445,15 @@ extern "C" int darwin_uml_vm_mapping_matches(unsigned long address, int fd,
 	return darwin_uml_static_vm_mapping_matches(address, fd, offset);
 }
 
+/* The bridge ABI still calls this rebind, but it binds nothing: it only
+ * discards a software mapping that names other backing than the page a
+ * uaccess pinned. */
 extern "C" int darwin_uml_vm_rebind(unsigned long address, int fd,
 				    unsigned long long offset)
 {
 	if (publish_native_shadow(fd, offset, DARWIN_UML_GUEST_PAGE_SIZE) < 0)
 		return -1;
-	return darwin_uml_static_vm_rebind(address, fd, offset);
+	return darwin_uml_static_vm_discard_if_stale(address, fd, offset);
 }
 
 extern "C" int darwin_uml_vm_stage_stack(unsigned long address)

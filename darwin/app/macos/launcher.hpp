@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <filesystem>
 #include <string_view>
 
 namespace uml::app {
@@ -13,6 +14,9 @@ struct LaunchConfiguration {
 	std::string_view default_guest_cpus;
 	bool top_byte_ignore{};
 	DisplayInput input_mode{DisplayInput::mouse};
+	/* A file or directory the launcher created for this run only, removed
+	 * once the guest stops. */
+	std::filesystem::path run_scratch;
 };
 
 int runEmbeddedKernel(int argc, char *argv[], char *envp[],

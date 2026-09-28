@@ -226,7 +226,7 @@ __attribute__((constructor)) void isolateGuestTimerFromApplicationThreads()
     }
 
     dlerror();
-    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v8");
+    void* symbol = dlsym(handle, "kernarium_runtime_get_api_v9");
     const char* symbolError = dlerror();
     if (symbol == nullptr || symbolError != nullptr) {
         std::fprintf(

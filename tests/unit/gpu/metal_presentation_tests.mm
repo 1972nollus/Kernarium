@@ -5,7 +5,8 @@
  * larger source. The native presenter scales such a scanout in its own Metal
  * pass instead of refusing it into the CPU fallback. Each case presents a
  * texture with one colour per quadrant and reads back the drawable that the
- * presenter drew into. */
+ * presenter drew into. The CPU path's framebuffer and texture exist only once
+ * it is written, so its frames before that present the clear alone. */
 
 #include "metal_presentation.hpp"
 
@@ -21,6 +22,7 @@
 #include <cstring>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -230,6 +232,99 @@ private:
     return outcome != PresentOutcome::unsupported;
 }
 
+[[nodiscard]] bool hasCpuPixels(MetalPresentation& presentation)
+{
+    auto& framebuffer = presentation.framebuffer();
+    std::lock_guard lock(framebuffer);
+    return framebuffer.hasStorage();
+}
+
+/* Writes one colour over the CPU framebuffer's whole mode, as a readback
+ * does, and publishes it. */
+void writeCpuFrame(MetalPresentation& presentation, const Pixel& colour)
+{
+    auto& framebuffer = presentation.framebuffer();
+    const auto width = framebuffer.width();
+    const auto height = framebuffer.height();
+    std::vector<std::uint8_t> source(
+        static_cast<std::size_t>(width) * height * colour.size());
+    for (std::size_t offset = 0; offset < source.size();
+         offset += colour.size()) {
+        std::memcpy(&source[offset], colour.data(), colour.size());
+    }
+    const auto written = framebuffer.update(
+        source,
+        width,
+        height,
+        static_cast<std::size_t>(width) * colour.size(),
+        uml::gpu::protocol::GpuFormat::b8g8r8a8Unorm,
+        0,
+        0,
+        0,
+        0,
+        width,
+        height);
+    require(written.width == width && written.height == height,
+        "the CPU framebuffer refused a whole-mode write");
+    presentation.publishCpuFrame();
+}
+
+[[nodiscard]] bool allOf(
+    const std::vector<std::uint8_t>& pixels,
+    const Pixel& expected)
+{
+    return pixelIs(pixels, 0, 0, expected) &&
+        pixelIs(pixels, framebufferWidth - 1, 0, expected) &&
+        pixelIs(pixels, framebufferWidth / 2, framebufferHeight / 2,
+            expected) &&
+        pixelIs(pixels, 0, framebufferHeight - 1, expected) &&
+        pixelIs(pixels, framebufferWidth - 1, framebufferHeight - 1,
+            expected);
+}
+
+void checkCpuFrames(
+    MetalPresentation& presentation,
+    Harness& harness,
+    std::vector<std::uint8_t>& pixels)
+{
+    /* A display that has only shown Metal textures holds no CPU pixels, and
+     * a CPU frame without them presents the clear. It must still retire, or
+     * the next draw could never complete. */
+    require(!hasCpuPixels(presentation),
+        "the direct path allocated the CPU framebuffer");
+    presentation.publishCpuFrame();
+    require(harness.draw(pixels), "a CPU frame without pixels was not drawn");
+    require(allOf(pixels, black), "a CPU frame without pixels was not black");
+
+    writeCpuFrame(presentation, green);
+    require(hasCpuPixels(presentation),
+        "a CPU write did not allocate the framebuffer");
+    require(harness.draw(pixels), "the first CPU frame was not drawn");
+    require(allOf(pixels, green), "the first CPU frame was not shown");
+
+    /* A new mode gives up the old one's pixels and starts black. */
+    require(presentation.resize(framebufferWidth / 2, framebufferHeight / 2),
+        "the CPU framebuffer did not take a new mode");
+    require(!hasCpuPixels(presentation),
+        "a new mode kept the previous mode's pixels");
+    require(harness.draw(pixels), "the first frame of a new mode was not drawn");
+    require(allOf(pixels, black), "the first frame of a new mode was not black");
+    writeCpuFrame(presentation, blue);
+    require(harness.draw(pixels), "a CPU frame of a new mode was not drawn");
+    require(allOf(pixels, blue),
+        "a CPU frame of a new mode was not scaled into the view");
+
+    /* So does a cleared display. */
+    presentation.framebuffer().clear();
+    presentation.publishCpuFrame();
+    require(!hasCpuPixels(presentation), "clearing kept the CPU pixels");
+    require(harness.draw(pixels), "a cleared CPU frame was not drawn");
+    require(allOf(pixels, black), "a cleared CPU frame was not black");
+    writeCpuFrame(presentation, red);
+    require(harness.draw(pixels), "a CPU frame after a clear was not drawn");
+    require(allOf(pixels, red), "a CPU frame after a clear was not shown");
+}
+
 int run()
 {
     std::unique_ptr<MetalPresentation> presentation;
@@ -315,6 +410,8 @@ int run()
     require(pixelIs(pixels, 16, 4, black) && pixelIs(pixels, 16, 31, black) &&
             pixelIs(pixels, 16, 18, red) && pixelIs(pixels, 48, 18, green),
         "a scanout rectangle was not aspect-fitted at its own aspect");
+
+    checkCpuFrames(*presentation, harness, pixels);
 
     /* A clockwise quarter-turn shows the guest's top-left at the display's
      * top-right, pillarboxed at the rotated aspect. */

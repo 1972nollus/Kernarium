@@ -83,7 +83,8 @@ if(UML_BUILD_X86_64_GUEST)
         PUBLIC UML::ThirdPartyCephes128
         PRIVATE UML::CpuContract)
     target_include_directories(uml_x86_64_gadgets PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin)
+        ${PROJECT_SOURCE_DIR}/darwin
+        ${PROJECT_SOURCE_DIR}/darwin/include)
     target_compile_features(uml_x86_64_gadgets PUBLIC cxx_std_20)
     target_compile_options(uml_x86_64_gadgets PRIVATE
         -Wall -Wextra -Werror)

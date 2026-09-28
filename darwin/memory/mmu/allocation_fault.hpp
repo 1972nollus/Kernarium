@@ -41,6 +41,13 @@ void reset_allocation_attempt_counts() noexcept;
 [[nodiscard]] std::size_t allocation_attempt_count(
 	AllocationSite site) noexcept;
 
+/* Runs at every checkpoint, before any injected failure, on the thread that
+ * reached it and under whatever locks that thread holds. It lets a test see
+ * the state an operation has at that point, so it must not call back into the
+ * memory domain. */
+using AllocationObserver = void (*)(AllocationSite site) noexcept;
+void set_allocation_observer(AllocationObserver observer) noexcept;
+
 void backing_mapping_created() noexcept;
 void backing_mapping_destroyed() noexcept;
 [[nodiscard]] std::size_t active_backing_mappings() noexcept;
