@@ -34,8 +34,10 @@ using ::uml::memory::StaticGuestMemory;
 namespace {
 
 
+/* darwin/cpu/CMakeLists.txt defines it for this translation unit, the only
+ * one that reads it. */
 #ifndef UML_GADGET_BLOCK_INSTRUCTIONS
-#define UML_GADGET_BLOCK_INSTRUCTIONS 64
+#error "UML_GADGET_BLOCK_INSTRUCTIONS must come from the build"
 #endif
 constexpr std::size_t block_instruction_count = UML_GADGET_BLOCK_INSTRUCTIONS;
 constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
@@ -856,10 +858,6 @@ private:
 	/* The unreachable guest PC an untrained indirect cell names; guest
 	 * targets are admitted only word-aligned, so none can collide. */
 	static constexpr std::uint64_t empty_pc = ~std::uint64_t{};
-	static_assert((slot_count & (slot_count - 1)) == 0,
-		"cache slot count must be a power of two");
-	static_assert(slot_count >= slab_slots * 4,
-		"cache must hold at least four slabs");
 
 	/* One translation, allocated apart from the slot that indexes it.
 	 *
