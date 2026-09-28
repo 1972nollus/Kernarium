@@ -185,12 +185,9 @@ separate accepted 16 KiB ACK artifact.
 
 Kernarium is an iOS device product only; [`graphics.md`](graphics.md)
 gives the Metal 4 reason the Simulator has no build of it or of the Apple GPU
-prefix, and how the device slice runs on an Apple silicon Mac.
-
-The library runs one guest per process, so a Kernarium launch runs its guest
-once. When the run returns, whether the guest powered off or the runtime
-failed, the application says how it ended and asks to be relaunched; it never
-starts a second run in the same process.
+prefix, and how the device slice runs on an Apple silicon Mac. The application,
+including its one run per launch, is described in
+[`../Kernarium/README.md`](../Kernarium/README.md).
 
 ## CPU execution and scheduling
 
@@ -372,26 +369,13 @@ independently. Apple emulator builds consume only the ACK ELF artifact; rootfs
 and command-line paths are launch inputs. The `uml-darwin-android17` product
 opens one directly writable supplied GPT and has no 4 KiB variant.
 
-A Kernarium `.kern` bundle contains one guest's persistent rootfs payload.
-Android bundles provide a kernel command line and one directly writable GPT
-image; a release
-manifest may accompany them as provenance. The kernel comes from the selected
-runtime framework. Launch does not compare kernel, runtime, or rootfs release
-identities; missing or malformed inputs fail at their ordinary file or image
-boundary. The app's `DiskUtil` owns raw-file capacity before launch and
-dispatches any format-specific partition-table update. Android GPT growth uses
-the verified static GPT fdisk core linked into the app; the standalone macOS
-launcher copies a changed release to its persistent 8 GiB disk and uses
-Homebrew `sgdisk`. Runtime frameworks receive no capacity policy
-and reject a GPT whose declared extent differs from its file. The guest only
-grows a filesystem after observing that its containing partition is larger.
-This keeps the same host-capacity workflow available to later Linux image
-formats without putting disk policy back into a kernel runtime.
-
-Compressed rootfs delivery is also an app boundary. `ZstdUtil` streams a zstd
-source into an adjacent temporary file, optionally represents zero regions as
-sparse holes, and publishes the destination only after a complete decode.
-Runtime frameworks receive only the resulting ordinary disk image.
+Guest bundles, disk capacity, and compressed rootfs delivery belong to the
+application ([`../Kernarium/README.md`](../Kernarium/README.md)). Runtime
+frameworks receive an ordinary disk image and no capacity policy, and reject a
+GPT whose declared extent differs from its file; the guest only grows a
+filesystem after observing that its containing partition is larger. This keeps
+one host-capacity workflow for every image format without putting disk policy
+into a kernel runtime.
 
 ## Devices and graphics
 
@@ -545,14 +529,8 @@ guest's own fences; the renderer adds none. A resource no other context
 imports keeps ordinary texture storage, and a host with dma-buf shares through
 that instead.
 
-Kernarium exposes an absolute touchscreen, keyboard, one 48 kHz stereo
-Virtio-Sound playback stream, SLiRP networking, a Metal framebuffer, and a
-serial terminal view. Android additionally receives the Apple host's battery
-percentage and charging state through a dedicated Virtio device, falling back
-to 100 percent and charging when the host has no readable battery. Point
-mode maps safe-area points to guest pixels at 160 DPI; Retina mode multiplies
-both size and density by `nativeScale`. Android's logical density is derived
-from the same launch value.
+The devices Kernarium attaches and its display geometry are listed in
+[`../Kernarium/README.md`](../Kernarium/README.md).
 
 Writable host files are tracked by the platform layer. Emulator sync asks the
 guest to write back through the management console and then flushes host files.

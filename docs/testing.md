@@ -385,13 +385,8 @@ before embedding an artifact; they do not bind to its patch release or source
 commit and never prepare sources or invoke a kernel/AOSP build. Rootfs bundles
 are launch inputs, not emulator build inputs.
 
-Kernarium defaults to 16 KiB Linux, 4 GiB of guest memory where the process is
-given the host's memory (an iOS app on macOS), 2 GiB on a physical device whose
-jetsam limit a 4 GiB guest would cross, and the processor count reported by
-`NSProcessInfo`. Android fixes the
-page profile at 16 KiB. A `.kern`
-bundle contains the selected rootfs release and its persistent writable state;
-rebuilding the app or kernel framework must not erase it.
+Kernarium's defaults, guest bundles, and scripts are described in
+[`../Kernarium/README.md`](../Kernarium/README.md).
 
 Launch and bundle assembly are owned by `Kernarium/scripts/run-ios-mac.sh` and
 `Kernarium/scripts/make-guest-bundle.py`. Use each script's `--help` rather than
@@ -433,11 +428,6 @@ four tests fail because of how the Mac hosts an iPad app:
   console looks for it. On the Mac the window ends above the bottom of the
   screen and the bar sits at the bottom of the window, so the console does
   not make room for it.
-
-When copying a `.kern` bundle to a device, target the complete
-`Documents/<name>.kern` destination. Never copy into or replace the Documents
-directory itself, because doing so can flatten the bundle or destroy unrelated
-persistent guests.
 
 ### UI automation on a device
 

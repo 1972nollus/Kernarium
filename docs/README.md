@@ -13,6 +13,7 @@ investigation date.
 | A64 instruction coverage | [`a64-instruction-coverage.md`](a64-instruction-coverage.md) and `tests/unit/arm64/*.tsv` |
 | A64 instruction corpus | [`../tests/unit/arm64/corpus/README.md`](../tests/unit/arm64/corpus/README.md) |
 | Darwin runtime details | [`../darwin/README.md`](../darwin/README.md) |
+| Kernarium iOS application | [`../Kernarium/README.md`](../Kernarium/README.md) |
 | x86-64 gadget engine contracts | [`../darwin/cpu/x86_64/gadgets/README.md`](../darwin/cpu/x86_64/gadgets/README.md) |
 | External dependencies | [`../dependencies/README.md`](../dependencies/README.md) |
 | Kernel families | [`../kernel/README.md`](../kernel/README.md) |

@@ -40,11 +40,8 @@ starts a raw shell on the image. The
 [boot ramdisk contract](../tools/rootfs/boot-ramdisk/README.md) owns the
 archive, its parameters and the host-side `uml-initramfs` tool.
 
-Kernarium uses `6.18`-series iOS runtime frameworks for 16 KiB Linux, 4 KiB
-Linux, and 16 KiB Android. Framework names remain stable across patch releases
-and kernel commits. It defaults to 16 KiB Linux, 4 GiB on Simulator, 2 GiB on
-physical devices, and all processors reported by `NSProcessInfo`. It loads one
-runtime for the process lifetime.
+Kernarium's runtime frameworks, defaults, and one run per launch are described
+in [`../Kernarium/README.md`](../Kernarium/README.md).
 
 The Android macOS composition is a separate product. Its build consumes a
 compatible ACK kernel artifact; launch accepts a rootfs directory and
@@ -66,9 +63,6 @@ application and launcher threads and is temporarily owned by vCPU0. Before the
 loader releases an embedded kernel image, it takes back the signal handlers
 and interval timer the kernel left pointing into it; see
 [the scheduling contract](../docs/architecture.md#cpu-execution-and-scheduling).
-
-Kernarium starts the synchronous guest run on the named `uml-launcher` thread.
-The main thread remains available for UIKit and MetalKit.
 
 ## Guest memory and kernel loading
 
@@ -264,19 +258,8 @@ failed map releases it for reuse. A receipt-bound guest image supplies the
 paired Mesa Venus driver and Vulkan CTS payload. Passing local probes or CTS
 runs does not create a formal Vulkan conformance claim.
 
-Kernarium attaches:
-
-- an absolute touchscreen and evdev keyboard;
-- one signed-16-bit stereo 48 kHz playback stream through Virtio-Sound;
-- an Android-only Virtio battery reflecting the Apple host's percentage and
-  charging state, with a 100-percent charging fallback;
-- SLiRP networking from the verified iOS prefix;
-- a Virtio-GPU Metal framebuffer; and
-- the existing `ttyS0` stream mirrored to a terminal view.
-
-Point display mode maps safe-area points to guest pixels at 160 DPI. Retina
-mode multiplies geometry and density by `nativeScale`. The GPU, touchscreen,
-and Android logical-density command line use the same launch geometry.
+The devices Kernarium attaches and its display geometry are listed in
+[`../Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
 
 The audio device owns a bounded period/completion ring. The callback path does
 not allocate or lock. iOS owns AVAudioSession interruption and route recovery.
@@ -318,9 +301,8 @@ idempotent ext4 `resize2fs` tool before mounting `/data`; OrangeFox performs an
 explicit extent comparison before `e2fsck` and `resize2fs`. The runtime
 validates that the GPT matches the file and boots it without rewriting either.
 
-Kernarium flushes when losing focus, quiesces before backgrounding or
-termination, and resumes on foregrounding. A `.kern` bundle owns its persistent,
-directly writable image; launch must reopen that same image.
+When Kernarium syncs, quiesces, and resumes is described in
+[`../Kernarium/README.md`](../Kernarium/README.md#lifecycle).
 
 ## API and validation
 

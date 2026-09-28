@@ -238,10 +238,9 @@ CPU-fallback frame. VNC reads a bottom-up texture back through the same
 scanout pass, which turns it upright before the copy. Venus scanouts keep
 their native Metal textures.
 
-The GPU advertises display geometry and density through EDID. Kernarium point
-mode uses safe-area points and 160 DPI. Retina mode multiplies dimensions and
-density by `nativeScale`. Android receives the same effective density on its
-kernel command line.
+The GPU advertises display geometry and density through EDID; Kernarium's
+point and Retina geometry is in
+[`../Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
 
 ## Dynamic native geometry
 

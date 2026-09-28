@@ -392,10 +392,8 @@ and appends the host-owned display density, ADB authorization policy, and
 tagged-pointer option at launch. Launches write persistent guest changes
 directly into the image inside the `.kern` bundle.
 
-Do not recreate a bundle merely to relaunch it; that would discard persistent
-guest state. When copying to physical iOS, target the complete
-`Documents/<name>.kern` destination rather than the Documents directory. See
-[`../../docs/testing.md`](../../docs/testing.md#apple-builds-and-kernarium).
+How Kernarium keeps, relaunches, and copies a bundle is in
+[`../../Kernarium/README.md`](../../Kernarium/README.md#guest-storage).
 
 ## Validation boundary
 
