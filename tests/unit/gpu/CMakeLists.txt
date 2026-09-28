@@ -525,16 +525,11 @@ if(TARGET uml_gpu_service)
 endif()
 
 if(TARGET uml_gpu_display)
+    # The resize path's objects come from the shipped display library.
     add_executable(uml_gpu_display_resize_tests
-        display_resize_tests.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/display_geometry.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/display_resize_notifier.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/scanout_framebuffer.cpp)
-    target_include_directories(uml_gpu_display_resize_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
-        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
+        display_resize_tests.cpp)
     target_link_libraries(uml_gpu_display_resize_tests PRIVATE
-        "-framework Accelerate")
+        uml_gpu_display)
     target_compile_features(uml_gpu_display_resize_tests PRIVATE cxx_std_20)
     target_compile_options(uml_gpu_display_resize_tests PRIVATE
         -Wall -Wextra -Werror)
@@ -543,44 +538,19 @@ if(TARGET uml_gpu_display)
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
 
-    add_library(uml_gpu_display_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/display_geometry.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/metal_readback.mm
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/metal_scanout_shader.mm
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/scanout_framebuffer.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vnc_display.cpp
+    add_executable(uml_gpu_vnc_lifetime_tests
+        vnc_display_lifetime_tests.cpp
         vnc_display_metal_testing.mm
         vnc_display_testing.cpp)
-    target_link_libraries(uml_gpu_display_test_variant PUBLIC
-        UML::VncInput)
-    target_link_libraries(uml_gpu_display_test_variant PRIVATE
-        UML::ThirdPartyVncServer
-        "-framework Accelerate"
+    target_link_libraries(uml_gpu_vnc_lifetime_tests PRIVATE
+        uml_gpu_display_test_variant
         "-framework Foundation"
         "-framework Metal")
-    target_include_directories(uml_gpu_display_test_variant PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
-        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
-        ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc
-        ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_definitions(uml_gpu_display_test_variant PRIVATE
-        UML_GPU_VNC_STARTUP_TESTING=1)
-    target_compile_features(uml_gpu_display_test_variant PUBLIC cxx_std_20)
-    set_target_properties(uml_gpu_display_test_variant PROPERTIES
-        OBJCXX_STANDARD 20)
-    target_compile_options(uml_gpu_display_test_variant PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
-    target_compile_options(uml_gpu_display_test_variant PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
-    add_dependencies(uml_gpu_display_test_variant
-        uml_dependency_prefix_verify)
-
-    add_executable(uml_gpu_vnc_lifetime_tests
-        vnc_display_lifetime_tests.cpp)
-    target_link_libraries(uml_gpu_vnc_lifetime_tests PRIVATE
-        uml_gpu_display_test_variant)
     target_compile_features(uml_gpu_vnc_lifetime_tests PRIVATE cxx_std_20)
+    set_target_properties(uml_gpu_vnc_lifetime_tests PROPERTIES
+        OBJCXX_STANDARD 20)
     target_compile_options(uml_gpu_vnc_lifetime_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
         -Wall -Wextra -Werror -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-vnc-lifetime
         COMMAND uml_gpu_vnc_lifetime_tests

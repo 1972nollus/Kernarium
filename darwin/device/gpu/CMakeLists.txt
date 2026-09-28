@@ -95,6 +95,33 @@ else()
 endif()
 add_dependencies(uml_gpu_display uml_dependency_prefix_verify)
 
+if(UML_BUILD_UNIT_TESTS AND UML_TARGET_MACOS)
+    # The VNC display with its testing accessors, for the VNC lifetime tests.
+    add_library(uml_gpu_display_test_variant STATIC
+        display_geometry.cpp
+        metal_readback.mm
+        metal_scanout_shader.mm
+        scanout_framebuffer.cpp
+        vnc_display.cpp)
+    uml_configure_gpu_component(uml_gpu_display_test_variant)
+    set_target_properties(uml_gpu_display_test_variant PROPERTIES
+        OBJCXX_STANDARD 20)
+    target_compile_options(uml_gpu_display_test_variant PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+    target_compile_definitions(uml_gpu_display_test_variant PUBLIC
+        UML_GPU_VNC_STARTUP_TESTING=1)
+    target_include_directories(uml_gpu_display_test_variant PUBLIC
+        ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
+    target_link_libraries(uml_gpu_display_test_variant PUBLIC UML::VncInput)
+    target_link_libraries(uml_gpu_display_test_variant PRIVATE
+        UML::ThirdPartyVncServer
+        "-framework Accelerate"
+        "-framework Foundation"
+        "-framework Metal")
+    add_dependencies(uml_gpu_display_test_variant
+        uml_dependency_prefix_verify)
+endif()
+
 add_library(uml_gpu_protocol_device STATIC virtio_gpu_device.cpp)
 uml_configure_gpu_component(uml_gpu_protocol_device)
 target_link_libraries(uml_gpu_protocol_device PUBLIC
