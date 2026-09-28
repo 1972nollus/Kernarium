@@ -359,6 +359,17 @@ independent compatible ACK artifact and performs no rootfs, kernel commit, or
 emulator release comparison at launch. A bundle's expanded disk remains usable
 across compatible kernel updates within the `6.18` line.
 
+### Superseded releases
+
+After a replacement release is validated, remove the superseded Android build,
+release, transfer, and guest-bundle artifacts from the local `.build` tree,
+local temporary directories, and the Android build machine. Resolve releases
+and bundles from their manifests and build outputs from their recorded
+invocation and canonical output root, and delete only explicit Android paths.
+Preserve the current accepted release and its active writable bundle, the
+Android source and patch-producer checkouts, accepted kernel inputs, dependency
+prefixes, non-Android guests, and unrelated files beside a bundle.
+
 ## Apple consumers and guest bundles
 
 The macOS Android product is configured with the `macos-android17` preset. Its
