@@ -27,10 +27,10 @@ so the layout it reports as identical is the one the image will really get.
  3 files changed, 19 insertions(+), 5 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 9d7183dab1fb072cefe5ca670b96f0891976aa4d..23e46067edee66284359bc55c81c69edb68c7a2b 100644
+index f027da8882b151ee9b8560673e6ef5dfbebcb7ad..31a7d463df8df2bab38bc776b038815361ea3fda 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
-@@ -590,10 +590,12 @@ kk_GetPhysicalDeviceImageFormatProperties2(
+@@ -594,10 +594,12 @@ kk_GetPhysicalDeviceImageFormatProperties2(
            * is the same both with and without host transfer usage */
           bool with_host_transfer = kk_image_layout_can_optimize(
              pImageFormatInfo->usage, pImageFormatInfo->tiling,

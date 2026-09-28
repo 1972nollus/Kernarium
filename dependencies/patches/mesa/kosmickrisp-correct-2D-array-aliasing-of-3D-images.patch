@@ -100,7 +100,7 @@ index ede8d596c2a869005e36da1e8ac38c4c5d8bc7f2..f8ecaffbcaea08539d27f83bf922572c
  mtl_render_pass_attachment_descriptor_set_load_action(
     mtl_render_pass_attachment_descriptor *descriptor,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 52c7354ca7bf735047c4987ce2aa6499cec4bf47..9dfde59943f8ac333b0cba96d70b479cef6d91ce 100644
+index 6cf4062dbc2584d572c78f93c650afb959100ab1..0e066d7029364567c79669dd88825fcec8e5c814 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -130,8 +130,13 @@ kk_fill_common_attachment_description(
@@ -120,10 +120,10 @@ index 52c7354ca7bf735047c4987ce2aa6499cec4bf47..9dfde59943f8ac333b0cba96d70b479c
     enum mtl_load_action load_action =
        force_attachment_load
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 538885984223a811bd8230d8607abdb85519f17d..405b303c64509a16a11431302f7b28fc6175ac80 100644
+index 28b4b063976cb6dda3f946326915bea04910c913..44c6720e48a0245d596c9253ae5c697c4c8928e8 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
-@@ -884,6 +884,7 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
+@@ -888,6 +888,7 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
        array_layout.type = MTL_TEXTURE_TYPE_2D_ARRAY;
        array_layout.layers = array_layout.layers * array_layout.depth_px;
        array_layout.depth_px = 1u;
@@ -234,10 +234,10 @@ index 9e601ea3333360b63fa253afdcbded153be81eaf..bfddc6f001e2db37fb63bbe7aaa04ecc
     }
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 23804e8bb7b3b1b179bf7e0a41795b6359877995..d2804a2ac6d53b8d6786ab1c8325be03f9fbe9d7 100644
+index fdde500193ad915c2532640fcae19e21ae1a4293..08f0c99621a0b2f02e0c6f07f48cab78889dbcb0 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -304,6 +304,26 @@ if with_tests
+@@ -344,6 +344,26 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

@@ -80,7 +80,7 @@ index 0000000000000000000000000000000000000000..9c7ec1e2cb65d57afb6b0bdcefaae8db
 +
 +#endif /* KK_GEOMETRY_H */
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 7c5630495be20864352fab36d9f8c9d698fe9c0d..46a45bce227fa7ae459b636ddbde7aa7e1ceedb7 100644
+index be7dec266fb5c5dea43c6dd374f3e2751498e388..ec8458e698a2d312506bd862f916f7c74f64a74a 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -209,6 +209,13 @@ struct kk_graphics_state {
@@ -551,10 +551,10 @@ index 8398a108ea820b45b02345f33c733b527744502f..ca3da5b0a25edf85b9f500e77f579a47
                                        : data->prim;
        if (!emulate_transform_feedback && polygon_as_points &&
 diff --git a/src/kosmickrisp/vulkan/kk_physical_device.c b/src/kosmickrisp/vulkan/kk_physical_device.c
-index b268e5553007604186944d4c16445c15ef49242b..89de07801dbc3b00614c023a1005ff2e8883ff71 100644
+index 2983889811045e5e3315ef219f33f57581230285..7e68db80f88b6530d6d7b56716baab10eb517220 100644
 --- a/src/kosmickrisp/vulkan/kk_physical_device.c
 +++ b/src/kosmickrisp/vulkan/kk_physical_device.c
-@@ -218,6 +218,7 @@ kk_get_device_features(
+@@ -217,6 +217,7 @@ kk_get_device_features(
        .dualSrcBlend = true,
        .fragmentStoresAndAtomics = true,
        .fullDrawIndexUint32 = true,
@@ -562,7 +562,7 @@ index b268e5553007604186944d4c16445c15ef49242b..89de07801dbc3b00614c023a1005ff2e
        .imageCubeArray = true,
        .independentBlend = true,
        .inheritedQueries = true,
-@@ -472,7 +473,7 @@ kk_get_device_features(
+@@ -471,7 +472,7 @@ kk_get_device_features(
  
        /* VK_EXT_transform_feedback */
        .transformFeedback = true,
@@ -571,7 +571,7 @@ index b268e5553007604186944d4c16445c15ef49242b..89de07801dbc3b00614c023a1005ff2e
  
        /* VK_EXT_vertex_attribute_robustness */
        .vertexAttributeRobustness = true,
-@@ -832,15 +833,15 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
+@@ -831,15 +832,15 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
        .shaderBinaryVersion = 0,
  
        /* VK_EXT_transform_feedback */

@@ -59,10 +59,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_helper_invocation_demote.cpp
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index ea56c611c0e5d1062f03df579a40b42fb015a3a4..ef37fc4ced61fbfc79bc84c0e7b5a79419c0ecd0 100644
+index 8137ea4564d99f43f80fc29a3a63ecd33039ea88..60dada78662945fefca66d07fff714a353ff0e7c 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
-@@ -445,9 +445,17 @@ as a non-helper thread, even after ``discard_fragment()`` is called. The
+@@ -451,9 +451,17 @@ as a non-helper thread, even after ``discard_fragment()`` is called. The
  workaround is to have a variable tracking this state and update it when the
  fragment is discarded. This issue is present in M1 and M2 chips.
  
@@ -80,7 +80,7 @@ index ea56c611c0e5d1062f03df579a40b42fb015a3a4..ef37fc4ced61fbfc79bc84c0e7b5a794
  
  KK_WORKAROUND_3
  ---------------
-@@ -500,10 +508,19 @@ Alternatively, the conditional can be changed to include ``simd_ballot(true)``:
+@@ -506,10 +514,19 @@ Alternatively, the conditional can be changed to include ``simd_ballot(true)``:
        temp = 2u;
  
  
@@ -101,7 +101,7 @@ index ea56c611c0e5d1062f03df579a40b42fb015a3a4..ef37fc4ced61fbfc79bc84c0e7b5a794
  KK_WORKAROUND_2
  ---------------
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 64d690c9942e8821acb159b9addb84dc84a89cc4..4a8f20b4abc0b07a2a234a55dfdd3a7a7c89b260 100644
+index 9fc9b511a30ed945122bb8c598ffe791db3071c7..954f3eb96626ab721bcf0af834f2e955df797655 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -245,10 +245,18 @@ kk_parse_device_environment_options(struct kk_device *dev)
@@ -127,10 +127,10 @@ index 64d690c9942e8821acb159b9addb84dc84a89cc4..4a8f20b4abc0b07a2a234a55dfdd3a7a
  }
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3e9a1881e8df4bb7216d6caa5f79b1f05405c8b8..e6e18405b9aa6406ac4fa40f8d57a7c72bf2d692 100644
+index c67e1317b5cc27aca72f7225cb727a3a3283a175..b54099b6341d231a2965542725ae8ecf31a0a64d 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -521,6 +521,20 @@ if with_tests
+@@ -579,6 +579,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

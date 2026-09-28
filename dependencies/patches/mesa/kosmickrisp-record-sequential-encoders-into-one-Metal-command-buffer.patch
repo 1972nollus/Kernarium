@@ -40,29 +40,34 @@ encoder of a layered or multiview pass therefore starts a command buffer.
 
 A pool may now be destroyed with a command buffer still recording without
 leaking its open command buffers.
+kosmickrisp_query_pool_lifetime throws such a recording away, and resets,
+begins or frees one, after destroying the timestamp query pool it wrote to:
+closing its encoders must not reach the pool's released Metal objects.
 ---
- docs/drivers/kosmickrisp/workarounds.rst      |   7 +-
+ docs/drivers/kosmickrisp/workarounds.rst      |   8 +-
  src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 168 ++++--
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  32 ++
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  36 +-
  src/kosmickrisp/vulkan/kk_queue.c             |   4 +-
- src/kosmickrisp/vulkan/meson.build            |  20 +
+ src/kosmickrisp/vulkan/meson.build            |  33 ++
  .../tests/command_buffer_shaders/color.frag   |   7 +
  .../tests/command_buffer_shaders/color.frag.h |  20 +
  .../tests/command_buffer_shaders/color.vert   |   9 +
  .../tests/command_buffer_shaders/color.vert.h |  47 ++
  .../tests/command_buffer_shaders/generate.sh  |   7 +
  .../tests/test_command_buffer_consolidation.c | 526 ++++++++++++++++++
- 12 files changed, 826 insertions(+), 57 deletions(-)
+ .../vulkan/tests/test_query_pool_lifetime.c   | 224 ++++++++
+ 13 files changed, 1064 insertions(+), 57 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag.h
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.vert
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.vert.h
  create mode 100755 src/kosmickrisp/vulkan/tests/command_buffer_shaders/generate.sh
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_buffer_consolidation.c
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_query_pool_lifetime.c
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index 3a7408608df069d4761c4b999a6ad228bc62316f..82bb255db89732f917f5839107fecbdf7f93d6b7 100644
+index d159845738a21e4c650d6e297393e06316794f8c..eb98498a257aadc04914669a0f5ad22ba2d145ad 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
 @@ -128,7 +128,9 @@ the documented requirements for layered rendering are unmet. Neither an
@@ -76,21 +81,22 @@ index 3a7408608df069d4761c4b999a6ad228bc62316f..82bb255db89732f917f5839107fecbdf
  
  Splitting the draws into smaller ones does not avoid the loss either: 1048576
  points issued as four draws of 262144 still lose 653984 of them, so there is no
-@@ -137,7 +139,8 @@ gated on a draw size.
- 
- The workaround therefore restarts the render command encoder before any draw
- that is not the first in the current encoder, whenever the pass is layered and
--the bound vertex shader writes the layer. Restarting reuses the existing
-+the bound vertex shader writes the layer, and every render encoder of a layered
-+or multiview pass starts a command buffer of its own. Restarting reuses the existing
+@@ -140,7 +142,9 @@ draw that is not the first in the current encoder, whenever the pass is layered
+ and the stage that feeds the rasterizer writes the layer: the emulated geometry
+ shader's raster draw, else the tessellation evaluation shader, else the vertex
+ shader. Each entry of a multi-draw is a Metal draw of its own, so every entry
+-after the first restarts the encoder as a separate draw call would. Restarting reuses the existing
++after the first restarts the encoder as a separate draw call would. Every
++render encoder of a layered or multiview pass also starts a command buffer of
++its own. Restarting reuses the existing
  render-pass flush path, so the attachments are reloaded and nothing is lost.
  The cost is one attachment load and store per such draw; a pass that never
  writes the layer, or is not layered, is untouched. The
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index f021f797231748d65960d14ac6fec34063e008b8..9619f9d99f14b8b0ffa7f562cba11b171e365035 100644
+index e9aad1e62133281eb13813d923457b278e832595..58c1a4409d26e955fbb81410d90f9d025ee8356b 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -79,6 +79,9 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
+@@ -94,6 +94,9 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
        container_of(vk_cmd_buffer, struct kk_cmd_buffer, vk);
     struct kk_cmd_pool *pool = kk_cmd_buffer_pool(cmd);
  
@@ -100,7 +106,7 @@ index f021f797231748d65960d14ac6fec34063e008b8..9619f9d99f14b8b0ffa7f562cba11b17
     mtl_release(cmd->argument_table);
     kk_destroy_encoder_state(&cmd->cmp[0]);
     kk_destroy_encoder_state(&cmd->cmp[1]);
-@@ -206,10 +209,8 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -221,10 +224,8 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
  {
     struct kk_device *dev = kk_cmd_buffer_device(cmd);
  
@@ -113,7 +119,7 @@ index f021f797231748d65960d14ac6fec34063e008b8..9619f9d99f14b8b0ffa7f562cba11b17
     kk_cmd_release_resources(dev, cmd);
  
     kk_reset_encoder_state(cmd->pre_gfx);
-@@ -220,6 +221,7 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -235,6 +236,7 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
     cmd->uploader.offset = 0;
  
     memset(&cmd->state, 0, sizeof(cmd->state));
@@ -121,7 +127,7 @@ index f021f797231748d65960d14ac6fec34063e008b8..9619f9d99f14b8b0ffa7f562cba11b17
     cmd->uses_heap = false;
  }
  
-@@ -294,9 +296,7 @@ kk_EndCommandBuffer(VkCommandBuffer commandBuffer)
+@@ -309,9 +311,7 @@ kk_EndCommandBuffer(VkCommandBuffer commandBuffer)
  {
     VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
  
@@ -132,7 +138,7 @@ index f021f797231748d65960d14ac6fec34063e008b8..9619f9d99f14b8b0ffa7f562cba11b17
  
     return vk_command_buffer_end(&cmd->vk);
  }
-@@ -313,16 +313,62 @@ kk_can_ignore_barrier(VkAccessFlags2 access, VkPipelineStageFlags2 stage)
+@@ -328,16 +328,62 @@ kk_can_ignore_barrier(VkAccessFlags2 access, VkPipelineStageFlags2 stage)
     return (!(access ^ ignore_access)) || (!(stage ^ ignore_stage));
  }
  
@@ -198,7 +204,7 @@ index f021f797231748d65960d14ac6fec34063e008b8..9619f9d99f14b8b0ffa7f562cba11b17
     cmd->gfx.encoder = mtl_new_render_command_encoder_with_descriptor(
        cmd->gfx.cmd_buf, state->render_pass_descriptor);
  
-@@ -385,38 +431,67 @@ cs_get_render(struct kk_cmd_buffer *cmd)
+@@ -400,38 +446,67 @@ cs_get_render(struct kk_cmd_buffer *cmd)
  }
  
  static void
@@ -285,9 +291,9 @@ index f021f797231748d65960d14ac6fec34063e008b8..9619f9d99f14b8b0ffa7f562cba11b17
  }
  
  static void
-@@ -481,9 +556,12 @@ kk_stop_encoder(struct kk_cmd_buffer *cmd, struct kk_encoder_state *es)
-    util_dynarray_clear(&es->ts_resolves);
-    util_dynarray_clear(&es->ts_samples);
+@@ -495,9 +570,12 @@ kk_stop_encoder(struct kk_cmd_buffer *cmd, struct kk_encoder_state *es)
+ 
+    kk_encoder_state_clear_timestamps(es);
  
 -   mtl_end_command_buffer(es->cmd_buf);
 -
@@ -301,7 +307,7 @@ index f021f797231748d65960d14ac6fec34063e008b8..9619f9d99f14b8b0ffa7f562cba11b17
     es->cmd_buf = NULL;
  }
  
-@@ -493,27 +571,39 @@ cs_end(struct kk_cmd_buffer *cmd)
+@@ -507,27 +585,39 @@ cs_end(struct kk_cmd_buffer *cmd)
     assert(cmd);
  
     if (cmd->pre_gfx->encoder) {
@@ -349,7 +355,7 @@ index f021f797231748d65960d14ac6fec34063e008b8..9619f9d99f14b8b0ffa7f562cba11b17
  kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd, uint64_t addr)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 1b1b941a091821afbf262375c4941bd7c00d008d..e0bca96fa29bc9247fee77fe998308b55ae91d04 100644
+index 06fbde5af1864840fa2c3b1d06762836bd37b527..7bbf86802f2816c62dd9e31d6904b6d2ba19cace 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -213,6 +213,11 @@ struct kk_graphics_state {
@@ -364,7 +370,7 @@ index 1b1b941a091821afbf262375c4941bd7c00d008d..e0bca96fa29bc9247fee77fe998308b5
     /* Draws issued into the render encoder that is currently open. Reset every
      * time a render encoder starts. KK_WORKAROUND_18 uses it. */
     uint32_t draws_since_encoder_start;
-@@ -336,6 +341,9 @@ struct kk_encoder_state {
+@@ -339,6 +344,9 @@ struct kk_encoder_state {
     mtl_fence *ts_fences[2];
     /* Render-stage timestamp samples (struct kk_ts_sample). */
     struct util_dynarray ts_samples;
@@ -374,7 +380,7 @@ index 1b1b941a091821afbf262375c4941bd7c00d008d..e0bca96fa29bc9247fee77fe998308b5
  };
  
  struct kk_cmd_buffer {
-@@ -347,6 +355,26 @@ struct kk_cmd_buffer {
+@@ -350,6 +358,26 @@ struct kk_cmd_buffer {
     struct kk_encoder_state *pre_gfx;
     struct kk_encoder_state *post_gfx;
  
@@ -401,7 +407,7 @@ index 1b1b941a091821afbf262375c4941bd7c00d008d..e0bca96fa29bc9247fee77fe998308b5
     void *drawable;
     mtl_argument_table *argument_table;
  
-@@ -419,6 +447,10 @@ void kk_cmd_buffer_set_vertex_amplification(struct kk_cmd_buffer *cmd,
+@@ -422,6 +450,10 @@ void kk_cmd_buffer_set_vertex_amplification(struct kk_cmd_buffer *cmd,
                                              uint32_t count);
  mtl_compute_encoder *cs_get_compute(struct kk_cmd_buffer *cmd, bool pre_gfx);
  void cs_end(struct kk_cmd_buffer *cmd);
@@ -413,10 +419,10 @@ index 1b1b941a091821afbf262375c4941bd7c00d008d..e0bca96fa29bc9247fee77fe998308b5
                                          uint64_t addr);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 1a2e2e15eb3b0958aa4751ab8da288dc5ed32325..a130a76b17ede2baf7a484246fbceca5a35ad550 100644
+index 0b2b4809cf3f96eb3d070e47f1dd65c1438c9eaa..08c5cb54e0fb068d2fd9afa762138031eb635a8c 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1831,7 +1831,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1890,7 +1890,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
     }
  }
  
@@ -425,7 +431,7 @@ index 1a2e2e15eb3b0958aa4751ab8da288dc5ed32325..a130a76b17ede2baf7a484246fbceca5
  kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
  {
     struct kk_graphics_state *gfx = &cmd->state.gfx;
-@@ -3372,20 +3372,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3431,20 +3431,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
  }
  
  static void
@@ -447,7 +453,7 @@ index 1a2e2e15eb3b0958aa4751ab8da288dc5ed32325..a130a76b17ede2baf7a484246fbceca5
     data->restart = cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable;
     data->restart_index =
        cmd->vk.dynamic_graphics_state.ia.primitive_restart_index;
-@@ -3514,6 +3502,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3588,6 +3576,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     }
  }
  
@@ -475,10 +481,10 @@ index 1a2e2e15eb3b0958aa4751ab8da288dc5ed32325..a130a76b17ede2baf7a484246fbceca5
  kk_CmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount,
             uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance)
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 26f73b167d9f0828582b8c3a5a7d2041467d8865..0c5ed7a758caf14db5458e5972fd28c179458a90 100644
+index 681be0d9eb9fc2087f4bb32bf0062c7fd5b42aef..8087aeb090f7a451e67d6aa2fd0bee91579130e5 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
-@@ -426,6 +426,7 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
+@@ -480,6 +480,7 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
     recording->queue = mtl_retain(queue);
     recording->allocator_cache = kk_command_allocator_cache_ref(
        kk_cmd_buffer_device(cmd)->allocator_cache);
@@ -486,7 +492,7 @@ index 26f73b167d9f0828582b8c3a5a7d2041467d8865..0c5ed7a758caf14db5458e5972fd28c1
     recording->command_buffers = cmd->submit_cmd_bufs;
     cmd->submit_cmd_bufs = UTIL_DYNARRAY_INIT;
  
-@@ -448,8 +449,7 @@ rerecord_cmd_buffer(struct kk_cmd_buffer *cmd)
+@@ -502,8 +503,7 @@ rerecord_cmd_buffer(struct kk_cmd_buffer *cmd)
     vk_cmd_queue_execute(&cmd->vk.cmd_queue, kk_cmd_buffer_to_handle(cmd),
                          &dev->vk.dispatch_table);
  
@@ -497,10 +503,10 @@ index 26f73b167d9f0828582b8c3a5a7d2041467d8865..0c5ed7a758caf14db5458e5972fd28c1
     /* Need to ensure the new buffers allocated at record are resident. */
     kk_device_make_resources_resident(dev);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index a5af599dc199dff01eb64dcb7e3274861287a0f4..bed031ca7a633fc5058ae155411a29da81bda4e3 100644
+index 195c810cc33fa5d5c9d44108f0133dbdddf871a4..4d3ef9f2a55028507afc2d2b49fcd709558aa278 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -881,6 +881,26 @@ if with_tests
+@@ -1028,6 +1028,39 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
@@ -522,6 +528,19 @@ index a5af599dc199dff01eb64dcb7e3274861287a0f4..bed031ca7a633fc5058ae155411a29da
 +      ),
 +      suite : ['kosmickrisp'],
 +      env : ['MESA_SHADER_CACHE_DISABLE=true'],
++      timeout : 60,
++    )
++    test(
++      'kosmickrisp_query_pool_lifetime',
++      executable(
++        'test_kosmickrisp_query_pool_lifetime',
++        files('tests/test_query_pool_lifetime.c'),
++        include_directories : kk_test_include_directories,
++        dependencies : [idep_vulkan_runtime_headers],
++        link_with : libvulkan_kosmickrisp,
++      ),
++      suite : ['kosmickrisp'],
++      env : ['MESA_SHADER_CACHE_DISABLE=true', 'NSZombieEnabled=YES'],
 +      timeout : 60,
 +    )
      test(
@@ -1177,5 +1196,235 @@ index 0000000000000000000000000000000000000000..0068732d8539535fee40f6adab9e5adb
 +   vkDestroyDevice(device, NULL);
 +   vkDestroyInstance(instance, NULL);
 +   printf("command buffer consolidation ok\n");
++   return 0;
++}
+diff --git a/src/kosmickrisp/vulkan/tests/test_query_pool_lifetime.c b/src/kosmickrisp/vulkan/tests/test_query_pool_lifetime.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..a9bcbd944cc487f8f5fa32a8567119ff796fffd5
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_query_pool_lifetime.c
+@@ -0,0 +1,224 @@
++/* SPDX-License-Identifier: MIT */
++
++/* A command buffer may still be recording when the application destroys a
++ * timestamp query pool it wrote to: the buffer becomes invalid, and resetting,
++ * beginning or freeing it is what is left to do with it.  The recording's
++ * open encoders still carry the pool's pending resolves, and closing them
++ * names the pool's counter heap and availability buffer.  Those must still be
++ * alive then.  Meson runs this with NSZombieEnabled, so a message to a
++ * released Metal object aborts instead of reading freed memory silently. */
++
++#define VK_NO_PROTOTYPES
++#include <vulkan/vulkan_core.h>
++
++#include <stdio.h>
++#include <stdlib.h>
++
++extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
++#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
++#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
++#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++
++int
++main(void)
++{
++   VkInstance instance = VK_NULL_HANDLE;
++   LOAD_I(vkCreateInstance);
++   VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
++                            .apiVersion = VK_API_VERSION_1_3};
++   VkInstanceCreateInfo instance_info = {
++      .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
++      .pApplicationInfo = &app,
++   };
++   CHECK(vkCreateInstance(&instance_info, NULL, &instance) == VK_SUCCESS);
++   LOAD_I(vkDestroyInstance);
++   LOAD_I(vkEnumeratePhysicalDevices);
++   LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
++   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
++   LOAD_I(vkCreateDevice);
++   LOAD_I(vkGetDeviceProcAddr);
++   uint32_t count = 1;
++   VkPhysicalDevice physical = VK_NULL_HANDLE;
++   VkResult enumerated =
++      vkEnumeratePhysicalDevices(instance, &count, &physical);
++   CHECK((enumerated == VK_SUCCESS || enumerated == VK_INCOMPLETE) && count);
++   uint32_t family_count = 0;
++   vkGetPhysicalDeviceQueueFamilyProperties(physical, &family_count, NULL);
++   VkQueueFamilyProperties *families = calloc(family_count, sizeof(*families));
++   CHECK(families);
++   vkGetPhysicalDeviceQueueFamilyProperties(physical, &family_count, families);
++   uint32_t family = 0;
++   while (family < family_count &&
++          !(families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT))
++      family++;
++   CHECK(family < family_count);
++   CHECK(families[family].timestampValidBits > 0);
++   free(families);
++   float priority = 1.0f;
++   VkDeviceQueueCreateInfo queue_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
++      .queueFamilyIndex = family,
++      .queueCount = 1,
++      .pQueuePriorities = &priority,
++   };
++   VkPhysicalDeviceVulkan13Features features13 = {
++      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
++      .dynamicRendering = VK_TRUE,
++      .synchronization2 = VK_TRUE,
++   };
++   VkDeviceCreateInfo device_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
++      .pNext = &features13,
++      .queueCreateInfoCount = 1,
++      .pQueueCreateInfos = &queue_info,
++   };
++   VkDevice device = VK_NULL_HANDLE;
++   CHECK(vkCreateDevice(physical, &device_info, NULL, &device) == VK_SUCCESS);
++   LOAD_D(vkDestroyDevice);
++   LOAD_D(vkCreateQueryPool);
++   LOAD_D(vkDestroyQueryPool);
++   LOAD_D(vkCreateCommandPool);
++   LOAD_D(vkDestroyCommandPool);
++   LOAD_D(vkAllocateCommandBuffers);
++   LOAD_D(vkFreeCommandBuffers);
++   LOAD_D(vkResetCommandBuffer);
++   LOAD_D(vkBeginCommandBuffer);
++   LOAD_D(vkEndCommandBuffer);
++   LOAD_D(vkCmdWriteTimestamp2);
++   LOAD_D(vkCmdBeginRendering);
++   LOAD_D(vkCmdEndRendering);
++   LOAD_D(vkCreateImage);
++   LOAD_D(vkDestroyImage);
++   LOAD_D(vkGetImageMemoryRequirements);
++   LOAD_D(vkAllocateMemory);
++   LOAD_D(vkFreeMemory);
++   LOAD_D(vkBindImageMemory);
++   LOAD_D(vkCreateImageView);
++   LOAD_D(vkDestroyImageView);
++
++   /* A render pass, so a timestamp can also take the render-stage path. */
++   VkImageCreateInfo image_info = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
++      .imageType = VK_IMAGE_TYPE_2D,
++      .format = VK_FORMAT_R8G8B8A8_UNORM,
++      .extent = {8, 8, 1},
++      .mipLevels = 1,
++      .arrayLayers = 1,
++      .samples = VK_SAMPLE_COUNT_1_BIT,
++      .tiling = VK_IMAGE_TILING_OPTIMAL,
++      .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
++   };
++   VkImage image = VK_NULL_HANDLE;
++   CHECK(vkCreateImage(device, &image_info, NULL, &image) == VK_SUCCESS);
++   VkMemoryRequirements requirements;
++   vkGetImageMemoryRequirements(device, image, &requirements);
++   VkPhysicalDeviceMemoryProperties properties;
++   vkGetPhysicalDeviceMemoryProperties(physical, &properties);
++   uint32_t type = 0;
++   while (type < properties.memoryTypeCount &&
++          !(requirements.memoryTypeBits & (1u << type)))
++      type++;
++   CHECK(type < properties.memoryTypeCount);
++   VkMemoryAllocateInfo memory_info = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++      .allocationSize = requirements.size,
++      .memoryTypeIndex = type,
++   };
++   VkDeviceMemory memory = VK_NULL_HANDLE;
++   CHECK(vkAllocateMemory(device, &memory_info, NULL, &memory) == VK_SUCCESS);
++   CHECK(vkBindImageMemory(device, image, memory, 0) == VK_SUCCESS);
++   VkImageViewCreateInfo view_info = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
++      .image = image,
++      .viewType = VK_IMAGE_VIEW_TYPE_2D,
++      .format = image_info.format,
++      .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
++   };
++   VkImageView view = VK_NULL_HANDLE;
++   CHECK(vkCreateImageView(device, &view_info, NULL, &view) == VK_SUCCESS);
++   VkRenderingAttachmentInfo attachment = {
++      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
++      .imageView = view,
++      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
++      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
++      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
++   };
++   VkRenderingInfo rendering = {
++      .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
++      .renderArea = {{0, 0}, {8, 8}},
++      .layerCount = 1,
++      .colorAttachmentCount = 1,
++      .pColorAttachments = &attachment,
++   };
++
++   VkQueryPoolCreateInfo query_info = {
++      .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
++      .queryType = VK_QUERY_TYPE_TIMESTAMP,
++      .queryCount = 4,
++   };
++   VkCommandPoolCreateInfo pool_info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
++      .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
++      .queueFamilyIndex = family,
++   };
++   VkCommandBufferBeginInfo begin = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
++   };
++
++   /* How the recording is thrown away after its query pool is gone: reset,
++    * begun again, freed, or freed with its command pool. */
++   for (unsigned way = 0; way < 4; way++) {
++      VkCommandPool pool = VK_NULL_HANDLE;
++      CHECK(vkCreateCommandPool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
++      VkCommandBufferAllocateInfo allocate = {
++         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
++         .commandPool = pool,
++         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
++         .commandBufferCount = 1,
++      };
++      VkCommandBuffer command = VK_NULL_HANDLE;
++      CHECK(vkAllocateCommandBuffers(device, &allocate, &command) ==
++            VK_SUCCESS);
++      VkQueryPool queries = VK_NULL_HANDLE;
++      CHECK(vkCreateQueryPool(device, &query_info, NULL, &queries) ==
++            VK_SUCCESS);
++
++      CHECK(vkBeginCommandBuffer(command, &begin) == VK_SUCCESS);
++      /* Outside a render pass: a compute-lane sample. */
++      vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
++                           queries, 0);
++      /* Inside one: a render-stage sample and a bottom-of-pipe one. */
++      vkCmdBeginRendering(command, &rendering);
++      vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
++                           queries, 1);
++      vkCmdWriteTimestamp2(command, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
++                           queries, 2);
++      /* Left open: the recording is abandoned inside its render pass. */
++
++      vkDestroyQueryPool(device, queries, NULL);
++
++      switch (way) {
++      case 0:
++         CHECK(vkResetCommandBuffer(command, 0) == VK_SUCCESS);
++         break;
++      case 1:
++         CHECK(vkBeginCommandBuffer(command, &begin) == VK_SUCCESS);
++         CHECK(vkEndCommandBuffer(command) == VK_SUCCESS);
++         break;
++      case 2:
++         vkFreeCommandBuffers(device, pool, 1, &command);
++         break;
++      default:
++         break;
++      }
++      vkDestroyCommandPool(device, pool, NULL);
++   }
++
++   vkDestroyImageView(device, view, NULL);
++   vkDestroyImage(device, image, NULL);
++   vkFreeMemory(device, memory, NULL);
++   vkDestroyDevice(device, NULL);
++   vkDestroyInstance(instance, NULL);
++   printf("recordings outlive the timestamp query pools they wrote to\n");
 +   return 0;
 +}

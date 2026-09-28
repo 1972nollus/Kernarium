@@ -3,17 +3,43 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 16:57:47 +0900
 Subject: [PATCH] kosmickrisp: precompile bounded raster executable classes
 
-kk_test_line_planner_bounds hands Metal a commit feedback block that points at
-a stack-allocated completion struct, and the only thing that kept that block
-from outliving the frame was a dispatch_semaphore_wait inside assert().  Every
-build that defines NDEBUG - Mesa's own release buildtype, which is what
-dependencies/build-apple-gpu.sh configures - dropped the wait with the rest of
-the assertion, so the helper committed the dispatch, released the semaphore and
-returned while Metal still held the block.  The block then ran on
-com.Metal4.CompletionQueue and signalled a semaphore that no longer existed,
-reading through a stale stack pointer: SIGSEGV in dispatch_semaphore_signal
-from __mtl_commit_options_add_feedback_handler_block_invoke, three times out of
-three, with and without the Metal validation layer.  A debugoptimized build
+A pipeline compiles a bounded set of raster executable classes
+(kk_raster_variant.h) instead of one raster shader per combination of
+dynamic state. BASE keeps fills and eligible native lines on Metal's direct
+path. POINT draws polygon-mode POINT as oriented squares that keep the
+source polygon's facingness, so polygon-point emulation no longer needs its
+own indirect setup dispatch. LINE, RECTANGULAR and SMOOTH materialize the
+three line modes through a compute scan that clips each source polygon once
+and publishes one 64-byte record per clipped edge (kk_raster_edge.h), never
+a record per pixel. DISCARD keeps the application stages and transform
+feedback without rasterizing. Provoking vertex, stipple enable and depth
+clipping stay dynamic within a class; only a change that needs another
+raster shader needs another class.
+
+kk_raster_variant_mask works out from the pipeline's static and dynamic
+state which classes a draw could ever select, and only those are compiled,
+once, at complete pipeline creation or at a library's final link or
+vertex-input resolution. At draw time kk_cmd_select_line_raster_variant
+applies kk_raster_variant_select to the current dynamic state and binds the
+selected class's stages. Shader positions never become unchecked counts or
+addresses: the scan bounds viewport coordinates, and an instance that would
+overflow suppresses the whole draw. kosmickrisp_raster_variant checks the
+selection against the masks for every primitive and dynamic state, and
+kosmickrisp_raster_discard covers the DISCARD class with transform feedback.
+
+The line-planner test helper also had to survive release builds.
+kk_test_line_planner_bounds hands Metal a commit feedback block that points
+at a stack-allocated completion struct, and the only thing that kept that
+block from outliving the frame was a dispatch_semaphore_wait inside
+assert(). Every build that defines NDEBUG - Mesa's own release buildtype,
+which is what dependencies/build-apple-gpu.sh configures - dropped the wait
+with the rest of the assertion, so the helper committed the dispatch,
+released the semaphore and returned while Metal still held the block. The
+block then ran on com.Metal4.CompletionQueue and signalled a semaphore that
+no longer existed, reading through a stale stack pointer: SIGSEGV in
+dispatch_semaphore_signal from
+__mtl_commit_options_add_feedback_handler_block_invoke, three times out of
+three, with and without the Metal validation layer. A debugoptimized build
 never saw it, because there the wait is real.
 
 Check with a macro that survives NDEBUG instead.  The wait is not the only
@@ -25,8 +51,9 @@ fatal too, because falling through one would leave Metal holding the same
 dangling block.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/kosmickrisp/libkk/kk_geometry.cl          |   20 +-
+ src/kosmickrisp/libkk/kk_geometry.cl          |   59 +-
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   10 +
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  267 ++-
  src/kosmickrisp/vulkan/kk_cmd_meta.c          |   12 +
@@ -52,7 +79,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  .../vulkan/tests/test_line_raster_cache.cpp   |    2 +
  .../vulkan/tests/test_raster_discard.cpp      |  500 +++++
  .../vulkan/tests/test_raster_variant.c        |   80 +
- 26 files changed, 2749 insertions(+), 815 deletions(-)
+ 26 files changed, 2749 insertions(+), 854 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_raster_edge.h
  create mode 100644 src/kosmickrisp/vulkan/kk_raster_variant.h
  create mode 100644 src/kosmickrisp/vulkan/tests/raster_discard_shaders/discard.frag
@@ -68,7 +95,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_raster_variant.c
 
 diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
-index 6d647946d06bdb091eee6063cabdd0bdf953c51e..3d71897ef0b3c237ed65bde0873ca2829db66e6a 100644
+index 6d647946d06bdb091eee6063cabdd0bdf953c51e..05c74af00b90cdf0bedad40a618f37336599897b 100644
 --- a/src/kosmickrisp/libkk/kk_geometry.cl
 +++ b/src/kosmickrisp/libkk/kk_geometry.cl
 @@ -144,7 +144,7 @@ static inline bool
@@ -92,7 +119,53 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..3d71897ef0b3c237ed65bde0873ca282
        return false;
  
     return poly_u32_checked_add(*output_size, *phase_size, &allocation) &&
-@@ -285,7 +285,7 @@ libkk_rectangular_line_setup_indirect(
+@@ -239,45 +239,6 @@ libkk_prefix_sum_geom(constant struct poly_geometry_params *p)
+                    p->count_buffer_stride / 4, cl_group_id.x, 1024);
+ }
+ 
+-KERNEL(1)
+-libkk_polygon_point_setup_indirect(
+-   global struct poly_heap *heap, global struct poly_vertex_params *vp,
+-   constant uint32_t *in_draw, global uint32_t *out_draw,
+-   uint64_t index_buffer, uint32_t index_buffer_range_el,
+-   uint32_t index_size_B, uint64_t vertex_outputs, uint32_t mode)
+-{
+-   uint32_t count = in_draw[0];
+-   uint32_t instance_count = in_draw[1];
+-   uint32_t output_size =
+-      poly_tcs_in_size(count * instance_count, vertex_outputs);
+-
+-   vp->output_buffer = (uintptr_t)poly_heap_alloc(heap, output_size);
+-   vp->outputs = vertex_outputs;
+-   vp->verts_per_instance = count;
+-
+-   /* MTLDispatchThreadsIndirectArguments is threadsPerGrid followed by
+-    * threadsPerThreadgroup.  An exact thread grid avoids both padding work and
+-    * out-of-range software vertex shader invocations. */
+-   vp->grid[0] = count;
+-   vp->grid[1] = instance_count;
+-   vp->grid[2] = 1;
+-   vp->grid[3] = 64;
+-   vp->grid[4] = 1;
+-   vp->grid[5] = 1;
+-
+-   if (index_size_B) {
+-      uint32_t first_index = in_draw[2];
+-      vp->index_buffer = index_buffer + (first_index * index_size_B);
+-      vp->index_buffer_range_el =
+-         poly_index_buffer_range_el(index_buffer_range_el, first_index);
+-   }
+-
+-   out_draw[0] = u_decomposed_prims_for_vertices(mode, count) * 3;
+-   out_draw[1] = instance_count;
+-   out_draw[2] = 0;
+-   out_draw[3] = in_draw[index_size_B ? 4 : 3];
+-}
+-
+ KERNEL(1)
+ libkk_rectangular_line_setup_indirect(
+    global struct poly_heap *heap, global struct poly_vertex_params *vp,
+@@ -285,7 +246,7 @@ libkk_rectangular_line_setup_indirect(
     uint64_t index_buffer, uint32_t index_buffer_range_el,
     uint32_t index_size_B, uint64_t vertex_outputs, uint32_t mode,
     uint32_t vertices_per_line, uint32_t lines_per_primitive,
@@ -101,7 +174,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..3d71897ef0b3c237ed65bde0873ca282
  {
     uint32_t count = in_draw[0];
     uint32_t instance_count = in_draw[1];
-@@ -298,7 +298,7 @@ libkk_rectangular_line_setup_indirect(
+@@ -298,7 +259,7 @@ libkk_rectangular_line_setup_indirect(
     if (!poly_u32_checked_mul(instance_count, view_count, &record_instances) ||
         !libkk_line_output_sizes(
            count, record_instances, vertex_outputs, mode, lines_per_primitive,
@@ -110,7 +183,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..3d71897ef0b3c237ed65bde0873ca282
            &phase_size, &out_vertices)) {
        libkk_suppress_line_work(vp, out_draw);
        return;
-@@ -329,7 +329,7 @@ libkk_rectangular_line_setup_indirect(
+@@ -329,7 +290,7 @@ libkk_rectangular_line_setup_indirect(
  
     if (index_size_B) {
        uint32_t first_index = in_draw[2];
@@ -119,7 +192,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..3d71897ef0b3c237ed65bde0873ca282
        vp->index_buffer_range_el =
           poly_index_buffer_range_el(index_buffer_range_el, first_index);
     }
-@@ -391,7 +391,7 @@ libkk_line_raster_setup_indirect(
+@@ -391,7 +352,7 @@ libkk_line_raster_setup_indirect(
     constant uint32_t *in_draw, global uint32_t *out_draw,
     uint64_t index_buffer, uint32_t index_buffer_range_el,
     uint32_t index_size_B, uint32_t mode, uint32_t vertices_per_line,
@@ -128,7 +201,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..3d71897ef0b3c237ed65bde0873ca282
     uint64_t line_run_starts_addr)
  {
     uint32_t count = in_draw[0];
-@@ -402,9 +402,9 @@ libkk_line_raster_setup_indirect(
+@@ -402,9 +363,9 @@ libkk_line_raster_setup_indirect(
     if ((vp->output_buffer == 0 && count != 0 && instance_count != 0) ||
         !poly_u32_checked_mul(primitive_count, lines_per_primitive, &lines) ||
         !poly_u32_checked_mul(lines, vertices_per_line, &out_vertices) ||
@@ -140,7 +213,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..3d71897ef0b3c237ed65bde0873ca282
         !poly_heap_size_can_align(phase_size)) {
        libkk_suppress_line_work(vp, out_draw);
        return;
-@@ -417,7 +417,7 @@ libkk_line_raster_setup_indirect(
+@@ -417,7 +378,7 @@ libkk_line_raster_setup_indirect(
        ? *((global const uint64_t *)line_run_starts_addr)
        : 0;
     vp->verts_per_instance = count;
@@ -150,7 +223,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..3d71897ef0b3c237ed65bde0873ca282
     vp->line_stipple_grid[2] = 1;
     vp->line_stipple_grid[3] = 1;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 06918dae6c8d4f5d2ad731b4a129123a8da59288..3db643cfd996080847810d9198b1cf4134077a2f 100644
+index a7b50a71f0692d84de98e29a178488cfb7d2e137..19dcc4e74f4427c4b45ab70d01423fb198a84d10 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -121,6 +121,11 @@ struct kk_per_draw_data {
@@ -183,7 +256,7 @@ index 06918dae6c8d4f5d2ad731b4a129123a8da59288..3db643cfd996080847810d9198b1cf41
  };
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8e22cc226 100644
+index 80d8fbb9df3385640c904855559a01906e4f0ac9..a0151d068f86d0cecffa23395619ac7d5bac221c 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -15,6 +15,7 @@
@@ -269,7 +342,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
              vk_command_buffer_set_error(&cmd->vk,
                                          VK_ERROR_OUT_OF_DEVICE_MEMORY);
              return false;
-@@ -1506,13 +1532,16 @@ kk_rast_discard(struct kk_cmd_buffer *cmd)
+@@ -1523,13 +1549,16 @@ kk_rast_discard(struct kk_cmd_buffer *cmd)
  {
     struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
  
@@ -287,7 +360,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
  }
  
  static void
-@@ -1545,7 +1574,8 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1562,7 +1591,8 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
  
     if (IS_DIRTY(RS_CULL_MODE) || IS_DIRTY(IA_PRIMITIVE_TOPOLOGY) ||
         IS_SHADER_DIRTY(VERTEX)) {
@@ -297,7 +370,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
           /* Vulkan cull mode does not apply to line primitives.  The generated
            * raster primitive is a triangle only as an implementation detail. */
           gfx->is_cull_front_and_back = false;
-@@ -1612,9 +1642,14 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1629,9 +1659,14 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
     }
  
     if (IS_DIRTY(RS_FRONT_FACE) || IS_DIRTY(TS_DOMAIN_ORIGIN) ||
@@ -314,7 +387,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
           front_face_ccw ^= gfx->tess.info.ccw;
           front_face_ccw ^=
              dyn->ts.domain_origin == VK_TESSELLATION_DOMAIN_ORIGIN_LOWER_LEFT;
-@@ -1624,8 +1659,9 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1641,8 +1676,9 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
                                           : MTL_WINDING_CLOCKWISE);
     }
  
@@ -326,7 +399,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
           mtl_set_depth_bias(enc, dyn->rs.depth_bias.constant_factor,
                              dyn->rs.depth_bias.slope_factor,
                              dyn->rs.depth_bias.clamp);
-@@ -1633,8 +1669,15 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1650,8 +1686,15 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
           mtl_set_depth_bias(enc, 0.0f, 0.0f, 0.0f);
     }
  
@@ -344,7 +417,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
  
     if (IS_DIRTY(DS_STENCIL_REFERENCE))
        mtl_set_stencil_references(
-@@ -2382,7 +2425,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2399,7 +2442,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
                                     &gfx->per_draw_data.vertex_params))
           return false;
  
@@ -353,7 +426,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
           const uint32_t wg_size[3] = {64, 1, 1};
           struct poly_vertex_params line_params;
           poly_vertex_params_init(&line_params,
-@@ -2434,8 +2477,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2451,8 +2494,7 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
        kk_upload_tess_params(cmd, tess_args.cpu, draw);
     }
  
@@ -363,7 +436,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
        const struct vk_dynamic_graphics_state *dyn =
           &cmd->vk.dynamic_graphics_state;
        gfx->per_draw_data.polygon_point_cull_mode = dyn->rs.cull_mode;
-@@ -2444,9 +2486,27 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2461,9 +2503,27 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
        gfx->per_draw_data.polygon_point_provoking_last =
           dyn->rs.provoking_vertex ==
           VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
@@ -394,7 +467,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
        const struct vk_dynamic_graphics_state *dyn =
           &cmd->vk.dynamic_graphics_state;
        gfx->per_draw_data.line_raster_topology =
-@@ -2465,6 +2525,18 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2482,6 +2542,18 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
           dyn->rs.line.stipple.pattern;
        gfx->per_draw_data.line_raster_run_starts_addr =
           draw->line_raster_run_starts_addr;
@@ -413,7 +486,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
  
        for (uint32_t i = 0; i < KK_MAX_VIEWPORTS; ++i) {
           const VkViewport *viewport =
-@@ -2479,6 +2551,17 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2496,6 +2568,17 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
              half_width != 0.0f ? 1.0f / half_width : 0.0f;
           gfx->per_draw_data.line_raster_viewports[i].inv_half_height =
              half_height != 0.0f ? 1.0f / half_height : 0.0f;
@@ -431,7 +504,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
        }
     }
  
-@@ -2613,69 +2696,36 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2630,69 +2713,36 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     return draw;
  }
  
@@ -526,7 +599,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
  }
  
  /* A continuous stipple pattern crosses line boundaries, so each line's
-@@ -2721,31 +2771,31 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2738,31 +2788,31 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
     const uint32_t view_count = kk_line_view_count(vs->info.vs.view_mask);
     uint32_t raster_vertex_count = 0;
     const bool line_stipple_continuous =
@@ -564,7 +637,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
           .index_buffer = draw.index.gpu.addr,
           .index_buffer_range_el = kk_draw_index_range_el(&draw),
           .index_size_B = draw.index.el_size_B,
-@@ -2753,14 +2803,14 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2770,14 +2820,14 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
           .mode = prim,
           .vertices_per_line = kk_line_vertices_per_line(vs),
           .lines_per_primitive =
@@ -582,7 +655,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
     }
  
     mtl_compute_encoder *enc = cs_get_compute(cmd, true);
-@@ -2790,6 +2840,9 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2807,6 +2857,9 @@ kk_launch_line_raster(struct kk_cmd_buffer *cmd,
                                        indirect ? NULL : &prefix_grid);
     }
  
@@ -592,7 +665,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
     kk_draw_line_raster_output(&draw, vs);
     return draw;
  }
-@@ -2872,12 +2925,12 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2889,12 +2942,12 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
        lines.line_raster_run_starts_addr = source.line_raster_run_starts_addr;
     enum mesa_prim line_prim = u_decomposed_prim(source_prim);
  
@@ -608,7 +681,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
        kk_line_stipple_prefix_required(
           vs->info.vs.line_raster_stipple,
           gfx->per_draw_data.line_stipple_enable,
-@@ -2887,15 +2940,15 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2904,15 +2957,15 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
        .heap = kk_heap(cmd),
        .vp = line_vp,
        .in_draw = lines.grid.addr,
@@ -627,7 +700,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
        .line_run_starts_addr = lines.line_raster_run_starts_addr,
     };
     libkk_line_raster_setup_indirect_struct(cmd, kk_grid_1d(1), true, setup);
-@@ -2905,7 +2958,7 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2922,7 +2975,7 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
        kk_dispatch_line_stipple_prefix(enc, vs, line_vp, NULL);
     }
  
@@ -636,7 +709,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
     kk_draw_line_raster_output(&lines, vs);
     return lines;
  }
-@@ -3160,7 +3213,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3177,7 +3230,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
     bool tess = cmd->state.shaders[MESA_SHADER_TESS_EVAL];
     struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
     bool geometry = vs && vs->info.vs.geometry_shader_emulation;
@@ -646,7 +719,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
     struct kk_draw_data draw = {
        .index.gpu = data->index_buffer,
        .index.el_size_B = data->index_buffer_el_size_B,
-@@ -3186,7 +3240,7 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3203,7 +3257,7 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
        draw.vertex_offset = draw_cmd.vertexOffset;
  
        uint64_t index_offset =
@@ -655,7 +728,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
        draw.index.gpu.addr += index_offset;
        draw.index.gpu.range = index_offset < draw.index.gpu.range
                                  ? draw.index.gpu.range - index_offset
-@@ -3228,11 +3282,12 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3245,11 +3299,12 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        return;
  
     bool tess = cmd->state.shaders[MESA_SHADER_TESS_EVAL];
@@ -670,7 +743,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
     const bool emulate_line_raster = vs->info.vs.line_raster_emulation;
     const bool materialize_line_raster =
        vs->info.vs.line_raster_materialize;
-@@ -3243,7 +3298,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3260,7 +3315,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        cmd->vk.dynamic_graphics_state.rs.provoking_vertex ==
        VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
     const bool rewrite_direct_provoking =
@@ -679,7 +752,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
        !emulate_transform_feedback && !emulate_polygon_points &&
        !emulate_line_raster &&
        u_reduced_prim(data->prim) != MESA_PRIM_POINTS;
-@@ -3260,7 +3315,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3277,7 +3332,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
          data->prim == MESA_PRIM_TRIANGLE_FAN) ||
         (emulate_transform_feedback && data->indexed && data->restart) ||
         (emulate_geometry && data->indexed && data->restart) ||
@@ -689,7 +762,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
          data->restart) ||
         (!emulate_geometry && !emulate_polygon_points && polygon_as_points &&
          is_polygon_primitive(data->prim) &&
-@@ -3296,8 +3352,6 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3313,8 +3369,6 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        } else if (emulate_transform_feedback)
           draw_data =
              kk_launch_transform_feedback(cmd, draw_data, data->prim);
@@ -698,7 +771,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
  
        const enum mesa_prim source_raster_prim =
           emulate_geometry ? vs->info.vs.geometry.mode
-@@ -3307,7 +3361,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3324,7 +3378,7 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        if (materialize_line_raster) {
           draw_data = kk_launch_materialized_line_raster(
              cmd, draw_data, source_raster_prim);
@@ -707,7 +780,7 @@ index a2f01d1d3341b15674d4282baabaeb7199f452ca..c8dfbdaca484b389ad033fd3f14e24e8
           draw_data =
              kk_launch_line_raster(cmd, draw_data, data->prim);
        }
-@@ -3320,12 +3374,13 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3337,12 +3391,13 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
        /* The XFB pass-through raster shader sources flat outputs from the
         * requested provoking vertex itself.  Keep its non-indexed vertex IDs
         * intact: they also address the generated XFB records. */
@@ -3440,7 +3513,7 @@ index c3939af69936578d95808c98020a6b6a4dfc350a..6a439054966ff29eb571fbaa22211790
     struct blob deferred_nir;
     struct msl_compile_data msl_data[MESA_SHADER_STAGES];
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 7b4d1d42d8178837949eab4bed25ebb6bc4d2c5a..3a953948436111cfe737762e01e903c87330fdae 100644
+index a32452d612201ac07d6bd839b2401aab8ff1e343..2e75cb1e36ac1af12e5b06aace60747f48a5d177 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -91,6 +91,8 @@ kk_files = files(
@@ -3452,7 +3525,7 @@ index 7b4d1d42d8178837949eab4bed25ebb6bc4d2c5a..3a953948436111cfe737762e01e903c8
    'kk_instance.h',
    'kk_instance.c',
    'kk_nir_lower_custom_border.c',
-@@ -308,6 +310,27 @@ if with_tests
+@@ -348,6 +350,27 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -3480,7 +3553,7 @@ index 7b4d1d42d8178837949eab4bed25ebb6bc4d2c5a..3a953948436111cfe737762e01e903c8
      test(
        'kosmickrisp_transform_feedback_builtins',
        executable(
-@@ -378,6 +401,7 @@ if with_tests
+@@ -418,6 +441,7 @@ if with_tests
                'tests/line_raster_cache_state.m'),
          include_directories : kk_test_include_directories,
          dependencies : [
@@ -3488,7 +3561,7 @@ index 7b4d1d42d8178837949eab4bed25ebb6bc4d2c5a..3a953948436111cfe737762e01e903c8
            idep_nir,
            idep_vulkan_runtime_headers,
            idep_vulkan_util_headers,
-@@ -449,6 +473,17 @@ if with_tests
+@@ -489,6 +513,17 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

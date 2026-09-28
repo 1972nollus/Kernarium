@@ -66,7 +66,7 @@ index 8b7d61657f05ecebb1566ac59bd81642ab1a2480..1e540ef4252f94ba601138881713ee63
  libkk_prefix_sum_tess(global struct poly_tess_params *p)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index aafa90ca4a2820f02c0b2201fc97d70c4a250c0e..7a81fee4c623710686a0afb16ce0b8ff37f1c59e 100644
+index 55dadb9d30201e89ba70b4ed01ec1a0304753a7a..080f7a7d52d66e797242dce305ba02fd9c0ca4c5 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -89,6 +89,18 @@ struct kk_per_draw_data {

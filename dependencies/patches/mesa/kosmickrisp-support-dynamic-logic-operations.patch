@@ -175,7 +175,7 @@ index bc979a79efc9b84e92ece4e5b43ee1ec0796902b..245d3b9dcb07fd04650864a95189e131
  nir_color_blend(nir_builder *b, nir_def *src0, nir_def *src1, nir_def *dst,
                  const nir_lower_blend_rt *rt, bool scalar_blend_const);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 0a33032fb4b2d4ef9226f4d06f8c49fea2029ba6..b90249f161787d726cc311730450f809bd986051 100644
+index fcef60698ec9162be7f09be7ae3982127c30e11b..b21a4963f24a71e4133536562de5ce0fb1151eb1 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -43,7 +43,7 @@ struct kk_root_descriptor_table {
@@ -385,7 +385,7 @@ index f64d59bfe1a3a13987cb5267b57384a7ea5419e0..098851ad6006b139ef206974a1c33633
  
     static_assert(ARRAY_SIZE(opts.rt) == 8, "max RTs out of sync");
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 4083d48363dcca2fd29e321115d79dcf92891765..1474a4cb318cb35472030d11778b052d6d799b6c 100644
+index 9e6ccb694f501ecd17b1ea87faed332ac2e11368..af6c3db8d90ca2ff36848f8f65a68389ff37cff2 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -83,6 +83,7 @@ kk_files = files(
@@ -396,7 +396,7 @@ index 4083d48363dcca2fd29e321115d79dcf92891765..1474a4cb318cb35472030d11778b052d
    'kk_image_layout.h',
    'kk_image_layout.c',
    'kk_image_view.h',
-@@ -282,6 +283,23 @@ if with_tests
+@@ -308,6 +309,23 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

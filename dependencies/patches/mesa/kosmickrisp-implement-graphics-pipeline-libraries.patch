@@ -879,7 +879,7 @@ index c3db6c67894eced6b1ac299b77006f39d03624e2..7e187015d14c1cc66ca824f4685ebcde
     struct msl_compile_data transform_feedback_pre_gs_msl;
     struct msl_compile_data geometry_main_msl;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index be0938b83742398b5a41f1592fbc68a479fb074d..15cf8c74acde0fb5a6f948de2bb8c9bfe786ada2 100644
+index 100493cf8f178ca73da9e7e1a57bd4077bb17ad1..4beaefd360be24573eca96462ce7f282af267530 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -81,6 +81,7 @@ kk_files = files(
@@ -890,7 +890,7 @@ index be0938b83742398b5a41f1592fbc68a479fb074d..15cf8c74acde0fb5a6f948de2bb8c9bf
    'kk_image_layout.h',
    'kk_image_layout.c',
    'kk_image_view.h',
-@@ -258,6 +259,16 @@ if with_tests
+@@ -284,6 +285,16 @@ if with_tests
      ),
      suite : ['kosmickrisp'],
    )
