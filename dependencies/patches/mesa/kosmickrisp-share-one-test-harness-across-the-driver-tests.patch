@@ -87,6 +87,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../tests/test_terminate_full_quads.cpp       |  20 +-
  .../test_tes_sampler_dynamic_indexing.cpp     | 682 -----------------
  .../tests/test_tes_sampler_indexing.cpp       |  72 +-
+ .../vulkan/tests/test_tess_bound_gpu.c        |  19 +-
  .../vulkan/tests/test_tess_draw_size.cpp      |  20 +-
  .../tests/test_tess_passthrough_geometry.cpp  |  20 +-
  .../vulkan/tests/test_tess_setup_gpu.c        |  19 +-
@@ -96,17 +97,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_timeline_wait_loss.c    |   4 +-
  .../test_transform_feedback_builtins.cpp      |  20 +-
  .../tests/test_unused_attachment_gaps.cpp     |  20 +-
- 74 files changed, 549 insertions(+), 2289 deletions(-)
+ 75 files changed, 550 insertions(+), 2307 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/kk_test.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3b324816c88af4d1193fc97f55285c92902fe89d..004eb6d0dde787825eaa88a4d9eedf17048762b4 100644
+index 1294cfcfdd20e5845e4651388a3e5baa18bf8853..f7e631e051ed7b390d8fbe668f44b7a4ccad2490 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -227,20 +227,62 @@ if with_tests
+@@ -228,20 +228,62 @@ if with_tests
    ]
  
    if host_machine.system() == 'darwin'
@@ -182,7 +183,7 @@ index 3b324816c88af4d1193fc97f55285c92902fe89d..004eb6d0dde787825eaa88a4d9eedf17
      test(
        'kosmickrisp_geometry_setup_gpu',
        executable(
-@@ -327,256 +369,37 @@ if with_tests
+@@ -348,256 +390,37 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
@@ -465,7 +466,7 @@ index 3b324816c88af4d1193fc97f55285c92902fe89d..004eb6d0dde787825eaa88a4d9eedf17
      test(
        'kosmickrisp_raster_discard',
        executable(
-@@ -598,48 +421,24 @@ if with_tests
+@@ -619,48 +442,24 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -531,7 +532,7 @@ index 3b324816c88af4d1193fc97f55285c92902fe89d..004eb6d0dde787825eaa88a4d9eedf17
      test(
        'kosmickrisp_pipeline_statistics_gpu',
        executable(
-@@ -660,34 +459,6 @@ if with_tests
+@@ -681,34 +480,6 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -566,7 +567,7 @@ index 3b324816c88af4d1193fc97f55285c92902fe89d..004eb6d0dde787825eaa88a4d9eedf17
      # A benchmark rather than a test: it reports the cost of the two blend
      # paths and is run by hand, once per path, because timing cannot assert.
      executable(
-@@ -707,104 +478,6 @@ if with_tests
+@@ -728,104 +499,6 @@ if with_tests
        link_with : libvulkan_kosmickrisp,
        override_options : ['cpp_std=c++20'],
      )
@@ -671,7 +672,7 @@ index 3b324816c88af4d1193fc97f55285c92902fe89d..004eb6d0dde787825eaa88a4d9eedf17
      timeline_wait_loss_test = executable(
        'test_kosmickrisp_timeline_wait_loss',
        files('tests/test_timeline_wait_loss.c'),
-@@ -1245,16 +918,25 @@ if with_tests
+@@ -1266,16 +939,25 @@ if with_tests
      )
    endif
  
@@ -707,7 +708,7 @@ index 3b324816c88af4d1193fc97f55285c92902fe89d..004eb6d0dde787825eaa88a4d9eedf17
  
    test(
      'kosmickrisp_queue_error',
-@@ -1292,49 +974,6 @@ if with_tests
+@@ -1313,49 +995,6 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -757,7 +758,7 @@ index 3b324816c88af4d1193fc97f55285c92902fe89d..004eb6d0dde787825eaa88a4d9eedf17
    test(
      'kosmickrisp_logic_op',
      executable(
-@@ -1492,75 +1131,28 @@ if with_tests
+@@ -1513,75 +1152,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -1998,10 +1999,10 @@ index 305053fb641d13373146d19fdd38ad8f923bb97a..ba0683573f2371b26507633c2d0643c4
     }
     api->DestroyCommandPool(device, commands, NULL);
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_growth.c b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
-index 1ce1e45a684237ea6b30cb85ec1577161f9aa883..ac257c1eac495cd43f9e681ec699b4684bc43523 100644
+index 21fc3c99ab5be4bae32597ecc7f5c4e5b2f0ddb7..1cb34a0c4a6cef75f8324e8ce64f05b8b38a5928 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_growth.c
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
-@@ -19,10 +19,7 @@
+@@ -21,10 +21,7 @@
  #include <string.h>
  
  extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
@@ -2014,7 +2015,7 @@ index 1ce1e45a684237ea6b30cb85ec1577161f9aa883..ac257c1eac495cd43f9e681ec699b468
  static const uint32_t fullscreen_spirv[] =
  #include "statistics_shaders/fullscreen.vert.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
-index d3506201ea34afd78da0b4c4e922428982fbf50b..4c3142e9efcb7ab5e4ed09bb9405df1c74eae078 100644
+index 5ea638d4f61ac26599c5afe40a333e9f4b043f2b..d4937e09d8fae76d7fa885a28d863abe223a91bf 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
 @@ -14,24 +14,7 @@
@@ -2044,7 +2045,7 @@ index d3506201ea34afd78da0b4c4e922428982fbf50b..4c3142e9efcb7ab5e4ed09bb9405df1c
  enum { HEAP_SIZE = 4096, HEAP_BOTTOM = 16, CANARY = 0xa5a5a5a5 };
  
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
-index 74f4550aa8d23cdff7c39cc3e36adde362e813e0..72c3424705ddfaa9ef9555bff816f1eddddc7871 100644
+index 988640971e99f73afb685759f7e306a1283ef9f6..720fcd3af893bd85e9ba727ecb70b5de15894a65 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 @@ -17,9 +17,7 @@
@@ -4459,6 +4460,36 @@ index f353d01a52a9254428b04c69eda4f0147b4185b3..7e58ab3259930117b869cf8f1ce74721
  
        vkDestroyCommandPool(device, pool, nullptr);
        vkDestroyPipeline(device, pipeline, nullptr);
+diff --git a/src/kosmickrisp/vulkan/tests/test_tess_bound_gpu.c b/src/kosmickrisp/vulkan/tests/test_tess_bound_gpu.c
+index ec0c70d7d21d5a383b0cd1088e3569935dc54d2b..9056289c916f005d3aeffe902fb7c3ce57078754 100644
+--- a/src/kosmickrisp/vulkan/tests/test_tess_bound_gpu.c
++++ b/src/kosmickrisp/vulkan/tests/test_tess_bound_gpu.c
+@@ -20,24 +20,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
+-#define CHECK(condition)                                                       \
+-   do {                                                                        \
+-      if (!(condition)) {                                                      \
+-         fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__,      \
+-                 #condition);                                                  \
+-         abort();                                                              \
+-      }                                                                        \
+-   } while (0)
+-
+-#define VK_CHECK(expr)                                                         \
+-   do {                                                                        \
+-      VkResult result_ = (expr);                                               \
+-      if (result_ != VK_SUCCESS) {                                             \
+-         fprintf(stderr, "%s:%d: %s = %d\n", __FILE__, __LINE__, #expr,        \
+-                 result_);                                                     \
+-         abort();                                                              \
+-      }                                                                        \
+-   } while (0)
++#include "kk_test.h"
+ 
+ enum { PATCHES = 4096, STRIDE_EL = 8 };
+ 
 diff --git a/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp b/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp
 index 64c467737fab0ca914bc6d904fe6583870630e4a..9aa71273ce576399fe88bea5ba44cb9a8eb1913e 100644
 --- a/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp
