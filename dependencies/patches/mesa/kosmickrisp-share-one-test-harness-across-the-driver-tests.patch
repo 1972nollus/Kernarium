@@ -3,14 +3,14 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 05:04:07 +0900
 Subject: [PATCH] kosmickrisp: share one test harness across the driver tests
 
-Every KosmicKrisp test carried its own copy of the same checks.  28 C and
+Every KosmicKrisp test carried its own copy of the same checks.  36 C and
 Objective-C tests defined CHECK in three shapes (two boolean messages and a
-VkResult form), ten of them the same LOAD_I and LOAD_D, 26 C++ tests and
-benchmarks the same require() and load<>(), and the line-planner helper its
-own KK_TEST_CHECK.  tests/kk_test.h now holds one boolean CHECK, one VK_CHECK
-and the C and C++ loaders; the VkResult-form tests and the one CHECK_VK use
-VK_CHECK.  Every check still names its expression and aborts in every build,
-and the C++ require() still exits with status 1.
+VkResult form), eighteen of them the same LOAD_I and LOAD_D, 28 C++ tests
+and benchmarks the same require() and load<>(), and the line-planner helper
+its own KK_TEST_CHECK.  tests/kk_test.h now holds one boolean CHECK, one
+VK_CHECK and the C and C++ loaders; the VkResult-form tests and the one
+CHECK_VK use VK_CHECK.  Every check still names its expression and aborts in
+every build, and the C++ require() still exits with status 1.
 
 The Meson stanzas of the four uniform families - Vulkan-level C++ tests,
 whole-library internal tests, header-only helper tests and NIR-to-MSL
@@ -22,7 +22,7 @@ unchanged.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/kosmickrisp/vulkan/meson.build            | 632 ++++------------
+ src/kosmickrisp/vulkan/meson.build            | 671 ++++-------------
  .../vulkan/tests/bench_blend_path.cpp         |  20 +-
  .../vulkan/tests/bench_vertex_fetch_path.cpp  |  20 +-
  src/kosmickrisp/vulkan/tests/kk_test.h        |  75 ++
@@ -32,23 +32,29 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../tests/point_clip_shaders/points.frag.h    |  20 -
  .../vulkan/tests/test_16bit_varying_io.c      |   9 +-
  .../vulkan/tests/test_3d_array_alias.c        |  44 +-
+ .../tests/test_address_binding_planes.c       |   4 +-
  .../test_alpha_to_coverage_no_attachment.cpp  |  20 +-
  .../vulkan/tests/test_blend_pipeline_key.c    |  54 +-
  .../tests/test_command_allocator_budget.c     |  14 +-
  .../tests/test_command_buffer_consolidation.c |  14 +-
  .../vulkan/tests/test_command_completion.m    |   4 +-
  .../vulkan/tests/test_command_pool_release.m  |   4 +-
+ .../vulkan/tests/test_command_pool_threads.c  |   4 +-
  .../vulkan/tests/test_command_resubmit.c      |   4 +-
  .../tests/test_custom_border_lowering.c       |   9 +-
+ .../vulkan/tests/test_drm_plane_offset.c      |   4 +-
  .../tests/test_dynamic_vertex_input_cache.cpp |  20 +-
  .../tests/test_early_sample_mask_count.cpp    |  20 +-
  .../tests/test_fragment_output_swizzle.c      |   9 +-
+ .../vulkan/tests/test_geometry_draw_size.cpp  |  20 +-
  .../tests/test_geometry_primitive_id_link.cpp |  20 +-
  .../vulkan/tests/test_geometry_setup_gpu.c    |  28 +-
+ .../vulkan/tests/test_heap_size_override.c    |   4 +-
  .../tests/test_helper_invocation_demote.cpp   |  20 +-
  .../tests/test_image_compression_chain.c      |   4 +-
  .../vulkan/tests/test_integer_point_target.c  |  82 +--
  .../vulkan/tests/test_invalid_view_type.c     |  20 +-
+ .../vulkan/tests/test_layered_draw_routes.cpp |  20 +-
  .../tests/test_layered_draw_sequence.cpp      |  20 +-
  .../vulkan/tests/test_line_raster_cache.cpp   |  18 +-
  .../tests/test_linear_input_attachment.m      |  41 +-
@@ -56,17 +62,20 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_maintenance10_resolve.c |  52 +-
  .../vulkan/tests/test_max_varyings.cpp        |  20 +-
  .../vulkan/tests/test_metal_blend.cpp         |  20 +-
+ .../vulkan/tests/test_metal_objects_export.c  |   4 +-
  .../vulkan/tests/test_metal_vertex_fetch.cpp  |  20 +-
  .../vulkan/tests/test_msl_coherent_access.c   |   9 +-
  .../vulkan/tests/test_msl_temporaries.c       |   9 +-
  .../test_multiview_clear_attachments.cpp      |  20 +-
  .../tests/test_non_seamless_cube_lowering.c   |   9 +-
  .../tests/test_offline_device_library.c       |   8 +-
+ .../vulkan/tests/test_owed_signal_bound.c     |   4 +-
  .../tests/test_pipeline_library_link_time.cpp |  20 +-
  .../tests/test_pipeline_statistics_gpu.c      | 110 ++-
  .../vulkan/tests/test_point_clip_volume.cpp   |  22 +-
  .../tests/test_polygon_point_raster.cpp       |  20 +-
  .../test_post_depth_coverage_sample_mask.cpp  |  20 +-
+ .../vulkan/tests/test_query_pool_lifetime.c   |   4 +-
  .../vulkan/tests/test_raster_discard.cpp      |  20 +-
  .../vulkan/tests/test_residency_release.m     |   4 +-
  .../vulkan/tests/test_rgb32_texel_format.c    |   9 +-
@@ -77,22 +86,23 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../test_tes_sampler_dynamic_indexing.cpp     | 682 ------------------
  .../tests/test_tes_sampler_indexing.cpp       |  72 +-
  .../tests/test_tess_passthrough_geometry.cpp  |  20 +-
+ .../vulkan/tests/test_texel_buffer_bounds.c   |   4 +-
  .../vulkan/tests/test_timeline_host_wait.cpp  |  22 +-
  .../tests/test_timeline_pending_wait.cpp      |  22 +-
  .../vulkan/tests/test_timeline_wait_loss.c    |   4 +-
  .../test_transform_feedback_builtins.cpp      |  20 +-
  .../tests/test_unused_attachment_gaps.cpp     |  20 +-
- 60 files changed, 521 insertions(+), 2128 deletions(-)
+ 70 files changed, 544 insertions(+), 2216 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/kk_test.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index c84bb222cf8416443df2c5d5d395dcdf56aefde6..fee00ec3789b95949abd5b805ad6b27b3d9a38f0 100644
+index 8f2abce6f37e904d6aa27ea4c1063ed02de792e1..00f9f0769ed0e307be58185a4e11fa796126c476 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -227,20 +227,42 @@ if with_tests
+@@ -227,20 +227,61 @@ if with_tests
    ]
  
    if host_machine.system() == 'darwin'
@@ -109,7 +119,6 @@ index c84bb222cf8416443df2c5d5d395dcdf56aefde6..fee00ec3789b95949abd5b805ad6b27b
 -      suite : ['kosmickrisp'],
 -      env : ['MESA_SHADER_CACHE_DISABLE=true'],
 -      timeout : 120,
--    )
 +    # Vulkan-level tests: each tests/test_<name>.cpp drives the driver through
 +    # its entry points.
 +    foreach kk_vulkan_test : [
@@ -129,6 +138,7 @@ index c84bb222cf8416443df2c5d5d395dcdf56aefde6..fee00ec3789b95949abd5b805ad6b27b
 +      ['helper_invocation_demote', 120],
 +      ['terminate_full_quads', 120],
 +      ['geometry_primitive_id_link', 120],
++      ['geometry_draw_size', 120],
 +      ['max_varyings', 120],
 +    ]
 +      test(
@@ -146,18 +156,50 @@ index c84bb222cf8416443df2c5d5d395dcdf56aefde6..fee00ec3789b95949abd5b805ad6b27b
 +        timeout : kk_vulkan_test[1],
 +      )
 +    endforeach
++    layered_draw_routes_test = executable(
++      'test_kosmickrisp_layered_draw_routes',
++      files('tests/test_layered_draw_routes.cpp'),
++      include_directories : kk_test_include_directories,
++      dependencies : [idep_vulkan_runtime_headers],
++      link_with : libvulkan_kosmickrisp,
++      override_options : ['cpp_std=c++20'],
+     )
++    foreach route : ['multi_draw', 'geometry']
++      test(
++        'kosmickrisp_layered_draw_' + route,
++        layered_draw_routes_test,
++        args : [route],
++        suite : ['kosmickrisp'],
++        env : ['MESA_SHADER_CACHE_DISABLE=true'],
++        timeout : 120,
++      )
++    endforeach
      test(
        'kosmickrisp_geometry_setup_gpu',
        executable(
-@@ -261,210 +283,37 @@ if with_tests
+@@ -287,242 +328,37 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
-       timeout : 120,
+       timeout : 60,
      )
 -    test(
 -      'kosmickrisp_polygon_point_raster',
 -      executable(
 -        'test_kosmickrisp_polygon_point_raster',
 -        files('tests/test_polygon_point_raster.cpp'),
+-        include_directories : kk_test_include_directories,
+-        dependencies : [idep_vulkan_runtime_headers],
+-        link_with : libvulkan_kosmickrisp,
+-        override_options : ['cpp_std=c++20'],
+-      ),
+-      suite : ['kosmickrisp'],
+-      env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-      timeout : 120,
+-    )
+-    test(
+-      'kosmickrisp_geometry_draw_size',
+-      executable(
+-        'test_kosmickrisp_geometry_draw_size',
+-        files('tests/test_geometry_draw_size.cpp'),
 -        include_directories : kk_test_include_directories,
 -        dependencies : [idep_vulkan_runtime_headers],
 -        link_with : libvulkan_kosmickrisp,
@@ -195,6 +237,50 @@ index c84bb222cf8416443df2c5d5d395dcdf56aefde6..fee00ec3789b95949abd5b805ad6b27b
 -      env : ['MESA_SHADER_CACHE_DISABLE=true'],
 -      timeout : 120,
 -    )
+-    layered_draw_routes_test = executable(
+-      'test_kosmickrisp_layered_draw_routes',
+-      files('tests/test_layered_draw_routes.cpp'),
+-      include_directories : kk_test_include_directories,
+-      dependencies : [idep_vulkan_runtime_headers],
+-      link_with : libvulkan_kosmickrisp,
+-      override_options : ['cpp_std=c++20'],
+-    )
+-    foreach route : ['multi_draw', 'geometry']
++    # Tests that link the driver library whole to reach its internals:
++    # tests/test_<name>.c.
++    foreach kk_internal_test : [
++      ['blend_pipeline_key', 120],
++      ['3d_array_alias', 120],
++      ['invalid_view_type', 120],
++      ['maintenance10_resolve', 120],
++      ['image_compression_chain', 60],
++      ['integer_point_target', 120],
++    ]
+       test(
+-        'kosmickrisp_layered_draw_' + route,
+-        layered_draw_routes_test,
+-        args : [route],
++        'kosmickrisp_' + kk_internal_test[0],
++        executable(
++          'test_kosmickrisp_' + kk_internal_test[0],
++          files('tests/test_' + kk_internal_test[0] + '.c'),
++          include_directories : kk_test_include_directories,
++          dependencies : [
++            idep_nir,
++            idep_vulkan_runtime_headers,
++            idep_vulkan_util_headers,
++            idep_vulkan_wsi_headers,
++            idep_libkk_shaders_h,
++          ],
++          link_whole : libkk,
++          link_args : ['-Wl,-undefined,dynamic_lookup'],
++        ),
+         suite : ['kosmickrisp'],
+         env : ['MESA_SHADER_CACHE_DISABLE=true'],
+-        timeout : 120,
++        timeout : kk_internal_test[1],
+       )
+     endforeach
 -    test(
 -      'kosmickrisp_alpha_to_coverage_no_attachment',
 -      executable(
@@ -357,41 +443,10 @@ index c84bb222cf8416443df2c5d5d395dcdf56aefde6..fee00ec3789b95949abd5b805ad6b27b
 -      env : ['MESA_SHADER_CACHE_DISABLE=true'],
 -      timeout : 120,
 -    )
-+    # Tests that link the driver library whole to reach its internals:
-+    # tests/test_<name>.c.
-+    foreach kk_internal_test : [
-+      ['blend_pipeline_key', 120],
-+      ['3d_array_alias', 120],
-+      ['invalid_view_type', 120],
-+      ['maintenance10_resolve', 120],
-+      ['image_compression_chain', 60],
-+      ['integer_point_target', 120],
-+    ]
-+      test(
-+        'kosmickrisp_' + kk_internal_test[0],
-+        executable(
-+          'test_kosmickrisp_' + kk_internal_test[0],
-+          files('tests/test_' + kk_internal_test[0] + '.c'),
-+          include_directories : kk_test_include_directories,
-+          dependencies : [
-+            idep_nir,
-+            idep_vulkan_runtime_headers,
-+            idep_vulkan_util_headers,
-+            idep_vulkan_wsi_headers,
-+            idep_libkk_shaders_h,
-+          ],
-+          link_whole : libkk,
-+          link_args : ['-Wl,-undefined,dynamic_lookup'],
-+        ),
-+        suite : ['kosmickrisp'],
-+        env : ['MESA_SHADER_CACHE_DISABLE=true'],
-+        timeout : kk_internal_test[1],
-+      )
-+    endforeach
      test(
        'kosmickrisp_raster_discard',
        executable(
-@@ -486,48 +335,24 @@ if with_tests
+@@ -544,48 +380,24 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -457,7 +512,7 @@ index c84bb222cf8416443df2c5d5d395dcdf56aefde6..fee00ec3789b95949abd5b805ad6b27b
      test(
        'kosmickrisp_pipeline_statistics_gpu',
        executable(
-@@ -548,34 +373,6 @@ if with_tests
+@@ -606,34 +418,6 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -492,7 +547,7 @@ index c84bb222cf8416443df2c5d5d395dcdf56aefde6..fee00ec3789b95949abd5b805ad6b27b
      # A benchmark rather than a test: it reports the cost of the two blend
      # paths and is run by hand, once per path, because timing cannot assert.
      executable(
-@@ -595,104 +392,6 @@ if with_tests
+@@ -653,104 +437,6 @@ if with_tests
        link_with : libvulkan_kosmickrisp,
        override_options : ['cpp_std=c++20'],
      )
@@ -597,7 +652,7 @@ index c84bb222cf8416443df2c5d5d395dcdf56aefde6..fee00ec3789b95949abd5b805ad6b27b
      timeline_wait_loss_test = executable(
        'test_kosmickrisp_timeline_wait_loss',
        files('tests/test_timeline_wait_loss.c'),
-@@ -1011,16 +710,25 @@ if with_tests
+@@ -1171,16 +857,25 @@ if with_tests
      )
    endif
  
@@ -633,7 +688,7 @@ index c84bb222cf8416443df2c5d5d395dcdf56aefde6..fee00ec3789b95949abd5b805ad6b27b
  
    test(
      'kosmickrisp_queue_error',
-@@ -1058,49 +766,6 @@ if with_tests
+@@ -1218,49 +913,6 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -683,7 +738,7 @@ index c84bb222cf8416443df2c5d5d395dcdf56aefde6..fee00ec3789b95949abd5b805ad6b27b
    test(
      'kosmickrisp_logic_op',
      executable(
-@@ -1258,75 +923,28 @@ if with_tests
+@@ -1418,75 +1070,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -1324,6 +1379,21 @@ index 4226d843a8fbde36cf267533a54a5df9cefbac82..1341eb4a7246a490a099707a8080d254
  
     bool pass = true;
     pass &= test_levels(&ctx, 1, false);
+diff --git a/src/kosmickrisp/vulkan/tests/test_address_binding_planes.c b/src/kosmickrisp/vulkan/tests/test_address_binding_planes.c
+index 11fa8afe051813bd62fed18c76ba58935a7a20ce..d263ecfe0dc3a820a6b73fbdb6006548e5e33104 100644
+--- a/src/kosmickrisp/vulkan/tests/test_address_binding_planes.c
++++ b/src/kosmickrisp/vulkan/tests/test_address_binding_planes.c
+@@ -13,9 +13,7 @@
+ #include <stdlib.h>
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ #define MAX_REPORTS 16u
+ 
 diff --git a/src/kosmickrisp/vulkan/tests/test_alpha_to_coverage_no_attachment.cpp b/src/kosmickrisp/vulkan/tests/test_alpha_to_coverage_no_attachment.cpp
 index ebdfed33ce4a020438e3da4a795ff64b88fdf6bb..f3bb87370866535d95fafeea669c9779273b7cfb 100644
 --- a/src/kosmickrisp/vulkan/tests/test_alpha_to_coverage_no_attachment.cpp
@@ -1594,6 +1664,21 @@ index a5576a617d74a53ee9b142a8b01e585033bd89c4..6c20077f28f8f9ecb55ad1a5d0ef2132
  
  struct test_allocation {
     void *base;
+diff --git a/src/kosmickrisp/vulkan/tests/test_command_pool_threads.c b/src/kosmickrisp/vulkan/tests/test_command_pool_threads.c
+index 33757bc2b999d1542f01c3f5607fe82d2580a14a..c45d25676c4b3491a246b5c149cf78b504c1fdde 100644
+--- a/src/kosmickrisp/vulkan/tests/test_command_pool_threads.c
++++ b/src/kosmickrisp/vulkan/tests/test_command_pool_threads.c
+@@ -19,9 +19,7 @@
+ #include <unistd.h>
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ /* Each update takes half an upload BO, so one recording cycles eight. */
+ #define UPDATES     16
 diff --git a/src/kosmickrisp/vulkan/tests/test_command_resubmit.c b/src/kosmickrisp/vulkan/tests/test_command_resubmit.c
 index f2bbea124a5b431e1d72d95640eabb0f1386ef69..2995588bd64005ccdc77b9bf6b8cf22d9863eea4 100644
 --- a/src/kosmickrisp/vulkan/tests/test_command_resubmit.c
@@ -1629,6 +1714,21 @@ index f657858d271b3d133f732d71586a4fa0c7b2032c..a2dd0e3f5bfe33e7902c1a196e15e750
  
  struct lowering_stats {
     unsigned samples;
+diff --git a/src/kosmickrisp/vulkan/tests/test_drm_plane_offset.c b/src/kosmickrisp/vulkan/tests/test_drm_plane_offset.c
+index b3353c15f4c59270f21d7216d95ac90d58161d05..11f416d7fb3c109ceea6a471fd22a19e9685389c 100644
+--- a/src/kosmickrisp/vulkan/tests/test_drm_plane_offset.c
++++ b/src/kosmickrisp/vulkan/tests/test_drm_plane_offset.c
+@@ -17,9 +17,7 @@
+ #include "drm-uapi/drm_fourcc.h"
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ int
+ main(void)
 diff --git a/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp b/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp
 index 65706eb0008d3ae0755a925ff0ddbdc1ef9f3c3e..09b7c01231607a7c94828870d5ab5a8f00d39faf 100644
 --- a/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp
@@ -1718,6 +1818,37 @@ index 2cff37893083732e7505da0d39551150b16f2492..67328e5be3cedced902e2006b8bd8732
  
  static nir_shader *
  build_fragment_store(unsigned components)
+diff --git a/src/kosmickrisp/vulkan/tests/test_geometry_draw_size.cpp b/src/kosmickrisp/vulkan/tests/test_geometry_draw_size.cpp
+index 3369fcf62e9e12eaa307f030c4eb68342cd9d8f3..085c25bf9ebad6dcb9f67f3de8c14af15ad155b1 100644
+--- a/src/kosmickrisp/vulkan/tests/test_geometry_draw_size.cpp
++++ b/src/kosmickrisp/vulkan/tests/test_geometry_draw_size.cpp
+@@ -21,25 +21,7 @@
+ 
+ extern "C" PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+ 
+-static void require(bool ok, const char *operation, VkResult value = VK_SUCCESS)
+-{
+-   if (!ok) {
+-      std::fprintf(stderr, "%s: %d\n", operation, value);
+-      std::exit(1);
+-   }
+-}
+-
+-template <typename T> static T load(VkInstance instance, const char *name)
+-{
+-   auto function = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
+-   require(function != nullptr, name);
+-   return function;
+-}
+-
+-#define LOAD_I(name) auto name = load<PFN_##name>(instance, #name)
+-#define LOAD_D(name)                                                             \
+-   auto name = reinterpret_cast<PFN_##name>(vkGetDeviceProcAddr(device, #name)); \
+-   require(name != nullptr, #name)
++#include "kk_test.h"
+ 
+ static const uint32_t vertex_spirv[] =
+ #include "geometry_draw_size_shaders/points.vert.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_geometry_primitive_id_link.cpp b/src/kosmickrisp/vulkan/tests/test_geometry_primitive_id_link.cpp
 index 031f97d4361d2691a506927ca820136172ebb45f..5c7fc15fd326a92f42af933a12c273cf39c764cc 100644
 --- a/src/kosmickrisp/vulkan/tests/test_geometry_primitive_id_link.cpp
@@ -1847,6 +1978,21 @@ index 305053fb641d13373146d19fdd38ad8f923bb97a..ba0683573f2371b26507633c2d0643c4
        check_setup(device, queue, command, &cases[i]);
     }
     api->DestroyCommandPool(device, commands, NULL);
+diff --git a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
+index b4e9eba04e54889b0fc360acd4dfab93aec645d4..a495f325b639cff5ed12ccf549976a6309e59593 100644
+--- a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
++++ b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
+@@ -17,9 +17,7 @@
+ #include <string.h>
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ static const uint32_t vertex_spirv[] =
+ #include "statistics_shaders/fullscreen.vert.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_helper_invocation_demote.cpp b/src/kosmickrisp/vulkan/tests/test_helper_invocation_demote.cpp
 index 7fc179112c317a8f3f9ca9c89d7c29a35b2db0e9..a9d0f7f3f3829f729ddb762d93f7ec76b82d4e4e 100644
 --- a/src/kosmickrisp/vulkan/tests/test_helper_invocation_demote.cpp
@@ -2179,6 +2325,37 @@ index 1ee7cd7489c9f5b460bb57ae6a4faaac96ff6545..19c002e2211c0e7e33eb963e9458a01e
     PFN_vkGetPhysicalDeviceMemoryProperties get_memory =
        (PFN_vkGetPhysicalDeviceMemoryProperties)kk_GetInstanceProcAddr(
           instance, "vkGetPhysicalDeviceMemoryProperties");
+diff --git a/src/kosmickrisp/vulkan/tests/test_layered_draw_routes.cpp b/src/kosmickrisp/vulkan/tests/test_layered_draw_routes.cpp
+index 9ff35085d14d6115368734d3c6d98fa9d806f60e..8ffc0f27f0016086bc1af4af6f5df59bd7c4d0e6 100644
+--- a/src/kosmickrisp/vulkan/tests/test_layered_draw_routes.cpp
++++ b/src/kosmickrisp/vulkan/tests/test_layered_draw_routes.cpp
+@@ -27,25 +27,7 @@
+ 
+ extern "C" PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+ 
+-static void require(bool ok, const char *operation, VkResult value = VK_SUCCESS)
+-{
+-   if (!ok) {
+-      std::fprintf(stderr, "%s: %d\n", operation, value);
+-      std::exit(1);
+-   }
+-}
+-
+-template <typename T> static T load(VkInstance instance, const char *name)
+-{
+-   auto function = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
+-   require(function != nullptr, name);
+-   return function;
+-}
+-
+-#define LOAD_I(name) auto name = load<PFN_##name>(instance, #name)
+-#define LOAD_D(name)                                                             \
+-   auto name = reinterpret_cast<PFN_##name>(vkGetDeviceProcAddr(device, #name)); \
+-   require(name != nullptr, #name)
++#include "kk_test.h"
+ 
+ static const uint32_t draw_id_vertex_spirv[] =
+ #include "layered_draw_shaders/draw_id.vert.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp b/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
 index 49abc983536d7bff19b40e827768e37e649d7445..9cb94899dc6b8769081decb6e9ee5325278491d6 100644
 --- a/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
@@ -2611,6 +2788,21 @@ index 3fc30861cda5cccaab3e9f331005b5f79fc68625..4c10d2660c0d7fd7210b8499c017a4a8
  
  static const uint32_t vertex_spirv[] =
  #include "metal_blend_shaders/blend.vert.h"
+diff --git a/src/kosmickrisp/vulkan/tests/test_metal_objects_export.c b/src/kosmickrisp/vulkan/tests/test_metal_objects_export.c
+index 35dddcf57203b0ad8274d09ed71ae3254f798f76..20222f297b3459105cefbd964419fcb7ad366956 100644
+--- a/src/kosmickrisp/vulkan/tests/test_metal_objects_export.c
++++ b/src/kosmickrisp/vulkan/tests/test_metal_objects_export.c
+@@ -14,9 +14,7 @@
+ #include <stdlib.h>
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ /* What a caller left in every output before the export. */
+ #define LEFT_OVER ((void *)(uintptr_t)0x5a5a5a5a5a50)
 diff --git a/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp b/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp
 index 869c35a09057cd3196e9d6f61b5d9c1fc2e91af9..04d1339f768c40247400977b793860cc9a3d8e90 100644
 --- a/src/kosmickrisp/vulkan/tests/test_metal_vertex_fetch.cpp
@@ -2752,6 +2944,21 @@ index c38c625e376b5df167b1763f5fa340c7fd2dc41f..b5b81d9c1b043d0329550cc59bab1d88
  
  static double
  now_ms(void)
+diff --git a/src/kosmickrisp/vulkan/tests/test_owed_signal_bound.c b/src/kosmickrisp/vulkan/tests/test_owed_signal_bound.c
+index f84ec379cc28bce08e1d250428757959cb480d76..85bb2683cd48eaad20bdb8cd899a9cf213d01b16 100644
+--- a/src/kosmickrisp/vulkan/tests/test_owed_signal_bound.c
++++ b/src/kosmickrisp/vulkan/tests/test_owed_signal_bound.c
+@@ -15,9 +15,7 @@
+ #include <stdlib.h>
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ #define SIGNALS 1000u
+ 
 diff --git a/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp b/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
 index aff0c55f3e6f4030bf859ba4fd00b35e6b3d50de..80a533471bd26a9ded9ef10ee84c561bae18ddc7 100644
 --- a/src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
@@ -3200,6 +3407,21 @@ index 1fa73dfeb097b40fee9c207801ff11e5efc995f7..005faf903309d2d92bd26e049071a186
  
  static const uint32_t vertex_spirv[] =
  #include "post_depth_coverage_shaders/pdc.vert.h"
+diff --git a/src/kosmickrisp/vulkan/tests/test_query_pool_lifetime.c b/src/kosmickrisp/vulkan/tests/test_query_pool_lifetime.c
+index a9bcbd944cc487f8f5fa32a8567119ff796fffd5..e27808a754f93f47d21015fb31b14a3ab7cd2834 100644
+--- a/src/kosmickrisp/vulkan/tests/test_query_pool_lifetime.c
++++ b/src/kosmickrisp/vulkan/tests/test_query_pool_lifetime.c
+@@ -15,9 +15,7 @@
+ #include <stdlib.h>
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ int
+ main(void)
 diff --git a/src/kosmickrisp/vulkan/tests/test_raster_discard.cpp b/src/kosmickrisp/vulkan/tests/test_raster_discard.cpp
 index b48923070b625aa6a378b03b6267abdcfe6f3ca9..7acd3da5eb9b4f1e88663fddb8b3b62ebf4083f3 100644
 --- a/src/kosmickrisp/vulkan/tests/test_raster_discard.cpp
@@ -4203,6 +4425,21 @@ index d7de8f71429df79685386b49762e196236b046bd..3bc621cee4fdc3ddd2c941d3b5491b24
  
  static const uint32_t vertex_spirv[] =
  #include "tess_passthrough_shaders/passthrough.vert.h"
+diff --git a/src/kosmickrisp/vulkan/tests/test_texel_buffer_bounds.c b/src/kosmickrisp/vulkan/tests/test_texel_buffer_bounds.c
+index d72b609cb40e747de87163e708bd5baa32b84e03..2a2cab01036880ee94208cf552cb195428232f4d 100644
+--- a/src/kosmickrisp/vulkan/tests/test_texel_buffer_bounds.c
++++ b/src/kosmickrisp/vulkan/tests/test_texel_buffer_bounds.c
+@@ -17,9 +17,7 @@
+ #include <string.h>
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ static const uint32_t bounds_comp[] =
+ #include "texel_buffer_bounds_shaders/bounds.comp.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp b/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
 index 9c52792a4dd8f4647dbf83c3ebb46dacab84d21d..c47abacd3407ac933da58cad4dbbe14f66473056 100644
 --- a/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp

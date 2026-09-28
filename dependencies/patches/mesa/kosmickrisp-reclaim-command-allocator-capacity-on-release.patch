@@ -15,10 +15,10 @@ Add native coverage for release, reset, recycling and trim, with real GPU fill r
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_pool_release.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index d16ad5e9c03d980228f2ee737a85d0e8435fae44..668bbcaba279b59826318b3d0e06d0999d83af13 100644
+index 6d407cee3ecb011f1ab2f9cd731a8a4437e6336a..2d0b1431599db6b30a99aabcf3bb2ef3484ff662 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -176,7 +176,8 @@ alloc_fail:
+@@ -191,7 +191,8 @@ alloc_fail:
  static void
  kk_reset_encoder_state(struct kk_encoder_state *es)
  {
@@ -28,7 +28,7 @@ index d16ad5e9c03d980228f2ee737a85d0e8435fae44..668bbcaba279b59826318b3d0e06d099
  }
  
  void
-@@ -203,13 +204,23 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -218,13 +219,23 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
  
  static void
  kk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
@@ -53,7 +53,7 @@ index d16ad5e9c03d980228f2ee737a85d0e8435fae44..668bbcaba279b59826318b3d0e06d099
     cmd->submitted = false;
     cmd->one_time_submit = false;
  }
-@@ -220,6 +231,17 @@ const struct vk_command_buffer_ops kk_cmd_buffer_ops = {
+@@ -235,6 +246,17 @@ const struct vk_command_buffer_ops kk_cmd_buffer_ops = {
     .destroy = kk_destroy_cmd_buffer,
  };
  
@@ -71,7 +71,7 @@ index d16ad5e9c03d980228f2ee737a85d0e8435fae44..668bbcaba279b59826318b3d0e06d099
  VKAPI_ATTR VkResult VKAPI_CALL
  kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                        const VkCommandBufferBeginInfo *pBeginInfo)
-@@ -227,6 +249,18 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+@@ -242,6 +264,18 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
     VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
  
     kk_reset_cmd_buffer(&cmd->vk, 0u);
@@ -152,10 +152,10 @@ index 9962c952d9612ba18f409cf16e87ed97bf6990f3..e505acdf6e537df2696af29175c11948
  kk_TrimCommandPool(VkDevice device, VkCommandPool commandPool,
                     VkCommandPoolTrimFlags flags)
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 9f8ce7d0a6478e342135754848fb3a16803e87bd..233b837623f314ee928f23c9e2a0d115eb6f42ff 100644
+index 74e197db09c0146de0ffb40d72e65060e76bc1ac..d636b50f1c34b41d4cfe073d974bb79b80ebb525 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -507,6 +507,28 @@ if with_tests
+@@ -547,6 +547,28 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

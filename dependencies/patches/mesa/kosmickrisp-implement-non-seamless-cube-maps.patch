@@ -135,7 +135,7 @@ index e9927f93d22154d59bcd752edbd97c93739e641e..3c4447d2d953a23a81ed43a7d1017937
        uint64_t input_gpu_resource_id;
     } planes[3];
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 648adc8c36364ba3ff32d5c37382b1902c18b5a8..918d3ef08f0f945d3d05714aa856abf51b168287 100644
+index f1f7f63a6a403c1dd84fa546252f0de7fbe89415..b6a69512d544c0e52ecf00eb0f03496d85dbcf27 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -10,6 +10,7 @@
@@ -235,7 +235,7 @@ index 648adc8c36364ba3ff32d5c37382b1902c18b5a8..918d3ef08f0f945d3d05714aa856abf5
  static nir_def *
  load_resource_addr(nir_builder *b, unsigned num_components, unsigned bit_size,
                     nir_deref_instr *deref, unsigned offset_B,
-@@ -524,6 +598,11 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -548,6 +622,11 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
  
     nir_deref_instr *texture_deref =
        nir_src_as_deref(nir_src_for_ssa(texture));
@@ -247,7 +247,7 @@ index 648adc8c36364ba3ff32d5c37382b1902c18b5a8..918d3ef08f0f945d3d05714aa856abf5
     if (tex->sampler_dim == GLSL_SAMPLER_DIM_BUF) {
        assert(plane == 0);
        if (tex->op == nir_texop_txs) {
-@@ -665,8 +744,13 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -690,8 +769,13 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
     }
  
     {
@@ -263,7 +263,7 @@ index 648adc8c36364ba3ff32d5c37382b1902c18b5a8..918d3ef08f0f945d3d05714aa856abf5
  
        nir_def *resource_addr = load_resource_addr(
           b, 1, 64, nir_src_as_deref(nir_src_for_ssa(texture)),
-@@ -674,15 +758,52 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -699,15 +783,52 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
  
        nir_def *handle = NULL;
        if (tex->is_shadow) {
@@ -320,7 +320,7 @@ index 648adc8c36364ba3ff32d5c37382b1902c18b5a8..918d3ef08f0f945d3d05714aa856abf5
     }
  
     if (sampler != NULL) {
-@@ -901,7 +1022,8 @@ bool
+@@ -926,7 +1047,8 @@ bool
  kk_nir_lower_descriptors(nir_shader *nir,
                           const struct vk_pipeline_robustness_state *rs,
                           uint32_t set_layout_count,
@@ -330,7 +330,7 @@ index 648adc8c36364ba3ff32d5c37382b1902c18b5a8..918d3ef08f0f945d3d05714aa856abf5
  {
     struct lower_descriptors_ctx ctx = {
        .clamp_desc_array_bounds =
-@@ -912,6 +1034,7 @@ kk_nir_lower_descriptors(nir_shader *nir,
+@@ -937,6 +1059,7 @@ kk_nir_lower_descriptors(nir_shader *nir,
           rs->images != VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_DISABLED,
        .ssbo_addr_format = kk_buffer_addr_format(rs->storage_buffers),
        .ubo_addr_format = kk_buffer_addr_format(rs->uniform_buffers),
@@ -737,10 +737,10 @@ index 67d45395434530d7b1f835fa75a079edb1588883..c3db6c67894eced6b1ac299b77006f39
  /* Loads from the root descriptor table the way the descriptor lowering does,
   * for the other passes that read it. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index cfd82532b641b9944163bb9ee82b03c2ee38f1c9..122a0f6bfe6908ee0613e61a0cb7cfa4080aa891 100644
+index e0aa4cd8bad2045135b6e88e25b62294c90a2e22..41263c24aacc40a8a0848260ca4785663fecf8db 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -258,4 +258,26 @@ if with_tests
+@@ -284,4 +284,26 @@ if with_tests
      ),
      suite : ['kosmickrisp'],
    )

@@ -124,7 +124,7 @@ index 56887401c5b59391742c087b21e8020cef818d7c..9939aa22956988ab0b1ebf570cafb4c3
  
  #endif /* KK_QUERY_H */
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 7a81fee4c623710686a0afb16ce0b8ff37f1c59e..7c5630495be20864352fab36d9f8c9d698fe9c0d 100644
+index 080f7a7d52d66e797242dce305ba02fd9c0ca4c5..be7dec266fb5c5dea43c6dd374f3e2751498e388 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -81,6 +81,12 @@ struct kk_per_draw_data {
@@ -619,7 +619,7 @@ index 298b0aa81a8a2de3c471c9ecf6a73895d2f1cc56..2983889811045e5e3315ef219f33f575
  
        /* VK_KHR_vertex_attribute_divisor */
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index de0ea8742a53298428be8f17ed716f27d73f3090..fa93d36a3a0dffd775b993507cdf91e4b3350e4c 100644
+index c5988777b6f32a9b6be45e391b733386bd613397..19710b5353d2dee4d28fd94806ec90db12e30624 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
 @@ -36,6 +36,9 @@ kk_reports_per_query(struct kk_query_pool *pool)
@@ -665,7 +665,7 @@ index de0ea8742a53298428be8f17ed716f27d73f3090..fa93d36a3a0dffd775b993507cdf91e4
  }
  
  static void
-@@ -407,28 +418,58 @@ kk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
+@@ -410,28 +421,58 @@ kk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
     }
  }
  
@@ -736,7 +736,7 @@ index de0ea8742a53298428be8f17ed716f27d73f3090..fa93d36a3a0dffd775b993507cdf91e4
  
     /* Make the query available. The Vulkan spec states:
      * If queries are used while executing a render pass instance that has
-@@ -441,12 +482,23 @@ kk_CmdEndQuery(VkCommandBuffer commandBuffer, VkQueryPool queryPool,
+@@ -444,12 +485,23 @@ kk_CmdEndQuery(VkCommandBuffer commandBuffer, VkQueryPool queryPool,
      * Queries used with multiview rendering must not span subpasses, i.e.
      * they must begin and end in the same subpass.
      */

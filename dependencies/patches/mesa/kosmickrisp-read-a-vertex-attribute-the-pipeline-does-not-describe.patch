@@ -140,7 +140,7 @@ index 7cb1ed3d6b09257d160faf1dc5949eef4c358415..ee5af3521b809c3823b7040f5fcf75fa
  
  unsigned kk_vbo_interchange_alignment(enum pipe_format format);
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index afce3bf3e5fd1cf3a6fa048f34a98b279af46af5..93f79cd1fa43f72f0ee2fc62dbe8dfa77e2f91e5 100644
+index db1788793555d5fd4028ebb1b1e23d01b7567098..b1885fd178995f7796b09a460fc3c069f702dffb 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -1657,6 +1657,18 @@ kk_compile_shader_as(struct kk_device *dev, nir_shader *nir,
@@ -163,10 +163,10 @@ index afce3bf3e5fd1cf3a6fa048f34a98b279af46af5..93f79cd1fa43f72f0ee2fc62dbe8dfa7
         * inputs since we read vertex attributes from UBOs. */
        if (!emulated_vs &&
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e9857ff902b86558edafdaa3a80f67313df87dc0..c0cc46a02ad8cb50169bf7a4e0e17da8c1d5095f 100644
+index cc2dc3c7f8a9a887648f852bcc856e3c45888d18..d24b884786d902dc0ac2e4359be9908f3ad5aa9e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1039,6 +1039,26 @@ if with_tests
+@@ -1133,6 +1133,26 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

@@ -13,24 +13,123 @@ The queue publishes that value just before it enqueues the signal, not after. Ev
 In a threaded queue a binary payload moves when the worker reaches the wait, not inside vkQueueSubmit. The signal that payload waits for may still be queued ahead of the wait, and the worker unwraps it against whatever payload the semaphore holds when it runs, so a move made at once handed that signal the fresh payload and left the wait on a point nothing signals until Metal abandoned the native wait seconds later.
 
 Keep absolute CPU wait deadlines while observing device loss, wake queue drains when submission fails, and allow lost-device cleanup of pending submissions. Cover delayed host signals, mixed binary waits with every signalled stage bounded to a second, loss during waits and drain, a binary wait queued behind a host-gated batch, and submission that outruns a long GPU dependency.
+
+Once the worker runs, a resubmitted command buffer is recorded again on it, while the application may be recording another buffer from the same command pool: Vulkan asks it to synchronize the pool only against its own recording, and vkQueueSubmit is not one of those commands. Both recordings take upload BOs from the pool's free list and give them back, so the list and its count are now guarded by a pool mutex. kosmickrisp_command_pool_threads records from one pool on both threads with the worker forced on; without the mutex the list lost its count or crashed within a run.
 ---
+ src/kosmickrisp/vulkan/kk_cmd_pool.c          |  10 +-
+ src/kosmickrisp/vulkan/kk_cmd_pool.h          |   9 +
  src/kosmickrisp/vulkan/kk_device.c            |  18 +-
  src/kosmickrisp/vulkan/kk_physical_device.c   |   2 +
  src/kosmickrisp/vulkan/kk_queue.c             |  12 +-
  src/kosmickrisp/vulkan/kk_sync.c              | 203 +++++++++-
  src/kosmickrisp/vulkan/kk_sync.h              |  20 +
- src/kosmickrisp/vulkan/meson.build            |  75 ++++
+ src/kosmickrisp/vulkan/meson.build            |  98 +++++
+ .../vulkan/tests/test_command_pool_threads.c  | 207 ++++++++++
  .../vulkan/tests/test_timeline_host_wait.cpp  | 364 +++++++++++++++++
  .../tests/test_timeline_pending_wait.cpp      | 372 ++++++++++++++++++
  .../vulkan/tests/test_timeline_wait_loss.c    | 182 +++++++++
  src/vulkan/runtime/vk_queue.c                 |  25 +-
- 10 files changed, 1240 insertions(+), 33 deletions(-)
+ 13 files changed, 1488 insertions(+), 34 deletions(-)
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_command_pool_threads.c
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_pending_wait.cpp
  create mode 100644 src/kosmickrisp/vulkan/tests/test_timeline_wait_loss.c
 
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_pool.c b/src/kosmickrisp/vulkan/kk_cmd_pool.c
+index e505acdf6e537df2696af29175c119482401bbfe..eba1f8d6aa08ad965775fef2332f0ed45f4d23bb 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_pool.c
++++ b/src/kosmickrisp/vulkan/kk_cmd_pool.c
+@@ -45,24 +45,28 @@ kk_cmd_bo_destroy(struct kk_cmd_pool *pool, struct kk_cmd_bo *bo)
+ static void
+ kk_cmd_pool_destroy_bos(struct kk_cmd_pool *pool)
+ {
++   simple_mtx_lock(&pool->bo_mutex);
+    list_for_each_entry_safe(struct kk_cmd_bo, bo, &pool->free_bos, link)
+       kk_cmd_bo_destroy(pool, bo);
+ 
+    list_inithead(&pool->free_bos);
+    pool->num_free_bos = 0;
++   simple_mtx_unlock(&pool->bo_mutex);
+ }
+ 
+ VkResult
+ kk_cmd_pool_alloc_bo(struct kk_cmd_pool *pool, struct kk_cmd_bo **bo_out)
+ {
+    struct kk_cmd_bo *bo = NULL;
++   simple_mtx_lock(&pool->bo_mutex);
+    if (!list_is_empty(&pool->free_bos)) {
+       bo = list_first_entry(&pool->free_bos, struct kk_cmd_bo, link);
+       pool->num_free_bos--;
++      list_del(&bo->link);
+    }
++   simple_mtx_unlock(&pool->bo_mutex);
+ 
+    if (bo) {
+-      list_del(&bo->link);
+       *bo_out = bo;
+       return VK_SUCCESS;
+    }
+@@ -73,6 +77,7 @@ kk_cmd_pool_alloc_bo(struct kk_cmd_pool *pool, struct kk_cmd_bo **bo_out)
+ void
+ kk_cmd_pool_free_bo_list(struct kk_cmd_pool *pool, struct list_head *bos)
+ {
++   simple_mtx_lock(&pool->bo_mutex);
+    list_for_each_entry_safe(struct kk_cmd_bo, bo, bos, link) {
+       list_del(&bo->link);
+       if (pool->num_free_bos >= KK_CMD_POOL_BO_MAX) {
+@@ -82,6 +87,7 @@ kk_cmd_pool_free_bo_list(struct kk_cmd_pool *pool, struct list_head *bos)
+          pool->num_free_bos++;
+       }
+    }
++   simple_mtx_unlock(&pool->bo_mutex);
+ }
+ 
+ VKAPI_ATTR VkResult VKAPI_CALL
+@@ -105,6 +111,7 @@ kk_CreateCommandPool(VkDevice _device,
+       return result;
+    }
+ 
++   simple_mtx_init(&pool->bo_mutex, mtx_plain);
+    list_inithead(&pool->free_bos);
+    pool->num_free_bos = 0;
+ 
+@@ -125,6 +132,7 @@ kk_DestroyCommandPool(VkDevice _device, VkCommandPool commandPool,
+ 
+    vk_command_pool_finish(&pool->vk);
+    kk_cmd_pool_destroy_bos(pool);
++   simple_mtx_destroy(&pool->bo_mutex);
+    vk_free2(&device->vk.alloc, pAllocator, pool);
+ }
+ 
+diff --git a/src/kosmickrisp/vulkan/kk_cmd_pool.h b/src/kosmickrisp/vulkan/kk_cmd_pool.h
+index e24e5a24693354b5dac6770ccf2e2aa91f1b26e8..46542b5f80a0d4490eb8c5f406d0f06636e68e5b 100644
+--- a/src/kosmickrisp/vulkan/kk_cmd_pool.h
++++ b/src/kosmickrisp/vulkan/kk_cmd_pool.h
+@@ -12,6 +12,8 @@
+ 
+ #include "vk_command_pool.h"
+ 
++#include "util/simple_mtx.h"
++
+ #define KK_CMD_BO_SIZE     (1024 * 128)
+ #define KK_CMD_POOL_BO_MAX 32
+ 
+@@ -26,6 +28,13 @@ struct kk_cmd_bo {
+ struct kk_cmd_pool {
+    struct vk_command_pool vk;
+ 
++   /* Guards free_bos and num_free_bos. The application synchronizes a pool
++    * only against its own recording, but a resubmitted command buffer is
++    * recorded again on the queue's submit thread, which takes and returns
++    * upload BOs while the application records another buffer from the pool.
++    */
++   simple_mtx_t bo_mutex;
++
+    /** List of kk_cmd_bo */
+    struct list_head free_bos;
+    uint32_t num_free_bos;
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 175b4edc72bcda3381c7ff20bb6eb0d6de5b66d3..64d690c9942e8821acb159b9addb84dc84a89cc4 100644
+index 2624f423ab94c68003c1523716539c1a3a958e79..9fc9b511a30ed945122bb8c598ffe791db3071c7 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -366,6 +366,13 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
@@ -47,7 +146,7 @@ index 175b4edc72bcda3381c7ff20bb6eb0d6de5b66d3..64d690c9942e8821acb159b9addb84dc
     dev->vk.shader_ops = &kk_device_shader_ops;
     dev->mtl_handle = pdev->mtl_dev_handle;
     dev->vk.command_buffer_ops = &kk_cmd_buffer_ops;
-@@ -467,6 +474,12 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
+@@ -473,6 +480,12 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
        mtl_stop_gpu_capture();
     }
  
@@ -60,7 +159,7 @@ index 175b4edc72bcda3381c7ff20bb6eb0d6de5b66d3..64d690c9942e8821acb159b9addb84dc
     /* Meta first since it may destroy Vulkan objects */
     kk_device_finish_meta(dev);
     kk_device_finish_lib(dev);
-@@ -477,11 +490,6 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
+@@ -483,11 +496,6 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
     if (dev->heap)
        kk_destroy_bo(dev, dev->heap);
  
@@ -400,10 +499,10 @@ index da4f149918dfa99b63618adc67ba3bf7be786d92..ec5b69b396ba441e0df0228e1ee7ea84
 +
  #endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index d7d479a6a34de65e0ec2231d576f8fb35d7a52fd..d04882b05615b5b2eec9f8f32ae8ef9705e4c6ba 100644
+index be41fc5ac0eaa92ba48193cbbbb9a8a656565762..ad13d5d00633cf8f43a31413b8c58cf6060cfd8b 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -507,6 +507,81 @@ if with_tests
+@@ -547,6 +547,104 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -482,9 +581,245 @@ index d7d479a6a34de65e0ec2231d576f8fb35d7a52fd..d04882b05615b5b2eec9f8f32ae8ef97
 +        timeout : 60,
 +      )
 +    endforeach
++    test(
++      'kosmickrisp_command_pool_threads',
++      executable(
++        'test_kosmickrisp_command_pool_threads',
++        files('tests/test_command_pool_threads.c'),
++        include_directories : kk_test_include_directories,
++        dependencies : [
++          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
++          idep_vulkan_runtime_headers,
++          idep_vulkan_util_headers,
++          idep_vulkan_wsi_headers,
++          idep_libkk_shaders_h,
++        ],
++        link_whole : libkk,
++        link_args : ['-Wl,-undefined,dynamic_lookup'],
++      ),
++      suite : ['kosmickrisp'],
++      env : [
++        'MESA_SHADER_CACHE_DISABLE=true',
++        'MESA_VK_ENABLE_SUBMIT_THREAD=true',
++      ],
++      timeout : 90,
++    )
      test(
        'kosmickrisp_command_completion',
        executable(
+diff --git a/src/kosmickrisp/vulkan/tests/test_command_pool_threads.c b/src/kosmickrisp/vulkan/tests/test_command_pool_threads.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..33757bc2b999d1542f01c3f5607fe82d2580a14a
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_command_pool_threads.c
+@@ -0,0 +1,207 @@
++/* SPDX-License-Identifier: MIT */
++
++/* Metal cannot run one recording twice, so a resubmitted command buffer is
++ * recorded again inside the queue's submission, and once the queue has a
++ * submit thread that happens on the thread.  The application synchronizes a
++ * command pool only against its own recording, so it may go on recording
++ * another buffer from the same pool while that thread re-records: both take
++ * upload BOs from the pool and give them back.  Meson runs this with the
++ * submit thread forced on, so every submission re-records there. */
++
++#define VK_NO_PROTOTYPES
++#include "kk_cmd_pool.h"
++
++#include "util/list.h"
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++
++extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
++#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
++#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
++#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++
++/* Each update takes half an upload BO, so one recording cycles eight. */
++#define UPDATES     16
++#define UPDATE_SIZE 65536
++#define ROUNDS      400
++
++static void
++record(PFN_vkBeginCommandBuffer begin, PFN_vkEndCommandBuffer end,
++       PFN_vkCmdUpdateBuffer update, VkCommandBuffer command, VkBuffer buffer,
++       const void *data, VkCommandBufferUsageFlags flags)
++{
++   VkCommandBufferBeginInfo info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
++      .flags = flags,
++   };
++   CHECK(begin(command, &info) == VK_SUCCESS);
++   for (unsigned i = 0; i < UPDATES; i++)
++      update(command, buffer, (VkDeviceSize)i * UPDATE_SIZE, UPDATE_SIZE, data);
++   CHECK(end(command) == VK_SUCCESS);
++}
++
++int
++main(void)
++{
++   /* A corrupted free list can send the pool round a cycle forever. */
++   alarm(60);
++   VkInstance instance = VK_NULL_HANDLE;
++   LOAD_I(vkCreateInstance);
++   VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
++                            .apiVersion = VK_API_VERSION_1_3};
++   VkInstanceCreateInfo instance_info = {
++      .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
++      .pApplicationInfo = &app,
++   };
++   CHECK(vkCreateInstance(&instance_info, NULL, &instance) == VK_SUCCESS);
++   LOAD_I(vkDestroyInstance);
++   LOAD_I(vkEnumeratePhysicalDevices);
++   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
++   LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
++   LOAD_I(vkCreateDevice);
++   LOAD_I(vkGetDeviceProcAddr);
++   uint32_t count = 1;
++   VkPhysicalDevice physical = VK_NULL_HANDLE;
++   VkResult enumerated =
++      vkEnumeratePhysicalDevices(instance, &count, &physical);
++   CHECK((enumerated == VK_SUCCESS || enumerated == VK_INCOMPLETE) && count);
++   uint32_t family_count = 0;
++   vkGetPhysicalDeviceQueueFamilyProperties(physical, &family_count, NULL);
++   VkQueueFamilyProperties *families = calloc(family_count, sizeof(*families));
++   CHECK(families);
++   vkGetPhysicalDeviceQueueFamilyProperties(physical, &family_count, families);
++   uint32_t family = 0;
++   while (family < family_count &&
++          !(families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT))
++      family++;
++   CHECK(family < family_count);
++   free(families);
++   float priority = 1.0f;
++   VkDeviceQueueCreateInfo queue_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
++      .queueFamilyIndex = family,
++      .queueCount = 1,
++      .pQueuePriorities = &priority,
++   };
++   VkDeviceCreateInfo device_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
++      .queueCreateInfoCount = 1,
++      .pQueueCreateInfos = &queue_info,
++   };
++   VkDevice device = VK_NULL_HANDLE;
++   CHECK(vkCreateDevice(physical, &device_info, NULL, &device) == VK_SUCCESS);
++   LOAD_D(vkDestroyDevice);
++   LOAD_D(vkGetDeviceQueue);
++   LOAD_D(vkCreateBuffer);
++   LOAD_D(vkDestroyBuffer);
++   LOAD_D(vkGetBufferMemoryRequirements);
++   LOAD_D(vkAllocateMemory);
++   LOAD_D(vkFreeMemory);
++   LOAD_D(vkBindBufferMemory);
++   LOAD_D(vkCreateCommandPool);
++   LOAD_D(vkDestroyCommandPool);
++   LOAD_D(vkAllocateCommandBuffers);
++   LOAD_D(vkResetCommandBuffer);
++   LOAD_D(vkBeginCommandBuffer);
++   LOAD_D(vkEndCommandBuffer);
++   LOAD_D(vkCmdUpdateBuffer);
++   LOAD_D(vkQueueSubmit);
++   LOAD_D(vkCreateFence);
++   LOAD_D(vkWaitForFences);
++   LOAD_D(vkResetFences);
++   LOAD_D(vkDestroyFence);
++   VkQueue queue = VK_NULL_HANDLE;
++   vkGetDeviceQueue(device, family, 0, &queue);
++
++   VkBufferCreateInfo buffer_info = {
++      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
++      .size = (VkDeviceSize)UPDATES * UPDATE_SIZE,
++      .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
++   };
++   VkBuffer buffer = VK_NULL_HANDLE;
++   CHECK(vkCreateBuffer(device, &buffer_info, NULL, &buffer) == VK_SUCCESS);
++   VkMemoryRequirements requirements;
++   vkGetBufferMemoryRequirements(device, buffer, &requirements);
++   VkPhysicalDeviceMemoryProperties properties;
++   vkGetPhysicalDeviceMemoryProperties(physical, &properties);
++   uint32_t type = 0;
++   while (type < properties.memoryTypeCount &&
++          !(requirements.memoryTypeBits & (1u << type)))
++      type++;
++   CHECK(type < properties.memoryTypeCount);
++   VkMemoryAllocateInfo memory_info = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++      .allocationSize = requirements.size,
++      .memoryTypeIndex = type,
++   };
++   VkDeviceMemory memory = VK_NULL_HANDLE;
++   CHECK(vkAllocateMemory(device, &memory_info, NULL, &memory) == VK_SUCCESS);
++   CHECK(vkBindBufferMemory(device, buffer, memory, 0) == VK_SUCCESS);
++
++   VkCommandPoolCreateInfo pool_info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
++      .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
++      .queueFamilyIndex = family,
++   };
++   VkCommandPool pool = VK_NULL_HANDLE;
++   CHECK(vkCreateCommandPool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
++   VkCommandBufferAllocateInfo command_info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
++      .commandPool = pool,
++      .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
++      .commandBufferCount = 2,
++   };
++   VkCommandBuffer commands[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
++   CHECK(vkAllocateCommandBuffers(device, &command_info, commands) ==
++         VK_SUCCESS);
++   void *data = calloc(1, UPDATE_SIZE);
++   CHECK(data);
++
++   /* commands[0] is submitted again and again, so every submission after
++    * the first records it again on the submit thread. */
++   record(vkBeginCommandBuffer, vkEndCommandBuffer, vkCmdUpdateBuffer,
++          commands[0], buffer, data, 0);
++   VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
++   VkFence fence = VK_NULL_HANDLE;
++   CHECK(vkCreateFence(device, &fence_info, NULL, &fence) == VK_SUCCESS);
++   VkSubmitInfo submit = {
++      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++      .commandBufferCount = 1,
++      .pCommandBuffers = &commands[0],
++   };
++   for (unsigned round = 0; round < ROUNDS; round++) {
++      CHECK(vkQueueSubmit(queue, 1, &submit, fence) == VK_SUCCESS);
++      /* While the submit thread re-records commands[0], record the other
++       * buffer from the same pool. */
++      CHECK(vkResetCommandBuffer(commands[1], 0) == VK_SUCCESS);
++      record(vkBeginCommandBuffer, vkEndCommandBuffer, vkCmdUpdateBuffer,
++             commands[1], buffer, data,
++             VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
++      CHECK(vkWaitForFences(device, 1, &fence, VK_TRUE, 10000000000ull) ==
++            VK_SUCCESS);
++      CHECK(vkResetFences(device, 1, &fence) == VK_SUCCESS);
++   }
++   CHECK(vkResetCommandBuffer(commands[1], 0) == VK_SUCCESS);
++
++   /* Every BO either recording holds went back to the pool whole, and the
++    * pool's count of them still matches its list. */
++   struct kk_cmd_pool *kk_pool = kk_cmd_pool_from_handle(pool);
++   unsigned listed = list_length(&kk_pool->free_bos);
++   CHECK(listed == kk_pool->num_free_bos);
++   CHECK(listed <= KK_CMD_POOL_BO_MAX);
++
++   free(data);
++   vkDestroyFence(device, fence, NULL);
++   vkDestroyCommandPool(device, pool, NULL);
++   vkDestroyBuffer(device, buffer, NULL);
++   vkFreeMemory(device, memory, NULL);
++   vkDestroyDevice(device, NULL);
++   vkDestroyInstance(instance, NULL);
++   alarm(0);
++   printf("the submit thread and the application recorded from one pool "
++          "%u times\n", ROUNDS);
++   return 0;
++}
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp b/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
 new file mode 100644
 index 0000000000000000000000000000000000000000..9c52792a4dd8f4647dbf83c3ebb46dacab84d21d

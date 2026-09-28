@@ -3,16 +3,21 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 3 Sep 2026 19:23:31 +0900
 Subject: [PATCH] kosmickrisp: make timestamp queries reliable
 
+A pending timestamp resolve and a shared render-stage sample hold their
+own references to the query pool's counter heap and availability buffer
+until their lane is closed. An application may destroy the pool while a
+command buffer that wrote to it is still recording and then reset, begin
+or free that buffer, and closing its encoders still names both objects.
 ---
  src/kosmickrisp/bridge/mtl_command_buffer.h   |  4 +-
- src/kosmickrisp/bridge/mtl_command_buffer.m   |  8 ++-
+ src/kosmickrisp/bridge/mtl_command_buffer.m   |  8 +-
  src/kosmickrisp/bridge/mtl_encoder.m          |  4 +-
  .../bridge/stubs/mtl_command_buffer.c         |  4 +-
- src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 57 ++++++++++++++--
- src/kosmickrisp/vulkan/kk_cmd_buffer.h        | 17 +++++
- src/kosmickrisp/vulkan/kk_query_pool.c        | 65 ++++++++++---------
- src/kosmickrisp/vulkan/kk_query_pool.h        |  8 ---
- 8 files changed, 116 insertions(+), 51 deletions(-)
+ src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 73 +++++++++++++++++--
+ src/kosmickrisp/vulkan/kk_cmd_buffer.h        | 22 +++++-
+ src/kosmickrisp/vulkan/kk_query_pool.c        | 68 +++++++++--------
+ src/kosmickrisp/vulkan/kk_query_pool.h        |  8 --
+ 8 files changed, 138 insertions(+), 53 deletions(-)
 
 diff --git a/src/kosmickrisp/bridge/mtl_command_buffer.h b/src/kosmickrisp/bridge/mtl_command_buffer.h
 index 0d7dab681da22fbfde19268004059308bf22d78e..fbb71c63f66ae1125e4a8fe7ce13941127bfbc38 100644
@@ -90,22 +95,44 @@ index 72278149c266bb223aea926a98cd3926141f7f13..d87a8dc077cdb06eab7902968a3aec80
  {
  }
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 5360ef0d896591d26240bd1a999c9651a1b283fd..737a004dec067eaab53686761b41c7ea0a543fa5 100644
+index 5360ef0d896591d26240bd1a999c9651a1b283fd..a626735fb73a470bab751333b79b6c870fe90046 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -64,8 +64,11 @@ kk_destroy_encoder_state(struct kk_encoder_state *es)
+@@ -56,6 +56,20 @@ kk_cmd_release_resources(struct kk_device *dev, struct kk_cmd_buffer *cmd)
+    util_dynarray_clear(&cmd->large_bos);
+ }
+ 
++/* Drops a lane's pending timestamp work and the query-pool objects it holds. */
++static void
++kk_encoder_state_clear_timestamps(struct kk_encoder_state *es)
++{
++   util_dynarray_foreach(&es->ts_resolves, struct kk_ts_resolve, r) {
++      mtl_release(r->heap);
++      mtl_release(r->availability);
++   }
++   util_dynarray_foreach(&es->ts_samples, struct kk_ts_sample, s)
++      mtl_release(s->heap);
++   util_dynarray_clear(&es->ts_resolves);
++   util_dynarray_clear(&es->ts_samples);
++}
++
+ static void
+ kk_destroy_encoder_state(struct kk_encoder_state *es)
+ {
+@@ -64,8 +78,12 @@ kk_destroy_encoder_state(struct kk_encoder_state *es)
  
     mtl_release(es->allocator);
     es->allocator = NULL;
 +   for (unsigned i = 0; i < ARRAY_SIZE(es->ts_fences); ++i)
 +      mtl_release(es->ts_fences[i]);
  
++   kk_encoder_state_clear_timestamps(es);
     util_dynarray_fini(&es->ts_resolves);
 +   util_dynarray_fini(&es->ts_samples);
  }
  
  static void
-@@ -95,6 +98,7 @@ kk_init_encoder_state(struct kk_encoder_state *es, mtl_device *handle)
+@@ -95,6 +113,7 @@ kk_init_encoder_state(struct kk_encoder_state *es, mtl_device *handle)
  {
     es->allocator = mtl_new_command_allocator(handle);
     es->ts_resolves = UTIL_DYNARRAY_INIT;
@@ -113,7 +140,7 @@ index 5360ef0d896591d26240bd1a999c9651a1b283fd..737a004dec067eaab53686761b41c7ea
     return es->allocator != NULL;
  }
  
-@@ -337,19 +341,64 @@ cs_get_compute(struct kk_cmd_buffer *cmd, bool pre_gfx)
+@@ -337,19 +356,63 @@ cs_get_compute(struct kk_cmd_buffer *cmd, bool pre_gfx)
  static void
  kk_stop_encoder(struct kk_cmd_buffer *cmd, struct kk_encoder_state *es)
  {
@@ -177,16 +204,25 @@ index 5360ef0d896591d26240bd1a999c9651a1b283fd..737a004dec067eaab53686761b41c7ea
 +      }
     }
  
-    util_dynarray_clear(&es->ts_resolves);
-+   util_dynarray_clear(&es->ts_samples);
+-   util_dynarray_clear(&es->ts_resolves);
++   kk_encoder_state_clear_timestamps(es);
  
     mtl_end_command_buffer(es->cmd_buf);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 19928d1aa18a0dff02d1624e20ca796d09d94e16..2406b63b2dcdda2b55d4e3833949d8d89c03d96d 100644
+index 19928d1aa18a0dff02d1624e20ca796d09d94e16..2c059079934afc2a03092392216bcf2f5d45f50e 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-@@ -203,6 +203,18 @@ struct kk_ts_resolve {
+@@ -198,11 +198,26 @@ struct kk_uploader {
+ };
+ 
+ /* A pending resolve of one timestamp counter-heap entry into a query pool BO.
+- * Recorded by vkCmdWriteTimestamp2 and flushed on the GPU timeline at cs_end. */
++ * Recorded by vkCmdWriteTimestamp2 and flushed on the GPU timeline at cs_end.
++ * It holds its own references to the heap and the availability buffer, as a
++ * sample holds one to its heap: the application may destroy the query pool
++ * and then reset or free the recording, which still closes its encoders. */
+ struct kk_ts_resolve {
     mtl_counter_heap *heap;
     uint32_t index;
     uint64_t dst_addr;
@@ -205,7 +241,7 @@ index 19928d1aa18a0dff02d1624e20ca796d09d94e16..2406b63b2dcdda2b55d4e3833949d8d8
  };
  
  struct kk_encoder_state {
-@@ -212,6 +224,11 @@ struct kk_encoder_state {
+@@ -212,6 +227,11 @@ struct kk_encoder_state {
     mtl_command_buffer *cmd_buf;
     /* Pending timestamp resolves (struct kk_ts_resolve), flushed at cs_end. */
     struct util_dynarray ts_resolves;
@@ -218,7 +254,7 @@ index 19928d1aa18a0dff02d1624e20ca796d09d94e16..2406b63b2dcdda2b55d4e3833949d8d8
  
  struct kk_cmd_buffer {
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index 3e7dd25bda26ed68a78217c75b6c7642c253aeaa..de0ea8742a53298428be8f17ed716f27d73f3090 100644
+index 3e7dd25bda26ed68a78217c75b6c7642c253aeaa..c5988777b6f32a9b6be45e391b733386bd613397 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
 @@ -186,8 +186,6 @@ kk_CreateQueryPool(VkDevice device, const VkQueryPoolCreateInfo *pCreateInfo,
@@ -238,7 +274,7 @@ index 3e7dd25bda26ed68a78217c75b6c7642c253aeaa..de0ea8742a53298428be8f17ed716f27
     }
  
     kk_destroy_bo(dev, pool->bo);
-@@ -351,36 +348,43 @@ kk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
+@@ -351,36 +348,44 @@ kk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
      * paths can read it. Flushed on the GPU timeline at cs_end. */
     struct kk_ts_resolve resolve = {
        .heap = pool->ts.heap,
@@ -282,7 +318,7 @@ index 3e7dd25bda26ed68a78217c75b6c7642c253aeaa..de0ea8742a53298428be8f17ed716f27
 +      if (sample == NULL) {
 +         struct kk_ts_sample entry = {
 +            .stage = mtl_stage,
-+            .heap = pool->ts.heap,
++            .heap = mtl_retain(pool->ts.heap),
 +            .index = 0,
 +         };
 +         util_dynarray_append(&cmd->gfx.ts_samples, entry);
@@ -298,12 +334,13 @@ index 3e7dd25bda26ed68a78217c75b6c7642c253aeaa..de0ea8742a53298428be8f17ed716f27
  
 -      mtl_render_write_timestamp(cmd->gfx.encoder, mtl_stage, pool->ts.heap,
 -                                 query);
-+      resolve.heap = sample->heap;
++      resolve.heap = mtl_retain(sample->heap);
 +      resolve.index = sample->index;
++      mtl_retain(resolve.availability);
        util_dynarray_append(&cmd->gfx.ts_resolves, resolve);
     } else {
        bool top = true;
-@@ -393,15 +397,12 @@ kk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
+@@ -393,15 +398,14 @@ kk_CmdWriteTimestamp2(VkCommandBuffer commandBuffer,
        }
        es = top ? cmd->pre_gfx : cmd->post_gfx;
  
@@ -321,6 +358,8 @@ index 3e7dd25bda26ed68a78217c75b6c7642c253aeaa..de0ea8742a53298428be8f17ed716f27
  
 -      mtl_compute_write_timestamp(es->encoder, pool->ts.heap, query);
 +      mtl_compute_write_timestamp(es->encoder, pool->ts.heap, 0);
++      mtl_retain(resolve.heap);
++      mtl_retain(resolve.availability);
        util_dynarray_append(&es->ts_resolves, resolve);
     }
  }

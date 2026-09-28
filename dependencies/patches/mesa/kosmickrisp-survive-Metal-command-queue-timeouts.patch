@@ -137,10 +137,10 @@ index a00bcebba203801ba4965be0200de10b70e2b392..dc3d39977a31268a5c6c9eddb959153d
        buffer->mtl_handle, &layout, aligned_offset_B);
     if (!view->mtl_texel_buffer_handle) {
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 405b303c64509a16a11431302f7b28fc6175ac80..0bc236ea7854fec09d6bb9d284912531e8c3aa9e 100644
+index 44c6720e48a0245d596c9253ae5c697c4c8928e8..e471adeb520cc849e53c3bd0b7e85cdb259a8412 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
-@@ -565,9 +565,24 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
+@@ -569,9 +569,24 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
           ycbcr_info ? ycbcr_info->planes[plane].denominator_scales[0] : 1;
        const uint8_t height_scale =
           ycbcr_info ? ycbcr_info->planes[plane].denominator_scales[1] : 1;
@@ -168,7 +168,7 @@ index 405b303c64509a16a11431302f7b28fc6175ac80..0bc236ea7854fec09d6bb9d284912531
     }
  
     return VK_SUCCESS;
-@@ -740,11 +755,14 @@ kk_GetDeviceImageMemoryRequirements(VkDevice device,
+@@ -744,11 +759,14 @@ kk_GetDeviceImageMemoryRequirements(VkDevice device,
                                      VkMemoryRequirements2 *pMemoryRequirements)
  {
     VK_FROM_HANDLE(kk_device, dev, device);
@@ -186,7 +186,7 @@ index 405b303c64509a16a11431302f7b28fc6175ac80..0bc236ea7854fec09d6bb9d284912531
  
     const VkImageAspectFlags aspects =
        image.disjoint ? pInfo->planeAspect : image.vk.aspects;
-@@ -823,11 +841,14 @@ kk_GetDeviceImageSubresourceLayoutKHR(
+@@ -827,11 +845,14 @@ kk_GetDeviceImageSubresourceLayoutKHR(
     VkSubresourceLayout2KHR *pLayout)
  {
     VK_FROM_HANDLE(kk_device, dev, device);
@@ -598,7 +598,7 @@ index 0000000000000000000000000000000000000000..60415bc7dbb4ae115af3da7df4770685
 +
 +#endif /* KK_QUEUE_ERROR_H */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 89e84e4754d2690381cdfbdc5f037cb3b09e8927..e51c5ed1a71f570d316c67c4bc71fa9745a6fa42 100644
+index 779a9fe93a01e2977929cc87e745881749757869..ff92c7deadfc0be0ea2c632de792b0ef94c2e5b4 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -84,6 +84,8 @@ kk_files = files(
@@ -619,7 +619,7 @@ index 89e84e4754d2690381cdfbdc5f037cb3b09e8927..e51c5ed1a71f570d316c67c4bc71fa97
    'kk_sampler.h',
    'kk_sampler.c',
    'kk_shader.h',
-@@ -506,6 +510,32 @@ if with_tests
+@@ -546,6 +550,32 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

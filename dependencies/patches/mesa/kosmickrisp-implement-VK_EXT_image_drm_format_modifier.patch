@@ -141,7 +141,7 @@ index 6512a40d8ada6748b16bd2d2096b23b3b6ea2537..08eeba36f09f019b5c2803450b843af1
           vk_debug_ignored_stype(ext->sType);
           break;
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 0bc236ea7854fec09d6bb9d284912531e8c3aa9e..b2d12e269c53b88f8c070827519d0322a541901c 100644
+index e471adeb520cc849e53c3bd0b7e85cdb259a8412..ef38be429500e3de85e20f05d9481f6fd1eba61b 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
 @@ -7,6 +7,8 @@
@@ -150,11 +150,11 @@ index 0bc236ea7854fec09d6bb9d284912531e8c3aa9e..b2d12e269c53b88f8c070827519d0322
  
 +#include "kk_linear_layout.h"
 +
+ #include "kk_buffer_view.h"
  #include "kk_device.h"
  #include "kk_device_memory.h"
- #include "kk_entrypoints.h"
-@@ -21,6 +23,8 @@
- #include "vk_format.h"
+@@ -25,6 +27,8 @@
+ #include "vk_semaphore.h"
  #include "wsi_common_private.h"
  
 +#include "drm-uapi/drm_fourcc.h"
@@ -162,7 +162,7 @@ index 0bc236ea7854fec09d6bb9d284912531e8c3aa9e..b2d12e269c53b88f8c070827519d0322
  #include <vulkan/vulkan_metal.h>
  
  static VkFormatFeatureFlags2
-@@ -30,6 +34,19 @@ kk_get_image_plane_format_features(struct kk_physical_device *pdev,
+@@ -34,6 +38,19 @@ kk_get_image_plane_format_features(struct kk_physical_device *pdev,
  {
     VkFormatFeatureFlags2 features = 0;
  
@@ -182,7 +182,7 @@ index 0bc236ea7854fec09d6bb9d284912531e8c3aa9e..b2d12e269c53b88f8c070827519d0322
     /* Metal does not support linear tiling for compressed formats */
     if (tiling == VK_IMAGE_TILING_LINEAR && vk_format_is_compressed(vk_format))
        return 0;
-@@ -65,7 +82,8 @@ kk_get_image_plane_format_features(struct kk_physical_device *pdev,
+@@ -69,7 +86,8 @@ kk_get_image_plane_format_features(struct kk_physical_device *pdev,
     }
  
     /* We disable A8 format due to lower blend pass issues */
@@ -192,7 +192,7 @@ index 0bc236ea7854fec09d6bb9d284912531e8c3aa9e..b2d12e269c53b88f8c070827519d0322
         vk_format != VK_FORMAT_A8_UNORM) {
        features |= VK_FORMAT_FEATURE_2_COLOR_ATTACHMENT_BIT;
        features |= VK_FORMAT_FEATURE_2_BLIT_DST_BIT;
-@@ -233,6 +251,33 @@ kk_GetPhysicalDeviceImageFormatProperties2(
+@@ -237,6 +255,33 @@ kk_GetPhysicalDeviceImageFormatProperties2(
     memset(&pImageFormatProperties->imageFormatProperties, 0,
            sizeof(pImageFormatProperties->imageFormatProperties));
  
@@ -226,7 +226,7 @@ index 0bc236ea7854fec09d6bb9d284912531e8c3aa9e..b2d12e269c53b88f8c070827519d0322
     /* Metal does not support depth/stencil textures that are not 2D (we make 1D
      * textures 2D) */
     if (vk_format_is_depth_or_stencil(pImageFormatInfo->format) &&
-@@ -257,34 +302,29 @@ kk_GetPhysicalDeviceImageFormatProperties2(
+@@ -261,34 +306,29 @@ kk_GetPhysicalDeviceImageFormatProperties2(
     VkFormatFeatureFlags2 features;
     if (ycbcr_info == NULL) {
        features = kk_get_image_plane_format_features(
@@ -270,7 +270,7 @@ index 0bc236ea7854fec09d6bb9d284912531e8c3aa9e..b2d12e269c53b88f8c070827519d0322
        return VK_ERROR_FORMAT_NOT_SUPPORTED;
  
     if (ycbcr_info && pImageFormatInfo->type != VK_IMAGE_TYPE_2D)
-@@ -533,6 +573,48 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
+@@ -537,6 +577,48 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
  {
     vk_image_init(&dev->vk, &image->vk, pCreateInfo);
  
@@ -319,7 +319,7 @@ index 0bc236ea7854fec09d6bb9d284912531e8c3aa9e..b2d12e269c53b88f8c070827519d0322
     if ((image->vk.usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) &&
         image->vk.samples > 1) {
-@@ -585,6 +667,52 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
+@@ -589,6 +671,52 @@ kk_image_init(struct kk_device *dev, struct kk_image *image,
        }
     }
  
@@ -504,10 +504,10 @@ index fb3cd714bb3a433a3413a1ce6160011528322886..42716090f5c48b55a0081ec11684e307
        .EXT_load_store_op_none = true,
        .EXT_memory_budget = true,
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index d68648f80308edcd7f96d5401561f1397ba73100..d5af884691a74f5b9c813bc509fd55de1ccb04e9 100644
+index a79ad9fc77ffe473ce2c7b857f66e49851978c83..74053814e39df778c5319c3d63dd051f4372b691 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -829,6 +829,16 @@ if with_tests
+@@ -910,6 +910,16 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

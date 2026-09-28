@@ -429,10 +429,10 @@ index b09a76d3b6220a88cddf39dbc0ce44978b1d4625..d77537c3ea6bf584640b043f0b0d553d
        P_IND(ctx, "FragmentIn in [[stage_in]],\n");
        break;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index d59915c5db630849184ea7208b5820843d4992df..f021f797231748d65960d14ac6fec34063e008b8 100644
+index 4d584d4c647334efe8282f0df332ce10abb5224b..e9aad1e62133281eb13813d923457b278e832595 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -153,7 +153,17 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+@@ -168,7 +168,17 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
     {
        mtl_argument_table_descriptor *desc = mtl_new_argument_table_descriptor();
        /* Root at 0, samplers at 1 and per draw data at 2 */
@@ -452,10 +452,10 @@ index d59915c5db630849184ea7208b5820843d4992df..f021f797231748d65960d14ac6fec340
        mtl_set_address(cmd->argument_table, dev->samplers.table.bo->gpu, 1u);
        mtl_release(desc);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index befb6e1b8b299e36209a013b7e317b2b5d26a0af..e2e2ef00170d9cfe296c366e4a48a612ec385950 100644
+index 3c64052a0f387db905837826ed9f894dbef7c1fd..b52724ef87ff428719140404ebffd4076753faad 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1757,8 +1757,20 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1791,8 +1791,20 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
     }
  
     if (IS_DIRTY(VI) || IS_DIRTY(VI_BINDINGS_VALID) ||
@@ -477,7 +477,7 @@ index befb6e1b8b299e36209a013b7e317b2b5d26a0af..e2e2ef00170d9cfe296c366e4a48a612
        unsigned slot = 0;
        u_foreach_bit(i, vs->info.vs.attribs_read) {
           if (dyn->vi->attributes_valid & BITFIELD_BIT(i)) {
-@@ -1775,6 +1787,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1809,6 +1821,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
           slot++;
        }
        desc->root_dirty = true;
@@ -559,7 +559,7 @@ index a31eadde4320459375e9f1e68bb5d39ea24d55d3..4e246852333186c87ebaa80e892f09cc
  #define KK_MAX_PUSH_SIZE                 256
  #define KK_MAX_DYNAMIC_BUFFERS           64
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 466d8cb38a1fb03859b2111b0b9716a69187625e..03f650713298a89e0b607e6d85ec65f5c3c332aa 100644
+index 8d5fa3570c8ec451d377f52408eb2bac83c05d31..17a927fa393c90204ef395f43697c97de5d60462 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
 @@ -368,6 +368,291 @@ kk_lower_vs_vbo(nir_shader *nir, const struct vk_graphics_pipeline_state *state,
@@ -940,7 +940,7 @@ index 466d8cb38a1fb03859b2111b0b9716a69187625e..03f650713298a89e0b607e6d85ec65f5
      * in the array so need to check them all, not just first
      * color_attachment_count entries.
 diff --git a/src/kosmickrisp/vulkan/kk_shader.h b/src/kosmickrisp/vulkan/kk_shader.h
-index ed7fd4d5aa75d68a9fc45f1edff6d66f3a19108f..63c1420f05f83756fcd8b2f0024be8ca0cf7baf3 100644
+index 889ecc06804ac229cbfca446cabb3e74187ba26d..3b30bc48aef7216669c71bfa0cbb5ce42e1dd455 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.h
 +++ b/src/kosmickrisp/vulkan/kk_shader.h
 @@ -9,6 +9,7 @@
@@ -951,7 +951,7 @@ index ed7fd4d5aa75d68a9fc45f1edff6d66f3a19108f..63c1420f05f83756fcd8b2f0024be8ca
  #include "kk_private.h"
  #include "kk_raster_variant.h"
  
-@@ -119,6 +120,25 @@ struct kk_shader_info {
+@@ -122,6 +123,25 @@ struct kk_shader_info {
              uint8_t write_mask;
           } stencil_front, stencil_back;
           uint8_t color_attachment_count;
@@ -978,10 +978,10 @@ index ed7fd4d5aa75d68a9fc45f1edff6d66f3a19108f..63c1420f05f83756fcd8b2f0024be8ca
            * accepted the pipeline's colour blend state and the fragment shader
            * therefore kept its stores instead of carrying a lowered blend. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 9bab8830ddb451ff1987b24aafbdbbf81d05f9bf..26bc647e3e6d70dd39cc64d80a7bcf75f995e412 100644
+index 54d440f6c8b20ca8b9d77378916525481f56a93e..e003358163671ba98ae65d3634a8054a5dddeb2c 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -545,6 +545,15 @@ if with_tests
+@@ -603,6 +603,15 @@ if with_tests
        link_with : libvulkan_kosmickrisp,
        override_options : ['cpp_std=c++20'],
      )
@@ -997,7 +997,7 @@ index 9bab8830ddb451ff1987b24aafbdbbf81d05f9bf..26bc647e3e6d70dd39cc64d80a7bcf75
      test(
        'kosmickrisp_metal_blend',
        executable(
-@@ -559,6 +568,20 @@ if with_tests
+@@ -617,6 +626,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
