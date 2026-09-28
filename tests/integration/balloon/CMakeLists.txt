@@ -7,7 +7,7 @@ target_include_directories(uml-balloon-churn-server PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device)
 target_link_libraries(uml-balloon-churn-server PRIVATE
     UML::BalloonDevice
-    uml_gpu_transport)
+    UML::VhostUserTransport)
 target_compile_features(uml-balloon-churn-server PRIVATE cxx_std_20)
 target_compile_options(uml-balloon-churn-server PRIVATE
     -Wall -Wextra -Werror)

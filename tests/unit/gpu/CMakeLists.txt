@@ -439,9 +439,9 @@ if(TARGET uml_gpu_service)
     # The wire with its stop-wait observer, so a test waits until a receiver
     # has consumed every queued fragment instead of sleeping and hoping.
     add_library(uml_gpu_transport_wire_stop_wait_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_message.cpp)
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user/vhost_user_message.cpp)
     target_include_directories(uml_gpu_transport_wire_stop_wait_test_variant
-        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
     target_compile_definitions(uml_gpu_transport_wire_stop_wait_test_variant
         PRIVATE UML_GPU_STOP_WAIT_TESTING=1)
     target_compile_features(uml_gpu_transport_wire_stop_wait_test_variant
@@ -473,7 +473,7 @@ if(TARGET uml_gpu_service)
         vhost_user_descriptor_ceiling_test_main.cpp
         vhost_user_descriptor_ceiling_tests.cpp)
     target_link_libraries(uml_gpu_transport_ceiling_tests PRIVATE
-        uml_gpu_transport_wire)
+        uml_vhost_user_wire)
     target_include_directories(uml_gpu_transport_ceiling_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${CMAKE_CURRENT_SOURCE_DIR})
@@ -488,11 +488,11 @@ if(TARGET uml_gpu_service)
     # The shared service scaffold in the transport has a startup checkpoint
     # of its own, so the startup tests build the transport with it.
     add_library(uml_gpu_transport_startup_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/shared_memory_regions.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_server.cpp
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user/shared_memory_regions.cpp
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user/vhost_user_server.cpp
         in_process_service_testing.cpp)
     target_include_directories(uml_gpu_transport_startup_test_variant PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
         ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_definitions(uml_gpu_transport_startup_test_variant PRIVATE
         UML_GPU_STARTUP_TESTING=1)
@@ -546,9 +546,9 @@ if(TARGET uml_gpu_service)
     # observable: the child watchdog fails if service shutdown falls back to
     # periodic polling.
     add_library(uml_gpu_transport_wire_slow_stop_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_message.cpp)
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user/vhost_user_message.cpp)
     target_include_directories(uml_gpu_transport_wire_slow_stop_test_variant
-        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
     target_compile_definitions(uml_gpu_transport_wire_slow_stop_test_variant
         PRIVATE
             UML_GPU_STOP_POLL_TIMEOUT_MILLISECONDS=5000
@@ -559,10 +559,10 @@ if(TARGET uml_gpu_service)
         -Wall -Wextra -Werror -Wno-deprecated-declarations)
 
     add_library(uml_gpu_transport_slow_stop_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/shared_memory_regions.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_server.cpp)
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user/shared_memory_regions.cpp
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user/vhost_user_server.cpp)
     target_include_directories(uml_gpu_transport_slow_stop_test_variant
-        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
     target_compile_definitions(uml_gpu_transport_slow_stop_test_variant
         PRIVATE UML_GPU_STOP_POLL_TIMEOUT_MILLISECONDS=5000)
     target_compile_features(uml_gpu_transport_slow_stop_test_variant
@@ -596,6 +596,7 @@ if(TARGET uml_gpu_service)
         in_process_service_stop_wake_tests.cpp)
     target_include_directories(uml_gpu_service_stop_wake_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
         ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_features(uml_gpu_service_stop_wake_tests PRIVATE cxx_std_20)
     target_compile_options(uml_gpu_service_stop_wake_tests PRIVATE
@@ -611,6 +612,7 @@ if(TARGET uml_gpu_service)
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/virtio_gpu_device.cpp)
     target_include_directories(uml_gpu_protocol_device_test_variant PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
         ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_definitions(uml_gpu_protocol_device_test_variant PUBLIC
         UML_GPU_DEVICE_TESTING=1)
@@ -645,7 +647,8 @@ if(TARGET uml_gpu_display)
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/display_resize_notifier.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/scanout_framebuffer.cpp)
     target_include_directories(uml_gpu_display_resize_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
     target_link_libraries(uml_gpu_display_resize_tests PRIVATE
         "-framework Accelerate")
     target_compile_features(uml_gpu_display_resize_tests PRIVATE cxx_std_20)
@@ -673,6 +676,7 @@ if(TARGET uml_gpu_display)
         "-framework Metal")
     target_include_directories(uml_gpu_display_test_variant PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
         ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc
         ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_definitions(uml_gpu_display_test_variant PRIVATE
