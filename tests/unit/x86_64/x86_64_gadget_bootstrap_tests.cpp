@@ -3252,6 +3252,62 @@ read_test_sequences(void *context) noexcept
 			"compat32 ModR/M rm=5 is not an absolute 32-bit address");
 }
 
+/* In 32-bit code C4 and C5 are LES and LDS unless the next byte's top two bits
+ * are 11, which a memory ModR/M can never produce.  Inside a VEX prefix that
+ * does select, VEX.B-bar and the top bit of vvvv are ignored, so only XMM0-7
+ * are reachable. */
+[[nodiscard]] bool decode_compat32_vex_aliases()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xc4, 0xe1, 0x38, 0x58, 0xc1, // vaddps xmm0, xmm0, xmm1 (vvvv[3] set)
+		0xc4, 0xc1, 0x78, 0x28, 0xd1, // vmovaps xmm2, xmm1 (B-bar clear)
+		0xcd, 0x80,                   // int 80h
+	});
+	memory.load(0x40, {0xc4, 0x01, 0x78, 0x28, 0xc1}); // les eax, [ecx]
+	memory.load(0x50, {0xc5, 0x41, 0x58, 0xc1});       // lds eax, [ecx+0x58]
+	for (const auto address : {0x40U, 0x50U}) {
+		const auto alias = decode(memory, address, ExecutionMode::compat32);
+		if (!expect(alias.status == DecodeStatus::illegal_instruction,
+			"compat32 LES/LDS form decoded as a VEX prefix"))
+			return false;
+	}
+	const auto wide = decode(memory, 5, ExecutionMode::long64);
+	if (!expect(wide.status == DecodeStatus::decoded &&
+		wide.instruction.source.reg.index == 9,
+		"64-bit VEX.B-bar no longer selects XMM8-15"))
+		return false;
+	const auto built = gadgets::build(memory, 0, ExecutionMode::compat32);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"compat32 VEX block did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.execution_mode = ExecutionMode::compat32;
+	const auto fill = [&](std::size_t index, float value) {
+		for (std::size_t lane = 0; lane < 4; ++lane)
+			std::memcpy(&cpu.vectors[index][lane * sizeof(float)],
+				&value, sizeof(float));
+	};
+	const auto lane0 = [&](std::size_t index) {
+		float value{};
+		std::memcpy(&value, &cpu.vectors[index][0], sizeof(float));
+		return value;
+	};
+	fill(0, 1.0F);
+	fill(1, 2.0F);
+	fill(8, 100.0F);
+	fill(9, 200.0F);
+	const auto result = gadgets::execute(built.program, cpu, memory, 3);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		result.retired_instructions == 3,
+		"compat32 VEX block did not reach INT 80h") &&
+		expect(lane0(0) == 3.0F,
+			"compat32 VEX.vvvv[3] selected XMM8") &&
+		expect(lane0(2) == 2.0F,
+			"compat32 VEX.B-bar selected XMM9");
+}
+
 [[nodiscard]] bool execute_compat32_stack_and_int80()
 {
 	using namespace uml::cpu::x86_64;
@@ -6498,6 +6554,7 @@ int main()
 		execute_byte_sign_masks() &&
 		execute_call_and_return() &&
 		decode_compat32_defaults() &&
+		decode_compat32_vex_aliases() &&
 		execute_compat32_stack_and_int80() &&
 		execute_compat32_pushfd_popfd() &&
 		execute_compat32_enter_frames() &&

@@ -2316,6 +2316,13 @@ private:
 		std::uint8_t second{};
 		if (!read(second))
 			return false;
+		/* In 32-bit code C4 and C5 are LES and LDS, and select VEX only
+		 * when the next byte would be a register ModR/M, which those
+		 * instructions reject.  Far-pointer loads are not implemented, so
+		 * the LES/LDS forms are illegal like LSS, LFS and LGS. */
+		const bool compat32 = prefixes_.mode == ExecutionMode::compat32;
+		if (compat32 && (second & 0xc0U) != 0xc0U)
+			return false;
 		std::uint8_t third{};
 		std::uint8_t rex{};
 		std::uint8_t map = 1;
@@ -2336,12 +2343,16 @@ private:
 		} else if ((second & 0x80U) == 0) {
 			rex |= 4U;
 		}
+		/* 32-bit code reaches only registers 0-7: VEX.B-bar and the top
+		 * bit of vvvv are ignored there. */
+		if (compat32)
+			rex = static_cast<std::uint8_t>(rex & ~1U);
 		prefixes_.rex = rex;
 		prefixes_.rex_present = true;
 		prefixes_.vex = true;
 		prefixes_.vex_map = map;
 		prefixes_.vex_vvvv = static_cast<std::uint8_t>(
-			(~controls >> 3U) & 0xfU);
+			(~controls >> 3U) & (compat32 ? 0x7U : 0xfU));
 		prefixes_.vex_long = (controls & 4U) != 0;
 		prefixes_.operand_size = false;
 		prefixes_.repeat = 0;
