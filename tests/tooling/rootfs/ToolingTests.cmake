@@ -11,7 +11,7 @@ uml_add_tooling_test(
     NAME rootfs-overlay-launcher-options
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_boot_overlay_systemd.py
-        --launcher ${PROJECT_SOURCE_DIR}/scripts/boot-overlay-systemd.sh
+        --launcher ${PROJECT_SOURCE_DIR}/tools/boot-overlay-systemd.sh
     LABELS rootfs;audit
     TIMEOUT 30)
 

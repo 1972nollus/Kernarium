@@ -380,7 +380,7 @@ build requires a compatible ACK artifact; launch takes any rootfs directory
 with the expected payload layout and one directly writable GPT image. It
 does not alter the normal Linux executable or search for `rootfs.erofs`.
 
-[`../../scripts/boot_android.py`](../../scripts/boot_android.py) is the ordinary
+[`../../tools/boot_android.py`](../../tools/boot_android.py) is the ordinary
 macOS launcher. It selects the accepted installed release, copies its seed GPT
 to a persistent writable image on first boot, expands that copy to 8 GiB,
 exposes guest ADB only on host loopback, waits for the transport, and disconnects
@@ -390,7 +390,7 @@ with a newly expanded copy of that release. The default session uses
 the existing `macos-android17` executable with native Metal display, 10 vCPUs,
 8 GiB of RAM, the gadgets engine, and a 720-by-1280 portrait display. Pass
 `--build` to refresh that executable incrementally or `--recovery` to boot
-OrangeFox; run `scripts/boot_android.py --help` for other overrides.
+OrangeFox; run `tools/boot_android.py --help` for other overrides.
 
 Kernarium represents one Android guest as a `.kern` directory containing:
 

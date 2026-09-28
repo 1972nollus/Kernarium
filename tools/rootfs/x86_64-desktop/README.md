@@ -31,7 +31,7 @@ warning.
 For a long-running qualification guest, expose both independent consoles:
 
 ```sh
-python3 scripts/boot_kde_vnc.py \
+python3 tools/boot_kde_vnc.py \
   --serial-socket /private/tmp/uml-x86-ttyS0.sock \
   --virtio-console-socket /private/tmp/uml-x86-hvc0.sock \
   --emulator .build/presets/macos-x86_64/bin/uml-darwin \
