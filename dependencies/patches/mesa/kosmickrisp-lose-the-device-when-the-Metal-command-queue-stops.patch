@@ -127,10 +127,10 @@ index 9c03b79fddc81f3aac958ac270eeabdb377579ce..8990b6eaa42b60c96c0733b46259d655
        }
  
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 5f5ec3822966e2b1bd178d94012c9b91e25c26a5..ab6c4278bbac829b16bc30712e154d9b545e229c 100644
+index 9ff92971b59aab4a60b927275f1ec28ce50bb46d..681be0d9eb9fc2087f4bb32bf0062c7fd5b42aef 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
-@@ -88,18 +88,38 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
+@@ -120,18 +120,38 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
     return made_good;
  }
  

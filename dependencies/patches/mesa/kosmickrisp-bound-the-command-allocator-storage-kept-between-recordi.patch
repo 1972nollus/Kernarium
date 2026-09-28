@@ -436,7 +436,7 @@ index 16ec133e7201e835ec4678e0340a00a572616b12..a9635df0591c0604cb4981db654b585e
  
  struct kk_command_allocator_cache *kk_command_allocator_cache_create(void);
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index ef6c7ec0348736e43d0cbf1269c061c042f4d929..603c86033101c774ecfb54be242e73e2fe8af110 100644
+index 8087aeb090f7a451e67d6aa2fd0bee91579130e5..3f7064d74a2cba668a749862551825410a7f13ad 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -19,6 +19,11 @@
@@ -451,7 +451,7 @@ index ef6c7ec0348736e43d0cbf1269c061c042f4d929..603c86033101c774ecfb54be242e73e2
  #include <stdio.h>
  
  /* Drop every record Metal has already made good, so the list holds only
-@@ -396,11 +401,23 @@ commit_callback(struct mtl_feedback_data *data)
+@@ -428,11 +433,23 @@ commit_callback(struct mtl_feedback_data *data)
     kk_queue_feedback_unref(feedback);
  }
  
@@ -478,7 +478,7 @@ index ef6c7ec0348736e43d0cbf1269c061c042f4d929..603c86033101c774ecfb54be242e73e2
     struct util_dynarray command_buffers;
     mtl_command_allocator *allocators[3];
     mtl_command_queue *queue;
-@@ -408,10 +425,22 @@ struct kk_completed_recording {
+@@ -440,10 +457,22 @@ struct kk_completed_recording {
     struct kk_command_allocator_cache *allocator_cache;
  };
  
@@ -503,7 +503,7 @@ index ef6c7ec0348736e43d0cbf1269c061c042f4d929..603c86033101c774ecfb54be242e73e2
        return;
  
     util_dynarray_foreach(&recording->command_buffers, mtl_command_buffer *, cb)
-@@ -424,13 +453,20 @@ kk_completed_recording_unref(struct kk_completed_recording *recording)
+@@ -456,13 +485,20 @@ kk_completed_recording_unref(struct kk_completed_recording *recording)
                                        recording->allocators[i]);
     kk_command_allocator_cache_unref(recording->allocator_cache);
     mtl_release(recording->queue);
@@ -526,7 +526,7 @@ index ef6c7ec0348736e43d0cbf1269c061c042f4d929..603c86033101c774ecfb54be242e73e2
  }
  
  static struct kk_completed_recording *
-@@ -441,10 +477,23 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
+@@ -473,10 +509,23 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
     if (!recording)
        return NULL;
  
@@ -553,7 +553,7 @@ index ef6c7ec0348736e43d0cbf1269c061c042f4d929..603c86033101c774ecfb54be242e73e2
     recording->queue = mtl_retain(queue);
     recording->allocator_cache = kk_command_allocator_cache_ref(
        kk_cmd_buffer_device(cmd)->allocator_cache);
-@@ -462,9 +511,80 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
+@@ -494,9 +543,80 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
     return recording;
  }
  
@@ -636,7 +636,7 @@ index ef6c7ec0348736e43d0cbf1269c061c042f4d929..603c86033101c774ecfb54be242e73e2
     struct kk_device *dev = kk_cmd_buffer_device(cmd);
     kk_reset_cmd_buffer_internal(cmd);
  
-@@ -475,6 +595,8 @@ rerecord_cmd_buffer(struct kk_cmd_buffer *cmd)
+@@ -507,6 +627,8 @@ rerecord_cmd_buffer(struct kk_cmd_buffer *cmd)
  
     /* Need to ensure the new buffers allocated at record are resident. */
     kk_device_make_resources_resident(dev);
@@ -645,7 +645,7 @@ index ef6c7ec0348736e43d0cbf1269c061c042f4d929..603c86033101c774ecfb54be242e73e2
  }
  
  static VkResult
-@@ -512,8 +634,12 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+@@ -544,8 +666,12 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
  
        /* Submitted command buffers require re-recording since Metal does not
         * support multiple submissions. */
@@ -660,7 +660,7 @@ index ef6c7ec0348736e43d0cbf1269c061c042f4d929..603c86033101c774ecfb54be242e73e2
        cmd_buffer->submitted = true;
  
        mtl_command_buffer **cmds =
-@@ -544,26 +670,28 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+@@ -576,26 +702,28 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
                                       "Failed to allocate Metal submission feedback");
           }
  
