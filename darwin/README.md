@@ -291,14 +291,12 @@ that need writeback requests boot with magic SysRq enabled. If the physical iOS
 sandbox cannot bind the console, host-file flushing still runs but guest
 writeback/freeze is unavailable.
 
-Guest disk capacity is an application concern rather than a runtime option.
-Kernarium transactionally grows raw Android images and their final userdata
-GPT entry through Swift `DiskUtil` and the statically linked GPT fdisk core.
-The standalone macOS Android wrapper performs the same host-side operation
-with the system `truncate` utility and Homebrew `sgdisk`. Android invokes the
-idempotent ext4 `resize2fs` tool before mounting `/data`; OrangeFox performs an
-explicit extent comparison before `e2fsck` and `resize2fs`. The runtime
-validates that the GPT matches the file and boots it without rewriting either.
+Guest disk capacity is an application concern rather than a runtime option:
+the runtime validates that a GPT matches its file and boots it without
+rewriting either. The
+[Android static disk contract](../android/aosp-17/README.md#static-disk-and-boot-contract)
+owns how Kernarium and the macOS launcher grow an image and how the guest
+grows its filesystem.
 
 When Kernarium syncs, quiesces, and resumes is described in
 [`../Kernarium/README.md`](../Kernarium/README.md#lifecycle).
