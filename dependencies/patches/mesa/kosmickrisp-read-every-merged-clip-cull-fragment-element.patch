@@ -67,10 +67,10 @@ index 8699eadad62942d034287e60713e850a2768f92f..2c837a01f80e43657c37bbd3fb2535bc
     NIR_PASS(_, nir, nir_separate_merged_clip_cull_io);
     if (nir->info.stage == MESA_SHADER_FRAGMENT)
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 8968a9a70bd31a852c2f3639aa3f5491ed90d7ef..fdde500193ad915c2532640fcae19e21ae1a4293 100644
+index 6dd1214832c42ecc5ebfbf0bdd0a11cb3bc16485..eca8d94d2b1b159e4c6d54616e9f9fbf9ec951ca 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -644,6 +644,20 @@ if with_tests
+@@ -678,6 +678,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

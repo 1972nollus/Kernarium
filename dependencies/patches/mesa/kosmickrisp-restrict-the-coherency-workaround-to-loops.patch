@@ -160,10 +160,10 @@ index 76b3cc9740463a32d5b4dc1ebad096a7bc09fc05..318a0cbd32a608cab739ff7ebc066b1b
                                    ? "coherent device"
                                    : "device";
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index ff92c7deadfc0be0ea2c632de792b0ef94c2e5b4..c33d2e1d504aa4ed2aa7620f87805579003e2358 100644
+index 26ad7747b3cd5ac87b4a8f60306ca9d033536fdc..27e8b39a7a1fb8431fecb75c326961cbf1ecf18e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -443,6 +443,20 @@ if with_tests
+@@ -477,6 +477,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
