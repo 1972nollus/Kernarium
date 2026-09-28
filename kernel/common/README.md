@@ -68,10 +68,18 @@ carrier's native stack or the signal stack its interrupts run on. An
 interrupt's trace continues on the task stack it interrupted, a kernel fault's
 starts at the faulting instruction, and a blocked task's starts at the context
 it saved when it switched away. A task running on another vCPU still prints no
-trace. Every maintained kernel builds with frame pointers, so the walk
-follows frame records and every WARN, BUG and sysrq trace lists only reliable
-entries; they cost about 1% on the iPad. `guest-kernel-nofault` requires its
-sysrq t dump to list entries and to mark none of them unreliable (`?`).
+trace. The walk follows frame records, so every WARN, BUG and sysrq trace
+lists only reliable entries, and a Darwin kernel without frame pointers fails
+to build; every maintained kernel has them, at about 1% on the iPad.
+`guest-kernel-nofault` requires its sysrq t dump to list entries and to mark
+none of them unreliable (`?`).
+
+A string copied from user memory, such as a path or a task name, is copied a
+page at a time up to its terminator. As with the native
+`strncpy_from_user()`, the destination past the terminator is left as it was,
+so a short path costs the same wherever it lies in its page.
+`guest-user-strings` checks the copy's length limits, page crossings and
+faults.
 
 Both maintained kernel lines perform futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value
