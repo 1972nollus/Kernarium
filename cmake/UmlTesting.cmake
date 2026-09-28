@@ -51,10 +51,6 @@ function(uml_finalize_suite_binary_target SUITE AGGREGATE_TARGET)
     get_property(_command_targets GLOBAL PROPERTY
         "UML_${_suite_upper}_COMMAND_TARGETS")
     foreach(_command_target IN LISTS _command_targets)
-        if(NOT TARGET "${_command_target}")
-            message(FATAL_ERROR
-                "${SUITE} test command target disappeared: ${_command_target}")
-        endif()
         add_dependencies("${AGGREGATE_TARGET}" "${_command_target}")
     endforeach()
 endfunction()
