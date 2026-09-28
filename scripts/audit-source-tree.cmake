@@ -8,6 +8,41 @@ endif()
 # The gadget composer is the one C++ file that includes implementation
 # fragments: its .ipp decode families stay in one compiler-visible translation
 # unit without making .ipp a general convention.
+# A darwin/ source that includes a header existing only under tests/ compiles
+# only when a test target adds that directory to its include path.
+function(uml_audit_test_only_includes ROOT OUT_VIOLATIONS)
+    file(GLOB_RECURSE TEST_HEADERS LIST_DIRECTORIES false
+        "${ROOT}/tests/*.h" "${ROOT}/tests/*.hpp")
+    set(DARWIN_GLOBS)
+    foreach(EXTENSION IN ITEMS c cc cpp cxx m mm h hh hpp hxx ipp inl inc S)
+        list(APPEND DARWIN_GLOBS "${ROOT}/darwin/*.${EXTENSION}")
+    endforeach()
+    file(GLOB_RECURSE DARWIN_FILES LIST_DIRECTORIES false ${DARWIN_GLOBS})
+    set(TEST_ONLY_NAMES)
+    foreach(PATH IN LISTS TEST_HEADERS)
+        get_filename_component(HEADER_NAME "${PATH}" NAME)
+        list(APPEND TEST_ONLY_NAMES "${HEADER_NAME}")
+    endforeach()
+    foreach(PATH IN LISTS DARWIN_FILES)
+        get_filename_component(HEADER_NAME "${PATH}" NAME)
+        list(REMOVE_ITEM TEST_ONLY_NAMES "${HEADER_NAME}")
+    endforeach()
+    set(FOUND)
+    foreach(PATH IN LISTS DARWIN_FILES)
+        file(STRINGS "${PATH}" DIRECTIVES
+            REGEX "^[ \t]*#[ \t]*include[ \t]*\"[^\"]+\"")
+        foreach(DIRECTIVE IN LISTS DIRECTIVES)
+            string(REGEX REPLACE "^[ \t]*#[ \t]*include[ \t]*\"([^\"]+)\".*$"
+                "\\1" INCLUDE_NAME "${DIRECTIVE}")
+            if(INCLUDE_NAME IN_LIST TEST_ONLY_NAMES)
+                list(APPEND FOUND
+                    "${PATH}: includes ${INCLUDE_NAME}, which exists only under tests/")
+            endif()
+        endforeach()
+    endforeach()
+    set(${OUT_VIOLATIONS} "${FOUND}" PARENT_SCOPE)
+endfunction()
+
 function(uml_audit_implementation_fragments ROOT OUT_VIOLATIONS)
     set(COMPOSER "${ROOT}/darwin/cpu/arm64/gadgets/program_builder.cpp")
     set(FRAGMENT_VIOLATIONS)
@@ -19,13 +54,19 @@ function(uml_audit_implementation_fragments ROOT OUT_VIOLATIONS)
         "${ROOT}/darwin/*.hh"
         "${ROOT}/darwin/*.hpp"
         "${ROOT}/darwin/*.ipp"
+        "${ROOT}/darwin/*.m"
+        "${ROOT}/darwin/*.mm"
+        "${ROOT}/Kernarium/*.m"
+        "${ROOT}/Kernarium/*.mm"
         "${ROOT}/tests/*.cpp"
         "${ROOT}/tests/*.cc"
         "${ROOT}/tests/*.cxx"
         "${ROOT}/tests/*.h"
         "${ROOT}/tests/*.hh"
         "${ROOT}/tests/*.hpp"
-        "${ROOT}/tests/*.ipp")
+        "${ROOT}/tests/*.ipp"
+        "${ROOT}/tests/*.m"
+        "${ROOT}/tests/*.mm")
     foreach(PATH IN LISTS FIRST_PARTY_CXX_FILES)
         if(PATH STREQUAL COMPOSER)
             continue()
@@ -40,6 +81,27 @@ function(uml_audit_implementation_fragments ROOT OUT_VIOLATIONS)
     set(${OUT_VIOLATIONS} "${FRAGMENT_VIOLATIONS}" PARENT_SCOPE)
 endfunction()
 
+# Guest domains and performance runners may share process/console mechanics
+# only through tests/integration/support. Importing another suite's entry
+# point, or a guest launcher (scripts/boot_*.py, tools/rootfs/*/boot.py),
+# couples its command-line policy and teardown behavior into an unrelated
+# test.
+function(uml_audit_guest_runner_imports ROOT OUT_VIOLATIONS)
+    set(_violations)
+    file(GLOB_RECURSE _runners LIST_DIRECTORIES false
+        "${ROOT}/tests/integration/*.py"
+        "${ROOT}/tests/perf/*.py")
+    foreach(_path IN LISTS _runners)
+        file(READ "${_path}" _content)
+        if(_content MATCHES
+           "(^|\n)[ \t]*(from|import)[ \t]+((tests\.)?integration\.)?(run_guest_(ltp|smp|jit|network|gpu)|boot(_[A-Za-z0-9_]+)?[ \t\r\n.,(])")
+            list(APPEND _violations
+                "${_path}: guest suites must share helpers through tests/integration/support")
+        endif()
+    endforeach()
+    set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
+endfunction()
+
 set(VIOLATIONS)
 
 file(GLOB ROOT_C_SOURCES LIST_DIRECTORIES false
@@ -47,7 +109,7 @@ file(GLOB ROOT_C_SOURCES LIST_DIRECTORIES false
     "${SOURCE_ROOT}/Makefile")
 set(C_SOURCES ${ROOT_C_SOURCES})
 foreach(FIRST_PARTY_SCOPE IN ITEMS
-        cmake darwin dependencies kernel scripts tests tools)
+        cmake darwin dependencies kernel Kernarium scripts tests tools)
     if(NOT IS_DIRECTORY "${SOURCE_ROOT}/${FIRST_PARTY_SCOPE}")
         continue()
     endif()
@@ -178,11 +240,20 @@ file(GLOB_RECURSE CXX_SOURCES LIST_DIRECTORIES false
     "${SOURCE_ROOT}/darwin/*.hpp"
     "${SOURCE_ROOT}/darwin/*.h"
     "${SOURCE_ROOT}/darwin/*.hh"
+    "${SOURCE_ROOT}/darwin/*.m"
+    "${SOURCE_ROOT}/darwin/*.mm"
+    "${SOURCE_ROOT}/Kernarium/*.m"
+    "${SOURCE_ROOT}/Kernarium/*.mm"
+    "${SOURCE_ROOT}/Kernarium/*.cpp"
+    "${SOURCE_ROOT}/Kernarium/*.hpp"
+    "${SOURCE_ROOT}/Kernarium/*.h"
     "${SOURCE_ROOT}/tests/*.cpp"
     "${SOURCE_ROOT}/tests/*.cc"
     "${SOURCE_ROOT}/tests/*.cxx"
     "${SOURCE_ROOT}/tests/*.hpp"
-    "${SOURCE_ROOT}/tests/*.h")
+    "${SOURCE_ROOT}/tests/*.h"
+    "${SOURCE_ROOT}/tests/*.m"
+    "${SOURCE_ROOT}/tests/*.mm")
 foreach(PATH IN LISTS CXX_SOURCES)
     file(READ "${PATH}" CONTENT)
     file(RELATIVE_PATH SOURCE_PATH "${SOURCE_ROOT}" "${PATH}")
@@ -202,6 +273,9 @@ uml_audit_implementation_fragments(
     "${SOURCE_ROOT}" IMPLEMENTATION_FRAGMENT_VIOLATIONS)
 list(APPEND VIOLATIONS ${IMPLEMENTATION_FRAGMENT_VIOLATIONS})
 
+uml_audit_test_only_includes("${SOURCE_ROOT}" TEST_ONLY_INCLUDE_VIOLATIONS)
+list(APPEND VIOLATIONS ${TEST_ONLY_INCLUDE_VIOLATIONS})
+
 # All first-party CTest registrations must pass through the suite helpers so
 # suite labels, fixture policy, and aggregate binary dependencies cannot be
 # bypassed by a raw add_test() in another directory.
@@ -219,56 +293,46 @@ foreach(PATH IN LISTS UNIT_SCRIPT_RUNNERS)
         "${PATH}: Python and shell are not allowed in the host unit-test tree")
 endforeach()
 
-# Guest domains and performance runners may share process/console mechanics
-# only through tests/integration/support. Importing another suite's entry point
-# couples its command-line policy and teardown behavior into an unrelated test.
-file(GLOB_RECURSE GUEST_RUNNER_PYTHON LIST_DIRECTORIES false
-    "${SOURCE_ROOT}/tests/integration/*.py"
-    "${SOURCE_ROOT}/tests/perf/*.py")
-foreach(PATH IN LISTS GUEST_RUNNER_PYTHON)
-    file(READ "${PATH}" CONTENT)
-    if(CONTENT MATCHES
-       "(^|\n)[ \t]*(from|import)[ \t]+((tests\.)?integration\.)?run_guest_(ltp|smp|jit|network|gpu)")
-        list(APPEND VIOLATIONS
-            "${PATH}: guest suites must share helpers through tests/integration/support")
-    endif()
-endforeach()
+uml_audit_guest_runner_imports("${SOURCE_ROOT}" GUEST_RUNNER_IMPORT_VIOLATIONS)
+list(APPEND VIOLATIONS ${GUEST_RUNNER_IMPORT_VIOLATIONS})
 
-# Verify that every implementation source has a first-party CMake owner using
-# its complete module-relative path. A same-named source in another module is
-# not evidence of ownership.
+# Verify that every implementation source is owned by the nearest CMakeLists.txt
+# at or above it, using its complete module-relative path. A same-named source
+# in another module is not evidence of ownership, and darwin/CMakeLists.txt
+# composes subdirectories without owning leaf sources.
+set(OWNERSHIP_GLOBS)
+foreach(OWNED_TREE IN ITEMS darwin Kernarium/Runtime)
+    foreach(EXTENSION IN ITEMS cpp cc cxx m mm S s)
+        list(APPEND OWNERSHIP_GLOBS "${SOURCE_ROOT}/${OWNED_TREE}/*.${EXTENSION}")
+    endforeach()
+endforeach()
 file(GLOB_RECURSE IMPLEMENTATION_SOURCES LIST_DIRECTORIES false
-    "${SOURCE_ROOT}/darwin/*.cpp"
-    "${SOURCE_ROOT}/darwin/*.cc"
-    "${SOURCE_ROOT}/darwin/*.cxx"
-    "${SOURCE_ROOT}/darwin/*.m"
-    "${SOURCE_ROOT}/darwin/*.mm"
-    "${SOURCE_ROOT}/darwin/*.S"
-    "${SOURCE_ROOT}/darwin/*.s")
-file(GLOB_RECURSE OWNERSHIP_MANIFESTS LIST_DIRECTORIES false
-    "${SOURCE_ROOT}/darwin/CMakeLists.txt")
+    ${OWNERSHIP_GLOBS})
 foreach(PATH IN LISTS IMPLEMENTATION_SOURCES)
     file(RELATIVE_PATH SOURCE_RELATIVE_PATH "${SOURCE_ROOT}" "${PATH}")
-    set(OWNED FALSE)
-    foreach(MANIFEST IN LISTS OWNERSHIP_MANIFESTS)
-        get_filename_component(MANIFEST_DIRECTORY "${MANIFEST}" DIRECTORY)
-        file(RELATIVE_PATH MANIFEST_RELATIVE_PATH
-            "${MANIFEST_DIRECTORY}" "${PATH}")
-        file(READ "${MANIFEST}" MANIFEST_TEXT)
-        string(REGEX REPLACE "#[^\n]*" "" MANIFEST_CODE "${MANIFEST_TEXT}")
-        string(FIND "${MANIFEST_CODE}" "${MANIFEST_RELATIVE_PATH}"
-            RELATIVE_OWNER_INDEX)
-        string(FIND "${MANIFEST_CODE}" "${SOURCE_RELATIVE_PATH}"
-            SOURCE_OWNER_INDEX)
-        if(NOT RELATIVE_OWNER_INDEX EQUAL -1 OR
-           NOT SOURCE_OWNER_INDEX EQUAL -1)
-            set(OWNED TRUE)
-            break()
-        endif()
-    endforeach()
-    if(NOT OWNED)
+    get_filename_component(MANIFEST_DIRECTORY "${PATH}" DIRECTORY)
+    while(NOT EXISTS "${MANIFEST_DIRECTORY}/CMakeLists.txt" AND
+          NOT MANIFEST_DIRECTORY STREQUAL SOURCE_ROOT)
+        get_filename_component(MANIFEST_DIRECTORY "${MANIFEST_DIRECTORY}"
+            DIRECTORY)
+    endwhile()
+    set(MANIFEST "${MANIFEST_DIRECTORY}/CMakeLists.txt")
+    if(MANIFEST STREQUAL "${SOURCE_ROOT}/darwin/CMakeLists.txt" OR
+       MANIFEST STREQUAL "${SOURCE_ROOT}/CMakeLists.txt")
         list(APPEND VIOLATIONS
-            "${PATH}: implementation source has no CMake owner")
+            "${PATH}: implementation source has no CMake owner below the composition file")
+        continue()
+    endif()
+    file(RELATIVE_PATH MANIFEST_RELATIVE_PATH "${MANIFEST_DIRECTORY}" "${PATH}")
+    file(READ "${MANIFEST}" MANIFEST_TEXT)
+    string(REGEX REPLACE "#[^\n]*" "" MANIFEST_CODE "${MANIFEST_TEXT}")
+    string(FIND "${MANIFEST_CODE}" "${MANIFEST_RELATIVE_PATH}"
+        RELATIVE_OWNER_INDEX)
+    string(FIND "${MANIFEST_CODE}" "${SOURCE_RELATIVE_PATH}"
+        SOURCE_OWNER_INDEX)
+    if(RELATIVE_OWNER_INDEX EQUAL -1 AND SOURCE_OWNER_INDEX EQUAL -1)
+        list(APPEND VIOLATIONS
+            "${PATH}: implementation source is not owned by its nearest CMakeLists.txt")
     endif()
 endforeach()
 

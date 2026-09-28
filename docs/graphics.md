@@ -34,7 +34,7 @@ remains a target of the ordinary, non-GPU iOS libraries only. The unmodified
 device slice also runs on an Apple silicon Mac in Designed for iPad mode, where
 Metal reports the host GPU and the full Metal 4 family; the physical-device
 lanes are in [`testing.md`](testing.md). The device runtimes use the
-Vulkan-experiment product's GPU prefix and kernel descriptors. Desktop GL 4.6
+Vulkan-experiment GPU prefix and the accepted kernel descriptors. Desktop GL 4.6
 needs `GL_ARB_buffer_storage`, whose coherent buffers reach the guest through
 the vhost-user shared-memory aperture of the shared kernel series.
 

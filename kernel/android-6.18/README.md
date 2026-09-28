@@ -22,7 +22,11 @@ The host exposes hardware decoding through V4L2 independently of the GPU.
 
 The line has one 16 KiB ARM64 configuration in
 [`config/android.fragment`](config/android.fragment). It is built-in-only:
-`CONFIG_MODULES=n`, no `.ko` or DLKM payloads, and no 4 KiB variant.
+`CONFIG_MODULES=n`, no `.ko` or DLKM payloads, and no 4 KiB variant. The
+kernel build and the release verifier require every symbol in
+[`config/required-builtins.txt`](config/required-builtins.txt) to be `y` and
+every symbol in [`config/forbidden-options.txt`](config/forbidden-options.txt)
+to be absent.
 
 The configuration includes the Android Binder, SELinux/audit, cgroups, storage,
 DMA-BUF heaps, networking, BPF interpreter, Virtio devices, and Darwin UML

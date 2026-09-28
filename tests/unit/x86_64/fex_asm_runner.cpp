@@ -431,6 +431,24 @@ void print_result(std::string_view status, std::size_t retired,
 		<< "detail=" << detail << '\n';
 }
 
+/* FEX expectation keys, K-trace register masks and register_name() all index
+ * the general registers in this order, and the K-trace and compact RFLAGS
+ * encodings index the flags in this one. */
+constexpr std::array<uml::cpu::x86_64::Register, 16> pack_registers{
+	uml::cpu::x86_64::Register::rax, uml::cpu::x86_64::Register::rbx,
+	uml::cpu::x86_64::Register::rcx, uml::cpu::x86_64::Register::rdx,
+	uml::cpu::x86_64::Register::rsi, uml::cpu::x86_64::Register::rdi,
+	uml::cpu::x86_64::Register::rbp, uml::cpu::x86_64::Register::rsp,
+	uml::cpu::x86_64::Register::r8, uml::cpu::x86_64::Register::r9,
+	uml::cpu::x86_64::Register::r10, uml::cpu::x86_64::Register::r11,
+	uml::cpu::x86_64::Register::r12, uml::cpu::x86_64::Register::r13,
+	uml::cpu::x86_64::Register::r14, uml::cpu::x86_64::Register::r15};
+constexpr std::array<std::uint64_t, 7> pack_flags{
+	uml::cpu::x86_64::rflags_carry, uml::cpu::x86_64::rflags_parity,
+	uml::cpu::x86_64::rflags_auxiliary, uml::cpu::x86_64::rflags_zero,
+	uml::cpu::x86_64::rflags_sign, uml::cpu::x86_64::rflags_direction,
+	uml::cpu::x86_64::rflags_overflow};
+
 [[nodiscard]] const char *register_name(unsigned index) noexcept
 {
 	constexpr std::array<const char *, 16> names{
@@ -443,12 +461,6 @@ void print_result(std::string_view status, std::size_t retired,
 	const uml::cpu::x86_64::CpuState &cpu, std::string &status,
 	std::string &detail)
 {
-	using uml::cpu::x86_64::Register;
-	constexpr std::array<Register, 16> fex_registers{
-		Register::rax, Register::rbx, Register::rcx, Register::rdx,
-		Register::rsi, Register::rdi, Register::rbp, Register::rsp,
-		Register::r8, Register::r9, Register::r10, Register::r11,
-		Register::r12, Register::r13, Register::r14, Register::r15};
 	for (const auto &expectation : configuration.registers) {
 		const auto index = std::countr_zero(expectation.key);
 		if (index == 0) {
@@ -461,7 +473,7 @@ void print_result(std::string_view status, std::size_t retired,
 		} else if (index >= 1 && index <= 16) {
 			const auto register_index = index - 1;
 			if (expectation.values.size() != 1 ||
-				cpu.gpr(fex_registers[register_index]) !=
+				cpu.gpr(pack_registers[register_index]) !=
 					expectation.values.front()) {
 				status = "result_mismatch";
 				std::ostringstream mismatch;
@@ -469,7 +481,7 @@ void print_result(std::string_view status, std::size_t retired,
 					" expected=0x" << std::hex <<
 					(expectation.values.empty() ? 0 :
 					 expectation.values.front()) << " actual=0x" <<
-					cpu.gpr(fex_registers[register_index]);
+					cpu.gpr(pack_registers[register_index]);
 				detail = mismatch.str();
 				return false;
 			}
@@ -801,45 +813,27 @@ struct KExpectedState final {
 [[nodiscard]] std::uint8_t compact_flags(
 	const uml::cpu::x86_64::CpuState &cpu) noexcept
 {
-	using namespace uml::cpu::x86_64;
-	constexpr std::array<std::uint64_t, 7> masks{
-		rflags_carry, rflags_parity, rflags_auxiliary, rflags_zero,
-		rflags_sign, rflags_direction, rflags_overflow};
 	std::uint8_t value{};
-	for (unsigned index = 0; index < masks.size(); ++index)
-		value |= ((cpu.rflags & masks[index]) != 0) << index;
+	for (unsigned index = 0; index < pack_flags.size(); ++index)
+		value |= ((cpu.rflags & pack_flags[index]) != 0) << index;
 	return value;
 }
 
 void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 	const KExpectedState &expected, std::span<const std::uint32_t> offsets)
 {
-	using uml::cpu::x86_64::Register;
-	constexpr std::array<Register, 16> registers{
-		Register::rax, Register::rbx, Register::rcx, Register::rdx,
-		Register::rsi, Register::rdi, Register::rbp, Register::rsp,
-		Register::r8, Register::r9, Register::r10, Register::r11,
-		Register::r12, Register::r13, Register::r14, Register::r15};
-	for (unsigned index = 0; index < registers.size(); ++index) {
+	for (unsigned index = 0; index < pack_registers.size(); ++index) {
 		if ((expected.gpr_valid & (1U << index)) != 0)
-			cpu.gpr(registers[index]) = expected.gprs[index];
+			cpu.gpr(pack_registers[index]) = expected.gprs[index];
 	}
 	for (unsigned index = 0; index < cpu.vectors.size(); ++index) {
 		if ((expected.vector_valid & (1U << index)) != 0)
 			cpu.vectors[index] = expected.vectors[index];
 	}
 	cpu.rflags = uml::cpu::x86_64::rflags_reserved;
-	constexpr std::array<std::uint64_t, 7> flag_masks{
-		uml::cpu::x86_64::rflags_carry,
-		uml::cpu::x86_64::rflags_parity,
-		uml::cpu::x86_64::rflags_auxiliary,
-		uml::cpu::x86_64::rflags_zero,
-		uml::cpu::x86_64::rflags_sign,
-		uml::cpu::x86_64::rflags_direction,
-		uml::cpu::x86_64::rflags_overflow};
-	for (unsigned index = 0; index < flag_masks.size(); ++index) {
+	for (unsigned index = 0; index < pack_flags.size(); ++index) {
 		if ((expected.flag_valid & expected.flag_values & (1U << index)) != 0)
-			cpu.rflags |= flag_masks[index];
+			cpu.rflags |= pack_flags[index];
 	}
 	cpu.rip = code_address + offsets[expected.rip_index];
 }
@@ -907,12 +901,6 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 	const KExpectedState &expected, std::span<const std::uint32_t> offsets,
 	bool nan_class_equivalence, std::string &detail)
 {
-	using uml::cpu::x86_64::Register;
-	constexpr std::array<Register, 16> registers{
-		Register::rax, Register::rbx, Register::rcx, Register::rdx,
-		Register::rsi, Register::rdi, Register::rbp, Register::rsp,
-		Register::r8, Register::r9, Register::r10, Register::r11,
-		Register::r12, Register::r13, Register::r14, Register::r15};
 	const auto expected_rip = code_address + offsets[expected.rip_index];
 	if (cpu.rip != expected_rip) {
 		std::ostringstream mismatch;
@@ -921,13 +909,13 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 		detail = mismatch.str();
 		return false;
 	}
-	for (unsigned index = 0; index < registers.size(); ++index) {
+	for (unsigned index = 0; index < pack_registers.size(); ++index) {
 		if ((expected.gpr_valid & (1U << index)) == 0 ||
-			cpu.gpr(registers[index]) == expected.gprs[index])
+			cpu.gpr(pack_registers[index]) == expected.gprs[index])
 			continue;
 		std::ostringstream mismatch;
 		mismatch << register_name(index) << " expected=0x" << std::hex <<
-			expected.gprs[index] << " actual=0x" << cpu.gpr(registers[index]);
+			expected.gprs[index] << " actual=0x" << cpu.gpr(pack_registers[index]);
 		detail = mismatch.str();
 		return false;
 	}

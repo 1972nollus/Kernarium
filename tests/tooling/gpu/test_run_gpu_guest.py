@@ -487,8 +487,12 @@ class GpuGuestSafetyTests(unittest.TestCase):
 
     def test_integration_graph_builds_and_passes_the_local_payload(self) -> None:
         source = INTEGRATION_CMAKE.read_text(encoding="utf-8")
+        # Every guest payload joins integration-test-binaries.
         self.assertIn(
-            "add_dependencies(integration-test-binaries uml-docker-hello-world)",
+            "add_dependencies(integration-test-binaries uml-${NAME})", source
+        )
+        self.assertIn(
+            "uml_add_guest_payload(UML_DOCKER_HELLO_WORLD docker-hello-world\n",
             source,
         )
         self.assertIn(

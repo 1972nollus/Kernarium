@@ -8,6 +8,7 @@
  * gives the slot its write access back.
  */
 #include "allocation_fault.hpp"
+#include "mach_vm_region_test_support.hpp"
 #include "native_address_space.hpp"
 #include "native_window_test_support.hpp"
 #include "scratch_backing.hpp"
@@ -48,19 +49,8 @@ void require(bool condition, const char *message)
 
 [[nodiscard]] vm_prot_t protection_at(std::uintptr_t address)
 {
-	mach_vm_address_t region = address;
-	mach_vm_size_t size = 0;
-	vm_region_basic_info_data_64_t information{};
-	mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-	mach_port_t object = MACH_PORT_NULL;
-	const auto status = mach_vm_region(mach_task_self(), &region, &size,
-		VM_REGION_BASIC_INFO_64,
-		reinterpret_cast<vm_region_info_t>(&information), &count, &object);
-	if (object != MACH_PORT_NULL)
-		(void)mach_port_deallocate(mach_task_self(), object);
-	if (status != KERN_SUCCESS || region > address)
-		return VM_PROT_NONE;
-	return information.protection;
+	const auto region = uml::testing::region_containing(address);
+	return region ? region->protection : VM_PROT_NONE;
 }
 
 [[nodiscard]] std::byte load(std::uintptr_t address) noexcept

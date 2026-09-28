@@ -38,6 +38,18 @@ def parse_assignments(
     return values
 
 
+def accepted_directory_name(
+    path: Path, key: str, error: Callable[[str], BaseException] = ValueError
+) -> str:
+    """Return the single directory name an acceptance descriptor assigns to key."""
+    value = parse_assignments(path, error).get(key)
+    if value is None:
+        raise error(f"{path} does not define {key}")
+    if value in ("", ".", "..") or PurePosixPath(value).name != value:
+        raise error(f"unsafe {key} in {path}")
+    return value
+
+
 def replace_assignment(
     text: str, key: str, value: str, error: Callable[[str], BaseException] = ValueError
 ) -> str:

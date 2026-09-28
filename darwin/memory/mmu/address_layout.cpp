@@ -7,7 +7,6 @@
 namespace uml::memory {
 namespace {
 
-#if DARWIN_UML_DYNAMIC_NATIVE_LAYOUT
 struct AddressWindowState final {
 	std::atomic_uint64_t revision{};
 	std::atomic_uint64_t start{DARWIN_UML_NATIVE_ADDRESS_START};
@@ -83,20 +82,13 @@ void publish_window(std::uint64_t start, std::uint64_t end) noexcept
 		first_segment == Segment::guest_high ? AddressDomain::guest :
 		AddressDomain::native;
 }
-#endif
 
 } // namespace
 
 AddressDomain ConfiguredAddressLayout::classify(
 	std::uint64_t address, std::uint64_t length) noexcept
 {
-#if DARWIN_UML_DYNAMIC_NATIVE_LAYOUT
 	return classify_with_window(address, length, snapshot_window());
-#else
-	return AddressLayout<DARWIN_UML_GUEST_ADDRESS_LIMIT,
-		DARWIN_UML_NATIVE_ADDRESS_START,
-		DARWIN_UML_NATIVE_ADDRESS_END>::classify(address, length);
-#endif
 }
 
 bool ConfiguredAddressLayout::is_guest(std::uint64_t address) noexcept
@@ -107,18 +99,12 @@ bool ConfiguredAddressLayout::is_guest(std::uint64_t address) noexcept
 bool ConfiguredAddressLayout::is_native_window(
 	std::uint64_t address, std::uint64_t length) noexcept
 {
-#if DARWIN_UML_DYNAMIC_NATIVE_LAYOUT
 	if (length > std::numeric_limits<std::uint64_t>::max() - address)
 		return false;
 	const auto window = snapshot_window();
 	const auto last = length == 0 ? address : address + length - 1U;
 	return address >= window.start && address < window.end &&
 		last >= window.start && last < window.end;
-#else
-	return AddressLayout<DARWIN_UML_GUEST_ADDRESS_LIMIT,
-		DARWIN_UML_NATIVE_ADDRESS_START,
-		DARWIN_UML_NATIVE_ADDRESS_END>::is_native_window(address, length);
-#endif
 }
 
 bool configure_native_address_window(
@@ -127,21 +113,14 @@ bool configure_native_address_window(
 	if (start > end || start < DARWIN_UML_NATIVE_ADDRESS_START ||
 	    end > DARWIN_UML_GUEST_ADDRESS_LIMIT)
 		return false;
-#if DARWIN_UML_DYNAMIC_NATIVE_LAYOUT
 	publish_window(start, end);
 	return true;
-#else
-	return start == DARWIN_UML_NATIVE_ADDRESS_START &&
-		end == DARWIN_UML_NATIVE_ADDRESS_END;
-#endif
 }
 
 void reset_native_address_window() noexcept
 {
-#if DARWIN_UML_DYNAMIC_NATIVE_LAYOUT
 	publish_window(DARWIN_UML_NATIVE_ADDRESS_START,
 		DARWIN_UML_NATIVE_ADDRESS_END);
-#endif
 }
 
 } // namespace uml::memory

@@ -14,8 +14,6 @@ uml_add_unit_test(
     LABELS gpu;vulkan)
 
 # The balloon follows host GPU memory that Metal's allocated size omits.
-# The balloon device exists only in GPU builds; the platform's host GPU
-# memory library is always built.
 if(TARGET uml_balloon_device)
     add_executable(uml_gpu_host_graphics_footprint_tests
         host_graphics_footprint_tests.mm)
@@ -436,19 +434,6 @@ if(TARGET uml_gpu_service)
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
 
-    # The wire with its stop-wait observer, so a test waits until a receiver
-    # has consumed every queued fragment instead of sleeping and hoping.
-    add_library(uml_gpu_transport_wire_stop_wait_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_message.cpp)
-    target_include_directories(uml_gpu_transport_wire_stop_wait_test_variant
-        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_definitions(uml_gpu_transport_wire_stop_wait_test_variant
-        PRIVATE UML_GPU_STOP_WAIT_TESTING=1)
-    target_compile_features(uml_gpu_transport_wire_stop_wait_test_variant
-        PUBLIC cxx_std_20)
-    target_compile_options(uml_gpu_transport_wire_stop_wait_test_variant
-        PRIVATE -Wall -Wextra -Werror -Wno-deprecated-declarations)
-
     add_executable(uml_gpu_transport_wire_tests
         gpu_allocation_failure.cpp
         vhost_user_message_test_main.cpp
@@ -473,7 +458,7 @@ if(TARGET uml_gpu_service)
         vhost_user_descriptor_ceiling_test_main.cpp
         vhost_user_descriptor_ceiling_tests.cpp)
     target_link_libraries(uml_gpu_transport_ceiling_tests PRIVATE
-        uml_gpu_transport_wire)
+        uml_vhost_user_wire)
     target_include_directories(uml_gpu_transport_ceiling_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${CMAKE_CURRENT_SOURCE_DIR})
@@ -485,46 +470,9 @@ if(TARGET uml_gpu_service)
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
 
-    # The shared service scaffold in the transport has a startup checkpoint
-    # of its own, so the startup tests build the transport with it.
-    add_library(uml_gpu_transport_startup_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/deferred_fences.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/shared_memory_regions.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_server.cpp
-        in_process_service_testing.cpp)
-    target_include_directories(uml_gpu_transport_startup_test_variant PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
-        ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_definitions(uml_gpu_transport_startup_test_variant PRIVATE
-        UML_GPU_STARTUP_TESTING=1)
-    target_compile_features(uml_gpu_transport_startup_test_variant PUBLIC
-        cxx_std_20)
-    target_compile_options(uml_gpu_transport_startup_test_variant PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
-    target_link_libraries(uml_gpu_transport_startup_test_variant PUBLIC
-        UML::DeviceSocketPaths
-        UML::MemorySharedBacking
-        uml_gpu_transport_wire_stop_wait_test_variant
-        uml_gpu_protocol_device
-        UML::VncInput)
-    target_link_libraries(uml_gpu_transport_startup_test_variant PRIVATE
-        UML::GuestTimerMask)
-
-    add_library(uml_gpu_service_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/in_process_service.cpp)
-    target_link_libraries(uml_gpu_service_test_variant PUBLIC
-        uml_gpu_transport_startup_test_variant)
-    target_include_directories(uml_gpu_service_test_variant PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
-        ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_definitions(uml_gpu_service_test_variant PRIVATE
-        UML_GPU_STARTUP_TESTING=1)
-    target_compile_features(uml_gpu_service_test_variant PUBLIC cxx_std_20)
-    target_compile_options(uml_gpu_service_test_variant PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
-
     add_executable(uml_gpu_service_fd_tests
         gpu_lifetime_tests.cpp
+        in_process_service_testing.cpp
         in_process_service_lifetime_tests.cpp
         vhost_user_protocol_tests.cpp
         vhost_user_server_lifetime_tests.cpp)
@@ -541,61 +489,12 @@ if(TARGET uml_gpu_service)
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
 
-    # A deliberately slow test transport makes the owned stop wake
-    # observable: the child watchdog fails if service shutdown falls back to
-    # periodic polling.
-    add_library(uml_gpu_transport_wire_slow_stop_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_message.cpp)
-    target_include_directories(uml_gpu_transport_wire_slow_stop_test_variant
-        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_definitions(uml_gpu_transport_wire_slow_stop_test_variant
-        PRIVATE
-            UML_GPU_STOP_POLL_TIMEOUT_MILLISECONDS=5000
-            UML_GPU_STOP_WAIT_TESTING=1)
-    target_compile_features(uml_gpu_transport_wire_slow_stop_test_variant
-        PUBLIC cxx_std_20)
-    target_compile_options(uml_gpu_transport_wire_slow_stop_test_variant PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
-
-    add_library(uml_gpu_transport_slow_stop_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/deferred_fences.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/shared_memory_regions.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_server.cpp)
-    target_include_directories(uml_gpu_transport_slow_stop_test_variant
-        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_definitions(uml_gpu_transport_slow_stop_test_variant
-        PRIVATE UML_GPU_STOP_POLL_TIMEOUT_MILLISECONDS=5000)
-    target_compile_features(uml_gpu_transport_slow_stop_test_variant
-        PUBLIC cxx_std_20)
-    target_compile_options(uml_gpu_transport_slow_stop_test_variant PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
-    target_link_libraries(uml_gpu_transport_slow_stop_test_variant PUBLIC
-        UML::DeviceSocketPaths
-        UML::MemorySharedBacking
-        uml_gpu_transport_wire_slow_stop_test_variant
-        uml_gpu_protocol_device
-        UML::VncInput)
-
-    add_library(uml_gpu_service_slow_stop_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/in_process_service.cpp
-        in_process_service_testing.cpp)
-    target_include_directories(uml_gpu_service_slow_stop_test_variant PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
-        ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_definitions(uml_gpu_service_slow_stop_test_variant PRIVATE
-        UML_GPU_STARTUP_TESTING=0
-        UML_GPU_SERVICE_TRANSPORT_TESTING=1)
-    target_compile_features(uml_gpu_service_slow_stop_test_variant PUBLIC
-        cxx_std_20)
-    target_compile_options(uml_gpu_service_slow_stop_test_variant PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
-    target_link_libraries(uml_gpu_service_slow_stop_test_variant PRIVATE
-        uml_gpu_transport_slow_stop_test_variant)
-
     add_executable(uml_gpu_service_stop_wake_tests
-        in_process_service_stop_wake_tests.cpp)
+        in_process_service_stop_wake_tests.cpp
+        in_process_service_testing.cpp)
     target_include_directories(uml_gpu_service_stop_wake_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
         ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_features(uml_gpu_service_stop_wake_tests PRIVATE cxx_std_20)
     target_compile_options(uml_gpu_service_stop_wake_tests PRIVATE
@@ -607,20 +506,7 @@ if(TARGET uml_gpu_service)
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
 
-    add_library(uml_gpu_protocol_device_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/virtio_gpu_device.cpp)
-    target_include_directories(uml_gpu_protocol_device_test_variant PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
-        ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_definitions(uml_gpu_protocol_device_test_variant PUBLIC
-        UML_GPU_DEVICE_TESTING=1)
-    target_compile_features(uml_gpu_protocol_device_test_variant PUBLIC
-        cxx_std_20)
-    target_compile_options(uml_gpu_protocol_device_test_variant PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
-
     add_executable(uml_gpu_device_atomicity_tests
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/deferred_fences.cpp
         gpu_allocation_failure.cpp
         virtio_gpu_device_test_main.cpp
         virtio_gpu_device_lifetime_tests.cpp)
@@ -639,15 +525,11 @@ if(TARGET uml_gpu_service)
 endif()
 
 if(TARGET uml_gpu_display)
+    # The resize path's objects come from the shipped display library.
     add_executable(uml_gpu_display_resize_tests
-        display_resize_tests.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/display_geometry.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/display_resize_notifier.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/scanout_framebuffer.cpp)
-    target_include_directories(uml_gpu_display_resize_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+        display_resize_tests.cpp)
     target_link_libraries(uml_gpu_display_resize_tests PRIVATE
-        "-framework Accelerate")
+        uml_gpu_display)
     target_compile_features(uml_gpu_display_resize_tests PRIVATE cxx_std_20)
     target_compile_options(uml_gpu_display_resize_tests PRIVATE
         -Wall -Wextra -Werror)
@@ -656,43 +538,19 @@ if(TARGET uml_gpu_display)
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
 
-    add_library(uml_gpu_display_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/display_geometry.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/metal_readback.mm
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/metal_scanout_shader.mm
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/scanout_framebuffer.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vnc_display.cpp
+    add_executable(uml_gpu_vnc_lifetime_tests
+        vnc_display_lifetime_tests.cpp
         vnc_display_metal_testing.mm
         vnc_display_testing.cpp)
-    target_link_libraries(uml_gpu_display_test_variant PUBLIC
-        UML::VncInput)
-    target_link_libraries(uml_gpu_display_test_variant PRIVATE
-        UML::ThirdPartyVncServer
-        "-framework Accelerate"
+    target_link_libraries(uml_gpu_vnc_lifetime_tests PRIVATE
+        uml_gpu_display_test_variant
         "-framework Foundation"
         "-framework Metal")
-    target_include_directories(uml_gpu_display_test_variant PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu
-        ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc
-        ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_definitions(uml_gpu_display_test_variant PRIVATE
-        UML_GPU_VNC_STARTUP_TESTING=1)
-    target_compile_features(uml_gpu_display_test_variant PUBLIC cxx_std_20)
-    set_target_properties(uml_gpu_display_test_variant PROPERTIES
-        OBJCXX_STANDARD 20)
-    target_compile_options(uml_gpu_display_test_variant PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
-    target_compile_options(uml_gpu_display_test_variant PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
-    add_dependencies(uml_gpu_display_test_variant
-        uml_dependency_prefix_verify)
-
-    add_executable(uml_gpu_vnc_lifetime_tests
-        vnc_display_lifetime_tests.cpp)
-    target_link_libraries(uml_gpu_vnc_lifetime_tests PRIVATE
-        uml_gpu_display_test_variant)
     target_compile_features(uml_gpu_vnc_lifetime_tests PRIVATE cxx_std_20)
+    set_target_properties(uml_gpu_vnc_lifetime_tests PROPERTIES
+        OBJCXX_STANDARD 20)
     target_compile_options(uml_gpu_vnc_lifetime_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
         -Wall -Wextra -Werror -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-vnc-lifetime
         COMMAND uml_gpu_vnc_lifetime_tests

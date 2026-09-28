@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "a64_body_inspection.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 
 #include <algorithm>
@@ -10,6 +11,8 @@
 #include <optional>
 #include <source_location>
 #include <span>
+
+using uml::testing::a64::indirect_branch;
 
 namespace jit_test = uml::cpu::arm64::jit::testing;
 
@@ -178,7 +181,7 @@ void require_only_native_br_x13(std::span<const std::uint32_t> hot,
                                 std::size_t expected) {
   std::size_t branches = 0;
   for (const auto word : hot) {
-    if ((word & 0xffff'fc1fU) != 0xd61f'0000U)
+    if (!indirect_branch(word))
       continue;
     ++branches;
     require(((word >> 5U) & 31U) == 13U,
@@ -205,7 +208,7 @@ void out_of_range_literal_uses_cold_absolute_fallback() {
     materialization_words += is_move_wide_to(word, 12);
     literal_loads +=
         (word & 0xff00'001fU) == (0x5800'0000U | 12U);
-    require((word & 0xffff'fc1fU) != 0xd61f'0000U,
+    require(!indirect_branch(word),
             "pointer fallback introduces a register branch");
   }
   require(materialization_words == 4 && literal_loads == 0,
@@ -259,7 +262,7 @@ void two_out_of_range_literals_use_independent_cold_fallbacks() {
     require((word & 0xff00'001fU) != (0x5800'0000U | 12U) &&
                 (word & 0xff00'001fU) != (0x5800'0000U | 13U),
             "out-of-range two-pointer fallback retains a literal load");
-    require((word & 0xffff'fc1fU) != 0xd61f'0000U,
+    require(!indirect_branch(word),
             "two-pointer fallback introduces a register branch");
   }
   require(first_materialization_words == 4 &&
@@ -492,7 +495,7 @@ void pic_success_path_has_scheduled_remaining_budget() {
               count_word(resident, 0xf900'0670U) == 0,
           "PIC success still publishes obsolete terminal metadata");
   for (const auto word : resident)
-    if ((word & 0xffff'fc1fU) == 0xd61f'0000U)
+    if (indirect_branch(word))
       require(((word >> 5U) & 31U) == 13U,
               "PIC native branch consumes a guest-controlled register");
   require_only_native_br_x13(resident, 1);

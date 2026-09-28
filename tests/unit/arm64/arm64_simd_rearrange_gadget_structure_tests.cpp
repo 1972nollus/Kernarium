@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "a64_body_inspection.hpp"
 #include "arm64_simd_rearrange_test_support.hpp"
 #include "arm64_simd_test_support.hpp"
 
@@ -8,6 +9,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
+
+using uml::testing::a64::conditional_branch;
+using uml::testing::a64::indirect_branch;
 
 extern "C" {
 void uml_arm64_gadget_svc();
@@ -165,18 +169,6 @@ void every_table_form_has_resolved_wrapped_offsets()
 						address_of(uml_arm64_gadget_svc));
 				}
 			}
-}
-
-[[nodiscard]] constexpr bool conditional_branch(std::uint32_t instruction)
-{
-	return (instruction & 0xff00'0010U) == 0x5400'0000U ||
-		(instruction & 0x7e00'0000U) == 0x3400'0000U ||
-		(instruction & 0x7e00'0000U) == 0x3600'0000U;
-}
-
-[[nodiscard]] constexpr bool indirect_branch(std::uint32_t instruction)
-{
-	return (instruction & 0xffff'fc1fU) == 0xd61f'0000U;
 }
 
 void require_branch_free(Gadget gadget)

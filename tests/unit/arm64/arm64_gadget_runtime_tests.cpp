@@ -5,7 +5,7 @@
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
 #include "static_mmu_test_support.hpp"
-#include "mach_vm_protection_test_support.hpp"
+#include "mach_vm_region_test_support.hpp"
 #include "scratch_backing.hpp"
 
 #include <array>
@@ -36,19 +36,8 @@ void require(bool condition,
 
 void require_data_only(const gadgets::Program &program)
 {
-	vm_address_t address = reinterpret_cast<vm_address_t>(
-		program.words().data());
-	vm_size_t size = 0;
-	vm_region_basic_info_data_64_t info{};
-	mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-	mach_port_t object = MACH_PORT_NULL;
-	const auto result = vm_region_64(mach_task_self(), &address, &size,
-		VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info),
-		&count, &object);
-	require(result == KERN_SUCCESS);
-	require((info.protection & VM_PROT_EXECUTE) == 0);
-	if (object != MACH_PORT_NULL)
-		(void)mach_port_deallocate(mach_task_self(), object);
+	require((uml::testing::current_vm_protection(program.words().data()) &
+		VM_PROT_EXECUTE) == 0);
 }
 
 void data_only_stream_and_execution_boundary()

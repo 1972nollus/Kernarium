@@ -2,6 +2,7 @@
 
 #include "fence_deadline.hpp"
 #include "gpu_test_support.hpp"
+#include "gpu_vhost_user_server.hpp"
 #include "in_process_service_testing.hpp"
 #include "vhost_user_message_testing.hpp"
 
@@ -189,8 +190,9 @@ void unsupportedRequestReclaimsDescriptor()
 {
     const auto before = descriptorCount();
     {
-        VhostUserServer server {
-            {}, "127.0.0.1", 0, {}, 64, 64, false};
+        const auto ownedServer = makeGpuVhostUserServer(
+            {}, "127.0.0.1", 0, {}, 64, 64, false);
+        auto& server = *ownedServer;
         withServerConnection(server, [](int socket) {
             auto sent = openTestDescriptor();
             const protocol::VhostHeader header {
@@ -221,8 +223,9 @@ void memoryReplacementReleasesQueueDescriptors()
 {
     const auto before = descriptorCount();
     {
-        VhostUserServer server {
-            {}, "127.0.0.1", 0, {}, 64, 64, false};
+        const auto ownedServer = makeGpuVhostUserServer(
+            {}, "127.0.0.1", 0, {}, 64, 64, false);
+        auto& server = *ownedServer;
         auto memory = openMemoryDescriptor();
         std::size_t stableConfiguredCount = 0;
         withServerConnection(server, [&](int socket) {
@@ -252,8 +255,9 @@ void failedMemoryReplacementIsRetryable(
 {
     const auto before = descriptorCount();
     {
-        VhostUserServer server {
-            {}, "127.0.0.1", 0, {}, 64, 64, false};
+        const auto ownedServer = makeGpuVhostUserServer(
+            {}, "127.0.0.1", 0, {}, 64, 64, false);
+        auto& server = *ownedServer;
         auto memory = openMemoryDescriptor(backingSize);
         withServerConnection(server, [&](int socket) {
             configureMemory(socket, memory.get());
@@ -284,8 +288,9 @@ void twoRegionFailureRollsBackEveryOwner()
 {
     const auto before = descriptorCount();
     {
-        VhostUserServer server {
-            {}, "127.0.0.1", 0, {}, 64, 64, false};
+        const auto ownedServer = makeGpuVhostUserServer(
+            {}, "127.0.0.1", 0, {}, 64, 64, false);
+        auto& server = *ownedServer;
         auto first = openMemoryDescriptor();
         auto shortSecond = openMemoryDescriptor(1024);
         const std::array regions {
@@ -333,8 +338,9 @@ void twoRegionFailureRollsBackEveryOwner()
 void standaloneRunCanBeRetriedWithoutLeaking()
 {
     const auto path = temporarySocketPath();
-    VhostUserServer server {
-        path, "127.0.0.1", 0, {}, 64, 64, false};
+    const auto ownedServer = makeGpuVhostUserServer(
+        path, "127.0.0.1", 0, {}, 64, 64, false);
+    auto& server = *ownedServer;
     const auto before = descriptorCount();
     std::atomic_bool alreadyStopped {true};
     server.run(alreadyStopped);
@@ -355,8 +361,9 @@ void standaloneRunDoesNotReplaceExistingPath()
     require(::write(sentinel.get(), &marker, sizeof(marker)) ==
         static_cast<ssize_t>(sizeof(marker)));
     const std::filesystem::path path {rawPath};
-    VhostUserServer server {
-        path, "127.0.0.1", 0, {}, 64, 64, false};
+    const auto ownedServer = makeGpuVhostUserServer(
+        path, "127.0.0.1", 0, {}, 64, 64, false);
+    auto& server = *ownedServer;
     std::atomic_bool alreadyStopped {true};
     bool rejected = false;
     try {
@@ -379,12 +386,12 @@ void concurrentRendererConstructionFailsAndLaterRetries()
 {
     const auto before = descriptorCount();
     {
-        VhostUserServer first {
-            {}, "127.0.0.1", 0, {}, 64, 64, false};
+        const auto first = makeGpuVhostUserServer(
+            {}, "127.0.0.1", 0, {}, 64, 64, false);
         bool rejected = false;
         try {
-            VhostUserServer second {
-                {}, "127.0.0.1", 0, {}, 64, 64, false};
+            const auto second = makeGpuVhostUserServer(
+                {}, "127.0.0.1", 0, {}, 64, 64, false);
         } catch (const std::runtime_error&) {
             rejected = true;
         }
@@ -392,8 +399,8 @@ void concurrentRendererConstructionFailsAndLaterRetries()
     }
     require(descriptorCount() == before);
     {
-        VhostUserServer retry {
-            {}, "127.0.0.1", 0, {}, 64, 64, false};
+        const auto retry = makeGpuVhostUserServer(
+            {}, "127.0.0.1", 0, {}, 64, 64, false);
     }
     require(descriptorCount() == before);
 }
@@ -657,8 +664,8 @@ void runVhostUserServerTests(const char* executable)
     partialFrameStopIsPrompt(executable, false, true);
     partialFrameStopIsPrompt(executable, true, true);
     {
-        VhostUserServer warmRuntime {
-            {}, "127.0.0.1", 0, {}, 64, 64, false};
+        const auto warmRuntime = makeGpuVhostUserServer(
+            {}, "127.0.0.1", 0, {}, 64, 64, false);
     }
     concurrentRendererConstructionFailsAndLaterRetries();
     unsupportedRequestReclaimsDescriptor();

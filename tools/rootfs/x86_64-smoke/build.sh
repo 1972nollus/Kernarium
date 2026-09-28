@@ -20,7 +20,11 @@ for tool in as ld readelf mkfs.erofs fsck.erofs busybox; do
 done
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-work=$(mktemp -d)
+output_parent=$(dirname -- "$output")
+mkdir -p -- "$output_parent"
+# The image is written and audited beside the output, then renamed into place,
+# so a rejected image is never published.
+work=$(mktemp -d "$output_parent/.$(basename -- "$output").partial.XXXXXX")
 cleanup()
 {
 	rm -rf -- "$work"
@@ -45,15 +49,17 @@ ln -s busybox "$root/bin/sh"
 install -m 0644 "$script_dir/overlay/etc/passwd" "$root/etc/passwd"
 install -m 0644 "$script_dir/overlay/etc/group" "$root/etc/group"
 
-mkdir -p "$(dirname -- "$output")"
-mkfs.erofs -L uml-x86-smoke "$output" "$root"
+image="$work/rootfs.erofs"
+mkfs.erofs -L uml-x86-smoke "$image" "$root"
 
 extracted="$work/extracted"
 mkdir "$extracted"
-fsck.erofs --extract="$extracted" "$output" >/dev/null
+fsck.erofs --extract="$extracted" "$image" >/dev/null
 for executable in "$extracted/init" "$extracted/bin/busybox"; do
 	readelf -h "$executable" |
 		grep -q 'Machine:.*Advanced Micro Devices X86-64' ||
 		fail "rootfs contains a non-x86-64 executable: $executable"
 done
+mv -T -n -- "$image" "$output"
+[ ! -e "$image" ] || fail "output appeared during publication: $output"
 sha256sum "$output"

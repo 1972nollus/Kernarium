@@ -15,18 +15,14 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import re
-import subprocess
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"))
-from contract_checks import parse_assignments  # noqa: E402
+import pinned_source
+from pinned_source import run as _run
+# pinned_source puts scripts/ on sys.path.
 import patch_series  # noqa: E402
 
 
-HEX40 = re.compile(r"[0-9a-f]{40}")
 REQUIRED_METADATA = {
     "MESA_VENUS_SOURCE_SCHEMA",
     "MESA_VENUS_UPSTREAM_REPOSITORY",
@@ -48,29 +44,14 @@ class VerificationError(ValueError):
     pass
 
 
-def run(*command: str, cwd: Path | None = None, payload: bytes | None = None) -> str:
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        input=payload,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.decode(errors="replace").strip()
-        raise VerificationError(f"command failed: {' '.join(command)}: {detail}")
-    return result.stdout.decode(errors="strict").strip()
+def run(*command: str, cwd: Path | None = None) -> str:
+    return _run(*command, cwd=cwd, error=VerificationError)
 
 
 def parse_metadata(path: Path) -> dict[str, str]:
-    values = parse_assignments(path, VerificationError)
-    if set(values) != REQUIRED_METADATA:
-        missing = sorted(REQUIRED_METADATA - set(values))
-        extra = sorted(set(values) - REQUIRED_METADATA)
-        raise VerificationError(
-            f"Mesa Venus metadata keys differ (missing={missing}, extra={extra})"
-        )
-    return values
+    return pinned_source.read_metadata(
+        path, REQUIRED_METADATA, "Mesa Venus", VerificationError
+    )
 
 
 def validate_metadata(values: dict[str, str]) -> None:
@@ -88,21 +69,19 @@ def validate_metadata(values: dict[str, str]) -> None:
         raise VerificationError("Mesa Venus license metadata changed")
     if values["MESA_VENUS_GUEST_SERIES"] != "tools/rootfs/vulkan/patches/mesa":
         raise VerificationError("the guest Mesa series moved")
-    for key in (
-        "MESA_VENUS_UPSTREAM_COMMIT",
-        "MESA_VENUS_UPSTREAM_TREE",
-        "MESA_VENUS_GUEST_TREE",
-        "MESA_VENUS_FINAL_TREE",
-    ):
-        if HEX40.fullmatch(values[key]) is None:
-            raise VerificationError(f"{key} is not a full lowercase Git object ID")
-    ref = subprocess.run(
-        ("git", "check-ref-format", f"refs/heads/{values['MESA_VENUS_PATCH_BRANCH']}"),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    pinned_source.check_object_ids(
+        values,
+        (
+            "MESA_VENUS_UPSTREAM_COMMIT",
+            "MESA_VENUS_UPSTREAM_TREE",
+            "MESA_VENUS_GUEST_TREE",
+            "MESA_VENUS_FINAL_TREE",
+        ),
+        VerificationError,
     )
-    if ref.returncode != 0:
-        raise VerificationError("Mesa Venus patch branch name is invalid")
+    pinned_source.check_branch_name(
+        values["MESA_VENUS_PATCH_BRANCH"], "Mesa Venus", VerificationError
+    )
 
 
 def verify_guest_pin(repository_root: Path, values: dict[str, str]) -> int:
@@ -126,13 +105,9 @@ def verify_guest_pin(repository_root: Path, values: dict[str, str]) -> int:
 
 def verify_series(root: Path) -> int:
     """Return how many Android port patches the checked-in series holds."""
-    try:
-        series = patch_series.read_series(root / "third_party/mesa-venus/series")
-    except patch_series.SeriesError as error:
-        raise VerificationError(f"Mesa Venus series: {error}") from error
-    if not series.names:
-        raise VerificationError("Mesa Venus series is empty")
-    return len(series.names)
+    return pinned_source.read_generated_series(
+        root / "third_party/mesa-venus/series", "Mesa Venus", VerificationError
+    )
 
 
 def verify_checkout(
@@ -141,20 +116,9 @@ def verify_checkout(
     guest_count: int,
     count: int,
 ) -> None:
-    if not aosp_source.is_dir() or not (aosp_source / ".repo").is_dir():
-        raise VerificationError("AOSP source is not a Repo workspace")
-    source = aosp_source / values["MESA_VENUS_DESTINATION"]
-    if source.is_symlink() or not source.is_dir():
-        raise VerificationError(f"materialized Mesa Venus checkout is missing: {source}")
-    top = Path(run("git", "rev-parse", "--show-toplevel", cwd=source)).resolve()
-    if top != source.resolve():
-        raise VerificationError("Mesa Venus destination is not the Git checkout root")
-    if run("git", "status", "--porcelain", "--untracked-files=all", cwd=source):
-        raise VerificationError("materialized Mesa Venus checkout is dirty")
-    if run("git", "remote", "get-url", "origin", cwd=source) != values[
-        "MESA_VENUS_UPSTREAM_REPOSITORY"
-    ]:
-        raise VerificationError("materialized Mesa Venus origin differs from metadata")
+    source = pinned_source.open_checkout(
+        aosp_source, values, "MESA_VENUS", "Mesa Venus", VerificationError
+    )
     if run("git", "branch", "--show-current", cwd=source) != values[
         "MESA_VENUS_PATCH_BRANCH"
     ]:

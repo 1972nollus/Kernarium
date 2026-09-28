@@ -5,6 +5,7 @@
  * there, and a live guest mapping cannot be destroyed by an unrelated owner
  * releasing its own memory.
  */
+#include "mach_vm_region_test_support.hpp"
 #include "native_window_test_support.hpp"
 #include "scratch_backing.hpp"
 #include "uml_darwin_memory.h"
@@ -75,22 +76,10 @@ struct RegionReport final {
 [[nodiscard]] RegionReport region_over(
 	std::uintptr_t address, std::size_t length) noexcept
 {
-	mach_vm_address_t region = address;
-	mach_vm_size_t region_size = 0;
-	vm_region_basic_info_data_64_t information{};
-	mach_msg_type_number_t information_count = VM_REGION_BASIC_INFO_COUNT_64;
-	mach_port_t object = MACH_PORT_NULL;
-	const auto status = mach_vm_region(mach_task_self(), &region, &region_size,
-		VM_REGION_BASIC_INFO_64,
-		reinterpret_cast<vm_region_info_t>(&information),
-		&information_count, &object);
-	if (object != MACH_PORT_NULL)
-		(void)mach_port_deallocate(mach_task_self(), object);
-	if (status != KERN_SUCCESS || region > address ||
-	    address - region >= region_size ||
-	    region_size - (address - region) < length)
+	const auto region = uml::testing::region_containing(address);
+	if (!region || region->size - (address - region->start) < length)
 		return {};
-	return {true, information.protection};
+	return {true, region->protection};
 }
 
 /* An unrelated owner asking the host for memory. Darwin honours a free hint,
@@ -317,6 +306,10 @@ void test_live_mapping_survives_an_unrelated_allocation_cycle()
 
 int main()
 {
+	if (const char *reason = uml::testing::native_test_window_unsupported) {
+		std::printf("unsupported: %s\n", reason);
+		return uml::testing::native_test_window_unsupported_status;
+	}
 	try {
 		const uml::testing::NativeTestWindowScope window;
 		require(window.entered(),

@@ -78,16 +78,10 @@ option(UML_BUILD_NETWORK_PROVIDER
     "Build the optional SLiRP network provider"
     ${UML_BUILD_KERNEL_RUNNER})
 
-if(UML_BUILD_GPU OR UML_BUILD_AUDIO)
-    # Both native display implementations are Objective-C++. Keep that
-    # language out of ordinary CPU/library-only configurations.
-    enable_language(OBJCXX)
-endif()
-
-if(UML_BUILD_AUDIO AND NOT UML_BUILD_GPU)
-    message(FATAL_ERROR
-        "UML_BUILD_AUDIO currently requires the shared GPU vhost-user transport")
-endif()
+# darwin/platform compiles Objective-C++ in every configuration. Without the
+# language its .mm sources fall to the C++ rule, which drops their
+# OBJCXX-only options, among them -fobjc-arc.
+enable_language(OBJCXX)
 
 option(UML_GUEST_16K_PAGES
     "Build the kernel and static userspace MMU for 16 KiB guest pages" ON)
@@ -178,7 +172,6 @@ set(UML_NATIVE_AUXILIARY_MAXIMUM 0x0000000100000000ULL)
 set(UML_NATIVE_VHOST_USER_SHMEM_RESERVATION 0x0000000040008000ULL)
 set(UML_NATIVE_STUB_PAGES 3)
 set(UML_SIGRETURN_TRAMPOLINE 0x00007fffffffff00ULL)
-set(UML_DYNAMIC_NATIVE_LAYOUT 1)
 if(UML_APPLE_PLATFORM MATCHES "^ios")
     set(UML_SIGNED_KERNEL_CARRIER 1)
 else()
@@ -205,7 +198,6 @@ target_compile_definitions(uml_guest_page_configuration INTERFACE
     DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION=${UML_NATIVE_VHOST_USER_SHMEM_RESERVATION}
     DARWIN_UML_NATIVE_STUB_PAGES=${UML_NATIVE_STUB_PAGES}
     DARWIN_UML_SIGRETURN_TRAMPOLINE=${UML_SIGRETURN_TRAMPOLINE}
-    DARWIN_UML_DYNAMIC_NATIVE_LAYOUT=${UML_DYNAMIC_NATIVE_LAYOUT}
     DARWIN_UML_SIGNED_KERNEL_CARRIER=${UML_SIGNED_KERNEL_CARRIER})
 
 if(UML_BUILD_UNIT_TESTS OR UML_BUILD_INTEGRATION_TESTS OR

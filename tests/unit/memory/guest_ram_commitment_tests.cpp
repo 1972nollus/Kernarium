@@ -3,6 +3,7 @@
  * leave the process footprint, a committed one must be counted (and wired)
  * again, and repeated, overlapping or concurrent calls must reach the host
  * only for pages whose state they change. */
+#include "mach_vm_region_test_support.hpp"
 #include "memory/guest_ram_commitment.hpp"
 
 #include <cerrno>
@@ -22,6 +23,21 @@
 namespace {
 
 using uml::memory::GuestRamCommitment;
+
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define UML_COMMITMENT_TEST_UNDER_ASAN 1
+#endif
+#endif
+
+/* AddressSanitizer intercepts mlock() and does nothing, so no range it
+ * builds is ever wired. */
+#if defined(UML_COMMITMENT_TEST_UNDER_ASAN)
+constexpr const char *wiring_unsupported =
+	"AddressSanitizer ignores mlock()";
+#else
+constexpr const char *wiring_unsupported = nullptr;
+#endif
 
 constexpr std::size_t mib = 1024U * 1024U;
 
@@ -49,19 +65,8 @@ void require(bool condition, const std::string &message)
 /* The user wire count of the map entry holding address. */
 [[nodiscard]] unsigned wired(const std::byte *address) noexcept
 {
-	mach_vm_address_t region = reinterpret_cast<mach_vm_address_t>(address);
-	mach_vm_size_t size = 0;
-	vm_region_basic_info_data_64_t info{};
-	mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-	mach_port_t object = MACH_PORT_NULL;
-	if (mach_vm_region(mach_task_self(), &region, &size,
-		    VM_REGION_BASIC_INFO_64,
-		    reinterpret_cast<vm_region_info_t>(&info), &count,
-		    &object) != KERN_SUCCESS)
-		return 0;
-	if (object != MACH_PORT_NULL)
-		(void)mach_port_deallocate(mach_task_self(), object);
-	return info.user_wired_count;
+	const auto region = uml::testing::region_containing(address);
+	return region ? region->user_wired_count : 0;
 }
 
 class Mapping final {
@@ -231,6 +236,7 @@ int main()
 	const struct {
 		const char *name;
 		void (*run)();
+		const char *unsupported{};
 	} tests[] = {
 		{"release leaves and commit restores the footprint",
 			release_leaves_and_commit_restores_the_footprint},
@@ -239,12 +245,18 @@ int main()
 		{"ranges outside the managed window are ignored or refused",
 			ranges_outside_the_managed_window_are_ignored_or_refused},
 		{"a wired host wires on commit and unwires on release",
-			a_wired_host_wires_on_commit_and_unwires_on_release},
+			a_wired_host_wires_on_commit_and_unwires_on_release,
+			wiring_unsupported},
 		{"concurrent callers keep the count exact",
 			concurrent_callers_keep_the_count_exact},
 	};
 	int failures = 0;
 	for (const auto &test : tests) {
+		if (test.unsupported != nullptr) {
+			std::printf("unsupported: %s: %s\n", test.name,
+				test.unsupported);
+			continue;
+		}
 		try {
 			test.run();
 			std::printf("ok: %s\n", test.name);

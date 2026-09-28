@@ -12,15 +12,13 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 ROOTFS="$ROOT_DIR/rootfs.erofs"
-# The device runtimes render through the Vulkan-experiment GPU stack, whose
-# guest reaches host-visible blob memory through the vhost-user shared-memory
-# aperture. The presets select that product's GPU prefix and kernel
-# descriptors; stage the artifacts they name.
+# The device runtime presets embed the accepted mainline kernels; stage the
+# artifacts they name.
 # shellcheck disable=SC1091
-. "$ROOT_DIR/kernel/mainline-6.18/artifacts/vulkan-experiment-16k.env"
+. "$ROOT_DIR/kernel/mainline-6.18/artifacts/accepted-16k.env"
 ARTIFACT_16K=${UML_MAINLINE_618_KERNEL_ARTIFACT_16K_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}
 # shellcheck disable=SC1091
-. "$ROOT_DIR/kernel/mainline-6.18/artifacts/vulkan-experiment-4k.env"
+. "$ROOT_DIR/kernel/mainline-6.18/artifacts/accepted-4k.env"
 ARTIFACT_4K=${UML_MAINLINE_618_KERNEL_ARTIFACT_4K_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}
 BUNDLE_ID=com.imxieyi.Kernarium
 DERIVED_DATA="$ROOT_DIR/.build/kernarium-xcode-derived"

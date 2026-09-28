@@ -11,7 +11,6 @@ LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 METADATA_PATH=${UML_KERNEL_METADATA_PATH:-"$LINE_ROOT/patches/metadata.env"}
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 PUBLISHER="$ROOT_DIR/dependencies/publish-prefix.py"
-REQUESTED_SOURCE_DIR=
 CACHE_ROOT=${UML_KERNEL_CACHE_DIR:-"$ROOT_DIR/.build/kernel-cache/mainline-6.18"}
 FETCH=1
 WORK_ROOT=
@@ -31,8 +30,6 @@ Usage: kernel/mainline-6.18/scripts/materialize-git.sh [options]
 Materialize the exact upstream Linux stable commit as a local replay checkout.
 
 Options:
-  --source PATH   Compatibility assertion; PATH must exactly match the
-                  required kernel/mainline-6.18/source-location.conf value
   --cache PATH    Pinned Git cache
                   (default: .build/kernel-cache/mainline-6.18)
   --no-fetch      Use only the exact commit already present in the Git cache
@@ -45,11 +42,6 @@ EOF
 
 while [ "$#" -gt 0 ]; do
 	case "$1" in
-	--source)
-		[ "$#" -ge 2 ] || fail "--source requires a path"
-		REQUESTED_SOURCE_DIR=$2
-		shift 2
-		;;
 	--cache)
 		[ "$#" -ge 2 ] || fail "--cache requires a path"
 		CACHE_ROOT=$2
@@ -69,9 +61,6 @@ done
 
 [ -x "$SOURCE_LOCATION" ] || fail "missing source-location verifier: $SOURCE_LOCATION"
 SOURCE_DIR=$("$SOURCE_LOCATION") || fail "kernel source configuration is invalid"
-if [ -n "$REQUESTED_SOURCE_DIR" ] && [ "$REQUESTED_SOURCE_DIR" != "$SOURCE_DIR" ]; then
-	fail "--source must match configured UML_KERNEL_SOURCE_DIR: $SOURCE_DIR"
-fi
 [ -r "$METADATA_PATH" ] || fail "missing metadata: $METADATA_PATH"
 # shellcheck disable=SC1090
 . "$METADATA_PATH"

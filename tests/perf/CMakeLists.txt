@@ -91,9 +91,9 @@ add_executable(uml-gadget-ceiling-bench EXCLUDE_FROM_ALL
     $<TARGET_OBJECTS:uml_arm64_gadgets>
     $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 target_include_directories(uml-gadget-ceiling-bench PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin
-    ${PROJECT_SOURCE_DIR}/darwin/include)
+    ${PROJECT_SOURCE_DIR}/darwin)
 target_link_libraries(uml-gadget-ceiling-bench PRIVATE
+    UML::BridgeAbi
     UML::CpuContract UML::MemorySharedBacking)
 target_compile_definitions(uml-gadget-ceiling-bench PRIVATE
     UML_GADGET_CEILING_WITH_IDEAL=1)
