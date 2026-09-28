@@ -4,7 +4,7 @@
 #include "cpu/arm64/engine_execution.hpp"
 #include "memory/static_guest_memory.hpp"
 #include "mach_vm_region_test_support.hpp"
-#include "arm64/jit_test_support.hpp"
+#include "jit_test_support.hpp"
 #include "uml_darwin_guest.h"
 
 #include <array>

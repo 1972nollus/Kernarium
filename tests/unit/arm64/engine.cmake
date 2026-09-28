@@ -154,53 +154,8 @@
     uml_add_unit_test(NAME arm64-gadget-tlb-layout
         COMMAND uml_arm64_gadget_tlb_layout_tests)
 
-    add_executable(uml_static_mmu_batch_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/static_mmu_batch_tests.cpp
-        $<TARGET_OBJECTS:uml_static_mmu_test_variant>)
-    target_link_libraries(uml_static_mmu_batch_tests PRIVATE UML::BridgeAbi)
-    target_include_directories(uml_static_mmu_batch_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
-    target_compile_features(uml_static_mmu_batch_tests PRIVATE cxx_std_20)
-    target_compile_definitions(uml_static_mmu_batch_tests PRIVATE
-        UML_MEMORY_ALLOCATION_TESTING=1)
-    target_compile_options(uml_static_mmu_batch_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME static-mmu-batch COMMAND uml_static_mmu_batch_tests
-        LABELS tsan)
-
-    add_executable(uml_emulator_api_tests ${PROJECT_SOURCE_DIR}/tests/unit/arm64/emulator_api_tests.cpp)
-    target_link_libraries(uml_emulator_api_tests PRIVATE
-        UML::BridgeAbi
-        UML::Emulator
-        uml_test_allocation_failure)
-    target_include_directories(uml_emulator_api_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_emulator_api_tests PRIVATE cxx_std_20)
-    target_compile_definitions(uml_emulator_api_tests PRIVATE
-        UML_EMULATOR_TEST_HAS_SLIRP=$<BOOL:${UML_BUILD_NETWORK_PROVIDER}>)
-    if(TARGET uml_network_provider)
-        target_link_libraries(uml_emulator_api_tests PRIVATE
-            UML::NetworkProvider)
-    endif()
-    target_compile_options(uml_emulator_api_tests PRIVATE
-        -Wall -Wextra -Werror)
-    uml_add_unit_test(NAME emulator-native-entry-api COMMAND uml_emulator_api_tests)
-
-	add_executable(uml_emulator_options_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/emulator_options_tests.cpp)
-	target_link_libraries(uml_emulator_options_tests PRIVATE
-		UML::BridgeAbi
-		UML::Emulator)
-	target_include_directories(uml_emulator_options_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/darwin/emulator/src)
-	target_compile_features(uml_emulator_options_tests PRIVATE cxx_std_20)
-	target_compile_options(uml_emulator_options_tests PRIVATE
-		-Wall -Wextra -Werror)
-	uml_add_unit_test(NAME emulator-options COMMAND uml_emulator_options_tests)
-
 	add_executable(uml_cpu_engine_contract_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/cpu_engine_contract_tests.cpp)
+		${PROJECT_SOURCE_DIR}/tests/unit/arm64/cpu_engine_contract_tests.cpp)
 	target_link_libraries(uml_cpu_engine_contract_tests PRIVATE
 		UML::BridgeAbi
 		UML::Emulator)

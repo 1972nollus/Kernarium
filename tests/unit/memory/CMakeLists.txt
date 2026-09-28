@@ -132,3 +132,45 @@ target_compile_options(uml_guest_ram_commitment_tests PRIVATE
 uml_add_unit_test(NAME memory-guest-ram-commitment
     COMMAND uml_guest_ram_commitment_tests)
 set_tests_properties(memory-guest-ram-commitment PROPERTIES RUN_SERIAL TRUE)
+
+# Raw MMU compositions carry the shared-backing archive MappedBacking
+# references, as the production memory component does.
+add_executable(uml_static_mmu_batch_tests
+    static_mmu_batch_tests.cpp
+    $<TARGET_OBJECTS:uml_static_mmu_test_variant>)
+target_link_libraries(uml_static_mmu_batch_tests PRIVATE
+    UML::BridgeAbi
+    UML::MemorySharedBacking)
+target_include_directories(uml_static_mmu_batch_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
+target_compile_features(uml_static_mmu_batch_tests PRIVATE cxx_std_20)
+target_compile_definitions(uml_static_mmu_batch_tests PRIVATE
+    UML_MEMORY_ALLOCATION_TESTING=1)
+target_compile_options(uml_static_mmu_batch_tests PRIVATE
+    -Wall -Wextra -Werror)
+uml_add_unit_test(NAME static-mmu-batch COMMAND uml_static_mmu_batch_tests
+    LABELS tsan)
+
+if(NOT UML_GUEST_16K_PAGES)
+    add_executable(uml_native_mmu_tests
+        native_mmu_tests.cpp
+        $<TARGET_OBJECTS:uml_native_mmu_test_variant>
+        $<TARGET_OBJECTS:uml_memory_vm_bridge>
+        $<TARGET_OBJECTS:uml_static_mmu_test_variant>)
+    target_link_libraries(uml_native_mmu_tests PRIVATE
+        UML::BridgeAbi
+        UML::MemorySharedBacking)
+    target_include_directories(uml_native_mmu_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+    target_compile_features(uml_native_mmu_tests PRIVATE cxx_std_20)
+    target_compile_definitions(uml_native_mmu_tests PRIVATE
+        UML_MEMORY_ALLOCATION_TESTING=1)
+    target_compile_options(uml_native_mmu_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(NAME native-4k-shadow-mmu COMMAND uml_native_mmu_tests)
+    # The test reserves the fixed Darwin native bridge window. Running after
+    # several concurrent VM-heavy tests can make that host reservation fail
+    # transiently even though an isolated retry succeeds.
+    set_tests_properties(native-4k-shadow-mmu PROPERTIES RUN_SERIAL TRUE)
+endif()

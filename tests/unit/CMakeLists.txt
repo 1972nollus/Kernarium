@@ -16,19 +16,7 @@ if(TARGET uml_x86_64_gadgets)
 endif()
 add_subdirectory(memory)
 add_subdirectory(runtime)
-
-add_executable(uml_emulator_c_api_boundary_tests
-    emulator_c_api_boundary_tests.cpp)
-target_link_libraries(uml_emulator_c_api_boundary_tests PRIVATE
-    UML::BridgeAbi
-    UML::Emulator)
-target_compile_features(uml_emulator_c_api_boundary_tests PRIVATE cxx_std_20)
-target_compile_options(uml_emulator_c_api_boundary_tests PRIVATE
-    -Wall -Wextra -Werror)
-uml_add_unit_test(
-    NAME emulator-c-api-boundary
-    COMMAND uml_emulator_c_api_boundary_tests)
-
+add_subdirectory(emulator)
 add_subdirectory(platform)
 add_subdirectory(block)
 add_subdirectory(sockets)
