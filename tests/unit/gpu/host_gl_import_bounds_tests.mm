@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// A guest names the layout of every image it imports: format, size, stride,
-// offset. The renderer lays a texture over, or copies out of, storage it did
-// not size itself - an exporter's shared-memory segment, a Metal heap, a Metal
-// texture the exporter published - so each of those numbers has to fit what is
-// really there, or the import is refused.
+// A guest names the layout of every image it imports and every box it
+// transfers: format, size, stride, offset. The renderer lays a texture over,
+// or copies out of, storage it did not size itself - an exporter's
+// shared-memory segment, a Metal heap, a Metal texture the exporter
+// published, a whole texture level it read back - so each of those numbers
+// has to fit what is really there, or the request is refused.
 //
 // Every refusal below was a host out-of-bounds access before it was checked:
-// a texture over memory past a segment or a heap, read back to the guest, and
-// a Metal texture read at four times the texel size of the pages sized for
-// it, written past them. The accepted cases keep the legitimate imports
-// working.
+// a texture over memory past a segment or a heap, read back to the guest; a
+// Metal texture read at four times the texel size of the pages sized for it,
+// written past them; and a compressed readback cut that read a row past its
+// buffer and sent it to the guest. The accepted cases keep the legitimate
+// imports and transfers working.
 
 #include "virgl_renderer.hpp"
 
@@ -56,7 +58,9 @@ constexpr std::uint32_t virgl2CapsetId = 2;
 constexpr std::uint32_t virglCommandSetType = 49;
 constexpr std::uint32_t setTypeLength = 10;
 constexpr std::uint32_t virglFormatB8g8r8a8Unorm = 1;
+constexpr std::uint32_t virglFormatDxt1Rgb = 105;
 constexpr std::uint32_t virglBindSamplerView = 1U << 3U;
+constexpr std::uint32_t pipeTexture2d = 2;
 // virgl_resource.h
 constexpr int nativeHandleMetalHeap = 1;
 
@@ -442,9 +446,100 @@ void textureImportsMatchTheTexturesTexelSize(
     }
 }
 
+// A compressed level is transferred in whole blocks, so a box has to start on
+// a block and end on one or at the level's edge, as GL requires. The level
+// readback cuts the box out of a buffer holding exactly the level.
+void compressedTransfersStayOnBlocks(uml::gpu::VirglRenderer& renderer)
+{
+    constexpr std::uint32_t blockBytes = 8;
+    struct Level {
+        std::uint32_t resourceId;
+        std::uint32_t side;
+    };
+    for (const Level level : {Level {60, 8}, Level {61, 6}}) {
+        require(renderer.createResource3d(uml::gpu::VirglRenderer::Resource3d {
+                    .resourceId = level.resourceId,
+                    .target = pipeTexture2d,
+                    .format = virglFormatDxt1Rgb,
+                    .bind = virglBindSamplerView,
+                    .width = level.side,
+                    .height = level.side,
+                    .depth = 1,
+                    .arraySize = 1,
+                }) == 0,
+            "a BC1 texture could not be created");
+        const std::uint32_t blocks = (level.side + 3) / 4;
+        std::vector<std::uint8_t> backing(
+            static_cast<std::size_t>(blocks) * blocks * blockBytes);
+        for (std::size_t index = 0; index < backing.size(); ++index)
+            backing[index] = static_cast<std::uint8_t>(index * 5U + 3U);
+        const std::vector<std::uint8_t> stored = backing;
+        std::array<iovec, 1> vectors {
+            iovec {.iov_base = backing.data(), .iov_len = backing.size()},
+        };
+        require(renderer.attachBacking(level.resourceId, vectors) == 0,
+            "the BC1 texture's backing could not be attached");
+        require(renderer.attachResource(contextId, level.resourceId) == 0,
+            "the BC1 texture could not be attached to the guest context");
+
+        const auto transfer = [&](bool toHost,
+                                  std::uint32_t x,
+                                  std::uint32_t y,
+                                  std::uint32_t width,
+                                  std::uint32_t height) {
+            return renderer.transferResource(toHost, level.resourceId,
+                contextId, 0, 0, 0,
+                uml::gpu::VirglRenderer::Box {
+                    .x = x,
+                    .y = y,
+                    .width = width,
+                    .height = height,
+                    .depth = 1,
+                },
+                0);
+        };
+        require(transfer(true, 0, 0, level.side, level.side) == 0,
+            "a whole BC1 level could not be written");
+
+        if (level.side == 8) {
+            require(transfer(false, 1, 1, 7, 7) != 0,
+                "a BC1 box starting inside a block was read back");
+            require(transfer(false, 0, 0, 7, 8) != 0,
+                "a BC1 box ending inside a block short of the edge was "
+                "read back");
+            require(transfer(true, 1, 1, 7, 7) != 0,
+                "a BC1 box starting inside a block was written");
+
+            std::fill(backing.begin(), backing.end(), std::uint8_t {});
+            require(transfer(false, 4, 4, 4, 4) == 0,
+                "a block-aligned BC1 box could not be read back");
+            require(std::equal(backing.begin(), backing.begin() + blockBytes,
+                        stored.begin() + 3 * blockBytes),
+                "a block-aligned BC1 box read back the wrong block");
+        } else {
+            // A level whose side is not a whole number of blocks ends on its
+            // edge, not on a block boundary.
+            require(transfer(false, 0, 0, 5, 6) != 0,
+                "a BC1 box ending inside a block short of the edge was "
+                "read back");
+            std::fill(backing.begin(), backing.end(), std::uint8_t {});
+            require(transfer(false, 0, 0, 6, 6) == 0,
+                "a BC1 box reaching the level's edge was refused");
+            require(backing == stored,
+                "a whole BC1 level read back other bytes than were written");
+        }
+
+        require(renderer.detachResource(contextId, level.resourceId) == 0,
+            "the BC1 texture could not be detached");
+        renderer.detachBacking(level.resourceId);
+        renderer.unrefResource(level.resourceId);
+    }
+}
+
 } // namespace
 
-// With an argument, runs only the named group: shm, heap or texture.
+// With an argument, runs only the named group: shm, heap, texture or
+// compressed.
 int main(int argc, char** argv)
 {
     const std::string only = argc > 1 ? argv[1] : "";
@@ -475,6 +570,8 @@ int main(int argc, char** argv)
             heapImportsFitTheirHeap(device, importer);
         if (runs("texture"))
             textureImportsMatchTheTexturesTexelSize(*renderer, device, importer);
+        if (runs("compressed"))
+            compressedTransfersStayOnBlocks(*renderer);
         renderer->destroyContext(contextId);
     }
     std::fputs("Import bounds: ok\n", stderr);

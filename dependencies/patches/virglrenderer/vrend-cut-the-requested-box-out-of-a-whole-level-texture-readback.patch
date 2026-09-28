@@ -22,17 +22,58 @@ the same test passes.
 Copy the box out of the level, at the level's own row stride, before the
 data is written to the guest.
 
+The cut counts whole blocks, so it holds only for a box that covers whole
+blocks. A compressed box whose origin splits a block, or whose far edge does
+neither end a block nor reach the level's edge, would be cut out past the
+end of the level and those heap bytes sent to the guest. GL refuses such a
+box for a compressed sub-image, so a transfer refuses it too, in both
+directions.
+
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_renderer.c | 31 +++++++++++++++++++++++++++++++
- 1 file changed, 31 insertions(+)
+ src/vrend/vrend_renderer.c | 64 ++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 62 insertions(+), 2 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 94c84ffbc301c6c7582f54eac1d0f34cd775b62f..ed4f6b482b9c1e3fb4bf39a8ea6a8d555fc7f8d1 100644
+index 94c84ffbc301c6c7582f54eac1d0f34cd775b62f..1ce0b8d4ebe70969f8a983733392a6f0da0d3519 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -10334,6 +10334,37 @@ static int vrend_transfer_send_getteximage(struct vrend_resource *res,
+@@ -9773,6 +9773,33 @@ static inline bool resource_contains_box(struct vrend_resource *res,
+    return true;
+ }
+ 
++/* Whether a transfer box of a compressed format covers whole blocks: its
++ * origin on a block boundary, and each far edge on one or at the level's own
++ * edge, which is GL's rule for a compressed sub-image. Blocks are the unit
++ * both directions move, so a box that splits one names bytes that no block
++ * layout of the box holds; the whole-level readback would cut such a box out
++ * past the end of the level. Every box of an uncompressed format qualifies.
++ * The caller has already checked that the box lies inside the level. */
++static inline bool transfer_box_is_block_aligned(const struct vrend_resource *res,
++                                                 const struct pipe_box *box,
++                                                 uint32_t level)
++{
++   const enum virgl_formats format = res->base.format;
++   if (!util_format_is_compressed(format))
++      return true;
++
++   const uint32_t block_width = util_format_get_blockwidth(format);
++   const uint32_t block_height = util_format_get_blockheight(format);
++   const uint32_t width = u_minify(res->base.width0, level);
++   const uint32_t height = u_minify(res->base.height0, level);
++   const uint32_t x = box->x, y = box->y;
++   const uint32_t box_width = box->width, box_height = box->height;
++
++   return x % block_width == 0 && y % block_height == 0 &&
++          (box_width % block_width == 0 || x + box_width == width) &&
++          (box_height % block_height == 0 || y + box_height == height);
++}
++
+ /* Calculate the size of the memory needed to hold all the data of a
+  * transfer for particular stride values.
+  */
+@@ -10334,6 +10361,37 @@ static int vrend_transfer_send_getteximage(struct vrend_resource *res,
  
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
  
@@ -70,3 +111,23 @@ index 94c84ffbc301c6c7582f54eac1d0f34cd775b62f..ed4f6b482b9c1e3fb4bf39a8ea6a8d55
     write_transfer_data(&res->base, iov, num_iovs, data + send_offset,
                         info->stride, info->box, info->level, info->offset,
                         false);
+@@ -10699,7 +10757,8 @@ static int vrend_renderer_transfer_internal(struct vrend_context *ctx,
+    }
+ #endif
+ 
+-   if (!resource_contains_box(res, info->box, info->level)) {
++   if (!resource_contains_box(res, info->box, info->level) ||
++       !transfer_box_is_block_aligned(res, info->box, info->level)) {
+       vrend_report_context_error(ctx, VIRGL_ERROR_CTX_TRANSFER_IOV_BOUNDS, res->gl_id);
+       return EINVAL;
+    }
+@@ -10771,7 +10830,8 @@ int vrend_transfer_inline_write(struct vrend_context *ctx,
+       return EINVAL;
+    }
+ 
+-   if (!resource_contains_box(res, info->box, info->level)) {
++   if (!resource_contains_box(res, info->box, info->level) ||
++       !transfer_box_is_block_aligned(res, info->box, info->level)) {
+       vrend_report_context_error(ctx, VIRGL_ERROR_CTX_ILLEGAL_CMD_BUFFER, dst_handle);
+       return EINVAL;
+    }

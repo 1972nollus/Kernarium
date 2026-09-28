@@ -232,7 +232,7 @@ index 214cc92fad41187f41186f01d6ae7c5d606a433e..0c2d1d5646b25388b74bfeecea4cacfe
 +   return true;
 +}
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 992d29d674a7810272f926a59a698815fa476935..c4ed090e856070b8e90c5b786d27b10731e5ae53 100644
+index dee00df916ed521fa321d86630163b8759bc739c..3bbdb6ef5749b4017a58f14189112d3edc1df020 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -64,6 +64,9 @@
@@ -501,7 +501,7 @@ index 992d29d674a7810272f926a59a698815fa476935..c4ed090e856070b8e90c5b786d27b107
  
     if (has_bit(res->storage_bits, VREND_STORAGE_GL_TEXTURE)) {
        glDeleteTextures(1, &res->gl_id);
-@@ -14272,9 +14408,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -14301,9 +14437,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
              virgl_warn("%s: ignoring plane_count = %d and using the first one\n",
                         __func__, args->plane_count);
           }
