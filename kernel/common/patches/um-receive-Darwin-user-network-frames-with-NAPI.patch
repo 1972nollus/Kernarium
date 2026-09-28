@@ -26,14 +26,14 @@ per-segment stack cost.
 
 Change-Id: If1980b33f5489d259fbc2db0774272f162157558
 ---
- arch/um/drivers/darwin_net_kern.c | 44 +++++++++++++++++++++++--------
- 1 file changed, 33 insertions(+), 11 deletions(-)
+ arch/um/drivers/darwin_net_kern.c | 53 ++++++++++++++++++++++++-------
+ 1 file changed, 42 insertions(+), 11 deletions(-)
 
 diff --git a/arch/um/drivers/darwin_net_kern.c b/arch/um/drivers/darwin_net_kern.c
-index 4291170b64845b5d4fd37616c2665c46ddbe42d9..0d0634b77d12bfd3347a4545be8dcb8951a80fb5 100644
+index 4291170b64845b5d4fd37616c2665c46ddbe42d9..32b45034da9b82267bd9ffb4a0fd2a960744fd45 100644
 --- a/arch/um/drivers/darwin_net_kern.c
 +++ b/arch/um/drivers/darwin_net_kern.c
-@@ -9,29 +9,38 @@
+@@ -9,29 +9,47 @@
  #include <irq_kern.h>
  
  #define DARWIN_NET_FRAME_SIZE 2048
@@ -76,10 +76,19 @@ index 4291170b64845b5d4fd37616c2665c46ddbe42d9..0d0634b77d12bfd3347a4545be8dcb89
  		if (length <= 0)
  			break;
 +		work_done++;
++		/* The provider is the embedder's: a frame longer than the buffer
++		 * would copy past it, and one shorter than an Ethernet header
++		 * would let eth_type_trans() read past the copied data. */
++		if (length < ETH_HLEN ||
++		    length > (int)sizeof(private->receive_frame)) {
++			device->stats.rx_length_errors++;
++			device->stats.rx_errors++;
++			continue;
++		}
  		buffer = netdev_alloc_skb_ip_align(device, length);
  		if (buffer == NULL) {
  			device->stats.rx_dropped++;
-@@ -41,18 +50,24 @@ static void darwin_net_receive(struct net_device *device)
+@@ -41,18 +59,24 @@ static void darwin_net_receive(struct net_device *device)
  		buffer->protocol = eth_type_trans(buffer, device);
  		device->stats.rx_packets++;
  		device->stats.rx_bytes += length;
@@ -107,7 +116,7 @@ index 4291170b64845b5d4fd37616c2665c46ddbe42d9..0d0634b77d12bfd3347a4545be8dcb89
  	return IRQ_HANDLED;
  }
  
-@@ -90,10 +105,15 @@ static int darwin_net_open_device(struct net_device *device)
+@@ -90,10 +114,15 @@ static int darwin_net_open_device(struct net_device *device)
  	descriptor = darwin_uml_net_irq_fd();
  	if (descriptor < 0)
  		return -ENODEV;
@@ -124,7 +133,7 @@ index 4291170b64845b5d4fd37616c2665c46ddbe42d9..0d0634b77d12bfd3347a4545be8dcb89
  	private->receive_irq = irq;
  	device->irq = irq;
  	netif_carrier_on(device);
-@@ -110,6 +130,8 @@ static int darwin_net_close_device(struct net_device *device)
+@@ -110,6 +139,8 @@ static int darwin_net_close_device(struct net_device *device)
  		um_free_irq(private->receive_irq, device);
  		private->receive_irq = -1;
  	}

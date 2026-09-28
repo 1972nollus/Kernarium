@@ -25,14 +25,14 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  arch/arm64/um/asm/elf.h               |  66 ++-
  arch/arm64/um/asm/mman.h              |   5 +
  arch/arm64/um/asm/processor.h         |  13 +-
- arch/arm64/um/asm/ptrace.h            |   4 +-
+ arch/arm64/um/asm/ptrace.h            |   6 +-
  arch/arm64/um/asm/syscall.h           |  12 +-
  arch/arm64/um/asm/unistd.h            |  33 ++
  arch/arm64/um/asm/user.h              |  29 +-
  arch/arm64/um/mmap.c                  | 128 ++++
- arch/arm64/um/ptrace.c                | 108 +++-
+ arch/arm64/um/ptrace.c                | 149 +++--
  arch/arm64/um/shared/sysdep/ptrace.h  | 140 ++++-
- arch/arm64/um/signal.c                | 540 ++++++++++++++---
+ arch/arm64/um/signal.c                | 542 ++++++++++++++---
  arch/arm64/um/tls.c                   |   3 +-
  arch/arm64/um/x86_64_syscalls.c       | 806 ++++++++++++++++++++++++++
  arch/arm64/um/x86_syscall_tables.c    |  32 +
@@ -42,22 +42,22 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  arch/um/kernel/process.c              |   2 +-
  arch/um/kernel/skas/syscall.c         |  31 +-
  arch/um/kernel/trap.c                 |   3 +
- arch/um/os-Darwin/skas/process.c      |  82 ++-
+ arch/um/os-Darwin/skas/process.c      |  43 +-
  fs/eventpoll.c                        |   2 +-
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
  include/linux/fs.h                    |   2 +
- 27 files changed, 1929 insertions(+), 180 deletions(-)
+ 27 files changed, 1911 insertions(+), 204 deletions(-)
  create mode 100644 arch/arm64/um/asm/unistd.h
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
  create mode 100644 arch/arm64/um/x86_syscall_tables.c
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 06086feb226da3a2012f1ca2cfb0dec9bb63f69d..8b11524ed704297ef448fc36bdf785f9763e451c 100644
+index 6068242b331a532ca5735f49556d1d497a49798b..5ecda903ad20895c211be00c4ba8ea0d4ea1da61 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -23,6 +23,15 @@ config UML_ARM64
+@@ -22,6 +22,15 @@ config UML_ARM64
  	select ARCH_USE_QUEUED_RWLOCKS
  	select UML_SUBARCH_SUPPORTS_SMP
  
@@ -250,10 +250,10 @@ index 6fd6da6c5816a452cec29b2cc4fe7605845236ad..7670607444d68b6a76bd5593fd032b0f
  
  #endif
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
-index edc2f6ffeb77fa3fa4bf27e794eff96d41641c70..ae377e46d4142f49cda73371118e2172807c778c 100644
+index e25a782dc897099cd0224b6f3c2db3e46a3b5e88..b132ad664ae559e1adf5bf0f63d65c7b55eea115 100644
 --- a/arch/arm64/um/asm/ptrace.h
 +++ b/arch/arm64/um/asm/ptrace.h
-@@ -18,8 +18,8 @@ enum {
+@@ -19,8 +19,8 @@ enum {
  #define PT_REGS_BP(state) PT_REGS_FP(state)
  #define PT_REGS_LR(state) UPT_LR(&(state)->regs)
  #define PT_REGS_PSTATE(state) UPT_PSTATE(&(state)->regs)
@@ -264,6 +264,13 @@ index edc2f6ffeb77fa3fa4bf27e794eff96d41641c70..ae377e46d4142f49cda73371118e2172
  
  #define PT_REGS_SET_SYSCALL_RETURN(state, result) \
  	(PT_REGS_SYSCALL_RET(state) = (result))
+@@ -47,6 +47,4 @@ static inline int ptrace_set_thread_area(struct task_struct *child, int index,
+ 
+ extern void arch_switch_to(struct task_struct *to);
+ 
+-extern bool uml_arm64_valid_user_pstate(unsigned long *pstate);
+-
+ #endif
 diff --git a/arch/arm64/um/asm/syscall.h b/arch/arm64/um/asm/syscall.h
 index 9dfdeb2cc681efb4bcb590e7737e8f9ac9fb4c44..ac47265672c80b9f30b18270b40e98ad1159a67b 100644
 --- a/arch/arm64/um/asm/syscall.h
@@ -502,10 +509,17 @@ index 0000000000000000000000000000000000000000..1a8b242f6aa99b62d006f59bfc55f0d6
 +	return vm_unmapped_area(&info);
 +}
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index 3dfd7a0a6fa5f7a5f5cca252c4bcaeb8a1155b1f..a4767ee8185daf64b4524f952b5dec1b61c73b8a 100644
+index 52e976dc7f84880c40d4616989f8eea484a7c172..a4767ee8185daf64b4524f952b5dec1b61c73b8a 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
-@@ -9,30 +9,97 @@
+@@ -1,6 +1,5 @@
+ // SPDX-License-Identifier: GPL-2.0
+ 
+-#include <linux/bits.h>
+ #include <linux/elf.h>
+ #include <linux/regset.h>
+ #include <linux/sched.h>
+@@ -10,59 +9,97 @@
  
  static int register_index(int regno)
  {
@@ -588,6 +602,35 @@ index 3dfd7a0a6fa5f7a5f5cca252c4bcaeb8a1155b1f..a4767ee8185daf64b4524f952b5dec1b
  	if (index < 0)
  		return 0;
 -	return child->thread.regs.regs.gp[index];
+-}
+-
+-/*
+- * Native arm64 clears these bits from a PSTATE that a signal frame or a tracer
+- * supplies (SPSR_EL1_AARCH64_RES0_BITS).  SS is not the task's either:
+- * begin_guest_step() sets it for the one entry that PTRACE_SINGLESTEP asks
+- * for, and the engine steps on it whenever it is set.
+- */
+-#define UML_ARM64_PSTATE_RES0 \
+-	(GENMASK_ULL(63, 32) | GENMASK_ULL(27, 26) | GENMASK_ULL(23, 22) | \
+-	 GENMASK_ULL(20, 13) | BIT_ULL(5))
+-#define UML_ARM64_PSTATE_SS		BIT_ULL(21)
+-#define UML_ARM64_PSTATE_NZCV		GENMASK_ULL(31, 28)
+-/* EL0t in AArch64 state has M[4:0] zero, and EL0 cannot mask D, A, I or F. */
+-#define UML_ARM64_PSTATE_MODE_DAIF	(GENMASK_ULL(9, 6) | GENMASK_ULL(4, 0))
+-
+-/*
+- * Keep the bits of a user-supplied PSTATE that userspace owns: NZCV, TCO, DIT,
+- * SSBS and BTYPE.  A mode or DAIF bit makes it invalid; like native
+- * valid_user_regs(), reduce it to NZCV and report that, so rt_sigreturn raises
+- * SIGSEGV and a tracer's register write fails with -EINVAL.
+- */
+-bool uml_arm64_valid_user_pstate(unsigned long *pstate)
+-{
+-	*pstate &= ~(UML_ARM64_PSTATE_RES0 | UML_ARM64_PSTATE_SS);
+-	if (!(*pstate & UML_ARM64_PSTATE_MODE_DAIF))
+-		return true;
+-	*pstate &= UML_ARM64_PSTATE_NZCV;
+-	return false;
 +	get_user_regs(&child->thread.regs.regs, &regs);
 +	return ((unsigned long *)&regs)[index];
  }
@@ -599,8 +642,8 @@ index 3dfd7a0a6fa5f7a5f5cca252c4bcaeb8a1155b1f..a4767ee8185daf64b4524f952b5dec1b
  
  	if (index < 0)
  		return index;
--	if (index == HOST_PSTATE)
--		value &= 0xf0000000UL;
+-	if (index == HOST_PSTATE && !uml_arm64_valid_user_pstate(&value))
+-		return -EINVAL;
 -	child->thread.regs.regs.gp[index] = value;
 +	get_user_regs(&child->thread.regs.regs, &regs);
 +	((unsigned long *)&regs)[index] = value;
@@ -608,7 +651,7 @@ index 3dfd7a0a6fa5f7a5f5cca252c4bcaeb8a1155b1f..a4767ee8185daf64b4524f952b5dec1b
  	return 0;
  }
  
-@@ -62,8 +129,10 @@ long subarch_ptrace(struct task_struct *child, long request,
+@@ -92,8 +129,10 @@ long subarch_ptrace(struct task_struct *child, long request,
  static int genregs_get(struct task_struct *target,
  		       const struct user_regset *regset, struct membuf to)
  {
@@ -621,12 +664,23 @@ index 3dfd7a0a6fa5f7a5f5cca252c4bcaeb8a1155b1f..a4767ee8185daf64b4524f952b5dec1b
  	return 0;
  }
  
-@@ -72,8 +141,15 @@ static int genregs_set(struct task_struct *target,
+@@ -102,19 +141,15 @@ static int genregs_set(struct task_struct *target,
  		       unsigned int pos, unsigned int count,
  		       const void *kbuf, const void __user *ubuf)
  {
--	return user_regset_copyin(&pos, &count, &kbuf, &ubuf,
--		target->thread.regs.regs.gp, 0, sizeof(struct user_regs_struct));
+-	unsigned long regs[sizeof(struct user_regs_struct) /
+-			   sizeof(unsigned long)];
+-	int ret;
+-
+-	memcpy(regs, target->thread.regs.regs.gp, sizeof(regs));
+-	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, regs, 0,
+-				 sizeof(regs));
+-	if (ret)
+-		return ret;
+-	if (!uml_arm64_valid_user_pstate(&regs[HOST_PSTATE]))
+-		return -EINVAL;
+-	memcpy(target->thread.regs.regs.gp, regs, sizeof(regs));
+-	return 0;
 +	struct user_regs_struct regs;
 +	int error;
 +
@@ -639,7 +693,7 @@ index 3dfd7a0a6fa5f7a5f5cca252c4bcaeb8a1155b1f..a4767ee8185daf64b4524f952b5dec1b
  }
  
  static int fpregs_get(struct task_struct *target,
-@@ -92,7 +168,7 @@ static int fpregs_set(struct task_struct *target,
+@@ -133,7 +168,7 @@ static int fpregs_set(struct task_struct *target,
  		target->thread.regs.regs.fp, 0, host_fp_size);
  }
  
@@ -648,7 +702,7 @@ index 3dfd7a0a6fa5f7a5f5cca252c4bcaeb8a1155b1f..a4767ee8185daf64b4524f952b5dec1b
  	[REGSET_GENERAL] = {
  		USER_REGSET_NOTE_TYPE(PRSTATUS),
  		.n = sizeof(struct user_regs_struct) / sizeof(unsigned long),
-@@ -111,15 +187,15 @@ static const struct user_regset uml_arm64_regsets[] = {
+@@ -152,15 +187,15 @@ static const struct user_regset uml_arm64_regsets[] = {
  	},
  };
  
@@ -834,7 +888,7 @@ index f77c6e818dabddb6598a1cefb47167cbe324fef7..e9f2fa31680132fae796582d93da3dfe
  
  extern unsigned long host_fp_size;
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 5df9d3a0e736f20fab5848ff103bfd4c41abf0b3..215c4616db4336c089434528b511d3f1b00f9dac 100644
+index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1b00f9dac 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -9,14 +9,135 @@
@@ -977,7 +1031,7 @@ index 5df9d3a0e736f20fab5848ff103bfd4c41abf0b3..215c4616db4336c089434528b511d3f1
  #ifdef UML_HOST_DARWIN
  /* The final guest page is deliberately above STACK_TOP and never mapped.
   * Returning there lets the Darwin Mach exception bridge synthesize the
-@@ -26,98 +147,319 @@ struct uml_arm64_rt_sigframe {
+@@ -26,100 +147,319 @@ struct uml_arm64_rt_sigframe {
  	(UML_DARWIN_TASK_SIZE - 0x100UL)
  #endif
  
@@ -1287,6 +1341,8 @@ index 5df9d3a0e736f20fab5848ff103bfd4c41abf0b3..215c4616db4336c089434528b511d3f1
 -	error |= get_user(PT_REGS_SP(regs), &context->sp);
 -	error |= get_user(PT_REGS_IP(regs), &context->pc);
 -	error |= get_user(PT_REGS_PSTATE(regs), &context->pstate);
+-	if (!error && !uml_arm64_valid_user_pstate(&PT_REGS_PSTATE(regs)))
+-		error = -EINVAL;
 -	if (!error)
 -		error = restore_fpsimd_context(regs, context);
 +	struct uml_x86_64_sigcontext state;
@@ -1364,7 +1420,7 @@ index 5df9d3a0e736f20fab5848ff103bfd4c41abf0b3..215c4616db4336c089434528b511d3f1
  
  	if (ksig->ka.sa.sa_flags & SA_RESTORER)
  		restorer = (unsigned long)ksig->ka.sa.sa_restorer;
-@@ -128,31 +470,63 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
+@@ -130,31 +470,63 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
  	else
  		return 1;
  #endif
@@ -2312,7 +2368,7 @@ index 0000000000000000000000000000000000000000..eee25b1ba9e6fc18f88a0f1312f76d25
 +#undef __SYSCALL
 +#undef __SYSCALL_NORETURN
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
-index 8d02b821d4bfaeef86e1a6f7896190fbaca8e692..ee771f98afcd9085be7d7b9a45fbb980f0afcd3d 100644
+index 0aeef9020f26bed52be2434cbafb2ad4fcd15614..74a64f7374f89295c4a2068455dd23769f069b19 100644
 --- a/arch/um/include/asm/pgtable.h
 +++ b/arch/um/include/asm/pgtable.h
 @@ -8,6 +8,11 @@
@@ -2438,10 +2494,10 @@ index ba7494f9bfe41254a0c5987fe50c1d073668130d..bcb5f2d9ca82d9bb8ff67340478400ba
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
  
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 9971a92efe35ce98441ba41601605769861c7cc9..31545ef9eaa69122a291677c85d7d60b1604c8e0 100644
+index 3267358aad21eb46cb76cc8375280bac948f0bc9..bde1affde2a40d95c648c8221d1d58181d687a4f 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
-@@ -495,6 +495,9 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
+@@ -484,6 +484,9 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
  		struct faultinfo *fi = UPT_FAULTINFO(regs);
  		current->thread.arch.faultinfo = *fi;
  		force_sig_fault(sig, code, (void __user *)FAULT_ADDRESS(*fi));
@@ -2452,10 +2508,10 @@ index 9971a92efe35ce98441ba41601605769861c7cc9..31545ef9eaa69122a291677c85d7d60b
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index b41d2ba7dc31b3aee976a1cff392e1dfed0b67ed..a6d67db93b18e28918afdb74b5cdcbe684b18812 100644
+index 01bea1dff640b72d0da2213b37d2841617d651d5..c45bc9c0b20ce27f77e7b9e0e5a6656df1840f5f 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -61,6 +61,7 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
+@@ -56,6 +56,7 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
  #define DARWIN_GUEST_SEGV_CPERR 10
  /* Linux asm-generic/siginfo.h values differ from Darwin's floating-point
   * si_code values, so keep the guest ABI numbers explicit at this boundary. */
@@ -2463,63 +2519,16 @@ index b41d2ba7dc31b3aee976a1cff392e1dfed0b67ed..a6d67db93b18e28918afdb74b5cdcbe6
  #define DARWIN_GUEST_FPE_FLTDIV 3
  #define DARWIN_GUEST_FPE_FLTOVF 4
  #define DARWIN_GUEST_FPE_FLTUND 5
-@@ -283,28 +284,25 @@ static int reconcile_implicit_stack_quarter(struct uml_pt_regs *registers)
- 
- static int syscall_snapshots_address_space(struct uml_pt_regs *registers)
- {
--	/* handle_syscall() copies architectural x8 into uml_pt_regs.syscall,
--	 * but this decision must happen before handle_syscall() builds the
--	 * child's COW page tables.  Read the current trap's x8 directly rather
--	 * than the previous syscall retained in the bookkeeping field.
-+	/* This decision happens before handle_syscall() builds the child's COW
-+	 * page tables, so inspect the live x86 entry register rather than the
-+	 * previous syscall retained in the bookkeeping field.
- 	 */
--	switch (UPT_X(registers, 8)) {
--	case __NR_clone:
--		/* CLONE_VM (including the usual CLONE_VFORK exec path) shares
--		 * the current mm and does not construct COW page tables.  Flushing
--		 * and write-protecting every shadow slot in that case only forces the
--		 * shared parent/child address space to refault clean pages.
--		 */
--		return !(UPT_X(registers, 0) & DARWIN_CLONE_VM);
--#ifdef __NR_clone3
--	case __NR_clone3:
--#endif
--		/* Linux builds a forked child's COW page tables from the physical
--		 * backing pages while the parent's latest userspace writes still
--		 * live in Darwin's private 4 KiB shadows.  Snapshot the active mm
--		 * before copy_mm() can observe stale heap or stack contents.  This
--		 * is harmless for CLONE_VM and keeps clone3 handling independent of
--		 * reading its userspace argument structure here.
-+	unsigned long syscall = UPT_SYSCALL_ARCH_NR(registers);
-+
-+	if (UPT_X86_64_COMPAT_SYSCALL(registers))
-+		return 0;
-+	switch (syscall) {
-+	case 56:
-+		return !(UPT_SYSCALL_ARG1(registers) & DARWIN_CLONE_VM);
-+	case 57:
-+		return 1;
-+	case 58:
-+		return 0;
-+	case 435:
-+		/* Reading clone3 flags would require touching the userspace
-+		 * structure before the syscall path has validated it.  A redundant
-+		 * snapshot for CLONE_VM is safe.
- 		 */
- 		return 1;
- 	default:
-@@ -461,7 +459,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -424,7 +425,7 @@ void userspace(struct uml_pt_regs *registers)
  #endif
  		switch (event) {
  		case DARWIN_UML_EVENT_SYSCALL:
 -			registers->orig_x0 = UPT_X(registers, 0);
 +			UPT_SAVE_ORIGINAL_SYSCALL(registers);
- #ifndef CONFIG_PAGE_SIZE_16KB
- 			snapshots_mm = syscall_snapshots_address_space(registers);
- 			if (snapshots_mm && darwin_uml_vm_flush_active() < 0)
-@@ -556,13 +554,20 @@ void userspace(struct uml_pt_regs *registers)
+ 			handle_syscall(registers);
+ 			/* copy_mm() records the parent's COW protection changes in
+ 			 * UML's normal TLB synchronization state.  The next userspace
+@@ -485,13 +486,20 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_FLOATING_POINT_TRAP:
  		{
  			siginfo_t signal_info = { 0 };
@@ -2540,7 +2549,7 @@ index b41d2ba7dc31b3aee976a1cff392e1dfed0b67ed..a6d67db93b18e28918afdb74b5cdcbe6
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -670,14 +675,45 @@ void userspace(struct uml_pt_regs *registers)
+@@ -599,14 +607,45 @@ void userspace(struct uml_pt_regs *registers)
  
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);

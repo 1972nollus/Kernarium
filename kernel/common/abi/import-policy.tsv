@@ -1,7 +1,5 @@
 symbol	availability	rationale
-darwin_uml_vm_flush_active	4k-only	Flush private host-page shadows before a 4 KiB address-space snapshot
 darwin_uml_vm_flush_generation	4k-only	Flush private host-page shadows before a 4 KiB generation is retired
-darwin_uml_vm_sync_to_backing	4k-only	Publish a 4 KiB userspace quarter to shared physical backing
 darwin_uml_vm_sync_from_backing	4k-only	Refresh a 4 KiB native shadow from shared physical backing
 darwin_uml_vm_sync_from_buffer	4k-only	Publish a bounded write from a 4 KiB native shadow
 darwin_uml_vm_stage_stack	4k-only	Stage an implicit 4 KiB stack quarter before resolving its Linux fault

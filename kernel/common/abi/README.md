@@ -47,14 +47,6 @@ For an intentional bridge declaration change:
 Each artifact descriptor records the bridge identity it was built with, and
 configure rejects an artifact whose identity differs from `identity.env`.
 
-The next ABI-changing topic should also drop the literal identity checks the
-kernel tree still carries, because the generated identity header already
-defines both values: the `_Static_assert(DARWIN_UML_ABI_VERSION == N)` in
-`arch/um/os-Darwin/skas/process.c`, and the two C++ `static_assert`s on the
-version and fingerprint in `darwin_uml_abi.h`. The replay carries
-`darwin_uml_abi.h` byte for byte, so those lines change only with a kernel
-topic.
-
 Every kernel build also verifies its exact active `darwin_uml_*` imports for
 the selected page profile. The 4 KiB native-shadow services are inactive in
 the 16 KiB profile; all other shared declarations apply to both.

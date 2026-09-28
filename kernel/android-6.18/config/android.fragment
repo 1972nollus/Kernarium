@@ -431,11 +431,7 @@ CONFIG_BRIDGE_NETFILTER=y
 # --- eBPF -------------------------------------------------------------------
 # UML has no BPF JIT backend, so programs run through the interpreter. The
 # syscall ABI and verifier are complete; only their throughput is reduced.
-CONFIG_BPF=y
 CONFIG_BPF_SYSCALL=y
-# CONFIG_BPF_JIT is not set
-# CONFIG_BPF_JIT_ALWAYS_ON is not set
-# CONFIG_HAVE_EBPF_JIT is not set
 # Exercise the guest's unprivileged verifier/interpreter ABI; this affects
 # guest policy only and cannot grant capabilities in the Darwin host.
 # CONFIG_BPF_UNPRIV_DEFAULT_OFF is not set

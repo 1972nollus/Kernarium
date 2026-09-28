@@ -2,6 +2,7 @@
 #include "uml_darwin_guest.h"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
+#include "uml/tlb_sync_ranges.h"
 #include "address_layout.hpp"
 #include "memory/guest_ram_commitment.hpp"
 #if UML_MEMORY_HAS_NATIVE_VM
@@ -355,7 +356,10 @@ extern "C" int darwin_uml_vm_batch_begin(unsigned long generation)
 
 extern "C" int darwin_uml_vm_batch_end(void)
 {
-	return darwin_uml_static_vm_batch_end();
+	/* The static API reports a rejected batch as Darwin's EAGAIN, which the
+	 * kernel cannot tell from its own errno values. */
+	const int result = darwin_uml_static_vm_batch_end();
+	return result == -EAGAIN ? DARWIN_UML_VM_BATCH_REJECTED : result;
 }
 
 extern "C" int darwin_uml_vm_walker_lock(unsigned long generation)
@@ -373,17 +377,9 @@ extern "C" int darwin_uml_vm_destroy(unsigned long generation)
 	return darwin_uml_static_vm_destroy(generation);
 }
 
-extern "C" int darwin_uml_vm_flush_active(void)
-{
-	return 0;
-}
 extern "C" int darwin_uml_vm_flush_generation(unsigned long generation)
 {
 	return darwin_uml_static_vm_flush_generation(generation);
-}
-extern "C" int darwin_uml_vm_sync_to_backing(unsigned long)
-{
-	return 0;
 }
 extern "C" int darwin_uml_vm_sync_from_backing(unsigned long address)
 {
@@ -522,12 +518,6 @@ extern "C" int darwin_uml_vm_retry_fault(unsigned long address, int execute, int
 #else
 	return 0;
 #endif
-}
-
-extern "C" int darwin_uml_begin_write_single_step(unsigned long, unsigned long)
-{
-	errno = ENOTSUP;
-	return -1;
 }
 
 extern "C" int darwin_uml_physmem_release(unsigned long long offset,

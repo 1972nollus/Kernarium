@@ -13,10 +13,10 @@ Subject: [PATCH] suspend guests through mconsole
  6 files changed, 61 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/Kconfig b/arch/um/Kconfig
-index 1ec666f76a7b66e5d771911689b47b913a63f635..bb37228eca093d4d355dc3930955c0cf3e5726ae 100644
+index bab809d264846372e425ff6ed975eddf97743437..cab6992fdc2222474b6c8a68835da5b8715936ea 100644
 --- a/arch/um/Kconfig
 +++ b/arch/um/Kconfig
-@@ -313,7 +313,6 @@ source "arch/um/drivers/Kconfig"
+@@ -312,7 +312,6 @@ source "arch/um/drivers/Kconfig"
  
  config ARCH_SUSPEND_POSSIBLE
  	def_bool y

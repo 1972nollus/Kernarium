@@ -40,13 +40,12 @@ Generate the i386 dispatch table from the canonical Linux 6.18 syscall specifica
  arch/um/kernel/signal.c                     |   7 +-
  arch/um/kernel/skas/process.c               |   9 +
  arch/um/kernel/skas/syscall.c               |  17 +-
- arch/um/kernel/tlb.c                        |  16 +
  arch/um/os-Darwin/skas/process.c            |   4 +
  include/linux/syscall_user_dispatch.h       |   8 +-
  include/linux/syscall_user_dispatch_types.h |   2 +-
  kernel/entry/Makefile                       |   3 +-
  net/ethtool/ioctl.c                         |   1 +
- 39 files changed, 1807 insertions(+), 189 deletions(-)
+ 38 files changed, 1791 insertions(+), 189 deletions(-)
  create mode 100644 arch/arm64/um/asm/seccomp.h
  create mode 100644 arch/arm64/um/x86_32.h
  create mode 100644 arch/arm64/um/x86_32_syscalls.c
@@ -74,10 +73,10 @@ index ee9fd0150f487c491d1ffa0637a004832481de8b..89a196845065fdd863ca5d0e4f5a7baa
  config GENERIC_ENTRY
  	bool
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 8b11524ed704297ef448fc36bdf785f9763e451c..abb03ef11cb08c1943ac20163cb83b87fcc26ff0 100644
+index 5ecda903ad20895c211be00c4ba8ea0d4ea1da61..38749c4c865f6fd7e9fa53facdc6d6909f74174a 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -26,11 +26,22 @@ config UML_ARM64
+@@ -25,11 +25,22 @@ config UML_ARM64
  config UML_X86_64_USERSPACE_ONLY
  	bool "Run x86-64 userspace exclusively"
  	depends on PAGE_SIZE_4KB
@@ -244,10 +243,10 @@ index 57b834791c66f9c7bb1beae8cfceb212adf00b48..61a22bf85f676d1445d66d09f1da8e0b
  #define ELF_NGREG 27
  typedef elf_greg_t elf_gregset_t[ELF_NGREG];
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
-index ae377e46d4142f49cda73371118e2172807c778c..2673eb7fe531dae40b5b733d43a02ffa87770075 100644
+index b132ad664ae559e1adf5bf0f63d65c7b55eea115..50bb312cff0f0d9e22d268238c92cc5e6aa1a5be 100644
 --- a/arch/arm64/um/asm/ptrace.h
 +++ b/arch/arm64/um/asm/ptrace.h
-@@ -21,6 +21,12 @@ enum {
+@@ -22,6 +22,12 @@ enum {
  #define PT_REGS_ORIG_SYSCALL(state) ((state)->regs.orig_x0)
  #define PT_REGS_SYSCALL_RET(state) UPT_SYSCALL_RETURN(&(state)->regs)
  
@@ -2412,12 +2411,12 @@ index 14ec16f92ce4086eafa5ca774f52c79df2b0b88c..8706382ab84a31ee6882fa75e26285bc
  
  #define pte_ERROR(e) \
 diff --git a/arch/um/include/asm/pgtable-3level.h b/arch/um/include/asm/pgtable-3level.h
-index 6b6712f2c9117a4a2e2e590e774c2c9071f0359b..6f82262f9c55f86b506b111703111d8143af35cc 100644
+index 277e84d1866403690341e16db6d5f04fa152b74d..bfa922f20ed6fe9f920f85f709e5aed7f929f04f 100644
 --- a/arch/um/include/asm/pgtable-3level.h
 +++ b/arch/um/include/asm/pgtable-3level.h
-@@ -24,7 +24,11 @@
- 
- #define HUGE_MAX_HSTATE	1
+@@ -22,7 +22,11 @@
+ #define PTRS_PER_PMD	(1U << UML_PGTABLE_SHIFT)
+ #define PTRS_PER_PGD	(1U << UML_PGTABLE_SHIFT)
  
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +#define USER_PTRS_PER_PGD ((task_size + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
@@ -2428,12 +2427,12 @@ index 6b6712f2c9117a4a2e2e590e774c2c9071f0359b..6f82262f9c55f86b506b111703111d81
  #define pte_ERROR(e) \
  	printk("%s:%d: bad pte %p(%016lx).\n", __FILE__, __LINE__, &(e), \
 diff --git a/arch/um/include/asm/pgtable-4level.h b/arch/um/include/asm/pgtable-4level.h
-index ac825e88e4e77deec98431359ccdb259802b655e..f5d6e828e54bb0aea294de7989565bb3af19b206 100644
+index 17649aefd6922012de5f30349361bf2dc50466e7..d5b69726ced58e7a9290cfe58dc3d66a9d7fbb08 100644
 --- a/arch/um/include/asm/pgtable-4level.h
 +++ b/arch/um/include/asm/pgtable-4level.h
-@@ -44,7 +44,11 @@
- 
- #define HUGE_MAX_HSTATE 2
+@@ -42,7 +42,11 @@
+ #define PTRS_PER_PUD (1U << UML_PGTABLE_SHIFT)
+ #define PTRS_PER_PGD (1U << UML_PGTABLE_SHIFT)
  
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +#define USER_PTRS_PER_PGD ((task_size + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
@@ -2690,45 +2689,11 @@ index bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e..300039328b3b4a426d8baa6f2eaebe45
  			uml_x86_64_sys_call_table;
  
  		ret = (*table[syscall])(UPT_SYSCALL_ARG1(&regs->regs),
-diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 3834e5c57680d9222c884256c1ecec3f76593502..bc879b800185d9d9b85947122263c1aa79c5fe6d 100644
---- a/arch/um/kernel/tlb.c
-+++ b/arch/um/kernel/tlb.c
-@@ -11,6 +11,9 @@
- #include <asm/tlbflush.h>
- #include <asm/mmu_context.h>
- #include <as-layout.h>
-+#ifdef UML_HOST_DARWIN
-+#include <darwin-address-space.h>
-+#endif
- #include <mem_user.h>
- #include <os.h>
- #include <skas.h>
-@@ -1007,6 +1010,19 @@ void darwin_tlb_invalidate_range(struct mm_struct *mm, unsigned long start,
- 		return;
- 	start &= PAGE_MASK;
- 	end = PAGE_ALIGN(end);
-+	/* Compat exec relocates its temporary stack from STACK_TOP_MAX down to
-+	 * the i386 stack ceiling.  The conservative Linux invalidation then
-+	 * spans Darwin's reserved native-kernel window, which is not one guest
-+	 * address domain.  Dropping the generation is a safe rare-path fallback;
-+	 * later page-table walks repopulate every still-valid guest mapping.
-+	 */
-+	if (!uml_darwin_guest_range(start, end - start)) {
-+		if (darwin_uml_vm_flush_generation(
-+				mm->context.id.darwin_generation) < 0)
-+			panic("Darwin: unable to flush guest mm %lu for range %#lx-%#lx",
-+			      mm->context.id.darwin_generation, start, end);
-+		return;
-+	}
- 	if (darwin_uml_vm_unmap_generation(
- 			mm->context.id.darwin_generation, (void *)start,
- 			end - start) < 0)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index a6d67db93b18e28918afdb74b5cdcbe684b18812..b0c5c699aa24e0259550683923c218aa27b5c177 100644
+index c45bc9c0b20ce27f77e7b9e0e5a6656df1840f5f..93d8f120b87ca5e90e1f6e825653730411a0462a 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -401,6 +401,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -367,6 +367,10 @@ void userspace(struct uml_pt_regs *registers)
  		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
  		 */
  		registers->is_user = 1;

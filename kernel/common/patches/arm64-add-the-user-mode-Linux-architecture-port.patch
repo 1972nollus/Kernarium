@@ -5,8 +5,8 @@ Subject: [PATCH] arm64: add the user-mode Linux architecture port
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
- arch/arm64/Makefile.um                       |  64 ++++++++
- arch/arm64/um/Kconfig                        |  41 +++++
+ arch/arm64/Makefile.um                       |  64 +++++++
+ arch/arm64/um/Kconfig                        |  40 +++++
  arch/arm64/um/Makefile                       |  12 ++
  arch/arm64/um/asm/barrier.h                  |  15 ++
  arch/arm64/um/asm/checksum.h                 |   8 +
@@ -19,7 +19,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/asm/perf_event.h               |  19 +++
  arch/arm64/um/asm/processor.h                |  51 ++++++
  arch/arm64/um/asm/ptrace-abi.h               |  15 ++
- arch/arm64/um/asm/ptrace.h                   |  47 ++++++
+ arch/arm64/um/asm/ptrace.h                   |  50 ++++++
  arch/arm64/um/asm/rqspinlock.h               |  10 ++
  arch/arm64/um/asm/segment.h                  |   8 +
  arch/arm64/um/asm/set_memory.h               |  53 ++++++
@@ -37,7 +37,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/delay.c                        |  32 ++++
  arch/arm64/um/fault.c                        |  30 ++++
  arch/arm64/um/mem.c                          |   8 +
- arch/arm64/um/ptrace.c                       | 125 ++++++++++++++
+ arch/arm64/um/ptrace.c                       | 166 +++++++++++++++++++
  arch/arm64/um/registers.c                    |  51 ++++++
  arch/arm64/um/setjmp.S                       |  43 +++++
  arch/arm64/um/shared/sysdep/archsetjmp.h     |  29 ++++
@@ -45,14 +45,14 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/shared/sysdep/kernel-offsets.h |  16 ++
  arch/arm64/um/shared/sysdep/ptrace.h         |  74 +++++++++
  arch/arm64/um/shared/sysdep/ptrace_user.h    |  14 ++
- arch/arm64/um/signal.c                       | 164 +++++++++++++++++++
+ arch/arm64/um/signal.c                       | 166 +++++++++++++++++++
  arch/arm64/um/subarch.c                      |  29 ++++
  arch/arm64/um/syscall_table.c                |  25 +++
  arch/arm64/um/syscalls.c                     |  14 ++
  arch/arm64/um/sysrq.c                        |  18 ++
  arch/arm64/um/tls.c                          |  22 +++
  arch/arm64/um/user-offsets.c                 |  63 +++++++
- 47 files changed, 1499 insertions(+)
+ 47 files changed, 1544 insertions(+)
  create mode 100644 arch/arm64/Makefile.um
  create mode 100644 arch/arm64/um/Kconfig
  create mode 100644 arch/arm64/um/Makefile
@@ -173,16 +173,15 @@ index 0000000000000000000000000000000000000000..ecf8bbeb93d1b784561f0d9457af06be
 +endif
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
 new file mode 100644
-index 0000000000000000000000000000000000000000..b0603b1240cdc084043dcc83f1b4941872e630d3
+index 0000000000000000000000000000000000000000..69b162be2450e3e813d378cfe650526512ea0695
 --- /dev/null
 +++ b/arch/arm64/um/Kconfig
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,40 @@
 +# SPDX-License-Identifier: GPL-2.0
 +
 +config UML_ARM64
 +	def_bool y
 +	select CLONE_BACKWARDS
-+	select ARCH_SUPPORTS_HUGETLBFS
 +	select ARCH_WANT_DEFAULT_TOPDOWN_MMAP_LAYOUT
 +	select ARCH_HAS_SET_DIRECT_MAP
 +	select ARCH_HAS_SET_MEMORY
@@ -584,10 +583,10 @@ index 0000000000000000000000000000000000000000..3afa6ed84585b358f068303471d9b3d6
 +#endif
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..cc0e19f4217c47239fa6a6eb4ee3da9f35d994bc
+index 0000000000000000000000000000000000000000..06ae614ff420b1b811457fa8e2f3a5f67b088ee0
 --- /dev/null
 +++ b/arch/arm64/um/asm/ptrace.h
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,50 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef _ASM_UM_ARM64_PTRACE_H
 +#define _ASM_UM_ARM64_PTRACE_H
@@ -598,6 +597,7 @@ index 0000000000000000000000000000000000000000..cc0e19f4217c47239fa6a6eb4ee3da9f
 +};
 +
 +#include <linux/errno.h>
++#include <linux/types.h>
 +#include <asm/ptrace-generic.h>
 +
 +#define user_mode(state) UPT_IS_USER(&(state)->regs)
@@ -633,6 +633,8 @@ index 0000000000000000000000000000000000000000..cc0e19f4217c47239fa6a6eb4ee3da9f
 +}
 +
 +extern void arch_switch_to(struct task_struct *to);
++
++extern bool uml_arm64_valid_user_pstate(unsigned long *pstate);
 +
 +#endif
 diff --git a/arch/arm64/um/asm/rqspinlock.h b/arch/arm64/um/asm/rqspinlock.h
@@ -1066,12 +1068,13 @@ index 0000000000000000000000000000000000000000..e4bf1f54108e46046b5cca195bc88ecf
 +}
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..3dfd7a0a6fa5f7a5f5cca252c4bcaeb8a1155b1f
+index 0000000000000000000000000000000000000000..52e976dc7f84880c40d4616989f8eea484a7c172
 --- /dev/null
 +++ b/arch/arm64/um/ptrace.c
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,166 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
++#include <linux/bits.h>
 +#include <linux/elf.h>
 +#include <linux/regset.h>
 +#include <linux/sched.h>
@@ -1096,14 +1099,43 @@ index 0000000000000000000000000000000000000000..3dfd7a0a6fa5f7a5f5cca252c4bcaeb8
 +	return child->thread.regs.regs.gp[index];
 +}
 +
++/*
++ * Native arm64 clears these bits from a PSTATE that a signal frame or a tracer
++ * supplies (SPSR_EL1_AARCH64_RES0_BITS).  SS is not the task's either:
++ * begin_guest_step() sets it for the one entry that PTRACE_SINGLESTEP asks
++ * for, and the engine steps on it whenever it is set.
++ */
++#define UML_ARM64_PSTATE_RES0 \
++	(GENMASK_ULL(63, 32) | GENMASK_ULL(27, 26) | GENMASK_ULL(23, 22) | \
++	 GENMASK_ULL(20, 13) | BIT_ULL(5))
++#define UML_ARM64_PSTATE_SS		BIT_ULL(21)
++#define UML_ARM64_PSTATE_NZCV		GENMASK_ULL(31, 28)
++/* EL0t in AArch64 state has M[4:0] zero, and EL0 cannot mask D, A, I or F. */
++#define UML_ARM64_PSTATE_MODE_DAIF	(GENMASK_ULL(9, 6) | GENMASK_ULL(4, 0))
++
++/*
++ * Keep the bits of a user-supplied PSTATE that userspace owns: NZCV, TCO, DIT,
++ * SSBS and BTYPE.  A mode or DAIF bit makes it invalid; like native
++ * valid_user_regs(), reduce it to NZCV and report that, so rt_sigreturn raises
++ * SIGSEGV and a tracer's register write fails with -EINVAL.
++ */
++bool uml_arm64_valid_user_pstate(unsigned long *pstate)
++{
++	*pstate &= ~(UML_ARM64_PSTATE_RES0 | UML_ARM64_PSTATE_SS);
++	if (!(*pstate & UML_ARM64_PSTATE_MODE_DAIF))
++		return true;
++	*pstate &= UML_ARM64_PSTATE_NZCV;
++	return false;
++}
++
 +int putreg(struct task_struct *child, int regno, unsigned long value)
 +{
 +	int index = register_index(regno);
 +
 +	if (index < 0)
 +		return index;
-+	if (index == HOST_PSTATE)
-+		value &= 0xf0000000UL;
++	if (index == HOST_PSTATE && !uml_arm64_valid_user_pstate(&value))
++		return -EINVAL;
 +	child->thread.regs.regs.gp[index] = value;
 +	return 0;
 +}
@@ -1144,8 +1176,19 @@ index 0000000000000000000000000000000000000000..3dfd7a0a6fa5f7a5f5cca252c4bcaeb8
 +		       unsigned int pos, unsigned int count,
 +		       const void *kbuf, const void __user *ubuf)
 +{
-+	return user_regset_copyin(&pos, &count, &kbuf, &ubuf,
-+		target->thread.regs.regs.gp, 0, sizeof(struct user_regs_struct));
++	unsigned long regs[sizeof(struct user_regs_struct) /
++			   sizeof(unsigned long)];
++	int ret;
++
++	memcpy(regs, target->thread.regs.regs.gp, sizeof(regs));
++	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, regs, 0,
++				 sizeof(regs));
++	if (ret)
++		return ret;
++	if (!uml_arm64_valid_user_pstate(&regs[HOST_PSTATE]))
++		return -EINVAL;
++	memcpy(target->thread.regs.regs.gp, regs, sizeof(regs));
++	return 0;
 +}
 +
 +static int fpregs_get(struct task_struct *target,
@@ -1507,10 +1550,10 @@ index 0000000000000000000000000000000000000000..88d7debbae6f3405ffa36f9f47925764
 +#endif
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..5abf1641a0c2ec6163e38160ec73d3acbf74f711
+index 0000000000000000000000000000000000000000..51c5ab74921ce0cfc43bde262e71670e1fa03b1d
 --- /dev/null
 +++ b/arch/arm64/um/signal.c
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,166 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <linux/errno.h>
@@ -1604,6 +1647,8 @@ index 0000000000000000000000000000000000000000..5abf1641a0c2ec6163e38160ec73d3ac
 +	error |= get_user(PT_REGS_SP(regs), &context->sp);
 +	error |= get_user(PT_REGS_IP(regs), &context->pc);
 +	error |= get_user(PT_REGS_PSTATE(regs), &context->pstate);
++	if (!error && !uml_arm64_valid_user_pstate(&PT_REGS_PSTATE(regs)))
++		error = -EINVAL;
 +	if (!error)
 +		error = restore_fpsimd_context(regs, context);
 +	PT_REGS_SYSCALL_NR(regs) = -1;
