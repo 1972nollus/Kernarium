@@ -11,6 +11,39 @@ endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+# Build a freestanding static arm64 guest payload into
+# ${CMAKE_CURRENT_BINARY_DIR}/<NAME>, set OUTPUT_VARIABLE to its path, and
+# make integration-test-binaries build it through the uml-<NAME> target.
+# COMPILE_OPTIONS precede the common static-link flags; LINK_OPTIONS follow
+# the entry-point flag.
+function(uml_add_guest_payload OUTPUT_VARIABLE NAME SOURCE)
+    cmake_parse_arguments(PARSE_ARGV 3 _payload ""
+        "COMMENT" "COMPILE_OPTIONS;LINK_OPTIONS")
+    set(_output "${CMAKE_CURRENT_BINARY_DIR}/${NAME}")
+    set(_source "${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE}")
+    add_custom_command(
+        OUTPUT "${_output}"
+        COMMAND "${CMAKE_CXX_COMPILER}"
+            --target=aarch64-unknown-linux-gnu
+            ${_payload_COMPILE_OPTIONS}
+            -nostdlib
+            -static
+            -fuse-ld=lld
+            -Wl,-e,_start
+            ${_payload_LINK_OPTIONS}
+            "${_source}"
+            -o "${_output}"
+        COMMAND ${CMAKE_COMMAND}
+            -DOUTPUT=${_output}
+            -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
+        DEPENDS "${_source}"
+        COMMENT "${_payload_COMMENT}"
+        VERBATIM)
+    add_custom_target(uml-${NAME} DEPENDS "${_output}")
+    add_dependencies(integration-test-binaries uml-${NAME})
+    set(${OUTPUT_VARIABLE} "${_output}" PARENT_SCOPE)
+endfunction()
+
 option(UML_TEST_APPLE_AUDIO "Qualify the real Apple audio output with a short stereo tone" OFF)
 if(UML_TEST_APPLE_AUDIO)
     add_subdirectory(audio)
@@ -119,49 +152,13 @@ uml_add_ltp_engine_campaign(jit)
 add_custom_target(guest-ltp-verified)
 add_dependencies(guest-ltp-verified guest-ltp-gadgets guest-ltp-jit)
 
-set(UML_DOCKER_HELLO_WORLD
-    "${CMAKE_CURRENT_BINARY_DIR}/docker-hello-world")
-add_custom_command(
-    OUTPUT "${UML_DOCKER_HELLO_WORLD}"
-    COMMAND "${CMAKE_CXX_COMPILER}"
-        --target=aarch64-unknown-linux-gnu
-        -nostdlib
-        -static
-        -fuse-ld=lld
-        -Wl,-e,_start
-        "${CMAKE_CURRENT_SOURCE_DIR}/docker/hello_world.S"
-        -o "${UML_DOCKER_HELLO_WORLD}"
-    COMMAND ${CMAKE_COMMAND}
-        -DOUTPUT=${UML_DOCKER_HELLO_WORLD}
-        -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/docker/hello_world.S"
-    COMMENT "Building the offline arm64 Docker hello-world payload"
-    VERBATIM)
-add_custom_target(uml-docker-hello-world
-    DEPENDS "${UML_DOCKER_HELLO_WORLD}")
-add_dependencies(integration-test-binaries uml-docker-hello-world)
+uml_add_guest_payload(UML_DOCKER_HELLO_WORLD docker-hello-world
+    docker/hello_world.S
+    COMMENT "Building the offline arm64 Docker hello-world payload")
 
-set(UML_GUEST_HWCAP_SANITY
-    "${CMAKE_CURRENT_BINARY_DIR}/guest-hwcap-sanity")
-add_custom_command(
-    OUTPUT "${UML_GUEST_HWCAP_SANITY}"
-    COMMAND "${CMAKE_CXX_COMPILER}"
-        --target=aarch64-unknown-linux-gnu
-        -nostdlib
-        -static
-        -fuse-ld=lld
-        -Wl,-e,_start
-        "${CMAKE_CURRENT_SOURCE_DIR}/features/guest_hwcap_sanity.S"
-        -o "${UML_GUEST_HWCAP_SANITY}"
-    COMMAND ${CMAKE_COMMAND}
-        -DOUTPUT=${UML_GUEST_HWCAP_SANITY}
-        -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/guest_hwcap_sanity.S"
-    COMMENT "Building the arm64 guest HWCAP sanity payload"
-    VERBATIM)
-add_custom_target(uml-guest-hwcap-sanity
-    DEPENDS "${UML_GUEST_HWCAP_SANITY}")
-add_dependencies(integration-test-binaries uml-guest-hwcap-sanity)
+uml_add_guest_payload(UML_GUEST_HWCAP_SANITY guest-hwcap-sanity
+    features/guest_hwcap_sanity.S
+    COMMENT "Building the arm64 guest HWCAP sanity payload")
 
 # Guest campaigns share the EROFS image directly. The filesystem supplies the
 # read-only contract; writable guest state lives in disposable overlays. The
@@ -391,27 +388,9 @@ uml_add_integration_test(
     PROCESSORS 4
     RESOURCE_GROUPS cpus:4)
 
-set(UML_GUEST_SAMPLER_WORKLOAD
-    "${CMAKE_CURRENT_BINARY_DIR}/guest-sampler-workload")
-add_custom_command(
-    OUTPUT "${UML_GUEST_SAMPLER_WORKLOAD}"
-    COMMAND "${CMAKE_CXX_COMPILER}"
-        --target=aarch64-unknown-linux-gnu
-        -nostdlib
-        -static
-        -fuse-ld=lld
-        -Wl,-e,_start
-        "${CMAKE_CURRENT_SOURCE_DIR}/profiling/guest_sampler_workload.S"
-        -o "${UML_GUEST_SAMPLER_WORKLOAD}"
-    COMMAND ${CMAKE_COMMAND}
-        -DOUTPUT=${UML_GUEST_SAMPLER_WORKLOAD}
-        -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/profiling/guest_sampler_workload.S"
-    COMMENT "Building the freestanding arm64 guest sampler workload"
-    VERBATIM)
-add_custom_target(uml-guest-sampler-workload
-    DEPENDS "${UML_GUEST_SAMPLER_WORKLOAD}")
-add_dependencies(integration-test-binaries uml-guest-sampler-workload)
+uml_add_guest_payload(UML_GUEST_SAMPLER_WORKLOAD guest-sampler-workload
+    profiling/guest_sampler_workload.S
+    COMMENT "Building the freestanding arm64 guest sampler workload")
 
 uml_add_guest_integration_test(
     NAME guest-code-sampler
@@ -425,34 +404,14 @@ uml_add_guest_integration_test(
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
 
-set(UML_GUEST_SHARED_MMAP_STRESS
-    "${CMAKE_CURRENT_BINARY_DIR}/guest-shared-mmap-stress")
-add_custom_command(
-    OUTPUT "${UML_GUEST_SHARED_MMAP_STRESS}"
-    COMMAND "${CMAKE_CXX_COMPILER}"
-        --target=aarch64-unknown-linux-gnu
-        -nostdlib
-        -static
-        -fuse-ld=lld
-        -Wl,-e,_start
-        "${CMAKE_CURRENT_SOURCE_DIR}/smp/guest_shared_mmap_stress.S"
-        -o "${UML_GUEST_SHARED_MMAP_STRESS}"
-    COMMAND ${CMAKE_COMMAND}
-        -DOUTPUT=${UML_GUEST_SHARED_MMAP_STRESS}
-        -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/smp/guest_shared_mmap_stress.S"
-    COMMENT "Building the freestanding arm64 shared-MM guest stress binary"
-    VERBATIM)
-add_custom_target(uml-guest-shared-mmap-stress
-    DEPENDS "${UML_GUEST_SHARED_MMAP_STRESS}")
-add_dependencies(integration-test-binaries uml-guest-shared-mmap-stress)
+uml_add_guest_payload(UML_GUEST_SHARED_MMAP_STRESS guest-shared-mmap-stress
+    smp/guest_shared_mmap_stress.S
+    COMMENT "Building the freestanding arm64 shared-MM guest stress binary")
 
-set(UML_GUEST_FORK_COW_COHERENCE
-    "${CMAKE_CURRENT_BINARY_DIR}/guest-fork-cow-coherence")
-add_custom_command(
-    OUTPUT "${UML_GUEST_FORK_COW_COHERENCE}"
-    COMMAND "${CMAKE_CXX_COMPILER}"
-        --target=aarch64-unknown-linux-gnu
+uml_add_guest_payload(UML_GUEST_FORK_COW_COHERENCE guest-fork-cow-coherence
+    smp/guest_fork_cow_coherence.cpp
+    COMMENT "Building the freestanding arm64 fork copy-on-write guest stress binary"
+    COMPILE_OPTIONS
         -std=c++20
         -O2
         -Wall
@@ -465,23 +424,9 @@ add_custom_command(
         -fno-rtti
         -fno-stack-protector
         -fno-asynchronous-unwind-tables
-        -nostdlib
-        -static
-        -fuse-ld=lld
-        -Wl,-e,_start
+    LINK_OPTIONS
         -Wl,-z,max-page-size=16384
-        -Wl,-s
-        "${CMAKE_CURRENT_SOURCE_DIR}/smp/guest_fork_cow_coherence.cpp"
-        -o "${UML_GUEST_FORK_COW_COHERENCE}"
-    COMMAND ${CMAKE_COMMAND}
-        -DOUTPUT=${UML_GUEST_FORK_COW_COHERENCE}
-        -P ${PROJECT_SOURCE_DIR}/cmake/VerifyGeneratedFile.cmake
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/smp/guest_fork_cow_coherence.cpp"
-    COMMENT "Building the freestanding arm64 fork copy-on-write guest stress binary"
-    VERBATIM)
-add_custom_target(uml-guest-fork-cow-coherence
-    DEPENDS "${UML_GUEST_FORK_COW_COHERENCE}")
-add_dependencies(integration-test-binaries uml-guest-fork-cow-coherence)
+        -Wl,-s)
 
 uml_add_guest_integration_test(
     NAME guest-mmu-stress

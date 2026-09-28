@@ -14,12 +14,9 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import pathlib
-import sys
 
-
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-
-from guest import Guest, GuestFile  # noqa: E402
+# The script's own directory, the harness's, is first on sys.path.
+from guest import Guest, GuestFile
 
 
 GUEST_PROBE = "/usr/local/libexec/uml-test/probe.py"
