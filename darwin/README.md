@@ -48,82 +48,28 @@ compatible ACK kernel artifact; launch accepts a rootfs directory and
 one directly writable GPT image without comparing rootfs release identity, and
 it does not search for the Linux desktop image.
 
-## Runtime and scheduling
+## Runtime, memory, and kernel loading
 
-Each public emulator handle owns its context, engine, stop state, and network
-callbacks. One handle admits one run. Native 16 KiB callback runs may coexist
-when mappings do not overlap; embedded and 4 KiB runs serialize through the
-process address-space gate.
-
-Every configured guest CPU has one persistent `uml-vcpu-N-carrier` pthread.
-Linux tasks migrate on guest stacks rather than creating host threads. Host
-signals wake carriers, and pending IPIs run only at IRQ-enabled checkpoints.
-The early process-directed `SIGALRM` calibration signal remains blocked on
-application and launcher threads and is temporarily owned by vCPU0. Before the
-loader releases an embedded kernel image, it takes back the signal handlers
-and interval timer the kernel left pointing into it; see
-[the scheduling contract](../docs/architecture.md#cpu-execution-and-scheduling).
-
-## Guest memory and kernel loading
-
-All products use the same 128 TiB sparse software-MMU task range. The native
-kernel window contains guest RAM plus a page-rounded auxiliary allowance equal
-to RAM, bounded from 1 GiB to 4 GiB. macOS places the window at 96 TiB. iOS
-asks for the address below its ceiling and, when the host declines that hint,
-for wherever a window of that size fits: an iOS app's usable virtual range is
-not guaranteed to contain the compile-time envelope, and iOS 27 moved it out.
-On a physical device the window is reserved before the guest starts so nothing
-else can take part of it, and a run whose window cannot be reserved fails. It
-stays reserved end to end: the kernel image, the reserved physical prefix and
-guest RAM are all mapped over the reservation in place. macOS and Designed for
-iPad leave the window unreserved and place the image and the loader tail by an
-honoured address hint.
-
-Accepted arm64-userspace mainline artifacts are shared by macOS and iOS within
-each page profile. The x86_64-userspace 4 KiB slice has a distinct artifact
-identity and is selected only by the macOS product. The Android product uses
-its independent accepted 16 KiB ACK artifact. Apple CMake validates artifact
-manifests and never invokes Kbuild.
-
-Kernarium carries each kernel ELF in a signed framework `__TEXT` section. The
-loader aliases immutable executable pages from that mapping and copies only
-data/BSS into anonymous storage. It rejects carrier mismatch, writable
-executable segments, and relocations into signed text. macOS retains the
-unsigned embedded-loader path.
-
-Darwin UML guest RAM uses the kernel's linear physical window as its root. The
-signed kernel image occupies the reserved prefix and the allocatable suffix is
-created anonymously in place; software-MMU and host-service views borrow that
-window rather than retaining a second full-span mapping. This applies to both
-mainline page profiles and the Android kernel. The guest commits and releases
-guest RAM on demand. Physical iOS wires only the committed pages; Simulator and
-macOS commit and release without wiring. A Virtio balloon takes the host GPU's
-memory out of the guest. See [the memory
-architecture](../docs/architecture.md#memory-and-executable-code). Disk and
-image descriptors remain file-backed.
+Handle and run ownership, the vCPU carriers and host signal ownership, the
+native kernel window, guest RAM commitment and the balloon, accepted-artifact
+sharing, and the signed kernel loader are cross-module contracts owned by the
+architecture: see its
+[runtime ownership](../docs/architecture.md#runtime-ownership),
+[memory and executable code](../docs/architecture.md#memory-and-executable-code),
+and [CPU execution and scheduling](../docs/architecture.md#cpu-execution-and-scheduling)
+sections.
 
 ## CPU engines
 
-Engine selection is explicit. Gadgets execute non-executable data streams of
-precompiled entries, and the JIT publishes native code only through
-`cpu/arm64/jit/jit_arena.cpp`. The JIT owns its semantic slow path: generated
-code routes a fixed set of instruction classes to helpers that decode only
-those classes, and any other word is a fatal internal error.
+Engine selection, executable-memory ownership, the JIT's semantic slow path,
+the x86_64 slice's userspace profile, and the gadget cache's address-space tags
+are in the
+[architecture](../docs/architecture.md#cpu-execution-and-scheduling). This
+section owns the engines' internal detail.
 
-The macOS x86_64 slice always uses the x86_64 gadget backend for userspace
-while UML kernel-mode execution remains arm64. The kernel slice cannot load
-arm64 userspace and does not switch ISA per task. Integer, vector, x87/MMX,
-TLS, atomic, and extended-state execution is qualified in both long64 and
-compat32 modes against the pinned FEX handwritten ASM corpora. The ordinary
-userspace feature profile covers scalar x86, x87, MMX, SSE through SSE4.2,
-AVX, AVX2, F16C, FMA, AES/PCLMUL, BMI1/2, and their 32-bit operand/address
-forms; CPUID advertises that profile, ERMS included: a repeated string
-operation moves whole page-bounded blocks, so the REP MOVSB that ERMS steers
-libc onto is this engine's fastest copy rather than its slowest. Register,
-YMM, MMX, and x87 state is serialized in the task-owned bridge frame across
-carrier scheduling. Passing those corpora does not by itself establish
-arbitrary distribution or complete Linux syscall compatibility. Other host
-products and page profiles retain arm64 userspace execution.
+The x86_64 backend's CPUID advertises ERMS: a repeated string operation moves
+whole page-bounded blocks, so the REP MOVSB that ERMS steers libc onto is this
+engine's fastest copy rather than its slowest.
 
 The x86_64 gadget engine assembles against ARMv8.5-A, so it lowers guest
 semantics onto LSE atomics, FlagM/FlagM2 condition transfer, and FRINTTS
@@ -131,20 +77,16 @@ truncating conversion directly. Every arm64 Mac implements those extensions,
 and the engine is a macOS-only backend, so this constrains no shipping product.
 The arm64 engine keeps its own, higher, ARMv8.6-A declaration.
 
-The gadget cache retains a bounded number of tagged address spaces. Retiring an
-address space drops only its owned state, and stale same-generation programs
-must match every consumed guest word before reuse.
-
-A cache slot indexes a translation rather than holding one. Each stored program
-is a single exact-sized allocation carrying its stream and the guest words it is
-validated against, taken from an arena with sixteen-byte size classes, and the
-program refers to those words rather than owning a second copy. A build
-assembles its stream in a scratch buffer that the next build rewinds, so a
-translation allocates only when it is stored. The arena marks where every live
-translation starts, one bit per granule, and that map is how a terminal exit
-inside a linked successor is attributed to the successor's program; the cache
-keeps no index keyed by stream address and maintains nothing per store for
-that lookup.
+A gadget cache slot indexes a translation rather than holding one. Each stored
+program is a single exact-sized allocation carrying its stream and the guest
+words it is validated against, taken from an arena with sixteen-byte size
+classes, and the program refers to those words rather than owning a second
+copy. A build assembles its stream in a scratch buffer that the next build
+rewinds, so a translation allocates only when it is stored. The arena marks
+where every live translation starts, one bit per granule, and that map is how a
+terminal exit inside a linked successor is attributed to the successor's
+program; the cache keeps no index keyed by stream address and maintains nothing
+per store for that lookup.
 
 The arm64 and x86 private gadget caches use the same `UML_GADGET_CACHE_SLOTS`
 and `UML_GADGET_RESIDENT_GENERATIONS` controls: four ways, 256-slot lazy slabs,
@@ -233,29 +175,12 @@ same backing, even when the stored value is unchanged.
 
 ## Devices
 
-The generic vhost-user transport supports independent Virtio-GPU,
-Virtio-input, Virtio-Sound, Virtio-console, and Kernarium battery services.
-Deferred used-ring publication lets a device retain a descriptor until
-asynchronous host work is complete.
-
-The Apple graphics stack uses upstream virglrenderer on one packaged host GL
-provider, Mesa Zink over KosmicKrisp, and is built for macOS and the iOS
-device. macOS provides native AppKit and VNC display consumers; iOS provides
-UIKit Metal presentation and deliberately excludes VNC. See
-[`../docs/graphics.md`](../docs/graphics.md).
-
-The `apple-gpu-vulkan-experiment` composition adds a Venus facade over one
-directly linked Mesa KosmicKrisp framework, and routes host OpenGL through
-Mesa Zink on that same driver. Every GPU build advertises it: the host
-implements capset 4/version 0, HOST3D blob resources, ring-indexed deferred
-fences on the same transport pipeline the Virgl path uses, and a bounded 1 GiB
-vhost-user shared-memory aperture; invalid memory types, ranges, ownership, acknowledgements, or
-reconnect state fail closed. The guest can map up to one blob per 16 KiB
-aperture page without a smaller record-count limit. Page ownership stays
-reserved through pending map/unmap acknowledgements; successful teardown or a
-failed map releases it for reuse. A receipt-bound guest image supplies the
-paired Mesa Venus driver and Vulkan CTS payload. Passing local probes or CTS
-runs does not create a formal Vulkan conformance claim.
+The vhost-user transport and the Apple graphics stack are in the
+[architecture](../docs/architecture.md#devices-and-graphics) and
+[`../docs/graphics.md`](../docs/graphics.md). The Venus route's host side
+fails closed on an invalid memory type, range, ownership, acknowledgement, or
+reconnect state, and keeps an aperture page owned through pending map and unmap
+acknowledgements; a completed teardown or a failed map releases it for reuse.
 
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
@@ -278,28 +203,13 @@ a host listener intact, promptly and without a dropped frame.
 
 ## Guest storage and lifecycle
 
-The platform layer tracks every writable host descriptor opened for the guest.
-`uml_emulator_sync()` asks the guest to write back through its management
-console, then flushes those host descriptors. `uml_emulator_quiesce()` enters
-full Linux system suspend and waits until devices, secondary CPUs, interrupts,
-and timekeeping have reached the platform sleep boundary before flushing the
-host. `uml_emulator_resume()` sends the console wake edge. A kernel without the
-suspend command falls back to the legacy stop/go pair.
-
-Every run receives a unique UML identity and management-console path. Guests
-that need writeback requests boot with magic SysRq enabled. If the physical iOS
-sandbox cannot bind the console, host-file flushing still runs but guest
-writeback/freeze is unavailable.
-
-Guest disk capacity is an application concern rather than a runtime option:
-the runtime validates that a GPT matches its file and boots it without
-rewriting either. The
+Sync, quiesce, resume, and the management console are in the
+[architecture](../docs/architecture.md#guest-lifecycle). Disk capacity is an
+application concern: the runtime validates that a GPT matches its file and
+boots it without rewriting either, and the
 [Android static disk contract](../android/aosp-17/README.md#static-disk-and-boot-contract)
-owns how Kernarium and the macOS launcher grow an image and how the guest
-grows its filesystem.
-
-When Kernarium syncs, quiesces, and resumes is described in
-[`../Kernarium/README.md`](../Kernarium/README.md#lifecycle).
+owns how an image and its filesystem grow. When Kernarium syncs, quiesces, and
+resumes is in [`../Kernarium/README.md`](../Kernarium/README.md#lifecycle).
 
 ## API and validation
 

@@ -88,7 +88,7 @@ that launch geometry. The Metal shader cache policy is in
 Kernarium asks the guest to write back when the application loses focus,
 quiesces it before the application is backgrounded or terminated, and resumes
 it on foregrounding. The runtime side of sync, quiesce, and resume is in
-[`../darwin/README.md`](../darwin/README.md#guest-storage-and-lifecycle).
+[`../docs/architecture.md`](../docs/architecture.md#guest-lifecycle).
 
 ## Scripts
 

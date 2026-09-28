@@ -61,8 +61,11 @@ allowance bounded between 1 GiB and 4 GiB, plus the fixed guarded aperture the
 kernel reserves for negotiated vhost-user shared-memory regions and its stub
 pages. The host and the kernel derive that reservation from the same constants,
 so a host window smaller than the kernel's expectation faults on the kernel's
-own stub write. macOS places the window at 96 TiB; iOS top-packs it below the
-physical-device address ceiling. The iOS slice also runs on an Apple silicon
+own stub write. macOS places the window at 96 TiB. iOS first asks for the
+address that top-packs it below the physical-device address ceiling and, when
+the host declines that hint, for wherever a window of that size fits, because
+an iOS app's usable virtual range is not guaranteed to contain that envelope
+(iOS 27's does not). The iOS slice also runs on an Apple silicon
 Mac in Designed for iPad mode, where the process is a macOS process; placement
 follows the address space the process actually has, so that mode takes the
 macOS window.
@@ -96,6 +99,7 @@ after the run returns, and a host stop leaves their queues started.
 Every Darwin UML kernel uses its linear physical window as the anonymous RAM
 root. Software-MMU and host-service consumers borrow that root or create
 non-copying Mach aliases; no separate full-span guest-RAM mapping is retained.
+Disk and image descriptors remain file-backed.
 
 `mem=` is a ceiling, not a reservation. The guest commits guest RAM before
 using it and releases what it frees, through the bridge's
@@ -165,8 +169,9 @@ cache.
 
 Ordinary iOS libraries exclude native-VM and embedded-ELF execution. Kernarium
 uses versioned runtime frameworks whose kernel ELF is carried in signed Mach-O
-`__TEXT`. Its loader aliases immutable executable pages from that mapping and
-rejects writable executable segments or relocations into signed text. The app
+`__TEXT`. Its loader aliases immutable executable pages from that mapping,
+copies only data and BSS into anonymous storage, and rejects a carrier
+mismatch, writable executable segments, or relocations into signed text. The app
 embeds every selectable framework, links none at launch, and loads exactly one
 guest flavour/page profile for the process lifetime. macOS retains its
 unsigned embedded-loader path.
@@ -268,7 +273,9 @@ The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
 width. As on x86 Linux, a task always runs with RFLAGS.IF set: the host sets it
-on entry, whatever the kernel's register image holds. The host routes userspace instruction execution through immutable,
+on entry, whatever the kernel's register image holds. Register, YMM, MMX, and
+x87 state is serialized in the task-owned bridge frame across carrier
+scheduling. The host routes userspace instruction execution through immutable,
 data-only streams of pointers to precompiled handwritten arm64 assembly
 gadgets. There is no semantic C++ execution fallback. Two gadget banks serve
 scalar integer instructions: an ordinary bank that decodes its operands from
@@ -532,11 +539,18 @@ that instead.
 The devices Kernarium attaches and its display geometry are listed in
 [`../Kernarium/README.md`](../Kernarium/README.md).
 
-Writable host files are tracked by the platform layer. Emulator sync asks the
-guest to write back through the management console and then flushes host files.
-Quiesce enters full Linux system suspend and waits for the platform sleep
-boundary before flushing host files; resume sends the console wake edge.
-Accepted kernels without system suspend retain a stop/go fallback.
+## Guest lifecycle
+
+The platform layer tracks every writable host descriptor opened for the guest.
+`uml_emulator_sync()` asks the guest to write back through its management
+console, then flushes those host descriptors. `uml_emulator_quiesce()` enters
+full Linux system suspend and waits until devices, secondary CPUs, interrupts,
+and timekeeping have reached the platform sleep boundary before flushing the
+host. `uml_emulator_resume()` sends the console wake edge. A kernel without the
+suspend command falls back to the stop/go pair. Guests that need writeback
+requests boot with magic SysRq enabled; if the physical iOS sandbox cannot bind
+the console, host-file flushing still runs but guest writeback and freeze are
+unavailable.
 
 The guest binds the management console as a Unix datagram socket and replies
 to each request's own bound socket, which the host places beside it. On macOS
