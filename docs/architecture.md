@@ -269,7 +269,8 @@ aligned.
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
-width. The host routes userspace instruction execution through immutable,
+width. As on x86 Linux, a task always runs with RFLAGS.IF set: the host sets it
+on entry, whatever the kernel's register image holds. The host routes userspace instruction execution through immutable,
 data-only streams of pointers to precompiled handwritten arm64 assembly
 gadgets. There is no semantic C++ execution fallback. Two gadget banks serve
 scalar integer instructions: an ordinary bank that decodes its operands from
