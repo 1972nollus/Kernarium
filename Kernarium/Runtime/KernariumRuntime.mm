@@ -1625,8 +1625,6 @@ const kernarium_runtime_api runtimeApi {
     .struct_size = sizeof(kernarium_runtime_api),
     .guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE,
     .guest_flavor = KERNARIUM_RUNTIME_GUEST_FLAVOR,
-    .kernel_release = KERNARIUM_KERNEL_RELEASE_SERIES,
-    .framework_name = KERNARIUM_RUNTIME_FRAMEWORK_NAME,
     .run = runtimeRun,
     .request_stop = runtimeRequestStop,
     .sync = runtimeSync,
@@ -1640,7 +1638,7 @@ const kernarium_runtime_api runtimeApi {
 
 } // namespace
 
-extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v8(void)
+extern "C" const kernarium_runtime_api* kernarium_runtime_get_api_v9(void)
 {
     return &runtimeApi;
 }
