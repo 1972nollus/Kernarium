@@ -1690,6 +1690,8 @@ BuildResult GadgetExecutor::translate(
 		diagnostics::execution_histogram_note_executor(&d);
 	}
 #endif
+	/* A stream pointer left by a non-retiring or FPCR-enable exit was
+	 * consumed and cleared above, so what remains is a cache cell. */
 	if (cpu.gadget_indirect_miss != nullptr &&
 	    (cpu.pc & (alignof(std::uint32_t) - 1U)) == 0U) {
 		programs_->learn_indirect(
