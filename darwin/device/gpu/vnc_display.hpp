@@ -2,6 +2,7 @@
 #pragma once
 
 #include "display.hpp"
+#include "display_geometry.hpp"
 #include "metal_readback.hpp"
 #include "scanout_framebuffer.hpp"
 
@@ -9,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -27,6 +29,12 @@ using rfbClientPtr = _rfbClientRec*;
 
 namespace uml::gpu {
 
+/* A VNC framebuffer keeps the size it was created with, which the device
+ * advertises as the preferred mode. Every mode the guest applies is shown
+ * aspect-fitted and centred in it, black outside, and pointer input maps back
+ * through the same rectangle. A mode the fit leaves at its own size, such as
+ * the preferred one, is copied pixel for pixel; any other is scaled on the
+ * GPU. */
 class VncDisplay final : public Display {
 public:
     VncDisplay(
@@ -49,6 +57,10 @@ public:
     // Callers use the post-bind value instead of racing a probe socket.
     [[nodiscard]] std::uint16_t port() const noexcept;
     [[nodiscard]] std::optional<std::uint16_t> vncPort() const noexcept override;
+    [[nodiscard]] bool guestScanoutChanged(
+        std::uint32_t width,
+        std::uint32_t height) noexcept override;
+    void resetGuestSession() noexcept override;
     // Return the published scanout to a blank device-reset state. This is
     // allocation-free so transport teardown can call it from a noexcept reset.
     void clear() noexcept override;
@@ -73,6 +85,7 @@ public:
 #if UML_GPU_VNC_STARTUP_TESTING
     [[nodiscard]] std::array<std::uint8_t, 4> pixelForTesting(
         std::uint32_t x, std::uint32_t y) noexcept;
+    [[nodiscard]] bool readbackIdleForTesting() const noexcept;
 #endif
 
 private:
@@ -82,7 +95,20 @@ private:
         std::chrono::steady_clock::time_point deadline {};
     };
 
-    void publishMetalFrame(const MetalReadbackFrame& frame) noexcept;
+    /* The framebuffer rectangle that shows the active guest mode. */
+    [[nodiscard]] DisplayRectangle placement() const noexcept;
+    /* Where a readback requested now belongs. */
+    [[nodiscard]] ReadbackTarget readbackTarget() const noexcept;
+    /* The framebuffer no longer extends what any earlier readback read, so
+     * nothing read before now may reach it. Needs geometryMutex_. */
+    void advanceFrameEpochLocked() noexcept;
+    void applyGuestMode(std::uint32_t width, std::uint32_t height) noexcept;
+    void releasePointerLocked() noexcept;
+    void presentStaged(
+        const MetalScanout& scanout,
+        ReadbackTarget target) noexcept;
+    [[nodiscard]] bool publishMetalFrame(
+        const MetalReadbackFrame& frame) noexcept;
     void eventLoop();
     [[nodiscard]] std::optional<std::uint32_t> clientConnected() noexcept;
     void clientDisconnected(rfbClientPtr client) noexcept;
@@ -91,22 +117,37 @@ private:
     void handleKey(bool down, std::uint32_t keySymbol) noexcept;
     void handlePointer(int buttonMask, int x, int y) noexcept;
     void reportInputFailure() noexcept;
+    void reportStagingFailure() noexcept;
     [[nodiscard]] std::uint32_t connectionEpoch() const noexcept;
     void recordFullFrame(std::uint32_t connectionEpoch) noexcept;
 
     uml::input::vnc::VncInputSink inputSink_;
     ScanoutFramebuffer framebuffer_;
+    /* The framebuffer's size is the host's preferred geometry; the active
+     * guest mode is tracked separately. */
+    DisplayGeometryPolicy geometry_;
+    /* Orders every framebuffer change outside the readback - a mode change,
+     * clear(), a CPU fallback copy - against a readback frame requested
+     * before it, which is then discarded. */
+    std::mutex geometryMutex_;
+    /* Changed only by the GPU thread, under geometryMutex_. */
+    std::atomic<std::uint64_t> frameEpoch_ {};
+    /* The CPU fallback's image of a guest mode that must be scaled. Owned by
+     * the GPU thread. */
+    std::unique_ptr<ScanoutFramebuffer> stagingImage_;
     std::string password_;
     std::array<char*, 2> passwordList_ {};
     rfbScreenInfoPtr screen_ {};
     uml::input::vnc::PointerMode pointerMode_;
-    uml::input::vnc::DirectTouchContact touchContact_;
+    /* Pointer state is the event thread's, except that a mode change on the
+     * GPU thread releases what the guest holds. */
+    std::mutex pointerMutex_;
+    FittedPointer pointer_;
     /* The upper half is a reconnect epoch and the lower half is the live
      * client count. Publishing them together prevents the GPU thread from
      * observing a first client without also observing its full-frame demand. */
     std::atomic<std::uint64_t> clientState_ {};
     std::atomic<std::uint32_t> fullFrameEpoch_ {};
-    std::atomic<std::uint64_t> cpuFallbackExtent_ {};
     /* Orders the GPU thread's "remember, then see no client" against the
      * event thread's "count the first client, then refresh what was
      * remembered", so no scanout dropped for lack of a client escapes both. */
@@ -118,6 +159,7 @@ private:
     std::vector<HeldClient> heldClients_;
     std::atomic_bool running_ {true};
     std::atomic_bool inputFailureReported_ {};
+    std::atomic_bool stagingFailureReported_ {};
     std::thread eventThread_;
     std::unique_ptr<MetalReadback> metalReadback_;
 };

@@ -4,6 +4,7 @@
 
 #include "display_activity_log.hpp"
 #include "display_geometry.hpp"
+#include "metal_scanout_shader.hpp"
 
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
@@ -16,141 +17,10 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
-#include <string>
 #include <utility>
 
 namespace uml::gpu {
 namespace {
-
-NSString* const metalShaderSource = @R"metal(
-#include <metal_stdlib>
-using namespace metal;
-
-struct RasterData {
-    float4 position [[position]];
-    float2 textureCoordinate;
-};
-
-vertex RasterData displayVertex(unsigned int vertexId [[vertex_id]])
-{
-    const float2 positions[] = {
-        float2(-1.0, -1.0),
-        float2( 3.0, -1.0),
-        float2(-1.0,  3.0),
-    };
-    const float2 coordinates[] = {
-        float2(0.0,  1.0),
-        float2(2.0,  1.0),
-        float2(0.0, -1.0),
-    };
-    RasterData output;
-    output.position = float4(positions[vertexId], 0.0, 1.0);
-    output.textureCoordinate = coordinates[vertexId];
-    return output;
-}
-
-// Where the presenter samples the scanout: origin + point * extent, clamped
-// to the centres of the scanout rectangle's edge texels, maps the guest's
-// top-left-origin unit square onto the rectangle in its texture, with a
-// bottom-up texture's flip folded into a negative vertical extent.
-struct ScanoutSampling {
-    float2 origin;
-    float2 extent;
-    float2 minimum;
-    float2 maximum;
-    uint rotation;
-};
-
-// Rotation turns the guest image onto the display, so a display point maps
-// back through the inverse turn into the guest's unit square.
-float2 scanoutCoordinate(float2 coordinate, constant ScanoutSampling& sampling)
-{
-    switch (sampling.rotation & 3u) {
-    case 1u:
-        coordinate = float2(coordinate.y, 1.0 - coordinate.x);
-        break;
-    case 2u:
-        coordinate = float2(1.0 - coordinate.x, 1.0 - coordinate.y);
-        break;
-    case 3u:
-        coordinate = float2(1.0 - coordinate.y, coordinate.x);
-        break;
-    default:
-        break;
-    }
-    return clamp(
-        sampling.origin + coordinate * sampling.extent,
-        sampling.minimum,
-        sampling.maximum);
-}
-
-// A guest pixel magnified onto the display stays a sharp block, so text and
-// pixel art keep their edges at Retina and integer scales. A scanout larger
-// than its viewport is minified bilinearly, which blends each display pixel's
-// nearest 2x2 texels instead of dropping whole rows and columns. The guest's
-// textures have no mip chain, so a reduction beyond 2:1 still skips texels.
-constexpr sampler scanoutSampler(
-    mag_filter::nearest,
-    min_filter::linear,
-    address::clamp_to_edge);
-
-fragment float4 displayFragment(
-    RasterData input [[stage_in]],
-    texture2d<float> scanout [[texture(0)]],
-    constant ScanoutSampling& sampling [[buffer(0)]])
-{
-    const float4 color = scanout.sample(
-        scanoutSampler,
-        scanoutCoordinate(input.textureCoordinate, sampling));
-    return float4(color.rgb, 1.0);
-}
-
-fragment float4 displayArrayFragment(
-    RasterData input [[stage_in]],
-    texture2d_array<float> scanout [[texture(0)]],
-    constant ScanoutSampling& sampling [[buffer(0)]])
-{
-    const float4 color = scanout.sample(
-        scanoutSampler,
-        scanoutCoordinate(input.textureCoordinate, sampling),
-        0);
-    return float4(color.rgb, 1.0);
-}
-)metal";
-
-/* The shader's ScanoutSampling: float2 members are 8-byte aligned, and the
- * trailing uint pads the struct to a multiple of that alignment. */
-struct ShaderScanoutSampling final {
-    float origin[2];
-    float extent[2];
-    float minimum[2];
-    float maximum[2];
-    std::uint32_t rotation;
-    std::uint32_t padding;
-};
-static_assert(sizeof(ShaderScanoutSampling) == 40);
-
-[[nodiscard]] ShaderScanoutSampling shaderSampling(
-    const ScanoutSampling& sampling,
-    DisplayRotation rotation) noexcept
-{
-    return {
-        .origin = {
-            static_cast<float>(sampling.origin.x),
-            static_cast<float>(sampling.origin.y)},
-        .extent = {
-            static_cast<float>(sampling.extent.x),
-            static_cast<float>(sampling.extent.y)},
-        .minimum = {
-            static_cast<float>(sampling.minimum.x),
-            static_cast<float>(sampling.minimum.y)},
-        .maximum = {
-            static_cast<float>(sampling.maximum.x),
-            static_cast<float>(sampling.maximum.y)},
-        .rotation = static_cast<std::uint32_t>(rotation),
-        .padding = 0,
-    };
-}
 
 /* The CPU fallback texture holds exactly the framebuffer, top row first. */
 [[nodiscard]] std::optional<ScanoutSampling> framebufferSampling(
@@ -163,14 +33,6 @@ static_assert(sizeof(ShaderScanoutSampling) == 40);
         .width = width,
         .height = height,
     });
-}
-
-std::string description(NSError* error)
-{
-    if (error == nil || error.localizedDescription == nil)
-        return "unknown Metal error";
-    const char* text = error.localizedDescription.UTF8String;
-    return text == nullptr ? "unknown Metal error" : std::string(text);
 }
 
 [[nodiscard]] double frameStatisticsInterval() noexcept
@@ -207,40 +69,10 @@ struct MetalPresentationState final :
         if (commandQueue == nil)
             throw std::runtime_error("Metal command queue creation failed");
 
-        NSError* error = nil;
-        id<MTLLibrary> library = [device
-            newLibraryWithSource:metalShaderSource
-            options:nil
-            error:&error];
-        if (library == nil) {
-            throw std::runtime_error(
-                "Metal display shader compilation failed: " +
-                description(error));
-        }
-        id<MTLFunction> vertex = [library newFunctionWithName:@"displayVertex"];
-        id<MTLFunction> fragment =
-            [library newFunctionWithName:@"displayFragment"];
-        id<MTLFunction> arrayFragment =
-            [library newFunctionWithName:@"displayArrayFragment"];
-        if (vertex == nil || fragment == nil || arrayFragment == nil)
-            throw std::runtime_error("Metal display shader entry is missing");
-        const auto makePipeline = [&](id<MTLFunction> selectedFragment) {
-            MTLRenderPipelineDescriptor* descriptor =
-                [[MTLRenderPipelineDescriptor alloc] init];
-            descriptor.vertexFunction = vertex;
-            descriptor.fragmentFunction = selectedFragment;
-            descriptor.colorAttachments[0].pixelFormat =
-                MTLPixelFormatBGRA8Unorm;
-            return [device
-                newRenderPipelineStateWithDescriptor:descriptor
-                error:&error];
-        };
-        pipeline = makePipeline(fragment);
-        arrayPipeline = makePipeline(arrayFragment);
-        if (pipeline == nil || arrayPipeline == nil)
-            throw std::runtime_error(
-                "Metal display pipeline creation failed: " +
-                description(error));
+        const auto pipelines =
+            makeScanoutPipelines(device, MTLPixelFormatBGRA8Unorm);
+        pipeline = pipelines.texture2D;
+        arrayPipeline = pipelines.textureArray;
 
         fallbackTexture = makeFallbackTexture(width, height);
         if (fallbackTexture == nil)

@@ -618,7 +618,9 @@ if(TARGET uml_gpu_display)
         LABELS gpu)
 
     add_library(uml_gpu_display_test_variant STATIC
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/display_geometry.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/metal_readback.mm
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/metal_scanout_shader.mm
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/scanout_framebuffer.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vnc_display.cpp
         vnc_display_metal_testing.mm

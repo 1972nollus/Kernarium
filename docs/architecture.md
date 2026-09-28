@@ -517,9 +517,11 @@ layout. An unlinked vnode-backed identity descriptor reconnects each guest
 dma-buf with its in-process MTLHeap and native MTLTexture; the descriptor never
 stores pixel data. Native presentation samples that texture directly. The VNC
 consumer instead performs a damage-bounded asynchronous Metal blit into one
-shared staging buffer, keeps at most one newer pending frame, and publishes to
-LibVNCServer only after GPU completion, so neither readback nor encoding blocks
-the guest flush timeline.
+shared staging buffer, first drawing the scanout at its fitted size with the
+native presenter's pass when the guest mode or a bottom-up texture needs it,
+keeps at most one newer pending frame, and publishes to LibVNCServer only after
+GPU completion, so neither readback, scaling, nor encoding blocks the guest
+flush timeline.
 
 Sharing runs the other way too, for a guest whose buffer allocator is not the
 Vulkan driver: when another context asks to import a GL resource, the renderer
