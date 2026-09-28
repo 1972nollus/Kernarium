@@ -78,12 +78,12 @@ index 2dde638d10d910fcc9a9110793c36f5c29495e66..6cd49a51fd6ac538b1406af80c2222a8
  					  void *address,
  					  unsigned long length);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index b0f2e74633e8623cf016fd31d229409a3ef7c302..3834e5c57680d9222c884256c1ecec3f76593502 100644
+index d8f1550d1f680cdf3b0463ca3228311c5999d1b4..34b7fa613174026d64f0cb00947fae1c8daf6070 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
-@@ -1013,6 +1013,27 @@ void darwin_tlb_invalidate_range(struct mm_struct *mm, unsigned long start,
- 		panic("Darwin: unable to invalidate guest mm %lu range %#lx-%#lx",
- 		      mm->context.id.darwin_generation, start, end);
+@@ -1050,6 +1050,27 @@ void darwin_tlb_flush_range(struct mm_struct *mm, unsigned long start,
+ 	darwin_tlb_flush_guest_range(mm, start, min(end, native_start));
+ 	darwin_tlb_flush_guest_range(mm, max(start, native_end), end);
  }
 +
 +void darwin_flush_icache_remote_user_range(struct mm_struct *mm,

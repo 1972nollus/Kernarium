@@ -140,6 +140,13 @@ the configured guest RAM. The host emulator admits the same span
 top-level CMake layout); a host that reserves less faults on the kernel's own
 stub write, so the two sizes move together.
 
+The window lies inside every task's address range, and `mmap()` refuses any
+user mapping that would enter it. A user TLB flush can still cover it: freeing
+page tables widens the flush to each table's whole span, which starts inside
+the window when a table also maps the first pages above it. Such a flush drops
+and replays only the guest ranges beside the window, because the host would
+take a range inside it for the kernel's own mappings.
+
 Darwin UML negotiates the standardized vhost-user shared-memory-region
 transport (`VHOST_USER_PROTOCOL_F_SHMEM_MAP`), obtains one region through
 `VHOST_USER_GET_SHMEM_CONFIG`, and services acknowledged backend

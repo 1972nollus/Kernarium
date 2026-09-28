@@ -136,10 +136,10 @@ index b46649f2ea64a6d4b289cb0d9ab8c164da804ba1..8b8a647f44ee690582f1f6b4aabb6d3e
  {
  	int cpu = evt - &timer_clockevent[0];
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 9fd280bc968e0b66661b0c87a84b2d6ee747ed25..9d7c3297dc83f0fded54efe9673131f1875dde0a 100644
+index 0cc16dd44498a659c731b35f2bdf0723de977a35..a8d07807e5f1c4dc1b6ed758da5911aa445eb506 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
-@@ -734,7 +734,17 @@ void flush_tlb_mm(struct mm_struct *mm)
+@@ -771,7 +771,17 @@ void flush_tlb_mm(struct mm_struct *mm)
  	for_each_vma(vmi, vma) {
  		um_tlb_mark_sync(mm, vma->vm_start, vma->vm_end);
  #ifdef UML_HOST_DARWIN
