@@ -336,8 +336,9 @@ the host write outside the memory it gave the host, whatever the GPU does.
 
 Only a resource's attached backing reaches guest RAM: a blob resource carries
 no guest pages, and the device translates a backing entry only as a whole range
-inside one negotiated memory region. A control-queue reply is clamped to the
-writable descriptors the guest supplied. A Venus reply stream ends where the
+inside one negotiated memory region. A control-queue reply is never written
+past the writable descriptors the guest supplied: one that does not fit ends
+the connection instead. A Venus reply stream ends where the
 window the guest declared through `vkSetReplyCommandStreamMESA` ends rather
 than where the shared-memory resource holding it ends, so an oversized reply
 marks the context fatal instead of running on through whatever else the guest

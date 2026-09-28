@@ -477,9 +477,10 @@ resource shapes use CPU readback. See [`graphics.md`](graphics.md).
 
 A guest drives the renderer, so no host write into guest memory is sized by
 the renderer alone: the device bounds a translated guest range to one
-negotiated memory region, clamps a reply to the writable descriptors the guest
-supplied, and the renderer ends a Venus reply stream at the window the guest
-declared rather than at the resource holding it.
+negotiated memory region, never writes a reply past the writable descriptors
+the guest supplied (a reply that does not fit ends the connection), and the
+renderer ends a Venus reply stream at the window the guest declared rather
+than at the resource holding it.
 
 Every GPU build also carries an independent Vulkan route:
 

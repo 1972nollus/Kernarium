@@ -208,9 +208,10 @@ VirglRenderer::VirglRenderer()
 
         /*
          * The Mesa provider supplies an external EGLDisplay whose contexts are
-         * desktop OpenGL 4.6 core. It publishes no Metal texture for a vrend
-         * resource and no VideoToolbox decode surface, so scanouts of those
-         * resources take the readback path.
+         * desktop OpenGL 4.6 core. A vrend resource names the Metal texture
+         * Zink stores it in through virgl_renderer_resource_get_info_ext, so
+         * its scanout is presented directly and read back only when that
+         * lookup fails.
          *
          * The render server publishes each context's per-ring timeline
          * sequence numbers in shared memory, so virgl_renderer_context_poll
