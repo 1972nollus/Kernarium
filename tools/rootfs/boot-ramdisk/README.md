@@ -36,16 +36,19 @@ panics the kernel, which aborts the emulator with a nonzero status.
 [`init`](init) is the default segment `/init`. It runs under the base's ash,
 which has no `command` builtin, and calls only applets the base verifier
 requires. It mounts devtmpfs, proc and sysfs, waits up to ten seconds for the
-root device, mounts the new root at `/newroot`, copies `/payload` into it
-with `cp -af`, moves `/dev`, `/proc` and `/sys` across, prints
+root device, mounts the new root at `/newroot`, installs `/payload` into it,
+moves `/dev`, `/proc` and `/sys` across, prints
 `UML_BOOT_SWITCH_ROOT:<entry>` and `switch_root`s into the entry as PID 1.
 Any failure prints `UML_BOOT_ERROR:<reason>` and stops the guest.
 
-A payload file replaces a file the image carries at the same path. Over a
-symlink it writes through to the target when the target exists and replaces
-the link otherwise. A payload directory must not pass through a symlink in the
-image: images with a merged `/usr` link `/lib` to `usr/lib`, so a payload
-names `/usr/lib/...` instead.
+Each payload file is copied with `cp -af`, keeping its mode, and replaces a
+file the image carries at the same path. Over a symlink it writes through to
+the target when the target exists and replaces the link otherwise. A directory
+the image already has keeps its own mode and owner, so a payload beneath
+`/var/tmp` leaves it sticky and world-writable; a missing one is created
+`0755`. A payload directory must not pass through a symlink in the image:
+images with a merged `/usr` link `/lib` to `usr/lib`, so a payload names
+`/usr/lib/...` instead.
 
 `/boot.env` holds `KEY=VALUE` lines; blank lines and `#` comments are ignored
 and an unknown key is an error.

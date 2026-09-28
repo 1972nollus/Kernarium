@@ -175,6 +175,30 @@ mount_overlay_root()
 		overlay /newroot || fail "cannot mount the overlay"
 }
 
+# Copy the payload directory $1 into the new-root directory $2. A directory
+# the image already has keeps its own mode, owner and times; cp -a would give
+# it the payload's, turning /var/tmp into a 0755 directory. A missing one is
+# created 0755. Each file keeps its payload mode, and -f replaces a file whose
+# open fails, such as a dangling symlink.
+install_payload()
+{
+	local source=$1 target=$2 entry name
+	for entry in "$source"/* "$source"/.[!.]* "$source"/..?*; do
+		[ -e "$entry" ] || continue
+		name=${entry##*/}
+		if [ -d "$entry" ]; then
+			[ ! -L "$target/$name" ] || fail \
+				"a payload directory passes through a symlink: ${target#/newroot}/$name"
+			[ -d "$target/$name" ] || mkdir -m 0755 "$target/$name" || \
+				fail "cannot create ${target#/newroot}/$name"
+			install_payload "$entry" "$target/$name"
+		else
+			cp -af "$entry" "$target/$name" || \
+				fail "cannot install ${target#/newroot}/$name"
+		fi
+	done
+}
+
 read_parameters
 mount -t devtmpfs devtmpfs /dev || fail "cannot mount devtmpfs"
 mount -t proc proc /proc || fail "cannot mount proc"
@@ -186,9 +210,8 @@ tmpfs) mount_overlay_root ;;
 esac
 
 # The payload mirrors the new root; in an overlay it lands in the upper layer.
-# -f replaces a file whose open fails, such as a dangling symlink.
 if [ -d /payload ]; then
-	cp -af /payload/. /newroot/ || fail "cannot install the payload"
+	install_payload /payload /newroot
 fi
 if [ "$upper" = tmpfs ]; then
 	for layer in lower state; do
