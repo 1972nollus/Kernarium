@@ -52,7 +52,7 @@ so.
  4 files changed, 161 insertions(+), 60 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 9c85dec7f615e352aa8ab41a8275f854a4d756e3..0bc9052d7bcf463607c12640424df4179959c1fc 100644
+index c5d3c49370bf5ebb4efc8fd85808cba0c61bda71..af5d06c10270fa89d52b25bf37b2dc66a0d0a3b6 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -57,12 +57,11 @@ kk_queue_signals_prune_locked(struct kk_queue_feedback *feedback)
@@ -103,7 +103,7 @@ index 9c85dec7f615e352aa8ab41a8275f854a4d756e3..0bc9052d7bcf463607c12640424df417
  static void
  kk_queue_feedback_unref(struct kk_queue_feedback *feedback)
  {
-@@ -176,15 +178,85 @@ kk_queue_record_signal(struct kk_queue_feedback *feedback,
+@@ -182,15 +184,85 @@ kk_queue_record_signal(struct kk_queue_feedback *feedback,
   * the queue may run before the record it would have resolved exists. Both
   * sides therefore check, and whichever happens second does the work. */
  static void
@@ -193,7 +193,7 @@ index 9c85dec7f615e352aa8ab41a8275f854a4d756e3..0bc9052d7bcf463607c12640424df417
  }
  
  static struct kk_queue_submission *
-@@ -205,53 +277,71 @@ commit_callback(struct mtl_feedback_data *data)
+@@ -211,53 +283,71 @@ commit_callback(struct mtl_feedback_data *data)
     struct kk_queue_submission *submission = data->user_data;
     struct kk_queue_feedback *feedback = submission->feedback;
  
@@ -297,7 +297,7 @@ index 9c85dec7f615e352aa8ab41a8275f854a4d756e3..0bc9052d7bcf463607c12640424df417
  
     if (feedback->submit_timing) {
        /* These host-second timestamps cover the entire committed Metal batch.
-@@ -355,6 +445,13 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+@@ -361,6 +451,13 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
     if (vk_queue_is_lost(&queue->vk))
        return VK_ERROR_DEVICE_LOST;
  

@@ -93,7 +93,7 @@ index 2d6be6ae61d1c5c443d607f527385191d5ef3ba4..9c03b79fddc81f3aac958ac270eeabdb
     }
  }
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 0bc9052d7bcf463607c12640424df4179959c1fc..dee7b41d42f23bf45e1ca5f819c6df329785c72f 100644
+index af5d06c10270fa89d52b25bf37b2dc66a0d0a3b6..5f5ec3822966e2b1bd178d94012c9b91e25c26a5 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -88,6 +88,20 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
@@ -117,7 +117,7 @@ index 0bc9052d7bcf463607c12640424df4179959c1fc..dee7b41d42f23bf45e1ca5f819c6df32
  /* Metal reports a failure against one submission, but the work it kills
   * behind that submission does not always arrive as a report of its own. A
   * signal enqueued after the reported one can therefore go missing with
-@@ -312,6 +326,7 @@ commit_callback(struct mtl_feedback_data *data)
+@@ -318,6 +332,7 @@ commit_callback(struct mtl_feedback_data *data)
        /* Survived or not, a failed queue runs nothing more that can be
         * trusted. */
        ++feedback->failures;

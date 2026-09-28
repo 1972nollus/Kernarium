@@ -127,7 +127,7 @@ index 9c03b79fddc81f3aac958ac270eeabdb377579ce..8990b6eaa42b60c96c0733b46259d655
        }
  
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index dee7b41d42f23bf45e1ca5f819c6df329785c72f..7424fd72280196b80d06d70789e416670dfba4f8 100644
+index 5f5ec3822966e2b1bd178d94012c9b91e25c26a5..ab6c4278bbac829b16bc30712e154d9b545e229c 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -88,18 +88,38 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
@@ -326,7 +326,7 @@ index 0effa2e9054d3a8f979b4d24f488751529f89505..24c13070a3d16bc3f9ef0b10f5eb0120
        kk_queue_complete_owed_signals(&dev->queue, timeline->mtl_handle);
     if (completed) {
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index f4c6c0e6a665d472e826845785cdc6e71dad2830..d420e1e76d42d2eb5c4b3307dd6354d16a3e5b44 100644
+index 63f3b6e38e3bfc4d0c4cd6415706b57f93940d62..b29aa610b1d97b7476339f2ca8dc99b377ebfd6d 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -698,6 +698,16 @@ if with_tests

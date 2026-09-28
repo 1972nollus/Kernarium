@@ -480,10 +480,10 @@ index 45bc47def4964cb9352f3a35515be779c181f456..efa087026ea64a7ab879c5b01bcc51e1
  kk_CmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount,
             uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance)
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 7424fd72280196b80d06d70789e416670dfba4f8..f48f77501ce54f106734c09becfe309cc3b579e8 100644
+index ab6c4278bbac829b16bc30712e154d9b545e229c..ef6c7ec0348736e43d0cbf1269c061c042f4d929 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
-@@ -442,6 +442,7 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
+@@ -448,6 +448,7 @@ kk_detach_completed_recording(struct kk_cmd_buffer *cmd,
     recording->queue = mtl_retain(queue);
     recording->allocator_cache = kk_command_allocator_cache_ref(
        kk_cmd_buffer_device(cmd)->allocator_cache);
@@ -491,7 +491,7 @@ index 7424fd72280196b80d06d70789e416670dfba4f8..f48f77501ce54f106734c09becfe309c
     recording->command_buffers = cmd->submit_cmd_bufs;
     cmd->submit_cmd_bufs = UTIL_DYNARRAY_INIT;
  
-@@ -464,8 +465,7 @@ rerecord_cmd_buffer(struct kk_cmd_buffer *cmd)
+@@ -470,8 +471,7 @@ rerecord_cmd_buffer(struct kk_cmd_buffer *cmd)
     vk_cmd_queue_execute(&cmd->vk.cmd_queue, kk_cmd_buffer_to_handle(cmd),
                          &dev->vk.dispatch_table);
  
@@ -502,10 +502,10 @@ index 7424fd72280196b80d06d70789e416670dfba4f8..f48f77501ce54f106734c09becfe309c
     /* Need to ensure the new buffers allocated at record are resident. */
     kk_device_make_resources_resident(dev);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 4526d9dd4e22878e9c42e52bf79be728b6762a39..58f1c88ca8c2bbb89de9a9f1d3e4d45b9f965272 100644
+index 95e592054207ebd6ffa143d2b2dfa49ec430713f..c92c2be2ed27e5752f755a2b8ad7472bbd2f3c7e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -931,6 +931,39 @@ if with_tests
+@@ -951,6 +951,39 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
