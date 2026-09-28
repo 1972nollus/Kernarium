@@ -402,11 +402,9 @@ four tests fail because of how the Mac hosts an iPad app:
 - `theKeyboardButtonFocusesTheViewOnScreen` and
   `anEndedRunIsNeverStartedAgain` find SwiftUI controls by walking the
   window's accessibility elements. On the iPad a test run has UIKit
-  application accessibility on, and the walk finds every control. That was
-  observed while the `KernariumAutomation` host was serving; a run with no
-  automation session on the device has not been measured. On the Mac it is
-  off, and SwiftUI's hosting view then exposes no elements. Turning it on in
-  the process makes the same walk find them.
+  application accessibility on, and the walk finds every control. On the Mac
+  it is off, and SwiftUI's hosting view then exposes no elements. Turning it
+  on in the process makes the same walk find them.
 - `theKeyBarNeverCoversTheConsole` and `anUnfocusedConsoleKeepsEveryRow`
   model the key bar docked at the bottom of the screen, which is where the
   console looks for it. On the Mac the window ends above the bottom of the
@@ -415,45 +413,12 @@ four tests fail because of how the Mac hosts an iPad app:
 
 ### UI automation on a device
 
-On a device with a passcode, turning UI automation on asks for the owner's
-approval (Touch ID or passcode) at the device. XCTest gives up 60 s after the
-runner starts, and the prompt stays on screen until someone dismisses it.
-Automation stays on while any XCTest session holds it, and other runners start
-without a prompt during that time. Once the last session ends, turning it on
-again needs a fresh approval. That includes stopping, redeploying or losing
-the automation host. Only a restart within a few minutes of the approval was
-seen to skip the prompt.
-
-Unattended work therefore goes through one long-lived session, the
-`KernariumAutomation` UI-test target. It runs for hours and executes commands
-that `Kernarium/scripts/ipad-automation.py` copies into its runner's data
-container with `devicectl`. Build it with the script and run `start` while
-someone can approve at the device. See `--help` for the commands: launch, tap,
-wait, type, key, element tree, screenshot, and stop, which refuses without
-`--force`. Each command answers in about one to four seconds. Exit status 3
-means no host is serving. The host recreates its channel folders if another
-tool clears the container.
-
-XCTest on a device delivers nothing to the application for a synthesized
-Return typed as `\r`, or for Delete, Escape, or Backspace, yet reports
-success. The script therefore sends `key return` as `\n`, which produces the
-real Return key with any modifiers, and refuses `delete` and `escape`, naming
-a route that works.
-
-No command ends the host. A thrown error, an XCTest issue, and an
-Objective-C exception XCTest raises, such as `typeKey` given anything but one
-UTF-16 character, each become that command's error. The host keeps a
-command's issues out of XCTest's record, so it prints every failed command to
-its log. XCTest waits for the application to go idle before each command. A
-system keyboard animation can leave that wait's count stuck for the rest of
-the application's life, so every command then takes about 60 s; relaunch the
-application.
-
-The target has no target application, so starting it installs only its own
-runner, and it is not in the `Kernarium` scheme. Reinstalling Kernarium,
-hosted `Kernarium` test runs, and other UI-test runners leave it running; the
-host's log records each such termination as a Kernarium crash. Keep all
-automation code in the test targets.
+Unattended device automation goes through the long-lived
+`KernariumAutomation` UI-test host, because each new XCTest session on a
+device with a passcode needs the owner's approval at the device. Its commands,
+approval rules, and failure modes are in
+`Kernarium/scripts/ipad-automation.py --help`. Keep all automation code in the
+test targets.
 
 ## LTP
 
