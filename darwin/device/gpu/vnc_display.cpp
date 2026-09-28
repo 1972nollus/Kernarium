@@ -221,7 +221,7 @@ VncDisplay::VncDisplay(
 #endif
     metalReadback_ = std::make_unique<MetalReadback>(
         [this](const MetalReadbackFrame& frame) noexcept {
-            publishMetalFrame(frame);
+            return publishMetalFrame(frame);
         });
     eventThread_ = std::thread(&VncDisplay::eventLoop, this);
     screenGuard.release();
@@ -267,6 +267,19 @@ DisplayRectangle VncDisplay::placement() const noexcept
         geometry_.activeGuestSize());
 }
 
+ReadbackTarget VncDisplay::readbackTarget() const noexcept
+{
+    return {
+        .placement = placement(),
+        .epoch = frameEpoch_.load(std::memory_order_relaxed),
+    };
+}
+
+void VncDisplay::advanceFrameEpochLocked() noexcept
+{
+    frameEpoch_.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool VncDisplay::guestScanoutChanged(
     std::uint32_t width,
     std::uint32_t height) noexcept
@@ -295,11 +308,13 @@ void VncDisplay::applyGuestMode(
         const auto previous = placement();
         (void)geometry_.guestScanoutChanged(width, height);
         next = placement();
+        /* Neither path has drawn the new mode yet, so a readback of the old
+         * one is discarded, the first of the new one reads its whole view,
+         * and a CPU fallback reads its whole scanout again. */
+        advanceFrameEpochLocked();
+        fullFrameEpoch_.store(0, std::memory_order_release);
         if (next != previous) {
-            /* The bars around the new rectangle show nothing, and neither
-             * path has drawn the new mode yet, so a CPU fallback reads its
-             * whole scanout again. */
-            fullFrameEpoch_.store(0, std::memory_order_release);
+            /* The bars around the new rectangle show nothing. */
             std::lock_guard lock(framebuffer_);
             framebuffer_.clearLocked();
             rfbMarkRectAsModified(
@@ -310,10 +325,8 @@ void VncDisplay::applyGuestMode(
                 static_cast<int>(framebuffer_.height()));
         }
     }
-    /* Neither a remembered scanout nor the damage of the old mode describes
-     * the new one. */
+    /* A remembered scanout of the old mode does not describe the new one. */
     metalReadback_->forget();
-    metalReadback_->invalidate();
     if (next.width == width && next.height == height) {
         stagingImage_.reset();
         metalReadback_->releaseStaging();
@@ -336,11 +349,12 @@ void VncDisplay::resetGuestSession() noexcept
         std::lock_guard geometryLock(geometryMutex_);
         geometry_.resetGuestSession(
             {.width = framebuffer_.width(), .height = framebuffer_.height()});
+        advanceFrameEpochLocked();
+        fullFrameEpoch_.store(0, std::memory_order_release);
     }
     stagingImage_.reset();
     metalReadback_->releaseStaging();
     metalReadback_->forget();
-    metalReadback_->invalidate();
 }
 
 void VncDisplay::clear() noexcept
@@ -350,6 +364,15 @@ void VncDisplay::clear() noexcept
         idleFramesDropped_ = false;
         metalReadback_->forget();
     }
+    /* A CPU fallback's staged image is part of the picture being cleared. */
+    stagingImage_.reset();
+    metalReadback_->releaseStaging();
+    /* The framebuffer holds no guest image now, so a readback requested
+     * before this one must not repaint it or count as a complete frame, and
+     * a CPU fallback reads its whole scanout again. */
+    std::lock_guard geometryLock(geometryMutex_);
+    advanceFrameEpochLocked();
+    fullFrameEpoch_.store(0, std::memory_order_release);
     std::lock_guard lock(framebuffer_);
     framebuffer_.clearLocked();
     // Scaled client framebuffers are derived synchronously by this call, so
@@ -373,7 +396,8 @@ void VncDisplay::update(
 {
     const auto updateEpoch = connectionEpoch();
     const auto mode = geometry_.activeGuestSize();
-    const auto target = placement();
+    const auto target = readbackTarget();
+    const auto& placed = target.placement;
     /* The CPU path now owns the image, so a remembered native scanout would
      * only overwrite it with an older one. */
     metalReadback_->forget();
@@ -381,7 +405,7 @@ void VncDisplay::update(
         return;
     width = std::min(width, mode.width - destinationX);
     height = std::min(height, mode.height - destinationY);
-    if (target.width != mode.width || target.height != mode.height) {
+    if (placed.width != mode.width || placed.height != mode.height) {
         /* Keep the whole mode here and let the GPU scale it, exactly as it
          * scales a native scanout. */
         if (!stagingImage_ || stagingImage_->width() != mode.width ||
@@ -425,24 +449,29 @@ void VncDisplay::update(
         presentStaged(*scanout, target);
         return;
     }
-    const auto rectangle = framebuffer_.update(
-        source,
-        sourceWidth,
-        sourceHeight,
-        sourceRowBytes,
-        sourceFormat,
-        sourceX,
-        sourceY,
-        target.x + destinationX,
-        target.y + destinationY,
-        width,
-        height);
-    if (rectangle.width == 0 || rectangle.height == 0)
-        return;
-    const bool complete = rectangle.x == target.x &&
-        rectangle.y == target.y && rectangle.width == target.width &&
-        rectangle.height == target.height;
+    bool complete = false;
     {
+        /* This copy is newer than any readback still in flight, which must
+         * not paint over it. */
+        std::lock_guard geometryLock(geometryMutex_);
+        advanceFrameEpochLocked();
+        const auto rectangle = framebuffer_.update(
+            source,
+            sourceWidth,
+            sourceHeight,
+            sourceRowBytes,
+            sourceFormat,
+            sourceX,
+            sourceY,
+            placed.x + destinationX,
+            placed.y + destinationY,
+            width,
+            height);
+        if (rectangle.width == 0 || rectangle.height == 0)
+            return;
+        complete = rectangle.x == placed.x && rectangle.y == placed.y &&
+            rectangle.width == placed.width &&
+            rectangle.height == placed.height;
         std::lock_guard lock(framebuffer_);
         rfbMarkRectAsModified(
             screen_,
@@ -473,7 +502,7 @@ PresentOutcome VncDisplay::presentMetal(
     /* The scanout rectangle is the guest mode. The device reports each mode
      * before it presents it; a caller that does not is followed here. */
     applyGuestMode(scanout.width, scanout.height);
-    const auto target = placement();
+    const auto target = readbackTarget();
     std::unique_lock scanoutLock(scanoutMutex_);
     const auto state = clientState_.load(std::memory_order_acquire);
     /* With no remote consumer, accepting and dropping the scanout avoids the
@@ -504,7 +533,7 @@ PresentOutcome VncDisplay::presentMetal(
 
 void VncDisplay::presentStaged(
     const MetalScanout& scanout,
-    DisplayRectangle target) noexcept
+    ReadbackTarget target) noexcept
 {
     std::unique_lock scanoutLock(scanoutMutex_);
     const auto state = clientState_.load(std::memory_order_acquire);
@@ -661,19 +690,23 @@ void VncDisplay::recordCpuFallbackFrame() noexcept
         metalReadback_->recordCpuFallbackFrame();
 }
 
-void VncDisplay::publishMetalFrame(
+bool VncDisplay::publishMetalFrame(
     const MetalReadbackFrame& frame) noexcept
 {
     try {
         std::lock_guard geometryLock(geometryMutex_);
-        if (frame.placement != placement()) {
+        const auto epoch = frameEpoch_.load(std::memory_order_relaxed);
+        if (frame.target.epoch != epoch) {
             displayActivityLog().record(
-                "vnc discard frame placement=%ux%u+%u+%u",
-                frame.placement.width,
-                frame.placement.height,
-                frame.placement.x,
-                frame.placement.y);
-            return;
+                "vnc discard frame epoch=%llu current=%llu "
+                "placement=%ux%u+%u+%u",
+                static_cast<unsigned long long>(frame.target.epoch),
+                static_cast<unsigned long long>(epoch),
+                frame.target.placement.width,
+                frame.target.placement.height,
+                frame.target.placement.x,
+                frame.target.placement.y);
+            return false;
         }
         const auto rectangle = framebuffer_.update(
             frame.pixels,
@@ -688,7 +721,7 @@ void VncDisplay::publishMetalFrame(
             frame.width,
             frame.height);
         if (rectangle.width == 0 || rectangle.height == 0)
-            return;
+            return false;
         {
             std::lock_guard lock(framebuffer_);
             rfbMarkRectAsModified(
@@ -700,11 +733,18 @@ void VncDisplay::publishMetalFrame(
         }
         if (frame.complete)
             recordFullFrame(frame.generation);
+        return true;
     } catch (...) {
+        return false;
     }
 }
 
 #if UML_GPU_VNC_STARTUP_TESTING
+bool VncDisplay::readbackIdleForTesting() const noexcept
+{
+    return metalReadback_->idleForTesting();
+}
+
 std::array<std::uint8_t, 4> VncDisplay::pixelForTesting(
     std::uint32_t x, std::uint32_t y) noexcept
 {

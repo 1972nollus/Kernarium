@@ -47,7 +47,10 @@ the CPU path can read refreshes in full on the guest's next flush. The client
 waits at most 2 s for it, so a static CPU-path scanout then arrives as last
 published.
 The VNC display converts native Metal scanouts with an asynchronous Metal
-readback.
+readback. A readback requested before the framebuffer was cleared, re-placed
+for a new mode, or written by a CPU-path copy is discarded when it completes,
+so it never repaints newer contents or counts as a complete frame, and the
+next readback reads its whole scanout.
 
 The VNC framebuffer keeps the size it was created with, which the device
 advertises as the preferred mode, and shows every applied guest mode

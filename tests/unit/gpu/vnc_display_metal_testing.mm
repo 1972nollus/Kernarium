@@ -206,4 +206,139 @@ void verifyScaledReadbackIsDamageBounded(VncDisplay& display)
     }
 }
 
+/* clear() blanks the framebuffer, which already holds a complete frame,
+ * while one readback is in flight and another waits behind it. Neither may
+ * repaint the blank or stand for the complete frame a CPU fallback relies
+ * on, and the next scanout, damaged in one corner, is read back whole. A CPU
+ * fallback copy made while a readback is in flight is not painted over
+ * either. */
+void verifyClearDiscardsEarlierReadbacks(VncDisplay& display)
+{
+    @autoreleasepool {
+        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+        require(device != nil, "Metal device unavailable");
+        const auto width = display.width();
+        const auto height = display.height();
+        constexpr std::array<std::uint8_t, 4> blank {};
+        constexpr std::array<std::uint8_t, 4> stale {
+            0x2dU, 0x5eU, 0x8fU, 0xffU};
+        constexpr std::array<std::uint8_t, 4> fresh {
+            0x91U, 0x0cU, 0x47U, 0xffU};
+        constexpr std::array<std::uint8_t, 4> copied {
+            0x0bU, 0x6aU, 0xc4U, 0xffU};
+        require(display.needsFullCpuFallback(),
+                "clear test expects a client with no complete frame");
+
+        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+            width:width
+            height:height
+            mipmapped:NO];
+        descriptor.storageMode = MTLStorageModeShared;
+        descriptor.usage = MTLTextureUsageShaderRead;
+        id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
+        require(texture != nil, "clear test texture creation failed");
+        const auto fill = [&](const std::array<std::uint8_t, 4>& pixel) {
+            std::vector<std::uint8_t> pixels(
+                static_cast<std::size_t>(width) * height * 4U);
+            for (std::size_t offset = 0; offset < pixels.size(); offset += 4U)
+                std::memcpy(&pixels[offset], pixel.data(), pixel.size());
+            [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
+                       mipmapLevel:0
+                         withBytes:pixels.data()
+                       bytesPerRow:width * 4U];
+        };
+        const auto present = [&](std::uint32_t x,
+                                 std::uint32_t y,
+                                 std::uint32_t damageWidth,
+                                 std::uint32_t damageHeight) {
+            require(presentAccepted(display.presentMetal(MetalScanout {
+                        .texture = (__bridge void*)texture,
+                        .sourceWidth = width,
+                        .sourceHeight = height,
+                        .width = width,
+                        .height = height,
+                        .damageX = x,
+                        .damageY = y,
+                        .damageWidth = damageWidth,
+                        .damageHeight = damageHeight,
+                    })),
+                    "clear test readback was rejected");
+        };
+        const auto waitUntil = [](auto predicate, const char* message) {
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::seconds(5);
+            while (!predicate() &&
+                   std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            require(predicate(), message);
+        };
+
+        fill(stale);
+        present(0, 0, width, height);
+        waitUntil([&] { return !display.needsFullCpuFallback(); },
+                  "the first readback was not a complete frame");
+        waitUntil([&] { return display.readbackIdleForTesting(); },
+                  "the first readback did not finish");
+
+        holdReadbackCompletions();
+        present(0, 0, width, height);
+        waitUntil([] { return heldReadbackCompletions() == 1; },
+                  "the first readback did not complete on the GPU");
+        present(0, 0, 8, 8);
+        display.clear();
+        releaseReadbackCompletions();
+        waitUntil([&] { return display.readbackIdleForTesting(); },
+                  "readbacks from before clear() did not finish");
+        require(display.pixelForTesting(0, 0) == blank &&
+                    display.pixelForTesting(width - 1U, height - 1U) ==
+                        blank,
+                "a readback from before clear() repainted the framebuffer");
+        require(display.needsFullCpuFallback(),
+                "after clear() the CPU fallback may send damage only");
+
+        fill(fresh);
+        present(0, 0, 1, 1);
+        waitUntil([&] { return display.readbackIdleForTesting(); },
+                  "the readback after clear() did not finish");
+        require(display.pixelForTesting(0, 0) == fresh &&
+                    display.pixelForTesting(width - 1U, height - 1U) ==
+                        fresh,
+                "the first readback after clear() did not cover its view");
+        require(!display.needsFullCpuFallback(),
+                "the first readback after clear() was not a complete frame");
+
+        fill(stale);
+        holdReadbackCompletions();
+        present(0, 0, width, height);
+        waitUntil([] { return heldReadbackCompletions() == 1; },
+                  "the readback before the CPU copy did not complete");
+        const std::size_t rowBytes =
+            static_cast<std::size_t>(width) * protocol::gpuBytesPerPixel;
+        std::vector<std::uint8_t> image(rowBytes * height);
+        for (std::size_t offset = 0; offset < image.size(); offset += 4U)
+            std::memcpy(&image[offset], copied.data(), copied.size());
+        display.update(
+            image,
+            width,
+            height,
+            rowBytes,
+            protocol::GpuFormat::b8g8r8a8Unorm,
+            0,
+            0,
+            0,
+            0,
+            width,
+            height);
+        releaseReadbackCompletions();
+        waitUntil([&] { return display.readbackIdleForTesting(); },
+                  "the readback before the CPU copy did not finish");
+        require(display.pixelForTesting(0, 0) == copied &&
+                    display.pixelForTesting(width - 1U, height - 1U) ==
+                        copied,
+                "a readback from before a CPU copy painted over it");
+    }
+}
+
 } // namespace uml::gpu::testing

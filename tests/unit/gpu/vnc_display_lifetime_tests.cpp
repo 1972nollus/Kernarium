@@ -290,6 +290,15 @@ void scaledReadbackIsDamageBounded()
     disconnectClient(client);
 }
 
+void clearDiscardsEarlierReadbacks()
+{
+    uml::gpu::VncDisplay display {"127.0.0.1", 0, {}, 64, 64};
+    int client = connectClient(display.port());
+    requireEventually([&] { return display.needsFullCpuFallback(); });
+    uml::gpu::testing::verifyClearDiscardsEarlierReadbacks(display);
+    disconnectClient(client);
+}
+
 void privateMetalTextureReadbackIsDamageBounded()
 {
     /* A Venus scanout has no guest-visible Virgl resource, so the display
@@ -312,6 +321,7 @@ int main()
     postListenThreadFailureReleasesServer();
     privateMetalTextureReadbackIsDamageBounded();
     scaledReadbackIsDamageBounded();
+    clearDiscardsEarlierReadbacks();
     std::puts("VNC display lifetime tests passed");
     return 0;
 }

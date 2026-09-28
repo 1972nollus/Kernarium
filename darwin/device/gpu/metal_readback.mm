@@ -5,6 +5,10 @@
 #include "display_activity_log.hpp"
 #include "metal_scanout_shader.hpp"
 
+#if UML_GPU_VNC_STARTUP_TESTING
+#include "vnc_display_testing.hpp"
+#endif
+
 #import <Metal/Metal.h>
 
 #include <algorithm>
@@ -38,11 +42,17 @@ struct ReadbackRequest {
     std::uint32_t viewHeight {};
     /* Where the view goes in the display's framebuffer. */
     DisplayRectangle placement;
+    std::uint64_t epoch {};
     /* How the scanout pass samples the view; set only for a request that is
      * drawn rather than copied. */
     std::optional<ScanoutSampling> sampling;
     std::uint32_t generation {};
     ReadbackSource source {};
+
+    [[nodiscard]] ReadbackTarget target() const noexcept
+    {
+        return {.placement = placement, .epoch = epoch};
+    }
 };
 
 /* The part of a request that completion publishes: which pixels were read,
@@ -53,7 +63,7 @@ struct ReadbackCopy {
     std::uint32_t height {};
     std::uint32_t destinationX {};
     std::uint32_t destinationY {};
-    DisplayRectangle placement;
+    ReadbackTarget target;
     std::uint32_t generation {};
     ReadbackSource source {};
     bool complete {};
@@ -80,14 +90,14 @@ void coverView(ReadbackRequest& request) noexcept
 /* A newer request replaces one still waiting for the in-flight readback. Its
  * texture holds the whole newest image, so reading the union of both damages
  * from it shows everything the replaced request would have. A different view
- * or placement has no common damage, so the newer request reads its whole
+ * or target has no common damage, so the newer request reads its whole
  * view. */
 void absorb(ReadbackRequest& next, const ReadbackRequest& replaced) noexcept
 {
     if (next.viewX != replaced.viewX || next.viewY != replaced.viewY ||
         next.viewWidth != replaced.viewWidth ||
         next.viewHeight != replaced.viewHeight ||
-        next.placement != replaced.placement) {
+        next.target() != replaced.target()) {
         coverView(next);
         return;
     }
@@ -207,8 +217,9 @@ struct MetalReadbackState final :
 
     [[nodiscard]] std::optional<ReadbackRequest> request(
         const MetalScanout& scanout,
-        DisplayRectangle placement) noexcept
+        ReadbackTarget target) noexcept
     {
+        const auto placement = target.placement;
         auto& activity = displayActivityLog();
         if (scanout.texture == nullptr || scanout.sourceWidth == 0 ||
             scanout.sourceHeight == 0 || scanout.width == 0 ||
@@ -346,6 +357,7 @@ struct MetalReadbackState final :
             .viewWidth = scanout.width,
             .viewHeight = scanout.height,
             .placement = placement,
+            .epoch = target.epoch,
             .sampling = sampling,
         };
     }
@@ -411,7 +423,7 @@ struct MetalReadbackState final :
                         request.placement.x + request.destinationX,
                     .destinationY =
                         request.placement.y + request.destinationY,
-                    .placement = request.placement,
+                    .target = request.target(),
                     .generation = request.generation,
                     .source = request.source,
                     .complete = coversView(request),
@@ -544,8 +556,12 @@ struct MetalReadbackState final :
         std::size_t size) noexcept
     {
         @autoreleasepool {
+#if UML_GPU_VNC_STARTUP_TESTING
+            testing::readbackCompletionCheckpoint();
+#endif
             bool mayPublish = false;
             bool published = false;
+            const bool guest = copy.source == ReadbackSource::guest;
             {
                 std::lock_guard lock(mutex);
                 mayPublish = running &&
@@ -554,7 +570,7 @@ struct MetalReadbackState final :
             }
             if (mayPublish) {
                 try {
-                    publish(MetalReadbackFrame {
+                    published = publish(MetalReadbackFrame {
                         .pixels = std::span<const std::uint8_t>(
                             static_cast<const std::uint8_t*>(
                                 completedBuffer.contents),
@@ -565,14 +581,13 @@ struct MetalReadbackState final :
                         .height = copy.height,
                         .destinationX = copy.destinationX,
                         .destinationY = copy.destinationY,
-                        .placement = copy.placement,
+                        .target = copy.target,
                         .generation = copy.generation,
                         .complete = copy.complete,
                     });
-                    published = true;
-                    if (copy.source == ReadbackSource::guest) {
-                        presentedFrames.fetch_add(
-                            1, std::memory_order_relaxed);
+                    if (guest) {
+                        (published ? presentedFrames : droppedFrames)
+                            .fetch_add(1, std::memory_order_relaxed);
                     }
                 } catch (...) {
                     reportFailure();
@@ -609,29 +624,27 @@ struct MetalReadbackState final :
         }
     }
 
-    /* A request for a placement other than the previous request's, or the
-     * first after invalidate(), reads its whole view: the framebuffer holds
-     * nothing of this placement's image outside the damage. */
+    /* A request for a target other than the previous request's reads its
+     * whole view: the framebuffer holds nothing of this target's image
+     * outside the damage. */
     void placeLocked(ReadbackRequest& request) noexcept
     {
-        if (coverNext ||
-            (lastPlacement && *lastPlacement != request.placement)) {
+        if (coverNext || (lastTarget && *lastTarget != request.target()))
             coverView(request);
-        }
-        lastPlacement = request.placement;
+        lastTarget = request.target();
         coverNext = false;
     }
 
     PresentOutcome present(
         const MetalScanout& scanout,
-        DisplayRectangle placement,
+        ReadbackTarget target,
         std::uint32_t generation,
         ReadbackSource source) noexcept
     {
         const bool guest = source == ReadbackSource::guest;
         if (guest)
             guestFrames.fetch_add(1, std::memory_order_relaxed);
-        auto next = request(scanout, placement);
+        auto next = request(scanout, target);
         if (!next)
             return PresentOutcome::unsupported;
         next->generation = generation;
@@ -672,9 +685,9 @@ struct MetalReadbackState final :
 
     bool remember(
         const MetalScanout& scanout,
-        DisplayRectangle placement) noexcept
+        ReadbackTarget target) noexcept
     {
-        auto next = request(wholeView(scanout), placement);
+        auto next = request(wholeView(scanout), target);
         std::lock_guard lock(mutex);
         latest.reset();
         if (running)
@@ -708,12 +721,6 @@ struct MetalReadbackState final :
     {
         std::lock_guard lock(mutex);
         latest.reset();
-    }
-
-    void invalidate() noexcept
-    {
-        std::lock_guard lock(mutex);
-        coverNext = true;
     }
 
     std::optional<MetalScanout> stage(
@@ -880,7 +887,7 @@ struct MetalReadbackState final :
     std::optional<ReadbackRequest> pending;
     /* The whole view of the newest scanout nobody read back. */
     std::optional<ReadbackRequest> latest;
-    std::optional<DisplayRectangle> lastPlacement;
+    std::optional<ReadbackTarget> lastTarget;
     bool coverNext {};
     bool running {true};
     bool inFlight {};
@@ -906,18 +913,18 @@ MetalReadback::~MetalReadback()
 
 PresentOutcome MetalReadback::present(
     const MetalScanout& scanout,
-    DisplayRectangle placement,
+    ReadbackTarget target,
     std::uint32_t generation,
     ReadbackSource source) noexcept
 {
-    return state_->present(scanout, placement, generation, source);
+    return state_->present(scanout, target, generation, source);
 }
 
 bool MetalReadback::remember(
     const MetalScanout& scanout,
-    DisplayRectangle placement) noexcept
+    ReadbackTarget target) noexcept
 {
-    return state_->remember(scanout, placement);
+    return state_->remember(scanout, target);
 }
 
 bool MetalReadback::refresh(std::uint32_t generation) noexcept
@@ -928,11 +935,6 @@ bool MetalReadback::refresh(std::uint32_t generation) noexcept
 void MetalReadback::forget() noexcept
 {
     state_->forget();
-}
-
-void MetalReadback::invalidate() noexcept
-{
-    state_->invalidate();
 }
 
 std::optional<MetalScanout> MetalReadback::stage(
@@ -964,5 +966,13 @@ void MetalReadback::shutdown() noexcept
     if (state_)
         state_->shutdown();
 }
+
+#if UML_GPU_VNC_STARTUP_TESTING
+bool MetalReadback::idleForTesting() const noexcept
+{
+    std::lock_guard lock(state_->mutex);
+    return !state_->inFlight && !state_->pending;
+}
+#endif
 
 } // namespace uml::gpu

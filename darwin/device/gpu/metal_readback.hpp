@@ -12,7 +12,24 @@
 #include <optional>
 #include <span>
 
+#ifndef UML_GPU_VNC_STARTUP_TESTING
+#define UML_GPU_VNC_STARTUP_TESTING 0
+#endif
+
 namespace uml::gpu {
+
+/* Where a request's pixels go: the framebuffer rectangle its view is placed
+ * in, and the display's tag for the framebuffer contents those pixels extend.
+ * A display changes the epoch whenever the framebuffer stops holding what
+ * earlier requests left there - it was blanked, re-placed, or written by
+ * another path - and discards a frame that carries an older one. */
+struct ReadbackTarget {
+    DisplayRectangle placement;
+    std::uint64_t epoch {};
+
+    friend bool operator==(const ReadbackTarget&, const ReadbackTarget&) =
+        default;
+};
 
 struct MetalReadbackFrame {
     std::span<const std::uint8_t> pixels;
@@ -23,9 +40,8 @@ struct MetalReadbackFrame {
     /* Where the pixels belong in the display's framebuffer. */
     std::uint32_t destinationX {};
     std::uint32_t destinationY {};
-    /* The framebuffer rectangle the request placed the scanout's view in. A
-     * display that has since moved its guest elsewhere discards the frame. */
-    DisplayRectangle placement;
+    /* The target of the request this frame answers. */
+    ReadbackTarget target;
     /* The caller's tag for the request this frame answers, and whether the
      * frame covers the scanout's whole view rather than only its damage. */
     std::uint32_t generation {};
@@ -55,8 +71,9 @@ struct MetalReadbackState;
  * scaled pixels. */
 class MetalReadback final {
 public:
+    /* Returns whether the frame reached the display's framebuffer. */
     using PublishCallback =
-        std::function<void(const MetalReadbackFrame&)>;
+        std::function<bool(const MetalReadbackFrame&)>;
 
     explicit MetalReadback(PublishCallback publish);
     ~MetalReadback();
@@ -64,14 +81,15 @@ public:
     MetalReadback(const MetalReadback&) = delete;
     MetalReadback& operator=(const MetalReadback&) = delete;
 
-    /* Read back the scanout's damage into placement. The generation travels
-     * to the published frame. A request that replaces one still waiting for
-     * the in-flight readback also covers the damage of the one it replaces,
-     * and one whose placement differs from the previous request's covers its
-     * whole view. */
+    /* Read back the scanout's damage into the target's placement. The
+     * generation travels to the published frame. A request that replaces one
+     * still waiting for the in-flight readback also covers the damage of the
+     * one it replaces. One whose target differs from the previous request's,
+     * or that follows a frame the display did not take, covers its whole
+     * view. */
     [[nodiscard]] PresentOutcome present(
         const MetalScanout& scanout,
-        DisplayRectangle placement,
+        ReadbackTarget target,
         std::uint32_t generation,
         ReadbackSource source = ReadbackSource::guest) noexcept;
     /* Keep the scanout's whole view, without reading it, for a later
@@ -79,14 +97,11 @@ public:
      * readback cannot convert. */
     bool remember(
         const MetalScanout& scanout,
-        DisplayRectangle placement) noexcept;
+        ReadbackTarget target) noexcept;
     /* Read back the whole view of the remembered scanout, if any, and
      * release it. The request is not a guest frame. */
     [[nodiscard]] bool refresh(std::uint32_t generation) noexcept;
     void forget() noexcept;
-    /* The next request reads its whole view, because the framebuffer no
-     * longer holds what earlier requests left in it. */
-    void invalidate() noexcept;
     /* Copy the damaged rectangle of the display's CPU image of the whole
      * guest mode, BGRA with rowBytes per row, into a host texture of that
      * mode, and return the texture as a scanout of the mode damaged by that
@@ -102,6 +117,10 @@ public:
     [[nodiscard]] DisplayStatistics statistics() const noexcept;
     void recordCpuFallbackFrame() noexcept;
     void shutdown() noexcept;
+#if UML_GPU_VNC_STARTUP_TESTING
+    /* No readback is in flight or queued behind one. */
+    [[nodiscard]] bool idleForTesting() const noexcept;
+#endif
 
 private:
     std::shared_ptr<MetalReadbackState> state_;

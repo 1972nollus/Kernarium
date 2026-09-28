@@ -85,6 +85,7 @@ public:
 #if UML_GPU_VNC_STARTUP_TESTING
     [[nodiscard]] std::array<std::uint8_t, 4> pixelForTesting(
         std::uint32_t x, std::uint32_t y) noexcept;
+    [[nodiscard]] bool readbackIdleForTesting() const noexcept;
 #endif
 
 private:
@@ -96,12 +97,18 @@ private:
 
     /* The framebuffer rectangle that shows the active guest mode. */
     [[nodiscard]] DisplayRectangle placement() const noexcept;
+    /* Where a readback requested now belongs. */
+    [[nodiscard]] ReadbackTarget readbackTarget() const noexcept;
+    /* The framebuffer no longer extends what any earlier readback read, so
+     * nothing read before now may reach it. Needs geometryMutex_. */
+    void advanceFrameEpochLocked() noexcept;
     void applyGuestMode(std::uint32_t width, std::uint32_t height) noexcept;
     void releasePointerLocked() noexcept;
     void presentStaged(
         const MetalScanout& scanout,
-        DisplayRectangle placement) noexcept;
-    void publishMetalFrame(const MetalReadbackFrame& frame) noexcept;
+        ReadbackTarget target) noexcept;
+    [[nodiscard]] bool publishMetalFrame(
+        const MetalReadbackFrame& frame) noexcept;
     void eventLoop();
     [[nodiscard]] std::optional<std::uint32_t> clientConnected() noexcept;
     void clientDisconnected(rfbClientPtr client) noexcept;
@@ -119,9 +126,12 @@ private:
     /* The framebuffer's size is the host's preferred geometry; the active
      * guest mode is tracked separately. */
     DisplayGeometryPolicy geometry_;
-    /* Orders a mode change's blanking of the framebuffer against a readback
-     * frame for the mode it replaces, which is then discarded. */
+    /* Orders every framebuffer change outside the readback - a mode change,
+     * clear(), a CPU fallback copy - against a readback frame requested
+     * before it, which is then discarded. */
     std::mutex geometryMutex_;
+    /* Changed only by the GPU thread, under geometryMutex_. */
+    std::atomic<std::uint64_t> frameEpoch_ {};
     /* The CPU fallback's image of a guest mode that must be scaled. Owned by
      * the GPU thread. */
     std::unique_ptr<ScanoutFramebuffer> stagingImage_;
