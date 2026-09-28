@@ -77,8 +77,10 @@ void correct_terminal_instruction_count(
 	if (!terminal_does_not_retire(event))
 		return;
 
+	/* program_position answers only inside the program, so the position
+	 * is always below its instruction count. */
 	const auto position = program_position(program, fault_pc);
-	if (!position || *position >= program.instruction_count())
+	if (!position)
 		return;
 	const auto unretired = program.instruction_count() - *position;
 	if (executed < unretired)
@@ -113,7 +115,7 @@ void correct_fpcr_enable_instruction_count(
 			return;
 		retired = program.instruction_count();
 	}
-	if (retired == 0 || retired > program.instruction_count())
+	if (retired == 0)
 		return;
 	const auto unretired = program.instruction_count() - retired;
 	if (executed < unretired)
