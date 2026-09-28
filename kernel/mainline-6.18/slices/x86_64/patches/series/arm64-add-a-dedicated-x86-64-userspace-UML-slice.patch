@@ -54,10 +54,10 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  create mode 100644 arch/arm64/um/x86_syscall_tables.c
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 06086feb226da3a2012f1ca2cfb0dec9bb63f69d..8b11524ed704297ef448fc36bdf785f9763e451c 100644
+index 6068242b331a532ca5735f49556d1d497a49798b..5ecda903ad20895c211be00c4ba8ea0d4ea1da61 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -23,6 +23,15 @@ config UML_ARM64
+@@ -22,6 +22,15 @@ config UML_ARM64
  	select ARCH_USE_QUEUED_RWLOCKS
  	select UML_SUBARCH_SUPPORTS_SMP
  
@@ -2312,7 +2312,7 @@ index 0000000000000000000000000000000000000000..eee25b1ba9e6fc18f88a0f1312f76d25
 +#undef __SYSCALL
 +#undef __SYSCALL_NORETURN
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
-index 8d02b821d4bfaeef86e1a6f7896190fbaca8e692..ee771f98afcd9085be7d7b9a45fbb980f0afcd3d 100644
+index 0aeef9020f26bed52be2434cbafb2ad4fcd15614..74a64f7374f89295c4a2068455dd23769f069b19 100644
 --- a/arch/um/include/asm/pgtable.h
 +++ b/arch/um/include/asm/pgtable.h
 @@ -8,6 +8,11 @@
@@ -2438,10 +2438,10 @@ index ba7494f9bfe41254a0c5987fe50c1d073668130d..bcb5f2d9ca82d9bb8ff67340478400ba
  		PT_REGS_SET_SYSCALL_RETURN(regs, ret);
  
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 9971a92efe35ce98441ba41601605769861c7cc9..31545ef9eaa69122a291677c85d7d60b1604c8e0 100644
+index 3267358aad21eb46cb76cc8375280bac948f0bc9..bde1affde2a40d95c648c8221d1d58181d687a4f 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
-@@ -495,6 +495,9 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
+@@ -484,6 +484,9 @@ void relay_signal(int sig, struct siginfo *si, struct uml_pt_regs *regs,
  		struct faultinfo *fi = UPT_FAULTINFO(regs);
  		current->thread.arch.faultinfo = *fi;
  		force_sig_fault(sig, code, (void __user *)FAULT_ADDRESS(*fi));

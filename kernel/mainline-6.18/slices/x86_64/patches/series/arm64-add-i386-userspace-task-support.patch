@@ -73,10 +73,10 @@ index ee9fd0150f487c491d1ffa0637a004832481de8b..89a196845065fdd863ca5d0e4f5a7baa
  config GENERIC_ENTRY
  	bool
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 8b11524ed704297ef448fc36bdf785f9763e451c..abb03ef11cb08c1943ac20163cb83b87fcc26ff0 100644
+index 5ecda903ad20895c211be00c4ba8ea0d4ea1da61..38749c4c865f6fd7e9fa53facdc6d6909f74174a 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -26,11 +26,22 @@ config UML_ARM64
+@@ -25,11 +25,22 @@ config UML_ARM64
  config UML_X86_64_USERSPACE_ONLY
  	bool "Run x86-64 userspace exclusively"
  	depends on PAGE_SIZE_4KB
@@ -2411,12 +2411,12 @@ index 14ec16f92ce4086eafa5ca774f52c79df2b0b88c..8706382ab84a31ee6882fa75e26285bc
  
  #define pte_ERROR(e) \
 diff --git a/arch/um/include/asm/pgtable-3level.h b/arch/um/include/asm/pgtable-3level.h
-index 6b6712f2c9117a4a2e2e590e774c2c9071f0359b..6f82262f9c55f86b506b111703111d8143af35cc 100644
+index 277e84d1866403690341e16db6d5f04fa152b74d..bfa922f20ed6fe9f920f85f709e5aed7f929f04f 100644
 --- a/arch/um/include/asm/pgtable-3level.h
 +++ b/arch/um/include/asm/pgtable-3level.h
-@@ -24,7 +24,11 @@
- 
- #define HUGE_MAX_HSTATE	1
+@@ -22,7 +22,11 @@
+ #define PTRS_PER_PMD	(1U << UML_PGTABLE_SHIFT)
+ #define PTRS_PER_PGD	(1U << UML_PGTABLE_SHIFT)
  
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +#define USER_PTRS_PER_PGD ((task_size + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
@@ -2427,12 +2427,12 @@ index 6b6712f2c9117a4a2e2e590e774c2c9071f0359b..6f82262f9c55f86b506b111703111d81
  #define pte_ERROR(e) \
  	printk("%s:%d: bad pte %p(%016lx).\n", __FILE__, __LINE__, &(e), \
 diff --git a/arch/um/include/asm/pgtable-4level.h b/arch/um/include/asm/pgtable-4level.h
-index ac825e88e4e77deec98431359ccdb259802b655e..f5d6e828e54bb0aea294de7989565bb3af19b206 100644
+index 17649aefd6922012de5f30349361bf2dc50466e7..d5b69726ced58e7a9290cfe58dc3d66a9d7fbb08 100644
 --- a/arch/um/include/asm/pgtable-4level.h
 +++ b/arch/um/include/asm/pgtable-4level.h
-@@ -44,7 +44,11 @@
- 
- #define HUGE_MAX_HSTATE 2
+@@ -42,7 +42,11 @@
+ #define PTRS_PER_PUD (1U << UML_PGTABLE_SHIFT)
+ #define PTRS_PER_PGD (1U << UML_PGTABLE_SHIFT)
  
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +#define USER_PTRS_PER_PGD ((task_size + (PGDIR_SIZE - 1)) / PGDIR_SIZE)

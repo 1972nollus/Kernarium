@@ -38,10 +38,10 @@ index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 1b4ec301bed1df9d3c32babd98ff8c286c32ad95..fd0c48b58e4d077cb425d7b0ce7ba418a1d33243 100644
+index 67168293b87ba628eb6f6a64503e9ce03a9aad6e..fb13592247f1ec3df3145da42c5f4fbd24f04a99 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -176,6 +176,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+@@ -138,6 +138,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)
  #endif
  }
  
@@ -73,7 +73,7 @@ index 1b4ec301bed1df9d3c32babd98ff8c286c32ad95..fd0c48b58e4d077cb425d7b0ce7ba418
  static int do_op_one_page(unsigned long addr, int len, int is_write,
  		 int (*op)(unsigned long addr, int len, void *arg), void *arg)
  {
-@@ -184,10 +209,17 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -146,10 +171,17 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	unsigned long user_addr = addr;
  #endif
  	int n = -1;
@@ -92,7 +92,7 @@ index 1b4ec301bed1df9d3c32babd98ff8c286c32ad95..fd0c48b58e4d077cb425d7b0ce7ba418
  
  #ifdef CONFIG_64BIT
  #if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
-@@ -228,6 +260,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -190,6 +222,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  		set_page_dirty_lock(page);
  out_put:
  	put_page(page);
@@ -136,10 +136,10 @@ index b46649f2ea64a6d4b289cb0d9ab8c164da804ba1..8b8a647f44ee690582f1f6b4aabb6d3e
  {
  	int cpu = evt - &timer_clockevent[0];
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 0cc16dd44498a659c731b35f2bdf0723de977a35..a8d07807e5f1c4dc1b6ed758da5911aa445eb506 100644
+index d3b3508d221412cb32c2ae9f6a282729e421c1ee..232d63abc0cc8b6641377db31be49583103bad10 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
-@@ -771,7 +771,17 @@ void flush_tlb_mm(struct mm_struct *mm)
+@@ -686,7 +686,17 @@ void flush_tlb_mm(struct mm_struct *mm)
  	for_each_vma(vmi, vma) {
  		um_tlb_mark_sync(mm, vma->vm_start, vma->vm_end);
  #ifdef UML_HOST_DARWIN

@@ -1,23 +1,21 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Thu, 27 Aug 2026 08:24:20 +0900
-Subject: [PATCH] uml: add MMU synchronization and large-page support
+Subject: [PATCH] uml: add MMU synchronization and user-access support
 
-Keep page-table synchronization, precise nested invalidation ranges, large-page handling, same-process address-space lifetime, and user-access behavior in one final-state MMU topic.
+Keep page-table synchronization, precise nested invalidation ranges, same-process address-space lifetime, and user-access behavior in one final-state MMU topic.
 ---
  arch/um/include/asm/tlb.h        |   9 +
- arch/um/kernel/hugetlb.c         | 250 ++++++++++++++
  arch/um/kernel/mem.c             |  13 +
  arch/um/kernel/skas/Makefile     |   5 +
- arch/um/kernel/skas/mmu.c        |  33 +-
- arch/um/kernel/skas/mmu_darwin.c | 102 ++++++
- arch/um/kernel/skas/process.c    |  88 ++++-
- arch/um/kernel/skas/uaccess.c    | 288 ++++++++++++----
- arch/um/kernel/tlb.c             | 574 +++++++++++++++++++++++++++++--
- arch/um/kernel/trap.c            |  69 +++-
+ arch/um/kernel/skas/mmu.c        |  33 ++-
+ arch/um/kernel/skas/mmu_darwin.c | 102 +++++++
+ arch/um/kernel/skas/process.c    |  88 +++++-
+ arch/um/kernel/skas/uaccess.c    | 254 ++++++++++++----
+ arch/um/kernel/tlb.c             | 489 +++++++++++++++++++++++++++++--
+ arch/um/kernel/trap.c            |  58 +++-
  mm/mmu_gather.c                  |   7 +-
- 11 files changed, 1326 insertions(+), 112 deletions(-)
- create mode 100644 arch/um/kernel/hugetlb.c
+ 10 files changed, 944 insertions(+), 114 deletions(-)
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
 diff --git a/arch/um/include/asm/tlb.h b/arch/um/include/asm/tlb.h
@@ -38,262 +36,6 @@ index 0422467bda5ba309aa58820feb50a9198860ac1b..ed4e779424897a3d2d195eb5b48feb79
 +#endif
 +
  #endif
-diff --git a/arch/um/kernel/hugetlb.c b/arch/um/kernel/hugetlb.c
-new file mode 100644
-index 0000000000000000000000000000000000000000..78b40df35aacf0c1c0f4586a8b0c4df7a7041e1e
---- /dev/null
-+++ b/arch/um/kernel/hugetlb.c
-@@ -0,0 +1,250 @@
-+// SPDX-License-Identifier: GPL-2.0
-+/*
-+ * HugeTLB support for User-Mode Linux.
-+ *
-+ * A UML address space is ultimately installed into host VM mappings one base
-+ * page at a time. Represent a 2 MiB HugeTLB mapping as a contiguous run of
-+ * 512 ordinary PTEs. A 1 GiB HugeTLB mapping uses a PUD leaf which the UML
-+ * TLB synchronizer expands into host mappings. The HugeTLB core still sees
-+ * one representative PTE through the helpers below.
-+ */
-+
-+#include <linux/hugetlb.h>
-+#include <linux/mm.h>
-+
-+#include <asm/tlbflush.h>
-+
-+static unsigned int um_huge_nr_ptes(unsigned long sz)
-+{
-+	VM_WARN_ON_ONCE(sz != HPAGE_SIZE);
-+	return sz >> PAGE_SHIFT;
-+}
-+
-+static void um_set_huge_present(struct mm_struct *mm, unsigned long addr,
-+				pte_t *ptep, pte_t pte, unsigned long sz)
-+{
-+	unsigned int nr = um_huge_nr_ptes(sz);
-+
-+	while (nr--) {
-+		set_pte_at(mm, addr, ptep, pte);
-+		pte = pte_next_pfn(pte);
-+		ptep++;
-+		addr += PAGE_SIZE;
-+	}
-+}
-+
-+static bool um_huge_pte_is_pud(struct mm_struct *mm, unsigned long addr,
-+			       pte_t *ptep)
-+{
-+	pgd_t *pgd = pgd_offset(mm, addr);
-+	p4d_t *p4d;
-+
-+	if (!pgd_present(*pgd))
-+		return false;
-+	p4d = p4d_offset(pgd, addr);
-+	if (!p4d_present(*p4d))
-+		return false;
-+	return ptep == (pte_t *)pud_offset(p4d, addr);
-+}
-+
-+static void um_set_huge_pud(struct mm_struct *mm, unsigned long addr,
-+			    pte_t *ptep, pte_t pte)
-+{
-+	set_pud((pud_t *)ptep, __pud(pte_val(pte)));
-+	um_tlb_mark_sync(mm, addr, addr + PUD_SIZE);
-+}
-+
-+pte_t *huge_pte_alloc(struct mm_struct *mm, struct vm_area_struct *vma,
-+		      unsigned long addr, unsigned long sz)
-+{
-+	pgd_t *pgd;
-+	p4d_t *p4d;
-+	pud_t *pud;
-+	pmd_t *pmd;
-+
-+	VM_WARN_ON_ONCE((sz != HPAGE_SIZE && sz != PUD_SIZE) ||
-+			!IS_ALIGNED(addr, sz));
-+
-+	pgd = pgd_offset(mm, addr);
-+	p4d = p4d_alloc(mm, pgd, addr);
-+	if (!p4d)
-+		return NULL;
-+	pud = pud_alloc(mm, p4d, addr);
-+	if (!pud)
-+		return NULL;
-+	if (sz == PUD_SIZE)
-+		return (pte_t *)pud;
-+	pmd = pmd_alloc(mm, pud, addr);
-+	if (!pmd)
-+		return NULL;
-+
-+	return pte_alloc_huge(mm, pmd, addr & HPAGE_MASK);
-+}
-+
-+pte_t *huge_pte_offset(struct mm_struct *mm, unsigned long addr,
-+		       unsigned long sz)
-+{
-+	pgd_t *pgd;
-+	p4d_t *p4d;
-+	pud_t *pud;
-+	pmd_t *pmd;
-+
-+	VM_WARN_ON_ONCE(sz != HPAGE_SIZE && sz != PUD_SIZE);
-+	addr &= ~(sz - 1);
-+
-+	pgd = pgd_offset(mm, addr);
-+	if (!pgd_present(*pgd))
-+		return NULL;
-+	p4d = p4d_offset(pgd, addr);
-+	if (!p4d_present(*p4d))
-+		return NULL;
-+	pud = pud_offset(p4d, addr);
-+	if (sz == PUD_SIZE)
-+		return (pte_t *)pud;
-+	if (!pud_present(*pud))
-+		return NULL;
-+	pmd = pmd_offset(pud, addr);
-+	if (!pmd_present(*pmd))
-+		return NULL;
-+
-+	return pte_offset_huge(pmd, addr);
-+}
-+
-+unsigned long hugetlb_mask_last_page(struct hstate *h)
-+{
-+	return huge_page_size(h) == PUD_SIZE ? P4D_SIZE - PUD_SIZE : 0;
-+}
-+
-+pte_t arch_make_huge_pte(pte_t entry, unsigned int shift, vm_flags_t flags)
-+{
-+	VM_WARN_ON_ONCE(shift != HPAGE_SHIFT && shift != PUD_SHIFT);
-+	pte_set_bits(entry, _PAGE_HUGE);
-+	return entry;
-+}
-+
-+pte_t huge_ptep_get(struct mm_struct *mm, unsigned long addr, pte_t *ptep)
-+{
-+	pte_t pte;
-+	unsigned int nr = HPAGE_SIZE >> PAGE_SHIFT;
-+
-+	if (um_huge_pte_is_pud(mm, addr, ptep))
-+		return __pte(pud_val(READ_ONCE(*(pud_t *)ptep)));
-+	pte = ptep_get(ptep);
-+
-+	if (!pte_present(pte) || !pte_huge(pte))
-+		return pte;
-+
-+	while (--nr) {
-+		pte_t subpte = ptep_get(++ptep);
-+
-+		if (pte_dirty(subpte))
-+			pte = pte_mkdirty(pte);
-+		if (pte_young(subpte))
-+			pte = pte_mkyoung(pte);
-+	}
-+
-+	return pte;
-+}
-+
-+void set_huge_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep,
-+		     pte_t pte, unsigned long sz)
-+{
-+	unsigned int nr;
-+	unsigned int i;
-+
-+	if (sz == PUD_SIZE) {
-+		um_set_huge_pud(mm, addr, ptep, pte);
-+		return;
-+	}
-+	nr = um_huge_nr_ptes(sz);
-+
-+	if (pte_present(pte)) {
-+		um_set_huge_present(mm, addr, ptep, pte, sz);
-+		return;
-+	}
-+
-+	/* Non-present HugeTLB state is represented by the first PTE only. */
-+	set_pte_at(mm, addr, ptep, pte);
-+	for (i = 1; i < nr; i++)
-+		pte_clear(mm, addr + i * PAGE_SIZE, ptep + i);
-+	um_tlb_mark_sync(mm, addr, addr + sz);
-+}
-+
-+void huge_pte_clear(struct mm_struct *mm, unsigned long addr, pte_t *ptep,
-+		    unsigned long sz)
-+{
-+	unsigned int nr;
-+	unsigned int i;
-+
-+	if (sz == PUD_SIZE) {
-+		pud_clear((pud_t *)ptep);
-+		um_tlb_mark_sync(mm, addr, addr + sz);
-+		return;
-+	}
-+	nr = um_huge_nr_ptes(sz);
-+
-+	for (i = 0; i < nr; i++)
-+		pte_clear(mm, addr + i * PAGE_SIZE, ptep + i);
-+	um_tlb_mark_sync(mm, addr, addr + sz);
-+}
-+
-+pte_t huge_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
-+			      pte_t *ptep, unsigned long sz)
-+{
-+	pte_t pte = huge_ptep_get(mm, addr, ptep);
-+
-+	huge_pte_clear(mm, addr, ptep, sz);
-+	return pte;
-+}
-+
-+pte_t huge_ptep_clear_flush(struct vm_area_struct *vma, unsigned long addr,
-+			    pte_t *ptep)
-+{
-+	unsigned long sz = huge_page_size(hstate_vma(vma));
-+	pte_t pte = huge_ptep_get_and_clear(vma->vm_mm, addr, ptep, sz);
-+
-+	flush_tlb_range(vma, addr, addr + sz);
-+	return pte;
-+}
-+
-+void huge_ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr,
-+			     pte_t *ptep)
-+{
-+	unsigned int nr = HPAGE_SIZE >> PAGE_SHIFT;
-+
-+	if (um_huge_pte_is_pud(mm, addr, ptep)) {
-+		pte_t pte = huge_ptep_get(mm, addr, ptep);
-+
-+		um_set_huge_pud(mm, addr, ptep, pte_wrprotect(pte));
-+		return;
-+	}
-+
-+	while (nr--) {
-+		ptep_set_wrprotect(mm, addr, ptep);
-+		ptep++;
-+		addr += PAGE_SIZE;
-+	}
-+}
-+
-+int huge_ptep_set_access_flags(struct vm_area_struct *vma,
-+			       unsigned long addr, pte_t *ptep,
-+			       pte_t pte, int dirty)
-+{
-+	unsigned long sz = huge_page_size(hstate_vma(vma));
-+	pte_t old = huge_ptep_get(vma->vm_mm, addr, ptep);
-+
-+	if (pte_same(old, pte))
-+		return 0;
-+
-+	if (sz == PUD_SIZE)
-+		um_set_huge_pud(vma->vm_mm, addr, ptep, pte);
-+	else
-+		um_set_huge_present(vma->vm_mm, addr, ptep, pte, sz);
-+	flush_tlb_range(vma, addr, addr + sz);
-+	return 1;
-+}
-+
-+bool __init arch_hugetlb_valid_size(unsigned long size)
-+{
-+	return size == HPAGE_SIZE || size == PUD_SIZE;
-+}
 diff --git a/arch/um/kernel/mem.c b/arch/um/kernel/mem.c
 index 32e3b1972dc12f57620cf6b2d97d5057619845df..94ab67fa3b6aca2c966b5ab8df6ad8ec54cd84f2 100644
 --- a/arch/um/kernel/mem.c
@@ -655,10 +397,10 @@ index 5881b17eb9874256cef33ca69643aa0f737e4cab..3273efe8362a19ed8434f51c21e672d2
 +	return 0;
  }
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c286c32ad95 100644
+index 198269e384c43b174208d683ec4f18242d726fac..67168293b87ba628eb6f6a64503e9ce03a9aad6e 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -8,72 +8,197 @@
+@@ -8,72 +8,159 @@
  #include <linux/mm.h>
  #include <linux/module.h>
  #include <linux/sched.h>
@@ -711,45 +453,14 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
  	pud = pud_offset(p4d, addr);
  	if (!pud_present(*pud))
 -		return NULL;
+-
 +		goto out;
-+	if (pud_leaf(*pud)) {
-+		pud_t value;
-+		unsigned long phys;
-+
-+		ptl = pud_lock(mm, pud);
-+		value = READ_ONCE(*pud);
-+		if (!pud_leaf(value) || !(pud_val(value) & _PAGE_USER) ||
-+		    (pud_val(value) & _PAGE_PROTNONE) ||
-+		    (is_write && !(pud_val(value) & _PAGE_RW)))
-+			goto unlock_huge;
-+		phys = (pud_val(value) & PUD_MASK) |
-+		       (addr & ~PUD_MASK & PAGE_MASK);
-+		page = phys_to_page(phys);
-+		get_page(page);
-+		goto unlock_huge;
-+	}
- 
  	pmd = pmd_offset(pud, addr);
  	if (!pmd_present(*pmd))
 -		return NULL;
+-
+-	return pte_offset_kernel(pmd, addr);
 +		goto out;
-+	if (pmd_leaf(*pmd)) {
-+		pmd_t value;
-+		unsigned long phys;
-+
-+		ptl = pmd_lock(mm, pmd);
-+		value = READ_ONCE(*pmd);
-+		if (!pmd_leaf(value) || !(pmd_val(value) & _PAGE_USER) ||
-+		    (pmd_val(value) & _PAGE_PROTNONE) ||
-+		    (is_write && !(pmd_val(value) & _PAGE_RW)))
-+			goto unlock_huge;
-+		phys = (pmd_val(value) & PMD_MASK) |
-+		       (addr & ~PMD_MASK & PAGE_MASK);
-+		page = phys_to_page(phys);
-+		get_page(page);
-+		goto unlock_huge;
-+	}
-+
 +	ptep = pte_offset_map_lock(mm, pmd, addr, &ptl);
 +	if (ptep != NULL) {
 +		pte_t value = ptep_get(ptep);
@@ -761,11 +472,6 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
 +		}
 +		pte_unmap_unlock(ptep, ptl);
 +	}
-+	goto out;
- 
--	return pte_offset_kernel(pmd, addr);
-+unlock_huge:
-+	spin_unlock(ptl);
 +out:
 +	mmap_read_unlock(mm);
 +	return page;
@@ -797,16 +503,13 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
 +	page = pin_user_mapping(current->mm, virt, is_write);
 +	if (page == NULL) {
 +		if (handle_page_fault(virt, 0, is_write, 1, &dummy_code))
-+			return NULL;
-+		page = pin_user_mapping(current->mm, virt, is_write);
-+		if (page == NULL)
  			return NULL;
 -		pte = virt_to_pte(current->mm, virt);
- 	}
--	if (!pte_present(*pte))
--		pte = NULL;
- 
--	return pte;
++		page = pin_user_mapping(current->mm, virt, is_write);
++		if (page == NULL)
++			return NULL;
++	}
++
 +#ifdef UML_HOST_DARWIN
 +	/* A task can resume inside a syscall after a child left a different mm
 +	 * active.  Restore the current generation and verify that a concurrently
@@ -838,11 +541,14 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
 +		if (darwin_uml_vm_sync_to_backing(virt) < 0)
 +			goto fail;
 +#endif
-+	}
+ 	}
+-	if (!pte_present(*pte))
+-		pte = NULL;
 +#endif
 +
 +	return page;
-+
+ 
+-	return pte;
 +#ifdef UML_HOST_DARWIN
 +fail:
 +	put_page(page);
@@ -881,7 +587,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
  	pagefault_disable();
  	addr = (unsigned long) page_address(page) +
  		(addr & ~PAGE_MASK);
-@@ -89,6 +214,20 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -89,6 +176,20 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	kunmap_atomic((void *)addr);
  #endif
  
@@ -902,7 +608,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
  	return n;
  }
  
-@@ -223,7 +362,7 @@ long strnlen_user(const char __user *str, long len)
+@@ -223,7 +324,7 @@ long strnlen_user(const char __user *str, long len)
  	int count = 0, n;
  
  	if (!access_ok(str, 1))
@@ -911,7 +617,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
  	n = buffer_op((unsigned long) str, len, 0, strnlen_chunk, &count);
  	if (n == 0)
  		return count + 1;
-@@ -250,20 +389,22 @@ EXPORT_SYMBOL(strnlen_user);
+@@ -250,20 +351,22 @@ EXPORT_SYMBOL(strnlen_user);
  
  int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
  {
@@ -940,7 +646,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	addr = (unsigned long) page_address(page) +
-@@ -273,37 +414,51 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
+@@ -273,37 +376,51 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
  		((unsigned long) addr & ~PAGE_MASK);
  #endif
  	uaddr = (u32 *) addr;
@@ -1014,7 +720,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
  
  	if (ret == 0)
  		*oval = oldval;
-@@ -331,18 +486,19 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -331,18 +448,19 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  			      u32 oldval, u32 newval)
  {
  	struct page *page;
@@ -1039,7 +745,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	uaddr = page_address(page) + (((unsigned long) uaddr) & ~PAGE_MASK);
-@@ -350,9 +506,8 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -350,9 +468,8 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  	uaddr = kmap_atomic(page) + ((unsigned long) uaddr & ~PAGE_MASK);
  #endif
  
@@ -1051,7 +757,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
  
  #ifdef CONFIG_64BIT
  	pagefault_enable();
-@@ -361,8 +516,15 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -361,8 +478,15 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  #endif
  	ret = 0;
  
@@ -1069,7 +775,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..1b4ec301bed1df9d3c32babd98ff8c28
  }
  EXPORT_SYMBOL(futex_atomic_cmpxchg_inatomic);
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index cf7e0d4407f2cd73777870ee6b087962bab79489..9fd280bc968e0b66661b0c87a84b2d6ee747ed25 100644
+index cf7e0d4407f2cd73777870ee6b087962bab79489..d747c429ba7a12c976a31589ec4371864b14ef11 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -6,6 +6,7 @@
@@ -1270,7 +976,7 @@ index cf7e0d4407f2cd73777870ee6b087962bab79489..9fd280bc968e0b66661b0c87a84b2d6e
  void report_enomem(void)
  {
  	printk(KERN_ERR "UML ran out of memory on the host side! "
-@@ -54,38 +224,157 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
+@@ -54,38 +224,97 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
  {
  	pte_t *pte;
  	int ret = 0;
@@ -1298,14 +1004,14 @@ index cf7e0d4407f2cd73777870ee6b087962bab79489..9fd280bc968e0b66661b0c87a84b2d6e
 +		 * pending range, so it does not need this bit as a completion marker.
 +		 */
 +		/*
-+		 * A huge-page split or replacement may change the PMD while holding
-+		 * only mmap_read_lock().  Deriving pte_lockptr() separately from the
-+		 * PTE therefore leaves a window where the page-table page (and its
-+		 * split lock) can disappear before spin_lock().  Map and lock as one
-+		 * operation so the generic retry check rejects a changed PMD.
++		 * The PMD can change while the walk holds only mmap_read_lock().
++		 * Deriving pte_lockptr() separately from the PTE therefore leaves a
++		 * window where the page-table page (and its split lock) can
++		 * disappear before spin_lock().  Map and lock as one operation so
++		 * the generic retry check rejects a changed PMD.
 +		 *
-+		 * init_mm has no split PTE locks, and its page tables do not undergo
-+		 * user huge-page transitions, so retain the mm-wide lock there.
++		 * init_mm has no split PTE locks, and nothing frees or replaces its
++		 * page tables, so retain the mm-wide lock there.
 +		 */
 +		if (ops->mm == &init_mm) {
 +			pte = pte_offset_kernel(pmd, addr);
@@ -1374,70 +1080,10 @@ index cf7e0d4407f2cd73777870ee6b087962bab79489..9fd280bc968e0b66661b0c87a84b2d6e
  		*pte = pte_mkuptodate(*pte);
  	} while (pte++, addr += PAGE_SIZE, ((addr < end) && !ret));
 +#endif
-+	return ret;
-+}
-+
-+/*
-+ * Host protection of a PMD or PUD leaf from its raw bits.  Unlike a PTE, whose
-+ * execute bit survives a cleared young bit as in generic UML, a leaf that is
-+ * not accessed is mapped with no access at all.
-+ */
-+static inline int um_leaf_protection(unsigned long val)
-+{
-+	int r = !!(val & _PAGE_USER);
-+	int w = !!(val & _PAGE_RW);
-+	int x = r;
-+
-+	if (val & _PAGE_PROTNONE)
-+		r = w = x = 0;
-+	else if (!(val & _PAGE_ACCESSED))
-+		r = w = x = 0;
-+	else if (!(val & _PAGE_DIRTY))
-+		w = 0;
-+
-+	return (r ? UM_PROT_READ : 0) |
-+	       (w ? UM_PROT_WRITE : 0) |
-+	       (x ? UM_PROT_EXEC : 0);
-+}
-+
-+static inline int update_pmd_leaf(pmd_t *pmd, unsigned long addr,
-+				  unsigned long end, struct vm_ops *ops)
-+{
-+	pmd_t pmdval = READ_ONCE(*pmd);
-+	unsigned long phys = (pmd_val(pmdval) & PMD_MASK) |
-+			     (addr & ~PMD_MASK);
-+	int prot;
-+	int ret = 0;
-+
-+	/* pmd_mkinvalid() leaves the THP marker set while the generic split path
-+	 * replaces the leaf. Do not expose the temporarily invalid mapping.
-+	 */
-+	if (!(pmd_val(pmdval) & (_PAGE_PRESENT | _PAGE_PROTNONE)))
-+		return ops->unmap(ops->mm_idp, addr, end - addr);
-+
-+	prot = um_leaf_protection(pmd_val(pmdval));
-+#ifdef UML_HOST_DARWIN
-+	/* A leaf lies inside one VMA, which the walk's mmap_read_lock() keeps. */
-+	prot = darwin_guest_protection(ops->mm, prot, prot & UM_PROT_EXEC,
-+				       darwin_vma_protection(ops->mm, addr));
-+#endif
-+	do {
-+		__u64 offset;
-+		int fd = phys_mapping(phys, &offset);
-+
-+		ret = ops->mmap(ops->mm_idp, addr, PAGE_SIZE, prot, fd, offset);
-+		addr += PAGE_SIZE;
-+		phys += PAGE_SIZE;
-+	} while (addr < end && !ret);
-+
-+#ifndef UML_HOST_DARWIN
-+	if (!ret)
-+		pmd_mkuptodate(*pmd);
-+#endif
  	return ret;
  }
  
-@@ -104,14 +393,40 @@ static inline int update_pmd_range(pud_t *pud, unsigned long addr,
+@@ -104,10 +333,13 @@ static inline int update_pmd_range(pud_t *pud, unsigned long addr,
  			if (pmd_needsync(*pmd)) {
  				ret = ops->unmap(ops->mm_idp, addr,
  						 next - addr);
@@ -1447,39 +1093,12 @@ index cf7e0d4407f2cd73777870ee6b087962bab79489..9fd280bc968e0b66661b0c87a84b2d6e
  			}
  		}
 -		else ret = update_pte_range(pmd, addr, next, ops);
-+		else if (pmd_leaf(*pmd))
-+			ret = update_pmd_leaf(pmd, addr, next, ops);
 +		else
 +			ret = update_pte_range(pmd, addr, next, ops);
  	} while (pmd++, addr = next, ((addr < end) && !ret));
  	return ret;
  }
- 
-+static inline int update_pud_leaf(pud_t *pud, unsigned long addr,
-+				  unsigned long end, struct vm_ops *ops)
-+{
-+	pud_t pudval = READ_ONCE(*pud);
-+	unsigned long phys = (pud_val(pudval) & PUD_MASK) |
-+			     (addr & ~PUD_MASK);
-+	__u64 offset;
-+	int fd;
-+	int prot;
-+
-+	if (!(pud_val(pudval) & (_PAGE_PRESENT | _PAGE_PROTNONE)))
-+		return ops->unmap(ops->mm_idp, addr, end - addr);
-+	prot = um_leaf_protection(pud_val(pudval));
-+#ifdef UML_HOST_DARWIN
-+	prot = darwin_guest_protection(ops->mm, prot, prot & UM_PROT_EXEC,
-+				       darwin_vma_protection(ops->mm, addr));
-+#endif
-+	fd = phys_mapping(phys, &offset);
-+	return ops->mmap(ops->mm_idp, addr, end - addr, prot, fd, offset);
-+}
-+
- static inline int update_pud_range(p4d_t *p4d, unsigned long addr,
- 				   unsigned long end,
- 				   struct vm_ops *ops)
-@@ -127,10 +442,14 @@ static inline int update_pud_range(p4d_t *p4d, unsigned long addr,
+@@ -127,10 +359,12 @@ static inline int update_pud_range(p4d_t *p4d, unsigned long addr,
  			if (pud_needsync(*pud)) {
  				ret = ops->unmap(ops->mm_idp, addr,
  						 next - addr);
@@ -1489,14 +1108,12 @@ index cf7e0d4407f2cd73777870ee6b087962bab79489..9fd280bc968e0b66661b0c87a84b2d6e
  			}
 -		}
 -		else ret = update_pmd_range(pud, addr, next, ops);
-+		} else if (pud_leaf(*pud))
-+			ret = update_pud_leaf(pud, addr, next, ops);
-+		else
++		} else
 +			ret = update_pmd_range(pud, addr, next, ops);
  	} while (pud++, addr = next, ((addr < end) && !ret));
  	return ret;
  }
-@@ -150,7 +469,9 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
+@@ -150,7 +384,9 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
  			if (p4d_needsync(*p4d)) {
  				ret = ops->unmap(ops->mm_idp, addr,
  						 next - addr);
@@ -1506,7 +1123,7 @@ index cf7e0d4407f2cd73777870ee6b087962bab79489..9fd280bc968e0b66661b0c87a84b2d6e
  			}
  		} else
  			ret = update_pud_range(p4d, addr, next, ops);
-@@ -158,17 +479,105 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
+@@ -158,17 +394,105 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
  	return ret;
  }
  
@@ -1614,7 +1231,7 @@ index cf7e0d4407f2cd73777870ee6b087962bab79489..9fd280bc968e0b66661b0c87a84b2d6e
  	if (mm == &init_mm) {
  		ops.mmap = kern_map;
  		ops.unmap = kern_unmap;
-@@ -176,30 +585,119 @@ int um_tlb_sync(struct mm_struct *mm)
+@@ -176,30 +500,119 @@ int um_tlb_sync(struct mm_struct *mm)
  		ops.mmap = map;
  		ops.unmap = unmap;
  	}
@@ -1747,7 +1364,7 @@ index cf7e0d4407f2cd73777870ee6b087962bab79489..9fd280bc968e0b66661b0c87a84b2d6e
  void flush_tlb_all(void)
  {
  	/*
-@@ -212,11 +710,31 @@ void flush_tlb_all(void)
+@@ -212,11 +625,31 @@ void flush_tlb_all(void)
  	flush_tlb_mm(current->mm);
  }
  
@@ -1781,7 +1398,7 @@ index cf7e0d4407f2cd73777870ee6b087962bab79489..9fd280bc968e0b66661b0c87a84b2d6e
 +	}
  }
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1e6194ce52e3e8face711622b7b81a0c30b78c6a 100644
+index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..433b6fda3da3428817c1ca7e81304b6b6bc02c7a 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
 @@ -17,6 +17,11 @@
@@ -1796,7 +1413,7 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1e6194ce52e3e8face711622b7b81a0c
  /*
   * NOTE: UML does not have exception tables. As such, this is almost a copy
   * of the code in mm/memory.c, only adjusting the logic to simply check whether
-@@ -137,11 +142,15 @@ um_lock_mm_and_find_vma(struct mm_struct *mm,
+@@ -137,8 +142,9 @@ um_lock_mm_and_find_vma(struct mm_struct *mm,
   * Note this is constrained to return 0, -EFAULT, -EACCES, -ENOMEM by
   * segv().
   */
@@ -1808,13 +1425,7 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1e6194ce52e3e8face711622b7b81a0c
  {
  	struct mm_struct *mm = current->mm;
  	struct vm_area_struct *vma;
-+#if CONFIG_PGTABLE_LEVELS == 4
-+	pud_t *pud;
-+#endif
- 	pmd_t *pmd;
- 	pte_t *pte;
- 	int err = -EFAULT;
-@@ -168,6 +177,13 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+@@ -168,6 +174,13 @@ int handle_page_fault(unsigned long address, unsigned long ip,
  		if (!(vma->vm_flags & VM_WRITE))
  			goto out;
  		flags |= FAULT_FLAG_WRITE;
@@ -1828,23 +1439,7 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1e6194ce52e3e8face711622b7b81a0c
  	} else {
  		/* Don't require VM_READ|VM_EXEC for write faults! */
  		if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
-@@ -203,7 +219,15 @@ int handle_page_fault(unsigned long address, unsigned long ip,
- 			goto retry;
- 		}
- 
-+#if CONFIG_PGTABLE_LEVELS == 4
-+		pud = pud_offset(p4d_offset(pgd_offset(mm, address), address),
-+				 address);
-+		if (pud_leaf(READ_ONCE(*pud)))
-+			break;
-+#endif
- 		pmd = pmd_off(mm, address);
-+		if (pmd_trans_huge(*pmd))
-+			break;
- 		pte = pte_offset_kernel(pmd, address);
- 	} while (!pte_present(*pte));
- 	err = 0;
-@@ -236,6 +260,13 @@ int handle_page_fault(unsigned long address, unsigned long ip,
+@@ -236,6 +249,13 @@ int handle_page_fault(unsigned long address, unsigned long ip,
  	return 0;
  }
  
@@ -1858,7 +1453,7 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1e6194ce52e3e8face711622b7b81a0c
  static void show_segv_info(struct uml_pt_regs *regs)
  {
  	struct task_struct *tsk = current;
-@@ -316,17 +347,35 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -316,17 +336,35 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  	if (!is_user && regs)
  		current->thread.segv_regs = container_of(regs, struct pt_regs, regs);
  
@@ -1897,7 +1492,7 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1e6194ce52e3e8face711622b7b81a0c
  		goto out;
  	}
  	else if (current->pagefault_disabled) {
-@@ -353,8 +402,13 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -353,8 +391,13 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  	}
  
  	if (SEGV_IS_FIXABLE(&fi))
@@ -1913,7 +1508,7 @@ index 5b80a3a89c201e670a9ac4bf5df33c9c0266fa82..1e6194ce52e3e8face711622b7b81a0c
  	else {
  		err = -EFAULT;
  		/*
-@@ -375,7 +429,6 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -375,7 +418,6 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  		panic("Kernel mode fault at addr 0x%lx, ip 0x%lx",
  		      address, ip);
  	}

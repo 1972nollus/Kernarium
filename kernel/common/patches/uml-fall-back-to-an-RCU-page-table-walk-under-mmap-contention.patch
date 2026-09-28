@@ -25,7 +25,7 @@ unchanged.
  1 file changed, 21 insertions(+), 4 deletions(-)
 
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index fd0c48b58e4d077cb425d7b0ce7ba418a1d33243..4e2a2d1085c202ef2a3173b68836b1718519df89 100644
+index fb13592247f1ec3df3145da42c5f4fbd24f04a99..1aa7d8c7a02caa80f0b70be31edcc74a4e989d1a 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -7,6 +7,7 @@
@@ -71,9 +71,9 @@ index fd0c48b58e4d077cb425d7b0ce7ba418a1d33243..4e2a2d1085c202ef2a3173b68836b171
  	} else {
  		mmap_read_lock(mm);
  	}
-@@ -105,7 +119,10 @@ static struct page *pin_user_mapping(struct mm_struct *mm, unsigned long addr,
- unlock_huge:
- 	spin_unlock(ptl);
+@@ -67,7 +81,10 @@ static struct page *pin_user_mapping(struct mm_struct *mm, unsigned long addr,
+ 		pte_unmap_unlock(ptep, ptl);
+ 	}
  out:
 -	mmap_read_unlock(mm);
 +	if (mmap_locked)

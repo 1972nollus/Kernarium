@@ -57,7 +57,7 @@ index c224dfb5c3ac46768c8ac1e0304ee6224193df36..3cb07f3bc42f64756253629f30dd397b
  
  #endif
 diff --git a/arch/um/kernel/Makefile b/arch/um/kernel/Makefile
-index 3c0e879c2f05ee0098c2975c3ed56112d4826177..e24f9d1d63d764d4028b2f51fa5ef3b7fa2585fb 100644
+index 4dfa286cf6bae567dee545ec05f313929688e204..6e3354460427678eb477bfcf5b5ac05e1f917512 100644
 --- a/arch/um/kernel/Makefile
 +++ b/arch/um/kernel/Makefile
 @@ -20,7 +20,13 @@ obj-y = config.o exec.o exitcode.o irq.o ksyms.o mem.o \

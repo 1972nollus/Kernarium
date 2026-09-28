@@ -37,7 +37,7 @@ to the bridge, version 12.
  9 files changed, 255 insertions(+), 6 deletions(-)
 
 diff --git a/arch/um/include/asm/page.h b/arch/um/include/asm/page.h
-index 2c49472072cfc3d7d78e352abdd0e67bda2c3401..fbf0e8e340e09075f4383f1133f5aafe14a41f7d 100644
+index 6f54254aaf443d0420bc02e6e67e3285ce99c68e..c1ad6f1a4e249a8d8ec07e4260352c462cbc3ce6 100644
 --- a/arch/um/include/asm/page.h
 +++ b/arch/um/include/asm/page.h
 @@ -15,6 +15,17 @@
