@@ -136,9 +136,9 @@ void test_explicit_defaults_are_preserved()
 	 * space or misread at the comma. */
 	const char *plain[]{"uml-test"};
 	require(!uml::emulator::prepare_emulator_options(
-			1, plain, "/tmp/My Disk.erofs", false).valid &&
+			1, plain, "/tmp/My Disk.erofs").valid &&
 		!uml::emulator::prepare_emulator_options(
-			1, plain, "/tmp/a,b.erofs", false).valid,
+			1, plain, "/tmp/a,b.erofs").valid,
 		"a rootfs path the UBD argument cannot carry was accepted");
 }
 
