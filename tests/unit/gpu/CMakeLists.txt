@@ -436,12 +436,25 @@ if(TARGET uml_gpu_service)
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
         LABELS gpu)
 
+    # The wire with its stop-wait observer, so a test waits until a receiver
+    # has consumed every queued fragment instead of sleeping and hoping.
+    add_library(uml_gpu_transport_wire_stop_wait_test_variant STATIC
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_message.cpp)
+    target_include_directories(uml_gpu_transport_wire_stop_wait_test_variant
+        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+    target_compile_definitions(uml_gpu_transport_wire_stop_wait_test_variant
+        PRIVATE UML_GPU_STOP_WAIT_TESTING=1)
+    target_compile_features(uml_gpu_transport_wire_stop_wait_test_variant
+        PUBLIC cxx_std_20)
+    target_compile_options(uml_gpu_transport_wire_stop_wait_test_variant
+        PRIVATE -Wall -Wextra -Werror -Wno-deprecated-declarations)
+
     add_executable(uml_gpu_transport_wire_tests
         gpu_allocation_failure.cpp
         vhost_user_message_test_main.cpp
         vhost_user_message_tests.cpp)
     target_link_libraries(uml_gpu_transport_wire_tests PRIVATE
-        uml_gpu_transport_wire)
+        uml_gpu_transport_wire_stop_wait_test_variant)
     target_include_directories(uml_gpu_transport_wire_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${CMAKE_CURRENT_SOURCE_DIR})
@@ -491,7 +504,7 @@ if(TARGET uml_gpu_service)
     target_link_libraries(uml_gpu_transport_startup_test_variant PUBLIC
         UML::DeviceSocketPaths
         UML::MemorySharedBacking
-        uml_gpu_transport_wire
+        uml_gpu_transport_wire_stop_wait_test_variant
         uml_gpu_protocol_device
         UML::VncInput)
     target_link_libraries(uml_gpu_transport_startup_test_variant PRIVATE
