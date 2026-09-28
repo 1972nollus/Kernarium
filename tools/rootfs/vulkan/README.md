@@ -87,20 +87,16 @@ Unreferenced text files, including the retired GTF list, are not executable
 requirements. This combined mode has a distinct
 artifact identity and never replaces the accepted Vulkan-only image.
 
-The immutable base identity is 3,802,316,800 bytes, SHA-256
-`73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91`,
-with EROFS UUID `b84fcbe2-0673-4126-8f81-bdee45997306`. The derivative is
-8,589,934,592 bytes with ext4 UUID
-`2240061a-2b64-4626-b8bf-dd0f9993a4a9`; its content digest and complete build
-identity are owned by `tests/integration/gpu/vulkan_cts_receipt.json` and its
-verifier.
+The immutable base and the derivative's identities, content digest, and
+complete build identity are recorded in
+`tests/integration/gpu/vulkan_cts_receipt.json` and checked by its verifier.
 
 The combined Vulkan/Zink/OpenGL derivative is named
-`rootfs-vulkan-zink-gl.ext4`, uses ext4 UUID
-`3b59fbc9-4b35-4a2b-890d-286a77b04afd`, and is consumed only with its emitted
-schema-4 receipt. It binds the upstream runner identity, all four XML payloads
-and hashes, their derived configuration records, and the eight referenced leaf
-identities. Full qualification additionally freezes an ordered runtime
+`rootfs-vulkan-zink-gl.ext4`, has its identity in
+`tests/integration/gpu/vk_gl_cts_derivative_rootfs.json`, and is consumed only
+with its emitted schema-4 receipt. It binds the upstream runner identity, all
+four XML payloads and hashes, their derived configuration records, and the
+eight referenced leaf identities. Full qualification additionally freezes an ordered runtime
 `CTS-Configs.gl46` inventory: the first actual EGL configuration receives the
 one-time suites and first-config records; later configurations receive their
 other-config records. XML surface sizes, seeds, and named FBO configurations
@@ -112,30 +108,17 @@ patched source trees for Mesa, Venus protocol, and CTS, plus the pinned
 Vulkan-Headers and Vulkan-Loader sources. Their image, executable,
 and runtime-closure identities remain separate.
 
-Seal only new stage, image, and receipt paths:
+Seal only new stage, image, and receipt paths. The Mesa build and stage roots
+default below `WORK`, and the metadata and repository roots default to this
+checkout; `--help` lists every option:
 
 ```sh
-sudo tools/rootfs/vulkan/seal-in-vm.py \
-  --work-root /home/vm/uml-vulkan-rootfs \
-  --metadata-root /home/vm/uml-vulkan-rootfs/input/repo/tools/rootfs/vulkan \
-  --outer-root /home/vm/uml-vulkan-rootfs/input/repo \
-  --base-rootfs /home/vm/uml-vulkan-rootfs/input/rootfs.erofs \
-  --mesa-build-root /home/vm/uml-vulkan-rootfs/build/mesa \
-  --mesa-stage-root /home/vm/uml-vulkan-rootfs/stage/mesa \
-  --stage-root /home/vm/uml-vulkan-rootfs/stage/rootfs-kosmickrisp \
-  --output /home/vm/uml-vulkan-rootfs/output-kosmickrisp/rootfs-vulkan-venus.ext4 \
-  --receipt /home/vm/uml-vulkan-rootfs/output-kosmickrisp/rootfs-vulkan-venus.receipt.json
+sudo tools/rootfs/vulkan/seal-in-vm.py --work-root WORK \
+  --base-rootfs WORK/input/rootfs.erofs --stage-root NEW-STAGE \
+  --output NEW.ext4 --receipt NEW.receipt.json
 ```
 
-For a new combined qualification image, add the flag and replace the final
-three path arguments with fresh paths:
-
-```sh
-  --include-opengl-cts \
-  --stage-root /home/vm/uml-vulkan-rootfs/stage/rootfs-vulkan-zink-gl \
-  --output /home/vm/uml-vulkan-rootfs/output-zink-gl/rootfs-vulkan-zink-gl.ext4 \
-  --receipt /home/vm/uml-vulkan-rootfs/output-zink-gl/rootfs-vulkan-zink-gl.receipt.json
-```
+Add `--include-opengl-cts` for a combined qualification image.
 
 The sealer refuses existing output paths. It authenticates each source's base
 and the tree its series records, independently regenerates every driver header from the
