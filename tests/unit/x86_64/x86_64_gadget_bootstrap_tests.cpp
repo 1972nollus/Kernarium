@@ -5410,6 +5410,67 @@ read_test_sequences(void *context) noexcept
 		"a fetch fault inside the length limit was not a page fault");
 }
 
+/* RDRAND and RDSEED return host CSPRNG output with CF set.  They used to
+ * return one xorshift round of the counter XORed with the CpuState address,
+ * which a guest could invert and XOR with RDTSC to learn a host pointer. */
+[[nodiscard]] bool random_instructions_expose_no_host_state()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x0f, 0x31,             // rdtsc
+		0x48, 0x89, 0xc7,       // mov rdi, rax
+		0x48, 0x89, 0xd6,       // mov rsi, rdx
+		0x48, 0x0f, 0xc7, 0xf0, // rdrand rax
+		0x48, 0x0f, 0xc7, 0xfb, // rdseed rbx
+		0x0f, 0x05,             // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"RDRAND/RDSEED block did not build"))
+		return false;
+	/* The inverse of x ^= x << 13; x ^= x >> 7; x ^= x << 17. */
+	const auto invert = [](std::uint64_t value) {
+		value ^= value << 17;
+		value ^= value << 34;
+		value ^= value >> 7;
+		value ^= value >> 14;
+		value ^= value >> 28;
+		value ^= value >> 56;
+		value ^= value << 13;
+		value ^= value << 26;
+		value ^= value << 52;
+		return value;
+	};
+	std::uint64_t first{};
+	bool varied = false;
+	for (int round = 0; round < 16; ++round) {
+		CpuState cpu{};
+		const auto result = gadgets::execute(built.program, cpu, memory, 8);
+		if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 6,
+			"RDRAND/RDSEED block did not reach SYSCALL") ||
+			!expect((cpu.rflags & 0x8d5U) == 1U,
+				"RDSEED did not report success with only CF set"))
+			return false;
+		const auto counter = (cpu.gpr(Register::rsi) << 32U) |
+			(cpu.gpr(Register::rdi) & 0xffff'ffffULL);
+		const auto host = reinterpret_cast<std::uintptr_t>(&cpu);
+		for (const auto value :
+			{cpu.gpr(Register::rax), cpu.gpr(Register::rbx)}) {
+			const auto recovered = invert(value) ^ counter;
+			if (!expect((recovered >> 12U) != (host >> 12U),
+				"RDRAND/RDSEED output revealed the CpuState address"))
+				return false;
+		}
+		if (round == 0)
+			first = cpu.gpr(Register::rax);
+		else if (cpu.gpr(Register::rax) != first)
+			varied = true;
+	}
+	return expect(varied, "RDRAND returned one value sixteen times");
+}
+
 /* WRFSBASE and WRGSBASE with a 64-bit operand raise #GP for a non-canonical
  * address and leave the base unchanged; the 32-bit form zero-extends and so
  * cannot fault. */
@@ -6874,6 +6935,7 @@ int main()
 		privileged_instructions_raise_general_protection() &&
 		segment_base_writes_reject_non_canonical_addresses() &&
 		overlong_instructions_raise_general_protection() &&
+		random_instructions_expose_no_host_state() &&
 		software_interrupt_vectors_trap() &&
 		one_instruction_budget_steps_linked_programs() &&
 		popf_setting_trap_flag_leaves_at_the_next_instruction() &&

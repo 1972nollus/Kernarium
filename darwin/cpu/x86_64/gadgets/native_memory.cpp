@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -230,6 +231,13 @@ extern "C" void uml_x86_64_gadget_publish_code_write(
 	invalidate_cached_code(*context, address, size);
 	if (context->write_code != write_code_published)
 		(void)publish_code_page(*context, address);
+}
+
+extern "C" std::uint64_t uml_x86_64_gadget_random_value() noexcept
+{
+	std::uint64_t value{};
+	arc4random_buf(&value, sizeof(value));
+	return value;
 }
 
 extern "C" void uml_x86_64_gadget_invalidate_code(

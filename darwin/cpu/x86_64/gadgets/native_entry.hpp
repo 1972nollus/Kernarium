@@ -153,5 +153,8 @@ extern "C" std::uint32_t uml_x86_64_gadget_bulk_load(
 extern "C" std::uint32_t uml_x86_64_gadget_bulk_store(
 	NativeExecutionContext *context, std::uint64_t address,
 	const void *source, std::uint32_t size) noexcept;
+/* RDRAND and RDSEED: host CSPRNG output, which carries nothing of the host's
+ * own state into the guest. */
+extern "C" std::uint64_t uml_x86_64_gadget_random_value() noexcept;
 
 } // namespace uml::cpu::x86_64::gadgets
