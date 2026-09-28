@@ -954,10 +954,14 @@ CTS tessellation, geometry, draw and rasterization groups asks it for
 1.53 MiB; `MESA_KK_HEAP_SIZE_MIB` sets it from 1 to 4095 MiB without a
 rebuild, and any other value keeps 16 MiB. If Metal refuses the heap, a draw
 that needs it is not recorded and its command buffer ends with
-`VK_ERROR_OUT_OF_DEVICE_MEMORY`. An undersized heap produces wrong results
-rather than a diagnosable failure, because the overflow report is a
-shader-side `printf` and `abort()` that reaches neither Metal nor the host log,
-so a smaller size is validated only by a conformance run.
+`VK_ERROR_OUT_OF_DEVICE_MEMORY`. An overflow is not diagnosable: the device
+library is compiled without `printf`, and its `abort()` only ends the
+allocating kernel invocation, so the stages after it run on the null pointers
+and unwritten draw words it left and the command buffer still completes. The
+draw loses output, and so does every later draw in the same command buffer
+that needs the heap, because the failed reservation leaves it exhausted. Real
+draws can exceed the default: 130 quad patches at tessellation level 64 lose
+patches. A smaller size is therefore validated only by a conformance run.
 
 An uninterrupted released mustpass fraction runs about 200,000 cases in one
 `deqp-vk` process, and a 1536 MiB guest cannot hold every group in that
