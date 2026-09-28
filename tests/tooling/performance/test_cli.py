@@ -126,12 +126,21 @@ def parse_runner_arguments(runner: str, extra: list[str]) -> object:
 
 
 def verify_offline_geekbench_contract() -> None:
+    module = load_runner_module("run_guest_geekbench.py")
+    script = module.WORKLOAD.read_text(encoding="utf-8")
+    runs = [
+        line
+        for line in script.splitlines()
+        if line.strip().startswith('"$benchmark"')
+    ]
+    if not runs or any("--no-upload" not in line for line in runs):
+        raise RuntimeError("Geekbench must disable the upload prompt")
     options = parse_runner_arguments(
         "run_guest_geekbench.py",
         ["--console-log", "console.log"],
     )
-    if "--no-upload" not in options.command:
-        raise RuntimeError("Geekbench must disable the upload prompt")
+    if options.workloads is not None:
+        raise RuntimeError("Geekbench must run the full benchmark by default")
 
 
 def session_guest() -> mock.MagicMock:
@@ -151,7 +160,9 @@ def run_geekbench_shutdown_case(
     command_status: int,
     shutdown_ok: bool,
     emulator_status: int | None,
-) -> tuple[int | None, RuntimeError | None, mock.Mock]:
+    *,
+    workloads: str | None = None,
+) -> tuple[int | None, RuntimeError | None, mock.Mock, mock.Mock]:
     module = load_runner_module("run_guest_geekbench.py")
     directory = tempfile.TemporaryDirectory(prefix="uml-geekbench-cli-")
     console_log = pathlib.Path(directory.name, "console.log")
@@ -160,7 +171,7 @@ def run_geekbench_shutdown_case(
         rootfs=pathlib.Path("rootfs.erofs"),
         profile_dir=None,
         console_log=console_log,
-        command="geekbench6 --no-upload",
+        workloads=workloads,
         kernel_argument=[],
         memory="8G",
         cpus=10,
@@ -197,11 +208,11 @@ def run_geekbench_shutdown_case(
             f"Geekbench runner did not stream the console into {console_log}: "
             f"{sink!r}"
         )
-    return status, error, guest
+    return status, error, guest, constructor
 
 
 def verify_geekbench_shutdown_contract() -> None:
-    status, error, guest = run_geekbench_shutdown_case(0, True, 0)
+    status, error, guest, _ = run_geekbench_shutdown_case(0, True, 0)
     if status != 0 or error is not None:
         raise RuntimeError(
             "Geekbench runner rejected a clean emulator exit: "
@@ -209,7 +220,7 @@ def verify_geekbench_shutdown_contract() -> None:
         )
     guest.shutdown.assert_called_once_with(60)
 
-    status, error, _ = run_geekbench_shutdown_case(0, True, 23)
+    status, error, _, _ = run_geekbench_shutdown_case(0, True, 23)
     if (
         status is not None
         or error is None
@@ -220,7 +231,7 @@ def verify_geekbench_shutdown_contract() -> None:
             f"status={status}, error={error}"
         )
 
-    status, error, _ = run_geekbench_shutdown_case(7, True, 23)
+    status, error, _, _ = run_geekbench_shutdown_case(7, True, 23)
     if (
         status is not None
         or error is None
@@ -314,6 +325,43 @@ def verify_guest_shell_shutdown_contract() -> None:
         )
 
 
+def verify_geekbench_payloads() -> None:
+    """The workload script, and its parameters when targeted, are payloads."""
+    module = load_runner_module("run_guest_geekbench.py")
+    script = module.WORKLOAD.read_bytes()
+    for workloads, expected in (
+        (None, {module.GUEST_WORKLOAD: script}),
+        (
+            "4,17",
+            {
+                module.GUEST_WORKLOAD: script,
+                module.GUEST_PARAMETERS: b"UML_GEEKBENCH_WORKLOADS=4,17\n",
+            },
+        ),
+    ):
+        status, error, _, constructor = run_geekbench_shutdown_case(
+            0, True, 0, workloads=workloads
+        )
+        payloads = constructor.call_args.kwargs["payloads"]
+        contents = {path: payload.contents for path, payload in payloads.items()}
+        if status != 0 or error is not None or contents != expected:
+            raise RuntimeError(
+                f"Geekbench payloads for workloads={workloads!r} were "
+                f"{sorted(contents)}: status={status}, error={error}"
+            )
+        if payloads[module.GUEST_WORKLOAD].mode != 0o755:
+            raise RuntimeError("the Geekbench script must be executable")
+        command = constructor.return_value.run_command.call_args.args[0]
+        if command != module.GUEST_WORKLOAD:
+            raise RuntimeError(f"Geekbench ran {command!r}, not its script")
+    for workloads in ("", "4,", "4;reboot", ",4"):
+        try:
+            run_geekbench_shutdown_case(0, True, 0, workloads=workloads)
+        except ValueError:
+            continue
+        raise RuntimeError(f"Geekbench accepted workloads={workloads!r}")
+
+
 def verify_no_root_device_option() -> None:
     """The launcher chooses the root device; no runner restates it."""
     cases = (
@@ -386,6 +434,7 @@ def main() -> int:
     verify_offline_geekbench_contract()
     verify_geekbench_shutdown_contract()
     verify_guest_shell_shutdown_contract()
+    verify_geekbench_payloads()
     verify_no_root_device_option()
     verify_core_class_launcher()
     for runner in RUNNERS:

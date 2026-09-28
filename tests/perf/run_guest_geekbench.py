@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the image-local Geekbench payload in a direct OverlayFS shell."""
+"""Run the image-local Geekbench payload in a disposable overlay shell."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -7,13 +7,21 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import pathlib
+import re
 import subprocess
 import sys
 
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "integration" / "support"))
-from guest import CORE_CLASSES, Guest  # noqa: E402
+from guest import CORE_CLASSES, Guest, GuestFile  # noqa: E402
+
+
+# The workload script Kernarium runs as well; it prints the run's markers.
+WORKLOAD = pathlib.Path(__file__).resolve().parent / "guest" / "geekbench.sh"
+GUEST_WORKLOAD = "/usr/local/libexec/uml-test/geekbench"
+GUEST_PARAMETERS = "/etc/uml-geekbench.env"
+WORKLOAD_LIST = re.compile(r"[0-9]+(?:,[0-9]+)*")
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -27,10 +35,11 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--console-log", required=True, type=pathlib.Path)
     parser.add_argument(
-        "--command",
-        default=(
-            "/opt/geekbench/release/geekbench6 "
-            "--no-upload"
+        "--workloads",
+        metavar="LIST",
+        help=(
+            "run only these comma-separated single-core workload numbers "
+            "instead of the full benchmark"
         ),
     )
     parser.add_argument(
@@ -78,6 +87,13 @@ def main() -> int:
         or arguments.sample_seconds < 1
     ):
         raise ValueError("timeouts must be positive")
+    payloads = {GUEST_WORKLOAD: GuestFile(WORKLOAD.read_bytes(), 0o755)}
+    if arguments.workloads is not None:
+        if not WORKLOAD_LIST.fullmatch(arguments.workloads):
+            raise ValueError("--workloads must be comma-separated numbers")
+        payloads[GUEST_PARAMETERS] = GuestFile(
+            f"UML_GEEKBENCH_WORKLOADS={arguments.workloads}\n".encode()
+        )
 
     if arguments.profile_dir is not None:
         arguments.profile_dir.mkdir(parents=True, exist_ok=True)
@@ -95,6 +111,7 @@ def main() -> int:
         engine=arguments.engine,
         core_class=arguments.core_class,
         console_sink=console_log,
+        payloads=payloads,
     ) as guest:
         profiler: subprocess.Popen[bytes] | None = None
         try:
@@ -116,12 +133,7 @@ def main() -> int:
                         arguments.sample_command,
                     )
                 )
-            command = (
-                "printf '\\nGB_BEGIN\\n'; "
-                f"{arguments.command}; benchmark_rc=$?; "
-                "printf '\\nGB_END\\n'; (exit \"$benchmark_rc\")"
-            )
-            result = guest.run_command(command, arguments.timeout)
+            result = guest.run_command(GUEST_WORKLOAD, arguments.timeout)
             print(result.output, flush=True)
             shutdown_ok = guest.shutdown(60)
             if result.return_code != 0:
