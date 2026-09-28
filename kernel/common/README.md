@@ -70,7 +70,7 @@ starts at the faulting instruction, and a blocked task's starts at the context
 it saved when it switched away. A task running on another vCPU still prints no
 trace. The walk follows frame records, so every WARN, BUG and sysrq trace
 lists only reliable entries, and a Darwin kernel without frame pointers fails
-to build; every maintained kernel has them, at about 1% on the iPad.
+to build; every maintained kernel has them.
 `guest-kernel-nofault` requires its sysrq t dump to list entries and to mark
 none of them unreliable (`?`).
 

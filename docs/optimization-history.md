@@ -454,6 +454,8 @@ count how often it is taken before assuming its cost is the thing to reduce.
 | Gadget-cache and TLB follow-up for Chromium H.264 | Rejected. Instrumentation found each vCPU's program cache nearly full with heavy translation churn, but link-storage, hashing, memo, capacity, associativity, replacement and resident-TLB variants regressed, gave mixed signs or broke early guest boot. Translation churn is real, but retaining address-space-local state needs a correctness-preserving generation and lifetime design. |
 | Extend VideoToolbox decode to HEVC and P010 | Accepted. Hardware HEVC Main and Main10 decode was an order of magnitude faster than four-thread software decode and used almost no guest decode CPU, and Chromium ran it end to end over VA-API. Presentation and guest GPU work, not decode, remained the 60 fps bottleneck. |
 | Extend stock-guest VideoToolbox formats | Accepted HEVC Main and Main10 up to 8K and JPEG Baseline/MJPEG, each several to many times faster than software decode with matching output. H.264 High10 was rejected on macOS after native frame validation exposed a false-positive session probe, and 4:2:2 and 4:4:4 because stock Debian libva and Mesa expose no such profiles; no guest-library fork is required or supported. |
+| Decode straight to packed RGB in the VA-API backend | Accepted. Blitting a guest-converted NV12 frame to RGB, as a browser under OpenGL does, cost about 150 ms a 1920x1200 frame against about 1 ms to copy a packed `AR24` frame the device produced, so a whole stream ran in about 60 percent of the time. The guest conversion's cost is its scalar arithmetic, not memory bandwidth. |
+| Lend the capture queue the VA-API driver's surfaces | Accepted for the avoidable copy, not for speed: a whole stream ran within half a percent either way, because copying a frame out of a capture buffer is a fraction of a millisecond beside decoding it. |
 | Bound KosmicKrisp Metal retention by Vulkan lifetime | Accepted. Finite raster variants, owner-based pipeline retirement, command-allocator reset and completion-based release of one-time recordings prevent storage from accumulating with submission count. A sustained 2,465-case GL shard completed without failures and recovered memory after transient peaks. Guest RAM limits do not bound native graphics allocations. |
 | Avoid raster expansion when rasterizer discard is enabled | Accepted. A dedicated discard class retains transform feedback and shader side effects while eliminating unused raster output. The previously timing-out geometry workload completes; discarded rasterization does not permit dropping earlier programmable stages. |
 | Recycle KosmicKrisp command storage between submissions | Accepted. One-time-submit recordings released their Metal command allocators on GPU completion, so every submission bought command storage from the kernel and purged it back; a refcounted device-level allocator cache cut flush and submission latency about threefold and doubled glmark2 and glxgears on the host-Zink stack, with conformance results and peak memory unchanged. Command storage belongs to the device, not to one recording. |
@@ -466,6 +468,12 @@ count how often it is taken before assuming its cost is the thing to reduce.
 | Attempt | Disposition and lesson |
 | --- | --- |
 | Enable high-resolution timers on the mainline kernels | Accepted; Android already had them. An ABBA comparison was neutral on host CPU and workloads while one-millisecond sleeps became more than twice as accurate. Programming the one-shot Darwin clock event only records a deadline, so the 100 Hz tick policy, not timer resolution, bounds host wakeups. |
+
+## Kernel frame pointers
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Build every Darwin kernel with frame pointers for the stack walker | Accepted as a correctness requirement: the walker follows frame records, so every trace lists only reliable entries. It costs about 1 percent on the iPad, a directory walk the most, and grows kernel text by about 4 percent. |
 
 ## 4 KiB native MMU page publication
 

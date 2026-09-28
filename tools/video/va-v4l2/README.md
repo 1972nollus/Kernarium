@@ -100,23 +100,14 @@ host already produced.
 | `UML_VA_V4L2_RGB=off` | NV12 |
 | `auto` (default) or `force` | packed RGB |
 
-It is the single largest thing in the guest-side video path. Measured over a
-whole 392-frame 1920x1200 stream, blitting every frame the way a browser
-under OpenGL does:
-
-| decoded format | whole stream | per blit |
-| --- | --- | --- |
-| NV12, converted in the guest | 128.2 s | 156 ms |
-| packed `AR24`, copied | 74.8 s | 1 ms |
-
-The conversion is a scalar pass over 2.3 million pixels at about 21 Mpx/s; the
-copy is a row `memcpy` at about 21 GB/s. Carrying 2.6 times the bytes out of
-the device costs about 6 ms a frame, which is nothing beside the 155 ms it
-saves.
-
-The cost is the arithmetic, not the memory: a 9.2 MB `memcpy` in this guest
-runs at 36-41 GB/s whether it touches anonymous memory, a `gbm_bo_map`ped
-buffer or a V4L2 `MMAP` capture plane, all within 10% of each other.
+It is the single largest thing in the guest-side video path: converting NV12
+in the guest is a scalar pass over every pixel, while copying packed `AR24` is
+a row `memcpy`, so carrying the larger packed frame out of the device costs a
+small fraction of the conversion it saves. The cost is the arithmetic, not the
+memory: a large `memcpy` in this guest runs at the same rate whether it touches
+anonymous memory, a `gbm_bo_map`ped buffer or a V4L2 `MMAP` capture plane. The
+measurement is recorded in
+[`optimization-history.md`](../../../docs/optimization-history.md).
 
 The decision is made once, at initialisation, from what the device offers
 rather than from what a client has done so far, so the first decode session of
@@ -174,11 +165,9 @@ decode keeps the decoder's own buffers. When the capture queue learns to take
 one object carrying both planes, the probe finds it and that copy goes away
 with no other change.
 
-What it is worth is one copy a frame and no more: over the same 392-frame
-stream, 74.81 s lending the queue this driver's surfaces against 74.57 s
-letting it keep its own, because copying 9.2 MB out of a capture buffer is a
-row `memcpy` costing about 0.4 ms beside 190 ms a frame of decoding. It is
-here because the copy is real and avoidable, not because it is fast.
+What it is worth is one copy a frame and no more: copying a frame out of a
+capture buffer is a row `memcpy` that is small beside the frame's decoding. It
+is here because the copy is real and avoidable, not because it is fast.
 
 The surface's own format stays NV12: the packed picture lives in a shadow
 buffer, and `vaDeriveImage`, `vaGetImage` and `vaExportSurfaceHandle` convert
