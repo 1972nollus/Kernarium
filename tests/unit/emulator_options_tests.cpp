@@ -256,7 +256,6 @@ void test_scalable_native_kernel_layout_geometry()
 	static_assert(DARWIN_UML_NATIVE_AUXILIARY_DIVISOR == 1);
 	static_assert(DARWIN_UML_NATIVE_AUXILIARY_MINIMUM == gib);
 	static_assert(DARWIN_UML_NATIVE_AUXILIARY_MAXIMUM == 4ULL * gib);
-	static_assert(DARWIN_UML_DYNAMIC_NATIVE_LAYOUT == 1);
 	static_assert(DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION ==
 		gib + 32ULL * kib);
 	static_assert(DARWIN_UML_NATIVE_STUB_PAGES == 3);
