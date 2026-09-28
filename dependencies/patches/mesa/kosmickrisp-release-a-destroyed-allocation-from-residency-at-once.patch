@@ -22,10 +22,10 @@ commit cannot take residency from pending work.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_residency_release.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 954f3eb96626ab721bcf0af834f2e955df797655..cffe413f41f4543429b26801eabf3fbf43633055 100644
+index 83ccc40a2920313e3978351cc724e76cd4f49e37..edbf1904f4485120e62c4d5a36db310b51d1c424 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
-@@ -550,14 +550,30 @@ kk_device_add_heap_to_residency_set(struct kk_device *dev, mtl_heap *heap)
+@@ -554,14 +554,30 @@ kk_device_add_heap_to_residency_set(struct kk_device *dev, mtl_heap *heap)
     simple_mtx_unlock(&dev->residency_set.mutex);
  }
  
@@ -59,7 +59,7 @@ index 954f3eb96626ab721bcf0af834f2e955df797655..cffe413f41f4543429b26801eabf3fbf
  void
  kk_device_add_buffer_to_residency_set(struct kk_device *dev, mtl_buffer *buffer)
  {
-@@ -570,9 +586,7 @@ void
+@@ -574,9 +590,7 @@ void
  kk_device_remove_buffer_from_residency_set(struct kk_device *dev,
                                             mtl_buffer *buffer)
  {
@@ -70,7 +70,7 @@ index 954f3eb96626ab721bcf0af834f2e955df797655..cffe413f41f4543429b26801eabf3fbf
  }
  
  void
-@@ -587,9 +601,7 @@ void
+@@ -591,9 +605,7 @@ void
  kk_device_remove_texture_from_residency_set(struct kk_device *dev,
                                              mtl_texture *texture)
  {
@@ -82,10 +82,10 @@ index 954f3eb96626ab721bcf0af834f2e955df797655..cffe413f41f4543429b26801eabf3fbf
  
  void
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 2e774432491f6898d5a4a17ea7802227237c44e7..74b3cc46324469fff21933c8f5fdb22a33b60316 100644
+index caa10923310124896ac2c9d82fb18016d51b8d6d..b869c820d181ec22e6a255cc40a68ad07f30c1bb 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1061,6 +1061,27 @@ if with_tests
+@@ -1081,6 +1081,27 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )

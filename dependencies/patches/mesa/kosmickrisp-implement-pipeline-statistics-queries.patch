@@ -4836,10 +4836,10 @@ index 798ca25210e5e1e7570762cf728c79895f43ce5a..f46081cdcf6de0167307e46ea4319e17
  
     uint32_t elsize_B = sizeof(struct poly_tess_point);
 diff --git a/src/poly/geometry.h b/src/poly/geometry.h
-index b814a2c18d57fc000850ee768e84772f0a0868c8..ec348a086e8273b73e7a5a8b3d20e1aa2ef8bbb2 100644
+index e47ebf4c4264e30babc7b616af537f080f09231a..21d4ecdf7e561d46516c619c1ff0fbb22fe30d30 100644
 --- a/src/poly/geometry.h
 +++ b/src/poly/geometry.h
-@@ -721,15 +721,32 @@ poly_prefix_sum(local uint *scratch, global uint *buffer, uint len, uint words,
+@@ -741,15 +741,32 @@ poly_prefix_sum(local uint *scratch, global uint *buffer, uint len, uint words,
     }
  }
  
@@ -4874,7 +4874,7 @@ index b814a2c18d57fc000850ee768e84772f0a0868c8..ec348a086e8273b73e7a5a8b3d20e1aa
        }
     }
  }
-@@ -741,11 +758,11 @@ poly_increment_ia(global uint32_t *ia_vertices, global uint32_t *ia_primitives,
+@@ -761,11 +778,11 @@ poly_increment_ia(global uint32_t *ia_vertices, global uint32_t *ia_primitives,
                    enum mesa_prim prim, unsigned verts_per_patch)
  {
     poly_increment_counters(ia_vertices, vs_invocations, NULL,

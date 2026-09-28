@@ -12,7 +12,7 @@ A direct geometry draw sizes the geometry stage's count and output-index buffers
 
 A heap reservation that does not fit is refused rather than aborted. The MSL backend lowers a shader-side abort() to a return, which ends only the invocation that calls it: the restart unroll's other threads went on with a buffer pointer the first had never published, and the geometry and line setups left the grids and draw words they had already written for the stages after them. poly_heap_try_alloc_offs reports the refusal instead, and each caller suppresses its draw: the unroll empties its draw and publishes a null buffer that every thread checks, and the geometry and line setups clear their grids, draw words and buffers. kosmickrisp_heap_overflow_gpu dispatches each of these kernels on a heap too small for its draw. Asahi's geometry.cl, which this build does not compile, ignores the result poly_gs_setup_indirect now returns.
 
-The allocator advances the heap's bottom with a compare-exchange, and only by a reservation that fits, so the bottom never passes the end. An add that was refused after the fact moved it anyway: enough of them racing, or a single one on a heap past 2 GiB, carried the 32-bit bottom around into space still in use, where the next reservation was granted. A refused reservation now leaves the heap as it was. kosmickrisp_heap_overflow_gpu also runs two line setups on a heap that claims 0xf0000000 bytes with 16 free: the first asks for exactly the distance to 2^32, and the second must be refused rather than granted at offset zero.
+The allocator advances the heap's bottom with a compare-exchange, and only by a reservation that fits, so the bottom never passes the end. An add that was refused after the fact moved it anyway: enough of them racing, or a single one on a heap past 2 GiB, carried the 32-bit bottom around into space still in use, where the next reservation was granted. A refused reservation now leaves the heap as it was. kosmickrisp_heap_overflow_gpu also runs two line setups on a heap that claims 0xf0000000 bytes with 16 free: the first asks for exactly the distance to 2^32, and the second must be refused rather than granted at offset zero. Every refusal also adds one to a count, and its size in 16-byte units to another, in two header words that nothing on the GPU resets, so struct poly_heap grows to eight words: the host reads them to grow the heap for later command buffers, and the wrap test checks both.
 
 Checkpoint validation: KosmicKrisp provider links; kosmickrisp_line_raster, poly_passthrough_gs, and poly_gs_side_effects pass. All 96 portable native geometry side-effect cases pass cold and serialized-cache reload across direct, indirect, indexed, XFB, last provoking, and stipple paths. Guest line/provoking qualification, multiview, and dynamic raster variant integration remain pending.
 ---
@@ -63,19 +63,19 @@ Checkpoint validation: KosmicKrisp provider links; kosmickrisp_line_raster, poly
  .../tests/polygon_point_shaders/points.vert   |   15 +
  .../tests/polygon_point_shaders/points.vert.h |   38 +
  .../vulkan/tests/test_geometry_draw_size.cpp  |  342 ++++
- .../vulkan/tests/test_heap_overflow_gpu.c     |  495 +++++
+ .../vulkan/tests/test_heap_overflow_gpu.c     |  499 +++++
  .../vulkan/tests/test_line_raster.c           |  292 +++
  .../vulkan/tests/test_line_raster_cache.cpp   |  879 +++++++++
  .../tests/test_polygon_point_raster.cpp       |  509 +++++
  src/poly/cl/restart.h                         |  122 +-
- src/poly/geometry.h                           |  202 +-
+ src/poly/geometry.h                           |  226 ++-
  src/poly/nir/meson.build                      |   38 +
  src/poly/nir/poly_nir.h                       |   14 +-
  src/poly/nir/poly_nir_lower_gs.c              |  233 ++-
  src/poly/nir/poly_nir_passthrough_gs.c        |    2 +
  src/poly/nir/tests/test_gs_side_effects.c     |  126 ++
  src/poly/nir/tests/test_passthrough_gs.c      |   72 +
- 59 files changed, 7059 insertions(+), 371 deletions(-)
+ 59 files changed, 7085 insertions(+), 373 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_line_raster.h
  create mode 100644 src/kosmickrisp/vulkan/tests/geometry_draw_size_shaders/dynamic_points.geom
  create mode 100644 src/kosmickrisp/vulkan/tests/geometry_draw_size_shaders/dynamic_points.geom.h
@@ -5998,10 +5998,10 @@ index 0000000000000000000000000000000000000000..3369fcf62e9e12eaa307f030c4eb6834
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..df8881efd512972c133f9a8b5f016e3f52707b8c
+index 0000000000000000000000000000000000000000..d3506201ea34afd78da0b4c4e922428982fbf50b
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
-@@ -0,0 +1,495 @@
+@@ -0,0 +1,499 @@
 +/* SPDX-License-Identifier: MIT */
 +
 +/* Launch the production unroll and setup kernels on a heap too small for
@@ -6398,7 +6398,11 @@ index 0000000000000000000000000000000000000000..df8881efd512972c133f9a8b5f016e3f
 +      CHECK(actual->output_buffer == 0 && all_zero(actual->grid, 6));
 +      CHECK(all_zero(out_draws[i].cpu, 4));
 +   }
-+   CHECK(((const struct poly_heap *)heap_ptr.cpu)->bottom == bottom);
++   const struct poly_heap *after = heap_ptr.cpu;
++   CHECK(after->bottom == bottom);
++   /* Both refusals are counted, with the 0x10000010 and 32 bytes they asked
++    * for in 16-byte units, for the host to grow the heap by. */
++   CHECK(after->refusals == 2u && after->refused_units == 0x1000001u + 2u);
 +   printf("heap wrap PASS\n");
 +}
 +
@@ -8396,7 +8400,7 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..5f8347e5e2120f5f7ec248105868d23e
     }
  
 diff --git a/src/poly/geometry.h b/src/poly/geometry.h
-index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b814a2c18d57fc000850ee768e84772f0a0868c8 100644
+index b732add2fd235424dbb45f0d024838cb2c8b7dd5..e47ebf4c4264e30babc7b616af537f080f09231a 100644
 --- a/src/poly/geometry.h
 +++ b/src/poly/geometry.h
 @@ -19,6 +19,94 @@
@@ -8494,12 +8498,34 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b814a2c18d57fc000850ee768e84772f
  enum poly_gs_shape {
     /* Indexed, where indices are encoded as:
      *
-@@ -116,19 +204,55 @@ static_assert(sizeof(struct poly_heap) == 4 * 4,
-               "struct poly_heap must be 4 words");
+@@ -111,24 +199,80 @@ poly_gs_index_size(enum poly_gs_shape shape)
+ struct poly_heap {
+    DEVICE(uchar) base;
+    uint32_t bottom, size;
++
++   /* Every refused reservation adds one to refusals and its size, in 16-byte
++    * units, to refused_units. Both wrap modulo 2^32 and nothing on the GPU
++    * resets them, so the host reads them as deltas to size the heap for later
++    * command buffers. */
++   uint32_t refusals, refused_units;
++   uint32_t pad[2];
+ } PACKED;
+-static_assert(sizeof(struct poly_heap) == 4 * 4,
+-              "struct poly_heap must be 4 words");
++static_assert(sizeof(struct poly_heap) == 8 * 4,
++              "struct poly_heap must be 8 words");
  
  #ifdef __OPENCL_VERSION__
 -static inline uint
 -poly_heap_alloc_offs(global struct poly_heap *heap, uint size_B)
++/* Count a reservation the heap refused; see struct poly_heap. */
++static inline void
++poly_heap_note_refusal(global struct poly_heap *heap, uint size_B)
++{
++   atomic_add(&heap->refusals, 1u);
++   atomic_add(&heap->refused_units, (size_B >> 4) + ((size_B & 15u) != 0u));
++}
++
 +/* Reserve size_B bytes of the heap and return their offset in *offs_B, or
 + * return false when they do not fit. The caller then has to suppress the work
 + * that would have used them: a shader-side abort() only ends the invocation
@@ -8518,8 +8544,10 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b814a2c18d57fc000850ee768e84772f
  {
 +   /* align() adds alignment - 1 before masking, so reject values for which
 +    * that addition cannot be represented. */
-+   if (!poly_heap_size_can_align(size_B))
++   if (!poly_heap_size_can_align(size_B)) {
++      poly_heap_note_refusal(heap, size_B);
 +      return false;
++   }
 +
     size_B = align(size_B, 16);
  
@@ -8527,9 +8555,16 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b814a2c18d57fc000850ee768e84772f
 -      atomic_fetch_add((volatile atomic_uint *)(&heap->bottom), size_B);
 +   /* Preserve the allocator's existing rule that consuming the final byte is
 +    * an overflow. */
-+   if (size_B >= heap->size)
++   if (size_B >= heap->size) {
++      poly_heap_note_refusal(heap, size_B);
 +      return false;
-+
++   }
+ 
+-   /* Use printf+abort because assert is stripped from release builds. */
+-   if (heap->bottom >= heap->size) {
+-      printf(
+-         "FATAL: GPU heap overflow, allocating size %u, at offset %u, heap size %u!",
+-         size_B, offs, heap->size);
 +   const uint limit = heap->size - size_B;
 +   volatile atomic_uint *bottom = (volatile atomic_uint *)&heap->bottom;
 +   uint offs = heap->bottom;
@@ -8540,12 +8575,8 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b814a2c18d57fc000850ee768e84772f
 +         return true;
 +      }
 +   }
- 
--   /* Use printf+abort because assert is stripped from release builds. */
--   if (heap->bottom >= heap->size) {
--      printf(
--         "FATAL: GPU heap overflow, allocating size %u, at offset %u, heap size %u!",
--         size_B, offs, heap->size);
++
++   poly_heap_note_refusal(heap, size_B);
 +   return false;
 +}
 +
@@ -8559,7 +8590,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b814a2c18d57fc000850ee768e84772f
  
        abort();
     }
-@@ -192,9 +316,25 @@ struct poly_vertex_params {
+@@ -192,9 +336,25 @@ struct poly_vertex_params {
  
     /* Mask of outputs present in the output buffer */
     uint64_t outputs;
@@ -8587,7 +8618,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b814a2c18d57fc000850ee768e84772f
  
  static inline void
  poly_vertex_params_init(struct poly_vertex_params *p,
-@@ -206,6 +346,10 @@ poly_vertex_params_init(struct poly_vertex_params *p,
+@@ -206,6 +366,10 @@ poly_vertex_params_init(struct poly_vertex_params *p,
           0, 0, 1, /* x/y are set by poly_vertex_params_set_draw() */
           wg_size[0], wg_size[1], wg_size[2],
        },
@@ -8598,7 +8629,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b814a2c18d57fc000850ee768e84772f
     };
  }
  
-@@ -217,6 +361,7 @@ poly_vertex_params_set_draw(struct poly_vertex_params *p,
+@@ -217,6 +381,7 @@ poly_vertex_params_set_draw(struct poly_vertex_params *p,
     p->verts_per_instance = vertex_count;
     p->grid[0] = vertex_count;
     p->grid[1] = instance_count;
@@ -8606,7 +8637,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b814a2c18d57fc000850ee768e84772f
  }
  
  static inline uint
-@@ -314,9 +459,15 @@ struct poly_geometry_params {
+@@ -314,9 +479,15 @@ struct poly_geometry_params {
      * layout() declared input class.
      */
     uint32_t input_topology;
@@ -8624,7 +8655,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b814a2c18d57fc000850ee768e84772f
  
  static inline void
  poly_geometry_params_init(struct poly_geometry_params *p,
-@@ -599,7 +750,9 @@ poly_increment_ia(global uint32_t *ia_vertices, global uint32_t *ia_primitives,
+@@ -599,7 +770,9 @@ poly_increment_ia(global uint32_t *ia_vertices, global uint32_t *ia_primitives,
     poly_increment_counters(ia_primitives, c_prims, c_invs, prims);
  }
  
@@ -8635,7 +8666,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b814a2c18d57fc000850ee768e84772f
  poly_gs_setup_indirect(uint64_t index_buffer, constant uint *draw,
                         global struct poly_vertex_params *vp /* output */,
                         global struct poly_geometry_params *p /* output */,
-@@ -636,21 +789,28 @@ poly_gs_setup_indirect(uint64_t index_buffer, constant uint *draw,
+@@ -636,21 +809,28 @@ poly_gs_setup_indirect(uint64_t index_buffer, constant uint *draw,
     uint vertex_buffer_size =
        poly_tcs_in_size(vertex_count * instance_count, vs_outputs);
  

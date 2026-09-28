@@ -121,10 +121,10 @@ index d159845738a21e4c650d6e297393e06316794f8c..d5ecf61716299c994ef6d7274cd34142
  KK_WORKAROUND_17
  ----------------
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index e9aad1e62133281eb13813d923457b278e832595..58c1a4409d26e955fbb81410d90f9d025ee8356b 100644
+index adc9b348fa08cd47f9325eac6e873e4f70f40a11..09bd4024837bdb01f2966fc1efb64dd7cb8ed43b 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -94,6 +94,9 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
+@@ -96,6 +96,9 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
        container_of(vk_cmd_buffer, struct kk_cmd_buffer, vk);
     struct kk_cmd_pool *pool = kk_cmd_buffer_pool(cmd);
  
@@ -134,7 +134,7 @@ index e9aad1e62133281eb13813d923457b278e832595..58c1a4409d26e955fbb81410d90f9d02
     mtl_release(cmd->argument_table);
     kk_destroy_encoder_state(&cmd->cmp[0]);
     kk_destroy_encoder_state(&cmd->cmp[1]);
-@@ -221,10 +224,8 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -225,10 +228,8 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
  {
     struct kk_device *dev = kk_cmd_buffer_device(cmd);
  
@@ -147,15 +147,15 @@ index e9aad1e62133281eb13813d923457b278e832595..58c1a4409d26e955fbb81410d90f9d02
     kk_cmd_release_resources(dev, cmd);
  
     kk_reset_encoder_state(cmd->pre_gfx);
-@@ -235,6 +236,7 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -239,6 +240,7 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
     cmd->uploader.offset = 0;
  
     memset(&cmd->state, 0, sizeof(cmd->state));
 +   cmd->main.render_needed_pre = false;
-    cmd->uses_heap = false;
+    cmd->heap = NULL;
+    cmd->heap_demand_B = 0;
  }
- 
-@@ -309,9 +311,7 @@ kk_EndCommandBuffer(VkCommandBuffer commandBuffer)
+@@ -314,9 +316,7 @@ kk_EndCommandBuffer(VkCommandBuffer commandBuffer)
  {
     VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
  
@@ -166,7 +166,7 @@ index e9aad1e62133281eb13813d923457b278e832595..58c1a4409d26e955fbb81410d90f9d02
  
     return vk_command_buffer_end(&cmd->vk);
  }
-@@ -328,16 +328,62 @@ kk_can_ignore_barrier(VkAccessFlags2 access, VkPipelineStageFlags2 stage)
+@@ -333,16 +333,62 @@ kk_can_ignore_barrier(VkAccessFlags2 access, VkPipelineStageFlags2 stage)
     return (!(access ^ ignore_access)) || (!(stage ^ ignore_stage));
  }
  
@@ -232,7 +232,7 @@ index e9aad1e62133281eb13813d923457b278e832595..58c1a4409d26e955fbb81410d90f9d02
     cmd->gfx.encoder = mtl_new_render_command_encoder_with_descriptor(
        cmd->gfx.cmd_buf, state->render_pass_descriptor);
  
-@@ -400,38 +446,67 @@ cs_get_render(struct kk_cmd_buffer *cmd)
+@@ -405,38 +451,67 @@ cs_get_render(struct kk_cmd_buffer *cmd)
  }
  
  static void
@@ -319,7 +319,7 @@ index e9aad1e62133281eb13813d923457b278e832595..58c1a4409d26e955fbb81410d90f9d02
  }
  
  static void
-@@ -495,9 +570,12 @@ kk_stop_encoder(struct kk_cmd_buffer *cmd, struct kk_encoder_state *es)
+@@ -500,9 +575,12 @@ kk_stop_encoder(struct kk_cmd_buffer *cmd, struct kk_encoder_state *es)
  
     kk_encoder_state_clear_timestamps(es);
  
@@ -335,7 +335,7 @@ index e9aad1e62133281eb13813d923457b278e832595..58c1a4409d26e955fbb81410d90f9d02
     es->cmd_buf = NULL;
  }
  
-@@ -507,27 +585,39 @@ cs_end(struct kk_cmd_buffer *cmd)
+@@ -512,27 +590,39 @@ cs_end(struct kk_cmd_buffer *cmd)
     assert(cmd);
  
     if (cmd->pre_gfx->encoder) {
@@ -383,7 +383,7 @@ index e9aad1e62133281eb13813d923457b278e832595..58c1a4409d26e955fbb81410d90f9d02
  kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd, uint64_t addr)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 06fbde5af1864840fa2c3b1d06762836bd37b527..7bbf86802f2816c62dd9e31d6904b6d2ba19cace 100644
+index f10f5e66380787cd3431fc388dc622f551f6fc5d..407655ec567a1030142c9c618f3967e353d195ea 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -213,6 +213,11 @@ struct kk_graphics_state {
@@ -435,7 +435,7 @@ index 06fbde5af1864840fa2c3b1d06762836bd37b527..7bbf86802f2816c62dd9e31d6904b6d2
     void *drawable;
     mtl_argument_table *argument_table;
  
-@@ -422,6 +450,10 @@ void kk_cmd_buffer_set_vertex_amplification(struct kk_cmd_buffer *cmd,
+@@ -434,6 +462,10 @@ void kk_cmd_buffer_set_vertex_amplification(struct kk_cmd_buffer *cmd,
                                              uint32_t count);
  mtl_compute_encoder *cs_get_compute(struct kk_cmd_buffer *cmd, bool pre_gfx);
  void cs_end(struct kk_cmd_buffer *cmd);
@@ -447,10 +447,10 @@ index 06fbde5af1864840fa2c3b1d06762836bd37b527..7bbf86802f2816c62dd9e31d6904b6d2
                                          uint64_t addr);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index c6ae810c4a40fc5ee55ad41ba77d1947c9327f8e..26b2a6fc867eedcf40fd0c569163d7682c225fe1 100644
+index d043b2e0cd632a9581e7ce23d8b5e513680527df..36189a39a422cdc2f5bf2856df837f91a19e45da 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1909,7 +1909,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -2116,7 +2116,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
     }
  }
  
@@ -459,7 +459,7 @@ index c6ae810c4a40fc5ee55ad41ba77d1947c9327f8e..26b2a6fc867eedcf40fd0c569163d768
  kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
  {
     struct kk_graphics_state *gfx = &cmd->state.gfx;
-@@ -3449,20 +3449,8 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3713,20 +3713,8 @@ kk_tess_heap_bound(struct kk_cmd_buffer *cmd, const struct kk_draw_data *draw)
  }
  
  static void
@@ -481,7 +481,7 @@ index c6ae810c4a40fc5ee55ad41ba77d1947c9327f8e..26b2a6fc867eedcf40fd0c569163d768
     data->restart = cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable;
     data->restart_index =
        cmd->vk.dynamic_graphics_state.ia.primitive_restart_index;
-@@ -3606,6 +3594,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3881,6 +3869,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     }
  }
  
@@ -531,10 +531,10 @@ index 681be0d9eb9fc2087f4bb32bf0062c7fd5b42aef..8087aeb090f7a451e67d6aa2fd0bee91
     /* Need to ensure the new buffers allocated at record are resident. */
     kk_device_make_resources_resident(dev);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 74b3cc46324469fff21933c8f5fdb22a33b60316..5b4203c590633698baf22c9e451deaad6882f147 100644
+index b869c820d181ec22e6a255cc40a68ad07f30c1bb..7c74aeb734fddfd738877e6842b1b82fd6e5b819 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1082,6 +1082,39 @@ if with_tests
+@@ -1102,6 +1102,39 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
