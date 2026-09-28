@@ -1,9 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 
-if(NOT UML_GUEST_16K_PAGES)
-    message(FATAL_ERROR "The Android 17 product supports only 16 KiB guest pages")
-endif()
-
 set(_uml_android_kernel_root "${PROJECT_SOURCE_DIR}/kernel/android-6.18")
 set(_uml_kernel_common_root "${PROJECT_SOURCE_DIR}/kernel/common")
 include("${PROJECT_SOURCE_DIR}/kernel/common/artifacts/KernelArtifact.cmake")

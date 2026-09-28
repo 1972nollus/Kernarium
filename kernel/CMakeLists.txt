@@ -2,7 +2,6 @@
 
 set(UML_KERNEL_COMMON_ROOT "${PROJECT_SOURCE_DIR}/kernel/common")
 set(UML_KERNEL_LINE_ROOT "${PROJECT_SOURCE_DIR}/kernel/mainline-6.18")
-set(UML_ANDROID_KERNEL_LINE_ROOT "${PROJECT_SOURCE_DIR}/kernel/android-6.18")
 include("${UML_KERNEL_COMMON_ROOT}/artifacts/KernelArtifact.cmake")
 
 set(UML_KERNEL_PRODUCT "mainline-6.18" CACHE STRING
@@ -17,10 +16,8 @@ if(UML_KERNEL_PRODUCT STREQUAL "android-17")
         message(FATAL_ERROR
             "The Android 17 product supports only 16 KiB guest pages")
     endif()
-    if(NOT TARGET uml_android17_kernel_artifact)
-        add_subdirectory("${PROJECT_SOURCE_DIR}/android/aosp-17"
-            "${CMAKE_CURRENT_BINARY_DIR}/android-aosp-17")
-    endif()
+    add_subdirectory("${PROJECT_SOURCE_DIR}/android/aosp-17"
+        "${CMAKE_CURRENT_BINARY_DIR}/android-aosp-17")
     set(UML_ACTIVE_KERNEL_ARTIFACT_TARGET
         "${UML_ANDROID17_KERNEL_ARTIFACT_TARGET}"
         CACHE INTERNAL "Selected read-only kernel artifact target" FORCE)
@@ -32,20 +29,9 @@ if(NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18")
         "UML_KERNEL_PRODUCT must be mainline-6.18 or android-17")
 endif()
 
-set(UML_MAINLINE_KERNEL_SLICE "arm64" CACHE STRING
-    "Mainline kernel userspace ISA slice")
-set_property(CACHE UML_MAINLINE_KERNEL_SLICE PROPERTY STRINGS arm64 x86_64)
-if(NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64" AND
-   NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
-    message(FATAL_ERROR
-        "UML_MAINLINE_KERNEL_SLICE must be arm64 or x86_64")
-endif()
-
+# The root rejects every slice other than arm64 and x86_64, and x86_64 with
+# 16 KiB pages.
 if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
-    if(UML_GUEST_16K_PAGES)
-        message(FATAL_ERROR
-            "The x86_64 mainline kernel slice supports only 4 KiB guest pages")
-    endif()
     set(_uml_mainline_acceptance
         "${UML_KERNEL_LINE_ROOT}/slices/x86_64/artifacts/accepted-4k.env")
     set(_uml_expected_page_size 4096)
