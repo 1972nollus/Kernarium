@@ -22,6 +22,11 @@ from typing import NoReturn, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+_ARTIFACTS = str(REPO_ROOT / "kernel/common/artifacts")
+if _ARTIFACTS not in sys.path:
+    sys.path.insert(0, _ARTIFACTS)
+from contract_checks import accepted_directory_name  # noqa: E402
+
 ACCEPTED_RELEASE = (
     REPO_ROOT / "android/aosp-17/metadata/accepted-release.env"
 )
@@ -176,31 +181,9 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
 
 
 def accepted_directory(descriptor: Path = ACCEPTED_RELEASE) -> str:
-    try:
-        lines = descriptor.read_text(encoding="utf-8").splitlines()
-    except OSError as error:
-        raise LauncherError(
-            f"cannot read accepted Android release descriptor {descriptor}: {error}"
-        ) from error
-    key = "ANDROID17_ACCEPTED_DIRECTORY_NAME"
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        name, separator, encoded = stripped.partition("=")
-        if separator != "=" or name != key:
-            continue
-        try:
-            values = shlex.split(encoded, posix=True)
-        except ValueError as error:
-            raise LauncherError(f"invalid {key} in {descriptor}: {error}") from error
-        if len(values) != 1:
-            raise LauncherError(f"invalid {key} in {descriptor}")
-        value = values[0]
-        if value in ("", ".", "..") or Path(value).name != value:
-            raise LauncherError(f"unsafe {key} in {descriptor}")
-        return value
-    raise LauncherError(f"{descriptor} does not define {key}")
+    return accepted_directory_name(
+        descriptor, "ANDROID17_ACCEPTED_DIRECTORY_NAME", LauncherError
+    )
 
 
 def release_path(
