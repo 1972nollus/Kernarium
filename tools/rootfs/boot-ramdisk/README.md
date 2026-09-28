@@ -110,6 +110,17 @@ and `/sys`, so a payload a session run reads lives elsewhere, conventionally
 under `/usr/local/libexec`. The integration and performance harness
 (`tests/integration/support/guest.py`) boots every guest this way.
 
+## Seeds
+
+[`seeds/unified-kde-setup`](seeds/unified-kde-setup) is the desktop policy
+that the unified KDE image (`rootfs.erofs` and the ext4 derivatives sealed
+from it) does not carry itself: the `uml` user's device groups, getty masks
+on the display manager's VTs, XDG and Trash directories, SDDM autologin, the
+Folder View default, the disabled idle lock and the hidden Lavapipe ICD.
+`scripts/boot_kde_vnc.py` installs it as a payload and runs it from the
+harness test unit, which runs before the display manager. The file holds this
+policy until the image does.
+
 ## Launchers
 
 `uml-darwin` embeds the accepted base for its kernel slice's userspace
