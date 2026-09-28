@@ -14,16 +14,17 @@ This directory contains only source-family-independent inputs:
 - `tooling/kernel_series.py`: replay, verification, and regeneration of a
   line's ordered generated series; it reads and writes `metadata.env` through
   that parser;
-- `tooling/verify-console-input.py` and `console_input_probe.cpp`: the console
-  PTY assertion described below; and
+- `tooling/verify-console-input.py` and `tooling/console_input_probe.cpp`: the
+  console PTY assertion described below; and
 - [`video/`](video/README.md): the private Virtio video wire contract and the
   tool that syncs it into each kernel checkout.
 
 Pinned commits, complete configurations, toolchains, source locations, the
 bytes of each line's own overlay series, and build commands stay in the owning
-versioned kernel line. The common artifact verifier is local and read-only; it checks semantic
-source/ABI identity, page and module policy, ELF geometry, payload inventory,
-and exact bridge imports without requiring Kbuild or a source checkout.
+versioned kernel line. The common artifact verifier is local and read-only; it
+checks semantic source/ABI identity, page and module policy, ELF geometry,
+payload inventory, and exact bridge imports without requiring Kbuild or a
+source checkout.
 
 Host-terminal console output preserves unread terminal input when changing
 newline processing. Input and output may share one host PTY, so a kernel log
