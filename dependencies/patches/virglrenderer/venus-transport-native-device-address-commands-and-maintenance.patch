@@ -6,7 +6,7 @@ Subject: [PATCH] venus: transport native device-address commands and
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- meson.build                            |  77 +++++++--
+ meson.build                            |  81 +++++++--
  meson_options.txt                      |   7 +
  src/venus/vkr_acceleration_structure.c |  12 +-
  src/venus/vkr_allocator.c              |   1 +
@@ -32,10 +32,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  src/venus/vkr_ring.c                   |   2 +-
  src/venus/vkr_ring.h                   |   2 +-
  src/venus/vkr_transport.c              |   4 +-
- 26 files changed, 334 insertions(+), 35 deletions(-)
+ 26 files changed, 336 insertions(+), 37 deletions(-)
 
 diff --git a/meson.build b/meson.build
-index ced2650e49382de395bd5db90b04c66b59daf803..96c8c887eb88c6f70c73a55e39a9a246622bc136 100644
+index ced2650e49382de395bd5db90b04c66b59daf803..d1ccc1876d45c674f574d1486a30e07f0088cfca 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -374,23 +374,73 @@ if with_venus and with_host_darwin
@@ -113,8 +113,10 @@ index ced2650e49382de395bd5db90b04c66b59daf803..96c8c887eb88c6f70c73a55e39a9a246
     elif with_host_darwin
 -      vulkan_include_dir = get_option('vulkan-include-dir')
        vulkan_library_file = get_option('vulkan-library-file')
-       if vulkan_include_dir == '' or vulkan_library_file == ''
-          error('Darwin Venus requires explicit Vulkan headers and provider binary')
+-      if vulkan_include_dir == '' or vulkan_library_file == ''
+-         error('Darwin Venus requires explicit Vulkan headers and provider binary')
++      if vulkan_library_file == ''
++         error('Darwin Venus requires an explicit Vulkan provider binary')
        endif
        venus_dep += declare_dependency(
 -         compile_args : ['-I' + vulkan_include_dir],
