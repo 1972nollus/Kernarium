@@ -26,13 +26,9 @@ endif()
 uml_add_unit_test(NAME memory-domain-lifetime
     COMMAND uml_memory_domain_lifetime_tests LABELS tsan)
 
-add_executable(uml_memory_address_window_tests
-    address_window_tests.cpp
-    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu/address_layout.cpp)
+add_executable(uml_memory_address_window_tests address_window_tests.cpp)
 target_link_libraries(uml_memory_address_window_tests PRIVATE
-    UML::MemoryContract)
-target_include_directories(uml_memory_address_window_tests PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
+    uml_address_layout_test_variant)
 target_compile_features(uml_memory_address_window_tests PRIVATE cxx_std_20)
 target_compile_options(uml_memory_address_window_tests PRIVATE
     -Wall -Wextra -Werror)

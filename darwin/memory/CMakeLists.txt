@@ -176,6 +176,18 @@ if(UML_BUILD_UNIT_TESTS)
     target_compile_options(uml_execution_gate_profile_test_variant PRIVATE
         -Wall -Wextra -Werror)
 
+    # The published address window alone, for its reader test; products
+    # compile it into uml_static_mmu.
+    add_library(uml_address_layout_test_variant OBJECT mmu/address_layout.cpp)
+    uml_declare_architecture_target(uml_address_layout_test_variant memory)
+    target_link_libraries(uml_address_layout_test_variant PUBLIC
+        UML::MemoryContract)
+    target_include_directories(uml_address_layout_test_variant PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
+    target_compile_features(uml_address_layout_test_variant PUBLIC cxx_std_20)
+    target_compile_options(uml_address_layout_test_variant PRIVATE
+        -Wall -Wextra -Werror)
+
     add_library(uml_memory_test_component INTERFACE)
     add_library(UML::MemoryTestComponent ALIAS uml_memory_test_component)
     uml_declare_architecture_target(uml_memory_test_component memory)
