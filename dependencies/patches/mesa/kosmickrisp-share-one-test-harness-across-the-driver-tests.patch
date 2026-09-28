@@ -3,14 +3,14 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 05:04:07 +0900
 Subject: [PATCH] kosmickrisp: share one test harness across the driver tests
 
-Every KosmicKrisp test carried its own copy of the same checks.  30 C and
+Every KosmicKrisp test carried its own copy of the same checks.  31 C and
 Objective-C tests defined CHECK in three shapes (two boolean messages and a
-VkResult form), twelve of them the same LOAD_I and LOAD_D, 27 C++ tests and
-benchmarks the same require() and load<>(), and the line-planner helper its
-own KK_TEST_CHECK.  tests/kk_test.h now holds one boolean CHECK, one VK_CHECK
-and the C and C++ loaders; the VkResult-form tests and the one CHECK_VK use
-VK_CHECK.  Every check still names its expression and aborts in every build,
-and the C++ require() still exits with status 1.
+VkResult form), thirteen of them the same LOAD_I and LOAD_D, 27 C++ tests
+and benchmarks the same require() and load<>(), and the line-planner helper
+its own KK_TEST_CHECK.  tests/kk_test.h now holds one boolean CHECK, one
+VK_CHECK and the C and C++ loaders; the VkResult-form tests and the one
+CHECK_VK use VK_CHECK.  Every check still names its expression and aborts in
+every build, and the C++ require() still exits with status 1.
 
 The Meson stanzas of the four uniform families - Vulkan-level C++ tests,
 whole-library internal tests, header-only helper tests and NIR-to-MSL
@@ -41,6 +41,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_command_pool_threads.c  |   4 +-
  .../vulkan/tests/test_command_resubmit.c      |   4 +-
  .../tests/test_custom_border_lowering.c       |   9 +-
+ .../vulkan/tests/test_drm_plane_offset.c      |   4 +-
  .../tests/test_dynamic_vertex_input_cache.cpp |  20 +-
  .../tests/test_early_sample_mask_count.cpp    |  20 +-
  .../tests/test_fragment_output_swizzle.c      |   9 +-
@@ -85,14 +86,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_timeline_wait_loss.c    |   4 +-
  .../test_transform_feedback_builtins.cpp      |  20 +-
  .../tests/test_unused_attachment_gaps.cpp     |  20 +-
- 63 files changed, 525 insertions(+), 2167 deletions(-)
+ 64 files changed, 526 insertions(+), 2170 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/kk_test.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 93305da67d2ece9f0799339f5b7ae14864d7b904..0d0ed3aa6b04b03b7605978ad0f244e4d3f3b2a0 100644
+index a1de7bd7a53b44c6727752dd6e8f4a8e75943d9c..587699cfd9a6bda82db5622c442c75275f4a4b0f 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -227,20 +227,43 @@ if with_tests
@@ -615,7 +616,7 @@ index 93305da67d2ece9f0799339f5b7ae14864d7b904..0d0ed3aa6b04b03b7605978ad0f244e4
      timeline_wait_loss_test = executable(
        'test_kosmickrisp_timeline_wait_loss',
        files('tests/test_timeline_wait_loss.c'),
-@@ -1061,16 +747,25 @@ if with_tests
+@@ -1074,16 +760,25 @@ if with_tests
      )
    endif
  
@@ -651,7 +652,7 @@ index 93305da67d2ece9f0799339f5b7ae14864d7b904..0d0ed3aa6b04b03b7605978ad0f244e4
  
    test(
      'kosmickrisp_queue_error',
-@@ -1108,49 +803,6 @@ if with_tests
+@@ -1121,49 +816,6 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -701,7 +702,7 @@ index 93305da67d2ece9f0799339f5b7ae14864d7b904..0d0ed3aa6b04b03b7605978ad0f244e4
    test(
      'kosmickrisp_logic_op',
      executable(
-@@ -1308,75 +960,28 @@ if with_tests
+@@ -1321,75 +973,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -1662,6 +1663,21 @@ index f657858d271b3d133f732d71586a4fa0c7b2032c..a2dd0e3f5bfe33e7902c1a196e15e750
  
  struct lowering_stats {
     unsigned samples;
+diff --git a/src/kosmickrisp/vulkan/tests/test_drm_plane_offset.c b/src/kosmickrisp/vulkan/tests/test_drm_plane_offset.c
+index b3353c15f4c59270f21d7216d95ac90d58161d05..11f416d7fb3c109ceea6a471fd22a19e9685389c 100644
+--- a/src/kosmickrisp/vulkan/tests/test_drm_plane_offset.c
++++ b/src/kosmickrisp/vulkan/tests/test_drm_plane_offset.c
+@@ -17,9 +17,7 @@
+ #include "drm-uapi/drm_fourcc.h"
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ int
+ main(void)
 diff --git a/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp b/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp
 index 65706eb0008d3ae0755a925ff0ddbdc1ef9f3c3e..09b7c01231607a7c94828870d5ab5a8f00d39faf 100644
 --- a/src/kosmickrisp/vulkan/tests/test_dynamic_vertex_input_cache.cpp
