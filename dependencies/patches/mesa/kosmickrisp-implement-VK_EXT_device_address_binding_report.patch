@@ -216,10 +216,10 @@ index f2c96dbea7462a7fa3f73354c844b483bee82f3c..d63f71d45122df8396c2e5044fe140b5
         * Metal never tells the driver whether it compressed a texture and
         * offers no fixed-rate control, so every query answers "no
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 4122a0ce1ed86c92e7b9cdc6187bdfc07fe434dc..bfb240079e24c494971e99e62ebafd59bbb4d75d 100644
+index 28d7025a75d0f29f6e606a7c5b2207be51f4735c..a0e39670ca510007d170a08eea823dd3447fb2d1 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -879,6 +879,19 @@ if with_tests
+@@ -899,6 +899,19 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

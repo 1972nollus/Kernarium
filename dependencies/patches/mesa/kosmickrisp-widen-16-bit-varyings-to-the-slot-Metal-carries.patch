@@ -210,10 +210,10 @@ index e4a875a5214df6308805bc527563b7406f157916..db1788793555d5fd4028ebb1b1e23d01
      * path, link only the application pre-raster chain now; linking an
      * unmatched internal line input to the old final stage would discard it. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index dc0d6dfbd7df6a5c9176c5f5a2739e45a8959652..932ecd1e75314bd3cd15a23ae20a7762efcae8ba 100644
+index 884ace134d2b291e5d40975d33e77e53e7591df3..f3a166442c027f130e8bea52931cc7765b75e093 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1148,6 +1148,20 @@ if with_tests
+@@ -1168,6 +1168,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

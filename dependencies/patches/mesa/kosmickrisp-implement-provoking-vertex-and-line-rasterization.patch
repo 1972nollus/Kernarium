@@ -10,11 +10,13 @@ Memory-writing geometry shaders produce emitted attributes and counts exactly on
 
 A direct geometry draw sizes the geometry stage's count and output-index buffers in 64 bits, as it does the output records, and fails the command buffer when either would not fit the 32 bits the upload allocator and the GPU address them in, instead of handing the stage a truncated buffer. kosmickrisp_geometry_draw_size records such a draw.
 
+A heap reservation that does not fit is refused rather than aborted. The MSL backend lowers a shader-side abort() to a return, which ends only the invocation that calls it: the restart unroll's other threads went on with a buffer pointer the first had never published, and the geometry and line setups left the grids and draw words they had already written for the stages after them. poly_heap_try_alloc_offs reports the refusal instead, and each caller suppresses its draw: the unroll empties its draw and publishes a null buffer that every thread checks, and the geometry and line setups clear their grids, draw words and buffers. kosmickrisp_heap_overflow_gpu dispatches each of these kernels on a heap too small for its draw. Asahi's geometry.cl, which this build does not compile, ignores the result poly_gs_setup_indirect now returns.
+
 Checkpoint validation: KosmicKrisp provider links; kosmickrisp_line_raster, poly_passthrough_gs, and poly_gs_side_effects pass. All 96 portable native geometry side-effect cases pass cold and serialized-cache reload across direct, indirect, indexed, XFB, last provoking, and stipple paths. Guest line/provoking qualification, multiview, and dynamic raster variant integration remain pending.
 ---
  src/kosmickrisp/compiler/msl_iomap.c          |    2 +-
  src/kosmickrisp/libkk/kk_draws.cl             |   15 +-
- src/kosmickrisp/libkk/kk_geometry.cl          |  228 ++-
+ src/kosmickrisp/libkk/kk_geometry.cl          |  256 ++-
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   24 +-
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  699 ++++++-
  src/kosmickrisp/vulkan/kk_line_raster.h       |  296 +++
@@ -22,7 +24,7 @@ Checkpoint validation: KosmicKrisp provider links; kosmickrisp_line_raster, poly
  src/kosmickrisp/vulkan/kk_physical_device.c   |   13 +-
  src/kosmickrisp/vulkan/kk_shader.c            | 1702 +++++++++++++++--
  src/kosmickrisp/vulkan/kk_shader.h            |   20 +-
- src/kosmickrisp/vulkan/meson.build            |   63 +
+ src/kosmickrisp/vulkan/meson.build            |   83 +
  .../dynamic_points.geom                       |   18 +
  .../dynamic_points.geom.h                     |   74 +
  .../geometry_draw_size_shaders/generate.sh    |    7 +
@@ -59,18 +61,19 @@ Checkpoint validation: KosmicKrisp provider links; kosmickrisp_line_raster, poly
  .../tests/polygon_point_shaders/points.vert   |   15 +
  .../tests/polygon_point_shaders/points.vert.h |   38 +
  .../vulkan/tests/test_geometry_draw_size.cpp  |  342 ++++
+ .../vulkan/tests/test_heap_overflow_gpu.c     |  435 +++++
  .../vulkan/tests/test_line_raster.c           |  292 +++
  .../vulkan/tests/test_line_raster_cache.cpp   |  879 +++++++++
  .../tests/test_polygon_point_raster.cpp       |  509 +++++
- src/poly/cl/restart.h                         |  111 +-
- src/poly/geometry.h                           |  137 +-
+ src/poly/cl/restart.h                         |  122 +-
+ src/poly/geometry.h                           |  199 +-
  src/poly/nir/meson.build                      |   38 +
  src/poly/nir/poly_nir.h                       |   14 +-
  src/poly/nir/poly_nir_lower_gs.c              |  233 ++-
  src/poly/nir/poly_nir_passthrough_gs.c        |    2 +
  src/poly/nir/tests/test_gs_side_effects.c     |  126 ++
  src/poly/nir/tests/test_passthrough_gs.c      |   72 +
- 58 files changed, 6465 insertions(+), 346 deletions(-)
+ 59 files changed, 6998 insertions(+), 369 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_line_raster.h
  create mode 100644 src/kosmickrisp/vulkan/tests/geometry_draw_size_shaders/dynamic_points.geom
  create mode 100644 src/kosmickrisp/vulkan/tests/geometry_draw_size_shaders/dynamic_points.geom.h
@@ -108,6 +111,7 @@ Checkpoint validation: KosmicKrisp provider links; kosmickrisp_line_raster, poly
  create mode 100644 src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.vert
  create mode 100644 src/kosmickrisp/vulkan/tests/polygon_point_shaders/points.vert.h
  create mode 100644 src/kosmickrisp/vulkan/tests/test_geometry_draw_size.cpp
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
  create mode 100644 src/kosmickrisp/vulkan/tests/test_line_raster.c
  create mode 100644 src/kosmickrisp/vulkan/tests/test_line_raster_cache.cpp
  create mode 100644 src/kosmickrisp/vulkan/tests/test_polygon_point_raster.cpp
@@ -160,7 +164,7 @@ index cd9f13f1072f00e36e05416f09ffd1fae3d325ff..7d77eace591dd34aaa3f9ab4c7a35445
 +                        scratch);
  }
 diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
-index 39a3eda9ce24b2f617f306053284288f12fbc2c0..dd13feed1bd333403d9f9908b7dc60c3569a468f 100644
+index 39a3eda9ce24b2f617f306053284288f12fbc2c0..e776500cea8891d698f5505607d2e63c6fa4fb18 100644
 --- a/src/kosmickrisp/libkk/kk_geometry.cl
 +++ b/src/kosmickrisp/libkk/kk_geometry.cl
 @@ -11,6 +11,66 @@
@@ -230,10 +234,13 @@ index 39a3eda9ce24b2f617f306053284288f12fbc2c0..dd13feed1bd333403d9f9908b7dc60c3
  KERNEL(1)
  libkk_gs_setup_indirect(
     uint64_t index_buffer, constant uint32_t *draw,
-@@ -29,10 +89,40 @@ libkk_gs_setup_indirect(
+@@ -29,9 +89,46 @@ libkk_gs_setup_indirect(
        gs_group_grid[2] = 0;
     }
  
+-   poly_gs_setup_indirect(index_buffer, draw, vp, p, heap, vertex_outputs,
+-                          index_size_B, index_buffer_range_el, prim,
+-                          is_prefix_summing, max_indices, shape);
 +   uint32_t output_size = 0;
 +   uint32_t vs_records, vs_slots, vs_size;
 +   bool valid =
@@ -250,28 +257,34 @@ index 39a3eda9ce24b2f617f306053284288f12fbc2c0..dd13feed1bd333403d9f9908b7dc60c3
 +         poly_gs_output_buffer_size(total_primitives, p->output_vertices,
 +                                     p->output_vertex_stride, &output_size);
 +   }
-+   if (!valid) {
++   /* The setup below sets the grids before it reserves the buffers they
++    * write, so a refused reservation has to clear them again. */
++   uint32_t output_offs = 0;
++   if (!valid ||
++       !poly_gs_setup_indirect(index_buffer, draw, vp, p, heap,
++                               vertex_outputs, index_size_B,
++                               index_buffer_range_el, prim, is_prefix_summing,
++                               max_indices, shape) ||
++       (p->output_vertex_stride && output_size &&
++        !poly_heap_try_alloc_offs(heap, output_size, &output_offs))) {
 +      libkk_zero_indirect_grid(vp->grid);
++      libkk_zero_indirect_grid(vp->line_stipple_grid);
 +      libkk_zero_indirect_grid(p->grid);
++      vp->output_buffer = 0;
 +      p->draw = (struct poly_indirect_draw){0};
 +      p->input_primitives = 0;
 +      p->output_vertex_buffer = 0;
 +      return;
 +   }
 +
-    poly_gs_setup_indirect(index_buffer, draw, vp, p, heap, vertex_outputs,
-                           index_size_B, index_buffer_range_el, prim,
-                           is_prefix_summing, max_indices, shape);
- 
 +   if (p->output_vertex_stride)
 +      p->output_vertex_buffer = output_size
-+         ? poly_heap_alloc(heap, output_size)
++         ? (global uint *)(heap->base + output_offs)
 +         : 0;
-+
+ 
     if (gs_group_grid) {
        gs_group_grid[0] = p->grid[0] / KK_GEOMETRY_THREADGROUP_WIDTH +
-                          (p->grid[0] % KK_GEOMETRY_THREADGROUP_WIDTH != 0);
-@@ -93,23 +183,49 @@ libkk_rectangular_line_setup_indirect(
+@@ -93,23 +190,55 @@ libkk_rectangular_line_setup_indirect(
     global struct poly_heap *heap, global struct poly_vertex_params *vp,
     constant uint32_t *in_draw, global uint32_t *out_draw,
     uint64_t index_buffer, uint32_t index_buffer_range_el,
@@ -300,7 +313,13 @@ index 39a3eda9ce24b2f617f306053284288f12fbc2c0..dd13feed1bd333403d9f9908b7dc60c3
 +   }
  
 -   vp->output_buffer = (uintptr_t)poly_heap_alloc(heap, output_size);
-+   global uchar *allocation = poly_heap_alloc(heap, output_size + phase_size);
++   uint32_t allocation_offs;
++   if (!poly_heap_try_alloc_offs(heap, output_size + phase_size,
++                                 &allocation_offs)) {
++      libkk_suppress_line_work(vp, out_draw);
++      return;
++   }
++   global uchar *allocation = heap->base + allocation_offs;
 +   vp->output_buffer = (uintptr_t)allocation;
 +   vp->line_stipple_phases =
 +      phase_size ? (uintptr_t)(allocation + output_size) : 0;
@@ -326,7 +345,7 @@ index 39a3eda9ce24b2f617f306053284288f12fbc2c0..dd13feed1bd333403d9f9908b7dc60c3
  
     if (index_size_B) {
        uint32_t first_index = in_draw[2];
-@@ -118,8 +234,106 @@ libkk_rectangular_line_setup_indirect(
+@@ -118,8 +247,115 @@ libkk_rectangular_line_setup_indirect(
           poly_index_buffer_range_el(index_buffer_range_el, first_index);
     }
  
@@ -361,8 +380,12 @@ index 39a3eda9ce24b2f617f306053284288f12fbc2c0..dd13feed1bd333403d9f9908b7dc60c3
 +      return;
 +   }
 +
-+   vp->output_buffer =
-+      (uintptr_t)poly_heap_alloc(heap, output_size);
++   uint32_t output_offs;
++   if (!poly_heap_try_alloc_offs(heap, output_size, &output_offs)) {
++      libkk_suppress_line_work(vp, NULL);
++      return;
++   }
++   vp->output_buffer = (uintptr_t)(heap->base + output_offs);
 +   vp->outputs = vertex_outputs;
 +   vp->verts_per_instance = count;
 +   vp->line_source_verts_per_instance = count;
@@ -408,8 +431,13 @@ index 39a3eda9ce24b2f617f306053284288f12fbc2c0..dd13feed1bd333403d9f9908b7dc60c3
 +      return;
 +   }
 +
++   uint32_t phase_offs = 0;
++   if (phase_size && !poly_heap_try_alloc_offs(heap, phase_size, &phase_offs)) {
++      libkk_suppress_line_work(vp, out_draw);
++      return;
++   }
 +   vp->line_stipple_phases = phase_size
-+      ? (uintptr_t)poly_heap_alloc(heap, phase_size)
++      ? (uintptr_t)(heap->base + phase_offs)
 +      : 0;
 +   vp->line_run_starts = line_run_starts_addr
 +      ? *((global const uint64_t *)line_run_starts_addr)
@@ -4365,7 +4393,7 @@ index 7e187015d14c1cc66ca824f4685ebcde07599ca8..305d35e072a40f0c3581acc02fac5e28
 +
  #endif /* KK_SHADER_H */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index af6c3db8d90ca2ff36848f8f65a68389ff37cff2..5cbaaeb3b43b493fb4b7ddcffcb42a417504fcf9 100644
+index af6c3db8d90ca2ff36848f8f65a68389ff37cff2..9d4278b8182a3043479ee173f3f3d443a793df56 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -90,6 +90,7 @@ kk_files = files(
@@ -4376,7 +4404,34 @@ index af6c3db8d90ca2ff36848f8f65a68389ff37cff2..5cbaaeb3b43b493fb4b7ddcffcb42a41
    'kk_instance.h',
    'kk_instance.c',
    'kk_nir_lower_custom_border.c',
-@@ -275,6 +276,57 @@ if with_tests
+@@ -249,6 +250,26 @@ if with_tests
+       env : ['MESA_SHADER_CACHE_DISABLE=true'],
+       timeout : 120,
+     )
++    test(
++      'kosmickrisp_heap_overflow_gpu',
++      executable(
++        'test_kosmickrisp_heap_overflow_gpu',
++        files('tests/test_heap_overflow_gpu.c'),
++        include_directories : kk_test_include_directories,
++        dependencies : [
++          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
++          idep_vulkan_runtime_headers,
++          idep_vulkan_util_headers,
++          idep_vulkan_wsi_headers,
++          idep_libkk_shaders_h,
++        ],
++        link_whole : libkk,
++        link_args : ['-Wl,-undefined,dynamic_lookup'],
++      ),
++      suite : ['kosmickrisp'],
++      env : ['MESA_SHADER_CACHE_DISABLE=true'],
++      timeout : 120,
++    )
+     test(
+       'kosmickrisp_metal_objects_export',
+       executable(
+@@ -275,6 +296,57 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
@@ -4434,7 +4489,7 @@ index af6c3db8d90ca2ff36848f8f65a68389ff37cff2..5cbaaeb3b43b493fb4b7ddcffcb42a41
    endif
  
    test(
-@@ -298,6 +350,17 @@ if with_tests
+@@ -298,6 +370,17 @@ if with_tests
      ),
      suite : ['kosmickrisp'],
    )
@@ -5937,6 +5992,447 @@ index 0000000000000000000000000000000000000000..3369fcf62e9e12eaa307f030c4eb6834
 +   vkDestroyDevice(device, nullptr);
 +   vkDestroyInstance(instance, nullptr);
 +   std::printf("oversized geometry-shader draws fail their command buffer\n");
++   return 0;
++}
+diff --git a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..d017499cb4f70f25cfc3359c0135e8b7bedd732f
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
+@@ -0,0 +1,435 @@
++/* SPDX-License-Identifier: MIT */
++
++/* Launch the production unroll and setup kernels on a heap too small for
++ * their draws. A refused heap reservation must leave every stage after it
++ * with nothing to do. A shader-side abort() ends only the invocation that
++ * calls it, so a kernel that aborted instead would leave the words it had not
++ * written yet - the canaries below - for the stages that read them, and the
++ * other invocations of an unroll group would go on with a pointer the
++ * aborted one never published. */
++#include "kosmickrisp/vulkan/kk_cmd_buffer.h"
++#include "kosmickrisp/vulkan/kk_device.h"
++#include "kosmickrisp/vulkan/kk_entrypoints.h"
++
++#include <stdlib.h>
++#include <string.h>
++
++#define CHECK(condition)                                                       \
++   do {                                                                        \
++      if (!(condition)) {                                                      \
++         fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__,      \
++                 #condition);                                                  \
++         abort();                                                              \
++      }                                                                        \
++   } while (0)
++
++#define VK_CHECK(expr)                                                         \
++   do {                                                                        \
++      VkResult result_ = (expr);                                               \
++      if (result_ != VK_SUCCESS) {                                             \
++         fprintf(stderr, "%s:%d: %s = %d\n", __FILE__, __LINE__, #expr,        \
++                 result_);                                                     \
++         abort();                                                              \
++      }                                                                        \
++   } while (0)
++
++enum { HEAP_SIZE = 4096, HEAP_BOTTOM = 16, CANARY = 0xa5a5a5a5 };
++
++struct context {
++   VkDevice device;
++   VkQueue queue;
++   VkCommandPool pool;
++   VkCommandBuffer command;
++   const struct vk_device_dispatch_table *api;
++};
++
++static struct kk_cmd_buffer *
++begin(struct context *ctx)
++{
++   VK_CHECK(ctx->api->ResetCommandPool(ctx->device, ctx->pool, 0));
++   const VkCommandBufferBeginInfo info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
++      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
++   };
++   VK_CHECK(ctx->api->BeginCommandBuffer(ctx->command, &info));
++   return kk_cmd_buffer_from_handle(ctx->command);
++}
++
++static void
++submit(struct context *ctx)
++{
++   VK_CHECK(ctx->api->EndCommandBuffer(ctx->command));
++   const VkSubmitInfo info = {
++      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++      .commandBufferCount = 1,
++      .pCommandBuffers = &ctx->command,
++   };
++   VK_CHECK(ctx->api->QueueSubmit(ctx->queue, 1, &info, VK_NULL_HANDLE));
++   VK_CHECK(ctx->api->QueueWaitIdle(ctx->queue));
++}
++
++/* A HEAP_SIZE heap in pool memory, the first HEAP_BOTTOM bytes in use. */
++static struct kk_ptr
++heap(struct kk_cmd_buffer *cmd)
++{
++   struct kk_ptr storage = kk_pool_alloc(cmd, HEAP_SIZE, 16);
++   CHECK(storage.gpu);
++   const struct poly_heap data = {
++      .base = storage.gpu,
++      .bottom = HEAP_BOTTOM,
++      .size = HEAP_SIZE,
++   };
++   struct kk_ptr header = kk_pool_upload(cmd, &data, sizeof(data), 4);
++   CHECK(header.cpu);
++   return header;
++}
++
++static struct kk_ptr
++canaries(struct kk_cmd_buffer *cmd, uint32_t words)
++{
++   struct kk_ptr ptr = kk_pool_alloc(cmd, words * sizeof(uint32_t), 8);
++   CHECK(ptr.cpu);
++   memset(ptr.cpu, 0xa5, words * sizeof(uint32_t));
++   return ptr;
++}
++
++static bool
++all_zero(const uint32_t *words, uint32_t count)
++{
++   for (uint32_t i = 0; i < count; i++) {
++      if (words[i])
++         return false;
++   }
++   return true;
++}
++
++struct unroll_case {
++   const char *name;
++   enum mesa_prim mode;
++   bool line_runs;
++   uint32_t vertices[2];
++   uint32_t draws, unrolled;
++};
++
++/* Unroll non-indexed fans or strips. Each draw's words and a guard after the
++ * last must show whether it was unrolled whole or emptied. */
++static void
++check_unroll(struct context *ctx, const struct unroll_case *test)
++{
++   struct kk_cmd_buffer *cmd = begin(ctx);
++   struct kk_ptr heap_ptr = heap(cmd);
++   const uint32_t out_stride = test->line_runs ? 8 : 5;
++   uint32_t in_words[2][4];
++   for (uint32_t i = 0; i < test->draws; i++) {
++      in_words[i][0] = test->vertices[i];
++      in_words[i][1] = 2 + i;
++      in_words[i][2] = 7 + i;
++      in_words[i][3] = 3 + i;
++   }
++   struct kk_ptr in_draw = kk_pool_upload(cmd, in_words, sizeof(in_words), 4);
++   struct kk_ptr out_draw = canaries(cmd, test->draws * out_stride + 1);
++   CHECK(in_draw.cpu);
++   const struct libkk_unroll_geometry_args args = {
++      .heap = heap_ptr.gpu,
++      .in_draw = in_draw.gpu,
++      .out_draw = out_draw.gpu,
++      .in_draw_stride_el = 4,
++      .out_draw_stride_el = out_stride,
++      .restart_index = UINT32_MAX,
++      .out_el_size_B = 4,
++      .emit_line_runs = test->line_runs,
++      .mode = test->mode,
++   };
++   libkk_unroll_geometry_struct(cmd, kk_grid_1d(1024 * test->draws), true,
++                                args);
++   submit(ctx);
++
++   const uint32_t per_prim = mesa_vertices_per_prim(u_decomposed_prim(test->mode));
++   const uint32_t *out = out_draw.cpu;
++   const struct poly_heap *actual_heap = heap_ptr.cpu;
++   uint32_t unrolled = 0;
++   for (uint32_t i = 0; i < test->draws; i++) {
++      const uint32_t *words = out + i * out_stride;
++      const uint32_t indices =
++         u_decomposed_prims_for_vertices(test->mode, test->vertices[i]) *
++         per_prim;
++      const uint32_t size_B = indices * 4 + (test->line_runs
++         ? u_decomposed_prims_for_vertices(test->mode, test->vertices[i]) * 4
++         : 0);
++      /* Reservations may land in either order, so a draw that fits on its
++       * own is either whole or emptied; the count below says which. */
++      if (!all_zero(words, out_stride)) {
++         CHECK(size_B < HEAP_SIZE - HEAP_BOTTOM);
++         CHECK(words[0] == indices && words[1] == 2 + i &&
++               words[3] == 7 + i && words[4] == 3 + i);
++         const uint32_t offset_B = words[2] * 4;
++         CHECK(offset_B >= HEAP_BOTTOM &&
++               offset_B + size_B <= actual_heap->bottom &&
++               offset_B + size_B <= HEAP_SIZE);
++         if (test->line_runs) {
++            const uint64_t runs = *(const uint64_t *)&words[6];
++            CHECK(words[5] == 0 &&
++                  runs == actual_heap->base + offset_B + indices * 4);
++         }
++         unrolled++;
++      }
++   }
++   CHECK(unrolled == test->unrolled);
++   CHECK(out[test->draws * out_stride] == CANARY);
++   printf("unroll PASS %s (%u of %u draws unrolled)\n", test->name, unrolled,
++          test->draws);
++}
++
++struct gs_case {
++   const char *name;
++   uint32_t vertices;
++   uint32_t output_vertices, stride;
++   bool fits;
++};
++
++static void
++check_gs(struct context *ctx, const struct gs_case *test)
++{
++   struct kk_cmd_buffer *cmd = begin(ctx);
++   const uint32_t local[3] = {64, 1, 1};
++   struct poly_vertex_params vertex;
++   struct poly_geometry_params geometry;
++   poly_vertex_params_init(&vertex, 1, local);
++   poly_geometry_params_init(&geometry, MESA_PRIM_POINTS, local);
++   geometry.output_vertex_stride = test->stride;
++   geometry.output_vertices = test->output_vertices;
++   struct kk_ptr vp = kk_pool_upload(cmd, &vertex, sizeof(vertex), 8);
++   struct kk_ptr gp = kk_pool_upload(cmd, &geometry, sizeof(geometry), 8);
++   const uint32_t draw_words[4] = {test->vertices, 1, 0, 0};
++   struct kk_ptr draw = kk_pool_upload(cmd, draw_words, sizeof(draw_words), 4);
++   struct kk_ptr groups = canaries(cmd, 3);
++   struct kk_ptr heap_ptr = heap(cmd);
++   CHECK(vp.cpu && gp.cpu && draw.cpu);
++   const struct libkk_gs_setup_indirect_args args = {
++      .draw = draw.gpu,
++      .vp = vp.gpu,
++      .p = gp.gpu,
++      .heap = heap_ptr.gpu,
++      .vertex_outputs = 1,
++      .prim = MESA_PRIM_POINTS,
++      .shape = POLY_GS_SHAPE_STATIC_PER_INSTANCE,
++      .gs_group_grid = groups.gpu,
++   };
++   libkk_gs_setup_indirect_struct(cmd, kk_grid_1d(1), true, args);
++   submit(ctx);
++
++   const struct poly_vertex_params *actual_vp = vp.cpu;
++   const struct poly_geometry_params *actual_gp = gp.cpu;
++   const uint32_t *actual_groups = groups.cpu;
++   if (test->fits) {
++      CHECK(actual_vp->grid[0] == test->vertices &&
++            actual_gp->grid[0] == test->vertices);
++      CHECK(actual_vp->output_buffer && actual_gp->output_vertex_buffer);
++      CHECK(actual_groups[0] == DIV_ROUND_UP(test->vertices, 64));
++   } else {
++      CHECK(all_zero(actual_vp->grid, 6) &&
++            all_zero(actual_vp->line_stipple_grid, 6) &&
++            all_zero(actual_gp->grid, 6) && all_zero(actual_groups, 3));
++      const struct poly_indirect_draw empty = {0};
++      CHECK(memcmp(&actual_gp->draw, &empty, sizeof(empty)) == 0);
++      CHECK(actual_vp->output_buffer == 0 && actual_gp->input_primitives == 0 &&
++            actual_gp->output_vertex_buffer == 0);
++   }
++   printf("geometry setup PASS %s\n", test->name);
++}
++
++enum line_kernel { LINE_RECTANGULAR, LINE_MATERIALIZE, LINE_RASTER };
++
++struct line_case {
++   const char *name;
++   enum line_kernel kernel;
++   uint32_t vertices, aux_stride;
++   bool fits;
++};
++
++static void
++check_line(struct context *ctx, const struct line_case *test)
++{
++   struct kk_cmd_buffer *cmd = begin(ctx);
++   const uint32_t local[3] = {64, 1, 1};
++   struct poly_vertex_params vertex;
++   poly_vertex_params_init(&vertex, 1, local);
++   /* Stale sizes from an earlier draw, which a refused setup must clear. The
++    * third grid word is the view count the host publishes. */
++   vertex.grid[0] = vertex.grid[1] = 9;
++   vertex.line_stipple_grid[0] = 9;
++   /* The raster setup follows a materializing producer. */
++   const uint64_t producer_output = 0x100000;
++   if (test->kernel == LINE_RASTER)
++      vertex.output_buffer = producer_output;
++   struct kk_ptr vp = kk_pool_upload(cmd, &vertex, sizeof(vertex), 8);
++   const uint32_t draw_words[5] = {test->vertices, 1, 0, 0, 0};
++   struct kk_ptr draw = kk_pool_upload(cmd, draw_words, sizeof(draw_words), 4);
++   struct kk_ptr out_draw = canaries(cmd, 4);
++   struct kk_ptr heap_ptr = heap(cmd);
++   CHECK(vp.cpu && draw.cpu);
++   switch (test->kernel) {
++   case LINE_RECTANGULAR: {
++      const struct libkk_rectangular_line_setup_indirect_args args = {
++         .heap = heap_ptr.gpu,
++         .vp = vp.gpu,
++         .in_draw = draw.gpu,
++         .out_draw = out_draw.gpu,
++         .vertex_outputs = 1,
++         .mode = MESA_PRIM_LINES,
++         .vertices_per_line = 6,
++         .lines_per_primitive = 1,
++         .line_aux_stride = test->aux_stride,
++      };
++      libkk_rectangular_line_setup_indirect_struct(cmd, kk_grid_1d(1), true,
++                                                   args);
++      break;
++   }
++   case LINE_MATERIALIZE: {
++      const struct libkk_line_materialize_setup_indirect_args args = {
++         .heap = heap_ptr.gpu,
++         .vp = vp.gpu,
++         .in_draw = draw.gpu,
++         .vertex_outputs = 1,
++      };
++      libkk_line_materialize_setup_indirect_struct(cmd, kk_grid_1d(1), true,
++                                                   args);
++      break;
++   }
++   case LINE_RASTER: {
++      const struct libkk_line_raster_setup_indirect_args args = {
++         .heap = heap_ptr.gpu,
++         .vp = vp.gpu,
++         .in_draw = draw.gpu,
++         .out_draw = out_draw.gpu,
++         .mode = MESA_PRIM_LINES,
++         .vertices_per_line = 6,
++         .lines_per_primitive = 1,
++         .line_aux_stride = test->aux_stride,
++      };
++      libkk_line_raster_setup_indirect_struct(cmd, kk_grid_1d(1), true,
++                                              args);
++      break;
++   }
++   }
++   submit(ctx);
++
++   const struct poly_vertex_params *actual = vp.cpu;
++   const uint32_t *out = out_draw.cpu;
++   const bool writes_draw = test->kernel != LINE_MATERIALIZE;
++   if (test->fits) {
++      if (test->kernel == LINE_RASTER) {
++         CHECK(actual->output_buffer == producer_output &&
++               actual->line_stipple_phases &&
++               actual->line_stipple_grid[0] == 1);
++      } else {
++         CHECK(actual->output_buffer && actual->grid[0] == test->vertices);
++      }
++      if (writes_draw)
++         CHECK(out[0] == test->vertices / 2 * 6 && out[1] == 1);
++   } else {
++      CHECK(all_zero(actual->grid, 6) &&
++            all_zero(actual->line_stipple_grid, 6));
++      CHECK(actual->output_buffer == 0 && actual->line_stipple_phases == 0 &&
++            actual->verts_per_instance == 0);
++      if (writes_draw)
++         CHECK(all_zero(out, 4));
++   }
++   if (!writes_draw)
++      CHECK(out[0] == CANARY);
++   printf("line setup PASS %s\n", test->name);
++}
++
++int
++main(void)
++{
++   const VkApplicationInfo app = {
++      .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
++      .apiVersion = VK_API_VERSION_1_3,
++   };
++   const VkInstanceCreateInfo instance_info = {
++      .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
++      .pApplicationInfo = &app,
++   };
++   VkInstance instance;
++   VK_CHECK(kk_CreateInstance(&instance_info, NULL, &instance));
++   PFN_vkEnumeratePhysicalDevices enumerate =
++      (PFN_vkEnumeratePhysicalDevices)kk_GetInstanceProcAddr(
++         instance, "vkEnumeratePhysicalDevices");
++   uint32_t count = 1;
++   VkPhysicalDevice physical;
++   VK_CHECK(enumerate(instance, &count, &physical));
++   CHECK(count == 1);
++   const float priority = 1;
++   const VkDeviceQueueCreateInfo queue_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
++      .queueFamilyIndex = 0,
++      .queueCount = 1,
++      .pQueuePriorities = &priority,
++   };
++   const VkDeviceCreateInfo device_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
++      .queueCreateInfoCount = 1,
++      .pQueueCreateInfos = &queue_info,
++   };
++   struct context ctx = {0};
++   VK_CHECK(kk_CreateDevice(physical, &device_info, NULL, &ctx.device));
++   ctx.api = &kk_device_from_handle(ctx.device)->exposed_dispatch_table;
++   ctx.api->GetDeviceQueue(ctx.device, 0, 0, &ctx.queue);
++   const VkCommandPoolCreateInfo pool_info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
++      .queueFamilyIndex = 0,
++   };
++   VK_CHECK(ctx.api->CreateCommandPool(ctx.device, &pool_info, NULL,
++                                       &ctx.pool));
++   const VkCommandBufferAllocateInfo allocation = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
++      .commandPool = ctx.pool,
++      .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
++      .commandBufferCount = 1,
++   };
++   VK_CHECK(ctx.api->AllocateCommandBuffers(ctx.device, &allocation,
++                                            &ctx.command));
++
++   /* A fan of n vertices unrolls to 3(n - 2) indices; a strip with runs to
++    * 2(n - 1) indices and n - 1 run starts. The heap holds 4080 bytes. */
++   const struct unroll_case unrolls[] = {
++      {"fan-fits", MESA_PRIM_TRIANGLE_FAN, false, {5}, 1, 1},
++      {"strip-runs-fit", MESA_PRIM_LINE_STRIP, true, {5}, 1, 1},
++      {"fan-overflows", MESA_PRIM_TRIANGLE_FAN, false, {3000}, 1, 0},
++      {"strip-runs-overflow", MESA_PRIM_LINE_STRIP, true, {1000}, 1, 0},
++      {"second-fan-overflows", MESA_PRIM_TRIANGLE_FAN, false, {5, 3000}, 2, 1},
++      /* Each fits alone; whichever reserves second is refused. */
++      {"fans-overflow-together", MESA_PRIM_TRIANGLE_FAN, false, {200, 250}, 2,
++       1},
++   };
++   for (unsigned i = 0; i < ARRAY_SIZE(unrolls); i++)
++      check_unroll(&ctx, &unrolls[i]);
++
++   /* A point is 16 bytes of vertex output; each GS output vertex is stride
++    * bytes. */
++   const struct gs_case geometries[] = {
++      {"fits", 10, 4, 16, true},
++      {"vertex-buffer-overflows", 1000, 1, 16, false},
++      {"output-buffer-overflows", 10, 64, 16, false},
++   };
++   for (unsigned i = 0; i < ARRAY_SIZE(geometries); i++)
++      check_gs(&ctx, &geometries[i]);
++
++   /* 16 bytes of output per vertex and aux_stride bytes per line. */
++   const struct line_case lines[] = {
++      {"rectangular-fits", LINE_RECTANGULAR, 10, 4, true},
++      {"rectangular-overflows", LINE_RECTANGULAR, 300, 4, false},
++      {"materialize-fits", LINE_MATERIALIZE, 10, 0, true},
++      {"materialize-overflows", LINE_MATERIALIZE, 300, 0, false},
++      {"raster-fits", LINE_RASTER, 10, 4, true},
++      {"raster-phases-overflow", LINE_RASTER, 1000, 16, false},
++   };
++   for (unsigned i = 0; i < ARRAY_SIZE(lines); i++)
++      check_line(&ctx, &lines[i]);
++
++   ctx.api->DestroyCommandPool(ctx.device, ctx.pool, NULL);
++   ctx.api->DestroyDevice(ctx.device, NULL);
++   kk_DestroyInstance(instance, NULL);
 +   return 0;
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_line_raster.c b/src/kosmickrisp/vulkan/tests/test_line_raster.c
@@ -7638,10 +8134,10 @@ index 0000000000000000000000000000000000000000..adc46cb439e08101cd776875c862e459
 +   return 0;
 +}
 diff --git a/src/poly/cl/restart.h b/src/poly/cl/restart.h
-index 995720da0ea0f92afe47ca0056a352e14316754a..66ccf3eec5357fecc058433daaf5d1b5de7de14d 100644
+index 995720da0ea0f92afe47ca0056a352e14316754a..5f8347e5e2120f5f7ec248105868d23e18f566e3 100644
 --- a/src/poly/cl/restart.h
 +++ b/src/poly/cl/restart.h
-@@ -135,15 +135,41 @@ static inline global void *
+@@ -135,22 +135,45 @@ static inline global void *
  poly_setup_unroll_for_draw(global struct poly_heap *heap,
                             constant uint *in_draw, global uint *out_draw,
                             enum mesa_prim mode, uint in_index_size_B,
@@ -7656,6 +8152,13 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..66ccf3eec5357fecc058433daaf5d1b5
 -   uint max_prims = u_decomposed_prims_for_vertices(mode, in_draw[0]);
 -   uint max_verts = max_prims * mesa_vertices_per_prim(mode);
 -   uint alloc_size = max_verts * out_index_size_B;
+-
+-   /* Allocate unrolled index buffer.
+-    *
+-    * TODO: For multidraw, should be atomic. But multidraw+unroll isn't
+-    * currently wired up in any driver.
+-    */
+-   uint old_heap_bottom_B = poly_heap_alloc_offs(heap, alloc_size);
 +   uint max_prims =
 +      poly_decomposed_prims_for_vertices_u32(mode, in_draw[0]);
 +   uint per_prim = discard_adjacency
@@ -7665,14 +8168,18 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..66ccf3eec5357fecc058433daaf5d1b5
 +
 +   /* The heap ABI and indirect count are 32-bit.  Reject an indirect draw
 +    * whose conservative unroll bound cannot be represented instead of
-+    * wrapping the allocation and allowing the GPU writers to run past it. */
++    * wrapping the allocation and allowing the GPU writers to run past it.
++    * A bound the heap cannot hold is refused the same way: the draw is
++    * emptied and the caller publishes the null buffer to every thread, which
++    * would otherwise go on with a pointer this thread never wrote. */
++   uint old_heap_bottom_B;
 +   if (!poly_u32_checked_mul(max_prims, per_prim, &max_verts) ||
 +       !poly_u32_checked_mul(max_verts, out_index_size_B, &index_size) ||
 +       (emit_line_runs &&
 +        !poly_u32_checked_mul(max_prims, sizeof(uint32_t), &run_size)) ||
 +       !poly_u32_checked_add(index_size, emit_line_runs ? run_size : 0,
 +                             &alloc_size) ||
-+       !poly_heap_size_can_align(alloc_size)) {
++       !poly_heap_try_alloc_offs(heap, alloc_size, &old_heap_bottom_B)) {
 +      out_draw[0] = 0;
 +      out_draw[1] = 0;
 +      out_draw[2] = 0;
@@ -7685,9 +8192,9 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..66ccf3eec5357fecc058433daaf5d1b5
 +      return NULL;
 +   }
  
-    /* Allocate unrolled index buffer.
-     *
-@@ -159,6 +185,16 @@ poly_setup_unroll_for_draw(global struct poly_heap *heap,
+    /* Setup most of the descriptor. Count will be determined after unroll. */
+    uint vertex_offset_idx = in_index_size_B > 0 ? 3 : 2;
+@@ -159,6 +182,16 @@ poly_setup_unroll_for_draw(global struct poly_heap *heap,
     out_draw[3] = in_draw[vertex_offset_idx];           /* index bias */
     out_draw[4] = in_draw[vertex_offset_idx + 1];       /* base instance */
  
@@ -7704,7 +8211,7 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..66ccf3eec5357fecc058433daaf5d1b5
     /* Return the index buffer we allocated */
     return (global uchar *)heap->base + old_heap_bottom_B;
  }
-@@ -173,6 +209,10 @@ poly_unroll_geometry(global uint32_t *out_draw,
+@@ -173,6 +206,10 @@ poly_unroll_geometry(global uint32_t *out_draw,
                       uint32_t out_index_size_B,
                       uint32_t restart_index,
                       uint32_t flatshade_first,
@@ -7715,7 +8222,7 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..66ccf3eec5357fecc058433daaf5d1b5
                       enum mesa_prim mode,
                       local void *scratch)
  {
-@@ -183,7 +223,9 @@ poly_unroll_geometry(global uint32_t *out_draw,
+@@ -183,7 +220,9 @@ poly_unroll_geometry(global uint32_t *out_draw,
     if (tid == 0) {
        out_ptr = (uintptr_t)poly_setup_unroll_for_draw(heap, in_draw, out_draw,
                                                        mode, in_index_size_B,
@@ -7726,7 +8233,7 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..66ccf3eec5357fecc058433daaf5d1b5
        if (get_num_sub_groups() > 1)
           *(uintptr_t *)scratch = out_ptr;
     }
-@@ -195,14 +237,26 @@ poly_unroll_geometry(global uint32_t *out_draw,
+@@ -195,14 +234,26 @@ poly_unroll_geometry(global uint32_t *out_draw,
        out_ptr = sub_group_broadcast(out_ptr, 0);
     }
  
@@ -7754,7 +8261,7 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..66ccf3eec5357fecc058433daaf5d1b5
     while (needle < count) {
        /* Search for next restart or the end. Lanes load in parallel. */
        uint next_restart = needle;
-@@ -221,17 +275,43 @@ poly_unroll_geometry(global uint32_t *out_draw,
+@@ -221,17 +272,43 @@ poly_unroll_geometry(global uint32_t *out_draw,
  
        /* Emit up to the next restart. Lanes output in parallel */
        uint subcount = next_restart - needle;
@@ -7803,7 +8310,7 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..66ccf3eec5357fecc058433daaf5d1b5
  
              poly_store_index(out_ptr, out_index_size_B, x, y);
           }
-@@ -259,7 +339,11 @@ poly_unroll_restart(global uint32_t *out_draw,
+@@ -259,7 +336,11 @@ poly_unroll_restart(global uint32_t *out_draw,
  {
     poly_unroll_geometry(out_draw, heap, in_draw, index_buffer,
                          index_buffer_range_el, index_size_B, index_size_B,
@@ -7816,7 +8323,7 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..66ccf3eec5357fecc058433daaf5d1b5
  }
  
  static inline uint32_t
-@@ -299,7 +383,8 @@ poly_count_restart_prims(constant uint *in_draw,
+@@ -299,7 +380,8 @@ poly_count_restart_prims(constant uint *in_draw,
        }
  
        uint subcount = next_restart - needle;
@@ -7827,7 +8334,7 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..66ccf3eec5357fecc058433daaf5d1b5
     }
  
 diff --git a/src/poly/geometry.h b/src/poly/geometry.h
-index b732add2fd235424dbb45f0d024838cb2c8b7dd5..ac92bcfb6fbb212ba3d53e05b6d1ab54a5872ae9 100644
+index b732add2fd235424dbb45f0d024838cb2c8b7dd5..45ceee9d4b156318c41a7109ede2e71d29554864 100644
 --- a/src/poly/geometry.h
 +++ b/src/poly/geometry.h
 @@ -19,6 +19,94 @@
@@ -7925,33 +8432,71 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..ac92bcfb6fbb212ba3d53e05b6d1ab54
  enum poly_gs_shape {
     /* Indexed, where indices are encoded as:
      *
-@@ -119,13 +207,23 @@ static_assert(sizeof(struct poly_heap) == 4 * 4,
- static inline uint
- poly_heap_alloc_offs(global struct poly_heap *heap, uint size_B)
+@@ -116,19 +204,56 @@ static_assert(sizeof(struct poly_heap) == 4 * 4,
+               "struct poly_heap must be 4 words");
+ 
+ #ifdef __OPENCL_VERSION__
+-static inline uint
+-poly_heap_alloc_offs(global struct poly_heap *heap, uint size_B)
++/* Reserve size_B bytes of the heap and return their offset in *offs_B, or
++ * return false when they do not fit. The caller then has to suppress the work
++ * that would have used them: a shader-side abort() only ends the invocation
++ * that calls it, so a caller that went on would leave the stages after it with
++ * the pointers and dispatch sizes it had not written yet.
++ *
++ * A refused reservation already made by the atomic below still advances the
++ * allocator, so every later reservation in the command buffer is refused too.
++ * One that could never fit, or one made after the heap filled, leaves it
++ * alone. Only reservations that pass that check while the heap still has
++ * room move the bottom past the end, each by less than the heap size. The
++ * 32-bit bottom wraps back into space still in use only when the ones in
++ * flight at once overshoot by 2^32 minus the heap size: gigabytes at the
++ * default size, but only two reservations near the largest heap
++ * MESA_KK_HEAP_SIZE_MIB allows. */
++static inline bool
++poly_heap_try_alloc_offs(global struct poly_heap *heap, uint size_B,
++                         uint *offs_B)
  {
 +   /* align() adds alignment - 1 before masking, so reject values for which
 +    * that addition cannot be represented. */
-+   if (!poly_heap_size_can_align(size_B)) {
-+      printf("FATAL: GPU heap allocation size %u cannot be aligned!", size_B);
-+      abort();
-+   }
++   if (!poly_heap_size_can_align(size_B))
++      return false;
 +
     size_B = align(size_B, 16);
  
++   /* Preserve the allocator's existing rule that consuming the final byte is
++    * an overflow. */
++   if (size_B >= heap->size || heap->bottom >= heap->size)
++      return false;
++
     uint offs =
        atomic_fetch_add((volatile atomic_uint *)(&heap->bottom), size_B);
  
 -   /* Use printf+abort because assert is stripped from release builds. */
 -   if (heap->bottom >= heap->size) {
+-      printf(
+-         "FATAL: GPU heap overflow, allocating size %u, at offset %u, heap size %u!",
+-         size_B, offs, heap->size);
 +   /* Check against the pre-add offset so a wrapped atomic result cannot make
-+    * an overflowing reservation appear to fit.  Preserve the allocator's
-+    * existing rule that consuming the final byte is an overflow. */
-+   if (size_B >= heap->size || offs >= heap->size - size_B ||
-+       offs > 0xffffffffu - size_B) {
-       printf(
-          "FATAL: GPU heap overflow, allocating size %u, at offset %u, heap size %u!",
-          size_B, offs, heap->size);
-@@ -192,9 +290,25 @@ struct poly_vertex_params {
++    * an overflowing reservation appear to fit. */
++   if (offs >= heap->size - size_B || offs > 0xffffffffu - size_B)
++      return false;
++
++   *offs_B = offs;
++   return true;
++}
++
++static inline uint
++poly_heap_alloc_offs(global struct poly_heap *heap, uint size_B)
++{
++   uint offs;
++   if (!poly_heap_try_alloc_offs(heap, size_B, &offs)) {
++      printf("FATAL: GPU heap overflow, allocating size %u, heap size %u!",
++             size_B, heap->size);
+ 
+       abort();
+    }
+@@ -192,9 +317,25 @@ struct poly_vertex_params {
  
     /* Mask of outputs present in the output buffer */
     uint64_t outputs;
@@ -7979,7 +8524,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..ac92bcfb6fbb212ba3d53e05b6d1ab54
  
  static inline void
  poly_vertex_params_init(struct poly_vertex_params *p,
-@@ -206,6 +320,10 @@ poly_vertex_params_init(struct poly_vertex_params *p,
+@@ -206,6 +347,10 @@ poly_vertex_params_init(struct poly_vertex_params *p,
           0, 0, 1, /* x/y are set by poly_vertex_params_set_draw() */
           wg_size[0], wg_size[1], wg_size[2],
        },
@@ -7990,7 +8535,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..ac92bcfb6fbb212ba3d53e05b6d1ab54
     };
  }
  
-@@ -217,6 +335,7 @@ poly_vertex_params_set_draw(struct poly_vertex_params *p,
+@@ -217,6 +362,7 @@ poly_vertex_params_set_draw(struct poly_vertex_params *p,
     p->verts_per_instance = vertex_count;
     p->grid[0] = vertex_count;
     p->grid[1] = instance_count;
@@ -7998,7 +8543,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..ac92bcfb6fbb212ba3d53e05b6d1ab54
  }
  
  static inline uint
-@@ -314,9 +433,15 @@ struct poly_geometry_params {
+@@ -314,9 +460,15 @@ struct poly_geometry_params {
      * layout() declared input class.
      */
     uint32_t input_topology;
@@ -8016,6 +8561,53 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..ac92bcfb6fbb212ba3d53e05b6d1ab54
  
  static inline void
  poly_geometry_params_init(struct poly_geometry_params *p,
+@@ -599,7 +751,9 @@ poly_increment_ia(global uint32_t *ia_vertices, global uint32_t *ia_primitives,
+    poly_increment_counters(ia_primitives, c_prims, c_invs, prims);
+ }
+ 
+-static inline void
++/* Returns false when the heap cannot hold the stage's buffers. The draw's grids
++ * are already set then, so the caller has to clear them. */
++static inline bool
+ poly_gs_setup_indirect(uint64_t index_buffer, constant uint *draw,
+                        global struct poly_vertex_params *vp /* output */,
+                        global struct poly_geometry_params *p /* output */,
+@@ -636,21 +790,28 @@ poly_gs_setup_indirect(uint64_t index_buffer, constant uint *draw,
+    uint vertex_buffer_size =
+       poly_tcs_in_size(vertex_count * instance_count, vs_outputs);
+ 
++   uint offs;
+    if (is_prefix_summing) {
+-      p->count_buffer = poly_heap_alloc(
+-         heap, p->input_primitives * p->count_buffer_stride);
++      if (!poly_heap_try_alloc_offs(
++             heap, p->input_primitives * p->count_buffer_stride, &offs))
++         return false;
++      p->count_buffer = (global uint *)(heap->base + offs);
+    }
+ 
+-   vp->output_buffer = (uintptr_t)poly_heap_alloc(heap, vertex_buffer_size);
++   if (!poly_heap_try_alloc_offs(heap, vertex_buffer_size, &offs))
++      return false;
++   vp->output_buffer = (uintptr_t)(heap->base + offs);
+ 
+    vp->outputs = vs_outputs;
+ 
+    if (shape == POLY_GS_SHAPE_DYNAMIC_INDEXED) {
+-      const uint32_t index_offset =
+-         poly_heap_alloc_offs(heap, p->draw.index_count * 4);
+-      p->draw.first_index = index_offset / 4;
+-      p->output_index_buffer = (global uint *)(heap->base + index_offset);
++      if (!poly_heap_try_alloc_offs(heap, p->draw.index_count * 4, &offs))
++         return false;
++      p->draw.first_index = offs / 4;
++      p->output_index_buffer = (global uint *)(heap->base + offs);
+    }
++
++   return true;
+ }
+ 
+ static uint
 diff --git a/src/poly/nir/meson.build b/src/poly/nir/meson.build
 index a489a5226401a29599576e9d795d7254ce3efd69..abfd305a267684c8d861055dc625014bce579443 100644
 --- a/src/poly/nir/meson.build

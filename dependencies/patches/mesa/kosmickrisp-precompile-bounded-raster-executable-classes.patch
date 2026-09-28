@@ -95,7 +95,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_raster_variant.c
 
 diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
-index 6d647946d06bdb091eee6063cabdd0bdf953c51e..05c74af00b90cdf0bedad40a618f37336599897b 100644
+index c826b4d605aa995a863119add325fc3cf667f47b..6f45578ceafd3bf93883e25a4f74530735b7c5bd 100644
 --- a/src/kosmickrisp/libkk/kk_geometry.cl
 +++ b/src/kosmickrisp/libkk/kk_geometry.cl
 @@ -144,7 +144,7 @@ static inline bool
@@ -119,7 +119,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..05c74af00b90cdf0bedad40a618f3733
        return false;
  
     return poly_u32_checked_add(*output_size, *phase_size, &allocation) &&
-@@ -239,45 +239,6 @@ libkk_prefix_sum_geom(constant struct poly_geometry_params *p)
+@@ -246,45 +246,6 @@ libkk_prefix_sum_geom(constant struct poly_geometry_params *p)
                     p->count_buffer_stride / 4, cl_group_id.x, 1024);
  }
  
@@ -165,7 +165,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..05c74af00b90cdf0bedad40a618f3733
  KERNEL(1)
  libkk_rectangular_line_setup_indirect(
     global struct poly_heap *heap, global struct poly_vertex_params *vp,
-@@ -285,7 +246,7 @@ libkk_rectangular_line_setup_indirect(
+@@ -292,7 +253,7 @@ libkk_rectangular_line_setup_indirect(
     uint64_t index_buffer, uint32_t index_buffer_range_el,
     uint32_t index_size_B, uint64_t vertex_outputs, uint32_t mode,
     uint32_t vertices_per_line, uint32_t lines_per_primitive,
@@ -174,7 +174,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..05c74af00b90cdf0bedad40a618f3733
  {
     uint32_t count = in_draw[0];
     uint32_t instance_count = in_draw[1];
-@@ -298,7 +259,7 @@ libkk_rectangular_line_setup_indirect(
+@@ -305,7 +266,7 @@ libkk_rectangular_line_setup_indirect(
     if (!poly_u32_checked_mul(instance_count, view_count, &record_instances) ||
         !libkk_line_output_sizes(
            count, record_instances, vertex_outputs, mode, lines_per_primitive,
@@ -183,7 +183,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..05c74af00b90cdf0bedad40a618f3733
            &phase_size, &out_vertices)) {
        libkk_suppress_line_work(vp, out_draw);
        return;
-@@ -329,7 +290,7 @@ libkk_rectangular_line_setup_indirect(
+@@ -342,7 +303,7 @@ libkk_rectangular_line_setup_indirect(
  
     if (index_size_B) {
        uint32_t first_index = in_draw[2];
@@ -192,7 +192,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..05c74af00b90cdf0bedad40a618f3733
        vp->index_buffer_range_el =
           poly_index_buffer_range_el(index_buffer_range_el, first_index);
     }
-@@ -391,7 +352,7 @@ libkk_line_raster_setup_indirect(
+@@ -408,7 +369,7 @@ libkk_line_raster_setup_indirect(
     constant uint32_t *in_draw, global uint32_t *out_draw,
     uint64_t index_buffer, uint32_t index_buffer_range_el,
     uint32_t index_size_B, uint32_t mode, uint32_t vertices_per_line,
@@ -201,7 +201,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..05c74af00b90cdf0bedad40a618f3733
     uint64_t line_run_starts_addr)
  {
     uint32_t count = in_draw[0];
-@@ -402,9 +363,9 @@ libkk_line_raster_setup_indirect(
+@@ -419,9 +380,9 @@ libkk_line_raster_setup_indirect(
     if ((vp->output_buffer == 0 && count != 0 && instance_count != 0) ||
         !poly_u32_checked_mul(primitive_count, lines_per_primitive, &lines) ||
         !poly_u32_checked_mul(lines, vertices_per_line, &out_vertices) ||
@@ -213,7 +213,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..05c74af00b90cdf0bedad40a618f3733
         !poly_heap_size_can_align(phase_size)) {
        libkk_suppress_line_work(vp, out_draw);
        return;
-@@ -417,7 +378,7 @@ libkk_line_raster_setup_indirect(
+@@ -439,7 +400,7 @@ libkk_line_raster_setup_indirect(
        ? *((global const uint64_t *)line_run_starts_addr)
        : 0;
     vp->verts_per_instance = count;
@@ -3513,7 +3513,7 @@ index c3939af69936578d95808c98020a6b6a4dfc350a..6a439054966ff29eb571fbaa22211790
     struct blob deferred_nir;
     struct msl_compile_data msl_data[MESA_SHADER_STAGES];
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index a32452d612201ac07d6bd839b2401aab8ff1e343..2e75cb1e36ac1af12e5b06aace60747f48a5d177 100644
+index f7192afb69cdfa026e439e51567fd1fbabd039e2..5caad26d5bd1e3a7c3ca6e81092a7889fa24726f 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -91,6 +91,8 @@ kk_files = files(
@@ -3525,7 +3525,7 @@ index a32452d612201ac07d6bd839b2401aab8ff1e343..2e75cb1e36ac1af12e5b06aace60747f
    'kk_instance.h',
    'kk_instance.c',
    'kk_nir_lower_custom_border.c',
-@@ -348,6 +350,27 @@ if with_tests
+@@ -368,6 +370,27 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -3553,7 +3553,7 @@ index a32452d612201ac07d6bd839b2401aab8ff1e343..2e75cb1e36ac1af12e5b06aace60747f
      test(
        'kosmickrisp_transform_feedback_builtins',
        executable(
-@@ -418,6 +441,7 @@ if with_tests
+@@ -438,6 +461,7 @@ if with_tests
                'tests/line_raster_cache_state.m'),
          include_directories : kk_test_include_directories,
          dependencies : [
@@ -3561,7 +3561,7 @@ index a32452d612201ac07d6bd839b2401aab8ff1e343..2e75cb1e36ac1af12e5b06aace60747f
            idep_nir,
            idep_vulkan_runtime_headers,
            idep_vulkan_util_headers,
-@@ -489,6 +513,17 @@ if with_tests
+@@ -509,6 +533,17 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

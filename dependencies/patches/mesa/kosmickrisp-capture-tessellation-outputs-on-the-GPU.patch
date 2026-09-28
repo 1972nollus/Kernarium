@@ -1,16 +1,16 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
-Date: Sun, 6 Sep 2026 07:09:27 +0900
+Date: Tue, 29 Sep 2026 02:38:58 +0900
 Subject: [PATCH] kosmickrisp: capture tessellation outputs on the GPU
 
 Produce ordered TES records once, then pull raw capture and raster outputs without re-executing application effects. Preserve shared GPU capacity and query accounting, independent raster provoking values, and empty-patch draws.
 
 Use one tessellator index winding for native and software consumers. Match indirect VS/TCS launches to the exact-thread Metal dispatch ABI.
 
-Size the buffers and grids a tessellated draw takes from application draw words with checked 32-bit arithmetic, one helper for the host and the indirect setup kernel: the TCS outputs, each patch's coordinate allocation and index count, the TCS grid and, for an indirect draw, the vertex outputs. A wrapped size would hand the TCS and the tessellator a small allocation to write far past. A direct draw that does not fit fails the recording with VK_ERROR_OUT_OF_DEVICE_MEMORY; an indirect one launches nothing, counts no statistic and draws nothing. The index prefix sum refuses a total that wrapped or that its 32-bit heap cannot address the same way: it draws nothing and clears the patch count, which the tessellator kernels respect. kosmickrisp_tess_draw_size records the direct refusal, and kosmickrisp_tess_setup_gpu launches the setup and prefix-sum kernels on bounded heaps with sizes that wrap.
+Size the buffers and grids a tessellated draw takes from application draw words with checked 32-bit arithmetic, one helper for the host and the indirect setup kernel: the TCS outputs, each patch's coordinate allocation and index count, the TCS grid and, for an indirect draw, the vertex outputs. A wrapped size would hand the TCS and the tessellator a small allocation to write far past. A direct draw that does not fit fails the recording with VK_ERROR_OUT_OF_DEVICE_MEMORY; an indirect one launches nothing, counts no statistic and draws nothing. The index prefix sum refuses a total that wrapped or that its 32-bit heap cannot address the same way: it draws nothing and clears the patch count, which the tessellator kernels respect. A reservation the heap cannot hold is refused the same way rather than aborted, since the MSL backend's abort() ends only the calling invocation and would leave the grids, patch count and draw words it had not cleared: the setup and the prefix sum launch nothing, and a tessellator that cannot place a patch's points empties the whole draw, whose other patches' indices are then never drawn, and counts no TES invocations for that patch. kosmickrisp_tess_draw_size records the direct refusal, and kosmickrisp_tess_setup_gpu launches the setup and prefix-sum kernels on bounded heaps with sizes that wrap or that the heap cannot hold.
 ---
- src/kosmickrisp/libkk/kk_geometry.cl          |  26 +-
- src/kosmickrisp/libkk/kk_tessellation.cl      |  46 ++-
+ src/kosmickrisp/libkk/kk_geometry.cl          |  28 +-
+ src/kosmickrisp/libkk/kk_tessellation.cl      |  51 ++-
  src/kosmickrisp/libkk/kk_tessellator.cl       |  10 +
  src/kosmickrisp/libkk/kk_tessellator.h        |  34 ++
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  81 ++--
@@ -22,11 +22,11 @@ Size the buffers and grids a tessellated draw takes from application draw words 
  .../tests/tess_draw_size_shaders/wide.tese    |   8 +
  .../tests/tess_draw_size_shaders/wide.tese.h  |  50 +++
  .../vulkan/tests/test_tess_draw_size.cpp      | 354 ++++++++++++++++++
- .../vulkan/tests/test_tess_setup_gpu.c        | 293 +++++++++++++++
+ .../vulkan/tests/test_tess_setup_gpu.c        | 297 +++++++++++++++
  src/poly/cl/tessellation.cl                   |   2 +-
- src/poly/cl/tessellator.h                     |   7 +-
+ src/poly/cl/tessellator.h                     |  30 +-
  src/poly/tessellator.h                        |  15 +-
- 17 files changed, 1175 insertions(+), 77 deletions(-)
+ 17 files changed, 1204 insertions(+), 82 deletions(-)
  create mode 100755 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/generate.sh
  create mode 100644 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc
  create mode 100644 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc.h
@@ -36,10 +36,10 @@ Size the buffers and grids a tessellated draw takes from application draw words 
  create mode 100644 src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
 
 diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
-index 05c74af00b90cdf0bedad40a618f37336599897b..e488291ef6ba441f9d4669466605958f67f1f1a8 100644
+index 6f45578ceafd3bf93883e25a4f74530735b7c5bd..7231127cd789991c3338cfd8bc4d3fc4807592b6 100644
 --- a/src/kosmickrisp/libkk/kk_geometry.cl
 +++ b/src/kosmickrisp/libkk/kk_geometry.cl
-@@ -410,6 +410,15 @@ libkk_prefix_sum_tess(global struct poly_tess_params *p,
+@@ -432,6 +432,15 @@ libkk_prefix_sum_tess(global struct poly_tess_params *p,
     poly_prefix_sum(scratch, p->counts, p->nr_patches, 1 /* words */,
                     0 /* word */, 1024);
  
@@ -55,7 +55,7 @@ index 05c74af00b90cdf0bedad40a618f37336599897b..e488291ef6ba441f9d4669466605958f
     /* After prefix summing, we know the total # of indices, so allocate the
      * index buffer now. Elect a thread for the allocation.
      */
-@@ -420,15 +429,24 @@ libkk_prefix_sum_tess(global struct poly_tess_params *p,
+@@ -442,15 +451,24 @@ libkk_prefix_sum_tess(global struct poly_tess_params *p,
     /* The last element of an inclusive prefix sum is the total sum */
     uint total = p->nr_patches > 0 ? p->counts[p->nr_patches - 1] : 0;
  
@@ -65,17 +65,18 @@ index 05c74af00b90cdf0bedad40a618f37336599897b..e488291ef6ba441f9d4669466605958f
 +    * tessellator skips every patch once nr_patches is zero. */
     uint32_t elsize_B = sizeof(uint32_t);
 -   uint32_t size_B = total * elsize_B;
+-   uint alloc_B = poly_heap_alloc_offs(p->heap, size_B);
 +   uint32_t size_B;
 +   global uint32_t *desc = p->out_draws;
++   uint alloc_B;
 +   if (wraps || !poly_u32_checked_mul(total, elsize_B, &size_B) ||
-+       !poly_heap_size_can_align(size_B)) {
++       !poly_heap_try_alloc_offs(p->heap, size_B, &alloc_B)) {
 +      p->nr_patches = 0;
 +      for (uint i = 0; i < 5; ++i)
 +         desc[i] = 0;
 +      return;
 +   }
 +
-    uint alloc_B = poly_heap_alloc_offs(p->heap, size_B);
     p->index_buffer = (global uint32_t *)(((uintptr_t)p->heap->base) + alloc_B);
  
     /* ...and now we can generate the API indexed draw */
@@ -85,7 +86,7 @@ index 05c74af00b90cdf0bedad40a618f37336599897b..e488291ef6ba441f9d4669466605958f
     desc[1] = 1;                  /* instance_count */
     desc[2] = alloc_B / elsize_B; /* start */
 diff --git a/src/kosmickrisp/libkk/kk_tessellation.cl b/src/kosmickrisp/libkk/kk_tessellation.cl
-index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..8c633622ac8d69119a7668481a11ed08d010e364 100644
+index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..0dda4747c507b451ed4b6df7043bc0603ac84f89 100644
 --- a/src/kosmickrisp/libkk/kk_tessellation.cl
 +++ b/src/kosmickrisp/libkk/kk_tessellation.cl
 @@ -5,13 +5,14 @@
@@ -110,11 +111,11 @@ index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..8c633622ac8d69119a7668481a11ed08
  
 +   /* The draw words are application data, so size every buffer and grid
 +    * before writing any state; the arithmetic below then cannot wrap. A
-+    * draw whose sizes do not fit 32 bits launches nothing: its three grids
-+    * stay empty, the prefix sum sees no patch and writes an empty draw, and
-+    * no statistic counts it. */
++    * draw whose sizes do not fit 32 bits, or whose buffers the heap cannot
++    * hold, launches nothing: its three grids stay empty, the prefix sum sees
++    * no patch and writes an empty draw, and no statistic counts it. */
 +   unsigned unrolled_patches;
-+   uint32_t patch_buffers_B, vertices, vb_B, blob_B;
++   uint32_t patch_buffers_B, vertices, vb_B, blob_B, blob_offs;
 +   if (!kk_tess_patch_buffers_size(in_patches, instance_count,
 +                                   p->tcs_stride_el, p->output_patch_size,
 +                                   &unrolled_patches, &patch_buffers_B) ||
@@ -122,7 +123,7 @@ index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..8c633622ac8d69119a7668481a11ed08
 +       !poly_u32_checked_mul(vertices, util_bitcount64(vertex_outputs) * 16,
 +                             &vb_B) ||
 +       !poly_u32_checked_add(patch_buffers_B, vb_B, &blob_B) ||
-+       !poly_heap_size_can_align(blob_B)) {
++       !poly_heap_try_alloc_offs(p->heap, blob_B, &blob_offs)) {
 +      for (uint i = 0; i < 18; ++i)
 +         grids[i] = 0;
 +      p->nr_patches = 0;
@@ -140,7 +141,19 @@ index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..8c633622ac8d69119a7668481a11ed08
  
     uint32_t alloc = 0;
     uint32_t tcs_out_offs = alloc;
-@@ -81,14 +102,23 @@ libkk_tess_setup_indirect(
+@@ -45,8 +66,9 @@ libkk_tess_setup_indirect(
+    uint vb_size = poly_tcs_in_size(count * instance_count, vertex_outputs);
+    alloc += vb_size;
+ 
+-   /* Allocate all patch calculations in one go */
+-   global uchar *blob = poly_heap_alloc(p->heap, alloc);
++   /* All patch calculations share the one reservation made above, which
++    * the same sizes bound. */
++   global uchar *blob = p->heap->base + blob_offs;
+ 
+    p->tcs_buffer = (global float *)(blob + tcs_out_offs);
+    p->patches_per_instance = in_patches;
+@@ -81,14 +103,23 @@ libkk_tess_setup_indirect(
     grids[0] = count;
     grids[1] = instance_count;
     grids[2] = 1;
@@ -728,10 +741,10 @@ index 014eb1b25555fba7cc06cb9d618fb91e26bccca7..0162840e86d1c8bb0509921a75111d64
  
        mesa_shader_stage logical_stage = nir_shaders[i]->info.stage;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 8968a9a70bd31a852c2f3639aa3f5491ed90d7ef..6dd1214832c42ecc5ebfbf0bdd0a11cb3bc16485 100644
+index 0ce7f35e050fcd6d31989282acdd8e92048e7228..0ac4f683eaace636ecef990b838babf78e712123 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -256,6 +256,26 @@ if with_tests
+@@ -276,6 +276,26 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -758,7 +771,7 @@ index 8968a9a70bd31a852c2f3639aa3f5491ed90d7ef..6dd1214832c42ecc5ebfbf0bdd0a11cb
      test(
        'kosmickrisp_metal_objects_export',
        executable(
-@@ -296,6 +316,20 @@ if with_tests
+@@ -316,6 +336,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -1370,18 +1383,19 @@ index 0000000000000000000000000000000000000000..64c467737fab0ca914bc6d904fe65838
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..80494a40ca8d8bd30de52b67225f320f028caa1c
+index 0000000000000000000000000000000000000000..b7232bb259192887564d9db21ee77cd6662de7ec
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
-@@ -0,0 +1,293 @@
+@@ -0,0 +1,297 @@
 +/* SPDX-License-Identifier: MIT */
 +
 +/* Launch only the production tessellation setup and index prefix sum. An
 + * indirect draw's words and the per-patch index counts are application data;
 + * sizes that do not fit 32 bits must launch nothing rather than wrap into a
-+ * small allocation. Every case here stays within a bounded heap even with the
-+ * sizes wrapped, so an unchecked kernel reports a wrong result instead of
-+ * faulting, and no oversized stage is ever dispatched. */
++ * small allocation, and neither must sizes the heap cannot hold. Every case
++ * here stays within a bounded heap even with the sizes wrapped, so an
++ * unchecked kernel reports a wrong result instead of faulting, and no
++ * oversized stage is ever dispatched. */
 +#include "kosmickrisp/vulkan/kk_cmd_buffer.h"
 +#include "kosmickrisp/vulkan/kk_device.h"
 +#include "kosmickrisp/vulkan/kk_entrypoints.h"
@@ -1642,6 +1656,8 @@ index 0000000000000000000000000000000000000000..80494a40ca8d8bd30de52b67225f320f
 +      {"patch-count-overflow", 1u << 16, 1u << 16, 1, 1, 1, 0, false},
 +      {"tcs-size-overflow", 1u << 16, 1, 1, 1, 1u << 14, 0, false},
 +      {"vertex-size-overflow", 1u << 22, 1, 32, 1, 1, UINT64_MAX, false},
++      /* 1000 patches of 1000 TCS words fit 32 bits but not the heap. */
++      {"heap-overflow", 3000, 1, 3, 3, 1000, 1, false},
 +   };
 +   for (unsigned i = 0; i < ARRAY_SIZE(setups); i++) {
 +      VK_CHECK(ctx.api->ResetCommandPool(ctx.device, pool, 0));
@@ -1656,6 +1672,7 @@ index 0000000000000000000000000000000000000000..80494a40ca8d8bd30de52b67225f320f
 +      {"sum-wraps", 3, 2, 0x80000000u, 16, false},
 +      {"sum-wraps-past-one-group", 2049, 2048, 1u << 21, 8, false},
 +      {"size-overflow", 1, 1, 1u << 30, 0, false},
++      {"heap-overflow", 1, 1, 1u << 20, 0, false},
 +   };
 +   for (unsigned i = 0; i < ARRAY_SIZE(sums); i++) {
 +      VK_CHECK(ctx.api->ResetCommandPool(ctx.device, pool, 0));
@@ -1681,7 +1698,7 @@ index d0004cbf96f5a6c5a28c5f3a3165317094238c80..aef5b82ef3e5f24748fe9d66d47c6f2d
  
        if (id == 1)
 diff --git a/src/poly/cl/tessellator.h b/src/poly/cl/tessellator.h
-index f46081cdcf6de0167307e46ea4319e17f7c963b2..270100977173d5500d94f72e5fff3eca1e41a3a4 100644
+index f46081cdcf6de0167307e46ea4319e17f7c963b2..41de4a2c3bf3d0b4e25688f023eb9825277e4fdd 100644
 --- a/src/poly/cl/tessellator.h
 +++ b/src/poly/cl/tessellator.h
 @@ -90,6 +90,7 @@ struct INDEX_PATCH_CONTEXT2 {
@@ -1692,7 +1709,39 @@ index f46081cdcf6de0167307e46ea4319e17f7c963b2..270100977173d5500d94f72e5fff3eca
  
     // array where we will store u/v's for the points we generate
     global struct poly_tess_point *Point;
-@@ -319,7 +320,9 @@ DefineTriangle(private struct CHWTessellator *ctx, int index0, int index1,
+@@ -179,11 +180,22 @@ poly_draw_empty(constant struct poly_tess_params *p, enum poly_tess_mode mode,
+ /*
+  * Allocate heap memory for domain points for a patch. The allocation
+  * is recorded in the coord_allocs[] array, which is in elements.
++ *
++ * When the heap cannot hold the points, the patch's indices, which the prefix
++ * sum already placed, would be left unwritten. Empty the whole draw instead
++ * and return NULL; the caller then returns without writing anything.
+  */
+ static inline global struct poly_tess_point *
+ poly_heap_alloc_points(constant struct poly_tess_params *p, uint patch,
+                        uint count)
+ {
++   uint32_t elsize_B = sizeof(struct poly_tess_point);
++   uint32_t alloc_B;
++   if (!poly_heap_try_alloc_offs(p->heap, elsize_B * count, &alloc_B)) {
++      p->out_draws[0] = 0;
++      return NULL;
++   }
++
+    /* If we're recording statistics, increment now. The statistic is for
+     * tessellation evaluation shader invocations, which is equal to the number
+     * of domain points generated.
+@@ -192,8 +204,6 @@ poly_heap_alloc_points(constant struct poly_tess_params *p, uint patch,
+       poly_atomic_add_u64((global uint32_t *)p->statistic, count);
+    }
+ 
+-   uint32_t elsize_B = sizeof(struct poly_tess_point);
+-   uint32_t alloc_B = poly_heap_alloc_offs(p->heap, elsize_B * count);
+    uint32_t alloc_el = alloc_B / elsize_B;
+ 
+    p->coord_allocs[patch] = alloc_el;
+@@ -319,7 +329,9 @@ DefineTriangle(private struct CHWTessellator *ctx, int index0, int index1,
     index1 = PatchIndexValue(ctx, index1);
     index2 = PatchIndexValue(ctx, index2);
  
@@ -1703,7 +1752,16 @@ index f46081cdcf6de0167307e46ea4319e17f7c963b2..270100977173d5500d94f72e5fff3eca
             (global uint *)ctx->Index + indexStorageBaseOffset);
  }
  
-@@ -834,6 +837,7 @@ poly_tess_tri_process(constant struct poly_tess_params *p, uint32_t patch,
+@@ -777,6 +789,8 @@ poly_tess_isoline_process(constant struct poly_tess_params *p, uint32_t patch,
+    if (mode != POLY_TESS_MODE_COUNT) {
+       global struct poly_tess_point *points =
+          poly_heap_alloc_points(p, patch, num_points);
++      if (!points)
++         return;
+ 
+       for (int line = 0, pointOffset = 0; line < numLines; line++) {
+          FXP fxpV =
+@@ -834,6 +848,7 @@ poly_tess_tri_process(constant struct poly_tess_params *p, uint32_t patch,
     struct CHWTessellator ctx = {
        .mode = mode,
        .index_bias = patch * POLY_TES_PATCH_ID_STRIDE,
@@ -1711,7 +1769,25 @@ index f46081cdcf6de0167307e46ea4319e17f7c963b2..270100977173d5500d94f72e5fff3eca
     };
  
     // Is the patch culled? NaN will pass.
-@@ -1163,6 +1167,7 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
+@@ -905,6 +920,8 @@ poly_tess_tri_process(constant struct poly_tess_params *p, uint32_t patch,
+ 
+          global struct poly_tess_point *points =
+             poly_heap_alloc_points(p, patch, 3);
++         if (!points)
++            return;
+ 
+          DefinePoint(&points[0], 0,
+                      FXP_ONE);          // V=1 (beginning of Ueq0 edge VW)
+@@ -966,6 +983,8 @@ poly_tess_tri_process(constant struct poly_tess_params *p, uint32_t patch,
+    /* GENERATE POINTS */
+    if (mode != POLY_TESS_MODE_COUNT) {
+       ctx.Point = poly_heap_alloc_points(p, patch, NumPoints);
++      if (!ctx.Point)
++         return;
+ 
+       // Generate exterior ring edge points, clockwise starting from point V
+       // (VW, the U==0 edge)
+@@ -1163,6 +1182,7 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
     struct CHWTessellator ctx = {
        .mode = mode,
        .index_bias = patch * POLY_TES_PATCH_ID_STRIDE,
@@ -1719,6 +1795,24 @@ index f46081cdcf6de0167307e46ea4319e17f7c963b2..270100977173d5500d94f72e5fff3eca
     };
  
     // Is the patch culled?
+@@ -1254,6 +1274,8 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
+ 
+          global struct poly_tess_point *points =
+             poly_heap_alloc_points(p, patch, 4);
++         if (!points)
++            return;
+ 
+          DefinePoint(&points[0], 0, 0);
+          DefinePoint(&points[1], FXP_ONE, 0);
+@@ -1303,6 +1325,8 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
+ 
+    if (mode != POLY_TESS_MODE_COUNT) {
+       ctx.Point = poly_heap_alloc_points(p, patch, NumPoints);
++      if (!ctx.Point)
++         return;
+ 
+       // Generate exterior ring edge points, clockwise from top-left
+       int pointOffset = 0;
 diff --git a/src/poly/tessellator.h b/src/poly/tessellator.h
 index 6087d97d4298010f64cb29566286eb6b84657daf..06dbae12d5962515bb1e559648645cf12d40569b 100644
 --- a/src/poly/tessellator.h

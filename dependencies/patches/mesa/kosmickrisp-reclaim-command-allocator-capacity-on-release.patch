@@ -152,10 +152,10 @@ index 9962c952d9612ba18f409cf16e87ed97bf6990f3..e505acdf6e537df2696af29175c11948
  kk_TrimCommandPool(VkDevice device, VkCommandPool commandPool,
                     VkCommandPoolTrimFlags flags)
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 62b6ba96713bd01162866c7029f20b01922eb6e2..7aeca20ae2f357701f3a5afaca1a5f4fe22a30d2 100644
+index 8eedb0cef99b902199141a7e230fda8ad6386569..8215464f9654579461f952a19b3bc4585c4eb15d 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -581,6 +581,28 @@ if with_tests
+@@ -601,6 +601,28 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
