@@ -3,33 +3,71 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 12:17:23 +0900
 Subject: [PATCH] venus: bridge host memory through guest dma-bufs
 
+A shared-memory resource a Venus context imports is consumed as a host
+pointer: VkImportMemoryResourceInfoMESA naming one becomes a
+VK_EXT_external_memory_host import of the resource's own mapping. That
+extension requires the range to stay mapped for as long as the memory
+lives, and the driver reaches it through the CPU as well as the GPU, for a
+host image copy of a linear image bound to it, while the guest destroys the
+resource whenever it likes. The mapping is therefore reference counted: the
+resource holds one reference, each memory that imports it holds another,
+and the pages are unmapped when the last of them is released.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/venus/vkr_context.c         |  78 ++++++++++--
- src/venus/vkr_context.h         |   5 +
+ src/venus/vkr_context.c         | 116 ++++++++++++++--
+ src/venus/vkr_context.h         |  26 ++++
  src/venus/vkr_device.c          |  12 ++
  src/venus/vkr_device.h          |   2 +
- src/venus/vkr_device_memory.c   | 217 +++++++++++++++++++++++++++-----
- src/venus/vkr_device_memory.h   |   4 +
+ src/venus/vkr_device_memory.c   | 226 +++++++++++++++++++++++++++-----
+ src/venus/vkr_device_memory.h   |   8 ++
  src/venus/vkr_physical_device.c |  17 +++
  src/venus/vkr_renderer.c        |   3 +-
- src/virgl_resource.c            | 171 +++++++++++++++++++++++++
+ src/virgl_resource.c            | 171 ++++++++++++++++++++++++
  src/virgl_resource.h            |  25 ++++
  src/virglrenderer.c             |   2 +-
- 11 files changed, 493 insertions(+), 43 deletions(-)
+ 11 files changed, 562 insertions(+), 46 deletions(-)
 
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..e0457772cd51394d61833d276b9199784f7db063 100644
+index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..a0271aa7abd50e941ad52e2ce0c43953d3642ffa 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
-@@ -193,6 +193,7 @@ vkr_context_free_resource(struct hash_entry *entry)
-       munmap(res->u.data, res->size);
+@@ -185,14 +185,33 @@ vkr_context_submit_cmd(struct vkr_context *ctx, const void *buffer, size_t size)
+    return true;
+ }
+ 
++struct vkr_shm_mapping *
++vkr_shm_mapping_retain(struct vkr_shm_mapping *mapping)
++{
++   atomic_fetch_add_explicit(&mapping->refcount, 1, memory_order_relaxed);
++   return mapping;
++}
++
++void
++vkr_shm_mapping_release(struct vkr_shm_mapping *mapping)
++{
++   if (!mapping ||
++       atomic_fetch_sub_explicit(&mapping->refcount, 1, memory_order_acq_rel) != 1)
++      return;
++
++   munmap(mapping->data, mapping->size);
++   free(mapping);
++}
++
+ static inline void
+ vkr_context_free_resource(struct hash_entry *entry)
+ {
+    struct vkr_resource *res = entry->data;
+    if (res->fd_type == VIRGL_RESOURCE_FD_SHM)
+-      munmap(res->u.data, res->size);
++      vkr_shm_mapping_release(res->shm_mapping);
     else if (res->u.fd >= 0)
        close(res->u.fd);
 +   virgl_resource_native_release(res->native_resource_id);
     free(res);
  }
  
-@@ -226,17 +227,25 @@ vkr_context_import_resource_internal(struct vkr_context *ctx,
+@@ -226,26 +245,49 @@ vkr_context_import_resource_internal(struct vkr_context *ctx,
                                       uint64_t blob_size,
                                       enum virgl_resource_fd_type fd_type,
                                       int fd,
@@ -54,18 +92,36 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..e0457772cd51394d61833d276b919978
 +   res->native_resource_id = native_resource_id;
 +   res->native_handle_type = native_handle_type;
 +   res->native_handle = native_handle;
++   res->shm_mapping = NULL;
  
     /* fd and mmap_ptr cannot be valid at the same time, but allowed to be -1 and NULL */
     assert(fd < 0 || !mmap_ptr);
-@@ -246,6 +255,7 @@ vkr_context_import_resource_internal(struct vkr_context *ctx,
+-   if (mmap_ptr)
++   if (mmap_ptr) {
++      /* The mapping belongs to the resource only once it is added; until
++       * then a failure leaves it to the caller. */
++      res->shm_mapping = malloc(sizeof(*res->shm_mapping));
++      if (!res->shm_mapping) {
++         virgl_resource_native_release(native_resource_id);
++         free(res);
++         return false;
++      }
++      res->shm_mapping->data = mmap_ptr;
++      res->shm_mapping->size = blob_size;
++      atomic_init(&res->shm_mapping->refcount, 1);
+       res->u.data = mmap_ptr;
+-   else
++   } else {
        res->u.fd = fd;
++   }
  
     if (!vkr_context_add_resource(ctx, res)) {
 +      virgl_resource_native_release(native_resource_id);
++      free(res->shm_mapping);
        free(res);
        return false;
     }
-@@ -257,16 +267,26 @@ static bool
+@@ -257,16 +299,26 @@ static bool
  vkr_context_import_resource_from_shm(struct vkr_context *ctx,
                                       uint32_t res_id,
                                       uint64_t blob_size,
@@ -95,7 +151,7 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..e0457772cd51394d61833d276b919978
        munmap(mmap_ptr, blob_size);
        return false;
     }
-@@ -299,7 +319,9 @@ vkr_context_create_resource_from_shm(struct vkr_context *ctx,
+@@ -299,7 +351,9 @@ vkr_context_create_resource_from_shm(struct vkr_context *ctx,
     }
  
     if (!vkr_context_import_resource_internal(ctx, res_id, alloc_size,
@@ -106,7 +162,7 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..e0457772cd51394d61833d276b919978
        munmap(mmap_ptr, alloc_size);
        close(fd);
        return false;
-@@ -332,6 +354,29 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
+@@ -332,6 +386,29 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
     if (!vkr_device_memory_export_blob(mem, blob_size, blob_flags, &blob))
        return false;
  
@@ -136,7 +192,7 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..e0457772cd51394d61833d276b919978
     /* If memory might get exported, store a dup'ed fd in vkr_resource for:
      * - vkAllocateMemory for dma_buf import
      * - vkGetMemoryFdPropertiesKHR for dma_buf fd properties query
-@@ -345,8 +390,9 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
+@@ -345,8 +422,9 @@ vkr_context_create_resource_from_device_memory(struct vkr_context *ctx,
        }
     }
  
@@ -148,7 +204,7 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..e0457772cd51394d61833d276b919978
        if (res_fd >= 0)
           close(res_fd);
        close(blob.u.fd);
-@@ -383,10 +429,20 @@ vkr_context_import_resource(struct vkr_context *ctx,
+@@ -383,10 +461,20 @@ vkr_context_import_resource(struct vkr_context *ctx,
                              int fd,
                              uint64_t size)
  {
@@ -173,10 +229,35 @@ index b97e5ea26d46678958ab2ae501f9b8ba1e946d55..e0457772cd51394d61833d276b919978
  
  void
 diff --git a/src/venus/vkr_context.h b/src/venus/vkr_context.h
-index 3867f138fdfd6cedca49c7de4ceca01d76546d43..7383f9249c4a943c24d8e346faf473c5d657dc90 100644
+index 3867f138fdfd6cedca49c7de4ceca01d76546d43..7607063f95d93c16820d8f222f17659948722409 100644
 --- a/src/venus/vkr_context.h
 +++ b/src/venus/vkr_context.h
-@@ -32,6 +32,11 @@ struct vkr_resource {
+@@ -15,6 +15,24 @@
+ 
+ #include "vkr_cs.h"
+ 
++/*
++ * The mapping of a shared-memory resource. The resource holds one reference,
++ * and so does each device memory that imports the mapping as host memory:
++ * VK_EXT_external_memory_host requires the range to stay mapped for as long
++ * as the memory lives, and the guest destroys the resource whenever it likes.
++ */
++struct vkr_shm_mapping {
++   void *data;
++   size_t size;
++   atomic_uint refcount;
++};
++
++struct vkr_shm_mapping *
++vkr_shm_mapping_retain(struct vkr_shm_mapping *mapping);
++
++void
++vkr_shm_mapping_release(struct vkr_shm_mapping *mapping);
++
+ /*
+  * When vkr_context_create_resource or vkr_context_import_resource is called, a
+  * vkr_resource is created, and is valid until vkr_context_destroy_resource.
+@@ -32,6 +50,14 @@ struct vkr_resource {
     } u;
  
     size_t size;
@@ -185,6 +266,9 @@ index 3867f138fdfd6cedca49c7de4ceca01d76546d43..7383f9249c4a943c24d8e346faf473c5
 +   uint64_t native_resource_id;
 +   enum virgl_resource_native_handle_type native_handle_type;
 +   void *native_handle;
++
++   /* The reference that keeps u.data mapped, valid when fd_type is shm. */
++   struct vkr_shm_mapping *shm_mapping;
  };
  
  enum vkr_context_validate_level {
@@ -225,7 +309,7 @@ index a8c185c6807c5ffc8be7b01b9d23a5b58ea4dc39..fcf875c2c3fcc242342034a04ad1ab1b
  VKR_DEFINE_OBJECT_CAST(device, VK_OBJECT_TYPE_DEVICE, VkDevice)
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 82acbc43a7c0a465a1f6050dc46869889cfa883a..4c8286c7896d7c374c0ee29073c0652b88e58d24 100644
+index 82acbc43a7c0a465a1f6050dc46869889cfa883a..f01e1020296faed1bce5c5fce17a63534c3820d9 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -7,6 +7,7 @@
@@ -266,7 +350,7 @@ index 82acbc43a7c0a465a1f6050dc46869889cfa883a..4c8286c7896d7c374c0ee29073c0652b
        .fd = fd,
        .handleType = handle_type,
     };
-@@ -265,19 +259,101 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -265,19 +259,107 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
                                                       guest_mem_type_index);
     alloc_info->memoryTypeIndex = host_mem_type_index;
  
@@ -280,6 +364,7 @@ index 82acbc43a7c0a465a1f6050dc46869889cfa883a..4c8286c7896d7c374c0ee29073c0652b
 +      .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_METAL_HANDLE_INFO_EXT,
 +   };
     VkImportMemoryResourceInfoMESA *res_info = NULL;
++   struct vkr_shm_mapping *host_mapping = NULL;
     void *prev_of_res_info = vkr_find_prev_struct(
        alloc_info, VK_STRUCTURE_TYPE_IMPORT_MEMORY_RESOURCE_INFO_MESA);
     if (prev_of_res_info) {
@@ -354,6 +439,11 @@ index 82acbc43a7c0a465a1f6050dc46869889cfa883a..4c8286c7896d7c374c0ee29073c0652b
 +         local_host_import.pHostPointer = res->u.data;
 +         vkr_pnext_set_next(prev_of_res_info, &local_host_import);
 +         alloc_info->allocationSize = res->size;
++         /* The memory names these pages until it is freed, so it keeps them
++          * mapped: the driver reads and writes them through the CPU as well,
++          * for a host image copy, and the guest may destroy the resource
++          * first. */
++         host_mapping = vkr_shm_mapping_retain(res->shm_mapping);
 +      } else {
 +         const bool fd_import_supported =
 +            physical_dev->KHR_external_memory_fd &&
@@ -371,7 +461,7 @@ index 82acbc43a7c0a465a1f6050dc46869889cfa883a..4c8286c7896d7c374c0ee29073c0652b
     }
  
     VkExportMemoryAllocateInfo *export_info =
-@@ -285,6 +361,10 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -285,6 +367,10 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
  
     /* track if driver has requested export allocation */
     const bool might_export = export_info && export_info->handleTypes;
@@ -382,7 +472,7 @@ index 82acbc43a7c0a465a1f6050dc46869889cfa883a..4c8286c7896d7c374c0ee29073c0652b
  
     /* Make host-visible memory shareable with the virtio-gpu blob transport.
      * VK_EXT_external_memory_host supplies the direct import path on unified-memory
-@@ -305,17 +385,27 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -305,17 +391,27 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
     void *gbm_bo = NULL;
     struct vkr_host_shm *host_shm = NULL;
     VkExportMemoryAllocateInfo local_export_info;
@@ -413,15 +503,24 @@ index 82acbc43a7c0a465a1f6050dc46869889cfa883a..4c8286c7896d7c374c0ee29073c0652b
        host_shm = vkr_host_shm_alloc(
           alloc_info->allocationSize,
           physical_dev->min_imported_host_pointer_alignment);
-@@ -449,6 +539,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -439,6 +535,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+       if (gbm_bo)
+          vkr_gbm_bo_destroy(gbm_bo);
+       vkr_host_shm_free(host_shm);
++      vkr_shm_mapping_release(host_mapping);
+       return;
+    }
+ 
+@@ -449,6 +546,8 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
     mem->udmabuf_fd = udmabuf_fd;
     mem->gbm_bo = gbm_bo;
     mem->host_shm = host_shm;
++   mem->host_mapping = host_mapping;
 +   mem->metal_heap_exportable = export_metal_heap;
     mem->allocation_size = alloc_info->allocationSize;
     mem->memory_type_index = host_mem_type_index;
  }
-@@ -507,27 +598,53 @@ vkr_dispatch_vkGetMemoryResourcePropertiesMESA(
+@@ -507,27 +606,53 @@ vkr_dispatch_vkGetMemoryResourcePropertiesMESA(
        return;
     }
  
@@ -488,15 +587,17 @@ index 82acbc43a7c0a465a1f6050dc46869889cfa883a..4c8286c7896d7c374c0ee29073c0652b
  
     VkMemoryResourceAllocationSizePropertiesMESA *alloc_size_props =
        vkr_find_struct(args->pMemoryResourceProperties->pNext,
-@@ -559,6 +676,7 @@ vkr_context_init_device_memory_dispatch(struct vkr_context *ctx)
+@@ -559,7 +684,9 @@ vkr_context_init_device_memory_dispatch(struct vkr_context *ctx)
  void
  vkr_device_memory_release(struct vkr_device_memory *mem)
  {
 +   virgl_resource_native_release(mem->native_resource_id);
     vkr_host_shm_free(mem->host_shm);
++   vkr_shm_mapping_release(mem->host_mapping);
     if (mem->gbm_bo)
        vkr_gbm_bo_destroy(mem->gbm_bo);
-@@ -609,6 +727,45 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
+    if (mem->udmabuf_fd >= 0)
+@@ -609,6 +736,45 @@ vkr_device_memory_export_blob(struct vkr_device_memory *mem,
        return true;
     }
  
@@ -543,13 +644,17 @@ index 82acbc43a7c0a465a1f6050dc46869889cfa883a..4c8286c7896d7c374c0ee29073c0652b
     const bool can_export_opaque = mem->valid_fd_types & (1 << VIRGL_RESOURCE_FD_OPAQUE);
     enum virgl_resource_fd_type fd_type;
 diff --git a/src/venus/vkr_device_memory.h b/src/venus/vkr_device_memory.h
-index b82e8786c059919c83d06eeb961ac1a3b315cb44..e25198b50a0e89efd2a0473b0c1289710915bec1 100644
+index b82e8786c059919c83d06eeb961ac1a3b315cb44..19456f74a27f6c787decc9c5a5a0b809c5a1bcdd 100644
 --- a/src/venus/vkr_device_memory.h
 +++ b/src/venus/vkr_device_memory.h
-@@ -30,6 +30,10 @@ struct vkr_device_memory {
+@@ -30,6 +30,14 @@ struct vkr_device_memory {
     /* Anonymous shared memory imported through VK_EXT_external_memory_host. */
     struct vkr_host_shm *host_shm;
  
++   /* A shared-memory resource's mapping this memory imports as host memory,
++    * held so the range outlives the resource. */
++   struct vkr_shm_mapping *host_mapping;
++
 +   /* Renderer-private MTLHeap export retained by the fd identity registry. */
 +   bool metal_heap_exportable;
 +   uint64_t native_resource_id;

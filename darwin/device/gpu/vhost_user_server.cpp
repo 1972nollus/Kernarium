@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "vhost_user_server.hpp"
-#include "fence_deadline.hpp"
+#include "deferred_fences.hpp"
 #include "virtio_gpu_device.hpp"
 
 #include "socket_paths.hpp"
@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -455,8 +454,6 @@ public:
                     "registering GPU display-resize event failed");
             }
         }
-        pendingFences_.reserve(protocol::maximumVirtqueueSize);
-        readyFences_.reserve(protocol::maximumVirtqueueSize);
     }
 
     [[nodiscard]] const char* name() const noexcept override
@@ -541,48 +538,40 @@ public:
             responseCapacity < sizeof(protocol::GpuControlHeader)) {
             throw std::runtime_error("short Virtio-GPU response buffer");
         }
-        if (!pendingFences_.empty() && !fenceOrderingRelaxed_ &&
+        if (!fences_.empty() && !fences_.orderingRelaxed() &&
             !gpu_.canProcessWhileFencesPending(request, cursorQueue)) {
             return {.action = uml::virtio::VhostUserQueueAction::retry};
         }
 
         const bool mayDefer = canDeferFence(cursorQueue, request);
-        if (mayDefer &&
-            pendingFences_.size() == protocol::maximumVirtqueueSize) {
+        if (mayDefer && fences_.full())
             return {.action = uml::virtio::VhostUserQueueAction::retry};
-        }
-        if (mayDefer && pendingFences_.empty())
+        if (mayDefer && fences_.empty())
             armFenceTimer();
 
         auto result = gpu_.processWithDeferredFence(
             request, cursorQueue, requestId);
         if (result.response.size() > responseCapacity)
             throw std::runtime_error("short Virtio-GPU response buffer");
+        if (result.destroyedContextId) {
+            /* The context's held commands complete on the next tick. */
+            const bool held = !fences_.empty();
+            fences_.forgetContext(*result.destroyedContextId);
+            if (held)
+                armFenceTimer();
+        }
         if (result.fence) {
-            if (!mayDefer ||
-                pendingFences_.size() == protocol::maximumVirtqueueSize) {
+            if (!mayDefer)
                 throw std::runtime_error("invalid deferred GPU fence");
-            }
-            const auto requestHeader =
-                loadUnaligned<protocol::GpuControlHeader>(request.data());
-            /* A ring that has stopped retiring has already been given the
-             * full escape three times over and reported once. Keep polling
-             * the renderer for it, so any retirement it does make revives
-             * the ring, but stop buying it windows it has never used. */
-            const bool deadRing = ringHasStoppedRetiring(
-                escapesForRing(*result.fence).consecutive);
-            const auto now = std::chrono::steady_clock::now();
-            pendingFences_.push_back(PendingFence {
-                .requestId = requestId,
-                .requestHeader = requestHeader,
-                .response = std::move(result.response),
-                .fence = *result.fence,
-                .deadline = deadRing ? now : now + maximumFenceWait,
-                .orderingReleased = deadRing,
-            });
+            fences_.defer(
+                requestId,
+                loadUnaligned<protocol::GpuControlHeader>(request.data()),
+                std::move(result.response),
+                *result.fence,
+                DeferredFences::Clock::now());
             return {.action = uml::virtio::VhostUserQueueAction::defer};
         }
-        if (pendingFences_.empty() && gpu_.rendererHasPendingWork())
+        if (fences_.empty() && gpu_.rendererHasPendingWork())
             armFenceTimer();
         return {
             .action = uml::virtio::VhostUserQueueAction::complete,
@@ -593,10 +582,7 @@ public:
     void reset() noexcept override
     {
         cancelFenceTimer();
-        pendingFences_.clear();
-        fenceOrderingRelaxed_ = false;
-        ringEscapes_.clear();
-        readyFences_.clear();
+        fences_.clear();
         gpu_.reset();
         configChangePending_ = false;
     }
@@ -650,7 +636,7 @@ public:
         }
         if (!fenceTimerReady)
             return;
-        if (pendingFences_.empty()) {
+        if (fences_.empty()) {
             /* A guest thread blocked on a query result spins on the buffer
              * the renderer fills and issues no further commands, so no fence
              * of its own is left to drive the scan that completes the query.
@@ -668,102 +654,35 @@ public:
          * one poll drains every Virgl context. A Venus context owns its own
          * render-server timeline and retires only when it is polled itself,
          * so each distinct pending context needs its own poll. */
-        if (gpu_.pollContextFences(
-                pendingFences_.front().fence.contextId) != 0) {
-            throw std::runtime_error("polling GPU fences failed");
-        }
-        for (std::size_t index = 1; index < pendingFences_.size(); ++index) {
-            const auto contextId = pendingFences_[index].fence.contextId;
-            const auto previous = std::find_if(
-                pendingFences_.begin(),
-                pendingFences_.begin() + static_cast<std::ptrdiff_t>(index),
-                [contextId](const PendingFence& pending) {
-                    return pending.fence.contextId == contextId;
-                });
-            if (previous !=
-                pendingFences_.begin() + static_cast<std::ptrdiff_t>(index)) {
-                continue;
-            }
+        fences_.forEachContext([this](std::uint32_t contextId) {
             if (gpu_.pollContextFences(contextId) != 0)
                 throw std::runtime_error("polling GPU fences failed");
-        }
-
-        const auto now = std::chrono::steady_clock::now();
-        for (std::size_t index = 0; index < pendingFences_.size();) {
-            auto& pending = pendingFences_[index];
-            const int status = gpu_.contextFenceStatus(pending.fence);
-            if (status == EBUSY) {
-                auto& escapes = escapesForRing(pending.fence);
-                const bool stopped =
-                    ringHasStoppedRetiring(escapes.consecutive);
-                const auto action = classifyOverdueFence(
-                    now, pending.deadline, pending.orderingReleased);
-                if (action == OverdueFenceAction::wait) {
-                    ++index;
-                    continue;
-                }
-                if (action == OverdueFenceAction::releaseOrdering) {
-                    pending.orderingReleased = true;
-                    fenceOrderingRelaxed_ = true;
-                    reportOverdueFence(pending, "releasing queue ordering");
-                    pending.deadline = now + maximumFenceWait;
-                    ++index;
-                    continue;
-                }
-                if (!stopped) {
-                    reportOverdueFence(pending, "retiring without the renderer");
-                    ++escapes.consecutive;
-                    if (ringHasStoppedRetiring(escapes.consecutive))
-                        reportRingStoppedRetiring(pending.fence);
-                }
-            } else if (status != 0) {
-                throw std::runtime_error("reading GPU fence status failed");
-            } else {
-                auto& escapes = escapesForRing(pending.fence);
-                if (ringHasStoppedRetiring(escapes.consecutive)) {
-                    std::fprintf(
-                        stderr,
-                        "GPU ring retired a fence again: context=%u ring=%u: "
-                        "the renderer is answering for it once more\n",
-                        pending.fence.contextId,
-                        pending.fence.ringIndex);
-                }
-                escapes.consecutive = 0;
-            }
-            if (readyFences_.size() == protocol::maximumVirtqueueSize)
-                throw std::runtime_error("GPU fence completion overflow");
-
-            const auto* requestBytes = reinterpret_cast<const std::uint8_t*>(
-                &pending.requestHeader);
-            traceQueue(
-                protocol::gpuControlQueue,
-                {requestBytes, sizeof(pending.requestHeader)},
-                pending.response);
-            readyFences_.push_back(ReadyFence {
-                .requestId = pending.requestId,
-                .response = std::move(pending.response),
+        });
+        fences_.retire(
+            DeferredFences::Clock::now(),
+            [this](const DeferredFence& fence) {
+                return gpu_.contextFenceStatus(fence);
             });
-            pendingFences_.erase(pendingFences_.begin() + index);
-        }
-        if (pendingFences_.empty()) {
-            fenceOrderingRelaxed_ = false;
-            if (gpu_.rendererHasPendingWork())
-                armFenceTimer();
-        } else {
+        if (!fences_.empty() || gpu_.rendererHasPendingWork())
             armFenceTimer();
-        }
     }
 
     [[nodiscard]] bool takeQueueCompletion(
         uml::virtio::VhostUserQueueCompletion& completion) override
     {
-        if (readyFences_.empty())
+        DeferredFences::Completion completed;
+        if (!fences_.takeCompletion(completed))
             return false;
+        const auto* requestBytes =
+            reinterpret_cast<const std::uint8_t*>(&completed.requestHeader);
+        traceQueue(
+            protocol::gpuControlQueue,
+            {requestBytes, sizeof(completed.requestHeader)},
+            completed.response);
         completion = {
-            .requestId = readyFences_.front().requestId,
-            .response = std::move(readyFences_.front().response),
+            .requestId = completed.requestId,
+            .response = std::move(completed.response),
         };
-        readyFences_.erase(readyFences_.begin());
         return true;
     }
 
@@ -902,42 +821,6 @@ public:
     }
 
 private:
-    struct PendingFence {
-        std::uint64_t requestId {};
-        protocol::GpuControlHeader requestHeader {};
-        std::vector<std::uint8_t> response;
-        VirtioGpuDevice::DeferredFence fence;
-        std::chrono::steady_clock::time_point deadline;
-        /* Whether this fence has already spent its ordering-release window.
-         * Connection-wide relaxation is a consequence of some fence escaping,
-         * not evidence that this one has had its second chance. */
-        bool orderingReleased {};
-    };
-
-    struct ReadyFence {
-        std::uint64_t requestId {};
-        std::vector<std::uint8_t> response;
-    };
-
-    /* How many fences in a row this ring has completed without the renderer.
-     * A ring is few per connection: one per Venus guest queue, and one for
-     * every Virgl context. */
-    struct RingEscapes {
-        std::uint32_t contextId {};
-        std::uint32_t ringIndex {};
-        unsigned consecutive {};
-    };
-
-    /* One window of the two-stage escape below. A renderer fence covers a
-     * single Virgl submission, which takes milliseconds; a host that kills a
-     * GPU workload for running too long kills it in well under a second. So
-     * this bounds a fence that is stuck, not one that is slow, and the only
-     * thing a longer window buys is a longer stall. It costs two windows to
-     * clear each stuck fence, and a Vulkan CTS group whose shaders exceed the
-     * device's command-buffer limit produced fourteen of them in twelve
-     * cases. Fifteen seconds still leaves three orders of magnitude over a
-     * real submission. */
-    static constexpr auto maximumFenceWait = std::chrono::seconds(15);
     static constexpr std::uintptr_t fenceTimerIdentifier = 1;
     static constexpr std::intptr_t fencePollMicroseconds = 100;
 
@@ -959,59 +842,6 @@ private:
          * guest ring. The device knows each context's capset, so it decides
          * which rings defer and completes the rest synchronously. */
         return pipelineCommand && fence && header.contextId != 0;
-    }
-
-    /* One line per transition, never per poll: this shares the guest console
-     * and heavy logging is itself able to end a run. */
-    void reportOverdueFence(
-        const PendingFence& pending,
-        const char* action) const noexcept
-    {
-        std::fprintf(
-            stderr,
-            "GPU fence overdue: context=%u ring=%u command=0x%x: %s\n",
-            pending.fence.contextId,
-            pending.fence.ringIndex,
-            pending.requestHeader.type,
-            action);
-    }
-
-    /* Said once, when the ring crosses from one stuck submission into not
-     * retiring at all, and said in full: the pairs above name a fence, and a
-     * reader counting them has no way to learn that the guest is now being
-     * told work completed that the renderer never did. */
-    void reportRingStoppedRetiring(
-        const VirtioGpuDevice::DeferredFence& fence) const noexcept
-    {
-        std::fprintf(
-            stderr,
-            "GPU ring stopped retiring: context=%u ring=%u completed %u "
-            "fences in a row without the renderer. The renderer is not "
-            "answering for this ring, so results the guest reads back from it "
-            "cannot be trusted; later fences on it complete immediately and "
-            "are not reported again\n",
-            fence.contextId,
-            fence.ringIndex,
-            maximumRingEscapes);
-    }
-
-    [[nodiscard]] RingEscapes& escapesForRing(
-        const VirtioGpuDevice::DeferredFence& fence)
-    {
-        const auto existing = std::find_if(
-            ringEscapes_.begin(),
-            ringEscapes_.end(),
-            [&fence](const RingEscapes& escapes) {
-                return escapes.contextId == fence.contextId &&
-                    escapes.ringIndex == fence.ringIndex;
-            });
-        if (existing != ringEscapes_.end())
-            return *existing;
-        ringEscapes_.push_back(RingEscapes {
-            .contextId = fence.contextId,
-            .ringIndex = fence.ringIndex,
-        });
-        return ringEscapes_.back();
     }
 
     void armFenceTimer()
@@ -1056,12 +886,7 @@ private:
     bool hasEdid_;
     bool configChangePending_ {};
     UniqueDescriptor eventQueue_;
-    std::vector<PendingFence> pendingFences_;
-    std::vector<ReadyFence> readyFences_;
-    std::vector<RingEscapes> ringEscapes_;
-    /* Set when an overdue fence releases queue ordering, and cleared once
-     * every pending fence has retired. */
-    bool fenceOrderingRelaxed_ {};
+    DeferredFences fences_;
 };
 
 } // namespace

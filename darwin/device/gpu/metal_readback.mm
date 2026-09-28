@@ -260,11 +260,7 @@ struct MetalReadbackState final :
         }
 
         id<MTLTexture> texture = (__bridge id<MTLTexture>)scanout.texture;
-        const bool supportedType = texture != nil &&
-            (texture.textureType == MTLTextureType2D ||
-             (texture.textureType == MTLTextureType2DArray &&
-              texture.arrayLength == 1));
-        if (!supportedType || texture.sampleCount != 1 ||
+        if (!scanoutPassSamples(texture) ||
             texture.width < scanout.sourceWidth ||
             texture.height < scanout.sourceHeight) {
             activity.record(
@@ -304,19 +300,7 @@ struct MetalReadbackState final :
                     static_cast<unsigned long>(texture.usage));
                 return std::nullopt;
             }
-            sampling = scanoutSampling({
-                .texture = {
-                    .width = static_cast<std::uint32_t>(texture.width),
-                    .height = static_cast<std::uint32_t>(texture.height)},
-                .source = {
-                    .width = scanout.sourceWidth,
-                    .height = scanout.sourceHeight},
-                .x = scanout.sourceX,
-                .y = scanout.sourceY,
-                .width = scanout.width,
-                .height = scanout.height,
-                .flipped = scanout.flipped,
-            });
+            sampling = scanoutPassSampling(texture, scanout);
             if (!sampling) {
                 activity.record(
                     "readback reject=sampling handle=%p", scanout.texture);

@@ -499,9 +499,8 @@ void VncDisplay::fillSelfTestPattern()
 PresentOutcome VncDisplay::presentMetal(
     const MetalScanout& scanout) noexcept
 {
-    /* The scanout rectangle is the guest mode. The device reports each mode
-     * before it presents it; a caller that does not is followed here. */
-    applyGuestMode(scanout.width, scanout.height);
+    /* The scanout rectangle is the guest mode, which the device reports
+     * through guestScanoutChanged before it presents a scanout of it. */
     const auto target = readbackTarget();
     std::unique_lock scanoutLock(scanoutMutex_);
     const auto state = clientState_.load(std::memory_order_acquire);
@@ -584,9 +583,10 @@ std::optional<std::uint32_t> VncDisplay::clientConnected() noexcept
         const auto connected = stateConnectionEpoch(desired);
         /* Frames dropped while nobody watched never reached the
          * framebuffer. The first client of this epoch waits for a complete
-         * frame newer than its connection, which a remembered native
-         * scanout provides at once and the CPU path provides on the
-         * guest's next flush. */
+         * frame newer than its connection. A remembered native scanout
+         * provides it at once, and so does a remembered staged image of a
+         * CPU-path scanout shown scaled; a CPU-path scanout shown pixel for
+         * pixel provides it on the guest's next flush. */
         if (count == 0 && std::exchange(idleFramesDropped_, false)) {
             staleEpoch_ = connected;
             const bool refreshing = metalReadback_->refresh(connected);
@@ -792,6 +792,10 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
 {
     if (!inputSink_)
         return;
+    /* A mode change releases the pointer and moves the placement under this
+     * lock, so an event mapped under it uses the rectangle the release left:
+     * one read before it could deliver a press in what is now a bar. */
+    std::lock_guard lock(pointerMutex_);
     const auto target = placement();
     const AspectFitRectangle content {
         .x = static_cast<double>(target.x),
@@ -821,7 +825,6 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
         count = 0;
     };
 
-    std::lock_guard lock(pointerMutex_);
     if (pointerMode_ == vnc_input::PointerMode::touchscreen) {
         for (const auto& sample :
              pointer_.touch(content, location, (buttonMask & 1) != 0)) {

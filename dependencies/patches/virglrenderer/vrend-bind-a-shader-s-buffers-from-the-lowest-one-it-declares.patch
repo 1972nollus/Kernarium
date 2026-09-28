@@ -27,13 +27,21 @@ enough for the indices a guest can send: one stage declares at most one block
 per binding point, so the declarations span less than twice the limit. The
 instruction paths keep using the declared index, so the emitted names are
 unchanged.
+
+Every declared and every referenced buffer index then selects a bit of those
+64-bit masks, so each has to stay inside them. A declaration whose range
+runs backwards is refused, since its last index no longer bounds its first,
+and so is an instruction naming a buffer register at or past the declaration
+limit: the first pass sees every instruction before the second emits any.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_shader.c | 68 ++++++++++++++++++++++++----------------
- src/vrend/vrend_shader.h |  6 ++++
- 2 files changed, 47 insertions(+), 27 deletions(-)
+ src/vrend/vrend_shader.c | 98 +++++++++++++++++++++++++++++-----------
+ src/vrend/vrend_shader.h |  6 +++
+ 2 files changed, 77 insertions(+), 27 deletions(-)
 
 diff --git a/src/vrend/vrend_shader.c b/src/vrend/vrend_shader.c
-index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a1789f6ed 100644
+index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..83c89e065519eb8ced7e71fe0b97dacb9e4f5f4c 100644
 --- a/src/vrend/vrend_shader.c
 +++ b/src/vrend/vrend_shader.c
 @@ -234,12 +234,15 @@ struct dump_ctx {
@@ -56,7 +64,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a
     int32_t ssbo_last_binding;
  
     struct vrend_shader_image images[PIPE_MAX_SHADER_IMAGES];
-@@ -2030,16 +2033,24 @@ iter_declaration(struct tgsi_iterate_context *iter,
+@@ -2030,16 +2033,25 @@ iter_declaration(struct tgsi_iterate_context *iter,
           return false;
        break;
     case TGSI_FILE_BUFFER:
@@ -64,7 +72,8 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a
 +      /* The binding this stage occupies is the declared index rebased onto
 +       * the lowest one the shader declares, which the first pass has already
 +       * found, plus the points the earlier stages hold. */
-+      if (decl->Range.Last >= VREND_MAX_SSBO_DECLARATIONS) {
++      if (decl->Range.First > decl->Range.Last ||
++          decl->Range.Last >= VREND_MAX_SSBO_DECLARATIONS) {
 +         virgl_error("Buffer declarations exceeded, max is %d\n", VREND_MAX_SSBO_DECLARATIONS);
 +         return false;
 +      }
@@ -84,7 +93,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a
        } else {
           if (decl->Range.First < ctx->ssbo_array_base)
              ctx->ssbo_array_base = decl->Range.First;
-@@ -3894,7 +3905,7 @@ static bool is_integer_memory(const struct dump_ctx *ctx, enum tgsi_file_type fi
+@@ -3894,7 +3906,7 @@ static bool is_integer_memory(const struct dump_ctx *ctx, enum tgsi_file_type fi
  {
     switch(file_type) {
     case TGSI_FILE_BUFFER:
@@ -93,7 +102,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a
     case TGSI_FILE_MEMORY:
        return ctx->integer_memory;
     default:
-@@ -3922,15 +3933,15 @@ static bool set_image_qualifier(struct vrend_shader_image images[],
+@@ -3922,15 +3934,15 @@ static bool set_image_qualifier(struct vrend_shader_image images[],
  }
  
  static bool set_memory_qualifier(uint8_t ssbo_memory_qualifier[],
@@ -112,7 +121,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a
           ssbo_memory_qualifier[reg_index] = TGSI_MEMORY_COHERENT;
        } else
           return false;
-@@ -3954,7 +3965,7 @@ static void make_ssbo_varstring(const struct dump_ctx *ctx, char result[128],
+@@ -3954,7 +3966,7 @@ static void make_ssbo_varstring(const struct dump_ctx *ctx, char result[128],
                                  unsigned register_index, bool indirect, int indirect_register)
  {
     const char *cname = tgsi_proc_to_prefix(ctx->prog_type);
@@ -121,7 +130,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a
     const char *atomic_str = atomic_ssbo ? "atomic" : "";
     unsigned base = atomic_ssbo ? ctx->ssbo_atomic_array_base : ctx->ssbo_array_base;
  
-@@ -4067,11 +4078,11 @@ translate_store(const struct dump_ctx *ctx,
+@@ -4067,11 +4079,11 @@ translate_store(const struct dump_ctx *ctx,
           emit_store_mem(glsl_strbufs, dst, dst_reg->Register.WriteMask, srcs,
                          conversion);
        } else {
@@ -136,7 +145,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a
  
           emit_buff(glsl_strbufs, "switch (addr%d + %d) {\n", dst_reg->Indirect.Index,
                     dst_reg->Register.Index - base);
-@@ -4211,7 +4222,7 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4211,7 +4223,7 @@ translate_load(const struct dump_ctx *ctx,
        emit_buff(glsl_strbufs, "ssbo_addr_temp = uint(floatBitsToUint(%s)) >> 2;\n", srcs[1]);
  
        atomic_op[0] = atomic_src[0] = '\0';
@@ -145,7 +154,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a
           /* Emulate atomicCounter with atomicOr. */
           strcpy(atomic_op, "atomicOr");
           strcpy(atomic_src, ", uint(0)");
-@@ -4225,11 +4236,11 @@ translate_load(const struct dump_ctx *ctx,
+@@ -4225,11 +4237,11 @@ translate_load(const struct dump_ctx *ctx,
        } else {
           char src[128] = "";
  
@@ -160,7 +169,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a
  
           emit_buff(glsl_strbufs, "switch (addr%d + %d) {\n", inst->Src[0].Indirect.Index, inst->Src[0].Register.Index - base);
           for (int i = 0; i < array_count; ++i) {
-@@ -6967,20 +6978,20 @@ static int emit_ios_common(const struct dump_ctx *ctx,
+@@ -6967,20 +6979,20 @@ static int emit_ios_common(const struct dump_ctx *ctx,
     }
  
     if (ctx->info.indirect_files & (1 << TGSI_FILE_BUFFER)) {
@@ -187,7 +196,44 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a
           char *coherent = ctx->ssbo_memory_qualifier[id] == TGSI_MEMORY_COHERENT ? "coherent" : "";
           emit_hdrf(glsl_strbufs, "layout (binding = %d, std430) %s buffer %sssbo%d { %s %sssbocontents%d[]; };\n", binding, coherent, sname, id,
                    get_string(type), sname, id);
-@@ -8025,7 +8036,7 @@ static bool analyze_instruction(struct tgsi_iterate_context *iter,
+@@ -8017,15 +8029,44 @@ static bool fill_interpolants(const struct dump_ctx *ctx, struct vrend_variable_
+    return fill_fragment_interpolants(ctx, &sinfo->fs_info);
+ }
+ 
++/* Whether every buffer register an instruction names indexes a declaration
++ * slot. The index is the guest's, and it selects a bit of the 64-bit masks
++ * the declarations fill, so an index outside them would shift a mask by more
++ * than it holds. */
++static bool buffer_registers_in_range(const struct tgsi_full_instruction *inst)
++{
++   for (unsigned i = 0; i < inst->Instruction.NumSrcRegs; ++i) {
++      const struct tgsi_src_register *reg = &inst->Src[i].Register;
++      if (reg->File == TGSI_FILE_BUFFER &&
++          (reg->Index < 0 || reg->Index >= VREND_MAX_SSBO_DECLARATIONS))
++         return false;
++   }
++   for (unsigned i = 0; i < inst->Instruction.NumDstRegs; ++i) {
++      const struct tgsi_dst_register *reg = &inst->Dst[i].Register;
++      if (reg->File == TGSI_FILE_BUFFER &&
++          (reg->Index < 0 || reg->Index >= VREND_MAX_SSBO_DECLARATIONS))
++         return false;
++   }
++   return true;
++}
++
+ static bool analyze_instruction(struct tgsi_iterate_context *iter,
+                                    struct tgsi_full_instruction *inst)
+ {
+    struct dump_ctx *ctx = (struct dump_ctx *)iter;
+    uint32_t opcode = inst->Instruction.Opcode;
++
++   /* The first pass sees every instruction before the second emits any, so
++    * refusing here covers both. */
++   if (!buffer_registers_in_range(inst)) {
++      virgl_error("Buffer register index exceeded, max is %d\n",
++                  VREND_MAX_SSBO_DECLARATIONS);
++      return false;
++   }
     if (opcode == TGSI_OPCODE_ATOMIMIN || opcode == TGSI_OPCODE_ATOMIMAX) {
         const struct tgsi_full_src_register *src = &inst->Src[0];
         if (src->Register.File == TGSI_FILE_BUFFER)
@@ -196,7 +242,7 @@ index eaeaa7b9c5e7418c6ee4e5410680881f3b969a4b..dcd8b224411df2d9ad7b2a401d894d3a
         if (src->Register.File == TGSI_FILE_MEMORY)
           ctx->integer_memory = true;
     }
-@@ -8077,7 +8088,10 @@ static void fill_sinfo(const struct dump_ctx *ctx, struct vrend_shader_info *sin
+@@ -8077,7 +8118,10 @@ static void fill_sinfo(const struct dump_ctx *ctx, struct vrend_shader_info *sin
     sinfo->fog_input_mask = ctx->fog_input_mask;
     sinfo->fog_output_mask = ctx->fog_output_mask;
  

@@ -3,6 +3,7 @@
 #include "fence_deadline.hpp"
 #include "gpu_test_support.hpp"
 #include "in_process_service_testing.hpp"
+#include "vhost_user_message_testing.hpp"
 
 #include <cerrno>
 #include <chrono>
@@ -95,6 +96,9 @@ void verifyControlRetry(VhostUserServer& server)
             const std::array descriptors {sent.get()};
             const std::span<const int> sentDescriptors = carryDescriptor ?
                 std::span<const int> {descriptors} : std::span<const int> {};
+            // The server reads a frame only once its socket is readable, so
+            // it waits for more only after consuming the fragment below.
+            testing::resetStopWaitObserver();
             if (partialPayload) {
                 std::array<
                     std::uint8_t,
@@ -113,7 +117,8 @@ void verifyControlRetry(VhostUserServer& server)
                     sentDescriptors);
             }
 
-            std::this_thread::sleep_for(std::chrono::milliseconds {30});
+            if (!testing::waitForStopWaitCount(1, 2000))
+                std::_Exit(102);
             stopRequested.store(true, std::memory_order_release);
             const auto deadline = std::chrono::steady_clock::now() +
                 std::chrono::seconds {2};

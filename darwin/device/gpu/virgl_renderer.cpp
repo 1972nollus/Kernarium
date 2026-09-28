@@ -208,9 +208,10 @@ VirglRenderer::VirglRenderer()
 
         /*
          * The Mesa provider supplies an external EGLDisplay whose contexts are
-         * desktop OpenGL 4.6 core. It publishes no Metal texture for a vrend
-         * resource and no VideoToolbox decode surface, so scanouts of those
-         * resources take the readback path.
+         * desktop OpenGL 4.6 core. A vrend resource names the Metal texture
+         * Zink stores it in through virgl_renderer_resource_get_info_ext, so
+         * its scanout is presented directly and read back only when that
+         * lookup fails.
          *
          * The render server publishes each context's per-ring timeline
          * sequence numbers in shared memory, so virgl_renderer_context_poll
@@ -410,10 +411,8 @@ int VirglRenderer::createResource3d(
 int VirglRenderer::createResourceBlob(
     const ResourceBlob& resource) noexcept
 {
-    if (resource.backing.size() >
-        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-        return EINVAL;
-    }
+    /* A blob is renderer storage; the device refuses guest backing for one,
+     * so no iovec reaches the renderer. */
     virgl_renderer_resource_create_blob_args arguments {
         .res_handle = resource.resourceId,
         .ctx_id = resource.contextId,
@@ -421,8 +420,8 @@ int VirglRenderer::createResourceBlob(
         .blob_flags = resource.flags,
         .blob_id = resource.blobId,
         .size = resource.size,
-        .iovecs = resource.backing.data(),
-        .num_iovs = static_cast<std::uint32_t>(resource.backing.size()),
+        .iovecs = nullptr,
+        .num_iovs = 0,
     };
     return virgl_renderer_resource_create_blob(&arguments);
 }
