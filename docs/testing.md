@@ -511,24 +511,6 @@ Guest CTS qualification is opt-in, receipt-bound, and separate from the
 `*-venus*` workflows above, which never launch a guest or make a Vulkan support
 claim. Every campaign guest is JIT with exactly four vCPUs and 4 GiB.
 
-X11 CTS surfaces use native Xorg with virtio DRM modesetting and Virgl-backed
-glamor. The launchers verify the server executable, DRM file descriptor,
-DRI3 and Present extensions, connected output, accelerated rendering, and that
-screen blanking is off; Xwayland and Xvfb are rejected. A CTS guest receives no
-input, so a server left with its default screen-saver and DPMS timeouts blanks
-ten minutes into every run; a blanked screen has no active CRTC, the Present
-extension falls back to its one-second fake vblank, and every FIFO
-presentation after that costs a second per frame instead of a frame.
-OpenGL explicitly selects X11 for EGL.
-Vulkan selections that include Wayland also start the image's unmodified
-KWin Wayland compositor nested on Xorg, without Xwayland and without lock
-screen support, so mixed WSI cases retain their released traversal order and
-working Wayland surface support. An idle compositor lock is the Wayland
-equivalent of a blanked X screen: it occludes every client, and a surface the
-compositor is not painting is owed no frame callback, so each FIFO
-presentation waits out its whole bound instead of a frame.
-The launchers stop their display processes before requesting guest shutdown.
-
 Two rules bound what any graphics run may be used to claim.
 
 A version or capability rises only when natural capset discovery and a
@@ -540,190 +522,42 @@ A run must exercise the real Virtio-GPU/Virgl path. An app-owned framebuffer, a
 Chromium-specific library preload, or any other substitution for the guest's own
 driver stack invalidates the result for capability purposes.
 
-`tests/integration/gpu/run_vk_cts.py` owns the Vulkan lane. `--qualification`
-binds the run to `vulkan_cts_receipt.json`: the sealed image's receipt, the CTS
-and Mesa source locks, and the staged KosmicKrisp provider digest, which must
-match the configured verified prefix so a run cannot silently use an older
-provider. `--mode exact-family` selects cases in released traversal order; a
-reordered list is rejected. Accepted `NotSupported` and warning results stay
-distinct from `Pass` and prove nothing about an optional feature.
+`tests/integration/gpu/run_vk_cts.py` runs the Vulkan lane,
+`tests/integration/gpu/run_vk_gl_cts.py` the OpenGL and OpenGL ES lanes, and
+`tests/integration/gpu/run_graphics_cts_campaign.py` coordinates both into one
+campaign. Each runner's `--help` describes its selection modes, inventories,
+display setup, guest sessions, shard pool, and restart options.
 
-`tests/integration/gpu/run_vk_gl_cts.py` owns the OpenGL lane. `--api gl46
---leaf gl46 --case` runs core `KHR-GL46.*` cases; `--case` repeats to run a
-focused set in one guest boot and the repeated cases keep CTS traversal order.
-`--matrix gl46` runs the official XML-derived must-pass configurations by
-`--mustpass-config-index`/`--fraction`. Adding `--case` there narrows that
-shard to named cases, which must be an ordered subset of the shard's own case
-list; the run records itself as a case subset in its mode and its artifact
-directory, and no campaign or matrix aggregate counts it as the shard it was
-cut from. The ES-for-GL leaves (`dEQP-GL45-ES3.*`, `dEQP-GL45-ES31.*`,
-`KHR-Single-GL46.*`) exist only as matrix shards. Seeds, dimensions, and FBO
-settings come from the XML records, and an ordered `CTS-Configs.gl46`
-inventory captured from the exact emulator, image, and provider
-(`--config-inventory gl46`, replayed with `--config-inventory-run`) assigns
-the first/other EGL configuration roles.
+A qualification run is bound to its inputs. A Vulkan run is bound to
+`tests/integration/gpu/vulkan_cts_receipt.json`: the sealed image's receipt,
+the CTS and Mesa source locks, and the staged KosmicKrisp provider digest,
+which must match the configured verified prefix so a run cannot silently use
+an older provider. An OpenGL matrix run is bound to the combined image's
+schema-4 receipt and to an ordered EGL configuration inventory captured from
+the same emulator, image, and provider. Window-system cases render on real surfaces:
+native Xorg with Virgl-backed glamor and, for Vulkan selections that include
+Wayland, the image's own KWin nested on Xorg. Xwayland and Xvfb are rejected.
 
-`--matrix gles32` runs the OpenGL ES 3.2 must-pass matrix from the same
-authenticated image, on the EGL configurations an ordered ES 3.2 inventory
-reports (`--config-inventory gles32`); a GL46 inventory never stands in for
-it. That inventory has its own scope, `configs-egl-attributes`: one guest
-session runs `CTS-Configs.es32` and `dEQP-EGL.info.configs` from a two-line
-caselist, and records both the conformant configuration list and the EGL
-attribute table, each with its own digest. Its run records come from the five
-ES must-pass documents pinned beside the runner (`vk_gl_cts_gles_mustpass*.xml`
-and `vk_gl_cts_*_aosp_mustpass.xml`, with the caselist identities in
-`vk_gl_cts_gles32_matrix.json`, which must agree with the CTS identity
-wherever they name the same file), and the guest re-checks the document and
-caselist digests before a shard runs. Following getTestRunsForES in the pinned
-runner source, the NoContext and Khronos ES collections admit every API an
-ES 3.2 context supports (`KHR-GLES2/3/31/32`, `KHR-GLESEXT`, `KHR-NoContext`)
-and Single Config only the exact API (`KHR-Single-GLES32`); the NoContext and
-Single Config runs happen once, on the first configuration.
+A shard attempt passes only when its guest ran exactly the enumerated
+selection, in released traversal order and each case once, delivered its
+whole QPA, stopped with a clean Virtio-GPU takedown, and reported only
+statuses the receipt's runner oracle accepts. Accepted `NotSupported`,
+warning, and `Waiver` results stay distinct from `Pass` and prove nothing
+about an optional feature. A campaign is complete when every shard has one
+attempt that passes, whichever generation of inputs ran it. Its plan -- the
+suites, page profile, images, receipts, and EGL configuration set -- never
+changes, except that a relaunch may add a suite, and a catalogued attempt
+whose evidence was removed fails the campaign closed. A complete campaign is
+not an all-`Pass`, all-features-supported, or Khronos conformance claim.
 
-The two AOSP collections the runner also visits (`dEQP-EGL` and
-`dEQP-GLES2/3/31`) name a GL configuration such as `rgba8888d24s8ms0` instead
-of an EGL configuration id. The plan reconstructs `ConfigList::aospConfigs`
-from the recorded EGL attribute table — every configuration that renders and
-conforms to ES 3, multisample ones included — and resolves each name against
-it exactly as the runner does, refusing the plan unless that reconstruction
-reproduces the conformant list the same inventory reports. An AOSP run names
-its GL configuration and, outside the EGL run, the surface type its resolved
-configuration offers; it never seeds itself or names an EGL configuration id.
-These collections come last in the plan, so adding them renumbers no existing
-run; plan order is not the runner's emission order, and runs are independent
-guest boots.
-
-`tests/integration/gpu/run_graphics_cts_campaign.py` coordinates the suites:
-eight Vulkan fractions and eight deterministic fractions per OpenGL run, at
-most eight owned guests at a time (`--jobs` may only lower that), immediately
-refilled. With `--jobs-file`, `--jobs` is the floor: the file is re-read
-before every launch and an integer above the floor raises the owned guests up
-to eight, so the host's budget can move a running pool without restarting it;
-lowering it stops the next launch and never ends a guest. `--suite` selects them: `vulkan`, `opengl` (GL46), `gles32`, `both`
-(Vulkan and GL46), `gl` (both OpenGL matrices without Vulkan) or `all`. Every
-selection is a subsequence of the fixed suite order, so a campaign planned
-with one completes from its own suites alone, and a later launch may only add
-suites to it. Each OpenGL matrix owns its shard prefix
-(`gl46-runNNNN-kkof08`, `gles32-runNNNN-kkof08`) and its own configuration
-inventory (`--opengl-config-inventory-run`, `--gles32-config-inventory-run`). It freezes source, runner, emulator, framework, rootfs, receipt,
-selection, and timeout identities per attempt, and reverifies completed ones.
-
-A campaign is complete when every shard has one attempt that validates, not
-when every shard passed on its first try. Restarting reruns only the shards
-that have not passed; a shard that failed is retried in a new directory beside
-the evidence its earlier attempt left, and `--max-attempts` bounds how often.
-The inputs that may change between attempts are the emulator and the source
-tree: each distinct set is recorded as a generation, and every attempt is
-judged only against the generation that ran it, so a campaign may span several
-emulators without any single result meaning less. What may never change is the
-plan -- the suites, page profile, images, receipts, and EGL configuration set
-that decide which shards exist -- because that is what "every shard passed"
-refers to. The one exception is adding a matrix: relaunching a campaign with a
-suite it did not have keeps every recorded suite's plan section and shard name
-unchanged and adds only the new suite's shards, so nothing already proved is
-reinterpreted. A catalogued attempt whose directory has been removed still fails
-closed: retrying a failure is ordinary, but no later run can restore what
-deleted evidence proved.
-
-With `--detach-on-signal`, an interrupted pool leaves its running leaves,
-guests, and emulators alive instead of stopping them, and the next pool over
-that campaign adopts them: they occupy their slots exactly as if it had started
-them, so restarting to pick up a new emulator costs no in-flight shard its
-work. An adopted leaf is not the adopting pool's child, so its exit status
-comes from the file the leaf writes for itself; an older leaf that predates
-that file is held to its ownership journal and artifact evidence alone.
-
-Each generation records the interpreter and leaf runners it launched, so the
-pool's own commands stay reproducible across checkouts. The guest harness
-command inside `run.json` is rebuilt by the leaf runner from its own module
-location, so revalidating an earlier generation's attempts requires the
-resuming pool to run from the same checkout path and interpreter as that
-generation. Resume a campaign by updating that checkout in place rather than
-by pointing a second checkout at it; the emulator is named separately and is
-free to come from anywhere.
-
-The generated guest script reaches the guest as a file of the per-run
-initramfs, and every recorded harness command names that file by its SHA-256,
-so changing the script invalidates the attempts a campaign already holds. Anything that
-alters it therefore arrives as an option that is off by default and is recorded
-in the generation that asked for it, leaving earlier attempts byte-identical.
-`--relax-diagnostics` is the first: it reports Venus stuck-wait lines from the
-CTS process while a Vulkan shard is stalled, which is otherwise written to a
-guest file that never leaves the guest. Even with `--keep-going`, a host-observed emulator
-stall or dirty DRM shutdown cancels the remaining pool through its owned-process
-cleanup and preserves the attempted shards' evidence. Ordinary CTS result
-failures retain `--keep-going` behavior. One stall is exempt: a guest that
-transported and had acknowledged its final artifact frame and then missed its
-shutdown grace cost the shard no coverage, so the host reaps that guest, records
-a `shutdown_stall` beside the session and in `run.json`, keeps the complete
-evidence, and lets the pool continue. That transcript still has to prove a clean
-Virtio-GPU takedown; only the clean guest stop marker is waived for it. `--verify-only` reparses all evidence without launching
-a guest and `--dry-run` prints the derived shard commands. A leaf arms its
-ownership journal before creating a child, so a repeated interrupt cannot skip
-the wait/kill fallback, and the pool releases a slot only after a run-token
-journal acknowledges that exact guest's reap and console/socket cleanup;
-`gpu-guest-process-ownership-safety` exercises that boundary host-only. A
-complete accepted-status campaign is not an all-`Pass`, all-features-supported,
-or Khronos conformance claim.
-
-Every CTS guest masks the image's desktop stack and its container runtime
-(`docker.service`, `docker.socket`, `containerd.service`). No suite uses either,
-and a short shard powers off while the runtime is still starting: tearing its
-freshly loaded BPF programs down from that state leaves kworkers blocked in
-`bpf_prog_free_deferred`, with `systemd` blocked behind them and the guest never
-reaching poweroff.
-
-A shard is one or more guest sessions. The guest transports its growing QPA as
-ordered checkpoint segments, so a killed guest still leaves the prefix it
-produced, and the host reassembles the single `results.qpa` every consumer
-reads. A segment counts as delivered only once its compressed stream has been
-measured back against the range it was meant to hold and the host has
-acknowledged it; a segment that could not be produced keeps its bytes pending
-for the next attempt, and the guest's `summary.txt` is transported last whatever
-happened before it. A receipt-backed summary states `qpa_transfer`, with
-`qpa_missing_bytes` when that is not `complete`, and only `complete` is
-accepted: a run that lost results says so rather than reporting a short one.
-Zero-length artifacts are refused, so a guest that runs out of room cannot frame
-one. The progress watchdog is CPU-aware: a case that produces no QPA output
-for `--console-stall-timeout` seconds while its `glcts` processes also burn no
-CPU is abandoned, while a case that is silent but computing survives until
-`--console-stall-busy-timeout` (campaign default 3600 s), because guest-side
-software fp64 cases run for 700-2000 s without logging whereas a wedged Venus
-wait consumes nothing. That watchdog runs inside the guest, so a guest wedged
-in its own kernel starves the watchdog with everything else; the host keeps a
-second bound on the same `--console-stall-timeout`, ending a session whose
-console and artifact transport both stop advancing. Kernel stall diagnostics --
-RCU stall reports and their task dumps, hung-task and soft-lockup warnings --
-are not console progress for that bound, because a wedged kernel reprints them
-on its own timer and would otherwise hold the bound off indefinitely.
-dEQP ends its whole session at the first `ResourceError` and offers no way to
-carry on, so the guest runs the remainder of the order it already enumerated
-in a fresh CTS process, up to
-eight processes for one shard and all of them inside the shard's single
-deadline. Nothing is re-run and nothing is invented: each process appends its
-own session document to the same transported stream, `summary.txt` states
-`cts_sessions` and `cts_cases_run`, and the host still requires the union of
-the results to be the enumerated selection, in its order, with each case
-present exactly once.
-
-Fraction 03 uses 1280 MiB and one planned CTS process restart immediately
-before `dEQP-VK.pipeline.fast_linked_library.render_to_image.core.2d_array.huge.width_height_layers.r8g8b8a8_unorm`.
-The host releases the prefix process's graphics memory only after that
-process exits, and the balloon mirrors it into the guest as a lower `MemTotal`.
-The guest therefore starts the suffix once `MemTotal` is back within 128 MiB of
-its value before the first CTS process, or after 60 seconds, never past the
-shard deadline; the restart note states which, how long it waited, and the
-three `MemTotal` readings. The boundary uses the same continuation path as a
-`ResourceError`: it preserves the enumerated order and the eight-process limit,
-so the normal two-process run retains six recovery sessions.
-
-An emulator exit -- an abandoned case, a host fault, a
-signal -- aborts the session rather than producing a result: the host invents
-no status for the case that was in flight, keeps the last `Test case` name the
-guest console printed as a diagnostic, and starts a fresh guest at the same
-index, so every case after the last transported result is simply re-run. A
-shard that cannot get past a case exhausts `--max-resumptions` and fails as a
-whole, naming that case.
+A campaign directory holds `campaign.json`, which records the plan, every
+generation of inputs, the attempt catalogue, the state and, once the campaign
+is complete, its aggregate status counts. A shard's first attempt lives in
+`shards/<shard>/` and later ones in `retries/<shard>/<NNNN>/`. Each attempt
+keeps its `attempt.json`, `runner.log`, and guest ownership journal, and under
+`driver-output/` the leaf run's `run.json`, console log, and transported
+`artifacts/`, including `results.qpa` and `summary.txt`. `--verify-only`
+reparses that evidence without launching a guest.
 
 ### OpenGL ES3 FBO state-query waiver
 
