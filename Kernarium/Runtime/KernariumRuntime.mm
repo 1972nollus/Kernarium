@@ -1089,7 +1089,7 @@ void appendKernelCommandLine(
          uml::android::readKernelCommandLine(path, launcherPrefixes))
         arguments.push_back(std::move(argument));
 
-    /* Android init imports this as ro.boot.lcd_density. Cuttlefish graphics
+    /* Android init imports this as ro.boot.lcd_density. The product's vendor
      * init then publishes the same value as ro.sf.lcd_density, keeping the
      * framework's logical density aligned with the per-launch EDID. Swift has
      * already scaled dotsPerInch by nativeScale when Retina mode is active. */
