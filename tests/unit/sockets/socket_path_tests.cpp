@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "scratch_directory.hpp"
 #include "socket_paths.hpp"
 
 #include <cerrno>
@@ -34,13 +35,15 @@ void requireThrows(Operation &&operation)
 	std::abort();
 }
 
+/* Socket paths must fit sun_path, so they live in a fresh directory under the
+ * host temporary directory rather than the build-tree scratch directory. */
 std::filesystem::path scratchDirectory()
 {
 	static const auto directory = [] {
-		auto candidate = std::filesystem::temp_directory_path() /
-			("uml-socket-path-tests-" + std::to_string(::getpid()));
-		std::filesystem::create_directories(candidate);
-		return candidate;
+		auto pattern = ::uml::testing::socket_scratch_template(
+			"uml-socket-path.XXXXXX");
+		require(::mkdtemp(pattern.data()) != nullptr);
+		return std::filesystem::path {pattern};
 	}();
 	return directory;
 }
