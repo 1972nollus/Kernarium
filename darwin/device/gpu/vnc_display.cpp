@@ -499,9 +499,8 @@ void VncDisplay::fillSelfTestPattern()
 PresentOutcome VncDisplay::presentMetal(
     const MetalScanout& scanout) noexcept
 {
-    /* The scanout rectangle is the guest mode. The device reports each mode
-     * before it presents it; a caller that does not is followed here. */
-    applyGuestMode(scanout.width, scanout.height);
+    /* The scanout rectangle is the guest mode, which the device reports
+     * through guestScanoutChanged before it presents a scanout of it. */
     const auto target = readbackTarget();
     std::unique_lock scanoutLock(scanoutMutex_);
     const auto state = clientState_.load(std::memory_order_acquire);
