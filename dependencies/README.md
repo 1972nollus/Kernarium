@@ -196,6 +196,14 @@ KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
 regressions use `--suite vulkan`. Assertions must stay active in those builds.
 
+Apple has no pthread barriers, so Mesa's `util_barrier` there is its own mutex
+and condition variable. Its serial thread is the last thread to leave, so
+`util_queue_finish`, which lets the serial worker destroy the barrier, never
+destroys it under a worker that is still waking; that keeps Zink's screen
+teardown from hanging in the disk cache's queue. Its regression is
+`util_tests --gtest_filter='util_barrier.*'`, which
+`meson test -C BUILD --suite util` runs in any `-Dbuild-tests=true` tree.
+
 KosmicKrisp never hands Metal a texture view it cannot make, because Metal
 answers one with an assertion that ends the process. An image view whose type,
 levels or layers its image cannot provide fails with
