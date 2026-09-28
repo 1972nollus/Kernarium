@@ -441,19 +441,23 @@ restore checks against an existing user bundle.
 
 `KernariumTests` runs on the iPad and, as an iPad app, on an Apple silicon
 Mac. The iPad is the reference, and the whole suite passes there. On the Mac
-four tests fail because of how the Mac hosts an iPad app:
+up to four tests fail because of how the Mac hosts an iPad app:
 
+- `theKeyBarNeverCoversTheConsole` and `anUnfocusedConsoleKeepsEveryRow`
+  always fail. They model the key bar docked at the bottom of the screen,
+  which is where the console looks for it. On the Mac the window ends above
+  the bottom of the screen and the bar sits at the bottom of the window, so
+  the console does not make room for it.
 - `theKeyboardButtonFocusesTheViewOnScreen` and
   `anEndedRunIsNeverStartedAgain` find SwiftUI controls by walking the
-  window's accessibility elements. On the iPad a test run has UIKit
-  application accessibility on, and the walk finds every control. On the Mac
-  it is off, and SwiftUI's hosting view then exposes no elements. Turning it
-  on in the process makes the same walk find them.
-- `theKeyBarNeverCoversTheConsole` and `anUnfocusedConsoleKeepsEveryRow`
-  model the key bar docked at the bottom of the screen, which is where the
-  console looks for it. On the Mac the window ends above the bottom of the
-  screen and the bar sits at the bottom of the window, so the console does
-  not make room for it.
+  window's accessibility elements. SwiftUI's hosting view exposes them only
+  while UIKit application accessibility is on in the process. A test run on
+  the iPad has it on. On the Mac it follows the host's
+  `ApplicationAccessibilityEnabled` preference in `com.apple.Accessibility`,
+  which an assistive client turns on; while it is off, both tests fail.
+- `anEndedRunIsNeverStartedAgain` also stops the guest the application boots
+  as it launches, so it fails when the launch has no image to boot, as a run
+  whose `TEST_RUNNER_KERNARIUM_ROOTFS` names a missing file does.
 
 ### UI automation on a device
 
