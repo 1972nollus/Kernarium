@@ -108,7 +108,10 @@ so the other keys must keep their defaults.
 The session mounts over `/tmp` and `/run`, and the kernel owns `/dev`, `/proc`
 and `/sys`, so a payload a session run reads lives elsewhere, conventionally
 under `/usr/local/libexec`. The integration and performance harness
-(`tests/integration/support/guest.py`) boots every guest this way.
+(`tests/integration/support/guest.py`) boots every guest this way, the GPU
+runner (`tests/integration/gpu/run_gpu_guest.py`) boots with `systemd`, and
+`scripts/boot-overlay-systemd.sh` boots an EROFS image interactively with the
+fixed parameters in [`overlay-systemd/`](overlay-systemd).
 
 ## Seeds
 
