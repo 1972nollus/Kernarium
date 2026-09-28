@@ -349,6 +349,10 @@ CONFIG_DNS_RESOLVER=y
 # CONFIG_CAN is not set
 # Socket monitoring interfaces used by ss, lsof, and systemd introspection.
 CONFIG_INET_DIAG=y
+# netd closes a network's sockets through SOCK_DESTROY when the network goes
+# away, so apps and adb reconnect on the new one. GKI enables it in
+# gki_defconfig.
+CONFIG_INET_DIAG_DESTROY=y
 CONFIG_INET_UDP_DIAG=y
 CONFIG_NETLINK_DIAG=y
 CONFIG_PACKET_DIAG=y
