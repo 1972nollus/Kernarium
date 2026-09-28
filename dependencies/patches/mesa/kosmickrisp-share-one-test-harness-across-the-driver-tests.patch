@@ -3,7 +3,7 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 05:04:07 +0900
 Subject: [PATCH] kosmickrisp: share one test harness across the driver tests
 
-Every KosmicKrisp test carried its own copy of the same checks.  37 C and
+Every KosmicKrisp test carried its own copy of the same checks.  38 C and
 Objective-C tests defined CHECK in three shapes (two boolean messages and a
 VkResult form), eighteen of them the same LOAD_I and LOAD_D, 29 C++ tests
 and benchmarks the same require() and load<>(), and the line-planner helper
@@ -49,6 +49,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_geometry_draw_size.cpp  |  20 +-
  .../tests/test_geometry_primitive_id_link.cpp |  20 +-
  .../vulkan/tests/test_geometry_setup_gpu.c    |  28 +-
+ .../vulkan/tests/test_heap_overflow_gpu.c     |  19 +-
  .../vulkan/tests/test_heap_size_override.c    |   4 +-
  .../tests/test_helper_invocation_demote.cpp   |  20 +-
  .../tests/test_image_compression_chain.c      |   4 +-
@@ -94,14 +95,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_timeline_wait_loss.c    |   4 +-
  .../test_transform_feedback_builtins.cpp      |  20 +-
  .../tests/test_unused_attachment_gaps.cpp     |  20 +-
- 72 files changed, 547 insertions(+), 2267 deletions(-)
+ 73 files changed, 548 insertions(+), 2285 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/kk_test.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 39035df79b00a6437ec417e35552de00c410cff6..e5418648f3b91888d150e7f1f375645143e97660 100644
+index 978eaf042af0a4defc608f8ab96eb3344937df58..f9cfb77db5c28690bbf6f207af8e4af28926afad 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -227,20 +227,62 @@ if with_tests
@@ -180,7 +181,7 @@ index 39035df79b00a6437ec417e35552de00c410cff6..e5418648f3b91888d150e7f1f3756451
      test(
        'kosmickrisp_geometry_setup_gpu',
        executable(
-@@ -307,256 +349,37 @@ if with_tests
+@@ -327,256 +369,37 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
@@ -463,7 +464,7 @@ index 39035df79b00a6437ec417e35552de00c410cff6..e5418648f3b91888d150e7f1f3756451
      test(
        'kosmickrisp_raster_discard',
        executable(
-@@ -578,48 +401,24 @@ if with_tests
+@@ -598,48 +421,24 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -529,7 +530,7 @@ index 39035df79b00a6437ec417e35552de00c410cff6..e5418648f3b91888d150e7f1f3756451
      test(
        'kosmickrisp_pipeline_statistics_gpu',
        executable(
-@@ -640,34 +439,6 @@ if with_tests
+@@ -660,34 +459,6 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -564,7 +565,7 @@ index 39035df79b00a6437ec417e35552de00c410cff6..e5418648f3b91888d150e7f1f3756451
      # A benchmark rather than a test: it reports the cost of the two blend
      # paths and is run by hand, once per path, because timing cannot assert.
      executable(
-@@ -687,104 +458,6 @@ if with_tests
+@@ -707,104 +478,6 @@ if with_tests
        link_with : libvulkan_kosmickrisp,
        override_options : ['cpp_std=c++20'],
      )
@@ -669,7 +670,7 @@ index 39035df79b00a6437ec417e35552de00c410cff6..e5418648f3b91888d150e7f1f3756451
      timeline_wait_loss_test = executable(
        'test_kosmickrisp_timeline_wait_loss',
        files('tests/test_timeline_wait_loss.c'),
-@@ -1205,16 +878,25 @@ if with_tests
+@@ -1225,16 +898,25 @@ if with_tests
      )
    endif
  
@@ -705,7 +706,7 @@ index 39035df79b00a6437ec417e35552de00c410cff6..e5418648f3b91888d150e7f1f3756451
  
    test(
      'kosmickrisp_queue_error',
-@@ -1252,49 +934,6 @@ if with_tests
+@@ -1272,49 +954,6 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -755,7 +756,7 @@ index 39035df79b00a6437ec417e35552de00c410cff6..e5418648f3b91888d150e7f1f3756451
    test(
      'kosmickrisp_logic_op',
      executable(
-@@ -1452,75 +1091,28 @@ if with_tests
+@@ -1472,75 +1111,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -1995,6 +1996,36 @@ index 305053fb641d13373146d19fdd38ad8f923bb97a..ba0683573f2371b26507633c2d0643c4
        check_setup(device, queue, command, &cases[i]);
     }
     api->DestroyCommandPool(device, commands, NULL);
+diff --git a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
+index d017499cb4f70f25cfc3359c0135e8b7bedd732f..f437d3e7b090024a303b996f53368fbc773f79af 100644
+--- a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
++++ b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
+@@ -14,24 +14,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
+-#define CHECK(condition)                                                       \
+-   do {                                                                        \
+-      if (!(condition)) {                                                      \
+-         fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__,      \
+-                 #condition);                                                  \
+-         abort();                                                              \
+-      }                                                                        \
+-   } while (0)
+-
+-#define VK_CHECK(expr)                                                         \
+-   do {                                                                        \
+-      VkResult result_ = (expr);                                               \
+-      if (result_ != VK_SUCCESS) {                                             \
+-         fprintf(stderr, "%s:%d: %s = %d\n", __FILE__, __LINE__, #expr,        \
+-                 result_);                                                     \
+-         abort();                                                              \
+-      }                                                                        \
+-   } while (0)
++#include "kk_test.h"
+ 
+ enum { HEAP_SIZE = 4096, HEAP_BOTTOM = 16, CANARY = 0xa5a5a5a5 };
+ 
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 index b4e9eba04e54889b0fc360acd4dfab93aec645d4..a495f325b639cff5ed12ccf549976a6309e59593 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
@@ -4474,10 +4505,10 @@ index d7de8f71429df79685386b49762e196236b046bd..3bc621cee4fdc3ddd2c941d3b5491b24
  static const uint32_t vertex_spirv[] =
  #include "tess_passthrough_shaders/passthrough.vert.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
-index 80494a40ca8d8bd30de52b67225f320f028caa1c..ee2b8cbd4241ea5104deae66464d192e61a15265 100644
+index b7232bb259192887564d9db21ee77cd6662de7ec..cc87939575063f8e6e99d24209c412c3da4e3e50 100644
 --- a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
 +++ b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
-@@ -14,24 +14,7 @@
+@@ -15,24 +15,7 @@
  #include <stdlib.h>
  #include <string.h>
  

@@ -268,10 +268,10 @@ index 6821a7e4ed4128309533871fefd8c5fa0ca38b77..7cd60977abe8119d28fc8a7112813ed0
        result = kk_compile_graphics_pipeline(dev, shader);
     }
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3a26bbeff569663b145388cac24a15c647a4dab2..62b6ba96713bd01162866c7029f20b01922eb6e2 100644
+index b969535cfa93b49394943942ac0ecab92de1e4ad..8eedb0cef99b902199141a7e230fda8ad6386569 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -376,6 +376,20 @@ if with_tests
+@@ -396,6 +396,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -292,7 +292,7 @@ index 3a26bbeff569663b145388cac24a15c647a4dab2..62b6ba96713bd01162866c7029f20b01
      test(
        'kosmickrisp_blend_pipeline_key',
        executable(
-@@ -505,6 +519,20 @@ if with_tests
+@@ -525,6 +539,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

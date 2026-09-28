@@ -29,14 +29,14 @@ kind of bad value and under a valid one.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/kosmickrisp/vulkan/kk_cmd_draw.c          |  59 ++-
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          |  60 ++-
  src/kosmickrisp/vulkan/meson.build            |  20 +
  .../vulkan/tests/test_heap_size_override.c    | 415 ++++++++++++++++++
- 3 files changed, 491 insertions(+), 3 deletions(-)
+ 3 files changed, 492 insertions(+), 3 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..d8d59b59ee6db9cd29a8c825178114f7ccb1c6a1 100644
+index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..d77cc4eb2dc5818d966bb5e8655531684f9fdbbc 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -27,6 +27,8 @@
@@ -48,7 +48,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..d8d59b59ee6db9cd29a8c825178114f7
  #include "poly/geometry.h"
  #include "poly/tessellator.h"
  
-@@ -1134,8 +1136,32 @@ kk_init_heap(const void *data)
+@@ -1134,8 +1136,33 @@ kk_init_heap(const void *data)
     struct kk_cmd_buffer *cmd = (struct kk_cmd_buffer *)data;
     struct kk_device *dev = kk_cmd_buffer_device(cmd);
  
@@ -62,9 +62,10 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..d8d59b59ee6db9cd29a8c825178114f7
 +    * VkDevice.
 +    *
 +    * Demand is linear in patches and primitives, which the API does not bound,
-+    * so no fixed size is safe for every application, and an overrun ends as a
-+    * GPU-side abort rather than a diagnosable error. MESA_KK_HEAP_SIZE_MIB
-+    * raises the size without a rebuild. The GPU allocator bounds the heap with
++    * so no fixed size is safe for every application. A reservation the heap
++    * cannot hold empties its draw, and every later draw in the command buffer
++    * that needs the heap, with no diagnostic. MESA_KK_HEAP_SIZE_MIB raises the
++    * size without a rebuild. The GPU allocator bounds the heap with
 +    * a 32-bit size, so only 1 to 4095 MiB is honoured and any other value
 +    * keeps the default. */
 +   size_t size = 16 * 1024 * 1024;
@@ -83,7 +84,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..d8d59b59ee6db9cd29a8c825178114f7
  
     struct poly_heap *map = (struct poly_heap *)dev->heap->cpu;
  
-@@ -1146,12 +1172,30 @@ kk_init_heap(const void *data)
+@@ -1146,12 +1173,30 @@ kk_init_heap(const void *data)
     };
  }
  
@@ -115,7 +116,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..d8d59b59ee6db9cd29a8c825178114f7
  
     /* We need to free all allocations after each command buffer execution */
     if (!cmd->uses_heap) {
-@@ -3473,6 +3517,15 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3473,6 +3518,15 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
         requires_index_promotion(data) || requires_unroll_robustness(cmd, data) ||
         requires_unroll_restart(cmd, data) || rewrite_direct_provoking ||
         (discard_adjacency && !emulate_line_raster));
@@ -132,10 +133,10 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..d8d59b59ee6db9cd29a8c825178114f7
        data->line_raster_runs =
           emulate_line_raster &&
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 5baeac5a2f7195b1a61286bbd256484927bbd863..11e663a10f969e9ef67216ffc0921b5d53f5b66e 100644
+index 43160fdacdd5a3922f886a5cb834cfcdd5dea854..460b0ab1adc255fa23dfd0c866c2af3cbfa4966e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -906,6 +906,26 @@ if with_tests
+@@ -926,6 +926,26 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
