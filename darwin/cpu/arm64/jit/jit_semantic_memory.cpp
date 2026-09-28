@@ -137,9 +137,7 @@ extern "C" void *uml_arm64_jit_tlb_translate(Tlb *tlb, std::uint64_t address,
 
 class JitSemanticMemory final : public ::uml::memory::GuestAddressSpace {
 public:
-  explicit JitSemanticMemory(Tlb &tlb,
-                             bool scalar_ordered_atomics = false) noexcept
-      : tlb_{tlb}, scalar_ordered_atomics_{scalar_ordered_atomics} {}
+  explicit JitSemanticMemory(Tlb &tlb) noexcept : tlb_{tlb} {}
 
   bool read(std::uint64_t address, std::span<std::byte> destination) override {
     if (jit_pair_read(tlb_, address, destination))
@@ -185,36 +183,40 @@ public:
   }
 
   /*
-   * Returning no direct pointer deliberately selects the semantic path's
-   * ordinary-load/store atomic fallback. Host exclusive instructions cannot
-   * be restarted safely after a Darwin shadow-map protection fault.
-   *
-   * A scalar ordered store is the single exception, and only
-   * uml_arm64_jit_execute_ordered enables it. That form lowers to one plain
-   * release store rather than an exclusive sequence, so it is restartable,
-   * and it must be single-copy atomic: guest memory shared with a native host
-   * thread - the Venus command ring reached through the vhost-user
-   * shared-memory aperture - is read there with real atomics, and the
-   * byte-wise fallback lets that reader observe a half-updated word that was
+   * Every atomic, exclusive and ordered access of the semantic path is one
+   * host access through this pointer: an LSE atomic or CASP for a
+   * read-modify-write, LDAR/STLR or a plain load or store for the ordered
+   * and relaxed forms, and LDXP for a 128-bit snapshot. Each is therefore
+   * single-copy atomic against native JIT code on other vCPUs and against a
+   * host thread that shares the page, such as the Venus command ring
+   * reached through the vhost-user shared-memory aperture. A byte-wise copy
+   * would let either observe or overwrite a half-updated value that was
    * never architecturally visible.
+   *
+   * The pointer is offered only for an access the single-copy alignment rule
+   * admits as a whole: naturally aligned, or, when the host has FEAT_LSE2,
+   * inside one 16-byte block. Such an access never crosses a page. A failed
+   * translation is the instruction's fault; callers report it instead of
+   * completing the access byte by byte.
+   *
+   * The dynamic loader can change COW permissions within the same page
+   * between two such accesses, so a write translation is revalidated at this
+   * cold helper boundary instead of reusing a pre-transition host pointer,
+   * exactly as the byte-wise path does before it copies.
    */
   std::byte *atomic_pointer(std::uint64_t address, std::size_t size,
                             ::uml::memory::MemoryAccess access) override {
-    if (!scalar_ordered_atomics_ || size == 0 ||
-        size > sizeof(std::uint64_t) || (size & (size - 1U)) != 0 ||
+    if (size == 0 || size > 16U || (size & (size - 1U)) != 0 ||
         arm64::detail::single_copy_alignment_faults(address, size,
                                                     tlb_.unaligned_atomics))
       return nullptr;
     const auto direction = ::uml::memory::translated_access(access);
-    /*
-     * The dynamic loader can change COW permissions within the same page
-     * between ordered stores. Revalidate the write translation at this cold
-     * helper boundary instead of retaining a pre-transition host pointer,
-     * exactly as the byte-wise path does before it copies.
-     */
     if (direction == Access::write)
       tlb_.discard(address);
-    return tlb_.translate(address, direction);
+    auto *pointer = tlb_.translate(address, direction);
+    if (pointer == nullptr)
+      record_fault();
+    return pointer;
   }
 
   std::byte *reservation_pointer(
@@ -259,7 +261,6 @@ private:
   }
 
   Tlb &tlb_;
-  bool scalar_ordered_atomics_{};
   ::uml::memory::MemoryFault fault_{};
   bool fault_recorded_{};
 };
@@ -303,7 +304,9 @@ uml_arm64_jit_execute_exclusive(CpuState *cpu, Tlb *tlb,
   const auto handler = jit::semantic::exclusive_handler(instruction);
   if (handler == nullptr)
     return pack_jit_result(Event::fatal, 0);
+  /* An exclusive load: o2 = 0 and L = 1 in the exclusive class. */
   const bool establishes_reservation =
+      handler == jit::semantic::load_store_exclusive &&
       (instruction & 0x00c0'0000U) == 0x0040'0000U;
   const bool uses_software_reservation =
       establishes_reservation || cpu->exclusive_size != 0U;
@@ -327,9 +330,12 @@ uml_arm64_jit_execute_exclusive(CpuState *cpu, Tlb *tlb,
     return semantic_result(*tlb, memory, result);
   };
   /*
-   * Native compare/exchange and atomic instructions already provide their
-   * own inter-vCPU serialization. Only the semantic fallback which creates
-   * or consumes CpuState's software reservation needs the publication gate.
+   * Compare-and-swap, the LSE, LSE128 and read-check-write atomics perform
+   * their memory transaction as one host atomic on the translated page, so
+   * they are single-copy atomic against every other writer without the
+   * publication gate. Only an exclusive load, which creates CpuState's
+   * software reservation, and any instruction run while that reservation is
+   * held, which may consume it, wait out other vCPUs' native store blocks.
    */
   if (uses_software_reservation) {
     JitExclusiveOperationScope operation;
@@ -341,14 +347,13 @@ uml_arm64_jit_execute_exclusive(CpuState *cpu, Tlb *tlb,
 [[nodiscard]] std::uint64_t
 execute_semantic_instruction(CpuState &cpu, Tlb &tlb,
                              std::uint32_t instruction,
-                             jit::semantic::Handler handler,
-                             bool scalar_ordered_atomics) noexcept {
+                             jit::semantic::Handler handler) noexcept {
   materialize_semantic_cpu_state(cpu);
   /* Generated code routes only the selected classes here. Any other word is
    * an internal error and is never interpreted. */
   if (handler == nullptr)
     return pack_jit_result(Event::fatal, 0);
-  JitSemanticMemory memory{tlb, scalar_ordered_atomics};
+  JitSemanticMemory memory{tlb};
   return semantic_result(tlb, memory, handler(cpu, memory, instruction));
 }
 
@@ -358,8 +363,7 @@ uml_arm64_jit_execute_memory(CpuState *cpu, Tlb *tlb,
   if (cpu == nullptr || tlb == nullptr)
     return pack_jit_result(Event::fatal, 0);
   return execute_semantic_instruction(
-      *cpu, *tlb, instruction, jit::semantic::memory_handler(instruction),
-      false);
+      *cpu, *tlb, instruction, jit::semantic::memory_handler(instruction));
 }
 
 extern "C" std::uint64_t
@@ -368,8 +372,7 @@ uml_arm64_jit_execute_gcs(CpuState *cpu, Tlb *tlb,
   if (cpu == nullptr || tlb == nullptr)
     return pack_jit_result(Event::fatal, 0);
   return execute_semantic_instruction(
-      *cpu, *tlb, instruction, jit::semantic::gcs_handler(instruction),
-      false);
+      *cpu, *tlb, instruction, jit::semantic::gcs_handler(instruction));
 }
 
 extern "C" std::uint64_t
@@ -519,14 +522,13 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
   /*
    * Ordered stores must invalidate software reservations even when an alias
    * writes the same bits, and must revalidate write access. The semantic
-   * slow path owns both rules, so route the store there; asking for direct
-   * scalar atomics makes that path store the value with one host release
-   * store instead of copying it a byte at a time.
+   * slow path owns both rules and stores the value with one host release
+   * store, so route the store there.
    */
   if (!load)
     return execute_semantic_instruction(
         *cpu, *tlb, instruction,
-        jit::semantic::ordered_store_handler(instruction), true);
+        jit::semantic::ordered_store_handler(instruction));
   materialize_semantic_cpu_state(*cpu);
   const unsigned size_shift = instruction >> 30;
   const std::size_t size = std::size_t{1} << size_shift;
