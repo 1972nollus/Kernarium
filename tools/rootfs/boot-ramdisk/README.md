@@ -37,9 +37,15 @@ panics the kernel, which aborts the emulator with a nonzero status.
 which has no `command` builtin, and calls only applets the base verifier
 requires. It mounts devtmpfs, proc and sysfs, waits up to ten seconds for the
 root device, mounts the new root at `/newroot`, copies `/payload` into it
-with `cp -a`, moves `/dev`, `/proc` and `/sys` across, prints
+with `cp -af`, moves `/dev`, `/proc` and `/sys` across, prints
 `UML_BOOT_SWITCH_ROOT:<entry>` and `switch_root`s into the entry as PID 1.
 Any failure prints `UML_BOOT_ERROR:<reason>` and stops the guest.
+
+A payload file replaces a file the image carries at the same path. Over a
+symlink it writes through to the target when the target exists and replaces
+the link otherwise. A payload directory must not pass through a symlink in the
+image: images with a merged `/usr` link `/lib` to `usr/lib`, so a payload
+names `/usr/lib/...` instead.
 
 `/boot.env` holds `KEY=VALUE` lines; blank lines and `#` comments are ignored
 and an unknown key is an error.
@@ -53,7 +59,9 @@ and an unknown key is an error.
 | `UML_BOOT_ENTRY` | absolute path in the new root | `/sbin/init` |
 
 With `tmpfs` the image is mounted read-only beneath a tmpfs overlay that ends
-with the run, and the payload lands in that upper layer. With `none` the image
+with the run, and the payload lands in that upper layer. The new root keeps
+both layers visible: the image at `/.uml-lower` and the tmpfs, with its
+`upper` and `work` directories, at `/.uml-state`. With `none` the image
 itself is the read-write root, as a starter disk or a one-image machine uses
 it, and the payload is written into it. `UML_BOOT_GROW=1` first grows a sole
 ext4 partition that a host tool has already enlarged, reporting

@@ -159,7 +159,9 @@ mount_direct_root()
 		fail "cannot mount $root"
 }
 
-# The image read-only beneath a writable layer that ends with the run.
+# The image read-only beneath a writable layer that ends with the run. Both
+# layers stay visible in the new root, at /.uml-lower and /.uml-state, so a
+# guest can check what it runs on and keep bulky state beside the overlay.
 mount_overlay_root()
 {
 	mkdir -p /lower /state || fail "cannot create the overlay mount points"
@@ -184,8 +186,16 @@ tmpfs) mount_overlay_root ;;
 esac
 
 # The payload mirrors the new root; in an overlay it lands in the upper layer.
+# -f replaces a file whose open fails, such as a dangling symlink.
 if [ -d /payload ]; then
-	cp -a /payload/. /newroot/ || fail "cannot install the payload"
+	cp -af /payload/. /newroot/ || fail "cannot install the payload"
+fi
+if [ "$upper" = tmpfs ]; then
+	for layer in lower state; do
+		mkdir -p "/newroot/.uml-$layer" && \
+			mount -o move "/$layer" "/newroot/.uml-$layer" || \
+			fail "cannot move /$layer into the new root"
+	done
 fi
 for filesystem in dev proc sys; do
 	mount -o move "/$filesystem" "/newroot/$filesystem" || \
