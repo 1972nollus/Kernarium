@@ -425,6 +425,16 @@ verify_final_slice ios-simulator ios-arm64-simulator "$ios_simulator_install"
 build_xcode_xcframework_consumer "$staged_output" \
 	"$work_root/final-xcode-consumer/macos"
 
-rm -rf -- "$output"
-mv -- "$staged_output" "$output"
+# An existing package is exchanged with the staged one in a single rename;
+# the previous package then sits in the stage, which cleanup removes. A first
+# publish is exclusive, so a run that loses the race fails instead of moving
+# its package inside the winner's.
+publisher="$project_root/dependencies/publish-prefix.py"
+if [ -e "$output" ] || [ -L "$output" ]; then
+	python3 -B "$publisher" --swap "$staged_output" "$output" ||
+		fail "could not replace $output atomically"
+else
+	python3 -B "$publisher" "$staged_output" "$output" ||
+		fail "could not publish $output; another run may have published it first"
+fi
 printf '%s\n' "$output"
