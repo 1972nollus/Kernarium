@@ -461,7 +461,8 @@ class ResultParsingTests(unittest.TestCase):
             session.index("ip link set lo up"),
             session.index('echo "UML_SESSION_READY:$entry"'),
         )
-        self.assertEqual(session.rstrip().splitlines()[-1], 'exec "$entry"')
+        # A shell or systemd entry replaces the session as PID 1.
+        self.assertIn('[ "$workload" = 1 ] || exec "$entry"', session)
 
     def test_modules_builtin_validation_is_canonical_and_exhaustive(self) -> None:
         entries = tuple(
