@@ -40,14 +40,10 @@ uml_add_unit_test(NAME memory-address-window-reads
     COMMAND uml_memory_address_window_tests)
 
 add_executable(uml_execution_gate_profile_tests
-    execution_gate_profile_tests.cpp
-    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu/execution_gate.cpp)
-target_link_libraries(uml_execution_gate_profile_tests PRIVATE UML::BridgeAbi)
-target_include_directories(uml_execution_gate_profile_tests PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
-target_compile_definitions(uml_execution_gate_profile_tests PRIVATE
-    UML_MEMORY_PROFILE_TESTING=1
-    UML_RUNTIME_PROFILING=1)
+    execution_gate_profile_tests.cpp)
+target_link_libraries(uml_execution_gate_profile_tests PRIVATE
+    UML::BridgeAbi
+    uml_execution_gate_profile_test_variant)
 target_compile_features(uml_execution_gate_profile_tests PRIVATE cxx_std_20)
 target_compile_options(uml_execution_gate_profile_tests PRIVATE
     -Wall -Wextra -Werror)

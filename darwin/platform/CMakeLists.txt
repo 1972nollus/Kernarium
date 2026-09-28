@@ -69,6 +69,19 @@ target_compile_definitions(uml_run_routing PRIVATE
     UML_RUN_ROUTING_TESTING=0)
 set_target_properties(uml_run_routing PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
+if(UML_BUILD_UNIT_TESTS)
+    # The same source with its failure-injection points, for the routing
+    # transaction tests; products compile it without them.
+    add_library(uml_run_routing_test_variant OBJECT run_routing.cpp)
+    uml_declare_architecture_target(uml_run_routing_test_variant platform)
+    target_include_directories(uml_run_routing_test_variant PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(uml_run_routing_test_variant PRIVATE
+        UML_RUN_ROUTING_TESTING=1)
+    target_compile_features(uml_run_routing_test_variant PUBLIC cxx_std_20)
+    target_compile_options(uml_run_routing_test_variant PRIVATE
+        -Wall -Wextra -Werror)
+endif()
 
 add_library(uml_host_topology OBJECT host_topology.cpp)
 add_library(UML::HostTopology ALIAS uml_host_topology)

@@ -16,17 +16,7 @@ target_compile_definitions(uml_video_decoder_tests PRIVATE
 uml_add_unit_test(NAME platform-video-decoder COMMAND uml_video_decoder_tests
     LABELS video TIMEOUT 120)
 
-# The platform's run routing, with the test variant's injected failures.
-add_library(uml_run_routing_test_variant OBJECT
-    ${PROJECT_SOURCE_DIR}/darwin/platform/run_routing.cpp)
-target_include_directories(uml_run_routing_test_variant PUBLIC
-    ${PROJECT_SOURCE_DIR}/darwin/platform)
-target_compile_definitions(uml_run_routing_test_variant PRIVATE
-    UML_RUN_ROUTING_TESTING=1)
-target_compile_features(uml_run_routing_test_variant PUBLIC cxx_std_20)
-target_compile_options(uml_run_routing_test_variant PRIVATE
-    -Wall -Wextra -Werror)
-
+# The platform's run routing; the transaction tests use its test variant.
 add_executable(uml_run_routing_tests
     run_routing_tests.cpp
     $<TARGET_OBJECTS:uml_run_routing_test_variant>)

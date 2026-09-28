@@ -157,6 +157,25 @@ if(UML_BUILD_UNIT_TESTS)
             POSITION_INDEPENDENT_CODE ON)
     endif()
 
+    # The execution gate with its profile counters, for the profile test;
+    # products compile it into uml_static_mmu without them.
+    add_library(uml_execution_gate_profile_test_variant OBJECT
+        mmu/execution_gate.cpp)
+    uml_declare_architecture_target(uml_execution_gate_profile_test_variant
+        memory)
+    target_link_libraries(uml_execution_gate_profile_test_variant PRIVATE
+        UML::BridgeAbi
+        UML::MemoryContract)
+    target_include_directories(uml_execution_gate_profile_test_variant PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
+    target_compile_definitions(uml_execution_gate_profile_test_variant PUBLIC
+        UML_MEMORY_PROFILE_TESTING=1
+        UML_RUNTIME_PROFILING=1)
+    target_compile_features(uml_execution_gate_profile_test_variant PUBLIC
+        cxx_std_20)
+    target_compile_options(uml_execution_gate_profile_test_variant PRIVATE
+        -Wall -Wextra -Werror)
+
     add_library(uml_memory_test_component INTERFACE)
     add_library(UML::MemoryTestComponent ALIAS uml_memory_test_component)
     uml_declare_architecture_target(uml_memory_test_component memory)
