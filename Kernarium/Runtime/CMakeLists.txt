@@ -164,6 +164,7 @@ add_library(KernariumRuntime SHARED
     "${_kernarium_aquarium_header}"
     "${_kernarium_cts_header}"
     KernariumBootstrap.hpp
+    KernariumConsoleInput.hpp
     KernariumRuntime.h
     KernariumRuntime.mm)
 uml_declare_architecture_target(KernariumRuntime app)

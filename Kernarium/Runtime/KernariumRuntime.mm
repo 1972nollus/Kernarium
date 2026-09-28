@@ -3,6 +3,7 @@
 #include "KernariumRuntime.h"
 #include "KernariumAquarium.hpp"
 #include "KernariumBootstrap.hpp"
+#include "KernariumConsoleInput.hpp"
 #include "KernariumCtsCampaigns.hpp"
 
 #include "audio/in_process_service.hpp"
@@ -40,6 +41,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <pthread.h>
 #include <signal.h>
 #include <stdexcept>
@@ -113,8 +115,9 @@ std::atomic_bool runtimeActive;
  * valid for that call. Sync, quiesce and resume can take seconds, so they
  * serialize on a lifecycle mutex of their own rather than stall a stop request
  * or main-thread touch and key input; the emulator registration takes both.
- * Console input can block on a guest that stops reading, so it does not share
- * a mutex with touch and key input either.
+ * Console input can wait on a guest that stops reading, so it goes through a
+ * registry of its own that no caller holds while it writes; see
+ * kernarium::console::InputRegistry.
  */
 std::mutex emulatorLifecycleMutex;
 std::mutex activeEmulatorMutex;
@@ -122,9 +125,10 @@ uml_emulator* activeEmulator;
 std::mutex activeInputMutex;
 uml::input::virtio::InProcessInputService* activeTouchscreen;
 uml::input::virtio::InProcessInputService* activeKeyboard;
-class ConsoleBridge;
-std::mutex activeConsoleMutex;
-ConsoleBridge* activeConsoleBridge;
+/* Process lifetime, like the input callers it serves: the application's
+ * terminal can still write while the process exits. */
+kernarium::console::InputRegistry& consoleInputs =
+    *new kernarium::console::InputRegistry;
 std::mutex consoleOutputCallbackMutex;
 std::mutex consoleStdoutMutex;
 kernarium_runtime_console_output_callback consoleOutputCallback;
@@ -458,22 +462,29 @@ public:
                 std::string(std::strerror(errno)));
         }
         guest_ = descriptors[0];
-        host_ = descriptors[1];
+        const int host = descriptors[1];
         const int enabled = 1;
         if (setsockopt(
-                host_,
+                host,
                 SOL_SOCKET,
                 SO_NOSIGPIPE,
                 &enabled,
                 sizeof(enabled)) != 0) {
             const int error = errno;
             close(guest_);
-            close(host_);
+            close(host);
             guest_ = -1;
-            host_ = -1;
             throw std::runtime_error(
                 "console socket setup failed: " +
                 std::string(std::strerror(error)));
+        }
+        try {
+            host_.emplace(host);
+        } catch (...) {
+            close(guest_);
+            close(host);
+            guest_ = -1;
+            throw;
         }
         try {
             relay_ = std::thread([
@@ -491,8 +502,8 @@ public:
                 std::string observed;
                 char buffer[4096];
                 for (;;) {
-                    const ssize_t received = recv(
-                        host_, buffer, sizeof(buffer), 0);
+                    const ssize_t received = host_->receive(
+                        buffer, sizeof(buffer));
                     if (received > 0) {
                         publishConsoleOutput(
                             buffer, static_cast<std::size_t>(received));
@@ -584,7 +595,7 @@ public:
                                         kernarium::bootstrap::desktop(modeSetup);
                                 }
                                 bootstrap.push_back('\n');
-                                const int error = sendInput(
+                                const int error = host_->send(
                                     bootstrap.data(), bootstrap.size());
                                 bootstrapDelivered = error == 0;
                                 if (!bootstrapDelivered)
@@ -624,11 +635,10 @@ public:
                     }
                     break;
                 }
-                closeHost();
+                host_->close();
             });
         } catch (...) {
             close(guest_);
-            closeHost();
             guest_ = -1;
             throw;
         }
@@ -636,6 +646,9 @@ public:
 
     ~ConsoleBridge()
     {
+        /* A bootstrap the relay is still writing ends with the input, and the
+         * relay's receive ends when the guest end closes. */
+        host_->stop();
         if (guest_ >= 0) {
             (void)shutdown(guest_, SHUT_RDWR);
             close(guest_);
@@ -647,31 +660,9 @@ public:
     ConsoleBridge(const ConsoleBridge&) = delete;
     ConsoleBridge& operator=(const ConsoleBridge&) = delete;
 
-    [[nodiscard]] int sendInput(
-        const void* buffer,
-        std::size_t length) noexcept
+    [[nodiscard]] kernarium::console::HostEnd& host() noexcept
     {
-        if (length == 0U)
-            return 0;
-        if (buffer == nullptr)
-            return EINVAL;
-        std::lock_guard lock(hostWriteMutex_);
-        if (host_ < 0)
-            return ENOTCONN;
-        std::string_view remaining {
-            static_cast<const char*>(buffer), length};
-        while (!remaining.empty()) {
-            const ssize_t sent = send(
-                host_, remaining.data(), remaining.size(), 0);
-            if (sent > 0) {
-                remaining.remove_prefix(static_cast<std::size_t>(sent));
-            } else if (sent < 0 && errno == EINTR) {
-                continue;
-            } else {
-                return sent == 0 ? EIO : errno;
-            }
-        }
-        return 0;
+        return *host_;
     }
 
     [[nodiscard]] std::string kernelArgument() const
@@ -681,18 +672,8 @@ public:
     }
 
 private:
-    void closeHost() noexcept
-    {
-        std::lock_guard lock(hostWriteMutex_);
-        if (host_ >= 0) {
-            close(host_);
-            host_ = -1;
-        }
-    }
-
     int guest_ {-1};
-    int host_ {-1};
-    std::mutex hostWriteMutex_;
+    std::optional<kernarium::console::HostEnd> host_;
     std::thread relay_;
 };
 
@@ -945,14 +926,14 @@ class ActiveConsoleRegistration final {
 public:
     explicit ActiveConsoleRegistration(ConsoleBridge& console)
     {
-        std::lock_guard lock(activeConsoleMutex);
-        activeConsoleBridge = &console;
+        consoleInputs.publish(console.host());
     }
 
+    /* The guest has stopped reading for good, so a write that still waits
+     * for it ends here rather than holding the run's teardown. */
     ~ActiveConsoleRegistration()
     {
-        std::lock_guard lock(activeConsoleMutex);
-        activeConsoleBridge = nullptr;
+        consoleInputs.retire();
     }
 
     ActiveConsoleRegistration(const ActiveConsoleRegistration&) = delete;
@@ -1634,10 +1615,7 @@ void runtimeSetConsoleOutputCallback(
 
 int runtimeSendConsoleInput(const void* buffer, std::size_t length)
 {
-    std::lock_guard lock(activeConsoleMutex);
-    if (activeConsoleBridge == nullptr)
-        return -ENOTCONN;
-    const int error = activeConsoleBridge->sendInput(buffer, length);
+    const int error = consoleInputs.send(buffer, length);
     return error == 0 ? 0 : -error;
 }
 
