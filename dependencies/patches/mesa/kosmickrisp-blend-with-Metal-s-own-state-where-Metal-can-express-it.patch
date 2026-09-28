@@ -452,10 +452,10 @@ index fa4b9cde1df9456a76b4fa4066081d08bf6cbfed..8319e2d10da17d3dfb4275500076fda5
  vk_compare_op_to_mtl_compare_function(enum VkCompareOp op);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 4fcc7474de4585b72102e62b1d2b6a16582c9945..3c64052a0f387db905837826ed9f894dbef7c1fd 100644
+index 6ee817d9b25a526ad324db8c371e0703db40509c..def06289d0279199efe14eedcea49dffb433e3c4 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1761,14 +1761,25 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1780,14 +1780,25 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
           enc, cmd->vk.dynamic_graphics_state.ds.stencil.front.reference,
           cmd->vk.dynamic_graphics_state.ds.stencil.back.reference);
  
@@ -845,10 +845,10 @@ index ef1aed242386292a86b14e08f2c36b242560b676..889ecc06804ac229cbfca446cabb3e74
           bool has_alpha_to_coverage_enabled;
           bool has_alpha_to_one_enabled;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index d38acf624d85cb4ada0cbca1239fb7ab04aa9689..54d440f6c8b20ca8b9d77378916525481f56a93e 100644
+index f44e7ea77ec40d1f8c44ebec60275bea876b7dde..b0df057b5a0b1183031a70833b3a852729ef45e2 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -593,6 +593,30 @@ if with_tests
+@@ -627,6 +627,30 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

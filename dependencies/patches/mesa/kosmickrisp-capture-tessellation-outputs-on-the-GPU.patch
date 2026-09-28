@@ -6,20 +6,96 @@ Subject: [PATCH] kosmickrisp: capture tessellation outputs on the GPU
 Produce ordered TES records once, then pull raw capture and raster outputs without re-executing application effects. Preserve shared GPU capacity and query accounting, independent raster provoking values, and empty-patch draws.
 
 Use one tessellator index winding for native and software consumers. Match indirect VS/TCS launches to the exact-thread Metal dispatch ABI.
----
- src/kosmickrisp/libkk/kk_tessellation.cl |  23 ++--
- src/kosmickrisp/vulkan/kk_cmd_draw.c     |  55 +++++----
- src/kosmickrisp/vulkan/kk_shader.c       | 151 ++++++++++++++++++-----
- src/poly/cl/tessellation.cl              |   2 +-
- src/poly/cl/tessellator.h                |   7 +-
- src/poly/tessellator.h                   |  15 ++-
- 6 files changed, 185 insertions(+), 68 deletions(-)
 
+Size the buffers and grids a tessellated draw takes from application draw words with checked 32-bit arithmetic, one helper for the host and the indirect setup kernel: the TCS outputs, each patch's coordinate allocation and index count, the TCS grid and, for an indirect draw, the vertex outputs. A wrapped size would hand the TCS and the tessellator a small allocation to write far past. A direct draw that does not fit fails the recording with VK_ERROR_OUT_OF_DEVICE_MEMORY; an indirect one launches nothing, counts no statistic and draws nothing. The index prefix sum refuses a total that wrapped or that its 32-bit heap cannot address the same way: it draws nothing and clears the patch count, which the tessellator kernels respect. kosmickrisp_tess_draw_size records the direct refusal, and kosmickrisp_tess_setup_gpu launches the setup and prefix-sum kernels on bounded heaps with sizes that wrap.
+---
+ src/kosmickrisp/libkk/kk_geometry.cl          |  26 +-
+ src/kosmickrisp/libkk/kk_tessellation.cl      |  46 ++-
+ src/kosmickrisp/libkk/kk_tessellator.cl       |  10 +
+ src/kosmickrisp/libkk/kk_tessellator.h        |  34 ++
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          |  81 ++--
+ src/kosmickrisp/vulkan/kk_shader.c            | 151 ++++++--
+ src/kosmickrisp/vulkan/meson.build            |  34 ++
+ .../tests/tess_draw_size_shaders/generate.sh  |   7 +
+ .../tests/tess_draw_size_shaders/wide.tesc    |  20 +
+ .../tests/tess_draw_size_shaders/wide.tesc.h  | 114 ++++++
+ .../tests/tess_draw_size_shaders/wide.tese    |   8 +
+ .../tests/tess_draw_size_shaders/wide.tese.h  |  50 +++
+ .../vulkan/tests/test_tess_draw_size.cpp      | 354 ++++++++++++++++++
+ .../vulkan/tests/test_tess_setup_gpu.c        | 293 +++++++++++++++
+ src/poly/cl/tessellation.cl                   |   2 +-
+ src/poly/cl/tessellator.h                     |   7 +-
+ src/poly/tessellator.h                        |  15 +-
+ 17 files changed, 1175 insertions(+), 77 deletions(-)
+ create mode 100755 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/generate.sh
+ create mode 100644 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc
+ create mode 100644 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc.h
+ create mode 100644 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tese
+ create mode 100644 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tese.h
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
+
+diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
+index 05c74af00b90cdf0bedad40a618f37336599897b..e488291ef6ba441f9d4669466605958f67f1f1a8 100644
+--- a/src/kosmickrisp/libkk/kk_geometry.cl
++++ b/src/kosmickrisp/libkk/kk_geometry.cl
+@@ -410,6 +410,15 @@ libkk_prefix_sum_tess(global struct poly_tess_params *p,
+    poly_prefix_sum(scratch, p->counts, p->nr_patches, 1 /* words */,
+                    0 /* word */, 1024);
+ 
++   /* The per-patch index counts follow the application's tessellation
++    * levels, so their 32-bit running sum can wrap, and it wrapped exactly
++    * where it decreases. Count the decreases across the group. */
++   barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
++   uint wraps = 0;
++   for (uint i = cl_local_id.x + 1; i < p->nr_patches; i += 1024)
++      wraps += p->counts[i] < p->counts[i - 1];
++   wraps = poly_work_group_scan_inclusive_add(wraps, scratch)[1];
++
+    /* After prefix summing, we know the total # of indices, so allocate the
+     * index buffer now. Elect a thread for the allocation.
+     */
+@@ -420,15 +429,24 @@ libkk_prefix_sum_tess(global struct poly_tess_params *p,
+    /* The last element of an inclusive prefix sum is the total sum */
+    uint total = p->nr_patches > 0 ? p->counts[p->nr_patches - 1] : 0;
+ 
+-   /* Allocate 4-byte indices */
++   /* Allocate 4-byte indices, unless their size does not fit the 32 bits
++    * the heap addresses. Then draw nothing and write no index either: the
++    * tessellator skips every patch once nr_patches is zero. */
+    uint32_t elsize_B = sizeof(uint32_t);
+-   uint32_t size_B = total * elsize_B;
++   uint32_t size_B;
++   global uint32_t *desc = p->out_draws;
++   if (wraps || !poly_u32_checked_mul(total, elsize_B, &size_B) ||
++       !poly_heap_size_can_align(size_B)) {
++      p->nr_patches = 0;
++      for (uint i = 0; i < 5; ++i)
++         desc[i] = 0;
++      return;
++   }
++
+    uint alloc_B = poly_heap_alloc_offs(p->heap, size_B);
+    p->index_buffer = (global uint32_t *)(((uintptr_t)p->heap->base) + alloc_B);
+ 
+    /* ...and now we can generate the API indexed draw */
+-   global uint32_t *desc = p->out_draws;
+-
+    desc[0] = total;              /* count */
+    desc[1] = 1;                  /* instance_count */
+    desc[2] = alloc_B / elsize_B; /* start */
 diff --git a/src/kosmickrisp/libkk/kk_tessellation.cl b/src/kosmickrisp/libkk/kk_tessellation.cl
-index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..abc66ebb70f22a7a821acfb4867327d1fdff8f85 100644
+index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..8c633622ac8d69119a7668481a11ed08d010e364 100644
 --- a/src/kosmickrisp/libkk/kk_tessellation.cl
 +++ b/src/kosmickrisp/libkk/kk_tessellation.cl
-@@ -11,7 +11,7 @@
+@@ -5,13 +5,14 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
++#include "kk_tessellator.h"
+ #include "poly/geometry.h"
+ #include "poly/tessellator.h"
+ 
  KERNEL(1)
  libkk_tess_setup_indirect(
     global struct poly_tess_params *p,
@@ -28,7 +104,43 @@ index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..abc66ebb70f22a7a821acfb4867327d1
     global struct poly_vertex_params *vp /* output */, global uint32_t *indirect,
     uint64_t in_index_buffer, uint32_t in_index_buffer_range_el,
     uint32_t in_index_size_B, uint64_t vertex_outputs /* bitfield */,
-@@ -81,14 +81,23 @@ libkk_tess_setup_indirect(
+@@ -22,6 +23,27 @@ libkk_tess_setup_indirect(
+    uint count = indirect[0], instance_count = indirect[1];
+    unsigned in_patches = count / p->input_patch_size;
+ 
++   /* The draw words are application data, so size every buffer and grid
++    * before writing any state; the arithmetic below then cannot wrap. A
++    * draw whose sizes do not fit 32 bits launches nothing: its three grids
++    * stay empty, the prefix sum sees no patch and writes an empty draw, and
++    * no statistic counts it. */
++   unsigned unrolled_patches;
++   uint32_t patch_buffers_B, vertices, vb_B, blob_B;
++   if (!kk_tess_patch_buffers_size(in_patches, instance_count,
++                                   p->tcs_stride_el, p->output_patch_size,
++                                   &unrolled_patches, &patch_buffers_B) ||
++       !poly_u32_checked_mul(count, instance_count, &vertices) ||
++       !poly_u32_checked_mul(vertices, util_bitcount64(vertex_outputs) * 16,
++                             &vb_B) ||
++       !poly_u32_checked_add(patch_buffers_B, vb_B, &blob_B) ||
++       !poly_heap_size_can_align(blob_B)) {
++      for (uint i = 0; i < 18; ++i)
++         grids[i] = 0;
++      p->nr_patches = 0;
++      return;
++   }
++
+    /* TCS invocation counter increments once per-patch */
+    if (tcs_statistic) {
+       poly_atomic_add_u64(tcs_statistic,
+@@ -29,7 +51,6 @@ libkk_tess_setup_indirect(
+    }
+ 
+    size_t draw_stride = 5 * sizeof(uint32_t);
+-   unsigned unrolled_patches = in_patches * instance_count;
+ 
+    uint32_t alloc = 0;
+    uint32_t tcs_out_offs = alloc;
+@@ -81,14 +102,23 @@ libkk_tess_setup_indirect(
     grids[0] = count;
     grids[1] = instance_count;
     grids[2] = 1;
@@ -58,10 +170,107 @@ index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..abc66ebb70f22a7a821acfb4867327d1
 +   grids[16] = 1;
 +   grids[17] = 1;
  }
+diff --git a/src/kosmickrisp/libkk/kk_tessellator.cl b/src/kosmickrisp/libkk/kk_tessellator.cl
+index fc6e8dad59a973f3f9e9aa9a7821520ebdb64034..5ca71835dce82b71de5a2f46d730a2123928bb4b 100644
+--- a/src/kosmickrisp/libkk/kk_tessellator.cl
++++ b/src/kosmickrisp/libkk/kk_tessellator.cl
+@@ -6,11 +6,17 @@
+ 
+ #include "poly/cl/tessellator.h"
+ 
++/* The grid covers every patch the setup sized. libkk_prefix_sum_tess clears
++ * nr_patches when the patches' indices cannot be addressed, so the pass that
++ * writes them then writes nothing. */
++
+ KERNEL(1)
+ libkk_tess_isoline(constant struct poly_tess_params *p,
+                    enum poly_tess_mode tess_mode)
+ {
+    uint patch = cl_global_id.x;
++   if (patch >= p->nr_patches)
++      return;
+    poly_tess_isoline_process(p, patch, tess_mode);
+ }
+ 
+@@ -19,6 +25,8 @@ libkk_tess_tri(constant struct poly_tess_params *p,
+                enum poly_tess_mode tess_mode)
+ {
+    uint patch = cl_global_id.x;
++   if (patch >= p->nr_patches)
++      return;
+    poly_tess_tri_process(p, patch, tess_mode);
+ }
+ 
+@@ -27,5 +35,7 @@ libkk_tess_quad(constant struct poly_tess_params *p,
+                 enum poly_tess_mode tess_mode)
+ {
+    uint patch = cl_global_id.x;
++   if (patch >= p->nr_patches)
++      return;
+    poly_tess_quad_process(p, patch, tess_mode);
+ }
+diff --git a/src/kosmickrisp/libkk/kk_tessellator.h b/src/kosmickrisp/libkk/kk_tessellator.h
+index 5d687f40a3ab7ff0ace370f94882993923730d88..58a668b71f8b99b3814283dfae078a3e6f2f379c 100644
+--- a/src/kosmickrisp/libkk/kk_tessellator.h
++++ b/src/kosmickrisp/libkk/kk_tessellator.h
+@@ -7,6 +7,7 @@
+ 
+ #pragma once
+ 
++#include "poly/geometry.h"
+ #include "poly/tessellator.h"
+ 
+ #define libkk_tessellate(context, grid, barrier, prim, mode, state)            \
+@@ -18,3 +19,36 @@
+       assert(prim == TESS_PRIMITIVE_ISOLINES);                                 \
+       libkk_tess_isoline(context, grid, barrier, state, mode);                 \
+    }
++
++/* A tessellated draw sizes its patch buffers from application draw words:
++ * the TCS outputs, then each patch's coordinate allocation and index count,
++ * for every patch of every instance. The command pool, the GPU heap and the
++ * dispatches address them in 32 bits, so a product that does not fit would
++ * wrap into a small allocation the TCS and the tessellator write far past.
++ * Returns false for such a draw, and otherwise the unrolled patch count and
++ * the buffers' total size. The TCS grid, `patches` times the output patch
++ * size per instance, has to fit as well. OpenCL and C both size from here.
++ */
++static inline bool
++kk_tess_patch_buffers_size(uint32_t patches, uint32_t instances,
++                           uint32_t tcs_stride_el, uint32_t output_patch_size,
++                           uint32_t *unrolled_patches, uint32_t *size_B)
++{
++   uint32_t tcs_threads, tcs_el, tcs_B, patch_B;
++
++   if (!poly_u32_checked_mul(patches, instances, unrolled_patches))
++      return false;
++
++   /* No patch at all launches nothing, whatever one instance would need. */
++   if (*unrolled_patches == 0) {
++      *size_B = 0;
++      return true;
++   }
++
++   return poly_u32_checked_mul(patches, output_patch_size, &tcs_threads) &&
++          poly_u32_checked_mul(*unrolled_patches, tcs_stride_el, &tcs_el) &&
++          poly_u32_checked_mul(tcs_el, sizeof(uint32_t), &tcs_B) &&
++          poly_u32_checked_mul(*unrolled_patches, 2 * sizeof(uint32_t),
++                               &patch_B) &&
++          poly_u32_checked_add(tcs_B, patch_B, size_B);
++}
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb959100ab1 100644
+index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43f86b8757 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
+@@ -1460,7 +1460,7 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
+    return kk_pool_upload(cmd, &params, sizeof(params), 8).gpu;
+ }
+ 
+-static void
++static bool
+ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+                       const struct kk_draw_data *draw)
+ {
 @@ -1489,6 +1489,7 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
        .partitioning = partitioning,
        .points_mode = gfx->tess.info.points,
@@ -70,7 +279,39 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
     };
  
     if (!args.points_mode && gfx->tess.info.mode != TESS_PRIMITIVE_ISOLINES) {
-@@ -1532,8 +1533,8 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+@@ -1506,7 +1507,21 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+ 
+    if (!kk_grid_is_indirect(draw->grid)) {
+       unsigned in_patches = draw->grid.size.x / args.input_patch_size;
+-      unsigned unrolled_patches = in_patches * draw->grid.size.y;
++
++      /* The draw words are application data. A patch buffer or grid whose
++       * size wrapped would hand the TCS and the tessellator a small
++       * allocation to write past, so such a draw fails the recording, and
++       * the arithmetic below cannot wrap. */
++      unsigned unrolled_patches;
++      uint32_t patch_buffers_B;
++      if (!kk_tess_patch_buffers_size(in_patches, draw->grid.size.y,
++                                      args.tcs_stride_el,
++                                      args.output_patch_size,
++                                      &unrolled_patches, &patch_buffers_B) ||
++          patch_buffers_B > UINT32_MAX - draw_stride_B) {
++         vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++         return false;
++      }
+ 
+       uint32_t alloc = 0;
+       uint32_t tcs_out_offs = alloc;
+@@ -1523,6 +1538,8 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+       alloc += draw_stride_B;
+ 
+       struct kk_ptr ptr = kk_pool_alloc(cmd, alloc, 4);
++      if (!ptr.gpu)
++         return false;
+       gfx->tess.out_draws_addr = ptr.gpu + draw_offs;
+       uint64_t addr = ptr.gpu;
+       args.tcs_buffer = addr + tcs_out_offs;
+@@ -1532,16 +1549,19 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
        args.out_draws = addr + draw_offs;
        args.counts = addr + count_offs;
     } else {
@@ -81,7 +322,18 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
        gfx->tess.indirect_ptr = kk_pool_alloc(cmd, grid_stride * 3, 4);
  
        struct kk_ptr ptr = kk_pool_alloc(cmd, draw_stride_B, 4);
-@@ -1662,15 +1663,6 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
++      if (!gfx->tess.indirect_ptr.gpu || !ptr.gpu)
++         return false;
+       gfx->tess.out_draws_addr = ptr.gpu;
+       args.out_draws = ptr.gpu;
+    }
+ 
+    memcpy(out, &args, sizeof(args));
++   return true;
+ }
+ 
+ static bool
+@@ -1662,15 +1682,6 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
         IS_SHADER_DIRTY(TESS_CTRL) || IS_SHADER_DIRTY(TESS_EVAL) ||
         IS_SHADER_DIRTY(VERTEX)) {
        bool front_face_ccw = dyn->rs.front_face != VK_FRONT_FACE_CLOCKWISE;
@@ -97,7 +349,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
        mtl_set_front_face_winding(enc, front_face_ccw
                                           ? MTL_WINDING_COUNTER_CLOCKWISE
                                           : MTL_WINDING_CLOCKWISE);
-@@ -2459,8 +2451,9 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2459,8 +2470,9 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
     }
  
     if (transform_feedback) {
@@ -108,7 +360,18 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
                                     &vs->info.vs.transform_feedback, false);
        if (!gfx->per_draw_data.geometry_params)
           return false;
-@@ -2506,10 +2499,6 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2489,9 +2501,8 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+       struct kk_ptr tess_args =
+          kk_pool_alloc(cmd, sizeof(struct poly_tess_params), 4);
+       gfx->per_draw_data.tess_params = tess_args.gpu;
+-      if (!tess_args.gpu)
++      if (!tess_args.gpu || !kk_upload_tess_params(cmd, tess_args.cpu, draw))
+          return false;
+-      kk_upload_tess_params(cmd, tess_args.cpu, draw);
+    }
+ 
+    if (polygon_points || line_raster) {
+@@ -2506,10 +2517,6 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
        gfx->per_draw_data.polygon_point_clip_flags =
           (vk_rasterization_state_depth_clip_enable(&dyn->rs) ? 1u : 0u) |
           (dyn->vp.depth_clip_negative_one_to_one ? 2u : 0u) |
@@ -119,7 +382,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
           (dyn->rs.depth_bias.enable ? 8u : 0u) |
           (dyn->rs.depth_clamp_enable ? 16u : 0u);
        gfx->per_draw_data.polygon_depth_bias_constant =
-@@ -2598,8 +2587,7 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
+@@ -2598,8 +2605,7 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
     if (grid.mode == KK_GRID_DIRECT)
        mtl_dispatch_threads(enc, grid.size, local_size);
     else
@@ -129,7 +392,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
  }
  
  static struct kk_draw_data
-@@ -2625,6 +2613,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2625,6 +2631,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
        &gfx->descriptors, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT);
  
     if (vs->info.vs.geometry_shader_emulation ||
@@ -137,7 +400,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
         dyn->rs.rasterizer_discard_enable) {
        c_primitives = 0;
        c_invocations = 0;
-@@ -2650,7 +2639,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2650,7 +2657,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  
        libkk_tess_setup_indirect_struct(cmd, kk_grid_1d(1), true, args);
  
@@ -146,7 +409,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
        grid_vs = kk_grid_indirect(gfx->tess.indirect_ptr.gpu + 0u * grid_stride);
        grid_tcs =
           kk_grid_indirect(gfx->tess.indirect_ptr.gpu + 1u * grid_stride);
-@@ -3003,6 +2992,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -3003,6 +3010,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                               struct kk_draw_data draw, enum mesa_prim prim)
  {
     struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
@@ -154,7 +417,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
     struct kk_graphics_state *gfx = &cmd->state.gfx;
     const struct poly_gs_info *gsi = &vs->info.vs.transform_feedback;
     bool indirect = kk_grid_is_indirect(draw.grid);
-@@ -3023,7 +3013,8 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -3023,7 +3031,8 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
           .vp = gfx->per_draw_data.vertex_params,
           .p = gfx->per_draw_data.geometry_params,
           .heap = kk_heap(cmd),
@@ -164,7 +427,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
           .index_size_B = draw.index.el_size_B,
           .index_buffer_range_el = kk_draw_index_range_el(&draw),
           .prim = prim,
-@@ -3035,7 +3026,11 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -3035,7 +3044,11 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
     }
  
     mtl_compute_encoder *enc = cs_get_compute(cmd, true);
@@ -177,7 +440,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
     struct mtl_size vs_local_size = {64, 1, 1};
  
     mtl_barrier_after_encoder_stages(enc, MTL_STAGE_DISPATCH,
-@@ -3360,15 +3355,24 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3360,15 +3373,24 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
                                     data->prim))
           return;
  
@@ -205,7 +468,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..6cf4062dbc2584d572c78f93c650afb9
  
        const enum mesa_prim source_raster_prim =
           emulate_geometry ? vs->info.vs.geometry.mode
-@@ -3392,7 +3396,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3392,7 +3414,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
         * requested provoking vertex itself.  Keep its non-indexed vertex IDs
         * intact: they also address the generated XFB records. */
        if (rasterize && provoking_last && !emulate_line_raster &&
@@ -464,6 +727,946 @@ index 014eb1b25555fba7cc06cb9d618fb91e26bccca7..0162840e86d1c8bb0509921a75111d64
                       nir_shaders[i]->info.stage == MESA_SHADER_TESS_EVAL;
  
        mesa_shader_stage logical_stage = nir_shaders[i]->info.stage;
+diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
+index 8968a9a70bd31a852c2f3639aa3f5491ed90d7ef..6dd1214832c42ecc5ebfbf0bdd0a11cb3bc16485 100644
+--- a/src/kosmickrisp/vulkan/meson.build
++++ b/src/kosmickrisp/vulkan/meson.build
+@@ -256,6 +256,26 @@ if with_tests
+       env : ['MESA_SHADER_CACHE_DISABLE=true'],
+       timeout : 120,
+     )
++    test(
++      'kosmickrisp_tess_setup_gpu',
++      executable(
++        'test_kosmickrisp_tess_setup_gpu',
++        files('tests/test_tess_setup_gpu.c'),
++        include_directories : kk_test_include_directories,
++        dependencies : [
++          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
++          idep_vulkan_runtime_headers,
++          idep_vulkan_util_headers,
++          idep_vulkan_wsi_headers,
++          idep_libkk_shaders_h,
++        ],
++        link_whole : libkk,
++        link_args : ['-Wl,-undefined,dynamic_lookup'],
++      ),
++      suite : ['kosmickrisp'],
++      env : ['MESA_SHADER_CACHE_DISABLE=true'],
++      timeout : 120,
++    )
+     test(
+       'kosmickrisp_metal_objects_export',
+       executable(
+@@ -296,6 +316,20 @@ if with_tests
+       env : ['MESA_SHADER_CACHE_DISABLE=true'],
+       timeout : 120,
+     )
++    test(
++      'kosmickrisp_tess_draw_size',
++      executable(
++        'test_kosmickrisp_tess_draw_size',
++        files('tests/test_tess_draw_size.cpp'),
++        include_directories : kk_test_include_directories,
++        dependencies : [idep_vulkan_runtime_headers],
++        link_with : libvulkan_kosmickrisp,
++        override_options : ['cpp_std=c++20'],
++      ),
++      suite : ['kosmickrisp'],
++      env : ['MESA_SHADER_CACHE_DISABLE=true'],
++      timeout : 120,
++    )
+     test(
+       'kosmickrisp_geometry_draw_size',
+       executable(
+diff --git a/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/generate.sh b/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/generate.sh
+new file mode 100755
+index 0000000000000000000000000000000000000000..d45539bbe9ec55126dea700e0436ff78e49e0a6b
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/generate.sh
+@@ -0,0 +1,7 @@
++#!/bin/sh
++# SPDX-License-Identifier: MIT
++set -eu
++cd -- "$(dirname -- "$0")"
++for shader in wide.tesc wide.tese; do
++   glslc -O --target-env=vulkan1.3 -mfmt=c "$shader" -o "$shader.h"
++done
+diff --git a/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc b/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc
+new file mode 100644
+index 0000000000000000000000000000000000000000..8520b58507639682dc3be9b8658c2cfffa350ec7
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc
+@@ -0,0 +1,20 @@
++/* SPDX-License-Identifier: MIT */
++#version 450
++/* 32 output vertices of a position and 15 vec4 outputs each. Every output
++ * is its own function of the invocation and the TES indexes them
++ * dynamically, so the compiler cannot fold them away. */
++layout(vertices = 32) out;
++layout(location = 0) out vec4 wide[][15];
++void main()
++{
++   gl_out[gl_InvocationID].gl_Position = gl_in[0].gl_Position;
++   for (int i = 0; i < 15; ++i) {
++      float seed = float(gl_InvocationID * 15 + i) + gl_in[0].gl_Position.x;
++      wide[gl_InvocationID][i] =
++         vec4(sin(seed), cos(seed), sin(2.0 * seed), cos(3.0 * seed));
++   }
++   gl_TessLevelOuter[0] = 1.0;
++   gl_TessLevelOuter[1] = 1.0;
++   gl_TessLevelOuter[2] = 1.0;
++   gl_TessLevelInner[0] = 1.0;
++}
+diff --git a/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc.h b/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..3d32adb32b1cc9ec1504de628739418e142d2023
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc.h
+@@ -0,0 +1,114 @@
++{0x07230203,0x00010600,0x000d000b,0x0000005d,
++0x00000000,0x00020011,0x00000003,0x0006000b,
++0x00000001,0x4c534c47,0x6474732e,0x3035342e,
++0x00000000,0x0003000e,0x00000000,0x00000001,
++0x000b000f,0x00000001,0x00000004,0x6e69616d,
++0x00000000,0x0000000f,0x00000012,0x00000018,
++0x00000039,0x00000050,0x0000005a,0x00040010,
++0x00000004,0x0000001a,0x00000020,0x00030047,
++0x0000000b,0x00000002,0x00050048,0x0000000b,
++0x00000000,0x0000000b,0x00000000,0x00050048,
++0x0000000b,0x00000001,0x0000000b,0x00000001,
++0x00050048,0x0000000b,0x00000002,0x0000000b,
++0x00000003,0x00050048,0x0000000b,0x00000003,
++0x0000000b,0x00000004,0x00040047,0x00000012,
++0x0000000b,0x00000008,0x00030047,0x00000015,
++0x00000002,0x00050048,0x00000015,0x00000000,
++0x0000000b,0x00000000,0x00050048,0x00000015,
++0x00000001,0x0000000b,0x00000001,0x00050048,
++0x00000015,0x00000002,0x0000000b,0x00000003,
++0x00050048,0x00000015,0x00000003,0x0000000b,
++0x00000004,0x00040047,0x00000039,0x0000001e,
++0x00000000,0x00040047,0x00000050,0x0000000b,
++0x0000000b,0x00030047,0x00000050,0x0000000f,
++0x00040047,0x0000005a,0x0000000b,0x0000000c,
++0x00030047,0x0000005a,0x0000000f,0x00020013,
++0x00000002,0x00030021,0x00000003,0x00000002,
++0x00030016,0x00000006,0x00000020,0x00040017,
++0x00000007,0x00000006,0x00000004,0x00040015,
++0x00000008,0x00000020,0x00000000,0x0004002b,
++0x00000008,0x00000009,0x00000001,0x0004001c,
++0x0000000a,0x00000006,0x00000009,0x0006001e,
++0x0000000b,0x00000007,0x00000006,0x0000000a,
++0x0000000a,0x0004002b,0x00000008,0x0000000c,
++0x00000020,0x0004001c,0x0000000d,0x0000000b,
++0x0000000c,0x00040020,0x0000000e,0x00000003,
++0x0000000d,0x0004003b,0x0000000e,0x0000000f,
++0x00000003,0x00040015,0x00000010,0x00000020,
++0x00000001,0x00040020,0x00000011,0x00000001,
++0x00000010,0x0004003b,0x00000011,0x00000012,
++0x00000001,0x0004002b,0x00000010,0x00000014,
++0x00000000,0x0006001e,0x00000015,0x00000007,
++0x00000006,0x0000000a,0x0000000a,0x0004001c,
++0x00000016,0x00000015,0x0000000c,0x00040020,
++0x00000017,0x00000001,0x00000016,0x0004003b,
++0x00000017,0x00000018,0x00000001,0x00040020,
++0x00000019,0x00000001,0x00000007,0x00040020,
++0x0000001c,0x00000003,0x00000007,0x0004002b,
++0x00000010,0x00000026,0x0000000f,0x00020014,
++0x00000027,0x0004002b,0x00000008,0x00000030,
++0x00000000,0x00040020,0x00000031,0x00000001,
++0x00000006,0x0004002b,0x00000008,0x00000035,
++0x0000000f,0x0004001c,0x00000036,0x00000007,
++0x00000035,0x0004001c,0x00000037,0x00000036,
++0x0000000c,0x00040020,0x00000038,0x00000003,
++0x00000037,0x0004003b,0x00000038,0x00000039,
++0x00000003,0x0004002b,0x00000006,0x00000040,
++0x40000000,0x0004002b,0x00000006,0x00000044,
++0x40400000,0x0004002b,0x00000010,0x0000004b,
++0x00000001,0x0004002b,0x00000008,0x0000004d,
++0x00000004,0x0004001c,0x0000004e,0x00000006,
++0x0000004d,0x00040020,0x0000004f,0x00000003,
++0x0000004e,0x0004003b,0x0000004f,0x00000050,
++0x00000003,0x0004002b,0x00000006,0x00000051,
++0x3f800000,0x00040020,0x00000052,0x00000003,
++0x00000006,0x0004002b,0x00000010,0x00000055,
++0x00000002,0x0004002b,0x00000008,0x00000057,
++0x00000002,0x0004001c,0x00000058,0x00000006,
++0x00000057,0x00040020,0x00000059,0x00000003,
++0x00000058,0x0004003b,0x00000059,0x0000005a,
++0x00000003,0x00050036,0x00000002,0x00000004,
++0x00000000,0x00000003,0x000200f8,0x00000005,
++0x0004003d,0x00000010,0x00000013,0x00000012,
++0x00060041,0x00000019,0x0000001a,0x00000018,
++0x00000014,0x00000014,0x0004003d,0x00000007,
++0x0000001b,0x0000001a,0x00060041,0x0000001c,
++0x0000001d,0x0000000f,0x00000013,0x00000014,
++0x0003003e,0x0000001d,0x0000001b,0x000200f9,
++0x00000020,0x000200f8,0x00000020,0x000700f5,
++0x00000010,0x0000005c,0x00000014,0x00000005,
++0x0000004c,0x00000021,0x000500b1,0x00000027,
++0x00000028,0x0000005c,0x00000026,0x000400f6,
++0x00000022,0x00000021,0x00000000,0x000400fa,
++0x00000028,0x00000021,0x00000022,0x000200f8,
++0x00000021,0x00050084,0x00000010,0x0000002c,
++0x00000013,0x00000026,0x00050080,0x00000010,
++0x0000002e,0x0000002c,0x0000005c,0x0004006f,
++0x00000006,0x0000002f,0x0000002e,0x00070041,
++0x00000031,0x00000032,0x00000018,0x00000014,
++0x00000014,0x00000030,0x0004003d,0x00000006,
++0x00000033,0x00000032,0x00050081,0x00000006,
++0x00000034,0x0000002f,0x00000033,0x0006000c,
++0x00000006,0x0000003d,0x00000001,0x0000000d,
++0x00000034,0x0006000c,0x00000006,0x0000003f,
++0x00000001,0x0000000e,0x00000034,0x00050085,
++0x00000006,0x00000042,0x00000040,0x00000034,
++0x0006000c,0x00000006,0x00000043,0x00000001,
++0x0000000d,0x00000042,0x00050085,0x00000006,
++0x00000046,0x00000044,0x00000034,0x0006000c,
++0x00000006,0x00000047,0x00000001,0x0000000e,
++0x00000046,0x00070050,0x00000007,0x00000048,
++0x0000003d,0x0000003f,0x00000043,0x00000047,
++0x00060041,0x0000001c,0x00000049,0x00000039,
++0x00000013,0x0000005c,0x0003003e,0x00000049,
++0x00000048,0x00050080,0x00000010,0x0000004c,
++0x0000005c,0x0000004b,0x000200f9,0x00000020,
++0x000200f8,0x00000022,0x00050041,0x00000052,
++0x00000053,0x00000050,0x00000014,0x0003003e,
++0x00000053,0x00000051,0x00050041,0x00000052,
++0x00000054,0x00000050,0x0000004b,0x0003003e,
++0x00000054,0x00000051,0x00050041,0x00000052,
++0x00000056,0x00000050,0x00000055,0x0003003e,
++0x00000056,0x00000051,0x00050041,0x00000052,
++0x0000005b,0x0000005a,0x00000014,0x0003003e,
++0x0000005b,0x00000051,0x000100fd,0x00010038}
+diff --git a/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tese b/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tese
+new file mode 100644
+index 0000000000000000000000000000000000000000..210111795be451ec8f7b13c2beb90e5842fac115
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tese
+@@ -0,0 +1,8 @@
++/* SPDX-License-Identifier: MIT */
++#version 450
++layout(triangles) in;
++layout(location = 0) in vec4 wide[][15];
++void main()
++{
++   gl_Position = wide[gl_PrimitiveID % 32][gl_PrimitiveID % 15];
++}
+diff --git a/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tese.h b/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tese.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..68c198a083253a1feb186924a4c186733e9a5e79
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tese.h
+@@ -0,0 +1,50 @@
++{0x07230203,0x00010600,0x000d000b,0x00000023,
++0x00000000,0x00020011,0x00000003,0x0006000b,
++0x00000001,0x4c534c47,0x6474732e,0x3035342e,
++0x00000000,0x0003000e,0x00000000,0x00000001,
++0x0008000f,0x00000002,0x00000004,0x6e69616d,
++0x00000000,0x0000000d,0x00000015,0x00000017,
++0x00030010,0x00000004,0x00000016,0x00030010,
++0x00000004,0x00000001,0x00030010,0x00000004,
++0x00000005,0x00030047,0x0000000b,0x00000002,
++0x00050048,0x0000000b,0x00000000,0x0000000b,
++0x00000000,0x00050048,0x0000000b,0x00000001,
++0x0000000b,0x00000001,0x00050048,0x0000000b,
++0x00000002,0x0000000b,0x00000003,0x00050048,
++0x0000000b,0x00000003,0x0000000b,0x00000004,
++0x00040047,0x00000015,0x0000001e,0x00000000,
++0x00040047,0x00000017,0x0000000b,0x00000007,
++0x00020013,0x00000002,0x00030021,0x00000003,
++0x00000002,0x00030016,0x00000006,0x00000020,
++0x00040017,0x00000007,0x00000006,0x00000004,
++0x00040015,0x00000008,0x00000020,0x00000000,
++0x0004002b,0x00000008,0x00000009,0x00000001,
++0x0004001c,0x0000000a,0x00000006,0x00000009,
++0x0006001e,0x0000000b,0x00000007,0x00000006,
++0x0000000a,0x0000000a,0x00040020,0x0000000c,
++0x00000003,0x0000000b,0x0004003b,0x0000000c,
++0x0000000d,0x00000003,0x00040015,0x0000000e,
++0x00000020,0x00000001,0x0004002b,0x0000000e,
++0x0000000f,0x00000000,0x0004002b,0x00000008,
++0x00000010,0x0000000f,0x0004001c,0x00000011,
++0x00000007,0x00000010,0x0004002b,0x00000008,
++0x00000012,0x00000020,0x0004001c,0x00000013,
++0x00000011,0x00000012,0x00040020,0x00000014,
++0x00000001,0x00000013,0x0004003b,0x00000014,
++0x00000015,0x00000001,0x00040020,0x00000016,
++0x00000001,0x0000000e,0x0004003b,0x00000016,
++0x00000017,0x00000001,0x0004002b,0x0000000e,
++0x00000019,0x00000020,0x0004002b,0x0000000e,
++0x0000001c,0x0000000f,0x00040020,0x0000001e,
++0x00000001,0x00000007,0x00040020,0x00000021,
++0x00000003,0x00000007,0x00050036,0x00000002,
++0x00000004,0x00000000,0x00000003,0x000200f8,
++0x00000005,0x0004003d,0x0000000e,0x00000018,
++0x00000017,0x0005008b,0x0000000e,0x0000001a,
++0x00000018,0x00000019,0x0005008b,0x0000000e,
++0x0000001d,0x00000018,0x0000001c,0x00060041,
++0x0000001e,0x0000001f,0x00000015,0x0000001a,
++0x0000001d,0x0004003d,0x00000007,0x00000020,
++0x0000001f,0x00050041,0x00000021,0x00000022,
++0x0000000d,0x0000000f,0x0003003e,0x00000022,
++0x00000020,0x000100fd,0x00010038}
+diff --git a/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp b/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..64c467737fab0ca914bc6d904fe6583870630e4a
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_tess_draw_size.cpp
+@@ -0,0 +1,354 @@
++/*
++ * SPDX-License-Identifier: MIT
++ */
++
++/* A direct tessellated draw sizes the TCS output, patch coordinate and index
++ * count buffers at recording time: every patch of every instance needs the
++ * TCS's whole output patch.  Vulkan puts no bound on a draw's vertex or
++ * instance count, so a large enough draw makes that size overflow the 32 bits
++ * the upload allocator and the GPU address it in.  The draw must then fail
++ * the command buffer instead of handing the TCS and the tessellator a
++ * truncated buffer to write gigabytes past.  The test only records:
++ * submitting the unfixed case would corrupt GPU memory.
++ */
++
++#define VK_NO_PROTOTYPES
++#include <vulkan/vulkan.h>
++
++#include <cstdio>
++#include <cstdlib>
++#include <vector>
++
++extern "C" PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
++
++static void require(bool ok, const char *operation, VkResult value = VK_SUCCESS)
++{
++   if (!ok) {
++      std::fprintf(stderr, "%s: %d\n", operation, value);
++      std::exit(1);
++   }
++}
++
++template <typename T> static T load(VkInstance instance, const char *name)
++{
++   auto function = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
++   require(function != nullptr, name);
++   return function;
++}
++
++#define LOAD_I(name) auto name = load<PFN_##name>(instance, #name)
++#define LOAD_D(name)                                                             \
++   auto name = reinterpret_cast<PFN_##name>(vkGetDeviceProcAddr(device, #name)); \
++   require(name != nullptr, #name)
++
++static const uint32_t vertex_spirv[] =
++#include "geometry_draw_size_shaders/points.vert.h"
++;
++static const uint32_t control_spirv[] =
++#include "tess_draw_size_shaders/wide.tesc.h"
++;
++static const uint32_t evaluation_spirv[] =
++#include "tess_draw_size_shaders/wide.tese.h"
++;
++static const uint32_t fragment_spirv[] =
++#include "geometry_draw_size_shaders/green.frag.h"
++;
++
++/* The compiled wide.tesc stores six tessellation levels and 32 vertices of
++ * 15 four-word output slots, 1926 words per patch, and each patch also needs
++ * a coordinate allocation and an index count.  Every vertex is a patch, so
++ * the first draw whose buffers need 2^32 bytes leaves a wrapped size of a
++ * few kilobytes.  Fewer slots would let that draw fit and fail this test. */
++static constexpr uint64_t patch_bytes = 1926 * 4 + 2 * 4;
++static constexpr uint32_t first_overflowing_draw =
++   uint32_t(((UINT64_C(1) << 32) + patch_bytes - 1) / patch_bytes);
++
++int main()
++{
++   std::setvbuf(stdout, nullptr, _IONBF, 0);
++   VkInstance instance = VK_NULL_HANDLE;
++   LOAD_I(vkCreateInstance);
++   VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
++   app.pApplicationName = "tess-draw-size";
++   app.apiVersion = VK_API_VERSION_1_3;
++   VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
++   instance_info.pApplicationInfo = &app;
++   auto result = vkCreateInstance(&instance_info, nullptr, &instance);
++   require(result == VK_SUCCESS, "create instance", result);
++   LOAD_I(vkDestroyInstance);
++   LOAD_I(vkEnumeratePhysicalDevices);
++   LOAD_I(vkGetPhysicalDeviceFeatures);
++   LOAD_I(vkGetPhysicalDeviceQueueFamilyProperties);
++   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
++   LOAD_I(vkCreateDevice);
++   LOAD_I(vkGetDeviceProcAddr);
++   uint32_t physical_count = 1;
++   VkPhysicalDevice physical = VK_NULL_HANDLE;
++   result = vkEnumeratePhysicalDevices(instance, &physical_count, &physical);
++   require((result == VK_SUCCESS || result == VK_INCOMPLETE) && physical_count,
++           "physical device", result);
++
++   VkPhysicalDeviceFeatures features{};
++   vkGetPhysicalDeviceFeatures(physical, &features);
++   require(features.tessellationShader, "tessellation shaders");
++   uint32_t queue_count = 0;
++   vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count, nullptr);
++   std::vector<VkQueueFamilyProperties> queues(queue_count);
++   vkGetPhysicalDeviceQueueFamilyProperties(physical, &queue_count,
++                                            queues.data());
++   uint32_t queue = 0;
++   while (queue < queue_count &&
++          !(queues[queue].queueFlags & VK_QUEUE_GRAPHICS_BIT))
++      ++queue;
++   require(queue < queue_count, "graphics queue");
++   float priority = 1.0f;
++   VkDeviceQueueCreateInfo queue_info{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
++   queue_info.queueFamilyIndex = queue;
++   queue_info.queueCount = 1;
++   queue_info.pQueuePriorities = &priority;
++   VkPhysicalDeviceFeatures enabled{};
++   enabled.tessellationShader = VK_TRUE;
++   VkPhysicalDeviceVulkan13Features features13{
++      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
++   features13.dynamicRendering = VK_TRUE;
++   VkDeviceCreateInfo device_info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
++   device_info.pNext = &features13;
++   device_info.queueCreateInfoCount = 1;
++   device_info.pQueueCreateInfos = &queue_info;
++   device_info.pEnabledFeatures = &enabled;
++   VkDevice device = VK_NULL_HANDLE;
++   result = vkCreateDevice(physical, &device_info, nullptr, &device);
++   require(result == VK_SUCCESS, "create device", result);
++   LOAD_D(vkDestroyDevice);
++   LOAD_D(vkCreateShaderModule);
++   LOAD_D(vkDestroyShaderModule);
++   LOAD_D(vkCreatePipelineLayout);
++   LOAD_D(vkDestroyPipelineLayout);
++   LOAD_D(vkCreateGraphicsPipelines);
++   LOAD_D(vkDestroyPipeline);
++   LOAD_D(vkCreateCommandPool);
++   LOAD_D(vkDestroyCommandPool);
++   LOAD_D(vkAllocateCommandBuffers);
++   LOAD_D(vkResetCommandBuffer);
++   LOAD_D(vkBeginCommandBuffer);
++   LOAD_D(vkEndCommandBuffer);
++   LOAD_D(vkCmdBeginRendering);
++   LOAD_D(vkCmdEndRendering);
++   LOAD_D(vkCmdBindPipeline);
++   LOAD_D(vkCmdSetViewport);
++   LOAD_D(vkCmdSetScissor);
++   LOAD_D(vkCmdDraw);
++   LOAD_D(vkCreateImage);
++   LOAD_D(vkDestroyImage);
++   LOAD_D(vkCreateImageView);
++   LOAD_D(vkDestroyImageView);
++   LOAD_D(vkGetImageMemoryRequirements);
++   LOAD_D(vkAllocateMemory);
++   LOAD_D(vkFreeMemory);
++   LOAD_D(vkBindImageMemory);
++
++   constexpr uint32_t extent = 8;
++   constexpr VkFormat color_format = VK_FORMAT_R8G8B8A8_UNORM;
++   VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
++   image_info.imageType = VK_IMAGE_TYPE_2D;
++   image_info.format = color_format;
++   image_info.extent = {extent, extent, 1};
++   image_info.mipLevels = 1;
++   image_info.arrayLayers = 1;
++   image_info.samples = VK_SAMPLE_COUNT_1_BIT;
++   image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
++   image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
++   VkImage image = VK_NULL_HANDLE;
++   result = vkCreateImage(device, &image_info, nullptr, &image);
++   require(result == VK_SUCCESS, "create image", result);
++   VkMemoryRequirements requirements{};
++   vkGetImageMemoryRequirements(device, image, &requirements);
++   VkPhysicalDeviceMemoryProperties memory_properties{};
++   vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
++   uint32_t type = 0;
++   while (type < memory_properties.memoryTypeCount &&
++          !(requirements.memoryTypeBits & (1u << type)))
++      ++type;
++   require(type < memory_properties.memoryTypeCount, "memory type");
++   VkMemoryAllocateInfo memory_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
++   memory_info.allocationSize = requirements.size;
++   memory_info.memoryTypeIndex = type;
++   VkDeviceMemory memory = VK_NULL_HANDLE;
++   result = vkAllocateMemory(device, &memory_info, nullptr, &memory);
++   require(result == VK_SUCCESS, "allocate image", result);
++   result = vkBindImageMemory(device, image, memory, 0);
++   require(result == VK_SUCCESS, "bind image", result);
++   VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
++   view_info.image = image;
++   view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
++   view_info.format = color_format;
++   view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
++   VkImageView view = VK_NULL_HANDLE;
++   result = vkCreateImageView(device, &view_info, nullptr, &view);
++   require(result == VK_SUCCESS, "create view", result);
++
++   auto make_module = [&](const uint32_t *code, size_t size) {
++      VkShaderModuleCreateInfo module_info{
++         VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
++      module_info.codeSize = size;
++      module_info.pCode = code;
++      VkShaderModule module = VK_NULL_HANDLE;
++      result = vkCreateShaderModule(device, &module_info, nullptr, &module);
++      require(result == VK_SUCCESS, "create module", result);
++      return module;
++   };
++   VkShaderModule modules[4] = {
++      make_module(vertex_spirv, sizeof(vertex_spirv)),
++      make_module(control_spirv, sizeof(control_spirv)),
++      make_module(evaluation_spirv, sizeof(evaluation_spirv)),
++      make_module(fragment_spirv, sizeof(fragment_spirv)),
++   };
++   const VkShaderStageFlagBits stage_bits[4] = {
++      VK_SHADER_STAGE_VERTEX_BIT,
++      VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT,
++      VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT,
++      VK_SHADER_STAGE_FRAGMENT_BIT,
++   };
++   VkPipelineShaderStageCreateInfo stages[4]{};
++   for (unsigned i = 0; i < 4; ++i) {
++      stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
++      stages[i].stage = stage_bits[i];
++      stages[i].module = modules[i];
++      stages[i].pName = "main";
++   }
++
++   VkPipelineLayoutCreateInfo layout_info{
++      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
++   VkPipelineLayout layout = VK_NULL_HANDLE;
++   result = vkCreatePipelineLayout(device, &layout_info, nullptr, &layout);
++   require(result == VK_SUCCESS, "create layout", result);
++
++   VkPipelineVertexInputStateCreateInfo vertex_input{
++      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
++   VkPipelineInputAssemblyStateCreateInfo assembly{
++      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
++   assembly.topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
++   VkPipelineTessellationStateCreateInfo tessellation{
++      VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO};
++   tessellation.patchControlPoints = 1;
++   VkPipelineViewportStateCreateInfo viewport_state{
++      VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
++   viewport_state.viewportCount = 1;
++   viewport_state.scissorCount = 1;
++   VkPipelineRasterizationStateCreateInfo raster{
++      VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
++   raster.polygonMode = VK_POLYGON_MODE_FILL;
++   raster.cullMode = VK_CULL_MODE_NONE;
++   raster.lineWidth = 1.0f;
++   VkPipelineMultisampleStateCreateInfo multisample{
++      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
++   multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
++   VkPipelineColorBlendAttachmentState blend_attachment{};
++   blend_attachment.colorWriteMask = 0xf;
++   VkPipelineColorBlendStateCreateInfo blend{
++      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
++   blend.attachmentCount = 1;
++   blend.pAttachments = &blend_attachment;
++   const VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT,
++                                            VK_DYNAMIC_STATE_SCISSOR};
++   VkPipelineDynamicStateCreateInfo dynamic{
++      VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
++   dynamic.dynamicStateCount = 2;
++   dynamic.pDynamicStates = dynamic_states;
++   VkPipelineRenderingCreateInfo rendering_info{
++      VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
++   rendering_info.colorAttachmentCount = 1;
++   rendering_info.pColorAttachmentFormats = &color_format;
++   VkGraphicsPipelineCreateInfo pipeline_info{
++      VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
++   pipeline_info.pNext = &rendering_info;
++   pipeline_info.stageCount = 4;
++   pipeline_info.pStages = stages;
++   pipeline_info.pVertexInputState = &vertex_input;
++   pipeline_info.pInputAssemblyState = &assembly;
++   pipeline_info.pTessellationState = &tessellation;
++   pipeline_info.pViewportState = &viewport_state;
++   pipeline_info.pRasterizationState = &raster;
++   pipeline_info.pMultisampleState = &multisample;
++   pipeline_info.pColorBlendState = &blend;
++   pipeline_info.pDynamicState = &dynamic;
++   pipeline_info.layout = layout;
++   VkPipeline pipeline = VK_NULL_HANDLE;
++   result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info,
++                                      nullptr, &pipeline);
++   require(result == VK_SUCCESS, "create pipeline", result);
++
++   VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
++   pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
++   pool_info.queueFamilyIndex = queue;
++   VkCommandPool pool = VK_NULL_HANDLE;
++   result = vkCreateCommandPool(device, &pool_info, nullptr, &pool);
++   require(result == VK_SUCCESS, "create command pool", result);
++   VkCommandBufferAllocateInfo allocate{
++      VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
++   allocate.commandPool = pool;
++   allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
++   allocate.commandBufferCount = 1;
++   VkCommandBuffer command = VK_NULL_HANDLE;
++   result = vkAllocateCommandBuffers(device, &allocate, &command);
++   require(result == VK_SUCCESS, "allocate command buffer", result);
++
++   /* Records one draw of `patches` single-vertex patches and returns what
++    * ending the recording reports. */
++   auto record = [&](uint32_t patches) {
++      result = vkResetCommandBuffer(command, 0);
++      require(result == VK_SUCCESS, "reset command buffer", result);
++      VkCommandBufferBeginInfo begin{
++         VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
++      begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
++      result = vkBeginCommandBuffer(command, &begin);
++      require(result == VK_SUCCESS, "begin command buffer", result);
++      VkRenderingAttachmentInfo attachment{
++         VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
++      attachment.imageView = view;
++      attachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
++      attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
++      attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
++      VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
++      rendering.renderArea = {{0, 0}, {extent, extent}};
++      rendering.layerCount = 1;
++      rendering.colorAttachmentCount = 1;
++      rendering.pColorAttachments = &attachment;
++      vkCmdBeginRendering(command, &rendering);
++      vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
++      const VkViewport viewport{0.0f, 0.0f, float(extent), float(extent),
++                                0.0f, 1.0f};
++      const VkRect2D scissor{{0, 0}, {extent, extent}};
++      vkCmdSetViewport(command, 0, 1, &viewport);
++      vkCmdSetScissor(command, 0, 1, &scissor);
++      vkCmdDraw(command, patches, 1, 0, 0);
++      vkCmdEndRendering(command);
++      return vkEndCommandBuffer(command);
++   };
++
++   result = record(3);
++   require(result == VK_SUCCESS, "record a small tessellated draw", result);
++   result = record(first_overflowing_draw);
++   require(result == VK_ERROR_OUT_OF_DEVICE_MEMORY,
++           "record a draw whose patch buffers need 2^32 bytes", result);
++   result = record(first_overflowing_draw + 1u);
++   require(result == VK_ERROR_OUT_OF_DEVICE_MEMORY,
++           "record a draw whose patch buffers need more than 2^32 bytes",
++           result);
++   result = record(3);
++   require(result == VK_SUCCESS, "record a small draw after a refused one",
++           result);
++
++   vkDestroyCommandPool(device, pool, nullptr);
++   vkDestroyPipeline(device, pipeline, nullptr);
++   vkDestroyPipelineLayout(device, layout, nullptr);
++   for (VkShaderModule module : modules)
++      vkDestroyShaderModule(device, module, nullptr);
++   vkDestroyImageView(device, view, nullptr);
++   vkDestroyImage(device, image, nullptr);
++   vkFreeMemory(device, memory, nullptr);
++   vkDestroyDevice(device, nullptr);
++   vkDestroyInstance(instance, nullptr);
++   std::printf("oversized tessellated draws fail their command buffer\n");
++   return 0;
++}
+diff --git a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..80494a40ca8d8bd30de52b67225f320f028caa1c
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
+@@ -0,0 +1,293 @@
++/* SPDX-License-Identifier: MIT */
++
++/* Launch only the production tessellation setup and index prefix sum. An
++ * indirect draw's words and the per-patch index counts are application data;
++ * sizes that do not fit 32 bits must launch nothing rather than wrap into a
++ * small allocation. Every case here stays within a bounded heap even with the
++ * sizes wrapped, so an unchecked kernel reports a wrong result instead of
++ * faulting, and no oversized stage is ever dispatched. */
++#include "kosmickrisp/vulkan/kk_cmd_buffer.h"
++#include "kosmickrisp/vulkan/kk_device.h"
++#include "kosmickrisp/vulkan/kk_entrypoints.h"
++#include "poly/tessellator.h"
++
++#include <stdlib.h>
++#include <string.h>
++
++#define CHECK(condition)                                                       \
++   do {                                                                        \
++      if (!(condition)) {                                                      \
++         fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__,      \
++                 #condition);                                                  \
++         abort();                                                              \
++      }                                                                        \
++   } while (0)
++
++#define VK_CHECK(expr)                                                         \
++   do {                                                                        \
++      VkResult result_ = (expr);                                               \
++      if (result_ != VK_SUCCESS) {                                             \
++         fprintf(stderr, "%s:%d: %s = %d\n", __FILE__, __LINE__, #expr,        \
++                 result_);                                                     \
++         abort();                                                              \
++      }                                                                        \
++   } while (0)
++
++enum { HEAP_SIZE = 2 << 20, HEAP_BOTTOM = 16 };
++
++struct setup_case {
++   const char *name;
++   uint32_t count, instances;
++   uint32_t input_patch_size, output_patch_size, tcs_stride_el;
++   uint64_t outputs;
++   bool valid;
++};
++
++struct sum_case {
++   const char *name;
++   uint32_t patches;
++   uint32_t head_count, head_value, tail_value;
++   bool valid;
++};
++
++struct context {
++   VkDevice device;
++   VkQueue queue;
++   VkCommandBuffer command;
++   const struct vk_device_dispatch_table *api;
++};
++
++static struct kk_cmd_buffer *
++begin(struct context *ctx)
++{
++   const VkCommandBufferBeginInfo info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
++      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
++   };
++   VK_CHECK(ctx->api->BeginCommandBuffer(ctx->command, &info));
++   return kk_cmd_buffer_from_handle(ctx->command);
++}
++
++static void
++submit(struct context *ctx)
++{
++   VK_CHECK(ctx->api->EndCommandBuffer(ctx->command));
++   const VkSubmitInfo info = {
++      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++      .commandBufferCount = 1,
++      .pCommandBuffers = &ctx->command,
++   };
++   VK_CHECK(ctx->api->QueueSubmit(ctx->queue, 1, &info, VK_NULL_HANDLE));
++   VK_CHECK(ctx->api->QueueWaitIdle(ctx->queue));
++}
++
++static struct kk_ptr
++heap(struct kk_cmd_buffer *cmd)
++{
++   struct kk_ptr storage = kk_pool_alloc(cmd, HEAP_SIZE, 16);
++   CHECK(storage.gpu);
++   const struct poly_heap data = {
++      .base = storage.gpu,
++      .bottom = HEAP_BOTTOM,
++      .size = HEAP_SIZE,
++   };
++   return kk_pool_upload(cmd, &data, sizeof(data), 4);
++}
++
++static void
++check_setup(struct context *ctx, const struct setup_case *test)
++{
++   struct kk_cmd_buffer *cmd = begin(ctx);
++   const uint32_t local[3] = {64, 1, 1};
++   struct poly_vertex_params vertex;
++   poly_vertex_params_init(&vertex, test->outputs, local);
++   struct kk_ptr heap_ptr = heap(cmd);
++   const struct poly_tess_params tess = {
++      .heap = heap_ptr.gpu,
++      .input_patch_size = test->input_patch_size,
++      .output_patch_size = test->output_patch_size,
++      .tcs_stride_el = test->tcs_stride_el,
++   };
++   struct kk_ptr p = kk_pool_upload(cmd, &tess, sizeof(tess), 8);
++   struct kk_ptr vp = kk_pool_upload(cmd, &vertex, sizeof(vertex), 8);
++   const uint32_t draw_words[4] = {test->count, test->instances, 0, 0};
++   struct kk_ptr draw = kk_pool_upload(cmd, draw_words, sizeof(draw_words), 4);
++   uint32_t guard[18];
++   memset(guard, 0xa5, sizeof(guard));
++   struct kk_ptr grids = kk_pool_upload(cmd, guard, sizeof(guard), 4);
++   const uint64_t zero = 0;
++   struct kk_ptr statistic = kk_pool_upload(cmd, &zero, sizeof(zero), 8);
++   CHECK(heap_ptr.cpu && p.cpu && vp.cpu && draw.cpu && grids.cpu &&
++         statistic.cpu);
++   const struct libkk_tess_setup_indirect_args args = {
++      .p = p.gpu,
++      .grids = grids.gpu,
++      .vp = vp.gpu,
++      .indirect = draw.gpu,
++      .vertex_outputs = test->outputs,
++      .tcs_statistic = statistic.gpu,
++   };
++   libkk_tess_setup_indirect_struct(cmd, kk_grid_1d(1), true, args);
++   submit(ctx);
++
++   const struct poly_tess_params *actual = p.cpu;
++   const struct poly_heap *actual_heap = heap_ptr.cpu;
++   const uint32_t *actual_grids = grids.cpu;
++   const uint32_t in_patches = test->count / test->input_patch_size;
++   const uint32_t patches = in_patches * test->instances;
++   const uint32_t expected[18] = {
++      test->count, test->instances, 1, 64, 1, 1,
++      in_patches * test->output_patch_size, test->instances, 1,
++      test->output_patch_size, 1, 1,
++      patches, 1, 1, 1, 1, 1,
++   };
++   for (unsigned i = 0; i < 18; i++)
++      CHECK(actual_grids[i] == (test->valid ? expected[i] : 0));
++   CHECK(actual->nr_patches == (test->valid ? patches : 0));
++   CHECK(*(const uint64_t *)statistic.cpu ==
++         (test->valid ? (uint64_t)in_patches * test->instances : 0));
++   if (test->valid) {
++      const uint32_t size_B =
++         patches * (test->tcs_stride_el * 4 + 8) +
++         test->count * test->instances *
++            util_bitcount64(test->outputs) * 16;
++      CHECK(actual_heap->bottom == HEAP_BOTTOM + align(size_B, 16));
++   } else {
++      CHECK(actual_heap->bottom == HEAP_BOTTOM);
++   }
++   printf("tessellation setup PASS %s\n", test->name);
++}
++
++static void
++check_sum(struct context *ctx, const struct sum_case *test)
++{
++   struct kk_cmd_buffer *cmd = begin(ctx);
++   struct kk_ptr heap_ptr = heap(cmd);
++   struct kk_ptr counts =
++      kk_pool_alloc(cmd, test->patches * sizeof(uint32_t), 4);
++   struct kk_ptr out_draw = kk_pool_alloc(cmd, 5 * sizeof(uint32_t), 4);
++   CHECK(heap_ptr.cpu && counts.cpu && out_draw.cpu);
++   uint32_t *count_words = counts.cpu;
++   uint64_t total = 0;
++   for (uint32_t i = 0; i < test->patches; i++) {
++      count_words[i] = i < test->head_count ? test->head_value
++                                            : test->tail_value;
++      total += count_words[i];
++   }
++   memset(out_draw.cpu, 0xa5, 5 * sizeof(uint32_t));
++   const struct poly_tess_params tess = {
++      .heap = heap_ptr.gpu,
++      .counts = counts.gpu,
++      .out_draws = out_draw.gpu,
++      .nr_patches = test->patches,
++   };
++   struct kk_ptr p = kk_pool_upload(cmd, &tess, sizeof(tess), 8);
++   CHECK(p.cpu);
++   libkk_prefix_sum_tess(cmd, kk_grid_1d(1024u), true, p.gpu, 0, 0, false);
++   submit(ctx);
++
++   const struct poly_tess_params *actual = p.cpu;
++   const struct poly_heap *actual_heap = heap_ptr.cpu;
++   const uint32_t *desc = out_draw.cpu;
++   if (test->valid) {
++      CHECK(total * 4 <= HEAP_SIZE - HEAP_BOTTOM);
++      CHECK(actual->nr_patches == test->patches);
++      CHECK(desc[0] == total && desc[1] == 1 &&
++            desc[2] == HEAP_BOTTOM / 4 && desc[3] == 0 && desc[4] == 0);
++      CHECK(actual_heap->bottom ==
++            HEAP_BOTTOM + align((uint32_t)total * 4, 16));
++   } else {
++      CHECK(actual->nr_patches == 0);
++      for (unsigned i = 0; i < 5; i++)
++         CHECK(desc[i] == 0);
++      CHECK(actual_heap->bottom == HEAP_BOTTOM);
++   }
++   printf("tessellation prefix sum PASS %s\n", test->name);
++}
++
++int
++main(void)
++{
++   const VkApplicationInfo app = {
++      .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
++      .apiVersion = VK_API_VERSION_1_3,
++   };
++   const VkInstanceCreateInfo instance_info = {
++      .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
++      .pApplicationInfo = &app,
++   };
++   VkInstance instance;
++   VK_CHECK(kk_CreateInstance(&instance_info, NULL, &instance));
++   PFN_vkEnumeratePhysicalDevices enumerate =
++      (PFN_vkEnumeratePhysicalDevices)kk_GetInstanceProcAddr(
++         instance, "vkEnumeratePhysicalDevices");
++   uint32_t count = 1;
++   VkPhysicalDevice physical;
++   VK_CHECK(enumerate(instance, &count, &physical));
++   CHECK(count == 1);
++   const float priority = 1;
++   const VkDeviceQueueCreateInfo queue_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
++      .queueFamilyIndex = 0,
++      .queueCount = 1,
++      .pQueuePriorities = &priority,
++   };
++   const VkDeviceCreateInfo device_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
++      .queueCreateInfoCount = 1,
++      .pQueueCreateInfos = &queue_info,
++   };
++   struct context ctx = {0};
++   VK_CHECK(kk_CreateDevice(physical, &device_info, NULL, &ctx.device));
++   ctx.api = &kk_device_from_handle(ctx.device)->exposed_dispatch_table;
++   ctx.api->GetDeviceQueue(ctx.device, 0, 0, &ctx.queue);
++   const VkCommandPoolCreateInfo pool_info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
++      .queueFamilyIndex = 0,
++   };
++   VkCommandPool pool;
++   VK_CHECK(ctx.api->CreateCommandPool(ctx.device, &pool_info, NULL, &pool));
++   const VkCommandBufferAllocateInfo allocation = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
++      .commandPool = pool,
++      .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
++      .commandBufferCount = 1,
++   };
++   VK_CHECK(ctx.api->AllocateCommandBuffers(ctx.device, &allocation,
++                                            &ctx.command));
++
++   /* The wrapped sizes are small: 2^16 x 2^16 patches wrap to none, 2^16
++    * patches of 2^16 TCS words wrap the TCS buffer to nothing, and 2^22
++    * vertices of 64 outputs wrap the vertex buffer to nothing. */
++   const struct setup_case setups[] = {
++      {"patches", 6, 2, 3, 3, 10, 1, true},
++      {"no-complete-patch", 2, 5, 3, 3, 10, 1, true},
++      {"empty-instances", 6, 0, 3, 3, 10, 1, true},
++      {"patch-count-overflow", 1u << 16, 1u << 16, 1, 1, 1, 0, false},
++      {"tcs-size-overflow", 1u << 16, 1, 1, 1, 1u << 14, 0, false},
++      {"vertex-size-overflow", 1u << 22, 1, 32, 1, 1, UINT64_MAX, false},
++   };
++   for (unsigned i = 0; i < ARRAY_SIZE(setups); i++) {
++      VK_CHECK(ctx.api->ResetCommandPool(ctx.device, pool, 0));
++      check_setup(&ctx, &setups[i]);
++   }
++
++   /* 2^32 of the 32-bit sum is lost when it wraps, so each wrapping case
++    * leaves a small total an unchecked allocation would accept. */
++   const struct sum_case sums[] = {
++      {"counts", 4, 1, 3, 6, true},
++      {"counts-past-one-group", 3000, 0, 0, 1, true},
++      {"sum-wraps", 3, 2, 0x80000000u, 16, false},
++      {"sum-wraps-past-one-group", 2049, 2048, 1u << 21, 8, false},
++      {"size-overflow", 1, 1, 1u << 30, 0, false},
++   };
++   for (unsigned i = 0; i < ARRAY_SIZE(sums); i++) {
++      VK_CHECK(ctx.api->ResetCommandPool(ctx.device, pool, 0));
++      check_sum(&ctx, &sums[i]);
++   }
++
++   ctx.api->DestroyCommandPool(ctx.device, pool, NULL);
++   ctx.api->DestroyDevice(ctx.device, NULL);
++   kk_DestroyInstance(instance, NULL);
++   return 0;
++}
 diff --git a/src/poly/cl/tessellation.cl b/src/poly/cl/tessellation.cl
 index d0004cbf96f5a6c5a28c5f3a3165317094238c80..aef5b82ef3e5f24748fe9d66d47c6f2daafd613c 100644
 --- a/src/poly/cl/tessellation.cl

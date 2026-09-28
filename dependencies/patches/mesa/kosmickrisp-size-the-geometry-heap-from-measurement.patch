@@ -36,7 +36,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index b52724ef87ff428719140404ebffd4076753faad..0b2b4809cf3f96eb3d070e47f1dd65c1438c9eaa 100644
+index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..d8d59b59ee6db9cd29a8c825178114f7ccb1c6a1 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -27,6 +27,8 @@
@@ -115,7 +115,7 @@ index b52724ef87ff428719140404ebffd4076753faad..0b2b4809cf3f96eb3d070e47f1dd65c1
  
     /* We need to free all allocations after each command buffer execution */
     if (!cmd->uses_heap) {
-@@ -3455,6 +3499,15 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3473,6 +3517,15 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
         requires_index_promotion(data) || requires_unroll_robustness(cmd, data) ||
         requires_unroll_restart(cmd, data) || rewrite_direct_provoking ||
         (discard_adjacency && !emulate_line_raster));
@@ -132,10 +132,10 @@ index b52724ef87ff428719140404ebffd4076753faad..0b2b4809cf3f96eb3d070e47f1dd65c1
        data->line_raster_runs =
           emulate_line_raster &&
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 90e788e820ced6d51bea72338450b904791cb69c..5cfbb38353c6f41ca384ed3fc6e9ad0f5392941d 100644
+index 5baeac5a2f7195b1a61286bbd256484927bbd863..11e663a10f969e9ef67216ffc0921b5d53f5b66e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -872,6 +872,26 @@ if with_tests
+@@ -906,6 +906,26 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
