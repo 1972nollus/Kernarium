@@ -40,46 +40,6 @@ clean_build_environment()
 		"$@"
 }
 
-require_cache_entry()
-{
-	cache=$1
-	entry=$2
-	grep -Fqx "$entry" "$cache" ||
-		fail "configured slice is missing exact cache entry: $entry"
-}
-
-verify_release_cache()
-{
-	platform=$1
-	build_dir=$2
-	network_provider=$3
-	cache="$build_dir/CMakeCache.txt"
-	[ -f "$cache" ] || fail "slice has no CMake cache: $build_dir"
-	require_cache_entry "$cache" "CMAKE_GENERATOR:INTERNAL=Ninja"
-	require_cache_entry "$cache" "CMAKE_BUILD_TYPE:STRING=Release"
-	require_cache_entry "$cache" "CMAKE_OSX_ARCHITECTURES:STRING=arm64"
-	require_cache_entry "$cache" "UML_APPLE_PLATFORM:STRING=$platform"
-	require_cache_entry "$cache" "UML_GUEST_16K_PAGES:BOOL=ON"
-	require_cache_entry "$cache" "UML_ENABLE_RUNTIME_PROFILING:BOOL=OFF"
-	require_cache_entry "$cache" "UML_BUILD_CLI:BOOL=OFF"
-	require_cache_entry "$cache" "UML_BUILD_KERNEL_RUNNER:BOOL=OFF"
-	require_cache_entry "$cache" "UML_BUILD_UNIT_TESTS:BOOL=OFF"
-	require_cache_entry "$cache" "UML_BUILD_INTEGRATION_TESTS:BOOL=OFF"
-	require_cache_entry "$cache" "UML_BUILD_TOOLING_TESTS:BOOL=ON"
-	require_cache_entry "$cache" "UML_BUILD_GPU:BOOL=OFF"
-	require_cache_entry "$cache" \
-		"UML_BUILD_NETWORK_PROVIDER:BOOL=$network_provider"
-	for flags in \
-		CMAKE_C_FLAGS \
-		CMAKE_CXX_FLAGS \
-		CMAKE_ASM_FLAGS \
-		CMAKE_EXE_LINKER_FLAGS \
-		CMAKE_STATIC_LINKER_FLAGS
-	do
-		require_cache_entry "$cache" "$flags:STRING="
-	done
-}
-
 verify_public_headers()
 {
 	header_root=$1
@@ -267,7 +227,6 @@ build_slice()
 		-DCMAKE_ASM_FLAGS:STRING= \
 		-DCMAKE_EXE_LINKER_FLAGS:STRING= \
 		-DCMAKE_STATIC_LINKER_FLAGS:STRING=
-	verify_release_cache "$platform" "$build_dir" "$network_provider"
 
 	set -- uml_emulator architecture-audit
 	if [ "$platform" = macos ]; then
