@@ -112,7 +112,8 @@ function(uml_audit_foreign_darwin_sources ROOT OUT_VIOLATIONS)
     set(_source "darwin/[A-Za-z0-9_./-]+\\.(cpp|cxx|cc|mm|m|S|s)")
     set(_violations)
     set(_cmake_globs)
-    foreach(_scope IN ITEMS cmake dependencies kernel Kernarium scripts tests tools)
+    foreach(_scope IN ITEMS android cmake dependencies kernel Kernarium scripts tests
+            tools)
         list(APPEND _cmake_globs
             "${ROOT}/${_scope}/*CMakeLists.txt" "${ROOT}/${_scope}/*.cmake")
     endforeach()
