@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +25,10 @@ COMMAND_LINE = "boot/kernel-command-line.txt"
 GUEST_DIRECTORY = "guest"
 ROOT = Path(__file__).resolve().parents[2]
 ACCEPTANCE = ROOT / "android/aosp-17/metadata/accepted-release.env"
+_ARTIFACTS = str(ROOT / "kernel/common/artifacts")
+if _ARTIFACTS not in sys.path:
+    sys.path.insert(0, _ARTIFACTS)
+import contract_checks  # noqa: E402
 
 
 def fail(message: str) -> None:
@@ -33,11 +36,13 @@ def fail(message: str) -> None:
 
 
 def accepted_directory_name() -> str:
-    pattern = re.compile(r"^ANDROID17_ACCEPTED_DIRECTORY_NAME='([^']+)'$", re.M)
-    match = pattern.search(ACCEPTANCE.read_text(encoding="utf-8"))
-    if match is None:
-        fail(f"cannot read the accepted release identity from {ACCEPTANCE}")
-    return match.group(1)
+    return contract_checks.accepted_directory_name(
+        ACCEPTANCE,
+        "ANDROID17_ACCEPTED_DIRECTORY_NAME",
+        lambda message: SystemExit(
+            f"Kernarium/scripts/make-guest-bundle.py: {message}"
+        ),
+    )
 
 
 def release_disk(release: Path) -> Path:

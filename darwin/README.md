@@ -4,11 +4,13 @@
 
 ```text
 api/       installed C API and ABI identity
+include/   host copies of the host/Linux bridge and host-only guest contracts
 platform/  Apple capabilities, VM, files, signals, and sockets
 memory/    guest address spaces, software MMU, and TLBs
 cpu/       gadgets, JIT, shared decode, and neutral engine selection
 runtime/   guest-entry composition
-device/    block, console, GPU, input, audio, and network providers
+device/    block, console, GPU, input, audio, and network providers, and the
+           vhost-user transport they share
 emulator/  options and product composition
 app/macos/ standalone process adapter
 app/initramfs/ host tool that writes a guest's per-run initramfs

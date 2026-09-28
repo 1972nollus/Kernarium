@@ -124,19 +124,7 @@ arm64|aarch64) ;;
 *) fail "the host dependency build currently requires arm64" ;;
 esac
 
-find_tool()
-{
-	variable=$1
-	shift
-	for candidate in "$@"; do
-		path=$(command -v "$candidate" 2>/dev/null || true)
-		if [ -n "$path" ]; then
-			eval "$variable=\$path"
-			return
-		fi
-	done
-	fail "required build tool is unavailable: $*"
-}
+. "$ROOT_DIR/dependencies/build-common.sh"
 
 find_tool CMAKE "${UML_DEPENDENCY_CMAKE:-cmake}"
 if [ -x "$ROOT_DIR/.build/gpu-tools-venv/bin/meson" ]; then
@@ -494,18 +482,6 @@ manifest_sha256=$($SHASUM -a 256 "$MANIFEST" | awk '{print $1}')
 	printf 'compiler\t%s\n' "$($CC --version | sed -n '1p')"
 } > "$RECEIPT_DIR/receipt.tsv"
 
-verify_prefix "$STAGE"
 # The exclusive rename never replaces, or moves below, a prefix that a
 # concurrent build published first; that winner is verified and reused.
-status=0
-"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$STAGE" "$PREFIX" ||
-	status=$?
-case $status in
-0) printf '%s\n' "built private dependency prefix: $PREFIX" ;;
-1)
-	verify_prefix "$PREFIX" ||
-		fail "concurrently published prefix is invalid: $PREFIX"
-	printf '%s\n' "reusing concurrently published dependency prefix: $PREFIX"
-	;;
-*) fail "could not atomically publish dependency prefix: $PREFIX" ;;
-esac
+publish_verified "$STAGE" "$PREFIX" verify_prefix "private dependency prefix"

@@ -86,9 +86,7 @@ def main() -> int:
         if reports:
             raise RuntimeError("the host reported recovered nofault reads:\n"
                                + dumped.output)
-        alive = guest.run_command("echo alive", 30)
-        if alive.return_code != 0 or "alive" not in alive.output:
-            raise RuntimeError("the guest stopped answering after sysrq t")
+        guest.check_command("echo alive", 30, expected="alive")
         return 0
 
 

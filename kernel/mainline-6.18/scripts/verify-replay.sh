@@ -91,35 +91,24 @@ printf 'UML_KERNEL_SOURCE_DIR=%s\n' "$REPLAY_DIR/linux" \
 "$LINE_ROOT/scripts/prepare-source.sh" --slice arm64
 "$LINE_ROOT/scripts/prepare-source.sh" --slice arm64 --verify --no-fetch
 
+# build_slice SLICE PAGE_SIZE builds one slice into the replay directory.
+build_slice()
+{
+	set -- --slice "$1" --build "$REPLAY_DIR/build-$1-$2" --page-size "$2"
+	[ -z "$JOBS" ] || set -- "$@" --jobs "$JOBS"
+	"$LINE_ROOT/build/build-kernel.sh" "$@"
+}
+
 if [ "$BUILD" -eq 1 ]; then
-	if [ -n "$JOBS" ]; then
-		"$LINE_ROOT/build/build-kernel.sh" \
-			--slice arm64 --build "$REPLAY_DIR/build-arm64-16k" \
-			--page-size 16k --jobs "$JOBS"
-		"$LINE_ROOT/build/build-kernel.sh" \
-			--slice arm64 --build "$REPLAY_DIR/build-arm64-4k" \
-			--page-size 4k --jobs "$JOBS"
-	else
-		"$LINE_ROOT/build/build-kernel.sh" \
-			--slice arm64 --build "$REPLAY_DIR/build-arm64-16k" --page-size 16k
-		"$LINE_ROOT/build/build-kernel.sh" \
-			--slice arm64 --build "$REPLAY_DIR/build-arm64-4k" --page-size 4k
-	fi
+	build_slice arm64 16k
+	build_slice arm64 4k
 fi
 
 "$LINE_ROOT/scripts/prepare-source.sh" --slice x86_64 --no-fetch
 "$LINE_ROOT/scripts/prepare-source.sh" --slice x86_64 --verify --no-fetch
 
 if [ "$BUILD" -eq 1 ]; then
-	if [ -n "$JOBS" ]; then
-		"$LINE_ROOT/build/build-kernel.sh" \
-			--slice x86_64 --build "$REPLAY_DIR/build-x86_64-4k" \
-			--page-size 4k --jobs "$JOBS"
-	else
-		"$LINE_ROOT/build/build-kernel.sh" \
-			--slice x86_64 --build "$REPLAY_DIR/build-x86_64-4k" \
-			--page-size 4k
-	fi
+	build_slice x86_64 4k
 fi
 
 printf '%s\n' "fresh replay verified in $REPLAY_DIR"

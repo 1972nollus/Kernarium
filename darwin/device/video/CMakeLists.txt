@@ -8,8 +8,8 @@ uml_declare_architecture_target(uml_video_device device)
 target_include_directories(uml_video_device PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/kernel/common/video
-    ${PROJECT_SOURCE_DIR}/darwin/device/gpu
+    ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
     ${PROJECT_SOURCE_DIR}/darwin/platform)
 target_compile_features(uml_video_device PUBLIC cxx_std_20)
 target_compile_options(uml_video_device PRIVATE -Wall -Wextra -Werror)
-target_link_libraries(uml_video_device PRIVATE uml_gpu_transport UML::VideoDecoder)
+target_link_libraries(uml_video_device PRIVATE UML::VhostUserTransport UML::VideoDecoder)

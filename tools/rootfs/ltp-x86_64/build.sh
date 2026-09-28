@@ -92,8 +92,10 @@ mkdir -p -- "$root"
 
 owner_uid=$(id -u)
 owner_gid=$(id -g)
-staging=$(mktemp "$output_parent/.$output_name.partial.XXXXXX")
-rm -f -- "$staging"
+# Stage in a directory this user owns beside the output, so the name root's
+# mkfs.erofs writes stays reserved and publication is a same-directory rename.
+staging_dir=$(mktemp -d "$output_parent/.$output_name.partial.XXXXXX")
+staging=$staging_dir/$output_name
 unmount_root()
 {
 	for mount_point in dev sys proc; do
@@ -105,9 +107,13 @@ unmount_root()
 cleanup()
 {
 	unmount_root || true
-	[ -n "$staging" ] || return
-	sudo rm -f -- "$staging" "$staging.packages.tsv" \
-		"$staging.elf.tsv" "$staging.sha256"
+	[ -n "$staging_dir" ] || return
+	sudo rm -rf -- "$staging_dir"
+}
+publish()
+{
+	mv -T -n -- "$1" "$2"
+	[ ! -e "$1" ] || fail "output appeared during publication: $2"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
@@ -177,10 +183,11 @@ sudo chown "$owner_uid:$owner_gid" "$staging"
 checksum=$(sha256sum "$staging" | awk '{print $1}')
 printf '%s  %s\n' "$checksum" "$output_name" > "$staging.sha256"
 
-mv -n -- "$staging" "$output"
-mv -n -- "$staging.packages.tsv" "$output.packages.tsv"
-mv -n -- "$staging.elf.tsv" "$output.elf.tsv"
-mv -n -- "$staging.sha256" "$output.sha256"
-staging=
+publish "$staging" "$output"
+publish "$staging.packages.tsv" "$output.packages.tsv"
+publish "$staging.elf.tsv" "$output.elf.tsv"
+publish "$staging.sha256" "$output.sha256"
+rmdir -- "$staging_dir"
+staging_dir=
 trap - EXIT HUP INT TERM
 printf '%s\n' "Built x86-64 LTP rootfs: $output"

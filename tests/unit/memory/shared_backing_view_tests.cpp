@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "mach_vm_region_test_support.hpp"
 #include "memory/shared_backing.hpp"
 #include "scratch_directory.hpp"
 
@@ -55,23 +56,10 @@ private:
 
 [[nodiscard]] bool is_unmapped(void *address)
 {
-	mach_vm_address_t region_address =
-		reinterpret_cast<mach_vm_address_t>(address);
-	const mach_vm_address_t requested_address = region_address;
-	mach_vm_size_t region_size{};
-	vm_region_basic_info_data_64_t information{};
-	mach_msg_type_number_t information_count =
-		VM_REGION_BASIC_INFO_COUNT_64;
-	mach_port_t object_name = MACH_PORT_NULL;
-	const kern_return_t result = ::mach_vm_region(
-		::mach_task_self(), &region_address, &region_size,
-		VM_REGION_BASIC_INFO_64,
-		reinterpret_cast<vm_region_info_t>(&information),
-		&information_count, &object_name);
-	if (object_name != MACH_PORT_NULL)
-		(void)::mach_port_deallocate(::mach_task_self(), object_name);
-	return result == KERN_INVALID_ADDRESS ||
-		(result == KERN_SUCCESS && region_address > requested_address);
+	const auto requested = reinterpret_cast<std::uintptr_t>(address);
+	const auto query = uml::testing::query_vm_region(requested);
+	return query.status == KERN_INVALID_ADDRESS ||
+		(query.status == KERN_SUCCESS && query.region.start > requested);
 }
 
 void test_ordinary_descriptor_view_owns_its_mapping(std::size_t page_size)
@@ -98,23 +86,9 @@ void test_ordinary_descriptor_view_owns_its_mapping(std::size_t page_size)
 
 [[nodiscard]] vm_prot_t protection_of(void *address)
 {
-	mach_vm_address_t region_address =
-		reinterpret_cast<mach_vm_address_t>(address);
-	mach_vm_size_t region_size{};
-	vm_region_basic_info_data_64_t information{};
-	mach_msg_type_number_t information_count =
-		VM_REGION_BASIC_INFO_COUNT_64;
-	mach_port_t object_name = MACH_PORT_NULL;
-	const kern_return_t result = ::mach_vm_region(
-		::mach_task_self(), &region_address, &region_size,
-		VM_REGION_BASIC_INFO_64,
-		reinterpret_cast<vm_region_info_t>(&information),
-		&information_count, &object_name);
-	if (object_name != MACH_PORT_NULL)
-		(void)::mach_port_deallocate(::mach_task_self(), object_name);
-	require(result == KERN_SUCCESS &&
-		region_address <= reinterpret_cast<mach_vm_address_t>(address));
-	return information.protection;
+	const auto region = uml::testing::region_containing(address);
+	require(region.has_value());
+	return region->protection;
 }
 
 void *test_anonymous_consumers_borrow_one_root(std::size_t page_size,

@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "protocol.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_device.hpp"
 #include "vhost_user_message.hpp"
-#include "display.hpp"
-#include "../input/vnc/vnc_input.hpp"
+#include "vhost_user_protocol.hpp"
 #include "../../memory/shared_backing.hpp"
 
 #include <array>
@@ -29,23 +27,11 @@ namespace uml::gpu {
 
 class VhostUserServer {
 public:
-    VhostUserServer(
-        std::filesystem::path socketPath,
-        std::string vncBindAddress,
-        std::uint16_t vncPort,
-        std::string vncPassword,
-        std::uint32_t width,
-        std::uint32_t height,
-        bool selfTestPattern,
-        uml::input::vnc::VncInputSink inputSink = {},
-        DisplayMode displayMode = DisplayMode::vnc,
-        void* nativeView = nullptr,
-        std::uint32_t dotsPerInch = 0,
-        uml::input::vnc::PointerMode pointerMode =
-            uml::input::vnc::PointerMode::mouse,
-        bool autoResizeGuest = true);
+    /* Serves `device`. `socketPath` is the listening socket run() creates;
+     * runConnected() needs none. */
     explicit VhostUserServer(
-        std::unique_ptr<uml::virtio::VhostUserDevice> device);
+        std::unique_ptr<uml::virtio::VhostUserDevice> device,
+        std::filesystem::path socketPath = {});
     ~VhostUserServer();
 
     VhostUserServer(const VhostUserServer&) = delete;
@@ -159,8 +145,6 @@ private:
     [[nodiscard]] std::uint64_t allocateRequestId();
 
     std::filesystem::path socketPath_;
-    std::string vncBindAddress_;
-    std::unique_ptr<Display> display_;
     std::unique_ptr<uml::virtio::VhostUserDevice> device_;
     UniqueDescriptor slaveRequestDescriptor_;
     std::shared_ptr<uml::virtio::SharedMemoryRegions> sharedMemoryRegions_;

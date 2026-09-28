@@ -83,8 +83,6 @@ done
 
 "$DEVICE_SYNC" --android-root "$ANDROID_ROOT" --tree overlay \
 	--workspace "$AOSP_SOURCE"
-"$JELLY_VERIFIER" --android-root "$ANDROID_ROOT" \
-	--aosp-source "$AOSP_SOURCE"
 "$VERIFIER" --android-root "$ANDROID_ROOT" \
 	--aosp-source "$AOSP_SOURCE" --expect final
 printf '%s\n' "applied routed AOSP 17 project patches"

@@ -167,19 +167,7 @@ MESA_SOURCE="$SOURCE_ROOT/mesa"
 VULKAN_HEADERS_SOURCE="$SOURCE_ROOT/vulkan-headers"
 VENUS_PROTOCOL_SOURCE="$SOURCE_ROOT/venus-protocol"
 
-find_tool()
-{
-	variable=$1
-	shift
-	for candidate in "$@"; do
-		tool_path=$(command -v "$candidate" 2>/dev/null || true)
-		if [ -n "$tool_path" ]; then
-			eval "$variable=\$tool_path"
-			return
-		fi
-	done
-	fail "required build tool is unavailable: $*"
-}
+. "$ROOT_DIR/dependencies/build-common.sh"
 
 if [ -x "$ROOT_DIR/.build/gpu-tools-venv/bin/meson" ]; then
 	PATH="$ROOT_DIR/.build/gpu-tools-venv/bin:$PATH"
@@ -236,11 +224,6 @@ cleanup()
 	fi
 }
 trap cleanup EXIT HUP INT TERM
-
-publish_exclusively()
-{
-	"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$1" "$2"
-}
 
 SOURCES="$TEMP_ROOT/sources"
 BUILDS="$TEMP_ROOT/builds"
@@ -642,15 +625,5 @@ CONTRACT_SHA256=$(shasum -a 256 "$PLATFORM_CONTRACT" | awk '{print $1}')
 } > "$STAGE/share/uml-dependencies/build-receipt.tsv"
 cp "$PLATFORM_CONTRACT" \
 	"$STAGE/share/uml-dependencies/$CONTRACT_NAME"
-verify_prefix "$STAGE"
-if ! publish_exclusively "$STAGE" "$PREFIX"; then
-	if [ -e "$PREFIX" ] || [ -L "$PREFIX" ]; then
-		verify_prefix "$PREFIX" ||
-			fail "concurrent prefix winner is invalid: $PREFIX"
-	else
-		fail "Apple GPU prefix could not be published atomically: $PREFIX"
-	fi
-else
-	STAGE=
-fi
-printf '%s\n' "published $PLATFORM Apple GPU dependency prefix: $PREFIX"
+publish_verified "$STAGE" "$PREFIX" verify_prefix \
+	"$PLATFORM Apple GPU dependency prefix"

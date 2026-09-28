@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "a64_body_inspection.hpp"
 #include "arm64_simd_widening_test_support.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
@@ -8,6 +9,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <set>
+
+using uml::testing::a64::conditional_branch;
+using uml::testing::a64::indirect_branch;
 
 extern "C" {
 #define UML_DECLARE_WIDENING(name) \
@@ -68,18 +72,6 @@ constexpr std::array expected_gadgets{
 {
 	return offsetof(test::arm64::CpuState, vectors) +
 		index * sizeof(test::arm64::VectorRegister);
-}
-
-[[nodiscard]] constexpr bool conditional_branch(std::uint32_t instruction)
-{
-	return (instruction & 0xff00'0010U) == 0x5400'0000U ||
-		(instruction & 0x7e00'0000U) == 0x3400'0000U ||
-		(instruction & 0x7e00'0000U) == 0x3600'0000U;
-}
-
-[[nodiscard]] constexpr bool indirect_branch(std::uint32_t instruction)
-{
-	return (instruction & 0xffff'fc1fU) == 0xd61f'0000U;
 }
 
 [[nodiscard]] unsigned instructions_to_dispatch(Gadget gadget)

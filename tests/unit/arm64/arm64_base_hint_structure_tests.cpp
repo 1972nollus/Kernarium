@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "a64_body_inspection.hpp"
 #include "arm64_base_hint_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
@@ -6,6 +7,9 @@
 #include <array>
 #include <cstdint>
 #include <set>
+
+using uml::testing::a64::conditional_branch;
+using uml::testing::a64::indirect_branch;
 
 namespace {
 
@@ -62,13 +66,11 @@ struct BodyShape final {
 	BodyShape result{};
 	for (unsigned index = 0; index < 32U; ++index) {
 		const auto instruction = code[index];
-		if ((instruction & 0xffff'fc1fU) == 0xd61f'0000U) {
+		if (indirect_branch(instruction)) {
 			result.terminal = true;
 			break;
 		}
-		if ((instruction & 0xff00'0010U) == 0x5400'0000U ||
-		    (instruction & 0x7e00'0000U) == 0x3400'0000U ||
-		    (instruction & 0x7e00'0000U) == 0x3600'0000U)
+		if (conditional_branch(instruction))
 			++result.conditional_branches;
 		++result.instructions;
 	}

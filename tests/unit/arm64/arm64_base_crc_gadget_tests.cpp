@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "a64_body_inspection.hpp"
 #include "arm64_base_crc_test_support.hpp"
 
 #include "cpu/arm64/gadgets/gadget_operand_encoding.hpp"
@@ -10,6 +11,9 @@
 #include <cstdint>
 #include <memory_resource>
 #include <set>
+
+using uml::testing::a64::conditional_branch;
+using uml::testing::a64::indirect_branch;
 
 extern "C" {
 #define UML_DECLARE_CHECKSUM_SOURCES(prefix) \
@@ -148,21 +152,9 @@ void exact_translation_selection_and_stream_shape(bool force_software)
 		"checksum operation/source modes did not select 40 live gadgets");
 }
 
-[[nodiscard]] constexpr bool conditional_branch(std::uint32_t instruction)
-{
-	return (instruction & 0xff00'0010U) == 0x5400'0000U ||
-		(instruction & 0x7e00'0000U) == 0x3400'0000U ||
-		(instruction & 0x7e00'0000U) == 0x3600'0000U;
-}
-
 [[nodiscard]] constexpr bool direct_branch(std::uint32_t instruction)
 {
 	return (instruction & 0xfc00'0000U) == 0x1400'0000U;
-}
-
-[[nodiscard]] constexpr bool indirect_branch(std::uint32_t instruction)
-{
-	return (instruction & 0xffff'fc1fU) == 0xd61f'0000U;
 }
 
 [[nodiscard]] constexpr bool native_checksum(std::uint32_t instruction)

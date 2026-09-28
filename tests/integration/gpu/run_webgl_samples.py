@@ -17,12 +17,12 @@ import time
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.insert(0, str(REPO_ROOT / "tests/integration/support"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import boot_kde_vnc  # noqa: E402
 import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
 import run_gpu_guest as gpu_guest  # noqa: E402
 import run_vk_gl_cts as cts  # noqa: E402
+import kde_session  # noqa: E402
 import webgl_launcher  # noqa: E402
 from run_chromium_webgl import (  # noqa: E402
     announced_vnc_port,
@@ -560,7 +560,7 @@ def main() -> int:
 
     port = 0
     password = "webgl"
-    launcher_options = boot_kde_vnc.parse_arguments(
+    launcher_options = kde_session.parse_arguments(
         [
             "--display", "vnc",
             "--port", str(port),
@@ -576,8 +576,8 @@ def main() -> int:
             "--engine", options.engine,
         ]
     )
-    command = boot_kde_vnc.build_harness_command(launcher_options)
-    separator = boot_kde_vnc.guest_argument_separator(command)
+    command = kde_session.build_harness_command(launcher_options)
+    separator = kde_session.guest_argument_separator(command)
     artifact = options.artifact_root.resolve() / time.strftime("%Y%m%d-%H%M%S")
     guest_files = gpu_guest.StagedGuestFiles(
         artifact / gpu_guest.GUEST_FILE_DIRECTORY

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "a64_body_inspection.hpp"
 #include "arm64_base_store_hint_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
@@ -6,6 +7,9 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+
+using uml::testing::a64::conditional_branch;
+using uml::testing::a64::indirect_branch;
 
 namespace store_hint = arm64_base_store_hint_test;
 namespace gadgets = uml::cpu::arm64::gadgets;
@@ -47,12 +51,9 @@ void all_forms_fold_to_nop()
 	unsigned instructions = 0;
 	for (; instructions < 4U; ++instructions) {
 		const auto instruction = body[instructions];
-		if ((instruction & 0xffff'fc1fU) == 0xd61f'0000U)
+		if (indirect_branch(instruction))
 			break;
-		arm64_hint_test::require(
-			(instruction & 0xff00'0010U) != 0x5400'0000U &&
-			(instruction & 0x7e00'0000U) != 0x3400'0000U &&
-			(instruction & 0x7e00'0000U) != 0x3600'0000U,
+		arm64_hint_test::require(!conditional_branch(instruction),
 			"NOP gadget contains a conditional branch");
 	}
 	arm64_hint_test::require(instructions <= 1U,

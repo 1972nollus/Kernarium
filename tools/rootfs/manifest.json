@@ -1,21 +1,6 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "image": "rootfs.erofs",
   "sha256": "73e36c063e8374b68bdaca992f789d41dda59e159fd4b426dbbb5515dcf84c91",
-  "size": 3802316800,
-  "filesystem": {
-    "format": "erofs",
-    "superblock_offset": 1024,
-    "magic": "0xe0f5e1e2",
-    "checksum": "0xaaf1ff11",
-    "feature_compat": "0x00000007",
-    "feature_incompat": "0x00000003",
-    "available_compr_algs": "0x0008",
-    "extra_devices": 0,
-    "block_size": 4096,
-    "blocks": 928300,
-    "inodes": 202634,
-    "uuid": "b84fcbe2-0673-4126-8f81-bdee45997306",
-    "volume_name": "rootfs"
-  }
+  "size": 3802316800
 }

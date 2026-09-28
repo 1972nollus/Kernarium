@@ -13,17 +13,12 @@ Production must not discover libraries from Homebrew, ambient
 `CMAKE_PREFIX_PATH`, or unrestricted `pkg-config`. Consumers use only verified
 private prefixes through the CMake targets in this directory.
 
-Apple GPU builds reuse one Xcode DerivedData directory below their shared work
-root; they do not populate the user's global Xcode DerivedData directory.
-
 ## Products
 
 The dependency products are:
 
 - `macos`: non-graphics static host libraries at
   `.build/dependencies/macos-arm64`;
-- `apple-gpu`: the upstream libepoxy and virglrenderer sources alone. It
-  publishes no host GL provider, so no product consumes it directly;
 - `apple-gpu-vulkan-experiment`: the macOS and iOS device builds, which add the
   pinned Mesa, Vulkan-Headers, and Venus-protocol sources so that Mesa supplies
   both the KosmicKrisp Vulkan driver and the Zink Gallium OpenGL driver. There
@@ -137,11 +132,10 @@ rows still requires a rebuild.
 and for the iOS device, from one source matrix and one set of patches; its
 `--platform ios` build differs only in SDK, deployment target, platform
 contract, and its need for a native-machine pass for the compilers Mesa runs
-during the build. It builds the `apple-gpu` source matrix -- upstream
-virglrenderer and libepoxy --
-and adds Mesa, which supplies both the KosmicKrisp Vulkan driver and the Zink
-Gallium OpenGL driver, plus the standalone Vulkan SDK headers and the Venus
-protocol generator.
+during the build. It builds upstream virglrenderer and libepoxy and adds Mesa,
+which supplies both the KosmicKrisp Vulkan driver and the Zink Gallium OpenGL
+driver, plus the standalone Vulkan SDK headers and the Venus protocol
+generator.
 
 Its format-4 platform contract sets `gl_provider=zink-kosmickrisp` and an
 independent `vk_provider=venus-kosmickrisp`. The build compiles KosmicKrisp as

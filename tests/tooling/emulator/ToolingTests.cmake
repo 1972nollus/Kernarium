@@ -11,10 +11,10 @@ if(UML_BUILD_KERNEL_RUNNER)
     add_executable(uml_embedded_kernel_serialization_tests
         ${PROJECT_SOURCE_DIR}/tests/tooling/emulator/embedded_kernel_serialization_tests.cpp)
     target_link_libraries(uml_embedded_kernel_serialization_tests PRIVATE
+        UML::BridgeAbi
         uml_emulator_admission_test_variant
         UML::GuestPageConfiguration)
     target_include_directories(uml_embedded_kernel_serialization_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/include
         ${PROJECT_SOURCE_DIR}/darwin/emulator/src)
     target_compile_features(uml_embedded_kernel_serialization_tests PRIVATE
         cxx_std_20)

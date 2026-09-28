@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "a64_body_inspection.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 
 #include <algorithm>
@@ -9,6 +10,8 @@
 #include <cstdlib>
 #include <source_location>
 #include <span>
+
+using uml::testing::a64::indirect_branch;
 
 namespace jit_test = uml::cpu::arm64::jit::testing;
 
@@ -144,7 +147,7 @@ void two_way_shape_uses_only_host_owned_branch_target(
   bool records_miss_source = false;
   for (const auto word : hot) {
     target_compares += word == 0xeb09'011fU; // cmp x8, x9
-    if ((word & 0xffff'fc1fU) == 0xd61f'0000U) {
+    if (indirect_branch(word)) {
       ++host_branches;
       require(((word >> 5U) & 31U) == 13U,
               "guest target register became a native BR operand");
@@ -190,7 +193,7 @@ void unlinked_compilation_has_no_native_guest_target_branch() {
   const auto compiled = jit_test::compile_block(pc, guest);
   const auto hot = hot_code(compiled);
   for (const auto word : hot)
-    require((word & 0xffff'fc1fU) != 0xd61f'0000U,
+    require(!indirect_branch(word),
             "unlinked indirect exit branched to a guest register");
 }
 
@@ -203,7 +206,7 @@ void direct_link_uses_compact_capability_selection() {
   require_compact_capability_selection(hot);
   std::size_t host_branches = 0;
   for (const auto word : hot) {
-    if ((word & 0xffff'fc1fU) != 0xd61f'0000U)
+    if (!indirect_branch(word))
       continue;
     ++host_branches;
     require(((word >> 5U) & 31U) == 13U,

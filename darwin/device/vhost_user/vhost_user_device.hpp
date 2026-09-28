@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -154,6 +155,12 @@ public:
     virtual void releaseConfigChange() noexcept {}
     virtual void clearConfigChange() noexcept {}
     virtual void setStopRequest(const std::atomic_bool*) noexcept {}
+    /* Printed after the transport's own readiness line when the device has
+     * more to announce, such as where its display can be reached. */
+    [[nodiscard]] virtual std::string readinessDescription() const
+    {
+        return {};
+    }
     virtual void traceQueue(
         std::uint32_t,
         std::span<const std::uint8_t>,

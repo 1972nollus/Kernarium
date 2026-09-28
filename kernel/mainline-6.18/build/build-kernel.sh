@@ -24,7 +24,7 @@ usage()
 	cat <<'EOF'
 Usage: kernel/mainline-6.18/build/build-kernel.sh \
        --build PATH --page-size 16k|4k [--slice arm64|x86_64] [--jobs N]
-       [--source CONFIGURED_PATH] [--lockdep]
+       [--lockdep]
 
 The compiler, linker, make program, cross prefix, and tool overrides are
 configured through UML_KERNEL_{MAKE,CC,HOST_CC,LD,CROSS_COMPILE,AR,NM,OBJCOPY,
@@ -32,7 +32,7 @@ OBJDUMP,READELF,STRIP,LLVM,JOBS,EXTRA_HOST_CFLAGS,EXTRA_HOST_CXXFLAGS}. pahole
 and the static libelf used for BTF come from UML_KERNEL_HOST_TOOLS_PREFIX
 (default .build/dependencies/kernel-host-tools, built by
 dependencies/build-kernel-host-tools.sh); UML_KERNEL_PAHOLE may select another
-pahole v1.29 or newer. One
+pahole v1.29 or newer.
 The arm64 slice supports 16 KiB and 4 KiB pages. The x86_64 userspace slice is
 4 KiB only and composes its own config fragment after the shared common and
 page fragments. The output directory must be outside
@@ -40,13 +40,12 @@ the Linux source tree. Darwin host-tool compatibility is injected from
 kernel/mainline-6.18/build/toolchain/darwin-host. macOS, iOS Simulator, and physical iOS all use
 the same constrained native address-space profile. An omitted jobs value uses
 all online host processors. The source is always read from the required,
-Git-ignored kernel/mainline-6.18/source-location.conf. --source is accepted only as an exact
-assertion of that configured path. --lockdep also applies config/lockdep.fragment
-for a lock-checking probe kernel, which is never an accepted artifact.
+Git-ignored kernel/mainline-6.18/source-location.conf. --lockdep also applies
+config/lockdep.fragment for a lock-checking probe kernel, which is never an
+accepted artifact.
 EOF
 }
 
-REQUESTED_SOURCE_DIR=''
 BUILD_DIR=''
 PAGE_SIZE=''
 SLICE=arm64
@@ -56,11 +55,6 @@ while [ "$#" -gt 0 ]; do
 	--slice)
 		[ "$#" -ge 2 ] || fail "--slice requires arm64 or x86_64"
 		SLICE=$2
-		shift 2
-		;;
-	--source)
-		[ "$#" -ge 2 ] || fail "--source requires a path"
-		REQUESTED_SOURCE_DIR=$2
 		shift 2
 		;;
 	--build)
@@ -105,9 +99,6 @@ uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
 [ -x "$SOURCE_LOCATION" ] || fail "missing source-location verifier: $SOURCE_LOCATION"
 SOURCE_DIR=$("$SOURCE_LOCATION" --require-source) ||
 	fail "kernel build requires a valid kernel/mainline-6.18/source-location.conf"
-if [ -n "$REQUESTED_SOURCE_DIR" ] && [ "$REQUESTED_SOURCE_DIR" != "$SOURCE_DIR" ]; then
-	fail "--source must match configured UML_KERNEL_SOURCE_DIR: $SOURCE_DIR"
-fi
 case "$PAGE_SIZE" in
 16k|4k) ;;
 *) fail "--page-size must be 16k or 4k" ;;
@@ -283,12 +274,12 @@ apply_config_fragment()
 # `olddefconfig` resolves a requested symbol against its dependencies in
 # silence.  A symbol whose menu is closed is simply dropped, and one that
 # another symbol selects is force-enabled, so the composed fragments can
-# disagree with every kernel they produce without anything saying so. Later
-# fragments intentionally override earlier policy for a product slice.
-# CONFIG_NAMESPACES
-# defaulting off under EXPERT cost USER_NS and TIME_NS that way, and the guest
-# lost every namespace while the fragment still claimed two of them.  Compare
-# what was asked for against what the resolved configuration actually holds.
+# disagree with every kernel they produce without anything saying so.
+# CONFIG_NAMESPACES defaulting off under EXPERT cost USER_NS and TIME_NS that
+# way, and the guest lost every namespace while the fragment still claimed two
+# of them.  Compare what was asked for against what the resolved configuration
+# actually holds.  Later fragments intentionally override earlier policy for a
+# product slice.
 verify_composed_config()
 {
 	mismatches=$(awk -v config="$BUILD_DIR/.config" '
