@@ -84,7 +84,7 @@ index 439b36d32e4989b25ee87ec3bf523a76b9f7f122..1f442697874e60044c7474ac67714ee0
     default:
        vkr_log("unrecognized object type %u", type);
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index 48d3b52298df0073d9ad78dc0e5bfde0f77cb48b..e969d9e337ad79816f8bdb58a6c769cea76d466f 100644
+index 8594ac308bea36ba0e5b37b3a8fb24d5ac86227b..d3dbac12ee1b7e0c9e8398dfe2dcb2aa99af4fb9 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
 @@ -118,6 +118,7 @@ vkr_context_init_dispatch(struct vkr_context *ctx)

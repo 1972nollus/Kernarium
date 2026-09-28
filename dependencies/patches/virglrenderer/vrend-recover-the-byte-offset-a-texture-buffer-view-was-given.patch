@@ -31,10 +31,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 39 insertions(+), 9 deletions(-)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index f5653dbfad9f66bc389d6f14952cb6a4caea9463..a0e49262e0fb24cc632674359da86cfc1060abbf 100644
+index 2fbaa7fa65ec582ec99060a7cd49e3d85ad917b7..feedf6323aae45e7368771c972f0badbc5ddba36 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -382,6 +382,7 @@ struct global_renderer_state {
+@@ -379,6 +379,7 @@ struct global_renderer_state {
  
     uint32_t max_draw_buffers;
     uint32_t max_texture_buffer_size;
@@ -42,7 +42,7 @@ index f5653dbfad9f66bc389d6f14952cb6a4caea9463..a0e49262e0fb24cc632674359da86cfc
     uint32_t max_texture_2d_size;
     uint32_t max_texture_3d_size;
     uint32_t max_texture_cube_size;
-@@ -3705,6 +3706,31 @@ static GLenum vrend_get_arb_format(enum virgl_formats format)
+@@ -3702,6 +3703,31 @@ static GLenum vrend_get_arb_format(enum virgl_formats format)
     }
  }
  
@@ -74,7 +74,7 @@ index f5653dbfad9f66bc389d6f14952cb6a4caea9463..a0e49262e0fb24cc632674359da86cfc
  void vrend_set_single_sampler_view(struct vrend_context *ctx,
                                     uint32_t shader_type,
                                     uint32_t index,
-@@ -3798,15 +3824,15 @@ void vrend_set_single_sampler_view(struct vrend_context *ctx,
+@@ -3795,15 +3821,15 @@ void vrend_set_single_sampler_view(struct vrend_context *ctx,
           }
  
           if (has_feature(feat_texture_buffer_range)) {
@@ -99,7 +99,7 @@ index f5653dbfad9f66bc389d6f14952cb6a4caea9463..a0e49262e0fb24cc632674359da86cfc
           } else
              glTexBuffer(GL_TEXTURE_BUFFER, internalformat, view->texture->gl_id);
        }
-@@ -7739,6 +7765,10 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+@@ -7736,6 +7762,10 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
     glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS,
                   (GLint*)&vrend_state.max_texture_units);
  

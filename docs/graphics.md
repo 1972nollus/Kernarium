@@ -38,14 +38,16 @@ through the vhost-user shared-memory aperture only that line carries.
 The GPU transport thread owns renderer creation, context use, reset, and
 teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS
 consumer of the same renderer and is intended for diagnostics and remote
-display, not as a second graphics backend. With no connected VNC client,
-scanout flushes retire without any GPU-to-CPU readback. A client that connects
-after such an interval dropped frames receives its first framebuffer update
-only once a complete scanout newer than its connection is published: the
-display reads the newest native Metal scanout back at once, and a scanout only
-the CPU path can read refreshes in full on the guest's next flush. The client
-waits at most 2 s for it, so a static CPU-path scanout then arrives as last
-published.
+display, not as a second graphics backend. With no connected VNC client, a
+native Metal scanout's flushes retire without any GPU-to-CPU readback; a
+scanout only the CPU path can read is still read back from the renderer on
+each flush. A client that connects after such an interval dropped frames
+receives its first framebuffer update only once a complete scanout newer than
+its connection is published. The display reads the newest native Metal
+scanout back at once, and a CPU-path scanout shown scaled as well, since it is
+kept in a host texture of the whole mode; a CPU-path scanout shown pixel for
+pixel refreshes in full on the guest's next flush. The client waits at most
+2 s for that flush, so a static one then arrives as last published.
 The VNC display converts native Metal scanouts with an asynchronous Metal
 readback. A readback requested before the framebuffer was cleared, re-placed
 for a new mode, or written by a CPU-path copy is discarded when it completes,
@@ -76,7 +78,11 @@ a shared-memory file that only names the heap, so vrend reads the pixels where
 they are: the rows of a linear image or a buffer from the heap's shared
 storage, which it aliases like any shared-memory segment, and an optimal image
 through the Metal texture its exporter published for scanout, which it reads
-into pages of its own before each read.
+into pages of its own before each read. The guest names the layout, so every
+import is bounded by what backs it: each row the image spans, at its stride
+and offset, has to lie inside the segment or the heap, the size is passed to
+the driver that aliases it, and an optimal texture has to have the guest
+format's texel size. An import that does not fit is refused.
 
 The macOS native display turns the emulator into an AppKit application, which
 makes the whole process eligible for App Nap whenever its window is occluded or
@@ -332,8 +338,9 @@ the host write outside the memory it gave the host, whatever the GPU does.
 
 Only a resource's attached backing reaches guest RAM: a blob resource carries
 no guest pages, and the device translates a backing entry only as a whole range
-inside one negotiated memory region. A control-queue reply is clamped to the
-writable descriptors the guest supplied. A Venus reply stream ends where the
+inside one negotiated memory region. A control-queue reply is never written
+past the writable descriptors the guest supplied: one that does not fit ends
+the connection instead. A Venus reply stream ends where the
 window the guest declared through `vkSetReplyCommandStreamMESA` ends rather
 than where the shared-memory resource holding it ends, so an oversized reply
 marks the context fatal instead of running on through whatever else the guest

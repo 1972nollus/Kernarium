@@ -104,6 +104,7 @@ add_library(uml_gpu_transport_wire STATIC vhost_user_message.cpp)
 uml_configure_gpu_component(uml_gpu_transport_wire)
 
 add_library(uml_gpu_transport STATIC
+    deferred_fences.cpp
     shared_memory_regions.cpp
     vhost_user_server.cpp)
 uml_configure_gpu_component(uml_gpu_transport)

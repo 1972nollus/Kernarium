@@ -136,6 +136,33 @@ ShaderScanoutSampling shaderSampling(
     };
 }
 
+bool scanoutPassSamples(id<MTLTexture> texture) noexcept
+{
+    return texture != nil &&
+        (texture.textureType == MTLTextureType2D ||
+         (texture.textureType == MTLTextureType2DArray &&
+          texture.arrayLength == 1));
+}
+
+std::optional<ScanoutSampling> scanoutPassSampling(
+    id<MTLTexture> texture,
+    const MetalScanout& scanout) noexcept
+{
+    return scanoutSampling({
+        .texture = {
+            .width = static_cast<std::uint32_t>(texture.width),
+            .height = static_cast<std::uint32_t>(texture.height)},
+        .source = {
+            .width = scanout.sourceWidth,
+            .height = scanout.sourceHeight},
+        .x = scanout.sourceX,
+        .y = scanout.sourceY,
+        .width = scanout.width,
+        .height = scanout.height,
+        .flipped = scanout.flipped,
+    });
+}
+
 id<MTLRenderPipelineState> ScanoutPipelines::forTexture(
     id<MTLTexture> texture) const noexcept
 {

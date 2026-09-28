@@ -69,10 +69,7 @@ struct MetalPresentationState final :
         if (commandQueue == nil)
             throw std::runtime_error("Metal command queue creation failed");
 
-        const auto pipelines =
-            makeScanoutPipelines(device, MTLPixelFormatBGRA8Unorm);
-        pipeline = pipelines.texture2D;
-        arrayPipeline = pipelines.textureArray;
+        pipelines = makeScanoutPipelines(device, MTLPixelFormatBGRA8Unorm);
 
         fallbackTexture = makeFallbackTexture(width, height);
         if (fallbackTexture == nil)
@@ -203,11 +200,7 @@ struct MetalPresentationState final :
                 return PresentOutcome::unsupported;
             }
             id<MTLTexture> texture = (__bridge id<MTLTexture>)scanout.texture;
-            const bool supportedType = texture != nil &&
-                (texture.textureType == MTLTextureType2D ||
-                 (texture.textureType == MTLTextureType2DArray &&
-                  texture.arrayLength == 1));
-            if (!supportedType || texture.device != device ||
+            if (!scanoutPassSamples(texture) || texture.device != device ||
                 texture.width < scanout.sourceWidth ||
                 texture.height < scanout.sourceHeight) {
                 displayActivityLog().record(
@@ -226,19 +219,7 @@ struct MetalPresentationState final :
             }
             /* The pass scales the scanout rectangle into the drawable at the
              * rectangle's own aspect, whatever size the framebuffer has. */
-            const auto sampling = scanoutSampling({
-                .texture = {
-                    .width = static_cast<std::uint32_t>(texture.width),
-                    .height = static_cast<std::uint32_t>(texture.height)},
-                .source = {
-                    .width = scanout.sourceWidth,
-                    .height = scanout.sourceHeight},
-                .x = scanout.sourceX,
-                .y = scanout.sourceY,
-                .width = scanout.width,
-                .height = scanout.height,
-                .flipped = scanout.flipped,
-            });
+            const auto sampling = scanoutPassSampling(texture, scanout);
             if (!sampling) {
                 displayActivityLog().record(
                     "present display=native reject=geometry texture=%p "
@@ -405,9 +386,8 @@ struct MetalPresentationState final :
                     .znear = 0.0,
                     .zfar = 1.0,
                 };
-                [encoder setRenderPipelineState:pipeline];
-                if (sourceTexture.textureType == MTLTextureType2DArray)
-                    [encoder setRenderPipelineState:arrayPipeline];
+                [encoder setRenderPipelineState:
+                    pipelines.forTexture(sourceTexture)];
                 [encoder setViewport:viewport];
                 [encoder setFragmentTexture:sourceTexture atIndex:0];
                 const auto sampling =
@@ -532,8 +512,7 @@ struct MetalPresentationState final :
     ScanoutFramebuffer framebuffer;
     id<MTLDevice> device;
     id<MTLCommandQueue> commandQueue;
-    id<MTLRenderPipelineState> pipeline;
-    id<MTLRenderPipelineState> arrayPipeline;
+    ScanoutPipelines pipelines;
     id<MTLTexture> fallbackTexture;
     id<MTLTexture> latestTexture;
     ScanoutSampling latestSampling;

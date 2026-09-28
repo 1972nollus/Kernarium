@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "deferred_fences.hpp"
 #include "protocol.hpp"
 #include "unique_descriptor.hpp"
 #include "virgl_renderer.hpp"
@@ -35,14 +36,13 @@ public:
         std::function<bool(std::uint64_t, std::span<std::uint8_t>)>;
     using GuestMapper =
         std::function<std::span<std::uint8_t>(std::uint64_t, std::size_t)>;
-    struct DeferredFence {
-        std::uint32_t contextId {};
-        std::uint32_t ringIndex {};
-        std::uint64_t cookie {};
-    };
+    using DeferredFence = gpu::DeferredFence;
     struct ProcessResult {
         std::vector<std::uint8_t> response;
         std::optional<DeferredFence> fence;
+        /* The context this command destroyed. Its renderer fence state is
+         * gone, so nothing the transport holds for it can retire any more. */
+        std::optional<std::uint32_t> destroyedContextId;
     };
 
     struct SharedMemoryAction {
@@ -129,7 +129,6 @@ private:
         std::uint32_t target {};
         std::uint32_t width {};
         std::uint32_t height {};
-        std::vector<BackingEntry> backing;
         std::vector<iovec> vectors;
     };
 
@@ -149,8 +148,6 @@ private:
         std::uint64_t chargedSize {};
         std::uint64_t regionOffset {};
         std::uint64_t pendingActionId {};
-        std::vector<BackingEntry> backing;
-        std::vector<iovec> vectors;
         MappingState mappingState {MappingState::unmapped};
         bool retireAfterAction {};
     };
@@ -170,7 +167,6 @@ private:
         std::span<const std::uint8_t> request,
         std::size_t entriesOffset,
         std::uint32_t entryCount,
-        std::vector<BackingEntry>& backing,
         std::vector<iovec>& vectors) const;
     /* The renderer's capability set, or the response a query for it fails
      * with. */
@@ -184,7 +180,8 @@ private:
         std::span<const std::uint8_t> request,
         bool cursorQueue,
         std::uint64_t fenceCookie,
-        std::optional<DeferredFence>* deferredFence);
+        std::optional<DeferredFence>* deferredFence,
+        std::optional<std::uint32_t>* destroyedContextId);
     void releaseBlobScanout() noexcept;
     void clearScanout() noexcept;
     [[nodiscard]] protocol::GpuResponse presentReadback(

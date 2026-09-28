@@ -72,7 +72,6 @@ public:
         std::uint32_t flags {};
         std::uint64_t blobId {};
         std::uint64_t size {};
-        std::span<iovec> backing;
     };
 
     VirglRenderer();

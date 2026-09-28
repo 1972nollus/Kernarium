@@ -2,8 +2,8 @@
 
 #include "gpu_test_support.hpp"
 #include "vhost_user_message.hpp"
+#include "vhost_user_message_testing.hpp"
 
-#include <chrono>
 #include <stdexcept>
 #include <thread>
 
@@ -186,11 +186,14 @@ void fragmentedHeaderAdoptsLaterDescriptors()
 
         VhostUserMessage message;
         bool received = false;
+        testing::resetStopWaitObserver();
         std::thread receiver {[&] {
             received = receiveVhostUserMessage(
                 sockets.descriptors[1].get(), message);
         }};
-        std::this_thread::sleep_for(std::chrono::milliseconds {20});
+        // The receiver waits for more only once it has consumed the first
+        // fragment, so the rest arrives in a fragment of its own.
+        const bool waiting = testing::waitForStopWaitCount(1, 2000);
         const std::array descriptors {sent.get()};
         sendBytesWithDescriptors(
             sockets.descriptors[0].get(),
@@ -198,6 +201,7 @@ void fragmentedHeaderAdoptsLaterDescriptors()
             sizeof(header) - firstFragment,
             descriptors);
         receiver.join();
+        require(waiting);
         require(received);
         require(message.descriptors.size() == 1);
         require(

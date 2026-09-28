@@ -710,7 +710,8 @@ class AquariumResourceMetricTests(unittest.TestCase):
             )
 
     def test_native_frame_and_shutdown_contracts_fail_closed(self) -> None:
-        frames = run_chromium_webgl.parse_native_display_final(
+        frames = run_chromium_webgl.cts.parse_native_display_final(
+            "Native display: direct Metal texture presentation\n"
             "Native display final: guest 120 presented 240 dropped 1 "
             "cpu-fallback 0"
         )
