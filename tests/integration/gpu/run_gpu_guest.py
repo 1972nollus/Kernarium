@@ -6,6 +6,8 @@ The launcher's per-run initramfs mounts the image beneath a tmpfs overlay,
 installs this run's files and hands PID 1 to the harness session, which
 prepares the resolver and container state and execs the image's systemd.
 systemd starts the test unit through ``systemd.wants=``; nothing is typed.
+With ``--image-init`` the initramfs starts the image's own ``/sbin/init``
+instead, for an image that owns its whole session.
 """
 
 from __future__ import annotations
@@ -13,10 +15,12 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+from dataclasses import dataclass, field
+import hashlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import pty
 import select
 import shlex
@@ -56,6 +60,9 @@ TEST_UNIT = "uml-gpu-overlay-test.service"
 TEST_UNIT_GUEST_PATH = f"/etc/systemd/system/{TEST_UNIT}"
 DOCKER_ARCHIVE_GUEST_PATH = "/usr/local/libexec/uml-docker-hello-world.tar"
 BOOT_PARAMETERS_GUEST_PATH = "/boot.env"
+IMAGE_INIT = "/sbin/init"
+# Where a caller stages the files it generates, beside its own artifacts.
+GUEST_FILE_DIRECTORY = "guest-files"
 # Guest paths this runner writes itself; a caller's file may not replace one.
 RUNNER_GUEST_PATHS = (
     BOOT_PARAMETERS_GUEST_PATH,
@@ -97,6 +104,43 @@ ROOTFS_TYPES = ("erofs", "ext4")
 
 class SafetyError(RuntimeError):
     """Raised when a boot could risk modifying the base image."""
+
+
+@dataclass
+class StagedGuestFiles:
+    """Generated files a caller hands this runner through ``--guest-file``.
+
+    Each is named by its SHA-256 and mode, so the command that names it is
+    known before anything is written and changes whenever the file does.
+    ``write`` puts the files in place just before that command runs.
+    """
+
+    directory: Path
+    files: dict[Path, tuple[bytes, int]] = field(default_factory=dict)
+    arguments: list[str] = field(default_factory=list)
+
+    def add(self, guest_path: str, content: str | bytes, mode: int = 0o644) -> None:
+        try:
+            validate_payload_path(guest_path)
+        except ValueError as error:
+            raise SafetyError(str(error)) from error
+        if guest_path in RUNNER_GUEST_PATHS:
+            raise SafetyError(f"guest file replaces the runner's own {guest_path}")
+        data = content.encode("utf-8") if isinstance(content, str) else content
+        digest = hashlib.sha256(data).hexdigest()
+        host = self.directory / (
+            f"{digest}-{mode:04o}-{PurePosixPath(guest_path).name}"
+        )
+        self.files[host] = (data, mode)
+        self.arguments.append(f"--guest-file={guest_path}={host}")
+
+    def write(self) -> None:
+        for host, (data, mode) in self.files.items():
+            host.parent.mkdir(parents=True, exist_ok=True)
+            temporary = host.with_name(f".{host.name}.{os.getpid()}")
+            temporary.write_bytes(data)
+            temporary.chmod(mode)
+            os.replace(temporary, host)
 
 
 class SerialConsoleSocket:
@@ -319,8 +363,10 @@ def parse_guest_file(value: str) -> tuple[str, Path]:
     return guest_path, host_path
 
 
-def boot_parameters(root_device: str, rootfs_type: str) -> str:
-    """The per-run /boot.env: the image beneath tmpfs, then the session."""
+def boot_parameters(
+    root_device: str, rootfs_type: str, entry: str = SESSION_GUEST_PATH
+) -> str:
+    """The per-run /boot.env: the image beneath tmpfs, then ``entry``."""
     if rootfs_type not in ROOTFS_TYPES:
         raise SafetyError(f"unsupported root filesystem type: {rootfs_type}")
     if not root_device.startswith("/dev/") or any(
@@ -331,7 +377,7 @@ def boot_parameters(root_device: str, rootfs_type: str) -> str:
         f"UML_BOOT_ROOT={root_device}\n"
         f"UML_BOOT_ROOT_TYPE={rootfs_type}\n"
         "UML_BOOT_UPPER=tmpfs\n"
-        f"UML_BOOT_ENTRY={SESSION_GUEST_PATH}\n"
+        f"UML_BOOT_ENTRY={entry}\n"
     )
 
 
@@ -345,12 +391,24 @@ SESSION_PARAMETERS = (
 
 
 def runner_guest_files(
-    test_script: str,
+    test_script: str | None,
     root_device: str,
     rootfs_type: str,
     docker_hello_world: bytes | None = None,
 ) -> dict[str, tuple[bytes, int]]:
-    """The files this runner writes for one boot, by guest path."""
+    """The files this runner writes for one boot, by guest path.
+
+    Without a test script the image's own init is the entry and the boot
+    parameters are the only file."""
+    if test_script is None:
+        if docker_hello_world is not None:
+            raise SafetyError("the Docker smoke needs the test session")
+        return {
+            BOOT_PARAMETERS_GUEST_PATH: (
+                boot_parameters(root_device, rootfs_type, IMAGE_INIT).encode(),
+                0o644,
+            )
+        }
     files = {
         BOOT_PARAMETERS_GUEST_PATH: (
             boot_parameters(root_device, rootfs_type).encode(), 0o644
@@ -384,7 +442,11 @@ def guest_file_arguments(
     the checkout unchanged and a caller's files from where the caller put
     them. Archive paths are ``/boot.env`` or ``/payload`` plus the guest path.
     """
-    pairs = [(f"/payload{SESSION_GUEST_PATH}", SESSION_SCRIPT)]
+    pairs = (
+        [(f"/payload{SESSION_GUEST_PATH}", SESSION_SCRIPT)]
+        if TEST_SCRIPT_GUEST_PATH in files
+        else []
+    )
     for guest_path in files:
         archive = (
             guest_path
@@ -427,6 +489,9 @@ def build_command(
         raise SafetyError(f"unsupported root filesystem type: {rootfs_type}")
     if not any(guest == BOOT_PARAMETERS_GUEST_PATH for guest, _ in guest_files):
         raise SafetyError("the guest files carry no /boot.env")
+    test_session = any(
+        guest == f"/payload{TEST_UNIT_GUEST_PATH}" for guest, _ in guest_files
+    )
     ubd_flags = "c" if rootfs_type == "erofs" else "cr"
     return [
         str(emulator.resolve()),
@@ -436,7 +501,7 @@ def build_command(
         "console=tty0",
         "console=ttyS0",
         f"systemd.unit={systemd_unit}",
-        f"systemd.wants={TEST_UNIT}",
+        *([f"systemd.wants={TEST_UNIT}"] if test_session else []),
         *extra_arguments,
         *(
             [f"--virtio-console-socket={virtio_console_socket.resolve()}"]
@@ -751,6 +816,15 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="leave the guest running after its checks instead of shutting down normally",
     )
     parser.add_argument(
+        "--image-init",
+        action="store_true",
+        help=(
+            f"start the image's own {IMAGE_INIT} beneath the overlay, with no "
+            "harness session or checks; the run ends when the guest stops "
+            "(requires --no-auto-poweroff)"
+        ),
+    )
+    parser.add_argument(
         "--serial-socket",
         type=Path,
         help=(
@@ -780,7 +854,17 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         nargs="*",
         help="additional non-root kernel arguments after '--'",
     )
-    return parser.parse_args(arguments)
+    options = parser.parse_args(arguments)
+    if options.image_init and (
+        options.command
+        or options.docker_hello_world_binary is not None
+        or not options.no_auto_poweroff
+    ):
+        parser.error(
+            "--image-init runs no checks: it takes no --command or Docker "
+            "smoke and requires --no-auto-poweroff"
+        )
+    return options
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
@@ -816,7 +900,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             options.docker_hello_world_binary.resolve()
         )
     caller_files = [parse_guest_file(value) for value in options.guest_file]
-    test_script = make_test_script(
+    test_script = None if options.image_init else make_test_script(
         options.command,
         auto_poweroff=not options.no_auto_poweroff,
         docker_hello_world=docker_hello_world is not None,
@@ -850,6 +934,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "rootfs": str(rootfs),
         "rootfs_type": options.rootfs_type,
         "auto_poweroff": not options.no_auto_poweroff,
+        "image_init": options.image_init,
     }
     if serial_socket is not None:
         result["serial_socket"] = str(serial_socket)
@@ -883,7 +968,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         }
     )
     write_json(artifact_directory / "run.json", result)
-    if not saw_pass or saw_fail:
+    # run_guest has already refused a nonzero emulator status; an image's own
+    # session prints no test markers.
+    if not options.image_init and (not saw_pass or saw_fail):
         raise RuntimeError("guest root-overlay verification did not pass")
     return 0
 

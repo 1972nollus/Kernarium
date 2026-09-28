@@ -326,6 +326,101 @@ class GpuGuestSafetyTests(unittest.TestCase):
             )
             self.assertFalse((root / "artifacts").exists())
 
+    def test_staged_files_are_named_by_content_and_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / "staged"
+            staged = run_gpu_guest.StagedGuestFiles(root)
+            staged.add("/usr/local/libexec/tool", "#!/bin/sh\n", 0o755)
+            staged.add("/usr/local/share/tool/data", b"data")
+            self.assertFalse(root.exists(), "adding a file wrote it")
+            again = run_gpu_guest.StagedGuestFiles(root)
+            again.add("/usr/local/libexec/tool", "#!/bin/sh\n", 0o755)
+            again.add("/usr/local/share/tool/data", b"other")
+            self.assertEqual(staged.arguments[0], again.arguments[0])
+            self.assertNotEqual(staged.arguments[1], again.arguments[1])
+            mode_only = run_gpu_guest.StagedGuestFiles(root)
+            mode_only.add("/usr/local/libexec/tool", "#!/bin/sh\n", 0o700)
+            self.assertNotEqual(staged.arguments[0], mode_only.arguments[0])
+            staged.write()
+            for argument in staged.arguments:
+                guest, host = run_gpu_guest.parse_guest_file(
+                    argument.removeprefix("--guest-file=")
+                )
+                contents, mode = staged.files[host]
+                self.assertEqual(host.read_bytes(), contents)
+                self.assertEqual(host.stat().st_mode & 0o777, mode)
+            self.assertEqual(
+                sorted(path.name for path in root.iterdir()),
+                sorted(path.name for path in staged.files),
+            )
+            for guest_path in (
+                "/tmp/tool",
+                "relative/tool",
+                run_gpu_guest.TEST_SCRIPT_GUEST_PATH,
+                run_gpu_guest.SESSION_GUEST_PATH,
+            ):
+                with self.subTest(guest_path=guest_path), self.assertRaises(
+                    run_gpu_guest.SafetyError
+                ):
+                    staged.add(guest_path, b"")
+
+    def test_image_init_boots_the_image_with_no_session(self) -> None:
+        files = run_gpu_guest.runner_guest_files(None, "/dev/ubda1", "ext4")
+        self.assertEqual(list(files), [run_gpu_guest.BOOT_PARAMETERS_GUEST_PATH])
+        self.assertEqual(
+            files[run_gpu_guest.BOOT_PARAMETERS_GUEST_PATH][0]
+            .decode()
+            .splitlines(),
+            [
+                "UML_BOOT_ROOT=/dev/ubda1",
+                "UML_BOOT_ROOT_TYPE=ext4",
+                "UML_BOOT_UPPER=tmpfs",
+                "UML_BOOT_ENTRY=/sbin/init",
+            ],
+        )
+        pairs = run_gpu_guest.guest_file_arguments(Path("/boot-files"), files)
+        self.assertEqual(pairs, [("/boot.env", Path("/boot-files/boot.env"))])
+        command = run_gpu_guest.build_command(
+            Path("/bin/echo"),
+            Path("/tmp/rootfs.ext4"),
+            "8G",
+            "graphical.target",
+            [],
+            pairs,
+            rootfs_type="ext4",
+        )
+        self.assertFalse(
+            any(argument.startswith("systemd.wants=") for argument in command)
+        )
+        with self.assertRaises(run_gpu_guest.SafetyError):
+            run_gpu_guest.runner_guest_files(None, "/dev/ubda", "erofs", b"x")
+
+    def test_image_init_runs_no_checks_and_never_powers_off(self) -> None:
+        for extra in (
+            ["--no-auto-poweroff", "--command", "true"],
+            [],
+        ):
+            with self.subTest(extra=extra), contextlib.redirect_stderr(
+                io.StringIO()
+            ), self.assertRaises(SystemExit):
+                run_gpu_guest.parse_arguments(["--image-init", *extra])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rootfs = root / "rootfs.ext4"
+            rootfs.write_bytes(b"image")
+            rootfs.chmod(0o444)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = run_gpu_guest.main([
+                    "--emulator", "/bin/echo", "--rootfs", str(rootfs),
+                    "--rootfs-type", "ext4", "--root-device", "/dev/ubda1",
+                    "--artifact-root", str(root / "artifacts"),
+                    "--image-init", "--no-auto-poweroff", "--dry-run",
+                ])
+            self.assertEqual(status, 0)
+            self.assertNotIn("uml-session", output.getvalue())
+            self.assertNotIn(run_gpu_guest.TEST_UNIT, output.getvalue())
+
     def test_offline_docker_smoke_is_local_and_fail_closed(self) -> None:
         payload = b"\x7fELFtest-payload"
         script = run_gpu_guest.make_test_script(
