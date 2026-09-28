@@ -7,18 +7,13 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import re
 import subprocess
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"))
-from contract_checks import parse_assignments  # noqa: E402
-import patch_series  # noqa: E402
+import pinned_source
+from pinned_source import run as _run
 
 
-HEX40 = re.compile(r"[0-9a-f]{40}")
 REQUIRED_METADATA = {
     "JELLY_SOURCE_SCHEMA",
     "JELLY_UPSTREAM_REPOSITORY",
@@ -36,31 +31,14 @@ class VerificationError(ValueError):
     pass
 
 
-def run(
-    *command: str, cwd: Path | None = None, payload: bytes | None = None
-) -> str:
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        input=payload,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.decode(errors="replace").strip()
-        raise VerificationError(f"command failed: {' '.join(command)}: {detail}")
-    return result.stdout.decode(errors="strict").strip()
+def run(*command: str, cwd: Path | None = None) -> str:
+    return _run(*command, cwd=cwd, error=VerificationError)
 
 
 def parse_metadata(path: Path) -> dict[str, str]:
-    values = parse_assignments(path, VerificationError)
-    if set(values) != REQUIRED_METADATA:
-        missing = sorted(REQUIRED_METADATA - set(values))
-        extra = sorted(set(values) - REQUIRED_METADATA)
-        raise VerificationError(
-            f"Jelly metadata keys differ (missing={missing}, extra={extra})"
-        )
-    return values
+    return pinned_source.read_metadata(
+        path, REQUIRED_METADATA, "Jelly", VerificationError
+    )
 
 
 def validate_metadata(values: dict[str, str]) -> None:
@@ -76,46 +54,26 @@ def validate_metadata(values: dict[str, str]) -> None:
         raise VerificationError("Jelly destination is not packages/apps/Jelly")
     if values["JELLY_LICENSE"] != "Apache-2.0":
         raise VerificationError("Jelly license metadata changed")
-    for key in (
-        "JELLY_UPSTREAM_COMMIT",
-        "JELLY_UPSTREAM_TREE",
-        "JELLY_FINAL_TREE",
-    ):
-        if HEX40.fullmatch(values[key]) is None:
-            raise VerificationError(f"{key} is not a full lowercase Git object ID")
-    ref = subprocess.run(
-        ("git", "check-ref-format", f"refs/heads/{values['JELLY_PATCH_BRANCH']}"),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    pinned_source.check_object_ids(
+        values,
+        ("JELLY_UPSTREAM_COMMIT", "JELLY_UPSTREAM_TREE", "JELLY_FINAL_TREE"),
+        VerificationError,
     )
-    if ref.returncode != 0:
-        raise VerificationError("Jelly patch branch name is invalid")
+    pinned_source.check_branch_name(
+        values["JELLY_PATCH_BRANCH"], "Jelly", VerificationError
+    )
 
 
 def verify_series(root: Path) -> None:
-    try:
-        series = patch_series.read_series(root / "third_party/jelly/series")
-    except patch_series.SeriesError as error:
-        raise VerificationError(f"Jelly series: {error}") from error
-    if not series.names:
-        raise VerificationError("Jelly series is empty")
+    pinned_source.read_generated_series(
+        root / "third_party/jelly/series", "Jelly", VerificationError
+    )
 
 
 def verify_checkout(aosp_source: Path, values: dict[str, str]) -> None:
-    if not aosp_source.is_dir() or not (aosp_source / ".repo").is_dir():
-        raise VerificationError("AOSP source is not a Repo workspace")
-    source = aosp_source / values["JELLY_DESTINATION"]
-    if source.is_symlink() or not source.is_dir():
-        raise VerificationError(f"materialized Jelly checkout is missing: {source}")
-    top = Path(run("git", "rev-parse", "--show-toplevel", cwd=source)).resolve()
-    if top != source.resolve():
-        raise VerificationError("Jelly destination is not the Git checkout root")
-    if run("git", "status", "--porcelain", "--untracked-files=all", cwd=source):
-        raise VerificationError("materialized Jelly checkout is dirty")
-    if run("git", "remote", "get-url", "origin", cwd=source) != values[
-        "JELLY_UPSTREAM_REPOSITORY"
-    ]:
-        raise VerificationError("materialized Jelly origin differs from metadata")
+    source = pinned_source.open_checkout(
+        aosp_source, values, "JELLY", "Jelly", VerificationError
+    )
     branch = subprocess.run(
         ("git", "symbolic-ref", "--quiet", "HEAD"),
         cwd=source,

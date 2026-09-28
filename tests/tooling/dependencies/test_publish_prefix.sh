@@ -109,4 +109,75 @@ LOSERS=$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type d \
 [ -z "$(find "$PUBLISH_ROOT/winner" -mindepth 1 -type d)" ] ||
 	fail "concurrent publication nested the loser in the winner"
 
-printf '%s\n' "exclusive and swap publication tests passed"
+# The builders' shared publish step verifies the stage, publishes it, reuses
+# a concurrent winner only after verifying it, and fails on anything else.
+HELPER_ROOT="$TEST_ROOT/publish-verified"
+mkdir -p "$HELPER_ROOT"
+cat >"$HELPER_ROOT/run.sh" <<'EOF_RUN'
+set -eu
+ROOT_DIR=$1
+PYTHON=python3
+fail()
+{
+	printf '%s\n' "$*" >&2
+	exit 1
+}
+verify_fixture()
+{
+	[ -f "$1/identity" ] && [ ! -e "$1/invalid" ]
+}
+. "$ROOT_DIR/dependencies/build-common.sh"
+STAGE=$2
+publish_verified "$2" "$3" verify_fixture "fixture prefix"
+printf 'stage=%s\n' "$STAGE"
+EOF_RUN
+
+publish_verified_status()
+{
+	status=0
+	sh "$HELPER_ROOT/run.sh" "$ROOT_DIR" "$1" "$2" \
+		>"$HELPER_ROOT/out" 2>"$HELPER_ROOT/err" || status=$?
+	printf '%s\n' "$status"
+}
+
+staged helper-first
+[ "$(publish_verified_status "$TEST_ROOT/helper-first" \
+	"$HELPER_ROOT/prefix")" = 0 ] || fail "publish_verified did not publish"
+grep -qx "published fixture prefix: $HELPER_ROOT/prefix" "$HELPER_ROOT/out" ||
+	fail "publish_verified did not report its publication"
+grep -qx 'stage=' "$HELPER_ROOT/out" ||
+	fail "publish_verified kept STAGE after publishing it"
+[ "$(identity publish-verified/prefix)" = helper-first ] ||
+	fail "publish_verified published the wrong directory"
+
+staged helper-second
+[ "$(publish_verified_status "$TEST_ROOT/helper-second" \
+	"$HELPER_ROOT/prefix")" = 0 ] || fail "publish_verified did not reuse a winner"
+grep -qx "reusing concurrently published fixture prefix: $HELPER_ROOT/prefix" \
+	"$HELPER_ROOT/out" || fail "publish_verified did not report the reuse"
+grep -qx "stage=$TEST_ROOT/helper-second" "$HELPER_ROOT/out" ||
+	fail "publish_verified cleared STAGE for a stage it did not publish"
+[ "$(identity helper-second)" = helper-second ] ||
+	fail "publish_verified changed a losing stage"
+
+: >"$HELPER_ROOT/prefix/invalid"
+[ "$(publish_verified_status "$TEST_ROOT/helper-second" \
+	"$HELPER_ROOT/prefix")" = 1 ] || fail "publish_verified reused an invalid winner"
+grep -q 'concurrently published fixture prefix is invalid' "$HELPER_ROOT/err" ||
+	fail "an invalid winner had no diagnostic"
+
+: >"$TEST_ROOT/helper-second/invalid"
+[ "$(publish_verified_status "$TEST_ROOT/helper-second" \
+	"$HELPER_ROOT/fresh")" != 0 ] || fail "publish_verified accepted an invalid stage"
+[ ! -e "$HELPER_ROOT/fresh" ] || fail "publish_verified published an invalid stage"
+rm -f "$TEST_ROOT/helper-second/invalid"
+
+[ "$(publish_verified_status "$TEST_ROOT/helper-second" \
+	"$HELPER_ROOT/absent/prefix")" = 1 ] ||
+	fail "publish_verified accepted a publisher failure"
+grep -q "could not publish fixture prefix: $HELPER_ROOT/absent/prefix" \
+	"$HELPER_ROOT/err" || fail "a publisher failure had no diagnostic"
+[ "$(identity helper-second)" = helper-second ] ||
+	fail "a publisher failure moved its stage"
+
+printf '%s\n' "exclusive, swap and verified publication tests passed"

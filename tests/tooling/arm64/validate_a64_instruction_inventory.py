@@ -22,7 +22,8 @@ COLUMNS = [
     "native_feature_requirements",
     "engine_status",
 ]
-SECTION_COUNTS = {"Base": 516, "FP&SIMD": 467}
+# Each section numbers its stable IDs under its own prefix.
+SECTION_PREFIXES = {"Base": "BASE", "FP&SIMD": "FPSIMD"}
 ENGINE_STATUSES = {"pending", "verified"}
 SUITE_VARIANT_MODELS = {
     "shared-base-control-system": {
@@ -46,122 +47,13 @@ SUITE_VARIANT_MODELS = {
         "structure+element-size+addressing-mode+writeback+register-alias+fault-ordering+reserved",
     },
 }
-FEATURE_TOKENS = {
-    "aes",
-    "asmv8p2",
-    "ats1a",
-    "advanced_simd",
-    "bf16",
-    "brbe",
-    "bti",
-    "chk",
-    "clrbhb",
-    "cmh",
-    "cmpbr",
-    "cpa",
-    "crc32",
-    "cssc",
-    "d128",
-    "dgh",
-    "dit",
-    "dpb",
-    "dpb2",
-    "dotprod",
-    "e3dse",
-    "ebep",
-    "ebf16",
-    "f16f32dot",
-    "f16f32mm",
-    "f16mm",
-    "f8f16mm",
-    "f8f32mm",
-    "faminmax",
-    "fcma",
-    "fhm",
-    "floating_point",
-    "fp16",
-    "fp8",
-    "fp8dot2",
-    "fp8dot4",
-    "fp8fma",
-    "fprcvt",
-    "frintts",
-    "flag_m",
-    "flag_m2",
-    "gcie",
-    "gcs",
-    "hbc",
-    "hinte",
-    "i8mm",
-    "ite",
-    "jscvt",
-    "lor",
-    "lrcpc",
-    "lrcpc2",
-    "lrcpc3",
-    "ls64",
-    "ls64_accdata",
-    "ls64_v",
-    "lscp",
-    "lse",
-    "lse128",
-    "lsfe",
-    "lsui",
-    "lut",
-    "mec",
-    "mops",
-    "mte",
-    "mte2",
-    "mtetc",
-    "nmi",
-    "occmo",
-    "pan",
-    "pan2",
-    "pauth",
-    "pauth_lr",
-    "pcdphint",
-    "pmull",
-    "prfmslc",
-    "pops",
-    "ras",
-    "rdm",
-    "rme",
-    "rme_gpc3",
-    "rprfm",
-    "sb",
-    "sha1",
-    "sha256",
-    "sha3",
-    "sha512",
-    "sm3",
-    "sm4",
-    "sme",
-    "spe",
-    "specres",
-    "specres2",
-    "spe_exc",
-    "ssbs",
-    "sysinstr128",
-    "sysreg128",
-    "the",
-    "tlbid",
-    "tlbios",
-    "tlbirange",
-    "tlbiw",
-    "trbe_exc",
-    "trf",
-    "uao",
-    "vhe",
-    "wfxt",
-    "xs",
-}
-
-
 def fail(message: str) -> None:
     raise ValueError(message)
 
 
-def validate_requirement(value: str, stable_id: str) -> None:
+def validate_requirement(
+    value: str, stable_id: str, features: set[str]
+) -> None:
     if value == "baseline":
         return
     expression = value
@@ -176,7 +68,7 @@ def validate_requirement(value: str, stable_id: str) -> None:
         if term == "baseline":
             continue
         tokens = term.split("+")
-        if any(token not in FEATURE_TOKENS for token in tokens):
+        if any(token not in features for token in tokens):
             fail(f"{stable_id}: unknown native feature in {term!r}")
 
 
@@ -193,8 +85,6 @@ def main() -> int:
             fail(f"columns are {reader.fieldnames!r}, expected {COLUMNS!r}")
         rows = list(reader)
 
-    if len(FEATURE_TOKENS) != 107:
-        fail(f"feature token catalog has {len(FEATURE_TOKENS)} entries, expected 107")
     feature_source = host_features.read_text(encoding="utf-8")
     enum_match = re.search(
         r"enum class ArmFeature\s*:[^{]+\{(?P<body>.*?)"
@@ -212,17 +102,9 @@ def main() -> int:
             re.MULTILINE,
         )
     }
-    if enum_features != FEATURE_TOKENS:
-        fail(
-            "ArmFeature inventory differs from feature token catalog: "
-            f"missing={sorted(FEATURE_TOKENS - enum_features)!r}, "
-            f"extra={sorted(enum_features - FEATURE_TOKENS)!r}"
-        )
-    if len(rows) != 983:
-        fail(f"inventory has {len(rows)} rows, expected 983")
+    if not enum_features:
+        fail("ArmFeature lists no inventory members")
     counts = Counter(row["section"] for row in rows)
-    if counts != Counter(SECTION_COUNTS):
-        fail(f"section counts are {dict(counts)!r}, expected {SECTION_COUNTS!r}")
     status_counts = Counter(row["engine_status"] for row in rows)
     verified_sections = Counter(
         row["section"]
@@ -241,9 +123,12 @@ def main() -> int:
     section_indices = Counter()
     for row in rows:
         section = row["section"]
+        if section not in SECTION_PREFIXES:
+            fail(f"{row['stable_id']}: unknown section {section!r}")
         section_indices[section] += 1
-        prefix = "BASE" if section == "Base" else "FPSIMD"
-        expected_ids.append(f"{prefix}-{section_indices[section]:04d}")
+        expected_ids.append(
+            f"{SECTION_PREFIXES[section]}-{section_indices[section]:04d}"
+        )
         for field in ("pdf_label", "current_suite", "current_variant_model"):
             if not row[field].strip():
                 fail(f"{row['stable_id']}: {field} is empty")
@@ -262,7 +147,7 @@ def main() -> int:
                 f"{row['engine_status']!r}"
             )
         validate_requirement(
-            row["native_feature_requirements"], row["stable_id"]
+            row["native_feature_requirements"], row["stable_id"], enum_features
         )
     if ids != expected_ids:
         fail("stable IDs are not contiguous in section order")

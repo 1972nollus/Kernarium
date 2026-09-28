@@ -164,7 +164,6 @@ string(JSON TARGET_COUNT LENGTH "${CODEMODEL_JSON}" configurations 0 targets)
 set(TARGET_IDS)
 set(TARGET_NAMES)
 set(TARGET_FILES)
-set(TARGET_SOURCE_PATHS)
 foreach(INDEX RANGE 0 ${TARGET_COUNT})
     if(INDEX EQUAL TARGET_COUNT)
         break()
@@ -172,12 +171,9 @@ foreach(INDEX RANGE 0 ${TARGET_COUNT})
     string(JSON TARGET_ID GET "${CODEMODEL_JSON}" configurations 0 targets ${INDEX} id)
     string(JSON TARGET_NAME GET "${CODEMODEL_JSON}" configurations 0 targets ${INDEX} name)
     string(JSON TARGET_FILE GET "${CODEMODEL_JSON}" configurations 0 targets ${INDEX} jsonFile)
-    file(READ "${REPLY_ROOT}/${TARGET_FILE}" TARGET_DESCRIPTION_JSON)
-    string(JSON TARGET_SOURCE_PATH GET "${TARGET_DESCRIPTION_JSON}" paths source)
     list(APPEND TARGET_IDS "${TARGET_ID}")
     list(APPEND TARGET_NAMES "${TARGET_NAME}")
     list(APPEND TARGET_FILES "${TARGET_FILE}")
-    list(APPEND TARGET_SOURCE_PATHS "${TARGET_SOURCE_PATH}")
 endforeach()
 
 foreach(DECLARED_TARGET IN LISTS ARCHITECTURE_TARGETS)
@@ -196,26 +192,9 @@ foreach(DECLARED_TARGET IN LISTS ARCHITECTURE_TARGETS)
     endif()
 endforeach()
 
-# The declaration list must also be complete in the other direction. Catch a
-# new concrete Darwin target even when nobody remembered to add it to the
-# hand-maintained layer graph. Pure interface targets are covered by the
-# configure-time recursive target check in UmlArchitecture.cmake because the
-# File API intentionally omits them.
-foreach(INDEX RANGE 0 ${TARGET_COUNT})
-    if(INDEX EQUAL TARGET_COUNT)
-        break()
-    endif()
-    list(GET TARGET_SOURCE_PATHS ${INDEX} TARGET_SOURCE_PATH)
-    if(TARGET_SOURCE_PATH MATCHES "^darwin(/|$)")
-        list(GET TARGET_NAMES ${INDEX} TARGET_NAME)
-        list(FIND ARCHITECTURE_TARGETS "${TARGET_NAME}" TARGET_LAYER_INDEX)
-        if(TARGET_LAYER_INDEX EQUAL -1)
-            message(FATAL_ERROR
-                "Configured Darwin target has no architecture declaration: "
-                "${TARGET_NAME} (${TARGET_SOURCE_PATH})")
-        endif()
-    endif()
-endforeach()
+# Completeness in the other direction, every Darwin target declared, is
+# enforced at configure time by uml_write_architecture_manifest(), which walks
+# every configured target of every type.
 
 # Audit every declared first-party edge, including pure interface contracts
 # which do not appear in CMake's File API codemodel.  The manifest is emitted

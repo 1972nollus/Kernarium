@@ -80,19 +80,7 @@ arm64|aarch64) ;;
 *) fail "the iOS $LABEL build requires an arm64 host" ;;
 esac
 
-find_tool()
-{
-	variable=$1
-	shift
-	for candidate in "$@"; do
-		tool_path=$(command -v "$candidate" 2>/dev/null || true)
-		if [ -n "$tool_path" ]; then
-			eval "$variable=\$tool_path"
-			return
-		fi
-	done
-	fail "required build tool is unavailable: $*"
-}
+. "$ROOT_DIR/dependencies/build-common.sh"
 
 find_tool CMAKE cmake
 find_tool MAKE gmake make
@@ -185,19 +173,4 @@ cp "$ROOT_DIR/dependencies/platforms/ios-simulator-$CONTRACT-arm64.tsv" \
 	"$PROVENANCE/ios-simulator-$CONTRACT-arm64.tsv"
 record_provenance "$PROVENANCE"
 
-verify_output "$STAGE"
-status=0
-"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$STAGE" "$OUTPUT" ||
-	status=$?
-case $status in
-0)
-	STAGE=
-	printf '%s\n' "published iOS $LABEL XCFramework: $OUTPUT"
-	;;
-1)
-	verify_output "$OUTPUT" ||
-		fail "concurrently published output is invalid: $OUTPUT"
-	printf '%s\n' "reusing concurrently published iOS $LABEL XCFramework: $OUTPUT"
-	;;
-*) fail "could not publish iOS $LABEL XCFramework: $OUTPUT" ;;
-esac
+publish_verified "$STAGE" "$OUTPUT" verify_output "iOS $LABEL XCFramework"

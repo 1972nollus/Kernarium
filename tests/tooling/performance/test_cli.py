@@ -5,7 +5,6 @@ from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
-import ast
 import contextlib
 import importlib.util
 import io
@@ -31,60 +30,72 @@ MOBILE_RUNNERS = (
 )
 
 
+class GuestConstructed(Exception):
+    """Stops a runner at its Guest construction."""
+
+
+# The arguments each runner needs, beyond the common ones, to reach its Guest.
+RUNNER_ARGUMENTS = {
+    "run_guest_geekbench.py": ("--console-log", "{directory}/console.log"),
+    "run_guest_command_bench.py": ("--command", "true"),
+    "run_guest_exec_bench.py": (
+        "--cpus", "1", "--workers", "1", "--executions", "1",
+    ),
+    "run_guest_link_bench.py": (
+        "--cpus", "1", "--workers", "1", "--binary", "{directory}/link-loop",
+    ),
+}
+
+
 def verify_engine_forwarding(runner: str) -> None:
-    source_path = ROOT / runner
-    source = source_path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(source_path))
-    guest_calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "Guest"
-    ]
-    if len(guest_calls) != 1:
-        raise RuntimeError(
-            f"{runner}: expected exactly one Guest construction, "
-            f"found {len(guest_calls)}"
-        )
-    engine_keywords = [
-        keyword
-        for keyword in guest_calls[0].keywords
-        if keyword.arg == "engine"
-    ]
-    expected = "arguments.engine"
-    if len(engine_keywords) != 1 or ast.unparse(engine_keywords[0].value) != expected:
-        raise RuntimeError(
-            f"{runner}: Guest must receive engine={expected}"
-        )
-    core_keywords = [
-        keyword
-        for keyword in guest_calls[0].keywords
-        if keyword.arg == "core_class"
-    ]
-    expected_core = "arguments.core_class"
-    if (
-        len(core_keywords) != 1
-        or ast.unparse(core_keywords[0].value) != expected_core
-    ):
-        raise RuntimeError(
-            f"{runner}: Guest must receive core_class={expected_core} so an "
-            "efficiency-core measurement is selectable"
-        )
-    if "--execution-engine" in source:
-        raise RuntimeError(
-            f"{runner}: engine selection must not be passed as a kernel argument"
-        )
-    if runner == "run_guest_geekbench.py":
-        overlay_keywords = [
-            keyword
-            for keyword in guest_calls[0].keywords
-            if keyword.arg == "overlay_shell"
-        ]
+    """Run a runner up to its Guest and check the engine and core class."""
+    module = load_runner_module(runner)
+    for engine in ("jit", "gadgets"):
+        with tempfile.TemporaryDirectory(prefix="uml-perf-cli-") as directory:
+            pathlib.Path(directory, "link-loop").write_bytes(b"")
+            arguments = [
+                str(ROOT / runner),
+                "--emulator",
+                "emulator",
+                "--rootfs",
+                "rootfs.erofs",
+                "--engine",
+                engine,
+                "--core-class",
+                "efficiency",
+                *(
+                    argument.format(directory=directory)
+                    for argument in RUNNER_ARGUMENTS[runner]
+                ),
+            ]
+            with (
+                mock.patch.object(sys, "argv", arguments),
+                mock.patch.object(
+                    module, "Guest", side_effect=GuestConstructed
+                ) as constructor,
+            ):
+                try:
+                    module.main()
+                except GuestConstructed:
+                    pass
+                else:
+                    raise RuntimeError(f"{runner}: main() built no Guest")
+        call = constructor.call_args
+        if call.kwargs.get("engine") != engine:
+            raise RuntimeError(f"{runner}: Guest must receive engine={engine}")
+        if call.kwargs.get("core_class") != "efficiency":
+            raise RuntimeError(
+                f"{runner}: Guest must receive the selected core class so an "
+                "efficiency-core measurement is selectable"
+            )
+        if any("--execution-engine" in argument for argument in call.args[4]):
+            raise RuntimeError(
+                f"{runner}: engine selection must not be passed as a kernel "
+                "argument"
+            )
         if (
-            len(overlay_keywords) != 1
-            or not isinstance(overlay_keywords[0].value, ast.Constant)
-            or overlay_keywords[0].value.value is not True
+            runner == "run_guest_geekbench.py"
+            and call.kwargs.get("overlay_shell") is not True
         ):
             raise RuntimeError(
                 f"{runner}: Geekbench must enable overlay_shell=True"

@@ -13,7 +13,7 @@ function(uml_find_raw_test_registrations)
     endif()
 
     set(_manifests "${ARG_SOURCE_ROOT}/CMakeLists.txt")
-    foreach(_scope IN ITEMS cmake darwin tests)
+    foreach(_scope IN ITEMS android cmake darwin dependencies kernel Kernarium tests)
         if(NOT IS_DIRECTORY "${ARG_SOURCE_ROOT}/${_scope}")
             continue()
         endif()

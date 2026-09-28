@@ -23,16 +23,15 @@ from typing import Any, BinaryIO, NamedTuple, Sequence
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.insert(0, str(REPO_ROOT / "tests/integration/support"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(REPO_ROOT / "tests" / "integration" / "support"))
-import boot_kde_vnc  # noqa: E402
 import guest_process  # noqa: E402
 import kernarium  # noqa: E402
 import run_gpu_guest as gpu_guest  # noqa: E402
 import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
 import run_vk_gl_cts as cts  # noqa: E402
 import vulkan_cts_receipt as vk_receipt  # noqa: E402
+import kde_session  # noqa: E402
 import webgl_launcher  # noqa: E402
 
 
@@ -1416,9 +1415,9 @@ def main() -> int:
         launcher_arguments.extend(
             ("--serial-socket", str(options.serial_socket.resolve()))
         )
-    launcher_options = boot_kde_vnc.parse_arguments(launcher_arguments)
-    command = boot_kde_vnc.build_harness_command(launcher_options)
-    separator = boot_kde_vnc.guest_argument_separator(command)
+    launcher_options = kde_session.parse_arguments(launcher_arguments)
+    command = kde_session.build_harness_command(launcher_options)
+    separator = kde_session.guest_argument_separator(command)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     artifact = options.artifact_root.resolve() / (
         f"{timestamp}-{os.getpid()}-{options.page_profile}-{options.display}"

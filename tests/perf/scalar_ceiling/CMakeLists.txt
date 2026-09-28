@@ -7,9 +7,10 @@ if(UML_TARGET_MACOS)
         $<TARGET_OBJECTS:uml_arm64_gadgets>
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_link_libraries(uml_scalar_ceiling_bench PRIVATE
+        UML::BridgeAbi
         UML::CpuContract UML::MemorySharedBacking)
     target_include_directories(uml_scalar_ceiling_bench PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin ${PROJECT_SOURCE_DIR}/darwin/include)
+        ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_definitions(uml_scalar_ceiling_bench PRIVATE
         UML_SCALAR_CEILING_GADGETS=1)
     target_compile_options(uml_scalar_ceiling_bench PRIVATE

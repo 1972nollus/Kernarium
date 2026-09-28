@@ -12,20 +12,15 @@ import json
 import os
 import pathlib
 import re
-import struct
 import subprocess
 import tempfile
+import sys
 import time
 from collections import Counter
 from typing import Any
 
-
-# FEX's configuration record: four u64 and three u32 header fields, then
-# offset/count pairs for memory regions, registers, memory data and the
-# environment, whose NUL-terminated key/value pairs end the record.
-FEX_CONFIG_HEADER_SIZE = 76
-FEX_CONFIG_ENVIRONMENT = 68
-FEX_REDUCED_PRECISION = b"FEX_X87REDUCEDPRECISION"
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import fex_config  # noqa: E402
 
 
 def fail(message: str) -> "NoReturn":
@@ -78,36 +73,14 @@ def load_corpus(root: pathlib.Path) -> tuple[dict[str, Any], list[dict[str, Any]
 def full_precision_config(config: bytes) -> bytes | None:
     """Return CONFIG without FEX's reduced-precision x87 request.
 
-    That request makes FEX's own translator compute x87 in doubles; the
-    gadget engine has only full 80-bit x87 and its runner rejects the
-    request. FEX's x86-64 host runner executes every ASM test natively, where
-    the request has no effect, so the expected registers are already
-    full-precision hardware results, as the unit corpus producer also relies
-    on. Returns None when CONFIG carries no request, or when its environment
-    is malformed, which the runner then reports.
+    Returns None when CONFIG carries no request, or when its record is
+    malformed, which the runner then reports.
     """
-    if len(config) < FEX_CONFIG_HEADER_SIZE:
+    try:
+        rewritten, requested = fex_config.without_reduced_precision(config)
+    except ValueError:
         return None
-    offset, count = struct.unpack_from("<II", config, FEX_CONFIG_ENVIRONMENT)
-    if not FEX_CONFIG_HEADER_SIZE <= offset <= len(config):
-        return None
-    entries: list[tuple[bytes, bytes]] = []
-    cursor = offset
-    for _ in range(count):
-        key_end = config.find(b"\0", cursor)
-        value_end = config.find(b"\0", key_end + 1) if key_end >= 0 else -1
-        if value_end < 0:
-            return None
-        entries.append((config[cursor:key_end], config[key_end + 1 : value_end]))
-        cursor = value_end + 1
-    kept = [entry for entry in entries if entry[0] != FEX_REDUCED_PRECISION]
-    if len(kept) == len(entries) or cursor != len(config):
-        return None
-    rebuilt = bytearray(config[:offset])
-    struct.pack_into("<II", rebuilt, FEX_CONFIG_ENVIRONMENT, offset, len(kept))
-    for key, value in kept:
-        rebuilt += key + b"\0" + value + b"\0"
-    return bytes(rebuilt)
+    return rewritten if requested else None
 
 
 def parse_runner_output(output: str, binary: str) -> dict[str, object]:

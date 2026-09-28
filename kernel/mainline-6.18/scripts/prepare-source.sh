@@ -29,8 +29,6 @@ checkout.  The source location must reside on a case-sensitive filesystem.
 
 Options:
   --slice SLICE  Kernel slice to prepare: arm64 (default) or x86_64
-  --source PATH   Compatibility assertion; PATH must exactly match the
-                  required kernel/mainline-6.18/source-location.conf value
   --cache PATH    Pinned source Git cache (default:
                   .build/kernel-cache/mainline-6.18 or UML_KERNEL_CACHE_DIR)
   --verify        Verify only; never download, switch branches, or apply patches
@@ -41,7 +39,6 @@ Options:
 EOF
 }
 
-REQUESTED_SOURCE_DIR=
 CACHE_ROOT=${UML_KERNEL_CACHE_DIR:-"$ROOT_DIR/.build/kernel-cache/mainline-6.18"}
 VERIFY_ONLY=0
 RECREATE=0
@@ -53,11 +50,6 @@ while [ "$#" -gt 0 ]; do
 	--slice)
 		[ "$#" -ge 2 ] || fail "--slice requires arm64 or x86_64"
 		SLICE=$2
-		shift 2
-		;;
-	--source)
-		[ "$#" -ge 2 ] || fail "--source requires a path"
-		REQUESTED_SOURCE_DIR=$2
 		shift 2
 		;;
 	--cache)
@@ -106,9 +98,6 @@ else
 	SOURCE_DIR=$("$SOURCE_LOCATION") ||
 		fail "kernel source configuration is invalid"
 fi
-if [ -n "$REQUESTED_SOURCE_DIR" ] && [ "$REQUESTED_SOURCE_DIR" != "$SOURCE_DIR" ]; then
-	fail "--source must match configured UML_KERNEL_SOURCE_DIR: $SOURCE_DIR"
-fi
 
 command -v git >/dev/null 2>&1 || fail "git is required"
 [ -x "$MATERIALIZER" ] || fail "missing Git materializer: $MATERIALIZER"
@@ -124,11 +113,9 @@ kernel_series check || fail "the $UML_KERNEL_SLICE series files are invalid"
 
 if [ ! -d "$SOURCE_DIR/.git" ]; then
 	[ "$VERIFY_ONLY" -eq 0 ] || fail "Linux checkout is missing: $SOURCE_DIR"
-	if [ "$FETCH" -eq 1 ]; then
-		"$MATERIALIZER" --source "$SOURCE_DIR" --cache "$CACHE_ROOT"
-	else
-		"$MATERIALIZER" --source "$SOURCE_DIR" --cache "$CACHE_ROOT" --no-fetch
-	fi
+	set -- --cache "$CACHE_ROOT"
+	[ "$FETCH" -eq 1 ] || set -- "$@" --no-fetch
+	"$MATERIALIZER" "$@"
 fi
 
 require_source_config()

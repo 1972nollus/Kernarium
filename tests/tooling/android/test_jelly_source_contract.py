@@ -48,6 +48,7 @@ def write_fixture(
     tools.mkdir(parents=True)
     shutil.copy2(verifier, tools / "verify-jelly-source.py")
     os.chmod(tools / "verify-jelly-source.py", 0o755)
+    shutil.copy2(verifier.with_name("pinned_source.py"), tools / "pinned_source.py")
     artifacts = root / "kernel/common/artifacts"
     artifacts.mkdir(parents=True)
     shutil.copy2(

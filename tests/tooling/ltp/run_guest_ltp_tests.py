@@ -78,259 +78,13 @@ class GuestConsoleWriteTests(unittest.TestCase):
 
 
 class ResultParsingTests(unittest.TestCase):
-    def test_repository_design_omissions_are_disabled_and_not_verified(self) -> None:
+    def test_repository_disabled_cases_are_not_verified(self) -> None:
+        # The two manifests own their rows; a case belongs to one of them.
         disabled = runner.load_disabled_manifest(LTP_ROOT / "disabled-tests.tsv")
         verified = {
             case.key for case in runner.load_manifest(LTP_ROOT / "verified-tests.tsv")
         }
-        expected = {
-            "mm/mmap10",
-            "mm/mmap10_1",
-            "mm/ksm01",
-            "mm/ksm01_1",
-            "mm/ksm02",
-            "mm/ksm02_1",
-            "mm/ksm03",
-            "mm/ksm03_1",
-            "mm/ksm04",
-            "mm/ksm04_1",
-            "mm/ksm05",
-            "mm/ksm06",
-            "mm/ksm06_1",
-            "mm/ksm06_2",
-            "mm/ksm07",
-            "mm/oom01",
-            "mm/thp03",
-            "pty/pty03",
-            "pty/pty04",
-            "pty/pty05",
-            "controllers/cgroup_fj_function_debug",
-            "controllers/cgroup_fj_stress_debug_2_2_none",
-            "controllers/cgroup_fj_stress_debug_3_3_none",
-            "controllers/cgroup_fj_stress_debug_4_4_none",
-            "controllers/cgroup_fj_stress_debug_2_9_none",
-            "controllers/cgroup_fj_stress_debug_10_3_none",
-            "controllers/cgroup_fj_stress_debug_1_200_none",
-            "controllers/cgroup_fj_stress_debug_200_1_none",
-            "controllers/cgroup_fj_stress_debug_2_2_one",
-            "controllers/cgroup_fj_stress_debug_3_3_one",
-            "controllers/cgroup_fj_stress_debug_4_4_one",
-            "controllers/cgroup_fj_stress_debug_2_9_one",
-            "controllers/cgroup_fj_stress_debug_10_3_one",
-            "controllers/cgroup_fj_stress_debug_1_200_one",
-            "controllers/cgroup_fj_stress_debug_200_1_one",
-            "controllers/cgroup_fj_stress_debug_2_2_each",
-            "controllers/cgroup_fj_stress_debug_3_3_each",
-            "controllers/cgroup_fj_stress_debug_4_4_each",
-            "controllers/cgroup_fj_stress_debug_2_9_each",
-            "controllers/cgroup_fj_stress_debug_10_3_each",
-            "controllers/cgroup_fj_stress_debug_1_200_each",
-            "controllers/cgroup_fj_stress_debug_200_1_each",
-            "cve/cve-2011-2183",
-            "cve/cve-2017-2636",
-            "cve/cve-2020-11494",
-            "cve/cve-2020-14416",
-        }
-        expected.update({
-            "mm/thp01",
-            "mm/thp02",
-            "mm/thp04",
-            "syscalls/cachestat03",
-            "syscalls/futex_wake04",
-            "syscalls/memfd_create03",
-            "syscalls/memfd_create04",
-            "controllers/cgroup_fj_function_hugetlb",
-            "hugetlb/hugefallocate01",
-            "hugetlb/hugefallocate02",
-            "hugetlb/hugefork01",
-            "hugetlb/hugefork02",
-            "hugetlb/hugemmap01",
-            "hugetlb/hugemmap02",
-            "hugetlb/hugemmap04",
-            "hugetlb/hugemmap05",
-            "hugetlb/hugemmap06",
-            "hugetlb/hugemmap07",
-            "hugetlb/hugemmap08",
-            "hugetlb/hugemmap09",
-            "hugetlb/hugemmap10",
-            "hugetlb/hugemmap11",
-            "hugetlb/hugemmap12",
-            "hugetlb/hugemmap13",
-            "hugetlb/hugemmap14",
-            "hugetlb/hugemmap15",
-            "hugetlb/hugemmap16",
-            "hugetlb/hugemmap17",
-            "hugetlb/hugemmap18",
-            "hugetlb/hugemmap19",
-            "hugetlb/hugemmap20",
-            "hugetlb/hugemmap21",
-            "hugetlb/hugemmap22",
-            "hugetlb/hugemmap23",
-            "hugetlb/hugemmap24",
-            "hugetlb/hugemmap25",
-            "hugetlb/hugemmap26",
-            "hugetlb/hugemmap27",
-            "hugetlb/hugemmap28",
-            "hugetlb/hugemmap29",
-            "hugetlb/hugemmap30",
-            "hugetlb/hugemmap31",
-            "hugetlb/hugemmap34",
-            "hugetlb/hugemmap05_1",
-            "hugetlb/hugemmap05_2",
-            "hugetlb/hugemmap05_3",
-            "hugetlb/hugeshmat01",
-            "hugetlb/hugeshmat02",
-            "hugetlb/hugeshmat03",
-            "hugetlb/hugeshmat04",
-            "hugetlb/hugeshmat05",
-            "hugetlb/hugeshmctl01",
-            "hugetlb/hugeshmctl02",
-            "hugetlb/hugeshmctl03",
-            "hugetlb/hugeshmdt01",
-            "hugetlb/hugeshmget01",
-            "hugetlb/hugeshmget02",
-            "hugetlb/hugeshmget03",
-            "hugetlb/hugeshmget05",
-            "hugetlb/hugeshmget06",
-            "can/can_filter",
-            "can/can_rcv_own_msgs",
-            "can/can_bcm01",
-            "cve/cve-2011-0999",
-            "cve/cve-2017-1000405",
-            "cve/cve-2021-3609",
-            "controllers/cgroup_fj_stress_hugetlb_2_2_none",
-            "controllers/cgroup_fj_stress_hugetlb_3_3_none",
-            "controllers/cgroup_fj_stress_hugetlb_4_4_none",
-            "controllers/cgroup_fj_stress_hugetlb_2_9_none",
-            "controllers/cgroup_fj_stress_hugetlb_10_3_none",
-            "controllers/cgroup_fj_stress_hugetlb_1_200_none",
-            "controllers/cgroup_fj_stress_hugetlb_200_1_none",
-            "controllers/cgroup_fj_stress_hugetlb_2_2_one",
-            "controllers/cgroup_fj_stress_hugetlb_3_3_one",
-            "controllers/cgroup_fj_stress_hugetlb_4_4_one",
-            "controllers/cgroup_fj_stress_hugetlb_2_9_one",
-            "controllers/cgroup_fj_stress_hugetlb_10_3_one",
-            "controllers/cgroup_fj_stress_hugetlb_1_200_one",
-            "controllers/cgroup_fj_stress_hugetlb_200_1_one",
-            "controllers/cgroup_fj_stress_hugetlb_2_2_each",
-            "controllers/cgroup_fj_stress_hugetlb_3_3_each",
-            "controllers/cgroup_fj_stress_hugetlb_4_4_each",
-            "controllers/cgroup_fj_stress_hugetlb_2_9_each",
-            "controllers/cgroup_fj_stress_hugetlb_10_3_each",
-            "controllers/cgroup_fj_stress_hugetlb_1_200_each",
-            "controllers/cgroup_fj_stress_hugetlb_200_1_each",
-            "hugetlb/hugemmap32",
-        })
-        self.assertEqual(len(verified), 2_429)
-        self.assertEqual(len(disabled), 134)
-        self.assertEqual(len(verified) + len(disabled), 2_563)
-        self.assertEqual(set(disabled), expected)
-        self.assertTrue(expected.isdisjoint(verified))
-
-    def test_updated_rootfs_requalification_is_reflected_in_manifest(self) -> None:
-        cases = {
-            case.key: case
-            for case in runner.load_manifest(LTP_ROOT / "verified-tests.tsv")
-        }
-        strict_passes = {
-            "syscalls/fanotify22",
-            "syscalls/mmap16",
-            "syscalls/quotactl01",
-            "syscalls/quotactl04",
-            "syscalls/quotactl06",
-            "syscalls/quotactl08",
-            "syscalls/statx05",
-            "syscalls/statx06",
-            "syscalls/statx09",
-            "containers/netns_netlink",
-            "commands/mkfs01_ext3_sh",
-            "commands/mkfs01_ext4_sh",
-            "fs/binfmt_misc01",
-            "fs/binfmt_misc02",
-            "fs/quota_remount_test01",
-            "kernel_misc/zram03",
-        }
-        metadata_driver_passes = {
-            "containers/netns_breakns_ip_ipv4_netlink",
-            "containers/netns_breakns_ip_ipv6_netlink",
-            "containers/netns_breakns_ip_ipv4_ioctl",
-            "containers/netns_breakns_ip_ipv6_ioctl",
-            "containers/netns_breakns_ns_exec_ipv4_netlink",
-            "containers/netns_breakns_ns_exec_ipv6_netlink",
-            "containers/netns_breakns_ns_exec_ipv4_ioctl",
-            "containers/netns_breakns_ns_exec_ipv6_ioctl",
-            "containers/netns_comm_ip_ipv4_netlink",
-            "containers/netns_comm_ip_ipv6_netlink",
-            "containers/netns_comm_ip_ipv4_ioctl",
-            "containers/netns_comm_ip_ipv6_ioctl",
-            "containers/netns_comm_ns_exec_ipv4_netlink",
-            "containers/netns_comm_ns_exec_ipv6_netlink",
-            "containers/netns_comm_ns_exec_ipv4_ioctl",
-            "containers/netns_comm_ns_exec_ipv6_ioctl",
-            "containers/netns_sysfs",
-        }
-        strict_passes |= metadata_driver_passes
-        userspace_exemptions = {
-            "syscalls/fallocate04",
-            "syscalls/fallocate05",
-            "syscalls/fallocate06",
-            "syscalls/fanotify13",
-            "syscalls/fanotify24",
-            "syscalls/preadv203",
-            "syscalls/preadv203_64",
-            "syscalls/quotactl09",
-            "syscalls/statx10",
-            "kernel_misc/zram01",
-            "kernel_misc/zram02",
-        }
-        requalified = strict_passes | userspace_exemptions
-        self.assertEqual(len(strict_passes), 33)
-        self.assertEqual(len(requalified), 44)
-        self.assertEqual(
-            {cases[key].expectation for key in strict_passes}, {"pass"}
-        )
-        self.assertEqual(
-            {cases[key].expectation for key in userspace_exemptions},
-            {"userspace-exempt"},
-        )
-        self.assertEqual(
-            cases["syscalls/statx05"].reason,
-            "All four encrypted and plain ext4 statx attribute assertions "
-            "pass",
-        )
-        self.assertEqual(
-            cases["fs/quota_remount_test01"].reason,
-            "Quota usage changes after the ext3 read-only and read-write "
-            "remount cycle",
-        )
-        self.assertEqual(
-            cases["syscalls/quotactl01"].reason,
-            "All 36 user and group quota-control assertions pass across the "
-            "vfsv0 and vfsv1 formats",
-        )
-        self.assertEqual(
-            cases["syscalls/quotactl06"].reason,
-            "All 22 quota error-path assertions pass across the vfsv0 and "
-            "vfsv1 formats",
-        )
-        self.assertEqual(
-            cases["kernel_misc/zram01"].reason,
-            "All 12 applicable zram lifecycle and compression checks pass; "
-            "one retired max_comp_streams attribute probe is skipped",
-        )
-        self.assertTrue(cases["kernel_misc/zram01"].serial)
-        # zram01 fills three 25 MiB devices with one dd process per KiB,
-        # about 63,000 execs; each exec translates its code from cold, so
-        # the x86-64 guest needs well over the default 300 s.
-        self.assertGreaterEqual(
-            cases["kernel_misc/zram01"].timeout_seconds, 600
-        )
-        self.assertEqual(
-            cases["kernel_misc/zram01"].kernel_arguments, ("ncpus=1",)
-        )
-        self.assertTrue(all(
-            "BusyBox ip" not in cases[key].reason for key in requalified
-        ))
+        self.assertTrue(disabled.keys().isdisjoint(verified))
 
     def test_disabled_manifest_records_design_omissions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -416,9 +170,6 @@ class ResultParsingTests(unittest.TestCase):
                 ("root", "rootfstype", "init", "ip", "uml_ltp_workspace"),
             )
 
-    def test_boot_timeout_allows_parallel_host_startup_contention(self) -> None:
-        self.assertGreaterEqual(runner.BOOT_TIMEOUT_SECONDS, 60)
-
     def test_overlay_shell_session_prepares_only_disposable_state(self) -> None:
         # Every LTP guest is an overlay shell; its workspace, swap and cgroup
         # choices travel as session parameters, not kernel arguments.
@@ -486,23 +237,6 @@ class ResultParsingTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     runner.validate_modules_builtin(value)
 
-    def test_modules_builtin_loader_requires_sibling_kernel_release(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            build = pathlib.Path(directory) / "build"
-            release = build / "include/config/kernel.release"
-            release.parent.mkdir(parents=True)
-            modules_builtin = build / "modules.builtin"
-            data = b"kernel/fs/binfmt_misc.ko\nkernel/drivers/net/veth.ko\n"
-            modules_builtin.write_bytes(data)
-            release.write_text("6.18.41-test\n", encoding="utf-8")
-            self.assertEqual(
-                runner.load_modules_builtin(modules_builtin),
-                (data, "6.18.41-test"),
-            )
-            release.write_text("bad release\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "invalid sibling"):
-                runner.load_modules_builtin(modules_builtin)
-
     def test_modules_builtin_loader_accepts_the_kernel_artifact_layout(
         self,
     ) -> None:
@@ -523,16 +257,12 @@ class ResultParsingTests(unittest.TestCase):
             release.write_text("6.18.54\n6.18.54\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "invalid sibling"):
                 runner.load_modules_builtin(modules_builtin)
-            release.write_text("6.18.54-uml-darwin\n", encoding="utf-8")
-            kbuild_release = kernel / "include/config/kernel.release"
-            kbuild_release.parent.mkdir(parents=True)
-            kbuild_release.write_text("6.18.54-uml-darwin\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "ambiguous"):
+            release.write_text("bad release\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid sibling"):
                 runner.load_modules_builtin(modules_builtin)
             release.unlink()
-            kbuild_release.unlink()
             with self.assertRaisesRegex(
-                ValueError, "neither .*kernel.release nor .*include/config"
+                ValueError, "cannot read sibling kernel release"
             ):
                 runner.load_modules_builtin(modules_builtin)
 

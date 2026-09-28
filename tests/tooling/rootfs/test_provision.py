@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise authenticated rootfs provisioning with a small EROFS fixture."""
+"""Exercise authenticated rootfs provisioning with a small image fixture."""
 
 from __future__ import annotations
 
@@ -9,11 +9,9 @@ __import__("sys").dont_write_bytecode = True
 import hashlib
 import json
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
-import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -26,40 +24,13 @@ from verify import VerificationError, verify  # noqa: E402
 
 
 def make_fixture(path: Path) -> dict[str, object]:
-    block_size = 4096
-    blocks = 2
-    image = bytearray(block_size * blocks)
-    superblock = memoryview(image)[1024 : 1024 + 144]
-    struct.pack_into("<III", superblock, 0, 0xE0F5E1E2, 0x12345678, 0x5)
-    superblock[12] = 12
-    struct.pack_into("<Q", superblock, 16, 3)
-    struct.pack_into("<I", superblock, 36, blocks)
-    fixture_uuid = uuid.UUID("12345678-1234-5678-9abc-def012345678")
-    superblock[48:64] = fixture_uuid.bytes
-    superblock[64:80] = b"fixture\0" + b"\0" * 8
-    struct.pack_into("<I", superblock, 80, 0x3)
-
+    image = bytes(range(256)) * 32
     path.write_bytes(image)
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "image": "rootfs.erofs",
         "sha256": hashlib.sha256(image).hexdigest(),
         "size": len(image),
-        "filesystem": {
-            "format": "erofs",
-            "superblock_offset": 1024,
-            "magic": "0xe0f5e1e2",
-            "checksum": "0x12345678",
-            "feature_compat": "0x00000005",
-            "feature_incompat": "0x00000003",
-            "available_compr_algs": "0x0000",
-            "extra_devices": 0,
-            "block_size": block_size,
-            "blocks": blocks,
-            "inodes": 3,
-            "uuid": str(fixture_uuid),
-            "volume_name": "fixture",
-        },
     }
 
 
@@ -79,21 +50,15 @@ def main() -> int:
 
         invalid = root / "invalid.erofs"
         invalid_bytes = bytearray(source.read_bytes())
-        struct.pack_into("<I", invalid_bytes, 1024, 0)
+        invalid_bytes[1024] ^= 0xFF
         invalid.write_bytes(invalid_bytes)
-        invalid_manifest_value = dict(manifest_value)
-        invalid_manifest_value["sha256"] = hashlib.sha256(invalid_bytes).hexdigest()
-        invalid_manifest = root / "invalid.json"
-        invalid_manifest.write_text(
-            json.dumps(invalid_manifest_value), encoding="utf-8"
-        )
         try:
-            verify(invalid, invalid_manifest)
+            verify(invalid, manifest)
         except VerificationError as error:
-            if "does not have an EROFS" not in str(error):
+            if "SHA-256 does not match" not in str(error):
                 raise
         else:
-            raise RuntimeError("invalid EROFS fixture was accepted")
+            raise RuntimeError("a changed image was accepted")
 
         output = root / "local" / "rootfs.erofs"
         if run(

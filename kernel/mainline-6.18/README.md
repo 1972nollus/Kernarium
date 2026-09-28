@@ -370,13 +370,6 @@ kernel cannot satisfy an x86_64 selection. Apple products validate the whole
 selected bundle and derive paths from its manifest; they do not inspect source
 or Kbuild state.
 
-`artifacts/vulkan-experiment-16k.env` and `vulkan-experiment-4k.env` select the
-separately published standard-arm64 bundles built from the series this
-directory currently tracks, and apply only when a build sets
-`UML_KERNEL_PRODUCT=mainline-6.18-vulkan-experiment`. They do not replace the
-accepted descriptors, which stay on their independently reviewed publication
-until a new one is accepted.
-
 ## Toolchain
 
 `build/toolchain/darwin.env` owns portable compiler/linker defaults and the

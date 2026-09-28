@@ -5,7 +5,6 @@ from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
-import importlib.util
 import os
 from pathlib import Path
 import re
@@ -20,16 +19,15 @@ from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "boot_kde_vnc.py"
 GPU_INTEGRATION = Path(__file__).resolve().parents[2] / "integration" / "gpu"
-SPEC = importlib.util.spec_from_file_location("boot_kde_vnc", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
-boot_kde_vnc = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(boot_kde_vnc)
+SUPPORT = Path(__file__).resolve().parents[2] / "integration" / "support"
+sys.path.insert(0, str(SUPPORT))
 sys.path.insert(0, str(GPU_INTEGRATION))
+import kde_session  # noqa: E402
 import run_webgl_samples  # noqa: E402
 
 
 def legacy_seed() -> str:
-    return boot_kde_vnc.LEGACY_KDE_SEED.read_text(encoding="utf-8")
+    return kde_session.LEGACY_KDE_SEED.read_text(encoding="utf-8")
 
 
 def seed_commands() -> list[str]:
@@ -109,24 +107,24 @@ def run_samples_launcher(
 
 class KdeVncLauncherTests(unittest.TestCase):
     def test_defaults_to_localhost_without_a_password(self) -> None:
-        options = boot_kde_vnc.parse_arguments([])
+        options = kde_session.parse_arguments([])
         self.assertEqual(options.bind, "127.0.0.1")
         self.assertEqual(options.display, "native")
         self.assertIsNone(options.password)
         self.assertEqual(options.cpus, 10)
         self.assertEqual(options.engine, "jit")
-        self.assertEqual(options.rootfs, boot_kde_vnc.DEFAULT_ROOTFS)
+        self.assertEqual(options.rootfs, kde_session.DEFAULT_ROOTFS)
         self.assertEqual(options.rootfs_type, "ext4")
         self.assertEqual(options.image_profile, "starter")
         self.assertEqual(options.root_device, "/dev/ubda1")
 
     def test_default_starter_disk_contract_is_forwarded(self) -> None:
-        command = boot_kde_vnc.build_harness_command(
-            boot_kde_vnc.parse_arguments([])
+        command = kde_session.build_harness_command(
+            kde_session.parse_arguments([])
         )
-        separator = boot_kde_vnc.guest_argument_separator(command)
+        separator = kde_session.guest_argument_separator(command)
         harness_arguments = command[:separator]
-        self.assertIn(str(boot_kde_vnc.DEFAULT_ROOTFS), harness_arguments)
+        self.assertIn(str(kde_session.DEFAULT_ROOTFS), harness_arguments)
         self.assertEqual(
             harness_arguments[
                 harness_arguments.index("--rootfs-type") :
@@ -149,28 +147,28 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertNotIn("ip=off", command[separator + 1 :])
 
     def test_execution_settings_are_forwarded(self) -> None:
-        options = boot_kde_vnc.parse_arguments(
+        options = kde_session.parse_arguments(
             ["--cpus", "6", "--engine", "gadgets"]
         )
-        command = boot_kde_vnc.build_harness_command(options)
-        separator = boot_kde_vnc.guest_argument_separator(command)
+        command = kde_session.build_harness_command(options)
+        separator = kde_session.guest_argument_separator(command)
         self.assertIn("ncpus=6", command[separator + 1 :])
         self.assertIn("--execution-engine=gadgets", command[separator + 1 :])
 
     def test_standard_launch_attaches_host_audio(self) -> None:
-        command = boot_kde_vnc.build_harness_command(
-            boot_kde_vnc.parse_arguments([])
+        command = kde_session.build_harness_command(
+            kde_session.parse_arguments([])
         )
-        separator = boot_kde_vnc.guest_argument_separator(command)
+        separator = kde_session.guest_argument_separator(command)
         self.assertEqual(command.count("--audio"), 1)
         self.assertIn("--audio", command[separator + 1 :])
 
     def test_serial_socket_is_forwarded_to_the_guest_harness(self) -> None:
-        options = boot_kde_vnc.parse_arguments(
+        options = kde_session.parse_arguments(
             ["--serial-socket", "/tmp/uml-serial.sock"]
         )
-        command = boot_kde_vnc.build_harness_command(options)
-        separator = boot_kde_vnc.guest_argument_separator(command)
+        command = kde_session.build_harness_command(options)
+        separator = kde_session.guest_argument_separator(command)
         self.assertEqual(
             command[command.index("--serial-socket") : separator],
             ["--serial-socket", "/tmp/uml-serial.sock"],
@@ -181,11 +179,11 @@ class KdeVncLauncherTests(unittest.TestCase):
         )
 
     def test_virtio_console_socket_attaches_hvc0_getty(self) -> None:
-        options = boot_kde_vnc.parse_arguments(
+        options = kde_session.parse_arguments(
             ["--virtio-console-socket", "/tmp/uml-hvc0.sock"]
         )
-        command = boot_kde_vnc.build_harness_command(options)
-        separator = boot_kde_vnc.guest_argument_separator(command)
+        command = kde_session.build_harness_command(options)
+        separator = kde_session.guest_argument_separator(command)
         self.assertEqual(
             command[command.index("--virtio-console-socket") : separator],
             ["--virtio-console-socket", "/tmp/uml-hvc0.sock"],
@@ -200,7 +198,7 @@ class KdeVncLauncherTests(unittest.TestCase):
 
     def test_console_socket_paths_must_be_distinct(self) -> None:
         with self.assertRaises(SystemExit):
-            boot_kde_vnc.parse_arguments(
+            kde_session.parse_arguments(
                 [
                     "--serial-socket",
                     "/tmp/uml-console.sock",
@@ -213,10 +211,10 @@ class KdeVncLauncherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             iso = Path(directory) / "installer.iso"
             iso.touch()
-            options = boot_kde_vnc.parse_arguments(["--iso", str(iso)])
-            command = boot_kde_vnc.build_harness_command(options)
+            options = kde_session.parse_arguments(["--iso", str(iso)])
+            command = kde_session.build_harness_command(options)
 
-        separator = boot_kde_vnc.guest_argument_separator(command)
+        separator = kde_session.guest_argument_separator(command)
         kernel_arguments = command[separator + 1 :]
         self.assertIn(f"ubd1r={iso.resolve()}", kernel_arguments)
         # The image's systemd mounts it, so the starter's own init needs no
@@ -228,36 +226,48 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertNotIn("--command", command[:separator])
 
     def test_no_iso_disk_or_mount_is_added_by_default(self) -> None:
-        command = boot_kde_vnc.build_harness_command(
-            boot_kde_vnc.parse_arguments([])
+        command = kde_session.build_harness_command(
+            kde_session.parse_arguments([])
         )
-        self.assertNotIn(boot_kde_vnc.ISO_MOUNT_ARGUMENT, command)
+        self.assertNotIn(kde_session.ISO_MOUNT_ARGUMENT, command)
         self.assertFalse(any(argument.startswith("ubd1") for argument in command))
 
     def test_optional_display_density_is_forwarded_to_the_host_gpu(self) -> None:
-        default_command = boot_kde_vnc.build_harness_command(
-            boot_kde_vnc.parse_arguments([])
+        default_command = kde_session.build_harness_command(
+            kde_session.parse_arguments([])
         )
         self.assertFalse(
             any(item.startswith("--gpu-dpi=") for item in default_command)
         )
-        density_command = boot_kde_vnc.build_harness_command(
-            boot_kde_vnc.parse_arguments(["--dpi", "288"])
+        density_command = kde_session.build_harness_command(
+            kde_session.parse_arguments(["--dpi", "288"])
         )
         self.assertIn("--gpu-dpi=288", density_command)
 
     def test_webgl_commands_extend_the_gpu_harness(self) -> None:
-        options = boot_kde_vnc.parse_arguments([])
-        command = boot_kde_vnc.build_harness_command(options)
-        guest_separator = boot_kde_vnc.guest_argument_separator(command)
+        options = kde_session.parse_arguments([])
+        command = kde_session.build_harness_command(options)
+        guest_separator = kde_session.guest_argument_separator(command)
         self.assertGreater(
-            guest_separator, command.index(str(boot_kde_vnc.GUEST_HARNESS))
+            guest_separator, command.index(str(kde_session.GUEST_HARNESS))
         )
         for runner_name in ("run_chromium_webgl.py", "run_webgl_samples.py"):
             runner = (GPU_INTEGRATION / runner_name).read_text(encoding="utf-8")
             self.assertIn(
-                "boot_kde_vnc.guest_argument_separator(command)", runner
+                "kde_session.guest_argument_separator(command)", runner
             )
+
+    def test_launcher_is_a_command_line_over_the_session(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--help"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Boot KDE Plasma Wayland", result.stdout)
 
     def test_webgl_runners_boot_legacy_images(self) -> None:
         # rootfs.erofs and the receipt-bound ext4 derivatives sealed from it
@@ -382,7 +392,7 @@ class KdeVncLauncherTests(unittest.TestCase):
                 "--artifact-root", str(root / "artifacts"),
                 "--end-at", "1",
             ]
-            samples_launcher = run_webgl_samples.boot_kde_vnc
+            samples_launcher = run_webgl_samples.kde_session
             with (
                 mock.patch.object(sys, "argv", arguments),
                 mock.patch.object(
@@ -416,18 +426,18 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertEqual((group, session), (pid, pid))
 
     def test_guest_harness_runs_directly(self) -> None:
-        options = boot_kde_vnc.parse_arguments(
+        options = kde_session.parse_arguments(
             [
                 "--rootfs", "/tmp/rootfs.erofs",
                 "--rootfs-type", "erofs",
             ]
         )
-        command = boot_kde_vnc.build_harness_command(options)
+        command = kde_session.build_harness_command(options)
         self.assertEqual(command[0], sys.executable)
         self.assertEqual(
             command[1:10],
             [
-                str(boot_kde_vnc.GUEST_HARNESS),
+                str(kde_session.GUEST_HARNESS),
                 "--emulator",
                 str(options.emulator),
                 "--rootfs",
@@ -443,21 +453,21 @@ class KdeVncLauncherTests(unittest.TestCase):
             command[seed : seed + 4],
             [
                 "--guest-file",
-                f"{boot_kde_vnc.LEGACY_KDE_SEED_GUEST_PATH}="
-                f"{boot_kde_vnc.LEGACY_KDE_SEED}",
+                f"{kde_session.LEGACY_KDE_SEED_GUEST_PATH}="
+                f"{kde_session.LEGACY_KDE_SEED}",
                 "--command",
-                boot_kde_vnc.LEGACY_KDE_SEED_GUEST_PATH,
+                kde_session.LEGACY_KDE_SEED_GUEST_PATH,
             ],
         )
-        self.assertTrue(os.access(boot_kde_vnc.LEGACY_KDE_SEED, os.X_OK))
+        self.assertTrue(os.access(kde_session.LEGACY_KDE_SEED, os.X_OK))
         self.assertNotIn("--image-init", command)
 
     def test_ext4_root_type_is_forwarded_to_the_guest_harness(self) -> None:
-        options = boot_kde_vnc.parse_arguments(
+        options = kde_session.parse_arguments(
             ["--rootfs", "/tmp/rootfs.ext4", "--rootfs-type", "ext4"]
         )
-        command = boot_kde_vnc.build_harness_command(options)
-        separator = boot_kde_vnc.guest_argument_separator(command)
+        command = kde_session.build_harness_command(options)
+        separator = kde_session.guest_argument_separator(command)
         rootfs_type = command.index("--rootfs-type")
         self.assertLess(rootfs_type, separator)
         self.assertEqual(
@@ -498,7 +508,7 @@ class KdeVncLauncherTests(unittest.TestCase):
 
     def test_seed_is_valid_shell(self) -> None:
         result = subprocess.run(
-            ["sh", "-n", str(boot_kde_vnc.LEGACY_KDE_SEED)],
+            ["sh", "-n", str(kde_session.LEGACY_KDE_SEED)],
             capture_output=True,
             text=True,
             check=False,
@@ -507,12 +517,12 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertIn("set -eu", seed_commands())
 
     def test_starter_image_owns_account_and_login_policy(self) -> None:
-        command = boot_kde_vnc.build_harness_command(
-            boot_kde_vnc.parse_arguments([])
+        command = kde_session.build_harness_command(
+            kde_session.parse_arguments([])
         )
-        separator = boot_kde_vnc.guest_argument_separator(command)
+        separator = kde_session.guest_argument_separator(command)
         harness_arguments = "\n".join(command[:separator])
-        self.assertNotIn(str(boot_kde_vnc.LEGACY_KDE_SEED), harness_arguments)
+        self.assertNotIn(str(kde_session.LEGACY_KDE_SEED), harness_arguments)
         self.assertNotIn("/home/debian", harness_arguments)
         self.assertNotIn("sddm", harness_arguments.lower())
 
@@ -528,10 +538,10 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertNotIn("chpasswd", commands)
 
     def test_default_kernel_arguments_control_getties(self) -> None:
-        command = boot_kde_vnc.build_harness_command(
-            boot_kde_vnc.parse_arguments([])
+        command = kde_session.build_harness_command(
+            kde_session.parse_arguments([])
         )
-        separator = boot_kde_vnc.guest_argument_separator(command)
+        separator = kde_session.guest_argument_separator(command)
         kernel_arguments = command[separator + 1 :]
         self.assertIn("systemd.mask=serial-getty@hvc0.service", kernel_arguments)
         # The starter Plasma session starts from its getty@tty1 autologin.
@@ -541,10 +551,10 @@ class KdeVncLauncherTests(unittest.TestCase):
     def test_legacy_erofs_kernel_arguments_mask_display_manager_getties(
         self,
     ) -> None:
-        command = boot_kde_vnc.build_harness_command(
-            boot_kde_vnc.parse_arguments(["--rootfs-type", "erofs"])
+        command = kde_session.build_harness_command(
+            kde_session.parse_arguments(["--rootfs-type", "erofs"])
         )
-        separator = boot_kde_vnc.guest_argument_separator(command)
+        separator = kde_session.guest_argument_separator(command)
         kernel_arguments = command[separator + 1 :]
         self.assertIn("systemd.mask=getty@tty0.service", kernel_arguments)
         self.assertIn("systemd.mask=getty@tty1.service", kernel_arguments)
@@ -552,7 +562,7 @@ class KdeVncLauncherTests(unittest.TestCase):
     def test_legacy_ext4_derivative_keeps_the_legacy_session_policy(
         self,
     ) -> None:
-        options = boot_kde_vnc.parse_arguments(
+        options = kde_session.parse_arguments(
             [
                 "--rootfs", "/tmp/rootfs-vulkan-venus.ext4",
                 "--rootfs-type", "ext4",
@@ -560,8 +570,8 @@ class KdeVncLauncherTests(unittest.TestCase):
             ]
         )
         self.assertEqual(options.root_device, "/dev/ubda")
-        command = boot_kde_vnc.build_harness_command(options)
-        separator = boot_kde_vnc.guest_argument_separator(command)
+        command = kde_session.build_harness_command(options)
+        separator = kde_session.guest_argument_separator(command)
         harness_arguments = command[:separator]
         kernel_arguments = command[separator + 1 :]
         rootfs_type = harness_arguments.index("--rootfs-type")
@@ -569,7 +579,7 @@ class KdeVncLauncherTests(unittest.TestCase):
             harness_arguments[rootfs_type : rootfs_type + 2],
             ["--rootfs-type", "ext4"],
         )
-        self.assertIn(boot_kde_vnc.LEGACY_KDE_SEED_GUEST_PATH, harness_arguments)
+        self.assertIn(kde_session.LEGACY_KDE_SEED_GUEST_PATH, harness_arguments)
         self.assertNotIn("--image-init", harness_arguments)
         self.assertIn("systemd.mask=getty@tty0.service", kernel_arguments)
         self.assertIn("systemd.mask=getty@tty1.service", kernel_arguments)
@@ -577,16 +587,16 @@ class KdeVncLauncherTests(unittest.TestCase):
 
     def test_starter_profile_requires_an_ext4_disk(self) -> None:
         with self.assertRaises(SystemExit):
-            boot_kde_vnc.parse_arguments(
+            kde_session.parse_arguments(
                 ["--rootfs-type", "erofs", "--image-profile", "starter"]
             )
 
     def test_legacy_erofs_override_retains_uml_compatibility(self) -> None:
-        options = boot_kde_vnc.parse_arguments(["--rootfs-type", "erofs"])
+        options = kde_session.parse_arguments(["--rootfs-type", "erofs"])
         self.assertEqual(options.root_device, "/dev/ubda")
-        command = boot_kde_vnc.build_harness_command(options)
-        separator = boot_kde_vnc.guest_argument_separator(command)
-        self.assertIn(boot_kde_vnc.LEGACY_KDE_SEED_GUEST_PATH, command[:separator])
+        command = kde_session.build_harness_command(options)
+        separator = kde_session.guest_argument_separator(command)
+        self.assertIn(kde_session.LEGACY_KDE_SEED_GUEST_PATH, command[:separator])
         commands = legacy_seed()
         self.assertIn("getent passwd uml", commands)
         self.assertIn("User=uml", commands)
@@ -596,32 +606,32 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertNotIn("ip=off", command[separator + 1 :])
 
     def test_password_is_forwarded_to_the_host_gpu(self) -> None:
-        options = boot_kde_vnc.parse_arguments(
+        options = kde_session.parse_arguments(
             ["--display", "vnc", "--password", "secret", "--dry-run"]
         )
-        command = boot_kde_vnc.build_harness_command(options)
+        command = kde_session.build_harness_command(options)
         self.assertIn("--gpu-display=vnc", command)
         self.assertIn("--gpu-vnc-bind=127.0.0.1", command)
         self.assertIn("--gpu-vnc-password=secret", command)
 
     def test_native_default_has_no_vnc_host_options(self) -> None:
-        command = boot_kde_vnc.build_harness_command(
-            boot_kde_vnc.parse_arguments([])
+        command = kde_session.build_harness_command(
+            kde_session.parse_arguments([])
         )
         self.assertIn("--gpu-display=native", command)
         self.assertFalse(any(item.startswith("--gpu-vnc-") for item in command))
 
     def test_vnc_password_limit_is_enforced(self) -> None:
         with self.assertRaises(SystemExit):
-            boot_kde_vnc.parse_arguments(["--password", "123456789"])
+            kde_session.parse_arguments(["--password", "123456789"])
 
     def test_native_display_rejects_a_vnc_password(self) -> None:
         with self.assertRaises(SystemExit):
-            boot_kde_vnc.parse_arguments(["--password", "secret"])
+            kde_session.parse_arguments(["--password", "secret"])
 
     def test_native_display_rejects_vnc_network_options(self) -> None:
         with self.assertRaises(SystemExit):
-            boot_kde_vnc.parse_arguments(["--port", "5901"])
+            kde_session.parse_arguments(["--port", "5901"])
 
 
 if __name__ == "__main__":

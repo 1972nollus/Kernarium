@@ -137,19 +137,7 @@ fi
 "$ROOT_DIR/dependencies/prepare.sh" --product ios-network \
 	--root "$SOURCE_ROOT" --verify
 
-find_tool()
-{
-	variable=$1
-	shift
-	for candidate in "$@"; do
-		tool_path=$(command -v "$candidate" 2>/dev/null || true)
-		if [ -n "$tool_path" ]; then
-			eval "$variable=\$tool_path"
-			return
-		fi
-	done
-	fail "required build tool is unavailable: $*"
-}
+. "$ROOT_DIR/dependencies/build-common.sh"
 
 find_tool CMAKE cmake
 if [ -x "$ROOT_DIR/.build/gpu-tools-venv/bin/meson" ]; then
@@ -316,19 +304,5 @@ cp "$RECEIPT" \
 printf 'source\ttree\nglib-ios\t%s\n' \
 	"$(git -C "$SOURCE_ROOT/glib-ios" rev-parse 'HEAD^{tree}')" \
 	> "$STAGE/share/uml-dependencies/source-trees.tsv"
-verify_prefix "$STAGE"
-status=0
-"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$STAGE" "$PREFIX" ||
-	status=$?
-case $status in
-0)
-	STAGE=
-	printf '%s\n' "published iOS network dependency prefix: $PREFIX"
-	;;
-1)
-	verify_prefix "$PREFIX" ||
-		fail "concurrently published prefix is invalid: $PREFIX"
-	printf '%s\n' "reusing concurrently published iOS network dependency prefix: $PREFIX"
-	;;
-*) fail "could not publish iOS network dependency prefix: $PREFIX" ;;
-esac
+publish_verified "$STAGE" "$PREFIX" verify_prefix \
+	"iOS network dependency prefix"

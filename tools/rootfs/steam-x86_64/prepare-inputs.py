@@ -30,7 +30,11 @@ def sha256(path: Path) -> str:
 def download(url: str, path: Path, expected: str | None = None, *, fetch: bool = True) -> dict:
     if path.is_symlink():
         raise RuntimeError(f"refusing symlink input: {path}")
-    if not path.is_file():
+    if path.is_file():
+        digest = sha256(path)
+        if expected and digest != expected:
+            raise RuntimeError(f"cached payload checksum differs: {path}")
+    else:
         if not fetch:
             raise RuntimeError(f"prepared payload is missing: {path}")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,12 +42,10 @@ def download(url: str, path: Path, expected: str | None = None, *, fetch: bool =
         print(f"Downloading {url}", flush=True)
         with urllib.request.urlopen(url, timeout=300) as response, temporary.open("wb") as output:
             shutil.copyfileobj(response, output)
-        if expected and sha256(temporary) != expected:
+        digest = sha256(temporary)
+        if expected and digest != expected:
             raise RuntimeError(f"downloaded checksum differs: {path.name}")
         temporary.rename(path)
-    digest = sha256(path)
-    if expected and digest != expected:
-        raise RuntimeError(f"cached payload checksum differs: {path}")
     return {"url": url, "file": str(path), "sha256": digest}
 
 
@@ -113,12 +115,15 @@ def main() -> None:
             raise RuntimeError("prepared input identities differ from the current lock")
         if recorded.get("policy_sha256") != policy:
             raise RuntimeError("prepared input policy differs; run preparation with the current lock")
-        for url, path, digest in payload_specs(root, lock):
-            download(url, path, digest, fetch=False)
-        recorded_paths = {entry["file"] for entry in recorded["payloads"]}
+        # The receipt must record the lock's digest for every locked payload;
+        # the pass below then hashes each recorded payload once.
+        recorded_digests = {entry["file"]: entry["sha256"] for entry in recorded["payloads"]}
+        for _, path, digest in payload_specs(root, lock):
+            if recorded_digests.get(str(path)) != digest:
+                raise RuntimeError(f"prepared payload receipt differs from the lock: {path.name}")
         for name in ("base.tar.zst", "base.packages.tsv", "builder.tar.zst",
                      "builder.packages.tsv", "steam-client.manifest"):
-            if str(root / name) not in recorded_paths:
+            if str(root / name) not in recorded_digests:
                 raise RuntimeError(f"prepared payload receipt is missing: {name}")
         for entry in recorded["payloads"]:
             path = Path(entry["file"])

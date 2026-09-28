@@ -103,7 +103,11 @@ target_compile_definitions(uml-emulator-external-c-consumer PRIVATE
 target_link_libraries(uml-emulator-external-c-consumer PRIVATE
     ${_uml_emulator_consumer_target})
 
-add_executable(uml-emulator-external-objc-consumer main.m)
+# The Objective-C consumer compiles the same source as the C one: a copy with
+# a .m name is compiled as Objective-C.
+configure_file(main.c ${CMAKE_CURRENT_BINARY_DIR}/objc_consumer.m COPYONLY)
+add_executable(uml-emulator-external-objc-consumer
+    ${CMAKE_CURRENT_BINARY_DIR}/objc_consumer.m)
 set_target_properties(uml-emulator-external-objc-consumer PROPERTIES
     OBJC_STANDARD 11
     OBJC_STANDARD_REQUIRED YES

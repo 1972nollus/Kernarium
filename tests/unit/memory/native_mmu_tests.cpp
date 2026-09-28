@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "native_address_space.hpp"
 #include "native_retry_validation_test_support.hpp"
-#include "mach_vm_protection_test_support.hpp"
+#include "mach_vm_region_test_support.hpp"
 #include "allocation_fault.hpp"
 #include "native_window_test_support.hpp"
 #include "scratch_backing.hpp"

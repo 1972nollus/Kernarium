@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "a64_body_inspection.hpp"
 #include "arm64_base_pstate_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
@@ -7,6 +8,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory_resource>
+
+using uml::testing::a64::conditional_branch;
+using uml::testing::a64::indirect_branch;
 
 namespace uml::emulator::tests::base_pstate {
 namespace {
@@ -166,7 +170,7 @@ constexpr std::array<Gadget, 16> daif_clear_gadgets{
 	const auto *instructions =
 		reinterpret_cast<const std::uint32_t *>(address(gadget));
 	for (unsigned index = 0; index < 20U; ++index)
-		if ((instructions[index] & 0xffff'fc1fU) == 0xd61f'0000U)
+		if (indirect_branch(instructions[index]))
 			return index + 1U;
 	arm64_system_test::require(false);
 	return 0;
@@ -179,11 +183,9 @@ constexpr std::array<Gadget, 16> daif_clear_gadgets{
 	unsigned branches = 0;
 	for (unsigned index = 0; index < 20U; ++index) {
 		const auto instruction = instructions[index];
-		if ((instruction & 0xffff'fc1fU) == 0xd61f'0000U)
+		if (indirect_branch(instruction))
 			return branches;
-		if ((instruction & 0xff00'0010U) == 0x5400'0000U ||
-		    (instruction & 0x7e00'0000U) == 0x3400'0000U ||
-		    (instruction & 0x7e00'0000U) == 0x3600'0000U)
+		if (conditional_branch(instruction))
 			++branches;
 	}
 	arm64_system_test::require(false);
