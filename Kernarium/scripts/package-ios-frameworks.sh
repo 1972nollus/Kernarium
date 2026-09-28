@@ -13,6 +13,11 @@
 # payloads (Kernarium/README.md), in place of the release ones. Both lines are
 # checked: the release runtime must not read a payload, and the automation
 # runtime must.
+#
+# KernariumTests also links HostBattery.xcframework: the Apple battery
+# provider's archive, as the Android runtime links it, with its header. The
+# application neither links nor embeds it, and the test bundle loads no second
+# runtime to reach it.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -66,6 +71,8 @@ DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64/Frameworks"
 STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
 ZSTD="$ROOT_DIR/.build/dependencies/ios-zstd/LibZstd.xcframework"
+HOST_BATTERY="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16k/darwin/platform/libuml_host_battery.a"
+HOST_BATTERY_HEADER="$ROOT_DIR/darwin/platform/host_battery.hpp"
 
 # Mesa supplies the host GL provider as MesaEGL and MesaGallium, and the
 # Vulkan driver they render on as KosmicKrisp.
@@ -86,6 +93,7 @@ for framework in \
 	"$ZSTD"; do
 	[ -d "$framework" ] || fail "missing framework slice: $framework"
 done
+[ -f "$HOST_BATTERY" ] || fail "missing host battery archive: $HOST_BATTERY"
 for framework in $GPU_FRAMEWORKS; do
 	[ -d "$DEVICE_GPU/$framework.framework" ] ||
 		fail "missing framework slice: $DEVICE_GPU/$framework.framework"
@@ -125,6 +133,15 @@ done
 	"$STAGE/GPTFDisk.xcframework"
 "$CMAKE" -E copy_directory "$ZSTD" \
 	"$STAGE/LibZstd.xcframework"
+HOST_BATTERY_HEADERS="$STAGE/host-battery-headers"
+mkdir -p -- "$HOST_BATTERY_HEADERS"
+cp -- "$HOST_BATTERY_HEADER" "$HOST_BATTERY_HEADERS/"
+"$XCODEBUILD" -create-xcframework \
+	-library "$HOST_BATTERY" -headers "$HOST_BATTERY_HEADERS" \
+	-output "$STAGE/HostBattery.xcframework"
+"$CMAKE" -E remove_directory "$HOST_BATTERY_HEADERS"
+[ -f "$STAGE/HostBattery.xcframework/ios-arm64/libuml_host_battery.a" ] ||
+	fail "HostBattery XCFramework was not created"
 
 RUNTIME_FRAMEWORKS="$RUNTIME_4K $RUNTIME_16K $RUNTIME_ANDROID_16K"
 for framework in $RUNTIME_FRAMEWORKS $GPU_FRAMEWORKS; do

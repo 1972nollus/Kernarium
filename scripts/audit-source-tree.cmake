@@ -102,6 +102,49 @@ function(uml_audit_guest_runner_imports ROOT OUT_VIOLATIONS)
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
 
+# A darwin/ implementation source is compiled only by the CMake owner beneath
+# darwin/ that lists it. Any other target reaches it through a product that
+# owner builds: a CMake test links the owner's target or test variant, and an
+# Xcode target links a framework or archive packaged from the owner's build.
+# Naming the source from another CMake file or from an Xcode project compiles
+# a second copy under other flags.
+function(uml_audit_foreign_darwin_sources ROOT OUT_VIOLATIONS)
+    set(_source "darwin/[A-Za-z0-9_./-]+\\.(cpp|cxx|cc|mm|m|S|s)")
+    set(_violations)
+    set(_cmake_globs)
+    foreach(_scope IN ITEMS android cmake dependencies kernel Kernarium scripts tests
+            tools)
+        list(APPEND _cmake_globs
+            "${ROOT}/${_scope}/*CMakeLists.txt" "${ROOT}/${_scope}/*.cmake")
+    endforeach()
+    file(GLOB_RECURSE _cmake_files LIST_DIRECTORIES false ${_cmake_globs})
+    file(GLOB _root_files LIST_DIRECTORIES false "${ROOT}/CMakeLists.txt")
+    foreach(_path IN LISTS _root_files _cmake_files)
+        file(READ "${_path}" _text)
+        string(REGEX REPLACE "#[^\n]*" "" _code "${_text}")
+        string(REGEX MATCHALL "(_SOURCE_DIR}/|\\.\\./)${_source}" _named
+            "${_code}")
+        foreach(_name IN LISTS _named)
+            string(REGEX REPLACE "^(_SOURCE_DIR}/|\\.\\./)" "" _name "${_name}")
+            list(APPEND _violations
+                "${_path}: compiles ${_name}, which only its darwin/ owner may build")
+        endforeach()
+    endforeach()
+    file(GLOB_RECURSE _projects LIST_DIRECTORIES false
+        "${ROOT}/Kernarium/*.pbxproj")
+    foreach(_path IN LISTS _projects)
+        file(READ "${_path}" _text)
+        string(REGEX MATCHALL "[ \t{]path = \"?([^\";\n]*/)?${_source}"
+            _references "${_text}")
+        foreach(_reference IN LISTS _references)
+            string(REGEX REPLACE "^.*path = \"?" "" _name "${_reference}")
+            list(APPEND _violations
+                "${_path}: an Xcode target compiles ${_name}, which only its darwin/ owner may build")
+        endforeach()
+    endforeach()
+    set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
+endfunction()
+
 set(VIOLATIONS)
 
 file(GLOB ROOT_C_SOURCES LIST_DIRECTORIES false
@@ -295,6 +338,9 @@ endforeach()
 
 uml_audit_guest_runner_imports("${SOURCE_ROOT}" GUEST_RUNNER_IMPORT_VIOLATIONS)
 list(APPEND VIOLATIONS ${GUEST_RUNNER_IMPORT_VIOLATIONS})
+
+uml_audit_foreign_darwin_sources("${SOURCE_ROOT}" FOREIGN_DARWIN_SOURCE_VIOLATIONS)
+list(APPEND VIOLATIONS ${FOREIGN_DARWIN_SOURCE_VIOLATIONS})
 
 # Verify that every implementation source is owned by the nearest CMakeLists.txt
 # at or above it, using its complete module-relative path. A same-named source

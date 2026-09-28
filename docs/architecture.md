@@ -572,7 +572,9 @@ Every first-party CTest has one primary suite: `unit`, `tooling`, or
 `integration`, set by the `cmake/UmlTesting.cmake` helper that registers it.
 
 `architecture-audit` checks the CMake File API graph, dependency cycles,
-implementation includes, source ownership, and test registration. It does not
+implementation includes, source ownership, and test registration. Ownership
+includes that only a darwin/ source's owner compiles it: no other CMake file
+and no Xcode project names one. It does not
 prove performance, generated code shape, a kernel boot, or guest behavior;
 those require their owning validation.
 
