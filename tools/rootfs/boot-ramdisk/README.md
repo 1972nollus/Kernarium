@@ -20,7 +20,8 @@ The initrd is `pad4(base) || segment`:
   Parents come before their children and every file is a single link.
 
 The kernel unpacks every part into the same ramfs root, so a segment file
-replaces the base file of the same name. After a gzip member it looks for the
+replaces the base file of the same name, and a further segment appended after
+the first, padded the same way, replaces the first one's files. After a gzip member it looks for the
 next header at the member's exact length and reads a newc header only at a
 four-byte aligned offset; the zero padding makes the segment readable, and a
 segment appended without it is reported as an invalid compressed archive and
@@ -57,14 +58,21 @@ and an unknown key is an error.
 | --- | --- | --- |
 | `UML_BOOT_ROOT` | root block device | `/dev/ubda` |
 | `UML_BOOT_ROOT_TYPE` | `erofs`, `ext4` | `erofs` |
-| `UML_BOOT_UPPER` | `tmpfs`, `none` | `tmpfs` |
+| `UML_BOOT_UPPER` | `tmpfs`, `ext4`, `none` | `tmpfs` |
+| `UML_BOOT_UPPER_DEVICE` | block device (only, and required, with `ext4`) | none |
 | `UML_BOOT_GROW` | `0`, `1` (only with `UML_BOOT_UPPER=none`) | `0` |
 | `UML_BOOT_ENTRY` | absolute path in the new root | `/sbin/init` |
 
 With `tmpfs` the image is mounted read-only beneath a tmpfs overlay that ends
 with the run, and the payload lands in that upper layer. The new root keeps
 both layers visible: the image at `/.uml-lower` and the tmpfs, with its
-`upper` and `work` directories, at `/.uml-state`. With `none` the image
+`upper` and `work` directories, at `/.uml-state`. `ext4` is the same overlay
+on an ext4 filesystem that `/init` formats afresh on `UML_BOOT_UPPER_DEVICE`
+with the base's `mkfs.ext4`, so the device's previous contents are lost.
+Docker's overlay2 and containerd's overlay snapshotter refuse an overlayfs
+backing, so on ext4 `/var/lib/docker` and `/var/lib/containerd` are bound from
+`docker` and `containerd` directories (mode `0711`) on that filesystem, beside
+`upper` and `work`. Kernarium boots every Linux desktop this way. With `none` the image
 itself is the read-write root, as a starter disk or a one-image machine uses
 it, and the payload is written into it. `UML_BOOT_GROW=1` first grows a sole
 ext4 partition that a host tool has already enlarged, reporting
