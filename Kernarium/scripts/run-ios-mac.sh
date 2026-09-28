@@ -14,7 +14,7 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-ROOTFS="$ROOT_DIR/rootfs.erofs"
+ROOTFS=
 # The device runtime presets embed the accepted mainline kernels; stage the
 # artifacts they name.
 # shellcheck disable=SC1091
@@ -44,7 +44,10 @@ usage()
 		"Usage: Kernarium/scripts/run-ios-mac.sh [options]" \
 		"" \
 		"Options:" \
-		"  --rootfs PATH  EROFS or sealed ext4 image for app Documents" \
+		"  --rootfs PATH  EROFS or sealed ext4 image to copy into app" \
+		"                 Documents under its own name and select" \
+		"                 (default: the accepted KDE desktop image that" \
+		"                 Kernarium selects when its settings name none)" \
 		"  --guest-bundle NAME  Assemble NAME.kern from the accepted" \
 		"                 Android release and select it; its writable disk" \
 		"                 is kept across runs" \
@@ -107,10 +110,27 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
+if [ -z "$ROOTFS" ]; then
+	# Kernarium's default image (RootfsImage.defaultFilename) is the accepted
+	# KDE release that tools/rootfs/desktop/images.json records.
+	ROOTFS=$(python3 -B - "$ROOT_DIR/tools/rootfs/desktop/images.json" <<'PYTHON'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    accepted = json.load(handle)["images"]["kde"]["accepted"]
+print(f"{accepted['release']}/{accepted['file']}")
+PYTHON
+) || fail "cannot read the accepted KDE image from images.json"
+	ROOTFS="$ROOT_DIR/.build/rootfs/$ROOTFS"
+fi
 [ -f "$ROOTFS" ] || fail "rootfs image is unavailable: $ROOTFS"
-case "$ROOTFS" in
-*.erofs) ROOTFS_FILENAME=rootfs.erofs ;;
-*.ext4) ROOTFS_FILENAME=rootfs.ext4 ;;
+# The image keeps its name in Documents, as the application's picker shows it,
+# and that name reaches a UBD kernel argument (RootfsImage.validatedFilename).
+ROOTFS_FILENAME=$(basename -- "$ROOTFS")
+case "$ROOTFS_FILENAME" in
+*[[:space:],:\"]*) fail "the image name cannot be a kernel argument: $ROOTFS_FILENAME" ;;
+*.erofs|*.ext4) ;;
 *) fail "rootfs must have an .erofs or .ext4 suffix: $ROOTFS" ;;
 esac
 [ -d "$ARTIFACT_16K" ] ||
@@ -203,9 +223,9 @@ fi
 mkdir -p -- "$DATA_CONTAINER/Documents"
 rm -f -- "$DATA_CONTAINER/Documents/$ROOTFS_FILENAME"
 cp "$ROOTFS" "$DATA_CONTAINER/Documents/$ROOTFS_FILENAME"
-if [ "$ROOTFS_FILENAME" = rootfs.ext4 ]; then
-	chmod 0444 "$DATA_CONTAINER/Documents/$ROOTFS_FILENAME"
-fi
+case "$ROOTFS_FILENAME" in
+*.ext4) chmod 0444 "$DATA_CONTAINER/Documents/$ROOTFS_FILENAME" ;;
+esac
 LAUNCH_ROOTFS=$ROOTFS_FILENAME
 printf '%s\n' "copied rootfs to $DATA_CONTAINER/Documents/$ROOTFS_FILENAME"
 if [ -n "$GUEST_BUNDLE" ]; then

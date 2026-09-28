@@ -400,9 +400,10 @@ variable in its environment to the app with the prefix removed; the launcher
 sets `TEST_RUNNER_KERNARIUM_ROOTFS` itself (and, with `--aquarium`, the
 probe's automation settings), and a caller exports any other
 `TEST_RUNNER_KERNARIUM_*` setting. An iOS application reads nothing outside its
-container, so the launcher copies the rootfs into
-`~/Library/Containers/<uuid>/Data/Documents` rather than referencing it in
-place.
+container, so the launcher copies the rootfs, by default the accepted KDE
+desktop image Kernarium itself defaults to, into
+`~/Library/Containers/<uuid>/Data/Documents` under its own name rather than
+referencing it in place.
 
 For an opt-in diagnostic, pass one SLiRP forwarding specification as
 `TEST_RUNNER_KERNARIUM_HOST_FORWARD` when launching the app. For example,

@@ -42,8 +42,12 @@ limit a 4 GiB guest would cross. Android fixes the page profile at 16 KiB.
 
 ## Guest storage
 
-A Linux guest boots an image file in the application's Documents directory,
-`rootfs.erofs` unless the settings name another. An Android guest is a `.kern`
+A Linux guest boots an image file in the application's Documents directory:
+the one the settings name, or, while they name none, the accepted KDE desktop
+image `kde-20260928-r1.erofs`
+([`tools/rootfs/desktop`](../tools/rootfs/desktop/README.md)). A name the
+settings already store, `rootfs.erofs` included, is kept, and every image in
+Documents stays selectable. An Android guest is a `.kern`
 bundle directory in Documents; the
 [Android README](../android/aosp-17/README.md#apple-consumers-and-guest-bundles)
 owns its layout. A bundle holds the guest's persistent, directly writable image,
@@ -85,7 +89,8 @@ device groups, getty and display-manager policy, network and resolver belong
 to the image. The KDE, Phrog and postmarketOS images Kernarium boots carry
 that setup ([`tools/rootfs/desktop`](../tools/rootfs/desktop/README.md)); the
 KDE image masks the VT gettys, since SDDM runs the session on a VT of its own.
-A plain `rootfs.erofs` without it boots to its own defaults.
+The unified `rootfs.erofs` carries none of it and boots to its own defaults:
+SDDM without autologin, beside the image's `getty@tty0`.
 
 ## Automation runs
 

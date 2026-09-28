@@ -33,7 +33,11 @@ release derived from it.
 
 Each image keeps its own init, network, resolver, accounts and session;
 Kernarium boots it through the generic per-run `/init` into `/sbin/init`
-([Kernarium/README.md](../../../Kernarium/README.md#guest-boot)).
+([Kernarium/README.md](../../../Kernarium/README.md#guest-boot)). The accepted
+KDE image is the one Kernarium selects while its settings name none
+([Kernarium/README.md](../../../Kernarium/README.md#guest-storage)), and
+`Kernarium/scripts/run-ios-mac.sh` stages it by default from
+`.build/rootfs/<release>/`.
 
 ## Deriving
 
@@ -49,4 +53,6 @@ sudo tools/rootfs/desktop/derive.py --image kde \
 ```
 
 Publish a new release under a new name and record it in `images.json`; never
-replace an accepted image or the source it came from.
+replace an accepted image or the source it came from. A new KDE release also
+renames Kernarium's default image, `RootfsImage.defaultFilename` in
+`Kernarium/Kernarium/EmulatorConfiguration.swift`, and its tests.
