@@ -119,6 +119,42 @@ target_compile_definitions(uml_gpu_service PRIVATE
     UML_GPU_STARTUP_TESTING=0)
 target_link_libraries(uml_gpu_service PRIVATE uml_gpu_vhost_user_device)
 
+if(UML_BUILD_UNIT_TESTS)
+    # Test variants for the GPU service and device tests. Each recompiles the
+    # production sources under a test-only policy; the hooks those policies
+    # call are implemented beside the tests.
+    add_library(uml_gpu_service_test_variant STATIC
+        deferred_fences.cpp
+        gpu_vhost_user_server.cpp
+        in_process_service.cpp)
+    uml_configure_gpu_component(uml_gpu_service_test_variant)
+    target_compile_definitions(uml_gpu_service_test_variant PRIVATE
+        UML_GPU_STARTUP_TESTING=1)
+    target_link_libraries(uml_gpu_service_test_variant PUBLIC
+        uml_gpu_transport_startup_test_variant
+        uml_gpu_protocol_device
+        UML::VncInput)
+
+    add_library(uml_gpu_service_slow_stop_test_variant STATIC
+        in_process_service.cpp)
+    uml_configure_gpu_component(uml_gpu_service_slow_stop_test_variant)
+    target_compile_definitions(uml_gpu_service_slow_stop_test_variant PRIVATE
+        UML_GPU_STARTUP_TESTING=0
+        UML_GPU_SERVICE_TRANSPORT_TESTING=1)
+    target_link_libraries(uml_gpu_service_slow_stop_test_variant PRIVATE
+        uml_gpu_transport_slow_stop_test_variant
+        uml_gpu_protocol_device)
+
+    # The device with its command-atomicity probes, and the fence queue it
+    # completes into.
+    add_library(uml_gpu_protocol_device_test_variant STATIC
+        deferred_fences.cpp
+        virtio_gpu_device.cpp)
+    uml_configure_gpu_component(uml_gpu_protocol_device_test_variant)
+    target_compile_definitions(uml_gpu_protocol_device_test_variant PUBLIC
+        UML_GPU_DEVICE_TESTING=1)
+endif()
+
 add_library(uml_gpu_device INTERFACE)
 add_library(UML::GpuDevice ALIAS uml_gpu_device)
 uml_declare_architecture_target(uml_gpu_device device)

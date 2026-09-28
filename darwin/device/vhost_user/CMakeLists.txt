@@ -25,3 +25,57 @@ target_link_libraries(uml_vhost_user_transport PUBLIC
     uml_vhost_user_wire)
 # AutoreleaseScope calls the Objective-C runtime directly.
 target_link_libraries(uml_vhost_user_transport PRIVATE UML::GuestTimerMask objc)
+
+if(UML_BUILD_UNIT_TESTS AND UML_BUILD_GPU)
+    # The GPU service tests build the transport under test-only policies;
+    # the hooks those policies call are implemented beside the tests.
+
+    # The wire with its stop-wait observer, so a test waits until a receiver
+    # has consumed every queued fragment instead of sleeping and hoping.
+    add_library(uml_gpu_transport_wire_stop_wait_test_variant STATIC
+        vhost_user_message.cpp)
+    uml_configure_vhost_user_component(
+        uml_gpu_transport_wire_stop_wait_test_variant)
+    target_compile_definitions(uml_gpu_transport_wire_stop_wait_test_variant
+        PRIVATE UML_GPU_STOP_WAIT_TESTING=1)
+
+    # The shared service scaffold has a startup checkpoint of its own.
+    add_library(uml_gpu_transport_startup_test_variant STATIC
+        shared_memory_regions.cpp
+        vhost_user_server.cpp)
+    uml_configure_vhost_user_component(uml_gpu_transport_startup_test_variant)
+    target_compile_definitions(uml_gpu_transport_startup_test_variant PRIVATE
+        UML_GPU_STARTUP_TESTING=1)
+    target_link_libraries(uml_gpu_transport_startup_test_variant PUBLIC
+        UML::DeviceSocketPaths
+        UML::MemorySharedBacking
+        uml_gpu_transport_wire_stop_wait_test_variant)
+    target_link_libraries(uml_gpu_transport_startup_test_variant PRIVATE
+        UML::GuestTimerMask
+        objc)
+
+    # A deliberately slow stop poll makes the owned stop wake observable: the
+    # child watchdog fails if service shutdown falls back to polling.
+    add_library(uml_gpu_transport_wire_slow_stop_test_variant STATIC
+        vhost_user_message.cpp)
+    uml_configure_vhost_user_component(
+        uml_gpu_transport_wire_slow_stop_test_variant)
+    target_compile_definitions(uml_gpu_transport_wire_slow_stop_test_variant
+        PRIVATE
+            UML_GPU_STOP_POLL_TIMEOUT_MILLISECONDS=5000
+            UML_GPU_STOP_WAIT_TESTING=1)
+
+    add_library(uml_gpu_transport_slow_stop_test_variant STATIC
+        shared_memory_regions.cpp
+        vhost_user_server.cpp)
+    uml_configure_vhost_user_component(
+        uml_gpu_transport_slow_stop_test_variant)
+    target_compile_definitions(uml_gpu_transport_slow_stop_test_variant
+        PRIVATE UML_GPU_STOP_POLL_TIMEOUT_MILLISECONDS=5000)
+    target_link_libraries(uml_gpu_transport_slow_stop_test_variant PUBLIC
+        UML::DeviceSocketPaths
+        UML::MemorySharedBacking
+        uml_gpu_transport_wire_slow_stop_test_variant)
+    target_link_libraries(uml_gpu_transport_slow_stop_test_variant PRIVATE
+        objc)
+endif()
