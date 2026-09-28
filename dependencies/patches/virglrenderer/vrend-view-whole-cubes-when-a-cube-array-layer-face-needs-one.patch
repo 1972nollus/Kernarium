@@ -40,10 +40,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 9 insertions(+)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 1ce0b8d4ebe70969f8a983733392a6f0da0d3519..483fd218df2d5e0f1c0604d48a4273b96be511da 100644
+index 77d107b0733d70b3d1c3caef855942ad50d2e15f..b1a58ea1895743d68674720651553f5cbf30bd0c 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -2416,6 +2416,15 @@ int vrend_create_surface(struct vrend_context *ctx,
+@@ -2413,6 +2413,15 @@ int vrend_create_surface(struct vrend_context *ctx,
           if (target == GL_TEXTURE_CUBE_MAP && first_layer == last_layer) {
              first_layer = 0;
              last_layer = 5;

@@ -26,18 +26,16 @@ transfer after it, each of which reached the guest as
 VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER and a readback of nothing.
 
 Clear the error with the buffer or transfer that carried it, whatever it
-returned, and answer a waiting query whose context can no longer run
-with the invalid result rather than dropping it. The error stays in the
-log and the dispatch still fails; what no longer happens is the guest
-losing every command it sends afterwards.
+returned. The error stays in the log and the dispatch still fails; what
+no longer happens is the guest losing every command it sends afterwards.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/vrend/vrend_decode.c   | 26 ++++++++++++++++++++++----
- src/vrend/vrend_renderer.c | 26 +++++++++++++++++++++++++-
+ src/vrend/vrend_renderer.c | 13 +++++++++++++
  src/vrend/vrend_renderer.h |  2 ++
- 3 files changed, 49 insertions(+), 5 deletions(-)
+ 3 files changed, 37 insertions(+), 4 deletions(-)
 
 diff --git a/src/vrend/vrend_decode.c b/src/vrend/vrend_decode.c
 index 72fdab49f59df4fe328e36154ff32f4ce3de99c3..9c5e85dddc44696e96d6cc022e5ca9566c6afba4 100644
@@ -100,20 +98,10 @@ index 72fdab49f59df4fe328e36154ff32f4ce3de99c3..9c5e85dddc44696e96d6cc022e5ca956
  
  static int vrend_decode_ctx_get_fencing_fd(UNUSED struct virgl_context *ctx)
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 2ac1a1aa3bdd680995422b7538e7db02c7bee912..d252379d94de1a64ef78d54923222ea396f577b5 100644
+index 2ac1a1aa3bdd680995422b7538e7db02c7bee912..f6ff49763dd5414a4907279a8caa68d5aa9499c4 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -126,6 +126,9 @@ struct vrend_query {
-    int sub_ctx_id;
-    struct vrend_resource *res;
-    bool fake_samples_passed;
-+   /* Set when the query's context can no longer run, so a guest waiting on
-+    * the result is answered instead of spinning forever. */
-+   bool invalid;
- };
- 
- struct global_error_state {
-@@ -1158,6 +1161,19 @@ void vrend_report_context_error_internal(const char *fname, struct vrend_context
+@@ -1158,6 +1158,19 @@ void vrend_report_context_error_internal(const char *fname, struct vrend_context
                 value);
  }
  
@@ -133,30 +121,6 @@ index 2ac1a1aa3bdd680995422b7538e7db02c7bee912..d252379d94de1a64ef78d54923222ea3
  #define CORE_PROFILE_WARN_NONE 0
  #define CORE_PROFILE_WARN_STIPPLE 1
  #define CORE_PROFILE_WARN_POLYGON_MODE 2
-@@ -11728,7 +11744,7 @@ static bool vrend_check_query(struct vrend_query *query)
-    /* We got a boolean, but the client wanted the actual number of samples
-     * blow the number up so that the client doesn't think it was just one pixel
-     * and discards an object that might be bigger */
--   if (query->fake_samples_passed) {
-+   if (query->fake_samples_passed && !query->invalid) {
-       vrend_update_oq_samples_multiplier(query->ctx);
-       state.result *= query->ctx->sub->fake_occlusion_query_samples_passed_multiplier;
-    }
-@@ -11799,6 +11815,14 @@ static void vrend_renderer_check_queries(void)
-       if (!vrend_hw_switch_context_with_sub(query->ctx, query->sub_ctx_id)) {
-          virgl_warn("Failed to switch to context (%d) with sub (%d) for query %u\n",
-                       query->ctx->ctx_id, query->sub_ctx_id, query->id);
-+         /* A context that reported an error can no longer run GL, but a guest
-+          * blocked on this result spins on the buffer the host writes and
-+          * never issues another command. Answer it with the invalid result so
-+          * the guest makes progress and the failure surfaces as a wrong
-+          * result rather than a hang.
-+          */
-+         query->invalid = true;
-+         vrend_check_query(query);
-       }
-       else if (!vrend_check_query(query)) {
-          continue;
 diff --git a/src/vrend/vrend_renderer.h b/src/vrend/vrend_renderer.h
 index 4bc62f35f94d86b41306dc2c6bcc1dbf22fa5d83..bbf2635d232b8cad39d3cdf252cecf1873e489b1 100644
 --- a/src/vrend/vrend_renderer.h

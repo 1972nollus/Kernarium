@@ -232,7 +232,7 @@ index 214cc92fad41187f41186f01d6ae7c5d606a433e..0c2d1d5646b25388b74bfeecea4cacfe
 +   return true;
 +}
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index dee00df916ed521fa321d86630163b8759bc739c..3bbdb6ef5749b4017a58f14189112d3edc1df020 100644
+index a36aa9a3c7ddb9faab28ee9433d460a637340eb2..0c761d3e057ac0652f910a94a776422c3770bd25 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -64,6 +64,9 @@
@@ -245,7 +245,7 @@ index dee00df916ed521fa321d86630163b8759bc739c..3bbdb6ef5749b4017a58f14189112d3e
  #include "virgl_protocol.h"
  #include "virgl_fence.h"
  #include "virtgpu_drm.h"
-@@ -9445,50 +9448,38 @@ static void *vrend_resource_alias_shm(struct vrend_resource *gr,
+@@ -9442,50 +9445,38 @@ static void *vrend_resource_alias_shm(struct vrend_resource *gr,
                                              offset);
  }
  
@@ -310,7 +310,7 @@ index dee00df916ed521fa321d86630163b8759bc739c..3bbdb6ef5749b4017a58f14189112d3e
        return ret;
     }
  
-@@ -9497,7 +9488,7 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
+@@ -9494,7 +9485,7 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
                   __func__, gr->base.width0, gr->base.height0);
        gr->shm_import_image = image;
        gr->shm_import_map = map;
@@ -319,7 +319,7 @@ index dee00df916ed521fa321d86630163b8759bc739c..3bbdb6ef5749b4017a58f14189112d3e
        gr->shm_import_stride = stride;
        gr->shm_import_offset = offset;
        gr->shm_import_format = format;
-@@ -9514,15 +9505,140 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
+@@ -9511,15 +9502,140 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
     /* Pinning the exporter's segment turns the refresh into a GPU-side copy of
      * its own pages; an unpinnable segment falls back to a client-memory
      * upload. This is the same pinning the export direction uses. */
@@ -462,7 +462,7 @@ index dee00df916ed521fa321d86630163b8759bc739c..3bbdb6ef5749b4017a58f14189112d3e
  #endif
  
  void vrend_resource_sync_shm_import(struct vrend_resource *res)
-@@ -9541,6 +9657,17 @@ void vrend_resource_sync_shm_import(struct vrend_resource *res)
+@@ -9538,6 +9654,17 @@ void vrend_resource_sync_shm_import(struct vrend_resource *res)
                                stride, width, height, blocksize))
        return;
  
@@ -480,7 +480,7 @@ index dee00df916ed521fa321d86630163b8759bc739c..3bbdb6ef5749b4017a58f14189112d3e
     glBindTexture(res->target, res->gl_id);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, stride / blocksize);
-@@ -9570,9 +9697,18 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+@@ -9567,9 +9694,18 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
     if (res->shm_export_dirty)
        list_del(&res->shm_export_head);
     /* A borrowed mapping belongs to this resource's own segment, which the
@@ -501,7 +501,7 @@ index dee00df916ed521fa321d86630163b8759bc739c..3bbdb6ef5749b4017a58f14189112d3e
  
     if (has_bit(res->storage_bits, VREND_STORAGE_GL_TEXTURE)) {
        glDeleteTextures(1, &res->gl_id);
-@@ -14301,9 +14437,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -14290,9 +14426,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
              virgl_warn("%s: ignoring plane_count = %d and using the first one\n",
                         __func__, args->plane_count);
           }

@@ -116,10 +116,10 @@ index 46d1eb19e3df38d53eb33496f28bd5e3f9a4302e..f70eda6f737e2fab568d98813ebed518
     /* One drain per command buffer still reports a host GL error and still
      * keeps the driver's error queue bounded; only the name of the command
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 6d3a3b291c8202715a41a084fab38c83aef4cb01..ad2a4041008357ce72fee7dcad9275954b2ccb9c 100644
+index bf5b812beb2e37da5d89e1d554a39abd46e0c0ae..af60fb251bbe8cd95fbfa8bdce7aba9f7dd05a15 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -3123,6 +3123,8 @@ static void vrend_hw_set_zsurf_texture(struct vrend_context *ctx)
+@@ -3120,6 +3120,8 @@ static void vrend_hw_set_zsurf_texture(struct vrend_context *ctx)
     }
  }
  
@@ -128,7 +128,7 @@ index 6d3a3b291c8202715a41a084fab38c83aef4cb01..ad2a4041008357ce72fee7dcad927595
  static void vrend_hw_set_color_surface(struct vrend_sub_context *sub_ctx, GLuint index)
  {
     struct vrend_surface *surf = sub_ctx->surf[index];
-@@ -3139,6 +3141,8 @@ static void vrend_hw_set_color_surface(struct vrend_sub_context *sub_ctx, GLuint
+@@ -3136,6 +3138,8 @@ static void vrend_hw_set_color_surface(struct vrend_sub_context *sub_ctx, GLuint
        vrend_fb_bind_texture_id(surf->texture, surf->gl_id, index, surf->level,
                                 first_layer != last_layer ? -1 : (GLint)first_layer,
                                 surf->nr_samples);
@@ -137,7 +137,7 @@ index 6d3a3b291c8202715a41a084fab38c83aef4cb01..ad2a4041008357ce72fee7dcad927595
     }
  }
  
-@@ -7609,12 +7613,173 @@ static void vrend_pipe_resource_detach_iov(struct pipe_resource *pres,
+@@ -7606,12 +7610,173 @@ static void vrend_pipe_resource_detach_iov(struct pipe_resource *pres,
     res->num_iovs = 0;
  }
  
@@ -313,7 +313,7 @@ index 6d3a3b291c8202715a41a084fab38c83aef4cb01..ad2a4041008357ce72fee7dcad927595
        *fd = os_dupfd_cloexec(shm_res->host_shm->fd);
        return *fd >= 0 ? VIRGL_RESOURCE_FD_SHM : VIRGL_RESOURCE_FD_INVALID;
     }
-@@ -9306,28 +9471,10 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
+@@ -9303,28 +9468,10 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
                   offset);
     }
  
@@ -346,7 +346,7 @@ index 6d3a3b291c8202715a41a084fab38c83aef4cb01..ad2a4041008357ce72fee7dcad927595
  
     gr->shm_import_map = map;
     gr->shm_import_size = res->map_size;
-@@ -9380,7 +9527,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+@@ -9377,7 +9524,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
     if (res->shm_import_image)
        virgl_egl_host_pointer_image_destroy(egl, res->shm_import_image);
  #endif

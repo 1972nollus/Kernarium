@@ -49,7 +49,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  4 files changed, 319 insertions(+)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..efb5636e8faba55fbfc9ad20c607b48bfae8ab22 100644
+index 08f809b508840f670680ff9a86701a96a755c33e..fbaf94000fde002f3fc680273caac829070fcf19 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -29,6 +29,8 @@
@@ -61,7 +61,7 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..efb5636e8faba55fbfc9ad20c607b48b
  #include "pipe/p_shader_tokens.h"
  
  #include "pipe/p_defines.h"
-@@ -1059,6 +1061,11 @@ static inline bool
+@@ -1056,6 +1058,11 @@ static inline bool
  vrend_resource_needs_redblue_swizzle(struct vrend_resource *res,
                                       enum virgl_formats view_format)
  {
@@ -73,7 +73,7 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..efb5636e8faba55fbfc9ad20c607b48b
     return !vrend_resource_supports_view(res, view_format) &&
           vrend_format_is_bgra(res->base.format) ^ vrend_format_is_bgra(view_format);
  }
-@@ -5387,6 +5394,7 @@ static GLuint vrend_draw_bind_samplers_shader(struct vrend_sub_context *sub_ctx,
+@@ -5384,6 +5391,7 @@ static GLuint vrend_draw_bind_samplers_shader(struct vrend_sub_context *sub_ctx,
                 target = GL_TEXTURE_BUFFER;
              }
  
@@ -81,7 +81,7 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..efb5636e8faba55fbfc9ad20c607b48b
              glBindTexture(target, id);
              vrend_apply_sampler_state(sub_ctx, tview->texture,
                                        shader_view->samplers[i],
-@@ -9174,8 +9182,209 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
+@@ -9171,8 +9179,209 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
     return &gr->base;
  }
  
@@ -291,7 +291,7 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..efb5636e8faba55fbfc9ad20c607b48b
     if (has_bit(res->storage_bits, VREND_STORAGE_GL_TEXTURE)) {
        glDeleteTextures(1, &res->gl_id);
     } else if (has_bit(res->storage_bits, VREND_STORAGE_GL_BUFFER)) {
-@@ -11470,6 +11679,9 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
+@@ -11467,6 +11676,9 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
        .swizzle =  {0, 1, 2, 3}
     };
  
@@ -301,7 +301,7 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..efb5636e8faba55fbfc9ad20c607b48b
     /* We create the texture views in this function instead of doing it in
      * vrend_renderer_prepare_blit_extra_info because we also delete them here */
     if ((src_res->base.format != info->src.format) && has_feature(feat_texture_view) &&
-@@ -13723,8 +13935,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -13712,8 +13924,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
        };
        struct vrend_resource *gr;
  
@@ -317,7 +317,7 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..efb5636e8faba55fbfc9ad20c607b48b
  
        gr = vrend_resource_create(&create_args);
        if (!gr)
-@@ -13773,6 +13992,25 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -13762,6 +13981,25 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
              return ret;
           }
  
