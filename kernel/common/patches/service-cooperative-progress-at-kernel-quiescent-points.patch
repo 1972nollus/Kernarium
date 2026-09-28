@@ -16,12 +16,12 @@ tty_open() and every other carrier asleep.  A task that is about to block
 needs no poll: it leaves the CPU to the idle loop or to another task.
 ---
  arch/um/include/shared/kern_util.h |  3 +++
- arch/um/kernel/skas/uaccess.c      | 37 +++++++++++++++++++++++++++++-
- arch/um/kernel/time.c              | 15 ++++++++++++
- arch/um/kernel/tlb.c               | 10 ++++++++
- arch/um/os-Darwin/smp.c            | 23 +++++++++++++++----
- kernel/sched/core.c                | 29 +++++++++++++++++++++++
- 6 files changed, 111 insertions(+), 6 deletions(-)
+ arch/um/kernel/skas/uaccess.c      | 34 +++++++++++++++++++++++++++++-
+ arch/um/kernel/time.c              | 15 +++++++++++++
+ arch/um/kernel/tlb.c               | 10 +++++++++
+ arch/um/os-Darwin/smp.c            | 23 +++++++++++++++-----
+ kernel/sched/core.c                | 29 +++++++++++++++++++++++++
+ 6 files changed, 108 insertions(+), 6 deletions(-)
 
 diff --git a/arch/um/include/shared/kern_util.h b/arch/um/include/shared/kern_util.h
 index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b5e2662e1 100644
@@ -38,10 +38,10 @@ index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 1b4ec301bed1df9d3c32babd98ff8c286c32ad95..fd0c48b58e4d077cb425d7b0ce7ba418a1d33243 100644
+index b8b872ba3f0056242fc73f63d62fa09404192670..9ee32c0fbe4b723f0defaee6d078be9a68e80635 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -176,6 +176,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+@@ -225,6 +225,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)
  #endif
  }
  
@@ -73,31 +73,26 @@ index 1b4ec301bed1df9d3c32babd98ff8c286c32ad95..fd0c48b58e4d077cb425d7b0ce7ba418
  static int do_op_one_page(unsigned long addr, int len, int is_write,
  		 int (*op)(unsigned long addr, int len, void *arg), void *arg)
  {
-@@ -184,10 +209,17 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
- 	unsigned long user_addr = addr;
- #endif
- 	int n = -1;
-+#ifdef UML_HOST_DARWIN
-+	bool may_resched = !faulthandler_disabled();
-+#endif
+@@ -234,8 +259,12 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+ 	bool may_sleep = !faulthandler_disabled();
  
  	page = maybe_map(addr, is_write);
 -	if (page == NULL)
 +	if (!page) {
 +#ifdef UML_HOST_DARWIN
-+		darwin_uaccess_checkpoint(may_resched);
++		darwin_uaccess_checkpoint(may_sleep);
 +#endif
  		return -1;
 +	}
  
  #ifdef CONFIG_64BIT
  #if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
-@@ -228,6 +260,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
- 		set_page_dirty_lock(page);
+@@ -276,6 +305,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+ 		mark_user_page_dirty(user_addr, page, may_sleep);
  out_put:
  	put_page(page);
 +#ifdef UML_HOST_DARWIN
-+	darwin_uaccess_checkpoint(may_resched);
++	darwin_uaccess_checkpoint(may_sleep);
 +#endif
  	return n;
  }
@@ -136,10 +131,10 @@ index b46649f2ea64a6d4b289cb0d9ab8c164da804ba1..8b8a647f44ee690582f1f6b4aabb6d3e
  {
  	int cpu = evt - &timer_clockevent[0];
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 9fd280bc968e0b66661b0c87a84b2d6ee747ed25..9d7c3297dc83f0fded54efe9673131f1875dde0a 100644
+index d3b3508d221412cb32c2ae9f6a282729e421c1ee..232d63abc0cc8b6641377db31be49583103bad10 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
-@@ -734,7 +734,17 @@ void flush_tlb_mm(struct mm_struct *mm)
+@@ -686,7 +686,17 @@ void flush_tlb_mm(struct mm_struct *mm)
  	for_each_vma(vmi, vma) {
  		um_tlb_mark_sync(mm, vma->vm_start, vma->vm_end);
  #ifdef UML_HOST_DARWIN

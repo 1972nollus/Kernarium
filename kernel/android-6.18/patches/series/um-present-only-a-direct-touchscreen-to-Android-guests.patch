@@ -18,7 +18,7 @@ hover coordinates outside an active contact.
  1 file changed, 15 insertions(+), 20 deletions(-)
 
 diff --git a/arch/um/drivers/vnc_input.c b/arch/um/drivers/vnc_input.c
-index 7d72c22268902c6bf4aa299731c584ffa52f9acf..0e5dfebe6106bc2843d0a26aeb96b9519f8dc7d5 100644
+index 6ad13ee15181776f5cf62ecf149f1eadbbe1fc30..12c88d6dcbb678c31ef26f83dac1dd3648f7e924 100644
 --- a/arch/um/drivers/vnc_input.c
 +++ b/arch/um/drivers/vnc_input.c
 @@ -1,7 +1,7 @@
@@ -51,7 +51,7 @@ index 7d72c22268902c6bf4aa299731c584ffa52f9acf..0e5dfebe6106bc2843d0a26aeb96b951
  	} else {
  		input_event(keyboard, type, code, value);
  	}
-@@ -96,26 +100,17 @@ static void configure_keyboard(struct input_dev *device)
+@@ -94,26 +98,17 @@ static void configure_keyboard(struct input_dev *device)
  
  static void configure_pointer(struct input_dev *device)
  {
@@ -82,7 +82,7 @@ index 7d72c22268902c6bf4aa299731c584ffa52f9acf..0e5dfebe6106bc2843d0a26aeb96b951
  	input_set_abs_params(device, ABS_X, 0, 32767, 0, 0);
  	input_set_abs_params(device, ABS_Y, 0, 32767, 0, 0);
  }
-@@ -156,7 +151,7 @@ static int __init vnc_input_init(void)
+@@ -154,7 +149,7 @@ static int __init vnc_input_init(void)
  		error = input_irq;
  		goto unregister_pointer;
  	}

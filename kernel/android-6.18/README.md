@@ -35,8 +35,8 @@ match UML; the AOSP product uses the generic BPF interpreter, which runs
 callbacks through the entry-point pool the
 [mainline README](../mainline-6.18/README.md) describes. The kernel
 carries BTF type information, exposed at `/sys/kernel/btf/vmlinux`, as GKI
-does. The build emits DWARF 5 only as pahole's input and keeps frame pointers
-off.
+does. The build emits DWARF 5 only as pahole's input. Frame pointers are on
+for the stack walker, as the [common README](../common/README.md) describes.
 
 Android's Ethernet IpClient acquires the SLiRP lease, default route, and DNS
 configuration after init starts, so the kernel does not perform IP
@@ -63,6 +63,11 @@ The local series provides the durable Android-specific behavior:
 - system suspend and wake through the management console, including secondary
   vCPU hotplug across an Apple host background interval; and
 - anonymous host VM for Android physical memory.
+
+The management console socket is `/tmp/uml-<umid>-mconsole`, or
+`<dir>/mconsole` when the host passes `uml_dir=<dir>`, a directory owned by
+that machine alone; a path that does not fit Darwin's 104-byte `sun_path` is
+refused, never truncated.
 
 Pure touchscreen input is specific to this Android line because Android and
 recovery must not enter pointer mode. The mainline kernel continues to expose

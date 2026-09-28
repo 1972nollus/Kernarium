@@ -270,6 +270,18 @@ boundary or end on its last byte, unterminated strings, `EFAULT` for NULL,
 unmapped and `PROT_NONE` memory, and the exact bytes a symlink target and a
 task name keep.
 
+`guest-native-window-unmap` maps a page just below and just above the Darwin
+kernel's native window, which it finds from the addresses `mmap()` refuses,
+and unmaps each alone and both with one `munmap()` across the window. The
+page tables freed with them widen the kernel's TLB flush over the window, and
+the guest must survive each unmap and run another command.
+
+`guest-ptrace-pstate` writes a stopped child's PSTATE through
+`PTRACE_SETREGSET` and `PTRACE_POKEUSER`. SS and the RES0 bits must read back
+cleared and TCO, DIT and SSBS kept, a mode or DAIF bit must fail with
+`EINVAL`, and the child continued after an SS write must exit rather than
+stop on a single-step trap.
+
 `guest-run-end-stop` boots embedded guests in child processes and stops each
 one at a different point, from CPU bring-up to a guest waiting for its root
 device. A run must return 0 and leave only the host thread behind. The test

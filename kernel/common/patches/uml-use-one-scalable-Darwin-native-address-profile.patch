@@ -9,14 +9,16 @@ Use one sparse Apple guest address contract, size the native hole from configure
  arch/arm64/um/asm/mman.h                      | 23 ++++++
  arch/arm64/um/signal.c                        |  3 +-
  arch/um/include/asm/processor-generic.h       |  2 +-
+ arch/um/include/asm/tlbflush.h                |  7 +-
  arch/um/include/asm/uaccess.h                 | 10 +++
  arch/um/include/shared/darwin-address-space.h | 38 ++++++++++
+ arch/um/kernel/tlb.c                          | 37 ++++++++++
  arch/um/kernel/trap.c                         |  7 +-
  arch/um/kernel/um_arch.c                      | 70 ++++++++++++++++---
  arch/um/os-Darwin/skas/process.c              |  9 +--
  arch/um/os-Darwin/uml_darwin_abi.h            |  6 +-
  arch/um/os-Darwin/uml_darwin_abi_identity.h   |  4 +-
- 11 files changed, 166 insertions(+), 52 deletions(-)
+ 13 files changed, 208 insertions(+), 54 deletions(-)
  create mode 100644 arch/um/include/shared/darwin-address-space.h
 
 diff --git a/arch/arm64/Makefile.um b/arch/arm64/Makefile.um
@@ -121,7 +123,7 @@ index 56ab3b4245323f6a57b73cef75b801c55aa5fd76..2a075458f6d6e6a70a6c3429ab0aa809
 +
  #endif
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 5abf1641a0c2ec6163e38160ec73d3acbf74f711..5df9d3a0e736f20fab5848ff103bfd4c41abf0b3 100644
+index 51c5ab74921ce0cfc43bde262e71670e1fa03b1d..b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -22,7 +22,8 @@ struct uml_arm64_rt_sigframe {
@@ -147,6 +149,32 @@ index dfcbfa025d624d2498f4f3e4421811f82daea62e..9e9f2c7f127f78532c554ee958d45888
  #else
  #define TASK_UNMAPPED_BASE	(0x40000000)
  #endif
+diff --git a/arch/um/include/asm/tlbflush.h b/arch/um/include/asm/tlbflush.h
+index 1e7594036606ee51401df5750cb83863ebec9871..d048fa81f9085ec54c5150abca3c53ef49b73efd 100644
+--- a/arch/um/include/asm/tlbflush.h
++++ b/arch/um/include/asm/tlbflush.h
+@@ -38,6 +38,8 @@ extern int um_tlb_sync_locked(struct mm_struct *mm);
+ extern void darwin_tlb_invalidate_range(struct mm_struct *mm,
+ 					unsigned long start,
+ 					unsigned long end);
++extern void darwin_tlb_flush_range(struct mm_struct *mm, unsigned long start,
++				   unsigned long end);
+ #endif
+ 
+ extern void flush_tlb_all(void);
+@@ -56,9 +58,10 @@ static inline void flush_tlb_page(struct vm_area_struct *vma,
+ static inline void flush_tlb_range(struct vm_area_struct *vma,
+ 				   unsigned long start, unsigned long end)
+ {
+-	um_tlb_mark_sync(vma->vm_mm, start, end);
+ #ifdef UML_HOST_DARWIN
+-	darwin_tlb_invalidate_range(vma->vm_mm, start, end);
++	darwin_tlb_flush_range(vma->vm_mm, start, end);
++#else
++	um_tlb_mark_sync(vma->vm_mm, start, end);
+ #endif
+ }
+ 
 diff --git a/arch/um/include/asm/uaccess.h b/arch/um/include/asm/uaccess.h
 index 1c6e0ae41b0c5a7251e5ae81bfc57b21f739cec3..b435f1b5c30e8d4aec59db9c353649836bf3173b 100644
 --- a/arch/um/include/asm/uaccess.h
@@ -216,8 +244,63 @@ index 0000000000000000000000000000000000000000..1fd6bd965bb5ada99d3f51edc4776a22
 +}
 +
 +#endif
+diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
+index d747c429ba7a12c976a31589ec4371864b14ef11..d3b3508d221412cb32c2ae9f6a282729e421c1ee 100644
+--- a/arch/um/kernel/tlb.c
++++ b/arch/um/kernel/tlb.c
+@@ -15,6 +15,9 @@
+ #include <os.h>
+ #include <skas.h>
+ #include <kern_util.h>
++#ifdef UML_HOST_DARWIN
++#include <darwin-address-space.h>
++#endif
+ 
+ struct vm_ops {
+ 	struct mm_id *mm_idp;
+@@ -639,6 +642,40 @@ void darwin_tlb_invalidate_range(struct mm_struct *mm, unsigned long start,
+ 		panic("Darwin: unable to invalidate guest mm %lu range %#lx-%#lx",
+ 		      mm->context.id.darwin_generation, start, end);
+ }
++
++static void darwin_tlb_flush_guest_range(struct mm_struct *mm,
++					 unsigned long start,
++					 unsigned long end)
++{
++	if (end <= start)
++		return;
++	um_tlb_mark_sync(mm, start, end);
++	darwin_tlb_invalidate_range(mm, start, end);
++}
++
++/*
++ * No user mapping lies in the native window, yet a user flush can cover it.
++ * Freeing a page table widens the flush to the table's whole span, which
++ * starts inside the window when the table also maps the first pages above
++ * it, and one munmap() can free tables on both sides.  The host takes a
++ * range inside the window for the kernel's own mappings there, whether the
++ * flush drops it or a later replay unmaps it, so a user mm flushes only the
++ * guest ranges beside the window.
++ */
++void darwin_tlb_flush_range(struct mm_struct *mm, unsigned long start,
++			    unsigned long end)
++{
++	unsigned long native_start = uml_darwin_native_address_start();
++	unsigned long native_end = uml_darwin_native_address_end();
++
++	if (mm == &init_mm) {
++		um_tlb_mark_sync(mm, start, end);
++		return;
++	}
++	end = min_t(unsigned long, end, UML_DARWIN_GUEST_ADDRESS_LIMIT);
++	darwin_tlb_flush_guest_range(mm, start, min(end, native_start));
++	darwin_tlb_flush_guest_range(mm, max(start, native_end), end);
++}
+ #endif
+ 
+ void flush_tlb_mm(struct mm_struct *mm)
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 1e6194ce52e3e8face711622b7b81a0c30b78c6a..31575c43f7e1ffdcfb7070ced4b346324b1d4274 100644
+index 433b6fda3da3428817c1ca7e81304b6b6bc02c7a..dbb4d6cf068d0bbadd846a42d7bbbd117cad5d72 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
 @@ -18,6 +18,7 @@
@@ -228,7 +311,7 @@ index 1e6194ce52e3e8face711622b7b81a0c30b78c6a..31575c43f7e1ffdcfb7070ced4b34632
  extern int darwin_uml_vm_retry_fault(unsigned long address, int execute,
  				     int write);
  #endif
-@@ -395,7 +396,11 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
+@@ -384,7 +385,11 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
  		show_regs(container_of(regs, struct pt_regs, regs));
  		panic("Segfault with no mm");
  	}

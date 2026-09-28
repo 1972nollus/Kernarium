@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "uml_darwin_network.h"
+
 #include <libslirp.h>
 #include <poll.h>
 
@@ -25,7 +27,7 @@
 
 namespace uml::network {
 
-inline constexpr std::size_t frame_size = 2048;
+inline constexpr std::size_t frame_size = DARWIN_UML_NET_FRAME_SIZE;
 inline constexpr std::size_t ring_size = 256;
 /* How long a guest transmit waits for the event loop to free a ring slot
  * before the frame is refused (see SlirpProvider::write). The loop frees one

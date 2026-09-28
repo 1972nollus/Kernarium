@@ -59,10 +59,10 @@ index d36d5b8f77bdc4cc689ee4da965eab07f613ea87..15e501e58d4d2b84c1217e2e60c197a5
  			     int is_write, int is_user, int *code_out);
  
 diff --git a/arch/um/kernel/trap.c b/arch/um/kernel/trap.c
-index 31575c43f7e1ffdcfb7070ced4b346324b1d4274..9971a92efe35ce98441ba41601605769861c7cc9 100644
+index dbb4d6cf068d0bbadd846a42d7bbbd117cad5d72..3267358aad21eb46cb76cc8375280bac948f0bc9 100644
 --- a/arch/um/kernel/trap.c
 +++ b/arch/um/kernel/trap.c
-@@ -331,6 +331,27 @@ void segv_handler(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs,
+@@ -320,6 +320,27 @@ void segv_handler(int sig, struct siginfo *unused_si, struct uml_pt_regs *regs,
  	segv(*fi, UPT_IP(regs), UPT_IS_USER(regs), regs, mc);
  }
  

@@ -40,11 +40,11 @@ user mms and never for init_mm. WARN_ON_ONCE() keeps that true.
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
  arch/um/include/asm/tlbflush.h |   5 ++
- arch/um/kernel/tlb.c           | 115 ++++++++++++++++++++++++++++++++-
- 2 files changed, 119 insertions(+), 1 deletion(-)
+ arch/um/kernel/tlb.c           | 111 ++++++++++++++++++++++++++++++++-
+ 2 files changed, 115 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/include/asm/tlbflush.h b/arch/um/include/asm/tlbflush.h
-index f2010ae962c677ad6ae6e7b5a05d0fd9acec4d89..a854797aeac655f97dd141bdea82f0ff8accaeed 100644
+index bd049ef7a30551999bbafa7b3bfef08932df43d6..458f68c3840a1ef17578329c8470f2fbae2a9cb1 100644
 --- a/arch/um/include/asm/tlbflush.h
 +++ b/arch/um/include/asm/tlbflush.h
 @@ -33,6 +33,7 @@
@@ -55,7 +55,7 @@ index f2010ae962c677ad6ae6e7b5a05d0fd9acec4d89..a854797aeac655f97dd141bdea82f0ff
  extern bool um_tlb_sync_pending(struct mm_struct *mm);
  extern int um_tlb_sync_locked(struct mm_struct *mm, unsigned long start,
  			      unsigned long end);
-@@ -71,7 +72,11 @@ static inline void flush_tlb_kernel_range(unsigned long start,
+@@ -74,7 +75,11 @@ static inline void flush_tlb_kernel_range(unsigned long start,
  	um_tlb_mark_sync(&init_mm, start, end);
  
  	/* Kernel needs to be synced immediately */
@@ -68,10 +68,10 @@ index f2010ae962c677ad6ae6e7b5a05d0fd9acec4d89..a854797aeac655f97dd141bdea82f0ff
  
  #endif
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 35367b69563740cffdb3dcae0cd174f5a7b5597a..b0f2e74633e8623cf016fd31d229409a3ef7c302 100644
+index b6ea5a11d548c4b9ac21c79fa2f3c0c9211a52bd..99bdbd238e862b33f0ba2ca36a971047fb94cc76 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
-@@ -330,6 +330,15 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
+@@ -333,6 +333,15 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
  
  			ret = ops->mmap(ops->mm_idp, addr, PAGE_SIZE,
  					prot, fd, offset);
@@ -87,18 +87,7 @@ index 35367b69563740cffdb3dcae0cd174f5a7b5597a..b0f2e74633e8623cf016fd31d229409a
  		} else
  			ret = ops->unmap(ops->mm_idp, addr, PAGE_SIZE);
  
-@@ -395,6 +404,10 @@ static inline int update_pmd_leaf(pmd_t *pmd, unsigned long addr,
- 		int fd = phys_mapping(phys, &offset);
- 
- 		ret = ops->mmap(ops->mm_idp, addr, PAGE_SIZE, prot, fd, offset);
-+#ifdef UML_HOST_DARWIN
-+		if (unlikely(ret && ops->mm == &init_mm))
-+			(void)ops->unmap(ops->mm_idp, addr, PAGE_SIZE);
-+#endif
- 		addr += PAGE_SIZE;
- 		phys += PAGE_SIZE;
- 	} while (addr < end && !ret);
-@@ -419,6 +432,16 @@ static inline int update_pmd_range(pud_t *pud, unsigned long addr,
+@@ -362,6 +371,16 @@ static inline int update_pmd_range(pud_t *pud, unsigned long addr,
  		next = pmd_addr_end(addr, end);
  		if (!pmd_present(*pmd)) {
  			if (pmd_needsync(*pmd)) {
@@ -115,7 +104,7 @@ index 35367b69563740cffdb3dcae0cd174f5a7b5597a..b0f2e74633e8623cf016fd31d229409a
  				ret = ops->unmap(ops->mm_idp, addr,
  						 next - addr);
  #ifndef UML_HOST_DARWIN
-@@ -468,6 +491,16 @@ static inline int update_pud_range(p4d_t *p4d, unsigned long addr,
+@@ -388,6 +407,16 @@ static inline int update_pud_range(p4d_t *p4d, unsigned long addr,
  		next = pud_addr_end(addr, end);
  		if (!pud_present(*pud)) {
  			if (pud_needsync(*pud)) {
@@ -132,7 +121,7 @@ index 35367b69563740cffdb3dcae0cd174f5a7b5597a..b0f2e74633e8623cf016fd31d229409a
  				ret = ops->unmap(ops->mm_idp, addr,
  						 next - addr);
  #ifndef UML_HOST_DARWIN
-@@ -495,6 +528,16 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
+@@ -413,6 +442,16 @@ static inline int update_p4d_range(pgd_t *pgd, unsigned long addr,
  		next = p4d_addr_end(addr, end);
  		if (!p4d_present(*p4d)) {
  			if (p4d_needsync(*p4d)) {
@@ -149,7 +138,7 @@ index 35367b69563740cffdb3dcae0cd174f5a7b5597a..b0f2e74633e8623cf016fd31d229409a
  				ret = ops->unmap(ops->mm_idp, addr,
  						 next - addr);
  #ifndef UML_HOST_DARWIN
-@@ -519,6 +562,16 @@ static int update_mm_range(struct mm_struct *mm, struct vm_ops *ops,
+@@ -437,6 +476,16 @@ static int update_mm_range(struct mm_struct *mm, struct vm_ops *ops,
  		next = pgd_addr_end(addr, end);
  		if (!pgd_present(*pgd)) {
  			if (pgd_needsync(*pgd)) {
@@ -166,7 +155,7 @@ index 35367b69563740cffdb3dcae0cd174f5a7b5597a..b0f2e74633e8623cf016fd31d229409a
  				ret = ops->unmap(ops->mm_idp, addr,
  						 next - addr);
  #ifndef UML_HOST_DARWIN
-@@ -762,8 +815,23 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -674,8 +723,23 @@ static int __um_tlb_sync(struct mm_struct *mm,
  #ifdef UML_HOST_DARWIN
  static struct task_struct *init_mm_tlb_owner;
  
@@ -190,7 +179,7 @@ index 35367b69563740cffdb3dcae0cd174f5a7b5597a..b0f2e74633e8623cf016fd31d229409a
  	int ret;
  
  	/* A host fault inside an init_mm host mapping operation re-enters the
-@@ -779,7 +847,16 @@ static noinline int um_tlb_sync_init_mm(void)
+@@ -691,7 +755,16 @@ static noinline int um_tlb_sync_init_mm(void)
  		goto clear_owner;
  	}
  	WRITE_ONCE(init_mm_tlb_owner, current);
@@ -208,7 +197,7 @@ index 35367b69563740cffdb3dcae0cd174f5a7b5597a..b0f2e74633e8623cf016fd31d229409a
  clear_owner:
  	WRITE_ONCE(init_mm_tlb_owner, NULL);
  	mutex_unlock(&init_mm.context.turnstile);
-@@ -797,6 +874,42 @@ int um_tlb_sync(struct mm_struct *mm)
+@@ -709,6 +782,42 @@ int um_tlb_sync(struct mm_struct *mm)
  }
  
  #ifdef UML_HOST_DARWIN

@@ -3,24 +3,25 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 22:04:07 +0900
 Subject: [PATCH] Build the dwarves library and pahole on Darwin
 
-<malloc.h> is a glibc header; the files that included it need only the
-<stdlib.h> declarations. BSD C libraries, including Darwin's, declare an
-extern fls() in <strings.h>, which conflicts with the static helper of the
-same name in dutil.h, so the helper is now dwarves__fls().
+<malloc.h> is a glibc header; the library files that pahole links and that
+included it need only the <stdlib.h> declarations. BSD C libraries,
+including Darwin's, declare an extern fls() in <strings.h>, which conflicts
+with the static helper of the same name in dutil.h, so the helper is now
+dwarves__fls().
 
 The argp version-hook definition names its symbol with an assembler label.
 Prefix it with __USER_LABEL_PREFIX__, so on Mach-O, where C symbols start
 with an underscore, the definition still replaces argp's and --version
 remains available.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  btf_loader.c |  1 -
  ctf_loader.c |  1 -
  dutil.h      | 26 ++++++++++++++++----------
  elf_symtab.c |  2 +-
  libctf.c     |  1 -
- pdwtags.c    |  1 -
- pglobal.c    |  1 -
- 7 files changed, 17 insertions(+), 16 deletions(-)
+ 5 files changed, 17 insertions(+), 14 deletions(-)
 
 diff --git a/btf_loader.c b/btf_loader.c
 index 66ffd1a0b5ad73a3f2c8f0e9409c094a1aa32b4e..0a3f9f3fdabd9cf2c5ac66b3f6ce86b512547787 100644
@@ -144,29 +145,5 @@ index 51f75fbd664635067ec225248e96caad3f78c7d1..4addccaf5146e48b05eb328d93ee2472
  #include <limits.h>
 -#include <malloc.h>
  #include <errno.h>
- #include <stdio.h>
- #include <stdlib.h>
-diff --git a/pdwtags.c b/pdwtags.c
-index 4cea6ba577a44e3f380bdbed94c508a71aca106e..6ceadfec34aae18a61ee590d34db9e2d2bdc652f 100644
---- a/pdwtags.c
-+++ b/pdwtags.c
-@@ -7,7 +7,6 @@
- #include <argp.h>
- #include <stdio.h>
- #include <stdlib.h>
--#include <malloc.h>
- 
- #include "dwarves.h"
- #include "dutil.h"
-diff --git a/pglobal.c b/pglobal.c
-index ebf705160aaa281f2fa830ecca803dcc7346ffbc..8e5f4cd1e3bc270cae4da27509f4767a88b0a920 100644
---- a/pglobal.c
-+++ b/pglobal.c
-@@ -5,7 +5,6 @@
-  */
- 
- #include <argp.h>
--#include <malloc.h>
- #include <search.h>
  #include <stdio.h>
  #include <stdlib.h>

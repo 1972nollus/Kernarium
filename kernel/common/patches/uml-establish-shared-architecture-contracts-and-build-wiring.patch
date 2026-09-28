@@ -6,42 +6,39 @@ Subject: [PATCH] uml: establish shared architecture contracts and build wiring
 Apply the reviewed final-state topic without intermediate churn.
 ---
  arch/um/Kbuild                          |   2 +-
- arch/um/Kconfig                         |  61 +++++-
- arch/um/Makefile                        |  14 +-
- arch/um/Makefile-os-Darwin              |  24 +++
+ arch/um/Kconfig                         |  60 ++++++++++-
+ arch/um/Makefile                        |  14 ++-
+ arch/um/Makefile-os-Darwin              |  24 +++++
  arch/um/include/asm/Kbuild              |   2 -
- arch/um/include/asm/common.lds.S        |  16 +-
- arch/um/include/asm/cpufeature.h        |  21 ++
+ arch/um/include/asm/common.lds.S        |  16 ++-
+ arch/um/include/asm/cpufeature.h        |  21 ++++
  arch/um/include/asm/current.h           |   5 +-
- arch/um/include/asm/hardirq.h           |  24 ++-
- arch/um/include/asm/hugetlb.h           |  40 ++++
+ arch/um/include/asm/hardirq.h           |  24 ++++-
  arch/um/include/asm/irqflags.h          |   4 +-
- arch/um/include/asm/mm_hooks.h          |  26 +++
- arch/um/include/asm/mmu.h               |  20 ++
- arch/um/include/asm/page.h              |  11 +
- arch/um/include/asm/pgtable-3level.h    |  77 +++++++
- arch/um/include/asm/pgtable-4level.h    |  28 ++-
- arch/um/include/asm/pgtable.h           | 259 +++++++++++++++++++++++-
- arch/um/include/asm/processor-generic.h |  10 +
- arch/um/include/asm/smp.h               |  21 +-
+ arch/um/include/asm/mm_hooks.h          |  26 +++++
+ arch/um/include/asm/mmu.h               |  20 ++++
+ arch/um/include/asm/pgtable-3level.h    |  75 ++++++++++++++
+ arch/um/include/asm/pgtable-4level.h    |  16 +--
+ arch/um/include/asm/pgtable.h           | 128 ++++++++++++++++++++++--
+ arch/um/include/asm/processor-generic.h |  10 ++
+ arch/um/include/asm/smp.h               |  21 +++-
  arch/um/include/asm/syscall-generic.h   |   6 +-
- arch/um/include/asm/tlb_sync_ranges.h   |  64 ++++++
- arch/um/include/asm/tlbflush.h          |  15 ++
- arch/um/include/asm/topology.h          |  21 ++
- arch/um/include/asm/xor.h               |   9 +
- arch/um/include/linux/smp-internal.h    |  17 ++
+ arch/um/include/asm/tlb_sync_ranges.h   |  64 ++++++++++++
+ arch/um/include/asm/tlbflush.h          |  15 +++
+ arch/um/include/asm/topology.h          |  21 ++++
+ arch/um/include/asm/xor.h               |   9 ++
+ arch/um/include/linux/smp-internal.h    |  17 ++++
  arch/um/include/linux/time-internal.h   |   3 +
- arch/um/include/shared/darwin_net.h     |  10 +
+ arch/um/include/shared/darwin_net.h     |  10 ++
  arch/um/include/shared/kern_util.h      |   1 +
  arch/um/include/shared/longjmp.h        |   3 +-
- arch/um/include/shared/os.h             |  69 ++++++-
- arch/um/include/shared/skas/mm_id.h     |  11 +
- arch/um/include/shared/skas/skas.h      |   6 +
- arch/um/include/shared/smp.h            |  21 ++
- arch/um/kernel/dyn.lds.S                |  13 ++
- 34 files changed, 896 insertions(+), 38 deletions(-)
+ arch/um/include/shared/os.h             |  69 ++++++++++++-
+ arch/um/include/shared/skas/mm_id.h     |  11 ++
+ arch/um/include/shared/skas/skas.h      |   6 ++
+ arch/um/include/shared/smp.h            |  21 ++++
+ arch/um/kernel/dyn.lds.S                |  13 +++
+ 32 files changed, 701 insertions(+), 36 deletions(-)
  create mode 100644 arch/um/Makefile-os-Darwin
- create mode 100644 arch/um/include/asm/hugetlb.h
  create mode 100644 arch/um/include/asm/mm_hooks.h
  create mode 100644 arch/um/include/asm/pgtable-3level.h
  create mode 100644 arch/um/include/asm/tlb_sync_ranges.h
@@ -60,7 +57,7 @@ index 6cf0c1e5927b273626b5bf964952c524e3a207c3..a552106e3d073224b5e7c62d2b455651
 -obj-y += kernel/ drivers/ os-Linux/
 +obj-y += kernel/ drivers/ os-$(UML_HOST_OS)/
 diff --git a/arch/um/Kconfig b/arch/um/Kconfig
-index 93ed850d508ed25952c5b62b4b27680b87a490d7..1ec666f76a7b66e5d771911689b47b913a63f635 100644
+index 93ed850d508ed25952c5b62b4b27680b87a490d7..bab809d264846372e425ff6ed975eddf97743437 100644
 --- a/arch/um/Kconfig
 +++ b/arch/um/Kconfig
 @@ -11,6 +11,7 @@ config UML
@@ -71,13 +68,7 @@ index 93ed850d508ed25952c5b62b4b27680b87a490d7..1ec666f76a7b66e5d771911689b47b91
  	select ARCH_HAS_GCOV_PROFILE_ALL
  	select ARCH_HAS_KCOV
  	select ARCH_HAS_STRNCPY_FROM_USER
-@@ -20,15 +21,18 @@ config UML
- 	select HAVE_ARCH_KASAN if X86_64
- 	select HAVE_ARCH_KASAN_VMALLOC if HAVE_ARCH_KASAN
- 	select HAVE_ARCH_SECCOMP_FILTER
-+	select HAVE_ARCH_TRANSPARENT_HUGEPAGE if 64BIT
- 	select HAVE_ASM_MODVERSIONS
- 	select HAVE_UID16
+@@ -25,10 +26,12 @@ config UML
  	select HAVE_DEBUG_KMEMLEAK
  	select HAVE_DEBUG_BUGVERBOSE
  	select HAVE_PAGE_SIZE_4KB
@@ -90,7 +81,7 @@ index 93ed850d508ed25952c5b62b4b27680b87a490d7..1ec666f76a7b66e5d771911689b47b91
  	select HAVE_GCC_PLUGINS
  	select ARCH_SUPPORTS_LTO_CLANG
  	select ARCH_SUPPORTS_LTO_CLANG_THIN
-@@ -38,9 +42,12 @@ config UML
+@@ -38,9 +41,12 @@ config UML
  	select HAVE_RUST
  	select ARCH_HAS_UBSAN
  	select HAVE_ARCH_TRACEHOOK
@@ -103,7 +94,7 @@ index 93ed850d508ed25952c5b62b4b27680b87a490d7..1ec666f76a7b66e5d771911689b47b91
  
  config MMU
  	bool
-@@ -79,13 +86,52 @@ config GENERIC_CALIBRATE_DELAY
+@@ -79,13 +85,52 @@ config GENERIC_CALIBRATE_DELAY
  	default y
  
  config HZ
@@ -160,7 +151,7 @@ index 93ed850d508ed25952c5b62b4b27680b87a490d7..1ec666f76a7b66e5d771911689b47b91
  
  source "arch/$(HEADER_ARCH)/um/Kconfig"
  
-@@ -209,9 +255,15 @@ config MMAPPER
+@@ -209,9 +254,15 @@ config MMAPPER
  
  config PGTABLE_LEVELS
  	int
@@ -176,7 +167,7 @@ index 93ed850d508ed25952c5b62b4b27680b87a490d7..1ec666f76a7b66e5d771911689b47b91
  config UML_TIME_TRAVEL_SUPPORT
  	bool
  	prompt "Support time-travel mode (e.g. for test execution)"
-@@ -261,6 +313,7 @@ source "arch/um/drivers/Kconfig"
+@@ -261,6 +312,7 @@ source "arch/um/drivers/Kconfig"
  
  config ARCH_SUSPEND_POSSIBLE
  	def_bool y
@@ -410,52 +401,6 @@ index 52e2c36267a938e49c7435bc171d660f6506cd15..8de71752a9b8d2ace241e906f6d7099c
 +}
 +
  #endif /* __ASM_UM_HARDIRQ_H */
-diff --git a/arch/um/include/asm/hugetlb.h b/arch/um/include/asm/hugetlb.h
-new file mode 100644
-index 0000000000000000000000000000000000000000..abee026749bab581b244c6253049b2f96ddabd6e
---- /dev/null
-+++ b/arch/um/include/asm/hugetlb.h
-@@ -0,0 +1,40 @@
-+/* SPDX-License-Identifier: GPL-2.0 */
-+#ifndef __UM_HUGETLB_H
-+#define __UM_HUGETLB_H
-+
-+#include <asm/page.h>
-+
-+#define __HAVE_ARCH_HUGE_PTE_CLEAR
-+void huge_pte_clear(struct mm_struct *mm, unsigned long addr,
-+		    pte_t *ptep, unsigned long sz);
-+
-+#define __HAVE_ARCH_HUGE_SET_HUGE_PTE_AT
-+void set_huge_pte_at(struct mm_struct *mm, unsigned long addr,
-+		     pte_t *ptep, pte_t pte, unsigned long sz);
-+
-+#define __HAVE_ARCH_HUGE_PTEP_GET_AND_CLEAR
-+pte_t huge_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
-+			      pte_t *ptep, unsigned long sz);
-+
-+#define __HAVE_ARCH_HUGE_PTEP_CLEAR_FLUSH
-+pte_t huge_ptep_clear_flush(struct vm_area_struct *vma, unsigned long addr,
-+			    pte_t *ptep);
-+
-+#define __HAVE_ARCH_HUGE_PTEP_SET_WRPROTECT
-+void huge_ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr,
-+			     pte_t *ptep);
-+
-+#define __HAVE_ARCH_HUGE_PTEP_SET_ACCESS_FLAGS
-+int huge_ptep_set_access_flags(struct vm_area_struct *vma,
-+			       unsigned long addr, pte_t *ptep,
-+			       pte_t pte, int dirty);
-+
-+#define __HAVE_ARCH_HUGE_PTEP_GET
-+pte_t huge_ptep_get(struct mm_struct *mm, unsigned long addr, pte_t *ptep);
-+
-+pte_t arch_make_huge_pte(pte_t entry, unsigned int shift, vm_flags_t flags);
-+#define arch_make_huge_pte arch_make_huge_pte
-+
-+#include <asm-generic/hugetlb.h>
-+
-+#endif /* __UM_HUGETLB_H */
 diff --git a/arch/um/include/asm/irqflags.h b/arch/um/include/asm/irqflags.h
 index 1e69ef5bc35e0021c55685e4856c93c94794eb82..31e49e0894c5e7ccf842ae81f9bfbe0af5958f49 100644
 --- a/arch/um/include/asm/irqflags.h
@@ -551,34 +496,12 @@ index 4d0e4239f3ccc4ed57402643aed64efc470cdbd3..65bf0b3375992a9c1a3127e4215b1be1
 +	}
 +
  #endif
-diff --git a/arch/um/include/asm/page.h b/arch/um/include/asm/page.h
-index 6f54254aaf443d0420bc02e6e67e3285ce99c68e..2c49472072cfc3d7d78e352abdd0e67bda2c3401 100644
---- a/arch/um/include/asm/page.h
-+++ b/arch/um/include/asm/page.h
-@@ -29,6 +29,17 @@ struct page;
- #define clear_user_page(page, vaddr, pg)	clear_page(page)
- #define copy_user_page(to, from, vaddr, pg)	copy_page(to, from)
- 
-+#if defined(CONFIG_HUGETLB_PAGE) || defined(CONFIG_TRANSPARENT_HUGEPAGE)
-+/*
-+ * A UML huge page is one PMD span.  Each page-table level consumes
-+ * PAGE_SHIFT - 3 address bits because every entry is eight bytes.
-+ */
-+#define HPAGE_SHIFT		(2 * PAGE_SHIFT - 3)
-+#define HPAGE_SIZE		(_AC(1, UL) << HPAGE_SHIFT)
-+#define HPAGE_MASK		(~(HPAGE_SIZE - 1))
-+#define HUGETLB_PAGE_ORDER	(HPAGE_SHIFT - PAGE_SHIFT)
-+#endif
-+
- typedef struct { unsigned long pte; } pte_t;
- typedef struct { unsigned long pgd; } pgd_t;
- 
 diff --git a/arch/um/include/asm/pgtable-3level.h b/arch/um/include/asm/pgtable-3level.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..6b6712f2c9117a4a2e2e590e774c2c9071f0359b
+index 0000000000000000000000000000000000000000..277e84d1866403690341e16db6d5f04fa152b74d
 --- /dev/null
 +++ b/arch/um/include/asm/pgtable-3level.h
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,75 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Three populated page-table levels for 64-bit UML with 16 KiB pages.
@@ -602,8 +525,6 @@ index 0000000000000000000000000000000000000000..6b6712f2c9117a4a2e2e590e774c2c90
 +#define PTRS_PER_PTE	(1U << UML_PGTABLE_SHIFT)
 +#define PTRS_PER_PMD	(1U << UML_PGTABLE_SHIFT)
 +#define PTRS_PER_PGD	(1U << UML_PGTABLE_SHIFT)
-+
-+#define HUGE_MAX_HSTATE	1
 +
 +#define USER_PTRS_PER_PGD ((TASK_SIZE + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
 +
@@ -657,7 +578,7 @@ index 0000000000000000000000000000000000000000..6b6712f2c9117a4a2e2e590e774c2c90
 +
 +#endif
 diff --git a/arch/um/include/asm/pgtable-4level.h b/arch/um/include/asm/pgtable-4level.h
-index 7a271b7b83d2bdb6fa05231fabd3ef379671501e..ac825e88e4e77deec98431359ccdb259802b655e 100644
+index 7a271b7b83d2bdb6fa05231fabd3ef379671501e..17649aefd6922012de5f30349361bf2dc50466e7 100644
 --- a/arch/um/include/asm/pgtable-4level.h
 +++ b/arch/um/include/asm/pgtable-4level.h
 @@ -11,7 +11,9 @@
@@ -689,7 +610,7 @@ index 7a271b7b83d2bdb6fa05231fabd3ef379671501e..ac825e88e4e77deec98431359ccdb259
  #define PMD_SIZE	(1UL << PMD_SHIFT)
  #define PMD_MASK	(~(PMD_SIZE-1))
  
-@@ -35,10 +37,12 @@
+@@ -35,10 +37,10 @@
   * entries per page directory level
   */
  
@@ -701,40 +622,14 @@ index 7a271b7b83d2bdb6fa05231fabd3ef379671501e..ac825e88e4e77deec98431359ccdb259
 +#define PTRS_PER_PMD (1U << UML_PGTABLE_SHIFT)
 +#define PTRS_PER_PUD (1U << UML_PGTABLE_SHIFT)
 +#define PTRS_PER_PGD (1U << UML_PGTABLE_SHIFT)
-+
-+#define HUGE_MAX_HSTATE 2
  
  #define USER_PTRS_PER_PGD ((TASK_SIZE + (PGDIR_SIZE - 1)) / PGDIR_SIZE)
  
-@@ -56,7 +60,9 @@
- 	       pgd_val(e))
- 
- #define pud_none(x)	(!(pud_val(x) & ~_PAGE_NEEDSYNC))
--#define	pud_bad(x)	((pud_val(x) & (~PAGE_MASK & ~_PAGE_USER)) != _KERNPG_TABLE)
-+#define	pud_bad(x)	(!(pud_val(x) & _PAGE_HUGE) && \
-+			 ((pud_val(x) & (~PAGE_MASK & ~_PAGE_USER)) != \
-+			  _KERNPG_TABLE))
- #define pud_present(x)	(pud_val(x) & _PAGE_PRESENT)
- #define pud_populate(mm, pud, pmd) \
- 	set_pud(pud, __pud(_PAGE_TABLE + __pa(pmd)))
-@@ -94,6 +100,12 @@ static inline void p4d_clear (p4d_t *p4d)
- #define pud_page(pud) phys_to_page(pud_val(pud) & PAGE_MASK)
- #define pud_pgtable(pud) ((pmd_t *) __va(pud_val(pud) & PAGE_MASK))
- 
-+#define pud_leaf pud_leaf
-+static inline bool pud_leaf(pud_t pud)
-+{
-+	return pud_present(pud) && (pud_val(pud) & _PAGE_HUGE);
-+}
-+
- #define p4d_page(p4d) phys_to_page(p4d_val(p4d) & PAGE_MASK)
- #define p4d_pgtable(p4d) ((pud_t *) __va(p4d_val(p4d) & PAGE_MASK))
- 
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
-index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74be8c8d27 100644
+index 24fdea6f88c37f4672876f76e9d5067610a87c2f..96a91a038928cc7cd6a253f42d1e51bbe4543a80 100644
 --- a/arch/um/include/asm/pgtable.h
 +++ b/arch/um/include/asm/pgtable.h
-@@ -13,10 +13,13 @@
+@@ -13,6 +13,8 @@
  
  #define _PAGE_PRESENT	0x001
  #define _PAGE_NEEDSYNC	0x002
@@ -743,12 +638,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74
  #define _PAGE_RW	0x020
  #define _PAGE_USER	0x040
  #define _PAGE_ACCESSED	0x080
- #define _PAGE_DIRTY	0x100
-+#define _PAGE_HUGE	0x200
- /* If _PAGE_PRESENT is clear, we use these: */
- #define _PAGE_PROTNONE	0x010	/* if the user mapped it with PROT_NONE;
- 				   pte_present gives true */
-@@ -26,6 +29,8 @@
+@@ -26,6 +28,8 @@
  
  #if CONFIG_PGTABLE_LEVELS == 4
  #include <asm/pgtable-4level.h>
@@ -757,7 +647,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74
  #elif CONFIG_PGTABLE_LEVELS == 2
  #include <asm/pgtable-2level.h>
  #else
-@@ -49,13 +54,19 @@ extern unsigned long end_iomem;
+@@ -49,13 +53,19 @@ extern unsigned long end_iomem;
  
  #define VMALLOC_OFFSET	(__va_space)
  #define VMALLOC_START ((end_iomem + VMALLOC_OFFSET) & ~(VMALLOC_OFFSET-1))
@@ -778,7 +668,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74
  #define __PAGE_KERNEL_EXEC                                              \
  	 (_PAGE_PRESENT | _PAGE_RW | _PAGE_DIRTY | _PAGE_ACCESSED)
  #define PAGE_NONE	__pgprot(_PAGE_PROTNONE | _PAGE_ACCESSED)
-@@ -64,7 +75,6 @@ extern unsigned long end_iomem;
+@@ -64,7 +74,6 @@ extern unsigned long end_iomem;
  #define PAGE_READONLY	__pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_ACCESSED)
  #define PAGE_KERNEL	__pgprot(_PAGE_PRESENT | _PAGE_RW | _PAGE_DIRTY | _PAGE_ACCESSED)
  #define PAGE_KERNEL_EXEC	__pgprot(__PAGE_KERNEL_EXEC)
@@ -786,50 +676,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74
  /*
   * The i386 can't do page protection for execute, and considers that the same
   * are read.
-@@ -81,9 +91,19 @@ extern unsigned long end_iomem;
- #define pte_clear(mm, addr, xp) pte_set_val(*(xp), (phys_t) 0, __pgprot(_PAGE_NEEDSYNC))
- 
- #define pmd_none(x)	(!((unsigned long)pmd_val(x) & ~_PAGE_NEEDSYNC))
--#define	pmd_bad(x)	((pmd_val(x) & (~PAGE_MASK & ~_PAGE_USER)) != _KERNPG_TABLE)
-+#define	pmd_bad(x)	(!(pmd_val(x) & _PAGE_HUGE) && \
-+			 ((pmd_val(x) & (~PAGE_MASK & ~_PAGE_USER)) != \
-+			  _KERNPG_TABLE))
- 
-+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-+/* A PMD remains identifiable as a THP while split_huge_page() temporarily
-+ * invalidates it, matching the contract documented by debug_vm_pgtable.
-+ */
-+#define pmd_present(x)	(pmd_val(x) & (_PAGE_PRESENT | _PAGE_PROTNONE | \
-+				       _PAGE_HUGE))
-+#else
- #define pmd_present(x)	(pmd_val(x) & _PAGE_PRESENT)
-+#endif
- #define pmd_clear(xp)	do { pmd_val(*(xp)) = _PAGE_NEEDSYNC; } while (0)
- 
- #define pmd_needsync(x)   (pmd_val(x) & _PAGE_NEEDSYNC)
-@@ -98,10 +118,21 @@ extern unsigned long end_iomem;
- #define pmd_pfn(pmd) (pmd_val(pmd) >> PAGE_SHIFT)
- #define pmd_page(pmd) phys_to_page(pmd_val(pmd) & PAGE_MASK)
- 
-+#define pmd_leaf pmd_leaf
-+static inline bool pmd_leaf(pmd_t pmd)
-+{
-+	return pmd_present(pmd) && (pmd_val(pmd) & _PAGE_HUGE);
-+}
-+
- #define pte_page(x) pfn_to_page(pte_pfn(x))
- 
- #define pte_present(x)	pte_get_bits(x, (_PAGE_PRESENT | _PAGE_PROTNONE))
- 
-+static inline int pte_huge(pte_t pte)
-+{
-+	return pte_present(pte) && pte_get_bits(pte, _PAGE_HUGE);
-+}
-+
- /*
-  * =================================
-  * Flags checking section.
-@@ -197,6 +228,59 @@ static inline pte_t pte_mkwrite_novma(pte_t pte)
+@@ -197,6 +206,59 @@ static inline pte_t pte_mkwrite_novma(pte_t pte)
  	return pte;
  }
  
@@ -851,7 +698,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74
 +	return pte;
 +}
 +
-+/* UML has PMD leaves for THP, but does not implement PMD swap entries. */
++/* UML maps no PMD leaves and implements no PMD swap entries. */
 +static inline int pmd_uffd_wp(pmd_t pmd)
 +{
 +	return !!(pmd_val(pmd) & _PAGE_UFFD_WP);
@@ -889,7 +736,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74
  static inline pte_t pte_mkuptodate(pte_t pte)
  {
  	pte_clear_bits(pte, _PAGE_NEEDSYNC);
-@@ -225,6 +309,30 @@ static inline void set_pte(pte_t *pteptr, pte_t pteval)
+@@ -225,6 +287,30 @@ static inline void set_pte(pte_t *pteptr, pte_t pteval)
  static inline void um_tlb_mark_sync(struct mm_struct *mm, unsigned long start,
  				    unsigned long end)
  {
@@ -920,35 +767,13 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74
  	if (!mm->context.sync_tlb_range_to) {
  		mm->context.sync_tlb_range_from = start;
  		mm->context.sync_tlb_range_to = end;
-@@ -234,11 +342,34 @@ static inline void um_tlb_mark_sync(struct mm_struct *mm, unsigned long start,
+@@ -234,11 +320,12 @@ static inline void um_tlb_mark_sync(struct mm_struct *mm, unsigned long start,
  		if (end > mm->context.sync_tlb_range_to)
  			mm->context.sync_tlb_range_to = end;
  	}
 +#endif
-+}
-+
-+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-+static inline void set_pmd_at(struct mm_struct *mm, unsigned long addr,
-+			      pmd_t *pmdp, pmd_t pmd)
-+{
-+	pmd_val(pmd) |= _PAGE_NEEDSYNC;
-+	WRITE_ONCE(*pmdp, pmd);
-+	um_tlb_mark_sync(mm, addr & PMD_MASK,
-+			 ALIGN(addr + 1, PMD_SIZE));
  }
  
-+#define pmdp_establish pmdp_establish
-+static inline pmd_t pmdp_establish(struct vm_area_struct *vma,
-+				   unsigned long address, pmd_t *pmdp,
-+				   pmd_t pmd)
-+{
-+	pmd_t old = READ_ONCE(*pmdp);
-+
-+	set_pmd_at(vma->vm_mm, address, pmdp, pmd);
-+	return old;
-+}
-+#endif
-+
  #define set_ptes set_ptes
  static inline void set_ptes(struct mm_struct *mm, unsigned long addr,
 -			    pte_t *ptep, pte_t pte, int nr)
@@ -956,7 +781,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74
  {
  	/* Basically the default implementation */
  	size_t length = nr * PAGE_SIZE;
-@@ -248,7 +379,7 @@ static inline void set_ptes(struct mm_struct *mm, unsigned long addr,
+@@ -248,7 +335,7 @@ static inline void set_ptes(struct mm_struct *mm, unsigned long addr,
  		if (--nr == 0)
  			break;
  		ptep++;
@@ -965,99 +790,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74
  	}
  
  	um_tlb_mark_sync(mm, addr, addr + length);
-@@ -278,6 +409,91 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
- 	return pte;
- }
- 
-+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-+static inline int pmd_trans_huge(pmd_t pmd)
-+{
-+	return !!(pmd_val(pmd) & _PAGE_HUGE);
-+}
-+
-+static inline pmd_t pmd_mkhuge(pmd_t pmd)
-+{
-+	pmd_val(pmd) |= _PAGE_HUGE;
-+	return pmd;
-+}
-+
-+static inline pmd_t pmd_mkinvalid(pmd_t pmd)
-+{
-+	pmd_val(pmd) &= ~(_PAGE_PRESENT | _PAGE_PROTNONE);
-+	return pmd;
-+}
-+
-+static inline int pmd_write(pmd_t pmd)
-+{
-+	return (pmd_val(pmd) & _PAGE_RW) &&
-+	       !(pmd_val(pmd) & _PAGE_PROTNONE);
-+}
-+
-+#define pmd_dirty pmd_dirty
-+static inline int pmd_dirty(pmd_t pmd)
-+{
-+	return !!(pmd_val(pmd) & _PAGE_DIRTY);
-+}
-+
-+#define pmd_young pmd_young
-+static inline int pmd_young(pmd_t pmd)
-+{
-+	return !!(pmd_val(pmd) & _PAGE_ACCESSED);
-+}
-+
-+static inline pmd_t pmd_wrprotect(pmd_t pmd)
-+{
-+	pmd_val(pmd) &= ~_PAGE_RW;
-+	return pmd;
-+}
-+
-+static inline pmd_t pmd_mkold(pmd_t pmd)
-+{
-+	pmd_val(pmd) &= ~_PAGE_ACCESSED;
-+	return pmd;
-+}
-+
-+static inline pmd_t pmd_mkclean(pmd_t pmd)
-+{
-+	pmd_val(pmd) &= ~_PAGE_DIRTY;
-+	return pmd;
-+}
-+
-+static inline pmd_t pmd_mkyoung(pmd_t pmd)
-+{
-+	pmd_val(pmd) |= _PAGE_ACCESSED;
-+	return pmd;
-+}
-+
-+static inline pmd_t pmd_mkwrite_novma(pmd_t pmd)
-+{
-+	pmd_val(pmd) |= _PAGE_RW;
-+	return pmd;
-+}
-+
-+static inline pmd_t pmd_mkdirty(pmd_t pmd)
-+{
-+	pmd_val(pmd) |= _PAGE_DIRTY;
-+	return pmd;
-+}
-+
-+#define pmd_pgprot pmd_pgprot
-+static inline pgprot_t pmd_pgprot(pmd_t pmd)
-+{
-+	return __pgprot(pmd_val(pmd) & ~PAGE_MASK);
-+}
-+
-+static inline pmd_t pmd_modify(pmd_t pmd, pgprot_t newprot)
-+{
-+	return __pmd((pmd_val(pmd) & (_PAGE_CHG_MASK | _PAGE_HUGE)) |
-+		     pgprot_val(newprot));
-+}
-+#endif
-+
- /*
-  * the pmd page can be thought of an array like this: pmd_t[PTRS_PER_PMD]
-  *
-@@ -286,11 +502,20 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
+@@ -286,11 +373,20 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
   */
  #define pmd_page_vaddr(pmd) ((unsigned long) __va(pmd_val(pmd) & PAGE_MASK))
  
@@ -1080,7 +813,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74
  
  /*
   * Encode/decode swap entries and swap PTEs. Swap PTEs are all PTEs that
-@@ -303,6 +528,7 @@ extern pte_t *virt_to_pte(struct mm_struct *mm, unsigned long addr);
+@@ -303,6 +399,7 @@ extern pte_t *virt_to_pte(struct mm_struct *mm, unsigned long addr);
   *   <--------------- offset ----------------> E < type -> 0 0 0 1 0
   *
   *   E is the exclusive marker that is not stored in swap entries.
@@ -1088,7 +821,7 @@ index 24fdea6f88c37f4672876f76e9d5067610a87c2f..ec490ced2163af7fbdc5d6bbf7ab8b74
   *   _PAGE_NEEDSYNC (bit 1) is always set to 1 in set_pte().
   */
  #define __swp_type(x)			(((x).val >> 5) & 0x1f)
-@@ -331,4 +557,23 @@ static inline pte_t pte_swp_clear_exclusive(pte_t pte)
+@@ -331,4 +428,23 @@ static inline pte_t pte_swp_clear_exclusive(pte_t pte)
  	return pte;
  }
  

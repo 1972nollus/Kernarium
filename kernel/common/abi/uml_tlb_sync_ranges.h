@@ -1,9 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* Canonical bounded TLB invalidation range helper shared with UML. */
+/* Canonical TLB synchronization contracts shared with UML: the bounded
+ * invalidation range helper, and the host's verdict on a replay batch. */
 #ifndef UML_TLB_SYNC_RANGES_H
 #define UML_TLB_SYNC_RANGES_H
 
 #define UML_TLB_SYNC_MAX_RANGES 16
+
+/* darwin_uml_vm_batch_end() returns this when an invalidation rejected the
+ * batch.  It is a bridge value rather than an errno because the host's errno
+ * values are not Linux's.  Kernel code reaches this header, and not the other
+ * bridge headers. */
+#define DARWIN_UML_VM_BATCH_REJECTED 1
 
 struct uml_tlb_sync_range {
 	unsigned long from;

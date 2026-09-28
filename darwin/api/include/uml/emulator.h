@@ -15,7 +15,12 @@ typedef int (*uml_emulator_kernel_entry)(int argc, char *const argv[],
 					char *const envp[]);
 
 /* The callback table is copied by uml_emulator_create. Its context remains
- * caller-owned and must stay valid during every run that can invoke it. */
+ * caller-owned and must stay valid during every run that can invoke it.
+ *
+ * read dequeues one whole Ethernet frame into buffer and returns its length,
+ * at most capacity. It returns 0 when no frame is pending and a negative errno
+ * on failure. The guest drops a frame longer than capacity or shorter than an
+ * Ethernet header. */
 struct uml_emulator_network_callbacks {
 	uint32_t struct_size;
 	void *context;

@@ -315,6 +315,31 @@ uml_add_guest_integration_test(
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
 
+# Unmapping user pages beside the native window leaves the kernel's own
+# mappings in it alone.
+uml_add_guest_integration_test(
+    NAME guest-native-window-unmap
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_native_window_unmap.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
+# A tracer's PSTATE writes are filtered as native arm64 filters them.
+uml_add_guest_integration_test(
+    NAME guest-ptrace-pstate
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_ptrace_pstate.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
 # A stopped embedded guest returns to its host only after every kernel
 # thread has left the image the loader then unmaps.
 add_executable(uml_run_end_stop_tests kernel/run_end_stop_tests.cpp)
