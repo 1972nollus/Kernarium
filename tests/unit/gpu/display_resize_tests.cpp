@@ -69,10 +69,21 @@ void resizeNotificationsAreCoalescedAndBounded()
         "rearmed resize changed the settled geometry");
 }
 
+[[nodiscard]] bool framebufferHasStorage(
+    uml::gpu::ScanoutFramebuffer& framebuffer)
+{
+    std::lock_guard lock(framebuffer);
+    return framebuffer.hasStorage();
+}
+
 void framebufferResizePublishesOneClearedGeometry()
 {
     uml::gpu::ScanoutFramebuffer framebuffer {64, 48};
+    require(!framebufferHasStorage(framebuffer),
+        "a new framebuffer held pixels before anything was written");
     framebuffer.fillSelfTestPattern();
+    require(framebufferHasStorage(framebuffer),
+        "the self-test pattern did not allocate the framebuffer");
     framebuffer.resize(96, 72);
     require(framebuffer.width() == 96 && framebuffer.height() == 72,
         "framebuffer resize did not publish its new dimensions");
@@ -81,11 +92,12 @@ void framebufferResizePublishesOneClearedGeometry()
             96U * uml::gpu::protocol::gpuBytesPerPixel,
         "framebuffer resize retained the old row stride");
     {
+        /* A new mode is black until something is written to it, and holds
+         * no pixels until then. */
         std::lock_guard lock(framebuffer);
-        require(std::ranges::all_of(
-                    framebuffer.pixels(),
-                    [](std::uint8_t value) { return value == 0; }),
-            "framebuffer resize exposed pixels from the old geometry");
+        require(!framebuffer.hasStorage() && framebuffer.pixels().empty() &&
+                framebuffer.data() == nullptr,
+            "framebuffer resize kept storage for the new geometry");
     }
 
     const std::array<std::uint8_t, 4> bluePixel {0xff, 0, 0, 0xff};
@@ -106,13 +118,86 @@ void framebufferResizePublishesOneClearedGeometry()
     {
         std::lock_guard lock(framebuffer);
         const auto pixels = framebuffer.pixels();
+        require(pixels.size() ==
+                96U * 72U * uml::gpu::protocol::gpuBytesPerPixel,
+            "a partial update did not allocate the whole framebuffer");
         require(std::equal(
                     bluePixel.begin(),
                     bluePixel.end(),
                     pixels.end() -
                         static_cast<std::ptrdiff_t>(bluePixel.size())),
             "packed update used the pre-resize framebuffer stride");
+        require(std::all_of(
+                    pixels.begin(),
+                    pixels.end() -
+                        static_cast<std::ptrdiff_t>(bluePixel.size()),
+                    [](std::uint8_t value) { return value == 0; }),
+            "a partial update exposed pixels from the old geometry");
     }
+
+    /* Clearing releases the pixels too, and the next write starts again
+     * from black. */
+    framebuffer.fillSelfTestPattern();
+    framebuffer.clear();
+    require(!framebufferHasStorage(framebuffer),
+        "clearing the framebuffer kept its storage");
+    require(framebuffer.width() == 96 && framebuffer.height() == 72,
+        "clearing the framebuffer changed the applied mode");
+    (void)framebuffer.update(
+        bluePixel,
+        1,
+        1,
+        bluePixel.size(),
+        uml::gpu::protocol::GpuFormat::b8g8r8a8Unorm,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1);
+    {
+        std::lock_guard lock(framebuffer);
+        const auto pixels = framebuffer.pixels();
+        require(std::equal(bluePixel.begin(), bluePixel.end(),
+                    pixels.begin()) &&
+                std::all_of(
+                    pixels.begin() +
+                        static_cast<std::ptrdiff_t>(bluePixel.size()),
+                    pixels.end(),
+                    [](std::uint8_t value) { return value == 0; }),
+            "an update after a clear exposed the cleared pixels");
+    }
+}
+
+/* LibVNCServer reads a retained framebuffer through the pointer it was given
+ * at construction, so clearing zeroes that storage in place. */
+void retainedFramebufferKeepsItsStorage()
+{
+    uml::gpu::ScanoutFramebuffer framebuffer {
+        8, 4, uml::gpu::FramebufferStorage::retained};
+    std::uint8_t* storage = nullptr;
+    {
+        std::lock_guard lock(framebuffer);
+        storage = framebuffer.data();
+        require(storage != nullptr &&
+                std::ranges::all_of(
+                    framebuffer.pixels(),
+                    [](std::uint8_t value) { return value == 0; }),
+            "a retained framebuffer did not start with zeroed storage");
+    }
+    framebuffer.fillSelfTestPattern();
+    {
+        std::lock_guard lock(framebuffer);
+        framebuffer.clearLocked();
+        require(framebuffer.data() == storage &&
+                std::ranges::all_of(
+                    framebuffer.pixels(),
+                    [](std::uint8_t value) { return value == 0; }),
+            "clearing a retained framebuffer moved or kept its pixels");
+    }
+    framebuffer.clear();
+    require(framebufferHasStorage(framebuffer),
+        "clearing a retained framebuffer released its storage");
 }
 
 void aspectFitCentersGuestContentWithoutDistortion()
@@ -620,6 +705,7 @@ int main()
     try {
         resizeNotificationsAreCoalescedAndBounded();
         framebufferResizePublishesOneClearedGeometry();
+        retainedFramebufferKeepsItsStorage();
         aspectFitCentersGuestContentWithoutDistortion();
         scanoutRectanglesSampleOnlyTheirOwnTexels();
         hostRotationSwapsPresentationAndMapsGuestInput();

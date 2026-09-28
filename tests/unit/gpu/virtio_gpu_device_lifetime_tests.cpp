@@ -310,6 +310,7 @@ public:
         lastReadWidth = width;
         lastReadHeight = height;
         lastReadDestinationBytes = destination.size();
+        lastReadDestination = destination.data();
         for (std::uint32_t row = 0; row < height; ++row) {
             for (std::uint32_t column = 0; column < width; ++column) {
                 const auto offset =
@@ -545,6 +546,7 @@ public:
     std::uint32_t lastReadWidth {};
     std::uint32_t lastReadHeight {};
     std::size_t lastReadDestinationBytes {};
+    const std::uint8_t* lastReadDestination {};
     std::uint8_t readResourceTag {0x5aU};
     unsigned nativeResourceRequestCount {};
     unsigned resourceMetalTextureCount {};
@@ -716,6 +718,24 @@ void requireFirstAllocationFailsBeforeCommit(
     }
     clearAllocationFailure();
     require(failed);
+}
+
+/* Processes a request that may allocate its reply and nothing else. */
+[[nodiscard]] std::vector<std::uint8_t> processAllocatingOnlyTheReply(
+    VirtioGpuDevice& device,
+    std::span<const std::uint8_t> request)
+{
+    std::vector<std::uint8_t> result;
+    bool allocatedMore = false;
+    failAfterAllocations(1);
+    try {
+        result = device.process(request, false);
+    } catch (const std::bad_alloc&) {
+        allocatedMore = true;
+    }
+    clearAllocationFailure();
+    require(!allocatedMore);
+    return result;
 }
 
 [[nodiscard]] protocol::GpuResourceCreate2d create2d(
@@ -1196,7 +1216,7 @@ void rendererExecutionFailuresPreserveDeviceState()
     require(dependencies.readResourceCount == 3);
     require(dependencies.displayUpdateCount == 1);
 
-    // Once setScanout has sized the packed readback staging area, a fallback
+    // Once the first readback has sized the packed staging area, a fallback
     // flush allocates only its response. Any second allocation is a regression
     // to per-frame staging or cloning.
     std::vector<std::uint8_t> warmedFlush;
@@ -1959,7 +1979,7 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
     scanout.scanoutId = protocol::primaryScanoutId;
     scanout.resourceId = create.resourceId;
 
-    failAfterAllocations(1);
+    failNextAllocation();
     bool responseFailed = false;
     try {
         (void)device.process(requestBytes(scanout), false);
@@ -1970,12 +1990,10 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
     require(responseFailed);
     require(dependencies.guestScanoutChangeCount == 0);
 
-    failNextAllocation();
-    const auto retry = device.process(requestBytes(scanout), false);
-    clearAllocationFailure();
-    require(responseType(retry) == protocol::GpuResponse::errorOutOfMemory);
-    require(dependencies.guestScanoutChangeCount == 0);
-    require(responseType(device.process(requestBytes(scanout), false)) ==
+    /* The reply is all a Virgl scanout allocates: its readback staging waits
+     * for the first flush that reads back. */
+    require(responseType(processAllocatingOnlyTheReply(
+                device, requestBytes(scanout))) ==
         protocol::GpuResponse::okNoData);
     require(dependencies.guestScanoutChangeCount == 1);
     require(dependencies.lastGuestScanoutWidth == scanout.rectangle.width);
@@ -2014,6 +2032,100 @@ void setScanoutReplyFailureDoesNotCommitAllocation()
 
     device.reset();
     require(dependencies.guestSessionResetCount == 1);
+}
+
+/* A Virgl scanout allocates its readback staging at the first flush that
+ * reads back, which is therefore where running out of memory is reported. The
+ * staging serves every later readback of that scanout and of page flips at
+ * its size, and is released when the scanout changes size or kind. */
+void readbackStagingIsAllocatedByTheFirstReadback()
+{
+    FakeGpuDependencies dependencies;
+    dependencies.fullCpuFallback = true;
+    VirtioGpuDevice device {
+        dependencies,
+        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
+        [](std::uint64_t, std::size_t) {
+            return std::span<std::uint8_t> {};
+        }};
+    const auto first = create3d(0x901);
+    const auto second = create3d(0x902);
+    const auto software = create2d(0x903);
+    require(responseType(device.process(requestBytes(first), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(responseType(device.process(requestBytes(second), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(responseType(device.process(requestBytes(software), false)) ==
+        protocol::GpuResponse::okNoData);
+
+    protocol::GpuSetScanout scanout {};
+    scanout.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::setScanout);
+    scanout.rectangle = {.x = 0, .y = 0, .width = 4, .height = 4};
+    scanout.scanoutId = protocol::primaryScanoutId;
+    scanout.resourceId = first.resourceId;
+    protocol::GpuResourceFlush flush {};
+    flush.header.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::resourceFlush);
+    flush.rectangle = scanout.rectangle;
+    flush.resourceId = first.resourceId;
+
+    const auto setScanout = [&](std::uint32_t resourceId) {
+        scanout.resourceId = resourceId;
+        flush.resourceId = resourceId;
+        flush.rectangle = scanout.rectangle;
+        require(responseType(processAllocatingOnlyTheReply(
+                    device, requestBytes(scanout))) ==
+            protocol::GpuResponse::okNoData);
+    };
+    // The first readback fails if it cannot allocate the staging, and
+    // succeeds once it can. Either way nothing reaches the display early.
+    const auto requireReadbackAllocates = [&] {
+        const auto reads = dependencies.readResourceCount;
+        const auto updates = dependencies.displayUpdateCount;
+        failAfterAllocations(1);
+        const auto failed = device.process(requestBytes(flush), false);
+        clearAllocationFailure();
+        require(responseType(failed) ==
+            protocol::GpuResponse::errorOutOfMemory);
+        require(dependencies.readResourceCount == reads);
+        require(dependencies.displayUpdateCount == updates);
+        require(responseType(device.process(requestBytes(flush), false)) ==
+            protocol::GpuResponse::okNoData);
+        require(dependencies.readResourceCount == reads + 1U);
+        require(dependencies.displayUpdateCount == updates + 1U);
+        require(dependencies.lastReadDestinationBytes ==
+            static_cast<std::size_t>(scanout.rectangle.width) *
+                scanout.rectangle.height * protocol::gpuBytesPerPixel);
+        return dependencies.lastReadDestination;
+    };
+    const auto requireReadbackReuses = [&](const std::uint8_t* staging) {
+        const auto reads = dependencies.readResourceCount;
+        require(responseType(processAllocatingOnlyTheReply(
+                    device, requestBytes(flush))) ==
+            protocol::GpuResponse::okNoData);
+        require(dependencies.readResourceCount == reads + 1U);
+        require(dependencies.lastReadDestination == staging);
+    };
+
+    setScanout(first.resourceId);
+    const auto* staging = requireReadbackAllocates();
+    requireReadbackReuses(staging);
+    /* A page flip at the same size keeps it. */
+    setScanout(second.resourceId);
+    requireReadbackReuses(staging);
+
+    /* A new size releases it, and the next readback allocates it again. */
+    scanout.rectangle = {.x = 0, .y = 0, .width = 2, .height = 2};
+    setScanout(first.resourceId);
+    staging = requireReadbackAllocates();
+    requireReadbackReuses(staging);
+
+    /* So does a 2D scanout, which never reads back, at the same size. */
+    setScanout(software.resourceId);
+    setScanout(first.resourceId);
+    staging = requireReadbackAllocates();
+    requireReadbackReuses(staging);
 }
 
 // A capability query the renderer cannot answer, as when it has lost its GL
@@ -2723,11 +2835,30 @@ void virglBlobScanoutPresentsItsGlTexture()
     require(dependencies.cpuFallbackFrameCount == fallbacksBeforeTexture + 2U);
     dependencies.nativeResourceAvailable = false;
 
+    /* A scanout the display takes as a Metal texture releases the readback
+     * staging, so the Virgl blob's next readback allocates it again. */
+    require(responseType(device.process(requestBytes(scanout), false)) ==
+        protocol::GpuResponse::okNoData);
+    dependencies.rejectNext(FakeGpuDependencies::Operation::blob_scanout);
+    require(responseType(device.process(requestBytes(scanout), false)) ==
+        protocol::GpuResponse::okNoData);
+    const auto readsBeforeRelease = dependencies.readResourceCount;
+    failAfterAllocations(1);
+    const auto releasedFlush = device.process(requestBytes(flush), false);
+    clearAllocationFailure();
+    require(responseType(releasedFlush) ==
+        protocol::GpuResponse::errorOutOfMemory);
+    require(dependencies.readResourceCount == readsBeforeRelease);
+    require(responseType(device.process(requestBytes(flush), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(dependencies.readResourceCount == readsBeforeRelease + 1U);
+
+    const auto releasesBeforeDisable = dependencies.releaseBlobScanoutCount;
     auto disable = scanout;
     disable.resourceId = protocol::invalidResourceId;
     require(responseType(device.process(requestBytes(disable), false)) ==
         protocol::GpuResponse::okNoData);
-    require(dependencies.releaseBlobScanoutCount == 0);
+    require(dependencies.releaseBlobScanoutCount == releasesBeforeDisable);
     require(dependencies.unmapResourceCount == 0);
     const auto readsAfterDisable = dependencies.readResourceCount;
     require(responseType(device.process(requestBytes(flush), false)) ==
@@ -2996,6 +3127,7 @@ void runVirtioGpuDeviceTests()
     backingRangesAndAttachStateAreValidated();
     failedTransferDoesNotPartiallyCommitPixels();
     setScanoutReplyFailureDoesNotCommitAllocation();
+    readbackStagingIsAllocatedByTheFirstReadback();
     unanswerableCapabilityQueriesFailOnlyThemselves();
     venusBlobsAndFencesUseStandardWireState();
     blobMappingCapacityFollowsTheAperture();
