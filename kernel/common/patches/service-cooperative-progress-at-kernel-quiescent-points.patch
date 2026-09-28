@@ -38,7 +38,7 @@ index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index b8b872ba3f0056242fc73f63d62fa09404192670..9ee32c0fbe4b723f0defaee6d078be9a68e80635 100644
+index 5f1418a4e89517f160ae293cb37aaedd82f33092..4bc1ddd3d663b0c410be0f09de01a200017d3fb9 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -225,6 +225,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)
@@ -73,10 +73,10 @@ index b8b872ba3f0056242fc73f63d62fa09404192670..9ee32c0fbe4b723f0defaee6d078be9a
  static int do_op_one_page(unsigned long addr, int len, int is_write,
  		 int (*op)(unsigned long addr, int len, void *arg), void *arg)
  {
-@@ -234,8 +259,12 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
- 	bool may_sleep = !faulthandler_disabled();
- 
- 	page = maybe_map(addr, is_write);
+@@ -246,8 +271,12 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+ 		page = NULL;
+ 	}
+ #endif
 -	if (page == NULL)
 +	if (!page) {
 +#ifdef UML_HOST_DARWIN
@@ -86,10 +86,10 @@ index b8b872ba3f0056242fc73f63d62fa09404192670..9ee32c0fbe4b723f0defaee6d078be9a
 +	}
  
  #ifdef CONFIG_64BIT
- #if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
-@@ -276,6 +305,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+ 	pagefault_disable();
+@@ -278,6 +307,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+ 	if (is_write && n >= 0)
  		mark_user_page_dirty(user_addr, page, may_sleep);
- out_put:
  	put_page(page);
 +#ifdef UML_HOST_DARWIN
 +	darwin_uaccess_checkpoint(may_sleep);
