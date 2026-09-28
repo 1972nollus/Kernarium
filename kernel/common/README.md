@@ -87,6 +87,20 @@ so a short path costs the same wherever it lies in its page.
 `guest-user-strings` checks the copy's length limits, page crossings and
 faults.
 
+An arm64 signal handler installed without `SA_RESTORER` returns to a
+trampoline in the final guest page, above `STACK_TOP`, where the Darwin host
+runs `rt_sigreturn` itself. Every arm64 task maps that page read-only as
+`[sigpage]`, holding native arm64's `__kernel_rt_sigreturn` instructions at
+the trampoline, and the kernel places a frame record with the interrupted x29
+and x30 above the signal frame. Unwinders such as libgcc's therefore cross a
+signal frame as on native arm64, which `backtrace()` in a handler and thread
+cancellation inside a system call rely on. Like native's sigreturn page, the
+page is sealed where the kernel seals system mappings, and a debugger may
+write it as the tracee's private copy; a breakpoint written at the trampoline
+never fires, because the host returns from the handler before fetching there.
+`guest-signal-unwind` checks the unwinds, the frame record and a tracer's
+write.
+
 Both maintained kernel lines perform futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value
 observed by that operation, and wake-operation arithmetic retries competing

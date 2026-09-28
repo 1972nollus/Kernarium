@@ -2770,9 +2770,36 @@ def run_receipt_campaign(
     return 1 if result["outcome"] == "receipt-backed-cts-failures" else 0
 
 
+HELP_EPILOG = """\
+--qualification binds a run to vulkan_cts_receipt.json: the sealed image's
+receipt, the CTS and Mesa source locks, and the staged KosmicKrisp provider
+digest, which must match the configured verified prefix so a run cannot
+silently use an older provider. --mode exact-family runs named --case values
+or one --family, never fractioned or repeated, and validates the results in
+released traversal order. current-must-pass runs a fraction of the released
+list. Accepted NotSupported and warning results stay distinct from Pass.
+
+The summary states qpa_transfer, with qpa_missing_bytes unless it is complete.
+Only complete is accepted, and on a baked device fraction also a transfer
+recovered with no missing bytes: a run that lost results says so rather than
+reporting a short one. dEQP ends its whole session at the first
+ResourceError, so the guest runs the rest of the order it enumerated in a
+fresh CTS process, at most eight processes in all within the shard deadline.
+Nothing is re-run or invented: summary.txt states cts_sessions and
+cts_cases_run, and the union of the sessions must be the enumerated
+selection, in order, each case once.
+
+--relax-diagnostics changes the generated guest script, so a campaign enables
+it only for a new generation. QPA transport, stall handling and resumption
+after an emulator exit are shared with run_vk_gl_cts.py; see its --help.
+"""
+
+
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="run a frozen Vulkan CTS development or receipt-backed lane"
+        description="run a frozen Vulkan CTS development or receipt-backed lane",
+        epilog=HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--relax-diagnostics",

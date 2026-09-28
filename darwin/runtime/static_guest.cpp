@@ -338,10 +338,11 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 		cpu.execution_mode, registers.pc);
 	cpu.timestamp_faults = (registers.svcr & x86_64_timestamp_faults) != 0;
 	/* Linux runs userspace with IF set, and no user instruction can clear
-	 * it (CLI and STI raise #GP; POPF and IRET keep it). The kernel's image
-	 * of a task fresh from execve holds no flags and one restored from a
-	 * signal frame holds the frame's, so IF is supplied here with the
-	 * reserved bit and reaches the kernel on the way out. */
+	 * it (CLI and STI raise #GP; POPF and IRET keep it). The kernel sets IF
+	 * and the reserved bit at execve and keeps both through sigreturn and
+	 * tracer writes, which may change only the flags Linux lets them change.
+	 * Setting both here too keeps that guarantee for any image the kernel
+	 * hands over, and they reach the kernel on the way out. */
 	cpu.rflags = registers.x[x86_64_rflags_slot] |
 		x86_64::rflags_reserved | x86_64::rflags_interrupt;
 	cpu.compat_tls_bases = {};

@@ -10,16 +10,16 @@ Generate the i386 dispatch table from the canonical Linux 6.18 syscall specifica
  arch/Kconfig                                |   4 +
  arch/arm64/um/Kconfig                       |  17 +-
  arch/arm64/um/Makefile                      |  11 +-
- arch/arm64/um/asm/elf.h                     |  82 ++-
+ arch/arm64/um/asm/elf.h                     |  83 ++-
  arch/arm64/um/asm/ptrace.h                  |   6 +
  arch/arm64/um/asm/seccomp.h                 |  42 ++
  arch/arm64/um/asm/syscall.h                 |  10 +-
  arch/arm64/um/asm/unistd.h                  |  13 +
  arch/arm64/um/asm/user.h                    |  27 +
  arch/arm64/um/mmap.c                        |   9 +
- arch/arm64/um/ptrace.c                      |  92 ++++
+ arch/arm64/um/ptrace.c                      |  94 ++++
  arch/arm64/um/shared/sysdep/ptrace.h        |  15 +
- arch/arm64/um/signal.c                      | 517 +++++++++++++++++-
+ arch/arm64/um/signal.c                      | 513 +++++++++++++++++-
  arch/arm64/um/tls.c                         |   3 +
  arch/arm64/um/x86_32.h                      |   9 +
  arch/arm64/um/x86_32_syscalls.c             | 571 ++++++++++++++++++++
@@ -45,7 +45,7 @@ Generate the i386 dispatch table from the canonical Linux 6.18 syscall specifica
  include/linux/syscall_user_dispatch_types.h |   2 +-
  kernel/entry/Makefile                       |   3 +-
  net/ethtool/ioctl.c                         |   1 +
- 38 files changed, 1791 insertions(+), 189 deletions(-)
+ 38 files changed, 1790 insertions(+), 189 deletions(-)
  create mode 100644 arch/arm64/um/asm/seccomp.h
  create mode 100644 arch/arm64/um/x86_32.h
  create mode 100644 arch/arm64/um/x86_32_syscalls.c
@@ -139,7 +139,7 @@ index 476b8f2426167dd2d1c07c0f7b7d3a6075453492..ea7f7cb331aa9886b14387022a824763
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index 57b834791c66f9c7bb1beae8cfceb212adf00b48..61a22bf85f676d1445d66d09f1da8e0b3f09d467 100644
+index 010fbc343a529602a189ec4cec1bed06c4615bba..079e80c27dac54ae4c5cb0836fcb67a5eabbc44c 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
 @@ -32,9 +32,14 @@
@@ -157,9 +157,9 @@ index 57b834791c66f9c7bb1beae8cfceb212adf00b48..61a22bf85f676d1445d66d09f1da8e0b
 +	 (header)->e_ident[EI_CLASS] == ELFCLASS64 && \
 +	 (header)->e_ident[EI_DATA] == ELFDATA2LSB)
  
- /* x86-64 starts a task with the flat 64-bit code and stack selectors; the
-  * data selectors stay null as flush_thread() left them.
-@@ -46,9 +51,82 @@
+ /* x86-64 starts a task with the flat 64-bit code and stack selectors and
+  * with RFLAGS IF and bit 1, as Linux's start_thread(); the data selectors
+@@ -48,9 +53,83 @@
  } while (0)
  
  #define SET_PERSONALITY(executable) do { \
@@ -206,6 +206,7 @@ index 57b834791c66f9c7bb1beae8cfceb212adf00b48..61a22bf85f676d1445d66d09f1da8e0b
 +	UPT_X86_64(guest, UML_X86_64_R15) = 0;
 +	UPT_X86_64_FS_BASE(guest) = 0;
 +	UPT_X86_64_GS_BASE(guest) = 0;
++	UPT_X86_64_RFLAGS(guest) = UML_X86_RFLAGS_INITIAL;
 +	upt_x86_64_set_segment_selector(guest, 0, 0x2b);
 +	upt_x86_64_set_segment_selector(guest, 1, 0x23);
 +	upt_x86_64_set_segment_selector(guest, 2, 0x2b);
@@ -442,10 +443,10 @@ index 1a8b242f6aa99b62d006f59bfc55f0d609280d26..3294381b9533c3e8892858694bfa03bd
  		return uml_x86_64_get_unmapped_area_32bit(filp, addr, len, flags,
  						     vm_flags);
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index a4767ee8185daf64b4524f952b5dec1b61c73b8a..03612f21119fe2c96208237a462ad80b2e606cda 100644
+index 0e16e611416a790dd3a58a5d688cec2fe0ea4a0a..23145bdaae87aa507991bcbf787bfd680c41ba6a 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
-@@ -79,6 +79,51 @@ static void set_user_regs(struct uml_pt_regs *guest,
+@@ -81,6 +81,53 @@ static void set_user_regs(struct uml_pt_regs *guest,
  	upt_x86_64_set_segment_selector(guest, 5, regs->gs);
  }
  
@@ -489,7 +490,9 @@ index a4767ee8185daf64b4524f952b5dec1b61c73b8a..03612f21119fe2c96208237a462ad80b
 +	guest->orig_x0 = regs->orig_eax;
 +	UPT_X86_64_RIP(guest) = regs->eip;
 +	upt_x86_64_set_segment_selector(guest, 1, regs->cs);
-+	UPT_X86_64_RFLAGS(guest) = regs->eflags | 2;
++	UPT_X86_64_RFLAGS(guest) =
++		(UPT_X86_64_RFLAGS(guest) & ~UML_X86_RFLAGS_TRACER_MASK) |
++		(regs->eflags & UML_X86_RFLAGS_TRACER_MASK) | 2;
 +	UPT_X86_64(guest, UML_X86_64_RSP) = regs->esp;
 +	upt_x86_64_set_segment_selector(guest, 2, regs->ss);
 +}
@@ -497,7 +500,7 @@ index a4767ee8185daf64b4524f952b5dec1b61c73b8a..03612f21119fe2c96208237a462ad80b
  unsigned long getreg(struct task_struct *child, int regno)
  {
  	struct user_regs_struct regs;
-@@ -152,6 +197,32 @@ static int genregs_set(struct task_struct *target,
+@@ -154,6 +201,32 @@ static int genregs_set(struct task_struct *target,
  	return error;
  }
  
@@ -530,7 +533,7 @@ index a4767ee8185daf64b4524f952b5dec1b61c73b8a..03612f21119fe2c96208237a462ad80b
  static int fpregs_get(struct task_struct *target,
  		      const struct user_regset *regset, struct membuf to)
  {
-@@ -194,8 +265,29 @@ static const struct user_regset_view uml_x86_64_view = {
+@@ -196,8 +269,29 @@ static const struct user_regset_view uml_x86_64_view = {
  	.n = ARRAY_SIZE(uml_x86_64_regsets),
  };
  
@@ -561,10 +564,10 @@ index a4767ee8185daf64b4524f952b5dec1b61c73b8a..03612f21119fe2c96208237a462ad80b
  	return &uml_x86_64_view;
  }
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index e9f2fa31680132fae796582d93da3dfe7667d4c5..0f237234909adfe6ec773a5a639bb0904b4e32c0 100644
+index a83391a7d46cb661683616999460b7bf418f94a0..6a7ad1d350106455333ef2dd8efc70d35a511db4 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
-@@ -71,6 +71,7 @@ struct uml_pt_regs {
+@@ -81,6 +81,7 @@ struct uml_pt_regs {
  #define UPT_X86_64_FS_BASE(regs) UPT_X((regs), 17)
  #define UPT_X86_64_GS_BASE(regs) UPT_X((regs), 18)
  #define UML_X86_64_COMPAT_SYSCALL (1UL << 32)
@@ -572,7 +575,7 @@ index e9f2fa31680132fae796582d93da3dfe7667d4c5..0f237234909adfe6ec773a5a639bb090
  /* PR_SET_TSC(PR_TSC_SIGSEGV): RDTSC and RDTSCP raise #GP. */
  #define UML_X86_64_TSC_SIGSEGV (1UL << 34)
  
-@@ -82,6 +83,20 @@ static inline int upt_x86_64_compat_syscall(const struct uml_pt_regs *regs)
+@@ -92,6 +93,20 @@ static inline int upt_x86_64_compat_syscall(const struct uml_pt_regs *regs)
  #define UPT_X86_64_COMPAT_SYSCALL(regs) \
  	upt_x86_64_compat_syscall(regs)
  
@@ -594,7 +597,7 @@ index e9f2fa31680132fae796582d93da3dfe7667d4c5..0f237234909adfe6ec773a5a639bb090
  upt_x86_64_segment_selector(const struct uml_pt_regs *regs, unsigned int index)
  {
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c696f4e1b 100644
+index 775f7b80119886229c864f2b7dd16f9b57b836ba..0f3c17e36482e3db0a9005876062939b72126e4b 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -1,7 +1,9 @@
@@ -718,14 +721,10 @@ index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c
  #define UML_X86_64_X87_SIGNIFICAND_SLOT 19
  #define UML_X86_64_X87_EXPONENT_SLOT 27
  #define UML_X86_64_X87_TOP_MASK (7U << 11)
-@@ -131,10 +223,25 @@ struct uml_x86_64_task_fpstate {
+@@ -131,10 +223,21 @@ struct uml_x86_64_task_fpstate {
  #define UML_X86_64_RFLAGS_TF (1UL << 8)
  #define UML_X86_64_RFLAGS_DF (1UL << 10)
  #define UML_X86_64_RFLAGS_RF (1UL << 16)
-+#define UML_X86_RFLAGS_RESTORE_MASK \
-+	((1UL << 0) | (1UL << 2) | (1UL << 4) | (1UL << 6) | \
-+	 (1UL << 7) | UML_X86_64_RFLAGS_TF | UML_X86_64_RFLAGS_DF | \
-+	 (1UL << 11) | UML_X86_64_RFLAGS_RF | (1UL << 18))
 +#define UML_X86_32_USER_CS 0x23
 +#define UML_X86_32_USER_DS 0x2b
 +#define UML_X86_32_NR_SIGRETURN 119
@@ -744,7 +743,7 @@ index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c
  static_assert(sizeof(struct uml_x86_64_task_fpstate) ==
  	      sizeof(elf_fpregset_t));
  
-@@ -202,7 +309,8 @@ static void clear_x86_64_fpstate(struct uml_pt_regs *guest)
+@@ -202,7 +305,8 @@ static void clear_x86_64_fpstate(struct uml_pt_regs *guest)
  }
  
  static int save_x86_64_fpstate(struct uml_x86_64_xstate __user *user_state,
@@ -754,7 +753,7 @@ index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c
  {
  	struct uml_x86_64_xstate state = { };
  	struct uml_pt_regs *guest = &regs->regs;
-@@ -249,8 +357,7 @@ static int save_x86_64_fpstate(struct uml_x86_64_xstate __user *user_state,
+@@ -249,8 +353,7 @@ static int save_x86_64_fpstate(struct uml_x86_64_xstate __user *user_state,
  		}
  	}
  	state.fpstate.sw_reserved.magic1 = UML_X86_64_FP_XSTATE_MAGIC1;
@@ -764,7 +763,7 @@ index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c
  	state.fpstate.sw_reserved.xfeatures = UML_X86_64_XFEATURES;
  	state.fpstate.sw_reserved.xstate_size = UML_X86_64_XSTATE_SIZE;
  	state.header.xfeatures = UML_X86_64_XFEATURES;
-@@ -262,7 +369,8 @@ static int save_x86_64_fpstate(struct uml_x86_64_xstate __user *user_state,
+@@ -262,7 +365,8 @@ static int save_x86_64_fpstate(struct uml_x86_64_xstate __user *user_state,
  }
  
  static int restore_x86_64_fpstate(struct pt_regs *regs,
@@ -774,7 +773,7 @@ index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c
  {
  	struct uml_x86_64_xstate state = { };
  	struct uml_pt_regs *guest = &regs->regs;
-@@ -289,7 +397,7 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
+@@ -289,7 +393,7 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
  	if (state.fpstate.sw_reserved.magic1 ==
  		    UML_X86_64_FP_XSTATE_MAGIC1 &&
  	    state.fpstate.sw_reserved.extended_size ==
@@ -783,7 +782,7 @@ index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c
  	    state.fpstate.sw_reserved.xstate_size == UML_X86_64_XSTATE_SIZE) {
  		if (get_user(magic2, (unsigned int __user *)
  		    (user_address + UML_X86_64_XSTATE_SIZE)))
-@@ -364,6 +472,328 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
+@@ -364,6 +468,328 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
  	return 0;
  }
  
@@ -1112,7 +1111,7 @@ index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c
  static int
  save_x86_64_mcontext(struct uml_x86_64_sigcontext __user *context,
  		     struct pt_regs *regs, unsigned long oldmask,
-@@ -432,7 +862,8 @@ restore_x86_64_mcontext(struct pt_regs *regs,
+@@ -435,7 +861,8 @@ restore_x86_64_mcontext(struct pt_regs *regs,
  		return 1;
  	upt_x86_64_set_segment_selector(guest, 1, state.cs | 3);
  	upt_x86_64_set_segment_selector(guest, 2, state.ss | 3);
@@ -1122,7 +1121,7 @@ index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c
  		return 1;
  	guest->svcr &= ~UML_X86_64_COMPAT_SYSCALL;
  	PT_REGS_SYSCALL_NR(regs) = -1;
-@@ -480,7 +911,8 @@ static int setup_x86_64_signal_stack(unsigned long stack_top,
+@@ -483,7 +910,8 @@ static int setup_x86_64_signal_stack(unsigned long stack_top,
  	error |= __save_altstack(&frame->uc.uc_stack,
  		UPT_X86_64(&regs->regs, UML_X86_64_RSP));
  	error |= __copy_to_user(&frame->uc.uc_sigmask, mask, sizeof(*mask));
@@ -1132,7 +1131,7 @@ index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c
  	error |= save_x86_64_mcontext(&frame->uc.uc_mcontext, regs,
  		mask->sig[0], (unsigned long)fpstate);
  	if (ksig->ka.sa.sa_flags & SA_SIGINFO)
-@@ -510,6 +942,8 @@ static int setup_x86_64_signal_stack(unsigned long stack_top,
+@@ -513,6 +941,8 @@ static int setup_x86_64_signal_stack(unsigned long stack_top,
  int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
  			  struct pt_regs *regs, sigset_t *mask)
  {
@@ -1141,7 +1140,7 @@ index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c
  	return setup_x86_64_signal_stack(stack_top, ksig, regs, mask);
  }
  
-@@ -537,3 +971,72 @@ SYSCALL_DEFINE0(rt_sigreturn)
+@@ -540,3 +970,72 @@ SYSCALL_DEFINE0(rt_sigreturn)
  	force_sig(SIGSEGV);
  	return 0;
  }

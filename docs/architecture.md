@@ -273,7 +273,9 @@ The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
 arm64 userspace; per-task mode selects only an x86-family operand and address
 width. As on x86 Linux, a task always runs with RFLAGS.IF set: the host sets it
-on entry, whatever the kernel's register image holds. Register, YMM, MMX, and
+on entry, whatever the kernel's register image holds, and the kernel keeps it
+in that image as the [mainline README](../kernel/mainline-6.18/README.md)
+describes. Register, YMM, MMX, and
 x87 state is serialized in the task-owned bridge frame across carrier
 scheduling. The host routes userspace instruction execution through immutable,
 data-only streams of pointers to precompiled handwritten arm64 assembly
