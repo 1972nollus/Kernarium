@@ -3,10 +3,19 @@
  * The host-forward specification is the only user-facing grammar the user
  * network exposes, and a silently misread forward is worse than a refused one:
  * the guest port simply never answers. Pin every accepted form, every default,
- * and the malformed shapes that must be refused.
+ * and the malformed shapes that must be refused, and when a forward may join
+ * a SLiRP instance.
  */
 #include "provider.hpp"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <string_view>
 
@@ -53,6 +62,88 @@ void expect_parsed(std::string_view specification, bool udp,
 	failures++;
 }
 
+/* A loopback port nothing listens on, found by letting the host pick one. */
+std::uint16_t unused_loopback_port()
+{
+	const int descriptor = socket(AF_INET, SOCK_STREAM, 0);
+	if (descriptor < 0)
+		return 0;
+	sockaddr_in address{};
+	address.sin_family = AF_INET;
+	address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	socklen_t length = sizeof(address);
+	std::uint16_t port = 0;
+	if (bind(descriptor, reinterpret_cast<const sockaddr *>(&address),
+		 sizeof(address)) == 0 &&
+	    getsockname(descriptor, reinterpret_cast<sockaddr *>(&address),
+			&length) == 0)
+		port = ntohs(address.sin_port);
+	close(descriptor);
+	return port;
+}
+
+void expect(bool condition, const char *what)
+{
+	if (condition)
+		return;
+	fprintf(stderr, "%s\n", what);
+	failures++;
+}
+
+/* libslirp takes no lock, and its worker walks the socket lists a forward is
+ * linked into (and, when the host port is taken, freed from). Every forward
+ * therefore joins an instance before that instance's worker starts, and none
+ * joins one that is running. The taken port exercises the path that frees. */
+void forwards_join_before_the_worker_runs()
+{
+	const int taken = socket(AF_INET, SOCK_STREAM, 0);
+	sockaddr_in address{};
+	address.sin_family = AF_INET;
+	address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	socklen_t length = sizeof(address);
+	expect(taken >= 0 &&
+		       bind(taken, reinterpret_cast<const sockaddr *>(&address),
+			    sizeof(address)) == 0 &&
+		       listen(taken, 1) == 0 &&
+		       getsockname(taken, reinterpret_cast<sockaddr *>(&address),
+				   &length) == 0,
+	       "could not hold a loopback port");
+
+	uml::network::SlirpProvider provider;
+	uml::network::HostForward forward{};
+	forward.host_port = unused_loopback_port();
+	forward.guest_port = 22;
+	expect(forward.host_port != 0, "no free loopback port");
+	expect(provider.add_forward(forward) == 0,
+	       "a forward registered before open was refused");
+	uml::network::HostForward busy{};
+	busy.host_port = ntohs(address.sin_port);
+	busy.guest_port = 80;
+	expect(provider.add_forward(busy) == 0,
+	       "a forward on a taken port was refused before open");
+
+	std::array<unsigned char, 6> mac{};
+	unsigned int mtu = 0;
+	expect(provider.open(mac, mtu) == 0, "the provider did not open");
+	expect(provider.forwards_installed_while_running_for_testing() == 0,
+	       "a forward was installed while the SLiRP worker ran");
+	uml::network::HostForward late{};
+	late.host_port = unused_loopback_port();
+	late.guest_port = 23;
+	expect(provider.add_forward(late) == -EBUSY,
+	       "a forward was accepted into a running instance");
+
+	provider.stop();
+	expect(provider.add_forward(late) == 0,
+	       "a stopped provider refused a forward");
+	expect(provider.open(mac, mtu) == 0, "the provider did not reopen");
+	expect(provider.forwards_installed_while_running_for_testing() == 0,
+	       "a reopen installed a forward while the SLiRP worker ran");
+	provider.stop();
+	if (taken >= 0)
+		close(taken);
+}
+
 } // namespace
 
 int main(void)
@@ -89,12 +180,15 @@ int main(void)
 	expect_rejected("5555-5555x");
 	expect_rejected("::1:5555-5555");
 
+	forwards_join_before_the_worker_runs();
+
 	if (failures != 0) {
-		fprintf(stderr, "%d host-forward parse expectations failed\n",
+		fprintf(stderr, "%d host-forward expectations failed\n",
 			failures);
 		return 1;
 	}
 	printf("PASS: host-forward specifications parse with loopback and "
-	       "DHCP-lease defaults and refuse malformed forms\n");
+	       "DHCP-lease defaults and refuse malformed forms, and forwards "
+	       "join an instance only before its worker runs\n");
 	return 0;
 }
