@@ -292,10 +292,10 @@ Metal device, when it is smaller than the source, or when the rectangle is
 empty or reaches outside the source.
 
 Apart from the VNC display's fixed framebuffer, only the CPU path keeps host
-copies of a guest mode's pixels, and only once it uses them. The native display
-has three, each the whole scanout rectangle at four bytes per pixel: its CPU
-framebuffer, the shared Metal texture that framebuffer is uploaded into, and
-the Virtio-GPU device's readback staging for a Virgl scanout. An applied mode
+copies of a guest mode's pixels, and only once it uses them. There are three,
+each the whole scanout rectangle at four bytes per pixel: the native display's
+CPU framebuffer, the shared Metal texture that framebuffer is uploaded into,
+and the Virtio-GPU device's readback staging for a Virgl scanout. An applied mode
 and a cleared display start without any of them. The first CPU write allocates
 the framebuffer, zeroed, and the first draw that shows it creates the texture;
 the first flush that reads a Virgl scanout back allocates the staging. Each is
