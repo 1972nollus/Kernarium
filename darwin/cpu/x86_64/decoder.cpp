@@ -500,7 +500,10 @@ private:
 			std::uint64_t displacement{};
 			if (!read_unsigned(4, displacement))
 				return false;
-			if (address_32(prefixes_)) {
+			/* Only 32-bit mode encodes an absolute disp32 here. In 64-bit
+			 * mode it is RIP-relative, and with 0x67 EIP-relative: the
+			 * sum is truncated to 32 bits like any 32-bit address. */
+			if (prefixes_.mode == ExecutionMode::compat32) {
 				operand.memory.absolute_address = true;
 				operand.memory.absolute = static_cast<std::uint32_t>(displacement);
 			} else {
