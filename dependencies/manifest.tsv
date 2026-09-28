@@ -15,8 +15,8 @@ gvdb	2b42fc7	macos,ios-network	https://gitlab.gnome.org/GNOME/gvdb.git	2b42fc75f
 libslirp	4.9.5	macos,ios-network	https://gitlab.freedesktop.org/slirp/libslirp.git	390848f47391f412451b2d259d8527fabb51e5e3	.	-
 gptfdisk	1.0.10	ios-storage	https://git.code.sf.net/p/gptfdisk/code.git	53ac725a88a616b9f3395500d6e520aa04742fa5	.	patches/gptfdisk/series.tsv
 libvncserver	0.9.15	macos	https://github.com/LibVNC/libvncserver.git	9b54b1ec32731bd23158ca014dc18014db4194c3	.	-
-libepoxy	1.5.10	apple-gpu,apple-gpu-vulkan-experiment	https://github.com/anholt/libepoxy.git	c84bc9459357a40e46e2fec0408d04fbdde2c973	.	patches/libepoxy/series.tsv
-virglrenderer	1.3.0-cf6c62da	apple-gpu,apple-gpu-vulkan-experiment	https://gitlab.freedesktop.org/virgl/virglrenderer.git	cf6c62da2a1384b194f463e6221371962fe99575	.	patches/virglrenderer/series.tsv
+libepoxy	1.5.10	apple-gpu-vulkan-experiment	https://github.com/anholt/libepoxy.git	c84bc9459357a40e46e2fec0408d04fbdde2c973	.	patches/libepoxy/series.tsv
+virglrenderer	1.3.0-cf6c62da	apple-gpu-vulkan-experiment	https://gitlab.freedesktop.org/virgl/virglrenderer.git	cf6c62da2a1384b194f463e6221371962fe99575	.	patches/virglrenderer/series.tsv
 mesa	26.2.3	apple-gpu-vulkan-experiment	https://gitlab.freedesktop.org/mesa/mesa.git	31e9a6b2e95e30d84bf3177d1f497d063e59b6b2	.	rootfs-vulkan:patches/mesa/series.tsv+patches/mesa/series.tsv
 vulkan-headers	1.4.357.0	apple-gpu-vulkan-experiment	https://github.com/KhronosGroup/Vulkan-Headers.git	e3b1eec08173d6b825cd3ac88c885a63b621504a	.	-
 venus-protocol	1.1.3	apple-gpu-vulkan-experiment	https://gitlab.freedesktop.org/virgl/venus-protocol.git	ca19b6358d7cc491bc3e4de76f04c6700876a8fa	.	rootfs-vulkan:patches/venus-protocol/series.tsv
