@@ -18,18 +18,17 @@ faulting instruction. A task blocked in the scheduler is walked from
 the context it saved when it switched away; one running on another CPU
 still reports nothing.
 
-With CONFIG_FRAME_POINTER the walk follows AArch64 frame records and
-every entry is reliable; the arm64 port gains PT_REGS_BP so the shared
-header builds. Without it the walk reports each kernel text address on
-the stack as unreliable, as the x86 scan does, and saving a trace
-returns at once instead of scanning for entries it would drop. A saved
-trace now honours its skip count.
+The walk follows AArch64 frame records, so every entry is reliable, and
+a Darwin kernel without CONFIG_FRAME_POINTER fails to build instead of
+printing guesses. The arm64 port gains PT_REGS_BP, which the shared
+stack-trace header uses with frame pointers. A saved trace now honours
+its skip count.
 ---
  arch/arm64/um/asm/ptrace.h  |   2 +
  arch/um/include/shared/os.h |   3 +-
- arch/um/kernel/stacktrace.c | 132 +++++++++++++++++++++++++++++++++---
+ arch/um/kernel/stacktrace.c | 122 +++++++++++++++++++++++++++++++++---
  arch/um/os-Darwin/util.c    |  24 ++++++-
- 4 files changed, 148 insertions(+), 13 deletions(-)
+ 4 files changed, 139 insertions(+), 12 deletions(-)
 
 diff --git a/arch/arm64/um/asm/ptrace.h b/arch/arm64/um/asm/ptrace.h
 index cc0e19f4217c47239fa6a6eb4ee3da9f35d994bc..edc2f6ffeb77fa3fa4bf27e794eff96d41641c70 100644
@@ -59,25 +58,28 @@ index b9fcc80df13687109f1c737b98db5672a4b85395..512090564767072bc880dfb9759678e7
  extern int darwin_uml_vm_batch_begin(unsigned long generation);
  extern int darwin_uml_vm_batch_end(void);
 diff --git a/arch/um/kernel/stacktrace.c b/arch/um/kernel/stacktrace.c
-index f6a76717b89a519f6a69c7b6daec1221b35921e4..1924cf5b41df5701e37a16a01f3e51ad7b6f8da4 100644
+index f6a76717b89a519f6a69c7b6daec1221b35921e4..e2a27cbfa2586c5434ebeef497ffb0e73dde57a7 100644
 --- a/arch/um/kernel/stacktrace.c
 +++ b/arch/um/kernel/stacktrace.c
-@@ -13,16 +13,125 @@
+@@ -13,16 +13,122 @@
  #include <linux/uaccess.h>
  #include <asm/stacktrace.h>
  #ifdef UML_HOST_DARWIN
 +#include <linux/sched/task_stack.h>
 +#include <asm/irq_regs.h>
  #include <os.h>
--#endif
 +
 +/*
 + * A Darwin vCPU carrier thread runs each Linux task on that task's own stack
 + * in guest memory, takes host signals, and so interrupts, on its signal stack,
-+ * and runs early boot on its native stack.  Walk only the stack that holds the
-+ * starting stack pointer; an interrupt continues on the task stack it
-+ * interrupted, found through the registers the interrupt saved.
++ * and runs early boot on its native stack.  Walk the frame records on the
++ * stack that holds the starting stack pointer; an interrupt continues on the
++ * task stack it interrupted, found through the registers the interrupt saved.
 + */
++#ifndef CONFIG_FRAME_POINTER
++#error "the Darwin stack walker follows frame records and needs CONFIG_FRAME_POINTER"
+ #endif
+ 
 +struct darwin_stack {
 +	unsigned long low;
 +	unsigned long high;
@@ -110,13 +112,6 @@ index f6a76717b89a519f6a69c7b6daec1221b35921e4..1924cf5b41df5701e37a16a01f3e51ad
 +	unsigned long next;
 +
 +	sp &= ~(sizeof(long) - 1);
-+	if (!IS_ENABLED(CONFIG_FRAME_POINTER)) {
-+		/* Without frame records every text address is only a guess. */
-+		for (; sp < stack->high; sp += sizeof(long))
-+			darwin_report(ops, data,
-+				      READ_ONCE_NOCHECK(*(unsigned long *)sp), 0);
-+		return;
-+	}
 +	/*
 +	 * An AArch64 frame record holds the caller's record and the return
 +	 * address, and each record lies above the one it follows.
@@ -132,7 +127,7 @@ index f6a76717b89a519f6a69c7b6daec1221b35921e4..1924cf5b41df5701e37a16a01f3e51ad
 +		fp = next;
 +	}
 +}
- 
++
 +void dump_trace(struct task_struct *tsk,
 +		const struct stacktrace_ops *ops,
 +		void *data)
@@ -190,7 +185,7 @@ index f6a76717b89a519f6a69c7b6daec1221b35921e4..1924cf5b41df5701e37a16a01f3e51ad
  	struct pt_regs *segv_regs = tsk->thread.segv_regs;
  	struct stack_frame *frame;
  
-@@ -30,14 +139,7 @@ void dump_trace(struct task_struct *tsk,
+@@ -30,14 +136,7 @@ void dump_trace(struct task_struct *tsk,
  	sp = get_stack_pointer(tsk, segv_regs);
  
  	frame = (struct stack_frame *)bp;
@@ -206,7 +201,7 @@ index f6a76717b89a519f6a69c7b6daec1221b35921e4..1924cf5b41df5701e37a16a01f3e51ad
  		addr = READ_ONCE_NOCHECK(*sp);
  		if (__kernel_text_address(addr)) {
  			reliable = 0;
-@@ -51,6 +153,7 @@ void dump_trace(struct task_struct *tsk,
+@@ -51,6 +150,7 @@ void dump_trace(struct task_struct *tsk,
  		sp++;
  	}
  }
@@ -214,7 +209,7 @@ index f6a76717b89a519f6a69c7b6daec1221b35921e4..1924cf5b41df5701e37a16a01f3e51ad
  
  static void save_addr(void *data, unsigned long address, int reliable)
  {
-@@ -58,6 +161,10 @@ static void save_addr(void *data, unsigned long address, int reliable)
+@@ -58,6 +158,10 @@ static void save_addr(void *data, unsigned long address, int reliable)
  
  	if (!reliable)
  		return;
@@ -224,18 +219,6 @@ index f6a76717b89a519f6a69c7b6daec1221b35921e4..1924cf5b41df5701e37a16a01f3e51ad
 +	}
  	if (trace->nr_entries >= trace->max_entries)
  		return;
- 
-@@ -70,6 +177,11 @@ static const struct stacktrace_ops dump_ops = {
- 
- static void __save_stack_trace(struct task_struct *tsk, struct stack_trace *trace)
- {
-+#ifdef UML_HOST_DARWIN
-+	/* Only a frame record makes an entry reliable enough to save. */
-+	if (!IS_ENABLED(CONFIG_FRAME_POINTER))
-+		return;
-+#endif
- 	dump_trace(tsk, &dump_ops, trace);
- }
  
 diff --git a/arch/um/os-Darwin/util.c b/arch/um/os-Darwin/util.c
 index 3bdb9963266452e938a8c95d10b7ef1aa2f99a37..11e80320ceaecea798dbf1f8cfc3c67f32612502 100644

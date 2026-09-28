@@ -260,6 +260,15 @@ point panics the guest instead. The same dump must list Call Trace entries,
 which the kernel walks from each blocked task's saved context, and frame
 pointers make every one of them reliable, so none may be marked `?`.
 
+`guest-user-strings` runs 54 checks on the strings a system call copies from
+user memory with `strncpy_from_user()`: paths through `newfstatat()` and
+`symlinkat()`, and a task name through `prctl(PR_SET_NAME)`. Each string sits
+at a chosen offset of the probe's own mapping. The checks cover lengths around
+the 4064-byte embedded name buffer and `PATH_MAX`, strings that cross a page
+boundary or end on its last byte, unterminated strings, `EFAULT` for NULL,
+unmapped and `PROT_NONE` memory, and the exact bytes a symlink target and a
+task name keep.
+
 `guest-run-end-stop` boots embedded guests in child processes and stops each
 one at a different point, from CPU bring-up to a guest waiting for its root
 device. A run must return 0 and leave only the host thread behind. The test
