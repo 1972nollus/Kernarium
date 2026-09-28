@@ -3252,6 +3252,45 @@ read_test_sequences(void *context) noexcept
 			"compat32 ModR/M rm=5 is not an absolute 32-bit address");
 }
 
+/* A gather whose destination, mask and index registers are not all distinct
+ * is #UD; the comparison is between full register numbers. */
+[[nodiscard]] bool decode_gather_register_aliases()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case final {
+		std::array<std::uint8_t, 6> bytes;
+		bool legal;
+		const char *message;
+	};
+	const std::array cases{
+		Case{{0xc4, 0xe2, 0x69, 0x90, 0x04, 0x08}, true,
+			"distinct gather registers did not decode"},
+		Case{{0xc4, 0xa2, 0x69, 0x90, 0x0c, 0x08}, true,
+			"gather index XMM9 was compared by its low bits"},
+		Case{{0xc4, 0xe2, 0x79, 0x90, 0x04, 0x08}, false,
+			"gather destination aliasing the mask decoded"},
+		Case{{0xc4, 0xe2, 0x69, 0x90, 0x04, 0x00}, false,
+			"gather destination aliasing the index decoded"},
+		Case{{0xc4, 0xe2, 0x71, 0x90, 0x04, 0x08}, false,
+			"gather mask aliasing the index decoded"},
+		Case{{0xc4, 0xa2, 0x31, 0x90, 0x0c, 0x08}, false,
+			"gather mask aliasing extended index XMM9 decoded"},
+	};
+	for (const auto &shape : cases) {
+		TestMemory memory;
+		memory.load(0, {shape.bytes[0], shape.bytes[1], shape.bytes[2],
+			shape.bytes[3], shape.bytes[4], shape.bytes[5]});
+		const auto decoded = decode(memory, 0);
+		const bool legal = decoded.status == DecodeStatus::decoded &&
+			decoded.instruction.operation == Operation::vector_gather;
+		const bool illegal =
+			decoded.status == DecodeStatus::illegal_instruction;
+		if (!expect(shape.legal ? legal : illegal, shape.message))
+			return false;
+	}
+	return true;
+}
+
 /* In 32-bit code C4 and C5 are LES and LDS unless the next byte's top two bits
  * are 11, which a memory ModR/M can never produce.  Inside a VEX prefix that
  * does select, VEX.B-bar and the top bit of vvvv are ignored, so only XMM0-7
@@ -6618,6 +6657,7 @@ int main()
 		execute_call_and_return() &&
 		decode_compat32_defaults() &&
 		decode_compat32_vex_aliases() &&
+		decode_gather_register_aliases() &&
 		execute_compat32_stack_and_int80() &&
 		execute_compat32_pushfd_popfd() &&
 		execute_compat32_enter_frames() &&

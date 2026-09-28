@@ -1672,6 +1672,17 @@ private:
 			instruction.destination = vector_reg_field(modrm, destination_width);
 			instruction.source = vector_register_operand(
 				prefixes_.vex_vvvv, destination_width);
+			/* The gather updates its destination and mask element by
+			 * element while reading them and the index, so any two of the
+			 * three naming one register is #UD. */
+			const auto destination_register =
+				instruction.destination.reg.index;
+			const auto mask_register = instruction.source.reg.index;
+			const auto index_register = address.memory.index;
+			if (destination_register == mask_register ||
+				destination_register == index_register ||
+				mask_register == index_register)
+				return false;
 			instruction.auxiliary = address;
 			instruction.vex = true;
 			instruction.vector_opcode = opcode;
