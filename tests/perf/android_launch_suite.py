@@ -42,7 +42,7 @@ import sys
 import time
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
-BOOT = REPOSITORY / "scripts" / "boot_android.py"
+BOOT = REPOSITORY / "tools" / "boot_android.py"
 MANIFEST = pathlib.Path(__file__).resolve().parent / "android_launch_apps.tsv"
 # `logcat -v epoch`: seconds.fraction, then the rest of the line.
 EPOCH_LINE = re.compile(r"^\s*(\d+\.\d+)\s+(.*)$")

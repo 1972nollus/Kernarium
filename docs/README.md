@@ -26,6 +26,10 @@ investigation date.
 | Linux guest images and the boot ramdisk | the README beside each producer under [`../tools/rootfs/`](../tools/rootfs/); the Vulkan guest image and its receipt: [`../tools/rootfs/vulkan/README.md`](../tools/rootfs/vulkan/README.md) |
 | Public and kernel ABI maintenance | [`../kernel/common/abi/README.md`](../kernel/common/abi/README.md) |
 
+`scripts/` holds build, packaging and patch-series infrastructure that CMake
+and other tools call; `tools/` holds developer-facing launchers, producers and
+generators.
+
 Short accepted decisions remain under [`decisions/`](decisions/). Machine-
 readable manifests, identities, and test inventories are the source of truth
 for exact lists and counts.

@@ -88,7 +88,7 @@ Boot the resulting disk with
 and attach the host Virtio-console service to reach the image-owned `hvc0`
 getty.
 
-The KDE convenience launcher, `scripts/boot_kde_vnc.py`, boots the Plasma
+The KDE convenience launcher, `tools/boot_kde_vnc.py`, boots the Plasma
 disk of release `starter-20260928-kde-setup` from `.build/rootfs/<release>/`
 by default. It attaches the disk read-only, so the host file must not be
 writable, selects `/dev/ubda1` beneath a tmpfs overlay, and has the per-run
@@ -98,4 +98,4 @@ and Plasma session are the image's, and the launcher adds no setup.
 explicit legacy-image launch. An ext4 filesystem selects the starter policy
 unless `--image-profile legacy` names an ext4 derivative of the unified EROFS
 image, which keeps that image's unpartitioned root, SDDM session, getty masks
-and [seed](../boot-ramdisk/README.md#seeds).
+and [seed](../boot-ramdisk/README.md#harness-session).

@@ -17,7 +17,7 @@ import unittest
 from unittest import mock
 
 
-SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "boot_kde_vnc.py"
+SCRIPT = Path(__file__).resolve().parents[3] / "tools" / "boot_kde_vnc.py"
 GPU_INTEGRATION = Path(__file__).resolve().parents[2] / "integration" / "gpu"
 SUPPORT = Path(__file__).resolve().parents[2] / "integration" / "support"
 sys.path.insert(0, str(SUPPORT))
