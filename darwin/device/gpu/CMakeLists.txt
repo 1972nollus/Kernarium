@@ -113,7 +113,8 @@ target_link_libraries(uml_gpu_transport PUBLIC
     UML::DeviceSocketPaths
     UML::MemorySharedBacking
     uml_gpu_transport_wire)
-target_link_libraries(uml_gpu_transport PRIVATE UML::GuestTimerMask)
+# AutoreleaseScope calls the Objective-C runtime directly.
+target_link_libraries(uml_gpu_transport PRIVATE UML::GuestTimerMask objc)
 
 # The Virtio-GPU device on that transport, with its display.
 add_library(uml_gpu_vhost_user_device STATIC

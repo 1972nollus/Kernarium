@@ -55,6 +55,7 @@ target_compile_options(uml_host_gpu_memory PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 target_link_libraries(uml_host_gpu_memory PRIVATE
     UML::PlatformContract
+    objc
     "-framework Metal")
 
 add_library(uml_run_routing OBJECT run_routing.cpp)
