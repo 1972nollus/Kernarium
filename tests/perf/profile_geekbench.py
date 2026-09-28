@@ -128,7 +128,7 @@ def main() -> int:
                             f"{phase}\t{workload}\t\n")
                         events_file.flush()
                         continue
-                    if line.startswith("GB_END"):
+                    if line.startswith("UML_GEEKBENCH_END"):
                         phase = "complete"
                         workload = "complete"
                         now = time.time()

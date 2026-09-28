@@ -18,13 +18,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GUEST_HARNESS = REPO_ROOT / "tests/integration/gpu/run_gpu_guest.py"
 DEFAULT_EMULATOR = REPO_ROOT / ".build/presets/macos-integration/bin/uml-darwin"
 DEFAULT_ROOTFS = (
-    REPO_ROOT / ".build/rootfs/starter/debian-13-plasma-wayland.img"
+    REPO_ROOT
+    / ".build/rootfs/starter-20260928-kde-setup/debian-13-plasma-wayland.img"
 )
-# A starter image is a partitioned ext4 disk that owns its session and
-# network policy: its getty@tty1 autologin starts Plasma, and it configures
-# DHCP itself. A legacy image is the unified KDE filesystem, rootfs.erofs, or
-# an ext4 derivative sealed from it: an unpartitioned filesystem whose SDDM
-# autologin starts Plasma and whose gettys must stay off the display manager's
+# A starter image is a partitioned ext4 disk that owns its whole session: the
+# per-run initramfs starts its own /sbin/init, its getty@tty1 autologin starts
+# Plasma, and it configures DHCP itself. A legacy image is the unified KDE
+# filesystem, rootfs.erofs, or an ext4 derivative sealed from it: an
+# unpartitioned filesystem whose SDDM autologin starts Plasma once the seed
+# below has set it up, and whose gettys must stay off the display manager's
 # VT. The filesystem type selects the usual profile; runners that accept
 # legacy derivatives name the profile explicitly.
 IMAGE_PROFILES = ("starter", "legacy")
@@ -38,113 +40,14 @@ ROOT_DEVICE_BY_IMAGE_PROFILE = {
 }
 CDROM_DEVICE = "/dev/ubdb"
 CDROM_MOUNT_POINT = "/mnt/cdrom"
-ISO_MOUNT_COMMAND = (
-    f"install -d -m 0755 {CDROM_MOUNT_POINT}; "
-    f"mount -t iso9660 -o ro {CDROM_DEVICE} {CDROM_MOUNT_POINT}; "
-    f"findmnt -n -o SOURCE,FSTYPE,OPTIONS -T {CDROM_MOUNT_POINT}"
+# The image's systemd mounts the ISO; both image kinds run systemd 257.
+ISO_MOUNT_ARGUMENT = (
+    f"systemd.mount-extra={CDROM_DEVICE}:{CDROM_MOUNT_POINT}:iso9660:ro"
 )
-
-STARTER_KDE_OVERLAY_COMMANDS = (
-    "getent passwd debian >/dev/null",
-    # install -d gives the requested owner only to the directories it names,
-    # so every parent below the home directory is named before its children.
-    "install -d -m 0755 -o debian -g debian "
-    "/home/debian/Desktop /home/debian/Documents /home/debian/Downloads "
-    "/home/debian/Music /home/debian/Pictures /home/debian/Public "
-    "/home/debian/Templates /home/debian/Videos /home/debian/.config "
-    "/home/debian/.local /home/debian/.local/share "
-    "/home/debian/.local/share/Trash "
-    "/home/debian/.local/share/pki "
-    "/home/debian/.local/share/Trash/files "
-    "/home/debian/.local/share/Trash/info",
-    "printf '%s\\n' "
-    "'XDG_DESKTOP_DIR=\"$HOME/Desktop\"' "
-    "'XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"' "
-    "'XDG_TEMPLATES_DIR=\"$HOME/Templates\"' "
-    "'XDG_PUBLICSHARE_DIR=\"$HOME/Public\"' "
-    "'XDG_DOCUMENTS_DIR=\"$HOME/Documents\"' "
-    "'XDG_MUSIC_DIR=\"$HOME/Music\"' "
-    "'XDG_PICTURES_DIR=\"$HOME/Pictures\"' "
-    "'XDG_VIDEOS_DIR=\"$HOME/Videos\"' "
-    "> /home/debian/.config/user-dirs.dirs",
-    "chown debian:debian /home/debian/.config/user-dirs.dirs",
-    # KInfoCenter 6.3 counts Mesa's CPU-only Lavapipe Vulkan device as the
-    # guest GPU and labels an otherwise accelerated Virgl session "llvmpipe".
-    # This OpenGL-only guest has no Vulkan render path, so hide that software
-    # ICD in the disposable overlay.
-    "rm -f /usr/share/vulkan/icd.d/lvp_icd.json",
-    # The desktop:/ KIO worker crashes under UML. Keep Plasma's normal Folder
-    # View containment, but use the stable local-file worker for this session.
-    "sed -i "
-    "'s#<default>desktop:/</default>#"
-    "<default>file:///home/debian/Desktop</default>#' "
-    "/usr/share/plasma/plasmoids/org.kde.desktopcontainment/"
-    "contents/config/main.xml",
-    "printf '%s\\n' '[Daemon]' 'Autolock=false' 'LockOnResume=false' "
-    "'Timeout=0' > /home/debian/.config/kscreenlockerrc; "
-    "chown debian:debian /home/debian/.config/kscreenlockerrc",
-)
-
-# Legacy images retain the compatibility setup owned by the unified KDE image.
-# The default starter image uses the smaller overlay above and keeps its
-# account, getty, and session policy image-owned.
-LEGACY_KDE_OVERLAY_COMMANDS = (
-    "getent passwd uml >/dev/null",
-    "usermod -a -G video,render,input uml",
-    # /dev/tty0 is the active-VT alias, while tty1 is the VT SDDM initially
-    # claims before starting the Wayland session. A getty on either device can
-    # cancel display-manager activation or follow the compositor onto its VT.
-    # The attachable ttyS0 socket remains the interactive recovery console.
-    "systemctl mask --now getty@tty0.service getty@tty1.service",
-    "install -d -m 0755 -o uml -g uml "
-    "/home/uml/Desktop /home/uml/Documents /home/uml/Downloads "
-    "/home/uml/Music /home/uml/Pictures /home/uml/Public "
-    "/home/uml/Templates /home/uml/Videos /home/uml/.config "
-    "/home/uml/.local /home/uml/.local/share /home/uml/.local/share/Trash "
-    "/home/uml/.local/share/pki "
-    "/home/uml/.local/share/Trash/files "
-    "/home/uml/.local/share/Trash/info "
-    # SDDM redirects the Wayland session's stderr into this directory. When it
-    # is absent the redirect fails, the session runs with a broken stderr, and
-    # every reason a failed bring-up would have reported is discarded.
-    "/home/uml/.local/share/sddm",
-    "printf '%s\\n' "
-    "'XDG_DESKTOP_DIR=\"$HOME/Desktop\"' "
-    "'XDG_DOWNLOAD_DIR=\"$HOME/Downloads\"' "
-    "'XDG_TEMPLATES_DIR=\"$HOME/Templates\"' "
-    "'XDG_PUBLICSHARE_DIR=\"$HOME/Public\"' "
-    "'XDG_DOCUMENTS_DIR=\"$HOME/Documents\"' "
-    "'XDG_MUSIC_DIR=\"$HOME/Music\"' "
-    "'XDG_PICTURES_DIR=\"$HOME/Pictures\"' "
-    "'XDG_VIDEOS_DIR=\"$HOME/Videos\"' "
-    "> /home/uml/.config/user-dirs.dirs",
-    "chown uml:uml /home/uml/.config/user-dirs.dirs",
-    # KInfoCenter 6.3 counts Mesa's CPU-only Lavapipe Vulkan device as the
-    # guest GPU and labels an otherwise accelerated Virgl session "llvmpipe".
-    # This OpenGL-only guest has no Vulkan render path, so hide that software
-    # ICD in the tmpfs overlay. KInfoCenter then uses its OpenGL probe, which
-    # reports the same Virgl renderer used by KWin and applications.
-    "rm -f /usr/share/vulkan/icd.d/lvp_icd.json",
-    # The desktop:/ KIO worker crashes under UML. Keep Plasma's normal Folder
-    # View containment, but point it directly at the user's Desktop directory
-    # so it uses the stable local-file worker instead. This edits only the
-    # tmpfs overlay; the EROFS guest image remains unchanged.
-    "sed -i "
-    "'s#<default>desktop:/</default>#"
-    "<default>file:///home/uml/Desktop</default>#' "
-    "/usr/share/plasma/plasmoids/org.kde.desktopcontainment/"
-    "contents/config/main.xml",
-    "install -d -m 0755 /etc/sddm.conf.d",
-    "printf '%s\\n' '[Autologin]' 'User=uml' 'Session=plasma' "
-    "'Relogin=false' > /etc/sddm.conf.d/uml-autologin.conf",
-    # A benchmark must remain visible and continuously rendered after its
-    # warm-up period. Disable Plasma's idle lock in the disposable overlay so
-    # long diagnostic or measurement runs cannot be replaced by the lock
-    # screen.
-    "printf '%s\\n' '[Daemon]' 'Autolock=false' 'LockOnResume=false' "
-    "'Timeout=0' > /home/uml/.config/kscreenlockerrc; "
-    "chown uml:uml /home/uml/.config/kscreenlockerrc",
-)
+# The legacy image's desktop setup, installed as a payload and run before the
+# display manager starts.
+LEGACY_KDE_SEED = REPO_ROOT / "tools/rootfs/boot-ramdisk/seeds/unified-kde-setup"
+LEGACY_KDE_SEED_GUEST_PATH = "/usr/local/libexec/uml-unified-kde-setup"
 
 
 def ipv4_address(value: str) -> str:
@@ -347,15 +250,15 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
         "0",
         "--no-auto-poweroff",
     ]
-    overlay_commands = (
-        STARTER_KDE_OVERLAY_COMMANDS
-        if options.image_profile == "starter"
-        else LEGACY_KDE_OVERLAY_COMMANDS
-    )
-    for overlay_command in overlay_commands:
-        command.extend(("--command", overlay_command))
-    if options.iso is not None:
-        command.extend(("--command", ISO_MOUNT_COMMAND))
+    if options.image_profile == "starter":
+        command.append("--image-init")
+    else:
+        command.extend((
+            "--guest-file",
+            f"{LEGACY_KDE_SEED_GUEST_PATH}={LEGACY_KDE_SEED}",
+            "--command",
+            LEGACY_KDE_SEED_GUEST_PATH,
+        ))
     if options.serial_socket is not None:
         command.extend(("--serial-socket", str(options.serial_socket)))
     if options.virtio_console_socket is not None:
@@ -369,16 +272,12 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
         f"ncpus={options.cpus}",
         f"--execution-engine={options.engine}",
     ))
-    if options.image_profile == "starter":
-        # Starter images own DHCP/DNS. This later argument overrides the GPU
-        # harness's legacy kernel-DHCP default. Their Plasma session starts
-        # from the image's getty@tty1 autologin, so its getties stay unmasked.
-        command.append("ip=off")
-    else:
+    if options.image_profile == "legacy":
         # Legacy SDDM images must keep a getty off the display manager's VT
-        # from the start of boot, as their overlay setup explains. Their
-        # getty@tty0 autologin otherwise opens the VT that SDDM has just given
-        # the Plasma session and hangs it up.
+        # from the start of boot, as their seed explains. Their getty@tty0
+        # autologin otherwise opens the VT that SDDM has just given the Plasma
+        # session and hangs it up. A starter image's Plasma session starts
+        # from its getty@tty1 autologin, so its getties stay unmasked.
         command.extend((
             "systemd.mask=getty@tty0.service",
             "systemd.mask=getty@tty1.service",
@@ -390,7 +289,7 @@ def build_harness_command(options: argparse.Namespace) -> list[str]:
     else:
         command.append("systemd.wants=serial-getty@hvc0.service")
     if options.iso is not None:
-        command.append(f"ubd1r={options.iso}")
+        command.extend((f"ubd1r={options.iso}", ISO_MOUNT_ARGUMENT))
     command.extend(("--audio", "--gpu", f"--gpu-display={options.display}"))
     if options.display == "vnc":
         command.extend((

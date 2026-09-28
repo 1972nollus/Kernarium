@@ -4,7 +4,9 @@
 The launcher appends a per-run segment (its built-in /init, /boot.env and
 /payload files) to the base archive it embeds. A run passes only when the
 generic /init mounts the EROFS image beneath a tmpfs overlay, installs the
-payload and switches root into the payload's entry program as PID 1. The
+payload, replacing a file the image carries and leaving the attributes of a
+directory the image already has, leaves both layers visible and switches root
+into the payload's entry program as PID 1. The
 remaining cases require every broken boot to stop with a named reason and a
 nonzero exit instead of reaching the image's own init: the base archive alone,
 a segment appended without the base's padding, an initrd the kernel never
@@ -31,6 +33,12 @@ MISSING_INIT = "init=/uml-per-run-initramfs-did-not-run"
 BOOT_TIMEOUT_SECONDS = 180
 PROBE_PATH = "/uml-boot-probe"
 TOKEN_PATH = "/opt/uml-boot-initramfs-test/nested/token"
+# A file every supported image carries, which the payload must replace.
+REPLACED_PATH = "/etc/hostname"
+# A file beneath the image's sticky, world-writable /var/tmp, which must keep
+# its mode when the payload adds to it.
+KEPT_DIRECTORY = "/var/tmp"
+KEPT_DIRECTORY_TOKEN_PATH = f"{KEPT_DIRECTORY}/uml-boot-initramfs-test/token"
 
 # Runs as PID 1 in the new root, with the image's own shell.
 PROBE = f"""#!/bin/sh
@@ -48,8 +56,15 @@ check overlay-root grep -q \\
 	'^overlay / overlay .*lowerdir=/lower,upperdir=/state/upper,workdir=/state/work' \\
 	/proc/mounts
 check erofs-lower [ -d /sys/fs/erofs/ubda ]
+check lower-visible grep -q '^/dev/ubda /.uml-lower erofs ro[, ]' /proc/mounts
+check state-visible grep -q '^tmpfs /.uml-state tmpfs ' /proc/mounts
 check initramfs-gone [ ! -e /boot.env ]
 token=$(cat {TOKEN_PATH} 2>/dev/null)
+check replaced-file [ "$(cat {REPLACED_PATH})" = "$token" ]
+check kept-directory [ "$(stat -c %a:%u:%g {KEPT_DIRECTORY})" = \\
+	"$(stat -c %a:%u:%g /.uml-lower{KEPT_DIRECTORY})" ]
+check new-directory [ "$(stat -c %a {TOKEN_PATH.rsplit("/", 1)[0]})" = 755 ]
+check nested-file [ "$(cat {KEPT_DIRECTORY_TOKEN_PATH})" = "$token" ]
 echo "UML_BOOT_PROBE_CMDLINE:$(cat /proc/cmdline)"
 if [ -z "$failures" ]; then
 	echo "UML_BOOT_PROBE_OK:$token"
@@ -119,7 +134,8 @@ def require_probe(status: int, output: str, token: str, cmdline: str) -> None:
     )
     require(
         f"UML_BOOT_PROBE_OK:{token}" in output,
-        "the new root is not an overlay on the EROFS image with this run's payload",
+        "the new root is not an overlay on the EROFS image, with both layers "
+        "visible and this run's payload",
         output,
     )
     require(
@@ -160,6 +176,8 @@ def run(arguments: argparse.Namespace) -> None:
             f"--guest-file=/boot.env={boot_env}",
             f"--guest-file=/payload{PROBE_PATH}={probe}",
             f"--guest-file=/payload{TOKEN_PATH}={token_file}",
+            f"--guest-file=/payload{REPLACED_PATH}={token_file}",
+            f"--guest-file=/payload{KEPT_DIRECTORY_TOKEN_PATH}={token_file}",
         ]
 
         # The kernel never loads the launcher's initrd, so only the
@@ -201,6 +219,8 @@ def run(arguments: argparse.Namespace) -> None:
                 f"--file=/boot.env={boot_env}",
                 f"--file=/payload{PROBE_PATH}={probe}",
                 f"--file=/payload{TOKEN_PATH}={token_file}",
+                f"--file=/payload{REPLACED_PATH}={token_file}",
+                f"--file=/payload{KEPT_DIRECTORY_TOKEN_PATH}={token_file}",
             ],
             check=True,
             timeout=60,

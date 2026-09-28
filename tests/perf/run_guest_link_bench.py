@@ -15,19 +15,17 @@ import time
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "integration" / "support"))
-from guest import CORE_CLASSES, Guest  # noqa: E402
+from guest import CORE_CLASSES, Guest, GuestFile  # noqa: E402
 from host_metrics import cpu_time_seconds  # noqa: E402
+
+
+GUEST_LINK_LOOP = "/usr/local/libexec/uml-test/guest-link-loop"
 
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
-    parser.add_argument(
-        "--root-device",
-        default="/dev/ubda",
-        help="raw EROFS root block device (default: /dev/ubda)",
-    )
     parser.add_argument("--binary", required=True, type=pathlib.Path)
     parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument("--workers", type=int, default=10)
@@ -63,15 +61,15 @@ def parse_arguments() -> argparse.Namespace:
     boot_mode.add_argument(
         "--shell-init",
         action="store_true",
-        help="boot /bin/sh directly and mount disposable runtime filesystems",
+        help="start a bare shell on the image's tmpfs overlay",
     )
     boot_mode.add_argument(
         "--overlay-shell",
         dest="overlay_shell",
         action="store_true",
         help=(
-            "boot the EROFS root through a writable tmpfs OverlayFS shell "
-            "(default)"
+            "start a shell with runtime mounts and the user network on the "
+            "image's tmpfs overlay (default)"
         ),
     )
     return parser.parse_args()
@@ -83,7 +81,7 @@ def workload_command(workers: int) -> str:
         ": >/tmp/link-loop-pids; "
         "i=0; "
         f"while [ \"$i\" -lt {workers} ]; do "
-        "/tmp/guest-link-loop >\"/tmp/link-loop-output.$i\" 2>&1 & "
+        f"{GUEST_LINK_LOOP} >\"/tmp/link-loop-output.$i\" 2>&1 & "
         "echo \"$!\" >>/tmp/link-loop-pids; "
         "i=$((i + 1)); "
         "done; "
@@ -118,7 +116,6 @@ def main() -> int:
         "tmpfs",
         (
             f"ncpus={arguments.cpus}",
-            f"root={arguments.root_device}",
             *(("--guest-top-byte-ignore",)
               if arguments.guest_top_byte_ignore else ()),
         ),
@@ -126,13 +123,16 @@ def main() -> int:
         overlay_shell=not arguments.shell_init,
         engine=arguments.engine,
         core_class=arguments.core_class,
+        payloads={
+            GUEST_LINK_LOOP: GuestFile(
+                arguments.binary.resolve().read_bytes(), 0o755
+            )
+        },
     ) as guest:
         if arguments.shell_init:
             guest.boot_to_shell(arguments.boot_timeout)
             mounts = guest.run_command(
-                "mount -t proc proc /proc && "
-                "mount -t tmpfs -o mode=1777 tmpfs /tmp",
-                30,
+                "mount -t tmpfs -o mode=1777 tmpfs /tmp", 30
             )
             if mounts.return_code != 0:
                 raise RuntimeError(
@@ -140,9 +140,6 @@ def main() -> int:
                 )
         else:
             guest.boot_and_login(arguments.boot_timeout)
-        guest.upload(
-            arguments.binary.resolve().read_bytes(), "/tmp/guest-link-loop", 0o755
-        )
         command = workload_command(arguments.workers)
         for repetition in range(arguments.repetitions):
             before_cpu = cpu_time_seconds(guest.process_id)

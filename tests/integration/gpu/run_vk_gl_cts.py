@@ -48,6 +48,7 @@ import vulkan_cts_receipt  # noqa: E402
 import guest_process  # noqa: E402
 import opengl_cts_plan  # noqa: E402
 import gles_cts_plan  # noqa: E402
+import run_gpu_guest as gpu_guest  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -69,6 +70,8 @@ RUNNER_ORACLE_PATH = Path(__file__).with_name(
 )
 WAIVERS_PATH = Path(__file__).with_name("vk_gl_cts_waivers.json")
 GUEST_WAIVER_PATH = "/usr/local/share/uml-vk-gl-cts/waivers.xml"
+GUEST_LAUNCHER_PATH = "/usr/local/libexec/uml-vk-gl-cts"
+GUEST_SERVICE_PATH = "/etc/systemd/system/uml-vk-gl-cts.service"
 WAIVED_STATUS = "Waiver"
 WAIVER_KEYS = frozenset(
     {"id", "granted", "granted_by", "scope", "vendor", "renderers", "url",
@@ -3108,16 +3111,6 @@ def write_artifacts(artifacts: dict[str, bytes], directory: Path) -> None:
         destination.write_bytes(payload)
 
 
-def install_text(path: str, content: str, mode: str = "0644") -> str:
-    encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
-    parent = str(Path(path).parent)
-    return (
-        f"install -d -m 0755 {shlex.quote(parent)}; "
-        f"printf '%s' {shlex.quote(encoded)} | base64 -d > {shlex.quote(path)}; "
-        f"chmod {mode} {shlex.quote(path)}"
-    )
-
-
 def artifact_transport_program(
     *,
     error_prefix: str,
@@ -3582,12 +3575,16 @@ def native_wsi_harness_command(
     artifact_directory: Path,
     overlay_commands: Sequence[str],
     *,
+    guest_files: gpu_guest.StagedGuestFiles | None = None,
     width: int = 1280,
     height: int = 720,
     display: str = "vnc",
     rootfs_type: str = "ext4",
 ) -> list[str]:
-    """Boot the CTS service without a competing display manager."""
+    """Boot the CTS service without a competing display manager.
+
+    ``guest_files`` are installed before the guest starts; the caller writes
+    them before running the command."""
     if display not in ("native", "vnc") or rootfs_type not in ("ext4", "erofs"):
         raise CampaignError("unsupported native WSI display or root filesystem")
     command = [
@@ -3598,6 +3595,7 @@ def native_wsi_harness_command(
         "--timeout", "0", "--no-auto-poweroff",
         "--artifact-root", str(artifact_directory / "guest"),
         f"--virtio-serial-socket={artifact_socket_path(artifact_directory)}",
+        *(guest_files.arguments if guest_files is not None else ()),
     ]
     for overlay_command in overlay_commands:
         command.extend(("--command", overlay_command))
@@ -4256,53 +4254,53 @@ def gl_scope_launch_environment(options: argparse.Namespace) -> tuple[str, ...]:
     return ("UML_GPU_CAPABILITY_REPORT",)
 
 
-def build_harness_command(
+def plan_harness_command(
     options: argparse.Namespace,
     selection: Selection | None,
     artifact_directory: Path,
     *,
     resume_after: int = 0,
-) -> list[str]:
+) -> tuple[list[str], gpu_guest.StagedGuestFiles]:
+    """The guest harness command and the files it installs, unwritten.
+
+    The launcher, its service and any waiver list reach the guest as files;
+    their digests are in the command, so it records exactly what ran."""
     applied_waivers = getattr(options, "applied_waivers", ())
     waiver_text = waiver_xml(applied_waivers) if applied_waivers else None
-    overlay_commands = (
-        *(
-            (install_text(GUEST_WAIVER_PATH, waiver_text, "0644"),)
-            if waiver_text is not None
-            else ()
-        ),
-        install_text(
-            "/usr/local/libexec/uml-vk-gl-cts",
-            build_guest_launcher(
-                selection,
-                options.seed,
-                options.shard_timeout,
-                16384 if options.page_profile == "16k" else 4096,
-                options.rootfs_contract,
-                config_inventory_api=options.config_inventory,
-                matrix=options.matrix_run,
-                artifact_transport="virtio-serial",
-                renderer_backend=options.renderer,
-                resume_after=resume_after,
-                checkpoint_bytes=QPA_CHECKPOINT_BYTES,
-                progress_timeout=options.console_stall_timeout,
-                progress_busy_timeout=options.console_stall_busy_timeout,
-                waiver_sha256=(
-                    hashlib.sha256(waiver_text.encode("utf-8")).hexdigest()
-                    if waiver_text is not None
-                    else None
-                ),
-            ),
-            "0755",
-        ),
-        install_text(
-            "/etc/systemd/system/uml-vk-gl-cts.service",
-            CTS_SERVICE,
-        ),
-        "systemctl start --no-block uml-vk-gl-cts.service",
+    guest_files = gpu_guest.StagedGuestFiles(
+        artifact_directory / gpu_guest.GUEST_FILE_DIRECTORY
     )
+    if waiver_text is not None:
+        guest_files.add(GUEST_WAIVER_PATH, waiver_text)
+    guest_files.add(
+        GUEST_LAUNCHER_PATH,
+        build_guest_launcher(
+            selection,
+            options.seed,
+            options.shard_timeout,
+            16384 if options.page_profile == "16k" else 4096,
+            options.rootfs_contract,
+            config_inventory_api=options.config_inventory,
+            matrix=options.matrix_run,
+            artifact_transport="virtio-serial",
+            renderer_backend=options.renderer,
+            resume_after=resume_after,
+            checkpoint_bytes=QPA_CHECKPOINT_BYTES,
+            progress_timeout=options.console_stall_timeout,
+            progress_busy_timeout=options.console_stall_busy_timeout,
+            waiver_sha256=(
+                hashlib.sha256(waiver_text.encode("utf-8")).hexdigest()
+                if waiver_text is not None
+                else None
+            ),
+        ),
+        0o755,
+    )
+    guest_files.add(GUEST_SERVICE_PATH, CTS_SERVICE)
     command = native_wsi_harness_command(
-        options, artifact_directory, overlay_commands,
+        options, artifact_directory,
+        ("systemctl start --no-block uml-vk-gl-cts.service",),
+        guest_files=guest_files,
         width=options.width, height=options.height,
         display=options.display, rootfs_type=options.rootfs_type,
     )
@@ -4311,7 +4309,35 @@ def build_harness_command(
     ]
     if options.display == "native":
         launch_environment.append("UML_GPU_FRAME_STATS=1")
-    return ["env", *launch_environment, *command]
+    return ["env", *launch_environment, *command], guest_files
+
+
+def build_harness_command(
+    options: argparse.Namespace,
+    selection: Selection | None,
+    artifact_directory: Path,
+    *,
+    resume_after: int = 0,
+) -> list[str]:
+    """The recorded guest harness command; building it writes nothing."""
+    return plan_harness_command(
+        options, selection, artifact_directory, resume_after=resume_after
+    )[0]
+
+
+def prepare_harness_command(
+    options: argparse.Namespace,
+    selection: Selection | None,
+    artifact_directory: Path,
+    *,
+    resume_after: int = 0,
+) -> list[str]:
+    """Write the files a harness command installs and return the command."""
+    command, guest_files = plan_harness_command(
+        options, selection, artifact_directory, resume_after=resume_after
+    )
+    guest_files.write()
+    return command
 
 
 def stop_guest(process: subprocess.Popen[bytes]) -> None:
@@ -5988,6 +6014,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             )
 
     if selection is None:
+        command = prepare_harness_command(options, selection, artifact_directory)
         with log_path.open("wb") as log:
             with guest_process.managed_child(
                 command, stop=stop_guest, stdout=log, stderr=subprocess.STDOUT,
@@ -6028,7 +6055,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
         sessions, expected_cases, merged_results = run_shard_sessions(
             artifact_directory,
-            build_command=lambda resume, guest: build_harness_command(
+            build_command=lambda resume, guest: prepare_harness_command(
                 options, selection, guest, resume_after=resume
             ),
             resolve_expected=lambda first: tuple(

@@ -159,7 +159,9 @@ mount_direct_root()
 		fail "cannot mount $root"
 }
 
-# The image read-only beneath a writable layer that ends with the run.
+# The image read-only beneath a writable layer that ends with the run. Both
+# layers stay visible in the new root, at /.uml-lower and /.uml-state, so a
+# guest can check what it runs on and keep bulky state beside the overlay.
 mount_overlay_root()
 {
 	mkdir -p /lower /state || fail "cannot create the overlay mount points"
@@ -171,6 +173,30 @@ mount_overlay_root()
 	mount -t overlay \
 		-o lowerdir=/lower,upperdir=/state/upper,workdir=/state/work \
 		overlay /newroot || fail "cannot mount the overlay"
+}
+
+# Copy the payload directory $1 into the new-root directory $2. A directory
+# the image already has keeps its own mode, owner and times; cp -a would give
+# it the payload's, turning /var/tmp into a 0755 directory. A missing one is
+# created 0755. Each file keeps its payload mode, and -f replaces a file whose
+# open fails, such as a dangling symlink.
+install_payload()
+{
+	local source=$1 target=$2 entry name
+	for entry in "$source"/* "$source"/.[!.]* "$source"/..?*; do
+		[ -e "$entry" ] || continue
+		name=${entry##*/}
+		if [ -d "$entry" ]; then
+			[ ! -L "$target/$name" ] || fail \
+				"a payload directory passes through a symlink: ${target#/newroot}/$name"
+			[ -d "$target/$name" ] || mkdir -m 0755 "$target/$name" || \
+				fail "cannot create ${target#/newroot}/$name"
+			install_payload "$entry" "$target/$name"
+		else
+			cp -af "$entry" "$target/$name" || \
+				fail "cannot install ${target#/newroot}/$name"
+		fi
+	done
 }
 
 read_parameters
@@ -185,7 +211,14 @@ esac
 
 # The payload mirrors the new root; in an overlay it lands in the upper layer.
 if [ -d /payload ]; then
-	cp -a /payload/. /newroot/ || fail "cannot install the payload"
+	install_payload /payload /newroot
+fi
+if [ "$upper" = tmpfs ]; then
+	for layer in lower state; do
+		mkdir -p "/newroot/.uml-$layer" && \
+			mount -o move "/$layer" "/newroot/.uml-$layer" || \
+			fail "cannot move /$layer into the new root"
+	done
 fi
 for filesystem in dev proc sys; do
 	mount -o move "/$filesystem" "/newroot/$filesystem" || \

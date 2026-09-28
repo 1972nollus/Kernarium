@@ -51,7 +51,6 @@ def main() -> int:
         engine=arguments.engine,
     ) as guest:
         guest.boot_to_shell(180)
-        guest.check_command("mount -t proc proc /proc", 20)
         # The dump goes to the kernel log only; the console would take minutes.
         dumped = guest.run_command(
             "echo 1 > /proc/sys/kernel/printk && echo t > /proc/sysrq-trigger && "

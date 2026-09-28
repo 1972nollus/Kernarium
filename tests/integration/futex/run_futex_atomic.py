@@ -17,8 +17,6 @@ def main() -> int:
     fixture_transfer.run_probe(
         arguments,
         subject="futex atomic regression",
-        payload=arguments.probe.read_bytes(),
-        payload_name="probe",
         kernel_arguments=("ncpus=4", "panic=1"),
         engine="gadgets",
         probe_timeout_seconds=95,

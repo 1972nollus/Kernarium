@@ -34,20 +34,16 @@ import importlib
 import json
 import os
 import pathlib
-import pty
 import re
-import select
-import signal
 import statistics
 import subprocess
 import sys
 import time
-import uuid
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / "tests/integration/support"))
-from guest import ANSI_ESCAPE, CommandResult, LINE_START, marker_pattern  # noqa: E402
+from guest import ConsoleProcess, LINE_START  # noqa: E402
 
 
 def _load_disk_preparation():
@@ -152,11 +148,6 @@ PHASE_REPORT = (
 )
 
 
-def normal_output(output: bytes) -> str:
-    decoded = output.decode("utf-8", errors="replace").replace("\r", "")
-    return ANSI_ESCAPE.sub("", decoded).strip()
-
-
 def host_conditions() -> dict[str, object]:
     """Record, never reject: what else the host was doing when a run started."""
     load = os.getloadavg()
@@ -198,15 +189,17 @@ class BootFlake(RuntimeError):
     """A recognized infrastructure flake; the run is retried, not reported."""
 
 
-class SteamGuest:
+class SteamGuest(ConsoleProcess):
     """One appliance boot driven through its ttyS0 autologin console.
 
-    The shared ``tests/integration/support`` harness fixes
-    ``systemd.unit=multi-user.target``, which never starts the gaming session,
-    so this runner owns its own command line. It keeps that module's console
-    protocol (marker-delimited commands, ANSI-normalized transcript) by
-    importing it rather than restating it.
+    The Steam image owns its init and the gaming session starts from
+    ``graphical.target``, so this runner owns its command line and reaches a
+    shell through the image's autologin. The console transport and command
+    protocol are the shared harness's ``ConsoleProcess``.
     """
+
+    # systemd needs longer than the harness shell to stop after SIGTERM.
+    STOP_GRACE_SECONDS = 10.0
 
     def __init__(self, emulator: pathlib.Path, rootfs: pathlib.Path,
                  userdata: pathlib.Path, memory: str, cpus: int,
@@ -223,7 +216,6 @@ class SteamGuest:
             *extra,
         ]
         self._transcript_path = transcript_path
-        self._transcript = bytearray()
         # The video device writes its activity log once, when a stream
         # closes, so naming a per-boot file records what each boot decoded
         # without costing timing. A caller that already named one is
@@ -231,41 +223,16 @@ class SteamGuest:
         environment = dict(os.environ)
         if activity_log is not None and "UML_VIDEO_ACTIVITY_LOG" not in os.environ:
             environment["UML_VIDEO_ACTIVITY_LOG"] = str(activity_log)
-        master, slave = pty.openpty()
-        self._master = master
-        os.set_blocking(master, False)
-        try:
-            self.started_at = time.monotonic()
-            self.started_realtime = time.time()
-            self._process = subprocess.Popen(
-                self._argv,
-                env=environment,
-                stdin=subprocess.PIPE, stdout=slave, stderr=slave,
-                close_fds=True)
-        except BaseException:
-            os.close(master)
-            raise
-        finally:
-            os.close(slave)
-        assert self._process.stdin is not None
-        self._input = self._process.stdin
-        os.set_blocking(self._input.fileno(), False)
-        self.first_output_at: float | None = None
+        self.started_at = time.monotonic()
+        self.started_realtime = time.time()
+        super().__init__(self._argv, environment=environment)
 
     @property
     def command_line(self) -> list[str]:
         return list(self._argv)
 
-    @property
-    def process_id(self) -> int:
-        return self._process.pid
-
-    @property
-    def return_code(self) -> int | None:
-        return self._process.poll()
-
     def transcript(self) -> str:
-        return normal_output(bytes(self._transcript))
+        return self.output()
 
     def save_transcript(self) -> None:
         self._transcript_path.parent.mkdir(parents=True, exist_ok=True)
@@ -284,51 +251,26 @@ class SteamGuest:
                          timeout_seconds, search_from)
         return time.monotonic()
 
-    def run_command(self, command: str,
-                    timeout_seconds: float = 60) -> CommandResult:
-        token = uuid.uuid4().hex
-        begin = f"__UML_COMMAND_BEGIN_{token}__"
-        end = f"__UML_COMMAND_END_{token}__"
-        start = len(self._transcript)
-        self._write(f"printf '\\n{begin}\\n'; {command}; rc=$?; "
-                    f"printf '\\n{end}:%s\\n' \"$rc\"\n")
-        match = self._read_until(marker_pattern(end), timeout_seconds, start)
-        section = bytes(self._transcript[start:match.start()])
-        begin_at = section.rfind(begin.encode())
-        if begin_at >= 0:
-            section = section[begin_at + len(begin):]
-        return CommandResult(int(match.group(1)), normal_output(section))
-
     def poweroff(self, timeout_seconds: float) -> tuple[bool, float]:
         """Ask systemd for an orderly poweroff and wait for the emulator."""
         requested = time.monotonic()
-        if self._process.poll() is not None:
+        if self.return_code is not None:
             return True, 0.0
         with contextlib.suppress(BrokenPipeError, OSError, TimeoutError):
             self._write("sync; systemctl --no-block poweroff\n")
-        if self._wait_for_exit(requested + timeout_seconds):
+        if self.wait_for_exit(timeout_seconds):
             return True, time.monotonic() - requested
         # systemd refused or hung; force the kernel halt the shared harness
         # uses, and report that this boot did not shut down cleanly.
         with contextlib.suppress(BrokenPipeError, OSError, TimeoutError):
             self._write("sync; poweroff -f\n")
-        self._wait_for_exit(time.monotonic() + 30)
+        self.wait_for_exit(30)
         return False, time.monotonic() - requested
 
     def close(self) -> None:
         try:
-            if self._process.poll() is None:
-                with contextlib.suppress(ProcessLookupError):
-                    self._process.send_signal(signal.SIGTERM)
-                if not self._wait_for_exit(time.monotonic() + 10):
-                    with contextlib.suppress(ProcessLookupError):
-                        self._process.send_signal(signal.SIGKILL)
-                    self._process.wait()
+            super().close()
         finally:
-            with contextlib.suppress(OSError):
-                self._input.close()
-            with contextlib.suppress(OSError):
-                os.close(self._master)
             self.save_transcript()
 
     def check_health(self) -> None:
@@ -339,78 +281,10 @@ class SteamGuest:
         if found:
             raise RuntimeError(f"guest reported {found[0]!r}")
 
-    def _wait_for_exit(self, deadline: float) -> bool:
-        while self._process.poll() is None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            readable, _, _ = select.select([self._master], [], [],
-                                           min(remaining, 0.25))
-            if readable:
-                self._drain()
-        self._drain()
-        return True
-
-    def _write(self, text: str) -> None:
-        payload = memoryview(text.encode())
-        descriptor = self._input.fileno()
-        offset = 0
-        deadline = time.monotonic() + 30
-        while offset < len(payload):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("guest console write exceeded 30s")
-            try:
-                written = os.write(descriptor, payload[offset:])
-            except InterruptedError:
-                continue
-            except BlockingIOError:
-                written = 0
-            if written > 0:
-                offset += written
-                continue
-            if self._process.poll() is not None:
-                raise BrokenPipeError("guest exited during console write")
-            readable, writable, _ = select.select(
-                [self._master], [descriptor], [], min(remaining, 0.25))
-            if readable:
-                self._drain()
-
-    def _read_until(self, pattern: re.Pattern[bytes], timeout_seconds: float,
-                    search_from: int = 0) -> re.Match[bytes]:
-        deadline = time.monotonic() + timeout_seconds
-        while True:
-            match = pattern.search(self._transcript, search_from)
-            if match is not None:
-                return match
-            if self._process.poll() is not None:
-                self._drain()
-                match = pattern.search(self._transcript, search_from)
-                if match is not None:
-                    return match
-                self.check_health()
-                raise RuntimeError(
-                    f"guest exited with status {self._process.returncode} "
-                    "before the expected console output")
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError(f"guest operation exceeded {timeout_seconds:g}s")
-            readable, _, _ = select.select([self._master], [], [],
-                                           min(remaining, 0.25))
-            if readable:
-                self._drain()
-
-    def _drain(self) -> None:
-        while True:
-            try:
-                chunk = os.read(self._master, 65536)
-            except (BlockingIOError, OSError):
-                return
-            if not chunk:
-                return
-            if self.first_output_at is None:
-                self.first_output_at = time.monotonic()
-            self._transcript.extend(chunk)
+    def _exited_without_output(self) -> None:
+        # A guest that died says why on its console; report that, and a
+        # recognized flake as one, before the bare exit status.
+        self.check_health()
 
 
 def parse_report(text: str) -> dict[str, str]:

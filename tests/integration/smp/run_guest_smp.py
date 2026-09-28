@@ -24,13 +24,6 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
     parser.add_argument(
-        "--root-device",
-        help=(
-            "guest block device containing /; when set, append an explicit "
-            "root= argument"
-        ),
-    )
-    parser.add_argument(
         "--cpus",
         type=int,
         default=10,
@@ -44,15 +37,12 @@ def main() -> int:
     if not 1 <= arguments.cpus <= min(os.cpu_count() or 1, 64):
         raise ValueError("--cpus must be between 1 and the host CPU count")
     expected_cpus = arguments.cpus
-    kernel_arguments = [f"ncpus={expected_cpus}"]
-    if arguments.root_device:
-        kernel_arguments.append(f"root={arguments.root_device}")
     guest = Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         "1024M",
         "tmpfs",
-        tuple(kernel_arguments),
+        (f"ncpus={expected_cpus}",),
         overlay_shell=True,
     )
     try:
