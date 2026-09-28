@@ -6931,6 +6931,10 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			return false;
 		stream.push_back(entry_address(entry));
 		stream.push_back(*offset);
+		/* A 64-bit write raises #GP at this instruction when the base is
+		 * not canonical. */
+		if (!read && operand.width == OperandWidth::qword)
+			stream.push_back(gadget.address);
 		return true;
 	}
 	case Operation::memory_fence:

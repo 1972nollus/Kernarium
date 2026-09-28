@@ -5187,6 +5187,69 @@ read_test_sequences(void *context) noexcept
 			"RDTSC under PR_TSC_SIGSEGV did not raise #GP");
 }
 
+/* WRFSBASE and WRGSBASE with a 64-bit operand raise #GP for a non-canonical
+ * address and leave the base unchanged; the 32-bit form zero-extends and so
+ * cannot fault. */
+[[nodiscard]] bool segment_base_writes_reject_non_canonical_addresses()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case final {
+		std::uint8_t modrm;
+		bool wide;
+		std::uint64_t value;
+		bool faults;
+	};
+	constexpr std::uint64_t original = 0x1234'5000ULL;
+	const std::array cases{
+		Case{0xd0, true, 0x0000'7fff'ffff'f000ULL, false},
+		Case{0xd8, true, 0xffff'8000'0000'0000ULL, false},
+		Case{0xd0, true, 0x0000'8000'0000'0000ULL, true},
+		Case{0xd8, true, 0x0000'8000'0000'0000ULL, true},
+		Case{0xd0, true, 0x8000'0000'0000'1000ULL, true},
+		Case{0xd8, true, 0xfff7'ffff'ffff'0000ULL, true},
+		Case{0xd0, false, 0xffff'ffff'ffff'ffffULL, false},
+		Case{0xd8, false, 0x8000'0000'8000'0000ULL, false},
+	};
+	for (const auto &shape : cases) {
+		TestMemory memory;
+		if (shape.wide)
+			memory.load(100, {0xf3, 0x48, 0x0f, 0xae, shape.modrm});
+		else
+			memory.load(100, {0xf3, 0x0f, 0xae, shape.modrm});
+		const auto built = gadgets::build(memory, 100, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"WRFSBASE/WRGSBASE did not build"))
+			return false;
+		const bool fs = shape.modrm == 0xd0;
+		CpuState cpu{};
+		cpu.rip = 100;
+		cpu.fs_base = original;
+		cpu.gs_base = original;
+		cpu.gpr(Register::rax) = shape.value;
+		const auto result = gadgets::execute(built.program, cpu, memory, 1);
+		const auto base = fs ? cpu.fs_base : cpu.gs_base;
+		const auto other = fs ? cpu.gs_base : cpu.fs_base;
+		if (shape.faults) {
+			if (!expect(result.event ==
+					uml::cpu::EngineEvent::general_protection &&
+				result.retired_instructions == 0 && cpu.rip == 100,
+				"non-canonical segment base write did not raise #GP") ||
+				!expect(base == original && other == original,
+					"faulting segment base write changed a base"))
+				return false;
+			continue;
+		}
+		const auto expected = shape.wide ? shape.value :
+			(shape.value & 0xffff'ffffULL);
+		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == 1 &&
+			base == expected && other == original,
+			"canonical segment base write did not retire"))
+			return false;
+	}
+	return true;
+}
+
 /* RFLAGS.TF single-steps: the runtime runs each entry with a budget of one.
  * Once blocks are cached and linked, a one-instruction budget must still
  * stop after exactly one instruction, including across a taken branch. */
@@ -6583,6 +6646,7 @@ int main()
 		native_divide_traps_precisely() &&
 		native_into_reports_overflow_precisely() &&
 		privileged_instructions_raise_general_protection() &&
+		segment_base_writes_reject_non_canonical_addresses() &&
 		software_interrupt_vectors_trap() &&
 		one_instruction_budget_steps_linked_programs() &&
 		popf_setting_trap_flag_leaves_at_the_next_instruction() &&
