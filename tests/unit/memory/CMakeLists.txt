@@ -43,6 +43,7 @@ add_executable(uml_execution_gate_profile_tests
     execution_gate_profile_tests.cpp
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu/execution_gate.cpp)
 target_include_directories(uml_execution_gate_profile_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
 target_compile_definitions(uml_execution_gate_profile_tests PRIVATE
     UML_MEMORY_PROFILE_TESTING=1

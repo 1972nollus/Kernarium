@@ -2213,11 +2213,8 @@ extern "C" int darwin_uml_static_vm_execution_context_code_change_ranges(
 	struct darwin_uml_static_code_change *changes, size_t capacity,
 	uint64_t *current_sequence)
 {
-	static_assert(sizeof(darwin_uml_static_code_change) ==
-		sizeof(uml::memory::CodeChangeRange));
 	return uml::memory::execution_context_code_changes(context, sequence,
-		reinterpret_cast<uml::memory::CodeChangeRange *>(changes),
-		capacity, current_sequence);
+		changes, capacity, current_sequence);
 }
 
 extern "C" int darwin_uml_static_vm_execution_begin(

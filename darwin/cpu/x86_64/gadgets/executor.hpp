@@ -2,6 +2,7 @@
 #pragma once
 
 #include "program.hpp"
+#include "uml_darwin_static_mmu.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -38,17 +39,13 @@ struct ProgramCacheSequences final {
 using ProgramCacheSequenceReader = ProgramCacheSequences (*)(
 	void *context) noexcept;
 
-struct ProgramCodeChange final {
-	std::uint64_t address{};
-	std::uint64_t length{};
-};
+/* The address space writes these ranges into the cache's buffers itself, so
+ * they are its own bridge types. */
+using ProgramCodeChange = darwin_uml_static_code_change;
 
 /* The guest ranges whose mapping changed after `sequence`, or a negative
  * result when the caller has to retire every software-TLB entry. */
-struct ProgramMappingChange final {
-	std::uint64_t address{};
-	std::uint64_t length{};
-};
+using ProgramMappingChange = darwin_uml_static_mapping_change;
 using MappingChangeReader = int (*)(void *context, std::uint64_t generation,
 	std::uint64_t sequence, ProgramMappingChange *changes,
 	std::size_t capacity, std::uint64_t *current_sequence) noexcept;
