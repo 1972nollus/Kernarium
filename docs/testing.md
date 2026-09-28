@@ -82,6 +82,18 @@ cmake --workflow --preset check-gpu-venus
 cmake --workflow --preset check-integration-venus
 ```
 
+KosmicKrisp's prebuilt SPIR-V has a cheap guard in the tooling suite and an
+opt-in full comparison that rebuilds `mesa_clc` on the pinned Debian host and
+compiles both blobs again from a checkout of the committed Mesa series
+(`external/sources/mesa` unless `UML_KOSMICKRISP_SPIRV_MESA_SOURCE` names
+another). It registers only when that SSH host is named:
+
+```sh
+cmake --preset macos-tooling -DUML_KOSMICKRISP_SPIRV_BUILD_HOST=<host>
+ctest --test-dir .build/presets/macos-tooling \
+  -R '^dependency-kosmickrisp-spirv-regeneration$' --output-on-failure
+```
+
 The iOS GPU lane runs the unmodified iOS device build on this Apple silicon
 Mac in Designed for iPad mode, because the host GL provider is Mesa Zink over
 KosmicKrisp and the iOS Simulator provides no Metal 4 device. The Simulator GPU
