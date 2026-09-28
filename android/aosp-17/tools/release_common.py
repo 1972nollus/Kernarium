@@ -638,9 +638,11 @@ def verify_kernel_config(
         fail(f"release kernel contains loadable-module values: {module_values[:8]}")
     if not enforce_tracked_policy:
         return
+    # The ACK kernel line owns its configuration contract.
+    line_config = android_root.parents[1] / "kernel/android-6.18/config"
     for path, expected in (
-        (android_root / "support/verification/required-kernel-builtins.txt", "y"),
-        (android_root / "support/verification/forbidden-kernel-options.txt", "n"),
+        (line_config / "required-builtins.txt", "y"),
+        (line_config / "forbidden-options.txt", "n"),
     ):
         for raw in path.read_text(encoding="utf-8").splitlines():
             symbol = raw.strip()
