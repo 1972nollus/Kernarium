@@ -17,6 +17,9 @@ CONFIG_BINFMT_MISC=y
 # Accept an external initramfs for recovery, image inspection, and read-only
 # overlay boots without modifying the guest's root partition.
 CONFIG_BLK_DEV_INITRD=y
+# The product ramdisk is uncompressed, but a gzip initramfs such as the Linux
+# boot base must unpack too; pin it instead of relying on the RD_* defaults.
+CONFIG_RD_GZIP=y
 CONFIG_IKCONFIG=y
 CONFIG_IKCONFIG_PROC=y
 CONFIG_PRINTK_TIME=y
@@ -346,6 +349,10 @@ CONFIG_DNS_RESOLVER=y
 # CONFIG_CAN is not set
 # Socket monitoring interfaces used by ss, lsof, and systemd introspection.
 CONFIG_INET_DIAG=y
+# netd closes a network's sockets through SOCK_DESTROY when the network goes
+# away, so apps and adb reconnect on the new one. GKI enables it in
+# gki_defconfig.
+CONFIG_INET_DIAG_DESTROY=y
 CONFIG_INET_UDP_DIAG=y
 CONFIG_NETLINK_DIAG=y
 CONFIG_PACKET_DIAG=y

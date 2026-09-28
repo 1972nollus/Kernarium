@@ -11,11 +11,11 @@ Keep page-table synchronization, precise nested invalidation ranges, same-proces
  arch/um/kernel/skas/mmu.c        |  33 ++-
  arch/um/kernel/skas/mmu_darwin.c | 102 +++++++
  arch/um/kernel/skas/process.c    |  88 +++++-
- arch/um/kernel/skas/uaccess.c    | 333 +++++++++++++++++----
+ arch/um/kernel/skas/uaccess.c    | 339 +++++++++++++++++----
  arch/um/kernel/tlb.c             | 489 +++++++++++++++++++++++++++++--
  arch/um/kernel/trap.c            |  58 +++-
  mm/mmu_gather.c                  |   7 +-
- 10 files changed, 1025 insertions(+), 112 deletions(-)
+ 10 files changed, 1031 insertions(+), 112 deletions(-)
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
 diff --git a/arch/um/include/asm/tlb.h b/arch/um/include/asm/tlb.h
@@ -397,10 +397,10 @@ index 5881b17eb9874256cef33ca69643aa0f737e4cab..3273efe8362a19ed8434f51c21e672d2
 +	return 0;
  }
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 198269e384c43b174208d683ec4f18242d726fac..b8b872ba3f0056242fc73f63d62fa09404192670 100644
+index 198269e384c43b174208d683ec4f18242d726fac..c60a3bb348c207db5c9bbe31f009b40f0bc54a48 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -7,73 +7,246 @@
+@@ -7,72 +7,252 @@
  #include <linux/highmem.h>
  #include <linux/mm.h>
  #include <linux/module.h>
@@ -474,7 +474,8 @@ index 198269e384c43b174208d683ec4f18242d726fac..b8b872ba3f0056242fc73f63d62fa094
  		return NULL;
 +	return pte_offset_map_lock(walk->mm, pmd, addr, ptlp);
 +}
-+
+ 
+-	return pte_offset_kernel(pmd, addr);
 +static struct page *pin_user_mapping(struct mm_struct *mm, unsigned long addr,
 +				     int is_write)
 +{
@@ -485,8 +486,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b8b872ba3f0056242fc73f63d62fa094
 +
 +	if (mm == NULL)
 +		return NULL;
- 
--	return pte_offset_kernel(pmd, addr);
++
 +	if (!user_walk_begin(&walk, mm, !faulthandler_disabled()))
 +		return NULL;
 +	ptep = user_walk_lock_pte(&walk, addr, &ptl);
@@ -614,12 +614,16 @@ index 198269e384c43b174208d683ec4f18242d726fac..b8b872ba3f0056242fc73f63d62fa094
 +
 +		if (fd < 0 || darwin_uml_vm_activate(generation) < 0)
 +			goto fail;
-+		/* matches() reports 1 for an equal mapping, 0 for one that
-+		 * names different backing, and -1 when the address has no
-+		 * mapping at all.  Repairing only the second reported a
-+		 * missing mapping as if it had been checked, leaving the
-+		 * software MMU without an entry the guest then faults on
-+		 * repeatedly; rebind establishes it in either case.
++		/* The software MMU can still map virt to a page this PTE no
++		 * longer names, for example after a sibling's copy-on-write.
++		 * matches() reports 1 for an equal mapping, 0 for one that
++		 * names other backing, and -1 for none.  Despite its bridge
++		 * name, darwin_uml_vm_rebind() never installs the pinned
++		 * page, because either side may be the stale one: it discards
++		 * a mapping that names other backing and leaves an absent one
++		 * absent.  This access goes through the kernel's alias of the
++		 * page; the guest's next access to virt then faults, and a
++		 * walker replays the current PTE.
 +		 */
 +		else if ((mapping_state = darwin_uml_vm_mapping_matches(
 +				  virt, fd, offset)) <= 0) {
@@ -647,32 +651,34 @@ index 198269e384c43b174208d683ec4f18242d726fac..b8b872ba3f0056242fc73f63d62fa094
  {
  	struct page *page;
 -	pte_t *pte;
--	int n;
 +	unsigned long user_addr = addr;
-+	int n = -1;
-+	bool may_sleep = !faulthandler_disabled();
- 
+ 	int n;
+-
 -	pte = maybe_map(addr, is_write);
 -	if (pte == NULL)
++	bool may_sleep = !faulthandler_disabled();
++
 +	page = maybe_map(addr, is_write);
++#if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
++	/* The kernel physical alias is assembled in a private 16 KiB Darwin
++	 * shadow.  Refresh it from the shared physical backing before uaccess so
++	 * it cannot read or later copy bytes which predate a sibling guest thread.
++	 * A page that cannot be refreshed fails like one that cannot be mapped.
++	 */
++	if (page != NULL && darwin_uml_vm_sync_from_backing(
++			(unsigned long)page_address(page)) < 0) {
++		put_page(page);
++		page = NULL;
++	}
++#endif
 +	if (page == NULL)
  		return -1;
  
 -	page = pte_page(*pte);
  #ifdef CONFIG_64BIT
-+#if defined(UML_HOST_DARWIN) && !defined(CONFIG_PAGE_SIZE_16KB)
-+	/* The kernel physical alias is assembled in a private 16 KiB Darwin
-+	 * shadow.  Refresh it from the shared physical backing before uaccess so
-+	 * it cannot read or later copy bytes which predate a sibling guest thread.
-+	 */
-+	if (darwin_uml_vm_sync_from_backing(
-+			(unsigned long)page_address(page)) < 0)
-+		goto out_put;
-+#endif
  	pagefault_disable();
  	addr = (unsigned long) page_address(page) +
- 		(addr & ~PAGE_MASK);
-@@ -89,6 +262,20 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -89,6 +269,19 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	kunmap_atomic((void *)addr);
  #endif
  
@@ -688,12 +694,11 @@ index 198269e384c43b174208d683ec4f18242d726fac..b8b872ba3f0056242fc73f63d62fa094
 +
 +	if (is_write && n >= 0)
 +		mark_user_page_dirty(user_addr, page, may_sleep);
-+out_put:
 +	put_page(page);
  	return n;
  }
  
-@@ -223,7 +410,7 @@ long strnlen_user(const char __user *str, long len)
+@@ -223,7 +416,7 @@ long strnlen_user(const char __user *str, long len)
  	int count = 0, n;
  
  	if (!access_ok(str, 1))
@@ -702,7 +707,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b8b872ba3f0056242fc73f63d62fa094
  	n = buffer_op((unsigned long) str, len, 0, strnlen_chunk, &count);
  	if (n == 0)
  		return count + 1;
-@@ -250,20 +437,20 @@ EXPORT_SYMBOL(strnlen_user);
+@@ -250,20 +443,20 @@ EXPORT_SYMBOL(strnlen_user);
  
  int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
  {
@@ -729,7 +734,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b8b872ba3f0056242fc73f63d62fa094
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	addr = (unsigned long) page_address(page) +
-@@ -273,37 +460,51 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
+@@ -273,37 +466,51 @@ int arch_futex_atomic_op_inuser(int op, u32 oparg, int *oval, u32 __user *uaddr)
  		((unsigned long) addr & ~PAGE_MASK);
  #endif
  	uaddr = (u32 *) addr;
@@ -803,7 +808,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b8b872ba3f0056242fc73f63d62fa094
  
  	if (ret == 0)
  		*oval = oldval;
-@@ -331,18 +532,17 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -331,18 +538,17 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  			      u32 oldval, u32 newval)
  {
  	struct page *page;
@@ -826,7 +831,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b8b872ba3f0056242fc73f63d62fa094
  #ifdef CONFIG_64BIT
  	pagefault_disable();
  	uaddr = page_address(page) + (((unsigned long) uaddr) & ~PAGE_MASK);
-@@ -350,9 +550,8 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -350,9 +556,8 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  	uaddr = kmap_atomic(page) + ((unsigned long) uaddr & ~PAGE_MASK);
  #endif
  
@@ -838,7 +843,7 @@ index 198269e384c43b174208d683ec4f18242d726fac..b8b872ba3f0056242fc73f63d62fa094
  
  #ifdef CONFIG_64BIT
  	pagefault_enable();
-@@ -361,8 +560,16 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+@@ -361,8 +566,16 @@ int futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
  #endif
  	ret = 0;
  
