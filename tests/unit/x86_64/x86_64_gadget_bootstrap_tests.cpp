@@ -6661,6 +6661,158 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 	return true;
 }
 
+/* MASKMOVDQU writes only the bytes its mask selects, so a LOCK INC on another
+ * vCPU that targets an unselected byte of the same sixteen is never undone.
+ * The gadget used to read the whole block, merge and write it back. */
+[[nodiscard]] bool mask_store_keeps_concurrent_unselected_bytes()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t block = 0x800;
+	constexpr unsigned increments = 100000;
+	TestMemory memory;
+	/* 0: maskmovdqu xmm0, xmm1; dec ecx; jnz 0; syscall */
+	memory.load(0, {0x66, 0x0f, 0xf7, 0xc1, 0xff, 0xc9, 0x75, 0xf8,
+		0x0f, 0x05});
+	/* 0x40: lock inc byte [rdi+1]; syscall */
+	memory.load(0x40, {0xf0, 0xfe, 0x47, 0x01, 0x0f, 0x05});
+	const auto increment = gadgets::build(memory, 0x40);
+	if (!expect(increment.status == gadgets::BuildStatus::built,
+		"concurrent LOCK INC block did not build"))
+		return false;
+	std::atomic<bool> done{false};
+	std::atomic<bool> healthy{true};
+	std::thread writer{[&] {
+		gadgets::Executor executor;
+		executor.prepare(memory, 42, 1, 1);
+		while (!done.load(std::memory_order_relaxed) &&
+			healthy.load(std::memory_order_relaxed)) {
+			CpuState cpu{};
+			cpu.gpr(Register::rdi) = block;
+			cpu.gpr(Register::rcx) = 1000;
+			for (std::size_t lane = 0; lane < 16; ++lane)
+				cpu.vectors[0][lane] = std::byte{0x5a};
+			cpu.vectors[1][0] = std::byte{0x80};
+			auto event = uml::cpu::EngineEvent::continued;
+			while (event == uml::cpu::EngineEvent::continued) {
+				const auto selected = executor.select_program(
+					memory, cpu.rip, ExecutionMode::long64);
+				if (selected.program == nullptr) {
+					healthy.store(false);
+					return;
+				}
+				event = gadgets::execute(*selected.program, cpu,
+					memory, executor, 1U << 20U).event;
+			}
+			if (event != uml::cpu::EngineEvent::system_call)
+				healthy.store(false);
+		}
+	}};
+	{
+		gadgets::Executor executor;
+		executor.prepare(memory);
+		for (unsigned step = 0; step < increments; ++step) {
+			CpuState cpu{};
+			cpu.rip = 0x40;
+			cpu.gpr(Register::rdi) = block;
+			if (gadgets::execute(increment.program, cpu, memory,
+				executor, 4).event !=
+				uml::cpu::EngineEvent::system_call) {
+				healthy.store(false);
+				break;
+			}
+		}
+	}
+	done.store(true);
+	writer.join();
+	return expect(healthy.load(),
+		"concurrent MASKMOVDQU or LOCK INC left the stream") &&
+		expect(memory.byte(block) == 0x5a,
+			"MASKMOVDQU did not write its selected byte") &&
+		expect(memory.byte(block + 1) == (increments & 0xffU),
+			"MASKMOVDQU wrote back an unselected byte another vCPU "
+			"had changed");
+}
+
+/* MASKMOVQ and MASKMOVDQU store through DS:(E/R)DI: a segment override adds
+ * its base and 0x67 takes EDI, and only the selected bytes change. */
+[[nodiscard]] bool mask_store_uses_its_segment_and_address_size()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case final {
+		std::array<std::uint8_t, 5> bytes;
+		std::size_t length;
+		bool mmx;
+		std::uint64_t rdi;
+		std::uint64_t fs_base;
+		std::uint64_t target;
+		const char *message;
+	};
+	const std::array cases{
+		Case{{0x66, 0x0f, 0xf7, 0xc1, 0x00}, 4, false,
+			0x300, 0, 0x300, "MASKMOVDQU did not store at RDI"},
+		Case{{0x64, 0x66, 0x0f, 0xf7, 0xc1}, 5, false,
+			0x100, 0x1000, 0x1100,
+			"MASKMOVDQU ignored its FS override"},
+		Case{{0x67, 0x66, 0x0f, 0xf7, 0xc1}, 5, false,
+			0xffff'ffff'0000'0200ULL, 0, 0x200,
+			"MASKMOVDQU ignored its address-size prefix"},
+		Case{{0x64, 0x0f, 0xf7, 0xc1, 0x00}, 4, true,
+			0x180, 0x2000, 0x2180,
+			"MASKMOVQ ignored its FS override"},
+	};
+	for (const auto &shape : cases) {
+		TestMemory memory;
+		for (std::size_t index = 0; index < shape.length; ++index)
+			memory.load(index, {shape.bytes[index]});
+		memory.load(shape.length, {0x0f, 0x05});
+		for (std::size_t index = 0; index < 16; ++index) {
+			memory.load(shape.target + index, {0xee});
+			if (shape.rdi < 0x4000 && shape.rdi != shape.target)
+				memory.load(shape.rdi + index, {0xdd});
+		}
+		const auto built = gadgets::build(memory, 0);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"MASKMOV block did not build"))
+			return false;
+		CpuState cpu{};
+		cpu.gpr(Register::rdi) = shape.rdi;
+		cpu.fs_base = shape.fs_base;
+		std::uint64_t data{};
+		std::uint64_t mask{};
+		for (std::size_t lane = 0; lane < 16; ++lane) {
+			const auto selected = lane == 0 || lane == 5 || lane == 11;
+			cpu.vectors[0][lane] = static_cast<std::byte>(0x10U + lane);
+			cpu.vectors[1][lane] = selected ? std::byte{0x80} : std::byte{0x7f};
+			if (lane < 8) {
+				data |= std::uint64_t{0x10U + lane} << (lane * 8U);
+				mask |= std::uint64_t{selected ? 0x80U : 0x7fU} <<
+					(lane * 8U);
+			}
+		}
+		cpu.mmx[0] = data;
+		cpu.mmx[1] = mask;
+		const auto result = gadgets::execute(built.program, cpu, memory, 4);
+		if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 2, shape.message))
+			return false;
+		const std::size_t bytes = shape.mmx ? 8 : 16;
+		for (std::size_t index = 0; index < 16; ++index) {
+			const bool selected = index < bytes &&
+				(index == 0 || index == 5 || index == 11);
+			const auto expected = selected ?
+				static_cast<std::uint8_t>(0x10U + index) : 0xeeU;
+			if (!expect(memory.byte(shape.target + index) == expected,
+				shape.message))
+				return false;
+			if (shape.rdi < 0x4000 && shape.rdi != shape.target &&
+				!expect(memory.byte(shape.rdi + index) == 0xdd,
+					shape.message))
+				return false;
+		}
+	}
+	return true;
+}
+
 /* A locked operand that faults under the split lock gives the lock back: the
  * next one, on another thread, still gets through.
  */
@@ -6956,6 +7108,8 @@ int main()
 		locked_increment_survives_concurrent_vcpus() &&
 		locked_forms_agree_at_every_operand_address() &&
 		unaligned_locked_increment_survives_concurrent_vcpus() &&
+		mask_store_uses_its_segment_and_address_size() &&
+		mask_store_keeps_concurrent_unselected_bytes() &&
 		faulting_split_operand_releases_the_lock() &&
 		guest_stores_reach_other_cpus_in_program_order() &&
 		guest_memory_gadgets_end_in_an_ordering_barrier();

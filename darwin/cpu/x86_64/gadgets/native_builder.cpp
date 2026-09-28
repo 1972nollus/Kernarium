@@ -2161,11 +2161,15 @@ struct EncodedMemory final {
 		entry = native::uml_x86_64_gadget_vector_mask_store_128;
 	else
 		return false;
+	const auto encoded = encode_memory(
+		gadget, instruction.destination, *source);
+	if (!encoded)
+		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(static_cast<std::uintptr_t>(*source) |
-		(static_cast<std::uintptr_t>(*mask) << 16U) |
-		(static_cast<std::uintptr_t>(instruction.length) << 56U));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
+	stream.push_back(*mask);
 	return true;
 }
 

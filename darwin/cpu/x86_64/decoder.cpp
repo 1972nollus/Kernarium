@@ -1205,6 +1205,9 @@ private:
 			vector_register_operand(static_cast<std::uint8_t>(
 				(modrm & 7U) |
 				((prefixes_.rex & 1U) != 0 ? 8U : 0U)), width);
+		/* The store goes through DS:(E/R)DI, which a segment override and
+		 * the address-size prefix both change. */
+		instruction.destination = string_memory(7, width, prefixes_.segment);
 		instruction.vex = prefixes_.vex;
 		instruction.vector_prefix = static_cast<std::uint8_t>(prefix);
 		return true;
