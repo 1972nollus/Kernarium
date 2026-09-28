@@ -498,6 +498,33 @@ void connectedSocketChannelIsNonblocking()
     require(std::equal(output.begin(), output.end(), received.begin()));
 }
 
+/* The device sizes a read by the guest's writable descriptors, which a guest
+ * can make as large as its memory. The channel's own buffer stays bounded. */
+void connectedSocketChannelBoundsItsReadBuffer()
+{
+    constexpr std::size_t bound = 64U * 1024U;
+    std::array<int, 2> descriptors {-1, -1};
+    require(::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors.data()) == 0);
+    uml::gpu::UniqueDescriptor peer {descriptors[1]};
+    uml::console::ConnectedSocketChannel channel(descriptors[0]);
+
+    const int buffer = 4 * static_cast<int>(bound);
+    (void)::setsockopt(peer.get(), SOL_SOCKET, SO_SNDBUF, &buffer,
+        sizeof(buffer));
+    (void)::setsockopt(channel.eventDescriptor(), SOL_SOCKET, SO_RCVBUF,
+        &buffer, sizeof(buffer));
+    const int flags = ::fcntl(peer.get(), F_GETFL);
+    require(flags >= 0 && ::fcntl(peer.get(), F_SETFL, flags | O_NONBLOCK) == 0);
+    const std::vector<std::uint8_t> input(2U * bound, 'i');
+    const ssize_t sent = ::send(peer.get(), input.data(), input.size(), 0);
+    require(sent > 0);
+
+    const auto received = channel.read(std::size_t {16} << 20U);
+    require(!received.empty());
+    require(received.size() <= std::min(bound, static_cast<std::size_t>(sent)));
+    require(received.capacity() <= bound);
+}
+
 void inProcessServicePublishesAndRemovesTheExternalSocket()
 {
     TemporaryDirectory temporary;
@@ -535,6 +562,7 @@ int main()
     unixSocketChannelNeverExposesAWiderModeWhileListening();
     unixSocketChannelRejectsAClientThatClosedBeforeAccept();
     connectedSocketChannelIsNonblocking();
+    connectedSocketChannelBoundsItsReadBuffer();
     inProcessServicePublishesAndRemovesTheExternalSocket();
     return EXIT_SUCCESS;
 }

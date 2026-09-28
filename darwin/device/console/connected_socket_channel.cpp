@@ -13,6 +13,15 @@
 #include <unistd.h>
 
 namespace uml::console {
+namespace {
+
+/* The device asks for as much as the guest's input buffers hold, which the
+ * guest chooses: one descriptor may cover all of its RAM, and a chain may
+ * repeat it. A read never allocates more than this, and recv() hands back no
+ * more than is queued anyway. */
+constexpr std::size_t maximumReadBytes = 64U * 1024U;
+
+} // namespace
 
 ConnectedSocketChannel::ConnectedSocketChannel(int descriptor)
     : descriptor_(descriptor)
@@ -44,7 +53,7 @@ ConnectedSocketChannel::~ConnectedSocketChannel()
 std::vector<std::uint8_t> ConnectedSocketChannel::read(
     std::size_t maximumBytes)
 {
-    std::vector<std::uint8_t> result(maximumBytes);
+    std::vector<std::uint8_t> result(std::min(maximumBytes, maximumReadBytes));
     for (;;) {
         const ssize_t received = ::recv(
             descriptor_, result.data(), result.size(), MSG_DONTWAIT);
