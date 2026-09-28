@@ -346,7 +346,12 @@ replacement for the accepted general-purpose rootfs. The slice's own
 `tests/integration/boot/run_guest_boot_initramfs.py --engine gadgets`, the
 `macos-x86_64` `uml-darwin`, any x86-64 EROFS image such as the
 [x86-64 LTP rootfs](../tools/rootfs/ltp-x86_64/README.md), the x86-64 base
-and a `uml-initramfs`.
+and a `uml-initramfs`. With the same emulator and any x86-64 image,
+`tests/integration/x86_64/run_guest_x86_64_rflags.py` cross-builds a
+freestanding x86-64 and i386 probe with `clang++` and `ld.lld` and checks the
+slice's user-RFLAGS contract from the
+[mainline README](../kernel/mainline-6.18/README.md): the value `execve()`
+starts a task with, and the bits a tracer and a signal return may change.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session

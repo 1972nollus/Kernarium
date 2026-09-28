@@ -45,7 +45,7 @@ index 3afa6ed84585b358f068303471d9b3d640f20421..7af74c93f494f76334b7b6610fbe1ad5
  #define PTRACE_SETFPREGS 15
  #define PTRACE_OLDSETOPTIONS 21
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index 03612f21119fe2c96208237a462ad80b2e606cda..a64194ef882d68724511eb377d29b04aaba5d3ab 100644
+index 23145bdaae87aa507991bcbf787bfd680c41ba6a..e561801a0afa78700dfd700cbe38e738f007d0bb 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
 @@ -6,6 +6,20 @@
@@ -69,7 +69,7 @@ index 03612f21119fe2c96208237a462ad80b2e606cda..a64194ef882d68724511eb377d29b04a
  
  static int register_index(int regno)
  {
-@@ -148,26 +162,80 @@ int putreg(struct task_struct *child, int regno, unsigned long value)
+@@ -152,26 +166,80 @@ int putreg(struct task_struct *child, int regno, unsigned long value)
  	return 0;
  }
  
@@ -155,7 +155,7 @@ index 03612f21119fe2c96208237a462ad80b2e606cda..a64194ef882d68724511eb377d29b04a
  	return -EIO;
  }
  
-@@ -226,8 +294,10 @@ static int genregs32_set(struct task_struct *target,
+@@ -230,8 +298,10 @@ static int genregs32_set(struct task_struct *target,
  static int fpregs_get(struct task_struct *target,
  		      const struct user_regset *regset, struct membuf to)
  {
@@ -168,7 +168,7 @@ index 03612f21119fe2c96208237a462ad80b2e606cda..a64194ef882d68724511eb377d29b04a
  }
  
  static int fpregs_set(struct task_struct *target,
-@@ -235,8 +305,55 @@ static int fpregs_set(struct task_struct *target,
+@@ -239,8 +309,55 @@ static int fpregs_set(struct task_struct *target,
  		      unsigned int pos, unsigned int count,
  		      const void *kbuf, const void __user *ubuf)
  {
@@ -226,7 +226,7 @@ index 03612f21119fe2c96208237a462ad80b2e606cda..a64194ef882d68724511eb377d29b04a
  }
  
  static const struct user_regset uml_x86_64_regsets[] = {
-@@ -250,12 +367,20 @@ static const struct user_regset uml_x86_64_regsets[] = {
+@@ -254,12 +371,20 @@ static const struct user_regset uml_x86_64_regsets[] = {
  	},
  	[REGSET_FP] = {
  		USER_REGSET_NOTE_TYPE(PRFPREG),
@@ -250,7 +250,7 @@ index 03612f21119fe2c96208237a462ad80b2e606cda..a64194ef882d68724511eb377d29b04a
  };
  
  static const struct user_regset_view uml_x86_64_view = {
-@@ -274,6 +399,22 @@ static const struct user_regset uml_x86_32_regsets[] = {
+@@ -278,6 +403,22 @@ static const struct user_regset uml_x86_32_regsets[] = {
  		.regset_get = genregs32_get,
  		.set = genregs32_set,
  	},
@@ -274,7 +274,7 @@ index 03612f21119fe2c96208237a462ad80b2e606cda..a64194ef882d68724511eb377d29b04a
  
  static const struct user_regset_view uml_x86_32_view = {
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 6389e8017f374148a3c9030336d01f1ca081c186..77608dbfc788f7b7009a7f29a82b039322f3c3ff 100644
+index 0f3c17e36482e3db0a9005876062939b72126e4b..4c2e5d9eebe9f4e00cdaa5a28a1c7636d6e10789 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -12,6 +12,7 @@
@@ -370,7 +370,7 @@ index 6389e8017f374148a3c9030336d01f1ca081c186..77608dbfc788f7b7009a7f29a82b0393
  #define UML_X86_64_RFLAGS_TF (1UL << 8)
  #define UML_X86_64_RFLAGS_DF (1UL << 10)
  #define UML_X86_64_RFLAGS_RF (1UL << 16)
-@@ -232,9 +176,6 @@ struct uml_x86_64_task_fpstate {
+@@ -228,9 +172,6 @@ struct uml_x86_64_task_fpstate {
  #define UML_X86_32_NR_SIGRETURN 119
  #define UML_X86_32_NR_RT_SIGRETURN 173
  
@@ -380,7 +380,7 @@ index 6389e8017f374148a3c9030336d01f1ca081c186..77608dbfc788f7b7009a7f29a82b0393
  static_assert(sizeof(struct uml_x86_32_fpstate_legacy) == 112);
  static_assert(sizeof(struct uml_x86_32_fpstate) == 624);
  static_assert(sizeof(struct uml_x86_32_xstate) == 944);
-@@ -308,19 +249,16 @@ static void clear_x86_64_fpstate(struct uml_pt_regs *guest)
+@@ -304,19 +245,16 @@ static void clear_x86_64_fpstate(struct uml_pt_regs *guest)
  	}
  }
  
@@ -402,7 +402,7 @@ index 6389e8017f374148a3c9030336d01f1ca081c186..77608dbfc788f7b7009a7f29a82b0393
  	unsigned int mxcsr = 0x1f80;
  
  	if (task->marker == UML_X86_64_FP_MARKER) {
-@@ -356,11 +294,22 @@ static int save_x86_64_fpstate(struct uml_x86_64_xstate __user *user_state,
+@@ -352,11 +290,22 @@ static int save_x86_64_fpstate(struct uml_x86_64_xstate __user *user_state,
  			       task->vectors[index] + 16, 16);
  		}
  	}
@@ -426,7 +426,7 @@ index 6389e8017f374148a3c9030336d01f1ca081c186..77608dbfc788f7b7009a7f29a82b0393
  
  	if (copy_to_user(user_state, &state, sizeof(state)))
  		return 1;
-@@ -374,15 +323,12 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
+@@ -370,15 +319,12 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
  {
  	struct uml_x86_64_xstate state = { };
  	struct uml_pt_regs *guest = &regs->regs;
@@ -442,7 +442,7 @@ index 6389e8017f374148a3c9030336d01f1ca081c186..77608dbfc788f7b7009a7f29a82b0393
  	bool extended = false;
  
  	if (!user_address) {
-@@ -425,19 +371,31 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
+@@ -421,19 +367,31 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
  		    !(present & UML_X86_64_XFEATURE_SSE))
  			return 1;
  	}
@@ -479,7 +479,7 @@ index 6389e8017f374148a3c9030336d01f1ca081c186..77608dbfc788f7b7009a7f29a82b0393
  
  			memcpy(&significand, slot, sizeof(significand));
  			memcpy(&exponent, slot + sizeof(significand),
-@@ -445,7 +403,7 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
+@@ -441,7 +399,7 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
  			UPT_X(guest, UML_X86_64_X87_SIGNIFICAND_SLOT + physical) =
  				significand;
  			x86_64_set_x87_exponent(guest, physical, exponent);
@@ -488,7 +488,7 @@ index 6389e8017f374148a3c9030336d01f1ca081c186..77608dbfc788f7b7009a7f29a82b0393
  				unsigned int shift = physical * 2;
  				unsigned short value;
  
-@@ -454,21 +412,21 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
+@@ -450,21 +408,21 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
  				tag = (tag & ~(3U << shift)) | (value << shift);
  			}
  		}

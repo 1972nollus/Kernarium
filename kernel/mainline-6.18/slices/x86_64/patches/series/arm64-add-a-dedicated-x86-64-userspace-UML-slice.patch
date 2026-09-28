@@ -22,7 +22,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
 ---
  arch/arm64/um/Kconfig                 |   9 +
  arch/arm64/um/Makefile                |  19 +-
- arch/arm64/um/asm/elf.h               |  74 ++-
+ arch/arm64/um/asm/elf.h               |  76 ++-
  arch/arm64/um/asm/mman.h              |   5 +
  arch/arm64/um/asm/processor.h         |  13 +-
  arch/arm64/um/asm/ptrace.h            |   6 +-
@@ -30,9 +30,9 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  arch/arm64/um/asm/unistd.h            |  33 ++
  arch/arm64/um/asm/user.h              |  29 +-
  arch/arm64/um/mmap.c                  | 128 ++++
- arch/arm64/um/ptrace.c                | 149 +++--
- arch/arm64/um/shared/sysdep/ptrace.h  | 140 ++++-
- arch/arm64/um/signal.c                | 591 ++++++++++++++-----
+ arch/arm64/um/ptrace.c                | 151 +++--
+ arch/arm64/um/shared/sysdep/ptrace.h  | 150 ++++-
+ arch/arm64/um/signal.c                | 594 ++++++++++++++-----
  arch/arm64/um/tls.c                   |   3 +-
  arch/arm64/um/x86_64_syscalls.c       | 806 ++++++++++++++++++++++++++
  arch/arm64/um/x86_syscall_tables.c    |  32 +
@@ -47,7 +47,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
  include/linux/fs.h                    |   2 +
- 27 files changed, 1901 insertions(+), 271 deletions(-)
+ 27 files changed, 1918 insertions(+), 271 deletions(-)
  create mode 100644 arch/arm64/um/asm/unistd.h
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
@@ -104,10 +104,10 @@ index b3bbae6cd5a149976a91c3df809f696e79d83ef0..476b8f2426167dd2d1c07c0f7b7d3a60
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index baaa7c8c27de70be2f0513cc137f7bf645fa19ab..57b834791c66f9c7bb1beae8cfceb212adf00b48 100644
+index baaa7c8c27de70be2f0513cc137f7bf645fa19ab..010fbc343a529602a189ec4cec1bed06c4615bba 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
-@@ -22,31 +22,27 @@
+@@ -22,31 +22,29 @@
  
  #define ELF_CLASS ELFCLASS64
  #define ELF_DATA ELFDATA2LSB
@@ -141,18 +141,20 @@ index baaa7c8c27de70be2f0513cc137f7bf645fa19ab..57b834791c66f9c7bb1beae8cfceb212
 -#define elf_check_arch(header) ((header)->e_machine == EM_AARCH64)
 +#define elf_check_arch(header) ((header)->e_machine == EM_X86_64)
  
-+/* x86-64 starts a task with the flat 64-bit code and stack selectors; the
-+ * data selectors stay null as flush_thread() left them.
++/* x86-64 starts a task with the flat 64-bit code and stack selectors and
++ * with RFLAGS IF and bit 1, as Linux's start_thread(); the data selectors
++ * stay null as flush_thread() left them.
 + */
  #define ELF_PLAT_INIT(regs, load_address) do { \
 -	PT_REGS_X((regs), 0) = 0; \
 +	UPT_X86_64(&(regs)->regs, UML_X86_64_RDX) = 0; \
++	UPT_X86_64_RFLAGS(&(regs)->regs) = UML_X86_RFLAGS_INITIAL; \
 +	upt_x86_64_set_segment_selector(&(regs)->regs, 1, 0x33); \
 +	upt_x86_64_set_segment_selector(&(regs)->regs, 2, 0x2b); \
  } while (0)
  
  #define SET_PERSONALITY(executable) do { \
-@@ -54,7 +50,7 @@ extern unsigned long darwin_uml_guest_hwcap2(void);
+@@ -54,7 +52,7 @@ extern unsigned long darwin_uml_guest_hwcap2(void);
  } while (0)
  
  typedef unsigned long elf_greg_t;
@@ -161,7 +163,7 @@ index baaa7c8c27de70be2f0513cc137f7bf645fa19ab..57b834791c66f9c7bb1beae8cfceb212
  typedef elf_greg_t elf_gregset_t[ELF_NGREG];
  
  struct uml_arm64_fpsimd_state {
-@@ -65,23 +61,37 @@ struct uml_arm64_fpsimd_state {
+@@ -65,23 +63,37 @@ struct uml_arm64_fpsimd_state {
  typedef struct uml_arm64_fpsimd_state elf_fpregset_t;
  
  #define ELF_CORE_COPY_REGS(destination, source) do { \
@@ -520,7 +522,7 @@ index 0000000000000000000000000000000000000000..1a8b242f6aa99b62d006f59bfc55f0d6
 +	return vm_unmapped_area(&info);
 +}
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index 52e976dc7f84880c40d4616989f8eea484a7c172..a4767ee8185daf64b4524f952b5dec1b61c73b8a 100644
+index 52e976dc7f84880c40d4616989f8eea484a7c172..0e16e611416a790dd3a58a5d688cec2fe0ea4a0a 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
 @@ -1,6 +1,5 @@
@@ -530,7 +532,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..a4767ee8185daf64b4524f952b5dec1b
  #include <linux/elf.h>
  #include <linux/regset.h>
  #include <linux/sched.h>
-@@ -10,59 +9,97 @@
+@@ -10,59 +9,99 @@
  
  static int register_index(int regno)
  {
@@ -594,7 +596,9 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..a4767ee8185daf64b4524f952b5dec1b
 +	guest->orig_x0 = regs->orig_ax;
 +	UPT_X86_64_RIP(guest) = regs->ip;
 +	upt_x86_64_set_segment_selector(guest, 1, regs->cs);
-+	UPT_X86_64_RFLAGS(guest) = regs->flags | 2;
++	UPT_X86_64_RFLAGS(guest) =
++		(UPT_X86_64_RFLAGS(guest) & ~UML_X86_RFLAGS_TRACER_MASK) |
++		(regs->flags & UML_X86_RFLAGS_TRACER_MASK) | 2;
 +	UPT_X86_64(guest, UML_X86_64_RSP) = regs->sp;
 +	upt_x86_64_set_segment_selector(guest, 2, regs->ss);
 +	UPT_X86_64_FS_BASE(guest) = regs->fs_base;
@@ -662,7 +666,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..a4767ee8185daf64b4524f952b5dec1b
  	return 0;
  }
  
-@@ -92,8 +129,10 @@ long subarch_ptrace(struct task_struct *child, long request,
+@@ -92,8 +131,10 @@ long subarch_ptrace(struct task_struct *child, long request,
  static int genregs_get(struct task_struct *target,
  		       const struct user_regset *regset, struct membuf to)
  {
@@ -675,7 +679,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..a4767ee8185daf64b4524f952b5dec1b
  	return 0;
  }
  
-@@ -102,19 +141,15 @@ static int genregs_set(struct task_struct *target,
+@@ -102,19 +143,15 @@ static int genregs_set(struct task_struct *target,
  		       unsigned int pos, unsigned int count,
  		       const void *kbuf, const void __user *ubuf)
  {
@@ -704,7 +708,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..a4767ee8185daf64b4524f952b5dec1b
  }
  
  static int fpregs_get(struct task_struct *target,
-@@ -133,7 +168,7 @@ static int fpregs_set(struct task_struct *target,
+@@ -133,7 +170,7 @@ static int fpregs_set(struct task_struct *target,
  		target->thread.regs.regs.fp, 0, host_fp_size);
  }
  
@@ -713,7 +717,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..a4767ee8185daf64b4524f952b5dec1b
  	[REGSET_GENERAL] = {
  		USER_REGSET_NOTE_TYPE(PRSTATUS),
  		.n = sizeof(struct user_regs_struct) / sizeof(unsigned long),
-@@ -152,15 +187,15 @@ static const struct user_regset uml_arm64_regsets[] = {
+@@ -152,15 +189,15 @@ static const struct user_regset uml_arm64_regsets[] = {
  	},
  };
  
@@ -736,7 +740,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..a4767ee8185daf64b4524f952b5dec1b
 +	return &uml_x86_64_view;
  }
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index f77c6e818dabddb6598a1cefb47167cbe324fef7..e9f2fa31680132fae796582d93da3dfe7667d4c5 100644
+index f77c6e818dabddb6598a1cefb47167cbe324fef7..a83391a7d46cb661683616999460b7bf418f94a0 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
 @@ -22,15 +22,25 @@
@@ -774,13 +778,23 @@ index f77c6e818dabddb6598a1cefb47167cbe324fef7..e9f2fa31680132fae796582d93da3dfe
  
  struct uml_pt_regs {
  	unsigned long gp[MAX_REG_NR];
-@@ -55,17 +65,117 @@ struct uml_pt_regs {
+@@ -55,17 +65,127 @@ struct uml_pt_regs {
  	unsigned long fp[];
  };
  
 +#define UPT_X86_64(regs, n) UPT_X((regs), (n))
 +#define UPT_X86_64_RIP(regs) UPT_IP(regs)
 +#define UPT_X86_64_RFLAGS(regs) UPT_X((regs), 16)
++/*
++ * The RFLAGS bits a task controls, as on Linux x86: a signal frame restores
++ * FIX_EFLAGS (CF, PF, AF, ZF, SF, TF, DF, OF, RF and AC), and a tracer may
++ * also change NT (ptrace's FLAG_MASK). IF, IOPL, VM, VIF, VIP and ID keep
++ * the task's value. start_thread() starts a task with IF and reserved bit 1,
++ * which the Darwin host also sets on every entry to the task.
++ */
++#define UML_X86_RFLAGS_RESTORE_MASK 0x50dd5UL
++#define UML_X86_RFLAGS_TRACER_MASK (UML_X86_RFLAGS_RESTORE_MASK | (1UL << 14))
++#define UML_X86_RFLAGS_INITIAL 0x202UL
 +#define UPT_X86_64_FS_BASE(regs) UPT_X((regs), 17)
 +#define UPT_X86_64_GS_BASE(regs) UPT_X((regs), 18)
 +#define UML_X86_64_COMPAT_SYSCALL (1UL << 32)
@@ -899,7 +913,7 @@ index f77c6e818dabddb6598a1cefb47167cbe324fef7..e9f2fa31680132fae796582d93da3dfe
  
  extern unsigned long host_fp_size;
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index af7e9d392da83e03b4617b23bdd19692cdf47a1f..65f9b01e059b2f5894e578a5d6fb2540cfb00346 100644
+index af7e9d392da83e03b4617b23bdd19692cdf47a1f..775f7b80119886229c864f2b7dd16f9b57b836ba 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -1,9 +1,6 @@
@@ -1057,7 +1071,7 @@ index af7e9d392da83e03b4617b23bdd19692cdf47a1f..65f9b01e059b2f5894e578a5d6fb2540
  #ifdef UML_HOST_DARWIN
  /* A handler without SA_RESTORER returns here, in the final guest page above
   * STACK_TOP, and the Darwin host runs the rt_sigreturn syscall itself when a
-@@ -35,160 +145,321 @@ struct uml_arm64_frame_record {
+@@ -35,160 +145,324 @@ struct uml_arm64_frame_record {
   */
  #define UML_DARWIN_SIGRETURN_TRAMPOLINE \
  	(UML_DARWIN_TASK_SIZE - 0x100UL)
@@ -1421,6 +1435,7 @@ index af7e9d392da83e03b4617b23bdd19692cdf47a1f..65f9b01e059b2f5894e578a5d6fb2540
 -		error = restore_fpsimd_context(regs, context);
 +	struct uml_x86_64_sigcontext state;
 +	struct uml_pt_regs *guest = &regs->regs;
++	unsigned long flags = UPT_X86_64_RFLAGS(guest);
 +
 +	if (copy_from_user(&state, context, sizeof(state)))
 +		return 1;
@@ -1441,7 +1456,9 @@ index af7e9d392da83e03b4617b23bdd19692cdf47a1f..65f9b01e059b2f5894e578a5d6fb2540
 +	UPT_X86_64(guest, UML_X86_64_RCX) = state.cx;
 +	UPT_X86_64(guest, UML_X86_64_RSP) = state.sp;
 +	UPT_X86_64_RIP(guest) = state.ip;
-+	UPT_X86_64_RFLAGS(guest) = state.flags | 2;
++	UPT_X86_64_RFLAGS(guest) =
++		(flags & ~UML_X86_RFLAGS_RESTORE_MASK) |
++		(state.flags & UML_X86_RFLAGS_RESTORE_MASK) | 2;
 +	if ((state.cs | 3) != UML_X86_64_USER_CS ||
 +	    (state.ss | 3) != UML_X86_64_USER_SS)
 +		return 1;
@@ -1499,7 +1516,7 @@ index af7e9d392da83e03b4617b23bdd19692cdf47a1f..65f9b01e059b2f5894e578a5d6fb2540
  
  	if (ksig->ka.sa.sa_flags & SA_RESTORER)
  		restorer = (unsigned long)ksig->ka.sa.sa_restorer;
-@@ -199,31 +470,63 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
+@@ -199,31 +473,63 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
  	else
  		return 1;
  #endif
