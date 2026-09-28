@@ -1024,10 +1024,10 @@ glmark2 over Virgl and over guest Zink on Venus, WebGL Aquarium in Chromium
 and a Steam Big Picture boot together leave about 0.12 MB of index and 30 MB of
 data. Each entry's index record has the same size on the iPad and the Mac, so
 the same workload leaves the same index on both. At the limit the index costs a
-few MiB; the measured costs are beside `MetalShaderCache.indexLimit`. Removing
-a full cache is quick, and the next boot then compiles the host's own pipelines
-before the guest's first frame, and each workload compiles its shaders once
-more.
+few MiB; the measured costs are beside `indexLimit` in
+`Kernarium/Kernarium/MetalShaderCache.swift`. Removing a full cache is quick,
+and the next boot then compiles the host's own pipelines before the guest's
+first frame, and each workload compiles its shaders once more.
 
 The cache is `<bundle identifier>/com.apple.metal` in the Darwin user cache
 directory: the container's `Library/Caches` on a device, where
