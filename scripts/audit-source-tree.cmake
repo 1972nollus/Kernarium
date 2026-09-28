@@ -83,7 +83,7 @@ endfunction()
 
 # Guest domains and performance runners may share process/console mechanics
 # only through tests/integration/support. Importing another suite's entry
-# point, or a guest launcher (scripts/boot_*.py, tools/rootfs/*/boot.py),
+# point, or a guest launcher (tools/boot_*.py, tools/rootfs/*/boot.py),
 # couples its command-line policy and teardown behavior into an unrelated
 # test.
 function(uml_audit_guest_runner_imports ROOT OUT_VIOLATIONS)

@@ -14,7 +14,7 @@ import unittest
 from unittest import mock
 
 
-SCRIPT = Path(__file__).resolve().parents[3] / "scripts/boot_android.py"
+SCRIPT = Path(__file__).resolve().parents[3] / "tools/boot_android.py"
 SPEC = importlib.util.spec_from_file_location("boot_android", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 boot_android = importlib.util.module_from_spec(SPEC)

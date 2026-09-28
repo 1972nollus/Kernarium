@@ -121,13 +121,13 @@ and `/sys`, so a payload a session run reads lives elsewhere, conventionally
 under `/usr/local/libexec`. The integration and performance harness
 (`tests/integration/support/guest.py`) boots every guest this way, the GPU
 runner (`tests/integration/gpu/run_gpu_guest.py`) boots with `systemd`, and
-`scripts/boot-overlay-systemd.sh` boots an EROFS image interactively with the
+`tools/boot-overlay-systemd.sh` boots an EROFS image interactively with the
 fixed parameters in [`overlay-systemd/`](overlay-systemd).
 
 The KDE desktop policy that `rootfs.erofs` and the ext4 derivatives sealed
 from it do not carry is [`../desktop/setup/kde`](../desktop/setup/kde), which
 the [desktop image derivation](../desktop/README.md) bakes into the KDE image
-it produces. For the images without it, `scripts/boot_kde_vnc.py` installs
+it produces. For the images without it, `tools/boot_kde_vnc.py` installs
 that file as a payload and runs it from the harness test unit, which runs
 before the display manager.
 

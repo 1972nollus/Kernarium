@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """The KDE Plasma session launch: options, GPU-harness command, separator.
 
-scripts/boot_kde_vnc.py is the interactive command line over this module,
+tools/boot_kde_vnc.py is the interactive command line over this module,
 and the WebGL runners build their guests from the same options and command,
 appending their own kernel arguments after the separator.
 """

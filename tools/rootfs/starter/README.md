@@ -88,7 +88,7 @@ Boot the resulting disk with
 and attach the host Virtio-console service to reach the image-owned `hvc0`
 getty.
 
-The KDE convenience launcher, `scripts/boot_kde_vnc.py`, boots the Plasma
+The KDE convenience launcher, `tools/boot_kde_vnc.py`, boots the Plasma
 disk of release `starter-20260928-kde-setup` from `.build/rootfs/<release>/`
 by default. It attaches the disk read-only, so the host file must not be
 writable, selects `/dev/ubda1` beneath a tmpfs overlay, and has the per-run
