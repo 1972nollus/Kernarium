@@ -33,27 +33,18 @@ Program::Program(std::uint64_t guest_address, std::size_t instruction_count,
 	return execute(program, cpu, tlb, executed);
 }
 
+/* The per-block form below with the host environment handed back; fault
+ * resolution touches only the PC and the exit scratch, so doing it first does
+ * not matter. */
 ::uml::cpu::EngineEvent execute(const Program &program, CpuState &cpu, ::uml::memory::Tlb &tlb,
 	      std::size_t &executed) noexcept
 {
-	executed = 0;
-	if (program.words().empty())
-		return ::uml::cpu::EngineEvent::fatal;
-	if (program.accesses_fp_state())
-		cpu.access_fp_state();
-	const auto result =
-		uml_arm64_gadget_enter(program.words().data(), &cpu, &tlb,
-			program.instruction_count()
-#if UML_GADGET_EXECUTION_HISTOGRAM
-			, diagnostics::execution_counters()
-#endif
-			);
+	const auto event = execute_preserving_native_fp_environment(
+		program, cpu, tlb, executed);
 	restore_native_fp_environment(cpu);
-	executed = result.executed;
-	const auto event = static_cast<::uml::cpu::EngineEvent>(result.event);
-	resolve_entered_fault(program, cpu, event);
 	return event;
 }
+
 ::uml::cpu::EngineEvent execute_preserving_native_fp_environment(
 	const Program &program, CpuState &cpu, ::uml::memory::Tlb &tlb,
 	std::size_t &executed) noexcept

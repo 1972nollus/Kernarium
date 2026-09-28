@@ -4,6 +4,9 @@ Date: Mon, 3 Aug 2026 17:24:06 +0900
 Subject: [PATCH] uml: add Darwin host service implementation
 
 Apply the reviewed final-state topic without intermediate churn.
+
+uml_dir= puts the machine's files directly in the directory it names,
+without upstream's <umid>/ level, because Darwin's sun_path holds 104 bytes.
 ---
  arch/um/os-Darwin/Makefile       |   15 +
  arch/um/os-Darwin/bridge.h       |    8 +
@@ -25,9 +28,9 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/os-Darwin/start_up.c     |   72 ++
  arch/um/os-Darwin/time.c         |  262 +++++++
  arch/um/os-Darwin/tty.c          |   22 +
- arch/um/os-Darwin/umid.c         |   40 ++
+ arch/um/os-Darwin/umid.c         |   93 +++
  arch/um/os-Darwin/util.c         |  133 ++++
- 22 files changed, 4012 insertions(+)
+ 22 files changed, 4065 insertions(+)
  create mode 100644 arch/um/os-Darwin/Makefile
  create mode 100644 arch/um/os-Darwin/bridge.h
  create mode 100644 arch/um/os-Darwin/compat.c
@@ -4012,21 +4015,34 @@ index 0000000000000000000000000000000000000000..3c1f9f9b628745ba5efd52112dca7ce8
 +}
 diff --git a/arch/um/os-Darwin/umid.c b/arch/um/os-Darwin/umid.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..d00d373d9a77d5ce22a9f46fa3843e46f8e2aecf
+index 0000000000000000000000000000000000000000..ed24b37fa7f66dc49d6245b2d1fad57e1b78d926
 --- /dev/null
 +++ b/arch/um/os-Darwin/umid.c
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,93 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
 +#include <stdlib.h>
 +#include <string.h>
 +#include <unistd.h>
++#include <init.h>
 +#include <os.h>
 +
 +#define UMID_LENGTH 64
++#define UML_DIR_LENGTH 256
 +
 +static char umid[UMID_LENGTH] = "darwin";
++
++/*
++ * Without uml_dir=, machines share /tmp and each file carries its machine's
++ * umid: /tmp/uml-<umid>-<name>. uml_dir= names a directory that belongs to
++ * this machine alone, and its files go directly into it as <uml_dir>/<name>.
++ * Upstream nests a <umid>/ directory below uml_dir instead, but these files
++ * are Unix sockets, Darwin's sun_path holds 104 bytes, and an iOS
++ * application's own temporary directory already takes 89 of them.
++ */
++static char uml_dir[UML_DIR_LENGTH];
++static int uml_dir_error;
 +
 +char *get_umid(void)
 +{
@@ -4044,18 +4060,58 @@ index 0000000000000000000000000000000000000000..d00d373d9a77d5ce22a9f46fa3843e46
 +
 +int umid_file_name(char *name, char *buffer, int length)
 +{
-+	const char prefix[] = "/tmp/uml-";
-+	size_t needed = sizeof(prefix) - 1 + strlen(umid) + 1 + strlen(name) + 1;
++	const char *prefix = uml_dir[0] != '\0' ? uml_dir : "/tmp/uml-";
++	const char *separator = uml_dir[0] != '\0' ? "/" : "-";
++	const char *owner = uml_dir[0] != '\0' ? "" : umid;
++	size_t needed = strlen(prefix) + strlen(owner) + strlen(separator) +
++			strlen(name) + 1;
 +	size_t used;
 +
-+	if (length < 0 || (size_t)length < needed)
++	if (uml_dir_error)
++		return uml_dir_error;
++	if (length < 0 || (size_t)length < needed) {
++		printk(UM_KERN_ERR "umid_file_name: %s%s%s%s needs %zu bytes, not %d\n",
++		       prefix, owner, separator, name, needed, length);
 +		return -ENAMETOOLONG;
++	}
 +	used = strlcpy(buffer, prefix, (size_t)length);
-+	used += strlcpy(buffer + used, umid, (size_t)length - used);
-+	used += strlcpy(buffer + used, "-", (size_t)length - used);
++	used += strlcpy(buffer + used, owner, (size_t)length - used);
++	used += strlcpy(buffer + used, separator, (size_t)length - used);
 +	strlcpy(buffer + used, name, (size_t)length - used);
 +	return 0;
 +}
++
++static int __init set_uml_dir(char *name, int *add)
++{
++	size_t length = strlen(name);
++
++	*add = 0;
++	while (length > 1 && name[length - 1] == '/')
++		length--;
++	if (length == 0) {
++		os_warn("uml_dir can't be an empty string\n");
++		return 0;
++	}
++	if (length >= sizeof(uml_dir)) {
++		/* Falling back to /tmp would put the files where whoever chose
++		 * the directory will not look for them. */
++		os_warn("uml_dir is longer than %zu bytes; this machine gets no management console\n",
++			sizeof(uml_dir) - 1);
++		uml_dir_error = -ENAMETOOLONG;
++		return 0;
++	}
++	memcpy(uml_dir, name, length);
++	uml_dir[length] = '\0';
++	uml_dir_error = 0;
++	return 0;
++}
++
++__uml_setup("uml_dir=", set_uml_dir,
++"uml_dir=<directory>\n"
++"    A directory that belongs to this machine alone. Its files, such as the\n"
++"    management console socket, go directly into it under their own names.\n"
++"    Without it they go to /tmp, named after the umid.\n\n"
++);
 diff --git a/arch/um/os-Darwin/util.c b/arch/um/os-Darwin/util.c
 new file mode 100644
 index 0000000000000000000000000000000000000000..3bdb9963266452e938a8c95d10b7ef1aa2f99a37

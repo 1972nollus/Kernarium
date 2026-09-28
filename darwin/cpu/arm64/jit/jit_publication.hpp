@@ -80,9 +80,11 @@ struct JitStoreParticipant final {
    * taken. An unregistered participant publishes here and is invisible to the
    * scan, which is what an unregistered participant meant before as well. */
   JitStoreSlot local_{};
-  /* Written only by the owning thread, in register/unregister, and read only
-   * by the owner on its own store path. The scan reads the slot array, never
-   * this pointer, so publication does not have to be synchronised. */
+  /* Written only by the owning thread, in register/unregister, under
+   * jit_store_participants_mutex. The owner reads it without the mutex on its
+   * own store path. The slot scan reads the slot array, not this pointer;
+   * another thread reads it only in the overflow scan, which holds the same
+   * mutex, so the owner's store path needs no synchronisation. */
   JitStoreSlot *published_{&local_};
 };
 

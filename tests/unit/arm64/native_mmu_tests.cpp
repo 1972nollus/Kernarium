@@ -8,6 +8,7 @@
 #include "memory/shared_backing.hpp"
 #include "uml_darwin_memory.h"
 #include "uml_darwin_static_mmu.h"
+#include "uml/tlb_sync_ranges.h"
 
 #include <algorithm>
 #include <array>
@@ -164,6 +165,39 @@ void test_shadow_publication_precedes_software_mapping()
 		"publication fixture static cleanup failed");
 	require(darwin_uml_vm_unmap(reinterpret_cast<void *>(base), slot.size()) == 0,
 		"publication fixture native cleanup failed");
+}
+
+/* The bridge reports a batch that an invalidation rejected as
+ * DARWIN_UML_VM_BATCH_REJECTED.  The static API's Darwin EAGAIN (35) would
+ * reach the kernel as EDEADLK, and its retry of the batch would never run. */
+void test_bridge_names_a_rejected_batch()
+{
+	constexpr unsigned long generation = 0x402;
+	constexpr std::uintptr_t guest_address = 0x40'0000;
+	ScratchBacking backing{backing_name, guest_page_size};
+	const auto map_page = [&] {
+		return darwin_uml_vm_map_generation(generation,
+			reinterpret_cast<void *>(guest_address), backing.descriptor(),
+			0, guest_page_size, PROT_READ | PROT_WRITE, 0, 1);
+	};
+
+	require(darwin_uml_vm_batch_begin(generation) == 0,
+		"rejected-batch fixture could not begin a batch");
+	require(map_page() == 0, "rejected-batch fixture map failed");
+	std::thread invalidator{[&] {
+		require(darwin_uml_vm_unmap_generation(generation,
+			reinterpret_cast<void *>(guest_address),
+			guest_page_size) == 0,
+			"rejected-batch fixture invalidation failed");
+	}};
+	invalidator.join();
+	require(darwin_uml_vm_batch_end() == DARWIN_UML_VM_BATCH_REJECTED,
+		"the bridge did not name a rejected batch");
+	require(darwin_uml_vm_batch_begin(generation) == 0 && map_page() == 0 &&
+		darwin_uml_vm_batch_end() == 0,
+		"the walk after the invalidation was not published");
+	require(darwin_uml_static_vm_destroy(generation) == 0,
+		"rejected-batch fixture cleanup failed");
 }
 
 void test_backing_index_tracks_rebind_unmap_and_retire()
@@ -1273,6 +1307,7 @@ int main()
 		require(native_window.entered(),
 			"could not configure native MMU test window");
 		test_shadow_publication_precedes_software_mapping();
+		test_bridge_names_a_rejected_batch();
 		test_backing_index_tracks_rebind_unmap_and_retire();
 		test_publication_filter_survives_its_rebuilds();
 		test_absent_quarter_and_alias_coherency();

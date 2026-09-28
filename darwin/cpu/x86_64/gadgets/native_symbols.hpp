@@ -496,6 +496,7 @@ void uml_x86_64_gadget_leave_16();
 void uml_x86_64_gadget_leave_32();
 void uml_x86_64_gadget_leave_64();
 void uml_x86_64_gadget_enter_16();
+void uml_x86_64_gadget_enter_32();
 void uml_x86_64_gadget_enter_64();
 void uml_x86_64_gadget_push_segment_32();
 void uml_x86_64_gadget_push_segment_64();

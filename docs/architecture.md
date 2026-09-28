@@ -144,11 +144,14 @@ A failed kernel map unmaps its own address for the same reason, degrading to
 A generation's software-MMU mappings are published only by a page-table
 walker's batch. The batch records the generation's invalidation epoch when it
 begins and is rejected when any invalidation arrives before it ends, so a walk
-which sampled a PTE before Linux changed it cannot publish it afterwards.
-Nothing else installs a mapping. A kernel uaccess pins its page from a PTE
-whose lock it has already dropped, so when the host names other backing than
-that page either of the two may be the stale one; the uaccess discards the
-mapping and the next access replays the PTE. An absent page is always sound.
+which sampled a PTE before Linux changed it cannot publish it afterwards. The
+walker walks a rejected batch again before it returns to the guest; the bridge
+reports the rejection as `DARWIN_UML_VM_BATCH_REJECTED`, not as an errno,
+because Darwin's errno values are not Linux's. Nothing else installs a mapping.
+A kernel uaccess pins its page from a PTE whose lock it has already dropped, so
+when the host names other backing than that page either of the two may be the
+stale one; the uaccess discards the mapping and the next access replays the
+PTE. An absent page is always sound.
 
 Gadget streams, MMU backing, and shadow mappings are data.
 Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,
@@ -254,12 +257,14 @@ block takes the alignment fault. A pair counts as one access of its total
 size. Without host LSE2 every misaligned such access faults. Each executor
 records the choice in its TLB. Gadgets execute the native host instruction on
 an admitted address, and a host CASAL loop for software floating-point
-atomics; the JIT applies the same rule in its semantic path, whose direct
-ordered forms use host LDAR and STLR. The rule matches native
-LSE2 hardware for the LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2 forms. The
-LRCPC3 and LSFE forms follow the architecture's rule, which current hosts
-cannot execute natively. LDIAPP/STILP and the LSCP pairs keep their element
-alignment, and LSE128, RCW, GCS, and LS64 accesses stay naturally aligned.
+atomics; the JIT applies the same rule in its semantic path, which performs
+each such access as one host instruction, with LDAR and STLR for the ordered
+forms and a CASAL loop for a misaligned read-modify-write. The rule matches
+native LSE2 hardware for the LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2
+forms. The LRCPC3 and LSFE forms follow the architecture's rule, which current
+hosts cannot execute natively. LDIAPP/STILP and the LSCP pairs keep their
+element alignment, and LSE128, RCW, GCS, and LS64 accesses stay naturally
+aligned.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

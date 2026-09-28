@@ -27,10 +27,10 @@ time that this covers struct page.
  2 files changed, 12 insertions(+)
 
 diff --git a/arch/arm64/um/Kconfig b/arch/arm64/um/Kconfig
-index 2b518b23fbe29da511c84051c58db647b1a80734..06086feb226da3a2012f1ca2cfb0dec9bb63f69d 100644
+index 1619a8085d70bb0b4168dedfe0623c8b337ea080..6068242b331a532ca5735f49556d1d497a49798b 100644
 --- a/arch/arm64/um/Kconfig
 +++ b/arch/arm64/um/Kconfig
-@@ -13,7 +13,9 @@ config UML_ARM64
+@@ -12,7 +12,9 @@ config UML_ARM64
  	select GENERIC_HWEIGHT
  	select GENERIC_TIME_VSYSCALL
  	select HAVE_GENERIC_VDSO

@@ -172,7 +172,7 @@ gadget xgetbv
 gadget \rdtscp
 	ldr x22, [_stream], #8
 	ldrb w8, [_cpu, #UML_X86_64_CPU_TIMESTAMP_FAULTS]
-	cbnz w8, .Lx86_timestamp_fault
+	cbnz w8, .Lx86_general_protection
 	isb
 	mrs x8, cntvct_el0
 	mov w9, w8
@@ -192,7 +192,7 @@ timestamp rdtscp
 gadget privileged
 	ldr x22, [_stream]
 /* A faulting instruction does not retire; RIP names the instruction. */
-.Lx86_timestamp_fault:
+.Lx86_general_protection:
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_GENERAL_PROTECTION
 	b uml_x86_64_gadget_leave
@@ -220,10 +220,19 @@ gadget read_\name\()_base_\host_register\()_r
 	retire_and_next
 .endm
 
+/* A 64-bit base must be canonical: bits 63:47 all equal, or #GP. */
 .macro write_segment_base name, base, width, host_register
 gadget write_\name\()_base_\width\()_r
 	ldr x8, [_stream], #8
+	.if \width == 64
+	ldr x22, [_stream], #8
+	.endif
 	ldr \host_register\()9, [_cpu, x8]
+	.if \width == 64
+	sbfx x10, x9, #0, #48
+	cmp x10, x9
+	b.ne .Lx86_general_protection
+	.endif
 	str x9, [_cpu, #\base]
 	retire_and_next
 .endm
