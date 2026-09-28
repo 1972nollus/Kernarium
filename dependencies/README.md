@@ -204,91 +204,14 @@ teardown from hanging in the disk cache's queue. Its regression is
 `util_tests --gtest_filter='util_barrier.*'`, which
 `meson test -C BUILD --suite util` runs in any `-Dbuild-tests=true` tree.
 
-KosmicKrisp never hands Metal a texture view it cannot make, because Metal
-answers one with an assertion that ends the process. An image view whose type,
-levels or layers its image cannot provide fails with
-`VK_ERROR_OUT_OF_DEVICE_MEMORY`, except that a 3D view of a non-3D image is made
-as the 2D or 2D-array texture the image is: Venus creates views without waiting
-for the result, so a refusal would surface later as a lost device. Metal still
-decides pixel-format compatibility. The same invalid views through
-`vkCreateImageView` trip the common runtime's assertions, so
-`kosmickrisp_invalid_view_type` checks them there only in a build without
-assertions and checks the texture bridge directly in the regression suite.
-
-Programmable primitive IDs cross the Metal vertex/fragment interface as flat
-user varyings. Layer and viewport indices use unsigned native Metal attributes
-without interpolation qualifiers.
-
-KosmicKrisp gates unsatisfied timeline waits on the CPU before native Metal
-submission, using the common Vulkan runtime's on-demand submit worker. This
-keeps delayed host signals from outliving Metal's finite GPU event-wait window;
-`MESA_VK_ENABLE_SUBMIT_THREAD=false` still preserves that required fallback.
-Only a wait whose signal has not been submitted is gated. A value already
-signalled on the CPU or enqueued on the queue's Metal timeline is pending, so
-ordinary dependencies keep the immediate path, the worker stays off, and
-`vkQueueSubmit` never waits for the GPU work its batch depends on. A binary
-semaphore wait is pending by definition because its signal must have been
-submitted first. That distinction is what keeps a gated batch from blocking
-the caller that has to release it. Once the worker runs, a binary semaphore's
-payload moves to the batch waiting on it when the worker reaches that batch,
-after any signal queued ahead of it, never inside `vkQueueSubmit`, where a
-still-queued signal would land on a fresh payload. A timeline wait whose
-signal is submitted later to the same queue remains unsupported: the device
-exposes one queue and submits in order. CPU waits preserve their absolute
-deadlines and observe device loss so pending submissions and queue drains can
-shut down before device resources are released.
-
-A render pass clear depth reaches Metal already rounded to the attachment
-format's nearest representable value and offset inside that texel's interval.
-Metal converts the clear into a normalized-integer depth attachment by
-truncating, so an unrounded value would clear `D16_UNORM` one step low and
-disagree with the rasterizer's own depth writes, which round. Depth formats
-Metal stores as floats keep their exact value.
-
-Subgroup operations reach Metal's SIMD groups, which exist in kernel and
-fragment functions only, so the driver advertises compute and fragment as its
-subgroup stages. A vertex, tessellation or geometry shader that reads the
-subgroup builtins or uses a group operation still compiles: those stages
-present the single-invocation subgroup their properties imply, with size and
-count one, invocation zero, and every group operation returning the value that
-one invocation contributed.
-
-The shader outputs Metal names itself keep the shape Metal gives them, not
-the shape the shader's stores imply: the clip coordinate is four components
-even when a shader writes only `gl_Position.xy`, point size is one float, the
-layer and viewport indices are unsigned, and the clip and cull distances are
-float arrays. A component no store reaches keeps the value the output is
-initialized with, which for the clip coordinate is the identity `(0, 0, 0, 1)`
-rather than a degenerate zero `w`.
-
-Linked graphics pipelines share native programs and dynamic vertex-input
-variants only while a live Vulkan pipeline owns them. The lookup cache drops
-its entry and releases those resources when the last pipeline owner is
-destroyed, so obsolete programs do not accumulate until device teardown.
-Pipeline statistics use draw-time guards in the same executable, including
-its bounded raster variants; query begin and end never compile or retain a
-second shader tree. A discard variant preserves application shader effects and
-transform feedback without raster-only materialization or provoking-vertex
-conversion. Dynamic discard changes select the corresponding precompiled
-variant, including after pipeline-cache reload.
-Metal bridge constructors return one owned, initialized object. Callers release
-that object once; constructors must not initialize it again after `new`.
-
-Sequential encoders of one recording share a Metal command buffer. Only
-compute that must run before or after a whole render pass, and each encoder of
-a layered or multiview pass, gets a Metal command buffer of its own. A command
-buffer takes a native command allocator for a lane only when that lane
-records. Every submission takes its allocators and Metal command buffers with
-it and hands the allocators to the device's allocator cache when the GPU
-finishes; a reset hands over only allocators that were never submitted. A
-resubmitted command buffer is recorded again, so its re-record first waits
-for the GPU to finish its last submission, which a `SIMULTANEOUS_USE` buffer
-may still be running. An allocator keeps its
-high-water storage until it is released, and a recording that takes a grown
-one keeps all of it, so the cache recycles only allocators of at most 16 MiB,
-keeps at most 64 MiB in total, and releases every other allocator. Feedback
-reporting remains valid after Vulkan device teardown through a separate
-reference-counted context.
+KosmicKrisp's runtime behaviour is specified in
+[`../docs/graphics.md`](../docs/graphics.md#kosmickrisp-driver-contracts).
+`kosmickrisp_invalid_view_type` checks invalid image views through
+`vkCreateImageView` only in a build without assertions, because they trip the
+common runtime's assertions, and checks the texture bridge directly in the
+regression suite. Metal bridge constructors return one owned, initialized
+object. Callers release that object once; constructors must not initialize it
+again after `new`.
 
 Apple builds compile KosmicKrisp's device library offline: `kk_clc` writes
 each program's MSL into one bundle, and the build compiles it with the target
@@ -321,11 +244,9 @@ dependencies/kosmickrisp-spirv/generate.py generate \
 `generate.py verify` is the full comparison against a checkout of the
 committed series.
 
-`MESA_KK_DEBUG=submit_timing` enables optional raw Metal commit-feedback
-diagnostics on stderr: an opaque device identity, GPU start and end host
-seconds, and the commit error code for the whole committed command-buffer
-batch. It is not a Vulkan timestamp-query result, adds no GPU commands, and is
-absent from the disabled path.
+The optional `MESA_KK_DEBUG=submit_timing` diagnostics are specified with the
+tools that use them, in
+[`../tests/perf/README.md`](../tests/perf/README.md#native-whole-submit-timing).
 
 The iOS storage build exports only the two file-oriented C entry points used by
 Kernarium. They run one at a time, and while one runs they redirect the whole

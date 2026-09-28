@@ -628,6 +628,93 @@ The driver emits such a load as two wide halves instead. Each half keeps the
 alignment NIR proved, so the access costs two rather than the eight a packed
 four-component 64-bit vector would, and nothing narrower changes.
 
+### KosmicKrisp driver contracts
+
+These are the run-time guarantees of the host KosmicKrisp driver as this
+project's Mesa series patches it; the series and its regression suites are in
+[`../dependencies/README.md`](../dependencies/README.md).
+
+KosmicKrisp never hands Metal a texture view it cannot make, because Metal
+answers one with an assertion that ends the process. An image view whose type,
+levels or layers its image cannot provide fails with
+`VK_ERROR_OUT_OF_DEVICE_MEMORY`, except that a 3D view of a non-3D image is made
+as the 2D or 2D-array texture the image is: Venus creates views without waiting
+for the result, so a refusal would surface later as a lost device. Metal still
+decides pixel-format compatibility.
+
+Programmable primitive IDs cross the Metal vertex/fragment interface as flat
+user varyings. Layer and viewport indices use unsigned native Metal attributes
+without interpolation qualifiers.
+
+KosmicKrisp gates unsatisfied timeline waits on the CPU before native Metal
+submission, using the common Vulkan runtime's on-demand submit worker. This
+keeps delayed host signals from outliving Metal's finite GPU event-wait window;
+`MESA_VK_ENABLE_SUBMIT_THREAD=false` still preserves that required fallback.
+Only a wait whose signal has not been submitted is gated. A value already
+signalled on the CPU or enqueued on the queue's Metal timeline is pending, so
+ordinary dependencies keep the immediate path, the worker stays off, and
+`vkQueueSubmit` never waits for the GPU work its batch depends on. A binary
+semaphore wait is pending by definition because its signal must have been
+submitted first. That distinction is what keeps a gated batch from blocking
+the caller that has to release it. Once the worker runs, a binary semaphore's
+payload moves to the batch waiting on it when the worker reaches that batch,
+after any signal queued ahead of it, never inside `vkQueueSubmit`, where a
+still-queued signal would land on a fresh payload. A timeline wait whose
+signal is submitted later to the same queue remains unsupported: the device
+exposes one queue and submits in order. CPU waits preserve their absolute
+deadlines and observe device loss so pending submissions and queue drains can
+shut down before device resources are released.
+
+A render pass clear depth reaches Metal already rounded to the attachment
+format's nearest representable value and offset inside that texel's interval.
+Metal converts the clear into a normalized-integer depth attachment by
+truncating, so an unrounded value would clear `D16_UNORM` one step low and
+disagree with the rasterizer's own depth writes, which round. Depth formats
+Metal stores as floats keep their exact value.
+
+Subgroup operations reach Metal's SIMD groups, which exist in kernel and
+fragment functions only, so the driver advertises compute and fragment as its
+subgroup stages. A vertex, tessellation or geometry shader that reads the
+subgroup builtins or uses a group operation still compiles: those stages
+present the single-invocation subgroup their properties imply, with size and
+count one, invocation zero, and every group operation returning the value that
+one invocation contributed.
+
+The shader outputs Metal names itself keep the shape Metal gives them, not
+the shape the shader's stores imply: the clip coordinate is four components
+even when a shader writes only `gl_Position.xy`, point size is one float, the
+layer and viewport indices are unsigned, and the clip and cull distances are
+float arrays. A component no store reaches keeps the value the output is
+initialized with, which for the clip coordinate is the identity `(0, 0, 0, 1)`
+rather than a degenerate zero `w`.
+
+Linked graphics pipelines share native programs and dynamic vertex-input
+variants only while a live Vulkan pipeline owns them. The lookup cache drops
+its entry and releases those resources when the last pipeline owner is
+destroyed, so obsolete programs do not accumulate until device teardown.
+Pipeline statistics use draw-time guards in the same executable, including
+its bounded raster variants; query begin and end never compile or retain a
+second shader tree. A discard variant preserves application shader effects and
+transform feedback without raster-only materialization or provoking-vertex
+conversion. Dynamic discard changes select the corresponding precompiled
+variant, including after pipeline-cache reload.
+
+Sequential encoders of one recording share a Metal command buffer. Only
+compute that must run before or after a whole render pass, and each encoder of
+a layered or multiview pass, gets a Metal command buffer of its own. A command
+buffer takes a native command allocator for a lane only when that lane
+records. Every submission takes its allocators and Metal command buffers with
+it and hands the allocators to the device's allocator cache when the GPU
+finishes; a reset hands over only allocators that were never submitted. A
+resubmitted command buffer is recorded again, so its re-record first waits
+for the GPU to finish its last submission, which a `SIMULTANEOUS_USE` buffer
+may still be running. An allocator keeps its
+high-water storage until it is released, and a recording that takes a grown
+one keeps all of it, so the cache recycles only allocators of at most 16 MiB,
+keeps at most 64 MiB in total, and releases every other allocator. Feedback
+reporting remains valid after Vulkan device teardown through a separate
+reference-counted context.
+
 ### Apple8 (A15) device behaviour
 
 The physical iOS device the Vulkan route has been exercised on is an iPad
@@ -889,7 +976,7 @@ list is `DEVICE_EXCLUSIONS` in `tests/integration/gpu/run_vk_cts.py`.
 Native graphics allocations are separate from the configured guest RAM limit.
 KosmicKrisp releases obsolete pipeline resources with their last Vulkan owner
 and a submission's recording storage after GPU completion; see the
-[dependency ownership contracts](../dependencies/README.md).
+[KosmicKrisp driver contracts](#kosmickrisp-driver-contracts).
 
 Budget campaign concurrency from host physical footprint and the
 `IOAccelerator (graphics)` row of `vmmap -summary`, rather than process RSS,

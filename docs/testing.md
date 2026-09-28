@@ -799,20 +799,6 @@ rule requiring a common texture target applies only when one is. Reporting that
 framebuffer incomplete would contradict the completeness rules a conforming
 implementation must apply.
 
-### Native whole-submit timing
-
-The KosmicKrisp line and geometry unit executables accept the opt-in arguments
-`performance` (render-only Vulkan queries) and `performance-whole-submit`
-(native Metal commit feedback through `MESA_KK_DEBUG=submit_timing`);
-`tests/perf/uml-kosmickrisp-rgb32-texel-bench` uses the same collector through
-`--timing metal-whole-submit`. Registered CTests never run these modes. The
-collector permits one outstanding submission and requires exactly one finite,
-ordered, wall-bounded callback per draw; missing, malformed, duplicate, late,
-or unmatched records fail closed rather than being filtered. Whole-submit
-intervals include every clear, barrier, and copy in the Metal commit and are
-not comparable with render-only query intervals. No speed ratio is a
-correctness threshold.
-
 ## Claiming completion
 
 A passing structural audit does not prove generated-code shape, performance,
