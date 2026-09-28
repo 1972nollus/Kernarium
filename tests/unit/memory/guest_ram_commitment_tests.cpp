@@ -23,6 +23,21 @@ namespace {
 
 using uml::memory::GuestRamCommitment;
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define UML_COMMITMENT_TEST_UNDER_ASAN 1
+#endif
+#endif
+
+/* AddressSanitizer intercepts mlock() and does nothing, so no range it
+ * builds is ever wired. */
+#if defined(UML_COMMITMENT_TEST_UNDER_ASAN)
+constexpr const char *wiring_unsupported =
+	"AddressSanitizer ignores mlock()";
+#else
+constexpr const char *wiring_unsupported = nullptr;
+#endif
+
 constexpr std::size_t mib = 1024U * 1024U;
 
 void require(bool condition, const std::string &message)
@@ -231,6 +246,7 @@ int main()
 	const struct {
 		const char *name;
 		void (*run)();
+		const char *unsupported{};
 	} tests[] = {
 		{"release leaves and commit restores the footprint",
 			release_leaves_and_commit_restores_the_footprint},
@@ -239,12 +255,18 @@ int main()
 		{"ranges outside the managed window are ignored or refused",
 			ranges_outside_the_managed_window_are_ignored_or_refused},
 		{"a wired host wires on commit and unwires on release",
-			a_wired_host_wires_on_commit_and_unwires_on_release},
+			a_wired_host_wires_on_commit_and_unwires_on_release,
+			wiring_unsupported},
 		{"concurrent callers keep the count exact",
 			concurrent_callers_keep_the_count_exact},
 	};
 	int failures = 0;
 	for (const auto &test : tests) {
+		if (test.unsupported != nullptr) {
+			std::printf("unsupported: %s: %s\n", test.name,
+				test.unsupported);
+			continue;
+		}
 		try {
 			test.run();
 			std::printf("ok: %s\n", test.name);

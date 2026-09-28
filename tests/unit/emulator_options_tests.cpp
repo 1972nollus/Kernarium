@@ -356,11 +356,24 @@ void test_scalable_native_kernel_layout_geometry()
 #endif
 }
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define UML_OPTIONS_TEST_UNDER_ASAN 1
+#endif
+#endif
+
 /* A reserved native window must reach the loader whole. Darwin places its
  * next unhinted allocation in a range freed inside it, which the guest's next
  * fixed mapping would then replace without telling either owner. */
 void test_reserved_native_window_has_no_gap()
 {
+#if defined(UML_OPTIONS_TEST_UNDER_ASAN)
+	/* AddressSanitizer keeps its allocator heap at 0x600000000000 on arm64
+	 * macOS, the product's macOS native window, so the window cannot be
+	 * reserved beside it. */
+	std::puts("unsupported: the reserved native window has no gap: "
+		"AddressSanitizer's heap occupies the macOS native window");
+#else
 	constexpr std::uint64_t gib = 1024ULL * 1024ULL * 1024ULL;
 	constexpr std::uintptr_t start = DARWIN_UML_MACOS_NATIVE_ADDRESS;
 	constexpr std::uintptr_t length = 2U * gib +
@@ -400,6 +413,7 @@ void test_reserved_native_window_has_no_gap()
 		length) == 0, "the reserved native window could not be released");
 	require(!uml::runtime::reserve_native_kernel_window({}).valid,
 		"an invalid geometry reserved a native window");
+#endif
 }
 
 void test_guest_cpu_count_matches_kernel_policy()

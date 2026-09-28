@@ -59,6 +59,9 @@ if(UML_GUEST_16K_PAGES AND UML_TARGET_MACOS)
 		NAME emulator-native-16k-ownership
 		COMMAND uml_native_16k_ownership_tests
 		LABELS tsan)
+	# Unsupported beside AddressSanitizer's heap (native_window_test_support.hpp).
+	set_tests_properties(emulator-native-16k-ownership PROPERTIES
+		SKIP_RETURN_CODE 77)
 endif()
 
 # uml_add_arm64_unit_test(<stem> [NAME <test>] [WITHOUT_HARNESS]

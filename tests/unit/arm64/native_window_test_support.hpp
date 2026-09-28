@@ -14,7 +14,23 @@ namespace uml::testing {
 #if __has_feature(thread_sanitizer)
 #define UML_NATIVE_TEST_WINDOW_UNDER_TSAN 1
 #endif
+#if __has_feature(address_sanitizer)
+#define UML_NATIVE_TEST_WINDOW_UNDER_ASAN 1
 #endif
+#endif
+
+/* AddressSanitizer keeps its allocator heap at 0x600000000000 on arm64 macOS,
+ * which is the product's macOS native window. A test that needs a large or
+ * fixed part of that window reports this reason and exits with
+ * native_test_window_unsupported_status, which its registration names as its
+ * skip code. */
+#if defined(UML_NATIVE_TEST_WINDOW_UNDER_ASAN) && DARWIN_UML_NATIVE_HIGH_PLACEMENT
+inline constexpr const char *native_test_window_unsupported =
+	"AddressSanitizer's heap occupies the macOS native window";
+#else
+inline constexpr const char *native_test_window_unsupported = nullptr;
+#endif
+inline constexpr int native_test_window_unsupported_status = 77;
 
 /* Match the product placement: macOS avoids crowded low host VM bands.
  * ThreadSanitizer reserves everything from 0x20000000000 up for itself, the

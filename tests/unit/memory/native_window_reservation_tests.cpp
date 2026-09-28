@@ -317,6 +317,10 @@ void test_live_mapping_survives_an_unrelated_allocation_cycle()
 
 int main()
 {
+	if (const char *reason = uml::testing::native_test_window_unsupported) {
+		std::printf("unsupported: %s\n", reason);
+		return uml::testing::native_test_window_unsupported_status;
+	}
 	try {
 		const uml::testing::NativeTestWindowScope window;
 		require(window.entered(),

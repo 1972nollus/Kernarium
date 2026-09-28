@@ -209,6 +209,10 @@ cmake --build --preset tsan
 ctest --preset unit-tsan
 ```
 
+AddressSanitizer keeps its heap at the product's macOS native window and
+ignores `mlock()`, so under it the cases that need that window or wired guest
+RAM report themselves unsupported instead of running.
+
 ## Integration prerequisites and workflows
 
 Integration needs four local inputs:

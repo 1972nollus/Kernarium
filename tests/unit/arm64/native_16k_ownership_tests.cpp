@@ -1182,6 +1182,10 @@ void require_registry_oom_child(const char *executable, const char *mode)
 
 int main(int argc, char **argv)
 {
+	if (const char *reason = uml::testing::native_test_window_unsupported) {
+		std::printf("unsupported: %s\n", reason);
+		return uml::testing::native_test_window_unsupported_status;
+	}
 	try {
 		static_assert(page_size == 16384);
 		uml::testing::NativeTestWindowScope native_window;

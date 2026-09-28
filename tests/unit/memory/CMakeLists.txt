@@ -73,8 +73,11 @@ if(TARGET uml_native_mmu_test_variant)
     # VM-heavy test can perturb.
     uml_add_unit_test(NAME memory-native-window-reservation
         COMMAND uml_native_window_reservation_tests)
+    # Unsupported beside AddressSanitizer's heap
+    # (tests/unit/arm64/native_window_test_support.hpp).
     set_tests_properties(memory-native-window-reservation PROPERTIES
-        RUN_SERIAL TRUE)
+        RUN_SERIAL TRUE
+        SKIP_RETURN_CODE 77)
 endif()
 
 # The direct-to-shadow slot conversion exists only where a guest page is
