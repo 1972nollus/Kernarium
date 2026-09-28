@@ -32,7 +32,7 @@ OBJDUMP,READELF,STRIP,LLVM,JOBS,EXTRA_HOST_CFLAGS,EXTRA_HOST_CXXFLAGS}. pahole
 and the static libelf used for BTF come from UML_KERNEL_HOST_TOOLS_PREFIX
 (default .build/dependencies/kernel-host-tools, built by
 dependencies/build-kernel-host-tools.sh); UML_KERNEL_PAHOLE may select another
-pahole v1.29 or newer. One
+pahole v1.29 or newer.
 The arm64 slice supports 16 KiB and 4 KiB pages. The x86_64 userspace slice is
 4 KiB only and composes its own config fragment after the shared common and
 page fragments. The output directory must be outside
@@ -283,12 +283,12 @@ apply_config_fragment()
 # `olddefconfig` resolves a requested symbol against its dependencies in
 # silence.  A symbol whose menu is closed is simply dropped, and one that
 # another symbol selects is force-enabled, so the composed fragments can
-# disagree with every kernel they produce without anything saying so. Later
-# fragments intentionally override earlier policy for a product slice.
-# CONFIG_NAMESPACES
-# defaulting off under EXPERT cost USER_NS and TIME_NS that way, and the guest
-# lost every namespace while the fragment still claimed two of them.  Compare
-# what was asked for against what the resolved configuration actually holds.
+# disagree with every kernel they produce without anything saying so.
+# CONFIG_NAMESPACES defaulting off under EXPERT cost USER_NS and TIME_NS that
+# way, and the guest lost every namespace while the fragment still claimed two
+# of them.  Compare what was asked for against what the resolved configuration
+# actually holds.  Later fragments intentionally override earlier policy for a
+# product slice.
 verify_composed_config()
 {
 	mismatches=$(awk -v config="$BUILD_DIR/.config" '
