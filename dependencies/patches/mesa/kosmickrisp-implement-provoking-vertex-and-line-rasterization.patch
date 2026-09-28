@@ -4365,7 +4365,7 @@ index 7e187015d14c1cc66ca824f4685ebcde07599ca8..305d35e072a40f0c3581acc02fac5e28
 +
  #endif /* KK_SHADER_H */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 1474a4cb318cb35472030d11778b052d6d799b6c..d70a70f642a8ef1339742bc2572ebddc50d7e1d9 100644
+index 9cd68be0a9dd3ed2c17a561443070b5bf5b3d384..fd2514864c1dedfe57a377246216c93137b5f29a 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -90,6 +90,7 @@ kk_files = files(
@@ -4376,9 +4376,9 @@ index 1474a4cb318cb35472030d11778b052d6d799b6c..d70a70f642a8ef1339742bc2572ebddc
    'kk_instance.h',
    'kk_instance.c',
    'kk_nir_lower_custom_border.c',
-@@ -249,6 +250,57 @@ if with_tests
+@@ -262,6 +263,57 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
-       timeout : 120,
+       timeout : 60,
      )
 +    test(
 +      'kosmickrisp_polygon_point_raster',
@@ -4434,7 +4434,7 @@ index 1474a4cb318cb35472030d11778b052d6d799b6c..d70a70f642a8ef1339742bc2572ebddc
    endif
  
    test(
-@@ -272,6 +324,17 @@ if with_tests
+@@ -285,6 +337,17 @@ if with_tests
      ),
      suite : ['kosmickrisp'],
    )

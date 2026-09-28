@@ -173,10 +173,10 @@ index 3e3033f8b37b45eb83f5ea105cdf492cfd04ea46..239139bb548cce76edb35a79b7420a5f
   * cannot represent has to become a Vulkan error before it reaches Metal. */
  static inline bool
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e6bc1facd7f2f449358420ee60c5266704bf3482..83f6ac8b3202e95ac24d404e5a8b75e3551dbccd 100644
+index 730c2f82f1f796101b9ec292f42a95f0f87b103d..84a379ce0e84f78a0fded156353f86e101f10fc0 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -854,6 +854,27 @@ if with_tests
+@@ -867,6 +867,27 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

@@ -258,7 +258,7 @@ index 0000000000000000000000000000000000000000..8b698c583019baad22275dfd358aacb4
 +
 +#endif /* KK_DEPTH_CLIP_H */
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index af7c0cea6d136fbce0eec160c207e65655c8a5c8..648adc8c36364ba3ff32d5c37382b1902c18b5a8 100644
+index 9f9b33b8a44f687cde77f661b912af28dfbec4f8..f1f7f63a6a403c1dd84fa546252f0de7fbe89415 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -65,6 +65,13 @@ load_root(nir_builder *b, unsigned num_components, unsigned bit_size,
@@ -568,7 +568,7 @@ index c14ac9789877ffc1fe6b8b4253c51e83a72a2017..67d45395434530d7b1f835fa75a079ed
  bool kk_nir_lower_null_images(nir_shader *nir);
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 5259c0d61989d2304d17a2a7220a7bf1e8fdd5ec..cfd82532b641b9944163bb9ee82b03c2ee38f1c9 100644
+index 7c9bca854e8124c44c78a5d7fbc7ad1fc7eab14b..ee6da2a2811c12f4a6bd9404e0e69c8fbcd51210 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -62,6 +62,7 @@ kk_files = files(
@@ -579,8 +579,8 @@ index 5259c0d61989d2304d17a2a7220a7bf1e8fdd5ec..cfd82532b641b9944163bb9ee82b03c2
    'kk_cmd_meta.c',
    'kk_cmd_pool.h',
    'kk_cmd_pool.c',
-@@ -246,4 +247,15 @@ if with_tests
-       timeout : 120,
+@@ -259,4 +260,15 @@ if with_tests
+       timeout : 60,
      )
    endif
 +

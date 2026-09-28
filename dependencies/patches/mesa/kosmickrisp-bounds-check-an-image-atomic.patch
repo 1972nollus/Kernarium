@@ -17,24 +17,28 @@ descriptor lowering so the size query is still an image deref that pass
 resolves, and so the comparison uses the Vulkan coordinate space, before
 the cube and 1D rewrites fold a face or a layer into it.
 
-Reads and writes stay unguarded: the hardware already covers them and a
-size query per access is not free.
+Reads and writes stay unguarded here: the hardware already covers them
+within a texture's bounds, descriptor lowering checks a texel buffer
+coordinate against its view before moving it into the wider texture Metal
+needs, and a size query per access is not free.
 ---
- src/kosmickrisp/vulkan/kk_shader.c | 31 ++++++++++++++++++++++++++++++
- 1 file changed, 31 insertions(+)
+ src/kosmickrisp/vulkan/kk_shader.c | 33 ++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
 
 diff --git a/src/kosmickrisp/vulkan/kk_shader.c b/src/kosmickrisp/vulkan/kk_shader.c
-index 93f79cd1fa43f72f0ee2fc62dbe8dfa77e2f91e5..e2af16a8dec4599725596c159e458a1217e02859 100644
+index 93f79cd1fa43f72f0ee2fc62dbe8dfa77e2f91e5..095f0e5acdbeec4c7ac1b2926863b197e9f598af 100644
 --- a/src/kosmickrisp/vulkan/kk_shader.c
 +++ b/src/kosmickrisp/vulkan/kk_shader.c
-@@ -1299,6 +1299,24 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
+@@ -1299,6 +1299,26 @@ kk_lower_fs(struct kk_device *dev, nir_shader *nir,
     }
  }
  
 +/* Which accesses nir_lower_robust_access has to guard for us.  Metal already
-+ * gives a texture read and a texture write robustImageAccess2 behaviour, and
-+ * buffer robustness arrives with the address format, so only an image atomic
-+ * is left unguarded.
++ * gives a texture read and a texture write robustImageAccess2 behaviour
++ * within the texture's own bounds, descriptor lowering rejects a texel buffer
++ * coordinate outside its view before moving it into the wider texture that
++ * starts in front of the view, and buffer robustness arrives with the address
++ * format, so only an image atomic is left unguarded.
 + */
 +static bool
 +kk_image_atomic_needs_bounds(const nir_intrinsic_instr *intr,
@@ -52,7 +56,7 @@ index 93f79cd1fa43f72f0ee2fc62dbe8dfa77e2f91e5..e2af16a8dec4599725596c159e458a12
  static void
  kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
               bool pipeline_statistics,
-@@ -1414,6 +1432,19 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
+@@ -1414,6 +1434,19 @@ kk_lower_nir(struct kk_device *dev, nir_shader *nir, bool emulated_stage,
        kk_lower_fs(dev, nir, state, writes_depth, pipeline_statistics);
     }
  

@@ -385,7 +385,7 @@ index f64d59bfe1a3a13987cb5267b57384a7ea5419e0..098851ad6006b139ef206974a1c33633
  
     static_assert(ARRAY_SIZE(opts.rt) == 8, "max RTs out of sync");
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 4083d48363dcca2fd29e321115d79dcf92891765..1474a4cb318cb35472030d11778b052d6d799b6c 100644
+index 21571ad07f856d990964739e076643ef2c333411..9cd68be0a9dd3ed2c17a561443070b5bf5b3d384 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -83,6 +83,7 @@ kk_files = files(
@@ -396,7 +396,7 @@ index 4083d48363dcca2fd29e321115d79dcf92891765..1474a4cb318cb35472030d11778b052d
    'kk_image_layout.h',
    'kk_image_layout.c',
    'kk_image_view.h',
-@@ -282,6 +283,23 @@ if with_tests
+@@ -295,6 +296,23 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

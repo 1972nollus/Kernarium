@@ -26,11 +26,11 @@ format test discards it.
  src/kosmickrisp/vulkan/kk_buffer_view.h       |   3 +
  src/kosmickrisp/vulkan/kk_descriptor_set.c    |   3 +-
  src/kosmickrisp/vulkan/kk_descriptor_types.h  |  53 ++-
- .../vulkan/kk_nir_lower_descriptors.c         | 180 +++++++++-
+ .../vulkan/kk_nir_lower_descriptors.c         | 182 +++++++++-
  src/kosmickrisp/vulkan/meson.build            |  35 ++
  .../vulkan/tests/test_rgb32_texel_format.c    |  71 ++++
  .../vulkan/tests/test_rgb32_texel_lowering.c  | 310 ++++++++++++++++++
- 8 files changed, 680 insertions(+), 19 deletions(-)
+ 8 files changed, 681 insertions(+), 20 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_rgb32_texel_format.c
  create mode 100644 src/kosmickrisp/vulkan/tests/test_rgb32_texel_lowering.c
 
@@ -233,7 +233,7 @@ index 1962ba6a1ccd8ed65d83593d1325dbba58800e28..b33c61bf1afd20684add23e18f76cb6e
  
  /* This has to match nir_address_format_64bit_bounded_global */
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 918d3ef08f0f945d3d05714aa856abf51b168287..5824faf645e9d70a87dcfaf117b31effd807506f 100644
+index b6a69512d544c0e52ecf00eb0f03496d85dbcf27..0a804efc7e5888b15fba7da8e9accc709d7035d3 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -31,6 +31,11 @@ struct lower_descriptors_ctx {
@@ -248,7 +248,7 @@ index 918d3ef08f0f945d3d05714aa856abf51b168287..5824faf645e9d70a87dcfaf117b31eff
  };
  
  enum non_seamless_cube_mode {
-@@ -533,6 +538,138 @@ lower_image_intrin(nir_builder *b, nir_intrinsic_instr *intr,
+@@ -557,6 +562,139 @@ lower_image_intrin(nir_builder *b, nir_intrinsic_instr *intr,
     return true;
  }
  
@@ -340,7 +340,8 @@ index 918d3ef08f0f945d3d05714aa856abf51b168287..5824faf645e9d70a87dcfaf117b31eff
 +    * discards.
 +    */
 +   nir_src_rewrite(&tex->src[coord_src_idx].src,
-+                   nir_iadd(b, coord, offset_or_raw));
++                   shift_texel_buffer_coord(b, coord, offset_or_raw,
++                                            texture_deref, ctx));
 +
 +   nir_def *resource_addr = load_resource_addr(
 +      b, 1, 64, texture_deref,
@@ -387,7 +388,7 @@ index 918d3ef08f0f945d3d05714aa856abf51b168287..5824faf645e9d70a87dcfaf117b31eff
  static bool
  try_lower_intrin(nir_builder *b, nir_intrinsic_instr *intrin,
                   const struct lower_descriptors_ctx *ctx)
-@@ -579,7 +716,7 @@ try_lower_intrin(nir_builder *b, nir_intrinsic_instr *intrin,
+@@ -603,7 +741,7 @@ try_lower_intrin(nir_builder *b, nir_intrinsic_instr *intrin,
  
  static bool
  lower_tex(nir_builder *b, nir_tex_instr *tex,
@@ -396,7 +397,7 @@ index 918d3ef08f0f945d3d05714aa856abf51b168287..5824faf645e9d70a87dcfaf117b31eff
  {
     b->cursor = nir_before_instr(&tex->instr);
  
-@@ -605,6 +742,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -629,6 +767,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
                      : NON_SEAMLESS_CUBE_NATIVE;
     if (tex->sampler_dim == GLSL_SAMPLER_DIM_BUF) {
        assert(plane == 0);
@@ -404,7 +405,7 @@ index 918d3ef08f0f945d3d05714aa856abf51b168287..5824faf645e9d70a87dcfaf117b31eff
        if (tex->op == nir_texop_txs) {
           nir_def *element_count = load_resource_deref_desc(
              b, 1, 32, texture_deref,
-@@ -613,15 +751,8 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -637,16 +776,8 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
           return true;
        }
  
@@ -415,14 +416,15 @@ index 918d3ef08f0f945d3d05714aa856abf51b168287..5824faf645e9d70a87dcfaf117b31eff
 -         b, 1, 32, texture_deref,
 -         offsetof(struct kk_texel_buffer_descriptor, texel_offset), ctx);
 -      nir_src_rewrite(&tex->src[coord_src_idx].src,
--                      nir_iadd(b, tex->src[coord_src_idx].src.ssa,
--                               texel_offset));
+-                      shift_texel_buffer_coord(
+-                         b, tex->src[coord_src_idx].src.ssa, texel_offset,
+-                         texture_deref, ctx));
 +      lower_buffer_texel_fetch(b, tex, texture_deref, ctx);
 +      return true;
     }
  
     /* LOD bias is passed in the descriptor set, rather than embedded into
-@@ -853,7 +984,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
+@@ -878,7 +1009,7 @@ lower_tex(nir_builder *b, nir_tex_instr *tex,
  static bool
  try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
  {
@@ -431,7 +433,7 @@ index 918d3ef08f0f945d3d05714aa856abf51b168287..5824faf645e9d70a87dcfaf117b31eff
  
     switch (instr->type) {
     case nir_instr_type_tex:
-@@ -865,6 +996,28 @@ try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
+@@ -890,6 +1021,28 @@ try_lower_descriptors_instr(nir_builder *b, nir_instr *instr, void *_data)
     }
  }
  
@@ -460,7 +462,7 @@ index 918d3ef08f0f945d3d05714aa856abf51b168287..5824faf645e9d70a87dcfaf117b31eff
  static bool
  lower_ssbo_resource_index(nir_builder *b, nir_intrinsic_instr *intrin,
                            const struct lower_descriptors_ctx *ctx)
-@@ -1048,8 +1201,9 @@ kk_nir_lower_descriptors(nir_shader *nir,
+@@ -1073,8 +1226,9 @@ kk_nir_lower_descriptors(nir_shader *nir,
      * TODO: See if we can unify this, not sure if the fast path matters on
      * Apple. This is inherited from NVK.
      */
@@ -473,10 +475,10 @@ index 918d3ef08f0f945d3d05714aa856abf51b168287..5824faf645e9d70a87dcfaf117b31eff
     bool pass_lower_ssbo = nir_shader_intrinsics_pass(
        nir, lower_ssbo_descriptor, nir_metadata_control_flow, &ctx);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 122a0f6bfe6908ee0613e61a0cb7cfa4080aa891..be0938b83742398b5a41f1592fbc68a479fb074d 100644
+index 6f3a2b2b021aa0dfb233fb89ef6e56827a3ab055..e4e7fad14e21bca412e9428c228bf4e1809b0e2c 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -259,6 +259,20 @@ if with_tests
+@@ -272,6 +272,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -497,7 +499,7 @@ index 122a0f6bfe6908ee0613e61a0cb7cfa4080aa891..be0938b83742398b5a41f1592fbc68a4
    test(
      'kosmickrisp_non_seamless_cube_lowering',
      executable(
-@@ -280,4 +294,25 @@ if with_tests
+@@ -293,4 +307,25 @@ if with_tests
      ),
      suite : ['kosmickrisp'],
    )

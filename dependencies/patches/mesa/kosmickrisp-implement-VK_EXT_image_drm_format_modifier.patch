@@ -504,10 +504,10 @@ index fb3cd714bb3a433a3413a1ce6160011528322886..42716090f5c48b55a0081ec11684e307
        .EXT_load_store_op_none = true,
        .EXT_memory_budget = true,
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 454ccfd5fc289410b9d8565caabb21dd3d106711..1f44a3b0574e6bbf477cdaf36c9568a73cf934c6 100644
+index fd55ff1d6b6b1ddb423bd190e5f64dbe9f24c75a..5eb02e1bbcd063ddf13af66d66d8a9b522060f57 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -866,6 +866,16 @@ if with_tests
+@@ -879,6 +879,16 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

@@ -3,11 +3,11 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 05:04:07 +0900
 Subject: [PATCH] kosmickrisp: share one test harness across the driver tests
 
-Every KosmicKrisp test carried its own copy of the same checks.  32 C and
+Every KosmicKrisp test carried its own copy of the same checks.  33 C and
 Objective-C tests defined CHECK in three shapes (two boolean messages and a
-VkResult form), fourteen of them the same LOAD_I and LOAD_D, 27 C++ tests
-and benchmarks the same require() and load<>(), and the line-planner helper
-its own KK_TEST_CHECK.  tests/kk_test.h now holds one boolean CHECK, one
+VkResult form), fifteen of them the same LOAD_I and LOAD_D, 27 C++ tests and
+benchmarks the same require() and load<>(), and the line-planner helper its
+own KK_TEST_CHECK.  tests/kk_test.h now holds one boolean CHECK, one
 VK_CHECK and the C and C++ loaders; the VkResult-form tests and the one
 CHECK_VK use VK_CHECK.  Every check still names its expression and aborts in
 every build, and the C++ require() still exits with status 1.
@@ -82,19 +82,20 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../test_tes_sampler_dynamic_indexing.cpp     | 682 ------------------
  .../tests/test_tes_sampler_indexing.cpp       |  72 +-
  .../tests/test_tess_passthrough_geometry.cpp  |  20 +-
+ .../vulkan/tests/test_texel_buffer_bounds.c   |   4 +-
  .../vulkan/tests/test_timeline_host_wait.cpp  |  22 +-
  .../tests/test_timeline_pending_wait.cpp      |  22 +-
  .../vulkan/tests/test_timeline_wait_loss.c    |   4 +-
  .../test_transform_feedback_builtins.cpp      |  20 +-
  .../tests/test_unused_attachment_gaps.cpp     |  20 +-
- 65 files changed, 527 insertions(+), 2173 deletions(-)
+ 66 files changed, 528 insertions(+), 2176 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/kk_test.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 40eb3ab19eec066908d0909bca3768bfa2b36d02..77ada2e3a8738df0da0257258fccb705e2b0f0dd 100644
+index 0f8cf4a29942e23602f5246f64467ee2628e1b37..80a43ea04999f232118b6bec527630d633bcbe63 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -227,20 +227,43 @@ if with_tests
@@ -155,9 +156,9 @@ index 40eb3ab19eec066908d0909bca3768bfa2b36d02..77ada2e3a8738df0da0257258fccb705
      test(
        'kosmickrisp_geometry_setup_gpu',
        executable(
-@@ -261,224 +284,37 @@ if with_tests
+@@ -274,224 +297,37 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
-       timeout : 120,
+       timeout : 60,
      )
 -    test(
 -      'kosmickrisp_polygon_point_raster',
@@ -411,7 +412,7 @@ index 40eb3ab19eec066908d0909bca3768bfa2b36d02..77ada2e3a8738df0da0257258fccb705
      test(
        'kosmickrisp_raster_discard',
        executable(
-@@ -500,48 +336,24 @@ if with_tests
+@@ -513,48 +349,24 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -477,7 +478,7 @@ index 40eb3ab19eec066908d0909bca3768bfa2b36d02..77ada2e3a8738df0da0257258fccb705
      test(
        'kosmickrisp_pipeline_statistics_gpu',
        executable(
-@@ -562,34 +374,6 @@ if with_tests
+@@ -575,34 +387,6 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -512,7 +513,7 @@ index 40eb3ab19eec066908d0909bca3768bfa2b36d02..77ada2e3a8738df0da0257258fccb705
      # A benchmark rather than a test: it reports the cost of the two blend
      # paths and is run by hand, once per path, because timing cannot assert.
      executable(
-@@ -609,104 +393,6 @@ if with_tests
+@@ -622,104 +406,6 @@ if with_tests
        link_with : libvulkan_kosmickrisp,
        override_options : ['cpp_std=c++20'],
      )
@@ -617,7 +618,7 @@ index 40eb3ab19eec066908d0909bca3768bfa2b36d02..77ada2e3a8738df0da0257258fccb705
      timeline_wait_loss_test = executable(
        'test_kosmickrisp_timeline_wait_loss',
        files('tests/test_timeline_wait_loss.c'),
-@@ -1094,16 +780,25 @@ if with_tests
+@@ -1107,16 +793,25 @@ if with_tests
      )
    endif
  
@@ -653,7 +654,7 @@ index 40eb3ab19eec066908d0909bca3768bfa2b36d02..77ada2e3a8738df0da0257258fccb705
  
    test(
      'kosmickrisp_queue_error',
-@@ -1141,49 +836,6 @@ if with_tests
+@@ -1154,49 +849,6 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -703,7 +704,7 @@ index 40eb3ab19eec066908d0909bca3768bfa2b36d02..77ada2e3a8738df0da0257258fccb705
    test(
      'kosmickrisp_logic_op',
      executable(
-@@ -1341,75 +993,28 @@ if with_tests
+@@ -1354,75 +1006,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -4314,6 +4315,21 @@ index d7de8f71429df79685386b49762e196236b046bd..3bc621cee4fdc3ddd2c941d3b5491b24
  
  static const uint32_t vertex_spirv[] =
  #include "tess_passthrough_shaders/passthrough.vert.h"
+diff --git a/src/kosmickrisp/vulkan/tests/test_texel_buffer_bounds.c b/src/kosmickrisp/vulkan/tests/test_texel_buffer_bounds.c
+index d72b609cb40e747de87163e708bd5baa32b84e03..2a2cab01036880ee94208cf552cb195428232f4d 100644
+--- a/src/kosmickrisp/vulkan/tests/test_texel_buffer_bounds.c
++++ b/src/kosmickrisp/vulkan/tests/test_texel_buffer_bounds.c
+@@ -17,9 +17,7 @@
+ #include <string.h>
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ static const uint32_t bounds_comp[] =
+ #include "texel_buffer_bounds_shaders/bounds.comp.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp b/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
 index 9c52792a4dd8f4647dbf83c3ebb46dacab84d21d..c47abacd3407ac933da58cad4dbbe14f66473056 100644
 --- a/src/kosmickrisp/vulkan/tests/test_timeline_host_wait.cpp
