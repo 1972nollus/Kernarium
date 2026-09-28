@@ -11,6 +11,7 @@ runtime/   guest-entry composition
 device/    block, console, GPU, input, audio, and network providers
 emulator/  options and product composition
 app/macos/ standalone process adapter
+app/initramfs/ host tool that writes a guest's per-run initramfs
 ```
 
 Targets and source lists belong to these directories. See
@@ -28,6 +29,15 @@ x86_64 product defaults to `cgroup.memory=nokmem`: userspace memory-controller
 accounting remains available, while kernel-object charging is outside this
 compatibility slice. An explicit `cgroup.memory=` argument overrides the
 default.
+
+Each Linux product embeds the boot base archive for its userspace
+architecture. Unless the command line names `init=` or `initrd=`, the
+launcher boots that base with a per-run initramfs: by default the EROFS image
+under a tmpfs overlay and then the image's own init, and with `--guest-init=`
+or `--guest-file=` whatever those supply. An explicit `init=/bin/sh` still
+starts a raw shell on the image. The
+[boot ramdisk contract](../tools/rootfs/boot-ramdisk/README.md) owns the
+archive, its parameters and the host-side `uml-initramfs` tool.
 
 Kernarium uses `6.18`-series iOS runtime frameworks for 16 KiB Linux, 4 KiB
 Linux, and 16 KiB Android. Framework names remain stable across patch releases

@@ -29,3 +29,22 @@ uml_add_tooling_test(
         --starter-root ${PROJECT_SOURCE_DIR}/tools/rootfs/starter
     LABELS rootfs;audit
     TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME rootfs-boot-base-contract
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_boot_base.py
+        --boot-ramdisk ${PROJECT_SOURCE_DIR}/tools/rootfs/boot-ramdisk
+    LABELS rootfs;boot;audit
+    TIMEOUT 60)
+
+if(TARGET uml-initramfs)
+    uml_add_tooling_test(
+        NAME rootfs-initramfs-host-tool
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_uml_initramfs.py
+            --tool $<TARGET_FILE:uml-initramfs>
+            --boot-ramdisk ${PROJECT_SOURCE_DIR}/tools/rootfs/boot-ramdisk
+        LABELS rootfs;boot
+        TIMEOUT 60)
+endif()

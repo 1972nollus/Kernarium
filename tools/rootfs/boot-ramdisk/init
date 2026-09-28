@@ -1,0 +1,195 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The per-run /init of a Linux guest. A launcher appends it, with /boot.env
+# and any /payload files, to the base archive, whose static BusyBox ash runs
+# it. README.md beside this file owns the contract. The base ash has no
+# `command` builtin, so nothing here probes for programs.
+
+PATH=/bin:/sbin
+export PATH
+
+# Exiting PID 1 panics the kernel, which ends the run with this reason on the
+# console rather than leaving a rescue shell nobody is waiting for.
+fail()
+{
+	echo "UML_BOOT_ERROR:$*"
+	exit 1
+}
+
+root=/dev/ubda
+root_type=erofs
+upper=tmpfs
+grow=0
+entry=/sbin/init
+
+read_parameters()
+{
+	[ -f /boot.env ] || return 0
+	while IFS= read -r line || [ -n "$line" ]; do
+		case "$line" in
+		''|'#'*) continue ;;
+		*=*) ;;
+		*) fail "malformed /boot.env line: $line" ;;
+		esac
+		value=${line#*=}
+		case "${line%%=*}" in
+		UML_BOOT_ROOT) root=$value ;;
+		UML_BOOT_ROOT_TYPE) root_type=$value ;;
+		UML_BOOT_UPPER) upper=$value ;;
+		UML_BOOT_GROW) grow=$value ;;
+		UML_BOOT_ENTRY) entry=$value ;;
+		*) fail "unknown /boot.env parameter: ${line%%=*}" ;;
+		esac
+	done < /boot.env
+	case "$root_type" in erofs|ext4) ;; *) fail "unsupported root type: $root_type" ;; esac
+	case "$upper" in tmpfs|none) ;; *) fail "unsupported upper layer: $upper" ;; esac
+	case "$grow" in 0|1) ;; *) fail "UML_BOOT_GROW must be 0 or 1" ;; esac
+	case "$entry" in /*) ;; *) fail "UML_BOOT_ENTRY must be absolute: $entry" ;; esac
+	if [ "$grow" = 1 ] && [ "$upper" != none ]; then
+		fail "UML_BOOT_GROW needs UML_BOOT_UPPER=none"
+	fi
+}
+
+wait_for_root()
+{
+	attempt=0
+	while [ ! -b "$root" ]; do
+		attempt=$((attempt + 1))
+		[ "$attempt" -le 100 ] || fail "$root did not appear"
+		sleep 0.1
+	done
+}
+
+# Grow a sole ext4 partition to the size a host tool already gave it, while it
+# is unmounted. Every problem here is only a warning: the root still mounts at
+# its old size.
+grow_ext4()
+{
+	device=$1
+	name=${device##*/}
+	disk=${name%%[0-9]*}
+	partition_count=0
+	for candidate in /sys/block/"$disk"/"$disk"*; do
+		[ -f "$candidate/partition" ] || continue
+		partition_count=$((partition_count + 1))
+	done
+	if [ "$partition_count" -ne 1 ]; then
+		echo "UML_BOOT_GROW_SKIP:partition-count=$partition_count"
+		return
+	fi
+	case "$(blkid "$device" 2>/dev/null)" in
+	*TYPE=\"ext4\"*) ;;
+	*)
+		echo "UML_BOOT_GROW_SKIP:not-ext4:$device"
+		return
+		;;
+	esac
+
+	block_count=
+	block_size=
+	blocks_per_group=
+	inode_blocks=
+	reserved_gdt=0
+	superblock=$(dumpe2fs -h "$device" 2>/dev/null) || superblock=
+	while IFS=: read -r key value; do
+		case "$key" in
+		"Block count") set -- $value; block_count=${1-} ;;
+		"Block size") set -- $value; block_size=${1-} ;;
+		"Blocks per group") set -- $value; blocks_per_group=${1-} ;;
+		"Inode blocks per group") set -- $value; inode_blocks=${1-} ;;
+		"Reserved GDT blocks") set -- $value; reserved_gdt=${1-} ;;
+		esac
+	done <<-EOF
+	$superblock
+	EOF
+	partition_sectors=
+	read -r partition_sectors < "/sys/class/block/$name/size" || :
+	for number in "$block_count" "$block_size" "$blocks_per_group" \
+		"$inode_blocks" "$reserved_gdt" "$partition_sectors"; do
+		case "$number" in
+		''|*[!0-9]*)
+			echo "UML_BOOT_GROW_WARN:geometry-unreadable:$device"
+			return
+			;;
+		esac
+	done
+	if [ "$block_size" -eq 0 ] || [ "$blocks_per_group" -eq 0 ]; then
+		echo "UML_BOOT_GROW_WARN:geometry-unreadable:$device"
+		return
+	fi
+
+	# A grown filesystem can still end short of its partition: resize2fs rounds
+	# the size down to a whole page and drops a trailing group smaller than its
+	# metadata plus 50 blocks. Treat only a larger gap as growth, so an already
+	# grown disk is neither checked nor resized again.
+	partition_blocks=$((partition_sectors * 512 / block_size))
+	descriptor_blocks=$(((partition_blocks / blocks_per_group + 1) * 64 / \
+		block_size + 1))
+	slack_limit=$((inode_blocks + reserved_gdt + descriptor_blocks + 3 + 50 + \
+		65536 / block_size))
+	if [ $((partition_blocks - block_count)) -le "$slack_limit" ]; then
+		echo "UML_BOOT_GROW_SKIP:no-growth:$device"
+		return
+	fi
+
+	# resize2fs refuses an unmounted filesystem that was mounted after its
+	# last full check. Status 4 or higher means errors were left uncorrected.
+	echo "UML_BOOT_GROW_CHECK:$device"
+	e2fsck -f -p "$device"
+	status=$?
+	if [ "$status" -ge 4 ]; then
+		echo "UML_BOOT_GROW_WARN:e2fsck-status=$status:$device"
+		return
+	fi
+	echo "UML_BOOT_GROW_OFFLINE:$device"
+	if resize2fs "$device"; then
+		echo "UML_BOOT_GROW_DONE:$device"
+		sync
+	else
+		echo "UML_BOOT_GROW_WARN:resize2fs-failed:$device"
+	fi
+}
+
+# The image mounted read-write as the new root: the guest's own persistent
+# disk, as the starter images and one-image machines use it.
+mount_direct_root()
+{
+	[ "$grow" = 0 ] || grow_ext4 "$root"
+	mount -t "$root_type" -o rw,noatime "$root" /newroot || \
+		fail "cannot mount $root"
+}
+
+# The image read-only beneath a writable layer that ends with the run.
+mount_overlay_root()
+{
+	mkdir -p /lower /state || fail "cannot create the overlay mount points"
+	mount -t "$root_type" -o ro "$root" /lower || fail "cannot mount $root"
+	mount -t tmpfs -o mode=0755 tmpfs /state || \
+		fail "cannot mount the writable layer"
+	mkdir -p /state/upper /state/work || \
+		fail "cannot create the writable layer"
+	mount -t overlay \
+		-o lowerdir=/lower,upperdir=/state/upper,workdir=/state/work \
+		overlay /newroot || fail "cannot mount the overlay"
+}
+
+read_parameters
+mount -t devtmpfs devtmpfs /dev || fail "cannot mount devtmpfs"
+mount -t proc proc /proc || fail "cannot mount proc"
+mount -t sysfs sysfs /sys || fail "cannot mount sysfs"
+wait_for_root
+case "$upper" in
+none) mount_direct_root ;;
+tmpfs) mount_overlay_root ;;
+esac
+
+# The payload mirrors the new root; in an overlay it lands in the upper layer.
+if [ -d /payload ]; then
+	cp -a /payload/. /newroot/ || fail "cannot install the payload"
+fi
+for filesystem in dev proc sys; do
+	mount -o move "/$filesystem" "/newroot/$filesystem" || \
+		fail "cannot move /$filesystem into the new root"
+done
+echo "UML_BOOT_SWITCH_ROOT:$entry"
+exec switch_root /newroot "$entry"

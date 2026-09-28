@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <new>
@@ -716,6 +717,10 @@ int uml::app::runEmbeddedKernel(
 		console_service->stop();
 	if (gpu_service)
 		gpu_service->stop();
+	if (!configuration.run_scratch.empty()) {
+		std::error_code ignored;
+		std::filesystem::remove_all(configuration.run_scratch, ignored);
+	}
 	/* The embedded ELF kernel installs process-wide Linux signal handlers.
 	 * Once it halts, avoid running unrelated C++ static teardown through that
 	 * signal environment.  Native app-linked kernels can use normal app
