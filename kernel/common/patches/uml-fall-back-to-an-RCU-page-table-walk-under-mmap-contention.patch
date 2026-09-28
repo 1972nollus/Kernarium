@@ -21,30 +21,38 @@ every page-table level alive across the walk, and the page-table lock taken
 further down still samples the entry itself.  The blocking path is
 unchanged.
 ---
- arch/um/kernel/skas/uaccess.c | 25 +++++++++++++++++++++----
- 1 file changed, 21 insertions(+), 4 deletions(-)
+ arch/um/kernel/skas/uaccess.c | 43 +++++++++++++++++++++++------------
+ 1 file changed, 29 insertions(+), 14 deletions(-)
 
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index fb13592247f1ec3df3145da42c5f4fbd24f04a99..1aa7d8c7a02caa80f0b70be31edcc74a4e989d1a 100644
+index 9ee32c0fbe4b723f0defaee6d078be9a68e80635..2bfed76039061eff7e2614b3988836e85d52ae2f 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -7,6 +7,7 @@
- #include <linux/highmem.h>
+@@ -8,6 +8,7 @@
  #include <linux/mm.h>
  #include <linux/module.h>
+ #include <linux/pagemap.h>
 +#include <linux/rcupdate.h>
  #include <linux/sched.h>
  #include <linux/uaccess.h>
  #include <asm/current.h>
-@@ -27,6 +28,7 @@ static struct page *pin_user_mapping(struct mm_struct *mm, unsigned long addr,
- 	pte_t *ptep;
- 	spinlock_t *ptl;
- 	struct page *page = NULL;
-+	bool mmap_locked = true;
+@@ -20,30 +21,46 @@
  
- 	if (mm == NULL)
- 		return NULL;
-@@ -35,11 +37,23 @@ static struct page *pin_user_mapping(struct mm_struct *mm, unsigned long addr,
+ struct user_walk {
+ 	struct mm_struct *mm;
++	bool mmap_locked;
+ };
+ 
+-/* Take what keeps the page tables of mm alive for a walk.  Returns false,
+- * having taken nothing, when a caller that may not sleep would have to.
+- */
+-static bool user_walk_begin(struct user_walk *walk, struct mm_struct *mm,
++static void user_walk_begin(struct user_walk *walk, struct mm_struct *mm,
+ 			    bool may_sleep)
+ {
+ 	walk->mm = mm;
++	walk->mmap_locked = true;
+ 	/*
  	 * Atomic uaccess callers can already hold a futex hash-bucket lock.  A
  	 * blocking mmap lock acquisition would let UML schedule the Linux task
  	 * while its Darwin carrier still owns that spinlock, stranding the next
@@ -62,24 +70,46 @@ index fb13592247f1ec3df3145da42c5f4fbd24f04a99..1aa7d8c7a02caa80f0b70be31edcc74a
 +	 * keeps every level alive, and the page-table lock taken below still
 +	 * samples the entry itself.
  	 */
- 	if (faulthandler_disabled()) {
--		if (!mmap_read_trylock(mm))
--			return NULL;
-+		mmap_locked = mmap_read_trylock(mm);
-+		if (!mmap_locked)
+-	if (!may_sleep)
+-		return mmap_read_trylock(mm);
+-	mmap_read_lock(mm);
+-	return true;
++	if (may_sleep) {
++		mmap_read_lock(mm);
++	} else {
++		walk->mmap_locked = mmap_read_trylock(mm);
++		if (!walk->mmap_locked)
 +			rcu_read_lock();
- 	} else {
- 		mmap_read_lock(mm);
- 	}
-@@ -67,7 +81,10 @@ static struct page *pin_user_mapping(struct mm_struct *mm, unsigned long addr,
- 		pte_unmap_unlock(ptep, ptl);
- 	}
- out:
--	mmap_read_unlock(mm);
-+	if (mmap_locked)
-+		mmap_read_unlock(mm);
-+	else
-+		rcu_read_unlock();
- 	return page;
++	}
  }
  
+ static void user_walk_end(struct user_walk *walk)
+ {
+-	mmap_read_unlock(walk->mm);
++	if (walk->mmap_locked)
++		mmap_read_unlock(walk->mm);
++	else
++		rcu_read_unlock();
+ }
+ 
+ /* The PTE mapping addr, mapped and locked through *ptlp, or NULL. */
+@@ -81,8 +98,7 @@ static struct page *pin_user_mapping(struct mm_struct *mm, unsigned long addr,
+ 	if (mm == NULL)
+ 		return NULL;
+ 
+-	if (!user_walk_begin(&walk, mm, !faulthandler_disabled()))
+-		return NULL;
++	user_walk_begin(&walk, mm, !faulthandler_disabled());
+ 	ptep = user_walk_lock_pte(&walk, addr, &ptl);
+ 	if (ptep != NULL) {
+ 		pte_t value = ptep_get(ptep);
+@@ -141,8 +157,7 @@ static void mark_user_page_dirty(unsigned long addr, struct page *page,
+ 		return;
+ 	}
+ 
+-	if (!user_walk_begin(&walk, current->mm, false))
+-		return;
++	user_walk_begin(&walk, current->mm, false);
+ 	ptep = user_walk_lock_pte(&walk, addr, &ptl);
+ 	if (ptep != NULL) {
+ 		pte_t value = ptep_get(ptep);

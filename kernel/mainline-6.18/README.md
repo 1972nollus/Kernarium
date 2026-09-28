@@ -91,8 +91,8 @@ The series is maintained locally; no tooling submits or pushes it.
 as the starting `.config`, applies exactly one page fragment, runs
 `olddefconfig`, and verifies that every requested symbol resolved as declared.
 `build/build-kernel.sh --lockdep` also applies `config/lockdep.fragment`
-last, for a lock-checking probe with lockdep, its hardirq-state tracking and
-`DEBUG_VM`. Publish such a kernel only to a scratch output root and select it
+last, for a lock-checking probe with lockdep, its hardirq-state tracking,
+`DEBUG_ATOMIC_SLEEP`, and `DEBUG_VM`. Publish such a kernel only to a scratch output root and select it
 through `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; it is never an accepted
 artifact.
 
