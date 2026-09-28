@@ -78,7 +78,7 @@ index b984fd54f57b0ff0600ff7bcac27fa852e23932c..108d2e6be4ab0f19d844048a581393be
  mtl_copy_from_buffer_to_texture(mtl_compute_encoder *encoder,
                                  struct mtl_buffer_image_copy *data)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 737a004dec067eaab53686761b41c7ea0a543fa5..d16ad5e9c03d980228f2ee737a85d0e8435fae44 100644
+index a626735fb73a470bab751333b79b6c870fe90046..6d407cee3ecb011f1ab2f9cd731a8a4437e6336a 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 @@ -10,6 +10,7 @@
@@ -89,7 +89,7 @@ index 737a004dec067eaab53686761b41c7ea0a543fa5..d16ad5e9c03d980228f2ee737a85d0e8
  #include "kk_entrypoints.h"
  
  #include "kosmickrisp/bridge/mtl_bridge.h"
-@@ -440,6 +441,18 @@ kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd, uint64_t addr)
+@@ -454,6 +455,18 @@ kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd, uint64_t addr)
     cmd->state.root_addr = addr;
  }
  
@@ -109,7 +109,7 @@ index 737a004dec067eaab53686761b41c7ea0a543fa5..d16ad5e9c03d980228f2ee737a85d0e8
  kk_CmdPipelineBarrier2(VkCommandBuffer commandBuffer,
                         const VkDependencyInfo *pDependencyInfo)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 67b5d26da894c31e17116c7d185b1f8ccfe3967f..0a33032fb4b2d4ef9226f4d06f8c49fea2029ba6 100644
+index f9879e5770e21b5d6837e650b7b744fd77fd0768..fcef60698ec9162be7f09be7ae3982127c30e11b 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -27,6 +27,7 @@
@@ -120,7 +120,7 @@ index 67b5d26da894c31e17116c7d185b1f8ccfe3967f..0a33032fb4b2d4ef9226f4d06f8c49fe
  
  struct kk_root_descriptor_table {
     uint64_t addr;
-@@ -392,6 +393,10 @@ struct kk_ptr kk_pool_alloc(struct kk_cmd_buffer *cmd, uint32_t size,
+@@ -395,6 +396,10 @@ struct kk_ptr kk_pool_alloc(struct kk_cmd_buffer *cmd, uint32_t size,
  struct kk_ptr kk_pool_upload(struct kk_cmd_buffer *cmd, const void *data,
                               uint32_t size, uint32_t alignment);
  
@@ -583,10 +583,10 @@ index 09fcec3df77d8b2610d4c72299b3ed0efcecc99b..64a69a57e7c23abe5d9215ec419f101a
        .customBorderColors = true,
        .customBorderColorWithoutFormat = true,
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index fa93d36a3a0dffd775b993507cdf91e4b3350e4c..3dfa8f1bc15b82e12a99a7dcfa452fff15440041 100644
+index 19710b5353d2dee4d28fd94806ec90db12e30624..9e308db4c3d1881c896f836de55593f5ac8bf298 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
-@@ -591,15 +591,15 @@ kk_GetQueryPoolResults(VkDevice device, VkQueryPool queryPool,
+@@ -594,15 +594,15 @@ kk_GetQueryPoolResults(VkDevice device, VkQueryPool queryPool,
     return status;
  }
  
@@ -610,7 +610,7 @@ index fa93d36a3a0dffd775b993507cdf91e4b3350e4c..3dfa8f1bc15b82e12a99a7dcfa452fff
     struct kk_device *dev = kk_cmd_buffer_device(cmd);
  
     /* Timestamp results are resolved into the pool BO on a deferred command
-@@ -621,11 +621,44 @@ kk_CmdCopyQueryPoolResults(VkCommandBuffer commandBuffer, VkQueryPool queryPool,
+@@ -624,11 +624,44 @@ kk_CmdCopyQueryPoolResults(VkCommandBuffer commandBuffer, VkQueryPool queryPool,
        .availability = pool->bo->gpu,
        .results = results_bo->gpu + pool->query_start,
        .oq_index = pool->bo->gpu + pool->index_start,

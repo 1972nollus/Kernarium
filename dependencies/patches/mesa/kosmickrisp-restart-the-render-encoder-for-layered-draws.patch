@@ -167,10 +167,10 @@ index 4e1a6c004110588e9b28418c0993361cf94c7121..ea56c611c0e5d1062f03df579a40b42f
  ----------------
  | macOS version: 27.0
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 4ffa19612d69f8ddfac66ef88083408cd01c3eed..d59915c5db630849184ea7208b5820843d4992df 100644
+index 4e3bb301db2381fe09b81794dec82e0fc348ec46..4d584d4c647334efe8282f0df332ce10abb5224b 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -316,14 +316,20 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+@@ -331,14 +331,20 @@ cs_start_render(struct kk_cmd_buffer *cmd)
     cmd->gfx.encoder = mtl_new_render_command_encoder_with_descriptor(
        cmd->gfx.cmd_buf, state->render_pass_descriptor);
  
@@ -198,7 +198,7 @@ index 4ffa19612d69f8ddfac66ef88083408cd01c3eed..d59915c5db630849184ea7208b582084
  
     /* Argument table won't ever change */
     mtl_render_set_argument_table(
-@@ -333,6 +339,25 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+@@ -348,6 +354,25 @@ cs_start_render(struct kk_cmd_buffer *cmd)
     kk_cmd_buffer_dirty_all_gfx(cmd);
  }
  
@@ -225,7 +225,7 @@ index 4ffa19612d69f8ddfac66ef88083408cd01c3eed..d59915c5db630849184ea7208b582084
  cs_get_render(struct kk_cmd_buffer *cmd)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 3db643cfd996080847810d9198b1cf4134077a2f..3761d06afef8be760d62ad76db3bd653e445d60c 100644
+index 19dcc4e74f4427c4b45ab70d01423fb198a84d10..db3dda0283125fed23d4e82d9fbf66e68943e65e 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -206,6 +206,17 @@ struct kk_graphics_state {
@@ -246,7 +246,7 @@ index 3db643cfd996080847810d9198b1cf4134077a2f..3761d06afef8be760d62ad76db3bd653
     enum kk_dirty dirty;
     uint32_t pipeline_sample_count;
  
-@@ -396,6 +407,9 @@ kk_get_descriptors_state(struct kk_cmd_buffer *cmd,
+@@ -399,6 +410,9 @@ kk_get_descriptors_state(struct kk_cmd_buffer *cmd,
  void kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd);
  void cs_start_render(struct kk_cmd_buffer *cmd);
  mtl_render_encoder *cs_get_render(struct kk_cmd_buffer *cmd);

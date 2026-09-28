@@ -359,7 +359,7 @@ index bb2d06e169516bd0b40e927b631a271a6994fd12..0e8c1a91ac9c44e0d171a36fc287baba
  
     size_t draw_stride = 5 * sizeof(uint32_t);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 53ff8384555b9380d118955e1468b45dad5ecbf4..06918dae6c8d4f5d2ad731b4a129123a8da59288 100644
+index 901239f351388235047704d96f169f94b823bcb4..a7b50a71f0692d84de98e29a178488cfb7d2e137 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -14,6 +14,7 @@
@@ -1024,7 +1024,7 @@ index 0000000000000000000000000000000000000000..1679c31d9d53cb3beca549d3266db482
 +
 +#endif /* KK_PIPELINE_STATISTICS_H */
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index 3dfa8f1bc15b82e12a99a7dcfa452fff15440041..c89dc217e8d05102b3259d239d6988f608fc17af 100644
+index 9e308db4c3d1881c896f836de55593f5ac8bf298..2d6be6ae61d1c5c443d607f527385191d5ef3ba4 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
 @@ -39,6 +39,8 @@ kk_reports_per_query(struct kk_query_pool *pool)
@@ -1059,7 +1059,7 @@ index 3dfa8f1bc15b82e12a99a7dcfa452fff15440041..c89dc217e8d05102b3259d239d6988f6
  }
  
  VKAPI_ATTR void VKAPI_CALL
-@@ -442,6 +445,25 @@ kk_cmd_begin_end_query(struct kk_cmd_buffer *cmd, struct kk_query_pool *pool,
+@@ -445,6 +448,25 @@ kk_cmd_begin_end_query(struct kk_cmd_buffer *cmd, struct kk_query_pool *pool,
        cmd->state.gfx.xfb.query[index] =
           end ? 0 : kk_query_report_addr(dev, pool, query);
        break;
@@ -1085,7 +1085,7 @@ index 3dfa8f1bc15b82e12a99a7dcfa452fff15440041..c89dc217e8d05102b3259d239d6988f6
     default:
        UNREACHABLE("Unsupported query type");
     }
-@@ -509,24 +531,22 @@ kk_query_is_available(struct kk_device *dev, struct kk_query_pool *pool,
+@@ -512,24 +534,22 @@ kk_query_is_available(struct kk_device *dev, struct kk_query_pool *pool,
     return p_atomic_read(available) != 0;
  }
  
@@ -1115,7 +1115,7 @@ index 3dfa8f1bc15b82e12a99a7dcfa452fff15440041..c89dc217e8d05102b3259d239d6988f6
  }
  
  static void
-@@ -620,7 +640,8 @@ kk_cmd_copy_query_pool_results(
+@@ -623,7 +643,8 @@ kk_cmd_copy_query_pool_results(
     struct libkk_copy_queries_args args = {
        .availability = pool->bo->gpu,
        .results = results_bo->gpu + pool->query_start,

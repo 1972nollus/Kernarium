@@ -32,7 +32,7 @@ index ada13f68970ee974d572b14649152a5ca5a97ff0..1fce418824d7e6927d4ed1d24e14fd23
    VK_EXT_descriptor_buffer                              DONE (anv, lvp, nvk, radv, tu)
    VK_EXT_descriptor_heap                                DONE (anv, radv, vn)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 3fa01aeff965059195da06ba85887442b87f3b0f..67b5d26da894c31e17116c7d185b1f8ccfe3967f 100644
+index 7d061bd1220e2de5b0bf950737641bddf69fd23d..f9879e5770e21b5d6837e650b7b744fd77fd0768 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -10,6 +10,7 @@

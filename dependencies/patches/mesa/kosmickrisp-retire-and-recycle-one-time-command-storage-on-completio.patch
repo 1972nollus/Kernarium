@@ -54,10 +54,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_completion.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 668bbcaba279b59826318b3d0e06d0999d83af13..4ffa19612d69f8ddfac66ef88083408cd01c3eed 100644
+index 2d0b1431599db6b30a99aabcf3bb2ef3484ff662..4e3bb301db2381fe09b81794dec82e0fc348ec46 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -94,10 +94,21 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
+@@ -109,10 +109,21 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
     vk_free(&pool->vk.alloc, cmd);
  }
  
@@ -81,7 +81,7 @@ index 668bbcaba279b59826318b3d0e06d0999d83af13..4ffa19612d69f8ddfac66ef88083408c
     es->ts_resolves = UTIL_DYNARRAY_INIT;
     es->ts_samples = UTIL_DYNARRAY_INIT;
     return es->allocator != NULL;
-@@ -130,13 +141,13 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+@@ -145,13 +156,13 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
  
     cmd->pre_gfx = &cmd->cmp[0];
     cmd->post_gfx = &cmd->cmp[1];
@@ -98,7 +98,7 @@ index 668bbcaba279b59826318b3d0e06d0999d83af13..4ffa19612d69f8ddfac66ef88083408c
        goto post_gfx_allocator_fail;
  
     {
-@@ -254,7 +265,7 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+@@ -269,7 +280,7 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                                            &cmd->cmp[1]};
     for (unsigned i = 0; i < ARRAY_SIZE(encoders); i++) {
        if (!encoders[i]->allocator)

@@ -175,7 +175,7 @@ index bc979a79efc9b84e92ece4e5b43ee1ec0796902b..245d3b9dcb07fd04650864a95189e131
  nir_color_blend(nir_builder *b, nir_def *src0, nir_def *src1, nir_def *dst,
                  const nir_lower_blend_rt *rt, bool scalar_blend_const);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 0a33032fb4b2d4ef9226f4d06f8c49fea2029ba6..b90249f161787d726cc311730450f809bd986051 100644
+index fcef60698ec9162be7f09be7ae3982127c30e11b..b21a4963f24a71e4133536562de5ce0fb1151eb1 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -43,7 +43,7 @@ struct kk_root_descriptor_table {

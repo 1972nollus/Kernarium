@@ -80,7 +80,7 @@ index 0000000000000000000000000000000000000000..9c7ec1e2cb65d57afb6b0bdcefaae8db
 +
 +#endif /* KK_GEOMETRY_H */
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 7c5630495be20864352fab36d9f8c9d698fe9c0d..46a45bce227fa7ae459b636ddbde7aa7e1ceedb7 100644
+index be7dec266fb5c5dea43c6dd374f3e2751498e388..ec8458e698a2d312506bd862f916f7c74f64a74a 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -209,6 +209,13 @@ struct kk_graphics_state {

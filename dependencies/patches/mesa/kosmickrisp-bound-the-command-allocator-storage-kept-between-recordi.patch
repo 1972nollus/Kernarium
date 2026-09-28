@@ -116,10 +116,10 @@ index d87a8dc077cdb06eab7902968a3aec805e9bb356..1c5ecad4c45b7daef95a04041addbf91
  mtl_begin_command_buffer(mtl_command_buffer *command_buffer,
                           mtl_command_allocator *allocator)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16cec0b6fb5 100644
+index 58c1a4409d26e955fbb81410d90f9d025ee8356b..661262dca67f827b477e3d03ca8596716b9ff4a2 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -83,6 +83,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
+@@ -98,6 +98,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
     cs_flush(cmd);
  
     mtl_release(cmd->argument_table);
@@ -127,7 +127,7 @@ index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16c
     kk_destroy_encoder_state(&cmd->cmp[0]);
     kk_destroy_encoder_state(&cmd->cmp[1]);
     kk_destroy_encoder_state(&cmd->gfx);
-@@ -108,13 +109,31 @@ kk_acquire_command_allocator(struct kk_device *dev)
+@@ -123,13 +124,31 @@ kk_acquire_command_allocator(struct kk_device *dev)
     return allocator ? allocator : mtl_new_command_allocator(dev->mtl_handle);
  }
  
@@ -163,7 +163,7 @@ index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16c
  }
  
  static VkResult
-@@ -144,14 +163,9 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+@@ -159,14 +178,9 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
  
     cmd->pre_gfx = &cmd->cmp[0];
     cmd->post_gfx = &cmd->cmp[1];
@@ -181,7 +181,7 @@ index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16c
  
     {
        mtl_argument_table_descriptor *desc = mtl_new_argument_table_descriptor();
-@@ -185,23 +199,19 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+@@ -200,23 +214,19 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
  
     return VK_SUCCESS;
  
@@ -211,7 +211,7 @@ index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16c
  }
  
  void
-@@ -213,9 +223,9 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -228,9 +238,9 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
     cs_flush(cmd);
     kk_cmd_release_resources(dev, cmd);
  
@@ -224,7 +224,7 @@ index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16c
  
     cmd->uploader.bo = NULL;
     cmd->uploader.offset = 0;
-@@ -227,23 +237,18 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -242,23 +252,18 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
  
  static void
  kk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
@@ -254,7 +254,7 @@ index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16c
     cmd->submitted = false;
     cmd->one_time_submit = false;
  }
-@@ -254,17 +259,6 @@ const struct vk_command_buffer_ops kk_cmd_buffer_ops = {
+@@ -269,17 +274,6 @@ const struct vk_command_buffer_ops kk_cmd_buffer_ops = {
     .destroy = kk_destroy_cmd_buffer,
  };
  
@@ -272,7 +272,7 @@ index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16c
  VKAPI_ATTR VkResult VKAPI_CALL
  kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                        const VkCommandBufferBeginInfo *pBeginInfo)
-@@ -272,18 +266,6 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+@@ -287,18 +281,6 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
     VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
  
     kk_reset_cmd_buffer(&cmd->vk, 0u);
@@ -291,7 +291,7 @@ index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16c
     vk_command_buffer_begin(&cmd->vk, pBeginInfo);
     cmd->one_time_submit =
        pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-@@ -319,11 +301,8 @@ static void kk_stop_encoder(struct kk_cmd_buffer *cmd,
+@@ -334,11 +316,8 @@ static void kk_stop_encoder(struct kk_cmd_buffer *cmd,
  static mtl_command_buffer *
  cs_open_main(struct kk_cmd_buffer *cmd)
  {
@@ -305,7 +305,7 @@ index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16c
     return cmd->main.cmd_buf;
  }
  
-@@ -368,6 +347,9 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+@@ -383,6 +362,9 @@ cs_start_render(struct kk_cmd_buffer *cmd)
  
     cmd->main.render_follows_work = cmd->main.cmd_buf != NULL;
     cmd->gfx.cmd_buf = cs_open_main(cmd);
@@ -315,7 +315,7 @@ index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16c
     cmd->gfx.in_main = true;
     cmd->gfx.encoder = mtl_new_render_command_encoder_with_descriptor(
        cmd->gfx.cmd_buf, state->render_pass_descriptor);
-@@ -434,13 +416,10 @@ static void
+@@ -449,13 +431,10 @@ static void
  kk_start_compute_encoder(struct kk_cmd_buffer *cmd,
                           struct kk_encoder_state *es, bool in_main)
  {
@@ -334,10 +334,10 @@ index 9619f9d99f14b8b0ffa7f562cba11b171e365035..16ce0e13577aeea5bba615a1b2fcc16c
     es->encoder = mtl_new_compute_command_encoder(es->cmd_buf);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index e0bca96fa29bc9247fee77fe998308b55ae91d04..8546213f6b3dad81bdce8f2a446e69f5f5b92495 100644
+index 7bbf86802f2816c62dd9e31d6904b6d2ba19cace..64141abe777e86f14e43820c92abc74673c6b871 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-@@ -332,6 +332,9 @@ struct kk_ts_sample {
+@@ -335,6 +335,9 @@ struct kk_ts_sample {
  struct kk_encoder_state {
     /* either a mtl_compute_encoder or a mtl_render_encoder */
     mtl_command_encoder *encoder;
@@ -347,7 +347,7 @@ index e0bca96fa29bc9247fee77fe998308b55ae91d04..8546213f6b3dad81bdce8f2a446e69f5
     mtl_command_allocator *allocator;
     mtl_command_buffer *cmd_buf;
     /* Pending timestamp resolves (struct kk_ts_resolve), flushed at cs_end. */
-@@ -406,6 +409,10 @@ struct kk_cmd_buffer {
+@@ -409,6 +412,10 @@ struct kk_cmd_buffer {
     /* Metal command buffers are single-shot: a resubmission must re-record
      * by replaying the enqueued commands (see rerecord_cmd_buffer). */
     bool submitted;
@@ -722,7 +722,7 @@ index d33225848e610e7f93746cb46d86556bde7e2b86..9c014699d4c9ddda040d181c4cdd35cc
                         const VkDeviceQueueCreateInfo *pCreateInfo,
                         uint32_t index_in_family);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 0c6dc8a68823a74a3df8c68235489a8cc9fd0315..d9a00b1d9baae6aa957f4e676c4c2a8be91d53e8 100644
+index b260d55ded56a74c575cab163a557ad570e1833e..c37c120cd4196a33fe87b69d6eaefa089f367ad9 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -895,6 +895,47 @@ if with_tests

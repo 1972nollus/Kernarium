@@ -44,10 +44,10 @@ index dbeac584cb80354a0ff30d821bb9f17ba17f381f..14770e63fa4974e23da92856cddcd176
           P(ctx, "%s(*(constant packed_%s*)(((constant %s*)", type, type,
             no_component_type);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 464722d26af8418990f135f83a3a893fe9caa4df..53ff8384555b9380d118955e1468b45dad5ecbf4 100644
+index 9799d79209242d06c1daf1ca49e2397e623e6350..901239f351388235047704d96f169f94b823bcb4 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-@@ -309,6 +309,7 @@ struct kk_cmd_buffer {
+@@ -312,6 +312,7 @@ struct kk_cmd_buffer {
        struct kk_compute_state cs;
        struct kk_conditional_rendering_state cond_render;
        struct kk_shader *shaders[MESA_SHADER_STAGES];

@@ -25,7 +25,7 @@ Subject: [PATCH] kosmickrisp: support unused dynamic-rendering attachments
  create mode 100644 src/kosmickrisp/vulkan/tests/unused_attachment_shaders/unused_att.vert.h
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 46a45bce227fa7ae459b636ddbde7aa7e1ceedb7..3fa01aeff965059195da06ba85887442b87f3b0f 100644
+index ec8458e698a2d312506bd862f916f7c74f64a74a..7d061bd1220e2de5b0bf950737641bddf69fd23d 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -133,6 +133,7 @@ struct kk_rendering_state {

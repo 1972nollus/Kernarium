@@ -150,7 +150,7 @@ index 6d647946d06bdb091eee6063cabdd0bdf953c51e..3d71897ef0b3c237ed65bde0873ca282
     vp->line_stipple_grid[2] = 1;
     vp->line_stipple_grid[3] = 1;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 06918dae6c8d4f5d2ad731b4a129123a8da59288..3db643cfd996080847810d9198b1cf4134077a2f 100644
+index a7b50a71f0692d84de98e29a178488cfb7d2e137..19dcc4e74f4427c4b45ab70d01423fb198a84d10 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -121,6 +121,11 @@ struct kk_per_draw_data {
