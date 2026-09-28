@@ -8,6 +8,7 @@
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <cstring>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -454,6 +455,87 @@ void native_store_invalidates_semantic_reservation_case() {
   semantic_executor.end_execution();
 }
 
+/*
+ * A pair or structure store that the JIT leaves to its slow helper, here
+ * because it crosses a page, must invalidate another vCPU's software
+ * reservation on the bytes it writes even when it stores the value already
+ * there. Otherwise that vCPU's STXR succeeds over the intervening store.
+ */
+void slow_store_invalidates_semantic_reservation_case(bool structure) {
+  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+  const unsigned long generation = structure ? 10'123U : 10'122U;
+  const std::uint64_t base = structure ? 0x158'0000U : 0x150'0000U;
+  const auto data = base + 2U * page;
+  constexpr std::uint64_t observed = 0x1122'3344'5566'7788ULL;
+  constexpr std::uint64_t replacement = 0x8877'6655'4433'2211ULL;
+  constexpr std::uint32_t crossing_pair = 0xa900'08c2U; // stp x2, x2, [x6]
+  constexpr std::uint32_t crossing_structure =
+      0x4c00'70c0U; // st1 {v0.16b}, [x6]
+
+  JitBacking backing{3};
+  backing.put32(0, load_exclusive);
+  backing.put32(4, system_call);
+  backing.put32(8, structure ? crossing_structure : crossing_pair);
+  backing.put32(12, system_call);
+  backing.put32(16, store_exclusive);
+  backing.put32(20, system_call);
+  backing.put64(2U * page - 8U, observed);
+  backing.put64(2U * page, observed);
+  JitMapping mapping{generation, base, backing, 3};
+
+  uml::cpu::arm64::JitExecutor semantic_executor;
+  uml::cpu::arm64::JitExecutor store_executor;
+  uml::memory::StaticGuestMemory memory;
+  auto cpus = std::make_unique<
+      std::array<uml::cpu::arm64::CpuState, 2>>();
+  auto &semantic_cpu = (*cpus)[0];
+  auto &store_cpu = (*cpus)[1];
+  semantic_cpu.pc = base;
+  semantic_cpu.registers[1] = data;
+  semantic_cpu.registers[4] = replacement;
+  semantic_cpu.mte_enabled = true;
+  store_cpu.pc = base + 8U;
+  store_cpu.registers[2] = observed;
+  store_cpu.registers[6] = data - 8U;
+  std::memcpy(store_cpu.vectors[0].bytes.data(), &observed, 8U);
+  std::memcpy(store_cpu.vectors[0].bytes.data() + 8U, &observed, 8U);
+
+  require(semantic_executor.begin_execution(generation, semantic_cpu.pc));
+  std::size_t executed = 0;
+  require(semantic_executor.run_block(
+              semantic_cpu, memory, generation, executed) ==
+          ::uml::cpu::EngineEvent::continued);
+  require(executed == 1U);
+  require(semantic_cpu.exclusive_size == 8U);
+
+  require(store_executor.begin_execution(generation, store_cpu.pc));
+  auto store_event = ::uml::cpu::EngineEvent::continued;
+  std::size_t retired = 0;
+  for (unsigned attempt = 0;
+       attempt < 4U &&
+       store_event == ::uml::cpu::EngineEvent::continued;
+       ++attempt) {
+    store_event = store_executor.run_block(
+        store_cpu, memory, generation, executed);
+    retired += executed;
+  }
+  require(store_event == ::uml::cpu::EngineEvent::system_call);
+  require(retired == 2U);
+  require(backing.get64(2U * page - 8U) == observed);
+  require(backing.get64(2U * page) == observed);
+  store_executor.end_execution();
+
+  semantic_cpu.pc = base + 16U;
+  require(semantic_executor.run_block(
+              semantic_cpu, memory, generation, executed) ==
+          ::uml::cpu::EngineEvent::continued);
+  require(executed == 1U);
+  require(semantic_cpu.registers[5] == 1U);
+  require(semantic_cpu.exclusive_size == 0U);
+  require(backing.get64(2U * page) == observed);
+  semantic_executor.end_execution();
+}
+
 void concurrent_native_cold_paths_leave_publication_before_helper() {
   constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
   constexpr unsigned long generation = 10'103U;
@@ -719,6 +801,8 @@ int main() {
     same_backing_alias_case(false, false, store);
   }
   native_store_invalidates_semantic_reservation_case();
+  slow_store_invalidates_semantic_reservation_case(false);
+  slow_store_invalidates_semantic_reservation_case(true);
   concurrent_native_cold_paths_leave_publication_before_helper();
   helper_pair_compare_swap_keeps_native_updates();
   helper_misaligned_compare_swap_keeps_native_updates();

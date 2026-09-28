@@ -219,8 +219,9 @@ therefore single-copy atomic against native code on other vCPUs and against
 host threads that share the page. Only an exclusive load, or an instruction
 run while its software reservation is held, waits out other vCPUs' native
 store blocks. Native and semantic stores share the JIT's software reservation
-table. An ordered store through an alias invalidates the matching software
-reservation even when the stored value is unchanged.
+table: every data store, including a pair or structure store that leaves its
+native lowering, invalidates the granules it writes through any alias of the
+same backing, even when the stored value is unchanged.
 
 ## Devices
 

@@ -3,6 +3,7 @@
 #include "jit_semantic_memory.hpp"
 #include "jit_publication.hpp"
 #include "jit_semantic_instructions.hpp"
+#include "jit_semantic_reservation.hpp"
 
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/detail/single_copy_alignment.hpp"
@@ -103,10 +104,15 @@ extern "C" void *uml_arm64_jit_tlb_translate(Tlb *tlb, std::uint64_t address,
 }
 
 [[nodiscard]] bool jit_pair_write(Tlb &tlb, std::uint64_t address,
-                                  std::span<const std::byte> bytes) noexcept {
+                                  std::span<const std::byte> bytes,
+                                  bool invalidate_reservations = false) noexcept {
   /* Pair stores are architecturally one memory access. Translate every
    * page before the first host store so a second-page fault cannot expose a
    * partial guest update. A pair spans at most two supported guest pages.
+   *
+   * A store invalidates every software reservation granule it writes, even
+   * when the stored bits are unchanged. The ordinary semantic store path
+   * does that itself; a caller that writes here directly asks for it.
    */
   std::array<std::byte *, 2> destinations{};
   std::array<std::size_t, 2> lengths{};
@@ -128,10 +134,16 @@ extern "C" void *uml_arm64_jit_tlb_translate(Tlb *tlb, std::uint64_t address,
     completed += count;
   }
   completed = 0;
+  std::array<JitStoreRange, 2> stored{};
   for (std::size_t page = 0; page < pages; ++page) {
     std::memcpy(destinations[page], bytes.data() + completed, lengths[page]);
     completed += lengths[page];
+    stored[page] = {reinterpret_cast<std::uintptr_t>(destinations[page]),
+                    lengths[page]};
   }
+  if (invalidate_reservations)
+    jit::semantic::invalidate_store_ranges(
+        std::span<const JitStoreRange>{stored}.first(pages));
   return true;
 }
 
@@ -476,7 +488,9 @@ uml_arm64_jit_execute_pair(CpuState *cpu, Tlb *tlb,
       std::memcpy(bytes.data(), &first_value, size);
       std::memcpy(bytes.data() + size, &second_value, size);
     }
-    if (!jit_pair_write(*tlb, address, transfer))
+    /* This helper runs inside the block's store publication, so an
+     * exclusive store waiting in its operation scope sees the invalidation. */
+    if (!jit_pair_write(*tlb, address, transfer, true))
       return pack_jit_result(Event::memory_fault, 0);
   }
 
@@ -564,6 +578,37 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
   cpu->write_register(transfer, value, false);
   cpu->pc += sizeof(instruction);
   return pack_jit_result(Event::continued, 1);
+}
+
+/*
+ * The shared structure transfer, which the gadget engine also uses, stores
+ * without touching the JIT's software reservations. Invalidate every granule
+ * it wrote, even when the stored bits are unchanged, from the same untagged
+ * address it translated. The helper runs inside the block's store
+ * publication, so an exclusive store waiting in its operation scope sees it.
+ */
+void invalidate_structure_store(CpuState &cpu, Tlb &tlb,
+                                std::uint64_t tagged_address, bool base_sp,
+                                std::size_t size) noexcept {
+  const bool tagged = !base_sp && cpu.tagged_addresses_enabled();
+  const auto address =
+      tagged ? tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
+  std::array<JitStoreRange, 2> stored{};
+  std::size_t pages = 0;
+  for (std::size_t completed = 0;
+       completed < size && pages < stored.size();) {
+    const auto current = address + completed;
+    const auto length = std::min(
+        size - completed,
+        static_cast<std::size_t>(page_size - (current & (page_size - 1U))));
+    auto *destination = tlb.translate_tagged(current, Access::write);
+    if (destination != nullptr)
+      stored[pages++] = {reinterpret_cast<std::uintptr_t>(destination),
+                         length};
+    completed += length;
+  }
+  jit::semantic::invalidate_store_ranges(
+      std::span<const JitStoreRange>{stored}.first(pages));
 }
 
 extern "C" std::uint64_t
@@ -714,6 +759,8 @@ uml_arm64_jit_execute_simd_structure(CpuState *cpu, Tlb *tlb,
                 (element_size << 8) | static_cast<std::size_t>(tagchecked))) ==
         0U)
       return pack_jit_result(Event::memory_fault, 0);
+    invalidate_structure_store(*cpu, *tlb, tagged_address, base_sp,
+                               transfer.size());
   }
   if (post_index) {
     const auto offset = offset_register == 31U
