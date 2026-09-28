@@ -485,23 +485,6 @@ class ResultParsingTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     runner.validate_modules_builtin(value)
 
-    def test_modules_builtin_loader_requires_sibling_kernel_release(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            build = pathlib.Path(directory) / "build"
-            release = build / "include/config/kernel.release"
-            release.parent.mkdir(parents=True)
-            modules_builtin = build / "modules.builtin"
-            data = b"kernel/fs/binfmt_misc.ko\nkernel/drivers/net/veth.ko\n"
-            modules_builtin.write_bytes(data)
-            release.write_text("6.18.41-test\n", encoding="utf-8")
-            self.assertEqual(
-                runner.load_modules_builtin(modules_builtin),
-                (data, "6.18.41-test"),
-            )
-            release.write_text("bad release\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "invalid sibling"):
-                runner.load_modules_builtin(modules_builtin)
-
     def test_modules_builtin_loader_accepts_the_kernel_artifact_layout(
         self,
     ) -> None:
@@ -522,16 +505,12 @@ class ResultParsingTests(unittest.TestCase):
             release.write_text("6.18.54\n6.18.54\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "invalid sibling"):
                 runner.load_modules_builtin(modules_builtin)
-            release.write_text("6.18.54-uml-darwin\n", encoding="utf-8")
-            kbuild_release = kernel / "include/config/kernel.release"
-            kbuild_release.parent.mkdir(parents=True)
-            kbuild_release.write_text("6.18.54-uml-darwin\n", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "ambiguous"):
+            release.write_text("bad release\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid sibling"):
                 runner.load_modules_builtin(modules_builtin)
             release.unlink()
-            kbuild_release.unlink()
             with self.assertRaisesRegex(
-                ValueError, "neither .*kernel.release nor .*include/config"
+                ValueError, "cannot read sibling kernel release"
             ):
                 runner.load_modules_builtin(modules_builtin)
 
