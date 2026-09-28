@@ -214,6 +214,21 @@ only when negotiated, bounded, invisible to guest userspace, and presented
 through an ABI the unmodified guest Mesa and libdrm already understand. A
 private userspace ioctl or library must never become a production dependency.
 
+Two framebuffers for which `KHR-GL46.direct_state_access.framebuffers_check_status`
+prefers an incomplete status are reported complete, as the specification
+requires. One mixes a renderbuffer created with one sample and one created
+with two. `RenderbufferStorageMultisample` may grant more samples than were
+asked for, and the frontend promotes a one-sample request to two, because
+Gallium represents no one-sample multisample surface: one sample there is a
+single-sampled surface, on which Zink deletes a shader's `gl_SampleMask` writes
+and the `sample_variables` `multisample_rbo_1` cases lose the per-sample
+fragment operations they verify. Both renderbuffers therefore carry the same
+`RENDERBUFFER_SAMPLES`, and section 9.4.2 requires the framebuffer that mixes
+them to be reported complete. The other attaches one slice of a
+three-dimensional texture beside a two-dimensional texture, which leaves no
+attachment layered, and the rule requiring a common texture target applies
+only when one is.
+
 Hardware video decode is not advertised. It published frames through a Metal
 texture client buffer that only the retired ANGLE provider exposed, and the
 renderer is built without it.

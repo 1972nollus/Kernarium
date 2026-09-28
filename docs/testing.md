@@ -683,10 +683,9 @@ console and artifact transport both stop advancing. Kernel stall diagnostics --
 RCU stall reports and their task dumps, hung-task and soft-lockup warnings --
 are not console progress for that bound, because a wedged kernel reprints them
 on its own timer and would otherwise hold the bound off indefinitely.
-dEQP ends its whole session at the first `ResourceError`, and offers no way to
-carry on, so every case after one used to go unrun: one such case once cost a
-device fraction 196,227 of its 216,952 cases. The guest therefore runs the
-remainder of the order it already enumerated in a fresh CTS process, up to
+dEQP ends its whole session at the first `ResourceError` and offers no way to
+carry on, so the guest runs the remainder of the order it already enumerated
+in a fresh CTS process, up to
 eight processes for one shard and all of them inside the shard's single
 deadline. Nothing is re-run and nothing is invented: each process appends its
 own session document to the same transported stream, `summary.txt` states
@@ -746,23 +745,9 @@ is not a pass and makes no conformance claim.
 observations optional, because the specification does not make the statuses
 they expect mandatory, and reports `CompatibilityWarning` when one of them sees
 `GL_FRAMEBUFFER_COMPLETE` instead. The runner policy above counts that status as
-a success, and this case is expected to report two of those observations.
-
-The multisample observation mixes a renderbuffer created with one sample and one
-created with two. `RenderbufferStorageMultisample` may grant more samples than
-were asked for, and the frontend promotes a one-sample request to two, because
-Gallium represents no one-sample multisample surface: one sample there is a
-single-sampled surface, on which Zink deletes a shader's `gl_SampleMask` writes
-and the `sample_variables` `multisample_rbo_1` cases lose the per-sample
-fragment operations they verify. Both renderbuffers therefore carry the same
-`RENDERBUFFER_SAMPLES`, and section 9.4.2 requires the framebuffer that mixes
-them to be reported complete.
-
-The layer-targets observation attaches one slice of a three-dimensional texture
-beside a two-dimensional texture, which leaves no attachment layered, and the
-rule requiring a common texture target applies only when one is. Reporting that
-framebuffer incomplete would contradict the completeness rules a conforming
-implementation must apply.
+a success, and this case is expected to report two of those observations;
+[`graphics.md`](graphics.md#guest-capability-boundary) explains why both
+framebuffers are complete.
 
 ## Claiming completion
 
