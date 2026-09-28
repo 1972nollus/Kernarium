@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "mach_vm_region_test_support.hpp"
 #include "memory/mmu/address_layout.hpp"
 
 #include <cstddef>
@@ -106,22 +107,13 @@ private:
 
 	mach_vm_address_t cursor = start;
 	while (cursor < end) {
-		mach_vm_address_t region = cursor;
-		mach_vm_size_t region_size = 0;
-		vm_region_basic_info_data_64_t information{};
-		mach_msg_type_number_t information_count =
-			VM_REGION_BASIC_INFO_COUNT_64;
-		mach_port_t object = MACH_PORT_NULL;
-		const auto status = mach_vm_region(mach_task_self(), &region,
-			&region_size, VM_REGION_BASIC_INFO_64,
-			reinterpret_cast<vm_region_info_t>(&information),
-			&information_count, &object);
-		if (object != MACH_PORT_NULL)
-			(void)mach_port_deallocate(mach_task_self(), object);
-		if (status == KERN_INVALID_ADDRESS)
+		const auto query = query_vm_region(cursor);
+		if (query.status == KERN_INVALID_ADDRESS)
 			return reserve_gap(cursor, end);
-		if (status != KERN_SUCCESS)
+		if (query.status != KERN_SUCCESS)
 			return 0;
+		const mach_vm_address_t region = query.region.start;
+		const mach_vm_size_t region_size = query.region.size;
 
 		const auto gap_end = region < end ? region : end;
 		if (const auto reserved = reserve_gap(cursor, gap_end);
@@ -155,25 +147,13 @@ private:
 	mach_vm_address_t cursor = address;
 	const mach_vm_address_t end = address + length;
 	while (cursor < end) {
-		mach_vm_address_t region = cursor;
-		mach_vm_size_t region_size = 0;
-		vm_region_basic_info_data_64_t information{};
-		mach_msg_type_number_t information_count =
-			VM_REGION_BASIC_INFO_COUNT_64;
-		mach_port_t object = MACH_PORT_NULL;
-		const auto status = mach_vm_region(mach_task_self(), &region,
-			&region_size, VM_REGION_BASIC_INFO_64,
-			reinterpret_cast<vm_region_info_t>(&information),
-			&information_count, &object);
-		if (object != MACH_PORT_NULL)
-			(void)mach_port_deallocate(mach_task_self(), object);
-		/* A region starting past the cursor leaves a free gap, and a
-		 * region with any protection is still a live mapping. */
-		if (status != KERN_SUCCESS || region > cursor ||
-		    region_size == 0 || region + region_size <= cursor ||
-		    information.protection != VM_PROT_NONE)
+		/* A cursor outside every region is a free gap, and a region
+		 * with any protection is still a live mapping. */
+		const auto region = region_containing(
+			static_cast<std::uintptr_t>(cursor));
+		if (!region || region->protection != VM_PROT_NONE)
 			return false;
-		cursor = region + region_size;
+		cursor = region->start + region->size;
 	}
 	return true;
 }

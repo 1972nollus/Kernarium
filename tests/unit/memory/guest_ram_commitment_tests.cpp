@@ -3,6 +3,7 @@
  * leave the process footprint, a committed one must be counted (and wired)
  * again, and repeated, overlapping or concurrent calls must reach the host
  * only for pages whose state they change. */
+#include "mach_vm_region_test_support.hpp"
 #include "memory/guest_ram_commitment.hpp"
 
 #include <cerrno>
@@ -64,19 +65,8 @@ void require(bool condition, const std::string &message)
 /* The user wire count of the map entry holding address. */
 [[nodiscard]] unsigned wired(const std::byte *address) noexcept
 {
-	mach_vm_address_t region = reinterpret_cast<mach_vm_address_t>(address);
-	mach_vm_size_t size = 0;
-	vm_region_basic_info_data_64_t info{};
-	mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-	mach_port_t object = MACH_PORT_NULL;
-	if (mach_vm_region(mach_task_self(), &region, &size,
-		    VM_REGION_BASIC_INFO_64,
-		    reinterpret_cast<vm_region_info_t>(&info), &count,
-		    &object) != KERN_SUCCESS)
-		return 0;
-	if (object != MACH_PORT_NULL)
-		(void)mach_port_deallocate(mach_task_self(), object);
-	return info.user_wired_count;
+	const auto region = uml::testing::region_containing(address);
+	return region ? region->user_wired_count : 0;
 }
 
 class Mapping final {

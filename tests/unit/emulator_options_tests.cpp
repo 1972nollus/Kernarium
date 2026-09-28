@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "mach_vm_region_test_support.hpp"
 #include "options.hpp"
 #include "runtime/native_kernel_layout.hpp"
 
@@ -392,22 +393,14 @@ void test_reserved_native_window_has_no_gap()
 		"the native window was not reserved where the host offered it");
 	mach_vm_address_t cursor = window.window_start;
 	while (cursor < window.window_end) {
-		mach_vm_address_t region = cursor;
-		mach_vm_size_t size = 0;
-		vm_region_basic_info_data_64_t information{};
-		mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-		mach_port_t object = MACH_PORT_NULL;
-		const kern_return_t result = mach_vm_region(mach_task_self(),
-			&region, &size, VM_REGION_BASIC_INFO_64,
-			reinterpret_cast<vm_region_info_t>(&information), &count,
-			&object);
-		if (object != MACH_PORT_NULL)
-			(void)mach_port_deallocate(mach_task_self(), object);
-		require(result == KERN_SUCCESS && region == cursor && size != 0,
+		const auto query = uml::testing::query_vm_region(
+			static_cast<std::uintptr_t>(cursor));
+		require(query.status == KERN_SUCCESS &&
+			query.region.start == cursor && query.region.size != 0,
 			"the reserved native window has a gap");
-		require(information.protection == VM_PROT_NONE,
+		require(query.region.protection == VM_PROT_NONE,
 			"the reserved native window is accessible");
-		cursor = region + size;
+		cursor = query.region.start + query.region.size;
 	}
 	require(munmap(reinterpret_cast<void *>(window.window_start),
 		length) == 0, "the reserved native window could not be released");
