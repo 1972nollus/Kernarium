@@ -11,9 +11,11 @@ normal arm64 slices apply the shared
 [`kernel/common/patches`](../common/patches) series, which the Android line
 also applies, and then this line's overlay in `patches/series`. The dedicated
 x86_64 userspace slice applies after them and owns only its config and patch
-overlay under [`slices/x86_64`](slices/x86_64). Those machine-readable files are the
-source of truth; the final tree is the identity an artifact is accepted by, and
-replay commit IDs and binary hashes are observations.
+overlay under [`slices/x86_64`](slices/x86_64). Its metadata names no upstream
+identity: the slice takes this line's, and the series tooling rejects a copy.
+Those machine-readable files are the source of truth; the final tree is the
+identity an artifact is accepted by, and replay commit IDs and binary hashes
+are observations.
 
 The shared stateful Virtio video decoder is built in for every product in this
 line. Its [wire contract](../common/video/README.md) is synchronized from the

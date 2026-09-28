@@ -68,29 +68,11 @@ def main() -> None:
 
     metadata_path = line_root / "patches/metadata.env"
     if args.slice == "x86_64":
-        common_metadata = parse_env(metadata_path)
+        # The overlay's upstream identity is the arm64 line's; the shared
+        # publisher reads it through the kernel series loader.
         metadata_path = line_root / "slices/x86_64/patches/metadata.env"
-        metadata = parse_env(metadata_path)
-        if metadata.get("UML_KERNEL_SLICE") != "x86_64":
+        if parse_env(metadata_path).get("UML_KERNEL_SLICE") != "x86_64":
             fail("x86_64 patch metadata has the wrong slice identity")
-        inherited_keys = (
-            "UML_KERNEL_RELEASE_VERSION",
-            "UML_KERNEL_UPSTREAM_REPOSITORY",
-            "UML_KERNEL_UPSTREAM_BRANCH",
-            "UML_KERNEL_UPSTREAM_COMMIT",
-            "UML_KERNEL_UPSTREAM_TREE",
-            "UML_KERNEL_BASE_REF",
-        )
-        mismatched = [
-            key
-            for key in inherited_keys
-            if metadata.get(key) != common_metadata.get(key)
-        ]
-        if mismatched:
-            fail(
-                "x86_64 patch metadata differs from common identity: "
-                + ", ".join(mismatched)
-            )
 
     def check_release(release: str, metadata: dict[str, str]) -> None:
         if not release.startswith(metadata["UML_KERNEL_RELEASE_VERSION"]):

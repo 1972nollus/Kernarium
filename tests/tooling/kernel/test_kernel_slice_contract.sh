@@ -38,6 +38,7 @@ COMMON_PATCH_BRANCH=${UML_KERNEL_SERIES##*:}
 COMMON_RELEASE_VERSION=$UML_KERNEL_RELEASE_VERSION
 COMMON_UPSTREAM_REPOSITORY=$UML_KERNEL_UPSTREAM_REPOSITORY
 COMMON_UPSTREAM_BRANCH=$UML_KERNEL_UPSTREAM_BRANCH
+COMMON_UPSTREAM_COMMIT=$UML_KERNEL_UPSTREAM_COMMIT
 
 # The x86_64 slice is a true overlay whose series follow the arm64 series.
 # shellcheck disable=SC1090
@@ -68,33 +69,24 @@ uml_kernel_select_slice "$LINE_ROOT" x86_64 ||
 [ "$UML_KERNEL_METADATA_PATH" = "$SLICE_METADATA" ] &&
 	[ "$UML_KERNEL_PATCH_BRANCH" = "$SLICE_PATCH_BRANCH" ] &&
 	[ "$UML_KERNEL_PARENT_BRANCH" = "$COMMON_PATCH_BRANCH" ] &&
+	[ "$UML_KERNEL_UPSTREAM_COMMIT" = "$COMMON_UPSTREAM_COMMIT" ] &&
 	[ "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" = \
 		"$SLICE_ROOT/config/userspace.fragment" ] ||
 	fail "x86_64 selection does not compose the overlay series/config"
 
-# An overlay that stops inheriting the common upstream identity is rejected
-# by every consumer of the selector.
-SELECTOR_FIXTURE="$TEST_ROOT/selector-fixture"
-mkdir -p \
-	"$SELECTOR_FIXTURE/patches" \
-	"$SELECTOR_FIXTURE/scripts" \
-	"$SELECTOR_FIXTURE/slices/x86_64/patches"
-cp "$COMMON_METADATA" "$SELECTOR_FIXTURE/patches/metadata.env"
-cp "$LINE_ROOT/scripts/select-slice.sh" \
-	"$SELECTOR_FIXTURE/scripts/select-slice.sh"
-sed "s/^UML_KERNEL_UPSTREAM_COMMIT=.*/UML_KERNEL_UPSTREAM_COMMIT='$WRONG_TREE'/" \
-	"$SLICE_METADATA" \
-	> "$SELECTOR_FIXTURE/slices/x86_64/patches/metadata.env"
-if (
-	# shellcheck disable=SC1090
-	. "$SELECTOR_FIXTURE/scripts/select-slice.sh"
-	uml_kernel_select_slice "$SELECTOR_FIXTURE" x86_64
-) >"$TEST_ROOT/selector.out" 2>"$TEST_ROOT/selector.err"; then
-	fail "slice selection accepted an overlay with its own upstream identity"
+# The overlay takes the common upstream identity, and the series loader that
+# every producer runs first rejects an overlay that restates any of it.
+RESTATED_METADATA="$TEST_ROOT/restated-x86_64.env"
+{
+	cat "$SLICE_METADATA"
+	printf '%s\n' "UML_KERNEL_UPSTREAM_COMMIT='$WRONG_TREE'"
+} > "$RESTATED_METADATA"
+if python3 -B "$KERNEL_SERIES" check --metadata "$RESTATED_METADATA" \
+	>"$TEST_ROOT/restated.out" 2>"$TEST_ROOT/restated.err"; then
+	fail "series loader accepted an overlay with its own upstream identity"
 fi
-grep -F 'x86_64 metadata does not inherit the common kernel identity' \
-	"$TEST_ROOT/selector.err" >/dev/null ||
-	fail "diverged overlay identity failed for the wrong reason"
+grep -F 'restates UML_KERNEL_UPSTREAM_COMMIT' "$TEST_ROOT/restated.err" \
+	>/dev/null || fail "restated overlay identity failed for the wrong reason"
 
 PREPARE_SOURCE="$LINE_ROOT/scripts/prepare-source.sh"
 
