@@ -1164,7 +1164,7 @@ index 0000000000000000000000000000000000000000..49e8a4e502d56e07d4a2f7add3d34668
 +
 +#endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 5cbaaeb3b43b493fb4b7ddcffcb42a417504fcf9..cb640756becece8eba57d2289ae75e672e54cf18 100644
+index 9d4278b8182a3043479ee173f3f3d443a793df56..025dec3c0bb7ad948535e92f1b7023bd8013f174 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -111,6 +111,8 @@ kk_files = files(
@@ -1176,7 +1176,7 @@ index 5cbaaeb3b43b493fb4b7ddcffcb42a417504fcf9..cb640756becece8eba57d2289ae75e67
    'kk_shader.c',
    'kk_sync.h',
    'kk_sync.c',
-@@ -304,6 +306,26 @@ if with_tests
+@@ -324,6 +326,26 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -1203,7 +1203,7 @@ index 5cbaaeb3b43b493fb4b7ddcffcb42a417504fcf9..cb640756becece8eba57d2289ae75e67
      test(
        'kosmickrisp_line_raster_cache',
        executable(
-@@ -327,6 +349,28 @@ if with_tests
+@@ -347,6 +369,28 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -1232,7 +1232,7 @@ index 5cbaaeb3b43b493fb4b7ddcffcb42a417504fcf9..cb640756becece8eba57d2289ae75e67
    endif
  
    test(
-@@ -445,4 +489,25 @@ if with_tests
+@@ -465,4 +509,25 @@ if with_tests
      ),
      suite : ['kosmickrisp'],
    )

@@ -722,10 +722,10 @@ index d33225848e610e7f93746cb46d86556bde7e2b86..9c014699d4c9ddda040d181c4cdd35cc
                         const VkDeviceQueueCreateInfo *pCreateInfo,
                         uint32_t index_in_family);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index f1fa2d564a632174a1af9024d466cb895b62f01b..bddd60cc52d891edb0795422148d4f730a9b0847 100644
+index 5b4203c590633698baf22c9e451deaad6882f147..e5cd1bd41b8fd1e646a5bf87370d56634435e5f9 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1062,6 +1062,47 @@ if with_tests
+@@ -1082,6 +1082,47 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
