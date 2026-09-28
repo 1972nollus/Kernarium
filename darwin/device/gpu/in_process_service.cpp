@@ -80,9 +80,8 @@ class InProcessGpuService::Implementation {
 public:
     explicit Implementation(InProcessGpuOptions options)
         : options_(std::move(options))
-        , inputDescriptors_(options_.inputSink ? DescriptorPair{} : makeInputSocketPair())
+        , inputDescriptors_(makeInputSocketPair())
         , inputConnectionName_(
-              options_.inputSink ? std::string{} :
               "fd=" + std::to_string(inputDescriptors_[1].get()))
         , service_(
               "GPU",
@@ -149,13 +148,6 @@ private:
     void sendInput(
         std::span<const uml::input::vnc::VncInputEvent> events) noexcept
     {
-        if (options_.inputSink) {
-            if (!uml::input::vnc::tryDeliver(options_.inputSink, events) &&
-                !reportedInputFailure_.exchange(true, std::memory_order_relaxed)) {
-                std::fputs("Unable to deliver display input to composed devices\n", stderr);
-            }
-            return;
-        }
         const auto bytes = events.size_bytes();
         const auto sent = ::send(
             inputDescriptors_[0].get(), events.data(), bytes, MSG_DONTWAIT);
