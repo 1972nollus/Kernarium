@@ -1749,7 +1749,8 @@ void rendererBackingAttachIsRetryableAfterAllocationFailure()
     };
     const auto request = requestWithEntry(attach, entry);
 
-    failAfterAllocations(2);
+    // The response is allocated first; the backing's iovec array second.
+    failAfterAllocations(1);
     bool failed = false;
     try {
         (void)device.process(request, false);

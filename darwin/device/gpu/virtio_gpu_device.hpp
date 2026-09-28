@@ -129,7 +129,6 @@ private:
         std::uint32_t target {};
         std::uint32_t width {};
         std::uint32_t height {};
-        std::vector<BackingEntry> backing;
         std::vector<iovec> vectors;
     };
 
@@ -149,8 +148,6 @@ private:
         std::uint64_t chargedSize {};
         std::uint64_t regionOffset {};
         std::uint64_t pendingActionId {};
-        std::vector<BackingEntry> backing;
-        std::vector<iovec> vectors;
         MappingState mappingState {MappingState::unmapped};
         bool retireAfterAction {};
     };
@@ -170,7 +167,6 @@ private:
         std::span<const std::uint8_t> request,
         std::size_t entriesOffset,
         std::uint32_t entryCount,
-        std::vector<BackingEntry>& backing,
         std::vector<iovec>& vectors) const;
     /* The renderer's capability set, or the response a query for it fails
      * with. */

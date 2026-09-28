@@ -410,10 +410,8 @@ int VirglRenderer::createResource3d(
 int VirglRenderer::createResourceBlob(
     const ResourceBlob& resource) noexcept
 {
-    if (resource.backing.size() >
-        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-        return EINVAL;
-    }
+    /* A blob is renderer storage; the device refuses guest backing for one,
+     * so no iovec reaches the renderer. */
     virgl_renderer_resource_create_blob_args arguments {
         .res_handle = resource.resourceId,
         .ctx_id = resource.contextId,
@@ -421,8 +419,8 @@ int VirglRenderer::createResourceBlob(
         .blob_flags = resource.flags,
         .blob_id = resource.blobId,
         .size = resource.size,
-        .iovecs = resource.backing.data(),
-        .num_iovs = static_cast<std::uint32_t>(resource.backing.size()),
+        .iovecs = nullptr,
+        .num_iovs = 0,
     };
     return virgl_renderer_resource_create_blob(&arguments);
 }
