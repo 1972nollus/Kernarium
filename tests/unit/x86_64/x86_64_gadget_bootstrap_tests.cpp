@@ -5226,6 +5226,63 @@ read_test_sequences(void *context) noexcept
 			"RDTSC under PR_TSC_SIGSEGV did not raise #GP");
 }
 
+/* An instruction that would need a sixteenth byte raises #GP at its first
+ * byte without fetching that byte.  It used to be reported as a fetch fault
+ * at the sixteenth byte, which a mapped page resolves as spurious, so the
+ * guest re-ran the same bytes forever.  A fetch that fails before the limit
+ * stays a page fault at the byte it wanted. */
+[[nodiscard]] bool overlong_instructions_raise_general_protection()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::size_t span = 16384;
+	TestMemory memory;
+	memory.load(0x100, {0x90});
+	for (std::size_t index = 0; index < 15; ++index) {
+		memory.load(0x101 + index, {0x66});
+		memory.load(0x200 + index, {0x66});
+	}
+	memory.load(0x110, {0x90});
+	memory.load(0x20f, {0x90});
+	for (std::size_t index = 0; index < 14; ++index)
+		memory.load(span - 14 + index, {0x66});
+
+	const auto legal = gadgets::build(memory, 0x201, 1);
+	if (!expect(legal.status == gadgets::BuildStatus::built,
+		"a fifteen-byte instruction did not build"))
+		return false;
+	CpuState fits{};
+	fits.rip = 0x201;
+	const auto fitted = gadgets::execute(legal.program, fits, memory, 1);
+	if (!expect(fitted.event == uml::cpu::EngineEvent::continued &&
+		fitted.retired_instructions == 1 && fits.rip == 0x210,
+		"a fifteen-byte instruction did not retire"))
+		return false;
+
+	for (const auto start : {0x100U, 0x101U}) {
+		const auto built = gadgets::build(memory, start, 4);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"an overlong instruction did not build to #GP") ||
+			!expect(built.program.replay_instructions().size() ==
+				built.program.instruction_count(),
+				"an overlong instruction did not replay from its source"))
+			return false;
+		CpuState cpu{};
+		cpu.rip = start;
+		const auto result = gadgets::execute(built.program, cpu, memory, 4);
+		const auto retired = start == 0x100U ? 1U : 0U;
+		if (!expect(result.event ==
+				uml::cpu::EngineEvent::general_protection &&
+			result.retired_instructions == retired && cpu.rip == 0x101,
+			"an overlong instruction did not raise #GP at its first byte"))
+			return false;
+	}
+
+	const auto short_fetch = gadgets::build(memory, span - 14, 1);
+	return expect(short_fetch.status == gadgets::BuildStatus::fetch_fault &&
+		short_fetch.fault_address == span,
+		"a fetch fault inside the length limit was not a page fault");
+}
+
 /* WRFSBASE and WRGSBASE with a 64-bit operand raise #GP for a non-canonical
  * address and leave the base unchanged; the 32-bit form zero-extends and so
  * cannot fault. */
@@ -6687,6 +6744,7 @@ int main()
 		native_into_reports_overflow_precisely() &&
 		privileged_instructions_raise_general_protection() &&
 		segment_base_writes_reject_non_canonical_addresses() &&
+		overlong_instructions_raise_general_protection() &&
 		software_interrupt_vectors_trap() &&
 		one_instruction_budget_steps_linked_programs() &&
 		popf_setting_trap_flag_leaves_at_the_next_instruction() &&
