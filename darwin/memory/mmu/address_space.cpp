@@ -629,7 +629,7 @@ public:
 		return iterator->second.fd == fd && iterator->second.offset == offset;
 	}
 
-	int rebind(std::uint64_t address, int fd, std::uint64_t offset)
+	int discard_if_stale(std::uint64_t address, int fd, std::uint64_t offset)
 	{
 		address &= ~(page_size - 1);
 		auto backing = backing_for(fd);
@@ -1980,11 +1980,12 @@ extern "C" int darwin_uml_static_vm_mapping_matches(
 		[&](auto &space) { return space.matches(address, fd, offset); });
 }
 
-extern "C" int darwin_uml_static_vm_rebind(unsigned long address, int fd,
-					      unsigned long long offset)
+extern "C" int darwin_uml_static_vm_discard_if_stale(unsigned long address,
+	int fd, unsigned long long offset)
 {
-	return with_address_space(
-		[&](auto &space) { return space.rebind(address, fd, offset); });
+	return with_address_space([&](auto &space) {
+		return space.discard_if_stale(address, fd, offset);
+	});
 }
 
 extern "C" int darwin_uml_static_vm_copy_from_buffer(
