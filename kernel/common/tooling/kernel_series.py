@@ -15,6 +15,11 @@ replay branch that ends it. A line regenerates only the trailing series it
 owns; the series before them belong to another line and are checked by the
 tree they produce here, because the same topics exported from a different
 upstream base carry different context and index lines.
+
+A line whose last inherited series has a ``metadata.env`` beside it is an
+overlay of that line, such as the mainline x86_64 slice. Its inherited series
+are exactly that line's series, and it takes that line's upstream identity
+(``IDENTITY``) instead of naming its own.
 """
 
 from __future__ import annotations
@@ -36,6 +41,10 @@ from contract_checks import parse_assignments, replace_assignment  # noqa: E402
 from patch_series import SeriesError, git  # noqa: E402
 
 BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+# The pinned upstream source a line's series apply to.
+IDENTITY = ("UML_KERNEL_RELEASE_VERSION", "UML_KERNEL_UPSTREAM_REPOSITORY",
+            "UML_KERNEL_UPSTREAM_BRANCH", "UML_KERNEL_UPSTREAM_COMMIT",
+            "UML_KERNEL_UPSTREAM_TREE", "UML_KERNEL_BASE_REF")
 
 
 @dataclass(frozen=True)
@@ -73,11 +82,9 @@ class Line:
         return tuple(layer for layer in self.layers if not layer.owned)
 
 
-def load_line(metadata: Path) -> Line:
-    metadata = metadata if metadata.is_absolute() else ROOT / metadata
+def _read_line(metadata: Path) -> tuple[dict[str, str], tuple[Layer, ...]]:
     values = parse_assignments(metadata, SeriesError)
-    for key in ("UML_KERNEL_UPSTREAM_COMMIT", "UML_KERNEL_SERIES",
-                "UML_KERNEL_OWNED_SERIES", "UML_KERNEL_FINAL_TREE"):
+    for key in ("UML_KERNEL_SERIES", "UML_KERNEL_OWNED_SERIES", "UML_KERNEL_FINAL_TREE"):
         if not values.get(key):
             raise SeriesError(f"{metadata}: {key} is not set")
     owned = values["UML_KERNEL_OWNED_SERIES"].split()
@@ -96,7 +103,35 @@ def load_line(metadata: Path) -> Line:
     flags = [layer.owned for layer in layers]
     if not flags[-1] or flags != sorted(flags):
         raise SeriesError(f"{metadata}: owned series must be the trailing series")
-    return Line(metadata, values, values["UML_KERNEL_UPSTREAM_COMMIT"], tuple(layers))
+    return values, tuple(layers)
+
+
+def _inherited_identity(metadata: Path, values: dict[str, str],
+                        layers: tuple[Layer, ...]) -> dict[str, str]:
+    """Return the upstream identity an overlay takes from the line it extends."""
+    inherited = [layer for layer in layers if not layer.owned]
+    if not inherited:
+        return {}
+    parent = inherited[-1].directory.parent / "metadata.env"
+    if not parent.is_file():
+        return {}
+    restated = [key for key in IDENTITY if key in values]
+    if restated:
+        raise SeriesError(f"{metadata}: an overlay of {parent} restates {', '.join(restated)}")
+    parent_values, parent_layers = _read_line(parent)
+    if [(layer.relative, layer.branch) for layer in parent_layers] != [
+            (layer.relative, layer.branch) for layer in inherited]:
+        raise SeriesError(f"{metadata}: the inherited series are not the series of {parent}")
+    return {key: parent_values[key] for key in IDENTITY if key in parent_values}
+
+
+def load_line(metadata: Path) -> Line:
+    metadata = metadata if metadata.is_absolute() else ROOT / metadata
+    values, layers = _read_line(metadata)
+    values = {**_inherited_identity(metadata, values, layers), **values}
+    if not values.get("UML_KERNEL_UPSTREAM_COMMIT"):
+        raise SeriesError(f"{metadata}: UML_KERNEL_UPSTREAM_COMMIT is not set")
+    return Line(metadata, values, values["UML_KERNEL_UPSTREAM_COMMIT"], layers)
 
 
 def check(line: Line) -> list[patch_series.Series]:
