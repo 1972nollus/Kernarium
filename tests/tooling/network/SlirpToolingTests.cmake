@@ -1,29 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 if(UML_BUILD_NETWORK_PROVIDER)
-    add_library(uml_network_provider_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp/provider.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp/event_loop.cpp
-        ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp/frame_queue.cpp)
-    target_include_directories(uml_network_provider_test_variant
-        PUBLIC
-            ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp
-            ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp/include
-        PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin/device/network)
-    target_compile_definitions(uml_network_provider_test_variant PUBLIC
-        UML_SLIRP_TESTING=1)
-    target_compile_features(uml_network_provider_test_variant PUBLIC cxx_std_20)
-    target_compile_options(uml_network_provider_test_variant PRIVATE
-        -Wall -Wextra -Werror)
-    target_link_libraries(uml_network_provider_test_variant PUBLIC
-        UML::BridgeAbi)
-    target_link_libraries(uml_network_provider_test_variant PRIVATE
-        UML::GuestTimerMask
-        UML::ThirdPartySlirp)
-    add_dependencies(uml_network_provider_test_variant
-        uml_dependency_prefix_verify)
-
     add_executable(uml_slirp_network_tests
         ${PROJECT_SOURCE_DIR}/tests/tooling/network/slirp_arp_probe.cpp)
     target_link_libraries(uml_slirp_network_tests PRIVATE
