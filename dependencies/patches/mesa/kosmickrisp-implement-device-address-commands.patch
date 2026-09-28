@@ -19,8 +19,8 @@ Subject: [PATCH] kosmickrisp: implement device address commands
  src/kosmickrisp/vulkan/kk_physical_device.c   |   4 +
  src/kosmickrisp/vulkan/kk_query_pool.c        |  53 ++++-
  src/kosmickrisp/vulkan/meson.build            |  12 ++
- .../vulkan/tests/test_device_address.c        |  47 +++++
- 16 files changed, 429 insertions(+), 12 deletions(-)
+ .../vulkan/tests/test_device_address.c        |  48 +++++
+ 16 files changed, 430 insertions(+), 12 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_device_address.h
  create mode 100644 src/kosmickrisp/vulkan/tests/test_device_address.c
 
@@ -411,7 +411,7 @@ index d00c2a4d39777eabfbe2d846c47078661261c5a4..053e458d3c356ef7a05c922885580600
     /* Complete native pipelines assembled from reusable GPL subsets. */
 diff --git a/src/kosmickrisp/vulkan/kk_device_address.h b/src/kosmickrisp/vulkan/kk_device_address.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..67f6f4b34780a78965bb1b8a6ebf950681a32aba
+index 0000000000000000000000000000000000000000..e5c4fc12b96525c2d58f8d6daeda9e8efe68ad86
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/kk_device_address.h
 @@ -0,0 +1,28 @@
@@ -434,8 +434,8 @@ index 0000000000000000000000000000000000000000..67f6f4b34780a78965bb1b8a6ebf9506
 +                                 VkDeviceAddress address, VkDeviceSize size)
 +{
 +   if (size == 0)
-+      return address == 0 || (address >= allocation_address &&
-+                              address - allocation_address <= allocation_size);
++      return address >= allocation_address &&
++             address - allocation_address <= allocation_size;
 +
 +   return address >= allocation_address &&
 +          address - allocation_address < allocation_size &&
@@ -689,10 +689,10 @@ index 4beaefd360be24573eca96462ce7f282af267530..9e6ccb694f501ecd17b1ea87faed332a
      executable(
 diff --git a/src/kosmickrisp/vulkan/tests/test_device_address.c b/src/kosmickrisp/vulkan/tests/test_device_address.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..e741bc6703b5cd45ce3c97cd495e3758b10e534a
+index 0000000000000000000000000000000000000000..e263e4acc75cc79c1041d2163e93f7d7b9e5e085
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_device_address.c
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,48 @@
 +/*
 + * Copyright 2026 Google LLC
 + * SPDX-License-Identifier: MIT
@@ -720,10 +720,11 @@ index 0000000000000000000000000000000000000000..e741bc6703b5cd45ce3c97cd495e3758
 +   assert(!kk_device_address_range_contains(allocation, allocation_size,
 +                                            allocation + 0x80, 0x81));
 +
-+   /* Empty ranges may use the null address, or any address up to and including
-+    * the end of an allocation.
++   /* An empty range is contained at any address up to and including the end
++    * of an allocation. The null range is not inside any allocation: accepting
++    * it is its caller's decision.
 +    */
-+   assert(kk_device_address_range_contains(allocation, allocation_size, 0, 0));
++   assert(!kk_device_address_range_contains(allocation, allocation_size, 0, 0));
 +   assert(kk_device_address_range_contains(allocation, allocation_size,
 +                                           allocation + allocation_size, 0));
 +   assert(!kk_device_address_range_contains(allocation, allocation_size,
