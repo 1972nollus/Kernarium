@@ -269,6 +269,11 @@ public:
     [[nodiscard]] bool configure(
         const PlaybackParameters& parameters) override
     {
+        // Queued periods belong to the current state, and their completions
+        // arrive only there: replacing it would strand them, so they must
+        // come back first, as prepare() also requires.
+        if (state_->pending.load(std::memory_order_acquire) != 0)
+            return false;
         @try {
             [player_ stop];
             [engine_ stop];

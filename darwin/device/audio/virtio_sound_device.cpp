@@ -153,6 +153,8 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processControl(
         const auto parameters = fromBytes<protocol::PcmSetParameters>(request);
         if (!validStreamHeader(parameters.header))
             return status(protocol::Status::badMessage, responseCapacity);
+        if (deferredTransfers_ != 0)
+            return status(protocol::Status::ioError, responseCapacity);
         if (state_ == StreamState::running ||
             state_ == StreamState::stopped ||
             parameters.bufferBytes == 0 || parameters.periodBytes == 0 ||
@@ -258,6 +260,7 @@ uml::virtio::VhostUserQueueResult VirtioSoundDevice::processTransmit(
             .latencyBytes = 0,
         }));
     }
+    ++deferredTransfers_;
     return {
         .action = uml::virtio::VhostUserQueueAction::defer,
         .response = {},
@@ -289,6 +292,7 @@ void VirtioSoundDevice::reset() noexcept
     sink_->reset();
     state_ = StreamState::unconfigured;
     parameters_ = {};
+    deferredTransfers_ = 0;
 }
 
 int VirtioSoundDevice::eventDescriptor() const noexcept
@@ -307,6 +311,8 @@ bool VirtioSoundDevice::takeQueueCompletion(
     PlaybackCompletion playback;
     if (!sink_->takeCompletion(playback))
         return false;
+    if (deferredTransfers_ != 0)
+        --deferredTransfers_;
     completion = {
         .requestId = playback.requestId,
         .response = toBytes(protocol::PcmStatus {
