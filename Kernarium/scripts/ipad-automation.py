@@ -19,8 +19,18 @@ at the device, and then send commands:
 Every command has a bounded wait. A command fails with exit status 3 when the
 host is not running. UI automation stays approved only while some XCTest
 session keeps it on, so a new host normally needs a new approval at the
-device: never stop a working host without someone to approve its successor. The host targets com.imxieyi.Kernarium unless --bundle names another
-application, such as com.apple.springboard.
+device: never stop a working host without someone to approve its successor.
+Run `start` only while someone can approve, because XCTest gives up 60 s after
+the runner starts and leaves the prompt on screen. The host targets
+com.imxieyi.Kernarium unless --bundle names another application, such as
+com.apple.springboard.
+
+No command ends the host: a failed command reports its error, and the host
+prints it to its log. If every command starts taking about 60 s, a system
+keyboard animation has left XCTest's wait for an idle application stuck;
+relaunch the application. The host is not in the Kernarium scheme, so
+reinstalling Kernarium or running other tests leaves it serving, and its log
+records each such termination as a Kernarium crash.
 """
 
 import argparse
