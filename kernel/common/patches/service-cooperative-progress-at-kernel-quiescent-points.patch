@@ -38,10 +38,10 @@ index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 5f1418a4e89517f160ae293cb37aaedd82f33092..4bc1ddd3d663b0c410be0f09de01a200017d3fb9 100644
+index c60a3bb348c207db5c9bbe31f009b40f0bc54a48..45ed6821735894d9d275021d20d05cfb8ba9f617 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -225,6 +225,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)
+@@ -229,6 +229,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)
  #endif
  }
  
@@ -73,7 +73,7 @@ index 5f1418a4e89517f160ae293cb37aaedd82f33092..4bc1ddd3d663b0c410be0f09de01a200
  static int do_op_one_page(unsigned long addr, int len, int is_write,
  		 int (*op)(unsigned long addr, int len, void *arg), void *arg)
  {
-@@ -246,8 +271,12 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -250,8 +275,12 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  		page = NULL;
  	}
  #endif
@@ -87,7 +87,7 @@ index 5f1418a4e89517f160ae293cb37aaedd82f33092..4bc1ddd3d663b0c410be0f09de01a200
  
  #ifdef CONFIG_64BIT
  	pagefault_disable();
-@@ -278,6 +307,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
+@@ -282,6 +311,9 @@ static int do_op_one_page(unsigned long addr, int len, int is_write,
  	if (is_write && n >= 0)
  		mark_user_page_dirty(user_addr, page, may_sleep);
  	put_page(page);
