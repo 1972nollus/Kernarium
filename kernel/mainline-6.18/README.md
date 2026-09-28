@@ -81,8 +81,9 @@ same change. The x86_64 run first rebases its overlay onto the current arm64
 branch. A patch file changes only when its own topic does. Never edit patch
 files, `series.tsv`, or the final tree by hand.
 
-`check-next-version.sh --ref REF` rebases a replay onto a development ref and
-reports the topics that need a port, then the `git range-diff` of the rest.
+`check-next-version.sh --work-root PATH --ref REF` (see `--help`) rebases a
+replay onto a development ref and reports the topics that need a port, then the
+`git range-diff` of the rest.
 The series is maintained locally; no tooling submits or pushes it.
 
 ## Kernel configuration
