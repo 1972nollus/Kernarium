@@ -565,6 +565,62 @@ void connectedSocketChannelBoundsItsReadBuffer()
     require(received.capacity() <= bound);
 }
 
+/*
+ * A relay that has not read earlier output leaves the channel's descriptor
+ * full. The channel keeps what it could not send, the device leaves later
+ * guest output queued meanwhile, and the room the relay makes wakes the
+ * device to send it: every byte arrives once and in order.
+ */
+void connectedSerialPortKeepsOutputTheRelayHasNoRoomFor()
+{
+    std::array<int, 2> descriptors {-1, -1};
+    require(::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors.data()) == 0);
+    uml::gpu::UniqueDescriptor relay {descriptors[1]};
+    uml::console::VirtioConsoleDevice device(
+        std::make_unique<uml::console::ConnectedSocketChannel>(descriptors[0]),
+        std::string(protocol::hostSerialPortName));
+
+    std::vector<std::uint8_t> first(1U << 20U);
+    for (std::size_t index = 0; index < first.size(); ++index)
+        first[index] = static_cast<std::uint8_t>(index * 131U + 7U);
+    const std::vector<std::uint8_t> second {'n', 'e', 'x', 't', '\n'};
+    require(device.processQueue(protocol::outputQueue, 1, first, 0).action ==
+            uml::virtio::VhostUserQueueAction::complete);
+    require(device.processQueue(protocol::outputQueue, 2, second, 0).action ==
+            uml::virtio::VhostUserQueueAction::retry);
+
+    std::vector<std::uint8_t> received;
+    const auto takeWhatTheRelayHas = [&] {
+        for (;;) {
+            std::array<std::uint8_t, 4096> buffer {};
+            const auto count = ::recv(
+                relay.get(), buffer.data(), buffer.size(), MSG_DONTWAIT);
+            if (count <= 0)
+                return;
+            received.insert(
+                received.end(), buffer.begin(), buffer.begin() + count);
+        }
+    };
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    for (;;) {
+        require(std::chrono::steady_clock::now() < deadline);
+        takeWhatTheRelayHas();
+        if (received.size() >= first.size())
+            break;
+        // The room the relay just made is what has to wake the device.
+        waitReadable(device.eventDescriptor());
+        device.drainEventSource();
+    }
+    require(device.processQueue(protocol::outputQueue, 2, second, 0).action ==
+            uml::virtio::VhostUserQueueAction::complete);
+    waitReadable(relay.get());
+    takeWhatTheRelayHas();
+    std::vector<std::uint8_t> expected(first);
+    expected.insert(expected.end(), second.begin(), second.end());
+    require(received == expected);
+}
+
 void inProcessServicePublishesAndRemovesTheExternalSocket()
 {
     TemporaryDirectory temporary;
@@ -604,6 +660,7 @@ int main()
     unixSocketChannelRejectsAClientThatClosedBeforeAccept();
     connectedSocketChannelIsNonblocking();
     connectedSocketChannelBoundsItsReadBuffer();
+    connectedSerialPortKeepsOutputTheRelayHasNoRoomFor();
     inProcessServicePublishesAndRemovesTheExternalSocket();
     return EXIT_SUCCESS;
 }

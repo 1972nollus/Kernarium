@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <stdexcept>
@@ -71,6 +72,13 @@ std::vector<std::uint8_t> ConnectedSocketChannel::read(
 void ConnectedSocketChannel::write(
     std::span<const std::uint8_t> bytes) noexcept
 {
+    sendWaitingOutput();
+    if (waitingSent_ < waiting_.size()) {
+        // The device offers no output while some waits; anything written
+        // regardless queues behind it rather than overtaking it.
+        keepUnsent(bytes);
+        return;
+    }
     while (!bytes.empty()) {
         const ssize_t sent = ::send(
             descriptor_, bytes.data(), bytes.size(), 0);
@@ -80,8 +88,61 @@ void ConnectedSocketChannel::write(
         }
         if (sent < 0 && errno == EINTR)
             continue;
+        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            keepUnsent(bytes);
+            return;
+        }
+        reportOutputDrop(sent < 0 ? std::strerror(errno) : "no progress");
         return;
     }
+}
+
+bool ConnectedSocketChannel::outputWaiting() noexcept
+{
+    sendWaitingOutput();
+    return waitingSent_ < waiting_.size();
+}
+
+void ConnectedSocketChannel::sendWaitingOutput() noexcept
+{
+    while (waitingSent_ < waiting_.size()) {
+        const ssize_t sent = ::send(
+            descriptor_,
+            waiting_.data() + waitingSent_,
+            waiting_.size() - waitingSent_,
+            0);
+        if (sent > 0) {
+            waitingSent_ += static_cast<std::size_t>(sent);
+            continue;
+        }
+        if (sent < 0 && errno == EINTR)
+            continue;
+        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            return;
+        reportOutputDrop(sent < 0 ? std::strerror(errno) : "no progress");
+        break;
+    }
+    waiting_.clear();
+    waitingSent_ = 0;
+}
+
+void ConnectedSocketChannel::keepUnsent(
+    std::span<const std::uint8_t> bytes) noexcept
+{
+    try {
+        waiting_.insert(waiting_.end(), bytes.begin(), bytes.end());
+    } catch (...) {
+        reportOutputDrop("no memory to keep it");
+    }
+}
+
+void ConnectedSocketChannel::reportOutputDrop(const char* reason) noexcept
+{
+    if (reportedOutputDrop_)
+        return;
+    reportedOutputDrop_ = true;
+    std::fprintf(
+        stderr, "Virtio console relay output dropped: %s\n", reason);
 }
 
 int ConnectedSocketChannel::eventDescriptor() const noexcept
@@ -91,6 +152,7 @@ int ConnectedSocketChannel::eventDescriptor() const noexcept
 
 void ConnectedSocketChannel::drainEventSource()
 {
+    sendWaitingOutput();
 }
 
 void ConnectedSocketChannel::reset() noexcept
