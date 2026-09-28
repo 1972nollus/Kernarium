@@ -28,10 +28,10 @@ retired queue is replaced while a write the old queue destroyed stays
 destroyed.
 ---
  src/kosmickrisp/vulkan/kk_query_pool.c | 31 ++++++++++++++++++++++++--
- src/kosmickrisp/vulkan/kk_queue.c      | 18 ++++++++++++++-
+ src/kosmickrisp/vulkan/kk_queue.c      | 15 +++++++++++++
  src/kosmickrisp/vulkan/kk_queue.h      | 22 ++++++++++++++++++
  src/kosmickrisp/vulkan/kk_sync.c       | 15 +++++--------
- 4 files changed, 73 insertions(+), 13 deletions(-)
+ 4 files changed, 71 insertions(+), 12 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
 index 2d6be6ae61d1c5c443d607f527385191d5ef3ba4..9c03b79fddc81f3aac958ac270eeabdb377579ce 100644
@@ -93,10 +93,10 @@ index 2d6be6ae61d1c5c443d607f527385191d5ef3ba4..9c03b79fddc81f3aac958ac270eeabdb
     }
  }
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 635b85799bf79ab145f0c1334f6461d1eff9b1bc..780958f26e9c6ec1332640fa9dd81d27deddcbe0 100644
+index 0bc9052d7bcf463607c12640424df4179959c1fc..dee7b41d42f23bf45e1ca5f819c6df329785c72f 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
-@@ -78,6 +78,20 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
+@@ -88,6 +88,20 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
     return made_good;
  }
  
@@ -117,18 +117,14 @@ index 635b85799bf79ab145f0c1334f6461d1eff9b1bc..780958f26e9c6ec1332640fa9dd81d27
  /* Metal reports a failure against one submission, but the work it kills
   * behind that submission does not always arrive as a report of its own. A
   * signal enqueued after the reported one can therefore go missing with
-@@ -290,8 +304,10 @@ commit_callback(struct mtl_feedback_data *data)
-    simple_mtx_lock(&feedback->signal_mutex);
-    ++feedback->reported;
-    /* Survived or not, a failed queue runs nothing more that can be trusted. */
--   if (failed)
-+   if (failed) {
+@@ -312,6 +326,7 @@ commit_callback(struct mtl_feedback_data *data)
+       /* Survived or not, a failed queue runs nothing more that can be
+        * trusted. */
        ++feedback->failures;
 +      feedback->ever_failed = true;
-+   }
-    simple_mtx_unlock(&feedback->signal_mutex);
- 
-    if (failed) {
+       made_good = kk_queue_signals_make_good_locked(
+          feedback, lost ? UINT64_MAX : submission->serial);
+    } else if (feedback->failures > 0u) {
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
 index 015e724e083ea39ca33200b0f709dca558b12d2e..c9cce94231c0b907df59c535ba5859968b60b00a 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
