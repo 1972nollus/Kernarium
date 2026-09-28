@@ -297,8 +297,9 @@ stop on a single-step trap.
 `guest-signal-unwind` compiles a probe in the guest and unwinds through a
 signal frame as native arm64 allows: `backtrace()` in a handler must reach the
 code that raised the signal and `main()`, the handler's caller frame record
-must hold the interrupted x29 and x30, and cancelling a thread blocked in
-`read()` must run its cleanup handler.
+must hold the interrupted x29 and x30, cancelling a thread blocked in
+`read()` must run its cleanup handler, and a tracer must be able to write
+back the word at the handler's return address.
 
 `guest-run-end-stop` needs only the kernel image: it stops embedded guests
 throughout their boot and checks the run-end and SIGALRM contracts in

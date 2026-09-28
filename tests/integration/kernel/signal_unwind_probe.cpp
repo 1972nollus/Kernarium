@@ -9,8 +9,10 @@
 // in a handler and the forced unwind of a thread cancelled while blocked in a
 // system call both rely on. The handler's caller frame record must also hold
 // the interrupted x29 and x30, as the native frame record above the signal
-// frame does. Every case runs in its own child, so a crash fails only that
-// case. Prints one line per case and exits with the number of failures.
+// frame does. A debugger can also write the page that holds those
+// instructions, which becomes the tracee's private copy, as it can native's
+// sigreturn page. Every case runs in its own child, so a crash fails only
+// that case. Prints one line per case and exits with the number of failures.
 //
 // Build in the guest: c++ -std=c++20 -O2 -g -fno-omit-frame-pointer -rdynamic
 // -pthread signal_unwind_probe.cpp
@@ -18,10 +20,12 @@
 #include <execinfo.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <ucontext.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -67,6 +71,14 @@ void read_frame_record(int, siginfo_t *, void *context)
 	}
 	interrupted_fp = uc->uc_mcontext.regs[29];
 	interrupted_lr = uc->uc_mcontext.regs[30];
+}
+
+volatile std::uintptr_t handler_return;
+
+[[gnu::noinline]] void read_return_address(int)
+{
+	handler_return = reinterpret_cast<std::uintptr_t>(
+		__builtin_return_address(0));
 }
 
 bool frames_name(char **symbols, int count, const char *name)
@@ -119,6 +131,49 @@ int frame_record_case()
 			    static_cast<unsigned long>(record_lr),
 			    static_cast<unsigned long>(interrupted_fp),
 			    static_cast<unsigned long>(interrupted_lr));
+		return 4;
+	}
+	return 0;
+}
+
+// A tracer reads the word at the handler's return address and writes it
+// back, as a debugger setting a breakpoint there does.
+int trampoline_poke_case()
+{
+	if (signal(SIGUSR1, read_return_address) == SIG_ERR)
+		return 2;
+	raise_in_signal_origin();
+	const std::uintptr_t address = handler_return;
+	const pid_t tracee = fork();
+	if (tracee < 0)
+		return 2;
+	if (tracee == 0) {
+		ptrace(PTRACE_TRACEME, 0, nullptr, nullptr);
+		raise(SIGSTOP);
+		std::_Exit(0);
+	}
+	int status = 0;
+	if (waitpid(tracee, &status, 0) != tracee || !WIFSTOPPED(status))
+		return 3;
+	auto *target = reinterpret_cast<void *>(address);
+	errno = 0;
+	const long word = ptrace(PTRACE_PEEKTEXT, tracee, target, nullptr);
+	const int peek_error = errno;
+	const long poke = peek_error == 0 ?
+		ptrace(PTRACE_POKETEXT, tracee, target,
+		       reinterpret_cast<void *>(word)) : -1;
+	const int poke_error = errno;
+	errno = 0;
+	const long again = ptrace(PTRACE_PEEKTEXT, tracee, target, nullptr);
+	kill(tracee, SIGKILL);
+	waitpid(tracee, &status, 0);
+	if (peek_error != 0 || poke != 0 || again != word) {
+		std::printf("  at %#lx: peek %s, poke %s, word %#lx then %#lx\n",
+			    static_cast<unsigned long>(address),
+			    std::strerror(peek_error),
+			    poke == 0 ? "ok" : std::strerror(poke_error),
+			    static_cast<unsigned long>(word),
+			    static_cast<unsigned long>(again));
 		return 4;
 	}
 	return 0;
@@ -185,6 +240,7 @@ const Case cases[] = {
 	{"frame record above a signal frame", frame_record_case},
 	{"cancellation of a thread blocked in read()",
 	 [] { return cancel_case(blocked_reader); }},
+	{"tracer write at the sigreturn trampoline", trampoline_poke_case},
 };
 
 } // namespace

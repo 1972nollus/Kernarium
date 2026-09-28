@@ -32,7 +32,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  arch/arm64/um/mmap.c                  | 128 ++++
  arch/arm64/um/ptrace.c                | 151 +++--
  arch/arm64/um/shared/sysdep/ptrace.h  | 150 ++++-
- arch/arm64/um/signal.c                | 594 ++++++++++++++-----
+ arch/arm64/um/signal.c                | 598 ++++++++++++++-----
  arch/arm64/um/tls.c                   |   3 +-
  arch/arm64/um/x86_64_syscalls.c       | 806 ++++++++++++++++++++++++++
  arch/arm64/um/x86_syscall_tables.c    |  32 +
@@ -47,7 +47,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
  include/linux/fs.h                    |   2 +
- 27 files changed, 1918 insertions(+), 271 deletions(-)
+ 27 files changed, 1918 insertions(+), 275 deletions(-)
  create mode 100644 arch/arm64/um/asm/unistd.h
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
@@ -913,7 +913,7 @@ index f77c6e818dabddb6598a1cefb47167cbe324fef7..a83391a7d46cb661683616999460b7bf
  
  extern unsigned long host_fp_size;
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index af7e9d392da83e03b4617b23bdd19692cdf47a1f..775f7b80119886229c864f2b7dd16f9b57b836ba 100644
+index 1b8d3a726ec4b17e88bbecb795b980a3bdb446d9..775f7b80119886229c864f2b7dd16f9b57b836ba 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -1,9 +1,6 @@
@@ -1071,7 +1071,7 @@ index af7e9d392da83e03b4617b23bdd19692cdf47a1f..775f7b80119886229c864f2b7dd16f9b
  #ifdef UML_HOST_DARWIN
  /* A handler without SA_RESTORER returns here, in the final guest page above
   * STACK_TOP, and the Darwin host runs the rt_sigreturn syscall itself when a
-@@ -35,160 +145,324 @@ struct uml_arm64_frame_record {
+@@ -35,164 +145,324 @@ struct uml_arm64_frame_record {
   */
  #define UML_DARWIN_SIGRETURN_TRAMPOLINE \
  	(UML_DARWIN_TASK_SIZE - 0x100UL)
@@ -1157,9 +1157,13 @@ index af7e9d392da83e03b4617b23bdd19692cdf47a1f..775f7b80119886229c864f2b7dd16f9b
 -		return -ENOMEM;
 -	if (mmap_write_lock_killable(mm))
 -		return -EINTR;
+-	/* As native arm64 maps its sigreturn page: sealed where system
+-	 * mappings are, and writable only by a debugger's copy-on-write.
+-	 */
 -	vma = _install_special_mapping(mm,
 -		UML_DARWIN_SIGRETURN_TRAMPOLINE & PAGE_MASK, PAGE_SIZE,
--		VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYEXEC, &sigpage);
+-		VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC |
+-		VM_SEALED_SYSMAP, &sigpage);
 -	mmap_write_unlock(mm);
 -	return PTR_ERR_OR_ZERO(vma);
 +	struct uml_x86_64_task_fpstate *fp = x86_64_task_fpstate(guest);
@@ -1516,7 +1520,7 @@ index af7e9d392da83e03b4617b23bdd19692cdf47a1f..775f7b80119886229c864f2b7dd16f9b
  
  	if (ksig->ka.sa.sa_flags & SA_RESTORER)
  		restorer = (unsigned long)ksig->ka.sa.sa_restorer;
-@@ -199,31 +473,63 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
+@@ -203,31 +473,63 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
  	else
  		return 1;
  #endif

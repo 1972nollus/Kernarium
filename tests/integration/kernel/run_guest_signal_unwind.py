@@ -5,8 +5,9 @@ A handler installed without SA_RESTORER returns to the kernel's sigreturn
 trampoline, and libgcc recognises the signal frame by reading the
 instructions there, as on native arm64. The guest builds a small C++ probe
 and checks backtrace() in a handler, the frame record above the signal
-frame, and cancellation of threads that poll for it and that are blocked in
-read(), whose forced unwind crosses the cancellation signal's frame.
+frame, cancellation of threads that poll for it and that are blocked in
+read(), whose forced unwind crosses the cancellation signal's frame, and a
+tracer's write at the trampoline.
 """
 
 from __future__ import annotations
