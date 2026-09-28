@@ -124,11 +124,9 @@ kernel_series check || fail "the $UML_KERNEL_SLICE series files are invalid"
 
 if [ ! -d "$SOURCE_DIR/.git" ]; then
 	[ "$VERIFY_ONLY" -eq 0 ] || fail "Linux checkout is missing: $SOURCE_DIR"
-	if [ "$FETCH" -eq 1 ]; then
-		"$MATERIALIZER" --source "$SOURCE_DIR" --cache "$CACHE_ROOT"
-	else
-		"$MATERIALIZER" --source "$SOURCE_DIR" --cache "$CACHE_ROOT" --no-fetch
-	fi
+	set -- --source "$SOURCE_DIR" --cache "$CACHE_ROOT"
+	[ "$FETCH" -eq 1 ] || set -- "$@" --no-fetch
+	"$MATERIALIZER" "$@"
 fi
 
 require_source_config()
