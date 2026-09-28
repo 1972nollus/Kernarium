@@ -68,7 +68,7 @@ index bd049ef7a30551999bbafa7b3bfef08932df43d6..458f68c3840a1ef17578329c8470f2fb
  
  #endif
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 5dc3413c9c87a027a34b2de43e88f0e097f3c572..89e36c2a8c6d4eeeb44192b2b5808199b75dd9ad 100644
+index b6ea5a11d548c4b9ac21c79fa2f3c0c9211a52bd..99bdbd238e862b33f0ba2ca36a971047fb94cc76 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -333,6 +333,15 @@ static inline int update_pte_range(pmd_t *pmd, unsigned long addr,
@@ -155,7 +155,7 @@ index 5dc3413c9c87a027a34b2de43e88f0e097f3c572..89e36c2a8c6d4eeeb44192b2b5808199
  				ret = ops->unmap(ops->mm_idp, addr,
  						 next - addr);
  #ifndef UML_HOST_DARWIN
-@@ -680,8 +729,23 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -674,8 +723,23 @@ static int __um_tlb_sync(struct mm_struct *mm,
  #ifdef UML_HOST_DARWIN
  static struct task_struct *init_mm_tlb_owner;
  
@@ -179,7 +179,7 @@ index 5dc3413c9c87a027a34b2de43e88f0e097f3c572..89e36c2a8c6d4eeeb44192b2b5808199
  	int ret;
  
  	/* A host fault inside an init_mm host mapping operation re-enters the
-@@ -697,7 +761,16 @@ static noinline int um_tlb_sync_init_mm(void)
+@@ -691,7 +755,16 @@ static noinline int um_tlb_sync_init_mm(void)
  		goto clear_owner;
  	}
  	WRITE_ONCE(init_mm_tlb_owner, current);
@@ -197,7 +197,7 @@ index 5dc3413c9c87a027a34b2de43e88f0e097f3c572..89e36c2a8c6d4eeeb44192b2b5808199
  clear_owner:
  	WRITE_ONCE(init_mm_tlb_owner, NULL);
  	mutex_unlock(&init_mm.context.turnstile);
-@@ -715,6 +788,42 @@ int um_tlb_sync(struct mm_struct *mm)
+@@ -709,6 +782,42 @@ int um_tlb_sync(struct mm_struct *mm)
  }
  
  #ifdef UML_HOST_DARWIN

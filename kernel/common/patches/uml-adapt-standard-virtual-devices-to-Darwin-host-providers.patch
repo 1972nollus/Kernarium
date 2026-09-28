@@ -17,10 +17,10 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/um/drivers/ubd_kern.c        | 129 ++++++++++++++++++---
  arch/um/drivers/ubd_user.c        |   4 -
  arch/um/drivers/virtio_uml.c      |  39 ++++---
- arch/um/drivers/vnc_input.c       | 185 ++++++++++++++++++++++++++++++
+ arch/um/drivers/vnc_input.c       | 183 ++++++++++++++++++++++++++++++
  arch/um/include/shared/os.h       |   5 +
  drivers/video/console/Kconfig     |   3 +-
- 15 files changed, 722 insertions(+), 51 deletions(-)
+ 15 files changed, 720 insertions(+), 51 deletions(-)
  create mode 100644 arch/um/drivers/darwin_net_kern.c
  create mode 100644 arch/um/drivers/vnc_input.c
 
@@ -1061,10 +1061,10 @@ index de7867ae220d0c59dc93b2df1d820a5f77a98603..18a66122189fb54d8726bb1f28c2830f
  		return rc;
 diff --git a/arch/um/drivers/vnc_input.c b/arch/um/drivers/vnc_input.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..6fafe8c1c4133066abd57665856ab09fff13fb99
+index 0000000000000000000000000000000000000000..5bc59c8a4381cb99d2297700b5e572a390b7387b
 --- /dev/null
 +++ b/arch/um/drivers/vnc_input.c
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,183 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * VNC keyboard and absolute-pointer input passed directly from the Darwin
@@ -1131,8 +1131,6 @@ index 0000000000000000000000000000000000000000..6fafe8c1c4133066abd57665856ab09f
 +	(void)data;
 +	for (;;) {
 +		bytes = os_read_file(input_fd, events, sizeof(events));
-+		if (bytes == -EAGAIN)
-+			break;
 +		if (bytes <= 0)
 +			break;
 +		handled = true;

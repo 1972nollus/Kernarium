@@ -22,7 +22,7 @@ Change-Id: I29da7c53a5bd415d790b80a8ad5c2ec22dba3bae
  1 file changed, 14 insertions(+), 1 deletion(-)
 
 diff --git a/arch/um/drivers/vnc_input.c b/arch/um/drivers/vnc_input.c
-index 6fafe8c1c4133066abd57665856ab09fff13fb99..7d72c22268902c6bf4aa299731c584ffa52f9acf 100644
+index 5bc59c8a4381cb99d2297700b5e572a390b7387b..6ad13ee15181776f5cf62ecf149f1eadbbe1fc30 100644
 --- a/arch/um/drivers/vnc_input.c
 +++ b/arch/um/drivers/vnc_input.c
 @@ -48,6 +48,8 @@ static void deliver_event(const struct uml_vnc_input_event *wire)
@@ -34,7 +34,7 @@ index 6fafe8c1c4133066abd57665856ab09fff13fb99..7d72c22268902c6bf4aa299731c584ff
  	} else {
  		input_event(keyboard, type, code, value);
  	}
-@@ -97,7 +99,18 @@ static void configure_pointer(struct input_dev *device)
+@@ -95,7 +97,18 @@ static void configure_pointer(struct input_dev *device)
  	device->name = "Darwin UML VNC Tablet";
  	device->phys = "uml/vnc/input1";
  	device->id.bustype = BUS_VIRTUAL;

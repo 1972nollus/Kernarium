@@ -75,9 +75,9 @@ one thread and 325 -> 995 on eight; multi-core File Compression 584 ->
  arch/um/include/shared/skas/skas.h |   1 +
  arch/um/kernel/skas/mmu_darwin.c   |  28 ----
  arch/um/kernel/skas/process.c      |  62 ++++---
- arch/um/kernel/tlb.c               | 254 ++++++++++++++++++++++++-----
+ arch/um/kernel/tlb.c               | 260 +++++++++++++++++++++++------
  arch/um/os-Darwin/skas/process.c   |  14 +-
- 7 files changed, 285 insertions(+), 108 deletions(-)
+ 7 files changed, 285 insertions(+), 114 deletions(-)
 
 diff --git a/arch/um/include/asm/pgtable.h b/arch/um/include/asm/pgtable.h
 index 96a91a038928cc7cd6a253f42d1e51bbe4543a80..0aeef9020f26bed52be2434cbafb2ad4fcd15614 100644
@@ -306,7 +306,7 @@ index 5e153236cbc104c5ac60297c9de16773e1a325dd..8cb774915731e131352e9f9e3249ac84
  	return 0;
  }
 diff --git a/arch/um/kernel/tlb.c b/arch/um/kernel/tlb.c
-index 232d63abc0cc8b6641377db31be49583103bad10..5dc3413c9c87a027a34b2de43e88f0e097f3c572 100644
+index 232d63abc0cc8b6641377db31be49583103bad10..b6ea5a11d548c4b9ac21c79fa2f3c0c9211a52bd 100644
 --- a/arch/um/kernel/tlb.c
 +++ b/arch/um/kernel/tlb.c
 @@ -28,9 +28,33 @@ struct vm_ops {
@@ -460,15 +460,16 @@ index 232d63abc0cc8b6641377db31be49583103bad10..5dc3413c9c87a027a34b2de43e88f0e0
  	int mmap_lock_owned = 0;
  	unsigned long flags;
  	unsigned int sync_count;
-@@ -440,7 +556,6 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -439,21 +555,37 @@ static int __um_tlb_sync(struct mm_struct *mm,
+ #endif
  
  #ifdef UML_HOST_DARWIN
- retry:
+-retry:
 -	batch_started = 0;
- 	mmap_lock_owned = 0;
+-	mmap_lock_owned = 0;
  	/*
  	 * set_ptes() records pending work while the fault path still holds the
-@@ -448,12 +563,31 @@ static int __um_tlb_sync(struct mm_struct *mm,
+ 	 * mmap lock.  Do not retain this spinlock while the walker takes
  	 * mmap_read_lock(), which would invert that order and deadlock concurrent
  	 * faults in a shared mm.
  	 *
@@ -504,7 +505,7 @@ index 232d63abc0cc8b6641377db31be49583103bad10..5dc3413c9c87a027a34b2de43e88f0e0
  	sync_count = mm->context.sync_tlb_range_count;
  	if (sync_count == 0) {
  		spin_unlock_irqrestore(&mm->context.sync_tlb_lock, flags);
-@@ -475,27 +609,25 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -475,27 +607,25 @@ static int __um_tlb_sync(struct mm_struct *mm,
  #ifdef UML_HOST_DARWIN
  	/*
  	 * macOS/arm64 maps memory in 16 KiB host pages. um_tlb_mark_sync() has
@@ -544,7 +545,7 @@ index 232d63abc0cc8b6641377db31be49583103bad10..5dc3413c9c87a027a34b2de43e88f0e0
  	if (mm == &init_mm) {
  		ops.mmap = kern_map;
  		ops.unmap = kern_unmap;
-@@ -504,7 +636,10 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -504,7 +634,10 @@ static int __um_tlb_sync(struct mm_struct *mm,
  		ops.unmap = unmap;
  	}
  #ifdef UML_HOST_DARWIN
@@ -556,7 +557,7 @@ index 232d63abc0cc8b6641377db31be49583103bad10..5dc3413c9c87a027a34b2de43e88f0e0
  		addr = sync_ranges[sync_index].from;
  		sync_end = sync_ranges[sync_index].to;
  		ret = update_mm_range(mm, &ops, addr, sync_end);
-@@ -514,18 +649,6 @@ static int __um_tlb_sync(struct mm_struct *mm,
+@@ -514,18 +647,6 @@ static int __um_tlb_sync(struct mm_struct *mm,
  #endif
  
  #ifdef UML_HOST_DARWIN
@@ -575,7 +576,18 @@ index 232d63abc0cc8b6641377db31be49583103bad10..5dc3413c9c87a027a34b2de43e88f0e0
  	if (mmap_lock_owned) {
  		mmap_read_unlock(mm);
  		mmap_lock_owned = 0;
-@@ -574,7 +697,7 @@ static noinline int um_tlb_sync_init_mm(void)
+@@ -542,10 +663,6 @@ static int __um_tlb_sync(struct mm_struct *mm,
+ 			um_tlb_mark_sync(mm, sync_ranges[sync_index].from,
+ 					 sync_ranges[sync_index].to);
+ 	}
+-	if (ret == -EAGAIN) {
+-		ret = 0;
+-		goto retry;
+-	}
+ #else
+ 	mm->context.sync_tlb_range_from = 0;
+ 	mm->context.sync_tlb_range_to = 0;
+@@ -574,7 +691,7 @@ static noinline int um_tlb_sync_init_mm(void)
  		goto clear_owner;
  	}
  	WRITE_ONCE(init_mm_tlb_owner, current);
@@ -584,7 +596,7 @@ index 232d63abc0cc8b6641377db31be49583103bad10..5dc3413c9c87a027a34b2de43e88f0e0
  clear_owner:
  	WRITE_ONCE(init_mm_tlb_owner, NULL);
  	mutex_unlock(&init_mm.context.turnstile);
-@@ -588,7 +711,7 @@ int um_tlb_sync(struct mm_struct *mm)
+@@ -588,7 +705,7 @@ int um_tlb_sync(struct mm_struct *mm)
  	if (unlikely(mm == &init_mm))
  		return um_tlb_sync_init_mm();
  #endif
@@ -593,7 +605,7 @@ index 232d63abc0cc8b6641377db31be49583103bad10..5dc3413c9c87a027a34b2de43e88f0e0
  }
  
  #ifdef UML_HOST_DARWIN
-@@ -603,16 +726,61 @@ bool um_tlb_sync_pending(struct mm_struct *mm)
+@@ -603,16 +720,61 @@ bool um_tlb_sync_pending(struct mm_struct *mm)
  	return pending;
  }
  
