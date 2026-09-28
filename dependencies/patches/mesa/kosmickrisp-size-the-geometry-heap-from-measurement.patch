@@ -22,7 +22,7 @@ without a rebuild.
  1 file changed, 20 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index e2e2ef00170d9cfe296c366e4a48a612ec385950..1a2e2e15eb3b0958aa4751ab8da288dc5ed32325 100644
+index dfeda87c6e3e0183b8273a26fff2325b9a4730e7..45bc47def4964cb9352f3a35515be779c181f456 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -27,6 +27,8 @@

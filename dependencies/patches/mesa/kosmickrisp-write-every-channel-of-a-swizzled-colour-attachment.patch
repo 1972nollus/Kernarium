@@ -251,7 +251,7 @@ index c509672590c4a72327b1ee377d73c3418386d0db..0b0730a1e934098b002520d919db4611
  
  bool kk_nir_lower_vs_multiview(nir_shader *nir, uint32_t view_mask);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 26bc647e3e6d70dd39cc64d80a7bcf75f995e412..d68648f80308edcd7f96d5401561f1397ba73100 100644
+index f09249c6718023f0bfe92509357389aee23044c4..b98c138f3ef35f0e20cbdebfedb222c86e1f39e4 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -98,6 +98,7 @@ kk_files = files(
@@ -262,7 +262,7 @@ index 26bc647e3e6d70dd39cc64d80a7bcf75f995e412..d68648f80308edcd7f96d5401561f139
    'kk_nir_lower_descriptors.c',
    'kk_nir_lower_multiview.c',
    'kk_nir_lower_null_images.c',
-@@ -946,6 +947,26 @@ if with_tests
+@@ -960,6 +961,26 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

@@ -26,7 +26,7 @@ unaffected and keep their exact value.
  1 file changed, 32 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 9dfde59943f8ac333b0cba96d70b479cef6d91ce..0ccdd440389cf094d21ad8013a942a4656b8b6d5 100644
+index 0e066d7029364567c79669dd88825fcec8e5c814..dc9823c213fa74f0cac8f39f1b1b7619a6500ca0 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -25,6 +25,8 @@

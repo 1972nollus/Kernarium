@@ -95,10 +95,10 @@ index cd62fbda0a3c61f641210a44f9869917c468df83..76b3cc9740463a32d5b4dc1ebad096a7
        }
     }
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index ab3c1c0a7d7f4a22548a9f749de493b23e1a48e6..89e84e4754d2690381cdfbdc5f037cb3b09e8927 100644
+index bb8d8a240a65f1405dfccff0283efbfa86418496..b8602b80840f8ae36127b2dae7d4b7d66d709e27 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -680,6 +680,20 @@ if with_tests
+@@ -694,6 +694,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

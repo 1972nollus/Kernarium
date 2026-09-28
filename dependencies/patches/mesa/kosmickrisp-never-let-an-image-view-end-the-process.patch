@@ -250,10 +250,10 @@ index bb3602a78bb21ac793b671c329a37e743d99409e..daf70afca65a50a79a9c2d214b5ad65f
  
  void
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 19e06dbf136a6b22f646ab503aaf78d6e4723cf8..2bde631e3508f6187127b20219ac3b111eecbfea 100644
+index 460b5320b12bc09698d38602d83d6a94a3266ca0..1217b5e3f2db7320a2eb755de62e3088fe120f47 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -385,6 +385,26 @@ if with_tests
+@@ -399,6 +399,26 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

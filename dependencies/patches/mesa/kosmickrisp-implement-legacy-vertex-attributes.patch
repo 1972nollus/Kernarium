@@ -56,10 +56,10 @@ index 464722d26af8418990f135f83a3a893fe9caa4df..53ff8384555b9380d118955e1468b45d
         * We are trying to be nice to ourselves. */
        uint64_t root_addr;
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 32262cbd0222928a6aef9b01570addba72c35dd9..4b8a5f0965dc898c618cf5eba3f780130b802bf3 100644
+index 4443ca440c848bdff1da96cce4aebaef0c0ece2b..94b08bd91432cd8265637ee6f270832385fbf892 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -3057,6 +3057,14 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3074,6 +3074,14 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
  static void
  kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
  {
@@ -1164,7 +1164,7 @@ index 0000000000000000000000000000000000000000..49e8a4e502d56e07d4a2f7add3d34668
 +
 +#endif
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 0b2b485086855f1bc7b12dda4c3f7a60cb452ae8..6c12b6ce8945ebecde43c53e196344ac055d26e2 100644
+index d70a70f642a8ef1339742bc2572ebddc50d7e1d9..2345d326d3d6c89f0613f040ffc3d6f85d15fa9e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -111,6 +111,8 @@ kk_files = files(
@@ -1176,7 +1176,7 @@ index 0b2b485086855f1bc7b12dda4c3f7a60cb452ae8..6c12b6ce8945ebecde43c53e196344ac
    'kk_shader.c',
    'kk_sync.h',
    'kk_sync.c',
-@@ -264,6 +266,26 @@ if with_tests
+@@ -278,6 +280,26 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -1203,7 +1203,7 @@ index 0b2b485086855f1bc7b12dda4c3f7a60cb452ae8..6c12b6ce8945ebecde43c53e196344ac
      test(
        'kosmickrisp_line_raster_cache',
        executable(
-@@ -287,6 +309,28 @@ if with_tests
+@@ -301,6 +323,28 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -1232,7 +1232,7 @@ index 0b2b485086855f1bc7b12dda4c3f7a60cb452ae8..6c12b6ce8945ebecde43c53e196344ac
    endif
  
    test(
-@@ -405,4 +449,25 @@ if with_tests
+@@ -419,4 +463,25 @@ if with_tests
      ),
      suite : ['kosmickrisp'],
    )

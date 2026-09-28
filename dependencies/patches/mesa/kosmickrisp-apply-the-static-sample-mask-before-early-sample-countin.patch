@@ -99,10 +99,10 @@ index 3761d06afef8be760d62ad76db3bd653e445d60c..1b1b941a091821afbf262375c4941bd7
        struct {
           uint32_t base_group[3];
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index d2f5b97e536777bbb539aeadb708e272bcda36a2..147f708d8b156a83b4832e15b81b044ff6ab9e2f 100644
+index dd9ac4b6ca7bf65c61cbe58de96e83096fa1447a..ffafb5400c722e9e049a512e05b74f906f48f0fd 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1773,8 +1773,17 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1790,8 +1790,17 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
        kk_cmd_bind_root_to_argument_table(cmd, desc->root.addr);
     }
  
@@ -122,7 +122,7 @@ index d2f5b97e536777bbb539aeadb708e272bcda36a2..147f708d8b156a83b4832e15b81b044f
                                       gfx->occlusion.index * sizeof(uint64_t));
     }
  }
-@@ -1800,6 +1809,22 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+@@ -1817,6 +1826,22 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
        desc->root.draw.clip_statistics != clip_statistics;
     desc->root.draw.clip_statistics = clip_statistics;
  
@@ -335,10 +335,10 @@ index 6a439054966ff29eb571fbaa222117909a0c6e2d..d20bf2c9fbc6d2c75a6b302941b06277
  
        struct {
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e6e18405b9aa6406ac4fa40f8d57a7c72bf2d692..5d3c216f437f565901ddf3c91ed039afe3397322 100644
+index 634cddb5a60d9991960e462032f4d197c7edf47f..808c9e7af0e6bf88f6a82a040594f292cbd4b027 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -521,6 +521,20 @@ if with_tests
+@@ -535,6 +535,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

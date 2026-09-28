@@ -56,10 +56,10 @@ index 6444eb5f71b53c43c527457877a8a963217a0c79..fbb071995c17bea5a114b6416f8d938f
  
     msl_optimize_nir(nir);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 22dda927fa5386245a61dd20fcd439c78f54789f..7b4d1d42d8178837949eab4bed25ebb6bc4d2c5a 100644
+index 4a09730f707b6fe1dd11537dfb152e8d2b0f7212..6d96ef2a915cf85c79cf36c7a5908501e09139ee 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -308,6 +308,20 @@ if with_tests
+@@ -322,6 +322,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

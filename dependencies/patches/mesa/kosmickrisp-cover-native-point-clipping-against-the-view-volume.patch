@@ -34,10 +34,10 @@ vertex stage and through a point-emitting geometry stage.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_point_clip_volume.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3a953948436111cfe737762e01e903c87330fdae..d65713f3998cfd73c9e5350c27d0bfd68f147a71 100644
+index 7004796461e810c1be04e0651d618fc53b9fad08..9b356e5fb6563a09ee7ecb34264967cafcbacbe8 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -270,6 +270,20 @@ if with_tests
+@@ -284,6 +284,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

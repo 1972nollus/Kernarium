@@ -598,7 +598,7 @@ index 0000000000000000000000000000000000000000..60415bc7dbb4ae115af3da7df4770685
 +
 +#endif /* KK_QUEUE_ERROR_H */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 89e84e4754d2690381cdfbdc5f037cb3b09e8927..e51c5ed1a71f570d316c67c4bc71fa9745a6fa42 100644
+index b8602b80840f8ae36127b2dae7d4b7d66d709e27..f0420ee866e2f024359f786209aab2199864939b 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -84,6 +84,8 @@ kk_files = files(
@@ -619,7 +619,7 @@ index 89e84e4754d2690381cdfbdc5f037cb3b09e8927..e51c5ed1a71f570d316c67c4bc71fa97
    'kk_sampler.h',
    'kk_sampler.c',
    'kk_shader.h',
-@@ -506,6 +510,32 @@ if with_tests
+@@ -520,6 +524,32 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

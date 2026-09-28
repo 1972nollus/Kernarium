@@ -452,10 +452,10 @@ index d59915c5db630849184ea7208b5820843d4992df..f021f797231748d65960d14ac6fec340
        mtl_set_address(cmd->argument_table, dev->samplers.table.bo->gpu, 1u);
        mtl_release(desc);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index befb6e1b8b299e36209a013b7e317b2b5d26a0af..e2e2ef00170d9cfe296c366e4a48a612ec385950 100644
+index cc73fe23faa240a8642c1dd4201dde435f4d7093..dfeda87c6e3e0183b8273a26fff2325b9a4730e7 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1757,8 +1757,20 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1774,8 +1774,20 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
     }
  
     if (IS_DIRTY(VI) || IS_DIRTY(VI_BINDINGS_VALID) ||
@@ -477,7 +477,7 @@ index befb6e1b8b299e36209a013b7e317b2b5d26a0af..e2e2ef00170d9cfe296c366e4a48a612
        unsigned slot = 0;
        u_foreach_bit(i, vs->info.vs.attribs_read) {
           if (dyn->vi->attributes_valid & BITFIELD_BIT(i)) {
-@@ -1775,6 +1787,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1792,6 +1804,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
           slot++;
        }
        desc->root_dirty = true;
@@ -978,10 +978,10 @@ index ed7fd4d5aa75d68a9fc45f1edff6d66f3a19108f..63c1420f05f83756fcd8b2f0024be8ca
            * accepted the pipeline's colour blend state and the fragment shader
            * therefore kept its stores instead of carrying a lowered blend. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 9bab8830ddb451ff1987b24aafbdbbf81d05f9bf..26bc647e3e6d70dd39cc64d80a7bcf75f995e412 100644
+index 5f262402199b0bf13f7a372564712da8056bbb0e..f09249c6718023f0bfe92509357389aee23044c4 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -545,6 +545,15 @@ if with_tests
+@@ -559,6 +559,15 @@ if with_tests
        link_with : libvulkan_kosmickrisp,
        override_options : ['cpp_std=c++20'],
      )
@@ -997,7 +997,7 @@ index 9bab8830ddb451ff1987b24aafbdbbf81d05f9bf..26bc647e3e6d70dd39cc64d80a7bcf75
      test(
        'kosmickrisp_metal_blend',
        executable(
-@@ -559,6 +568,20 @@ if with_tests
+@@ -573,6 +582,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
