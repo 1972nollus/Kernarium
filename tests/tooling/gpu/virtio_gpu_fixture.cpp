@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "vhost_user_server.hpp"
+#include "gpu_vhost_user_server.hpp"
 
 #include <atomic>
 #include <charconv>
@@ -100,10 +100,10 @@ int main(int argument_count, char **arguments)
 		std::signal(SIGTERM, stop);
 		std::signal(SIGHUP, stop);
 
-		uml::gpu::VhostUserServer server(
+		const auto server = uml::gpu::makeGpuVhostUserServer(
 			std::move(socket_path), std::move(vnc_bind_address), vnc_port,
 			std::move(vnc_password), width, height, self_test_pattern);
-		server.run(stop_requested);
+		server->run(stop_requested);
 		return 0;
 	} catch (const std::exception &error) {
 		std::cerr << "uml-virtio-gpu: " << error.what() << '\n';

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "protocol.hpp"
+#include "vhost_user_protocol.hpp"
 #include "unique_descriptor.hpp"
 
 #include <array>

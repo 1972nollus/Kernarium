@@ -103,26 +103,35 @@ target_link_libraries(uml_gpu_protocol_device PUBLIC
 add_library(uml_gpu_transport_wire STATIC vhost_user_message.cpp)
 uml_configure_gpu_component(uml_gpu_transport_wire)
 
+# The device-neutral vhost-user transport and in-process service scaffold
+# that every vhost-user device is built on.
 add_library(uml_gpu_transport STATIC
-    deferred_fences.cpp
     shared_memory_regions.cpp
     vhost_user_server.cpp)
 uml_configure_gpu_component(uml_gpu_transport)
-target_compile_definitions(uml_gpu_transport PRIVATE
-    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 target_link_libraries(uml_gpu_transport PUBLIC
     UML::DeviceSocketPaths
     UML::MemorySharedBacking
-    uml_gpu_transport_wire
+    uml_gpu_transport_wire)
+target_link_libraries(uml_gpu_transport PRIVATE UML::GuestTimerMask)
+
+# The Virtio-GPU device on that transport, with its display.
+add_library(uml_gpu_vhost_user_device STATIC
+    deferred_fences.cpp
+    gpu_vhost_user_server.cpp)
+uml_configure_gpu_component(uml_gpu_vhost_user_device)
+target_compile_definitions(uml_gpu_vhost_user_device PRIVATE
+    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
+target_link_libraries(uml_gpu_vhost_user_device PUBLIC
+    uml_gpu_transport
     uml_gpu_protocol_device
     UML::VncInput)
-target_link_libraries(uml_gpu_transport PRIVATE UML::GuestTimerMask)
 
 add_library(uml_gpu_service STATIC in_process_service.cpp)
 uml_configure_gpu_component(uml_gpu_service)
 target_compile_definitions(uml_gpu_service PRIVATE
     UML_GPU_STARTUP_TESTING=0)
-target_link_libraries(uml_gpu_service PRIVATE uml_gpu_transport)
+target_link_libraries(uml_gpu_service PRIVATE uml_gpu_vhost_user_device)
 
 add_library(uml_gpu_device INTERFACE)
 add_library(UML::GpuDevice ALIAS uml_gpu_device)

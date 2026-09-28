@@ -488,7 +488,6 @@ if(TARGET uml_gpu_service)
     # The shared service scaffold in the transport has a startup checkpoint
     # of its own, so the startup tests build the transport with it.
     add_library(uml_gpu_transport_startup_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/deferred_fences.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/shared_memory_regions.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_server.cpp
         in_process_service_testing.cpp)
@@ -511,6 +510,8 @@ if(TARGET uml_gpu_service)
         UML::GuestTimerMask)
 
     add_library(uml_gpu_service_test_variant STATIC
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/deferred_fences.cpp
+        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/gpu_vhost_user_server.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/in_process_service.cpp)
     target_link_libraries(uml_gpu_service_test_variant PUBLIC
         uml_gpu_transport_startup_test_variant)
@@ -558,7 +559,6 @@ if(TARGET uml_gpu_service)
         -Wall -Wextra -Werror -Wno-deprecated-declarations)
 
     add_library(uml_gpu_transport_slow_stop_test_variant STATIC
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu/deferred_fences.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/shared_memory_regions.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/vhost_user_server.cpp)
     target_include_directories(uml_gpu_transport_slow_stop_test_variant

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "gpu_test_support.hpp"
+#include "gpu_vhost_user_server.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -2227,8 +2228,9 @@ void runVhostUserProtocolTests()
     standardizedSharedMemoryNegotiationBatchesBackendRequestsBeforeReply();
     rejectedSharedMemoryActionClosesBackendChannel();
     {
-        VhostUserServer server {
-            {}, "127.0.0.1", 0, {}, 64, 64, false};
+        const auto ownedServer = makeGpuVhostUserServer(
+            {}, "127.0.0.1", 0, {}, 64, 64, false);
+        auto& server = *ownedServer;
         validConfigurationProtocol(server);
         invalidControlMessagesAreRejected(server);
         invalidConfigurationMessagesAreRejected(server);
