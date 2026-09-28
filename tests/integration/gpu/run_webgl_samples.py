@@ -21,12 +21,12 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import boot_kde_vnc  # noqa: E402
 import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
+import run_gpu_guest as gpu_guest  # noqa: E402
 import run_vk_gl_cts as cts  # noqa: E402
 import webgl_launcher  # noqa: E402
 from run_chromium_webgl import (  # noqa: E402
     announced_vnc_port,
     guest_child,
-    install_text,
     rootfs_contract_metadata,
 )
 
@@ -578,50 +578,41 @@ def main() -> int:
     )
     command = boot_kde_vnc.build_harness_command(launcher_options)
     separator = boot_kde_vnc.guest_argument_separator(command)
+    artifact = options.artifact_root.resolve() / time.strftime("%Y%m%d-%H%M%S")
+    guest_files = gpu_guest.StagedGuestFiles(
+        artifact / gpu_guest.GUEST_FILE_DIRECTORY
+    )
+    extension = "/var/tmp/uml-webgl-samples-extension"
+    for name, content in (
+        ("manifest.json", MANIFEST),
+        ("service-worker.js", SERVICE_WORKER_SCRIPT),
+        ("reset.html", RESET_HTML),
+        ("reset.js", RESET_SCRIPT),
+        ("probe-main.js", PROBE_SCRIPT),
+        ("verify.js", verifier),
+    ):
+        guest_files.add(f"{extension}/{name}", content)
+    guest_files.add("/usr/local/libexec/uml-webgl-samples", launcher, 0o755)
+    guest_files.add("/etc/systemd/system/uml-webgl-samples.service", SERVICE)
     overlay_commands = (
         "for unit in docker.service docker.socket containerd.service "
         "packagekit.service apt-daily.service apt-daily.timer "
         "apt-daily-upgrade.service apt-daily-upgrade.timer; do "
         "ln -sf /dev/null /etc/systemd/system/$unit; done",
-        install_text(
-            "/var/tmp/uml-webgl-samples-extension/manifest.json", MANIFEST
-        ),
-        install_text(
-            "/var/tmp/uml-webgl-samples-extension/service-worker.js",
-            SERVICE_WORKER_SCRIPT,
-        ),
-        install_text(
-            "/var/tmp/uml-webgl-samples-extension/reset.html", RESET_HTML
-        ),
-        install_text(
-            "/var/tmp/uml-webgl-samples-extension/reset.js", RESET_SCRIPT
-        ),
-        install_text(
-            "/var/tmp/uml-webgl-samples-extension/probe-main.js", PROBE_SCRIPT
-        ),
-        install_text(
-            "/var/tmp/uml-webgl-samples-extension/verify.js", verifier
-        ),
-        install_text(
-            "/usr/local/libexec/uml-webgl-samples", launcher, "0755"
-        ),
-        install_text(
-            "/etc/systemd/system/uml-webgl-samples.service", SERVICE
-        ),
         "install -d -m 0755 /etc/systemd/system/graphical.target.wants; "
         "ln -sf ../uml-webgl-samples.service "
         "/etc/systemd/system/graphical.target.wants/"
         "uml-webgl-samples.service; "
         "systemctl start --no-block uml-webgl-samples.service",
     )
-    additions: list[str] = []
+    additions: list[str] = list(guest_files.arguments)
     for overlay_command in overlay_commands:
         additions.extend(("--command", overlay_command))
     command[separator:separator] = additions
 
-    artifact = options.artifact_root / time.strftime("%Y%m%d-%H%M%S")
     capture_directory = artifact / "captures"
     capture_directory.mkdir(parents=True)
+    guest_files.write()
     log_path = artifact / "console.log"
     run_path = artifact / "run.json"
     run_metadata: dict[str, object] = {

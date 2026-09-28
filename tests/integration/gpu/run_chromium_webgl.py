@@ -28,6 +28,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import boot_kde_vnc  # noqa: E402
 import guest_process  # noqa: E402
+import run_gpu_guest as gpu_guest  # noqa: E402
 import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
 import run_vk_gl_cts as cts  # noqa: E402
 import vulkan_cts_receipt as vk_receipt  # noqa: E402
@@ -1389,6 +1390,34 @@ def main() -> int:
     launcher_options = boot_kde_vnc.parse_arguments(launcher_arguments)
     command = boot_kde_vnc.build_harness_command(launcher_options)
     separator = boot_kde_vnc.guest_argument_separator(command)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    artifact = options.artifact_root.resolve() / (
+        f"{timestamp}-{os.getpid()}-{options.page_profile}-{options.display}"
+    )
+    guest_files = gpu_guest.StagedGuestFiles(
+        artifact / gpu_guest.GUEST_FILE_DIRECTORY
+    )
+    guest_files.add(
+        "/var/tmp/uml-aquarium-extension/manifest.json", EXTENSION_MANIFEST
+    )
+    guest_files.add(
+        "/var/tmp/uml-aquarium-extension/verify.js",
+        build_probe_script(options.warmup_seconds, options.sample_seconds),
+    )
+    guest_files.add(
+        "/usr/local/libexec/uml-chromium-aquarium",
+        build_guest_launcher(
+            options.chromium_flag,
+            auto_poweroff=options.display == "native",
+            budget=budget,
+            egl_config_diagnostics=options.egl_config_diagnostics,
+            renderer_backend=options.renderer,
+        ),
+        0o755,
+    )
+    guest_files.add(
+        "/etc/systemd/system/uml-chromium-aquarium.service", SERVICE
+    )
     overlay_commands = (
         "for unit in docker.service docker.socket containerd.service "
         "packagekit.service apt-daily.service apt-daily.timer "
@@ -1407,47 +1436,19 @@ def main() -> int:
             if options.ignore_image_chromium_config
             else ()
         ),
-        install_text(
-            "/var/tmp/uml-aquarium-extension/manifest.json",
-            EXTENSION_MANIFEST,
-        ),
-        install_text(
-            "/var/tmp/uml-aquarium-extension/verify.js",
-            build_probe_script(
-                options.warmup_seconds, options.sample_seconds
-            ),
-        ),
-        install_text(
-            "/usr/local/libexec/uml-chromium-aquarium",
-            build_guest_launcher(
-                options.chromium_flag,
-                auto_poweroff=options.display == "native",
-                budget=budget,
-                egl_config_diagnostics=options.egl_config_diagnostics,
-                renderer_backend=options.renderer,
-            ),
-            "0755",
-        ),
-        install_text(
-            "/etc/systemd/system/uml-chromium-aquarium.service",
-            SERVICE,
-        ),
         "install -d -m 0755 /etc/systemd/system/graphical.target.wants; "
         "ln -sf ../uml-chromium-aquarium.service "
         "/etc/systemd/system/graphical.target.wants/"
         "uml-chromium-aquarium.service; "
         "systemctl start --no-block uml-chromium-aquarium.service",
     )
-    additions: list[str] = []
+    additions: list[str] = list(guest_files.arguments)
     for overlay_command in overlay_commands:
         additions.extend(("--command", overlay_command))
     command[separator:separator] = additions
 
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    artifact = options.artifact_root.resolve() / (
-        f"{timestamp}-{os.getpid()}-{options.page_profile}-{options.display}"
-    )
     artifact.mkdir(parents=True, exist_ok=False)
+    guest_files.write()
     log_path = artifact / "console.log"
     capture_path = artifact / "aquarium.ppm"
     run_metadata: dict[str, object] = {

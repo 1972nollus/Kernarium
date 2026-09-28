@@ -700,8 +700,9 @@ generation. Resume a campaign by updating that checkout in place rather than
 by pointing a second checkout at it; the emulator is named separately and is
 free to come from anywhere.
 
-The generated guest script is embedded in every recorded harness command, so
-changing it invalidates the attempts a campaign already holds. Anything that
+The generated guest script reaches the guest as a file of the per-run
+initramfs, and every recorded harness command names that file by its SHA-256,
+so changing the script invalidates the attempts a campaign already holds. Anything that
 alters it therefore arrives as an option that is off by default and is recorded
 in the generation that asked for it, leaving earlier attempts byte-identical.
 `--relax-diagnostics` is the first: it reports Venus stuck-wait lines from the
