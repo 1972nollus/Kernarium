@@ -33,7 +33,10 @@ struct AddressWindow final {
 			configured_window.start.load(std::memory_order_relaxed),
 			configured_window.end.load(std::memory_order_relaxed),
 		};
-		if (configured_window.revision.load(std::memory_order_acquire) ==
+		/* Keeps both loads ahead of the closing check; it pairs with
+		 * the writer's release fence. */
+		std::atomic_thread_fence(std::memory_order_acquire);
+		if (configured_window.revision.load(std::memory_order_relaxed) ==
 		    before)
 			return window;
 	}
@@ -44,6 +47,8 @@ void publish_window(std::uint64_t start, std::uint64_t end) noexcept
 	while (configured_window.writer.test_and_set(std::memory_order_acquire))
 		;
 	configured_window.revision.fetch_add(1, std::memory_order_acq_rel);
+	/* A reader that loads either store below then sees the odd revision. */
+	std::atomic_thread_fence(std::memory_order_release);
 	configured_window.start.store(start, std::memory_order_relaxed);
 	configured_window.end.store(end, std::memory_order_relaxed);
 	configured_window.revision.fetch_add(1, std::memory_order_release);
