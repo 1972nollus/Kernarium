@@ -269,12 +269,18 @@ gadget interrupt_return_\width
 	mov w15, #1
 .Lx86_iret_state_ready\@:
 	.endif
-	.if \width == 16
-	uxth w25, w25
+	/* At CPL 3 IRET loads what POPF loads, plus RF: IF, IOPL, VM, VIF and
+	 * VIP keep their values and the reserved bits stay fixed.  None of the
+	 * kept bits is an arithmetic flag, so a deferred result need not be
+	 * materialized first. */
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	mov x10, #0x4dd5
+	.if \width != 16
+	movk x10, #0x25, lsl #16
 	.endif
-	.if \width == 32
-	mov w25, w25
-	.endif
+	bic x9, x9, x10
+	and x25, x25, x10
+	orr x25, x9, x25
 	orr x25, x25, #2
 	str x19, [_cpu, #UML_X86_64_CPU_RIP]
 	strh w24, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]

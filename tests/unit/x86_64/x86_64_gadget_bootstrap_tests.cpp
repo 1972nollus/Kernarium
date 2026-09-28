@@ -3563,6 +3563,8 @@ read_test_sequences(void *context) noexcept
 	cpu.gpr(Register::rsp) = stack;
 	cpu.segment_selectors[1] = 0x33;
 	cpu.segment_selectors[2] = 0x2b;
+	/* User mode runs with IF set, which IRET at CPL 3 cannot change. */
+	cpu.rflags = 0x202;
 	const auto result = gadgets::execute(built.program, cpu, memory, 1);
 	return expect(result.event == uml::cpu::EngineEvent::continued &&
 			result.retired_instructions == 1,
@@ -3573,6 +3575,69 @@ read_test_sequences(void *context) noexcept
 		expect(cpu.segment_selectors[1] == 0x33 &&
 			cpu.segment_selectors[2] == 0x2b && cpu.rflags == 0x246,
 			"long64 IRETQ did not restore its selectors and flags");
+}
+
+/* At CPL 3 IRET loads the flags POPF may load, plus RF: IF, IOPL, VM, VIF and
+ * VIP keep their values, the reserved bits stay fixed, and a 16-bit IRET
+ * leaves the upper half alone. */
+[[nodiscard]] bool interrupt_return_masks_user_flags()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case final {
+		ExecutionMode mode;
+		std::array<std::uint8_t, 2> bytes;
+		std::size_t slot;
+		std::uint64_t current;
+		std::uint64_t popped;
+		std::uint64_t expected;
+		const char *message;
+	};
+	const std::array cases{
+		Case{ExecutionMode::long64, {0x48, 0xcf}, 8, 0x202,
+			~0ULL, 0x25'4fd7,
+			"IRETQ loaded flags outside the user mask"},
+		Case{ExecutionMode::long64, {0x48, 0xcf}, 8, 0x3202,
+			0, 0x3202,
+			"IRETQ cleared IF or IOPL"},
+		Case{ExecutionMode::compat32, {0xcf, 0x00}, 4, 0x202,
+			0xffff'ffffULL, 0x25'4fd7,
+			"compat32 IRETD loaded flags outside the user mask"},
+		Case{ExecutionMode::compat32, {0x66, 0xcf}, 2, 0x24'0202,
+			0xffffULL, 0x24'4fd7,
+			"compat32 16-bit IRET changed the upper flags"},
+	};
+	constexpr std::uint64_t stack = 0x200;
+	constexpr std::uint64_t target = 0x40;
+	for (const auto &shape : cases) {
+		TestMemory memory;
+		memory.load(0, {shape.bytes[0], shape.bytes[1]});
+		const std::array<std::uint64_t, 5> frame{
+			target, 0x23, shape.popped, 0x900, 0x2b};
+		for (std::size_t index = 0; index < frame.size(); ++index) {
+			std::array<std::byte, 8> word{};
+			std::memcpy(word.data(), &frame[index], word.size());
+			if (!memory.write(stack + index * shape.slot,
+				std::span{word.data(), shape.slot}))
+				return expect(false, "IRET frame setup failed");
+		}
+		const auto built = gadgets::build(memory, 0, shape.mode, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"IRET did not build"))
+			return false;
+		CpuState cpu{};
+		cpu.execution_mode = shape.mode;
+		cpu.gpr(Register::rsp) = stack;
+		cpu.segment_selectors[1] = 0x23;
+		cpu.segment_selectors[2] = 0x2b;
+		cpu.rflags = shape.current;
+		const auto result = gadgets::execute(built.program, cpu, memory, 1);
+		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == 1 && cpu.rip == target,
+			"IRET did not retire") ||
+			!expect(cpu.rflags == shape.expected, shape.message))
+			return false;
+	}
+	return true;
 }
 
 [[nodiscard]] bool expose_consistent_xsave_cpuid_state()
@@ -6720,6 +6785,7 @@ int main()
 		execute_compat32_enter_frames() &&
 		execute_compat32_legacy_segment_stack() &&
 		execute_long64_interrupt_return_stack_switch() &&
+		interrupt_return_masks_user_flags() &&
 		expose_consistent_xsave_cpuid_state() &&
 		wrap_compat32_instruction_pointer() &&
 		execute_compat32_tls_segment() &&
