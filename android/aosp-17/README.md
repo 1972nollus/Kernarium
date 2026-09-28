@@ -389,8 +389,8 @@ manifest is provenance rather than a runtime compatibility token, and legacy
 bundles without it remain selectable. Missing files and malformed disk images
 fail when opened or parsed. Android fixes Kernarium's page selection at 16 KiB
 and appends the host-owned display density, ADB authorization policy, and
-tagged-pointer option at launch. Simulator launches write persistent guest
-changes directly into the image inside the `.kern` bundle.
+tagged-pointer option at launch. Launches write persistent guest changes
+directly into the image inside the `.kern` bundle.
 
 Do not recreate a bundle merely to relaunch it; that would discard persistent
 guest state. When copying to physical iOS, target the complete

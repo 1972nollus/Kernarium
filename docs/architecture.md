@@ -183,13 +183,9 @@ artifact on macOS and on the iOS device. The macOS x86_64 userspace
 product uses a separately identified 4 KiB mainline slice. Android uses a
 separate accepted 16 KiB ACK artifact.
 
-Kernarium is an iOS device product only. Its GPU stack renders through
-KosmicKrisp, which requires Metal 4, and the iOS Simulator exposes no Metal 4
-device, so the Simulator has no build of the application or of the Apple GPU
-prefix. The unmodified iOS device slice runs on an Apple silicon Mac in
-Designed for iPad mode, where it reaches the host GPU directly; that mode is
-where iOS behaviour is verified when no physical device is attached. The
-Simulator remains a target of the ordinary, non-GPU iOS libraries.
+Kernarium is an iOS device product only; [`graphics.md`](graphics.md)
+gives the Metal 4 reason the Simulator has no build of it or of the Apple GPU
+prefix, and how the device slice runs on an Apple silicon Mac.
 
 The library runs one guest per process, so a Kernarium launch runs its guest
 once. When the run returns, whether the guest powered off or the runtime

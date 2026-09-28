@@ -24,16 +24,19 @@ loader, or a second ambient libepoxy/virglrenderer family.
 
 macOS and the iOS device both build that stack from the same sources; the
 prefixes differ only in their platform contract and deployment target. The iOS
-Simulator does not, because KosmicKrisp requires Metal 4 and the Simulator
-exposes no Metal 4 device: its GPU preset and
-`dependencies/build-apple-gpu.sh --platform ios-simulator` fail early with that
-reason rather than configuring against a device that cannot exist. Until a
-physical device is attached, the iOS slice is exercised by running the
-unmodified device build on an Apple silicon Mac in Designed for iPad mode,
-where Metal reports the host GPU and the full Metal 4 family. The device
-runtimes take the Vulkan-experiment kernel line with that stack: desktop GL
-4.6 needs `GL_ARB_buffer_storage`, whose coherent buffers reach the guest
-through the vhost-user shared-memory aperture only that line carries.
+Simulator has no build of it, because KosmicKrisp requires Metal 4 and the
+Simulator exposes no Metal 4 device: configuring the GPU product for
+`ios-simulator` fails early with that reason
+(`dependencies/cmake/AppleGpuDependencies.cmake`), and
+`dependencies/build-apple-gpu.sh` accepts only `macos` and `ios`. Kernarium is
+therefore an iOS device product with no Simulator variant, and the Simulator
+remains a target of the ordinary, non-GPU iOS libraries only. The unmodified
+device slice also runs on an Apple silicon Mac in Designed for iPad mode, where
+Metal reports the host GPU and the full Metal 4 family; the physical-device
+lanes are in [`testing.md`](testing.md). The device runtimes use the
+Vulkan-experiment product's GPU prefix and kernel descriptors. Desktop GL 4.6
+needs `GL_ARB_buffer_storage`, whose coherent buffers reach the guest through
+the vhost-user shared-memory aperture of the shared kernel series.
 
 The GPU transport thread owns renderer creation, context use, reset, and
 teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS

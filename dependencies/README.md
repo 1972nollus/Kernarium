@@ -27,8 +27,8 @@ The dependency products are:
 - `apple-gpu-vulkan-experiment`: the macOS and iOS device builds, which add the
   pinned Mesa, Vulkan-Headers, and Venus-protocol sources so that Mesa supplies
   both the KosmicKrisp Vulkan driver and the Zink Gallium OpenGL driver. There
-  is no iOS Simulator build: KosmicKrisp requires Metal 4 and the Simulator
-  exposes no Metal 4 device;
+  is no iOS Simulator build (see
+  [`../docs/graphics.md`](../docs/graphics.md#current-path));
 - `ios-network`: the iOS GLib/libslirp network closure;
 - `ios-storage`: the patch-managed GPT fdisk core as one static arm64
   `GPTFDisk.xcframework` with iOS device and Simulator slices;

@@ -95,10 +95,9 @@ ctest --test-dir .build/presets/macos-tooling \
   -R '^dependency-kosmickrisp-spirv-regeneration$' --output-on-failure
 ```
 
-The iOS GPU lane runs the unmodified iOS device build on this Apple silicon
-Mac in Designed for iPad mode, because the host GL provider is Mesa Zink over
-KosmicKrisp and the iOS Simulator provides no Metal 4 device. The Simulator GPU
-presets fail early with that reason. Kernarium's own suite carries the narrowest
+The iOS GPU lane runs the unmodified iOS device build on an Apple silicon Mac
+in Designed for iPad mode; [`graphics.md`](graphics.md#current-path) says why
+the iOS Simulator has no GPU build. Kernarium's own suite carries the narrowest
 check of that provider: it creates a surfaceless OpenGL 4.6 core context in the
 application process and requires Zink on the packaged KosmicKrisp driver, so a
 broken iOS graphics closure fails in seconds rather than inside a guest. The retired Simulator and device GLES
@@ -371,9 +370,9 @@ cmake --build --preset ios-simulator
 scripts/build-xcframework.sh
 ```
 
-Kernarium is an iOS device product: it has runtime presets for 16 KiB and 4 KiB
-Linux and 16 KiB Android, with no Simulator variant, because its GPU stack needs
-a Metal 4 device.
+Kernarium is an iOS device product with runtime presets for 16 KiB and 4 KiB
+Linux and 16 KiB Android and no Simulator variant; see
+[`graphics.md`](graphics.md#current-path).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
 Xcode.
