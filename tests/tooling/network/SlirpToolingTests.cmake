@@ -9,7 +9,6 @@ if(UML_BUILD_NETWORK_PROVIDER)
         PUBLIC
             ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp
             ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp/include
-            ${PROJECT_SOURCE_DIR}/darwin/include
         PRIVATE
             ${PROJECT_SOURCE_DIR}/darwin/device/network)
     target_compile_definitions(uml_network_provider_test_variant PUBLIC
@@ -17,6 +16,8 @@ if(UML_BUILD_NETWORK_PROVIDER)
     target_compile_features(uml_network_provider_test_variant PUBLIC cxx_std_20)
     target_compile_options(uml_network_provider_test_variant PRIVATE
         -Wall -Wextra -Werror)
+    target_link_libraries(uml_network_provider_test_variant PUBLIC
+        UML::BridgeAbi)
     target_link_libraries(uml_network_provider_test_variant PRIVATE
         UML::GuestTimerMask
         UML::ThirdPartySlirp)
