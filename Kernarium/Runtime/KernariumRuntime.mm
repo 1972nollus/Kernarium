@@ -20,6 +20,7 @@
 #include "gpu/protocol.hpp"
 #include "input/virtio/in_process_service.hpp"
 #include "block/android_boot.hpp"
+#include "block/ubd_path.hpp"
 #include "uml/emulator.h"
 #include "uml_slirp_net.h"
 
@@ -1160,6 +1161,18 @@ int runtimeRun(
         if (!usableFile(rootfsPath) || !immutableExt4Rootfs(rootfsPath) ||
             !usableFile(overlayPath)) {
             std::fputs("Kernarium: invalid rootfs or overlay path\n", stderr);
+            return -UML_EMULATOR_INVALID_ARGUMENT;
+        }
+        /* Both are named in UBD kernel arguments, which cannot carry a path
+         * with whitespace, a quote, a comma or a colon as itself. */
+        if (!uml::block::usable_ubd_path(rootfsPath) ||
+            !uml::block::usable_ubd_path(overlayPath)) {
+            std::fprintf(
+                stderr,
+                "Kernarium: %s cannot be named on the kernel command line; "
+                "rename it without spaces, quotes, commas or colons\n",
+                uml::block::usable_ubd_path(rootfsPath) ? overlayPath
+                                                        : rootfsPath);
             return -UML_EMULATOR_INVALID_ARGUMENT;
         }
         const bool derivativeRootfs = ext4Rootfs(rootfsPath);

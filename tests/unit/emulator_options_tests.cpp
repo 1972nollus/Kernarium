@@ -124,6 +124,14 @@ void test_explicit_defaults_are_preserved()
 			1, explicit_mapping, "/unused/rootfs.erofs", false)
 			.valid,
 		"explicit EROFS mapping was rejected");
+	/* The rootfs is named in ubd0c=, which the kernel would split at the
+	 * space or misread at the comma. */
+	const char *plain[]{"uml-test"};
+	require(!uml::emulator::prepare_emulator_options(
+			1, plain, "/tmp/My Disk.erofs", false).valid &&
+		!uml::emulator::prepare_emulator_options(
+			1, plain, "/tmp/a,b.erofs", false).valid,
+		"a rootfs path the UBD argument cannot carry was accepted");
 }
 
 void test_x86_64_kernel_memory_accounting_policy()
