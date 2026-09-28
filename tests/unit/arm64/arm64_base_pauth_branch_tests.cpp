@@ -68,11 +68,25 @@ void production_specialization()
 	pauth::require(guarded_entries.size() == 8);
 }
 
+/* The guarded call used to park its target in the XZR slot. */
+void guarded_call_keeps_zero_register()
+{
+	constexpr auto target = pauth::pc + 0x100;
+	constexpr std::array branch{
+		pauth::data_processing(8, 16), // paciza x16
+		pauth::authenticated_branch(true, false, true, 16), // blraaz x16
+	};
+	pauth::arm64::CpuState cpu{};
+	cpu.registers[16] = target;
+	pauth::guarded_branch_keeps_zero_register(branch, cpu, target);
+}
+
 } // namespace
 
 int main()
 {
 	production_specialization();
+	guarded_call_keeps_zero_register();
 
 	return 0;
 }

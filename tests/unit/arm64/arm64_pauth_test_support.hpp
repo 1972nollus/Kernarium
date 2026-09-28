@@ -4,12 +4,14 @@
 #include "arm64_engine_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
+#include "memory/tlb.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <memory_resource>
 #include <source_location>
 #include <span>
 #include <string_view>
@@ -82,6 +84,41 @@ inline void require(bool condition,
 		((encoded_offset & 0x1ffU) << 12) |
 		(static_cast<unsigned>(writeback) << 11) |
 		((base & 31U) << 5) | (destination & 31U);
+}
+
+/* A guarded authenticated call or return must leave the zero slot every
+ * translated XZR source reads at zero: run `branch` from `pc`, then a block
+ * at the branch target that adds XZR, and require that it added nothing. */
+inline void guarded_branch_keeps_zero_register(
+	std::span<const std::uint32_t> branch, arm64::CpuState cpu,
+	std::uint64_t target)
+{
+	const gadgets::BuildOptions guarded{
+		.enable_guarded_control_flow = true};
+	const auto first = gadgets::Builder{}.build(pc, branch, {},
+		std::pmr::get_default_resource(), {}, guarded);
+	require(first.complete &&
+		first.program.instruction_count() == branch.size());
+	cpu.pc = pc;
+	::uml::memory::Tlb tlb;
+	std::size_t executed{};
+	require(gadgets::execute(first.program, cpu, tlb, executed) ==
+		::uml::cpu::EngineEvent::continued);
+	require(cpu.pc == target && executed == branch.size());
+	require(cpu.gadget_zero == 0);
+
+	constexpr std::array consumer{
+		0x8b1f'0020U, // add x0, x1, xzr
+		0xd400'0001U, // svc #0
+	};
+	const auto second = gadgets::Builder{}.build(target, consumer, {},
+		std::pmr::get_default_resource(), {}, guarded);
+	require(second.complete);
+	cpu.registers[1] = 0x1234;
+	executed = 0;
+	require(gadgets::execute(second.program, cpu, tlb, executed) ==
+		::uml::cpu::EngineEvent::system_call);
+	require(cpu.registers[0] == 0x1234);
 }
 
 } // namespace arm64_pauth_test

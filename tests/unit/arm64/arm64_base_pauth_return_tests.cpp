@@ -51,11 +51,27 @@ void production_specialization()
 			illegal.program.words().front());
 }
 
+/* The guarded return used to park its target in the XZR slot, even with the
+ * control stack disabled. */
+void guarded_return_keeps_zero_register()
+{
+	constexpr auto target = pauth::pc + 0x100;
+	constexpr std::array branch{
+		pauth::hint(25), // paciasp
+		pauth::authenticated_return(false), // retaa
+	};
+	pauth::arm64::CpuState cpu{};
+	cpu.registers[30] = target;
+	cpu.sp = 0x7000'0000;
+	pauth::guarded_branch_keeps_zero_register(branch, cpu, target);
+}
+
 } // namespace
 
 int main()
 {
 	production_specialization();
+	guarded_return_keeps_zero_register();
 
 	return 0;
 }

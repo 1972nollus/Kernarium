@@ -328,7 +328,7 @@ pauth_branch blra_b_zz, 5, 1, 1, 1
 .macro pauth_guarded_call name, operation, target_zero, modifier_zero
 gadget pauth_branch_blra_gcs_\name
 	pauth_target_operands \operation, \target_zero, \modifier_zero
-	str x9, [_cpu, #UML_GADGET_CPU_ZERO]
+	mov x19, x9
 	ldr x13, [_stream]
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
@@ -337,7 +337,7 @@ gadget pauth_branch_blra_gcs_\name
 	bl NAME(uml_arm64_guarded_call_record)
 	ldp x1, x2, [sp], #16
 	cbnz w0, 97f
-	ldr x9, [_cpu, #UML_GADGET_CPU_ZERO]
+	mov x9, x19
 	ldr x13, [_stream]
 	str x13, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
 	str x9, [_cpu, #UML_GADGET_CPU_PC]
@@ -368,8 +368,9 @@ pauth_guarded_call b_zz, 5, 1, 1
 .purgem pauth_target_operands
 
 /* Guarded authenticated returns always use LR and SP. The checked target is
- * kept in the private zero slot across the helper call. On a failed read or
- * record comparison, _stream already addresses the faulting guest PC.
+ * kept in x19, which the helper call preserves; the zero slot every XZR source
+ * reads is never written. On a failed read or record comparison, _stream
+ * already addresses the faulting guest PC.
  */
 .macro pauth_guarded_return name, operation
 gadget pauth_return_gcs_\name
@@ -379,6 +380,7 @@ gadget pauth_return_gcs_\name
 	ubfx w11, w8, #16, #16
 	ldr x12, [_cpu, x11]
 	software_pointer_auth x9, x12, \operation
+	mov x19, x9
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x2
@@ -386,8 +388,7 @@ gadget pauth_return_gcs_\name
 	bl NAME(uml_arm64_guarded_return_record)
 	ldp x1, x2, [sp], #16
 	cbnz w0, 97f
-	ldr x9, [_cpu, #UML_GADGET_CPU_ZERO]
-	str x9, [_cpu, #UML_GADGET_CPU_PC]
+	str x19, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 97:
