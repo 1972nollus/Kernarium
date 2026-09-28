@@ -195,6 +195,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                           wrong_audio_defaults: bool = False,
                           wrong_product_model: bool = False,
                           mesa_gles_alignment: int = 16384,
+                          init_variant: str | None = None,
+                          extra_entry: str | None = None,
                           alignment: int = 16384) -> None:
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("BOOT/kernel", kernel.read_bytes())
@@ -305,8 +307,24 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
                     fstab,
                 )
+                graphics = "".join(
+                    f"    setprop ro.hardware.{name} ${{ro.boot.hardware.{name}}}\n"
+                    for name in ("egl", "gralloc", "vulkan")
+                    if not (init_variant == "missing-hal-copy" and name == "vulkan")
+                )
+                if init_variant == "angle-copy":
+                    graphics += (
+                        "    setprop debug.angle.feature_overrides_enabled "
+                        "${ro.boot.hardware.angle_feature_overrides_enabled}\n"
+                    )
+                density = (
+                    "on early-init\n"
+                    if init_variant == "ungated-density"
+                    else "on early-init && property:ro.boot.lcd_density=*\n"
+                ) + "    setprop ro.sf.lcd_density ${ro.boot.lcd_density}\n"
                 archive.writestr(
                     "VENDOR/etc/init/init.kernarium.rc",
+                    "on early-init\n" + graphics + density +
                     "on fs\n    mount_all --early\n"
                     "on late-fs\n"
                     "    exec -- /system/bin/resize2fs "
@@ -317,6 +335,8 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     "    setprop service.adb.tcp.port 5555\n"
                     "    start adbd\n",
                 )
+                if extra_entry is not None:
+                    archive.writestr(extra_entry, "on early-init\n")
                 archive.writestr(
                     "VENDOR/etc/audio_effects_config.xml",
                     '<audio_effects_conf version="2.0"/>\n',
@@ -372,7 +392,7 @@ def verify_target_files_fixtures(verifier: Path) -> None:
                     ueventd += "/dev/hvc0 0660 root shell\n"
                 if unsupported_hvc:
                     ueventd += "/dev/hvc1 0660 root shell\n"
-                archive.writestr("VENDOR/ueventd.rc", ueventd)
+                archive.writestr("VENDOR/etc/ueventd.rc", ueventd)
                 for apk in REQUIRED_PREOPT_APKS:
                     archive.writestr(apk, b"apk")
                     apk_path = Path(apk)
@@ -539,6 +559,13 @@ def verify_target_files_fixtures(verifier: Path) -> None:
             ("audio-defaults", {"wrong_audio_defaults": True}),
             ("product-model", {"wrong_product_model": True}),
             ("mesa-gles-alignment", {"mesa_gles_alignment": 4096}),
+            ("missing-hal-copy", {"init_variant": "missing-hal-copy"}),
+            ("angle-copy", {"init_variant": "angle-copy"}),
+            ("ungated-density", {"init_variant": "ungated-density"}),
+            ("cuttlefish-graphics-rc",
+             {"extra_entry": "VENDOR/etc/init/init_graphics.vendor.rc"}),
+            ("product-init-rc", {"extra_entry": "PRODUCT/etc/init/init.rc"}),
+            ("legacy-ueventd", {"extra_entry": "VENDOR/ueventd.rc"}),
         ):
             fixture = root / f"bad-{label}.zip"
             write_fixture(fixture, **options)
@@ -586,6 +613,21 @@ def verify_hal_selections(android_root: Path) -> None:
     module = f"vulkan.{verifier.BOOT_HAL_SELECTIONS['vulkan']}"
     if f"MESA_VENUS_HAL_MODULE='{module}'" not in metadata.splitlines():
         fail(f"the Vulkan HAL selection does not name the Venus module {module}")
+
+    # A setprop that expands a missing ro.boot property fails at every boot.
+    # The product init script may therefore expand only properties the command
+    # line sets, or a host-supplied one inside an action gated on its presence.
+    provided = {token.partition("=")[0] for token in command_line}
+    script = (android_root / "overlay/config/init.vendor.rc").read_text()
+    for trigger, commands in verifier.init_actions(script).items():
+        gated = set(re.findall(r"property:ro\.boot\.([\w.]+)=\*", trigger))
+        for command in commands:
+            for name in re.findall(r"\$\{ro\.boot\.([\w.]+)\}", command):
+                if name not in gated and f"androidboot.{name}" not in provided:
+                    fail(
+                        f"init action '{trigger}' expands ro.boot.{name}, "
+                        "which the boot command line does not set"
+                    )
 
 
 def newc_entry(name: str, mode: int, payload: bytes, inode: int) -> bytes:

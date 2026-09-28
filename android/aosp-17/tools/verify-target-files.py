@@ -50,10 +50,10 @@ MESA_EGL_ENTRIES = {
     f"{MESA_EGL_DIRECTORY}libGLESv2_{MESA_EGL_SUFFIX}.so",
 }
 MESA_ELF_ENTRIES = {f"VENDOR/lib64/{MESA_GALLIUM_DRIVER}", *MESA_EGL_ENTRIES}
-# The graphics HAL selections. The inherited Cuttlefish graphics init script
-# copies each androidboot.hardware.<name> into ro.hardware.<name> at
-# early-init, so the boot command line is each property's one writer and must
-# name these values; a vendor property would make that setprop fail.
+# The graphics HAL selections. The product init script copies each
+# androidboot.hardware.<name> into ro.hardware.<name> at early-init, so the
+# boot command line is each property's one writer and must name these values;
+# a vendor property would make that setprop fail.
 BOOT_HAL_SELECTIONS = {
     "egl": MESA_EGL_SUFFIX,
     "vulkan": "virtio",
@@ -117,7 +117,7 @@ REQUIRED_ENTRIES = {
     "VENDOR/etc/primary_audio_policy_configuration.xml",
     "VENDOR/etc/r_submix_audio_policy_configuration.xml",
     "VENDOR/etc/selinux/vendor_sepolicy.cil",
-    "VENDOR/ueventd.rc",
+    "VENDOR/etc/ueventd.rc",
     "VENDOR/etc/vintf/compatibility_matrix.xml",
     "VENDOR/etc/vintf/manifest.xml",
     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
@@ -207,6 +207,7 @@ FORBIDDEN_STATIC_ENTRIES = {
     "IMAGES/vbmeta_vendor.img",
     "META/ab_partitions.txt",
     "PRODUCT/app/QuickSearchBox/QuickSearchBox.apk",
+    "PRODUCT/etc/init/init.rc",
     "PRODUCT/overlay/cuttlefish_overlay_uwb.apk",
     "SYSTEM_EXT/etc/permissions/privapp-permissions-com.android.threadnetwork.demoapp.xml",
     "SYSTEM_EXT/priv-app/ThreadNetworkDemoApp/ThreadNetworkDemoApp.apk",
@@ -227,6 +228,7 @@ FORBIDDEN_STATIC_ENTRIES = {
     "VENDOR/apex/com.google.cf.wpa_supplicant.apex",
     "VENDOR/bin/hw/android.hardware.sensors-service.multihal",
     "VENDOR/etc/bluetooth_with_le_audio_policy_configuration_7_0.xml",
+    "VENDOR/etc/init/init_graphics.vendor.rc",
     "VENDOR/etc/init/seriallogging.rc",
     "VENDOR/etc/permissions/android.hardware.uwb.xml",
     "VENDOR/etc/permissions/android.hardware.wifi.xml",
@@ -240,6 +242,7 @@ FORBIDDEN_STATIC_ENTRIES = {
     "VENDOR/bin/install-recovery.sh",
     "VENDOR/etc/recovery.img",
     "VENDOR/recovery-from-boot.p",
+    "VENDOR/ueventd.rc",
     "SYSTEM/vendor/bin/install-recovery.sh",
     "SYSTEM/vendor/etc/recovery.img",
     "SYSTEM/vendor/etc/recovery-resource.dat",
@@ -367,7 +370,17 @@ UML_INIT_REQUIRED = (
     "setprop service.adb.tcp.port 5555",
     "start adbd",
 )
+# Only Kernarium passes a display density, so the product init script copies
+# it inside an action gated on its presence; an unconditional copy fails on
+# every standalone macOS boot.
+UML_INIT_DENSITY_TRIGGER = "early-init && property:ro.boot.lcd_density=*"
+UML_INIT_DENSITY_COPY = "setprop ro.sf.lcd_density ${ro.boot.lcd_density}"
+# The inherited Cuttlefish graphics script also copied the goldfish composer
+# mode and the ANGLE feature overrides; this product has neither, and their
+# androidboot sources never exist.
 UML_INIT_FORBIDDEN = (
+    "ro.vendor.hwcomposer.mode",
+    "debug.angle.",
     "metrics_helper",
     "rename_eth0",
     "setup_wifi",
@@ -465,6 +478,24 @@ def check_apex_payload_filesystem(
     fail(f"APEX payload must use ext4: {info.filename}")
 
 
+def init_actions(payload: str) -> dict[str, list[str]]:
+    """Map each action trigger of an init script to its commands."""
+    actions: dict[str, list[str]] = {}
+    commands: list[str] | None = None
+    for raw in payload.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        keyword, _, rest = line.partition(" ")
+        if keyword == "on":
+            commands = actions.setdefault(" ".join(rest.split()), [])
+        elif keyword in ("service", "import"):
+            commands = None
+        elif commands is not None and raw[:1].isspace():
+            commands.append(" ".join(line.split()))
+    return actions
+
+
 def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo]) -> None:
     system_properties = read_small(
         archive, infos["SYSTEM/build.prop"]
@@ -510,9 +541,20 @@ def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo
     for token in UML_INIT_FORBIDDEN:
         if token in init_payload:
             fail(f"UML init policy retains unsupported Cuttlefish action: {token}")
+    actions = init_actions(init_payload)
+    early_init = actions.get("early-init", [])
+    for name in sorted(BOOT_HAL_SELECTIONS):
+        copy = f"setprop ro.hardware.{name} ${{ro.boot.hardware.{name}}}"
+        if copy not in early_init:
+            fail(f"UML init policy does not copy the {name} HAL selection at early-init")
+    for trigger, commands in actions.items():
+        if UML_INIT_DENSITY_COPY in commands and trigger != UML_INIT_DENSITY_TRIGGER:
+            fail(f"UML init policy copies the display density under '{trigger}'")
+    if UML_INIT_DENSITY_COPY not in actions.get(UML_INIT_DENSITY_TRIGGER, []):
+        fail("UML init policy does not copy a host-supplied display density")
 
     ueventd_payload = read_small(
-        archive, infos["VENDOR/ueventd.rc"]
+        archive, infos["VENDOR/etc/ueventd.rc"]
     ).decode("utf-8", errors="strict")
     ueventd_entries = {
         line.strip()

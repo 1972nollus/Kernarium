@@ -153,11 +153,20 @@ pinned revision. The Vulkan HAL is Mesa's Venus driver,
 `ro.hardware.vulkan=virtio`.
 
 The boot command line is the only writer of the three graphics HAL selections:
-the inherited Cuttlefish graphics init script copies `androidboot.hardware.egl`,
+the product's vendor init script copies `androidboot.hardware.egl`,
 `androidboot.hardware.vulkan` and `androidboot.hardware.gralloc` into their
 `ro.hardware` properties at early-init, and that copy fails for a property a
 vendor property has already set. The target-files verifier therefore refuses a
 vendor `ro.hardware.egl`, `ro.hardware.vulkan` or `ro.hardware.gralloc`.
+
+That script replaces the inherited Cuttlefish graphics init script. It expands
+only `androidboot` properties the tracked command line sets, because a copy
+from a missing one fails at every boot; the goldfish composer mode and the
+ANGLE feature overrides have no source on this product and are not copied. The
+one host-supplied value, `androidboot.lcd_density`, is copied to
+`ro.sf.lcd_density` in an action gated on its presence. Kernarium passes it at
+each launch. The standalone macOS launcher passes none, so SurfaceFlinger uses
+its 213 dpi fallback and logs that the property is undefined.
 
 `third_party/mesa-venus/` pins that source as three independent inputs: the
 upstream Mesa revision, the guest Vulkan series under

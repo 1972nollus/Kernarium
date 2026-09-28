@@ -2,6 +2,24 @@ on early-init
     setprop ro.hw_timeout_multiplier ${ro.boot.hw_timeout_multiplier}
     setprop hypervisor.memory_reclaim.supported ${ro.boot.hypervisor.vm.supported}
     setprop ro.setupwizard.mode ${ro.boot.setupwizard_mode}
+    # Graphics configuration. The tracked boot command line sets every
+    # ro.boot property copied here.
+    setprop ro.hardware.egl ${ro.boot.hardware.egl}
+    setprop debug.sf.vsync_reactor_ignore_present_fences true
+    setprop ro.hardware.gralloc ${ro.boot.hardware.gralloc}
+    setprop ro.hardware.hwcomposer ${ro.boot.hardware.hwcomposer}
+    setprop ro.vendor.hwcomposer.display_finder_mode ${ro.boot.hardware.hwcomposer.display_finder_mode}
+    setprop ro.vendor.hwcomposer.display_framebuffer_format ${ro.boot.hardware.hwcomposer.display_framebuffer_format}
+    setprop ro.hardware.vulkan ${ro.boot.hardware.vulkan}
+    setprop ro.cpuvulkan.version ${ro.boot.cpuvulkan.version}
+    setprop ro.opengles.version ${ro.boot.opengles.version}
+    setprop debug.hwui.renderer ${ro.boot.hardware.guest_hwui_renderer}
+    setprop ro.zygote.disable_gl_preload ${ro.boot.hardware.guest_disable_renderer_preload}
+
+# Kernarium passes the display density at each launch. The standalone macOS
+# launcher passes none, which leaves SurfaceFlinger on its fallback density.
+on early-init && property:ro.boot.lcd_density=*
+    setprop ro.sf.lcd_density ${ro.boot.lcd_density}
 
 on fs
     mount_all --early
