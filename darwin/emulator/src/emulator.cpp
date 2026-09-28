@@ -343,6 +343,10 @@ public:
 		 * admission. */
 		if (::uml::runtime::process_guest_spent())
 			return -UML_EMULATOR_UNSUPPORTED;
+		/* A process killed before its guest shut down left that guest's
+		 * console socket behind, and this guest could not bind over it. */
+		if (!prepared.informational)
+			::uml::device::release_guest_management_console();
 		::uml::runtime::NativeKernelLayout native_layout;
 		std::optional<::uml::runtime::NativeKernelLayoutScope> layout_scope;
 		if (native_kernel_entry_ == nullptr) {

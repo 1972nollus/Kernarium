@@ -7,6 +7,7 @@
 #include <limits>
 #include <optional>
 #include <string_view>
+#include <utility>
 
 #include "guest_console.hpp"
 #include "ubd_path.hpp"
@@ -185,17 +186,18 @@ EmulatorOptions prepare_emulator_options(
 	bool default_user_network)
 {
 	EmulatorOptions prepared;
-	/* Policy can append at most ten kernel arguments. Keep the final argc
+	/* Policy can append at most eleven kernel arguments. Keep the final argc
 	 * representable by the fixed-width kernel entry ABI before allocating or
 	 * inspecting a caller-supplied vector. */
-	constexpr int maximum_appended_arguments = 10;
+	constexpr int maximum_appended_arguments = 11;
 	if (argc < 0 ||
 	    argc > std::numeric_limits<int>::max() - maximum_appended_arguments ||
 	    (argc != 0 && argv == nullptr)) {
 		prepared.valid = false;
 		return prepared;
 	}
-	prepared.arguments.reserve(static_cast<std::size_t>(argc) + 10U);
+	prepared.arguments.reserve(static_cast<std::size_t>(argc) +
+		static_cast<std::size_t>(maximum_appended_arguments));
 	for (int index = 0; index < argc; ++index) {
 		if (argv[index] == nullptr) {
 			prepared.valid = false;
@@ -289,12 +291,13 @@ EmulatorOptions prepare_emulator_options(
 	}
 	if (!has_prefix(prepared.arguments, "mem="))
 		prepared.arguments.emplace_back("mem=256M");
-	// The guest names its management-console socket after this, and never
-	// removes it. A per-run name gives every guest a console instead of only
-	// the first one on the host, and lets guests run side by side.
-	if (!has_prefix(prepared.arguments, "umid="))
-		prepared.arguments.emplace_back(
-			"umid=" + ::uml::device::guest_management_console_umid());
+	// Place the guest's management console where the host looks for it.
+	for (auto &argument :
+	     ::uml::device::guest_management_console_arguments()) {
+		const auto name = argument.substr(0, argument.find('=') + 1U);
+		if (!has_prefix(prepared.arguments, name))
+			prepared.arguments.push_back(std::move(argument));
+	}
 	// Automatic kernel DHCP is a convenience of the unified rootfs path.
 	// Rootfs-less, disk-composed guests own their network configuration.
 	if (default_user_network && !rootfs.empty() &&

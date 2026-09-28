@@ -4,12 +4,14 @@
 
 #include "sockets/socket_paths.hpp"
 
+#include <TargetConditionals.h>
 #include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -56,15 +58,32 @@ constexpr std::string_view writebackAcknowledgement = "Emergency Sync";
 constexpr std::string_view suspendAcknowledgement = "suspended";
 constexpr std::string_view stopAcknowledgement = "stopped";
 
+/* A reply socket's identifier is this many hexadecimal digits, so the widest
+ * reply path is known before any request is sent. */
+constexpr std::size_t clientIdDigits = 8U;
+constexpr std::size_t socketPathLimit = sizeof(sockaddr_un {}.sun_path);
+
 std::mutex consoleMutex;
 bool consoleAdopted;
 std::unique_ptr<SocketPath> consoleGuard;
-std::atomic_uint64_t nextClientId;
+std::atomic_uint32_t nextClientId;
 
-/* arch/um/os-Darwin/umid.c composes the path this way. */
-[[nodiscard]] std::string consolePath()
+/* One console per process. Two guests in one process cannot both own the
+ * kernel's single console anyway, and embedded runs are serialized. */
+[[nodiscard]] const std::string &consoleUmid()
 {
-	return "/tmp/uml-" + guest_management_console_umid() + "-mconsole";
+	static const std::string umid = "kern" + std::to_string(::getpid());
+	return umid;
+}
+
+[[nodiscard]] std::optional<std::string> privateConsoleDirectory()
+{
+#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+	const char *directory = std::getenv("TMPDIR");
+	return std::string {directory == nullptr ? "" : directory};
+#else
+	return std::nullopt;
+#endif
 }
 
 [[nodiscard]] bool fillAddress(sockaddr_un &address, const std::string &path)
@@ -79,18 +98,20 @@ std::atomic_uint64_t nextClientId;
 
 /*
  * The reply comes back to the sender's address, so the client has to be bound.
- * Darwin does not autobind a Unix datagram socket, and the application's own
- * temporary directory is far longer than sun_path allows, so this shares the
- * short directory the guest's console already lives in. A reply that has not
- * arrived within two seconds is left pending.
+ * Darwin does not autobind a Unix datagram socket, so this binds next to the
+ * guest's console. Each request binds a new name, so a reply that arrives
+ * after its request gave up finds no socket instead of the next request's. A
+ * reply that has not arrived within two seconds is left pending.
  */
 class Client final {
 public:
-	Client()
+	explicit Client(const GuestConsoleLocation &location)
 	{
-		path_ = "/tmp/uml-mc-" + std::to_string(::getpid()) + "-" +
-			std::to_string(nextClientId.fetch_add(
-				1U, std::memory_order_relaxed));
+		std::array<char, clientIdDigits + 1U> id {};
+		(void)std::snprintf(id.data(), id.size(), "%08x",
+			static_cast<unsigned int>(nextClientId.fetch_add(
+				1U, std::memory_order_relaxed)));
+		path_ = location.client_prefix + id.data();
 		(void)::unlink(path_.c_str());
 		descriptor_ = ::socket(AF_UNIX, SOCK_DGRAM, 0);
 		if (descriptor_ < 0)
@@ -153,11 +174,12 @@ void adoptConsolePath(const std::string &path)
 
 /* Sends one command from a client of its own and collects the reply. */
 [[nodiscard]] ExchangeResult exchange(
+	const GuestConsoleLocation &location,
 	const sockaddr_un &address,
 	std::string_view command,
 	std::string &response)
 {
-	Client client;
+	Client client {location};
 	if (!client.usable())
 		return ExchangeResult::notSent;
 	const int descriptor = client.descriptor();
@@ -186,11 +208,12 @@ void adoptConsolePath(const std::string &path)
 	}
 }
 
-[[nodiscard]] bool requestWriteback(const sockaddr_un &address,
-	unsigned int settleMs)
+[[nodiscard]] bool requestWriteback(const GuestConsoleLocation &location,
+	const sockaddr_un &address, unsigned int settleMs)
 {
 	std::string response;
-	if (exchange(address, "sysrq s", response) != ExchangeResult::accepted)
+	if (exchange(location, address, "sysrq s", response) !=
+	    ExchangeResult::accepted)
 		return false;
 	if (response.find(writebackAcknowledgement) == std::string::npos) {
 		std::fputs(
@@ -210,24 +233,73 @@ void adoptConsolePath(const std::string &path)
 
 } // namespace
 
-std::string guest_management_console_umid()
+std::optional<GuestConsoleLocation> compose_guest_console_location(
+	std::optional<std::string_view> private_directory,
+	std::string_view umid, pid_t pid)
 {
-	/* One console per process. Two guests in one process cannot both own the
-	 * kernel's single console anyway, and embedded runs are serialized. */
-	static const std::string umid = "kern" + std::to_string(::getpid());
-	return umid;
+	GuestConsoleLocation location;
+	if (private_directory) {
+		/* arch/um/os-Darwin/umid.c composes <uml_dir>/<name> after dropping
+		 * the same trailing slashes. */
+		auto directory = *private_directory;
+		while (directory.size() > 1U && directory.ends_with('/'))
+			directory.remove_suffix(1U);
+		if (!directory.starts_with('/'))
+			return std::nullopt;
+		location.directory = directory;
+		location.console = location.directory + "/mconsole";
+		location.client_prefix = location.directory + "/mc-";
+	} else {
+		/* And /tmp/uml-<umid>-<name> without uml_dir=. */
+		location.console = "/tmp/uml-" + std::string {umid} + "-mconsole";
+		location.client_prefix =
+			"/tmp/uml-mc-" + std::to_string(pid) + "-";
+	}
+	if (location.console.size() >= socketPathLimit ||
+	    location.client_prefix.size() + clientIdDigits >= socketPathLimit)
+		return std::nullopt;
+	return location;
+}
+
+const std::optional<GuestConsoleLocation> &guest_console_location()
+{
+	static const std::optional<GuestConsoleLocation> location = [] {
+		const auto directory = privateConsoleDirectory();
+		auto composed = compose_guest_console_location(
+			directory, consoleUmid(), ::getpid());
+		if (!composed) {
+			std::fprintf(stderr,
+				"Guest management console: no console under \"%s\": "
+				"it needs an absolute directory whose socket paths fit "
+				"in %zu bytes; the host cannot reach the guest's console\n",
+				directory.value_or("/tmp").c_str(), socketPathLimit);
+		}
+		return composed;
+	}();
+	return location;
+}
+
+std::vector<std::string> guest_management_console_arguments()
+{
+	std::vector<std::string> arguments {"umid=" + consoleUmid()};
+	const auto &location = guest_console_location();
+	if (location && !location->directory.empty())
+		arguments.push_back("uml_dir=" + location->directory);
+	return arguments;
 }
 
 bool request_guest_writeback(unsigned int settleMs) noexcept
 {
 	try {
 		std::lock_guard lock(consoleMutex);
-		const auto path = consolePath();
-		adoptConsolePath(path);
-		sockaddr_un address {};
-		if (!fillAddress(address, path))
+		const auto &location = guest_console_location();
+		if (!location)
 			return false;
-		return requestWriteback(address, settleMs);
+		adoptConsolePath(location->console);
+		sockaddr_un address {};
+		if (!fillAddress(address, location->console))
+			return false;
+		return requestWriteback(*location, address, settleMs);
 	} catch (...) {
 		return false;
 	}
@@ -238,17 +310,20 @@ GuestSuspension suspend_guest(unsigned int writebackSettleMs,
 {
 	try {
 		std::lock_guard lock(consoleMutex);
-		const auto path = consolePath();
-		adoptConsolePath(path);
+		const auto &location = guest_console_location();
+		if (!location)
+			return GuestSuspension::none;
+		adoptConsolePath(location->console);
 		sockaddr_un address {};
-		if (!fillAddress(address, path))
+		if (!fillAddress(address, location->console))
 			return GuestSuspension::none;
 		std::string response;
 		/* A suspend-capable guest replies only after devices, secondary
 		 * CPUs, interrupts, and timekeeping have reached the platform sleep
 		 * boundary. The separate wake request remains queued on the console
 		 * descriptor until the kernel has resumed it. */
-		const auto suspendResult = exchange(address, "suspend", response);
+		const auto suspendResult =
+			exchange(*location, address, "suspend", response);
 		if (suspendResult == ExchangeResult::accepted) {
 			if (response.find(suspendAcknowledgement) == std::string::npos) {
 				std::fputs("Guest console returned an unexpected suspend reply\n",
@@ -270,8 +345,8 @@ GuestSuspension suspend_guest(unsigned int writebackSettleMs,
 		 * Its stop path does not sync filesystems, so preserve the old writeback
 		 * step only on this compatibility path. A suspend-capable kernel performs
 		 * the sync itself and avoids spending the iOS background budget twice. */
-		(void)requestWriteback(address, writebackSettleMs);
-		const auto stopResult = exchange(address, "stop", response);
+		(void)requestWriteback(*location, address, writebackSettleMs);
+		const auto stopResult = exchange(*location, address, "stop", response);
 		if (stopResult == ExchangeResult::notSent ||
 		    stopResult == ExchangeResult::rejected ||
 		    (stopResult == ExchangeResult::accepted &&
@@ -296,13 +371,14 @@ void resume_guest(GuestSuspension suspension) noexcept
 		return;
 	try {
 		std::lock_guard lock(consoleMutex);
+		const auto &location = guest_console_location();
 		sockaddr_un address {};
-		if (!fillAddress(address, consolePath()))
+		if (!location || !fillAddress(address, location->console))
 			return;
 		std::string response;
 		const auto command = suspension == GuestSuspension::system ?
 			"wake" : "go";
-		(void)exchange(address, command, response);
+		(void)exchange(*location, address, command, response);
 	} catch (...) {
 	}
 }
@@ -316,11 +392,13 @@ void release_guest_management_console() noexcept
 			consoleAdopted = false;
 			return;
 		}
-		const auto path = consolePath();
+		const auto &location = guest_console_location();
+		if (!location)
+			return;
 		struct stat details {};
-		if (::lstat(path.c_str(), &details) == 0 &&
+		if (::lstat(location->console.c_str(), &details) == 0 &&
 		    S_ISSOCK(details.st_mode))
-			(void)::unlink(path.c_str());
+			(void)::unlink(location->console.c_str());
 	} catch (...) {
 	}
 }

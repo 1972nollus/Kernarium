@@ -556,8 +556,17 @@ Writable host files are tracked by the platform layer. Emulator sync asks the
 guest to write back through the management console and then flushes host files.
 Quiesce enters full Linux system suspend and waits for the platform sleep
 boundary before flushing host files; resume sends the console wake edge.
-Accepted kernels without system suspend retain a stop/go fallback. Guests
-receive unique run identities so management-console paths do not collide.
+Accepted kernels without system suspend retain a stop/go fallback.
+
+The guest binds the management console as a Unix datagram socket and replies
+to each request's own bound socket, which the host places beside it. On macOS
+and the iOS Simulator both live in the shared `/tmp` and carry the run's
+identity (`umid=`), so guests run side by side. The iOS sandbox refuses
+sockets in `/tmp`, so an iOS device passes its application temporary directory
+as `uml_dir=` and both sides use short fixed names there. Every such path must
+fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
+rather than truncated or moved. A killed process leaves its guest's socket
+behind, so each run removes a socket at its own path before booting.
 
 ## Tests and structural audit
 

@@ -119,6 +119,12 @@ void test_explicit_defaults_are_preserved()
 	require(contains(named, "umid=chosen") &&
 		count_prefixed(named, "umid=") == 1,
 		"a caller-supplied management-console name was replaced");
+	const char *placed_console[]{"uml_dir=/chosen"};
+	const auto placed = uml::emulator::prepare_emulator_options(
+		1, placed_console, "/tmp/rootfs.erofs", false);
+	require(contains(placed, "uml_dir=/chosen") &&
+		count_prefixed(placed, "uml_dir=") == 1,
+		"a caller-supplied management-console directory was replaced");
 	const char *explicit_mapping[]{"ubd0c=/custom/rootfs.erofs"};
 	require(uml::emulator::prepare_emulator_options(
 			1, explicit_mapping, "/unused/rootfs.erofs", false)
