@@ -1200,7 +1200,8 @@ printf '%s %s\\n' "$qpa_offset" "$qpa_segments" > "$output/state"
             "smoke", [], None, vk.Fraction(0, 1)
         )
         launcher = vk.build_receipt_guest_launcher(
-            receipt, selection, page_size=16384, timeout=900
+            receipt, selection, page_size=16384, timeout=900,
+            case_list=vk.GUEST_CASE_LIST_PATH,
         )
         flush = self.shell_function(launcher, "flush_qpa")
         compress = self.shell_function(launcher, "compress_artifact")

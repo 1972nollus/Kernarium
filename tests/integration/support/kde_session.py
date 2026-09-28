@@ -49,8 +49,9 @@ ISO_MOUNT_ARGUMENT = (
     f"systemd.mount-extra={CDROM_DEVICE}:{CDROM_MOUNT_POINT}:iso9660:ro"
 )
 # The legacy image's desktop setup, installed as a payload and run before the
-# display manager starts.
-LEGACY_KDE_SEED = REPO_ROOT / "tools/rootfs/boot-ramdisk/seeds/unified-kde-setup"
+# display manager starts. The desktop image derivation bakes the same file
+# into the KDE images it produces.
+LEGACY_KDE_SEED = REPO_ROOT / "tools/rootfs/desktop/setup/kde"
 LEGACY_KDE_SEED_GUEST_PATH = "/usr/local/libexec/uml-unified-kde-setup"
 
 

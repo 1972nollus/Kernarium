@@ -285,7 +285,7 @@ index 19dcc4e74f4427c4b45ab70d01423fb198a84d10..db3dda0283125fed23d4e82d9fbf66e6
  void cs_end(struct kk_cmd_buffer *cmd);
  void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index dc9823c213fa74f0cac8f39f1b1b7619a6500ca0..16fe5d709c41f98f71c7134be045a5e943e53f0e 100644
+index 714d8cb3131b31e9c1789ab57f962aac7f707efe..1c63b09684daad03f976aed902de917037ca43d7 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -354,6 +354,7 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
@@ -348,7 +348,7 @@ index dc9823c213fa74f0cac8f39f1b1b7619a6500ca0..16fe5d709c41f98f71c7134be045a5e9
     bool color_map_changed = false;
  
     if (IS_DIRTY(COLOR_ATTACHMENT_MAP)) {
-@@ -2265,6 +2297,8 @@ kk_dispatch_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data data)
+@@ -2284,6 +2316,8 @@ kk_dispatch_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data data)
  {
     mtl_render_encoder *enc = cs_get_render(cmd);
  
@@ -357,7 +357,7 @@ index dc9823c213fa74f0cac8f39f1b1b7619a6500ca0..16fe5d709c41f98f71c7134be045a5e9
     if (kk_grid_is_indirect(data.grid)) {
        if (data.index.el_size_B) {
           struct kk_addr_range index_range =
-@@ -3384,6 +3418,12 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3402,6 +3436,12 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     }
  
     for (uint32_t i = 0; i < data->draw_count; i++) {
@@ -440,10 +440,10 @@ index 6a439054966ff29eb571fbaa222117909a0c6e2d..8b278af2c7575dbc170b1c945be114c9
           struct poly_gs_info geometry;
           uint64_t flat_outputs;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index c8f0f237f54c42384e7d3fb6336f35c8adca2624..8f685bcaf5907e2428dbab6a462f6b84febebb56 100644
+index 1e1d3dc070db563789c8c3bc13fc4d3d60920d05..fb5468a079a06fb2e59dfae200f47fa7ab05e35c 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -314,6 +314,52 @@ if with_tests
+@@ -348,6 +348,52 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

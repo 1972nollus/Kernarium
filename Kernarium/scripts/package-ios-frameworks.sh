@@ -8,6 +8,11 @@
 # requires Metal 4, and the iOS Simulator exposes no Metal 4 device, so there
 # is no Simulator slice to combine. An iOS device build runs on an Apple
 # silicon Mac in Designed for iPad mode when no device is attached.
+#
+# --automation packages the automation Linux runtimes, which boot host
+# payloads (Kernarium/README.md), in place of the release ones. Both lines are
+# checked: the release runtime must not read a payload, and the automation
+# runtime must.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -19,9 +24,12 @@ fail()
 	exit 1
 }
 
-if [ "$#" -ne 0 ]; then
-	fail "this script takes no arguments"
-fi
+AUTOMATION=0
+case "$#:${1-}" in
+0:) ;;
+1:--automation) AUTOMATION=1 ;;
+*) fail "usage: package-ios-frameworks.sh [--automation]" ;;
+esac
 
 find_tool()
 {
@@ -50,8 +58,10 @@ RUNTIME_16K="KRuntime_6_18_16K"
 # invalidate an existing guest bundle.
 RUNTIME_ANDROID_16K="KRuntime_ACK_6_18_16K"
 
-DEVICE_RUNTIME_4K="$ROOT_DIR/.build/kernarium-runtime-ios-device-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
-DEVICE_RUNTIME_16K="$ROOT_DIR/.build/kernarium-runtime-ios-device-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
+RUNTIME_TREE=kernarium-runtime-ios-device
+[ "$AUTOMATION" -eq 0 ] || RUNTIME_TREE=kernarium-runtime-ios-device-automation
+DEVICE_RUNTIME_4K="$ROOT_DIR/.build/$RUNTIME_TREE-4k/Kernarium/Runtime/$RUNTIME_4K.framework"
+DEVICE_RUNTIME_16K="$ROOT_DIR/.build/$RUNTIME_TREE-16k/Kernarium/Runtime/$RUNTIME_16K.framework"
 DEVICE_RUNTIME_ANDROID="$ROOT_DIR/.build/kernarium-runtime-ios-device-android-16k/Kernarium/Runtime/$RUNTIME_ANDROID_16K.framework"
 DEVICE_GPU="$ROOT_DIR/.build/dependencies/apple-gpu-vulkan-experiment/ios-device-arm64/Frameworks"
 STORAGE="$ROOT_DIR/.build/dependencies/ios-storage/GPTFDisk.xcframework"
@@ -133,6 +143,16 @@ for framework in $RUNTIME_FRAMEWORKS; do
 	[ "$rpaths" = '@loader_path/..' ] ||
 		fail "$framework has an invalid runtime search path: $rpaths"
 done
+for framework in "$RUNTIME_4K" "$RUNTIME_16K"; do
+	binary="$STAGE/$framework.xcframework/ios-arm64/$framework.framework/$framework"
+	if LC_ALL=C grep -a -q KERNARIUM_BOOT_PAYLOAD "$binary"; then
+		[ "$AUTOMATION" -eq 1 ] ||
+			fail "$framework is an automation runtime; package it with --automation"
+	else
+		[ "$AUTOMATION" -eq 0 ] ||
+			fail "$framework is a release runtime; build the kernarium-ios-device-automation presets"
+	fi
+done
 
 # The storage and compression cores carry no Metal dependency, so their
 # XCFrameworks keep both published slices.
@@ -165,4 +185,8 @@ case $publish in
 	;;
 *) fail "could not publish the XCFrameworks: $OUTPUT" ;;
 esac
-printf '%s\n' "published Kernarium XCFrameworks: $OUTPUT"
+if [ "$AUTOMATION" -eq 1 ]; then
+	printf '%s\n' "published Kernarium automation XCFrameworks: $OUTPUT"
+else
+	printf '%s\n' "published Kernarium XCFrameworks: $OUTPUT"
+fi

@@ -546,6 +546,7 @@ if(APPLE AND UML_IOS_MAC_CTS_ROOTFS)
             --campaign ${UML_IOS_MAC_CTS_CAMPAIGN}
             --rootfs ${UML_IOS_MAC_CTS_ROOTFS}
             --rootfs-receipt ${UML_IOS_MAC_CTS_ROOTFS_RECEIPT}
+            --initramfs-tool $<TARGET_FILE:uml-initramfs>
             --artifact-root ${CMAKE_CURRENT_BINARY_DIR}/ios-mac-cts
         LABELS gpu;apple;ios;external;full
         TIMEOUT 5400
@@ -555,8 +556,8 @@ endif()
 
 # The device counterpart drives a connected iOS device through devicectl. The
 # guest runs on the device, so the host only holds a console; what a checkout
-# cannot provide is the paired device and an installed application already
-# carrying the campaign, so this lane is opt-in too: name the device and it
+# cannot provide is the paired device with the automation application and the
+# image installed, so this lane is opt-in too: name the device and it
 # registers.
 if(APPLE AND UML_IOS_DEVICE_VK_CTS_DEVICE)
     if(NOT UML_IOS_DEVICE_VK_CTS_CAMPAIGN)
@@ -568,6 +569,7 @@ if(APPLE AND UML_IOS_DEVICE_VK_CTS_DEVICE)
             ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_ios_device_vk_cts.py
             --device ${UML_IOS_DEVICE_VK_CTS_DEVICE}
             --campaign ${UML_IOS_DEVICE_VK_CTS_CAMPAIGN}
+            --initramfs-tool $<TARGET_FILE:uml-initramfs>
             --artifact-root ${CMAKE_CURRENT_BINARY_DIR}/ios-device-vk-cts
         LABELS gpu;apple;ios;external;full
         TIMEOUT 5400

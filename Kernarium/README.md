@@ -42,8 +42,12 @@ limit a 4 GiB guest would cross. Android fixes the page profile at 16 KiB.
 
 ## Guest storage
 
-A Linux guest boots an image file in the application's Documents directory,
-`rootfs.erofs` unless the settings name another. An Android guest is a `.kern`
+A Linux guest boots an image file in the application's Documents directory:
+the one the settings name, or, while they name none, the accepted KDE desktop
+image `kde-20260928-r1.erofs`
+([`tools/rootfs/desktop`](../tools/rootfs/desktop/README.md)). A name the
+settings already store, `rootfs.erofs` included, is kept, and every image in
+Documents stays selectable. An Android guest is a `.kern`
 bundle directory in Documents; the
 [Android README](../android/aosp-17/README.md#apple-consumers-and-guest-bundles)
 owns its layout. A bundle holds the guest's persistent, directly writable image,
@@ -63,6 +67,56 @@ format-specific partition-table update; Android GPT growth is in the
 `ZstdUtil` streams a zstd source into an adjacent temporary file, optionally
 representing zero regions as sparse holes, and publishes the destination only
 after a complete decode.
+
+## Guest boot
+
+A Linux run boots the base archive the runtime embeds
+([`tools/rootfs/boot-ramdisk`](../tools/rootfs/boot-ramdisk/README.md))
+followed by a segment holding the generic per-run `/init` and its
+`/boot.env`. The runtime writes that initrd to its temporary directory as
+`kernarium-initrd-<pid>.cpio`, removes it when the run returns, and removes
+any an earlier, killed process left. The parameters mount the image read-only
+on `ubd0` beneath an overlay whose writable layer is an ext4 filesystem
+formatted afresh on `ubd1`: the sparse `kernarium-overlay.ext4` the
+application recreates in its temporary directory at each launch, at the size
+the overlay setting names. Docker and containerd state is bound from that
+filesystem beside the overlay, because neither accepts an overlayfs backing.
+A sealed ext4 image is attached read-only as well. `/init` then switches root
+into the image's own `/sbin/init`, which boots `graphical.target`.
+
+Nothing is typed on the console and the runtime edits no image: accounts,
+device groups, getty and display-manager policy, network and resolver belong
+to the image. The KDE, Phrog and postmarketOS images Kernarium boots carry
+that setup ([`tools/rootfs/desktop`](../tools/rootfs/desktop/README.md)); the
+KDE image masks the VT gettys, since SDDM runs the session on a VT of its own.
+The unified `rootfs.erofs` carries none of it and boots to its own defaults:
+SDDM without autologin, beside the image's `getty@tty0`.
+
+## Automation runs
+
+The release runtime accepts no host payload and carries no test campaign. The
+`kernarium-ios-device-automation` and `kernarium-ios-device-automation-4k`
+presets build the Linux runtimes with `UML_KERNARIUM_AUTOMATION_HARNESS`, and
+`scripts/package-ios-frameworks.sh --automation` packages them in place of
+the release ones. Only these read:
+
+- `KERNARIUM_BOOT_PAYLOAD`, a plain file name in Documents: a padded newc
+  segment of at most 64 MiB, written by `uml-initramfs`, that the runtime
+  appends after its own, so its files, `/boot.env` included, replace the
+  runtime's; and
+- `KERNARIUM_SYSTEMD_UNIT`, the `*.target` the guest boots instead of
+  `graphical.target`.
+
+A payload also attaches the artifact relay, a Virtio serial port whose
+acknowledged frames the runtime prints on standard output. The runtime prints
+`Kernarium: automation boot with a <n>-byte payload and target <unit>`; a
+host that does not see that line is talking to the release runtime.
+`tests/integration/support/kernarium.py` writes payloads for the conformance
+lanes, which boot `uml-cts.target`, the WebGL Aquarium probe, which boots
+`uml-aquarium.target`, and the device workload runner, whose script the
+harness session runs before powering the guest off. The lanes are in
+[`testing.md`](../docs/testing.md#apple-builds-and-kernarium) and
+[`tests/perf/README.md`](../tests/perf/README.md).
 
 ## Devices and display
 
@@ -97,7 +151,8 @@ Each script documents its options in `--help` or its header:
 - `run-ios-mac.sh` builds, installs, provisions, and launches the application
   on an Apple silicon Mac in Designed for iPad mode;
 - `package-ios-frameworks.sh` packages the selected runtime and graphics slices
-  and the static GPT fdisk and zstd XCFrameworks for Xcode;
+  and the static GPT fdisk and zstd XCFrameworks for Xcode, with
+  `--automation` the automation Linux runtimes;
 - `make-guest-bundle.py` assembles an Android `.kern` bundle from an installed
   release;
 - `ipad-automation.py` drives UI automation on a connected iPad through the

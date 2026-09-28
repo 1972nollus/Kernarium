@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "KernariumRuntime.h"
-#include "KernariumAquarium.hpp"
-#include "KernariumBootstrap.hpp"
 #include "KernariumConsoleInput.hpp"
-#include "KernariumCtsCampaigns.hpp"
+#if KERNARIUM_AUTOMATION_HARNESS
+#include "KernariumHarness.hpp"
+#endif
 
 #include "audio/in_process_service.hpp"
 #include "video/in_process_service.hpp"
@@ -20,6 +20,7 @@
 #include "gpu/protocol.hpp"
 #include "input/virtio/in_process_service.hpp"
 #include "block/android_boot.hpp"
+#include "block/boot_initramfs.hpp"
 #include "block/ubd_path.hpp"
 #include "uml/emulator.h"
 #include "uml_slirp_net.h"
@@ -45,6 +46,7 @@
 #include <optional>
 #include <pthread.h>
 #include <signal.h>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -61,6 +63,18 @@ extern const unsigned char uml_elf_start[]
     __asm("section$start$__TEXT$__uml_elf");
 extern const unsigned char uml_elf_end[]
     __asm("section$end$__TEXT$__uml_elf");
+#if !KERNARIUM_RUNTIME_ANDROID_GUEST
+/* The accepted aarch64 boot base archive and the generic per-run /init
+ * (tools/rootfs/boot-ramdisk), linked in beside the kernel. */
+extern const unsigned char uml_boot_base_start[]
+    __asm("section$start$__TEXT$__uml_boot_base");
+extern const unsigned char uml_boot_base_end[]
+    __asm("section$end$__TEXT$__uml_boot_base");
+extern const unsigned char uml_boot_init_start[]
+    __asm("section$start$__TEXT$__uml_boot_init");
+extern const unsigned char uml_boot_init_end[]
+    __asm("section$end$__TEXT$__uml_boot_init");
+#endif
 }
 
 namespace {
@@ -188,111 +202,6 @@ private:
     void* context_ {};
 };
 
-
-/* Geekbench over the overlay root; see kernarium::bootstrap::overlayWorkload. */
-constexpr std::string_view geekbenchWorkload = R"krn(benchmark=/opt/geekbench/release/geekbench6
-[ -x "$benchmark" ] || fail "Geekbench payload is unavailable"
-export HOME=/root
-echo "KERNARIUM_GEEKBENCH_READY"
-set +e
-if [ -n "${KERNARIUM_GEEKBENCH_WORKLOADS:-}" ]; then
-    echo "KERNARIUM_GEEKBENCH_TARGETS:$KERNARIUM_GEEKBENCH_WORKLOADS"
-    "$benchmark" --no-upload --single-core --section 1 \
-        --workload "$KERNARIUM_GEEKBENCH_WORKLOADS"
-else
-    "$benchmark" --no-upload
-fi
-benchmark_rc=$?
-printf '\nKERNARIUM_GEEKBENCH_END:%s\n' "$benchmark_rc"
-sync
-poweroff -f
-exit "$benchmark_rc"
-)krn";
-
-/* The discard benchmark writes /dev/ubdb itself, so it builds no overlay root.
- * It follows kernarium::bootstrap::workloadFailure. */
-constexpr std::string_view discardBenchmarkWorkload = R"krn([ -b /dev/ubdb ] || fail "overlay block device is unavailable"
-mount -t proc proc /proc || fail "proc mount failed"
-mount -t sysfs sysfs /sys || fail "sysfs mount failed"
-[ -x /usr/sbin/blkdiscard ] || fail "blkdiscard is unavailable"
-case "$KERNARIUM_DISCARD_MODE" in
-batched-128m)
-    expected_max=134217728
-    ;;
-fragmented-32k)
-    expected_max=32768
-    echo "$expected_max" > /sys/block/ubdb/queue/discard_max_bytes ||
-        fail "discard limit update failed"
-    ;;
-*)
-    fail "invalid benchmark mode"
-    ;;
-esac
-actual_max=$(cat /sys/block/ubdb/queue/discard_max_bytes)
-[ "$actual_max" = "$expected_max" ] ||
-    fail "unexpected discard limit $actual_max"
-echo "KERNARIUM_DISCARD_READY:$KERNARIUM_DISCARD_MODE:$actual_max"
-run=1
-while [ "$run" -le 7 ]; do
-    dd if=/dev/zero of=/dev/ubdb bs=1M count=512 conv=fsync status=none ||
-        fail "payload write failed"
-    set -- $(cat /sys/block/ubdb/stat)
-    requests_before=${12}
-    sectors_before=${14}
-    ticks_before=${15}
-    started=$(date +%s%N)
-    /usr/sbin/blkdiscard -o 0 -l 536870912 /dev/ubdb ||
-        fail "discard failed"
-    sync
-    finished=$(date +%s%N)
-    set -- $(cat /sys/block/ubdb/stat)
-    requests=$((${12} - requests_before))
-    sectors=$((${14} - sectors_before))
-    ticks=$((${15} - ticks_before))
-    elapsed=$((finished - started))
-    echo "KERNARIUM_DISCARD_SAMPLE:$KERNARIUM_DISCARD_MODE:$run:"\
-"$elapsed:$requests:$sectors:$ticks"
-    run=$((run + 1))
-done
-echo "KERNARIUM_DISCARD_END:0"
-sync
-poweroff -f
-)krn";
-
-/* A measured guest payload supplied by the host as one base64 shell script.
- *
- * The connected-device benchmarks need the same guest work the macOS probe and
- * Geekbench runners drive through a command line, which no fixed bootstrap can
- * express. The script arrives in the shell variable the relay assigns before
- * the bootstrap, so no line carries the whole payload, and it runs over the
- * same writable overlay root as Geekbench.
- */
-constexpr std::string_view guestScriptWorkload = R"krn(printf %s "$KERNARIUM_GUEST_SCRIPT" | base64 -d >/tmp/kernarium-guest-script ||
-    fail "guest script decode failed"
-unset KERNARIUM_GUEST_SCRIPT
-export HOME=/root
-echo "KERNARIUM_GUEST_SCRIPT_READY"
-set +e
-sh /tmp/kernarium-guest-script
-script_rc=$?
-printf '\nKERNARIUM_GUEST_SCRIPT_END:%s\n' "$script_rc"
-sync
-poweroff -f
-exit "$script_rc"
-)krn";
-
-enum class ConsoleBootMode {
-    desktop,
-    aquarium,
-    cts,
-    geekbench,
-    discardBenchmark,
-    /* A host-supplied measured payload; see guestScriptWorkload. */
-    guestScript,
-    /* Android brings up its own init from the selected GPT ramdisk range. The
-     * relay carries its console in both directions and injects nothing. */
-    android,
-};
 
 class ActiveRuntime final {
 public:
@@ -439,16 +348,8 @@ public:
 
 class ConsoleBridge final {
 public:
-    explicit ConsoleBridge(
-        ConsoleBootMode bootMode,
-        std::string geekbenchWorkloads,
-        std::string discardBenchmarkMode,
-        std::string guestScript,
-        const kernarium::cts::Campaign* ctsCampaign,
-        bool derivativeRootfs)
+    ConsoleBridge()
     {
-        if ((bootMode == ConsoleBootMode::cts) != (ctsCampaign != nullptr))
-            throw std::invalid_argument("invalid CTS console campaign");
         int descriptors[2] {-1, -1};
         if (socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) != 0) {
             throw std::runtime_error(
@@ -481,19 +382,7 @@ public:
             throw;
         }
         try {
-            relay_ = std::thread([
-                this,
-                bootMode,
-                geekbenchWorkloads = std::move(geekbenchWorkloads),
-                discardBenchmarkMode = std::move(discardBenchmarkMode),
-                guestScript = std::move(guestScript),
-                ctsCampaign,
-                derivativeRootfs] {
-                constexpr std::string_view shellReady =
-                    "Run /bin/sh as init process";
-                bool bootstrapDelivered =
-                    bootMode == ConsoleBootMode::android;
-                std::string observed;
+            relay_ = std::thread([this] {
                 char buffer[4096];
                 for (;;) {
                     const ssize_t received = host_->receive(
@@ -501,120 +390,21 @@ public:
                     if (received > 0) {
                         publishConsoleOutput(
                             buffer, static_cast<std::size_t>(received));
-                        {
-                            std::lock_guard outputLock(consoleStdoutMutex);
-                            std::string_view output(
-                                buffer, static_cast<std::size_t>(received));
-                            while (!output.empty()) {
-                                const ssize_t written = write(
-                                    STDOUT_FILENO,
-                                    output.data(),
-                                    output.size());
-                                if (written > 0) {
-                                    output.remove_prefix(
-                                        static_cast<std::size_t>(written));
-                                } else if (written < 0 && errno == EINTR) {
-                                    continue;
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
-                        if (!bootstrapDelivered) {
-                            observed.append(
-                                buffer,
-                                static_cast<std::size_t>(received));
-                            if (observed.size() > 1024U)
-                                observed.erase(0, observed.size() - 1024U);
-                            if (observed.find(shellReady) != std::string::npos) {
-                                std::string bootstrap;
-                                if (bootMode ==
-                                    ConsoleBootMode::discardBenchmark) {
-                                    bootstrap =
-                                        "KERNARIUM_DISCARD_MODE=";
-                                    bootstrap.append(discardBenchmarkMode);
-                                    bootstrap.push_back('\n');
-                                    bootstrap.append(
-                                        kernarium::bootstrap::workloadFailure(
-                                            "KERNARIUM_DISCARD_ERROR"));
-                                    bootstrap.append(discardBenchmarkWorkload);
-                                } else if (
-                                    bootMode ==
-                                    ConsoleBootMode::guestScript) {
-                                    /* The payload is assigned in fixed-size
-                                     * pieces because the guest console's line
-                                     * discipline bounds a single line. */
-                                    bootstrap =
-                                        "KERNARIUM_GUEST_SCRIPT=\n";
-                                    constexpr std::size_t piece = 256U;
-                                    for (std::size_t offset = 0U;
-                                         offset < guestScript.size();
-                                         offset += piece) {
-                                        bootstrap.append(
-                                            "KERNARIUM_GUEST_SCRIPT="
-                                            "\"$KERNARIUM_GUEST_SCRIPT\"'");
-                                        bootstrap.append(
-                                            guestScript,
-                                            offset,
-                                            piece);
-                                        bootstrap.append("'\n");
-                                    }
-                                    bootstrap.append(
-                                        "export KERNARIUM_GUEST_SCRIPT\n");
-                                    bootstrap.append(
-                                        kernarium::bootstrap::overlayWorkload(
-                                            "KERNARIUM_GUEST_SCRIPT_ERROR",
-                                            guestScriptWorkload));
-                                } else if (
-                                    bootMode == ConsoleBootMode::geekbench) {
-                                    if (!geekbenchWorkloads.empty()) {
-                                        bootstrap =
-                                            "KERNARIUM_GEEKBENCH_WORKLOADS=";
-                                        bootstrap.append(geekbenchWorkloads);
-                                        bootstrap.push_back('\n');
-                                    }
-                                    bootstrap.append(
-                                        kernarium::bootstrap::overlayWorkload(
-                                            "KERNARIUM_GEEKBENCH_ERROR",
-                                            geekbenchWorkload));
-                                } else {
-                                    std::string_view modeSetup;
-                                    if (bootMode == ConsoleBootMode::aquarium)
-                                        modeSetup = kernarium::aquarium::setup;
-                                    if (bootMode == ConsoleBootMode::cts)
-                                        modeSetup = derivativeRootfs
-                                            ? ctsCampaign->ext4Setup
-                                            : ctsCampaign->erofsSetup;
-                                    bootstrap =
-                                        kernarium::bootstrap::desktop(modeSetup);
-                                }
-                                bootstrap.push_back('\n');
-                                const int error = host_->send(
-                                    bootstrap.data(), bootstrap.size());
-                                bootstrapDelivered = error == 0;
-                                if (!bootstrapDelivered)
-                                    std::fprintf(
-                                        stderr,
-                                        "Kernarium: console bootstrap write "
-                                        "failed: %s\n",
-                                        std::strerror(error));
-                                if (bootstrapDelivered)
-                                    std::fprintf(
-                                        stderr,
-                                        "Kernarium: %s bootstrap delivered\n",
-                                        bootMode == ConsoleBootMode::guestScript
-                                            ? "guest script"
-                                            : bootMode == ConsoleBootMode::geekbench
-                                            ? "Geekbench"
-                                            : bootMode ==
-                                                    ConsoleBootMode::discardBenchmark
-                                            ? "discard benchmark"
-                                            : bootMode == ConsoleBootMode::cts
-                                            ? "CTS"
-                                            : bootMode == ConsoleBootMode::aquarium
-                                            ? "Aquarium"
-                                            : "desktop");
-                                observed.clear();
+                        std::lock_guard outputLock(consoleStdoutMutex);
+                        std::string_view output(
+                            buffer, static_cast<std::size_t>(received));
+                        while (!output.empty()) {
+                            const ssize_t written = write(
+                                STDOUT_FILENO,
+                                output.data(),
+                                output.size());
+                            if (written > 0) {
+                                output.remove_prefix(
+                                    static_cast<std::size_t>(written));
+                            } else if (written < 0 && errno == EINTR) {
+                                continue;
+                            } else {
+                                break;
                             }
                         }
                         continue;
@@ -640,7 +430,7 @@ public:
 
     ~ConsoleBridge()
     {
-        /* A bootstrap the relay is still writing ends with the input, and the
+        /* A console write still in progress ends with the input, and the
          * relay's receive ends when the guest end closes. */
         host_->stop();
         if (guest_ >= 0) {
@@ -668,251 +458,6 @@ public:
 private:
     int guest_ {-1};
     std::optional<kernarium::console::HostEnd> host_;
-    std::thread relay_;
-};
-
-class CtsArtifactBridge final {
-public:
-    CtsArtifactBridge()
-    {
-        int descriptors[2] {-1, -1};
-        if (::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) != 0) {
-            throw std::runtime_error(
-                "CTS artifact socketpair failed: " +
-                std::string(std::strerror(errno)));
-        }
-        try {
-            service_ = std::make_unique<
-                uml::console::InProcessConsoleService>(
-                descriptors[0],
-                std::string {
-                    uml::console::protocol::hostSerialPortName});
-            ::close(descriptors[0]);
-            descriptors[0] = -1;
-            host_ = descriptors[1];
-            descriptors[1] = -1;
-            relay_ = std::thread([this] { relay(); });
-        } catch (...) {
-            if (descriptors[0] >= 0)
-                ::close(descriptors[0]);
-            if (descriptors[1] >= 0)
-                ::close(descriptors[1]);
-            if (host_ >= 0) {
-                ::close(host_);
-                host_ = -1;
-            }
-            if (service_)
-                service_->stop();
-            throw;
-        }
-    }
-
-    ~CtsArtifactBridge()
-    {
-        if (service_)
-            service_->stop();
-        if (host_ >= 0)
-            (void)::shutdown(host_, SHUT_RDWR);
-        if (relay_.joinable())
-            relay_.join();
-        if (host_ >= 0)
-            ::close(host_);
-    }
-
-    CtsArtifactBridge(const CtsArtifactBridge&) = delete;
-    CtsArtifactBridge& operator=(const CtsArtifactBridge&) = delete;
-
-    [[nodiscard]] std::string takeConnectionName()
-    {
-        return service_->takeConnectionName();
-    }
-
-private:
-    /* One frame is one base64 line plus its short header. The GL driver
-     * encodes 1 KiB lines and the Vulkan driver 3 KiB ones, so a bound below
-     * the larger of the two rejects every Vulkan artifact past the first
-     * single-chunk file. */
-    static constexpr std::size_t maximumFrameBytes = 4096U;
-
-    [[nodiscard]] static bool decimal(std::string_view text) noexcept
-    {
-        return !text.empty() && std::ranges::all_of(
-            text, [](char character) {
-                return character >= '0' && character <= '9';
-            });
-    }
-
-    [[nodiscard]] static bool lowercaseHex(
-        std::string_view text,
-        std::size_t expectedSize) noexcept
-    {
-        return text.size() == expectedSize && std::ranges::all_of(
-            text, [](char character) {
-                return (character >= '0' && character <= '9') ||
-                    (character >= 'a' && character <= 'f');
-            });
-    }
-
-    [[nodiscard]] static bool base64(std::string_view text) noexcept
-    {
-        /* One chunk is one encoded line: the GL driver writes 1 KiB lines and
-         * the Vulkan driver 3 KiB ones. */
-        return !text.empty() && text.size() <= 3072U &&
-            std::ranges::all_of(text, [](char character) {
-                return (character >= 'A' && character <= 'Z') ||
-                    (character >= 'a' && character <= 'z') ||
-                    (character >= '0' && character <= '9') ||
-                    character == '+' || character == '/' || character == '=';
-            });
-    }
-
-    [[nodiscard]] static bool allowedArtifact(
-        std::string_view name) noexcept
-    {
-        for (const std::string_view allowed : {
-                 "renderer.txt",
-                 "selected.txt",
-                 "expected.txt",
-                 /* A campaign whose device cannot hold every enumerated case
-                  * reports which ones it left out, and under which reason. */
-                 "skipped.txt",
-                 "results.qpa",
-                 "summary.txt"}) {
-            if (name == allowed)
-                return true;
-        }
-        /* A campaign that checkpoints its log ships it as fixed-width
-         * numbered segments, which the host reassembles in order. */
-        constexpr std::string_view segmentPrefix = "results.qpa.";
-        constexpr std::size_t segmentDigits = 4U;
-        if (name.size() != segmentPrefix.size() + segmentDigits ||
-            name.substr(0, segmentPrefix.size()) != segmentPrefix) {
-            return false;
-        }
-        return decimal(name.substr(segmentPrefix.size()));
-    }
-
-    [[nodiscard]] static std::vector<std::string_view> split(
-        std::string_view frame)
-    {
-        std::vector<std::string_view> fields;
-        while (true) {
-            const auto separator = frame.find('|');
-            fields.push_back(frame.substr(0, separator));
-            if (separator == std::string_view::npos)
-                break;
-            frame.remove_prefix(separator + 1U);
-        }
-        return fields;
-    }
-
-    [[nodiscard]] static std::string acknowledgement(
-        std::string_view frame)
-    {
-        const auto fields = split(frame);
-        if (fields.size() == 5U &&
-            fields[0] == "UML_CTS_ARTIFACT_BEGIN" &&
-            allowedArtifact(fields[1]) &&
-            fields[2] == "gzip+base64" && decimal(fields[3]) &&
-            lowercaseHex(fields[4], 64U)) {
-            return "UML_CTS_ARTIFACT_ACK|" + std::string {fields[1]} +
-                "|begin\n";
-        }
-        if (fields.size() == 4U &&
-            fields[0] == "UML_CTS_ARTIFACT_CHUNK" &&
-            allowedArtifact(fields[1]) && decimal(fields[2]) &&
-            base64(fields[3])) {
-            return "UML_CTS_ARTIFACT_ACK|" + std::string {fields[1]} +
-                "|" + std::string {fields[2]} + "\n";
-        }
-        if (fields.size() == 3U &&
-            fields[0] == "UML_CTS_ARTIFACT_END" &&
-            allowedArtifact(fields[1]) && decimal(fields[2])) {
-            return "UML_CTS_ARTIFACT_ACK|" + std::string {fields[1]} +
-                "|end\n";
-        }
-        return {};
-    }
-
-    [[nodiscard]] static bool writeAll(
-        int descriptor,
-        std::string_view bytes) noexcept
-    {
-        while (!bytes.empty()) {
-            const ssize_t written = ::write(
-                descriptor, bytes.data(), bytes.size());
-            if (written > 0) {
-                bytes.remove_prefix(static_cast<std::size_t>(written));
-            } else if (written < 0 && errno == EINTR) {
-                continue;
-            } else {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    void report(std::string_view record) noexcept
-    {
-        std::lock_guard outputLock(consoleStdoutMutex);
-        (void)writeAll(STDOUT_FILENO, record);
-    }
-
-    void relay() noexcept
-    {
-        (void)::pthread_setname_np("uml-cts-artifacts");
-        std::string pending;
-        std::size_t frames = 0;
-        std::size_t acknowledgements = 0;
-        bool valid = true;
-        char buffer[4096];
-        for (;;) {
-            const ssize_t received = ::recv(host_, buffer, sizeof(buffer), 0);
-            if (received > 0) {
-                pending.append(buffer, static_cast<std::size_t>(received));
-                while (true) {
-                    const auto newline = pending.find('\n');
-                    if (newline == std::string::npos)
-                        break;
-                    std::string frame = pending.substr(0, newline);
-                    pending.erase(0, newline + 1U);
-                    if (!frame.empty() && frame.back() == '\r')
-                        frame.pop_back();
-                    const std::string ack = acknowledgement(frame);
-                    if (frame.size() > maximumFrameBytes || ack.empty()) {
-                        valid = false;
-                        break;
-                    }
-                    report(frame + "\n");
-                    ++frames;
-                    if (!writeAll(host_, ack)) {
-                        valid = false;
-                        break;
-                    }
-                    ++acknowledgements;
-                }
-                if (!valid || pending.size() > maximumFrameBytes)
-                    break;
-                continue;
-            }
-            if (received < 0 && errno == EINTR)
-                continue;
-            if (received < 0 && errno != ECONNRESET)
-                valid = false;
-            break;
-        }
-        if (!pending.empty())
-            valid = false;
-        if (!valid)
-            report("UML_VK_CTS_ERROR: invalid artifact relay frame\n");
-        report(
-            "UML_VK_CTS_RELAY|frames=" + std::to_string(frames) +
-            "|acks=" + std::to_string(acknowledgements) +
-            "|valid=" + std::to_string(valid ? 1U : 0U) + "\n");
-    }
-
-    int host_ {-1};
-    std::unique_ptr<uml::console::InProcessConsoleService> service_;
     std::thread relay_;
 };
 
@@ -972,56 +517,6 @@ bool immutableExt4Rootfs(const char* path)
     return (permissions & writable) == std::filesystem::perms::none;
 }
 
-bool environmentEnabled(const char* name)
-{
-    const char* value = std::getenv(name);
-    return value != nullptr && value[0] != '\0' && value[0] != '0';
-}
-
-const kernarium::cts::Campaign* findCtsCampaign(
-    std::string_view identifier) noexcept
-{
-    for (const auto& campaign : kernarium::cts::campaigns) {
-        if (campaign.identifier == identifier)
-            return &campaign;
-    }
-    return nullptr;
-}
-
-bool validGeekbenchWorkloads(std::string_view workloads)
-{
-    if (workloads.empty() || workloads.size() > 256U)
-        return false;
-    bool needsDigit = true;
-    for (const char character : workloads) {
-        if (character >= '0' && character <= '9') {
-            needsDigit = false;
-        } else if (character == ',' && !needsDigit) {
-            needsDigit = true;
-        } else {
-            return false;
-        }
-    }
-    return !needsDigit;
-}
-
-/* A guest script crosses into the guest as shell single-quoted pieces, so it is
- * accepted only as base64 and never as text a quote could escape from. */
-bool validGuestScript(std::string_view script)
-{
-    if (script.empty() || script.size() > 65536U)
-        return false;
-    for (const char character : script) {
-        const bool allowed =
-            (character >= 'A' && character <= 'Z') ||
-            (character >= 'a' && character <= 'z') ||
-            (character >= '0' && character <= '9') ||
-            character == '+' || character == '/' || character == '=';
-        if (!allowed)
-            return false;
-    }
-    return script.size() % 4U == 0U;
-}
 #endif
 
 /* The translating engine to run guest userspace under.
@@ -1085,6 +580,97 @@ std::string fbconFontArgument(uint32_t dotsPerInch)
         ? "fbcon=font:TER16x32"
         : "fbcon=font:VGA8x16";
 }
+
+/* A Linux guest boots the embedded base archive and a segment holding the
+ * generic per-run /init and these parameters: the image read-only beneath an
+ * overlay whose writable layer is a fresh ext4 filesystem on the overlay
+ * disk, ubd1, and then the image's own init. Kernarium/README.md and
+ * tools/rootfs/boot-ramdisk/README.md own the contract. */
+std::string bootParameters(bool ext4Image)
+{
+    std::string parameters {"UML_BOOT_ROOT=/dev/ubda\nUML_BOOT_ROOT_TYPE="};
+    parameters.append(ext4Image ? "ext4" : "erofs");
+    parameters.append(
+        "\nUML_BOOT_UPPER=ext4\n"
+        "UML_BOOT_UPPER_DEVICE=/dev/ubdb\n"
+        "UML_BOOT_ENTRY=/sbin/init\n");
+    return parameters;
+}
+
+/* The run's initrd, a file in the application's temporary directory that the
+ * kernel reads while it boots. The process runs one guest, so an initrd an
+ * earlier, killed process left behind is removed first; this one is removed
+ * when the run returns. */
+class RunInitrd final {
+public:
+    /* `payload` is a padded newc segment appended after the runtime's own,
+     * whose files replace the runtime's. */
+    RunInitrd(bool ext4Image, std::span<const std::byte> payload)
+    {
+        const std::filesystem::path directory {
+            NSTemporaryDirectory().fileSystemRepresentation};
+        std::error_code error;
+        for (const auto& entry :
+             std::filesystem::directory_iterator(directory, error)) {
+            if (entry.path().filename().string().starts_with(prefix)) {
+                std::error_code ignored;
+                std::filesystem::remove(entry.path(), ignored);
+            }
+        }
+        path_ = directory /
+            (std::string {prefix} + std::to_string(getpid()) + ".cpio");
+        /* A kernel argument ends at whitespace and treats a double quote as
+         * quoting. */
+        for (const unsigned char character : path_.string()) {
+            if (character <= ' ' || character == '"' || character >= 0x7f) {
+                throw std::runtime_error(
+                    "the temporary directory cannot be named on the kernel "
+                    "command line: " + path_.string());
+            }
+        }
+        uml::boot::InitramfsArchive archive;
+        archive.addFile(
+            "/init",
+            std::as_bytes(std::span {
+                uml_boot_init_start,
+                static_cast<std::size_t>(
+                    uml_boot_init_end - uml_boot_init_start)}),
+            0755,
+            0);
+        const std::string parameters = bootParameters(ext4Image);
+        archive.addFile(
+            "/boot.env",
+            std::as_bytes(std::span {parameters.data(), parameters.size()}),
+            0644,
+            0);
+        auto initrd = uml::boot::composeInitrd(
+            std::as_bytes(std::span {
+                uml_boot_base_start,
+                static_cast<std::size_t>(
+                    uml_boot_base_end - uml_boot_base_start)}),
+            archive.serialize());
+        initrd.insert(initrd.end(), payload.begin(), payload.end());
+        uml::boot::writeNewFile(path_, initrd);
+    }
+
+    ~RunInitrd()
+    {
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+    }
+
+    RunInitrd(const RunInitrd&) = delete;
+    RunInitrd& operator=(const RunInitrd&) = delete;
+
+    [[nodiscard]] std::string kernelArgument() const
+    {
+        return "initrd=" + path_.string();
+    }
+
+private:
+    static constexpr std::string_view prefix {"kernarium-initrd-"};
+    std::filesystem::path path_;
+};
 #endif
 
 } // namespace
@@ -1147,7 +733,6 @@ int runtimeRun(
         const auto androidBoot = uml::android::selectBoot(
             androidDisk,
             static_cast<uml::android::BootMode>(boot->android_boot_mode));
-        const bool derivativeRootfs = false;
 #else
         const char* rootfsPath = boot->rootfs_path;
         const char* overlayPath = boot->overlay_path;
@@ -1235,134 +820,41 @@ int runtimeRun(
              * Android's init turns SysRq off, so state it here. */
             "sysrq_always_enabled",
         };
-        /* Only a CTS campaign creates the artifact relay, and only the Linux
-         * guest can request one, but the device argument below is shared. */
-        std::unique_ptr<CtsArtifactBridge> ctsArtifactBridge;
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-        const ConsoleBootMode bootMode = ConsoleBootMode::android;
-        const kernarium::cts::Campaign* ctsCampaign = nullptr;
-        const std::string geekbenchWorkloads;
-        const std::string discardBenchmarkMode;
-        const std::string guestScript;
-        ConsoleBridge consoleBridge {
-            bootMode,
-            geekbenchWorkloads,
-            discardBenchmarkMode,
-            guestScript,
-            ctsCampaign,
-            derivativeRootfs};
+        ConsoleBridge consoleBridge;
         /* Android tags heap pointers, so the guest must run with the top byte
          * ignored exactly as it does on the macOS Android product. */
         arguments.emplace_back("--guest-top-byte-ignore");
         arguments.emplace_back(consoleBridge.kernelArgument());
 #else
-        const bool aquarium = environmentEnabled("KERNARIUM_WEBGL_AQUARIUM");
-        const bool geekbench = environmentEnabled("KERNARIUM_GEEKBENCH");
-        const char* discardBenchmarkEnvironment =
-            std::getenv("KERNARIUM_DISCARD_BENCHMARK");
-        const std::string discardBenchmarkMode =
-            discardBenchmarkEnvironment == nullptr
-            ? std::string {}
-            : std::string {discardBenchmarkEnvironment};
-        const bool discardBenchmark = !discardBenchmarkMode.empty();
-        const char* guestScriptEnvironment =
-            std::getenv("KERNARIUM_GUEST_SCRIPT");
-        const std::string guestScript = guestScriptEnvironment == nullptr
-            ? std::string {}
-            : std::string {guestScriptEnvironment};
-        const bool guestScriptRequested = !guestScript.empty();
-        const char* ctsCampaignEnvironment =
-            std::getenv("KERNARIUM_CTS_CAMPAIGN");
-        const bool ctsRequested = ctsCampaignEnvironment != nullptr &&
-            ctsCampaignEnvironment[0] != '\0';
-        const kernarium::cts::Campaign* ctsCampaign = ctsRequested
-            ? findCtsCampaign(ctsCampaignEnvironment)
-            : nullptr;
-        const char* geekbenchWorkloadsEnvironment =
-            std::getenv("KERNARIUM_GEEKBENCH_WORKLOADS");
-        const std::string geekbenchWorkloads =
-            geekbenchWorkloadsEnvironment == nullptr
-            ? std::string {}
-            : std::string {geekbenchWorkloadsEnvironment};
-        if (ctsRequested && ctsCampaign == nullptr) {
-            std::fputs(
-                "Kernarium: unknown CTS campaign identifier\n", stderr);
-            return -UML_EMULATOR_INVALID_ARGUMENT;
-        }
-        if (discardBenchmark &&
-            discardBenchmarkMode != "batched-128m" &&
-            discardBenchmarkMode != "fragmented-32k") {
-            std::fputs(
-                "Kernarium: invalid discard benchmark mode\n", stderr);
-            return -UML_EMULATOR_INVALID_ARGUMENT;
-        }
-        const unsigned int specialModeCount =
-            static_cast<unsigned int>(aquarium) +
-            static_cast<unsigned int>(geekbench) +
-            static_cast<unsigned int>(discardBenchmark) +
-            static_cast<unsigned int>(guestScriptRequested) +
-            static_cast<unsigned int>(ctsRequested);
-        if (specialModeCount > 1U) {
-            std::fputs(
-                "Kernarium: Aquarium, CTS, Geekbench, guest script, and "
-                "discard benchmark modes are mutually exclusive\n",
-                stderr);
-            return -UML_EMULATOR_INVALID_ARGUMENT;
-        }
-        if (guestScriptRequested && !validGuestScript(guestScript)) {
-            std::fputs(
-                "Kernarium: a guest script must be base64 of at most 64 KiB\n",
-                stderr);
-            return -UML_EMULATOR_INVALID_ARGUMENT;
-        }
-        if (!geekbenchWorkloads.empty() &&
-            (!geekbench || !validGeekbenchWorkloads(geekbenchWorkloads))) {
-            std::fputs(
-                "Kernarium: targeted workloads require Geekbench mode and a "
-                "comma-separated numeric list\n",
-                stderr);
-            return -UML_EMULATOR_INVALID_ARGUMENT;
-        }
-        const ConsoleBootMode bootMode = geekbench
-            ? ConsoleBootMode::geekbench
-            : guestScriptRequested ? ConsoleBootMode::guestScript
-            : discardBenchmark ? ConsoleBootMode::discardBenchmark
-            : ctsRequested ? ConsoleBootMode::cts
-            : aquarium ? ConsoleBootMode::aquarium
-            : ConsoleBootMode::desktop;
-        ConsoleBridge consoleBridge {
-            bootMode,
-            geekbenchWorkloads,
-            discardBenchmarkMode,
-            guestScript,
-            ctsCampaign,
-            derivativeRootfs};
-        if (ctsCampaign != nullptr && ctsCampaign->namedSerialArtifacts)
-            ctsArtifactBridge = std::make_unique<CtsArtifactBridge>();
-        if (aquarium)
-            std::fputs(
-                "Kernarium: WebGL Aquarium verification requested\n",
-                stderr);
-        if (ctsRequested) {
+#if KERNARIUM_AUTOMATION_HARNESS
+        const auto automation =
+            kernarium::harness::AutomationBoot::fromEnvironment(
+                consoleStdoutMutex);
+        if (automation)
             std::fprintf(
                 stderr,
-                "Kernarium: VK-GL-CTS campaign requested: %s\n",
-                ctsCampaignEnvironment);
-        }
-        if (geekbench)
-            std::fputs("Kernarium: no-systemd Geekbench requested\n", stderr);
-        if (guestScriptRequested)
-            std::fprintf(
-                stderr,
-                "Kernarium: measured guest script requested: %zu base64 "
-                "bytes\n",
-                guestScript.size());
-        if (discardBenchmark)
-            std::fprintf(
-                stderr,
-                "Kernarium: UBD discard benchmark requested: %s\n",
-                discardBenchmarkMode.c_str());
-        arguments.emplace_back("init=/bin/sh");
+                "Kernarium: automation boot with a %zu-byte payload and "
+                "target %s\n",
+                automation->payload().size(),
+                automation->systemdUnit().empty()
+                    ? "graphical.target"
+                    : automation->systemdUnit().c_str());
+        const RunInitrd initrd {
+            derivativeRootfs,
+            automation ? automation->payload()
+                       : std::span<const std::byte> {}};
+        const std::string systemdUnit =
+            automation && !automation->systemdUnit().empty()
+            ? automation->systemdUnit()
+            : std::string {"graphical.target"};
+#else
+        const RunInitrd initrd {derivativeRootfs, {}};
+        const std::string systemdUnit {"graphical.target"};
+#endif
+        ConsoleBridge consoleBridge;
+        arguments.emplace_back(initrd.kernelArgument());
+        arguments.emplace_back(uml::boot::missingInitArgument);
         arguments.emplace_back("console=tty0");
         arguments.emplace_back("console=ttyS0");
         arguments.emplace_back(fbconFontArgument(dotsPerInch));
@@ -1399,12 +891,12 @@ int runtimeRun(
                 "virtio_uml.device=" + videoService->takeConnectionName() + ":" +
                 std::to_string(uml::video::deviceId));
         }
-        if (ctsArtifactBridge) {
-            arguments.emplace_back(
-                "virtio_uml.device=" +
-                ctsArtifactBridge->takeConnectionName() + ":" +
-                std::to_string(uml::console::protocol::deviceId));
+#if KERNARIUM_AUTOMATION_HARNESS && !KERNARIUM_RUNTIME_ANDROID_GUEST
+        if (automation) {
+            if (auto relay = automation->relayDeviceArgument(); !relay.empty())
+                arguments.emplace_back(std::move(relay));
         }
+#endif
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
         /* The bundle GPT is the directly writable persistent disk. Its selected
          * ramdisk is exposed from the same file without a standalone image. */
@@ -1419,38 +911,12 @@ int runtimeRun(
         appendKernelCommandLine(
             arguments, boot->android_command_line_path, dotsPerInch);
 #else
-        if (derivativeRootfs) {
+        /* A sealed ext4 derivative is attached read-only; the per-run /init
+         * mounts either kind of image beneath the overlay. */
+        if (derivativeRootfs)
             arguments.emplace_back("ubd0cr=" + std::string(rootfsPath));
-            arguments.emplace_back("root=/dev/ubda");
-            arguments.emplace_back("rootfstype=ext4");
-            arguments.emplace_back("ro");
-        }
-        if (!geekbench && !guestScriptRequested) {
-            /* A CTS campaign owns the display itself: its launcher starts
-             * Xorg on VT 1 and asks the stack for a GL context through it.
-             * The image's display manager claims its own VT as soon as
-             * graphical.target is reached, Xorg suspends AIGLX for that
-             * switch, and the pending GL query then never returns. The
-             * campaign therefore boots the session-free target the macOS
-             * lane boots, with the display manager and the fixed-VT getties
-             * masked. The container runtime is masked beside them because a
-             * campaign that powers off while Docker is still loading its BPF
-             * programs leaves the teardown blocked. */
-            arguments.emplace_back(
-                ctsRequested ? "systemd.unit=multi-user.target"
-                             : "systemd.unit=graphical.target");
-            if (ctsRequested) {
-                arguments.emplace_back(
-                    "systemd.mask=display-manager.service");
-                arguments.emplace_back("systemd.mask=sddm.service");
-                arguments.emplace_back("systemd.mask=getty@tty0.service");
-                arguments.emplace_back("systemd.mask=getty@tty1.service");
-                arguments.emplace_back("systemd.mask=docker.service");
-                arguments.emplace_back("systemd.mask=docker.socket");
-                arguments.emplace_back("systemd.mask=containerd.service");
-            }
-            arguments.emplace_back("plymouth.enable=0");
-        }
+        arguments.emplace_back("systemd.unit=" + systemdUnit);
+        arguments.emplace_back("plymouth.enable=0");
 #endif
         const uml_emulator_config config {
             .abi_version = UML_EMULATOR_ABI_VERSION,

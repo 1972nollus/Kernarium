@@ -1,9 +1,11 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Desktop policy the unified KDE image (rootfs.erofs, or an ext4 derivative
-# sealed from it) does not carry itself. A launcher installs this file as a
-# payload and runs it as root on the disposable overlay before the display
-# manager starts. ../README.md owns the contract.
+# sealed from it) does not carry itself. The desktop image derivation runs it
+# once in the extracted image to bake it in; for an image without it, the
+# macOS KDE launcher installs this file as a payload and runs it as root on
+# the disposable overlay before the display manager starts. ../../README.md
+# owns the contract.
 set -eu
 
 getent passwd uml >/dev/null
@@ -11,8 +13,14 @@ usermod -a -G video,render,input uml
 # /dev/tty0 is the active-VT alias, while tty1 is the VT SDDM initially claims
 # before starting the Wayland session. A getty on either device can cancel
 # display-manager activation or follow the compositor onto its VT. The
-# attachable ttyS0 socket remains the interactive recovery console.
-systemctl mask --now getty@tty0.service getty@tty1.service
+# attachable ttyS0 socket remains the interactive recovery console. On a
+# running system the gettys also stop now; systemctl refuses --now in the
+# chroot of an image derivation, where nothing runs.
+if [ -d /run/systemd/system ]; then
+    systemctl mask --now getty@tty0.service getty@tty1.service
+else
+    systemctl mask getty@tty0.service getty@tty1.service
+fi
 
 # install -d gives the requested owner only to the directories it names, so
 # every parent below the home directory is named before its children. SDDM

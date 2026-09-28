@@ -24,10 +24,10 @@ border-colour topic itself.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_custom_border_lowering.c
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 11af87df26b9df6843a8d2367f75c7bbac29eede..4fe0ae30b12316be5806375cf64f721bdee66725 100644
+index 451affe364c21a7360a3d3d2dffbd0cfc23b18bf..ae9aff210052341a104bbc359442ed00ec23e368 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -642,6 +642,28 @@ if with_tests
+@@ -676,6 +676,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

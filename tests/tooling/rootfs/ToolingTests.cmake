@@ -48,3 +48,10 @@ if(TARGET uml-initramfs)
         LABELS rootfs;boot
         TIMEOUT 60)
 endif()
+
+uml_add_tooling_test(
+    NAME rootfs-desktop-image-descriptor
+    COMMAND ${Python3_EXECUTABLE} -B
+        ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_desktop_images.py
+    LABELS rootfs;audit
+    TIMEOUT 30)

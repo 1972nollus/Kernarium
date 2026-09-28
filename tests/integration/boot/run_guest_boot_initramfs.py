@@ -6,12 +6,15 @@ The launcher appends a per-run segment (its built-in /init, /boot.env and
 generic /init mounts the EROFS image beneath a tmpfs overlay, installs the
 payload, replacing a file the image carries and leaving the attributes of a
 directory the image already has, leaves both layers visible and switches root
-into the payload's entry program as PID 1. The
-remaining cases require every broken boot to stop with a named reason and a
-nonzero exit instead of reaching the image's own init: the base archive alone,
-a segment appended without the base's padding, an initrd the kernel never
-loads, and an invalid /boot.env. The contract is
-tools/rootfs/boot-ramdisk/README.md.
+into the payload's entry program as PID 1. The same payload must boot over an
+ext4 writable layer formatted on a second block device, with the container
+state bound from that filesystem, when a second segment appended after the
+first replaces its /boot.env, and the harness session must run a workload
+entry and power the guest off after it. The remaining cases require every broken boot
+to stop with a named reason and a nonzero exit instead of reaching the image's
+own init: the base archive alone, a segment appended without the base's
+padding, an initrd the kernel never loads, and an invalid /boot.env. The
+contract is tools/rootfs/boot-ramdisk/README.md.
 """
 
 from __future__ import annotations
@@ -29,6 +32,10 @@ import uuid
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 GENERIC_INIT = REPOSITORY / "tools" / "rootfs" / "boot-ramdisk" / "init"
+SESSION = REPOSITORY / "tools" / "rootfs" / "boot-ramdisk" / "session"
+SESSION_PATH = "/usr/local/libexec/uml-session"
+WORKLOAD_PATH = "/usr/local/libexec/uml-boot-workload"
+WORKLOAD_STATUS = 7
 MISSING_INIT = "init=/uml-per-run-initramfs-did-not-run"
 BOOT_TIMEOUT_SECONDS = 180
 PROBE_PATH = "/uml-boot-probe"
@@ -40,8 +47,24 @@ REPLACED_PATH = "/etc/hostname"
 KEPT_DIRECTORY = "/var/tmp"
 KEPT_DIRECTORY_TOKEN_PATH = f"{KEPT_DIRECTORY}/uml-boot-initramfs-test/token"
 
-# Runs as PID 1 in the new root, with the image's own shell.
-PROBE = f"""#!/bin/sh
+# What the writable layer looks like in the new root, by its /boot.env.
+TMPFS_STATE_CHECKS = """check state-visible grep -q '^tmpfs /.uml-state tmpfs ' /proc/mounts
+"""
+EXT4_STATE_CHECKS = """check state-visible grep -q '^/dev/ubdb /.uml-state ext4 ' /proc/mounts
+check state-journal sh -c 'dumpe2fs -h /dev/ubdb 2>/dev/null | grep -q has_journal'
+check docker-state grep -q '^/dev/ubdb /var/lib/docker ext4 ' /proc/mounts
+check containerd-state grep -q '^/dev/ubdb /var/lib/containerd ext4 ' /proc/mounts
+check container-state-mode [ "$(stat -c %a /.uml-state/docker)" = 711 ]
+"""
+EXT4_BOOT_ENV = (
+    f"UML_BOOT_UPPER=ext4\nUML_BOOT_UPPER_DEVICE=/dev/ubdb\n"
+    f"UML_BOOT_ENTRY={PROBE_PATH}\n"
+)
+EXT4_DEVICE_BYTES = 256 << 20
+
+# Runs as PID 1 in the new root, with the image's own shell. Each line of
+# STATE_CHECKS checks the writable layer this boot asked for.
+PROBE_TEMPLATE = f"""#!/bin/sh
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 failures=
@@ -57,7 +80,7 @@ check overlay-root grep -q \\
 	/proc/mounts
 check erofs-lower [ -d /sys/fs/erofs/ubda ]
 check lower-visible grep -q '^/dev/ubda /.uml-lower erofs ro[, ]' /proc/mounts
-check state-visible grep -q '^tmpfs /.uml-state tmpfs ' /proc/mounts
+STATE_CHECKS
 check initramfs-gone [ ! -e /boot.env ]
 token=$(cat {TOKEN_PATH} 2>/dev/null)
 check replaced-file [ "$(cat {REPLACED_PATH})" = "$token" ]
@@ -73,6 +96,22 @@ else
 fi
 sync
 poweroff -f
+"""
+
+
+def probe_text(state_checks: str) -> str:
+    return PROBE_TEMPLATE.replace("STATE_CHECKS\n", state_checks)
+
+
+# A workload the session runs as a child of PID 1, in the runtime
+# filesystems it prepared; its status must reach the console.
+WORKLOAD = f"""#!/bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+if [ "$$" != 1 ] && grep -q '^tmpfs /run tmpfs ' /proc/mounts && \\
+	grep -q '^tmpfs /tmp tmpfs ' /proc/mounts; then
+	echo "UML_BOOT_WORKLOAD:$(cat {TOKEN_PATH})"
+fi
+exit {WORKLOAD_STATUS}
 """
 
 
@@ -166,7 +205,7 @@ def run(arguments: argparse.Namespace) -> None:
         scratch.mkdir()
         token = uuid.uuid4().hex
         probe = work / "probe"
-        probe.write_text(PROBE)
+        probe.write_text(probe_text(TMPFS_STATE_CHECKS))
         probe.chmod(0o755)
         token_file = work / "token"
         token_file.write_text(token + "\n")
@@ -235,6 +274,45 @@ def run(arguments: argparse.Namespace) -> None:
         require_probe(status, output, token, f"{MISSING_INIT} ")
         print("ok: uml-initramfs writes an initrd that boots the same payload")
 
+        # A second segment appended to the whole initrd replaces the first
+        # one's files, as a host payload does on Kernarium: here /boot.env
+        # and the probe, which then expects the ext4 writable layer.
+        ext4_probe = work / "ext4-probe"
+        ext4_probe.write_text(probe_text(EXT4_STATE_CHECKS))
+        ext4_probe.chmod(0o755)
+        ext4_env = work / "ext4.env"
+        ext4_env.write_text(EXT4_BOOT_ENV)
+        second = work / "second.cpio"
+        subprocess.run(
+            [
+                str(tool),
+                f"--output={second}",
+                f"--file=/boot.env={ext4_env}",
+                f"--file=/payload{PROBE_PATH}={ext4_probe}",
+            ],
+            check=True,
+            timeout=60,
+        )
+        layered = work / "layered.cpio"
+        first = composed.read_bytes()
+        require(len(first) % 4 == 0, "a composed initrd is not padded", "")
+        layered.write_bytes(first + second.read_bytes())
+        device = work / "writable.img"
+        with device.open("wb") as handle:
+            handle.truncate(EXT4_DEVICE_BYTES)
+        status, output = launch(
+            emulator,
+            rootfs,
+            engine,
+            scratch,
+            [f"initrd={layered}", MISSING_INIT, f"ubd1={device}"],
+        )
+        require_probe(status, output, token, f"{MISSING_INIT} ")
+        print(
+            "ok: a later segment's /boot.env boots the overlay on a fresh ext4 "
+            "layer with the container state beside it"
+        )
+
         status, output = launch(
             emulator, rootfs, engine, scratch, [f"initrd={base}"]
         )
@@ -288,6 +366,43 @@ def run(arguments: argparse.Namespace) -> None:
             status, output, "UML_BOOT_ERROR:unknown /boot.env parameter: UML_BOOT_TYPO"
         )
         print("ok: an invalid /boot.env stops the per-run /init")
+
+        workload = work / "workload"
+        workload.write_text(WORKLOAD)
+        workload.chmod(0o755)
+        session_env = work / "uml-session.env"
+        session_env.write_text(
+            f"UML_SESSION_ENTRY={WORKLOAD_PATH}\n"
+            "UML_SESSION_RUNTIME_MOUNTS=1\n"
+        )
+        workload_boot = work / "workload-boot.env"
+        workload_boot.write_text(f"UML_BOOT_ENTRY={SESSION_PATH}\n")
+        status, output = launch(
+            emulator,
+            rootfs,
+            engine,
+            scratch,
+            [
+                f"--guest-file=/boot.env={workload_boot}",
+                f"--guest-file=/payload{SESSION_PATH}={SESSION}",
+                f"--guest-file=/payload/etc/uml-session.env={session_env}",
+                f"--guest-file=/payload{WORKLOAD_PATH}={workload}",
+                f"--guest-file=/payload{TOKEN_PATH}={token_file}",
+            ],
+        )
+        require(
+            f"UML_BOOT_WORKLOAD:{token}" in output,
+            "the session did not run the workload with its runtime mounts",
+            output,
+        )
+        require(
+            f"UML_SESSION_EXIT:{WORKLOAD_STATUS}" in output,
+            "the session did not report the workload's status",
+            output,
+        )
+        require("Kernel panic" not in output, "the guest panicked", output)
+        require(status == 0, f"the guest exited with status {status}", output)
+        print("ok: the session runs a workload entry and powers the guest off")
 
 
 def main() -> int:
