@@ -3,6 +3,9 @@
 
 .macro enter_push width, store, host_register
 	sub x25, x25, #(\width / 8)
+	.if \width == 32
+	mov w25, w25
+	.endif
 	mov x7, x25
 	page_cross_check (\width / 8), .Lx86_enter_push_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
@@ -52,6 +55,9 @@ gadget enter_\width
 	cmp w19, w8
 	b.hs .Lx86_enter_push_frame\@
 	sub x24, x24, #(\width / 8)
+	.if \width == 32
+	mov w24, w24
+	.endif
 	enter_load \width, \load, \load_register
 	enter_push \width, \store, \store_register
 	add w19, w19, #1
@@ -60,9 +66,18 @@ gadget enter_\width
 	mov x27, x26
 	enter_push \width, \store, \store_register
 .Lx86_enter_nesting_done\@:
+	/* A 32-bit frame writes EBP and ESP zero-extended, as every other
+	 * 32-bit stack operation does; its stack wraps at 4 GiB. */
+	.if \width == 32
+	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
+	.else
 	\store \store_register\()26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 5 * 8)]
+	.endif
 	ubfx x8, x23, #16, #16
 	sub x25, x25, x8
+	.if \width == 32
+	mov w25, w25
+	.endif
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	ubfx x8, x23, #56, #4
 	add x8, x22, x8
@@ -74,6 +89,7 @@ gadget enter_\width
 .endm
 
 enter_gadget 16, ldrh, w, strh, w
+enter_gadget 32, ldr, w, str, w
 enter_gadget 64, ldr, x, str, x
 
 .purgem enter_gadget

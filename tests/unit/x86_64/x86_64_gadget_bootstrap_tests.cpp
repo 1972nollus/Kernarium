@@ -3247,6 +3247,57 @@ read_test_sequences(void *context) noexcept
 			"compat32 INT 80h did not publish its syscall convention or EIP");
 }
 
+/* ENTER's default operand size follows the stack, so an i386 ENTER without a
+ * 0x66 prefix builds a 32-bit frame: EBP and each copied frame pointer are
+ * dwords, and ESP and EBP are written zero-extended. */
+[[nodiscard]] bool execute_compat32_enter_frames()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xc8, 0x10, 0x00, 0x00, // enter 0x10, 0
+		0xc8, 0x08, 0x00, 0x02, // enter 8, 2
+	});
+	memory.load(0x17c, {0xbb, 0xbb, 0xaa, 0xaa});
+	CpuState cpu{};
+	cpu.execution_mode = ExecutionMode::compat32;
+	cpu.gpr(Register::rsp) = 0x1'0000'0200ULL;
+	cpu.gpr(Register::rbp) = 0xffff'ffff'1234'5678ULL;
+	const auto flat = gadgets::build(memory, 0, ExecutionMode::compat32, 1);
+	if (!expect(flat.status == gadgets::BuildStatus::built,
+		"compat32 ENTER did not build"))
+		return false;
+	const auto flat_result = gadgets::execute(flat.program, cpu, memory, 1);
+	if (!expect(flat_result.event == uml::cpu::EngineEvent::continued &&
+			flat_result.retired_instructions == 1 && cpu.rip == 4,
+		"compat32 ENTER did not retire") ||
+		!expect(memory.dword(0x1fc) == 0x1234'5678 &&
+			cpu.gpr(Register::rbp) == 0x1fc &&
+			cpu.gpr(Register::rsp) == 0x1ec,
+			"compat32 ENTER did not build a 32-bit frame"))
+		return false;
+
+	cpu.gpr(Register::rsp) = 0x1'0000'0200ULL;
+	cpu.gpr(Register::rbp) = 0xffff'ffff'0000'0180ULL;
+	const auto nested = gadgets::build(memory, 4, ExecutionMode::compat32, 1);
+	if (!expect(nested.status == gadgets::BuildStatus::built,
+		"compat32 nested ENTER did not build"))
+		return false;
+	const auto nested_result =
+		gadgets::execute(nested.program, cpu, memory, 1);
+	return expect(nested_result.event ==
+			uml::cpu::EngineEvent::continued &&
+			nested_result.retired_instructions == 1 && cpu.rip == 8,
+		"compat32 nested ENTER did not retire") &&
+		expect(memory.dword(0x1fc) == 0x180 &&
+			memory.dword(0x1f8) == 0xaaaa'bbbb &&
+			memory.dword(0x1f4) == 0x1fc,
+			"compat32 nested ENTER did not copy dword frame pointers") &&
+		expect(cpu.gpr(Register::rbp) == 0x1fc &&
+			cpu.gpr(Register::rsp) == 0x1ec,
+			"compat32 nested ENTER did not set EBP and ESP");
+}
+
 [[nodiscard]] bool execute_compat32_pushfd_popfd()
 {
 	using namespace uml::cpu::x86_64;
@@ -6414,6 +6465,7 @@ int main()
 		decode_compat32_defaults() &&
 		execute_compat32_stack_and_int80() &&
 		execute_compat32_pushfd_popfd() &&
+		execute_compat32_enter_frames() &&
 		execute_compat32_legacy_segment_stack() &&
 		execute_long64_interrupt_return_stack_switch() &&
 		expose_consistent_xsave_cpuid_state() &&

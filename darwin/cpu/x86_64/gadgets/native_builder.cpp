@@ -5053,6 +5053,8 @@ struct FlagState final {
 	NativeEntry entry{};
 	if (instruction.destination.width == OperandWidth::word)
 		entry = native::uml_x86_64_gadget_enter_16;
+	else if (instruction.destination.width == OperandWidth::dword)
+		entry = native::uml_x86_64_gadget_enter_32;
 	else if (instruction.destination.width == OperandWidth::qword)
 		entry = native::uml_x86_64_gadget_enter_64;
 	else
