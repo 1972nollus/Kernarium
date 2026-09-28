@@ -13,8 +13,8 @@ remain unchanged. Generated codecs, SDK headers, and registry copies are not
 carried in the downstream patch series.
 
 The guest Mesa series ([`patches/mesa/series.tsv`](patches/mesa/series.tsv))
-carries downstream transport, reporting, and sharing correctness fixes; each
-topic's commit message states its contract. The renderer pairing and receipt
+is intentionally downstream and carries transport, reporting, and sharing
+correctness fixes; each topic's commit message states its contract. The renderer pairing and receipt
 gates below are what this image guarantees. How a guest shares a swapchain
 image with the renderer, including the native-heap image-extent limit, is in
 [`graphics.md`](../../../docs/graphics.md#vulkan).
