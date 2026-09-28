@@ -285,6 +285,34 @@ CPU fallback only when it is not a single-layer 2D texture of the display's
 Metal device, when it is smaller than the source, or when the rectangle is
 empty or reaches outside the source.
 
+Presentation storage follows the applied guest mode, not the host view. The
+host keeps three copies of the scanout rectangle at four bytes per pixel: the
+display's CPU framebuffer, the shared Metal texture the CPU path uploads it
+into, and the Virtio-GPU device's readback staging for a Virgl scanout. A
+4096x2160 mode therefore holds about 107 MB even while every frame takes the
+direct Metal path, where none of the three is used after the first frame. The
+view's drawables, three on iOS, stay sized to the view. A smaller applied mode
+frees the framebuffer and its texture within a second of the resize. The
+readback staging changes size only at the next Virgl scanout, so it keeps the
+larger size while a classic resource such as the fbcon framebuffer is shown.
+The balloon target follows the process's Metal and graphics memory, so growth
+there, including the guest's own scanout buffers, comes out of guest RAM, while
+the two CPU copies add to the footprint.
+
+On the iPad mini 6, Kernarium's EDID connector lists only the host's preferred
+mode, 1133x687 for a full-screen view, so a guest reaches 4096x2160 by setting
+a user-defined mode. There a double-buffered GBM client at 4096x2160, with a
+2048 MiB guest, raised the physical footprint from about 440 MiB to 685-700
+MiB. Its graphics footprint rose by about 97 MiB: two 35.7 MB guest scanout
+textures and the 4096x2160 fallback texture. The balloon took 96 MiB back from
+the guest. Footprint plus `os_proc_available_memory()` stays at the 2867 MiB
+(3007 MB) limit, and footprint plus the guest's available memory, the bound on
+further growth, rises by about 100 MiB to about 2400 MiB. The guest's
+4096x2160 buffers can stay allocated in the renderer for a minute or more after
+their client exits, until later rendering releases them. After three 4096x2160
+cycles the graphics footprint was back at its preferred-mode level, so they do
+not accumulate.
+
 Rendering and input use the same centered aspect-fit rectangle. AppKit and VNC
 map that rectangle into the fixed tablet range, while Kernarium maps it into
 the touchscreen range advertised at boot. VNC rounds the rectangle to whole
