@@ -15,6 +15,7 @@ namespace {
 std::atomic<AllocationSite> failure_site{};
 std::atomic_size_t failure_occurrence{};
 std::atomic_size_t backing_mappings{};
+std::atomic<AllocationObserver> allocation_observer{};
 std::array<std::atomic_size_t,
 	static_cast<std::size_t>(AllocationSite::count)> allocation_attempts{};
 
@@ -39,8 +40,16 @@ void clear_allocation_failure() noexcept
 	failure_occurrence.store(0, std::memory_order_release);
 }
 
+void set_allocation_observer(const AllocationObserver observer) noexcept
+{
+	allocation_observer.store(observer, std::memory_order_release);
+}
+
 void allocation_checkpoint(const AllocationSite site)
 {
+	if (const auto observer =
+		    allocation_observer.load(std::memory_order_acquire))
+		observer(site);
 	const auto site_index = static_cast<std::size_t>(site);
 	if (site_index < allocation_attempts.size())
 		allocation_attempts[site_index].fetch_add(1, std::memory_order_relaxed);

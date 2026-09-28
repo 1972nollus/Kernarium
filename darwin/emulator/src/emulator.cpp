@@ -353,7 +353,9 @@ public:
 			native_layout = ::uml::runtime::prepare_native_kernel_layout(
 				prepared.guest_memory_bytes);
 			if (!native_layout.valid)
-				return -UML_EMULATOR_INVALID_ARGUMENT;
+				return native_layout.reservation_failed ?
+					-UML_EMULATOR_RUNTIME_ERROR :
+					-UML_EMULATOR_INVALID_ARGUMENT;
 			layout_scope.emplace(native_layout);
 			if (!layout_scope->entered())
 				return -UML_EMULATOR_RUNTIME_ERROR;

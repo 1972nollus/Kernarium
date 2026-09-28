@@ -30,9 +30,8 @@ struct BootSelection {
 BootSelection selectBoot(const std::filesystem::path &disk,
 			 BootMode requestedMode);
 
-/* A UBD specification is comma and colon delimited, so a path carrying either
- * would silently name a different device configuration. Throws
- * std::invalid_argument, naming `label`, for such a path or an empty one. */
+/* Throws std::invalid_argument, naming `label`, for a path that a UBD kernel
+ * argument cannot carry as itself (see uml::block::usable_ubd_path). */
 void validateUbdPath(const std::filesystem::path &path, std::string_view label);
 
 /* Checks the writable Android disk: a regular file, not a link, that this

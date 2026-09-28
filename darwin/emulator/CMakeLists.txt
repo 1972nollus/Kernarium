@@ -16,6 +16,7 @@ function(_uml_add_emulator_boundary TARGET ADMISSION_TESTING)
     target_link_libraries(${TARGET} PRIVATE
         UML::ApiContract
         UML::DeviceGuestConsole
+        UML::DeviceUbdPath
         UML::GuestPageConfiguration
         UML::RuntimeContract)
     target_include_directories(${TARGET} PRIVATE

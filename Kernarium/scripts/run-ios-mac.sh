@@ -14,8 +14,8 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 ROOTFS="$ROOT_DIR/rootfs.erofs"
 # The device runtimes render through the Vulkan-experiment GPU stack, whose
 # guest reaches host-visible blob memory through the vhost-user shared-memory
-# aperture that only the Vulkan-experiment kernel line carries. The presets
-# select that product; stage the artifacts it names.
+# aperture. The presets select that product's GPU prefix and kernel
+# descriptors; stage the artifacts they name.
 # shellcheck disable=SC1091
 . "$ROOT_DIR/kernel/mainline-6.18/artifacts/vulkan-experiment-16k.env"
 ARTIFACT_16K=${UML_MAINLINE_618_KERNEL_ARTIFACT_16K_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}

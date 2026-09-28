@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "guest_console.hpp"
+#include "ubd_path.hpp"
 
 namespace uml::emulator {
 
@@ -272,7 +273,7 @@ EmulatorOptions prepare_emulator_options(
 	// host-file lock so parallel guests can share the image; EROFS supplies the
 	// read-only filesystem contract.
 	if (!has_prefix(prepared.arguments, "ubd0")) {
-		if (rootfs.empty()) {
+		if (!::uml::block::usable_ubd_path(rootfs)) {
 			prepared.valid = false;
 			return prepared;
 		}

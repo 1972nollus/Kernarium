@@ -102,48 +102,82 @@ public:
         updateChannelDescriptor();
     }
 
+    // A write can detach the channel's client too, when it finds the client
+    // gone. Its descriptor is closed then, which drops its registration, so
+    // the listener has to be watched again before anything else happens:
+    // otherwise the next client never wakes the device, and once one is
+    // accepted under the same descriptor number it is never registered.
+    void followChannel()
+    {
+        updateChannelDescriptor();
+    }
+
 private:
     void updateChannelDescriptor()
     {
         const int next = channel_.eventDescriptor();
         if (next < 0)
             throw std::runtime_error("Virtio serial channel has no event descriptor");
-        if (next == channelDescriptor_)
-            return;
-        if (channelDescriptor_ >= 0) {
-            struct kevent removal {};
-            EV_SET(
-                &removal,
-                static_cast<std::uintptr_t>(channelDescriptor_),
-                EVFILT_READ,
-                EV_DELETE,
-                0,
-                0,
-                nullptr);
-            if (::kevent(
-                    descriptor_.get(), &removal, 1, nullptr, 0, nullptr) != 0 &&
-                errno != ENOENT && errno != EBADF) {
-                throw std::runtime_error(
-                    "removing stale Virtio serial channel event failed");
+        if (next != channelDescriptor_) {
+            if (channelDescriptor_ >= 0) {
+                remove(channelDescriptor_, EVFILT_READ);
+                if (watchingForRoom_)
+                    remove(channelDescriptor_, EVFILT_WRITE);
             }
+            watchingForRoom_ = false;
+            add(next, EVFILT_READ, EV_ADD | EV_CLEAR);
+            channelDescriptor_ = next;
         }
+        // Output that waits for the peer is sent once it makes room, which
+        // only the descriptor's writability reports.
+        const bool waiting = channel_.outputWaiting();
+        if (waiting == watchingForRoom_)
+            return;
+        if (waiting)
+            add(next, EVFILT_WRITE, EV_ADD);
+        else
+            remove(next, EVFILT_WRITE);
+        watchingForRoom_ = waiting;
+    }
+
+    void add(int descriptor, std::int16_t filter, std::uint16_t flags)
+    {
         struct kevent addition {};
         EV_SET(
             &addition,
-            static_cast<std::uintptr_t>(next),
-            EVFILT_READ,
-            EV_ADD | EV_CLEAR,
+            static_cast<std::uintptr_t>(descriptor),
+            filter,
+            flags,
             0,
             0,
             nullptr);
         if (::kevent(descriptor_.get(), &addition, 1, nullptr, 0, nullptr) != 0)
             throw std::runtime_error("registering Virtio serial channel event failed");
-        channelDescriptor_ = next;
+    }
+
+    // A descriptor the channel closed has lost its registrations already.
+    void remove(int descriptor, std::int16_t filter)
+    {
+        struct kevent removal {};
+        EV_SET(
+            &removal,
+            static_cast<std::uintptr_t>(descriptor),
+            filter,
+            EV_DELETE,
+            0,
+            0,
+            nullptr);
+        if (::kevent(descriptor_.get(), &removal, 1, nullptr, 0, nullptr) != 0 &&
+            errno != ENOENT && errno != EBADF) {
+            throw std::runtime_error(
+                "removing stale Virtio serial channel event failed");
+        }
     }
 
     ConsoleChannel& channel_;
     uml::gpu::UniqueDescriptor descriptor_;
     int channelDescriptor_ {-1};
+    bool watchingForRoom_ {};
 };
 
 VirtioConsoleDevice::VirtioConsoleDevice(
@@ -225,7 +259,14 @@ uml::virtio::VhostUserQueueResult VirtioConsoleDevice::processQueue(
             throw std::runtime_error(
                 "invalid Virtio console output descriptor");
         }
+        // Output the channel's peer has not made room for keeps later output
+        // queued, so none is dropped or reordered. The channel's descriptor
+        // turning writable wakes the device, which offers it again.
+        if (channel_->outputWaiting())
+            return {};
         channel_->write(request);
+        if (events_)
+            events_->followChannel();
         return {
             .action = uml::virtio::VhostUserQueueAction::complete,
             .response = {},

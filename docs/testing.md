@@ -20,7 +20,8 @@ Every first-party CTest has exactly one primary suite:
 - `integration`: guest, rootfs, GUI, network, and kernel behavior.
 
 The helper that registers a test sets its suite label; `ctest -N -L <suite>`
-lists a configured tree's registrations.
+lists a configured tree's registrations. A unit test without its own `TIMEOUT`
+gets a 600 s bound, so a wedged binary fails the suite instead of stalling it.
 Performance and long external campaigns are not CTest correctness suites.
 
 Tooling tests run tools against fixtures; they do not grep tracked source for

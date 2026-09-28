@@ -379,6 +379,57 @@ void rejectsUnsupportedParametersAndRetriesWhenFull()
             protocol::Status::ioError);
 }
 
+/* A transfer's buffer belongs to the parameters it was queued under, so new
+ * parameters wait until every queued transfer has come back. */
+void refusesParametersWhileTransfersAreQueued()
+{
+    Fixture fixture;
+    const auto selected = parameters();
+    require(responseStatus(control(*fixture.device, bytes(selected))) ==
+            protocol::Status::ok);
+    require(responseStatus(control(
+                *fixture.device,
+                bytes(pcmCommand(protocol::Request::pcmPrepare)))) ==
+            protocol::Status::ok);
+    const protocol::PcmTransfer transfer {.streamId = protocol::streamId};
+    std::vector<std::uint8_t> pcm(selected.periodBytes);
+    auto request = bytes(transfer);
+    request.insert(request.end(), pcm.begin(), pcm.end());
+    require(fixture.device->processQueue(
+                protocol::transmitQueue, 7, request,
+                sizeof(protocol::PcmStatus)).action ==
+            uml::virtio::VhostUserQueueAction::defer);
+
+    require(responseStatus(control(*fixture.device, bytes(selected))) ==
+            protocol::Status::ioError);
+    require(fixture.sink->configureCount == 1);
+
+    fixture.sink->completions.push_back({
+        .requestId = 7,
+        .latencyBytes = selected.periodBytes,
+        .success = true,
+    });
+    uml::virtio::VhostUserQueueCompletion completion;
+    require(fixture.device->takeQueueCompletion(completion) &&
+            completion.requestId == 7);
+    require(responseStatus(control(*fixture.device, bytes(selected))) ==
+            protocol::Status::ok);
+    require(fixture.sink->configureCount == 2);
+
+    /* A device reset drops whatever the sink still held. */
+    require(responseStatus(control(
+                *fixture.device,
+                bytes(pcmCommand(protocol::Request::pcmPrepare)))) ==
+            protocol::Status::ok);
+    require(fixture.device->processQueue(
+                protocol::transmitQueue, 8, request,
+                sizeof(protocol::PcmStatus)).action ==
+            uml::virtio::VhostUserQueueAction::defer);
+    fixture.device->reset();
+    require(responseStatus(control(*fixture.device, bytes(selected))) ==
+            protocol::Status::ok);
+}
+
 } // namespace
 
 int main()
@@ -389,5 +440,6 @@ int main()
     playbackDefersUntilTheAppleSinkConsumesAPeriod();
     acceptsTheVirtioPcmLifecycleTransitions();
     rejectsUnsupportedParametersAndRetriesWhenFull();
+    refusesParametersWhileTransfersAreQueued();
     return EXIT_SUCCESS;
 }

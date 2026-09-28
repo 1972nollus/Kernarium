@@ -3,10 +3,12 @@
 // a decoder: the VP9 header reader, the superframe assembly the hidden-frame
 // rule depends on, and the pixel paths. Runs natively on any Linux build host.
 #include <fcntl.h>
+#include <linux/videodev2.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -235,6 +237,39 @@ void testLayout()
     check(uml::va::planeLayout(VA_FOURCC_ARGB, 1280, 720, planes, pitch, offset, size), "ARGB has a layout");
     check(planes == 1 && pitch[0] == 1280 * 4, "ARGB is one packed plane");
     check(!uml::va::planeLayout(VA_FOURCC_P010, 64, 64, planes, pitch, offset, size), "P010 is refused for now");
+}
+
+void testCapturedPlaneBounds()
+{
+    using uml::va::capturedPlaneFits;
+    constexpr std::size_t luma = std::size_t(1920) * 1080;
+    check(capturedPlaneFits(V4L2_PIX_FMT_NV12M, 0, 1920, 1080, 1920, 0, luma), "a tight NV12 luma plane fits");
+    check(!capturedPlaneFits(V4L2_PIX_FMT_NV12M, 0, 1920, 1080, 1920, 0, luma - 1),
+          "an NV12 luma plane one byte short does not fit");
+    check(!capturedPlaneFits(V4L2_PIX_FMT_NV12M, 0, 1920, 1080, 1920, 1, luma),
+          "a data offset that pushes the luma rows past the plane does not fit");
+    check(!capturedPlaneFits(V4L2_PIX_FMT_NV12M, 0, 1920, 1080, 2048, 0, luma),
+          "a stride wider than the mapped rows does not fit");
+    check(capturedPlaneFits(V4L2_PIX_FMT_NV12M, 1, 1920, 1080, 1920, 0, luma / 2),
+          "a tight NV12 chroma plane fits");
+    check(!capturedPlaneFits(V4L2_PIX_FMT_NV12M, 1, 1920, 1080, 1920, 0, luma / 2 - 1),
+          "an NV12 chroma plane one byte short does not fit");
+    // Odd sizes round the chroma up to whole sample pairs and rows.
+    check(capturedPlaneFits(V4L2_PIX_FMT_NV12M, 1, 1921, 1081, 1922, 0, std::size_t(1922) * 541),
+          "odd NV12 chroma fits in whole sample pairs");
+    check(!capturedPlaneFits(V4L2_PIX_FMT_NV12M, 1, 1921, 1081, 1922, 0, std::size_t(1922) * 541 - 1),
+          "odd NV12 chroma needs its last sample pair");
+    // Only the bytes a row reads count, so the last row may end before its
+    // pitch does.
+    check(capturedPlaneFits(V4L2_PIX_FMT_ABGR32, 0, 100, 10, 512, 0, 512 * 9 + 400),
+          "a packed picture whose last row ends short of its pitch fits");
+    check(!capturedPlaneFits(V4L2_PIX_FMT_ABGR32, 0, 100, 10, 512, 0, 512 * 9 + 399),
+          "a packed picture one byte short does not fit");
+    check(capturedPlaneFits(V4L2_PIX_FMT_ABGR32, 1, 100, 10, 512, 0, 0), "a packed picture reads no second plane");
+    check(!capturedPlaneFits(V4L2_PIX_FMT_ABGR32, 0, 100, 10, 512, 4097, 4096),
+          "a data offset past the plane does not fit");
+    check(!capturedPlaneFits(V4L2_PIX_FMT_ABGR32, 0, 100, 2, SIZE_MAX, 0, 4096),
+          "a stride that overflows does not fit");
 }
 
 void testMemoryStorage()
@@ -469,6 +504,7 @@ int main()
     testSuperframes();
     testPixels();
     testLayout();
+    testCapturedPlaneBounds();
     testMemoryStorage();
     testCapturePolicy();
     testCapturePool();

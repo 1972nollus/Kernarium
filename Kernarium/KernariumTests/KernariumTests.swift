@@ -633,6 +633,15 @@ struct KernariumTests {
                 environment: [RootfsImage.environmentKey: "phosh.img"]
             ) == nil
         )
+        // The name ends up in a UBD kernel argument, which these would split
+        // or misread.
+        for unusable in [
+            "My Disk.ext4", "tab\tdisk.erofs", "a,b.erofs", "a:b.erofs",
+            "quote\".erofs", "\u{00A0}nbsp.erofs", "\u{8800}.erofs"
+        ] {
+            #expect(RootfsImage.validatedFilename(unusable) == nil)
+        }
+        #expect(RootfsImage.validatedFilename("my-disk_2.ext4") == "my-disk_2.ext4")
     }
 
     @Test
