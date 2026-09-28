@@ -146,7 +146,11 @@ class KosmicKrispSpirvGuardTest(unittest.TestCase):
     def test_corrupted_literal_is_rejected(self) -> None:
         patch = "dependencies/patches/mesa/kosmickrisp-embed-LLVM-free-build-shaders.patch"
         lines = (self.fixture.root / patch).read_text().split("\n")
-        start = lines.index("literal 380208")
+        header = lines.index(
+            "diff --git a/src/kosmickrisp/libkk/libkk.spv "
+            "b/src/kosmickrisp/libkk/libkk.spv")
+        start = next(i for i in range(header, len(lines))
+                     if lines[i].startswith("literal "))
         line = lines[start + 2]
         replacement = line[:10] + ("0" if line[10] != "0" else "1") + line[11:]
         self.fixture.edit(patch, "\n" + line + "\n", "\n" + replacement + "\n")
