@@ -185,12 +185,12 @@ The fixed x86_64 userspace product registers no CTest suites, so the x86_64
 slice exercises its own V4L2 path by running `run_v4l2_decode.py` directly with
 an x86-64 probe and an x86-64 rootfs, the way its boot check below is run.
 
-The optional `guest-futex-atomic` regression uses a static C++20 build of
-`tests/integration/futex/futex_atomic_probe.cpp`, selected through
-`UML_FUTEX_PROBE_BINARY`. It boots a disposable guest and checks concurrent
-userspace/kernel futex updates and robust priority-inheritance mutexes. Run
-it on both Linux page profiles and the maintained Android kernel. The guest
-needs the same shell tools as the video probe above.
+The optional `guest-futex-atomic` test checks the futex contract in
+[`../kernel/common/README.md`](../kernel/common/README.md). Configure
+`UML_FUTEX_PROBE_BINARY` with a static C++20 build of
+`tests/integration/futex/futex_atomic_probe.cpp`; the rootfs needs the video
+probe's shell tools. Run it on both Linux page profiles and the maintained
+Android kernel.
 
 `UML_TEST_APPLE_AUDIO=ON` enables `apple-audio-playback`, which sends a brief,
 low-volume stereo tone through the real macOS output and verifies completion
