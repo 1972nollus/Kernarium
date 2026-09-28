@@ -480,7 +480,7 @@ index 00a42529070517976d00235ed48d3e8a6143258b..439b36d32e4989b25ee87ec3bf523a76
  #include "virgl_util.h"
  #include "virglrenderer.h"
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index e0457772cd51394d61833d276b9199784f7db063..48d3b52298df0073d9ad78dc0e5bfde0f77cb48b 100644
+index a0271aa7abd50e941ad52e2ce0c43953d3642ffa..8594ac308bea36ba0e5b37b3a8fb24d5ac86227b 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
 @@ -10,7 +10,7 @@
@@ -493,7 +493,7 @@ index e0457772cd51394d61833d276b9199784f7db063..48d3b52298df0073d9ad78dc0e5bfde0
  #define XXH_INLINE_ALL
  #include "util/xxhash.h"
 diff --git a/src/venus/vkr_context.h b/src/venus/vkr_context.h
-index 7383f9249c4a943c24d8e346faf473c5d657dc90..f0acdd4ad629fdf983e916b23f21d7ff623b0157 100644
+index 7607063f95d93c16820d8f222f17659948722409..74482ee0a0461c273e1d1badd1ad08c31909e5b5 100644
 --- a/src/venus/vkr_context.h
 +++ b/src/venus/vkr_context.h
 @@ -9,8 +9,8 @@
@@ -547,7 +547,7 @@ index 980b6877f18409fe5cc5e4e99d1febc30796e480..fe7543148d01dd8b73330f382be6a02c
  #include "vkr_context.h"
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index ac57f335e64cd0beffd6fe1b7dd85a81ba44a8b4..11ccd776df012a886c8763ad0a1533545343a929 100644
+index 7233e6024606d0c1ea1afadc903dbd376e96d03c..d0945d02dbedbe405aa532f2104cb87b792c6252 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -8,7 +8,7 @@

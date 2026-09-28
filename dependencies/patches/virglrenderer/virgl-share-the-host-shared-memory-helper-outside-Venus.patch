@@ -43,7 +43,7 @@ index 6d1ce14b423e62ffc5188dbf00c2bf27ba1d1be2..4aca6a18881be8c7ca97a5cb74e18b6a
     'venus/vkr_image.c',
     'venus/vkr_instance.c',
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 11ccd776df012a886c8763ad0a1533545343a929..3f33a7044db96d704f96e78d972d81ad82f2b316 100644
+index d0945d02dbedbe405aa532f2104cb87b792c6252..918e9b4efb813b6773a407e7b579640b8cb3a2d6 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -11,7 +11,7 @@
@@ -55,7 +55,7 @@ index 11ccd776df012a886c8763ad0a1533545343a929..3f33a7044db96d704f96e78d972d81ad
  #include "vkr_physical_device.h"
  
  static bool
-@@ -390,7 +390,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -396,7 +396,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
     uint32_t valid_fd_types = 0;
     int udmabuf_fd = -1;
     void *gbm_bo = NULL;
@@ -64,7 +64,7 @@ index 11ccd776df012a886c8763ad0a1533545343a929..3f33a7044db96d704f96e78d972d81ad
     VkExportMemoryAllocateInfo local_export_info;
     /* VK_EXT_external_memory_host is renderer-internal.  It gives a unified-memory
      * host a real Vulkan import of the same anonymous file that virtio-gpu maps into
-@@ -413,7 +413,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -419,7 +419,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
           export_info = NULL;
        }
  
@@ -73,7 +73,7 @@ index 11ccd776df012a886c8763ad0a1533545343a929..3f33a7044db96d704f96e78d972d81ad
           alloc_info->allocationSize,
           physical_dev->min_imported_host_pointer_alignment);
        if (!host_shm) {
-@@ -431,7 +431,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -437,7 +437,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
            !(host_props.memoryTypeBits & (1u << host_mem_type_index))) {
           if (args->ret == VK_SUCCESS)
              args->ret = VK_ERROR_INVALID_EXTERNAL_HANDLE;
@@ -82,26 +82,26 @@ index 11ccd776df012a886c8763ad0a1533545343a929..3f33a7044db96d704f96e78d972d81ad
           return;
        }
  
-@@ -536,7 +536,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -542,7 +542,7 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
           close(local_import_info.fd);
        if (gbm_bo)
           vkr_gbm_bo_destroy(gbm_bo);
 -      vkr_host_shm_free(host_shm);
 +      virgl_host_shm_free(host_shm);
+       vkr_shm_mapping_release(host_mapping);
        return;
     }
- 
-@@ -689,7 +689,7 @@ vkr_device_memory_release(struct vkr_device_memory *mem)
+@@ -697,7 +697,7 @@ vkr_device_memory_release(struct vkr_device_memory *mem)
     virgl_resource_native_release(mem->native_resource_id);
     if (mem->metal_heap_fd >= 0)
        close(mem->metal_heap_fd);
 -   vkr_host_shm_free(mem->host_shm);
 +   virgl_host_shm_free(mem->host_shm);
+    vkr_shm_mapping_release(mem->host_mapping);
     if (mem->gbm_bo)
        vkr_gbm_bo_destroy(mem->gbm_bo);
-    if (mem->udmabuf_fd >= 0)
 diff --git a/src/venus/vkr_device_memory.h b/src/venus/vkr_device_memory.h
-index 02e2ebf330b54be4baffb494f75732ce505ad3a1..aab490e77cc47e3d4ac48c28679d15f6621d5f6d 100644
+index c695c7de3ee0297e82318076af207abf6c3f7c2d..76d61e4620ee2d046a197e207fa3cdd6bff114a0 100644
 --- a/src/venus/vkr_device_memory.h
 +++ b/src/venus/vkr_device_memory.h
 @@ -9,7 +9,7 @@
@@ -120,8 +120,8 @@ index 02e2ebf330b54be4baffb494f75732ce505ad3a1..aab490e77cc47e3d4ac48c28679d15f6
 -   struct vkr_host_shm *host_shm;
 +   struct virgl_host_shm *host_shm;
  
-    /* Renderer-private MTLHeap export retained by the fd identity registry. */
-    bool metal_heap_exportable;
+    /* A shared-memory resource's mapping this memory imports as host memory,
+     * held so the range outlives the resource. */
 diff --git a/src/venus/vkr_host_memory.h b/src/venus/vkr_host_memory.h
 deleted file mode 100644
 index 55c2f5c81299a342f8c6a07ddc23d6c43736e00f..0000000000000000000000000000000000000000
