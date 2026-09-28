@@ -7,26 +7,28 @@ Produce ordered TES records once, then pull raw capture and raster outputs witho
 
 Use one tessellator index winding for native and software consumers. Match indirect VS/TCS launches to the exact-thread Metal dispatch ABI.
 
-Size the buffers and grids a tessellated draw takes from application draw words with checked 32-bit arithmetic, one helper for the host and the indirect setup kernel: the TCS outputs, each patch's coordinate allocation and index count, the TCS grid and, for an indirect draw, the vertex outputs. A wrapped size would hand the TCS and the tessellator a small allocation to write far past. A direct draw that does not fit fails the recording with VK_ERROR_OUT_OF_DEVICE_MEMORY; an indirect one launches nothing, counts no statistic and draws nothing. The index prefix sum refuses a total that wrapped or that its 32-bit heap cannot address the same way: it draws nothing and clears the patch count, which the tessellator kernels respect. A reservation the heap cannot hold is refused the same way rather than aborted, since the MSL backend's abort() ends only the calling invocation and would leave the grids, patch count and draw words it had not cleared: the setup and the prefix sum launch nothing, and a tessellator that cannot place a patch's points empties the whole draw, whose other patches' indices are then never drawn, and counts no TES invocations for that patch. kosmickrisp_tess_draw_size records the direct refusal, and kosmickrisp_tess_setup_gpu launches the setup and prefix-sum kernels on bounded heaps with sizes that wrap or that the heap cannot hold. It also runs the tessellator on one quad patch at level 64 over a heap that holds the patch's indices but not its points, which must empty the draw and leave the heap's bottom after the indices.
+Size the buffers and grids a tessellated draw takes from application draw words with checked 32-bit arithmetic, one helper for the host and the indirect setup kernel: the TCS outputs, each patch's coordinate allocation and index count, the TCS grid and, for an indirect draw, the vertex outputs. A wrapped size would hand the TCS and the tessellator a small allocation to write far past. A direct draw that does not fit fails the recording with VK_ERROR_OUT_OF_DEVICE_MEMORY; an indirect one launches nothing, counts no statistic and draws nothing. The index prefix sum refuses a total that wrapped or that its 32-bit heap cannot address the same way: it draws nothing and clears the patch count, which the tessellator kernels respect. A reservation the heap cannot hold is refused the same way rather than aborted, since the MSL backend's abort() ends only the calling invocation and would leave the grids, patch count and draw words it had not cleared: the setup and the prefix sum launch nothing.
+
+The prefix sum reserves a draw's indices and the domain points of all its patches at once, and turns the point counts the tessellator's counting pass recorded into each patch's offset among them, in the same work-group scan that sums the index counts and with a per-patch check for either sum wrapping. The patches of a draw therefore never contend for the heap, and a draw whose points the heap cannot hold draws nothing and counts no TES invocations rather than leave a patch's share of it unwritten. kosmickrisp_tess_draw_size records the direct refusal, and kosmickrisp_tess_setup_gpu launches the setup and prefix-sum kernels on bounded heaps with index or point counts that wrap, within one work group or past it, and with sizes the heap cannot hold, and checks every patch's index end and first point. It also tessellates one quad patch at level 64 over a heap that would hold the patch's indices but not its points, which must empty the draw and leave the heap as it was, and four patches at levels 64 and 1, culled, and 64, whose points must start at 0, 4225, 4229 and 4229.
 ---
- src/kosmickrisp/libkk/kk_geometry.cl          |  28 +-
- src/kosmickrisp/libkk/kk_tessellation.cl      |  51 ++-
+ src/kosmickrisp/libkk/kk_geometry.cl          | 108 +++-
+ src/kosmickrisp/libkk/kk_tessellation.cl      |  51 +-
  src/kosmickrisp/libkk/kk_tessellator.cl       |  10 +
  src/kosmickrisp/libkk/kk_tessellator.h        |  34 ++
- src/kosmickrisp/vulkan/kk_cmd_draw.c          |  81 ++--
- src/kosmickrisp/vulkan/kk_shader.c            | 151 +++++--
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          |  87 ++--
+ src/kosmickrisp/vulkan/kk_shader.c            | 151 +++++-
  src/kosmickrisp/vulkan/meson.build            |  34 ++
  .../tests/tess_draw_size_shaders/generate.sh  |   7 +
  .../tests/tess_draw_size_shaders/wide.tesc    |  20 +
- .../tests/tess_draw_size_shaders/wide.tesc.h  | 114 ++++++
+ .../tests/tess_draw_size_shaders/wide.tesc.h  | 114 ++++
  .../tests/tess_draw_size_shaders/wide.tese    |   8 +
- .../tests/tess_draw_size_shaders/wide.tese.h  |  50 +++
- .../vulkan/tests/test_tess_draw_size.cpp      | 354 ++++++++++++++++
- .../vulkan/tests/test_tess_setup_gpu.c        | 380 ++++++++++++++++++
+ .../tests/tess_draw_size_shaders/wide.tese.h  |  50 ++
+ .../vulkan/tests/test_tess_draw_size.cpp      | 354 +++++++++++++
+ .../vulkan/tests/test_tess_setup_gpu.c        | 488 ++++++++++++++++++
  src/poly/cl/tessellation.cl                   |   2 +-
- src/poly/cl/tessellator.h                     |  30 +-
- src/poly/tessellator.h                        |  15 +-
- 17 files changed, 1287 insertions(+), 82 deletions(-)
+ src/poly/cl/tessellator.h                     |  56 +-
+ src/poly/tessellator.h                        |  21 +-
+ 17 files changed, 1470 insertions(+), 125 deletions(-)
  create mode 100755 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/generate.sh
  create mode 100644 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc
  create mode 100644 src/kosmickrisp/vulkan/tests/tess_draw_size_shaders/wide.tesc.h
@@ -36,55 +38,144 @@ Size the buffers and grids a tessellated draw takes from application draw words 
  create mode 100644 src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
 
 diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
-index 6f45578ceafd3bf93883e25a4f74530735b7c5bd..7231127cd789991c3338cfd8bc4d3fc4807592b6 100644
+index 6f45578ceafd3bf93883e25a4f74530735b7c5bd..b16501d89a4447da46c9765cd87e54e8add420a8 100644
 --- a/src/kosmickrisp/libkk/kk_geometry.cl
 +++ b/src/kosmickrisp/libkk/kk_geometry.cl
-@@ -432,6 +432,15 @@ libkk_prefix_sum_tess(global struct poly_tess_params *p,
-    poly_prefix_sum(scratch, p->counts, p->nr_patches, 1 /* words */,
-                    0 /* word */, 1024);
+@@ -422,41 +422,119 @@ libkk_line_raster_setup_indirect(
+    out_draw[3] = in_draw[index_size_B ? 4 : 3];
+ }
  
-+   /* The per-patch index counts follow the application's tessellation
-+    * levels, so their 32-bit running sum can wrap, and it wrapped exactly
-+    * where it decreases. Count the decreases across the group. */
-+   barrier(CLK_GLOBAL_MEM_FENCE | CLK_LOCAL_MEM_FENCE);
-+   uint wraps = 0;
-+   for (uint i = cl_local_id.x + 1; i < p->nr_patches; i += 1024)
-+      wraps += p->counts[i] < p->counts[i - 1];
-+   wraps = poly_work_group_scan_inclusive_add(wraps, scratch)[1];
++/* Scans x and y across the 1024-thread group at once, sharing one pair of
++ * barriers: returns their inclusive prefix sums in .xy and the group's
++ * totals in .zw. scratch holds 64 words. */
++static uint4
++libkk_work_group_scan_inclusive_add2(uint x, uint y, local uint *scratch)
++{
++   uint sg_id = get_sub_group_id();
++   uint sg_x = sub_group_scan_inclusive_add(x);
++   uint sg_y = sub_group_scan_inclusive_add(y);
 +
-    /* After prefix summing, we know the total # of indices, so allocate the
-     * index buffer now. Elect a thread for the allocation.
-     */
-@@ -442,15 +451,24 @@ libkk_prefix_sum_tess(global struct poly_tess_params *p,
-    /* The last element of an inclusive prefix sum is the total sum */
-    uint total = p->nr_patches > 0 ? p->counts[p->nr_patches - 1] : 0;
++   barrier(CLK_LOCAL_MEM_FENCE);
++   scratch[sg_id] = sub_group_broadcast(sg_x, 31);
++   scratch[32 + sg_id] = sub_group_broadcast(sg_y, 31);
++   barrier(CLK_LOCAL_MEM_FENCE);
++
++   uint lane = get_sub_group_local_id();
++   uint other_x = scratch[lane], other_y = scratch[32 + lane];
++   uint before_x = sub_group_scan_exclusive_add(other_x);
++   uint before_y = sub_group_scan_exclusive_add(other_y);
++   return (uint4)(sub_group_broadcast(before_x, sg_id) + sg_x,
++                  sub_group_broadcast(before_y, sg_id) + sg_y,
++                  sub_group_broadcast(before_x + other_x, 31),
++                  sub_group_broadcast(before_y + other_y, 31));
++}
++
+ KERNEL(1024)
+ libkk_prefix_sum_tess(global struct poly_tess_params *p,
+                       global uint32_t *c_prims,
+                       global uint32_t *c_invs,
+                       uint32_t increment_stats)
+ {
+-   local uint scratch[32];
+-   poly_prefix_sum(scratch, p->counts, p->nr_patches, 1 /* words */,
+-                   0 /* word */, 1024);
++   local uint scratch[64];
++   local uint wrapped;
++   const uint nr_patches = p->nr_patches;
++   const uint tid = cl_local_id.x;
++
++   /* Counting left each patch's number of indices in counts and of domain
++    * points in coord_allocs. One pass turns the first into their inclusive
++    * sum and the second into their exclusive sum, which places each patch's
++    * points after the previous patch's, so the draw reserves all of them at
++    * once below, together with its indices, instead of every patch
++    * contending for the heap on its own. The counts follow the application's
++    * tessellation levels, so a 32-bit running sum can wrap, and it wrapped
++    * exactly where it is smaller than the count it just added. */
++   if (tid == 0)
++      wrapped = 0;
++   uint total = 0, total_points = 0;
++   for (uint first = 0; first < nr_patches; first += 1024) {
++      uint i = first + tid;
++      uint index_count = i < nr_patches ? p->counts[i] : 0;
++      uint point_count = i < nr_patches ? p->coord_allocs[i] : 0;
++      uint4 sums = libkk_work_group_scan_inclusive_add2(index_count,
++                                                        point_count, scratch);
++
++      uint index_end = total + sums.x, point_end = total_points + sums.y;
++      if (i < nr_patches) {
++         p->counts[i] = index_end;
++         p->coord_allocs[i] = point_end - point_count;
++         if (index_end < index_count || point_end < point_count)
++            atomic_or(&wrapped, 1u);
++      }
++      total += sums.z;
++      total_points += sums.w;
++   }
++   barrier(CLK_LOCAL_MEM_FENCE);
  
+-   /* After prefix summing, we know the total # of indices, so allocate the
+-    * index buffer now. Elect a thread for the allocation.
++   /* After prefix summing, we know the total # of indices and points, so
++    * allocate the index buffer and the points now. Elect a thread for the
++    * allocation.
+     */
+-   barrier(CLK_LOCAL_MEM_FENCE);
+    if (cl_local_id.x != 0)
+       return;
+ 
+-   /* The last element of an inclusive prefix sum is the total sum */
+-   uint total = p->nr_patches > 0 ? p->counts[p->nr_patches - 1] : 0;
+-
 -   /* Allocate 4-byte indices */
-+   /* Allocate 4-byte indices, unless their size does not fit the 32 bits
-+    * the heap addresses. Then draw nothing and write no index either: the
-+    * tessellator skips every patch once nr_patches is zero. */
++   /* Allocate 4-byte indices followed by 8-byte points in one reservation,
++    * unless their size does not fit the 32 bits the heap addresses or the
++    * heap cannot hold them. Then draw nothing and write no index or point
++    * either: the tessellator skips every patch once nr_patches is zero. */
     uint32_t elsize_B = sizeof(uint32_t);
 -   uint32_t size_B = total * elsize_B;
 -   uint alloc_B = poly_heap_alloc_offs(p->heap, size_B);
-+   uint32_t size_B;
-+   global uint32_t *desc = p->out_draws;
+-   p->index_buffer = (global uint32_t *)(((uintptr_t)p->heap->base) + alloc_B);
+-
+-   /* ...and now we can generate the API indexed draw */
++   uint32_t point_B = sizeof(struct poly_tess_point);
++   uint32_t size_B, points_B, alloc_size_B;
+    global uint32_t *desc = p->out_draws;
 +   uint alloc_B;
-+   if (wraps || !poly_u32_checked_mul(total, elsize_B, &size_B) ||
-+       !poly_heap_try_alloc_offs(p->heap, size_B, &alloc_B)) {
++   if (wrapped ||
++       !poly_u32_checked_mul(total, elsize_B, &size_B) ||
++       !poly_heap_size_can_align(size_B) ||
++       !poly_u32_checked_mul(total_points, point_B, &points_B) ||
++       !poly_u32_checked_add(align(size_B, 16), points_B, &alloc_size_B) ||
++       !poly_heap_try_alloc_offs(p->heap, alloc_size_B, &alloc_B)) {
 +      p->nr_patches = 0;
 +      for (uint i = 0; i < 5; ++i)
 +         desc[i] = 0;
 +      return;
 +   }
 +
-    p->index_buffer = (global uint32_t *)(((uintptr_t)p->heap->base) + alloc_B);
++   global uchar *indices = p->heap->base + alloc_B;
++   p->index_buffer = (global uint32_t *)indices;
++
++   /* coord_allocs now counts each patch's first point from here. */
++   p->patch_coord_buffer =
++      (global struct poly_tess_point *)(indices + align(size_B, 16));
  
-    /* ...and now we can generate the API indexed draw */
--   global uint32_t *desc = p->out_draws;
--
++   /* ...and now we can generate the API indexed draw */
     desc[0] = total;              /* count */
     desc[1] = 1;                  /* instance_count */
     desc[2] = alloc_B / elsize_B; /* start */
+    desc[3] = 0;                  /* index_bias */
+    desc[4] = 0;                  /* start_instance */
+ 
++   /* The statistic is for tessellation evaluation shader invocations, which
++    * is equal to the number of domain points generated. */
++   if (p->statistic)
++      poly_atomic_add_u64((global uint32_t *)p->statistic, total_points);
++
+    if (increment_stats) {
+       uint prims = p->points_mode ? total
+                    : p->isolines  ? (total / 2)
 diff --git a/src/kosmickrisp/libkk/kk_tessellation.cl b/src/kosmickrisp/libkk/kk_tessellation.cl
 index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..0dda4747c507b451ed4b6df7043bc0603ac84f89 100644
 --- a/src/kosmickrisp/libkk/kk_tessellation.cl
@@ -184,7 +275,7 @@ index 0e8c1a91ac9c44e0d171a36fc287baba12c23610..0dda4747c507b451ed4b6df7043bc060
 +   grids[17] = 1;
  }
 diff --git a/src/kosmickrisp/libkk/kk_tessellator.cl b/src/kosmickrisp/libkk/kk_tessellator.cl
-index fc6e8dad59a973f3f9e9aa9a7821520ebdb64034..5ca71835dce82b71de5a2f46d730a2123928bb4b 100644
+index fc6e8dad59a973f3f9e9aa9a7821520ebdb64034..c827db03d5233a18e80d237fbf84b3e6d2dbdf7f 100644
 --- a/src/kosmickrisp/libkk/kk_tessellator.cl
 +++ b/src/kosmickrisp/libkk/kk_tessellator.cl
 @@ -6,11 +6,17 @@
@@ -192,8 +283,8 @@ index fc6e8dad59a973f3f9e9aa9a7821520ebdb64034..5ca71835dce82b71de5a2f46d730a212
  #include "poly/cl/tessellator.h"
  
 +/* The grid covers every patch the setup sized. libkk_prefix_sum_tess clears
-+ * nr_patches when the patches' indices cannot be addressed, so the pass that
-+ * writes them then writes nothing. */
++ * nr_patches when the heap cannot hold the patches' indices and points, so
++ * the pass that writes them then writes nothing. */
 +
  KERNEL(1)
  libkk_tess_isoline(constant struct poly_tess_params *p,
@@ -272,10 +363,10 @@ index 5d687f40a3ab7ff0ace370f94882993923730d88..58a668b71f8b99b3814283dfae078a3e
 +          poly_u32_checked_add(tcs_B, patch_B, size_B);
 +}
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43f86b8757 100644
+index a0151d068f86d0cecffa23395619ac7d5bac221c..ff2be999c0054ff7f8fb2f6ee22ac29b4a6e3763 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1460,7 +1460,7 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
+@@ -1460,11 +1460,10 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
     return kk_pool_upload(cmd, &params, sizeof(params), 8).gpu;
  }
  
@@ -284,7 +375,11 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
  kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
                        const struct kk_draw_data *draw)
  {
-@@ -1489,6 +1489,7 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+-   struct kk_device *dev = kk_cmd_buffer_device(cmd);
+    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
+    struct kk_graphics_state *gfx = &cmd->state.gfx;
+    struct kk_shader *tcs = cmd->state.shaders[MESA_SHADER_TESS_CTRL];
+@@ -1489,6 +1488,7 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
        .partitioning = partitioning,
        .points_mode = gfx->tess.info.points,
        .isolines = gfx->tess.info.mode == TESS_PRIMITIVE_ISOLINES,
@@ -292,7 +387,15 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
     };
  
     if (!args.points_mode && gfx->tess.info.mode != TESS_PRIMITIVE_ISOLINES) {
-@@ -1506,7 +1507,21 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+@@ -1500,13 +1500,26 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+    uint32_t draw_stride_el = 5;
+    size_t draw_stride_B = draw_stride_el * sizeof(uint32_t);
+ 
+-   /* heap is allocated by kk_heap */
+-   /* TODO_KOSMICKRISP Self-contained until we have rodata at the device. */
+-   args.patch_coord_buffer = dev->heap->gpu + sizeof(struct poly_heap);
++   /* libkk_prefix_sum_tess sets patch_coord_buffer when it reserves the
++    * draw's points. */
  
     if (!kk_grid_is_indirect(draw->grid)) {
        unsigned in_patches = draw->grid.size.x / args.input_patch_size;
@@ -315,7 +418,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
  
        uint32_t alloc = 0;
        uint32_t tcs_out_offs = alloc;
-@@ -1523,6 +1538,8 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+@@ -1523,6 +1536,8 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
        alloc += draw_stride_B;
  
        struct kk_ptr ptr = kk_pool_alloc(cmd, alloc, 4);
@@ -324,7 +427,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
        gfx->tess.out_draws_addr = ptr.gpu + draw_offs;
        uint64_t addr = ptr.gpu;
        args.tcs_buffer = addr + tcs_out_offs;
-@@ -1532,16 +1549,19 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+@@ -1532,16 +1547,19 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
        args.out_draws = addr + draw_offs;
        args.counts = addr + count_offs;
     } else {
@@ -346,7 +449,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
  }
  
  static bool
-@@ -1662,15 +1682,6 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1662,15 +1680,6 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
         IS_SHADER_DIRTY(TESS_CTRL) || IS_SHADER_DIRTY(TESS_EVAL) ||
         IS_SHADER_DIRTY(VERTEX)) {
        bool front_face_ccw = dyn->rs.front_face != VK_FRONT_FACE_CLOCKWISE;
@@ -362,7 +465,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
        mtl_set_front_face_winding(enc, front_face_ccw
                                           ? MTL_WINDING_COUNTER_CLOCKWISE
                                           : MTL_WINDING_CLOCKWISE);
-@@ -2459,8 +2470,9 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2459,8 +2468,9 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
     }
  
     if (transform_feedback) {
@@ -373,7 +476,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
                                     &vs->info.vs.transform_feedback, false);
        if (!gfx->per_draw_data.geometry_params)
           return false;
-@@ -2489,9 +2501,8 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2489,9 +2499,8 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
        struct kk_ptr tess_args =
           kk_pool_alloc(cmd, sizeof(struct poly_tess_params), 4);
        gfx->per_draw_data.tess_params = tess_args.gpu;
@@ -384,7 +487,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
     }
  
     if (polygon_points || line_raster) {
-@@ -2506,10 +2517,6 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
+@@ -2506,10 +2515,6 @@ kk_upload_per_draw_data(struct kk_cmd_buffer *cmd, uint32_t upload_mask,
        gfx->per_draw_data.polygon_point_clip_flags =
           (vk_rasterization_state_depth_clip_enable(&dyn->rs) ? 1u : 0u) |
           (dyn->vp.depth_clip_negative_one_to_one ? 2u : 0u) |
@@ -395,7 +498,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
           (dyn->rs.depth_bias.enable ? 8u : 0u) |
           (dyn->rs.depth_clamp_enable ? 16u : 0u);
        gfx->per_draw_data.polygon_depth_bias_constant =
-@@ -2598,8 +2605,7 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
+@@ -2598,8 +2603,7 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
     if (grid.mode == KK_GRID_DIRECT)
        mtl_dispatch_threads(enc, grid.size, local_size);
     else
@@ -405,7 +508,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
  }
  
  static struct kk_draw_data
-@@ -2625,6 +2631,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2625,6 +2629,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
        &gfx->descriptors, VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT);
  
     if (vs->info.vs.geometry_shader_emulation ||
@@ -413,7 +516,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
         dyn->rs.rasterizer_discard_enable) {
        c_primitives = 0;
        c_invocations = 0;
-@@ -2650,7 +2657,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2650,7 +2655,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  
        libkk_tess_setup_indirect_struct(cmd, kk_grid_1d(1), true, args);
  
@@ -422,7 +525,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
        grid_vs = kk_grid_indirect(gfx->tess.indirect_ptr.gpu + 0u * grid_stride);
        grid_tcs =
           kk_grid_indirect(gfx->tess.indirect_ptr.gpu + 1u * grid_stride);
-@@ -3003,6 +3010,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -3003,6 +3008,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                               struct kk_draw_data draw, enum mesa_prim prim)
  {
     struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
@@ -430,7 +533,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
     struct kk_graphics_state *gfx = &cmd->state.gfx;
     const struct poly_gs_info *gsi = &vs->info.vs.transform_feedback;
     bool indirect = kk_grid_is_indirect(draw.grid);
-@@ -3023,7 +3031,8 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -3023,7 +3029,8 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
           .vp = gfx->per_draw_data.vertex_params,
           .p = gfx->per_draw_data.geometry_params,
           .heap = kk_heap(cmd),
@@ -440,7 +543,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
           .index_size_B = draw.index.el_size_B,
           .index_buffer_range_el = kk_draw_index_range_el(&draw),
           .prim = prim,
-@@ -3035,7 +3044,11 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -3035,7 +3042,11 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
     }
  
     mtl_compute_encoder *enc = cs_get_compute(cmd, true);
@@ -453,7 +556,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
     struct mtl_size vs_local_size = {64, 1, 1};
  
     mtl_barrier_after_encoder_stages(enc, MTL_STAGE_DISPATCH,
-@@ -3360,15 +3373,24 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3360,15 +3371,24 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
                                     data->prim))
           return;
  
@@ -481,7 +584,7 @@ index a0151d068f86d0cecffa23395619ac7d5bac221c..e831677b50ddb63df4f106ecc19f7d43
  
        const enum mesa_prim source_raster_prim =
           emulate_geometry ? vs->info.vs.geometry.mode
-@@ -3392,7 +3414,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3392,7 +3412,8 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
         * requested provoking vertex itself.  Keep its non-indexed vertex IDs
         * intact: they also address the generated XFB records. */
        if (rasterize && provoking_last && !emulate_line_raster &&
@@ -1383,10 +1486,10 @@ index 0000000000000000000000000000000000000000..64c467737fab0ca914bc6d904fe65838
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..4e3788765c9a29ae21213572b87720803b820c27
+index 0000000000000000000000000000000000000000..63d57dd9ad7a62dce1a0616fe16ee4ab2716848c
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
-@@ -0,0 +1,380 @@
+@@ -0,0 +1,488 @@
 +/* SPDX-License-Identifier: MIT */
 +
 +/* Launch only the production tessellation setup and index prefix sum. An
@@ -1434,10 +1537,13 @@ index 0000000000000000000000000000000000000000..4e3788765c9a29ae21213572b8772080
 +   bool valid;
 +};
 +
++/* The first head_count patches have head_value indices and head_points
++ * domain points, the rest tail_value and tail_points. */
 +struct sum_case {
 +   const char *name;
 +   uint32_t patches;
 +   uint32_t head_count, head_value, tail_value;
++   uint32_t head_points, tail_points;
 +   bool valid;
 +};
 +
@@ -1557,18 +1663,24 @@ index 0000000000000000000000000000000000000000..4e3788765c9a29ae21213572b8772080
 +   struct kk_ptr counts =
 +      kk_pool_alloc(cmd, test->patches * sizeof(uint32_t), 4);
 +   struct kk_ptr out_draw = kk_pool_alloc(cmd, 5 * sizeof(uint32_t), 4);
-+   CHECK(heap_ptr.cpu && counts.cpu && out_draw.cpu);
++   struct kk_ptr coord_allocs =
++      kk_pool_alloc(cmd, test->patches * sizeof(uint32_t), 4);
++   CHECK(heap_ptr.cpu && counts.cpu && out_draw.cpu && coord_allocs.cpu);
 +   uint32_t *count_words = counts.cpu;
-+   uint64_t total = 0;
++   uint32_t *point_words = coord_allocs.cpu;
++   uint64_t total = 0, total_points = 0;
 +   for (uint32_t i = 0; i < test->patches; i++) {
-+      count_words[i] = i < test->head_count ? test->head_value
-+                                            : test->tail_value;
++      const bool head = i < test->head_count;
++      count_words[i] = head ? test->head_value : test->tail_value;
++      point_words[i] = head ? test->head_points : test->tail_points;
 +      total += count_words[i];
++      total_points += point_words[i];
 +   }
 +   memset(out_draw.cpu, 0xa5, 5 * sizeof(uint32_t));
 +   const struct poly_tess_params tess = {
 +      .heap = heap_ptr.gpu,
 +      .counts = counts.gpu,
++      .coord_allocs = coord_allocs.gpu,
 +      .out_draws = out_draw.gpu,
 +      .nr_patches = test->patches,
 +   };
@@ -1581,12 +1693,27 @@ index 0000000000000000000000000000000000000000..4e3788765c9a29ae21213572b8772080
 +   const struct poly_heap *actual_heap = heap_ptr.cpu;
 +   const uint32_t *desc = out_draw.cpu;
 +   if (test->valid) {
-+      CHECK(total * 4 <= HEAP_SIZE - HEAP_BOTTOM);
++      /* Each patch ends its indices at the inclusive sum of the counts and
++       * starts its points at the exclusive sum of the points, which follow
++       * the indices in the draw's one reservation. */
++      const uint32_t index_B = align((uint32_t)total * 4, 16);
++      CHECK(index_B + total_points * 8 <= HEAP_SIZE - HEAP_BOTTOM);
 +      CHECK(actual->nr_patches == test->patches);
 +      CHECK(desc[0] == total && desc[1] == 1 &&
 +            desc[2] == HEAP_BOTTOM / 4 && desc[3] == 0 && desc[4] == 0);
++      CHECK(actual->patch_coord_buffer ==
++            actual_heap->base + HEAP_BOTTOM + index_B);
 +      CHECK(actual_heap->bottom ==
-+            HEAP_BOTTOM + align((uint32_t)total * 4, 16));
++            HEAP_BOTTOM + align(index_B + (uint32_t)total_points * 8, 16));
++      uint32_t index_end = 0, point_start = 0;
++      for (uint32_t i = 0; i < test->patches; i++) {
++         index_end += test->head_count > i ? test->head_value
++                                           : test->tail_value;
++         CHECK(count_words[i] == index_end);
++         CHECK(point_words[i] == point_start);
++         point_start += test->head_count > i ? test->head_points
++                                             : test->tail_points;
++      }
 +   } else {
 +      CHECK(actual->nr_patches == 0);
 +      for (unsigned i = 0; i < 5; i++)
@@ -1597,10 +1724,10 @@ index 0000000000000000000000000000000000000000..4e3788765c9a29ae21213572b8772080
 +}
 +
 +/* One quad patch at level 64 has 4225 domain points and 24576 indices. The
-+ * tessellator reserves each patch's points after the prefix sum has placed
-+ * the indices, so on a heap that holds the indices but not the points the
-+ * patch would leave its share of the draw unwritten; the whole draw has to
-+ * become empty instead. */
++ * prefix sum reserves the draw's points together with its indices, so on a
++ * heap that would hold the indices but not the points the whole draw has to
++ * become empty, leaving the heap as it was, rather than leave the patch's
++ * share of the draw unwritten. */
 +struct points_case {
 +   const char *name;
 +   uint32_t heap_size;
@@ -1630,6 +1757,7 @@ index 0000000000000000000000000000000000000000..4e3788765c9a29ae21213572b8772080
 +   CHECK(heap_ptr.cpu && tcs.cpu && counts.cpu && coord_allocs.cpu &&
 +         out_draw.cpu);
 +   memset(out_draw.cpu, 0xa5, 5 * sizeof(uint32_t));
++   memset(coord_allocs.cpu, 0xa5, sizeof(uint32_t));
 +   const struct poly_tess_params tess = {
 +      .heap = heap_ptr.gpu,
 +      .patch_coord_buffer = storage.gpu,
@@ -1657,16 +1785,95 @@ index 0000000000000000000000000000000000000000..4e3788765c9a29ae21213572b8772080
 +   const uint32_t *desc = out_draw.cpu;
 +   const struct poly_heap *actual_heap = heap_ptr.cpu;
 +   CHECK(*(const uint32_t *)counts.cpu == indices);
++   const struct poly_tess_params *actual = p.cpu;
 +   if (test->fits) {
 +      CHECK(desc[0] == indices && desc[1] == 1);
-+      CHECK(*(const uint32_t *)coord_allocs.cpu * 8 ==
-+            HEAP_BOTTOM + index_B);
++      CHECK(actual->patch_coord_buffer ==
++            storage.gpu + HEAP_BOTTOM + index_B);
++      CHECK(*(const uint32_t *)coord_allocs.cpu == 0);
 +      CHECK(actual_heap->bottom == HEAP_BOTTOM + index_B + points_B);
 +   } else {
 +      CHECK(desc[0] == 0);
-+      CHECK(actual_heap->bottom == HEAP_BOTTOM + index_B);
++      CHECK(actual_heap->bottom == HEAP_BOTTOM);
 +   }
 +   printf("tessellator points PASS %s\n", test->name);
++}
++
++/* The prefix sum reserves the points of every patch of a draw at once, after
++ * its indices, and gives each patch the points after the previous patch's.
++ * Four quad patches: level 64 with 4225 points and 24576 indices, level 1
++ * with 4 and 6, a culled one with none, and level 64 again. Counting has to
++ * record every patch's points, the culled one's too, over whatever the
++ * buffer held. */
++static void
++check_points_many(struct context *ctx)
++{
++   enum { PATCHES = 4 };
++   const uint32_t points[PATCHES] = {4225, 4, 0, 4225};
++   const uint32_t index_B = align((24576 * 2 + 6) * 4, 16);
++   const uint32_t points_B = align((4225 * 2 + 4) * 8, 16);
++   struct kk_cmd_buffer *cmd = begin(ctx);
++   struct kk_ptr storage = kk_pool_alloc(cmd, HEAP_SIZE, 16);
++   CHECK(storage.gpu);
++   const struct poly_heap heap_data = {
++      .base = storage.gpu,
++      .bottom = HEAP_BOTTOM,
++      .size = HEAP_SIZE,
++   };
++   struct kk_ptr heap_ptr =
++      kk_pool_upload(cmd, &heap_data, sizeof(heap_data), 4);
++   const float factors[PATCHES][8] = {
++      {64, 64, 64, 64, 64, 64, 0, 0},
++      {1, 1, 1, 1, 1, 1, 0, 0},
++      {0, 0, 0, 0, 0, 0, 0, 0},
++      {64, 64, 64, 64, 64, 64, 0, 0},
++   };
++   struct kk_ptr tcs = kk_pool_upload(cmd, factors, sizeof(factors), 4);
++   struct kk_ptr counts = kk_pool_alloc(cmd, PATCHES * sizeof(uint32_t), 4);
++   struct kk_ptr coord_allocs =
++      kk_pool_alloc(cmd, PATCHES * sizeof(uint32_t), 4);
++   struct kk_ptr out_draw = kk_pool_alloc(cmd, 5 * sizeof(uint32_t), 4);
++   CHECK(heap_ptr.cpu && tcs.cpu && counts.cpu && coord_allocs.cpu &&
++         out_draw.cpu);
++   memset(coord_allocs.cpu, 0xa5, PATCHES * sizeof(uint32_t));
++   const struct poly_tess_params tess = {
++      .heap = heap_ptr.gpu,
++      .patch_coord_buffer = storage.gpu,
++      .coord_allocs = coord_allocs.gpu,
++      .out_draws = out_draw.gpu,
++      .tcs_buffer = tcs.gpu,
++      .counts = counts.gpu,
++      .input_patch_size = 4,
++      .output_patch_size = 4,
++      .patches_per_instance = PATCHES,
++      .tcs_stride_el = 8,
++      .nr_patches = PATCHES,
++      .partitioning = POLY_TESS_PARTITIONING_INTEGER,
++      .winding_in_index_buffer = true,
++   };
++   struct kk_ptr p = kk_pool_upload(cmd, &tess, sizeof(tess), 8);
++   CHECK(p.cpu);
++   libkk_tessellate(cmd, kk_grid_1d(PATCHES), true, TESS_PRIMITIVE_QUADS,
++                    POLY_TESS_MODE_COUNT, p.gpu);
++   libkk_prefix_sum_tess(cmd, kk_grid_1d(1024u), true, p.gpu, 0, 0, false);
++   libkk_tessellate(cmd, kk_grid_1d(PATCHES), true, TESS_PRIMITIVE_QUADS,
++                    POLY_TESS_MODE_WITH_COUNTS, p.gpu);
++   submit(ctx);
++
++   const uint32_t *desc = out_draw.cpu;
++   const uint32_t *allocs = coord_allocs.cpu;
++   const struct poly_heap *actual_heap = heap_ptr.cpu;
++   const struct poly_tess_params *actual = p.cpu;
++   CHECK(desc[0] == 24576 * 2 + 6 && desc[1] == 1);
++   CHECK(actual->patch_coord_buffer == storage.gpu + HEAP_BOTTOM + index_B);
++   uint32_t first = 0;
++   for (unsigned i = 0; i < PATCHES; i++) {
++      CHECK(allocs[i] == first);
++      first += points[i];
++   }
++   CHECK(actual_heap->bottom == HEAP_BOTTOM + index_B + points_B);
++   CHECK(actual_heap->refusals == 0);
++   printf("tessellator points PASS many-patches\n");
 +}
 +
 +int
@@ -1741,12 +1948,14 @@ index 0000000000000000000000000000000000000000..4e3788765c9a29ae21213572b8772080
 +   /* 2^32 of the 32-bit sum is lost when it wraps, so each wrapping case
 +    * leaves a small total an unchecked allocation would accept. */
 +   const struct sum_case sums[] = {
-+      {"counts", 4, 1, 3, 6, true},
-+      {"counts-past-one-group", 3000, 0, 0, 1, true},
-+      {"sum-wraps", 3, 2, 0x80000000u, 16, false},
-+      {"sum-wraps-past-one-group", 2049, 2048, 1u << 21, 8, false},
-+      {"size-overflow", 1, 1, 1u << 30, 0, false},
-+      {"heap-overflow", 1, 1, 1u << 20, 0, false},
++      {"counts", 4, 1, 3, 6, 5, 2, true},
++      {"counts-past-one-group", 3000, 1000, 1, 2, 3, 1, true},
++      {"sum-wraps", 3, 2, 0x80000000u, 16, 0, 0, false},
++      {"sum-wraps-past-one-group", 2049, 2048, 1u << 21, 8, 0, 0, false},
++      {"points-wrap", 3, 2, 1, 1, 0x80000000u, 16, false},
++      {"points-wrap-past-one-group", 2049, 2048, 1, 1, 1u << 21, 8, false},
++      {"size-overflow", 1, 1, 1u << 30, 0, 0, 0, false},
++      {"heap-overflow", 1, 1, 1u << 20, 0, 0, 0, false},
 +   };
 +   for (unsigned i = 0; i < ARRAY_SIZE(sums); i++) {
 +      VK_CHECK(ctx.api->ResetCommandPool(ctx.device, pool, 0));
@@ -1761,6 +1970,8 @@ index 0000000000000000000000000000000000000000..4e3788765c9a29ae21213572b8772080
 +      VK_CHECK(ctx.api->ResetCommandPool(ctx.device, pool, 0));
 +      check_points(&ctx, &points[i]);
 +   }
++   VK_CHECK(ctx.api->ResetCommandPool(ctx.device, pool, 0));
++   check_points_many(&ctx);
 +
 +   ctx.api->DestroyCommandPool(ctx.device, pool, NULL);
 +   ctx.api->DestroyDevice(ctx.device, NULL);
@@ -1781,7 +1992,7 @@ index d0004cbf96f5a6c5a28c5f3a3165317094238c80..aef5b82ef3e5f24748fe9d66d47c6f2d
  
        if (id == 1)
 diff --git a/src/poly/cl/tessellator.h b/src/poly/cl/tessellator.h
-index f46081cdcf6de0167307e46ea4319e17f7c963b2..41de4a2c3bf3d0b4e25688f023eb9825277e4fdd 100644
+index f46081cdcf6de0167307e46ea4319e17f7c963b2..0a88b71456d737d0b7e56c3ad6d18d7a70e03c3b 100644
 --- a/src/poly/cl/tessellator.h
 +++ b/src/poly/cl/tessellator.h
 @@ -90,6 +90,7 @@ struct INDEX_PATCH_CONTEXT2 {
@@ -1792,39 +2003,52 @@ index f46081cdcf6de0167307e46ea4319e17f7c963b2..41de4a2c3bf3d0b4e25688f023eb9825
  
     // array where we will store u/v's for the points we generate
     global struct poly_tess_point *Point;
-@@ -179,11 +180,22 @@ poly_draw_empty(constant struct poly_tess_params *p, enum poly_tess_mode mode,
+@@ -173,32 +174,27 @@ poly_draw_empty(constant struct poly_tess_params *p, enum poly_tess_mode mode,
+ {
+    if (mode == POLY_TESS_MODE_COUNT) {
+       p->counts[patch] = 0;
++      p->coord_allocs[patch] = 0;
+    }
+ }
+ 
  /*
-  * Allocate heap memory for domain points for a patch. The allocation
-  * is recorded in the coord_allocs[] array, which is in elements.
-+ *
-+ * When the heap cannot hold the points, the patch's indices, which the prefix
-+ * sum already placed, would be left unwritten. Empty the whole draw instead
-+ * and return NULL; the caller then returns without writing anything.
+- * Allocate heap memory for domain points for a patch. The allocation
+- * is recorded in the coord_allocs[] array, which is in elements.
++ * The domain points of a patch. Counting records how many the patch has in
++ * coord_allocs[], and the prefix sum then reserves the points of every patch
++ * of the draw at once, points patch_coord_buffer at them and turns each count
++ * into the patch's first point there. Tessellating returns that point; a draw
++ * the heap could not hold has no patches left to tessellate by then.
   */
  static inline global struct poly_tess_point *
- poly_heap_alloc_points(constant struct poly_tess_params *p, uint patch,
-                        uint count)
+-poly_heap_alloc_points(constant struct poly_tess_params *p, uint patch,
+-                       uint count)
++poly_tess_points(constant struct poly_tess_params *p, enum poly_tess_mode mode,
++                 uint patch, uint count)
  {
-+   uint32_t elsize_B = sizeof(struct poly_tess_point);
-+   uint32_t alloc_B;
-+   if (!poly_heap_try_alloc_offs(p->heap, elsize_B * count, &alloc_B)) {
-+      p->out_draws[0] = 0;
+-   /* If we're recording statistics, increment now. The statistic is for
+-    * tessellation evaluation shader invocations, which is equal to the number
+-    * of domain points generated.
+-    */
+-   if (p->statistic) {
+-      poly_atomic_add_u64((global uint32_t *)p->statistic, count);
++   if (mode == POLY_TESS_MODE_COUNT) {
++      p->coord_allocs[patch] = count;
 +      return NULL;
-+   }
-+
-    /* If we're recording statistics, increment now. The statistic is for
-     * tessellation evaluation shader invocations, which is equal to the number
-     * of domain points generated.
-@@ -192,8 +204,6 @@ poly_heap_alloc_points(constant struct poly_tess_params *p, uint patch,
-       poly_atomic_add_u64((global uint32_t *)p->statistic, count);
     }
  
 -   uint32_t elsize_B = sizeof(struct poly_tess_point);
 -   uint32_t alloc_B = poly_heap_alloc_offs(p->heap, elsize_B * count);
-    uint32_t alloc_el = alloc_B / elsize_B;
+-   uint32_t alloc_el = alloc_B / elsize_B;
+-
+-   p->coord_allocs[patch] = alloc_el;
+-   return (global struct poly_tess_point *)(((uintptr_t)p->heap->base) +
+-                                            alloc_B);
++   return &p->patch_coord_buffer[p->coord_allocs[patch]];
+ }
  
-    p->coord_allocs[patch] = alloc_el;
-@@ -319,7 +329,9 @@ DefineTriangle(private struct CHWTessellator *ctx, int index0, int index1,
+ // Microsoft D3D11 Fixed Function Tessellator Reference - May 7, 2012
+@@ -319,7 +315,9 @@ DefineTriangle(private struct CHWTessellator *ctx, int index0, int index1,
     index1 = PatchIndexValue(ctx, index1);
     index2 = PatchIndexValue(ctx, index2);
  
@@ -1835,16 +2059,20 @@ index f46081cdcf6de0167307e46ea4319e17f7c963b2..41de4a2c3bf3d0b4e25688f023eb9825
             (global uint *)ctx->Index + indexStorageBaseOffset);
  }
  
-@@ -777,6 +789,8 @@ poly_tess_isoline_process(constant struct poly_tess_params *p, uint32_t patch,
-    if (mode != POLY_TESS_MODE_COUNT) {
-       global struct poly_tess_point *points =
-          poly_heap_alloc_points(p, patch, num_points);
-+      if (!points)
-+         return;
+@@ -774,10 +772,9 @@ poly_tess_isoline_process(constant struct poly_tess_params *p, uint32_t patch,
  
+    /* Points */
+    uint num_points = numPointsPerLine * numLines;
++   global struct poly_tess_point *points =
++      poly_tess_points(p, mode, patch, num_points);
+    if (mode != POLY_TESS_MODE_COUNT) {
+-      global struct poly_tess_point *points =
+-         poly_heap_alloc_points(p, patch, num_points);
+-
        for (int line = 0, pointOffset = 0; line < numLines; line++) {
           FXP fxpV =
-@@ -834,6 +848,7 @@ poly_tess_tri_process(constant struct poly_tess_params *p, uint32_t patch,
+             PlacePointIn1D(&lineDensityTessFactorCtx, lineDensityOdd, line);
+@@ -834,6 +831,7 @@ poly_tess_tri_process(constant struct poly_tess_params *p, uint32_t patch,
     struct CHWTessellator ctx = {
        .mode = mode,
        .index_bias = patch * POLY_TES_PATCH_ID_STRIDE,
@@ -1852,25 +2080,34 @@ index f46081cdcf6de0167307e46ea4319e17f7c963b2..41de4a2c3bf3d0b4e25688f023eb9825
     };
  
     // Is the patch culled? NaN will pass.
-@@ -905,6 +920,8 @@ poly_tess_tri_process(constant struct poly_tess_params *p, uint32_t patch,
+@@ -898,14 +896,13 @@ poly_tess_tri_process(constant struct poly_tess_params *p, uint32_t patch,
+           (FXP_ONE == outsideTessFactor[Weq0])) {
  
-          global struct poly_tess_point *points =
-             poly_heap_alloc_points(p, patch, 3);
-+         if (!points)
-+            return;
+          /* Just do minimum tess factor */
++         global struct poly_tess_point *points =
++            poly_tess_points(p, mode, patch, 3);
+          if (mode == POLY_TESS_MODE_COUNT) {
+             p->counts[patch] = 3;
+             return;
+          }
  
+-         global struct poly_tess_point *points =
+-            poly_heap_alloc_points(p, patch, 3);
+-
           DefinePoint(&points[0], 0,
                       FXP_ONE);          // V=1 (beginning of Ueq0 edge VW)
-@@ -966,6 +983,8 @@ poly_tess_tri_process(constant struct poly_tess_params *p, uint32_t patch,
+          DefinePoint(&points[1], 0, 0); // W=1 (beginning of Veq0 edge WU)
+@@ -964,8 +961,8 @@ poly_tess_tri_process(constant struct poly_tess_params *p, uint32_t patch,
+    }
+ 
     /* GENERATE POINTS */
++   ctx.Point = poly_tess_points(p, mode, patch, NumPoints);
     if (mode != POLY_TESS_MODE_COUNT) {
-       ctx.Point = poly_heap_alloc_points(p, patch, NumPoints);
-+      if (!ctx.Point)
-+         return;
+-      ctx.Point = poly_heap_alloc_points(p, patch, NumPoints);
  
        // Generate exterior ring edge points, clockwise starting from point V
        // (VW, the U==0 edge)
-@@ -1163,6 +1182,7 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
+@@ -1163,6 +1160,7 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
     struct CHWTessellator ctx = {
        .mode = mode,
        .index_bias = patch * POLY_TES_PATCH_ID_STRIDE,
@@ -1878,29 +2115,54 @@ index f46081cdcf6de0167307e46ea4319e17f7c963b2..41de4a2c3bf3d0b4e25688f023eb9825
     };
  
     // Is the patch culled?
-@@ -1254,6 +1274,8 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
+@@ -1239,6 +1237,8 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
+           (FXP_ONE == outsideTessFactor[Veq1])) {
  
-          global struct poly_tess_point *points =
-             poly_heap_alloc_points(p, patch, 4);
-+         if (!points)
-+            return;
+          /* Just do minimum tess factor */
++         global struct poly_tess_point *points =
++            poly_tess_points(p, mode, patch, 4);
+          if (!p->points_mode) {
+             ctx.Index = poly_draw(p, mode, false, patch, 6);
+             if (mode == POLY_TESS_MODE_COUNT)
+@@ -1252,9 +1252,6 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
+                return;
+          }
  
+-         global struct poly_tess_point *points =
+-            poly_heap_alloc_points(p, patch, 4);
+-
           DefinePoint(&points[0], 0, 0);
           DefinePoint(&points[1], FXP_ONE, 0);
-@@ -1303,6 +1325,8 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
+          DefinePoint(&points[2], FXP_ONE, FXP_ONE);
+@@ -1301,9 +1298,8 @@ poly_tess_quad_process(constant struct poly_tess_params *p, uint32_t patch,
+                            (numPointsForInsideTessFactor[V] - 2);
+    NumPoints += numInteriorPoints;
  
++   ctx.Point = poly_tess_points(p, mode, patch, NumPoints);
     if (mode != POLY_TESS_MODE_COUNT) {
-       ctx.Point = poly_heap_alloc_points(p, patch, NumPoints);
-+      if (!ctx.Point)
-+         return;
- 
+-      ctx.Point = poly_heap_alloc_points(p, patch, NumPoints);
+-
        // Generate exterior ring edge points, clockwise from top-left
        int pointOffset = 0;
+       for (int edge = 0; edge < QUAD_EDGES; edge++) {
 diff --git a/src/poly/tessellator.h b/src/poly/tessellator.h
-index 6087d97d4298010f64cb29566286eb6b84657daf..06dbae12d5962515bb1e559648645cf12d40569b 100644
+index 6087d97d4298010f64cb29566286eb6b84657daf..4f0efd00af9cda47bd0e40920187a1629e7bd1a5 100644
 --- a/src/poly/tessellator.h
 +++ b/src/poly/tessellator.h
-@@ -95,11 +95,14 @@ struct poly_tess_params {
+@@ -38,8 +38,10 @@ struct poly_tess_params {
+     */
+    DEVICE(struct poly_tess_point) patch_coord_buffer;
+ 
+-   /* Per-patch index within the heap for the tess coords, written by the
+-    * tessellator based on the allocated memory.
++   /* Per-patch index of the first tess coord in patch_coord_buffer. The
++    * tessellator counts each patch's points here, and the prefix sum that
++    * reserves them turns the counts into indices and sets
++    * patch_coord_buffer.
+     */
+    DEVICE(uint32_t) coord_allocs;
+ 
+@@ -95,11 +97,14 @@ struct poly_tess_params {
     uint32_t points_mode;
     uint32_t isolines;
  

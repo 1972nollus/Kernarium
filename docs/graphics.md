@@ -969,7 +969,9 @@ refused, empties its draw; the command buffer completes. The heap header counts
 refusals, and the driver reads them at the next draw and when the recording is
 reset, grows the heap for later command buffers and logs the first loss once
 per device. Reservations advance the heap by compare-exchange and never past
-its end, so a refused one leaves the heap as it was. A recording keeps every
+its end, so a refused one leaves the heap as it was. A tessellated draw
+reserves its indices and all its patches' domain points at once, so its
+patches do not contend for the heap. A recording keeps every
 heap it used until it is reset or freed. If Metal refuses the first heap, a
 draw that needs it is not recorded and its command buffer ends with
 `VK_ERROR_OUT_OF_DEVICE_MEMORY`; if it refuses a larger one, the device keeps

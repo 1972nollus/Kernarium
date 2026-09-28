@@ -59,7 +59,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/kosmickrisp/vulkan/kk_cmd_buffer.c        |   7 +-
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  24 +-
- src/kosmickrisp/vulkan/kk_cmd_draw.c          | 414 +++++++++++++--
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          | 411 ++++++++++++--
  src/kosmickrisp/vulkan/kk_device.c            |   8 +-
  src/kosmickrisp/vulkan/kk_device.h            |  34 +-
  src/kosmickrisp/vulkan/meson.build            |  40 ++
@@ -70,7 +70,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../tests/heap_growth_shaders/tile.tese.h     |  63 +++
  .../vulkan/tests/test_heap_growth.c           | 502 ++++++++++++++++++
  .../vulkan/tests/test_heap_size_override.c    | 418 +++++++++++++++
- 13 files changed, 1566 insertions(+), 53 deletions(-)
+ 13 files changed, 1565 insertions(+), 51 deletions(-)
  create mode 100755 src/kosmickrisp/vulkan/tests/heap_growth_shaders/generate.sh
  create mode 100644 src/kosmickrisp/vulkan/tests/heap_growth_shaders/level64.tesc
  create mode 100644 src/kosmickrisp/vulkan/tests/heap_growth_shaders/level64.tesc.h
@@ -168,7 +168,7 @@ index 06fbde5af1864840fa2c3b1d06762836bd37b527..f10f5e66380787cd3431fc388dc622f5
  
  void kk_cmd_release_dynamic_ds_state(struct kk_cmd_buffer *cmd);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..cbc4ab76a48bb74eeea59167fcf36bdaf1021f1c 100644
+index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..72801fda8c84297a700433f4655f3de0c0a3ef26 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -27,6 +27,8 @@
@@ -522,24 +522,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..cbc4ab76a48bb74eeea59167fcf36bda
        }
     } else {
        if (gsi->output_vertex_stride) {
-@@ -1532,7 +1788,6 @@ static bool
- kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
-                       const struct kk_draw_data *draw)
- {
--   struct kk_device *dev = kk_cmd_buffer_device(cmd);
-    struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
-    struct kk_graphics_state *gfx = &cmd->state.gfx;
-    struct kk_shader *tcs = cmd->state.shaders[MESA_SHADER_TESS_CTRL];
-@@ -1571,7 +1826,7 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
- 
-    /* heap is allocated by kk_heap */
-    /* TODO_KOSMICKRISP Self-contained until we have rodata at the device. */
--   args.patch_coord_buffer = dev->heap->gpu + sizeof(struct poly_heap);
-+   args.patch_coord_buffer = kk_heap_data(cmd).addr;
- 
-    if (!kk_grid_is_indirect(draw->grid)) {
-       unsigned in_patches = draw->grid.size.x / args.input_patch_size;
-@@ -2095,7 +2350,6 @@ static bool
+@@ -2093,7 +2349,6 @@ static bool
  kk_unroll_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
                     bool rotate_provoking_to_first, bool discard_adjacency)
  {
@@ -547,7 +530,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..cbc4ab76a48bb74eeea59167fcf36bda
  
     if (unlikely(!kk_convert_to_indirect_draw(cmd, data)))
        return false;
-@@ -2141,8 +2395,7 @@ kk_unroll_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -2139,8 +2394,7 @@ kk_unroll_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
     data->prim = discard_adjacency ? u_reduced_prim(data->prim)
                                    : u_decomposed_prim(data->prim);
     /* TODO_KOSMICKRISP Self-contained until we have rodata at the device. */
@@ -557,7 +540,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..cbc4ab76a48bb74eeea59167fcf36bda
     data->restart_index = UINT32_MAX;
     data->index_buffer_el_size_B = 4u;
     data->indirect = true;
-@@ -2180,7 +2433,6 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
+@@ -2178,7 +2432,6 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
         !rotate_provoking_to_first)
        return draw;
  
@@ -565,7 +548,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..cbc4ab76a48bb74eeea59167fcf36bda
     uint64_t in_draw;
     uint32_t in_draw_stride_el;
  
-@@ -2253,10 +2505,7 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
+@@ -2251,10 +2504,7 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
     libkk_unroll_geometry_struct(cmd, kk_grid_1d(1024), true, args);
  
     draw.grid = kk_grid_indirect(out_draw.gpu);
@@ -577,7 +560,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..cbc4ab76a48bb74eeea59167fcf36bda
     draw.index.el_size_B = sizeof(uint32_t);
     draw.vertex_offset = 0;
     draw.line_raster_run_starts_addr =
-@@ -2730,7 +2979,6 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
+@@ -2728,7 +2978,6 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
  static struct kk_draw_data
  kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  {
@@ -585,7 +568,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..cbc4ab76a48bb74eeea59167fcf36bda
     struct kk_graphics_state *gfx = &cmd->state.gfx;
     struct kk_grid grid_vs, grid_tcs, grid_tess;
  
-@@ -2832,8 +3080,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2830,8 +3079,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  
     draw.grid = kk_grid_indirect(gfx->tess.out_draws_addr);
  
@@ -595,7 +578,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..cbc4ab76a48bb74eeea59167fcf36bda
     draw.index.el_size_B = 4u;
     draw.primitive_type = mesa_prim_to_mtl_primitive_type(gfx->tess.prim);
     return draw;
-@@ -3404,6 +3651,71 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3402,6 +3650,71 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
     return draw;
  }
  
@@ -667,7 +650,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..cbc4ab76a48bb74eeea59167fcf36bda
  static void
  kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
  {
-@@ -3473,16 +3785,31 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3471,16 +3784,31 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
         requires_index_promotion(data) || requires_unroll_robustness(cmd, data) ||
         requires_unroll_restart(cmd, data) || rewrite_direct_provoking ||
         (discard_adjacency && !emulate_line_raster));
@@ -702,7 +685,7 @@ index 4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2..cbc4ab76a48bb74eeea59167fcf36bda
  
     for (uint32_t i = 0; i < data->draw_count; i++) {
        /* KK_WORKAROUND_18: every entry of a multi-draw is a Metal draw of its
-@@ -3493,6 +3820,11 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3491,6 +3819,11 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
  
        struct kk_draw_data draw_data = build_draw_data(cmd, data, i);
  

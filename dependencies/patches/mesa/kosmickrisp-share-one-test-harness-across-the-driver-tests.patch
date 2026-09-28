@@ -4522,7 +4522,7 @@ index d7de8f71429df79685386b49762e196236b046bd..3bc621cee4fdc3ddd2c941d3b5491b24
  static const uint32_t vertex_spirv[] =
  #include "tess_passthrough_shaders/passthrough.vert.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
-index 4e3788765c9a29ae21213572b87720803b820c27..437e1b2636f491c56dc5e0f9ea35de5179b63069 100644
+index 63d57dd9ad7a62dce1a0616fe16ee4ab2716848c..3cfcf8f901248338c1fc7d745225b07dcf67d6a2 100644
 --- a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
 +++ b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
 @@ -16,24 +16,7 @@
