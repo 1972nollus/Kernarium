@@ -57,6 +57,10 @@ private:
     std::unique_ptr<PlaybackSink> sink_;
     StreamState state_ {StreamState::unconfigured};
     PlaybackParameters parameters_ {};
+    // Transfers handed to the sink whose completions have not been taken.
+    // Their buffers belong to the sink's current configuration, so new
+    // parameters are refused until they come back, as Linux itself does.
+    std::size_t deferredTransfers_ {};
 };
 
 } // namespace uml::audio

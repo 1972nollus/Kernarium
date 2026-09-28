@@ -266,7 +266,17 @@ void testWritableDisk(const std::filesystem::path &directory)
 	requireThrows([] { uml::android::validateUbdPath("", "disk"); });
 	requireThrows([] { uml::android::validateUbdPath("/a,b.img", "disk"); });
 	requireThrows([] { uml::android::validateUbdPath("/a:b.img", "disk"); });
+	/* The kernel splits its command line at whitespace, byte 0xa0 included,
+	 * and reads a double quote as quoting. */
+	requireThrows([] { uml::android::validateUbdPath("/My Disk.img", "disk"); });
+	requireThrows([] { uml::android::validateUbdPath("/a\tb.img", "disk"); });
+	requireThrows([] { uml::android::validateUbdPath("/a\nb.img", "disk"); });
+	requireThrows([] { uml::android::validateUbdPath("/a\"b.img", "disk"); });
+	requireThrows([] {
+		uml::android::validateUbdPath("/\xe8\xa0\x80.img", "disk");
+	});
 	uml::android::validateUbdPath("/a/b.img", "disk");
+	uml::android::validateUbdPath("/a/\xe6\x97\xa5.img", "disk");
 
 	const auto disk = directory / "writable.img";
 	writeText(disk, "disk");

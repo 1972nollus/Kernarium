@@ -132,6 +132,14 @@ void test_explicit_defaults_are_preserved()
 			1, explicit_mapping, "/unused/rootfs.erofs")
 			.valid,
 		"explicit EROFS mapping was rejected");
+	/* The rootfs is named in ubd0c=, which the kernel would split at the
+	 * space or misread at the comma. */
+	const char *plain[]{"uml-test"};
+	require(!uml::emulator::prepare_emulator_options(
+			1, plain, "/tmp/My Disk.erofs", false).valid &&
+		!uml::emulator::prepare_emulator_options(
+			1, plain, "/tmp/a,b.erofs", false).valid,
+		"a rootfs path the UBD argument cannot carry was accepted");
 }
 
 void test_x86_64_kernel_memory_accounting_policy()
@@ -336,11 +344,16 @@ void test_scalable_native_kernel_layout_geometry()
 		product.load_bias == product.window_start - 48ULL * gib,
 		"macOS did not select its high dynamic native window");
 #else
-	require(product.valid &&
-		product.window_start == one_gib.window_start &&
-		product.window_end == one_gib.window_end &&
-		product.load_bias == one_gib.load_bias,
-		"iOS did not select its low dynamic native window");
+	/* A physical device maps guest RAM over its window in place, so the
+	 * window is always reserved: a failed reservation fails the run rather
+	 * than fall back to the packed geometry. The host picks where it goes
+	 * when it declines the packed address, as iOS 27 does. */
+	require(product.valid && product.reserved &&
+		product.window_end - product.window_start ==
+			2ULL * gib + product_reserved &&
+		product.load_bias ==
+			product.window_start - DARWIN_UML_NATIVE_LINK_ADDRESS,
+		"iOS did not reserve its dynamic native window");
 #endif
 }
 

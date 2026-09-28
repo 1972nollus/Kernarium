@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -77,16 +78,30 @@ std::string receiveRequest(int descriptor, sockaddr_un &client,
 	return std::string(request.data.data(), length);
 }
 
+/* Waits up to `milliseconds` for a request; false when none arrives. */
+bool awaitRequest(int descriptor, int milliseconds)
+{
+	pollfd waiting {descriptor, POLLIN, 0};
+	int ready;
+	do {
+		ready = ::poll(&waiting, 1, milliseconds);
+	} while (ready < 0 && errno == EINTR);
+	require(ready >= 0);
+	return ready > 0;
+}
+
 void observeRequests(int descriptor, std::vector<std::string> &requests)
 {
 	sockaddr_un client {};
 	socklen_t clientLength {};
+	/* suspend_guest sends its request at once. When it sends nothing, the
+	 * observer gives up so that the test fails on the result instead of
+	 * waiting here for ever. */
+	if (!awaitRequest(descriptor, 10000))
+		return;
 	requests.push_back(receiveRequest(descriptor, client, clientLength));
 
-	pollfd waiting {descriptor, POLLIN, 0};
-	const int ready = ::poll(&waiting, 1, 2500);
-	require(ready >= 0);
-	if (ready == 0)
+	if (!awaitRequest(descriptor, 2500))
 		return;
 
 	requests.push_back(receiveRequest(descriptor, client, clientLength));

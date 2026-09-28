@@ -15,6 +15,9 @@ struct NativeKernelLayout final {
 	/* The host already holds the whole window as one reservation, so the
 	 * kernel image and guest RAM must be mapped over it in place. */
 	bool reserved{};
+	/* With `valid` false: the geometry fits, but the host would not reserve
+	 * the window a physical iOS device requires. */
+	bool reservation_failed{};
 };
 
 template<std::uint64_t LinkAddress, std::uint64_t AddressCeiling,
@@ -106,6 +109,11 @@ public:
 	}
 };
 
+/* The layout for this process. It is invalid when guest_memory does not fit
+ * the product's envelope, and also, with `reservation_failed` set, when a
+ * physical iOS device cannot reserve its window: guest RAM is mapped over the
+ * window with MAP_FIXED, which must never land on a range the host could
+ * have handed to someone else. */
 [[nodiscard]] NativeKernelLayout prepare_native_kernel_layout(
 	std::size_t guest_memory) noexcept;
 

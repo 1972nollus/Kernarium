@@ -150,6 +150,22 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 		if (!slirp_) {
 			return -EIO;
 		}
+		/* Replay the recorded forwards onto the SLiRP instance this open
+		 * created, before its worker exists. libslirp takes no lock: a
+		 * forward links a listening socket into the lists the worker walks,
+		 * and frees it again when the host port is taken. A refused forward
+		 * is reported but never fails the guest network: losing one
+		 * convenience port must not cost every guest its only interface. */
+		for (const auto &forward : forwards_) {
+			if (install_forward(forward) == 0)
+				continue;
+			std::fprintf(stderr,
+				"Unable to forward host %s:%u to guest %s:%u\n",
+				forward.host_address.c_str(),
+				static_cast<unsigned int>(forward.host_port),
+				forward.guest_address.c_str(),
+				static_cast<unsigned int>(forward.guest_port));
+		}
 		try {
 			/*
 			 * ITIMER_REAL is UML's guest clock and must run only on its
@@ -167,20 +183,6 @@ int SlirpProvider::open(std::span<unsigned char, 6> mac,
 			return -EIO;
 		}
 		started_.store(true, std::memory_order_release);
-		/* Replay the recorded forwards onto the SLiRP instance this open
-		 * created. A refused forward is reported but never fails the guest
-		 * network: losing one convenience port must not cost every guest its
-		 * only interface. */
-		for (const auto &forward : forwards_) {
-			if (install_forward(forward) == 0)
-				continue;
-			std::fprintf(stderr,
-				"Unable to forward host %s:%u to guest %s:%u\n",
-				forward.host_address.c_str(),
-				static_cast<unsigned int>(forward.host_port),
-				forward.guest_address.c_str(),
-				static_cast<unsigned int>(forward.guest_port));
-		}
 	}
 	std::ranges::copy(default_mac, mac.begin());
 	mtu = 1500;
@@ -196,6 +198,11 @@ int SlirpProvider::install_forward(const HostForward &forward) noexcept
 		return -EINVAL;
 	if (inet_pton(AF_INET, forward.guest_address.c_str(), &target_address) != 1)
 		return -EINVAL;
+#if UML_SLIRP_TESTING
+	if (worker_.joinable())
+		forwards_installed_while_running_for_testing_.fetch_add(
+			1, std::memory_order_relaxed);
+#endif
 	if (slirp_add_hostfwd(slirp_.get(), forward.udp ? 1 : 0, host_address,
 			      forward.host_port, target_address,
 			      forward.guest_port) != 0)
@@ -208,12 +215,10 @@ int SlirpProvider::add_forward(const HostForward &forward)
 	std::lock_guard lock{start_mutex_};
 	if (forward.host_port == 0 || forward.guest_port == 0)
 		return -EINVAL;
-	if (started_.load(std::memory_order_acquire) && slirp_) {
-		const int error = install_forward(forward);
-		if (error != 0)
-			return error;
-	}
-	/* Record it either way so a later reopen re-establishes the same set. */
+	/* A running worker walks the instance's socket lists without a lock, so
+	 * a forward joins only the next instance open() creates. */
+	if (started_.load(std::memory_order_acquire))
+		return -EBUSY;
 	forwards_.push_back(forward);
 	return 0;
 }

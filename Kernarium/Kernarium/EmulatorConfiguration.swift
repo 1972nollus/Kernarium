@@ -326,10 +326,23 @@ enum RootfsImage {
         )[0]
     }
 
+    /// The runtime names the image in a UBD kernel argument, which cannot
+    /// carry kernel whitespace (including byte 0xa0, which the kernel's
+    /// Latin-1 table counts), a double quote, a comma or a colon. Such a name
+    /// is not offered, rather than failing to boot (darwin/device/block/
+    /// ubd_path.hpp holds the same rule).
+    static func namesOnKernelCommandLine(_ filename: String) -> Bool {
+        !filename.utf8.contains { byte in
+            (0x09...0x0d).contains(byte) || byte == 0x20 || byte == 0xa0 ||
+                byte == 0x22 || byte == 0x2c || byte == 0x3a
+        }
+    }
+
     static func validatedFilename(_ filename: String) -> String? {
         let pathExtension = (filename as NSString).pathExtension.lowercased()
         guard !filename.isEmpty,
               (filename as NSString).lastPathComponent == filename,
+              namesOnKernelCommandLine(filename),
               pathExtension == "erofs" || pathExtension == "ext4" ||
                   pathExtension == GuestBundle.pathExtension
         else {

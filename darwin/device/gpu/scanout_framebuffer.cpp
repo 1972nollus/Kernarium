@@ -110,13 +110,26 @@ void copyRectangleWithVImage(
         throw std::runtime_error("vImage pixel conversion failed");
 }
 
+std::vector<std::uint8_t> initialPixels(
+    std::uint32_t width,
+    std::uint32_t height,
+    FramebufferStorage storage)
+{
+    const auto size = framebufferSize(width, height);
+    if (storage == FramebufferStorage::lazy)
+        return {};
+    return std::vector<std::uint8_t>(size);
+}
+
 } // namespace
 
 ScanoutFramebuffer::ScanoutFramebuffer(
     std::uint32_t width,
-    std::uint32_t height)
+    std::uint32_t height,
+    FramebufferStorage storage)
     : dimensions_(displayDimensions(width, height))
-    , pixels_(framebufferSize(width, height))
+    , storage_(storage)
+    , pixels_(initialPixels(width, height, storage))
 {
 }
 
@@ -135,6 +148,11 @@ std::size_t ScanoutFramebuffer::rowBytes() const noexcept
     return static_cast<std::size_t>(width()) * protocol::gpuBytesPerPixel;
 }
 
+bool ScanoutFramebuffer::hasStorage() const noexcept
+{
+    return !pixels_.empty();
+}
+
 std::span<const std::uint8_t> ScanoutFramebuffer::pixels() const noexcept
 {
     return pixels_;
@@ -142,7 +160,7 @@ std::span<const std::uint8_t> ScanoutFramebuffer::pixels() const noexcept
 
 std::uint8_t* ScanoutFramebuffer::data() noexcept
 {
-    return pixels_.data();
+    return pixels_.empty() ? nullptr : pixels_.data();
 }
 
 void ScanoutFramebuffer::lock() noexcept
@@ -162,21 +180,38 @@ void ScanoutFramebuffer::resize(
     const auto replacementDimensions = displayDimensions(width, height);
     if (dimensions_.load(std::memory_order_acquire) == replacementDimensions)
         return;
-    std::vector<std::uint8_t> replacement(framebufferSize(width, height));
+    /* The previous storage is freed with this vector, after the unlock. */
+    auto replacement = initialPixels(width, height, storage_);
     std::lock_guard lock(mutex_);
-    pixels_ = std::move(replacement);
+    pixels_.swap(replacement);
     dimensions_.store(replacementDimensions, std::memory_order_release);
 }
 
 void ScanoutFramebuffer::clear() noexcept
 {
+    /* Released storage is freed with this vector, after the unlock. */
+    std::vector<std::uint8_t> released;
     std::lock_guard lock(mutex_);
-    clearLocked();
+    if (storage_ == FramebufferStorage::lazy)
+        released.swap(pixels_);
+    else
+        clearLocked();
 }
 
 void ScanoutFramebuffer::clearLocked() noexcept
 {
-    std::fill(pixels_.begin(), pixels_.end(), 0);
+    if (storage_ == FramebufferStorage::retained)
+        std::fill(pixels_.begin(), pixels_.end(), 0);
+    else
+        std::vector<std::uint8_t>().swap(pixels_);
+}
+
+void ScanoutFramebuffer::ensureStorageLocked(std::uint64_t dimensions)
+{
+    if (pixels_.empty()) {
+        pixels_.resize(framebufferSize(
+            displayWidth(dimensions), displayHeight(dimensions)));
+    }
 }
 
 ScanoutRectangle ScanoutFramebuffer::update(
@@ -242,6 +277,7 @@ ScanoutRectangle ScanoutFramebuffer::update(
             framebufferDimensions) {
             return {};
         }
+        ensureStorageLocked(framebufferDimensions);
         for (std::uint32_t row = 0; row < rectangleHeight; ++row) {
             const auto destinationOffset =
                 (static_cast<std::size_t>(destinationY + row) *
@@ -278,6 +314,7 @@ ScanoutRectangle ScanoutFramebuffer::update(
     std::lock_guard lock(mutex_);
     if (dimensions_.load(std::memory_order_acquire) != framebufferDimensions)
         return {};
+    ensureStorageLocked(framebufferDimensions);
     for (std::uint32_t row = 0; row < rectangleHeight; ++row) {
         const auto destinationOffset =
             (static_cast<std::size_t>(destinationY + row) * destinationWidth +
@@ -311,6 +348,7 @@ void ScanoutFramebuffer::fillSelfTestPatternLocked()
     constexpr std::uint8_t testRed = 0x5aU;
 
     const auto dimensions = dimensions_.load(std::memory_order_acquire);
+    ensureStorageLocked(dimensions);
     const auto currentWidth = displayWidth(dimensions);
     const auto currentHeight = displayHeight(dimensions);
     for (std::uint32_t y = 0; y < currentHeight; ++y) {

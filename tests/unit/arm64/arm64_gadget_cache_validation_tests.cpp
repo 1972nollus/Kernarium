@@ -2,6 +2,7 @@
 #include "jit_test_support.hpp"
 
 #include "cpu/arm64/gadgets/executor.hpp"
+#include "static_mmu_test_support.hpp"
 
 #include <cstdint>
 #include <cstring>

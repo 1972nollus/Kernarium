@@ -721,10 +721,11 @@ int uml::app::runEmbeddedKernel(
 		std::error_code ignored;
 		std::filesystem::remove_all(configuration.run_scratch, ignored);
 	}
-	/* The embedded ELF kernel installs process-wide Linux signal handlers.
-	 * Once it halts, avoid running unrelated C++ static teardown through that
-	 * signal environment.  Native app-linked kernels can use normal app
-	 * lifecycle management.
+	/* The loader hands the kernel's signal state back to the host before
+	 * uml_elf_run returns, so no Linux handler is left behind. The launcher
+	 * still leaves through _Exit, which runs no static destructor or atexit
+	 * handler; code that must write at exit, such as the guest-code
+	 * sampler, does so before this point.
 	 */
 	std::_Exit(result);
 }

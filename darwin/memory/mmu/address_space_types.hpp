@@ -2,6 +2,7 @@
 #pragma once
 
 #include "mapped_backing.hpp"
+#include "uml_darwin_static_mmu.h"
 #include "word_shared_mutex.hpp"
 #include "page_index.hpp"
 
@@ -68,10 +69,9 @@ struct GenerationState final {
 	std::array<CodeChangeRecord, 1024> code_history{};
 };
 
-struct CodeChangeRange final {
-	std::uint64_t address;
-	std::uint64_t length;
-};
+/* The bridge's own type, so the history is written straight into a caller's
+ * buffer of it. */
+using CodeChangeRange = darwin_uml_static_code_change;
 
 [[nodiscard]] inline GenerationState::CodeChangeRecord &code_change_record(
 	GenerationState &state, std::uint64_t sequence) noexcept
@@ -186,13 +186,6 @@ struct ActiveGeneration final {
 struct GenerationReference final {
 	std::shared_ptr<GenerationState> owner;
 	GenerationState *state{};
-};
-
-struct ActiveExecution final {
-	const void *address_space{};
-	std::uint64_t generation{};
-	GenerationState *state{};
-	std::shared_ptr<GenerationState> owner;
 };
 
 struct ExecutionContext final {
