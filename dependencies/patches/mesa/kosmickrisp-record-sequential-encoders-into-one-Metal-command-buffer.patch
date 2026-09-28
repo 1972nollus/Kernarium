@@ -44,7 +44,7 @@ kosmickrisp_query_pool_lifetime throws such a recording away, and resets,
 begins or frees one, after destroying the timestamp query pool it wrote to:
 closing its encoders must not reach the pool's released Metal objects.
 ---
- docs/drivers/kosmickrisp/workarounds.rst      |   8 +-
+ docs/drivers/kosmickrisp/workarounds.rst      |  22 +-
  src/kosmickrisp/vulkan/kk_cmd_buffer.c        | 168 ++++--
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  32 ++
  src/kosmickrisp/vulkan/kk_cmd_draw.c          |  36 +-
@@ -57,7 +57,7 @@ closing its encoders must not reach the pool's released Metal objects.
  .../tests/command_buffer_shaders/generate.sh  |   7 +
  .../tests/test_command_buffer_consolidation.c | 526 ++++++++++++++++++
  .../vulkan/tests/test_query_pool_lifetime.c   | 224 ++++++++
- 13 files changed, 1064 insertions(+), 57 deletions(-)
+ 13 files changed, 1078 insertions(+), 57 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.frag.h
  create mode 100644 src/kosmickrisp/vulkan/tests/command_buffer_shaders/color.vert
@@ -67,7 +67,7 @@ closing its encoders must not reach the pool's released Metal objects.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_query_pool_lifetime.c
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index d159845738a21e4c650d6e297393e06316794f8c..eb98498a257aadc04914669a0f5ad22ba2d145ad 100644
+index d159845738a21e4c650d6e297393e06316794f8c..d5ecf61716299c994ef6d7274cd34142840c47fe 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
 @@ -128,7 +128,9 @@ the documented requirements for layered rendering are unmet. Neither an
@@ -92,6 +92,34 @@ index d159845738a21e4c650d6e297393e06316794f8c..eb98498a257aadc04914669a0f5ad22b
  render-pass flush path, so the attachments are reloaded and nothing is lost.
  The cost is one attachment load and store per such draw; a pass that never
  writes the layer, or is not layered, is untouched. The
+@@ -150,6 +154,19 @@ workaround, and ``kosmickrisp_layered_draw_multi_draw`` and
+ through a geometry shader's layer: without the per-draw restart and the
+ raster-stage check, each loses the same 908672 points.
+ 
++The restart does not remove the loss entirely. A restarted encoder still
++occasionally loses whole 1984-vertex batches from the start of its
++layer-selecting draw: about one isolated ``kosmickrisp_layered_draw_sequence``
++run in twenty loses 126976 or 253952 points of the second layer, and a
++standalone Metal 4 program without Mesa loses them the same way. The loss
++needs an encoder that draws into a different layer than the encoder before it,
++is ordered after that encoder by a queue barrier or a fence, and follows one
++that drew many primitives without clearing the attachment; a 16384-point draw
++after a 1048576-point one loses points in most fresh processes. A ``CLEAR``
++load op protects only the encoder right after it, and no other load op,
++barrier form, fence or extra encoder avoids the loss while keeping the
++encoders ordered, so no driver-side avoidance is known.
++
+ Restarting an encoder mid-pass has to preserve everything the open encoder
+ was carrying. Vertex amplification was the one piece that did not survive:
+ ``vkCmdClearAttachments`` turns amplification off because the meta clear
+@@ -162,6 +179,7 @@ encoder start, and ``kosmickrisp_multiview_clear_attachments`` covers it.
+ 
+ | Log:
+ | 2026-09-12: Workaround implemented
++| 2026-09-29: Residual loss after a restart reproduced without Mesa
+ 
+ KK_WORKAROUND_17
+ ----------------
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 index e9aad1e62133281eb13813d923457b278e832595..58c1a4409d26e955fbb81410d90f9d025ee8356b 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
