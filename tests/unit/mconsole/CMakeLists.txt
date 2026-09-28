@@ -5,5 +5,8 @@ target_link_libraries(uml_guest_console_tests PRIVATE UML::DeviceGuestConsole)
 target_compile_features(uml_guest_console_tests PRIVATE cxx_std_20)
 target_compile_options(uml_guest_console_tests PRIVATE -Wall -Wextra -Werror)
 uml_add_unit_test(NAME guest-console-suspend-timeout
-    COMMAND uml_guest_console_tests
+    COMMAND uml_guest_console_tests suspend-timeout
+    LABELS console)
+uml_add_unit_test(NAME guest-console-location
+    COMMAND uml_guest_console_tests location
     LABELS console)
