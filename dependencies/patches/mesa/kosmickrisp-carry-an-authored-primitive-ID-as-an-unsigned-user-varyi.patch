@@ -181,7 +181,7 @@ index f0cf216fd0db5b7b7170738d8c0541a72978c787..45bb7b7ecb42236676c3be8a60835e20
  
     for (unsigned i = 0u; i < ARRAY_SIZE(fixed); ++i) {
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e8f531270b97b3c449151a0dfaecaa2c0cff6caa..291edb7b53bce77146f1a1a3043cbb219b661abe 100644
+index d420e1e76d42d2eb5c4b3307dd6354d16a3e5b44..d3d435ff29cbd4f61c798ab8df0e93c2891fc493 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -659,6 +659,20 @@ if with_tests

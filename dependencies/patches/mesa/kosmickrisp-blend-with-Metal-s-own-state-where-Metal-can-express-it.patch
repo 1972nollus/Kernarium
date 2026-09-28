@@ -845,7 +845,7 @@ index d20bf2c9fbc6d2c75a6b302941b06277cdd30e4f..ed7fd4d5aa75d68a9fc45f1edff6d66f
           bool has_alpha_to_coverage_enabled;
           bool has_alpha_to_one_enabled;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 07fc52ea777ac7910fe4ebb6adeb2ca6c1bef3cd..5f262402199b0bf13f7a372564712da8056bbb0e 100644
+index d9951ddda0c74214814b185e5048b51bfd2ba0aa..d10046c1991f30d306745b9ec5197a7877b5c937 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -549,6 +549,30 @@ if with_tests

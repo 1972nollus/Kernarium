@@ -335,7 +335,7 @@ index 6a439054966ff29eb571fbaa222117909a0c6e2d..d20bf2c9fbc6d2c75a6b302941b06277
  
        struct {
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 634cddb5a60d9991960e462032f4d197c7edf47f..808c9e7af0e6bf88f6a82a040594f292cbd4b027 100644
+index bad11d9ca5f5bbfdd05613b2932e8d39070cbfff..4a41e26d529893aa5637114933945d9b96c30107 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -535,6 +535,20 @@ if with_tests

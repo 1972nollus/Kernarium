@@ -299,10 +299,10 @@ index 318a0cbd32a608cab739ff7ebc066b1b1c052af3..b09a76d3b6220a88cddf39dbc0ce4497
     msl_emit_io_blocks(&ctx, shader);
     if (shader->info.stage == MESA_SHADER_FRAGMENT &&
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 0a9faad7c489e6c8c0880f82de9a47ce902cb55c..ca4aaf2e01f4bf18745a3f0089dd0a2af47668c6 100644
+index 6ad362433e872fa6c31f9401e4a8272582201884..b86c454a0e080a05766353334e1fdeb34358981b 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -913,6 +913,20 @@ if with_tests
+@@ -936,6 +936,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

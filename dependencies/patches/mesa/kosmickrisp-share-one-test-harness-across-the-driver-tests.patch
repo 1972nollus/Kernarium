@@ -3,9 +3,9 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 05:04:07 +0900
 Subject: [PATCH] kosmickrisp: share one test harness across the driver tests
 
-Every KosmicKrisp test carried its own copy of the same checks.  29 C and
+Every KosmicKrisp test carried its own copy of the same checks.  30 C and
 Objective-C tests defined CHECK in three shapes (two boolean messages and a
-VkResult form), eleven of them the same LOAD_I and LOAD_D, 27 C++ tests and
+VkResult form), twelve of them the same LOAD_I and LOAD_D, 27 C++ tests and
 benchmarks the same require() and load<>(), and the line-planner helper its
 own KK_TEST_CHECK.  tests/kk_test.h now holds one boolean CHECK, one VK_CHECK
 and the C and C++ loaders; the VkResult-form tests and the one CHECK_VK use
@@ -38,6 +38,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../tests/test_command_buffer_consolidation.c |  14 +-
  .../vulkan/tests/test_command_completion.m    |   4 +-
  .../vulkan/tests/test_command_pool_release.m  |   4 +-
+ .../vulkan/tests/test_command_pool_threads.c  |   4 +-
  .../vulkan/tests/test_command_resubmit.c      |   4 +-
  .../tests/test_custom_border_lowering.c       |   9 +-
  .../tests/test_dynamic_vertex_input_cache.cpp |  20 +-
@@ -84,14 +85,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../vulkan/tests/test_timeline_wait_loss.c    |   4 +-
  .../test_transform_feedback_builtins.cpp      |  20 +-
  .../tests/test_unused_attachment_gaps.cpp     |  20 +-
- 62 files changed, 524 insertions(+), 2164 deletions(-)
+ 63 files changed, 525 insertions(+), 2167 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/kk_test.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag
  delete mode 100644 src/kosmickrisp/vulkan/tests/point_clip_shaders/points.frag.h
  delete mode 100644 src/kosmickrisp/vulkan/tests/test_tes_sampler_dynamic_indexing.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 8cd261f1415298be4623e2682237a3b98dfa66b7..6ba1f4090dca0aa687a634503e04ef5480811f07 100644
+index 93305da67d2ece9f0799339f5b7ae14864d7b904..0d0ed3aa6b04b03b7605978ad0f244e4d3f3b2a0 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -227,20 +227,43 @@ if with_tests
@@ -614,7 +615,7 @@ index 8cd261f1415298be4623e2682237a3b98dfa66b7..6ba1f4090dca0aa687a634503e04ef54
      timeline_wait_loss_test = executable(
        'test_kosmickrisp_timeline_wait_loss',
        files('tests/test_timeline_wait_loss.c'),
-@@ -1038,16 +724,25 @@ if with_tests
+@@ -1061,16 +747,25 @@ if with_tests
      )
    endif
  
@@ -650,7 +651,7 @@ index 8cd261f1415298be4623e2682237a3b98dfa66b7..6ba1f4090dca0aa687a634503e04ef54
  
    test(
      'kosmickrisp_queue_error',
-@@ -1085,49 +780,6 @@ if with_tests
+@@ -1108,49 +803,6 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -700,7 +701,7 @@ index 8cd261f1415298be4623e2682237a3b98dfa66b7..6ba1f4090dca0aa687a634503e04ef54
    test(
      'kosmickrisp_logic_op',
      executable(
-@@ -1285,75 +937,28 @@ if with_tests
+@@ -1308,75 +960,28 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -1611,6 +1612,21 @@ index a5576a617d74a53ee9b142a8b01e585033bd89c4..6c20077f28f8f9ecb55ad1a5d0ef2132
  
  struct test_allocation {
     void *base;
+diff --git a/src/kosmickrisp/vulkan/tests/test_command_pool_threads.c b/src/kosmickrisp/vulkan/tests/test_command_pool_threads.c
+index 33757bc2b999d1542f01c3f5607fe82d2580a14a..c45d25676c4b3491a246b5c149cf78b504c1fdde 100644
+--- a/src/kosmickrisp/vulkan/tests/test_command_pool_threads.c
++++ b/src/kosmickrisp/vulkan/tests/test_command_pool_threads.c
+@@ -19,9 +19,7 @@
+ #include <unistd.h>
+ 
+ extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
+-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+-#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
+-#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++#include "kk_test.h"
+ 
+ /* Each update takes half an upload BO, so one recording cycles eight. */
+ #define UPDATES     16
 diff --git a/src/kosmickrisp/vulkan/tests/test_command_resubmit.c b/src/kosmickrisp/vulkan/tests/test_command_resubmit.c
 index f2bbea124a5b431e1d72d95640eabb0f1386ef69..2995588bd64005ccdc77b9bf6b8cf22d9863eea4 100644
 --- a/src/kosmickrisp/vulkan/tests/test_command_resubmit.c
