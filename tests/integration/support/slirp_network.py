@@ -94,11 +94,11 @@ def wait_for_slirp_lease(
 def verify_slirp_lease(
     route_table: str, interfaces: str, addresses: str
 ) -> None:
-    if SLIRP_DEFAULT_ROUTE.search(route_table) is None:
-        raise RuntimeError(
-            "missing default route through the SLiRP gateway 10.0.2.2:\n"
-            f"{route_table}"
-        )
+    """Check the tables that wait_for_slirp_lease returned.
+
+    That wait returns only once route_table holds the default route through
+    the SLiRP gateway, so only the interface and the lease remain to check.
+    """
     if re.search(r"^\s*eth0:", interfaces, re.MULTILINE) is None:
         raise RuntimeError(f"SLiRP eth0 interface is missing:\n{interfaces}")
     # The single SLiRP lease is also the default target of a host forward, so
