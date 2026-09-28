@@ -452,10 +452,10 @@ index 4d584d4c647334efe8282f0df332ce10abb5224b..e9aad1e62133281eb13813d923457b27
        mtl_set_address(cmd->argument_table, dev->samplers.table.bo->gpu, 1u);
        mtl_release(desc);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index def06289d0279199efe14eedcea49dffb433e3c4..4bf9f43214a715fafce2a8bfe2bf4a6eb0aed6f2 100644
+index ebdadad34519aad135889803e8765be67768a6a8..87232e3085dd5c0672ee94acbe74fb4aa695a82f 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1810,8 +1810,20 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1808,8 +1808,20 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
     }
  
     if (IS_DIRTY(VI) || IS_DIRTY(VI_BINDINGS_VALID) ||
@@ -477,7 +477,7 @@ index def06289d0279199efe14eedcea49dffb433e3c4..4bf9f43214a715fafce2a8bfe2bf4a6e
        unsigned slot = 0;
        u_foreach_bit(i, vs->info.vs.attribs_read) {
           if (dyn->vi->attributes_valid & BITFIELD_BIT(i)) {
-@@ -1828,6 +1840,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1826,6 +1838,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
           slot++;
        }
        desc->root_dirty = true;

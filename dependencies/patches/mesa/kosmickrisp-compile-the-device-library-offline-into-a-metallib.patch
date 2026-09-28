@@ -413,10 +413,10 @@ index 236af5081351c89aa0748ac61dc69dbe092ccf8c..df3f8b487229017e145491cddb770de6
    link_with : libkk_shaders_lib,
  )
 diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
-index bc8491e266a7931d9ce5984b9088fc9d43ef0caa..d4308661e88266314ddb958540919c8c514c2507 100644
+index 2510dec553f9390ee83dc6e421672e5c6aa9f617..b9738aa2a30759b27190897100369cad6f5f8016 100644
 --- a/src/kosmickrisp/vulkan/kk_device.h
 +++ b/src/kosmickrisp/vulkan/kk_device.h
-@@ -94,6 +94,8 @@ struct kk_sampler_heap {
+@@ -93,6 +93,8 @@ struct kk_sampler_heap {
  
  struct kk_precompiled_cache {
     struct kk_precompiled_shader shaders[LIBKK_NUM_PROGRAMS];
@@ -539,10 +539,10 @@ index b7906019f9f140a266945357340e97ac7634240d..615babfc44f1c279d6a9a2c6621ab746
        mtl_release(dev->precompiled_cache.shaders[j].pipeline);
     return vk_error(dev, VK_ERROR_INVALID_SHADER_NV);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 04237cc4177746b06f5137ffb06dd590e7f3a127..3b324816c88af4d1193fc97f55285c92902fe89d 100644
+index b898342c0caa9598909b8e6ba1cf68f91abc9c33..1294cfcfdd20e5845e4651388a3e5baa18bf8853 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1143,6 +1143,27 @@ if with_tests
+@@ -1164,6 +1164,27 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )

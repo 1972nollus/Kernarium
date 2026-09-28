@@ -447,10 +447,10 @@ index f10f5e66380787cd3431fc388dc622f551f6fc5d..407655ec567a1030142c9c618f3967e3
                                          uint64_t addr);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index cbc4ab76a48bb74eeea59167fcf36bdaf1021f1c..fe72ec8bb2a41f473ac240582d57c5e9f3abc44f 100644
+index ea2c58165d4ffd47fa69548711af03de3e7b56ef..5288221279e2773b76a3aa9f081fa52f2914a768 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -2120,7 +2120,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -2177,7 +2177,7 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
     }
  }
  
@@ -459,7 +459,7 @@ index cbc4ab76a48bb74eeea59167fcf36bdaf1021f1c..fe72ec8bb2a41f473ac240582d57c5e9
  kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
  {
     struct kk_graphics_state *gfx = &cmd->state.gfx;
-@@ -3717,20 +3717,8 @@ kk_tess_heap_bound(struct kk_cmd_buffer *cmd, const struct kk_draw_data *draw)
+@@ -3781,20 +3781,8 @@ kk_tess_heap_bound(struct kk_cmd_buffer *cmd, const struct kk_draw_data *draw)
  }
  
  static void
@@ -481,7 +481,7 @@ index cbc4ab76a48bb74eeea59167fcf36bdaf1021f1c..fe72ec8bb2a41f473ac240582d57c5e9
     data->restart = cmd->vk.dynamic_graphics_state.ia.primitive_restart_enable;
     data->restart_index =
        cmd->vk.dynamic_graphics_state.ia.primitive_restart_index;
-@@ -3885,6 +3873,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3960,6 +3948,26 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     }
  }
  
@@ -531,10 +531,10 @@ index 681be0d9eb9fc2087f4bb32bf0062c7fd5b42aef..8087aeb090f7a451e67d6aa2fd0bee91
     /* Need to ensure the new buffers allocated at record are resident. */
     kk_device_make_resources_resident(dev);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index b869c820d181ec22e6a255cc40a68ad07f30c1bb..7c74aeb734fddfd738877e6842b1b82fd6e5b819 100644
+index d6773f11fb98c37adcb069a68eda994f585e4093..c52d55b51c562277cef295646b8da69955bebbde 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1102,6 +1102,39 @@ if with_tests
+@@ -1123,6 +1123,39 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )
