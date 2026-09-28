@@ -77,6 +77,29 @@ if(TARGET uml_native_mmu_test_variant)
         RUN_SERIAL TRUE)
 endif()
 
+# The direct-to-shadow slot conversion exists only where a guest page is
+# smaller than the host page.
+if(TARGET uml_native_mmu_test_variant AND NOT UML_GUEST_16K_PAGES)
+    add_executable(uml_native_direct_conversion_tests
+        native_direct_conversion_tests.cpp)
+    target_link_libraries(uml_native_direct_conversion_tests PRIVATE
+        UML::MemoryTestComponent)
+    target_include_directories(uml_native_direct_conversion_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/darwin/include
+        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
+        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
+    target_compile_features(uml_native_direct_conversion_tests PRIVATE
+        cxx_std_20)
+    target_compile_options(uml_native_direct_conversion_tests PRIVATE
+        -Wall -Wextra -Werror)
+    # Like the other native-window tests, it maps at fixed window addresses
+    # that a concurrent VM-heavy test can occupy.
+    uml_add_unit_test(NAME memory-native-direct-conversion
+        COMMAND uml_native_direct_conversion_tests)
+    set_tests_properties(memory-native-direct-conversion PROPERTIES
+        RUN_SERIAL TRUE)
+endif()
+
 add_executable(uml_shared_backing_view_tests shared_backing_view_tests.cpp)
 target_link_libraries(uml_shared_backing_view_tests PRIVATE
     UML::MemorySharedBacking)
