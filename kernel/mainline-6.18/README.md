@@ -303,8 +303,11 @@ implementation, and Apple launchers never construct a COW image pair.
 Lifecycle quiesce uses full Linux system suspend. The management console
 acknowledges only after the suspend entry boundary and remains the explicit
 wake source, so monotonic guest uptime excludes time while an Apple host has
-frozen the application. Multi-vCPU suspend parks secondary carriers through
-CPU hotplug and restores them before guest tasks resume.
+frozen the application. Multi-vCPU suspend parks secondary carriers through CPU
+hotplug and restores them before guest tasks resume. The console socket is
+`/tmp/uml-<umid>-mconsole`, or `<dir>/mconsole` when the host passes
+`uml_dir=<dir>`, a directory owned by that machine alone; a path that does not
+fit Darwin's 104-byte `sun_path` is refused, never truncated.
 
 Loadable modules remain disabled. The required guest filesystems, networking,
 Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM

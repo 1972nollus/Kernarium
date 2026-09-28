@@ -64,6 +64,11 @@ The local series provides the durable Android-specific behavior:
   vCPU hotplug across an Apple host background interval; and
 - anonymous host VM for Android physical memory.
 
+The management console socket is `/tmp/uml-<umid>-mconsole`, or
+`<dir>/mconsole` when the host passes `uml_dir=<dir>`, a directory owned by
+that machine alone; a path that does not fit Darwin's 104-byte `sun_path` is
+refused, never truncated.
+
 Pure touchscreen input is specific to this Android line because Android and
 recovery must not enter pointer mode. The mainline kernel continues to expose
 desktop mouse buttons, hover, and wheel input for non-Android guests.
