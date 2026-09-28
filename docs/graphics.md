@@ -959,10 +959,11 @@ library is compiled without `printf`, and its `abort()` would end only the
 allocating kernel invocation, so every kernel that reserves heap space checks
 the reservation instead and, when it is refused, empties its draw. The stages
 after it launch nothing and the command buffer completes. The draw loses its
-output, and so does every later draw in the same command buffer that needs the
-heap, because the refused reservation leaves it exhausted. Real
-draws can exceed the default: 130 quad patches at tessellation level 64 lose
-patches. A smaller size is therefore validated only by a conformance run.
+output. Reservations advance the heap by compare-exchange and never past its
+end, so a refused one leaves the heap as it was and a later draw that fits
+still renders. Real draws can exceed the default: 130 quad patches at
+tessellation level 64 lose patches. A smaller size is therefore validated only
+by a conformance run.
 
 An uninterrupted released mustpass fraction runs about 200,000 cases in one
 `deqp-vk` process, and a 1536 MiB guest cannot hold every group in that

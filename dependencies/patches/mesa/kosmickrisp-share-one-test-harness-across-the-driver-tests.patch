@@ -1997,7 +1997,7 @@ index 305053fb641d13373146d19fdd38ad8f923bb97a..ba0683573f2371b26507633c2d0643c4
     }
     api->DestroyCommandPool(device, commands, NULL);
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
-index d017499cb4f70f25cfc3359c0135e8b7bedd732f..f437d3e7b090024a303b996f53368fbc773f79af 100644
+index df8881efd512972c133f9a8b5f016e3f52707b8c..8ac11af988ce3d0453b24c8d7566461f0d7ee705 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
 @@ -14,24 +14,7 @@
@@ -4505,10 +4505,10 @@ index d7de8f71429df79685386b49762e196236b046bd..3bc621cee4fdc3ddd2c941d3b5491b24
  static const uint32_t vertex_spirv[] =
  #include "tess_passthrough_shaders/passthrough.vert.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
-index b7232bb259192887564d9db21ee77cd6662de7ec..cc87939575063f8e6e99d24209c412c3da4e3e50 100644
+index 4e3788765c9a29ae21213572b87720803b820c27..437e1b2636f491c56dc5e0f9ea35de5179b63069 100644
 --- a/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
 +++ b/src/kosmickrisp/vulkan/tests/test_tess_setup_gpu.c
-@@ -15,24 +15,7 @@
+@@ -16,24 +16,7 @@
  #include <stdlib.h>
  #include <string.h>
  
