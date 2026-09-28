@@ -13,9 +13,6 @@ Production must not discover libraries from Homebrew, ambient
 `CMAKE_PREFIX_PATH`, or unrestricted `pkg-config`. Consumers use only verified
 private prefixes through the CMake targets in this directory.
 
-Apple GPU builds reuse one Xcode DerivedData directory below their shared work
-root; they do not populate the user's global Xcode DerivedData directory.
-
 ## Products
 
 The dependency products are:
