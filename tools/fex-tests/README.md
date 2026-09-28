@@ -62,6 +62,11 @@ python3 tools/fex-tests/run-asm-corpus.py \
   OUTPUT_I386_DIRECTORY REPORT_I386.json
 ```
 
+The runner reports each case as one tab-separated line of `key=value` fields
+that names the binary it ran; the campaign rejects a line naming another input.
+The `x86-64-fex-asm-campaign-runner` tooling test runs the campaign over the
+runner on generated inputs, so the two cannot drift apart.
+
 The campaign executes every selected binary, including upstream-disabled
 inputs, but excludes those upstream-disabled results from the applicable pass
 rate. It never filters tests according to host CPU features: those annotations

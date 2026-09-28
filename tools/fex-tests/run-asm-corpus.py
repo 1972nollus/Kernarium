@@ -66,7 +66,13 @@ def load_corpus(root: pathlib.Path) -> tuple[dict[str, Any], list[dict[str, Any]
     return metadata, tests
 
 
-def parse_runner_output(output: str) -> dict[str, object]:
+def parse_runner_output(output: str, binary: str) -> dict[str, object]:
+    """Parse the runner's one tab-separated result line for BINARY.
+
+    The runner names the case in an optional `test` field; it must name the
+    binary this campaign passed, so a result can never be credited to another
+    input.
+    """
     line = output.strip().splitlines()
     if len(line) != 1:
         return {
@@ -89,13 +95,21 @@ def parse_runner_output(output: str) -> dict[str, object]:
             }
         fields[key] = value
     required = {"status", "retired", "address", "opcode", "detail"}
-    if set(fields) != required:
+    if set(fields) - {"test"} != required:
         return {
             "status": "runner_error",
             "retired": 0,
             "address": "0x0",
             "opcode": "",
             "detail": "runner result fields differ from the contract",
+        }
+    if fields.get("test", binary) != binary:
+        return {
+            "status": "runner_error",
+            "retired": 0,
+            "address": "0x0",
+            "opcode": "",
+            "detail": "runner result names another test",
         }
     try:
         retired = int(fields["retired"])
@@ -151,9 +165,10 @@ def run_one(
     timeout: float,
 ) -> dict[str, object]:
     started = time.monotonic()
+    binary = str(corpus_path(root, record["binary"]))
     command = [
         str(runner),
-        str(corpus_path(root, record["binary"])),
+        binary,
         str(corpus_path(root, record["config"])),
     ]
     try:
@@ -165,7 +180,7 @@ def run_one(
             text=True,
             timeout=timeout,
         )
-        result = parse_runner_output(completed.stdout)
+        result = parse_runner_output(completed.stdout, binary)
         result["runner_returncode"] = completed.returncode
         if completed.stderr:
             result["runner_stderr"] = completed.stderr[-4096:]
