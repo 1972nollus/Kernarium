@@ -870,6 +870,68 @@ read_moving_code_sequences(void *opaque) noexcept
 		"rebuilt translation did not execute the rewritten bytes");
 }
 
+/* A masked store publishes once for its whole range, from its base. When that
+ * base is on one page and a selected element lies wholly on the next, the
+ * record the store owes is the next page's: another executor holding a
+ * translation there must see its stamp move and rebuild. */
+[[nodiscard]] bool a_masked_store_publishes_the_page_its_elements_reach()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	/* VPMASKMOVD [RAX], XMM1, XMM0; SYSCALL. */
+	memory.load(0, {0xc4, 0xe2, 0x71, 0x8e, 0x00, 0x0f, 0x05});
+	memory.load(0x2000, {0xb8, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x05});
+	memory.set_every_page_executable(true);
+	memory.set_code_stamps_available(true);
+	TestCodeSequences sequences;
+	memory.set_code_changes(&sequences.code_changes);
+	gadgets::Executor writer;
+	writer.prepare(memory, 29, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	gadgets::Executor reader;
+	reader.prepare(memory, 29, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	const auto cached = reader.select_program(
+		memory, 0x2000, ExecutionMode::long64);
+	const auto block = writer.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(cached.program != nullptr && block.program != nullptr,
+		"masked-store publication setup did not cache both blocks"))
+		return false;
+
+	/* Only element 2, the dword at 0x2000, is selected; the base and the
+	 * two elements before it are on the page below. */
+	CpuState cpu{};
+	cpu.gpr(Register::rax) = 0x1ff8;
+	const std::array<std::uint8_t, 4> replacement{0xb8, 0x02, 0x00, 0x00};
+	for (std::size_t index = 0; index < replacement.size(); ++index)
+		cpu.vectors[0][8 + index] = std::byte{replacement[index]};
+	cpu.vectors[1][11] = std::byte{0x80};
+	memory.load(0x1ff8, {0x5a});
+	const auto result = gadgets::execute(
+		*block.program, cpu, memory, writer, 64);
+	if (!expect(result.event == uml::cpu::EngineEvent::system_call,
+			"masked-store writer did not run") ||
+		!expect(memory.byte(0x2001) == 0x02 && memory.byte(0x1ff8) == 0x5a,
+			"masked store did not write only its selected element"))
+		return false;
+
+	reader.prepare(memory, 29, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	const auto again = reader.select_program(
+		memory, 0x2000, ExecutionMode::long64);
+	if (!expect(again.program != nullptr && !again.cache_hit,
+		"a masked store left another executor's translation current"))
+		return false;
+	CpuState other{};
+	other.rip = 0x2000;
+	const auto ran = gadgets::execute(
+		*again.program, other, memory, reader, 64);
+	return expect(ran.event == uml::cpu::EngineEvent::system_call &&
+		other.gpr(Register::rax) == 2,
+		"rebuilt translation did not execute the masked store's bytes");
+}
+
 /* The same publisher must not be able to keep a program whose own bytes have
  * been rewritten. */
 [[nodiscard]] bool a_moving_code_sequence_rebuilds_changed_programs()
@@ -3082,6 +3144,41 @@ read_test_sequences(void *context) noexcept
 			return false;
 	}
 
+	/* With 0x67 in 64-bit mode the same encoding is EIP-relative: the
+	 * displacement still counts from the end of the instruction, and the
+	 * sum is a 32-bit address. It is never an absolute disp32, which is
+	 * what ModR/M rm=5 means only in 32-bit mode.
+	 */
+	{
+		TestMemory memory;
+		memory.load(data, {0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01});
+		const std::uint64_t rip_code = 0x200;
+		const auto displacement = static_cast<std::uint32_t>(
+			data - (rip_code + 8));
+		memory.load(rip_code, {0x67, 0x48, 0x8b, 0x05,
+			static_cast<std::uint8_t>(displacement),
+			static_cast<std::uint8_t>(displacement >> 8),
+			static_cast<std::uint8_t>(displacement >> 16),
+			static_cast<std::uint8_t>(displacement >> 24)});
+		const auto decoded = decode(memory, rip_code, ExecutionMode::long64);
+		CpuState cpu{};
+		cpu.rip = rip_code;
+		const auto built = gadgets::build(memory, rip_code, 1);
+		if (!expect(decoded.status == DecodeStatus::decoded &&
+				decoded.instruction.source.memory.rip_relative &&
+				decoded.instruction.source.memory.address_32 &&
+				!decoded.instruction.source.memory.absolute_address,
+				"addr32 rm=5 did not decode as EIP-relative") ||
+			!expect(built.status == gadgets::BuildStatus::built,
+				"EIP-relative did not build") ||
+			!expect(gadgets::execute(built.program, cpu, memory, 1).event ==
+				uml::cpu::EngineEvent::continued,
+				"EIP-relative did not execute") ||
+			!expect(cpu.gpr(Register::rax) == marker,
+				"EIP-relative resolved the wrong address"))
+			return false;
+	}
+
 	/* A load that spans a page boundary leaves the inline fast path, so the
 	 * shape has to stay correct on the slow path too.
 	 */
@@ -3217,6 +3314,101 @@ read_test_sequences(void *context) noexcept
 			"compat32 ModR/M rm=5 is not an absolute 32-bit address");
 }
 
+/* A gather whose destination, mask and index registers are not all distinct
+ * is #UD; the comparison is between full register numbers. */
+[[nodiscard]] bool decode_gather_register_aliases()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case final {
+		std::array<std::uint8_t, 6> bytes;
+		bool legal;
+		const char *message;
+	};
+	const std::array cases{
+		Case{{0xc4, 0xe2, 0x69, 0x90, 0x04, 0x08}, true,
+			"distinct gather registers did not decode"},
+		Case{{0xc4, 0xa2, 0x69, 0x90, 0x0c, 0x08}, true,
+			"gather index XMM9 was compared by its low bits"},
+		Case{{0xc4, 0xe2, 0x79, 0x90, 0x04, 0x08}, false,
+			"gather destination aliasing the mask decoded"},
+		Case{{0xc4, 0xe2, 0x69, 0x90, 0x04, 0x00}, false,
+			"gather destination aliasing the index decoded"},
+		Case{{0xc4, 0xe2, 0x71, 0x90, 0x04, 0x08}, false,
+			"gather mask aliasing the index decoded"},
+		Case{{0xc4, 0xa2, 0x31, 0x90, 0x0c, 0x08}, false,
+			"gather mask aliasing extended index XMM9 decoded"},
+	};
+	for (const auto &shape : cases) {
+		TestMemory memory;
+		memory.load(0, {shape.bytes[0], shape.bytes[1], shape.bytes[2],
+			shape.bytes[3], shape.bytes[4], shape.bytes[5]});
+		const auto decoded = decode(memory, 0);
+		const bool legal = decoded.status == DecodeStatus::decoded &&
+			decoded.instruction.operation == Operation::vector_gather;
+		const bool illegal =
+			decoded.status == DecodeStatus::illegal_instruction;
+		if (!expect(shape.legal ? legal : illegal, shape.message))
+			return false;
+	}
+	return true;
+}
+
+/* In 32-bit code C4 and C5 are LES and LDS unless the next byte's top two bits
+ * are 11, which a memory ModR/M can never produce.  Inside a VEX prefix that
+ * does select, VEX.B-bar and the top bit of vvvv are ignored, so only XMM0-7
+ * are reachable. */
+[[nodiscard]] bool decode_compat32_vex_aliases()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xc4, 0xe1, 0x38, 0x58, 0xc1, // vaddps xmm0, xmm0, xmm1 (vvvv[3] set)
+		0xc4, 0xc1, 0x78, 0x28, 0xd1, // vmovaps xmm2, xmm1 (B-bar clear)
+		0xcd, 0x80,                   // int 80h
+	});
+	memory.load(0x40, {0xc4, 0x01, 0x78, 0x28, 0xc1}); // les eax, [ecx]
+	memory.load(0x50, {0xc5, 0x41, 0x58, 0xc1});       // lds eax, [ecx+0x58]
+	for (const auto address : {0x40U, 0x50U}) {
+		const auto alias = decode(memory, address, ExecutionMode::compat32);
+		if (!expect(alias.status == DecodeStatus::illegal_instruction,
+			"compat32 LES/LDS form decoded as a VEX prefix"))
+			return false;
+	}
+	const auto wide = decode(memory, 5, ExecutionMode::long64);
+	if (!expect(wide.status == DecodeStatus::decoded &&
+		wide.instruction.source.reg.index == 9,
+		"64-bit VEX.B-bar no longer selects XMM8-15"))
+		return false;
+	const auto built = gadgets::build(memory, 0, ExecutionMode::compat32);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"compat32 VEX block did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.execution_mode = ExecutionMode::compat32;
+	const auto fill = [&](std::size_t index, float value) {
+		for (std::size_t lane = 0; lane < 4; ++lane)
+			std::memcpy(&cpu.vectors[index][lane * sizeof(float)],
+				&value, sizeof(float));
+	};
+	const auto lane0 = [&](std::size_t index) {
+		float value{};
+		std::memcpy(&value, &cpu.vectors[index][0], sizeof(float));
+		return value;
+	};
+	fill(0, 1.0F);
+	fill(1, 2.0F);
+	fill(8, 100.0F);
+	fill(9, 200.0F);
+	const auto result = gadgets::execute(built.program, cpu, memory, 3);
+	return expect(result.event == uml::cpu::EngineEvent::system_call &&
+		result.retired_instructions == 3,
+		"compat32 VEX block did not reach INT 80h") &&
+		expect(lane0(0) == 3.0F,
+			"compat32 VEX.vvvv[3] selected XMM8") &&
+		expect(lane0(2) == 2.0F,
+			"compat32 VEX.B-bar selected XMM9");
+}
+
 [[nodiscard]] bool execute_compat32_stack_and_int80()
 {
 	using namespace uml::cpu::x86_64;
@@ -3245,6 +3437,57 @@ read_test_sequences(void *context) noexcept
 			"compat32 PUSH/POP did not use a wrapping 32-bit stack") &&
 		expect(cpu.system_call_32bit && cpu.rip == 4,
 			"compat32 INT 80h did not publish its syscall convention or EIP");
+}
+
+/* ENTER's default operand size follows the stack, so an i386 ENTER without a
+ * 0x66 prefix builds a 32-bit frame: EBP and each copied frame pointer are
+ * dwords, and ESP and EBP are written zero-extended. */
+[[nodiscard]] bool execute_compat32_enter_frames()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xc8, 0x10, 0x00, 0x00, // enter 0x10, 0
+		0xc8, 0x08, 0x00, 0x02, // enter 8, 2
+	});
+	memory.load(0x17c, {0xbb, 0xbb, 0xaa, 0xaa});
+	CpuState cpu{};
+	cpu.execution_mode = ExecutionMode::compat32;
+	cpu.gpr(Register::rsp) = 0x1'0000'0200ULL;
+	cpu.gpr(Register::rbp) = 0xffff'ffff'1234'5678ULL;
+	const auto flat = gadgets::build(memory, 0, ExecutionMode::compat32, 1);
+	if (!expect(flat.status == gadgets::BuildStatus::built,
+		"compat32 ENTER did not build"))
+		return false;
+	const auto flat_result = gadgets::execute(flat.program, cpu, memory, 1);
+	if (!expect(flat_result.event == uml::cpu::EngineEvent::continued &&
+			flat_result.retired_instructions == 1 && cpu.rip == 4,
+		"compat32 ENTER did not retire") ||
+		!expect(memory.dword(0x1fc) == 0x1234'5678 &&
+			cpu.gpr(Register::rbp) == 0x1fc &&
+			cpu.gpr(Register::rsp) == 0x1ec,
+			"compat32 ENTER did not build a 32-bit frame"))
+		return false;
+
+	cpu.gpr(Register::rsp) = 0x1'0000'0200ULL;
+	cpu.gpr(Register::rbp) = 0xffff'ffff'0000'0180ULL;
+	const auto nested = gadgets::build(memory, 4, ExecutionMode::compat32, 1);
+	if (!expect(nested.status == gadgets::BuildStatus::built,
+		"compat32 nested ENTER did not build"))
+		return false;
+	const auto nested_result =
+		gadgets::execute(nested.program, cpu, memory, 1);
+	return expect(nested_result.event ==
+			uml::cpu::EngineEvent::continued &&
+			nested_result.retired_instructions == 1 && cpu.rip == 8,
+		"compat32 nested ENTER did not retire") &&
+		expect(memory.dword(0x1fc) == 0x180 &&
+			memory.dword(0x1f8) == 0xaaaa'bbbb &&
+			memory.dword(0x1f4) == 0x1fc,
+			"compat32 nested ENTER did not copy dword frame pointers") &&
+		expect(cpu.gpr(Register::rbp) == 0x1fc &&
+			cpu.gpr(Register::rsp) == 0x1ec,
+			"compat32 nested ENTER did not set EBP and ESP");
 }
 
 [[nodiscard]] bool execute_compat32_pushfd_popfd()
@@ -3382,6 +3625,8 @@ read_test_sequences(void *context) noexcept
 	cpu.gpr(Register::rsp) = stack;
 	cpu.segment_selectors[1] = 0x33;
 	cpu.segment_selectors[2] = 0x2b;
+	/* User mode runs with IF set, which IRET at CPL 3 cannot change. */
+	cpu.rflags = 0x202;
 	const auto result = gadgets::execute(built.program, cpu, memory, 1);
 	return expect(result.event == uml::cpu::EngineEvent::continued &&
 			result.retired_instructions == 1,
@@ -3392,6 +3637,69 @@ read_test_sequences(void *context) noexcept
 		expect(cpu.segment_selectors[1] == 0x33 &&
 			cpu.segment_selectors[2] == 0x2b && cpu.rflags == 0x246,
 			"long64 IRETQ did not restore its selectors and flags");
+}
+
+/* At CPL 3 IRET loads the flags POPF may load, plus RF: IF, IOPL, VM, VIF and
+ * VIP keep their values, the reserved bits stay fixed, and a 16-bit IRET
+ * leaves the upper half alone. */
+[[nodiscard]] bool interrupt_return_masks_user_flags()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case final {
+		ExecutionMode mode;
+		std::array<std::uint8_t, 2> bytes;
+		std::size_t slot;
+		std::uint64_t current;
+		std::uint64_t popped;
+		std::uint64_t expected;
+		const char *message;
+	};
+	const std::array cases{
+		Case{ExecutionMode::long64, {0x48, 0xcf}, 8, 0x202,
+			~0ULL, 0x25'4fd7,
+			"IRETQ loaded flags outside the user mask"},
+		Case{ExecutionMode::long64, {0x48, 0xcf}, 8, 0x3202,
+			0, 0x3202,
+			"IRETQ cleared IF or IOPL"},
+		Case{ExecutionMode::compat32, {0xcf, 0x00}, 4, 0x202,
+			0xffff'ffffULL, 0x25'4fd7,
+			"compat32 IRETD loaded flags outside the user mask"},
+		Case{ExecutionMode::compat32, {0x66, 0xcf}, 2, 0x24'0202,
+			0xffffULL, 0x24'4fd7,
+			"compat32 16-bit IRET changed the upper flags"},
+	};
+	constexpr std::uint64_t stack = 0x200;
+	constexpr std::uint64_t target = 0x40;
+	for (const auto &shape : cases) {
+		TestMemory memory;
+		memory.load(0, {shape.bytes[0], shape.bytes[1]});
+		const std::array<std::uint64_t, 5> frame{
+			target, 0x23, shape.popped, 0x900, 0x2b};
+		for (std::size_t index = 0; index < frame.size(); ++index) {
+			std::array<std::byte, 8> word{};
+			std::memcpy(word.data(), &frame[index], word.size());
+			if (!memory.write(stack + index * shape.slot,
+				std::span{word.data(), shape.slot}))
+				return expect(false, "IRET frame setup failed");
+		}
+		const auto built = gadgets::build(memory, 0, shape.mode, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"IRET did not build"))
+			return false;
+		CpuState cpu{};
+		cpu.execution_mode = shape.mode;
+		cpu.gpr(Register::rsp) = stack;
+		cpu.segment_selectors[1] = 0x23;
+		cpu.segment_selectors[2] = 0x2b;
+		cpu.rflags = shape.current;
+		const auto result = gadgets::execute(built.program, cpu, memory, 1);
+		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == 1 && cpu.rip == target,
+			"IRET did not retire") ||
+			!expect(cpu.rflags == shape.expected, shape.message))
+			return false;
+	}
+	return true;
 }
 
 [[nodiscard]] bool expose_consistent_xsave_cpuid_state()
@@ -5045,6 +5353,187 @@ read_test_sequences(void *context) noexcept
 			"RDTSC under PR_TSC_SIGSEGV did not raise #GP");
 }
 
+/* An instruction that would need a sixteenth byte raises #GP at its first
+ * byte without fetching that byte.  It used to be reported as a fetch fault
+ * at the sixteenth byte, which a mapped page resolves as spurious, so the
+ * guest re-ran the same bytes forever.  A fetch that fails before the limit
+ * stays a page fault at the byte it wanted. */
+[[nodiscard]] bool overlong_instructions_raise_general_protection()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::size_t span = 16384;
+	TestMemory memory;
+	memory.load(0x100, {0x90});
+	for (std::size_t index = 0; index < 15; ++index) {
+		memory.load(0x101 + index, {0x66});
+		memory.load(0x200 + index, {0x66});
+	}
+	memory.load(0x110, {0x90});
+	memory.load(0x20f, {0x90});
+	for (std::size_t index = 0; index < 14; ++index)
+		memory.load(span - 14 + index, {0x66});
+
+	const auto legal = gadgets::build(memory, 0x201, 1);
+	if (!expect(legal.status == gadgets::BuildStatus::built,
+		"a fifteen-byte instruction did not build"))
+		return false;
+	CpuState fits{};
+	fits.rip = 0x201;
+	const auto fitted = gadgets::execute(legal.program, fits, memory, 1);
+	if (!expect(fitted.event == uml::cpu::EngineEvent::continued &&
+		fitted.retired_instructions == 1 && fits.rip == 0x210,
+		"a fifteen-byte instruction did not retire"))
+		return false;
+
+	for (const auto start : {0x100U, 0x101U}) {
+		const auto built = gadgets::build(memory, start, 4);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"an overlong instruction did not build to #GP") ||
+			!expect(built.program.replay_instructions().size() ==
+				built.program.instruction_count(),
+				"an overlong instruction did not replay from its source"))
+			return false;
+		CpuState cpu{};
+		cpu.rip = start;
+		const auto result = gadgets::execute(built.program, cpu, memory, 4);
+		const auto retired = start == 0x100U ? 1U : 0U;
+		if (!expect(result.event ==
+				uml::cpu::EngineEvent::general_protection &&
+			result.retired_instructions == retired && cpu.rip == 0x101,
+			"an overlong instruction did not raise #GP at its first byte"))
+			return false;
+	}
+
+	const auto short_fetch = gadgets::build(memory, span - 14, 1);
+	return expect(short_fetch.status == gadgets::BuildStatus::fetch_fault &&
+		short_fetch.fault_address == span,
+		"a fetch fault inside the length limit was not a page fault");
+}
+
+/* RDRAND and RDSEED return host CSPRNG output with CF set.  They used to
+ * return one xorshift round of the counter XORed with the CpuState address,
+ * which a guest could invert and XOR with RDTSC to learn a host pointer. */
+[[nodiscard]] bool random_instructions_expose_no_host_state()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x0f, 0x31,             // rdtsc
+		0x48, 0x89, 0xc7,       // mov rdi, rax
+		0x48, 0x89, 0xd6,       // mov rsi, rdx
+		0x48, 0x0f, 0xc7, 0xf0, // rdrand rax
+		0x48, 0x0f, 0xc7, 0xfb, // rdseed rbx
+		0x0f, 0x05,             // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"RDRAND/RDSEED block did not build"))
+		return false;
+	/* The inverse of x ^= x << 13; x ^= x >> 7; x ^= x << 17. */
+	const auto invert = [](std::uint64_t value) {
+		value ^= value << 17;
+		value ^= value << 34;
+		value ^= value >> 7;
+		value ^= value >> 14;
+		value ^= value >> 28;
+		value ^= value >> 56;
+		value ^= value << 13;
+		value ^= value << 26;
+		value ^= value << 52;
+		return value;
+	};
+	std::uint64_t first{};
+	bool varied = false;
+	for (int round = 0; round < 16; ++round) {
+		CpuState cpu{};
+		const auto result = gadgets::execute(built.program, cpu, memory, 8);
+		if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 6,
+			"RDRAND/RDSEED block did not reach SYSCALL") ||
+			!expect((cpu.rflags & 0x8d5U) == 1U,
+				"RDSEED did not report success with only CF set"))
+			return false;
+		const auto counter = (cpu.gpr(Register::rsi) << 32U) |
+			(cpu.gpr(Register::rdi) & 0xffff'ffffULL);
+		const auto host = reinterpret_cast<std::uintptr_t>(&cpu);
+		for (const auto value :
+			{cpu.gpr(Register::rax), cpu.gpr(Register::rbx)}) {
+			const auto recovered = invert(value) ^ counter;
+			if (!expect((recovered >> 12U) != (host >> 12U),
+				"RDRAND/RDSEED output revealed the CpuState address"))
+				return false;
+		}
+		if (round == 0)
+			first = cpu.gpr(Register::rax);
+		else if (cpu.gpr(Register::rax) != first)
+			varied = true;
+	}
+	return expect(varied, "RDRAND returned one value sixteen times");
+}
+
+/* WRFSBASE and WRGSBASE with a 64-bit operand raise #GP for a non-canonical
+ * address and leave the base unchanged; the 32-bit form zero-extends and so
+ * cannot fault. */
+[[nodiscard]] bool segment_base_writes_reject_non_canonical_addresses()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case final {
+		std::uint8_t modrm;
+		bool wide;
+		std::uint64_t value;
+		bool faults;
+	};
+	constexpr std::uint64_t original = 0x1234'5000ULL;
+	const std::array cases{
+		Case{0xd0, true, 0x0000'7fff'ffff'f000ULL, false},
+		Case{0xd8, true, 0xffff'8000'0000'0000ULL, false},
+		Case{0xd0, true, 0x0000'8000'0000'0000ULL, true},
+		Case{0xd8, true, 0x0000'8000'0000'0000ULL, true},
+		Case{0xd0, true, 0x8000'0000'0000'1000ULL, true},
+		Case{0xd8, true, 0xfff7'ffff'ffff'0000ULL, true},
+		Case{0xd0, false, 0xffff'ffff'ffff'ffffULL, false},
+		Case{0xd8, false, 0x8000'0000'8000'0000ULL, false},
+	};
+	for (const auto &shape : cases) {
+		TestMemory memory;
+		if (shape.wide)
+			memory.load(100, {0xf3, 0x48, 0x0f, 0xae, shape.modrm});
+		else
+			memory.load(100, {0xf3, 0x0f, 0xae, shape.modrm});
+		const auto built = gadgets::build(memory, 100, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"WRFSBASE/WRGSBASE did not build"))
+			return false;
+		const bool fs = shape.modrm == 0xd0;
+		CpuState cpu{};
+		cpu.rip = 100;
+		cpu.fs_base = original;
+		cpu.gs_base = original;
+		cpu.gpr(Register::rax) = shape.value;
+		const auto result = gadgets::execute(built.program, cpu, memory, 1);
+		const auto base = fs ? cpu.fs_base : cpu.gs_base;
+		const auto other = fs ? cpu.gs_base : cpu.fs_base;
+		if (shape.faults) {
+			if (!expect(result.event ==
+					uml::cpu::EngineEvent::general_protection &&
+				result.retired_instructions == 0 && cpu.rip == 100,
+				"non-canonical segment base write did not raise #GP") ||
+				!expect(base == original && other == original,
+					"faulting segment base write changed a base"))
+				return false;
+			continue;
+		}
+		const auto expected = shape.wide ? shape.value :
+			(shape.value & 0xffff'ffffULL);
+		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == 1 &&
+			base == expected && other == original,
+			"canonical segment base write did not retire"))
+			return false;
+	}
+	return true;
+}
+
 /* RFLAGS.TF single-steps: the runtime runs each entry with a budget of one.
  * Once blocks are cached and linked, a one-instruction budget must still
  * stop after exactly one instruction, including across a taken branch. */
@@ -6172,6 +6661,158 @@ constexpr std::array<std::uint64_t, 4> locked_operand_addresses{
 	return true;
 }
 
+/* MASKMOVDQU writes only the bytes its mask selects, so a LOCK INC on another
+ * vCPU that targets an unselected byte of the same sixteen is never undone.
+ * The gadget used to read the whole block, merge and write it back. */
+[[nodiscard]] bool mask_store_keeps_concurrent_unselected_bytes()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t block = 0x800;
+	constexpr unsigned increments = 100000;
+	TestMemory memory;
+	/* 0: maskmovdqu xmm0, xmm1; dec ecx; jnz 0; syscall */
+	memory.load(0, {0x66, 0x0f, 0xf7, 0xc1, 0xff, 0xc9, 0x75, 0xf8,
+		0x0f, 0x05});
+	/* 0x40: lock inc byte [rdi+1]; syscall */
+	memory.load(0x40, {0xf0, 0xfe, 0x47, 0x01, 0x0f, 0x05});
+	const auto increment = gadgets::build(memory, 0x40);
+	if (!expect(increment.status == gadgets::BuildStatus::built,
+		"concurrent LOCK INC block did not build"))
+		return false;
+	std::atomic<bool> done{false};
+	std::atomic<bool> healthy{true};
+	std::thread writer{[&] {
+		gadgets::Executor executor;
+		executor.prepare(memory, 42, 1, 1);
+		while (!done.load(std::memory_order_relaxed) &&
+			healthy.load(std::memory_order_relaxed)) {
+			CpuState cpu{};
+			cpu.gpr(Register::rdi) = block;
+			cpu.gpr(Register::rcx) = 1000;
+			for (std::size_t lane = 0; lane < 16; ++lane)
+				cpu.vectors[0][lane] = std::byte{0x5a};
+			cpu.vectors[1][0] = std::byte{0x80};
+			auto event = uml::cpu::EngineEvent::continued;
+			while (event == uml::cpu::EngineEvent::continued) {
+				const auto selected = executor.select_program(
+					memory, cpu.rip, ExecutionMode::long64);
+				if (selected.program == nullptr) {
+					healthy.store(false);
+					return;
+				}
+				event = gadgets::execute(*selected.program, cpu,
+					memory, executor, 1U << 20U).event;
+			}
+			if (event != uml::cpu::EngineEvent::system_call)
+				healthy.store(false);
+		}
+	}};
+	{
+		gadgets::Executor executor;
+		executor.prepare(memory);
+		for (unsigned step = 0; step < increments; ++step) {
+			CpuState cpu{};
+			cpu.rip = 0x40;
+			cpu.gpr(Register::rdi) = block;
+			if (gadgets::execute(increment.program, cpu, memory,
+				executor, 4).event !=
+				uml::cpu::EngineEvent::system_call) {
+				healthy.store(false);
+				break;
+			}
+		}
+	}
+	done.store(true);
+	writer.join();
+	return expect(healthy.load(),
+		"concurrent MASKMOVDQU or LOCK INC left the stream") &&
+		expect(memory.byte(block) == 0x5a,
+			"MASKMOVDQU did not write its selected byte") &&
+		expect(memory.byte(block + 1) == (increments & 0xffU),
+			"MASKMOVDQU wrote back an unselected byte another vCPU "
+			"had changed");
+}
+
+/* MASKMOVQ and MASKMOVDQU store through DS:(E/R)DI: a segment override adds
+ * its base and 0x67 takes EDI, and only the selected bytes change. */
+[[nodiscard]] bool mask_store_uses_its_segment_and_address_size()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case final {
+		std::array<std::uint8_t, 5> bytes;
+		std::size_t length;
+		bool mmx;
+		std::uint64_t rdi;
+		std::uint64_t fs_base;
+		std::uint64_t target;
+		const char *message;
+	};
+	const std::array cases{
+		Case{{0x66, 0x0f, 0xf7, 0xc1, 0x00}, 4, false,
+			0x300, 0, 0x300, "MASKMOVDQU did not store at RDI"},
+		Case{{0x64, 0x66, 0x0f, 0xf7, 0xc1}, 5, false,
+			0x100, 0x1000, 0x1100,
+			"MASKMOVDQU ignored its FS override"},
+		Case{{0x67, 0x66, 0x0f, 0xf7, 0xc1}, 5, false,
+			0xffff'ffff'0000'0200ULL, 0, 0x200,
+			"MASKMOVDQU ignored its address-size prefix"},
+		Case{{0x64, 0x0f, 0xf7, 0xc1, 0x00}, 4, true,
+			0x180, 0x2000, 0x2180,
+			"MASKMOVQ ignored its FS override"},
+	};
+	for (const auto &shape : cases) {
+		TestMemory memory;
+		for (std::size_t index = 0; index < shape.length; ++index)
+			memory.load(index, {shape.bytes[index]});
+		memory.load(shape.length, {0x0f, 0x05});
+		for (std::size_t index = 0; index < 16; ++index) {
+			memory.load(shape.target + index, {0xee});
+			if (shape.rdi < 0x4000 && shape.rdi != shape.target)
+				memory.load(shape.rdi + index, {0xdd});
+		}
+		const auto built = gadgets::build(memory, 0);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"MASKMOV block did not build"))
+			return false;
+		CpuState cpu{};
+		cpu.gpr(Register::rdi) = shape.rdi;
+		cpu.fs_base = shape.fs_base;
+		std::uint64_t data{};
+		std::uint64_t mask{};
+		for (std::size_t lane = 0; lane < 16; ++lane) {
+			const auto selected = lane == 0 || lane == 5 || lane == 11;
+			cpu.vectors[0][lane] = static_cast<std::byte>(0x10U + lane);
+			cpu.vectors[1][lane] = selected ? std::byte{0x80} : std::byte{0x7f};
+			if (lane < 8) {
+				data |= std::uint64_t{0x10U + lane} << (lane * 8U);
+				mask |= std::uint64_t{selected ? 0x80U : 0x7fU} <<
+					(lane * 8U);
+			}
+		}
+		cpu.mmx[0] = data;
+		cpu.mmx[1] = mask;
+		const auto result = gadgets::execute(built.program, cpu, memory, 4);
+		if (!expect(result.event == uml::cpu::EngineEvent::system_call &&
+			result.retired_instructions == 2, shape.message))
+			return false;
+		const std::size_t bytes = shape.mmx ? 8 : 16;
+		for (std::size_t index = 0; index < 16; ++index) {
+			const bool selected = index < bytes &&
+				(index == 0 || index == 5 || index == 11);
+			const auto expected = selected ?
+				static_cast<std::uint8_t>(0x10U + index) : 0xeeU;
+			if (!expect(memory.byte(shape.target + index) == expected,
+				shape.message))
+				return false;
+			if (shape.rdi < 0x4000 && shape.rdi != shape.target &&
+				!expect(memory.byte(shape.rdi + index) == 0xdd,
+					shape.message))
+				return false;
+		}
+	}
+	return true;
+}
+
 /* A locked operand that faults under the split lock gives the lock back: the
  * next one, on another thread, still gets through.
  */
@@ -6370,6 +7011,7 @@ int main()
 		native_executable_stores_publish_every_code_page() &&
 		a_settled_link_owes_its_page_a_fresh_publication() &&
 		an_unpublished_code_page_strands_another_translation() &&
+		a_masked_store_publishes_the_page_its_elements_reach() &&
 		a_moving_code_sequence_rebuilds_changed_programs() &&
 		a_recorded_code_stamp_is_no_newer_than_its_source() &&
 		a_write_racing_a_first_translation_does_not_survive() &&
@@ -6412,10 +7054,14 @@ int main()
 		execute_byte_sign_masks() &&
 		execute_call_and_return() &&
 		decode_compat32_defaults() &&
+		decode_compat32_vex_aliases() &&
+		decode_gather_register_aliases() &&
 		execute_compat32_stack_and_int80() &&
 		execute_compat32_pushfd_popfd() &&
+		execute_compat32_enter_frames() &&
 		execute_compat32_legacy_segment_stack() &&
 		execute_long64_interrupt_return_stack_switch() &&
+		interrupt_return_masks_user_flags() &&
 		expose_consistent_xsave_cpuid_state() &&
 		wrap_compat32_instruction_pointer() &&
 		execute_compat32_tls_segment() &&
@@ -6439,6 +7085,9 @@ int main()
 		native_divide_traps_precisely() &&
 		native_into_reports_overflow_precisely() &&
 		privileged_instructions_raise_general_protection() &&
+		segment_base_writes_reject_non_canonical_addresses() &&
+		overlong_instructions_raise_general_protection() &&
+		random_instructions_expose_no_host_state() &&
 		software_interrupt_vectors_trap() &&
 		one_instruction_budget_steps_linked_programs() &&
 		popf_setting_trap_flag_leaves_at_the_next_instruction() &&
@@ -6459,6 +7108,8 @@ int main()
 		locked_increment_survives_concurrent_vcpus() &&
 		locked_forms_agree_at_every_operand_address() &&
 		unaligned_locked_increment_survives_concurrent_vcpus() &&
+		mask_store_uses_its_segment_and_address_size() &&
+		mask_store_keeps_concurrent_unselected_bytes() &&
 		faulting_split_operand_releases_the_lock() &&
 		guest_stores_reach_other_cpus_in_program_order() &&
 		guest_memory_gadgets_end_in_an_ordering_barrier();

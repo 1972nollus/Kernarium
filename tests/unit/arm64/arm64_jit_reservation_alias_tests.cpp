@@ -3,10 +3,12 @@
 #include "cpu/arm64/jit/jit_cache_geometry.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_semantic_memory.hpp"
+#include "platform/apple/host_features.hpp"
 
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <cstring>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -453,6 +455,87 @@ void native_store_invalidates_semantic_reservation_case() {
   semantic_executor.end_execution();
 }
 
+/*
+ * A pair or structure store that the JIT leaves to its slow helper, here
+ * because it crosses a page, must invalidate another vCPU's software
+ * reservation on the bytes it writes even when it stores the value already
+ * there. Otherwise that vCPU's STXR succeeds over the intervening store.
+ */
+void slow_store_invalidates_semantic_reservation_case(bool structure) {
+  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+  const unsigned long generation = structure ? 10'123U : 10'122U;
+  const std::uint64_t base = structure ? 0x158'0000U : 0x150'0000U;
+  const auto data = base + 2U * page;
+  constexpr std::uint64_t observed = 0x1122'3344'5566'7788ULL;
+  constexpr std::uint64_t replacement = 0x8877'6655'4433'2211ULL;
+  constexpr std::uint32_t crossing_pair = 0xa900'08c2U; // stp x2, x2, [x6]
+  constexpr std::uint32_t crossing_structure =
+      0x4c00'70c0U; // st1 {v0.16b}, [x6]
+
+  JitBacking backing{3};
+  backing.put32(0, load_exclusive);
+  backing.put32(4, system_call);
+  backing.put32(8, structure ? crossing_structure : crossing_pair);
+  backing.put32(12, system_call);
+  backing.put32(16, store_exclusive);
+  backing.put32(20, system_call);
+  backing.put64(2U * page - 8U, observed);
+  backing.put64(2U * page, observed);
+  JitMapping mapping{generation, base, backing, 3};
+
+  uml::cpu::arm64::JitExecutor semantic_executor;
+  uml::cpu::arm64::JitExecutor store_executor;
+  uml::memory::StaticGuestMemory memory;
+  auto cpus = std::make_unique<
+      std::array<uml::cpu::arm64::CpuState, 2>>();
+  auto &semantic_cpu = (*cpus)[0];
+  auto &store_cpu = (*cpus)[1];
+  semantic_cpu.pc = base;
+  semantic_cpu.registers[1] = data;
+  semantic_cpu.registers[4] = replacement;
+  semantic_cpu.mte_enabled = true;
+  store_cpu.pc = base + 8U;
+  store_cpu.registers[2] = observed;
+  store_cpu.registers[6] = data - 8U;
+  std::memcpy(store_cpu.vectors[0].bytes.data(), &observed, 8U);
+  std::memcpy(store_cpu.vectors[0].bytes.data() + 8U, &observed, 8U);
+
+  require(semantic_executor.begin_execution(generation, semantic_cpu.pc));
+  std::size_t executed = 0;
+  require(semantic_executor.run_block(
+              semantic_cpu, memory, generation, executed) ==
+          ::uml::cpu::EngineEvent::continued);
+  require(executed == 1U);
+  require(semantic_cpu.exclusive_size == 8U);
+
+  require(store_executor.begin_execution(generation, store_cpu.pc));
+  auto store_event = ::uml::cpu::EngineEvent::continued;
+  std::size_t retired = 0;
+  for (unsigned attempt = 0;
+       attempt < 4U &&
+       store_event == ::uml::cpu::EngineEvent::continued;
+       ++attempt) {
+    store_event = store_executor.run_block(
+        store_cpu, memory, generation, executed);
+    retired += executed;
+  }
+  require(store_event == ::uml::cpu::EngineEvent::system_call);
+  require(retired == 2U);
+  require(backing.get64(2U * page - 8U) == observed);
+  require(backing.get64(2U * page) == observed);
+  store_executor.end_execution();
+
+  semantic_cpu.pc = base + 16U;
+  require(semantic_executor.run_block(
+              semantic_cpu, memory, generation, executed) ==
+          ::uml::cpu::EngineEvent::continued);
+  require(executed == 1U);
+  require(semantic_cpu.registers[5] == 1U);
+  require(semantic_cpu.exclusive_size == 0U);
+  require(backing.get64(2U * page) == observed);
+  semantic_executor.end_execution();
+}
+
 void concurrent_native_cold_paths_leave_publication_before_helper() {
   constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
   constexpr unsigned long generation = 10'103U;
@@ -527,6 +610,170 @@ void concurrent_native_cold_paths_leave_publication_before_helper() {
   require(valid.load(std::memory_order_relaxed));
 }
 
+/*
+ * A compare-and-swap the JIT leaves to its semantic helper must be one host
+ * atomic. vCPU A runs a helper-routed compare-and-swap loop that increments
+ * one field; vCPU B runs a native LDADD loop on bytes the swap also covers,
+ * concurrently. A read-compare-write that is not atomic writes back B's old
+ * bytes and loses its increments; each field must end at its own count.
+ */
+struct HelperSwapRace final {
+  unsigned long generation;
+  std::uint64_t base;
+  std::array<std::uint32_t, 12> swap_loop;
+  std::size_t swap_words;
+  std::size_t swap_offset;
+  std::array<std::uint32_t, 4> add_loop;
+  std::size_t add_offset;
+  std::uint64_t swap_mask;
+  unsigned add_shift;
+  std::uint64_t add_mask;
+};
+
+void helper_swap_keeps_native_updates(const HelperSwapRace &race) {
+  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
+  const auto data = race.base + page;
+  constexpr std::uint64_t add_code = 0x100U;
+  constexpr unsigned swaps = 20000;
+  constexpr std::uint64_t unbounded = std::uint64_t{1} << 40;
+
+  JitBacking backing{2};
+  for (std::size_t index = 0; index < race.swap_words; ++index)
+    backing.put32(index * 4U, race.swap_loop[index]);
+  for (std::size_t index = 0; index < race.add_loop.size(); ++index)
+    backing.put32(add_code + index * 4U, race.add_loop[index]);
+  JitMapping mapping{race.generation, race.base, backing, 2};
+
+  uml::cpu::arm64::JitExecutor swap_executor;
+  uml::cpu::arm64::JitExecutor add_executor;
+  uml::memory::StaticGuestMemory swap_memory;
+  uml::memory::StaticGuestMemory add_memory;
+  auto cpus = std::make_unique<
+      std::array<uml::cpu::arm64::CpuState, 2>>();
+  auto &swap_cpu = (*cpus)[0];
+  auto &add_cpu = (*cpus)[1];
+  swap_cpu.pc = race.base;
+  swap_cpu.registers[1] = data + race.swap_offset;
+  swap_cpu.registers[19] = swaps;
+  add_cpu.pc = race.base + add_code;
+  add_cpu.registers[8] = data + race.add_offset;
+  add_cpu.registers[9] = 1;
+  add_cpu.registers[19] = unbounded;
+
+  std::atomic<bool> swapping{true};
+  std::atomic<bool> valid{true};
+  std::barrier start{2};
+  std::thread adder{[&] {
+    if (!add_executor.begin_execution(race.generation, add_cpu.pc))
+      valid.store(false, std::memory_order_relaxed);
+    start.arrive_and_wait();
+    std::size_t executed = 0;
+    while (swapping.load(std::memory_order_acquire) &&
+           valid.load(std::memory_order_relaxed)) {
+      if (add_executor.run_block(add_cpu, add_memory, race.generation,
+                                 executed) !=
+          ::uml::cpu::EngineEvent::continued)
+        valid.store(false, std::memory_order_relaxed);
+    }
+    add_executor.end_execution();
+  }};
+  if (!swap_executor.begin_execution(race.generation, swap_cpu.pc))
+    valid.store(false, std::memory_order_relaxed);
+  start.arrive_and_wait();
+  auto event = ::uml::cpu::EngineEvent::continued;
+  std::size_t executed = 0;
+  for (std::uint64_t attempt = 0;
+       attempt < 100'000'000U &&
+       event == ::uml::cpu::EngineEvent::continued;
+       ++attempt)
+    event = swap_executor.run_block(swap_cpu, swap_memory,
+                                    race.generation, executed);
+  swapping.store(false, std::memory_order_release);
+  adder.join();
+  swap_executor.end_execution();
+  require(valid.load(std::memory_order_relaxed));
+  require(event == ::uml::cpu::EngineEvent::system_call);
+  require(swap_cpu.registers[19] == 0);
+
+  const auto adds = unbounded - add_cpu.registers[19];
+  const auto low = backing.get64(page);
+  const auto high = backing.get64(page + 8U);
+  const unsigned __int128 memory =
+      (static_cast<unsigned __int128>(high) << 64U) | low;
+  const auto swapped =
+      static_cast<std::uint64_t>(memory >> (race.swap_offset * 8U)) &
+      race.swap_mask;
+  const auto added =
+      static_cast<std::uint64_t>(memory >> race.add_shift) & race.add_mask;
+  require(adds != 0);
+  require(swapped == (swaps & race.swap_mask));
+  require(added == (adds & race.add_mask));
+}
+
+void helper_pair_compare_swap_keeps_native_updates() {
+  /* CASP always takes the helper. A increments the low doubleword with
+   * CASP; B's native LDADD increments the high one. */
+  helper_swap_keeps_native_updates({
+      .generation = 10'120U,
+      .base = 0x140'0000U,
+      .swap_loop = {0xa940'0c22U,   // ldp x2, x3, [x1]
+                    0x9100'0444U,   // add x4, x2, #1
+                    0xaa03'03e5U,   // mov x5, x3
+                    0xaa02'03e6U,   // mov x6, x2
+                    0xaa03'03e7U,   // mov x7, x3
+                    0x4822'7c24U,   // casp x2, x3, x4, x5, [x1]
+                    0xeb06'005fU,   // cmp x2, x6
+                    0xfa47'0060U,   // ccmp x3, x7, #0, eq
+                    0x54ff'ff01U,   // b.ne start
+                    0xf100'0673U,   // subs x19, x19, #1
+                    0x54ff'fec1U,   // b.ne start
+                    system_call},
+      .swap_words = 12,
+      .swap_offset = 0,
+      .add_loop = {0xf829'010aU,    // ldadd x9, x10, [x8]
+                   0xf100'0673U,    // subs x19, x19, #1
+                   0x54ff'ffc1U,    // b.ne start
+                   system_call},
+      .add_offset = 8,
+      .swap_mask = ~std::uint64_t{},
+      .add_shift = 64,
+      .add_mask = ~std::uint64_t{},
+  });
+}
+
+void helper_misaligned_compare_swap_keeps_native_updates() {
+  /* With FEAT_LSE2 a CAS misaligned inside one 16-byte block completes, and
+   * the JIT leaves it to the helper. A's word covers bytes 2-5; B's native
+   * LDADDH increments bytes 4-5, the upper half of that word. A's own
+   * increments stay in bytes 2-3 because it swaps fewer than 65536 times. */
+  if (!::uml::platform::apple::probed_host_capabilities().has(
+          ::uml::cpu::ArmFeature::lse2))
+    return;
+  helper_swap_keeps_native_updates({
+      .generation = 10'121U,
+      .base = 0x148'0000U,
+      .swap_loop = {0xb940'0022U,   // ldr w2, [x1]
+                    0x1100'0444U,   // add w4, w2, #1
+                    0x2a02'03e6U,   // mov w6, w2
+                    0x88a2'7c24U,   // cas w2, w4, [x1]
+                    0x6b06'005fU,   // cmp w2, w6
+                    0x54ff'ff61U,   // b.ne start
+                    0xf100'0673U,   // subs x19, x19, #1
+                    0x54ff'ff21U,   // b.ne start
+                    system_call},
+      .swap_words = 9,
+      .swap_offset = 2,
+      .add_loop = {0x7829'010aU,    // ldaddh w9, w10, [x8]
+                   0xf100'0673U,    // subs x19, x19, #1
+                   0x54ff'ffc1U,    // b.ne start
+                   system_call},
+      .add_offset = 4,
+      .swap_mask = 0xffffU,
+      .add_shift = 32,
+      .add_mask = 0xffffU,
+  });
+}
+
 } // namespace
 
 int main() {
@@ -554,6 +801,10 @@ int main() {
     same_backing_alias_case(false, false, store);
   }
   native_store_invalidates_semantic_reservation_case();
+  slow_store_invalidates_semantic_reservation_case(false);
+  slow_store_invalidates_semantic_reservation_case(true);
   concurrent_native_cold_paths_leave_publication_before_helper();
+  helper_pair_compare_swap_keeps_native_updates();
+  helper_misaligned_compare_swap_keeps_native_updates();
   return 0;
 }

@@ -259,12 +259,14 @@ block takes the alignment fault. A pair counts as one access of its total
 size. Without host LSE2 every misaligned such access faults. Each executor
 records the choice in its TLB. Gadgets execute the native host instruction on
 an admitted address, and a host CASAL loop for software floating-point
-atomics; the JIT applies the same rule in its semantic path, whose direct
-ordered forms use host LDAR and STLR. The rule matches native
-LSE2 hardware for the LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2 forms. The
-LRCPC3 and LSFE forms follow the architecture's rule, which current hosts
-cannot execute natively. LDIAPP/STILP and the LSCP pairs keep their element
-alignment, and LSE128, RCW, GCS, and LS64 accesses stay naturally aligned.
+atomics; the JIT applies the same rule in its semantic path, which performs
+each such access as one host instruction, with LDAR and STLR for the ordered
+forms and a CASAL loop for a misaligned read-modify-write. The rule matches
+native LSE2 hardware for the LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2
+forms. The LRCPC3 and LSFE forms follow the architecture's rule, which current
+hosts cannot execute natively. LDIAPP/STILP and the LSCP pairs keep their
+element alignment, and LSE128, RCW, GCS, and LS64 accesses stay naturally
+aligned.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load

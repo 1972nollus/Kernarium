@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_bits.hpp"
+
 #include <bit>
 #include <cstdint>
 
@@ -75,25 +77,9 @@ enum class Class : std::uint8_t {
 	signaling_nan,
 };
 
-struct Format final {
-	unsigned width;
-	unsigned exponent_bits;
-	unsigned fraction_bits;
-	int bias;
-};
-
-[[nodiscard]] constexpr Format format(unsigned width) noexcept
-{
-	return width == 16U ? Format{16U, 5U, 10U, 15} :
-		width == 32U ? Format{32U, 8U, 23U, 127} :
-			Format{64U, 11U, 52U, 1023};
-}
-
-[[nodiscard]] constexpr std::uint64_t low_mask(unsigned bits) noexcept
-{
-	return bits == 64U ? ~std::uint64_t{0} :
-		(std::uint64_t{1} << bits) - 1U;
-}
+using floating_bits::Format;
+using floating_bits::format;
+using floating_bits::low_mask;
 
 struct Unpacked final {
 	std::uint64_t bits;

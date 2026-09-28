@@ -33,9 +33,13 @@ inline constexpr std::size_t execution_histogram_capacity = std::size_t{1} << 18
  * predecessor names a block entry, so per-entry totals are pair sums. */
 [[nodiscard]] std::size_t execution_histogram_slot(
 	const void *previous, const void *gadget);
-/* Executor diagnostics blocks to sum into the dump; each executor registers
- * its own and keeps it alive for the process lifetime. */
+/* An executor's diagnostics block, summed into the dump. The carrier that
+ * owns the block notes it after each block run and the histogram copies it
+ * from time to time on that carrier, so the dump never reads a block another
+ * thread is writing; `forget` hands over the final counts when the executor
+ * is destroyed, after which the histogram holds no pointer to it. */
 void execution_histogram_note_executor(const void *diagnostics);
+void execution_histogram_forget_executor(const void *diagnostics);
 extern "C" void uml_arm64_gadget_execution_count();
 #endif
 

@@ -5,15 +5,8 @@
 #include "cpu/host_capabilities.hpp"
 
 namespace uml::cpu::arm64::jit {
-namespace {
 
-[[nodiscard]] constexpr std::int64_t sign_extend(std::uint64_t value,
-                                                 unsigned bits) noexcept {
-  const auto shift = 64U - bits;
-  return static_cast<std::int64_t>(value << shift) >> shift;
-}
-
-} // namespace
+using arm64::detail::sign_extend;
 
 void JitCompilerFamilies::emit_native_binary(std::uint32_t instruction,
                                              bool stack_pointer,

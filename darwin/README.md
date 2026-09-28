@@ -215,10 +215,16 @@ compile eagerly.
 Native stores publish per-vCPU state on separate 128-byte host cache lines.
 Bounded load/compare/conditional-branch/store-exclusive retry regions use host
 exclusives after checking both mappings and permissions. Unsupported shapes
-and tagged accesses take the JIT's semantic slow path. Native and semantic
-stores share the JIT's software reservation table and publication protocol.
-An ordered store through an alias invalidates the matching software reservation
-even when the stored value is unchanged.
+and tagged accesses take the JIT's semantic slow path, which performs each
+atomic, exclusive and ordered access as one host access on the translated
+page, with LSE atomics or CASP for a read-modify-write. Those accesses are
+therefore single-copy atomic against native code on other vCPUs and against
+host threads that share the page. Only an exclusive load, or an instruction
+run while its software reservation is held, waits out other vCPUs' native
+store blocks. Native and semantic stores share the JIT's software reservation
+table: every data store, including a pair or structure store that leaves its
+native lowering, invalidates the granules it writes through any alias of the
+same backing, even when the stored value is unchanged.
 
 ## Devices
 

@@ -45,9 +45,10 @@ public:
 
 	[[nodiscard]] bool read(std::uint8_t &value)
 	{
+		/* The sixteenth byte is never fetched: the instruction is already
+		 * too long, whatever that byte's page holds. */
 		if (position_ == maximum_instruction_bytes) {
-			fault_address_ = advance_instruction_pointer(
-				mode_, address_, position_);
+			too_long_ = true;
 			return false;
 		}
 		const auto address = advance_instruction_pointer(
@@ -87,6 +88,7 @@ public:
 	{
 		return fault_address_;
 	}
+	[[nodiscard]] bool too_long() const noexcept { return too_long_; }
 
 private:
 	static constexpr std::uint8_t maximum_instruction_bytes =
@@ -141,6 +143,7 @@ private:
 	std::span<const std::byte> code_{};
 	std::uint64_t fault_address_{};
 	std::uint8_t position_{};
+	bool too_long_{};
 };
 
 struct Prefixes final {
@@ -245,12 +248,13 @@ public:
 	{
 		std::uint8_t opcode{};
 		if (!read_opcode(opcode))
-			return fetch_fault();
+			return reader_.too_long() ? too_long() : fetch_fault();
 		Instruction instruction{};
 		instruction.locked = prefixes_.locked;
 		instruction.repeat = prefixes_.repeat;
 		if (!decode_opcode(opcode, instruction))
-			return failed_ ? fetch_fault() : illegal();
+			return reader_.too_long() ? too_long() :
+				failed_ ? fetch_fault() : illegal();
 		instruction.length = reader_.position();
 		if (prefixes_.locked && !lock_allowed(instruction))
 			return illegal();
@@ -296,6 +300,17 @@ private:
 	[[nodiscard]] static DecodeResult illegal() noexcept
 	{
 		return {DecodeStatus::illegal_instruction, {}, 0};
+	}
+
+	/* An instruction longer than fifteen bytes raises #GP at its first
+	 * byte, which is what the privileged operation does; its length covers
+	 * the bytes read, so a replay from the saved source decodes it again. */
+	[[nodiscard]] DecodeResult too_long() const noexcept
+	{
+		Instruction instruction{};
+		instruction.operation = Operation::privileged;
+		instruction.length = reader_.position();
+		return {DecodeStatus::decoded, instruction, 0};
 	}
 
 	[[nodiscard]] bool read(std::uint8_t &value)
@@ -500,7 +515,10 @@ private:
 			std::uint64_t displacement{};
 			if (!read_unsigned(4, displacement))
 				return false;
-			if (address_32(prefixes_)) {
+			/* Only 32-bit mode encodes an absolute disp32 here. In 64-bit
+			 * mode it is RIP-relative, and with 0x67 EIP-relative: the
+			 * sum is truncated to 32 bits like any 32-bit address. */
+			if (prefixes_.mode == ExecutionMode::compat32) {
 				operand.memory.absolute_address = true;
 				operand.memory.absolute = static_cast<std::uint32_t>(displacement);
 			} else {
@@ -1187,6 +1205,9 @@ private:
 			vector_register_operand(static_cast<std::uint8_t>(
 				(modrm & 7U) |
 				((prefixes_.rex & 1U) != 0 ? 8U : 0U)), width);
+		/* The store goes through DS:(E/R)DI, which a segment override and
+		 * the address-size prefix both change. */
+		instruction.destination = string_memory(7, width, prefixes_.segment);
 		instruction.vex = prefixes_.vex;
 		instruction.vector_prefix = static_cast<std::uint8_t>(prefix);
 		return true;
@@ -1669,6 +1690,17 @@ private:
 			instruction.destination = vector_reg_field(modrm, destination_width);
 			instruction.source = vector_register_operand(
 				prefixes_.vex_vvvv, destination_width);
+			/* The gather updates its destination and mask element by
+			 * element while reading them and the index, so any two of the
+			 * three naming one register is #UD. */
+			const auto destination_register =
+				instruction.destination.reg.index;
+			const auto mask_register = instruction.source.reg.index;
+			const auto index_register = address.memory.index;
+			if (destination_register == mask_register ||
+				destination_register == index_register ||
+				mask_register == index_register)
+				return false;
 			instruction.auxiliary = address;
 			instruction.vex = true;
 			instruction.vector_opcode = opcode;
@@ -2313,6 +2345,13 @@ private:
 		std::uint8_t second{};
 		if (!read(second))
 			return false;
+		/* In 32-bit code C4 and C5 are LES and LDS, and select VEX only
+		 * when the next byte would be a register ModR/M, which those
+		 * instructions reject.  Far-pointer loads are not implemented, so
+		 * the LES/LDS forms are illegal like LSS, LFS and LGS. */
+		const bool compat32 = prefixes_.mode == ExecutionMode::compat32;
+		if (compat32 && (second & 0xc0U) != 0xc0U)
+			return false;
 		std::uint8_t third{};
 		std::uint8_t rex{};
 		std::uint8_t map = 1;
@@ -2333,12 +2372,16 @@ private:
 		} else if ((second & 0x80U) == 0) {
 			rex |= 4U;
 		}
+		/* 32-bit code reaches only registers 0-7: VEX.B-bar and the top
+		 * bit of vvvv are ignored there. */
+		if (compat32)
+			rex = static_cast<std::uint8_t>(rex & ~1U);
 		prefixes_.rex = rex;
 		prefixes_.rex_present = true;
 		prefixes_.vex = true;
 		prefixes_.vex_map = map;
 		prefixes_.vex_vvvv = static_cast<std::uint8_t>(
-			(~controls >> 3U) & 0xfU);
+			(~controls >> 3U) & (compat32 ? 0x7U : 0xfU));
 		prefixes_.vex_long = (controls & 4U) != 0;
 		prefixes_.operand_size = false;
 		prefixes_.repeat = 0;

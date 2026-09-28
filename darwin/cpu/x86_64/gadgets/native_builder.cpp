@@ -928,18 +928,18 @@ struct EncodedMemory final {
 			UML_X86_64_MEMORY_PLAIN_ADDRESS) |
 		(static_cast<std::uintptr_t>(gadget.instruction.length) << 56U);
 	std::uintptr_t displacement{};
-	constexpr auto absent_registers =
+	constexpr auto register_fields =
 		(std::uintptr_t{0xffff} << 16U) | (std::uintptr_t{0xffff} << 32U);
 	constexpr auto zero_registers =
 		(std::uintptr_t{UML_X86_64_CPU_SEGMENT_ZERO} << 16U) |
 		(std::uintptr_t{UML_X86_64_CPU_SEGMENT_ZERO} << 32U);
 	if (memory.absolute_address) {
 		displacement = memory.absolute;
-		descriptor = (descriptor & ~absent_registers) | zero_registers;
+		descriptor = (descriptor & ~register_fields) | zero_registers;
 	} else if (memory.rip_relative) {
 		displacement = gadget.address + gadget.instruction.length +
 			static_cast<std::int64_t>(memory.displacement);
-		descriptor = (descriptor & ~absent_registers) | zero_registers;
+		descriptor = (descriptor & ~register_fields) | zero_registers;
 	} else {
 		displacement = static_cast<std::uintptr_t>(
 			static_cast<std::int64_t>(memory.displacement));
@@ -2161,11 +2161,15 @@ struct EncodedMemory final {
 		entry = native::uml_x86_64_gadget_vector_mask_store_128;
 	else
 		return false;
+	const auto encoded = encode_memory(
+		gadget, instruction.destination, *source);
+	if (!encoded)
+		return false;
 	stream.push_back(entry_address(entry));
-	stream.push_back(static_cast<std::uintptr_t>(*source) |
-		(static_cast<std::uintptr_t>(*mask) << 16U) |
-		(static_cast<std::uintptr_t>(instruction.length) << 56U));
+	stream.push_back(encoded->descriptor);
+	stream.push_back(encoded->displacement);
 	stream.push_back(gadget.address);
+	stream.push_back(*mask);
 	return true;
 }
 
@@ -5053,6 +5057,8 @@ struct FlagState final {
 	NativeEntry entry{};
 	if (instruction.destination.width == OperandWidth::word)
 		entry = native::uml_x86_64_gadget_enter_16;
+	else if (instruction.destination.width == OperandWidth::dword)
+		entry = native::uml_x86_64_gadget_enter_32;
 	else if (instruction.destination.width == OperandWidth::qword)
 		entry = native::uml_x86_64_gadget_enter_64;
 	else
@@ -6929,6 +6935,10 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 			return false;
 		stream.push_back(entry_address(entry));
 		stream.push_back(*offset);
+		/* A 64-bit write raises #GP at this instruction when the base is
+		 * not canonical. */
+		if (!read && operand.width == OperandWidth::qword)
+			stream.push_back(gadget.address);
 		return true;
 	}
 	case Operation::memory_fence:

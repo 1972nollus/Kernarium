@@ -251,8 +251,9 @@ struct DecodeResult final {
 	std::uint64_t fault_address{};
 };
 
-/* x86 encodes no instruction longer than this, and the decoder refuses one
- * that reaches it. */
+/* x86 encodes no instruction longer than this. An encoding that would need
+ * another byte decodes as a privileged operation, which raises #GP at its
+ * first byte as the hardware does, without fetching that byte. */
 inline constexpr std::size_t maximum_instruction_bytes = 15;
 
 /* Guest bytes a decode has already fetched. A caller decoding a run of

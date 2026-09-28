@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_bits.hpp"
 #include "floating_exception.hpp"
 #include "floating_reciprocal.hpp"
 #include "instruction_primitives.hpp"
@@ -21,12 +22,7 @@ struct FloatingReciprocalLaneResult final {
 
 namespace floating_reciprocal_software_detail {
 
-struct Format final {
-	unsigned width;
-	unsigned exponent_bits;
-	unsigned fraction_bits;
-	int bias;
-};
+using floating_bits::Format;
 
 enum class ValueClass {
 	zero,
@@ -51,18 +47,8 @@ inline constexpr std::uint32_t fpcr_dn = 1U << 25;
 inline constexpr std::uint32_t fpcr_rounding = 3U << 22;
 inline constexpr std::uint32_t fpcr_exception_traps = 0x0000'9f00U;
 
-[[nodiscard]] constexpr Format format(unsigned width) noexcept
-{
-	return width == 16U ? Format{16U, 5U, 10U, 15} :
-		width == 32U ? Format{32U, 8U, 23U, 127} :
-			Format{64U, 11U, 52U, 1023};
-}
-
-[[nodiscard]] constexpr std::uint64_t low_mask(unsigned bits) noexcept
-{
-	return bits == 64U ? ~std::uint64_t{0} :
-		(std::uint64_t{1} << bits) - 1U;
-}
+using floating_bits::format;
+using floating_bits::low_mask;
 
 [[nodiscard]] constexpr std::uint64_t sign_mask(
 	const Format &value) noexcept

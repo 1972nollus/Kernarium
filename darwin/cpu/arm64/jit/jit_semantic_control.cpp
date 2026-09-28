@@ -70,6 +70,10 @@ using arm64::detail::GcsOperation;
 		observed = expected;
 		return true;
 	}
+	/* A memory that offers atomic pointers has recorded the failed
+	 * translation as this access's fault. */
+	if (memory.has_fault())
+		return false;
 
 	std::array<std::byte, 8> bytes{};
 	if (!memory.read(address, bytes))

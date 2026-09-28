@@ -2,6 +2,7 @@
 #pragma once
 
 #include "cpu/arm64/cpu_state.hpp"
+#include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/engine.hpp"
 #include "uml_darwin_static_mmu.h"
 
@@ -87,11 +88,8 @@ lower_memory_barrier(std::uint32_t instruction, bool native_sb,
   return {{{instruction, 0}}, 1};
 }
 
-[[nodiscard]] constexpr std::int64_t
-sign_extend(std::uint64_t value, unsigned bits) noexcept {
-  const auto shift = 64U - bits;
-  return static_cast<std::int64_t>(value << shift) >> shift;
-}
+/* Callers pass the instruction field already masked to `bits`. */
+using detail::sign_extend;
 
 [[nodiscard]] constexpr std::uint64_t
 pack_jit_result(Event event, std::size_t retired) noexcept {

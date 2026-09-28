@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <pthread.h>
+#include <signal.h>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -61,10 +63,30 @@ static_assert(std::atomic_uint64_t::is_always_lock_free);
 	return buffer;
 }
 
+void add_counts(GadgetCacheDiagnostics &total,
+	const GadgetCacheDiagnostics &d) noexcept
+{
+	total.translations += d.translations;
+	total.block_entries += d.block_entries;
+	total.cache_misses += d.cache_misses;
+	total.exits_chain_limit += d.exits_chain_limit;
+	total.exits_indirect_miss += d.exits_indirect_miss;
+	total.exits_indirect_miss_return += d.exits_indirect_miss_return;
+	for (std::size_t i = 0; i < total.miss_by_site_targets.size(); ++i)
+		total.miss_by_site_targets[i] += d.miss_by_site_targets[i];
+	total.exits_unlinked += d.exits_unlinked;
+	total.exits_syscall += d.exits_syscall;
+	total.exits_fault += d.exits_fault;
+	total.exits_interrupt += d.exits_interrupt;
+	total.exits_other += d.exits_other;
+}
+
 /* Each carrier has exactly one writer. Aligned A64 LDR/STR implements the
  * relaxed atomic operations used by the threaded counter gadget; the dumper
- * reads with relaxed loads, so a snapshot is not one atomic instant. Tables
- * outlive carriers and remain valid at exit. */
+ * reads with relaxed loads, so a snapshot is not one atomic instant. The
+ * histogram lives for the process: carriers may still translate while exit()
+ * runs, so nothing it owns is ever destroyed, and the final dump is an atexit
+ * handler. */
 class Histogram final {
 public:
 	Histogram()
@@ -73,14 +95,21 @@ public:
 		if (path == nullptr || *path == '\0')
 			return;
 		path_ = path;
+		/* Host signals are the guest's interrupts and must never be
+		 * delivered to this thread; it inherits the blocked mask. */
+		sigset_t all;
+		sigset_t previous;
+		sigfillset(&all);
+		pthread_sigmask(SIG_BLOCK, &all, &previous);
 		worker_ = std::thread{[this] {
 			while (!stop_.load(std::memory_order_relaxed)) {
 				dump();
 				std::this_thread::sleep_for(std::chrono::seconds{2});
 			}
 		}};
+		pthread_sigmask(SIG_SETMASK, &previous, nullptr);
 	}
-	~Histogram()
+	void finish()
 	{
 		stop_.store(true, std::memory_order_relaxed);
 		if (worker_.joinable())
@@ -88,12 +117,32 @@ public:
 		if (!path_.empty())
 			dump();
 	}
+	/* Runs on the carrier that owns `diagnostics`, the block's only
+	 * writer, so reading it here is not a race. */
 	void note_executor(const GadgetCacheDiagnostics *diagnostics)
 	{
 		const std::scoped_lock lock{mutex_};
-		if (std::find(executors_.begin(), executors_.end(), diagnostics) ==
-		    executors_.end())
-			executors_.push_back(diagnostics);
+		executors_[diagnostics] = *diagnostics;
+	}
+	void forget_executor(const GadgetCacheDiagnostics *diagnostics)
+	{
+		bool last = false;
+		{
+			const std::scoped_lock lock{mutex_};
+			add_counts(retired_, *diagnostics);
+			executors_.erase(diagnostics);
+			forgotten_.fetch_add(1, std::memory_order_relaxed);
+			last = executors_.empty();
+		}
+		/* The emulator leaves through _Exit(), which skips atexit(), but
+		 * the end of a run retires every executor first, so the file is
+		 * complete once the last one goes. */
+		if (last && !path_.empty())
+			dump();
+	}
+	[[nodiscard]] std::uint64_t forgotten() const noexcept
+	{
+		return forgotten_.load(std::memory_order_relaxed);
 	}
 	Counters *register_thread()
 	{
@@ -120,6 +169,9 @@ public:
 private:
 	void dump()
 	{
+		/* The worker, the last executor and exit may all dump; one at a
+		 * time writes the file and uses the name cache. */
+		const std::scoped_lock dumping{dump_mutex_};
 		std::vector<std::uint64_t> merged(execution_histogram_capacity);
 		std::vector<Pair> entries;
 		GadgetCacheDiagnostics executors{};
@@ -129,22 +181,9 @@ private:
 				for (std::size_t i = 0; i < merged.size(); ++i)
 					merged[i] += (*table)[i].load(std::memory_order_relaxed);
 			entries = entries_;
-			for (const auto *d : executors_) {
-				executors.translations += d->translations;
-				executors.block_entries += d->block_entries;
-				executors.cache_misses += d->cache_misses;
-				executors.exits_chain_limit += d->exits_chain_limit;
-				executors.exits_indirect_miss += d->exits_indirect_miss;
-				executors.exits_indirect_miss_return +=
-					d->exits_indirect_miss_return;
-				for (std::size_t i = 0; i < executors.miss_by_site_targets.size(); ++i)
-					executors.miss_by_site_targets[i] += d->miss_by_site_targets[i];
-				executors.exits_unlinked += d->exits_unlinked;
-				executors.exits_syscall += d->exits_syscall;
-				executors.exits_fault += d->exits_fault;
-				executors.exits_interrupt += d->exits_interrupt;
-				executors.exits_other += d->exits_other;
-			}
+			executors = retired_;
+			for (const auto &entry : executors_)
+				add_counts(executors, entry.second);
 		}
 		std::vector<std::pair<std::uint64_t, Pair>> ordered;
 		ordered.reserve(entries.size());
@@ -201,10 +240,17 @@ private:
 	}
 
 	std::mutex mutex_;
+	std::mutex dump_mutex_;
 	std::vector<Counters *> tables_;
 	std::unordered_map<Pair, std::uint32_t, PairHash> index_;
 	std::vector<Pair> entries_;
-	std::vector<const GadgetCacheDiagnostics *> executors_;
+	/* The latest copy of each live executor's block, keyed by an address
+	 * that is never dereferenced once the executor is forgotten, and the
+	 * final counts of the executors already destroyed. */
+	std::unordered_map<const GadgetCacheDiagnostics *,
+		GadgetCacheDiagnostics> executors_;
+	GadgetCacheDiagnostics retired_{};
+	std::atomic_uint64_t forgotten_{};
 	std::unordered_map<const void *, std::string> names_;
 	std::atomic_bool stop_{};
 	std::thread worker_;
@@ -213,8 +259,12 @@ private:
 
 Histogram &histogram()
 {
-	static Histogram instance;
-	return instance;
+	static Histogram *const instance = [] {
+		auto *created = new Histogram;
+		std::atexit([] { histogram().finish(); });
+		return created;
+	}();
+	return *instance;
 }
 
 } // namespace
@@ -232,11 +282,28 @@ std::size_t execution_histogram_slot(const void *previous, const void *gadget)
 
 void execution_histogram_note_executor(const void *diagnostics)
 {
+	/* A copy costs the mutex, so a carrier refreshes it on its first run
+	 * of an executor and every 4096 runs after that. The shortcut is keyed
+	 * by the forget count too: a destroyed executor's address can come back
+	 * as a new one, which must be copied afresh. */
 	static thread_local const void *noted = nullptr;
-	if (noted == diagnostics)
+	static thread_local std::uint64_t noted_forgotten = 0;
+	static thread_local std::uint32_t runs = 0;
+	auto &table = histogram();
+	const auto forgotten = table.forgotten();
+	if (noted == diagnostics && noted_forgotten == forgotten &&
+	    (++runs & 4095U) != 0)
 		return;
 	noted = diagnostics;
-	histogram().note_executor(
+	noted_forgotten = forgotten;
+	runs = 0;
+	table.note_executor(
+		static_cast<const GadgetCacheDiagnostics *>(diagnostics));
+}
+
+void execution_histogram_forget_executor(const void *diagnostics)
+{
+	histogram().forget_executor(
 		static_cast<const GadgetCacheDiagnostics *>(diagnostics));
 }
 
