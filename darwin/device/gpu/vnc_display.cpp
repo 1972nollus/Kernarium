@@ -793,6 +793,10 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
 {
     if (!inputSink_)
         return;
+    /* A mode change releases the pointer and moves the placement under this
+     * lock, so an event mapped under it uses the rectangle the release left:
+     * one read before it could deliver a press in what is now a bar. */
+    std::lock_guard lock(pointerMutex_);
     const auto target = placement();
     const AspectFitRectangle content {
         .x = static_cast<double>(target.x),
@@ -822,7 +826,6 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
         count = 0;
     };
 
-    std::lock_guard lock(pointerMutex_);
     if (pointerMode_ == vnc_input::PointerMode::touchscreen) {
         for (const auto& sample :
              pointer_.touch(content, location, (buttonMask & 1) != 0)) {
