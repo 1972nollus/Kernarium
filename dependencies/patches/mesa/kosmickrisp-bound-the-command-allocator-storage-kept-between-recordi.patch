@@ -359,7 +359,7 @@ index 7bbf86802f2816c62dd9e31d6904b6d2ba19cace..64141abe777e86f14e43820c92abc746
  
  VK_DEFINE_HANDLE_CASTS(kk_cmd_buffer, vk.base, VkCommandBuffer,
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index f1f0f830236fafd85571e3199974a13c5ae6d112..2c2c8dff714c5d8d0c1feb2470408e9aa116b873 100644
+index cffe413f41f4543429b26801eabf3fbf43633055..c60d9d1f742bd9aab664738606e5147383df236b 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -309,8 +309,10 @@ kk_command_allocator_cache_take(struct kk_command_allocator_cache *cache)
@@ -391,7 +391,7 @@ index f1f0f830236fafd85571e3199974a13c5ae6d112..2c2c8dff714c5d8d0c1feb2470408e9a
        allocator = NULL;
     }
     simple_mtx_unlock(&cache->mutex);
-@@ -549,7 +556,9 @@ kk_device_add_heap_to_residency_set(struct kk_device *dev, mtl_heap *heap)
+@@ -555,7 +562,9 @@ kk_device_add_heap_to_residency_set(struct kk_device *dev, mtl_heap *heap)
   * only when work is submitted, so a destroyed allocation that a submission
   * once made resident would stay allocated until the device's next submission,
   * which may never come. Commit the removal at once. Vulkan requires work that

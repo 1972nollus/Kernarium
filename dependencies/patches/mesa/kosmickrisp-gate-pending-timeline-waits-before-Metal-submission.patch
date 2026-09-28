@@ -129,7 +129,7 @@ index e24e5a24693354b5dac6770ccf2e2aa91f1b26e8..46542b5f80a0d4490eb8c5f406d0f066
     struct list_head free_bos;
     uint32_t num_free_bos;
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 175b4edc72bcda3381c7ff20bb6eb0d6de5b66d3..64d690c9942e8821acb159b9addb84dc84a89cc4 100644
+index 2624f423ab94c68003c1523716539c1a3a958e79..9fc9b511a30ed945122bb8c598ffe791db3071c7 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -366,6 +366,13 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
@@ -146,7 +146,7 @@ index 175b4edc72bcda3381c7ff20bb6eb0d6de5b66d3..64d690c9942e8821acb159b9addb84dc
     dev->vk.shader_ops = &kk_device_shader_ops;
     dev->mtl_handle = pdev->mtl_dev_handle;
     dev->vk.command_buffer_ops = &kk_cmd_buffer_ops;
-@@ -467,6 +474,12 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
+@@ -473,6 +480,12 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
        mtl_stop_gpu_capture();
     }
  
@@ -159,7 +159,7 @@ index 175b4edc72bcda3381c7ff20bb6eb0d6de5b66d3..64d690c9942e8821acb159b9addb84dc
     /* Meta first since it may destroy Vulkan objects */
     kk_device_finish_meta(dev);
     kk_device_finish_lib(dev);
-@@ -477,11 +490,6 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
+@@ -483,11 +496,6 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
     if (dev->heap)
        kk_destroy_bo(dev, dev->heap);
  

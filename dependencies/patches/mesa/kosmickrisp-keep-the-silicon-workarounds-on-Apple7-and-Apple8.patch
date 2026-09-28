@@ -101,7 +101,7 @@ index 8137ea4564d99f43f80fc29a3a63ecd33039ea88..60dada78662945fefca66d07fff714a3
  KK_WORKAROUND_2
  ---------------
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 64d690c9942e8821acb159b9addb84dc84a89cc4..4a8f20b4abc0b07a2a234a55dfdd3a7a7c89b260 100644
+index 9fc9b511a30ed945122bb8c598ffe791db3071c7..954f3eb96626ab721bcf0af834f2e955df797655 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -245,10 +245,18 @@ kk_parse_device_environment_options(struct kk_device *dev)
