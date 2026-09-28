@@ -67,13 +67,13 @@ def expect_error(label: str, fragment: str, action) -> None:
     raise AssertionError(f"{label}: accepted")
 
 
-def write_line(path: Path, base: str, series: list[tuple[Path, str]], owned: list[Path],
-               final_tree: str) -> kernel_series.Line:
+def write_line(path: Path, base: str | None, series: list[tuple[Path, str]],
+               owned: list[Path], final_tree: str) -> kernel_series.Line:
     entries = " ".join(f"{directory}:{branch}" for directory, branch in series)
     path.write_text(
         "UML_KERNEL_SERIES_SCHEMA=4\n"
-        f"UML_KERNEL_UPSTREAM_COMMIT='{base}'\n"
-        f"UML_KERNEL_SERIES='{entries}'\n"
+        + (f"UML_KERNEL_UPSTREAM_COMMIT='{base}'\n" if base else "")
+        + f"UML_KERNEL_SERIES='{entries}'\n"
         f"UML_KERNEL_OWNED_SERIES='{' '.join(str(item) for item in owned)}'\n"
         f"UML_KERNEL_FINAL_TREE='{final_tree}'\n"
     )
@@ -132,6 +132,21 @@ def run(scratch: Path) -> None:
         [common_dir], overlay_tree))
     expect_error("shared branch", "same branch", lambda: write_line(
         scratch / "bad.env", base, [(common_dir, "same"), (overlay_dir, "same")],
+        [overlay_dir], overlay_tree))
+
+    # An overlay of the line whose metadata sits beside its last inherited
+    # series takes that line's upstream identity and restates none of it.
+    parent_dir = scratch / "parent/series"
+    parent_dir.mkdir(parents=True)
+    write_line(scratch / "parent/metadata.env", base, [(parent_dir, "parent")],
+               [parent_dir], common_tree)
+    inheriting = [(parent_dir, "parent"), (overlay_dir, "overlay")]
+    assert write_line(scratch / "inheriting.env", None, inheriting,
+                      [overlay_dir], overlay_tree).base == base
+    expect_error("restated identity", "restates UML_KERNEL_UPSTREAM_COMMIT", lambda: write_line(
+        scratch / "bad.env", base, inheriting, [overlay_dir], overlay_tree))
+    expect_error("foreign series", "not the series of", lambda: write_line(
+        scratch / "bad.env", None, [(parent_dir, "other"), (overlay_dir, "overlay")],
         [overlay_dir], overlay_tree))
 
     # A replay from the upstream commit reproduces the tree and marks each

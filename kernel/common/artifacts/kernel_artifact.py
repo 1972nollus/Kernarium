@@ -501,12 +501,27 @@ def publish_runtime_image(objcopy: Path, source: Path, destination: Path) -> Non
     shutil.copymode(source, destination)
 
 
+def tracked_line(kernel_metadata_path: Path) -> dict[str, str]:
+    """Return a kernel line's metadata, with an overlay's inherited identity."""
+    # Imported here so that compatible verification, which reads no line
+    # metadata, does not load the series tooling.
+    tooling = str(Path(__file__).resolve().parents[1] / "tooling")
+    if tooling not in sys.path:
+        sys.path.insert(0, tooling)
+    import kernel_series  # noqa: PLC0415
+
+    try:
+        return kernel_series.load_line(kernel_metadata_path.absolute()).values
+    except kernel_series.SeriesError as error:
+        fail(str(error))
+
+
 def verify_tracked_identity(
     manifest: dict,
     kernel_metadata_path: Path,
     abi_metadata_path: Path,
 ) -> None:
-    kernel = parse_env(kernel_metadata_path)
+    kernel = tracked_line(kernel_metadata_path)
     expected_source = {
         "repository": kernel["UML_KERNEL_UPSTREAM_REPOSITORY"],
         "branch": kernel["UML_KERNEL_UPSTREAM_BRANCH"],
@@ -676,7 +691,7 @@ def publish_artifact(
             fail_publish(f"Git failed in the {source_label}: {result.stderr.strip()}")
         return result.stdout.strip()
 
-    metadata = parse_env(metadata_path)
+    metadata = tracked_line(metadata_path)
     abi_metadata_path = common_root / "abi/identity.env"
     abi = parse_env(abi_metadata_path)
     if git("status", "--porcelain=v1", "--untracked-files=all"):
