@@ -349,8 +349,8 @@ address space from the same code translated again for another address space.
 
 [`probes.tsv`](probes.tsv) is the complete inventory of freestanding A64 probe
 sources. It records the mechanism, required guest feature, runner, and retained
-purpose. The source-tree audit requires a one-to-one match between the manifest
-and `guest_*.S` files.
+purpose. [`CMakeLists.txt`](CMakeLists.txt) builds every row, so a row without
+its source fails the build; keep one row per `guest_*.S` file.
 
 Build all probes with the `performance-probe-binaries` target. Run one through
 the owning runner shown in `probes.tsv`; use the runner's `--help` for emulator,
