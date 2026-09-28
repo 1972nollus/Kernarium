@@ -22,7 +22,11 @@ def run(
     *kernel_arguments: str,
     options: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
+    # macOS runs the launcher under its own Bash 3.2, whatever an env lookup
+    # would find first, so the test does too when that shell exists.
+    shell = ["/bin/bash"] if Path("/bin/bash").is_file() else []
     command = [
+        *shell,
         str(launcher),
         "--emulator",
         "/usr/bin/true",
