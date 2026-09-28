@@ -89,7 +89,6 @@ add_custom_target(guest-smp-parallel
         ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_smp.py
         --emulator $<TARGET_FILE:${_uml_integration_emulator}>
         --rootfs ${UML_INTEGRATION_ROOTFS}
-        --root-device /dev/ubda
     DEPENDS uml-darwin
     COMMENT "Running standalone guest SMP integration suite"
     USES_TERMINAL
@@ -482,7 +481,6 @@ uml_add_guest_integration_test(
         ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_mmu_stress.py
         --emulator $<TARGET_FILE:${_uml_integration_emulator}>
         --rootfs ${UML_INTEGRATION_ROOTFS}
-        --root-device /dev/ubda
         --shared-mmap-binary ${UML_GUEST_SHARED_MMAP_STRESS}
         --fork-cow-binary ${UML_GUEST_FORK_COW_COHERENCE}
         --cpus 10

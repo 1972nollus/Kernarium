@@ -18,7 +18,6 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
 import contextlib
 import dataclasses
 import hashlib
@@ -29,13 +28,12 @@ import socket
 import sys
 import threading
 import time
-import zlib
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 
-from guest import Guest  # noqa: E402
+from guest import Guest, GuestFile  # noqa: E402
 from slirp_network import (  # noqa: E402
     NODE,
     start_guest_dhcp_client,
@@ -60,9 +58,10 @@ PARALLEL_TOTAL_LIMIT_MS = 30_000
 STALL_RESUME_LIMIT_MS = 5_000
 EXCHANGE_LIMIT_MS = 1_000
 
+GUEST_SCRIPT_PATH = "/usr/local/libexec/uml-test/transfer.js"
 GUEST_SCRIPT = r"""
 const net=require("net"),crypto=require("crypto"),fs=require("fs");
-const HOST="10.0.2.2",PORT=%PORT%;
+const HOST="10.0.2.2",PORT=Number(process.argv[2]);
 const drops=()=>Number(fs.readFileSync("/sys/class/net/eth0/statistics/tx_dropped","utf8"));
 async function measured(run){const before=drops(),result=await run();
 result.tx_dropped=drops()-before;return result;}
@@ -209,14 +208,7 @@ class TransferServer:
 
 
 def guest_command(port: int) -> str:
-    script = GUEST_SCRIPT.replace("%PORT%", str(port)).replace(
-        "%MARKER%", RESULT_MARKER)
-    packed = base64.b64encode(zlib.compress(script.encode(), 9)).decode()
-    loader = (
-        'eval(require("zlib").inflateSync('
-        f'Buffer.from("{packed}","base64")).toString())'
-    )
-    return f"{NODE} -e '{loader}'"
+    return f"{NODE} {GUEST_SCRIPT_PATH} {port}"
 
 
 def interface_counters(guest: Guest) -> dict[str, int]:
@@ -284,6 +276,11 @@ def main() -> int:
         "tmpfs",
         (),
         init_shell=True,
+        payloads={
+            GUEST_SCRIPT_PATH: GuestFile(
+                GUEST_SCRIPT.replace("%MARKER%", RESULT_MARKER).encode()
+            )
+        },
     ) as guest:
         guest.boot_to_shell(180)
         start_guest_dhcp_client(guest)

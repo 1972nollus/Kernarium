@@ -34,11 +34,6 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--root-device",
-        default="/dev/ubda",
-        help="raw EROFS root block device (default: /dev/ubda)",
-    )
-    parser.add_argument(
         "--kernel-argument",
         action="append",
         default=[],
@@ -94,7 +89,6 @@ def main() -> int:
         "tmpfs",
         (
             f"ncpus={arguments.cpus}",
-            f"root={arguments.root_device}",
             *arguments.kernel_argument,
         ),
         overlay_shell=True,

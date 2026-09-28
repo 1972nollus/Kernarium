@@ -16,9 +16,10 @@ import sys
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 
-from guest import Guest  # noqa: E402
+from guest import Guest, GuestFile  # noqa: E402
 
 
+GUEST_HWCAP_SANITY = "/usr/local/libexec/uml-test/hwcap-sanity"
 HWCAP_FP = 1 << 0
 HWCAP_ASIMD = 1 << 1
 HWCAP_AES = 1 << 3
@@ -162,12 +163,11 @@ def main() -> int:
         "tmpfs",
         init_shell=True,
         engine=arguments.engine,
+        payloads={GUEST_HWCAP_SANITY: GuestFile(hwcap_sanity, 0o755)},
     ) as guest:
         guest.boot_to_shell(180)
         guest.check_command(
-            "mount -t proc proc /proc && "
-            "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp",
-            60,
+            "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp", 60
         )
 
         auxv = auxiliary_vector(guest)
@@ -211,8 +211,7 @@ def main() -> int:
 
         # Every advertised family must also execute correctly. The payload
         # reads the auxiliary vector itself and skips what is not advertised.
-        guest.upload(hwcap_sanity, "/tmp/guest-hwcap-sanity", 0o755)
-        guest.check_command("/tmp/guest-hwcap-sanity", 60, expected="OK")
+        guest.check_command(GUEST_HWCAP_SANITY, 60, expected="OK")
 
         node = "/opt/node/bin/node"
         node_path = guest.check_command(f"test -x {shlex.quote(node)} && echo present", 60)

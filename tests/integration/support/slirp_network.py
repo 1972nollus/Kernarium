@@ -39,14 +39,13 @@ def start_guest_dhcp_client(guest: Guest) -> None:
     without the rest of systemd, so the runner supplies the three things its
     unit would have provided.
     """
-    guest.check_command("mount -t proc proc /proc")
     # systemd reads a writable /sys as "udev runs here" and then parks every
     # link in "pending udev initialization" indefinitely.  A read-only /sys is
     # its documented convention for a userspace that has no udev, which is
     # exactly this boot.
     guest.check_command("mount -t sysfs -o ro sysfs /sys")
-    # The product root is read-only EROFS, so the drop-in and the daemon's
-    # runtime state both live on a disposable tmpfs.
+    # An init would have created /run, so the drop-in and the daemon's
+    # runtime state both live on a disposable tmpfs there.
     guest.check_command("mount -t tmpfs tmpfs /run")
     guest.check_command(f"mkdir -p {NETWORK_DIRECTORY}")
     # networkd drops to the systemd-network user and refuses a runtime

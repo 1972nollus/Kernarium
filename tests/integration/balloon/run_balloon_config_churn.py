@@ -48,8 +48,6 @@ def churn(guest: Guest) -> None:
     # the boot can stop too.
     try:
         guest.boot_to_shell(180)
-        # poweroff refuses to run without /proc.
-        guest.check_command("mount -t proc proc /proc", 20)
         churned = guest.run_command(
             f"sleep {CHURN_SECONDS}; echo CHURN-$((6*7))",
             CHURN_SECONDS + 60,

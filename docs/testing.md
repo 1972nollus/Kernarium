@@ -175,9 +175,9 @@ The optional `guest-v4l2-decode` test qualifies the
 [Virtio video decoder](../darwin/device/video/README.md). Build
 `tests/integration/video/v4l2_decode_probe.cpp` as a static C++20 executable for
 the guest architecture and configure an integration preset with
-`UML_V4L2_PROBE_BINARY` pointing to it. The rootfs needs a shell, `ip`, `tar`,
-`sha256sum`, `timeout`, and either `curl` or `wget`. The test boots a disposable
-overlay, transfers generated fixtures over the local SLiRP endpoint, checks
+`UML_V4L2_PROBE_BINARY` pointing to it. The rootfs needs a shell, `ip`,
+`sha256sum` and `timeout`. The test boots a disposable overlay with the probe
+and its fixtures installed as payload files, checks their SHA-256 list, checks
 every advertised profile's pixels, raw layouts including packed BGRA capture,
 imported dma-buf capture, timestamps, source-change and EOS events, and rejects
 kernel faults or failed shutdown. Run it on both Linux
@@ -191,7 +191,7 @@ The optional `guest-futex-atomic` regression uses a static C++20 build of
 `UML_FUTEX_PROBE_BINARY`. It boots a disposable guest and checks concurrent
 userspace/kernel futex updates and robust priority-inheritance mutexes. Run
 it on both Linux page profiles and the maintained Android kernel. The guest
-needs the same shell and local-transfer tools as the video probe above.
+needs the same shell tools as the video probe above.
 
 `UML_TEST_APPLE_AUDIO=ON` enables `apple-audio-playback`, which sends a brief,
 low-volume stereo tone through the real macOS output and verifies completion
@@ -231,9 +231,16 @@ The workflows configure the product, build it, run tooling checks, and execute
 the fast integration suite. `integration-full` and `integration-full-4k` are
 explicit CTest presets when the complete registered guest set is required.
 
-The shared serial harness sends commands through a nonblocking pipe and keeps
-PTY output. This keeps host input pollable when every guest CPU is busy while
-preserving terminal output behavior and bounded writes under backpressure.
+The shared serial harness boots each guest through the launcher's per-run
+initramfs: its `/init` mounts the image beneath a tmpfs overlay, installs the
+files a test needs as payload files, and starts the
+[harness session](../tools/rootfs/boot-ramdisk/README.md#harness-session),
+which prepares the requested runtime mounts, network, workspace, swap and
+cgroups and gives the harness a root shell. The console carries commands and
+their output, never files. The harness sends commands through a nonblocking
+pipe and keeps PTY output. This keeps host input pollable when every guest CPU
+is busy while preserving terminal output behavior and bounded writes under
+backpressure.
 `guest-console-input-burst` writes an 11 KiB burst to `ttyS0` in one host write,
 enough to throttle the tty, and then requires later typed input to reach the
 shell. `guest-console-concurrent-input` streams 1 MiB of numbered lines to a
@@ -312,7 +319,8 @@ override may select another whole bundle of the matching profile through
 
 `rootfs.erofs` is a unified immutable guest image. Ordinary runs use it
 directly; authentication happens only when provisioning a replacement. Shared
-runs map it with `ubd0c=` and boot `root=/dev/ubda rootfstype=erofs`. Never use
+runs map it with `ubd0c=`, and the per-run `/init` mounts `/dev/ubda` as EROFS
+beneath the run's writable layer; no runner names the root device. Never use
 the root device as writable scratch space.
 
 Ordinary test guest state belongs in a disposable OverlayFS

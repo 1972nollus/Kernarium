@@ -69,6 +69,44 @@ ext4 partition that a host tool has already enlarged, reporting
 [`../starter/boot.env`](../starter/boot.env) selects that mode for starter
 disks.
 
+## Harness session
+
+[`session`](session) prepares a disposable run on an image that does not
+configure one itself. A launcher installs it as a payload at
+`/usr/local/libexec/uml-session` with its parameters at
+`/etc/uml-session.env` and names it as `UML_BOOT_ENTRY`. It runs as PID 1
+under the image's own shell, prepares what the parameters ask for, prints
+`UML_SESSION_READY:<entry>` and replaces itself with the entry. Any failure
+prints `UML_SESSION_ERROR:<reason>` and ends the run.
+
+`/etc/uml-session.env` uses the `/boot.env` syntax:
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `UML_SESSION_ENTRY` | `/bin/sh`, `systemd` | `/bin/sh` |
+| `UML_SESSION_RESOLVER` | `image`, `user-network` | `image` |
+| `UML_SESSION_CONTAINER_STATE` | `image`, `tmpfs` | `image` |
+| `UML_SESSION_RUNTIME_MOUNTS` | `0`, `1` | `0` |
+| `UML_SESSION_NETWORK` | `image`, `user-network` | `image` |
+| `UML_SESSION_WORKSPACE` | `tmpfs`, `ext2` | `tmpfs` |
+| `UML_SESSION_SWAP` | a block device | none |
+| `UML_SESSION_CGROUP` | `v2-nsdelegate`, `v1:<controller>` | none |
+
+`user-network` resolves through the SLiRP resolver and public ones, and gives
+`eth0` the SLiRP provider's fixed lease, since the kernel has no IP
+autoconfiguration. `tmpfs` container state keeps Docker and containerd data
+out of the overlay's upper layer. Runtime mounts are what an init would
+otherwise provide for a shell: `/run`, `/tmp`, `/dev/shm`, `/dev/pts`,
+securityfs and shared propagation. `ext2` puts a 512 MiB memory-backed ext2
+filesystem on `/tmp`. `systemd` finds the image's systemd, which mounts,
+networks and manages everything but the resolver and container state itself,
+so the other keys must keep their defaults.
+
+The session mounts over `/tmp` and `/run`, and the kernel owns `/dev`, `/proc`
+and `/sys`, so a payload a session run reads lives elsewhere, conventionally
+under `/usr/local/libexec`. The integration and performance harness
+(`tests/integration/support/guest.py`) boots every guest this way.
+
 ## Launchers
 
 `uml-darwin` embeds the accepted base for its kernel slice's userspace

@@ -161,7 +161,6 @@ def run_geekbench_shutdown_case(
         profile_dir=None,
         console_log=console_log,
         command="geekbench6 --no-upload",
-        root_device="/dev/ubda",
         kernel_argument=[],
         memory="8G",
         cpus=10,
@@ -247,7 +246,6 @@ def run_guest_shell_case(
         memory="4G",
         cpus=4,
         audio=audio,
-        root_device="/dev/ubda",
         engine="jit",
         core_class="performance",
         quiet=True,
@@ -316,7 +314,8 @@ def verify_guest_shell_shutdown_contract() -> None:
         )
 
 
-def verify_erofs_root_device_defaults() -> None:
+def verify_no_root_device_option() -> None:
+    """The launcher chooses the root device; no runner restates it."""
     cases = (
         ("run_guest_geekbench.py", ["--console-log", "console.log"]),
         ("run_guest_command_bench.py", ["--command", "true"]),
@@ -325,10 +324,8 @@ def verify_erofs_root_device_defaults() -> None:
     )
     for runner, extra in cases:
         options = parse_runner_arguments(runner, extra)
-        if options.root_device != "/dev/ubda":
-            raise RuntimeError(
-                f"{runner}: raw EROFS root must default to /dev/ubda"
-            )
+        if hasattr(options, "root_device"):
+            raise RuntimeError(f"{runner}: --root-device must not return")
 
 
 def verify_core_class_launcher() -> None:
@@ -389,7 +386,7 @@ def main() -> int:
     verify_offline_geekbench_contract()
     verify_geekbench_shutdown_contract()
     verify_guest_shell_shutdown_contract()
-    verify_erofs_root_device_defaults()
+    verify_no_root_device_option()
     verify_core_class_launcher()
     for runner in RUNNERS:
         verify_engine_forwarding(runner)
