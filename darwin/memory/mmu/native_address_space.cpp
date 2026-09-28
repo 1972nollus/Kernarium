@@ -378,16 +378,9 @@ public:
 			throw;
 		}
 
-		void *mapped = map_shared_backing(
-			reinterpret_cast<void *>(address), length, protection,
-			MAP_FIXED | MAP_SHARED, fd, offset);
-		if (mapped == MAP_FAILED) {
-			rollback();
-			return -1;
-		}
-		if (mapped != reinterpret_cast<void *>(address)) {
-			(void)munmap(mapped, length);
-			errno = EFAULT;
+		if (map_shared_backing(reinterpret_cast<void *>(address), length,
+			    protection, MAP_FIXED | MAP_SHARED, fd, offset) ==
+		    MAP_FAILED) {
 			rollback();
 			return -1;
 		}
@@ -418,12 +411,10 @@ public:
 			owners_.erase(slot);
 			throw;
 		}
-		void *mapped = mmap(reinterpret_cast<void *>(slot), host_page_size(),
-			protection, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
-		if (mapped == MAP_FAILED || mapped != reinterpret_cast<void *>(slot)) {
-			const auto saved_errno = mapped == MAP_FAILED ? errno : EFAULT;
-			if (mapped != MAP_FAILED)
-				(void)munmap(mapped, host_page_size());
+		if (mmap(reinterpret_cast<void *>(slot), host_page_size(),
+			    protection, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) ==
+		    MAP_FAILED) {
+			const auto saved_errno = errno;
 			owners_.erase(slot);
 			errno = saved_errno;
 			return -1;
@@ -471,16 +462,10 @@ public:
 			errno = found == owners_.end() ? ENOMEM : EBUSY;
 			return -1;
 		}
-		void *mapped = map_shared_backing(
-			reinterpret_cast<void *>(slot), host_page_size(), protection,
-			MAP_FIXED | MAP_SHARED, fd, offset);
-		if (mapped == MAP_FAILED || mapped != reinterpret_cast<void *>(slot)) {
-			const int saved_errno = mapped == MAP_FAILED ? errno : EFAULT;
-			if (mapped != MAP_FAILED)
-				(void)munmap(mapped, host_page_size());
-			errno = saved_errno;
+		if (map_shared_backing(reinterpret_cast<void *>(slot),
+			    host_page_size(), protection, MAP_FIXED | MAP_SHARED, fd,
+			    offset) == MAP_FAILED)
 			return -1;
-		}
 		found->second = direct_ownership(owner);
 		return 0;
 	}
