@@ -8,7 +8,7 @@ include("${UML_KERNEL_COMMON_ROOT}/artifacts/KernelArtifact.cmake")
 set(UML_KERNEL_PRODUCT "mainline-6.18" CACHE STRING
     "Prebuilt kernel product consumed by the selected Apple executable/runtime")
 set_property(CACHE UML_KERNEL_PRODUCT PROPERTY STRINGS
-    mainline-6.18 mainline-6.18-vulkan-experiment android-17)
+    mainline-6.18 android-17)
 
 if(UML_KERNEL_PRODUCT STREQUAL "android-17")
     # Apple targets consume the ACK artifact only. Rootfs bundles are selected
@@ -27,11 +27,9 @@ if(UML_KERNEL_PRODUCT STREQUAL "android-17")
     return()
 endif()
 
-if(NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18" AND
-   NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment")
+if(NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18")
     message(FATAL_ERROR
-        "UML_KERNEL_PRODUCT must be mainline-6.18, "
-        "mainline-6.18-vulkan-experiment, or android-17")
+        "UML_KERNEL_PRODUCT must be mainline-6.18 or android-17")
 endif()
 
 set(UML_MAINLINE_KERNEL_SLICE "arm64" CACHE STRING
@@ -42,15 +40,7 @@ if(NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64" AND
     message(FATAL_ERROR
         "UML_MAINLINE_KERNEL_SLICE must be arm64 or x86_64")
 endif()
-if(UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment" AND
-   NOT UML_MAINLINE_KERNEL_SLICE STREQUAL "arm64")
-    message(FATAL_ERROR
-        "The mainline-6.18-vulkan-experiment product is published only for "
-        "the arm64 slice")
-endif()
 
-# The Vulkan experiment reads the same mainline-6.18 series through its own
-# fixed descriptors.
 if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
     if(UML_GUEST_16K_PAGES)
         message(FATAL_ERROR
@@ -60,22 +50,12 @@ if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
         "${UML_KERNEL_LINE_ROOT}/slices/x86_64/artifacts/accepted-4k.env")
     set(_uml_expected_page_size 4096)
 elseif(UML_GUEST_16K_PAGES)
-    if(UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment")
-        set(_uml_mainline_acceptance
-            "${UML_KERNEL_LINE_ROOT}/artifacts/vulkan-experiment-16k.env")
-    else()
-        set(_uml_mainline_acceptance
-            "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-16k.env")
-    endif()
+    set(_uml_mainline_acceptance
+        "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-16k.env")
     set(_uml_expected_page_size 16384)
 else()
-    if(UML_KERNEL_PRODUCT STREQUAL "mainline-6.18-vulkan-experiment")
-        set(_uml_mainline_acceptance
-            "${UML_KERNEL_LINE_ROOT}/artifacts/vulkan-experiment-4k.env")
-    else()
-        set(_uml_mainline_acceptance
-            "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-4k.env")
-    endif()
+    set(_uml_mainline_acceptance
+        "${UML_KERNEL_LINE_ROOT}/artifacts/accepted-4k.env")
     set(_uml_expected_page_size 4096)
 endif()
 uml_read_artifact_env(
