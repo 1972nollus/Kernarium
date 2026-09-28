@@ -603,21 +603,17 @@ gadget xlat
 	retire_and_next
 
 .macro random_value width, store, host_register
+/* RDRAND and RDSEED take the host CSPRNG's output, so the guest learns
+ * nothing of the host's counter or addresses, and report it with CF set.
+ * Zero is as valid a result as any other. */
 gadget random_\width
 	bl uml_x86_64_gadget_materialize_flags
+	bl NAME(uml_x86_64_gadget_random_value)
 	ldr x8, [_stream], #8
-	mrs x11, cntvct_el0
-	eor x11, x11, _cpu
-	eor x11, x11, x11, lsl #13
-	eor x11, x11, x11, lsr #7
-	eor x11, x11, x11, lsl #17
-	cbnz x11, .Lx86_random_nonzero\@
-	mov x11, #1
-.Lx86_random_nonzero\@:
 	.if \width == 32
-	mov w11, w11
+	mov w0, w0
 	.endif
-	\store \host_register\()11, [_cpu, x8]
+	\store \host_register\()0, [_cpu, x8]
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x8d5
 	bic x9, x9, x10

@@ -14,10 +14,12 @@
 
 /*
  * The JIT's software reservation state. A versioned table of host
- * reservation granules backs the guest exclusive monitor; the semantic slow
- * path serializes its memory transactions with exclusive_memory_mutex and
- * publishes every store it performs, and tracked native store blocks
- * invalidate the granules they wrote before their publication ends.
+ * reservation granules backs the guest exclusive monitor. The semantic slow
+ * path performs each atomic, exclusive and ordered access as one host access
+ * on the translated page (GuestMemory::atomic_pointer), serializes its
+ * reservation checks and stores with exclusive_memory_mutex, and invalidates
+ * every granule it stores to. Tracked native store blocks invalidate the
+ * granules they wrote before their publication ends.
  */
 
 namespace uml::cpu::arm64::jit::semantic {

@@ -97,19 +97,16 @@ inline void emit_indirect_link(DecodeContext &context, std::uint64_t source,
 	return true;
 }
 
-/* Pack an inline suffix into a zero high-bit range of an operand. The builder
- * falls back to an ordinary terminal branch before a public caller's unusually
- * large input could overlap live operand bits. */
+/* Pack an inline suffix into a zero high-bit range of an operand. build()
+ * caps a block at 2^16 instructions, so a suffix needs at most sixteen bits,
+ * which a shift of 48 or less leaves free above the operand. */
 [[nodiscard]] inline bool emit_inlined_packed_compare_branch(
 	DecodeContext &context, selection::Gadget gadget,
 	std::uintptr_t operand, std::uint64_t target, std::uint8_t suffix_shift,
 	std::size_t retires = 1)
 {
-	const auto suffix_maximum =
-		std::numeric_limits<std::uintptr_t>::max() >> suffix_shift;
-	if (gadget == nullptr || suffix_shift == 0 ||
+	if (gadget == nullptr || suffix_shift == 0 || suffix_shift > 48 ||
 	    (operand >> suffix_shift) != 0 ||
-	    context.following.size() > suffix_maximum ||
 	    context.suffixes.full())
 		return false;
 	selection::emit(context.words, gadget);

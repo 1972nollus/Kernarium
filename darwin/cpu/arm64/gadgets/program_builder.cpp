@@ -83,7 +83,8 @@ BuildResult Builder::build(
 	std::size_t compiled = 0;
 	bool program_accesses_fp_state = false;
 	/* A transfer without a PC word names its instruction by a 16-bit
-	 * position in the block. */
+	 * position in the block, and the same cap bounds every packed inline
+	 * suffix to sixteen bits. */
 	const auto window = instructions.first(std::min(instructions.size(),
 		std::size_t{1} << 16));
 	const auto finish = [&](std::size_t retired) {
