@@ -409,11 +409,12 @@ Host objects are compiled without debug information whenever BTF is enabled.
 They describe host C library types under the kernel's type names, and pahole
 would otherwise encode those definitions into vmlinux BTF.
 
-The kernel links with full DWARF 5, which is only pahole's input; frame
-pointers stay off, so debug information does not change the generated code.
-The publisher's `--objcopy`, the build's own `llvm-objcopy`, strips every
-`.debug_*` section from the published `vmlinux`; the artifact verifier rejects
-DWARF and requires an allocated `.BTF` section. Stripping drops only the
+The kernel links with full DWARF 5, which is only pahole's input. Frame
+pointers are on for the stack walker, as the
+[common README](../common/README.md) describes. The publisher's `--objcopy`,
+the build's own `llvm-objcopy`, strips every `.debug_*` section from the
+published `vmlinux`; the artifact verifier rejects DWARF and requires an
+allocated `.BTF` section. Stripping drops only the
 `STT_FILE` symbols and the locals that describe debug sections. Every function
 and data symbol, `.dynsym`, and `System.map` stay, so crash symbolization is
 unchanged.

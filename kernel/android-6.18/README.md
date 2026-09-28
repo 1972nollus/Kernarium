@@ -35,8 +35,8 @@ match UML; the AOSP product uses the generic BPF interpreter, which runs
 callbacks through the entry-point pool the
 [mainline README](../mainline-6.18/README.md) describes. The kernel
 carries BTF type information, exposed at `/sys/kernel/btf/vmlinux`, as GKI
-does. The build emits DWARF 5 only as pahole's input and keeps frame pointers
-off.
+does. The build emits DWARF 5 only as pahole's input. Frame pointers are on
+for the stack walker, as the [common README](../common/README.md) describes.
 
 Android's Ethernet IpClient acquires the SLiRP lease, default route, and DNS
 configuration after init starts, so the kernel does not perform IP
