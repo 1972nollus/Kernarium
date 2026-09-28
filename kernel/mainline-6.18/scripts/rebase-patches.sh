@@ -11,7 +11,6 @@ LINE_ROOT="$ROOT_DIR/kernel/mainline-6.18"
 KERNEL_SERIES="$ROOT_DIR/kernel/common/tooling/kernel_series.py"
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
-REQUESTED_SOURCE=
 SLICE=arm64
 
 fail()
@@ -24,7 +23,7 @@ usage()
 {
 	cat <<'USAGE'
 Usage: kernel/mainline-6.18/scripts/rebase-patches.sh \
-       [--slice arm64|x86_64] [--source CONFIGURED_PATH]
+       [--slice arm64|x86_64]
 
 Amend, insert, or reorder topic commits on the slice's managed branch, then
 run this command to export its series and record its final tree. Never edit
@@ -37,11 +36,6 @@ while [ "$#" -gt 0 ]; do
 	--slice)
 		[ "$#" -ge 2 ] || fail "--slice requires arm64 or x86_64"
 		SLICE=$2
-		shift 2
-		;;
-	--source)
-		[ "$#" -ge 2 ] || fail "--source requires a path"
-		REQUESTED_SOURCE=$2
 		shift 2
 		;;
 	-h|--help)
@@ -61,9 +55,6 @@ uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
 [ -x "$SOURCE_LOCATION" ] || fail "missing source-location verifier: $SOURCE_LOCATION"
 SOURCE=$("$SOURCE_LOCATION" --require-source) ||
 	fail "kernel source configuration is invalid"
-if [ -n "$REQUESTED_SOURCE" ] && [ "$REQUESTED_SOURCE" != "$SOURCE" ]; then
-	fail "--source must match configured UML_KERNEL_SOURCE_DIR: $SOURCE"
-fi
 [ -d "$SOURCE/.git" ] || fail "source is not a Git working tree: $SOURCE"
 
 kernel_series()
