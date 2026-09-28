@@ -239,11 +239,10 @@ Deferred used-ring publication lets a device retain a descriptor until
 asynchronous host work is complete.
 
 The Apple graphics stack uses upstream virglrenderer on one packaged host GL
-provider: Mesa Zink over KosmicKrisp. macOS is the only platform with a build
-of that stack; iOS presentation code remains but the iOS GPU product is
-pending its Mesa/KosmicKrisp port. macOS provides native AppKit and VNC
-display consumers; iOS provides UIKit Metal presentation and deliberately
-excludes VNC. See [`../docs/graphics.md`](../docs/graphics.md).
+provider, Mesa Zink over KosmicKrisp, and is built for macOS and the iOS
+device. macOS provides native AppKit and VNC display consumers; iOS provides
+UIKit Metal presentation and deliberately excludes VNC. See
+[`../docs/graphics.md`](../docs/graphics.md).
 
 The `apple-gpu-vulkan-experiment` composition adds a Venus facade over one
 directly linked Mesa KosmicKrisp framework, and routes host OpenGL through
