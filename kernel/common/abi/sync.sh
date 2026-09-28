@@ -107,6 +107,8 @@ sync_generated()
 
 # Every replayed kernel carries this header byte for byte, so its text,
 # including the comment, changes only together with an ABI-changing topic.
+# The comment still names kernel/abi/identity.env, the path before
+# kernel/common existed; correct it with the next bridge ABI change.
 bridge_identity_header()
 {
 	cat <<EOF
