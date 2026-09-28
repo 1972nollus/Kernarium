@@ -252,9 +252,10 @@ change, which for a guest that never leaves round-to-nearest is never. The
 rounding gadgets therefore round with the host's current mode instead of
 branching on MXCSR, and the arithmetic honours the guest's mode as well.
 
-`uml_x86_64_gadget_leave` restores round-to-nearest from FPCR itself rather
-than from a copy saved at entry, because a gadget that faults out of a
-stack-using sequence can reach it with a different stack pointer.
+`uml_x86_64_gadget_leave` restores round-to-nearest by clearing FPCR's mode
+field, so entry needs no slot for the caller's copy. Every path into it has the
+stack pointer back at the entry frame, from which it restores the callee-saved
+registers.
 
 ## Code pages
 

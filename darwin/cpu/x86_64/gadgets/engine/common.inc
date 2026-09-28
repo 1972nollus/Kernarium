@@ -663,10 +663,10 @@ uml_x86_64_gadget_leave:
 	 * here -- a repeated string that runs out of budget, a fallback after a
 	 * link -- so leaving the engine always orders what came before it. */
 	x86_memory_order_barrier
-	/* Hand the caller back its own rounding mode, which is the host default:
-	 * derive it from FPCR rather than from a saved copy, because a gadget
-	 * that faults out of a stack-using sequence can reach here with a
-	 * different stack pointer. */
+	/* Hand the caller back its own rounding mode, which is the host
+	 * default, by clearing FPCR's mode field, so entry needs no slot for a
+	 * saved copy.  Every path here has sp back at the entry frame: the
+	 * callee-saved registers below are restored from it. */
 	mrs x10, fpcr
 	ubfx x11, x10, #22, #2
 	cbz x11, .Lx86_leave_rounding_ready
