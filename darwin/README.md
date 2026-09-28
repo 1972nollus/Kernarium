@@ -30,8 +30,9 @@ accounting remains available, while kernel-object charging is outside this
 compatibility slice. An explicit `cgroup.memory=` argument overrides the
 default.
 
-Each Linux product embeds the boot base archive for its userspace
-architecture. Unless the command line names `init=` or `initrd=`, the
+The emulator library chooses no guest init and configures no guest network;
+the image owns both. Each Linux product embeds the boot base archive for its
+userspace architecture. Unless the command line names `init=` or `initrd=`, the
 launcher boots that base with a per-run initramfs: by default the EROFS image
 under a tmpfs overlay and then the image's own init, and with `--guest-init=`
 or `--guest-file=` whatever those supply. An explicit `init=/bin/sh` still
