@@ -102,6 +102,16 @@ public:
         updateChannelDescriptor();
     }
 
+    // A write can detach the channel's client too, when it finds the client
+    // gone. Its descriptor is closed then, which drops its registration, so
+    // the listener has to be watched again before anything else happens:
+    // otherwise the next client never wakes the device, and once one is
+    // accepted under the same descriptor number it is never registered.
+    void followChannel()
+    {
+        updateChannelDescriptor();
+    }
+
 private:
     void updateChannelDescriptor()
     {
@@ -226,6 +236,8 @@ uml::virtio::VhostUserQueueResult VirtioConsoleDevice::processQueue(
                 "invalid Virtio console output descriptor");
         }
         channel_->write(request);
+        if (events_)
+            events_->followChannel();
         return {
             .action = uml::virtio::VhostUserQueueAction::complete,
             .response = {},

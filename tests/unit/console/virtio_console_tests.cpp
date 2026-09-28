@@ -391,6 +391,46 @@ void unixSocketChannelSupportsTailInputAndReconnect()
 }
 
 /*
+ * A named serial port watches its listener while no client is attached, and
+ * the client once one is. A guest write that finds the client gone detaches
+ * it, and the port must go back to watching the listener then: the next
+ * client has to wake the device, and so does that client's input once it is
+ * accepted, usually under the departed client's descriptor number.
+ */
+void namedSerialPortFollowsAClientThatLeftDuringAWrite()
+{
+    TemporaryDirectory temporary;
+    const auto path = temporary.path() / "serial.sock";
+    {
+        uml::console::VirtioConsoleDevice device(
+            std::make_unique<uml::console::UnixSocketChannel>(path),
+            std::string(protocol::hostSerialPortName));
+        auto first = connectClient(path);
+        waitReadable(device.eventDescriptor());
+        device.drainEventSource();
+        first.reset();
+
+        constexpr std::array<std::uint8_t, 4> output {'o', 'u', 't', '\n'};
+        (void)device.processQueue(protocol::outputQueue, 1, output, 0);
+
+        auto second = connectClient(path);
+        waitReadable(device.eventDescriptor());
+        device.drainEventSource();
+        constexpr std::array<std::uint8_t, 3> input {'i', 'n', '\n'};
+        require(::send(second.get(), input.data(), input.size(), 0) ==
+                static_cast<ssize_t>(input.size()));
+        waitReadable(device.eventDescriptor());
+        device.drainEventSource();
+        const auto received =
+            device.processQueue(protocol::inputQueue, 2, {}, 64);
+        require(received.response ==
+                std::vector<std::uint8_t>(input.begin(), input.end()));
+    }
+    struct stat removed {};
+    require(::lstat(path.c_str(), &removed) != 0 && errno == ENOENT);
+}
+
+/*
  * The harness accepts the artifact socket only when it first observes mode
  * 0600.  Creating the file under the process umask and narrowing it after
  * listen() exposed a wider mode for the bind-to-chmod window, which aborted
@@ -559,6 +599,7 @@ int main()
     deviceImplementsTheTwoQueueConsoleContract();
     deviceImplementsTheNamedSerialControlHandshake();
     unixSocketChannelSupportsTailInputAndReconnect();
+    namedSerialPortFollowsAClientThatLeftDuringAWrite();
     unixSocketChannelNeverExposesAWiderModeWhileListening();
     unixSocketChannelRejectsAClientThatClosedBeforeAccept();
     connectedSocketChannelIsNonblocking();
