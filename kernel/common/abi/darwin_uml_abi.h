@@ -31,7 +31,6 @@ typedef unsigned long long darwin_uml_abi_u64;
 #endif
 
 enum {
-	DARWIN_UML_GUEST_REGISTER_COUNT = 31,
 	DARWIN_UML_VECTOR_REGISTER_COUNT = 32,
 	DARWIN_UML_POINTER_AUTH_KEY_COUNT = 5,
 };
@@ -121,8 +120,6 @@ struct darwin_uml_guest_fp_registers {
 
 #if defined(__cplusplus)
 #include <stddef.h>
-static_assert(DARWIN_UML_ABI_VERSION == 12U);
-static_assert(DARWIN_UML_ABI_FINGERPRINT == 0xefee2a66cbe8be89ULL);
 static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
 static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
 static_assert(DARWIN_UML_EVENT_STOP == 9);

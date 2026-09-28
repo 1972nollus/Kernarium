@@ -55,3 +55,4 @@ patch	um-arm64-select-HAVE_ALIGNED_STRUCT_PAGE-and-HAVE_CMPXCHG_DOUBLE.patch
 patch	um-report-Darwin-IRQ-state-changes-to-lockdep.patch
 patch	um-walk-the-Darwin-stack-a-trace-starts-on.patch
 patch	um-copy-a-user-string-without-padding-the-rest-of-its-page.patch
+patch	uml-retire-dead-Darwin-bridge-entries-and-name-a-rejected-batch.patch

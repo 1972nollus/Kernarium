@@ -2,6 +2,11 @@
 #ifndef UML_DARWIN_NETWORK_ABI_H
 #define UML_DARWIN_NETWORK_ABI_H
 
+/* The largest Ethernet frame the bridge carries.  It sizes the kernel's
+ * receive buffer and each slot of the SLiRP provider's receive and transmit
+ * rings, so the provider never holds a frame the kernel cannot take. */
+#define DARWIN_UML_NET_FRAME_SIZE 2048
+
 #ifdef __cplusplus
 extern "C" {
 #endif
