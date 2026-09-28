@@ -8,6 +8,41 @@ endif()
 # The gadget composer is the one C++ file that includes implementation
 # fragments: its .ipp decode families stay in one compiler-visible translation
 # unit without making .ipp a general convention.
+# A darwin/ source that includes a header existing only under tests/ compiles
+# only when a test target adds that directory to its include path.
+function(uml_audit_test_only_includes ROOT OUT_VIOLATIONS)
+    file(GLOB_RECURSE TEST_HEADERS LIST_DIRECTORIES false
+        "${ROOT}/tests/*.h" "${ROOT}/tests/*.hpp")
+    set(DARWIN_GLOBS)
+    foreach(EXTENSION IN ITEMS c cc cpp cxx m mm h hh hpp hxx ipp inl inc S)
+        list(APPEND DARWIN_GLOBS "${ROOT}/darwin/*.${EXTENSION}")
+    endforeach()
+    file(GLOB_RECURSE DARWIN_FILES LIST_DIRECTORIES false ${DARWIN_GLOBS})
+    set(TEST_ONLY_NAMES)
+    foreach(PATH IN LISTS TEST_HEADERS)
+        get_filename_component(HEADER_NAME "${PATH}" NAME)
+        list(APPEND TEST_ONLY_NAMES "${HEADER_NAME}")
+    endforeach()
+    foreach(PATH IN LISTS DARWIN_FILES)
+        get_filename_component(HEADER_NAME "${PATH}" NAME)
+        list(REMOVE_ITEM TEST_ONLY_NAMES "${HEADER_NAME}")
+    endforeach()
+    set(FOUND)
+    foreach(PATH IN LISTS DARWIN_FILES)
+        file(STRINGS "${PATH}" DIRECTIVES
+            REGEX "^[ \t]*#[ \t]*include[ \t]*\"[^\"]+\"")
+        foreach(DIRECTIVE IN LISTS DIRECTIVES)
+            string(REGEX REPLACE "^[ \t]*#[ \t]*include[ \t]*\"([^\"]+)\".*$"
+                "\\1" INCLUDE_NAME "${DIRECTIVE}")
+            if(INCLUDE_NAME IN_LIST TEST_ONLY_NAMES)
+                list(APPEND FOUND
+                    "${PATH}: includes ${INCLUDE_NAME}, which exists only under tests/")
+            endif()
+        endforeach()
+    endforeach()
+    set(${OUT_VIOLATIONS} "${FOUND}" PARENT_SCOPE)
+endfunction()
+
 function(uml_audit_implementation_fragments ROOT OUT_VIOLATIONS)
     set(COMPOSER "${ROOT}/darwin/cpu/arm64/gadgets/program_builder.cpp")
     set(FRAGMENT_VIOLATIONS)
@@ -68,22 +103,6 @@ foreach(PATH IN LISTS C_SOURCES)
     list(APPEND VIOLATIONS "${PATH}: project C source is not allowed")
 endforeach()
 
-# Header names that exist only in the test tree. A darwin/ source that includes
-# one compiles only when a test target adds that directory to its include path.
-file(GLOB_RECURSE TEST_TREE_HEADERS LIST_DIRECTORIES false
-    "${SOURCE_ROOT}/tests/*.h" "${SOURCE_ROOT}/tests/*.hpp")
-file(GLOB_RECURSE DARWIN_TREE_HEADERS LIST_DIRECTORIES false
-    "${SOURCE_ROOT}/darwin/*.h" "${SOURCE_ROOT}/darwin/*.hpp")
-set(TEST_ONLY_HEADER_NAMES)
-foreach(PATH IN LISTS TEST_TREE_HEADERS)
-    get_filename_component(HEADER_NAME "${PATH}" NAME)
-    list(APPEND TEST_ONLY_HEADER_NAMES "${HEADER_NAME}")
-endforeach()
-foreach(PATH IN LISTS DARWIN_TREE_HEADERS)
-    get_filename_component(HEADER_NAME "${PATH}" NAME)
-    list(REMOVE_ITEM TEST_ONLY_HEADER_NAMES "${HEADER_NAME}")
-endforeach()
-
 set(LAYER_GLOBS)
 foreach(EXTENSION IN ITEMS
         c cc cpp cxx m mm h hh hpp hxx ipp inl def S s asm inc)
@@ -111,11 +130,6 @@ foreach(PATH IN LISTS LAYER_SOURCES)
             "${SOURCE_DIRECTORY}/${INCLUDE_NAME}"
             "${SOURCE_ROOT}/darwin/${INCLUDE_NAME}"
             "${SOURCE_ROOT}/darwin/include/${INCLUDE_NAME}")
-        if(INCLUDE_DIRECTIVE MATCHES "\"" AND
-           INCLUDE_NAME IN_LIST TEST_ONLY_HEADER_NAMES)
-            list(APPEND VIOLATIONS
-                "${PATH}: includes ${INCLUDE_NAME}, which exists only under tests/")
-        endif()
         set(NORMALIZED_INCLUDE "${INCLUDE_NAME}")
         foreach(INCLUDE_CANDIDATE IN LISTS INCLUDE_CANDIDATES)
             cmake_path(NORMAL_PATH INCLUDE_CANDIDATE)
@@ -222,6 +236,9 @@ endforeach()
 uml_audit_implementation_fragments(
     "${SOURCE_ROOT}" IMPLEMENTATION_FRAGMENT_VIOLATIONS)
 list(APPEND VIOLATIONS ${IMPLEMENTATION_FRAGMENT_VIOLATIONS})
+
+uml_audit_test_only_includes("${SOURCE_ROOT}" TEST_ONLY_INCLUDE_VIOLATIONS)
+list(APPEND VIOLATIONS ${TEST_ONLY_INCLUDE_VIOLATIONS})
 
 # All first-party CTest registrations must pass through the suite helpers so
 # suite labels, fixture policy, and aggregate binary dependencies cannot be
