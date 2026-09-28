@@ -57,17 +57,10 @@
 #include <vector>
 
 extern "C" {
-#if DARWIN_UML_SIGNED_KERNEL_CARRIER
 extern const unsigned char uml_elf_start[]
     __asm("section$start$__TEXT$__uml_elf");
 extern const unsigned char uml_elf_end[]
     __asm("section$end$__TEXT$__uml_elf");
-#else
-extern const unsigned char uml_elf_start[]
-    __asm("section$start$__DATA$__uml_elf");
-extern const unsigned char uml_elf_end[]
-    __asm("section$end$__DATA$__uml_elf");
-#endif
 }
 
 namespace {
@@ -1264,11 +1257,6 @@ int runtimeRun(
         arguments.emplace_back(consoleBridge.kernelArgument());
 #else
         const bool aquarium = environmentEnabled("KERNARIUM_WEBGL_AQUARIUM");
-        if (aquarium && KERNARIUM_AQUARIUM_SUPPORTED == 0) {
-            std::fputs(
-                "Kernarium: WebGL Aquarium needs an iOS product\n", stderr);
-            return -UML_EMULATOR_INVALID_ARGUMENT;
-        }
         const bool geekbench = environmentEnabled("KERNARIUM_GEEKBENCH");
         const char* discardBenchmarkEnvironment =
             std::getenv("KERNARIUM_DISCARD_BENCHMARK");

@@ -201,30 +201,19 @@ target_compile_features(KernariumRuntime PRIVATE cxx_std_20)
 target_compile_options(KernariumRuntime PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
     -Wall -Wextra -Werror)
-if(UML_APPLE_PLATFORM MATCHES "^ios")
-    set(_kernarium_aquarium_supported 1)
-else()
-    set(_kernarium_aquarium_supported 0)
-endif()
 target_compile_definitions(KernariumRuntime PRIVATE
-    KERNARIUM_AQUARIUM_SUPPORTED=${_kernarium_aquarium_supported}
     KERNARIUM_KERNEL_RELEASE_SERIES="${KERNARIUM_KERNEL_RELEASE_SERIES}"
     KERNARIUM_RUNTIME_ANDROID_GUEST=${KERNARIUM_RUNTIME_ANDROID_GUEST}
     KERNARIUM_RUNTIME_GUEST_FLAVOR=${KERNARIUM_RUNTIME_GUEST_FLAVOR}
     KERNARIUM_RUNTIME_FRAMEWORK_NAME="${KERNARIUM_RUNTIME_FRAMEWORK_NAME}")
 target_link_options(KernariumRuntime PRIVATE
     "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
-if(UML_APPLE_PLATFORM MATCHES "^ios")
-    # The framework code signature covers __TEXT pages. The loader aliases
-    # the ELF's immutable executable pages from this aligned carrier into the
-    # kernel's runtime-selected native window instead of creating anonymous
-    # code.
-    target_link_options(KernariumRuntime PRIVATE
-        "LINKER:-sectcreate,__TEXT,__uml_elf,${_kernarium_kernel_image}"
-        "LINKER:-sectalign,__TEXT,__uml_elf,0x4000")
-    set_property(TARGET KernariumRuntime APPEND PROPERTY
-        LINK_DEPENDS "${_kernarium_kernel_image}")
-endif()
+# The framework code signature covers __TEXT pages. The loader aliases the
+# ELF's immutable executable pages from this aligned carrier into the
+# kernel's runtime-selected native window instead of creating anonymous code.
+target_link_options(KernariumRuntime PRIVATE
+    "LINKER:-sectcreate,__TEXT,__uml_elf,${_kernarium_kernel_image}"
+    "LINKER:-sectalign,__TEXT,__uml_elf,0x4000")
 add_dependencies(KernariumRuntime
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
     uml_dependency_prefix_verify)
