@@ -237,17 +237,21 @@ far_return 64, ldr, x
 .Lx86_iret_load_done\@:
 .endm
 
-.macro interrupt_return width, load, host_register
-gadget interrupt_return_\width
+/* \long_mode names the 64-bit-mode forms. There IRET pops SS:RSP at every
+ * operand size and whatever the privilege change, and a narrower EIP, CS,
+ * EFLAGS, ESP or SS is zero-extended by the load. In compat32 SS:ESP is
+ * popped only on a return to an outer privilege level. */
+.macro interrupt_return name, width, load, host_register, long_mode
+gadget interrupt_return_\name
 	ldr x22, [_stream], #8
 	ldr x23, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	iret_load \width, \load, \host_register, 19, 0
 	iret_load \width, \load, \host_register, 24, 1
 	iret_load \width, \load, \host_register, 25, 2
-	.if \width == 64
-	/* Long-mode IRETQ always restores the five-word machine frame.  Wine
-	 * relies on this to switch from its syscall stack to the initial user
-	 * stack even though both selectors have ring-three privilege. */
+	.if \long_mode
+	/* Wine relies on the five-slot frame to switch from its syscall stack
+	 * to the initial user stack even though both selectors have ring-three
+	 * privilege. */
 	iret_load \width, \load, \host_register, 26, 3
 	iret_load \width, \load, \host_register, 27, 4
 	mov w15, #1
@@ -296,9 +300,11 @@ gadget interrupt_return_\width
 	b uml_x86_64_gadget_leave
 .endm
 
-interrupt_return 16, ldrh, w
-interrupt_return 32, ldr, w
-interrupt_return 64, ldr, x
+interrupt_return 16, 16, ldrh, w, 0
+interrupt_return 32, 32, ldr, w, 0
+interrupt_return 64, 64, ldr, x, 1
+interrupt_return long_16, 16, ldrh, w, 1
+interrupt_return long_32, 32, ldr, w, 1
 
 .purgem interrupt_return
 .purgem iret_load

@@ -3126,8 +3126,10 @@ private:
 			instruction.operation = Operation::interrupt_overflow;
 			return true;
 		case 0xcf:
+			/* Unlike the stack operations, IRET keeps a 32-bit default
+			 * operand size in 64-bit mode: IRETQ needs REX.W. */
 			instruction.operation = Operation::interrupt_ret;
-			instruction.destination.width = stack_width(prefixes_);
+			instruction.destination.width = ordinary_width(prefixes_);
 			return true;
 		case 0xd7:
 			instruction.operation = Operation::xlat;
