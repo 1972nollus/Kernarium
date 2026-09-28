@@ -167,19 +167,59 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 			host_capabilities().has(ArmFeature::lse2));
 }
 
+[[nodiscard]] bool naturally_aligned(const std::byte *pointer,
+	std::size_t size) noexcept
+{
+	return reinterpret_cast<std::uintptr_t>(pointer) % size == 0;
+}
+
+/*
+ * A memory that offers atomic pointers records a failed translation as the
+ * access's fault. Report it instead of completing the access through the
+ * byte-wise fallback below: the fault repair of another vCPU could let that
+ * fallback succeed as a read-modify-write that is not atomic.
+ */
+[[nodiscard]] bool atomic_translation_failed(GuestMemory &memory) noexcept
+{
+	return memory.has_fault();
+}
+
+/*
+ * A read-modify-write the FEAT_LSE2 rule admits although it is not naturally
+ * aligned: one host CASAL loop, which the host's own LSE2 keeps single-copy
+ * atomic inside the 16-byte block. `size` is 2, 4 or 8.
+ */
+template<typename Result>
+[[nodiscard]] std::uint64_t lse2_read_modify_write(std::byte *pointer,
+	std::size_t size, Result result) noexcept
+{
+	auto expected = arm64::detail::lse2_acquire_load(pointer, size);
+	for (;;) {
+		const auto actual = arm64::detail::lse2_compare_swap(
+			pointer, size, expected, result(expected));
+		if (actual == expected)
+			return expected;
+		expected = actual;
+	}
+}
+
 [[nodiscard]] bool atomic_load_value(GuestMemory &memory,
 	std::uint64_t address, std::size_t size, std::memory_order order,
 	std::uint64_t &value, std::uintptr_t &key)
 {
 	auto *pointer = memory.atomic_pointer(
 		address, size, MemoryAccess::read);
-	if (pointer != nullptr &&
-	    reinterpret_cast<std::uintptr_t>(pointer) % size == 0) {
+	if (pointer != nullptr && naturally_aligned(pointer, size)) {
+		/* An ordered load is LDAR, whose RCsc order the exclusive
+		 * load-acquires need; it is also correct for the RCpc forms. A
+		 * C++ acquire load would compile to the weaker LDAPR. */
+		const auto host_order = order == std::memory_order_relaxed ?
+			std::memory_order_relaxed : std::memory_order_seq_cst;
 		switch (size) {
-		case 1: value = atomic_load_at<std::uint8_t>(pointer, order); break;
-		case 2: value = atomic_load_at<std::uint16_t>(pointer, order); break;
-		case 4: value = atomic_load_at<std::uint32_t>(pointer, order); break;
-		case 8: value = atomic_load_at<std::uint64_t>(pointer, order); break;
+		case 1: value = atomic_load_at<std::uint8_t>(pointer, host_order); break;
+		case 2: value = atomic_load_at<std::uint16_t>(pointer, host_order); break;
+		case 4: value = atomic_load_at<std::uint32_t>(pointer, host_order); break;
+		case 8: value = atomic_load_at<std::uint64_t>(pointer, host_order); break;
 		default: return false;
 		}
 		key = host_reservation_key(pointer);
@@ -190,6 +230,8 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 		key = host_reservation_key(pointer);
 		return true;
 	}
+	if (atomic_translation_failed(memory))
+		return false;
 
 	std::array<std::byte, 8> bytes{};
 	if (!memory.read(address, std::span{bytes}.first(size)))
@@ -208,8 +250,7 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 {
 	auto *pointer = memory.atomic_pointer(
 		address, size, MemoryAccess::write);
-	if (pointer != nullptr &&
-	    reinterpret_cast<std::uintptr_t>(pointer) % size == 0) {
+	if (pointer != nullptr && naturally_aligned(pointer, size)) {
 		key = host_reservation_key(pointer);
 		if (expected_key != nullptr && key != *expected_key)
 			return AtomicStoreResult::reservation_mismatch;
@@ -229,6 +270,8 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 		arm64::detail::lse2_release_store(pointer, size, value);
 		return AtomicStoreResult::stored;
 	}
+	if (atomic_translation_failed(memory))
+		return AtomicStoreResult::fault;
 
 	key = reservation_key(memory, address, size, MemoryAccess::write);
 	std::array<std::byte, 8> bytes{};
@@ -257,8 +300,7 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 	const auto failure_order = acquire ? std::memory_order_acquire :
 		std::memory_order_relaxed;
 	auto *pointer = memory.atomic_pointer(address, size, MemoryAccess::write);
-	if (pointer != nullptr &&
-	    reinterpret_cast<std::uintptr_t>(pointer) % size == 0) {
+	if (pointer != nullptr && naturally_aligned(pointer, size)) {
 		switch (size) {
 		case 1:
 			observed = atomic_compare_swap_at<std::uint8_t>(pointer,
@@ -281,6 +323,15 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 		key = host_reservation_key(pointer);
 		return true;
 	}
+	if (pointer != nullptr) {
+		/* Misaligned inside one 16-byte block: CASAL under host LSE2. */
+		observed = arm64::detail::lse2_compare_swap(
+			pointer, size, compare, replacement);
+		key = host_reservation_key(pointer);
+		return true;
+	}
+	if (atomic_translation_failed(memory))
+		return false;
 
 	std::array<std::byte, 8> bytes{};
 	if (!memory.read(address, std::span{bytes}.first(size)))
@@ -315,8 +366,9 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 	std::array<std::byte, 16> bytes{};
 	auto *pointer = memory.atomic_pointer(
 		address, total_size, MemoryAccess::write);
-	if (pointer != nullptr &&
-	    reinterpret_cast<std::uintptr_t>(pointer) % total_size == 0) {
+	if (pointer != nullptr) {
+		/* The single-copy rule keeps a 16-byte pair 16-byte aligned; an
+		 * 8-byte pair may sit misaligned inside one 16-byte block. */
 		key = host_reservation_key(pointer);
 		if (total_size == 8) {
 			const auto packed_compare =
@@ -331,9 +383,12 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 				std::memory_order_release : std::memory_order_relaxed;
 			const auto failure_order = acquire ?
 				std::memory_order_acquire : std::memory_order_relaxed;
-			const auto packed_observed = atomic_compare_swap_at<std::uint64_t>(
-				pointer, packed_compare, packed_replacement,
-				success_order, failure_order);
+			const auto packed_observed = naturally_aligned(pointer, 8) ?
+				atomic_compare_swap_at<std::uint64_t>(pointer,
+					packed_compare, packed_replacement,
+					success_order, failure_order) :
+				arm64::detail::lse2_compare_swap(pointer, 8,
+					packed_compare, packed_replacement);
 			observed_first = packed_observed & 0xffff'ffffU;
 			observed_second = packed_observed >> 32;
 			return true;
@@ -342,12 +397,12 @@ void atomic_load_pair_128_at(std::byte *pointer, std::uint64_t &first,
 			compare_second, replacement_first, replacement_second,
 			observed_first, observed_second);
 		return true;
-	} else {
-		if (!memory.read(address, std::span{bytes}.first(total_size)))
-			return false;
-		key = reservation_key(
-			memory, address, total_size, MemoryAccess::write);
 	}
+	if (atomic_translation_failed(memory))
+		return false;
+	if (!memory.read(address, std::span{bytes}.first(total_size)))
+		return false;
+	key = reservation_key(memory, address, total_size, MemoryAccess::write);
 	observed_first = arm64::detail::decode_little_endian(
 		std::span{bytes}.first(element_size));
 	observed_second = arm64::detail::decode_little_endian(
@@ -458,8 +513,7 @@ template<typename Integer>
 		std::memory_order_release : std::memory_order_relaxed;
 	const std::size_t size = decoded.width / 8U;
 	auto *pointer = memory.atomic_pointer(address, size, MemoryAccess::write);
-	if (pointer != nullptr &&
-	    reinterpret_cast<std::uintptr_t>(pointer) % size == 0) {
+	if (pointer != nullptr && naturally_aligned(pointer, size)) {
 		switch (size) {
 		case 2:
 			observed = atomic_floating_rmw_at<std::uint16_t>(pointer,
@@ -481,6 +535,18 @@ template<typename Integer>
 		key = host_reservation_key(pointer);
 		return true;
 	}
+	if (pointer != nullptr) {
+		observed = lse2_read_modify_write(pointer, size,
+			[&](std::uint64_t current) {
+				return arm64::detail::atomic_floating_result(
+					decoded.operation, current, operand,
+					decoded.width, decoded.bfloat, fpcr);
+			});
+		key = host_reservation_key(pointer);
+		return true;
+	}
+	if (atomic_translation_failed(memory))
+		return false;
 
 	std::array<std::byte, 8> bytes{};
 	if (!memory.read(address, std::span{bytes}.first(size)))
@@ -508,8 +574,7 @@ template<typename Integer>
 		acquire ? std::memory_order_acquire :
 		release ? std::memory_order_release : std::memory_order_relaxed;
 	auto *pointer = memory.atomic_pointer(address, size, MemoryAccess::write);
-	if (pointer != nullptr &&
-	    reinterpret_cast<std::uintptr_t>(pointer) % size == 0) {
+	if (pointer != nullptr && naturally_aligned(pointer, size)) {
 		switch (size) {
 		case 1: observed = atomic_rmw_at<std::uint8_t>(pointer,
 			operation, operand, order); break;
@@ -524,6 +589,17 @@ template<typename Integer>
 		key = host_reservation_key(pointer);
 		return true;
 	}
+	if (pointer != nullptr) {
+		observed = lse2_read_modify_write(pointer, size,
+			[&](std::uint64_t current) {
+				return atomic_operation_result(
+					operation, current, operand, size);
+			});
+		key = host_reservation_key(pointer);
+		return true;
+	}
+	if (atomic_translation_failed(memory))
+		return false;
 
 	std::array<std::byte, 8> bytes{};
 	if (!memory.read(address, std::span{bytes}.first(size)))
@@ -578,9 +654,9 @@ rcw_result(unsigned operation, bool soft, std::uint64_t observed,
 		release ? std::memory_order_release : std::memory_order_relaxed;
 	const auto failure_order = acquire ? std::memory_order_acquire :
 		std::memory_order_relaxed;
+	/* Read-check-write is naturally aligned; the handler checks it. */
 	auto *pointer = memory.atomic_pointer(address, 8, MemoryAccess::write);
-	if (pointer != nullptr &&
-	    reinterpret_cast<std::uintptr_t>(pointer) % 8 == 0) {
+	if (pointer != nullptr && naturally_aligned(pointer, 8)) {
 		auto &storage = *reinterpret_cast<std::uint64_t *>(pointer);
 		auto reference = std::atomic_ref<std::uint64_t>{storage};
 		auto expected = reference.load(std::memory_order_relaxed);
@@ -596,6 +672,8 @@ rcw_result(unsigned operation, bool soft, std::uint64_t observed,
 			}
 		}
 	}
+	if (atomic_translation_failed(memory))
+		return false;
 
 	std::array<std::byte, 8> bytes{};
 	if (!memory.read(address, bytes))
@@ -667,8 +745,7 @@ struct RcwPairResult final {
 {
 	constexpr std::size_t size = 16;
 	auto *pointer = memory.atomic_pointer(address, size, MemoryAccess::write);
-	if (pointer != nullptr &&
-	    reinterpret_cast<std::uintptr_t>(pointer) % size == 0) {
+	if (pointer != nullptr && naturally_aligned(pointer, size)) {
 		key = host_reservation_key(pointer);
 		atomic_load_pair_128_at(pointer, observed_first, observed_second);
 		for (;;) {
@@ -689,6 +766,8 @@ struct RcwPairResult final {
 			observed_second = actual_second;
 		}
 	}
+	if (atomic_translation_failed(memory))
+		return false;
 
 	std::array<std::byte, size> bytes{};
 	if (!memory.read(address, bytes))
@@ -726,8 +805,7 @@ struct RcwPairResult final {
 	constexpr std::size_t size = 16;
 	std::array<std::byte, size> bytes{};
 	auto *pointer = memory.atomic_pointer(address, size, MemoryAccess::write);
-	if (pointer != nullptr &&
-	    reinterpret_cast<std::uintptr_t>(pointer) % size == 0) {
+	if (pointer != nullptr && naturally_aligned(pointer, size)) {
 		key = host_reservation_key(pointer);
 		atomic_load_pair_128_at(pointer, observed_first, observed_second);
 		for (;;) {
@@ -760,11 +838,12 @@ struct RcwPairResult final {
 			observed_first = actual_first;
 			observed_second = actual_second;
 		}
-	} else {
-		if (!memory.read(address, bytes))
-			return false;
-		key = reservation_key(memory, address, size, MemoryAccess::write);
 	}
+	if (atomic_translation_failed(memory))
+		return false;
+	if (!memory.read(address, bytes))
+		return false;
+	key = reservation_key(memory, address, size, MemoryAccess::write);
 
 	observed_first = arm64::detail::decode_little_endian(
 		std::span{bytes}.first<8>());
@@ -809,27 +888,34 @@ struct RcwPairResult final {
 	std::array<std::byte, 16> bytes{};
 	auto *pointer = memory.atomic_pointer(
 		address, total_size, MemoryAccess::read);
-	if (pointer != nullptr &&
-	    reinterpret_cast<std::uintptr_t>(pointer) % element_size == 0) {
+	if (pointer != nullptr) {
 		key = host_reservation_key(pointer);
-		if (total_size == 16 &&
-		    reinterpret_cast<std::uintptr_t>(pointer) % 16 == 0) {
-			/* A pair marked single-copy atomic must not inherit memcpy's
-			 * tearing behavior in the slow path. LDXP supplies one atomic
-			 * 128-bit snapshot on the AArch64 host; CLREX prevents this internal
-			 * implementation detail from retaining a reservation. */
+		if (total_size == 16) {
+			/* The single-copy rule keeps a 16-byte pair aligned. LDXP
+			 * supplies one atomic 128-bit snapshot on the AArch64 host;
+			 * CLREX keeps this internal implementation detail from
+			 * retaining a reservation. */
 			atomic_load_pair_128_at(pointer, first, second);
 			if (order != std::memory_order_relaxed)
 				std::atomic_thread_fence(order);
 			return true;
 		}
-		std::copy_n(pointer, total_size, bytes.begin());
-	} else {
-		if (!memory.read(address, std::span{bytes}.first(total_size)))
-			return false;
-		key = reservation_key(
-			memory, address, total_size, MemoryAccess::read);
+		const auto packed = !naturally_aligned(pointer, 8) ?
+			arm64::detail::lse2_acquire_load(pointer, 8) :
+			order == std::memory_order_relaxed ?
+			atomic_load_at<std::uint64_t>(pointer,
+				std::memory_order_relaxed) :
+			atomic_load_at<std::uint64_t>(pointer,
+				std::memory_order_seq_cst);
+		first = packed & 0xffff'ffffU;
+		second = packed >> 32;
+		return true;
 	}
+	if (atomic_translation_failed(memory))
+		return false;
+	if (!memory.read(address, std::span{bytes}.first(total_size)))
+		return false;
+	key = reservation_key(memory, address, total_size, MemoryAccess::read);
 	if (order != std::memory_order_relaxed)
 		std::atomic_thread_fence(order);
 	first = arm64::detail::decode_little_endian(
@@ -852,39 +938,44 @@ struct RcwPairResult final {
 		std::span{bytes}.subspan(element_size, element_size));
 	auto *pointer = memory.atomic_pointer(
 		address, total_size, MemoryAccess::write);
-	if (pointer != nullptr &&
-	    reinterpret_cast<std::uintptr_t>(pointer) % element_size == 0) {
+	if (pointer != nullptr) {
 		key = host_reservation_key(pointer);
 		if (expected_key != nullptr && key != *expected_key)
 			return AtomicStoreResult::reservation_mismatch;
+		if (total_size == 8) {
+			const auto packed = (first & 0xffff'ffffU) | (second << 32);
+			if (!naturally_aligned(pointer, 8))
+				arm64::detail::lse2_release_store(pointer, 8, packed);
+			else
+				atomic_store_at<std::uint64_t>(pointer, packed, order);
+			return AtomicStoreResult::stored;
+		}
 		if (order != std::memory_order_relaxed)
 			std::atomic_thread_fence(order);
-		if (total_size == 16 &&
-		    reinterpret_cast<std::uintptr_t>(pointer) % 16 == 0) {
-			/* CASP gives the slow path a true 128-bit atomic store on
-			 * hosts without FEAT_LSE128. The speculative LDP only seeds the
-			 * comparison; CASP validates it before committing. */
-			__asm__ volatile(
-				"mov x9, %0\n"
-				"mov x12, %1\n"
-				"mov x13, %2\n"
-				"ldp x14, x15, [x9]\n"
-				"1:\n"
-				"mov x10, x14\n"
-				"mov x11, x15\n"
-				"casp x14, x15, x12, x13, [x9]\n"
-				"cmp x14, x10\n"
-				"ccmp x15, x11, #0, eq\n"
-				"b.ne 1b"
-				:
-				: "r"(pointer), "r"(first), "r"(second)
-				: "x9", "x10", "x11", "x12", "x13", "x14", "x15",
-				  "cc", "memory");
-		} else {
-			std::copy_n(bytes.begin(), total_size, pointer);
-		}
+		/* The single-copy rule keeps a 16-byte pair aligned. CASP gives
+		 * the slow path a true 128-bit atomic store on hosts without
+		 * FEAT_LSE128. The speculative LDP only seeds the
+		 * comparison; CASP validates it before committing. */
+		__asm__ volatile(
+			"mov x9, %0\n"
+			"mov x12, %1\n"
+			"mov x13, %2\n"
+			"ldp x14, x15, [x9]\n"
+			"1:\n"
+			"mov x10, x14\n"
+			"mov x11, x15\n"
+			"casp x14, x15, x12, x13, [x9]\n"
+			"cmp x14, x10\n"
+			"ccmp x15, x11, #0, eq\n"
+			"b.ne 1b"
+			:
+			: "r"(pointer), "r"(first), "r"(second)
+			: "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+			  "cc", "memory");
 		return AtomicStoreResult::stored;
 	}
+	if (atomic_translation_failed(memory))
+		return AtomicStoreResult::fault;
 
 	key = reservation_key(
 		memory, address, total_size, MemoryAccess::write);

@@ -56,6 +56,13 @@ InProcessConsoleService::InProcessConsoleService(
     int connectedDescriptor,
     std::string portName)
 {
+    /* Output the relay has no room for waits in the channel, and only a
+     * named serial port watches the descriptor for the room that resumes
+     * it. */
+    if (portName.empty()) {
+        throw std::invalid_argument(
+            "a connected Virtio console needs a named serial port");
+    }
     /* The caller keeps its descriptor; the service owns a duplicate from
      * here on, even when it fails to start. */
     auto connection = std::make_shared<uml::gpu::UniqueDescriptor>(

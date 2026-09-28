@@ -21,7 +21,8 @@ struct DecodedPicture {
     unsigned planes {};
     const std::uint8_t* plane[3] {};
     std::size_t pitch[3] {};
-    std::size_t bytes[3] {};
+    // Set when the device flagged the picture, or when a plane's rows would
+    // run past the buffer it was decoded into; `plane` is then not to be read.
     bool error {};
     // True when the picture was written into a buffer the caller lent the
     // decoder, so its pixels are already where the caller wants them and
@@ -181,6 +182,14 @@ CaptureMemory captureMemoryRequest(const char* request) noexcept;
 // does not enumerate it makes the RGB decode path unavailable, and the driver
 // then decodes NV12 and converts.
 bool decoderOffersCapture(const std::string& device, std::uint32_t fourcc);
+
+// Whether plane `plane` of a `width` x `height` picture decoded in `format`,
+// its rows `pitch` bytes apart from `offset` bytes into a buffer plane of
+// `length` bytes, holds every byte a copy of the picture reads: each row of a
+// packed ABGR32 picture, and otherwise each row of NV12 luma and each of the
+// half-height chroma rows.
+bool capturedPlaneFits(std::uint32_t format, unsigned plane, unsigned width, unsigned height,
+                       std::size_t pitch, std::size_t offset, std::size_t length) noexcept;
 
 // The frame sizes the device accepts for a coded format. Returns false and
 // leaves the arguments untouched when the device does not say.

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "uml_darwin_network.h"
+
 #include <libslirp.h>
 #include <poll.h>
 
@@ -25,9 +27,8 @@
 
 namespace uml::network {
 
-inline constexpr std::size_t frame_size = 2048;
+inline constexpr std::size_t frame_size = DARWIN_UML_NET_FRAME_SIZE;
 inline constexpr std::size_t ring_size = 256;
-inline constexpr std::size_t max_poll_descriptors = 512;
 /* How long a guest transmit waits for the event loop to free a ring slot
  * before the frame is refused (see SlirpProvider::write). The loop frees one
  * within its next pass; the bound only stops a wedged loop holding a vCPU, so
@@ -43,8 +44,9 @@ inline constexpr const char *guest_address = "10.0.2.15";
 inline constexpr const char *nameserver_address = "10.0.2.3";
 
 /* One host listening socket forwarded into the guest. Registrations are
- * accepted before or after open(); the provider owns replaying them onto each
- * SLiRP instance it creates, so a stop/reopen keeps the same forwards. */
+ * accepted while the provider is not open; the provider owns replaying them
+ * onto each SLiRP instance it creates, so a stop/reopen keeps the same
+ * forwards. */
 struct HostForward final {
 	bool udp{};
 	std::string host_address{"127.0.0.1"};
@@ -89,9 +91,11 @@ struct Timer final {
 	std::int64_t expires_ms{-1};
 };
 
+/* The descriptors one event-loop pass polls: the wake pipe first, then one
+ * per socket SLiRP asks for, however many flows the guest has open. The
+ * vector is kept across passes, so a steady flow count allocates nothing. */
 struct PollState final {
-	std::array<pollfd, max_poll_descriptors + 1> descriptors{};
-	nfds_t count{};
+	std::vector<pollfd> descriptors;
 };
 
 struct SlirpDeleter final {
@@ -107,10 +111,11 @@ public:
 	~SlirpProvider();
 
     int open(std::span<unsigned char, 6> mac, unsigned int &mtu);
-	/* Register a host forward. Before open() the forward is recorded and
-	 * installed when SLiRP is created; afterwards it is installed immediately.
-	 * Returns 0, or a negative errno when the addresses are malformed or the
-	 * host port cannot be claimed. */
+	/* Register a host forward. It is recorded and installed on each SLiRP
+	 * instance open() creates, before that instance's worker starts: libslirp
+	 * takes no lock, so nothing may join an instance its worker is walking.
+	 * Returns 0, -EINVAL for a zero port, or -EBUSY while the provider is
+	 * open. A host port that cannot be claimed is reported at open(). */
 	int add_forward(const HostForward &forward);
 	/* The active-session IRQ descriptor is borrowed from the provider and keeps
 	 * the same numeric identity across stop/reopen. It closes only when the
@@ -139,6 +144,13 @@ public:
 	{
 		return processed_transmits_for_testing_.load(
 			std::memory_order_acquire);
+	}
+	/* Forwards installed while a worker already ran on the instance. */
+	[[nodiscard]] std::size_t
+	forwards_installed_while_running_for_testing() const noexcept
+	{
+		return forwards_installed_while_running_for_testing_.load(
+			std::memory_order_relaxed);
 	}
 #endif
 
@@ -210,6 +222,7 @@ private:
 	std::atomic_bool transmit_pause_requested_for_testing_{};
 	bool transmit_pause_reached_for_testing_{};
 	std::atomic_uint64_t processed_transmits_for_testing_{};
+	std::atomic_size_t forwards_installed_while_running_for_testing_{};
 	bool write_pause_requested_for_testing_{};
 	bool write_pause_reached_for_testing_{};
 	bool release_write_for_testing_{};

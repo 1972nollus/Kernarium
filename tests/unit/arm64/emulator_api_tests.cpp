@@ -52,7 +52,8 @@ bool native_arguments_valid;
 bool execution_option_was_stripped;
 bool native_inputs_were_mutable;
 #if UML_EMULATOR_TEST_HAS_SLIRP
-bool dhcp_argument_present;
+bool network_kernel_ran;
+bool ip_argument_present;
 #endif
 
 struct NetworkState final {
@@ -508,12 +509,13 @@ int isolated_mmu_kernel_b(int, char *const[], char *const[])
 #endif
 
 #if UML_EMULATOR_TEST_HAS_SLIRP
-int native_dhcp_kernel(int argc, char *const argv[], char *const[])
+int native_network_kernel(int argc, char *const argv[], char *const[])
 {
 	const auto arguments = std::span{argv, static_cast<std::size_t>(argc)};
-	dhcp_argument_present = std::ranges::any_of(
+	network_kernel_ran = true;
+	ip_argument_present = std::ranges::any_of(
 		arguments, [](const char *argument) {
-			return std::strcmp(argument, "ip=dhcp") == 0;
+			return std::string_view{argument}.starts_with("ip=");
 		});
 	return 0;
 }
@@ -970,7 +972,9 @@ void test_active_registries_are_allocation_free_and_transactional()
 }
 
 #if UML_EMULATOR_TEST_HAS_SLIRP
-void test_injected_user_network_requests_dhcp()
+/* No maintained kernel builds IP_PNP, so a user network leaves addressing to
+ * guest userspace and adds nothing to the kernel command line. */
+void test_injected_user_network_adds_no_kernel_ip_configuration()
 {
 	void *network_context = uml_slirp_net_create();
 	require(network_context != nullptr,
@@ -991,7 +995,7 @@ void test_injected_user_network_requests_dhcp()
 		.rootfs_path = "/tmp/rootfs.erofs",
 		.kernel_image = nullptr,
 		.kernel_image_size = 0,
-		.native_kernel_entry = native_dhcp_kernel,
+		.native_kernel_entry = native_network_kernel,
 		.network = &callbacks,
 	};
 	uml_emulator *created = nullptr;
@@ -1003,8 +1007,10 @@ void test_injected_user_network_requests_dhcp()
 	require(uml_emulator_run(emulator.get(), 1, arguments, nullptr) == 0,
 		"injected-network emulator run failed");
 	uml_slirp_net_stop(network.get());
-	require(dhcp_argument_present,
-		"injected user network did not request kernel DHCP");
+	require(network_kernel_ran,
+		"injected-network emulator never entered its kernel");
+	require(!ip_argument_present,
+		"injected user network added kernel IP autoconfiguration");
 }
 #endif
 
@@ -1032,7 +1038,7 @@ int main()
 	#endif
 		test_active_registries_are_allocation_free_and_transactional();
 #if UML_EMULATOR_TEST_HAS_SLIRP
-		test_injected_user_network_requests_dhcp();
+		test_injected_user_network_adds_no_kernel_ip_configuration();
 #endif
 		return EXIT_SUCCESS;
 	} catch (const std::exception &error) {

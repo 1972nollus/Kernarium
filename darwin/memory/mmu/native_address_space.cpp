@@ -378,16 +378,9 @@ public:
 			throw;
 		}
 
-		void *mapped = map_shared_backing(
-			reinterpret_cast<void *>(address), length, protection,
-			MAP_FIXED | MAP_SHARED, fd, offset);
-		if (mapped == MAP_FAILED) {
-			rollback();
-			return -1;
-		}
-		if (mapped != reinterpret_cast<void *>(address)) {
-			(void)munmap(mapped, length);
-			errno = EFAULT;
+		if (map_shared_backing(reinterpret_cast<void *>(address), length,
+			    protection, MAP_FIXED | MAP_SHARED, fd, offset) ==
+		    MAP_FAILED) {
 			rollback();
 			return -1;
 		}
@@ -418,12 +411,10 @@ public:
 			owners_.erase(slot);
 			throw;
 		}
-		void *mapped = mmap(reinterpret_cast<void *>(slot), host_page_size(),
-			protection, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
-		if (mapped == MAP_FAILED || mapped != reinterpret_cast<void *>(slot)) {
-			const auto saved_errno = mapped == MAP_FAILED ? errno : EFAULT;
-			if (mapped != MAP_FAILED)
-				(void)munmap(mapped, host_page_size());
+		if (mmap(reinterpret_cast<void *>(slot), host_page_size(),
+			    protection, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) ==
+		    MAP_FAILED) {
+			const auto saved_errno = errno;
 			owners_.erase(slot);
 			errno = saved_errno;
 			return -1;
@@ -471,16 +462,10 @@ public:
 			errno = found == owners_.end() ? ENOMEM : EBUSY;
 			return -1;
 		}
-		void *mapped = map_shared_backing(
-			reinterpret_cast<void *>(slot), host_page_size(), protection,
-			MAP_FIXED | MAP_SHARED, fd, offset);
-		if (mapped == MAP_FAILED || mapped != reinterpret_cast<void *>(slot)) {
-			const int saved_errno = mapped == MAP_FAILED ? errno : EFAULT;
-			if (mapped != MAP_FAILED)
-				(void)munmap(mapped, host_page_size());
-			errno = saved_errno;
+		if (map_shared_backing(reinterpret_cast<void *>(slot),
+			    host_page_size(), protection, MAP_FIXED | MAP_SHARED, fd,
+			    offset) == MAP_FAILED)
 			return -1;
-		}
 		found->second = direct_ownership(owner);
 		return 0;
 	}
@@ -1130,33 +1115,80 @@ int NativeAddressSpace::convert_direct_slot_to_shadow_locked(
 	 * produced by replacing a mapping with MAP_FIXED anonymous memory first. */
 	std::array<std::byte, 16 * 1024> snapshot{};
 	static_assert(snapshot.size() >= 4 * guest_page_size);
+
+	/* A store another carrier makes through the direct slot between the
+	 * snapshot and the remap would reach the backing but not the shadow
+	 * built from the snapshot, and the native view would lose it. The slot
+	 * is read-only for that interval instead: such a store faults, and its
+	 * retry waits on mutex_ until the shadow is published or the slot is
+	 * restored. This call's own stack, from its deepest callee up to its
+	 * frame, must not be in the slot, or it would fault the same way. */
+	const int direct_protection = direct->second.protection;
+	const bool writable = (direct_protection & PROT_WRITE) != 0;
+	if (writable) {
+		const auto frame = reinterpret_cast<std::uintptr_t>(
+			__builtin_frame_address(0));
+		const auto deepest =
+			reinterpret_cast<std::uintptr_t>(snapshot.data()) -
+			host_page_size();
+		if (slot <= frame && slot + host_page_size() > deepest) {
+			errno = EBUSY;
+			return -1;
+		}
+		if (mprotect(reinterpret_cast<void *>(slot), host_page_size(),
+			direct_protection & ~PROT_WRITE) != 0)
+			return -1;
+	}
+	const auto restore_direct = [&]() noexcept {
+		if (!writable)
+			return;
+		const int saved_errno = errno;
+		(void)mprotect(reinterpret_cast<void *>(slot), host_page_size(),
+			direct_protection);
+		errno = saved_errno;
+	};
+
 	void *shared_alias = map_shared_backing(nullptr, host_page_size(), PROT_READ,
 		MAP_SHARED, direct->second.fd, direct->second.offset);
-	if (shared_alias == MAP_FAILED)
+	if (shared_alias == MAP_FAILED) {
+		restore_direct();
 		return -1;
+	}
 	std::copy_n(static_cast<const std::byte *>(shared_alias), host_page_size(),
 		snapshot.begin());
-	if (munmap(shared_alias, host_page_size()) != 0)
+	if (munmap(shared_alias, host_page_size()) != 0) {
+		restore_direct();
 		return -1;
+	}
 
 	BackingIdentity identity{};
-	if (identify_backing(direct->second.fd, identity) < 0)
+	if (identify_backing(direct->second.fd, identity) < 0) {
+		restore_direct();
 		return -1;
+	}
 	const int shadow_protection =
-		shadow_data_protection(direct->second.protection);
+		shadow_data_protection(direct_protection);
 	std::array<std::uintptr_t, 4> pages{};
 	std::vector<decltype(backing_index_)::iterator> index_entries;
-	index_entries.reserve(pages.size());
+	try {
+		index_entries.reserve(pages.size());
+	} catch (...) {
+		restore_direct();
+		throw;
+	}
 	void *prepared = mmap(nullptr, host_page_size(),
 		PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-	if (prepared == MAP_FAILED)
+	if (prepared == MAP_FAILED) {
+		restore_direct();
 		return -1;
+	}
 	std::copy_n(snapshot.begin(), host_page_size(),
 		static_cast<std::byte *>(prepared));
 	if (mprotect(prepared, host_page_size(), shadow_protection) != 0) {
 		const int saved_errno = errno;
 		(void)munmap(prepared, host_page_size());
 		errno = saved_errno;
+		restore_direct();
 		return -1;
 	}
 
@@ -1210,6 +1242,7 @@ int NativeAddressSpace::convert_direct_slot_to_shadow_locked(
 	} catch (...) {
 		rollback_metadata();
 		(void)munmap(prepared, host_page_size());
+		restore_direct();
 		throw;
 	}
 
@@ -1219,6 +1252,7 @@ int NativeAddressSpace::convert_direct_slot_to_shadow_locked(
 		const int saved_errno = errno;
 		rollback_metadata();
 		(void)munmap(prepared, host_page_size());
+		restore_direct();
 		errno = saved_errno;
 		return -1;
 	}

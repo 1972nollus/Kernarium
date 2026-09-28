@@ -91,8 +91,8 @@ The series is maintained locally; no tooling submits or pushes it.
 as the starting `.config`, applies exactly one page fragment, runs
 `olddefconfig`, and verifies that every requested symbol resolved as declared.
 `build/build-kernel.sh --lockdep` also applies `config/lockdep.fragment`
-last, for a lock-checking probe with lockdep, its hardirq-state tracking and
-`DEBUG_VM`. Publish such a kernel only to a scratch output root and select it
+last, for a lock-checking probe with lockdep, its hardirq-state tracking,
+`DEBUG_ATOMIC_SLEEP`, and `DEBUG_VM`. Publish such a kernel only to a scratch output root and select it
 through `UML_MAINLINE_618_KERNEL_ARTIFACT_DIR`; it is never an accepted
 artifact.
 
@@ -139,6 +139,13 @@ the configured guest RAM. The host emulator admits the same span
 (`UML_NATIVE_VHOST_USER_SHMEM_RESERVATION` and `UML_NATIVE_STUB_PAGES` in the
 top-level CMake layout); a host that reserves less faults on the kernel's own
 stub write, so the two sizes move together.
+
+The window lies inside every task's address range, and `mmap()` refuses any
+user mapping that would enter it. A user TLB flush can still cover it: freeing
+page tables widens the flush to each table's whole span, which starts inside
+the window when a table also maps the first pages above it. Such a flush drops
+and replays only the guest ranges beside the window, because the host would
+take a range inside it for the kernel's own mappings.
 
 Darwin UML negotiates the standardized vhost-user shared-memory-region
 transport (`VHOST_USER_PROTOCOL_F_SHMEM_MAP`), obtains one region through
@@ -296,8 +303,11 @@ implementation, and Apple launchers never construct a COW image pair.
 Lifecycle quiesce uses full Linux system suspend. The management console
 acknowledges only after the suspend entry boundary and remains the explicit
 wake source, so monotonic guest uptime excludes time while an Apple host has
-frozen the application. Multi-vCPU suspend parks secondary carriers through
-CPU hotplug and restores them before guest tasks resume.
+frozen the application. Multi-vCPU suspend parks secondary carriers through CPU
+hotplug and restores them before guest tasks resume. The console socket is
+`/tmp/uml-<umid>-mconsole`, or `<dir>/mconsole` when the host passes
+`uml_dir=<dir>`, a directory owned by that machine alone; a path that does not
+fit Darwin's 104-byte `sun_path` is refused, never truncated.
 
 Loadable modules remain disabled. The required guest filesystems, networking,
 Virtio devices, cgroups, BPF interpreter, zram, zswap/zstd, and supported LSM
@@ -402,11 +412,12 @@ Host objects are compiled without debug information whenever BTF is enabled.
 They describe host C library types under the kernel's type names, and pahole
 would otherwise encode those definitions into vmlinux BTF.
 
-The kernel links with full DWARF 5, which is only pahole's input; frame
-pointers stay off, so debug information does not change the generated code.
-The publisher's `--objcopy`, the build's own `llvm-objcopy`, strips every
-`.debug_*` section from the published `vmlinux`; the artifact verifier rejects
-DWARF and requires an allocated `.BTF` section. Stripping drops only the
+The kernel links with full DWARF 5, which is only pahole's input. Frame
+pointers are on for the stack walker, as the
+[common README](../common/README.md) describes. The publisher's `--objcopy`,
+the build's own `llvm-objcopy`, strips every `.debug_*` section from the
+published `vmlinux`; the artifact verifier rejects DWARF and requires an
+allocated `.BTF` section. Stripping drops only the
 `STT_FILE` symbols and the locals that describe debug sections. Every function
 and data symbol, `.dynsym`, and `System.map` stay, so crash symbolization is
 unchanged.

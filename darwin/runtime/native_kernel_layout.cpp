@@ -4,6 +4,8 @@
 #include "host_environment.hpp"
 #include "memory/mmu/address_layout.hpp"
 
+#include <cstdio>
+
 #include <sys/mman.h>
 
 namespace uml::runtime {
@@ -54,8 +56,17 @@ NativeKernelLayout prepare_native_kernel_layout(
 			guest_memory, DARWIN_UML_MACOS_NATIVE_ADDRESS);
 	}
 	const auto packed = DeviceGeometry::derive(guest_memory);
+	if (!packed.valid)
+		return packed;
 	const auto reserved = reserve_native_kernel_window(packed);
-	return reserved.valid ? reserved : packed;
+	if (!reserved.valid) {
+		std::fprintf(stderr,
+			"UML: cannot reserve a %llu-byte native kernel window\n",
+			static_cast<unsigned long long>(
+				packed.window_end - packed.window_start));
+		return {.reservation_failed = true};
+	}
+	return reserved;
 #endif
 #else
 	(void)guest_memory;

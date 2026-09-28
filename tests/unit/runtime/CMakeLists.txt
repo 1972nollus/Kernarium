@@ -27,6 +27,18 @@ uml_add_unit_test(
     COMMAND uml_run_routing_tests
     LABELS tsan)
 
+add_executable(uml_run_routing_stress_tests
+    run_routing_stress_tests.cpp
+    $<TARGET_OBJECTS:uml_run_routing>)
+target_include_directories(uml_run_routing_stress_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/darwin/platform)
+target_compile_features(uml_run_routing_stress_tests PRIVATE cxx_std_20)
+target_compile_options(uml_run_routing_stress_tests PRIVATE
+    -Wall -Wextra -Werror)
+uml_add_unit_test(
+    NAME runtime-route-unbound-reads
+    COMMAND uml_run_routing_stress_tests)
+
 add_executable(uml_runtime_context_tests context_tests.cpp)
 target_link_libraries(uml_runtime_context_tests PRIVATE
     UML::Emulator

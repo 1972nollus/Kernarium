@@ -11,6 +11,7 @@ runtime/   guest-entry composition
 device/    block, console, GPU, input, audio, and network providers
 emulator/  options and product composition
 app/macos/ standalone process adapter
+app/initramfs/ host tool that writes a guest's per-run initramfs
 ```
 
 Targets and source lists belong to these directories. See
@@ -28,6 +29,16 @@ x86_64 product defaults to `cgroup.memory=nokmem`: userspace memory-controller
 accounting remains available, while kernel-object charging is outside this
 compatibility slice. An explicit `cgroup.memory=` argument overrides the
 default.
+
+The emulator library chooses no guest init and configures no guest network;
+the image owns both. Each Linux product embeds the boot base archive for its
+userspace architecture. Unless the command line names `init=` or `initrd=`, the
+launcher boots that base with a per-run initramfs: by default the EROFS image
+under a tmpfs overlay and then the image's own init, and with `--guest-init=`
+or `--guest-file=` whatever those supply. An explicit `init=/bin/sh` still
+starts a raw shell on the image. The
+[boot ramdisk contract](../tools/rootfs/boot-ramdisk/README.md) owns the
+archive, its parameters and the host-side `uml-initramfs` tool.
 
 Kernarium uses `6.18`-series iOS runtime frameworks for 16 KiB Linux, 4 KiB
 Linux, and 16 KiB Android. Framework names remain stable across patch releases
@@ -67,9 +78,12 @@ to RAM, bounded from 1 GiB to 4 GiB. macOS places the window at 96 TiB. iOS
 asks for the address below its ceiling and, when the host declines that hint,
 for wherever a window of that size fits: an iOS app's usable virtual range is
 not guaranteed to contain the compile-time envelope, and iOS 27 moved it out.
-The window is reserved before the guest starts so nothing else can take part of
-it, and it stays reserved end to end: the kernel image, the reserved physical
-prefix and guest RAM are all mapped over the reservation in place.
+On a physical device the window is reserved before the guest starts so nothing
+else can take part of it, and a run whose window cannot be reserved fails. It
+stays reserved end to end: the kernel image, the reserved physical prefix and
+guest RAM are all mapped over the reservation in place. macOS and Designed for
+iPad leave the window unreserved and place the image and the loader tail by an
+honoured address hint.
 
 Accepted arm64-userspace mainline artifacts are shared by macOS and iOS within
 each page profile. The x86_64-userspace 4 KiB slice has a distinct artifact
@@ -212,10 +226,16 @@ compile eagerly.
 Native stores publish per-vCPU state on separate 128-byte host cache lines.
 Bounded load/compare/conditional-branch/store-exclusive retry regions use host
 exclusives after checking both mappings and permissions. Unsupported shapes
-and tagged accesses take the JIT's semantic slow path. Native and semantic
-stores share the JIT's software reservation table and publication protocol.
-An ordered store through an alias invalidates the matching software reservation
-even when the stored value is unchanged.
+and tagged accesses take the JIT's semantic slow path, which performs each
+atomic, exclusive and ordered access as one host access on the translated
+page, with LSE atomics or CASP for a read-modify-write. Those accesses are
+therefore single-copy atomic against native code on other vCPUs and against
+host threads that share the page. Only an exclusive load, or an instruction
+run while its software reservation is held, waits out other vCPUs' native
+store blocks. Native and semantic stores share the JIT's software reservation
+table: every data store, including a pair or structure store that leaves its
+native lowering, invalidates the granules it writes through any alias of the
+same backing, even when the stored value is unchanged.
 
 ## Devices
 

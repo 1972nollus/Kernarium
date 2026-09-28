@@ -185,10 +185,10 @@ index 28ab8dbe589f95dfba5654a2fb08c756c190bf19..dfcf40a0ea376cd35d2467e432323513
  
  void block_signals_hard(void)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 0d57cc6869baf11dbaef7dbe6d5df28998119edf..b41d2ba7dc31b3aee976a1cff392e1dfed0b67ed 100644
+index d4284e564057261937a1b4dcc6a3269fb322354f..1fb66557b1dd0af709865e6671f80d6a2e6897c5 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -387,7 +387,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -389,7 +389,7 @@ void userspace(struct uml_pt_regs *registers)
  		 * user mode; do the equivalent explicitly before both guest execution
  		 * and the syscall entry which follows it.
  		 */

@@ -11,5 +11,5 @@ target_include_directories(uml_virtio_input
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
 target_compile_features(uml_virtio_input PUBLIC cxx_std_20)
 target_compile_options(uml_virtio_input PRIVATE
-    -Wall -Wextra -Werror -Wno-deprecated-declarations)
+    -Wall -Wextra -Werror)
 target_link_libraries(uml_virtio_input PRIVATE uml_gpu_transport)

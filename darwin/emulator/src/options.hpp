@@ -40,7 +40,6 @@ struct EmulatorOptions final {
 };
 
 [[nodiscard]] EmulatorOptions prepare_emulator_options(
-	int argc, const char *const argv[], std::string_view rootfs,
-	bool default_user_network);
+	int argc, const char *const argv[], std::string_view rootfs);
 
 } // namespace uml::emulator

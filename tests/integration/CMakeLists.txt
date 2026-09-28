@@ -291,6 +291,25 @@ uml_add_guest_integration_test(
     PROCESSORS 4
     RESOURCE_GROUPS cpus:4)
 
+# The base archive and a per-run initramfs boot the EROFS image, and every
+# broken initramfs stops the guest with a named reason.
+if(NOT UML_BOOT_BASE_ARCHIVE OR NOT TARGET uml-initramfs)
+    message(FATAL_ERROR
+        "guest-boot-initramfs requires the accepted boot base and uml-initramfs")
+endif()
+uml_add_guest_integration_test(
+    NAME guest-boot-initramfs
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/boot/run_guest_boot_initramfs.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+        --base ${UML_BOOT_BASE_ARCHIVE}
+        --initramfs-tool $<TARGET_FILE:uml-initramfs>
+    LABELS guest;boot;smoke
+    TIMEOUT 600
+    PROCESSORS 1
+    RESOURCE_GROUPS cpus:1)
+
 # A faulting nofault kernel read resumes at its recovery point.
 uml_add_guest_integration_test(
     NAME guest-kernel-nofault
@@ -308,6 +327,31 @@ uml_add_guest_integration_test(
     NAME guest-user-strings
     COMMAND ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_user_strings.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
+# Unmapping user pages beside the native window leaves the kernel's own
+# mappings in it alone.
+uml_add_guest_integration_test(
+    NAME guest-native-window-unmap
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_native_window_unmap.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
+# A tracer's PSTATE writes are filtered as native arm64 filters them.
+uml_add_guest_integration_test(
+    NAME guest-ptrace-pstate
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_ptrace_pstate.py
         --emulator $<TARGET_FILE:${_uml_integration_emulator}>
         --rootfs ${UML_INTEGRATION_ROOTFS}
     LABELS guest;kernel;smoke

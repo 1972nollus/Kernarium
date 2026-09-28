@@ -77,12 +77,16 @@ void announce_resolver() noexcept
 
 /* One registry change, from the first field it touches to the last, including
  * the testing pause: a reader waits the odd sequence out and then sees the
- * change whole. The caller holds the registry mutex. */
+ * change whole. The caller holds the registry mutex. The release fence after
+ * the opening increment pairs with the reader's acquire fence: a reader that
+ * loads any payload store of this change then sees the odd sequence (or a
+ * later one) in its closing check and retries. */
 class RoutePublication final {
 public:
 	RoutePublication() noexcept
 	{
 		route_registry->sequence.fetch_add(1, std::memory_order_seq_cst);
+		std::atomic_thread_fence(std::memory_order_release);
 	}
 
 	~RoutePublication()
@@ -177,8 +181,12 @@ Route current_route() noexcept
 				route_registry->published_active.load(
 					std::memory_order_relaxed),
 			};
+			/* An acquire load orders only what follows it, so the
+			 * payload loads above need this fence to stay ahead of
+			 * the closing check. */
+			std::atomic_thread_fence(std::memory_order_acquire);
 			if (route_registry->sequence.load(
-				    std::memory_order_acquire) == before)
+				    std::memory_order_relaxed) == before)
 				return route;
 		}
 		if (attempt >= 64)

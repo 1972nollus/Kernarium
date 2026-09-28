@@ -8,6 +8,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <limits>
+#include <vector>
 
 namespace uml::network {
 namespace {
@@ -120,19 +122,24 @@ int SlirpProvider::add_poll_descriptor(
 	slirp_os_socket descriptor, int events, void *opaque) noexcept
 {
 	auto &state = *static_cast<PollState *>(opaque);
-	if (state.count >= max_poll_descriptors)
+	const auto index = state.descriptors.size();
+	if (index > static_cast<std::size_t>(std::numeric_limits<int>::max()))
 		return -1;
-	auto &entry = state.descriptors[state.count];
-	entry.fd = descriptor;
-	entry.events = poll_events_from_slirp(events);
-	entry.revents = 0;
-	return static_cast<int>(state.count++);
+	try {
+		state.descriptors.push_back(
+			{descriptor, poll_events_from_slirp(events), 0});
+	} catch (...) {
+		/* SLiRP skips a socket it gets no index for, this pass only. */
+		return -1;
+	}
+	return static_cast<int>(index);
 }
 
 int SlirpProvider::get_poll_events(int index, void *opaque) noexcept
 {
 	const auto &state = *static_cast<PollState *>(opaque);
-	if (index < 0 || static_cast<nfds_t>(index) >= state.count)
+	if (index < 0 ||
+	    static_cast<std::size_t>(index) >= state.descriptors.size())
 		return 0;
 	return slirp_events_from_poll(state.descriptors[index].revents);
 }
@@ -173,21 +180,22 @@ void SlirpProvider::handle_expired_timers() noexcept
 
 void SlirpProvider::event_loop(std::stop_token stop_token) noexcept
 {
+	PollState state;
+	/* The wake pipe keeps index 0, which SLiRP is never handed. Clearing
+	 * keeps the capacity, so the wake entry never allocates after this. */
+	state.descriptors.reserve(64);
 	while (!stop_token.stop_requested()) {
-		PollState state{};
 		std::uint32_t timeout = 1000;
 		process_transmit_queue();
+		state.descriptors.clear();
+		state.descriptors.push_back({wake_pipe_[0].get(), POLLIN, 0});
 		slirp_pollfds_fill_socket(slirp_.get(), &timeout,
 					 add_poll_descriptor, &state);
 		timeout = timer_timeout(timeout);
-		const auto wake_index = state.count;
-		auto &wake_entry = state.descriptors[wake_index];
-		wake_entry.fd = wake_pipe_[0].get();
-		wake_entry.events = POLLIN;
-		state.count++;
-		const int result = poll(state.descriptors.data(), state.count,
+		const int result = poll(state.descriptors.data(),
+					static_cast<nfds_t>(state.descriptors.size()),
 					static_cast<int>(timeout));
-		if ((wake_entry.revents & POLLIN) != 0) {
+		if ((state.descriptors.front().revents & POLLIN) != 0) {
 			std::array<std::byte, 64> buffer{};
 			while (::read(wake_pipe_[0].get(), buffer.data(),
 				      buffer.size()) > 0)

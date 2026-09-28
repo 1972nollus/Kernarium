@@ -4,10 +4,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <optional>
 #include <poll.h>
 #include <string>
 #include <string_view>
@@ -43,8 +45,9 @@ void require(bool condition)
 
 std::string consolePath()
 {
-	return "/tmp/uml-" + ::uml::device::guest_management_console_umid() +
-		"-mconsole";
+	const auto &location = ::uml::device::guest_console_location();
+	require(location.has_value());
+	return location->console;
 }
 
 int bindServer(const std::string &path)
@@ -75,16 +78,30 @@ std::string receiveRequest(int descriptor, sockaddr_un &client,
 	return std::string(request.data.data(), length);
 }
 
+/* Waits up to `milliseconds` for a request; false when none arrives. */
+bool awaitRequest(int descriptor, int milliseconds)
+{
+	pollfd waiting {descriptor, POLLIN, 0};
+	int ready;
+	do {
+		ready = ::poll(&waiting, 1, milliseconds);
+	} while (ready < 0 && errno == EINTR);
+	require(ready >= 0);
+	return ready > 0;
+}
+
 void observeRequests(int descriptor, std::vector<std::string> &requests)
 {
 	sockaddr_un client {};
 	socklen_t clientLength {};
+	/* suspend_guest sends its request at once. When it sends nothing, the
+	 * observer gives up so that the test fails on the result instead of
+	 * waiting here for ever. */
+	if (!awaitRequest(descriptor, 10000))
+		return;
 	requests.push_back(receiveRequest(descriptor, client, clientLength));
 
-	pollfd waiting {descriptor, POLLIN, 0};
-	const int ready = ::poll(&waiting, 1, 2500);
-	require(ready >= 0);
-	if (ready == 0)
+	if (!awaitRequest(descriptor, 2500))
 		return;
 
 	requests.push_back(receiveRequest(descriptor, client, clientLength));
@@ -114,10 +131,94 @@ void aSuspendTimeoutCannotQueueLegacyStop()
 	(void)::unlink(path.c_str());
 }
 
+/* The widest reply socket a location may name. */
+std::size_t widestClientPath(const ::uml::device::GuestConsoleLocation &location)
+{
+	return location.client_prefix.size() + 8U;
+}
+
+void aSharedLocationKeepsTheGuestsTmpNames()
+{
+	const auto location = ::uml::device::compose_guest_console_location(
+		std::nullopt, "kern42", 42);
+	require(location.has_value());
+	require(location->directory.empty());
+	require(location->console == "/tmp/uml-kern42-mconsole");
+	require(location->client_prefix == "/tmp/uml-mc-42-");
+
+	/* Nothing on macOS moves the console out of /tmp, so the guest is told
+	 * only its name. */
+	const auto &process = ::uml::device::guest_console_location();
+	require(process.has_value() && process->directory.empty());
+	const auto arguments =
+		::uml::device::guest_management_console_arguments();
+	require(arguments.size() == 1U && arguments[0].starts_with("umid=kern"));
+	require(process->console == "/tmp/uml-" + arguments[0].substr(5U) +
+		"-mconsole");
+}
+
+void aPrivateDirectoryHoldsShortNamesThatFit()
+{
+	/* $TMPDIR of an iOS application: 89 bytes with its trailing slash. */
+	const std::string container =
+		"/private/var/mobile/Containers/Data/Application/"
+		"00000000-0000-4000-8000-000000000000/tmp";
+	const auto location = ::uml::device::compose_guest_console_location(
+		container + "/", "kern42", 42);
+	require(location.has_value());
+	require(location->directory == container);
+	require(location->console == container + "/mconsole");
+	require(location->client_prefix == container + "/mc-");
+	require(location->console.size() < sizeof(sockaddr_un {}.sun_path));
+	require(widestClientPath(*location) < sizeof(sockaddr_un {}.sun_path));
+
+	const auto slashes = ::uml::device::compose_guest_console_location(
+		container + "///", "kern42", 42);
+	require(slashes.has_value() && slashes->directory == container);
+}
+
+void aPrivateDirectoryThatDoesNotFitIsRefused()
+{
+	/* The longest directory whose widest reply socket still fits. */
+	constexpr std::size_t limit = sizeof(sockaddr_un {}.sun_path);
+	const std::size_t longest = limit - 1U - std::string_view {"/mc-"}.size() -
+		8U;
+	const auto fitting = "/" + std::string(longest - 1U, 'd');
+	const auto fits = ::uml::device::compose_guest_console_location(
+		fitting, "kern42", 42);
+	require(fits.has_value() && widestClientPath(*fits) == limit - 1U);
+
+	/* One byte more is refused outright: not truncated, and not moved to the
+	 * shared /tmp where the guest would not bind. */
+	require(!::uml::device::compose_guest_console_location(
+		fitting + "d", "kern42", 42).has_value());
+	require(!::uml::device::compose_guest_console_location(
+		"/" + std::string(limit, 'd'), "kern42", 42).has_value());
+}
+
+void aPrivateDirectoryMustBeAbsolute()
+{
+	require(!::uml::device::compose_guest_console_location(
+		std::string_view {}, "kern42", 42).has_value());
+	require(!::uml::device::compose_guest_console_location(
+		"tmp/", "kern42", 42).has_value());
+}
+
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
-	aSuspendTimeoutCannotQueueLegacyStop();
-	return EXIT_SUCCESS;
+	const std::string_view selected = argc > 1 ? argv[1] : "";
+	if (selected == "location") {
+		aSharedLocationKeepsTheGuestsTmpNames();
+		aPrivateDirectoryHoldsShortNamesThatFit();
+		aPrivateDirectoryThatDoesNotFitIsRefused();
+		aPrivateDirectoryMustBeAbsolute();
+		return EXIT_SUCCESS;
+	}
+	if (selected == "suspend-timeout") {
+		aSuspendTimeoutCannotQueueLegacyStop();
+		return EXIT_SUCCESS;
+	}
+	return EXIT_FAILURE;
 }

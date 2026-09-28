@@ -1,5 +1,5 @@
 {
-  "cases": 171306,
+  "cases": 171318,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
@@ -7,12 +7,12 @@
     "illegal-instruction": 24616,
     "instruction-budget": 863,
     "memory-fault": 16852,
-    "system-call": 128865
+    "system-call": 128877
   },
   "cases_by_profile": {
-    "16k": 37238,
+    "16k": 37244,
     "16k+4k": 96818,
-    "4k": 37250
+    "4k": 37256
   },
   "coverage": {
     "entries": 983,
@@ -23,9 +23,9 @@
   },
   "exports": {
     "16k": {
-      "classes": 24308,
+      "classes": 24314,
       "covering_cases": 16778,
-      "declared_cases": 18218274,
+      "declared_cases": 18218280,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -38,14 +38,14 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 134321,
+      "exported_cases": 134327,
       "forced_cases": 4285,
       "producers": 452
     },
     "4k": {
-      "classes": 24307,
+      "classes": 24313,
       "covering_cases": 16791,
-      "declared_cases": 18218273,
+      "declared_cases": 18218279,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -58,7 +58,7 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 134333,
+      "exported_cases": 134339,
       "forced_cases": 4285,
       "producers": 452
     }
@@ -73,19 +73,19 @@
     "script": "tools/arm64-tests/lse2-alignment-corpus.py",
     "sha256": "7930348c920a379aea8484c922d55e93d68bfdac9746580c3ffe83816a839316"
   },
-  "memory_blobs": 3348,
-  "pack_bytes": 14887191,
-  "pack_sha256": "3d05af17d2f52b26712e82dd5573765a897661f5f0421510afb9791839ac1ade",
-  "producer_commit": "ab2344676255d39d793186fd63b29a7a85995f2e",
-  "programs": 147216,
-  "records": 1332,
+  "memory_blobs": 3352,
+  "pack_bytes": 14888489,
+  "pack_sha256": "f5eb439d29e1fdfac5a249cd6d8d8a1786e5dde8b4a35aa5258344e296344ea4",
+  "producer_commit": "aec8b13959f463ed8798fd1611ac54895b8a861b",
+  "programs": 147228,
+  "records": 1336,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
     "broad": 63,
     "full": 1314,
-    "narrow": 169929
+    "narrow": 169941
   },
   "validator_cases": {
     "guarded-control-call-fault-atomicity/v1": 8,

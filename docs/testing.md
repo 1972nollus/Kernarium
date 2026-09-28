@@ -20,7 +20,8 @@ Every first-party CTest has exactly one primary suite:
 - `integration`: guest, rootfs, GUI, network, and kernel behavior.
 
 The helper that registers a test sets its suite label; `ctest -N -L <suite>`
-lists a configured tree's registrations.
+lists a configured tree's registrations. A unit test without its own `TIMEOUT`
+gets a 600 s bound, so a wedged binary fails the suite instead of stalling it.
 Performance and long external campaigns are not CTest correctness suites.
 
 Tooling tests run tools against fixtures; they do not grep tracked source for
@@ -210,10 +211,12 @@ ctest --preset unit-tsan
 
 ## Integration prerequisites and workflows
 
-Integration needs three local inputs:
+Integration needs four local inputs:
 
 - the accepted kernel bundle for the selected page profile below
   `.build/kernel/artifacts`;
+- the accepted boot base archive below `.build/rootfs`, which `uml-darwin`
+  embeds ([boot ramdisk](../tools/rootfs/boot-ramdisk/README.md));
 - the verified dependency prefix; and
 - the unified `rootfs.erofs` image.
 
@@ -252,6 +255,15 @@ calls into callback programs. It checks that the verifier's frame, stack, and
 tail-call limits still reject, and exhausts and refills the interpreter's
 callback entry-point pool.
 
+`guest-boot-initramfs` boots the launcher's base and per-run initramfs. The
+generic `/init` must mount the image beneath a tmpfs overlay, install the
+payload and switch root into the payload's entry as PID 1; the same payload
+must boot from an initrd written by `uml-initramfs`. The base alone, a segment
+appended without padding, an initrd the kernel never loads and an unknown
+`/boot.env` key must each stop the guest with their named reason and a nonzero
+exit, and the launcher must remove its scratch initrd, including one an
+aborted run left behind.
+
 `guest-kernel-nofault` dumps every task with sysrq t. Its workqueue report for
 each idle kernel worker reads through a NULL pointer with
 `copy_from_kernel_nofault()`, which must fail quietly: the guest keeps running
@@ -268,6 +280,18 @@ the 4064-byte embedded name buffer and `PATH_MAX`, strings that cross a page
 boundary or end on its last byte, unterminated strings, `EFAULT` for NULL,
 unmapped and `PROT_NONE` memory, and the exact bytes a symlink target and a
 task name keep.
+
+`guest-native-window-unmap` maps a page just below and just above the Darwin
+kernel's native window, which it finds from the addresses `mmap()` refuses,
+and unmaps each alone and both with one `munmap()` across the window. The
+page tables freed with them widen the kernel's TLB flush over the window, and
+the guest must survive each unmap and run another command.
+
+`guest-ptrace-pstate` writes a stopped child's PSTATE through
+`PTRACE_SETREGSET` and `PTRACE_POKEUSER`. SS and the RES0 bits must read back
+cleared and TCO, DIT and SSBS kept, a mode or DAIF bit must fail with
+`EINVAL`, and the child continued after an SS write must exit rather than
+stop on a single-step trap.
 
 `guest-run-end-stop` boots embedded guests in child processes and stops each
 one at a different point, from CPU bring-up to a guest waiting for its root
@@ -305,10 +329,11 @@ network dependency. Docker and containerd state are mounted separately from
 the writable root overlay.
 
 `tools/rootfs/starter` separately owns the writable raw-GPT starter disks used
-with the macOS emulator. Their common memory-backed initramfs grows ext4 only
-after a host tool has enlarged the disk and its sole partition. Growth happens
-before the real root is mounted, is skipped for non-ext4 or multi-partition
-disks, and is non-fatal. Each image owns its `hvc0` getty, DHCP/DNS service,
+with the macOS emulator and the boot base archives. A starter disk boots
+through the generic per-run `/init` with the starter `boot.env`, which grows
+ext4 only after a host tool has enlarged the disk and its sole partition.
+Growth happens before the real root is mounted, is skipped for non-ext4 or
+multi-partition disks, and is non-fatal. Each image owns its `hvc0` getty, DHCP/DNS service,
 accounts, and optional Plasma session. See the
 [producer README](../tools/rootfs/starter/README.md) for its single build and
 grow entry points; these images do not replace the unified immutable product
@@ -319,7 +344,12 @@ qualify the dedicated 4 KiB x86_64-userspace kernel slice. Kernel-mode
 execution remains native arm64, but that slice cannot load arm64 userspace.
 Build it on an x86-64 Linux host and run the bounded
 `tests/integration/x86_64/run_guest_x86_64_smoke.py` boot check; it is not a
-replacement for the accepted general-purpose rootfs.
+replacement for the accepted general-purpose rootfs. The slice's own
+`uml-darwin` embeds the x86-64 boot base, so check it with
+`tests/integration/boot/run_guest_boot_initramfs.py --engine gadgets`, the
+`macos-x86_64` `uml-darwin`, any x86-64 EROFS image such as the
+[x86-64 LTP rootfs](../tools/rootfs/ltp-x86_64/README.md), the x86-64 base
+and a `uml-initramfs`.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session

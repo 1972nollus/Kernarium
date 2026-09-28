@@ -93,9 +93,16 @@ struct CpuState final {
 	std::uint64_t gadget_host_fpcr{};
 	std::uint64_t gadget_host_fpsr{};
 	bool gadget_fp_active{};
-	/* Private execution-engine scratch. An indirect control-flow cache miss
-	 * records its data-only cache cell here so the gadget executor can train
-	 * that exact site. This is never guest-visible architectural state. */
+	/* Private execution-engine scratch, never guest-visible architectural
+	 * state, holding one of two things. An indirect control-flow cache miss
+	 * records its data-only cache cell here, with a `continued` event, so the
+	 * gadget executor can train that exact site. Every other exit that
+	 * writes it records its position in a translated stream instead, and
+	 * does so only with an event that does not retire the instruction or
+	 * from the FPCR write that enables traps; the executor consumes and
+	 * clears that pointer before it trains, so a stream pointer is never
+	 * taken for a cache cell. A new exit that records its stream must keep
+	 * to that rule. */
 	void *gadget_indirect_miss{};
 	/* JIT blocks using the optional native mode register retain the host value
 	 * here so returning and terminal C++ helpers can run in the host-owned

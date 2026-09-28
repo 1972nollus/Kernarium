@@ -405,6 +405,7 @@ void VirtioGpuDevice::clearScanout() noexcept
 {
     displayActivityLog().record("scanout clear resource=%u", scanoutResource_);
     releaseBlobScanout();
+    std::vector<std::uint8_t>().swap(readbackStaging_);
     scanoutResource_ = protocol::invalidResourceId;
     scanoutRectangle_ = {};
     UML_GPU_DISPLAY.clear();
@@ -418,16 +419,23 @@ protocol::GpuResponse VirtioGpuDevice::presentReadback(
     UML_GPU_DISPLAY.recordCpuFallbackFrame();
     const auto fallbackDamage =
         UML_GPU_DISPLAY.needsFullCpuFallback() ? scanoutRectangle_ : damage;
+    const auto stagingBytes = pixelBufferSize(
+        scanoutRectangle_.width, scanoutRectangle_.height);
     const auto readbackBytes = pixelBufferSize(
         fallbackDamage.width, fallbackDamage.height);
-    if (!readbackBytes || readbackStaging_.size() < *readbackBytes)
+    if (!stagingBytes || !readbackBytes || *readbackBytes > *stagingBytes)
         return protocol::GpuResponse::errorUnspecified;
-    const auto readback = std::span<std::uint8_t>(readbackStaging_)
-        .first(*readbackBytes);
     const auto readbackRowBytes =
         static_cast<std::size_t>(fallbackDamage.width) *
         protocol::gpuBytesPerPixel;
     try {
+        /* The first readback of a scanout sizes the staging to all of it,
+         * and later ones reuse it until the scanout changes. A scanout that
+         * the display always takes as a Metal texture never allocates it. */
+        if (readbackStaging_.size() != *stagingBytes)
+            readbackStaging_.resize(*stagingBytes);
+        const auto readback = std::span<std::uint8_t>(readbackStaging_)
+            .first(*readbackBytes);
         if (UML_GPU_RENDERER.readResourceRectangle(
                 resourceId,
                 readback,
@@ -536,7 +544,7 @@ void VirtioGpuDevice::reset() noexcept
         protocol::invalidResourceId);
     resources_.clear();
     transferStaging_.clear();
-    readbackStaging_.clear();
+    std::vector<std::uint8_t>().swap(readbackStaging_);
     displayGeneration_ = 0;
     reportedDisplayGeneration_ = 0;
     clearedDisplayGeneration_ = 0;
@@ -1742,24 +1750,12 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         if (!rectangleFits(scanout->rectangle, width, height))
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
-        std::vector<std::uint8_t> replacementReadback;
-        bool replaceReadback = false;
-        if (virglResource != nullptr) {
-            const auto byteCount = pixelBufferSize(
-                scanout->rectangle.width, scanout->rectangle.height);
-            if (!byteCount) {
-                return response(
-                    *header, protocol::GpuResponse::errorOutOfMemory);
-            }
-            if (readbackStaging_.size() != *byteCount) {
-                try {
-                    replacementReadback.resize(*byteCount);
-                } catch (const std::bad_alloc&) {
-                    return response(
-                        *header, protocol::GpuResponse::errorOutOfMemory);
-                }
-                replaceReadback = true;
-            }
+        /* A Virgl scanout's readback staging is allocated by its first flush
+         * that reads back, but the scanout must be one it could hold. */
+        if (virglResource != nullptr &&
+            !pixelBufferSize(
+                scanout->rectangle.width, scanout->rectangle.height)) {
+            return response(*header, protocol::GpuResponse::errorOutOfMemory);
         }
         auto success = response(*header, protocol::GpuResponse::okNoData);
         const bool dimensionsChanged =
@@ -1777,8 +1773,10 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             std::memcpy(success.data(), &failure, sizeof(failure));
             return success;
         }
-        if (replaceReadback)
-            readbackStaging_.swap(replacementReadback);
+        /* Staging for another size, or for a scanout that never reads back,
+         * is only held memory. */
+        if (virglResource == nullptr || dimensionsChanged)
+            std::vector<std::uint8_t>().swap(readbackStaging_);
         releaseBlobScanout();
         scanoutResource_ = scanout->resourceId;
         scanoutRectangle_ = scanout->rectangle;
@@ -1858,25 +1856,14 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
          * its own; Android's gralloc allocates the compositor's framebuffers
          * this way once blobs exist. Each flush presents the Metal texture
          * that stores the GL texture, and reads the blob back into the CPU
-         * framebuffer only when there is none, so keep that fallback's
-         * staging ready.
+         * framebuffer only when there is none. That readback allocates its
+         * staging at the first flush that needs it, so a scanout the display
+         * always takes as a Metal texture holds none.
          */
-        std::vector<std::uint8_t> replacementReadback;
-        if (readback) {
-            const auto byteCount = pixelBufferSize(
-                scanout->rectangle.width, scanout->rectangle.height);
-            if (!byteCount) {
-                return response(
-                    *header, protocol::GpuResponse::errorOutOfMemory);
-            }
-            if (readbackStaging_.size() != *byteCount) {
-                try {
-                    replacementReadback.resize(*byteCount);
-                } catch (const std::bad_alloc&) {
-                    return response(
-                        *header, protocol::GpuResponse::errorOutOfMemory);
-                }
-            }
+        if (readback &&
+            !pixelBufferSize(
+                scanout->rectangle.width, scanout->rectangle.height)) {
+            return response(*header, protocol::GpuResponse::errorOutOfMemory);
         }
         /* The scanout rectangle is the guest mode whichever path shows it,
          * so the display sizes presentation, input and its window to it as
@@ -1898,8 +1885,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
             std::memcpy(success.data(), &failure, sizeof(failure));
             return success;
         }
-        if (!replacementReadback.empty())
-            readbackStaging_.swap(replacementReadback);
+        if (!readback || dimensionsChanged)
+            std::vector<std::uint8_t>().swap(readbackStaging_);
         displayActivityLog().record(
             "scanout set kind=blob resource=%u source=%ux%u rect=%ux%u+%u+%u "
             "format=%u stride=%u offset=%u texture=%p path=%s",

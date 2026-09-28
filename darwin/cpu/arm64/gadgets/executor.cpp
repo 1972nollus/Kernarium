@@ -34,8 +34,10 @@ using ::uml::memory::StaticGuestMemory;
 namespace {
 
 
+/* darwin/cpu/CMakeLists.txt defines it for this translation unit, the only
+ * one that reads it. */
 #ifndef UML_GADGET_BLOCK_INSTRUCTIONS
-#define UML_GADGET_BLOCK_INSTRUCTIONS 64
+#error "UML_GADGET_BLOCK_INSTRUCTIONS must come from the build"
 #endif
 constexpr std::size_t block_instruction_count = UML_GADGET_BLOCK_INSTRUCTIONS;
 constexpr std::size_t guest_page_size = DARWIN_UML_GUEST_PAGE_SIZE;
@@ -75,8 +77,10 @@ void correct_terminal_instruction_count(
 	if (!terminal_does_not_retire(event))
 		return;
 
+	/* program_position answers only inside the program, so the position
+	 * is always below its instruction count. */
 	const auto position = program_position(program, fault_pc);
-	if (!position || *position >= program.instruction_count())
+	if (!position)
 		return;
 	const auto unretired = program.instruction_count() - *position;
 	if (executed < unretired)
@@ -111,7 +115,7 @@ void correct_fpcr_enable_instruction_count(
 			return;
 		retired = program.instruction_count();
 	}
-	if (retired == 0 || retired > program.instruction_count())
+	if (retired == 0)
 		return;
 	const auto unretired = program.instruction_count() - retired;
 	if (executed < unretired)
@@ -538,21 +542,6 @@ public:
 		return occupied;
 	}
 
-	void invalidate() noexcept
-	{
-		resident_.clear();
-		generations_.clear();
-		current_ = nullptr;
-		++epoch_;
-		if (epoch_ != 0)
-			return;
-		for (auto &slab : slabs_)
-			if (slab)
-				for (auto &slot : slab->slots)
-					slot.epoch = 0;
-		epoch_ = 1;
-	}
-
 	/* Reset the activations of one address space, as its code change
 	 * requires.
 	 *
@@ -871,10 +860,6 @@ private:
 	/* The unreachable guest PC an untrained indirect cell names; guest
 	 * targets are admitted only word-aligned, so none can collide. */
 	static constexpr std::uint64_t empty_pc = ~std::uint64_t{};
-	static_assert((slot_count & (slot_count - 1)) == 0,
-		"cache slot count must be a power of two");
-	static_assert(slot_count >= slab_slots * 4,
-		"cache must hold at least four slabs");
 
 	/* One translation, allocated apart from the slot that indexes it.
 	 *
@@ -984,11 +969,10 @@ private:
 		/* Reactivation resolves the same link record every time, so its
 		 * address is memoised here rather than hashed again on each pass.
 		 * The owning address space keeps its records in chunks that never
-		 * move, so the address is stable until invalidate() clears them,
-		 * and that also advances epoch_, which is what link_epoch is
-		 * compared against.
-		 * Retiring the address space clears this slot's epoch in the same
-		 * pass that destroys the map.
+		 * move, so the address stays valid while the slot holds this
+		 * translation: store() and release() reset the memo, and retiring
+		 * the address space clears this slot's epoch in the same pass that
+		 * destroys the map.
 		 *
 		 * The memo is only ever valid for the address space named by
 		 * `generation`, and nothing about the record itself says which
@@ -1441,6 +1425,9 @@ GadgetExecutor::~GadgetExecutor()
 {
 	if (sampling_ != nullptr)
 		diagnostics::guest_sampling_unregister(*sampling_);
+#if UML_GADGET_EXECUTION_HISTOGRAM
+	diagnostics::execution_histogram_forget_executor(&cache_diagnostics_);
+#endif
 #if UML_GADGET_CACHE_CENSUS
 	if (const char *path = std::getenv("DARWIN_UML_GADGET_CACHE_CENSUS");
 	    path != nullptr && *path != '\0') {
@@ -1687,6 +1674,8 @@ BuildResult GadgetExecutor::translate(
 		diagnostics::execution_histogram_note_executor(&d);
 	}
 #endif
+	/* A stream pointer left by a non-retiring or FPCR-enable exit was
+	 * consumed and cleared above, so what remains is a cache cell. */
 	if (cpu.gadget_indirect_miss != nullptr &&
 	    (cpu.pc & (alignof(std::uint32_t) - 1U)) == 0U) {
 		programs_->learn_indirect(

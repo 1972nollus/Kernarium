@@ -33,10 +33,10 @@ frame pointers; the change does not depend on them.
  1 file changed, 11 insertions(+), 4 deletions(-)
 
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 4e2a2d1085c202ef2a3173b68836b1718519df89..8b4a36b86819f39eb7685deb4c445dd2ad2c666b 100644
+index 2bfed76039061eff7e2614b3988836e85d52ae2f..e80e84da89a22d76a5f1e25db491d26a77664b02 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
-@@ -361,12 +361,19 @@ static int strncpy_chunk_from_user(unsigned long from, int len, void *arg)
+@@ -404,12 +404,19 @@ static int strncpy_chunk_from_user(unsigned long from, int len, void *arg)
  	char **to_ptr = arg, *to = *to_ptr;
  	int n;
  

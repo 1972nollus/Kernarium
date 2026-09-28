@@ -176,6 +176,8 @@ function(uml_apply_test_properties NAME)
     endif()
 endfunction()
 
+set(UML_UNIT_TEST_DEFAULT_TIMEOUT 600)
+
 function(uml_add_unit_test)
     cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
         "COMMAND;LABELS;RESOURCE_GROUPS" ${ARGN})
@@ -200,6 +202,13 @@ function(uml_add_unit_test)
     set(_labels "unit")
     if(TEST_LABELS)
         list(APPEND _labels ${TEST_LABELS})
+    endif()
+    # A wedged unit binary fails its suite instead of stalling it. The default
+    # stays several times above the slowest unit test measured without an
+    # explicit bound, sanitizer presets and a loaded host included; a test
+    # that needs longer passes its own TIMEOUT.
+    if(NOT TEST_TIMEOUT)
+        set(TEST_TIMEOUT "${UML_UNIT_TEST_DEFAULT_TIMEOUT}")
     endif()
     uml_apply_test_properties("${TEST_NAME}"
         LABELS "${_labels}"

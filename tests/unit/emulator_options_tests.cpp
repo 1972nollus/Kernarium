@@ -50,7 +50,7 @@ void test_defaults_and_engine_selection()
 	const char *arguments[]{"uml-test", "--execution-engine=jit",
 		"--guest-top-byte-ignore", "console=ttyS0"};
 	const auto options = uml::emulator::prepare_emulator_options(
-		4, arguments, "/tmp/rootfs.erofs", true);
+		4, arguments, "/tmp/rootfs.erofs");
 	require(options.valid, "valid emulator options were rejected");
 	require(options.engine == uml::runtime::ExecutionEngine::jit,
 		"execution engine was not parsed");
@@ -64,10 +64,10 @@ void test_defaults_and_engine_selection()
 	require(contains(options, "root=/dev/ubda"), "root default was not added");
 	require(contains(options, "rootfstype=erofs"),
 		"EROFS root type was not added");
-	require(contains(options, "init=/bin/sh"),
-		"interactive shell init was not added");
-	require(!contains(options, "init=/sbin/uml-overlay-init"),
-		"removed image-local overlay init was injected");
+	/* The launcher owns the boot: an initramfs /init, or an init= it names
+	 * itself. The library adds no init of its own. */
+	require(!starts_with_any(options, "init="),
+		"the library chose an init for the guest");
 	require(contains(options, "mem=256M"), "memory default was not added");
 	require(options.jit_cache_budget == 128U * 1024U * 1024U,
 		"default memory did not produce the default half-memory JIT budget");
@@ -75,23 +75,25 @@ void test_defaults_and_engine_selection()
 		"default guest memory was not retained for kernel placement");
 	require(options.jit_executor_cache_budget == 256U * 1024U * 1024U,
 		"default private JIT cache cap is not 256 MiB");
-	require(contains(options, "ip=dhcp"), "network default was not added");
+	/* No maintained kernel builds IP_PNP; guest userspace owns DHCP. */
+	require(!starts_with_any(options, "ip="),
+		"an inert kernel IP autoconfiguration argument was added");
 	require(!contains(options, "--execution-engine=jit"),
 		"host execution option leaked into the kernel command line");
 
 	const char *default_arguments[]{"uml-test"};
 	const auto defaults = uml::emulator::prepare_emulator_options(
-		1, default_arguments, "/tmp/rootfs.erofs", false);
+		1, default_arguments, "/tmp/rootfs.erofs");
 	require(contains(defaults, "console=tty0") &&
 		contains(defaults, "console=ttyS0"),
 		"framebuffer and host serial console defaults were not added");
 
 	const char *disk_composed[]{"ubd0=/tmp/guest.img", "root=/dev/ram0"};
 	const auto disk_options = uml::emulator::prepare_emulator_options(
-		2, disk_composed, {}, true);
+		2, disk_composed, {});
 	require(disk_options.valid,
 		"rootfs-less disk-composed guest options were rejected");
-	require(!contains(disk_options, "ip=dhcp"),
+	require(!starts_with_any(disk_options, "ip="),
 		"rootfs-less guest inherited kernel DHCP configuration");
 }
 
@@ -101,7 +103,7 @@ void test_explicit_defaults_are_preserved()
 		"root=/dev/custom", "rootfstype=erofs", "init=/custom-init",
 		"mem=512M", "ip=dhcp", "--execution-engine", "gadgets"};
 	const auto options = uml::emulator::prepare_emulator_options(
-		9, arguments, "/unused/rootfs", true);
+		9, arguments, "/unused/rootfs");
 	require(options.valid, "explicit emulator options were rejected");
 	require(!options.top_byte_ignore,
 		"guest top-byte-ignore mode was enabled by default");
@@ -115,15 +117,29 @@ void test_explicit_defaults_are_preserved()
 		"the guest was left without a management-console name");
 	const char *named_console[]{"umid=chosen"};
 	const auto named = uml::emulator::prepare_emulator_options(
-		1, named_console, "/tmp/rootfs.erofs", false);
+		1, named_console, "/tmp/rootfs.erofs");
 	require(contains(named, "umid=chosen") &&
 		count_prefixed(named, "umid=") == 1,
 		"a caller-supplied management-console name was replaced");
+	const char *placed_console[]{"uml_dir=/chosen"};
+	const auto placed = uml::emulator::prepare_emulator_options(
+		1, placed_console, "/tmp/rootfs.erofs");
+	require(contains(placed, "uml_dir=/chosen") &&
+		count_prefixed(placed, "uml_dir=") == 1,
+		"a caller-supplied management-console directory was replaced");
 	const char *explicit_mapping[]{"ubd0c=/custom/rootfs.erofs"};
 	require(uml::emulator::prepare_emulator_options(
-			1, explicit_mapping, "/unused/rootfs.erofs", false)
+			1, explicit_mapping, "/unused/rootfs.erofs")
 			.valid,
 		"explicit EROFS mapping was rejected");
+	/* The rootfs is named in ubd0c=, which the kernel would split at the
+	 * space or misread at the comma. */
+	const char *plain[]{"uml-test"};
+	require(!uml::emulator::prepare_emulator_options(
+			1, plain, "/tmp/My Disk.erofs").valid &&
+		!uml::emulator::prepare_emulator_options(
+			1, plain, "/tmp/a,b.erofs").valid,
+		"a rootfs path the UBD argument cannot carry was accepted");
 }
 
 void test_x86_64_kernel_memory_accounting_policy()
@@ -131,13 +147,13 @@ void test_x86_64_kernel_memory_accounting_policy()
 #if DARWIN_UML_X86_64_USERSPACE_ONLY
 	const char *defaults[]{"uml-test"};
 	const auto options = uml::emulator::prepare_emulator_options(
-		1, defaults, "/tmp/rootfs.erofs", false);
+		1, defaults, "/tmp/rootfs.erofs");
 	require(contains(options, "cgroup.memory=nokmem"),
 		"x86_64 userspace slice enabled kernel-object memory charging");
 
 	const char *explicit_policy[]{"uml-test", "cgroup.memory=default"};
 	const auto explicit_options = uml::emulator::prepare_emulator_options(
-		2, explicit_policy, "/tmp/rootfs.erofs", false);
+		2, explicit_policy, "/tmp/rootfs.erofs");
 	require(contains(explicit_options, "cgroup.memory=default") &&
 		count_prefixed(explicit_options, "cgroup.memory=") == 1,
 		"explicit cgroup memory policy was replaced or duplicated");
@@ -168,7 +184,7 @@ void test_guest_memory_budget_matches_kernel_memparse()
 	for (const auto &example : examples) {
 		const char *arguments[]{"uml-test", example.argument};
 		const auto options = uml::emulator::prepare_emulator_options(
-			2, arguments, "/tmp/rootfs.erofs", false);
+			2, arguments, "/tmp/rootfs.erofs");
 		require(options.valid, "kernel-compatible mem= value was rejected");
 		require(options.jit_cache_budget == example.expected_budget,
 			"mem= value did not match kernel memparse semantics");
@@ -178,36 +194,36 @@ void test_guest_memory_budget_matches_kernel_memparse()
 
 	const char *repeated[]{"uml-test", "mem=1G", "mem=512M"};
 	auto options = uml::emulator::prepare_emulator_options(
-		3, repeated, "/tmp/rootfs.erofs", false);
+		3, repeated, "/tmp/rootfs.erofs");
 	require(options.jit_cache_budget == 256U * mib,
 		"the last repeated mem= value did not own the JIT budget");
 
 	const char *last_malformed[]{"uml-test", "mem=1G", "mem=bogus"};
 	options = uml::emulator::prepare_emulator_options(
-		3, last_malformed, "/tmp/rootfs.erofs", false);
+		3, last_malformed, "/tmp/rootfs.erofs");
 	require(options.jit_cache_budget == 0,
 		"a final malformed mem= did not replace the earlier kernel value");
 
 	const char *invalid_octal[]{"uml-test", "mem=09G"};
 	options = uml::emulator::prepare_emulator_options(
-		2, invalid_octal, "/tmp/rootfs.erofs", false);
+		2, invalid_octal, "/tmp/rootfs.erofs");
 	require(options.jit_cache_budget == 0,
 		"base-zero octal parsing did not stop at the invalid digit");
 
 	const char *strict_host_suffix[]{"uml-test", "--jit-cache-budget=1T"};
 	require(!uml::emulator::prepare_emulator_options(
-		2, strict_host_suffix, "/tmp/rootfs.erofs", false).valid,
+		2, strict_host_suffix, "/tmp/rootfs.erofs").valid,
 		"host JIT budget unexpectedly inherited the guest's T suffix");
 	const char *strict_host_trailing[]{"uml-test",
 		"--jit-cache-budget=1Gignored"};
 	require(!uml::emulator::prepare_emulator_options(
-		2, strict_host_trailing, "/tmp/rootfs.erofs", false).valid,
+		2, strict_host_trailing, "/tmp/rootfs.erofs").valid,
 		"host JIT budget unexpectedly ignored trailing text");
 
 	const char *private_cap[]{"uml-test",
 		"--jit-executor-cache-budget=32M"};
 	options = uml::emulator::prepare_emulator_options(
-		2, private_cap, "/tmp/rootfs.erofs", false);
+		2, private_cap, "/tmp/rootfs.erofs");
 	require(options.valid &&
 		options.jit_executor_cache_budget == 32U * mib &&
 		!contains(options, private_cap[1]),
@@ -215,14 +231,14 @@ void test_guest_memory_budget_matches_kernel_memparse()
 	const char *maximum_private_cap[]{"uml-test",
 		"--jit-executor-cache-budget=256M"};
 	options = uml::emulator::prepare_emulator_options(
-		2, maximum_private_cap, "/tmp/rootfs.erofs", false);
+		2, maximum_private_cap, "/tmp/rootfs.erofs");
 	require(options.valid &&
 		options.jit_executor_cache_budget == 256U * mib,
 		"maximum private JIT cache cap was rejected");
 	const char *oversized_private_cap[]{"uml-test",
 		"--jit-executor-cache-budget=257M"};
 	require(!uml::emulator::prepare_emulator_options(
-		2, oversized_private_cap, "/tmp/rootfs.erofs", false).valid,
+		2, oversized_private_cap, "/tmp/rootfs.erofs").valid,
 		"private JIT cache cap above 256 MiB was accepted");
 }
 
@@ -328,11 +344,16 @@ void test_scalable_native_kernel_layout_geometry()
 		product.load_bias == product.window_start - 48ULL * gib,
 		"macOS did not select its high dynamic native window");
 #else
-	require(product.valid &&
-		product.window_start == one_gib.window_start &&
-		product.window_end == one_gib.window_end &&
-		product.load_bias == one_gib.load_bias,
-		"iOS did not select its low dynamic native window");
+	/* A physical device maps guest RAM over its window in place, so the
+	 * window is always reserved: a failed reservation fails the run rather
+	 * than fall back to the packed geometry. The host picks where it goes
+	 * when it declines the packed address, as iOS 27 does. */
+	require(product.valid && product.reserved &&
+		product.window_end - product.window_start ==
+			2ULL * gib + product_reserved &&
+		product.load_bias ==
+			product.window_start - DARWIN_UML_NATIVE_LINK_ADDRESS,
+		"iOS did not reserve its dynamic native window");
 #endif
 }
 
@@ -391,55 +412,55 @@ void test_guest_cpu_count_matches_kernel_policy()
 			uml::runtime::maximum_guest_cpu_count)));
 	const char *defaults[]{"uml-test"};
 	auto options = uml::emulator::prepare_emulator_options(
-		1, defaults, "/tmp/rootfs.erofs", false);
+		1, defaults, "/tmp/rootfs.erofs");
 	require(options.valid, "default CPU topology was rejected");
 	require(options.guest_cpus == expected_default,
 		"absent ncpus did not follow the kernel's online-CPU default");
 
 	const char *explicit_count[]{"uml-test", "ncpus=10"};
 	options = uml::emulator::prepare_emulator_options(
-		2, explicit_count, "/tmp/rootfs.erofs", false);
+		2, explicit_count, "/tmp/rootfs.erofs");
 	require(options.guest_cpus == 10,
 		"ordinary ncpus value was not preserved");
 
 	const char *clamped_high[]{"uml-test", "ncpus=1024"};
 	options = uml::emulator::prepare_emulator_options(
-		2, clamped_high, "/tmp/rootfs.erofs", false);
+		2, clamped_high, "/tmp/rootfs.erofs");
 	require(options.guest_cpus ==
 			uml::runtime::maximum_guest_cpu_count,
 		"ncpus was not clamped to the kernel's CONFIG_NR_CPUS");
 
 	const char *clamped_low[]{"uml-test", "ncpus=0"};
 	options = uml::emulator::prepare_emulator_options(
-		2, clamped_low, "/tmp/rootfs.erofs", false);
+		2, clamped_low, "/tmp/rootfs.erofs");
 	require(options.guest_cpus == 1,
 		"zero ncpus was not clamped like the kernel");
 	const char *signed_counts[]{"uml-test", "ncpus=-2", "ncpus=+6"};
 	options = uml::emulator::prepare_emulator_options(
-		3, signed_counts, "/tmp/rootfs.erofs", false);
+		3, signed_counts, "/tmp/rootfs.erofs");
 	require(options.guest_cpus == 6,
 		"signed ncpus values did not follow kernel integer parsing");
 
 	const char *malformed[]{"uml-test", "ncpus=10junk"};
 	options = uml::emulator::prepare_emulator_options(
-		2, malformed, "/tmp/rootfs.erofs", false);
+		2, malformed, "/tmp/rootfs.erofs");
 	require(options.guest_cpus == expected_default,
 		"malformed ncpus changed the kernel-compatible default");
 	const char *terminal_newline[]{"uml-test", "ncpus=7\n"};
 	options = uml::emulator::prepare_emulator_options(
-		2, terminal_newline, "/tmp/rootfs.erofs", false);
+		2, terminal_newline, "/tmp/rootfs.erofs");
 	require(options.guest_cpus == 7,
 		"terminal-newline ncpus did not match kstrtoint");
 	const char *malformed_newline[]{"uml-test", "ncpus=7\n\n"};
 	options = uml::emulator::prepare_emulator_options(
-		2, malformed_newline, "/tmp/rootfs.erofs", false);
+		2, malformed_newline, "/tmp/rootfs.erofs");
 	require(options.guest_cpus == expected_default,
 		"multiple terminal newlines were accepted");
 
 	const char *repeated[]{"uml-test", "ncpus=4", "ncpus=bogus",
 		"ncpus=7"};
 	options = uml::emulator::prepare_emulator_options(
-		4, repeated, "/tmp/rootfs.erofs", false);
+		4, repeated, "/tmp/rootfs.erofs");
 	require(options.guest_cpus == 7,
 		"later valid ncpus did not match kernel argument ordering");
 }
@@ -448,34 +469,34 @@ void test_invalid_and_informational_inputs()
 {
 	const char *invalid_engine[]{"--execution-engine=unknown"};
 	require(!uml::emulator::prepare_emulator_options(
-		1, invalid_engine, "/tmp/rootfs.erofs", false)
+		1, invalid_engine, "/tmp/rootfs.erofs")
 			.valid,
 		"unknown execution engine was accepted");
 	const char *missing_value[]{"--execution-engine"};
 	require(!uml::emulator::prepare_emulator_options(
-		1, missing_value, "/tmp/rootfs.erofs", false)
+		1, missing_value, "/tmp/rootfs.erofs")
 			.valid,
 		"missing execution engine value was accepted");
 	const char *removed_option[]{"--jit-gadget-fallback=off"};
 	require(!uml::emulator::prepare_emulator_options(
-		1, removed_option, "/tmp/rootfs.erofs", false)
+		1, removed_option, "/tmp/rootfs.erofs")
 			.valid,
 		"removed fallback option was accepted");
 	const char *help[]{"--help"};
 	const auto informational = uml::emulator::prepare_emulator_options(
-		1, help, {}, false);
+		1, help, {});
 	require(informational.valid && informational.informational &&
 		informational.arguments.size() == 1 &&
 		informational.guest_memory_bytes == 64U * 1024U * 1024U,
 		"informational invocation incorrectly required a rootfs");
 	require(!uml::emulator::prepare_emulator_options(
-			1, static_cast<const char *const *>(nullptr), {}, false)
+			1, static_cast<const char *const *>(nullptr), {})
 			.valid,
 		"null argument vector was accepted");
 	const char *placeholder[]{"unused"};
 	require(!uml::emulator::prepare_emulator_options(
 			std::numeric_limits<int>::max(), placeholder,
-			"/tmp/rootfs.erofs", false).valid,
+			"/tmp/rootfs.erofs").valid,
 		"argument count that overflows the kernel-entry ABI was accepted");
 }
 

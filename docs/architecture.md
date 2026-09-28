@@ -67,11 +67,16 @@ Mac in Designed for iPad mode, where the process is a macOS process; placement
 follows the address space the process actually has, so that mode takes the
 macOS window.
 
-The window is a reservation, and it never returns address space to the process
-while the VM lives. It is created once as a single `PROT_NONE MAP_NORESERVE`
-anonymous mapping, guest pages are mapped over it with `MAP_FIXED`, and
-releasing one hands its range back to that reservation instead of unmapping it:
-one mapping call, no committed pages, and the replacement is atomic. `munmap`
+On a physical iOS device the window is a reservation, and it never returns
+address space to the process while the VM lives. It is created once, before the
+guest starts, as a single `PROT_NONE MAP_NORESERVE` anonymous mapping; a run
+whose window cannot be reserved fails rather than map guest RAM over a range
+nothing holds. macOS and Designed for iPad do not reserve the window up front:
+the kernel image and the loader tail take it by an address hint the host
+honours, far above the ranges its allocators use. On every product guest pages
+are mapped over the window with `MAP_FIXED`, and releasing one hands its range
+back as a reservation instead of unmapping it: one mapping call, no committed
+pages, and the replacement is atomic. `munmap`
 would delete the reservation along with the mapping and leave a free gap inside
 the window. Darwin's allocation hint follows the most recently freed range, so
 on iOS - where the host chooses the window's address and it therefore sits in
@@ -144,11 +149,14 @@ A failed kernel map unmaps its own address for the same reason, degrading to
 A generation's software-MMU mappings are published only by a page-table
 walker's batch. The batch records the generation's invalidation epoch when it
 begins and is rejected when any invalidation arrives before it ends, so a walk
-which sampled a PTE before Linux changed it cannot publish it afterwards.
-Nothing else installs a mapping. A kernel uaccess pins its page from a PTE
-whose lock it has already dropped, so when the host names other backing than
-that page either of the two may be the stale one; the uaccess discards the
-mapping and the next access replays the PTE. An absent page is always sound.
+which sampled a PTE before Linux changed it cannot publish it afterwards. The
+walker walks a rejected batch again before it returns to the guest; the bridge
+reports the rejection as `DARWIN_UML_VM_BATCH_REJECTED`, not as an errno,
+because Darwin's errno values are not Linux's. Nothing else installs a mapping.
+A kernel uaccess pins its page from a PTE whose lock it has already dropped, so
+when the host names other backing than that page either of the two may be the
+stale one; the uaccess discards the mapping and the next access replays the
+PTE. An absent page is always sound.
 
 Gadget streams, MMU backing, and shadow mappings are data.
 Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,
@@ -254,12 +262,14 @@ block takes the alignment fault. A pair counts as one access of its total
 size. Without host LSE2 every misaligned such access faults. Each executor
 records the choice in its TLB. Gadgets execute the native host instruction on
 an admitted address, and a host CASAL loop for software floating-point
-atomics; the JIT applies the same rule in its semantic path, whose direct
-ordered forms use host LDAR and STLR. The rule matches native
-LSE2 hardware for the LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2 forms. The
-LRCPC3 and LSFE forms follow the architecture's rule, which current hosts
-cannot execute natively. LDIAPP/STILP and the LSCP pairs keep their element
-alignment, and LSE128, RCW, GCS, and LS64 accesses stay naturally aligned.
+atomics; the JIT applies the same rule in its semantic path, which performs
+each such access as one host instruction, with LDAR and STLR for the ordered
+forms and a CASAL loop for a misaligned read-modify-write. The rule matches
+native LSE2 hardware for the LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2
+forms. The LRCPC3 and LSFE forms follow the architecture's rule, which current
+hosts cannot execute natively. LDIAPP/STILP and the LSCP pairs keep their
+element alignment, and LSE128, RCW, GCS, and LS64 accesses stay naturally
+aligned.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode
 execution while exposing the x86_64 and i386 userspace ABIs. It cannot load
@@ -551,8 +561,17 @@ Writable host files are tracked by the platform layer. Emulator sync asks the
 guest to write back through the management console and then flushes host files.
 Quiesce enters full Linux system suspend and waits for the platform sleep
 boundary before flushing host files; resume sends the console wake edge.
-Accepted kernels without system suspend retain a stop/go fallback. Guests
-receive unique run identities so management-console paths do not collide.
+Accepted kernels without system suspend retain a stop/go fallback.
+
+The guest binds the management console as a Unix datagram socket and replies
+to each request's own bound socket, which the host places beside it. On macOS
+and the iOS Simulator both live in the shared `/tmp` and carry the run's
+identity (`umid=`), so guests run side by side. The iOS sandbox refuses
+sockets in `/tmp`, so an iOS device passes its application temporary directory
+as `uml_dir=` and both sides use short fixed names there. Every such path must
+fit Darwin's 104-byte `sun_path`; one that does not is refused on both sides
+rather than truncated or moved. A killed process leaves its guest's socket
+behind, so each run removes a socket at its own path before booting.
 
 ## Tests and structural audit
 

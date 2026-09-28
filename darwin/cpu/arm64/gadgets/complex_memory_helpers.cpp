@@ -583,7 +583,6 @@ void gcs_memory_fault(Tlb *tlb, std::uint64_t address,
 [[nodiscard]] std::uint32_t guarded_return_record(CpuState *cpu, Tlb *tlb,
 	std::uint64_t target) noexcept
 {
-	cpu->gadget_zero = target;
 	if (!cpu->gcs_implemented || !cpu->gcs_push_enabled)
 		return static_cast<std::uint32_t>(GcsStatus::success);
 	const auto address = cpu->gcs_pointer;
@@ -592,7 +591,6 @@ void gcs_memory_fault(Tlb *tlb, std::uint64_t address,
 		return static_cast<std::uint32_t>(GcsStatus::memory_fault);
 	if (recorded != target)
 		return static_cast<std::uint32_t>(GcsStatus::gcs_fault);
-	cpu->gadget_zero = recorded;
 	cpu->gcs_pointer = (address + sizeof(recorded)) & ~std::uint64_t{7};
 	return static_cast<std::uint32_t>(GcsStatus::success);
 }
