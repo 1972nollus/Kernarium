@@ -232,21 +232,6 @@ ActiveGeneration &active_thread_generation()
 	return active;
 }
 
-ActiveExecution &active_thread_execution()
-{
-	struct ThreadExecution final {
-		~ThreadExecution()
-		{
-			if (value.state != nullptr)
-				execution_reader_end(*value.state);
-		}
-
-		ActiveExecution value;
-	};
-	static thread_local ThreadExecution active;
-	return active.value;
-}
-
 class AddressSpace;
 
 std::atomic_uint64_t &domain_retirement_sequence_storage()
@@ -304,14 +289,6 @@ void prune_retired_thread_state(ThreadAddressSpaceCache &cache) noexcept
 			state->address_space_lifetime->retired.load(
 				std::memory_order_acquire);
 	};
-	auto &execution = active_thread_execution();
-	if (domain_retired(execution.state)) {
-		execution_reader_end(*execution.state);
-		execution.address_space = nullptr;
-		execution.generation = 0;
-		execution.state = nullptr;
-		execution.owner.reset();
-	}
 	auto &walker = active_walker();
 	if (domain_retired(walker.state.get())) {
 		walker.state.reset();
@@ -634,14 +611,6 @@ public:
 			walker.address_space = nullptr;
 			walker.generation = 0;
 		}
-		auto &execution = active_thread_execution();
-		if (execution.address_space == this && execution.state != nullptr) {
-			execution_reader_end(*execution.state);
-			execution.address_space = nullptr;
-			execution.generation = 0;
-			execution.state = nullptr;
-			execution.owner.reset();
-		}
 	}
 
 	int matches(std::uint64_t address, int fd, std::uint64_t offset)
@@ -817,8 +786,7 @@ public:
 		return access_allocation_tag(generation, address, true, &tag);
 	}
 
-	[[nodiscard]] std::uint64_t changes(std::uint64_t generation,
-					       bool code)
+	[[nodiscard]] std::uint64_t changes(std::uint64_t generation)
 	{
 		auto &active = active_thread_generation();
 		/* The active generation owns this state for the lifetime of the
@@ -829,34 +797,10 @@ public:
 		if (active.address_space == this &&
 		    active.generation == generation && active.state &&
 		    !active.state->retired.load(std::memory_order_acquire))
-			return (code ? active.state->code_changes :
-				active.state->mapping_changes)
-				.load(std::memory_order_acquire);
-		auto state = state_for(generation);
-		return (code ? state->code_changes : state->mapping_changes)
-			.load(std::memory_order_acquire);
-	}
-
-	[[nodiscard]] darwin_uml_static_sequences sequences(
-		std::uint64_t generation)
-	{
-		auto &active = active_thread_generation();
-		if (active.address_space == this &&
-		    active.generation == generation && active.state &&
-		    !active.state->retired.load(std::memory_order_acquire))
-			return {
-				active.state->mapping_changes.load(
-					std::memory_order_acquire),
-				active.state->code_changes.load(
-					std::memory_order_acquire),
-				0,
-			};
-		auto state = state_for(generation);
-		return {
-			state->mapping_changes.load(std::memory_order_acquire),
-			state->code_changes.load(std::memory_order_acquire),
-			0,
-		};
+			return active.state->mapping_changes.load(
+				std::memory_order_acquire);
+		return state_for(generation)->mapping_changes.load(
+			std::memory_order_acquire);
 	}
 
 	int mapping_changes(std::uint64_t generation, std::uint64_t sequence,
@@ -1080,46 +1024,6 @@ public:
 		active.state.reset();
 		active.address_space = nullptr;
 		active.generation = 0;
-		return 0;
-	}
-
-	int execution_begin(std::uint64_t generation, std::uint64_t guest_pc)
-	{
-		auto &execution = active_thread_execution();
-		if (execution.state != nullptr)
-			return -1;
-		auto &active = active_thread_generation();
-		if (active.address_space == this &&
-		    active.generation == generation && active.state &&
-		    !active.state->retired.load(std::memory_order_acquire)) {
-			execution.owner = active.state;
-		} else {
-			execution.owner = state_for(generation);
-		}
-		execution.state = execution.owner.get();
-		execution.address_space = this;
-		if (!execution_reader_begin(
-				*execution.state, generation, guest_pc)) {
-			execution.state = nullptr;
-			execution.owner.reset();
-			execution.address_space = nullptr;
-			return -1;
-		}
-		execution.generation = generation;
-		return 0;
-	}
-
-	int execution_end(std::uint64_t generation)
-	{
-		auto &execution = active_thread_execution();
-		if (execution.state == nullptr || execution.address_space != this ||
-		    execution.generation != generation)
-			return -1;
-		execution_reader_end(*execution.state);
-		execution.state = nullptr;
-		execution.owner.reset();
-		execution.address_space = nullptr;
-		execution.generation = 0;
 		return 0;
 	}
 
@@ -2182,19 +2086,7 @@ extern "C" int darwin_uml_static_vm_store_allocation_tag(
 extern "C" uint64_t darwin_uml_static_vm_changes(unsigned long generation)
 {
 	return with_address_space_sequence(
-		[&](auto &space) { return space.changes(generation, false); });
-}
-
-extern "C" struct darwin_uml_static_sequences darwin_uml_static_vm_sequences(
-	unsigned long generation)
-{
-	try {
-		auto space = uml::memory::address_space();
-		return space ? space->sequences(generation) :
-			darwin_uml_static_sequences{};
-	} catch (...) {
-		return {};
-	}
+		[&](auto &space) { return space.changes(generation); });
 }
 
 extern "C" int darwin_uml_static_vm_mapping_changes(
@@ -2215,21 +2107,6 @@ extern "C" int darwin_uml_static_vm_execution_context_code_change_ranges(
 {
 	return uml::memory::execution_context_code_changes(context, sequence,
 		changes, capacity, current_sequence);
-}
-
-extern "C" int darwin_uml_static_vm_execution_begin(
-	unsigned long generation, unsigned long guest_pc)
-{
-	return with_address_space([&](auto &space) {
-		return space.execution_begin(generation, guest_pc);
-	});
-}
-
-extern "C" int darwin_uml_static_vm_execution_end(
-	unsigned long generation)
-{
-	return with_address_space(
-		[&](auto &space) { return space.execution_end(generation); });
 }
 
 extern "C" void *darwin_uml_static_vm_execution_context_create(
@@ -2299,13 +2176,6 @@ darwin_uml_static_vm_execution_context_sequences(void *context)
 	} catch (...) {
 		return {};
 	}
-}
-
-extern "C" uint64_t darwin_uml_static_vm_code_changes(
-	unsigned long generation)
-{
-	return with_address_space_sequence(
-		[&](auto &space) { return space.changes(generation, true); });
 }
 
 extern "C" int darwin_uml_static_vm_invalidate_code_generation(

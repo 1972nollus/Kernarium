@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml_darwin_guest.h"
 #include "uml_darwin_static_mmu.h"
+#include "static_mmu_test_support.hpp"
 #include "address_layout.hpp"
 #include "address_space_types.hpp"
 #include "allocation_fault.hpp"

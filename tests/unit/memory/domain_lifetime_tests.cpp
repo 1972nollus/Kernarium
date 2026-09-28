@@ -232,9 +232,16 @@ void test_software_thread_state_recovers_after_domain_retirement()
 			darwin_uml_static_vm_batch_begin(retired_generation) == 0;
 		const bool walker_locked =
 			darwin_uml_static_vm_walker_lock(retired_generation) == 0;
-		const bool execution_started =
-			darwin_uml_static_vm_execution_begin(
-				retired_generation, 0) == 0;
+		/* An engine's execution context is its own, not the thread's: it
+		 * keeps its generation alive across the retirement and is left
+		 * inside the execution gate here, as a vCPU stopped mid-block
+		 * would be. */
+		void *execution =
+			darwin_uml_static_vm_execution_context_create(
+				retired_generation);
+		const bool execution_started = execution != nullptr &&
+			darwin_uml_static_vm_execution_context_begin(
+				execution, 0) == 0;
 		initial_state_ready.store(activated && batch_started && walker_locked &&
 			execution_started, std::memory_order_release);
 		prepared.store(true, std::memory_order_release);
@@ -245,8 +252,13 @@ void test_software_thread_state_recovers_after_domain_retirement()
 			darwin_uml_static_vm_batch_end() == -1;
 		const bool old_walker_closed =
 			darwin_uml_static_vm_walker_unlock(retired_generation) == -1;
-		const bool old_execution_closed =
-			darwin_uml_static_vm_execution_end(retired_generation) == -1;
+		/* The retired context still leaves the gate it entered, but
+		 * refuses to enter again. */
+		const bool old_execution_closed = execution != nullptr &&
+			darwin_uml_static_vm_execution_context_end(execution) == 0 &&
+			darwin_uml_static_vm_execution_context_begin(
+				execution, 0) == -1;
+		darwin_uml_static_vm_execution_context_destroy(execution);
 		stale_operations_failed.store(old_batch_closed && old_walker_closed &&
 			old_execution_closed, std::memory_order_release);
 
@@ -258,10 +270,15 @@ void test_software_thread_state_recovers_after_domain_retirement()
 		const bool replacement_walker =
 			darwin_uml_static_vm_walker_lock(replacement_generation) == 0 &&
 			darwin_uml_static_vm_walker_unlock(replacement_generation) == 0;
-		const bool replacement_execution =
-			darwin_uml_static_vm_execution_begin(
-				replacement_generation, 0) == 0 &&
-			darwin_uml_static_vm_execution_end(replacement_generation) == 0;
+		void *replacement_context =
+			darwin_uml_static_vm_execution_context_create(
+				replacement_generation);
+		const bool replacement_execution = replacement_context != nullptr &&
+			darwin_uml_static_vm_execution_context_begin(
+				replacement_context, 0) == 0 &&
+			darwin_uml_static_vm_execution_context_end(
+				replacement_context) == 0;
+		darwin_uml_static_vm_execution_context_destroy(replacement_context);
 		replacement_state_ready.store(replacement_activated &&
 			replacement_batch && replacement_walker && replacement_execution,
 			std::memory_order_release);
@@ -360,7 +377,7 @@ void test_software_nested_resolution_keeps_a_borrowed_space()
 	require(uml::memory::testing::software_domain_count() == 0);
 }
 
-void test_software_thread_exit_closes_walker_and_execution()
+void test_software_thread_exit_closes_walker()
 {
 	constexpr std::uint64_t domain = 14'001;
 	constexpr unsigned long generation = 908;
@@ -372,9 +389,7 @@ void test_software_thread_exit_closes_walker_and_execution()
 		const bool activated = darwin_uml_static_vm_activate(generation) == 0;
 		const bool walker_locked =
 			darwin_uml_static_vm_walker_lock(generation) == 0;
-		const bool execution_started =
-			darwin_uml_static_vm_execution_begin(generation, 0) == 0;
-		prepared.store(activated && walker_locked && execution_started,
+		prepared.store(activated && walker_locked,
 			std::memory_order_release);
 	}};
 	worker.join();
@@ -546,7 +561,7 @@ int main()
 	test_software_thread_state_recovers_after_domain_retirement();
 	test_software_resolution_cache_drops_a_retired_domain();
 	test_software_nested_resolution_keeps_a_borrowed_space();
-	test_software_thread_exit_closes_walker_and_execution();
+	test_software_thread_exit_closes_walker();
 #if UML_MEMORY_DOMAIN_TEST_HAS_NATIVE
 	test_native_registry_initialization_retries_once();
 	test_native_delayed_resolver_cannot_recreate_retired_domain();

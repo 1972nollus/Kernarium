@@ -4,6 +4,7 @@
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 #include "cpu/arm64/id_registers.hpp"
+#include "static_mmu_test_support.hpp"
 
 #include <cstddef>
 #include <cstdint>

@@ -188,13 +188,6 @@ struct GenerationReference final {
 	GenerationState *state{};
 };
 
-struct ActiveExecution final {
-	const void *address_space{};
-	std::uint64_t generation{};
-	GenerationState *state{};
-	std::shared_ptr<GenerationState> owner;
-};
-
 struct ExecutionContext final {
 	std::shared_ptr<GenerationState> state;
 	std::uint64_t generation{};
