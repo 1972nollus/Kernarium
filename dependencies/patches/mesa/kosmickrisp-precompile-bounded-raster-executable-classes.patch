@@ -3,17 +3,43 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Sat, 5 Sep 2026 16:57:47 +0900
 Subject: [PATCH] kosmickrisp: precompile bounded raster executable classes
 
-kk_test_line_planner_bounds hands Metal a commit feedback block that points at
-a stack-allocated completion struct, and the only thing that kept that block
-from outliving the frame was a dispatch_semaphore_wait inside assert().  Every
-build that defines NDEBUG - Mesa's own release buildtype, which is what
-dependencies/build-apple-gpu.sh configures - dropped the wait with the rest of
-the assertion, so the helper committed the dispatch, released the semaphore and
-returned while Metal still held the block.  The block then ran on
-com.Metal4.CompletionQueue and signalled a semaphore that no longer existed,
-reading through a stale stack pointer: SIGSEGV in dispatch_semaphore_signal
-from __mtl_commit_options_add_feedback_handler_block_invoke, three times out of
-three, with and without the Metal validation layer.  A debugoptimized build
+A pipeline compiles a bounded set of raster executable classes
+(kk_raster_variant.h) instead of one raster shader per combination of
+dynamic state. BASE keeps fills and eligible native lines on Metal's direct
+path. POINT draws polygon-mode POINT as oriented squares that keep the
+source polygon's facingness, so polygon-point emulation no longer needs its
+own indirect setup dispatch. LINE, RECTANGULAR and SMOOTH materialize the
+three line modes through a compute scan that clips each source polygon once
+and publishes one 64-byte record per clipped edge (kk_raster_edge.h), never
+a record per pixel. DISCARD keeps the application stages and transform
+feedback without rasterizing. Provoking vertex, stipple enable and depth
+clipping stay dynamic within a class; only a change that needs another
+raster shader needs another class.
+
+kk_raster_variant_mask works out from the pipeline's static and dynamic
+state which classes a draw could ever select, and only those are compiled,
+once, at complete pipeline creation or at a library's final link or
+vertex-input resolution. At draw time kk_cmd_select_line_raster_variant
+applies kk_raster_variant_select to the current dynamic state and binds the
+selected class's stages. Shader positions never become unchecked counts or
+addresses: the scan bounds viewport coordinates, and an instance that would
+overflow suppresses the whole draw. kosmickrisp_raster_variant checks the
+selection against the masks for every primitive and dynamic state, and
+kosmickrisp_raster_discard covers the DISCARD class with transform feedback.
+
+The line-planner test helper also had to survive release builds.
+kk_test_line_planner_bounds hands Metal a commit feedback block that points
+at a stack-allocated completion struct, and the only thing that kept that
+block from outliving the frame was a dispatch_semaphore_wait inside
+assert(). Every build that defines NDEBUG - Mesa's own release buildtype,
+which is what dependencies/build-apple-gpu.sh configures - dropped the wait
+with the rest of the assertion, so the helper committed the dispatch,
+released the semaphore and returned while Metal still held the block. The
+block then ran on com.Metal4.CompletionQueue and signalled a semaphore that
+no longer existed, reading through a stale stack pointer: SIGSEGV in
+dispatch_semaphore_signal from
+__mtl_commit_options_add_feedback_handler_block_invoke, three times out of
+three, with and without the Metal validation layer. A debugoptimized build
 never saw it, because there the wait is real.
 
 Check with a macro that survives NDEBUG instead.  The wait is not the only
@@ -25,6 +51,7 @@ fatal too, because falling through one would leave Metal holding the same
 dangling block.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/kosmickrisp/libkk/kk_geometry.cl          |   59 +-
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   10 +
