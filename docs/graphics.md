@@ -971,20 +971,21 @@ and its `abort()` would end only the allocating kernel invocation, so every
 kernel that reserves heap space checks the reservation instead and, when it is
 refused, empties its draw; the command buffer completes. The heap header counts
 refusals, and the driver reads them at the next draw and when the recording is
-reset. It grows the heap for later command buffers, to where the furthest
-refused reservation would have ended or to the refused sizes' sum, whichever is
-larger, and logs the first loss once per device. Reservations advance the heap
-by compare-exchange and never past its end, so a refused one leaves the heap as
-it was. A tessellated draw reserves its indices and all its patches' domain
-points at once, so its patches do not contend for the heap. A recording keeps
-every heap it used until it is reset or freed. If Metal refuses the first heap,
-a draw that needs it is not recorded and its command buffer ends with
-`VK_ERROR_OUT_OF_DEVICE_MEMORY`; if it refuses a larger one, the device keeps
-the heap it has. The level-64 bound is conservative, so when the TCS computes
-its levels the heap grows with the patches a render pass draws directly,
-whatever their levels: past about a thousand quad patches it reaches the cap.
-Constant levels bound it by the level written instead, and 65,536 triangle
-patches at level 1 fit the starting 16 MiB.
+reset. It grows the heap for later command buffers in one step to hold what
+every refused render segment needed, what it reserved plus every size it was
+refused, and logs the first loss once per device. The kernel that resets the
+heap for each segment folds the segment before it into the header. Reservations
+advance the heap by compare-exchange and never past its end, so a refused one
+leaves the heap as it was. A tessellated draw reserves its indices and all its
+patches' domain points at once, so its patches do not contend for the heap. A
+recording keeps every heap it used until it is reset or freed. If Metal refuses
+the first heap, a draw that needs it is not recorded and its command buffer
+ends with `VK_ERROR_OUT_OF_DEVICE_MEMORY`; if it refuses a larger one, the
+device keeps the heap it has. The level-64 bound is conservative, so when the
+TCS computes its levels the heap grows with the patches a render pass draws
+directly, whatever their levels: past about a thousand quad patches it reaches
+the cap. Constant levels bound it by the level written instead, and 65,536
+triangle patches at level 1 fit the starting 16 MiB.
 
 An uninterrupted released mustpass fraction runs about 200,000 cases in one
 `deqp-vk` process, and a 1536 MiB guest cannot hold every group in that

@@ -403,10 +403,10 @@ index edbf1904f4485120e62c4d5a36db310b51d1c424..6c071c22e437b082d431077179ef4b53
   */
  static void
 diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
-index 395010773819e8feef068078e595576a8971d4f9..afa5148850d7e340f7ae7ac0024a7987053e50cb 100644
+index b6abffab30bf792984aa9890ae4d44b0abf3ba76..2510dec553f9390ee83dc6e421672e5c6aa9f617 100644
 --- a/src/kosmickrisp/vulkan/kk_device.h
 +++ b/src/kosmickrisp/vulkan/kk_device.h
-@@ -107,14 +107,28 @@ struct kk_precompiled_cache {
+@@ -106,14 +106,28 @@ struct kk_precompiled_cache {
   * callback after the device is gone, and the callback must be able to return
   * its allocators somewhere. It therefore holds no Vulkan pointers, exactly
   * like the queue's feedback block.

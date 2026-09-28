@@ -1999,7 +1999,7 @@ index 305053fb641d13373146d19fdd38ad8f923bb97a..ba0683573f2371b26507633c2d0643c4
     }
     api->DestroyCommandPool(device, commands, NULL);
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_growth.c b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
-index 21fc3c99ab5be4bae32597ecc7f5c4e5b2f0ddb7..1cb34a0c4a6cef75f8324e8ce64f05b8b38a5928 100644
+index 0f3f81d0b81d24ea29d4fe1d8230594da31bc9f9..4a9108e8b80b48b37a2c92e0fd8361ef809c7b23 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_growth.c
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
 @@ -21,10 +21,7 @@
@@ -2015,7 +2015,7 @@ index 21fc3c99ab5be4bae32597ecc7f5c4e5b2f0ddb7..1cb34a0c4a6cef75f8324e8ce64f05b8
  static const uint32_t fullscreen_spirv[] =
  #include "statistics_shaders/fullscreen.vert.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
-index 5ea638d4f61ac26599c5afe40a333e9f4b043f2b..d4937e09d8fae76d7fa885a28d863abe223a91bf 100644
+index 02f3a11a5243a1e5ac0f7b484eb5d7469268ef5b..3ac05934553313ca7a42bf85a8d0a2e4b53c580e 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
 @@ -14,24 +14,7 @@
@@ -2045,7 +2045,7 @@ index 5ea638d4f61ac26599c5afe40a333e9f4b043f2b..d4937e09d8fae76d7fa885a28d863abe
  enum { HEAP_SIZE = 4096, HEAP_BOTTOM = 16, CANARY = 0xa5a5a5a5 };
  
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
-index 988640971e99f73afb685759f7e306a1283ef9f6..720fcd3af893bd85e9ba727ecb70b5de15894a65 100644
+index 95a963e10ec7194ca66bf049e734b8e44898072c..bb1c48cf4d76aa691f7b05d89e92f2e084ca1ade 100644
 --- a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 @@ -17,9 +17,7 @@

@@ -28,13 +28,15 @@ need, up to 128 MiB or the starting size, whichever is larger:
   for all its entries. A draw that does not fit beside the earlier draws of
   its render segment moves the segment to the grown heap. A bound past the
   cap grows the heap to the cap and leaves the rest to the GPU.
-- A reservation only the GPU can size is refused when it does not fit, and its
-  draw loses its output. The heap header counts refusals, and the next draw
-  that pins the heap, or the reset of a recording that used it, grows it for
-  later command buffers, to where the furthest refused reservation would have
-  ended or to the refused reservations' sum, whichever is larger. The first
-  loss is logged once per device. Vulkan cannot fail a command buffer after it
-  ran short of losing the device, so none fails.
+- A reservation only the GPU can size is refused when it does not fit, and
+  its draw loses its output. The heap header counts refusals, and the next
+  draw that pins the heap, or the reset of a recording that used it, grows it
+  for later command buffers in one step to hold what every refused render
+  segment needed: what it reserved plus every size it was refused. The kernel
+  that resets the heap for each segment folds the segment before it into the
+  header, and the host adds the segment still open. The first loss is logged
+  once per device. Vulkan cannot fail a command buffer after it ran short of
+  losing the device, so none fails.
 
 A recording pins every heap it reserved from until it is reset, re-recorded
 or freed, and a heap that grew is freed with its last pin. A device that
@@ -62,7 +64,15 @@ the first submission, as do the same patches in one multi-draw, which holds
 only 32 MiB. At a constant level 1, 256 patches and 500 draws of 64 stay at
 16 MiB; at a level the compiler cannot see, the 500 draws grow the heap in
 steps to 128 MiB and hold 240 MiB at most. A device that draws a triangle
-list has no heap, and one whose fan fits keeps 16 MiB.
+list has no heap, and one whose fan fits keeps 16 MiB. Six indirect draws of
+39 patches at level 64 and then one of 64 lose their last four on the
+first submission, and the second renders them whole: the render pass needs
+what the first three reserved plus every refused size, more than either
+the largest refused end or the refused sizes alone.
+
+kosmickrisp_heap_overflow_gpu checks that the heap's reset folds a segment's
+reserved and refused units into the need, keeps a larger need, and
+saturates a sum past 2^32.
 
 kosmickrisp_tess_bound_gpu tessellates patches at levels up to each of 19
 maxima from 0.5 to 64, for every domain, partitioning and point mode, and
@@ -70,11 +80,12 @@ checks that none exceeds the bound kk_tess_patch_bound() gives.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
+ src/kosmickrisp/libkk/kk_geometry.cl          |   8 +
  src/kosmickrisp/vulkan/kk_cmd_buffer.c        |   7 +-
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |  24 +-
- src/kosmickrisp/vulkan/kk_cmd_draw.c          | 486 ++++++++++++--
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          | 487 ++++++++++++--
  src/kosmickrisp/vulkan/kk_device.c            |   8 +-
- src/kosmickrisp/vulkan/kk_device.h            |  38 +-
+ src/kosmickrisp/vulkan/kk_device.h            |  37 +-
  src/kosmickrisp/vulkan/kk_shader.c            |  60 ++
  src/kosmickrisp/vulkan/kk_shader.h            |   6 +
  src/kosmickrisp/vulkan/kk_tess_bound.h        |  53 ++
@@ -88,10 +99,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../tests/heap_growth_shaders/level64.tesc.h  |  79 +++
  .../tests/heap_growth_shaders/tile.tese       |   9 +
  .../tests/heap_growth_shaders/tile.tese.h     |  63 ++
- .../vulkan/tests/test_heap_growth.c           | 610 ++++++++++++++++++
+ .../vulkan/tests/test_heap_growth.c           | 627 ++++++++++++++++++
+ .../vulkan/tests/test_heap_overflow_gpu.c     |  35 +
  .../vulkan/tests/test_heap_size_override.c    | 419 ++++++++++++
  .../vulkan/tests/test_tess_bound_gpu.c        | 246 +++++++
- 21 files changed, 2340 insertions(+), 50 deletions(-)
+ 23 files changed, 2399 insertions(+), 51 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_tess_bound.h
  create mode 100644 src/kosmickrisp/vulkan/tests/heap_growth_shaders/dynamic.tesc
  create mode 100644 src/kosmickrisp/vulkan/tests/heap_growth_shaders/dynamic.tesc.h
@@ -106,6 +118,25 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_heap_size_override.c
  create mode 100644 src/kosmickrisp/vulkan/tests/test_tess_bound_gpu.c
 
+diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
+index b16501d89a4447da46c9765cd87e54e8add420a8..bc56afd6293d53a6e3add7fea93f19063d03c7dd 100644
+--- a/src/kosmickrisp/libkk/kk_geometry.cl
++++ b/src/kosmickrisp/libkk/kk_geometry.cl
+@@ -24,6 +24,14 @@ libkk_primitive_count(enum mesa_prim prim, uint vertices,
+              : poly_decomposed_prims_for_vertices_u32(prim, vertices);
+ }
+ 
++/* Starts a render segment on the heap: folds the segment before it into what
++ * the heap needed and frees what that segment reserved. */
++KERNEL(1)
++libkk_heap_reset(global struct poly_heap *heap)
++{
++   poly_heap_reset(heap);
++}
++
+ KERNEL(1)
+ libkk_increment_ia(global uint32_t *ia_vertices,
+                    global uint32_t *ia_primitives,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 index e9aad1e62133281eb13813d923457b278e832595..adc9b348fa08cd47f9325eac6e873e4f70f40a11 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
@@ -195,7 +226,7 @@ index 06fbde5af1864840fa2c3b1d06762836bd37b527..f10f5e66380787cd3431fc388dc622f5
  
  void kk_cmd_release_dynamic_ds_state(struct kk_cmd_buffer *cmd);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2bb72ee9e4 100644
+index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..ea2c58165d4ffd47fa69548711af03de3e7b56ef 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -16,6 +16,7 @@
@@ -215,7 +246,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
  #include "poly/geometry.h"
  #include "poly/tessellator.h"
  
-@@ -1128,43 +1131,359 @@ kk_flush_pipeline(struct kk_cmd_buffer *cmd)
+@@ -1128,43 +1131,358 @@ kk_flush_pipeline(struct kk_cmd_buffer *cmd)
     }
  }
  
@@ -234,17 +265,18 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
 + * grows, at least doubling, up to a cap:
 + *
 + * - A direct draw whose reservations the host can bound, the restart unroll
-+ *   and tessellation at the level-64 maximum, grows it before it is recorded
-+ *   and renders on its first submission. A bound past the cap grows the heap
-+ *   to the cap, and the GPU reports the rest.
++ *   and tessellation at the largest level its TCS can write, grows it before
++ *   it is recorded and renders on its first submission. A bound past the cap
++ *   grows the heap to the cap, and the GPU reports the rest.
 + * - A reservation only the GPU can size is refused when it does not fit, and
 + *   its draw loses its output: kernels that reserve suppress their draw
 + *   instead of aborting, because a shader abort() ends only the invocation
-+ *   that calls it. The header counts refusals, and the next draw that pins
-+ *   the heap, or the reset of a recording that used it, grows it for later
-+ *   command buffers. The first loss is logged once per device. Vulkan has no
-+ *   way to fail a command buffer after it ran short of losing the device, so
-+ *   none fails.
++ *   that calls it. The header counts refusals and what each refused render
++ *   segment needed, what it reserved plus every size it was refused, and the
++ *   next draw that pins the heap, or the reset of a recording that used it,
++ *   grows it for later command buffers to hold that in one step. The first
++ *   loss is logged once per device. Vulkan has no way to fail a command
++ *   buffer after it ran short of losing the device, so none fails.
 + *
 + * MESA_KK_HEAP_SIZE_MIB sets the starting size. The header's size is 32-bit,
 + * so only 1 to 4095 MiB is honoured, and any other value keeps 16 MiB. The cap
@@ -325,31 +357,30 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
 +static void
 +kk_heap_observe_locked(struct kk_device *dev, struct kk_geometry_heap *heap)
 +{
-+   static_assert(offsetof(struct poly_heap, refused_units) ==
-+                    offsetof(struct poly_heap, refusals) + 4 &&
-+                 offsetof(struct poly_heap, refused_end_units) ==
-+                    offsetof(struct poly_heap, refusals) + 8,
-+                 "adjacent counters");
-+   const uint32_t *counters =
-+      (const uint32_t *)((const uint8_t *)heap->bo->cpu +
-+                         offsetof(struct poly_heap, refusals));
-+   const uint32_t refusals = p_atomic_read(&counters[0]);
-+   const uint32_t new_refusals = refusals - heap->seen_refusals;
-+   if (new_refusals == 0)
++   /* struct poly_heap is packed, so its words are read through a plain
++    * pointer. */
++   const uint32_t *words = heap->bo->cpu;
++   const uint32_t refusals =
++      p_atomic_read(&words[offsetof(struct poly_heap, refusals) / 4]);
++   if (refusals == heap->seen_refusals)
 +      return;
 +
-+   /* A refused reservation needed the heap to reach where it would have
-+    * ended, and several refused ones needed at least their sum. What else
-+    * their segments held is not recorded, so a segment that needed more than
-+    * the larger of the two is refused again and asks again. */
-+   const uint32_t units = p_atomic_read(&counters[1]);
-+   const uint64_t refused_B =
-+      (uint64_t)(uint32_t)(units - heap->seen_refused_units) * 16u;
-+   const uint64_t end_B = (uint64_t)p_atomic_read(&counters[2]) * 16u;
++   /* Every render segment that was refused needed what it reserved plus
++    * every size it was refused. The GPU folded each segment the heap has
++    * reset since into needed_units; the one still open is its bottom and
++    * refused sizes. Growing to hold the larger holds each of them. */
++   const uint64_t needed_B =
++      (uint64_t)p_atomic_read(
++         &words[offsetof(struct poly_heap, needed_units) / 4]) *
++      16u;
++   const uint64_t open_B =
++      p_atomic_read(&words[offsetof(struct poly_heap, bottom) / 4]) +
++      (uint64_t)p_atomic_read(
++         &words[offsetof(struct poly_heap, segment_refused_units) / 4]) *
++         16u;
 +   heap->seen_refusals = refusals;
-+   heap->seen_refused_units = units;
 +   dev->heap_wanted_B =
-+      MAX2(dev->heap_wanted_B, MAX2(end_B, refused_B));
++      MAX2(dev->heap_wanted_B, MAX2(needed_B, open_B));
 +
 +   if (!dev->heap_loss_reported) {
 +      dev->heap_loss_reported = true;
@@ -429,19 +460,15 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
 + * heap at all fails the draw, and its recording. */
 +static bool
 +kk_heap_prepare(struct kk_cmd_buffer *cmd, uint64_t direct_B)
- {
-    struct kk_device *dev = kk_cmd_buffer_device(cmd);
- 
--   util_call_once_data(&dev->heap_init_once, kk_init_heap, cmd);
++{
++   struct kk_device *dev = kk_cmd_buffer_device(cmd);
++
 +   if (cmd->heap_in_segment &&
 +       cmd->heap_demand_B + direct_B < cmd->heap->usable_B) {
 +      cmd->heap_demand_B += direct_B;
 +      return true;
 +   }
- 
--   /* We need to free all allocations after each command buffer execution */
--   if (!cmd->uses_heap) {
--      uint64_t addr = dev->heap->gpu;
++
 +   simple_mtx_lock(&dev->heap_lock);
 +   if (!dev->heap_attempted)
 +      kk_heap_create_first_locked(dev, MAX2(dev->heap_wanted_B, direct_B));
@@ -450,8 +477,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
 +      vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
 +      return false;
 +   }
- 
--      /* Zeroing the allocated index frees everything */
++
 +   /* A draw that does not fit beside the segment's earlier draws on the
 +    * device's heap needs a larger one, which it then starts on alone. */
 +   kk_heap_observe_locked(dev, dev->heap);
@@ -495,13 +521,11 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
 +   if (retired != NULL)
 +      kk_geometry_heap_free(dev, retired);
 +
-+   /* Zeroing the bottom frees everything the segment reserved. Recorded
-+    * mid-render, the write lands after the segment's work. */
++   /* The reset frees everything the segment before reserved, after folding
++    * what that segment needed into the header. Recorded mid-render, it lands
++    * after the segment's work. */
 +   if (switched)
-       kk_cmd_write(cmd, (struct libkk_imm_write){
--                           addr + offsetof(struct poly_heap, bottom), 0});
-+                           heap->bo->gpu + offsetof(struct poly_heap, bottom),
-+                           0});
++      libkk_heap_reset(cmd, kk_grid_1d(1), !cmd->gfx.encoder, heap->bo->gpu);
 +   return true;
 +}
 +
@@ -511,13 +535,13 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
 + * that holds them all instead of each entry growing it a step. */
 +static void
 +kk_heap_expect(struct kk_cmd_buffer *cmd, uint64_t total_B)
-+{
-+   struct kk_device *dev = kk_cmd_buffer_device(cmd);
+ {
+    struct kk_device *dev = kk_cmd_buffer_device(cmd);
 +   if (cmd->heap_in_segment &&
 +       cmd->heap_demand_B + total_B < cmd->heap->usable_B)
 +      return;
  
--      cmd->uses_heap = true;
+-   util_call_once_data(&dev->heap_init_once, kk_init_heap, cmd);
 +   simple_mtx_lock(&dev->heap_lock);
 +   struct kk_geometry_heap *retired = NULL;
 +   if (!dev->heap_attempted) {
@@ -527,13 +551,19 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
 +                                 ? cmd->heap_demand_B + total_B
 +                                 : total_B;
 +      retired = kk_heap_grow_locked(dev, MAX2(dev->heap_wanted_B, need_B));
-    }
++   }
 +   simple_mtx_unlock(&dev->heap_lock);
-+
+ 
+-   /* We need to free all allocations after each command buffer execution */
+-   if (!cmd->uses_heap) {
+-      uint64_t addr = dev->heap->gpu;
 +   if (retired != NULL)
 +      kk_geometry_heap_free(dev, retired);
 +}
-+
+ 
+-      /* Zeroing the allocated index frees everything */
+-      kk_cmd_write(cmd, (struct libkk_imm_write){
+-                           addr + offsetof(struct poly_heap, bottom), 0});
 +void
 +kk_cmd_release_heaps(struct kk_cmd_buffer *cmd)
 +{
@@ -546,7 +576,8 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
 +   cmd->heap_demand_B = 0;
 +   if (count == 0)
 +      return;
-+
+ 
+-      cmd->uses_heap = true;
 +   /* Vulkan forbids resetting or freeing a pending command buffer, and a
 +    * re-record waits for the last submission, so the work that used these
 +    * heaps has run, and what it had refused is in their headers. */
@@ -557,7 +588,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
 +      assert(heaps[i]->refcount > 0);
 +      if (--heaps[i]->refcount == 0)
 +         heaps[unused++] = heaps[i];
-+   }
+    }
 +   simple_mtx_unlock(&dev->heap_lock);
 +
 +   for (unsigned i = 0; i < unused; ++i)
@@ -594,7 +625,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
  }
  
  enum kk_predicate_op : uint16_t {
-@@ -1375,7 +1694,6 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
+@@ -1375,7 +1693,6 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
                            const struct poly_gs_info *gsi,
                            bool application_gs)
  {
@@ -602,7 +633,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
     struct kk_graphics_state *gfx = &cmd->state.gfx;
     struct kk_shader *vs = cmd->state.shaders[MESA_SHADER_VERTEX];
     const uint32_t wg_size[3] = {KK_GEOMETRY_THREADGROUP_WIDTH, 1, 1};
-@@ -1427,10 +1745,7 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
+@@ -1427,10 +1744,7 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
     if (indirect) {
        if (gsi->shape == POLY_GS_SHAPE_DYNAMIC_INDEXED) {
           kk_heap(cmd);
@@ -614,7 +645,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
        }
     } else {
        if (gsi->output_vertex_stride) {
-@@ -2093,7 +2408,6 @@ static bool
+@@ -2093,7 +2407,6 @@ static bool
  kk_unroll_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
                     bool rotate_provoking_to_first, bool discard_adjacency)
  {
@@ -622,7 +653,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
  
     if (unlikely(!kk_convert_to_indirect_draw(cmd, data)))
        return false;
-@@ -2139,8 +2453,7 @@ kk_unroll_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -2139,8 +2452,7 @@ kk_unroll_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
     data->prim = discard_adjacency ? u_reduced_prim(data->prim)
                                    : u_decomposed_prim(data->prim);
     /* TODO_KOSMICKRISP Self-contained until we have rodata at the device. */
@@ -632,7 +663,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
     data->restart_index = UINT32_MAX;
     data->index_buffer_el_size_B = 4u;
     data->indirect = true;
-@@ -2178,7 +2491,6 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
+@@ -2178,7 +2490,6 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
         !rotate_provoking_to_first)
        return draw;
  
@@ -640,7 +671,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
     uint64_t in_draw;
     uint32_t in_draw_stride_el;
  
-@@ -2251,10 +2563,7 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
+@@ -2251,10 +2562,7 @@ kk_unroll_raster_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
     libkk_unroll_geometry_struct(cmd, kk_grid_1d(1024), true, args);
  
     draw.grid = kk_grid_indirect(out_draw.gpu);
@@ -652,7 +683,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
     draw.index.el_size_B = sizeof(uint32_t);
     draw.vertex_offset = 0;
     draw.line_raster_run_starts_addr =
-@@ -2728,7 +3037,6 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
+@@ -2728,7 +3036,6 @@ kk_dispatch_compute(mtl_compute_encoder *enc, struct kk_grid grid,
  static struct kk_draw_data
  kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  {
@@ -660,7 +691,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
     struct kk_graphics_state *gfx = &cmd->state.gfx;
     struct kk_grid grid_vs, grid_tcs, grid_tess;
  
-@@ -2830,8 +3138,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2830,8 +3137,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  
     draw.grid = kk_grid_indirect(gfx->tess.out_draws_addr);
  
@@ -670,7 +701,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
     draw.index.el_size_B = 4u;
     draw.primitive_type = mesa_prim_to_mtl_primitive_type(gfx->tess.prim);
     return draw;
-@@ -3402,6 +3709,78 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
+@@ -3402,6 +3708,78 @@ build_draw_data(struct kk_cmd_buffer *cmd, struct kk_draw_command *data,
     return draw;
  }
  
@@ -749,7 +780,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
  static void
  kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
  {
-@@ -3471,15 +3850,41 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3471,15 +3849,41 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
         requires_index_promotion(data) || requires_unroll_robustness(cmd, data) ||
         requires_unroll_restart(cmd, data) || rewrite_direct_provoking ||
         (discard_adjacency && !emulate_line_raster));
@@ -794,7 +825,7 @@ index 87232e3085dd5c0672ee94acbe74fb4aa695a82f..bff62607b8b3032d90c5cf60fa6e0e2b
     }
  
     for (uint32_t i = 0; i < data->draw_count; i++) {
-@@ -3491,6 +3896,11 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3491,6 +3895,11 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
  
        struct kk_draw_data draw_data = build_draw_data(cmd, data, i);
  
@@ -841,10 +872,10 @@ index 954f3eb96626ab721bcf0af834f2e955df797655..83ccc40a2920313e3978351cc724e76c
     /* Outstanding completion callbacks keep their own reference. */
     kk_command_allocator_cache_unref(dev->allocator_cache);
 diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
-index 16ec133e7201e835ec4678e0340a00a572616b12..395010773819e8feef068078e595576a8971d4f9 100644
+index 16ec133e7201e835ec4678e0340a00a572616b12..b6abffab30bf792984aa9890ae4d44b0abf3ba76 100644
 --- a/src/kosmickrisp/vulkan/kk_device.h
 +++ b/src/kosmickrisp/vulkan/kk_device.h
-@@ -68,6 +68,21 @@ struct kk_rc_sampler {
+@@ -68,6 +68,20 @@ struct kk_rc_sampler {
     uint16_t index;
  };
  
@@ -858,15 +889,14 @@ index 16ec133e7201e835ec4678e0340a00a572616b12..395010773819e8feef068078e595576a
 +   uint32_t usable_B;
 +   /* The rest is protected by kk_device::heap_lock. */
 +   uint32_t refcount;
-+   /* The header's refusal counters when the host last read them. */
++   /* The header's refusal count when the host last read it. */
 +   uint32_t seen_refusals;
-+   uint32_t seen_refused_units;
 +};
 +
  struct kk_sampler_heap {
     simple_mtx_t lock;
  
-@@ -156,9 +171,23 @@ struct kk_device {
+@@ -156,9 +170,23 @@ struct kk_device {
  
     struct vk_meta_device meta;
  
@@ -893,7 +923,7 @@ index 16ec133e7201e835ec4678e0340a00a572616b12..395010773819e8feef068078e595576a
  
     uint64_t disabled_workarounds;
     bool gpu_capture_enabled;
-@@ -179,6 +208,9 @@ void kk_device_finish_lib(struct kk_device *dev);
+@@ -179,6 +207,9 @@ void kk_device_finish_lib(struct kk_device *dev);
  VkResult kk_linked_graphics_pipeline_cache_init(struct kk_device *dev);
  void kk_linked_graphics_pipeline_cache_finish(struct kk_device *dev);
  void kk_device_add_heap_to_residency_set(struct kk_device *dev, mtl_heap *heap);
@@ -1571,10 +1601,10 @@ index 0000000000000000000000000000000000000000..fc45533d63f086795bfbcc8fcadd2d74
 +0x0000002d,0x000100fd,0x00010038}
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_growth.c b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..21fc3c99ab5be4bae32597ecc7f5c4e5b2f0ddb7
+index 0000000000000000000000000000000000000000..0f3f81d0b81d24ea29d4fe1d8230594da31bc9f9
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_growth.c
-@@ -0,0 +1,610 @@
+@@ -0,0 +1,627 @@
 +/* SPDX-License-Identifier: MIT */
 +
 +/* The geometry heap grows for draws that need more than it holds.
@@ -1653,8 +1683,8 @@ index 0000000000000000000000000000000000000000..21fc3c99ab5be4bae32597ecc7f5c4e5
 +struct draw_case {
 +   enum draw_kind kind;
 +   /* Draws count vertices, draws times, and then second more when it is not
-+    * zero, all in one render pass, indirectly or not, or count and second as
-+    * the two entries of one multi-draw. */
++    * zero, all in one render pass and all indirectly or none, or count and
++    * second as the two entries of one multi-draw. */
 +   uint32_t count, draws, second;
 +   bool indirect, multi;
 +   /* How many times the command buffer is submitted. */
@@ -1797,7 +1827,7 @@ index 0000000000000000000000000000000000000000..21fc3c99ab5be4bae32597ecc7f5c4e5
 +   const VkDeviceSize pixels_B = EXTENT * EXTENT * 4u;
 +   VkBufferCreateInfo buffer_info = {
 +      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-+      .size = pixels_B + sizeof(VkDrawIndirectCommand),
++      .size = pixels_B + 2u * sizeof(VkDrawIndirectCommand),
 +      .usage =
 +         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 +   };
@@ -1825,8 +1855,9 @@ index 0000000000000000000000000000000000000000..21fc3c99ab5be4bae32597ecc7f5c4e5
 +   uint8_t *pixels = NULL;
 +   VK_CHECK(vkMapMemory(device, buffer_memory, 0, VK_WHOLE_SIZE, 0,
 +                        (void **)&pixels));
-+   const VkDrawIndirectCommand draw = {count, 1, 0, 0};
-+   memcpy(pixels + pixels_B, &draw, sizeof(draw));
++   const VkDrawIndirectCommand draws[2] = {{count, 1, 0, 0},
++                                           {second, 1, 0, 0}};
++   memcpy(pixels + pixels_B, draws, sizeof(draws));
 +
 +   const uint32_t *control =
 +      kind == TESS_LEVEL1 ? level1_spirv
@@ -1848,7 +1879,8 @@ index 0000000000000000000000000000000000000000..21fc3c99ab5be4bae32597ecc7f5c4e5
 +      sizeof(evaluation_spirv),
 +      sizeof(red_spirv),
 +   };
-+   /* The dynamic control shader's level is its input's w, 1, times this. */
++   /* The dynamic control shader's level is this times one plus a bit of the
++    * primitive ID that no draw here reaches. */
 +   const float scale = kind == TESS_DYNAMIC1 ? 1.0f : 64.0f;
 +   const VkSpecializationMapEntry scale_entry = {0, 0, sizeof(scale)};
 +   const VkSpecializationInfo specialization = {1, &scale_entry,
@@ -1994,7 +2026,10 @@ index 0000000000000000000000000000000000000000..21fc3c99ab5be4bae32597ecc7f5c4e5
 +         else
 +            vkCmdDraw(commands, count, 1, 0, 0);
 +      }
-+      if (second != 0u)
++      if (second != 0u && indirect)
++         vkCmdDrawIndirect(commands, buffer,
++                           pixels_B + sizeof(VkDrawIndirectCommand), 1, 0);
++      else if (second != 0u)
 +         vkCmdDraw(commands, second, 1, 0, 0);
 +   }
 +   vkCmdEndRendering(commands);
@@ -2163,6 +2198,18 @@ index 0000000000000000000000000000000000000000..21fc3c99ab5be4bae32597ecc7f5c4e5
 +   CHECK(o.red[0] == 120u * TILE_TEXELS && o.heap_B == MIB(32) &&
 +         o.peak_B == MIB(32) && !o.loss_reported);
 +
++   /* Six indirect draws of 39 patches at level 64, 5.2 MB each, and then one
++    * of 64 patches, 8.5 MB, 39.4 MB together. On the 16 MiB heap the first
++    * three fit and the rest are refused one after another, so the render
++    * pass needs what the three reserved plus every refused size. Neither
++    * the largest refused end nor the refused sizes' sum, 23.9 MB each, is
++    * enough: grown to hold only that, the second submission loses the last
++    * draw again. */
++   o = report(instance, physical,
++              &(struct draw_case){TESS, 39u, 6, 64u, true, false, 2});
++   CHECK(o.red[0] < 64u * TILE_TEXELS && o.red[1] == 64u * TILE_TEXELS &&
++         o.heap_B == MIB(64) && o.loss_reported);
++
 +   /* 256 patches at the constant level 1 need a few hundred kilobytes, so
 +    * the heap keeps its 16 MiB. So do 500 draws of 64 in one render pass.
 +    * The same draws at level 1 through a level the compiler cannot see are
@@ -2185,9 +2232,62 @@ index 0000000000000000000000000000000000000000..21fc3c99ab5be4bae32597ecc7f5c4e5
 +   printf("the geometry heap grows for the draws that need it\n");
 +   return 0;
 +}
+diff --git a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
+index 587401849fb8378a8d39b01553f487b6367e21d3..02f3a11a5243a1e5ac0f7b484eb5d7469268ef5b 100644
+--- a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
++++ b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
+@@ -408,6 +408,32 @@ check_wrap(struct context *ctx, const char *name, uint32_t refused_units,
+    printf("heap wrap PASS %s\n", name);
+ }
+ 
++/* The reset that starts a render segment on the heap folds the segment
++ * before it into needed_units, the 16-byte units it reserved plus those it
++ * was refused, zeroes both and keeps the larger need. A sum past 2^32
++ * saturates. */
++struct fold_case {
++   const char *name;
++   uint32_t bottom, size, refused_units, needed_units;
++   uint32_t expected;
++};
++
++static void
++check_fold(struct context *ctx, const struct fold_case *test)
++{
++   struct kk_cmd_buffer *cmd = begin(ctx);
++   struct kk_ptr heap_ptr = heap_claiming(cmd, test->bottom, test->size);
++   struct poly_heap *header = heap_ptr.cpu;
++   header->segment_refused_units = test->refused_units;
++   header->needed_units = test->needed_units;
++   libkk_heap_reset(cmd, kk_grid_1d(1), true, heap_ptr.gpu);
++   submit(ctx);
++
++   CHECK(header->bottom == 0u && header->segment_refused_units == 0u);
++   CHECK(header->needed_units == test->expected);
++   printf("heap fold PASS %s\n", test->name);
++}
++
+ int
+ main(void)
+ {
+@@ -499,6 +525,15 @@ main(void)
+    check_wrap(&ctx, "counts", 0u, 0u);
+    check_wrap(&ctx, "saturates", 0xffffff00u, 0xffffffffu);
+ 
++   const struct fold_case folds[] = {
++      {"reserved-and-refused", 0x100, HEAP_SIZE, 5, 0, 0x10 + 5},
++      {"partial-unit", 0x101, HEAP_SIZE, 0, 0, 0x11},
++      {"keeps-larger-need", 0x100, HEAP_SIZE, 5, 0x100, 0x100},
++      {"saturates", 0xeffffff0u, 0xf0000000u, 0xffffff00u, 0, 0xffffffffu},
++   };
++   for (unsigned i = 0; i < ARRAY_SIZE(folds); i++)
++      check_fold(&ctx, &folds[i]);
++
+    ctx.api->DestroyCommandPool(ctx.device, ctx.pool, NULL);
+    ctx.api->DestroyDevice(ctx.device, NULL);
+    kk_DestroyInstance(instance, NULL);
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..988640971e99f73afb685759f7e306a1283ef9f6
+index 0000000000000000000000000000000000000000..95a963e10ec7194ca66bf049e734b8e44898072c
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 @@ -0,0 +1,419 @@
@@ -2230,8 +2330,8 @@ index 0000000000000000000000000000000000000000..988640971e99f73afb685759f7e306a1
 +   uint32_t bottom;
 +   uint32_t size;
 +   uint32_t refusals;
-+   uint32_t refused_units;
-+   uint32_t refused_end_units;
++   uint32_t segment_refused_units;
++   uint32_t needed_units;
 +   uint32_t pad;
 +};
 +

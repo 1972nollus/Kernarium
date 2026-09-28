@@ -12,7 +12,7 @@ A direct geometry draw sizes the geometry stage's count and output-index buffers
 
 A heap reservation that does not fit is refused rather than aborted. The MSL backend lowers a shader-side abort() to a return, which ends only the invocation that calls it: the restart unroll's other threads went on with a buffer pointer the first had never published, and the geometry and line setups left the grids and draw words they had already written for the stages after them. poly_heap_try_alloc_offs reports the refusal instead, and each caller suppresses its draw: the unroll empties its draw and publishes a null buffer that every thread checks, and the geometry and line setups clear their grids, draw words and buffers. kosmickrisp_heap_overflow_gpu dispatches each of these kernels on a heap too small for its draw. Asahi's geometry.cl, which this build does not compile, ignores the result poly_gs_setup_indirect now returns.
 
-The allocator advances the heap's bottom with a compare-exchange, and only by a reservation that fits, so the bottom never passes the end. An add that was refused after the fact moved it anyway: enough of them racing, or a single one on a heap past 2 GiB, carried the 32-bit bottom around into space still in use, where the next reservation was granted. A refused reservation now leaves the heap as it was. kosmickrisp_heap_overflow_gpu also runs two line setups on a heap that claims 0xf0000000 bytes with 16 free: the first asks for exactly the distance to 2^32, and the second must be refused rather than granted at offset zero. Every refusal also adds one to a count, adds its size in 16-byte units to another, and raises a third to where, in 16-byte units, it would have ended. Nothing on the GPU resets these header words, so struct poly_heap grows to eight words: the host reads them to grow the heap for later command buffers, and the wrap test checks all three.
+The allocator advances the heap's bottom with a compare-exchange, and only by a reservation that fits, so the bottom never passes the end. An add that was refused after the fact moved it anyway: enough of them racing, or a single one on a heap past 2 GiB, carried the 32-bit bottom around into space still in use, where the next reservation was granted. A refused reservation now leaves the heap as it was. kosmickrisp_heap_overflow_gpu also runs two line setups on a heap that claims 0xf0000000 bytes with 16 free: the first asks for exactly the distance to 2^32, and the second must be refused rather than granted at offset zero. Every refusal also adds one to a count, which nothing on the GPU resets, and its size in 16-byte units to the sizes its render segment was refused. poly_heap_reset() folds a segment into the most any segment needed, what it reserved plus what it was refused, then zeroes the bottom and the refused sizes; that need saturates rather than wrap. struct poly_heap grows to eight words for these, which the host reads to grow the heap for later command buffers, and the wrap test checks the counts and the saturation.
 
 Checkpoint validation: KosmicKrisp provider links; kosmickrisp_line_raster, poly_passthrough_gs, and poly_gs_side_effects pass. All 96 portable native geometry side-effect cases pass cold and serialized-cache reload across direct, indirect, indexed, XFB, last provoking, and stipple paths. Guest line/provoking qualification, multiview, and dynamic raster variant integration remain pending.
 ---
@@ -63,19 +63,19 @@ Checkpoint validation: KosmicKrisp provider links; kosmickrisp_line_raster, poly
  .../tests/polygon_point_shaders/points.vert   |   15 +
  .../tests/polygon_point_shaders/points.vert.h |   38 +
  .../vulkan/tests/test_geometry_draw_size.cpp  |  342 ++++
- .../vulkan/tests/test_heap_overflow_gpu.c     |  501 +++++
+ .../vulkan/tests/test_heap_overflow_gpu.c     |  506 +++++
  .../vulkan/tests/test_line_raster.c           |  292 +++
  .../vulkan/tests/test_line_raster_cache.cpp   |  879 +++++++++
  .../tests/test_polygon_point_raster.cpp       |  509 +++++
  src/poly/cl/restart.h                         |  122 +-
- src/poly/geometry.h                           |  231 ++-
+ src/poly/geometry.h                           |  247 ++-
  src/poly/nir/meson.build                      |   38 +
  src/poly/nir/poly_nir.h                       |   14 +-
  src/poly/nir/poly_nir_lower_gs.c              |  233 ++-
  src/poly/nir/poly_nir_passthrough_gs.c        |    2 +
  src/poly/nir/tests/test_gs_side_effects.c     |  126 ++
  src/poly/nir/tests/test_passthrough_gs.c      |   72 +
- 59 files changed, 7092 insertions(+), 373 deletions(-)
+ 59 files changed, 7113 insertions(+), 373 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/kk_line_raster.h
  create mode 100644 src/kosmickrisp/vulkan/tests/geometry_draw_size_shaders/dynamic_points.geom
  create mode 100644 src/kosmickrisp/vulkan/tests/geometry_draw_size_shaders/dynamic_points.geom.h
@@ -5998,10 +5998,10 @@ index 0000000000000000000000000000000000000000..3369fcf62e9e12eaa307f030c4eb6834
 +}
 diff --git a/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ea638d4f61ac26599c5afe40a333e9f4b043f2b
+index 0000000000000000000000000000000000000000..587401849fb8378a8d39b01553f487b6367e21d3
 --- /dev/null
 +++ b/src/kosmickrisp/vulkan/tests/test_heap_overflow_gpu.c
-@@ -0,0 +1,501 @@
+@@ -0,0 +1,506 @@
 +/* SPDX-License-Identifier: MIT */
 +
 +/* Launch the production unroll and setup kernels on a heap too small for
@@ -6358,14 +6358,21 @@ index 0000000000000000000000000000000000000000..5ea638d4f61ac26599c5afe40a333e9f
 + * that bottom. An allocator that added a reservation before refusing it
 + * carried the 32-bit bottom around to zero, and then granted the second
 + * setup's 32 bytes at offset zero, over space still in use. The claimed space
-+ * is never written: a line setup only records where its buffers are. */
++ * is never written: a line setup only records where its buffers are.
++ *
++ *
++ * Both refusals add the 0x10000010 and 32 bytes they asked for, in 16-byte
++ * units, to the sizes the segment was refused, which start at refused_units.
++ * When those wrap past 2^32, what the heap needed saturates. */
 +static void
-+check_wrap(struct context *ctx)
++check_wrap(struct context *ctx, const char *name, uint32_t refused_units,
++           uint32_t needed_units)
 +{
 +   const uint32_t size = 0xf0000000u, bottom = size - 16u;
 +   const uint32_t vertices[2] = {(1u << 24) + 1u, 2u};
 +   struct kk_cmd_buffer *cmd = begin(ctx);
 +   struct kk_ptr heap_ptr = heap_claiming(cmd, bottom, size);
++   ((struct poly_heap *)heap_ptr.cpu)->segment_refused_units = refused_units;
 +   const uint32_t local[3] = {64, 1, 1};
 +   struct kk_ptr vps[2], out_draws[2];
 +   for (unsigned i = 0; i < 2; i++) {
@@ -6399,13 +6406,10 @@ index 0000000000000000000000000000000000000000..5ea638d4f61ac26599c5afe40a333e9f
 +      CHECK(all_zero(out_draws[i].cpu, 4));
 +   }
 +   const struct poly_heap *after = heap_ptr.cpu;
-+   CHECK(after->bottom == bottom);
-+   /* Both refusals are counted, with the 0x10000010 and 32 bytes they asked
-+    * for in 16-byte units, for the host to grow the heap by, and the first,
-+    * which would have ended at 2^32, raised the end. */
-+   CHECK(after->refusals == 2u && after->refused_units == 0x1000001u + 2u);
-+   CHECK(after->refused_end_units == 0x10000000u);
-+   printf("heap wrap PASS\n");
++   CHECK(after->bottom == bottom && after->refusals == 2u);
++   CHECK(after->segment_refused_units == refused_units + 0x1000001u + 2u);
++   CHECK(after->needed_units == needed_units);
++   printf("heap wrap PASS %s\n", name);
 +}
 +
 +int
@@ -6496,7 +6500,8 @@ index 0000000000000000000000000000000000000000..5ea638d4f61ac26599c5afe40a333e9f
 +   for (unsigned i = 0; i < ARRAY_SIZE(lines); i++)
 +      check_line(&ctx, &lines[i]);
 +
-+   check_wrap(&ctx);
++   check_wrap(&ctx, "counts", 0u, 0u);
++   check_wrap(&ctx, "saturates", 0xffffff00u, 0xffffffffu);
 +
 +   ctx.api->DestroyCommandPool(ctx.device, ctx.pool, NULL);
 +   ctx.api->DestroyDevice(ctx.device, NULL);
@@ -8402,7 +8407,7 @@ index 995720da0ea0f92afe47ca0056a352e14316754a..5f8347e5e2120f5f7ec248105868d23e
     }
  
 diff --git a/src/poly/geometry.h b/src/poly/geometry.h
-index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6c1fa7f5d 100644
+index b732add2fd235424dbb45f0d024838cb2c8b7dd5..b9f1affa4b5c13a303277e26e2db9e219f6aa460 100644
 --- a/src/poly/geometry.h
 +++ b/src/poly/geometry.h
 @@ -19,6 +19,94 @@
@@ -8500,17 +8505,21 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6
  enum poly_gs_shape {
     /* Indexed, where indices are encoded as:
      *
-@@ -111,24 +199,85 @@ poly_gs_index_size(enum poly_gs_shape shape)
+@@ -111,24 +199,101 @@ poly_gs_index_size(enum poly_gs_shape shape)
  struct poly_heap {
     DEVICE(uchar) base;
     uint32_t bottom, size;
 +
-+   /* Every refused reservation adds one to refusals and its size, in 16-byte
-+    * units, to refused_units, and raises refused_end_units to where it would
-+    * have ended. The sums wrap modulo 2^32, and nothing on the GPU resets any
-+    * of them, so the host reads the sums as deltas, and the end as the most
-+    * the heap was ever asked to hold, to size it for later command buffers. */
-+   uint32_t refusals, refused_units, refused_end_units;
++   /* Every refused reservation adds one to refusals, which nothing on the GPU
++    * resets, and its size, in 16-byte units, to segment_refused_units. A
++    * render segment that was refused needed what it reserved, which is the
++    * bottom it left, plus every size it was refused. The reset that starts
++    * the next segment on the heap folds that into needed_units and zeroes
++    * both. needed_units only grows, and saturates at 0xffffffff, as it does
++    * when segment_refused_units would wrap. The host takes a change in
++    * refusals as a loss, and sizes the heap for later command buffers to hold
++    * needed_units or the segment still open, whichever is larger. */
++   uint32_t refusals, segment_refused_units, needed_units;
 +   uint32_t pad;
  } PACKED;
 -static_assert(sizeof(struct poly_heap) == 4 * 4,
@@ -8521,16 +8530,28 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6
  #ifdef __OPENCL_VERSION__
 -static inline uint
 -poly_heap_alloc_offs(global struct poly_heap *heap, uint size_B)
-+/* Count a reservation of size_B the heap refused at offs_B; see struct
-+ * poly_heap. */
++/* Count a reservation of size_B the heap refused; see struct poly_heap. */
 +static inline void
-+poly_heap_note_refusal(global struct poly_heap *heap, uint offs_B,
-+                       uint size_B)
-+{
++poly_heap_note_refusal(global struct poly_heap *heap, uint size_B)
+ {
 +   const uint units = (size_B >> 4) + ((size_B & 15u) != 0u);
 +   atomic_add(&heap->refusals, 1u);
-+   atomic_add(&heap->refused_units, units);
-+   atomic_max(&heap->refused_end_units, (offs_B >> 4) + units);
++   if (atomic_add(&heap->segment_refused_units, units) > 0xffffffffu - units)
++      atomic_max(&heap->needed_units, 0xffffffffu);
++}
++
++/* Fold the render segment that last used the heap into needed_units and free
++ * everything it reserved; see struct poly_heap. Nothing else may use the heap
++ * meanwhile. */
++static inline void
++poly_heap_reset(global struct poly_heap *heap)
++{
++   const uint used = (heap->bottom >> 4) + ((heap->bottom & 15u) != 0u);
++   const uint refused = heap->segment_refused_units;
++   atomic_max(&heap->needed_units,
++              refused > 0xffffffffu - used ? 0xffffffffu : used + refused);
++   heap->segment_refused_units = 0;
++   heap->bottom = 0;
 +}
 +
 +/* Reserve size_B bytes of the heap and return their offset in *offs_B, or
@@ -8548,11 +8569,11 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6
 +static inline bool
 +poly_heap_try_alloc_offs(global struct poly_heap *heap, uint size_B,
 +                         uint *offs_B)
- {
++{
 +   /* align() adds alignment - 1 before masking, so reject values for which
 +    * that addition cannot be represented. */
 +   if (!poly_heap_size_can_align(size_B)) {
-+      poly_heap_note_refusal(heap, heap->bottom, size_B);
++      poly_heap_note_refusal(heap, size_B);
 +      return false;
 +   }
 +
@@ -8563,7 +8584,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6
 +   /* Preserve the allocator's existing rule that consuming the final byte is
 +    * an overflow. */
 +   if (size_B >= heap->size) {
-+      poly_heap_note_refusal(heap, heap->bottom, size_B);
++      poly_heap_note_refusal(heap, size_B);
 +      return false;
 +   }
  
@@ -8583,7 +8604,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6
 +      }
 +   }
 +
-+   poly_heap_note_refusal(heap, offs, size_B);
++   poly_heap_note_refusal(heap, size_B);
 +   return false;
 +}
 +
@@ -8597,7 +8618,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6
  
        abort();
     }
-@@ -192,9 +341,25 @@ struct poly_vertex_params {
+@@ -192,9 +357,25 @@ struct poly_vertex_params {
  
     /* Mask of outputs present in the output buffer */
     uint64_t outputs;
@@ -8625,7 +8646,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6
  
  static inline void
  poly_vertex_params_init(struct poly_vertex_params *p,
-@@ -206,6 +371,10 @@ poly_vertex_params_init(struct poly_vertex_params *p,
+@@ -206,6 +387,10 @@ poly_vertex_params_init(struct poly_vertex_params *p,
           0, 0, 1, /* x/y are set by poly_vertex_params_set_draw() */
           wg_size[0], wg_size[1], wg_size[2],
        },
@@ -8636,7 +8657,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6
     };
  }
  
-@@ -217,6 +386,7 @@ poly_vertex_params_set_draw(struct poly_vertex_params *p,
+@@ -217,6 +402,7 @@ poly_vertex_params_set_draw(struct poly_vertex_params *p,
     p->verts_per_instance = vertex_count;
     p->grid[0] = vertex_count;
     p->grid[1] = instance_count;
@@ -8644,7 +8665,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6
  }
  
  static inline uint
-@@ -314,9 +484,15 @@ struct poly_geometry_params {
+@@ -314,9 +500,15 @@ struct poly_geometry_params {
      * layout() declared input class.
      */
     uint32_t input_topology;
@@ -8662,7 +8683,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6
  
  static inline void
  poly_geometry_params_init(struct poly_geometry_params *p,
-@@ -599,7 +775,9 @@ poly_increment_ia(global uint32_t *ia_vertices, global uint32_t *ia_primitives,
+@@ -599,7 +791,9 @@ poly_increment_ia(global uint32_t *ia_vertices, global uint32_t *ia_primitives,
     poly_increment_counters(ia_primitives, c_prims, c_invs, prims);
  }
  
@@ -8673,7 +8694,7 @@ index b732add2fd235424dbb45f0d024838cb2c8b7dd5..a8e2dadfe09995c85d75316a88a78fc6
  poly_gs_setup_indirect(uint64_t index_buffer, constant uint *draw,
                         global struct poly_vertex_params *vp /* output */,
                         global struct poly_geometry_params *p /* output */,
-@@ -636,21 +814,28 @@ poly_gs_setup_indirect(uint64_t index_buffer, constant uint *draw,
+@@ -636,21 +830,28 @@ poly_gs_setup_indirect(uint64_t index_buffer, constant uint *draw,
     uint vertex_buffer_size =
        poly_tcs_in_size(vertex_count * instance_count, vs_outputs);
  

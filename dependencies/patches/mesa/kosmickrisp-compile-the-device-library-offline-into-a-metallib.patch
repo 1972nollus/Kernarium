@@ -413,10 +413,10 @@ index 236af5081351c89aa0748ac61dc69dbe092ccf8c..df3f8b487229017e145491cddb770de6
    link_with : libkk_shaders_lib,
  )
 diff --git a/src/kosmickrisp/vulkan/kk_device.h b/src/kosmickrisp/vulkan/kk_device.h
-index afa5148850d7e340f7ae7ac0024a7987053e50cb..1aeafb3555cc6593be24ce3b291b29c3ceae2b05 100644
+index 2510dec553f9390ee83dc6e421672e5c6aa9f617..b9738aa2a30759b27190897100369cad6f5f8016 100644
 --- a/src/kosmickrisp/vulkan/kk_device.h
 +++ b/src/kosmickrisp/vulkan/kk_device.h
-@@ -94,6 +94,8 @@ struct kk_sampler_heap {
+@@ -93,6 +93,8 @@ struct kk_sampler_heap {
  
  struct kk_precompiled_cache {
     struct kk_precompiled_shader shaders[LIBKK_NUM_PROGRAMS];
