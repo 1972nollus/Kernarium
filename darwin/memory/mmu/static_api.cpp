@@ -445,9 +445,9 @@ extern "C" int darwin_uml_vm_mapping_matches(unsigned long address, int fd,
 	return darwin_uml_static_vm_mapping_matches(address, fd, offset);
 }
 
-/* The bridge keeps its original name until its next ABI change: it no longer
- * binds anything, and only discards a software mapping that names other
- * backing than the page a uaccess pinned. */
+/* The bridge ABI still calls this rebind, but it binds nothing: it only
+ * discards a software mapping that names other backing than the page a
+ * uaccess pinned. */
 extern "C" int darwin_uml_vm_rebind(unsigned long address, int fd,
 				    unsigned long long offset)
 {
