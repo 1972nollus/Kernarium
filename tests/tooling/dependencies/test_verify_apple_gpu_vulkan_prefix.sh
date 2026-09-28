@@ -220,6 +220,30 @@ sed 's/^venus_protocol_generated_sha256.*/venus_protocol_generated_sha256\tunkno
 	>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
 expect_failure "invalid protocol build identity" "$CASE_PREFIX"
 
+# The installed platform contract must be the checked-in one.
+CASE_PREFIX="$TEST_ROOT/edited-contract"
+copy_fixture "$CASE_PREFIX"
+sed 's/^helper_process\t.*/helper_process\tenabled/' \
+	"$BASE_PREFIX/share/uml-dependencies/macos-gpu-vulkan-arm64.tsv" \
+	>"$CASE_PREFIX/share/uml-dependencies/macos-gpu-vulkan-arm64.tsv"
+expect_failure "edited platform contract" "$CASE_PREFIX"
+grep -q 'provenance does not match' "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" ||
+	fail "an edited platform contract was not reported as a provenance mismatch"
+
+CASE_PREFIX="$TEST_ROOT/empty-sdk-name"
+copy_fixture "$CASE_PREFIX"
+sed 's/^sdk_name\t.*/sdk_name\t/' \
+	"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" \
+	>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
+expect_failure "empty receipt SDK name" "$CASE_PREFIX"
+
+CASE_PREFIX="$TEST_ROOT/wrong-receipt-product"
+copy_fixture "$CASE_PREFIX"
+sed 's/^product\t.*/product\tother/' \
+	"$BASE_PREFIX/share/uml-dependencies/build-receipt.tsv" \
+	>"$CASE_PREFIX/share/uml-dependencies/build-receipt.tsv"
+expect_failure "receipt for another product" "$CASE_PREFIX"
+
 CASE_PREFIX="$TEST_ROOT/hidden-network-input"
 copy_fixture "$CASE_PREFIX"
 printf 'network_input\thttps://invalid.example/source\n' \

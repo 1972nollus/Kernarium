@@ -39,7 +39,6 @@ using DeviceGeometry = NativeKernelLayoutGeometry<
 NativeKernelLayout prepare_native_kernel_layout(
 	std::size_t guest_memory) noexcept
 {
-#if DARWIN_UML_DYNAMIC_NATIVE_LAYOUT
 #if DARWIN_UML_NATIVE_HIGH_PLACEMENT
 	return MacosGeometry::derive_at(
 		guest_memory, DARWIN_UML_MACOS_NATIVE_ADDRESS);
@@ -67,15 +66,6 @@ NativeKernelLayout prepare_native_kernel_layout(
 		return {.reservation_failed = true};
 	}
 	return reserved;
-#endif
-#else
-	(void)guest_memory;
-	return {
-		.load_bias = 0,
-		.window_start = DARWIN_UML_NATIVE_ADDRESS_START,
-		.window_end = DARWIN_UML_NATIVE_ADDRESS_END,
-		.valid = true,
-	};
 #endif
 }
 

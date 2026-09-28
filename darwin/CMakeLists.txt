@@ -3,6 +3,7 @@
 # Host-side composition only.  Each architectural layer owns its source
 # manifest and targets in its own directory; this file states their order.
 
+add_subdirectory(include)
 add_subdirectory(api)
 add_subdirectory(platform)
 add_subdirectory(memory)
@@ -12,14 +13,15 @@ add_subdirectory(device/mconsole)
 add_subdirectory(device/block)
 add_subdirectory(device/network)
 add_subdirectory(device/input/vnc)
+add_subdirectory(device/vhost_user)
+add_subdirectory(device/console)
+add_subdirectory(device/input/virtio)
+add_subdirectory(device/battery)
+add_subdirectory(device/balloon)
+add_subdirectory(device/video)
 
 if(UML_BUILD_GPU)
     add_subdirectory(device/gpu)
-    add_subdirectory(device/console)
-    add_subdirectory(device/input/virtio)
-    add_subdirectory(device/battery)
-    add_subdirectory(device/balloon)
-    add_subdirectory(device/video)
 endif()
 if(UML_BUILD_AUDIO)
     add_subdirectory(device/audio)

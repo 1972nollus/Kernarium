@@ -2,6 +2,7 @@
 
 #include "in_process_service.hpp"
 
+#include "gpu_vhost_user_server.hpp"
 #include "unique_descriptor.hpp"
 #include "vhost_user_server.hpp"
 #include "virgl_renderer.hpp"
@@ -126,7 +127,7 @@ private:
 #if UML_GPU_SERVICE_TRANSPORT_TESTING
         return testing::makeTransportTestServer();
 #else
-        return std::make_unique<VhostUserServer>(
+        return makeGpuVhostUserServer(
             std::filesystem::path {},
             options_.vncBindAddress,
             options_.vncPort,

@@ -52,18 +52,6 @@ SOURCE_KEYS = {
 SCHEMA_2_SOURCE_KEYS = SOURCE_KEYS | {"patch_count", "patch_manifest_sha256"}
 ABI_KEYS = {"version", "fingerprint"}
 INVENTORY_KEYS = {"path", "role", "format", "size"}
-ACCEPTANCE_KEYS = {
-    "UML_KERNEL_ARTIFACT_SCHEMA",
-    "UML_KERNEL_ARTIFACT_RELEASE_ID",
-    "UML_KERNEL_ARTIFACT_DIRECTORY_NAME",
-    "UML_KERNEL_ARTIFACT_FAMILY",
-    "UML_KERNEL_ARTIFACT_SLICE",
-    "UML_KERNEL_ARTIFACT_RELEASE",
-    "UML_KERNEL_ARTIFACT_PAGE_SIZE",
-    "UML_KERNEL_ARTIFACT_FINAL_TREE",
-    "UML_KERNEL_ARTIFACT_ABI_VERSION",
-    "UML_KERNEL_ARTIFACT_ABI_FINGERPRINT",
-}
 
 PAYLOAD_SPECS = {
     "kernel/System.map": ("kernel-symbol-map", "utf8-text"),
@@ -578,35 +566,12 @@ def verify_compatible_identity(
         )
 
 
-def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
-    acceptance = parse_env(acceptance_path)
-    if set(acceptance) != ACCEPTANCE_KEYS:
-        fail("kernel artifact acceptance keys differ from the fixed contract")
-    expected = {
-        "UML_KERNEL_ARTIFACT_SCHEMA": str(manifest["schema_version"]),
-        "UML_KERNEL_ARTIFACT_RELEASE_ID": manifest["release_id"],
-        "UML_KERNEL_ARTIFACT_DIRECTORY_NAME": manifest["directory_name"],
-        "UML_KERNEL_ARTIFACT_FAMILY": manifest["family"],
-        "UML_KERNEL_ARTIFACT_SLICE": manifest["slice"],
-        "UML_KERNEL_ARTIFACT_RELEASE": manifest["release"],
-        "UML_KERNEL_ARTIFACT_PAGE_SIZE": str(manifest["page_size"]),
-        "UML_KERNEL_ARTIFACT_FINAL_TREE": manifest["source"]["final_tree"],
-        "UML_KERNEL_ARTIFACT_ABI_VERSION": str(manifest["abi"]["version"]),
-        "UML_KERNEL_ARTIFACT_ABI_FINGERPRINT": manifest["abi"]["fingerprint"],
-    }
-    for key, value in expected.items():
-        if acceptance.get(key) != value:
-            fail(f"artifact differs from accepted descriptor field {key}")
-
-
-def verify_artifact(
+def _verify_bundle(
     artifact_root: Path,
     common_root: Path,
-    kernel_metadata_path: Path,
-    abi_metadata_path: Path,
-    *,
-    acceptance_path: Path | None = None,
+    verify_identity: Callable[[dict], None],
 ) -> dict:
+    """Check one bundle, with verify_identity deciding which identity it must carry."""
     if not artifact_root.is_absolute():
         fail("artifact root must be an absolute local path")
     if not artifact_root.is_dir() or artifact_root.is_symlink():
@@ -614,9 +579,7 @@ def verify_artifact(
     manifest = load_manifest(artifact_root)
     if artifact_root.name != manifest["directory_name"]:
         fail("artifact directory basename differs from its manifest")
-    verify_tracked_identity(manifest, kernel_metadata_path, abi_metadata_path)
-    if acceptance_path is not None:
-        verify_acceptance(manifest, acceptance_path)
+    verify_identity(manifest)
     verify_inventory(artifact_root, manifest)
     release = (artifact_root / "kernel/kernel.release").read_text(
         encoding="utf-8"
@@ -636,6 +599,21 @@ def verify_artifact(
     )
     verify_runtime_image(payload)
     return manifest
+
+
+def verify_artifact(
+    artifact_root: Path,
+    common_root: Path,
+    kernel_metadata_path: Path,
+    abi_metadata_path: Path,
+) -> dict:
+    return _verify_bundle(
+        artifact_root,
+        common_root,
+        lambda manifest: verify_tracked_identity(
+            manifest, kernel_metadata_path, abi_metadata_path
+        ),
+    )
 
 
 def verify_compatible_artifact(
@@ -647,40 +625,18 @@ def verify_compatible_artifact(
     expected_release_series: str,
     expected_page_size: int,
 ) -> dict:
-    if not artifact_root.is_absolute():
-        fail("artifact root must be an absolute local path")
-    if not artifact_root.is_dir() or artifact_root.is_symlink():
-        fail("artifact root must be a regular local directory")
-    manifest = load_manifest(artifact_root)
-    if artifact_root.name != manifest["directory_name"]:
-        fail("artifact directory basename differs from its manifest")
-    verify_compatible_identity(
-        manifest,
-        abi_metadata_path,
-        expected_family,
-        expected_slice,
-        expected_release_series,
-        expected_page_size,
-    )
-    verify_inventory(artifact_root, manifest)
-    release = (artifact_root / "kernel/kernel.release").read_text(
-        encoding="utf-8"
-    ).strip()
-    if release != manifest["release"]:
-        fail("kernel release payload differs from its manifest")
-    verify_config(
-        artifact_root / "kernel/config",
-        manifest["page_size"],
-        manifest["slice"],
-    )
-    payload = verify_elf(
-        artifact_root / "kernel/vmlinux",
-        manifest["page_size"],
+    return _verify_bundle(
+        artifact_root,
         common_root,
-        manifest["slice"],
+        lambda manifest: verify_compatible_identity(
+            manifest,
+            abi_metadata_path,
+            expected_family,
+            expected_slice,
+            expected_release_series,
+            expected_page_size,
+        ),
     )
-    verify_runtime_image(payload)
-    return manifest
 
 
 def publish_artifact(

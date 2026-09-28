@@ -56,13 +56,17 @@ if(UML_BUILD_UNIT_TESTS)
     target_compile_features(uml_test_scratch_directory PUBLIC cxx_std_20)
     target_compile_options(uml_test_scratch_directory PRIVATE
         -Wall -Wextra -Werror)
+    # One Mach VM region query for every test that inspects this task's map.
+    add_library(uml_test_mach_vm_region INTERFACE)
+    target_include_directories(uml_test_mach_vm_region INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit/mach_vm)
     # Change-sequence reads the tests make without an execution context. An
     # archive, so a binary that names neither helper links no MMU symbols.
     add_library(uml_static_mmu_test_support STATIC
         unit/static_mmu/static_mmu_test_support.cpp)
-    target_include_directories(uml_static_mmu_test_support
-        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/unit/static_mmu
-        PRIVATE ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_link_libraries(uml_static_mmu_test_support PRIVATE UML::BridgeAbi)
+    target_include_directories(uml_static_mmu_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit/static_mmu)
     target_compile_features(uml_static_mmu_test_support PUBLIC cxx_std_20)
     target_compile_options(uml_static_mmu_test_support PRIVATE
         -Wall -Wextra -Werror)
@@ -72,6 +76,7 @@ if(UML_BUILD_UNIT_TESTS)
     link_libraries(
         uml_host_capabilities_test_support
         uml_test_scratch_directory
+        uml_test_mach_vm_region
         uml_static_mmu_test_support
         UML::GadgetHistogramConfiguration
         UML::GuestPageConfiguration

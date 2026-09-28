@@ -49,8 +49,25 @@ make -C "$build_source" \
 	-j"$(sysctl -n hw.logicalcpu 2>/dev/null || printf 4)" nasm
 mkdir -p "$stage/bin"
 install -m 0755 "$build_source/nasm" "$stage/bin/nasm"
-"$stage/bin/nasm" -v | grep -q '^NASM version 2\.16\.03' ||
-	fail "built NASM has the wrong version"
-mv "$stage" "$output"
-stage=
-printf '%s\n' "built pinned NASM at $output/bin/nasm"
+verify_nasm()
+{
+	"$1/bin/nasm" -v | grep -q '^NASM version 2\.16\.03'
+}
+verify_nasm "$stage" || fail "built NASM has the wrong version"
+# The exclusive rename never replaces, or moves below, a prefix that a
+# concurrent build published first; that winner is verified and reused.
+status=0
+python3 -B "$root/dependencies/publish-prefix.py" "$stage" "$output" ||
+	status=$?
+case $status in
+0)
+	stage=
+	printf '%s\n' "built pinned NASM at $output/bin/nasm"
+	;;
+1)
+	verify_nasm "$output" ||
+		fail "concurrently published NASM is invalid: $output"
+	printf '%s\n' "reusing concurrently published NASM at $output/bin/nasm"
+	;;
+*) fail "could not atomically publish NASM: $output" ;;
+esac

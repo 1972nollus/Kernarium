@@ -40,7 +40,8 @@ For an intentional bridge declaration change:
 
 1. set the new version and the computed kernel fingerprint in `identity.env`;
 2. run `kernel/common/abi/sync.sh --kernel-source <replay>` and regenerate the
-   kernel topic that carries the change; and
+   kernel topic that carries the change, correcting the generated identity
+   header's stale `kernel/abi/identity.env` comment in `sync.sh` with it; and
 3. rebuild and re-accept the four kernel artifacts (mainline arm64 16 KiB and
    4 KiB, mainline x86_64 4 KiB, and Android arm64 16 KiB).
 

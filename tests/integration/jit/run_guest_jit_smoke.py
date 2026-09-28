@@ -214,9 +214,7 @@ def main() -> int:
         guest.check_command(GUEST_HWCAP_SANITY, 60, expected="OK")
 
         node = "/opt/node/bin/node"
-        node_path = guest.check_command(f"test -x {shlex.quote(node)} && echo present", 60)
-        if "present" not in node_path:
-            raise RuntimeError(f"Node executable is missing: {node}")
+        guest.check_command(f"test -x {shlex.quote(node)}", 60)
 
         dynamic_output = guest.check_command(
             f"{shlex.quote(node)} -e "

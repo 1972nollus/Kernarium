@@ -82,8 +82,6 @@ foreach(_uml_apple_gl_framework IN LISTS _uml_apple_gl_frameworks)
             "${_uml_apple_gpu_frameworks}/${_uml_apple_gl_framework}.framework/${_uml_apple_gl_framework}")
     list(APPEND _uml_apple_gl_provider_targets "${_uml_apple_gl_target}")
 endforeach()
-list(GET _uml_apple_gl_provider_targets 0 _uml_apple_gl_egl_target)
-add_library(UML::ThirdPartyHostGlEgl ALIAS ${_uml_apple_gl_egl_target})
 
 add_library(uml_third_party_epoxy STATIC IMPORTED GLOBAL)
 set_target_properties(uml_third_party_epoxy PROPERTIES
@@ -120,14 +118,12 @@ add_custom_target(uml_apple_gpu_prefix_verify
     DEPENDS ${_uml_apple_gpu_inputs}
     COMMENT "Checking the common ${UML_APPLE_PLATFORM} Apple GPU prefix"
     VERBATIM)
-if(TARGET uml_dependency_prefix_verify)
-    add_dependencies(uml_dependency_prefix_verify
-        uml_apple_gpu_prefix_verify)
-else()
+# dependencies/ is not added for an iOS build, which then has no aggregate
+# verification target yet.
+if(NOT TARGET uml_dependency_prefix_verify)
     add_custom_target(uml_dependency_prefix_verify)
-    add_dependencies(uml_dependency_prefix_verify
-        uml_apple_gpu_prefix_verify)
 endif()
+add_dependencies(uml_dependency_prefix_verify uml_apple_gpu_prefix_verify)
 
 set(UML_APPLE_GPU_FRAMEWORK_DIRECTORY
     "${_uml_apple_gpu_frameworks}"

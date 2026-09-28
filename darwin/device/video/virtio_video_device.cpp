@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "virtio_video_device.hpp"
 #include "video_capabilities.hpp"
-#include "protocol.hpp"
+#include "vhost_user_protocol.hpp"
 
 #include <algorithm>
 #include <chrono>

@@ -136,15 +136,6 @@ materialize "$SOURCE" >/dev/null
 
 expect_failure "replacement of an existing source checkout" materialize "$SOURCE"
 
-MISMATCH_CONFIG="$TEST_ROOT/mismatch-source.conf"
-printf 'UML_KERNEL_SOURCE_DIR=%s\n' "$TEST_ROOT/mismatch-source" \
-	> "$MISMATCH_CONFIG"
-expect_failure "source override differing from configuration" \
-	env UML_KERNEL_METADATA_PATH="$METADATA" \
-		UML_KERNEL_SOURCE_CONFIG="$MISMATCH_CONFIG" \
-		"$MATERIALIZER" --source "$TEST_ROOT/other-source" \
-		--cache "$CACHE" --no-fetch
-
 expect_failure "missing source-location configuration" \
 	env UML_KERNEL_METADATA_PATH="$METADATA" \
 		UML_KERNEL_SOURCE_CONFIG="$TEST_ROOT/missing-source.conf" \

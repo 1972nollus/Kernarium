@@ -10,10 +10,10 @@ uml_declare_architecture_target(uml_console_device device)
 target_include_directories(uml_console_device
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
+        ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
 target_compile_features(uml_console_device PUBLIC cxx_std_20)
 target_compile_options(uml_console_device PRIVATE
     -Wall -Wextra -Werror)
 target_link_libraries(uml_console_device
     PUBLIC UML::DeviceSocketPaths
-    PRIVATE uml_gpu_transport)
+    PRIVATE UML::VhostUserTransport)

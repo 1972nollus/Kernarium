@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "a64_body_inspection.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 
 #include <array>
@@ -169,9 +170,7 @@ inline void require(
 [[nodiscard]] constexpr bool is_conditional_runtime_branch(
 	std::uint32_t instruction) noexcept
 {
-	return (instruction & 0xff00'0010U) == 0x5400'0000U ||
-	       (instruction & 0x7e00'0000U) == 0x3400'0000U ||
-	       (instruction & 0x7e00'0000U) == 0x3600'0000U;
+	return uml::testing::a64::conditional_branch(instruction);
 }
 
 enum class NativeOpcodeClass : std::uint8_t {

@@ -80,11 +80,10 @@ if(UML_BUILD_X86_64_GUEST)
 		x86_64/gadgets/x87_math.cpp)
     uml_declare_architecture_target(uml_x86_64_gadgets cpu gadget)
     target_link_libraries(uml_x86_64_gadgets
-        PUBLIC UML::ThirdPartyCephes128
+        PUBLIC UML::BridgeAbi UML::ThirdPartyCephes128
         PRIVATE UML::CpuContract)
     target_include_directories(uml_x86_64_gadgets PUBLIC
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/darwin/include)
+        ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_features(uml_x86_64_gadgets PUBLIC cxx_std_20)
     target_compile_options(uml_x86_64_gadgets PRIVATE
         -Wall -Wextra -Werror)
@@ -123,9 +122,10 @@ add_library(uml_arm64_execution_helpers OBJECT
     arm64/native_environment.S
     arm64/tlb.cpp)
 uml_declare_architecture_target(uml_arm64_execution_helpers cpu shared)
-target_link_libraries(uml_arm64_execution_helpers PRIVATE UML::CpuContract)
+target_link_libraries(uml_arm64_execution_helpers PRIVATE
+    UML::BridgeAbi
+    UML::CpuContract)
 target_include_directories(uml_arm64_execution_helpers PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_arm64_execution_helpers PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_execution_helpers PRIVATE
@@ -175,10 +175,9 @@ add_library(uml_arm64_gadgets OBJECT
     arm64/gadgets/complex_memory_helpers.cpp
     arm64/gadgets/engine.S)
 uml_declare_architecture_target(uml_arm64_gadgets cpu gadget)
-target_link_libraries(uml_arm64_gadgets PRIVATE UML::CpuContract)
+target_link_libraries(uml_arm64_gadgets PRIVATE UML::BridgeAbi UML::CpuContract)
 target_link_libraries(uml_arm64_gadgets PUBLIC uml_arm64_execution_helpers)
 target_include_directories(uml_arm64_gadgets PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_arm64_gadgets PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadgets PRIVATE
@@ -227,9 +226,9 @@ set(_uml_cpu_jit_sources
 add_library(uml_arm64_jit OBJECT ${_uml_cpu_jit_sources})
 uml_declare_architecture_target(uml_arm64_jit cpu native)
 target_link_libraries(uml_arm64_jit PRIVATE
+    UML::BridgeAbi
     UML::CpuContract)
 target_include_directories(uml_arm64_jit PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_arm64_jit PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_jit PRIVATE
@@ -263,12 +262,13 @@ endif()
 add_library(uml_arm64_jit_executor OBJECT
     ${_uml_cpu_jit_executor_sources})
 uml_declare_architecture_target(uml_arm64_jit_executor cpu native)
-target_link_libraries(uml_arm64_jit_executor PRIVATE UML::CpuContract)
+target_link_libraries(uml_arm64_jit_executor PRIVATE
+    UML::BridgeAbi
+    UML::CpuContract)
 target_link_libraries(uml_arm64_jit_executor PUBLIC
     uml_arm64_jit
     uml_arm64_execution_helpers)
 target_include_directories(uml_arm64_jit_executor PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_arm64_jit_executor PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_jit_executor PRIVATE -Wall -Wextra -Werror)
@@ -287,12 +287,12 @@ if(UML_BUILD_UNIT_TESTS)
     uml_declare_architecture_target(
         uml_arm64_jit_diagnostics_executor cpu native)
     target_link_libraries(uml_arm64_jit_diagnostics_executor PRIVATE
+        UML::BridgeAbi
         UML::CpuContract)
     target_link_libraries(uml_arm64_jit_diagnostics_executor PUBLIC
         uml_arm64_jit
         uml_arm64_execution_helpers)
     target_include_directories(uml_arm64_jit_diagnostics_executor PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/include
         ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_features(uml_arm64_jit_diagnostics_executor PUBLIC
         cxx_std_20)
@@ -333,12 +333,12 @@ if(UML_BUILD_UNIT_TESTS)
         arm64/jit/jit_test_support.cpp)
     uml_declare_architecture_target(uml_arm64_jit_test_support cpu native)
     target_link_libraries(uml_arm64_jit_test_support PRIVATE
+        UML::BridgeAbi
         UML::CpuContract)
     target_link_libraries(uml_arm64_jit_test_support PUBLIC
         uml_arm64_jit
         uml_arm64_execution_helpers)
     target_include_directories(uml_arm64_jit_test_support PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/include
         ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_features(uml_arm64_jit_test_support PUBLIC cxx_std_20)
     target_compile_options(uml_arm64_jit_test_support PRIVATE
@@ -351,10 +351,10 @@ add_library(uml_arm64_gadget_executor OBJECT
     arm64/gadgets/executor.cpp)
 uml_declare_architecture_target(uml_arm64_gadget_executor cpu gadget)
 target_link_libraries(uml_arm64_gadget_executor PRIVATE
+    UML::BridgeAbi
     UML::CpuContract)
 target_link_libraries(uml_arm64_gadget_executor PUBLIC uml_arm64_gadgets)
 target_include_directories(uml_arm64_gadget_executor PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_arm64_gadget_executor PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadget_executor PRIVATE -Wall -Wextra -Werror)
@@ -369,10 +369,10 @@ set_target_properties(uml_arm64_gadget_executor PROPERTIES
 add_library(uml_arm64_gadget_engine OBJECT arm64/gadgets/engine_adapter.cpp)
 uml_declare_architecture_target(uml_arm64_gadget_engine cpu gadget)
 target_link_libraries(uml_arm64_gadget_engine PRIVATE
+    UML::BridgeAbi
     UML::CpuContract)
 target_link_libraries(uml_arm64_gadget_engine PUBLIC uml_arm64_gadget_executor)
 target_include_directories(uml_arm64_gadget_engine PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_arm64_gadget_engine PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadget_engine PRIVATE -Wall -Wextra -Werror)
@@ -382,12 +382,12 @@ set_target_properties(uml_arm64_gadget_engine PROPERTIES
 add_library(uml_arm64_jit_engine OBJECT arm64/jit/engine_adapter.cpp)
 uml_declare_architecture_target(uml_arm64_jit_engine cpu native)
 target_link_libraries(uml_arm64_jit_engine PRIVATE
+    UML::BridgeAbi
     UML::CpuContract)
 target_link_libraries(uml_arm64_jit_engine PUBLIC
     uml_arm64_jit
     uml_arm64_jit_executor)
 target_include_directories(uml_arm64_jit_engine PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_arm64_jit_engine PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_jit_engine PRIVATE -Wall -Wextra -Werror)
@@ -397,13 +397,13 @@ set_target_properties(uml_arm64_jit_engine PROPERTIES
 add_library(uml_cpu_engine_factory OBJECT engine_factory.cpp)
 uml_declare_architecture_target(uml_cpu_engine_factory cpu mixed)
 target_link_libraries(uml_cpu_engine_factory PRIVATE
+    UML::BridgeAbi
     UML::CpuContract)
 target_link_libraries(uml_cpu_engine_factory PUBLIC
     uml_arm64_gadget_engine
     uml_arm64_jit_engine
     uml_arm64_execution_helpers)
 target_include_directories(uml_cpu_engine_factory PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_cpu_engine_factory PUBLIC cxx_std_20)
 target_compile_options(uml_cpu_engine_factory PRIVATE -Wall -Wextra -Werror)
