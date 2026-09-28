@@ -294,6 +294,16 @@ build. The unit tests that run the executor pass in such a build; the structure
 tests fail there, because they pin the default stream, which has no counter
 entries.
 
+## Host sampling of the x86-64 gadget engine
+
+Host sampling profiles the x86-64 gadget engine without instrumenting it. The
+bank publishes one symbol per gadget, so a sampled host PC attributes straight
+to the gadget that owned it; assembler-local labels fold into their routine,
+and self time is a frame's count less its children's. Threaded dispatch leaves
+no usable frame chain, because `x29` holds the retired-instruction count rather
+than a frame pointer, but the deepest frame is the real PC, which is all a
+gadget profile needs. A 5 ms interval leaves the scored rate unchanged.
+
 ## Guest code sampling
 
 Every arm64 gadgets build carries a statistical profiler of translated guest
