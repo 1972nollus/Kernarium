@@ -263,22 +263,13 @@ appended without padding, an initrd the kernel never loads and an unknown
 exit, and the launcher must remove its scratch initrd, including one an
 aborted run left behind.
 
-`guest-kernel-nofault` dumps every task with sysrq t. Its workqueue report for
-each idle kernel worker reads through a NULL pointer with
-`copy_from_kernel_nofault()`, which must fail quietly: the guest keeps running
-and the emulator prints no host fault report for it. A lost nofault recovery
-point panics the guest instead. The same dump must list Call Trace entries,
-which the kernel walks from each blocked task's saved context, and frame
-pointers make every one of them reliable, so none may be marked `?`.
+`guest-kernel-nofault` boots the rootfs and checks, through a sysrq t dump,
+that a faulting nofault read recovers silently and that every trace entry is
+reliable, as [`../kernel/common/README.md`](../kernel/common/README.md) specifies.
 
-`guest-user-strings` runs 54 checks on the strings a system call copies from
-user memory with `strncpy_from_user()`: paths through `newfstatat()` and
-`symlinkat()`, and a task name through `prctl(PR_SET_NAME)`. Each string sits
-at a chosen offset of the probe's own mapping. The checks cover lengths around
-the 4064-byte embedded name buffer and `PATH_MAX`, strings that cross a page
-boundary or end on its last byte, unterminated strings, `EFAULT` for NULL,
-unmapped and `PROT_NONE` memory, and the exact bytes a symlink target and a
-task name keep.
+`guest-user-strings` boots the rootfs and checks the strings system calls copy
+from user memory against the copy contract in
+[`../kernel/common/README.md`](../kernel/common/README.md).
 
 `guest-native-window-unmap` maps a page just below and just above the Darwin
 kernel's native window, which it finds from the addresses `mmap()` refuses,
@@ -292,16 +283,9 @@ cleared and TCO, DIT and SSBS kept, a mode or DAIF bit must fail with
 `EINVAL`, and the child continued after an SS write must exit rather than
 stop on a single-step trap.
 
-`guest-run-end-stop` boots embedded guests in child processes and stops each
-one at a different point, from CPU bring-up to a guest waiting for its root
-device. A run must return 0 and leave only the host thread behind. The test
-widens the window between a vCPU carrier signalling the run end and leaving the
-image, by pausing that carrier once it has signalled. A kernel whose run end
-does not wait for every kernel thread faults in the unmapped image or exits
-with status 2. Each attempt also has one host thread that unblocks SIGALRM and
-sends it to itself once the kernel handles the signal. The kernel must refuse
-that tick and leave the signal blocked on the thread, and at least one attempt
-must reach that check.
+`guest-run-end-stop` needs only the kernel image: it stops embedded guests
+throughout their boot and checks the run-end and SIGALRM contracts in
+[`../kernel/common/README.md`](../kernel/common/README.md).
 
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
