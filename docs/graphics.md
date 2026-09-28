@@ -499,7 +499,13 @@ upstream Venus does. A swapchain whose surface offers modifiers is therefore a
 optimally and reaches the window system through common WSI's linear prime
 blit. The implicit native-heap share, an optimal image whose dma-buf names only
 its MTLHeap, is made only for a renderer with a native heap and no modifiers,
-the one configuration in which Zink imports it as that image. Either way the
+the one configuration in which Zink imports it as that image. Because
+such an image is one renderer blob resource whose refusal is reported
+asynchronously, a native-heap surface advertises at most 8192 in each direction
+as its maximum image extent and refuses an image above the per-image budget
+with `VK_ERROR_OUT_OF_DEVICE_MEMORY` rather than presenting a dma-buf with no
+resource behind it; ordinary images keep the device's own
+`maxImageDimension2D`. Either way the
 guest allocates a shared image's device-local memory as an MTLHeap, as it does
 for a compositor's own scanout buffer that Zink allocates through GBM. The
 renderer publishes the Metal texture of every colour target created for
