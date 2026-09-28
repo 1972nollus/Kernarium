@@ -19,6 +19,9 @@ CONFIG_BINFMT_MISC=y
 # Accept an external initramfs for recovery, image inspection, and read-only
 # overlay boots without modifying the guest's root partition.
 CONFIG_BLK_DEV_INITRD=y
+# The boot base archive that launchers put before the per-run initramfs is
+# gzip-compressed; pin its decompressor instead of relying on the RD_* defaults.
+CONFIG_RD_GZIP=y
 CONFIG_IKCONFIG=y
 CONFIG_IKCONFIG_PROC=y
 CONFIG_PRINTK_TIME=y

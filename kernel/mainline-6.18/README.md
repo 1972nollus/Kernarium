@@ -109,7 +109,12 @@ still executes its UML kernel mode as native arm64, but its userspace ABI is
 fixed to the x86 family: it accepts x86_64 and i386 tasks and never arm64
 userspace. Signal delivery exposes the native x86 XSAVE layout for x87, SSE,
 and AVX state and restores user edits through the matching ABI's signal-return
-path. Host instruction
+path. User RFLAGS follow Linux x86 for both ABIs: `execve()` starts a task with
+0x202 (IF and bit 1), a signal return restores only `FIX_EFLAGS` (CF, PF, AF,
+ZF, SF, TF, DF, OF, RF and AC), and a tracer may change those bits and NT.
+IOPL, VM, VIF, VIP and ID stay the task's and IF stays set; the Darwin host
+also sets IF and bit 1 on every entry to the task.
+`tests/integration/x86_64/run_guest_x86_64_rflags.py` checks this. Host instruction
 execution is qualified against the pinned FEX handwritten x86-64 corpus;
 distribution and complete Linux syscall compatibility require separate guest
 qualification. Both normal arm64 profiles accept `EM_AARCH64` only. Android

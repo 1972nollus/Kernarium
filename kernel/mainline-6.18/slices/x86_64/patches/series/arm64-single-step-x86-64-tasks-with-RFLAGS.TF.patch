@@ -17,10 +17,10 @@ so the kernel leaves the value that instruction produced.
  2 files changed, 76 insertions(+), 2 deletions(-)
 
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index a64194ef882d68724511eb377d29b04aaba5d3ab..84ff5d15e33d4ec7ba3e4a06a55e138fe94e4971 100644
+index e561801a0afa78700dfd700cbe38e738f007d0bb..d08910007e3c803464902da8fa1d19a367587085 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
-@@ -138,6 +138,45 @@ static void set_user_regs32(struct uml_pt_regs *guest,
+@@ -142,6 +142,45 @@ static void set_user_regs32(struct uml_pt_regs *guest,
  	upt_x86_64_set_segment_selector(guest, 2, regs->ss);
  }
  

@@ -357,7 +357,10 @@ The release manifest may retain the ACK build that qualified its target files,
 but that value is historical provenance. Apple runtime selection uses an
 independent compatible ACK artifact and performs no rootfs, kernel commit, or
 emulator release comparison at launch. A bundle's expanded disk remains usable
-across compatible kernel updates within the `6.18` line.
+across compatible kernel updates within the `6.18` line. A kernel-only update
+therefore advances only
+[`accepted-16k.env`](../../kernel/android-6.18/artifacts/accepted-16k.env) and
+keeps the accepted release; release s35 runs a later ACK than it records.
 
 ### Superseded releases
 

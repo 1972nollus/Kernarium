@@ -363,6 +363,19 @@ uml_add_guest_integration_test(
     PROCESSORS 2
     RESOURCE_GROUPS cpus:2)
 
+# Unwinders cross an arm64 signal frame as on native Linux: backtrace() in a
+# handler and cancellation of a thread blocked in a system call.
+uml_add_guest_integration_test(
+    NAME guest-signal-unwind
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_signal_unwind.py
+        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --rootfs ${UML_INTEGRATION_ROOTFS}
+    LABELS guest;kernel;smoke
+    TIMEOUT 420
+    PROCESSORS 2
+    RESOURCE_GROUPS cpus:2)
+
 # A stopped embedded guest returns to its host only after every kernel
 # thread has left the image the loader then unmaps.
 add_executable(uml_run_end_stop_tests kernel/run_end_stop_tests.cpp)
