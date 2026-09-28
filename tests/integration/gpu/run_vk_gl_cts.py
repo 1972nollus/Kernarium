@@ -5492,9 +5492,10 @@ blanking off: a CTS guest gets no input, and a blanked screen drops Present to
 a one-second fake vblank. Xwayland and Xvfb are rejected. Wayland selections
 run the image's unmodified KWin nested on Xorg without a lock screen, because a
 locked compositor owes an occluded surface no frame callback. Display
-processes stop before guest shutdown. These guests mask the display manager
-and the container runtime: a short shard that powers off while Docker starts
-leaves kworkers blocked in bpf_prog_free_deferred and never reaches poweroff.
+processes stop before guest shutdown. These guests boot uml-cts.target, which
+conflicts with the display manager, the fixed-VT getties and the container
+runtime: a short shard that powers off while Docker starts leaves kworkers
+blocked in bpf_prog_free_deferred and never reaches poweroff.
 
 Guest sessions, shared with run_vk_cts.py. The guest transports its growing
 QPA as ordered checkpoint segments, so a killed guest still leaves the prefix
