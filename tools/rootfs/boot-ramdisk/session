@@ -3,9 +3,10 @@
 # A disposable session on an image that does not configure one itself. The
 # per-run /init installs this file at /usr/local/libexec/uml-session with its
 # parameters at /etc/uml-session.env and switches root into it; it prepares
-# what the parameters ask for and replaces itself, as PID 1, with the entry.
-# README.md beside this file owns the contract. It runs under the image's own
-# shell, so any failure is reported and ends the run.
+# what the parameters ask for and replaces itself, as PID 1, with the entry,
+# or runs a workload entry and powers the guest off after it. README.md beside
+# this file owns the contract. It runs under the image's own shell, so any
+# failure is reported and ends the run.
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -47,8 +48,13 @@ if [ -f "$parameters" ]; then
 		esac
 	done < "$parameters"
 fi
+workload=0
 case "$entry" in
 /bin/sh) ;;
+/*)
+	[ -x "$entry" ] || fail "the workload is not executable: $entry"
+	workload=1
+	;;
 systemd)
 	for candidate in /lib/systemd/systemd /usr/lib/systemd/systemd; do
 		if [ -x "$candidate" ]; then
@@ -72,11 +78,11 @@ v1:*[!a-z0-9_,]*|v1:) fail "unsupported cgroup v1 controller: ${cgroup#v1:}" ;;
 v1:*) ;;
 *) fail "unsupported cgroup: $cgroup" ;;
 esac
-if [ "$entry" != /bin/sh ]; then
+if [ "$workload" = 0 ] && [ "$entry" != /bin/sh ]; then
 	# systemd mounts these itself and owns the network and the workspace.
 	[ "$runtime_mounts" = 0 ] && [ "$network" = image ] && \
 		[ "$workspace" = tmpfs ] && [ -z "$swap$cgroup" ] || \
-		fail "runtime mounts, network, workspace, swap and cgroups need the shell entry"
+		fail "runtime mounts, network, workspace, swap and cgroups need a shell or workload entry"
 fi
 
 # The SLiRP user network's own resolver answers, but the public ones keep
@@ -160,4 +166,13 @@ v1:*)
 esac
 
 echo "UML_SESSION_READY:$entry"
-exec "$entry"
+[ "$workload" = 1 ] || exec "$entry"
+
+# PID 1 may not exit, so the session outlives the workload and powers the
+# guest off once its status is on the console.
+"$entry"
+status=$?
+echo "UML_SESSION_EXIT:$status"
+sync
+poweroff -f
+fail "cannot power off"

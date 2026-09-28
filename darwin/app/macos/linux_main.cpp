@@ -46,12 +46,6 @@ constexpr std::string_view macos_default_guest_cpus{"ncpus=10"};
 constexpr std::string_view guest_init_option{"--guest-init="};
 constexpr std::string_view guest_file_option{"--guest-file="};
 constexpr std::string_view scratch_prefix{"uml-guest-initrd-"};
-/* Named only so that its failure explains itself. The kernel runs init= when
- * no initramfs /init exists, or when /init cannot be executed, and panics if
- * that fails too; without it the kernel would fall back to /sbin/init on the
- * read-only image, or to the base archive's shell. */
-constexpr std::string_view missing_init_argument{
-	"init=/uml-per-run-initramfs-did-not-run"};
 
 bool has_prefix(std::span<const std::string> arguments,
 		std::string_view prefix)
@@ -285,7 +279,7 @@ int main(int argc, char *argv[], char *envp[])
 			options.forwarded.push_back(
 				"initrd=" + (scratch / "initrd.cpio").string());
 			if (!explicit_init)
-				options.forwarded.emplace_back(missing_init_argument);
+				options.forwarded.emplace_back(uml::boot::missingInitArgument);
 		}
 	} catch (const std::exception &error) {
 		std::fprintf(stderr, "Unable to prepare the guest initramfs: %s\n",

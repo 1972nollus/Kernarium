@@ -648,8 +648,9 @@ class VkGlCtsToolingTests(unittest.TestCase):
             self.assertFalse(
                 any("systemctl set-environment" in argument for argument in command)
             )
-            self.assertIn("systemd.mask=sddm.service", command)
-            self.assertIn("multi-user.target", command)
+            self.assertEqual(
+                command[command.index("--unit") + 1], cts.CTS_TARGET_UNIT
+            )
 
     def test_every_virgl_scope_reports_its_host_provider(self) -> None:
         identity = cts.load_identity()
@@ -1369,24 +1370,53 @@ native_display_cleanup
 
     def test_native_harness_has_no_competing_desktop(self) -> None:
         options = cts.parse_arguments(["--inventory", "--dry-run"])
+        guest_files = cts.gpu_guest.StagedGuestFiles(
+            Path("/tmp/native-wsi-test/files")
+        )
         command = cts.native_wsi_harness_command(
-            options, Path("/tmp/native-wsi-test"), ("true",),
+            options, Path("/tmp/native-wsi-test"), cts.GUEST_SERVICE_NAME,
+            guest_files=guest_files,
             width=800, height=600, display="native", rootfs_type="erofs",
         )
-        self.assertEqual(command[command.index("--unit") + 1], "multi-user.target")
+        self.assertEqual(
+            command[command.index("--unit") + 1], "uml-cts.target"
+        )
         self.assertIn("--no-auto-poweroff", command)
-        self.assertIn("systemd.mask=display-manager.service", command)
-        self.assertIn("systemd.mask=sddm.service", command)
-        # No suite uses the container runtime, and tearing its BPF programs
-        # down from a half-started state wedges a guest that is powering off.
-        self.assertIn("systemd.mask=docker.service", command)
-        self.assertIn("systemd.mask=docker.socket", command)
-        self.assertIn("systemd.mask=containerd.service", command)
+        self.assertFalse(any("systemd.mask=" in argument for argument in command))
+        self.assertNotIn("--command", command)
+        target = next(
+            data.decode()
+            for host, (data, _) in guest_files.files.items()
+            if host.name.endswith("-uml-cts.target")
+        )
+        self.assertIn(
+            f"--guest-file={cts.CTS_TARGET_PATH}=", " ".join(command)
+        )
+        self.assertIn("Requires=multi-user.target\n", target)
+        self.assertIn("Wants=uml-vk-gl-cts.service\n", target)
+        conflicts = next(
+            line.split("=", 1)[1].split()
+            for line in target.splitlines()
+            if line.startswith("Conflicts=")
+        )
+        # The display manager and the fixed-VT getties take the VT the
+        # campaign's X server holds; no suite uses the container runtime, and
+        # tearing its BPF programs down from a half-started state wedges a
+        # guest that is powering off.
+        self.assertEqual(
+            set(conflicts),
+            {
+                "display-manager.service", "sddm.service",
+                "getty@tty0.service", "getty@tty1.service",
+                "docker.service", "docker.socket", "containerd.service",
+            },
+        )
         self.assertIn("--gpu-width=800", command)
         self.assertIn("--gpu-height=600", command)
         self.assertNotIn("--gpu-vnc-port=0", command)
         self.assertNotIn("display-manager.service", cts.CTS_SERVICE)
-        self.assertIn("WantedBy=multi-user.target", cts.CTS_SERVICE)
+        with self.assertRaises(cts.CampaignError):
+            cts.cts_target("uml-vk-gl-cts.service\nWants=evil.service")
 
     def test_host_backend_refuses_retired_providers_and_requires_zink(self) -> None:
         cts.validate_host_backend("Virgl Zink/KosmicKrisp provider: hardware\n")
@@ -1997,7 +2027,7 @@ native_display_cleanup
         because only one of them is read when a campaign is generated.
         """
         runtime = (
-            REPO_ROOT / "Kernarium/Runtime/KernariumRuntime.mm"
+            REPO_ROOT / "Kernarium/Runtime/KernariumHarness.mm"
         ).read_text(encoding="utf-8")
         gl_launcher = (INTEGRATION_GPU / "run_vk_gl_cts.py").read_text(
             encoding="utf-8"
@@ -2039,128 +2069,152 @@ native_display_cleanup
             self.assertIn(f'"{name}"', runtime)
         self.assertIn('segmentPrefix = "results.qpa."', runtime)
 
-    def test_kernarium_generator_embeds_the_common_page_specific_launcher(self) -> None:
-        generator = REPO_ROOT / "Kernarium/scripts/generate-cts-campaign-header.py"
+    def test_kernarium_campaigns_are_the_common_page_specific_launchers(
+        self,
+    ) -> None:
+        import kernarium_campaigns
+        import run_vk_cts as vulkan
+
         derivative_receipt = receipt_fixtures.current_epoch_receipt_file(
             self, receipt_fixtures.ZINK_GL_RECEIPT
         )
         vulkan_receipt = receipt_fixtures.current_epoch_receipt_file(
             self, receipt_fixtures.VULKAN_RECEIPT
         )
-        with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "KernariumCtsCampaigns.hpp"
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-B",
-                    str(generator),
-                    "--runner",
-                    str(INTEGRATION_GPU / "run_vk_gl_cts.py"),
-                    "--vulkan-runner",
-                    str(INTEGRATION_GPU / "run_vk_cts.py"),
-                    "--identity",
-                    str(INTEGRATION_GPU / "vk_gl_cts_identity.json"),
-                    "--vulkan-identity",
-                    str(INTEGRATION_GPU / "vulkan_cts_identity.json"),
-                    "--campaigns",
-                    str(INTEGRATION_GPU / "vk_gl_cts_apple_campaigns.json"),
-                    "--matrix",
-                    str(INTEGRATION_GPU / "vk_gl_cts_apple_matrix.json"),
-                    "--derivative-receipt",
-                    str(derivative_receipt),
-                    "--page-size",
-                    "4096",
-                    "--output",
-                    str(output),
-                ],
-                check=True,
-            )
-            generated = output.read_text(encoding="utf-8")
-            self.assertIn("gles3-declaration-sentinel-v1", generated)
-            self.assertIn("gles2-identity-sentinel-v1", generated)
-            self.assertIn("gles3-identity-sentinel-v1", generated)
-            self.assertIn("gles2-config-inventory-v1", generated)
-            self.assertIn("gles3-config-inventory-v1", generated)
-            self.assertIn("gles2-matrix-cfg00-000of001-v1", generated)
-            self.assertIn("gles3-matrix-cfg19-003of004-v1", generated)
-            self.assertIn("gl46-matrix-cfg00-xml01-001of032-virgl-v1", generated)
-            self.assertIn("gl46-matrix-cfg00-xml01-001of032-zink-v1", generated)
-            self.assertIn(
-                "aosp_mustpass/main/gl45-es31-main.txt", generated
-            )
-            self.assertIn(
-                "the official GL matrix requires the sealed ext4 derivative",
-                generated,
-            )
-            self.assertIn("--deqp-case=CTS-Configs.es2", generated)
-            self.assertIn("--deqp-case=CTS-Configs.es3", generated)
-            self.assertIn("--deqp-gl-config-id=1", generated)
-            self.assertIn("--deqp-gl-config-id=52", generated)
-            self.assertIn("--deqp-caselist-file=/run/uml-cts/selected.txt", generated)
-            self.assertIn("does not match 4096", generated)
-            self.assertIn("UML_CTS_ARTIFACT_BEGIN", generated)
-            self.assertIn("x11_server=xorg", generated)
-            self.assertIn("uml-vk-gl-cts.service", generated)
-            self.assertIn("vulkan-info-development-v1", generated)
-            self.assertIn("uml-vulkan-cts.service", generated)
-            self.assertIn("VK_ERROR_INITIALIZATION_FAILED", generated)
-            self.assertIn("bool namedSerialArtifacts", generated)
-            self.assertIn("std::string_view erofsSetup", generated)
-            self.assertIn("std::string_view ext4Setup", generated)
-            self.assertIn("3b59fbc9-4b35-4a2b-890d-286a77b04afd", generated)
-            self.assertIn(
-                "9bb567b4db930fce28e2dc893a09fa0bd5b7c046f72d0807c3546ae4311dc1d1",
-                generated,
-            )
-            self.assertNotIn("/dev/ubda", generated)
+        patches = (
+            mock.patch.object(
+                kernarium_campaigns, "GL_DERIVATIVE_RECEIPT_PATH",
+                derivative_receipt,
+            ),
+            mock.patch.object(vulkan, "RECEIPT_PATH", vulkan_receipt),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
 
-            venus_output = Path(temporary) / "KernariumVenusCtsCampaigns.hpp"
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-B",
-                    str(generator),
-                    "--runner",
-                    str(INTEGRATION_GPU / "run_vk_gl_cts.py"),
-                    "--vulkan-runner",
-                    str(INTEGRATION_GPU / "run_vk_cts.py"),
-                    "--identity",
-                    str(INTEGRATION_GPU / "vk_gl_cts_identity.json"),
-                    "--vulkan-identity",
-                    str(INTEGRATION_GPU / "vulkan_cts_identity.json"),
-                    "--campaigns",
-                    str(INTEGRATION_GPU / "vk_gl_cts_apple_campaigns.json"),
-                    "--matrix",
-                    str(INTEGRATION_GPU / "vk_gl_cts_apple_matrix.json"),
-                    "--derivative-receipt",
-                    str(derivative_receipt),
-                    "--vulkan-receipt",
-                    str(vulkan_receipt),
-                    "--experimental-venus",
-                    "--page-size",
-                    "4096",
-                    "--output",
-                    str(venus_output),
-                ],
-                check=True,
+        def launcher(identifier: str, image_type: str) -> str:
+            campaign = kernarium_campaigns.build(
+                identifier, image_type=image_type, page_size=4096
             )
-            venus_generated = venus_output.read_text(encoding="utf-8")
-            self.assertIn("vulkan-info-receipt-smoke-v1", venus_generated)
-            self.assertIn(cts.sha256_file(vulkan_receipt), venus_generated)
-            self.assertIn(
-                "/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357",
-                venus_generated,
+            self.assertEqual(campaign.unit, "uml-cts.target")
+            path = next(
+                path for path, (_, mode) in campaign.files.items()
+                if mode == 0o755 and not path.endswith("-run")
             )
-            self.assertIn("formal_conformance=false", venus_generated)
-            self.assertIn("vulkan-mustpass-03of16-v4", venus_generated)
-            self.assertNotIn("vulkan-mustpass-03of16-v3", venus_generated)
-            self.assertIn(
-                "pipeline.fast_linked_library.render_to_image.core.2d_array."
-                "huge.width_height_layers.r8g8b8a8_unorm",
-                venus_generated,
+            text = campaign.files[path][0].decode()
+            self.assertNotIn("/dev/ubda", text)
+            return text
+
+        identifiers = kernarium_campaigns.identifiers()
+        self.assertEqual(len(identifiers), len(set(identifiers)))
+        for identifier in (
+            "gles3-declaration-sentinel-v1",
+            "gles2-identity-sentinel-v1",
+            "gles3-identity-sentinel-v1",
+            "gles2-config-inventory-v1",
+            "gles3-config-inventory-v1",
+            "gles2-matrix-cfg00-000of001-v1",
+            "gles3-matrix-cfg19-003of004-v1",
+            "gl46-matrix-cfg00-xml01-001of032-virgl-v1",
+            "gl46-matrix-cfg00-xml01-001of032-zink-v1",
+            "vulkan-info-development-v1",
+            "vulkan-info-receipt-smoke-v1",
+            "vulkan-mustpass-03of16-v4",
+        ):
+            self.assertIn(identifier, identifiers)
+        self.assertNotIn("vulkan-mustpass-03of16-v3", identifiers)
+
+        sentinel = kernarium_campaigns.build(
+            "gles3-declaration-sentinel-v1", image_type="erofs",
+            page_size=4096,
+        )
+        self.assertEqual(
+            {path: mode for path, (_, mode) in sentinel.files.items()},
+            {
+                cts.GUEST_LAUNCHER_PATH: 0o755,
+                cts.GUEST_SERVICE_PATH: 0o644,
+                cts.CTS_TARGET_PATH: 0o644,
+            },
+        )
+        self.assertEqual(
+            sentinel.files[cts.CTS_TARGET_PATH][0].decode(),
+            cts.cts_target("uml-vk-gl-cts.service"),
+        )
+        self.assertEqual(
+            set(sentinel.payload().files),
+            {f"/payload{path}" for path in sentinel.files},
+        )
+        text = launcher("gles3-declaration-sentinel-v1", "erofs")
+        self.assertIn("does not match 4096", text)
+        self.assertIn("UML_CTS_ARTIFACT_BEGIN", text)
+        self.assertIn("x11_server=xorg", text)
+        ext4 = launcher("gles3-declaration-sentinel-v1", "ext4")
+        self.assertIn("3b59fbc9-4b35-4a2b-890d-286a77b04afd", ext4)
+        self.assertIn(
+            "9bb567b4db930fce28e2dc893a09fa0bd5b7c046f72d0807c3546ae4311dc1d1",
+            ext4,
+        )
+        self.assertIn(
+            "--deqp-case=CTS-Configs.es2",
+            launcher("gles2-config-inventory-v1", "erofs"),
+        )
+        self.assertIn(
+            "--deqp-caselist-file=/run/uml-cts/selected.txt",
+            launcher("gles3-matrix-cfg19-003of004-v1", "erofs"),
+        )
+        self.assertIn(
+            "aosp_mustpass/main/gl45-es31-main.txt",
+            launcher("gl46-matrix-cfg00-xml01-001of032-zink-v1", "ext4"),
+        )
+        with self.assertRaisesRegex(
+            cts.CampaignError, "requires the sealed ext4 derivative"
+        ):
+            kernarium_campaigns.build(
+                "gl46-matrix-cfg00-xml01-001of032-virgl-v1",
+                image_type="erofs", page_size=4096,
             )
-            self.assertIn(
-                "settle_limit=$((settle_start + 60))", venus_generated
+
+        development = kernarium_campaigns.build(
+            "vulkan-info-development-v1", image_type="erofs", page_size=4096
+        )
+        self.assertIn(
+            "expected no-device status 137",
+            development.files[kernarium_campaigns.VULKAN_WRAPPER_PATH][0]
+            .decode(),
+        )
+        case_list = development.files[vulkan.GUEST_CASE_LIST_PATH][0]
+        self.assertIn(
+            hashlib.sha256(case_list).hexdigest(),
+            launcher("vulkan-info-development-v1", "erofs"),
+        )
+        self.assertIn(
+            "Wants=uml-vulkan-cts.service\n",
+            development.files[cts.CTS_TARGET_PATH][0].decode(),
+        )
+        with self.assertRaisesRegex(cts.CampaignError, "frozen EROFS image"):
+            kernarium_campaigns.build(
+                "vulkan-info-development-v1", image_type="ext4",
+                page_size=4096,
+            )
+        smoke = launcher("vulkan-info-receipt-smoke-v1", "ext4")
+        self.assertIn(cts.sha256_file(vulkan_receipt), smoke)
+        self.assertIn("/usr/lib/aarch64-linux-gnu/libvulkan.so.1.4.357", smoke)
+        self.assertIn("formal_conformance=false", smoke)
+        with self.assertRaisesRegex(cts.CampaignError, "ext4 derivative"):
+            kernarium_campaigns.build(
+                "vulkan-info-receipt-smoke-v1", image_type="erofs",
+                page_size=4096,
+            )
+        mustpass = launcher("vulkan-mustpass-03of16-v4", "ext4")
+        self.assertIn(
+            "pipeline.fast_linked_library.render_to_image.core.2d_array."
+            "huge.width_height_layers.r8g8b8a8_unorm",
+            mustpass,
+        )
+        self.assertIn("settle_limit=$((settle_start + 60))", mustpass)
+        with self.assertRaisesRegex(cts.CampaignError, "no Kernarium campaign"):
+            kernarium_campaigns.build(
+                "no-such-campaign", image_type="erofs", page_size=4096
             )
 
     def test_signed_apple_matrix_freezes_complete_current_geometry(self) -> None:
@@ -2328,12 +2382,16 @@ native_display_cleanup
                 if argument.startswith("--guest-file=")
             }
             self.assertEqual(
-                set(staged), {cts.GUEST_LAUNCHER_PATH, cts.GUEST_SERVICE_PATH}
+                set(staged),
+                {
+                    cts.GUEST_LAUNCHER_PATH,
+                    cts.GUEST_SERVICE_PATH,
+                    cts.CTS_TARGET_PATH,
+                },
             )
             self.assertNotIn("base64 -d", " ".join(command))
-            self.assertIn(
-                "systemctl start --no-block uml-vk-gl-cts.service", command
-            )
+            # The session target starts the service; nothing is typed.
+            self.assertNotIn("--command", command)
             self.assertEqual(
                 cts.prepare_harness_command(options, selection, run), command
             )

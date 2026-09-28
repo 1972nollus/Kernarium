@@ -460,7 +460,7 @@ struct KernariumTests {
         )
         #expect(configuration.overlaySizeGiB == 8)
         #expect(configuration.androidDiskSizeGiB == 8)
-        #expect(configuration.rootfsFilename == "rootfs.erofs")
+        #expect(configuration.rootfsFilename == "kde-20260928-r1.erofs")
         #expect(configuration.kernelPageSize == .sixteenKiB)
         #expect(configuration.retinaMode == false)
         #expect(configuration.autoResizeGuest == true)
@@ -514,11 +514,30 @@ struct KernariumTests {
         #expect(normalized.guestMemoryMiB == 1024)
         #expect(normalized.overlaySizeGiB == 1)
         #expect(normalized.androidDiskSizeGiB == 64)
-        #expect(normalized.rootfsFilename == "rootfs.erofs")
+        #expect(normalized.rootfsFilename == "kde-20260928-r1.erofs")
         #expect(normalized.kernelPageSize == .sixteenKiB)
         #expect(normalized.retinaMode == true)
         #expect(normalized.autoResizeGuest == false)
         #expect(normalized.androidBootMode == .recovery)
+    }
+
+    @Test
+    func storedUnifiedImageSelectionOutlivesTheDesktopDefault() {
+        let (defaults, suiteName) = isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("rootfs.erofs", forKey: "emulator.rootfsFilename")
+
+        let configuration = EmulatorConfiguration.load(
+            defaults: defaults,
+            physicalProcessorCount: 6
+        )
+
+        #expect(configuration.rootfsFilename == "rootfs.erofs")
+        configuration.save(defaults: defaults)
+        #expect(
+            defaults.string(forKey: "emulator.rootfsFilename") ==
+                "rootfs.erofs"
+        )
     }
 
     @Test

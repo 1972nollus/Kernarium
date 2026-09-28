@@ -24,7 +24,6 @@ import receipt_fixtures
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "tests/integration/gpu/run_chromium_webgl.py"
-GENERATOR = REPO_ROOT / "Kernarium/scripts/generate-aquarium-header.py"
 
 
 def load_module(name: str, path: Path):
@@ -37,9 +36,6 @@ def load_module(name: str, path: Path):
 
 run_chromium_webgl = load_module("run_chromium_webgl", SCRIPT)
 webgl_launcher = run_chromium_webgl.webgl_launcher
-generate_aquarium_header = load_module(
-    "generate_aquarium_header", GENERATOR
-)
 
 
 def metric_line(samples: list[float]) -> str:
@@ -398,35 +394,37 @@ class AquariumProbePolicyTests(unittest.TestCase):
         self.assertEqual(contract.filesystem_type, "ext4")
         self.assertEqual(contract.sha256, receipt["derivative"]["sha256"])
 
-    def test_kernarium_header_is_generated_from_common_probe(self) -> None:
-        driver = generate_aquarium_header.load_driver(SCRIPT)
-        header = generate_aquarium_header.generate_header(driver)
-        self.assertIn("namespace kernarium::aquarium", header)
-        self.assertIn('R"AQUARIUM(', header)
-        self.assertIn("Kernarium Aquarium performance probe enabled", header)
-        self.assertIn(driver.build_kernarium_setup(), header)
-
-    def test_generated_setup_uses_bounded_lossless_console_lines(self) -> None:
-        setup = run_chromium_webgl.build_kernarium_setup()
-        self.assertLessEqual(
-            max(len(line.encode("utf-8")) for line in setup.splitlines()),
-            2048,
+    def test_kernarium_payload_boots_the_probe_target(self) -> None:
+        payload = run_chromium_webgl.kernarium_payload().files
+        self.assertEqual(
+            set(payload),
+            {
+                "/payload/var/tmp/uml-aquarium-extension/manifest.json",
+                "/payload/var/tmp/uml-aquarium-extension/verify.js",
+                "/payload/usr/local/libexec/uml-chromium-aquarium",
+                "/payload/etc/systemd/system/uml-chromium-aquarium.service",
+                "/payload/etc/systemd/system/uml-aquarium.target",
+            },
         )
-        with tempfile.TemporaryDirectory() as temporary:
-            destination = Path(temporary) / "probe.txt"
-            content = "line\n" * 4096
-            subprocess.run(
-                [
-                    "/bin/sh",
-                    "-c",
-                    run_chromium_webgl.install_text(
-                        str(destination), content, "0600"
-                    ),
-                ],
-                check=True,
-            )
-            self.assertEqual(destination.read_text(encoding="utf-8"), content)
-            self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+        launcher = payload["/payload/usr/local/libexec/uml-chromium-aquarium"]
+        self.assertEqual(launcher.mode, 0o755)
+        # Kernarium reads the console without a host deadline, so the guest
+        # powers itself off.
+        self.assertIn(b"poweroff -f", launcher.contents)
+        target = payload[
+            "/payload/etc/systemd/system/uml-aquarium.target"
+        ].contents.decode()
+        self.assertEqual(target, run_chromium_webgl.TARGET)
+        self.assertIn("Requires=graphical.target\n", target)
+        self.assertIn("Wants=uml-chromium-aquarium.service\n", target)
+        conflicts = next(
+            line.split("=", 1)[1].split()
+            for line in target.splitlines()
+            if line.startswith("Conflicts=")
+        )
+        self.assertIn("docker.socket", conflicts)
+        self.assertIn("apt-daily-upgrade.timer", conflicts)
+        self.assertNotIn("display-manager.service", conflicts)
 
     def test_only_unrelated_site_favicon_is_ignored(self) -> None:
         script = run_chromium_webgl.EXTENSION_SCRIPT

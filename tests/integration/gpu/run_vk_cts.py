@@ -19,7 +19,6 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
 from dataclasses import dataclass
 import hashlib
 import json
@@ -58,7 +57,8 @@ VIRTIO_IDENTITY = re.compile(r"(?:virtio|venus)", re.IGNORECASE)
 CTS_SERVICE_PATH = "/usr/local/libexec/uml-vulkan-cts"
 # A harness installs the selected cases here as a file, whatever their count.
 GUEST_CASE_LIST_PATH = "/usr/local/share/uml-vulkan-cts/selected.txt"
-CTS_WSI_SERVICE_PATH = "/etc/systemd/system/uml-vulkan-cts.service"
+CTS_WSI_SERVICE_NAME = "uml-vulkan-cts.service"
+CTS_WSI_SERVICE_PATH = f"/etc/systemd/system/{CTS_WSI_SERVICE_NAME}"
 CTS_WSI_SERVICE = """[Unit]
 Description=Darwin UML Vulkan WSI CTS campaign
 After=systemd-user-sessions.service
@@ -85,9 +85,9 @@ import vulkan_cts_receipt as receipt_contract  # noqa: E402
 CampaignError = common.CampaignError
 
 
-# The identifiers the Kernarium campaign generator bakes into the application.
-# Both the generator and the lanes that name a campaign read them from here, so
-# a campaign cannot exist in the bundle under a name no runner will accept.
+# The Vulkan campaigns a Kernarium automation run can boot. The payload
+# builder (kernarium_campaigns.py) and the lanes that name a campaign read them
+# from here, so a campaign cannot be built under a name no runner accepts.
 APPLE_DEVELOPMENT_CAMPAIGN = "vulkan-info-development-v1"
 APPLE_RECEIPT_SMOKE_CAMPAIGN = "vulkan-info-receipt-smoke-v1"
 # The released CTS permits at most sixteen native fractions, and a device runs
@@ -321,7 +321,7 @@ def _exclusion_expression(pattern: str) -> str:
 
 
 def apple_campaigns() -> tuple[str, ...]:
-    """Every Vulkan campaign an experimental-Venus application carries."""
+    """Every Vulkan campaign a Kernarium automation run can boot."""
 
     return (
         APPLE_DEVELOPMENT_CAMPAIGN,
@@ -955,17 +955,12 @@ def selected_list_setup(
 ) -> str:
     """Shell that writes the selected cases to ``$selected`` for the CTS user.
 
-    A harness installs the list as the guest file ``case_list``, which the
-    launcher checks against its digest. Without one the list is embedded in
-    the launcher, as in the fixed launchers generated for Kernarium.
+    Every harness installs the list as the guest file ``case_list``, whatever
+    its length, and the launcher checks it against its digest.
     """
-    payload = _selected_payload(selection).encode()
     if case_list is None:
-        encoded = base64.b64encode(payload).decode()
-        return (
-            f"printf '%s' {shlex.quote(encoded)} | base64 -d > \"$selected\"\n"
-            'chown uml:uml "$selected"'
-        )
+        raise CampaignError("a selected case list must reach the guest as a file")
+    payload = _selected_payload(selection).encode()
     digest = hashlib.sha256(payload).hexdigest()
     return (
         f'install -m 0644 -o uml -g uml {shlex.quote(case_list)} "$selected"\n'
@@ -1990,8 +1985,7 @@ def plan_receipt_harness_command(
     if uses_wsi:
         guest_files.add(CTS_WSI_SERVICE_PATH, CTS_WSI_SERVICE)
         command = common.native_wsi_harness_command(
-            options, artifact_directory,
-            ("systemctl start --no-block uml-vulkan-cts.service",),
+            options, artifact_directory, CTS_WSI_SERVICE_NAME,
             guest_files=guest_files,
         )
         return [*environment, *command], guest_files

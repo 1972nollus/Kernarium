@@ -14,6 +14,17 @@
 namespace uml::boot {
 
 /*
+ * A launcher that boots through the per-run initramfs names this init= too.
+ * The kernel runs init= only when the initramfs has no /init it can execute,
+ * as when it never loaded the initrd behind a mistyped initrd_offset=, and
+ * panics when that fails as well. The panic then names the missing
+ * initramfs, where the kernel would otherwise fall back to the image's own
+ * init or to the base archive's shell.
+ */
+inline constexpr std::string_view missingInitArgument{
+	"init=/uml-per-run-initramfs-did-not-run"};
+
+/*
  * One per-run initramfs segment in the kernel's "newc" cpio format.
  *
  * Linux unpacks every segment of an initrd in order into the same root, so a

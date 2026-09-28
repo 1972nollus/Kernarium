@@ -20,7 +20,8 @@ The initrd is `pad4(base) || segment`:
   Parents come before their children and every file is a single link.
 
 The kernel unpacks every part into the same ramfs root, so a segment file
-replaces the base file of the same name. After a gzip member it looks for the
+replaces the base file of the same name, and a further segment appended after
+the first, padded the same way, replaces the first one's files. After a gzip member it looks for the
 next header at the member's exact length and reads a newc header only at a
 four-byte aligned offset; the zero padding makes the segment readable, and a
 segment appended without it is reported as an invalid compressed archive and
@@ -57,14 +58,21 @@ and an unknown key is an error.
 | --- | --- | --- |
 | `UML_BOOT_ROOT` | root block device | `/dev/ubda` |
 | `UML_BOOT_ROOT_TYPE` | `erofs`, `ext4` | `erofs` |
-| `UML_BOOT_UPPER` | `tmpfs`, `none` | `tmpfs` |
+| `UML_BOOT_UPPER` | `tmpfs`, `ext4`, `none` | `tmpfs` |
+| `UML_BOOT_UPPER_DEVICE` | block device (only, and required, with `ext4`) | none |
 | `UML_BOOT_GROW` | `0`, `1` (only with `UML_BOOT_UPPER=none`) | `0` |
 | `UML_BOOT_ENTRY` | absolute path in the new root | `/sbin/init` |
 
 With `tmpfs` the image is mounted read-only beneath a tmpfs overlay that ends
 with the run, and the payload lands in that upper layer. The new root keeps
 both layers visible: the image at `/.uml-lower` and the tmpfs, with its
-`upper` and `work` directories, at `/.uml-state`. With `none` the image
+`upper` and `work` directories, at `/.uml-state`. `ext4` is the same overlay
+on an ext4 filesystem that `/init` formats afresh on `UML_BOOT_UPPER_DEVICE`
+with the base's `mkfs.ext4`, so the device's previous contents are lost.
+Docker's overlay2 and containerd's overlay snapshotter refuse an overlayfs
+backing, so on ext4 `/var/lib/docker` and `/var/lib/containerd` are bound from
+`docker` and `containerd` directories (mode `0711`) on that filesystem, beside
+`upper` and `work`. Kernarium boots every Linux desktop this way. With `none` the image
 itself is the read-write root, as a starter disk or a one-image machine uses
 it, and the payload is written into it. `UML_BOOT_GROW=1` first grows a sole
 ext4 partition that a host tool has already enlarged, reporting
@@ -80,13 +88,16 @@ configure one itself. A launcher installs it as a payload at
 `/etc/uml-session.env` and names it as `UML_BOOT_ENTRY`. It runs as PID 1
 under the image's own shell, prepares what the parameters ask for, prints
 `UML_SESSION_READY:<entry>` and replaces itself with the entry. Any failure
-prints `UML_SESSION_ERROR:<reason>` and ends the run.
+prints `UML_SESSION_ERROR:<reason>` and ends the run. An entry other than
+`/bin/sh` and `systemd` is a workload, an executable payload such as a
+benchmark script: PID 1 may not exit, so the session runs it as a child,
+prints `UML_SESSION_EXIT:<status>`, syncs and powers the guest off.
 
 `/etc/uml-session.env` uses the `/boot.env` syntax:
 
 | Key | Values | Default |
 | --- | --- | --- |
-| `UML_SESSION_ENTRY` | `/bin/sh`, `systemd` | `/bin/sh` |
+| `UML_SESSION_ENTRY` | `/bin/sh`, `systemd`, a workload's absolute path | `/bin/sh` |
 | `UML_SESSION_RESOLVER` | `image`, `user-network` | `image` |
 | `UML_SESSION_CONTAINER_STATE` | `image`, `tmpfs` | `image` |
 | `UML_SESSION_RUNTIME_MOUNTS` | `0`, `1` | `0` |
@@ -113,16 +124,12 @@ runner (`tests/integration/gpu/run_gpu_guest.py`) boots with `systemd`, and
 `scripts/boot-overlay-systemd.sh` boots an EROFS image interactively with the
 fixed parameters in [`overlay-systemd/`](overlay-systemd).
 
-## Seeds
-
-[`seeds/unified-kde-setup`](seeds/unified-kde-setup) is the desktop policy
-that the unified KDE image (`rootfs.erofs` and the ext4 derivatives sealed
-from it) does not carry itself: the `uml` user's device groups, getty masks
-on the display manager's VTs, XDG and Trash directories, SDDM autologin, the
-Folder View default, the disabled idle lock and the hidden Lavapipe ICD.
-`scripts/boot_kde_vnc.py` installs it as a payload and runs it from the
-harness test unit, which runs before the display manager. The file holds this
-policy until the image does.
+The KDE desktop policy that `rootfs.erofs` and the ext4 derivatives sealed
+from it do not carry is [`../desktop/setup/kde`](../desktop/setup/kde), which
+the [desktop image derivation](../desktop/README.md) bakes into the KDE image
+it produces. For the images without it, `scripts/boot_kde_vnc.py` installs
+that file as a payload and runs it from the harness test unit, which runs
+before the display manager.
 
 ## Launchers
 
@@ -148,6 +155,11 @@ ramdisk and has none of this.
 `uml-initramfs --output=<new file> [--base=<base>] [--init=<file>]
 [--file=<archive path>=<file>]...` writes the same segment, or with `--base`
 the whole initrd, for a host that boots the guest elsewhere.
+
+Kernarium's Linux runtime embeds the base and the default `init` the same way
+and writes each run's initrd into its temporary directory
+([Kernarium/README.md](../../../Kernarium/README.md#guest-boot)); its
+automation build appends a host-written segment after its own.
 
 ## Accepting a base
 

@@ -23,20 +23,26 @@ start systemd or background desktop services. See current options with:
 python3 tests/perf/run_guest_geekbench.py --help
 ```
 
-Kernarium has an explicit physical-device Geekbench mode using the same direct
-guest shell. A successful run must reach the ready/end markers, guest poweroff,
-and status-zero managed emulator return. Attached Instruments or other sampling
-changes the run into a diagnostic capture.
+On a physical device, `run_ios_device_workload.py` runs the same script, or
+any POSIX shell script with `--script` and the files it reads with `--file`,
+in Kernarium. The script and its files reach the guest as a boot payload,
+which only the automation build of the runtime boots
+([Kernarium/README.md](../../Kernarium/README.md#automation-runs)); the
+harness session runs it over the image's overlay root without systemd or a
+desktop, prints `UML_SESSION_EXIT:<status>` and powers the guest off. Nothing
+is typed, so a script's own markers are safe to key on. A successful run
+reaches its markers, a zero session status, and a status-zero managed
+emulator return:
 
-`KERNARIUM_GUEST_SCRIPT` carries one base64 POSIX shell script over that same
-overlay, which is how a device runs the probe payloads and a Geekbench command
-line the fixed modes do not express. It is mutually exclusive with the other
-console modes. A host driving it must not key completion on a marker inside the
-script: the guest console echoes what it is fed and kernel timestamps interleave
-with that echo, so only the emulator's own return line is unambiguous. Back-to-
-back device runs also need a settle pause, because iOS releases the previous
-guest's wired window asynchronously and a run started too soon fails to wire
-its own.
+```sh
+python3 tests/perf/run_ios_device_workload.py --device DEVICE-IDENTIFIER \
+  --geekbench --geekbench-workloads 101
+```
+
+Attached Instruments or other sampling changes the run into a diagnostic
+capture. Back-to-back device runs need a settle pause, because iOS releases
+the previous guest's wired window asynchronously and a run started too soon
+fails to wire its own.
 
 Profile readers under this directory summarize aggregate stacks, group them by
 workload, and compare two diagnostic captures. They do not decide acceptance
@@ -44,9 +50,10 @@ without a matched benchmark or focused mechanism control.
 
 The physical-iPad UBD discard control compares the shipped 128 MiB request
 limit with a 32 KiB soft limit on the same 512 MiB raw range. It installs an
-already-built Kernarium app, reuses an existing named rootfs file in the app
-container, recreates the disposable overlay for each mode, and requires exact
-discard request and sector counts:
+already-built automation Kernarium app, reuses an existing named rootfs file in
+the app container, and boots [`guest/ubd-discard.sh`](guest/ubd-discard.sh)
+once per mode under a tmpfs writable layer, so the script owns the recreated
+overlay disk; it requires exact discard request and sector counts:
 
 ```sh
 python3 tests/perf/run_ios_device_discard_bench.py \
@@ -404,9 +411,10 @@ runs real programs from the Debian rootfs whose work resembles one: gzip,
 xz and bzip2 decompression, a bind-now dynamic link of a large library,
 Python imports, sort, glibc regular expressions, a C front end, Perl hash
 churn, JVM start-up and Node start-up. It runs inside the guest under any
-console runner (on the iPad through `KERNARIUM_GUEST_SCRIPT`), prepares its
-inputs from rootfs files, runs every workload once to warm the page and
-translation caches, and prints `CORPUS:<name>:<round>:<runs>:<centiseconds>`
+console runner (on the iPad as `run_ios_device_workload.py --script`),
+prepares its inputs from rootfs files, runs every workload once to warm the
+page and translation caches, and prints
+`CORPUS:<name>:<round>:<runs>:<centiseconds>`
 per workload and round. A workload the rootfs cannot run prints
 `CORPUS_SKIP:<name>` once and is left out; the iPad image has no `cc1`, so it
 skips the C front end. `CORPUS_ROUNDS` and `CORPUS_ONLY` select the work.
