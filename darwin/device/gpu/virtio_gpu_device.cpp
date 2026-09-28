@@ -771,7 +771,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
     std::span<const std::uint8_t> request,
     bool cursorQueue)
 {
-    return processInternal(request, cursorQueue, 0, nullptr);
+    return processInternal(request, cursorQueue, 0, nullptr, nullptr);
 }
 
 VirtioGpuDevice::ProcessResult VirtioGpuDevice::processWithDeferredFence(
@@ -780,11 +780,17 @@ VirtioGpuDevice::ProcessResult VirtioGpuDevice::processWithDeferredFence(
     std::uint64_t fenceCookie)
 {
     std::optional<DeferredFence> deferredFence;
+    std::optional<std::uint32_t> destroyedContextId;
     auto response = processInternal(
-        request, cursorQueue, fenceCookie, &deferredFence);
+        request,
+        cursorQueue,
+        fenceCookie,
+        &deferredFence,
+        &destroyedContextId);
     return {
         .response = std::move(response),
         .fence = deferredFence,
+        .destroyedContextId = destroyedContextId,
     };
 }
 
@@ -844,7 +850,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
     std::span<const std::uint8_t> request,
     bool cursorQueue,
     std::uint64_t fenceCookie,
-    std::optional<DeferredFence>* deferredFence)
+    std::optional<DeferredFence>* deferredFence,
+    std::optional<std::uint32_t>* destroyedContextId)
 {
     const auto* header = readStructure<protocol::GpuControlHeader>(request);
     if (header == nullptr) {
@@ -955,6 +962,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         UML_GPU_RENDERER.destroyContext(header->contextId);
         contexts_.erase(header->contextId);
         venusContexts_.erase(header->contextId);
+        if (destroyedContextId != nullptr)
+            *destroyedContextId = header->contextId;
         return success;
     }
 

@@ -510,7 +510,10 @@ retired because another fence already relaxed ordering for the connection.
 Both transitions report one line naming the context, ring, and command.
 The transport keeps serving the connection either way, so a wedged submission
 fails the workload that owns it while the guest stays able to finish its
-remaining work and power off.
+remaining work and power off. This state belongs to the context: destroying a
+context takes its renderer fence slots with it, so the transport completes the
+commands still held behind its fences and drops its rings' escape counts, and
+a later context the guest gives the same ID starts with none.
 
 Venus keeps shareable Zink scanouts in their renderer-optimal Metal
 layout. An unlinked vnode-backed identity descriptor reconnects each guest

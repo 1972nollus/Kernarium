@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "deferred_fences.hpp"
+#include "fence_deadline.hpp"
 #include "gpu_test_support.hpp"
 #include "virtio_gpu_device.hpp"
 #include "virtio_gpu_device_testing.hpp"
@@ -137,6 +139,11 @@ public:
     void destroyContext(std::uint32_t contextId) noexcept override
     {
         contexts.erase(contextId);
+        /* The renderer's fence slots go with the context, as in
+         * VirglRenderer::destroyContext. */
+        std::erase_if(retiredContextFences, [contextId](const auto& entry) {
+            return static_cast<std::uint32_t>(entry.first >> 8U) == contextId;
+        });
         ++destroyContextCount;
     }
 
@@ -2788,6 +2795,186 @@ void malformed3dCommandsUseSpecificErrors()
     require(dependencyCallCount() == before);
 }
 
+/* A context the guest destroys takes its renderer fence slots with it, so a
+ * command still held behind one of its fences can never retire through the
+ * renderer. The transport completes such commands when the device reports the
+ * destroy. Reading the fence instead answers EIO, and the transport would end
+ * the whole GPU connection for a process that merely exited. */
+void aDestroyedContextsHeldFencesComplete()
+{
+    FakeGpuDependencies dependencies;
+    VirtioGpuDevice device {
+        dependencies,
+        [](std::uint64_t, std::span<std::uint8_t>) { return false; },
+        [](std::uint64_t, std::size_t) {
+            return std::span<std::uint8_t> {};
+        }};
+    const auto exiting = createContext(831);
+    const auto surviving = createContext(832);
+    require(responseType(device.process(requestBytes(exiting), false)) ==
+        protocol::GpuResponse::okNoData);
+    require(responseType(device.process(requestBytes(surviving), false)) ==
+        protocol::GpuResponse::okNoData);
+
+    DeferredFences fences;
+    auto now = DeferredFences::Clock::now();
+    const auto deferSubmit = [&](std::uint32_t contextId,
+                                 std::uint64_t requestId) {
+        protocol::GpuSubmit3d submit {};
+        submit.header.type =
+            static_cast<std::uint32_t>(protocol::GpuCommand::submit3d);
+        submit.header.flags = protocol::gpuFlagFence;
+        submit.header.contextId = contextId;
+        submit.header.fenceId = requestId;
+        auto result = device.processWithDeferredFence(
+            requestBytes(submit), false, requestId);
+        require(result.fence.has_value());
+        require(!result.destroyedContextId.has_value());
+        fences.defer(
+            requestId,
+            submit.header,
+            std::move(result.response),
+            *result.fence,
+            now);
+    };
+    deferSubmit(exiting.header.contextId, 41);
+    deferSubmit(surviving.header.contextId, 42);
+    deferSubmit(exiting.header.contextId, 43);
+    const auto status = [&device](const DeferredFence& fence) {
+        return device.contextFenceStatus(fence);
+    };
+    fences.retire(now, status);
+    require(!fences.empty());
+
+    /* The first window expires with every fence busy: ordering is released,
+     * which is what lets the guest's destroy through while fences are held. */
+    now += DeferredFences::maximumFenceWait;
+    fences.retire(now, status);
+    require(fences.orderingRelaxed());
+
+    protocol::GpuControlHeader destroy {};
+    destroy.type =
+        static_cast<std::uint32_t>(protocol::GpuCommand::contextDestroy);
+    destroy.contextId = exiting.header.contextId;
+    const auto destroyed =
+        device.processWithDeferredFence(requestBytes(destroy), false, 0);
+    require(responseType(destroyed.response) ==
+        protocol::GpuResponse::okNoData);
+    require(!destroyed.fence.has_value());
+    require(destroyed.destroyedContextId == exiting.header.contextId);
+    fences.forgetContext(*destroyed.destroyedContextId);
+
+    /* The next tick reads every fence still held. None of them may be the
+     * destroyed context's: its slots are gone and the read answers EIO. */
+    bool connectionKept = true;
+    try {
+        fences.retire(now, status);
+    } catch (const std::runtime_error&) {
+        connectionKept = false;
+    }
+    require(connectionKept);
+
+    /* Both of the destroyed context's commands complete, in order, with the
+     * fenced responses the guest is waiting for. */
+    DeferredFences::Completion completion;
+    for (const std::uint64_t requestId : {41U, 43U}) {
+        require(fences.takeCompletion(completion));
+        require(completion.requestId == requestId);
+        require(completion.requestHeader.contextId ==
+            exiting.header.contextId);
+        const auto reply = responseHeader(completion.response);
+        require(reply.fenceId == requestId);
+        require((reply.flags & protocol::gpuFlagFence) != 0);
+    }
+    require(!fences.takeCompletion(completion));
+
+    /* The surviving context's fence is still the renderer's to retire. */
+    require(!fences.empty());
+    require(fences.orderingRelaxed());
+    dependencies.retireContextFence(surviving.header.contextId, 0, 42);
+    fences.retire(now, status);
+    require(fences.empty());
+    require(!fences.orderingRelaxed());
+    require(fences.takeCompletion(completion));
+    require(completion.requestId == 42);
+    require(!fences.takeCompletion(completion));
+
+    /* A destroy the device refuses reports no context. */
+    const auto refused =
+        device.processWithDeferredFence(requestBytes(destroy), false, 0);
+    require(responseType(refused.response) ==
+        protocol::GpuResponse::errorInvalidContext);
+    require(!refused.destroyedContextId.has_value());
+}
+
+/* A ring that stopped retiring belongs to its context. The guest reuses the
+ * lowest free context ID, so a count that outlived the context would start
+ * the next process's ring as dead and complete its fences before its GPU work
+ * ran. */
+void aReusedContextIdStartsWithALiveRing()
+{
+    DeferredFences fences;
+    auto now = DeferredFences::Clock::now();
+    const DeferredFence fence {.contextId = 5, .ringIndex = 0};
+    const auto busy = [](const DeferredFence&) { return EBUSY; };
+    DeferredFences::Completion completion;
+    protocol::GpuControlHeader header {};
+    header.contextId = fence.contextId;
+
+    std::uint64_t requestId = 0;
+    for (unsigned escape = 0; escape < maximumRingEscapes; ++escape) {
+        fences.defer(++requestId, header, {}, fence, now);
+        now += DeferredFences::maximumFenceWait;
+        fences.retire(now, busy);
+        require(!fences.empty());
+        now += DeferredFences::maximumFenceWait;
+        fences.retire(now, busy);
+        require(fences.empty());
+        require(fences.takeCompletion(completion));
+        require(completion.requestId == requestId);
+    }
+
+    /* The ring is now dead: its next fence completes on the first tick. */
+    fences.defer(++requestId, header, {}, fence, now);
+    fences.retire(now, busy);
+    require(fences.empty());
+    require(fences.takeCompletion(completion));
+
+    /* A new context with the same ID gets a whole window again. */
+    fences.forgetContext(fence.contextId);
+    fences.defer(++requestId, header, {}, fence, now);
+    fences.retire(now, busy);
+    require(!fences.empty());
+    require(!fences.takeCompletion(completion));
+    fences.retire(now + DeferredFences::maximumFenceWait, busy);
+    require(!fences.empty());
+    require(fences.orderingRelaxed());
+}
+
+/* Completions wait for the transport to take them, so they share the
+ * virtqueue's capacity with the commands still held. */
+void heldAndCompletedFencesShareTheQueueCapacity()
+{
+    DeferredFences fences;
+    const auto now = DeferredFences::Clock::now();
+    protocol::GpuControlHeader header {};
+    header.contextId = 7;
+    for (std::uint32_t request = 0;
+         request < protocol::maximumVirtqueueSize;
+         ++request) {
+        require(!fences.full());
+        fences.defer(request, header, {}, {.contextId = 7}, now);
+    }
+    require(fences.full());
+    fences.forgetContext(7);
+    require(fences.empty());
+    require(fences.full());
+    DeferredFences::Completion completion;
+    require(fences.takeCompletion(completion));
+    require(completion.requestId == 0);
+    require(!fences.full());
+}
+
 } // namespace
 
 void runVirtioGpuDeviceTests()
@@ -2799,6 +2986,9 @@ void runVirtioGpuDeviceTests()
     rendererExecutionFailuresPreserveDeviceState();
     softwareScanoutProgressesWhileRendererFenceIsPending();
     deferredFencesUseHostTimelineAndMergedRetirement();
+    aDestroyedContextsHeldFencesComplete();
+    aReusedContextIdStartsWithALiveRing();
+    heldAndCompletedFencesShareTheQueueCapacity();
     resetRetiresEachExternalOwnerExactlyOnce();
     resetIsPristineAndAllocationRetryIsAtomic();
     rendererBackingAttachIsRetryableAfterAllocationFailure();
