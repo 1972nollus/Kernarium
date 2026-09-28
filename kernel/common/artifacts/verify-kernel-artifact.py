@@ -17,7 +17,6 @@ def main() -> None:
     parser.add_argument("--common-root", type=Path, required=True)
     parser.add_argument("--kernel-metadata", type=Path)
     parser.add_argument("--abi-metadata", type=Path, required=True)
-    parser.add_argument("--acceptance", type=Path)
     parser.add_argument("--compatible", action="store_true")
     parser.add_argument("--expected-family")
     parser.add_argument("--expected-slice")
@@ -32,11 +31,10 @@ def main() -> None:
             or args.expected_release_series is None
             or args.expected_page_size is None
             or args.kernel_metadata is not None
-            or args.acceptance is not None
         ):
             parser.error(
                 "--compatible requires expected family, slice, release series, "
-                "and page size without tracked-source or acceptance inputs"
+                "and page size without tracked-source inputs"
             )
         manifest = verify_compatible_artifact(
             args.artifact,
@@ -55,7 +53,6 @@ def main() -> None:
             args.common_root,
             args.kernel_metadata,
             args.abi_metadata,
-            acceptance_path=args.acceptance,
         )
     print(
         f"verified {manifest['family']} {manifest['slice']} "
