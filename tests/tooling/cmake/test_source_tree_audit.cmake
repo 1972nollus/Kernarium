@@ -11,8 +11,9 @@ if(NOT DEFINED TEST_ROOT OR TEST_ROOT STREQUAL "")
 endif()
 
 # Including the audit checks the live tree; the fixtures below check that the
-# implementation-fragment rule rejects an .ipp include outside the composer and
-# that a darwin/ source cannot include a header that exists only under tests/.
+# implementation-fragment rule rejects an .ipp include outside the composer,
+# that a darwin/ source cannot include a header that exists only under tests/,
+# and that a guest runner cannot import a guest launcher.
 include("${AUDIT_SCRIPT}")
 
 file(REMOVE_RECURSE "${TEST_ROOT}")
@@ -48,6 +49,20 @@ uml_audit_test_only_includes("${TEST_ROOT}" BESIDE_SOURCE_VIOLATIONS)
 if(BESIDE_SOURCE_VIOLATIONS)
     message(FATAL_ERROR
         "source audit rejected a hook header beside its source: ${BESIDE_SOURCE_VIOLATIONS}")
+endif()
+
+file(WRITE "${TEST_ROOT}/tests/integration/fixture/run_fixture.py"
+    "import sys\nimport boot_kde_vnc  # noqa: E402\n")
+uml_audit_guest_runner_imports("${TEST_ROOT}" LAUNCHER_IMPORT_VIOLATIONS)
+if(NOT LAUNCHER_IMPORT_VIOLATIONS MATCHES "run_fixture.py: guest suites must share")
+    message(FATAL_ERROR "source audit accepted a guest runner importing a launcher")
+endif()
+file(WRITE "${TEST_ROOT}/tests/integration/fixture/run_fixture.py"
+    "import sys\nimport kde_session  # noqa: E402\nimport bootstrap_fixture\n")
+uml_audit_guest_runner_imports("${TEST_ROOT}" SUPPORT_IMPORT_VIOLATIONS)
+if(SUPPORT_IMPORT_VIOLATIONS)
+    message(FATAL_ERROR
+        "source audit rejected a guest runner's support import: ${SUPPORT_IMPORT_VIOLATIONS}")
 endif()
 
 file(REMOVE_RECURSE "${TEST_ROOT}")

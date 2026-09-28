@@ -81,6 +81,27 @@ function(uml_audit_implementation_fragments ROOT OUT_VIOLATIONS)
     set(${OUT_VIOLATIONS} "${FRAGMENT_VIOLATIONS}" PARENT_SCOPE)
 endfunction()
 
+# Guest domains and performance runners may share process/console mechanics
+# only through tests/integration/support. Importing another suite's entry
+# point, or a guest launcher (scripts/boot_*.py, tools/rootfs/*/boot.py),
+# couples its command-line policy and teardown behavior into an unrelated
+# test.
+function(uml_audit_guest_runner_imports ROOT OUT_VIOLATIONS)
+    set(_violations)
+    file(GLOB_RECURSE _runners LIST_DIRECTORIES false
+        "${ROOT}/tests/integration/*.py"
+        "${ROOT}/tests/perf/*.py")
+    foreach(_path IN LISTS _runners)
+        file(READ "${_path}" _content)
+        if(_content MATCHES
+           "(^|\n)[ \t]*(from|import)[ \t]+((tests\.)?integration\.)?(run_guest_(ltp|smp|jit|network|gpu)|boot(_[A-Za-z0-9_]+)?[ \t\r\n.,(])")
+            list(APPEND _violations
+                "${_path}: guest suites must share helpers through tests/integration/support")
+        endif()
+    endforeach()
+    set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
+endfunction()
+
 set(VIOLATIONS)
 
 file(GLOB ROOT_C_SOURCES LIST_DIRECTORIES false
@@ -272,20 +293,8 @@ foreach(PATH IN LISTS UNIT_SCRIPT_RUNNERS)
         "${PATH}: Python and shell are not allowed in the host unit-test tree")
 endforeach()
 
-# Guest domains and performance runners may share process/console mechanics
-# only through tests/integration/support. Importing another suite's entry point
-# couples its command-line policy and teardown behavior into an unrelated test.
-file(GLOB_RECURSE GUEST_RUNNER_PYTHON LIST_DIRECTORIES false
-    "${SOURCE_ROOT}/tests/integration/*.py"
-    "${SOURCE_ROOT}/tests/perf/*.py")
-foreach(PATH IN LISTS GUEST_RUNNER_PYTHON)
-    file(READ "${PATH}" CONTENT)
-    if(CONTENT MATCHES
-       "(^|\n)[ \t]*(from|import)[ \t]+((tests\.)?integration\.)?run_guest_(ltp|smp|jit|network|gpu)")
-        list(APPEND VIOLATIONS
-            "${PATH}: guest suites must share helpers through tests/integration/support")
-    endif()
-endforeach()
+uml_audit_guest_runner_imports("${SOURCE_ROOT}" GUEST_RUNNER_IMPORT_VIOLATIONS)
+list(APPEND VIOLATIONS ${GUEST_RUNNER_IMPORT_VIOLATIONS})
 
 # Verify that every implementation source is owned by the nearest CMakeLists.txt
 # at or above it, using its complete module-relative path. A same-named source
