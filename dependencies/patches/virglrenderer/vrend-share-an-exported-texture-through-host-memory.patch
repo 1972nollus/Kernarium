@@ -116,7 +116,7 @@ index 46d1eb19e3df38d53eb33496f28bd5e3f9a4302e..f70eda6f737e2fab568d98813ebed518
     /* One drain per command buffer still reports a host GL error and still
      * keeps the driver's error queue bounded; only the name of the command
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index ea75064cd5141274814ad58d15378b645634417d..3bb8f27d1e12ef03f12269315b1288f326e9c666 100644
+index 6d3a3b291c8202715a41a084fab38c83aef4cb01..ad2a4041008357ce72fee7dcad9275954b2ccb9c 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -3123,6 +3123,8 @@ static void vrend_hw_set_zsurf_texture(struct vrend_context *ctx)
@@ -313,7 +313,7 @@ index ea75064cd5141274814ad58d15378b645634417d..3bb8f27d1e12ef03f12269315b1288f3
        *fd = os_dupfd_cloexec(shm_res->host_shm->fd);
        return *fd >= 0 ? VIRGL_RESOURCE_FD_SHM : VIRGL_RESOURCE_FD_INVALID;
     }
-@@ -9276,28 +9441,10 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
+@@ -9306,28 +9471,10 @@ static int vrend_resource_import_shm(struct vrend_resource *gr,
                   offset);
     }
  
@@ -346,7 +346,7 @@ index ea75064cd5141274814ad58d15378b645634417d..3bb8f27d1e12ef03f12269315b1288f3
  
     gr->shm_import_map = map;
     gr->shm_import_size = res->map_size;
-@@ -9353,7 +9500,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
+@@ -9380,7 +9527,11 @@ void vrend_renderer_resource_destroy(struct vrend_resource *res)
     if (res->shm_import_image)
        virgl_egl_host_pointer_image_destroy(egl, res->shm_import_image);
  #endif

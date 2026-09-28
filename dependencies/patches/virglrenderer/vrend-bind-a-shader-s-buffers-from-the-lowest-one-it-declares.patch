@@ -27,6 +27,8 @@ enough for the indices a guest can send: one stage declares at most one block
 per binding point, so the declarations span less than twice the limit. The
 instruction paths keep using the declared index, so the emitted names are
 unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/vrend/vrend_shader.c | 68 ++++++++++++++++++++++++----------------
  src/vrend/vrend_shader.h |  6 ++++

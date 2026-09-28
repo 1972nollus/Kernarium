@@ -23,15 +23,16 @@ Copy the box out of the level, at the level's own row stride, before the
 data is written to the guest.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/vrend/vrend_renderer.c | 31 +++++++++++++++++++++++++++++++
  1 file changed, 31 insertions(+)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 6521db43f3a23ef7d4aaf0a57bcf59a604ac8470..79baed2e594fd5727c0ca16c6b19d974c4964ba1 100644
+index 94c84ffbc301c6c7582f54eac1d0f34cd775b62f..ed4f6b482b9c1e3fb4bf39a8ea6a8d555fc7f8d1 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -10307,6 +10307,37 @@ static int vrend_transfer_send_getteximage(struct vrend_resource *res,
+@@ -10334,6 +10334,37 @@ static int vrend_transfer_send_getteximage(struct vrend_resource *res,
  
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
  

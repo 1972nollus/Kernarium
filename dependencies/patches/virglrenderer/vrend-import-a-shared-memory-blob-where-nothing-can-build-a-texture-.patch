@@ -33,16 +33,23 @@ instead of a CPU pass over the frame. The refresh is a no-op for an aliased
 resource. That copy is read-only: a guest that renders into a blob the driver
 could not alias is not served by it.
 
+The guest chooses the image's width, height, stride and offset, so the import
+is refused unless every row lies inside the exporter's segment, and the
+driver is told the segment's size, so its own import cannot reach past it
+either. The alias and the refresh share that one bound, so a resource that
+imports is never one the refresh then skips.
+
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/vrend/vrend_renderer.c   | 211 +++++++++++++++++++++++++++++++++++
- src/vrend/vrend_renderer.h   |  19 ++++
- src/vrend/vrend_winsys_egl.c |  42 +++++++
- src/vrend/vrend_winsys_egl.h |  10 ++
- 4 files changed, 282 insertions(+)
+ src/vrend/vrend_renderer.c   | 238 +++++++++++++++++++++++++++++++++++
+ src/vrend/vrend_renderer.h   |  19 +++
+ src/vrend/vrend_winsys_egl.c |  51 ++++++++
+ src/vrend/vrend_winsys_egl.h |  11 ++
+ 4 files changed, 319 insertions(+)
 
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..dabd18add048435c81f7181db321c4a0bcbff671 100644
+index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..efb5636e8faba55fbfc9ad20c607b48bfae8ab22 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
 @@ -29,6 +29,8 @@
@@ -74,10 +81,29 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..dabd18add048435c81f7181db321c4a0
              glBindTexture(target, id);
              vrend_apply_sampler_state(sub_ctx, tview->texture,
                                        shader_view->samplers[i],
-@@ -9174,8 +9182,182 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
+@@ -9174,8 +9182,209 @@ vrend_renderer_resource_create(const struct vrend_renderer_resource_create_args
     return &gr->base;
  }
  
++/* Whether an image of width x height texels, blocksize bytes each, whose rows
++ * start stride bytes apart at offset, lies wholly inside a mapping of size
++ * bytes. The alias and the refresh both read every row in full - a driver
++ * imports whole rows - so neither may reach past the mapping, and a stride
++ * that is not a whole number of texels is a layout neither can express. The
++ * guest chooses every one of these values. */
++static bool vrend_shm_import_fits(uint64_t size,
++                                  uint32_t offset,
++                                  uint32_t stride,
++                                  uint32_t width,
++                                  uint32_t height,
++                                  uint32_t blocksize)
++{
++   if (!blocksize || !width || !height || stride % blocksize ||
++       stride < (uint64_t)width * blocksize || offset > size)
++      return false;
++   return (uint64_t)stride * height <= size - offset;
++}
++
 +#ifdef ENABLE_METAL
 +/* EGL names an imported image's layout with a DRM fourcc even where there is
 + * no DRM: it is the one channel-order vocabulary both sides already speak. */
@@ -102,6 +128,7 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..dabd18add048435c81f7181db321c4a0
 + * which is the caller's cue to fall back to the copy. */
 +static void *vrend_resource_alias_shm(struct vrend_resource *gr,
 +                                      void *map,
++                                      uint64_t size,
 +                                      uint32_t format,
 +                                      uint32_t stride,
 +                                      uint32_t offset)
@@ -110,14 +137,11 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..dabd18add048435c81f7181db321c4a0
 +      return NULL;
 +
 +   const uint32_t fourcc = vrend_shm_import_fourcc(format);
-+   const uint32_t blocksize = util_format_get_blocksize(format);
-+   if (!fourcc || !blocksize)
++   if (!fourcc)
 +      return NULL;
 +
-+   return virgl_egl_image_from_host_pointer(egl, map, gr->base.width0,
-+                                            gr->base.height0, fourcc,
-+                                            stride ? stride
-+                                                   : gr->base.width0 * blocksize,
++   return virgl_egl_image_from_host_pointer(egl, map, size, gr->base.width0,
++                                            gr->base.height0, fourcc, stride,
 +                                            offset);
 +}
 +
@@ -135,6 +159,18 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..dabd18add048435c81f7181db321c4a0
 +   if (res->fd < 0 || !res->map_size)
 +      return EINVAL;
 +
++   const uint32_t blocksize = util_format_get_blocksize(format);
++   if (!stride)
++      stride = gr->base.width0 * blocksize;
++   if (!vrend_shm_import_fits(res->map_size, offset, stride, gr->base.width0,
++                              gr->base.height0, blocksize)) {
++      virgl_error("%s: a %ux%u image of format %u at offset %u with stride %u "
++                  "does not fit the exporter's %" PRIu64 " byte segment\n",
++                  __func__, gr->base.width0, gr->base.height0, format, offset,
++                  stride, (uint64_t)res->map_size);
++      return EINVAL;
++   }
++
 +   map = mmap(NULL, res->map_size, PROT_READ, MAP_SHARED, res->fd, 0);
 +   if (map == MAP_FAILED) {
 +      virgl_error("%s: cannot map the exporter's %" PRIu64 " byte segment: %s\n",
@@ -145,7 +181,8 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..dabd18add048435c81f7181db321c4a0
 +   /* Aliasing is the whole point: a texture over the exporter's own pages
 +    * needs no refresh at all, so the presenting X server reads the guest's
 +    * frame where the guest wrote it. */
-+   void *image = vrend_resource_alias_shm(gr, map, format, stride, offset);
++   void *image = vrend_resource_alias_shm(gr, map, res->map_size, format,
++                                          stride, offset);
 +
 +   ret = vrend_resource_alloc_texture(gr, format, image);
 +   if (ret) {
@@ -216,18 +253,15 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..dabd18add048435c81f7181db321c4a0
 +   const uint32_t blocksize = util_format_get_blocksize(res->shm_import_format);
 +   const uint32_t width = res->base.width0;
 +   const uint32_t height = res->base.height0;
-+   const uint32_t stride = res->shm_import_stride ? res->shm_import_stride
-+                                                  : width * blocksize;
-+   const uint64_t needed = (uint64_t)res->shm_import_offset +
-+                           (uint64_t)stride * height;
++   const uint32_t stride = res->shm_import_stride;
 +
-+   if (!blocksize || needed > res->shm_import_size)
++   if (!vrend_shm_import_fits(res->shm_import_size, res->shm_import_offset,
++                              stride, width, height, blocksize))
 +      return;
 +
 +   glBindTexture(res->target, res->gl_id);
 +   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-+   if (stride % blocksize == 0)
-+      glPixelStorei(GL_UNPACK_ROW_LENGTH, stride / blocksize);
++   glPixelStorei(GL_UNPACK_ROW_LENGTH, stride / blocksize);
 +   if (res->shm_import_pbo) {
 +      glBindBuffer(GL_PIXEL_UNPACK_BUFFER, res->shm_import_pbo);
 +      glTexSubImage2D(res->target, 0, 0, 0, width, height,
@@ -257,7 +291,7 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..dabd18add048435c81f7181db321c4a0
     if (has_bit(res->storage_bits, VREND_STORAGE_GL_TEXTURE)) {
        glDeleteTextures(1, &res->gl_id);
     } else if (has_bit(res->storage_bits, VREND_STORAGE_GL_BUFFER)) {
-@@ -11470,6 +11652,9 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
+@@ -11470,6 +11679,9 @@ static void vrend_renderer_blit_int(struct vrend_context *ctx,
        .swizzle =  {0, 1, 2, 3}
     };
  
@@ -267,7 +301,7 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..dabd18add048435c81f7181db321c4a0
     /* We create the texture views in this function instead of doing it in
      * vrend_renderer_prepare_blit_extra_info because we also delete them here */
     if ((src_res->base.format != info->src.format) && has_feature(feat_texture_view) &&
-@@ -13723,8 +13908,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -13723,8 +13935,15 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
        };
        struct vrend_resource *gr;
  
@@ -283,7 +317,7 @@ index 9e24fc51e777a6db41e66611e8d34dd31d70ef0c..dabd18add048435c81f7181db321c4a0
  
        gr = vrend_resource_create(&create_args);
        if (!gr)
-@@ -13773,6 +13965,25 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
+@@ -13773,6 +13992,25 @@ vrend_renderer_pipe_resource_set_type(struct vrend_context *ctx,
              return ret;
           }
  
@@ -345,7 +379,7 @@ index 8bac5d847fabb363291c94e03e0e6250af2158ab..0290460cb0d212ae8d6ab55d2948b600
  #define VIRGL_TEXTURE_CAN_TEXTURE_STORAGE (1 << 1)
  #define VIRGL_TEXTURE_CAN_READBACK        (1 << 2)
 diff --git a/src/vrend/vrend_winsys_egl.c b/src/vrend/vrend_winsys_egl.c
-index c15f6b61407c9137221e6efe03be85b036f7e14c..527b12050d11970bf2b926b4831fed86a5733546 100644
+index c15f6b61407c9137221e6efe03be85b036f7e14c..06ecba50f1b24f40c30513b7cc283de60c8b647b 100644
 --- a/src/vrend/vrend_winsys_egl.c
 +++ b/src/vrend/vrend_winsys_egl.c
 @@ -69,6 +69,7 @@
@@ -364,7 +398,7 @@ index c15f6b61407c9137221e6efe03be85b036f7e14c..527b12050d11970bf2b926b4831fed86
  };
  
  struct egl_funcs {
-@@ -922,6 +924,46 @@ void *virgl_egl_aux_plane_image_from_gbm_bo(struct virgl_egl *egl, struct gbm_bo
+@@ -922,6 +924,55 @@ void *virgl_egl_aux_plane_image_from_gbm_bo(struct virgl_egl *egl, struct gbm_bo
  }
  #endif /* ENABLE_GBM_ALLOCATION */
  
@@ -372,6 +406,9 @@ index c15f6b61407c9137221e6efe03be85b036f7e14c..527b12050d11970bf2b926b4831fed86
 +#define EGL_HOST_POINTER_MESA        0x3293
 +#define EGL_HOST_POINTER_PITCH_MESA  0x3294
 +#define EGL_HOST_POINTER_OFFSET_MESA 0x3295
++#endif
++#ifndef EGL_HOST_POINTER_SIZE_MESA
++#define EGL_HOST_POINTER_SIZE_MESA   0x3296
 +#endif
 +
 +bool virgl_egl_supports_host_pointer_image(struct virgl_egl *egl)
@@ -381,18 +418,24 @@ index c15f6b61407c9137221e6efe03be85b036f7e14c..527b12050d11970bf2b926b4831fed86
 +
 +void *virgl_egl_image_from_host_pointer(struct virgl_egl *egl,
 +                                        void *pointer,
++                                        uint64_t size,
 +                                        uint32_t width,
 +                                        uint32_t height,
 +                                        uint32_t drm_format,
 +                                        uint32_t stride,
 +                                        uint32_t offset)
 +{
++   /* The size bounds what the driver may import from the pointer. An EGLint
++    * cannot carry more than INT32_MAX, and naming less memory than the caller
++    * owns only makes the driver refuse more. */
 +   const EGLint attrs[] = {
 +      EGL_WIDTH, (EGLint)width,
 +      EGL_HEIGHT, (EGLint)height,
 +      EGL_LINUX_DRM_FOURCC_EXT, (EGLint)drm_format,
 +      EGL_HOST_POINTER_PITCH_MESA, (EGLint)stride,
 +      EGL_HOST_POINTER_OFFSET_MESA, (EGLint)offset,
++      EGL_HOST_POINTER_SIZE_MESA,
++      size > (uint64_t)INT32_MAX ? INT32_MAX : (EGLint)size,
 +      EGL_NONE
 +   };
 +
@@ -412,16 +455,17 @@ index c15f6b61407c9137221e6efe03be85b036f7e14c..527b12050d11970bf2b926b4831fed86
  {
     return (egl && has_bit(egl->extension_bits, EGL_KHR_FENCE_SYNC_ANDROID));
 diff --git a/src/vrend/vrend_winsys_egl.h b/src/vrend/vrend_winsys_egl.h
-index 129d16d593156554a0c76393aaec3b692d8b409f..7023bb372e774f5bf98210239e50e7a2391d33b7 100644
+index 129d16d593156554a0c76393aaec3b692d8b409f..907ccee87bd5c156346c534e555712d83dd70def 100644
 --- a/src/vrend/vrend_winsys_egl.h
 +++ b/src/vrend/vrend_winsys_egl.h
-@@ -86,6 +86,16 @@ void *virgl_egl_image_from_gbm_bo(struct virgl_egl *egl, struct gbm_bo *bo);
+@@ -86,6 +86,17 @@ void *virgl_egl_image_from_gbm_bo(struct virgl_egl *egl, struct gbm_bo *bo);
  void *virgl_egl_aux_plane_image_from_gbm_bo(struct virgl_egl *egl, struct gbm_bo *bo, int plane);
  #endif
  
 +bool virgl_egl_supports_host_pointer_image(struct virgl_egl *egl);
 +void *virgl_egl_image_from_host_pointer(struct virgl_egl *egl,
 +                                        void *pointer,
++                                        uint64_t size,
 +                                        uint32_t width,
 +                                        uint32_t height,
 +                                        uint32_t drm_format,

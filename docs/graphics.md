@@ -76,7 +76,11 @@ a shared-memory file that only names the heap, so vrend reads the pixels where
 they are: the rows of a linear image or a buffer from the heap's shared
 storage, which it aliases like any shared-memory segment, and an optimal image
 through the Metal texture its exporter published for scanout, which it reads
-into pages of its own before each read.
+into pages of its own before each read. The guest names the layout, so every
+import is bounded by what backs it: each row the image spans, at its stride
+and offset, has to lie inside the segment or the heap, the size is passed to
+the driver that aliases it, and an optimal texture has to have the guest
+format's texel size. An import that does not fit is refused.
 
 The macOS native display turns the emulator into an AppKit application, which
 makes the whole process eligible for App Nap whenever its window is occluded or

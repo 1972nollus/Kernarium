@@ -4,6 +4,7 @@ Date: Sat, 5 Sep 2026 17:23:49 +0900
 Subject: [PATCH] venus: transport native device-address commands and
  maintenance
 
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  meson.build                            |  77 +++++++--
  meson_options.txt                      |   7 +
