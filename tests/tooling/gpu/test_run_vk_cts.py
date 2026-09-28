@@ -687,6 +687,94 @@ class VulkanCtsToolingTests(unittest.TestCase):
             "DE_CPU_ARM_64",
         )
 
+    def test_an_explicit_case_list_is_a_guest_file_not_an_argument(self) -> None:
+        # A 7,891-case list once overflowed the emulator's argument space
+        # (E2BIG) before the guest booted, because the list travelled inside
+        # the launcher on the command line.
+        cases = tuple(
+            f"dEQP-VK.api.info.format_properties.synthetic_{index:05d}"
+            for index in range(8000)
+        )
+        selection = cts.ReceiptSelection(
+            "exact-family", cases, cases, cts.Fraction(0, 1), False
+        )
+        options = cts.parse_arguments(("--qualification", "--dry-run"))
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = Path(directory) / "run"
+            command, guest_files = cts.plan_receipt_harness_command(
+                options, self.receipt, selection, artifacts
+            )
+            self.assertEqual(
+                command,
+                cts.build_receipt_harness_command(
+                    options, self.receipt, selection, artifacts
+                ),
+            )
+            self.assertLess(sum(len(argument) + 1 for argument in command), 8192)
+            self.assertFalse(artifacts.exists(), "building the command wrote files")
+            staged = {
+                argument.split("=", 2)[1]: Path(argument.split("=", 2)[2])
+                for argument in command
+                if argument.startswith("--guest-file=")
+            }
+            self.assertEqual(
+                set(staged), {cts.GUEST_CASE_LIST_PATH, cts.CTS_SERVICE_PATH}
+            )
+            self.assertEqual(
+                cts.prepare_receipt_harness_command(
+                    options, self.receipt, selection, artifacts
+                ),
+                command,
+            )
+            payload = "".join(f"{case}\n" for case in cases).encode()
+            case_list = staged[cts.GUEST_CASE_LIST_PATH]
+            self.assertEqual(case_list.read_bytes(), payload)
+            self.assertEqual(case_list.stat().st_mode & 0o777, 0o644)
+            launcher = staged[cts.CTS_SERVICE_PATH]
+            self.assertEqual(launcher.stat().st_mode & 0o777, 0o755)
+            text = launcher.read_text()
+            self.assertIn(
+                f"install -m 0644 -o uml -g uml {cts.GUEST_CASE_LIST_PATH}", text
+            )
+            self.assertIn(hashlib.sha256(payload).hexdigest(), text)
+            self.assertNotIn(cases[0], text)
+            self.assertNotIn("base64 -d", text)
+            self.assertNotIn("base64 -d", " ".join(command))
+
+    def test_an_installed_case_list_must_match_its_digest(self) -> None:
+        selection = cts.ReceiptSelection(
+            "exact-family", ("dEQP-VK.a",), ("dEQP-VK.a",), cts.Fraction(0, 1),
+            False,
+        )
+        setup = cts.selected_list_setup(selection, "/installed/list")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bin").mkdir()
+            # install(1) here only needs to copy; ownership belongs to the guest.
+            (root / "bin" / "install").write_text(
+                '#!/bin/sh\nwhile [ "$#" -gt 2 ]; do shift; done\ncp "$1" "$2"\n'
+            )
+            (root / "bin" / "install").chmod(0o755)
+            script = setup.replace("/installed/list", str(root / "list"))
+            for content, status in ((b"dEQP-VK.a\n", 0), (b"dEQP-VK.b\n", 1)):
+                (root / "list").write_bytes(content)
+                result = subprocess.run(
+                    ["sh", "-eu", "-c", f'selected={root}/selected\n{script}'],
+                    env={"PATH": f"{root}/bin:/usr/bin:/bin:/usr/sbin:/sbin"},
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, status, result.stdout)
+        # Launchers generated for Kernarium keep the list embedded.
+        embedded = cts.selected_list_setup(selection, None)
+        self.assertIn("base64 -d", embedded)
+        self.assertEqual(
+            base64.b64decode(shlex.split(embedded.split("|")[0])[2]),
+            b"dEQP-VK.a\n",
+        )
+
     def test_cli_selects_only_the_checked_derivative_for_qualification(self) -> None:
         options = cts.parse_arguments(("--qualification", "--dry-run"))
         self.assertEqual(options.rootfs, cts.DEFAULT_RECEIPT_ROOTFS)

@@ -5,6 +5,7 @@ from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
+import contextlib
 import io
 import signal
 from pathlib import Path
@@ -23,38 +24,99 @@ sys.path.insert(0, str(GPU_INTEGRATION_ROOT))
 import run_gpu_guest  # noqa: E402
 
 
+def boot_file_pairs(
+    rootfs_type: str = "erofs",
+    root_device: str = "/dev/ubda",
+    caller_files=(),
+) -> list[tuple[str, Path]]:
+    files = run_gpu_guest.runner_guest_files(
+        run_gpu_guest.make_test_script(
+            ["true"], auto_poweroff=True, lower_filesystem_type=rootfs_type
+        ),
+        root_device,
+        rootfs_type,
+    )
+    return run_gpu_guest.guest_file_arguments(
+        Path("/artifacts/boot-files"), files, caller_files
+    )
+
+
 class GpuGuestSafetyTests(unittest.TestCase):
-    def test_command_uses_the_raw_erofs_root(self) -> None:
+    def test_command_boots_the_erofs_image_through_the_ramdisk(self) -> None:
         command = run_gpu_guest.build_command(
             Path("/bin/echo"),
             Path("/tmp/rootfs.erofs"),
-            "/dev/ubda",
             "8G",
             "multi-user.target",
             ["quiet"],
+            boot_file_pairs(),
         )
         resolved_image = Path("/tmp/rootfs.erofs").resolve()
         self.assertIn(f"ubd0c={resolved_image}", command)
-        self.assertIn("root=/dev/ubda", command)
-        self.assertIn("rootfstype=erofs", command)
+        self.assertNotIn(f"ubd0r={resolved_image}", command)
         self.assertIn("console=tty0", command)
         self.assertIn("console=ttyS0", command)
-        self.assertNotIn(f"ubd0r={resolved_image}", command)
+        self.assertIn("systemd.unit=multi-user.target", command)
+        self.assertIn(f"systemd.wants={run_gpu_guest.TEST_UNIT}", command)
+        # The per-run /init owns the root, the init and the network.
+        for argument in command:
+            self.assertNotIn(
+                argument.split("=", 1)[0],
+                ("root", "rootfstype", "init", "ip"),
+            )
+        guest_files = [
+            argument.removeprefix("--guest-file=").split("=", 1)
+            for argument in command
+            if argument.startswith("--guest-file=")
+        ]
+        self.assertEqual(
+            {guest for guest, _ in guest_files},
+            {
+                "/boot.env",
+                "/payload/usr/local/libexec/uml-session",
+                "/payload/etc/uml-session.env",
+                "/payload/usr/local/libexec/uml-gpu-overlay-test",
+                "/payload/etc/systemd/system/uml-gpu-overlay-test.service",
+            },
+        )
+        self.assertIn(
+            ["/payload/usr/local/libexec/uml-session",
+             str(run_gpu_guest.SESSION_SCRIPT)],
+            guest_files,
+        )
+        with self.assertRaisesRegex(run_gpu_guest.SafetyError, "no /boot.env"):
+            run_gpu_guest.build_command(
+                Path("/bin/echo"), Path("/tmp/rootfs.erofs"), "8G",
+                "multi-user.target", [], [],
+            )
 
     def test_ext4_lower_is_attached_block_read_only(self) -> None:
         command = run_gpu_guest.build_command(
             Path("/bin/echo"),
             Path("/tmp/rootfs.ext4"),
-            "/dev/ubda",
             "8G",
             "multi-user.target",
             ["quiet"],
+            boot_file_pairs("ext4", "/dev/ubda1"),
             rootfs_type="ext4",
         )
         resolved_image = Path("/tmp/rootfs.ext4").resolve()
         self.assertIn(f"ubd0cr={resolved_image}", command)
-        self.assertIn("rootfstype=ext4", command)
         self.assertNotIn(f"ubd0c={resolved_image}", command)
+        self.assertEqual(
+            run_gpu_guest.boot_parameters("/dev/ubda1", "ext4").splitlines(),
+            [
+                "UML_BOOT_ROOT=/dev/ubda1",
+                "UML_BOOT_ROOT_TYPE=ext4",
+                "UML_BOOT_UPPER=tmpfs",
+                "UML_BOOT_ENTRY=/usr/local/libexec/uml-session",
+            ],
+        )
+        for device in ("ubda", "/dev/ubda 1", ""):
+            with self.subTest(device=device), self.assertRaises(
+                run_gpu_guest.SafetyError
+            ):
+                run_gpu_guest.boot_parameters(device, "ext4")
 
         script = run_gpu_guest.make_test_script(
             ["true"],
@@ -66,17 +128,15 @@ class GpuGuestSafetyTests(unittest.TestCase):
             'findmnt -n -o FSTYPE -T /.uml-lower)" ext4', script
         )
         self.assertIn('blockdev --getro /dev/ubda)" 1', script)
-        bootstrap = run_gpu_guest.make_bootstrap(script, "ext4").decode()
-        self.assertIn("lower=ext4, upper=tmpfs", bootstrap)
 
     def test_virtio_console_socket_is_forwarded_to_the_emulator(self) -> None:
         command = run_gpu_guest.build_command(
             Path("/bin/echo"),
             Path("/tmp/rootfs.erofs"),
-            "/dev/ubda",
             "8G",
             "multi-user.target",
             [],
+            boot_file_pairs(),
             virtio_console_socket=Path("/tmp/uml-hvc0.sock"),
         )
         self.assertIn(
@@ -115,10 +175,10 @@ class GpuGuestSafetyTests(unittest.TestCase):
             run_gpu_guest.build_command(
                 Path("/bin/echo"),
                 Path("/tmp/rootfs.unknown"),
-                "/dev/ubda",
                 "8G",
                 "multi-user.target",
                 [],
+                boot_file_pairs(),
                 rootfs_type="unknown",
             )
 
@@ -130,6 +190,9 @@ class GpuGuestSafetyTests(unittest.TestCase):
             "root=/dev/ubdb",
             "rootfstype=ext4",
             "init=/sbin/init",
+            "initrd=/tmp/other.img",
+            "--guest-file=/boot.env=/tmp/boot.env",
+            "--guest-init=/tmp/init",
             "mem=2G",
             "console=ttyS0",
             "systemd.unit=graphical.target",
@@ -141,57 +204,236 @@ class GpuGuestSafetyTests(unittest.TestCase):
                 with self.assertRaises(run_gpu_guest.SafetyError):
                     run_gpu_guest.validate_extra_arguments([argument])
 
-    def test_bootstrap_installs_overlay_guard_before_systemd(self) -> None:
-        bootstrap = run_gpu_guest.make_bootstrap(
-            run_gpu_guest.make_test_script(["true"], auto_poweroff=True)
-        ).decode()
-        docker_tmpfs = (
-            "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker"
+    def test_boot_files_hand_pid1_to_systemd_through_the_session(self) -> None:
+        script = run_gpu_guest.make_test_script(["true"], auto_poweroff=True)
+        files = run_gpu_guest.runner_guest_files(script, "/dev/ubda", "erofs")
+        self.assertEqual(
+            files["/boot.env"][0].decode().splitlines(),
+            [
+                "UML_BOOT_ROOT=/dev/ubda",
+                "UML_BOOT_ROOT_TYPE=erofs",
+                "UML_BOOT_UPPER=tmpfs",
+                "UML_BOOT_ENTRY=/usr/local/libexec/uml-session",
+            ],
         )
-        containerd_tmpfs = (
-            "mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/containerd"
+        self.assertEqual(
+            files["/etc/uml-session.env"][0].decode().splitlines(),
+            [
+                "UML_SESSION_ENTRY=systemd",
+                "UML_SESSION_RESOLVER=user-network",
+                "UML_SESSION_CONTAINER_STATE=tmpfs",
+            ],
         )
-        self.assertIn("mount -t overlay overlay", bootstrap)
-        self.assertIn("pivot_root . .uml-lower", bootstrap)
-        self.assertIn("mkdir -p /var/lib/docker", bootstrap)
-        self.assertIn(docker_tmpfs, bootstrap)
-        self.assertIn("mkdir -p /var/lib/containerd", bootstrap)
-        self.assertIn(containerd_tmpfs, bootstrap)
+        self.assertEqual(
+            files[run_gpu_guest.TEST_SCRIPT_GUEST_PATH], (script.encode(), 0o755)
+        )
+        unit = files[run_gpu_guest.TEST_UNIT_GUEST_PATH][0].decode()
         self.assertIn(
-            'findmnt -n -o FSTYPE -T /var/lib/docker)" tmpfs',
-            run_gpu_guest.make_test_script(["true"], auto_poweroff=True),
+            f"ExecStart={run_gpu_guest.TEST_SCRIPT_GUEST_PATH}", unit
         )
-        self.assertIn(
-            'findmnt -n -o FSTYPE -T /var/lib/containerd)" tmpfs',
-            run_gpu_guest.make_test_script(["true"], auto_poweroff=True),
+        self.assertIn("Before=display-manager.service", unit)
+        self.assertNotIn(run_gpu_guest.DOCKER_ARCHIVE_GUEST_PATH, files)
+        # The session keeps container state out of the upper layer and the
+        # test checks it; the image keeps its own accounts and gettys.
+        session = run_gpu_guest.SESSION_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("/var/lib/docker /var/lib/containerd", session)
+        for directory in ("/var/lib/docker", "/var/lib/containerd"):
+            self.assertIn(
+                f'findmnt -n -o FSTYPE -T {directory})" tmpfs', script
+            )
+        self.assertIn('findmnt -n -o FSTYPE -T /.uml-state)" tmpfs', script)
+        for text in (script, unit):
+            self.assertNotIn("getty@tty0.service", text)
+            self.assertNotIn("useradd", text)
+
+    def test_boot_files_are_written_where_the_command_names_them(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = b"\x7fELFtest-payload"
+            files = run_gpu_guest.runner_guest_files(
+                "#!/bin/sh\n", "/dev/ubda", "erofs", payload
+            )
+            caller = root / "caller-file"
+            caller.write_text("caller", encoding="utf-8")
+            pairs = run_gpu_guest.guest_file_arguments(
+                root / "boot-files", files,
+                [("/usr/local/libexec/caller", caller)],
+            )
+            self.assertFalse((root / "boot-files").exists())
+            run_gpu_guest.write_guest_files(root / "boot-files", files)
+            by_archive = dict(pairs)
+            self.assertEqual(
+                by_archive["/payload/usr/local/libexec/caller"], caller
+            )
+            for guest_path, (contents, mode) in files.items():
+                archive = (
+                    guest_path if guest_path == "/boot.env"
+                    else "/payload" + guest_path
+                )
+                host = by_archive[archive]
+                self.assertEqual(host.read_bytes(), contents)
+                self.assertEqual(host.stat().st_mode & 0o777, mode)
+            with self.assertRaisesRegex(run_gpu_guest.SafetyError, "twice"):
+                run_gpu_guest.guest_file_arguments(
+                    root, files,
+                    [("/usr/local/a", caller), ("/usr/local/a", caller)],
+                )
+
+    def test_caller_files_are_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            host = Path(directory) / "launcher"
+            host.write_text("#!/bin/sh\n", encoding="utf-8")
+            self.assertEqual(
+                run_gpu_guest.parse_guest_file(
+                    f"/usr/local/libexec/launcher={host}"
+                ),
+                ("/usr/local/libexec/launcher", host.resolve()),
+            )
+            for value in (
+                f"/tmp/launcher={host}",
+                f"/run/launcher={host}",
+                f"relative={host}",
+                f"/usr/../launcher={host}",
+                "/usr/local/libexec/launcher",
+                f"/usr/local/libexec/launcher={directory}",
+                f"{run_gpu_guest.TEST_SCRIPT_GUEST_PATH}={host}",
+                f"/etc/uml-session.env={host}",
+            ):
+                with self.subTest(value=value), self.assertRaises(
+                    run_gpu_guest.SafetyError
+                ):
+                    run_gpu_guest.parse_guest_file(value)
+
+    def test_dry_run_prints_the_command_and_writes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rootfs = root / "rootfs.erofs"
+            rootfs.write_bytes(b"image")
+            launcher = root / "launcher"
+            launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = run_gpu_guest.main([
+                    "--emulator", "/bin/echo", "--rootfs", str(rootfs),
+                    "--artifact-root", str(root / "artifacts"),
+                    "--guest-file", f"/usr/local/libexec/launcher={launcher}",
+                    "--dry-run",
+                ])
+            self.assertEqual(status, 0)
+            self.assertIn(
+                f"--guest-file=/payload/usr/local/libexec/launcher={launcher.resolve()}",
+                output.getvalue(),
+            )
+            self.assertFalse((root / "artifacts").exists())
+
+    def test_staged_files_are_named_by_content_and_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / "staged"
+            staged = run_gpu_guest.StagedGuestFiles(root)
+            staged.add("/usr/local/libexec/tool", "#!/bin/sh\n", 0o755)
+            staged.add("/usr/local/share/tool/data", b"data")
+            self.assertFalse(root.exists(), "adding a file wrote it")
+            again = run_gpu_guest.StagedGuestFiles(root)
+            again.add("/usr/local/libexec/tool", "#!/bin/sh\n", 0o755)
+            again.add("/usr/local/share/tool/data", b"other")
+            self.assertEqual(staged.arguments[0], again.arguments[0])
+            self.assertNotEqual(staged.arguments[1], again.arguments[1])
+            mode_only = run_gpu_guest.StagedGuestFiles(root)
+            mode_only.add("/usr/local/libexec/tool", "#!/bin/sh\n", 0o700)
+            self.assertNotEqual(staged.arguments[0], mode_only.arguments[0])
+            staged.write()
+            for argument in staged.arguments:
+                guest, host = run_gpu_guest.parse_guest_file(
+                    argument.removeprefix("--guest-file=")
+                )
+                contents, mode = staged.files[host]
+                self.assertEqual(host.read_bytes(), contents)
+                self.assertEqual(host.stat().st_mode & 0o777, mode)
+            self.assertEqual(
+                sorted(path.name for path in root.iterdir()),
+                sorted(path.name for path in staged.files),
+            )
+            for guest_path in (
+                "/tmp/tool",
+                "relative/tool",
+                run_gpu_guest.TEST_SCRIPT_GUEST_PATH,
+                run_gpu_guest.SESSION_GUEST_PATH,
+            ):
+                with self.subTest(guest_path=guest_path), self.assertRaises(
+                    run_gpu_guest.SafetyError
+                ):
+                    staged.add(guest_path, b"")
+
+    def test_image_init_boots_the_image_with_no_session(self) -> None:
+        files = run_gpu_guest.runner_guest_files(None, "/dev/ubda1", "ext4")
+        self.assertEqual(list(files), [run_gpu_guest.BOOT_PARAMETERS_GUEST_PATH])
+        self.assertEqual(
+            files[run_gpu_guest.BOOT_PARAMETERS_GUEST_PATH][0]
+            .decode()
+            .splitlines(),
+            [
+                "UML_BOOT_ROOT=/dev/ubda1",
+                "UML_BOOT_ROOT_TYPE=ext4",
+                "UML_BOOT_UPPER=tmpfs",
+                "UML_BOOT_ENTRY=/sbin/init",
+            ],
         )
-        self.assertNotIn("getty@tty0.service", bootstrap)
-        self.assertNotIn("agetty --autologin", bootstrap)
-        self.assertNotIn("useradd", bootstrap)
-        self.assertNotIn("groupadd", bootstrap)
-        self.assertIn("uml-gpu-overlay-test.service", bootstrap)
-        self.assertIn("exec /lib/systemd/systemd", bootstrap)
-        self.assertLess(
-            bootstrap.index("pivot_root . .uml-lower"),
-            bootstrap.index(docker_tmpfs),
+        pairs = run_gpu_guest.guest_file_arguments(Path("/boot-files"), files)
+        self.assertEqual(pairs, [("/boot.env", Path("/boot-files/boot.env"))])
+        command = run_gpu_guest.build_command(
+            Path("/bin/echo"),
+            Path("/tmp/rootfs.ext4"),
+            "8G",
+            "graphical.target",
+            [],
+            pairs,
+            rootfs_type="ext4",
         )
-        self.assertLess(
-            bootstrap.index(docker_tmpfs),
-            bootstrap.index(containerd_tmpfs),
+        self.assertFalse(
+            any(argument.startswith("systemd.wants=") for argument in command)
         )
-        self.assertLess(
-            bootstrap.index(containerd_tmpfs),
-            bootstrap.index("exec /lib/systemd/systemd"),
-        )
+        with self.assertRaises(run_gpu_guest.SafetyError):
+            run_gpu_guest.runner_guest_files(None, "/dev/ubda", "erofs", b"x")
+
+    def test_image_init_runs_no_checks_and_never_powers_off(self) -> None:
+        for extra in (
+            ["--no-auto-poweroff", "--command", "true"],
+            [],
+        ):
+            with self.subTest(extra=extra), contextlib.redirect_stderr(
+                io.StringIO()
+            ), self.assertRaises(SystemExit):
+                run_gpu_guest.parse_arguments(["--image-init", *extra])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rootfs = root / "rootfs.ext4"
+            rootfs.write_bytes(b"image")
+            rootfs.chmod(0o444)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = run_gpu_guest.main([
+                    "--emulator", "/bin/echo", "--rootfs", str(rootfs),
+                    "--rootfs-type", "ext4", "--root-device", "/dev/ubda1",
+                    "--artifact-root", str(root / "artifacts"),
+                    "--image-init", "--no-auto-poweroff", "--dry-run",
+                ])
+            self.assertEqual(status, 0)
+            self.assertNotIn("uml-session", output.getvalue())
+            self.assertNotIn(run_gpu_guest.TEST_UNIT, output.getvalue())
 
     def test_offline_docker_smoke_is_local_and_fail_closed(self) -> None:
         payload = b"\x7fELFtest-payload"
         script = run_gpu_guest.make_test_script(
             ["true"],
             auto_poweroff=True,
-            docker_hello_world=payload,
+            docker_hello_world=True,
         )
         self.assertIn("docker import", script)
+        self.assertIn(
+            f"docker_hello_world_archive='{run_gpu_guest.DOCKER_ARCHIVE_GUEST_PATH}'",
+            script,
+        )
+        self.assertNotIn("base64", script)
         self.assertIn("docker image inspect", script)
         self.assertIn("--pull=never --network none", script)
         self.assertIn("grep -Fxq 'Hello from Docker!'", script)
@@ -214,9 +456,16 @@ class GpuGuestSafetyTests(unittest.TestCase):
         run_block = script[run_start:grep_start]
         self.assertNotIn("|", run_block)
         self.assertIn('> "$docker_hello_world_output" 2>&1', run_block)
-        self.assertLessEqual(max(map(len, script.splitlines())), 600)
+        subprocess.run(["/bin/sh", "-n"], input=script, text=True, check=True)
 
-        archive_bytes = run_gpu_guest.make_docker_rootfs_archive(payload)
+        files = run_gpu_guest.runner_guest_files(
+            script, "/dev/ubda", "erofs", payload
+        )
+        archive_bytes, mode = files[run_gpu_guest.DOCKER_ARCHIVE_GUEST_PATH]
+        self.assertEqual(mode, 0o644)
+        self.assertEqual(
+            archive_bytes, run_gpu_guest.make_docker_rootfs_archive(payload)
+        )
         with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
             member = archive.getmember("hello")
             self.assertEqual(member.mode, 0o755)
@@ -259,10 +508,6 @@ class GpuGuestSafetyTests(unittest.TestCase):
         self.assertNotIn("docker pull", unconditional)
         self.assertIn("docker run --rm hello-world", opt_in)
 
-    def test_bootstrap_chunks_large_test_scripts_for_the_init_tty(self) -> None:
-        bootstrap = run_gpu_guest.make_bootstrap("x" * 16_384).decode()
-        self.assertLessEqual(max(map(len, bootstrap.splitlines())), 600)
-
     def test_test_script_stops_at_the_first_failed_command(self) -> None:
         script = run_gpu_guest.make_test_script(
             ["false", "true"], auto_poweroff=True
@@ -284,8 +529,6 @@ class GpuGuestSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             fake_emulator = (
                 "import sys;"
-                "sys.stdout.write('\\n# ');sys.stdout.flush();"
-                "sys.stdin.buffer.readline();"
                 f"sys.stdout.write({run_gpu_guest.PASS_MARKER!r}+'\\n');"
                 "sys.stdout.flush();"
                 "raise SystemExit(9)"
@@ -295,18 +538,10 @@ class GpuGuestSafetyTests(unittest.TestCase):
             ):
                 run_gpu_guest.run_guest(
                     [sys.executable, "-c", fake_emulator],
-                    b"BOOT",
                     Path(directory) / "console.log",
                     timeout=5,
                     expect_poweroff=False,
                 )
-
-    def test_console_write_budget_preserves_backlog(self) -> None:
-        stream = io.BytesIO()
-        pending = bytearray(b"0123456789")
-        run_gpu_guest.write_pending(stream, pending, maximum_bytes=4)
-        self.assertEqual(stream.getvalue(), b"0123")
-        self.assertEqual(pending, b"456789")
 
     def test_repeated_interrupt_cannot_skip_emulator_kill_fallback(self) -> None:
         observed_handlers: list[tuple[object, object]] = []
@@ -397,15 +632,10 @@ class GpuGuestSafetyTests(unittest.TestCase):
                 except BaseException as error:
                     client_errors.append(error)
 
+            # Nothing is typed before the console is the caller's: the first
+            # line the guest reads is the one the serial client sends.
             fake_emulator = (
                 "import sys,time;"
-                "sys.stdout.write('\\n# ');sys.stdout.flush();"
-                "sys.stdin.buffer.readline();"
-                "sys.stdout.write('\\n# ');sys.stdout.flush();"
-                "sys.stdin.buffer.readline();"
-                f"sys.stdout.buffer.write({run_gpu_guest.BOOTSTRAP_PRIMARY_PROMPT!r});"
-                "sys.stdout.buffer.flush();"
-                "sys.stdin.buffer.readline();"
                 f"sys.stdout.write({run_gpu_guest.PASS_MARKER!r}+"
                 "'\\nTTY:'+str(int(sys.stdin.isatty()))+'\\nREADY\\n');"
                 "sys.stdout.flush();"
@@ -418,7 +648,6 @@ class GpuGuestSafetyTests(unittest.TestCase):
             client_thread.start()
             return_code, saw_pass, saw_fail = run_gpu_guest.run_guest(
                 [sys.executable, "-c", fake_emulator],
-                b"BOOT",
                 root / "console.log",
                 timeout=10,
                 expect_poweroff=False,
@@ -433,37 +662,6 @@ class GpuGuestSafetyTests(unittest.TestCase):
             self.assertIn(b"TTY:1\n", received)
             self.assertIn(b"ECHO:status\n", received)
             self.assertFalse(serial_path.exists())
-
-    def test_bootstrap_waits_for_each_shell_prompt(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            fake_emulator = (
-                "import select,sys,time;"
-                "sys.stdout.write('\\n# ');sys.stdout.flush();"
-                "sys.stdin.buffer.readline();"
-                "sys.stdout.write('\\n# ');sys.stdout.flush();"
-                "sys.stdin.buffer.readline();"
-                f"sys.stdout.buffer.write({run_gpu_guest.BOOTSTRAP_PRIMARY_PROMPT!r});"
-                "sys.stdout.buffer.flush();"
-                "first=sys.stdin.buffer.readline();"
-                "early=bool(select.select([sys.stdin.buffer],[],[],0.1)[0]);"
-                f"sys.stdout.buffer.write({run_gpu_guest.BOOTSTRAP_PRIMARY_PROMPT!r});"
-                "sys.stdout.buffer.flush();"
-                "second=sys.stdin.buffer.readline();"
-                f"marker={run_gpu_guest.FAIL_MARKER!r} if early else "
-                f"{run_gpu_guest.PASS_MARKER!r};"
-                "sys.stdout.write(marker+'\\n');sys.stdout.flush();time.sleep(0.1)"
-            )
-            return_code, saw_pass, saw_fail = run_gpu_guest.run_guest(
-                [sys.executable, "-c", fake_emulator],
-                b"first\nsecond\n",
-                root / "console.log",
-                timeout=10,
-                expect_poweroff=False,
-            )
-            self.assertEqual(return_code, 0)
-            self.assertTrue(saw_pass)
-            self.assertFalse(saw_fail)
 
     def test_serial_socket_refuses_to_replace_an_existing_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

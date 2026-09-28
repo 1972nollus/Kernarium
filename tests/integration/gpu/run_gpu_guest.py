@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Boot the GPU test guest from a read-only lower filesystem plus tmpfs."""
+"""Boot the GPU test guest from a read-only lower filesystem plus tmpfs.
+
+The launcher's per-run initramfs mounts the image beneath a tmpfs overlay,
+installs this run's files and hands PID 1 to the harness session, which
+prepares the resolver and container state and execs the image's systemd.
+systemd starts the test unit through ``systemd.wants=``; nothing is typed.
+With ``--image-init`` the initramfs starts the image's own ``/sbin/init``
+instead, for an image that owns its whole session.
+"""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
+from dataclasses import dataclass, field
+import hashlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import pty
 import select
 import shlex
@@ -23,9 +32,17 @@ import sys
 import tarfile
 import time
 import tty
-from typing import Any, BinaryIO, Sequence
+from typing import Any, BinaryIO, Mapping, Sequence
 
 import guest_process
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "support"))
+from guest import (  # noqa: E402
+    SESSION_GUEST_PATH,
+    SESSION_PARAMETERS_GUEST_PATH,
+    SESSION_SCRIPT,
+    validate_payload_path,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -38,22 +55,47 @@ DOCKER_HELLO_WORLD_IMAGE = "uml/hello-world:local"
 MAX_DOCKER_HELLO_WORLD_SIZE = 1024 * 1024
 MAX_SERIAL_CLIENT_BACKLOG = 1024 * 1024
 MAX_SERIAL_INPUT_BACKLOG = 1024 * 1024
-SERIAL_WRITE_CHUNK_BYTES = 128
-SERIAL_WRITE_INTERVAL_SECONDS = 0.01
-BOOTSTRAP_PRIMARY_PROMPT = b"UML_BOOTSTRAP_READY> "
-BOOTSTRAP_CONTINUATION_PROMPT = b"UML_BOOTSTRAP_CONTINUE> "
-BOOTSTRAP_PROMPT_COMMAND = (
-    b"PS1='UML_BOOTSTRAP_READY> '; "
-    b"PS2='UML_BOOTSTRAP_CONTINUE> '\n"
+TEST_SCRIPT_GUEST_PATH = "/usr/local/libexec/uml-gpu-overlay-test"
+TEST_UNIT = "uml-gpu-overlay-test.service"
+TEST_UNIT_GUEST_PATH = f"/etc/systemd/system/{TEST_UNIT}"
+DOCKER_ARCHIVE_GUEST_PATH = "/usr/local/libexec/uml-docker-hello-world.tar"
+BOOT_PARAMETERS_GUEST_PATH = "/boot.env"
+IMAGE_INIT = "/sbin/init"
+# Where a caller stages the files it generates, beside its own artifacts.
+GUEST_FILE_DIRECTORY = "guest-files"
+# Guest paths this runner writes itself; a caller's file may not replace one.
+RUNNER_GUEST_PATHS = (
+    BOOT_PARAMETERS_GUEST_PATH,
+    SESSION_GUEST_PATH,
+    SESSION_PARAMETERS_GUEST_PATH,
+    TEST_SCRIPT_GUEST_PATH,
+    TEST_UNIT_GUEST_PATH,
+    DOCKER_ARCHIVE_GUEST_PATH,
 )
+TEST_UNIT_TEXT = f"""[Unit]
+Description=Darwin UML read-only-root GPU test guard
+After=local-fs.target
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart={TEST_SCRIPT_GUEST_PATH}
+RemainAfterExit=yes
+StandardInput=null
+StandardOutput=journal+console
+StandardError=journal+console
+"""
 PROTECTED_ARGUMENTS = (
     "ubd0",
     "root=",
     "rootfstype=",
     "init=",
+    "initrd=",
     "mem=",
     "console=",
     "systemd.unit=",
+    "--guest-file=",
+    "--guest-init=",
     "--virtio-console-socket=",
     "--virtio-serial-socket=",
 )
@@ -62,6 +104,43 @@ ROOTFS_TYPES = ("erofs", "ext4")
 
 class SafetyError(RuntimeError):
     """Raised when a boot could risk modifying the base image."""
+
+
+@dataclass
+class StagedGuestFiles:
+    """Generated files a caller hands this runner through ``--guest-file``.
+
+    Each is named by its SHA-256 and mode, so the command that names it is
+    known before anything is written and changes whenever the file does.
+    ``write`` puts the files in place just before that command runs.
+    """
+
+    directory: Path
+    files: dict[Path, tuple[bytes, int]] = field(default_factory=dict)
+    arguments: list[str] = field(default_factory=list)
+
+    def add(self, guest_path: str, content: str | bytes, mode: int = 0o644) -> None:
+        try:
+            validate_payload_path(guest_path)
+        except ValueError as error:
+            raise SafetyError(str(error)) from error
+        if guest_path in RUNNER_GUEST_PATHS:
+            raise SafetyError(f"guest file replaces the runner's own {guest_path}")
+        data = content.encode("utf-8") if isinstance(content, str) else content
+        digest = hashlib.sha256(data).hexdigest()
+        host = self.directory / (
+            f"{digest}-{mode:04o}-{PurePosixPath(guest_path).name}"
+        )
+        self.files[host] = (data, mode)
+        self.arguments.append(f"--guest-file={guest_path}={host}")
+
+    def write(self) -> None:
+        for host, (data, mode) in self.files.items():
+            host.parent.mkdir(parents=True, exist_ok=True)
+            temporary = host.with_name(f".{host.name}.{os.getpid()}")
+            temporary.write_bytes(data)
+            temporary.chmod(mode)
+            os.replace(temporary, host)
 
 
 class SerialConsoleSocket:
@@ -235,17 +314,11 @@ def make_docker_rootfs_archive(payload: bytes) -> bytes:
     return archive_stream.getvalue()
 
 
-def make_docker_hello_world_smoke(payload: bytes) -> str:
-    encoded_archive = base64.b64encode(
-        make_docker_rootfs_archive(payload)
-    ).decode("ascii")
-    encoded_lines = " \\\n".join(
-        f"        '{encoded_archive[offset : offset + 512]}'"
-        for offset in range(0, len(encoded_archive), 512)
-    )
+def make_docker_hello_world_smoke() -> str:
+    """The offline Docker smoke over the archive installed as a guest file."""
     return f"""docker_hello_world_image='{DOCKER_HELLO_WORLD_IMAGE}'
 docker_hello_world_container='uml-hello-world-smoke'
-docker_hello_world_archive='/run/uml-docker-hello-world.tar'
+docker_hello_world_archive='{DOCKER_ARCHIVE_GUEST_PATH}'
 docker_hello_world_output='/run/uml-docker-hello-world.out'
 docker_hello_world_cleanup()
 {{
@@ -253,11 +326,9 @@ docker_hello_world_cleanup()
         "$docker_hello_world_container" >/dev/null 2>&1 || true
     timeout 10 docker image rm -f \\
         "$docker_hello_world_image" >/dev/null 2>&1 || true
-    rm -f "$docker_hello_world_archive" "$docker_hello_world_output"
+    rm -f "$docker_hello_world_output"
 }}
 trap docker_hello_world_cleanup EXIT HUP INT TERM
-printf '%s' \\
-{encoded_lines} | base64 -d > "$docker_hello_world_archive"
 timeout 30 docker import \\
     "$docker_hello_world_archive" "$docker_hello_world_image" >/dev/null
 docker image inspect "$docker_hello_world_image" >/dev/null
@@ -275,32 +346,162 @@ trap - EXIT HUP INT TERM
 docker_hello_world_cleanup"""
 
 
+def parse_guest_file(value: str) -> tuple[str, Path]:
+    """Read a caller's ``GUEST_PATH=HOST_PATH`` file for the guest."""
+    guest_path, separator, host = value.partition("=")
+    if not separator or not host:
+        raise SafetyError(f"guest file must be GUEST_PATH=HOST_PATH: {value}")
+    try:
+        validate_payload_path(guest_path)
+    except ValueError as error:
+        raise SafetyError(str(error)) from error
+    if guest_path in RUNNER_GUEST_PATHS:
+        raise SafetyError(f"guest file replaces the runner's own {guest_path}")
+    host_path = Path(host).resolve()
+    if not host_path.is_file():
+        raise SafetyError(f"guest file source is not a regular file: {host_path}")
+    return guest_path, host_path
+
+
+def boot_parameters(
+    root_device: str, rootfs_type: str, entry: str = SESSION_GUEST_PATH
+) -> str:
+    """The per-run /boot.env: the image beneath tmpfs, then ``entry``."""
+    if rootfs_type not in ROOTFS_TYPES:
+        raise SafetyError(f"unsupported root filesystem type: {rootfs_type}")
+    if not root_device.startswith("/dev/") or any(
+        character.isspace() for character in root_device
+    ):
+        raise SafetyError(f"root device must be a /dev path: {root_device}")
+    return (
+        f"UML_BOOT_ROOT={root_device}\n"
+        f"UML_BOOT_ROOT_TYPE={rootfs_type}\n"
+        "UML_BOOT_UPPER=tmpfs\n"
+        f"UML_BOOT_ENTRY={entry}\n"
+    )
+
+
+# The session hands PID 1 to the image's systemd, keeping container state out
+# of the overlay's upper layer and the SLiRP resolver in /etc/resolv.conf.
+SESSION_PARAMETERS = (
+    "UML_SESSION_ENTRY=systemd\n"
+    "UML_SESSION_RESOLVER=user-network\n"
+    "UML_SESSION_CONTAINER_STATE=tmpfs\n"
+)
+
+
+def runner_guest_files(
+    test_script: str | None,
+    root_device: str,
+    rootfs_type: str,
+    docker_hello_world: bytes | None = None,
+) -> dict[str, tuple[bytes, int]]:
+    """The files this runner writes for one boot, by guest path.
+
+    Without a test script the image's own init is the entry and the boot
+    parameters are the only file."""
+    if test_script is None:
+        if docker_hello_world is not None:
+            raise SafetyError("the Docker smoke needs the test session")
+        return {
+            BOOT_PARAMETERS_GUEST_PATH: (
+                boot_parameters(root_device, rootfs_type, IMAGE_INIT).encode(),
+                0o644,
+            )
+        }
+    files = {
+        BOOT_PARAMETERS_GUEST_PATH: (
+            boot_parameters(root_device, rootfs_type).encode(), 0o644
+        ),
+        SESSION_PARAMETERS_GUEST_PATH: (SESSION_PARAMETERS.encode(), 0o644),
+        TEST_SCRIPT_GUEST_PATH: (test_script.encode(), 0o755),
+        TEST_UNIT_GUEST_PATH: (TEST_UNIT_TEXT.encode(), 0o644),
+    }
+    if docker_hello_world is not None:
+        files[DOCKER_ARCHIVE_GUEST_PATH] = (
+            make_docker_rootfs_archive(docker_hello_world), 0o644
+        )
+    return files
+
+
+def runner_file_name(guest_path: str) -> str:
+    """The host name of one of this runner's boot files."""
+    if guest_path == BOOT_PARAMETERS_GUEST_PATH:
+        return "boot.env"
+    return Path(guest_path).name
+
+
+def guest_file_arguments(
+    directory: Path,
+    files: Mapping[str, tuple[bytes, int]],
+    caller_files: Sequence[tuple[str, Path]] = (),
+) -> list[tuple[str, Path]]:
+    """Pair every boot file's archive path with its host copy, writing nothing.
+
+    This runner's files live in ``directory``; the session script comes from
+    the checkout unchanged and a caller's files from where the caller put
+    them. Archive paths are ``/boot.env`` or ``/payload`` plus the guest path.
+    """
+    pairs = (
+        [(f"/payload{SESSION_GUEST_PATH}", SESSION_SCRIPT)]
+        if TEST_SCRIPT_GUEST_PATH in files
+        else []
+    )
+    for guest_path in files:
+        archive = (
+            guest_path
+            if guest_path == BOOT_PARAMETERS_GUEST_PATH
+            else f"/payload{guest_path}"
+        )
+        pairs.append((archive, directory / runner_file_name(guest_path)))
+    guest_paths = [guest for guest, _ in caller_files]
+    if len(set(guest_paths)) != len(guest_paths):
+        raise SafetyError("a guest file is named twice")
+    pairs.extend((f"/payload{guest}", host) for guest, host in caller_files)
+    return pairs
+
+
+def write_guest_files(
+    directory: Path, files: Mapping[str, tuple[bytes, int]]
+) -> None:
+    """Write this runner's boot files where guest_file_arguments names them."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for guest_path, (contents, mode) in files.items():
+        host = directory / runner_file_name(guest_path)
+        host.write_bytes(contents)
+        host.chmod(mode)
+
+
 def build_command(
     emulator: Path,
     rootfs: Path,
-    root_device: str,
     memory: str,
     systemd_unit: str,
     extra_arguments: Sequence[str],
+    guest_files: Sequence[tuple[str, Path]],
     rootfs_type: str = "erofs",
     virtio_console_socket: Path | None = None,
     virtio_serial_socket: Path | None = None,
 ) -> list[str]:
+    """The launcher command; ``guest_files`` pairs archive and host paths."""
     validate_extra_arguments(extra_arguments)
     if rootfs_type not in ROOTFS_TYPES:
         raise SafetyError(f"unsupported root filesystem type: {rootfs_type}")
+    if not any(guest == BOOT_PARAMETERS_GUEST_PATH for guest, _ in guest_files):
+        raise SafetyError("the guest files carry no /boot.env")
+    test_session = any(
+        guest == f"/payload{TEST_UNIT_GUEST_PATH}" for guest, _ in guest_files
+    )
     ubd_flags = "c" if rootfs_type == "erofs" else "cr"
     return [
         str(emulator.resolve()),
+        *(f"--guest-file={guest}={host}" for guest, host in guest_files),
         f"ubd0{ubd_flags}={rootfs.resolve()}",
-        f"root={root_device}",
-        f"rootfstype={rootfs_type}",
-        "init=/bin/sh",
         f"mem={memory}",
         "console=tty0",
         "console=ttyS0",
-        "ip=dhcp",
         f"systemd.unit={systemd_unit}",
+        *([f"systemd.wants={TEST_UNIT}"] if test_session else []),
         *extra_arguments,
         *(
             [f"--virtio-console-socket={virtio_console_socket.resolve()}"]
@@ -318,7 +519,7 @@ def build_command(
 def make_test_script(
     commands: Sequence[str],
     auto_poweroff: bool,
-    docker_hello_world: bytes | None = None,
+    docker_hello_world: bool = False,
     lower_filesystem_type: str = "erofs",
     root_device: str = "/dev/ubda",
 ) -> str:
@@ -327,8 +528,8 @@ def make_test_script(
             f"unsupported root filesystem type: {lower_filesystem_type}"
         )
     command_parts = list(commands)
-    if docker_hello_world is not None:
-        command_parts.append(make_docker_hello_world_smoke(docker_hello_world))
+    if docker_hello_world:
+        command_parts.append(make_docker_hello_world_smoke())
     command_block = "\n".join(command_parts)
     poweroff_block = """
 echo "UML_GPU_OVERLAY_TEST: requesting normal poweroff"
@@ -371,7 +572,7 @@ case ",$(findmnt -n -o OPTIONS -T /.uml-lower)," in
     *,ro,*) ;;
     *) echo "overlay check failed: lower filesystem is not read-only"; status=1 ;;
 esac
-{block_read_only_check}check_equal "$(findmnt -n -o FSTYPE -T /.uml-lower/mnt)" tmpfs "upper backing type"
+{block_read_only_check}check_equal "$(findmnt -n -o FSTYPE -T /.uml-state)" tmpfs "upper backing type"
 check_equal "$(findmnt -n -o FSTYPE -T /var/lib/docker)" tmpfs "Docker state filesystem type"
 check_equal "$(findmnt -n -o FSTYPE -T /var/lib/containerd)" tmpfs "containerd state filesystem type"
 
@@ -403,93 +604,15 @@ exit "$status"
 """
 
 
-def make_bootstrap(
-    test_script: str,
-    lower_filesystem_type: str = "erofs",
-) -> bytes:
-    if lower_filesystem_type not in ROOTFS_TYPES:
-        raise SafetyError(
-            f"unsupported root filesystem type: {lower_filesystem_type}"
-        )
-    encoded_test = base64.b64encode(test_script.encode("utf-8")).decode("ascii")
-    # The bootstrap is typed into the UML init shell through its tty. Keep each
-    # physical input line comfortably below the tty's canonical-input limit so
-    # large diagnostic commands cannot be truncated before systemd starts.
-    encoded_arguments = " \\\n".join(
-        f"    '{encoded_test[offset : offset + 512]}'"
-        for offset in range(0, len(encoded_test), 512)
-    )
-    bootstrap = f"""stty -echo
-set -eu
-fail()
-{{
-    echo "Unable to construct the tmpfs overlay root: $*" >&2
-    poweroff -f
-}}
-mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt || fail "tmpfs mount"
-mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root || fail "overlay workspace"
-mount -o bind / /mnt/lower || fail "read-only lower bind"
-mount -t overlay overlay -o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root ||
-    fail "overlay mount"
-mount -t devtmpfs devtmpfs /mnt/root/dev || fail "devtmpfs mount"
-mkdir -p /mnt/root/.uml-lower || fail "old-root directory"
-cd /mnt/root || fail "new-root chdir"
-pivot_root . .uml-lower || fail "pivot_root"
-rm -f /etc/resolv.conf
-printf '%s\\n' \\
-    '# Darwin UML user-mode network' \\
-    'nameserver 1.1.1.1' \\
-    'nameserver 8.8.8.8' \\
-    'nameserver 10.0.2.3' \\
-    'options timeout:1 attempts:3 rotate' > /etc/resolv.conf
-mkdir -p /var/lib/docker
-mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/docker || fail "Docker state tmpfs"
-mkdir -p /var/lib/containerd
-mount -t tmpfs -o mode=0711,nosuid,nodev tmpfs /var/lib/containerd || fail "containerd state tmpfs"
-mkdir -p /usr/local/libexec /etc/systemd/system/multi-user.target.wants
-printf '%s' \\
-{encoded_arguments} | base64 -d > /usr/local/libexec/uml-gpu-overlay-test
-chmod 0755 /usr/local/libexec/uml-gpu-overlay-test
-cat > /etc/systemd/system/uml-gpu-overlay-test.service <<'EOF'
-[Unit]
-Description=Darwin UML read-only-root GPU test guard
-After=local-fs.target
-Before=display-manager.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/libexec/uml-gpu-overlay-test
-RemainAfterExit=yes
-StandardInput=null
-StandardOutput=journal+console
-StandardError=journal+console
-
-[Install]
-WantedBy=multi-user.target
-EOF
-ln -sf ../uml-gpu-overlay-test.service \
-    /etc/systemd/system/multi-user.target.wants/uml-gpu-overlay-test.service
-echo "Darwin UML root overlay: lower={lower_filesystem_type}, upper=tmpfs"
-exec /lib/systemd/systemd
-"""
-    return bootstrap.encode("utf-8")
-
-
 def terminate_process(process: subprocess.Popen[bytes]) -> None:
     guest_process.stop_process(process, guest_process.EMULATOR_STOP)
 
 
-def write_pending(
-    stream: BinaryIO,
-    pending: bytearray,
-    maximum_bytes: int | None = None,
-) -> None:
-    """Drain a bounded amount of queued input into a nonblocking tty."""
-    remaining = maximum_bytes
-    while pending and (remaining is None or remaining > 0):
-        payload = pending if remaining is None else pending[:remaining]
+def write_pending(stream: BinaryIO, pending: bytearray) -> None:
+    """Drain queued serial-client input into a nonblocking tty."""
+    while pending:
         try:
-            written = stream.write(payload)
+            written = stream.write(pending)
         except InterruptedError:
             continue
         except BlockingIOError:
@@ -499,13 +622,10 @@ def write_pending(
         if written <= 0:
             raise RuntimeError("guest console stopped accepting input")
         del pending[:written]
-        if remaining is not None:
-            remaining -= written
 
 
 def run_guest(
     command: Sequence[str],
-    bootstrap: bytes,
     console_log: Path,
     timeout: float,
     expect_poweroff: bool,
@@ -568,13 +688,6 @@ def run_guest(
         deadline = time.monotonic() + timeout if timeout > 0 else None
         pending = bytearray()
         guest_input = bytearray()
-        deferred_input = bytearray()
-        bootstrap_payload = bootstrap if bootstrap.endswith(b"\n") else bootstrap + b"\n"
-        bootstrap_lines = bootstrap_payload.splitlines(keepends=True)
-        bootstrap_line = 0
-        bootstrap_stage = "initial-prompt"
-        bootstrap_prompt_output = bytearray()
-        next_guest_write = 0.0
         if serial is not None:
             print(f"Serial console socket: {serial.path}", file=sys.stderr)
         with console_log.open("wb") as log:
@@ -582,26 +695,16 @@ def run_guest(
                 artifact_socket.observe()
                 if deadline is not None and time.monotonic() >= deadline:
                     raise TimeoutError(f"guest did not finish within {timeout:.0f}s")
-                now = time.monotonic()
-                guest_write_ready = bool(guest_input) and now >= next_guest_write
                 read_descriptors: list[Any] = [console]
-                write_descriptors: list[Any] = (
-                    [console] if guest_write_ready else []
-                )
+                write_descriptors: list[Any] = [console] if guest_input else []
                 if serial is not None:
                     read_descriptors.append(serial.listener)
                     if serial.client is not None:
                         read_descriptors.append(serial.client)
                         if serial.output:
                             write_descriptors.append(serial.client)
-                select_timeout = 0.25
-                if guest_input and not guest_write_ready:
-                    select_timeout = min(
-                        select_timeout,
-                        max(0.0, next_guest_write - now),
-                    )
                 readable, writable, _ = select.select(
-                    read_descriptors, write_descriptors, [], select_timeout
+                    read_descriptors, write_descriptors, [], 0.25
                 )
                 if serial is not None and serial.listener in readable:
                     serial.accept(bytes(pending))
@@ -612,15 +715,10 @@ def run_guest(
                 ):
                     data = serial.read_input()
                     if data:
-                        input_queue = (
-                            guest_input
-                            if bootstrap_stage == "complete"
-                            else deferred_input
-                        )
-                        if len(input_queue) + len(data) > MAX_SERIAL_INPUT_BACKLOG:
+                        if len(guest_input) + len(data) > MAX_SERIAL_INPUT_BACKLOG:
                             serial.close_client()
                         else:
-                            input_queue.extend(data)
+                            guest_input.extend(data)
                 if (
                     serial is not None
                     and serial.client is not None
@@ -628,14 +726,7 @@ def run_guest(
                 ):
                     serial.flush_output()
                 if console in writable:
-                    write_pending(
-                        console,
-                        guest_input,
-                        maximum_bytes=SERIAL_WRITE_CHUNK_BYTES,
-                    )
-                    next_guest_write = (
-                        time.monotonic() + SERIAL_WRITE_INTERVAL_SECONDS
-                    )
+                    write_pending(console, guest_input)
                 if console not in readable:
                     continue
                 try:
@@ -653,41 +744,6 @@ def run_guest(
                 pending.extend(data)
                 if len(pending) > 8192:
                     del pending[:-8192]
-                bootstrap_prompt_output.extend(data.replace(b"\r", b""))
-                if len(bootstrap_prompt_output) > 8192:
-                    del bootstrap_prompt_output[:-8192]
-                if (
-                    bootstrap_stage == "initial-prompt"
-                    and b"\n# " in bootstrap_prompt_output
-                ):
-                    # The init shell has echo enabled. Disable it before installing
-                    # unique prompts so the prompt strings in the setup command
-                    # cannot be mistaken for acknowledgements.
-                    guest_input.extend(b"stty -echo\n")
-                    bootstrap_stage = "echo-off"
-                    bootstrap_prompt_output.clear()
-                elif (
-                    bootstrap_stage == "echo-off"
-                    and b"\n# " in bootstrap_prompt_output
-                ):
-                    guest_input.extend(BOOTSTRAP_PROMPT_COMMAND)
-                    bootstrap_stage = "line-prompt"
-                    bootstrap_prompt_output.clear()
-                elif bootstrap_stage == "line-prompt" and (
-                    BOOTSTRAP_PRIMARY_PROMPT in bootstrap_prompt_output
-                    or BOOTSTRAP_CONTINUATION_PROMPT in bootstrap_prompt_output
-                ):
-                    if bootstrap_line >= len(bootstrap_lines):
-                        raise RuntimeError(
-                            "guest requested input after the complete bootstrap"
-                        )
-                    guest_input.extend(bootstrap_lines[bootstrap_line])
-                    bootstrap_line += 1
-                    bootstrap_prompt_output.clear()
-                    if bootstrap_line == len(bootstrap_lines):
-                        bootstrap_stage = "complete"
-                        guest_input.extend(deferred_input)
-                        deferred_input.clear()
                 decoded = pending.decode("utf-8", errors="replace")
                 saw_pass = saw_pass or PASS_MARKER in decoded
                 saw_fail = saw_fail or FAIL_MARKER in decoded
@@ -720,7 +776,11 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             "and without the host-file lock"
         ),
     )
-    parser.add_argument("--root-device", default="/dev/ubda")
+    parser.add_argument(
+        "--root-device",
+        default="/dev/ubda",
+        help="block device the per-run /init mounts beneath the overlay",
+    )
     parser.add_argument("--memory", default="8G")
     parser.add_argument("--unit", default="multi-user.target")
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
@@ -730,6 +790,17 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         action="append",
         default=[],
         help="shell command to run after the root-overlay checks (repeatable)",
+    )
+    parser.add_argument(
+        "--guest-file",
+        action="append",
+        default=[],
+        metavar="GUEST_PATH=HOST_PATH",
+        help=(
+            "install a host file at GUEST_PATH before the guest starts, "
+            "keeping its mode; outside /tmp, /run, /dev, /proc and /sys "
+            "(repeatable)"
+        ),
     )
     parser.add_argument(
         "--docker-hello-world-binary",
@@ -743,6 +814,15 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--no-auto-poweroff",
         action="store_true",
         help="leave the guest running after its checks instead of shutting down normally",
+    )
+    parser.add_argument(
+        "--image-init",
+        action="store_true",
+        help=(
+            f"start the image's own {IMAGE_INIT} beneath the overlay, with no "
+            "harness session or checks; the run ends when the guest stops "
+            "(requires --no-auto-poweroff)"
+        ),
     )
     parser.add_argument(
         "--serial-socket",
@@ -774,7 +854,17 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         nargs="*",
         help="additional non-root kernel arguments after '--'",
     )
-    return parser.parse_args(arguments)
+    options = parser.parse_args(arguments)
+    if options.image_init and (
+        options.command
+        or options.docker_hello_world_binary is not None
+        or not options.no_auto_poweroff
+    ):
+        parser.error(
+            "--image-init runs no checks: it takes no --command or Docker "
+            "smoke and requires --no-auto-poweroff"
+        )
+    return options
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
@@ -809,30 +899,42 @@ def main(arguments: Sequence[str] | None = None) -> int:
         docker_hello_world = load_docker_hello_world(
             options.docker_hello_world_binary.resolve()
         )
+    caller_files = [parse_guest_file(value) for value in options.guest_file]
+    test_script = None if options.image_init else make_test_script(
+        options.command,
+        auto_poweroff=not options.no_auto_poweroff,
+        docker_hello_world=docker_hello_world is not None,
+        lower_filesystem_type=options.rootfs_type,
+        root_device=options.root_device,
+    )
+    boot_files = runner_guest_files(
+        test_script,
+        options.root_device,
+        options.rootfs_type,
+        docker_hello_world,
+    )
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    artifact_directory = options.artifact_root.resolve() / (
+        f"{timestamp}-{os.getpid()}"
+    )
+    boot_file_directory = artifact_directory / "boot-files"
     command = build_command(
         emulator,
         rootfs,
-        options.root_device,
         options.memory,
         options.unit,
         options.kernel_arguments,
+        guest_file_arguments(boot_file_directory, boot_files, caller_files),
         rootfs_type=options.rootfs_type,
         virtio_console_socket=virtio_console_socket,
         virtio_serial_socket=virtio_serial_socket,
     )
-    test_script = make_test_script(
-        options.command,
-        auto_poweroff=not options.no_auto_poweroff,
-        docker_hello_world=docker_hello_world,
-        lower_filesystem_type=options.rootfs_type,
-        root_device=options.root_device,
-    )
-    bootstrap = make_bootstrap(test_script, options.rootfs_type)
     result = {
         "command": command,
         "rootfs": str(rootfs),
         "rootfs_type": options.rootfs_type,
         "auto_poweroff": not options.no_auto_poweroff,
+        "image_init": options.image_init,
     }
     if serial_socket is not None:
         result["serial_socket"] = str(serial_socket)
@@ -848,15 +950,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(shlex.join(command))
         return 0
 
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    artifact_directory = options.artifact_root.resolve() / (
-        f"{timestamp}-{os.getpid()}"
-    )
     artifact_directory.mkdir(parents=True, exist_ok=False)
+    write_guest_files(boot_file_directory, boot_files)
     write_json(artifact_directory / "run.json", result)
     return_code, saw_pass, saw_fail = run_guest(
         command,
-        bootstrap,
         artifact_directory / "console.log",
         options.timeout,
         expect_poweroff=not options.no_auto_poweroff,
@@ -870,7 +968,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         }
     )
     write_json(artifact_directory / "run.json", result)
-    if not saw_pass or saw_fail:
+    # run_guest has already refused a nonzero emulator status; an image's own
+    # session prints no test markers.
+    if not options.image_init and (not saw_pass or saw_fail):
         raise RuntimeError("guest root-overlay verification did not pass")
     return 0
 

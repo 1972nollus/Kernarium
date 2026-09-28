@@ -2313,6 +2313,57 @@ native_display_cleanup
         )
         self.assertEqual(options.emulator, cts.DEFAULT_EMULATOR)
 
+    def test_harness_installs_its_launcher_and_service_as_guest_files(
+        self,
+    ) -> None:
+        options = cts.parse_arguments(["--leaf", "gles3", "--api", "gles3"])
+        selection = cts.Selection(options.leaves["gles3"], (), 0, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory) / "run"
+            command = cts.build_harness_command(options, selection, run)
+            self.assertFalse(run.exists(), "building the command wrote files")
+            staged = {
+                argument.split("=", 2)[1]: Path(argument.split("=", 2)[2])
+                for argument in command
+                if argument.startswith("--guest-file=")
+            }
+            self.assertEqual(
+                set(staged), {cts.GUEST_LAUNCHER_PATH, cts.GUEST_SERVICE_PATH}
+            )
+            self.assertNotIn("base64 -d", " ".join(command))
+            self.assertIn(
+                "systemctl start --no-block uml-vk-gl-cts.service", command
+            )
+            self.assertEqual(
+                cts.prepare_harness_command(options, selection, run), command
+            )
+            launcher = staged[cts.GUEST_LAUNCHER_PATH]
+            self.assertEqual(launcher.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(
+                launcher.read_text(),
+                cts.build_guest_launcher(
+                    selection,
+                    options.seed,
+                    options.shard_timeout,
+                    16384,
+                    options.rootfs_contract,
+                    artifact_transport="virtio-serial",
+                    renderer_backend=options.renderer,
+                    checkpoint_bytes=cts.QPA_CHECKPOINT_BYTES,
+                    progress_timeout=options.console_stall_timeout,
+                    progress_busy_timeout=options.console_stall_busy_timeout,
+                ),
+            )
+            self.assertEqual(
+                staged[cts.GUEST_SERVICE_PATH].read_text(), cts.CTS_SERVICE
+            )
+            # A resumed session runs a different launcher, so its command
+            # names a different file: the recorded command identifies what ran.
+            resumed = cts.build_harness_command(
+                options, selection, run, resume_after=3
+            )
+            self.assertNotEqual(resumed, command)
+
     def test_native_harness_does_not_pass_vnc_only_options(self) -> None:
         options = cts.parse_arguments(
             [

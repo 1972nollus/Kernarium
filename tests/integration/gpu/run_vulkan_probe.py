@@ -11,8 +11,6 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
-import gzip
 import hashlib
 import os
 from pathlib import Path
@@ -31,6 +29,7 @@ MAX_PROBE_BYTES = 8 * 1024 * 1024
 DEVICE_MARKER = "UML_VULKAN_PROBE_DEVICE: Venus"
 RESULT_MARKER = "UML_VULKAN_PROBE: PASS"
 ICD_PATH = "/usr/share/vulkan/icd.d/virtio_icd.json"
+PROBE_GUEST_PATH = "/usr/local/libexec/uml-vulkan-probe"
 LIBRARY_PATH = "/usr/lib/aarch64-linux-gnu/libvulkan_virtio.so"
 
 
@@ -49,26 +48,23 @@ def load_probe(path: Path) -> bytes:
 
 def build_probe_script(payload: bytes, receipt: dict, page_size: int,
                        arguments: Sequence[str]) -> str:
+    """The guest check around the probe, which is installed as a guest file."""
     if page_size not in (4096, 16384):
         raise guest.SafetyError("unsupported guest page size")
-    encoded = base64.b64encode(gzip.compress(payload)).decode("ascii")
     digest = hashlib.sha256(payload).hexdigest()
     identities = [cts._receipt_file(receipt, path) for path in (ICD_PATH, LIBRARY_PATH)]
     checks = "\n".join(
         f"printf '%s\\n' {shlex.quote(item['sha256'] + '  ' + path)} | sha256sum -c -"
         for item, path in zip(identities, (ICD_PATH, LIBRARY_PATH))
     )
-    invocation = shlex.join(["/run/uml-vulkan-probe", *arguments])
+    invocation = shlex.join([PROBE_GUEST_PATH, *arguments])
     return f"""test "$(nproc)" = 4
 test "$(getconf PAGESIZE)" = {page_size}
 # UML consumes mem= before publishing /proc/cmdline. Check the usable amount
 # as well as the host's fixed 4G boot argument, allowing kernel reservations.
 awk '/^MemTotal:/ {{ print; found=1; if ($2 < 4000000 || $2 > 4194304) exit 1 }} END {{ if (!found) exit 1 }}' /proc/meminfo
 {checks}
-printf '%s' '{encoded}' | base64 -d > /run/uml-vulkan-probe.gz
-gzip -dc /run/uml-vulkan-probe.gz > /run/uml-vulkan-probe
-printf '%s\\n' '{digest}  /run/uml-vulkan-probe' | sha256sum -c -
-chmod 0700 /run/uml-vulkan-probe
+printf '%s\\n' '{digest}  {PROBE_GUEST_PATH}' | sha256sum -c -
 timeout 60 sh -c 'until test -e /dev/dri/renderD128; do sleep 1; done'
 unset VK_ICD_FILENAMES VK_ADD_DRIVER_FILES VK_INSTANCE_LAYERS VK_LOADER_DRIVERS_SELECT VK_LOADER_DRIVERS_DISABLE
 export VK_DRIVER_FILES={ICD_PATH}
@@ -114,18 +110,27 @@ def main(arguments: Sequence[str] | None = None) -> int:
     probe_arguments = options.probe_arguments
     if probe_arguments[:1] == ["--"]:
         probe_arguments = probe_arguments[1:]
-    command = guest.build_command(
-        emulator, rootfs, "/dev/ubda", "4G", "multi-user.target",
-        ["ncpus=4", "--execution-engine=jit", "--gpu", "--gpu-display=vnc",
-         "--gpu-vnc-bind=127.0.0.1", "--gpu-vnc-port=0",
-         "systemd.mask=NetworkManager.service",
-         "systemd.mask=systemd-networkd-wait-online.service"], rootfs_type="ext4")
     script = guest.make_test_script(
         [build_probe_script(payload, receipt, options.page_size, probe_arguments)],
         auto_poweroff=True, lower_filesystem_type="ext4")
     directory = options.artifact_root.resolve() / (
         time.strftime("%Y%m%d-%H%M%S-") + str(os.getpid()))
+    boot_files = guest.runner_guest_files(script, "/dev/ubda", "ext4")
+    probe_file = directory / "guest-files" / Path(PROBE_GUEST_PATH).name
+    command = guest.build_command(
+        emulator, rootfs, "4G", "multi-user.target",
+        ["ncpus=4", "--execution-engine=jit", "--gpu", "--gpu-display=vnc",
+         "--gpu-vnc-bind=127.0.0.1", "--gpu-vnc-port=0",
+         "systemd.mask=NetworkManager.service",
+         "systemd.mask=systemd-networkd-wait-online.service"],
+        guest.guest_file_arguments(directory / "boot-files", boot_files,
+                                   [(PROBE_GUEST_PATH, probe_file)]),
+        rootfs_type="ext4")
     directory.mkdir(parents=True, exist_ok=False)
+    probe_file.parent.mkdir()
+    probe_file.write_bytes(payload)
+    probe_file.chmod(0o700)
+    guest.write_guest_files(directory / "boot-files", boot_files)
     report = {
         "schema_version": 1, "formal_conformance": False,
         "scope": "supplemental Vulkan behavioral regression, not CTS",
@@ -142,8 +147,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     guest.write_json(directory / "run.json", report)
     try:
         code, passed, failed = guest.run_guest(
-            command, guest.make_bootstrap(script, "ext4"),
-            directory / "console.log", options.timeout, expect_poweroff=True)
+            command, directory / "console.log", options.timeout,
+            expect_poweroff=True)
         report.update(emulator_return_code=code, saw_pass_marker=passed,
                       saw_fail_marker=failed)
         validate_result(code, passed, failed,

@@ -12,7 +12,11 @@ result, and exit/shutdown status. Diagnostic profiler runs are not score
 evidence.
 
 Geekbench uses the payload already installed in `rootfs.erofs` and always runs
-with `--no-upload`. The runner creates disposable writable state and does not
+with `--no-upload`. The workload is [`guest/geekbench.sh`](guest/geekbench.sh),
+which the runner installs as a payload file and which prints the
+`UML_GEEKBENCH_READY` and `UML_GEEKBENCH_END:<status>` markers;
+`/etc/uml-geekbench.env` may name single-core workloads to run instead of the
+whole benchmark. The runner creates disposable writable state and does not
 start systemd or background desktop services. See current options with:
 
 ```sh

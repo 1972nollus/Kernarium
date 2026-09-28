@@ -21,10 +21,11 @@ import sys
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 
-from guest import Guest  # noqa: E402
+from guest import Guest, GuestFile  # noqa: E402
 
 
 PROBE = pathlib.Path(__file__).with_name("user_strings_probe.py")
+GUEST_PROBE = "/usr/local/libexec/uml-test/probe.py"
 PROBE_TIMEOUT_SECONDS = 120
 
 
@@ -43,14 +44,13 @@ def main() -> int:
         ("ncpus=2",),
         init_shell=True,
         engine=arguments.engine,
+        payloads={GUEST_PROBE: GuestFile(PROBE.read_bytes())},
     ) as guest:
         guest.boot_to_shell(180)
-        guest.check_command(
-            "mount -t proc proc /proc && mount -t tmpfs -o mode=1777 tmpfs /tmp",
-            20,
+        guest.check_command("mount -t tmpfs -o mode=1777 tmpfs /tmp", 20)
+        result = guest.run_command(
+            f"python3 -B {GUEST_PROBE}", PROBE_TIMEOUT_SECONDS
         )
-        guest.upload(PROBE.read_bytes(), "/tmp/probe.py")
-        result = guest.run_command("python3 -B /tmp/probe.py", PROBE_TIMEOUT_SECONDS)
         print(result.output.strip())
         if result.return_code != 0:
             raise RuntimeError(

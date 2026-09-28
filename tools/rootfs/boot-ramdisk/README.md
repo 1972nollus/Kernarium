@@ -36,10 +36,19 @@ panics the kernel, which aborts the emulator with a nonzero status.
 [`init`](init) is the default segment `/init`. It runs under the base's ash,
 which has no `command` builtin, and calls only applets the base verifier
 requires. It mounts devtmpfs, proc and sysfs, waits up to ten seconds for the
-root device, mounts the new root at `/newroot`, copies `/payload` into it
-with `cp -a`, moves `/dev`, `/proc` and `/sys` across, prints
+root device, mounts the new root at `/newroot`, installs `/payload` into it,
+moves `/dev`, `/proc` and `/sys` across, prints
 `UML_BOOT_SWITCH_ROOT:<entry>` and `switch_root`s into the entry as PID 1.
 Any failure prints `UML_BOOT_ERROR:<reason>` and stops the guest.
+
+Each payload file is copied with `cp -af`, keeping its mode, and replaces a
+file the image carries at the same path. Over a symlink it writes through to
+the target when the target exists and replaces the link otherwise. A directory
+the image already has keeps its own mode and owner, so a payload beneath
+`/var/tmp` leaves it sticky and world-writable; a missing one is created
+`0755`. A payload directory must not pass through a symlink in the image:
+images with a merged `/usr` link `/lib` to `usr/lib`, so a payload names
+`/usr/lib/...` instead.
 
 `/boot.env` holds `KEY=VALUE` lines; blank lines and `#` comments are ignored
 and an unknown key is an error.
@@ -53,13 +62,67 @@ and an unknown key is an error.
 | `UML_BOOT_ENTRY` | absolute path in the new root | `/sbin/init` |
 
 With `tmpfs` the image is mounted read-only beneath a tmpfs overlay that ends
-with the run, and the payload lands in that upper layer. With `none` the image
+with the run, and the payload lands in that upper layer. The new root keeps
+both layers visible: the image at `/.uml-lower` and the tmpfs, with its
+`upper` and `work` directories, at `/.uml-state`. With `none` the image
 itself is the read-write root, as a starter disk or a one-image machine uses
 it, and the payload is written into it. `UML_BOOT_GROW=1` first grows a sole
 ext4 partition that a host tool has already enlarged, reporting
 `UML_BOOT_GROW_*` markers; every growth problem is only a warning.
 [`../starter/boot.env`](../starter/boot.env) selects that mode for starter
 disks.
+
+## Harness session
+
+[`session`](session) prepares a disposable run on an image that does not
+configure one itself. A launcher installs it as a payload at
+`/usr/local/libexec/uml-session` with its parameters at
+`/etc/uml-session.env` and names it as `UML_BOOT_ENTRY`. It runs as PID 1
+under the image's own shell, prepares what the parameters ask for, prints
+`UML_SESSION_READY:<entry>` and replaces itself with the entry. Any failure
+prints `UML_SESSION_ERROR:<reason>` and ends the run.
+
+`/etc/uml-session.env` uses the `/boot.env` syntax:
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `UML_SESSION_ENTRY` | `/bin/sh`, `systemd` | `/bin/sh` |
+| `UML_SESSION_RESOLVER` | `image`, `user-network` | `image` |
+| `UML_SESSION_CONTAINER_STATE` | `image`, `tmpfs` | `image` |
+| `UML_SESSION_RUNTIME_MOUNTS` | `0`, `1` | `0` |
+| `UML_SESSION_NETWORK` | `image`, `user-network` | `image` |
+| `UML_SESSION_WORKSPACE` | `tmpfs`, `ext2` | `tmpfs` |
+| `UML_SESSION_SWAP` | a block device | none |
+| `UML_SESSION_CGROUP` | `v2-nsdelegate`, `v1:<controller>` | none |
+
+`user-network` resolves through the SLiRP resolver and public ones, and gives
+`eth0` the SLiRP provider's fixed lease, since the kernel has no IP
+autoconfiguration. `tmpfs` container state keeps Docker and containerd data
+out of the overlay's upper layer. Runtime mounts are what an init would
+otherwise provide for a shell: `/run`, `/tmp`, `/dev/shm`, `/dev/pts`,
+securityfs and shared propagation. `ext2` puts a 512 MiB memory-backed ext2
+filesystem on `/tmp`. `systemd` finds the image's systemd, which mounts,
+networks and manages everything but the resolver and container state itself,
+so the other keys must keep their defaults.
+
+The session mounts over `/tmp` and `/run`, and the kernel owns `/dev`, `/proc`
+and `/sys`, so a payload a session run reads lives elsewhere, conventionally
+under `/usr/local/libexec`. The integration and performance harness
+(`tests/integration/support/guest.py`) boots every guest this way, the GPU
+runner (`tests/integration/gpu/run_gpu_guest.py`) boots with `systemd`, and
+`scripts/boot-overlay-systemd.sh` boots an EROFS image interactively with the
+fixed parameters in [`overlay-systemd/`](overlay-systemd).
+
+## Seeds
+
+[`seeds/unified-kde-setup`](seeds/unified-kde-setup) is the desktop policy
+that the unified KDE image (`rootfs.erofs` and the ext4 derivatives sealed
+from it) does not carry itself: the `uml` user's device groups, getty masks
+on the display manager's VTs, XDG and Trash directories, SDDM autologin, the
+Folder View default, the disabled idle lock and the hidden Lavapipe ICD.
+`scripts/boot_kde_vnc.py` installs it as a payload and runs it from the
+harness test unit, which runs before the display manager. The file holds this
+policy until the image does.
 
 ## Launchers
 

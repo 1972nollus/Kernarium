@@ -16,7 +16,12 @@ import time
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "integration" / "support"))
-from guest import CORE_CLASSES, Guest  # noqa: E402
+from guest import (  # noqa: E402
+    CORE_CLASSES,
+    Guest,
+    GuestFile,
+    validate_payload_path,
+)
 from host_metrics import cpu_time_seconds  # noqa: E402
 
 
@@ -24,11 +29,6 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
-    parser.add_argument(
-        "--root-device",
-        default="/dev/ubda",
-        help="raw EROFS root block device (default: /dev/ubda)",
-    )
     parser.add_argument("--command", required=True)
     parser.add_argument("--cpus", type=int, default=1)
     parser.add_argument("--repetitions", type=int, default=3)
@@ -59,14 +59,17 @@ def parse_arguments() -> argparse.Namespace:
         action="append",
         default=[],
         metavar="HOST_PATH:GUEST_PATH",
-        help="stage a host file in guest /tmp before running the command",
+        help=(
+            "install an executable host file at GUEST_PATH, outside /tmp "
+            "and /run, before the guest starts"
+        ),
     )
     parser.add_argument(
         "--shell-init",
         action="store_true",
         help=(
-            "boot /bin/sh directly from the EROFS image instead of the "
-            "default writable tmpfs OverlayFS shell"
+            "start a bare shell on the image's tmpfs overlay instead of "
+            "the default shell with runtime mounts and the user network"
         ),
     )
     return parser.parse_args()
@@ -81,10 +84,20 @@ def main() -> int:
     if arguments.sample_seconds < 1 or arguments.timeout < 1:
         raise ValueError("sample duration and timeout must be positive")
 
-    extra_arguments = [
-        f"ncpus={arguments.cpus}",
-        f"root={arguments.root_device}",
-    ]
+    payloads = {}
+    for upload in arguments.upload:
+        try:
+            host_text, guest_path = upload.split(":", 1)
+        except ValueError as error:
+            raise ValueError("--upload must be HOST_PATH:GUEST_PATH") from error
+        host_path = pathlib.Path(host_text).resolve()
+        if not host_path.is_file():
+            raise ValueError(f"upload source is not a file: {host_path}")
+        validate_payload_path(guest_path)
+        if guest_path in payloads:
+            raise ValueError(f"--upload names {guest_path} twice")
+        payloads[guest_path] = GuestFile(host_path.read_bytes(), 0o755)
+
     elapsed_samples: list[float] = []
     utilization_samples: list[float] = []
     with Guest(
@@ -92,40 +105,22 @@ def main() -> int:
         arguments.rootfs.resolve(),
         arguments.memory,
         "tmpfs",
-        tuple(extra_arguments),
+        (f"ncpus={arguments.cpus}",),
         init_shell=arguments.shell_init,
         overlay_shell=not arguments.shell_init,
         engine=arguments.engine,
         core_class=arguments.core_class,
+        payloads=payloads,
     ) as guest:
         if arguments.shell_init:
             guest.boot_to_shell(180)
             mounts = guest.run_command(
-                "mount -t proc proc /proc && "
-                "mount -t tmpfs -o mode=1777 tmpfs /tmp",
-                30,
+                "mount -t tmpfs -o mode=1777 tmpfs /tmp", 30
             )
             if mounts.return_code != 0:
                 raise RuntimeError(f"guest mount setup failed\n{mounts.output}")
         else:
             guest.boot_and_login()
-        for upload in arguments.upload:
-            try:
-                host_text, guest_text = upload.split(":", 1)
-            except ValueError as error:
-                raise ValueError(
-                    "--upload must be HOST_PATH:GUEST_PATH"
-                ) from error
-            host_path = pathlib.Path(host_text).resolve()
-            guest_path = pathlib.PurePosixPath(guest_text)
-            if not host_path.is_file():
-                raise ValueError(f"upload source is not a file: {host_path}")
-            if not guest_path.is_absolute() or (
-                guest_path != pathlib.PurePosixPath("/tmp")
-                and pathlib.PurePosixPath("/tmp") not in guest_path.parents
-            ):
-                raise ValueError("upload destination must be below /tmp")
-            guest.upload(host_path.read_bytes(), str(guest_path), 0o755)
         for repetition in range(arguments.repetitions):
             sampler = None
             if arguments.sample_output is not None:

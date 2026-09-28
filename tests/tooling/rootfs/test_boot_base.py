@@ -6,8 +6,9 @@ A synthetic base that meets the contract must pass the verifier, and each
 single breach of it must fail: a digest mismatch, trailing bytes after the
 gzip member, a dynamic or wrongly aligned program, a program for the other
 architecture, a missing applet link and a base /init that does not fail
-loudly. The checked-in descriptors must parse, and the checked-in per-run
-/init must parse as POSIX sh without probing for programs.
+loudly. The checked-in descriptors must parse, the checked-in per-run /init
+must parse as POSIX sh without probing for programs, and the harness session
+must parse as POSIX sh.
 """
 
 from __future__ import annotations
@@ -143,6 +144,12 @@ def main() -> int:
         not any("command -v" in line or "which " in line for line in code),
         "the per-run /init probes for programs the base does not provide",
     )
+    session = boot_ramdisk / "session"
+    require(
+        session.stat().st_mode & 0o111 == 0o111,
+        "the harness session is not executable",
+    )
+    subprocess.run([shell, "-n", str(session)], check=True, timeout=30)
 
     machine = verify_base.ELF_MACHINES["aarch64"]
     other = verify_base.ELF_MACHINES["x86_64"]

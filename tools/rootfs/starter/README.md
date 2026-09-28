@@ -18,7 +18,11 @@ three raw GPT disks:
   `vainfo`, FFmpeg, and a PipeWire audio server for the guest sound device,
   logs `debian` in on `hvc0`, and grants that user passwordless sudo. Its
   panel pins only installed applications, so Discover and its PackageKit
-  daemon are omitted.
+  daemon are omitted. The session's XDG directories exist before the first
+  login, Folder View shows `~/Desktop` through the local-file worker, since
+  the `desktop:/` worker crashes under UML, the idle lock never engages, and
+  the image carries no Lavapipe ICD for KInfoCenter to mistake for the
+  guest GPU.
 
 Every disk has one Linux-filesystem GPT partition ending at the last usable
 LBA. Networking belongs to the image: OpenRC or systemd starts a DHCP client
@@ -84,11 +88,14 @@ Boot the resulting disk with
 and attach the host Virtio-console service to reach the image-owned `hvc0`
 getty.
 
-The KDE convenience launcher expects an accepted Plasma artifact at
-`.build/rootfs/starter/debian-13-plasma-wayland.img` by default. It attaches
-the disk read-only, selects `/dev/ubda1`, and uses the image-owned network,
-account, getty, and Plasma session. `--rootfs`, `--rootfs-type`, and
-`--root-device` remain available for an explicit legacy-image launch. An ext4
-filesystem selects the starter policy unless `--image-profile legacy` names an
-ext4 derivative of the unified EROFS image, which keeps that image's
-unpartitioned root, SDDM session, and getty masks.
+The KDE convenience launcher, `scripts/boot_kde_vnc.py`, boots the Plasma
+disk of release `starter-20260928-kde-setup` from `.build/rootfs/<release>/`
+by default. It attaches the disk read-only, so the host file must not be
+writable, selects `/dev/ubda1` beneath a tmpfs overlay, and has the per-run
+initramfs start the image's own `/sbin/init`: the network, account, getty,
+and Plasma session are the image's, and the launcher adds no setup.
+`--rootfs`, `--rootfs-type`, and `--root-device` remain available for an
+explicit legacy-image launch. An ext4 filesystem selects the starter policy
+unless `--image-profile legacy` names an ext4 derivative of the unified EROFS
+image, which keeps that image's unpartitioned root, SDDM session, getty masks
+and [seed](../boot-ramdisk/README.md#seeds).
