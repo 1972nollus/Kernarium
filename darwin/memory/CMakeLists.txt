@@ -31,9 +31,8 @@ set(_uml_static_mmu_sources
 
 add_library(uml_static_mmu OBJECT ${_uml_static_mmu_sources})
 uml_declare_architecture_target(uml_static_mmu memory)
-target_link_libraries(uml_static_mmu PRIVATE UML::MemoryContract)
+target_link_libraries(uml_static_mmu PRIVATE UML::BridgeAbi UML::MemoryContract)
 target_include_directories(uml_static_mmu PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
 target_compile_features(uml_static_mmu PUBLIC cxx_std_20)
 target_compile_options(uml_static_mmu PRIVATE -Wall -Wextra -Werror)
@@ -45,9 +44,10 @@ set_target_properties(uml_static_mmu PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_static_guest_memory OBJECT static_guest_memory.cpp)
 uml_declare_architecture_target(uml_static_guest_memory memory)
-target_link_libraries(uml_static_guest_memory PRIVATE UML::MemoryContract)
+target_link_libraries(uml_static_guest_memory PRIVATE
+    UML::BridgeAbi
+    UML::MemoryContract)
 target_include_directories(uml_static_guest_memory PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_static_guest_memory PUBLIC cxx_std_20)
 target_compile_options(uml_static_guest_memory PRIVATE -Wall -Wextra -Werror)
@@ -56,9 +56,10 @@ set_target_properties(uml_static_guest_memory PROPERTIES
 
 add_library(uml_memory_vm_bridge OBJECT mmu/static_api.cpp)
 uml_declare_architecture_target(uml_memory_vm_bridge memory)
-target_link_libraries(uml_memory_vm_bridge PRIVATE UML::MemoryContract)
+target_link_libraries(uml_memory_vm_bridge PRIVATE
+    UML::BridgeAbi
+    UML::MemoryContract)
 target_include_directories(uml_memory_vm_bridge PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin
     ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
 target_compile_features(uml_memory_vm_bridge PUBLIC cxx_std_20)
@@ -125,9 +126,9 @@ if(UML_BUILD_UNIT_TESTS)
         mmu/allocation_fault.cpp)
     uml_declare_architecture_target(uml_static_mmu_test_variant memory)
     target_link_libraries(uml_static_mmu_test_variant PRIVATE
+        UML::BridgeAbi
         UML::MemoryContract)
     target_include_directories(uml_static_mmu_test_variant PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/include
         ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
     target_compile_features(uml_static_mmu_test_variant PUBLIC cxx_std_20)
     target_compile_options(uml_static_mmu_test_variant PRIVATE

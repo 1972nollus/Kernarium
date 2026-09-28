@@ -3,6 +3,7 @@
 # Host-side composition only.  Each architectural layer owns its source
 # manifest and targets in its own directory; this file states their order.
 
+add_subdirectory(include)
 add_subdirectory(api)
 add_subdirectory(platform)
 add_subdirectory(memory)

@@ -4,9 +4,9 @@ add_executable(uml_memory_domain_lifetime_tests
     domain_lifetime_tests.cpp
     $<TARGET_OBJECTS:uml_static_mmu_test_variant>)
 target_link_libraries(uml_memory_domain_lifetime_tests PRIVATE
+    UML::BridgeAbi
     UML::MemorySharedBacking)
 target_include_directories(uml_memory_domain_lifetime_tests PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin/memory
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
 target_compile_features(uml_memory_domain_lifetime_tests PRIVATE cxx_std_20)
@@ -42,8 +42,8 @@ uml_add_unit_test(NAME memory-address-window-reads
 add_executable(uml_execution_gate_profile_tests
     execution_gate_profile_tests.cpp
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu/execution_gate.cpp)
+target_link_libraries(uml_execution_gate_profile_tests PRIVATE UML::BridgeAbi)
 target_include_directories(uml_execution_gate_profile_tests PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
 target_compile_definitions(uml_execution_gate_profile_tests PRIVATE
     UML_MEMORY_PROFILE_TESTING=1
@@ -58,11 +58,11 @@ if(TARGET uml_native_mmu_test_variant)
     add_executable(uml_native_window_reservation_tests
         native_window_reservation_tests.cpp)
     target_link_libraries(uml_native_window_reservation_tests PRIVATE
+        UML::BridgeAbi
         UML::MemoryTestComponent)
     # The native-window placement helper is shared with the ARM64 white-box
     # MMU tests and has no architecture content of its own.
     target_include_directories(uml_native_window_reservation_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/include
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
     target_compile_features(uml_native_window_reservation_tests PRIVATE
@@ -86,9 +86,9 @@ if(TARGET uml_native_mmu_test_variant AND NOT UML_GUEST_16K_PAGES)
     add_executable(uml_native_direct_conversion_tests
         native_direct_conversion_tests.cpp)
     target_link_libraries(uml_native_direct_conversion_tests PRIVATE
+        UML::BridgeAbi
         UML::MemoryTestComponent)
     target_include_directories(uml_native_direct_conversion_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/include
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
     target_compile_features(uml_native_direct_conversion_tests PRIVATE

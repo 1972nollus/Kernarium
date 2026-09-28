@@ -60,9 +60,9 @@ if(UML_BUILD_UNIT_TESTS)
     # archive, so a binary that names neither helper links no MMU symbols.
     add_library(uml_static_mmu_test_support STATIC
         unit/static_mmu/static_mmu_test_support.cpp)
-    target_include_directories(uml_static_mmu_test_support
-        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/unit/static_mmu
-        PRIVATE ${PROJECT_SOURCE_DIR}/darwin/include)
+    target_link_libraries(uml_static_mmu_test_support PRIVATE UML::BridgeAbi)
+    target_include_directories(uml_static_mmu_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit/static_mmu)
     target_compile_features(uml_static_mmu_test_support PUBLIC cxx_std_20)
     target_compile_options(uml_static_mmu_test_support PRIVATE
         -Wall -Wextra -Werror)

@@ -21,7 +21,6 @@ function(_uml_add_emulator_boundary TARGET ADMISSION_TESTING)
         UML::RuntimeContract)
     target_include_directories(${TARGET} PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/api/include
-        ${PROJECT_SOURCE_DIR}/darwin/include
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/darwin/device/network
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
@@ -69,7 +68,6 @@ target_include_directories(uml_emulator
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/darwin/api/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/include
         ${PROJECT_SOURCE_DIR}/darwin/device/network
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
         ${PROJECT_SOURCE_DIR}/darwin/runtime
@@ -113,7 +111,6 @@ if(_uml_need_admission_test_variant)
     target_include_directories(uml_emulator_admission_test_variant
         PUBLIC ${PROJECT_SOURCE_DIR}/darwin/api/include
         PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin/include
             ${PROJECT_SOURCE_DIR}/darwin/device/network
             ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
             ${PROJECT_SOURCE_DIR}/darwin/runtime

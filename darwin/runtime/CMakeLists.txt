@@ -4,11 +4,10 @@ add_library(uml_runtime_contract INTERFACE)
 add_library(UML::RuntimeContract ALIAS uml_runtime_contract)
 uml_declare_architecture_target(uml_runtime_contract runtime)
 target_link_libraries(uml_runtime_contract INTERFACE
+    UML::BridgeAbi
     UML::CpuContract
     UML::MemoryContract
     UML::PlatformContract)
-target_include_directories(uml_runtime_contract INTERFACE
-    ${PROJECT_SOURCE_DIR}/darwin/include)
 target_compile_features(uml_runtime_contract INTERFACE cxx_std_20)
 
 add_library(uml_static_runtime OBJECT
@@ -20,7 +19,6 @@ target_link_libraries(uml_static_runtime PRIVATE
     uml_cpu_engine_factory
     uml_static_guest_memory)
 target_include_directories(uml_static_runtime PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_static_runtime PUBLIC cxx_std_20)
 target_compile_options(uml_static_runtime PRIVATE -Wall -Wextra -Werror)
@@ -39,7 +37,6 @@ target_link_libraries(uml_runtime_context PRIVATE
     uml_cpu_engine_factory
     uml_static_guest_memory)
 target_include_directories(uml_runtime_context PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_runtime_context PUBLIC cxx_std_20)
 target_compile_options(uml_runtime_context PRIVATE -Wall -Wextra -Werror)
@@ -72,7 +69,6 @@ target_link_libraries(uml_runtime_guest_selector PRIVATE
     uml_cpu_engine_factory
     uml_static_guest_memory)
 target_include_directories(uml_runtime_guest_selector PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_runtime_guest_selector PUBLIC cxx_std_20)
 target_compile_options(uml_runtime_guest_selector PRIVATE
@@ -92,7 +88,6 @@ target_link_libraries(uml_runtime_entry PRIVATE
     uml_cpu_engine_factory
     uml_static_guest_memory)
 target_include_directories(uml_runtime_entry PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/platform)
 target_compile_features(uml_runtime_entry PUBLIC cxx_std_20)
@@ -137,11 +132,11 @@ add_library(uml_runtime_core INTERFACE)
 add_library(UML::RuntimeCore ALIAS uml_runtime_core)
 uml_declare_architecture_target(uml_runtime_core runtime)
 target_link_libraries(uml_runtime_core INTERFACE
+    UML::BridgeAbi
     UML::RuntimeObjects
     uml_cpu_engine_component
     UML::PlatformComponent)
 target_include_directories(uml_runtime_core INTERFACE
-    ${PROJECT_SOURCE_DIR}/darwin/include
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_features(uml_runtime_core INTERFACE cxx_std_20)
 
@@ -151,12 +146,12 @@ if(TARGET uml_memory_test_component)
         uml_runtime_core_test_variant)
     uml_declare_architecture_target(uml_runtime_core_test_variant runtime)
     target_link_libraries(uml_runtime_core_test_variant INTERFACE
+        UML::BridgeAbi
         UML::RuntimeObjects
         UML::CpuEngineObjects
         UML::MemoryTestComponent
         UML::PlatformComponent)
     target_include_directories(uml_runtime_core_test_variant INTERFACE
-        ${PROJECT_SOURCE_DIR}/darwin/include
         ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_features(uml_runtime_core_test_variant INTERFACE cxx_std_20)
 endif()

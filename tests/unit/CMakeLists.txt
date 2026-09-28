@@ -19,9 +19,9 @@ add_subdirectory(runtime)
 
 add_executable(uml_emulator_c_api_boundary_tests
     emulator_c_api_boundary_tests.cpp)
-target_link_libraries(uml_emulator_c_api_boundary_tests PRIVATE UML::Emulator)
-target_include_directories(uml_emulator_c_api_boundary_tests PRIVATE
-    ${PROJECT_SOURCE_DIR}/darwin/include)
+target_link_libraries(uml_emulator_c_api_boundary_tests PRIVATE
+    UML::BridgeAbi
+    UML::Emulator)
 target_compile_features(uml_emulator_c_api_boundary_tests PRIVATE cxx_std_20)
 target_compile_options(uml_emulator_c_api_boundary_tests PRIVATE
     -Wall -Wextra -Werror)

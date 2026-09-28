@@ -52,11 +52,11 @@ if(UML_ENABLE_RUNTIME_PROFILING)
     add_executable(uml_jit_profile_final_report_fixture
         ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/jit_profile_final_report_fixture.cpp)
     target_link_libraries(uml_jit_profile_final_report_fixture PRIVATE
+        UML::BridgeAbi
         UML::Emulator
         UML::GuestPageConfiguration
         UML::JitProfileConfiguration)
     target_include_directories(uml_jit_profile_final_report_fixture PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/include
         ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_features(uml_jit_profile_final_report_fixture PRIVATE
         cxx_std_20)

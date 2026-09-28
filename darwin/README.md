@@ -4,6 +4,7 @@
 
 ```text
 api/       installed C API and ABI identity
+include/   host copies of the host/Linux bridge and host-only guest contracts
 platform/  Apple capabilities, VM, files, signals, and sockets
 memory/    guest address spaces, software MMU, and TLBs
 cpu/       gadgets, JIT, shared decode, and neutral engine selection
