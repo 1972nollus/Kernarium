@@ -12,7 +12,9 @@
  * from the device's service thread while a vCPU waits for the answer, and the
  * main thread may itself be waiting for the guest, as it does while quiescing
  * on the way to the background. The answer must therefore never wait for the
- * main thread, and UIKit's battery notifications must keep it current. */
+ * main thread, and UIKit's battery notifications must keep it current. The
+ * provider is linked from HostBattery.xcframework, the archive the Android
+ * runtime links, so the tested object is the one that ships. */
 @interface HostBatteryProviderTests : XCTestCase
 @end
 
