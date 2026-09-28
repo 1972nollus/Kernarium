@@ -452,10 +452,10 @@ index fa4b9cde1df9456a76b4fa4066081d08bf6cbfed..8319e2d10da17d3dfb4275500076fda5
  vk_compare_op_to_mtl_compare_function(enum VkCompareOp op);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index ad4f943ad41bf98b1a484ef34cf8749689901c57..856ed152d0f487642a016b672055376dd8659dbe 100644
+index 147f708d8b156a83b4832e15b81b044ff6ab9e2f..befb6e1b8b299e36209a013b7e317b2b5d26a0af 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1726,14 +1726,25 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
+@@ -1727,14 +1727,25 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
           enc, cmd->vk.dynamic_graphics_state.ds.stencil.front.reference,
           cmd->vk.dynamic_graphics_state.ds.stencil.back.reference);
  

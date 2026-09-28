@@ -10,7 +10,7 @@ toolchain	-	toolchain.tsv	d8f4c2ba48349707cff69a815fd6895a019f8be69fcbe7a48f6e1d
 base	-	mesa	31e9a6b2e95e30d84bf3177d1f497d063e59b6b2
 blob	libkk	src/kosmickrisp/libkk/libkk.spv	5b55a820d9352917b01761e62fb2fca7fd170a31
 sha256	libkk	src/kosmickrisp/libkk/libkk.spv	5fc55edd9b066187e847b49c9b414d2553e47b305343da99e36f8bddbb05a129
-source	libkk	inputs	1b74570f8c68c8e1bb1e0f59a079b0f199504b6971361112fb895d3f99fd7b8f
+source	libkk	inputs	63ec1e47d4b1de253093a1df4a2a4e1138c21a33bdc1bd88e1c8d2a194a72a91
 kernel	libkk	libkk_copy_queries	-
 kernel	libkk	libkk_copy_xfb_counters	-
 kernel	libkk	libkk_gs_setup_indirect	-
@@ -54,7 +54,8 @@ input	libkk	src/compiler/libcl/stdlib.h	3eab3f61bc435b9ad5f725af22dc197d7c2ab2ba
 input	libkk	src/compiler/libcl/string.h	60b5881b6f06cf6347d6dd94888fec21dd4bcf0f
 input	libkk	src/compiler/shader_enums.h	d9d9ddd89754d0fdb767e2dfdf7ca65ea199df86
 input	libkk	src/kosmickrisp/libkk/kk_draws.cl	7d77eace591dd34aaa3f9ab4c7a354457142882b
-input	libkk	src/kosmickrisp/libkk/kk_geometry.cl	93220ef023e06e93c392503f074f713aa735510b
+input	libkk	src/kosmickrisp/libkk/kk_geometry.cl	3d71897ef0b3c237ed65bde0873ca2829db66e6a
+input	libkk	src/kosmickrisp/libkk/kk_geometry.h	9c7ec1e2cb65d57afb6b0bdcefaae8db04c5c187
 input	libkk	src/kosmickrisp/libkk/kk_query.cl	defc2be6c172b5b2756606a1561c9f03947b1dfa
 input	libkk	src/kosmickrisp/libkk/kk_query.h	9939aa22956988ab0b1ebf570cafb4c3340ab9c7
 input	libkk	src/kosmickrisp/libkk/kk_tessellation.cl	abc66ebb70f22a7a821acfb4867327d1fdff8f85

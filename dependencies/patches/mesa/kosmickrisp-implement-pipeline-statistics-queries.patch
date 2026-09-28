@@ -152,13 +152,13 @@ index 2d5f19c0a79dcdfbc05e1c4d48e8ab685a88d7cb..803ee64b6e6203315855cf4085832738
     .lower_fdph = true,
     .has_fsub = true,
 diff --git a/src/kosmickrisp/libkk/kk_geometry.cl b/src/kosmickrisp/libkk/kk_geometry.cl
-index 799efd4c7fb5279f7d5838ee3d2871c9d5faf2c8..b70c1d7fbe63afb7683493f59a297eed978ec1a6 100644
+index dd13feed1bd333403d9f9908b7dc60c3569a468f..6d647946d06bdb091eee6063cabdd0bdf953c51e 100644
 --- a/src/kosmickrisp/libkk/kk_geometry.cl
 +++ b/src/kosmickrisp/libkk/kk_geometry.cl
-@@ -7,8 +7,108 @@
-  */
+@@ -8,8 +8,108 @@
  
  #include "compiler/libcl/libcl_vk.h"
+ #include "kk_geometry.h"
 +#include "poly/cl/restart.h"
  #include "poly/geometry.h"
 +#include "poly/prim.h"
@@ -264,7 +264,7 @@ index 799efd4c7fb5279f7d5838ee3d2871c9d5faf2c8..b70c1d7fbe63afb7683493f59a297eed
  
  static inline void
  libkk_zero_indirect_grid(global uint32_t *grid)
-@@ -338,7 +438,10 @@ libkk_line_raster_setup_indirect(
+@@ -340,7 +440,10 @@ libkk_line_raster_setup_indirect(
  }
  
  KERNEL(1024)
@@ -276,7 +276,7 @@ index 799efd4c7fb5279f7d5838ee3d2871c9d5faf2c8..b70c1d7fbe63afb7683493f59a297eed
  {
     local uint scratch[32];
     poly_prefix_sum(scratch, p->counts, p->nr_patches, 1 /* words */,
-@@ -368,4 +471,12 @@ libkk_prefix_sum_tess(global struct poly_tess_params *p)
+@@ -370,4 +473,12 @@ libkk_prefix_sum_tess(global struct poly_tess_params *p)
     desc[2] = alloc_B / elsize_B; /* start */
     desc[3] = 0;                  /* index_bias */
     desc[4] = 0;                  /* start_instance */
@@ -500,10 +500,10 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
        mtl_dispatch_threadgroups_with_indirect_buffer(
           encoder, pInfo->addressRange.address, local_size);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90727ab396 100644
+index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3b8122e7d 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -1231,14 +1231,22 @@ kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
+@@ -1232,14 +1232,22 @@ kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
     return *params_out != 0;
  }
  
@@ -528,7 +528,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
           gfx->xfb.sink = sink.gpu;
        }
     }
-@@ -1299,9 +1307,10 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
+@@ -1300,9 +1308,10 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
        params.xfb_prims_generated_counter[i] = query ? query : sink;
        params.prims_generated_counter[i] =
           query ? query + sizeof(uint64_t) : sink;
@@ -541,7 +541,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
  
     params.count_buffer_stride = gsi->count_words * sizeof(uint32_t);
     if (!gsi->prefix_sum && params.count_buffer_stride) {
-@@ -1402,7 +1411,6 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
+@@ -1403,7 +1412,6 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
        gfx->xfb.raster_instance_count = params.draw.instance_count;
     }
  
@@ -549,7 +549,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
     return kk_pool_upload(cmd, &params, sizeof(params), 8).gpu;
  }
  
-@@ -1425,7 +1433,9 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+@@ -1426,7 +1434,9 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
     struct poly_tess_params args = {
        .heap = kk_heap(cmd),
        .tcs_stride_el = tcs->info.tess.tcs_output_stride / 4,
@@ -560,7 +560,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
        .input_patch_size = dyn->ts.patch_control_points,
        .output_patch_size = tcs->info.tess.tcs_output_patch_size,
        .tcs_patch_constants = tcs->info.tess.tcs_nr_patch_outputs,
-@@ -1689,6 +1699,18 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+@@ -1690,6 +1700,18 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
     kk_flush_render_pass(cmd);
     kk_flush_pipeline(cmd);
  
@@ -579,7 +579,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
     if (desc->push_dirty)
        kk_cmd_buffer_flush_push_descriptors(cmd, desc);
  
-@@ -1787,6 +1809,95 @@ kk_predicate_draws(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -1788,6 +1810,95 @@ kk_predicate_draws(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     return true;
  }
  
@@ -675,7 +675,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
  /* Unrolling will always be done through indirect rendering, so if this is
   * called from non-indirect calls, we will fake it. */
  static bool
-@@ -2402,6 +2513,19 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2403,6 +2514,19 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     uint32_t input_patch_size = dyn->ts.patch_control_points;
     uint64_t state = gfx->per_draw_data.tess_params;
     struct kk_tess_info info = gfx->tess.info;
@@ -695,7 +695,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
  
     /* Setup grids */
     if (kk_grid_is_indirect(draw.grid)) {
-@@ -2411,7 +2535,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2412,7 +2536,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
           .indirect = draw.grid.addr,
           .vp = gfx->per_draw_data.vertex_params,
           .vertex_outputs = vs->info.vs.outputs_written,
@@ -704,7 +704,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
        };
  
        if (draw.index.el_size_B) {
-@@ -2435,6 +2559,11 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2436,6 +2560,11 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  
        grid_tcs.size.x = patches * tcs->info.tess.tcs_output_patch_size;
        grid_tess = kk_grid_1d(patches * draw.grid.size.y);
@@ -716,7 +716,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
     }
  
     /* First launch the VS and TCS */
-@@ -2465,7 +2594,9 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2466,7 +2595,9 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     libkk_tessellate(cmd, grid_tess, true, info.mode, POLY_TESS_MODE_COUNT,
                      state);
  
@@ -727,7 +727,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
  
     libkk_tessellate(cmd, grid_tess, true, info.mode, POLY_TESS_MODE_WITH_COUNTS,
                      state);
-@@ -2776,6 +2907,24 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2777,6 +2908,24 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
     return lines;
  }
  
@@ -752,7 +752,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
  static struct kk_draw_data
  kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                               struct kk_draw_data draw, enum mesa_prim prim)
-@@ -2829,9 +2978,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2830,9 +2979,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                            vs_local_size);
     }
  
@@ -763,7 +763,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
  
     if (gfx->xfb.enabled || query_active) {
        mtl_barrier_after_encoder_stages(enc, MTL_STAGE_DISPATCH,
-@@ -2951,9 +3098,7 @@ kk_launch_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
+@@ -2952,9 +3099,7 @@ kk_launch_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
        return draw;
     }
  
@@ -774,7 +774,7 @@ index 75fec967be45434112eb659b2f3fcd02f32da533..49db8010802deef70c05c0c0c6130f90
  
     /* A memory-writing GS produces both its emitted values and counts once.
      * Prefix/pre-GS helpers consume those counts before the raster/XFB stage
-@@ -3076,6 +3221,9 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3077,6 +3222,9 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     if (data->predicate_count > 0 && !kk_predicate_draws(cmd, data))
        return;
  
