@@ -3602,7 +3602,7 @@ read_test_sequences(void *context) noexcept
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
-	memory.load(0, {0xcf}); // iretq
+	memory.load(0, {0x48, 0xcf}); // iretq
 	constexpr std::uint64_t stack = 0x200;
 	constexpr std::uint64_t restored_stack = 0x900;
 	constexpr std::uint64_t restored_rip = 0x1234'5678;
@@ -3639,6 +3639,69 @@ read_test_sequences(void *context) noexcept
 			"long64 IRETQ did not restore its selectors and flags");
 }
 
+/* In 64-bit mode IRET defaults to a 32-bit operand size: REX.W selects IRETQ
+ * and 0x66 the 16-bit form, and at every size it pops the five-slot frame,
+ * SS:RSP included, without regard to a privilege change. A narrower EIP or
+ * ESP (or IP or SP) is zero-extended into RIP and RSP. */
+[[nodiscard]] bool execute_long64_interrupt_return_operand_sizes()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case final {
+		std::array<std::uint8_t, 2> bytes;
+		std::size_t slot;
+		std::uint64_t restored_rip;
+		std::uint64_t restored_stack;
+		const char *message;
+	};
+	const std::array cases{
+		Case{{0xcf, 0x90}, 4, 0x1234'5678, 0x8765'4320,
+			"64-bit IRETD did not pop its 32-bit frame"},
+		Case{{0x48, 0xcf}, 8, 0x1'0000'0040, 0x1'0000'0900,
+			"IRETQ did not pop its 64-bit frame"},
+		Case{{0x66, 0xcf}, 2, 0x5678, 0x0900,
+			"64-bit 16-bit IRET did not pop its 16-bit frame"},
+	};
+	/* The code and stack sit above 4 GiB, so every narrower result must
+	 * clear the upper half the old RIP and RSP carried. */
+	constexpr std::uint64_t base = 0x1'0000'0000;
+	constexpr std::uint64_t stack = base + 0x200;
+	for (const auto &shape : cases) {
+		TestMemory memory{base};
+		memory.load(base, {shape.bytes[0], shape.bytes[1]});
+		const std::array<std::uint64_t, 5> frame{
+			shape.restored_rip, 0x33, 0x0246, shape.restored_stack, 0x2b};
+		for (std::size_t index = 0; index < frame.size(); ++index) {
+			std::array<std::byte, 8> word{};
+			std::memcpy(word.data(), &frame[index], word.size());
+			if (!memory.write(stack + index * shape.slot,
+				std::span{word.data(), shape.slot}))
+				return expect(false, "64-bit IRET frame setup failed");
+		}
+		const auto built = gadgets::build(
+			memory, base, ExecutionMode::long64, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"64-bit IRET did not build"))
+			return false;
+		CpuState cpu{};
+		cpu.rip = base;
+		cpu.gpr(Register::rsp) = stack;
+		cpu.segment_selectors[1] = 0x33;
+		cpu.segment_selectors[2] = 0x23;
+		cpu.rflags = 0x202;
+		const auto result = gadgets::execute(built.program, cpu, memory, 1);
+		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+				result.retired_instructions == 1,
+				"64-bit IRET did not retire") ||
+			!expect(cpu.rip == shape.restored_rip &&
+				cpu.gpr(Register::rsp) == shape.restored_stack &&
+				cpu.segment_selectors[1] == 0x33 &&
+				cpu.segment_selectors[2] == 0x2b &&
+				cpu.rflags == 0x246, shape.message))
+			return false;
+	}
+	return true;
+}
+
 /* At CPL 3 IRET loads the flags POPF may load, plus RF: IF, IOPL, VM, VIF and
  * VIP keep their values, the reserved bits stay fixed, and a 16-bit IRET
  * leaves the upper half alone. */
@@ -3661,6 +3724,12 @@ read_test_sequences(void *context) noexcept
 		Case{ExecutionMode::long64, {0x48, 0xcf}, 8, 0x3202,
 			0, 0x3202,
 			"IRETQ cleared IF or IOPL"},
+		Case{ExecutionMode::long64, {0xcf, 0x90}, 4, 0x202,
+			0xffff'ffffULL, 0x25'4fd7,
+			"64-bit IRETD loaded flags outside the user mask"},
+		Case{ExecutionMode::long64, {0x66, 0xcf}, 2, 0x24'0202,
+			0xffffULL, 0x24'4fd7,
+			"64-bit 16-bit IRET changed the upper flags"},
 		Case{ExecutionMode::compat32, {0xcf, 0x00}, 4, 0x202,
 			0xffff'ffffULL, 0x25'4fd7,
 			"compat32 IRETD loaded flags outside the user mask"},
@@ -7061,6 +7130,7 @@ int main()
 		execute_compat32_enter_frames() &&
 		execute_compat32_legacy_segment_stack() &&
 		execute_long64_interrupt_return_stack_switch() &&
+		execute_long64_interrupt_return_operand_sizes() &&
 		interrupt_return_masks_user_flags() &&
 		expose_consistent_xsave_cpuid_state() &&
 		wrap_compat32_instruction_pointer() &&

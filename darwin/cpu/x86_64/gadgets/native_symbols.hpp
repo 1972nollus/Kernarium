@@ -538,6 +538,8 @@ void uml_x86_64_gadget_far_return_64();
 void uml_x86_64_gadget_interrupt_return_16();
 void uml_x86_64_gadget_interrupt_return_32();
 void uml_x86_64_gadget_interrupt_return_64();
+void uml_x86_64_gadget_interrupt_return_long_16();
+void uml_x86_64_gadget_interrupt_return_long_32();
 void uml_x86_64_gadget_syscall();
 void uml_x86_64_gadget_int80();
 void uml_x86_64_gadget_breakpoint();

@@ -4,8 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 
+/* GadgetExecutor's layout follows this switch, so a translation unit that
+ * guessed it would disagree with the library about that layout. */
 #ifndef UML_GADGET_EXECUTION_HISTOGRAM
-#define UML_GADGET_EXECUTION_HISTOGRAM 0
+#error "UML_GADGET_EXECUTION_HISTOGRAM must come from the build"
 #endif
 
 /*

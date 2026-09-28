@@ -73,6 +73,7 @@ if(UML_BUILD_UNIT_TESTS)
         uml_host_capabilities_test_support
         uml_test_scratch_directory
         uml_static_mmu_test_support
+        UML::GadgetHistogramConfiguration
         UML::GuestPageConfiguration
         UML::JitProfileConfiguration)
     add_subdirectory(unit)
