@@ -247,6 +247,24 @@
       }
     },
     {
+      "name": "kernarium-ios-device-automation",
+      "displayName": "Kernarium iOS device automation runtime (16 KiB)",
+      "inherits": "kernarium-ios-device",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-automation-16k",
+      "cacheVariables": {
+        "UML_KERNARIUM_AUTOMATION_HARNESS": true
+      }
+    },
+    {
+      "name": "kernarium-ios-device-automation-4k",
+      "displayName": "Kernarium iOS device automation runtime (4 KiB)",
+      "inherits": "kernarium-ios-device-automation",
+      "binaryDir": "${sourceDir}/.build/kernarium-runtime-ios-device-automation-4k",
+      "cacheVariables": {
+        "UML_GUEST_16K_PAGES": false
+      }
+    },
+    {
       "name": "kernarium-ios-device-android",
       "displayName": "Kernarium iOS device Android runtime (16 KiB)",
       "inherits": "kernarium-ios-device",
@@ -370,6 +388,16 @@
     {
       "name": "kernarium-ios-device-4k",
       "configurePreset": "kernarium-ios-device-4k",
+      "targets": ["KernariumRuntime", "architecture-audit"]
+    },
+    {
+      "name": "kernarium-ios-device-automation",
+      "configurePreset": "kernarium-ios-device-automation",
+      "targets": ["KernariumRuntime", "architecture-audit"]
+    },
+    {
+      "name": "kernarium-ios-device-automation-4k",
+      "configurePreset": "kernarium-ios-device-automation-4k",
       "targets": ["KernariumRuntime", "architecture-audit"]
     },
     {

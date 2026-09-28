@@ -303,7 +303,8 @@ class VulkanCtsToolingTests(unittest.TestCase):
         self.assertIn("--deqp-crashhandler=disable", arguments)
         self.assertIn("--deqp-test-oom=disable", arguments)
         launcher = cts.build_guest_launcher(
-            self.identity, self.selection, page_size=16384, timeout=900
+            self.identity, self.selection, page_size=16384, timeout=900,
+            case_list=cts.GUEST_CASE_LIST_PATH,
         )
         self.assertIn(
             "VK_DRIVER_FILES=/usr/share/vulkan/icd.d/virtio_icd.json",
@@ -767,13 +768,9 @@ class VulkanCtsToolingTests(unittest.TestCase):
                     check=False,
                 )
                 self.assertEqual(result.returncode, status, result.stdout)
-        # Launchers generated for Kernarium keep the list embedded.
-        embedded = cts.selected_list_setup(selection, None)
-        self.assertIn("base64 -d", embedded)
-        self.assertEqual(
-            base64.b64decode(shlex.split(embedded.split("|")[0])[2]),
-            b"dEQP-VK.a\n",
-        )
+        # Every harness installs the list as a file; none embeds it.
+        with self.assertRaisesRegex(cts.CampaignError, "as a file"):
+            cts.selected_list_setup(selection, None)
 
     def test_cli_selects_only_the_checked_derivative_for_qualification(self) -> None:
         options = cts.parse_arguments(("--qualification", "--dry-run"))
@@ -804,6 +801,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
             page_size=16384,
             timeout=900,
             progress_timeout=600,
+            case_list=cts.GUEST_CASE_LIST_PATH,
         )
         self.assertEqual(cts.ARTIFACT_BASE64_LINE_LENGTH, 3 * 1024)
         self.assertIn(
@@ -831,6 +829,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
             timeout=900,
             progress_timeout=600,
             relax_diagnostics=True,
+            case_list=cts.GUEST_CASE_LIST_PATH,
         )
         # The watch reads that output by offset, so the two never coexist.
         self.assertNotIn('[ "$output_free_kb" -lt 65536 ]', relaxed)
@@ -972,6 +971,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
             timeout=900,
             progress_timeout=600,
             use_wsi=True,
+            case_list=cts.GUEST_CASE_LIST_PATH,
         )
         self.assertFalse(cts.receipt_selection_uses_wayland(selection))
         self.assertIn(cts.common.native_x11_setup(), launcher)
@@ -1081,6 +1081,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
             timeout=900,
             progress_timeout=600,
             use_wsi=True,
+            case_list=cts.GUEST_CASE_LIST_PATH,
         )
         self.assertIn(cts.common.native_x11_setup(wayland=True), launcher)
         self.assertIn("WAYLAND_DISPLAY=wayland-0", launcher)
@@ -1915,9 +1916,12 @@ class VulkanCtsToolingTests(unittest.TestCase):
             device="fixture",
             campaign=cts.apple_mustpass_campaign(0),
             rootfs_filename="rootfs-vulkan-venus.ext4",
+            payload="kernarium-payload-fixture.cpio",
+            systemd_unit="uml-cts.target",
             engine="gadgets",
             memory_mib=cts.APPLE_MUSTPASS_GUEST_MEMORY_MIB,
             cpus=1,
+            page_size=16384,
             timeout=28200,
             stall_timeout=1800,
         )

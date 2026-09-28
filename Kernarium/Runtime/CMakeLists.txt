@@ -77,97 +77,28 @@ if(NOT _kernarium_carrier_result EQUAL 0)
         "${_kernarium_carrier_output}${_kernarium_carrier_error}")
 endif()
 
-set(_kernarium_cts_generator
-    "${PROJECT_SOURCE_DIR}/Kernarium/scripts/generate-cts-campaign-header.py")
-set(_kernarium_cts_runner
-    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_vk_gl_cts.py")
-set(_kernarium_vulkan_cts_runner
-    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_vk_cts.py")
-set(_kernarium_cts_identity
-    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_identity.json")
-set(_kernarium_vulkan_cts_identity
-    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vulkan_cts_identity.json")
-set(_kernarium_cts_campaigns
-    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_apple_campaigns.json")
-set(_kernarium_cts_matrix
-    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_apple_matrix.json")
-set(_kernarium_cts_derivative_receipt
-    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vk_gl_cts_derivative_rootfs.json")
-set(_kernarium_vulkan_cts_receipt
-    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vulkan_cts_receipt.json")
-set(_kernarium_vulkan_cts_mandatory
-    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/vulkan_cts_mandatory_1_4_6_2.txt")
-set(_kernarium_cts_header
-    "${CMAKE_CURRENT_BINARY_DIR}/KernariumCtsCampaigns.hpp")
-set(_kernarium_vulkan_cts_options
-    --experimental-venus
-    --vulkan-receipt "${_kernarium_vulkan_cts_receipt}")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${_kernarium_vulkan_cts_receipt}"
-    "${_kernarium_vulkan_cts_mandatory}")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${_kernarium_cts_generator}"
-    "${_kernarium_cts_runner}"
-    "${_kernarium_vulkan_cts_runner}"
-    "${_kernarium_cts_identity}"
-    "${_kernarium_vulkan_cts_identity}"
-    "${_kernarium_cts_campaigns}"
-    "${_kernarium_cts_matrix}"
-    "${_kernarium_cts_derivative_receipt}")
-execute_process(
-    COMMAND "${_kernarium_python3}" -B "${_kernarium_cts_generator}"
-        --runner "${_kernarium_cts_runner}"
-        --vulkan-runner "${_kernarium_vulkan_cts_runner}"
-        --identity "${_kernarium_cts_identity}"
-        --vulkan-identity "${_kernarium_vulkan_cts_identity}"
-        --campaigns "${_kernarium_cts_campaigns}"
-        --matrix "${_kernarium_cts_matrix}"
-        --derivative-receipt "${_kernarium_cts_derivative_receipt}"
-        --page-size "${_kernarium_guest_page_size}"
-        ${_kernarium_vulkan_cts_options}
-        --output "${_kernarium_cts_header}"
-    RESULT_VARIABLE _kernarium_cts_result
-    OUTPUT_VARIABLE _kernarium_cts_output
-    ERROR_VARIABLE _kernarium_cts_error)
-if(NOT _kernarium_cts_result EQUAL 0)
-    message(FATAL_ERROR
-        "Cannot generate Kernarium CTS campaigns:\n"
-        "${_kernarium_cts_output}${_kernarium_cts_error}")
-endif()
-
-set(_kernarium_aquarium_generator
-    "${PROJECT_SOURCE_DIR}/Kernarium/scripts/generate-aquarium-header.py")
-set(_kernarium_aquarium_runner
-    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_chromium_webgl.py")
-set(_kernarium_aquarium_header
-    "${CMAKE_CURRENT_BINARY_DIR}/KernariumAquarium.hpp")
-# The runner builds its launcher from the shared WebGL launcher helper, whose
-# text is part of the generated setup.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${_kernarium_aquarium_generator}"
-    "${_kernarium_aquarium_runner}"
-    "${PROJECT_SOURCE_DIR}/tests/integration/gpu/webgl_launcher.py")
-execute_process(
-    COMMAND "${_kernarium_python3}" -B "${_kernarium_aquarium_generator}"
-        --runner "${_kernarium_aquarium_runner}"
-        --output "${_kernarium_aquarium_header}"
-    RESULT_VARIABLE _kernarium_aquarium_result
-    OUTPUT_VARIABLE _kernarium_aquarium_output
-    ERROR_VARIABLE _kernarium_aquarium_error)
-if(NOT _kernarium_aquarium_result EQUAL 0)
-    message(FATAL_ERROR
-        "Cannot generate Kernarium Aquarium probe:\n"
-        "${_kernarium_aquarium_output}${_kernarium_aquarium_error}")
-endif()
-
 add_library(KernariumRuntime SHARED
-    "${_kernarium_aquarium_header}"
-    "${_kernarium_cts_header}"
-    KernariumBootstrap.hpp
     KernariumConsoleInput.hpp
     KernariumRuntime.h
     KernariumRuntime.mm)
 uml_declare_architecture_target(KernariumRuntime app)
+
+# The release runtime boots only the desktop. The automation runtime, which
+# only test and benchmark drivers package, also accepts a host-built boot
+# payload and relays a guest campaign's artifacts; Kernarium/README.md owns
+# that contract.
+if(UML_KERNARIUM_AUTOMATION_HARNESS)
+    if(KERNARIUM_RUNTIME_ANDROID_GUEST)
+        message(FATAL_ERROR
+            "The Kernarium automation harness boots Linux guests only")
+    endif()
+    target_sources(KernariumRuntime PRIVATE
+        KernariumHarness.hpp
+        KernariumHarness.mm)
+    set(_kernarium_automation_harness 1)
+else()
+    set(_kernarium_automation_harness 0)
+endif()
 target_include_directories(KernariumRuntime
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE
@@ -183,6 +114,7 @@ target_include_directories(KernariumRuntime
 target_link_libraries(KernariumRuntime PRIVATE
     UML::Emulator
     UML::AndroidBoot
+    UML::BootInitramfs
     UML::GuestPageConfiguration
     UML::AudioDevice
     UML::VideoDevice
@@ -203,7 +135,8 @@ target_compile_options(KernariumRuntime PRIVATE
     -Wall -Wextra -Werror)
 target_compile_definitions(KernariumRuntime PRIVATE
     KERNARIUM_RUNTIME_ANDROID_GUEST=${KERNARIUM_RUNTIME_ANDROID_GUEST}
-    KERNARIUM_RUNTIME_GUEST_FLAVOR=${KERNARIUM_RUNTIME_GUEST_FLAVOR})
+    KERNARIUM_RUNTIME_GUEST_FLAVOR=${KERNARIUM_RUNTIME_GUEST_FLAVOR}
+    KERNARIUM_AUTOMATION_HARNESS=${_kernarium_automation_harness})
 target_link_options(KernariumRuntime PRIVATE
     "LINKER:-force_load,$<TARGET_FILE:uml_emulator>")
 # The framework code signature covers __TEXT pages. The loader aliases the
@@ -212,6 +145,20 @@ target_link_options(KernariumRuntime PRIVATE
 target_link_options(KernariumRuntime PRIVATE
     "LINKER:-sectcreate,__TEXT,__uml_elf,${_kernarium_kernel_image}"
     "LINKER:-sectalign,__TEXT,__uml_elf,0x4000")
+# A Linux guest boots the accepted aarch64 base archive and the generic
+# per-run /init, carried beside the kernel as uml-darwin carries them. Android
+# boots its own ramdisk.
+if(NOT KERNARIUM_RUNTIME_ANDROID_GUEST)
+    include("${PROJECT_SOURCE_DIR}/tools/rootfs/boot-ramdisk/BootBase.cmake")
+    uml_select_boot_base(aarch64 _kernarium_boot_base)
+    set(_kernarium_boot_init
+        "${PROJECT_SOURCE_DIR}/tools/rootfs/boot-ramdisk/init")
+    target_link_options(KernariumRuntime PRIVATE
+        "LINKER:-sectcreate,__TEXT,__uml_boot_base,${_kernarium_boot_base}"
+        "LINKER:-sectcreate,__TEXT,__uml_boot_init,${_kernarium_boot_init}")
+    set_property(TARGET KernariumRuntime APPEND PROPERTY LINK_DEPENDS
+        "${_kernarium_boot_base}" "${_kernarium_boot_init}")
+endif()
 add_dependencies(KernariumRuntime
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
     uml_dependency_prefix_verify)

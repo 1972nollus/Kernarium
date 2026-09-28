@@ -156,6 +156,11 @@ ramdisk and has none of this.
 [--file=<archive path>=<file>]...` writes the same segment, or with `--base`
 the whole initrd, for a host that boots the guest elsewhere.
 
+Kernarium's Linux runtime embeds the base and the default `init` the same way
+and writes each run's initrd into its temporary directory
+([Kernarium/README.md](../../../Kernarium/README.md#guest-boot)); its
+automation build appends a host-written segment after its own.
+
 ## Accepting a base
 
 `accepted-<arch>.env` names the release, file, size and SHA-256 of each base.

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Measure batched and fragmented UBD discard on a physical iPad."""
+"""Measure batched and fragmented UBD discard on a physical iPad.
+
+Each mode is one boot of guest/ubd-discard.sh as a device workload
+(run_ios_device_workload.py), under a tmpfs writable layer so the script owns
+the overlay disk.
+"""
 
 from __future__ import annotations
 
@@ -8,35 +13,37 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import json
-import os
 from pathlib import Path
 import re
-import signal
 import statistics
-import subprocess
+import sys
 import time
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
+import guest  # noqa: E402
+import kernarium  # noqa: E402
+
+WORKLOAD = Path(__file__).resolve().parent / "guest" / "ubd-discard.sh"
+PARAMETERS = "/etc/uml-discard.env"
 DEFAULT_APP = (
     REPOSITORY
     / ".build/kernarium-device-derived/Build/Products/Release-iphoneos"
     / "Kernarium.app"
 )
 DEFAULT_ARTIFACT_ROOT = REPOSITORY / ".build/ios-device-discard-bench"
-BUNDLE_ID = "com.imxieyi.Kernarium"
 MODES = ("batched-128m", "fragmented-32k")
 EXPECTED_REQUESTS = {"batched-128m": 4, "fragmented-32k": 16384}
 SAMPLE = re.compile(
-    r"KERNARIUM_DISCARD_SAMPLE:"
+    r"UML_DISCARD_SAMPLE:"
     r"(batched-128m|fragmented-32k):"
     r"([1-7]):([0-9]+):([0-9]+):([0-9]+):([0-9]+)"
 )
 READY = re.compile(
-    r"KERNARIUM_DISCARD_READY:"
+    r"UML_DISCARD_READY:"
     r"(batched-128m|fragmented-32k):([0-9]+)"
 )
-RUNTIME_RESULT = re.compile(r"Kernarium: runtime returned (-?[0-9]+)")
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -48,97 +55,51 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--memory-mib", type=int, default=1024)
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--artifact-root", type=Path, default=DEFAULT_ARTIFACT_ROOT)
+    parser.add_argument("--initramfs-tool", type=Path,
+                        default=kernarium.DEFAULT_INITRAMFS_TOOL)
     parser.add_argument("--maximum-batched-ms", type=float, default=500.0)
     parser.add_argument("--minimum-speedup", type=float, default=2.0)
     return parser.parse_args()
 
 
-def stop_console(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
-    process.send_signal(signal.SIGINT)
-    try:
-        process.wait(timeout=15)
-    except subprocess.TimeoutExpired:
-        process.terminate()
-        process.wait(timeout=5)
-
-
-def wait_for_runtime(
-    process: subprocess.Popen[bytes], log: Path, timeout: int, mode: str
-) -> str:
-    deadline = time.monotonic() + timeout
-    next_update = time.monotonic() + 30
-    while time.monotonic() < deadline:
-        transcript = log.read_text(encoding="utf-8", errors="replace")
-        if RUNTIME_RESULT.search(transcript) is not None:
-            return transcript
-        if process.poll() is not None:
-            raise RuntimeError(
-                f"device console exited before {mode} completed; see {log}"
-            )
-        now = time.monotonic()
-        if now >= next_update:
-            print(
-                f"iPad discard benchmark {mode} is running; "
-                f"console_bytes={log.stat().st_size}",
-                flush=True,
-            )
-            next_update = now + 30
-        time.sleep(0.5)
-    raise TimeoutError(f"iPad discard benchmark {mode} exceeded {timeout} seconds")
-
-
 def launch(
-    arguments: argparse.Namespace, mode: str, log: Path
+    arguments: argparse.Namespace, mode: str, directory: Path
 ) -> list[dict[str, int | str]]:
-    environment = os.environ.copy()
-    for name in (
-        "DEVICECTL_CHILD_KERNARIUM_CTS_CAMPAIGN",
-        "DEVICECTL_CHILD_KERNARIUM_GEEKBENCH",
-        "DEVICECTL_CHILD_KERNARIUM_GEEKBENCH_WORKLOADS",
-        "DEVICECTL_CHILD_KERNARIUM_WEBGL_AQUARIUM",
-    ):
-        environment.pop(name, None)
-    environment.update(
-        {
-            "DEVICECTL_CHILD_KERNARIUM_DISCARD_BENCHMARK": mode,
-            "DEVICECTL_CHILD_KERNARIUM_EXECUTION_ENGINE": "gadgets",
-            "DEVICECTL_CHILD_KERNARIUM_GUEST_MEMORY_MIB": str(
-                arguments.memory_mib
-            ),
-            "DEVICECTL_CHILD_KERNARIUM_KERNEL_PAGE_SIZE": "16384",
-            "DEVICECTL_CHILD_KERNARIUM_OVERLAY_SIZE_GIB": "1",
-            "DEVICECTL_CHILD_KERNARIUM_ROOTFS": arguments.rootfs_filename,
-            "DEVICECTL_CHILD_KERNARIUM_VCPU_COUNT": str(arguments.cpus),
-        }
+    payload = kernarium.workload_payload(
+        kernarium.root_type(arguments.rootfs_filename),
+        WORKLOAD.read_bytes(),
+        files={
+            PARAMETERS: guest.GuestFile(f"UML_DISCARD_MODE={mode}\n".encode())
+        },
+        upper="tmpfs",
     )
-    command = [
-        "xcrun",
-        "devicectl",
-        "device",
-        "process",
-        "launch",
-        "--device",
+    written = payload.write(
+        directory / f"{mode}.cpio", arguments.initramfs_tool
+    )
+    name = kernarium.payload_name(written)
+    kernarium.copy_to_device(arguments.device, written, name, 300)
+    log = directory / f"{mode}.log"
+    transcript = kernarium.run_device_console(
         arguments.device,
-        "--console",
-        "--terminate-existing",
-        BUNDLE_ID,
-    ]
-    with log.open("wb") as output:
-        process = subprocess.Popen(
-            command, stdout=output, stderr=subprocess.STDOUT, env=environment
-        )
-        try:
-            transcript = wait_for_runtime(
-                process, log, arguments.timeout, mode
-            )
-        finally:
-            stop_console(process)
-
-    runtime_results = RUNTIME_RESULT.findall(transcript)
-    if not runtime_results or int(runtime_results[-1]) != 0:
+        kernarium.settings_for(
+            rootfs=arguments.rootfs_filename,
+            payload=name,
+            cpus=arguments.cpus,
+            memory_mib=arguments.memory_mib,
+            engine="gadgets",
+            page_size=16384,
+            extra={"KERNARIUM_OVERLAY_SIZE_GIB": "1"},
+        ),
+        log,
+        timeout=arguments.timeout,
+        stall_timeout=arguments.timeout,
+        label=f"iPad discard benchmark {mode}",
+    )
+    kernarium.require_automation_boot(transcript)
+    if kernarium.runtime_result(transcript) != 0:
         raise RuntimeError(f"{mode} runtime did not return zero; see {log}")
+    if kernarium.session_exit(transcript) != 0:
+        raise RuntimeError(f"{mode} workload did not exit zero; see {log}")
     ready = READY.findall(transcript)
     if len(ready) != 1 or ready[0][0] != mode:
         raise RuntimeError(f"{mode} emitted an invalid ready record; see {log}")
@@ -178,25 +139,8 @@ def main() -> int:
     app = arguments.app.resolve()
     if not app.is_dir():
         raise ValueError(f"Kernarium app is unavailable: {app}")
-    subprocess.run(
-        ["codesign", "--verify", "--deep", "--strict", str(app)], check=True
-    )
-    subprocess.run(
-        [
-            "xcrun",
-            "devicectl",
-            "device",
-            "install",
-            "app",
-            "--device",
-            arguments.device,
-            str(app),
-            "--quiet",
-            "--timeout",
-            "300",
-        ],
-        check=True,
-    )
+    kernarium.require_automation_app(app)
+    kernarium.install_app(arguments.device, app, 300)
 
     artifact = arguments.artifact_root.resolve() / time.strftime(
         "%Y%m%d-%H%M%S"
@@ -204,7 +148,7 @@ def main() -> int:
     artifact.mkdir(parents=True, exist_ok=False)
     results: dict[str, list[dict[str, int | str]]] = {}
     for mode in MODES:
-        results[mode] = launch(arguments, mode, artifact / f"{mode}.log")
+        results[mode] = launch(arguments, mode, artifact)
 
     medians_ms = {
         mode: statistics.median(

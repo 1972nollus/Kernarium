@@ -74,6 +74,9 @@ option(UML_BUILD_AUDIO "Build the host Virtio Sound playback provider"
     ${UML_BUILD_GPU})
 option(UML_BUILD_KERNARIUM_RUNTIME
     "Build the Kernarium application framework for iOS" OFF)
+option(UML_KERNARIUM_AUTOMATION_HARNESS
+    "Build the automation-only Kernarium Linux runtime, which boots host payloads"
+    OFF)
 option(UML_BUILD_NETWORK_PROVIDER
     "Build the optional SLiRP network provider"
     ${UML_BUILD_KERNEL_RUNNER})

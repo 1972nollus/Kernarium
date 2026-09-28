@@ -6,8 +6,11 @@
 # The iOS Simulator cannot host this stack: Mesa Zink renders on KosmicKrisp,
 # which requires Metal 4, and the Simulator exposes no Metal 4 device. The same
 # unmodified iOS device slice runs natively on an Apple silicon Mac, where the
-# host GPU is used directly, so that mode is the iOS verification vehicle until
-# a physical device is attached.
+# host GPU is used directly; the physical-device lanes are in docs/testing.md.
+#
+# --aquarium builds and packages the automation runtimes instead of the release
+# ones and boots the WebGL Aquarium probe as a host payload
+# (Kernarium/README.md).
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -24,6 +27,7 @@ ARTIFACT_16K=${UML_MAINLINE_618_KERNEL_ARTIFACT_16K_DIR:-"$ROOT_DIR/.build/kerne
 ARTIFACT_4K=${UML_MAINLINE_618_KERNEL_ARTIFACT_4K_DIR:-"$ROOT_DIR/.build/kernel/artifacts/$UML_KERNEL_ARTIFACT_DIRECTORY_NAME"}
 BUNDLE_ID=com.imxieyi.Kernarium
 DERIVED_DATA="$ROOT_DIR/.build/kernarium-xcode-derived"
+INITRAMFS_TOOL="$ROOT_DIR/.build/presets/macos-integration/bin/uml-initramfs"
 DESTINATION='platform=macOS,variant=Designed for iPad'
 AQUARIUM=0
 GUEST_BUNDLE=
@@ -50,7 +54,10 @@ usage()
 		"  --artifact-4k PATH   Accepted 4 KiB kernel artifact directory" \
 		"  --jobs NUMBER  Parallel build jobs (default: 4)" \
 		"  --no-build     Stage and launch the installed app as it stands" \
-		"  --aquarium     Launch Chromium WebGL Aquarium verification" \
+		"  --aquarium     Build the automation runtimes and launch Chromium" \
+		"                 WebGL Aquarium verification" \
+		"  --initramfs-tool PATH  uml-initramfs, which writes the Aquarium" \
+		"                 payload (default: the macos-integration build)" \
 		"  -h, --help      Show this help"
 }
 
@@ -89,6 +96,11 @@ while [ "$#" -gt 0 ]; do
 		AQUARIUM=1
 		shift
 		;;
+	--initramfs-tool)
+		[ "$#" -ge 2 ] || fail "--initramfs-tool requires a path"
+		INITRAMFS_TOOL=$2
+		shift 2
+		;;
 	-h|--help)
 		usage
 		exit 0
@@ -107,16 +119,25 @@ esac
 	fail "16 KiB kernel artifact is unavailable: $ARTIFACT_16K"
 [ -d "$ARTIFACT_4K" ] ||
 	fail "4 KiB kernel artifact is unavailable: $ARTIFACT_4K"
+if [ "$AQUARIUM" -eq 1 ]; then
+	[ -x "$INITRAMFS_TOOL" ] ||
+		fail "uml-initramfs is unavailable: $INITRAMFS_TOOL; build it or pass --initramfs-tool"
+	PRESET=kernarium-ios-device-automation
+	PACKAGE_OPTION=--automation
+else
+	PRESET=kernarium-ios-device
+	PACKAGE_OPTION=
+fi
 
 cd "$ROOT_DIR"
 if [ "$SKIP_BUILD" -eq 0 ]; then
-	cmake --preset kernarium-ios-device \
+	cmake --preset "$PRESET" \
 		-DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR="$ARTIFACT_16K"
-	cmake --build --preset kernarium-ios-device --parallel "$JOBS"
-	cmake --preset kernarium-ios-device-4k \
+	cmake --build --preset "$PRESET" --parallel "$JOBS"
+	cmake --preset "$PRESET-4k" \
 		-DUML_MAINLINE_618_KERNEL_ARTIFACT_DIR="$ARTIFACT_4K"
-	cmake --build --preset kernarium-ios-device-4k --parallel "$JOBS"
-	"$ROOT_DIR/Kernarium/scripts/package-ios-frameworks.sh"
+	cmake --build --preset "$PRESET-4k" --parallel "$JOBS"
+	"$ROOT_DIR/Kernarium/scripts/package-ios-frameworks.sh" $PACKAGE_OPTION
 	xcodebuild \
 		-project "$ROOT_DIR/Kernarium/Kernarium.xcodeproj" \
 		-scheme Kernarium \
@@ -210,8 +231,16 @@ fi
 # removed, so these are exported to xcodebuild rather than given as arguments.
 set -- "TEST_RUNNER_KERNARIUM_ROOTFS=$LAUNCH_ROOTFS"
 if [ "$AQUARIUM" -eq 1 ]; then
+	# The automation runtime appends this payload to its boot and boots its
+	# target; it replaces the payload an earlier run of this script left.
+	PAYLOAD=kernarium-aquarium-payload.cpio
+	rm -f -- "$DATA_CONTAINER/Documents/$PAYLOAD"
+	python3 -B "$ROOT_DIR/tests/integration/gpu/run_chromium_webgl.py" \
+		--kernarium-payload "$DATA_CONTAINER/Documents/$PAYLOAD" \
+		--initramfs-tool "$INITRAMFS_TOOL"
 	set -- "$@" \
-		TEST_RUNNER_KERNARIUM_WEBGL_AQUARIUM=1 \
+		"TEST_RUNNER_KERNARIUM_BOOT_PAYLOAD=$PAYLOAD" \
+		TEST_RUNNER_KERNARIUM_SYSTEMD_UNIT=uml-aquarium.target \
 		TEST_RUNNER_KERNARIUM_EXECUTION_ENGINE=gadgets \
 		TEST_RUNNER_KERNARIUM_VCPU_COUNT=4 \
 		TEST_RUNNER_KERNARIUM_GUEST_MEMORY_MIB=4096 \

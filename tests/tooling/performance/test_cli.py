@@ -25,7 +25,10 @@ RUNNERS = (
     "run_guest_exec_bench.py",
     "run_guest_link_bench.py",
 )
-MOBILE_RUNNERS = ("run_ios_device_discard_bench.py",)
+MOBILE_RUNNERS = (
+    "run_ios_device_discard_bench.py",
+    "run_ios_device_workload.py",
+)
 
 
 def verify_engine_forwarding(runner: str) -> None:

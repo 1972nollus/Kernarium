@@ -7,7 +7,6 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
 from contextlib import AbstractContextManager
 import json
 import math
@@ -26,8 +25,10 @@ from typing import Any, BinaryIO, NamedTuple, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(REPO_ROOT / "tests" / "integration" / "support"))
 import boot_kde_vnc  # noqa: E402
 import guest_process  # noqa: E402
+import kernarium  # noqa: E402
 import run_gpu_guest as gpu_guest  # noqa: E402
 import kernarium_vk_gl_cts_common as kernarium_common  # noqa: E402
 import run_vk_gl_cts as cts  # noqa: E402
@@ -59,7 +60,35 @@ PAGE_MARGIN_SECONDS = 10
 # Kernarium reads the probe's console without a host deadline. This bounds
 # the guest waits of that unattended run instead.
 KERNARIUM_TIMEOUT_SECONDS = 1800
-CONSOLE_BASE64_CHUNK_CHARACTERS = 1024
+EXTENSION_DIRECTORY = "/var/tmp/uml-aquarium-extension"
+LAUNCHER_PATH = "/usr/local/libexec/uml-chromium-aquarium"
+SERVICE_NAME = "uml-chromium-aquarium.service"
+SERVICE_PATH = f"/etc/systemd/system/{SERVICE_NAME}"
+# The session the probe boots on both products: the image's desktop and the
+# probe, without the container runtime or the package managers' timers, whose
+# work competes with the measurement. Conflicts= stops each of them in the
+# boot transaction, whatever enables it.
+TARGET_UNIT = "uml-aquarium.target"
+TARGET_PATH = f"/etc/systemd/system/{TARGET_UNIT}"
+TARGET_CONFLICTS = (
+    "docker.service",
+    "docker.socket",
+    "containerd.service",
+    "packagekit.service",
+    "apt-daily.service",
+    "apt-daily.timer",
+    "apt-daily-upgrade.service",
+    "apt-daily-upgrade.timer",
+)
+TARGET = (
+    "[Unit]\n"
+    "Description=Chromium WebGL Aquarium verification session\n"
+    "Requires=graphical.target\n"
+    "After=graphical.target\n"
+    f"Wants={SERVICE_NAME}\n"
+    f"Conflicts={' '.join(TARGET_CONFLICTS)}\n"
+    "AllowIsolate=yes\n"
+)
 EXTENSION_MANIFEST = """{
   "manifest_version": 3,
   "name": "UML Aquarium verifier",
@@ -562,17 +591,6 @@ def announced_vnc_port(console: str) -> int:
     return port
 
 
-def install_text(path: str, content: str, mode: str = "0644") -> str:
-    encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
-    parent = str(Path(path).parent)
-    commands = [f"install -d -m 0755 {parent}", f": > {path}"]
-    for offset in range(0, len(encoded), CONSOLE_BASE64_CHUNK_CHARACTERS):
-        chunk = encoded[offset : offset + CONSOLE_BASE64_CHUNK_CHARACTERS]
-        commands.append(f"printf '%s' '{chunk}' | base64 -d >> {path}")
-    commands.append(f"chmod {mode} {path}")
-    return "\n".join(commands)
-
-
 def build_probe_script(
     warmup_seconds: int = DEFAULT_WARMUP_SECONDS,
     sample_seconds: int = DEFAULT_SAMPLE_SECONDS,
@@ -704,39 +722,27 @@ def load_vulkan_rootfs_contract(
     )
 
 
-def build_kernarium_setup() -> str:
-    commands = (
-        "for unit in docker.service docker.socket containerd.service "
-        "packagekit.service apt-daily.service apt-daily.timer "
-        "apt-daily-upgrade.service apt-daily-upgrade.timer; do "
-        "ln -sf /dev/null \"/etc/systemd/system/$unit\"; done",
-        install_text(
-            "/var/tmp/uml-aquarium-extension/manifest.json",
-            EXTENSION_MANIFEST,
+def kernarium_payload() -> kernarium.Payload:
+    """The probe as a Kernarium automation run's boot payload.
+
+    The application boots it with KERNARIUM_SYSTEMD_UNIT=uml-aquarium.target
+    and reads the probe's console without a host deadline, so the launcher
+    powers the guest off itself.
+    """
+    payload = kernarium.Payload()
+    payload.add(f"{EXTENSION_DIRECTORY}/manifest.json", EXTENSION_MANIFEST)
+    payload.add(f"{EXTENSION_DIRECTORY}/verify.js", build_probe_script())
+    payload.add(
+        LAUNCHER_PATH,
+        build_guest_launcher(
+            auto_poweroff=True,
+            budget=guest_budget(KERNARIUM_TIMEOUT_SECONDS, "virgl"),
         ),
-        install_text(
-            "/var/tmp/uml-aquarium-extension/verify.js",
-            build_probe_script(),
-        ),
-        install_text(
-            "/usr/local/libexec/uml-chromium-aquarium",
-            build_guest_launcher(
-                auto_poweroff=True,
-                budget=guest_budget(KERNARIUM_TIMEOUT_SECONDS, "virgl"),
-            ),
-            "0755",
-        ),
-        install_text(
-            "/etc/systemd/system/uml-chromium-aquarium.service",
-            SERVICE,
-        ),
-        "install -d -m 0755 /etc/systemd/system/graphical.target.wants; "
-        "ln -sf ../uml-chromium-aquarium.service "
-        "/etc/systemd/system/graphical.target.wants/"
-        "uml-chromium-aquarium.service; "
-        "echo 'Kernarium Aquarium performance probe enabled'",
+        0o755,
     )
-    return "\n".join(commands) + "\n"
+    payload.add(SERVICE_PATH, SERVICE)
+    payload.add(TARGET_PATH, TARGET)
+    return payload
 
 
 def _parse_process_cpu_time(value: str) -> float:
@@ -1295,6 +1301,22 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--kernarium-payload",
+        type=Path,
+        metavar="OUTPUT",
+        help=(
+            "write the probe as a Kernarium automation boot payload to this "
+            "new file and exit; the application boots it with "
+            f"KERNARIUM_SYSTEMD_UNIT={TARGET_UNIT}"
+        ),
+    )
+    parser.add_argument(
+        "--initramfs-tool",
+        type=Path,
+        default=kernarium.DEFAULT_INITRAMFS_TOOL,
+        help="uml-initramfs, which writes --kernarium-payload",
+    )
+    parser.add_argument(
         "--timeout",
         type=float,
         default=DEFAULT_TIMEOUT_SECONDS,
@@ -1304,6 +1326,13 @@ def main() -> int:
         ),
     )
     options = parser.parse_args()
+    if options.kernarium_payload is not None:
+        if options.kernarium_payload.exists():
+            parser.error(f"{options.kernarium_payload} already exists")
+        kernarium_payload().write(
+            options.kernarium_payload.resolve(), options.initramfs_tool
+        )
+        return 0
     receipt_kind = None
     if options.rootfs_receipt is not None:
         try:
@@ -1397,15 +1426,13 @@ def main() -> int:
     guest_files = gpu_guest.StagedGuestFiles(
         artifact / gpu_guest.GUEST_FILE_DIRECTORY
     )
+    guest_files.add(f"{EXTENSION_DIRECTORY}/manifest.json", EXTENSION_MANIFEST)
     guest_files.add(
-        "/var/tmp/uml-aquarium-extension/manifest.json", EXTENSION_MANIFEST
-    )
-    guest_files.add(
-        "/var/tmp/uml-aquarium-extension/verify.js",
+        f"{EXTENSION_DIRECTORY}/verify.js",
         build_probe_script(options.warmup_seconds, options.sample_seconds),
     )
     guest_files.add(
-        "/usr/local/libexec/uml-chromium-aquarium",
+        LAUNCHER_PATH,
         build_guest_launcher(
             options.chromium_flag,
             auto_poweroff=options.display == "native",
@@ -1415,14 +1442,12 @@ def main() -> int:
         ),
         0o755,
     )
-    guest_files.add(
-        "/etc/systemd/system/uml-chromium-aquarium.service", SERVICE
-    )
+    guest_files.add(SERVICE_PATH, SERVICE)
+    guest_files.add(TARGET_PATH, TARGET)
+    command[command.index("--unit") + 1] = TARGET_UNIT
+    # The harness test unit runs these before the display manager, and so
+    # before the probe, which starts after it.
     overlay_commands = (
-        "for unit in docker.service docker.socket containerd.service "
-        "packagekit.service apt-daily.service apt-daily.timer "
-        "apt-daily-upgrade.service apt-daily-upgrade.timer; do "
-        "ln -sf /dev/null /etc/systemd/system/$unit; done",
         *(
             (
                 "systemctl set-environment "
@@ -1436,11 +1461,6 @@ def main() -> int:
             if options.ignore_image_chromium_config
             else ()
         ),
-        "install -d -m 0755 /etc/systemd/system/graphical.target.wants; "
-        "ln -sf ../uml-chromium-aquarium.service "
-        "/etc/systemd/system/graphical.target.wants/"
-        "uml-chromium-aquarium.service; "
-        "systemctl start --no-block uml-chromium-aquarium.service",
     )
     additions: list[str] = list(guest_files.arguments)
     for overlay_command in overlay_commands:

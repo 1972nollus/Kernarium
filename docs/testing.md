@@ -116,13 +116,20 @@ ctest --test-dir .build/presets/macos-integration-venus \
     -R apple-ios-mac-vk-gl-cts
 ```
 
-The application carries the campaigns; the lane copies the image into its
-container, launches it, and decodes the artifact frames the runtime relays.
+The lane builds the campaign's guest launcher, service, and `uml-cts.target`
+into a boot payload with the macOS lanes' own drivers
+(`tests/integration/gpu/kernarium_campaigns.py`), copies the image and the
+payload into the application's container, launches it, and decodes the
+artifact frames the runtime relays. Only the automation application boots a
+payload ([`Kernarium/README.md`](../Kernarium/README.md#automation-runs)), so
+package the `kernarium-ios-device-automation` runtimes with
+`package-ios-frameworks.sh --automation` first.
 
-The same application runs a Vulkan campaign on a connected iOS device through
-the opt-in `apple-ios-device-vk-cts` lane. It registers only when the device is
-named, expects the bundle and the authenticated Venus image to be on the device
-already, and reads the artifact frames from the launch console, because the
+The same automation application runs a Vulkan campaign on a connected iOS
+device through the opt-in `apple-ios-device-vk-cts` lane. It registers only
+when the device is named, expects the application and the authenticated Venus
+image to be on the device already, copies the campaign's payload beside them,
+and reads the artifact frames from the launch console, because the
 guest-session log is an XCTest path that a device launch does not take:
 
 ```sh
@@ -148,10 +155,9 @@ a failure. Both cases remain in the required ordered coverage.
 
 Run the runner directly to install a bundle, stage an image, or take one of the
 fifteen `vulkan-mustpass-NNof16-v3` fractions of the released list or the
-`vulkan-mustpass-03of16-v4` fraction. See the runner's `--help`. A campaign is judged
-by its `summary.txt`, never by searching the console for an error marker,
-because the application echoes the generated guest launcher and that script
-carries its own marker strings.
+`vulkan-mustpass-03of16-v4` fraction. See the runner's `--help`. A campaign
+is judged by its `summary.txt`, the guest's own verdict, never by a console
+marker alone.
 
 Host and renderer diagnostics share that console with the artifact frames, and
 a line written into the middle of one is a malformed marker that costs the
@@ -385,8 +391,11 @@ Launch and bundle assembly are owned by `Kernarium/scripts/run-ios-mac.sh` and
 copying a long invocation into documentation. `open(1)` cannot start an iOS
 application on macOS and `devicectl` does not enumerate the host Mac, so Xcode's
 local install service, driven by `xcodebuild test`, is the only command-line
-launcher for this mode; the launcher forwards each `KERNARIUM_*` setting as the
-matching `TEST_RUNNER_` variable. An iOS application reads nothing outside its
+launcher for this mode. xcodebuild passes each `TEST_RUNNER_`-prefixed
+variable in its environment to the app with the prefix removed; the launcher
+sets `TEST_RUNNER_KERNARIUM_ROOTFS` itself (and, with `--aquarium`, the
+probe's automation settings), and a caller exports any other
+`TEST_RUNNER_KERNARIUM_*` setting. An iOS application reads nothing outside its
 container, so the launcher copies the rootfs into
 `~/Library/Containers/<uuid>/Data/Documents` rather than referencing it in
 place.
