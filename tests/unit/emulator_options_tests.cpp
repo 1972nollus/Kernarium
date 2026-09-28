@@ -328,11 +328,16 @@ void test_scalable_native_kernel_layout_geometry()
 		product.load_bias == product.window_start - 48ULL * gib,
 		"macOS did not select its high dynamic native window");
 #else
-	require(product.valid &&
-		product.window_start == one_gib.window_start &&
-		product.window_end == one_gib.window_end &&
-		product.load_bias == one_gib.load_bias,
-		"iOS did not select its low dynamic native window");
+	/* A physical device maps guest RAM over its window in place, so the
+	 * window is always reserved: a failed reservation fails the run rather
+	 * than fall back to the packed geometry. The host picks where it goes
+	 * when it declines the packed address, as iOS 27 does. */
+	require(product.valid && product.reserved &&
+		product.window_end - product.window_start ==
+			2ULL * gib + product_reserved &&
+		product.load_bias ==
+			product.window_start - DARWIN_UML_NATIVE_LINK_ADDRESS,
+		"iOS did not reserve its dynamic native window");
 #endif
 }
 

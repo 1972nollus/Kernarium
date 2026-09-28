@@ -67,11 +67,16 @@ Mac in Designed for iPad mode, where the process is a macOS process; placement
 follows the address space the process actually has, so that mode takes the
 macOS window.
 
-The window is a reservation, and it never returns address space to the process
-while the VM lives. It is created once as a single `PROT_NONE MAP_NORESERVE`
-anonymous mapping, guest pages are mapped over it with `MAP_FIXED`, and
-releasing one hands its range back to that reservation instead of unmapping it:
-one mapping call, no committed pages, and the replacement is atomic. `munmap`
+On a physical iOS device the window is a reservation, and it never returns
+address space to the process while the VM lives. It is created once, before the
+guest starts, as a single `PROT_NONE MAP_NORESERVE` anonymous mapping; a run
+whose window cannot be reserved fails rather than map guest RAM over a range
+nothing holds. macOS and Designed for iPad do not reserve the window up front:
+the kernel image and the loader tail take it by an address hint the host
+honours, far above the ranges its allocators use. On every product guest pages
+are mapped over the window with `MAP_FIXED`, and releasing one hands its range
+back as a reservation instead of unmapping it: one mapping call, no committed
+pages, and the replacement is atomic. `munmap`
 would delete the reservation along with the mapping and leave a free gap inside
 the window. Darwin's allocation hint follows the most recently freed range, so
 on iOS - where the host chooses the window's address and it therefore sits in
