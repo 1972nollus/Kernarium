@@ -541,7 +541,8 @@ void VncDisplay::presentStaged(
      * that connects later reads the staged image then. */
     if (stateClientCount(state) == 0) {
         idleFramesDropped_ = true;
-        (void)metalReadback_->remember(scanout, target);
+        (void)metalReadback_->remember(
+            scanout, target, ReadbackSource::staged);
         return;
     }
     const auto outcome = metalReadback_->present(

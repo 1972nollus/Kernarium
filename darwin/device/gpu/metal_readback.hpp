@@ -93,11 +93,12 @@ public:
         std::uint32_t generation,
         ReadbackSource source = ReadbackSource::guest) noexcept;
     /* Keep the scanout's whole view, without reading it, for a later
-     * refresh(). Returns false, and keeps nothing, for a scanout this
-     * readback cannot convert. */
+     * refresh() that counts it as the given source. Returns false, and keeps
+     * nothing, for a scanout this readback cannot convert. */
     bool remember(
         const MetalScanout& scanout,
-        ReadbackTarget target) noexcept;
+        ReadbackTarget target,
+        ReadbackSource source = ReadbackSource::guest) noexcept;
     /* Read back the whole view of the remembered scanout, if any, and
      * release it. The request is not a guest frame. */
     [[nodiscard]] bool refresh(std::uint32_t generation) noexcept;

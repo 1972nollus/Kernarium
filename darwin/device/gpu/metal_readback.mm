@@ -685,9 +685,12 @@ struct MetalReadbackState final :
 
     bool remember(
         const MetalScanout& scanout,
-        ReadbackTarget target) noexcept
+        ReadbackTarget target,
+        ReadbackSource source) noexcept
     {
         auto next = request(wholeView(scanout), target);
+        if (next)
+            next->source = source;
         std::lock_guard lock(mutex);
         latest.reset();
         if (running)
@@ -922,9 +925,10 @@ PresentOutcome MetalReadback::present(
 
 bool MetalReadback::remember(
     const MetalScanout& scanout,
-    ReadbackTarget target) noexcept
+    ReadbackTarget target,
+    ReadbackSource source) noexcept
 {
-    return state_->remember(scanout, target);
+    return state_->remember(scanout, target, source);
 }
 
 bool MetalReadback::refresh(std::uint32_t generation) noexcept

@@ -757,6 +757,51 @@ void oversizedCpuScanoutIsAspectFitted()
     }
 }
 
+/* A scaled CPU frame flushed while nobody watches is kept staged, and a
+ * client that connects later receives it fitted at once, still without
+ * counting it as a native frame. */
+void lateClientReceivesAStagedCpuFrame()
+{
+    @autoreleasepool {
+        auto display = uml::gpu::makeDisplay(
+            uml::gpu::DisplayMode::vnc, "127.0.0.1", 0, {}, vncWidth,
+            vncHeight, {}, nullptr, uml::input::vnc::PointerMode::mouse);
+        require(display != nullptr, "VNC display creation failed");
+        constexpr std::uint32_t width = 4096;
+        constexpr std::uint32_t height = 2160;
+        constexpr std::uint32_t block = 256;
+        require(
+            display->guestScanoutChanged(width, height),
+            "the VNC display refused an oversized mode");
+        const auto pixels = cornerImage(width, height, block);
+        display->update(
+            pixels,
+            width,
+            height,
+            static_cast<std::size_t>(width) * 4U,
+            uml::gpu::protocol::GpuFormat::b8g8r8x8Unorm,
+            0,
+            0,
+            0,
+            0,
+            width,
+            height);
+        const auto port = display->vncPort();
+        require(port.has_value() && *port != 0, "VNC display has no port");
+        Connection connection {*port};
+        connection.handshake();
+        requireFittedImage(
+            connection.readFramebuffer(),
+            uml::gpu::aspectFitPixels({vncWidth, vncHeight}, {width, height}),
+            block * 5.0 / 16.0,
+            "a late client did not receive the staged CPU frame");
+        const auto statistics = display->statistics();
+        require(
+            statistics.guestFrames == 0 && statistics.presentedFrames == 0,
+            "a refreshed staged CPU frame was counted as a native one");
+    }
+}
+
 /* A mode smaller than the framebuffer is magnified into the middle, with
  * nearest filtering, and a guest reset returns to the preferred mode, which
  * is copied pixel for pixel. */
@@ -920,6 +965,7 @@ int main()
         clientAfterAnIdleIntervalSeesTheNewestScanout();
         oversizedNativeScanoutIsAspectFitted();
         oversizedCpuScanoutIsAspectFitted();
+    lateClientReceivesAStagedCpuFrame();
         smallerModesAreMagnifiedAndResetRestoresThePreferredMode();
         pointerInputMapsThroughTheFittedRectangle();
     } catch (const std::exception& error) {
