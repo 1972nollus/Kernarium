@@ -100,15 +100,18 @@ AB_OTA_POSTINSTALL_CONFIG :=
 PRODUCT_BUILD_RECOVERY_IMAGE := true
 
 # Replace generic Cuttlefish boot policy modules with files owned by this
-# exact-synced product overlay.
+# exact-synced product overlay. The inherited product init script declares only
+# tombstone_transmit, which this product does not install. ueventd reads vendor
+# rules only from /vendor/etc/ueventd.rc.
 PRODUCT_PACKAGES_EXCLUDE += \
+    device_google_cuttlefish_shared_config_init_product_rc \
     device_google_cuttlefish_uml_config_init_vendor_rc \
     device_google_cuttlefish_uml_config_ueventd_rc \
     fstab.uml \
     fstab.uml.vendor_ramdisk
 PRODUCT_COPY_FILES += \
     device/kernarium/darwin/config/init.vendor.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/init.kernarium.rc \
-    device/kernarium/darwin/config/ueventd.rc:$(TARGET_COPY_OUT_VENDOR)/ueventd.rc \
+    device/kernarium/darwin/config/ueventd.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.rc \
     device/kernarium/darwin/config/fstab.uml:$(TARGET_COPY_OUT_VENDOR)/etc/fstab.uml \
     device/kernarium/darwin/config/fstab.uml:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/first_stage_ramdisk/fstab.uml \
     device/kernarium/darwin/config/audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_configuration.xml \
@@ -271,11 +274,18 @@ PRODUCT_PACKAGES += vulkan.virtio
 # ro.hardware.egl suffix; the gallium driver they link lies in /vendor/lib64.
 # The inherited Cuttlefish Virgl configuration would add the AOSP
 # external/mesa3d libGLES_mesa instead. The boot command line's
-# androidboot.hardware.egl is the property's one writer: the inherited
-# init_graphics.vendor.rc copies it, like the Vulkan and gralloc selections,
-# at early-init, and that setprop fails if a vendor property has already set
-# it. No vendor property may name any of the three.
-PRODUCT_PACKAGES_EXCLUDE += libGLES_mesa
+# androidboot.hardware.egl is the property's one writer: the product init
+# script copies it, like the Vulkan and gralloc selections, at early-init, and
+# that setprop fails if a vendor property has already set it. No vendor
+# property may name any of the three.
+#
+# That script replaces the inherited Cuttlefish init_graphics.vendor.rc, which
+# also copies the goldfish composer mode and the ANGLE feature overrides. This
+# product has neither, their androidboot sources never exist, and each copy
+# failed at every boot.
+PRODUCT_PACKAGES_EXCLUDE += \
+    device_google_cuttlefish_shared_config_init_graphics_vendor_rc \
+    libGLES_mesa
 PRODUCT_PACKAGES += \
     libEGL_kernarium \
     libGLESv1_CM_kernarium \
