@@ -170,7 +170,9 @@ target_compile_features(uml_arm64_gadgets PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadgets PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_compile_definitions(uml_arm64_gadgets PRIVATE
+# GadgetExecutor's layout follows this switch, so every consumer of the
+# gadget headers must see the value the library was built with.
+target_compile_definitions(uml_arm64_gadgets PUBLIC
     UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>)
 
 # The gadget library is still many translation units, and the selection tables

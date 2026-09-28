@@ -1441,6 +1441,9 @@ GadgetExecutor::~GadgetExecutor()
 {
 	if (sampling_ != nullptr)
 		diagnostics::guest_sampling_unregister(*sampling_);
+#if UML_GADGET_EXECUTION_HISTOGRAM
+	diagnostics::execution_histogram_forget_executor(&cache_diagnostics_);
+#endif
 #if UML_GADGET_CACHE_CENSUS
 	if (const char *path = std::getenv("DARWIN_UML_GADGET_CACHE_CENSUS");
 	    path != nullptr && *path != '\0') {
