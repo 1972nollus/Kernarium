@@ -68,6 +68,22 @@ foreach(PATH IN LISTS C_SOURCES)
     list(APPEND VIOLATIONS "${PATH}: project C source is not allowed")
 endforeach()
 
+# Header names that exist only in the test tree. A darwin/ source that includes
+# one compiles only when a test target adds that directory to its include path.
+file(GLOB_RECURSE TEST_TREE_HEADERS LIST_DIRECTORIES false
+    "${SOURCE_ROOT}/tests/*.h" "${SOURCE_ROOT}/tests/*.hpp")
+file(GLOB_RECURSE DARWIN_TREE_HEADERS LIST_DIRECTORIES false
+    "${SOURCE_ROOT}/darwin/*.h" "${SOURCE_ROOT}/darwin/*.hpp")
+set(TEST_ONLY_HEADER_NAMES)
+foreach(PATH IN LISTS TEST_TREE_HEADERS)
+    get_filename_component(HEADER_NAME "${PATH}" NAME)
+    list(APPEND TEST_ONLY_HEADER_NAMES "${HEADER_NAME}")
+endforeach()
+foreach(PATH IN LISTS DARWIN_TREE_HEADERS)
+    get_filename_component(HEADER_NAME "${PATH}" NAME)
+    list(REMOVE_ITEM TEST_ONLY_HEADER_NAMES "${HEADER_NAME}")
+endforeach()
+
 set(LAYER_GLOBS)
 foreach(EXTENSION IN ITEMS
         c cc cpp cxx m mm h hh hpp hxx ipp inl def S s asm inc)
@@ -95,6 +111,11 @@ foreach(PATH IN LISTS LAYER_SOURCES)
             "${SOURCE_DIRECTORY}/${INCLUDE_NAME}"
             "${SOURCE_ROOT}/darwin/${INCLUDE_NAME}"
             "${SOURCE_ROOT}/darwin/include/${INCLUDE_NAME}")
+        if(INCLUDE_DIRECTIVE MATCHES "\"" AND
+           INCLUDE_NAME IN_LIST TEST_ONLY_HEADER_NAMES)
+            list(APPEND VIOLATIONS
+                "${PATH}: includes ${INCLUDE_NAME}, which exists only under tests/")
+        endif()
         set(NORMALIZED_INCLUDE "${INCLUDE_NAME}")
         foreach(INCLUDE_CANDIDATE IN LISTS INCLUDE_CANDIDATES)
             cmake_path(NORMAL_PATH INCLUDE_CANDIDATE)
