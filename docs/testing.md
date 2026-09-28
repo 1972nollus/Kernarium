@@ -389,7 +389,9 @@ Linux and 16 KiB Android and no Simulator variant; see
 [`graphics.md`](graphics.md#current-path).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
-Xcode.
+Xcode. It also packages the Apple battery provider's archive, as the Android
+runtime links it, as `HostBattery.xcframework`; only `KernariumTests` links
+it, so the test process reaches the provider without loading a second runtime.
 `dependencies/build-ios-storage.sh --verify-only` and
 `dependencies/build-ios-zstd.sh --verify-only` check both arm64 Apple slices,
 their provenance and deployment targets, required APIs, and the absence of
