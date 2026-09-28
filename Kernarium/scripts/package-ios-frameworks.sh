@@ -40,6 +40,7 @@ find_tool()
 find_tool XCODEBUILD xcodebuild
 find_tool CMAKE cmake
 find_tool OTOOL otool
+find_tool PYTHON python3
 
 RUNTIME_4K="KRuntime_6_18_4K"
 RUNTIME_16K="KRuntime_6_18_16K"
@@ -142,9 +143,26 @@ for platform in ios-arm64 ios-arm64-simulator; do
 	[ -f "$binary" ] || fail "missing packaged zstd decompressor: $binary"
 done
 
-if [ -e "$OUTPUT" ] || [ -L "$OUTPUT" ]; then
-	"$CMAKE" -E remove_directory "$OUTPUT"
-fi
-mv "$STAGE" "$OUTPUT"
-STAGE=
+# Publish with one atomic rename, so the XCFrameworks are never absent and a
+# concurrent run is never moved below another's tree: the first publish is an
+# exclusive rename, and a later one swaps the new tree in, which leaves the
+# tree it replaced at the stage path for cleanup to remove.
+publish=0
+"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" "$STAGE" "$OUTPUT" ||
+	publish=$?
+case $publish in
+0) STAGE= ;;
+1)
+	publish=0
+	"$PYTHON" "$ROOT_DIR/dependencies/publish-prefix.py" \
+		--swap "$STAGE" "$OUTPUT" || publish=$?
+	[ "$publish" -eq 0 ] ||
+		fail "could not replace the published XCFrameworks: $OUTPUT"
+	if [ -L "$STAGE" ]; then
+		rm -f -- "$STAGE"
+		STAGE=
+	fi
+	;;
+*) fail "could not publish the XCFrameworks: $OUTPUT" ;;
+esac
 printf '%s\n' "published Kernarium XCFrameworks: $OUTPUT"
