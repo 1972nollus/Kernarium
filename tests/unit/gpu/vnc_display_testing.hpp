@@ -12,5 +12,6 @@ void failNextEventThreadStart() noexcept;
 void eventThreadStartCheckpoint(std::uint16_t port);
 [[nodiscard]] std::uint16_t failedEventThreadPort() noexcept;
 void verifyPrivateMetalTextureReadback(VncDisplay& display);
+void verifyScaledReadbackIsDamageBounded(VncDisplay& display);
 
 } // namespace uml::gpu::testing

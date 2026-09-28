@@ -214,9 +214,10 @@ void readbackTracksClientDemandAndReconnects()
 {
     /* A scanout the Metal readback cannot convert - here one with no
      * texture - falls back to the CPU framebuffer at the scanout's extent,
-     * and that fallback follows client demand. */
+     * and that fallback follows client demand. The mode fits at its own
+     * size, centred, so the CPU path copies it synchronously. */
     constexpr std::uint32_t extent = 64;
-    constexpr std::uint32_t scanoutWidth = 48;
+    constexpr std::uint32_t scanoutWidth = 64;
     constexpr std::uint32_t scanoutHeight = 32;
     uml::gpu::VncDisplay display {
         "127.0.0.1", 0, {}, extent, extent};
@@ -280,6 +281,15 @@ void readbackTracksClientDemandAndReconnects()
     disconnectClient(client);
 }
 
+void scaledReadbackIsDamageBounded()
+{
+    uml::gpu::VncDisplay display {"127.0.0.1", 0, {}, 160, 90};
+    int client = connectClient(display.port());
+    requireEventually([&] { return display.needsFullCpuFallback(); });
+    uml::gpu::testing::verifyScaledReadbackIsDamageBounded(display);
+    disconnectClient(client);
+}
+
 void privateMetalTextureReadbackIsDamageBounded()
 {
     /* A Venus scanout has no guest-visible Virgl resource, so the display
@@ -301,6 +311,7 @@ int main()
     readbackTracksClientDemandAndReconnects();
     postListenThreadFailureReleasesServer();
     privateMetalTextureReadbackIsDamageBounded();
+    scaledReadbackIsDamageBounded();
     std::puts("VNC display lifetime tests passed");
     return 0;
 }

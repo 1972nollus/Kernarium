@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace uml::gpu {
 
@@ -32,6 +33,36 @@ AspectFitRectangle aspectFitRectangle(
         .width = width,
         .height = height,
     };
+}
+
+DisplayRectangle aspectFitPixels(
+    DisplaySize container,
+    DisplaySize content) noexcept
+{
+    const auto fitted = aspectFitRectangle(
+        container.width, container.height, content.width, content.height);
+    if (fitted.width <= 0.0 || fitted.height <= 0.0)
+        return {};
+    const auto span = [](double origin,
+                          double length,
+                          std::uint32_t limit) {
+        const auto edge = [limit](double value) {
+            return static_cast<std::uint32_t>(std::clamp(
+                std::round(value), 0.0, static_cast<double>(limit)));
+        };
+        auto first = edge(origin);
+        auto last = edge(origin + length);
+        if (first == last) {
+            if (last < limit)
+                ++last;
+            else
+                --first;
+        }
+        return std::pair {first, last - first};
+    };
+    const auto [x, width] = span(fitted.x, fitted.width, container.width);
+    const auto [y, height] = span(fitted.y, fitted.height, container.height);
+    return {.x = x, .y = y, .width = width, .height = height};
 }
 
 DisplayRotation rotateDisplay(
@@ -185,6 +216,150 @@ std::optional<ClippedDisplaySegment> clipDisplaySegment(
         .entry = pointAt(entry),
         .exit = pointAt(exit),
     };
+}
+
+namespace {
+
+[[nodiscard]] bool contains(
+    AspectFitRectangle rectangle,
+    DisplayPoint point) noexcept
+{
+    return rectangle.width > 0.0 && rectangle.height > 0.0 &&
+        point.x >= rectangle.x && point.x <= rectangle.x + rectangle.width &&
+        point.y >= rectangle.y && point.y <= rectangle.y + rectangle.height;
+}
+
+[[nodiscard]] DisplayPoint guestPoint(
+    AspectFitRectangle rectangle,
+    DisplayPoint point) noexcept
+{
+    return {
+        .x = std::clamp((point.x - rectangle.x) / rectangle.width, 0.0, 1.0),
+        .y = std::clamp((point.y - rectangle.y) / rectangle.height, 0.0, 1.0),
+    };
+}
+
+constexpr std::uint32_t pointerButtonMask = 7U;
+
+} // namespace
+
+GuestPointerSamples FittedPointer::mouse(
+    AspectFitRectangle content,
+    DisplayPoint location,
+    std::uint32_t buttons) noexcept
+{
+    buttons &= pointerButtonMask;
+    if (suppressed_) {
+        if (buttons == 0)
+            suppressed_ = false;
+        return {};
+    }
+    if (!contains(content, location) && deliveredButtons_ == 0) {
+        if (buttons != 0)
+            suppressed_ = true;
+        return {};
+    }
+    deliveredButtons_ = buttons;
+    GuestPointerSamples result;
+    result.samples[result.count++] = {
+        .point = guestPoint(content, location),
+        .buttons = buttons,
+    };
+    return result;
+}
+
+GuestPointerSamples FittedPointer::touch(
+    AspectFitRectangle content,
+    DisplayPoint location,
+    bool pressed) noexcept
+{
+    GuestPointerSamples result;
+    if (suppressed_) {
+        if (!pressed) {
+            suppressed_ = false;
+            previousTouch_.reset();
+        }
+        return result;
+    }
+    const auto deliver = [&](DisplayPoint point, bool active) {
+        /* Lifting a contact the guest never saw reports nothing. */
+        if (!active && deliveredButtons_ == 0)
+            return;
+        deliveredButtons_ = active ? 1U : 0U;
+        result.samples[result.count++] = {
+            .point = guestPoint(content, point),
+            .buttons = deliveredButtons_,
+        };
+    };
+    const auto samePoint = [](DisplayPoint left, DisplayPoint right) {
+        return left.x == right.x && left.y == right.y;
+    };
+    const bool inside = contains(content, location);
+    const bool contactActive = deliveredButtons_ != 0;
+
+    if (!pressed) {
+        if (contactActive) {
+            DisplayPoint release = location;
+            if (!inside && previousTouch_) {
+                if (const auto clipped = clipDisplaySegment(
+                        content, *previousTouch_, location)) {
+                    release = clipped->exit;
+                }
+            }
+            deliver(release, false);
+        } else if (previousTouch_) {
+            if (const auto clipped = clipDisplaySegment(
+                    content, *previousTouch_, location)) {
+                deliver(clipped->entry, true);
+                if (inside) {
+                    if (!samePoint(clipped->entry, location))
+                        deliver(location, true);
+                    deliver(location, false);
+                } else {
+                    deliver(clipped->exit, false);
+                }
+            }
+        }
+        previousTouch_.reset();
+        return result;
+    }
+
+    if (!previousTouch_) {
+        previousTouch_ = location;
+        if (inside)
+            deliver(location, true);
+        return result;
+    }
+
+    const auto clipped =
+        clipDisplaySegment(content, *previousTouch_, location);
+    if (contactActive) {
+        if (inside) {
+            deliver(location, true);
+        } else {
+            deliver(clipped ? clipped->exit : *previousTouch_, false);
+        }
+    } else if (clipped) {
+        deliver(clipped->entry, true);
+        if (inside) {
+            if (!samePoint(clipped->entry, location))
+                deliver(location, true);
+        } else {
+            deliver(clipped->exit, false);
+        }
+    }
+    previousTouch_ = location;
+    return result;
+}
+
+bool FittedPointer::release() noexcept
+{
+    const bool held = deliveredButtons_ != 0;
+    if (held)
+        suppressed_ = true;
+    deliveredButtons_ = 0;
+    previousTouch_.reset();
+    return held;
 }
 
 DisplayGeometryPolicy::DisplayGeometryPolicy(

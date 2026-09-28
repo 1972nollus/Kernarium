@@ -378,6 +378,128 @@ void pointerPathsClipToExactGuestEdges()
         "a path tangent to a guest corner became a guest contact");
 }
 
+void fixedFramebufferPlacementsUseWholePixels()
+{
+    using uml::gpu::DisplayRectangle;
+    using uml::gpu::aspectFitPixels;
+    const auto place = [](std::uint32_t width, std::uint32_t height) {
+        return aspectFitPixels({1280, 720}, {width, height});
+    };
+    require(place(1280, 720) == DisplayRectangle {0, 0, 1280, 720},
+        "the preferred mode did not fill the framebuffer");
+    /* glmark2's no-EDID 4096x2160 mode scales by 5/16 to 1280x675, and the
+     * 22.5-pixel bars round to 23 above and 22 below. */
+    require(place(4096, 2160) == DisplayRectangle {0, 23, 1280, 675},
+        "an oversized mode was not letterboxed in whole pixels");
+    require(place(640, 480) == DisplayRectangle {160, 0, 960, 720},
+        "a smaller 4:3 mode was not magnified into a pillarbox");
+    require(place(1280, 600) == DisplayRectangle {0, 60, 1280, 600},
+        "a mode that fits at its own size was scaled");
+    require(place(8192, 1) == DisplayRectangle {0, 360, 1280, 1},
+        "a very wide mode rounded to an empty rectangle");
+    require(place(0, 720) == DisplayRectangle {},
+        "an empty mode produced a placement");
+}
+
+void fittedMousePointersKeepTheNativeBarRules()
+{
+    using uml::gpu::AspectFitRectangle;
+    using uml::gpu::DisplayPoint;
+    using uml::gpu::FittedPointer;
+    const AspectFitRectangle content {
+        .x = 0.0, .y = 23.0, .width = 1280.0, .height = 675.0};
+    FittedPointer pointer;
+
+    auto samples = pointer.mouse(content, {640.0, 360.5}, 0);
+    require(samples.count == 1 && near(samples.samples[0].point.x, 0.5) &&
+            near(samples.samples[0].point.y, 0.5) &&
+            samples.samples[0].buttons == 0,
+        "hover inside the guest did not map through the fitted rectangle");
+    require(pointer.mouse(content, {640.0, 10.0}, 0).count == 0,
+        "hover in a letterbox bar reached the guest");
+
+    /* A press in the bar belongs to the host until every button is up. */
+    require(pointer.mouse(content, {640.0, 10.0}, 1).count == 0,
+        "a press in a letterbox bar reached the guest");
+    require(pointer.mouse(content, {640.0, 360.5}, 1).count == 0,
+        "a drag begun in a letterbox bar reached the guest");
+    require(pointer.mouse(content, {640.0, 360.5}, 0).count == 0,
+        "the release of a bar gesture reached the guest");
+    require(pointer.mouse(content, {640.0, 360.5}, 0).count == 1,
+        "the guest stayed suppressed after the bar gesture ended");
+
+    /* A drag begun inside follows the pointer into the bar, clamped. */
+    samples = pointer.mouse(content, {100.0, 100.0}, 1);
+    require(samples.count == 1 && samples.samples[0].buttons == 1,
+        "a press inside the guest was not delivered");
+    samples = pointer.mouse(content, {100.0, 5.0}, 1);
+    require(samples.count == 1 && near(samples.samples[0].point.y, 0.0) &&
+            samples.samples[0].buttons == 1,
+        "a drag into a bar was not clamped to the guest edge");
+    samples = pointer.mouse(content, {100.0, 5.0}, 0);
+    require(samples.count == 1 && samples.samples[0].buttons == 0,
+        "releasing a drag in a bar did not reach the guest");
+    require(pointer.mouse(content, {100.0, 5.0}, 0).count == 0,
+        "hover in a bar reached the guest after a drag ended");
+
+    /* A mode change releases held buttons and keeps the rest of the
+     * gesture out of the guest. */
+    require(pointer.mouse(content, {100.0, 100.0}, 4).count == 1,
+        "a secondary press inside the guest was not delivered");
+    require(pointer.release(),
+        "releasing held buttons did not report them");
+    require(pointer.mouse(content, {100.0, 100.0}, 4).count == 0,
+        "a gesture continued into the guest after a mode change");
+    require(pointer.mouse(content, {100.0, 100.0}, 0).count == 0 &&
+            pointer.mouse(content, {100.0, 100.0}, 0).count == 1,
+        "the guest stayed suppressed after the released gesture ended");
+    require(!pointer.release(), "releasing an idle pointer reported buttons");
+}
+
+void fittedTouchesEnterAndLeaveAtTheGuestEdge()
+{
+    using uml::gpu::AspectFitRectangle;
+    using uml::gpu::DisplayPoint;
+    using uml::gpu::FittedPointer;
+    const AspectFitRectangle content {
+        .x = 0.0, .y = 23.0, .width = 1280.0, .height = 675.0};
+    FittedPointer pointer;
+
+    require(pointer.touch(content, {640.0, 10.0}, true).count == 0,
+        "a touch that began in a letterbox bar reached the guest");
+    auto samples = pointer.touch(content, {640.0, 360.5}, true);
+    require(samples.count == 2 && near(samples.samples[0].point.y, 0.0) &&
+            samples.samples[0].buttons == 1 &&
+            near(samples.samples[1].point.y, 0.5) &&
+            samples.samples[1].buttons == 1,
+        "a touch entering the guest did not begin at its edge");
+    samples = pointer.touch(content, {640.0, 715.0}, true);
+    require(samples.count == 1 && near(samples.samples[0].point.y, 1.0) &&
+            samples.samples[0].buttons == 0,
+        "a touch leaving the guest did not end at its edge");
+    require(pointer.touch(content, {640.0, 716.0}, true).count == 0,
+        "a touch in a bar kept a guest contact");
+    require(pointer.touch(content, {640.0, 716.0}, false).count == 0,
+        "lifting a touch in a bar reached the guest");
+
+    /* A tap that stays inside the guest is one contact. */
+    samples = pointer.touch(content, {10.0, 100.0}, true);
+    require(samples.count == 1 && samples.samples[0].buttons == 1,
+        "a touch inside the guest did not begin a contact");
+    samples = pointer.touch(content, {10.0, 100.0}, false);
+    require(samples.count == 1 && samples.samples[0].buttons == 0,
+        "lifting a touch inside the guest did not end its contact");
+
+    samples = pointer.touch(content, {10.0, 100.0}, true);
+    require(samples.count == 1, "a second touch was not delivered");
+    require(pointer.release(), "releasing a contact did not report it");
+    require(pointer.touch(content, {20.0, 100.0}, true).count == 0,
+        "a touch continued into the guest after a mode change");
+    require(pointer.touch(content, {20.0, 100.0}, false).count == 0 &&
+            pointer.touch(content, {20.0, 100.0}, true).count == 1,
+        "the guest stayed suppressed after the released touch ended");
+}
+
 void guestModesetsNeverDisableHostResize()
 {
     using uml::gpu::DisplayGeometryPolicy;
@@ -502,6 +624,9 @@ int main()
         scanoutRectanglesSampleOnlyTheirOwnTexels();
         hostRotationSwapsPresentationAndMapsGuestInput();
         pointerPathsClipToExactGuestEdges();
+        fixedFramebufferPlacementsUseWholePixels();
+        fittedMousePointersKeepTheNativeBarRules();
+        fittedTouchesEnterAndLeaveAtTheGuestEdge();
         guestModesetsNeverDisableHostResize();
         configuredOffAlwaysKeepsHostResizeSilent();
         repeatedSettledResizesRequestOnceAndFollowEveryGuestResult();

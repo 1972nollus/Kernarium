@@ -48,6 +48,22 @@ waits at most 2 s for it, so a static CPU-path scanout then arrives as last
 published.
 The VNC display converts native Metal scanouts with an asynchronous Metal
 readback.
+
+The VNC framebuffer keeps the size it was created with, which the device
+advertises as the preferred mode, and shows every applied guest mode
+aspect-fitted and centred in it, black outside. A mode the fit leaves at its
+own size, such as the preferred one, is copied pixel for pixel. Any other mode,
+and any texture stored bottom row first, is drawn into a texture the size of its
+fitted rectangle by the native presenter's scanout pass, with the same nearest
+magnification and bilinear minification, and only the part of it that the
+flush's damage reaches is read back. An oversized mode therefore costs the GPU
+one scaled draw and the CPU only the scaled pixels; glmark2's 4096x2160 mode
+fills a 1280x720 framebuffer's width at 1280x675. A CPU-path scanout at such a
+mode is kept in a host texture of the whole mode and scaled by the same pass,
+so it looks the same and a late client receives it at once. Pointer and touch
+input map back through the fitted rectangle by the native display's rules
+below.
+
 Images shared through native Metal heaps retain tiled storage but disable
 usage-dependent lossless compression. A compositor can therefore import a
 render target for sampling without reinterpreting its compression metadata as
@@ -206,9 +222,9 @@ after the fence of the rendering it shows has retired, and a Virgl context
 fence retires only once Zink's GPU work has completed. Anything else takes the
 CPU readback path, which the activity log records as `path=readback` for a
 blob and `path=cpu` for a classic resource, and the frame counters as a
-CPU-fallback frame. VNC reads a bottom-up texture back the same way, because
-its asynchronous Metal readback copies rows in texture order. Venus scanouts
-keep their native Metal textures.
+CPU-fallback frame. VNC reads a bottom-up texture back through the same
+scanout pass, which turns it upright before the copy. Venus scanouts keep
+their native Metal textures.
 
 The GPU advertises display geometry and density through EDID. Kernarium point
 mode uses safe-area points and 160 DPI. Retina mode multiplies dimensions and
@@ -238,12 +254,13 @@ its scanout is a classic resource or a blob shown through its Metal texture.
 The scanout rectangle is the mode. macOS
 resizes its content window to that applied size; the resulting host callback
 does not feed the same size back to the guest. iOS instead aspect-fits every
-guest mode in its view. A guest-initiated mode does not disable later automatic
-host-to-guest resize requests. With automatic resizing configured off, host
-window or view changes leave the guest mode unchanged and aspect-fit it in the
-available host content area. EDID-backed dimensions are limited to 4095 pixels
-per axis; the non-EDID Virtio-GPU path follows the DRM limit of 8192 pixels per
-axis.
+guest mode in its view, and VNC in its fixed framebuffer, magnifying a smaller
+mode and minifying a larger one. A guest-initiated mode does not disable later
+automatic host-to-guest resize requests. With automatic resizing configured
+off, host window or view changes leave the guest mode unchanged and aspect-fit
+it in the available host content area. EDID-backed dimensions are limited to
+4095 pixels per axis; the non-EDID Virtio-GPU path follows the DRM limit of
+8192 pixels per axis.
 
 The macOS native window's Display menu can rotate presentation clockwise or
 counterclockwise in 90-degree steps without changing the guest scanout or
@@ -265,9 +282,15 @@ CPU fallback only when it is not a single-layer 2D texture of the display's
 Metal device, when it is smaller than the source, or when the rectangle is
 empty or reaches outside the source.
 
-Rendering and input use the same centered aspect-fit rectangle. AppKit maps
-that rectangle into the fixed tablet range, while Kernarium maps it into the
-touchscreen range advertised at boot. A touch beginning in a letterbox or
+Rendering and input use the same centered aspect-fit rectangle. AppKit and VNC
+map that rectangle into the fixed tablet range, while Kernarium maps it into
+the touchscreen range advertised at boot. VNC rounds the rectangle to whole
+framebuffer pixels and maps a pointer at the centre of the pixel it names, so a
+pointer lands on the guest pixel drawn under it. A mouse in a bar reaches the
+guest only while it drags buttons first pressed inside, clamped to the edge,
+and buttons pressed in a bar stay with the host until all are released. A
+guest mode change releases the buttons or contact the guest holds and keeps
+the rest of that gesture from it. A touch beginning in a letterbox or
 pillarbox bar remains outside the guest until its path enters the fitted
 rectangle, where a new contact begins at the exact edge. Crossing back out
 releases the contact at the exit edge; re-entry while the physical gesture

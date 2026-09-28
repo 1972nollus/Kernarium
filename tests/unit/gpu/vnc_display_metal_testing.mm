@@ -9,7 +9,9 @@
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
+#include <cstring>
 #include <thread>
+#include <vector>
 
 namespace uml::gpu::testing {
 namespace {
@@ -116,6 +118,91 @@ void verifyPrivateMetalTextureReadback(VncDisplay& display)
         require(display.pixelForTesting(0, 0) ==
                     std::array<std::uint8_t, 4> {},
                 "Metal readback exceeded its damage rectangle");
+    }
+}
+
+/* A 640x360 mode on a 160x90 framebuffer is minified 4:1 on the GPU. A flush
+ * damaging one 64x64 block redraws and reads back only that block's
+ * footprint, 16x16 pixels and one more on each side, even though the rest of
+ * the texture has changed too. */
+void verifyScaledReadbackIsDamageBounded(VncDisplay& display)
+{
+    @autoreleasepool {
+        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+        require(device != nil, "Metal device unavailable");
+        constexpr std::uint32_t width = 640;
+        constexpr std::uint32_t height = 360;
+        constexpr std::array<std::uint8_t, 4> before {
+            0x21U, 0x42U, 0x63U, 0xffU};
+        constexpr std::array<std::uint8_t, 4> after {
+            0x7aU, 0x15U, 0x3cU, 0xffU};
+        require(display.width() == 160 && display.height() == 90,
+                "scaled readback test expects a 160x90 display");
+
+        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+            width:width
+            height:height
+            mipmapped:NO];
+        descriptor.storageMode = MTLStorageModeShared;
+        descriptor.usage = MTLTextureUsageShaderRead;
+        id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
+        require(texture != nil, "scaled readback texture creation failed");
+        const auto fill = [&](const std::array<std::uint8_t, 4>& pixel) {
+            std::vector<std::uint8_t> pixels(
+                static_cast<std::size_t>(width) * height * 4U);
+            for (std::size_t offset = 0; offset < pixels.size(); offset += 4U)
+                std::memcpy(&pixels[offset], pixel.data(), pixel.size());
+            [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
+                       mipmapLevel:0
+                         withBytes:pixels.data()
+                       bytesPerRow:width * 4U];
+        };
+        const auto present = [&](std::uint32_t x,
+                                 std::uint32_t y,
+                                 std::uint32_t damageWidth,
+                                 std::uint32_t damageHeight,
+                                 std::uint64_t frames) {
+            require(presentAccepted(display.presentMetal(MetalScanout {
+                        .texture = (__bridge void*)texture,
+                        .sourceWidth = width,
+                        .sourceHeight = height,
+                        .width = width,
+                        .height = height,
+                        .damageX = x,
+                        .damageY = y,
+                        .damageWidth = damageWidth,
+                        .damageHeight = damageHeight,
+                    })),
+                    "scaled readback was rejected");
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::seconds(2);
+            while (display.statistics().presentedFrames < frames &&
+                   std::chrono::steady_clock::now() < deadline) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            require(display.statistics().presentedFrames == frames,
+                    "scaled readback did not complete");
+        };
+
+        fill(before);
+        present(0, 0, width, height, 1);
+        require(display.pixelForTesting(0, 0) == before &&
+                    display.pixelForTesting(159, 89) == before,
+                "a scaled mode did not fill its placement");
+
+        /* Damage 64x64 at 320,160 reaches pixels 79..96 by 39..56. */
+        fill(after);
+        present(320, 160, 64, 64, 2);
+        require(display.pixelForTesting(80, 40) == after &&
+                    display.pixelForTesting(95, 55) == after,
+                "scaled damage was not redrawn");
+        require(display.pixelForTesting(78, 47) == before &&
+                    display.pixelForTesting(97, 47) == before &&
+                    display.pixelForTesting(88, 38) == before &&
+                    display.pixelForTesting(88, 57) == before &&
+                    display.pixelForTesting(0, 0) == before,
+                "a scaled readback exceeded its damage footprint");
     }
 }
 

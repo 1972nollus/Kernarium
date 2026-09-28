@@ -71,25 +71,6 @@ static_assert(sizeof(std::uintptr_t) >= sizeof(std::uint64_t));
     return static_cast<std::uint64_t>(epoch) << connectionEpochShift | count;
 }
 
-[[nodiscard]] constexpr std::uint64_t makeExtent(
-    const std::uint32_t width,
-    const std::uint32_t height) noexcept
-{
-    return static_cast<std::uint64_t>(width) << 32U | height;
-}
-
-[[nodiscard]] constexpr std::uint32_t extentWidth(
-    const std::uint64_t extent) noexcept
-{
-    return static_cast<std::uint32_t>(extent >> 32U);
-}
-
-[[nodiscard]] constexpr std::uint32_t extentHeight(
-    const std::uint64_t extent) noexcept
-{
-    return static_cast<std::uint32_t>(extent);
-}
-
 class ScreenInitializationGuard final {
 public:
     explicit ScreenInitializationGuard(rfbScreenInfoPtr& screen) noexcept
@@ -128,12 +109,10 @@ VncDisplay::VncDisplay(
     vnc_input::PointerMode pointerMode)
     : inputSink_(std::move(inputSink))
     , framebuffer_(width, height)
+    , geometry_(width, height, false)
     , password_(std::move(password))
     , pointerMode_(pointerMode)
 {
-    cpuFallbackExtent_.store(
-        makeExtent(framebuffer_.width(), framebuffer_.height()),
-        std::memory_order_relaxed);
     int argumentCount = 0;
     screen_ = rfbGetScreen(
         &argumentCount,
@@ -281,6 +260,89 @@ std::optional<std::uint16_t> VncDisplay::vncPort() const noexcept
     return port();
 }
 
+DisplayRectangle VncDisplay::placement() const noexcept
+{
+    return aspectFitPixels(
+        {.width = framebuffer_.width(), .height = framebuffer_.height()},
+        geometry_.activeGuestSize());
+}
+
+bool VncDisplay::guestScanoutChanged(
+    std::uint32_t width,
+    std::uint32_t height) noexcept
+{
+    applyGuestMode(width, height);
+    return true;
+}
+
+void VncDisplay::applyGuestMode(
+    std::uint32_t width,
+    std::uint32_t height) noexcept
+{
+    /* Only the GPU thread changes the mode, so this check needs no lock. */
+    const auto active = geometry_.activeGuestSize();
+    if (width == 0 || height == 0 ||
+        (active.width == width && active.height == height)) {
+        return;
+    }
+    DisplayRectangle next;
+    {
+        /* The contact or buttons the guest holds were placed through the old
+         * rectangle, so the guest must not see them move with it. */
+        std::lock_guard pointerLock(pointerMutex_);
+        releasePointerLocked();
+        std::lock_guard geometryLock(geometryMutex_);
+        const auto previous = placement();
+        (void)geometry_.guestScanoutChanged(width, height);
+        next = placement();
+        if (next != previous) {
+            /* The bars around the new rectangle show nothing, and neither
+             * path has drawn the new mode yet, so a CPU fallback reads its
+             * whole scanout again. */
+            fullFrameEpoch_.store(0, std::memory_order_release);
+            std::lock_guard lock(framebuffer_);
+            framebuffer_.clearLocked();
+            rfbMarkRectAsModified(
+                screen_,
+                0,
+                0,
+                static_cast<int>(framebuffer_.width()),
+                static_cast<int>(framebuffer_.height()));
+        }
+    }
+    /* Neither a remembered scanout nor the damage of the old mode describes
+     * the new one. */
+    metalReadback_->forget();
+    metalReadback_->invalidate();
+    if (next.width == width && next.height == height) {
+        stagingImage_.reset();
+        metalReadback_->releaseStaging();
+    }
+    displayActivityLog().record(
+        "vnc mode=%ux%u placement=%ux%u+%u+%u",
+        width,
+        height,
+        next.width,
+        next.height,
+        next.x,
+        next.y);
+}
+
+void VncDisplay::resetGuestSession() noexcept
+{
+    {
+        std::lock_guard pointerLock(pointerMutex_);
+        releasePointerLocked();
+        std::lock_guard geometryLock(geometryMutex_);
+        geometry_.resetGuestSession(
+            {.width = framebuffer_.width(), .height = framebuffer_.height()});
+    }
+    stagingImage_.reset();
+    metalReadback_->releaseStaging();
+    metalReadback_->forget();
+    metalReadback_->invalidate();
+}
+
 void VncDisplay::clear() noexcept
 {
     {
@@ -310,11 +372,59 @@ void VncDisplay::update(
     std::uint32_t height)
 {
     const auto updateEpoch = connectionEpoch();
-    const auto expectedExtent =
-        cpuFallbackExtent_.load(std::memory_order_acquire);
+    const auto mode = geometry_.activeGuestSize();
+    const auto target = placement();
     /* The CPU path now owns the image, so a remembered native scanout would
      * only overwrite it with an older one. */
     metalReadback_->forget();
+    if (destinationX >= mode.width || destinationY >= mode.height)
+        return;
+    width = std::min(width, mode.width - destinationX);
+    height = std::min(height, mode.height - destinationY);
+    if (target.width != mode.width || target.height != mode.height) {
+        /* Keep the whole mode here and let the GPU scale it, exactly as it
+         * scales a native scanout. */
+        if (!stagingImage_ || stagingImage_->width() != mode.width ||
+            stagingImage_->height() != mode.height) {
+            stagingImage_.reset();
+            stagingImage_ =
+                std::make_unique<ScanoutFramebuffer>(mode.width, mode.height);
+        }
+        const auto staged = stagingImage_->update(
+            source,
+            sourceWidth,
+            sourceHeight,
+            sourceRowBytes,
+            sourceFormat,
+            sourceX,
+            sourceY,
+            destinationX,
+            destinationY,
+            width,
+            height);
+        if (staged.width == 0 || staged.height == 0)
+            return;
+        const auto scanout = metalReadback_->stage(
+            stagingImage_->pixels(),
+            stagingImage_->rowBytes(),
+            mode,
+            {
+                .x = staged.x,
+                .y = staged.y,
+                .width = staged.width,
+                .height = staged.height,
+            });
+        if (!scanout) {
+            displayActivityLog().record(
+                "present display=vnc staging=failed mode=%ux%u",
+                mode.width,
+                mode.height);
+            reportStagingFailure();
+            return;
+        }
+        presentStaged(*scanout, target);
+        return;
+    }
     const auto rectangle = framebuffer_.update(
         source,
         sourceWidth,
@@ -323,15 +433,15 @@ void VncDisplay::update(
         sourceFormat,
         sourceX,
         sourceY,
-        destinationX,
-        destinationY,
+        target.x + destinationX,
+        target.y + destinationY,
         width,
         height);
     if (rectangle.width == 0 || rectangle.height == 0)
         return;
-    const bool complete = rectangle.x == 0 && rectangle.y == 0 &&
-        rectangle.width == extentWidth(expectedExtent) &&
-        rectangle.height == extentHeight(expectedExtent);
+    const bool complete = rectangle.x == target.x &&
+        rectangle.y == target.y && rectangle.width == target.width &&
+        rectangle.height == target.height;
     {
         std::lock_guard lock(framebuffer_);
         rfbMarkRectAsModified(
@@ -360,6 +470,10 @@ void VncDisplay::fillSelfTestPattern()
 PresentOutcome VncDisplay::presentMetal(
     const MetalScanout& scanout) noexcept
 {
+    /* The scanout rectangle is the guest mode. The device reports each mode
+     * before it presents it; a caller that does not is followed here. */
+    applyGuestMode(scanout.width, scanout.height);
+    const auto target = placement();
     std::unique_lock scanoutLock(scanoutMutex_);
     const auto state = clientState_.load(std::memory_order_acquire);
     /* With no remote consumer, accepting and dropping the scanout avoids the
@@ -367,7 +481,7 @@ PresentOutcome VncDisplay::presentMetal(
      * the scanout for the next client to read back when it connects. */
     if (stateClientCount(state) == 0) {
         idleFramesDropped_ = true;
-        const bool remembered = metalReadback_->remember(scanout);
+        const bool remembered = metalReadback_->remember(scanout, target);
         scanoutLock.unlock();
         displayActivityLog().record(
             "present display=vnc drop=no-client remembered=%d",
@@ -376,21 +490,38 @@ PresentOutcome VncDisplay::presentMetal(
     }
     /* A Venus scanout is a Metal texture with no guest-visible virgl
      * resource, so the CPU framebuffer path cannot reach it. The readback
-     * converts it off the guest timeline; a scanout it cannot convert
-     * returns unsupported, which deliberately selects the ordinary CPU
-     * framebuffer path at the scanout's extent. */
-    const auto outcome =
-        metalReadback_->present(scanout, stateConnectionEpoch(state));
+     * converts it off the guest timeline, scaling it on the GPU when the
+     * mode needs it; a scanout it cannot convert returns unsupported, which
+     * deliberately selects the ordinary CPU framebuffer path. */
+    const auto outcome = metalReadback_->present(
+        scanout, target, stateConnectionEpoch(state));
     scanoutLock.unlock();
     if (outcome != PresentOutcome::unsupported)
         return outcome;
     displayActivityLog().record("present display=vnc readback=rejected");
-    cpuFallbackExtent_.store(
-        makeExtent(
-            std::min(scanout.width, framebuffer_.width()),
-            std::min(scanout.height, framebuffer_.height())),
-        std::memory_order_release);
     return PresentOutcome::unsupported;
+}
+
+void VncDisplay::presentStaged(
+    const MetalScanout& scanout,
+    DisplayRectangle target) noexcept
+{
+    std::unique_lock scanoutLock(scanoutMutex_);
+    const auto state = clientState_.load(std::memory_order_acquire);
+    /* As for a native scanout, nothing is read back for nobody; a client
+     * that connects later reads the staged image then. */
+    if (stateClientCount(state) == 0) {
+        idleFramesDropped_ = true;
+        (void)metalReadback_->remember(scanout, target);
+        return;
+    }
+    const auto outcome = metalReadback_->present(
+        scanout, target, stateConnectionEpoch(state), ReadbackSource::staged);
+    scanoutLock.unlock();
+    if (outcome == PresentOutcome::unsupported) {
+        displayActivityLog().record("present display=vnc staged=rejected");
+        reportStagingFailure();
+    }
 }
 
 bool VncDisplay::needsFullCpuFallback() const noexcept
@@ -534,6 +665,16 @@ void VncDisplay::publishMetalFrame(
     const MetalReadbackFrame& frame) noexcept
 {
     try {
+        std::lock_guard geometryLock(geometryMutex_);
+        if (frame.placement != placement()) {
+            displayActivityLog().record(
+                "vnc discard frame placement=%ux%u+%u+%u",
+                frame.placement.width,
+                frame.placement.height,
+                frame.placement.x,
+                frame.placement.y);
+            return;
+        }
         const auto rectangle = framebuffer_.update(
             frame.pixels,
             frame.width,
@@ -610,19 +751,19 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
 {
     if (!inputSink_)
         return;
-    const bool pressed = (buttonMask & 1) != 0;
-    if (pointerMode_ == vnc_input::PointerMode::touchscreen &&
-        !touchContact_.update(pressed))
-        return;
-    const auto scale = [](int coordinate, std::uint32_t extent) {
-        if (extent <= 1)
-            return 0;
-        const auto clamped = std::clamp(
-            coordinate, 0, static_cast<int>(extent - 1U));
-        return static_cast<std::int32_t>(
-            static_cast<std::int64_t>(clamped) *
-                vnc_input::absoluteMaximum /
-            static_cast<std::int64_t>(extent - 1U));
+    const auto target = placement();
+    const AspectFitRectangle content {
+        .x = static_cast<double>(target.x),
+        .y = static_cast<double>(target.y),
+        .width = static_cast<double>(target.width),
+        .height = static_cast<double>(target.height),
+    };
+    /* A VNC position names a framebuffer pixel. Its centre is where the
+     * presenter sampled the guest, so it maps onto the guest pixel shown
+     * there. */
+    const DisplayPoint location {.x = x + 0.5, .y = y + 0.5};
+    const auto coordinate = [](double normalized) {
+        return vnc_input::normalizedAbsoluteCoordinate(normalized, 1.0);
     };
 
     std::array<vnc_input::VncInputEvent, 10> events {};
@@ -632,20 +773,55 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
                             std::int32_t value) {
         events[count++] = {.type = type, .code = code, .value = value};
     };
-    append(vnc_input::eventAbsolute, vnc_input::absoluteX, scale(x, width()));
-    append(vnc_input::eventAbsolute, vnc_input::absoluteY, scale(y, height()));
+    const auto deliver = [&] {
+        append(vnc_input::eventSync, vnc_input::syncReport, 0);
+        if (!vnc_input::tryDeliver(inputSink_, std::span(events).first(count)))
+            reportInputFailure();
+        count = 0;
+    };
+
+    std::lock_guard lock(pointerMutex_);
     if (pointerMode_ == vnc_input::PointerMode::touchscreen) {
-        append(vnc_input::eventKey, vnc_input::buttonTouch, pressed ? 1 : 0);
-    } else {
-        append(vnc_input::eventKey, vnc_input::buttonLeft, buttonMask & 1);
+        for (const auto& sample :
+             pointer_.touch(content, location, (buttonMask & 1) != 0)) {
+            append(
+                vnc_input::eventAbsolute,
+                vnc_input::absoluteX,
+                coordinate(sample.point.x));
+            append(
+                vnc_input::eventAbsolute,
+                vnc_input::absoluteY,
+                coordinate(sample.point.y));
+            append(
+                vnc_input::eventKey,
+                vnc_input::buttonTouch,
+                sample.buttons != 0 ? 1 : 0);
+            deliver();
+        }
+        return;
+    }
+    for (const auto& sample : pointer_.mouse(
+             content, location, static_cast<std::uint32_t>(buttonMask))) {
+        append(
+            vnc_input::eventAbsolute,
+            vnc_input::absoluteX,
+            coordinate(sample.point.x));
+        append(
+            vnc_input::eventAbsolute,
+            vnc_input::absoluteY,
+            coordinate(sample.point.y));
+        append(
+            vnc_input::eventKey,
+            vnc_input::buttonLeft,
+            static_cast<std::int32_t>(sample.buttons & 1U));
         append(
             vnc_input::eventKey,
             vnc_input::buttonMiddle,
-            (buttonMask >> 1) & 1);
+            static_cast<std::int32_t>((sample.buttons >> 1U) & 1U));
         append(
             vnc_input::eventKey,
             vnc_input::buttonRight,
-            (buttonMask >> 2) & 1);
+            static_cast<std::int32_t>((sample.buttons >> 2U) & 1U));
         if ((buttonMask & 8) != 0)
             append(vnc_input::eventRelative, vnc_input::relativeWheel, 1);
         if ((buttonMask & 16) != 0)
@@ -660,10 +836,37 @@ void VncDisplay::handlePointer(int buttonMask, int x, int y) noexcept
                 vnc_input::eventRelative,
                 vnc_input::relativeHorizontalWheel,
                 1);
+        deliver();
     }
-    append(vnc_input::eventSync, vnc_input::syncReport, 0);
-    if (!vnc_input::tryDeliver(inputSink_, std::span(events).first(count)))
-        reportInputFailure();
+}
+
+void VncDisplay::releasePointerLocked() noexcept
+{
+    if (!pointer_.release() || !inputSink_)
+        return;
+    const auto release = [&](auto... codes) {
+        const std::array events {
+            vnc_input::VncInputEvent {
+                .type = vnc_input::eventKey,
+                .code = codes,
+                .value = 0,
+            }...,
+            vnc_input::VncInputEvent {
+                .type = vnc_input::eventSync,
+                .code = vnc_input::syncReport,
+                .value = 0,
+            },
+        };
+        if (!vnc_input::tryDeliver(inputSink_, events))
+            reportInputFailure();
+    };
+    if (pointerMode_ == vnc_input::PointerMode::touchscreen)
+        release(vnc_input::buttonTouch);
+    else
+        release(
+            vnc_input::buttonLeft,
+            vnc_input::buttonMiddle,
+            vnc_input::buttonRight);
 }
 
 void VncDisplay::reportInputFailure() noexcept
@@ -671,6 +874,15 @@ void VncDisplay::reportInputFailure() noexcept
     if (!inputFailureReported_.exchange(true, std::memory_order_relaxed)) {
         std::fputs(
             "Unable to deliver VNC input to the emulator\n", stderr);
+    }
+}
+
+void VncDisplay::reportStagingFailure() noexcept
+{
+    if (!stagingFailureReported_.exchange(true, std::memory_order_relaxed)) {
+        std::fputs(
+            "VNC display: cannot scale the CPU framebuffer on the GPU\n",
+            stderr);
     }
 }
 

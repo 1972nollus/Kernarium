@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -59,6 +61,24 @@ struct ClippedDisplaySegment final {
     double containerHeight,
     double contentWidth,
     double contentHeight) noexcept;
+
+/* A rectangle of whole framebuffer pixels. */
+struct DisplayRectangle final {
+    std::uint32_t x {};
+    std::uint32_t y {};
+    std::uint32_t width {};
+    std::uint32_t height {};
+
+    [[nodiscard]] bool operator==(const DisplayRectangle&) const noexcept =
+        default;
+};
+
+/* The centred aspect fit of content in a fixed framebuffer, with its edges
+ * rounded to whole pixels. Content of the framebuffer's own size fills it
+ * exactly, and non-empty content never rounds to an empty rectangle. */
+[[nodiscard]] DisplayRectangle aspectFitPixels(
+    DisplaySize container,
+    DisplaySize content) noexcept;
 
 [[nodiscard]] DisplayRotation rotateDisplay(
     DisplayRotation rotation,
@@ -118,6 +138,60 @@ struct ScanoutSampling final {
     AspectFitRectangle rectangle,
     DisplayPoint start,
     DisplayPoint end) noexcept;
+
+/* One pointer report for the guest: a position in the guest's normalized,
+ * top-left-origin square and the buttons held with it. A touch contact is
+ * button 1. */
+struct GuestPointerSample final {
+    DisplayPoint point;
+    std::uint32_t buttons {};
+};
+
+/* The reports that answer one host pointer event, in order. */
+struct GuestPointerSamples final {
+    std::array<GuestPointerSample, 3> samples {};
+    std::size_t count {};
+
+    [[nodiscard]] const GuestPointerSample* begin() const noexcept
+    {
+        return samples.data();
+    }
+    [[nodiscard]] const GuestPointerSample* end() const noexcept
+    {
+        return samples.data() + count;
+    }
+};
+
+/* Maps host pointer events onto a guest shown in a fitted rectangle, by the
+ * native display's rules for the bars around it. A mouse outside the
+ * rectangle reaches the guest only while it drags buttons first pressed
+ * inside, clamped to the edge; buttons pressed outside stay with the host
+ * until all are released. A touch that starts outside begins a guest contact
+ * where its path enters the rectangle, and a contact ends where the path
+ * leaves. Host positions and the rectangle share one top-left-origin
+ * coordinate system. */
+class FittedPointer final {
+public:
+    /* buttons holds the primary, middle and secondary buttons in bits 0-2. */
+    [[nodiscard]] GuestPointerSamples mouse(
+        AspectFitRectangle content,
+        DisplayPoint location,
+        std::uint32_t buttons) noexcept;
+    [[nodiscard]] GuestPointerSamples touch(
+        AspectFitRectangle content,
+        DisplayPoint location,
+        bool pressed) noexcept;
+    /* Ends the contact or buttons the guest holds, for a mode change that
+     * moves the rectangle under them. Returns whether any were held, so the
+     * caller releases them in the guest; the rest of that host gesture then
+     * stays outside the guest. */
+    [[nodiscard]] bool release() noexcept;
+
+private:
+    std::optional<DisplayPoint> previousTouch_;
+    std::uint32_t deliveredButtons_ {};
+    bool suppressed_ {};
+};
 
 /* Separates the host geometry advertised through Virtio-GPU from the guest's
  * active scanout. Host geometry changes only when automatic resize is
