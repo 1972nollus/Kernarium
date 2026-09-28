@@ -52,15 +52,26 @@ def main() -> int:
         rootfs = Path(name) / "rootfs image.erofs"
         rootfs.touch()
 
-        valid = run(arguments.launcher, rootfs, "quiet")
-        require(valid.returncode == 0, f"valid dry run failed:\n{valid.stdout}")
-        command = shlex.split(valid.stdout)
-        require(
-            f"ubd0c={rootfs}" in command
-            and "root=/dev/ubda" in command
-            and "rootfstype=erofs" in command,
-            f"dry run lacks the raw EROFS boot options:\n{valid.stdout}",
-        )
+        # The launcher runs under macOS bash 3.2, where expanding an empty
+        # array under set -u aborts, so the default invocation is checked
+        # without any extra kernel argument too.
+        for extra in ((), ("quiet",)):
+            valid = run(arguments.launcher, rootfs, *extra)
+            require(
+                valid.returncode == 0,
+                f"valid dry run with {list(extra)} failed:\n{valid.stdout}",
+            )
+            command = shlex.split(valid.stdout)
+            require(
+                f"ubd0c={rootfs}" in command
+                and "root=/dev/ubda" in command
+                and "rootfstype=erofs" in command,
+                f"dry run lacks the raw EROFS boot options:\n{valid.stdout}",
+            )
+            require(
+                not extra or command[-len(extra):] == list(extra),
+                f"dry run lost its extra kernel arguments:\n{valid.stdout}",
+            )
 
         rejected = {
             "ubd0=/tmp/other.erofs": "controlled by the launcher",

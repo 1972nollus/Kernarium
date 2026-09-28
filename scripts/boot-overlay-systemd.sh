@@ -132,7 +132,7 @@ done
 	echo "$0: root device, memory, and systemd unit must be non-empty" >&2
 	exit 2
 }
-for kernel_argument in "${extra_kernel_arguments[@]}"; do
+for kernel_argument in ${extra_kernel_arguments[@]+"${extra_kernel_arguments[@]}"}; do
 	validate_kernel_argument "$kernel_argument"
 done
 
