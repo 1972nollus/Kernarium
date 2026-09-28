@@ -933,10 +933,16 @@ class VulkanCtsToolingTests(unittest.TestCase):
                 command = cts.build_receipt_harness_command(
                     options, self.receipt, selection, Path("/tmp/receipt-full-wsi-test")
                 )
-                self.assertIn("multi-user.target", command)
+                self.assertEqual(
+                    command[command.index("--unit") + 1], "uml-cts.target"
+                )
                 self.assertNotIn("graphical.target", command)
                 self.assertIn("--no-auto-poweroff", command)
-                self.assertIn("systemctl start --no-block uml-vulkan-cts.service", command)
+                self.assertNotIn("--command", command)
+                self.assertIn(
+                    "--guest-file=/etc/systemd/system/uml-cts.target=",
+                    " ".join(command),
+                )
                 self.assertIn("ncpus=4", command)
                 cts.validate_wsi_operation(selection, {}, renderer)
                 for evidence in renderer.splitlines(keepends=True):
@@ -1029,12 +1035,12 @@ class VulkanCtsToolingTests(unittest.TestCase):
             selection,
             Path("/tmp/receipt-wsi-test"),
         )
-        self.assertIn("multi-user.target", command)
+        self.assertEqual(
+            command[command.index("--unit") + 1], "uml-cts.target"
+        )
         self.assertNotIn("graphical.target", command)
         self.assertIn("--no-auto-poweroff", command)
-        self.assertIn(
-            "systemctl start --no-block uml-vulkan-cts.service", command
-        )
+        self.assertNotIn("--command", command)
         self.assertIn("ncpus=4", command)
         self.assertIn("--virtio-serial-socket=", " ".join(command))
 

@@ -71,7 +71,8 @@ RUNNER_ORACLE_PATH = Path(__file__).with_name(
 WAIVERS_PATH = Path(__file__).with_name("vk_gl_cts_waivers.json")
 GUEST_WAIVER_PATH = "/usr/local/share/uml-vk-gl-cts/waivers.xml"
 GUEST_LAUNCHER_PATH = "/usr/local/libexec/uml-vk-gl-cts"
-GUEST_SERVICE_PATH = "/etc/systemd/system/uml-vk-gl-cts.service"
+GUEST_SERVICE_NAME = "uml-vk-gl-cts.service"
+GUEST_SERVICE_PATH = f"/etc/systemd/system/{GUEST_SERVICE_NAME}"
 WAIVED_STATUS = "Waiver"
 WAIVER_KEYS = frozenset(
     {"id", "granted", "granted_by", "scope", "vendor", "renderers", "url",
@@ -3573,42 +3574,33 @@ fi
 def native_wsi_harness_command(
     options: argparse.Namespace,
     artifact_directory: Path,
-    overlay_commands: Sequence[str],
+    service: str,
     *,
-    guest_files: gpu_guest.StagedGuestFiles | None = None,
+    guest_files: gpu_guest.StagedGuestFiles,
     width: int = 1280,
     height: int = 720,
     display: str = "vnc",
     rootfs_type: str = "ext4",
 ) -> list[str]:
-    """Boot the CTS service without a competing display manager.
+    """Boot the campaign's session target, which starts ``service``.
 
-    ``guest_files`` are installed before the guest starts; the caller writes
-    them before running the command."""
+    ``guest_files`` gain the target; they are installed before the guest
+    starts, and the caller writes them before running the command."""
     if display not in ("native", "vnc") or rootfs_type not in ("ext4", "erofs"):
         raise CampaignError("unsupported native WSI display or root filesystem")
+    guest_files.add(CTS_TARGET_PATH, cts_target(service))
     command = [
         sys.executable, str(Path(__file__).with_name("run_gpu_guest.py")),
         "--emulator", str(options.emulator), "--rootfs", str(options.rootfs),
         "--rootfs-type", rootfs_type, "--root-device", "/dev/ubda",
-        "--memory", options.memory, "--unit", "multi-user.target",
+        "--memory", options.memory, "--unit", CTS_TARGET_UNIT,
         "--timeout", "0", "--no-auto-poweroff",
         "--artifact-root", str(artifact_directory / "guest"),
         f"--virtio-serial-socket={artifact_socket_path(artifact_directory)}",
-        *(guest_files.arguments if guest_files is not None else ()),
+        *guest_files.arguments,
     ]
-    for overlay_command in overlay_commands:
-        command.extend(("--command", overlay_command))
     command.extend((
         "--", f"ncpus={options.cpus}", f"--execution-engine={options.engine}",
-        "systemd.mask=display-manager.service", "systemd.mask=sddm.service",
-        "systemd.mask=getty@tty0.service", "systemd.mask=getty@tty1.service",
-        # No suite uses the image's container runtime, and a short shard powers
-        # off while it is still starting.  Tearing its freshly loaded BPF
-        # programs down from that state leaves kworkers blocked in
-        # bpf_prog_free_deferred and the guest never reaches poweroff.
-        "systemd.mask=docker.service", "systemd.mask=docker.socket",
-        "systemd.mask=containerd.service",
         "ip=off", "--gpu", f"--gpu-display={display}",
         f"--gpu-width={width}", f"--gpu-height={height}",
     ))
@@ -4225,6 +4217,44 @@ exit "$status"
 """
 
 
+# The session every conformance campaign boots, on macOS and in Kernarium:
+# multi-user.target and the campaign's service, with nothing that competes for
+# its display or stalls its poweroff. The image's display manager claims its
+# own VT as soon as it starts, Xorg suspends AIGLX for that switch, and a
+# pending GL query then never returns; the fixed-VT getties take the same VTs.
+# No suite uses the container runtime, and a short campaign that powers off
+# while Docker is still loading its BPF programs leaves kworkers blocked in
+# bpf_prog_free_deferred, so the guest never reaches poweroff. Conflicts= stops
+# each of these units in the boot transaction, whatever enables it.
+CTS_TARGET_UNIT = "uml-cts.target"
+CTS_TARGET_PATH = f"/etc/systemd/system/{CTS_TARGET_UNIT}"
+CTS_TARGET_CONFLICTS = (
+    "display-manager.service",
+    "sddm.service",
+    "getty@tty0.service",
+    "getty@tty1.service",
+    "docker.service",
+    "docker.socket",
+    "containerd.service",
+)
+SERVICE_UNIT_NAME = re.compile(r"[A-Za-z0-9@_.:-]+\.service")
+
+
+def cts_target(service: str) -> str:
+    """The campaign's session target, which starts ``service``."""
+    if SERVICE_UNIT_NAME.fullmatch(service) is None:
+        raise CampaignError(f"not a service unit name: {service!r}")
+    return (
+        "[Unit]\n"
+        "Description=Darwin UML conformance campaign session\n"
+        "Requires=multi-user.target\n"
+        "After=multi-user.target\n"
+        f"Wants={service}\n"
+        f"Conflicts={' '.join(CTS_TARGET_CONFLICTS)}\n"
+        "AllowIsolate=yes\n"
+    )
+
+
 CTS_SERVICE = """[Unit]
 Description=Darwin UML VK-GL-CTS campaign
 After=systemd-user-sessions.service
@@ -4298,8 +4328,7 @@ def plan_harness_command(
     )
     guest_files.add(GUEST_SERVICE_PATH, CTS_SERVICE)
     command = native_wsi_harness_command(
-        options, artifact_directory,
-        ("systemctl start --no-block uml-vk-gl-cts.service",),
+        options, artifact_directory, GUEST_SERVICE_NAME,
         guest_files=guest_files,
         width=options.width, height=options.height,
         display=options.display, rootfs_type=options.rootfs_type,

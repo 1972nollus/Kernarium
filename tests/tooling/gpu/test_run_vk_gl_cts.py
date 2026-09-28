@@ -648,8 +648,9 @@ class VkGlCtsToolingTests(unittest.TestCase):
             self.assertFalse(
                 any("systemctl set-environment" in argument for argument in command)
             )
-            self.assertIn("systemd.mask=sddm.service", command)
-            self.assertIn("multi-user.target", command)
+            self.assertEqual(
+                command[command.index("--unit") + 1], cts.CTS_TARGET_UNIT
+            )
 
     def test_every_virgl_scope_reports_its_host_provider(self) -> None:
         identity = cts.load_identity()
@@ -1369,24 +1370,53 @@ native_display_cleanup
 
     def test_native_harness_has_no_competing_desktop(self) -> None:
         options = cts.parse_arguments(["--inventory", "--dry-run"])
+        guest_files = cts.gpu_guest.StagedGuestFiles(
+            Path("/tmp/native-wsi-test/files")
+        )
         command = cts.native_wsi_harness_command(
-            options, Path("/tmp/native-wsi-test"), ("true",),
+            options, Path("/tmp/native-wsi-test"), cts.GUEST_SERVICE_NAME,
+            guest_files=guest_files,
             width=800, height=600, display="native", rootfs_type="erofs",
         )
-        self.assertEqual(command[command.index("--unit") + 1], "multi-user.target")
+        self.assertEqual(
+            command[command.index("--unit") + 1], "uml-cts.target"
+        )
         self.assertIn("--no-auto-poweroff", command)
-        self.assertIn("systemd.mask=display-manager.service", command)
-        self.assertIn("systemd.mask=sddm.service", command)
-        # No suite uses the container runtime, and tearing its BPF programs
-        # down from a half-started state wedges a guest that is powering off.
-        self.assertIn("systemd.mask=docker.service", command)
-        self.assertIn("systemd.mask=docker.socket", command)
-        self.assertIn("systemd.mask=containerd.service", command)
+        self.assertFalse(any("systemd.mask=" in argument for argument in command))
+        self.assertNotIn("--command", command)
+        target = next(
+            data.decode()
+            for host, (data, _) in guest_files.files.items()
+            if host.name.endswith("-uml-cts.target")
+        )
+        self.assertIn(
+            f"--guest-file={cts.CTS_TARGET_PATH}=", " ".join(command)
+        )
+        self.assertIn("Requires=multi-user.target\n", target)
+        self.assertIn("Wants=uml-vk-gl-cts.service\n", target)
+        conflicts = next(
+            line.split("=", 1)[1].split()
+            for line in target.splitlines()
+            if line.startswith("Conflicts=")
+        )
+        # The display manager and the fixed-VT getties take the VT the
+        # campaign's X server holds; no suite uses the container runtime, and
+        # tearing its BPF programs down from a half-started state wedges a
+        # guest that is powering off.
+        self.assertEqual(
+            set(conflicts),
+            {
+                "display-manager.service", "sddm.service",
+                "getty@tty0.service", "getty@tty1.service",
+                "docker.service", "docker.socket", "containerd.service",
+            },
+        )
         self.assertIn("--gpu-width=800", command)
         self.assertIn("--gpu-height=600", command)
         self.assertNotIn("--gpu-vnc-port=0", command)
         self.assertNotIn("display-manager.service", cts.CTS_SERVICE)
-        self.assertIn("WantedBy=multi-user.target", cts.CTS_SERVICE)
+        with self.assertRaises(cts.CampaignError):
+            cts.cts_target("uml-vk-gl-cts.service\nWants=evil.service")
 
     def test_host_backend_refuses_retired_providers_and_requires_zink(self) -> None:
         cts.validate_host_backend("Virgl Zink/KosmicKrisp provider: hardware\n")
@@ -2328,12 +2358,16 @@ native_display_cleanup
                 if argument.startswith("--guest-file=")
             }
             self.assertEqual(
-                set(staged), {cts.GUEST_LAUNCHER_PATH, cts.GUEST_SERVICE_PATH}
+                set(staged),
+                {
+                    cts.GUEST_LAUNCHER_PATH,
+                    cts.GUEST_SERVICE_PATH,
+                    cts.CTS_TARGET_PATH,
+                },
             )
             self.assertNotIn("base64 -d", " ".join(command))
-            self.assertIn(
-                "systemctl start --no-block uml-vk-gl-cts.service", command
-            )
+            # The session target starts the service; nothing is typed.
+            self.assertNotIn("--command", command)
             self.assertEqual(
                 cts.prepare_harness_command(options, selection, run), command
             )

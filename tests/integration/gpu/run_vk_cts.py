@@ -58,7 +58,8 @@ VIRTIO_IDENTITY = re.compile(r"(?:virtio|venus)", re.IGNORECASE)
 CTS_SERVICE_PATH = "/usr/local/libexec/uml-vulkan-cts"
 # A harness installs the selected cases here as a file, whatever their count.
 GUEST_CASE_LIST_PATH = "/usr/local/share/uml-vulkan-cts/selected.txt"
-CTS_WSI_SERVICE_PATH = "/etc/systemd/system/uml-vulkan-cts.service"
+CTS_WSI_SERVICE_NAME = "uml-vulkan-cts.service"
+CTS_WSI_SERVICE_PATH = f"/etc/systemd/system/{CTS_WSI_SERVICE_NAME}"
 CTS_WSI_SERVICE = """[Unit]
 Description=Darwin UML Vulkan WSI CTS campaign
 After=systemd-user-sessions.service
@@ -1990,8 +1991,7 @@ def plan_receipt_harness_command(
     if uses_wsi:
         guest_files.add(CTS_WSI_SERVICE_PATH, CTS_WSI_SERVICE)
         command = common.native_wsi_harness_command(
-            options, artifact_directory,
-            ("systemctl start --no-block uml-vulkan-cts.service",),
+            options, artifact_directory, CTS_WSI_SERVICE_NAME,
             guest_files=guest_files,
         )
         return [*environment, *command], guest_files
