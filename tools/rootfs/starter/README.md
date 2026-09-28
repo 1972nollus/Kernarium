@@ -18,7 +18,11 @@ three raw GPT disks:
   `vainfo`, FFmpeg, and a PipeWire audio server for the guest sound device,
   logs `debian` in on `hvc0`, and grants that user passwordless sudo. Its
   panel pins only installed applications, so Discover and its PackageKit
-  daemon are omitted.
+  daemon are omitted. The session's XDG directories exist before the first
+  login, Folder View shows `~/Desktop` through the local-file worker, since
+  the `desktop:/` worker crashes under UML, the idle lock never engages, and
+  the image carries no Lavapipe ICD for KInfoCenter to mistake for the
+  guest GPU.
 
 Every disk has one Linux-filesystem GPT partition ending at the last usable
 LBA. Networking belongs to the image: OpenRC or systemd starts a DHCP client
