@@ -22,10 +22,10 @@ commit cannot take residency from pending work.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_residency_release.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 4a8f20b4abc0b07a2a234a55dfdd3a7a7c89b260..f1f0f830236fafd85571e3199974a13c5ae6d112 100644
+index 954f3eb96626ab721bcf0af834f2e955df797655..cffe413f41f4543429b26801eabf3fbf43633055 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
-@@ -544,14 +544,30 @@ kk_device_add_heap_to_residency_set(struct kk_device *dev, mtl_heap *heap)
+@@ -550,14 +550,30 @@ kk_device_add_heap_to_residency_set(struct kk_device *dev, mtl_heap *heap)
     simple_mtx_unlock(&dev->residency_set.mutex);
  }
  
@@ -59,7 +59,7 @@ index 4a8f20b4abc0b07a2a234a55dfdd3a7a7c89b260..f1f0f830236fafd85571e3199974a13c
  void
  kk_device_add_buffer_to_residency_set(struct kk_device *dev, mtl_buffer *buffer)
  {
-@@ -564,9 +580,7 @@ void
+@@ -570,9 +586,7 @@ void
  kk_device_remove_buffer_from_residency_set(struct kk_device *dev,
                                             mtl_buffer *buffer)
  {
@@ -70,7 +70,7 @@ index 4a8f20b4abc0b07a2a234a55dfdd3a7a7c89b260..f1f0f830236fafd85571e3199974a13c
  }
  
  void
-@@ -581,9 +595,7 @@ void
+@@ -587,9 +601,7 @@ void
  kk_device_remove_texture_from_residency_set(struct kk_device *dev,
                                              mtl_texture *texture)
  {
@@ -82,12 +82,12 @@ index 4a8f20b4abc0b07a2a234a55dfdd3a7a7c89b260..f1f0f830236fafd85571e3199974a13c
  
  void
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 2bde631e3508f6187127b20219ac3b111eecbfea..a5af599dc199dff01eb64dcb7e3274861287a0f4 100644
+index 36978e23e82f8abf21e54b5e26ed6501da7185e1..195c810cc33fa5d5c9d44108f0133dbdddf871a4 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -860,6 +860,27 @@ if with_tests
+@@ -1007,6 +1007,27 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
-       timeout : 120,
+       timeout : 60,
      )
 +    test(
 +      'kosmickrisp_residency_release',

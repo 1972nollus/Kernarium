@@ -62,6 +62,11 @@ python3 tools/fex-tests/run-asm-corpus.py \
   OUTPUT_I386_DIRECTORY REPORT_I386.json
 ```
 
+The runner reports each case as one tab-separated line of `key=value` fields
+that names the binary it ran; the campaign rejects a line naming another input.
+The `x86-64-fex-asm-campaign-runner` tooling test runs the campaign over the
+runner on generated inputs, so the two cannot drift apart.
+
 The campaign executes every selected binary, including upstream-disabled
 inputs, but excludes those upstream-disabled results from the applicable pass
 rate. It never filters tests according to host CPU features: those annotations
@@ -72,3 +77,10 @@ opcode map so implementation can proceed from measured coverage gaps.
 FEX's generic `Disabled_Tests` entries are retained as explicit unsupported
 upstream cases. Host-, simulator-, and FEX-JIT-specific exclusions do not
 apply to the gadget backend.
+
+The engine emulates x87 only at full 80-bit precision, and the runner refuses
+a case that asks for FEX's reduced-precision mode. The campaign therefore runs
+those programs with `FEX_X87REDUCEDPRECISION` removed from the configuration it
+hands the runner, as the unit corpus producer does: FEX checks every ASM
+program natively, where the request has no effect, so their expected registers
+are full-precision results. The report counts the removed requests.

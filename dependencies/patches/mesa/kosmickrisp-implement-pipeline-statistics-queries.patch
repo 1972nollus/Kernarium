@@ -359,7 +359,7 @@ index bb2d06e169516bd0b40e927b631a271a6994fd12..0e8c1a91ac9c44e0d171a36fc287baba
  
     size_t draw_stride = 5 * sizeof(uint32_t);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 53ff8384555b9380d118955e1468b45dad5ecbf4..06918dae6c8d4f5d2ad731b4a129123a8da59288 100644
+index 901239f351388235047704d96f169f94b823bcb4..a7b50a71f0692d84de98e29a178488cfb7d2e137 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -14,6 +14,7 @@
@@ -500,7 +500,7 @@ index 4bd81afa1dbcc21155097ebe66b5787bf9686087..821985f2a3ebe5bd3af21aa1ff342d00
        mtl_dispatch_threadgroups_with_indirect_buffer(
           encoder, pInfo->addressRange.address, local_size);
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3b8122e7d 100644
+index 94b08bd91432cd8265637ee6f270832385fbf892..ab504cc72515ea889d91956fe9122f0ff5bfb26f 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -1232,14 +1232,22 @@ kk_upload_vertex_params(struct kk_cmd_buffer *cmd,
@@ -541,7 +541,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
  
     params.count_buffer_stride = gsi->count_words * sizeof(uint32_t);
     if (!gsi->prefix_sum && params.count_buffer_stride) {
-@@ -1403,7 +1412,6 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
+@@ -1420,7 +1429,6 @@ kk_upload_geometry_params(struct kk_cmd_buffer *cmd,
        gfx->xfb.raster_instance_count = params.draw.instance_count;
     }
  
@@ -549,7 +549,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
     return kk_pool_upload(cmd, &params, sizeof(params), 8).gpu;
  }
  
-@@ -1426,7 +1434,9 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
+@@ -1443,7 +1451,9 @@ kk_upload_tess_params(struct kk_cmd_buffer *cmd, struct poly_tess_params *out,
     struct poly_tess_params args = {
        .heap = kk_heap(cmd),
        .tcs_stride_el = tcs->info.tess.tcs_output_stride / 4,
@@ -560,7 +560,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
        .input_patch_size = dyn->ts.patch_control_points,
        .output_patch_size = tcs->info.tess.tcs_output_patch_size,
        .tcs_patch_constants = tcs->info.tess.tcs_nr_patch_outputs,
-@@ -1690,6 +1700,18 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
+@@ -1707,6 +1717,18 @@ kk_flush_gfx_state(struct kk_cmd_buffer *cmd)
     kk_flush_render_pass(cmd);
     kk_flush_pipeline(cmd);
  
@@ -579,7 +579,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
     if (desc->push_dirty)
        kk_cmd_buffer_flush_push_descriptors(cmd, desc);
  
-@@ -1788,6 +1810,95 @@ kk_predicate_draws(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -1805,6 +1827,95 @@ kk_predicate_draws(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     return true;
  }
  
@@ -675,7 +675,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
  /* Unrolling will always be done through indirect rendering, so if this is
   * called from non-indirect calls, we will fake it. */
  static bool
-@@ -2403,6 +2514,19 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2420,6 +2531,19 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     uint32_t input_patch_size = dyn->ts.patch_control_points;
     uint64_t state = gfx->per_draw_data.tess_params;
     struct kk_tess_info info = gfx->tess.info;
@@ -695,7 +695,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
  
     /* Setup grids */
     if (kk_grid_is_indirect(draw.grid)) {
-@@ -2412,7 +2536,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2429,7 +2553,7 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
           .indirect = draw.grid.addr,
           .vp = gfx->per_draw_data.vertex_params,
           .vertex_outputs = vs->info.vs.outputs_written,
@@ -704,7 +704,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
        };
  
        if (draw.index.el_size_B) {
-@@ -2436,6 +2560,11 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2453,6 +2577,11 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
  
        grid_tcs.size.x = patches * tcs->info.tess.tcs_output_patch_size;
        grid_tess = kk_grid_1d(patches * draw.grid.size.y);
@@ -716,7 +716,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
     }
  
     /* First launch the VS and TCS */
-@@ -2466,7 +2595,9 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
+@@ -2483,7 +2612,9 @@ kk_launch_tess(struct kk_cmd_buffer *cmd, struct kk_draw_data draw)
     libkk_tessellate(cmd, grid_tess, true, info.mode, POLY_TESS_MODE_COUNT,
                      state);
  
@@ -727,7 +727,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
  
     libkk_tessellate(cmd, grid_tess, true, info.mode, POLY_TESS_MODE_WITH_COUNTS,
                      state);
-@@ -2777,6 +2908,24 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
+@@ -2794,6 +2925,24 @@ kk_launch_materialized_line_raster(struct kk_cmd_buffer *cmd,
     return lines;
  }
  
@@ -752,7 +752,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
  static struct kk_draw_data
  kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                               struct kk_draw_data draw, enum mesa_prim prim)
-@@ -2830,9 +2979,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
+@@ -2847,9 +2996,7 @@ kk_launch_transform_feedback(struct kk_cmd_buffer *cmd,
                            vs_local_size);
     }
  
@@ -763,7 +763,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
  
     if (gfx->xfb.enabled || query_active) {
        mtl_barrier_after_encoder_stages(enc, MTL_STAGE_DISPATCH,
-@@ -2952,9 +3099,7 @@ kk_launch_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
+@@ -2969,9 +3116,7 @@ kk_launch_geometry(struct kk_cmd_buffer *cmd, struct kk_draw_data draw,
        return draw;
     }
  
@@ -774,7 +774,7 @@ index 4b8a5f0965dc898c618cf5eba3f780130b802bf3..d5f78a17ae03b60824418cc9769a81b3
  
     /* A memory-writing GS produces both its emitted values and counts once.
      * Prefix/pre-GS helpers consume those counts before the raster/XFB stage
-@@ -3077,6 +3222,9 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+@@ -3094,6 +3239,9 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
     if (data->predicate_count > 0 && !kk_predicate_draws(cmd, data))
        return;
  
@@ -819,7 +819,7 @@ index e90366d9bd08f38dcca88bc6a6c49b25c2eb4634..c1c5bd4c75048ee0fc4fc698ee768f3e
  
     if (save->desc0) {
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index 5824faf645e9d70a87dcfaf117b31effd807506f..e9720bc07fa359109754a09d11908c38a1c51a89 100644
+index 0a804efc7e5888b15fba7da8e9accc709d7035d3..9230d559697c1a405570df84a6dcd433862a1ffc 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -20,6 +20,7 @@
@@ -830,7 +830,7 @@ index 5824faf645e9d70a87dcfaf117b31effd807506f..e9720bc07fa359109754a09d11908c38
  #include "vk_pipeline.h"
  
  #include "vulkan/vulkan_core.h"
-@@ -1211,9 +1212,75 @@ kk_nir_lower_descriptors(nir_shader *nir,
+@@ -1236,9 +1237,75 @@ kk_nir_lower_descriptors(nir_shader *nir,
     return pass_lower_descriptors || pass_lower_ssbo;
  }
  
@@ -906,7 +906,7 @@ index 5824faf645e9d70a87dcfaf117b31effd807506f..e9720bc07fa359109754a09d11908c38
     switch (intrin->intrinsic) {
     case nir_intrinsic_load_vs_outputs_poly:
        return lower_sysval_to_per_draw(b, intrin, vertex_outputs);
-@@ -1226,11 +1293,34 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1251,11 +1318,34 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
     case nir_intrinsic_load_index_size_poly:
        return lower_sysval_to_per_draw(b, intrin, index_size);
     case nir_intrinsic_load_stat_query_address_poly:
@@ -946,7 +946,7 @@ index 5824faf645e9d70a87dcfaf117b31effd807506f..e9720bc07fa359109754a09d11908c38
     case nir_intrinsic_load_provoking_last:
        return lower_sysval_to_per_draw(b, intrin, provoking_last);
     case nir_intrinsic_load_rasterization_stream:
-@@ -1245,7 +1335,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1270,7 +1360,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
        return true;
     case nir_intrinsic_load_first_vertex:
        /* Lower only compute shaders */
@@ -955,7 +955,7 @@ index 5824faf645e9d70a87dcfaf117b31effd807506f..e9720bc07fa359109754a09d11908c38
           uint32_t root_table_offset = kk_per_draw_offset(base_vertex_addr);
           b->cursor = nir_instr_remove(&intrin->instr);
           assert((root_table_offset & 3) == 0 && "aligned");
-@@ -1261,7 +1351,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1286,7 +1376,7 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
        return false;
     case nir_intrinsic_load_base_instance:
        /* Lower only compute shaders */
@@ -964,7 +964,7 @@ index 5824faf645e9d70a87dcfaf117b31effd807506f..e9720bc07fa359109754a09d11908c38
           uint32_t root_table_offset = kk_per_draw_offset(base_instance_addr);
           b->cursor = nir_instr_remove(&intrin->instr);
           assert((root_table_offset & 3) == 0 && "aligned");
-@@ -1281,9 +1371,12 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
+@@ -1306,9 +1396,12 @@ lower_poly(struct nir_builder *b, nir_intrinsic_instr *intrin, void *data)
  }
  
  bool
@@ -1024,7 +1024,7 @@ index 0000000000000000000000000000000000000000..1679c31d9d53cb3beca549d3266db482
 +
 +#endif /* KK_PIPELINE_STATISTICS_H */
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index 3dfa8f1bc15b82e12a99a7dcfa452fff15440041..c89dc217e8d05102b3259d239d6988f608fc17af 100644
+index 9e308db4c3d1881c896f836de55593f5ac8bf298..2d6be6ae61d1c5c443d607f527385191d5ef3ba4 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
 @@ -39,6 +39,8 @@ kk_reports_per_query(struct kk_query_pool *pool)
@@ -1059,7 +1059,7 @@ index 3dfa8f1bc15b82e12a99a7dcfa452fff15440041..c89dc217e8d05102b3259d239d6988f6
  }
  
  VKAPI_ATTR void VKAPI_CALL
-@@ -442,6 +445,25 @@ kk_cmd_begin_end_query(struct kk_cmd_buffer *cmd, struct kk_query_pool *pool,
+@@ -445,6 +448,25 @@ kk_cmd_begin_end_query(struct kk_cmd_buffer *cmd, struct kk_query_pool *pool,
        cmd->state.gfx.xfb.query[index] =
           end ? 0 : kk_query_report_addr(dev, pool, query);
        break;
@@ -1085,7 +1085,7 @@ index 3dfa8f1bc15b82e12a99a7dcfa452fff15440041..c89dc217e8d05102b3259d239d6988f6
     default:
        UNREACHABLE("Unsupported query type");
     }
-@@ -509,24 +531,22 @@ kk_query_is_available(struct kk_device *dev, struct kk_query_pool *pool,
+@@ -512,24 +534,22 @@ kk_query_is_available(struct kk_device *dev, struct kk_query_pool *pool,
     return p_atomic_read(available) != 0;
  }
  
@@ -1115,7 +1115,7 @@ index 3dfa8f1bc15b82e12a99a7dcfa452fff15440041..c89dc217e8d05102b3259d239d6988f6
  }
  
  static void
-@@ -620,7 +640,8 @@ kk_cmd_copy_query_pool_results(
+@@ -623,7 +643,8 @@ kk_cmd_copy_query_pool_results(
     struct libkk_copy_queries_args args = {
        .availability = pool->bo->gpu,
        .results = results_bo->gpu + pool->query_start,
@@ -1534,7 +1534,7 @@ index c3a27b321da8cd4d382b4eeec533bfc0de8fff04..c3939af69936578d95808c98020a6b6a
  
  bool kk_nir_lower_custom_border(nir_shader *nir);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 6c12b6ce8945ebecde43c53e196344ac055d26e2..b96b9deb86225c7f752d2753ef7861cd06cd5301 100644
+index cb640756becece8eba57d2289ae75e672e54cf18..0b330ff023d36541cdd2b505afd9d1ba808ec034 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -100,6 +100,7 @@ kk_files = files(
@@ -1553,7 +1553,7 @@ index 6c12b6ce8945ebecde43c53e196344ac055d26e2..b96b9deb86225c7f752d2753ef7861cd
    ],
    dependencies : [kk_deps],
    gnu_symbol_visibility : 'hidden',
-@@ -286,6 +288,54 @@ if with_tests
+@@ -326,6 +328,54 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -1608,7 +1608,7 @@ index 6c12b6ce8945ebecde43c53e196344ac055d26e2..b96b9deb86225c7f752d2753ef7861cd
      test(
        'kosmickrisp_line_raster_cache',
        executable(
-@@ -470,4 +520,15 @@ if with_tests
+@@ -510,4 +560,15 @@ if with_tests
      ),
      suite : ['kosmickrisp'],
    )

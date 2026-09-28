@@ -541,10 +541,12 @@ Materialize each mode with the pinned NASM producer and
 repository. Run every binary through the test-only gadgets adapter with
 `tools/fex-tests/run-asm-corpus.py`. Generic upstream-disabled cases remain
 explicit exclusions, while FEX backend- and host-specific exclusions do not
-apply to gadgets. Acceptance requires every applicable materialized case in
-both modes to pass with no decoder or semantic failures; each JSON report
-records the pinned source identity, mode, applicable count,
-upstream-disabled cases, and per-test result.
+apply to gadgets. Programs that request FEX's reduced-precision x87 mode run
+at full precision against their natively produced expectations. Acceptance
+requires every applicable materialized case in both modes to pass with no
+decoder or semantic failures; each JSON report records the pinned source
+identity, mode, applicable count, upstream-disabled cases, and per-test
+result.
 
 ## Performance and external campaigns
 

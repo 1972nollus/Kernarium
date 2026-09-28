@@ -17,12 +17,26 @@ peak and ran a full released mustpass fraction clean.
 Demand is linear in patches and primitives, which the API does not bound, so no
 fixed size is safe for every application. MESA_KK_HEAP_SIZE_MIB raises it
 without a rebuild.
+
+The override only takes 1 to 4095 MiB, the range the GPU allocator's 32-bit
+bound can describe, and any other value keeps sixteen: a count that wrapped
+the byte size to zero, one Metal refuses and one past 4 GiB used to crash the
+first draw that needed the heap or leave the GPU a bound larger than the heap.
+A device Metal refuses its heap keeps none, and a draw that needs it fails its
+command buffer's recording and records nothing instead of dereferencing it.
+A test draws a triangle fan, which is unrolled through the heap, under each
+kind of bad value and under a valid one.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/kosmickrisp/vulkan/kk_cmd_draw.c | 21 ++++++++++++++++++++-
- 1 file changed, 20 insertions(+), 1 deletion(-)
+ src/kosmickrisp/vulkan/kk_cmd_draw.c          |  59 ++-
+ src/kosmickrisp/vulkan/meson.build            |  20 +
+ .../vulkan/tests/test_heap_size_override.c    | 415 ++++++++++++++++++
+ 3 files changed, 491 insertions(+), 3 deletions(-)
+ create mode 100644 src/kosmickrisp/vulkan/tests/test_heap_size_override.c
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index e2e2ef00170d9cfe296c366e4a48a612ec385950..1a2e2e15eb3b0958aa4751ab8da288dc5ed32325 100644
+index b52724ef87ff428719140404ebffd4076753faad..0b2b4809cf3f96eb3d070e47f1dd65c1438c9eaa 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
 @@ -27,6 +27,8 @@
@@ -34,11 +48,12 @@ index e2e2ef00170d9cfe296c366e4a48a612ec385950..1a2e2e15eb3b0958aa4751ab8da288dc
  #include "poly/geometry.h"
  #include "poly/tessellator.h"
  
-@@ -1117,7 +1119,24 @@ kk_init_heap(const void *data)
+@@ -1134,8 +1136,32 @@ kk_init_heap(const void *data)
     struct kk_cmd_buffer *cmd = (struct kk_cmd_buffer *)data;
     struct kk_device *dev = kk_cmd_buffer_device(cmd);
  
 -   size_t size = 128 * 1024 * 1024;
+-   kk_alloc_bo(dev, &dev->vk.base, size, 0, &dev->heap);
 +   /* Measured, not guessed. The heaviest command buffer in the CTS
 +    * tessellation, geometry, draw and rasterization groups asks this heap for
 +    * 1.53 MiB; 1 MiB fails those groups and 2 MiB passes them. Sixteen gives an
@@ -49,14 +64,522 @@ index e2e2ef00170d9cfe296c366e4a48a612ec385950..1a2e2e15eb3b0958aa4751ab8da288dc
 +    * Demand is linear in patches and primitives, which the API does not bound,
 +    * so no fixed size is safe for every application, and an overrun ends as a
 +    * GPU-side abort rather than a diagnosable error. MESA_KK_HEAP_SIZE_MIB
-+    * raises the size without a rebuild. */
++    * raises the size without a rebuild. The GPU allocator bounds the heap with
++    * a 32-bit size, so only 1 to 4095 MiB is honoured and any other value
++    * keeps the default. */
 +   size_t size = 16 * 1024 * 1024;
 +   const char *size_override = getenv("MESA_KK_HEAP_SIZE_MIB");
 +   if (size_override != NULL) {
 +      long requested = strtol(size_override, NULL, 10);
-+      if (requested > 0)
++      if (requested >= 1 && requested <= 4095)
 +         size = (size_t)requested * 1024 * 1024;
 +   }
-    kk_alloc_bo(dev, &dev->vk.base, size, 0, &dev->heap);
++   /* A device Metal refuses the heap keeps none, and every draw that needs it
++    * fails its recording instead; see kk_heap_ready(). */
++   if (kk_alloc_bo(dev, &dev->vk.base, size, 0, &dev->heap) != VK_SUCCESS) {
++      dev->heap = NULL;
++      return;
++   }
  
     struct poly_heap *map = (struct poly_heap *)dev->heap->cpu;
+ 
+@@ -1146,12 +1172,30 @@ kk_init_heap(const void *data)
+    };
+ }
+ 
++/* Whether the device heap exists, creating it on first use. Without it the
++ * recording fails, and the draw that asked must record nothing. */
++static bool
++kk_heap_ready(struct kk_cmd_buffer *cmd)
++{
++   struct kk_device *dev = kk_cmd_buffer_device(cmd);
++
++   util_call_once_data(&dev->heap_init_once, kk_init_heap, cmd);
++   if (dev->heap == NULL) {
++      vk_command_buffer_set_error(&cmd->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
++      return false;
++   }
++   return true;
++}
++
+ static uint64_t
+ kk_heap(struct kk_cmd_buffer *cmd)
+ {
+    struct kk_device *dev = kk_cmd_buffer_device(cmd);
+ 
+-   util_call_once_data(&dev->heap_init_once, kk_init_heap, cmd);
++   /* kk_draw_flushed() skips a draw whose heap is missing before any of its
++    * stages asks for it. */
++   if (!kk_heap_ready(cmd))
++      return 0;
+ 
+    /* We need to free all allocations after each command buffer execution */
+    if (!cmd->uses_heap) {
+@@ -3455,6 +3499,15 @@ kk_draw(struct kk_cmd_buffer *cmd, struct kk_draw_command *data)
+        requires_index_promotion(data) || requires_unroll_robustness(cmd, data) ||
+        requires_unroll_restart(cmd, data) || rewrite_direct_provoking ||
+        (discard_adjacency && !emulate_line_raster));
++   /* Every stage the driver emulates, and every unroll, allocates from the
++    * device heap. */
++   const bool needs_heap = requires_unroll || tess || emulate_geometry ||
++                           emulate_transform_feedback ||
++                           emulate_line_raster || emulate_polygon_points ||
++                           materialize_line_raster;
++   if (needs_heap && !kk_heap_ready(cmd))
++      return;
++
+    if (requires_unroll) {
+       data->line_raster_runs =
+          emulate_line_raster &&
+diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
+index 90e788e820ced6d51bea72338450b904791cb69c..5cfbb38353c6f41ca384ed3fc6e9ad0f5392941d 100644
+--- a/src/kosmickrisp/vulkan/meson.build
++++ b/src/kosmickrisp/vulkan/meson.build
+@@ -872,6 +872,26 @@ if with_tests
+       env : ['MESA_SHADER_CACHE_DISABLE=true'],
+       timeout : 60,
+     )
++    test(
++      'kosmickrisp_heap_size_override',
++      executable(
++        'test_kosmickrisp_heap_size_override',
++        files('tests/test_heap_size_override.c'),
++        include_directories : kk_test_include_directories,
++        dependencies : [
++          idep_nir.partial_dependency(compile_args : true, includes : true, sources : true),
++          idep_vulkan_runtime_headers,
++          idep_vulkan_util_headers,
++          idep_vulkan_wsi_headers,
++          idep_libkk_shaders_h,
++        ],
++        link_whole : libkk,
++        link_args : ['-Wl,-undefined,dynamic_lookup'],
++      ),
++      suite : ['kosmickrisp'],
++      env : ['MESA_SHADER_CACHE_DISABLE=true'],
++      timeout : 60,
++    )
+     test(
+       'kosmickrisp_line_raster_cache',
+       executable(
+diff --git a/src/kosmickrisp/vulkan/tests/test_heap_size_override.c b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..b4e9eba04e54889b0fc360acd4dfab93aec645d4
+--- /dev/null
++++ b/src/kosmickrisp/vulkan/tests/test_heap_size_override.c
+@@ -0,0 +1,415 @@
++/* SPDX-License-Identifier: MIT */
++
++/* The device heap the emulated stages allocate from is sized by
++ * MESA_KK_HEAP_SIZE_MIB when it is set. The size reaches the GPU allocator as
++ * a 32-bit bound, so only 1 to 4095 MiB can be honoured: a value that wraps
++ * the byte count to zero, one Metal refuses and one past 4 GiB must all fall
++ * back to the default instead of crashing the first draw that needs the heap
++ * or leaving the GPU a bound larger than the heap. Each case draws a triangle
++ * fan, which is unrolled through the heap, on a device of its own. */
++
++#define VK_NO_PROTOTYPES
++#include "kk_bo.h"
++#include "kk_device.h"
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++extern PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
++#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
++#define LOAD_I(name) PFN_##name name = (PFN_##name)vkGetInstanceProcAddr(instance, #name); CHECK(name)
++#define LOAD_D(name) PFN_##name name = (PFN_##name)vkGetDeviceProcAddr(device, #name); CHECK(name)
++
++static const uint32_t vertex_spirv[] =
++#include "statistics_shaders/fullscreen.vert.h"
++   ;
++static const uint32_t fragment_spirv[] =
++#include "alpha_to_coverage_shaders/a2c_red.frag.h"
++   ;
++
++#define EXTENT      32u
++#define DEFAULT_MIB 16u
++
++/* The header the driver writes at the start of the heap: struct poly_heap. */
++struct heap_header {
++   uint64_t base;
++   uint32_t bottom;
++   uint32_t size;
++};
++
++static const struct {
++   const char *value;
++   uint32_t mib;
++} cases[] = {
++   {NULL, DEFAULT_MIB},
++   {"2", 2u},
++   {"0", DEFAULT_MIB},
++   {"-8", DEFAULT_MIB},
++   /* 2^44 MiB is 2^64 bytes, which wraps to zero. */
++   {"17592186044416", DEFAULT_MIB},
++   /* Far more than Metal will make. */
++   {"1000000", DEFAULT_MIB},
++   /* Past the 32-bit bound. */
++   {"4096", DEFAULT_MIB},
++};
++
++static uint32_t
++draw_fan(VkInstance instance, VkPhysicalDevice physical, uint32_t *heap_size)
++{
++   LOAD_I(vkGetPhysicalDeviceMemoryProperties);
++   LOAD_I(vkCreateDevice);
++   LOAD_I(vkGetDeviceProcAddr);
++   const float priority = 1.0f;
++   VkDeviceQueueCreateInfo queue_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
++      .queueFamilyIndex = 0,
++      .queueCount = 1,
++      .pQueuePriorities = &priority,
++   };
++   VkPhysicalDeviceVulkan13Features features13 = {
++      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
++      .dynamicRendering = VK_TRUE,
++   };
++   VkDeviceCreateInfo device_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
++      .pNext = &features13,
++      .queueCreateInfoCount = 1,
++      .pQueueCreateInfos = &queue_info,
++   };
++   VkDevice device = VK_NULL_HANDLE;
++   CHECK(vkCreateDevice(physical, &device_info, NULL, &device) == VK_SUCCESS);
++   LOAD_D(vkDestroyDevice);
++   LOAD_D(vkGetDeviceQueue);
++   LOAD_D(vkCreateShaderModule);
++   LOAD_D(vkDestroyShaderModule);
++   LOAD_D(vkCreatePipelineLayout);
++   LOAD_D(vkDestroyPipelineLayout);
++   LOAD_D(vkCreateGraphicsPipelines);
++   LOAD_D(vkDestroyPipeline);
++   LOAD_D(vkCreateImage);
++   LOAD_D(vkDestroyImage);
++   LOAD_D(vkGetImageMemoryRequirements);
++   LOAD_D(vkAllocateMemory);
++   LOAD_D(vkFreeMemory);
++   LOAD_D(vkBindImageMemory);
++   LOAD_D(vkCreateImageView);
++   LOAD_D(vkDestroyImageView);
++   LOAD_D(vkCreateBuffer);
++   LOAD_D(vkDestroyBuffer);
++   LOAD_D(vkGetBufferMemoryRequirements);
++   LOAD_D(vkBindBufferMemory);
++   LOAD_D(vkMapMemory);
++   LOAD_D(vkCreateCommandPool);
++   LOAD_D(vkDestroyCommandPool);
++   LOAD_D(vkAllocateCommandBuffers);
++   LOAD_D(vkBeginCommandBuffer);
++   LOAD_D(vkEndCommandBuffer);
++   LOAD_D(vkCmdBeginRendering);
++   LOAD_D(vkCmdEndRendering);
++   LOAD_D(vkCmdBindPipeline);
++   LOAD_D(vkCmdDraw);
++   LOAD_D(vkCmdPipelineBarrier);
++   LOAD_D(vkCmdCopyImageToBuffer);
++   LOAD_D(vkQueueSubmit);
++   LOAD_D(vkQueueWaitIdle);
++   VkQueue queue = VK_NULL_HANDLE;
++   vkGetDeviceQueue(device, 0, 0, &queue);
++   VkPhysicalDeviceMemoryProperties memory_properties;
++   vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
++
++   const VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
++   VkImageCreateInfo image_info = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
++      .imageType = VK_IMAGE_TYPE_2D,
++      .format = format,
++      .extent = {EXTENT, EXTENT, 1},
++      .mipLevels = 1,
++      .arrayLayers = 1,
++      .samples = VK_SAMPLE_COUNT_1_BIT,
++      .tiling = VK_IMAGE_TILING_OPTIMAL,
++      .usage =
++         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
++   };
++   VkImage image = VK_NULL_HANDLE;
++   CHECK(vkCreateImage(device, &image_info, NULL, &image) == VK_SUCCESS);
++   VkMemoryRequirements image_requirements;
++   vkGetImageMemoryRequirements(device, image, &image_requirements);
++   uint32_t image_type = 0u;
++   while (image_type < memory_properties.memoryTypeCount &&
++          !(image_requirements.memoryTypeBits & (1u << image_type)))
++      image_type++;
++   CHECK(image_type < memory_properties.memoryTypeCount);
++   VkMemoryAllocateInfo image_allocate = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++      .allocationSize = image_requirements.size,
++      .memoryTypeIndex = image_type,
++   };
++   VkDeviceMemory image_memory = VK_NULL_HANDLE;
++   CHECK(vkAllocateMemory(device, &image_allocate, NULL, &image_memory) ==
++         VK_SUCCESS);
++   CHECK(vkBindImageMemory(device, image, image_memory, 0) == VK_SUCCESS);
++   VkImageViewCreateInfo view_info = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
++      .image = image,
++      .viewType = VK_IMAGE_VIEW_TYPE_2D,
++      .format = format,
++      .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
++   };
++   VkImageView view = VK_NULL_HANDLE;
++   CHECK(vkCreateImageView(device, &view_info, NULL, &view) == VK_SUCCESS);
++
++   VkBufferCreateInfo buffer_info = {
++      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
++      .size = EXTENT * EXTENT * 4u,
++      .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
++   };
++   VkBuffer buffer = VK_NULL_HANDLE;
++   CHECK(vkCreateBuffer(device, &buffer_info, NULL, &buffer) == VK_SUCCESS);
++   VkMemoryRequirements buffer_requirements;
++   vkGetBufferMemoryRequirements(device, buffer, &buffer_requirements);
++   const VkMemoryPropertyFlags host =
++      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
++   uint32_t buffer_type = 0u;
++   while (buffer_type < memory_properties.memoryTypeCount &&
++          (!(buffer_requirements.memoryTypeBits & (1u << buffer_type)) ||
++           (memory_properties.memoryTypes[buffer_type].propertyFlags & host) !=
++              host))
++      buffer_type++;
++   CHECK(buffer_type < memory_properties.memoryTypeCount);
++   VkMemoryAllocateInfo buffer_allocate = {
++      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
++      .allocationSize = buffer_requirements.size,
++      .memoryTypeIndex = buffer_type,
++   };
++   VkDeviceMemory buffer_memory = VK_NULL_HANDLE;
++   CHECK(vkAllocateMemory(device, &buffer_allocate, NULL, &buffer_memory) ==
++         VK_SUCCESS);
++   CHECK(vkBindBufferMemory(device, buffer, buffer_memory, 0) == VK_SUCCESS);
++   uint8_t *pixels = NULL;
++   CHECK(vkMapMemory(device, buffer_memory, 0, VK_WHOLE_SIZE, 0,
++                     (void **)&pixels) == VK_SUCCESS);
++   memset(pixels, 0, (size_t)buffer_info.size);
++
++   VkShaderModuleCreateInfo module_info = {
++      .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
++      .codeSize = sizeof(vertex_spirv),
++      .pCode = vertex_spirv,
++   };
++   VkShaderModule vertex_module = VK_NULL_HANDLE;
++   CHECK(vkCreateShaderModule(device, &module_info, NULL, &vertex_module) ==
++         VK_SUCCESS);
++   module_info.codeSize = sizeof(fragment_spirv);
++   module_info.pCode = fragment_spirv;
++   VkShaderModule fragment_module = VK_NULL_HANDLE;
++   CHECK(vkCreateShaderModule(device, &module_info, NULL, &fragment_module) ==
++         VK_SUCCESS);
++   VkPipelineLayoutCreateInfo layout_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
++   };
++   VkPipelineLayout layout = VK_NULL_HANDLE;
++   CHECK(vkCreatePipelineLayout(device, &layout_info, NULL, &layout) ==
++         VK_SUCCESS);
++   VkPipelineShaderStageCreateInfo stages[2] = {
++      {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
++       .stage = VK_SHADER_STAGE_VERTEX_BIT,
++       .module = vertex_module,
++       .pName = "main"},
++      {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
++       .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
++       .module = fragment_module,
++       .pName = "main"},
++   };
++   VkPipelineVertexInputStateCreateInfo vertex_input = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
++   };
++   /* Metal has no fans, so the driver unrolls this one through the heap. */
++   VkPipelineInputAssemblyStateCreateInfo assembly = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
++      .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN,
++   };
++   VkViewport viewport = {0, 0, EXTENT, EXTENT, 0, 1};
++   VkRect2D scissor = {{0, 0}, {EXTENT, EXTENT}};
++   VkPipelineViewportStateCreateInfo viewport_state = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
++      .viewportCount = 1,
++      .pViewports = &viewport,
++      .scissorCount = 1,
++      .pScissors = &scissor,
++   };
++   VkPipelineRasterizationStateCreateInfo raster = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
++      .polygonMode = VK_POLYGON_MODE_FILL,
++      .cullMode = VK_CULL_MODE_NONE,
++      .lineWidth = 1,
++   };
++   VkPipelineMultisampleStateCreateInfo multisample = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
++      .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
++   };
++   VkPipelineColorBlendAttachmentState blend_attachment = {
++      .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
++                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
++   };
++   VkPipelineColorBlendStateCreateInfo blend = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
++      .attachmentCount = 1,
++      .pAttachments = &blend_attachment,
++   };
++   VkPipelineRenderingCreateInfo rendering_info = {
++      .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
++      .colorAttachmentCount = 1,
++      .pColorAttachmentFormats = &format,
++   };
++   VkGraphicsPipelineCreateInfo pipeline_info = {
++      .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
++      .pNext = &rendering_info,
++      .stageCount = 2,
++      .pStages = stages,
++      .pVertexInputState = &vertex_input,
++      .pInputAssemblyState = &assembly,
++      .pViewportState = &viewport_state,
++      .pRasterizationState = &raster,
++      .pMultisampleState = &multisample,
++      .pColorBlendState = &blend,
++      .layout = layout,
++   };
++   VkPipeline pipeline = VK_NULL_HANDLE;
++   CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info,
++                                   NULL, &pipeline) == VK_SUCCESS);
++
++   VkCommandPoolCreateInfo pool_info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
++      .queueFamilyIndex = 0,
++   };
++   VkCommandPool pool = VK_NULL_HANDLE;
++   CHECK(vkCreateCommandPool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
++   VkCommandBufferAllocateInfo command_info = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
++      .commandPool = pool,
++      .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
++      .commandBufferCount = 1,
++   };
++   VkCommandBuffer commands = VK_NULL_HANDLE;
++   CHECK(vkAllocateCommandBuffers(device, &command_info, &commands) ==
++         VK_SUCCESS);
++   VkCommandBufferBeginInfo begin = {
++      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
++      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
++   };
++   CHECK(vkBeginCommandBuffer(commands, &begin) == VK_SUCCESS);
++   VkRenderingAttachmentInfo color_attachment = {
++      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
++      .imageView = view,
++      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
++      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
++      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
++   };
++   VkRenderingInfo rendering = {
++      .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
++      .renderArea = scissor,
++      .layerCount = 1,
++      .colorAttachmentCount = 1,
++      .pColorAttachments = &color_attachment,
++   };
++   vkCmdBeginRendering(commands, &rendering);
++   vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
++   vkCmdDraw(commands, 3, 1, 0, 0);
++   vkCmdEndRendering(commands);
++   VkImageMemoryBarrier to_transfer = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
++      .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
++      .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
++      .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
++      .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++      .image = image,
++      .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
++   };
++   vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
++                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1,
++                        &to_transfer);
++   VkBufferImageCopy copy = {
++      .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
++      .imageExtent = {EXTENT, EXTENT, 1},
++   };
++   vkCmdCopyImageToBuffer(commands, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++                          buffer, 1, &copy);
++   CHECK(vkEndCommandBuffer(commands) == VK_SUCCESS);
++   VkSubmitInfo submit = {
++      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++      .commandBufferCount = 1,
++      .pCommandBuffers = &commands,
++   };
++   CHECK(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS);
++   CHECK(vkQueueWaitIdle(queue) == VK_SUCCESS);
++
++   uint32_t red = 0u;
++   for (uint32_t texel = 0u; texel < EXTENT * EXTENT; texel++) {
++      if (pixels[texel * 4u] == 255u && pixels[texel * 4u + 1u] == 0u &&
++          pixels[texel * 4u + 3u] == 255u)
++         red++;
++   }
++
++   /* The draw needed the heap, so it exists, and the bound the GPU allocator
++    * checks against is what was allocated less the header. */
++   struct kk_device *dev = kk_device_from_handle(device);
++   CHECK(dev->heap != NULL);
++   const struct heap_header *header = dev->heap->cpu;
++   CHECK(sizeof(*header) == 16u);
++   *heap_size = header->size + (uint32_t)sizeof(*header);
++   CHECK(dev->heap->size_B >= *heap_size);
++
++   vkDestroyCommandPool(device, pool, NULL);
++   vkDestroyPipeline(device, pipeline, NULL);
++   vkDestroyPipelineLayout(device, layout, NULL);
++   vkDestroyShaderModule(device, fragment_module, NULL);
++   vkDestroyShaderModule(device, vertex_module, NULL);
++   vkDestroyBuffer(device, buffer, NULL);
++   vkFreeMemory(device, buffer_memory, NULL);
++   vkDestroyImageView(device, view, NULL);
++   vkDestroyImage(device, image, NULL);
++   vkFreeMemory(device, image_memory, NULL);
++   vkDestroyDevice(device, NULL);
++   return red;
++}
++
++int
++main(void)
++{
++   VkInstance instance = VK_NULL_HANDLE;
++   LOAD_I(vkCreateInstance);
++   VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
++                            .apiVersion = VK_API_VERSION_1_3};
++   VkInstanceCreateInfo instance_info = {
++      .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
++      .pApplicationInfo = &app,
++   };
++   CHECK(vkCreateInstance(&instance_info, NULL, &instance) == VK_SUCCESS);
++   LOAD_I(vkDestroyInstance);
++   LOAD_I(vkEnumeratePhysicalDevices);
++   uint32_t count = 1;
++   VkPhysicalDevice physical = VK_NULL_HANDLE;
++   VkResult enumerated =
++      vkEnumeratePhysicalDevices(instance, &count, &physical);
++   CHECK((enumerated == VK_SUCCESS || enumerated == VK_INCOMPLETE) && count);
++
++   for (unsigned i = 0u; i < sizeof(cases) / sizeof(cases[0]); i++) {
++      if (cases[i].value != NULL)
++         setenv("MESA_KK_HEAP_SIZE_MIB", cases[i].value, 1);
++      else
++         unsetenv("MESA_KK_HEAP_SIZE_MIB");
++      uint32_t heap_size = 0u;
++      const uint32_t red = draw_fan(instance, physical, &heap_size);
++      fprintf(stderr, "MESA_KK_HEAP_SIZE_MIB=%s: heap %u bytes, %u of %u red\n",
++              cases[i].value ? cases[i].value : "(unset)", heap_size, red,
++              EXTENT * EXTENT);
++      CHECK(heap_size == cases[i].mib * 1024u * 1024u);
++      CHECK(red == EXTENT * EXTENT);
++   }
++
++   vkDestroyInstance(instance, NULL);
++   printf("every heap-size override is bounded\n");
++   return 0;
++}

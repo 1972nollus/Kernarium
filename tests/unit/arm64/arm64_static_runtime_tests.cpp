@@ -159,6 +159,57 @@ static void uml_static_x86_64_entry_bridge()
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 }
 
+/* Linux runs x86 userspace with IF set (RFLAGS 0x202 after execve), and no
+ * user instruction can clear it. The kernel's register image of a fresh task
+ * holds 0, and one restored from a signal frame holds what the frame said, so
+ * the host must supply IF on entry, as it supplies the reserved bit. */
+static void uml_static_x86_user_interrupt_flag()
+{
+	constexpr std::uint64_t base = 0x2'c000;
+	constexpr std::uint64_t stack = base + 0x800;
+	constexpr std::uint64_t interrupt_flag = std::uint64_t{1} << 9;
+	constexpr std::uint64_t compat32_execution = std::uint64_t{1} << 33;
+	struct Entry final {
+		unsigned long generation;
+		std::array<std::byte, 4> program;
+		std::uint64_t kernel_flags;
+		std::uint64_t mode;
+		std::uint64_t pushed;
+	};
+	const std::array entries{
+		/* pushfq; pop rax; syscall -- a task fresh from execve. */
+		Entry{137, {std::byte{0x9c}, std::byte{0x58}, std::byte{0x0f},
+			std::byte{0x05}}, 0, 0, 0x202},
+		/* pushfd; pop eax; int 80h -- flags a signal frame restored
+		 * without IF. */
+		Entry{138, {std::byte{0x9c}, std::byte{0x58}, std::byte{0xcd},
+			std::byte{0x80}}, 0x46, compat32_execution, 0x246},
+	};
+	for (const auto &entry : entries) {
+		ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+		backing.put(0, entry.program);
+		require(darwin_uml_static_vm_activate(entry.generation) == 0);
+		require(darwin_uml_static_vm_map(
+			reinterpret_cast<void *>(base), backing.descriptor(), 0,
+			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
+			1, 1) == 0);
+		darwin_uml_guest_registers registers{};
+		darwin_uml_guest_fp_registers fp{};
+		registers.padding = 2;
+		registers.pc = base;
+		registers.x[4] = stack; // rsp
+		registers.x[16] = entry.kernel_flags;
+		registers.svcr = entry.mode;
+		unsigned long tls = 0;
+		const int event = darwin_uml_static_enter_guest(
+			&registers, &fp, sizeof(fp), entry.generation, &tls);
+		require(event == DARWIN_UML_EVENT_SYSCALL);
+		require(registers.x[0] == entry.pushed); // rax
+		require((registers.x[16] & interrupt_flag) != 0);
+		require(darwin_uml_static_vm_destroy(entry.generation) == 0);
+	}
+}
+
 static void uml_static_x86_compat32_entry_bridge()
 {
 	constexpr unsigned long generation = 134;
@@ -1084,6 +1135,7 @@ int main()
 	uml_static_entry_bridge();
 #if DARWIN_UML_X86_64_GUEST
 	uml_static_x86_64_entry_bridge();
+	uml_static_x86_user_interrupt_flag();
 	uml_static_x86_compat32_entry_bridge();
 	uml_static_x86_exception_bridge();
 	uml_static_x86_64_signal_return_bridge();

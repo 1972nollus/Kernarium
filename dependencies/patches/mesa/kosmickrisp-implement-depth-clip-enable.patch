@@ -32,7 +32,7 @@ index ada13f68970ee974d572b14649152a5ca5a97ff0..1fce418824d7e6927d4ed1d24e14fd23
    VK_EXT_descriptor_buffer                              DONE (anv, lvp, nvk, radv, tu)
    VK_EXT_descriptor_heap                                DONE (anv, radv, vn)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 3fa01aeff965059195da06ba85887442b87f3b0f..67b5d26da894c31e17116c7d185b1f8ccfe3967f 100644
+index 7d061bd1220e2de5b0bf950737641bddf69fd23d..f9879e5770e21b5d6837e650b7b744fd77fd0768 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -10,6 +10,7 @@
@@ -258,7 +258,7 @@ index 0000000000000000000000000000000000000000..8b698c583019baad22275dfd358aacb4
 +
 +#endif /* KK_DEPTH_CLIP_H */
 diff --git a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
-index af7c0cea6d136fbce0eec160c207e65655c8a5c8..648adc8c36364ba3ff32d5c37382b1902c18b5a8 100644
+index 9f9b33b8a44f687cde77f661b912af28dfbec4f8..f1f7f63a6a403c1dd84fa546252f0de7fbe89415 100644
 --- a/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 +++ b/src/kosmickrisp/vulkan/kk_nir_lower_descriptors.c
 @@ -65,6 +65,13 @@ load_root(nir_builder *b, unsigned num_components, unsigned bit_size,
@@ -568,7 +568,7 @@ index c14ac9789877ffc1fe6b8b4253c51e83a72a2017..67d45395434530d7b1f835fa75a079ed
  bool kk_nir_lower_null_images(nir_shader *nir);
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 5259c0d61989d2304d17a2a7220a7bf1e8fdd5ec..cfd82532b641b9944163bb9ee82b03c2ee38f1c9 100644
+index 5393a11d97e820f617860e3f8281bb61f4e5e141..e0aa4cd8bad2045135b6e88e25b62294c90a2e22 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -62,6 +62,7 @@ kk_files = files(
@@ -579,8 +579,8 @@ index 5259c0d61989d2304d17a2a7220a7bf1e8fdd5ec..cfd82532b641b9944163bb9ee82b03c2
    'kk_cmd_meta.c',
    'kk_cmd_pool.h',
    'kk_cmd_pool.c',
-@@ -246,4 +247,15 @@ if with_tests
-       timeout : 120,
+@@ -272,4 +273,15 @@ if with_tests
+       timeout : 60,
      )
    endif
 +

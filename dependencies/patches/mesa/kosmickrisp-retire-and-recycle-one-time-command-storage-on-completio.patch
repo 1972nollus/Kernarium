@@ -41,23 +41,30 @@ inside an autorelease pool, because reading a weak reference retains it
 until the pool drains and an observer that skips one keeps alive what it
 measures.
 
+Device creation now fails with VK_ERROR_OUT_OF_HOST_MEMORY when the device's
+allocator cache cannot be allocated. Its unwind frees the device, so every
+jump into it has to carry a failure: the two older jumps beside it, for a
+Metal compiler and a residency set Metal refuses, now return
+VK_ERROR_INITIALIZATION_FAILED and VK_ERROR_OUT_OF_DEVICE_MEMORY rather than
+the VK_SUCCESS of the step before them.
+
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
  src/kosmickrisp/vulkan/kk_cmd_buffer.c        |  23 +-
- src/kosmickrisp/vulkan/kk_device.c            |  77 +++++
+ src/kosmickrisp/vulkan/kk_device.c            |  87 ++++-
  src/kosmickrisp/vulkan/kk_device.h            |  36 ++
  src/kosmickrisp/vulkan/kk_queue.c             | 160 +++++++--
  src/kosmickrisp/vulkan/kk_queue.h             |  20 ++
  src/kosmickrisp/vulkan/meson.build            |  22 ++
  .../vulkan/tests/test_command_completion.m    | 307 ++++++++++++++++++
- 7 files changed, 614 insertions(+), 31 deletions(-)
+ 7 files changed, 622 insertions(+), 33 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_completion.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 668bbcaba279b59826318b3d0e06d0999d83af13..4ffa19612d69f8ddfac66ef88083408cd01c3eed 100644
+index 2d0b1431599db6b30a99aabcf3bb2ef3484ff662..4e3bb301db2381fe09b81794dec82e0fc348ec46 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -94,10 +94,21 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
+@@ -109,10 +109,21 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
     vk_free(&pool->vk.alloc, cmd);
  }
  
@@ -81,7 +88,7 @@ index 668bbcaba279b59826318b3d0e06d0999d83af13..4ffa19612d69f8ddfac66ef88083408c
     es->ts_resolves = UTIL_DYNARRAY_INIT;
     es->ts_samples = UTIL_DYNARRAY_INIT;
     return es->allocator != NULL;
-@@ -130,13 +141,13 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+@@ -145,13 +156,13 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
  
     cmd->pre_gfx = &cmd->cmp[0];
     cmd->post_gfx = &cmd->cmp[1];
@@ -98,7 +105,7 @@ index 668bbcaba279b59826318b3d0e06d0999d83af13..4ffa19612d69f8ddfac66ef88083408c
        goto post_gfx_allocator_fail;
  
     {
-@@ -254,7 +265,7 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+@@ -269,7 +280,7 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                                            &cmd->cmp[1]};
     for (unsigned i = 0; i < ARRAY_SIZE(encoders); i++) {
        if (!encoders[i]->allocator)
@@ -108,7 +115,7 @@ index 668bbcaba279b59826318b3d0e06d0999d83af13..4ffa19612d69f8ddfac66ef88083408c
           kk_reset_cmd_buffer(&cmd->vk,
                               VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
 diff --git a/src/kosmickrisp/vulkan/kk_device.c b/src/kosmickrisp/vulkan/kk_device.c
-index 09c0985e13c5487b23c21aaa218f82fc1c8d6ad3..175b4edc72bcda3381c7ff20bb6eb0d6de5b66d3 100644
+index 09c0985e13c5487b23c21aaa218f82fc1c8d6ad3..2624f423ab94c68003c1523716539c1a3a958e79 100644
 --- a/src/kosmickrisp/vulkan/kk_device.c
 +++ b/src/kosmickrisp/vulkan/kk_device.c
 @@ -17,6 +17,8 @@
@@ -200,18 +207,41 @@ index 09c0985e13c5487b23c21aaa218f82fc1c8d6ad3..175b4edc72bcda3381c7ff20bb6eb0d6
  VKAPI_ATTR VkResult VKAPI_CALL
  kk_CreateDevice(VkPhysicalDevice physicalDevice,
                  const VkDeviceCreateInfo *pCreateInfo,
-@@ -324,6 +392,10 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
+@@ -308,8 +376,10 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
+ 
+    /* Create a new Metal pipeline compiler for the device */
+    dev->mtl_compiler_handle = kk_acquire_compiler(dev);
+-   if (dev->mtl_compiler_handle == NULL)
++   if (dev->mtl_compiler_handle == NULL) {
++      result = vk_error(dev, VK_ERROR_INITIALIZATION_FAILED);
+       goto fail_init;
++   }
+ 
+    result = kk_linked_graphics_pipeline_cache_init(dev);
+    if (result != VK_SUCCESS)
+@@ -318,12 +388,20 @@ kk_CreateDevice(VkPhysicalDevice physicalDevice,
+    /* We need to initialize the device residency set before any bo is created. */
+    simple_mtx_init(&dev->residency_set.mutex, mtx_plain);
+    dev->residency_set.handle = mtl_new_residency_set(dev->mtl_handle);
+-   if (dev->residency_set.handle == NULL)
++   if (dev->residency_set.handle == NULL) {
++      result = vk_error(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+       goto fail_linked_pipeline_cache;
++   }
+ 
     simple_mtx_init(&dev->address_space.mutex, mtx_plain);
     list_inithead(&dev->address_space.allocations);
  
 +   dev->allocator_cache = kk_command_allocator_cache_create();
-+   if (dev->allocator_cache == NULL)
++   if (dev->allocator_cache == NULL) {
++      result = vk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
 +      goto fail_vab_memory;
++   }
 +
     if (pCreateInfo->queueCreateInfoCount > 0) {
        result =
           kk_queue_init(dev, &dev->queue, &pCreateInfo->pQueueCreateInfos[0], 0);
-@@ -365,6 +437,8 @@ fail_mem_cache:
+@@ -365,6 +443,8 @@ fail_mem_cache:
        dev->has_queue = false;
     }
  fail_vab_memory:
@@ -220,7 +250,7 @@ index 09c0985e13c5487b23c21aaa218f82fc1c8d6ad3..175b4edc72bcda3381c7ff20bb6eb0d6
     simple_mtx_destroy(&dev->address_space.mutex);
     mtl_release(dev->residency_set.handle);
     simple_mtx_destroy(&dev->residency_set.mutex);
-@@ -408,6 +482,9 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
+@@ -408,6 +488,9 @@ kk_DestroyDevice(VkDevice _device, const VkAllocationCallbacks *pAllocator)
        dev->has_queue = false;
     }
  
@@ -529,10 +559,10 @@ index 985352222940c90815d7c9938e8e0ae01f4e2db4..f35020cb5adbcbbe7d92e0a9b9596382
  
  static inline struct kk_device *
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 233b837623f314ee928f23c9e2a0d115eb6f42ff..d7d479a6a34de65e0ec2231d576f8fb35d7a52fd 100644
+index d636b50f1c34b41d4cfe073d974bb79b80ebb525..be41fc5ac0eaa92ba48193cbbbb9a8a656565762 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -507,6 +507,28 @@ if with_tests
+@@ -547,6 +547,28 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

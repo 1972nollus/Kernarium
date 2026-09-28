@@ -55,10 +55,10 @@ requires the device lost between 30 and 45 s.
  6 files changed, 282 insertions(+), 25 deletions(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_query_pool.c b/src/kosmickrisp/vulkan/kk_query_pool.c
-index d6e9e68c944ff85471d405ecc8c3bff51b33a2aa..806ddf4e84df05d3c6361468452eb7833de031e1 100644
+index 9c03b79fddc81f3aac958ac270eeabdb377579ce..8990b6eaa42b60c96c0733b46259d655001760e3 100644
 --- a/src/kosmickrisp/vulkan/kk_query_pool.c
 +++ b/src/kosmickrisp/vulkan/kk_query_pool.c
-@@ -546,9 +546,13 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
+@@ -549,9 +549,13 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
      * one. What it cannot report is a GPU write it destroyed: a query becomes
      * available through a write inside a submitted command buffer, and no
      * report names the query that write was for. So a queue that has failed
@@ -74,7 +74,7 @@ index d6e9e68c944ff85471d405ecc8c3bff51b33a2aa..806ddf4e84df05d3c6361468452eb783
  
     for (;;) {
        if (kk_query_is_available(dev, pool, query))
-@@ -558,17 +562,41 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
+@@ -561,17 +565,41 @@ kk_query_wait_for_available(struct kk_device *dev, struct kk_query_pool *pool,
        if (status != VK_SUCCESS)
           return status;
  
@@ -127,10 +127,10 @@ index d6e9e68c944ff85471d405ecc8c3bff51b33a2aa..806ddf4e84df05d3c6361468452eb783
        }
  
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 780958f26e9c6ec1332640fa9dd81d27deddcbe0..26f73b167d9f0828582b8c3a5a7d2041467d8865 100644
+index 9ff92971b59aab4a60b927275f1ec28ce50bb46d..681be0d9eb9fc2087f4bb32bf0062c7fd5b42aef 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
-@@ -78,18 +78,38 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
+@@ -120,18 +120,38 @@ kk_queue_signals_make_good(struct kk_queue_feedback *feedback,
     return made_good;
  }
  
@@ -326,10 +326,10 @@ index 0effa2e9054d3a8f979b4d24f488751529f89505..24c13070a3d16bc3f9ef0b10f5eb0120
        kk_queue_complete_owed_signals(&dev->queue, timeline->mtl_handle);
     if (completed) {
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index e42808b1c7952665e342340f2fca336ddd62707a..e52240c67061ecd395c8703b5f21e02afa1afe7f 100644
+index 9b1c60b34467dc38bed8aba777ff537b0cd688cc..a0a8ae6fcfc70d2467075973b0fba41291d718cf 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -684,6 +684,16 @@ if with_tests
+@@ -742,6 +742,16 @@ if with_tests
          timeout : 15,
        )
      endforeach

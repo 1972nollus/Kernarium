@@ -5120,15 +5120,24 @@ struct FlagState final {
 	}
 }
 
-[[nodiscard]] NativeEntry interrupt_return_entry(OperandWidth width) noexcept
+/* 64-bit mode pops SS:RSP at every operand size, compat32 only on a return
+ * to an outer privilege level, so the narrower forms come in both kinds. */
+[[nodiscard]] NativeEntry interrupt_return_entry(OperandWidth width,
+	ExecutionMode mode) noexcept
 {
+	const bool long_mode = mode == ExecutionMode::long64;
 	switch (width) {
 	case OperandWidth::word:
-		return native::uml_x86_64_gadget_interrupt_return_16;
+		return long_mode ?
+			native::uml_x86_64_gadget_interrupt_return_long_16 :
+			native::uml_x86_64_gadget_interrupt_return_16;
 	case OperandWidth::dword:
-		return native::uml_x86_64_gadget_interrupt_return_32;
+		return long_mode ?
+			native::uml_x86_64_gadget_interrupt_return_long_32 :
+			native::uml_x86_64_gadget_interrupt_return_32;
 	case OperandWidth::qword:
-		return native::uml_x86_64_gadget_interrupt_return_64;
+		return long_mode ?
+			native::uml_x86_64_gadget_interrupt_return_64 : nullptr;
 	default: return nullptr;
 	}
 }
@@ -6820,7 +6829,8 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		return true;
 	}
 	case Operation::interrupt_ret: {
-		const auto entry = interrupt_return_entry(instruction.destination.width);
+		const auto entry = interrupt_return_entry(
+			instruction.destination.width, mode);
 		if (entry == nullptr)
 			return false;
 		stream.push_back(entry_address(entry));

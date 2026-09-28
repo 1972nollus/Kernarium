@@ -292,7 +292,11 @@ marker for per-workload differences. Weighting each entry's count by the
 shortest helper-free host-instruction path of its symbol (from `objdump -d`)
 models the fast-path cost per guest instruction; per-thread hardware
 counters from an `xctrace` CPU Counters recording measure the whole engine.
-Both remain diagnostics, not scores.
+Both remain diagnostics, not scores. The switch changes the gadget executor's
+layout, so every target that includes the gadget headers takes it from the
+build. The unit tests that run the executor pass in such a build; the structure
+tests fail there, because they pin the default stream, which has no counter
+entries.
 
 ## Guest code sampling
 

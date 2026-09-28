@@ -29,10 +29,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 7 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 23e46067edee66284359bc55c81c69edb68c7a2b..f24e24518d7614b683883ed1b6b2b77ef64ad384 100644
+index 31a7d463df8df2bab38bc776b038815361ea3fda..af698e9d6772579bf46f056b89fea6dd390ac296 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
-@@ -497,7 +497,13 @@ kk_GetPhysicalDeviceImageFormatProperties2(
+@@ -501,7 +501,13 @@ kk_GetPhysicalDeviceImageFormatProperties2(
           break;
        case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT:
        case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT: {

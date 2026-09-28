@@ -863,11 +863,13 @@ raised to make room for a workload. Two consequences follow.
 The per-device geometry heap is 16 MiB rather than a fixed 128 MiB, because a
 Venus host pays it once per guest `VkDevice`. The heaviest command buffer in the
 CTS tessellation, geometry, draw and rasterization groups asks it for
-1.53 MiB; `MESA_KK_HEAP_SIZE_MIB` raises it without a rebuild. An undersized
-heap produces wrong results rather than a diagnosable failure, because the
-overflow report is a shader-side `printf` and `abort()` that reaches neither
-Metal nor the host log, so a smaller size is validated only by a conformance
-run.
+1.53 MiB; `MESA_KK_HEAP_SIZE_MIB` sets it from 1 to 4095 MiB without a
+rebuild, and any other value keeps 16 MiB. If Metal refuses the heap, a draw
+that needs it is not recorded and its command buffer ends with
+`VK_ERROR_OUT_OF_DEVICE_MEMORY`. An undersized heap produces wrong results
+rather than a diagnosable failure, because the overflow report is a
+shader-side `printf` and `abort()` that reaches neither Metal nor the host log,
+so a smaller size is validated only by a conformance run.
 
 An uninterrupted released mustpass fraction runs about 200,000 cases in one
 `deqp-vk` process, and a 1536 MiB guest cannot hold every group in that traversal.

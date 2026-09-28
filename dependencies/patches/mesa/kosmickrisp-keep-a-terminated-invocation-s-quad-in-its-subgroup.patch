@@ -56,7 +56,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_terminate_full_quads.cpp
 
 diff --git a/docs/drivers/kosmickrisp/workarounds.rst b/docs/drivers/kosmickrisp/workarounds.rst
-index ef37fc4ced61fbfc79bc84c0e7b5a79419c0ecd0..3a7408608df069d4761c4b999a6ad228bc62316f 100644
+index 60dada78662945fefca66d07fff714a353ff0e7c..d159845738a21e4c650d6e297393e06316794f8c 100644
 --- a/docs/drivers/kosmickrisp/workarounds.rst
 +++ b/docs/drivers/kosmickrisp/workarounds.rst
 @@ -49,6 +49,49 @@ info on what was updated.
@@ -171,10 +171,10 @@ index d77537c3ea6bf584640b043f0b0d553d144e35ad..a920e1d0375935d395c8a8e79c4ca0d5
        P_IND(ctx, "}\n");
        break;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index c0cc46a02ad8cb50169bf7a4e0e17da8c1d5095f..f90e2f4e915ea662e17cfa5ccbd77eb87f3e3117 100644
+index d24b884786d902dc0ac2e4359be9908f3ad5aa9e..90e788e820ced6d51bea72338450b904791cb69c 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -631,6 +631,20 @@ if with_tests
+@@ -689,6 +689,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
