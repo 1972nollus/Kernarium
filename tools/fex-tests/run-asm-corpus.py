@@ -12,11 +12,20 @@ import json
 import os
 import pathlib
 import re
+import struct
 import subprocess
 import tempfile
 import time
 from collections import Counter
 from typing import Any
+
+
+# FEX's configuration record: four u64 and three u32 header fields, then
+# offset/count pairs for memory regions, registers, memory data and the
+# environment, whose NUL-terminated key/value pairs end the record.
+FEX_CONFIG_HEADER_SIZE = 76
+FEX_CONFIG_ENVIRONMENT = 68
+FEX_REDUCED_PRECISION = b"FEX_X87REDUCEDPRECISION"
 
 
 def fail(message: str) -> "NoReturn":
@@ -64,6 +73,41 @@ def load_corpus(root: pathlib.Path) -> tuple[dict[str, Any], list[dict[str, Any]
         if sha256(config) != record.get("config_sha256"):
             fail(f"configuration hash mismatch: {record.get('test')}")
     return metadata, tests
+
+
+def full_precision_config(config: bytes) -> bytes | None:
+    """Return CONFIG without FEX's reduced-precision x87 request.
+
+    That request makes FEX's own translator compute x87 in doubles; the
+    gadget engine has only full 80-bit x87 and its runner rejects the
+    request. FEX's x86-64 host runner executes every ASM test natively, where
+    the request has no effect, so the expected registers are already
+    full-precision hardware results, as the unit corpus producer also relies
+    on. Returns None when CONFIG carries no request, or when its environment
+    is malformed, which the runner then reports.
+    """
+    if len(config) < FEX_CONFIG_HEADER_SIZE:
+        return None
+    offset, count = struct.unpack_from("<II", config, FEX_CONFIG_ENVIRONMENT)
+    if not FEX_CONFIG_HEADER_SIZE <= offset <= len(config):
+        return None
+    entries: list[tuple[bytes, bytes]] = []
+    cursor = offset
+    for _ in range(count):
+        key_end = config.find(b"\0", cursor)
+        value_end = config.find(b"\0", key_end + 1) if key_end >= 0 else -1
+        if value_end < 0:
+            return None
+        entries.append((config[cursor:key_end], config[key_end + 1 : value_end]))
+        cursor = value_end + 1
+    kept = [entry for entry in entries if entry[0] != FEX_REDUCED_PRECISION]
+    if len(kept) == len(entries) or cursor != len(config):
+        return None
+    rebuilt = bytearray(config[:offset])
+    struct.pack_into("<II", rebuilt, FEX_CONFIG_ENVIRONMENT, offset, len(kept))
+    for key, value in kept:
+        rebuilt += key + b"\0" + value + b"\0"
+    return bytes(rebuilt)
 
 
 def parse_runner_output(output: str, binary: str) -> dict[str, object]:
@@ -163,13 +207,20 @@ def run_one(
     root: pathlib.Path,
     record: dict[str, Any],
     timeout: float,
+    scratch: pathlib.Path,
+    index: int,
 ) -> dict[str, object]:
     started = time.monotonic()
     binary = str(corpus_path(root, record["binary"]))
+    config = corpus_path(root, record["config"])
+    rewritten = full_precision_config(config.read_bytes())
+    if rewritten is not None:
+        config = scratch / f"{index}.config.bin"
+        config.write_bytes(rewritten)
     command = [
         str(runner),
         binary,
-        str(corpus_path(root, record["config"])),
+        str(config),
     ]
     try:
         completed = subprocess.run(
@@ -199,6 +250,7 @@ def run_one(
             "source": record["source"],
             "host_features": record.get("host_features", []),
             "disabled_upstream": bool(record.get("disabled_upstream")),
+            "x87_reduced_precision_dropped": rewritten is not None,
             "duration_ms": round((time.monotonic() - started) * 1000, 3),
         }
     )
@@ -249,10 +301,14 @@ def main() -> int:
         fail("no tests selected")
 
     results_by_name: dict[str, dict[str, object]] = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=arguments.jobs) as pool:
+    with tempfile.TemporaryDirectory(prefix="fex-asm-configs-") as scratch, \
+            concurrent.futures.ThreadPoolExecutor(max_workers=arguments.jobs) as pool:
         futures = {
-            pool.submit(run_one, runner, root, record, arguments.timeout): record
-            for record in tests
+            pool.submit(
+                run_one, runner, root, record, arguments.timeout,
+                pathlib.Path(scratch), index,
+            ): record
+            for index, record in enumerate(tests)
         }
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
@@ -280,6 +336,9 @@ def main() -> int:
         "selected_count": len(results),
         "applicable_count": len(applicable),
         "upstream_disabled_count": len(disabled),
+        "x87_reduced_precision_dropped_count": sum(
+            1 for result in results if result["x87_reduced_precision_dropped"]
+        ),
         "passed_count": passed,
         "failed_count": len(applicable) - passed,
         "status_counts": dict(sorted(status_counts.items())),

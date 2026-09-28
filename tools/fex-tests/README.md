@@ -77,3 +77,10 @@ opcode map so implementation can proceed from measured coverage gaps.
 FEX's generic `Disabled_Tests` entries are retained as explicit unsupported
 upstream cases. Host-, simulator-, and FEX-JIT-specific exclusions do not
 apply to the gadget backend.
+
+The engine emulates x87 only at full 80-bit precision, and the runner refuses
+a case that asks for FEX's reduced-precision mode. The campaign therefore runs
+those programs with `FEX_X87REDUCEDPRECISION` removed from the configuration it
+hands the runner, as the unit corpus producer does: FEX checks every ASM
+program natively, where the request has no effect, so their expected registers
+are full-precision results. The report counts the removed requests.

@@ -41,12 +41,17 @@ def require(condition: bool, message: str) -> None:
         raise SystemExit(f"test_fex_asm_campaign.py: {message}")
 
 
-def config_expecting_rax(value: int) -> bytes:
+def config_expecting_rax(
+    value: int, environment: tuple[tuple[bytes, bytes], ...] = ()
+) -> bytes:
     record = bytearray(CONFIG_HEADER_SIZE)
     struct.pack_into("<I", record, CONFIG_MODE, LONG_MODE)
     struct.pack_into("<II", record, CONFIG_REGISTERS, len(record), 1)
     record += struct.pack("<IQQ", 1, RAX_KEY, value)
-    struct.pack_into("<II", record, CONFIG_ENVIRONMENT, len(record), 0)
+    struct.pack_into("<II", record, CONFIG_ENVIRONMENT, len(record),
+                     len(environment))
+    for key, setting in environment:
+        record += key + b"\0" + setting + b"\0"
     return bytes(record)
 
 
@@ -120,11 +125,21 @@ def main() -> int:
         "pass": (MOV_EAX_42_HLT, config_expecting_rax(42)),
         "mismatch": (MOV_EAX_42_HLT, config_expecting_rax(43)),
         "illegal": (UD2, config_expecting_rax(0)),
+        # FEX's expected registers are native full-precision results, so the
+        # campaign drops the reduced-precision x87 request the runner refuses.
+        "reduced": (
+            MOV_EAX_42_HLT,
+            config_expecting_rax(
+                42,
+                ((b"FEX_X87REDUCEDPRECISION", b"1"), (b"OTHER", b"kept")),
+            ),
+        ),
     }
     expected = {
         "Test_pass.asm": ("passed", "reached HLT with expected state"),
         "Test_mismatch.asm": ("result_mismatch", "RAX expected=0x2b actual=0x2a"),
         "Test_illegal.asm": ("illegal_instruction", "decoder rejected opcode"),
+        "Test_reduced.asm": ("passed", "reached HLT with expected state"),
     }
     with tempfile.TemporaryDirectory(prefix="fex-campaign-") as scratch:
         root = pathlib.Path(scratch) / "corpus"
@@ -147,9 +162,11 @@ def main() -> int:
                 f"campaign exited {completed.returncode}: "
                 f"{completed.stdout}{completed.stderr}")
         report = json.loads(report_path.read_text())
-    require(report["applicable_count"] == 3 and report["passed_count"] == 1,
+    require(report["applicable_count"] == 4 and report["passed_count"] == 2,
             f"campaign counted {report['passed_count']} of "
             f"{report['applicable_count']}")
+    require(report["x87_reduced_precision_dropped_count"] == 1,
+            "campaign did not count the dropped reduced-precision request")
     results = {result["test"]: result for result in report["results"]}
     for test, (status, detail) in expected.items():
         result = results[test]
@@ -157,8 +174,8 @@ def main() -> int:
                 f"{test}: {result['status']} ({result['detail']}), "
                 f"expected {status} ({detail})")
     check_parser(load_campaign(arguments.campaign))
-    print("FEX campaign reported the runner's pass, mismatch and illegal "
-          "results")
+    print("FEX campaign reported the runner's pass, mismatch, illegal and "
+          "full-precision results")
     return 0
 
 
