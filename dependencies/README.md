@@ -290,6 +290,29 @@ compiles a program's MSL only when the build made no metallib or Metal
 refuses one of its functions. What remains on a cold start is Metal's
 back-end compile to GPU code, which only its shader cache can skip.
 
+That library starts as SPIR-V the build does not compile: the Apple product
+keeps LLVM out of its closure, so Mesa's "embed LLVM-free build shaders" topic
+carries `libkk.spv` and `libpoly.spv` as `mesa_clc` output for the OpenCL
+sources at the head of the Mesa series.
+[`kosmickrisp-spirv/generate.py`](kosmickrisp-spirv/generate.py) produces
+them on an arm64 Debian host that already has exactly the packages
+[`kosmickrisp-spirv/toolchain.tsv`](kosmickrisp-spirv/toolchain.tsv) pins: it
+builds `mesa_clc` from a clean topic checkout there, compiles both blobs, and
+rewrites [`kosmickrisp-spirv/record.tsv`](kosmickrisp-spirv/record.tsv), which
+names each blob, its kernels, and the inputs it was compiled from. Its output
+is byte-for-byte reproducible. The `dependency-kosmickrisp-spirv` tooling test
+fails when a topic changes one of those inputs, the embedded bytes, the Mesa
+pin, or the toolchain without a regeneration. After such a change, generate
+the blobs, amend them into the embed topic, and regenerate the series:
+
+```sh
+dependencies/kosmickrisp-spirv/generate.py generate \
+  --source external/sources/mesa --host HOST --output DIR
+```
+
+`generate.py verify` is the full comparison against a checkout of the
+committed series.
+
 `MESA_KK_DEBUG=submit_timing` enables optional raw Metal commit-feedback
 diagnostics on stderr: an opaque device identity, GPU start and end host
 seconds, and the commit error code for the whole committed command-buffer

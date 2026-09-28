@@ -26,11 +26,11 @@ unaffected and keep their exact value.
  1 file changed, 32 insertions(+), 1 deletion(-)
 
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index 0fb93662d8fd251dc2003afb18d44dab5db7b06e..b34b6f88ea40a761cbc0b90038d71a9452622be9 100644
+index 9dfde59943f8ac333b0cba96d70b479cef6d91ce..0ccdd440389cf094d21ad8013a942a4656b8b6d5 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -24,6 +24,8 @@
- 
+@@ -25,6 +25,8 @@
+ #include "kosmickrisp/libkk/kk_geometry.h"
  #include "kosmickrisp/libkk/kk_tessellator.h"
  
 +#include "util/u_math.h"
@@ -38,7 +38,7 @@ index 0fb93662d8fd251dc2003afb18d44dab5db7b06e..b34b6f88ea40a761cbc0b90038d71a94
  #include "poly/geometry.h"
  #include "poly/tessellator.h"
  
-@@ -191,6 +193,32 @@ vk_clear_color_value_to_mtl_clear_color(union VkClearColorValue color,
+@@ -192,6 +194,32 @@ vk_clear_color_value_to_mtl_clear_color(union VkClearColorValue color,
     return swizzled_color;
  }
  
@@ -71,7 +71,7 @@ index 0fb93662d8fd251dc2003afb18d44dab5db7b06e..b34b6f88ea40a761cbc0b90038d71a94
  static void
  kk_set_color_attachments(mtl_render_pass_descriptor *pass_descriptor,
                           struct kk_rendering_state *render,
-@@ -257,7 +285,10 @@ kk_set_depth_stencil_attachments(
+@@ -258,7 +286,10 @@ kk_set_depth_stencil_attachments(
         * action does not clear the attachment. */
        if (render->depth_att.load_op == VK_ATTACHMENT_LOAD_OP_CLEAR)
           mtl_render_pass_attachment_descriptor_set_clear_depth(

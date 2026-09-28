@@ -257,10 +257,10 @@ index 3db643cfd996080847810d9198b1cf4134077a2f..3761d06afef8be760d62ad76db3bd653
  void cs_end(struct kk_cmd_buffer *cmd);
  void kk_cmd_bind_root_to_argument_table(struct kk_cmd_buffer *cmd,
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_draw.c b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-index b34b6f88ea40a761cbc0b90038d71a9452622be9..c6382bdd3aabc52354c846b8aefa06d162e305b6 100644
+index 0ccdd440389cf094d21ad8013a942a4656b8b6d5..d2f5b97e536777bbb539aeadb708e272bcda36a2 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_draw.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_draw.c
-@@ -353,6 +353,7 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
+@@ -354,6 +354,7 @@ kk_CmdBeginRendering(VkCommandBuffer commandBuffer,
     struct kk_rendering_state *render = &cmd->state.gfx.render;
  
     memset(render, 0, sizeof(*render));
@@ -268,7 +268,7 @@ index b34b6f88ea40a761cbc0b90038d71a9452622be9..c6382bdd3aabc52354c846b8aefa06d1
  
     render->flags = pRenderingInfo->flags;
     render->area = pRenderingInfo->renderArea;
-@@ -642,6 +643,7 @@ kk_CmdEndRendering2KHR(VkCommandBuffer commandBuffer,
+@@ -643,6 +644,7 @@ kk_CmdEndRendering2KHR(VkCommandBuffer commandBuffer,
        need_resolve = false;
  
     memset(render, 0, sizeof(*render));
@@ -276,7 +276,7 @@ index b34b6f88ea40a761cbc0b90038d71a9452622be9..c6382bdd3aabc52354c846b8aefa06d1
  
     if (need_resolve) {
        kk_meta_resolve_rendering(cmd, &vk_render);
-@@ -981,6 +983,18 @@ kk_force_attachment_load(struct kk_cmd_buffer *cmd)
+@@ -982,6 +984,18 @@ kk_force_attachment_load(struct kk_cmd_buffer *cmd)
     }
  }
  
@@ -295,7 +295,7 @@ index b34b6f88ea40a761cbc0b90038d71a9452622be9..c6382bdd3aabc52354c846b8aefa06d1
  static void
  kk_flush_render_pass(struct kk_cmd_buffer *cmd)
  {
-@@ -988,6 +1002,7 @@ kk_flush_render_pass(struct kk_cmd_buffer *cmd)
+@@ -989,6 +1003,7 @@ kk_flush_render_pass(struct kk_cmd_buffer *cmd)
     struct vk_dynamic_graphics_state *dyn = &cmd->vk.dynamic_graphics_state;
     struct kk_rendering_state *render = &gfx->render;
     bool needs_restart = kk_flush_sample_locations(cmd);
@@ -303,7 +303,7 @@ index b34b6f88ea40a761cbc0b90038d71a9452622be9..c6382bdd3aabc52354c846b8aefa06d1
     bool color_map_changed = false;
  
     if (IS_DIRTY(COLOR_ATTACHMENT_MAP)) {
-@@ -2247,6 +2262,8 @@ kk_dispatch_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data data)
+@@ -2248,6 +2263,8 @@ kk_dispatch_draw(struct kk_cmd_buffer *cmd, struct kk_draw_data data)
  {
     mtl_render_encoder *enc = cs_get_render(cmd);
  
