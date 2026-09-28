@@ -54,87 +54,19 @@ if(NOT EXISTS "${_contract_source}" OR IS_SYMLINK "${_contract_source}")
     message(FATAL_ERROR "Apple GPU platform contract is missing: ${_contract_source}")
 endif()
 
-function(_contract_expect _field _expected)
-    set(_matches)
-    foreach(_row IN LISTS _contract_rows)
-        string(REPLACE "\t" ";" _values "${_row}")
-        list(GET _values 0 _candidate)
-        if(_candidate STREQUAL "${_field}")
-            list(APPEND _matches "${_row}")
-        endif()
-    endforeach()
-    list(LENGTH _matches _match_count)
-    if(NOT _match_count EQUAL 1)
-        message(FATAL_ERROR
-            "Apple GPU platform contract has ${_match_count} ${_field} fields")
-    endif()
-    list(GET _matches 0 _row)
-    string(REPLACE "\t" ";" _values "${_row}")
-    list(LENGTH _values _value_count)
-    if(NOT _value_count EQUAL 2)
-        message(FATAL_ERROR "Malformed Apple GPU contract field: ${_field}")
-    endif()
-    list(GET _values 1 _actual)
-    if(NOT _actual STREQUAL "${_expected}")
-        message(FATAL_ERROR
-            "Apple GPU contract ${_field} is ${_actual}, expected ${_expected}")
-    endif()
-endfunction()
-
-set(_contract_fields
-    format platform architecture deployment_target linkage payload
-    gl_provider graphics_api presentation_api renderer_features components
-    source_manifest product vk_provider common_recipe
-    kosmickrisp_linkage vulkan_entrypoint venus_dynamic_loading
-    helper_process)
-file(STRINGS "${_contract_installed}" _contract_rows)
-set(_seen_contract_fields)
-foreach(_row IN LISTS _contract_rows)
-    if(_row MATCHES "^#" OR _row STREQUAL "" OR _row STREQUAL "field\tvalue")
-        continue()
-    endif()
-    string(REPLACE "\t" ";" _values "${_row}")
-    list(LENGTH _values _value_count)
-    if(NOT _value_count EQUAL 2)
-        message(FATAL_ERROR "Malformed Apple GPU platform contract row: ${_row}")
-    endif()
-    list(GET _values 0 _field)
-    list(FIND _contract_fields "${_field}" _field_index)
-    list(FIND _seen_contract_fields "${_field}" _seen_index)
-    if(_field_index EQUAL -1 OR NOT _seen_index EQUAL -1)
-        message(FATAL_ERROR
-            "Unexpected or duplicate Apple GPU contract field: ${_field}")
-    endif()
-    list(APPEND _seen_contract_fields "${_field}")
-endforeach()
-list(LENGTH _contract_fields _expected_contract_count)
-list(LENGTH _seen_contract_fields _actual_contract_count)
-if(NOT _actual_contract_count EQUAL _expected_contract_count)
-    message(FATAL_ERROR "Apple GPU platform contract is incomplete")
+# The installed platform contract is the checked-in one, byte for byte, so
+# its fields need no separate checks.
+if(NOT EXISTS "${_contract_installed}" OR IS_SYMLINK "${_contract_installed}")
+    message(FATAL_ERROR "Missing Apple GPU provenance: ${_contract_installed}")
 endif()
-
-_contract_expect(format 4)
-_contract_expect(product apple-gpu-vulkan-experiment)
-_contract_expect(platform "${PLATFORM}")
-_contract_expect(architecture arm64)
-_contract_expect(deployment_target "${_deployment_target}")
-_contract_expect(linkage static-and-framework)
-_contract_expect(gl_provider zink-kosmickrisp)
-_contract_expect(presentation_api Metal)
-_contract_expect(payload
-    "static-libepoxy,static-libvirglrenderer,dynamic-MesaEGL-framework,dynamic-MesaGallium-framework,dynamic-KosmicKrisp-framework,Vulkan-Headers")
-_contract_expect(vk_provider venus-kosmickrisp)
-_contract_expect(graphics_api "OpenGL,Vulkan")
-_contract_expect(renderer_features
-    "core-profile,venus,render-server-thread,direct-vulkan-entrypoint,readback-scanout")
-_contract_expect(components
-    "libepoxy,virglrenderer,mesa,vulkan-headers,venus-protocol")
-_contract_expect(common_recipe apple-gpu-vulkan-experiment-v4)
-_contract_expect(kosmickrisp_linkage dynamic-framework)
-_contract_expect(vulkan_entrypoint direct-vkGetInstanceProcAddr)
-_contract_expect(venus_dynamic_loading disabled)
-_contract_expect(helper_process disabled)
-_contract_expect(source_manifest dependencies/manifest.tsv)
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E compare_files
+        "${_contract_source}" "${_contract_installed}"
+    RESULT_VARIABLE _contract_status)
+if(NOT _contract_status EQUAL 0)
+    message(FATAL_ERROR
+        "Apple GPU dependency provenance does not match: ${_platform_contract}")
+endif()
 
 uml_verify_dependency_manifest_product(
     SOURCE "${SOURCE_ROOT}/dependencies/manifest.tsv"
@@ -156,17 +88,6 @@ foreach(_relative IN LISTS _provenance_files)
     set(_installed "${PREFIX}/share/uml-dependencies/${_relative}")
     if(NOT EXISTS "${_installed}" OR IS_SYMLINK "${_installed}")
         message(FATAL_ERROR "Missing Apple GPU provenance: ${_installed}")
-    endif()
-    if(NOT _relative STREQUAL "${_platform_contract}")
-        continue()
-    endif()
-    set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
-    execute_process(
-        COMMAND "${CMAKE_COMMAND}" -E compare_files "${_source}" "${_installed}"
-        RESULT_VARIABLE _provenance_status)
-    if(NOT _provenance_status EQUAL 0)
-        message(FATAL_ERROR
-            "Apple GPU dependency provenance does not match: ${_relative}")
     endif()
 endforeach()
 
@@ -256,25 +177,17 @@ list(LENGTH _seen_receipt_fields _actual_receipt_count)
 if(NOT _actual_receipt_count EQUAL _expected_receipt_count)
     message(FATAL_ERROR "Apple GPU build receipt is incomplete")
 endif()
+# The loop above admits each receipt field exactly once.
 function(_receipt_expect _field _expected)
-    set(_matches)
     foreach(_row IN LISTS _receipt_rows)
-        if(_row MATCHES "^${_field}\t")
-            list(APPEND _matches "${_row}")
+        if(_row MATCHES "^${_field}\t(.*)$")
+            if(NOT CMAKE_MATCH_1 STREQUAL "${_expected}")
+                message(FATAL_ERROR
+                    "Apple GPU build receipt ${_field} is ${CMAKE_MATCH_1}, expected ${_expected}")
+            endif()
+            return()
         endif()
     endforeach()
-    list(LENGTH _matches _match_count)
-    if(NOT _match_count EQUAL 1)
-        message(FATAL_ERROR
-            "Apple GPU build receipt has ${_match_count} ${_field} fields")
-    endif()
-    list(GET _matches 0 _row)
-    string(REPLACE "\t" ";" _values "${_row}")
-    list(GET _values 1 _actual)
-    if(NOT _actual STREQUAL "${_expected}")
-        message(FATAL_ERROR
-            "Apple GPU build receipt ${_field} is ${_actual}, expected ${_expected}")
-    endif()
 endfunction()
 # The manifest rows and source trees above identify what the prefix was built
 # from, and the platform contract is compared byte for byte. The receipt's
@@ -291,17 +204,10 @@ foreach(_row IN LISTS _receipt_rows)
         endif()
     endif()
 endforeach()
-foreach(_required_field IN ITEMS sdk_name sdk_version sdk_path compiler built_at_utc)
-    set(_matches)
-    foreach(_row IN LISTS _receipt_rows)
-        if(_row MATCHES "^${_required_field}\t.+")
-            list(APPEND _matches "${_row}")
-        endif()
-    endforeach()
-    list(LENGTH _matches _match_count)
-    if(NOT _match_count EQUAL 1)
+foreach(_row IN LISTS _receipt_rows)
+    if(_row MATCHES "^(sdk_name|sdk_version|sdk_path|compiler|built_at_utc)\t$")
         message(FATAL_ERROR
-            "Apple GPU build receipt has invalid ${_required_field}")
+            "Apple GPU build receipt has invalid ${CMAKE_MATCH_1}")
     endif()
 endforeach()
 
