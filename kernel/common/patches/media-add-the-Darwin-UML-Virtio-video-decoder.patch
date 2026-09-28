@@ -19,16 +19,16 @@ that share one dma-buf follow one another at their negotiated sizes.
  drivers/media/virtio/Kconfig                |    9 +
  drivers/media/virtio/Makefile               |    6 +
  drivers/media/virtio/README                 |   11 +
- drivers/media/virtio/virtio_video.h         |  426 ++++++
+ drivers/media/virtio/virtio_video.h         |  428 +++++++
  drivers/media/virtio/virtio_video_blob.c    |  157 +++
- drivers/media/virtio/virtio_video_caps.c    |  466 +++++++
+ drivers/media/virtio/virtio_video_caps.c    |  515 ++++++++
  drivers/media/virtio/virtio_video_dec.c     |  479 +++++++
  drivers/media/virtio/virtio_video_device.c  | 1283 +++++++++++++++++++
  drivers/media/virtio/virtio_video_driver.c  |  215 ++++
  drivers/media/virtio/virtio_video_helpers.c |  253 ++++
- drivers/media/virtio/virtio_video_vq.c      |  970 ++++++++++++++
+ drivers/media/virtio/virtio_video_vq.c      | 1009 +++++++++++++++
  include/uapi/linux/virtio_video.h           |  539 ++++++++
- 14 files changed, 4818 insertions(+)
+ 14 files changed, 4908 insertions(+)
  create mode 100644 drivers/media/virtio/Kconfig
  create mode 100644 drivers/media/virtio/Makefile
  create mode 100644 drivers/media/virtio/README
@@ -111,10 +111,10 @@ index 0000000000000000000000000000000000000000..90e8a3531bb86bec3aca28050a7e4950
 +in the owning Darwin host repository.
 diff --git a/drivers/media/virtio/virtio_video.h b/drivers/media/virtio/virtio_video.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..084e154a44403edd24a4a3f82ae789003c5718bb
+index 0000000000000000000000000000000000000000..f0507b92cddf2d892ba9773b1f8c441b29193afc
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video.h
-@@ -0,0 +1,426 @@
+@@ -0,0 +1,428 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/* Common header for virtio video driver.
 + *
@@ -223,6 +223,8 @@ index 0000000000000000000000000000000000000000..084e154a44403edd24a4a3f82ae78900
 +
 +	char *resp_buf;
 +	int resp_size;
++	/* Bytes the device wrote into resp_buf, as the used ring reported. */
++	unsigned int resp_len;
 +
 +	void *priv;
 +	virtio_video_resp_cb resp_cb;
@@ -706,10 +708,10 @@ index 0000000000000000000000000000000000000000..98fbb3c33f74fcc79542c517d3b8442d
 +}
 diff --git a/drivers/media/virtio/virtio_video_caps.c b/drivers/media/virtio/virtio_video_caps.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f68fee1cf
+index 0000000000000000000000000000000000000000..25294725f72ecf946a8647f95b10daa8dd44ecb3
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_caps.c
-@@ -0,0 +1,466 @@
+@@ -0,0 +1,515 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -786,26 +788,37 @@ index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f
 +	return sizeof(struct virtio_video_format_range);
 +}
 +
++/*
++ * The parsers below read a device reply of len bytes and return how many they
++ * consumed, or 0 when the counts it carries would read past its end.
++ */
 +static size_t virtio_video_parse_virtio_frame(struct virtio_video_device *vvd,
 +					      struct video_format_frame *frm,
-+					      void *buf)
++					      void *buf, size_t len)
 +{
 +	struct virtio_video_format_frame *virtio_frame;
 +	struct virtio_video_format_frame *frame = &frm->frame;
 +	struct virtio_video_format_range *rate;
 +	size_t idx, offset, extra_size;
 +
++	if (len < sizeof(*virtio_frame))
++		return 0;
 +	virtio_frame = buf;
 +
 +	virtio_video_copy_fmt_range(&frame->width, &virtio_frame->width);
 +	virtio_video_copy_fmt_range(&frame->height, &virtio_frame->height);
 +
++	offset = sizeof(struct virtio_video_format_frame);
 +	frame->num_rates = le32_to_cpu(virtio_frame->num_rates);
++	if (frame->num_rates >
++	    (len - offset) / sizeof(struct virtio_video_format_range))
++		return 0;
 +	frm->frame_rates = kcalloc(frame->num_rates,
 +				   sizeof(struct virtio_video_format_range),
 +				   GFP_KERNEL);
++	if (!frm->frame_rates)
++		return 0;
 +
-+	offset = sizeof(struct virtio_video_format_frame);
 +	for (idx = 0; idx < frame->num_rates; idx++) {
 +		rate = &frm->frame_rates[idx];
 +		extra_size =
@@ -824,13 +837,16 @@ index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f
 +}
 +
 +static size_t virtio_video_parse_virtio_fmt(struct virtio_video_device *vvd,
-+					    struct video_format *fmt, void *buf)
++					    struct video_format *fmt, void *buf,
++					    size_t len)
 +{
 +	struct virtio_video_format_desc *virtio_fmt_desc;
 +	struct virtio_video_format_desc *fmt_desc;
 +	struct video_format_frame *frame;
 +	size_t idx, offset, extra_size;
 +
++	if (len < sizeof(*virtio_fmt_desc))
++		return 0;
 +	virtio_fmt_desc = buf;
 +	fmt_desc = &fmt->desc;
 +
@@ -841,18 +857,27 @@ index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f
 +	fmt_desc->planes_layout = le32_to_cpu(virtio_fmt_desc->planes_layout);
 +
 +	fmt_desc->num_frames = le32_to_cpu(virtio_fmt_desc->num_frames);
++	offset = sizeof(struct virtio_video_format_desc);
++	/* Every frame takes at least its fixed part of the reply. */
++	if (fmt_desc->num_frames >
++	    (len - offset) / sizeof(struct virtio_video_format_frame))
++		return 0;
 +	fmt->frames = kcalloc(fmt_desc->num_frames,
 +			      sizeof(struct video_format_frame),
 +			      GFP_KERNEL);
++	if (!fmt->frames)
++		return 0;
 +
-+	offset = sizeof(struct virtio_video_format_desc);
 +	for (idx = 0; idx < fmt_desc->num_frames; idx++) {
 +		frame = &fmt->frames[idx];
 +		extra_size =
 +			virtio_video_parse_virtio_frame(vvd, frame,
-+							buf + offset);
++							buf + offset,
++							len - offset);
 +		if (extra_size == 0) {
-+			kfree(fmt->frames);
++			/* Free the frames parsed so far and their rates. */
++			fmt_desc->num_frames = idx;
++			virtio_video_free_frames(fmt);
 +			v4l2_err(&vvd->v4l2_dev, "failed to parse frame\n");
 +			return 0;
 +		}
@@ -868,18 +893,23 @@ index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f
 +					 uint32_t *ret_num_fmts)
 +{
 +	struct virtio_video_query_capability_resp *resp = resp_buf;
++	/* The reply buffer virtio_video_device_init() allocated. */
++	size_t len = vvd->max_caps_len;
 +	struct video_format *fmt;
 +	uint32_t fmt_count;
 +	int fmt_idx;
 +	size_t offset;
 +	int ret;
 +
-+	if (!resp || ret_fmt_list == NULL || ret_num_fmts == NULL) {
++	if (!resp || ret_fmt_list == NULL || ret_num_fmts == NULL ||
++	    len < sizeof(*resp)) {
 +		v4l2_err(&vvd->v4l2_dev, "invalid arguments!\n");
 +		return -EINVAL;
 +	}
 +
-+	if (le32_to_cpu(resp->num_descs) <= 0) {
++	if (le32_to_cpu(resp->hdr.type) !=
++		    VIRTIO_VIDEO_RESP_OK_QUERY_CAPABILITY ||
++	    le32_to_cpu(resp->num_descs) <= 0) {
 +		v4l2_err(&vvd->v4l2_dev, "invalid capability response\n");
 +		return -EINVAL;
 +	}
@@ -897,7 +927,8 @@ index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f
 +		}
 +
 +		fmt_size = virtio_video_parse_virtio_fmt(vvd, fmt,
-+							 resp_buf + offset);
++							 resp_buf + offset,
++							 len - offset);
 +		if (fmt_size == 0) {
 +			v4l2_err(&vvd->v4l2_dev, "failed to parse fmt\n");
 +			ret = -ENOENT;
@@ -1010,10 +1041,20 @@ index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f
 +		goto lvl_err;
 +	}
 +
++	/* An unsupported control is an error reply, and has no levels. */
++	if (resp_size < sizeof(*resp_buf) + sizeof(*l_resp_buf) ||
++	    le32_to_cpu(resp_buf->hdr.type) != VIRTIO_VIDEO_RESP_OK_QUERY_CONTROL)
++		goto lvl_err;
 +	l_resp_buf = (void *)((char *)resp_buf + sizeof(*resp_buf));
 +	num_levels = le32_to_cpu(l_resp_buf->num);
 +	if (num_levels == 0)
 +		goto lvl_err;
++	if (num_levels > (resp_size - sizeof(*resp_buf) - sizeof(*l_resp_buf)) /
++			 sizeof(uint32_t)) {
++		v4l2_err(&vvd->v4l2_dev, "level count exceeds the reply\n");
++		ret = -EINVAL;
++		goto lvl_err;
++	}
 +
 +	fmt->level = kzalloc(sizeof(*level), GFP_KERNEL);
 +	if (!fmt->level) {
@@ -1080,10 +1121,20 @@ index 0000000000000000000000000000000000000000..b64b5a9105c1bfc8c630b710bbca9e1f
 +		goto prf_err;
 +	}
 +
++	/* An unsupported control is an error reply, and has no profiles. */
++	if (resp_size < sizeof(*resp_buf) + sizeof(*p_resp_buf) ||
++	    le32_to_cpu(resp_buf->hdr.type) != VIRTIO_VIDEO_RESP_OK_QUERY_CONTROL)
++		goto prf_err;
 +	p_resp_buf = (void *)((char *)resp_buf + sizeof(*resp_buf));
 +	num_profiles = le32_to_cpu(p_resp_buf->num);
 +	if (num_profiles == 0)
 +		goto prf_err;
++	if (num_profiles > (resp_size - sizeof(*resp_buf) - sizeof(*p_resp_buf)) /
++			   sizeof(uint32_t)) {
++		v4l2_err(&vvd->v4l2_dev, "profile count exceeds the reply\n");
++		ret = -EINVAL;
++		goto prf_err;
++	}
 +
 +	fmt->profile = kzalloc(sizeof(*profile), GFP_KERNEL);
 +	if (!fmt->profile) {
@@ -3432,10 +3483,10 @@ index 0000000000000000000000000000000000000000..2ccfa84c3d1ae9525e0c7c92341aec07
 +}
 diff --git a/drivers/media/virtio/virtio_video_vq.c b/drivers/media/virtio/virtio_video_vq.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..d03234c6277ee29addfcda93a55fae76dc11b231
+index 0000000000000000000000000000000000000000..7c27bdaccedbb6964d2eb988d766ae6267a1876f
 --- /dev/null
 +++ b/drivers/media/virtio/virtio_video_vq.c
-@@ -0,0 +1,970 @@
+@@ -0,0 +1,1009 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/* Driver for virtio video device.
 + *
@@ -3548,6 +3599,7 @@ index 0000000000000000000000000000000000000000..d03234c6277ee29addfcda93a55fae76
 +			if (!vbuf_is_pending(vvd, vbuf))
 +				continue;
 +
++			vbuf->resp_len = len;
 +			if (vbuf->resp_cb)
 +				vbuf->resp_cb(vvd, vbuf);
 +
@@ -3970,6 +4022,19 @@ index 0000000000000000000000000000000000000000..d03234c6277ee29addfcda93a55fae76
 +	return ret;
 +}
 +
++/*
++ * Whether the device answered with a whole response of the expected type.  The
++ * inline response buffer starts zeroed, so a short or error reply would
++ * otherwise read as a successful one full of zeros.
++ */
++static bool virtio_video_resp_is(const struct virtio_video_vbuffer *vbuf,
++				 size_t size, uint32_t type)
++{
++	const struct virtio_video_cmd_hdr *hdr = (const void *)vbuf->resp_buf;
++
++	return vbuf->resp_len >= size && le32_to_cpu(hdr->type) == type;
++}
++
 +static void
 +virtio_video_cmd_resource_queue_cb(struct virtio_video_device *vvd,
 +				   struct virtio_video_vbuffer *vbuf)
@@ -3980,6 +4045,12 @@ index 0000000000000000000000000000000000000000..d03234c6277ee29addfcda93a55fae76
 +	struct virtio_video_resource_queue_resp *resp =
 +		(struct virtio_video_resource_queue_resp *)vbuf->resp_buf;
 +
++	/* The buffer still has to go back to vb2, as a failed one. */
++	if (!virtio_video_resp_is(vbuf, sizeof(*resp),
++				  VIRTIO_VIDEO_RESP_OK_RESOURCE_QUEUE)) {
++		virtio_video_buf_done(virtio_vb, VIRTIO_VIDEO_DEQUEUE_FLAG_ERR, 0);
++		return;
++	}
 +	flags = le32_to_cpu(resp->flags);
 +	timestamp = le64_to_cpu(resp->timestamp);
 +
@@ -4148,6 +4219,16 @@ index 0000000000000000000000000000000000000000..d03234c6277ee29addfcda93a55fae76
 +	struct virtio_video_stream *stream = vbuf->priv;
 +	enum virtio_video_queue_type queue_type;
 +	struct video_format_info *format_info;
++	uint32_t num_planes;
++
++	/* The stored plane count later indexes the fixed plane arrays of the
++	 * stream, of vb2's queue setup and of VIDIOC_G_FMT.
++	 */
++	num_planes = le32_to_cpu(params->num_planes);
++	if (!virtio_video_resp_is(vbuf, sizeof(*resp),
++				  VIRTIO_VIDEO_RESP_OK_GET_PARAMS) ||
++	    num_planes > VIRTIO_VIDEO_MAX_PLANES)
++		return;
 +
 +	queue_type = le32_to_cpu(params->queue_type);
 +	if (queue_type == VIRTIO_VIDEO_QUEUE_TYPE_INPUT)
@@ -4168,8 +4249,8 @@ index 0000000000000000000000000000000000000000..d03234c6277ee29addfcda93a55fae76
 +	format_info->crop.width = le32_to_cpu(params->crop.width);
 +	format_info->crop.height = le32_to_cpu(params->crop.height);
 +
-+	format_info->num_planes = le32_to_cpu(params->num_planes);
-+	for (i = 0; i < le32_to_cpu(params->num_planes); i++) {
++	format_info->num_planes = num_planes;
++	for (i = 0; i < num_planes; i++) {
 +		struct virtio_video_plane_format *plane_formats =
 +						 &params->plane_formats[i];
 +		struct video_plane_format *plane_format =
@@ -4262,6 +4343,9 @@ index 0000000000000000000000000000000000000000..d03234c6277ee29addfcda93a55fae76
 +	struct virtio_video_stream *stream = vbuf->priv;
 +	struct video_control_info *control = &stream->control;
 +
++	if (!virtio_video_resp_is(vbuf, sizeof(*resp) + sizeof(*resp_p),
++				  VIRTIO_VIDEO_RESP_OK_GET_CONTROL))
++		return;
 +	resp_p = (void *)((char *)resp +
 +			  sizeof(struct virtio_video_get_control_resp));
 +
@@ -4278,6 +4362,9 @@ index 0000000000000000000000000000000000000000..d03234c6277ee29addfcda93a55fae76
 +	struct virtio_video_stream *stream = vbuf->priv;
 +	struct video_control_info *control = &stream->control;
 +
++	if (!virtio_video_resp_is(vbuf, sizeof(*resp) + sizeof(*resp_p),
++				  VIRTIO_VIDEO_RESP_OK_GET_CONTROL))
++		return;
 +	resp_p = (void *)((char *)resp +
 +			  sizeof(struct virtio_video_get_control_resp));
 +
@@ -4294,6 +4381,9 @@ index 0000000000000000000000000000000000000000..d03234c6277ee29addfcda93a55fae76
 +	struct virtio_video_stream *stream = vbuf->priv;
 +	struct video_control_info *control = &stream->control;
 +
++	if (!virtio_video_resp_is(vbuf, sizeof(*resp) + sizeof(*resp_p),
++				  VIRTIO_VIDEO_RESP_OK_GET_CONTROL))
++		return;
 +	resp_p = (void *)((char *) resp +
 +			  sizeof(struct virtio_video_get_control_resp));
 +
