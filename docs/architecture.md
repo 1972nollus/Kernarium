@@ -399,9 +399,11 @@ Runtime frameworks receive only the resulting ordinary disk image.
 
 ## Devices and graphics
 
-The vhost-user transport owns connection, queue framing, and deferred used-ring
-publication. GPU, video, input, sound, console, battery, and network providers own
-their protocol behavior independently.
+The vhost-user transport in `darwin/device/vhost_user` owns connection, queue
+framing, and deferred used-ring publication. GPU, video, input, sound, console,
+battery, and network providers own their protocol behavior independently. Only
+the GPU provider depends on `UML_BUILD_GPU`; the others build on the transport
+alone.
 
 The [Virtio video device](../darwin/device/video/README.md) bridges the shared
 mainline/Android V4L2 driver to the platform VideoToolbox decoder. It uses its

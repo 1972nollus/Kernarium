@@ -8,7 +8,8 @@ platform/  Apple capabilities, VM, files, signals, and sockets
 memory/    guest address spaces, software MMU, and TLBs
 cpu/       gadgets, JIT, shared decode, and neutral engine selection
 runtime/   guest-entry composition
-device/    block, console, GPU, input, audio, and network providers
+device/    block, console, GPU, input, audio, and network providers, and the
+           vhost-user transport they share
 emulator/  options and product composition
 app/macos/ standalone process adapter
 app/initramfs/ host tool that writes a guest's per-run initramfs
@@ -239,8 +240,10 @@ same backing, even when the stored value is unchanged.
 
 ## Devices
 
-The generic vhost-user transport supports independent Virtio-GPU,
-Virtio-input, Virtio-Sound, Virtio-console, and Kernarium battery services.
+The generic vhost-user transport in `device/vhost_user/` supports independent
+Virtio-GPU, Virtio-input, Virtio-Sound, Virtio-console, Virtio-balloon,
+Virtio-video, and Kernarium battery services. Only the GPU service needs
+`UML_BUILD_GPU`.
 Deferred used-ring publication lets a device retain a descriptor until
 asynchronous host work is complete.
 

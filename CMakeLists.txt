@@ -84,11 +84,6 @@ if(UML_BUILD_GPU OR UML_BUILD_AUDIO)
     enable_language(OBJCXX)
 endif()
 
-if(UML_BUILD_AUDIO AND NOT UML_BUILD_GPU)
-    message(FATAL_ERROR
-        "UML_BUILD_AUDIO currently requires the shared GPU vhost-user transport")
-endif()
-
 option(UML_GUEST_16K_PAGES
     "Build the kernel and static userspace MMU for 16 KiB guest pages" ON)
 set(UML_MAINLINE_KERNEL_SLICE "arm64" CACHE STRING

@@ -503,18 +503,19 @@ if(TARGET uml_gpu_service)
     target_link_libraries(uml_gpu_transport_startup_test_variant PUBLIC
         UML::DeviceSocketPaths
         UML::MemorySharedBacking
-        uml_gpu_transport_wire_stop_wait_test_variant
-        uml_gpu_protocol_device
-        UML::VncInput)
+        uml_gpu_transport_wire_stop_wait_test_variant)
     target_link_libraries(uml_gpu_transport_startup_test_variant PRIVATE
-        UML::GuestTimerMask)
+        UML::GuestTimerMask
+        objc)
 
     add_library(uml_gpu_service_test_variant STATIC
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/deferred_fences.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/gpu_vhost_user_server.cpp
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/in_process_service.cpp)
     target_link_libraries(uml_gpu_service_test_variant PUBLIC
-        uml_gpu_transport_startup_test_variant)
+        uml_gpu_transport_startup_test_variant
+        uml_gpu_protocol_device
+        UML::VncInput)
     target_include_directories(uml_gpu_service_test_variant PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${CMAKE_CURRENT_SOURCE_DIR})
@@ -572,9 +573,9 @@ if(TARGET uml_gpu_service)
     target_link_libraries(uml_gpu_transport_slow_stop_test_variant PUBLIC
         UML::DeviceSocketPaths
         UML::MemorySharedBacking
-        uml_gpu_transport_wire_slow_stop_test_variant
-        uml_gpu_protocol_device
-        UML::VncInput)
+        uml_gpu_transport_wire_slow_stop_test_variant)
+    target_link_libraries(uml_gpu_transport_slow_stop_test_variant PRIVATE
+        objc)
 
     add_library(uml_gpu_service_slow_stop_test_variant STATIC
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu/in_process_service.cpp
@@ -590,7 +591,8 @@ if(TARGET uml_gpu_service)
     target_compile_options(uml_gpu_service_slow_stop_test_variant PRIVATE
         -Wall -Wextra -Werror -Wno-deprecated-declarations)
     target_link_libraries(uml_gpu_service_slow_stop_test_variant PRIVATE
-        uml_gpu_transport_slow_stop_test_variant)
+        uml_gpu_transport_slow_stop_test_variant
+        uml_gpu_protocol_device)
 
     add_executable(uml_gpu_service_stop_wake_tests
         in_process_service_stop_wake_tests.cpp)
