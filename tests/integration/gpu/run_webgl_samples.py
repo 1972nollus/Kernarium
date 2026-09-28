@@ -25,7 +25,6 @@ import run_vk_gl_cts as cts  # noqa: E402
 import webgl_launcher  # noqa: E402
 from run_chromium_webgl import (  # noqa: E402
     announced_vnc_port,
-    git_state,
     guest_child,
     install_text,
     rootfs_contract_metadata,
@@ -630,7 +629,7 @@ def main() -> int:
         "adapter": "macos-vnc",
         "workload": "webglsamples-functional-v1",
         "state": "running",
-        "git": git_state(),
+        "git": cts.git_state(),
         "rootfs": str(rootfs),
         "rootfs_receipt": (
             str(options.rootfs_receipt.resolve())

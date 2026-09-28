@@ -28,7 +28,7 @@ not counted twice. A host that states no limit keeps today's behaviour.
  7 files changed, 140 insertions(+), 5 deletions(-)
 
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index cce8d1831b2f36f2a1593b2127a4180c85c90992..2ab7bb5aef9c1296e0b8e7970847776d415d7404 100644
+index 770b47170b9facfc2f623c2579a113422585fe0e..1ebad8a476d29550c8f8c0d996175c834b7cf30f 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -259,6 +259,17 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,

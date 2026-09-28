@@ -4,8 +4,9 @@ Date: Sat, 5 Sep 2026 17:23:49 +0900
 Subject: [PATCH] venus: transport native device-address commands and
  maintenance
 
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- meson.build                            |  77 +++++++--
+ meson.build                            |  81 +++++++--
  meson_options.txt                      |   7 +
  src/venus/vkr_acceleration_structure.c |  12 +-
  src/venus/vkr_allocator.c              |   1 +
@@ -31,10 +32,10 @@ Subject: [PATCH] venus: transport native device-address commands and
  src/venus/vkr_ring.c                   |   2 +-
  src/venus/vkr_ring.h                   |   2 +-
  src/venus/vkr_transport.c              |   4 +-
- 26 files changed, 334 insertions(+), 35 deletions(-)
+ 26 files changed, 336 insertions(+), 37 deletions(-)
 
 diff --git a/meson.build b/meson.build
-index ced2650e49382de395bd5db90b04c66b59daf803..96c8c887eb88c6f70c73a55e39a9a246622bc136 100644
+index ced2650e49382de395bd5db90b04c66b59daf803..d1ccc1876d45c674f574d1486a30e07f0088cfca 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -374,23 +374,73 @@ if with_venus and with_host_darwin
@@ -112,8 +113,10 @@ index ced2650e49382de395bd5db90b04c66b59daf803..96c8c887eb88c6f70c73a55e39a9a246
     elif with_host_darwin
 -      vulkan_include_dir = get_option('vulkan-include-dir')
        vulkan_library_file = get_option('vulkan-library-file')
-       if vulkan_include_dir == '' or vulkan_library_file == ''
-          error('Darwin Venus requires explicit Vulkan headers and provider binary')
+-      if vulkan_include_dir == '' or vulkan_library_file == ''
+-         error('Darwin Venus requires explicit Vulkan headers and provider binary')
++      if vulkan_library_file == ''
++         error('Darwin Venus requires an explicit Vulkan provider binary')
        endif
        venus_dep += declare_dependency(
 -         compile_args : ['-I' + vulkan_include_dir],
@@ -479,7 +482,7 @@ index 00a42529070517976d00235ed48d3e8a6143258b..439b36d32e4989b25ee87ec3bf523a76
  #include "virgl_util.h"
  #include "virglrenderer.h"
 diff --git a/src/venus/vkr_context.c b/src/venus/vkr_context.c
-index e0457772cd51394d61833d276b9199784f7db063..48d3b52298df0073d9ad78dc0e5bfde0f77cb48b 100644
+index a0271aa7abd50e941ad52e2ce0c43953d3642ffa..8594ac308bea36ba0e5b37b3a8fb24d5ac86227b 100644
 --- a/src/venus/vkr_context.c
 +++ b/src/venus/vkr_context.c
 @@ -10,7 +10,7 @@
@@ -492,7 +495,7 @@ index e0457772cd51394d61833d276b9199784f7db063..48d3b52298df0073d9ad78dc0e5bfde0
  #define XXH_INLINE_ALL
  #include "util/xxhash.h"
 diff --git a/src/venus/vkr_context.h b/src/venus/vkr_context.h
-index 7383f9249c4a943c24d8e346faf473c5d657dc90..f0acdd4ad629fdf983e916b23f21d7ff623b0157 100644
+index 7607063f95d93c16820d8f222f17659948722409..74482ee0a0461c273e1d1badd1ad08c31909e5b5 100644
 --- a/src/venus/vkr_context.h
 +++ b/src/venus/vkr_context.h
 @@ -9,8 +9,8 @@
@@ -546,7 +549,7 @@ index 980b6877f18409fe5cc5e4e99d1febc30796e480..fe7543148d01dd8b73330f382be6a02c
  #include "vkr_context.h"
  
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index ac57f335e64cd0beffd6fe1b7dd85a81ba44a8b4..11ccd776df012a886c8763ad0a1533545343a929 100644
+index 7233e6024606d0c1ea1afadc903dbd376e96d03c..d0945d02dbedbe405aa532f2104cb87b792c6252 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
 @@ -8,7 +8,7 @@

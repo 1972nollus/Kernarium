@@ -225,6 +225,7 @@ void readbackTracksClientDemandAndReconnects()
         .width = scanoutWidth,
         .height = scanoutHeight,
     };
+    require(display.guestScanoutChanged(scanoutWidth, scanoutHeight));
     require(display.presentMetal(scanout) ==
         uml::gpu::PresentOutcome::dropped);
     require(!display.needsFullCpuFallback());

@@ -375,7 +375,7 @@ class KdeVncLauncherTests(unittest.TestCase):
                     return_value=command,
                 ),
                 mock.patch.object(
-                    run_webgl_samples, "git_state", return_value={}
+                    run_webgl_samples.cts, "git_state", return_value={}
                 ),
             ):
                 try:

@@ -22,9 +22,6 @@ struct InProcessGpuOptions {
         uml::input::vnc::PointerMode::mouse};
     void* nativeView {};
     bool autoResizeGuest {true};
-    // A composed input device may consume display events without the legacy
-    // kernel input socket. It must outlive this service.
-    uml::input::vnc::VncInputSink inputSink {};
     /* Shared with the other backends of the same guest. This service
      * publishes every host-visible blob range it maps there, so a device
      * whose guest names a buffer inside the region can resolve it. */

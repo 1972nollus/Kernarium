@@ -31,10 +31,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  1 file changed, 1 insertion(+), 2 deletions(-)
 
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 3f33a7044db96d704f96e78d972d81ad82f2b316..cce8d1831b2f36f2a1593b2127a4180c85c90992 100644
+index 918e9b4efb813b6773a407e7b579640b8cb3a2d6..770b47170b9facfc2f623c2579a113422585fe0e 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
-@@ -278,7 +278,6 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+@@ -279,7 +279,6 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
        if (!res) {
           vkr_log("failed to import resource: invalid res_id %u",
                   res_info->resourceId);
@@ -42,7 +42,7 @@ index 3f33a7044db96d704f96e78d972d81ad82f2b316..cce8d1831b2f36f2a1593b2127a4180c
           args->ret = VK_ERROR_INVALID_EXTERNAL_HANDLE;
           return;
        }
-@@ -604,7 +603,7 @@ vkr_dispatch_vkGetMemoryResourcePropertiesMESA(
+@@ -612,7 +611,7 @@ vkr_dispatch_vkGetMemoryResourcePropertiesMESA(
     struct vkr_resource *res = vkr_context_get_resource(ctx, args->resourceId);
     if (!res) {
        vkr_log("failed to query resource props: invalid res_id %u", args->resourceId);

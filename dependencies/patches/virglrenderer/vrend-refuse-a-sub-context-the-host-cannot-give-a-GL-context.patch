@@ -41,10 +41,10 @@ index f70eda6f737e2fab568d98813ebed5182f304e32..a2bd100ba1820a833bed30040e0c7606
  }
  
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index 3ec5d2bb4359a69bc415609042aba43b4969d4b6..fa32c6de74464161081d4c24f776c029ad96c7cb 100644
+index 41c4c2e07d24b5b1bb1546e19f834d0f78342872..a36aa9a3c7ddb9faab28ee9433d460a637340eb2 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -8466,7 +8466,17 @@ struct vrend_context *vrend_create_context(int id, uint32_t nlen, const char *de
+@@ -8463,7 +8463,17 @@ struct vrend_context *vrend_create_context(int id, uint32_t nlen, const char *de
     grctx->shader_cfg.has_vs_layer = has_feature(feat_vs_layer_viewport);
     grctx->shader_cfg.has_vs_viewport_index = has_feature(feat_vs_viewport_index);
  
@@ -63,7 +63,7 @@ index 3ec5d2bb4359a69bc415609042aba43b4969d4b6..fa32c6de74464161081d4c24f776c029
     vrend_renderer_set_sub_ctx(grctx, 0);
  
     int glver = get_glsl_version();
-@@ -13914,26 +13924,37 @@ void vrend_renderer_get_cap_set(uint32_t cap_set, uint32_t *max_ver,
+@@ -13959,26 +13969,37 @@ void vrend_renderer_get_cap_set(uint32_t cap_set, uint32_t *max_ver,
     }
  }
  
@@ -104,7 +104,7 @@ index 3ec5d2bb4359a69bc415609042aba43b4969d4b6..fa32c6de74464161081d4c24f776c029
     sub->parent = ctx;
     vrend_clicbs->make_current(sub->gl_context);
  
-@@ -13980,6 +14001,7 @@ void vrend_renderer_create_sub_ctx(struct vrend_context *ctx, int sub_ctx_id)
+@@ -14025,6 +14046,7 @@ void vrend_renderer_create_sub_ctx(struct vrend_context *ctx, int sub_ctx_id)
        ctx->sub0 = sub;
  
     vrend_set_tweak_from_env(&ctx->sub->tweaks);

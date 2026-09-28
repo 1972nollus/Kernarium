@@ -548,10 +548,6 @@ SAMPLE_LINE = re.compile(
 GUEST_SNAPSHOT_LINE = re.compile(
     r"UML_AQUARIUM_GUEST_(BEGIN|SAMPLE|END|ERROR)\|([^\r\n\"]+)"
 )
-NATIVE_DISPLAY_FINAL = re.compile(
-    r"Native display final: guest ([0-9]+) presented ([0-9]+) "
-    r"dropped ([0-9]+) cpu-fallback ([0-9]+)"
-)
 
 
 def announced_vnc_port(console: str) -> int:
@@ -1191,23 +1187,6 @@ def parse_guest_identity(transcript: str) -> dict[str, int]:
     }
 
 
-def parse_native_display_final(transcript: str) -> dict[str, int]:
-    matches = NATIVE_DISPLAY_FINAL.findall(transcript)
-    if len(matches) != 1:
-        raise RuntimeError("Aquarium native-display final report is missing")
-    guest, presented, dropped, cpu_fallback = (
-        int(value) for value in matches[0]
-    )
-    if guest <= 0 or presented <= 0 or cpu_fallback != 0:
-        raise RuntimeError("Aquarium did not retain direct native presentation")
-    return {
-        "guest_frames": guest,
-        "presented_frames": presented,
-        "dropped_frames": dropped,
-        "cpu_fallback_frames": cpu_fallback,
-    }
-
-
 def validate_native_shutdown(transcript: str) -> None:
     if "Memory manager not clean during takedown." in transcript:
         raise RuntimeError(
@@ -1225,24 +1204,6 @@ def validate_native_shutdown(transcript: str) -> None:
         raise RuntimeError(
             f"Aquarium guest omitted clean shutdown markers: {missing!r}"
         )
-
-
-def git_state() -> dict[str, object]:
-    revision = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    dirty_paths = subprocess.run(
-        ["git", "status", "--short"],
-        cwd=REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    return {"revision": revision, "dirty_paths": dirty_paths}
 
 
 def rootfs_contract_metadata(
@@ -1493,7 +1454,7 @@ def main() -> int:
         "schema_version": 2,
         "adapter": "macos",
         "workload": "webgl-aquarium-500-v1",
-        "git": git_state(),
+        "git": cts.git_state(),
         "rootfs": str(rootfs),
         "rootfs_receipt": (
             str(options.rootfs_receipt.resolve())
@@ -1585,7 +1546,7 @@ def main() -> int:
                         f"Aquarium guest exited with status {process.returncode}"
                     )
                 validate_native_shutdown(text)
-                native_display = parse_native_display_final(text)
+                native_display = cts.parse_native_display_final(text)
             else:
                 webgl_launcher.capture_rendered_frame(
                     options.client,

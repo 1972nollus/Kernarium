@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "display.hpp"
 #include "display_geometry.hpp"
 
 #import <Metal/Metal.h>
 
 #include <cstdint>
+#include <optional>
 
 namespace uml::gpu {
 
@@ -31,6 +33,16 @@ static_assert(sizeof(ShaderScanoutSampling) == 40);
 [[nodiscard]] ShaderScanoutSampling shaderSampling(
     const ScanoutSampling& sampling,
     DisplayRotation rotation) noexcept;
+
+/* Whether the pass can sample this texture: a 2D texture, or a 2D array of
+ * one layer. */
+[[nodiscard]] bool scanoutPassSamples(id<MTLTexture> texture) noexcept;
+
+/* How the pass samples a scanout stored in this texture, or nothing when the
+ * scanout's rectangle cannot be sampled from it. */
+[[nodiscard]] std::optional<ScanoutSampling> scanoutPassSampling(
+    id<MTLTexture> texture,
+    const MetalScanout& scanout) noexcept;
 
 /* The pass for one colour attachment format. A one-layer 2D-array texture
  * needs its own fragment stage; forTexture() picks the one that reads it. */

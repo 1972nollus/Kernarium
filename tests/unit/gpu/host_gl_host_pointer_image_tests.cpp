@@ -3,7 +3,9 @@
 // The host GL provider must be able to alias memory this process already owns
 // as a sampled 2D texture, so a guest's shared-memory scanout can be read
 // without copying it every frame. EGL_MESA_image_host_pointer is that entry
-// point; the import has to be exact or refused, never silently copied.
+// point; the import has to be exact or refused, never silently copied. The
+// caller states how many bytes it owns there, and an image that would reach
+// past them is refused: the layout comes from a guest.
 
 #include "host_gl_provider.hpp"
 
@@ -27,6 +29,9 @@ extern "C" {
 #define EGL_HOST_POINTER_MESA 0x3293
 #define EGL_HOST_POINTER_PITCH_MESA 0x3294
 #define EGL_HOST_POINTER_OFFSET_MESA 0x3295
+#endif
+#ifndef EGL_HOST_POINTER_SIZE_MESA
+#define EGL_HOST_POINTER_SIZE_MESA 0x3296
 #endif
 
 namespace {
@@ -87,6 +92,7 @@ public:
     HostPages& operator=(const HostPages&) = delete;
 
     [[nodiscard]] std::uint8_t* base() const noexcept { return base_; }
+    [[nodiscard]] std::size_t size() const noexcept { return bytes_; }
     [[nodiscard]] std::uint32_t& texel(std::uint32_t y, std::uint32_t x) const
     {
         return *reinterpret_cast<std::uint32_t*>(base_ + y * pitch_ + x * 4);
@@ -134,6 +140,8 @@ void hostPointerImageAliasesTheCallersPages()
         kFourccAbgr8888,
         EGL_HOST_POINTER_PITCH_MESA,
         static_cast<EGLint>(pitch),
+        EGL_HOST_POINTER_SIZE_MESA,
+        static_cast<EGLint>(pages.size()),
         EGL_NONE};
     const EGLImageKHR image = eglCreateImageKHR(
         display,
@@ -231,6 +239,8 @@ void hostPointerImageAliasesTheCallersPages()
         kFourccAbgr8888,
         EGL_HOST_POINTER_PITCH_MESA,
         static_cast<EGLint>(pitch + 4),
+        EGL_HOST_POINTER_SIZE_MESA,
+        static_cast<EGLint>(pages.size()),
         EGL_NONE};
     require(
         eglCreateImageKHR(
@@ -249,6 +259,55 @@ void hostPointerImageAliasesTheCallersPages()
             attributes)
         == EGL_NO_IMAGE_KHR);
 
+    // The caller's bytes bound the image: one that needs more than the caller
+    // owns, or whose size the caller never stated, is refused rather than
+    // laid over whatever memory follows.
+    const auto createWithin = [&](std::size_t size, std::size_t offset) {
+        const EGLint bounded[] = {
+            EGL_WIDTH,
+            static_cast<EGLint>(kWidth),
+            EGL_HEIGHT,
+            static_cast<EGLint>(kHeight),
+            EGL_LINUX_DRM_FOURCC_EXT,
+            kFourccAbgr8888,
+            EGL_HOST_POINTER_PITCH_MESA,
+            static_cast<EGLint>(pitch),
+            EGL_HOST_POINTER_OFFSET_MESA,
+            static_cast<EGLint>(offset),
+            EGL_HOST_POINTER_SIZE_MESA,
+            static_cast<EGLint>(size),
+            EGL_NONE};
+        return eglCreateImageKHR(
+            display,
+            EGL_NO_CONTEXT,
+            EGL_HOST_POINTER_MESA,
+            static_cast<EGLClientBuffer>(pages.base()),
+            bounded);
+    };
+    require(createWithin(pitch * kHeight - pitch, 0) == EGL_NO_IMAGE_KHR);
+    require(eglGetError() == EGL_BAD_PARAMETER);
+    require(createWithin(pages.size(), kHostPageSize) == EGL_NO_IMAGE_KHR);
+    require(eglGetError() == EGL_BAD_PARAMETER);
+    const EGLint unbounded[] = {
+        EGL_WIDTH,
+        static_cast<EGLint>(kWidth),
+        EGL_HEIGHT,
+        static_cast<EGLint>(kHeight),
+        EGL_LINUX_DRM_FOURCC_EXT,
+        kFourccAbgr8888,
+        EGL_HOST_POINTER_PITCH_MESA,
+        static_cast<EGLint>(pitch),
+        EGL_NONE};
+    require(
+        eglCreateImageKHR(
+            display,
+            EGL_NO_CONTEXT,
+            EGL_HOST_POINTER_MESA,
+            static_cast<EGLClientBuffer>(pages.base()),
+            unbounded)
+        == EGL_NO_IMAGE_KHR);
+    require(eglGetError() == EGL_BAD_PARAMETER);
+
     glDeleteProgram(program);
     glDeleteVertexArrays(1, &array);
     glDeleteFramebuffers(1, &framebuffer);
@@ -266,7 +325,8 @@ int main()
     hostPointerImageAliasesTheCallersPages();
     std::printf(
         "PASS host-pointer image: %ux%u aliased, sampled and re-read after a "
-        "CPU write, with wrong pitch and misalignment refused\n",
+        "CPU write, with wrong pitch, misalignment, and an image past or "
+        "without its stated size refused\n",
         kWidth,
         kHeight);
     return 0;

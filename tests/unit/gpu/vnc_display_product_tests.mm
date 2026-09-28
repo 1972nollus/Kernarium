@@ -815,6 +815,9 @@ void smallerModesAreMagnifiedAndResetRestoresThePreferredMode()
 
         id<MTLTexture> small = makeCornerTexture(device, 640, 480, 64);
         require(
+            display.guestScanoutChanged(640, 480),
+            "the VNC display refused a smaller mode");
+        require(
             display.presentMetal(wholeScanout(small, 640, 480)) ==
                 uml::gpu::PresentOutcome::presented,
             "the VNC display refused a smaller native scanout");

@@ -83,10 +83,10 @@ index 86288cb87213521b65c9ab69097209cd2de0ed09..bcec83586480dc30cb037fb023bcb7cf
  #define VREND_DEBUG(flag, ctx,  ...) \
     if (VREND_DEBUG_ENABLED && vrend_debug(ctx, flag)) \
 diff --git a/src/vrend/vrend_renderer.c b/src/vrend/vrend_renderer.c
-index dabd18add048435c81f7181db321c4a0bcbff671..ea75064cd5141274814ad58d15378b645634417d 100644
+index fbaf94000fde002f3fc680273caac829070fcf19..bf5b812beb2e37da5d89e1d554a39abd46e0c0ae 100644
 --- a/src/vrend/vrend_renderer.c
 +++ b/src/vrend/vrend_renderer.c
-@@ -7731,9 +7731,7 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
+@@ -7728,9 +7728,7 @@ int vrend_renderer_init(const struct vrend_if_cbs *cbs, uint32_t flags)
           vrend_state.max_texture_3d_size =
           vrend_state.max_texture_cube_size = 16384;
  

@@ -650,7 +650,6 @@ bool VirtioGpuDevice::parseBacking(
     std::span<const std::uint8_t> request,
     std::size_t entriesOffset,
     std::uint32_t entryCount,
-    std::vector<BackingEntry>& backing,
     std::vector<iovec>& vectors) const
 {
     if (entryCount > protocol::maximumResourceBackingEntries)
@@ -663,9 +662,7 @@ bool VirtioGpuDevice::parseBacking(
         return false;
     }
 
-    backing.clear();
     vectors.clear();
-    backing.reserve(entryCount);
     vectors.reserve(entryCount);
     for (std::uint32_t index = 0; index < entryCount; ++index) {
         const auto* entry = readStructure<protocol::GpuMemoryEntry>(
@@ -679,10 +676,6 @@ bool VirtioGpuDevice::parseBacking(
         auto mapping = guestMapper_(entry->address, entry->length);
         if (mapping.size() != entry->length)
             return false;
-        backing.push_back({
-            .address = entry->address,
-            .length = entry->length,
-        });
         vectors.push_back({
             .iov_base = mapping.data(),
             .iov_len = mapping.size(),
@@ -771,7 +764,7 @@ std::vector<std::uint8_t> VirtioGpuDevice::process(
     std::span<const std::uint8_t> request,
     bool cursorQueue)
 {
-    return processInternal(request, cursorQueue, 0, nullptr);
+    return processInternal(request, cursorQueue, 0, nullptr, nullptr);
 }
 
 VirtioGpuDevice::ProcessResult VirtioGpuDevice::processWithDeferredFence(
@@ -780,11 +773,17 @@ VirtioGpuDevice::ProcessResult VirtioGpuDevice::processWithDeferredFence(
     std::uint64_t fenceCookie)
 {
     std::optional<DeferredFence> deferredFence;
+    std::optional<std::uint32_t> destroyedContextId;
     auto response = processInternal(
-        request, cursorQueue, fenceCookie, &deferredFence);
+        request,
+        cursorQueue,
+        fenceCookie,
+        &deferredFence,
+        &destroyedContextId);
     return {
         .response = std::move(response),
         .fence = deferredFence,
+        .destroyedContextId = destroyedContextId,
     };
 }
 
@@ -844,7 +843,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
     std::span<const std::uint8_t> request,
     bool cursorQueue,
     std::uint64_t fenceCookie,
-    std::optional<DeferredFence>* deferredFence)
+    std::optional<DeferredFence>* deferredFence,
+    std::optional<std::uint32_t>* destroyedContextId)
 {
     const auto* header = readStructure<protocol::GpuControlHeader>(request);
     if (header == nullptr) {
@@ -955,6 +955,8 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         UML_GPU_RENDERER.destroyContext(header->contextId);
         contexts_.erase(header->contextId);
         venusContexts_.erase(header->contextId);
+        if (destroyedContextId != nullptr)
+            *destroyedContextId = header->contextId;
         return success;
     }
 
@@ -1023,7 +1025,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         if (submit == nullptr ||
             submit->size > protocol::maximumGpuSubmitSize ||
             submit->size % protocol::gpuCommandWordSize != 0 ||
-            sizeof(*submit) > request.size() ||
             submit->size != request.size() - sizeof(*submit) ||
             (venusContexts_.contains(header->contextId) &&
              !validVenusFenceHeader(*header))) {
@@ -1210,7 +1211,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 .flags = create->flags,
                 .blobId = create->blobId,
                 .size = create->size,
-                .backing = iterator->second.vectors,
             };
             if (UML_GPU_RENDERER.createResourceBlob(resource) != 0) {
                 blobResources_.erase(iterator);
@@ -1593,18 +1593,15 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         if (virgl == virglResources_.end())
             return response(
                 *header, protocol::GpuResponse::errorInvalidResource);
-        if (!virgl->second.backing.empty() ||
-            !virgl->second.vectors.empty())
+        if (!virgl->second.vectors.empty())
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
         auto success = response(*header, protocol::GpuResponse::okNoData);
-        std::vector<BackingEntry> backing;
         std::vector<iovec> vectors;
         if (!parseBacking(
                 request,
                 sizeof(*attach),
                 attach->entryCount,
-                backing,
                 vectors)) {
             return response(
                 *header, protocol::GpuResponse::errorInvalidParameter);
@@ -1618,7 +1615,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
         /* Virgl retains the iovec array pointer. Swapping the successfully
          * attached allocation into the resource preserves that address and
          * makes the final bookkeeping commit non-throwing. */
-        virgl->second.backing.swap(backing);
         virgl->second.vectors.swap(vectors);
         return success;
     }
@@ -1642,7 +1638,6 @@ std::vector<std::uint8_t> VirtioGpuDevice::processInternal(
                 *header, protocol::GpuResponse::errorInvalidResource);
         auto success = response(*header, protocol::GpuResponse::okNoData);
         UML_GPU_RENDERER.detachBacking(reference->resourceId);
-        virgl->second.backing.clear();
         virgl->second.vectors.clear();
         return success;
     }
@@ -2228,47 +2223,44 @@ void VirtioGpuDevice::completeSharedMemoryAction(
     std::uint64_t actionId,
     bool success) noexcept
 {
-    try {
-        for (auto iterator = blobResources_.begin();
-             iterator != blobResources_.end();
-             ++iterator) {
-            auto& resource = iterator->second;
-            if (resource.pendingActionId != actionId)
-                continue;
-            resource.pendingActionId = 0;
-            if (resource.mappingState == BlobResource::MappingState::mapping) {
-                resource.mappingState = success
-                    ? BlobResource::MappingState::mapped
-                    : BlobResource::MappingState::unmapped;
-                if (!success) {
-                    const auto pages = blobMappingPages(
-                        resource.regionOffset, resource.chargedSize);
-                    std::fill(pages.begin(), pages.end(), protocol::invalidResourceId);
-                    resource.regionOffset = 0;
-                }
-                return;
-            }
-            if (resource.mappingState ==
-                BlobResource::MappingState::unmapping) {
-                if (!success) {
-                    resource.mappingState = BlobResource::MappingState::mapped;
-                    return;
-                }
-                resource.mappingState = BlobResource::MappingState::unmapped;
+    for (auto iterator = blobResources_.begin();
+         iterator != blobResources_.end();
+         ++iterator) {
+        auto& resource = iterator->second;
+        if (resource.pendingActionId != actionId)
+            continue;
+        resource.pendingActionId = 0;
+        if (resource.mappingState == BlobResource::MappingState::mapping) {
+            resource.mappingState = success
+                ? BlobResource::MappingState::mapped
+                : BlobResource::MappingState::unmapped;
+            if (!success) {
                 const auto pages = blobMappingPages(
                     resource.regionOffset, resource.chargedSize);
                 std::fill(pages.begin(), pages.end(), protocol::invalidResourceId);
                 resource.regionOffset = 0;
-                if (resource.retireAfterAction) {
-                    const auto resourceId = iterator->first;
-                    UML_GPU_RENDERER.unrefResource(resourceId);
-                    blobResources_.erase(iterator);
-                }
-                return;
             }
             return;
         }
-    } catch (...) {
+        if (resource.mappingState ==
+            BlobResource::MappingState::unmapping) {
+            if (!success) {
+                resource.mappingState = BlobResource::MappingState::mapped;
+                return;
+            }
+            resource.mappingState = BlobResource::MappingState::unmapped;
+            const auto pages = blobMappingPages(
+                resource.regionOffset, resource.chargedSize);
+            std::fill(pages.begin(), pages.end(), protocol::invalidResourceId);
+            resource.regionOffset = 0;
+            if (resource.retireAfterAction) {
+                const auto resourceId = iterator->first;
+                UML_GPU_RENDERER.unrefResource(resourceId);
+                blobResources_.erase(iterator);
+            }
+            return;
+        }
+        return;
     }
 }
 

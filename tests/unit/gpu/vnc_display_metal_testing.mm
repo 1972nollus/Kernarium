@@ -138,6 +138,8 @@ void verifyScaledReadbackIsDamageBounded(VncDisplay& display)
             0x7aU, 0x15U, 0x3cU, 0xffU};
         require(display.width() == 160 && display.height() == 90,
                 "scaled readback test expects a 160x90 display");
+        require(display.guestScanoutChanged(width, height),
+                "the VNC display refused the scaled mode");
 
         MTLTextureDescriptor* descriptor = [MTLTextureDescriptor
             texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
