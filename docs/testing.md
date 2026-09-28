@@ -419,6 +419,14 @@ desktop image Kernarium itself defaults to, into
 `~/Library/Containers/<uuid>/Data/Documents` under its own name rather than
 referencing it in place.
 
+The shared `Kernarium` scheme gathers no code coverage. xcodebuild applies a
+scheme's coverage choice to every action, `build` included, and the test plan
+Xcode creates for a scheme by default gathers coverage. The scheme therefore
+keeps its own test settings, so neither the Release app a device installs nor
+the one the launcher runs through `xcodebuild test` carries coverage
+instrumentation. A coverage run passes `-enableCodeCoverage YES` to
+`xcodebuild test`.
+
 For an opt-in diagnostic, pass one SLiRP forwarding specification as
 `TEST_RUNNER_KERNARIUM_HOST_FORWARD` when launching the app. For example,
 `tcp:127.0.0.1:5567-5555` exposes guest ADB on host loopback port 5567. Normal
