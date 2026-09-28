@@ -538,21 +538,6 @@ public:
 		return occupied;
 	}
 
-	void invalidate() noexcept
-	{
-		resident_.clear();
-		generations_.clear();
-		current_ = nullptr;
-		++epoch_;
-		if (epoch_ != 0)
-			return;
-		for (auto &slab : slabs_)
-			if (slab)
-				for (auto &slot : slab->slots)
-					slot.epoch = 0;
-		epoch_ = 1;
-	}
-
 	/* Reset the activations of one address space, as its code change
 	 * requires.
 	 *
@@ -984,11 +969,10 @@ private:
 		/* Reactivation resolves the same link record every time, so its
 		 * address is memoised here rather than hashed again on each pass.
 		 * The owning address space keeps its records in chunks that never
-		 * move, so the address is stable until invalidate() clears them,
-		 * and that also advances epoch_, which is what link_epoch is
-		 * compared against.
-		 * Retiring the address space clears this slot's epoch in the same
-		 * pass that destroys the map.
+		 * move, so the address stays valid while the slot holds this
+		 * translation: store() and release() reset the memo, and retiring
+		 * the address space clears this slot's epoch in the same pass that
+		 * destroys the map.
 		 *
 		 * The memo is only ever valid for the address space named by
 		 * `generation`, and nothing about the record itself says which
