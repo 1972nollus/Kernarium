@@ -54,13 +54,19 @@ function(uml_audit_implementation_fragments ROOT OUT_VIOLATIONS)
         "${ROOT}/darwin/*.hh"
         "${ROOT}/darwin/*.hpp"
         "${ROOT}/darwin/*.ipp"
+        "${ROOT}/darwin/*.m"
+        "${ROOT}/darwin/*.mm"
+        "${ROOT}/Kernarium/*.m"
+        "${ROOT}/Kernarium/*.mm"
         "${ROOT}/tests/*.cpp"
         "${ROOT}/tests/*.cc"
         "${ROOT}/tests/*.cxx"
         "${ROOT}/tests/*.h"
         "${ROOT}/tests/*.hh"
         "${ROOT}/tests/*.hpp"
-        "${ROOT}/tests/*.ipp")
+        "${ROOT}/tests/*.ipp"
+        "${ROOT}/tests/*.m"
+        "${ROOT}/tests/*.mm")
     foreach(PATH IN LISTS FIRST_PARTY_CXX_FILES)
         if(PATH STREQUAL COMPOSER)
             continue()
@@ -82,7 +88,7 @@ file(GLOB ROOT_C_SOURCES LIST_DIRECTORIES false
     "${SOURCE_ROOT}/Makefile")
 set(C_SOURCES ${ROOT_C_SOURCES})
 foreach(FIRST_PARTY_SCOPE IN ITEMS
-        cmake darwin dependencies kernel scripts tests tools)
+        cmake darwin dependencies kernel Kernarium scripts tests tools)
     if(NOT IS_DIRECTORY "${SOURCE_ROOT}/${FIRST_PARTY_SCOPE}")
         continue()
     endif()
@@ -213,11 +219,20 @@ file(GLOB_RECURSE CXX_SOURCES LIST_DIRECTORIES false
     "${SOURCE_ROOT}/darwin/*.hpp"
     "${SOURCE_ROOT}/darwin/*.h"
     "${SOURCE_ROOT}/darwin/*.hh"
+    "${SOURCE_ROOT}/darwin/*.m"
+    "${SOURCE_ROOT}/darwin/*.mm"
+    "${SOURCE_ROOT}/Kernarium/*.m"
+    "${SOURCE_ROOT}/Kernarium/*.mm"
+    "${SOURCE_ROOT}/Kernarium/*.cpp"
+    "${SOURCE_ROOT}/Kernarium/*.hpp"
+    "${SOURCE_ROOT}/Kernarium/*.h"
     "${SOURCE_ROOT}/tests/*.cpp"
     "${SOURCE_ROOT}/tests/*.cc"
     "${SOURCE_ROOT}/tests/*.cxx"
     "${SOURCE_ROOT}/tests/*.hpp"
-    "${SOURCE_ROOT}/tests/*.h")
+    "${SOURCE_ROOT}/tests/*.h"
+    "${SOURCE_ROOT}/tests/*.m"
+    "${SOURCE_ROOT}/tests/*.mm")
 foreach(PATH IN LISTS CXX_SOURCES)
     file(READ "${PATH}" CONTENT)
     file(RELATIVE_PATH SOURCE_PATH "${SOURCE_ROOT}" "${PATH}")
@@ -272,41 +287,43 @@ foreach(PATH IN LISTS GUEST_RUNNER_PYTHON)
     endif()
 endforeach()
 
-# Verify that every implementation source has a first-party CMake owner using
-# its complete module-relative path. A same-named source in another module is
-# not evidence of ownership.
+# Verify that every implementation source is owned by the nearest CMakeLists.txt
+# at or above it, using its complete module-relative path. A same-named source
+# in another module is not evidence of ownership, and darwin/CMakeLists.txt
+# composes subdirectories without owning leaf sources.
+set(OWNERSHIP_GLOBS)
+foreach(OWNED_TREE IN ITEMS darwin Kernarium/Runtime)
+    foreach(EXTENSION IN ITEMS cpp cc cxx m mm S s)
+        list(APPEND OWNERSHIP_GLOBS "${SOURCE_ROOT}/${OWNED_TREE}/*.${EXTENSION}")
+    endforeach()
+endforeach()
 file(GLOB_RECURSE IMPLEMENTATION_SOURCES LIST_DIRECTORIES false
-    "${SOURCE_ROOT}/darwin/*.cpp"
-    "${SOURCE_ROOT}/darwin/*.cc"
-    "${SOURCE_ROOT}/darwin/*.cxx"
-    "${SOURCE_ROOT}/darwin/*.m"
-    "${SOURCE_ROOT}/darwin/*.mm"
-    "${SOURCE_ROOT}/darwin/*.S"
-    "${SOURCE_ROOT}/darwin/*.s")
-file(GLOB_RECURSE OWNERSHIP_MANIFESTS LIST_DIRECTORIES false
-    "${SOURCE_ROOT}/darwin/CMakeLists.txt")
+    ${OWNERSHIP_GLOBS})
 foreach(PATH IN LISTS IMPLEMENTATION_SOURCES)
     file(RELATIVE_PATH SOURCE_RELATIVE_PATH "${SOURCE_ROOT}" "${PATH}")
-    set(OWNED FALSE)
-    foreach(MANIFEST IN LISTS OWNERSHIP_MANIFESTS)
-        get_filename_component(MANIFEST_DIRECTORY "${MANIFEST}" DIRECTORY)
-        file(RELATIVE_PATH MANIFEST_RELATIVE_PATH
-            "${MANIFEST_DIRECTORY}" "${PATH}")
-        file(READ "${MANIFEST}" MANIFEST_TEXT)
-        string(REGEX REPLACE "#[^\n]*" "" MANIFEST_CODE "${MANIFEST_TEXT}")
-        string(FIND "${MANIFEST_CODE}" "${MANIFEST_RELATIVE_PATH}"
-            RELATIVE_OWNER_INDEX)
-        string(FIND "${MANIFEST_CODE}" "${SOURCE_RELATIVE_PATH}"
-            SOURCE_OWNER_INDEX)
-        if(NOT RELATIVE_OWNER_INDEX EQUAL -1 OR
-           NOT SOURCE_OWNER_INDEX EQUAL -1)
-            set(OWNED TRUE)
-            break()
-        endif()
-    endforeach()
-    if(NOT OWNED)
+    get_filename_component(MANIFEST_DIRECTORY "${PATH}" DIRECTORY)
+    while(NOT EXISTS "${MANIFEST_DIRECTORY}/CMakeLists.txt" AND
+          NOT MANIFEST_DIRECTORY STREQUAL SOURCE_ROOT)
+        get_filename_component(MANIFEST_DIRECTORY "${MANIFEST_DIRECTORY}"
+            DIRECTORY)
+    endwhile()
+    set(MANIFEST "${MANIFEST_DIRECTORY}/CMakeLists.txt")
+    if(MANIFEST STREQUAL "${SOURCE_ROOT}/darwin/CMakeLists.txt" OR
+       MANIFEST STREQUAL "${SOURCE_ROOT}/CMakeLists.txt")
         list(APPEND VIOLATIONS
-            "${PATH}: implementation source has no CMake owner")
+            "${PATH}: implementation source has no CMake owner below the composition file")
+        continue()
+    endif()
+    file(RELATIVE_PATH MANIFEST_RELATIVE_PATH "${MANIFEST_DIRECTORY}" "${PATH}")
+    file(READ "${MANIFEST}" MANIFEST_TEXT)
+    string(REGEX REPLACE "#[^\n]*" "" MANIFEST_CODE "${MANIFEST_TEXT}")
+    string(FIND "${MANIFEST_CODE}" "${MANIFEST_RELATIVE_PATH}"
+        RELATIVE_OWNER_INDEX)
+    string(FIND "${MANIFEST_CODE}" "${SOURCE_RELATIVE_PATH}"
+        SOURCE_OWNER_INDEX)
+    if(RELATIVE_OWNER_INDEX EQUAL -1 AND SOURCE_OWNER_INDEX EQUAL -1)
+        list(APPEND VIOLATIONS
+            "${PATH}: implementation source is not owned by its nearest CMakeLists.txt")
     endif()
 endforeach()
 
