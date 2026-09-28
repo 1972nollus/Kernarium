@@ -326,7 +326,7 @@ index 0effa2e9054d3a8f979b4d24f488751529f89505..24c13070a3d16bc3f9ef0b10f5eb0120
        kk_queue_complete_owed_signals(&dev->queue, timeline->mtl_handle);
     if (completed) {
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 56ee3d4a57b5b66292f002c379b57d6a147ae757..479f9cb7d11c99c60bc748d927688abe851e4d51 100644
+index a73c1118ab00aeaa3033dcebf551c114ef5671f1..89f55414e6c2fcd7fac51b484ced5b0c0aad2e8a 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -729,6 +729,16 @@ if with_tests
