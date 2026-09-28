@@ -191,8 +191,10 @@ NAME(uml_x86_64_gadget_\name):
 
 /* Stream descriptor:
  *   15:0   value-register byte offset
- *   31:16  base-register byte offset or 0xffff
- *   47:32  index-register byte offset or 0xffff
+ *   31:16  base-register byte offset, or UML_X86_64_CPU_SEGMENT_ZERO when
+ *          there is no base register
+ *   47:32  index-register byte offset, or UML_X86_64_CPU_SEGMENT_ZERO when
+ *          there is no index register
  *   49:48  index scale shift
  *   51:50  segment (0 none, 1 FS, 2 GS)
  *   52     32-bit effective-address arithmetic

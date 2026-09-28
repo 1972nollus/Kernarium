@@ -928,18 +928,18 @@ struct EncodedMemory final {
 			UML_X86_64_MEMORY_PLAIN_ADDRESS) |
 		(static_cast<std::uintptr_t>(gadget.instruction.length) << 56U);
 	std::uintptr_t displacement{};
-	constexpr auto absent_registers =
+	constexpr auto register_fields =
 		(std::uintptr_t{0xffff} << 16U) | (std::uintptr_t{0xffff} << 32U);
 	constexpr auto zero_registers =
 		(std::uintptr_t{UML_X86_64_CPU_SEGMENT_ZERO} << 16U) |
 		(std::uintptr_t{UML_X86_64_CPU_SEGMENT_ZERO} << 32U);
 	if (memory.absolute_address) {
 		displacement = memory.absolute;
-		descriptor = (descriptor & ~absent_registers) | zero_registers;
+		descriptor = (descriptor & ~register_fields) | zero_registers;
 	} else if (memory.rip_relative) {
 		displacement = gadget.address + gadget.instruction.length +
 			static_cast<std::int64_t>(memory.displacement);
-		descriptor = (descriptor & ~absent_registers) | zero_registers;
+		descriptor = (descriptor & ~register_fields) | zero_registers;
 	} else {
 		displacement = static_cast<std::uintptr_t>(
 			static_cast<std::int64_t>(memory.displacement));
