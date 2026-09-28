@@ -5451,6 +5451,68 @@ def api_for_leaf(identifier: str) -> str:
     return identifier.split("-", 1)[0]
 
 
+HELP_EPILOG = """\
+OpenGL lanes. --api gl46 --leaf gl46 --case runs core KHR-GL46.* cases;
+--case repeats to run a focused set in one guest boot, in CTS traversal order.
+--matrix gl46 runs one official XML-derived must-pass configuration by
+--mustpass-config-index and --fraction. Adding --case narrows that shard to an
+ordered subset of its own case list; the run records itself as a case subset
+in its mode and artifact directory, and no campaign or matrix aggregate counts
+it as the shard it was cut from. The ES-for-GL leaves (dEQP-GL45-ES3.*,
+dEQP-GL45-ES31.*, KHR-Single-GL46.*) exist only as matrix shards. Seeds,
+dimensions and FBO settings come from the XML records, and an ordered
+CTS-Configs.gl46 inventory captured from the exact emulator, image and
+provider (--config-inventory gl46, replayed with --config-inventory-run)
+assigns the first and other EGL configuration roles.
+
+--matrix gles32 runs the OpenGL ES 3.2 must-pass matrix on the EGL
+configurations its own ordered inventory reports (--config-inventory gles32);
+a GL46 inventory never stands in for it. That inventory, scope
+configs-egl-attributes, runs CTS-Configs.es32 and dEQP-EGL.info.configs in one
+guest session and records the conformant list and the EGL attribute table,
+each with its own digest. Its runs come from the five ES must-pass documents
+pinned beside this runner, with the caselist identities in
+vk_gl_cts_gles32_matrix.json, and the guest rechecks those digests before a
+shard runs. As in the pinned runner's getTestRunsForES, the NoContext and
+Khronos ES collections admit every API an ES 3.2 context supports and Single
+Config only KHR-Single-GLES32; NoContext and Single Config run once, on the
+first configuration. The AOSP collections (dEQP-EGL, dEQP-GLES2/3/31) name a
+GL configuration such as rgba8888d24s8ms0 instead of an EGL id: the plan
+rebuilds ConfigList::aospConfigs from the attribute table, resolves each name
+as the runner does, and refuses the plan unless that rebuild reproduces the
+inventory's conformant list. An AOSP run names its GL configuration and,
+outside the EGL run, its resolved surface type, never a seed or an EGL id.
+These collections come last in the plan, so adding them renumbered no run;
+plan order is not the runner's emission order.
+
+Display. X11 surfaces use native Xorg with virtio DRM modesetting and
+Virgl-backed glamor. The guest checks the server, its DRM descriptor, DRI3,
+Present, a connected output and accelerated rendering, and turns screen
+blanking off: a CTS guest gets no input, and a blanked screen drops Present to
+a one-second fake vblank. Xwayland and Xvfb are rejected. Wayland selections
+run the image's unmodified KWin nested on Xorg without a lock screen, because a
+locked compositor owes an occluded surface no frame callback. Display
+processes stop before guest shutdown. These guests mask the display manager
+and the container runtime: a short shard that powers off while Docker starts
+leaves kworkers blocked in bpf_prog_free_deferred and never reaches poweroff.
+
+Guest sessions, shared with run_vk_cts.py. The guest transports its growing
+QPA as ordered checkpoint segments, so a killed guest still leaves the prefix
+it produced. A segment counts only once its compressed stream has been
+measured back and acknowledged, summary.txt is sent last, and a zero-byte
+artifact is refused. The host ends a session whose console and artifact
+transport make no progress for --console-stall-timeout seconds; RCU stall,
+hung-task and soft-lockup reports do not count as progress, because a wedged
+kernel reprints them on its own timer. Inside an OpenGL guest a case that
+writes no QPA output while glcts burns no CPU is abandoned at the same bound,
+and one that is silent but computing, such as software fp64, at
+--console-stall-busy-timeout. An emulator exit aborts the session without
+inventing a status for the case in flight: a fresh guest resumes at the same
+index, and a shard that cannot get past a case exhausts --max-resumptions and
+fails, naming it.
+"""
+
+
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     identity_parser = argparse.ArgumentParser(add_help=False)
     identity_parser.add_argument(
@@ -5462,7 +5524,9 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     campaigns = load_apple_campaigns(identity)
     mustpass = load_gles_mustpass(identity)
     parser = argparse.ArgumentParser(
-        description="run a bounded in-image VK-GL-CTS shard"
+        description="run a bounded in-image VK-GL-CTS shard",
+        epilog=HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--cts-identity", type=Path, default=IDENTITY_PATH

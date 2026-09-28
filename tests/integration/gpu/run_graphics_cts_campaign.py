@@ -1,10 +1,60 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Run eight receipt-bound Vulkan and/or Zink GL fractions in a six-guest pool.
+"""Run receipt-bound Vulkan and OpenGL CTS fractions as one campaign.
 
-GL runs come from authenticated XML and an ordered runtime EGL inventory. This is project
-qualification, never a conformance submission or an all-features-supported claim.
-Completed attempts are independently reparsed; failed attempts are never retried.
+--suite selects vulkan, opengl (GL46), gles32, both (Vulkan and GL46), gl
+(both OpenGL matrices) or all. Every selection is a subsequence of that fixed
+order, so a campaign completes from its own suites alone and a later launch
+may only add suites to it. Vulkan runs eight fractions. Each OpenGL matrix
+runs eight fractions of every run its authenticated XML and ordered EGL
+inventory plan, as shards named gl46-runNNNN-KKof08 or gles32-runNNNN-KKof08,
+and never launches an empty fraction.
+
+At most eight owned guests (JIT, 4 CPUs, 4 GiB) run at a time, and a finished
+one is replaced at once; --jobs may only lower that. With --jobs-file, --jobs
+is the floor: the file is re-read before every launch and an integer above
+the floor raises the pool up to eight, so a running pool can follow the
+host's budget. Lowering it stops the next launch and never ends a guest.
+
+A campaign is complete when every shard has one attempt that validates, not
+when every shard passed first time. A launch whose inputs differ from the last
+records them as a new generation (source, runners, interpreter, emulator,
+provider, rootfs, receipts, inventories and timeouts), and every attempt is
+judged only against the generation that ran it, so a campaign may span
+emulators and source trees without weakening any result. The plan -- suites, page profile, images,
+receipts and EGL configuration set -- never changes, except that a relaunch
+may add a suite, which adds only that suite's shards. A restart reruns only
+shards without a validated attempt; a retry gets its own directory under
+retries/, and --max-attempts bounds how often. A catalogued attempt whose
+directory was removed fails the campaign closed.
+
+Generated guest files, such as the CTS launcher and its case list, reach the
+guest through the per-run initramfs and are named by SHA-256 and mode in the
+recorded harness command, so changing one invalidates the attempts already
+held. An option that changes them is therefore off by default and recorded in
+the generation that asked for it; --relax-diagnostics is the first. Each
+generation also records the interpreter and leaf runners it launched, and a
+leaf rebuilds its recorded command from its own location, so revalidating
+earlier attempts needs the same checkout path and interpreter: resume by
+updating that checkout in place. The emulator may come from anywhere.
+
+--keep-going finishes other shards after CTS failures, but a host-observed
+emulator stall or a dirty DRM shutdown always cancels the pool and keeps the
+attempted shards' evidence. A guest that transported and acknowledged its
+final artifact and then missed its shutdown grace cost no coverage: the host
+reaps it, records shutdown_stall, and the pool continues, though its console
+must still prove a clean Virtio-GPU takedown. With --detach-on-signal an
+interrupted pool leaves its leaves, guests and emulators running, and the next
+pool adopts them into their slots; an adopted leaf's status comes from the
+leaf-exit.json it writes. A leaf arms its ownership journal before creating a
+child, and the pool frees a slot only after that journal acknowledges the
+guest's reap and its console and socket cleanup; the
+gpu-guest-process-ownership-safety tooling test exercises that boundary.
+
+--verify-only reparses every attempt without launching a guest, and --dry-run
+prints the derived shard commands. A complete campaign is project
+qualification, never an all-Pass, all-features-supported or Khronos
+conformance claim.
 """
 
 from __future__ import annotations
@@ -1074,7 +1124,8 @@ def run_pending(campaign: Path, spec: dict[str, Any], pending: list[Shard],
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--suite",
         choices=tuple(SUITE_SELECTIONS),
