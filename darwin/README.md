@@ -160,7 +160,7 @@ Simulator to 65,536, because a slot is committed whether or not it is occupied
 and the iOS app runs under a jetsam limit. Their payloads and mutable branch
 links remain ISA-specific. Cached x86 programs
 release spare decoder and native-stream capacity before publication. Gadget
-executors do not share translations; G166 records why.
+executors do not share translations; Trial 2, G161 and G166 record why.
 
 Scalar forwarding keeps one write-through scalar result in host `x0` between
 adjacent declared gadgets. Assembly templates emit
