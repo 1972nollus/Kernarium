@@ -95,10 +95,9 @@ ctest --test-dir .build/presets/macos-tooling \
   -R '^dependency-kosmickrisp-spirv-regeneration$' --output-on-failure
 ```
 
-The iOS GPU lane runs the unmodified iOS device build on this Apple silicon
-Mac in Designed for iPad mode, because the host GL provider is Mesa Zink over
-KosmicKrisp and the iOS Simulator provides no Metal 4 device. The Simulator GPU
-presets fail early with that reason. Kernarium's own suite carries the narrowest
+The iOS GPU lane runs the unmodified iOS device build on an Apple silicon Mac
+in Designed for iPad mode; [`graphics.md`](graphics.md#current-path) says why
+the iOS Simulator has no GPU build. Kernarium's own suite carries the narrowest
 check of that provider: it creates a surfaceless OpenGL 4.6 core context in the
 application process and requires Zink on the packaged KosmicKrisp driver, so a
 broken iOS graphics closure fails in seconds rather than inside a guest. The retired Simulator and device GLES
@@ -268,22 +267,13 @@ appended without padding, an initrd the kernel never loads and an unknown
 exit, and the launcher must remove its scratch initrd, including one an
 aborted run left behind.
 
-`guest-kernel-nofault` dumps every task with sysrq t. Its workqueue report for
-each idle kernel worker reads through a NULL pointer with
-`copy_from_kernel_nofault()`, which must fail quietly: the guest keeps running
-and the emulator prints no host fault report for it. A lost nofault recovery
-point panics the guest instead. The same dump must list Call Trace entries,
-which the kernel walks from each blocked task's saved context, and frame
-pointers make every one of them reliable, so none may be marked `?`.
+`guest-kernel-nofault` boots the rootfs and checks, through a sysrq t dump,
+that a faulting nofault read recovers silently and that every trace entry is
+reliable, as [`../kernel/common/README.md`](../kernel/common/README.md) specifies.
 
-`guest-user-strings` runs 54 checks on the strings a system call copies from
-user memory with `strncpy_from_user()`: paths through `newfstatat()` and
-`symlinkat()`, and a task name through `prctl(PR_SET_NAME)`. Each string sits
-at a chosen offset of the probe's own mapping. The checks cover lengths around
-the 4064-byte embedded name buffer and `PATH_MAX`, strings that cross a page
-boundary or end on its last byte, unterminated strings, `EFAULT` for NULL,
-unmapped and `PROT_NONE` memory, and the exact bytes a symlink target and a
-task name keep.
+`guest-user-strings` boots the rootfs and checks the strings system calls copy
+from user memory against the copy contract in
+[`../kernel/common/README.md`](../kernel/common/README.md).
 
 `guest-native-window-unmap` maps a page just below and just above the Darwin
 kernel's native window, which it finds from the addresses `mmap()` refuses,
@@ -297,16 +287,9 @@ cleared and TCO, DIT and SSBS kept, a mode or DAIF bit must fail with
 `EINVAL`, and the child continued after an SS write must exit rather than
 stop on a single-step trap.
 
-`guest-run-end-stop` boots embedded guests in child processes and stops each
-one at a different point, from CPU bring-up to a guest waiting for its root
-device. A run must return 0 and leave only the host thread behind. The test
-widens the window between a vCPU carrier signalling the run end and leaving the
-image, by pausing that carrier once it has signalled. A kernel whose run end
-does not wait for every kernel thread faults in the unmapped image or exits
-with status 2. Each attempt also has one host thread that unblocks SIGALRM and
-sends it to itself once the kernel handles the signal. The kernel must refuse
-that tick and leave the signal blocked on the thread, and at least one attempt
-must reach that check.
+`guest-run-end-stop` needs only the kernel image: it stops embedded guests
+throughout their boot and checks the run-end and SIGALRM contracts in
+[`../kernel/common/README.md`](../kernel/common/README.md).
 
 The checked acceptance descriptors select complete kernel bundles. A local
 override may select another whole bundle of the matching profile through
@@ -375,9 +358,9 @@ cmake --build --preset ios-simulator
 scripts/build-xcframework.sh
 ```
 
-Kernarium is an iOS device product: it has runtime presets for 16 KiB and 4 KiB
-Linux and 16 KiB Android, with no Simulator variant, because its GPU stack needs
-a Metal 4 device.
+Kernarium is an iOS device product with runtime presets for 16 KiB and 4 KiB
+Linux and 16 KiB Android and no Simulator variant; see
+[`graphics.md`](graphics.md#current-path).
 `Kernarium/scripts/package-ios-frameworks.sh` packages all selected runtime and
 graphics slices plus the static GPT fdisk and decode-only zstd XCFrameworks for
 Xcode.
@@ -390,13 +373,8 @@ before embedding an artifact; they do not bind to its patch release or source
 commit and never prepare sources or invoke a kernel/AOSP build. Rootfs bundles
 are launch inputs, not emulator build inputs.
 
-Kernarium defaults to 16 KiB Linux, 4 GiB of guest memory where the process is
-given the host's memory (an iOS app on macOS), 2 GiB on a physical device whose
-jetsam limit a 4 GiB guest would cross, and the processor count reported by
-`NSProcessInfo`. Android fixes the
-page profile at 16 KiB. A `.kern`
-bundle contains the selected rootfs release and its persistent writable state;
-rebuilding the app or kernel framework must not erase it.
+Kernarium's defaults, guest bundles, and scripts are described in
+[`../Kernarium/README.md`](../Kernarium/README.md).
 
 Launch and bundle assembly are owned by `Kernarium/scripts/run-ios-mac.sh` and
 `Kernarium/scripts/make-guest-bundle.py`. Use each script's `--help` rather than
@@ -428,63 +406,23 @@ four tests fail because of how the Mac hosts an iPad app:
 - `theKeyboardButtonFocusesTheViewOnScreen` and
   `anEndedRunIsNeverStartedAgain` find SwiftUI controls by walking the
   window's accessibility elements. On the iPad a test run has UIKit
-  application accessibility on, and the walk finds every control. That was
-  observed while the `KernariumAutomation` host was serving; a run with no
-  automation session on the device has not been measured. On the Mac it is
-  off, and SwiftUI's hosting view then exposes no elements. Turning it on in
-  the process makes the same walk find them.
+  application accessibility on, and the walk finds every control. On the Mac
+  it is off, and SwiftUI's hosting view then exposes no elements. Turning it
+  on in the process makes the same walk find them.
 - `theKeyBarNeverCoversTheConsole` and `anUnfocusedConsoleKeepsEveryRow`
   model the key bar docked at the bottom of the screen, which is where the
   console looks for it. On the Mac the window ends above the bottom of the
   screen and the bar sits at the bottom of the window, so the console does
   not make room for it.
 
-When copying a `.kern` bundle to a device, target the complete
-`Documents/<name>.kern` destination. Never copy into or replace the Documents
-directory itself, because doing so can flatten the bundle or destroy unrelated
-persistent guests.
-
 ### UI automation on a device
 
-On a device with a passcode, turning UI automation on asks for the owner's
-approval (Touch ID or passcode) at the device. XCTest gives up 60 s after the
-runner starts, and the prompt stays on screen until someone dismisses it.
-Automation stays on while any XCTest session holds it, and other runners start
-without a prompt during that time. Once the last session ends, turning it on
-again needs a fresh approval. That includes stopping, redeploying or losing
-the automation host. Only a restart within a few minutes of the approval was
-seen to skip the prompt.
-
-Unattended work therefore goes through one long-lived session, the
-`KernariumAutomation` UI-test target. It runs for hours and executes commands
-that `Kernarium/scripts/ipad-automation.py` copies into its runner's data
-container with `devicectl`. Build it with the script and run `start` while
-someone can approve at the device. See `--help` for the commands: launch, tap,
-wait, type, key, element tree, screenshot, and stop, which refuses without
-`--force`. Each command answers in about one to four seconds. Exit status 3
-means no host is serving. The host recreates its channel folders if another
-tool clears the container.
-
-XCTest on a device delivers nothing to the application for a synthesized
-Return typed as `\r`, or for Delete, Escape, or Backspace, yet reports
-success. The script therefore sends `key return` as `\n`, which produces the
-real Return key with any modifiers, and refuses `delete` and `escape`, naming
-a route that works.
-
-No command ends the host. A thrown error, an XCTest issue, and an
-Objective-C exception XCTest raises, such as `typeKey` given anything but one
-UTF-16 character, each become that command's error. The host keeps a
-command's issues out of XCTest's record, so it prints every failed command to
-its log. XCTest waits for the application to go idle before each command. A
-system keyboard animation can leave that wait's count stuck for the rest of
-the application's life, so every command then takes about 60 s; relaunch the
-application.
-
-The target has no target application, so starting it installs only its own
-runner, and it is not in the `Kernarium` scheme. Reinstalling Kernarium,
-hosted `Kernarium` test runs, and other UI-test runners leave it running; the
-host's log records each such termination as a Kernarium crash. Keep all
-automation code in the test targets.
+Unattended device automation goes through the long-lived
+`KernariumAutomation` UI-test host, because each new XCTest session on a
+device with a passcode needs the owner's approval at the device. Its commands,
+approval rules, and failure modes are in
+`Kernarium/scripts/ipad-automation.py --help`. Keep all automation code in the
+test targets.
 
 ## LTP
 
@@ -749,10 +687,9 @@ console and artifact transport both stop advancing. Kernel stall diagnostics --
 RCU stall reports and their task dumps, hung-task and soft-lockup warnings --
 are not console progress for that bound, because a wedged kernel reprints them
 on its own timer and would otherwise hold the bound off indefinitely.
-dEQP ends its whole session at the first `ResourceError`, and offers no way to
-carry on, so every case after one used to go unrun: one such case once cost a
-device fraction 196,227 of its 216,952 cases. The guest therefore runs the
-remainder of the order it already enumerated in a fresh CTS process, up to
+dEQP ends its whole session at the first `ResourceError` and offers no way to
+carry on, so the guest runs the remainder of the order it already enumerated
+in a fresh CTS process, up to
 eight processes for one shard and all of them inside the shard's single
 deadline. Nothing is re-run and nothing is invented: each process appends its
 own session document to the same transported stream, `summary.txt` states
@@ -812,37 +749,9 @@ is not a pass and makes no conformance claim.
 observations optional, because the specification does not make the statuses
 they expect mandatory, and reports `CompatibilityWarning` when one of them sees
 `GL_FRAMEBUFFER_COMPLETE` instead. The runner policy above counts that status as
-a success, and this case is expected to report two of those observations.
-
-The multisample observation mixes a renderbuffer created with one sample and one
-created with two. `RenderbufferStorageMultisample` may grant more samples than
-were asked for, and the frontend promotes a one-sample request to two, because
-Gallium represents no one-sample multisample surface: one sample there is a
-single-sampled surface, on which Zink deletes a shader's `gl_SampleMask` writes
-and the `sample_variables` `multisample_rbo_1` cases lose the per-sample
-fragment operations they verify. Both renderbuffers therefore carry the same
-`RENDERBUFFER_SAMPLES`, and section 9.4.2 requires the framebuffer that mixes
-them to be reported complete.
-
-The layer-targets observation attaches one slice of a three-dimensional texture
-beside a two-dimensional texture, which leaves no attachment layered, and the
-rule requiring a common texture target applies only when one is. Reporting that
-framebuffer incomplete would contradict the completeness rules a conforming
-implementation must apply.
-
-### Native whole-submit timing
-
-The KosmicKrisp line and geometry unit executables accept the opt-in arguments
-`performance` (render-only Vulkan queries) and `performance-whole-submit`
-(native Metal commit feedback through `MESA_KK_DEBUG=submit_timing`);
-`tests/perf/uml-kosmickrisp-rgb32-texel-bench` uses the same collector through
-`--timing metal-whole-submit`. Registered CTests never run these modes. The
-collector permits one outstanding submission and requires exactly one finite,
-ordered, wall-bounded callback per draw; missing, malformed, duplicate, late,
-or unmatched records fail closed rather than being filtered. Whole-submit
-intervals include every clear, barrier, and copy in the Metal commit and are
-not comparable with render-only query intervals. No speed ratio is a
-correctness threshold.
+a success, and this case is expected to report two of those observations;
+[`graphics.md`](graphics.md#guest-capability-boundary) explains why both
+framebuffers are complete.
 
 ## Claiming completion
 

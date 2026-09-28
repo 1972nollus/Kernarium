@@ -24,15 +24,19 @@ loader, or a second ambient libepoxy/virglrenderer family.
 
 macOS and the iOS device both build that stack from the same sources; the
 prefixes differ only in their platform contract and deployment target. The iOS
-Simulator does not, because KosmicKrisp requires Metal 4 and the Simulator
-exposes no Metal 4 device: its GPU preset and
-`dependencies/build-apple-gpu.sh --platform ios-simulator` fail early with that
-reason rather than configuring against a device that cannot exist. Until a
-physical device is attached, the iOS slice is exercised by running the
-unmodified device build on an Apple silicon Mac in Designed for iPad mode,
-where Metal reports the host GPU and the full Metal 4 family. Desktop GL 4.6
+Simulator has no build of it, because KosmicKrisp requires Metal 4 and the
+Simulator exposes no Metal 4 device: configuring the GPU product for
+`ios-simulator` fails early with that reason
+(`dependencies/cmake/AppleGpuDependencies.cmake`), and
+`dependencies/build-apple-gpu.sh` accepts only `macos` and `ios`. Kernarium is
+therefore an iOS device product with no Simulator variant, and the Simulator
+remains a target of the ordinary, non-GPU iOS libraries only. The unmodified
+device slice also runs on an Apple silicon Mac in Designed for iPad mode, where
+Metal reports the host GPU and the full Metal 4 family; the physical-device
+lanes are in [`testing.md`](testing.md). The device runtimes use the
+Vulkan-experiment GPU prefix and the accepted kernel descriptors. Desktop GL 4.6
 needs `GL_ARB_buffer_storage`, whose coherent buffers reach the guest through
-the kernel's vhost-user shared-memory aperture.
+the vhost-user shared-memory aperture of the shared kernel series.
 
 The GPU transport thread owns renderer creation, context use, reset, and
 teardown. AppKit and UIKit share the Metal presentation layer. VNC is a macOS
@@ -210,6 +214,21 @@ only when negotiated, bounded, invisible to guest userspace, and presented
 through an ABI the unmodified guest Mesa and libdrm already understand. A
 private userspace ioctl or library must never become a production dependency.
 
+Two framebuffers for which `KHR-GL46.direct_state_access.framebuffers_check_status`
+prefers an incomplete status are reported complete, as the specification
+requires. One mixes a renderbuffer created with one sample and one created
+with two. `RenderbufferStorageMultisample` may grant more samples than were
+asked for, and the frontend promotes a one-sample request to two, because
+Gallium represents no one-sample multisample surface: one sample there is a
+single-sampled surface, on which Zink deletes a shader's `gl_SampleMask` writes
+and the `sample_variables` `multisample_rbo_1` cases lose the per-sample
+fragment operations they verify. Both renderbuffers therefore carry the same
+`RENDERBUFFER_SAMPLES`, and section 9.4.2 requires the framebuffer that mixes
+them to be reported complete. The other attaches one slice of a
+three-dimensional texture beside a two-dimensional texture, which leaves no
+attachment layered, and the rule requiring a common texture target applies
+only when one is.
+
 Hardware video decode is not advertised. It published frames through a Metal
 texture client buffer that only the retired ANGLE provider exposed, and the
 renderer is built without it.
@@ -234,10 +253,9 @@ CPU-fallback frame. VNC reads a bottom-up texture back through the same
 scanout pass, which turns it upright before the copy. Venus scanouts keep
 their native Metal textures.
 
-The GPU advertises display geometry and density through EDID. Kernarium point
-mode uses safe-area points and 160 DPI. Retina mode multiplies dimensions and
-density by `nativeScale`. Android receives the same effective density on its
-kernel command line.
+The GPU advertises display geometry and density through EDID; Kernarium's
+point and Retina geometry is in
+[`../Kernarium/README.md`](../Kernarium/README.md#devices-and-display).
 
 ## Dynamic native geometry
 
@@ -353,9 +371,9 @@ receipt-bound guest CTS campaigns described in
 [`testing.md`](testing.md#graphics-conformance-campaigns), which bind a run to
 its sealed image receipt, its CTS and Mesa source locks, and the staged
 provider digest. Accepted `NotSupported`, warning, and `Waiver` results are not
-passes. The last complete Vulkan CTS 1.4.6.2 campaign, on Mesa 26.2.1 in
-September 2026, ran all 16 fractions of the mandatory list with no disallowed
-result.
+passes. The last complete Vulkan CTS 1.4.6.2 campaign ran all 16 fractions of
+the mandatory list with no disallowed result; its receipt records the Mesa it
+ran.
 
 ### Guest memory boundary
 
@@ -496,7 +514,13 @@ upstream Venus does. A swapchain whose surface offers modifiers is therefore a
 optimally and reaches the window system through common WSI's linear prime
 blit. The implicit native-heap share, an optimal image whose dma-buf names only
 its MTLHeap, is made only for a renderer with a native heap and no modifiers,
-the one configuration in which Zink imports it as that image. Either way the
+the one configuration in which Zink imports it as that image. Because
+such an image is one renderer blob resource whose refusal is reported
+asynchronously, a native-heap surface advertises at most 8192 in each direction
+as its maximum image extent and refuses an image above the per-image budget
+with `VK_ERROR_OUT_OF_DEVICE_MEMORY` rather than presenting a dma-buf with no
+resource behind it; ordinary images keep the device's own
+`maxImageDimension2D`. Either way the
 guest allocates a shared image's device-local memory as an MTLHeap, as it does
 for a compositor's own scanout buffer that Zink allocates through GBM. The
 renderer publishes the Metal texture of every colour target created for
@@ -619,6 +643,93 @@ The driver emits such a load as two wide halves instead. Each half keeps the
 alignment NIR proved, so the access costs two rather than the eight a packed
 four-component 64-bit vector would, and nothing narrower changes.
 
+### KosmicKrisp driver contracts
+
+These are the run-time guarantees of the host KosmicKrisp driver as this
+project's Mesa series patches it; the series and its regression suites are in
+[`../dependencies/README.md`](../dependencies/README.md).
+
+KosmicKrisp never hands Metal a texture view it cannot make, because Metal
+answers one with an assertion that ends the process. An image view whose type,
+levels or layers its image cannot provide fails with
+`VK_ERROR_OUT_OF_DEVICE_MEMORY`, except that a 3D view of a non-3D image is made
+as the 2D or 2D-array texture the image is: Venus creates views without waiting
+for the result, so a refusal would surface later as a lost device. Metal still
+decides pixel-format compatibility.
+
+Programmable primitive IDs cross the Metal vertex/fragment interface as flat
+user varyings. Layer and viewport indices use unsigned native Metal attributes
+without interpolation qualifiers.
+
+KosmicKrisp gates unsatisfied timeline waits on the CPU before native Metal
+submission, using the common Vulkan runtime's on-demand submit worker. This
+keeps delayed host signals from outliving Metal's finite GPU event-wait window;
+`MESA_VK_ENABLE_SUBMIT_THREAD=false` still preserves that required fallback.
+Only a wait whose signal has not been submitted is gated. A value already
+signalled on the CPU or enqueued on the queue's Metal timeline is pending, so
+ordinary dependencies keep the immediate path, the worker stays off, and
+`vkQueueSubmit` never waits for the GPU work its batch depends on. A binary
+semaphore wait is pending by definition because its signal must have been
+submitted first. That distinction is what keeps a gated batch from blocking
+the caller that has to release it. Once the worker runs, a binary semaphore's
+payload moves to the batch waiting on it when the worker reaches that batch,
+after any signal queued ahead of it, never inside `vkQueueSubmit`, where a
+still-queued signal would land on a fresh payload. A timeline wait whose
+signal is submitted later to the same queue remains unsupported: the device
+exposes one queue and submits in order. CPU waits preserve their absolute
+deadlines and observe device loss so pending submissions and queue drains can
+shut down before device resources are released.
+
+A render pass clear depth reaches Metal already rounded to the attachment
+format's nearest representable value and offset inside that texel's interval.
+Metal converts the clear into a normalized-integer depth attachment by
+truncating, so an unrounded value would clear `D16_UNORM` one step low and
+disagree with the rasterizer's own depth writes, which round. Depth formats
+Metal stores as floats keep their exact value.
+
+Subgroup operations reach Metal's SIMD groups, which exist in kernel and
+fragment functions only, so the driver advertises compute and fragment as its
+subgroup stages. A vertex, tessellation or geometry shader that reads the
+subgroup builtins or uses a group operation still compiles: those stages
+present the single-invocation subgroup their properties imply, with size and
+count one, invocation zero, and every group operation returning the value that
+one invocation contributed.
+
+The shader outputs Metal names itself keep the shape Metal gives them, not
+the shape the shader's stores imply: the clip coordinate is four components
+even when a shader writes only `gl_Position.xy`, point size is one float, the
+layer and viewport indices are unsigned, and the clip and cull distances are
+float arrays. A component no store reaches keeps the value the output is
+initialized with, which for the clip coordinate is the identity `(0, 0, 0, 1)`
+rather than a degenerate zero `w`.
+
+Linked graphics pipelines share native programs and dynamic vertex-input
+variants only while a live Vulkan pipeline owns them. The lookup cache drops
+its entry and releases those resources when the last pipeline owner is
+destroyed, so obsolete programs do not accumulate until device teardown.
+Pipeline statistics use draw-time guards in the same executable, including
+its bounded raster variants; query begin and end never compile or retain a
+second shader tree. A discard variant preserves application shader effects and
+transform feedback without raster-only materialization or provoking-vertex
+conversion. Dynamic discard changes select the corresponding precompiled
+variant, including after pipeline-cache reload.
+
+Sequential encoders of one recording share a Metal command buffer. Only
+compute that must run before or after a whole render pass, and each encoder of
+a layered or multiview pass, gets a Metal command buffer of its own. A command
+buffer takes a native command allocator for a lane only when that lane
+records. Every submission takes its allocators and Metal command buffers with
+it and hands the allocators to the device's allocator cache when the GPU
+finishes; a reset hands over only allocators that were never submitted. A
+resubmitted command buffer is recorded again, so its re-record first waits
+for the GPU to finish its last submission, which a `SIMULTANEOUS_USE` buffer
+may still be running. An allocator keeps its
+high-water storage until it is released, and a recording that takes a grown
+one keeps all of it, so the cache recycles only allocators of at most 16 MiB,
+keeps at most 64 MiB in total, and releases every other allocator. Feedback
+reporting remains valid after Vulkan device teardown through a separate
+reference-counted context.
+
 ### Apple8 (A15) device behaviour
 
 The physical iOS device the Vulkan route has been exercised on is an iPad
@@ -650,9 +761,9 @@ names the encoder `MTLCommandEncoderErrorStateFaulted`. Metal 4 has no
 equivalent of that status, so the driver's own queue cannot tell the two apart.
 A "timeout" on this device is therefore a label, not a diagnosis, and must not
 be read as evidence that a shader ran too long. There is no command-buffer
-duration limit anywhere near the affected work: renders of 84 ms and 178 ms
-complete without error, while a submission that faults is reported 13-18 ms
-after its commit call, far short of the work it was given.
+duration limit anywhere near the affected work: a submission that faults is
+reported within about 20 ms of its commit call, far short of the work it was
+given, while renders several times that long complete without error.
 
 The timestamps on a failed commit do not measure execution either. A fault
 carries the placeholder end, which the driver prints as
@@ -702,20 +813,17 @@ wedge a guest for longer than that.
 #### Fragment-stage store work faults the GPU
 
 A render pass whose fragment shader performs enough `device` store work faults.
-A native Metal program in the driver's process renders 8200 loop iterations per
-fragment over 256x256 in 84 ms, and in 178 ms when each invocation stores to a
-distinct address, without error. Removing the store alone takes the same shader
-from 84 ms to 1 ms and it never faults, and spreading the stores over distinct
-addresses moves the fault threshold from 12288 to 16384 iterations, so what the
-fault tracks is the fragment stage's store work rather than elapsed time. The
-same program runs 32768 iterations on that Mac without faulting.
+A native Metal program in the driver's process that loops over a store in every
+fragment of a 256x256 pass faults at about 12,000 iterations per fragment.
+Without the store the same shader never faults, and spreading the stores over
+distinct addresses raises the threshold even though that variant runs longer,
+so what the fault tracks is the fragment stage's store work rather than elapsed
+time. The same program runs 32768 iterations on that Mac without faulting.
 
-Nothing in the driver removes it. The stores belong to the application, the
-fragment invocation count is the render area, the render pass tile size
-(`tileWidth`/`tileHeight`, whose default for a single 8-bit colour attachment
-is 32x32, with 16x16 the only other size the device accepts) changes nothing on
-the device, and splitting the render area with a scissor helps unreliably.
-Fifteen of the 552 `dEQP-VK.spirv_assembly.type.vec4.i64` cases stand on it -
+Nothing in the driver removes it: the stores and the fragment count belong to
+the application, and neither the render pass tile size (32x32 by default, 16x16
+the only other size the device accepts) nor a scissor-split render area
+reliably moves it. Fifteen of the 552 `dEQP-VK.spirv_assembly.type.vec4.i64` cases stand on it -
 `clamp_frag` and fourteen of the sixteen
 `bit_field_insert_offset{8,16,32,64}_count{8,16,32,64}_frag` - because dEQP has
 every one of 65,536 fragment invocations write every element of the output
@@ -780,22 +888,16 @@ nine times on each of the 2,101 trips of a loop it is told not to unroll, about
 19,000 samples per invocation. The `comp` sibling issues the identical Metal
 shader from a dispatch and never faults.
 
-What it is not. Holding every one of those sample coordinates inside [0,1] in
-the driver leaves the fault exactly where it was, and so do bounds-checking the
-shader's deliberately out-of-range `texelFetch`, replacing its explicit gradient
-with an explicit level, forcing every sampler to point sampling, and forcing
-clamp to edge in place of the test's clamp-to-border sampler. Discarding the
-samples removes the fault; discarding the fetches does not. Nothing out of
-bounds is involved, and the driver has no coordinate to reject.
+Nothing out of bounds is involved: coordinates, fetches, filtering, level
+selection and addressing mode can all be changed without moving the fault, and
+only discarding the samples removes it, so the driver has no coordinate to
+reject.
 
 What it tracks is how much 3D sampling the render stage does. Keeping only the
-first N samples of each trip and discarding the rest moves it: nine and eight
-kill two submissions a run, six is marginal (two, none and one kill over three
-runs), five and below never kill. The same shader over 21 trips is clean, as is
-a `texture3d<int>` or `texture3d<uint>` at nine samples a trip and a
-`texture2d<float>` at six. Serialising the samples into a dependency chain makes
-it much worse -- ten kills a run, and then every 3D-sampling draw in the rig
-faults -- so it is not a limit on requests in flight.
+first N samples of each trip moves it, with about six samples a trip the
+threshold; far fewer trips, an integer 3D texture, or a 2D float texture at the
+same count stay clean. Serialising the samples into a dependency chain makes it
+much worse, so it is not a limit on requests in flight.
 
 Nothing in the driver removes it. The neighbouring
 `dEQP-VK.robustness.robustness2` case uses the same image and the same sampler
@@ -820,44 +922,31 @@ the device starts having single submissions killed, reported as the timeout
 above. `dEQP-VK.pipeline.*.render_to_image.core.{1d_array,2d_array}.huge.layers`
 stands on it: each of those cases renders one layer at a time into a 256-layer
 image, so it records 256 single-layer render passes of 44x23 (or 54x1), one
-draw each, into a single command buffer, which reached Metal as 257
-`MTLCommandBuffer`s in one queue submit while every render encoder had its own.
-Sequential encoders now share one Metal command buffer, and the family has not
-been rerun on the device since. Fraction 05
-lost seven of those cases to six kills. A fourteen-case device rig covering the
-family reproduces it at nought to seven kills a run, and the kill always lands
-on the submission carrying the render passes, never on anything else.
+draw each, into a single command buffer. These observations were made while
+every render encoder reached Metal as its own `MTLCommandBuffer`; the driver
+now records sequential encoders into one. A device rig covering the family
+reproduces it, and the kill always lands on the submission carrying the render
+passes, never on anything else.
 
-What it is not. Not the size of one Metal kick: committing the same command
-buffers in bounded batches changes nothing, and at one command buffer per
-commit a submission carrying a single 44x23 render pass is still killed. Not
-memory: the device's residency set holds ten or eleven allocations totalling
-1-5 MiB and Metal reports 22-29 MiB allocated, against a 2.8 GiB working-set
-budget. Not API misuse: with Metal API validation enabled the run reports no
-validation error and the kills continue. Not the pipeline construction type:
-`monolithic`, `pipeline_library` and `fast_linked_library` of the same case
-produce byte-identical work, 256 passes and 257 command buffers each, and which
-of them fails changes from run to run. Not fragment or tile work:
-`cube_array.huge.layers` does the most of both, 252 passes of 35x35, and has
-never failed in any run. Not the per-device geometry heap: raising it to
-256 MiB leaves the kills where they were.
-
-What it tracks is how much the process has already done. The four failing
+It is not the size of one Metal kick, memory, API misuse, the pipeline
+construction type, fragment or tile work, or the per-device geometry heap: each
+was measured or varied without explaining the kills. What it tracks is how much
+the process has already done. The four failing
 `2d_array` cases, run as the entire workload, pass in four consecutive runs
 with no kill at all; the same four fail whenever the five neighbouring cases
 have run before them in the same process, and the first run after the device
 has been idle is usually clean as well. Which submission the kill lands on is
-random -- the 65th and the 190th of 257 in one arm. Nothing in the driver has
+random. Nothing in the driver has
 been found that removes it, and the whole family is clean on an Apple silicon
 Mac.
 
 #### Memory budget
 
-iOS ends the app at a physical footprint of about 3007 MB on this device. With
-a 1536 MiB guest the host side plateaus near 2673 MB, and the
-`render_to_image` cases with huge attachments add a transient of about 650 MB
-of `IOAccelerator` memory for a fraction of a second, so guest RAM cannot be
-raised to make room for a workload. Two consequences follow.
+iOS ends the app at a physical footprint of about 3 GB on this device. A
+1536 MiB guest already leaves the host side within a few hundred megabytes of
+that before the brief `IOAccelerator` transient of `render_to_image` cases with
+huge attachments, so guest RAM cannot be raised to make room for a workload.
+Two consequences follow.
 
 The per-device geometry heap is 16 MiB rather than a fixed 128 MiB, because a
 Venus host pays it once per guest `VkDevice`. The heaviest command buffer in the
@@ -871,20 +960,17 @@ shader-side `printf` and `abort()` that reaches neither Metal nor the host log,
 so a smaller size is validated only by a conformance run.
 
 An uninterrupted released mustpass fraction runs about 200,000 cases in one
-`deqp-vk` process, and a 1536 MiB guest cannot hold every group in that traversal.
-The cost is in two parts, both measured on
-macOS at the same guest profile. A baseline that grows: the process holds 134 MiB
-before its first case, from the released case hierarchy the enumeration builds,
-reaches about 560 MiB within the first 15,000 cases, and about 1.1 GB by 88
-percent of the fraction. And a per-group transient on top of it: fraction 00's
-380 `dEQP-VK.reconvergence` cases all pass in a fresh process, but their peak
-resident size is 665 MiB, because those tests simulate each subgroup's control
-flow on the CPU. The guest reaper takes `deqp-vk` where the two meet. Raising
+`deqp-vk` process, and a 1536 MiB guest cannot hold every group in that
+traversal. The cost has two parts: a baseline that grows through the fraction,
+from the released case hierarchy the enumeration builds to about 1 GB near its
+end, and per-group transients on top of it, such as `dEQP-VK.reconvergence`,
+whose tests simulate each subgroup's control flow on the CPU. The guest reaper
+takes `deqp-vk` where the two meet. Raising
 guest RAM is not available, and a 1024 MiB guest is killed earlier still.
 
 Two further consequences. The already-transported `results.qpa` stays in the
-guest's `/run` tmpfs, which is guest RAM: 271 MiB, 18 percent of the guest, by
-the time the reaper fires. And a killed `deqp-vk` takes the whole service cgroup
+guest's `/run` tmpfs, which is guest RAM, and holds nearly a fifth of the guest
+by the time the reaper fires. And a killed `deqp-vk` takes the whole service cgroup
 with it, so the guest prints no further progress line and sends no artifact
 frames: the run goes silent rather than reporting a stall, and its verdicts
 survive only as the result frames already on the console. The device lane ends a
@@ -905,7 +991,7 @@ list is `DEVICE_EXCLUSIONS` in `tests/integration/gpu/run_vk_cts.py`.
 Native graphics allocations are separate from the configured guest RAM limit.
 KosmicKrisp releases obsolete pipeline resources with their last Vulkan owner
 and a submission's recording storage after GPU completion; see the
-[dependency ownership contracts](../dependencies/README.md).
+[KosmicKrisp driver contracts](#kosmickrisp-driver-contracts).
 
 Budget campaign concurrency from host physical footprint and the
 `IOAccelerator (graphics)` row of `vmmap -summary`, rather than process RSS,
@@ -919,12 +1005,11 @@ pair for the GPU binaries pipelines link. KosmicKrisp's `MTL4Compiler`, the
 display's pipelines and the terminal's all read and extend the same files, and
 nothing in them says which entries came from a guest shader. The process maps
 the data files, but the first compile reads the whole index into memory, so
-footprint grows with the index whatever the data files hold: about 3.5 MiB per
-MB of index on the iPad mini 6 and 5 MiB per MB on an M1 Ultra. A pipeline
-built from a precompiled metallib skips only the `libraries` index. Metal
-stops each data file near 1.1 GB and evicts from there, so a full cache holds
-about 2.2 GB behind a 22 to 24 MB index, which costs 80 to 115 MiB; GPU
-conformance campaigns fill it. Metal has no call that clears, bounds, splits
+footprint grows with the index, by several MiB per MB of index, whatever the
+data files hold. A pipeline built from a precompiled metallib skips only the
+`libraries` index. Metal stops each data file near 1.1 GB and evicts from
+there, so a full cache holds about 2.2 GB behind an index of about 23 MB that
+costs around 100 MiB; GPU conformance campaigns fill it. Metal has no call that clears, bounds, splits
 or bypasses the cache: `MTL4CompilerDescriptor` carries a label and a pipeline
 data-set serializer, and binary archives add lookups without taking a
 pipeline off the cache.
@@ -938,10 +1023,11 @@ boot, benchmark or page reuses its entries and adds none. A desktop boot,
 glmark2 over Virgl and over guest Zink on Venus, WebGL Aquarium in Chromium
 and a Steam Big Picture boot together leave about 0.12 MB of index and 30 MB of
 data. Each entry's index record has the same size on the iPad and the Mac, so
-the same workload leaves the same index on both. At the limit the index costs
-about 3.5 MiB on the iPad. Removing a full cache takes under 0.1 s there;
-the next boot then spends about 2 s compiling the host's own pipelines before
-the guest's first frame, and each workload compiles its shaders once more.
+the same workload leaves the same index on both. At the limit the index costs a
+few MiB; the measured costs are beside `indexLimit` in
+`Kernarium/Kernarium/MetalShaderCache.swift`. Removing a full cache is quick,
+and the next boot then compiles the host's own pipelines before the guest's
+first frame, and each workload compiles its shaders once more.
 
 The cache is `<bundle identifier>/com.apple.metal` in the Darwin user cache
 directory: the container's `Library/Caches` on a device, where

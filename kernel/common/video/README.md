@@ -11,7 +11,7 @@ Amend the owning video topic and regenerate each line's series. Ordinary checks
 use `sync-protocol.py --kernel-source PATH --verify`. Never edit generated patch output.
 
 The protocol supports guest-page resources, separate command and event queues,
-H.264/HEVC/JPEG coded input, and NV12/YUV420/P010 or packed BGRA8888 output.
+H.264/HEVC/JPEG/VP9 coded input, and NV12/YUV420/P010 or packed BGRA8888 output.
 The packed format needs no driver change: the driver already maps it to
 `V4L2_PIX_FMT_ABGR32`, and plane count, stride, and plane size come from the
 host's negotiated parameters. Resource flags are bit

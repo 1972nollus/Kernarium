@@ -74,7 +74,7 @@ RGB/RGBA order alternates across three warmups and nine retained samples.
 `--samples`, `--warmup`, and `--max-elements` allow bounded manual subsets; see
 `--help`. The default `vulkan-queries` mode preserves raw dispatch timestamp
 intervals; `metal-whole-submit` instead uses the provider's opt-in
-[`MESA_KK_DEBUG=submit_timing` callback contract](../../docs/testing.md) and emits no
+[`MESA_KK_DEBUG=submit_timing` callback contract](#native-whole-submit-timing) and emits no
 Vulkan query commands. Its interval covers the entire GPU submission, including
 barriers and output stores, not just the texel loads. These timing domains are
 explicitly labeled and must not be compared as equivalent intervals.
@@ -100,9 +100,7 @@ or callback-validation error. No speed threshold determines success.
 
 These repeated-resource measurements are not physical memory bandwidth,
 cold-cache results, or uninstrumented CPU costs. Record host/power/compiler/
-provider identity and exclude other GPU work when comparing results. Native
-line and geometry workload modes use the same callback collector; their
-measurement contract is also documented in [the testing guide](../../docs/testing.md).
+provider identity and exclude other GPU work when comparing results.
 
 `--correctness-only` reuses the same shader, formats, aligned offsets, exact
 component checks, and guards, with one zero-active control and one full-data
@@ -152,6 +150,26 @@ explicit offline compiler (append `--verify` for a read-only freshness check):
 ```sh
 python3 -B tests/perf/generate_rgb32_texel.py --glslc /path/to/glslc
 ```
+
+## Native whole-submit timing
+
+`MESA_KK_DEBUG=submit_timing` enables optional raw Metal commit-feedback
+diagnostics on stderr: an opaque device identity, GPU start and end host
+seconds, and the commit error code for the whole committed command-buffer
+batch. It is not a Vulkan timestamp-query result, adds no GPU commands, and is
+absent from the disabled path.
+
+The KosmicKrisp line and geometry unit executables accept the opt-in arguments
+`performance` (render-only Vulkan queries) and `performance-whole-submit`
+(native Metal commit feedback through `MESA_KK_DEBUG=submit_timing`), and the
+RGB32 texel bench uses the same collector through `--timing
+metal-whole-submit`. Registered CTests never run these modes. The collector
+permits one outstanding submission and requires exactly one finite, ordered,
+wall-bounded callback per draw; missing, malformed, duplicate, late, or
+unmatched records fail closed rather than being filtered. Whole-submit
+intervals include every clear, barrier, and copy in the Metal commit and are
+not comparable with render-only query intervals. No speed ratio is a
+correctness threshold.
 
 ## Steam appliance boot time
 
@@ -293,6 +311,16 @@ layout, so every target that includes the gadget headers takes it from the
 build. The unit tests that run the executor pass in such a build; the structure
 tests fail there, because they pin the default stream, which has no counter
 entries.
+
+## Host sampling of the x86-64 gadget engine
+
+Host sampling profiles the x86-64 gadget engine without instrumenting it. The
+bank publishes one symbol per gadget, so a sampled host PC attributes straight
+to the gadget that owned it; assembler-local labels fold into their routine,
+and self time is a frame's count less its children's. Threaded dispatch leaves
+no usable frame chain, because `x29` holds the retired-instruction count rather
+than a frame pointer, but the deepest frame is the real PC, which is all a
+gadget profile needs. A 5 ms interval leaves the scored rate unchanged.
 
 ## Guest code sampling
 

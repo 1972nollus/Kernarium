@@ -44,92 +44,25 @@ autoconfiguration. Recovery independently assigns its fixed local endpoint for
 the host-forwarded ADB contract; external recovery routing is not a product
 requirement. This Android product has no 4 KiB profile.
 
-The local series provides the durable Android-specific behavior:
+The shared series supplies the Darwin carrier, memory, device, and lifecycle
+behaviour this line runs on, with the same contracts as the mainline line:
+cooperative progress on persistent vCPU carriers, on-demand guest RAM with
+page-cache trim, anonymous host memory for guest RAM, NAPI user networking,
+batched UBD discard, initrds from host file ranges, the Kernarium battery,
+system suspend through the management console, host-fault ownership, the
+uaccess and fault-replay changes, data-alignment fault delivery, and the
+vhost-user shared-memory aperture. [`../common/README.md`](../common/README.md)
+and the [mainline README](../mainline-6.18/README.md) describe them.
 
-- cooperative timer, reschedule, IPI, irq-work, and RCU progress on persistent
-  Darwin vCPU carriers;
-- direct touchscreen classification compatible with Android input;
-- NAPI receive processing for sustained user networking;
-- guest RAM committed on demand and released through free-page reporting, with
-  inactive page cache trimmed above a floor, and a Virtio balloon that does not
-  wait on a broken device at power-off, as in the mainline line;
-- virtually mapped 128 KiB task stacks and the common RAM-scaled auxiliary
-  address window;
-- 128 MiB batched discard for directly attached UBD images without modifying
-  the upstream UML COW implementation;
-- validated initramfs ranges inside the static GPT;
-- a Kernarium Virtio battery power-supply driver for host percentage and
-  charging-state passthrough;
-- system suspend and wake through the management console, including secondary
-  vCPU hotplug across an Apple host background interval; and
-- anonymous host VM for Android physical memory.
-
-The management console socket is `/tmp/uml-<umid>-mconsole`, or
-`<dir>/mconsole` when the host passes `uml_dir=<dir>`, a directory owned by
-that machine alone; a path that does not fit Darwin's 104-byte `sun_path` is
-refused, never truncated.
-
-Pure touchscreen input is specific to this Android line because Android and
-recovery must not enter pointer mode. The mainline kernel continues to expose
-desktop mouse buttons, hover, and wheel input for non-Android guests.
-
-Physical iOS wires only the guest RAM the guest has committed, and a Virtio
-balloon takes the host GPU's memory out of it. Normal image descriptors remain
-file-backed.
-
-A pagefault-disabled uaccess never reports mmap-lock contention as a fault.
-`mmap_read_trylock()` refuses to barge past a queued writer while the faulting
-retry of the same task still steals the lock, so answering the try with a fault
-made `futex_wait_setup()` alternate a failing atomic read with a succeeding
-faulting one and never yield the CPU that writer needs. The contended atomic
-walk runs under RCU, which `MMU_GATHER_RCU_TABLE_FREE` keeps safe, and the
-page-table lock still samples the entry. This is the same source change the
-mainline line carries, and it is independent of the cooperative-checkpoint safe
-point this line already has.
-
-A synchronous host fault is interpreted only by its owner. Signal dispositions
-are process-wide, so the emulator's device and renderer threads share UML's
-`SIGSEGV` and `SIGBUS` handlers even though they own no Linux task; such a fault
-now leaves the guest path, is reported with its real host thread and literal
-addresses, and terminates under the default host disposition. A vCPU
-carrier's fault that a nofault accessor recovers is not reported at all. This
-too is the same source change the mainline line carries.
-
-A guest data-alignment exception is not a translation fault and cannot be
-repaired by mapping a page. It crosses the versioned bridge as its own event
-and reaches the faulting task as `SIGBUS` with `BUS_ADRALN` at the effective
-data address, so a guest handler can repair or emulate the access before
-`sigreturn`. This is again the same source change the mainline line carries.
-
-An idle virtual CPU never blocks while one of its IPI vectors is pending: the
-idle wait reads the pending mask after publishing the idle state and polls
-instead of blocking, because a bit that is already set has no wake edge behind
-it and a CPU that blocked on one would absorb every later remote vector.
-`schedule()` is a cooperative polling boundary when its caller stays runnable,
-so a task that yields in a retry loop, as `tty_open()` does during the last
-close of a terminal, no longer stops the timer and the queued wakeups of its
-CPU. Both are the same source changes the mainline line carries.
-
-Threads of one process replay their mappings to the host side by side: a user
-`mm` has no replay lock, the host's invalidation epoch rejects a batch that
-sampled a PTE before Linux changed it, a replay is published in bounded batches
-with a scheduling checkpoint between them, user ranges are exact pages, and a
-fault replays ahead of Linux only when the PTE already grants the access. This
-is the same source change the mainline line carries; its
-[contract](../mainline-6.18/README.md) is described there.
-
-The standardized vhost-user shared-memory-region transport the mainline line
-adds for host-visible Virtio-GPU blobs is carried here as well. The Android
-product's Vulkan HAL is Mesa's Venus driver, which refuses to initialize
-without `VIRTGPU_PARAM_HOST_VISIBLE` or guest VRAM, so this line negotiates
-`VHOST_USER_PROTOCOL_F_SHMEM_MAP` and reserves the same guarded guest-physical
-aperture under the same mapping-capacity policy as the mainline topic.
-
-A buffer a Virtio-GPU file imports before it has a context is attached to the
-context when the context is created. Android's gralloc mapper imports a buffer
-and then locks it for reading, so without that the host refused the lock's
-transfer and every screenshot came back empty. This is the same source change
-the mainline line carries; its contract is described there.
+Two of them matter to Android for reasons of its own. Pure touchscreen input is
+specific to this line because Android and recovery must not enter pointer mode;
+the mainline kernel keeps desktop mouse buttons, hover, and wheel input for
+non-Android guests. The aperture is required here because the Android Vulkan
+HAL is Mesa's Venus driver, which refuses to initialize without
+`VIRTGPU_PARAM_HOST_VISIBLE` or guest VRAM. The drm-attach port in the overlay
+exists because Android's gralloc mapper imports a buffer and then locks it for
+reading, so a buffer imported before its context must be attached when the
+context is created.
 
 ## Build and artifact boundary
 
