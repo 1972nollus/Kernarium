@@ -53,3 +53,28 @@ uml_add_tooling_test(
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_runtime_dependencies.sh
     LABELS dependency
     TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME dependency-kosmickrisp-spirv
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_kosmickrisp_spirv.py
+    LABELS dependency gpu
+    TIMEOUT 60)
+
+# The full comparison ships a checkout of the committed Mesa series to the
+# named Debian build host, rebuilds mesa_clc there and compiles both blobs
+# again, so it registers only when that host is named.
+if(UML_KOSMICKRISP_SPIRV_BUILD_HOST)
+    if(NOT UML_KOSMICKRISP_SPIRV_MESA_SOURCE)
+        set(UML_KOSMICKRISP_SPIRV_MESA_SOURCE
+            "${PROJECT_SOURCE_DIR}/external/sources/mesa")
+    endif()
+    uml_add_tooling_test(
+        NAME dependency-kosmickrisp-spirv-regeneration
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/dependencies/kosmickrisp-spirv/generate.py
+            verify --source ${UML_KOSMICKRISP_SPIRV_MESA_SOURCE}
+            --host ${UML_KOSMICKRISP_SPIRV_BUILD_HOST}
+        LABELS dependency gpu
+        TIMEOUT 3600)
+endif()

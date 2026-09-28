@@ -3,14 +3,24 @@ From: Yi Xie <imxieyi@users.noreply.github.com>
 Date: Fri, 4 Sep 2026 17:14:49 +0900
 Subject: [PATCH] kosmickrisp: embed LLVM-free build shaders
 
+The Apple product build keeps LLVM out of its production dependency
+closure, so it cannot run mesa_clc. Carry libkk.spv and libpoly.spv as
+prebuilt mesa_clc output and build the device library from them instead of
+from the OpenCL sources; vtn_bindgen2 still builds for KosmicKrisp, which
+turns the SPIR-V into the NIR the driver links.
+
+The blobs are the output of the maintaining project's
+dependencies/kosmickrisp-spirv/generate.py for the sources at the head of
+the series, not at this topic, so a replay of the topics between this one
+and the last input edit builds kernels whose source it does not have yet.
 ---
  meson.build                       |   1 -
  src/compiler/spirv/meson.build    |   1 +
  src/kosmickrisp/libkk/libkk.spv   | Bin 0 -> 380208 bytes
- src/kosmickrisp/libkk/meson.build |  23 +++++++----------------
+ src/kosmickrisp/libkk/meson.build |  27 +++++++++++----------------
  src/poly/cl/libpoly.spv           | Bin 0 -> 67100 bytes
  src/poly/cl/meson.build           |  19 ++++---------------
- 6 files changed, 12 insertions(+), 32 deletions(-)
+ 6 files changed, 16 insertions(+), 32 deletions(-)
  create mode 100644 src/kosmickrisp/libkk/libkk.spv
  create mode 100644 src/poly/cl/libpoly.spv
 
@@ -2377,10 +2387,10 @@ literal 0
 HcmV?d00001
 
 diff --git a/src/kosmickrisp/libkk/meson.build b/src/kosmickrisp/libkk/meson.build
-index 04e175252552d8753677f09843d388450445e4de..ccc7dc76e4f0f507337acf32e7574d39fb631a90 100644
+index 04e175252552d8753677f09843d388450445e4de..236af5081351c89aa0748ac61dc69dbe092ccf8c 100644
 --- a/src/kosmickrisp/libkk/meson.build
 +++ b/src/kosmickrisp/libkk/meson.build
-@@ -10,22 +10,13 @@ libkk_shader_files = files(
+@@ -10,22 +10,17 @@ libkk_shader_files = files(
    'kk_tessellator.cl',
  )
  
@@ -2400,12 +2410,16 @@ index 04e175252552d8753677f09843d388450445e4de..ccc7dc76e4f0f507337acf32e7574d39
 -    ],
 -  depfile : 'libkk_shaders.h.d',
 -)
-+# The Apple product build deliberately excludes LLVM from its production
-+# dependency closure, so this SPIR-V is a prebuilt mesa_clc output rather than
-+# a build step.  It must match libkk_shader_files at the head of the maintained
-+# series, not at the topic that adds it: a later topic that edits one of those
-+# sources changes nothing until this blob is regenerated and amended, and no
-+# build step compares the two.
++# The Apple product build keeps LLVM out of its production dependency closure,
++# so libkk.spv is prebuilt mesa_clc output rather than a build step.  The
++# maintaining project's dependencies/kosmickrisp-spirv/generate.py produces it
++# from libkk_shader_files at the head of the maintained series: it builds
++# mesa_clc from that tree on the Debian toolchain its toolchain.tsv pins and
++# compiles with the include directories of the rule this replaced and the
++# release cl_args, whose NDEBUG compiles the shader assert()s out.  A later
++# topic that edits an input changes nothing until the blob is regenerated with
++# that script and amended into this topic; the project's tooling suite fails
++# until then.
 +libkk_spv = files('libkk.spv')
  
  libkk = custom_target(
@@ -2860,7 +2874,7 @@ literal 0
 HcmV?d00001
 
 diff --git a/src/poly/cl/meson.build b/src/poly/cl/meson.build
-index 286dcf1c90e25046de23f180a41a162225aa1f61..021067b2d9f8bbdce9e214513c7d81b9d139cc16 100644
+index 286dcf1c90e25046de23f180a41a162225aa1f61..d948b53154730495112f0d5123048cdf0af688d6 100644
 --- a/src/poly/cl/meson.build
 +++ b/src/poly/cl/meson.build
 @@ -7,21 +7,10 @@ libpoly_shader_files = files(
@@ -2882,9 +2896,9 @@ index 286dcf1c90e25046de23f180a41a162225aa1f61..021067b2d9f8bbdce9e214513c7d81b9
 -  depends : [],
 -  depfile : 'libpoly_shaders.h.d',
 -)
-+# Keep the runtime dependency closure free of LLVM: this SPIR-V is a prebuilt
-+# mesa_clc output that must match libpoly_shader_files at the head of the
-+# maintained series, under the same contract as libkk.spv.
++# Keep the runtime dependency closure free of LLVM: libpoly.spv is prebuilt
++# mesa_clc output of libpoly_shader_files, generated and checked together with
++# libkk.spv under the contract in src/kosmickrisp/libkk/meson.build.
 +libpoly_shaders_spv = files('libpoly.spv')
  
  libpoly_shaders = custom_target(
