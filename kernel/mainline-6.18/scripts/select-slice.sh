@@ -21,12 +21,6 @@ uml_kernel_select_slice()
 		return 1
 	}
 	UML_KERNEL_COMMON_PATCH_BRANCH=${UML_KERNEL_SERIES##*:}
-	UML_KERNEL_COMMON_RELEASE_VERSION=$UML_KERNEL_RELEASE_VERSION
-	UML_KERNEL_COMMON_UPSTREAM_REPOSITORY=$UML_KERNEL_UPSTREAM_REPOSITORY
-	UML_KERNEL_COMMON_UPSTREAM_BRANCH=$UML_KERNEL_UPSTREAM_BRANCH
-	UML_KERNEL_COMMON_UPSTREAM_COMMIT=$UML_KERNEL_UPSTREAM_COMMIT
-	UML_KERNEL_COMMON_UPSTREAM_TREE=$UML_KERNEL_UPSTREAM_TREE
-	UML_KERNEL_COMMON_BASE_REF=$UML_KERNEL_BASE_REF
 	UML_KERNEL_COMMON_METADATA_PATH=$uml_select_common_metadata
 
 	case "$uml_select_requested" in
@@ -54,17 +48,11 @@ uml_kernel_select_slice()
 			printf '%s\n' "x86_64 metadata has the wrong slice identity" >&2
 			return 1
 		}
-		[ "$UML_KERNEL_RELEASE_VERSION" = "$UML_KERNEL_COMMON_RELEASE_VERSION" ] &&
-		[ "$UML_KERNEL_UPSTREAM_REPOSITORY" = "$UML_KERNEL_COMMON_UPSTREAM_REPOSITORY" ] &&
-		[ "$UML_KERNEL_UPSTREAM_BRANCH" = "$UML_KERNEL_COMMON_UPSTREAM_BRANCH" ] &&
-		[ "$UML_KERNEL_UPSTREAM_COMMIT" = "$UML_KERNEL_COMMON_UPSTREAM_COMMIT" ] &&
-		[ "$UML_KERNEL_UPSTREAM_TREE" = "$UML_KERNEL_COMMON_UPSTREAM_TREE" ] &&
-		[ "$UML_KERNEL_BASE_REF" = "$UML_KERNEL_COMMON_BASE_REF" ] || {
-			printf '%s\n' "x86_64 metadata does not inherit the common kernel identity" >&2
-			return 1
-		}
-		# The overlay starts where the arm64 series end. Its own final tree
-		# covers every series below it, so a stale overlay fails verification.
+		# The overlay starts where the arm64 series end, on their upstream
+		# base. Its metadata names no upstream identity (kernel_series.py
+		# rejects one that does), so the common values sourced above stay in
+		# effect. Its own final tree covers every series below it, so a stale
+		# overlay fails verification.
 		UML_KERNEL_PARENT_BRANCH=$UML_KERNEL_COMMON_PATCH_BRANCH
 		;;
 	*)
