@@ -215,9 +215,18 @@ extern "C" void uml_x86_64_gadget_publish_code_write(
 	 * code page other than the one it last published. Mapping mutation is
 	 * excluded by the execution gate until this block returns. Every
 	 * executable store selectively cools overlapping cached blocks.
+	 *
+	 * A store whose range reaches a second page -- a masked store whose
+	 * base is on one page and whose selected elements are on the next --
+	 * may owe that page the record, so it asks each page, as the
+	 * cross-page helpers do.
 	 */
 	if (context == nullptr || context->memory == nullptr || size == 0)
 		return;
+	if (((address ^ (address + size - 1U)) & page_mask) != 0) {
+		publish_code_write(*context, address, size);
+		return;
+	}
 	invalidate_cached_code(*context, address, size);
 	if (context->write_code != write_code_published)
 		(void)publish_code_page(*context, address);

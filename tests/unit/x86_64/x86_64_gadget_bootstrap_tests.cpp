@@ -870,6 +870,68 @@ read_moving_code_sequences(void *opaque) noexcept
 		"rebuilt translation did not execute the rewritten bytes");
 }
 
+/* A masked store publishes once for its whole range, from its base. When that
+ * base is on one page and a selected element lies wholly on the next, the
+ * record the store owes is the next page's: another executor holding a
+ * translation there must see its stamp move and rebuild. */
+[[nodiscard]] bool a_masked_store_publishes_the_page_its_elements_reach()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	/* VPMASKMOVD [RAX], XMM1, XMM0; SYSCALL. */
+	memory.load(0, {0xc4, 0xe2, 0x71, 0x8e, 0x00, 0x0f, 0x05});
+	memory.load(0x2000, {0xb8, 0x01, 0x00, 0x00, 0x00, 0x0f, 0x05});
+	memory.set_every_page_executable(true);
+	memory.set_code_stamps_available(true);
+	TestCodeSequences sequences;
+	memory.set_code_changes(&sequences.code_changes);
+	gadgets::Executor writer;
+	writer.prepare(memory, 29, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	gadgets::Executor reader;
+	reader.prepare(memory, 29, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	const auto cached = reader.select_program(
+		memory, 0x2000, ExecutionMode::long64);
+	const auto block = writer.select_program(
+		memory, 0, ExecutionMode::long64);
+	if (!expect(cached.program != nullptr && block.program != nullptr,
+		"masked-store publication setup did not cache both blocks"))
+		return false;
+
+	/* Only element 2, the dword at 0x2000, is selected; the base and the
+	 * two elements before it are on the page below. */
+	CpuState cpu{};
+	cpu.gpr(Register::rax) = 0x1ff8;
+	const std::array<std::uint8_t, 4> replacement{0xb8, 0x02, 0x00, 0x00};
+	for (std::size_t index = 0; index < replacement.size(); ++index)
+		cpu.vectors[0][8 + index] = std::byte{replacement[index]};
+	cpu.vectors[1][11] = std::byte{0x80};
+	memory.load(0x1ff8, {0x5a});
+	const auto result = gadgets::execute(
+		*block.program, cpu, memory, writer, 64);
+	if (!expect(result.event == uml::cpu::EngineEvent::system_call,
+			"masked-store writer did not run") ||
+		!expect(memory.byte(0x2001) == 0x02 && memory.byte(0x1ff8) == 0x5a,
+			"masked store did not write only its selected element"))
+		return false;
+
+	reader.prepare(memory, 29, sequences.mapping_changes,
+		sequences.code_changes, &sequences, read_test_code_sequences);
+	const auto again = reader.select_program(
+		memory, 0x2000, ExecutionMode::long64);
+	if (!expect(again.program != nullptr && !again.cache_hit,
+		"a masked store left another executor's translation current"))
+		return false;
+	CpuState other{};
+	other.rip = 0x2000;
+	const auto ran = gadgets::execute(
+		*again.program, other, memory, reader, 64);
+	return expect(ran.event == uml::cpu::EngineEvent::system_call &&
+		other.gpr(Register::rax) == 2,
+		"rebuilt translation did not execute the masked store's bytes");
+}
+
 /* The same publisher must not be able to keep a program whose own bytes have
  * been rewritten. */
 [[nodiscard]] bool a_moving_code_sequence_rebuilds_changed_programs()
@@ -6736,6 +6798,7 @@ int main()
 		native_executable_stores_publish_every_code_page() &&
 		a_settled_link_owes_its_page_a_fresh_publication() &&
 		an_unpublished_code_page_strands_another_translation() &&
+		a_masked_store_publishes_the_page_its_elements_reach() &&
 		a_moving_code_sequence_rebuilds_changed_programs() &&
 		a_recorded_code_stamp_is_no_newer_than_its_source() &&
 		a_write_racing_a_first_translation_does_not_survive() &&
