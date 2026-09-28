@@ -66,8 +66,13 @@ int darwin_uml_static_vm_activate(unsigned long generation);
 int darwin_uml_static_vm_destroy(unsigned long generation);
 int darwin_uml_static_vm_mapping_matches(unsigned long address, int fd,
 					   unsigned long long offset);
-int darwin_uml_static_vm_rebind(unsigned long address, int fd,
-				 unsigned long long offset);
+/* Unmaps the page at `address` when its mapping names other backing than
+ * `fd` at `offset`; an absent or equal mapping is left as it is. The caller's
+ * backing is never installed: which of the two is stale is unknown, and the
+ * next access faults so a page-table walker replays the current PTE.
+ */
+int darwin_uml_static_vm_discard_if_stale(unsigned long address, int fd,
+					  unsigned long long offset);
 int darwin_uml_static_vm_copy_from_buffer(unsigned long address,
 					   const void *buffer,
 					   unsigned long length);
@@ -105,8 +110,6 @@ int darwin_uml_static_vm_store_allocation_tag(unsigned long generation,
 					       unsigned long address,
 					       uint8_t tag);
 uint64_t darwin_uml_static_vm_changes(unsigned long generation);
-struct darwin_uml_static_sequences darwin_uml_static_vm_sequences(
-	unsigned long generation);
 /* Copies mapping ranges changed after `sequence` and returns their count.
  * A negative result means the caller must invalidate its complete TLB.  The
  * returned current_sequence is an atomic snapshot taken with the ranges.
@@ -115,9 +118,6 @@ int darwin_uml_static_vm_mapping_changes(
 	unsigned long generation, uint64_t sequence,
 	struct darwin_uml_static_mapping_change *changes, size_t capacity,
 	uint64_t *current_sequence);
-int darwin_uml_static_vm_execution_begin(unsigned long generation,
-					 unsigned long guest_pc);
-int darwin_uml_static_vm_execution_end(unsigned long generation);
 /* A cached execution context keeps the generation alive and avoids resolving
  * thread-local address-space state at every translated-block boundary. */
 void *darwin_uml_static_vm_execution_context_create(unsigned long generation);
@@ -127,7 +127,6 @@ int darwin_uml_static_vm_execution_context_begin(void *context,
 int darwin_uml_static_vm_execution_context_end(void *context);
 struct darwin_uml_static_sequences darwin_uml_static_vm_execution_context_sequences(
 	void *context);
-uint64_t darwin_uml_static_vm_code_changes(unsigned long generation);
 /* Copies the guest ranges whose code changed after `sequence` and returns
  * their count.  A negative result means the caller must retire every
  * translation it holds for the address space.

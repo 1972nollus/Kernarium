@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "guest_console.hpp"
+#include "ubd_path.hpp"
 
 namespace uml::emulator {
 
@@ -181,14 +182,13 @@ std::size_t configured_guest_memory_bytes(
 }
 
 EmulatorOptions prepare_emulator_options(
-	int argc, const char *const argv[], std::string_view rootfs,
-	bool default_user_network)
+	int argc, const char *const argv[], std::string_view rootfs)
 {
 	EmulatorOptions prepared;
-	/* Policy can append at most eleven kernel arguments. Keep the final argc
+	/* Policy can append at most nine kernel arguments. Keep the final argc
 	 * representable by the fixed-width kernel entry ABI before allocating or
 	 * inspecting a caller-supplied vector. */
-	constexpr int maximum_appended_arguments = 11;
+	constexpr int maximum_appended_arguments = 9;
 	if (argc < 0 ||
 	    argc > std::numeric_limits<int>::max() - maximum_appended_arguments ||
 	    (argc != 0 && argv == nullptr)) {
@@ -272,7 +272,7 @@ EmulatorOptions prepare_emulator_options(
 	// host-file lock so parallel guests can share the image; EROFS supplies the
 	// read-only filesystem contract.
 	if (!has_prefix(prepared.arguments, "ubd0")) {
-		if (rootfs.empty()) {
+		if (!::uml::block::usable_ubd_path(rootfs)) {
 			prepared.valid = false;
 			return prepared;
 		}
@@ -282,8 +282,6 @@ EmulatorOptions prepare_emulator_options(
 		prepared.arguments.emplace_back("root=/dev/ubda");
 	if (!has_prefix(prepared.arguments, "rootfstype="))
 		prepared.arguments.emplace_back("rootfstype=erofs");
-	if (!has_prefix(prepared.arguments, "init="))
-		prepared.arguments.emplace_back("init=/bin/sh");
 	if (!has_prefix(prepared.arguments, "console=")) {
 		prepared.arguments.emplace_back("console=tty0");
 		prepared.arguments.emplace_back("console=ttyS0");
@@ -297,11 +295,6 @@ EmulatorOptions prepare_emulator_options(
 		if (!has_prefix(prepared.arguments, name))
 			prepared.arguments.push_back(std::move(argument));
 	}
-	// Automatic kernel DHCP is a convenience of the unified rootfs path.
-	// Rootfs-less, disk-composed guests own their network configuration.
-	if (default_user_network && !rootfs.empty() &&
-	    !has_prefix(prepared.arguments, "ip="))
-		prepared.arguments.emplace_back("ip=dhcp");
 #if DARWIN_UML_X86_64_USERSPACE_ONLY
 	/* The compatibility slice does not support object-cgroup charging of
 	 * kernel allocations. Keep ordinary userspace memory accounting enabled,

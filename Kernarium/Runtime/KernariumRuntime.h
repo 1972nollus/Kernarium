@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNARIUM_RUNTIME_API_VERSION 8U
+#define KERNARIUM_RUNTIME_API_VERSION 9U
 
 #if defined(__OBJC__)
 @class MTKView;
@@ -89,9 +89,6 @@ typedef struct kernarium_runtime_api {
     uint32_t struct_size;
     uint32_t guest_page_size;
     uint32_t guest_flavor;
-    /* Informational values only. The loader does not use them for admission. */
-    const char* kernel_release;
-    const char* framework_name;
     kernarium_runtime_run_function run;
     kernarium_runtime_request_stop_function request_stop;
     kernarium_runtime_sync_function sync;
@@ -111,7 +108,7 @@ typedef struct kernarium_runtime_api {
 #endif
 
 KERNARIUM_RUNTIME_EXPORT
-const kernarium_runtime_api* kernarium_runtime_get_api_v8(void);
+const kernarium_runtime_api* kernarium_runtime_get_api_v9(void);
 
 #ifdef __cplusplus
 }

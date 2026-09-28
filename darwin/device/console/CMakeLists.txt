@@ -13,7 +13,7 @@ target_include_directories(uml_console_device
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
 target_compile_features(uml_console_device PUBLIC cxx_std_20)
 target_compile_options(uml_console_device PRIVATE
-    -Wall -Wextra -Werror -Wno-deprecated-declarations)
+    -Wall -Wextra -Werror)
 target_link_libraries(uml_console_device
     PUBLIC UML::DeviceSocketPaths
     PRIVATE uml_gpu_transport)

@@ -37,6 +37,7 @@ struct GuestSessionTests {
         private let readEnd: Int32
         private let sink: Int32
         private let worker: Thread
+        private let copied: DispatchSemaphore
 
         init(destination: URL) throws {
             FileManager.default.createFile(atPath: destination.path, contents: nil)
@@ -58,7 +59,10 @@ struct GuestSessionTests {
             setvbuf(stdout, nil, _IOLBF, 0)
             let source = readEnd
             let copies = [original, sink]
+            let done = DispatchSemaphore(value: 0)
+            copied = done
             worker = Thread {
+                defer { done.signal() }
                 var buffer = [UInt8](repeating: 0, count: 16384)
                 while true {
                     let received = buffer.withUnsafeMutableBytes {
@@ -86,9 +90,20 @@ struct GuestSessionTests {
             worker.start()
         }
 
+        /// Restores descriptor 1 and returns once every record written
+        /// before it has reached the log.
         func finish() {
             fflush(stdout)
+            // Descriptor 1 held the pipe's last write end, so the copier
+            // reads the end of the pipe once it has copied what came before.
             dup2(original, STDOUT_FILENO)
+            if copied.wait(timeout: .now() + 30) == .timedOut {
+                // Something else still holds a write end. The copier may
+                // still be using these descriptors, so they stay open rather
+                // than be reused under it.
+                print("Kernarium: session log tee did not drain")
+                return
+            }
             close(readEnd)
             close(sink)
             close(original)
@@ -128,9 +143,6 @@ struct GuestSessionTests {
             }
         }
         print("KERNARIUM_SESSION_END|completed=\(completed)")
-        // Give the tee a moment to drain the final records into the container.
-        fflush(stdout)
-        Thread.sleep(forTimeInterval: 1)
         #expect(completed, "the guest session did not finish before its deadline")
     }
 }

@@ -37,8 +37,12 @@ def main() -> int:
     parser.add_argument("--debian-version", required=True)
     arguments = parser.parse_args()
     output = arguments.output.resolve()
+    boot_bases = {
+        "uml-boot-base-aarch64.cpio.gz": "aarch64",
+        "uml-boot-base-x86_64.cpio.gz": "x86_64",
+    }
     artifacts = (
-        "uml-resize-initramfs.cpio.gz",
+        *boot_bases,
         f"alpine-{arguments.alpine_version}-minimal.img",
         "debian-13-minimal.img",
         "debian-13-plasma-wayland.img",
@@ -54,6 +58,8 @@ def main() -> int:
             "size": stat.st_size,
             "allocated_size": stat.st_blocks * 512,
         }
+        if name in boot_bases:
+            entry["architecture"] = boot_bases[name]
         if path.suffix == ".img":
             disk = inspect(path)
             disk.pop("image", None)

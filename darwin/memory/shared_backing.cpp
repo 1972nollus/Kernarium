@@ -604,18 +604,10 @@ int reserve_host_range(void *address, std::size_t length) noexcept
 {
 	if (length == 0)
 		return 0;
-	void *reserved = mmap(address, length, PROT_NONE,
-		MAP_FIXED | MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
-	if (reserved == MAP_FAILED)
+	if (mmap(address, length, PROT_NONE,
+		    MAP_FIXED | MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0) ==
+	    MAP_FAILED)
 		return -1;
-	if (reserved != address) {
-		/* MAP_FIXED cannot answer with a different address. Release only
-		 * what this call created rather than leave a second mapping
-		 * behind, and report the impossible answer as a failure. */
-		(void)munmap(reserved, length);
-		errno = EFAULT;
-		return -1;
-	}
 	return 0;
 }
 

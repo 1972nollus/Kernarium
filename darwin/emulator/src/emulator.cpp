@@ -254,8 +254,7 @@ public:
 		  native_kernel_entry_{config.native_kernel_entry},
 		  runtime_{},
 		  network_{network_provider(config)},
-		  network_context_{network_},
-		  user_network_{config.network != nullptr}
+		  network_context_{network_}
 	{
 		if (config.kernel_image != nullptr && config.kernel_image_size != 0) {
 			const auto image = std::span{
@@ -293,8 +292,7 @@ public:
 		    AddressSpaceAdmissionMode::none)
 			invoke_admission_hook(after_handle_admission_hook);
 #endif
-		auto prepared = prepare_emulator_options(
-			argc, argv, rootfs_, user_network_);
+		auto prepared = prepare_emulator_options(argc, argv, rootfs_);
 		if (!prepared.valid || prepared.arguments.empty())
 			return -UML_EMULATOR_INVALID_ARGUMENT;
 		if (runtime_.set_execution_engine(prepared.engine) != 0)
@@ -353,7 +351,9 @@ public:
 			native_layout = ::uml::runtime::prepare_native_kernel_layout(
 				prepared.guest_memory_bytes);
 			if (!native_layout.valid)
-				return -UML_EMULATOR_INVALID_ARGUMENT;
+				return native_layout.reservation_failed ?
+					-UML_EMULATOR_RUNTIME_ERROR :
+					-UML_EMULATOR_INVALID_ARGUMENT;
 			layout_scope.emplace(native_layout);
 			if (!layout_scope->entered())
 				return -UML_EMULATOR_RUNTIME_ERROR;
@@ -477,7 +477,6 @@ private:
 	::uml::runtime::Context runtime_;
 	uml::network::Provider network_;
 	uml::network::ProviderContext network_context_;
-	bool user_network_{};
 	std::mutex guest_lifecycle_mutex_;
 	::uml::device::GuestSuspension guest_suspension_ {
 		::uml::device::GuestSuspension::none};

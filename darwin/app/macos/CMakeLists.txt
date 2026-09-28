@@ -98,6 +98,22 @@ if(UML_BUILD_CLI)
     uml_add_macos_embedded_kernel_app(
         uml-darwin linux_main.cpp "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
         UML::Emulator uml_emulator)
+    # Linux guests boot the accepted base archive for their userspace
+    # architecture plus a per-run archive the launcher writes; the Android
+    # launcher boots Android's own ramdisk and embeds neither.
+    include("${PROJECT_SOURCE_DIR}/tools/rootfs/boot-ramdisk/BootBase.cmake")
+    if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
+        uml_select_boot_base(x86_64 _uml_boot_base)
+    else()
+        uml_select_boot_base(aarch64 _uml_boot_base)
+    endif()
+    set(_uml_boot_init "${PROJECT_SOURCE_DIR}/tools/rootfs/boot-ramdisk/init")
+    target_link_libraries(uml-darwin PRIVATE UML::BootInitramfs)
+    target_link_options(uml-darwin PRIVATE
+        "LINKER:-sectcreate,__TEXT,__uml_boot_base,${_uml_boot_base}"
+        "LINKER:-sectcreate,__TEXT,__uml_boot_init,${_uml_boot_init}")
+    set_property(TARGET uml-darwin APPEND PROPERTY LINK_DEPENDS
+        "${_uml_boot_base}" "${_uml_boot_init}")
 endif()
 
 if(UML_BUILD_ANDROID17_CLI)

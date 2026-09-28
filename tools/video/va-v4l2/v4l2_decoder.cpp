@@ -128,6 +128,31 @@ std::string findDecoderDevice(std::uint32_t codedFormat)
     return {};
 }
 
+bool capturedPlaneFits(std::uint32_t format, unsigned plane, unsigned width, unsigned height,
+                       std::size_t pitch, std::size_t offset, std::size_t length) noexcept
+{
+    if (offset > length) return false;
+    std::size_t rows = 0;
+    std::size_t rowBytes = 0;
+    if (format == V4L2_PIX_FMT_ABGR32) {
+        if (plane == 0) {
+            rows = height;
+            rowBytes = std::size_t(width) * 4;
+        }
+    } else if (plane == 0) {
+        rows = height;
+        rowBytes = width;
+    } else if (plane == 1) {
+        rows = (std::size_t(height) + 1) / 2;
+        rowBytes = (std::size_t(width) + 1) / 2 * 2;
+    }
+    if (!rows || !rowBytes) return true;
+    const std::size_t room = length - offset;
+    if (rowBytes > room) return false;
+    // The last row starts (rows - 1) pitches in and reads rowBytes from there.
+    return rows == 1 || pitch <= (room - rowBytes) / (rows - 1);
+}
+
 bool queryCodecLimits(const std::string& device, std::uint32_t codedFormat, unsigned& minWidth,
                       unsigned& minHeight, unsigned& maxWidth, unsigned& maxHeight)
 {
@@ -524,12 +549,18 @@ bool V4l2Decoder::collect(DecodedPicture& picture, std::chrono::milliseconds wai
             picture.imported = captureImports_;
             picture.error = (buffer.flags & V4L2_BUF_FLAG_ERROR) != 0;
             for (unsigned plane = 0; plane < picture.planes; ++plane) {
-                picture.plane[plane] = capture_[buffer.index].planes[plane].data
-                    ? capture_[buffer.index].planes[plane].data + planes[plane].data_offset : nullptr;
-                picture.bytes[plane] = planes[plane].bytesused > planes[plane].data_offset
-                    ? planes[plane].bytesused - planes[plane].data_offset
-                    : 0;
                 picture.pitch[plane] = capturePitch_[plane];
+                const Plane& mapped = capture_[buffer.index].planes[plane];
+                if (!mapped.data) continue;
+                // The format's stride and height and the buffer's data offset
+                // come from the device independently of the length it mapped,
+                // so a picture they would read past the mapping fails instead.
+                if (!capturedPlaneFits(captureFormat_, plane, width_, height_, capturePitch_[plane],
+                                       planes[plane].data_offset, mapped.length)) {
+                    picture.error = true;
+                    continue;
+                }
+                picture.plane[plane] = mapped.data + planes[plane].data_offset;
             }
             return true;
         }
