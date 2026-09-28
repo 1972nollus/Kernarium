@@ -179,9 +179,8 @@ artifact_path()
 	printf '%s\n' "$path"
 }
 
-build_initramfs()
+prepare_busybox_config()
 {
-	printf '%s\n' "==> Building minimal resize initramfs"
 	buildroot_archive=$sources_dir/buildroot-$BUILDROOT_VERSION.tar.xz
 	busybox_archive=$sources_dir/busybox-$BUSYBOX_VERSION.tar.bz2
 	download_checked \
@@ -215,8 +214,22 @@ build_initramfs()
 			fail "BusyBox rejected required option CONFIG_$symbol"
 	done < "$SCRIPT_DIR/buildroot/busybox.fragment"
 	cp -- "$busybox_source/.config" "$busybox_config"
+}
 
-	buildroot_output=$builds_dir/buildroot
+# The base archive holds only the static tools a per-run /init needs; the
+# launcher appends that /init. Buildroot builds its own cross toolchain, so
+# this aarch64 host also produces the archive for x86_64-userspace guests.
+build_boot_base()
+{
+	architecture=$1
+	case "$architecture" in
+	aarch64) architecture_config='BR2_aarch64=y
+BR2_ARM64_PAGE_SIZE_16K=y' ;;
+	x86_64) architecture_config='BR2_x86_64=y' ;;
+	*) fail "unsupported boot base architecture: $architecture" ;;
+	esac
+	printf '%s\n' "==> Building the $architecture boot base archive"
+	buildroot_output=$builds_dir/buildroot-$architecture
 	mkdir -p -- "$buildroot_output"
 	if [ -d "$buildroot_output/build" ]; then
 		# A failed post-build may leave the generated target deliberately
@@ -229,12 +242,16 @@ build_initramfs()
 		find "$buildroot_output/build" -name .stamp_target_installed \
 			-delete
 	fi
-	generated_defconfig=$buildroot_output/uml-resize-defconfig
-	sed \
-		-e "s|@BUSYBOX_CONFIG@|$busybox_config|g" \
-		-e "s|@OVERLAY@|$SCRIPT_DIR/buildroot/overlay|g" \
-		-e "s|@POST_BUILD@|$SCRIPT_DIR/buildroot/post-build.sh|g" \
-		"$SCRIPT_DIR/buildroot/defconfig.in" > "$generated_defconfig"
+	generated_defconfig=$buildroot_output/uml-boot-base-defconfig
+	{
+		printf '%s\n' "$architecture_config"
+		sed \
+			-e "s|@BUSYBOX_CONFIG@|$busybox_config|g" \
+			-e "s|@OVERLAY@|$SCRIPT_DIR/buildroot/overlay|g" \
+			-e "s|@POST_BUILD@|$SCRIPT_DIR/buildroot/post-build.sh|g" \
+			-e "s|@ARCHITECTURE@|$architecture|g" \
+			"$SCRIPT_DIR/buildroot/defconfig.in"
+	} > "$generated_defconfig"
 	make -C "$buildroot_source" O="$buildroot_output" \
 		BR2_DL_DIR="$sources_dir/downloads" \
 		BR2_DEFCONFIG="$generated_defconfig" defconfig
@@ -244,14 +261,15 @@ build_initramfs()
 	image=$buildroot_output/images/rootfs.cpio.gz
 	[ -f "$image" ] || fail "Buildroot did not produce $image"
 	gzip -t "$image"
-	listing=$buildroot_output/initramfs.list
+	listing=$buildroot_output/boot-base.list
 	gzip -dc "$image" | cpio -it > "$listing" 2>/dev/null
-	for required in init bin/busybox sbin/blkid sbin/dumpe2fs sbin/e2fsck \
+	for required in init bin/busybox bin/cp bin/printf bin/umount sbin/blkid \
+		sbin/dumpe2fs sbin/e2fsck sbin/mke2fs sbin/mkfs.ext4 \
 		sbin/resize2fs sbin/switch_root; do
 		grep -qx "\./$required\|$required" "$listing" || \
-			fail "initramfs is missing $required"
+			fail "boot base is missing $required"
 	done
-	destination=$(artifact_path uml-resize-initramfs.cpio.gz)
+	destination=$(artifact_path "uml-boot-base-$architecture.cpio.gz")
 	cp -- "$image" "$destination"
 
 	# The native toolchain is several GiB and is no longer needed once the
@@ -608,7 +626,9 @@ build_debian_plasma()
 	cp "$work_dir/debian-plasma.packages.tsv" "$destination.packages.tsv"
 }
 
-build_initramfs
+prepare_busybox_config
+build_boot_base aarch64
+build_boot_base x86_64
 build_alpine
 build_debian_minimal
 build_debian_plasma

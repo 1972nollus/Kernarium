@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <new>
@@ -716,6 +717,10 @@ int uml::app::runEmbeddedKernel(
 		console_service->stop();
 	if (gpu_service)
 		gpu_service->stop();
+	if (!configuration.run_scratch.empty()) {
+		std::error_code ignored;
+		std::filesystem::remove_all(configuration.run_scratch, ignored);
+	}
 	/* The loader hands the kernel's signal state back to the host before
 	 * uml_elf_run returns, so no Linux handler is left behind. The launcher
 	 * still leaves through _Exit, which runs no static destructor or atexit
