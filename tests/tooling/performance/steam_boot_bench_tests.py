@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Contract tests for the Steam appliance boot benchmark, without a guest.
 
-The harness decides three things a later reader depends on and that no other
-test covers: which runs keep their user-data disk, that a campaign over two
-images is counterbalanced, and that a finished campaign can be re-read. All
-three are exercised here against the real functions, with the boot itself and
-the disk preparation stubbed, so nothing boots, allocates a real image, or
-touches the network.
+The harness decides things a later reader depends on and that no other test
+covers: which runs keep their user-data disk, that a campaign over two images
+is counterbalanced, that a finished campaign can be re-read, and that its
+console reports why a guest died. All are exercised here against the real
+functions, with the boot, the emulator and the disk preparation stubbed, so
+nothing boots, allocates a real image, or touches the network.
 """
 
 from __future__ import annotations
@@ -215,6 +215,67 @@ def check_summarize() -> list[str]:
     return []
 
 
+# Stand-ins for the emulator. The first plays the image's autologin, echoes
+# the sudo exec as the guest tty does, then serves commands with the host
+# shell; the others die the way a failing guest does.
+AUTOLOGIN = """#!/bin/sh
+printf 'steam login: uml (automatic login)\\n\\numl@steam:~$ '
+IFS= read -r line
+[ "$line" = "exec sudo -n /bin/sh" ] || exit 9
+printf '%s\\n# ' "$line"
+exec /bin/sh
+"""
+PANIC = "#!/bin/sh\nprintf 'Kernel panic - not syncing: test\\n'\nexit 1\n"
+FLAKE = "#!/bin/sh\nprintf 'VFS: Cannot open root device\\n'\nexit 1\n"
+
+
+def steam_guest(harness, directory: pathlib.Path, script: str):
+    emulator = directory / "emulator"
+    emulator.write_text(script)
+    emulator.chmod(0o755)
+    return harness.SteamGuest(
+        emulator, pathlib.Path("/dev/null"), directory / "userdata.img",
+        "8G", 4, "gadgets", "/usr/local/libexec/kernarium-init", [],
+        directory / "boot.log")
+
+
+def check_console(harness) -> list[str]:
+    """Login, commands and exit diagnosis go through the shared transport."""
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory() as name:
+        directory = pathlib.Path(name)
+        guest = steam_guest(harness, directory, AUTOLOGIN)
+        try:
+            guest.login(10)
+            result = guest.run_command("printf '%s' steam-console", 10)
+            if (result.return_code, result.output) != (0, "steam-console"):
+                failures.append(f"run_command returned {result!r}")
+        finally:
+            guest.close()
+        if "steam-console" not in (directory / "boot.log").read_text():
+            failures.append("close did not save the console transcript")
+
+    for script, expected, message in (
+        (PANIC, RuntimeError, "guest reported 'Kernel panic'"),
+        (FLAKE, harness.BootFlake, "VFS: Cannot open root device"),
+    ):
+        with tempfile.TemporaryDirectory() as name:
+            guest = steam_guest(harness, pathlib.Path(name), script)
+            try:
+                guest.login(10)
+            except expected as error:
+                if message not in str(error):
+                    failures.append(f"a dying guest reported {error!r}")
+            except Exception as error:  # noqa: BLE001 - report any other kind
+                failures.append(
+                    f"a dying guest raised {error!r}, not {expected.__name__}")
+            else:
+                failures.append("login succeeded on a guest that died")
+            finally:
+                guest.close()
+    return failures
+
+
 def main() -> int:
     harness = load_harness()
     failures: list[str] = []
@@ -222,12 +283,13 @@ def main() -> int:
     failures += check_order(harness)
     failures += check_dry_run()
     failures += check_summarize()
+    failures += check_console(harness)
     if failures:
         for failure in failures:
             print(f"steam boot bench: {failure}", file=sys.stderr)
         return 1
     print("steam boot bench contract passed "
-          "(cleanup, counterbalancing, dry run, summarize)")
+          "(cleanup, counterbalancing, dry run, summarize, console)")
     return 0
 
 

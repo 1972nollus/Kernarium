@@ -56,6 +56,8 @@ FORBIDDEN_SOFTWARE_ICD = re.compile(
 )
 VIRTIO_IDENTITY = re.compile(r"(?:virtio|venus)", re.IGNORECASE)
 CTS_SERVICE_PATH = "/usr/local/libexec/uml-vulkan-cts"
+# A harness installs the selected cases here as a file, whatever their count.
+GUEST_CASE_LIST_PATH = "/usr/local/share/uml-vulkan-cts/selected.txt"
 CTS_WSI_SERVICE_PATH = "/etc/systemd/system/uml-vulkan-cts.service"
 CTS_WSI_SERVICE = """[Unit]
 Description=Darwin UML Vulkan WSI CTS campaign
@@ -77,6 +79,7 @@ ARTIFACT_BASE64_LINE_LENGTH = 3 * 1024
 
 sys.path.insert(0, str(INTEGRATION_GPU))
 import run_vk_gl_cts as common  # noqa: E402
+import run_gpu_guest as gpu_guest  # noqa: E402
 import vulkan_cts_receipt as receipt_contract  # noqa: E402
 
 CampaignError = common.CampaignError
@@ -943,8 +946,35 @@ def validate_virtio_qpa_identity(qpa: str) -> None:
         raise CampaignError("Vulkan QPA does not identify a Virtio/Venus device")
 
 
-def _selected_payload(selection: DevelopmentSelection) -> str:
+def _selected_payload(selection: DevelopmentSelection | ReceiptSelection) -> str:
     return "".join(f"{case}\n" for case in selection.source_cases)
+
+
+def selected_list_setup(
+    selection: DevelopmentSelection | ReceiptSelection, case_list: str | None
+) -> str:
+    """Shell that writes the selected cases to ``$selected`` for the CTS user.
+
+    A harness installs the list as the guest file ``case_list``, which the
+    launcher checks against its digest. Without one the list is embedded in
+    the launcher, as in the fixed launchers generated for Kernarium.
+    """
+    payload = _selected_payload(selection).encode()
+    if case_list is None:
+        encoded = base64.b64encode(payload).decode()
+        return (
+            f"printf '%s' {shlex.quote(encoded)} | base64 -d > \"$selected\"\n"
+            'chown uml:uml "$selected"'
+        )
+    digest = hashlib.sha256(payload).hexdigest()
+    return (
+        f'install -m 0644 -o uml -g uml {shlex.quote(case_list)} "$selected"\n'
+        '[ "$(sha256sum < "$selected" | cut -d \' \' -f 1)" = '
+        f"{digest} ] || {{\n"
+        "    echo 'UML_VK_CTS_ERROR: installed case list identity changed'\n"
+        "    exit 1\n"
+        "}"
+    )
 
 
 def no_device_required_transcript(
@@ -965,10 +995,11 @@ def build_guest_launcher(
     page_size: int,
     timeout: int,
     experimental_venus: bool = False,
+    case_list: str | None = None,
 ) -> str:
     cts = identity["cts"]
     icd = identity["virtio_icd"]
-    selected_b64 = base64.b64encode(_selected_payload(selection).encode()).decode()
+    selected_setup = selected_list_setup(selection, case_list)
     command = deqp_arguments(identity, selection, "/run/uml-vk-cts")
     command_separator = " " + chr(92) + "\n    "
     quoted_command = command_separator.join(
@@ -1052,8 +1083,7 @@ finish()
 trap finish EXIT HUP INT TERM
 
 install -d -m 0755 -o uml -g uml "$output"
-printf '%s' {shlex.quote(selected_b64)} | base64 -d > "$selected"
-chown uml:uml "$selected"
+{selected_setup}
 : > "$qpa"
 chown uml:uml "$qpa"
 actual_page_size=$(getconf PAGESIZE)
@@ -1145,6 +1175,7 @@ def build_receipt_guest_launcher(
     progress_interval: int = 15,
     relax_diagnostics: bool = False,
     device_exclusions: Sequence[DeviceExclusion] = (),
+    case_list: str | None = None,
 ) -> str:
     if resume_after < 0 or checkpoint_bytes < 1 or progress_interval < 1:
         raise CampaignError("Vulkan shard resumption inputs are invalid")
@@ -1432,14 +1463,7 @@ chown uml:uml \"$selected\"
                 ' >> "$summary"\n'
             )
     else:
-        selected_b64 = base64.b64encode(
-            "".join(f"{case}\n" for case in selection.source_cases).encode()
-        ).decode()
-        selected_setup = (
-            "printf '%s' "
-            + shlex.quote(selected_b64)
-            + ' | base64 -d > "$selected"\nchown uml:uml "$selected"'
-        )
+        selected_setup = selected_list_setup(selection, case_list)
         expected_setup = ""
         if resume_after:
             expected_setup = (
@@ -1835,12 +1859,13 @@ exit "$status"
 """
 
 
-def build_harness_command(
+def plan_harness_command(
     options: argparse.Namespace,
     identity: dict[str, Any],
     selection: DevelopmentSelection,
     artifact_directory: Path,
-) -> list[str]:
+) -> tuple[list[str], gpu_guest.StagedGuestFiles]:
+    """The development harness command and the files it installs, unwritten."""
     socket_path = common.artifact_socket_path(artifact_directory)
     run_identity = hashlib.sha256(
         os.fsencode(artifact_directory.resolve())
@@ -1848,12 +1873,21 @@ def build_harness_command(
     serial_socket_path = (
         Path("/private/tmp") / f"uml-vk-cts-console-{run_identity}.sock"
     )
-    launcher = build_guest_launcher(
-        identity,
-        selection,
-        page_size=16384 if options.page_profile == "16k" else 4096,
-        timeout=options.shard_timeout,
-        experimental_venus=options.experimental_venus,
+    guest_files = gpu_guest.StagedGuestFiles(
+        artifact_directory / gpu_guest.GUEST_FILE_DIRECTORY
+    )
+    guest_files.add(GUEST_CASE_LIST_PATH, _selected_payload(selection))
+    guest_files.add(
+        CTS_SERVICE_PATH,
+        build_guest_launcher(
+            identity,
+            selection,
+            page_size=16384 if options.page_profile == "16k" else 4096,
+            timeout=options.shard_timeout,
+            experimental_venus=options.experimental_venus,
+            case_list=GUEST_CASE_LIST_PATH,
+        ),
+        0o755,
     )
     expected_status = identity["development_no_device_baseline"][
         "process_return_code"
@@ -1882,8 +1916,7 @@ def build_harness_command(
         "--serial-socket",
         str(serial_socket_path),
         f"--virtio-serial-socket={socket_path}",
-        "--command",
-        common.install_text(CTS_SERVICE_PATH, launcher, "0755"),
+        *guest_files.arguments,
         "--command",
         run_and_check,
         "--",
@@ -1898,17 +1931,31 @@ def build_harness_command(
         "--gpu-width=1280",
         "--gpu-height=720",
     ]
-    return ["env", "UML_GPU_CAPABILITY_REPORT=1", *command]
+    return ["env", "UML_GPU_CAPABILITY_REPORT=1", *command], guest_files
 
 
-def build_receipt_harness_command(
+def build_harness_command(
+    options: argparse.Namespace,
+    identity: dict[str, Any],
+    selection: DevelopmentSelection,
+    artifact_directory: Path,
+) -> list[str]:
+    """The recorded development harness command; building it writes nothing."""
+    return plan_harness_command(options, identity, selection, artifact_directory)[0]
+
+
+def plan_receipt_harness_command(
     options: argparse.Namespace,
     receipt: dict[str, Any],
     selection: ReceiptSelection,
     artifact_directory: Path,
     *,
     resume_after: int = 0,
-) -> list[str]:
+) -> tuple[list[str], gpu_guest.StagedGuestFiles]:
+    """The qualification harness command and the files it installs, unwritten.
+
+    An explicit case list reaches the guest as its own file, so no count of
+    cases lengthens a command line."""
     socket_path = common.artifact_socket_path(artifact_directory)
     run_identity = hashlib.sha256(
         os.fsencode(artifact_directory.resolve())
@@ -1917,27 +1964,37 @@ def build_receipt_harness_command(
         Path("/private/tmp") / f"uml-vk-cts-console-{run_identity}.sock"
     )
     uses_wsi = receipt_selection_uses_wsi(selection)
-    launcher = build_receipt_guest_launcher(
-        receipt,
-        selection,
-        page_size=16384 if options.page_profile == "16k" else 4096,
-        timeout=options.shard_timeout,
-        progress_timeout=options.console_stall_timeout,
-        use_wsi=uses_wsi,
-        resume_after=resume_after,
-        relax_diagnostics=getattr(options, "relax_diagnostics", False),
+    guest_files = gpu_guest.StagedGuestFiles(
+        artifact_directory / gpu_guest.GUEST_FILE_DIRECTORY
+    )
+    case_list = None
+    if not selection.generated_expected:
+        case_list = GUEST_CASE_LIST_PATH
+        guest_files.add(case_list, _selected_payload(selection))
+    guest_files.add(
+        CTS_SERVICE_PATH,
+        build_receipt_guest_launcher(
+            receipt,
+            selection,
+            page_size=16384 if options.page_profile == "16k" else 4096,
+            timeout=options.shard_timeout,
+            progress_timeout=options.console_stall_timeout,
+            use_wsi=uses_wsi,
+            resume_after=resume_after,
+            relax_diagnostics=getattr(options, "relax_diagnostics", False),
+            case_list=case_list,
+        ),
+        0o755,
     )
     environment = ["env", "UML_GPU_CAPABILITY_REPORT=1"]
     if uses_wsi:
-        overlay_commands = (
-            common.install_text(CTS_SERVICE_PATH, launcher, "0755"),
-            common.install_text(CTS_WSI_SERVICE_PATH, CTS_WSI_SERVICE),
-            "systemctl start --no-block uml-vulkan-cts.service",
-        )
+        guest_files.add(CTS_WSI_SERVICE_PATH, CTS_WSI_SERVICE)
         command = common.native_wsi_harness_command(
-            options, artifact_directory, overlay_commands,
+            options, artifact_directory,
+            ("systemctl start --no-block uml-vulkan-cts.service",),
+            guest_files=guest_files,
         )
-        return [*environment, *command]
+        return [*environment, *command], guest_files
     # The launcher records the CTS status in summary.txt and transfers every
     # artifact from its EXIT trap.  Keep the outer guest harness successful so
     # a failing CTS result reaches the host validator instead of being reduced
@@ -1963,8 +2020,7 @@ def build_receipt_harness_command(
         "--serial-socket",
         str(serial_socket_path),
         f"--virtio-serial-socket={socket_path}",
-        "--command",
-        common.install_text(CTS_SERVICE_PATH, launcher, "0755"),
+        *guest_files.arguments,
         "--command",
         run_and_capture,
         "--",
@@ -1979,7 +2035,37 @@ def build_receipt_harness_command(
         "--gpu-width=1280",
         "--gpu-height=720",
     ]
-    return [*environment, *command]
+    return [*environment, *command], guest_files
+
+
+def build_receipt_harness_command(
+    options: argparse.Namespace,
+    receipt: dict[str, Any],
+    selection: ReceiptSelection,
+    artifact_directory: Path,
+    *,
+    resume_after: int = 0,
+) -> list[str]:
+    """The recorded qualification harness command; building it writes nothing."""
+    return plan_receipt_harness_command(
+        options, receipt, selection, artifact_directory, resume_after=resume_after
+    )[0]
+
+
+def prepare_receipt_harness_command(
+    options: argparse.Namespace,
+    receipt: dict[str, Any],
+    selection: ReceiptSelection,
+    artifact_directory: Path,
+    *,
+    resume_after: int = 0,
+) -> list[str]:
+    """Write the files a qualification harness installs and return its command."""
+    command, guest_files = plan_receipt_harness_command(
+        options, receipt, selection, artifact_directory, resume_after=resume_after
+    )
+    guest_files.write()
+    return command
 
 
 def _summary(payload: bytes) -> dict[str, str]:
@@ -2598,7 +2684,7 @@ def run_receipt_campaign(
 
     sessions, expected_cases, merged = common.run_shard_sessions(
         artifact_directory,
-        build_command=lambda resume, guest: build_receipt_harness_command(
+        build_command=lambda resume, guest: prepare_receipt_harness_command(
             options, receipt, selection, guest, resume_after=resume
         ),
         resolve_expected=resolve_expected,
@@ -2811,7 +2897,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
     artifact_directory = options.artifact_root.resolve() / (
         f"{timestamp}-{os.getpid()}-{options.page_profile}-{selection.mode}"
     )
-    command = build_harness_command(options, identity, selection, artifact_directory)
+    command, guest_files = plan_harness_command(
+        options, identity, selection, artifact_directory
+    )
     if options.dry_run:
         print(shlex.join(command))
         return 0
@@ -2870,6 +2958,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     console_path = artifact_directory / "console.log"
     serial_path = artifact_directory / common.ARTIFACT_TRANSPORT_LOG
     socket_path = common.artifact_socket_path(artifact_directory)
+    guest_files.write()
     with console_path.open("wb") as console:
         with common.guest_process.managed_child(
             command, stop=common.stop_guest, stdout=console, stderr=subprocess.STDOUT,

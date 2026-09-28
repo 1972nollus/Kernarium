@@ -556,12 +556,46 @@ if [ "${XDG_VTNR:-}" = 1 ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
 fi
 EOF
 	as_root chown "$debian_uid:$debian_gid" "$root/home/debian/.profile"
+	# The session's XDG directories exist before its first login, so the
+	# Folder View containment below has a Desktop to show.
+	for directory in Desktop Documents Downloads Music Pictures Public \
+		Templates Videos .config .local .local/share .local/share/pki \
+		.local/share/Trash .local/share/Trash/files \
+		.local/share/Trash/info; do
+		as_root install -d -m 0755 "$root/home/debian/$directory"
+	done
+	write_root_file "$root/home/debian/.config/user-dirs.dirs" 0644 <<'EOF'
+XDG_DESKTOP_DIR="$HOME/Desktop"
+XDG_DOWNLOAD_DIR="$HOME/Downloads"
+XDG_TEMPLATES_DIR="$HOME/Templates"
+XDG_PUBLICSHARE_DIR="$HOME/Public"
+XDG_DOCUMENTS_DIR="$HOME/Documents"
+XDG_MUSIC_DIR="$HOME/Music"
+XDG_PICTURES_DIR="$HOME/Pictures"
+XDG_VIDEOS_DIR="$HOME/Videos"
+EOF
+	# A benchmark or diagnostic session must stay visible and rendering, so
+	# the idle lock never replaces it.
 	write_root_file "$root/home/debian/.config/kscreenlockerrc" 0644 <<'EOF'
 [Daemon]
 Autolock=false
 LockOnResume=false
+Timeout=0
 EOF
-	as_root chown -R "$debian_uid:$debian_gid" "$root/home/debian/.config"
+	as_root chown -R "$debian_uid:$debian_gid" "$root/home/debian"
+	# The desktop:/ KIO worker crashes under UML. Keep Plasma's Folder View
+	# containment, but point it at the Desktop directory so it uses the
+	# stable local-file worker.
+	containment_config=$root/usr/share/plasma/plasmoids/org.kde.desktopcontainment/contents/config/main.xml
+	as_root grep -q '<default>desktop:/</default>' "$containment_config" || \
+		fail "Folder View no longer defaults to desktop:/; drop its override"
+	as_root sed -i \
+		's#<default>desktop:/</default>#<default>file:///home/debian/Desktop</default>#' \
+		"$containment_config"
+	# KInfoCenter counts Mesa's CPU-only Lavapipe Vulkan device as the guest
+	# GPU and labels an accelerated Virgl session "llvmpipe". The image has
+	# no Vulkan render path, so it carries no software ICD.
+	as_root rm -f "$root/usr/share/vulkan/icd.d/lvp_icd.json"
 	# The task manager's default launchers include Discover, which needs the
 	# PackageKit daemon. Pin only the default launchers whose applications
 	# the image installs; Plasma runs this update script once per user,

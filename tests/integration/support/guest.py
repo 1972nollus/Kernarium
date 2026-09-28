@@ -4,100 +4,42 @@ from __future__ import annotations
 # Imported support must not leave source-adjacent bytecode caches.
 __import__("sys").dont_write_bytecode = True
 
-import base64
 import dataclasses
 import os
 import pathlib
 import pty
 import re
 import select
-import shlex
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import BinaryIO
 
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 BOOT_TIMEOUT_SECONDS = 90
 CONSOLE_WRITE_TIMEOUT_SECONDS = 30
-# One upload command stays well inside the guest console's 4 KiB line.
-UPLOAD_CHUNK_CHARACTERS = 2048
 # A failing session prints this much of its transcript's end.
 FAILURE_TRANSCRIPT_CHARACTERS = 16384
 SIZE_VALUE = re.compile(r"^(\d+)([KMGT]?)$", re.IGNORECASE)
 SWAP_IMAGE = re.compile(r"^uml-ltp-swap-(\d+)-.*\.img$")
-OVERLAY_READY_MARKER = "__UML_OVERLAY_READY__"
-OVERLAY_SHELL_BOOTSTRAP = "\n".join(
-    (
-        "{",
-        "set -eu",
-        "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /mnt",
-        "mkdir -p /mnt/lower /mnt/upper /mnt/work /mnt/root",
-        "mount -o bind / /mnt/lower",
-        "mount -t overlay overlay "
-        "-o lowerdir=/mnt/lower,upperdir=/mnt/upper,workdir=/mnt/work /mnt/root",
-        "mount -t devtmpfs devtmpfs /mnt/root/dev",
-        "mkdir -p /mnt/root/.uml-lower",
-        "cd /mnt/root",
-        "pivot_root . .uml-lower",
-        # The kernel starts init without PATH. The shell searches its own
-        # default, but programs that locate themselves through PATH (gcc)
-        # need it in the environment.
-        "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "rm -f /etc/resolv.conf",
-        "printf '%s\\n' 'nameserver 1.1.1.1' 'nameserver 8.8.8.8' "
-        "'nameserver 10.0.2.3' > /etc/resolv.conf",
-        "mount -t proc proc /proc",
-        "mount -t sysfs sysfs /sys",
-        "mkdir -p /run",
-        "mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run",
-        "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp",
-        # An init would provide these; POSIX shm, ptys and loopback sockets
-        # otherwise fail with ENOENT or ENETUNREACH.
-        "mkdir -p /dev/shm /dev/pts",
-        "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm",
-        "mount -t devpts -o gid=5,mode=620,ptmxmode=000 devpts /dev/pts",
-        "mount -t securityfs securityfs /sys/kernel/security",
-        # systemd makes every mount shared; unshare(1) relies on it.
-        "mount --make-rshared /",
-        "ip link set lo up",
-        # The SLiRP provider's fixed lease; the kernel has no IP_PNP.
-        "if ip link show eth0 >/dev/null 2>&1; then",
-        "ip link set eth0 up",
-        "ip addr add 10.0.2.15/24 dev eth0",
-        "ip route add default via 10.0.2.2",
-        "fi",
-        'case " $(cat /proc/cmdline) " in',
-        '*" uml_ltp_workspace=ext2 "*)',
-        "workspace_image=/run/uml-ltp-workspace.ext2",
-        'dd if=/dev/zero of="$workspace_image" bs=1M count=0 seek=512 2>/dev/null',
-        "workspace_loop=$(losetup -f)",
-        'losetup "$workspace_loop" "$workspace_image"',
-        "if command -v mkfs.ext2 >/dev/null 2>&1; then",
-        "workspace_mkfs=mkfs.ext2",
-        "elif command -v mke2fs >/dev/null 2>&1; then",
-        "workspace_mkfs=mke2fs",
-        "else",
-        "echo 'LTP ext2 workspace requires mkfs.ext2 or mke2fs' >&2",
-        "exit 127",
-        "fi",
-        '"$workspace_mkfs" -q -t ext2 "$workspace_loop"',
-        'mount -t ext2 -o noatime "$workspace_loop" /tmp',
-        "chmod 1777 /tmp",
-        ";;",
-        "esac",
-        "set +e",
-        "set +u",
-        ":",
-        "}",
-        f"printf '\\n{OVERLAY_READY_MARKER}\\n'",
-    )
-)
+REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
+# The launcher boots every guest through its base archive and a per-run
+# initramfs (tools/rootfs/boot-ramdisk/README.md); this session prepares the
+# shell the harness drives.
+SESSION_SCRIPT = REPOSITORY / "tools" / "rootfs" / "boot-ramdisk" / "session"
+SESSION_GUEST_PATH = "/usr/local/libexec/uml-session"
+SESSION_PARAMETERS_GUEST_PATH = "/etc/uml-session.env"
+SESSION_READY_MARKER = "UML_SESSION_READY:"
+SWAP_DEVICE = "/dev/ubdb"
+# The session mounts fresh filesystems over these, and the kernel owns the
+# rest, so a payload placed there would never be seen.
+HIDDEN_PAYLOAD_ROOTS = ("/tmp", "/run", "/dev", "/proc", "/sys")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -143,29 +85,121 @@ def emulator_arguments(
     emulator: pathlib.Path,
     rootfs: pathlib.Path,
     memory: str,
-    workspace: str = "tmpfs",
     kernel_arguments: Sequence[str] = (),
     swap_path: pathlib.Path | None = None,
-    init_path: str = "/sbin/init",
+    init_path: str | None = None,
     engine: str = "jit",
     core_class: str = "performance",
+    guest_files: Sequence[tuple[str, pathlib.Path]] = (),
 ) -> list[str]:
+    """The launcher command for one guest.
+
+    ``guest_files`` become the per-run initramfs the launcher builds, whose
+    /init mounts the image. A guest that boots straight into an init on its
+    EROFS image names it with ``init_path`` instead, and the launcher then
+    leaves the boot to the kernel."""
+    if init_path is not None and guest_files:
+        raise ValueError("a guest boots either its own init or guest files")
+    direct_boot = (
+        ("root=/dev/ubda", "rootfstype=erofs", f"init={init_path}")
+        if init_path is not None
+        else ()
+    )
     arguments = [
         *core_class_prefix(core_class),
         str(emulator),
         f"--execution-engine={engine}",
+        *(f"--guest-file={guest}={host}" for guest, host in guest_files),
         f"ubd0c={rootfs}",
-        "root=/dev/ubda",
-        "rootfstype=erofs",
-        f"init={init_path}",
+        *direct_boot,
         f"mem={memory}",
     ]
-    if workspace == "ext2":
-        arguments.insert(-1, "uml_ltp_workspace=ext2")
     if swap_path is not None:
         arguments.insert(-1, f"ubd1={swap_path}")
     arguments.extend(kernel_arguments)
     return arguments
+
+
+@dataclasses.dataclass(frozen=True)
+class GuestFile:
+    """A file the per-run initramfs installs in the guest before it starts."""
+
+    contents: bytes
+    mode: int = 0o644
+
+
+def validate_payload_path(path: str) -> None:
+    """Payload paths are absolute, clean and outside what the session hides."""
+    parts = path.split("/")
+    if (
+        not path.startswith("/")
+        or any(part in ("", ".", "..") for part in parts[1:])
+        or "=" in path
+    ):
+        raise ValueError(f"invalid guest payload path {path!r}")
+    for hidden in HIDDEN_PAYLOAD_ROOTS:
+        if path == hidden or path.startswith(hidden + "/"):
+            raise ValueError(
+                f"guest payload {path!r} would be hidden by {hidden}"
+            )
+
+
+def session_parameters(
+    *,
+    overlay_shell: bool,
+    workspace: str,
+    swap: bool,
+    cgroup1: str | None,
+    cgroup2_nsdelegate: bool,
+) -> str:
+    """The session file for a harness shell; see tools/rootfs/boot-ramdisk."""
+    if workspace not in ("tmpfs", "ext2"):
+        raise ValueError(f"unknown workspace {workspace!r}")
+    if workspace != "tmpfs" and not overlay_shell:
+        raise ValueError("a workspace needs the overlay shell environment")
+    lines = ["UML_SESSION_ENTRY=/bin/sh"]
+    if overlay_shell:
+        lines += [
+            "UML_SESSION_RESOLVER=user-network",
+            "UML_SESSION_RUNTIME_MOUNTS=1",
+            "UML_SESSION_NETWORK=user-network",
+            f"UML_SESSION_WORKSPACE={workspace}",
+        ]
+    if swap:
+        lines.append(f"UML_SESSION_SWAP={SWAP_DEVICE}")
+    if cgroup2_nsdelegate:
+        lines.append("UML_SESSION_CGROUP=v2-nsdelegate")
+    elif cgroup1 is not None:
+        lines.append(f"UML_SESSION_CGROUP=v1:{cgroup1}")
+    return "".join(f"{line}\n" for line in lines)
+
+
+def stage_guest_files(
+    directory: pathlib.Path,
+    session: str,
+    payloads: Mapping[str, GuestFile],
+) -> list[tuple[str, pathlib.Path]]:
+    """Write a harness session's initramfs inputs and return their pairs."""
+    boot = directory / "boot.env"
+    boot.write_text(f"UML_BOOT_ENTRY={SESSION_GUEST_PATH}\n")
+    parameters = directory / "session.env"
+    parameters.write_text(session)
+    files = [
+        ("/boot.env", boot),
+        (f"/payload{SESSION_GUEST_PATH}", SESSION_SCRIPT),
+        (f"/payload{SESSION_PARAMETERS_GUEST_PATH}", parameters),
+    ]
+    payload_directory = directory / "payload"
+    for index, (path, payload) in enumerate(sorted(payloads.items())):
+        validate_payload_path(path)
+        if path in (SESSION_GUEST_PATH, SESSION_PARAMETERS_GUEST_PATH):
+            raise ValueError(f"guest payload {path!r} replaces the session")
+        payload_directory.mkdir(exist_ok=True)
+        host = payload_directory / f"{index:04d}"
+        host.write_bytes(payload.contents)
+        host.chmod(payload.mode)
+        files.append((f"/payload{path}", host))
+    return files
 
 
 def size_bytes(value: str) -> int:
@@ -227,71 +261,40 @@ def marker_pattern(marker: str) -> re.Pattern[bytes]:
 LINE_START = rb"(?:^|\r?\n|\r)"
 
 
-class Guest:
-    """One emulator process controlled through its serial console."""
+class ConsoleProcess:
+    """One emulator process driven through its serial console.
+
+    Output goes to a PTY, which keeps it terminal-shaped and unbuffered;
+    input goes through a pipe, because Darwin can miss PTY readiness while
+    every guest CPU is busy and a pipe stays pollable at guest timer
+    boundaries. Writes have their own deadline. Commands are wrapped in
+    unique markers and read back from the ANSI-normalized transcript.
+    """
+
+    # How long a guest has to exit after SIGTERM before it is killed.
+    STOP_GRACE_SECONDS = 2.0
+    KILL_WAIT_SECONDS = 30.0
 
     def __init__(
         self,
-        emulator: pathlib.Path,
-        rootfs: pathlib.Path,
-        memory: str,
-        workspace: str,
-        kernel_arguments: Sequence[str] = (),
-        swap_size: str | None = None,
-        cgroup1: str | None = None,
-        cgroup2_nsdelegate: bool = False,
-        init_shell: bool = False,
-        overlay_shell: bool = False,
-        engine: str = "jit",
-        core_class: str = "performance",
+        arguments: Sequence[str],
+        *,
+        environment: Mapping[str, str] | None = None,
         pass_fds: Sequence[int] = (),
         console_sink: BinaryIO | None = None,
     ) -> None:
-        # The image locks root, so a guest is only reachable through one of
-        # the two /bin/sh init modes.
-        if init_shell == overlay_shell:
-            raise ValueError(
-                "a guest boots exactly one of init_shell or overlay_shell"
-            )
-        self._swap_path = None
-        self._core_class = core_class
-        try:
-            self._swap_path = create_swap_image(swap_size) if swap_size else None
-        except BaseException:
-            self._remove_swap_image()
-            raise
-        self._cgroup1 = cgroup1
-        self._cgroup2_nsdelegate = cgroup2_nsdelegate
-        self._overlay_shell = overlay_shell
-        kernel_arguments = (
-            *kernel_arguments,
-            "console=tty0",
-            "console=ttyS0",
-            "ip=dhcp",
-        )
-        try:
-            master, slave = pty.openpty()
-        except BaseException:
-            self._remove_swap_image()
-            raise
+        self._transcript = bytearray()
+        # Receives every console byte as the harness reads it, so a caller
+        # can stream a long command's output instead of waiting for its end.
+        self._console_sink = console_sink
+        self.first_output_at: float | None = None
+        master, slave = pty.openpty()
         self._master = master
         os.set_blocking(master, False)
         try:
             self._process = subprocess.Popen(
-                emulator_arguments(
-                    emulator,
-                    rootfs,
-                    memory,
-                    workspace,
-                    kernel_arguments,
-                    self._swap_path,
-                    "/bin/sh",
-                    engine,
-                    core_class,
-                ),
-                # Darwin can miss PTY readiness while all guest CPUs are
-                # busy. A pipe keeps input pollable at guest timer boundaries;
-                # retain the PTY for terminal-shaped, unbuffered output.
+                list(arguments),
+                env=None if environment is None else dict(environment),
                 stdin=subprocess.PIPE,
                 stdout=slave,
                 stderr=slave,
@@ -302,19 +305,14 @@ class Guest:
             )
         except BaseException:
             os.close(master)
-            self._remove_swap_image()
             raise
         finally:
             os.close(slave)
         assert self._process.stdin is not None
         self._input = self._process.stdin
         os.set_blocking(self._input.fileno(), False)
-        self._transcript = bytearray()
-        # Receives every console byte as the harness reads it, so a caller
-        # can stream a long command's output instead of waiting for its end.
-        self._console_sink = console_sink
 
-    def __enter__(self) -> Guest:
+    def __enter__(self) -> ConsoleProcess:
         return self
 
     def __exit__(self, exception_type, exception, traceback) -> None:
@@ -357,63 +355,10 @@ class Guest:
             except ProcessLookupError:
                 pass
 
-    def boot_to_shell(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
-        """Reach the root shell that init=/bin/sh starts."""
-        self._read_until(re.compile(LINE_START + rb"# $"), timeout_seconds)
-        if self._overlay_shell:
-            search_from = len(self._transcript)
-            self._write(OVERLAY_SHELL_BOOTSTRAP + "\n")
-            self._read_until(
-                re.compile(
-                    LINE_START
-                    + re.escape(OVERLAY_READY_MARKER.encode())
-                    + rb"\r?\n"
-                ),
-                timeout_seconds,
-                search_from,
-            )
-
-    def boot_and_login(self, timeout_seconds: int = BOOT_TIMEOUT_SECONDS) -> None:
-        self.boot_to_shell(timeout_seconds)
-        if self._swap_path is not None:
-            result = self.run_command(
-                "mkswap /dev/ubdb >/dev/null && swapon /dev/ubdb",
-                timeout_seconds,
-            )
-            if result.return_code != 0:
-                raise RuntimeError(
-                    "could not enable disposable guest swap: " + result.output
-                )
-        if self._cgroup2_nsdelegate:
-            result = self.run_command(
-                "mkdir -p /sys/fs/cgroup && "
-                "mount -t cgroup2 -o nsdelegate cgroup2 /sys/fs/cgroup",
-                timeout_seconds,
-            )
-            if result.return_code != 0:
-                raise RuntimeError(
-                    "could not mount disposable cgroup v2 nsdelegate hierarchy: "
-                    + result.output
-                )
-        elif self._cgroup1 is not None:
-            mountpoint = f"/sys/fs/cgroup/{self._cgroup1}"
-            command = (
-                "mount -t tmpfs -o mode=755 cgroup-root /sys/fs/cgroup && "
-                f"mkdir -p {shlex.quote(mountpoint)} && "
-                f"mount -t cgroup -o {shlex.quote(self._cgroup1)} "
-                f"{shlex.quote(self._cgroup1)} {shlex.quote(mountpoint)}"
-            )
-            result = self.run_command(command, timeout_seconds)
-            if result.return_code != 0:
-                raise RuntimeError(
-                    "could not mount disposable cgroup v1 hierarchy: "
-                    + result.output
-                )
-
     def run_command(
         self,
         command: str,
-        timeout_seconds: int = 30,
+        timeout_seconds: float = 30,
         *,
         preamble: str = "",
         single_write: bool = False,
@@ -461,7 +406,7 @@ class Guest:
     def check_command(
         self,
         command: str,
-        timeout_seconds: int = 30,
+        timeout_seconds: float = 30,
         *,
         expected: str | None = None,
     ) -> str:
@@ -481,62 +426,29 @@ class Guest:
             )
         return result.output
 
-    def upload(
-        self,
-        payload: bytes,
-        destination: str,
-        mode: int | None = None,
-        timeout_seconds: int = 30,
-    ) -> None:
-        """Write payload to a guest file through the console.
-
-        The bytes travel as base64 in chunks the console line accepts, are
-        decoded in the guest, and get ``mode`` when it is given."""
-        encoded = base64.b64encode(payload).decode("ascii")
-        staging = shlex.quote(f"{destination}.base64")
-        target = shlex.quote(destination)
-        self.check_command(f": > {staging}", timeout_seconds)
-        for offset in range(0, len(encoded), UPLOAD_CHUNK_CHARACTERS):
-            chunk = encoded[offset : offset + UPLOAD_CHUNK_CHARACTERS]
-            self.check_command(f"printf %s {chunk} >> {staging}", timeout_seconds)
-        command = f"base64 -d {staging} > {target} && rm -f {staging}"
-        if mode is not None:
-            command += f" && chmod {mode:o} {target}"
-        self.check_command(command, timeout_seconds)
-
-    def shutdown(self, timeout_seconds: int = 30) -> bool:
-        """Request an orderly halt and wait for the emulator to exit."""
-        if self._process.poll() is not None:
-            return True
-        try:
-            self._write("sync; poweroff -f\n")
-            deadline = time.monotonic() + timeout_seconds
-            while self._process.poll() is None:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return False
-                readable, _, _ = select.select(
-                    [self._master], [], [], min(remaining, 0.25)
-                )
-                if readable:
-                    self._drain()
-            self._drain()
-        except (BrokenPipeError, OSError):
-            return self._process.poll() is not None
+    def wait_for_exit(self, timeout_seconds: float) -> bool:
+        """Keep reading the console until the emulator exits or time runs out."""
+        deadline = time.monotonic() + timeout_seconds
+        while self._process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            readable, _, _ = select.select(
+                [self._master], [], [], min(remaining, 0.25)
+            )
+            if readable:
+                self._drain()
+        self._drain()
         return True
 
     def close(self) -> None:
+        """Stop the emulator if it still runs and release the console."""
         try:
-            self.shutdown(5)
             if self._process.poll() is None:
-                try:
-                    self._signal(signal.SIGTERM)
-                    self._process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    pass
-            if self._process.poll() is None:
-                self._signal(signal.SIGKILL)
-                self._process.wait()
+                self._signal(signal.SIGTERM)
+                if not self.wait_for_exit(self.STOP_GRACE_SECONDS):
+                    self._signal(signal.SIGKILL)
+                    self._process.wait(timeout=self.KILL_WAIT_SECONDS)
         except KeyboardInterrupt:
             if self._process.poll() is None:
                 self._signal(signal.SIGKILL)
@@ -548,19 +460,22 @@ class Guest:
         finally:
             try:
                 self._input.close()
+            except OSError:
+                pass
             finally:
                 try:
                     os.close(self._master)
-                finally:
-                    self._remove_swap_image()
-
-    def _remove_swap_image(self) -> None:
-        if self._swap_path is not None:
-            self._swap_path.unlink(missing_ok=True)
-            self._swap_path = None
+                except OSError:
+                    pass
 
     def output(self) -> str:
         return self._normal_output(bytes(self._transcript))
+
+    def _exited_without_output(self) -> None:
+        """Explain an emulator that exited before the awaited output.
+
+        Raise a more specific error than the generic exit status; the default
+        adds nothing."""
 
     def _write(self, text: str) -> None:
         payload = memoryview(text.encode())
@@ -605,7 +520,7 @@ class Guest:
     def _read_until(
         self,
         pattern: re.Pattern[bytes],
-        timeout_seconds: int,
+        timeout_seconds: float,
         search_from: int = 0,
     ) -> re.Match[bytes]:
         deadline = time.monotonic() + timeout_seconds
@@ -618,12 +533,15 @@ class Guest:
                 match = pattern.search(self._transcript, search_from)
                 if match is not None:
                     return match
+                self._exited_without_output()
                 raise RuntimeError(
                     f"guest exited with status {self._process.returncode}"
                 )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError(f"guest operation exceeded {timeout_seconds}s")
+                raise TimeoutError(
+                    f"guest operation exceeded {timeout_seconds:g}s"
+                )
             readable, _, _ = select.select(
                 [self._master], [], [], min(remaining, 0.25)
             )
@@ -638,6 +556,8 @@ class Guest:
                 return
             if not chunk:
                 return
+            if self.first_output_at is None:
+                self.first_output_at = time.monotonic()
             self._transcript.extend(chunk)
             if self._console_sink is not None:
                 self._console_sink.write(chunk)
@@ -647,3 +567,115 @@ class Guest:
     def _normal_output(output: bytes) -> str:
         decoded = output.decode("utf-8", errors="replace").replace("\r", "")
         return ANSI_ESCAPE.sub("", decoded).strip()
+
+
+class Guest(ConsoleProcess):
+    """A harness shell on the unified image, booted through the ramdisk.
+
+    The launcher's per-run initramfs mounts the image beneath a tmpfs
+    overlay, installs ``payloads`` and the session, and the session starts a
+    root shell on the console. ``overlay_shell`` gives that shell what an
+    init would: runtime mounts, the SLiRP address and resolver, and the
+    ``workspace`` under /tmp. ``init_shell`` gives a bare shell on the same
+    overlay. Swap and cgroup hierarchies are ready before the prompt.
+    """
+
+    def __init__(
+        self,
+        emulator: pathlib.Path,
+        rootfs: pathlib.Path,
+        memory: str,
+        workspace: str,
+        kernel_arguments: Sequence[str] = (),
+        swap_size: str | None = None,
+        cgroup1: str | None = None,
+        cgroup2_nsdelegate: bool = False,
+        init_shell: bool = False,
+        overlay_shell: bool = False,
+        engine: str = "jit",
+        core_class: str = "performance",
+        pass_fds: Sequence[int] = (),
+        console_sink: BinaryIO | None = None,
+        payloads: Mapping[str, GuestFile] = {},
+    ) -> None:
+        if init_shell == overlay_shell:
+            raise ValueError(
+                "a guest boots exactly one of init_shell or overlay_shell"
+            )
+        self._swap_path: pathlib.Path | None = None
+        self._staging: pathlib.Path | None = None
+        self._core_class = core_class
+        try:
+            session = session_parameters(
+                overlay_shell=overlay_shell,
+                workspace=workspace,
+                swap=swap_size is not None,
+                cgroup1=cgroup1,
+                cgroup2_nsdelegate=cgroup2_nsdelegate,
+            )
+            self._swap_path = create_swap_image(swap_size) if swap_size else None
+            self._staging = pathlib.Path(
+                tempfile.mkdtemp(prefix=f"uml-guest-files-{os.getpid()}-")
+            )
+            guest_files = stage_guest_files(self._staging, session, payloads)
+            super().__init__(
+                emulator_arguments(
+                    emulator,
+                    rootfs,
+                    memory,
+                    (*kernel_arguments, "console=tty0", "console=ttyS0"),
+                    self._swap_path,
+                    engine=engine,
+                    core_class=core_class,
+                    guest_files=guest_files,
+                ),
+                pass_fds=pass_fds,
+                console_sink=console_sink,
+            )
+        except BaseException:
+            self._remove_host_files()
+            raise
+
+    def boot_to_shell(self, timeout_seconds: float = BOOT_TIMEOUT_SECONDS) -> None:
+        """Reach the root shell the session starts."""
+        ready = self._read_until(
+            re.compile(
+                re.escape(f"{SESSION_READY_MARKER}/bin/sh".encode()) + rb"\r?\n"
+            ),
+            timeout_seconds,
+        )
+        # The search starts on the marker's line feed: a pattern's ``^`` does
+        # not match where a search starts.
+        self._read_until(
+            re.compile(LINE_START + rb"# $"), timeout_seconds, ready.end() - 1
+        )
+
+    def boot_and_login(self, timeout_seconds: float = BOOT_TIMEOUT_SECONDS) -> None:
+        self.boot_to_shell(timeout_seconds)
+
+    def shutdown(self, timeout_seconds: float = 30) -> bool:
+        """Request an orderly halt and wait for the emulator to exit."""
+        if self._process.poll() is not None:
+            return True
+        try:
+            self._write("sync; poweroff -f\n")
+            return self.wait_for_exit(timeout_seconds)
+        except (BrokenPipeError, OSError):
+            return self._process.poll() is not None
+
+    def close(self) -> None:
+        try:
+            try:
+                self.shutdown(5)
+            finally:
+                super().close()
+        finally:
+            self._remove_host_files()
+
+    def _remove_host_files(self) -> None:
+        if self._swap_path is not None:
+            self._swap_path.unlink(missing_ok=True)
+            self._swap_path = None
+        if self._staging is not None:
+            shutil.rmtree(self._staging, ignore_errors=True)
+            self._staging = None

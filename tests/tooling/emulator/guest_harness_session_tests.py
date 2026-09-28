@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Prove the guest harness cannot leave an emulator running after it dies."""
+"""Prove the guest harness boots its session through the per-run initramfs,
+drives the console, and cannot leave an emulator running after it dies."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -199,6 +200,205 @@ class AttachedGuestSessionTests(unittest.TestCase):
         self.assertEqual(result.output, "first line\nsecond line")
         follow = guest.run_command("printf '%s' after")
         self.assertEqual(follow.output, "after")
+
+    def recording_emulator(self, then: str = "exec sleep 3600") -> pathlib.Path:
+        """A stand-in that saves its arguments and each guest file it names."""
+        record = self.emulator.parent / "record"
+        record.mkdir()
+        self.emulator.write_text(
+            "#!/bin/sh\n"
+            f"record={record}\n"
+            'printf \'%s\\n\' "$@" > "$record/arguments"\n'
+            "index=0\n"
+            'for argument; do\n'
+            '    case "$argument" in\n'
+            "    --guest-file=*)\n"
+            '        pair=${argument#--guest-file=}\n'
+            '        cp "${pair#*=}" "$record/file-$index"\n'
+            '        ls -l "${pair#*=}" | cut -c1-10 > "$record/mode-$index"\n'
+            '        index=$((index + 1)) ;;\n'
+            "    esac\n"
+            "done\n"
+            ": > \"$record/done\"\n"
+            f"{then}\n",
+            encoding="utf-8",
+        )
+        return record
+
+    def wait_for(self, path: pathlib.Path) -> None:
+        deadline = time.monotonic() + 10
+        while not path.exists():
+            self.assertLess(time.monotonic(), deadline, f"{path} never appeared")
+            time.sleep(0.01)
+
+    def test_the_launcher_receives_the_session_and_its_payloads(self) -> None:
+        record = self.recording_emulator()
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/images/rootfs.erofs"),
+            memory="2G",
+            workspace="ext2",
+            kernel_arguments=("ncpus=2",),
+            swap_size="64M",
+            overlay_shell=True,
+            payloads={
+                "/usr/local/libexec/uml-test/probe": guest_support.GuestFile(
+                    b"probe bytes", 0o755
+                ),
+                "/etc/uml-test.conf": guest_support.GuestFile(b"setting=1\n"),
+            },
+        )
+        self.addCleanup(guest.close)
+        self.wait_for(record / "done")
+        arguments = (record / "arguments").read_text().splitlines()
+        guest_files = [
+            argument.removeprefix("--guest-file=").split("=", 1)[0]
+            for argument in arguments
+            if argument.startswith("--guest-file=")
+        ]
+        self.assertEqual(
+            guest_files,
+            [
+                "/boot.env",
+                "/payload/usr/local/libexec/uml-session",
+                "/payload/etc/uml-session.env",
+                "/payload/etc/uml-test.conf",
+                "/payload/usr/local/libexec/uml-test/probe",
+            ],
+        )
+        rest = [a for a in arguments if not a.startswith("--guest-file=")]
+        self.assertEqual(
+            rest[:2], ["--execution-engine=jit", "ubd0c=/images/rootfs.erofs"]
+        )
+        self.assertTrue(rest[2].startswith("ubd1="))
+        self.assertEqual(
+            rest[3:], ["mem=2G", "ncpus=2", "console=tty0", "console=ttyS0"]
+        )
+        self.assertFalse(
+            [a for a in rest if a.split("=", 1)[0] in ("root", "rootfstype", "init", "ip")],
+            "the launcher's per-run initramfs owns the root and the init",
+        )
+        contents = [
+            (record / f"file-{index}").read_bytes() for index in range(5)
+        ]
+        self.assertEqual(
+            contents[0], b"UML_BOOT_ENTRY=/usr/local/libexec/uml-session\n"
+        )
+        self.assertEqual(contents[1], guest_support.SESSION_SCRIPT.read_bytes())
+        self.assertEqual(
+            contents[2].decode().splitlines(),
+            [
+                "UML_SESSION_ENTRY=/bin/sh",
+                "UML_SESSION_RESOLVER=user-network",
+                "UML_SESSION_RUNTIME_MOUNTS=1",
+                "UML_SESSION_NETWORK=user-network",
+                "UML_SESSION_WORKSPACE=ext2",
+                "UML_SESSION_SWAP=/dev/ubdb",
+            ],
+        )
+        self.assertEqual(contents[3:], [b"setting=1\n", b"probe bytes"])
+        self.assertEqual(
+            (record / "mode-4").read_text().strip(), "-rwxr-xr-x"
+        )
+        self.assertEqual(
+            (record / "mode-3").read_text().strip(), "-rw-r--r--"
+        )
+        staging = pathlib.Path(
+            next(a for a in arguments if a.startswith("--guest-file=/boot.env="))
+            .split("=", 2)[2]
+        ).parent
+        self.assertTrue(staging.is_dir())
+        guest.close()
+        self.assertFalse(staging.exists(), "the staged guest files outlived the run")
+
+    def test_a_bare_shell_session_names_only_its_entry(self) -> None:
+        self.assertEqual(
+            guest_support.session_parameters(
+                overlay_shell=False,
+                workspace="tmpfs",
+                swap=False,
+                cgroup1="cpu",
+                cgroup2_nsdelegate=False,
+            ),
+            "UML_SESSION_ENTRY=/bin/sh\nUML_SESSION_CGROUP=v1:cpu\n",
+        )
+        with self.assertRaises(ValueError):
+            guest_support.session_parameters(
+                overlay_shell=False,
+                workspace="ext2",
+                swap=False,
+                cgroup1=None,
+                cgroup2_nsdelegate=False,
+            )
+
+    def test_payloads_the_session_would_hide_are_rejected(self) -> None:
+        record = self.recording_emulator()
+        for path in (
+            "/tmp/probe",
+            "/run/probe",
+            "/dev/probe",
+            "relative/probe",
+            "/usr/../probe",
+            "/usr//probe",
+            "/usr/probe=1",
+            guest_support.SESSION_GUEST_PATH,
+        ):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                guest_support.Guest(
+                    emulator=self.emulator,
+                    rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+                    memory="4G",
+                    workspace="tmpfs",
+                    init_shell=True,
+                    payloads={path: guest_support.GuestFile(b"")},
+                )
+        self.assertFalse((record / "arguments").exists())
+        leftovers = list(
+            pathlib.Path(tempfile.gettempdir()).glob(
+                f"uml-guest-files-{os.getpid()}-*"
+            )
+        )
+        self.assertEqual(leftovers, [])
+
+    def test_boot_waits_for_the_session_before_the_prompt(self) -> None:
+        # A prompt-shaped line before the session reports ready, such as one
+        # from the ramdisk, must not count as the harness shell.
+        self.emulator.write_text(
+            "#!/bin/sh\n"
+            "printf '# \\n'\n"
+            "sleep 0.5\n"
+            "printf 'UML_SESSION_READY:/bin/sh\\n# '\n"
+            "exec /bin/sh\n",
+            encoding="utf-8",
+        )
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        self.addCleanup(guest.close)
+        guest.boot_to_shell(10)
+        self.assertIn("UML_SESSION_READY:/bin/sh", guest.output())
+        self.assertEqual(guest.run_command("printf '%s' ready").output, "ready")
+
+    def test_a_session_failure_ends_the_boot_with_its_reason(self) -> None:
+        self.emulator.write_text(
+            "#!/bin/sh\nprintf 'UML_SESSION_ERROR:cannot mount /run\\n'\nexit 1\n",
+            encoding="utf-8",
+        )
+        guest = guest_support.Guest(
+            emulator=self.emulator,
+            rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+            memory="4G",
+            workspace="tmpfs",
+            init_shell=True,
+        )
+        self.addCleanup(guest.close)
+        with self.assertRaisesRegex(RuntimeError, "guest exited with status 1"):
+            guest.boot_to_shell(10)
+        self.assertIn("UML_SESSION_ERROR:cannot mount /run", guest.output())
 
     def test_a_killed_harness_group_takes_its_guest_with_it(self) -> None:
         harness = subprocess.Popen(

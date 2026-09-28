@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Run a static guest probe fetched over the SLiRP gateway.
+"""Run a static guest probe installed by the per-run initramfs.
 
-A runner hands over one payload: the probe itself, or an archive holding
-``probe`` and its fixtures. The host serves it on its loopback, which the
-guest reaches as the SLiRP gateway 10.0.2.2. A disposable overlay-shell guest
-fetches and checksums the payload, runs the probe, and the run fails on a
-missing PASS marker, an unclean shutdown, or a kernel failure in the
-transcript.
+A runner hands over the probe and any fixtures it reads. They reach the guest
+as payload files in one directory, beside a SHA-256 list the guest checks
+before anything runs. A disposable overlay-shell guest runs the probe there,
+and the run fails on a missing PASS marker, an unclean shutdown, or a kernel
+failure in the transcript.
 """
 
 from __future__ import annotations
@@ -14,19 +13,13 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import contextlib
-import functools
 import hashlib
-import http.server
 import pathlib
-import secrets
 import shlex
 import struct
-import tempfile
-import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Mapping, Sequence
 
-from guest import Guest
+from guest import Guest, GuestFile
 
 
 BOOT_TIMEOUT_SECONDS = 120
@@ -35,8 +28,8 @@ REPORT_TIMEOUT_SECONDS = 20
 PROBE_SIZE_LIMIT = 8 * 1024 * 1024
 # ELF e_machine values of the x86_64 and AArch64 guest ABIs.
 GUEST_MACHINES = (62, 183)
-SLIRP_GATEWAY = "10.0.2.2"
-WORKSPACE = "/tmp/uml-probe"
+PROBE_DIRECTORY = "/usr/local/libexec/uml-probe"
+CHECKSUMS = "SHA256SUMS"
 RESULT_LOG = "/tmp/uml-probe-result.log"
 KERNEL_FAILURE_MARKERS = (
     "Kernel panic",
@@ -45,11 +38,6 @@ KERNEL_FAILURE_MARKERS = (
     "Illegal instruction",
     "detected stalls on CPUs",
 )
-
-
-class QuietHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, *_args: object) -> None:
-        pass
 
 
 def parse_arguments(description: str | None) -> argparse.Namespace:
@@ -74,63 +62,50 @@ def parse_arguments(description: str | None) -> argparse.Namespace:
     return arguments
 
 
-@contextlib.contextmanager
-def serve_payload(payload: bytes) -> Iterator[str]:
-    """Serve payload on the host loopback and yield the guest's URL for it."""
-    with tempfile.TemporaryDirectory(prefix="uml-probe-payload-") as directory:
-        name = secrets.token_hex(16)
-        pathlib.Path(directory, name).write_bytes(payload)
-        server = http.server.ThreadingHTTPServer(
-            ("127.0.0.1", 0), functools.partial(QuietHandler, directory=directory)
-        )
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        try:
-            yield f"http://{SLIRP_GATEWAY}:{server.server_port}/{name}"
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=5)
-            if thread.is_alive():
-                raise RuntimeError("fixture server did not stop")
+def probe_payloads(
+    probe: bytes, fixtures: Mapping[str, bytes]
+) -> dict[str, GuestFile]:
+    """The probe, its fixtures and their checksum list, as guest payloads.
 
-
-def fetch_command(url: str, destination: str, digest: str) -> str:
-    """Fetch url to destination with curl or wget and verify its SHA-256."""
-    source = shlex.quote(url)
-    target = shlex.quote(destination)
-    return (
-        "if command -v curl >/dev/null; then "
-        f"curl -fsS --connect-timeout 5 --max-time 30 {source} -o {target}; "
-        f"else wget -q -T 30 -O {target} {source}; fi; "
-        f"echo '{digest}  {destination}' | sha256sum -c - >/dev/null"
+    Fixture names are relative to the probe's directory."""
+    if "probe" in fixtures or CHECKSUMS in fixtures:
+        raise ValueError(f"a fixture cannot replace probe or {CHECKSUMS}")
+    files = {"probe": probe, **fixtures}
+    checksums = "".join(
+        f"{hashlib.sha256(contents).hexdigest()}  {name}\n"
+        for name, contents in sorted(files.items())
     )
+    payloads = {
+        f"{PROBE_DIRECTORY}/{name}": GuestFile(
+            contents, 0o755 if name == "probe" else 0o644
+        )
+        for name, contents in files.items()
+    }
+    payloads[f"{PROBE_DIRECTORY}/{CHECKSUMS}"] = GuestFile(checksums.encode())
+    return payloads
 
 
 def run_probe(
     arguments: argparse.Namespace,
     *,
     subject: str,
-    payload: bytes,
-    payload_name: str,
     kernel_arguments: Sequence[str],
     probe_timeout_seconds: int,
     command_timeout_seconds: int,
     pass_marker: str,
+    fixtures: Mapping[str, bytes] = {},
     probe_arguments: Sequence[str] = (),
     precondition: str | None = None,
-    unpack: str | None = None,
     engine: str = "jit",
 ) -> None:
-    """Boot a guest, fetch payload as payload_name, and run ``./probe``.
+    """Boot a guest with the probe and fixtures installed and run ``./probe``.
 
-    precondition runs before the fetch and unpack after it; the probe's
-    output is kept in RESULT_LOG and must contain pass_marker."""
-    digest = hashlib.sha256(payload).hexdigest()
+    precondition runs before the checksum check; the probe's output is kept
+    in RESULT_LOG and must contain pass_marker."""
     probe = shlex.join(
         ("timeout", str(probe_timeout_seconds), "./probe", *probe_arguments)
     )
-    with serve_payload(payload) as url, Guest(
+    with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         "2G",
@@ -138,6 +113,7 @@ def run_probe(
         kernel_arguments=kernel_arguments,
         overlay_shell=True,
         engine=engine,
+        payloads=probe_payloads(arguments.probe.read_bytes(), fixtures),
     ) as guest:
         try:
             guest.boot_and_login(BOOT_TIMEOUT_SECONDS)
@@ -146,13 +122,10 @@ def run_probe(
                 steps.append(precondition)
             steps += [
                 f'test "$(getconf PAGESIZE)" = {arguments.page_size}',
-                f"mkdir -p {WORKSPACE}",
-                f"cd {WORKSPACE}",
-                fetch_command(url, payload_name, digest),
+                f"cd {PROBE_DIRECTORY}",
+                f"sha256sum -c {CHECKSUMS} >/dev/null",
+                f"{probe} >{RESULT_LOG} 2>&1",
             ]
-            if unpack:
-                steps.append(unpack)
-            steps += ["chmod 700 probe", f"{probe} >{RESULT_LOG} 2>&1"]
             result = guest.run_command("; ".join(steps), command_timeout_seconds)
             report = guest.run_command(f"cat {RESULT_LOG}", REPORT_TIMEOUT_SECONDS)
             print(report.output, flush=True)

@@ -23,9 +23,10 @@ import tempfile
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 
-from guest import Guest  # noqa: E402
+from guest import Guest, GuestFile  # noqa: E402
 
 SYMBOLIZER = REPOSITORY / "tests" / "perf" / "symbolize_guest_samples.py"
+GUEST_WORKLOAD = "/usr/local/libexec/uml-test/workload"
 SAMPLES_PER_SECOND = 1000
 HOT_SHARE = 0.9
 SHARE_TOLERANCE = 0.1
@@ -65,10 +66,10 @@ def main() -> int:
             overlay_shell=True,
             # Only the gadgets engine carries the sampler.
             engine="gadgets",
+            payloads={GUEST_WORKLOAD: GuestFile(workload.read_bytes(), 0o755)},
         ) as guest:
             guest.boot_and_login()
-            guest.upload(workload.read_bytes(), "/tmp/workload", 0o755)
-            output = guest.check_command("/tmp/workload", 300)
+            output = guest.check_command(GUEST_WORKLOAD, 300)
             if "OK" not in output.splitlines():
                 raise RuntimeError(f"workload did not finish:\n{output}")
             if not guest.shutdown(60):

@@ -275,7 +275,7 @@ class GuestProcessTests(unittest.TestCase):
                 guest.os, "set_blocking", side_effect=OSError("console setup failure")
             ), self.assertRaisesRegex(OSError, "console setup failure"):
                 guest.run_guest([sys.executable, "-c", "import time; time.sleep(30)"],
-                                b"", root / "console.log", 2, False)
+                                root / "console.log", 2, False)
             self.assertEqual(len(spawned), 1)
             self.assertIsNotNone(spawned[0].poll())
 
@@ -299,7 +299,7 @@ class GuestProcessTests(unittest.TestCase):
                 guest.SerialConsoleSocket, "close", fail_close
             ), self.assertRaisesRegex(OSError, "serial close failure"):
                 guest.run_guest([sys.executable, "-c", "import time; time.sleep(30)"],
-                                b"", root / "console.log", 0.05, False, root / "serial.sock")
+                                root / "console.log", 0.05, False, root / "serial.sock")
             self.assertIsNotNone(spawned[0].poll())
             self.assertFalse((root / "serial.sock").exists())
 
@@ -323,7 +323,7 @@ class GuestProcessTests(unittest.TestCase):
                 "import run_gpu_guest as g; "
                 "g.guest_process.EMULATOR_STOP=((signal.SIGTERM,0.3),(signal.SIGKILL,2)); "
                 f"g.run_guest({[sys.executable, '-c', emulator, str(endpoint), str(marker), '--virtio-serial-socket=' + str(endpoint)]!r}, "
-                f"b'', __import__('pathlib').Path({str(root / 'console.log')!r}),30,False)"
+                f"__import__('pathlib').Path({str(root / 'console.log')!r}),30,False)"
             )
             leaf = (
                 f"import sys,signal,time; sys.dont_write_bytecode=True; sys.path.insert(0,{str(INTEGRATION)!r}); "

@@ -28,6 +28,19 @@ sys.path.insert(0, str(GPU_INTEGRATION))
 import run_webgl_samples  # noqa: E402
 
 
+def legacy_seed() -> str:
+    return boot_kde_vnc.LEGACY_KDE_SEED.read_text(encoding="utf-8")
+
+
+def seed_commands() -> list[str]:
+    """The seed's commands, one per entry with continuations joined."""
+    return [
+        line.strip()
+        for line in legacy_seed().replace("\\\n", " ").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
 def run_samples_launcher(
     deadlines: dict[str, int], chromium: str
 ) -> subprocess.CompletedProcess[str]:
@@ -128,7 +141,12 @@ class KdeVncLauncherTests(unittest.TestCase):
             ],
             ["--root-device", "/dev/ubda1"],
         )
-        self.assertIn("ip=off", command[separator + 1 :])
+        # The starter disk owns its whole session: the initramfs starts its
+        # own init, and the launcher adds no setup or network override.
+        self.assertIn("--image-init", harness_arguments)
+        self.assertNotIn("--command", harness_arguments)
+        self.assertNotIn("--guest-file", harness_arguments)
+        self.assertNotIn("ip=off", command[separator + 1 :])
 
     def test_execution_settings_are_forwarded(self) -> None:
         options = boot_kde_vnc.parse_arguments(
@@ -199,19 +217,21 @@ class KdeVncLauncherTests(unittest.TestCase):
             command = boot_kde_vnc.build_harness_command(options)
 
         separator = boot_kde_vnc.guest_argument_separator(command)
-        self.assertIn(f"ubd1r={iso.resolve()}", command[separator + 1 :])
-        harness_arguments = command[:separator]
-        mount_index = harness_arguments.index(boot_kde_vnc.ISO_MOUNT_COMMAND)
-        self.assertEqual(harness_arguments[mount_index - 1], "--command")
-        self.assertIn("mount -t iso9660 -o ro", boot_kde_vnc.ISO_MOUNT_COMMAND)
-        self.assertIn("/dev/ubdb", boot_kde_vnc.ISO_MOUNT_COMMAND)
-        self.assertIn("/mnt/cdrom", boot_kde_vnc.ISO_MOUNT_COMMAND)
+        kernel_arguments = command[separator + 1 :]
+        self.assertIn(f"ubd1r={iso.resolve()}", kernel_arguments)
+        # The image's systemd mounts it, so the starter's own init needs no
+        # command from the launcher.
+        self.assertIn(
+            "systemd.mount-extra=/dev/ubdb:/mnt/cdrom:iso9660:ro",
+            kernel_arguments,
+        )
+        self.assertNotIn("--command", command[:separator])
 
     def test_no_iso_disk_or_mount_is_added_by_default(self) -> None:
         command = boot_kde_vnc.build_harness_command(
             boot_kde_vnc.parse_arguments([])
         )
-        self.assertNotIn(boot_kde_vnc.ISO_MOUNT_COMMAND, command)
+        self.assertNotIn(boot_kde_vnc.ISO_MOUNT_ARGUMENT, command)
         self.assertFalse(any(argument.startswith("ubd1") for argument in command))
 
     def test_optional_display_density_is_forwarded_to_the_host_gpu(self) -> None:
@@ -418,6 +438,19 @@ class KdeVncLauncherTests(unittest.TestCase):
                 "/dev/ubda",
             ],
         )
+        seed = command.index("--guest-file")
+        self.assertEqual(
+            command[seed : seed + 4],
+            [
+                "--guest-file",
+                f"{boot_kde_vnc.LEGACY_KDE_SEED_GUEST_PATH}="
+                f"{boot_kde_vnc.LEGACY_KDE_SEED}",
+                "--command",
+                boot_kde_vnc.LEGACY_KDE_SEED_GUEST_PATH,
+            ],
+        )
+        self.assertTrue(os.access(boot_kde_vnc.LEGACY_KDE_SEED, os.X_OK))
+        self.assertNotIn("--image-init", command)
 
     def test_ext4_root_type_is_forwarded_to_the_guest_harness(self) -> None:
         options = boot_kde_vnc.parse_arguments(
@@ -437,51 +470,54 @@ class KdeVncLauncherTests(unittest.TestCase):
             ["--root-device", "/dev/ubda1"],
         )
 
-    def test_desktop_idle_lock_is_disabled_in_overlay(self) -> None:
-        commands = "\n".join(boot_kde_vnc.STARTER_KDE_OVERLAY_COMMANDS)
+    def test_desktop_idle_lock_is_disabled_by_the_seed(self) -> None:
+        commands = legacy_seed()
         self.assertIn("kscreenlockerrc", commands)
         self.assertIn("Autolock=false", commands)
         self.assertIn("LockOnResume=false", commands)
 
-    def test_overlay_home_directories_name_every_parent(self) -> None:
+    def test_seed_home_directories_name_every_parent(self) -> None:
         # install -d leaves unnamed parents owned by root, which the session
         # user then cannot write, so each parent must be named before its
         # children.
-        for commands in (
-            boot_kde_vnc.STARTER_KDE_OVERLAY_COMMANDS,
-            boot_kde_vnc.LEGACY_KDE_OVERLAY_COMMANDS,
-        ):
-            install = next(
-                command
-                for command in commands
-                if command.startswith("install -d -m 0755 -o ")
+        install = next(
+            command
+            for command in seed_commands()
+            if command.startswith("install -d -m 0755 -o ")
+        )
+        directories = install.split()[8:]
+        home = directories[0].rsplit("/", 1)[0]
+        named: set[str] = set()
+        for directory in directories:
+            parent = directory.rsplit("/", 1)[0]
+            self.assertTrue(
+                parent == home or parent in named,
+                f"{directory} is named before its parent",
             )
-            directories = install.split()[8:]
-            home = directories[0].rsplit("/", 1)[0]
-            named: set[str] = set()
-            for directory in directories:
-                parent = directory.rsplit("/", 1)[0]
-                self.assertTrue(
-                    parent == home or parent in named,
-                    f"{directory} is named before its parent",
-                )
-                named.add(directory)
+            named.add(directory)
+
+    def test_seed_is_valid_shell(self) -> None:
+        result = subprocess.run(
+            ["sh", "-n", str(boot_kde_vnc.LEGACY_KDE_SEED)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("set -eu", seed_commands())
 
     def test_starter_image_owns_account_and_login_policy(self) -> None:
-        commands = "\n".join(boot_kde_vnc.STARTER_KDE_OVERLAY_COMMANDS)
-        self.assertIn("getent passwd debian", commands)
-        self.assertIn("/home/debian", commands)
-        self.assertNotIn("useradd", commands)
-        self.assertNotIn("usermod", commands)
-        self.assertNotIn("systemctl", commands)
-        self.assertNotIn("sddm", commands.lower())
-        self.assertNotIn("serial-getty@", commands)
-        self.assertNotIn("systemctl start getty@", commands)
-        self.assertNotIn("agetty", commands)
-        self.assertNotIn("chpasswd", commands)
+        command = boot_kde_vnc.build_harness_command(
+            boot_kde_vnc.parse_arguments([])
+        )
+        separator = boot_kde_vnc.guest_argument_separator(command)
+        harness_arguments = "\n".join(command[:separator])
+        self.assertNotIn(str(boot_kde_vnc.LEGACY_KDE_SEED), harness_arguments)
+        self.assertNotIn("/home/debian", harness_arguments)
+        self.assertNotIn("sddm", harness_arguments.lower())
 
     def test_conflicting_getties_are_masked_before_sddm(self) -> None:
-        commands = "\n".join(boot_kde_vnc.LEGACY_KDE_OVERLAY_COMMANDS)
+        commands = legacy_seed()
         self.assertIn(
             "systemctl mask --now getty@tty0.service getty@tty1.service",
             commands,
@@ -533,16 +569,11 @@ class KdeVncLauncherTests(unittest.TestCase):
             harness_arguments[rootfs_type : rootfs_type + 2],
             ["--rootfs-type", "ext4"],
         )
-        self.assertIn(
-            "systemctl mask --now getty@tty0.service getty@tty1.service",
-            harness_arguments,
-        )
+        self.assertIn(boot_kde_vnc.LEGACY_KDE_SEED_GUEST_PATH, harness_arguments)
+        self.assertNotIn("--image-init", harness_arguments)
         self.assertIn("systemd.mask=getty@tty0.service", kernel_arguments)
         self.assertIn("systemd.mask=getty@tty1.service", kernel_arguments)
         self.assertNotIn("ip=off", kernel_arguments)
-        self.assertNotIn(
-            "getent passwd debian", "\n".join(harness_arguments)
-        )
 
     def test_starter_profile_requires_an_ext4_disk(self) -> None:
         with self.assertRaises(SystemExit):
@@ -555,7 +586,8 @@ class KdeVncLauncherTests(unittest.TestCase):
         self.assertEqual(options.root_device, "/dev/ubda")
         command = boot_kde_vnc.build_harness_command(options)
         separator = boot_kde_vnc.guest_argument_separator(command)
-        commands = "\n".join(command[:separator])
+        self.assertIn(boot_kde_vnc.LEGACY_KDE_SEED_GUEST_PATH, command[:separator])
+        commands = legacy_seed()
         self.assertIn("getent passwd uml", commands)
         self.assertIn("User=uml", commands)
         self.assertIn("/home/uml", commands)

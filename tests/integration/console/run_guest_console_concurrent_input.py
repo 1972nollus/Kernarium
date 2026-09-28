@@ -16,7 +16,6 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import base64
 import pathlib
 import re
 import sys
@@ -25,7 +24,7 @@ import sys
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
 
-from guest import Guest  # noqa: E402
+from guest import Guest, GuestFile  # noqa: E402
 
 
 LINES = 16384
@@ -34,7 +33,8 @@ ROUNDS = 2
 CPUS = 4
 ROUND_TIMEOUT_SECONDS = 120
 
-# The init-shell root is read-only, so the reader travels in its command line.
+# The reader is a payload file; only the stream it checks crosses the console.
+GUEST_READER = "/usr/local/libexec/uml-test/reader.py"
 READER = f"""
 import os, select, sys
 n = int(sys.argv[1]); got = 0; bad = 0; first = None; buf = b""
@@ -71,11 +71,7 @@ def main() -> int:
     arguments = parser.parse_args()
 
     payload = "".join(stream_line(index) for index in range(LINES))
-    reader = base64.b64encode(READER.encode()).decode()
-    command = (
-        "taskset -c 1 python3 -c "
-        f"\"import base64; exec(base64.b64decode('{reader}'))\" {LINES}"
-    )
+    command = f"taskset -c 1 python3 -B {GUEST_READER} {LINES}"
     with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
@@ -83,10 +79,10 @@ def main() -> int:
         "tmpfs",
         (f"ncpus={CPUS}",),
         init_shell=True,
+        payloads={GUEST_READER: GuestFile(READER.encode())},
     ) as guest:
         guest.boot_to_shell(180)
-        for setup in ("mount -t proc proc /proc", "stty -echo"):
-            guest.check_command(setup, 20)
+        guest.check_command("stty -echo", 20)
         for round_index in range(ROUNDS):
             try:
                 result = guest.run_command(

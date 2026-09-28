@@ -6,8 +6,8 @@ a full systemd userspace - they need a root shell and the rootfs. Booting
 systemd for them costs about ninety seconds of service startup, and the
 benchmark runners' quiescence phase then has to stop most of it again.
 
-This boots straight to a shell over the OverlayFS bootstrap instead, runs each
-command, and prints the output.
+This boots the per-run ramdisk's harness session straight to a shell instead,
+runs each command, and prints the output.
 
     tools/guest-shell.py --emulator .build/presets/macos-integration/bin/uml-darwin \\
         -c 'objdump -d /opt/geekbench/... | head'
@@ -64,11 +64,6 @@ def parse_arguments() -> argparse.Namespace:
         help="suppress the live console stream and print only command output",
     )
     parser.add_argument("--timeout", type=int, default=1800)
-    parser.add_argument(
-        "--root-device",
-        default="/dev/ubda",
-        help="raw EROFS root block device (default: /dev/ubda)",
-    )
     return parser.parse_args()
 
 
@@ -86,7 +81,6 @@ def main() -> int:
         "tmpfs",
         (
             f"ncpus={arguments.cpus}",
-            f"root={arguments.root_device}",
             *(("--audio",) if arguments.audio else ()),
         ),
         overlay_shell=True,

@@ -3,10 +3,7 @@
 from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
-import base64
-import gzip
 from pathlib import Path
-import re
 import struct
 import subprocess
 import sys
@@ -50,9 +47,12 @@ class VulkanProbeTests(unittest.TestCase):
         receipt = receipt_fixtures.vulkan_receipt(self)
         payload = self.elf() + b"Vulkan probe data" * 64
         script = probe.build_probe_script(payload, receipt, 16384, ["a b", "$(false)"])
-        encoded = re.search(r"printf '%s' '([^']+)' \| base64", script).group(1)
-        self.assertEqual(gzip.decompress(base64.b64decode(encoded)), payload)
-        self.assertIn(probe.hashlib.sha256(payload).hexdigest(), script)
+        # The probe travels as a guest file; the script only checks it.
+        self.assertNotIn("base64", script)
+        self.assertIn(
+            f"{probe.hashlib.sha256(payload).hexdigest()}  {probe.PROBE_GUEST_PATH}",
+            script,
+        )
         self.assertIn('test "$(nproc)" = 4', script)
         self.assertIn('test "$(getconf PAGESIZE)" = 16384', script)
         self.assertIn("/^MemTotal:/", script)
@@ -60,7 +60,7 @@ class VulkanProbeTests(unittest.TestCase):
         self.assertIn("export VK_DRIVER_FILES=" + probe.ICD_PATH, script)
         self.assertIn("export UML_VULKAN_REQUIRE_VENUS=1", script)
         self.assertIn("unset VK_ICD_FILENAMES VK_ADD_DRIVER_FILES VK_INSTANCE_LAYERS", script)
-        self.assertIn("/run/uml-vulkan-probe 'a b' '$(false)'", script)
+        self.assertIn(f"{probe.PROBE_GUEST_PATH} 'a b' '$(false)'", script)
         for path in (probe.ICD_PATH, probe.LIBRARY_PATH):
             self.assertIn(probe.cts._receipt_file(receipt, path)["sha256"], script)
         subprocess.run(["/bin/sh", "-n"], input=script, text=True, check=True)
