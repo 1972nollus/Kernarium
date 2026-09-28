@@ -594,7 +594,7 @@ index e9f2fa31680132fae796582d93da3dfe7667d4c5..0f237234909adfe6ec773a5a639bb090
  upt_x86_64_segment_selector(const struct uml_pt_regs *regs, unsigned int index)
  {
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 215c4616db4336c089434528b511d3f1b00f9dac..c3fcb460652e40e9316299d3646b5c9c696f4e1b 100644
+index 65f9b01e059b2f5894e578a5d6fb2540cfb00346..6389e8017f374148a3c9030336d01f1ca081c186 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -1,7 +1,9 @@

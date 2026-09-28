@@ -5,54 +5,54 @@ Subject: [PATCH] arm64: add the user-mode Linux architecture port
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
- arch/arm64/Makefile.um                       |  64 +++++++
- arch/arm64/um/Kconfig                        |  40 +++++
- arch/arm64/um/Makefile                       |  12 ++
+ arch/arm64/Makefile.um                       |  64 +++++
+ arch/arm64/um/Kconfig                        |  40 ++++
+ arch/arm64/um/Makefile                       |  12 +
  arch/arm64/um/asm/barrier.h                  |  15 ++
  arch/arm64/um/asm/checksum.h                 |   8 +
  arch/arm64/um/asm/cpufeature.h               |   8 +
  arch/arm64/um/asm/cpufeatures.h              |   9 +
- arch/arm64/um/asm/elf.h                      |  79 +++++++++
- arch/arm64/um/asm/lse.h                      |  61 +++++++
+ arch/arm64/um/asm/elf.h                      |  87 +++++++
+ arch/arm64/um/asm/lse.h                      |  61 +++++
  arch/arm64/um/asm/memory.h                   |   8 +
  arch/arm64/um/asm/mman.h                     |   7 +
- arch/arm64/um/asm/perf_event.h               |  19 +++
- arch/arm64/um/asm/processor.h                |  51 ++++++
+ arch/arm64/um/asm/perf_event.h               |  19 ++
+ arch/arm64/um/asm/processor.h                |  51 ++++
  arch/arm64/um/asm/ptrace-abi.h               |  15 ++
- arch/arm64/um/asm/ptrace.h                   |  50 ++++++
- arch/arm64/um/asm/rqspinlock.h               |  10 ++
+ arch/arm64/um/asm/ptrace.h                   |  50 ++++
+ arch/arm64/um/asm/rqspinlock.h               |  10 +
  arch/arm64/um/asm/segment.h                  |   8 +
- arch/arm64/um/asm/set_memory.h               |  53 ++++++
+ arch/arm64/um/asm/set_memory.h               |  53 +++++
  arch/arm64/um/asm/signal.h                   |  15 ++
- arch/arm64/um/asm/spinlock.h                 |  19 +++
+ arch/arm64/um/asm/spinlock.h                 |  19 ++
  arch/arm64/um/asm/syscall.h                  |  18 ++
- arch/arm64/um/asm/user.h                     |  12 ++
- arch/arm64/um/asm/vdso/clocksource.h         |  11 ++
- arch/arm64/um/asm/vdso/gettimeofday.h        |  43 +++++
+ arch/arm64/um/asm/user.h                     |  12 +
+ arch/arm64/um/asm/vdso/clocksource.h         |  11 +
+ arch/arm64/um/asm/vdso/gettimeofday.h        |  43 ++++
  arch/arm64/um/asm/vdso/processor.h           |   7 +
  arch/arm64/um/asm/vdso/vsyscall.h            |   7 +
  arch/arm64/um/asm/vm-flags.h                 |   7 +
- arch/arm64/um/asm/word-at-a-time.h           |  35 ++++
- arch/arm64/um/bugs.c                         |  12 ++
- arch/arm64/um/delay.c                        |  32 ++++
- arch/arm64/um/fault.c                        |  30 ++++
+ arch/arm64/um/asm/word-at-a-time.h           |  35 +++
+ arch/arm64/um/bugs.c                         |  12 +
+ arch/arm64/um/delay.c                        |  32 +++
+ arch/arm64/um/fault.c                        |  30 +++
  arch/arm64/um/mem.c                          |   8 +
- arch/arm64/um/ptrace.c                       | 166 +++++++++++++++++++
- arch/arm64/um/registers.c                    |  51 ++++++
- arch/arm64/um/setjmp.S                       |  43 +++++
- arch/arm64/um/shared/sysdep/archsetjmp.h     |  29 ++++
- arch/arm64/um/shared/sysdep/faultinfo.h      |  41 +++++
+ arch/arm64/um/ptrace.c                       | 166 +++++++++++++
+ arch/arm64/um/registers.c                    |  51 ++++
+ arch/arm64/um/setjmp.S                       |  43 ++++
+ arch/arm64/um/shared/sysdep/archsetjmp.h     |  29 +++
+ arch/arm64/um/shared/sysdep/faultinfo.h      |  41 ++++
  arch/arm64/um/shared/sysdep/kernel-offsets.h |  16 ++
- arch/arm64/um/shared/sysdep/ptrace.h         |  74 +++++++++
+ arch/arm64/um/shared/sysdep/ptrace.h         |  74 ++++++
  arch/arm64/um/shared/sysdep/ptrace_user.h    |  14 ++
- arch/arm64/um/signal.c                       | 166 +++++++++++++++++++
- arch/arm64/um/subarch.c                      |  29 ++++
- arch/arm64/um/syscall_table.c                |  25 +++
+ arch/arm64/um/signal.c                       | 235 +++++++++++++++++++
+ arch/arm64/um/subarch.c                      |  29 +++
+ arch/arm64/um/syscall_table.c                |  25 ++
  arch/arm64/um/syscalls.c                     |  14 ++
  arch/arm64/um/sysrq.c                        |  18 ++
- arch/arm64/um/tls.c                          |  22 +++
- arch/arm64/um/user-offsets.c                 |  63 +++++++
- 47 files changed, 1544 insertions(+)
+ arch/arm64/um/tls.c                          |  22 ++
+ arch/arm64/um/user-offsets.c                 |  63 +++++
+ 47 files changed, 1621 insertions(+)
  create mode 100644 arch/arm64/Makefile.um
  create mode 100644 arch/arm64/um/Kconfig
  create mode 100644 arch/arm64/um/Makefile
@@ -301,10 +301,10 @@ index 0000000000000000000000000000000000000000..c224dfb5c3ac46768c8ac1e0304ee622
 +#endif
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..42959d6dfd834a68b940e9aec7bc7a665a9985c0
+index 0000000000000000000000000000000000000000..baaa7c8c27de70be2f0513cc137f7bf645fa19ab
 --- /dev/null
 +++ b/arch/arm64/um/asm/elf.h
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,87 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef _ASM_UM_ARM64_ELF_H
 +#define _ASM_UM_ARM64_ELF_H
@@ -382,6 +382,14 @@ index 0000000000000000000000000000000000000000..42959d6dfd834a68b940e9aec7bc7a66
 +
 +#define FIXADDR_USER_START 0
 +#define FIXADDR_USER_END 0
++
++#ifdef UML_HOST_DARWIN
++/* Maps the page that holds the sigreturn trampoline (signal.c). */
++#define ARCH_HAS_SETUP_ADDITIONAL_PAGES 1
++struct linux_binprm;
++extern int arch_setup_additional_pages(struct linux_binprm *bprm,
++				       int uses_interp);
++#endif
 +
 +#endif
 diff --git a/arch/arm64/um/asm/lse.h b/arch/arm64/um/asm/lse.h
@@ -1550,13 +1558,16 @@ index 0000000000000000000000000000000000000000..88d7debbae6f3405ffa36f9f47925764
 +#endif
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..51c5ab74921ce0cfc43bde262e71670e1fa03b1d
+index 0000000000000000000000000000000000000000..ab4b831db1a2ad1424bafd110896968d9bdbe17d
 --- /dev/null
 +++ b/arch/arm64/um/signal.c
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,235 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
++#include <linux/binfmts.h>
 +#include <linux/errno.h>
++#include <linux/init.h>
++#include <linux/mm.h>
 +#include <linux/personality.h>
 +#include <linux/sched.h>
 +#include <linux/signal.h>
@@ -1573,12 +1584,73 @@ index 0000000000000000000000000000000000000000..51c5ab74921ce0cfc43bde262e71670e
 +	struct ucontext uc;
 +};
 +
++/* As on native arm64, a frame record above the signal frame links the
++ * handler's frame chain to the interrupted context.
++ */
++struct uml_arm64_frame_record {
++	u64 fp;
++	u64 lr;
++};
++
 +#ifdef UML_HOST_DARWIN
-+/* The final guest page is deliberately above STACK_TOP and never mapped.
-+ * Returning there lets the Darwin Mach exception bridge synthesize the
-+ * rt_sigreturn syscall without requiring an executable guest stack or vDSO.
++/* A handler without SA_RESTORER returns here, in the final guest page above
++ * STACK_TOP, and the Darwin host runs the rt_sigreturn syscall itself when a
++ * task reaches this address, so no executable guest stack is needed.
 + */
 +#define UML_DARWIN_SIGRETURN_TRAMPOLINE 0x3fffffffff00UL
++
++/*
++ * Unwinders (libgcc, which glibc's backtrace() and thread cancellation use,
++ * GDB and libunwind) recognise a signal frame by reading the instructions at
++ * its return address.  Native arm64 returns to the vDSO's
++ * __kernel_rt_sigreturn, "mov x8, #__NR_rt_sigreturn; svc #0" after a NOP,
++ * and gives it no unwind directives on purpose.  Every task therefore maps
++ * this read-only page, which holds the same instructions at the trampoline.
++ */
++static struct page *uml_darwin_sigpage;
++
++static int __init uml_darwin_sigpage_init(void)
++{
++	static const u32 code[] = {
++		0xd503201f,	/* nop */
++		0xd2801168,	/* mov x8, #__NR_rt_sigreturn */
++		0xd4000001,	/* svc #0 */
++	};
++	unsigned long offset =
++		offset_in_page(UML_DARWIN_SIGRETURN_TRAMPOLINE) - sizeof(code[0]);
++
++	BUILD_BUG_ON(__NR_rt_sigreturn != 139);
++	BUILD_BUG_ON(offset_in_page(UML_DARWIN_SIGRETURN_TRAMPOLINE) <
++		     sizeof(code[0]) ||
++		     offset_in_page(UML_DARWIN_SIGRETURN_TRAMPOLINE) +
++		     sizeof(code) - sizeof(code[0]) > PAGE_SIZE);
++	uml_darwin_sigpage = alloc_page(GFP_KERNEL | __GFP_ZERO);
++	if (!uml_darwin_sigpage)
++		return -ENOMEM;
++	memcpy(page_address(uml_darwin_sigpage) + offset, code, sizeof(code));
++	return 0;
++}
++subsys_initcall(uml_darwin_sigpage_init);
++
++int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
++{
++	static const struct vm_special_mapping sigpage = {
++		.name = "[sigpage]",
++		.pages = &uml_darwin_sigpage,
++	};
++	struct mm_struct *mm = current->mm;
++	struct vm_area_struct *vma;
++
++	if (!uml_darwin_sigpage)
++		return -ENOMEM;
++	if (mmap_write_lock_killable(mm))
++		return -EINTR;
++	vma = _install_special_mapping(mm,
++		UML_DARWIN_SIGRETURN_TRAMPOLINE & PAGE_MASK, PAGE_SIZE,
++		VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYEXEC, &sigpage);
++	mmap_write_unlock(mm);
++	return PTR_ERR_OR_ZERO(vma);
++}
 +#endif
 +
 +static int save_fpsimd_context(struct sigcontext __user *context,
@@ -1658,14 +1730,19 @@ index 0000000000000000000000000000000000000000..51c5ab74921ce0cfc43bde262e71670e
 +int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
 +			  struct pt_regs *regs, sigset_t *mask)
 +{
++	struct uml_arm64_frame_record __user *record;
 +	struct uml_arm64_rt_sigframe __user *frame;
 +	unsigned long restorer;
 +	int error = 0;
 +
-+	frame = (void __user *)round_down(stack_top - sizeof(*frame), 16);
-+	if (!access_ok(frame, sizeof(*frame)))
++	record = (void __user *)round_down(stack_top - sizeof(*record), 16);
++	frame = (void __user *)round_down((unsigned long)record - sizeof(*frame),
++					  16);
++	if (!access_ok(frame, (unsigned long)(record + 1) - (unsigned long)frame))
 +		return 1;
 +
++	error |= put_user(PT_REGS_FP(regs), &record->fp);
++	error |= put_user(PT_REGS_LR(regs), &record->lr);
 +	error |= put_user(0, &frame->uc.uc_flags);
 +	error |= put_user(NULL, &frame->uc.uc_link);
 +	error |= __save_altstack(&frame->uc.uc_stack, PT_REGS_SP(regs));
@@ -1688,7 +1765,7 @@ index 0000000000000000000000000000000000000000..51c5ab74921ce0cfc43bde262e71670e
 +	PT_REGS_X(regs, 0) = ksig->sig;
 +	PT_REGS_X(regs, 1) = (unsigned long)&frame->info;
 +	PT_REGS_X(regs, 2) = (unsigned long)&frame->uc;
-+	PT_REGS_FP(regs) = 0;
++	PT_REGS_FP(regs) = (unsigned long)&record->fp;
 +	PT_REGS_LR(regs) = restorer;
 +	PT_REGS_SP(regs) = (unsigned long)frame;
 +	PT_REGS_IP(regs) = (unsigned long)ksig->ka.sa.sa_handler;

@@ -22,7 +22,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
 ---
  arch/arm64/um/Kconfig                 |   9 +
  arch/arm64/um/Makefile                |  19 +-
- arch/arm64/um/asm/elf.h               |  66 ++-
+ arch/arm64/um/asm/elf.h               |  74 ++-
  arch/arm64/um/asm/mman.h              |   5 +
  arch/arm64/um/asm/processor.h         |  13 +-
  arch/arm64/um/asm/ptrace.h            |   6 +-
@@ -32,7 +32,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  arch/arm64/um/mmap.c                  | 128 ++++
  arch/arm64/um/ptrace.c                | 149 +++--
  arch/arm64/um/shared/sysdep/ptrace.h  | 140 ++++-
- arch/arm64/um/signal.c                | 542 ++++++++++++++---
+ arch/arm64/um/signal.c                | 591 ++++++++++++++-----
  arch/arm64/um/tls.c                   |   3 +-
  arch/arm64/um/x86_64_syscalls.c       | 806 ++++++++++++++++++++++++++
  arch/arm64/um/x86_syscall_tables.c    |  32 +
@@ -47,7 +47,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
  include/linux/fs.h                    |   2 +
- 27 files changed, 1911 insertions(+), 204 deletions(-)
+ 27 files changed, 1901 insertions(+), 271 deletions(-)
  create mode 100644 arch/arm64/um/asm/unistd.h
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
@@ -104,7 +104,7 @@ index b3bbae6cd5a149976a91c3df809f696e79d83ef0..476b8f2426167dd2d1c07c0f7b7d3a60
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index 42959d6dfd834a68b940e9aec7bc7a665a9985c0..57b834791c66f9c7bb1beae8cfceb212adf00b48 100644
+index baaa7c8c27de70be2f0513cc137f7bf645fa19ab..57b834791c66f9c7bb1beae8cfceb212adf00b48 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
 @@ -22,31 +22,27 @@
@@ -161,7 +161,7 @@ index 42959d6dfd834a68b940e9aec7bc7a665a9985c0..57b834791c66f9c7bb1beae8cfceb212
  typedef elf_greg_t elf_gregset_t[ELF_NGREG];
  
  struct uml_arm64_fpsimd_state {
-@@ -65,12 +61,34 @@ struct uml_arm64_fpsimd_state {
+@@ -65,23 +61,37 @@ struct uml_arm64_fpsimd_state {
  typedef struct uml_arm64_fpsimd_state elf_fpregset_t;
  
  #define ELF_CORE_COPY_REGS(destination, source) do { \
@@ -202,6 +202,17 @@ index 42959d6dfd834a68b940e9aec7bc7a665a9985c0..57b834791c66f9c7bb1beae8cfceb212
  } while (0);
  
  #define FIXADDR_USER_START 0
+ #define FIXADDR_USER_END 0
+ 
+-#ifdef UML_HOST_DARWIN
+-/* Maps the page that holds the sigreturn trampoline (signal.c). */
+-#define ARCH_HAS_SETUP_ADDITIONAL_PAGES 1
+-struct linux_binprm;
+-extern int arch_setup_additional_pages(struct linux_binprm *bprm,
+-				       int uses_interp);
+-#endif
+-
+ #endif
 diff --git a/arch/arm64/um/asm/mman.h b/arch/arm64/um/asm/mman.h
 index 2a075458f6d6e6a70a6c3429ab0aa809048ef4ae..f188b1fb4cd91c918ba1b4301edd8c8037ce4643 100644
 --- a/arch/arm64/um/asm/mman.h
@@ -888,10 +899,20 @@ index f77c6e818dabddb6598a1cefb47167cbe324fef7..e9f2fa31680132fae796582d93da3dfe
  
  extern unsigned long host_fp_size;
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1b00f9dac 100644
+index af7e9d392da83e03b4617b23bdd19692cdf47a1f..65f9b01e059b2f5894e578a5d6fb2540cfb00346 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
-@@ -9,14 +9,135 @@
+@@ -1,9 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0
+ 
+-#include <linux/binfmts.h>
+ #include <linux/errno.h>
+-#include <linux/init.h>
+-#include <linux/mm.h>
+ #include <linux/personality.h>
+ #include <linux/sched.h>
+ #include <linux/signal.h>
+@@ -12,22 +9,135 @@
  #include <linux/uaccess.h>
  #include <asm/elf.h>
  #include <asm/ptrace.h>
@@ -949,6 +970,8 @@ index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1
 -	struct ucontext uc;
  };
  
+-/* As on native arm64, a frame record above the signal frame links the
+- * handler's frame chain to the interrupted context.
 +struct uml_x86_64_fpx_sw_bytes {
 +	unsigned int magic1;
 +	unsigned int extended_size;
@@ -989,15 +1012,18 @@ index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1
 +/* The Darwin bridge stores sixteen 256-bit x86 vectors in the same 512-byte
 + * payload used by the arm64 FPSIMD register array.  The remaining words are
 + * x86 control state when the marker is present.
-+ */
+  */
+-struct uml_arm64_frame_record {
+-	u64 fp;
+-	u64 lr;
 +struct uml_x86_64_task_fpstate {
 +	unsigned char vectors[16][32];
 +	unsigned int mxcsr;
 +	unsigned int x87_control_status;
 +	unsigned int x87_tag_top;
 +	unsigned int marker;
-+};
-+
+ };
+ 
 +#define UML_X86_64_USER_CS 0x33
 +#define UML_X86_64_USER_SS 0x2b
 +#define UML_X86_64_UC_FP_XSTATE 0x1
@@ -1029,22 +1055,50 @@ index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1
 +	      sizeof(elf_fpregset_t));
 +
  #ifdef UML_HOST_DARWIN
- /* The final guest page is deliberately above STACK_TOP and never mapped.
-  * Returning there lets the Darwin Mach exception bridge synthesize the
-@@ -26,100 +147,319 @@ struct uml_arm64_rt_sigframe {
+ /* A handler without SA_RESTORER returns here, in the final guest page above
+  * STACK_TOP, and the Darwin host runs the rt_sigreturn syscall itself when a
+@@ -35,160 +145,321 @@ struct uml_arm64_frame_record {
+  */
+ #define UML_DARWIN_SIGRETURN_TRAMPOLINE \
  	(UML_DARWIN_TASK_SIZE - 0x100UL)
- #endif
++#endif
  
--static int save_fpsimd_context(struct sigcontext __user *context,
+-/*
+- * Unwinders (libgcc, which glibc's backtrace() and thread cancellation use,
+- * GDB and libunwind) recognise a signal frame by reading the instructions at
+- * its return address.  Native arm64 returns to the vDSO's
+- * __kernel_rt_sigreturn, "mov x8, #__NR_rt_sigreturn; svc #0" after a NOP,
+- * and gives it no unwind directives on purpose.  Every task therefore maps
+- * this read-only page, which holds the same instructions at the trampoline.
+- */
+-static struct page *uml_darwin_sigpage;
 +static struct uml_x86_64_task_fpstate *
 +x86_64_task_fpstate(struct uml_pt_regs *guest)
 +{
 +	return (void *)guest->fp;
 +}
-+
+ 
+-static int __init uml_darwin_sigpage_init(void)
 +static unsigned short
 +x86_64_x87_exponent(const struct uml_pt_regs *guest, unsigned int index)
-+{
+ {
+-	static const u32 code[] = {
+-		0xd503201f,	/* nop */
+-		0xd2801168,	/* mov x8, #__NR_rt_sigreturn */
+-		0xd4000001,	/* svc #0 */
+-	};
+-	unsigned long offset =
+-		offset_in_page(UML_DARWIN_SIGRETURN_TRAMPOLINE) - sizeof(code[0]);
+-
+-	BUILD_BUG_ON(__NR_rt_sigreturn != 139);
+-	BUILD_BUG_ON(offset_in_page(UML_DARWIN_SIGRETURN_TRAMPOLINE) <
+-		     sizeof(code[0]) ||
+-		     offset_in_page(UML_DARWIN_SIGRETURN_TRAMPOLINE) +
+-		     sizeof(code) - sizeof(code[0]) > PAGE_SIZE);
+-	uml_darwin_sigpage = alloc_page(GFP_KERNEL | __GFP_ZERO);
+-	if (!uml_darwin_sigpage)
+-		return -ENOMEM;
+-	memcpy(page_address(uml_darwin_sigpage) + offset, code, sizeof(code));
 +	unsigned long packed = UPT_X(guest,
 +		UML_X86_64_X87_EXPONENT_SLOT + index / 4);
 +
@@ -1071,11 +1125,29 @@ index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1
 +		return 1;
 +	if (!exponent || exponent == 0x7fff || !(significand & (1UL << 63)))
 +		return 2;
-+	return 0;
-+}
-+
+ 	return 0;
+ }
+-subsys_initcall(uml_darwin_sigpage_init);
+ 
+-int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 +static void clear_x86_64_fpstate(struct uml_pt_regs *guest)
-+{
+ {
+-	static const struct vm_special_mapping sigpage = {
+-		.name = "[sigpage]",
+-		.pages = &uml_darwin_sigpage,
+-	};
+-	struct mm_struct *mm = current->mm;
+-	struct vm_area_struct *vma;
+-
+-	if (!uml_darwin_sigpage)
+-		return -ENOMEM;
+-	if (mmap_write_lock_killable(mm))
+-		return -EINTR;
+-	vma = _install_special_mapping(mm,
+-		UML_DARWIN_SIGRETURN_TRAMPOLINE & PAGE_MASK, PAGE_SIZE,
+-		VM_READ | VM_EXEC | VM_MAYREAD | VM_MAYEXEC, &sigpage);
+-	mmap_write_unlock(mm);
+-	return PTR_ERR_OR_ZERO(vma);
 +	struct uml_x86_64_task_fpstate *fp = x86_64_task_fpstate(guest);
 +	unsigned int index;
 +
@@ -1088,8 +1160,10 @@ index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1
 +		UPT_X(guest, UML_X86_64_X87_SIGNIFICAND_SLOT + index) = 0;
 +		x86_64_set_x87_exponent(guest, index, 0);
 +	}
-+}
-+
+ }
+-#endif
+ 
+-static int save_fpsimd_context(struct sigcontext __user *context,
 +static int save_x86_64_fpstate(struct uml_x86_64_xstate __user *user_state,
  			       struct pt_regs *regs)
  {
@@ -1110,9 +1184,7 @@ index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1
 +	unsigned int index;
 +	unsigned int magic2 = UML_X86_64_FP_XSTATE_MAGIC2;
 +	unsigned int mxcsr = 0x1f80;
- 
--	memcpy(fpsimd.vregs, state->vregs, sizeof(fpsimd.vregs));
--	if (clear_user(context->__reserved, sizeof(context->__reserved)))
++
 +	if (task->marker == UML_X86_64_FP_MARKER) {
 +		control = task->x87_control_status;
 +		status = task->x87_control_status >> 16;
@@ -1132,7 +1204,9 @@ index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1
 +			UML_X86_64_X87_SIGNIFICAND_SLOT + physical);
 +		unsigned short exponent = x86_64_x87_exponent(guest, physical);
 +		unsigned char *slot = (void *)&state.fpstate.st_space[index * 4];
-+
+ 
+-	memcpy(fpsimd.vregs, state->vregs, sizeof(fpsimd.vregs));
+-	if (clear_user(context->__reserved, sizeof(context->__reserved)))
 +		if (((tag >> (physical * 2)) & 3) != 3)
 +			state.fpstate.twd |= 1U << physical;
 +		memcpy(slot, &significand, sizeof(significand));
@@ -1387,6 +1461,7 @@ index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1
 +				     struct ksignal *ksig,
 +				     struct pt_regs *regs, sigset_t *mask)
  {
+-	struct uml_arm64_frame_record __user *record;
 -	struct uml_arm64_rt_sigframe __user *frame;
 +	struct uml_x86_64_rt_sigframe __user *frame;
 +	struct uml_x86_64_xstate __user *fpstate;
@@ -1394,8 +1469,10 @@ index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1
  	unsigned long restorer;
  	int error = 0;
  
--	frame = (void __user *)round_down(stack_top - sizeof(*frame), 16);
--	if (!access_ok(frame, sizeof(*frame)))
+-	record = (void __user *)round_down(stack_top - sizeof(*record), 16);
+-	frame = (void __user *)round_down((unsigned long)record - sizeof(*frame),
+-					  16);
+-	if (!access_ok(frame, (unsigned long)(record + 1) - (unsigned long)frame))
 +	if (stack_top < 128 + UML_X86_64_XSTATE_FRAME_SIZE)
 +		return 1;
 +	fpstate = (void __user *)round_down(stack_top - 128 -
@@ -1408,6 +1485,8 @@ index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1
 +	    !access_ok(frame, frame_end - (unsigned long)frame))
  		return 1;
 -
+-	error |= put_user(PT_REGS_FP(regs), &record->fp);
+-	error |= put_user(PT_REGS_LR(regs), &record->lr);
 -	error |= put_user(0, &frame->uc.uc_flags);
 -	error |= put_user(NULL, &frame->uc.uc_link);
 -	error |= __save_altstack(&frame->uc.uc_stack, PT_REGS_SP(regs));
@@ -1420,14 +1499,14 @@ index b3fdfa72ccbdd33f25c9a4d47985e4e3b1b21975..215c4616db4336c089434528b511d3f1
  
  	if (ksig->ka.sa.sa_flags & SA_RESTORER)
  		restorer = (unsigned long)ksig->ka.sa.sa_restorer;
-@@ -130,31 +470,63 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
+@@ -199,31 +470,63 @@ int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
  	else
  		return 1;
  #endif
 -	PT_REGS_X(regs, 0) = ksig->sig;
 -	PT_REGS_X(regs, 1) = (unsigned long)&frame->info;
 -	PT_REGS_X(regs, 2) = (unsigned long)&frame->uc;
--	PT_REGS_FP(regs) = 0;
+-	PT_REGS_FP(regs) = (unsigned long)&record->fp;
 -	PT_REGS_LR(regs) = restorer;
 -	PT_REGS_SP(regs) = (unsigned long)frame;
 -	PT_REGS_IP(regs) = (unsigned long)ksig->ka.sa.sa_handler;
