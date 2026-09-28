@@ -88,13 +88,16 @@ configure one itself. A launcher installs it as a payload at
 `/etc/uml-session.env` and names it as `UML_BOOT_ENTRY`. It runs as PID 1
 under the image's own shell, prepares what the parameters ask for, prints
 `UML_SESSION_READY:<entry>` and replaces itself with the entry. Any failure
-prints `UML_SESSION_ERROR:<reason>` and ends the run.
+prints `UML_SESSION_ERROR:<reason>` and ends the run. An entry other than
+`/bin/sh` and `systemd` is a workload, an executable payload such as a
+benchmark script: PID 1 may not exit, so the session runs it as a child,
+prints `UML_SESSION_EXIT:<status>`, syncs and powers the guest off.
 
 `/etc/uml-session.env` uses the `/boot.env` syntax:
 
 | Key | Values | Default |
 | --- | --- | --- |
-| `UML_SESSION_ENTRY` | `/bin/sh`, `systemd` | `/bin/sh` |
+| `UML_SESSION_ENTRY` | `/bin/sh`, `systemd`, a workload's absolute path | `/bin/sh` |
 | `UML_SESSION_RESOLVER` | `image`, `user-network` | `image` |
 | `UML_SESSION_CONTAINER_STATE` | `image`, `tmpfs` | `image` |
 | `UML_SESSION_RUNTIME_MOUNTS` | `0`, `1` | `0` |

@@ -9,7 +9,8 @@ directory the image already has, leaves both layers visible and switches root
 into the payload's entry program as PID 1. The same payload must boot over an
 ext4 writable layer formatted on a second block device, with the container
 state bound from that filesystem, when a second segment appended after the
-first replaces its /boot.env. The remaining cases require every broken boot
+first replaces its /boot.env, and the harness session must run a workload
+entry and power the guest off after it. The remaining cases require every broken boot
 to stop with a named reason and a nonzero exit instead of reaching the image's
 own init: the base archive alone, a segment appended without the base's
 padding, an initrd the kernel never loads, and an invalid /boot.env. The
@@ -31,6 +32,10 @@ import uuid
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 GENERIC_INIT = REPOSITORY / "tools" / "rootfs" / "boot-ramdisk" / "init"
+SESSION = REPOSITORY / "tools" / "rootfs" / "boot-ramdisk" / "session"
+SESSION_PATH = "/usr/local/libexec/uml-session"
+WORKLOAD_PATH = "/usr/local/libexec/uml-boot-workload"
+WORKLOAD_STATUS = 7
 MISSING_INIT = "init=/uml-per-run-initramfs-did-not-run"
 BOOT_TIMEOUT_SECONDS = 180
 PROBE_PATH = "/uml-boot-probe"
@@ -96,6 +101,18 @@ poweroff -f
 
 def probe_text(state_checks: str) -> str:
     return PROBE_TEMPLATE.replace("STATE_CHECKS\n", state_checks)
+
+
+# A workload the session runs as a child of PID 1, in the runtime
+# filesystems it prepared; its status must reach the console.
+WORKLOAD = f"""#!/bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+if [ "$$" != 1 ] && grep -q '^tmpfs /run tmpfs ' /proc/mounts && \\
+	grep -q '^tmpfs /tmp tmpfs ' /proc/mounts; then
+	echo "UML_BOOT_WORKLOAD:$(cat {TOKEN_PATH})"
+fi
+exit {WORKLOAD_STATUS}
+"""
 
 
 class CaseFailure(RuntimeError):
@@ -349,6 +366,43 @@ def run(arguments: argparse.Namespace) -> None:
             status, output, "UML_BOOT_ERROR:unknown /boot.env parameter: UML_BOOT_TYPO"
         )
         print("ok: an invalid /boot.env stops the per-run /init")
+
+        workload = work / "workload"
+        workload.write_text(WORKLOAD)
+        workload.chmod(0o755)
+        session_env = work / "uml-session.env"
+        session_env.write_text(
+            f"UML_SESSION_ENTRY={WORKLOAD_PATH}\n"
+            "UML_SESSION_RUNTIME_MOUNTS=1\n"
+        )
+        workload_boot = work / "workload-boot.env"
+        workload_boot.write_text(f"UML_BOOT_ENTRY={SESSION_PATH}\n")
+        status, output = launch(
+            emulator,
+            rootfs,
+            engine,
+            scratch,
+            [
+                f"--guest-file=/boot.env={workload_boot}",
+                f"--guest-file=/payload{SESSION_PATH}={SESSION}",
+                f"--guest-file=/payload/etc/uml-session.env={session_env}",
+                f"--guest-file=/payload{WORKLOAD_PATH}={workload}",
+                f"--guest-file=/payload{TOKEN_PATH}={token_file}",
+            ],
+        )
+        require(
+            f"UML_BOOT_WORKLOAD:{token}" in output,
+            "the session did not run the workload with its runtime mounts",
+            output,
+        )
+        require(
+            f"UML_SESSION_EXIT:{WORKLOAD_STATUS}" in output,
+            "the session did not report the workload's status",
+            output,
+        )
+        require("Kernel panic" not in output, "the guest panicked", output)
+        require(status == 0, f"the guest exited with status {status}", output)
+        print("ok: the session runs a workload entry and powers the guest off")
 
 
 def main() -> int:
