@@ -978,10 +978,10 @@ index 889ecc06804ac229cbfca446cabb3e74187ba26d..3b30bc48aef7216669c71bfa0cbb5ce4
            * accepted the pipeline's colour blend state and the fragment shader
            * therefore kept its stores instead of carrying a lowered blend. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 8a4c3d2cd53bfe2305fa0fb8ec2c4d41f1757ca4..a164d9b09fa1617717d2c31da8063fa2d1f33189 100644
+index 54d440f6c8b20ca8b9d77378916525481f56a93e..e003358163671ba98ae65d3634a8054a5dddeb2c 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -590,6 +590,15 @@ if with_tests
+@@ -603,6 +603,15 @@ if with_tests
        link_with : libvulkan_kosmickrisp,
        override_options : ['cpp_std=c++20'],
      )
@@ -997,7 +997,7 @@ index 8a4c3d2cd53bfe2305fa0fb8ec2c4d41f1757ca4..a164d9b09fa1617717d2c31da8063fa2
      test(
        'kosmickrisp_metal_blend',
        executable(
-@@ -604,6 +613,20 @@ if with_tests
+@@ -617,6 +626,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

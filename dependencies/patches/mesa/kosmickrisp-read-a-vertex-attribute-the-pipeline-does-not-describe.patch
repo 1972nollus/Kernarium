@@ -163,10 +163,10 @@ index db1788793555d5fd4028ebb1b1e23d01b7567098..b1885fd178995f7796b09a460fc3c069
         * inputs since we read vertex attributes from UBOs. */
        if (!emulated_vs &&
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index cacb351a05c92ca08a580c28f4fed6cc186d621e..1ee62606ce43480bfc4af354798ecb10a29d0e54 100644
+index cc2dc3c7f8a9a887648f852bcc856e3c45888d18..d24b884786d902dc0ac2e4359be9908f3ad5aa9e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -1120,6 +1120,26 @@ if with_tests
+@@ -1133,6 +1133,26 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

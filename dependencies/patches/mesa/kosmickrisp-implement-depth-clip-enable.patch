@@ -568,7 +568,7 @@ index c14ac9789877ffc1fe6b8b4253c51e83a72a2017..67d45395434530d7b1f835fa75a079ed
  bool kk_nir_lower_null_images(nir_shader *nir);
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 7c9bca854e8124c44c78a5d7fbc7ad1fc7eab14b..ee6da2a2811c12f4a6bd9404e0e69c8fbcd51210 100644
+index 5393a11d97e820f617860e3f8281bb61f4e5e141..e0aa4cd8bad2045135b6e88e25b62294c90a2e22 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -62,6 +62,7 @@ kk_files = files(
@@ -579,7 +579,7 @@ index 7c9bca854e8124c44c78a5d7fbc7ad1fc7eab14b..ee6da2a2811c12f4a6bd9404e0e69c8f
    'kk_cmd_meta.c',
    'kk_cmd_pool.h',
    'kk_cmd_pool.c',
-@@ -259,4 +260,15 @@ if with_tests
+@@ -272,4 +273,15 @@ if with_tests
        timeout : 60,
      )
    endif

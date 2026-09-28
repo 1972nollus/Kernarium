@@ -475,10 +475,10 @@ index b6a69512d544c0e52ecf00eb0f03496d85dbcf27..0a804efc7e5888b15fba7da8e9accc70
     bool pass_lower_ssbo = nir_shader_intrinsics_pass(
        nir, lower_ssbo_descriptor, nir_metadata_control_flow, &ctx);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 6f3a2b2b021aa0dfb233fb89ef6e56827a3ab055..e4e7fad14e21bca412e9428c228bf4e1809b0e2c 100644
+index 41263c24aacc40a8a0848260ca4785663fecf8db..100493cf8f178ca73da9e7e1a57bd4077bb17ad1 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -272,6 +272,20 @@ if with_tests
+@@ -285,6 +285,20 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  
@@ -499,7 +499,7 @@ index 6f3a2b2b021aa0dfb233fb89ef6e56827a3ab055..e4e7fad14e21bca412e9428c228bf4e1
    test(
      'kosmickrisp_non_seamless_cube_lowering',
      executable(
-@@ -293,4 +307,25 @@ if with_tests
+@@ -306,4 +320,25 @@ if with_tests
      ),
      suite : ['kosmickrisp'],
    )

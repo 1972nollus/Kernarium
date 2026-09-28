@@ -1534,7 +1534,7 @@ index c3a27b321da8cd4d382b4eeec533bfc0de8fff04..c3939af69936578d95808c98020a6b6a
  
  bool kk_nir_lower_custom_border(nir_shader *nir);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 0e3ece9dd5cb9fb163e8f5fd00071ec44afebb0d..04bb07c29a13e695c8c3ffe1e903b509a61ec740 100644
+index cb640756becece8eba57d2289ae75e672e54cf18..0b330ff023d36541cdd2b505afd9d1ba808ec034 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -100,6 +100,7 @@ kk_files = files(
@@ -1553,7 +1553,7 @@ index 0e3ece9dd5cb9fb163e8f5fd00071ec44afebb0d..04bb07c29a13e695c8c3ffe1e903b509
    ],
    dependencies : [kk_deps],
    gnu_symbol_visibility : 'hidden',
-@@ -313,6 +315,54 @@ if with_tests
+@@ -326,6 +328,54 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -1608,7 +1608,7 @@ index 0e3ece9dd5cb9fb163e8f5fd00071ec44afebb0d..04bb07c29a13e695c8c3ffe1e903b509
      test(
        'kosmickrisp_line_raster_cache',
        executable(
-@@ -497,4 +547,15 @@ if with_tests
+@@ -510,4 +560,15 @@ if with_tests
      ),
      suite : ['kosmickrisp'],
    )

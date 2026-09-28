@@ -3440,7 +3440,7 @@ index c3939af69936578d95808c98020a6b6a4dfc350a..6a439054966ff29eb571fbaa22211790
     struct blob deferred_nir;
     struct msl_compile_data msl_data[MESA_SHADER_STAGES];
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 3d8d58e1026edd3661573bb612e3e015f8f17d15..cbb66059d6428aeffbc5ce046bc563c444d18182 100644
+index a32452d612201ac07d6bd839b2401aab8ff1e343..2e75cb1e36ac1af12e5b06aace60747f48a5d177 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -91,6 +91,8 @@ kk_files = files(
@@ -3452,7 +3452,7 @@ index 3d8d58e1026edd3661573bb612e3e015f8f17d15..cbb66059d6428aeffbc5ce046bc563c4
    'kk_instance.h',
    'kk_instance.c',
    'kk_nir_lower_custom_border.c',
-@@ -335,6 +337,27 @@ if with_tests
+@@ -348,6 +350,27 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
@@ -3480,7 +3480,7 @@ index 3d8d58e1026edd3661573bb612e3e015f8f17d15..cbb66059d6428aeffbc5ce046bc563c4
      test(
        'kosmickrisp_transform_feedback_builtins',
        executable(
-@@ -405,6 +428,7 @@ if with_tests
+@@ -418,6 +441,7 @@ if with_tests
                'tests/line_raster_cache_state.m'),
          include_directories : kk_test_include_directories,
          dependencies : [
@@ -3488,7 +3488,7 @@ index 3d8d58e1026edd3661573bb612e3e015f8f17d15..cbb66059d6428aeffbc5ce046bc563c4
            idep_nir,
            idep_vulkan_runtime_headers,
            idep_vulkan_util_headers,
-@@ -476,6 +500,17 @@ if with_tests
+@@ -489,6 +513,17 @@ if with_tests
      suite : ['kosmickrisp'],
    )
  

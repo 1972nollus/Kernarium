@@ -366,12 +366,12 @@ index b58bd219e208f92948ad0f4864a992681f4a5503..a31eadde4320459375e9f1e68bb5d39e
  #define KK_MAX_VIEWPORTS                 16
  #define KK_MAX_DESCRIPTOR_SIZE           64
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index c13f5698af8d11e46cb1b8739344b333df829c44..a67be288a346dac0ecf5833debd5c0ae409e8a52 100644
+index aab37eeb4cf713018e942c533477c0eb81029eec..763133196c0b4a77042a2820253e60c485680f98 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -231,5 +231,18 @@ if with_tests
+@@ -244,5 +244,18 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
-       timeout : 120,
+       timeout : 60,
      )
 +    test(
 +      'kosmickrisp_texel_buffer_bounds',

@@ -845,10 +845,10 @@ index ef1aed242386292a86b14e08f2c36b242560b676..889ecc06804ac229cbfca446cabb3e74
           bool has_alpha_to_coverage_enabled;
           bool has_alpha_to_one_enabled;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 10dc449778cc2075bb4ace112dc8613c241f9d94..8a4c3d2cd53bfe2305fa0fb8ec2c4d41f1757ca4 100644
+index d38acf624d85cb4ada0cbca1239fb7ab04aa9689..54d440f6c8b20ca8b9d77378916525481f56a93e 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -580,6 +580,30 @@ if with_tests
+@@ -593,6 +593,30 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

@@ -658,7 +658,7 @@ index 19710b5353d2dee4d28fd94806ec90db12e30624..9e308db4c3d1881c896f836de55593f5
 +                                  queryResultFlags);
 +}
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 846501adbf2daf03519937615166fb57816a63a5..21571ad07f856d990964739e076643ef2c333411 100644
+index 4beaefd360be24573eca96462ce7f282af267530..9e6ccb694f501ecd17b1ea87faed332ac2e11368 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -73,6 +73,7 @@ kk_files = files(
@@ -669,7 +669,7 @@ index 846501adbf2daf03519937615166fb57816a63a5..21571ad07f856d990964739e076643ef
    'kk_device_memory.h',
    'kk_device_memory.c',
    'kk_device.h',
-@@ -262,6 +263,17 @@ if with_tests
+@@ -275,6 +276,17 @@ if with_tests
      )
    endif
  

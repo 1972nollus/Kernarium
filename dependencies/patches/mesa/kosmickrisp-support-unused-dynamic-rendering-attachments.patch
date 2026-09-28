@@ -769,7 +769,7 @@ index e16fb1986b75e96894487112796b5bd1286a8487..c14ac9789877ffc1fe6b8b4253c51e83
                                  struct kk_shader *shader);
  
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index a67be288a346dac0ecf5833debd5c0ae409e8a52..7c9bca854e8124c44c78a5d7fbc7ad1fc7eab14b 100644
+index 763133196c0b4a77042a2820253e60c485680f98..5393a11d97e820f617860e3f8281bb61f4e5e141 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
 @@ -211,6 +211,20 @@ if with_tests

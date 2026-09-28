@@ -38,10 +38,10 @@ index ab504cc72515ea889d91956fe9122f0ff5bfb26f..80d8fbb9df3385640c904855559a0190
     /* Render targets are always arrays */
     mtl_render_pass_descriptor_set_render_target_array_length(
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 04bb07c29a13e695c8c3ffe1e903b509a61ec740..9e0cc2ab2ee66b36de21e58598e3a386bbb095d3 100644
+index 0b330ff023d36541cdd2b505afd9d1ba808ec034..b569d9c55926c4873d9d343506a543bc094d739c 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -315,6 +315,26 @@ if with_tests
+@@ -328,6 +328,26 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

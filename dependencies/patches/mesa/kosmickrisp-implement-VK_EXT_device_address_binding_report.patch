@@ -111,10 +111,10 @@ index a52d77379217813115cd017439af5e2f0f5c1544..f504640db6f92c217b934225cfebb482
  
     vk_device_memory_destroy(&dev->vk, pAllocator, &mem->vk);
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 0f0e9b52a32d4c7b797fc1b42cecaf2e9bc53ebe..7ce84d5f3c908b4ea9fe7e62736340d9ccd2d7f3 100644
+index 30284d04c27c15a0ffb396ed66519192e1926933..18f693770298aff83c38df9b0ab94a4b7008bc5b 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
-@@ -25,6 +25,12 @@
+@@ -29,6 +29,12 @@
  
  #include "drm-uapi/drm_fourcc.h"
  
@@ -127,7 +127,7 @@ index 0f0e9b52a32d4c7b797fc1b42cecaf2e9bc53ebe..7ce84d5f3c908b4ea9fe7e62736340d9
  #include <vulkan/vulkan_metal.h>
  
  static VkFormatFeatureFlags2
-@@ -800,6 +806,9 @@ kk_DestroyImage(VkDevice device, VkImage _image,
+@@ -804,6 +810,9 @@ kk_DestroyImage(VkDevice device, VkImage _image,
     if (!image)
        return;
  
@@ -137,7 +137,7 @@ index 0f0e9b52a32d4c7b797fc1b42cecaf2e9bc53ebe..7ce84d5f3c908b4ea9fe7e62736340d9
     kk_image_finish(dev, image, pAllocator);
     vk_free2(&dev->vk.alloc, pAllocator, image);
  }
-@@ -1014,6 +1023,22 @@ kk_image_plane_create_texture(struct kk_image_plane *plane,
+@@ -1018,6 +1027,22 @@ kk_image_plane_create_texture(struct kk_image_plane *plane,
                                            mem_offset_B);
  }
  
@@ -160,7 +160,7 @@ index 0f0e9b52a32d4c7b797fc1b42cecaf2e9bc53ebe..7ce84d5f3c908b4ea9fe7e62736340d9
  static VkResult
  kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
                      struct kk_image_plane *plane, struct kk_device_memory *mem,
-@@ -1067,9 +1092,23 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
+@@ -1071,9 +1096,23 @@ kk_image_plane_bind(struct kk_device *dev, struct kk_image *image,
  
     *offset_B += plane_size_B;
  
@@ -184,7 +184,7 @@ index 0f0e9b52a32d4c7b797fc1b42cecaf2e9bc53ebe..7ce84d5f3c908b4ea9fe7e62736340d9
  static VkResult
  kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
  {
-@@ -1103,6 +1142,8 @@ kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
+@@ -1107,6 +1146,8 @@ kk_bind_image_memory(struct kk_device *dev, const VkBindImageMemoryInfo *info)
              ? mtl_retain(swapchain_plane->mtl_handle_array)
              : NULL;
        plane->addr = swapchain_plane->addr;
@@ -216,10 +216,10 @@ index f2c96dbea7462a7fa3f73354c844b483bee82f3c..d63f71d45122df8396c2e5044fe140b5
         * Metal never tells the driver whether it compressed a texture and
         * offers no fixed-rate control, so every query answers "no
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index ad45897b58e9731a9ad6755c7aa737adcbbb3aa1..cacb351a05c92ca08a580c28f4fed6cc186d621e 100644
+index c7068efd9c3618be3cf8701a16a534724935b3db..cc2dc3c7f8a9a887648f852bcc856e3c45888d18 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -832,6 +832,19 @@ if with_tests
+@@ -845,6 +845,19 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

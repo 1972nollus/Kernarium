@@ -737,10 +737,10 @@ index 67d45395434530d7b1f835fa75a079edb1588883..c3db6c67894eced6b1ac299b77006f39
  /* Loads from the root descriptor table the way the descriptor lowering does,
   * for the other passes that read it. */
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index ee6da2a2811c12f4a6bd9404e0e69c8fbcd51210..6f3a2b2b021aa0dfb233fb89ef6e56827a3ab055 100644
+index e0aa4cd8bad2045135b6e88e25b62294c90a2e22..41263c24aacc40a8a0848260ca4785663fecf8db 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -271,4 +271,26 @@ if with_tests
+@@ -284,4 +284,26 @@ if with_tests
      ),
      suite : ['kosmickrisp'],
    )

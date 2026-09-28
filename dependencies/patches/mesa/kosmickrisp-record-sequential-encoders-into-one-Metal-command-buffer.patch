@@ -503,10 +503,10 @@ index 681be0d9eb9fc2087f4bb32bf0062c7fd5b42aef..8087aeb090f7a451e67d6aa2fd0bee91
     /* Need to ensure the new buffers allocated at record are resident. */
     kk_device_make_resources_resident(dev);
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 7a847aa26e50eaa67aa3bd3da253ec6fa7758a08..65055efc915753cf1855ffcc0dda696881f0cc1e 100644
+index 71cff114998f240de63323862305ec8cb17603a6..e8a07567e9899450bc7f3db283df76616d3c2c3a 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -995,6 +995,39 @@ if with_tests
+@@ -1008,6 +1008,39 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 60,
      )

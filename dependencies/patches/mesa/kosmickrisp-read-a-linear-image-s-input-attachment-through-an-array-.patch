@@ -45,10 +45,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 src/kosmickrisp/vulkan/tests/test_linear_input_attachment.m
 
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 71ee5603c24a169ad72e257b5e9ec1d990c065f7..98542662b2970d62061bd9302ae07a100618b4b9 100644
+index 72b1f4c24d3a54cddfdc590480a53cc9bc1fbdbe..fc528f1c46a09eb46b9933603782e2f4ff5f1fd7 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
-@@ -370,11 +370,10 @@ kk_GetPhysicalDeviceImageFormatProperties2(
+@@ -374,11 +374,10 @@ kk_GetPhysicalDeviceImageFormatProperties2(
     if (linear_layout && pImageFormatInfo->type == VK_IMAGE_TYPE_3D)
        return VK_ERROR_FORMAT_NOT_SUPPORTED;
  
@@ -173,10 +173,10 @@ index 3e3033f8b37b45eb83f5ea105cdf492cfd04ea46..239139bb548cce76edb35a79b7420a5f
   * cannot represent has to become a Vulkan error before it reaches Metal. */
  static inline bool
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 38ecfec00618e1394acf63109af2b73aaeb62eaa..15f9768465e58d0fa43c51aee59b07f3b0825e4a 100644
+index d011c36006c3d80a49333294a7afa972de5eadb5..96df2f533e2fd6942fc2308d28e9589aa44d07fe 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -885,6 +885,27 @@ if with_tests
+@@ -898,6 +898,27 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

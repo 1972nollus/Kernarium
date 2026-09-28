@@ -99,10 +99,10 @@ index 7ccf20bbd91e086443efbabfe385ee6f39deda30..52a8e8ca5473abf30bc63e7d5a91db4b
  mtl_device_max_threads_per_threadgroup(mtl_device *dev)
  {
 diff --git a/src/kosmickrisp/vulkan/kk_image.c b/src/kosmickrisp/vulkan/kk_image.c
-index 7ce84d5f3c908b4ea9fe7e62736340d9ccd2d7f3..c8e6e88b27a7808ef19db66c0a23a0ce35388be8 100644
+index 18f693770298aff83c38df9b0ab94a4b7008bc5b..f027da8882b151ee9b8560673e6ef5dfbebcb7ad 100644
 --- a/src/kosmickrisp/vulkan/kk_image.c
 +++ b/src/kosmickrisp/vulkan/kk_image.c
-@@ -33,6 +33,19 @@ static void kk_image_report_address_binding(struct kk_device *dev,
+@@ -37,6 +37,19 @@ static void kk_image_report_address_binding(struct kk_device *dev,
  
  #include <vulkan/vulkan_metal.h>
  
@@ -122,7 +122,7 @@ index 7ce84d5f3c908b4ea9fe7e62736340d9ccd2d7f3..c8e6e88b27a7808ef19db66c0a23a0ce
  static VkFormatFeatureFlags2
  kk_get_image_plane_format_features(struct kk_physical_device *pdev,
                                     VkFormat vk_format, VkImageTiling tiling,
-@@ -69,11 +82,34 @@ kk_get_image_plane_format_features(struct kk_physical_device *pdev,
+@@ -73,11 +86,34 @@ kk_get_image_plane_format_features(struct kk_physical_device *pdev,
     if (va_format == NULL)
        return 0;
  

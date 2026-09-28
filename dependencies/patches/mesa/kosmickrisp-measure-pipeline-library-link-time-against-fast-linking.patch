@@ -57,10 +57,10 @@ requirement the day the answer becomes true.
  create mode 100644 src/kosmickrisp/vulkan/tests/test_pipeline_library_link_time.cpp
 
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index fe0d930c770c37c6eee13c1418cb933766dac09c..10dc449778cc2075bb4ace112dc8613c241f9d94 100644
+index 75e6e6244c5a65cd1b986c8203211ab23370c1a1..d38acf624d85cb4ada0cbca1239fb7ab04aa9689 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -566,6 +566,20 @@ if with_tests
+@@ -579,6 +579,20 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )

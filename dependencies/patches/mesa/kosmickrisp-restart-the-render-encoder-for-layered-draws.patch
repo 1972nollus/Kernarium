@@ -440,10 +440,10 @@ index 6a439054966ff29eb571fbaa222117909a0c6e2d..8b278af2c7575dbc170b1c945be114c9
           struct poly_gs_info geometry;
           uint64_t flat_outputs;
 diff --git a/src/kosmickrisp/vulkan/meson.build b/src/kosmickrisp/vulkan/meson.build
-index 7625bf2153ef7ce0a81524b20d61cc9a835f8d39..8688c11a7a466dd0c517b2b819a9c3acb5a8ce2a 100644
+index c8f0f237f54c42384e7d3fb6336f35c8adca2624..8f685bcaf5907e2428dbab6a462f6b84febebb56 100644
 --- a/src/kosmickrisp/vulkan/meson.build
 +++ b/src/kosmickrisp/vulkan/meson.build
-@@ -301,6 +301,52 @@ if with_tests
+@@ -314,6 +314,52 @@ if with_tests
        env : ['MESA_SHADER_CACHE_DISABLE=true'],
        timeout : 120,
      )
