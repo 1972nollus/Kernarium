@@ -62,6 +62,7 @@ if(UML_BUILD_UNIT_TESTS)
     link_libraries(
         uml_host_capabilities_test_support
         uml_test_scratch_directory
+        UML::GadgetHistogramConfiguration
         UML::GuestPageConfiguration
         UML::JitProfileConfiguration)
     add_subdirectory(unit)

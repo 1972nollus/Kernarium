@@ -138,6 +138,19 @@ set_target_properties(uml_arm64_execution_helpers PROPERTIES
 option(UML_GADGET_EXECUTION_HISTOGRAM
     "Count executed gadget entries (diagnostic builds only)"
     OFF)
+# GadgetExecutor's layout follows this switch, so every consumer of the gadget
+# headers must see the value the library was built with, and
+# execution_histogram.hpp refuses to compile without one. The CPU contract
+# carries it to CPU consumers, and the unit suite links it into every test
+# binary, including those that compose the gadget objects directly.
+add_library(uml_gadget_histogram_configuration INTERFACE)
+add_library(UML::GadgetHistogramConfiguration ALIAS
+    uml_gadget_histogram_configuration)
+uml_declare_architecture_target(uml_gadget_histogram_configuration cpu shared)
+target_compile_definitions(uml_gadget_histogram_configuration INTERFACE
+    UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>)
+target_link_libraries(uml_cpu_contract INTERFACE
+    UML::GadgetHistogramConfiguration)
 
 # The fetch window, not a limit on block length: only 0.07% of blocks run far
 # enough to be cut off by it rather than ending at a branch.
@@ -170,10 +183,8 @@ target_compile_features(uml_arm64_gadgets PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadgets PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
-# GadgetExecutor's layout follows this switch, so every consumer of the
-# gadget headers must see the value the library was built with.
-target_compile_definitions(uml_arm64_gadgets PUBLIC
-    UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>)
+target_link_libraries(uml_arm64_gadgets PUBLIC
+    UML::GadgetHistogramConfiguration)
 
 # The gadget library is still many translation units, and the selection tables
 # the decode families call into are among them. Interprocedural optimization
@@ -347,7 +358,6 @@ target_include_directories(uml_arm64_gadget_executor PRIVATE
 target_compile_features(uml_arm64_gadget_executor PUBLIC cxx_std_20)
 target_compile_options(uml_arm64_gadget_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_gadget_executor PRIVATE
-    UML_GADGET_EXECUTION_HISTOGRAM=$<BOOL:${UML_GADGET_EXECUTION_HISTOGRAM}>
     UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
