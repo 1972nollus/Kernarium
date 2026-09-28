@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Run BPF programs with callbacks on the interpreter-only guest kernel.
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Run one guest Python probe and fail on its exit status.
 
-The guest kernel has no BPF JIT, so every callback a helper such as
-bpf_loop(), bpf_for_each_map_elem() or a BPF timer invokes enters the
-interpreter through the kernel's fixed pool of native entry points. The probe
-loads and runs such programs, checks the verifier limits still hold, and
-exhausts and refills the entry-point pool.
+The guest boots an init shell on a tmpfs root with /tmp mounted, runs the
+probe with python3 -B, prints its output, and then runs one more command, so
+a probe that leaves the kernel unable to start a task fails too. Each probe's
+docstring states what it checks; its exit status is its failure count.
 """
 
 from __future__ import annotations
@@ -17,15 +17,12 @@ import pathlib
 import sys
 
 
-REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPOSITORY / "tests" / "integration" / "support"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from guest import Guest, GuestFile  # noqa: E402
 
 
-PROBE = pathlib.Path(__file__).with_name("bpf_callbacks_probe.py")
 GUEST_PROBE = "/usr/local/libexec/uml-test/probe.py"
-PROBE_TIMEOUT_SECONDS = 420
 
 
 def main() -> int:
@@ -33,6 +30,11 @@ def main() -> int:
     parser.add_argument("--emulator", required=True, type=pathlib.Path)
     parser.add_argument("--rootfs", required=True, type=pathlib.Path)
     parser.add_argument("--engine", choices=("jit", "gadgets"), default="jit")
+    parser.add_argument("--probe", required=True, type=pathlib.Path)
+    parser.add_argument("--ncpus", required=True, type=int)
+    parser.add_argument(
+        "--probe-timeout", required=True, type=int, metavar="SECONDS"
+    )
     arguments = parser.parse_args()
 
     with Guest(
@@ -40,21 +42,23 @@ def main() -> int:
         arguments.rootfs.resolve(),
         "1G",
         "tmpfs",
-        ("ncpus=4",),
+        (f"ncpus={arguments.ncpus}",),
         init_shell=True,
         engine=arguments.engine,
-        payloads={GUEST_PROBE: GuestFile(PROBE.read_bytes())},
+        payloads={GUEST_PROBE: GuestFile(arguments.probe.read_bytes())},
     ) as guest:
         guest.boot_to_shell(180)
         guest.check_command("mount -t tmpfs -o mode=1777 tmpfs /tmp", 20)
         result = guest.run_command(
-            f"python3 -B {GUEST_PROBE}", PROBE_TIMEOUT_SECONDS
+            f"python3 -B {GUEST_PROBE}", arguments.probe_timeout
         )
         print(result.output.strip())
         if result.return_code != 0:
             raise RuntimeError(
-                f"the BPF callback probe reported {result.return_code} failure(s)"
+                f"{arguments.probe.name} reported {result.return_code} "
+                "failure(s)"
             )
+        guest.check_command("echo alive", 20)
         return 0
 
 

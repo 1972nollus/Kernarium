@@ -282,9 +282,11 @@ uml_add_guest_integration_test(
 uml_add_guest_integration_test(
     NAME guest-bpf-callbacks
     COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/bpf/run_guest_bpf_callbacks.py
+        ${PROJECT_SOURCE_DIR}/tests/integration/support/run_guest_probe.py
         --emulator $<TARGET_FILE:${_uml_integration_emulator}>
         --rootfs ${UML_INTEGRATION_ROOTFS}
+        --probe ${PROJECT_SOURCE_DIR}/tests/integration/bpf/bpf_callbacks_probe.py
+        --ncpus 4 --probe-timeout 420
     LABELS guest;bpf;smoke
     TIMEOUT 600
     PROCESSORS 4
@@ -325,9 +327,11 @@ uml_add_guest_integration_test(
 uml_add_guest_integration_test(
     NAME guest-user-strings
     COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_user_strings.py
+        ${PROJECT_SOURCE_DIR}/tests/integration/support/run_guest_probe.py
         --emulator $<TARGET_FILE:${_uml_integration_emulator}>
         --rootfs ${UML_INTEGRATION_ROOTFS}
+        --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/user_strings_probe.py
+        --ncpus 2 --probe-timeout 120
     LABELS guest;kernel;smoke
     TIMEOUT 300
     PROCESSORS 2
@@ -338,9 +342,11 @@ uml_add_guest_integration_test(
 uml_add_guest_integration_test(
     NAME guest-native-window-unmap
     COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_native_window_unmap.py
+        ${PROJECT_SOURCE_DIR}/tests/integration/support/run_guest_probe.py
         --emulator $<TARGET_FILE:${_uml_integration_emulator}>
         --rootfs ${UML_INTEGRATION_ROOTFS}
+        --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/native_window_unmap_probe.py
+        --ncpus 2 --probe-timeout 120
     LABELS guest;kernel;smoke
     TIMEOUT 300
     PROCESSORS 2
@@ -350,9 +356,11 @@ uml_add_guest_integration_test(
 uml_add_guest_integration_test(
     NAME guest-ptrace-pstate
     COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_ptrace_pstate.py
+        ${PROJECT_SOURCE_DIR}/tests/integration/support/run_guest_probe.py
         --emulator $<TARGET_FILE:${_uml_integration_emulator}>
         --rootfs ${UML_INTEGRATION_ROOTFS}
+        --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/ptrace_pstate_probe.py
+        --ncpus 2 --probe-timeout 60
     LABELS guest;kernel;smoke
     TIMEOUT 300
     PROCESSORS 2
