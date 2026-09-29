@@ -10,8 +10,7 @@
 #include <cstdint>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 extern "C" {
 #define UML_DECLARE_WIDENING(name) \
@@ -76,15 +75,13 @@ constexpr std::array expected_gadgets{
 
 [[nodiscard]] unsigned instructions_to_dispatch(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(gadget);
-	for (unsigned index = 0; index < 64U; ++index) {
-		test::require(!conditional_branch(instructions[index]),
-			"widening gadget contains a conditional branch");
-		if (indirect_branch(instructions[index]))
-			return index + 1U;
-	}
-	test::fail("widening gadget did not reach indirect dispatch");
+	const auto shape = a64::body_shape(
+		reinterpret_cast<std::uintptr_t>(gadget), {.window = 64U});
+	test::require(shape.conditional_branches == 0U,
+		"widening gadget contains a conditional branch");
+	if (!shape.reached_dispatch)
+		test::fail("widening gadget did not reach indirect dispatch");
+	return shape.instructions + 1U;
 }
 
 void every_form_uses_one_direct_offset_gadget()

@@ -11,8 +11,7 @@
 #include <cstdlib>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace test = uml::emulator::tests::base_min_max;
 namespace engine_tests = uml::emulator::tests;
@@ -59,16 +58,14 @@ void require_one_operand_stream(const gadgets::BuildResult &built,
 
 [[nodiscard]] bool branch_free(std::uintptr_t entry)
 {
-	const auto *code = reinterpret_cast<const std::uint32_t *>(entry);
-	for (unsigned index = 0; index < 64U; ++index) {
-		const auto instruction = code[index];
-		if (indirect_branch(instruction))
-			return true;
-		if (conditional_branch(instruction) ||
-		    (instruction & 0x7c00'0000U) == 0x1400'0000U)
-			return false;
-	}
-	return false;
+	unsigned direct_branches = 0;
+	const auto shape = a64::body_shape(entry, {.window = 64U},
+		[&](std::uint32_t instruction) {
+			direct_branches +=
+				(instruction & 0x7c00'0000U) == 0x1400'0000U;
+		});
+	return shape.reached_dispatch && shape.conditional_branches == 0U &&
+		direct_branches == 0U;
 }
 
 void add_row(std::set<std::uintptr_t> &entries,

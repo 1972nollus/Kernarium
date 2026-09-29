@@ -11,8 +11,7 @@
 #include <cstdint>
 #include <memory_resource>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace uml::emulator::tests::base_flag {
 namespace {
@@ -52,16 +51,10 @@ template<typename Function>
 
 [[nodiscard]] unsigned conditional_branches(std::uintptr_t entry)
 {
-	const auto *code = reinterpret_cast<const std::uint32_t *>(entry);
-	unsigned result = 0;
-	for (unsigned index = 0; index < 64U; ++index) {
-		const auto instruction = code[index];
-		if (indirect_branch(instruction))
-			return result;
-		if (conditional_branch(instruction))
-			++result;
-	}
-	fail("flag gadget did not terminate in its inspection window");
+	const auto shape = a64::body_shape(entry, {.window = 64U});
+	if (!shape.reached_dispatch)
+		fail("flag gadget did not terminate in its inspection window");
+	return shape.conditional_branches;
 }
 
 void fixed_translation()

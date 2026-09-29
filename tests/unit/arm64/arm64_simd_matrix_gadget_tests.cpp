@@ -10,8 +10,7 @@
 #include <cstdint>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 extern "C" {
 void uml_arm64_gadget_simd_matrix_smmla();
@@ -72,18 +71,16 @@ using Gadget = void (*)();
 
 void require_straight_line(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(gadget);
-	for (unsigned index = 0; index < 64U; ++index) {
-		test::require(!conditional_branch(instructions[index]),
-			"matrix gadget contains a conditional branch");
-		test::require((instructions[index] & 0xfc00'0000U) !=
-				0x9400'0000U,
-			"matrix gadget contains a helper call");
-		if (indirect_branch(instructions[index]))
-			return;
-	}
-	test::fail("matrix gadget did not reach indirect dispatch");
+	const auto shape = a64::body_shape(
+		reinterpret_cast<std::uintptr_t>(gadget),
+		{.window = 64U}, [](std::uint32_t instruction) {
+			test::require(!a64::conditional_branch(instruction),
+				"matrix gadget contains a conditional branch");
+			test::require((instruction & 0xfc00'0000U) != 0x9400'0000U,
+				"matrix gadget contains a helper call");
+		});
+	if (!shape.reached_dispatch)
+		test::fail("matrix gadget did not reach indirect dispatch");
 }
 
 void translation_resolves_host_choice_and_register_offsets()

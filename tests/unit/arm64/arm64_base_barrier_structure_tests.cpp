@@ -10,8 +10,7 @@
 #include <cstdint>
 #include <memory_resource>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace uml::emulator::tests::base_barrier {
 namespace {
@@ -101,25 +100,18 @@ const std::array<std::uintptr_t, 4> nxs_gadgets{
 
 [[nodiscard]] unsigned runtime_instruction_count(std::uintptr_t entry)
 {
-	const auto *code = reinterpret_cast<const std::uint32_t *>(entry);
-	for (unsigned index = 0; index < 16U; ++index)
-		if (indirect_branch(code[index]))
-			return index + 1U;
-	fail("barrier gadget did not reach threaded dispatch");
+	const auto shape = a64::body_shape(entry, {.window = 16U});
+	if (!shape.reached_dispatch)
+		fail("barrier gadget did not reach threaded dispatch");
+	return shape.instructions + 1U;
 }
 
 [[nodiscard]] unsigned conditional_branches(std::uintptr_t entry)
 {
-	const auto *code = reinterpret_cast<const std::uint32_t *>(entry);
-	unsigned result = 0;
-	for (unsigned index = 0; index < 16U; ++index) {
-		const auto instruction = code[index];
-		if (indirect_branch(instruction))
-			return result;
-		if (conditional_branch(instruction))
-			++result;
-	}
-	fail("barrier gadget did not terminate in its inspection window");
+	const auto shape = a64::body_shape(entry, {.window = 16U});
+	if (!shape.reached_dispatch)
+		fail("barrier gadget did not terminate in its inspection window");
+	return shape.conditional_branches;
 }
 
 void standard_translation()
