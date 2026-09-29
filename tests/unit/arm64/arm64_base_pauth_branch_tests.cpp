@@ -35,37 +35,6 @@ void production_specialization()
 		}
 	}
 	pauth::require(entries.size() == 16);
-
-	std::set<std::uintptr_t> guarded_entries;
-	for (const bool key_b : {false, true}) {
-		for (const bool target_zero : {false, true}) {
-			for (const bool modifier_zero : {false, true}) {
-				const auto built =
-					pauth::gadgets::Builder{}.build(
-						pauth::pc,
-						std::array{
-							pauth::authenticated_branch(
-								true, key_b,
-								modifier_zero,
-								target_zero ? 31U :
-									3U,
-								modifier_zero ? 31U :
-									7U)},
-						{}, std::pmr::get_default_resource(),
-						{},
-						pauth::gadgets::BuildOptions{
-							.enable_guarded_control_flow =
-								true});
-				pauth::require(
-					built.complete &&
-					built.program.instruction_count() == 1);
-				const auto entry = built.program.words().front();
-				pauth::require(entries.count(entry) == 0);
-				guarded_entries.insert(entry);
-			}
-		}
-	}
-	pauth::require(guarded_entries.size() == 8);
 }
 
 } // namespace

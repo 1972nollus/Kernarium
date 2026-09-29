@@ -33,8 +33,8 @@ constexpr std::uint32_t sp_span_offset_extract =
     0xd340'0000U | (4U << 16U) | ((page_shift - 1U) << 10U) |
     (8U << 5U);
 constexpr std::uint32_t tagged_state_load =
-    0x7940'0000U |
-    (static_cast<std::uint32_t>(offsetof(arm64::CpuState, mte_enabled) / 2U)
+    0x3940'0000U |
+    (static_cast<std::uint32_t>(offsetof(arm64::CpuState, tbi_enabled))
      << 10U) |
     (15U << 5U);
 constexpr std::uint32_t monitor_clear =

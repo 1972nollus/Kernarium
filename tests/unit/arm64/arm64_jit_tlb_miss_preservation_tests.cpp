@@ -230,9 +230,8 @@ void miss_call_is_cold_and_has_no_resident_spills() {
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
   /*
    * Deferring the second-way probe and preserving miss bridge leaves a
-   * 25-word single-store hot body. The two-word tagged-address-state gate
-   * selects the exact semantic path for TBI or MTE without changing the
-   * preserving miss bridge. The persistent linked-block ABI contributes seven
+   * 25-word single-store hot body. The two-word TBI gate selects the exact
+   * semantic path without changing the preserving miss bridge. The persistent linked-block ABI contributes seven
    * fixed prologue/epilogue words.
    */
   const std::size_t persistent_hot_frame_words = 7U;
@@ -245,8 +244,8 @@ void miss_call_is_cold_and_has_no_resident_spills() {
 #else
   /*
    * The 4K translation has no second-way probe, and its deferred miss leaves a
-   * 27-word single-store hot body. The two-word tagged-address-state gate
-   * matches the 16K profile.
+   * 27-word single-store hot body. The two-word TBI gate matches the 16K
+   * profile.
    */
   const std::size_t persistent_hot_frame_words = 7U;
   const std::size_t persistent_total_frame_words = 13U;

@@ -244,8 +244,7 @@ static_assert(sizeof(SharedTranslationCache) + allocation_allowance <=
 
 bool SharedTranslationCache::CodegenProfile::operator==(
     const CodegenProfile &other) const noexcept {
-  return guarded_control_flow == other.guarded_control_flow &&
-         pointer_authentication == other.pointer_authentication &&
+  return pointer_authentication == other.pointer_authentication &&
          capabilities == other.capabilities;
 }
 

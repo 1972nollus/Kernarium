@@ -1,6 +1,68 @@
 gadget nop
 	next_gadget
 
+/* Unreachable padding in place of the FEAT_MTE allocation-tag-checked paths
+ * that the vector and pair transfer entries carried, so every later entry
+ * keeps the address and 64-byte phase it was measured at. Each size is the
+ * removed path's instruction count. */
+.macro removed_tag_checked_vector load, writeback
+	.set .Lrtc\@, 22
+	.if \load
+	.set .Lrtc\@, .Lrtc\@ + 2
+	.endif
+	.if \writeback
+	.set .Lrtc\@, .Lrtc\@ + 1
+	.endif
+	.space 4 * .Lrtc\@
+.endm
+
+.macro removed_tag_checked_vector_pair load, bytes, mode
+	.set .Lrtc\@, 23
+	.if \load
+	.set .Lrtc\@, .Lrtc\@ + 3
+	.if \bytes == 4 || \bytes == 8
+	.set .Lrtc\@, .Lrtc\@ + 5
+	.endif
+	.elseif \bytes == 4 || \bytes == 8
+	.set .Lrtc\@, .Lrtc\@ + 1
+	.endif
+	.if \mode == 1 || \mode == 2
+	.set .Lrtc\@, .Lrtc\@ + 1
+	.endif
+	.space 4 * .Lrtc\@
+.endm
+
+/* The pair entries also lose their hot-path MTE branches: one for a GPR
+ * base, two for an SP base with writeback. */
+.macro removed_tag_checked_pair load, bytes, sign_extend, mode, first_zero, second_zero, sp_base
+	.if !\sp_base || \mode != 0
+	.set .Lrtc\@, 18
+	.if \sp_base
+	.set .Lrtc\@, .Lrtc\@ + 2
+	.else
+	.set .Lrtc\@, .Lrtc\@ + 1
+	.endif
+	.if \load
+	.set .Lrtc\@, .Lrtc\@ + 2
+	.if !\first_zero
+	.set .Lrtc\@, .Lrtc\@ + 1
+	.endif
+	.if !\second_zero
+	.set .Lrtc\@, .Lrtc\@ + 1
+	.endif
+	.if \bytes == 4 && \sign_extend
+	.set .Lrtc\@, .Lrtc\@ + 2
+	.endif
+	.else
+	.set .Lrtc\@, .Lrtc\@ + 3
+	.endif
+	.if \mode == 1 || \mode == 2
+	.set .Lrtc\@, .Lrtc\@ + 1
+	.endif
+	.space 4 * .Lrtc\@
+	.endif
+.endm
+
 /* Literal form invariants are resolved while translating. Operand bits 15:0
  * are the CpuState destination byte offset; bits 63:16 are the signed PC
  * displacement. The following word is the guest PC used for address formation
@@ -495,7 +557,7 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	.endif
 	add x7, x7, x21
 	.if !\base_sp
-	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w9, .Lvector_unsigned_tagged\@
 .Lvector_unsigned_translate\@:
 	.endif
@@ -529,41 +591,12 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 
 	.if !\base_sp
 .Lvector_unsigned_tagged\@:
-	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
-	 * alone strips the logical tag and rejoins the fast path. */
-	tbnz w9, #0, .Lvector_unsigned_checked\@
+	/* TBI strips the logical tag and rejoins the fast path. */
 	ubfx x7, x7, #0, #56
 	b .Lvector_unsigned_translate\@
-.Lvector_unsigned_checked\@:
-	sub sp, sp, #32
-	stp x1, x2, [sp, #16]
-	.if \load
-	movi v0.16b, #0
-	.else
-	ldr q0, [_cpu, x19]
-	.endif
-	str q0, [sp]
-	mov x0, _cpu
-	mov x1, _tlb
-	mov x2, x7
-	mov x3, sp
-	mov x4, #\bytes
-	mov w5, #(!\load)
-	mov w6, #\base_sp
-	mov w7, #((\bytes << 8) | 1)
-	bl NAME(uml_arm64_simd_structure_memory_transfer)
-	ldp x1, x2, [sp, #16]
-	cbz w0, 97f
-	.if \load
-	ldr q0, [sp]
-	str q0, [_cpu, x19]
-	.endif
-	add sp, sp, #32
-	add _stream, _stream, #8
-	next_gadget
-97:
-	add sp, sp, #32
-	b uml_arm64_gadget_memory_fault
+	/* Unreachable padding where the FEAT_MTE allocation-tag-checked
+	 * path was, so every later entry keeps its address. */
+	removed_tag_checked_vector \load, 0
 	.endif
 	.if \forward
 .Lscalar_forward_alignment_read\@:
@@ -1019,7 +1052,7 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	mov x26, x25
 	.endif
 	.if !\base_sp || \mode != 0
-	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w9, .Lvector_other_immediate_tagged\@
 	.endif
 .Lvector_other_immediate_translate\@:
@@ -1060,44 +1093,12 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 
 	.if !\base_sp || \mode != 0
 .Lvector_other_immediate_tagged\@:
-	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
-	 * alone strips the logical tag and rejoins the fast path. */
-	tbnz w9, #0, .Lvector_other_immediate_checked\@
+	/* TBI strips the logical tag and rejoins the fast path. */
 	ubfx x26, x26, #0, #56
 	b .Lvector_other_immediate_translate\@
-.Lvector_other_immediate_checked\@:
-	sub sp, sp, #32
-	stp x1, x2, [sp, #16]
-	.if \load
-	movi v0.16b, #0
-	.else
-	ldr q0, [_cpu, x19]
-	.endif
-	str q0, [sp]
-	mov x0, _cpu
-	mov x1, _tlb
-	mov x2, x26
-	mov x3, sp
-	mov x4, #\bytes
-	mov w5, #(!\load)
-	mov w6, #\base_sp
-	mov w7, #((\bytes << 8) | 1)
-	bl NAME(uml_arm64_simd_structure_memory_transfer)
-	ldp x1, x2, [sp, #16]
-	cbz w0, 97f
-	.if \load
-	ldr q0, [sp]
-	str q0, [_cpu, x19]
-	.endif
-	.if \mode == 1 || \mode == 2
-	str x25, [_cpu, x20]
-	.endif
-	add sp, sp, #32
-	add _stream, _stream, #8
-	next_gadget
-97:
-	add sp, sp, #32
-	b uml_arm64_gadget_memory_fault
+	/* Unreachable padding where the FEAT_MTE allocation-tag-checked
+	 * path was, so every later entry keeps its address. */
+	removed_tag_checked_vector \load, (\mode == 1 || \mode == 2)
 	.endif
 	.if \forward
 .Lscalar_forward_alignment_read\@:
@@ -1162,7 +1163,7 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, .Lsm\@, scalar_
 		.endif
 	.endif
 	add x26, x24, x26
-	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w9, .Lvector_other_register_tagged\@
 .Lvector_other_register_translate\@:
 	mov x7, x26
@@ -1195,41 +1196,12 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, .Lsm\@, scalar_
 	next_gadget
 
 .Lvector_other_register_tagged\@:
-	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
-	 * alone strips the logical tag and rejoins the fast path. */
-	tbnz w9, #0, .Lvector_other_register_checked\@
+	/* TBI strips the logical tag and rejoins the fast path. */
 	ubfx x26, x26, #0, #56
 	b .Lvector_other_register_translate\@
-.Lvector_other_register_checked\@:
-	sub sp, sp, #32
-	stp x1, x2, [sp, #16]
-	.if \load
-	movi v0.16b, #0
-	.else
-	ldr q0, [_cpu, x19]
-	.endif
-	str q0, [sp]
-	mov x0, _cpu
-	mov x1, _tlb
-	mov x2, x26
-	mov x3, sp
-	mov x4, #\bytes
-	mov w5, #(!\load)
-	mov w6, #\base_sp
-	mov w7, #((\bytes << 8) | 1)
-	bl NAME(uml_arm64_simd_structure_memory_transfer)
-	ldp x1, x2, [sp, #16]
-	cbz w0, 97f
-	.if \load
-	ldr q0, [sp]
-	str q0, [_cpu, x19]
-	.endif
-	add sp, sp, #32
-	add _stream, _stream, #8
-	next_gadget
-97:
-	add sp, sp, #32
-	b uml_arm64_gadget_memory_fault
+	/* Unreachable padding where the FEAT_MTE allocation-tag-checked
+	 * path was, so every later entry keeps its address. */
+	removed_tag_checked_vector \load, 0
 	.if \forward
 .Lscalar_forward_alignment_read\@:
 	b .Lscalar_alignment_fault_read
@@ -1314,20 +1286,12 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	mov x19, x21
 	.endif
 	.if !\sp_base
-	/* CpuState keeps the MTE and TBI flags in the low and high bytes of
-	 * this halfword. MTE requires the precise allocation-tag helper, while
-	 * TBI alone can retain the ordinary pair fast path after stripping the
-	 * logical tag from the effective address. */
-	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	/* TBI keeps the ordinary pair fast path after stripping the logical
+	 * tag from the effective address. SP is never top-byte ignored. */
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, .Linteger_pair_untagged\@
-	tbnz w9, #0, .Linteger_pair_tagged\@
 	ubfx x19, x19, #0, #56
 .Linteger_pair_untagged\@:
-	.elseif \mode != 0
-	/* SP is never top-byte ignored, but writeback pair forms remain
-	 * allocation-tag checked when MTE is active. */
-	ldrb w9, [_cpu, #UML_GADGET_CPU_MTE_ENABLED]
-	cbnz w9, .Linteger_pair_tagged\@
 	.endif
 	/* Comparing the page bits of the first and final transfer bytes catches
 	 * both page crossing and address wraparound with one hot-path branch. */
@@ -1409,66 +1373,10 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	.endif
 	next_gadget
 
-	.if !\sp_base || \mode != 0
-.Linteger_pair_tagged\@:
-	sub sp, sp, #32
-	stp x1, x2, [sp, #16]
-	.if \load
-	stp xzr, xzr, [sp]
-	.else
-		.if \first_zero
-	mov x6, xzr
-		.else
-	ldr x6, [_cpu, x22]
-		.endif
-		.if \second_zero
-	mov x7, xzr
-		.else
-	ldr x7, [_cpu, x23]
-		.endif
-		.if \bytes == 4
-	stp w6, w7, [sp]
-		.else
-	stp x6, x7, [sp]
-		.endif
-	.endif
-	mov x0, _cpu
-	mov x1, _tlb
-	mov x2, x19
-	mov x3, sp
-	mov x4, #(2 * \bytes)
-	mov w5, #(!\load)
-	mov w6, #\sp_base
-	mov w7, #((\bytes << 8) | 1)
-	bl NAME(uml_arm64_simd_structure_memory_transfer)
-	ldp x1, x2, [sp, #16]
-	cbz w0, 97f
-	.if \load
-		.if \bytes == 4
-	ldp w6, w7, [sp]
-			.if \sign_extend
-	sxtw x6, w6
-	sxtw x7, w7
-			.endif
-		.else
-	ldp x6, x7, [sp]
-		.endif
-		.if !\first_zero
-	str x6, [_cpu, x22]
-		.endif
-		.if !\second_zero
-	str x7, [_cpu, x23]
-		.endif
-	.endif
-	.if \mode == 1 || \mode == 2
-	str x21, [_cpu, x24]
-	.endif
-	add sp, sp, #32
-	next_gadget
-97:
-	add sp, sp, #32
-	b uml_arm64_gadget_memory_fault_indexed
-	.endif
+	/* Unreachable padding where the FEAT_MTE tag-check branches and the
+	 * allocation-tag-checked path were, so every later entry keeps its
+	 * address. */
+	removed_tag_checked_pair \load, \bytes, \sign_extend, \mode, \first_zero, \second_zero, \sp_base
 	.if \forward
 .Lscalar_forward_alignment_pair_read\@:
 	b uml_arm64_gadget_pair_alignment_fault_read_indexed
@@ -1552,7 +1460,7 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 	mov x19, x21
 	.endif
 	.if !\sp_base || \mode != 0
-	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w9, .Lvector_pair_tagged\@
 .Lvector_pair_translate\@:
 	.endif
@@ -1614,69 +1522,12 @@ scalar_entry \name, \forward, (17 - \load), scalar_none, .Lsn\@, scalar_none, sc
 
 	.if !\sp_base || \mode != 0
 .Lvector_pair_tagged\@:
-	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
-	 * alone strips the logical tag and rejoins the fast path. */
-	tbnz w9, #0, .Lvector_pair_checked\@
+	/* TBI strips the logical tag and rejoins the fast path. */
 	ubfx x19, x19, #0, #56
 	b .Lvector_pair_translate\@
-.Lvector_pair_checked\@:
-	sub sp, sp, #48
-	stp x1, x2, [sp, #32]
-	.if \load
-	movi v0.16b, #0
-	movi v1.16b, #0
-	.else
-	ldr q0, [_cpu, x22]
-	ldr q1, [_cpu, x23]
-	/* The helper moves one contiguous range, so a narrower pair has to be
-	 * packed into it exactly as the cross-page path does. */
-		.if \bytes == 4
-	mov v0.s[1], v1.s[0]
-		.elseif \bytes == 8
-	mov v0.d[1], v1.d[0]
-		.endif
-	.endif
-	stp q0, q1, [sp]
-	mov x0, _cpu
-	mov x1, _tlb
-	mov x2, x19
-	mov x3, sp
-	mov x4, #(2 * \bytes)
-	mov w5, #(!\load)
-	mov w6, #\sp_base
-	mov w7, #(((2 * \bytes) << 8) | 1)
-	bl NAME(uml_arm64_simd_structure_memory_transfer)
-	ldp x1, x2, [sp, #32]
-	cbz w0, 97f
-	.if \load
-	ldp q0, q1, [sp]
-	/* The contiguous range holds both narrow elements in q0, so split them
-	 * back into two zero-extended destinations. */
-		.if \bytes == 4
-	movi v1.16b, #0
-	mov v1.s[0], v0.s[1]
-	movi v2.16b, #0
-	mov v2.s[0], v0.s[0]
-	mov v0.16b, v2.16b
-		.elseif \bytes == 8
-	movi v1.16b, #0
-	mov v1.d[0], v0.d[1]
-	movi v2.16b, #0
-	mov v2.d[0], v0.d[0]
-	mov v0.16b, v2.16b
-		.endif
-	str q0, [_cpu, x22]
-	str q1, [_cpu, x23]
-	.endif
-	.if \mode == 1 || \mode == 2
-	str x21, [_cpu, x24]
-	.endif
-	add sp, sp, #48
-	add _stream, _stream, #8
-	next_gadget
-97:
-	add sp, sp, #48
-	b uml_arm64_gadget_memory_fault
+	/* Unreachable padding where the FEAT_MTE allocation-tag-checked path
+	 * was, so every later entry keeps its address. */
+	removed_tag_checked_vector_pair \load, \bytes, \mode
 	.endif
 	.if \forward
 .Lscalar_forward_alignment_pair_read\@:

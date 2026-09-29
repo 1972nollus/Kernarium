@@ -5,8 +5,8 @@ BASE-0003	Base	ADCS	shared-base-data-processing	register-width+operand-form+regi
 BASE-0004	Base	ADD (extended register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0005	Base	ADD (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0006	Base	ADD (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
-BASE-0007	Base	ADDG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
-BASE-0008	Base	ADDPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	verified
+BASE-0007	Base	ADDG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	absent
+BASE-0008	Base	ADDPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	absent
 BASE-0009	Base	ADDS (extended register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0010	Base	ADDS (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0011	Base	ADDS (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
@@ -96,7 +96,7 @@ BASE-0094	Base	CMN (shifted register)	shared-base-data-processing	register-width
 BASE-0095	Base	CMP (extended register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0096	Base	CMP (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0097	Base	CMP (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
-BASE-0098	Base	CMPP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
+BASE-0098	Base	CMPP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	absent
 BASE-0099	Base	CNEG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0100	Base	CNT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
 BASE-0101	Base	COSP	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	specres2	verified
@@ -159,26 +159,26 @@ BASE-0157	Base	ERET	shared-base-control-system	condition+target-form+register-al
 BASE-0158	Base	ERETAA, ERETAB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	verified
 BASE-0159	Base	ESB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	ras	verified
 BASE-0160	Base	EXTR	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
-BASE-0161	Base	GCSB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcs	verified
-BASE-0162	Base	GCSPOPCX	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcs	verified
-BASE-0163	Base	GCSPOPM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	verified
-BASE-0164	Base	GCSPOPX	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcs	verified
-BASE-0165	Base	GCSPUSHM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	verified
-BASE-0166	Base	GCSPUSHX	shared-base-control-system	condition+target-form+register-alias+flags+reserved	gcs	verified
-BASE-0167	Base	GCSSS1	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	verified
-BASE-0168	Base	GCSSS2	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	verified
-BASE-0169	Base	GCSSTR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	gcs	verified
-BASE-0170	Base	GCSSTTR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	gcs	verified
+BASE-0161	Base	GCSB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcs	absent
+BASE-0162	Base	GCSPOPCX	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcs	absent
+BASE-0163	Base	GCSPOPM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	absent
+BASE-0164	Base	GCSPOPX	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcs	absent
+BASE-0165	Base	GCSPUSHM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	absent
+BASE-0166	Base	GCSPUSHX	shared-base-control-system	condition+target-form+register-alias+flags+reserved	gcs	absent
+BASE-0167	Base	GCSSS1	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	absent
+BASE-0168	Base	GCSSS2	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcs	absent
+BASE-0169	Base	GCSSTR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	gcs	absent
+BASE-0170	Base	GCSSTTR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	gcs	absent
 BASE-0171	Base	GIC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcie	verified
 BASE-0172	Base	GICR	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	gcie	verified
-BASE-0173	Base	GMI	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
+BASE-0173	Base	GMI	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	absent
 BASE-0174	Base	GSB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcie	verified
 BASE-0175	Base	HINT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	per_variant(baseline|bti|chk|clrbhb|cmh|dgh|e3dse|gcs|pcdphint|ras|spe|trf)	verified
 BASE-0176	Base	HINTE	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	hinte	verified
 BASE-0177	Base	HLT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0178	Base	HVC	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0179	Base	IC	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
-BASE-0180	Base	IRG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
+BASE-0180	Base	IRG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	absent
 BASE-0181	Base	ISB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0182	Base	LD64B	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	ls64	verified
 BASE-0183	Base	LDADD, LDADDA, LDADDAL, LDADDL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
@@ -210,8 +210,8 @@ BASE-0208	Base	LDCLRP, LDCLRPA, LDCLRPAL, LDCLRPL	shared-base-memory	access-size
 BASE-0209	Base	LDEOR, LDEORA, LDEORAL, LDEORL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
 BASE-0210	Base	LDEORB, LDEORAB, LDEORALB, LDEORLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
 BASE-0211	Base	LDEORH, LDEORAH, LDEORALH, LDEORLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
-BASE-0212	Base	LDG	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
-BASE-0213	Base	LDGM	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte2	verified
+BASE-0212	Base	LDG	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	absent
+BASE-0213	Base	LDGM	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte2	absent
 BASE-0214	Base	LDIAPP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc3	verified
 BASE-0215	Base	LDLAR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lor	verified
 BASE-0216	Base	LDLARB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lor	verified
@@ -279,7 +279,7 @@ BASE-0277	Base	LSR (immediate)	shared-base-data-processing	register-width+operan
 BASE-0278	Base	LSR (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0279	Base	LSRV	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0280	Base	MADD	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
-BASE-0281	Base	MADDPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	verified
+BASE-0281	Base	MADDPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	absent
 BASE-0282	Base	MNEG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0283	Base	MOV (bitmask immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0284	Base	MOV (inverted wide immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
@@ -295,7 +295,7 @@ BASE-0293	Base	MSR (immediate)	shared-base-control-system	condition+target-form+
 BASE-0294	Base	MSR (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0295	Base	MSRR	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	sysreg128	verified
 BASE-0296	Base	MSUB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
-BASE-0297	Base	MSUBPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	verified
+BASE-0297	Base	MSUBPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	absent
 BASE-0298	Base	MUL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0299	Base	MVN	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0300	Base	NEG (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
@@ -362,10 +362,10 @@ BASE-0360	Base	SBFM	shared-base-data-processing	register-width+operand-form+regi
 BASE-0361	Base	SBFX	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0362	Base	SDIV (quotient)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0363	Base	SETF8, SETF16	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	flag_m	verified
-BASE-0364	Base	SETGP, SETGM, SETGE	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	verified
-BASE-0365	Base	SETGPN, SETGMN, SETGEN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	verified
-BASE-0366	Base	SETGPT, SETGMT, SETGET	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	verified
-BASE-0367	Base	SETGPTN, SETGMTN, SETGETN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	verified
+BASE-0364	Base	SETGP, SETGM, SETGE	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	absent
+BASE-0365	Base	SETGPN, SETGMN, SETGEN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	absent
+BASE-0366	Base	SETGPT, SETGMT, SETGET	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	absent
+BASE-0367	Base	SETGPTN, SETGMTN, SETGETN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops+mte	absent
 BASE-0368	Base	SETP, SETM, SETE	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
 BASE-0369	Base	SETPN, SETMN, SETEN	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
 BASE-0370	Base	SETPT, SETMT, SETET	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mops	verified
@@ -386,7 +386,7 @@ BASE-0384	Base	SMSUBL	shared-base-data-processing	register-width+operand-form+re
 BASE-0385	Base	SMULH	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0386	Base	SMULL (32-bit)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0387	Base	SSBB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
-BASE-0388	Base	ST2G	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
+BASE-0388	Base	ST2G	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	absent
 BASE-0389	Base	ST64B	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	ls64	verified
 BASE-0390	Base	ST64BV	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	ls64_v	verified
 BASE-0391	Base	ST64BV0	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	ls64_accdata	verified
@@ -400,9 +400,9 @@ BASE-0398	Base	STCPH	shared-base-memory	access-size+addressing-mode+writeback+re
 BASE-0399	Base	STEOR, STEORL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
 BASE-0400	Base	STEORB, STEORLB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
 BASE-0401	Base	STEORH, STEORLH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
-BASE-0402	Base	STG	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
-BASE-0403	Base	STGM	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte2	verified
-BASE-0404	Base	STGP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
+BASE-0402	Base	STG	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	absent
+BASE-0403	Base	STGM	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte2	absent
+BASE-0404	Base	STGP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	absent
 BASE-0405	Base	STILP	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lrcpc3	verified
 BASE-0406	Base	STLLR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lor	verified
 BASE-0407	Base	STLLRB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lor	verified
@@ -459,16 +459,16 @@ BASE-0457	Base	STXP	shared-base-memory	access-size+addressing-mode+writeback+reg
 BASE-0458	Base	STXR	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
 BASE-0459	Base	STXRB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
 BASE-0460	Base	STXRH	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
-BASE-0461	Base	STZ2G	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
-BASE-0462	Base	STZG	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	verified
-BASE-0463	Base	STZGM	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte2	verified
+BASE-0461	Base	STZ2G	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	absent
+BASE-0462	Base	STZG	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte	absent
+BASE-0463	Base	STZGM	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	mte2	absent
 BASE-0464	Base	SUB (extended register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0465	Base	SUB (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0466	Base	SUB (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
-BASE-0467	Base	SUBG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
-BASE-0468	Base	SUBP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
-BASE-0469	Base	SUBPS	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	verified
-BASE-0470	Base	SUBPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	verified
+BASE-0467	Base	SUBG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	absent
+BASE-0468	Base	SUBP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	absent
+BASE-0469	Base	SUBPS	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	mte	absent
+BASE-0470	Base	SUBPT	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cpa	absent
 BASE-0471	Base	SUBS (extended register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0472	Base	SUBS (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0473	Base	SUBS (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified

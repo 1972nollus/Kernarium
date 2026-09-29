@@ -16,12 +16,13 @@ DecodeResult decode_load_store(DecodeContext &context)
 	auto &words = context.words;
 	const auto &options = context.options;
 
-	if (const auto selected = gcs_gadget(instruction); selected) {
-		emit(words, selected->entry);
-		if (selected->has_operand)
-			emit(words, selected->operand);
+	if ((instruction & 0xffff'ec00U) == 0xd91f'0c00U) {
+		/* FEAT_GCS GCSSTR/GCSSTTR: the virtual CPU does not implement
+		 * FEAT_GCS. */
+		emit(words, uml_arm64_gadget_illegal);
 		emit(words, address);
-		return DecodeResult::decoded;
+		++compiled;
+		return DecodeResult::terminal;
 	}
 	if ((instruction & 0xff00'0000U) == 0xd800'0000U) {
 		/* PRFM (literal) is an implementation-defined performance hint. */
@@ -108,9 +109,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			emit(words, (instruction & 31U) |
 				(static_cast<std::uintptr_t>(base_offset) << 16) |
 				(static_cast<std::uintptr_t>(offset_register_offset)
-					<< 32) |
-				(static_cast<std::uintptr_t>(
-					std::size_t{1} << size) << 48));
+					<< 32));
 			emit(words, address);
 		} else {
 			emit(words, uml_arm64_gadget_illegal);
@@ -528,7 +527,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 		   (instruction & 0x3fe0'0c00U) == 0x19c0'0400U ||
 		   (instruction & 0x3fe0'0c00U) == 0x1dc0'0400U) {
 		/* SET and SETG occupy values also accepted by the broad CPYF/CPY
-		 * masks. Resolve both specific families before selecting CPY. */
+		 * masks. Resolve both specific families before selecting CPY.
+		 * SETG needs FEAT_MTE, which the virtual CPU does not implement. */
 		const bool set_tag =
 			(instruction & 0x3fe0'0c00U) == 0x1dc0'0400U;
 		const bool set = !set_tag &&
@@ -539,77 +539,35 @@ DecodeResult decode_load_store(DecodeContext &context)
 		const unsigned destination = instruction & 31U;
 		const unsigned count = (instruction >> 5) & 31U;
 		const unsigned source = (instruction >> 16) & 31U;
-		const unsigned stage = (set || set_tag) ?
+		const unsigned stage = set ?
 			(instruction >> 14) & 3U :
 			(instruction >> 22) & 3U;
-		const bool valid = (instruction >> 30) == 0 && stage != 3 &&
-			destination != 31U && count != 31U &&
+		const bool valid = !set_tag && (instruction >> 30) == 0 &&
+			stage != 3 && destination != 31U && count != 31U &&
 			destination != count && source != destination &&
-			source != count && (set || set_tag || source != 31U);
+			source != count && (set || source != 31U);
 		if (!valid) {
 			emit(words, uml_arm64_gadget_illegal);
 			emit(words, address);
 			++compiled;
 			return DecodeResult::terminal;
 		}
-		emit(words, set_tag ?
-			mops_set_tag_gadget(stage, source == 31U) :
-			mops_gadget(family, stage, source == 31U));
+		emit(words, mops_gadget(family, stage, source == 31U));
 		if (stage != 1) {
 			emit(words, mops_operand(instruction));
-			if (set_tag || stage == 2)
+			if (stage == 2)
 				emit(words, address);
 		}
-	} else if ((instruction & 0xffff'fc00U) == 0xd9e0'0000U ||
-		   (instruction & 0xffff'fc00U) == 0xd9a0'0000U ||
-		   (instruction & 0xffff'fc00U) == 0xd920'0000U) {
-		/* LDGM/STGM/STZGM are undefined at EL0. Reject them before
-		 * observing CpuState or memory.
-		 */
+	} else if ((instruction & 0xff20'0000U) == 0xd920'0000U ||
+		   (instruction & 0xffc0'0000U) == 0x6880'0000U ||
+		   (instruction & 0xffc0'0000U) == 0x6900'0000U ||
+		   (instruction & 0xffc0'0000U) == 0x6980'0000U) {
+		/* FEAT_MTE LDG/STG/ST2G/STZG/STZ2G/STGP, and the EL1 LDGM/STGM/
+		 * STZGM: the virtual CPU does not implement FEAT_MTE. */
 		emit(words, uml_arm64_gadget_illegal);
 		emit(words, address);
 		++compiled;
 		return DecodeResult::terminal;
-	} else if ((instruction & 0xffc0'0000U) == 0x6880'0000U ||
-		   (instruction & 0xffc0'0000U) == 0x6900'0000U ||
-		   (instruction & 0xffc0'0000U) == 0x6980'0000U) {
-		const unsigned encoded_mode = (instruction >> 23) & 3U;
-		const unsigned mode = encoded_mode - 1U;
-		const unsigned first = instruction & 31U;
-		const unsigned second = (instruction >> 10) & 31U;
-		const unsigned base = (instruction >> 5) & 31U;
-		const auto immediate = static_cast<std::int16_t>(
-			detail::sign_extend((instruction >> 15) & 0x7fU, 7) * 16);
-		emit(words, mte_store_pair_tag_gadget(mode, base == 31U,
-			first == 31U, second == 31U));
-		emit(words, mte_memory_operand(
-			base, first, second, immediate, false));
-		emit(words, address);
-	} else if ((instruction & 0xff20'0000U) == 0xd920'0000U) {
-		const unsigned operation = (instruction >> 22) & 3U;
-		const unsigned encoded_mode = (instruction >> 10) & 3U;
-		const unsigned transfer = instruction & 31U;
-		const unsigned base = (instruction >> 5) & 31U;
-		const auto immediate = static_cast<std::int16_t>(
-			detail::sign_extend((instruction >> 12) & 0x1ffU, 9) * 16);
-		if (encoded_mode == 0) {
-			if (operation != 1U) {
-				emit(words, uml_arm64_gadget_illegal);
-				emit(words, address);
-				++compiled;
-				return DecodeResult::terminal;
-			}
-			emit(words, mte_load_tag_gadget(
-				base == 31U, transfer == 31U));
-			emit(words, mte_memory_operand(
-				base, transfer, 31U, immediate, false));
-		} else {
-			emit(words, mte_tag_store_gadget(operation,
-				encoded_mode - 1U, base == 31U));
-			emit(words, mte_memory_operand(
-				base, transfer, 31U, immediate, true));
-		}
-		emit(words, address);
 	} else if (const auto atomic_floating =
 			detail::decode_atomic_floating(instruction);
 		   atomic_floating.recognized) {

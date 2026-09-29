@@ -111,80 +111,6 @@ UML_DECLARE_ADD_SUB_CARRY_SOURCES(x_sbc_s,
 #undef UML_DECLARE_ADD_SUB_CARRY_SOURCES
 #undef UML_DECLARE_ADD_SUB_CARRY_FLAGS
 #undef UML_DECLARE_ADD_SUB_CARRY_RESULT
-#define UML_DECLARE_MTE_POINTER_VARIANTS(operation) \
-	void uml_arm64_gadget_mte_##operation##_rrr(); \
-	void uml_arm64_gadget_mte_##operation##_rrz(); \
-	void uml_arm64_gadget_mte_##operation##_rsr(); \
-	void uml_arm64_gadget_mte_##operation##_rsz(); \
-	void uml_arm64_gadget_mte_##operation##_srr(); \
-	void uml_arm64_gadget_mte_##operation##_srz(); \
-	void uml_arm64_gadget_mte_##operation##_ssr(); \
-	void uml_arm64_gadget_mte_##operation##_ssz();
-UML_DECLARE_MTE_POINTER_VARIANTS(gmi)
-UML_DECLARE_MTE_POINTER_VARIANTS(subp)
-UML_DECLARE_MTE_POINTER_VARIANTS(subps)
-#undef UML_DECLARE_MTE_POINTER_VARIANTS
-#define UML_DECLARE_MTE_TAG_VARIANTS(operation) \
-	void uml_arm64_gadget_mte_##operation##_rr(); \
-	void uml_arm64_gadget_mte_##operation##_rs(); \
-	void uml_arm64_gadget_mte_##operation##_sr(); \
-	void uml_arm64_gadget_mte_##operation##_ss();
-UML_DECLARE_MTE_TAG_VARIANTS(addg)
-UML_DECLARE_MTE_TAG_VARIANTS(subg)
-#undef UML_DECLARE_MTE_TAG_VARIANTS
-#define UML_DECLARE_MTE_IRG_VARIANTS() \
-	void uml_arm64_gadget_mte_irg_rrr(); \
-	void uml_arm64_gadget_mte_irg_rrs(); \
-	void uml_arm64_gadget_mte_irg_rzr(); \
-	void uml_arm64_gadget_mte_irg_rzs(); \
-	void uml_arm64_gadget_mte_irg_srr(); \
-	void uml_arm64_gadget_mte_irg_srs(); \
-	void uml_arm64_gadget_mte_irg_szr(); \
-	void uml_arm64_gadget_mte_irg_szs();
-UML_DECLARE_MTE_IRG_VARIANTS()
-#undef UML_DECLARE_MTE_IRG_VARIANTS
-#define UML_DECLARE_CPA_MODES(operation, shift) \
-	void uml_arm64_gadget_cpa_##operation##_##shift##_rrr(); \
-	void uml_arm64_gadget_cpa_##operation##_##shift##_rrs(); \
-	void uml_arm64_gadget_cpa_##operation##_##shift##_rzr(); \
-	void uml_arm64_gadget_cpa_##operation##_##shift##_rzs(); \
-	void uml_arm64_gadget_cpa_##operation##_##shift##_srr(); \
-	void uml_arm64_gadget_cpa_##operation##_##shift##_srs(); \
-	void uml_arm64_gadget_cpa_##operation##_##shift##_szr(); \
-	void uml_arm64_gadget_cpa_##operation##_##shift##_szs();
-#define UML_DECLARE_CPA_SHIFTS(operation) \
-	UML_DECLARE_CPA_MODES(operation, 0) \
-	UML_DECLARE_CPA_MODES(operation, 1) \
-	UML_DECLARE_CPA_MODES(operation, 2) \
-	UML_DECLARE_CPA_MODES(operation, 3) \
-	UML_DECLARE_CPA_MODES(operation, 4) \
-	UML_DECLARE_CPA_MODES(operation, 5) \
-	UML_DECLARE_CPA_MODES(operation, 6) \
-	UML_DECLARE_CPA_MODES(operation, 7)
-UML_DECLARE_CPA_SHIFTS(addpt)
-UML_DECLARE_CPA_SHIFTS(subpt)
-#undef UML_DECLARE_CPA_SHIFTS
-#undef UML_DECLARE_CPA_MODES
-#define UML_DECLARE_CPA_MULTIPLY_MODES(operation) \
-	void uml_arm64_gadget_cpa_##operation##_rrrr(); \
-	void uml_arm64_gadget_cpa_##operation##_rrrz(); \
-	void uml_arm64_gadget_cpa_##operation##_rrzr(); \
-	void uml_arm64_gadget_cpa_##operation##_rrzz(); \
-	void uml_arm64_gadget_cpa_##operation##_rzrr(); \
-	void uml_arm64_gadget_cpa_##operation##_rzrz(); \
-	void uml_arm64_gadget_cpa_##operation##_rzzr(); \
-	void uml_arm64_gadget_cpa_##operation##_rzzz(); \
-	void uml_arm64_gadget_cpa_##operation##_zrrr(); \
-	void uml_arm64_gadget_cpa_##operation##_zrrz(); \
-	void uml_arm64_gadget_cpa_##operation##_zrzr(); \
-	void uml_arm64_gadget_cpa_##operation##_zrzz(); \
-	void uml_arm64_gadget_cpa_##operation##_zzrr(); \
-	void uml_arm64_gadget_cpa_##operation##_zzrz(); \
-	void uml_arm64_gadget_cpa_##operation##_zzzr(); \
-	void uml_arm64_gadget_cpa_##operation##_zzzz();
-UML_DECLARE_CPA_MULTIPLY_MODES(maddpt)
-UML_DECLARE_CPA_MULTIPLY_MODES(msubpt)
-#undef UML_DECLARE_CPA_MULTIPLY_MODES
 #define UML_DECLARE_MULTIPLY_RESULT(prefix) \
 	void uml_arm64_gadget_multiply_add_##prefix##_r();
 #define UML_DECLARE_MULTIPLY_ADDENDS(prefix) \
@@ -1833,24 +1759,11 @@ void uml_arm64_gadget_cache_zero_r();
 void uml_arm64_gadget_cache_zero_z();
 void uml_arm64_gadget_code_synchronize_r();
 void uml_arm64_gadget_code_synchronize_z();
-void uml_arm64_gadget_gcs_popm_r();
-void uml_arm64_gadget_gcs_popm_z();
-void uml_arm64_gadget_gcs_pushm_r();
-void uml_arm64_gadget_gcs_pushm_z();
-void uml_arm64_gadget_gcs_ss1_r();
-void uml_arm64_gadget_gcs_ss1_z();
-void uml_arm64_gadget_gcs_ss2_r();
-void uml_arm64_gadget_gcs_ss2_z();
-void uml_arm64_gadget_gcs_store_rr();
-void uml_arm64_gadget_gcs_store_rz();
-void uml_arm64_gadget_gcs_store_sr();
-void uml_arm64_gadget_gcs_store_sz();
 #define UML_DECLARE_PSTATE_FIELD(name) \
 	void uml_arm64_gadget_pstate_##name##_0(); \
 	void uml_arm64_gadget_pstate_##name##_1();
 UML_DECLARE_PSTATE_FIELD(ssbs)
 UML_DECLARE_PSTATE_FIELD(dit)
-UML_DECLARE_PSTATE_FIELD(tco)
 UML_DECLARE_PSTATE_FIELD(sm)
 UML_DECLARE_PSTATE_FIELD(za)
 UML_DECLARE_PSTATE_FIELD(smza)
@@ -2207,40 +2120,6 @@ void uml_arm64_gadget_mops_epilogue_copy_forward();
 void uml_arm64_gadget_mops_epilogue_copy_general();
 void uml_arm64_gadget_mops_epilogue_set_r();
 void uml_arm64_gadget_mops_epilogue_set_z();
-void uml_arm64_gadget_mops_set_tag_prologue();
-void uml_arm64_gadget_mops_set_tag_epilogue_r();
-void uml_arm64_gadget_mops_set_tag_epilogue_z();
-#define UML_DECLARE_MTE_MEMORY(name) void uml_arm64_gadget_mte_memory_##name();
-UML_DECLARE_MTE_MEMORY(ldg_rr)
-UML_DECLARE_MTE_MEMORY(ldg_rz)
-UML_DECLARE_MTE_MEMORY(ldg_sr)
-UML_DECLARE_MTE_MEMORY(ldg_sz)
-#define UML_DECLARE_MTE_TAG_STORE_MODES(name) \
-	UML_DECLARE_MTE_MEMORY(name##_post_r) \
-	UML_DECLARE_MTE_MEMORY(name##_post_s) \
-	UML_DECLARE_MTE_MEMORY(name##_offset_r) \
-	UML_DECLARE_MTE_MEMORY(name##_offset_s) \
-	UML_DECLARE_MTE_MEMORY(name##_pre_r) \
-	UML_DECLARE_MTE_MEMORY(name##_pre_s)
-UML_DECLARE_MTE_TAG_STORE_MODES(stg)
-UML_DECLARE_MTE_TAG_STORE_MODES(st2g)
-UML_DECLARE_MTE_TAG_STORE_MODES(stzg)
-UML_DECLARE_MTE_TAG_STORE_MODES(stz2g)
-#undef UML_DECLARE_MTE_TAG_STORE_MODES
-#define UML_DECLARE_MTE_STGP_REGISTERS(mode, base) \
-	UML_DECLARE_MTE_MEMORY(stgp_##mode##_##base##rr) \
-	UML_DECLARE_MTE_MEMORY(stgp_##mode##_##base##rz) \
-	UML_DECLARE_MTE_MEMORY(stgp_##mode##_##base##zr) \
-	UML_DECLARE_MTE_MEMORY(stgp_##mode##_##base##zz)
-#define UML_DECLARE_MTE_STGP_MODE(mode) \
-	UML_DECLARE_MTE_STGP_REGISTERS(mode, r) \
-	UML_DECLARE_MTE_STGP_REGISTERS(mode, s)
-UML_DECLARE_MTE_STGP_MODE(post)
-UML_DECLARE_MTE_STGP_MODE(offset)
-UML_DECLARE_MTE_STGP_MODE(pre)
-#undef UML_DECLARE_MTE_STGP_MODE
-#undef UML_DECLARE_MTE_STGP_REGISTERS
-#undef UML_DECLARE_MTE_MEMORY
 #define UML_DECLARE_ORDERED_VARIANTS(kind, ordering, size) \
 	void uml_arm64_gadget_ordered_##kind##_##ordering##_##size##_r(); \
 	void uml_arm64_gadget_ordered_##kind##_##ordering##_##size##_z();
@@ -2520,7 +2399,6 @@ void uml_arm64_gadget_svc();
 void uml_arm64_gadget_interrupt();
 void uml_arm64_gadget_illegal();
 void uml_arm64_gadget_breakpoint();
-void uml_arm64_gadget_gcs_fault();
 void uml_arm64_gadget_branch();
 void uml_arm64_gadget_branch_linked();
 void uml_arm64_gadget_branch_link();
@@ -2539,11 +2417,7 @@ DECLARE_POINTER_AUTH_BRANCH(bra, a)
 DECLARE_POINTER_AUTH_BRANCH(bra, b)
 DECLARE_POINTER_AUTH_BRANCH(blra, a)
 DECLARE_POINTER_AUTH_BRANCH(blra, b)
-DECLARE_POINTER_AUTH_BRANCH(blra_gcs, a)
-DECLARE_POINTER_AUTH_BRANCH(blra_gcs, b)
 #undef DECLARE_POINTER_AUTH_BRANCH
-void uml_arm64_gadget_pauth_return_gcs_a();
-void uml_arm64_gadget_pauth_return_gcs_b();
 void uml_arm64_gadget_return();
 /* Fused guest CMP of two registers + B.cond, see compare_register_branch. */
 void uml_arm64_gadget_compare_register_branch_x_eq();

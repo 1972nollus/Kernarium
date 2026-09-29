@@ -98,15 +98,6 @@ int darwin_uml_static_vm_code_page(
 int darwin_uml_static_vm_code_page_stamp(
 	const void *handle, struct darwin_uml_static_code_page_stamp *stamp);
 void darwin_uml_static_vm_invalidate_code_page(void *handle);
-/* Allocation tags are attached to the shared physical backing rather than a
- * virtual mapping, so aliases in one or more generations observe one tag.
- * Return values use enum darwin_uml_static_translation_result. */
-int darwin_uml_static_vm_load_allocation_tag(unsigned long generation,
-					      unsigned long address,
-					      uint8_t *tag);
-int darwin_uml_static_vm_store_allocation_tag(unsigned long generation,
-					       unsigned long address,
-					       uint8_t tag);
 uint64_t darwin_uml_static_vm_changes(unsigned long generation);
 /* Copies mapping ranges changed after `sequence` and returns their count.
  * A negative result means the caller must invalidate its complete TLB.  The

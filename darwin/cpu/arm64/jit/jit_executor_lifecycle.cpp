@@ -56,7 +56,6 @@ JitExecutor::Implementation::Implementation(
       shared_publication_context_{diagnostics.shared_publication_context},
       before_shared_publication_{diagnostics.before_shared_publication},
 #endif
-      enable_guarded_control_flow_{options.enable_guarded_control_flow},
       enable_pointer_authentication_{
           options.enable_pointer_authentication},
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -152,9 +151,7 @@ JitExecutor::Implementation::indirect_link_diagnostics() const noexcept {
 }
 #endif
 
-JitExecutor::JitExecutor(bool enable_guarded_control_flow)
-    : JitExecutor{JitExecutorOptions{
-          .enable_guarded_control_flow = enable_guarded_control_flow}} {}
+JitExecutor::JitExecutor() : JitExecutor{JitExecutorOptions{}} {}
 
 JitExecutor::JitExecutor(JitExecutorOptions options)
     : implementation_{[&] {

@@ -376,9 +376,6 @@ void misordered_drain_is_safe_stale_and_recoverable() {
             message);
   };
   require_incompatible(
-      EngineConfiguration{.enable_guarded_control_flow = true},
-      "a guarded-control-flow mismatch borrowed another profile's executor");
-  require_incompatible(
       EngineConfiguration{.enable_pointer_authentication = false},
       "a pointer-authentication mismatch borrowed another profile's executor");
   auto capability_mismatch = EngineConfiguration{};

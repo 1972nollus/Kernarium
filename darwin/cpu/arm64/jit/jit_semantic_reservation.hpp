@@ -119,7 +119,7 @@ void reservation_store(std::uintptr_t key) noexcept;
 
 [[nodiscard]] bool simd_structure_address(CpuState &cpu,
 	GuestMemory &memory, std::uint64_t tagged_address, bool base_sp,
-	bool tagchecked, std::size_t transfer_size, std::size_t element_size,
+	std::size_t transfer_size, std::size_t element_size,
 	MemoryAccess access, std::uint64_t &address, std::uint64_t &fault_address);
 
 /* Invalidates every reservation granule that a tracked native store block

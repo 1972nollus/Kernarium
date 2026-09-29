@@ -1025,16 +1025,10 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 
 [[nodiscard]] bool simd_structure_address(CpuState &cpu,
 	GuestMemory &memory, std::uint64_t tagged_address, bool base_sp,
-	bool tagchecked, std::size_t transfer_size, std::size_t element_size,
+	std::size_t transfer_size, std::size_t element_size,
 	MemoryAccess access, std::uint64_t &address, std::uint64_t &fault_address)
 {
-	const bool tagged = !base_sp && cpu.tagged_addresses_enabled();
-	address = tagged ?
-		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
-	const bool check_tags =
-		tagchecked && cpu.mte_enabled && !cpu.pstate_tco;
-	const auto logical_tag = !base_sp && cpu.mte_enabled ?
-		static_cast<std::uint8_t>(tagged_address >> 56) & 15U : 0U;
+	address = cpu.untag_data_address(tagged_address, base_sp);
 	for (std::size_t completed = 0; completed < transfer_size;
 	     completed += element_size) {
 		const auto current = address + completed;
@@ -1043,21 +1037,6 @@ void invalidate_reservations_for_store_locked(GuestMemory &memory,
 		if (!memory.validate_access(current, access_size, access)) {
 			fault_address = memory.last_fault().address;
 			return false;
-		}
-		if (!check_tags)
-			continue;
-		for (std::size_t checked = 0; checked < access_size;) {
-			const auto tagged_current = current + checked;
-			std::uint8_t allocation_tag{};
-			if (!memory.read_allocation_tag(
-				    tagged_current, allocation_tag) ||
-			    allocation_tag != logical_tag) {
-				fault_address = tagged_current;
-				return false;
-			}
-			checked += std::min<std::size_t>(
-				access_size - checked,
-				16U - (tagged_current & 15U));
 		}
 	}
 	return true;

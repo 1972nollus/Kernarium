@@ -21,20 +21,10 @@ static_assert(offsetof(CpuState, vectors) == UML_GADGET_CPU_V0);
 static_assert(offsetof(CpuState, fpcr) == UML_GADGET_CPU_FPCR);
 static_assert(offsetof(CpuState, fpsr) == UML_GADGET_CPU_FPSR);
 static_assert(offsetof(CpuState, tls) == UML_GADGET_CPU_TLS);
-static_assert(offsetof(CpuState, mte_enabled) == UML_GADGET_CPU_MTE_ENABLED);
 static_assert(offsetof(CpuState, tbi_enabled) == UML_GADGET_CPU_TBI_ENABLED);
-static_assert(offsetof(CpuState, mte_exclude) == UML_GADGET_CPU_MTE_EXCLUDE);
-static_assert(offsetof(CpuState, mte_tag_choices) == UML_GADGET_CPU_MTE_TAG_CHOICES);
-static_assert(offsetof(CpuState, mte_random_tags) == UML_GADGET_CPU_MTE_RANDOM_TAGS);
-static_assert(offsetof(CpuState, mte_seed) == UML_GADGET_CPU_MTE_SEED);
-static_assert(offsetof(CpuState, mte_tag) == UML_GADGET_CPU_MTE_TAG);
-static_assert(offsetof(CpuState, mte_random_state) == UML_GADGET_CPU_MTE_RANDOM_STATE);
-static_assert(offsetof(CpuState, cpa_enabled) == UML_GADGET_CPU_CPA_ENABLED);
-static_assert(offsetof(CpuState, cpa_multiply_enabled) == UML_GADGET_CPU_CPA_MULTIPLY_ENABLED);
 static_assert(offsetof(CpuState, accdata) == UML_GADGET_CPU_ACCDATA);
 static_assert(offsetof(CpuState, pstate_ssbs) == UML_GADGET_CPU_PSTATE_SSBS);
 static_assert(offsetof(CpuState, pstate_dit) == UML_GADGET_CPU_PSTATE_DIT);
-static_assert(offsetof(CpuState, pstate_tco) == UML_GADGET_CPU_PSTATE_TCO);
 static_assert(offsetof(CpuState, pstate_sm) == UML_GADGET_CPU_PSTATE_SM);
 static_assert(offsetof(CpuState, pstate_za) == UML_GADGET_CPU_PSTATE_ZA);
 static_assert(offsetof(CpuState, pstate_daif_access) == UML_GADGET_CPU_PSTATE_DAIF_ACCESS);
@@ -81,6 +71,5 @@ static_assert(UML_GADGET_EVENT_MEMORY_FAULT == static_cast<int>(EngineEvent::mem
 static_assert(UML_GADGET_EVENT_INTERRUPT == static_cast<int>(EngineEvent::interrupt));
 static_assert(UML_GADGET_EVENT_ILLEGAL == static_cast<int>(EngineEvent::illegal_instruction));
 static_assert(UML_GADGET_EVENT_BREAKPOINT == static_cast<int>(EngineEvent::breakpoint));
-static_assert(UML_GADGET_EVENT_GCS_FAULT == static_cast<int>(EngineEvent::gcs_fault));
 
 } // namespace uml::cpu::arm64::layout

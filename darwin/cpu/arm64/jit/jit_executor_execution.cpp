@@ -119,8 +119,7 @@ namespace uml::cpu::arm64 {
       block = shared;
     } else {
       JitCompiler compiler{
-          enable_guarded_control_flow_, this,
-          &Implementation::resolve_block_link, false,
+          this, &Implementation::resolve_block_link, false,
           &Implementation::resolve_indirect_link
       };
       // Compile once on a miss. Speculatively lowering the whole block a
@@ -206,8 +205,7 @@ namespace uml::cpu::arm64 {
            * Direct descriptors are regenerated in the private link table.
            */
           JitCompiler retry_compiler{
-              enable_guarded_control_flow_, this,
-              &Implementation::resolve_block_link, false,
+              this, &Implementation::resolve_block_link, false,
               &Implementation::resolve_indirect_link
           };
           retry_compiler.set_pointer_authentication_enabled(
@@ -346,7 +344,7 @@ JitExecutor::Implementation::tracked_store_function(CompiledBlock &block, Static
             std::as_writable_bytes(std::span{&instructions[index], 1})))
       return nullptr;
   }
-  JitCompiler compiler{enable_guarded_control_flow_, nullptr, nullptr, true};
+  JitCompiler compiler{nullptr, nullptr, true};
   compiler.set_pointer_authentication_enabled(
       enable_pointer_authentication_);
   const auto compiled = compiler.compile(
@@ -450,8 +448,7 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
     JitExecutor::Implementation::SingleInstructionTranslation>
 JitExecutor::Implementation::translate_single_instruction(
     std::uint64_t pc, std::uint32_t instruction, bool track_direct_stores) {
-  JitCompiler compiler{enable_guarded_control_flow_, nullptr, nullptr,
-                       track_direct_stores};
+  JitCompiler compiler{nullptr, nullptr, track_direct_stores};
   compiler.set_pointer_authentication_enabled(
       enable_pointer_authentication_);
   const auto compiled =

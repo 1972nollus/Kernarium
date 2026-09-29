@@ -16,16 +16,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 	const auto &resolve_indirect_link = context.resolve_indirect_link;
 	const auto &options = context.options;
 
-	if (const auto selected = gcs_gadget(instruction); selected) {
-		emit(words, selected->entry);
-		if (selected->has_operand)
-			emit(words, selected->operand);
-		emit(words, address);
-		if (selected->always_traps) {
-			++compiled;
-			return DecodeResult::terminal;
-		}
-	} else if (pointer_auth_lr_unavailable(instruction)) {
+	if (pointer_auth_lr_unavailable(instruction)) {
 		/* FEAT_PAuth_LR is not advertised by the static guest profile.
 		 * Its non-HINT encodings are architecturally UNDEFINED. */
 		emit(words, uml_arm64_gadget_illegal);
@@ -247,14 +238,8 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		}
 		const bool link = (instruction & 0x0020'0000U) != 0;
 		const bool key_b = (instruction & 0x400U) != 0;
-		emit(words,
-			link && options.enable_guarded_control_flow ?
-				pointer_auth_guarded_call_gadget(
-					key_b, zero_modifier,
-					target == 31U) :
-				pointer_auth_branch_gadget(
-					link, key_b, zero_modifier,
-					target == 31U));
+		emit(words, pointer_auth_branch_gadget(
+			link, key_b, zero_modifier, target == 31U));
 		if (target != 31U || !zero_modifier) {
 			const auto operand = target == 31U ?
 				(modifier < 31U ?
@@ -277,13 +262,9 @@ DecodeResult decode_branch_system(DecodeContext &context)
 			return DecodeResult::terminal;
 		}
 		const bool key_b = (instruction & 0x400U) != 0;
-		emit(words, options.enable_guarded_control_flow ?
-			pointer_auth_guarded_return_gadget(key_b) :
-			pointer_auth_branch_gadget(
-				false, key_b, false, false));
+		emit(words, pointer_auth_branch_gadget(
+			false, key_b, false, false));
 		emit(words, pointer_auth_operand(30, 31));
-		if (options.enable_guarded_control_flow)
-			emit(words, address);
 		++compiled;
 		return DecodeResult::terminal;
 	} else if ((instruction & 0xffff'fc1fU) == 0xd61f'0000U ||

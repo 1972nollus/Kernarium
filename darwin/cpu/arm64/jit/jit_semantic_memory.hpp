@@ -26,8 +26,6 @@ uml_arm64_jit_execute_exclusive(CpuState *, Tlb *, std::uint32_t) noexcept;
 extern "C" std::uint64_t
 uml_arm64_jit_execute_memory(CpuState *, Tlb *, std::uint32_t) noexcept;
 extern "C" std::uint64_t
-uml_arm64_jit_execute_gcs(CpuState *, Tlb *, std::uint32_t) noexcept;
-extern "C" std::uint64_t
 uml_arm64_jit_execute_pair(CpuState *, Tlb *, std::uint32_t) noexcept;
 extern "C" std::uint64_t
 uml_arm64_jit_execute_ordered(CpuState *, Tlb *, std::uint32_t) noexcept;

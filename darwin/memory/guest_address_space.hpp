@@ -34,8 +34,9 @@ public:
 	[[nodiscard]] virtual bool write(std::uint64_t address,
 					 std::span<const std::byte> source) = 0;
 	/* Validate an access without changing guest memory. Emulators with
-	 * protection-aware mappings override this so instructions that perform
-	 * allocation-tag checks preserve architectural fault priority. */
+	 * protection-aware mappings override this so instructions that validate
+	 * a whole transfer before writing preserve architectural fault
+	 * priority. */
 	[[nodiscard]] virtual bool validate_access(
 		std::uint64_t, std::size_t, MemoryAccess)
 	{
@@ -55,16 +56,6 @@ public:
 		std::uint64_t address, std::size_t size, MemoryAccess access)
 	{
 		return atomic_pointer(address, size, access);
-	}
-	[[nodiscard]] virtual bool read_allocation_tag(
-		std::uint64_t, std::uint8_t &)
-	{
-		return false;
-	}
-	[[nodiscard]] virtual bool write_allocation_tag(
-		std::uint64_t, std::uint8_t)
-	{
-		return false;
 	}
 	[[nodiscard]] virtual bool is_executable(std::uint64_t) noexcept
 	{

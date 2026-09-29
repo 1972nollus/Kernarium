@@ -23,12 +23,8 @@ gadget breakpoint
 	mov w0, #UML_GADGET_EVENT_BREAKPOINT
 	b uml_arm64_gadget_leave
 
-gadget gcs_fault
-	ldr x8, [_stream]
-	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, #UML_GADGET_EVENT_GCS_FAULT
-	b uml_arm64_gadget_leave
+/* Unreachable padding where the FEAT_GCS fault exit was. */
+removed_gadget 32
 
 /* A BlockLink contains {stream, instruction_count, guest_pc}. An unlinked
  * target points at the one-word {link_exit} stream in front of it, so the hot
@@ -320,87 +316,11 @@ pauth_branch blra_b_zz, 5, 1, 1, 1
 
 .purgem pauth_branch
 
-/* Guarded authenticated calls are selected only for a guest profile which
- * exposes the optional control stack. Translation still fixes the key and
- * zero-register forms, while the normal call entries above remain unchanged.
- * The helper validates all pages before committing a record.
- */
-.macro pauth_guarded_call name, operation, target_zero, modifier_zero
-gadget pauth_branch_blra_gcs_\name
-	pauth_target_operands \operation, \target_zero, \modifier_zero
-	mov x19, x9
-	ldr x13, [_stream]
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x2
-	mov x2, x13
-	bl NAME(uml_arm64_guarded_call_record)
-	ldp x1, x2, [sp], #16
-	cbnz w0, 97f
-	mov x9, x19
-	ldr x13, [_stream]
-	str x13, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	str x9, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, wzr
-	b uml_arm64_gadget_leave
-97:
-	ldr x8, [_stream]
-	sub x8, x8, #4
-	str _stream, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
-	str x8, [_cpu, #UML_GADGET_CPU_PC]
-	cmp w0, #1
-	mov w8, #UML_GADGET_EVENT_MEMORY_FAULT
-	mov w9, #UML_GADGET_EVENT_GCS_FAULT
-	csel w0, w8, w9, eq
-	b uml_arm64_gadget_leave
-.endm
-
-pauth_guarded_call a_rr, 4, 0, 0
-pauth_guarded_call a_rz, 4, 0, 1
-pauth_guarded_call a_zr, 4, 1, 0
-pauth_guarded_call a_zz, 4, 1, 1
-pauth_guarded_call b_rr, 5, 0, 0
-pauth_guarded_call b_rz, 5, 0, 1
-pauth_guarded_call b_zr, 5, 1, 0
-pauth_guarded_call b_zz, 5, 1, 1
-
-.purgem pauth_guarded_call
 .purgem pauth_target_operands
 
-/* Guarded authenticated returns always use LR and SP. The checked target is
- * kept in x19, which the helper call preserves; the zero slot every XZR source
- * reads is never written. On a failed read or record comparison, _stream
- * already addresses the faulting guest PC.
- */
-.macro pauth_guarded_return name, operation
-gadget pauth_return_gcs_\name
-	ldr x8, [_stream], #8
-	and w10, w8, #0xffff
-	ldr x9, [_cpu, x10]
-	ubfx w11, w8, #16, #16
-	ldr x12, [_cpu, x11]
-	software_pointer_auth x9, x12, \operation
-	mov x19, x9
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x2
-	mov x2, x9
-	bl NAME(uml_arm64_guarded_return_record)
-	ldp x1, x2, [sp], #16
-	cbnz w0, 97f
-	str x19, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, wzr
-	b uml_arm64_gadget_leave
-97:
-	cmp w0, #1
-	b.eq uml_arm64_gadget_memory_fault
-	b NAME(uml_arm64_gadget_gcs_fault)
-.endm
-
-pauth_guarded_return a, 4
-pauth_guarded_return b, 5
-
-.purgem pauth_guarded_return
+/* Unreachable padding where the FEAT_GCS guarded authenticated call and
+ * return entries were. */
+removed_gadget 1408
 
 /* B.cond's condition is fixed when its data-only program is built.  Selecting
  * one of these precompiled gadgets avoids a C++ helper call at every loop

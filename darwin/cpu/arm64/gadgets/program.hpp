@@ -289,12 +289,6 @@ struct BuildOptions final {
 	 * production disables it once at translation time.
 	 */
 	bool enable_pointer_authentication{true};
-	/* The production guest profile does not currently expose guarded control
-	 * flow. Tests enable it explicitly so authenticated calls and returns use
-	 * dedicated precompiled entries without adding state checks to the normal
-	 * hot path.
-	 */
-	bool enable_guarded_control_flow{};
 	/* Test and portability validation can force optional checksum operations
 	 * through their precompiled software gadgets. Production leaves this
 	 * false and selects from detected host features.

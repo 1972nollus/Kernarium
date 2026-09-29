@@ -202,8 +202,18 @@ void stateful_system_instructions_are_translation_feature_gated()
 			pstate_immediate(immediate, 1), ArmFeature::ssbs);
 		require_translation_feature_gate(
 			pstate_immediate(immediate, 2), ArmFeature::dit);
-		require_translation_feature_gate(
-			pstate_immediate(immediate, 4), ArmFeature::mte);
+		/* MSR TCO stays UNDEFINED even on an MTE host: it compiles to
+		 * the same illegal terminal as an unallocated field. */
+		const std::array tco{pstate_immediate(immediate, 4)};
+		const std::array unallocated{pstate_immediate(immediate, 0)};
+		const auto compiled = uml::cpu::arm64::jit::testing::
+			compile_block_with_feature_override(
+				feature_gate_pc, tco, ArmFeature::mte, true);
+		const auto reference = uml::cpu::arm64::jit::testing::
+			compile_block_with_feature_override(
+				feature_gate_pc, unallocated, ArmFeature::mte, true);
+		require(compiled.guest_instructions == 1);
+		require(compiled.words == reference.words);
 	}
 	for (unsigned immediate = 2; immediate < 8; ++immediate)
 		require_translation_feature_gate(

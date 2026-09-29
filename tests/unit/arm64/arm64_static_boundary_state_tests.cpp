@@ -89,7 +89,7 @@ void pstate_and_svcr_survive_boundary()
 	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, pstate(1, 1));  // msr ssbs, #1
 	backing.put32(4, pstate(1, 2));  // msr dit, #1
-	backing.put32(8, pstate(1, 4));  // msr tco, #1
+	backing.put32(8, 0xd503'201fU);  // nop
 	backing.put32(12, pstate(7, 3)); // smstart smza
 	backing.put32(16, 0xd400'0001U); // svc #0
 	backing.put32(20, pstate(0, 1)); // msr ssbs, #0
@@ -101,12 +101,12 @@ void pstate_and_svcr_survive_boundary()
 
 	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
 	require(registers.pc == base + 20);
-	require((registers.pstate & 0x0300'1000U) == 0x0300'1000U);
+	require((registers.pstate & 0x0100'1000U) == 0x0100'1000U);
 	require(registers.svcr == 3);
 	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
 	require(registers.pc == base + 28);
 	require((registers.pstate & 0x0000'1000U) == 0);
-	require((registers.pstate & 0x0300'0000U) == 0x0300'0000U);
+	require((registers.pstate & 0x0100'0000U) == 0x0100'0000U);
 	require(registers.svcr == 3);
 }
 

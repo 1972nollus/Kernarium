@@ -44,15 +44,10 @@ inline void require(
 	cpu.fpsr = 0xf800'009fU;
 	cpu.fpmr = 0x0000'003f'ff7f'c1ffULL;
 	cpu.tls = 0x1234'5678'9abc'def0ULL;
-	cpu.set_mte_configuration(true, 0x8421U);
-	cpu.set_mte_generator(true, 0xace1U, 7,
-		0xfeed'face'0123'4567ULL);
-	cpu.cpa_enabled = true;
-	cpu.cpa_multiply_enabled = true;
+	cpu.tbi_enabled = true;
 	cpu.accdata = 0xa1b2'c3d4U;
 	cpu.pstate_ssbs = true;
 	cpu.pstate_dit = true;
-	cpu.pstate_tco = true;
 	cpu.pstate_sm = true;
 	cpu.pstate_za = true;
 	cpu.pstate_daif = 0xaU;

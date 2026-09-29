@@ -21,22 +21,6 @@ void production_specialization()
 		entries.insert(built.program.words().front());
 	}
 	pauth::require(entries.size() == 2);
-	std::set<std::uintptr_t> guarded_entries;
-	for (const bool key_b : {false, true}) {
-		const auto built = pauth::gadgets::Builder{}.build(
-			pauth::pc,
-			std::array{pauth::authenticated_return(key_b)},
-			{}, std::pmr::get_default_resource(), {},
-			pauth::gadgets::BuildOptions{
-				.enable_guarded_control_flow = true});
-		pauth::require(
-			built.complete &&
-			built.program.instruction_count() == 1);
-		const auto entry = built.program.words().front();
-		pauth::require(entries.count(entry) == 0);
-		guarded_entries.insert(entry);
-	}
-	pauth::require(guarded_entries.size() == 2);
 
 	const auto eretaa = pauth::gadgets::Builder{}.build(
 		pauth::pc, std::array{0xd69f'0bffU});

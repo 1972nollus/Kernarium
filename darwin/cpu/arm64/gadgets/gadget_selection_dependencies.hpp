@@ -26,7 +26,6 @@
 #include "../detail/floating_scale.hpp"
 #include "../detail/fp8.hpp"
 #include "../detail/fp_state_access.hpp"
-#include "../detail/gcs.hpp"
 #include "../detail/half_dot.hpp"
 #include "../detail/half_fused_long.hpp"
 #include "../detail/half_matrix.hpp"

@@ -164,29 +164,6 @@ void valid_prefix_before_implementation_gap_is_counted()
 	require(outcome.cpu.gadget_indirect_miss == nullptr);
 }
 
-void gcs_fault_excludes_the_faulting_instruction()
-{
-	constexpr std::array instructions{
-		0xd280'00a0U, // movz x0, #5
-		0xd91f'0fffU, // gcsstr xzr, [sp]
-		0xd400'0001U, // svc #0
-	};
-	gadgets::BuildOptions options{};
-	options.enable_guarded_control_flow = true;
-	const auto outcome = run(
-		instructions,
-		[](arm64::CpuState &cpu) {
-			cpu.gcs_implemented = true;
-			cpu.gcs_store_enabled = false;
-			cpu.sp = code_base;
-		},
-		options);
-	require(outcome.event == ::uml::cpu::EngineEvent::gcs_fault);
-	require(outcome.cpu.registers[0] == 5);
-	require(outcome.cpu.pc == code_base + sizeof(std::uint32_t));
-	require(outcome.executed == 1);
-}
-
 void retiring_terminals_keep_their_instruction_count()
 {
 	{
@@ -578,7 +555,6 @@ int main()
 	memory_fault_excludes_fault_and_later_decoded_words();
 	enabled_trap_reserved_allocation_does_not_retire();
 	valid_prefix_before_implementation_gap_is_counted();
-	gcs_fault_excludes_the_faulting_instruction();
 	retiring_terminals_keep_their_instruction_count();
 	add_immediate_at_block_tail_reaches_synthetic_terminal();
 	linked_successor_terminal_subtracts_only_its_suffix();

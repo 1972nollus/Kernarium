@@ -24,7 +24,10 @@ COLUMNS = [
 ]
 # Each section numbers its stable IDs under its own prefix.
 SECTION_PREFIXES = {"Base": "BASE", "FP&SIMD": "FPSIMD"}
-ENGINE_STATUSES = {"pending", "verified"}
+ENGINE_STATUSES = {"absent", "pending", "verified"}
+# Features the virtual CPU omits. An absent entry needs one of them in every
+# alternative; its corpus cases expect its encodings to be UNDEFINED.
+ABSENT_FEATURES = {"cpa", "gcs", "mte", "mte2", "mtetc"}
 SUITE_VARIANT_MODELS = {
     "shared-base-control-system": {
         "condition+target-form+register-alias+architectural-state+reserved",
@@ -149,6 +152,18 @@ def main() -> int:
         validate_requirement(
             row["native_feature_requirements"], row["stable_id"], enum_features
         )
+        if row["engine_status"] == "absent":
+            requirement = row["native_feature_requirements"]
+            if requirement.startswith("per_variant("):
+                requirement = requirement[len("per_variant(") : -1]
+            if any(
+                not set(term.split("+")) & ABSENT_FEATURES
+                for term in requirement.split("|")
+            ):
+                fail(
+                    f"{row['stable_id']}: absent entry needs an omitted "
+                    "feature in every alternative"
+                )
     if ids != expected_ids:
         fail("stable IDs are not contiguous in section order")
 
@@ -159,6 +174,7 @@ def main() -> int:
         f"{status_counts['verified']} verified "
         f"({verified_sections['Base']} Base, "
         f"{verified_sections['FP&SIMD']} FP&SIMD), "
+        f"{status_counts['absent']} absent, "
         f"{status_counts['pending']} pending"
     )
     return 0

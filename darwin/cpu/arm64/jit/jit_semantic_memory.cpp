@@ -241,22 +241,6 @@ public:
         address, ::uml::memory::translated_access(access));
   }
 
-  bool read_allocation_tag(std::uint64_t address,
-                           std::uint8_t &tag) override {
-    if (tlb_.read_allocation_tag(address, tag))
-      return true;
-    record_fault();
-    return false;
-  }
-
-  bool write_allocation_tag(std::uint64_t address,
-                            std::uint8_t tag) override {
-    if (tlb_.write_allocation_tag(address, tag))
-      return true;
-    record_fault();
-    return false;
-  }
-
   ::uml::memory::MemoryFault last_fault() const noexcept override {
     return fault_;
   }
@@ -296,8 +280,6 @@ semantic_result(Tlb &tlb, const JitSemanticMemory &memory,
   case StopReason::memory_fault:
     record_semantic_fault(tlb, memory, result);
     return pack_jit_result(Event::memory_fault, result.instructions);
-  case StopReason::gcs_fault:
-    return pack_jit_result(Event::gcs_fault, result.instructions);
   case StopReason::illegal_instruction:
   case StopReason::unsupported_instruction:
     return pack_jit_result(Event::illegal_instruction, result.instructions);
@@ -379,15 +361,6 @@ uml_arm64_jit_execute_memory(CpuState *cpu, Tlb *tlb,
 }
 
 extern "C" std::uint64_t
-uml_arm64_jit_execute_gcs(CpuState *cpu, Tlb *tlb,
-                          std::uint32_t instruction) noexcept {
-  if (cpu == nullptr || tlb == nullptr)
-    return pack_jit_result(Event::fatal, 0);
-  return execute_semantic_instruction(
-      *cpu, *tlb, instruction, jit::semantic::gcs_handler(instruction));
-}
-
-extern "C" std::uint64_t
 uml_arm64_jit_execute_pair(CpuState *cpu, Tlb *tlb,
                            std::uint32_t instruction) noexcept {
   if (cpu == nullptr || tlb == nullptr)
@@ -415,47 +388,12 @@ uml_arm64_jit_execute_pair(CpuState *cpu, Tlb *tlb,
   const auto adjusted =
       tagged_base + static_cast<std::uint64_t>(displacement);
   const auto tagged_address = mode == 1U ? tagged_base : adjusted;
-  const bool tagged =
-      base_register != 31U && cpu->tagged_addresses_enabled();
   const auto address =
-      tagged ? tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
+      cpu->untag_data_address(tagged_address, base_register == 31U);
   const unsigned first = instruction & 31U;
   const unsigned second = (instruction >> 10) & 31U;
   std::array<std::byte, 32> bytes{};
   const auto transfer = std::span{bytes}.first(size * 2U);
-  const auto direction = load ? Access::read : Access::write;
-  const bool tagchecked = mode == 1U || mode == 3U || base_register != 31U;
-  if (tagchecked && cpu->mte_enabled && !cpu->pstate_tco) {
-    /* A pair is one architectural memory access. Resolve every page and
-     * allocation granule before either destination or memory can change. */
-    std::size_t completed = 0;
-    while (completed < transfer.size()) {
-      const auto current = address + completed;
-      if (tlb->translate(current, direction) == nullptr)
-        return pack_jit_result(Event::memory_fault, 0);
-      completed +=
-          std::min(transfer.size() - completed,
-                   static_cast<std::size_t>(
-                       page_size - (current & (page_size - 1U))));
-    }
-    const auto logical_tag = base_register != 31U && cpu->mte_enabled
-                                 ? static_cast<std::uint8_t>(tagged_address >> 56) & 15U
-                                 : 0U;
-    for (std::size_t checked = 0; checked < transfer.size();) {
-      const auto current = address + checked;
-      std::uint8_t allocation_tag{};
-      if (!tlb->read_allocation_tag(current, allocation_tag) ||
-          allocation_tag != logical_tag) {
-        tlb->fault_address = current;
-        tlb->fault_access = direction;
-        return pack_jit_result(Event::memory_fault, 0);
-      }
-      checked += std::min(
-          transfer.size() - checked,
-          static_cast<std::size_t>(16U - (current & 15U)));
-    }
-  }
-
   if (load) {
     if (!jit_pair_read(*tlb, address, transfer))
       return pack_jit_result(Event::memory_fault, 0);
@@ -590,9 +528,7 @@ uml_arm64_jit_execute_ordered(CpuState *cpu, Tlb *tlb,
 void invalidate_structure_store(CpuState &cpu, Tlb &tlb,
                                 std::uint64_t tagged_address, bool base_sp,
                                 std::size_t size) noexcept {
-  const bool tagged = !base_sp && cpu.tagged_addresses_enabled();
-  const auto address =
-      tagged ? tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
+  const auto address = cpu.untag_data_address(tagged_address, base_sp);
   std::array<JitStoreRange, 2> stored{};
   std::size_t pages = 0;
   for (std::size_t completed = 0;
@@ -700,14 +636,10 @@ uml_arm64_jit_execute_simd_structure(CpuState *cpu, Tlb *tlb,
   std::array<std::byte, 64> bytes{};
   auto transfer = std::span{bytes}.first(transfer_size);
   const bool base_sp = base_register == 31U;
-  const bool tagchecked = post_index || !base_sp;
   if (load) {
     if (uml_arm64_simd_structure_memory_transfer(
             cpu, tlb, tagged_address, transfer.data(), transfer.size(), 0,
-            base_sp,
-            static_cast<std::uint32_t>(
-                (element_size << 8) | static_cast<std::size_t>(tagchecked))) ==
-        0U)
+            base_sp) == 0U)
       return pack_jit_result(Event::memory_fault, 0);
     for (unsigned index = 0; index < register_count; ++index) {
       auto &destination = cpu->vectors[(first_register + index) & 31U].bytes;
@@ -754,10 +686,7 @@ uml_arm64_jit_execute_simd_structure(CpuState *cpu, Tlb *tlb,
     }
     if (uml_arm64_simd_structure_memory_transfer(
             cpu, tlb, tagged_address, transfer.data(), transfer.size(), 1,
-            base_sp,
-            static_cast<std::uint32_t>(
-                (element_size << 8) | static_cast<std::size_t>(tagchecked))) ==
-        0U)
+            base_sp) == 0U)
       return pack_jit_result(Event::memory_fault, 0);
     invalidate_structure_store(*cpu, *tlb, tagged_address, base_sp,
                                transfer.size());

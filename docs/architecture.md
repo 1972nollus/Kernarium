@@ -267,7 +267,7 @@ forms and a CASAL loop for a misaligned read-modify-write. The rule matches
 native LSE2 hardware for the LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2
 forms. The LRCPC3 and LSFE forms follow the architecture's rule, which current
 hosts cannot execute natively. LDIAPP/STILP and the LSCP pairs keep their
-element alignment, and LSE128, RCW, GCS, and LS64 accesses stay naturally
+element alignment, and LSE128, RCW, and LS64 accesses stay naturally
 aligned.
 
 The macOS 4 KiB x86 compatibility slice keeps native arm64 UML kernel-mode

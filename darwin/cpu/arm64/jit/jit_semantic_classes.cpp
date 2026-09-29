@@ -3,7 +3,6 @@
 #include "jit_semantic_instructions.hpp"
 
 #include "cpu/arm64/detail/atomic_floating.hpp"
-#include "cpu/arm64/detail/gcs.hpp"
 #include "cpu/arm64/detail/read_check_write.hpp"
 
 #include <cstdint>
@@ -130,8 +129,8 @@ Handler exclusive_handler(std::uint32_t instruction) noexcept {
   if (matches(instruction, 0xbf20'0c00U, 0x1920'0000U))
     return load_store_atomic_pair_128;
   /* LSE and FEAT_LSUI atomic memory operations. LDAPR and LS64 share the LSE
-   * allocation, and the allocation-tag instructions share the size-3 LSUI
-   * cells; none of them reaches this helper. */
+   * allocation, and the unimplemented FEAT_MTE tag-memory cells share the
+   * size-3 LSUI cells; none of them reaches this helper. */
   if ((matches(instruction, 0x3f20'0c00U, 0x3820'0000U) &&
        !matches(instruction, 0x3fff'fc00U, 0x38bf'c000U) &&
        !load_store_64b_form(instruction)) ||
@@ -159,14 +158,6 @@ Handler ordered_store_handler(std::uint32_t instruction) noexcept {
   if (matches(instruction, 0x3fe0'0000U, 0x0880'0000U))
     return load_store_exclusive;
   return nullptr;
-}
-
-Handler gcs_handler(std::uint32_t instruction) noexcept {
-  const auto decoded = arm64::detail::decode_gcs(instruction);
-  if (!decoded ||
-      arm64::detail::gcs_is_privileged_exception_operation(decoded.operation))
-    return nullptr;
-  return guarded_control_stack;
 }
 
 } // namespace uml::cpu::arm64::jit::semantic

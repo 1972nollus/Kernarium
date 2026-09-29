@@ -63,7 +63,6 @@ constexpr std::uint64_t x86_64_timestamp_faults = 1ULL << 34U;
 
 constexpr std::size_t dispatch_budget = 64 * 1024;
 constexpr std::uint32_t pstate_nzcv = 0xf000'0000U;
-constexpr std::uint32_t pstate_tco = 0x0200'0000U;
 constexpr std::uint32_t pstate_dit = 0x0100'0000U;
 constexpr std::uint32_t pstate_ssbs = 0x0000'1000U;
 constexpr std::uint32_t pstate_daif = 0x0000'03c0U;
@@ -252,7 +251,6 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.sp = registers.sp;
 	cpu.pc = registers.pc;
 	cpu.nzcv = registers.pstate & pstate_nzcv;
-	cpu.pstate_tco = (registers.pstate & pstate_tco) != 0;
 	cpu.pstate_dit = (registers.pstate & pstate_dit) != 0;
 	cpu.pstate_ssbs = (registers.pstate & pstate_ssbs) != 0;
 	cpu.pstate_daif = static_cast<std::uint8_t>(
@@ -298,10 +296,9 @@ void save_cpu(arm64::CpuState &cpu,
 	registers.pc = cpu.pc;
 	registers.pstate =
 		(registers.pstate &
-		 ~(pstate_nzcv | pstate_tco | pstate_dit |
+		 ~(pstate_nzcv | pstate_dit |
 		   pstate_ssbs | pstate_daif)) |
 		(cpu.nzcv & pstate_nzcv) |
-		(cpu.pstate_tco ? pstate_tco : 0U) |
 		(cpu.pstate_dit ? pstate_dit : 0U) |
 		(cpu.pstate_ssbs ? pstate_ssbs : 0U) |
 		(static_cast<std::uint32_t>(cpu.pstate_daif & 15U) << 6);
@@ -514,7 +511,6 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		registers.fault.trap_number = 0;
 		event = DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
 		break;
-	case uml::cpu::ExitReason::gcs_fault:
 	case uml::cpu::ExitReason::pc_alignment:
 	case uml::cpu::ExitReason::fatal:
 		break;
@@ -563,7 +559,6 @@ uml::cpu::CpuEngine *common_engine(
 	if (!slot)
 		slot = uml::cpu::make_cpu_engine(Kind,
 			uml::cpu::EngineConfiguration{
-				.enable_guarded_control_flow = false,
 				.enable_pointer_authentication = false,
 				.host_capabilities =
 					::uml::platform::apple::probed_host_capabilities(),
@@ -592,8 +587,6 @@ bool signal_return_boundary(arm64::CpuState &cpu, void *) noexcept
 	case uml::cpu::ExitReason::breakpoint:
 	case uml::cpu::ExitReason::single_step:
 		return DispatchExit::breakpoint;
-	case uml::cpu::ExitReason::gcs_fault:
-		return DispatchExit::memory_fault;
 	case uml::cpu::ExitReason::floating_point_trap:
 		return DispatchExit::floating_point_trap;
 	case uml::cpu::ExitReason::pc_alignment:
@@ -719,9 +712,6 @@ int run_common_guest(
 		mutable_registers.fault.address = cpu.pc;
 		mutable_registers.fault.trap_number = arm64_software_step;
 		event = DARWIN_UML_EVENT_BREAKPOINT;
-		break;
-	case uml::cpu::ExitReason::gcs_fault:
-		event = DARWIN_UML_EVENT_GCS_FAULT;
 		break;
 	case uml::cpu::ExitReason::floating_point_trap:
 		save_floating_point_trap(

@@ -6,8 +6,10 @@ representative cases in the checked-in
 through the gadget and JIT engines. Each case passed the interpreter and gadget
 lanes, and the JIT lane where the export host implements its features, before
 it was exported. `tests/unit/arm64/corpus/coverage.tsv` counts the cases of each
-entry, so all rows in `tests/unit/arm64/a64_instruction_inventory.tsv` are
-marked `verified`.
+entry. In `tests/unit/arm64/a64_instruction_inventory.tsv`, 949 entries are
+marked `verified`. The other 34 are marked `absent`: they need FEAT_MTE,
+FEAT_GCS, or FEAT_CPA, which the virtual CPU omits. Their non-hint encodings
+are UNDEFINED, and GCSB is a NOP. Their corpus cases expect exactly that.
 
 That status is not exhaustive variant proof. No inventory entry has an
 independently reviewed complete partition of all forms, widths, aliases,

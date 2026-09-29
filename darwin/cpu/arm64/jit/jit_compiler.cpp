@@ -15,8 +15,7 @@
 
 namespace uml::cpu::arm64 {
 
-JitCompiler::JitCompiler(bool enable_guarded_control_flow,
-                       void *link_context,
+JitCompiler::JitCompiler(void *link_context,
                        LinkResolver link_resolver,
                        bool track_direct_stores,
                        IndirectLinkResolver indirect_link_resolver) noexcept
@@ -25,8 +24,7 @@ JitCompiler::JitCompiler(bool enable_guarded_control_flow,
         configured_link_context_{link_context},
         configured_link_resolver_{link_resolver},
         configured_indirect_link_resolver_{indirect_link_resolver},
-        track_direct_stores_{track_direct_stores},
-        enable_guarded_control_flow_{enable_guarded_control_flow} {
+        track_direct_stores_{track_direct_stores} {
     attach_family_emitter(&emitter_, &native_fp_, &native_fpmr_,
                           !track_direct_stores_);
     attach_link_resolver(link_context, link_resolver);
@@ -40,9 +38,9 @@ JitCompiler::JitCompiler(bool enable_guarded_control_flow,
     });
   }
 
-JitCompiler::JitCompiler(bool enable_guarded_control_flow,
+JitCompiler::JitCompiler(
               const ArmFeatureSet &translation_features) noexcept
-      : JitCompiler{enable_guarded_control_flow} {
+      : JitCompiler{} {
     translation_features_ = &translation_features;
   }
 
@@ -349,19 +347,10 @@ void JitCompiler::track_direct_store(unsigned address, std::size_t size,
       return false;
 
     /*
-     * Stateful aliases name fixed architectural registers. Rewrite them to
-     * ordinary register forms over scratch registers so x15 remains the
-     * CpuState base and only the specified guest destination is committed.
+     * CHKFEAT and GCSB are NOPs: the virtual CPU enables none of the
+     * features CHKFEAT reports, so X16 keeps its value.
      */
     const unsigned immediate = (instruction >> 5) & 0x7fU;
-    if (immediate == 40U) {
-      if (!host_capabilities().has(ArmFeature::chk))
-        return true;
-      load_gpr(16, 16, false);
-      emitter_.emit(instruction);
-      store_gpr(16, 16, false);
-      return true;
-    }
     /*
      * These hints directly affect the host execution carrying the guest
      * block. Optional HINT-space encodings are architecturally NOP on older
@@ -540,7 +529,7 @@ void JitCompiler::emit_cache_zero(std::uint32_t instruction, std::uint64_t pc) {
     load_gpr(8, source, false);
     if (source != 31U) {
       const auto no_tagged_state = emitter_.make_label();
-      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(no_tagged_state, 0, false, false);
       emitter_.ubfm(8, 8, 0, 55);
       emitter_.bind(no_tagged_state);
@@ -576,7 +565,7 @@ void JitCompiler::emit_code_synchronize(std::uint32_t instruction, std::uint64_t
     else {
       emitter_.load_x(0, 15, register_offset(source, false));
       const auto no_tagged_state = emitter_.make_label();
-      emitter_.load_h(8, 15, offsetof(CpuState, mte_enabled));
+      emitter_.load_b(8, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(no_tagged_state, 8, false, false);
       emitter_.ubfm(0, 0, 0, 55);
       emitter_.bind(no_tagged_state);
@@ -669,17 +658,6 @@ void JitCompiler::emit_memory_slow(std::uint32_t instruction, std::uint64_t pc,
     emitter_.load_constant(2, instruction);
     emitter_.call(
         reinterpret_cast<const void *>(&uml_arm64_jit_execute_memory));
-    emitter_.return_dynamic(count);
-  }
-
-void JitCompiler::emit_gcs_slow(std::uint32_t instruction, std::uint64_t pc,
-                     std::size_t count) {
-    store_pc(pc);
-    spill_gprs_for_terminal_call();
-    emitter_.move_x(0, 15);
-    emitter_.move_x(1, 14);
-    emitter_.load_constant(2, instruction);
-    emitter_.call(reinterpret_cast<const void *>(&uml_arm64_jit_execute_gcs));
     emitter_.return_dynamic(count);
   }
 

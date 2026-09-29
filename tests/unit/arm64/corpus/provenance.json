@@ -1,23 +1,45 @@
 {
-  "cases": 171318,
+  "absent_features": {
+    "added_cases": 105,
+    "dropped_cases": {
+      "cpa/feature-case": 503,
+      "gcs/feature-case": 509,
+      "mte/fails-stripped": 5524,
+      "mte/feature-case": 3018
+    },
+    "failing": {
+      "file": "tests/unit/arm64/corpus/absent-feature-failing.tsv",
+      "sha256": "be4267a602b18551b865eb903cdecd623470e5422cdef08ea7db0e43fca83458"
+    },
+    "features": [
+      "mte",
+      "gcs",
+      "cpa"
+    ],
+    "input_sha256": "00d333378e0c83eb0bc8fddc61f63e8fbc5b4caeb92068b2b74ca6e15827582d",
+    "script": "tools/arm64-tests/absent-feature-corpus.py",
+    "sha256": "2f3dae0338cf722ff77837cead48bd68aec1f5b8ce30a2c7f273c1e7eddf679f",
+    "stripped_cases": 74447,
+    "tbi_replacement_cases": 5496
+  },
+  "cases": 167365,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
-    "gcs-fault": 14,
-    "illegal-instruction": 24616,
+    "illegal-instruction": 24238,
     "instruction-budget": 863,
-    "memory-fault": 16852,
-    "system-call": 128877
+    "memory-fault": 14131,
+    "system-call": 128037
   },
   "cases_by_profile": {
-    "16k": 37244,
-    "16k+4k": 96818,
-    "4k": 37256
+    "16k": 35769,
+    "16k+4k": 95841,
+    "4k": 35755
   },
   "coverage": {
     "entries": 983,
-    "entries_with_cases": 937,
-    "entries_with_illegal_cases": 822,
+    "entries_with_cases": 909,
+    "entries_with_illegal_cases": 824,
     "unattributed_cases": 0,
     "unattributed_illegal_cases": 1289
   },
@@ -74,26 +96,22 @@
     "sha256": "7930348c920a379aea8484c922d55e93d68bfdac9746580c3ffe83816a839316"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 14888489,
-  "pack_sha256": "f5eb439d29e1fdfac5a249cd6d8d8a1786e5dde8b4a35aa5258344e296344ea4",
+  "pack_bytes": 14707442,
+  "pack_sha256": "72141961c8d3fbf449bc739d8eb349bc475249e8d18e734022b6d4efa71aada4",
   "producer_commit": "aec8b13959f463ed8798fd1611ac54895b8a861b",
-  "programs": 147228,
-  "records": 1336,
+  "programs": 146094,
+  "records": 1203,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
-    "broad": 63,
-    "full": 1314,
-    "narrow": 169941
+    "broad": 51,
+    "full": 1329,
+    "narrow": 165985
   },
   "validator_cases": {
-    "guarded-control-call-fault-atomicity/v1": 8,
-    "guarded-control-return-fault/v1": 8,
-    "guarded-control-zero-target-fault/v1": 8,
     "ignore-host-counter-register/v1": 1,
-    "permitted-exclusive-store-failure/v1": 358,
-    "permitted-tag-generator-choice/v1": 64,
+    "permitted-exclusive-store-failure/v1": 354,
     "permitted-transformed-branch-failure/v1": 42,
     "permitted-transformed-code/v1": 260,
     "permitted-transformed-generic/v1": 66,

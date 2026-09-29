@@ -128,8 +128,6 @@ template<bool PollCallback, typename Executor>
 				return finish(ExitReason::illegal_instruction, retired);
 			case EngineEvent::breakpoint:
 				return finish(ExitReason::breakpoint, retired);
-			case EngineEvent::gcs_fault:
-				return finish(ExitReason::gcs_fault, retired);
 			case EngineEvent::floating_point_trap:
 				return finish(ExitReason::floating_point_trap, retired, 0,
 					::uml::memory::MemoryAccess::read,

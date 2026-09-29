@@ -107,16 +107,16 @@ void validate_increment(const arm64::CpuState &initial,
                                            instruction);
 }
 
-void validate_disabled_random_tag(const arm64::CpuState &initial,
-                                  const arm64::CpuState &expected_template,
-                                  const arm64::CpuState &actual,
-                                  std::string_view case_name,
-                                  std::string_view engine,
-                                  std::uint32_t instruction) {
+void validate_absolute(const arm64::CpuState &initial,
+                       const arm64::CpuState &expected_template,
+                       const arm64::CpuState &actual,
+                       std::string_view case_name, std::string_view engine,
+                       std::uint32_t instruction) {
   record_validator_engine(engine);
   auto expected = initial;
+  const auto source = initial.registers[1];
   expected.registers[0] =
-      initial.registers[1] & ~0x0f00'0000'0000'0000ULL;
+      static_cast<std::int64_t>(source) < 0 ? 0U - source : source;
   expected.pc = expected_template.pc;
   engine_tests::require_architecture_equal(expected, actual, case_name, engine,
                                            instruction);
@@ -317,37 +317,6 @@ void direct_system_call_has_one_retirement_and_one_word_pc_advance(
   });
 }
 
-void allocation_tags_are_restored(engine_tests::EngineHarness &harness) {
-  std::array<std::byte, DARWIN_UML_GUEST_PAGE_SIZE> page{};
-  const std::array initial_tags{
-      engine_tests::AllocationTag{.offset = transfer_offset, .value = 1},
-      engine_tests::AllocationTag{.offset = 2 * transfer_offset, .value = 7},
-  };
-  const std::array expected_tags{
-      engine_tests::AllocationTag{.offset = transfer_offset, .value = 13},
-  };
-  const engine_tests::MemoryRegion region{
-      .address = engine_tests::engine_test_data_base,
-      .initial = std::span<const std::byte>{page},
-      .initial_tags =
-          std::span<const engine_tests::AllocationTag>{initial_tags},
-      .expected_tags =
-          std::span<const engine_tests::AllocationTag>{expected_tags},
-  };
-  auto initial = initial_state();
-  initial.registers[6] = engine_tests::engine_test_data_base + transfer_offset;
-  initial.registers[5] = 0x0d00'0000'0000'0000ULL;
-  harness.check({
-      .name = "engine-harness-allocation-tag",
-      .instruction = 0xd920'08c5U,
-      .initial = initial,
-      .expected = initial,
-      .native = engine_tests::NativeRequirements::features(
-          ::uml::cpu::ArmFeature::mte),
-      .memory = std::span<const engine_tests::MemoryRegion>{&region, 1},
-  });
-}
-
 void self_loop_reports_instruction_budget(
     engine_tests::EngineHarness &harness) {
   const std::array loop{
@@ -433,7 +402,7 @@ void validators_follow_engine_order_and_feature_skips(
                          jit_available ? 2U : 1U));
 
   const auto unavailable = engine_tests::NativeRequirements::features(
-      ::uml::cpu::ArmFeature::mte);
+      ::uml::cpu::ArmFeature::cssc);
   if (engine_tests::host_supports(unavailable))
     return;
   validator_calls = 0;
@@ -441,11 +410,11 @@ void validators_follow_engine_order_and_feature_skips(
   const auto before_skip = harness.counts();
   harness.check({
       .name = "engine-harness-validator-feature-skip",
-      .instruction = 0x9adf'1020U,
+      .instruction = 0xdac0'2020U, // ABS X0, X1
       .initial = initial,
       .expected = deliberately_non_oracle,
       .native = unavailable,
-      .validator = &validate_disabled_random_tag,
+      .validator = &validate_absolute,
       .execution_context = &hooks,
       .before_engine = &before_engine,
       .after_engine = &after_engine,
@@ -475,7 +444,6 @@ int main() {
   memory_fault_keeps_exact_page_address(harness);
   program_layout_and_control_flow(harness);
   direct_system_call_has_one_retirement_and_one_word_pc_advance(harness);
-  allocation_tags_are_restored(harness);
   self_loop_reports_instruction_budget(harness);
   single_instruction_case_can_report_instruction_budget(harness);
   invalid_encoding_bypasses_native_feature_gate(harness);
@@ -483,9 +451,9 @@ int main() {
   const auto &counts = harness.counts();
   const std::size_t expected_cases =
       engine_tests::host_supports(engine_tests::NativeRequirements::features(
-          ::uml::cpu::ArmFeature::mte))
-          ? 14
-          : 15;
+          ::uml::cpu::ArmFeature::cssc))
+          ? 13
+          : 14;
   if (counts.gadgets != expected_cases ||
       counts.jit + counts.jit_skipped != expected_cases)
     std::abort();

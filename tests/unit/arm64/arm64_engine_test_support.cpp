@@ -92,8 +92,6 @@ event_name(ExpectedEvent event) noexcept {
     return "system-call";
   case ExpectedEvent::memory_fault:
     return "memory-fault";
-  case ExpectedEvent::gcs_fault:
-    return "gcs-fault";
   case ExpectedEvent::illegal_instruction:
     return "illegal-instruction";
   case ExpectedEvent::breakpoint:
@@ -136,8 +134,6 @@ event_for(::uml::cpu::ExitReason reason) noexcept {
 		return ExpectedEvent::system_call;
 	case ::uml::cpu::ExitReason::memory_fault:
 		return ExpectedEvent::memory_fault;
-	case ::uml::cpu::ExitReason::gcs_fault:
-		return ExpectedEvent::gcs_fault;
 	case ::uml::cpu::ExitReason::illegal_instruction:
 		return ExpectedEvent::illegal_instruction;
 	case ::uml::cpu::ExitReason::breakpoint:
@@ -216,8 +212,7 @@ private:
 class CaseRegion final {
 public:
   CaseRegion(unsigned long generation, const MemoryRegion &region)
-      : generation_{generation}, region_{region},
-        backing_{backing_name, region.initial.size()},
+      : region_{region}, backing_{backing_name, region.initial.size()},
         mapping_{generation,
                  region.address,
                  backing_,
@@ -225,14 +220,7 @@ public:
                  region_protection(region),
                  region.guest_code,
                  region.guest_writable},
-        actual_(region.initial.size()),
-        initial_tags_(region.initial.size() / 16),
-        expected_tags_(region.initial.size() / 16) {
-    for (const auto tag : region_.initial_tags)
-      initial_tags_[tag.offset / 16] = tag.value;
-    expected_tags_ = initial_tags_;
-    for (const auto tag : region_.expected_tags)
-      expected_tags_[tag.offset / 16] = tag.value;
+        actual_(region.initial.size()) {
     restore();
   }
 
@@ -241,14 +229,6 @@ public:
 
   void restore() {
     backing_.put(0, region_.initial);
-    if (region_.initial_tags.empty() && region_.expected_tags.empty())
-      return;
-    for (std::size_t index = 0; index < initial_tags_.size(); ++index)
-      if (darwin_uml_static_vm_store_allocation_tag(
-              generation_, region_.address + index * 16,
-              initial_tags_[index]) !=
-          DARWIN_UML_STATIC_TRANSLATED)
-        fail("fixture", "tag-restore", 0, "cannot restore allocation tag");
   }
 
   void require_expected(std::string_view test_name, std::string_view engine,
@@ -266,34 +246,13 @@ public:
                    std::to_integer<unsigned>(actual_[offset]));
       fail(test_name, engine, instruction, "unexpected data-region contents");
     }
-    if (region_.initial_tags.empty() && region_.expected_tags.empty())
-      return;
-    for (std::size_t index = 0; index < expected_tags_.size(); ++index) {
-      std::uint8_t actual_tag{};
-      if (darwin_uml_static_vm_load_allocation_tag(
-              generation_, region_.address + index * 16, &actual_tag) !=
-              DARWIN_UML_STATIC_TRANSLATED ||
-          actual_tag != expected_tags_[index]) {
-        std::fprintf(
-            stderr,
-            "allocation-tag mismatch at %#llx: expected=%x actual=%x\n",
-            static_cast<unsigned long long>(region_.address + index * 16),
-            static_cast<unsigned>(expected_tags_[index]),
-            static_cast<unsigned>(actual_tag));
-        fail(test_name, engine, instruction,
-             "unexpected allocation-tag contents");
-      }
-    }
   }
 
 private:
-  unsigned long generation_;
   MemoryRegion region_;
   ScratchBacking backing_;
   Mapping mapping_;
   std::vector<std::byte> actual_;
-  std::vector<std::uint8_t> initial_tags_;
-  std::vector<std::uint8_t> expected_tags_;
 };
 
 [[nodiscard]] bool ranges_overlap(std::uint64_t first_address,
@@ -303,24 +262,6 @@ private:
   const auto first_end = first_address + first_size;
   const auto second_end = second_address + second_size;
   return first_address < second_end && second_address < first_end;
-}
-
-void validate_allocation_tags(std::string_view name, std::uint32_t instruction,
-                              std::size_t size,
-                              std::span<const AllocationTag> initial,
-                              std::span<const AllocationTag> expected) {
-  const auto validate = [&](std::span<const AllocationTag> tags) {
-    for (std::size_t index = 0; index < tags.size(); ++index) {
-      if (tags[index].offset >= size || tags[index].offset % 16 != 0 ||
-          tags[index].value > 15)
-        fail(name, "setup", instruction, "invalid allocation tag");
-      for (std::size_t prior = 0; prior < index; ++prior)
-        if (tags[prior].offset == tags[index].offset)
-          fail(name, "setup", instruction, "duplicate allocation tag");
-    }
-  };
-  validate(initial);
-  validate(expected);
 }
 
 void validate_memory_regions(std::string_view name, std::uint32_t instruction,
@@ -334,8 +275,6 @@ void validate_memory_regions(std::string_view name, std::uint32_t instruction,
         (!region.expected.empty() &&
          region.expected.size() != region.initial.size()))
       fail(name, "setup", instruction, "invalid memory-region shape");
-    validate_allocation_tags(name, instruction, size, region.initial_tags,
-                             region.expected_tags);
     if (ranges_overlap(region.address, size, code_base,
                        DARWIN_UML_GUEST_PAGE_SIZE))
       fail(name, "setup", instruction, "memory region overlaps code");
@@ -461,7 +400,6 @@ public:
                  true,
                  false} {
     const ::uml::cpu::EngineConfiguration configuration{
-        .enable_guarded_control_flow = options.enable_guarded_control_flow,
         .enable_pointer_authentication =
             options.enable_pointer_authentication,
         .host_capabilities = ::uml::platform::apple::probed_host_capabilities(),
@@ -480,7 +418,6 @@ public:
           ::uml::cpu::arm64::gadgets::BuildOptions{
             .enable_pointer_authentication =
                 options.enable_pointer_authentication,
-            .enable_guarded_control_flow = options.enable_guarded_control_flow,
             .force_software_checksum = options.force_software_checksum,
             .force_software_flags = options.force_software_flags,
             .force_software_sha3 = options.force_software_sha3,

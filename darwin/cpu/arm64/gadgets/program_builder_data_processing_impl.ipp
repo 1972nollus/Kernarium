@@ -93,14 +93,9 @@ DecodeResult decode_data_processing(DecodeContext &context)
 						immediate) << 32));
 			}
 		}
-	} else if ((instruction & 0xffc0'c000U) == 0x9180'0000U ||
-		   (instruction & 0xffc0'c000U) == 0xd180'0000U) {
-		emit(words, mte_tag_add_sub_gadget(
-			(instruction & 0x4000'0000U) != 0,
-			((instruction >> 5) & 31U) == 31U,
-			(instruction & 31U) == 31U));
-		emit(words, mte_tag_operand(instruction));
 	} else if ((instruction & 0x1f80'0000U) == 0x1180'0000U) {
+		/* Includes FEAT_MTE ADDG/SUBG, which the virtual CPU does not
+		 * implement. */
 		emit(words, uml_arm64_gadget_illegal);
 		emit(words, address);
 		++compiled;
@@ -296,34 +291,18 @@ DecodeResult decode_data_processing(DecodeContext &context)
 				left_zero, right_zero, destination_discard));
 			emit(words, operand);
 		}
-	} else if ((instruction & 0xffe0'fc00U) == 0x9ac0'1000U) {
-		emit(words, mte_irg_gadget(
-			((instruction >> 5) & 31U) == 31U,
-			((instruction >> 16) & 31U) == 31U,
-			(instruction & 31U) == 31U));
-		emit(words, mte_pointer_operand(instruction));
-		emit(words, reinterpret_cast<std::uintptr_t>(
-			byte_popcount_table.data()));
-	} else if ((instruction & 0xffe0'e000U) == 0x9a00'2000U ||
-		   (instruction & 0xffe0'e000U) == 0xda00'2000U) {
-		emit(words, cpa_pointer_gadget(
-			(instruction & 0x4000'0000U) != 0,
-			(instruction >> 10) & 7U,
-			((instruction >> 5) & 31U) == 31U,
-			((instruction >> 16) & 31U) == 31U,
-			(instruction & 31U) == 31U));
-		emit(words, cpa_pointer_operand(instruction));
-	} else if ((instruction & 0xffe0'fc00U) == 0x9ac0'0000U ||
+	} else if ((instruction & 0xffe0'fc00U) == 0x9ac0'1000U ||
+		   (instruction & 0xffe0'fc00U) == 0x9ac0'1400U ||
+		   (instruction & 0xffe0'fc00U) == 0x9ac0'0000U ||
 		   (instruction & 0xffe0'fc00U) == 0xbac0'0000U ||
-		   (instruction & 0xffe0'fc00U) == 0x9ac0'1400U) {
-		const auto opcode = instruction & 0xffe0'fc00U;
-		const unsigned operation = opcode == 0x9ac0'1400U ? 0U :
-			opcode == 0x9ac0'0000U ? 1U : 2U;
-		emit(words, mte_pointer_gadget(operation,
-			((instruction >> 5) & 31U) == 31U,
-			((instruction >> 16) & 31U) == 31U,
-			(instruction & 31U) == 31U));
-		emit(words, mte_pointer_operand(instruction));
+		   (instruction & 0xffe0'e000U) == 0x9a00'2000U ||
+		   (instruction & 0xffe0'e000U) == 0xda00'2000U) {
+		/* FEAT_MTE IRG/GMI/SUBP/SUBPS and FEAT_CPA ADDPT/SUBPT: the
+		 * virtual CPU implements neither feature. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
 	} else if ((instruction & 0x1fe0'fc00U) == 0x1a00'0000U) {
 		const unsigned destination = instruction & 31U;
 		const unsigned left = (instruction >> 5) & 31U;
@@ -460,15 +439,12 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		emit(words, address);
 		++compiled;
 		return DecodeResult::terminal;
-	} else if ((instruction & 0xffe0'8000U) == 0x9b60'0000U ||
-		   (instruction & 0xffe0'8000U) == 0x9b60'8000U) {
-		emit(words, cpa_multiply_gadget(
-			(instruction & 0x0000'8000U) != 0,
-			((instruction >> 5) & 31U) == 31U,
-			((instruction >> 16) & 31U) == 31U,
-			((instruction >> 10) & 31U) == 31U,
-			(instruction & 31U) == 31U));
-		emit(words, cpa_multiply_operand(instruction));
+	} else if ((instruction & 0xffe0'0000U) == 0x9b60'0000U) {
+		/* FEAT_CPA MADDPT/MSUBPT are not implemented. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
 	} else if ((instruction & 0x1f00'0000U) == 0x1b00'0000U) {
 		const bool is_64_bit = (instruction >> 31) != 0;
 		const auto operation = (instruction >> 21) & 7U;

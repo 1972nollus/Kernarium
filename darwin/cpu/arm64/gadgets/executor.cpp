@@ -1576,7 +1576,7 @@ BuildResult GadgetExecutor::translate(
 		mapping_generation_ = generation;
 		mapping_changes_ = sequences.mapping_changes;
 	}
-	tlb_.tagged_addresses = cpu.tagged_addresses_enabled();
+	tlb_.tagged_addresses = cpu.tbi_enabled;
 	/* CpuState::effective_fpcr(), open-coded: through the member this
 	 * block-entry test lowers to a word load and mask instead of a byte
 	 * test, and run_block inlines more around it. */

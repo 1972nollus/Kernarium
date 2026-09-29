@@ -15,8 +15,6 @@ public:
 		: executor_{gadgets::BuildOptions{
 			.enable_pointer_authentication =
 				configuration.enable_pointer_authentication,
-			.enable_guarded_control_flow =
-				configuration.enable_guarded_control_flow,
 			.host_capabilities = configuration.host_capabilities,
 		}}
 	{

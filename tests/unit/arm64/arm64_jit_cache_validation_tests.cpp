@@ -136,7 +136,6 @@ void publication_allocation_failure_installs_private_code(
 			move_immediate(0, 18), system_call};
 		const arm64::SharedTranslationCache::CodegenProfile profile{
 			.capabilities = options.host_capabilities,
-			.guarded_control_flow = options.enable_guarded_control_flow,
 			.pointer_authentication =
 				options.enable_pointer_authentication,
 		};
@@ -1454,7 +1453,6 @@ void defensive_install_rejects_mutated_canonical_metadata()
 		const JitExecutorOptions options{};
 		const arm64::SharedTranslationCache::CodegenProfile profile{
 			.capabilities = options.host_capabilities,
-			.guarded_control_flow = options.enable_guarded_control_flow,
 			.pointer_authentication =
 				options.enable_pointer_authentication,
 		};

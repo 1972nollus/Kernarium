@@ -43,7 +43,6 @@ struct ExecutionRequest final {
 };
 
 struct EngineConfiguration final {
-	bool enable_guarded_control_flow{};
 	bool enable_pointer_authentication{true};
 	HostCapabilities host_capabilities{::uml::cpu::host_capabilities()};
 };

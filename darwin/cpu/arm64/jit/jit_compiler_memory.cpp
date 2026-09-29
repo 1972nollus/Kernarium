@@ -255,7 +255,7 @@ void JitCompiler::clear_local_exclusive_monitor() {
     if (base == 31U) {
       emit_misalignment_check(8, 16, slow);
     } else {
-      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(slow, 0, false, true);
     }
     emit_misalignment_check(8, bytes, slow);
@@ -375,7 +375,7 @@ void JitCompiler::emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool lo
       cold_.push_back(
           {tag_slow, instruction, pc, count_ + 1,
            ColdPath::Action::memory_slow});
-      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(tag_slow, 0, false, true);
     }
     const auto alignment = emitter_.make_label();
@@ -547,7 +547,7 @@ void JitCompiler::emit_native_scalar_atomic(std::uint32_t instruction,
     if (base == 31U) {
       emit_misalignment_check(8, 16, slow);
     } else {
-      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(slow, 0, false, true);
       emit_misalignment_check(8, bytes, slow);
     }
@@ -592,7 +592,7 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     if (base == 31U) {
       emit_misalignment_check(8, 16, slow);
     } else {
-      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(slow, 0, false, true);
       emit_misalignment_check(8, bytes, slow);
     }
@@ -647,7 +647,7 @@ void JitCompiler::emit_atomic_floating_memory(
     if (base == 31U) {
       emit_misalignment_check(8, 16, slow);
     } else {
-      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(slow, 0, false, true);
       emit_misalignment_check(8, bytes, slow);
     }
@@ -729,11 +729,11 @@ void JitCompiler::emit_atomic_floating_memory(
        * check before either memory or writeback can change. */
       emit_misalignment_check(8, 16, slow);
     }
-    const bool tagchecked = mode == 1U || mode == 3U || base != 31U;
-    if (tagchecked) {
-      /* Allocation-tag validation stays on the exact semantic bridge.
-       * Untagged programs take the straight native path. */
-      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+    if (base != 31U) {
+      /* Top-byte-ignore untagging stays on the exact semantic bridge.
+       * Untagged programs take the straight native path, and an SP base
+       * is never untagged. */
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(slow, 0, false, true);
     }
     if (mode != 1U)
@@ -891,13 +891,13 @@ void JitCompiler::emit_atomic_floating_memory(
     if (base == 31U) {
       emit_misalignment_check(8, 16, slow);
     }
-    if (post_index || base != 31U) {
+    if (base != 31U) {
       /*
-       * Untagged programs retain the direct native transfer. Effective MTE
-       * state selects the checked cold bridge, which strips the logical tag
-       * and validates every touched allocation granule before any transfer.
+       * Untagged programs retain the direct native transfer. Top-byte
+       * ignore selects the cold bridge, which strips the logical tag; an SP
+       * base is never untagged.
        */
-      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(slow, 0, false, true);
     }
     emit_translate(8, load ? Access::read : Access::write, slow, fault,
@@ -1017,12 +1017,11 @@ void JitCompiler::emit_atomic_floating_memory(
         {fallback, instruction, pc, count_ + 1, ColdPath::Action::memory_slow});
     cold_.push_back(
         {fault, instruction, pc, count_ + 1, ColdPath::Action::memory_fault});
-    const bool tagchecked =
-        register_offset || mode == 1U || mode == 3U || base != 31U;
-    if (tagchecked) {
-      /* Tagged-state handling stays on the exact semantic cold path. The
-       * ordinary untagged hot path pays one load and one predicted branch. */
-      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+    if (base != 31U) {
+      /* Tagged-address handling stays on the exact semantic cold path. The
+       * ordinary untagged hot path pays one load and one predicted branch;
+       * an SP base is never untagged. */
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(fallback, 0, false, true);
     }
     emit_translate(8, load ? Access::read : Access::write, fallback, fault,
@@ -1210,7 +1209,7 @@ void JitCompiler::emit_atomic_floating_memory(
        * Consecutive operations share the immutable effective state, so one
        * translation-selected check is sufficient for the complete run.
        */
-      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(slow, 0, false, true);
     }
 
@@ -1466,7 +1465,7 @@ void JitCompiler::emit_atomic_floating_memory(
                      ColdPath::Action::memory_slow});
 
     load_gpr(8, base, true);
-    emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+    emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
     emitter_.compare_zero(slow, 0, false, true);
     maximum_end = maximum_ends[length - 1];
     const auto last_delta = maximum_end - 1U;
@@ -1564,7 +1563,7 @@ void JitCompiler::emit_atomic_floating_memory(
     cold_.push_back(
         {fault, instruction, pc, count_ + 1, ColdPath::Action::memory_fault});
     if (base != 31U) {
-      emitter_.load_h(0, 15, offsetof(CpuState, mte_enabled));
+      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
       emitter_.compare_zero(fallback, 0, false, true);
     }
     emit_translate(8, load ? Access::read : Access::write, fallback, fault,

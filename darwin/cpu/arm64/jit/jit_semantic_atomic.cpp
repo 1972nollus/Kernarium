@@ -476,25 +476,25 @@ RunResult load_store_atomic_floating(CpuState &cpu,
 	const std::size_t size = decoded.width / 8U;
 	const unsigned base_register = (instruction >> 5) & 31U;
 	const auto tagged_address = cpu.read_register(base_register, true);
-	/* CheckSPAlignment precedes element alignment, address translation, tag
-	 * checking, FP-state materialization, and memory observation. */
+	/* CheckSPAlignment precedes element alignment, address translation,
+	 * FP-state materialization, and memory observation. */
 	if (base_register == 31U && (tagged_address & 15U) != 0U)
 		return alignment_fault(tagged_address, instruction, true);
 	const auto untagged_address =
-		base_register != 31U && cpu.tagged_addresses_enabled() ?
-		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
+		cpu.untag_data_address(tagged_address, base_register == 31U);
 	if (single_copy_alignment_faults(untagged_address, size))
 		return alignment_fault(untagged_address, instruction, true);
 	std::uint64_t address{};
-	std::uint64_t tag_fault{};
+	std::uint64_t fault_address{};
 	if (!simd_structure_address(cpu, memory, tagged_address,
-		    base_register == 31U, base_register != 31U, size, size,
-		    MemoryAccess::write, address, tag_fault))
-		return {StopReason::memory_fault, tag_fault, instruction, 0, true};
+		    base_register == 31U, size, size,
+		    MemoryAccess::write, address, fault_address))
+		return {StopReason::memory_fault, fault_address, instruction, 0,
+			true};
 
 	/* Capture the complete source before an aliased destination is written.
 	 * Lazy FP materialization happens only after every decode, alignment,
-	 * permission, and allocation-tag check has passed.
+	 * and permission check has passed.
 	 */
 	cpu.access_fp_state();
 	const unsigned source = (instruction >> 16) & 31U;
