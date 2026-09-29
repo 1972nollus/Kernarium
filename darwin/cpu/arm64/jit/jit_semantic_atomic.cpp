@@ -4,7 +4,6 @@
 
 #include "cpu/arm64/detail/atomic_floating.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
-#include "cpu/arm64/detail/pointer_auth.hpp"
 #include "cpu/arm64/detail/read_check_write.hpp"
 
 #include <algorithm>

@@ -338,23 +338,6 @@ UML_DECLARE_BIT_REVERSE_COUNT(x_ctz_native)
 UML_DECLARE_BIT_REVERSE_COUNT(x_cnt_native)
 UML_DECLARE_BIT_REVERSE_COUNT(x_abs_native)
 #undef UML_DECLARE_BIT_REVERSE_COUNT
-void uml_arm64_gadget_xpaci();
-void uml_arm64_gadget_xpacd();
-void uml_arm64_gadget_xpaclri();
-#define DECLARE_POINTER_AUTH(name) \
-	void uml_arm64_gadget_pauth_##name##_r(); \
-	void uml_arm64_gadget_pauth_##name##_z();
-DECLARE_POINTER_AUTH(pacia)
-DECLARE_POINTER_AUTH(pacib)
-DECLARE_POINTER_AUTH(pacda)
-DECLARE_POINTER_AUTH(pacdb)
-DECLARE_POINTER_AUTH(autia)
-DECLARE_POINTER_AUTH(autib)
-DECLARE_POINTER_AUTH(autda)
-DECLARE_POINTER_AUTH(autdb)
-#undef DECLARE_POINTER_AUTH
-void uml_arm64_gadget_pauth_pacga_r();
-void uml_arm64_gadget_pauth_pacga_z();
 #define UML_DECLARE_INTEGER_MIN_MAX_FAST(name) \
 	void uml_arm64_gadget_integer_##name##_fast_w_r(); \
 	void uml_arm64_gadget_integer_##name##_fast_w_i(); \
@@ -1971,16 +1954,6 @@ UML_DECLARE_VECTOR_PAIR(load64)
 UML_DECLARE_VECTOR_PAIR(store128)
 UML_DECLARE_VECTOR_PAIR(load128)
 #undef UML_DECLARE_VECTOR_PAIR
-#define DECLARE_POINTER_AUTH_LOAD_MODES(key, mode) \
-	void uml_arm64_gadget_pauth_load_##key##_##mode##_rr(); \
-	void uml_arm64_gadget_pauth_load_##key##_##mode##_rz(); \
-	void uml_arm64_gadget_pauth_load_##key##_##mode##_sr(); \
-	void uml_arm64_gadget_pauth_load_##key##_##mode##_sz();
-DECLARE_POINTER_AUTH_LOAD_MODES(a, o)
-DECLARE_POINTER_AUTH_LOAD_MODES(a, w)
-DECLARE_POINTER_AUTH_LOAD_MODES(b, o)
-DECLARE_POINTER_AUTH_LOAD_MODES(b, w)
-#undef DECLARE_POINTER_AUTH_LOAD_MODES
 #define UML_DECLARE_SIMD_STRUCTURE_DIRECTION(base, direction) \
 	void uml_arm64_gadget_simd_structure_##base##_##direction##_0(); \
 	void uml_arm64_gadget_simd_structure_##base##_##direction##_1(); \
@@ -2408,16 +2381,6 @@ void uml_arm64_gadget_branch_link_register();
 void uml_arm64_gadget_branch_register_cached();
 void uml_arm64_gadget_branch_link_register_cached();
 void uml_arm64_gadget_return_cached();
-#define DECLARE_POINTER_AUTH_BRANCH(kind, key) \
-	void uml_arm64_gadget_pauth_branch_##kind##_##key##_rr(); \
-	void uml_arm64_gadget_pauth_branch_##kind##_##key##_rz(); \
-	void uml_arm64_gadget_pauth_branch_##kind##_##key##_zr(); \
-	void uml_arm64_gadget_pauth_branch_##kind##_##key##_zz();
-DECLARE_POINTER_AUTH_BRANCH(bra, a)
-DECLARE_POINTER_AUTH_BRANCH(bra, b)
-DECLARE_POINTER_AUTH_BRANCH(blra, a)
-DECLARE_POINTER_AUTH_BRANCH(blra, b)
-#undef DECLARE_POINTER_AUTH_BRANCH
 void uml_arm64_gadget_return();
 /* Fused guest CMP of two registers + B.cond, see compare_register_branch. */
 void uml_arm64_gadget_compare_register_branch_x_eq();

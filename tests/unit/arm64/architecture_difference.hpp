@@ -79,10 +79,6 @@ namespace uml::emulator::tests {
 	      expected.exclusive_version == actual.exclusive_version &&
 	      expected.exclusive_size == actual.exclusive_size))
 		return std::string{"exclusive monitor"};
-	if (!(expected.pointer_auth_keys == actual.pointer_auth_keys &&
-	      expected.pointer_authentication_enabled ==
-		      actual.pointer_authentication_enabled))
-		return std::string{"pointer-authentication state"};
 	return std::nullopt;
 }
 

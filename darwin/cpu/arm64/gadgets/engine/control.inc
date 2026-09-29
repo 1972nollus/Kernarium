@@ -253,74 +253,9 @@ gadget return_cached
 .purgem train_indirect_cell
 .purgem push_return_record
 
-/* Load the branch target into x9 and authenticate it with the key
- * `operation` names, against the modifier register or zero. The stream word
- * is the CpuState byte offset of the one register operand, or with two, the
- * target's in bits 0-15 and the modifier's in bits 16-31; with neither there
- * is no word. */
-.macro pauth_target_operands operation, target_zero, modifier_zero
-	.if !\target_zero || !\modifier_zero
-	ldr x8, [_stream], #8
-	.endif
-	.if \target_zero
-	mov x9, xzr
-	.elseif \modifier_zero
-	ldr x9, [_cpu, x8]
-	.else
-	and w10, w8, #0xffff
-	ldr x9, [_cpu, x10]
-	.endif
-	.if \modifier_zero
-	software_pointer_auth x9, xzr, \operation
-	.elseif \target_zero
-	ldr x12, [_cpu, x8]
-	software_pointer_auth x9, x12, \operation
-	.else
-	ubfx w11, w8, #16, #16
-	ldr x12, [_cpu, x11]
-	software_pointer_auth x9, x12, \operation
-	.endif
-.endm
-
-/* Authenticated indirect branches. Key, link behavior, zero modifier, and
- * XZR target are fixed by the builder. The ordinary register/register path
- * is straight-line and contains no guest-state validity branch. */
-.macro pauth_branch name, operation, link, target_zero, modifier_zero
-gadget pauth_branch_\name
-	pauth_target_operands \operation, \target_zero, \modifier_zero
-	.if \link
-	ldr x13, [_stream]
-	str x13, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	.endif
-	str x9, [_cpu, #UML_GADGET_CPU_PC]
-	mov w0, wzr
-	b uml_arm64_gadget_leave
-.endm
-
-pauth_branch bra_a_rr, 4, 0, 0, 0
-pauth_branch bra_a_rz, 4, 0, 0, 1
-pauth_branch bra_a_zr, 4, 0, 1, 0
-pauth_branch bra_a_zz, 4, 0, 1, 1
-pauth_branch bra_b_rr, 5, 0, 0, 0
-pauth_branch bra_b_rz, 5, 0, 0, 1
-pauth_branch bra_b_zr, 5, 0, 1, 0
-pauth_branch bra_b_zz, 5, 0, 1, 1
-pauth_branch blra_a_rr, 4, 1, 0, 0
-pauth_branch blra_a_rz, 4, 1, 0, 1
-pauth_branch blra_a_zr, 4, 1, 1, 0
-pauth_branch blra_a_zz, 4, 1, 1, 1
-pauth_branch blra_b_rr, 5, 1, 0, 0
-pauth_branch blra_b_rz, 5, 1, 0, 1
-pauth_branch blra_b_zr, 5, 1, 1, 0
-pauth_branch blra_b_zz, 5, 1, 1, 1
-
-.purgem pauth_branch
-
-.purgem pauth_target_operands
-
-/* Unreachable padding where the FEAT_GCS guarded authenticated call and
- * return entries were. */
-removed_gadget 1408
+/* Unreachable padding where the FEAT_PAuth authenticated branches and the
+ * FEAT_GCS guarded authenticated calls and returns were. */
+removed_gadget 2432
 
 /* B.cond's condition is fixed when its data-only program is built.  Selecting
  * one of these precompiled gadgets avoids a C++ helper call at every loop

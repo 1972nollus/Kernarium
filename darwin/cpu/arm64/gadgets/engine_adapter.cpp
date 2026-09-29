@@ -13,8 +13,6 @@ class GadgetEngine final : public CpuEngine {
 public:
 	explicit GadgetEngine(EngineConfiguration configuration)
 		: executor_{gadgets::BuildOptions{
-			.enable_pointer_authentication =
-				configuration.enable_pointer_authentication,
 			.host_capabilities = configuration.host_capabilities,
 		}}
 	{

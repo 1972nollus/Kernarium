@@ -6,19 +6,22 @@ usage: absent-feature-corpus.py [--features LIST] [--failing TSV]
                                 [--report TSV] DUMP OUTPUT
        absent-feature-corpus.py --collect-failing TSV DUMP LOG...
 
-The virtual CPU implements neither FEAT_MTE, FEAT_GCS, nor FEAT_CPA: their
-non-hint instructions are UNDEFINED, their hint-space instructions are NOPs,
-and the ID registers report them absent. The producer checks predate that
-choice, and their harness enabled these features in most cases' state, so
-this script rewrites a dump after export. For each named feature it
+The virtual CPU implements none of FEAT_MTE, FEAT_GCS, FEAT_CPA, and
+FEAT_PAuth: their non-hint instructions are UNDEFINED, their hint-space
+instructions are NOPs, and the ID registers report them absent. The producer
+checks predate that choice, and their harness enabled these features in most
+cases' state, so this script rewrites a dump after export. For each named
+feature it
 
-- drops every case that exercises the feature: one that needs it natively or
-  uses its harness option, terminal event, or validator relation;
+- drops every case that exercises the feature: one that uses its harness
+  option, terminal event, or validator relation, or needs it natively without
+  expecting the undefined-instruction trap;
 - drops every case whose program holds one of the feature's instruction
-  encodings but does not expect it to be undefined;
-- strips the feature's state fields and allocation tags from every other
-  case, and drops the ones the --failing file names, which fail once that
-  state is gone;
+  encodings, including the hint-space ones whose result the enabled feature
+  set, but does not expect it to be undefined;
+- strips the feature's state fields, harness option, and allocation tags from
+  every other case and record, and drops the cases the --failing file names,
+  which fail once that state is gone;
 - appends the arm64-absent-<feature> records, which expect every encoding
   class of the feature to be undefined and its hints to be NOPs; and
 - replaces the coverage that the --failing cases took from each allocation
@@ -59,13 +62,14 @@ sys.modules[_spec.name] = corpus
 _spec.loader.exec_module(corpus)
 
 SITE = "tools/arm64-tests/absent-feature-corpus.py"
-DEFAULT_FEATURES = ("mte", "gcs", "cpa")
+DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth")
 SVC = 0xD400_0001
 
 
 class Feature:
     def __init__(self, tokens, conditions, fields, validators=(), events=(),
-                 options=(), tags=False, encodings=()) -> None:
+                 options=(), tags=False, encodings=(),
+                 stripped_options=()) -> None:
         # Host and allocation feature tokens, and decode-partition conditions.
         self.tokens = frozenset(tokens)
         self.conditions = frozenset(conditions)
@@ -73,6 +77,9 @@ class Feature:
         self.validators = frozenset(validators)
         self.events = frozenset(events)
         self.options = frozenset(options)
+        # Harness options that nearly every producer check enabled. They are
+        # removed from the records rather than dropping them.
+        self.stripped_options = frozenset(stripped_options)
         self.tags = tags
         # (mask, value): system encodings that the allocation and partition
         # tables file under a baseline instruction (DC, MRS, MSR).
@@ -113,10 +120,26 @@ FEATURES = {
         tokens=("cpa",),
         conditions=("FEAT_CPA",),
         fields=("cpa_enabled", "cpa_multiply_enabled")),
+    # FEAT_PAuth_LR stays as it was: unimplemented, with its non-hint
+    # encodings UNDEFINED and PACM a NOP, so its cases stay valid.
+    "pauth": Feature(
+        tokens=("pauth",),
+        conditions=("FEAT_PAuth",),
+        fields=("pointer_auth_keys", "pointer_authentication_enabled"),
+        validators=("permitted-transformed-branch-failure/v1",
+                    "permitted-transformed-code/v1",
+                    "permitted-transformed-generic/v1",
+                    "transformed-address-fault-state/v1"),
+        stripped_options=("enable_pointer_authentication",),
+        # The hint-space PAC*, AUT*, and XPACLRI forms signed, authenticated,
+        # or stripped in the producer state.
+        encodings=tuple((0xFFFF_FFFF, 0xD503_201F | immediate << 5)
+                        for immediate in (7, 8, 10, 12, 14, *range(24, 32)))),
 }
 
 # Illegal-word records: one case per encoding class and operand extreme.
-# Each word was checked against llvm-mc 22.1.8 with the feature enabled.
+# Each word was checked against llvm-mc with the feature enabled (22.1.8 for
+# MTE, GCS, and CPA; 23.1.1 for PAuth).
 UNDEFINED = {
     "mte": (
         ("ADDG", 0x9181_0420), ("ADDG SP", 0x91BF_3FFF),
@@ -177,9 +200,50 @@ UNDEFINED = {
         ("MADDPT", 0x9B62_0C20), ("MADDPT XZR", 0x9B7F_7FFF),
         ("MSUBPT", 0x9B62_8C20), ("MSUBPT XZR", 0x9B7F_FFFF),
     ),
+    "pauth": (
+        ("PACIA", 0xDAC1_0020), ("PACIA XZR SP", 0xDAC1_03FF),
+        ("PACIB", 0xDAC1_0420), ("PACIB SP", 0xDAC1_07FE),
+        ("PACDA", 0xDAC1_0820), ("PACDA XZR SP", 0xDAC1_0BFF),
+        ("PACDB", 0xDAC1_0C20), ("PACDB SP", 0xDAC1_0FFE),
+        ("AUTIA", 0xDAC1_1020), ("AUTIA XZR SP", 0xDAC1_13FF),
+        ("AUTIB", 0xDAC1_1420), ("AUTIB SP", 0xDAC1_17FE),
+        ("AUTDA", 0xDAC1_1820), ("AUTDA XZR SP", 0xDAC1_1BFF),
+        ("AUTDB", 0xDAC1_1C20), ("AUTDB SP", 0xDAC1_1FFE),
+        ("PACIZA", 0xDAC1_23E0), ("PACIZA XZR", 0xDAC1_23FF),
+        ("PACIZB", 0xDAC1_27E0), ("PACDZA", 0xDAC1_2BE0),
+        ("PACDZB", 0xDAC1_2FE0), ("AUTIZA", 0xDAC1_33E0),
+        ("AUTIZA XZR", 0xDAC1_33FF), ("AUTIZB", 0xDAC1_37E0),
+        ("AUTDZA", 0xDAC1_3BE0), ("AUTDZB", 0xDAC1_3FE0),
+        ("AUTDZB XZR", 0xDAC1_3FFF),
+        ("XPACI", 0xDAC1_43E0), ("XPACI XZR", 0xDAC1_43FF),
+        ("XPACD", 0xDAC1_47E0), ("XPACD XZR", 0xDAC1_47FF),
+        ("PACGA", 0x9AC2_3020), ("PACGA XZR SP", 0x9ADF_33FF),
+        ("BRAA", 0xD71F_0801), ("BRAA SP", 0xD71F_0BDF),
+        ("BRAB", 0xD71F_0C01), ("BLRAA", 0xD73F_0801),
+        ("BLRAA SP", 0xD73F_0BDF), ("BLRAB", 0xD73F_0C01),
+        ("BRAAZ", 0xD61F_081F), ("BRAAZ X30", 0xD61F_0BDF),
+        ("BRABZ", 0xD61F_0C1F), ("BLRAAZ", 0xD63F_081F),
+        ("BLRABZ X30", 0xD63F_0FDF),
+        ("RETAA", 0xD65F_0BFF), ("RETAB", 0xD65F_0FFF),
+        ("ERETAA", 0xD69F_0BFF), ("ERETAB", 0xD69F_0FFF),
+        ("LDRAA", 0xF820_0420), ("LDRAA minimum", 0xF860_0420),
+        ("LDRAA XZR SP maximum", 0xF83F_F7FF),
+        ("LDRAA pre", 0xF820_1C20), ("LDRAA pre SP minimum", 0xF860_0FE0),
+        ("LDRAB", 0xF8A0_0420), ("LDRAB XZR SP maximum", 0xF8BF_F7FF),
+        ("LDRAB pre", 0xF8FF_FC20),
+    ),
 }
 HINTS = {
     "gcs": (("GCSB DSYNC", 0xD503_227F), ("CHKFEAT X16", 0xD503_251F)),
+    "pauth": (
+        ("XPACLRI", 0xD503_20FF), ("PACIA1716", 0xD503_211F),
+        ("PACIB1716", 0xD503_215F), ("AUTIA1716", 0xD503_219F),
+        ("AUTIB1716", 0xD503_21DF), ("PACIAZ", 0xD503_231F),
+        ("PACIASP", 0xD503_233F), ("PACIBZ", 0xD503_235F),
+        ("PACIBSP", 0xD503_237F), ("AUTIAZ", 0xD503_239F),
+        ("AUTIASP", 0xD503_23BF), ("AUTIBZ", 0xD503_23DF),
+        ("AUTIBSP", 0xD503_23FF),
+    ),
 }
 
 
@@ -227,6 +291,8 @@ class Rewriter:
             for mask, value in feature.encodings:
                 self.encodings.append((corpus.Pattern(
                     f"{mask:08x}", f"{value:08x}", "none"), name))
+        self.stripped_options = frozenset().union(*(
+            feature.stripped_options for feature in self.features.values()))
 
     def add(self, row: dict, owned) -> None:
         if is_hint(int(row["architecture_value"], 16)):
@@ -246,9 +312,13 @@ class Rewriter:
         return None
 
     def exercised_feature(self, record: dict, case: dict) -> str | None:
-        """The removed feature whose behaviour the case checks, if any."""
+        """The removed feature whose behaviour the case checks, if any. A
+        case that expects the undefined-instruction trap does not check it
+        through its native requirement: without the feature, every encoding
+        stays undefined."""
+        undefined = case["event"] == "illegal-instruction"
         for name, feature in self.features.items():
-            if set(case["native"]) & feature.tokens or \
+            if (not undefined and set(case["native"]) & feature.tokens) or \
                     set(record["options"]) & feature.options or \
                     case["event"] in feature.events or \
                     case.get("validator") in feature.validators:
@@ -359,8 +429,8 @@ def replacements(kept: list[tuple[dict, dict, int]], lost: collections.Counter,
         item = records.get((profiles, options))
         if item is None:
             name = f"{REPLACEMENT_PRODUCER}/{'+'.join(profiles)}"
-            if options != ("enable_pointer_authentication",):
-                name += "/" + "+".join(options or ("no-options",))
+            if options:
+                name += "/" + "+".join(options)
             item = records[(profiles, options)] = {
                 "record": name, "producer": REPLACEMENT_PRODUCER,
                 "site": SITE, "profiles": list(profiles),
@@ -457,6 +527,8 @@ def main() -> int:
             continue
         if item["producer"].startswith("arm64-absent-"):
             continue
+        item["options"] = [name for name in item["options"]
+                           if name not in rewriter.stripped_options]
         kept = []
         for case in item["cases"]:
             program = item["programs"][case["program"]]

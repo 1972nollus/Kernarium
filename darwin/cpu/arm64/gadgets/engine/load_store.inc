@@ -1602,67 +1602,13 @@ uml_arm64_gadget_pair_alignment_fault_write_indexed:
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault_indexed
 
-/* LDRAA/LDRAB authenticate the base with a zero modifier before applying the
- * signed scaled offset. Key, writeback, SP alignment, and XZR destination are
- * fixed by the builder. Stream: [packed direct offsets/immediate][guest PC]. */
-.macro pauth_load name, operation, writeback, base_sp, discard
-gadget pauth_load_\name
-	ldr x8, [_stream], #8
-	.if !\discard
-	and w19, w8, #0xffff
-	.endif
-	asr x21, x8, #32
-	.if \base_sp
-	ldr x7, [_cpu, #UML_GADGET_CPU_SP]
-	.else
-	ubfx w20, w8, #16, #16
-	ldr x7, [_cpu, x20]
-	.endif
-	.if \base_sp
-	tst x7, #0xf
-	b.ne .Lscalar_alignment_fault_read
-	.endif
-	software_pointer_auth x7, xzr, \operation
-	add x25, x7, x21
-	branch_if_cross_page x25, 8, x9, pauth_load_\name\()_cross
-	mov x7, x25
-	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
-	ldr x0, [x7]
-	b pauth_load_\name\()_finish
-pauth_load_\name\()_cross:
-	transfer_slow 0, x25, 8
-	fmov x0, d0
-pauth_load_\name\()_finish:
-	.if !\discard
-	str x0, [_cpu, x19]
-	.endif
-	.if \writeback
-	.if \base_sp
-	str x25, [_cpu, #UML_GADGET_CPU_SP]
-	.else
-	str x25, [_cpu, x20]
-	.endif
-	.endif
-	add _stream, _stream, #8
-	next_gadget
-.endm
-
-.macro pauth_load_modes key, operation
-pauth_load \key\()_o_rr, \operation, 0, 0, 0
-pauth_load \key\()_o_rz, \operation, 0, 0, 1
-pauth_load \key\()_o_sr, \operation, 0, 1, 0
-pauth_load \key\()_o_sz, \operation, 0, 1, 1
-pauth_load \key\()_w_rr, \operation, 1, 0, 0
-pauth_load \key\()_w_rz, \operation, 1, 0, 1
-pauth_load \key\()_w_sr, \operation, 1, 1, 0
-pauth_load \key\()_w_sz, \operation, 1, 1, 1
-.endm
-
-pauth_load_modes a, 6
-pauth_load_modes b, 7
-
-.purgem pauth_load_modes
-.purgem pauth_load
+/* Unreachable padding where the FEAT_PAuth LDRAA and LDRAB entries were; the
+ * 16 KiB translation made them longer. */
+#if DARWIN_UML_GUEST_PAGE_SIZE == 16384
+removed_gadget 4192
+#else
+removed_gadget 3988
+#endif
 
 uml_arm64_gadget_memory_fault:
 	ldr x8, [_stream]

@@ -3,137 +3,6 @@
 
 namespace uml::cpu::arm64::gadgets::selection {
 
-/* Rows are PACIA, PACIB, PACDA, PACDB, AUTIA, AUTIB, AUTDA, AUTDB;
- * columns are register/SP modifier and architecturally-zero modifier. */
-extern constexpr std::array<std::array<Gadget, 2>, 8> pointer_auth_gadgets{{
-	{uml_arm64_gadget_pauth_pacia_r, uml_arm64_gadget_pauth_pacia_z},
-	{uml_arm64_gadget_pauth_pacib_r, uml_arm64_gadget_pauth_pacib_z},
-	{uml_arm64_gadget_pauth_pacda_r, uml_arm64_gadget_pauth_pacda_z},
-	{uml_arm64_gadget_pauth_pacdb_r, uml_arm64_gadget_pauth_pacdb_z},
-	{uml_arm64_gadget_pauth_autia_r, uml_arm64_gadget_pauth_autia_z},
-	{uml_arm64_gadget_pauth_autib_r, uml_arm64_gadget_pauth_autib_z},
-	{uml_arm64_gadget_pauth_autda_r, uml_arm64_gadget_pauth_autda_z},
-	{uml_arm64_gadget_pauth_autdb_r, uml_arm64_gadget_pauth_autdb_z},
-}};
-
-struct PointerAuthOperation final {
-	unsigned operation;
-	unsigned destination;
-	unsigned modifier;
-	bool zero_modifier;
-};
-
-[[nodiscard]] std::optional<PointerAuthOperation>
-decode_pointer_auth_hint(std::uint32_t instruction) noexcept
-{
-	if ((instruction & 0xffff'f01fU) != 0xd503'201fU)
-		return std::nullopt;
-	switch ((instruction >> 5) & 0x7fU) {
-	case 8: return PointerAuthOperation{0, 17, 16, false}; // PACIA1716
-	case 10: return PointerAuthOperation{1, 17, 16, false}; // PACIB1716
-	case 12: return PointerAuthOperation{4, 17, 16, false}; // AUTIA1716
-	case 14: return PointerAuthOperation{5, 17, 16, false}; // AUTIB1716
-	case 24: return PointerAuthOperation{0, 30, 0, true}; // PACIAZ
-	case 25: return PointerAuthOperation{0, 30, 31, false}; // PACIASP
-	case 26: return PointerAuthOperation{1, 30, 0, true}; // PACIBZ
-	case 27: return PointerAuthOperation{1, 30, 31, false}; // PACIBSP
-	case 28: return PointerAuthOperation{4, 30, 0, true}; // AUTIAZ
-	case 29: return PointerAuthOperation{4, 30, 31, false}; // AUTIASP
-	case 30: return PointerAuthOperation{5, 30, 0, true}; // AUTIBZ
-	case 31: return PointerAuthOperation{5, 30, 31, false}; // AUTIBSP
-	default: return std::nullopt;
-	}
-}
-
-[[nodiscard]] std::uintptr_t pointer_auth_operand(
-	unsigned destination, unsigned modifier) noexcept
-{
-	const auto destination_offset = destination * sizeof(std::uint64_t);
-	const auto modifier_offset = modifier < 31 ?
-		modifier * sizeof(std::uint64_t) : offsetof(CpuState, sp);
-	return destination_offset |
-		(static_cast<std::uintptr_t>(modifier_offset) << 16);
-}
-
-[[nodiscard]] std::uintptr_t pointer_auth_generic_operand(
-	unsigned destination, unsigned source, unsigned modifier) noexcept
-{
-	const auto destination_offset = destination * sizeof(std::uint64_t);
-	const auto source_offset = source * sizeof(std::uint64_t);
-	const auto modifier_offset = modifier < 31 ?
-		modifier * sizeof(std::uint64_t) : offsetof(CpuState, sp);
-	return destination_offset |
-		(static_cast<std::uintptr_t>(source_offset) << 16) |
-		(static_cast<std::uintptr_t>(modifier_offset) << 32);
-}
-
-[[nodiscard]] Gadget pointer_auth_branch_gadget(bool link, bool key_b,
-	bool zero_modifier, bool zero_target) noexcept
-{
-	const unsigned variant = (static_cast<unsigned>(zero_target) << 1) |
-		static_cast<unsigned>(zero_modifier);
-	static constexpr std::array<Gadget, 4> bra_a{
-		uml_arm64_gadget_pauth_branch_bra_a_rr,
-		uml_arm64_gadget_pauth_branch_bra_a_rz,
-		uml_arm64_gadget_pauth_branch_bra_a_zr,
-		uml_arm64_gadget_pauth_branch_bra_a_zz};
-	static constexpr std::array<Gadget, 4> bra_b{
-		uml_arm64_gadget_pauth_branch_bra_b_rr,
-		uml_arm64_gadget_pauth_branch_bra_b_rz,
-		uml_arm64_gadget_pauth_branch_bra_b_zr,
-		uml_arm64_gadget_pauth_branch_bra_b_zz};
-	static constexpr std::array<Gadget, 4> blra_a{
-		uml_arm64_gadget_pauth_branch_blra_a_rr,
-		uml_arm64_gadget_pauth_branch_blra_a_rz,
-		uml_arm64_gadget_pauth_branch_blra_a_zr,
-		uml_arm64_gadget_pauth_branch_blra_a_zz};
-	static constexpr std::array<Gadget, 4> blra_b{
-		uml_arm64_gadget_pauth_branch_blra_b_rr,
-		uml_arm64_gadget_pauth_branch_blra_b_rz,
-		uml_arm64_gadget_pauth_branch_blra_b_zr,
-		uml_arm64_gadget_pauth_branch_blra_b_zz};
-	return link ? (key_b ? blra_b : blra_a)[variant] :
-		(key_b ? bra_b : bra_a)[variant];
-}
-
-[[nodiscard]] Gadget pointer_auth_load_gadget(bool key_b, bool writeback,
-	bool base_sp, bool discard) noexcept
-{
-	static constexpr std::array<Gadget, 16> gadgets{
-		uml_arm64_gadget_pauth_load_a_o_rr,
-		uml_arm64_gadget_pauth_load_a_o_rz,
-		uml_arm64_gadget_pauth_load_a_o_sr,
-		uml_arm64_gadget_pauth_load_a_o_sz,
-		uml_arm64_gadget_pauth_load_a_w_rr,
-		uml_arm64_gadget_pauth_load_a_w_rz,
-		uml_arm64_gadget_pauth_load_a_w_sr,
-		uml_arm64_gadget_pauth_load_a_w_sz,
-		uml_arm64_gadget_pauth_load_b_o_rr,
-		uml_arm64_gadget_pauth_load_b_o_rz,
-		uml_arm64_gadget_pauth_load_b_o_sr,
-		uml_arm64_gadget_pauth_load_b_o_sz,
-		uml_arm64_gadget_pauth_load_b_w_rr,
-		uml_arm64_gadget_pauth_load_b_w_rz,
-		uml_arm64_gadget_pauth_load_b_w_sr,
-		uml_arm64_gadget_pauth_load_b_w_sz,
-	};
-	return gadgets[(key_b ? 8U : 0U) | (writeback ? 4U : 0U) |
-		(base_sp ? 2U : 0U) | (discard ? 1U : 0U)];
-}
-
-[[nodiscard]] std::uintptr_t pointer_auth_load_operand(
-	unsigned destination, unsigned base, std::int64_t displacement) noexcept
-{
-	const auto destination_offset = destination < 31 ?
-		destination * sizeof(std::uint64_t) : 0U;
-	const auto base_offset = base < 31 ?
-		base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
-	return destination_offset |
-		(static_cast<std::uintptr_t>(base_offset) << 16) |
-		(static_cast<std::uintptr_t>(
-			static_cast<std::uint32_t>(displacement)) << 32);
-}
-
 [[nodiscard]] bool pointer_auth_lr_unavailable(
 	std::uint32_t instruction) noexcept
 {
@@ -929,8 +798,9 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 	if (immediate == 22U)
 		return uml_arm64_gadget_clrbhb;
 	/* The remaining allocated hints have no guest-visible effect in the
-	 * currently exposed architecture: guarded pages, GCS, RAS delivery,
-	 * profiling, trace, and a blocking event register are not advertised.
+	 * currently exposed architecture: pointer authentication, guarded
+	 * pages, GCS, RAS delivery, profiling, trace, and a blocking event
+	 * register are not advertised.
 	 * Their architectural feature-absent or unguarded behavior is NOP. Keep
 	 * that policy at translation time so the valid hot path has no decoder.
 	 */

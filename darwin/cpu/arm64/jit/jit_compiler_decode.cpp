@@ -385,19 +385,6 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.store_w(8, 15, offsetof(CpuState, exclusive_size));
       return Action::keep_going;
     }
-    if ((instruction & 0xffff'f01fU) == 0xd503'201fU) {
-      const unsigned immediate = (instruction >> 5) & 0x7fU;
-      const bool guest_key_operation =
-          immediate == 7U || immediate == 8U || immediate == 10U ||
-          immediate == 12U || immediate == 14U ||
-          (immediate >= 24U && immediate <= 31U);
-      if (guest_key_operation) {
-        if (!enable_pointer_authentication_)
-          return Action::keep_going;
-        emit_memory_slow(instruction, pc, resulting_count);
-        return Action::terminate;
-      }
-    }
     if (emit_primary_hint(instruction) ||
         (instruction & 0xffd8'f000U) == 0xd500'2000U)
       return Action::keep_going;
@@ -417,24 +404,12 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
+    /* The authenticated branches and returns need FEAT_PAuth, which the
+     * virtual CPU does not implement. */
     if ((instruction & 0xfedf'f800U) == 0xd61f'0800U ||
         (instruction & 0xffff'fbffU) == 0xd65f'0bffU) {
-      if (!enable_pointer_authentication_) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      const bool return_form =
-          (instruction & 0xffff'fbffU) == 0xd65f'0bffU;
-      const bool zero_modifier =
-          !return_form && (instruction & 0x0100'0000U) == 0;
-      if (zero_modifier && (instruction & 31U) != 31U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      emit_memory_slow(instruction, pc, resulting_count);
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
     if ((instruction & 0xffff'ffe0U) == 0xd503'1000U ||
@@ -604,52 +579,13 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
-    if ((instruction & 0xffff'c000U) == 0xdac1'0000U) {
-      if (!enable_pointer_authentication_) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      const unsigned operation = (instruction >> 10) & 15U;
-      const unsigned modifier = (instruction >> 5) & 31U;
-      if (operation >= 8U && modifier != 31U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      if ((instruction & 31U) == 31U)
-        return Action::keep_going;
-      emit_memory_slow(instruction, pc, resulting_count);
-      return Action::terminate;
-    }
-    if ((instruction & 0xffff'f800U) == 0xdac1'4000U) {
-      if (!enable_pointer_authentication_) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (((instruction >> 5) & 31U) != 31U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      if ((instruction & 31U) == 31U)
-        return Action::keep_going;
-      emit_memory_slow(instruction, pc, resulting_count);
-      return Action::terminate;
-    }
-    if ((instruction & 0xffe0'fc00U) == 0x9ac0'3000U) {
-      if (!enable_pointer_authentication_) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if ((instruction & 31U) == 31U)
-        return Action::keep_going;
-      emit_memory_slow(instruction, pc, resulting_count);
+    /* PAC*, AUT*, XPACI, XPACD and PACGA need FEAT_PAuth, which the
+     * virtual CPU does not implement. */
+    if ((instruction & 0xffff'c000U) == 0xdac1'0000U ||
+        (instruction & 0xffff'f800U) == 0xdac1'4000U ||
+        (instruction & 0xffe0'fc00U) == 0x9ac0'3000U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
     if ((instruction & 0x5fe0'0000U) == 0x1ac0'0000U) {
@@ -1597,22 +1533,11 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
+    /* LDRAA and LDRAB need FEAT_PAuth, which the virtual CPU does not
+     * implement. */
     if ((instruction & 0xff20'0400U) == 0xf820'0400U) {
-      if (!enable_pointer_authentication_) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      const unsigned destination = instruction & 31U;
-      const unsigned base = (instruction >> 5) & 31U;
-      const bool writeback = (instruction & 0x800U) != 0;
-      if (writeback && base == destination && base != 31U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      emit_memory_slow(instruction, pc, resulting_count);
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
     /*

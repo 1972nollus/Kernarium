@@ -48,10 +48,6 @@ void JitCompiler::set_table_list_planning_enabled(bool enabled) noexcept {
     table_list_planning_enabled_ = enabled;
   }
 
-void JitCompiler::set_pointer_authentication_enabled(bool enabled) noexcept {
-    enable_pointer_authentication_ = enabled;
-  }
-
 JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
                  std::span<const std::uint32_t> instructions) {
     const auto selected = compile_once(guest_pc, instructions);

@@ -307,28 +307,6 @@ NAME(uml_arm64_gadget_\name):
 98:
 .endm
 
-/*
- * Execute pointer signing/authentication using guest-owned key state. The
- * helper is intentionally outside the normal integer hot path: these
- * instructions are uncommon, and an EL0 process cannot install guest keys
- * into the host's protected key registers.
- *
- * Operations:
- *   0..3 sign instruction-A/B and data-A/B
- *   4..7 authenticate instruction-A/B and data-A/B
- *   8 generic, 9 strip instruction, 10 strip data
- */
-.macro software_pointer_auth value, modifier, operation
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, \value
-	mov x2, \modifier
-	mov w3, #\operation
-	bl NAME(uml_arm64_guest_pointer_auth)
-	mov \value, x0
-	ldp x1, x2, [sp], #16
-.endm
-
 .text
 .p2align 4
 uml_arm64_gadget_activate_native_fp_environment:
@@ -1892,83 +1870,9 @@ bit_reverse_count_fast 8, 1, 1, x_abs_native
 
 .purgem bit_reverse_count_fast
 
-/* Translation resolves instruction/data and XZR cases. */
-.macro xpac_register name, operation
-gadget \name
-	ldr x19, [_stream], #8
-	ldr x9, [_cpu, x19]
-	software_pointer_auth x9, xzr, \operation
-	str x9, [_cpu, x19]
-	next_gadget
-.endm
-
-xpac_register xpaci, 9
-xpac_register xpacd, 10
-
-.purgem xpac_register
-
-gadget xpaclri
-	ldr x30, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	software_pointer_auth x30, xzr, 9
-	str x30, [_cpu, #(UML_GADGET_CPU_X0 + 30 * 8)]
-	next_gadget
-
-/* Classic FEAT_PAuth operations. Packed operands are direct CpuState byte
- * offsets: destination in bits[15:0], modifier in bits[31:16]. The builder
- * selects modifier-zero forms separately, avoiding an execution-time test. */
-.macro pauth_operation name, operation
-gadget pauth_\name\()_r
-	ldr x19, [_stream], #8
-	and w10, w19, #0xffff
-	ubfx w11, w19, #16, #16
-	ldr x9, [_cpu, x10]
-	ldr x12, [_cpu, x11]
-	software_pointer_auth x9, x12, \operation
-	and w10, w19, #0xffff
-	str x9, [_cpu, x10]
-	next_gadget
-gadget pauth_\name\()_z
-	ldr x19, [_stream], #8
-	ldr x9, [_cpu, x19]
-	software_pointer_auth x9, xzr, \operation
-	str x9, [_cpu, x19]
-	next_gadget
-.endm
-
-pauth_operation pacia, 0
-pauth_operation pacib, 1
-pauth_operation pacda, 2
-pauth_operation pacdb, 3
-pauth_operation autia, 4
-pauth_operation autib, 5
-pauth_operation autda, 6
-pauth_operation autdb, 7
-
-.purgem pauth_operation
-
-/* PACGA writes a fresh 64-bit result, so the destination need not be loaded.
- * The builder separately selects the XZR first-source form and packs the
- * remaining direct CpuState offsets into one stream word. */
-gadget pauth_pacga_r
-	ldr x19, [_stream], #8
-	ubfx w11, w19, #16, #16
-	ubfx x12, x19, #32, #16
-	ldr x9, [_cpu, x11]
-	ldr x13, [_cpu, x12]
-	software_pointer_auth x9, x13, 8
-	and w10, w19, #0xffff
-	str x9, [_cpu, x10]
-	next_gadget
-
-gadget pauth_pacga_z
-	ldr x19, [_stream], #8
-	ubfx x12, x19, #32, #16
-	ldr x13, [_cpu, x12]
-	mov x9, xzr
-	software_pointer_auth x9, x13, 8
-	and w10, w19, #0xffff
-	str x9, [_cpu, x10]
-	next_gadget
+/* Unreachable padding where the FEAT_PAuth XPAC, PAC, AUT, and PACGA entries
+ * were. */
+removed_gadget 1472
 
 /* Production FEAT_CSSC min/max. Width, operation and operand form are fixed;
  * source fields are translation-resolved CpuState offsets. For immediates the

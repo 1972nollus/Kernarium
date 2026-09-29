@@ -179,12 +179,6 @@ struct EngineTestCounts final {
 };
 
 struct EngineHarnessOptions final {
-  /*
-   * The complete software implementation remains the default. Feature-profile
-   * tests disable it in both engines and verify HINT/undefined behavior with
-   * the same case definition.
-   */
-  bool enable_pointer_authentication{true};
   /* These switches alter only the gadget translation choice. The JIT still
    * runs in sequence, so portable gadget paths use the same case definition
    * as the ordinary two-engine run.

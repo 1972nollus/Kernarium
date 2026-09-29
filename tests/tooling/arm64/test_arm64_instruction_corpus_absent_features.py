@@ -3,10 +3,11 @@
 """Check the absent-feature rewrite of the A64 instruction corpus.
 
 The checked-in pack is absent-feature-corpus.py applied to a dump of the pack
-that preceded the removal of FEAT_MTE, FEAT_GCS, and FEAT_CPA. Rebuild that
-rewrite from the earlier pack in Git history and require the same bytes, and
-require every kept case to equal its source case except for the stripped
-feature state and allocation tags.
+that preceded the removal of FEAT_MTE, FEAT_GCS, FEAT_CPA, and FEAT_PAuth.
+Rebuild that rewrite from the earlier pack in Git history and require the same
+bytes, and require every kept case to equal its source case except for the
+stripped feature state and allocation tags, and every kept record to keep its
+identity except for the stripped harness options.
 """
 
 from __future__ import annotations
@@ -98,10 +99,13 @@ def main() -> int:
             if not sources[key]:
                 raise SystemExit(f"{key}: kept case has no source case")
             source_record, source_case = sources[key].popleft()
-            if {name: source_record[name] for name in
-                    ("producer", "site", "profiles", "options")} != \
-                    {name: item[name] for name in
-                     ("producer", "site", "profiles", "options")}:
+            identity = {name: source_record[name] for name in
+                        ("producer", "site", "profiles")}
+            identity["options"] = [
+                name for name in source_record["options"]
+                if name not in builder.RETIRED_OPTIONS]
+            if identity != {name: item[name] for name in
+                            ("producer", "site", "profiles", "options")}:
                 raise SystemExit(f"{key}: record identity changed")
             expected = copy.deepcopy(source_case)
             for state in (expected["initial"], expected["expected"]):

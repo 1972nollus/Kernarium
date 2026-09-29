@@ -170,13 +170,6 @@ using OrderedPairGadgets = std::array<OrderedPairAddressGadgets, 2>;
 
 using ConsistentPairGadgets = std::array<Gadget, 4>;
 
-struct PointerAuthOperation final {
-	unsigned operation;
-	unsigned destination;
-	unsigned modifier;
-	bool zero_modifier;
-};
-
 struct SystemRegisterGadget final {
 	Gadget gadget;
 	bool operand;
@@ -245,7 +238,6 @@ extern const OrderedPairGadgets ordered_pair_store_gadgets;
 extern const ConsistentPairGadgets consistent_pair_ldap_gadgets;
 extern const ConsistentPairGadgets consistent_pair_ldapp_gadgets;
 extern const ConsistentPairGadgets consistent_pair_store_gadgets;
-extern const std::array<std::array<Gadget, 2>, 8> pointer_auth_gadgets;
 extern const std::array<Gadget, 16> pstate_daif_set_gadgets;
 extern const std::array<Gadget, 16> pstate_daif_clear_gadgets;
 
@@ -289,12 +281,6 @@ extern const std::array<Gadget, 16> pstate_daif_clear_gadgets;
 [[nodiscard]] bool host_has_f16f32mm() noexcept;
 [[nodiscard]] bool host_has_f16f32dot() noexcept;
 [[nodiscard]] bool host_has_lsfe() noexcept;
-[[nodiscard]] std::optional<PointerAuthOperation> decode_pointer_auth_hint(std::uint32_t) noexcept;
-[[nodiscard]] std::uintptr_t pointer_auth_operand(unsigned int, unsigned int) noexcept;
-[[nodiscard]] std::uintptr_t pointer_auth_generic_operand(unsigned int, unsigned int, unsigned int) noexcept;
-[[nodiscard]] Gadget pointer_auth_branch_gadget(bool, bool, bool, bool) noexcept;
-[[nodiscard]] Gadget pointer_auth_load_gadget(bool, bool, bool, bool) noexcept;
-[[nodiscard]] std::uintptr_t pointer_auth_load_operand(unsigned int, unsigned int, std::int64_t) noexcept;
 [[nodiscard]] bool pointer_auth_lr_unavailable(std::uint32_t) noexcept;
 /* Fused guest CMP of two registers + B.cond. */
 [[nodiscard]] Gadget compare_register_branch_gadget(

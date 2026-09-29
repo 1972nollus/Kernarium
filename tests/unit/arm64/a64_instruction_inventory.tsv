@@ -21,13 +21,13 @@ BASE-0019	Base	ASR (immediate)	shared-base-data-processing	register-width+operan
 BASE-0020	Base	ASR (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0021	Base	ASRV	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0022	Base	AT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	per_variant(baseline|ats1a|pan2)	verified
-BASE-0023	Base	AUTDA, AUTDZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
-BASE-0024	Base	AUTDB, AUTDZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
-BASE-0025	Base	AUTIA, AUTIA1716, AUTIASP, AUTIAZ, AUTIZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0023	Base	AUTDA, AUTDZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	absent
+BASE-0024	Base	AUTDB, AUTDZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	absent
+BASE-0025	Base	AUTIA, AUTIA1716, AUTIASP, AUTIAZ, AUTIZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	absent
 BASE-0026	Base	AUTIA171615	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
 BASE-0027	Base	AUTIASPPC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
 BASE-0028	Base	AUTIASPPCR	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
-BASE-0029	Base	AUTIB, AUTIB1716, AUTIBSP, AUTIBZ, AUTIZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0029	Base	AUTIB, AUTIB1716, AUTIBSP, AUTIBZ, AUTIZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	absent
 BASE-0030	Base	AUTIB171615	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
 BASE-0031	Base	AUTIBSPPC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
 BASE-0032	Base	AUTIBSPPCR	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
@@ -43,9 +43,9 @@ BASE-0041	Base	BIC (shifted register)	shared-base-data-processing	register-width
 BASE-0042	Base	BICS (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0043	Base	BL	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0044	Base	BLR	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
-BASE-0045	Base	BLRAA, BLRAAZ, BLRAB, BLRABZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	verified
+BASE-0045	Base	BLRAA, BLRAAZ, BLRAB, BLRABZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	absent
 BASE-0046	Base	BR	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
-BASE-0047	Base	BRAA, BRAAZ, BRAB, BRABZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	verified
+BASE-0047	Base	BRAA, BRAAZ, BRAB, BRABZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	absent
 BASE-0048	Base	BRB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	brbe	verified
 BASE-0049	Base	BRK	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0050	Base	BTI	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	bti	verified
@@ -156,7 +156,7 @@ BASE-0154	Base	EON (shifted register)	shared-base-memory	access-size+addressing-
 BASE-0155	Base	EOR (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
 BASE-0156	Base	EOR (shifted register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
 BASE-0157	Base	ERET	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
-BASE-0158	Base	ERETAA, ERETAB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	verified
+BASE-0158	Base	ERETAA, ERETAB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	absent
 BASE-0159	Base	ESB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	ras	verified
 BASE-0160	Base	EXTR	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0161	Base	GCSB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	gcs	absent
@@ -222,7 +222,7 @@ BASE-0220	Base	LDPSW	shared-base-memory	access-size+addressing-mode+writeback+re
 BASE-0221	Base	LDR (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
 BASE-0222	Base	LDR (literal)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
 BASE-0223	Base	LDR (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
-BASE-0224	Base	LDRAA, LDRAB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	pauth	verified
+BASE-0224	Base	LDRAA, LDRAB	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	pauth	absent
 BASE-0225	Base	LDRB (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
 BASE-0226	Base	LDRB (register)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
 BASE-0227	Base	LDRH (immediate)	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	baseline	verified
@@ -306,13 +306,13 @@ BASE-0304	Base	NOP	shared-base-control-system	condition+target-form+register-ali
 BASE-0305	Base	ORN (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0306	Base	ORR (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0307	Base	ORR (shifted register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
-BASE-0308	Base	PACDA, PACDZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
-BASE-0309	Base	PACDB, PACDZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
-BASE-0310	Base	PACGA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
-BASE-0311	Base	PACIA, PACIA1716, PACIASP, PACIAZ, PACIZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0308	Base	PACDA, PACDZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	absent
+BASE-0309	Base	PACDB, PACDZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	absent
+BASE-0310	Base	PACGA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	absent
+BASE-0311	Base	PACIA, PACIA1716, PACIASP, PACIAZ, PACIZA	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	absent
 BASE-0312	Base	PACIA171615	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
 BASE-0313	Base	PACIASPPC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
-BASE-0314	Base	PACIB, PACIB1716, PACIBSP, PACIBZ, PACIZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0314	Base	PACIB, PACIB1716, PACIBSP, PACIBZ, PACIZB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	absent
 BASE-0315	Base	PACIB171615	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
 BASE-0316	Base	PACIBSPPC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
 BASE-0317	Base	PACM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth_lr	verified
@@ -342,7 +342,7 @@ BASE-0340	Base	RCWSSWPP, RCWSSWPPA, RCWSSWPPAL, RCWSSWPPL	shared-base-memory	acc
 BASE-0341	Base	RCWSWP, RCWSWPA, RCWSWPAL, RCWSWPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	the	verified
 BASE-0342	Base	RCWSWPP, RCWSWPPA, RCWSWPPAL, RCWSWPPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	d128+the	verified
 BASE-0343	Base	RET	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
-BASE-0344	Base	RETAA, RETAB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	verified
+BASE-0344	Base	RETAA, RETAB	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth	absent
 BASE-0345	Base	RETAASPPC, RETABSPPC	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth_lr	verified
 BASE-0346	Base	RETAASPPCR, RETABSPPCR	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	pauth_lr	verified
 BASE-0347	Base	REV	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
@@ -513,7 +513,7 @@ BASE-0511	Base	WFET	shared-base-control-system	condition+target-form+register-al
 BASE-0512	Base	WFI	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0513	Base	WFIT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	wfxt	verified
 BASE-0514	Base	XAFLAG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	flag_m2	verified
-BASE-0515	Base	XPACD, XPACI, XPACLRI	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	verified
+BASE-0515	Base	XPACD, XPACI, XPACLRI	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	absent
 BASE-0516	Base	YIELD	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 FPSIMD-0001	FP&SIMD	ABS	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified
 FPSIMD-0002	FP&SIMD	ADD (vector)	shared-simd-data-processing	scalar-vector+element-size+arrangement+register-alias+fp-state+reserved	advanced_simd	verified

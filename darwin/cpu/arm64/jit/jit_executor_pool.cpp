@@ -23,9 +23,7 @@ namespace {
 [[nodiscard]] bool same_configuration(
     const JitExecutorOptions &first,
     const JitExecutorOptions &second) noexcept {
-  return first.enable_pointer_authentication ==
-             second.enable_pointer_authentication &&
-         first.host_capabilities == second.host_capabilities;
+  return first.host_capabilities == second.host_capabilities;
 }
 
 [[nodiscard]] constexpr std::uint64_t bit_for(unsigned slot) noexcept {

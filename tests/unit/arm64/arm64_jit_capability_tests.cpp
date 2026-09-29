@@ -143,32 +143,48 @@ void guest_capabilities_match_host()
 		(immediate >= 24U && immediate <= 31U);
 }
 
-void guest_key_operations_use_semantic_bridge()
+/* The virtual CPU implements no FEAT_PAuth. Its non-hint encodings compile to
+ * the same illegal terminal as an unknown word, and its hint-space forms to
+ * the same code as NOP, so neither a host key nor added work reaches the
+ * translation. */
+void pointer_authentication_compiles_as_absent()
 {
 	constexpr std::uint64_t pc = 0x4fa0'0000;
-	constexpr std::array instructions{
-		0xdac1'0020U, // register sign
-		0xdac1'43e0U, // strip
-		0x9ac2'3020U, // generic code
-		0xd503'233fU, // fixed-register sign
-		0xd61f'083fU, // authenticated branch
-		0xf820'0420U, // authenticated load
+	constexpr std::array undefined{
+		0xdac1'0020U, // pacia x0, x1
+		0xdac1'23e0U, // paciza x0
+		0xdac1'43e0U, // xpaci x0
+		0x9ac2'3020U, // pacga x0, x1, x2
+		0xd61f'083fU, // braa x1, sp
+		0xd63f'081fU, // blraaz x0
+		0xd65f'0bffU, // retaa
+		0xf820'0420U, // ldraa x0, [x1]
+		0xf8a0'0c20U, // ldrab x0, [x1]!
 	};
-	for (std::size_t index = 0; index < instructions.size(); ++index) {
-		const std::array guest{instructions[index]};
+	const std::array unknown{0xffff'ffffU};
+	const auto reference = uml::cpu::arm64::jit::testing::compile_block(
+		pc, unknown);
+	for (const auto instruction : undefined) {
+		const std::array guest{instruction};
 		const auto compiled =
-			uml::cpu::arm64::jit::testing::compile_block(
-				pc + index * 0x1000U, guest);
+			uml::cpu::arm64::jit::testing::compile_block(pc, guest);
 		require(compiled.guest_instructions == 1);
-		require(compiled.hot_words <= compiled.words.size());
-		bool calls_bridge = false;
-		for (const auto word :
-		     std::span<const std::uint32_t>{compiled.words}.first(
-			     compiled.hot_words)) {
+		require(compiled.words == reference.words);
+	}
+	const std::array nop{0xd503'201fU, 0xd400'0001U};
+	const auto nop_code =
+		uml::cpu::arm64::jit::testing::compile_block(pc, nop);
+	for (const auto immediate :
+	     {7U, 8U, 10U, 12U, 14U, 24U, 25U, 26U, 27U, 28U, 29U, 30U, 31U,
+	      39U}) {
+		const std::array guest{0xd503'201fU | immediate << 5,
+				       0xd400'0001U};
+		const auto compiled =
+			uml::cpu::arm64::jit::testing::compile_block(pc, guest);
+		require(compiled.guest_instructions == 2);
+		require(compiled.words == nop_code.words);
+		for (const auto word : compiled.words)
 			require(!is_host_key_operation(word));
-			calls_bridge |= word == 0xd63f'0200U; // blr x16
-		}
-		require(calls_bridge);
 	}
 }
 
@@ -445,7 +461,7 @@ int main()
 	linked_blocks_use_persistent_internal_entry();
 	link_state_metadata_is_consistent();
 	tracked_translation_has_no_successor_branch();
-	guest_key_operations_use_semantic_bridge();
+	pointer_authentication_compiles_as_absent();
 	stateful_system_instructions_are_translation_feature_gated();
 	require(uml::cpu::arm64::jit::testing::
 		invalid_emitter_metadata_is_rejected_for_testing());

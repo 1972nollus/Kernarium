@@ -4,7 +4,6 @@
 
 #include "cpu/arm64/detail/atomic_floating.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
-#include "cpu/arm64/detail/pointer_auth.hpp"
 
 #include <algorithm>
 #include <array>
@@ -447,43 +446,6 @@ RunResult load_store_other(CpuState &cpu, GuestMemory &memory,
 		writeback = false;
 	if (writeback)
 		cpu.write_register(base_register, adjusted, true);
-	cpu.pc += 4;
-	return continue_after(pc, instruction);
-}
-
-RunResult load_pointer_authenticated(CpuState &cpu,
-	GuestMemory &memory, std::uint32_t instruction)
-{
-	const auto pc = cpu.pc;
-	if (!cpu.pointer_authentication_enabled)
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
-	const unsigned destination = instruction & 31U;
-	const unsigned base_register = (instruction >> 5) & 31U;
-	const bool writeback = (instruction & 0x800U) != 0;
-	/* Resolve the permitted constrained-unpredictable choice to UNDEFINED.
-	 * Diagnose it before authentication or memory observation. */
-	if (writeback && base_register == destination && base_register != 31U)
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
-
-	const auto encoded_offset = ((instruction >> 12) & 0x1ffU) |
-		(((instruction >> 22) & 1U) << 9);
-	const auto displacement = sign_extend(encoded_offset, 10) * 8;
-	auto address = cpu.read_register(base_register, true);
-	if (base_register == 31U && (address & 15U) != 0)
-		return alignment_fault(address, instruction, false);
-	address = arm64::detail::execute_pointer_auth(
-		cpu, address, 0,
-		(instruction & 0x0080'0000U) != 0 ?
-			arm64::detail::PointerAuthOperation::authenticate_data_b :
-			arm64::detail::PointerAuthOperation::authenticate_data_a);
-	address += displacement;
-	std::array<std::byte, 8> bytes{};
-	if (!memory.read(address, bytes))
-		return {StopReason::memory_fault, address, instruction, 0, false};
-	const auto value = decode_little_endian(bytes);
-	cpu.write_register(destination, value, false);
-	if (writeback)
-		cpu.write_register(base_register, address, true);
 	cpu.pc += 4;
 	return continue_after(pc, instruction);
 }

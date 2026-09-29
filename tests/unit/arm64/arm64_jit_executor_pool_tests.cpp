@@ -375,9 +375,6 @@ void misordered_drain_is_safe_stale_and_recoverable() {
                 arm64::jit_executor_pool_diagnostics().borrows == before,
             message);
   };
-  require_incompatible(
-      EngineConfiguration{.enable_pointer_authentication = false},
-      "a pointer-authentication mismatch borrowed another profile's executor");
   auto capability_mismatch = EngineConfiguration{};
   capability_mismatch.host_capabilities.cssc =
       !capability_mismatch.host_capabilities.cssc;

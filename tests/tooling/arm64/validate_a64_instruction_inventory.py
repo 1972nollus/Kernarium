@@ -27,7 +27,7 @@ SECTION_PREFIXES = {"Base": "BASE", "FP&SIMD": "FPSIMD"}
 ENGINE_STATUSES = {"absent", "pending", "verified"}
 # Features the virtual CPU omits. An absent entry needs one of them in every
 # alternative; its corpus cases expect its encodings to be UNDEFINED.
-ABSENT_FEATURES = {"cpa", "gcs", "mte", "mte2", "mtetc"}
+ABSENT_FEATURES = {"cpa", "gcs", "mte", "mte2", "mtetc", "pauth"}
 SUITE_VARIANT_MODELS = {
     "shared-base-control-system": {
         "condition+target-form+register-alias+architectural-state+reserved",

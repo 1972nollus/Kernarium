@@ -1,11 +1,13 @@
 {
   "absent_features": {
-    "added_cases": 105,
+    "added_cases": 174,
     "dropped_cases": {
       "cpa/feature-case": 503,
-      "gcs/feature-case": 509,
+      "gcs/feature-case": 271,
       "mte/fails-stripped": 5524,
-      "mte/feature-case": 3018
+      "mte/feature-case": 2775,
+      "pauth/feature-case": 1222,
+      "pauth/removed-encoding": 15
     },
     "failing": {
       "file": "tests/unit/arm64/corpus/absent-feature-failing.tsv",
@@ -14,31 +16,32 @@
     "features": [
       "mte",
       "gcs",
-      "cpa"
+      "cpa",
+      "pauth"
     ],
     "input_sha256": "00d333378e0c83eb0bc8fddc61f63e8fbc5b4caeb92068b2b74ca6e15827582d",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
-    "sha256": "2f3dae0338cf722ff77837cead48bd68aec1f5b8ce30a2c7f273c1e7eddf679f",
-    "stripped_cases": 74447,
+    "sha256": "810bac3a5b11d66ca14fb66f0585ed5f7564b3b88b61df710782916882bd4f03",
+    "stripped_cases": 73691,
     "tbi_replacement_cases": 5496
   },
-  "cases": 167365,
+  "cases": 166678,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
-    "illegal-instruction": 24238,
+    "illegal-instruction": 24775,
     "instruction-budget": 863,
-    "memory-fault": 14131,
-    "system-call": 128037
+    "memory-fault": 14073,
+    "system-call": 126871
   },
   "cases_by_profile": {
-    "16k": 35769,
-    "16k+4k": 95841,
-    "4k": 35755
+    "16k": 35660,
+    "16k+4k": 95372,
+    "4k": 35646
   },
   "coverage": {
     "entries": 983,
-    "entries_with_cases": 909,
+    "entries_with_cases": 895,
     "entries_with_illegal_cases": 824,
     "unattributed_cases": 0,
     "unattributed_illegal_cases": 1289
@@ -96,25 +99,21 @@
     "sha256": "7930348c920a379aea8484c922d55e93d68bfdac9746580c3ffe83816a839316"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 14707442,
-  "pack_sha256": "72141961c8d3fbf449bc739d8eb349bc475249e8d18e734022b6d4efa71aada4",
+  "pack_bytes": 14620544,
+  "pack_sha256": "c73632efff67bae4ebf071dfd5335cc38374eda8e0a0ef730738d895857e7aba",
   "producer_commit": "aec8b13959f463ed8798fd1611ac54895b8a861b",
-  "programs": 146094,
-  "records": 1203,
+  "programs": 145525,
+  "records": 1195,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
     "broad": 51,
-    "full": 1329,
-    "narrow": 165985
+    "full": 1026,
+    "narrow": 165601
   },
   "validator_cases": {
     "ignore-host-counter-register/v1": 1,
-    "permitted-exclusive-store-failure/v1": 354,
-    "permitted-transformed-branch-failure/v1": 42,
-    "permitted-transformed-code/v1": 260,
-    "permitted-transformed-generic/v1": 66,
-    "transformed-address-fault-state/v1": 4
+    "permitted-exclusive-store-failure/v1": 354
   }
 }

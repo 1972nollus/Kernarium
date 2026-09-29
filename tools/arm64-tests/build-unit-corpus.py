@@ -105,15 +105,13 @@ STATE_FIELDS = (
     (29, "exclusive_version", "Q"),
     (30, "exclusive_size", "B"),
     (31, "fp_dirty", "B"),
-    (36, "pointer_auth_keys", "80s"),
-    (37, "pointer_authentication_enabled", "B"),
 )
 
-# The virtual CPU implements no FEAT_MTE, FEAT_GCS, or FEAT_CPA. Producer
-# exports and packs made before their removal still carry these option, event,
-# state, allocation-tag, and validator slots, so they stay readable; the
-# absent-feature-corpus.py rewrite removes them, and the pack encoder refuses
-# them. Their pack ids and codes stay reserved.
+# The virtual CPU implements no FEAT_MTE, FEAT_GCS, FEAT_CPA, or FEAT_PAuth.
+# Producer exports and packs made before their removal still carry these
+# option, event, state, allocation-tag, and validator slots, so they stay
+# readable; the absent-feature-corpus.py rewrite removes them, and the pack
+# encoder refuses them. Their pack ids and codes stay reserved.
 RETIRED_FIELDS = (
     (7, "mte_enabled", "B"),
     (9, "mte_exclude", "H"),
@@ -129,14 +127,21 @@ RETIRED_FIELDS = (
     (33, "gcs_implemented", "B"),
     (34, "gcs_push_enabled", "B"),
     (35, "gcs_store_enabled", "B"),
+    (36, "pointer_auth_keys", "80s"),
+    (37, "pointer_authentication_enabled", "B"),
 )
-RETIRED_OPTIONS = frozenset({"enable_guarded_control_flow"})
+RETIRED_OPTIONS = frozenset({"enable_guarded_control_flow",
+                             "enable_pointer_authentication"})
 RETIRED_EVENTS = frozenset({"gcs-fault"})
 RETIRED_VALIDATORS = frozenset({
     "guarded-control-call-fault-atomicity/v1",
     "guarded-control-return-fault/v1",
     "guarded-control-zero-target-fault/v1",
     "permitted-tag-generator-choice/v1",
+    "permitted-transformed-branch-failure/v1",
+    "permitted-transformed-code/v1",
+    "permitted-transformed-generic/v1",
+    "transformed-address-fault-state/v1",
 })
 RETIRED_FIELD_NAMES = frozenset(name for _i, name, _f in RETIRED_FIELDS)
 # Readable fields, in pack id order.

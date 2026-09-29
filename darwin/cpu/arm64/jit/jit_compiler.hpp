@@ -31,7 +31,6 @@ public:
   explicit JitCompiler(const ArmFeatureSet &translation_features) noexcept;
 
   void set_table_list_planning_enabled(bool enabled) noexcept;
-  void set_pointer_authentication_enabled(bool enabled) noexcept;
 
   struct Result final {
     std::span<const std::uint32_t> words;
@@ -338,7 +337,6 @@ private:
   LinkResolver configured_link_resolver_{};
   IndirectLinkResolver configured_indirect_link_resolver_{};
   bool track_direct_stores_{};
-  bool enable_pointer_authentication_{true};
   bool table_list_planning_enabled_{true};
   const ArmFeatureSet *translation_features_{};
 };

@@ -208,41 +208,11 @@ void profile_dispatch(DispatchClock::time_point started,
 }
 #endif
 
-void ensure_pointer_auth_keys(
-	darwin_uml_guest_registers &registers) noexcept
-{
-	bool uninitialized = true;
-	for (const auto &key : registers.pointer_auth_keys)
-		for (const auto half : key)
-			uninitialized &= half == 0;
-	if (!uninitialized)
-		return;
-
-	arc4random_buf(registers.pointer_auth_keys,
-		       sizeof(registers.pointer_auth_keys));
-	for (std::size_t index = 0;
-	     index < DARWIN_UML_POINTER_AUTH_KEY_COUNT; ++index) {
-		auto &low = registers.pointer_auth_keys[index][0];
-		auto &high = registers.pointer_auth_keys[index][1];
-		/*
-		 * An all-zero 128-bit key is valid but is also the ABI's
-		 * uninitialized marker. Avoid the vanishingly unlikely collision
-		 * so that task migration cannot regenerate a key.
-		 */
-		if (low == 0 && high == 0) {
-			low = arm64::deterministic_pointer_auth_keys[index].low;
-			high = arm64::deterministic_pointer_auth_keys[index].high;
-		}
-	}
-}
-
 void load_cpu(arm64::CpuState &cpu,
-	      darwin_uml_guest_registers &registers,
+	      const darwin_uml_guest_registers &registers,
 	      const darwin_uml_guest_fp_registers &fp, std::uint64_t tls,
 	      bool top_byte_ignore)
 {
-	ensure_pointer_auth_keys(registers);
-	cpu.pointer_authentication_enabled = false;
 	cpu.tbi_enabled = top_byte_ignore;
 	std::copy(std::begin(registers.x), std::end(registers.x),
 		  cpu.registers.begin());
@@ -258,13 +228,6 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.pstate_sm = (registers.svcr & svcr_sm) != 0;
 	cpu.pstate_za = (registers.svcr & svcr_za) != 0;
 	cpu.fpmr = registers.fpmr;
-	for (std::size_t index = 0;
-	     index < DARWIN_UML_POINTER_AUTH_KEY_COUNT; ++index) {
-		cpu.pointer_auth_keys[index].low =
-			registers.pointer_auth_keys[index][0];
-		cpu.pointer_auth_keys[index].high =
-			registers.pointer_auth_keys[index][1];
-	}
 	cpu.tls = tls;
 	/* An exception return may clear the local monitor, and the emulator has
 	 * no architectural reservation token in uml_pt_regs.  Clear every
@@ -306,13 +269,6 @@ void save_cpu(arm64::CpuState &cpu,
 	registers.svcr =
 		(cpu.pstate_sm ? svcr_sm : 0U) |
 		(cpu.pstate_za ? svcr_za : 0U);
-	for (std::size_t index = 0;
-	     index < DARWIN_UML_POINTER_AUTH_KEY_COUNT; ++index) {
-		registers.pointer_auth_keys[index][0] =
-			cpu.pointer_auth_keys[index].low;
-		registers.pointer_auth_keys[index][1] =
-			cpu.pointer_auth_keys[index].high;
-	}
 	tls = static_cast<unsigned long>(cpu.tls);
 	if (cpu.fp_dirty) {
 		std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
@@ -559,7 +515,6 @@ uml::cpu::CpuEngine *common_engine(
 	if (!slot)
 		slot = uml::cpu::make_cpu_engine(Kind,
 			uml::cpu::EngineConfiguration{
-				.enable_pointer_authentication = false,
 				.host_capabilities =
 					::uml::platform::apple::probed_host_capabilities(),
 			});

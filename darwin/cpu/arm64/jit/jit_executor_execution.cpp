@@ -124,8 +124,6 @@ namespace uml::cpu::arm64 {
       };
       // Compile once on a miss. Speculatively lowering the whole block a
       // second time for GPR residency delays cold multi-process workloads.
-      compiler.set_pointer_authentication_enabled(
-          enable_pointer_authentication_);
 #if UML_ENABLE_JIT_PROFILE
       const auto local_compile_path_started = jit_profile_timestamp_ns();
 #endif
@@ -208,8 +206,6 @@ namespace uml::cpu::arm64 {
               this, &Implementation::resolve_block_link, false,
               &Implementation::resolve_indirect_link
           };
-          retry_compiler.set_pointer_authentication_enabled(
-              enable_pointer_authentication_);
           const auto retry_compiled = retry_compiler.compile(
               cpu.pc, std::span{instructions}.first(count));
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -345,8 +341,6 @@ JitExecutor::Implementation::tracked_store_function(CompiledBlock &block, Static
       return nullptr;
   }
   JitCompiler compiler{nullptr, nullptr, true};
-  compiler.set_pointer_authentication_enabled(
-      enable_pointer_authentication_);
   const auto compiled = compiler.compile(
       block.pc, std::span{instructions}.first(block.instruction_count));
   if (compiled.words.empty() ||
@@ -449,8 +443,6 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
 JitExecutor::Implementation::translate_single_instruction(
     std::uint64_t pc, std::uint32_t instruction, bool track_direct_stores) {
   JitCompiler compiler{nullptr, nullptr, track_direct_stores};
-  compiler.set_pointer_authentication_enabled(
-      enable_pointer_authentication_);
   const auto compiled =
       compiler.compile(pc, std::span{&instruction, std::size_t{1}});
   if (compiled.words.empty() || compiled.guest_instructions != 1U ||

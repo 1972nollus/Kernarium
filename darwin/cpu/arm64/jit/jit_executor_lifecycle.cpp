@@ -56,8 +56,6 @@ JitExecutor::Implementation::Implementation(
       shared_publication_context_{diagnostics.shared_publication_context},
       before_shared_publication_{diagnostics.before_shared_publication},
 #endif
-      enable_pointer_authentication_{
-          options.enable_pointer_authentication},
 #if UML_JIT_RUNTIME_DIAGNOSTICS
       reuse_validated_stale_blocks_{
           diagnostics.reuse_validated_stale_blocks},

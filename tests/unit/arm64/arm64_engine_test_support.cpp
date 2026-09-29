@@ -400,8 +400,6 @@ public:
                  true,
                  false} {
     const ::uml::cpu::EngineConfiguration configuration{
-        .enable_pointer_authentication =
-            options.enable_pointer_authentication,
         .host_capabilities = ::uml::platform::apple::probed_host_capabilities(),
     };
     const bool forced_gadget_path = options.force_software_checksum ||
@@ -416,8 +414,6 @@ public:
       forced_gadget_executor_ =
           std::make_unique<::uml::cpu::arm64::gadgets::GadgetExecutor>(
           ::uml::cpu::arm64::gadgets::BuildOptions{
-            .enable_pointer_authentication =
-                options.enable_pointer_authentication,
             .force_software_checksum = options.force_software_checksum,
             .force_software_flags = options.force_software_flags,
             .force_software_sha3 = options.force_software_sha3,

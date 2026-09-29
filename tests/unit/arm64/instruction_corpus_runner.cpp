@@ -66,8 +66,8 @@ constexpr std::uint32_t pack_version = 1;
 constexpr std::uint8_t profile_bit = page_size == 16384 ? 1U : 2U;
 constexpr std::uint32_t unbounded = 0xffff'ffffU;
 constexpr std::uint16_t no_validator = 0xffffU;
-/* Option bit 1 enabled the retired FEAT_GCS guarded control flow. */
-constexpr std::uint16_t retired_options = 2U;
+/* Option bits 0 and 1 enabled the retired FEAT_PAuth and FEAT_GCS. */
+constexpr std::uint16_t retired_options = 3U;
 
 class CorpusError final : public std::runtime_error {
 public:
@@ -244,8 +244,8 @@ struct Record final {
 };
 
 /* Every encoded non-register state field; see the README field table. Ids
- * 7, 9-16, 20, and 32-35 held the retired FEAT_MTE, FEAT_CPA, and FEAT_GCS
- * state and stay reserved. */
+ * 7, 9-16, 20, and 32-37 held the retired FEAT_MTE, FEAT_CPA, FEAT_GCS, and
+ * FEAT_PAuth state and stay reserved. */
 enum class Field : std::uint8_t {
   pc = 1,
   nzcv,
@@ -268,8 +268,6 @@ enum class Field : std::uint8_t {
   exclusive_version,
   exclusive_size,
   fp_dirty,
-  pointer_auth_keys = 36,
-  pointer_authentication_enabled,
 };
 
 [[nodiscard]] std::size_t field_size(std::uint8_t identifier) {
@@ -288,8 +286,6 @@ enum class Field : std::uint8_t {
   case Field::fpsr:
   case Field::accdata:
     return 4;
-  case Field::pointer_auth_keys:
-    return 80;
   case Field::tbi_enabled:
   case Field::pstate_ssbs:
   case Field::pstate_dit:
@@ -299,7 +295,6 @@ enum class Field : std::uint8_t {
   case Field::pstate_daif:
   case Field::exclusive_size:
   case Field::fp_dirty:
-  case Field::pointer_authentication_enabled:
     return 1;
   }
   throw CorpusError{"unknown state field " + std::to_string(identifier)};
@@ -362,8 +357,6 @@ sparse_state(Reader &reader, std::span<const std::byte> body) {
   state.exclusive_version = 0;
   state.exclusive_size = 0;
   state.fp_dirty = false;
-  state.pointer_auth_keys = arm64::deterministic_pointer_auth_keys;
-  state.pointer_authentication_enabled = true;
   return state;
 }
 
@@ -452,15 +445,6 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
     case Field::fp_dirty:
       state.fp_dirty = flag();
       break;
-    case Field::pointer_auth_keys:
-      for (auto &key : state.pointer_auth_keys) {
-        key.low = reader.u64();
-        key.high = reader.u64();
-      }
-      break;
-    case Field::pointer_authentication_enabled:
-      state.pointer_authentication_enabled = flag();
-      break;
     default:
       throw CorpusError{"unknown state field " + std::to_string(identifier)};
     }
@@ -482,32 +466,6 @@ struct RelationInput final {
 
 using Relation = std::optional<std::string> (*)(const RelationInput &);
 
-[[nodiscard]] constexpr std::uint64_t strip(std::uint64_t source,
-                                            bool data) noexcept {
-  const bool upper = (source & (std::uint64_t{1} << 55U)) != 0U;
-  if (data && !upper)
-    return source & 0xff00'7fff'ffff'ffffULL;
-  return (source & 0x0000'7fff'ffff'ffffULL) |
-         (upper ? 0xffff'8000'0000'0000ULL : 0U);
-}
-
-[[nodiscard]] constexpr std::uint64_t signing_original(std::uint64_t source,
-                                                       bool data) noexcept {
-  const bool upper = (source & (std::uint64_t{1} << 55U)) != 0U;
-  if (data && !upper)
-    return source & 0xff00'7fff'ffff'ffffULL;
-  return (source & 0x0000'7fff'ffff'ffffULL) |
-         ((source >> 63U) != 0U ? 0xffff'8000'0000'0000ULL : 0U);
-}
-
-[[nodiscard]] std::optional<std::uint32_t> word_at(const Program &program,
-                                                   std::size_t offset) {
-  for (const auto word : program.words)
-    if (word.offset == offset)
-      return word.word;
-  return std::nullopt;
-}
-
 /* A failed store-exclusive clears the monitor; the retained monitor payload
  * is opaque, so only its identity and size are compared. */
 std::optional<std::string> exclusive_store_failure(const RelationInput &in) {
@@ -516,103 +474,6 @@ std::optional<std::string> exclusive_store_failure(const RelationInput &in) {
   normalized.exclusive_value2 = in.expected.exclusive_value2;
   normalized.exclusive_version = in.expected.exclusive_version;
   return first_architecture_difference(in.expected, normalized);
-}
-
-/* PAC*, AUT*, and their HINT aliases: the retained pointer bits follow the
- * architectural relation while the inserted code is implementation-defined. */
-std::optional<std::string> transformed_code(const RelationInput &in) {
-  const auto word = in.program.entry_word;
-  unsigned destination = word & 31U;
-  bool data = false;
-  bool authenticate = false;
-  if ((word & 0xffff'c000U) == 0xdac1'0000U) {
-    data = ((word >> 10U) & 2U) != 0U;
-    authenticate = ((word >> 10U) & 4U) != 0U;
-  } else {
-    const unsigned immediate = (word >> 5U) & 0x7fU;
-    destination = immediate < 16U ? 17U : 30U;
-    authenticate = immediate == 12U || immediate == 14U ||
-                   (immediate >= 28U && immediate <= 31U);
-  }
-  auto expected = in.initial;
-  expected.pc = in.expected.pc;
-  if (destination < 31U) {
-    const auto before = in.initial.registers[destination];
-    const auto after = in.actual.registers[destination];
-    const auto retained =
-        authenticate ? strip(before, data) : signing_original(before, data);
-    if (strip(after, data) != retained)
-      return "x" + std::to_string(destination) + " " + hex(after) +
-             " does not retain " + hex(before);
-    expected.registers[destination] = after;
-  }
-  return first_architecture_difference(expected, in.actual);
-}
-
-/* PACGA: the low half of the generic code is zero. */
-std::optional<std::string> transformed_generic(const RelationInput &in) {
-  const unsigned destination = in.program.entry_word & 31U;
-  auto expected = in.initial;
-  expected.pc = in.expected.pc;
-  if (destination < 31U) {
-    if ((in.actual.registers[destination] & 0xffff'ffffULL) != 0U)
-      return "generic code " + hex(in.actual.registers[destination]) +
-             " has a non-zero low half";
-    expected.registers[destination] = in.actual.registers[destination];
-  }
-  return first_architecture_difference(expected, in.actual);
-}
-
-/* A failed authenticated branch or return faults at a transformed target.
- * Programs that sign the target register with itself as the modifier and
- * then branch fail with the original address in the retained bits. */
-std::optional<std::string> transformed_branch_failure(const RelationInput &in) {
-  const auto word = in.program.entry_word;
-  auto expected = in.initial;
-  expected.pc = in.actual.pc;
-  if ((word & 0xffff'c000U) == 0xdac1'0000U) {
-    const auto branch = word_at(in.program, in.program.entry + 4U);
-    if (!branch.has_value())
-      return std::string{"relation requires a branch after the signing entry"};
-    const bool link = (*branch & 0x0020'0000U) != 0U;
-    const unsigned target = word & 31U;
-    if (target == 31U)
-      return std::string{"relation requires a general target register"};
-    if (strip(in.actual.pc, false) != in.initial.registers[target])
-      return "failed target " + hex(in.actual.pc) + " does not retain " +
-             hex(in.initial.registers[target]);
-    if (!link || target != 30U) {
-      if (strip(in.actual.registers[target], false) !=
-          in.initial.registers[target])
-        return "x" + std::to_string(target) + " " +
-               hex(in.actual.registers[target]) + " does not retain " +
-               hex(in.initial.registers[target]);
-      expected.registers[target] = in.actual.registers[target];
-    }
-    if (link)
-      expected.registers[30] = code_base + in.program.entry + 8U;
-  } else {
-    if (strip(in.actual.pc, false) != 0U)
-      return "failed target " + hex(in.actual.pc) + " is not a zero address";
-    if ((word & 0x0020'0000U) != 0U)
-      expected.registers[30] = code_base + in.program.entry + 4U;
-  }
-  return first_architecture_difference(expected, in.actual);
-}
-
-/* An authenticated load through a signed base faults with only that base
- * transformed. */
-std::optional<std::string> transformed_address_fault(const RelationInput &in) {
-  const unsigned base = in.program.entry_word & 31U;
-  if (base == 31U)
-    return std::string{"relation requires a general base register"};
-  if (strip(in.actual.registers[base], true) != in.initial.registers[base])
-    return "x" + std::to_string(base) + " " + hex(in.actual.registers[base]) +
-           " does not retain " + hex(in.initial.registers[base]);
-  auto expected = in.initial;
-  expected.pc = in.expected.pc;
-  expected.registers[base] = in.actual.registers[base];
-  return first_architecture_difference(expected, in.actual);
 }
 
 /* A system-register read of the host counter is excluded from equality. */
@@ -630,10 +491,6 @@ std::optional<std::string> ignore_counter_register(const RelationInput &in) {
   static const std::map<std::string_view, Relation> relations{
       {"ignore-host-counter-register/v1", ignore_counter_register},
       {"permitted-exclusive-store-failure/v1", exclusive_store_failure},
-      {"permitted-transformed-branch-failure/v1", transformed_branch_failure},
-      {"permitted-transformed-code/v1", transformed_code},
-      {"permitted-transformed-generic/v1", transformed_generic},
-      {"transformed-address-fault-state/v1", transformed_address_fault},
   };
   if (const auto found = relations.find(name); found != relations.end())
     return found->second;
@@ -1057,10 +914,8 @@ struct Outcome final {
 class Engines final {
 public:
   explicit Engines(std::uint16_t options) {
-    const bool pointer_authentication = (options & 1U) != 0U;
     const auto &host = ::uml::platform::apple::probed_host_capabilities();
     const ::uml::cpu::EngineConfiguration configuration{
-        .enable_pointer_authentication = pointer_authentication,
         .host_capabilities = host,
     };
     if ((options & 0x3fcU) == 0U) {
@@ -1069,7 +924,6 @@ public:
     } else {
       forced_ = std::make_unique<arm64::gadgets::GadgetExecutor>(
           arm64::gadgets::BuildOptions{
-              .enable_pointer_authentication = pointer_authentication,
               .force_software_checksum = (options & 4U) != 0U,
               .force_software_flags = (options & 8U) != 0U,
               .force_software_sha3 = (options & 16U) != 0U,

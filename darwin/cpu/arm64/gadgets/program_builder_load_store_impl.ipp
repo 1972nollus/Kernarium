@@ -14,7 +14,6 @@ DecodeResult decode_load_store(DecodeContext &context)
 	auto &program_accesses_fp_state =
 		context.program_accesses_fp_state;
 	auto &words = context.words;
-	const auto &options = context.options;
 
 	if ((instruction & 0xffff'ec00U) == 0xd91f'0c00U) {
 		/* FEAT_GCS GCSSTR/GCSSTTR: the virtual CPU does not implement
@@ -196,30 +195,12 @@ DecodeResult decode_load_store(DecodeContext &context)
 			return DecodeResult::terminal;
 		}
 	} else if ((instruction & 0xff20'0400U) == 0xf820'0400U) {
-		if (!options.enable_pointer_authentication) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const unsigned destination = instruction & 31U;
-		const unsigned base = (instruction >> 5) & 31U;
-		const bool writeback = (instruction & 0x800U) != 0;
-		if (writeback && base == destination && base != 31U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const auto encoded_offset = ((instruction >> 12) & 0x1ffU) |
-			(((instruction >> 22) & 1U) << 9);
-		const auto displacement = sign_extend(encoded_offset, 10) * 8;
-		emit(words, pointer_auth_load_gadget(
-			(instruction & 0x0080'0000U) != 0, writeback,
-			base == 31U, destination == 31U));
-		emit(words, pointer_auth_load_operand(
-			destination, base, displacement));
+		/* LDRAA and LDRAB need FEAT_PAuth, which the virtual CPU does not
+		 * implement. */
+		emit(words, uml_arm64_gadget_illegal);
 		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
 	} else if ((instruction & 0xffc0'0000U) == 0xb940'0000U ||
 		   (instruction & 0xffc0'0000U) == 0xf940'0000U ||
 		   (instruction & 0xffc0'0000U) == 0xb900'0000U ||

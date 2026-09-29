@@ -42,18 +42,13 @@ inline void require(bool condition, const char *message)
 }
 
 /*
- * These primary-HINT encodings are delegated by the architecture to the
- * pointer-authentication instruction descriptions. They have architectural
- * register effects and are covered by that family's stateful tests rather
- * than by the stateless HINT/event family.
+ * The virtual CPU implements neither FEAT_PAuth nor FEAT_PAuth_LR, so their
+ * hint-space forms (XPACLRI, PAC*1716, AUT*1716, PAC*Z, PAC*SP, AUT*Z,
+ * AUT*SP, and PACM) are NOPs.
  */
-[[nodiscard]] constexpr bool is_delegated_stateful_hint(unsigned immediate)
-{
-	return immediate == 7U || immediate == 8U || immediate == 10U ||
-		immediate == 12U || immediate == 14U ||
-		(immediate >= 24U && immediate <= 31U) ||
-		immediate == 39U;
-}
+inline constexpr unsigned pointer_auth_hints[] = {
+	7U, 8U, 10U, 12U, 14U, 24U, 25U, 26U, 27U, 28U, 29U, 30U, 31U, 39U,
+};
 
 [[nodiscard]] constexpr bool is_owned_primary_hint(unsigned immediate)
 {
@@ -61,8 +56,7 @@ inline void require(bool condition, const char *message)
 		immediate != 40U &&
 		immediate != 48U &&
 		immediate != 49U &&
-		immediate != 52U &&
-		!is_delegated_stateful_hint(immediate);
+		immediate != 52U;
 }
 
 } // namespace arm64_hint_test

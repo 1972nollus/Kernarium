@@ -359,24 +359,12 @@ DecodeResult decode_data_processing(DecodeContext &context)
 		++compiled;
 		return DecodeResult::terminal;
 	} else if ((instruction & 0xffe0'fc00U) == 0x9ac0'3000U) {
-		if (!options.enable_pointer_authentication) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const unsigned destination = instruction & 31U;
-		const unsigned source = (instruction >> 5) & 31U;
-		const unsigned modifier = (instruction >> 16) & 31U;
-		if (destination == 31U) {
-			emit(words, uml_arm64_gadget_nop);
-		} else {
-			emit(words, source == 31U ?
-				uml_arm64_gadget_pauth_pacga_z :
-				uml_arm64_gadget_pauth_pacga_r);
-			emit(words, pointer_auth_generic_operand(
-				destination, source, modifier));
-		}
+		/* PACGA needs FEAT_PAuth, which the virtual CPU does not
+		 * implement. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
 	} else if ((instruction & 0x7fe0'f000U) == 0x1ac0'6000U) {
 		const unsigned destination = instruction & 31U;
 		if (destination == 31U) {
@@ -711,58 +699,14 @@ DecodeResult decode_data_processing(DecodeContext &context)
 			emit(words, masks->write);
 			emit(words, masks->test);
 		}
-	} else if ((instruction & 0xffff'c000U) == 0xdac1'0000U) {
-		if (!options.enable_pointer_authentication) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const unsigned encoded_operation = (instruction >> 10) & 15U;
-		const bool zero_modifier = encoded_operation >= 8U;
-		const unsigned modifier = (instruction >> 5) & 31U;
-		const unsigned destination = instruction & 31U;
-		/* PAC*Z/AUT*Z reserve every encoding whose nominal Rn field is
-		 * not 11111. Reject it before applying the XZR-destination fast
-		 * path so malformed guest code cannot hide invalid state. */
-		if (zero_modifier && modifier != 31U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		if (destination == 31U) {
-			emit(words, uml_arm64_gadget_nop);
-		} else {
-			emit(words, pointer_auth_gadgets[encoded_operation & 7U]
-				[zero_modifier]);
-			emit(words, zero_modifier ?
-				destination * sizeof(std::uint64_t) :
-				pointer_auth_operand(destination, modifier));
-		}
-	} else if ((instruction & 0xffff'f800U) == 0xdac1'4000U) {
-		if (!options.enable_pointer_authentication) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		/* XPACI/XPACD require Rn==11111. D and Rd are the only
-		 * variable fields; discard-to-XZR is side-effect free. */
-		if (((instruction >> 5) & 31U) != 31U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		if ((instruction & 31U) == 31U) {
-			emit(words, uml_arm64_gadget_nop);
-		} else {
-			emit(words, (instruction & 0x400U) != 0 ?
-				uml_arm64_gadget_xpacd : uml_arm64_gadget_xpaci);
-			emit(words, static_cast<std::uintptr_t>(
-				(instruction & 31U) * sizeof(std::uint64_t)));
-		}
+	} else if ((instruction & 0xffff'c000U) == 0xdac1'0000U ||
+		   (instruction & 0xffff'f800U) == 0xdac1'4000U) {
+		/* PAC*, AUT*, XPACI and XPACD need FEAT_PAuth, which the virtual
+		 * CPU does not implement. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
 	} else if ((instruction & 0x7fff'8000U) == 0x5ac0'0000U) {
 		const bool is_64_bit = (instruction >> 31) != 0;
 		const auto operation = (instruction >> 10) & 0x1fU;
