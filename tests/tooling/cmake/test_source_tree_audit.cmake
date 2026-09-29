@@ -100,4 +100,132 @@ if(OWNER_PRODUCT_VIOLATIONS)
         "source audit rejected targets linking the owner's product: ${OWNER_PRODUCT_VIOLATIONS}")
 endif()
 
+# The layer, engine-ownership, executable-memory, implementation-include,
+# CPU-header and test-registration rules read the whole tree, so the audit
+# itself runs over a fixture tree that breaks each rule beside a file the rule
+# accepts. Every fixture starts on its second line, so a rule cannot pass by
+# matching only at the start of a file.
+file(REMOVE_RECURSE "${TEST_ROOT}")
+file(WRITE "${TEST_ROOT}/CMakeLists.txt" "")
+file(WRITE "${TEST_ROOT}/docs/architecture.md" "")
+function(uml_write_audit_fixture PATH TEXT)
+    file(WRITE "${TEST_ROOT}/${PATH}" "// fixture\n${TEXT}\n")
+endfunction()
+set(REJECTED)
+set(ACCEPTED)
+
+uml_write_audit_fixture(darwin/cpu/fixture/cpu_layer.cpp
+    "#include \"runtime/fixture.hpp\"")
+uml_write_audit_fixture(darwin/memory/fixture/memory_layer.cpp
+    "#include \"device/fixture.hpp\"")
+uml_write_audit_fixture(darwin/device/fixture/device_layer.cpp
+    "#include <app/fixture.hpp>")
+uml_write_audit_fixture(darwin/platform/fixture/platform_layer.hpp
+    "#include \"darwin/cpu/fixture.hpp\"")
+uml_write_audit_fixture(darwin/device/fixture/device_memory.cpp
+    "#include \"memory/fixture.hpp\"")
+uml_write_audit_fixture(darwin/runtime/fixture/runtime_device.cpp
+    "#include \"device/fixture.hpp\"")
+list(APPEND REJECTED
+    "cpu/fixture/cpu_layer\\.cpp: [A-Za-z]+ layer includes"
+    "memory/fixture/memory_layer\\.cpp: [A-Za-z]+ layer includes"
+    "device/fixture/device_layer\\.cpp: [A-Za-z]+ layer includes"
+    "platform/fixture/platform_layer\\.hpp: [A-Za-z]+ layer includes")
+uml_write_audit_fixture(darwin/memory/fixture/tab_layer.cpp
+    "#include\t\"runtime/fixture.hpp\"")
+list(APPEND REJECTED "tab_layer\\.cpp: [A-Za-z]+ layer includes")
+list(APPEND ACCEPTED
+    "device_memory\\.cpp: [A-Za-z]+ layer"
+    "runtime_device\\.cpp: [A-Za-z]+ layer")
+
+uml_write_audit_fixture(darwin/cpu/fixture/fragment_source.cpp
+    "#include \"fixture_table.cpp\"")
+uml_write_audit_fixture(tests/fixture/fragment_contract.cpp
+    "#include \"fixture_contract.inc\"")
+uml_write_audit_fixture(Kernarium/Runtime/fragment_impl.mm
+    "#include \"runtime_impl.hpp\"")
+uml_write_audit_fixture(darwin/cpu/fixture/header_include.cpp
+    "#include \"fixture_contract.hpp\"")
+list(APPEND REJECTED
+    "fragment_source\\.cpp: C/C\\+\\+ source includes an implementation fragment"
+    "fragment_contract\\.cpp: C/C\\+\\+ source includes an implementation fragment"
+    "fragment_impl\\.mm: C/C\\+\\+ source includes an implementation fragment")
+list(APPEND ACCEPTED "header_include\\.cpp: C/C\\+\\+ source")
+
+uml_write_audit_fixture(darwin/cpu/fixture/anonymous.hpp
+    "namespace fixture {\nnamespace {\n}\n}")
+uml_write_audit_fixture(darwin/cpu/fixture/anonymous_source.cpp
+    "namespace {\n}")
+uml_write_audit_fixture(darwin/device/fixture/anonymous_device.hpp
+    "namespace {\n}")
+list(APPEND REJECTED
+    "anonymous\\.hpp: CPU header creates anonymous per-translation-unit ownership")
+list(APPEND ACCEPTED
+    "anonymous_source\\.cpp: CPU header"
+    "anonymous_device\\.hpp: CPU header")
+
+uml_write_audit_fixture(darwin/cpu/arm64/jit/jit_fixture.cpp
+    "#include \"cpu/arm64/gadgets/fixture.hpp\"")
+uml_write_audit_fixture(darwin/cpu/x86_64/x86_fixture.cpp
+    "#include \"cpu/arm64/jit/fixture.hpp\"")
+uml_write_audit_fixture(darwin/cpu/shared_fixture.cpp
+    "#include \"cpu/x86_64/fixture.hpp\"")
+uml_write_audit_fixture(darwin/cpu/engine_factory.cpp
+    "#include \"cpu/arm64/jit/fixture.hpp\"\n#include \"cpu/x86_64/fixture.hpp\"")
+list(APPEND REJECTED
+    "jit_fixture\\.cpp: CPU source includes an engine implementation"
+    "x86_fixture\\.cpp: CPU source includes an engine implementation"
+    "shared_fixture\\.cpp: CPU source includes an engine implementation")
+list(APPEND ACCEPTED "engine_factory\\.cpp: CPU source includes")
+
+uml_write_audit_fixture(darwin/cpu/arm64/gadgets/gadget_exec.cpp
+    "int publish() { return mprotect(nullptr, 0, 0); }")
+uml_write_audit_fixture(darwin/cpu/fixture/cpu_exec.cpp
+    "int protection = PROT_EXEC;")
+uml_write_audit_fixture(darwin/cpu/arm64/jit/jit_arena.cpp
+    "int publish() { return mprotect(nullptr, 0, 0); }")
+uml_write_audit_fixture(darwin/memory/fixture/memory_exec.cpp
+    "int protection = PROT_EXEC;")
+list(APPEND REJECTED
+    "gadget_exec\\.cpp: [^\n]*executable-memory"
+    "cpu_exec\\.cpp: [^\n]*executable-memory")
+list(APPEND ACCEPTED
+    "jit_arena\\.cpp: [^\n]*executable-memory"
+    "memory_exec\\.cpp: [^\n]*executable-memory")
+
+uml_write_audit_fixture(tests/fixture/CMakeLists.txt
+    "add_test(NAME fixture COMMAND fixture)")
+uml_write_audit_fixture(tests/fixture/Suite.cmake "ADD_TEST (fixture fixture)")
+uml_write_audit_fixture(tests/fixture/Commented.cmake
+    "# add_test(NAME fixture COMMAND fixture)")
+uml_write_audit_fixture(cmake/UmlTesting.cmake
+    "add_test(NAME fixture COMMAND fixture)")
+list(APPEND REJECTED
+    "fixture/CMakeLists\\.txt: raw add_test bypasses"
+    "fixture/Suite\\.cmake: raw add_test bypasses")
+list(APPEND ACCEPTED
+    "Commented\\.cmake: raw add_test"
+    "UmlTesting\\.cmake: raw add_test")
+
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${TEST_ROOT}" -P "${AUDIT_SCRIPT}"
+    RESULT_VARIABLE AUDIT_RESULT
+    OUTPUT_VARIABLE AUDIT_OUTPUT
+    ERROR_VARIABLE AUDIT_OUTPUT)
+if(AUDIT_RESULT EQUAL 0)
+    message(FATAL_ERROR "source audit accepted the fixture tree")
+endif()
+foreach(EXPECTED IN LISTS REJECTED)
+    if(NOT AUDIT_OUTPUT MATCHES "/${EXPECTED}")
+        message(FATAL_ERROR
+            "source audit did not report ${EXPECTED}:\n${AUDIT_OUTPUT}")
+    endif()
+endforeach()
+foreach(UNEXPECTED IN LISTS ACCEPTED)
+    if(AUDIT_OUTPUT MATCHES "/${UNEXPECTED}")
+        message(FATAL_ERROR
+            "source audit reported ${UNEXPECTED}:\n${AUDIT_OUTPUT}")
+    endif()
+endforeach()
+
 file(REMOVE_RECURSE "${TEST_ROOT}")
