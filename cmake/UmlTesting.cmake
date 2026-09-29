@@ -234,7 +234,3 @@ endfunction()
 function(uml_add_integration_test)
     _uml_add_suite_test(integration ${ARGN})
 endfunction()
-
-function(uml_add_guest_integration_test)
-    _uml_add_suite_test(integration ROOTFS ${ARGN})
-endfunction()

@@ -13,12 +13,8 @@ add_dependencies(integration-test-binaries uml-balloon-churn-server)
 # One-vCPU guest: balloon config changes and config reads must not deadlock.
 uml_add_guest_integration_test(
     NAME guest-balloon-config-churn
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/run_balloon_config_churn.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --server $<TARGET_FILE:uml-balloon-churn-server>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
+    SCRIPT run_balloon_config_churn.py
+    ARGS --server $<TARGET_FILE:uml-balloon-churn-server>
     LABELS guest;balloon;smoke
     TIMEOUT 300
-    PROCESSORS 1
-    RESOURCE_GROUPS cpus:1)
+    CPUS 1)

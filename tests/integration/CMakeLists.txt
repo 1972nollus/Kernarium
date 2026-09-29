@@ -55,6 +55,36 @@ if(NOT TARGET "${_uml_integration_emulator}")
         "Integration emulator target is unavailable: ${_uml_integration_emulator}")
 endif()
 
+# uml_add_guest_integration_test(NAME <test> SCRIPT <runner> [ARGS <arg>...]
+#     CPUS <n> [GPUS <n>] [LABELS <label>...] [TIMEOUT <seconds>])
+#
+# Registers a rootfs integration test that runs the Python <runner>, relative
+# to the calling directory, with the integration emulator and rootfs and then
+# ARGS. It reserves CPUS processors, and GPUS GPUs, from the resource spec.
+function(uml_add_guest_integration_test)
+    cmake_parse_arguments(_guest "" "NAME;SCRIPT;CPUS;GPUS;TIMEOUT"
+        "ARGS;LABELS" ${ARGN})
+    if(NOT _guest_SCRIPT OR NOT _guest_CPUS)
+        message(FATAL_ERROR
+            "${_guest_NAME}: guest integration tests require SCRIPT and CPUS")
+    endif()
+    set(_resources "cpus:${_guest_CPUS}")
+    if(_guest_GPUS)
+        string(APPEND _resources ",gpus:${_guest_GPUS}")
+    endif()
+    uml_add_integration_test(ROOTFS
+        NAME "${_guest_NAME}"
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/${_guest_SCRIPT}"
+            --emulator "$<TARGET_FILE:${_uml_integration_emulator}>"
+            --rootfs "${UML_INTEGRATION_ROOTFS}"
+            ${_guest_ARGS}
+        LABELS ${_guest_LABELS}
+        TIMEOUT "${_guest_TIMEOUT}"
+        PROCESSORS "${_guest_CPUS}"
+        RESOURCE_GROUPS "${_resources}")
+endfunction()
+
 set(UML_V4L2_PROBE_BINARY "" CACHE FILEPATH
     "Static guest V4L2 regression executable built from tests/integration/video/v4l2_decode_probe.cpp")
 if(UML_V4L2_PROBE_BINARY)
@@ -165,11 +195,8 @@ uml_add_guest_payload(UML_GUEST_HWCAP_SANITY guest-hwcap-sanity
 # fast suite contains short real boots; full adds topology, MMU, and rendering.
 uml_add_guest_integration_test(
     NAME guest-overlay-systemd-smoke
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_gpu_guest.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
-        --timeout 240
+    SCRIPT gpu/run_gpu_guest.py
+    ARGS --timeout 240
         --docker-hello-world-binary ${UML_DOCKER_HELLO_WORLD}
         --command "test -d /run/systemd/system && grep -qx systemd /proc/1/comm"
         --command "getent passwd uml >/dev/null"
@@ -205,23 +232,18 @@ done'"
         --command "test -x /usr/sbin/e4crypt"
     LABELS guest;overlay;systemd;smoke
     TIMEOUT 300
-    PROCESSORS 2
-    RESOURCE_GROUPS cpus:2)
+    CPUS 2)
 
 function(uml_add_guest_engine_smoke ENGINE)
     set(_labels guest cpu ${ENGINE} dynamic-code smoke)
     uml_add_guest_integration_test(
         NAME guest-${ENGINE}-smoke
-        COMMAND ${Python3_EXECUTABLE}
-            ${PROJECT_SOURCE_DIR}/tests/integration/jit/run_guest_jit_smoke.py
-            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-            --rootfs ${UML_INTEGRATION_ROOTFS}
-            --engine ${ENGINE}
+        SCRIPT jit/run_guest_jit_smoke.py
+        ARGS --engine ${ENGINE}
             --hwcap-sanity-binary ${UML_GUEST_HWCAP_SANITY}
         LABELS ${_labels}
         TIMEOUT 420
-        PROCESSORS 2
-        RESOURCE_GROUPS cpus:2)
+        CPUS 2)
 endfunction()
 
 uml_add_guest_engine_smoke(gadgets)
@@ -229,65 +251,45 @@ uml_add_guest_engine_smoke(jit)
 
 uml_add_guest_integration_test(
     NAME guest-slirp-network
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/network/run_guest_network_smoke.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
+    SCRIPT network/run_guest_network_smoke.py
     LABELS guest;network;slirp;smoke
     TIMEOUT 240
-    PROCESSORS 2
-    RESOURCE_GROUPS cpus:2)
+    CPUS 2)
 
 uml_add_guest_integration_test(
     NAME guest-slirp-network-transfer
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/network/run_guest_network_transfer.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
+    SCRIPT network/run_guest_network_transfer.py
     LABELS guest;network;slirp
     TIMEOUT 300
-    PROCESSORS 2
-    RESOURCE_GROUPS cpus:2)
+    CPUS 2)
 
 add_subdirectory(balloon)
 
 # One-vCPU guest: an input burst past the tty buffer must not end console input.
 uml_add_guest_integration_test(
     NAME guest-console-input-burst
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/console/run_guest_console_burst.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
+    SCRIPT console/run_guest_console_burst.py
     LABELS guest;console;smoke
     TIMEOUT 180
-    PROCESSORS 1
-    RESOURCE_GROUPS cpus:1)
+    CPUS 1)
 
 # Four-vCPU guest: two CPUs draining one serial line must not split its input.
 uml_add_guest_integration_test(
     NAME guest-console-concurrent-input
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/console/run_guest_console_concurrent_input.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
+    SCRIPT console/run_guest_console_concurrent_input.py
     LABELS guest;console;smoke
     TIMEOUT 420
-    PROCESSORS 4
-    RESOURCE_GROUPS cpus:4)
+    CPUS 4)
 
 # The interpreter runs BPF callbacks through its fixed entry-point pool.
 uml_add_guest_integration_test(
     NAME guest-bpf-callbacks
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/support/run_guest_probe.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
-        --probe ${PROJECT_SOURCE_DIR}/tests/integration/bpf/bpf_callbacks_probe.py
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/bpf/bpf_callbacks_probe.py
         --ncpus 4 --probe-timeout 420
     LABELS guest;bpf;smoke
     TIMEOUT 600
-    PROCESSORS 4
-    RESOURCE_GROUPS cpus:4)
+    CPUS 4)
 
 # The base archive and a per-run initramfs boot the EROFS image, and every
 # broken initramfs stops the guest with a named reason.
@@ -297,84 +299,60 @@ if(NOT UML_BOOT_BASE_ARCHIVE OR NOT TARGET uml-initramfs)
 endif()
 uml_add_guest_integration_test(
     NAME guest-boot-initramfs
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/boot/run_guest_boot_initramfs.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
-        --base ${UML_BOOT_BASE_ARCHIVE}
+    SCRIPT boot/run_guest_boot_initramfs.py
+    ARGS --base ${UML_BOOT_BASE_ARCHIVE}
         --initramfs-tool $<TARGET_FILE:uml-initramfs>
     LABELS guest;boot;smoke
     TIMEOUT 600
-    PROCESSORS 1
-    RESOURCE_GROUPS cpus:1)
+    CPUS 1)
 
 # A faulting nofault kernel read resumes at its recovery point.
 uml_add_guest_integration_test(
     NAME guest-kernel-nofault
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_kernel_nofault.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
+    SCRIPT kernel/run_guest_kernel_nofault.py
     LABELS guest;kernel;smoke
     TIMEOUT 300
-    PROCESSORS 2
-    RESOURCE_GROUPS cpus:2)
+    CPUS 2)
 
 # Path and name strings copied from user memory keep their contract.
 uml_add_guest_integration_test(
     NAME guest-user-strings
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/support/run_guest_probe.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
-        --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/user_strings_probe.py
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/user_strings_probe.py
         --ncpus 2 --probe-timeout 120
     LABELS guest;kernel;smoke
     TIMEOUT 300
-    PROCESSORS 2
-    RESOURCE_GROUPS cpus:2)
+    CPUS 2)
 
 # Unmapping user pages beside the native window leaves the kernel's own
 # mappings in it alone.
 uml_add_guest_integration_test(
     NAME guest-native-window-unmap
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/support/run_guest_probe.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
-        --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/native_window_unmap_probe.py
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/native_window_unmap_probe.py
         --ncpus 2 --probe-timeout 120
     LABELS guest;kernel;smoke
     TIMEOUT 300
-    PROCESSORS 2
-    RESOURCE_GROUPS cpus:2)
+    CPUS 2)
 
 # A tracer's PSTATE writes are filtered as native arm64 filters them.
 uml_add_guest_integration_test(
     NAME guest-ptrace-pstate
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/support/run_guest_probe.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
-        --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/ptrace_pstate_probe.py
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/ptrace_pstate_probe.py
         --ncpus 2 --probe-timeout 60
     LABELS guest;kernel;smoke
     TIMEOUT 300
-    PROCESSORS 2
-    RESOURCE_GROUPS cpus:2)
+    CPUS 2)
 
 # Unwinders cross an arm64 signal frame as on native Linux: backtrace() in a
 # handler and cancellation of a thread blocked in a system call.
 uml_add_guest_integration_test(
     NAME guest-signal-unwind
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/kernel/run_guest_signal_unwind.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
+    SCRIPT kernel/run_guest_signal_unwind.py
     LABELS guest;kernel;smoke
     TIMEOUT 420
-    PROCESSORS 2
-    RESOURCE_GROUPS cpus:2)
+    CPUS 2)
 
 # A stopped embedded guest returns to its host only after every kernel
 # thread has left the image the loader then unmaps.
@@ -405,15 +383,11 @@ uml_add_guest_payload(UML_GUEST_SAMPLER_WORKLOAD guest-sampler-workload
 
 uml_add_guest_integration_test(
     NAME guest-code-sampler
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/profiling/run_guest_code_sampler.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
-        --workload ${UML_GUEST_SAMPLER_WORKLOAD}
+    SCRIPT profiling/run_guest_code_sampler.py
+    ARGS --workload ${UML_GUEST_SAMPLER_WORKLOAD}
     LABELS guest;profiling
     TIMEOUT 300
-    PROCESSORS 2
-    RESOURCE_GROUPS cpus:2)
+    CPUS 2)
 
 uml_add_guest_payload(UML_GUEST_SHARED_MMAP_STRESS guest-shared-mmap-stress
     smp/guest_shared_mmap_stress.S
@@ -441,31 +415,23 @@ uml_add_guest_payload(UML_GUEST_FORK_COW_COHERENCE guest-fork-cow-coherence
 
 uml_add_guest_integration_test(
     NAME guest-mmu-stress
-    COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_mmu_stress.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-        --rootfs ${UML_INTEGRATION_ROOTFS}
-        --shared-mmap-binary ${UML_GUEST_SHARED_MMAP_STRESS}
+    SCRIPT smp/run_guest_mmu_stress.py
+    ARGS --shared-mmap-binary ${UML_GUEST_SHARED_MMAP_STRESS}
         --fork-cow-binary ${UML_GUEST_FORK_COW_COHERENCE}
         --cpus 10
     LABELS guest;memory;mmu;full;pressure
     TIMEOUT 600
-    PROCESSORS 10
-    RESOURCE_GROUPS cpus:10)
+    CPUS 10)
 
 if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
     uml_add_guest_integration_test(
         NAME guest-external-network
-        COMMAND ${Python3_EXECUTABLE}
-            ${PROJECT_SOURCE_DIR}/tests/integration/network/run_guest_network_smoke.py
-            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-            --rootfs ${UML_INTEGRATION_ROOTFS}
-            --external
+        SCRIPT network/run_guest_network_smoke.py
+        ARGS --external
             --external-host ${UML_EXTERNAL_NETWORK_TEST_HOST}
         LABELS guest;network;external;full
         TIMEOUT 300
-        PROCESSORS 2
-        RESOURCE_GROUPS cpus:2)
+        CPUS 2)
 
     # guest-overlay-systemd-smoke proves Docker runs a locally imported image
     # with no network at all.  This proves the rest of the path a real user
@@ -477,11 +443,8 @@ if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
     # executes those instructions.
     uml_add_guest_integration_test(
         NAME guest-docker-hello-world
-        COMMAND ${Python3_EXECUTABLE}
-            ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_gpu_guest.py
-            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-            --rootfs ${UML_INTEGRATION_ROOTFS}
-            --timeout 600
+        SCRIPT gpu/run_gpu_guest.py
+        ARGS --timeout 600
             --command "timeout 180 sh -c 'until systemctl is-active --quiet docker.service
 do
     sleep 1
@@ -490,32 +453,25 @@ done'"
             --command "docker image rm -f hello-world >/dev/null"
         LABELS guest;docker;network;external;full
         TIMEOUT 900
-        PROCESSORS 4
-        RESOURCE_GROUPS cpus:4)
+        CPUS 4)
 
     uml_add_guest_integration_test(
         NAME guest-kde-vnc-webgl-aquarium
-        COMMAND ${Python3_EXECUTABLE}
-            ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_chromium_webgl.py
-            --client $<TARGET_FILE:uml-vnc-smoke-client>
-            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-            --rootfs ${UML_INTEGRATION_ROOTFS}
+        SCRIPT gpu/run_chromium_webgl.py
+        ARGS --client $<TARGET_FILE:uml-vnc-smoke-client>
         LABELS guest;gpu;vnc;webgl;external;full
         TIMEOUT 720
-        PROCESSORS 10
-        RESOURCE_GROUPS cpus:10,gpus:1)
+        CPUS 10
+        GPUS 1)
 
     uml_add_guest_integration_test(
         NAME guest-webgl-rendered-workflows
-        COMMAND ${Python3_EXECUTABLE}
-            ${PROJECT_SOURCE_DIR}/tests/integration/gpu/run_webgl_samples.py
-            --client $<TARGET_FILE:uml-vnc-smoke-client>
-            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
-            --rootfs ${UML_INTEGRATION_ROOTFS}
+        SCRIPT gpu/run_webgl_samples.py
+        ARGS --client $<TARGET_FILE:uml-vnc-smoke-client>
         LABELS guest;gpu;webgl;external;full;pressure
         TIMEOUT 1800
-        PROCESSORS 10
-        RESOURCE_GROUPS cpus:10,gpus:1)
+        CPUS 10
+        GPUS 1)
 endif()
 
 # The iOS slice renders through Mesa Zink on KosmicKrisp, which requires Metal
