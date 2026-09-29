@@ -32,6 +32,7 @@ not exist; the completed release directory is published atomically.
 EOF
 }
 
+. "$SCRIPT_DIR/../producer.sh"
 work_dir=
 output_dir=
 jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1\n')
@@ -71,14 +72,8 @@ esac
 [ "$work_dir" != "$output_dir" ] || fail "work and output directories must differ"
 case "$jobs" in ''|*[!0-9]*) fail "--jobs must be a positive integer" ;; esac
 [ "$jobs" -gt 0 ] || fail "--jobs must be a positive integer"
-[ "$(uname -s)" = Linux ] || fail "the producer requires Linux"
-[ "$(uname -m)" = aarch64 ] || fail "the producer requires native aarch64"
-[ "$(id -u)" -ne 0 ] || fail "run as an ordinary user; the script uses sudo narrowly"
-sudo -n true 2>/dev/null || fail "passwordless sudo is required"
-for command in chroot cpio curl debootstrap e2fsck gzip make mkfs.ext4 \
-	python3 resize2fs sgdisk sha256sum sudo tar; do
-	command -v "$command" >/dev/null 2>&1 || fail "required command is unavailable: $command"
-done
+producer_require_host aarch64 chroot cpio curl debootstrap e2fsck gzip make \
+	mkfs.ext4 python3 resize2fs sgdisk sha256sum sudo tar
 
 requested_output_dir=$output_dir
 output_parent=$(dirname -- "$requested_output_dir")
@@ -93,19 +88,11 @@ case "$final_output_dir" in
 /|/home|/Users|/tmp) fail "unsafe output directory: $final_output_dir" ;;
 esac
 [ "$work_dir" != "$final_output_dir" ] || fail "work and output directories must differ"
-[ ! -e "$final_output_dir" ] && [ ! -L "$final_output_dir" ] || \
-	fail "refusing to replace output directory: $final_output_dir"
-staging_output_dir=$(mktemp -d "$output_parent/.$output_name.partial.XXXXXX")
+producer_require_absent "output directory" "$final_output_dir"
 chroot_proc=
-cleanup_output()
-{
-	unmount_chroot_proc || true
-	[ -n "$staging_output_dir" ] || return
-	rm -rf -- "$staging_output_dir"
-}
-trap cleanup_output EXIT
-trap 'exit 1' HUP INT TERM
-output_dir=$staging_output_dir
+producer_exit_hook=unmount_chroot_proc
+producer_stage "$output_parent" "$output_name"
+output_dir=$staging_dir
 
 sources_dir=$work_dir/sources
 roots_dir=$work_dir/roots
@@ -145,16 +132,6 @@ unmount_chroot_proc()
 	[ -n "$chroot_proc" ] || return 0
 	as_root umount -- "$chroot_proc"
 	chroot_proc=
-}
-
-write_root_file()
-{
-	destination=$1
-	mode=$2
-	temporary=$(mktemp "$work_dir/.root-file.XXXXXX")
-	cat > "$temporary"
-	as_root install -D -m "$mode" "$temporary" "$destination"
-	rm -f -- "$temporary"
 }
 
 download_checked()
@@ -676,8 +653,6 @@ python3 "$SCRIPT_DIR/write-manifest.py" \
 	--alpine-sha256 "$ALPINE_SHA256" \
 	--debian-suite "$DEBIAN_SUITE" \
 	--debian-version "$(cat "$work_dir/debian.version")"
-mv -T -n -- "$output_dir" "$final_output_dir"
-[ ! -e "$output_dir" ] || fail "output directory appeared during publication"
-staging_output_dir=
-trap - EXIT HUP INT TERM
+producer_publish "$output_dir" "$final_output_dir"
+producer_finish
 printf '%s\n' "Built starter release: $final_output_dir"
