@@ -362,7 +362,8 @@ and a `uml-initramfs`. With the same emulator and any x86-64 image,
 freestanding x86-64 and i386 probe with `clang++` and `ld.lld` and checks the
 slice's user-RFLAGS contract from the
 [mainline README](../kernel/mainline-6.18/README.md): the value `execve()`
-starts a task with, and the bits a tracer and a signal return may change.
+starts a task with, the bits a tracer and a signal return may change, and that
+RF from IRET or a signal return is gone by the next instruction's system call.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session

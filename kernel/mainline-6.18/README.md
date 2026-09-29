@@ -115,7 +115,9 @@ path. User RFLAGS follow Linux x86 for both ABIs: `execve()` starts a task with
 0x202 (IF and bit 1), a signal return restores only `FIX_EFLAGS` (CF, PF, AF,
 ZF, SF, TF, DF, OF, RF and AC), and a tracer may change those bits and NT.
 IOPL, VM, VIF, VIP and ID stay the task's and IF stays set; the Darwin host
-also sets IF and bit 1 on every entry to the task.
+also sets IF and bit 1 on every entry to the task. RF, which IRET at CPL 3 and
+a signal return may set, is gone when the next instruction starts, so a system
+call that instruction makes, and its signal frame, never show it.
 `tests/integration/x86_64/run_guest_x86_64_rflags.py` checks this. Host instruction
 execution is qualified against the pinned FEX handwritten x86-64 corpus;
 distribution and complete Linux syscall compatibility require separate guest
