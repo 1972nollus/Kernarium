@@ -33,8 +33,6 @@ if(TARGET uml_balloon_device)
         UML::BalloonDevice
         UML::HostGpuMemory
         "-framework Metal")
-    target_compile_options(uml_gpu_host_graphics_footprint_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     uml_add_unit_test(
         NAME gpu-host-graphics-footprint
         COMMAND uml_gpu_host_graphics_footprint_tests
@@ -285,7 +283,6 @@ if(TARGET uml_gpu_service)
     target_include_directories(uml_gpu_import_bounds_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
     target_compile_options(uml_gpu_import_bounds_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
         -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-import-bounds
         COMMAND uml_gpu_import_bounds_tests
@@ -307,7 +304,6 @@ if(TARGET uml_gpu_service)
     target_include_directories(uml_gpu_resource_metal_texture_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
     target_compile_options(uml_gpu_resource_metal_texture_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
         -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-resource-metal-texture
         COMMAND uml_gpu_resource_metal_texture_tests
@@ -490,7 +486,6 @@ if(TARGET uml_gpu_display)
         "-framework Foundation"
         "-framework Metal")
     target_compile_options(uml_gpu_vnc_lifetime_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
         -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-vnc-lifetime
         COMMAND uml_gpu_vnc_lifetime_tests
@@ -508,7 +503,6 @@ if(TARGET uml_gpu_display)
             "-framework Foundation"
             "-framework Metal")
         target_compile_options(uml_gpu_vnc_product_tests PRIVATE
-            $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
             -Wno-deprecated-declarations)
         uml_add_unit_test(NAME gpu-vnc-product-readback
             COMMAND uml_gpu_vnc_product_tests
@@ -526,8 +520,6 @@ if(TARGET uml_gpu_display)
             "-framework CoreGraphics")
         target_include_directories(uml_gpu_native_display_menu_teardown_tests
             PRIVATE ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-        target_compile_options(uml_gpu_native_display_menu_teardown_tests PRIVATE
-            $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
         uml_add_unit_test(NAME gpu-native-display-menu-teardown
             COMMAND uml_gpu_native_display_menu_teardown_tests
             WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -549,8 +541,6 @@ if(TARGET uml_gpu_display)
             "-framework QuartzCore")
         target_include_directories(uml_gpu_metal_presentation_tests
             PRIVATE ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-        target_compile_options(uml_gpu_metal_presentation_tests PRIVATE
-            $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
         uml_add_unit_test(NAME gpu-native-metal-presentation
             COMMAND uml_gpu_metal_presentation_tests
             WORKING_DIRECTORY "${_uml_unit_binary_directory}"

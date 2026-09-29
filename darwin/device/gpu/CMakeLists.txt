@@ -17,8 +17,6 @@ if(TARGET uml_third_party_kosmickrisp)
     uml_configure_gpu_component(uml_gpu_kosmickrisp_capability_probe)
     target_compile_definitions(uml_gpu_kosmickrisp_capability_probe PRIVATE
         VK_ENABLE_BETA_EXTENSIONS=1)
-    target_compile_options(uml_gpu_kosmickrisp_capability_probe PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     target_link_libraries(uml_gpu_kosmickrisp_capability_probe PRIVATE
         UML::ThirdPartyKosmicKrisp
         "-framework Foundation"
@@ -69,8 +67,6 @@ else()
 endif()
 add_library(uml_gpu_display STATIC ${_uml_gpu_display_sources})
 uml_configure_gpu_component(uml_gpu_display)
-target_compile_options(uml_gpu_display PRIVATE
-    $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 target_compile_definitions(uml_gpu_display PRIVATE
     UML_GPU_HAS_VNC=$<BOOL:${UML_TARGET_MACOS}>
     UML_GPU_VNC_STARTUP_TESTING=0)
@@ -105,8 +101,6 @@ if(UML_BUILD_UNIT_TESTS AND UML_TARGET_MACOS)
         scanout_framebuffer.cpp
         vnc_display.cpp)
     uml_configure_gpu_component(uml_gpu_display_test_variant)
-    target_compile_options(uml_gpu_display_test_variant PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     target_compile_definitions(uml_gpu_display_test_variant PUBLIC
         UML_GPU_VNC_STARTUP_TESTING=1)
     target_include_directories(uml_gpu_display_test_variant PUBLIC

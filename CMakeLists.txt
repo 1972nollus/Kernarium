@@ -6,8 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 # The one owner of the warning policy: every first-party C++ and
 # Objective-C++ source builds warning-clean. Hand-written assembly opts in
-# with a source COMPILE_OPTIONS property.
-add_compile_options("$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall;-Wextra;-Werror>")
+# with a source COMPILE_OPTIONS property. Objective-C++ always uses ARC.
+add_compile_options("$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall;-Wextra;-Werror>"
+    "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
 
 list(APPEND CMAKE_MODULE_PATH
     "${PROJECT_SOURCE_DIR}/cmake"
@@ -87,7 +88,7 @@ option(UML_BUILD_NETWORK_PROVIDER
 
 # darwin/platform compiles Objective-C++ in every configuration. Without the
 # language its .mm sources fall to the C++ rule, which drops their
-# OBJCXX-only options, among them -fobjc-arc.
+# OBJCXX-only options, among them the -fobjc-arc set above.
 enable_language(OBJCXX)
 
 option(UML_GUEST_16K_PAGES

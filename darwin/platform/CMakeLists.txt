@@ -15,7 +15,6 @@ add_library(uml_video_decoder STATIC apple/video_decoder.mm)
 add_library(UML::VideoDecoder ALIAS uml_video_decoder)
 uml_declare_architecture_target(uml_video_decoder platform)
 target_include_directories(uml_video_decoder PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(uml_video_decoder PRIVATE -fobjc-arc)
 target_link_libraries(uml_video_decoder PRIVATE UML::PlatformContract
     "-framework Foundation" "-framework CoreMedia" "-framework CoreVideo"
     "-framework VideoToolbox")
@@ -25,8 +24,6 @@ add_library(UML::HostBattery ALIAS uml_host_battery)
 uml_declare_architecture_target(uml_host_battery platform)
 target_include_directories(uml_host_battery PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(uml_host_battery PRIVATE
-    $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 target_link_libraries(uml_host_battery PRIVATE
     UML::PlatformContract
     "-framework Foundation")
@@ -41,8 +38,6 @@ add_library(UML::HostGpuMemory ALIAS uml_host_gpu_memory)
 uml_declare_architecture_target(uml_host_gpu_memory platform)
 target_include_directories(uml_host_gpu_memory PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(uml_host_gpu_memory PRIVATE
-    $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 target_link_libraries(uml_host_gpu_memory PRIVATE
     UML::PlatformContract
     objc
@@ -86,8 +81,6 @@ target_include_directories(uml_host_environment PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(uml_host_environment PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
-target_compile_options(uml_host_environment PRIVATE
-    $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 
 add_library(uml_guest_files OBJECT guest_files.cpp)
 add_library(UML::GuestFiles ALIAS uml_guest_files)

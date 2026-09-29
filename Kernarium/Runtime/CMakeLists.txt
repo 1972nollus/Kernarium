@@ -129,8 +129,6 @@ target_link_libraries(KernariumRuntime PRIVATE
     "-framework Metal"
     "-framework MetalKit"
     "-framework UIKit")
-target_compile_options(KernariumRuntime PRIVATE
-    $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 target_compile_definitions(KernariumRuntime PRIVATE
     KERNARIUM_RUNTIME_ANDROID_GUEST=${KERNARIUM_RUNTIME_ANDROID_GUEST}
     KERNARIUM_RUNTIME_GUEST_FLAVOR=${KERNARIUM_RUNTIME_GUEST_FLAVOR}
