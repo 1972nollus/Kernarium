@@ -134,6 +134,9 @@ done
 
 MANIFEST_HASH=$(sha256_file "$MANIFEST")
 cp "$MANIFEST" "$BASE_PREFIX/share/uml-dependencies/manifest.tsv"
+FIXTURE_TREE=$(git -C "$PATCH_REPOSITORY" rev-parse 'HEAD^{tree}')
+printf 'source\ttree\nfixture\t%s\n' "$FIXTURE_TREE" \
+	>"$BASE_PREFIX/share/uml-dependencies/source-trees.tsv"
 
 # GLib installs debugger helpers whose filenames embed an ELF shared-library
 # basename but end in -gdb.py. They are scripts, not dynamic libraries.
@@ -229,6 +232,26 @@ CASE_PREFIX="$TEST_ROOT/unrecorded-manifest"
 copy_fixture "$CASE_PREFIX"
 rm "$CASE_PREFIX/share/uml-dependencies/manifest.tsv"
 expect_failure "prefix without its dependency manifest" "$CASE_PREFIX"
+
+CASE_PREFIX="$TEST_ROOT/unrecorded-source-trees"
+copy_fixture "$CASE_PREFIX"
+rm "$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
+expect_failure "prefix without its patched source trees" "$CASE_PREFIX"
+
+# A series change that alters the tree keeps the manifest row, so only the
+# recorded tree tells the prefix is stale.
+CASE_PREFIX="$TEST_ROOT/other-source-tree"
+copy_fixture "$CASE_PREFIX"
+printf 'source\ttree\nfixture\t%s\n' \
+	"$(git -C "$PATCH_REPOSITORY" rev-parse 'HEAD~1^{tree}')" \
+	>"$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
+expect_failure "prefix built from another patched tree" "$CASE_PREFIX"
+
+CASE_PREFIX="$TEST_ROOT/headerless-source-trees"
+copy_fixture "$CASE_PREFIX"
+printf 'fixture\t%s\n' "$FIXTURE_TREE" \
+	>"$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
+expect_failure "source trees without their header" "$CASE_PREFIX"
 
 # Rows of other products and the products column itself do not identify this
 # prefix; a changed macos row does.

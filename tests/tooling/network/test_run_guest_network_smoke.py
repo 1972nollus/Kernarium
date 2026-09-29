@@ -76,6 +76,9 @@ class NetworkSmokeTaxonomyTests(unittest.TestCase):
             mock.patch.object(
                 run_guest_network_smoke, "run_node", side_effect=run_node
             ),
+            mock.patch.object(
+                run_guest_network_smoke, "verify_concurrent_forward"
+            ) as verify_forward,
         ):
             self.assertEqual(run_guest_network_smoke.main(), 0)
             # Guest userspace owns address configuration: every campaign has
@@ -83,6 +86,9 @@ class NetworkSmokeTaxonomyTests(unittest.TestCase):
             start_dhcp.assert_called_once()
             wait_for_lease.assert_called_once()
             verify_lease.assert_called_once_with("", "", "")
+            # Both campaigns carry host connections through the forward the
+            # guest was booted with.
+            verify_forward.assert_called_once()
         return scripts
 
     def test_default_campaign_does_not_issue_dns(self) -> None:

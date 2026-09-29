@@ -103,6 +103,35 @@ INSTALLED_MANIFEST="$PREFIX/share/uml-dependencies/manifest.tsv"
 	fail "prefix records no dependency manifest; rebuild it with dependencies/build.sh"
 [ "$(product_rows "$INSTALLED_MANIFEST")" = "$(product_rows "$MANIFEST")" ] ||
 	fail "prefix was built from different macos dependency rows; rebuild it"
+
+# A patched source is identified by the tree its series records, so a series
+# change that alters the tree invalidates the prefix while its row stays the
+# same. The last layer of a series records the tree of the whole stack.
+expected_trees=$(
+	awk -F '\t' '
+		/^#/ || /^[[:space:]]*$/ || $1 == "name" { next }
+		index("," $3 ",", ",macos,") && $7 != "-" { print $1 "\t" $7 }
+	' "$MANIFEST" | while IFS="$tab" read -r patched patched_series; do
+		patched_tree=$(awk -F '\t' '$1 == "tree" { print $2 }' \
+			"$SCRIPT_DIR/${patched_series##*+}")
+		printf '%s\t%s\n' "$patched" "$patched_tree"
+	done | LC_ALL=C sort
+)
+SOURCE_TREES="$PREFIX/share/uml-dependencies/source-trees.tsv"
+if [ -n "$expected_trees" ]; then
+	[ -f "$SOURCE_TREES" ] && [ ! -L "$SOURCE_TREES" ] ||
+		fail "prefix records no source trees; rebuild it with dependencies/build.sh"
+	[ "$(sed -n '1p' "$SOURCE_TREES")" = "$(printf 'source\ttree')" ] ||
+		fail "prefix source trees are malformed"
+	installed_trees=$(sed '1d' "$SOURCE_TREES" | LC_ALL=C sort)
+	[ "$installed_trees" = "$expected_trees" ] || {
+		printf '%s\n' "patched source trees the series record:" \
+			"$expected_trees" \
+			"patched source trees the prefix was built from:" \
+			"$installed_trees" >&2
+		fail "prefix was built from other patched source trees; rebuild it"
+	}
+fi
 [ "$(receipt_value schema)" = 2 ] || fail "unsupported receipt schema"
 [ "$(receipt_value platform)" = macos ] || fail "prefix is not a macOS build"
 [ "$(receipt_value architecture)" = arm64 ] || fail "prefix is not arm64"
