@@ -75,7 +75,7 @@ file(WRITE "${TEST_ROOT}/tests/unit/fixture/CMakeLists.txt"
 file(WRITE "${TEST_ROOT}/Kernarium/Fixture.xcodeproj/project.pbxproj"
     "\t\tD1 /* fixture.mm */ = {isa = PBXFileReference; name = fixture.mm; "
     "path = ../${FIXTURE_TREE}/platform/apple/fixture.mm; sourceTree = SOURCE_ROOT; };\n")
-uml_audit_foreign_darwin_sources("${TEST_ROOT}" FOREIGN_SOURCE_VIOLATIONS)
+uml_audit_build_files("${TEST_ROOT}" FOREIGN_SOURCE_VIOLATIONS)
 if(NOT FOREIGN_SOURCE_VIOLATIONS MATCHES
    "fixture/CMakeLists.txt: compiles ${FIXTURE_TREE}/device/fixture/fixture_device\\.cpp")
     message(FATAL_ERROR "source audit accepted a test CMake file compiling a darwin/ source")
@@ -94,7 +94,7 @@ file(WRITE "${TEST_ROOT}/Kernarium/Fixture.xcodeproj/project.pbxproj"
     "name = Fixture.xcframework; "
     "path = \"../.build/kernarium-xcframeworks/Fixture.xcframework\"; "
     "sourceTree = SOURCE_ROOT; };\n")
-uml_audit_foreign_darwin_sources("${TEST_ROOT}" OWNER_PRODUCT_VIOLATIONS)
+uml_audit_build_files("${TEST_ROOT}" OWNER_PRODUCT_VIOLATIONS)
 if(OWNER_PRODUCT_VIOLATIONS)
     message(FATAL_ERROR
         "source audit rejected targets linking the owner's product: ${OWNER_PRODUCT_VIOLATIONS}")
@@ -134,6 +134,14 @@ list(APPEND REJECTED
 uml_write_audit_fixture(darwin/memory/fixture/tab_layer.cpp
     "#include\t\"runtime/fixture.hpp\"")
 list(APPEND REJECTED "tab_layer\\.cpp: [A-Za-z]+ layer includes")
+# Neither memory nor device code depends on the CPU.
+uml_write_audit_fixture(darwin/memory/fixture/memory_cpu.cpp
+    "#include \"cpu/fixture.hpp\"")
+uml_write_audit_fixture(darwin/device/fixture/device_cpu.cpp
+    "#include <darwin/cpu/fixture.hpp>")
+list(APPEND REJECTED
+    "memory_cpu\\.cpp: memory layer includes the cpu layer"
+    "device_cpu\\.cpp: device layer includes the cpu layer")
 list(APPEND ACCEPTED
     "device_memory\\.cpp: [A-Za-z]+ layer"
     "runtime_device\\.cpp: [A-Za-z]+ layer")
@@ -196,16 +204,30 @@ list(APPEND ACCEPTED
 uml_write_audit_fixture(tests/fixture/CMakeLists.txt
     "add_test(NAME fixture COMMAND fixture)")
 uml_write_audit_fixture(tests/fixture/Suite.cmake "ADD_TEST (fixture fixture)")
+# CMake reads a carriage return as a space, before the command and before its
+# parenthesis alike.
+uml_write_audit_fixture(tests/fixture/Carriage.cmake
+    "\t\r add_test \r(NAME fixture COMMAND fixture)")
 uml_write_audit_fixture(tests/fixture/Commented.cmake
     "# add_test(NAME fixture COMMAND fixture)")
 uml_write_audit_fixture(cmake/UmlTesting.cmake
     "add_test(NAME fixture COMMAND fixture)")
+# tools/ holds guest-side CMake projects that never join the host build.
+uml_write_audit_fixture(tools/fixture/CMakeLists.txt
+    "add_test(NAME fixture COMMAND fixture)")
 list(APPEND REJECTED
     "fixture/CMakeLists\\.txt: raw add_test bypasses"
-    "fixture/Suite\\.cmake: raw add_test bypasses")
+    "fixture/Suite\\.cmake: raw add_test bypasses"
+    "fixture/Carriage\\.cmake: raw add_test bypasses")
 list(APPEND ACCEPTED
     "Commented\\.cmake: raw add_test"
-    "UmlTesting\\.cmake: raw add_test")
+    "UmlTesting\\.cmake: raw add_test"
+    "tools/fixture/CMakeLists\\.txt: raw add_test")
+
+# A darwin/ owner names its own sources.
+uml_write_audit_fixture(darwin/fixture/CMakeLists.txt
+    "add_library(fixture \${PROJECT_SOURCE_DIR}/${FIXTURE_TREE}/fixture/owned.cpp)")
+list(APPEND ACCEPTED "darwin/fixture/CMakeLists\\.txt: compiles")
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${TEST_ROOT}" -P "${AUDIT_SCRIPT}"

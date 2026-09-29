@@ -40,25 +40,22 @@ clean_build_environment()
 		"$@"
 }
 
+# A packaged header tree holds exactly the public headers, as regular files
+# with their source's bytes.
 verify_public_headers()
 {
 	header_root=$1
-	audit_dir=$2
-	mkdir -p -- "$audit_dir"
-	[ -f "$header_root/uml/emulator.h" ] ||
-		fail "missing public header: $header_root/uml/emulator.h"
-	[ -f "$header_root/uml/abi_identity.h" ] ||
-		fail "missing public header: $header_root/uml/abi_identity.h"
 	symlink=$(find "$header_root" -type l -print -quit)
 	[ -z "$symlink" ] || fail "public header tree contains a symlink: $symlink"
-	find "$header_root" -type f -print > "$audit_dir/headers.unsorted"
-	LC_ALL=C sort "$audit_dir/headers.unsorted" > "$audit_dir/headers.actual"
-	printf '%s\n' \
-		"$header_root/uml/abi_identity.h" \
-		"$header_root/uml/emulator.h" > "$audit_dir/headers.expected"
-	LC_ALL=C sort "$audit_dir/headers.expected" > "$audit_dir/headers.expected.sorted"
-	cmp "$audit_dir/headers.expected.sorted" "$audit_dir/headers.actual" ||
+	expected=$(printf '%s\n' \
+		"$header_root/uml/abi_identity.h" "$header_root/uml/emulator.h")
+	[ "$(find "$header_root" -type f | LC_ALL=C sort)" = "$expected" ] ||
 		fail "public header tree contains an unexpected or missing file: $header_root"
+	for header in abi_identity.h emulator.h; do
+		cmp "$project_root/darwin/api/include/uml/$header" \
+			"$header_root/uml/$header" ||
+			fail "public header differs from its source: $header_root/uml/$header"
+	done
 }
 
 verify_archive()
@@ -128,75 +125,36 @@ verify_archive()
 		fail "$platform archive does not carry every first-party object it references"
 }
 
+# Configure and build the external consumers against the package the
+# trailing -D options name, and run them where the host can.
 build_consumer()
 {
 	platform=$1
-	mode=$2
-	location=$3
-	headers=$4
-	consumer_dir=$5
-
-	if [ "$mode" = package ]; then
-		clean_build_environment cmake \
-			-S "$project_root/tests/consumer/apple" \
-			-B "$consumer_dir" -G Ninja \
-			-DCMAKE_TOOLCHAIN_FILE="$toolchain" \
-			-DUML_APPLE_PLATFORM="$platform" \
-			-DUML_EMULATOR_PACKAGE_PREFIX="$location" \
-			-DUML_EXPECTED_GUEST_PAGE_SIZE=16384 \
-			-DCMAKE_BUILD_TYPE=Release \
-			-DCMAKE_C_FLAGS:STRING= \
-			-DCMAKE_CXX_FLAGS:STRING= \
-			-DCMAKE_OBJC_FLAGS:STRING= \
-			-DCMAKE_EXE_LINKER_FLAGS:STRING=
-	else
-		clean_build_environment cmake \
-			-S "$project_root/tests/consumer/apple" \
-			-B "$consumer_dir" -G Ninja \
-			-DCMAKE_TOOLCHAIN_FILE="$toolchain" \
-			-DUML_APPLE_PLATFORM="$platform" \
-			-DUML_EMULATOR_LIBRARY="$location" \
-			-DUML_EMULATOR_HEADERS="$headers" \
-			-DUML_EXPECTED_GUEST_PAGE_SIZE=16384 \
-			-DCMAKE_BUILD_TYPE=Release \
-			-DCMAKE_C_FLAGS:STRING= \
-			-DCMAKE_CXX_FLAGS:STRING= \
-			-DCMAKE_OBJC_FLAGS:STRING= \
-			-DCMAKE_EXE_LINKER_FLAGS:STRING=
-	fi
+	generator=$2
+	consumer_dir=$3
+	shift 3
+	clean_build_environment cmake \
+		-S "$project_root/tests/consumer/apple" \
+		-B "$consumer_dir" -G "$generator" \
+		-DCMAKE_TOOLCHAIN_FILE="$toolchain" \
+		-DUML_APPLE_PLATFORM="$platform" \
+		-DUML_EXPECTED_GUEST_PAGE_SIZE=16384 \
+		-DCMAKE_C_FLAGS:STRING= \
+		-DCMAKE_CXX_FLAGS:STRING= \
+		-DCMAKE_OBJC_FLAGS:STRING= \
+		-DCMAKE_EXE_LINKER_FLAGS:STRING= \
+		"$@"
 	cmake --build "$consumer_dir" --config Release \
 		--target uml-emulator-external-consumer \
 			uml-emulator-external-c-consumer \
 			uml-emulator-external-objc-consumer --parallel
 	if [ "$platform" = macos ]; then
-		"$consumer_dir/uml-emulator-external-consumer"
-		"$consumer_dir/uml-emulator-external-c-consumer"
-		"$consumer_dir/uml-emulator-external-objc-consumer"
+		binaries=$consumer_dir
+		[ "$generator" = Ninja ] || binaries="$consumer_dir/Release"
+		"$binaries/uml-emulator-external-consumer"
+		"$binaries/uml-emulator-external-c-consumer"
+		"$binaries/uml-emulator-external-objc-consumer"
 	fi
-}
-
-build_xcode_xcframework_consumer()
-{
-	xcframework=$1
-	consumer_dir=$2
-	clean_build_environment cmake \
-		-S "$project_root/tests/consumer/apple" \
-		-B "$consumer_dir" -G Xcode \
-		-DCMAKE_TOOLCHAIN_FILE="$toolchain" \
-		-DUML_APPLE_PLATFORM=macos \
-		-DUML_EMULATOR_XCFRAMEWORK="$xcframework" \
-		-DUML_EXPECTED_GUEST_PAGE_SIZE=16384 \
-		-DCMAKE_C_FLAGS:STRING= \
-		-DCMAKE_CXX_FLAGS:STRING= \
-		-DCMAKE_OBJC_FLAGS:STRING= \
-		-DCMAKE_EXE_LINKER_FLAGS:STRING=
-	cmake --build "$consumer_dir" --config Release \
-		--target uml-emulator-external-consumer \
-			uml-emulator-external-c-consumer \
-			uml-emulator-external-objc-consumer --parallel
-	"$consumer_dir/Release/uml-emulator-external-consumer"
-	"$consumer_dir/Release/uml-emulator-external-c-consumer"
-	"$consumer_dir/Release/uml-emulator-external-objc-consumer"
 }
 
 build_slice()
@@ -240,18 +198,15 @@ build_slice()
 	install_dir="$build_dir/install"
 	cmake --install "$build_dir" --config Release --prefix "$install_dir"
 	installed_library="$install_dir/lib/libuml_emulator.a"
-	cmp "$project_root/darwin/api/include/uml/emulator.h" \
-		"$install_dir/include/uml/emulator.h"
-	cmp "$project_root/darwin/api/include/uml/abi_identity.h" \
-		"$install_dir/include/uml/abi_identity.h"
-	verify_public_headers "$install_dir/include" \
-		"$build_dir/package-audit/installed-headers"
+	# The stager refuses an install tree with other headers or a symlink,
+	# and the final package's headers are compared with their sources.
 	[ -f "$install_dir/lib/cmake/UMLEmulator/UMLEmulatorConfig.cmake" ] ||
 		fail "$platform install is missing its CMake package metadata"
 	verify_archive "$platform" "$installed_library" \
 		"$build_dir/package-audit/installed"
-	build_consumer "$platform" package "$install_dir" "" \
-		"$build_dir/installed-external-consumer"
+	build_consumer "$platform" Ninja "$build_dir/installed-external-consumer" \
+		-DUML_EMULATOR_PACKAGE_PREFIX="$install_dir" \
+		-DCMAKE_BUILD_TYPE=Release
 
 	case "$platform" in
 	macos)
@@ -270,20 +225,16 @@ verify_final_slice()
 {
 	platform=$1
 	identifier=$2
-	install_dir=$3
 	slice_root="$staged_output/$identifier"
 	final_library="$slice_root/libuml_emulator.a"
 	final_headers="$slice_root/Headers"
 	verify_archive "$platform" "$final_library" \
 		"$work_root/final-audit/$platform"
-	cmp "$install_dir/include/uml/emulator.h" \
-		"$final_headers/uml/emulator.h"
-	cmp "$install_dir/include/uml/abi_identity.h" \
-		"$final_headers/uml/abi_identity.h"
-	verify_public_headers "$final_headers" \
-		"$work_root/final-audit/$platform-headers"
-	build_consumer "$platform" raw "$final_library" "$final_headers" \
-		"$work_root/final-consumer/$platform"
+	verify_public_headers "$final_headers"
+	build_consumer "$platform" Ninja "$work_root/final-consumer/$platform" \
+		-DUML_EMULATOR_LIBRARY="$final_library" \
+		-DUML_EMULATOR_HEADERS="$final_headers" \
+		-DCMAKE_BUILD_TYPE=Release
 }
 
 build_root=$(canonical_destination "$build_root")
@@ -329,60 +280,36 @@ python3 -B "$xcframework_stager" \
 	--slice "ios-simulator=$ios_simulator_install" \
 	--output "$staged_output"
 
-plist="$staged_output/Info.plist"
-[ -f "$plist" ] || fail "XCFramework has no Info.plist: $staged_output"
-plist_buddy=/usr/libexec/PlistBuddy
-[ -x "$plist_buddy" ] || fail "PlistBuddy is required"
-saw_macos=0
-saw_ios=0
-saw_simulator=0
-for index in 0 1 2; do
-	platform=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:SupportedPlatform" "$plist")
-	variant=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:SupportedPlatformVariant" \
-		"$plist" 2>/dev/null || true)
-	architecture=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:SupportedArchitectures:0" "$plist")
-	identifier=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:LibraryIdentifier" "$plist")
-	library_path=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:LibraryPath" "$plist")
-	headers_path=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:HeadersPath" "$plist")
-	[ "$architecture" = arm64 ] ||
-		fail "XCFramework slice $index is not arm64: $architecture"
-	if $plist_buddy -c \
-		"Print :AvailableLibraries:$index:SupportedArchitectures:1" \
-		"$plist" >/dev/null 2>&1; then
-		fail "XCFramework slice $index contains more than one architecture"
-	fi
-	[ "$library_path" = libuml_emulator.a ] ||
-		fail "XCFramework slice $index has unexpected library path: $library_path"
-	[ "$headers_path" = Headers ] ||
-		fail "XCFramework slice $index has unexpected headers path: $headers_path"
-	case "$platform:$variant:$identifier" in
-	macos::macos-arm64) saw_macos=$((saw_macos + 1)) ;;
-	ios::ios-arm64) saw_ios=$((saw_ios + 1)) ;;
-	ios:simulator:ios-arm64-simulator)
-		saw_simulator=$((saw_simulator + 1))
-		;;
-	*) fail "unexpected XCFramework slice $index: $platform:$variant:$identifier" ;;
-	esac
-done
-if $plist_buddy -c "Print :AvailableLibraries:3" "$plist" \
-	>/dev/null 2>&1; then
-	fail "XCFramework contains more than the three supported slices"
-fi
-[ "$saw_macos" -eq 1 ] && [ "$saw_ios" -eq 1 ] &&
-	[ "$saw_simulator" -eq 1 ] ||
-	fail "XCFramework does not contain one exact supported slice per platform"
+# The staged Info.plist describes exactly the three supported arm64 slices.
+if ! python3 -B - "$staged_output/Info.plist" <<'EOF'
+import plistlib
+import sys
 
-verify_final_slice macos macos-arm64 "$macos_install"
-verify_final_slice ios ios-arm64 "$ios_install"
-verify_final_slice ios-simulator ios-arm64-simulator "$ios_simulator_install"
-build_xcode_xcframework_consumer "$staged_output" \
-	"$work_root/final-xcode-consumer/macos"
+with open(sys.argv[1], "rb") as stream:
+    libraries = plistlib.load(stream)["AvailableLibraries"]
+slices = sorted(
+    (library["SupportedPlatform"], library.get("SupportedPlatformVariant", ""),
+     library["LibraryIdentifier"], library["SupportedArchitectures"],
+     library["LibraryPath"], library["HeadersPath"])
+    for library in libraries)
+expected = [
+    (platform, variant, identifier, ["arm64"], "libuml_emulator.a", "Headers")
+    for platform, variant, identifier in (
+        ("ios", "", "ios-arm64"),
+        ("ios", "simulator", "ios-arm64-simulator"),
+        ("macos", "", "macos-arm64"))]
+if slices != expected:
+    sys.exit(f"unexpected XCFramework slices: {slices}")
+EOF
+then
+	fail "XCFramework Info.plist does not describe the three supported slices"
+fi
+
+verify_final_slice macos macos-arm64
+verify_final_slice ios ios-arm64
+verify_final_slice ios-simulator ios-arm64-simulator
+build_consumer macos Xcode "$work_root/final-xcode-consumer/macos" \
+	-DUML_EMULATOR_XCFRAMEWORK="$staged_output"
 
 # An existing package is exchanged with the staged one in a single rename;
 # the previous package then sits in the stage, which cleanup removes. A first
