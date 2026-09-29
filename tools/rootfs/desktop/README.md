@@ -31,6 +31,12 @@ release derived from it.
   classification of the Kernarium and VNC input devices, and an OpenRC
   service granting the display and input nodes to the desktop's groups.
 
+The derivation also removes the machine ID each source was built with, so
+every guest generates its own at first boot and keeps it in its writable
+root. A systemd image carries an empty `/etc/machine-id`; an OpenRC image
+carries none, because `dbus-uuidgen --ensure` rejects an empty file. D-Bus's
+`/var/lib/dbus/machine-id` links to `/etc/machine-id`.
+
 Each image keeps its own init, network, resolver, accounts and session;
 Kernarium boots it through the generic per-run `/init` into `/sbin/init`
 ([Kernarium/README.md](../../../Kernarium/README.md#guest-boot)). The accepted
