@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Normalize pinned K and FEX x86-64 cases into the checked-in unit corpus."""
+"""Normalize pinned K and FEX x86-64 cases, and the repository's own cases,
+into the checked-in unit corpus."""
 
 from __future__ import annotations
 
@@ -27,10 +28,19 @@ import fex_config  # noqa: E402
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
 DEPENDENCY_MANIFEST = REPOSITORY / "dependencies" / "manifest.tsv"
+CORPUS = REPOSITORY / "tests" / "unit" / "x86_64" / "corpus"
+REPOSITORY_CASES = CORPUS / "cases"
 CODE_ADDRESS = 0x1_0000
 STACK_ADDRESS = 0x7000_0000
+PAGE_SIZE = 0x1000
 PACK_MAGIC = b"UMLX86T\0"
 PACK_VERSION = 1
+PACK_KINDS = {"fex": 1, "k": 2, "repository": 3}
+CASE_REQUEST_MAGIC = b"UMLCREQ\0"
+CASE_RESPONSE_MAGIC = b"UMLCRSP\0"
+# The native helper records each state as an event, an instruction index or
+# RIP offset, sixteen GPRs, sixteen YMM registers and RFLAGS.
+NATIVE_STATE_SIZE = 4 + 4 + 16 * 8 + 16 * 32 + 8
 
 # These K floating-point traces contain concrete finite results that disagree
 # with native Intel execution. Bind the complete programs to the native oracle
@@ -427,7 +437,7 @@ def parse_disassembly(text: str) -> list[Instruction]:
     return instructions
 
 
-def assemble_k_program(
+def assemble_program(
     source: pathlib.Path,
     temporary: pathlib.Path,
     clang: str,
@@ -435,6 +445,7 @@ def assemble_k_program(
     objcopy: str,
     objdump: str,
     readelf: str,
+    label: str = "K",
 ) -> tuple[bytes, list[Instruction], list[int]]:
     stem = hashlib.sha256(str(source).encode()).hexdigest()[:16]
     obj = temporary / f"{stem}.o"
@@ -492,15 +503,15 @@ def assemble_k_program(
         sections,
     )
     if section_match is None:
-        fail(f"linked K program has no .text section: {source}")
+        fail(f"linked {label} program has no .text section: {source}")
     text_address = int(section_match.group(1), 16)
     text_size = int(section_match.group(2), 16)
     if text_address != CODE_ADDRESS:
-        fail(f"linked K .text has an unexpected address: {source}")
+        fail(f"linked {label} .text has an unexpected address: {source}")
     offsets = [instruction.address - CODE_ADDRESS for instruction in instructions]
     offsets.append(text_size)
     if offsets != sorted(offsets) or len(set(offsets)) != len(offsets):
-        fail(f"linked K instruction offsets are not strictly ordered: {source}")
+        fail(f"linked {label} instruction offsets are not strictly ordered: {source}")
     return binary.read_bytes(), instructions, offsets
 
 
@@ -918,7 +929,7 @@ def collect_k_programs(
             )
             continue
         try:
-            code, instructions, offsets = assemble_k_program(
+            code, instructions, offsets = assemble_program(
                 source,
                 temporary,
                 tools["clang"],
@@ -1117,6 +1128,242 @@ def collect_fex_records(
     return records, exclusions
 
 
+@dataclass(frozen=True)
+class RepositoryCase:
+    relative: str
+    code: bytes
+    instructions: list[Instruction]
+    regions: tuple[tuple[int, int], ...]
+    registers: tuple[tuple[str, tuple[int, ...]], ...]
+
+
+def register_key(name: str) -> int:
+    """FEX's one-bit register key: RIP, the GPRs from RAX, then XMM0-15."""
+    if name == "RIP":
+        return 1
+    if name in GPR_NAMES:
+        return 1 << (1 + GPR_NAMES.index(name))
+    match = re.fullmatch(r"XMM(\d+)", name)
+    if match is not None and int(match.group(1)) < 16:
+        return 1 << (17 + int(match.group(1)))
+    fail(f"repository cases cannot expect register {name}")
+
+
+def parse_integer_text(value: object, relative: str) -> int:
+    if not isinstance(value, str):
+        fail(f"repository case values are hexadecimal strings: {relative}")
+    try:
+        return int(value, 0)
+    except ValueError:
+        fail(f"invalid repository case value {value!r}: {relative}")
+
+
+def case_configuration(
+    source: pathlib.Path, relative: str, code_size: int
+) -> tuple[tuple[tuple[int, int], ...], tuple[tuple[str, tuple[int, ...]], ...]]:
+    """Read the `/* CONFIG ... */` block: FEX's RegData and MemoryRegions."""
+    text = source.read_text()
+    marker = "/* CONFIG"
+    if text.count(marker) != 1:
+        fail(f"repository case needs exactly one CONFIG block: {relative}")
+    body = text.split(marker, 1)[1].split("*/", 1)[0]
+    try:
+        config = json.loads(body)
+    except json.JSONDecodeError as error:
+        fail(f"invalid repository case CONFIG: {relative}: {error}")
+    if not isinstance(config, dict) or not set(config) <= {
+        "MemoryRegions", "RegData"
+    }:
+        fail(f"repository case CONFIG takes only MemoryRegions and RegData: {relative}")
+    expectations = config.get("RegData")
+    if not isinstance(expectations, dict) or not expectations:
+        fail(f"repository case expects no registers: {relative}")
+    registers: list[tuple[str, tuple[int, ...]]] = []
+    for name, value in expectations.items():
+        name = name.upper()
+        register_key(name)
+        if name.startswith("XMM"):
+            if not isinstance(value, list) or len(value) not in (2, 4):
+                fail(f"{name} expects two or four 64-bit lanes: {relative}")
+            values = tuple(parse_integer_text(item, relative) for item in value)
+        else:
+            values = (parse_integer_text(value, relative),)
+        if any(item >> 64 for item in values):
+            fail(f"{name} expectation exceeds 64 bits: {relative}")
+        registers.append((name, values))
+    if len({name for name, _ in registers}) != len(registers):
+        fail(f"repository case repeats a register: {relative}")
+    regions: list[tuple[int, int]] = []
+    code_end = CODE_ADDRESS + ((code_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
+    occupied = [(CODE_ADDRESS, code_end)]
+    raw_regions = config.get("MemoryRegions", {})
+    if not isinstance(raw_regions, dict):
+        fail(f"MemoryRegions maps addresses to sizes: {relative}")
+    for address_text, size_text in raw_regions.items():
+        address = parse_integer_text(address_text, relative)
+        size = parse_integer_text(size_text, relative)
+        end = address + size
+        if (size == 0 or address % PAGE_SIZE or size % PAGE_SIZE or
+                end > 1 << 47 or
+                any(address < last and first < end for first, last in occupied)):
+            fail(f"invalid repository case region {address:#x}+{size:#x}: {relative}")
+        occupied.append((address, end))
+        regions.append((address, size))
+    return tuple(regions), tuple(registers)
+
+
+def collect_repository_cases(
+    directory: pathlib.Path,
+    temporary: pathlib.Path,
+    tools: dict[str, str],
+) -> list[RepositoryCase]:
+    cases: list[RepositoryCase] = []
+    for source in sorted(directory.glob("*.s")):
+        relative = source.relative_to(CORPUS).as_posix()
+        try:
+            code, instructions, _ = assemble_program(
+                source,
+                temporary,
+                tools["clang"],
+                tools["linker"],
+                tools["objcopy"],
+                tools["objdump"],
+                tools["readelf"],
+                "repository",
+            )
+        except subprocess.CalledProcessError as error:
+            stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else error.stderr
+            fail(f"failed to assemble repository case {relative}: {(stderr or '').strip()}")
+        if b"\xf4" not in code:
+            fail(f"repository case has no HLT terminator: {relative}")
+        regions, registers = case_configuration(source, relative, len(code))
+        cases.append(
+            RepositoryCase(relative, code, instructions, regions, registers)
+        )
+    return cases
+
+
+def case_config(case: RepositoryCase) -> bytes:
+    """Encode FEX's configuration record, which the runner already reads."""
+    regions = b"".join(struct.pack("<QQ", *region) for region in case.regions)
+    registers = b"".join(
+        struct.pack("<IQ", len(values), register_key(name)) +
+        struct.pack(f"<{len(values)}Q", *values)
+        for name, values in case.registers
+    )
+    header_size = 4 * 8 + 3 * 4 + 4 * 8
+    offsets = [
+        header_size,
+        header_size + len(regions),
+        header_size + len(regions) + len(registers),
+        header_size + len(regions) + len(registers),
+    ]
+    header = struct.pack(
+        "<QQQQIII8I",
+        0,
+        0,
+        4096,
+        1,
+        0,
+        1,
+        0,
+        offsets[0], len(case.regions),
+        offsets[1], len(case.registers),
+        offsets[2], 0,
+        offsets[3], 0,
+    )
+    return header + regions + registers
+
+
+def repository_request(cases: list[RepositoryCase]) -> bytes:
+    records = bytearray()
+    for case in cases:
+        name = case.relative.encode()
+        records.extend(
+            struct.pack("<III", len(name), len(case.code), len(case.regions))
+        )
+        for region in case.regions:
+            records.extend(struct.pack("<QQ", *region))
+        records.extend(name)
+        records.extend(case.code)
+    identity = hashlib.sha256(records).digest()
+    return CASE_REQUEST_MAGIC + struct.pack("<II", 1, len(cases)) + identity + records
+
+
+def verify_repository_cases(
+    path: pathlib.Path, request: bytes, cases: list[RepositoryCase]
+) -> dict[str, str]:
+    """Require every declared expectation to be the native final state."""
+    data = path.read_bytes()
+    header = struct.Struct("<8sII12sI32s")
+    if len(data) < header.size:
+        fail("native repository response is truncated")
+    magic, version, count, vendor, signature, identity = header.unpack_from(data)
+    if magic != CASE_RESPONSE_MAGIC or version != 1:
+        fail("native repository response has an invalid header")
+    if identity != request[16:48] or count != len(cases):
+        fail("native repository response does not match the generated request")
+    cursor = header.size
+    for case in cases:
+        name = case.relative.encode()
+        if data[cursor:cursor + 4] != struct.pack("<I", len(name)) or \
+                data[cursor + 4:cursor + 4 + len(name)] != name:
+            fail(f"native repository response is out of order at {case.relative}")
+        cursor += 4 + len(name)
+        state = data[cursor:cursor + NATIVE_STATE_SIZE]
+        if len(state) != NATIVE_STATE_SIZE:
+            fail("native repository response is truncated")
+        cursor += NATIVE_STATE_SIZE
+        event, rip_offset = struct.unpack_from("<II", state)
+        gprs = struct.unpack_from("<16Q", state, 8)
+        vectors = [state[136 + index * 32:168 + index * 32] for index in range(16)]
+        if event != 0 or case.code[rip_offset:rip_offset + 1] != b"\xf4":
+            fail(f"native execution did not stop at HLT: {case.relative}")
+        for register, values in case.registers:
+            if register == "RIP":
+                native = (CODE_ADDRESS + rip_offset,)
+            elif register in GPR_NAMES:
+                native = (gprs[GPR_NAMES.index(register)],)
+            else:
+                vector = vectors[int(register[3:])]
+                native = struct.unpack_from(f"<{len(values)}Q", vector)
+            if native != values:
+                fail(
+                    f"{case.relative}: {register} expected "
+                    f"{[hex(value) for value in values]}, native "
+                    f"{[hex(value) for value in native]}"
+                )
+    if cursor != len(data):
+        fail("native repository response has trailing bytes")
+    return {
+        "vendor": vendor.decode("ascii", errors="strict"),
+        "cpuid_signature": f"0x{signature:08x}",
+        "response_sha256": sha256_file(path),
+    }
+
+
+def collect_repository_records(cases: list[RepositoryCase]) -> list[Record]:
+    """A repository case is written for every instruction it runs, so its
+    forms are all of them rather than those left after setup moves."""
+    return [
+        Record(
+            "repository",
+            case.relative,
+            f"repository/{pathlib.Path(case.relative).name}",
+            case.code,
+            case_config(case),
+            1,
+            tuple(sorted({
+                instruction.form
+                for instruction in case.instructions
+                if instruction.mnemonic not in {"hlt", "nop"}
+            })),
+            "native Intel final state",
+        )
+        for case in cases
+    ]
+
+
 def encode_pack(records: list[Record]) -> bytes:
     output = bytearray(PACK_MAGIC)
     output.extend(struct.pack("<II", PACK_VERSION, len(records)))
@@ -1125,7 +1372,7 @@ def encode_pack(records: list[Record]) -> bytes:
         source = record.source.encode()
         if len(name) > 0xFFFF or len(source) > 0xFFFF:
             fail(f"corpus record name is too long: {record.name}")
-        kind = 1 if record.origin == "fex" else 2
+        kind = PACK_KINDS[record.origin]
         flags = (
             (1 if record.upstream_disabled else 0)
             | (2 if record.nan_class_equivalence else 0)
@@ -1186,8 +1433,9 @@ def write_outputs(
     for record in records:
         for form in record.forms:
             form_counts[form][record.origin] += record.case_count
-    coverage_lines = ["form\tk_cases\tfex_cases"] + [
+    coverage_lines = ["form\tk_cases\tfex_cases\trepository_cases"] + [
         f"{form}\t{form_counts[form]['k']}\t{form_counts[form]['fex']}"
+        f"\t{form_counts[form]['repository']}"
         for form in sorted(form_counts)
     ]
     provenance = {
@@ -1198,6 +1446,9 @@ def write_outputs(
         "cases": sum(record.case_count for record in records),
         "k_records": sum(record.origin == "k" for record in records),
         "fex_records": sum(record.origin == "fex" for record in records),
+        "repository_records": sum(
+            record.origin == "repository" for record in records
+        ),
         "excluded_records": len(exclusions),
         "pack_sha256": sha256_bytes(pack),
     }
@@ -1223,7 +1474,8 @@ def write_outputs(
         temporary.replace(destination)
     print(
         f"wrote {provenance['cases']} x86 instruction cases "
-        f"({provenance['k_records']} K traces, {provenance['fex_records']} FEX programs)"
+        f"({provenance['k_records']} K traces, {provenance['fex_records']} FEX programs, "
+        f"{provenance['repository_records']} repository cases)"
     )
 
 
@@ -1240,6 +1492,16 @@ def main() -> int:
         "--native-response",
         type=pathlib.Path,
         help="consume the response produced by native-k-trace.cpp",
+    )
+    parser.add_argument(
+        "--repository-request",
+        type=pathlib.Path,
+        help="write the repository cases for the native Linux/x86 oracle",
+    )
+    parser.add_argument(
+        "--repository-response",
+        type=pathlib.Path,
+        help="consume the repository-case response produced by native-k-trace.cpp",
     )
     parser.add_argument(
         "--output",
@@ -1264,22 +1526,34 @@ def main() -> int:
             arguments.k_source.resolve(), pathlib.Path(directory), tools
         )
         request = native_request(programs)
-        if arguments.native_request is not None:
-            if arguments.native_response is not None or arguments.check:
-                fail("--native-request cannot be combined with --native-response or --check")
-            destination = arguments.native_request.resolve()
-            destination.write_bytes(request)
-            native_count = sum(
-                program.formal_states is None or
-                program.relative in NATIVE_OVERRIDE_SOURCES
-                for program in programs
-            )
-            print(f"wrote {native_count} native K trace requests to {destination}")
+        cases = collect_repository_cases(
+            REPOSITORY_CASES, pathlib.Path(directory), tools
+        )
+        case_request = repository_request(cases)
+        if arguments.native_request is not None or arguments.repository_request is not None:
+            if (arguments.native_response is not None or
+                    arguments.repository_response is not None or arguments.check):
+                fail("a native request cannot be combined with a response or --check")
+            if arguments.native_request is not None:
+                destination = arguments.native_request.resolve()
+                destination.write_bytes(request)
+                native_count = sum(
+                    program.formal_states is None or
+                    program.relative in NATIVE_OVERRIDE_SOURCES
+                    for program in programs
+                )
+                print(f"wrote {native_count} native K trace requests to {destination}")
+            if arguments.repository_request is not None:
+                destination = arguments.repository_request.resolve()
+                destination.write_bytes(case_request)
+                print(f"wrote {len(cases)} repository case requests to {destination}")
             return 0
         if arguments.native_response is None:
             fail("--native-response is required when generating or checking the corpus")
         if arguments.fex_corpus is None:
             fail("--fex-corpus is required when generating or checking the corpus")
+        if arguments.repository_response is None:
+            fail("--repository-response is required when generating or checking the corpus")
         native, native_identity = native_states(
             arguments.native_response.resolve(), request
         )
@@ -1288,7 +1562,13 @@ def main() -> int:
             arguments.fex_corpus.resolve(), tools["llvm_mc"]
         )
         exclusions.extend(fex_exclusions)
-        records = sorted(k_records + fex_records, key=lambda item: (item.origin, item.name))
+        repository_identity = verify_repository_cases(
+            arguments.repository_response.resolve(), case_request, cases
+        )
+        records = sorted(
+            k_records + fex_records + collect_repository_records(cases),
+            key=lambda item: (item.origin, item.name),
+        )
         write_outputs(
             arguments.output.resolve(),
             records,
@@ -1298,6 +1578,7 @@ def main() -> int:
                 "fex_corpus_sha256": sha256_file(arguments.fex_corpus / "corpus.json"),
                 "k_commit": k_commit,
                 "native_oracle": native_identity,
+                "repository_oracle": repository_identity,
                 "sdm": "325462-092, June 2026",
             },
             arguments.check,
