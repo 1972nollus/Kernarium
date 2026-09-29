@@ -446,12 +446,12 @@ index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..87ab3d9503d22267565e895193a234b6
  
  	if (virtmem_size < physmem_size)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 888bdf3d858c1076a643ee3ec6571c197c3dfed6..82c516e0c4d51e8e34e5640ffe37853578244e1a 100644
+index b01c0dfdea53febe8ea7f8b959f8ee99a0e28903..6461c46c41fe0a278318c14ab51fdca497acda65 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -11,6 +11,7 @@
- #include <asm/unistd.h>
  #include <kern_util.h>
+ #include <longjmp.h>
  #include <os.h>
 +#include <darwin-address-space.h>
  #include <skas.h>
@@ -462,13 +462,13 @@ index 888bdf3d858c1076a643ee3ec6571c197c3dfed6..82c516e0c4d51e8e34e5640ffe378535
   * guest boundary after register state has been reinterpreted. */
  _Static_assert(sizeof(unsigned long) == 8, "Darwin UML ABI requires LP64");
 -_Static_assert(DARWIN_UML_ABI_VERSION == 6U, "unexpected ABI version");
--_Static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x6524b65f20239ea1ULL,
-+_Static_assert(DARWIN_UML_ABI_VERSION == 7U, "unexpected ABI version");
-+_Static_assert(DARWIN_UML_ABI_FINGERPRINT == 0xefcbbdbbf473686eULL,
+-_Static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x7bfd9a6505527c44ULL,
++_Static_assert(DARWIN_UML_ABI_VERSION == 8U, "unexpected ABI version");
++_Static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x3871ad612337ea76ULL,
  	       "unexpected ABI fingerprint");
  _Static_assert(offsetof(struct uml_pt_regs, orig_x0) ==
  	      DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET,
-@@ -938,7 +939,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -457,7 +458,7 @@ void userspace(struct uml_pt_regs *registers)
  			 * into the shadow MMU before asking Linux to resolve a real
  			 * guest page fault.
  			 */
@@ -477,7 +477,7 @@ index 888bdf3d858c1076a643ee3ec6571c197c3dfed6..82c516e0c4d51e8e34e5640ffe378535
  				current_mm_force_sync(fault);
  				retry = darwin_uml_vm_retry_fault(fault,
  					FAULT_EXECUTE(registers->faultinfo),
-@@ -973,7 +974,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -492,7 +493,7 @@ void userspace(struct uml_pt_regs *registers)
  			}
  			segv(registers->faultinfo, UPT_IP(registers), 1,
  			     registers, NULL);
@@ -487,10 +487,10 @@ index 888bdf3d858c1076a643ee3ec6571c197c3dfed6..82c516e0c4d51e8e34e5640ffe378535
  
  				if (current_mm_prefault_host_slot(fault, write) < 0)
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
-index 0e219caee514261c3e297562c2c97bab7aa63ea2..9e483105fb3667c2841e89cd7391f01ac18c94f3 100644
+index 555c32a3d9a42bba23f2f690ccf579f3073f1762..8e770d81be5b491dd65d25007cf0cee7dfc1908d 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
-@@ -68,7 +68,9 @@ enum {
+@@ -69,7 +69,9 @@ enum {
  	(DARWIN_UML_FLOATING_POINT_EC | DARWIN_UML_FLOATING_POINT_IL | \
  	 DARWIN_UML_FLOATING_POINT_TFV)
  
@@ -500,19 +500,19 @@ index 0e219caee514261c3e297562c2c97bab7aa63ea2..9e483105fb3667c2841e89cd7391f01a
  #define DARWIN_UML_NR_RT_SIGRETURN 139ULL
  
  struct darwin_uml_faultinfo {
-@@ -117,8 +119,8 @@ struct darwin_uml_guest_fp_registers {
+@@ -118,8 +120,8 @@ struct darwin_uml_guest_fp_registers {
  
  #if defined(__cplusplus)
  #include <stddef.h>
 -static_assert(DARWIN_UML_ABI_VERSION == 6U);
--static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x6524b65f20239ea1ULL);
-+static_assert(DARWIN_UML_ABI_VERSION == 7U);
-+static_assert(DARWIN_UML_ABI_FINGERPRINT == 0xefcbbdbbf473686eULL);
+-static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x7bfd9a6505527c44ULL);
++static_assert(DARWIN_UML_ABI_VERSION == 8U);
++static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x3871ad612337ea76ULL);
  static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
  static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
- static_assert(DARWIN_UML_FLOATING_POINT_SYNDROME_BASE == 0xb2800000U);
+ static_assert(DARWIN_UML_EVENT_STOP == 9);
 diff --git a/arch/um/os-Darwin/uml_darwin_abi_identity.h b/arch/um/os-Darwin/uml_darwin_abi_identity.h
-index cd75a3d1954d3c534e8fbef2ed391d6e74e17a81..5cbdcbc4aca953903b6851d574c24de6ac876832 100644
+index b9a71eca27ab9e6670d9bcff938daf540db54a32..3dd57da3e4fe970b1d8385230a5828d7e7cc3109 100644
 --- a/arch/um/os-Darwin/uml_darwin_abi_identity.h
 +++ b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 @@ -3,7 +3,7 @@
@@ -520,8 +520,8 @@ index cd75a3d1954d3c534e8fbef2ed391d6e74e17a81..5cbdcbc4aca953903b6851d574c24de6
  #define UML_DARWIN_ABI_IDENTITY_H
  
 -#define DARWIN_UML_ABI_VERSION 6U
--#define DARWIN_UML_ABI_FINGERPRINT 0x6524b65f20239ea1ULL
-+#define DARWIN_UML_ABI_VERSION 7U
-+#define DARWIN_UML_ABI_FINGERPRINT 0xefcbbdbbf473686eULL
+-#define DARWIN_UML_ABI_FINGERPRINT 0x7bfd9a6505527c44ULL
++#define DARWIN_UML_ABI_VERSION 8U
++#define DARWIN_UML_ABI_FINGERPRINT 0x3871ad612337ea76ULL
  
  #endif

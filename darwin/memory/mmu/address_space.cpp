@@ -613,51 +613,36 @@ public:
 		}
 	}
 
-	int matches(std::uint64_t address, int fd, std::uint64_t offset)
-	{
-		address &= ~(page_size - 1);
-		const auto &active = active_thread_generation();
-		const auto generation = generation_for(address,
-			active.address_space == this && active.state &&
-				!active.state->retired.load(std::memory_order_acquire) ?
-				active.generation : 0);
-		auto reference = reference_for(generation);
-		std::shared_lock lock{reference.state->mappings_mutex};
-		auto iterator = reference.state->mappings.find(address);
-		if (iterator == reference.state->mappings.end())
-			return -1;
-		return iterator->second.fd == fd && iterator->second.offset == offset;
-	}
-
 	int discard_if_stale(std::uint64_t address, int fd, std::uint64_t offset)
 	{
 		address &= ~(page_size - 1);
-		auto backing = backing_for(fd);
-		if (!backing || offset > backing->size() ||
-		    page_size > backing->size() - offset)
-			return -1;
 		const auto &active = active_thread_generation();
 		const auto generation = generation_for(address,
 			active.address_space == this && active.state &&
 				!active.state->retired.load(std::memory_order_acquire) ?
 				active.generation : 0);
-		auto state = state_for(generation);
-		const auto names_other_backing = [&] {
-			const auto iterator = state->mappings.find(address);
-			return iterator != state->mappings.end() &&
+		const auto names_other_backing = [&](const GenerationState &state) {
+			const auto iterator = state.mappings.find(address);
+			return iterator != state.mappings.end() &&
 				(iterator->second.fd != fd ||
 				 iterator->second.offset != offset);
 		};
 		{
-			/* Nearly every caller finds the page absent or already right;
-			 * neither is worth stopping the generation's executors for. */
-			std::shared_lock lock{state->mappings_mutex};
-			if (!names_other_backing())
+			/* Every kernel uaccess asks, and nearly every one finds the page
+			 * absent or already right; neither is worth stopping the
+			 * generation's executors for.  The active generation is
+			 * borrowed without a reference, as a translation borrows it.
+			 * The caller's backing is only compared, never installed, so it
+			 * is never looked up. */
+			auto reference = reference_for(generation);
+			std::shared_lock lock{reference.state->mappings_mutex};
+			if (!names_other_backing(*reference.state))
 				return 0;
 		}
+		auto state = state_for(generation);
 		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
-		if (!names_other_backing())
+		if (!names_other_backing(*state))
 			return 0;
 		/* The caller pinned this backing from a PTE it no longer holds the
 		 * lock of, so the disagreement says only that one of the two is
@@ -1971,13 +1956,6 @@ extern "C" int darwin_uml_static_vm_destroy(unsigned long generation)
 {
 	return with_address_space(
 		[&](auto &space) { return space.destroy(generation); });
-}
-
-extern "C" int darwin_uml_static_vm_mapping_matches(
-	unsigned long address, int fd, unsigned long long offset)
-{
-	return with_address_space(
-		[&](auto &space) { return space.matches(address, fd, offset); });
 }
 
 extern "C" int darwin_uml_static_vm_discard_if_stale(unsigned long address,

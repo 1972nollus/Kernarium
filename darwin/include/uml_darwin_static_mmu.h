@@ -64,8 +64,6 @@ int darwin_uml_static_vm_unmap_generation(unsigned long generation,
 int darwin_uml_static_vm_flush_generation(unsigned long generation);
 int darwin_uml_static_vm_activate(unsigned long generation);
 int darwin_uml_static_vm_destroy(unsigned long generation);
-int darwin_uml_static_vm_mapping_matches(unsigned long address, int fd,
-					   unsigned long long offset);
 /* Unmaps the page at `address` when its mapping names other backing than
  * `fd` at `offset`; an absent or equal mapping is left as it is. The caller's
  * backing is never installed: which of the two is stale is unknown, and the

@@ -5,14 +5,14 @@ Subject: [PATCH] uml: define the Darwin fixed-arity host bridge ABI
 
 Apply the reviewed final-state topic without intermediate churn.
 ---
- arch/um/os-Darwin/uml_darwin_abi.h          | 146 ++++++++++++++++++++
+ arch/um/os-Darwin/uml_darwin_abi.h          | 148 ++++++++++++++++++++
  arch/um/os-Darwin/uml_darwin_abi_identity.h |   9 ++
  arch/um/os-Darwin/uml_darwin_bridge.h       |  11 ++
  arch/um/os-Darwin/uml_darwin_cpu.h          |  23 +++
- arch/um/os-Darwin/uml_darwin_host.h         |  20 +++
+ arch/um/os-Darwin/uml_darwin_host.h         |  22 +++
  arch/um/os-Darwin/uml_darwin_memory.h       |  48 +++++++
  arch/um/os-Darwin/uml_darwin_network.h      |  18 +++
- 7 files changed, 275 insertions(+)
+ 7 files changed, 279 insertions(+)
  create mode 100644 arch/um/os-Darwin/uml_darwin_abi.h
  create mode 100644 arch/um/os-Darwin/uml_darwin_abi_identity.h
  create mode 100644 arch/um/os-Darwin/uml_darwin_bridge.h
@@ -23,10 +23,10 @@ Apply the reviewed final-state topic without intermediate churn.
 
 diff --git a/arch/um/os-Darwin/uml_darwin_abi.h b/arch/um/os-Darwin/uml_darwin_abi.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..0e219caee514261c3e297562c2c97bab7aa63ea2
+index 0000000000000000000000000000000000000000..555c32a3d9a42bba23f2f690ccf579f3073f1762
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_abi.h
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,148 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later */
 +/*
 + * Canonical Darwin UML host/kernel data ABI.
@@ -74,6 +74,7 @@ index 0000000000000000000000000000000000000000..0e219caee514261c3e297562c2c97bab
 +	DARWIN_UML_EVENT_GCS_FAULT = 6,
 +	DARWIN_UML_EVENT_FLOATING_POINT_TRAP = 7,
 +	DARWIN_UML_EVENT_PC_ALIGNMENT = 8,
++	DARWIN_UML_EVENT_STOP = 9,
 +	DARWIN_UML_EVENT_FATAL = -1,
 +};
 +
@@ -147,9 +148,10 @@ index 0000000000000000000000000000000000000000..0e219caee514261c3e297562c2c97bab
 +#if defined(__cplusplus)
 +#include <stddef.h>
 +static_assert(DARWIN_UML_ABI_VERSION == 6U);
-+static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x6524b65f20239ea1ULL);
++static_assert(DARWIN_UML_ABI_FINGERPRINT == 0x7bfd9a6505527c44ULL);
 +static_assert(DARWIN_UML_EVENT_FLOATING_POINT_TRAP == 7);
 +static_assert(DARWIN_UML_EVENT_PC_ALIGNMENT == 8);
++static_assert(DARWIN_UML_EVENT_STOP == 9);
 +static_assert(DARWIN_UML_FLOATING_POINT_SYNDROME_BASE == 0xb2800000U);
 +static_assert(DARWIN_UML_GUEST_PAGE_SIZE ==
 +		(1ULL << DARWIN_UML_GUEST_PAGE_SHIFT));
@@ -175,7 +177,7 @@ index 0000000000000000000000000000000000000000..0e219caee514261c3e297562c2c97bab
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_abi_identity.h b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..cd75a3d1954d3c534e8fbef2ed391d6e74e17a81
+index 0000000000000000000000000000000000000000..b9a71eca27ab9e6670d9bcff938daf540db54a32
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_abi_identity.h
 @@ -0,0 +1,9 @@
@@ -185,7 +187,7 @@ index 0000000000000000000000000000000000000000..cd75a3d1954d3c534e8fbef2ed391d6e
 +#define UML_DARWIN_ABI_IDENTITY_H
 +
 +#define DARWIN_UML_ABI_VERSION 6U
-+#define DARWIN_UML_ABI_FINGERPRINT 0x6524b65f20239ea1ULL
++#define DARWIN_UML_ABI_FINGERPRINT 0x7bfd9a6505527c44ULL
 +
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_bridge.h b/arch/um/os-Darwin/uml_darwin_bridge.h
@@ -236,10 +238,10 @@ index 0000000000000000000000000000000000000000..8f0fc63b8119f5fe325a904576338de4
 +#endif
 diff --git a/arch/um/os-Darwin/uml_darwin_host.h b/arch/um/os-Darwin/uml_darwin_host.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..9f808c5dc4ad1d7b967b1747b81ec33ee8418de0
+index 0000000000000000000000000000000000000000..d4e0f91623ebf7f683e389780cda5686e605f80b
 --- /dev/null
 +++ b/arch/um/os-Darwin/uml_darwin_host.h
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,22 @@
 +/* SPDX-License-Identifier: GPL-2.0-or-later */
 +#ifndef UML_DARWIN_HOST_ABI_H
 +#define UML_DARWIN_HOST_ABI_H
@@ -252,6 +254,8 @@ index 0000000000000000000000000000000000000000..9f808c5dc4ad1d7b967b1747b81ec33e
 +int darwin_uml_close(int fd);
 +int darwin_uml_fcntl(int fd, int command, long argument);
 +int darwin_uml_ioctl(int fd, unsigned long command, void *argument);
++int darwin_uml_stop_fd(void);
++int darwin_uml_stop_requested(void);
 +void darwin_uml_abort(void) __attribute__((noreturn));
 +void darwin_uml_exit(int status, void *caller) __attribute__((noreturn));
 +

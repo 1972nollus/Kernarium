@@ -107,13 +107,11 @@ sync_generated()
 
 # Every replayed kernel carries this header byte for byte, so its text,
 # including the comment, changes only together with an ABI-changing topic.
-# The comment still names kernel/abi/identity.env, the path before
-# kernel/common existed; correct it with the next bridge ABI change.
 bridge_identity_header()
 {
 	cat <<EOF
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* Generated values are owned by kernel/abi/identity.env. */
+/* Generated values are owned by kernel/common/abi/identity.env. */
 #ifndef UML_DARWIN_ABI_IDENTITY_H
 #define UML_DARWIN_ABI_IDENTITY_H
 
