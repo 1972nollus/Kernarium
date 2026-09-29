@@ -44,7 +44,7 @@ limit a 4 GiB guest would cross. Android fixes the page profile at 16 KiB.
 
 A Linux guest boots an image file in the application's Documents directory:
 the one the settings name, or, while they name none, the accepted KDE desktop
-image `kde-20260928-r1.erofs`
+image `kde-20260929-r2.erofs`
 ([`tools/rootfs/desktop`](../tools/rootfs/desktop/README.md)). A name the
 settings already store, `rootfs.erofs` included, is kept, and every image in
 Documents stays selectable. An Android guest is a `.kern`

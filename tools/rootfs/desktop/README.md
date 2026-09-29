@@ -11,8 +11,8 @@ into a new image, so a launcher never edits an image while it boots.
 and SHA-256, the setup script, the compressor that reproduces the source's
 layout, and the accepted output with the digest of the setup that produced it.
 [`derive.py`](derive.py) refuses a source that does not match and never
-replaces an existing output. A setup change is accepted only with a new
-release derived from it.
+replaces an existing output. A change to a setup or to the derivation is
+accepted only with a new release derived from it.
 
 ## What each image carries
 
@@ -30,6 +30,12 @@ release derived from it.
   OpenRC otherwise counts among containers, the Kernarium `deviceinfo`, udev
   classification of the Kernarium and VNC input devices, and an OpenRC
   service granting the display and input nodes to the desktop's groups.
+
+The derivation also removes the machine ID each source was built with, so
+every guest generates its own at first boot and keeps it in its writable
+root. A systemd image carries an empty `/etc/machine-id`; an OpenRC image
+carries none, because `dbus-uuidgen --ensure` rejects an empty file. D-Bus's
+`/var/lib/dbus/machine-id` links to `/etc/machine-id`.
 
 Each image keeps its own init, network, resolver, accounts and session;
 Kernarium boots it through the generic per-run `/init` into `/sbin/init`
@@ -55,4 +61,6 @@ sudo tools/rootfs/desktop/derive.py --image kde \
 Publish a new release under a new name and record it in `images.json`; never
 replace an accepted image or the source it came from. A new KDE release also
 renames Kernarium's default image, `RootfsImage.defaultFilename` in
-`Kernarium/Kernarium/EmulatorConfiguration.swift`, and its tests.
+`Kernarium/Kernarium/EmulatorConfiguration.swift`, its tests and the
+Kernarium README; `tests/tooling/rootfs/test_desktop_images.py` holds them
+to `images.json`.

@@ -5,8 +5,8 @@
 Runs as root on an arm64 Linux host with erofs-utils: it checks the source
 against images.json, extracts it with ownership, modes and extended
 attributes, runs the image's setup script in a chroot of the extracted tree,
-and writes a new EROFS image with the source's compressor beside a receipt
-naming both images. README.md beside this script owns the contract.
+removes the source's machine ID, and writes a new EROFS image with the
+source's compressor beside a receipt naming both images. README.md beside this script owns the contract.
 """
 
 from __future__ import annotations
@@ -71,6 +71,46 @@ def tool_version(tool: str) -> str:
     return output.splitlines()[0].strip()
 
 
+def reset_machine_id(root: Path) -> None:
+    """Leave the extracted image at ``root`` without a machine ID.
+
+    Every guest then generates its own at first boot and keeps it in its
+    writable root. systemd fills an empty /etc/machine-id, while
+    dbus-uuidgen --ensure, which OpenRC's D-Bus service runs, creates a
+    missing file but rejects an empty one. D-Bus reads /var/lib/dbus/machine-id
+    before /etc/machine-id, and systemd adopts a regular D-Bus copy, so that
+    copy becomes a link to /etc/machine-id.
+    """
+    for directory in ("etc", "var", "var/lib", "var/lib/dbus"):
+        if (root / directory).is_symlink():
+            raise DerivationError(f"the image's /{directory} is a symbolic link")
+    machine_id = root / "etc/machine-id"
+    if machine_id.is_symlink() or (
+        machine_id.exists() and not machine_id.is_file()
+    ):
+        raise DerivationError("the image's /etc/machine-id is not a file")
+    machine_id.unlink(missing_ok=True)
+    systemd = os.path.lexists(root / "usr/lib/systemd/systemd") or (
+        not (root / "lib").is_symlink()
+        and os.path.lexists(root / "lib/systemd/systemd")
+    )
+    if systemd:
+        descriptor = os.open(
+            machine_id, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444
+        )
+        os.close(descriptor)
+        os.chmod(machine_id, 0o444)
+    dbus = root / "var/lib/dbus"
+    if dbus.is_dir():
+        copy = dbus / "machine-id"
+        if copy.is_dir() and not copy.is_symlink():
+            raise DerivationError(
+                "the image's /var/lib/dbus/machine-id is a directory"
+            )
+        copy.unlink(missing_ok=True)
+        copy.symlink_to("/etc/machine-id")
+
+
 def derive(image: str, source: Path, output: Path, work: Path) -> dict:
     descriptor = json.loads(DESCRIPTOR.read_text(encoding="utf-8"))
     try:
@@ -113,6 +153,7 @@ def derive(image: str, source: Path, output: Path, work: Path) -> dict:
             )
         while mounted:
             run(["umount", str(mounted.pop())])
+        reset_machine_id(root)
         temporary = output.with_name(f".{output.name}.{os.getpid()}")
         run([
             "mkfs.erofs", f"-z{entry['compression']}", str(temporary),

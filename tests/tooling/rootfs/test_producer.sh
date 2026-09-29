@@ -114,7 +114,7 @@ expect_failure()
 
 mode_of()
 {
-	ls -ln -- "$1" | cut -c1-10
+	ls -lnd -- "$1" | cut -c1-10
 }
 
 run_cases()
@@ -208,6 +208,45 @@ write_root_file "$P/writer-root/etc/deep/file" 0640 < "$P/writer-input"
 	grep -q "^sudo -n install -D -m 0640 $P/writer/\\.root-file\\.[^ ]* $P/writer-root/etc/deep/file\$" \
 		"$LOG" || fail "$shell: write_root_file did not install through sudo -n"
 
+	# A root leaves no machine ID behind: the package installs' IDs go, and
+	# D-Bus's copy follows the ID systemd generates at first boot.
+	mkdir -p "$P/machine-root/etc" "$P/machine-root/var/lib/dbus"
+	printf '%s\n' 0123456789abcdef0123456789abcdef > "$P/machine-root/etc/machine-id"
+	printf '%s\n' fedcba9876543210fedcba9876543210 > \
+		"$P/machine-root/var/lib/dbus/machine-id"
+	expect_success "producer_reset_machine_id" \
+		'producer_reset_machine_id "$P/machine-root"'
+	[ -f "$P/machine-root/etc/machine-id" ] && [ ! -L "$P/machine-root/etc/machine-id" ] &&
+		[ ! -s "$P/machine-root/etc/machine-id" ] ||
+		fail "$shell: /etc/machine-id is not an empty file"
+	[ -L "$P/machine-root/var/lib/dbus/machine-id" ] &&
+		[ "$(readlink "$P/machine-root/var/lib/dbus/machine-id")" = /etc/machine-id ] ||
+		fail "$shell: /var/lib/dbus/machine-id is not a link to /etc/machine-id"
+	grep -qx "sudo -n truncate -s 0 $P/machine-root/etc/machine-id" "$LOG" &&
+		grep -qx "sudo -n ln -sfn /etc/machine-id $P/machine-root/var/lib/dbus/machine-id" \
+			"$LOG" || fail "$shell: the machine ID was not reset through sudo -n"
+
+	# A command that lowers its own file-size limit, as BusyBox passwd does,
+	# dies writing to a standard error that is a log file past that limit.
+	# Captured, it runs, and its output and status reach the caller. The log
+	# grows through its own descriptor, as a producer's log does, because
+	# XNU checks the limit against the descriptor's offset before appending.
+	run_fixture '
+exec 2> "$P/direct-log"
+head -c 65536 /dev/zero >&2
+sh -c "ulimit -f 1; printf %s%s direct- output >&2"'
+	[ "$status" -ne 0 ] && ! grep -q direct-output "$P/direct-log" ||
+		fail "$shell: a command wrote past its file-size limit ($status)"
+	run_fixture '
+exec 2> "$P/captured-log"
+head -c 65536 /dev/zero >&2
+producer_run_captured sh -c "ulimit -f 1; echo captured >&2"
+producer_run_captured sh -c "echo failed; exit 3" || printf "%s\n" "$?"'
+	[ "$status" -eq 0 ] && [ "$(cat "$TEST_ROOT/out")" = 3 ] ||
+		fail "$shell: a captured command failed ($status) or lost its status"
+	[ "$(tail -c 16 "$P/captured-log")" = "$(printf 'captured\nfailed')" ] ||
+		fail "$shell: a captured command's output did not reach standard error"
+
 	# Publication renames onto an absent name and fails when a concurrent
 	# run took the name first, leaving that run's output alone.
 	expect_success "publication" '
@@ -251,7 +290,7 @@ sleep 5'
 
 	# A finished run publishes files out of its staging directory, or the
 	# directory itself, and neither leaves staging nor runs the hook.
-	mkdir -p "$P/stage-ok" "$P/release-parent"
+	mkdir -p "$P/stage-ok" "$P/release-parent" "$P/private-parent"
 	expect_success "a finished run" '
 hook()
 {
@@ -262,9 +301,14 @@ producer_stage "$P/stage-ok" out.erofs
 printf image > "$staging_dir/out.erofs"
 producer_publish "$staging_dir/out.erofs" "$P/stage-ok/out.erofs"
 producer_finish
+umask 022
 producer_stage "$P/release-parent" release
 printf manifest > "$staging_dir/manifest"
 producer_publish "$staging_dir" "$P/release-parent/release"
+producer_finish
+umask 027
+producer_stage "$P/private-parent" release
+producer_publish "$staging_dir" "$P/private-parent/release"
 producer_finish'
 	[ ! -e "$P/hook-ran-on-success" ] || fail "$shell: a finished run ran the exit hook"
 	[ "$(ls -A "$P/stage-ok")" = out.erofs ] ||
@@ -272,6 +316,11 @@ producer_finish'
 	[ "$(ls -A "$P/release-parent")" = release ] &&
 		[ "$(cat "$P/release-parent/release/manifest")" = manifest ] ||
 		fail "$shell: a finished directory publication left staging"
+	# A published directory has the mode mkdir gives under the caller's
+	# umask, not the owner-only mode of mktemp -d.
+	[ "$(mode_of "$P/release-parent/release")" = drwxr-xr-x ] &&
+		[ "$(mode_of "$P/private-parent/release")" = drwxr-x--- ] ||
+		fail "$shell: published directories have modes $(mode_of "$P/release-parent/release") and $(mode_of "$P/private-parent/release")"
 
 	# The EROFS prologue canonicalises both paths and stages beside the
 	# output; the tail checksums the image and publishes all four files.
@@ -299,6 +348,18 @@ printf "%s\n" "$root" "$output"'
 	grep -q "^sudo -n chown $("$REAL_ID" -u):$("$REAL_ID" -g) $P/e2e-real/\\.image\\.erofs\\.partial\\.[^ ]*/image\\.erofs\$" \
 		"$LOG" || fail "$shell: the EROFS tail did not take the image from root"
 }
+
+# Each producer of a systemd root that carries D-Bus resets its machine ID.
+# The Steam image instead links /etc/machine-id to its persistent disk.
+for producer in starter/build-all.sh x86_64-desktop/build.sh; do
+	grep -qx '[[:space:]]*producer_reset_machine_id "$root"' \
+		"$ROOT_DIR/tools/rootfs/$producer" ||
+		fail "$producer does not reset its machine ID"
+done
+# The starter's BusyBox passwd writes nothing to the producer's log itself.
+grep -qx '[[:space:]]*producer_run_captured as_root chroot "$root" /usr/bin/passwd -d root' \
+	"$ROOT_DIR/tools/rootfs/starter/build-all.sh" ||
+	fail "the starter's BusyBox passwd writes to the caller's standard error"
 
 tested=
 for shell in sh dash bash; do

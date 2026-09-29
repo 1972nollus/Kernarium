@@ -46,16 +46,43 @@ write_root_file()
 	rm -f -- "$producer_temporary"
 }
 
+# producer_run_captured COMMAND...: run COMMAND with its output captured
+# through a pipe, then copy that output to standard error. BusyBox passwd
+# lowers its own RLIMIT_FSIZE to about 15 MB, so writing straight to a
+# caller's standard error that is a log file already past that size would
+# kill it with SIGXFSZ.
+producer_run_captured()
+{
+	producer_status=0
+	producer_output=$("$@" 2>&1) || producer_status=$?
+	[ -z "$producer_output" ] || printf '%s\n' "$producer_output" >&2
+	return "$producer_status"
+}
+
+# producer_reset_machine_id ROOT: leave the systemd root ROOT, which carries
+# D-Bus, without a machine ID, so that every guest generates its own at first
+# boot. D-Bus reads /var/lib/dbus/machine-id before /etc/machine-id, and
+# systemd adopts a regular D-Bus copy, so the copy the package installs wrote
+# becomes a link to /etc/machine-id.
+producer_reset_machine_id()
+{
+	sudo -n truncate -s 0 "$1/etc/machine-id"
+	sudo -n ln -sfn /etc/machine-id "$1/var/lib/dbus/machine-id"
+}
+
 # producer_stage PARENT NAME: create $staging_dir, a directory this user owns
 # beside the output NAME in PARENT, so that the name a root-run tool writes
 # stays reserved and publication is a same-directory rename. Until
 # producer_finish runs, any exit runs the command named by
 # $producer_exit_hook, when the caller set one, and removes the directory.
+# A producer may publish the directory itself, so it takes the mode mkdir
+# would give it rather than the owner-only mode of mktemp -d.
 producer_stage()
 {
 	staging_dir=$(mktemp -d "$1/.$2.partial.XXXXXX")
 	trap producer_cleanup EXIT
 	trap 'exit 1' HUP INT TERM
+	chmod "$(umask -S)" "$staging_dir"
 }
 
 producer_cleanup()
