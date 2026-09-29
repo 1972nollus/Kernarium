@@ -163,10 +163,14 @@ void aFullTableNamesItself()
 
 } // namespace
 
-void runVhostUserDescriptorCeilingTests()
+} // namespace uml::gpu::testing
+
+int main()
 {
+    using namespace uml::gpu::testing;
+
     raisingTakesEverythingTheHostOffers();
     aFullTableNamesItself();
+    std::puts("GPU transport descriptor ceiling tests passed");
+    return 0;
 }
-
-} // namespace uml::gpu::testing

@@ -383,7 +383,6 @@ if(TARGET uml_gpu_service)
 
     add_executable(uml_gpu_transport_wire_tests
         gpu_allocation_failure.cpp
-        vhost_user_message_test_main.cpp
         vhost_user_message_tests.cpp)
     target_link_libraries(uml_gpu_transport_wire_tests PRIVATE
         uml_gpu_transport_wire_stop_wait_test_variant)
@@ -401,7 +400,6 @@ if(TARGET uml_gpu_service)
     # the file table would decide the outcome of anything sharing the process.
     add_executable(uml_gpu_transport_ceiling_tests
         gpu_allocation_failure.cpp
-        vhost_user_descriptor_ceiling_test_main.cpp
         vhost_user_descriptor_ceiling_tests.cpp)
     target_link_libraries(uml_gpu_transport_ceiling_tests PRIVATE
         uml_vhost_user_wire)
@@ -451,7 +449,6 @@ if(TARGET uml_gpu_service)
 
     add_executable(uml_gpu_device_atomicity_tests
         gpu_allocation_failure.cpp
-        virtio_gpu_device_test_main.cpp
         virtio_gpu_device_lifetime_tests.cpp)
     target_link_libraries(uml_gpu_device_atomicity_tests PRIVATE
         uml_gpu_protocol_device_test_variant)

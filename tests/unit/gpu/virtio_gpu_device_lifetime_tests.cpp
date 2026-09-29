@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdio>
 #include <new>
 #include <stdexcept>
 #include <unordered_map>
@@ -3109,8 +3110,12 @@ void heldAndCompletedFencesShareTheQueueCapacity()
 
 } // namespace
 
-void runVirtioGpuDeviceTests()
+} // namespace uml::gpu::testing
+
+int main()
 {
+    using namespace uml::gpu::testing;
+
     edidReportsDisplayPixelsAndEffectiveDensity();
     displayChangeEventsPreserveAResizeThatRacesGuestClear();
     contextInitUsesVirgl2ForTheDeviceSelectedDefault();
@@ -3134,6 +3139,6 @@ void runVirtioGpuDeviceTests()
     blobScanoutUsesNativeTextureAndPersistentVncMapping();
     virglBlobScanoutPresentsItsGlTexture();
     malformed3dCommandsUseSpecificErrors();
+    std::puts("Virtio-GPU command atomicity tests passed");
+    return 0;
 }
-
-} // namespace uml::gpu::testing
