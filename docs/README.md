@@ -27,8 +27,10 @@ investigation date.
 | Public and kernel ABI maintenance | [`../kernel/common/abi/README.md`](../kernel/common/abi/README.md) |
 
 `scripts/` holds build, packaging and patch-series infrastructure that CMake
-and other tools call; `tools/` holds developer-facing launchers, producers and
-generators.
+and other tools call. `tools/` holds developer-facing launchers, producers and
+generators, together with what each one owns: the guest sources, patch series
+and boot files a producer builds from, and the runner for a corpus a generator
+writes. CMake and CTest may read or run those files in place.
 
 Short accepted decisions remain under [`decisions/`](decisions/). Machine-
 readable manifests, identities, and test inventories are the source of truth
