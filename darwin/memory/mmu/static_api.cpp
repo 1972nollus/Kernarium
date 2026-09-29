@@ -439,20 +439,13 @@ extern "C" int darwin_uml_vm_invalidate_code(unsigned long generation,
 		address, length);
 }
 
-extern "C" int darwin_uml_vm_mapping_matches(unsigned long address, int fd,
-					     unsigned long long offset)
+/* The uaccess reaches the page through the kernel's own alias, which it
+ * refreshes and writes back itself on 4 KiB, and installs nothing here, so no
+ * 4 KiB native shadow needs publishing first: the walker that installs the
+ * page later publishes it, as every software map does. */
+extern "C" int darwin_uml_vm_discard_if_stale(unsigned long address, int fd,
+					      unsigned long long offset)
 {
-	return darwin_uml_static_vm_mapping_matches(address, fd, offset);
-}
-
-/* The bridge ABI still calls this rebind, but it binds nothing: it only
- * discards a software mapping that names other backing than the page a
- * uaccess pinned. */
-extern "C" int darwin_uml_vm_rebind(unsigned long address, int fd,
-				    unsigned long long offset)
-{
-	if (publish_native_shadow(fd, offset, DARWIN_UML_GUEST_PAGE_SIZE) < 0)
-		return -1;
 	return darwin_uml_static_vm_discard_if_stale(address, fd, offset);
 }
 

@@ -106,23 +106,7 @@ def declaration_digest(root: Path, domain: str) -> str:
         if not path.is_file():
             fail(f"missing ABI input: {path}")
         source = without_comments(path.read_text(encoding="utf-8"))
-        # Physical ownership moved under kernel/common without changing the
-        # declaration domain. Keep the established logical labels in the
-        # digest so a path-only repository refactor cannot advance the ABI.
-        identity_relative = relative.replace(
-            "kernel/common/abi/", "kernel/abi/", 1
-        )
-        if identity_relative == "kernel/abi/darwin_uml_abi.h":
-            # These checks mirror identity.env. Hashing their right-hand
-            # literals would make a derived fingerprint depend on itself.
-            source = re.sub(
-                r"static_assert\s*\(\s*DARWIN_UML_ABI_"
-                r"(?:VERSION|FINGERPRINT)\s*==.*?\);",
-                "",
-                source,
-                flags=re.DOTALL,
-            )
-        elif relative == "darwin/api/include/uml/abi_identity.h":
+        if relative == "darwin/api/include/uml/abi_identity.h":
             # The public identity header is installed, but its selected
             # version and derived fingerprint must not hash themselves.
             source = re.sub(
@@ -132,7 +116,7 @@ def declaration_digest(root: Path, domain: str) -> str:
                 source,
             )
         tokens = TOKEN.findall(source)
-        normalized.append(f"FILE {identity_relative}\n")
+        normalized.append(f"FILE {relative}\n")
         normalized.extend(f"{token}\n" for token in tokens)
     return hashlib.sha256("".join(normalized).encode()).hexdigest()
 

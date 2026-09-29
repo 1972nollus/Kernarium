@@ -712,10 +712,19 @@ void test_a_stale_mapping_is_discarded_instead_of_replaced()
 	constexpr unsigned long base = 0x60'0000;
 	ScratchBacking published{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	ScratchBacking pinned{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
+	published.put_byte(0, std::byte{0x5a});
+	pinned.put_byte(0, std::byte{0xa5});
 	const auto map_published = [&] {
 		return darwin_uml_static_vm_map_generation(
 			generation, reinterpret_cast<void *>(base), published.descriptor(),
 			0, DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1);
+	};
+	const auto require_published = [&] {
+		void *translated = nullptr;
+		require(darwin_uml_static_vm_translate(generation, base,
+				DARWIN_UML_STATIC_READ, &translated) ==
+			DARWIN_UML_STATIC_TRANSLATED);
+		require(*static_cast<const std::uint8_t *>(translated) == 0x5a);
 	};
 
 	require(darwin_uml_static_vm_activate(generation) == 0);
@@ -723,19 +732,17 @@ void test_a_stale_mapping_is_discarded_instead_of_replaced()
 	require_unmapped(generation, base);
 
 	require(map_published() == 0);
-	require(darwin_uml_static_vm_mapping_matches(base, published.descriptor(), 0) == 1);
+	require_published();
 	require(darwin_uml_static_vm_discard_if_stale(base, published.descriptor(), 0) == 0);
-	require(darwin_uml_static_vm_mapping_matches(base, published.descriptor(), 0) == 1);
+	require_published();
 
 	require(darwin_uml_static_vm_batch_begin(generation) == 0);
 	require(map_published() == 0);
 	std::thread uaccess{[&] {
 		require(darwin_uml_static_vm_activate(generation) == 0);
-		require(darwin_uml_static_vm_mapping_matches(
-			base, pinned.descriptor(), 0) == 0);
+		require_published();
 		require(darwin_uml_static_vm_discard_if_stale(base, pinned.descriptor(), 0) == 0);
-		require(darwin_uml_static_vm_mapping_matches(
-			base, pinned.descriptor(), 0) == -1);
+		require_unmapped(generation, base);
 	}};
 	uaccess.join();
 	require_unmapped(generation, base);

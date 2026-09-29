@@ -35,10 +35,12 @@ int darwin_uml_vm_invalidate_code(unsigned long generation,
 int darwin_uml_vm_sync_from_backing(unsigned long address);
 int darwin_uml_vm_sync_from_buffer(unsigned long address,
 				   const void *buffer, unsigned long length);
-int darwin_uml_vm_mapping_matches(unsigned long address, int fd,
-				  unsigned long long offset);
-int darwin_uml_vm_rebind(unsigned long address, int fd,
-			 unsigned long long offset);
+/* A uaccess pinned the page at fd and offset for address: discard the
+ * software mapping of address when it names other backing, because either
+ * sample may be the stale one. An absent or equal mapping is left as it is,
+ * and nothing is installed. Returns 0, or a negative value on failure. */
+int darwin_uml_vm_discard_if_stale(unsigned long address, int fd,
+				   unsigned long long offset);
 int darwin_uml_vm_stage_stack(unsigned long address);
 int darwin_uml_vm_finish_stack(unsigned long address);
 /* Returns 1 when the access can be retried, 0 when Linux must resolve the

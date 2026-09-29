@@ -159,8 +159,9 @@ reports the rejection as `DARWIN_UML_VM_BATCH_REJECTED`, not as an errno,
 because Darwin's errno values are not Linux's. Nothing else installs a mapping.
 A kernel uaccess pins its page from a PTE whose lock it has already dropped, so
 when the host names other backing than that page either of the two may be the
-stale one; the uaccess discards the mapping and the next access replays the
-PTE. An absent page is always sound.
+stale one. Each uaccess page makes one `darwin_uml_vm_discard_if_stale()`
+call, which discards such a mapping and leaves an absent or equal one alone,
+and the next access replays the PTE. An absent page is always sound.
 
 Gadget streams, MMU backing, and shadow mappings are data.
 Only `darwin/cpu/arm64/jit/jit_arena.cpp` may allocate executable memory,

@@ -2,10 +2,10 @@
 /*
  * Canonical Darwin UML host/kernel data ABI.
  *
- * This file is copied verbatim to the host and replayed Linux source by
- * kernel/abi/sync.sh.  Change it rather than either generated destination;
- * bump both ABI_VERSION and ABI_FINGERPRINT whenever a binary boundary, enum,
- * or layout changes.
+ * kernel/common/abi/sync.sh copies this file verbatim to the host and to a
+ * replayed Linux source.  Change it rather than either copy, and advance
+ * kernel/common/abi/identity.env whenever a binary boundary, enum, or layout
+ * changes.
  */
 #ifndef UML_DARWIN_ABI_H
 #define UML_DARWIN_ABI_H
