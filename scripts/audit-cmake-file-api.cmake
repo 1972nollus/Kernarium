@@ -200,13 +200,6 @@ foreach(TARGET_NAME TARGET_LAYER TARGET_KIND DEPENDENCY_TEXT IN ZIP_LISTS
                     "Malformed architecture dependency for ${TARGET_NAME}: ${DEPENDENCY}")
             endif()
             set(DEPENDENCY_NAME "${CMAKE_MATCH_1}")
-            uml_architecture_engine_edge_allowed(
-                "${TARGET_NAME}" "${DEPENDENCY_NAME}" ENGINE_EDGE_ALLOWED)
-            if(NOT ENGINE_EDGE_ALLOWED)
-                message(FATAL_ERROR
-                    "Forbidden cross-engine link edge: "
-                    "${TARGET_NAME} -> ${DEPENDENCY_NAME}")
-            endif()
             uml_architecture_layer("${DEPENDENCY_NAME}" DEPENDENCY_LAYER)
             uml_architecture_edge_allowed(
                 "${TARGET_LAYER}" "${DEPENDENCY_LAYER}" EDGE_ALLOWED)
@@ -230,11 +223,13 @@ foreach(TARGET_NAME IN LISTS ARCHITECTURE_TARGETS)
         "Declared architecture target dependency cycle")
 endforeach()
 
-# A neutral interface carrier must not conceal an engine-to-engine dependency.
-# Check reachability from every declared engine owner after the direct-edge and
-# cycle audits have established a well-formed graph.  File API dependencies
-# provide the same protection for concrete configured targets; this traversal
-# additionally covers pure interface chains omitted from the codemodel.
+# An engine links its own kind or shared code, shared code links only shared
+# code, and a neutral interface carrier must not conceal an engine-to-engine
+# dependency. Check everything reachable from every declared engine owner,
+# direct dependencies included, after the layer and cycle audits have
+# established a well-formed graph. File API dependencies provide the same
+# protection for concrete configured targets; this traversal additionally
+# covers pure interface chains omitted from the codemodel.
 function(uml_audit_engine_reachability ROOT NODE PATH)
     get_property(VISITED GLOBAL PROPERTY
         "UML_ENGINE_REACHABILITY_${ROOT}_${NODE}")
