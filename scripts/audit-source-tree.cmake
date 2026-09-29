@@ -145,7 +145,9 @@ endfunction()
 # cmake/UmlTesting.cmake, so suite labels, fixture policy, and aggregate
 # binary dependencies cannot be bypassed by a raw add_test() in another
 # directory. CMake command names are case-insensitive, so the source text is
-# normalized before matching.
+# normalized before matching. A command starts its line, and CMake refuses a
+# newline or comment before its parenthesis, so a commented-out registration
+# never matches.
 function(uml_audit_raw_test_registrations ROOT OUT_VIOLATIONS)
     set(_manifests "${ROOT}/CMakeLists.txt")
     foreach(_scope IN ITEMS android cmake darwin dependencies kernel Kernarium tests)
@@ -165,10 +167,9 @@ function(uml_audit_raw_test_registrations ROOT OUT_VIOLATIONS)
             continue()
         endif()
         file(READ "${_path}" _code)
-        string(REGEX REPLACE "#[^\n]*" "" _code "${_code}")
         string(TOLOWER "${_code}" _normalized_code)
         if(_normalized_code MATCHES
-           "(^|[\r\n])[ \t]*add_test[ \t\r\n]*\\(")
+           "(^|[\r\n])[ \t]*add_test[ \t\r]*\\(")
             list(APPEND _violations
                 "${_path}: raw add_test bypasses the centralized suite helpers")
         endif()
