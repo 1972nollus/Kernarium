@@ -5665,6 +5665,61 @@ read_test_sequences(void *context) noexcept
 		"POPF with TF already set did not run on");
 }
 
+/* Besides IRET, whose case is in the corpus, RF reaches the engine in the
+ * flags the kernel hands over: a signal return or a tracer may set it. It
+ * lasts until the next instruction starts, so neither SYSCALL's R11 nor the
+ * flags a system-call exit gives the kernel for pt_regs and the signal frame
+ * shows it. An exit that runs no instruction keeps it, as an interrupt taken
+ * before the instruction does (audit NC-E4). */
+[[nodiscard]] bool resume_flag_lasts_until_an_instruction_starts()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr std::uint64_t cleared = rflags_interrupt | rflags_reserved;
+	constexpr std::uint64_t resumed = cleared | rflags_resume;
+	TestMemory memory;
+	memory.load(0, {0x0f, 0x05});  // syscall
+	memory.load(16, {0xcd, 0x80}); // int 0x80
+	const auto call = gadgets::build(memory, 0, ExecutionMode::long64, 1);
+	const auto compat_call =
+		gadgets::build(memory, 16, ExecutionMode::compat32, 1);
+	if (!expect(call.status == gadgets::BuildStatus::built &&
+			compat_call.status == gadgets::BuildStatus::built,
+		"SYSCALL or INT 80h did not build"))
+		return false;
+
+	CpuState cpu{};
+	cpu.rflags = resumed;
+	unsigned int sequence = 1;
+	const uml::cpu::InterruptToken interrupt{
+		.sequence = &sequence,
+		.snapshot = 0,
+	};
+	const auto interrupted = gadgets::execute(
+		call.program, cpu, memory, 1, interrupt);
+	if (!expect(interrupted.event == uml::cpu::EngineEvent::interrupt &&
+			interrupted.retired_instructions == 0 &&
+			cpu.rflags == resumed,
+		"an exit that ran no instruction cleared RF"))
+		return false;
+	const auto called = gadgets::execute(call.program, cpu, memory, 1);
+	if (!expect(called.event == uml::cpu::EngineEvent::system_call &&
+			cpu.gpr(Register::r11) == cleared && cpu.rflags == cleared,
+		"SYSCALL showed the RF its flags started with"))
+		return false;
+
+	CpuState compat{};
+	compat.execution_mode = ExecutionMode::compat32;
+	compat.rip = 16;
+	compat.segment_selectors[1] = 0x23;
+	compat.segment_selectors[2] = 0x2b;
+	compat.rflags = resumed;
+	const auto compat_called =
+		gadgets::execute(compat_call.program, compat, memory, 1);
+	return expect(compat_called.event == uml::cpu::EngineEvent::system_call &&
+			compat.rflags == cleared,
+		"INT 80h showed the RF its flags started with");
+}
+
 /* INT 3 and INT 4 are the user-callable software interrupts besides 0x80:
  * both trap after the instruction. */
 [[nodiscard]] bool software_interrupt_vectors_trap()
@@ -7126,6 +7181,7 @@ int main()
 		software_interrupt_vectors_trap() &&
 		one_instruction_budget_steps_linked_programs() &&
 		popf_setting_trap_flag_leaves_at_the_next_instruction() &&
+		resume_flag_lasts_until_an_instruction_starts() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&
 		vector_results_cross_only_a_transfer_that_stays_inline() &&

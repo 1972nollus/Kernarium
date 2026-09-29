@@ -276,7 +276,9 @@ gadget interrupt_return_\name
 	/* At CPL 3 IRET loads what POPF loads, plus RF: IF, IOPL, VM, VIF and
 	 * VIP keep their values and the reserved bits stay fixed.  None of the
 	 * kept bits is an arithmetic flag, so a deferred result need not be
-	 * materialized first. */
+	 * materialized first.  RF lasts until the next instruction starts.
+	 * IRET always leaves the engine, and `execute` clears RF as it enters
+	 * to start that instruction, so no gadget has to. */
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x4dd5
 	.if \width != 16
