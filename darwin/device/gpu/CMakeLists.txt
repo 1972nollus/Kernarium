@@ -33,6 +33,10 @@ endif()
 # Keep the renderer, display, protocol device, transport, and in-process
 # service as independently owned units. Their dependency direction follows
 # the data path and contains no reverse service callbacks.
+add_library(uml_gpu_device_memory_pool STATIC device_memory_pool.cpp)
+add_library(UML::GpuDeviceMemoryPool ALIAS uml_gpu_device_memory_pool)
+uml_configure_gpu_component(uml_gpu_device_memory_pool)
+
 add_library(uml_gpu_renderer STATIC
     host_gl_provider.cpp
     virgl_renderer.cpp)
@@ -40,6 +44,7 @@ uml_configure_gpu_component(uml_gpu_renderer)
 target_compile_definitions(uml_gpu_renderer PRIVATE
     VIRGL_RENDERER_UNSTABLE_APIS)
 target_link_libraries(uml_gpu_renderer PRIVATE
+    UML::GpuDeviceMemoryPool
     UML::ThirdPartyVirglrenderer
     UML::HostGpuMemory)
 target_link_libraries(uml_gpu_renderer PRIVATE

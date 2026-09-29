@@ -10,45 +10,154 @@ reports a recommended working set of 2730 MiB against an app limit of
 guest's own RAM, so a guest sizing its textures from that heap could
 take the whole application down.
 
-Let the host state how much device memory the guest may use, together
-with a callback that reports how much is allocated right now. Every heap
-the guest is shown is at most that limit, memory budgets leave the guest
-only what the limit has left, and a new allocation that would pass it
-fails with VK_ERROR_OUT_OF_DEVICE_MEMORY, which an application is
-prepared to handle. An import names memory that already exists and is
-not counted twice. A host that states no limit keeps today's behaviour.
----
- src/venus/vkr_device_memory.c   | 11 ++++++++
- src/venus/vkr_physical_device.c | 37 +++++++++++++++++++++++----
- src/venus/vkr_physical_device.h |  2 ++
- src/venus/vkr_renderer.c        | 45 +++++++++++++++++++++++++++++++++
- src/venus/vkr_renderer.h        | 17 +++++++++++++
- src/virglrenderer.c             | 14 ++++++++++
- src/virglrenderer.h             | 19 ++++++++++++++
- 7 files changed, 140 insertions(+), 5 deletions(-)
+Let the host state how much device memory the guest may use, as a pool
+with a limit and callbacks: how much is allocated or reserved now, a
+reservation, and its release. Every heap the guest is shown is at most
+that limit, memory budgets leave the guest only what the pool has left,
+and a new allocation the pool cannot reserve fails with
+VK_ERROR_OUT_OF_DEVICE_MEMORY, which an application is prepared to
+handle. An import names memory that already exists and is not charged.
+A host that states no limit keeps today's behaviour.
 
+The renderer reserves an allocation's size before the driver makes it
+and releases the reservation once the driver has made it or failed, so
+allocations the renderer admits on different threads never pass the
+limit together, which a check that only read the host's allocation
+counter allowed. The driver also allocates memory for itself that no
+guest allocation accounts for, KosmicKrisp's geometry heap among it, so
+every device the renderer creates is given the same pool through
+KosmicKrisp's device-memory pool structure and reserves before it
+allocates too. A guest cannot name that structure: the protocol decoder
+rejects a chain member it does not know.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/venus/vkr_device.c          | 38 +++++++++++++++++++++
+ src/venus/vkr_device_memory.c   | 32 ++++++++++++++++--
+ src/venus/vkr_physical_device.c | 37 ++++++++++++++++++---
+ src/venus/vkr_physical_device.h |  2 ++
+ src/venus/vkr_renderer.c        | 58 +++++++++++++++++++++++++++++++++
+ src/venus/vkr_renderer.h        | 30 +++++++++++++++++
+ src/virglrenderer.c             | 23 +++++++++++++
+ src/virglrenderer.h             | 34 +++++++++++++++++++
+ 8 files changed, 246 insertions(+), 8 deletions(-)
+
+diff --git a/src/venus/vkr_device.c b/src/venus/vkr_device.c
+index 9343e4d77c5433eff6aeca41c135622bed6ac74f..c4f4abd5ef8fbdb387c0157711b2b2b7f3afe134 100644
+--- a/src/venus/vkr_device.c
++++ b/src/venus/vkr_device.c
+@@ -5,6 +5,8 @@
+ 
+ #include "vkr_device.h"
+ 
++#include <kosmickrisp/kk_device_memory_pool.h>
++
+ #include <vn_protocol_renderer_device.h>
+ 
+ #include "vkr_command_buffer.h"
+@@ -118,6 +120,24 @@ vkr_device_init_renderer_procs(struct vkr_device *dev)
+    return true;
+ }
+ 
++static VkBool32 VKAPI_PTR
++vkr_device_memory_pool_reserve(UNUSED void *data, VkDeviceSize size)
++{
++   return vkr_renderer_device_memory_reserve(size);
++}
++
++static void VKAPI_PTR
++vkr_device_memory_pool_release(UNUSED void *data, VkDeviceSize size)
++{
++   vkr_renderer_device_memory_release(size);
++}
++
++static VkDeviceSize VKAPI_PTR
++vkr_device_memory_pool_headroom(UNUSED void *data)
++{
++   return vkr_renderer_get_device_memory_headroom();
++}
++
+ static void
+ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
+                             struct vn_command_vkCreateDevice *args)
+@@ -217,8 +237,26 @@ vkr_dispatch_vkCreateDevice(struct vn_dispatch_context *dispatch,
+    }
+ 
+    vn_replace_vkCreateDevice_args_handle(args);
++
++   /* The driver charges the memory it allocates for itself, which no guest
++    * allocation accounts for, to the pool the guest's allocations are
++    * charged to. The guest cannot name this structure: the protocol decoder
++    * rejects a chain member it does not know.
++    */
++   VkDeviceCreateInfo *create_info = (VkDeviceCreateInfo *)args->pCreateInfo;
++   const void *guest_next = create_info->pNext;
++   VkDeviceMemoryPoolCreateInfoKK pool_info = {
++      .sType = VK_STRUCTURE_TYPE_DEVICE_MEMORY_POOL_CREATE_INFO_KK,
++      .pNext = guest_next,
++      .pfnReserve = vkr_device_memory_pool_reserve,
++      .pfnRelease = vkr_device_memory_pool_release,
++      .pfnHeadroom = vkr_device_memory_pool_headroom,
++   };
++   if (vkr_renderer_get_device_memory_limit())
++      create_info->pNext = &pool_info;
+    args->ret = vk->CreateDevice(args->physicalDevice, args->pCreateInfo, NULL,
+                                 &dev->base.handle.device);
++   create_info->pNext = guest_next;
+    if (args->ret != VK_SUCCESS) {
+       free(exts);
+       free(dev);
 diff --git a/src/venus/vkr_device_memory.c b/src/venus/vkr_device_memory.c
-index 770b47170b9facfc2f623c2579a113422585fe0e..1ebad8a476d29550c8f8c0d996175c834b7cf30f 100644
+index 770b47170b9facfc2f623c2579a113422585fe0e..4b6f407f9aee49907648c125b0c354d0a174a6dd 100644
 --- a/src/venus/vkr_device_memory.c
 +++ b/src/venus/vkr_device_memory.c
-@@ -259,6 +259,17 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
-                                                      guest_mem_type_index);
-    alloc_info->memoryTypeIndex = host_mem_type_index;
+@@ -239,10 +239,9 @@ vkr_gbm_get_fd_info_from_allocation_info(UNUSED struct vkr_physical_device *phys
+ #endif /* ENABLE_GBM_ALLOCATION */
  
-+   /* A new allocation has to fit the device memory the host granted the
-+    * guest. An import names memory that already exists, so it is not
-+    * counted twice.
-+    */
-+   if (!vkr_find_struct(alloc_info->pNext,
-+                        VK_STRUCTURE_TYPE_IMPORT_MEMORY_RESOURCE_INFO_MESA) &&
-+       !vkr_renderer_device_memory_admits(alloc_info->allocationSize)) {
+ static void
+-vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+-                              struct vn_command_vkAllocateMemory *args)
++vkr_device_memory_allocate(struct vn_dispatch_context *dispatch,
++                           struct vn_command_vkAllocateMemory *args)
+ {
+-   TRACE_FUNC();
+    struct vkr_context *ctx = dispatch->data;
+    struct vkr_device *dev = vkr_device_from_handle(args->device);
+    struct vkr_physical_device *physical_dev = dev->physical_device;
+@@ -561,6 +560,33 @@ vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
+    mem->memory_type_index = host_mem_type_index;
+ }
+ 
++/* A new allocation has to fit the device memory the host granted the guest,
++ * so it is reserved from the host's pool while the driver makes it, and the
++ * reservation is released once the driver has made it, when the pool's usage
++ * counts it, or has failed. Allocations the renderer admits concurrently, and
++ * those the driver makes for itself, therefore never pass the limit together.
++ * An import names memory that already exists, so it is not charged twice.
++ */
++static void
++vkr_dispatch_vkAllocateMemory(struct vn_dispatch_context *dispatch,
++                              struct vn_command_vkAllocateMemory *args)
++{
++   TRACE_FUNC();
++   const VkMemoryAllocateInfo *alloc_info = args->pAllocateInfo;
++   const bool charged = !vkr_find_struct(
++      alloc_info->pNext, VK_STRUCTURE_TYPE_IMPORT_MEMORY_RESOURCE_INFO_MESA);
++   const VkDeviceSize size = alloc_info->allocationSize;
++   if (charged && !vkr_renderer_device_memory_reserve(size)) {
 +      args->ret = VK_ERROR_OUT_OF_DEVICE_MEMORY;
 +      return;
 +   }
 +
-    /* Translate VkImportMemoryResourceInfoMESA into the native handle type. */
-    VkImportMemoryFdInfoKHR local_import_info = { .fd = -1 };
-    VkImportMemoryHostPointerInfoEXT local_host_import = {
++   vkr_device_memory_allocate(dispatch, args);
++
++   if (charged)
++      vkr_renderer_device_memory_release(size);
++}
++
+ static void
+ vkr_dispatch_vkFreeMemory(struct vn_dispatch_context *dispatch,
+                           struct vn_command_vkFreeMemory *args)
 diff --git a/src/venus/vkr_physical_device.c b/src/venus/vkr_physical_device.c
 index 2f06b6c40508de401931c15fd82120a807fd7b5c..6d1e421587f7e0467266da2d67b0e86fe8681c13 100644
 --- a/src/venus/vkr_physical_device.c
@@ -133,24 +242,22 @@ index 0b101fb6fae1859e44108b9c8f3ccadfdd549160..a9c919d094a8c7f14b218a78222816de
     bool is_dma_buf_fd_export_supported;
     bool is_opaque_fd_export_supported;
 diff --git a/src/venus/vkr_renderer.c b/src/venus/vkr_renderer.c
-index 47ef6c053c8c70e1e1a04ed2f1e246e6ad48f48f..16b5c113d2685c2f6a2da5f937a6cd630da43344 100644
+index 47ef6c053c8c70e1e1a04ed2f1e246e6ad48f48f..e6ca2dc0026df3ace1f0a1ff9cf3c2d7d80aeab1 100644
 --- a/src/venus/vkr_renderer.c
 +++ b/src/venus/vkr_renderer.c
-@@ -21,6 +21,13 @@ struct vkr_renderer_state {
+@@ -21,6 +21,11 @@ struct vkr_renderer_state {
      * guest at once, or zero when it has no such bound
      */
     uint64_t host_visible_aperture_size;
 +
-+   /* how much device memory the host lets the guest's allocations reach, or
-+    * zero when it sets no bound, and how much the host has allocated now
++   /* the pool the host charges the guest's device memory to, whose limit is
++    * zero when it sets no bound
 +    */
-+   uint64_t device_memory_limit;
-+   vkr_renderer_device_memory_usage_callback_type device_memory_usage;
-+   void *device_memory_usage_data;
++   struct vkr_renderer_device_memory_pool device_memory_pool;
  };
  
  struct vkr_renderer_state vkr_state;
-@@ -40,6 +47,44 @@ vkr_renderer_get_host_visible_aperture_size(void)
+@@ -40,6 +45,59 @@ vkr_renderer_get_host_visible_aperture_size(void)
     return vkr_state.host_visible_aperture_size;
  }
  
@@ -158,65 +265,87 @@ index 47ef6c053c8c70e1e1a04ed2f1e246e6ad48f48f..16b5c113d2685c2f6a2da5f937a6cd63
 + * host grants the guest's GPU is a property of the host.
 + */
 +void
-+vkr_renderer_set_device_memory_limit(
-+   uint64_t limit,
-+   vkr_renderer_device_memory_usage_callback_type usage,
-+   void *data)
++vkr_renderer_set_device_memory_pool(
++   const struct vkr_renderer_device_memory_pool *pool)
 +{
-+   vkr_state.device_memory_limit = limit;
-+   vkr_state.device_memory_usage = usage;
-+   vkr_state.device_memory_usage_data = data;
++   if (pool && pool->limit && pool->usage && pool->reserve && pool->release)
++      vkr_state.device_memory_pool = *pool;
++   else
++      memset(&vkr_state.device_memory_pool, 0,
++             sizeof(vkr_state.device_memory_pool));
 +}
 +
 +uint64_t
 +vkr_renderer_get_device_memory_limit(void)
 +{
-+   return vkr_state.device_memory_limit;
++   return vkr_state.device_memory_pool.limit;
 +}
 +
 +uint64_t
 +vkr_renderer_get_device_memory_usage(void)
 +{
-+   if (!vkr_state.device_memory_usage)
-+      return 0;
-+   return vkr_state.device_memory_usage(vkr_state.device_memory_usage_data);
++   const struct vkr_renderer_device_memory_pool *pool =
++      &vkr_state.device_memory_pool;
++   return pool->limit ? pool->usage(pool->data) : 0;
++}
++
++uint64_t
++vkr_renderer_get_device_memory_headroom(void)
++{
++   const uint64_t limit = vkr_state.device_memory_pool.limit;
++   const uint64_t usage = vkr_renderer_get_device_memory_usage();
++   return usage < limit ? limit - usage : 0;
 +}
 +
 +bool
-+vkr_renderer_device_memory_admits(uint64_t size)
++vkr_renderer_device_memory_reserve(uint64_t size)
 +{
-+   const uint64_t limit = vkr_state.device_memory_limit;
-+   if (!limit)
-+      return true;
-+   const uint64_t usage = vkr_renderer_get_device_memory_usage();
-+   return size <= limit && usage <= limit - size;
++   const struct vkr_renderer_device_memory_pool *pool =
++      &vkr_state.device_memory_pool;
++   return !pool->limit || pool->reserve(pool->data, size);
++}
++
++void
++vkr_renderer_device_memory_release(uint64_t size)
++{
++   const struct vkr_renderer_device_memory_pool *pool =
++      &vkr_state.device_memory_pool;
++   if (pool->limit)
++      pool->release(pool->data, size);
 +}
 +
  size_t
  vkr_get_capset(void *capset, uint32_t flags)
  {
 diff --git a/src/venus/vkr_renderer.h b/src/venus/vkr_renderer.h
-index 71fa65494fef44c0d66e1f5d9116e6e4806de9ee..65b3ea09d118586fc2454496c35eddb0ba5035ea 100644
+index 71fa65494fef44c0d66e1f5d9116e6e4806de9ee..807757c3e7c81cb307a8bd0a3c030259ce4ec253 100644
 --- a/src/venus/vkr_renderer.h
 +++ b/src/venus/vkr_renderer.h
-@@ -21,6 +21,8 @@ typedef void (*vkr_renderer_retire_fence_callback_type)(uint32_t ctx_id,
+@@ -21,6 +21,17 @@ typedef void (*vkr_renderer_retire_fence_callback_type)(uint32_t ctx_id,
                                                          uint32_t ring_idx,
                                                          uint64_t fence_id);
  
-+typedef uint64_t (*vkr_renderer_device_memory_usage_callback_type)(void *data);
++/* The host's pool of device memory for the guest; see
++ * virgl_renderer_set_device_memory_pool.
++ */
++struct vkr_renderer_device_memory_pool {
++   uint64_t limit;
++   void *data;
++   uint64_t (*usage)(void *data);
++   bool (*reserve)(void *data, uint64_t size);
++   void (*release)(void *data, uint64_t size);
++};
 +
  struct vkr_renderer_callbacks {
     virgl_log_callback_type debug_logger;
     vkr_renderer_retire_fence_callback_type retire_fence;
-@@ -35,6 +37,21 @@ vkr_renderer_set_host_visible_aperture_size(uint64_t size);
+@@ -35,6 +46,25 @@ vkr_renderer_set_host_visible_aperture_size(uint64_t size);
  uint64_t
  vkr_renderer_get_host_visible_aperture_size(void);
  
 +void
-+vkr_renderer_set_device_memory_limit(
-+   uint64_t limit,
-+   vkr_renderer_device_memory_usage_callback_type usage,
-+   void *data);
++vkr_renderer_set_device_memory_pool(
++   const struct vkr_renderer_device_memory_pool *pool);
 +
 +uint64_t
 +vkr_renderer_get_device_memory_limit(void);
@@ -224,31 +353,46 @@ index 71fa65494fef44c0d66e1f5d9116e6e4806de9ee..65b3ea09d118586fc2454496c35eddb0
 +uint64_t
 +vkr_renderer_get_device_memory_usage(void);
 +
++uint64_t
++vkr_renderer_get_device_memory_headroom(void);
++
 +bool
-+vkr_renderer_device_memory_admits(uint64_t size);
++vkr_renderer_device_memory_reserve(uint64_t size);
++
++void
++vkr_renderer_device_memory_release(uint64_t size);
 +
  bool
  vkr_renderer_init(uint32_t flags, const struct vkr_renderer_callbacks *cbs);
  
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index 085f6c0d298f9350625ba7bd0604c7441b88e958..2229e47acfb0c6acf5b3ea2245b90c4729882e42 100644
+index 085f6c0d298f9350625ba7bd0604c7441b88e958..086bbb985c82597ed8aa48a547f06115a1798f4b 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
-@@ -1557,6 +1557,20 @@ virgl_renderer_set_host_visible_aperture_size(uint64_t size)
+@@ -1557,6 +1557,29 @@ virgl_renderer_set_host_visible_aperture_size(uint64_t size)
  #endif
  }
  
 +void
-+virgl_renderer_set_device_memory_limit(
-+   uint64_t limit, virgl_renderer_device_memory_usage_cb usage, void *data)
++virgl_renderer_set_device_memory_pool(
++   const struct virgl_renderer_device_memory_pool *pool)
 +{
 +   TRACE_FUNC();
 +#ifdef ENABLE_VENUS
-+   vkr_renderer_set_device_memory_limit(limit, usage, data);
++   if (!pool || !pool->limit) {
++      vkr_renderer_set_device_memory_pool(NULL);
++      return;
++   }
++   const struct vkr_renderer_device_memory_pool vkr_pool = {
++      .limit = pool->limit,
++      .data = pool->data,
++      .usage = pool->usage,
++      .reserve = pool->reserve,
++      .release = pool->release,
++   };
++   vkr_renderer_set_device_memory_pool(&vkr_pool);
 +#else
-+   (void)limit;
-+   (void)usage;
-+   (void)data;
++   (void)pool;
 +#endif
 +}
 +
@@ -256,31 +400,46 @@ index 085f6c0d298f9350625ba7bd0604c7441b88e958..2229e47acfb0c6acf5b3ea2245b90c47
  virgl_renderer_export_fence(uint64_t client_fence_id, int *fd)
  {
 diff --git a/src/virglrenderer.h b/src/virglrenderer.h
-index 1b14cb00936cade3c1541248722de5c0a0356424..c0d8e293539594dc60c0225261d26746fabe797d 100644
+index 1b14cb00936cade3c1541248722de5c0a0356424..88372ec8bc0b688810895001081f6d9d20bd5ff4 100644
 --- a/src/virglrenderer.h
 +++ b/src/virglrenderer.h
-@@ -580,6 +580,25 @@ virgl_renderer_release_handle_for_scanout(enum virgl_renderer_native_handle_type
+@@ -580,6 +580,40 @@ virgl_renderer_release_handle_for_scanout(enum virgl_renderer_native_handle_type
  VIRGL_EXPORT void
  virgl_renderer_set_host_visible_aperture_size(uint64_t size);
  
 +/*
-+ * Reports how many bytes of device memory the host has allocated now, across
-+ * every consumer that shares the limit below.
++ * The host's account of the device memory a Venus guest may allocate: a limit
++ * in bytes and the callbacks of the pool every consumer of that memory
++ * charges. `usage` reports how many bytes are allocated or reserved now,
++ * across every consumer. `reserve` charges `size` bytes to the pool before
++ * they are allocated, or returns false and charges nothing when the pool
++ * cannot hold them, and `release` returns a reservation once its allocation
++ * exists, when `usage` counts it, or has failed. Consumers that reserve before
++ * they allocate never together take the host past the limit. The callbacks
++ * may be called from any thread, and must not call back into the renderer.
 + */
-+typedef uint64_t (*virgl_renderer_device_memory_usage_cb)(void *data);
++struct virgl_renderer_device_memory_pool {
++   uint64_t limit;
++   void *data;
++   uint64_t (*usage)(void *data);
++   bool (*reserve)(void *data, uint64_t size);
++   void (*release)(void *data, uint64_t size);
++};
 +
 +/*
-+ * Bound the device memory a Venus guest may allocate, in bytes, or pass zero
-+ * for no bound. Every memory heap the guest is shown is at most the limit,
-+ * memory budgets leave the guest only what the limit has left, and a new
-+ * allocation that would take `usage` past the limit fails with
++ * Bound the device memory a Venus guest may allocate by `pool`, or pass NULL
++ * or a zero limit for no bound. Every memory heap the guest is shown is at
++ * most the limit, memory budgets leave the guest only what the pool has left,
++ * and a new allocation the pool cannot reserve fails with
 + * VK_ERROR_OUT_OF_DEVICE_MEMORY. An import names memory that already exists
-+ * and is not refused. `usage` may be NULL, which counts nothing as allocated.
-+ * Call this before `virgl_renderer_init`.
++ * and is not charged. Every device the renderer creates for a guest charges
++ * the memory it allocates for itself to the same pool. The structure is
++ * copied, and `data` must outlive the renderer. Call this before
++ * `virgl_renderer_init`.
 + */
 +VIRGL_EXPORT void
-+virgl_renderer_set_device_memory_limit(
-+   uint64_t limit, virgl_renderer_device_memory_usage_cb usage, void *data);
++virgl_renderer_set_device_memory_pool(
++   const struct virgl_renderer_device_memory_pool *pool);
 +
  /* vtest semi-private APIs: */
  VIRGL_EXPORT int virgl_renderer_attach_fence(int ctx_id, int fence_fd);
