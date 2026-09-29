@@ -12,11 +12,10 @@
 /*
  * The JIT's semantic slow path. Generated code leaves a fixed set of
  * instruction classes to the helpers in jit_semantic_memory.cpp: dynamic
- * cases its native memory lowering declines (unsupported shapes, tag checks,
+ * cases its native memory lowering declines (unsupported shapes,
  * misalignment, exact fault metadata), the software exclusive monitor, and
- * the pointer-authentication, guarded-control-stack, and MOPS families. Each
- * handler executes exactly one instruction of its class against CpuState and
- * a GuestMemory view of the executor's TLB.
+ * the MOPS family. Each handler executes exactly one instruction of its class
+ * against CpuState and a GuestMemory view of the executor's TLB.
  *
  * The class selectors recognize only the words the compiler routes to each
  * helper. Any other word has no handler, and the helper reports it as an
@@ -28,7 +27,6 @@ namespace uml::cpu::arm64::jit::semantic {
 enum class StopReason : std::uint8_t {
   continued,
   memory_fault,
-  gcs_fault,
   illegal_instruction,
   unsupported_instruction,
 };
@@ -67,7 +65,7 @@ struct RunResult final {
 using Handler = RunResult (*)(CpuState &, GuestMemory &, std::uint32_t);
 
 /* uml_arm64_jit_execute_memory: ordered and exact-fault memory forms, MOPS,
- * LS64, FEAT_LSFE atomics, and pointer authentication. */
+ * LS64, and FEAT_LSFE atomics. */
 [[nodiscard]] Handler memory_handler(std::uint32_t instruction) noexcept;
 /* uml_arm64_jit_execute_exclusive: exclusives, compare-and-swap, LSE and
  * LSUI atomics, FEAT_LSE128, and read-check-write. */
@@ -75,8 +73,6 @@ using Handler = RunResult (*)(CpuState &, GuestMemory &, std::uint32_t);
 /* uml_arm64_jit_execute_ordered: the store half of the ordered scalar
  * load/store family, STLR and STLLR. */
 [[nodiscard]] Handler ordered_store_handler(std::uint32_t instruction) noexcept;
-/* uml_arm64_jit_execute_gcs: unprivileged guarded-control-stack operations. */
-[[nodiscard]] Handler gcs_handler(std::uint32_t instruction) noexcept;
 
 [[nodiscard]] RunResult load_store_64b(CpuState &, GuestMemory &,
                                        std::uint32_t);
@@ -88,8 +84,6 @@ using Handler = RunResult (*)(CpuState &, GuestMemory &, std::uint32_t);
                                      std::uint32_t);
 [[nodiscard]] RunResult load_store_other(CpuState &, GuestMemory &,
                                          std::uint32_t);
-[[nodiscard]] RunResult load_pointer_authenticated(CpuState &, GuestMemory &,
-                                                   std::uint32_t);
 [[nodiscard]] RunResult load_store_simd_ordered(CpuState &, GuestMemory &,
                                                 std::uint32_t);
 [[nodiscard]] RunResult load_store_exclusive(CpuState &, GuestMemory &,
@@ -116,15 +110,5 @@ using Handler = RunResult (*)(CpuState &, GuestMemory &, std::uint32_t);
 [[nodiscard]] RunResult load_store_ordered_writeback(CpuState &,
                                                      GuestMemory &,
                                                      std::uint32_t);
-[[nodiscard]] RunResult guarded_control_stack(CpuState &, GuestMemory &,
-                                              std::uint32_t);
-[[nodiscard]] RunResult pointer_auth_strip(CpuState &, GuestMemory &,
-                                           std::uint32_t);
-[[nodiscard]] RunResult pointer_auth_code(CpuState &, GuestMemory &,
-                                          std::uint32_t);
-[[nodiscard]] RunResult pointer_auth_generic(CpuState &, GuestMemory &,
-                                             std::uint32_t);
-[[nodiscard]] RunResult branch_authenticated(CpuState &, GuestMemory &,
-                                             std::uint32_t);
 
 } // namespace uml::cpu::arm64::jit::semantic

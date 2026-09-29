@@ -119,14 +119,11 @@ namespace uml::cpu::arm64 {
       block = shared;
     } else {
       JitCompiler compiler{
-          enable_guarded_control_flow_, this,
-          &Implementation::resolve_block_link, false,
+          this, &Implementation::resolve_block_link, false,
           &Implementation::resolve_indirect_link
       };
       // Compile once on a miss. Speculatively lowering the whole block a
       // second time for GPR residency delays cold multi-process workloads.
-      compiler.set_pointer_authentication_enabled(
-          enable_pointer_authentication_);
 #if UML_ENABLE_JIT_PROFILE
       const auto local_compile_path_started = jit_profile_timestamp_ns();
 #endif
@@ -206,12 +203,9 @@ namespace uml::cpu::arm64 {
            * Direct descriptors are regenerated in the private link table.
            */
           JitCompiler retry_compiler{
-              enable_guarded_control_flow_, this,
-              &Implementation::resolve_block_link, false,
+              this, &Implementation::resolve_block_link, false,
               &Implementation::resolve_indirect_link
           };
-          retry_compiler.set_pointer_authentication_enabled(
-              enable_pointer_authentication_);
           const auto retry_compiled = retry_compiler.compile(
               cpu.pc, std::span{instructions}.first(count));
 #if UML_JIT_RUNTIME_DIAGNOSTICS
@@ -346,9 +340,7 @@ JitExecutor::Implementation::tracked_store_function(CompiledBlock &block, Static
             std::as_writable_bytes(std::span{&instructions[index], 1})))
       return nullptr;
   }
-  JitCompiler compiler{enable_guarded_control_flow_, nullptr, nullptr, true};
-  compiler.set_pointer_authentication_enabled(
-      enable_pointer_authentication_);
+  JitCompiler compiler{nullptr, nullptr, true};
   const auto compiled = compiler.compile(
       block.pc, std::span{instructions}.first(block.instruction_count));
   if (compiled.words.empty() ||
@@ -450,10 +442,7 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
     JitExecutor::Implementation::SingleInstructionTranslation>
 JitExecutor::Implementation::translate_single_instruction(
     std::uint64_t pc, std::uint32_t instruction, bool track_direct_stores) {
-  JitCompiler compiler{enable_guarded_control_flow_, nullptr, nullptr,
-                       track_direct_stores};
-  compiler.set_pointer_authentication_enabled(
-      enable_pointer_authentication_);
+  JitCompiler compiler{nullptr, nullptr, track_direct_stores};
   const auto compiled =
       compiler.compile(pc, std::span{&instruction, std::size_t{1}});
   if (compiled.words.empty() || compiled.guest_instructions != 1U ||

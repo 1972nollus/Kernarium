@@ -29,10 +29,6 @@ public:
 	[[nodiscard]] std::byte *atomic_pointer(
 		std::uint64_t address, std::size_t size,
 		::uml::memory::MemoryAccess access) override;
-	[[nodiscard]] bool read_allocation_tag(
-		std::uint64_t address, std::uint8_t &tag) override;
-	[[nodiscard]] bool write_allocation_tag(
-		std::uint64_t address, std::uint8_t tag) override;
 	[[nodiscard]] bool is_executable(std::uint64_t address) noexcept override;
 	[[nodiscard]] bool code_page_stamp(std::uint64_t address,
 		void *execution_context,

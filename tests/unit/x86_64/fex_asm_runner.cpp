@@ -609,7 +609,6 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 	case uml::cpu::EngineEvent::interrupt: return "interrupt";
 	case uml::cpu::EngineEvent::illegal_instruction: return "illegal_instruction";
 	case uml::cpu::EngineEvent::breakpoint: return "breakpoint";
-	case uml::cpu::EngineEvent::gcs_fault: return "gcs_fault";
 	case uml::cpu::EngineEvent::floating_point_trap:
 		return "floating_point_trap";
 	case uml::cpu::EngineEvent::pc_alignment: return "pc_alignment";

@@ -86,9 +86,7 @@ void multiple_translation_is_fully_specialized()
 							selected.insert(require_stream(
 								built,
 								packed_operand(
-									rn, 29, rm,
-									std::size_t{1} <<
-										size)));
+									rn, 29, rm)));
 						}
 			}
 	/*

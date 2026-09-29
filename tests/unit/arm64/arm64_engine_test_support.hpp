@@ -65,7 +65,6 @@ private:
 enum class ExpectedEvent {
   system_call,
   memory_fault,
-  gcs_fault,
   illegal_instruction,
   breakpoint,
   floating_point_trap,
@@ -77,11 +76,6 @@ enum class ExpectedEvent {
 struct MemoryFaultExpectation final {
   std::uint64_t address{};
   arm64::MemoryAccess access{arm64::MemoryAccess::read};
-};
-
-struct AllocationTag final {
-  std::size_t offset{};
-  std::uint8_t value{};
 };
 
 using ArchitectureValidator = void (*)(
@@ -102,10 +96,6 @@ struct MemoryRegion final {
   std::span<const std::byte> initial;
   /* An empty expected span means that the initial bytes are unchanged. */
   std::span<const std::byte> expected;
-  /* Tag lists are sparse overrides; all omitted granules start at zero. */
-  std::span<const AllocationTag> initial_tags;
-  /* Omitted expected granules retain their initial value. */
-  std::span<const AllocationTag> expected_tags;
   bool readable{true};
   bool writable{true};
   bool executable{};
@@ -189,16 +179,6 @@ struct EngineTestCounts final {
 };
 
 struct EngineHarnessOptions final {
-  /*
-   * The complete software implementation remains the default. Feature-profile
-   * tests disable it in both engines and verify HINT/undefined behavior with
-   * the same case definition.
-   */
-  bool enable_pointer_authentication{true};
-  /* This switch selects dedicated guarded-control-flow translations in both
-   * production engines.
-   */
-  bool enable_guarded_control_flow{};
   /* These switches alter only the gadget translation choice. The JIT still
    * runs in sequence, so portable gadget paths use the same case definition
    * as the ordinary two-engine run.

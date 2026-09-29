@@ -740,7 +740,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..0e16e611416a790dd3a58a5d688cec2f
 +	return &uml_x86_64_view;
  }
 diff --git a/arch/arm64/um/shared/sysdep/ptrace.h b/arch/arm64/um/shared/sysdep/ptrace.h
-index f77c6e818dabddb6598a1cefb47167cbe324fef7..a83391a7d46cb661683616999460b7bf418f94a0 100644
+index 3a493972d6b40e4f5500325140850a61069660e4..51d035e8b6af242cc740041ecf2ec2985ff35cca 100644
 --- a/arch/arm64/um/shared/sysdep/ptrace.h
 +++ b/arch/arm64/um/shared/sysdep/ptrace.h
 @@ -22,15 +22,25 @@
@@ -778,7 +778,7 @@ index f77c6e818dabddb6598a1cefb47167cbe324fef7..a83391a7d46cb661683616999460b7bf
  
  struct uml_pt_regs {
  	unsigned long gp[MAX_REG_NR];
-@@ -55,17 +65,127 @@ struct uml_pt_regs {
+@@ -56,17 +66,127 @@ struct uml_pt_regs {
  	unsigned long fp[];
  };
  
@@ -2497,7 +2497,7 @@ index 215668ff8df026f330892cbf03bb84a4c1c63add..0c0aae139b9b19d30385a3b2920cfd58
  	*args++ = UPT_SYSCALL_ARG1(r);
  	*args++ = UPT_SYSCALL_ARG2(r);
 diff --git a/arch/um/kernel/exec.c b/arch/um/kernel/exec.c
-index d0f443c195f30b51bd8e011b1dbab1e8b32eaa88..54db27567bf51c577bded107bcaa1e58263e697b 100644
+index 3ebfd69039436852e72bb82bbc3245888de7f758..dd6e9bccb7464771aa4015720851c3e1302a2257 100644
 --- a/arch/um/kernel/exec.c
 +++ b/arch/um/kernel/exec.c
 @@ -31,7 +31,12 @@ void flush_thread(void)
@@ -2510,8 +2510,8 @@ index d0f443c195f30b51bd8e011b1dbab1e8b32eaa88..54db27567bf51c577bded107bcaa1e58
 +#else
  	current_pt_regs()->regs.svcr = 0;
 +#endif
- 	memset(current_pt_regs()->regs.pointer_auth_keys, 0,
- 	       sizeof(current_pt_regs()->regs.pointer_auth_keys));
+ 	memset(current_pt_regs()->regs.compat_tls, 0,
+ 	       sizeof(current_pt_regs()->regs.compat_tls));
  #endif
 diff --git a/arch/um/kernel/process.c b/arch/um/kernel/process.c
 index 9489651287b3d7fbe264d32eaeeb8977954a5a95..d254768e088ea9b85658600344bc3036941b18e9 100644
@@ -2608,18 +2608,18 @@ index 3267358aad21eb46cb76cc8375280bac948f0bc9..bde1affde2a40d95c648c8221d1d5818
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 01bea1dff640b72d0da2213b37d2841617d651d5..c45bc9c0b20ce27f77e7b9e0e5a6656df1840f5f 100644
+index 015a753d6cd3c5539e15d1722bf515aa732de017..0aba40dac51992b04acad8cc230442a202e82d3e 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -56,6 +56,7 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
- #define DARWIN_GUEST_SEGV_CPERR 10
+@@ -53,6 +53,7 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
+ #define DARWIN_GUEST_SIGBUS 7
  /* Linux asm-generic/siginfo.h values differ from Darwin's floating-point
   * si_code values, so keep the guest ABI numbers explicit at this boundary. */
 +#define DARWIN_GUEST_FPE_INTDIV 1
  #define DARWIN_GUEST_FPE_FLTDIV 3
  #define DARWIN_GUEST_FPE_FLTOVF 4
  #define DARWIN_GUEST_FPE_FLTUND 5
-@@ -424,7 +425,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -421,7 +422,7 @@ void userspace(struct uml_pt_regs *registers)
  #endif
  		switch (event) {
  		case DARWIN_UML_EVENT_SYSCALL:
@@ -2628,7 +2628,7 @@ index 01bea1dff640b72d0da2213b37d2841617d651d5..c45bc9c0b20ce27f77e7b9e0e5a6656d
  			handle_syscall(registers);
  			/* copy_mm() records the parent's COW protection changes in
  			 * UML's normal TLB synchronization state.  The next userspace
-@@ -485,13 +486,20 @@ void userspace(struct uml_pt_regs *registers)
+@@ -482,13 +483,20 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_FLOATING_POINT_TRAP:
  		{
  			siginfo_t signal_info = { 0 };
@@ -2649,7 +2649,7 @@ index 01bea1dff640b72d0da2213b37d2841617d651d5..c45bc9c0b20ce27f77e7b9e0e5a6656d
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -599,14 +607,45 @@ void userspace(struct uml_pt_regs *registers)
+@@ -574,14 +582,45 @@ void userspace(struct uml_pt_regs *registers)
  
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);

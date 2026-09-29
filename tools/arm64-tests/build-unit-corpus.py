@@ -30,6 +30,7 @@ INVENTORY = UNIT / "a64_instruction_inventory.tsv"
 ALLOCATIONS = UNIT / "a64_instruction_allocations.tsv"
 PARTITIONS = UNIT / "a64_instruction_decode_partitions.tsv"
 FEATURES = REPOSITORY / "darwin" / "platform" / "host_capabilities.hpp"
+ABSENT_FEATURES_SCRIPT = "tools/arm64-tests/absent-feature-corpus.py"
 
 PACK_MAGIC = b"UMLA64C\0"
 PACK_VERSION = 1
@@ -89,20 +90,10 @@ STATE_FIELDS = (
     (4, "fpsr", "I"),
     (5, "fpmr", "Q"),
     (6, "tls", "Q"),
-    (7, "mte_enabled", "B"),
     (8, "tbi_enabled", "B"),
-    (9, "mte_exclude", "H"),
-    (10, "mte_tag_choices", "256s"),
-    (11, "mte_random_tags", "B"),
-    (12, "mte_seed", "H"),
-    (13, "mte_tag", "B"),
-    (14, "mte_random_state", "Q"),
-    (15, "cpa_enabled", "B"),
-    (16, "cpa_multiply_enabled", "B"),
     (17, "accdata", "I"),
     (18, "pstate_ssbs", "B"),
     (19, "pstate_dit", "B"),
-    (20, "pstate_tco", "B"),
     (21, "pstate_sm", "B"),
     (22, "pstate_za", "B"),
     (23, "pstate_daif_access", "B"),
@@ -114,6 +105,24 @@ STATE_FIELDS = (
     (29, "exclusive_version", "Q"),
     (30, "exclusive_size", "B"),
     (31, "fp_dirty", "B"),
+)
+
+# The virtual CPU implements no FEAT_MTE, FEAT_GCS, FEAT_CPA, or FEAT_PAuth.
+# Producer exports and packs made before their removal still carry these
+# option, event, state, allocation-tag, and validator slots, so they stay
+# readable; the absent-feature-corpus.py rewrite removes them, and the pack
+# encoder refuses them. Their pack ids and codes stay reserved.
+RETIRED_FIELDS = (
+    (7, "mte_enabled", "B"),
+    (9, "mte_exclude", "H"),
+    (10, "mte_tag_choices", "256s"),
+    (11, "mte_random_tags", "B"),
+    (12, "mte_seed", "H"),
+    (13, "mte_tag", "B"),
+    (14, "mte_random_state", "Q"),
+    (15, "cpa_enabled", "B"),
+    (16, "cpa_multiply_enabled", "B"),
+    (20, "pstate_tco", "B"),
     (32, "gcs_pointer", "Q"),
     (33, "gcs_implemented", "B"),
     (34, "gcs_push_enabled", "B"),
@@ -121,8 +130,24 @@ STATE_FIELDS = (
     (36, "pointer_auth_keys", "80s"),
     (37, "pointer_authentication_enabled", "B"),
 )
-FIELD_BY_NAME = {name: (identifier, fmt) for identifier, name, fmt in STATE_FIELDS}
-FIELD_BY_ID = {identifier: (name, fmt) for identifier, name, fmt in STATE_FIELDS}
+RETIRED_OPTIONS = frozenset({"enable_guarded_control_flow",
+                             "enable_pointer_authentication"})
+RETIRED_EVENTS = frozenset({"gcs-fault"})
+RETIRED_VALIDATORS = frozenset({
+    "guarded-control-call-fault-atomicity/v1",
+    "guarded-control-return-fault/v1",
+    "guarded-control-zero-target-fault/v1",
+    "permitted-tag-generator-choice/v1",
+    "permitted-transformed-branch-failure/v1",
+    "permitted-transformed-code/v1",
+    "permitted-transformed-generic/v1",
+    "transformed-address-fault-state/v1",
+})
+RETIRED_FIELD_NAMES = frozenset(name for _i, name, _f in RETIRED_FIELDS)
+# Readable fields, in pack id order.
+READ_FIELDS = tuple(sorted(STATE_FIELDS + RETIRED_FIELDS))
+FIELD_BY_NAME = {name: (identifier, fmt) for identifier, name, fmt in READ_FIELDS}
+FIELD_BY_ID = {identifier: (name, fmt) for identifier, name, fmt in READ_FIELDS}
 DETERMINISTIC_KEYS = (
     0x84BE_85CE_9804_E94B, 0xEC28_0D07_4B7A_C6D3,
     0x4A65_7B64_56CB_C3D1, 0x2B7E_1516_28AE_D2A6,
@@ -130,6 +155,7 @@ DETERMINISTIC_KEYS = (
     0xD1B5_4A32_D192_ED03, 0x94D0_49BB_1331_11EB,
     0x2545_F491_4F6C_DD1D, 0xBF58_476D_1CE4_E5B9,
 )
+# The retired fields' defaults decode producer exports and pre-removal packs.
 DEFAULT_STATE = {
     "pc": 0, "nzcv": 0, "fpcr": 0, "fpsr": 0, "fpmr": 0, "tls": 0,
     "mte_enabled": 0, "tbi_enabled": 0, "mte_exclude": 0,
@@ -244,7 +270,8 @@ class Corpus:
 
 @functools.lru_cache(maxsize=None)
 def derived_tag_choices(enabled: int, exclude: int) -> bytes:
-    """CpuState::set_mte_configuration() table for (enabled, exclude)."""
+    """The retired MTE tag-choice table the producer harness derived from
+    (enabled, exclude)."""
     def choose(start: int, offset: int) -> int:
         if not enabled or exclude == 0xFFFF:
             return 0
@@ -265,10 +292,10 @@ def derived_tag_choices(enabled: int, exclude: int) -> bytes:
 
 
 def stored_fields(state: dict, base: dict) -> tuple:
-    """Fields that differ from base. The tag-choice table is implicit when it
-    is the one set_mte_configuration() derives from the MTE controls."""
+    """Fields that differ from base. The retired tag-choice table is implicit
+    when it is the one the producer harness derived from the MTE controls."""
     fields = []
-    for _identifier, name, _format in STATE_FIELDS:
+    for _identifier, name, _format in READ_FIELDS:
         if name == "mte_tag_choices":
             if state[name] != derived_tag_choices(state["mte_enabled"],
                                                   state["mte_exclude"]):
@@ -311,7 +338,7 @@ def apply_state(base: dict, sparse: tuple) -> dict:
     state = {
         "gpr": list(base["gpr"]),
         "vectors": list(base["vectors"]),
-        **{name: base[name] for _i, name, _f in STATE_FIELDS},
+        **{name: base[name] for _i, name, _f in READ_FIELDS},
     }
     gprs, vectors, others = sparse
     for index, value in gprs:
@@ -755,11 +782,33 @@ def decode_sparse(reader: ByteReader) -> tuple:
     return gprs, vectors, tuple(others)
 
 
+def retired_use(record: Record, case: Case) -> str | None:
+    """Names a retired slot the case uses, or None."""
+    for bit, name in enumerate(OPTION_NAMES):
+        if name in RETIRED_OPTIONS and record.options >> bit & 1:
+            return f"option {name}"
+    if case.event in RETIRED_EVENTS:
+        return f"event {case.event}"
+    if case.validator in RETIRED_VALIDATORS:
+        return f"validator {case.validator}"
+    for _gprs, _vectors, others in (case.initial, case.expected):
+        for name, _value in others:
+            if name in RETIRED_FIELD_NAMES:
+                return f"state field {name}"
+    if any(region.tags or region.expected_tags for region in case.memory):
+        return "allocation tags"
+    return None
+
+
 def encode_pack(corpus: Corpus, tokens: tuple[str, ...]) -> bytes:
     native_sets: dict[tuple[str, ...], int] = {}
     validators: dict[str, int] = {}
     for record in corpus.records:
         for _program, case in record.cases:
+            retired = retired_use(record, case)
+            if retired is not None:
+                fail(f"{record.name}: {case.name}: retired {retired}; "
+                     "rewrite the dump with absent-feature-corpus.py")
             native_sets.setdefault(case.native, len(native_sets))
             if case.validator is not None:
                 validators.setdefault(case.validator, len(validators))
@@ -971,7 +1020,7 @@ def load_sparse(values: dict) -> tuple:
             others.append((key, value))
         else:
             fail(f"unknown state field {key}")
-    order = {name: identifier for identifier, name, _fmt in STATE_FIELDS}
+    order = {name: identifier for identifier, name, _fmt in READ_FIELDS}
     return (tuple(sorted(gprs)), tuple(sorted(vectors)),
             tuple(sorted(others, key=lambda item: order[item[0]])))
 
@@ -1296,6 +1345,8 @@ def metadata(corpus: Corpus, pack: bytes) -> dict[str, bytes]:
            if "force_include" in corpus.meta else {}),
         **({"lse2_alignment": corpus.meta["lse2_alignment"]}
            if "lse2_alignment" in corpus.meta else {}),
+        **({"absent_features": corpus.meta["absent_features"]}
+           if "absent_features" in corpus.meta else {}),
         "sample_limit": corpus.meta["sample_limit"],
         "seed": corpus.meta["seed"],
         "exports": corpus.meta["exports"],
@@ -1364,6 +1415,15 @@ def build(options: argparse.Namespace) -> int:
         },
     }
     corpus = merge_exports(profiles, blobs, meta)
+    if options.text is not None:
+        # Producer exports carry retired slots, so the export becomes a dump
+        # for the post-export rewrites before it is packed.
+        with options.text.open("w", encoding="utf-8") as sink:
+            for line in dump_corpus(corpus, tokens):
+                sink.write(line + "\n")
+        print(f"wrote {options.text}: {len(corpus.records)} records, "
+              f"{sum(len(record.cases) for record in corpus.records)} cases")
+        return 0
     pack = encode_pack(corpus, tokens)
     options.output.mkdir(parents=True, exist_ok=True)
     (options.output / PACK_NAME).write_bytes(pack)
@@ -1392,6 +1452,25 @@ def check(options: argparse.Namespace) -> int:
         path = REPOSITORY / include["file"]
         if not path.is_file() or sha256(path.read_bytes()) != include["sha256"]:
             stale.append(include["file"] + " (changed since the export)")
+    # The absent-feature rewrite must be the current script with its
+    # default features and failing list.
+    step = corpus.meta.get("absent_features")
+    script = REPOSITORY / ABSENT_FEATURES_SCRIPT
+    if step is None or step["script"] != ABSENT_FEATURES_SCRIPT or \
+            sha256(script.read_bytes()) != step["sha256"]:
+        stale.append(ABSENT_FEATURES_SCRIPT + " (not the rewrite of the pack)")
+    else:
+        text = script.read_text(encoding="utf-8")
+        start = text.index("DEFAULT_FEATURES = (")
+        defaults = [item.strip().strip('"') for item in
+                    text[start:text.index(")", start)].split("(", 1)[1]
+                    .split(",") if item.strip()]
+        if step["features"] != defaults:
+            stale.append(ABSENT_FEATURES_SCRIPT + " (feature list)")
+        failing = step.get("failing")
+        if failing is None or sha256(
+                (REPOSITORY / failing["file"]).read_bytes()) != failing["sha256"]:
+            stale.append("absent-feature failing list")
     if stale:
         fail("stale corpus files: " + ", ".join(stale))
     print(f"A64 instruction corpus is fresh: "
@@ -1444,7 +1523,9 @@ def main() -> int:
     parser.add_argument("--include", type=pathlib.Path,
                         help="force-include directives both exports used")
     parser.add_argument("--text", type=pathlib.Path,
-                        help="dump destination (default: standard output)")
+                        help="dump destination (default: standard output); "
+                        "with --export-16k, dump the exports instead of "
+                        "packing them")
     options = parser.parse_args()
     if options.export_16k is not None:
         if options.export_4k is None or not options.producer_commit:

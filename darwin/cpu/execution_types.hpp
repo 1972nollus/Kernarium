@@ -18,7 +18,6 @@ enum class EngineEvent : int {
 	interrupt = 3,
 	illegal_instruction = 4,
 	breakpoint = 5,
-	gcs_fault = 6,
 	floating_point_trap = 7,
 	pc_alignment = 8,
 	overflow = 9,
@@ -37,7 +36,6 @@ enum class EngineEvent : int {
 	case EngineEvent::fatal:
 	case EngineEvent::memory_fault:
 	case EngineEvent::illegal_instruction:
-	case EngineEvent::gcs_fault:
 	case EngineEvent::floating_point_trap:
 		return true;
 	default:
@@ -51,7 +49,6 @@ enum class ExitReason {
 	interrupt,
 	illegal_instruction,
 	breakpoint,
-	gcs_fault,
 	floating_point_trap,
 	pc_alignment,
 	instruction_budget,

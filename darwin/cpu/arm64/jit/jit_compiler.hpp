@@ -22,18 +22,15 @@ using ::uml::memory::Access;
 
 class JitCompiler final : private jit::JitCompilerFamilies {
 public:
-  explicit JitCompiler(bool enable_guarded_control_flow,
-                       void *link_context = nullptr,
+  explicit JitCompiler(void *link_context = nullptr,
                        LinkResolver link_resolver = nullptr,
                        bool track_direct_stores = false,
                        IndirectLinkResolver indirect_link_resolver =
                            nullptr) noexcept;
 
-  JitCompiler(bool enable_guarded_control_flow,
-              const ArmFeatureSet &translation_features) noexcept;
+  explicit JitCompiler(const ArmFeatureSet &translation_features) noexcept;
 
   void set_table_list_planning_enabled(bool enabled) noexcept;
-  void set_pointer_authentication_enabled(bool enabled) noexcept;
 
   struct Result final {
     std::span<const std::uint32_t> words;
@@ -192,8 +189,6 @@ private:
   void emit_memory_slow(std::uint32_t instruction, std::uint64_t pc,
                         std::size_t count);
 
-  void emit_gcs_slow(std::uint32_t instruction, std::uint64_t pc,
-                     std::size_t count);
 
   void emit_simd_modified_immediate(std::uint32_t instruction,
                                     bool reads_destination);
@@ -342,8 +337,6 @@ private:
   LinkResolver configured_link_resolver_{};
   IndirectLinkResolver configured_indirect_link_resolver_{};
   bool track_direct_stores_{};
-  bool enable_guarded_control_flow_{};
-  bool enable_pointer_authentication_{true};
   bool table_list_planning_enabled_{true};
   const ArmFeatureSet *translation_features_{};
 };

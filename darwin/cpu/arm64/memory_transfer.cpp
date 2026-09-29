@@ -56,7 +56,7 @@ extern "C" std::uint32_t uml_arm64_simd_structure_memory_transfer(
 	uml::cpu::arm64::CpuState *cpu,
 	::uml::memory::Tlb *tlb, std::uint64_t tagged_address,
 	void *data, std::size_t size, std::uint32_t access,
-	std::uint32_t base_sp, std::uint32_t options) noexcept
+	std::uint32_t base_sp) noexcept
 {
 	using ::uml::memory::Access;
 	if (cpu == nullptr || tlb == nullptr)
@@ -64,48 +64,8 @@ extern "C" std::uint32_t uml_arm64_simd_structure_memory_transfer(
 	const auto direction =
 		access == static_cast<std::uint32_t>(Access::write) ?
 			Access::write : Access::read;
-	const bool tagged = base_sp == 0U && cpu->tagged_addresses_enabled();
-	const auto address = tagged ?
-		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
-	const auto element_size = static_cast<std::size_t>(options >> 8);
-	const bool tagchecked = (options & 1U) != 0U;
-	if (element_size == 0U || element_size > 32U)
-		return 0;
-	if (tagchecked && cpu->mte_enabled && !cpu->pstate_tco) {
-		const auto logical_tag = base_sp == 0U && cpu->mte_enabled ?
-			static_cast<std::uint8_t>(tagged_address >> 56) & 15U : 0U;
-		for (std::size_t completed = 0; completed < size;
-		     completed += element_size) {
-			const auto current = address + completed;
-			const auto access_size =
-				std::min(element_size, size - completed);
-			for (std::size_t translated = 0;
-			     translated < access_size;) {
-				const auto translated_address = current + translated;
-				if (tlb->translate(translated_address, direction) == nullptr)
-					return 0;
-				translated += std::min<std::size_t>(
-					access_size - translated,
-					DARWIN_UML_GUEST_PAGE_SIZE -
-						(translated_address &
-						 (DARWIN_UML_GUEST_PAGE_SIZE - 1U)));
-			}
-			for (std::size_t checked = 0; checked < access_size;) {
-				const auto tagged_current = current + checked;
-				std::uint8_t allocation_tag{};
-				if (!tlb->read_allocation_tag(
-					    tagged_current, allocation_tag) ||
-				    allocation_tag != logical_tag) {
-					tlb->fault_address = tagged_current;
-					tlb->fault_access = direction;
-					return 0;
-				}
-				checked += std::min<std::size_t>(
-					access_size - checked,
-					16U - (tagged_current & 15U));
-			}
-		}
-	}
+	const auto address =
+		cpu->untag_data_address(tagged_address, base_sp != 0U);
 	const auto transferred = uml_arm64_memory_transfer(
 		tlb, address, data, size, access);
 	if (transferred != 0U && direction == Access::write)
@@ -128,9 +88,8 @@ extern "C" std::byte *uml_arm64_atomic_floating_pointer(
 		tlb->fault_access = Access::write;
 		return nullptr;
 	}
-	const bool tagged = base_sp == 0U && cpu->tagged_addresses_enabled();
-	const auto address = tagged ?
-		tagged_address & 0x00ff'ffff'ffff'ffffULL : tagged_address;
+	const auto address =
+		cpu->untag_data_address(tagged_address, base_sp != 0U);
 	if (uml::cpu::arm64::detail::single_copy_alignment_faults(
 		    address, size, tlb->unaligned_atomics)) {
 		tlb->fault_alignment = 1;
@@ -139,22 +98,7 @@ extern "C" std::byte *uml_arm64_atomic_floating_pointer(
 		return nullptr;
 	}
 
-	auto *pointer = tlb->translate(address, Access::write);
-	if (pointer == nullptr)
-		return nullptr;
-	if (base_sp == 0U && cpu->mte_enabled && !cpu->pstate_tco) {
-		std::uint8_t allocation_tag{};
-		if (!tlb->read_allocation_tag(address, allocation_tag))
-			return nullptr;
-		const auto logical_tag =
-			static_cast<std::uint8_t>(tagged_address >> 56) & 15U;
-		if (allocation_tag != logical_tag) {
-			tlb->fault_address = address;
-			tlb->fault_access = Access::write;
-			return nullptr;
-		}
-	}
-	return pointer;
+	return tlb->translate(address, Access::write);
 }
 
 extern "C" void uml_arm64_alignment_fault(

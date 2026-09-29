@@ -13,8 +13,8 @@ A case is one engine-harness check exported from a producer unit test of a
 producer commit (see [Regeneration](#regeneration-and-new-cases)): a program
 on the code page at `0x4f000000`, the initial architectural state and
 data regions, and the expected terminal event, retired-instruction count,
-fault address and access, floating-point syndrome, architectural state, data
-bytes, and allocation tags. The code page must be unchanged after every run.
+fault address and access, floating-point syndrome, architectural state, and
+data bytes. The code page must be unchanged after every run.
 A case whose architecture permits several results names a validator relation
 instead of an exact state.
 
@@ -65,16 +65,8 @@ a `/16k` or `/4k` suffix holds profile-specific cases.
 
 | Relation | Accepted result |
 | --- | --- |
-| `guarded-control-call-fault-atomicity/v1` | exact state except the signed target register, whose stripped value is unchanged |
-| `guarded-control-return-fault/v1` | exact state except X30, whose stripped value is unchanged |
-| `guarded-control-zero-target-fault/v1` | expected state with a faulting PC whose stripped address is zero |
 | `ignore-host-counter-register/v1` | expected state except system-register read destinations |
 | `permitted-exclusive-store-failure/v1` | expected state except the opaque exclusive-monitor value and version |
-| `permitted-tag-generator-choice/v1` | initial state with an IRG result that keeps the address and uses a permitted tag, and any generator state |
-| `permitted-transformed-branch-failure/v1` | initial state plus the link update, with a faulting PC whose stripped address is zero or, when the entry signed the target with itself, the original target |
-| `permitted-transformed-code/v1` | initial state with a PAC or AUT result that retains the architectural pointer bits |
-| `permitted-transformed-generic/v1` | initial state with a PACGA result whose low half is zero |
-| `transformed-address-fault-state/v1` | initial state except the signed base register, whose stripped value is unchanged |
 
 Relations derive their operands from the program, so a new relation or a new
 use of an existing one requires a runner change.
@@ -100,8 +92,7 @@ state    = u32 mask, u64 per set bit (bit 31 is SP)
            u8 count, (field id:u8, value) per field
 region   = address:u64 size:u32 flags:u8 blob:u32
            u16*(offset:u32, length:u16, bytes)   expected bytes
-           u16*(offset:u32, tag:u8)              initial tags
-           u16*(offset:u32, tag:u8)              expected tags
+           u16 0  u16 0                          retired tag lists
 ```
 
 `str16` and `str32` are length-prefixed UTF-8. `meta` is JSON. Native sets
@@ -109,12 +100,16 @@ index the stable `arm_feature_tokens` table of
 `darwin/platform/host_capabilities.hpp`. Case flags hold the invalid-encoding
 bit, the fault-compared bit, and the minimization level (0 full, 1 narrow,
 2 broad) in bits 2-3. `profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
-Option bits, in order from bit 0, enable pointer authentication and guarded
-control flow and force the portable checksum, flag, SHA3, fixed-transform,
-AES, PMULL, dot-product, and I8MM gadget bodies. Region flags are readable,
-writable, executable, guest code, and guest writable. Events follow the
-harness order: system call, memory fault, GCS fault, illegal instruction,
-breakpoint, floating-point trap, PC alignment, instruction budget, fatal.
+Option bits 0 and 1 are reserved, and bits 2-9, in order, force the portable
+checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
+gadget bodies. Region flags are readable, writable, executable, guest code,
+and guest writable. Events follow the harness order: system call, memory
+fault, reserved, illegal instruction, breakpoint, floating-point trap, PC
+alignment, instruction budget, fatal. The reserved option bits, event code 2,
+the field ids marked reserved below, and non-empty tag lists held FEAT_PAuth,
+FEAT_MTE, FEAT_GCS, and FEAT_CPA state (see
+[Absent-feature cases](#absent-feature-cases)); the runner rejects a pack
+that uses them.
 Validator `0xffff` means exact comparison; retirement maximum `0xffffffff` is
 unbounded. Ordinals are the producer check ordinals, zero where a profile did
 not export the case.
@@ -122,38 +117,25 @@ not export the case.
 The initial state is encoded against a base state and the expected state
 against the initial one. In the base, `Xi` (and SP as `i = 31`) is
 `0x5eed000000000000 | i << 40 | 0x01010101 * (i + 1)`, byte `b` of `Vi` is
-`((16i + b) * 0x9d + 0x3b) mod 256`, PC is the entry address, MTE seed is 1,
-the tag generator state is `0x9e3779b97f4a7c15`, the exclusive address is all
-ones, pointer authentication is enabled with the deterministic `CpuState`
-keys, and every other field is zero. Field ids are:
+`((16i + b) * 0x9d + 0x3b) mod 256`, PC is the entry address, the exclusive
+address is all ones, and every other field is zero. Field ids are:
 
 | Id | Field | Id | Field |
 | --- | --- | --- | --- |
-| 1 | `pc` u64 | 20 | `pstate_tco` u8 |
-| 2 | `nzcv` u32 | 21 | `pstate_sm` u8 |
-| 3 | `fpcr` u32 | 22 | `pstate_za` u8 |
-| 4 | `fpsr` u32 | 23 | `pstate_daif_access` u8 |
-| 5 | `fpmr` u64 | 24 | `pstate_daif` u8 |
-| 6 | `tls` u64 | 25 | `exclusive_address` u64 |
-| 7 | `mte_enabled` u8 | 26 | `exclusive_key` u64 |
+| 1 | `pc` u64 | 21 | `pstate_sm` u8 |
+| 2 | `nzcv` u32 | 22 | `pstate_za` u8 |
+| 3 | `fpcr` u32 | 23 | `pstate_daif_access` u8 |
+| 4 | `fpsr` u32 | 24 | `pstate_daif` u8 |
+| 5 | `fpmr` u64 | 25 | `exclusive_address` u64 |
+| 6 | `tls` u64 | 26 | `exclusive_key` u64 |
 | 8 | `tbi_enabled` u8 | 27 | `exclusive_value` u64 |
-| 9 | `mte_exclude` u16 | 28 | `exclusive_value2` u64 |
-| 10 | `mte_tag_choices` 256 bytes | 29 | `exclusive_version` u64 |
-| 11 | `mte_random_tags` u8 | 30 | `exclusive_size` u8 |
-| 12 | `mte_seed` u16 | 31 | `fp_dirty` u8 |
-| 13 | `mte_tag` u8 | 32 | `gcs_pointer` u64 |
-| 14 | `mte_random_state` u64 | 33 | `gcs_implemented` u8 |
-| 15 | `cpa_enabled` u8 | 34 | `gcs_push_enabled` u8 |
-| 16 | `cpa_multiply_enabled` u8 | 35 | `gcs_store_enabled` u8 |
-| 17 | `accdata` u32 | 36 | `pointer_auth_keys` 5 x (low, high) u64 |
-| 18 | `pstate_ssbs` u8 | 37 | `pointer_authentication_enabled` u8 |
-| 19 | `pstate_dit` u8 | | |
+| 17 | `accdata` u32 | 28 | `exclusive_value2` u64 |
+| 18 | `pstate_ssbs` u8 | 29 | `exclusive_version` u64 |
+| 19 | `pstate_dit` u8 | 30 | `exclusive_size` u8 |
+| | | 31 | `fp_dirty` u8 |
 
-An omitted field 10 is the table `CpuState::set_mte_configuration()` derives
-from fields 7 and 9. A region's initial bytes are its blob, and its expected
-bytes are the blob with the runs applied. When either tag list is non-empty,
-every granule is restored to its initial tag (zero unless listed) and compared
-with its expected tag.
+Ids 7, 9-16, 20, and 32-37 are reserved. A region's initial bytes are its
+blob, and its expected bytes are the blob with the runs applied.
 
 ## Running
 
@@ -224,13 +206,53 @@ implement the rule. [`tools/arm64-tests/lse2-alignment-corpus.py`](../../../../t
 therefore rewrites a dump after export: it drops those cases and appends the
 hand-authored `arm64-lse2-alignment` records, whose completing and
 block-crossing cases follow the architecture and match native LSE2 hardware.
-`provenance.json` records its hash and counts under `lse2_alignment`. Run it on
-a `--dump` of every regenerated pack and `--repack` the result:
+`provenance.json` records its hash and counts under `lse2_alignment`.
+
+## Absent-feature cases
+
+The virtual CPU implements none of FEAT_PAuth, FEAT_MTE, FEAT_GCS, and
+FEAT_CPA: their non-hint encodings are UNDEFINED and their hint-space
+encodings, such as PACIASP, AUTIASP, and GCSB, are NOPs. FEAT_PAuth_LR stays
+unimplemented as before, so its cases are unchanged. The producer harness
+enabled the removed features in most cases' state, so
+[`tools/arm64-tests/absent-feature-corpus.py`](../../../../tools/arm64-tests/absent-feature-corpus.py)
+rewrites the dump after the LSE2 step. It drops the cases that exercise a
+removed feature or hold one of its encodings without expecting it to be
+undefined; a case that expects the undefined-instruction trap stays, because
+its encodings stay undefined. It strips the removed state fields, harness
+option, and allocation tags from every other case and record, and drops the
+cases that `absent-feature-failing.tsv` lists because they fail without that
+state. It then appends the `arm64-absent-<feature>` records, which expect at
+least one word of every encoding class to be undefined and the hints to be
+NOPs, and `arm64-absent-mte-tbi` records that restore the coverage the failing
+cases took from their allocations.
+
+A failing case's tagged address relied on the top-byte ignore that MTE
+implied. Its replacement takes a kept two-word case of the same SIMD&FP
+load/store allocation that completes through a general-register base with a
+zero top byte, sets `tbi_enabled`, and tags the base; the architectural result
+is the kept case's, except that a written-back base keeps its tag.
+`provenance.json` records the script's hash, its feature list, the failing
+file's hash, and the drop, strip, and addition counts under
+`absent_features`, and `build-unit-corpus.py --check` verifies them. The
+`arm64-instruction-corpus-absent-features` tooling test replays the rewrite
+from the pre-removal pack and checks that every kept case differs from its
+source only by the stripped state.
+
+Run both steps on a `--dump` of every regenerated pack and `--repack` the
+result:
 
 ```sh
 python3 -B tools/arm64-tests/build-unit-corpus.py \
   --dump tests/unit/arm64/corpus/a64_instruction_corpus.pack --text corpus.jsonl
 python3 -B tools/arm64-tests/lse2-alignment-corpus.py corpus.jsonl lse2.jsonl
-python3 -B tools/arm64-tests/build-unit-corpus.py --repack lse2.jsonl \
+python3 -B tools/arm64-tests/absent-feature-corpus.py \
+  --failing tests/unit/arm64/corpus/absent-feature-failing.tsv lse2.jsonl absent.jsonl
+python3 -B tools/arm64-tests/build-unit-corpus.py --repack absent.jsonl \
   --output tests/unit/arm64/corpus
 ```
+
+A regeneration that changes which stripped cases fail refreshes the failing
+list: rewrite without `--failing`, run the corpus test on that pack in both
+page profiles with `--max-failures 0`, and pass both logs to
+`absent-feature-corpus.py --collect-failing`.

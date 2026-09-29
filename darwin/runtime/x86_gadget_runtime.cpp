@@ -272,7 +272,6 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 		case ::uml::cpu::EngineEvent::floating_point_trap:
 			result.reason = ::uml::cpu::ExitReason::floating_point_trap;
 			return run;
-		case ::uml::cpu::EngineEvent::gcs_fault:
 		case ::uml::cpu::EngineEvent::pc_alignment:
 		case ::uml::cpu::EngineEvent::fatal:
 			trace_fatal("execute", cpu, generation, 0,

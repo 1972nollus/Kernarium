@@ -4,11 +4,6 @@
 
 uml_add_arm64_unit_test(base_ls64_gadget)
 uml_add_arm64_unit_test(base_mops_gadget)
-uml_add_arm64_unit_test(base_mte_tag_load)
-uml_add_arm64_unit_test(base_mte_tag_store)
-uml_add_arm64_unit_test(base_mte_zero_store NAME arm64-base-mte-zero_store)
-uml_add_arm64_unit_test(base_mte_stgp)
-uml_add_arm64_unit_test(base_mte_multiple_gadget)
 uml_add_arm64_unit_test(base_immediate_memory_structure)
 uml_add_arm64_unit_test(base_load_store_register_structure)
 uml_add_arm64_unit_test(base_ordered_behavior)

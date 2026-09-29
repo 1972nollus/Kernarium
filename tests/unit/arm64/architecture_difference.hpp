@@ -61,22 +61,12 @@ namespace uml::emulator::tests {
 		return values("fpmr", expected.fpmr, actual.fpmr);
 	if (expected.tls != actual.tls)
 		return values("tls", expected.tls, actual.tls);
-	if (!(expected.mte_enabled == actual.mte_enabled &&
-	      expected.tbi_enabled == actual.tbi_enabled &&
-	      expected.mte_exclude == actual.mte_exclude &&
-	      expected.mte_tag_choices == actual.mte_tag_choices &&
-	      expected.mte_random_tags == actual.mte_random_tags &&
-	      expected.mte_seed == actual.mte_seed &&
-	      expected.mte_tag == actual.mte_tag &&
-	      expected.mte_random_state == actual.mte_random_state))
-		return std::string{"tag state"};
-	if (!(expected.cpa_enabled == actual.cpa_enabled &&
-	      expected.cpa_multiply_enabled == actual.cpa_multiply_enabled &&
-	      expected.accdata == actual.accdata))
-		return std::string{"checked arithmetic state"};
+	if (expected.tbi_enabled != actual.tbi_enabled)
+		return values("tbi", expected.tbi_enabled, actual.tbi_enabled);
+	if (expected.accdata != actual.accdata)
+		return values("accdata", expected.accdata, actual.accdata);
 	if (!(expected.pstate_ssbs == actual.pstate_ssbs &&
 	      expected.pstate_dit == actual.pstate_dit &&
-	      expected.pstate_tco == actual.pstate_tco &&
 	      expected.pstate_sm == actual.pstate_sm &&
 	      expected.pstate_za == actual.pstate_za &&
 	      expected.pstate_daif_access == actual.pstate_daif_access &&
@@ -89,17 +79,6 @@ namespace uml::emulator::tests {
 	      expected.exclusive_version == actual.exclusive_version &&
 	      expected.exclusive_size == actual.exclusive_size))
 		return std::string{"exclusive monitor"};
-	if (!(expected.gcs_pointer == actual.gcs_pointer &&
-	      expected.gcs_implemented == actual.gcs_implemented &&
-	      expected.gcs_push_enabled == actual.gcs_push_enabled &&
-	      expected.gcs_store_enabled == actual.gcs_store_enabled))
-		return "guarded control stack (pointer expected " +
-			hex(expected.gcs_pointer) + " actual " +
-			hex(actual.gcs_pointer) + ")";
-	if (!(expected.pointer_auth_keys == actual.pointer_auth_keys &&
-	      expected.pointer_authentication_enabled ==
-		      actual.pointer_authentication_enabled))
-		return std::string{"pointer-authentication state"};
 	return std::nullopt;
 }
 

@@ -22,16 +22,6 @@ std::atomic_uint64_t next_code_page_identity{1};
 
 } // namespace
 
-struct MappedBacking::TagPage final {
-	TagPage() noexcept
-	{
-		for (auto &tag : tags)
-			tag.store(0, std::memory_order_relaxed);
-	}
-
-	std::array<std::atomic_uint8_t, page_size / 16> tags;
-};
-
 struct MappedBacking::CodePage final {
 	CodePage() noexcept
 		: identity{next_code_page_identity.fetch_add(
@@ -95,46 +85,6 @@ std::byte *MappedBacking::at(std::uint64_t offset) const noexcept
 {
 	auto *data = static_cast<std::byte *>(mapping_.data());
 	return offset < size_ ? data + static_cast<std::size_t>(offset) : nullptr;
-}
-
-std::uint8_t MappedBacking::load_allocation_tag(
-	std::uint64_t offset) const noexcept
-{
-	const auto page = offset / page_size;
-	const auto index = static_cast<std::size_t>(
-		(offset & (page_size - 1)) / 16);
-	std::shared_lock lock{tags_mutex_};
-	const auto found = tag_pages_.find(page);
-	return found == tag_pages_.end() ? 0 :
-		found->second->tags[index].load(std::memory_order_acquire);
-}
-
-bool MappedBacking::store_allocation_tag(
-	std::uint64_t offset, std::uint8_t tag) noexcept
-{
-	const auto page = offset / page_size;
-	const auto index = static_cast<std::size_t>(
-		(offset & (page_size - 1)) / 16);
-	TagPage *tags = nullptr;
-	{
-		std::shared_lock lock{tags_mutex_};
-		const auto found = tag_pages_.find(page);
-		if (found != tag_pages_.end())
-			tags = found->second.get();
-	}
-	if (tags == nullptr) {
-		try {
-			std::lock_guard lock{tags_mutex_};
-			auto &slot = tag_pages_[page];
-			if (!slot)
-				slot = std::make_unique<TagPage>();
-			tags = slot.get();
-		} catch (...) {
-			return false;
-		}
-	}
-	tags->tags[index].store(tag & 15U, std::memory_order_release);
-	return true;
 }
 
 void *MappedBacking::code_page_handle(std::uint64_t offset) noexcept

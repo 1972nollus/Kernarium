@@ -3,13 +3,13 @@
 
 /* Keep the rare bridge coupled to the verified neutral ABI, not to gadget
  * implementation headers.  C++ static assertions live in assembly_layout.hpp. */
-.if UML_ARM64_CPU_FP_ACTIVE != 1200
+.if UML_ARM64_CPU_FP_ACTIVE != 920
     .error "CpuState gadget_fp_active layout changed"
 .endif
-.if UML_ARM64_CPU_HOST_FPCR != 1184 || UML_ARM64_CPU_HOST_FPSR != 1192
+.if UML_ARM64_CPU_HOST_FPCR != 904 || UML_ARM64_CPU_HOST_FPSR != 912
     .error "CpuState native FP layout changed"
 .endif
-.if UML_ARM64_CPU_FPMR_ACTIVE != 1224 || UML_ARM64_CPU_HOST_FPMR != 1216
+.if UML_ARM64_CPU_FPMR_ACTIVE != 944 || UML_ARM64_CPU_HOST_FPMR != 936
     .error "CpuState native FPMR layout changed"
 .endif
 

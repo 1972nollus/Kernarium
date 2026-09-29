@@ -170,20 +170,6 @@ using OrderedPairGadgets = std::array<OrderedPairAddressGadgets, 2>;
 
 using ConsistentPairGadgets = std::array<Gadget, 4>;
 
-struct GcsGadget final {
-	Gadget entry{};
-	std::uintptr_t operand{};
-	bool has_operand{};
-	bool always_traps{};
-};
-
-struct PointerAuthOperation final {
-	unsigned operation;
-	unsigned destination;
-	unsigned modifier;
-	bool zero_modifier;
-};
-
 struct SystemRegisterGadget final {
 	Gadget gadget;
 	bool operand;
@@ -194,10 +180,6 @@ struct PstateImmediateGadget final {
 	bool valid;
 	bool fault_address;
 };
-
-using CpaModeGadgets = std::array<Gadget, 8>;
-
-using CpaShiftGadgets = std::array<CpaModeGadgets, 8>;
 
 using SimdThreeSameGadgets = std::array<Gadget, 11>;
 
@@ -256,10 +238,8 @@ extern const OrderedPairGadgets ordered_pair_store_gadgets;
 extern const ConsistentPairGadgets consistent_pair_ldap_gadgets;
 extern const ConsistentPairGadgets consistent_pair_ldapp_gadgets;
 extern const ConsistentPairGadgets consistent_pair_store_gadgets;
-extern const std::array<std::array<Gadget, 2>, 8> pointer_auth_gadgets;
 extern const std::array<Gadget, 16> pstate_daif_set_gadgets;
 extern const std::array<Gadget, 16> pstate_daif_clear_gadgets;
-extern const std::array<std::uint8_t, 256> byte_popcount_table;
 
 [[nodiscard]] Gadget literal_load_gadget(bool, unsigned int, bool) noexcept;
 [[nodiscard]] Gadget scalar_unsigned_memory_gadget(unsigned int, unsigned int, bool, bool) noexcept;
@@ -301,15 +281,6 @@ extern const std::array<std::uint8_t, 256> byte_popcount_table;
 [[nodiscard]] bool host_has_f16f32mm() noexcept;
 [[nodiscard]] bool host_has_f16f32dot() noexcept;
 [[nodiscard]] bool host_has_lsfe() noexcept;
-[[nodiscard]] std::optional<GcsGadget> gcs_gadget(std::uint32_t) noexcept;
-[[nodiscard]] std::optional<PointerAuthOperation> decode_pointer_auth_hint(std::uint32_t) noexcept;
-[[nodiscard]] std::uintptr_t pointer_auth_operand(unsigned int, unsigned int) noexcept;
-[[nodiscard]] std::uintptr_t pointer_auth_generic_operand(unsigned int, unsigned int, unsigned int) noexcept;
-[[nodiscard]] Gadget pointer_auth_branch_gadget(bool, bool, bool, bool) noexcept;
-[[nodiscard]] Gadget pointer_auth_guarded_call_gadget(bool, bool, bool) noexcept;
-[[nodiscard]] Gadget pointer_auth_guarded_return_gadget(bool) noexcept;
-[[nodiscard]] Gadget pointer_auth_load_gadget(bool, bool, bool, bool) noexcept;
-[[nodiscard]] std::uintptr_t pointer_auth_load_operand(unsigned int, unsigned int, std::int64_t) noexcept;
 [[nodiscard]] bool pointer_auth_lr_unavailable(std::uint32_t) noexcept;
 /* Fused guest CMP of two registers + B.cond. */
 [[nodiscard]] Gadget compare_register_branch_gadget(
@@ -338,15 +309,9 @@ extern const std::array<std::uint8_t, 256> byte_popcount_table;
 [[nodiscard]] std::uint16_t ls64_register_offset(unsigned int) noexcept;
 [[nodiscard]] std::uintptr_t ls64_operand(unsigned int, unsigned int, unsigned int, bool, bool) noexcept;
 [[nodiscard]] Gadget mops_gadget(unsigned int, unsigned int, bool) noexcept;
-[[nodiscard]] Gadget mops_set_tag_gadget(unsigned int, bool) noexcept;
 [[nodiscard]] PstateImmediateGadget pstate_boolean_gadget(Gadget, Gadget, unsigned int) noexcept;
 [[nodiscard]] PstateImmediateGadget pstate_immediate_gadget(std::uint32_t) noexcept;
 [[nodiscard]] SystemRegisterGadget system_register_gadget(std::uint32_t) noexcept;
-[[nodiscard]] Gadget mte_load_tag_gadget(bool, bool) noexcept;
-[[nodiscard]] Gadget mte_tag_store_gadget(unsigned int, unsigned int, bool) noexcept;
-[[nodiscard]] Gadget mte_store_pair_tag_gadget(unsigned int, bool, bool, bool) noexcept;
-[[nodiscard]] std::uint16_t mte_cpu_slot_offset(unsigned int, bool) noexcept;
-[[nodiscard]] std::uintptr_t mte_memory_operand(unsigned int, unsigned int, unsigned int, std::int16_t, bool) noexcept;
 [[nodiscard]] Gadget conditional_compare_gadget(unsigned int, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget conditional_select_gadget(unsigned int, unsigned int, bool) noexcept;
 [[nodiscard]] Gadget data_memory_barrier_gadget(bool, unsigned int) noexcept;
@@ -370,12 +335,6 @@ extern const std::array<std::uint8_t, 256> byte_popcount_table;
 [[nodiscard]] Gadget extract_register_gadget(bool, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget crc32_gadget(unsigned int, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget bit_reverse_count_gadget(bool, unsigned int) noexcept;
-[[nodiscard]] Gadget mte_pointer_gadget(unsigned int, bool, bool, bool) noexcept;
-[[nodiscard]] Gadget mte_tag_add_sub_gadget(bool, bool, bool) noexcept;
-[[nodiscard]] Gadget mte_irg_gadget(bool, bool, bool) noexcept;
-[[nodiscard]] std::array<std::uint8_t, 256> make_byte_popcount_table() noexcept;
-[[nodiscard]] Gadget cpa_pointer_gadget(bool, unsigned int, bool, bool, bool) noexcept;
-[[nodiscard]] Gadget cpa_multiply_gadget(bool, bool, bool, bool, bool) noexcept;
 [[nodiscard]] Gadget simd_extract_gadget(bool, unsigned int) noexcept;
 [[nodiscard]] Gadget simd_three_same_gadget(unsigned int, bool, bool, bool, unsigned int) noexcept;
 [[nodiscard]] Gadget simd_destination_resident_mla_gadget(bool, unsigned int) noexcept;

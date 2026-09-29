@@ -26,10 +26,8 @@
 #include "../detail/floating_scale.hpp"
 #include "../detail/fp_state_access.hpp"
 #include "../detail/fp8.hpp"
-#include "../detail/gcs.hpp"
 #include "../detail/instruction_primitives.hpp"
 #include "../detail/integer_multiply.hpp"
-#include "../detail/pointer_auth.hpp"
 #include "cpu/host_capabilities.hpp"
 #include "uml_darwin_static_mmu.h"
 

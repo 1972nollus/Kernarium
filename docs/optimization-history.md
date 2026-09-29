@@ -509,3 +509,9 @@ on the Mac, and landed only when every probe and workload was neutral or faster.
 | Remove the JIT's unused GPR residency planner | Accepted. Production never planned, but the planner's members made `JitCompiler` large enough that `run_block`, which holds one for a miss, called the stack probe on every entry. Without them the polymorphic-indirect probe ran 15 percent faster, link 7 and syscall 5, with generated code unchanged. A large object on the dispatcher's stack costs every block entry, not just the miss that uses it. |
 | Count JIT block links once | Accepted as level. Dropping a counter that always equalled the size left every probe within about 2 percent, with no consistent sign across wall and host CPU time. |
 | Recycle the JIT cache when a link table fills | Accepted. Link records keyed by address space were reclaimed only with a full arena, so short-lived processes filled the tables first and later blocks published unlinked exits, a tenfold slowdown a few hundred processes into a launch; recycling the cache on a full table holds steady speed. A bounded table keyed by a transient identity needs a reclamation path of its own, because exhaustion that degrades quietly shows up only as a performance cliff. |
+
+## Guest pointer authentication
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Implement and advertise FEAT_PAuth with a cheap FEAT_PACIMP algorithm | Rejected; PAuth was removed. A four-round AES-based PACIMP with PACIxSP+STP and AUTIxSP+RET fused in the gadget engine still cost 1.39 percent on llc (t = 4.64, n = 4 launches per arm on the iPad), against 2.35 percent unfused; gcc and shell stayed within noise. Frame signing runs on every non-leaf call and return, so even a fused hint pair taxes call-heavy code in proportion to its call rate. The hint-space forms stay NOPs, as on a CPU without PAuth. |

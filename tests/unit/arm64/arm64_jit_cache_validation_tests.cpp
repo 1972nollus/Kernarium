@@ -136,9 +136,6 @@ void publication_allocation_failure_installs_private_code(
 			move_immediate(0, 18), system_call};
 		const arm64::SharedTranslationCache::CodegenProfile profile{
 			.capabilities = options.host_capabilities,
-			.guarded_control_flow = options.enable_guarded_control_flow,
-			.pointer_authentication =
-				options.enable_pointer_authentication,
 		};
 		require(shared_cache.insert(
 			profile, base, occupant_words,
@@ -1454,9 +1451,6 @@ void defensive_install_rejects_mutated_canonical_metadata()
 		const JitExecutorOptions options{};
 		const arm64::SharedTranslationCache::CodegenProfile profile{
 			.capabilities = options.host_capabilities,
-			.guarded_control_flow = options.enable_guarded_control_flow,
-			.pointer_authentication =
-				options.enable_pointer_authentication,
 		};
 		require(arm64::SharedTranslationCache::instance().insert(
 			profile, base, guest_words, candidate) == candidate);
@@ -1488,11 +1482,11 @@ void defensive_install_rejects_mutated_canonical_metadata()
 	require(diagnostics.shared_validation_word_installs == 1);
 }
 
-void native_translation_preserves_fault_prefixes(bool pointer_authentication)
+void native_translation_preserves_fault_prefixes()
 {
 	constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
-	const unsigned long generation = pointer_authentication ? 19'701U : 19'704U;
-	const std::uint64_t base = pointer_authentication ? 0x410'0000U : 0x440'0000U;
+	constexpr unsigned long generation = 19'701U;
+	constexpr std::uint64_t base = 0x410'0000U;
 	JitBacking backing{2};
 	backing.put32(0, move_immediate(0, 19));
 	backing.put32(4, system_call);
@@ -1503,8 +1497,7 @@ void native_translation_preserves_fault_prefixes(bool pointer_authentication)
 	backing.put32(132, 0U); // UDF: the faulting instruction does not retire.
 	backing.put32(page - 4U, move_immediate(0, 31));
 	JitMapping mapping{generation, base, backing, 1};
-	JitExecutor executor{JitExecutorOptions{
-		.enable_pointer_authentication = pointer_authentication}};
+	JitExecutor executor;
 	StaticGuestMemory memory;
 	arm64::CpuState cpu{};
 	cpu.pc = base;
@@ -1587,7 +1580,10 @@ void peer_translation_reuse_requires_current_code()
 	require(changed_consumer.cache_validation_diagnostics().translations == 1);
 }
 
-void disabled_pointer_authentication_rejects_authentication_instructions()
+/* The virtual CPU does not implement FEAT_PAuth: every non-hint PAC, AUT,
+ * XPAC, PACGA, LDRA, and authenticated-branch encoding is UNDEFINED, and the
+ * hint-space forms retire as NOPs. */
+void pointer_authentication_instructions_are_undefined()
 {
 	constexpr unsigned long generation = 19'705U;
 	constexpr std::uint64_t base = 0x450'0000U;
@@ -1611,12 +1607,17 @@ void disabled_pointer_authentication_rejects_authentication_instructions()
 		backing.put32(index * 16U + 4U, unavailable[index]);
 		backing.put32(index * 16U + 8U, system_call);
 	}
+	constexpr std::array hints{
+		7U, 8U, 10U, 12U, 14U, 24U, 25U, 26U, 27U, 28U, 29U, 30U, 31U,
+		39U,
+	};
 	constexpr auto hint_offset = unavailable.size() * 16U;
-	backing.put32(hint_offset, 0xd503'233fU); // paciasp is a NOP here.
-	backing.put32(hint_offset + 4U, system_call);
+	for (std::size_t index = 0; index < hints.size(); ++index)
+		backing.put32(hint_offset + index * 4U,
+			0xd503'201fU | hints[index] << 5);
+	backing.put32(hint_offset + hints.size() * 4U, system_call);
 	JitMapping mapping{generation, base, backing, 1};
-	JitExecutor executor{JitExecutorOptions{
-		.enable_pointer_authentication = false}};
+	JitExecutor executor;
 	StaticGuestMemory memory;
 	arm64::CpuState cpu{};
 	for (std::size_t index = 0; index < unavailable.size(); ++index) {
@@ -1629,11 +1630,17 @@ void disabled_pointer_authentication_rejects_authentication_instructions()
 		require(run.executed == 1 && cpu.pc == base + index * 16U + 4U);
 		require(cpu.registers[0] == base && cpu.registers[9] == 61);
 	}
+	/* Every hint-space form is a NOP: no signing, authentication, or
+	 * stripping of X30, X17, or SP-relative state. */
 	cpu.pc = base + hint_offset;
-	cpu.registers[30] = base;
+	cpu.registers[16] = 0x0012'3456'789a'bcdeU;
+	cpu.registers[17] = base + 0x40U;
+	cpu.registers[30] = 0x0000'7fff'1234'5678U;
+	auto expected = cpu;
 	const auto run = run_once(executor, memory, generation, cpu);
 	require(run.event == ::uml::cpu::EngineEvent::system_call);
-	require(run.executed == 2 && cpu.registers[30] == base);
+	require(run.executed == hints.size() + 1U);
+	require(cpu.registers == expected.registers && cpu.sp == expected.sp);
 }
 
 void exclusive_and_system_blocks_are_translated()
@@ -1667,10 +1674,9 @@ int main()
 {
 	constexpr std::size_t gib = std::size_t{1024} * 1024U * 1024U;
 	require(arm64::set_jit_cache_budget(1U * gib, 2));
-	native_translation_preserves_fault_prefixes(true);
-	native_translation_preserves_fault_prefixes(false);
+	native_translation_preserves_fault_prefixes();
 	exclusive_and_system_blocks_are_translated();
-	disabled_pointer_authentication_rejects_authentication_instructions();
+	pointer_authentication_instructions_are_undefined();
 	peer_translation_reuse_requires_current_code();
 	publication_allocation_failures_install_private_code();
 	defensive_install_rejects_mutated_canonical_metadata();

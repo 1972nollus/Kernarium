@@ -82,7 +82,7 @@ struct alignas(32) Tlb final {
 	std::uint32_t fault_alignment{};
 	std::array<std::uint8_t, tlb_set_count> replacement_way{};
 	/* Whether the address space owning the current entries ignores the top
-	 * address byte (TBI or MTE). Set by the executor that fills the TLB
+	 * address byte (TBI). Set by the executor that fills the TLB
 	 * from its guest state; consumers that never present tagged addresses
 	 * leave it false. */
 	bool tagged_addresses{};
@@ -106,10 +106,6 @@ struct alignas(32) Tlb final {
 	 * follow their page's mapping changes. */
 	[[nodiscard]] std::byte *translate_tagged(
 		std::uint64_t address, Access access);
-	[[nodiscard]] bool read_allocation_tag(
-		std::uint64_t address, std::uint8_t &tag);
-	[[nodiscard]] bool write_allocation_tag(
-		std::uint64_t address, std::uint8_t tag);
 
 private:
 	void flush();
