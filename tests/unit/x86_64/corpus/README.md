@@ -42,7 +42,10 @@ executor or engine-internal state. Each case is a GNU-syntax `.s` file whose
 block holds FEX's `MemoryRegions` (page-aligned address to size) and
 `RegData` (RIP, the GPRs, and `XMM0`-`XMM15` as two or four 64-bit lanes)
 with the same meaning FEX gives them. A case starts from zeroed registers
-with IF set and may rely on no mapping but its code and its regions.
+with IF set and may rely on no mapping but its code and its regions. The only
+system call a case may make is `time(NULL)` (RAX 201, RDI 0), which the runner
+answers with 1 and the native run with the time, so a case that makes it
+leaves RAX undeclared.
 
 A case's expectation has the authority of the other origins: the producer
 accepts it only when a native Intel run of the case, from the same state to

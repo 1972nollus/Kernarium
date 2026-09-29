@@ -349,6 +349,13 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		.code_pages = executor.code_page_registry(),
 		.stack_entry = executor.tlb_entries(),
 	};
+	/* RF is cleared as the next instruction starts, after the
+	 * instruction-breakpoint check it exists to suppress. It reaches the
+	 * engine only from IRET, which always leaves it, and in the flags the
+	 * kernel hands over, so that instruction always starts here. The exits
+	 * above run no instruction and keep it, as an interrupt taken before the
+	 * instruction does. */
+	cpu.rflags &= ~rflags_resume;
 	executor.enter_engine();
 	const auto result = uml_x86_64_gadget_enter(
 		native_stream.data(), &cpu, &context);

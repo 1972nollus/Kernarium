@@ -666,7 +666,7 @@ incw:r16	65	0	0
 insertps:imm,mem,xmm	0	2	0
 insertps:imm,xmm,xmm	0	2	0
 int:imm	0	2	0
-iretqq:	0	1	2
+iretqq:	0	1	3
 ja:rel	0	4	0
 jae:rel	0	6	0
 jbb:rel	0	6	0
@@ -694,7 +694,7 @@ lcallqq:mem	0	2	0
 lddqu:mem,xmm	0	2	0
 ldmxcsr:mem	0	11	0
 leal:mem,r32	0	2	0
-leaq:mem,r64	0	12	4
+leaq:mem,r64	0	12	5
 leaq:rel,r64	0	1	0
 leave:	0	3	0
 leaw:mem,r16	0	2	0
@@ -778,7 +778,7 @@ movhps:mem,xmm	1377	4	0
 movhps:xmm,gs:0	0	1	0
 movhps:xmm,mem	0	2	0
 movl:imm,mem	0	2	0
-movl:imm,r32	0	37	1
+movl:imm,r32	0	37	2
 movl:mem,r32	0	4	0
 movl:r32,r32	0	0	2
 movl:r32,rel	0	1	0
@@ -803,13 +803,13 @@ movntps:xmm,mem	0	2	0
 movntqq:mm,mem	0	2	0
 movq2dqq:mm,xmm	0	3	0
 movq:imm,mem	0	1	0
-movq:imm,r64	29	22	4
+movq:imm,r64	29	22	5
 movq:mem,mm	0	2	0
 movq:mem,r64	0	11	1
 movq:mm,mem	0	1	0
 movq:mm,mm	0	1	0
 movq:r64,mem	0	13	1
-movq:r64,r64	29	2	2
+movq:r64,r64	29	2	3
 movq:r64,rel	0	2	0
 movq:rel,r64	0	3	0
 movsbb:mem,r32	0	1	0
@@ -1356,9 +1356,9 @@ punpcklwd:mm,mm	0	1	0
 punpcklwd:xmm,xmm	0	2	0
 pushfqq:	0	13	2
 pushfww:	0	2	0
-pushq:imm	0	2	2
+pushq:imm	0	2	3
 pushq:mem	0	1	0
-pushq:r64	0	3	2
+pushq:r64	0	3	3
 pushw:imm	0	2	0
 pushw:mem	0	1	0
 pushw:r16	0	1	0
@@ -1725,7 +1725,7 @@ subw:imm,r16	328	1	0
 subw:mem,r16	0	1	0
 subw:r16,mem	0	2	0
 subw:r16,r16	328	0	0
-syscalll:	0	1	0
+syscalll:	0	1	1
 testb:imm,mem	0	2	0
 testb:imm,r8	321	2	0
 testb:r8,mem	0	1	0

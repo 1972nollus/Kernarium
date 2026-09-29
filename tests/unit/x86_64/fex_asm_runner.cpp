@@ -745,8 +745,9 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 		if (dispatch == Dispatch::cached)
 			prepared_code_changes = executor.prepared_code_changes();
 		/* One upstream decoder test uses Linux time(2) only to prove that
-		 * SYSCALL reached a live boundary. Keep that test-local service in
-		 * the adapter instead of teaching the CPU engine about Linux ABIs.
+		 * SYSCALL reached a live boundary, and a repository case to read the
+		 * flags SYSCALL saves in R11. Keep that test-local service in the
+		 * adapter instead of teaching the CPU engine about Linux ABIs.
 		 */
 		if (result.event == uml::cpu::EngineEvent::system_call &&
 			cpu.gpr(uml::cpu::x86_64::Register::rax) == 201 &&

@@ -171,6 +171,22 @@ bias, so an edge that follows a link tests the sign of one addition instead of
 loading the limit and comparing against it. `uml_x86_64_gadget_leave` takes
 the bias back out before it reports what the dispatch retired.
 
+## Resume flag
+
+RF suppresses instruction breakpoints for one instruction and is cleared as
+that instruction starts, so nothing the instruction stores or reports shows it:
+a SYSCALL right after an IRET that loaded RF leaves R11 without it, as a native
+run of the corpus case `iret-resume-flag-clears-at-next-instruction.s` shows.
+The engine models no instruction breakpoints, so RF is only state to carry and
+clear. It arrives in two ways: IRET loads it from its image at CPL 3, and the
+kernel's flags carry it after a signal return or a tracer's write. IRET always
+leaves the engine and the kernel's flags always start a dispatch, so `execute`
+clears RF as it enters the engine and no gadget reads or clears it. An exit
+before the engine runs an instruction, for a pending interrupt or a zero
+budget, keeps RF, as an interrupt taken before that instruction does. Hardware
+also sets RF in the flags it pushes for a fault; the engine reports its live
+flags, in which RF is clear.
+
 ## Software TLB
 
 `Executor::prepare` enters an address-space generation, and it must not leave
