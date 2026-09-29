@@ -29,13 +29,10 @@ void failNextAllocation() noexcept;
 void failAfterAllocations(std::size_t count) noexcept;
 void clearAllocationFailure() noexcept;
 
-void runVhostUserMessageTests();
-void runVhostUserDescriptorCeilingTests();
 void runVhostUserServerTests(const char* executable);
 [[noreturn]] void runVhostUserServerChild(std::string_view mode);
 void runVhostUserProtocolTests();
 void runInProcessServiceTests();
-void runVirtioGpuDeviceTests();
 
 [[nodiscard]] inline std::size_t descriptorCount()
 {

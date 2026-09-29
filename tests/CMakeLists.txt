@@ -14,8 +14,6 @@ if(_uml_need_vnc_fixtures AND TARGET uml_gpu_service)
     target_link_libraries(uml-virtio-gpu PRIVATE UML::GpuDevice)
     target_include_directories(uml-virtio-gpu PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_options(uml-virtio-gpu PRIVATE
-        -Wno-deprecated-declarations)
     set_target_properties(uml-virtio-gpu PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
@@ -24,8 +22,6 @@ if(_uml_need_vnc_fixtures AND TARGET uml_gpu_service)
     target_link_libraries(uml-vnc-smoke-client PRIVATE
         UML::ThirdPartyVncClient
         "-framework CoreFoundation")
-    target_compile_options(uml-vnc-smoke-client PRIVATE
-        -Wno-deprecated-declarations)
     set_target_properties(uml-vnc-smoke-client PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 endif()
@@ -78,23 +74,11 @@ if(UML_BUILD_TOOLING_TESTS)
 endif()
 
 if(UML_BUILD_INTEGRATION_TESTS)
-    # CTest commands reference these host fixtures directly. Keep their build
-    # ownership explicit so the integration preset produces every executable
-    # required by the registered suite, not only the emulator app.
+    # Guest payloads and helpers that a command reaches only through a path
+    # add themselves to this aggregate; the finalization below adds every
+    # target a registered command names.
     add_custom_target(integration-test-binaries)
     add_subdirectory(integration)
-    set(_integration_targets uml-darwin)
-    if(UML_ENABLE_EXTERNAL_NETWORK_TESTS)
-        list(APPEND _integration_targets
-            uml-virtio-gpu uml-vnc-smoke-client)
-    endif()
-    foreach(_integration_target IN LISTS _integration_targets)
-        if(NOT TARGET ${_integration_target})
-            message(FATAL_ERROR
-                "Integration target is not available: ${_integration_target}")
-        endif()
-        add_dependencies(integration-test-binaries ${_integration_target})
-    endforeach()
 endif()
 
 # Suite aggregates are derived from the actual target-backed CTest commands,
