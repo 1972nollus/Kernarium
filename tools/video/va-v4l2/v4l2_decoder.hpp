@@ -153,10 +153,11 @@ private:
 std::string findDecoderDevice(std::uint32_t codedFormat);
 
 // Whether to ask the decoder for packed RGB rather than NV12. `off` never
-// does; `automatic` and `force` do whenever the device offers it.
-enum class RgbCapture { off, automatic, force };
+// does; `automatic` does whenever the device offers it.
+enum class RgbCapture { off, automatic };
 
-// Parses UML_VA_V4L2_RGB. An unset or unrecognised request is `automatic`.
+// Parses UML_VA_V4L2_RGB. An unset or unrecognised request, including the
+// retired `force`, is `automatic`.
 RgbCapture rgbCaptureRequest(const char* request) noexcept;
 
 // The decision itself, made once at initialisation so that the first decode
