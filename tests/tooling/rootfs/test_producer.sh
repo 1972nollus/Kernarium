@@ -114,7 +114,7 @@ expect_failure()
 
 mode_of()
 {
-	ls -ln -- "$1" | cut -c1-10
+	ls -lnd -- "$1" | cut -c1-10
 }
 
 run_cases()
@@ -269,7 +269,7 @@ sleep 5'
 
 	# A finished run publishes files out of its staging directory, or the
 	# directory itself, and neither leaves staging nor runs the hook.
-	mkdir -p "$P/stage-ok" "$P/release-parent"
+	mkdir -p "$P/stage-ok" "$P/release-parent" "$P/private-parent"
 	expect_success "a finished run" '
 hook()
 {
@@ -280,9 +280,14 @@ producer_stage "$P/stage-ok" out.erofs
 printf image > "$staging_dir/out.erofs"
 producer_publish "$staging_dir/out.erofs" "$P/stage-ok/out.erofs"
 producer_finish
+umask 022
 producer_stage "$P/release-parent" release
 printf manifest > "$staging_dir/manifest"
 producer_publish "$staging_dir" "$P/release-parent/release"
+producer_finish
+umask 027
+producer_stage "$P/private-parent" release
+producer_publish "$staging_dir" "$P/private-parent/release"
 producer_finish'
 	[ ! -e "$P/hook-ran-on-success" ] || fail "$shell: a finished run ran the exit hook"
 	[ "$(ls -A "$P/stage-ok")" = out.erofs ] ||
@@ -290,6 +295,11 @@ producer_finish'
 	[ "$(ls -A "$P/release-parent")" = release ] &&
 		[ "$(cat "$P/release-parent/release/manifest")" = manifest ] ||
 		fail "$shell: a finished directory publication left staging"
+	# A published directory has the mode mkdir gives under the caller's
+	# umask, not the owner-only mode of mktemp -d.
+	[ "$(mode_of "$P/release-parent/release")" = drwxr-xr-x ] &&
+		[ "$(mode_of "$P/private-parent/release")" = drwxr-x--- ] ||
+		fail "$shell: published directories have modes $(mode_of "$P/release-parent/release") and $(mode_of "$P/private-parent/release")"
 
 	# The EROFS prologue canonicalises both paths and stages beside the
 	# output; the tail checksums the image and publishes all four files.

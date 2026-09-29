@@ -62,11 +62,14 @@ producer_reset_machine_id()
 # stays reserved and publication is a same-directory rename. Until
 # producer_finish runs, any exit runs the command named by
 # $producer_exit_hook, when the caller set one, and removes the directory.
+# A producer may publish the directory itself, so it takes the mode mkdir
+# would give it rather than the owner-only mode of mktemp -d.
 producer_stage()
 {
 	staging_dir=$(mktemp -d "$1/.$2.partial.XXXXXX")
 	trap producer_cleanup EXIT
 	trap 'exit 1' HUP INT TERM
+	chmod "$(umask -S)" "$staging_dir"
 }
 
 producer_cleanup()
