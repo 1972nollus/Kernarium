@@ -468,9 +468,6 @@ def _parser() -> argparse.ArgumentParser:
     apply.add_argument("--series-dir", type=Path, action="append", required=True)
     apply.add_argument("--expect-tree")
 
-    listing = commands.add_parser("list", help="print patch paths in application order")
-    listing.add_argument("--series-dir", type=Path, action="append", required=True)
-
     recorded = commands.add_parser(
         "recorded-tree", help="check series files and print the last one's tree row")
     recorded.add_argument("--series-dir", type=Path, action="append", required=True)
@@ -502,10 +499,6 @@ def main(argv: list[str] | None = None) -> int:
         elif arguments.command == "apply":
             print(apply_series(arguments.repo, arguments.series_dir,
                                expected_tree=arguments.expect_tree))
-        elif arguments.command == "list":
-            for directory in arguments.series_dir:
-                for patch in read_series(directory).patches:
-                    print(patch)
         elif arguments.command == "recorded-tree":
             series = [read_series(directory) for directory in arguments.series_dir]
             if series[-1].tree is None:
