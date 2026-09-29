@@ -301,8 +301,9 @@ cp "$ROOT_DIR/dependencies/manifest.tsv" \
 	"$STAGE/share/uml-dependencies/manifest.tsv"
 cp "$RECEIPT" \
 	"$STAGE/share/uml-dependencies/$RECEIPT_NAME"
-printf 'source\ttree\nglib-ios\t%s\n' \
+printf 'source\ttree\nglib-ios\t%s\nlibslirp\t%s\n' \
 	"$(git -C "$SOURCE_ROOT/glib-ios" rev-parse 'HEAD^{tree}')" \
+	"$(git -C "$SOURCE_ROOT/libslirp" rev-parse 'HEAD^{tree}')" \
 	> "$STAGE/share/uml-dependencies/source-trees.tsv"
 publish_verified "$STAGE" "$PREFIX" verify_prefix \
 	"iOS network dependency prefix"
