@@ -316,54 +316,30 @@ python3 -B "$xcframework_stager" \
 	--slice "ios-simulator=$ios_simulator_install" \
 	--output "$staged_output"
 
-plist="$staged_output/Info.plist"
-[ -f "$plist" ] || fail "XCFramework has no Info.plist: $staged_output"
-plist_buddy=/usr/libexec/PlistBuddy
-[ -x "$plist_buddy" ] || fail "PlistBuddy is required"
-saw_macos=0
-saw_ios=0
-saw_simulator=0
-for index in 0 1 2; do
-	platform=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:SupportedPlatform" "$plist")
-	variant=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:SupportedPlatformVariant" \
-		"$plist" 2>/dev/null || true)
-	architecture=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:SupportedArchitectures:0" "$plist")
-	identifier=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:LibraryIdentifier" "$plist")
-	library_path=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:LibraryPath" "$plist")
-	headers_path=$($plist_buddy -c \
-		"Print :AvailableLibraries:$index:HeadersPath" "$plist")
-	[ "$architecture" = arm64 ] ||
-		fail "XCFramework slice $index is not arm64: $architecture"
-	if $plist_buddy -c \
-		"Print :AvailableLibraries:$index:SupportedArchitectures:1" \
-		"$plist" >/dev/null 2>&1; then
-		fail "XCFramework slice $index contains more than one architecture"
-	fi
-	[ "$library_path" = libuml_emulator.a ] ||
-		fail "XCFramework slice $index has unexpected library path: $library_path"
-	[ "$headers_path" = Headers ] ||
-		fail "XCFramework slice $index has unexpected headers path: $headers_path"
-	case "$platform:$variant:$identifier" in
-	macos::macos-arm64) saw_macos=$((saw_macos + 1)) ;;
-	ios::ios-arm64) saw_ios=$((saw_ios + 1)) ;;
-	ios:simulator:ios-arm64-simulator)
-		saw_simulator=$((saw_simulator + 1))
-		;;
-	*) fail "unexpected XCFramework slice $index: $platform:$variant:$identifier" ;;
-	esac
-done
-if $plist_buddy -c "Print :AvailableLibraries:3" "$plist" \
-	>/dev/null 2>&1; then
-	fail "XCFramework contains more than the three supported slices"
+# The staged Info.plist describes exactly the three supported arm64 slices.
+if ! python3 -B - "$staged_output/Info.plist" <<'EOF'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as stream:
+    libraries = plistlib.load(stream)["AvailableLibraries"]
+slices = sorted(
+    (library["SupportedPlatform"], library.get("SupportedPlatformVariant", ""),
+     library["LibraryIdentifier"], library["SupportedArchitectures"],
+     library["LibraryPath"], library["HeadersPath"])
+    for library in libraries)
+expected = [
+    (platform, variant, identifier, ["arm64"], "libuml_emulator.a", "Headers")
+    for platform, variant, identifier in (
+        ("ios", "", "ios-arm64"),
+        ("ios", "simulator", "ios-arm64-simulator"),
+        ("macos", "", "macos-arm64"))]
+if slices != expected:
+    sys.exit(f"unexpected XCFramework slices: {slices}")
+EOF
+then
+	fail "XCFramework Info.plist does not describe the three supported slices"
 fi
-[ "$saw_macos" -eq 1 ] && [ "$saw_ios" -eq 1 ] &&
-	[ "$saw_simulator" -eq 1 ] ||
-	fail "XCFramework does not contain one exact supported slice per platform"
 
 verify_final_slice macos macos-arm64
 verify_final_slice ios ios-arm64
