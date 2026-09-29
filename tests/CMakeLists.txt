@@ -14,8 +14,6 @@ if(_uml_need_vnc_fixtures AND TARGET uml_gpu_service)
     target_link_libraries(uml-virtio-gpu PRIVATE UML::GpuDevice)
     target_include_directories(uml-virtio-gpu PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_options(uml-virtio-gpu PRIVATE
-        -Wno-deprecated-declarations)
     set_target_properties(uml-virtio-gpu PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
@@ -24,8 +22,6 @@ if(_uml_need_vnc_fixtures AND TARGET uml_gpu_service)
     target_link_libraries(uml-vnc-smoke-client PRIVATE
         UML::ThirdPartyVncClient
         "-framework CoreFoundation")
-    target_compile_options(uml-vnc-smoke-client PRIVATE
-        -Wno-deprecated-declarations)
     set_target_properties(uml-vnc-smoke-client PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 endif()

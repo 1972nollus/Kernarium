@@ -11,22 +11,18 @@ set(_uml_host_gl_libraries
     UML::ThirdPartyEpoxy)
 
 # uml_add_gpu_unit_test(<test> <target> <source>... [LIBRARIES <library>...]
-#     [INCLUDES <directory>...] [VULKAN] [UNIT_DIRECTORY] [DEPRECATED]
-#     [TIMEOUT <seconds>])
+#     [INCLUDES <directory>...] [VULKAN] [UNIT_DIRECTORY] [TIMEOUT <seconds>])
 #
 # Builds <target> from the sources and registers it as the unit test <test>,
 # labelled gpu, and vulkan for VULKAN. UNIT_DIRECTORY runs it in the unit-test
-# binary directory; DEPRECATED lets it call deprecated APIs.
+# binary directory.
 function(uml_add_gpu_unit_test TEST TARGET)
     cmake_parse_arguments(PARSE_ARGV 2 _gpu_test
-        "VULKAN;UNIT_DIRECTORY;DEPRECATED" "TIMEOUT" "LIBRARIES;INCLUDES")
+        "VULKAN;UNIT_DIRECTORY" "TIMEOUT" "LIBRARIES;INCLUDES")
     add_executable(${TARGET} ${_gpu_test_UNPARSED_ARGUMENTS})
     target_link_libraries(${TARGET} PRIVATE ${_gpu_test_LIBRARIES})
     if(_gpu_test_INCLUDES)
         target_include_directories(${TARGET} PRIVATE ${_gpu_test_INCLUDES})
-    endif()
-    if(_gpu_test_DEPRECATED)
-        target_compile_options(${TARGET} PRIVATE -Wno-deprecated-declarations)
     endif()
     set(_options LABELS gpu)
     if(_gpu_test_VULKAN)
@@ -139,7 +135,7 @@ if(TARGET uml_gpu_service)
         uml_gpu_host_gl_provider_tests host_gl_provider_lifetime_tests.cpp
         LIBRARIES uml_gpu_renderer UML::ThirdPartyVirglrenderer
         INCLUDES ${_uml_gpu_device_directory}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     # The host GL provider has to be able to alias memory the caller already
     # owns as a sampled texture; the guest scanout import depends on it.
@@ -147,7 +143,7 @@ if(TARGET uml_gpu_service)
         uml_gpu_host_pointer_image_tests host_gl_host_pointer_image_tests.cpp
         LIBRARIES ${_uml_host_gl_libraries}
         INCLUDES ${_uml_gpu_device_directory}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     # A transfer a context refuses must not leave that context refusing every
     # later transfer: Android's gralloc mapper only ever transfers.
@@ -156,7 +152,7 @@ if(TARGET uml_gpu_service)
         host_gl_transfer_context_error_tests.cpp
         LIBRARIES ${_uml_host_gl_libraries}
         INCLUDES ${_uml_gpu_device_directory}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     # A layout the guest names has to fit the host storage behind it.
     uml_add_gpu_unit_test(gpu-import-bounds
@@ -164,7 +160,7 @@ if(TARGET uml_gpu_service)
         LIBRARIES ${_uml_host_gl_libraries}
             "-framework Foundation" "-framework Metal"
         INCLUDES ${_uml_gpu_device_directory}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     # The native display samples the Metal texture that stores a Virgl
     # scanout's GL texture, so the renderer must name the right one: its size,
@@ -175,7 +171,7 @@ if(TARGET uml_gpu_service)
         LIBRARIES ${_uml_host_gl_libraries}
             "-framework Foundation" "-framework Metal"
         INCLUDES ${_uml_gpu_device_directory}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     # One thread drives every host GL context, so a read in one context of a
     # texture another context left unsubmitted has to finish without a second
@@ -185,7 +181,7 @@ if(TARGET uml_gpu_service)
         host_gl_cross_context_readback_tests.cpp
         LIBRARIES ${_uml_host_gl_libraries}
         INCLUDES ${_uml_gpu_device_directory}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     # Virglrenderer advertises depth formats the guest turns into default
     # framebuffers. A host that substitutes different storage for a sized depth
@@ -195,7 +191,7 @@ if(TARGET uml_gpu_service)
         host_gl_depth_format_advertisement_tests.cpp
         LIBRARIES ${_uml_host_gl_libraries}
         INCLUDES ${_uml_gpu_device_directory}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     # GL_VERTICES_SUBMITTED_ARB counts submitted vertices, not assembled ones.
     # Zink does not advertise LINE_LOOP, so Mesa decomposes every line loop
@@ -206,7 +202,7 @@ if(TARGET uml_gpu_service)
         host_gl_line_loop_statistics_tests.cpp
         LIBRARIES ${_uml_host_gl_libraries}
         INCLUDES ${_uml_gpu_device_directory}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     # The renderer and the same-process render server share one fence table.
     # Exercise that ownership without a device: it is a pure lifetime
@@ -222,7 +218,7 @@ if(TARGET uml_gpu_service)
         vhost_user_message_tests.cpp
         LIBRARIES uml_gpu_transport_wire_stop_wait_test_variant
         INCLUDES ${_uml_gpu_device_directory} ${CMAKE_CURRENT_SOURCE_DIR}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     # Its own executable: the descriptor ceiling is process state, and filling
     # the file table would decide the outcome of anything sharing the process.
@@ -232,7 +228,7 @@ if(TARGET uml_gpu_service)
         vhost_user_descriptor_ceiling_tests.cpp
         LIBRARIES uml_vhost_user_wire
         INCLUDES ${_uml_gpu_device_directory} ${CMAKE_CURRENT_SOURCE_DIR}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     uml_add_gpu_unit_test(gpu-service-fd-ownership
         uml_gpu_service_fd_tests
@@ -243,7 +239,7 @@ if(TARGET uml_gpu_service)
         vhost_user_server_lifetime_tests.cpp
         LIBRARIES uml_gpu_service_test_variant
         INCLUDES ${_uml_gpu_device_directory} ${CMAKE_CURRENT_SOURCE_DIR}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     uml_add_gpu_unit_test(gpu-service-stop-wake
         uml_gpu_service_stop_wake_tests
@@ -254,7 +250,7 @@ if(TARGET uml_gpu_service)
             ${_uml_gpu_device_directory}
             ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
             ${CMAKE_CURRENT_SOURCE_DIR}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     uml_add_gpu_unit_test(gpu-device-command-atomicity
         uml_gpu_device_atomicity_tests
@@ -262,7 +258,7 @@ if(TARGET uml_gpu_service)
         virtio_gpu_device_lifetime_tests.cpp
         LIBRARIES uml_gpu_protocol_device_test_variant
         INCLUDES ${_uml_gpu_device_directory} ${CMAKE_CURRENT_SOURCE_DIR}
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 endif()
 
 if(TARGET uml_gpu_display)
@@ -279,7 +275,7 @@ if(TARGET uml_gpu_display)
         vnc_display_testing.cpp
         LIBRARIES uml_gpu_display_test_variant
             "-framework Foundation" "-framework Metal"
-        UNIT_DIRECTORY DEPRECATED)
+        UNIT_DIRECTORY)
 
     # This one links the shipped display library rather than a test variant,
     # so it also answers whether the product was built with the native Metal
@@ -289,7 +285,7 @@ if(TARGET uml_gpu_display)
             uml_gpu_vnc_product_tests vnc_display_product_tests.mm
             LIBRARIES uml_gpu_display
                 "-framework Foundation" "-framework Metal"
-            UNIT_DIRECTORY DEPRECATED)
+            UNIT_DIRECTORY)
 
         # The shipped display must return when the guest finishes while a
         # menu is open. It needs a window server session and skips without

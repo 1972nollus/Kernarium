@@ -10,8 +10,6 @@ target_include_directories(uml_audio_device
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
-target_compile_options(uml_audio_device PRIVATE
-    -Wno-deprecated-declarations)
 target_link_libraries(uml_audio_device PRIVATE
     UML::VhostUserTransport
     "-framework AVFAudio"
