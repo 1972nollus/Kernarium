@@ -153,7 +153,7 @@ sudo systemctl --root="$root" enable \
 	systemd-networkd.service systemd-resolved.service sddm.service
 sudo systemctl --root="$root" set-default graphical.target
 sudo ln -sfn /run/systemd/resolve/stub-resolv.conf "$root/etc/resolv.conf"
-sudo truncate -s 0 "$root/etc/machine-id"
+producer_reset_machine_id "$root"
 
 printf '%s\n' '==> Auditing the installed package state'
 package_audit=$(sudo chroot "$root" dpkg --audit)

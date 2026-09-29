@@ -208,6 +208,24 @@ write_root_file "$P/writer-root/etc/deep/file" 0640 < "$P/writer-input"
 	grep -q "^sudo -n install -D -m 0640 $P/writer/\\.root-file\\.[^ ]* $P/writer-root/etc/deep/file\$" \
 		"$LOG" || fail "$shell: write_root_file did not install through sudo -n"
 
+	# A root leaves no machine ID behind: the package installs' IDs go, and
+	# D-Bus's copy follows the ID systemd generates at first boot.
+	mkdir -p "$P/machine-root/etc" "$P/machine-root/var/lib/dbus"
+	printf '%s\n' 0123456789abcdef0123456789abcdef > "$P/machine-root/etc/machine-id"
+	printf '%s\n' fedcba9876543210fedcba9876543210 > \
+		"$P/machine-root/var/lib/dbus/machine-id"
+	expect_success "producer_reset_machine_id" \
+		'producer_reset_machine_id "$P/machine-root"'
+	[ -f "$P/machine-root/etc/machine-id" ] && [ ! -L "$P/machine-root/etc/machine-id" ] &&
+		[ ! -s "$P/machine-root/etc/machine-id" ] ||
+		fail "$shell: /etc/machine-id is not an empty file"
+	[ -L "$P/machine-root/var/lib/dbus/machine-id" ] &&
+		[ "$(readlink "$P/machine-root/var/lib/dbus/machine-id")" = /etc/machine-id ] ||
+		fail "$shell: /var/lib/dbus/machine-id is not a link to /etc/machine-id"
+	grep -qx "sudo -n truncate -s 0 $P/machine-root/etc/machine-id" "$LOG" &&
+		grep -qx "sudo -n ln -sfn /etc/machine-id $P/machine-root/var/lib/dbus/machine-id" \
+			"$LOG" || fail "$shell: the machine ID was not reset through sudo -n"
+
 	# Publication renames onto an absent name and fails when a concurrent
 	# run took the name first, leaving that run's output alone.
 	expect_success "publication" '
@@ -299,6 +317,14 @@ printf "%s\n" "$root" "$output"'
 	grep -q "^sudo -n chown $("$REAL_ID" -u):$("$REAL_ID" -g) $P/e2e-real/\\.image\\.erofs\\.partial\\.[^ ]*/image\\.erofs\$" \
 		"$LOG" || fail "$shell: the EROFS tail did not take the image from root"
 }
+
+# Each producer of a systemd root that carries D-Bus resets its machine ID.
+# The Steam image instead links /etc/machine-id to its persistent disk.
+for producer in starter/build-all.sh x86_64-desktop/build.sh; do
+	grep -qx '[[:space:]]*producer_reset_machine_id "$root"' \
+		"$ROOT_DIR/tools/rootfs/$producer" ||
+		fail "$producer does not reset its machine ID"
+done
 
 tested=
 for shell in sh dash bash; do

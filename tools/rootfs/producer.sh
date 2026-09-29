@@ -46,6 +46,17 @@ write_root_file()
 	rm -f -- "$producer_temporary"
 }
 
+# producer_reset_machine_id ROOT: leave the systemd root ROOT, which carries
+# D-Bus, without a machine ID, so that every guest generates its own at first
+# boot. D-Bus reads /var/lib/dbus/machine-id before /etc/machine-id, and
+# systemd adopts a regular D-Bus copy, so the copy the package installs wrote
+# becomes a link to /etc/machine-id.
+producer_reset_machine_id()
+{
+	sudo -n truncate -s 0 "$1/etc/machine-id"
+	sudo -n ln -sfn /etc/machine-id "$1/var/lib/dbus/machine-id"
+}
+
 # producer_stage PARENT NAME: create $staging_dir, a directory this user owns
 # beside the output NAME in PARENT, so that the name a root-run tool writes
 # stays reserved and publication is a same-directory rename. Until
