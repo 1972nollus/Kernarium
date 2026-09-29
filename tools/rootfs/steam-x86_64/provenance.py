@@ -30,6 +30,8 @@ def main() -> None:
     for directory in (here, here.parent / "steam-common"):
         sources += sorted(path for path in directory.rglob("*")
                           if path.is_file() and path.name != "README.md")
+    # build.sh and seal-image.sh source the helpers every rootfs producer shares.
+    sources.append(here.parent / "producer.sh")
     recorded["producer_sources"] = {path.relative_to(repository).as_posix(): digest(path)
                                     for path in sources}
     # The maintained Vulkan guest publishes the installed runtime's identity

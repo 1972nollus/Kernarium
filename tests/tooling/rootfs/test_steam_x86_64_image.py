@@ -203,6 +203,9 @@ class Provenance(unittest.TestCase):
                 record.main()
             recorded = json.loads(output.read_text())
             self.assertEqual(recorded["vulkan_runtime"]["mesa"]["patched_tree"], "0" * 40)
+            # The producer's shared helpers are part of its sources.
+            self.assertIn("tools/rootfs/producer.sh", recorded["producer_sources"])
+            self.assertIn("tools/rootfs/steam-x86_64/build.sh", recorded["producer_sources"])
 
 
 if __name__ == "__main__":
