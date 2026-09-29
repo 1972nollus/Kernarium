@@ -29,6 +29,13 @@ using ::uml::memory::Access;
 using ::uml::memory::StaticGuestMemory;
 using ::uml::memory::Tlb;
 
+enum class JitCacheValidationResult {
+  hit,
+  mismatch,
+  fault,
+  sequence_race,
+};
+
 class JitExecutor::Implementation final {
 public:
   explicit Implementation(

@@ -50,15 +50,7 @@ void JitCompiler::set_table_list_planning_enabled(bool enabled) noexcept {
 
 JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
                  std::span<const std::uint32_t> instructions) {
-    const auto selected = compile_once(guest_pc, instructions);
-    profile_jit_compilation(
-        guest_pc,
-        instructions.first(
-            std::min(selected.guest_instructions, instructions.size())),
-        selected.words, selected.hot_words, track_direct_stores_,
-        selected.direct_link_refusals, selected.indirect_link_refusals
-    );
-    return selected;
+    return compile_once(guest_pc, instructions);
   }
 
 JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,

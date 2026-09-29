@@ -115,12 +115,6 @@ endif()
 option(UML_ENABLE_RUNTIME_PROFILING
     "Compile optional runtime, MMU, and device profiling into products" OFF)
 
-add_library(uml_jit_profile_configuration INTERFACE)
-add_library(UML::JitProfileConfiguration ALIAS
-    uml_jit_profile_configuration)
-target_compile_definitions(uml_jit_profile_configuration INTERFACE
-    UML_ENABLE_JIT_PROFILE=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
-
 if(UML_GUEST_16K_PAGES)
     set(UML_GUEST_PAGE_SIZE 16384)
     set(UML_GUEST_PAGE_SHIFT 14)

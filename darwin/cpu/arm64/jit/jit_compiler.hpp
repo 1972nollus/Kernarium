@@ -2,7 +2,6 @@
 #pragma once
 
 #include "jit_compiler_families.hpp"
-#include "jit_diagnostics.hpp"
 #include "jit_emitter.hpp"
 #include "jit_runtime_contract.hpp"
 #include "jit_semantic_memory.hpp"

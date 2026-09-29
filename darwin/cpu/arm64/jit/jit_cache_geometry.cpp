@@ -3,9 +3,6 @@
 
 #include "jit_cache.hpp"
 #include "jit_executor_pool.hpp"
-#if UML_ENABLE_JIT_PROFILE
-#include "jit_executor_pool_profile.hpp"
-#endif
 #include "jit_linking.hpp"
 #include "jit_runtime_contract.hpp"
 #include "memory/tlb.hpp"
@@ -394,21 +391,12 @@ JitCacheExecutorLease::JitCacheExecutorLease(Admission admission) noexcept
 		++registry.live_executors;
 		admitted_ = true;
 	}
-#if UML_ENABLE_JIT_PROFILE
-	if (admission == Admission::standalone)
-		profiled_standalone_ =
-			profile_jit_standalone_executor_constructed();
-#endif
 }
 
 JitCacheExecutorLease::~JitCacheExecutorLease()
 {
 	if (!admitted_)
 		return;
-#if UML_ENABLE_JIT_PROFILE
-	if (profiled_standalone_)
-		profile_jit_standalone_executor_destroyed();
-#endif
 	auto &registry = budget_registry();
 	std::lock_guard lock{registry.mutex};
 	if (registry.live_executors != 0)
@@ -427,15 +415,9 @@ JitCacheExecutorLease::~JitCacheExecutorLease()
 JitCacheExecutorLease::JitCacheExecutorLease(
 	JitCacheExecutorLease &&other) noexcept
 	: geometry_{other.geometry_}, admitted_{other.admitted_}
-#if UML_ENABLE_JIT_PROFILE
-	, profiled_standalone_{other.profiled_standalone_}
-#endif
 {
 	other.geometry_ = {};
 	other.admitted_ = false;
-#if UML_ENABLE_JIT_PROFILE
-	other.profiled_standalone_ = false;
-#endif
 }
 
 JitCacheRunSession::JitCacheRunSession() noexcept

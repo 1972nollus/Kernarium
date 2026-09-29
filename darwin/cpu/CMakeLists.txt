@@ -6,8 +6,7 @@ uml_declare_architecture_target(uml_cpu_contract cpu shared)
 target_link_libraries(uml_cpu_contract INTERFACE
     UML::MemoryContract
     UML::PlatformContract
-    UML::GuestPageConfiguration
-    UML::JitProfileConfiguration)
+    UML::GuestPageConfiguration)
 
 # A private cache holds one translation per slot, so the slot count is the
 # working set an executor can keep. Counted on Geekbench 6 Clang, the workload
@@ -219,7 +218,6 @@ target_include_directories(uml_arm64_jit PRIVATE
 
 set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_cache_geometry.cpp
-    arm64/jit/jit_diagnostics.cpp
     arm64/jit/jit_executor_cache.cpp
     arm64/jit/jit_executor_execution.cpp
     arm64/jit/jit_executor_lifecycle.cpp
@@ -233,12 +231,6 @@ set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_semantic_memory.cpp
     arm64/jit/jit_semantic_reservation.cpp
     arm64/jit/jit_shared_translations.cpp)
-if(UML_ENABLE_RUNTIME_PROFILING)
-    list(APPEND _uml_cpu_jit_executor_sources
-        arm64/jit/jit_executor_pool_profile.cpp
-        arm64/jit/jit_profile_api.cpp
-        arm64/jit/jit_profile_output.cpp)
-endif()
 
 add_library(uml_arm64_jit_executor OBJECT
     ${_uml_cpu_jit_executor_sources})

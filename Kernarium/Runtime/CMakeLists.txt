@@ -124,7 +124,6 @@ target_link_libraries(KernariumRuntime PRIVATE
     UML::ConsoleDevice
     UML::VirtioInput
     UML::NetworkProvider
-    UML::JitProfileConfiguration
     "-framework Foundation"
     "-framework Metal"
     "-framework MetalKit"

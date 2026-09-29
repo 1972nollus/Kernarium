@@ -3,9 +3,6 @@
 #include "jit_executor_pool.hpp"
 
 #include "jit_cache_geometry.hpp"
-#if UML_ENABLE_JIT_PROFILE
-#include "jit_executor_pool_profile.hpp"
-#endif
 
 #include <array>
 #include <atomic>
@@ -127,9 +124,6 @@ public:
 
   [[nodiscard]] ClaimedExecutor borrow(
       JitExecutorPoolSessionToken session, unsigned preferred_slot
-#if UML_ENABLE_JIT_PROFILE
-      , JitExecutorPoolProfile *profile
-#endif
 #if UML_JIT_RUNTIME_DIAGNOSTICS
       ,
       JitExecutorPoolSessionCheckedHook checked_hook = nullptr,
@@ -138,10 +132,6 @@ public:
       void *wait_hook_context = nullptr
 #endif
       ) {
-#if UML_ENABLE_JIT_PROFILE
-    if (profile != nullptr)
-      profile->record_borrow_invocation(preferred_slot);
-#endif
 #if UML_JIT_RUNTIME_DIAGNOSTICS
     bool checked_hook_pending = checked_hook != nullptr;
 #endif
@@ -156,11 +146,7 @@ public:
           checked_hook(checked_hook_context);
         }
 #endif
-        const auto claimed = claim_free(session, preferred_slot
-#if UML_ENABLE_JIT_PROFILE
-                                        , profile
-#endif
-                                        );
+        const auto claimed = claim_free(session, preferred_slot);
         if (claimed.executor != nullptr) {
           /* Drain clears the active token before claiming each available
            * executor. If it raced this claim, the zero availability token keeps
@@ -170,9 +156,6 @@ public:
               waiters_.load(std::memory_order_seq_cst) == 0) {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
             borrows_.fetch_add(1, std::memory_order_relaxed);
-#endif
-#if UML_ENABLE_JIT_PROFILE
-            record_successful_borrow(profile, claimed, preferred_slot, true);
 #endif
             return claimed;
           }
@@ -188,17 +171,10 @@ public:
           active_session_.load(std::memory_order_relaxed) != session)
         return {};
       if (waiter_head_ == nullptr) {
-        if (const auto claimed = claim_free(session, preferred_slot
-#if UML_ENABLE_JIT_PROFILE
-                                            , profile
-#endif
-                                            );
+        if (const auto claimed = claim_free(session, preferred_slot);
             claimed.executor != nullptr) {
 #if UML_JIT_RUNTIME_DIAGNOSTICS
           borrows_.fetch_add(1, std::memory_order_relaxed);
-#endif
-#if UML_ENABLE_JIT_PROFILE
-          record_successful_borrow(profile, claimed, preferred_slot, true);
 #endif
           return claimed;
         }
@@ -210,10 +186,6 @@ public:
             return {};
           const auto bit = uncreated & (~uncreated + 1U);
           const auto slot = static_cast<unsigned>(std::countr_zero(bit));
-#if UML_ENABLE_JIT_PROFILE
-          if (profile != nullptr)
-            profile->record_construction_attempt();
-#endif
           auto executor =
               JitExecutor::make_for_managed_pool(*configuration_);
           if (executor == nullptr || !executor->budget_admitted())
@@ -221,15 +193,6 @@ public:
           slots_[slot].owner = std::move(executor);
           slots_[slot].session.store(session, std::memory_order_relaxed);
           created_mask_.fetch_or(bit, std::memory_order_release);
-#if UML_ENABLE_JIT_PROFILE
-          if (profile != nullptr) {
-            profile->record_created(static_cast<std::size_t>(std::popcount(
-                created_mask_.load(std::memory_order_acquire))));
-            record_successful_borrow(
-                profile, {slots_[slot].owner.get(), slot}, preferred_slot,
-                false);
-          }
-#endif
 #if UML_JIT_RUNTIME_DIAGNOSTICS
           ++constructions_;
           borrows_.fetch_add(1, std::memory_order_relaxed);
@@ -240,11 +203,6 @@ public:
 
       Waiter waiter;
       enqueue_waiter_locked(waiter);
-#if UML_ENABLE_JIT_PROFILE
-      if (profile != nullptr)
-        profile->record_waiter_enqueue(
-            waiters_.load(std::memory_order_seq_cst));
-#endif
       try {
         for (;;) {
           changed_.wait(lock, [&] {
@@ -260,20 +218,12 @@ public:
 #endif
             return ready;
           });
-#if UML_ENABLE_JIT_PROFILE
-          if (profile != nullptr)
-            profile->record_waiter_wake();
-#endif
           if (active_session_.load(std::memory_order_acquire) != session) {
             remove_waiter_locked(waiter);
             finish_drain_locked();
             return {};
           }
-          if (const auto claimed = claim_free(session, preferred_slot
-#if UML_ENABLE_JIT_PROFILE
-                                              , profile
-#endif
-                                              );
+          if (const auto claimed = claim_free(session, preferred_slot);
               claimed.executor != nullptr) {
             remove_waiter_locked(waiter);
             if (waiter_head_ != nullptr &&
@@ -281,11 +231,6 @@ public:
               changed_.notify_all();
 #if UML_JIT_RUNTIME_DIAGNOSTICS
             borrows_.fetch_add(1, std::memory_order_relaxed);
-#endif
-#if UML_ENABLE_JIT_PROFILE
-            if (profile != nullptr)
-              profile->record_fifo_handoff();
-            record_successful_borrow(profile, claimed, preferred_slot, true);
 #endif
             return claimed;
           }
@@ -375,36 +320,20 @@ private:
   };
 
   [[nodiscard]] ClaimedExecutor claim_slot(
-      unsigned slot, JitExecutorPoolSessionToken session
-#if UML_ENABLE_JIT_PROFILE
-      , JitExecutorPoolProfile *profile
-#endif
-      ) noexcept {
+      unsigned slot, JitExecutorPoolSessionToken session) noexcept {
     auto expected = session;
     const bool claimed = available_[slot].session.compare_exchange_strong(
         expected, 0, std::memory_order_acq_rel,
         std::memory_order_acquire);
-#if UML_ENABLE_JIT_PROFILE
-    if (profile != nullptr)
-      profile->record_cell_probe(claimed);
-#endif
     if (!claimed)
       return {};
     return {slots_[slot].owner.get(), slot};
   }
 
   [[nodiscard]] ClaimedExecutor claim_free(
-      JitExecutorPoolSessionToken session, unsigned preferred_slot
-#if UML_ENABLE_JIT_PROFILE
-      , JitExecutorPoolProfile *profile
-#endif
-      ) noexcept {
+      JitExecutorPoolSessionToken session, unsigned preferred_slot) noexcept {
     if (preferred_slot < maximum_jit_cache_executors) {
-      if (const auto claimed = claim_slot(preferred_slot, session
-#if UML_ENABLE_JIT_PROFILE
-                                          , profile
-#endif
-                                          );
+      if (const auto claimed = claim_slot(preferred_slot, session);
           claimed.executor != nullptr)
         return claimed;
     }
@@ -412,38 +341,13 @@ private:
     while (created != 0) {
       const auto bit = created & (~created + 1U);
       const auto slot = static_cast<unsigned>(std::countr_zero(bit));
-      if (const auto claimed = claim_slot(slot, session
-#if UML_ENABLE_JIT_PROFILE
-                                          , profile
-#endif
-                                          );
+      if (const auto claimed = claim_slot(slot, session);
           claimed.executor != nullptr)
         return claimed;
       created &= ~bit;
     }
     return {};
   }
-
-#if UML_ENABLE_JIT_PROFILE
-  void record_successful_borrow(JitExecutorPoolProfile *profile,
-                                const ClaimedExecutor &claimed,
-                                unsigned preferred_slot,
-                                bool availability_claim) const noexcept {
-    if (profile == nullptr || !profile->enabled())
-      return;
-    const auto created = created_mask_.load(std::memory_order_acquire);
-    /* This scan is diagnostic only. Concurrent claims and returns make it an
-     * observed post-claim snapshot, not a linearizable global maximum.
-     */
-    const auto borrowed = static_cast<std::size_t>(std::popcount(created)) -
-                          count_free(created, std::memory_order_acquire);
-    if (availability_claim &&
-        (preferred_slot >= maximum_jit_cache_executors ||
-         claimed.slot != preferred_slot))
-      profile->record_fallback_claim();
-    profile->record_successful_borrow(claimed.slot, preferred_slot, borrowed);
-  }
-#endif
 
   [[nodiscard]] bool has_free(std::memory_order order) const noexcept {
     const auto created = created_mask_.load(std::memory_order_acquire);
@@ -572,16 +476,8 @@ bool bind_jit_executor_pool_configuration(
 }
 
 JitExecutorPoolBorrow borrow_jit_executor(
-    JitExecutorPoolSessionToken session, unsigned preferred_slot
-#if UML_ENABLE_JIT_PROFILE
-    , JitExecutorPoolProfile *profile
-#endif
-    ) {
-  const auto claimed = executor_pool().borrow(session, preferred_slot
-#if UML_ENABLE_JIT_PROFILE
-                                              , profile
-#endif
-                                              );
+    JitExecutorPoolSessionToken session, unsigned preferred_slot) {
+  const auto claimed = executor_pool().borrow(session, preferred_slot);
   if (claimed.executor == nullptr)
     return {};
   return {claimed.executor, claimed.slot, session};
@@ -596,11 +492,7 @@ JitExecutorPoolBorrow borrow_jit_executor_after_session_check_for_test(
     JitExecutorPoolSessionToken session, unsigned preferred_slot,
     JitExecutorPoolSessionCheckedHook hook, void *context) {
   const auto claimed =
-      executor_pool().borrow(session, preferred_slot
-#if UML_ENABLE_JIT_PROFILE
-                             , nullptr
-#endif
-                             , hook, context);
+      executor_pool().borrow(session, preferred_slot, hook, context);
   if (claimed.executor == nullptr)
     return {};
   return {claimed.executor, claimed.slot, session};
@@ -609,12 +501,8 @@ JitExecutorPoolBorrow borrow_jit_executor_after_session_check_for_test(
 JitExecutorPoolBorrow borrow_jit_executor_before_wait_for_test(
     JitExecutorPoolSessionToken session, unsigned preferred_slot,
     JitExecutorPoolSessionCheckedHook hook, void *context) {
-  const auto claimed =
-      executor_pool().borrow(session, preferred_slot
-#if UML_ENABLE_JIT_PROFILE
-                             , nullptr
-#endif
-                             , nullptr, nullptr, hook, context);
+  const auto claimed = executor_pool().borrow(
+      session, preferred_slot, nullptr, nullptr, hook, context);
   if (claimed.executor == nullptr)
     return {};
   return {claimed.executor, claimed.slot, session};

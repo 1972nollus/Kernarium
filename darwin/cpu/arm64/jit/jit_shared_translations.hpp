@@ -320,10 +320,4 @@ private:
   std::size_t maximum_accounted_bytes_;
 };
 
-#if UML_ENABLE_JIT_PROFILE
-/* Emits the enabled process-global shared-cache summary only when its
- * cumulative snapshot changed since the preceding call. */
-void report_final_shared_translation_statistics() noexcept;
-#endif
-
 } // namespace uml::cpu::arm64

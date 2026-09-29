@@ -66,11 +66,6 @@ JitExecutor::Implementation::Implementation(
   static_assert(sizeof(Implementation) <= sizeof(Tlb) + 48U * 1024U);
   relocated_link_pointers_.reserve(maximum_block_instructions);
   tlb_.unaligned_atomics = host_capabilities_.has(ArmFeature::lse2);
-#if UML_ENABLE_JIT_PROFILE
-  profile_jit_link_table_state(links_.size(), links_.capacity(),
-                               indirect_links_.size(),
-                               indirect_links_.capacity());
-#endif
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   cache_validation_diagnostics_.direct_link_table_capacity =
       links_.capacity();

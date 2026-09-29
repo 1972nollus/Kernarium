@@ -3,9 +3,6 @@
 set(_uml_emulator_boundary_sources
     src/emulator.cpp
     src/options.cpp)
-if(UML_ENABLE_RUNTIME_PROFILING)
-    list(APPEND _uml_emulator_boundary_sources src/profile_reporter.cpp)
-endif()
 if(UML_BUILD_KERNEL_RUNNER)
     list(APPEND _uml_emulator_boundary_sources loader/elf_loader.cpp)
 endif()
