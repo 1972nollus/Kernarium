@@ -140,6 +140,7 @@ inline constexpr std::uint64_t rflags_trap = 1ULL << 8;
 inline constexpr std::uint64_t rflags_interrupt = 1ULL << 9;
 inline constexpr std::uint64_t rflags_direction = 1ULL << 10;
 inline constexpr std::uint64_t rflags_overflow = 1ULL << 11;
+inline constexpr std::uint64_t rflags_resume = 1ULL << 16;
 
 void materialize_flags(CpuState &cpu) noexcept;
 

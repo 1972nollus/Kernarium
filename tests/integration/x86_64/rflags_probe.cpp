@@ -6,12 +6,15 @@
  * from a signal frame, lets a tracer change NT as well (ptrace's FLAG_MASK),
  * and starts a task from execve() with IF and reserved bit 1, 0x202. IOPL,
  * VM, VIF, VIP and ID are never a task's to set that way, and IF stays set.
+ * RF, which IRET at CPL 3 and a signal return may set, is cleared as the next
+ * instruction starts, so a system call that instruction makes never shows it.
  *
  * The x86-64 build traces an x86-64 and an i386 child stopped after execve(),
  * and raises a signal whose handler sets privileged bits in its frame. The
  * i386 build, whose path is the first argument, is the 32-bit child and runs
- * the same signal case under the i386 ABI. Prints one line per case and exits
- * with the number of failures.
+ * the same signal case under the i386 ABI. Each build also sets RF and reads
+ * the signal frames, and on x86-64 SYSCALL's R11, of the kill() calls that
+ * follow. Prints one line per case and exits with the number of failures.
  */
 
 namespace {
@@ -69,6 +72,62 @@ word raise_and_read_flags(long pid)
 			 : "a"(nr_kill), "D"(pid), "S"(10L)
 			 : "rcx", "r11", "memory", "cc");
 	return flags;
+}
+
+/* uc_mcontext.rax. */
+constexpr unsigned frame_ax_offset = 40 + 13 * 8;
+
+/* IRETQ to the instruction after it, with RFLAGS %[image]. */
+#define PROBE_IRET_TO_NEXT                                                     \
+	"movq %%rsp, %%rcx\n\t"                                                \
+	"pushq $0x2b\n\t"                                                      \
+	"pushq %%rcx\n\t"                                                      \
+	"pushq %[image]\n\t"                                                   \
+	"pushq $0x33\n\t"                                                      \
+	"leaq 1f(%%rip), %%rcx\n\t"                                            \
+	"pushq %%rcx\n\t"                                                      \
+	"iretq\n"                                                              \
+	"1:\t"
+
+/* kill(pid, SIGUSR1) as the first instruction after an IRETQ that loads
+ * `image`, or as the one after that. Returns the flags SYSCALL saved in R11,
+ * which sigreturn restores. */
+word iret_then_raise(word image, long pid, bool later)
+{
+	long result = nr_kill;
+	word saved;
+	if (later)
+		__asm__ volatile(PROBE_IRET_TO_NEXT
+				 "nop\n\t"
+				 "syscall\n\t"
+				 "movq %%r11, %[saved]"
+				 : "+a"(result), [saved] "=r"(saved)
+				 : [image] "r"(image), "D"(pid), "S"(10L)
+				 : "rcx", "r11", "memory", "cc");
+	else
+		__asm__ volatile(PROBE_IRET_TO_NEXT
+				 "syscall\n\t"
+				 "movq %%r11, %[saved]"
+				 : "+a"(result), [saved] "=r"(saved)
+				 : [image] "r"(image), "D"(pid), "S"(10L)
+				 : "rcx", "r11", "memory", "cc");
+	return saved;
+}
+
+/* kill(pid, SIGUSR1) twice in a row, so the first handler's frame decides
+ * what the second SYSCALL starts with. Returns the flags the second one saved
+ * in R11. */
+word raise_twice(long pid)
+{
+	long result = nr_kill;
+	word saved;
+	__asm__ volatile("syscall\n\t"
+			 "syscall\n\t"
+			 "movq %%r11, %[saved]"
+			 : "+a"(result), [saved] "=r"(saved)
+			 : "D"(pid), "S"(10L)
+			 : "rcx", "r11", "memory", "cc");
+	return saved;
 }
 
 __asm__(".text\n"
@@ -131,6 +190,49 @@ word raise_and_read_flags(long pid)
 			 : "a"(nr_kill), "b"(pid), "c"(10L)
 			 : "memory", "cc");
 	return flags;
+}
+
+/* uc_mcontext.eax. */
+constexpr unsigned frame_ax_offset = 20 + 44;
+
+/* IRET to the instruction after it, with EFLAGS %[image]. */
+#define PROBE_IRET_TO_NEXT                                                     \
+	"pushl %[image]\n\t"                                                   \
+	"pushl $0x23\n\t"                                                      \
+	"pushl $1f\n\t"                                                        \
+	"iretl\n"                                                              \
+	"1:\t"
+
+/* The i386 versions: INT 80h saves no flags in a register, so they return
+ * zero and only the signal frame shows the flags. */
+word iret_then_raise(word image, long pid, bool later)
+{
+	long result = nr_kill;
+	if (later)
+		__asm__ volatile(PROBE_IRET_TO_NEXT
+				 "nop\n\t"
+				 "int $0x80"
+				 : "+a"(result)
+				 : [image] "r"(image), "b"(pid), "c"(10L)
+				 : "memory", "cc");
+	else
+		__asm__ volatile(PROBE_IRET_TO_NEXT
+				 "int $0x80"
+				 : "+a"(result)
+				 : [image] "r"(image), "b"(pid), "c"(10L)
+				 : "memory", "cc");
+	return 0;
+}
+
+word raise_twice(long pid)
+{
+	long result = nr_kill;
+	__asm__ volatile("int $0x80\n\t"
+			 "int $0x80"
+			 : "+a"(result)
+			 : "b"(pid), "c"(10L)
+			 : "memory", "cc");
+	return 0;
 }
 
 __asm__(".text\n"
@@ -267,6 +369,79 @@ bool sigreturn_restores_only_fix_eflags()
 	/* NT is not in FIX_EFLAGS, so the frame cannot change it either. */
 	return accepted_only("frame flags", before, requested, after,
 			     frame_privileged | flag_nt, flag_ac | flag_cf);
+}
+
+constexpr word flag_rf = 1UL << 16;
+
+volatile word resume_frame_flags;
+volatile int resume_frames;
+volatile bool resume_on_return;
+
+/* Records the frame's flags. Armed, it also sets RF in the frame and has the
+ * instruction sigreturn returns to make the same kill() again. */
+void record_resume_frame(int, void *, void *context)
+{
+	auto *frame = static_cast<char *>(context);
+	auto *flags = reinterpret_cast<word *>(frame + frame_flags_offset);
+	resume_frame_flags = *flags;
+	resume_frames = resume_frames + 1;
+	if (resume_on_return) {
+		resume_on_return = false;
+		*flags |= flag_rf;
+		*reinterpret_cast<word *>(frame + frame_ax_offset) = nr_kill;
+	}
+}
+
+/* `frames` handlers ran since `before`, and neither the last frame nor the
+ * flags the last system call saved show RF. Prints why not. */
+bool resume_cleared(const char *what, int before, int frames, word saved)
+{
+	const bool ok = resume_frames == before + frames &&
+			(resume_frame_flags & flag_rf) == 0 &&
+			(saved & flag_rf) == 0;
+	if (!ok) {
+		put("  ");
+		put(what);
+		put(": handlers ");
+		put_hex(static_cast<u32>(resume_frames - before));
+		put(", frame flags ");
+		put_hex(resume_frame_flags);
+		put(", saved flags ");
+		put_hex(saved);
+		put("\n");
+	}
+	return ok;
+}
+
+/* RF from IRET's image, or from a signal frame through sigreturn, is gone
+ * when the next instruction makes a system call: kill() as the first
+ * instruction after IRET, as the one after that, and as the first after a
+ * sigreturn that restored RF. */
+bool resume_flag_clears_at_next_instruction()
+{
+	KernelSigaction action = {};
+	action.handler = reinterpret_cast<word>(&record_resume_frame);
+	action.flags = sa_siginfo | sa_restorer;
+	action.restorer = reinterpret_cast<word>(&probe_restorer);
+	if (raw_syscall(nr_rt_sigaction, sigusr1,
+			reinterpret_cast<long>(&action), 0, 8) != 0) {
+		put("  rt_sigaction failed\n");
+		return false;
+	}
+	const long pid = raw_syscall(nr_getpid);
+	const word image = initial_flags | flag_rf;
+	int before = resume_frames;
+	word saved = iret_then_raise(image, pid, false);
+	bool ok = resume_cleared("kill() right after IRET", before, 1, saved);
+	before = resume_frames;
+	saved = iret_then_raise(image, pid, true);
+	ok = resume_cleared("kill() an instruction after IRET", before, 1,
+			    saved) && ok;
+	before = resume_frames;
+	resume_on_return = true;
+	saved = raise_twice(pid);
+	return resume_cleared("kill() right after sigreturn", before, 2,
+			      saved) && ok;
 }
 
 #if defined(__x86_64__)
@@ -420,8 +595,9 @@ bool setregset32_changes_only_flag_mask(long child)
 			     flag_nt | flag_ac | flag_cf);
 }
 
-/* The signal case runs in a child, since no popf can clear an IOPL a
- * sigreturn wrongly installed. */
+/* The signal cases run in a child, since no popf can clear an IOPL a
+ * sigreturn wrongly installed, and no instruction the task has can clear an
+ * RF that stays set. */
 bool in_child(const char *path, const char *mode)
 {
 	const char *arguments[] = {path, mode, nullptr};
@@ -469,6 +645,8 @@ int run_all(const char *self, const char *i386_probe)
 		finish(child);
 	report("x86-64 sigreturn restores only FIX_EFLAGS bits",
 	       in_child(self, "sigreturn"));
+	report("x86-64 RF from IRET or sigreturn is gone at the next instruction",
+	       in_child(self, "resume"));
 
 	child = start_traced(i386_probe, "idle");
 	report("i386 execve() starts with EFLAGS 0x202",
@@ -479,6 +657,8 @@ int run_all(const char *self, const char *i386_probe)
 		finish(child);
 	report("i386 sigreturn restores only FIX_EFLAGS bits",
 	       in_child(i386_probe, "sigreturn"));
+	report("i386 RF from IRET or sigreturn is gone at the next instruction",
+	       in_child(i386_probe, "resume"));
 	return failures;
 }
 #endif
@@ -493,6 +673,8 @@ extern "C" int probe_main(word *stack)
 		return 0;
 	if (count == 2 && equal(arguments[1], "sigreturn"))
 		return sigreturn_restores_only_fix_eflags() ? 0 : 1;
+	if (count == 2 && equal(arguments[1], "resume"))
+		return resume_flag_clears_at_next_instruction() ? 0 : 1;
 #if defined(__x86_64__)
 	if (count == 2)
 		return run_all(arguments[0], arguments[1]);
