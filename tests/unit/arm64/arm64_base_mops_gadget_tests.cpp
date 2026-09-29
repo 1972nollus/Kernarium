@@ -90,27 +90,22 @@ void copy_option_aliases(std::set<std::uintptr_t> &entries)
 	}
 }
 
-void set_option_aliases(std::set<std::uintptr_t> &entries, bool tags)
+void set_option_aliases(std::set<std::uintptr_t> &entries)
 {
 	for (const auto stage :
 	     {mops::Stage::prologue, mops::Stage::main,
 	      mops::Stage::epilogue}) {
 		for (const unsigned source : {source_register, 31U}) {
-			const auto instruction = tags ?
-				mops::set_tag_instruction(stage, 0,
-					destination_register, count_register, source) :
-				mops::set_instruction(stage, 0,
-					destination_register, count_register, source);
+			const auto instruction = mops::set_instruction(stage, 0,
+				destination_register, count_register, source);
 			const auto reference = build(instruction);
 			mops::require(reference.complete,
 				"set gadget translation completeness");
 			entries.insert(reference.program.words().front());
 			for (unsigned options = 1; options < 4; ++options) {
-				const auto alias = build(tags ?
-					mops::set_tag_instruction(stage, options,
-						destination_register, count_register, source) :
-					mops::set_instruction(stage, options,
-						destination_register, count_register, source));
+				const auto alias = build(mops::set_instruction(stage,
+					options, destination_register, count_register,
+					source));
 				mops::require(alias.complete,
 					"set option alias completeness");
 				mops::require(same_words(alias, reference),
@@ -118,24 +113,41 @@ void set_option_aliases(std::set<std::uintptr_t> &entries, bool tags)
 			}
 			if (stage != mops::Stage::main)
 				require_operand(reference, operand(source),
-					tags || stage == mops::Stage::epilogue);
+					stage == mops::Stage::epilogue);
 		}
 	}
+}
+
+/* SETGP, SETGM, and SETGE need FEAT_MTE, which the virtual CPU omits. */
+void set_tag_forms_are_illegal()
+{
+	const auto illegal = build(0U);
+	for (const auto stage :
+	     {mops::Stage::prologue, mops::Stage::main,
+	      mops::Stage::epilogue})
+		for (const unsigned source : {source_register, 31U})
+			for (unsigned options = 0; options < 4; ++options) {
+				const auto built = build(mops::set_tag_instruction(
+					stage, options, destination_register,
+					count_register, source));
+				mops::require(built.complete &&
+						same_words(built, illegal),
+					"SETG form is not UNDEFINED");
+			}
 }
 
 void translation_specialization()
 {
 	std::set<std::uintptr_t> entries;
 	copy_option_aliases(entries);
-	set_option_aliases(entries, false);
-	set_option_aliases(entries, true);
+	set_option_aliases(entries);
 	/*
-	 * One common no-op main, three prologues, four ordinary epilogues,
-	 * and three tag-setting entries. No runtime entry decodes option,
-	 * family, stage, or XZR choices.
+	 * One common no-op main, three prologues, and four epilogues. No
+	 * runtime entry decodes option, family, stage, or XZR choices.
 	 */
-	mops::require(entries.size() == 11,
+	mops::require(entries.size() == 8,
 		"MOPS specialized gadget entry count");
+	set_tag_forms_are_illegal();
 }
 
 } // namespace

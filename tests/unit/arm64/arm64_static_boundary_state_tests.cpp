@@ -2,7 +2,6 @@
 #include "uml_darwin_guest.h"
 #include "uml_darwin_cpu.h"
 #include "uml_darwin_static_mmu.h"
-#include "runtime/execution_engine.hpp"
 #include "jit_test_support.hpp"
 #include "scratch_backing.hpp"
 
@@ -47,16 +46,6 @@ int enter(darwin_uml_guest_registers &registers,
 		&registers, &fp, sizeof(fp), generation, &tls);
 }
 
-using GuestEntry = int (*)(
-	void *, void *, unsigned long, unsigned long, unsigned long *);
-
-int enter_with(GuestEntry entry, darwin_uml_guest_registers &registers,
-	darwin_uml_guest_fp_registers &fp, unsigned long generation)
-{
-	unsigned long tls = 0x1234'5678UL;
-	return entry(&registers, &fp, sizeof(fp), generation, &tls);
-}
-
 void fpmr_survives_boundary()
 {
 	constexpr unsigned long generation = 200;
@@ -89,7 +78,7 @@ void pstate_and_svcr_survive_boundary()
 	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
 	backing.put32(0, pstate(1, 1));  // msr ssbs, #1
 	backing.put32(4, pstate(1, 2));  // msr dit, #1
-	backing.put32(8, pstate(1, 4));  // msr tco, #1
+	backing.put32(8, 0xd503'201fU);  // nop
 	backing.put32(12, pstate(7, 3)); // smstart smza
 	backing.put32(16, 0xd400'0001U); // svc #0
 	backing.put32(20, pstate(0, 1)); // msr ssbs, #0
@@ -101,12 +90,12 @@ void pstate_and_svcr_survive_boundary()
 
 	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
 	require(registers.pc == base + 20);
-	require((registers.pstate & 0x0300'1000U) == 0x0300'1000U);
+	require((registers.pstate & 0x0100'1000U) == 0x0100'1000U);
 	require(registers.svcr == 3);
 	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
 	require(registers.pc == base + 28);
 	require((registers.pstate & 0x0000'1000U) == 0);
-	require((registers.pstate & 0x0300'0000U) == 0x0300'0000U);
+	require((registers.pstate & 0x0100'0000U) == 0x0100'0000U);
 	require(registers.svcr == 3);
 }
 
@@ -189,65 +178,6 @@ void deferred_fp_source_is_materialized_on_linked_target()
 	require(registers.pc == base + 24);
 }
 
-void guest_keys_survive_every_engine_boundary()
-{
-	struct Engine final {
-		GuestEntry enter;
-		unsigned long generation;
-		std::uint64_t base;
-		};
-		const std::array engines{
-			Engine{&darwin_uml_static_enter_guest, 206, 0x56'0000},
-			Engine{&darwin_uml_jit_enter_guest, 207, 0x57'0000},
-		};
-		require(uml::runtime::execution_engine_available(
-			uml::runtime::ExecutionEngine::jit));
-		for (const auto engine : engines) {
-			ScratchBacking backing{
-				backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
-			/*
-			 * The production profile deliberately does not advertise
-			 * pointer authentication. Dedicated feature-enabled engine
-			 * tests cover its instructions; this boundary test only needs
-			 * two ordinary entries to prove that the guest-owned keys are
-			 * initialized once and then preserved.
-			 */
-			backing.put32(0, 0xd280'0022U);  // movz x2, #1
-			backing.put32(4, 0xd400'0001U);  // svc #0
-			backing.put32(8, 0xd280'0043U);  // movz x3, #2
-			backing.put32(12, 0xd400'0001U); // svc #0
-		JitMapping mapping{engine.generation, engine.base, backing, 1};
-		darwin_uml_guest_registers registers{};
-		darwin_uml_guest_fp_registers fp{};
-		constexpr std::uint64_t pointer = 0x0000'1234'5678'9abcULL;
-		registers.pc = engine.base;
-		registers.x[0] = pointer;
-		registers.x[1] = 0xfeed'face'0123'4567ULL;
-
-		require(enter_with(
-			engine.enter, registers, fp, engine.generation) ==
-			DARWIN_UML_EVENT_SYSCALL);
-		require(registers.pc == engine.base + 8);
-		bool initialized = false;
-		for (const auto &key : registers.pointer_auth_keys)
-			initialized |= key[0] != 0 || key[1] != 0;
-		require(initialized);
-		std::array<std::array<std::uint64_t, 2>,
-			DARWIN_UML_POINTER_AUTH_KEY_COUNT> keys{};
-		std::memcpy(keys.data(), registers.pointer_auth_keys,
-			sizeof(registers.pointer_auth_keys));
-
-		require(enter_with(
-			engine.enter, registers, fp, engine.generation) ==
-			DARWIN_UML_EVENT_SYSCALL);
-		require(registers.pc == engine.base + 16);
-		require(registers.x[0] == pointer);
-		require(std::memcmp(
-			keys.data(), registers.pointer_auth_keys,
-			sizeof(registers.pointer_auth_keys)) == 0);
-	}
-}
-
 } // namespace
 
 int main()
@@ -257,5 +187,4 @@ int main()
 	exclusive_monitor_is_cleared_at_boundary();
 	deferred_fp_source_is_refreshed_at_boundary();
 	deferred_fp_source_is_materialized_on_linked_target();
-	guest_keys_survive_every_engine_boundary();
 }

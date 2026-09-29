@@ -655,14 +655,14 @@ bool publication_participant_lifetime_is_idempotent_for_testing() {
 CompiledCode compile_block(
     std::uint64_t pc,
     std::span<const std::uint32_t> instructions) {
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false};
+  JitCompiler compiler{};
   return copied_code(compiler.compile(pc, instructions));
 }
 
 CompiledCode compile_block_without_table_list_planning(
     std::uint64_t pc,
     std::span<const std::uint32_t> instructions) {
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false};
+  JitCompiler compiler{};
   compiler.set_table_list_planning_enabled(false);
   return copied_code(compiler.compile(pc, instructions));
 }
@@ -672,7 +672,7 @@ CompiledCode compile_block_with_feature_override(
     ArmFeature feature, bool available) {
   auto features = host_capabilities().supported;
   features.set(static_cast<std::size_t>(feature), available);
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false, features};
+  JitCompiler compiler{features};
   return copied_code(compiler.compile(pc, instructions));
 }
 
@@ -687,8 +687,7 @@ lower_memory_barrier_for_testing(std::uint32_t instruction, bool native_sb,
 CompiledCode compile_tracked_block(
     std::uint64_t pc,
     std::span<const std::uint32_t> instructions) {
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false,
-                       /*link_context=*/nullptr,
+  JitCompiler compiler{/*link_context=*/nullptr,
                        /*link_resolver=*/nullptr,
                        /*track_direct_stores=*/true};
   return copied_code(compiler.compile(pc, instructions));
@@ -703,7 +702,7 @@ CompiledCode compile_linked_block(
     resolved.guest_pc = target;
     return &resolved;
   };
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false, &link, resolver};
+  JitCompiler compiler{&link, resolver};
   return copied_code(compiler.compile(pc, instructions));
 }
 
@@ -730,8 +729,7 @@ CompiledCode compile_linked_block_with_capacity(
     record.guest_pc = target;
     return &record;
   };
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false, &links,
-                       resolver};
+  JitCompiler compiler{&links, resolver};
   return copied_code(compiler.compile(pc, instructions));
 }
 
@@ -751,8 +749,7 @@ CompiledCode compile_indirect_linked_block(
       +[](void *opaque, std::uint64_t) -> const void * {
     return &static_cast<Context *>(opaque)->site;
   };
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false, &context,
-                       nullptr, false, resolver};
+  JitCompiler compiler{&context, nullptr, false, resolver};
   return copied_code(compiler.compile(pc, instructions));
 }
 
@@ -766,7 +763,7 @@ CompiledCode compile_indirect_linked_block_with_capacity(
     return static_cast<JitIndirectLinkTable *>(context)->find_or_create(
         source_pc);
   };
-  JitCompiler compiler{/*enable_guarded_control_flow=*/false, &links,
+  JitCompiler compiler{&links,
                        /*link_resolver=*/nullptr,
                        /*track_direct_stores=*/false, resolver};
   return copied_code(compiler.compile(pc, instructions));

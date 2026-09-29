@@ -23,7 +23,6 @@ extern "C" {
 	void uml_arm64_gadget_pstate_##name##_1();
 UML_DECLARE_PSTATE_FIELD(ssbs)
 UML_DECLARE_PSTATE_FIELD(dit)
-UML_DECLARE_PSTATE_FIELD(tco)
 UML_DECLARE_PSTATE_FIELD(sm)
 UML_DECLARE_PSTATE_FIELD(za)
 UML_DECLARE_PSTATE_FIELD(smza)
@@ -62,10 +61,6 @@ constexpr std::array<Gadget, 2> ssbs_gadgets{
 constexpr std::array<Gadget, 2> dit_gadgets{
 	uml_arm64_gadget_pstate_dit_0,
 	uml_arm64_gadget_pstate_dit_1,
-};
-constexpr std::array<Gadget, 2> tco_gadgets{
-	uml_arm64_gadget_pstate_tco_0,
-	uml_arm64_gadget_pstate_tco_1,
 };
 constexpr std::array<Gadget, 2> sm_gadgets{
 	uml_arm64_gadget_pstate_sm_0,
@@ -139,12 +134,12 @@ constexpr std::array<Gadget, 16> daif_clear_gadgets{
 		return za_gadgets[value];
 	case Field::streaming_and_array_state:
 		return smza_gadgets[value];
-	case Field::tag_check_override:
-		return tco_gadgets[value];
 	case Field::interrupt_mask_set:
 		return daif_set_gadgets[immediate];
 	case Field::interrupt_mask_clear:
 		return daif_clear_gadgets[immediate];
+	case Field::tag_check_override:
+		/* The virtual CPU omits FEAT_MTE, so MSR TCO is UNDEFINED. */
 	case Field::flag_alias:
 	case Field::reserved:
 	case Field::uao:
@@ -239,8 +234,7 @@ void exhaustive_translation()
 void hot_path_shape()
 {
 	constexpr std::array boolean_fields{
-		ssbs_gadgets, dit_gadgets, tco_gadgets,
-		sm_gadgets, za_gadgets,
+		ssbs_gadgets, dit_gadgets, sm_gadgets, za_gadgets,
 	};
 	for (const auto &field : boolean_fields) {
 		arm64_system_test::require(

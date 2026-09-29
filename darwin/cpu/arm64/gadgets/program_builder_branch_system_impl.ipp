@@ -16,16 +16,7 @@ DecodeResult decode_branch_system(DecodeContext &context)
 	const auto &resolve_indirect_link = context.resolve_indirect_link;
 	const auto &options = context.options;
 
-	if (const auto selected = gcs_gadget(instruction); selected) {
-		emit(words, selected->entry);
-		if (selected->has_operand)
-			emit(words, selected->operand);
-		emit(words, address);
-		if (selected->always_traps) {
-			++compiled;
-			return DecodeResult::terminal;
-		}
-	} else if (pointer_auth_lr_unavailable(instruction)) {
+	if (pointer_auth_lr_unavailable(instruction)) {
 		/* FEAT_PAuth_LR is not advertised by the static guest profile.
 		 * Its non-HINT encodings are architecturally UNDEFINED. */
 		emit(words, uml_arm64_gadget_illegal);
@@ -228,62 +219,13 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		}
 		++compiled;
 		return DecodeResult::terminal;
-	} else if ((instruction & 0xfedf'f800U) == 0xd61f'0800U) {
-		if (!options.enable_pointer_authentication) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const bool zero_modifier =
-			(instruction & 0x0100'0000U) == 0;
-		const unsigned modifier = instruction & 31U;
-		const unsigned target = (instruction >> 5) & 31U;
-		if (zero_modifier && modifier != 31U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const bool link = (instruction & 0x0020'0000U) != 0;
-		const bool key_b = (instruction & 0x400U) != 0;
-		emit(words,
-			link && options.enable_guarded_control_flow ?
-				pointer_auth_guarded_call_gadget(
-					key_b, zero_modifier,
-					target == 31U) :
-				pointer_auth_branch_gadget(
-					link, key_b, zero_modifier,
-					target == 31U));
-		if (target != 31U || !zero_modifier) {
-			const auto operand = target == 31U ?
-				(modifier < 31U ?
-					modifier * sizeof(std::uint64_t) :
-					offsetof(CpuState, sp)) :
-				zero_modifier ?
-					target * sizeof(std::uint64_t) :
-					pointer_auth_operand(target, modifier);
-			emit(words, operand);
-		}
-		if (link)
-			emit(words, address + sizeof(instruction));
-		++compiled;
-		return DecodeResult::terminal;
-	} else if ((instruction & 0xffff'fbffU) == 0xd65f'0bffU) {
-		if (!options.enable_pointer_authentication) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const bool key_b = (instruction & 0x400U) != 0;
-		emit(words, options.enable_guarded_control_flow ?
-			pointer_auth_guarded_return_gadget(key_b) :
-			pointer_auth_branch_gadget(
-				false, key_b, false, false));
-		emit(words, pointer_auth_operand(30, 31));
-		if (options.enable_guarded_control_flow)
-			emit(words, address);
+	} else if ((instruction & 0xfedf'f800U) == 0xd61f'0800U ||
+		   (instruction & 0xffff'fbffU) == 0xd65f'0bffU) {
+		/* BRAA, BRAB, BLRAA, BLRAB, their zero-modifier forms, RETAA and
+		 * RETAB need FEAT_PAuth, which the virtual CPU does not
+		 * implement. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
 		++compiled;
 		return DecodeResult::terminal;
 	} else if ((instruction & 0xffff'fc1fU) == 0xd61f'0000U ||
@@ -495,20 +437,6 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		emit(words, address);
 		++compiled;
 		return DecodeResult::terminal;
-	} else if (instruction == 0xd503'20ffU) {
-		emit(words, options.enable_pointer_authentication ?
-			uml_arm64_gadget_xpaclri : uml_arm64_gadget_nop);
-	} else if (const auto pointer_auth =
-		decode_pointer_auth_hint(instruction); pointer_auth) {
-		if (!options.enable_pointer_authentication) {
-			emit(words, uml_arm64_gadget_nop);
-		} else {
-			emit(words, pointer_auth_gadgets[pointer_auth->operation]
-				[pointer_auth->zero_modifier]);
-			emit(words, pointer_auth_operand(
-				pointer_auth->destination,
-				pointer_auth->modifier));
-		}
 	} else if ((instruction & 0xffff'f01fU) == 0xd503'201fU) {
 		emit(words, architectural_hint_gadget(instruction));
 	} else if ((instruction & 0xffd8'f000U) == 0xd500'2000U ||

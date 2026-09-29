@@ -74,7 +74,7 @@ struct JitIndirectLinkDiagnostics final {
 
 class JitExecutor final {
 public:
-	explicit JitExecutor(bool enable_guarded_control_flow = false);
+	JitExecutor();
 	explicit JitExecutor(JitExecutorOptions options);
 #if UML_JIT_RUNTIME_DIAGNOSTICS
 	JitExecutor(JitExecutorOptions options,

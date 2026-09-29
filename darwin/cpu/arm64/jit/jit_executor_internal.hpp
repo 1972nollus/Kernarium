@@ -246,8 +246,6 @@ private:
   PendingIndirect pending_indirect_{};
   bool preempted_{};
   bool single_step_{};
-  bool enable_guarded_control_flow_{};
-  bool enable_pointer_authentication_{true};
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   bool reuse_validated_stale_blocks_{};
 #endif

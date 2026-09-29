@@ -282,19 +282,6 @@ struct BuildOptions final {
 	/* Select adjacent write-through forwarding for this program. */
 	bool scalar_forwarding{true};
 	bool vector_forwarding{true};
-	/*
-	 * Resolve backward-compatible HINT encodings to NOP and reject the
-	 * non-HINT allocations when the virtual CPU does not expose the base
-	 * extension. Tests default to the complete software implementation;
-	 * production disables it once at translation time.
-	 */
-	bool enable_pointer_authentication{true};
-	/* The production guest profile does not currently expose guarded control
-	 * flow. Tests enable it explicitly so authenticated calls and returns use
-	 * dedicated precompiled entries without adding state checks to the normal
-	 * hot path.
-	 */
-	bool enable_guarded_control_flow{};
 	/* Test and portability validation can force optional checksum operations
 	 * through their precompiled software gadgets. Production leaves this
 	 * false and selects from detected host features.

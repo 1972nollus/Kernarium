@@ -1,76 +1,12 @@
+/* Unreachable padding where the FEAT_GCS GCSPUSHM/GCSPOPM/GCSSS1/GCSSS2 and
+ * GCSSTR/GCSSTTR entries were: the virtual CPU does not implement FEAT_GCS,
+ * so those words are UNDEFINED. */
+removed_gadget 768
+
 /* DC ZVA is fixed at 64 bytes by the virtual DCZID_EL0. Translation selects
  * the real-register and XZR forms, and the 64-byte alignment guarantees that
  * one successful guest-page TLB lookup covers every store. Stream:
  * [register byte offset, when present][guest PC]. */
-
-/* FEAT_GCS helpers are fully selected by translation: operation, XZR
- * discard/source, and GCSSTR SP addressing never reach the runtime decoder.
- * The valid hot path retains one not-taken status branch. On any exception
- * _stream still points at the immutable guest-PC word consumed by the common
- * event gadgets. */
-.macro gcs name, operand
-gadget gcs_\name
-	.if \operand
-	ldr x8, [_stream], #8
-	.else
-	mov x8, xzr
-	.endif
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x2
-	mov x2, x8
-	bl NAME(uml_arm64_gadget_gcs_transfer_\name)
-	ldp x1, x2, [sp], #16
-	cbnz w0, 97f
-	add _stream, _stream, #8
-	next_gadget
-97:
-	cmp w0, #1
-	b.eq uml_arm64_gadget_memory_fault
-	tbz w0, #0, 98f
-	b NAME(uml_arm64_gadget_gcs_fault)
-98:
-	b NAME(uml_arm64_gadget_illegal)
-.endm
-
-gcs popm_r, 1
-gcs popm_z, 0
-gcs pushm_r, 1
-gcs pushm_z, 0
-gcs ss1_r, 1
-gcs ss1_z, 0
-gcs ss2_r, 1
-gcs ss2_z, 0
-
-.purgem gcs
-
-.macro gcs_store name
-gadget gcs_store_\name
-	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x2
-	mov x2, x8
-	bl NAME(uml_arm64_gadget_gcs_transfer_store_\name)
-	ldp x1, x2, [sp], #16
-	cbnz w0, 97f
-	add _stream, _stream, #8
-	next_gadget
-97:
-	cmp w0, #1
-	b.eq uml_arm64_gadget_memory_fault
-	tbz w0, #0, 98f
-	b NAME(uml_arm64_gadget_gcs_fault)
-98:
-	b NAME(uml_arm64_gadget_illegal)
-.endm
-
-gcs_store rr
-gcs_store rz
-gcs_store sr
-gcs_store sz
-
-.purgem gcs_store
 
 .macro cache_zero name, zero
 gadget cache_zero_\name
@@ -79,7 +15,7 @@ gadget cache_zero_\name
 	.else
 	ldr x8, [_stream], #8
 	ldr x7, [_cpu, x8]
-	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, .Lcache_zero_untagged\@
 	ubfx x7, x7, #0, #56
 .Lcache_zero_untagged\@:
@@ -113,7 +49,7 @@ gadget code_synchronize_\name
 	.else
 	ldr x8, [_stream], #8
 	ldr x0, [_cpu, x8]
-	ldrh w9, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbz w9, .Lcode_synchronize_untagged\@
 	ubfx x0, x0, #0, #56
 .Lcode_synchronize_untagged\@:
@@ -206,102 +142,9 @@ mops_epilogue copy_general
 mops_epilogue set_r
 mops_epilogue set_z
 
-gadget mops_set_tag_prologue
-	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
-	mov x0, x1
-	mov x1, x2
-	mov x2, x8
-	bl NAME(uml_arm64_gadget_mops_set_tag_prologue_transfer)
-	ldp x1, x2, [sp], #16
-	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
-	cbz w0, uml_arm64_gadget_memory_fault
-	add _stream, _stream, #8
-	next_gadget
-
-.macro mops_set_tag_epilogue name
-gadget mops_set_tag_epilogue_\name
-	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
-	mov x0, x1
-	mov x1, x2
-	mov x2, x8
-	bl NAME(uml_arm64_gadget_mops_set_tag_epilogue_transfer_\name)
-	ldp x1, x2, [sp], #16
-	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
-	cbz w0, uml_arm64_gadget_memory_fault
-	tbz w0, #1, 1f
-	b NAME(uml_arm64_gadget_illegal)
-1:	add _stream, _stream, #8
-	next_gadget
-.endm
-
-mops_set_tag_epilogue r
-mops_set_tag_epilogue z
-
-.purgem mops_set_tag_epilogue
-
-/* FEAT_MTE tag-memory operations are split by address mode, SP alignment,
- * and discarded STGP/LDG registers at translation time. The C++ helpers use
- * direct CpuState offsets and host bulk stores, leaving only dynamic alignment
- * and mapping-fault branches in valid production execution.
- */
-.macro mte_memory name
-gadget mte_memory_\name
-	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x2
-	mov x2, x8
-	bl NAME(uml_arm64_gadget_mte_memory_transfer_\name)
-	ldp x1, x2, [sp], #16
-	cbz w0, uml_arm64_gadget_memory_fault
-	add _stream, _stream, #8
-	next_gadget
-.endm
-
-mte_memory ldg_rr
-mte_memory ldg_rz
-mte_memory ldg_sr
-mte_memory ldg_sz
-
-.macro mte_tag_store_modes name
-	mte_memory \name\()_post_r
-	mte_memory \name\()_post_s
-	mte_memory \name\()_offset_r
-	mte_memory \name\()_offset_s
-	mte_memory \name\()_pre_r
-	mte_memory \name\()_pre_s
-.endm
-
-mte_tag_store_modes stg
-mte_tag_store_modes st2g
-mte_tag_store_modes stzg
-mte_tag_store_modes stz2g
-
-.purgem mte_tag_store_modes
-
-.macro mte_stgp_registers mode, base
-	mte_memory stgp_\mode\()_\base\()rr
-	mte_memory stgp_\mode\()_\base\()rz
-	mte_memory stgp_\mode\()_\base\()zr
-	mte_memory stgp_\mode\()_\base\()zz
-.endm
-
-.macro mte_stgp_mode mode
-	mte_stgp_registers \mode, r
-	mte_stgp_registers \mode, s
-.endm
-
-mte_stgp_mode post
-mte_stgp_mode offset
-mte_stgp_mode pre
-
-.purgem mte_stgp_mode
-.purgem mte_stgp_registers
-.purgem mte_memory
+/* Unreachable padding where the FEAT_MOPS+FEAT_MTE SETG* entries and the
+ * FEAT_MTE LDG/STG/ST2G/STZG/STZ2G/STGP entries were. */
+removed_gadget 2688
 
 gadget pc_relative
 	ldr x8, [_stream], #8
@@ -522,7 +365,8 @@ gadget pstate_\name\()_\value
 
 pstate_store_field ssbs, UML_GADGET_CPU_PSTATE_SSBS
 pstate_store_field dit, UML_GADGET_CPU_PSTATE_DIT
-pstate_store_field tco, UML_GADGET_CPU_PSTATE_TCO
+/* Unreachable padding where the FEAT_MTE PSTATE.TCO entries were. */
+removed_gadget 32
 pstate_store_field sm, UML_GADGET_CPU_PSTATE_SM
 pstate_store_field za, UML_GADGET_CPU_PSTATE_ZA
 
@@ -917,7 +761,7 @@ gadget simd_structure_\name
 	b.ne .Lsimd_structure_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
-	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	ldrb w8, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w8, .Lsimd_structure_tagged\@
 	.endif
 	branch_if_cross_page x20, (\count * (8 << \q)), x8, .Lsimd_structure_slow\@
@@ -946,12 +790,13 @@ gadget simd_structure_\name
 
 	.if \base_sp == 0 || \mode != 0
 .Lsimd_structure_tagged\@:
-	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
-	 * alone strips the logical tag and rejoins the fast path. */
-	tbnz w8, #0, .Lsimd_structure_slow\@
+	/* TBI strips the logical tag and rejoins the fast path. */
 	branch_if_cross_page x20, (\count * (8 << \q)), x8, .Lsimd_structure_slow\@
 	ubfx x7, x20, #0, #56
 	b .Lsimd_structure_translate\@
+	/* Unreachable padding where the FEAT_MTE tag-check branch and the slow
+	 * path's tag-check flag were, so later entries keep their addresses. */
+	.space 8
 	.endif
 
 .Lsimd_structure_slow\@:
@@ -965,11 +810,6 @@ gadget simd_structure_\name
 	mov x4, #(\count * (8 << \q))
 	mov w5, #0
 	mov w6, #\base_sp
-	ubfx x7, x19, #48, #8
-	lsl w7, w7, #8
-	.if \base_sp == 0 || \mode != 0
-	orr w7, w7, #1
-	.endif
 	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #64]
 	cbz w0, .Lsimd_structure_fault\@
@@ -987,11 +827,6 @@ gadget simd_structure_\name
 	mov x4, #(\count * (8 << \q))
 	mov w5, #1
 	mov w6, #\base_sp
-	ubfx x7, x19, #48, #8
-	lsl w7, w7, #8
-	.if \base_sp == 0 || \mode != 0
-	orr w7, w7, #1
-	.endif
 	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #64]
 	cbz w0, .Lsimd_structure_fault\@
@@ -1012,6 +847,8 @@ gadget simd_structure_\name
 .Lsimd_structure_fault\@:
 	add sp, sp, #80
 	b uml_arm64_gadget_memory_fault
+	/* Unreachable padding where the FEAT_MTE tag-granule operand was. */
+	.space 8
 
 	.if \base_sp
 .Lsimd_structure_alignment\@:
@@ -1120,7 +957,7 @@ gadget simd_replicate_\name
 	b.ne .Lsimd_replicate_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
-	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	ldrb w8, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w8, .Lsimd_replicate_tagged\@
 	.endif
 	.if \count * \width > 1
@@ -1160,14 +997,14 @@ gadget simd_replicate_\name
 
 	.if \base_sp == 0 || \mode != 0
 .Lsimd_replicate_tagged\@:
-	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
-	 * alone strips the logical tag and rejoins the fast path. */
-	tbnz w8, #0, .Lsimd_replicate_slow\@
+	/* TBI strips the logical tag and rejoins the fast path. */
 	.if \count * \width > 1
 	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_replicate_slow\@
 	.endif
 	ubfx x7, x21, #0, #56
 	b .Lsimd_replicate_translate\@
+	/* Unreachable padding where the FEAT_MTE tag-check branch was. */
+	.space 4
 	.endif
 
 .Lsimd_replicate_slow\@:
@@ -1180,7 +1017,6 @@ gadget simd_replicate_\name
 	mov x4, #(\count * \width)
 	mov w5, #0
 	mov w6, #\base_sp
-	mov w7, #((\width << 8) | (\base_sp == 0 || \mode != 0))
 	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_replicate_fault\@
@@ -1218,6 +1054,8 @@ gadget simd_replicate_\name
 .Lsimd_replicate_fault\@:
 	add sp, sp, #48
 	b uml_arm64_gadget_memory_fault
+	/* Unreachable padding where the FEAT_MTE tag-granule operand was. */
+	.space 4
 
 	.if \base_sp
 .Lsimd_replicate_alignment\@:
@@ -1326,7 +1164,7 @@ gadget simd_lane_\name
 	b.ne .Lsimd_lane_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
-	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	ldrb w8, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w8, .Lsimd_lane_tagged\@
 	.endif
 	.if \count * \width > 1
@@ -1354,14 +1192,14 @@ gadget simd_lane_\name
 
 	.if \base_sp == 0 || \mode != 0
 .Lsimd_lane_tagged\@:
-	/* MTE, the halfword's low byte, needs the allocation-tag helper. TBI
-	 * alone strips the logical tag and rejoins the fast path. */
-	tbnz w8, #0, .Lsimd_lane_slow\@
+	/* TBI strips the logical tag and rejoins the fast path. */
 	.if \count * \width > 1
 	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_lane_slow\@
 	.endif
 	ubfx x7, x21, #0, #56
 	b .Lsimd_lane_translate\@
+	/* Unreachable padding where the FEAT_MTE tag-check branch was. */
+	.space 4
 	.endif
 
 .Lsimd_lane_slow\@:
@@ -1375,7 +1213,6 @@ gadget simd_lane_\name
 	mov x4, #(\count * \width)
 	mov w5, #0
 	mov w6, #\base_sp
-	mov w7, #((\width << 8) | (\base_sp == 0 || \mode != 0))
 	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_lane_fault\@
@@ -1391,7 +1228,6 @@ gadget simd_lane_\name
 	mov x4, #(\count * \width)
 	mov w5, #1
 	mov w6, #\base_sp
-	mov w7, #((\width << 8) | (\base_sp == 0 || \mode != 0))
 	bl NAME(uml_arm64_simd_structure_memory_transfer)
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_lane_fault\@
@@ -1412,6 +1248,8 @@ gadget simd_lane_\name
 .Lsimd_lane_fault\@:
 	add sp, sp, #48
 	b uml_arm64_gadget_memory_fault
+	/* Unreachable padding where the FEAT_MTE tag-granule operand was. */
+	.space 4
 
 	.if \base_sp
 .Lsimd_lane_alignment\@:
@@ -1694,8 +1532,8 @@ ordered_writeback_fast load_x_suppress, 1, ldapr, x, 8, 0, 1
  * one LSFE instruction after translation. Hosts without LSFE call an equally
  * specialized CAS helper; neither valid hot path decodes the guest opcode.
  * Rn is specialized while the threaded program is built. GPR-base hot paths
- * add only the effective-MTE test needed to select the checked tag/permission
- * bridge; SP variants perform CheckSPAlignment without carrying that branch.
+ * add only the TBI test that selects the tagged-address bridge; SP variants
+ * perform CheckSPAlignment without carrying that branch.
  * Stream: packed source/destination/base, guest PC.
  */
 .macro atomic_floating_address name, bytes, alignment, base_sp
@@ -1709,7 +1547,7 @@ ordered_writeback_fast load_x_suppress, 1, ldapr, x, 8, 0, 1
 	ubfx w20, w19, #16, #5
 	ldr x7, [_cpu, x20, lsl #3]
 	/* Tagged-address handling is cold for normal untagged programs. */
-	ldrh w8, [_cpu, #UML_GADGET_CPU_TAGGED_ADDRESS_STATE]
+	ldrb w8, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
 	cbnz w8, 89f
 		.if \alignment
 	single_copy_alignment \name, \alignment, 1

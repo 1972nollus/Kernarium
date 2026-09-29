@@ -54,7 +54,7 @@ constexpr std::size_t x86_64_fs_base_slot = 17;
 constexpr std::size_t x86_64_gs_base_slot = 18;
 constexpr std::size_t x86_64_x87_significand_slot = 19;
 constexpr std::size_t x86_64_x87_exponent_slot = 27;
-constexpr std::size_t x86_32_tls_entry_count = 3;
+constexpr std::size_t x86_32_tls_entry_count = DARWIN_UML_COMPAT_TLS_COUNT;
 constexpr std::uint64_t x86_64_compatibility_syscall = 1ULL << 32U;
 constexpr std::uint64_t x86_64_compat32_execution = 1ULL << 33U;
 /* The x86 slice's PR_SET_TSC(PR_TSC_SIGSEGV) task state. */
@@ -63,7 +63,6 @@ constexpr std::uint64_t x86_64_timestamp_faults = 1ULL << 34U;
 
 constexpr std::size_t dispatch_budget = 64 * 1024;
 constexpr std::uint32_t pstate_nzcv = 0xf000'0000U;
-constexpr std::uint32_t pstate_tco = 0x0200'0000U;
 constexpr std::uint32_t pstate_dit = 0x0100'0000U;
 constexpr std::uint32_t pstate_ssbs = 0x0000'1000U;
 constexpr std::uint32_t pstate_daif = 0x0000'03c0U;
@@ -209,41 +208,11 @@ void profile_dispatch(DispatchClock::time_point started,
 }
 #endif
 
-void ensure_pointer_auth_keys(
-	darwin_uml_guest_registers &registers) noexcept
-{
-	bool uninitialized = true;
-	for (const auto &key : registers.pointer_auth_keys)
-		for (const auto half : key)
-			uninitialized &= half == 0;
-	if (!uninitialized)
-		return;
-
-	arc4random_buf(registers.pointer_auth_keys,
-		       sizeof(registers.pointer_auth_keys));
-	for (std::size_t index = 0;
-	     index < DARWIN_UML_POINTER_AUTH_KEY_COUNT; ++index) {
-		auto &low = registers.pointer_auth_keys[index][0];
-		auto &high = registers.pointer_auth_keys[index][1];
-		/*
-		 * An all-zero 128-bit key is valid but is also the ABI's
-		 * uninitialized marker. Avoid the vanishingly unlikely collision
-		 * so that task migration cannot regenerate a key.
-		 */
-		if (low == 0 && high == 0) {
-			low = arm64::deterministic_pointer_auth_keys[index].low;
-			high = arm64::deterministic_pointer_auth_keys[index].high;
-		}
-	}
-}
-
 void load_cpu(arm64::CpuState &cpu,
-	      darwin_uml_guest_registers &registers,
+	      const darwin_uml_guest_registers &registers,
 	      const darwin_uml_guest_fp_registers &fp, std::uint64_t tls,
 	      bool top_byte_ignore)
 {
-	ensure_pointer_auth_keys(registers);
-	cpu.pointer_authentication_enabled = false;
 	cpu.tbi_enabled = top_byte_ignore;
 	std::copy(std::begin(registers.x), std::end(registers.x),
 		  cpu.registers.begin());
@@ -252,7 +221,6 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.sp = registers.sp;
 	cpu.pc = registers.pc;
 	cpu.nzcv = registers.pstate & pstate_nzcv;
-	cpu.pstate_tco = (registers.pstate & pstate_tco) != 0;
 	cpu.pstate_dit = (registers.pstate & pstate_dit) != 0;
 	cpu.pstate_ssbs = (registers.pstate & pstate_ssbs) != 0;
 	cpu.pstate_daif = static_cast<std::uint8_t>(
@@ -260,13 +228,6 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.pstate_sm = (registers.svcr & svcr_sm) != 0;
 	cpu.pstate_za = (registers.svcr & svcr_za) != 0;
 	cpu.fpmr = registers.fpmr;
-	for (std::size_t index = 0;
-	     index < DARWIN_UML_POINTER_AUTH_KEY_COUNT; ++index) {
-		cpu.pointer_auth_keys[index].low =
-			registers.pointer_auth_keys[index][0];
-		cpu.pointer_auth_keys[index].high =
-			registers.pointer_auth_keys[index][1];
-	}
 	cpu.tls = tls;
 	/* An exception return may clear the local monitor, and the emulator has
 	 * no architectural reservation token in uml_pt_regs.  Clear every
@@ -298,10 +259,9 @@ void save_cpu(arm64::CpuState &cpu,
 	registers.pc = cpu.pc;
 	registers.pstate =
 		(registers.pstate &
-		 ~(pstate_nzcv | pstate_tco | pstate_dit |
+		 ~(pstate_nzcv | pstate_dit |
 		   pstate_ssbs | pstate_daif)) |
 		(cpu.nzcv & pstate_nzcv) |
-		(cpu.pstate_tco ? pstate_tco : 0U) |
 		(cpu.pstate_dit ? pstate_dit : 0U) |
 		(cpu.pstate_ssbs ? pstate_ssbs : 0U) |
 		(static_cast<std::uint32_t>(cpu.pstate_daif & 15U) << 6);
@@ -309,13 +269,6 @@ void save_cpu(arm64::CpuState &cpu,
 	registers.svcr =
 		(cpu.pstate_sm ? svcr_sm : 0U) |
 		(cpu.pstate_za ? svcr_za : 0U);
-	for (std::size_t index = 0;
-	     index < DARWIN_UML_POINTER_AUTH_KEY_COUNT; ++index) {
-		registers.pointer_auth_keys[index][0] =
-			cpu.pointer_auth_keys[index].low;
-		registers.pointer_auth_keys[index][1] =
-			cpu.pointer_auth_keys[index].high;
-	}
 	tls = static_cast<unsigned long>(cpu.tls);
 	if (cpu.fp_dirty) {
 		std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
@@ -349,8 +302,8 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 	cpu.compat_tls_present = 0;
 	if (cpu.execution_mode == x86_64::ExecutionMode::compat32) {
 		for (std::size_t index = 0; index < x86_32_tls_entry_count; ++index) {
-			const auto head = registers.pointer_auth_keys[index][0];
-			const auto tail = registers.pointer_auth_keys[index][1];
+			const auto head = registers.compat_tls[index][0];
+			const auto tail = registers.compat_tls[index][1];
 			if ((head | tail) == 0)
 				continue;
 			cpu.compat_tls_bases[index] = static_cast<std::uint32_t>(head >> 32U);
@@ -514,7 +467,6 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		registers.fault.trap_number = 0;
 		event = DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
 		break;
-	case uml::cpu::ExitReason::gcs_fault:
 	case uml::cpu::ExitReason::pc_alignment:
 	case uml::cpu::ExitReason::fatal:
 		break;
@@ -563,8 +515,6 @@ uml::cpu::CpuEngine *common_engine(
 	if (!slot)
 		slot = uml::cpu::make_cpu_engine(Kind,
 			uml::cpu::EngineConfiguration{
-				.enable_guarded_control_flow = false,
-				.enable_pointer_authentication = false,
 				.host_capabilities =
 					::uml::platform::apple::probed_host_capabilities(),
 			});
@@ -592,8 +542,6 @@ bool signal_return_boundary(arm64::CpuState &cpu, void *) noexcept
 	case uml::cpu::ExitReason::breakpoint:
 	case uml::cpu::ExitReason::single_step:
 		return DispatchExit::breakpoint;
-	case uml::cpu::ExitReason::gcs_fault:
-		return DispatchExit::memory_fault;
 	case uml::cpu::ExitReason::floating_point_trap:
 		return DispatchExit::floating_point_trap;
 	case uml::cpu::ExitReason::pc_alignment:
@@ -719,9 +667,6 @@ int run_common_guest(
 		mutable_registers.fault.address = cpu.pc;
 		mutable_registers.fault.trap_number = arm64_software_step;
 		event = DARWIN_UML_EVENT_BREAKPOINT;
-		break;
-	case uml::cpu::ExitReason::gcs_fault:
-		event = DARWIN_UML_EVENT_GCS_FAULT;
 		break;
 	case uml::cpu::ExitReason::floating_point_trap:
 		save_floating_point_trap(

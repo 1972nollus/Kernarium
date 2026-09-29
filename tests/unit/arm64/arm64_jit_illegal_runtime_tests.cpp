@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
-#include "platform/apple/host_features.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_semantic_memory.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
-#include <cstdio>
 
 using namespace uml::emulator::tests;
 
@@ -18,6 +17,7 @@ using ::uml::cpu::EngineEvent;
 
 constexpr std::uint32_t allocated_tag_add = 0x9180'0020U;
 constexpr std::uint32_t guarded_pop = 0xd52b'7720U;
+constexpr std::uint32_t set_ssbs = 0xd503'413fU;
 constexpr std::uint32_t unknown_encoding = 0xffff'ffffU;
 constexpr std::uint32_t add_x5_one = 0x9100'04a5U;
 constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
@@ -31,14 +31,26 @@ void require_guest_illegal_compilation(std::uint64_t pc,
   require(!compiled.words.empty());
 }
 
+/* An UNDEFINED encoding of an absent feature compiles to the same illegal
+ * terminal as an unallocated word. */
+void require_undefined_compilation(std::uint64_t pc,
+                                   std::uint32_t instruction) {
+  const std::array code{instruction};
+  const std::array unknown{unknown_encoding};
+  const auto compiled = jit_test::compile_block(pc, code);
+  require(compiled.guest_instructions == 1);
+  require(compiled.words == jit_test::compile_block(pc, unknown).words);
+}
+
 void first_word_illegal(unsigned long generation, std::uint64_t base,
-                        std::uint32_t instruction) {
+                        std::uint32_t instruction,
+                        uml::cpu::arm64::JitExecutorOptions options = {}) {
   JitBacking backing{1};
   backing.put32(0, instruction);
   backing.put32(4, terminal_system_call);
   JitMapping mapping{generation, base, backing, 1};
 
-  uml::cpu::arm64::JitExecutor executor;
+  uml::cpu::arm64::JitExecutor executor{options};
   uml::memory::StaticGuestMemory memory;
   uml::cpu::arm64::CpuState cpu{};
   cpu.pc = base;
@@ -65,19 +77,27 @@ void first_word_illegal(unsigned long generation, std::uint64_t base,
 }
 
 void valid_host_unavailable_is_guest_illegal() {
-  if (::uml::platform::apple::probed_host_capabilities().has(::uml::cpu::ArmFeature::gcs)) {
-    std::puts("arm64-jit-illegal-runtime: host-unavailable case skipped");
-    return;
-  }
+  // MSR SSBS translates only when the host implements FEAT_SSBS.
   constexpr std::uint64_t base = 0x4fa0'0000;
-  require_guest_illegal_compilation(base, guarded_pop);
-  first_word_illegal(851, base, guarded_pop);
+  const std::array code{set_ssbs};
+  const auto compiled = jit_test::compile_block_with_feature_override(
+      base, code, ::uml::cpu::ArmFeature::ssbs, false);
+  require(compiled.guest_illegal);
+  require(compiled.guest_instructions == 1);
+  uml::cpu::arm64::JitExecutorOptions options{};
+  options.host_capabilities.supported.reset(
+      static_cast<std::size_t>(::uml::cpu::ArmFeature::ssbs));
+  first_word_illegal(851, base, set_ssbs, options);
 }
 
 void valid_contract_unavailable_is_guest_illegal() {
+  // The virtual CPU omits FEAT_MTE and FEAT_GCS.
   constexpr std::uint64_t base = 0x4fb0'0000;
-  require_guest_illegal_compilation(base, allocated_tag_add);
+  require_undefined_compilation(base, allocated_tag_add);
   first_word_illegal(852, base, allocated_tag_add);
+  constexpr std::uint64_t guarded_base = 0x4fb1'0000;
+  require_undefined_compilation(guarded_base, guarded_pop);
+  first_word_illegal(855, guarded_base, guarded_pop);
 }
 
 void unknown_word_is_guest_illegal() {
@@ -91,7 +111,7 @@ void supported_prefix_stops_before_illegal_word() {
   constexpr std::uint64_t base = 0x4fd0'0000;
   constexpr std::array code{
       add_x5_one,
-      allocated_tag_add,
+      unknown_encoding,
       terminal_system_call,
   };
   const auto compiled = jit_test::compile_block(base, code);
@@ -147,7 +167,6 @@ void unrouted_semantic_word_is_fatal() {
       Case{&arm64::uml_arm64_jit_execute_memory, add_x0_x1_x2},
       Case{&arm64::uml_arm64_jit_execute_exclusive, store_x0_x1},
       Case{&arm64::uml_arm64_jit_execute_ordered, store_x0_x1},
-      Case{&arm64::uml_arm64_jit_execute_gcs, add_x0_x1_x2},
   };
   for (const auto &test_case : cases) {
     arm64::CpuState cpu{};

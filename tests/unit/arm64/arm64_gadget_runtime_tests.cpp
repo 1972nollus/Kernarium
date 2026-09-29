@@ -125,6 +125,14 @@ void emulated_identification_registers_read_sanitized_values()
 		~advertised_processor_feature_fields) == 0);
 	require(cpu.registers[3] == untouched);
 
+	/* The virtual CPU implements no FEAT_PAuth: APA, API, GPA, and GPI in
+	 * ID_AA64ISAR1_EL1 and APA3, GPA3, and PAC_frac in ID_AA64ISAR2_EL1
+	 * stay zero. */
+	require((detail::emulated_id_register_value(0xd538'0620U) &
+		 0xff00'0ff0U) == 0);
+	require((detail::emulated_id_register_value(0xd538'0640U) &
+		 0x0f00'ff00U) == 0);
+
 	/* The AArch32 identification group is in the same encoding space and is
 	 * one Linux does not emulate, so it stays illegal at the block start. */
 	constexpr std::array rejected{

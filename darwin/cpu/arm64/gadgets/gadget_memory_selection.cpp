@@ -27,10 +27,8 @@
 #include "../detail/floating_scale.hpp"
 #include "../detail/fp_state_access.hpp"
 #include "../detail/fp8.hpp"
-#include "../detail/gcs.hpp"
 #include "../detail/instruction_primitives.hpp"
 #include "../detail/integer_multiply.hpp"
-#include "../detail/pointer_auth.hpp"
 #include "cpu/host_capabilities.hpp"
 #include "uml_darwin_static_mmu.h"
 
@@ -1139,46 +1137,32 @@ static_assert(offsetof(CpuState, vectors) == 272);
 static_assert(offsetof(CpuState, fpcr) == 784);
 static_assert(offsetof(CpuState, fpsr) == 788);
 static_assert(offsetof(CpuState, tls) == 792);
-static_assert(offsetof(CpuState, mte_enabled) == 800);
-static_assert(offsetof(CpuState, tbi_enabled) == 801);
-static_assert(offsetof(CpuState, mte_exclude) == 802);
-static_assert(offsetof(CpuState, mte_tag_choices) == 804);
-static_assert(offsetof(CpuState, mte_random_tags) == 1060);
-static_assert(offsetof(CpuState, mte_seed) == 1062);
-static_assert(offsetof(CpuState, mte_tag) == 1064);
-static_assert(offsetof(CpuState, mte_random_state) == 1072);
-static_assert(offsetof(CpuState, cpa_enabled) == 1080);
-static_assert(offsetof(CpuState, cpa_multiply_enabled) == 1081);
-static_assert(offsetof(CpuState, accdata) == 1084);
-static_assert(offsetof(CpuState, pstate_ssbs) == 1088);
-static_assert(offsetof(CpuState, pstate_dit) == 1089);
-static_assert(offsetof(CpuState, pstate_tco) == 1090);
-static_assert(offsetof(CpuState, pstate_sm) == 1091);
-static_assert(offsetof(CpuState, pstate_za) == 1092);
-static_assert(offsetof(CpuState, pstate_daif_access) == 1093);
-static_assert(offsetof(CpuState, pstate_daif) == 1094);
-static_assert(offsetof(CpuState, exclusive_address) == 1096);
-static_assert(offsetof(CpuState, exclusive_key) == 1104);
-static_assert(offsetof(CpuState, exclusive_value) == 1112);
-static_assert(offsetof(CpuState, exclusive_value2) == 1120);
-static_assert(offsetof(CpuState, exclusive_version) == 1128);
-static_assert(offsetof(CpuState, exclusive_size) == 1136);
-static_assert(offsetof(CpuState, deferred_vectors) == 1144);
-static_assert(offsetof(CpuState, deferred_fpcr) == 1152);
-static_assert(offsetof(CpuState, deferred_fpsr) == 1156);
-static_assert(offsetof(CpuState, fp_loaded) == 1160);
-static_assert(offsetof(CpuState, fp_dirty) == 1161);
-static_assert(offsetof(CpuState, fpmr) == 1168);
-static_assert(offsetof(CpuState, gadget_zero) == 1176);
-static_assert(offsetof(CpuState, gadget_host_fpcr) == 1184);
-static_assert(offsetof(CpuState, gadget_host_fpsr) == 1192);
-static_assert(offsetof(CpuState, gadget_fp_active) == 1200);
-static_assert(offsetof(CpuState, gadget_indirect_miss) == 1208);
-static_assert(offsetof(CpuState, gadget_host_fpmr) == 1216);
-static_assert(offsetof(CpuState, gadget_fpmr_active) == 1224);
-static_assert(offsetof(CpuState, gcs_pointer) == 1232);
-static_assert(offsetof(CpuState, gcs_implemented) == 1240);
-static_assert(offsetof(CpuState, gcs_push_enabled) == 1241);
-static_assert(offsetof(CpuState, gcs_store_enabled) == 1242);
+static_assert(offsetof(CpuState, tbi_enabled) == 800);
+static_assert(offsetof(CpuState, accdata) == 804);
+static_assert(offsetof(CpuState, pstate_ssbs) == 808);
+static_assert(offsetof(CpuState, pstate_dit) == 809);
+static_assert(offsetof(CpuState, pstate_sm) == 810);
+static_assert(offsetof(CpuState, pstate_za) == 811);
+static_assert(offsetof(CpuState, pstate_daif_access) == 812);
+static_assert(offsetof(CpuState, pstate_daif) == 813);
+static_assert(offsetof(CpuState, exclusive_address) == 816);
+static_assert(offsetof(CpuState, exclusive_key) == 824);
+static_assert(offsetof(CpuState, exclusive_value) == 832);
+static_assert(offsetof(CpuState, exclusive_value2) == 840);
+static_assert(offsetof(CpuState, exclusive_version) == 848);
+static_assert(offsetof(CpuState, exclusive_size) == 856);
+static_assert(offsetof(CpuState, deferred_vectors) == 864);
+static_assert(offsetof(CpuState, deferred_fpcr) == 872);
+static_assert(offsetof(CpuState, deferred_fpsr) == 876);
+static_assert(offsetof(CpuState, fp_loaded) == 880);
+static_assert(offsetof(CpuState, fp_dirty) == 881);
+static_assert(offsetof(CpuState, fpmr) == 888);
+static_assert(offsetof(CpuState, gadget_zero) == 896);
+static_assert(offsetof(CpuState, gadget_host_fpcr) == 904);
+static_assert(offsetof(CpuState, gadget_host_fpsr) == 912);
+static_assert(offsetof(CpuState, gadget_fp_active) == 920);
+static_assert(offsetof(CpuState, gadget_indirect_miss) == 928);
+static_assert(offsetof(CpuState, gadget_host_fpmr) == 936);
+static_assert(offsetof(CpuState, gadget_fpmr_active) == 944);
 
 } // namespace uml::cpu::arm64::gadgets::selection

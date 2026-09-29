@@ -168,8 +168,6 @@ public:
    */
   struct CodegenProfile final {
     ::uml::cpu::HostCapabilities capabilities{};
-    bool guarded_control_flow{};
-    bool pointer_authentication{};
 
     /* Compared field by field rather than by bytes so padding cannot make
      * two identical configurations look different.

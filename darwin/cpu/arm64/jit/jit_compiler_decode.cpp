@@ -17,7 +17,6 @@
 #include "cpu/arm64/detail/floating_round.hpp"
 #include "cpu/arm64/detail/floating_scale.hpp"
 #include "cpu/arm64/detail/fp8.hpp"
-#include "cpu/arm64/detail/gcs.hpp"
 #include "cpu/arm64/detail/half_dot.hpp"
 #include "cpu/arm64/detail/half_fused_long.hpp"
 #include "cpu/arm64/detail/half_matrix.hpp"
@@ -104,18 +103,13 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
-    if (const auto gcs = arm64::detail::decode_gcs(instruction); gcs) {
-      if (arm64::detail::gcs_is_privileged_exception_operation(
-              gcs.operation)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      if (!host_capabilities().has(ArmFeature::gcs))
-        return Action::unsupported;
-      if (arm64::detail::gcs_writes_memory(gcs.operation))
-        mark_memory_write();
-      emit_gcs_slow(instruction, pc, resulting_count);
+    /*
+     * The virtual CPU implements no FEAT_GCS: GCSSTR and GCSSTTR are
+     * unallocated. The GCS SYS and SYSL forms take the generic SYS path.
+     */
+    if ((instruction & 0xffff'ec00U) == 0xd91f'0c00U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
     /*
@@ -205,31 +199,12 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return ordered_memory(!load);
     }
     /*
-     * Resolve the complete tag-immediate allocation before the ordinary
-     * immediate-arithmetic decoder. Only the two fully fixed forms are
-     * allocated; native execution of those forms is host-feature gated by
-     * the test harness and caller.
+     * The virtual CPU implements no FEAT_MTE. Resolve the tag-immediate
+     * (ADDG, SUBG) and tag-memory allocations as undefined before the
+     * ordinary immediate-arithmetic and load/store decoders see them.
      */
-    if ((instruction & 0x1f80'0000U) == 0x1180'0000U) {
-      const bool allocated =
-          (instruction & 0xffc0'c000U) == 0x9180'0000U ||
-          (instruction & 0xffc0'c000U) == 0xd180'0000U;
-      if (allocated)
-        return Action::unsupported;
-      store_pc(pc);
-      emitter_.return_constant(Event::illegal_instruction, resulting_count);
-      return Action::terminate;
-    }
-    /*
-     * Tag-memory mode zero contains one ordinary load form. Its other
-     * members are inaccessible at EL0 or unallocated. Other addressing
-     * modes are valid extension instructions and remain host gated.
-     */
-    if ((instruction & 0xff20'0000U) == 0xd920'0000U) {
-      const unsigned operation = (instruction >> 22) & 3U;
-      const unsigned mode = (instruction >> 10) & 3U;
-      if (mode != 0U || operation == 1U)
-        return Action::unsupported;
+    if ((instruction & 0x1f80'0000U) == 0x1180'0000U ||
+        (instruction & 0xff20'0000U) == 0xd920'0000U) {
       store_pc(pc);
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
@@ -343,11 +318,8 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           default:
             return reject();
           }
-        case 4:
-          if (!translation_supports(ArmFeature::mte))
-            return Action::unsupported;
-          store_boolean(offsetof(CpuState, pstate_tco));
-          return Action::keep_going;
+        case 4: /* MSR TCO needs FEAT_MTE. */
+          return reject();
         case 6:
         case 7: {
           const auto denied = emitter_.make_label();
@@ -413,19 +385,6 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.store_w(8, 15, offsetof(CpuState, exclusive_size));
       return Action::keep_going;
     }
-    if ((instruction & 0xffff'f01fU) == 0xd503'201fU) {
-      const unsigned immediate = (instruction >> 5) & 0x7fU;
-      const bool guest_key_operation =
-          immediate == 7U || immediate == 8U || immediate == 10U ||
-          immediate == 12U || immediate == 14U ||
-          (immediate >= 24U && immediate <= 31U);
-      if (guest_key_operation) {
-        if (!enable_pointer_authentication_)
-          return Action::keep_going;
-        emit_memory_slow(instruction, pc, resulting_count);
-        return Action::terminate;
-      }
-    }
     if (emit_primary_hint(instruction) ||
         (instruction & 0xffd8'f000U) == 0xd500'2000U)
       return Action::keep_going;
@@ -445,28 +404,12 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
+    /* The authenticated branches and returns need FEAT_PAuth, which the
+     * virtual CPU does not implement. */
     if ((instruction & 0xfedf'f800U) == 0xd61f'0800U ||
         (instruction & 0xffff'fbffU) == 0xd65f'0bffU) {
-      if (!enable_pointer_authentication_) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      const bool return_form =
-          (instruction & 0xffff'fbffU) == 0xd65f'0bffU;
-      const bool zero_modifier =
-          !return_form && (instruction & 0x0100'0000U) == 0;
-      if (zero_modifier && (instruction & 31U) != 31U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      const bool link =
-          !return_form && (instruction & 0x0020'0000U) != 0;
-      if (enable_guarded_control_flow_ && link)
-        mark_memory_write();
-      emit_memory_slow(instruction, pc, resulting_count);
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
     if ((instruction & 0xffff'ffe0U) == 0xd503'1000U ||
@@ -636,52 +579,13 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
-    if ((instruction & 0xffff'c000U) == 0xdac1'0000U) {
-      if (!enable_pointer_authentication_) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      const unsigned operation = (instruction >> 10) & 15U;
-      const unsigned modifier = (instruction >> 5) & 31U;
-      if (operation >= 8U && modifier != 31U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      if ((instruction & 31U) == 31U)
-        return Action::keep_going;
-      emit_memory_slow(instruction, pc, resulting_count);
-      return Action::terminate;
-    }
-    if ((instruction & 0xffff'f800U) == 0xdac1'4000U) {
-      if (!enable_pointer_authentication_) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (((instruction >> 5) & 31U) != 31U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      if ((instruction & 31U) == 31U)
-        return Action::keep_going;
-      emit_memory_slow(instruction, pc, resulting_count);
-      return Action::terminate;
-    }
-    if ((instruction & 0xffe0'fc00U) == 0x9ac0'3000U) {
-      if (!enable_pointer_authentication_) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if ((instruction & 31U) == 31U)
-        return Action::keep_going;
-      emit_memory_slow(instruction, pc, resulting_count);
+    /* PAC*, AUT*, XPACI, XPACD and PACGA need FEAT_PAuth, which the
+     * virtual CPU does not implement. */
+    if ((instruction & 0xffff'c000U) == 0xdac1'0000U ||
+        (instruction & 0xffff'f800U) == 0xdac1'4000U ||
+        (instruction & 0xffe0'fc00U) == 0x9ac0'3000U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
     if ((instruction & 0x5fe0'0000U) == 0x1ac0'0000U) {
@@ -1621,39 +1525,28 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       }
       return Action::keep_going;
     }
-    /* FEAT_MTE STGP occupies the GPR opc=01 store allocation. It is a
-     * distinct instruction family and must not be diagnosed as an
-     * unallocated ordinary pair.
-     */
+    /* STGP occupies the GPR opc=01 store allocation and needs FEAT_MTE. */
     if ((instruction & 0xffc0'0000U) == 0x6880'0000U ||
         (instruction & 0xffc0'0000U) == 0x6900'0000U ||
-        (instruction & 0xffc0'0000U) == 0x6980'0000U)
-      return Action::unsupported;
+        (instruction & 0xffc0'0000U) == 0x6980'0000U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
+    }
+    /* LDRAA and LDRAB need FEAT_PAuth, which the virtual CPU does not
+     * implement. */
     if ((instruction & 0xff20'0400U) == 0xf820'0400U) {
-      if (!enable_pointer_authentication_) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      const unsigned destination = instruction & 31U;
-      const unsigned base = (instruction >> 5) & 31U;
-      const bool writeback = (instruction & 0x800U) != 0;
-      if (writeback && base == destination && base != 31U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      emit_memory_slow(instruction, pc, resulting_count);
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
     /*
      * LS64 overlaps the broader atomic-memory class. Resolve its complete
      * allocation and exact native feature at translation time. The semantic
-     * cold path handles alignment faults and active allocation-tag checking;
-     * valid hot execution uses a translated host address and a native 64-byte
-     * transaction without a gadget fallback. Unsupported hosts and reserved
-     * Rt partitions terminate as undefined before observing an address.
+     * cold path handles alignment faults; valid hot execution uses a
+     * translated host address and a native 64-byte transaction without a
+     * gadget fallback. Unsupported hosts and reserved Rt partitions terminate
+     * as undefined before observing an address.
      */
     const bool ls64_load =
         (instruction & 0xffff'fc00U) == 0xf83f'd000U;
@@ -1699,10 +1592,9 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const bool valid_registers =
           destination != 31U && count != 31U && destination != count &&
           source != destination && source != count && (set || source != 31U);
-      if (!allocated || !valid_registers ||
-          !host_capabilities().has(ArmFeature::mops) ||
-          (set_allocation_tags &&
-           !host_capabilities().has(ArmFeature::mte))) {
+      /* SETG* needs FEAT_MTE, which the virtual CPU does not implement. */
+      if (!allocated || !valid_registers || set_allocation_tags ||
+          !host_capabilities().has(ArmFeature::mops)) {
         store_pc(pc);
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;

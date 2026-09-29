@@ -274,24 +274,4 @@ std::byte *Tlb::translate(std::uint64_t address, Access access)
 		(address & (page_size - 1));
 }
 
-bool Tlb::read_allocation_tag(std::uint64_t address, std::uint8_t &tag)
-{
-	if (darwin_uml_static_vm_load_allocation_tag(
-		generation, address, &tag) == DARWIN_UML_STATIC_TRANSLATED)
-		return true;
-	fault_address = address & 0x00ff'ffff'ffff'fff0ULL;
-	fault_access = Access::read;
-	return false;
-}
-
-bool Tlb::write_allocation_tag(std::uint64_t address, std::uint8_t tag)
-{
-	if (darwin_uml_static_vm_store_allocation_tag(
-		generation, address, tag) == DARWIN_UML_STATIC_TRANSLATED)
-		return true;
-	fault_address = address & 0x00ff'ffff'ffff'fff0ULL;
-	fault_access = Access::write;
-	return false;
-}
-
 } // namespace uml::memory

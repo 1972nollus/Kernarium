@@ -239,7 +239,7 @@ void concurrent_compare_retry_case(bool mixed_semantic) {
       auto &cpu = (*cpus)[index];
       auto &executor = (*executors)[index];
       cpu.registers[1] = data;
-      cpu.mte_enabled = mixed_semantic && index == 0;
+      cpu.tbi_enabled = mixed_semantic && index == 0;
       require(executor.begin_execution(generation, base));
       start.arrive_and_wait();
       std::uint64_t expected = 0;
@@ -329,7 +329,7 @@ void same_backing_alias_case(bool overlaps, bool semantic_store = false,
    * and may legitimately lose their monitor across this artificial sequence
    * of separate run_block calls.
    */
-  first_cpu.mte_enabled = true;
+  first_cpu.tbi_enabled = true;
   second_cpu.pc = base + 8U;
   second_cpu.registers[2] = observed;
   second_cpu.registers[6] = alias + store_offset;
@@ -418,7 +418,7 @@ void native_store_invalidates_semantic_reservation_case() {
   semantic_cpu.pc = base;
   semantic_cpu.registers[1] = data;
   semantic_cpu.registers[4] = 99U;
-  semantic_cpu.mte_enabled = true;
+  semantic_cpu.tbi_enabled = true;
   native_cpu.pc = base + 8U;
   native_cpu.registers[1] = data;
 
@@ -493,7 +493,7 @@ void slow_store_invalidates_semantic_reservation_case(bool structure) {
   semantic_cpu.pc = base;
   semantic_cpu.registers[1] = data;
   semantic_cpu.registers[4] = replacement;
-  semantic_cpu.mte_enabled = true;
+  semantic_cpu.tbi_enabled = true;
   store_cpu.pc = base + 8U;
   store_cpu.registers[2] = observed;
   store_cpu.registers[6] = data - 8U;
@@ -578,7 +578,7 @@ void concurrent_native_cold_paths_leave_publication_before_helper() {
     require(executed >= 4U);
     (*executors)[index].end_execution();
     cpu.pc = base;
-    cpu.mte_enabled = true;
+    cpu.tbi_enabled = true;
   }
 
   std::barrier start{workers};

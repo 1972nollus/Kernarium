@@ -66,7 +66,8 @@ constexpr std::uint32_t pack_version = 1;
 constexpr std::uint8_t profile_bit = page_size == 16384 ? 1U : 2U;
 constexpr std::uint32_t unbounded = 0xffff'ffffU;
 constexpr std::uint16_t no_validator = 0xffffU;
-constexpr std::uint64_t logical_tag_mask = 0x0f00'0000'0000'0000ULL;
+/* Option bits 0 and 1 enabled the retired FEAT_PAuth and FEAT_GCS. */
+constexpr std::uint16_t retired_options = 3U;
 
 class CorpusError final : public std::runtime_error {
 public:
@@ -128,20 +129,20 @@ private:
   std::size_t offset_{};
 };
 
-/* Terminal events, in pack order. */
+/* Terminal events, in pack order. Code 2 was the retired FEAT_GCS fault. */
 enum class Event : std::uint8_t {
   system_call,
   memory_fault,
-  gcs_fault,
-  illegal_instruction,
+  illegal_instruction = 3,
   breakpoint,
   floating_point_trap,
   pc_alignment,
   instruction_budget,
   fatal,
 };
+constexpr std::uint8_t retired_event = 2U;
 constexpr std::array<std::string_view, 9> event_names{
-    "system-call",        "memory-fault", "gcs-fault",
+    "system-call",        "memory-fault", "retired",
     "illegal-instruction", "breakpoint",  "floating-point-trap",
     "pc-alignment",        "instruction-budget", "fatal"};
 
@@ -155,8 +156,6 @@ constexpr std::array<std::string_view, 9> event_names{
     return Event::system_call;
   case ExitReason::memory_fault:
     return Event::memory_fault;
-  case ExitReason::gcs_fault:
-    return Event::gcs_fault;
   case ExitReason::illegal_instruction:
     return Event::illegal_instruction;
   case ExitReason::breakpoint:
@@ -186,11 +185,6 @@ struct Retirement final {
   std::uint32_t maximum{unbounded};
 };
 
-struct TagSpec final {
-  std::uint32_t offset{};
-  std::uint8_t value{};
-};
-
 struct RegionSpec final {
   std::uint64_t address{};
   std::uint32_t size{};
@@ -199,8 +193,6 @@ struct RegionSpec final {
   /* Encoded (offset, length, bytes) runs that differ after execution. */
   std::span<const std::byte> runs;
   std::uint16_t run_count{};
-  std::vector<TagSpec> tags;
-  std::vector<TagSpec> expected_tags;
 
   [[nodiscard]] bool readable() const noexcept { return (flags & 1U) != 0U; }
   [[nodiscard]] bool writable() const noexcept { return (flags & 2U) != 0U; }
@@ -251,7 +243,9 @@ struct Record final {
   std::vector<CorpusCase> cases;
 };
 
-/* Every encoded non-register state field; see the README field table. */
+/* Every encoded non-register state field; see the README field table. Ids
+ * 7, 9-16, 20, and 32-37 held the retired FEAT_MTE, FEAT_CPA, FEAT_GCS, and
+ * FEAT_PAuth state and stay reserved. */
 enum class Field : std::uint8_t {
   pc = 1,
   nzcv,
@@ -259,21 +253,11 @@ enum class Field : std::uint8_t {
   fpsr,
   fpmr,
   tls,
-  mte_enabled,
-  tbi_enabled,
-  mte_exclude,
-  mte_tag_choices,
-  mte_random_tags,
-  mte_seed,
-  mte_tag,
-  mte_random_state,
-  cpa_enabled,
-  cpa_multiply_enabled,
-  accdata,
+  tbi_enabled = 8,
+  accdata = 17,
   pstate_ssbs,
   pstate_dit,
-  pstate_tco,
-  pstate_sm,
+  pstate_sm = 21,
   pstate_za,
   pstate_daif_access,
   pstate_daif,
@@ -284,12 +268,6 @@ enum class Field : std::uint8_t {
   exclusive_version,
   exclusive_size,
   fp_dirty,
-  gcs_pointer,
-  gcs_implemented,
-  gcs_push_enabled,
-  gcs_store_enabled,
-  pointer_auth_keys,
-  pointer_authentication_enabled,
 };
 
 [[nodiscard]] std::size_t field_size(std::uint8_t identifier) {
@@ -297,45 +275,26 @@ enum class Field : std::uint8_t {
   case Field::pc:
   case Field::fpmr:
   case Field::tls:
-  case Field::mte_random_state:
   case Field::exclusive_address:
   case Field::exclusive_key:
   case Field::exclusive_value:
   case Field::exclusive_value2:
   case Field::exclusive_version:
-  case Field::gcs_pointer:
     return 8;
   case Field::nzcv:
   case Field::fpcr:
   case Field::fpsr:
   case Field::accdata:
     return 4;
-  case Field::mte_exclude:
-  case Field::mte_seed:
-    return 2;
-  case Field::mte_tag_choices:
-    return 256;
-  case Field::pointer_auth_keys:
-    return 80;
-  case Field::mte_enabled:
   case Field::tbi_enabled:
-  case Field::mte_random_tags:
-  case Field::mte_tag:
-  case Field::cpa_enabled:
-  case Field::cpa_multiply_enabled:
   case Field::pstate_ssbs:
   case Field::pstate_dit:
-  case Field::pstate_tco:
   case Field::pstate_sm:
   case Field::pstate_za:
   case Field::pstate_daif_access:
   case Field::pstate_daif:
   case Field::exclusive_size:
   case Field::fp_dirty:
-  case Field::gcs_implemented:
-  case Field::gcs_push_enabled:
-  case Field::gcs_store_enabled:
-  case Field::pointer_authentication_enabled:
     return 1;
   }
   throw CorpusError{"unknown state field " + std::to_string(identifier)};
@@ -383,19 +342,10 @@ sparse_state(Reader &reader, std::span<const std::byte> body) {
   state.fpsr = 0;
   state.fpmr = 0;
   state.tls = 0;
-  state.mte_enabled = false;
   state.tbi_enabled = false;
-  state.mte_exclude = 0;
-  state.mte_random_tags = false;
-  state.mte_seed = 1;
-  state.mte_tag = 0;
-  state.mte_random_state = 0x9e37'79b9'7f4a'7c15ULL;
-  state.cpa_enabled = false;
-  state.cpa_multiply_enabled = false;
   state.accdata = 0;
   state.pstate_ssbs = false;
   state.pstate_dit = false;
-  state.pstate_tco = false;
   state.pstate_sm = false;
   state.pstate_za = false;
   state.pstate_daif_access = false;
@@ -407,13 +357,6 @@ sparse_state(Reader &reader, std::span<const std::byte> body) {
   state.exclusive_version = 0;
   state.exclusive_size = 0;
   state.fp_dirty = false;
-  state.gcs_pointer = 0;
-  state.gcs_implemented = false;
-  state.gcs_push_enabled = false;
-  state.gcs_store_enabled = false;
-  state.pointer_auth_keys = arm64::deterministic_pointer_auth_keys;
-  state.pointer_authentication_enabled = true;
-  state.set_mte_configuration(false, 0);
   return state;
 }
 
@@ -434,7 +377,6 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
       const auto data = reader.bytes(16);
       std::copy(data.begin(), data.end(), state.vectors[index].bytes.begin());
     }
-  bool explicit_table = false;
   const auto fields = reader.u8();
   for (unsigned field = 0; field < fields; ++field) {
     const auto identifier = reader.u8();
@@ -458,40 +400,8 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
     case Field::tls:
       state.tls = reader.u64();
       break;
-    case Field::mte_enabled:
-      state.mte_enabled = flag();
-      break;
     case Field::tbi_enabled:
       state.tbi_enabled = flag();
-      break;
-    case Field::mte_exclude:
-      state.mte_exclude = reader.u16();
-      break;
-    case Field::mte_tag_choices: {
-      const auto data = reader.bytes(256);
-      for (std::size_t index = 0; index < 256U; ++index)
-        state.mte_tag_choices[index] =
-            std::to_integer<std::uint8_t>(data[index]);
-      explicit_table = true;
-      break;
-    }
-    case Field::mte_random_tags:
-      state.mte_random_tags = flag();
-      break;
-    case Field::mte_seed:
-      state.mte_seed = reader.u16();
-      break;
-    case Field::mte_tag:
-      state.mte_tag = reader.u8();
-      break;
-    case Field::mte_random_state:
-      state.mte_random_state = reader.u64();
-      break;
-    case Field::cpa_enabled:
-      state.cpa_enabled = flag();
-      break;
-    case Field::cpa_multiply_enabled:
-      state.cpa_multiply_enabled = flag();
       break;
     case Field::accdata:
       state.accdata = reader.u32();
@@ -501,9 +411,6 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
       break;
     case Field::pstate_dit:
       state.pstate_dit = flag();
-      break;
-    case Field::pstate_tco:
-      state.pstate_tco = flag();
       break;
     case Field::pstate_sm:
       state.pstate_sm = flag();
@@ -538,36 +445,12 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
     case Field::fp_dirty:
       state.fp_dirty = flag();
       break;
-    case Field::gcs_pointer:
-      state.gcs_pointer = reader.u64();
-      break;
-    case Field::gcs_implemented:
-      state.gcs_implemented = flag();
-      break;
-    case Field::gcs_push_enabled:
-      state.gcs_push_enabled = flag();
-      break;
-    case Field::gcs_store_enabled:
-      state.gcs_store_enabled = flag();
-      break;
-    case Field::pointer_auth_keys:
-      for (auto &key : state.pointer_auth_keys) {
-        key.low = reader.u64();
-        key.high = reader.u64();
-      }
-      break;
-    case Field::pointer_authentication_enabled:
-      state.pointer_authentication_enabled = flag();
-      break;
     default:
       throw CorpusError{"unknown state field " + std::to_string(identifier)};
     }
   }
   if (!reader.done())
     throw CorpusError{"trailing sparse state data"};
-  /* An omitted tag-choice table is the one the MTE controls derive. */
-  if (!explicit_table)
-    state.set_mte_configuration(state.mte_enabled, state.mte_exclude);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -583,46 +466,6 @@ struct RelationInput final {
 
 using Relation = std::optional<std::string> (*)(const RelationInput &);
 
-[[nodiscard]] constexpr std::uint64_t strip(std::uint64_t source,
-                                            bool data) noexcept {
-  const bool upper = (source & (std::uint64_t{1} << 55U)) != 0U;
-  if (data && !upper)
-    return source & 0xff00'7fff'ffff'ffffULL;
-  return (source & 0x0000'7fff'ffff'ffffULL) |
-         (upper ? 0xffff'8000'0000'0000ULL : 0U);
-}
-
-[[nodiscard]] constexpr std::uint64_t signing_original(std::uint64_t source,
-                                                       bool data) noexcept {
-  const bool upper = (source & (std::uint64_t{1} << 55U)) != 0U;
-  if (data && !upper)
-    return source & 0xff00'7fff'ffff'ffffULL;
-  return (source & 0x0000'7fff'ffff'ffffULL) |
-         ((source >> 63U) != 0U ? 0xffff'8000'0000'0000ULL : 0U);
-}
-
-[[nodiscard]] constexpr std::uint64_t
-read_register(const arm64::CpuState &cpu, unsigned index,
-              bool stack_pointer) noexcept {
-  return index == 31U ? (stack_pointer ? cpu.sp : 0U) : cpu.registers[index];
-}
-
-void write_register(arm64::CpuState &cpu, unsigned index, std::uint64_t value,
-                    bool stack_pointer) noexcept {
-  if (index != 31U)
-    cpu.registers[index] = value;
-  else if (stack_pointer)
-    cpu.sp = value;
-}
-
-[[nodiscard]] std::optional<std::uint32_t> word_at(const Program &program,
-                                                   std::size_t offset) {
-  for (const auto word : program.words)
-    if (word.offset == offset)
-      return word.word;
-  return std::nullopt;
-}
-
 /* A failed store-exclusive clears the monitor; the retained monitor payload
  * is opaque, so only its identity and size are compared. */
 std::optional<std::string> exclusive_store_failure(const RelationInput &in) {
@@ -631,169 +474,6 @@ std::optional<std::string> exclusive_store_failure(const RelationInput &in) {
   normalized.exclusive_value2 = in.expected.exclusive_value2;
   normalized.exclusive_version = in.expected.exclusive_version;
   return first_architecture_difference(in.expected, normalized);
-}
-
-/* IRG: the address bits are preserved and the tag is one permitted choice. */
-std::optional<std::string> tag_generator_choice(const RelationInput &in) {
-  const auto word = in.program.entry_word;
-  const unsigned destination = word & 31U;
-  const unsigned source = (word >> 5U) & 31U;
-  const unsigned exclude_register = (word >> 16U) & 31U;
-  const auto source_value = read_register(in.initial, source, true);
-  const auto result = read_register(in.actual, destination, true);
-  if ((result & ~logical_tag_mask) != (source_value & ~logical_tag_mask))
-    return "generated address " + hex(result) + " does not preserve " +
-           hex(source_value);
-  const auto exclude = static_cast<std::uint16_t>(
-      in.initial.mte_exclude |
-      read_register(in.initial, exclude_register, false));
-  const auto tag = static_cast<unsigned>(result >> 56U) & 15U;
-  if (!in.initial.mte_enabled || exclude == 0xffffU) {
-    if (tag != 0U)
-      return "disabled or fully excluded generation produced tag " +
-             std::to_string(tag);
-  } else if ((exclude & (1U << tag)) != 0U) {
-    return "generated excluded tag " + std::to_string(tag);
-  }
-  auto expected = in.initial;
-  expected.pc = in.expected.pc;
-  write_register(expected, destination, result, true);
-  expected.mte_random_state = in.actual.mte_random_state;
-  return first_architecture_difference(expected, in.actual);
-}
-
-/* PAC*, AUT*, and their HINT aliases: the retained pointer bits follow the
- * architectural relation while the inserted code is implementation-defined. */
-std::optional<std::string> transformed_code(const RelationInput &in) {
-  const auto word = in.program.entry_word;
-  unsigned destination = word & 31U;
-  bool data = false;
-  bool authenticate = false;
-  if ((word & 0xffff'c000U) == 0xdac1'0000U) {
-    data = ((word >> 10U) & 2U) != 0U;
-    authenticate = ((word >> 10U) & 4U) != 0U;
-  } else {
-    const unsigned immediate = (word >> 5U) & 0x7fU;
-    destination = immediate < 16U ? 17U : 30U;
-    authenticate = immediate == 12U || immediate == 14U ||
-                   (immediate >= 28U && immediate <= 31U);
-  }
-  auto expected = in.initial;
-  expected.pc = in.expected.pc;
-  if (destination < 31U) {
-    const auto before = in.initial.registers[destination];
-    const auto after = in.actual.registers[destination];
-    const auto retained =
-        authenticate ? strip(before, data) : signing_original(before, data);
-    if (strip(after, data) != retained)
-      return "x" + std::to_string(destination) + " " + hex(after) +
-             " does not retain " + hex(before);
-    expected.registers[destination] = after;
-  }
-  return first_architecture_difference(expected, in.actual);
-}
-
-/* PACGA: the low half of the generic code is zero. */
-std::optional<std::string> transformed_generic(const RelationInput &in) {
-  const unsigned destination = in.program.entry_word & 31U;
-  auto expected = in.initial;
-  expected.pc = in.expected.pc;
-  if (destination < 31U) {
-    if ((in.actual.registers[destination] & 0xffff'ffffULL) != 0U)
-      return "generic code " + hex(in.actual.registers[destination]) +
-             " has a non-zero low half";
-    expected.registers[destination] = in.actual.registers[destination];
-  }
-  return first_architecture_difference(expected, in.actual);
-}
-
-/* A failed authenticated branch or return faults at a transformed target.
- * Programs that sign the target register with itself as the modifier and
- * then branch fail with the original address in the retained bits. */
-std::optional<std::string> transformed_branch_failure(const RelationInput &in) {
-  const auto word = in.program.entry_word;
-  auto expected = in.initial;
-  expected.pc = in.actual.pc;
-  if ((word & 0xffff'c000U) == 0xdac1'0000U) {
-    const auto branch = word_at(in.program, in.program.entry + 4U);
-    if (!branch.has_value())
-      return std::string{"relation requires a branch after the signing entry"};
-    const bool link = (*branch & 0x0020'0000U) != 0U;
-    const unsigned target = word & 31U;
-    if (target == 31U)
-      return std::string{"relation requires a general target register"};
-    if (strip(in.actual.pc, false) != in.initial.registers[target])
-      return "failed target " + hex(in.actual.pc) + " does not retain " +
-             hex(in.initial.registers[target]);
-    if (!link || target != 30U) {
-      if (strip(in.actual.registers[target], false) !=
-          in.initial.registers[target])
-        return "x" + std::to_string(target) + " " +
-               hex(in.actual.registers[target]) + " does not retain " +
-               hex(in.initial.registers[target]);
-      expected.registers[target] = in.actual.registers[target];
-    }
-    if (link)
-      expected.registers[30] = code_base + in.program.entry + 8U;
-  } else {
-    if (strip(in.actual.pc, false) != 0U)
-      return "failed target " + hex(in.actual.pc) + " is not a zero address";
-    if ((word & 0x0020'0000U) != 0U)
-      expected.registers[30] = code_base + in.program.entry + 4U;
-  }
-  return first_architecture_difference(expected, in.actual);
-}
-
-/* A guarded call with a zero target faults after its link and stack update. */
-std::optional<std::string> guarded_zero_target(const RelationInput &in) {
-  if (strip(in.actual.pc, false) != 0U)
-    return "failed target " + hex(in.actual.pc) + " is not a zero address";
-  auto expected = in.expected;
-  expected.pc = in.actual.pc;
-  return first_architecture_difference(expected, in.actual);
-}
-
-/* A guarded call whose record store faults leaves only the signed target
- * register transformed. */
-std::optional<std::string> guarded_call_fault(const RelationInput &in) {
-  const unsigned target = in.program.entry_word & 31U;
-  if (target == 31U)
-    return std::string{"relation requires a general target register"};
-  if (strip(in.actual.registers[target], false) != in.initial.registers[target])
-    return "x" + std::to_string(target) + " " +
-           hex(in.actual.registers[target]) + " does not retain " +
-           hex(in.initial.registers[target]);
-  auto expected = in.initial;
-  expected.pc = in.expected.pc;
-  expected.registers[target] = in.actual.registers[target];
-  return first_architecture_difference(expected, in.actual);
-}
-
-/* A guarded return that faults leaves only the signed link register
- * transformed. */
-std::optional<std::string> guarded_return_fault(const RelationInput &in) {
-  if (strip(in.actual.registers[30], false) != in.initial.registers[30])
-    return "x30 " + hex(in.actual.registers[30]) + " does not retain " +
-           hex(in.initial.registers[30]);
-  auto expected = in.initial;
-  expected.pc = in.expected.pc;
-  expected.registers[30] = in.actual.registers[30];
-  return first_architecture_difference(expected, in.actual);
-}
-
-/* An authenticated load through a signed base faults with only that base
- * transformed. */
-std::optional<std::string> transformed_address_fault(const RelationInput &in) {
-  const unsigned base = in.program.entry_word & 31U;
-  if (base == 31U)
-    return std::string{"relation requires a general base register"};
-  if (strip(in.actual.registers[base], true) != in.initial.registers[base])
-    return "x" + std::to_string(base) + " " + hex(in.actual.registers[base]) +
-           " does not retain " + hex(in.initial.registers[base]);
-  auto expected = in.initial;
-  expected.pc = in.expected.pc;
-  expected.registers[base] = in.actual.registers[base];
-  return first_architecture_difference(expected, in.actual);
 }
 
 /* A system-register read of the host counter is excluded from equality. */
@@ -809,16 +489,8 @@ std::optional<std::string> ignore_counter_register(const RelationInput &in) {
 
 [[nodiscard]] Relation relation_for(std::string_view name) {
   static const std::map<std::string_view, Relation> relations{
-      {"guarded-control-call-fault-atomicity/v1", guarded_call_fault},
-      {"guarded-control-return-fault/v1", guarded_return_fault},
-      {"guarded-control-zero-target-fault/v1", guarded_zero_target},
       {"ignore-host-counter-register/v1", ignore_counter_register},
       {"permitted-exclusive-store-failure/v1", exclusive_store_failure},
-      {"permitted-tag-generator-choice/v1", tag_generator_choice},
-      {"permitted-transformed-branch-failure/v1", transformed_branch_failure},
-      {"permitted-transformed-code/v1", transformed_code},
-      {"permitted-transformed-generic/v1", transformed_generic},
-      {"transformed-address-fault-state/v1", transformed_address_fault},
   };
   if (const auto found = relations.find(name); found != relations.end())
     return found->second;
@@ -930,11 +602,6 @@ void validate_case(const Record &record, const CorpusCase &test_case,
           other.address < region.address + region.size)
         fail("memory regions overlap");
     }
-    for (const auto *tags : {&region.tags, &region.expected_tags})
-      for (const auto tag : *tags)
-        if (tag.offset >= region.size || tag.offset % 16U != 0U ||
-            tag.value > 15U)
-          fail("invalid allocation tag");
   }
 }
 
@@ -972,6 +639,8 @@ void validate_case(const Record &record, const CorpusCase &test_case,
     record.site = reader.string16();
     record.profiles = reader.u8();
     record.options = reader.u16();
+    if ((record.options & retired_options) != 0U)
+      throw CorpusError{std::string{record.name} + ": retired harness option"};
     const auto program_count = reader.u32();
     record.programs.reserve(program_count);
     for (std::uint32_t program = 0; program < program_count; ++program) {
@@ -1006,7 +675,7 @@ void validate_case(const Record &record, const CorpusCase &test_case,
       test_case.ordinal_16k = reader.u32();
       test_case.ordinal_4k = reader.u32();
       const auto event = reader.u8();
-      if (event >= event_names.size())
+      if (event >= event_names.size() || event == retired_event)
         throw CorpusError{std::string{record.name} + ": unknown event"};
       test_case.event = static_cast<Event>(event);
       const auto flags = reader.u8();
@@ -1065,11 +734,10 @@ void validate_case(const Record &record, const CorpusCase &test_case,
           (void)reader.bytes(length);
         }
         region.runs = body.subspan(runs_begin, reader.offset() - runs_begin);
-        for (auto *tags : {&region.tags, &region.expected_tags}) {
-          const auto count = reader.u16();
-          for (unsigned tag = 0; tag < count; ++tag)
-            tags->push_back({.offset = reader.u32(), .value = reader.u8()});
-        }
+        /* The two reserved allocation-tag list counts. */
+        if (reader.u16() != 0U || reader.u16() != 0U)
+          throw CorpusError{std::string{record.name} +
+                            ": retired allocation tags"};
       }
       /* Region shapes depend on the page profile a record targets. */
       if ((record.profiles & profile_bit) != 0U)
@@ -1190,14 +858,6 @@ public:
         std::copy(data.begin(), data.end(), expected_.begin() + offset);
       }
     }
-    if (!spec.tags.empty() || !spec.expected_tags.empty()) {
-      initial_tags_.assign(spec.size / 16U, 0);
-      for (const auto tag : spec.tags)
-        initial_tags_[tag.offset / 16U] = tag.value;
-      expected_tags_ = initial_tags_;
-      for (const auto tag : spec.expected_tags)
-        expected_tags_[tag.offset / 16U] = tag.value;
-    }
   }
 
   CaseRegion(const CaseRegion &) = delete;
@@ -1205,11 +865,6 @@ public:
 
   void restore() const {
     std::copy(initial_.begin(), initial_.end(), backing_.view().begin());
-    for (std::size_t index = 0; index < initial_tags_.size(); ++index)
-      if (darwin_uml_static_vm_store_allocation_tag(
-              generation, spec_.address + index * 16U, initial_tags_[index]) !=
-          DARWIN_UML_STATIC_TRANSLATED)
-        throw std::runtime_error{"cannot restore an allocation tag"};
   }
 
   [[nodiscard]] std::optional<std::string> check() const {
@@ -1225,16 +880,6 @@ public:
              hex(std::to_integer<unsigned>(*mismatch.second)) + " actual " +
              hex(std::to_integer<unsigned>(*mismatch.first));
     }
-    for (std::size_t index = 0; index < expected_tags_.size(); ++index) {
-      std::uint8_t tag{};
-      if (darwin_uml_static_vm_load_allocation_tag(
-              generation, spec_.address + index * 16U, &tag) !=
-              DARWIN_UML_STATIC_TRANSLATED ||
-          tag != expected_tags_[index])
-        return "allocation tag at " + hex(spec_.address + index * 16U) +
-               " expected " + std::to_string(expected_tags_[index]) +
-               " actual " + std::to_string(tag);
-    }
     return std::nullopt;
   }
 
@@ -1244,8 +889,6 @@ private:
   SharedBacking backing_;
   GuestMapping mapping_;
   std::vector<std::byte> expected_;
-  std::vector<std::uint8_t> initial_tags_;
-  std::vector<std::uint8_t> expected_tags_;
 };
 
 /* ------------------------------------------------------------------------ */
@@ -1271,12 +914,8 @@ struct Outcome final {
 class Engines final {
 public:
   explicit Engines(std::uint16_t options) {
-    const bool pointer_authentication = (options & 1U) != 0U;
-    const bool guarded_control_flow = (options & 2U) != 0U;
     const auto &host = ::uml::platform::apple::probed_host_capabilities();
     const ::uml::cpu::EngineConfiguration configuration{
-        .enable_guarded_control_flow = guarded_control_flow,
-        .enable_pointer_authentication = pointer_authentication,
         .host_capabilities = host,
     };
     if ((options & 0x3fcU) == 0U) {
@@ -1285,8 +924,6 @@ public:
     } else {
       forced_ = std::make_unique<arm64::gadgets::GadgetExecutor>(
           arm64::gadgets::BuildOptions{
-              .enable_pointer_authentication = pointer_authentication,
-              .enable_guarded_control_flow = guarded_control_flow,
               .force_software_checksum = (options & 4U) != 0U,
               .force_software_flags = (options & 8U) != 0U,
               .force_software_sha3 = (options & 16U) != 0U,

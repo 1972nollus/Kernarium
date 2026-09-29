@@ -757,20 +757,6 @@ public:
 		return DARWIN_UML_STATIC_TRANSLATED;
 	}
 
-	int load_allocation_tag(std::uint64_t generation, std::uint64_t address,
-		std::uint8_t *tag)
-	{
-		if (tag == nullptr)
-			return DARWIN_UML_STATIC_HOST_ERROR;
-		return access_allocation_tag(generation, address, false, tag);
-	}
-
-	int store_allocation_tag(std::uint64_t generation, std::uint64_t address,
-		std::uint8_t tag)
-	{
-		return access_allocation_tag(generation, address, true, &tag);
-	}
-
 	[[nodiscard]] std::uint64_t changes(std::uint64_t generation)
 	{
 		auto &active = active_thread_generation();
@@ -1080,35 +1066,6 @@ private:
 			return false;
 		return AddressLayout::classify(address, length) !=
 			AddressDomain::invalid;
-	}
-
-	int access_allocation_tag(std::uint64_t generation,
-		std::uint64_t address, bool write, std::uint8_t *tag)
-	{
-		/* MTE allocation tags are indexed by the untagged Tag Granule. */
-		address &= 0x00ff'ffff'ffff'fff0ULL;
-		const auto page = address & ~(page_size - 1);
-		const auto resolved_generation = generation_for(page, generation);
-		auto reference = reference_for(resolved_generation);
-		std::shared_lock lock{reference.state->mappings_mutex};
-		const auto iterator = reference.state->mappings.find(page);
-		if (iterator == reference.state->mappings.end())
-			return DARWIN_UML_STATIC_UNMAPPED;
-		auto &mapping = iterator->second;
-		const int required = write ? PROT_WRITE : PROT_READ;
-		if ((mapping.protection & required) == 0)
-			return DARWIN_UML_STATIC_PERMISSION;
-		const auto offset = mapping.offset +
-			(address & (page_size - 1));
-		if (offset >= mapping.backing->size())
-			return DARWIN_UML_STATIC_HOST_ERROR;
-		if (write) {
-			if (!mapping.backing->store_allocation_tag(offset, *tag))
-				return DARWIN_UML_STATIC_HOST_ERROR;
-		} else {
-			*tag = mapping.backing->load_allocation_tag(offset);
-		}
-		return DARWIN_UML_STATIC_TRANSLATED;
 	}
 
 	static std::uint64_t generation_for(std::uint64_t address,
@@ -2044,22 +2001,6 @@ extern "C" int darwin_uml_static_vm_code_page_stamp(
 extern "C" void darwin_uml_static_vm_invalidate_code_page(void *handle)
 {
 	uml::memory::MappedBacking::invalidate_code_page(handle);
-}
-
-extern "C" int darwin_uml_static_vm_load_allocation_tag(
-	unsigned long generation, unsigned long address, uint8_t *tag)
-{
-	return with_address_space([&](auto &space) {
-		return space.load_allocation_tag(generation, address, tag);
-	});
-}
-
-extern "C" int darwin_uml_static_vm_store_allocation_tag(
-	unsigned long generation, unsigned long address, uint8_t tag)
-{
-	return with_address_space([&](auto &space) {
-		return space.store_allocation_tag(generation, address, tag);
-	});
 }
 
 extern "C" uint64_t darwin_uml_static_vm_changes(unsigned long generation)

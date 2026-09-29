@@ -63,8 +63,7 @@ void check_success(
     std::span<const std::uint32_t> instructions,
     const arm64::CpuState &initial, arm64::CpuState expected,
     std::uint64_t region_address, std::span<const std::byte> initial_memory,
-    std::span<const std::byte> expected_memory,
-    std::span<const engine::AllocationTag> initial_tags = {}) {
+    std::span<const std::byte> expected_memory) {
   std::vector<engine::ProgramWord> code;
   code.reserve(instructions.size() + 1U);
   for (std::size_t index = 0; index < instructions.size(); ++index)
@@ -83,7 +82,6 @@ void check_success(
           .address = region_address,
           .initial = initial_memory,
           .expected = expected_memory,
-          .initial_tags = initial_tags,
       },
   };
   harness.check_program({
@@ -542,11 +540,10 @@ void dirty_prefix_is_preserved_on_cold_fallback(
 }
 
 void tagged_state_fallback_is_exact(engine::EngineHarness &harness) {
-  constexpr std::uint8_t logical_tag = 9;
-  constexpr std::uint8_t mismatching_tag = 6;
+  constexpr std::uint8_t address_tag = 9;
   const auto &load = memory::single_variants[9];
   const auto physical_base = data_base + page_size / 4U;
-  const auto logical_base = tagged(physical_base, logical_tag);
+  const auto logical_base = tagged(physical_base, address_tag);
   std::vector<std::byte> initial_memory(page_size);
   memory::fill_memory(initial_memory, 181);
   const std::array instructions{
@@ -558,7 +555,7 @@ void tagged_state_fallback_is_exact(engine::EngineHarness &harness) {
 
   {
     auto initial = memory::seeded_state(0xd800'0000'0000'0001ULL);
-    initial.set_mte_configuration(true, 0);
+    initial.tbi_enabled = true;
     initial.registers[26] = logical_base;
     auto expected = initial;
     auto expected_memory = initial_memory;
@@ -568,30 +565,21 @@ void tagged_state_fallback_is_exact(engine::EngineHarness &harness) {
     apply_unsigned_oracle(
         initial, expected, initial_memory, expected_memory, physical_base,
         load, 1, 9);
-    const std::array tags{
-        engine::AllocationTag{
-            .offset = static_cast<std::size_t>(physical_base - data_base),
-            .value = logical_tag,
-        },
-        engine::AllocationTag{
-            .offset =
-                static_cast<std::size_t>(physical_base - data_base + 16U),
-            .value = logical_tag,
-        },
-    };
     check_success(
-        harness, "jit-simd-run-tagged-state-matching", instructions, initial,
-        expected, data_base, initial_memory, expected_memory, tags);
+        harness, "jit-simd-run-tagged-state-untagged", instructions, initial,
+        expected, data_base, initial_memory, expected_memory);
   }
 
   {
+    /* The second load crosses into the unmapped page after the region. */
+    const auto edge_base = data_base + page_size - load.size;
     auto initial = memory::seeded_state(0xd800'0000'0000'0002ULL);
-    initial.set_mte_configuration(true, 0);
-    initial.registers[26] = logical_base;
+    initial.tbi_enabled = true;
+    initial.registers[26] = tagged(edge_base, address_tag);
     auto expected = initial;
     auto expected_memory = initial_memory;
     apply_unsigned_oracle(
-        initial, expected, initial_memory, expected_memory, physical_base,
+        initial, expected, initial_memory, expected_memory, edge_base,
         load, 0, 8);
     expected.pc = engine::engine_test_code_base + 4U;
     const std::array code{
@@ -599,23 +587,11 @@ void tagged_state_fallback_is_exact(engine::EngineHarness &harness) {
         engine::ProgramWord{.offset = 4, .instruction = instructions[1]},
         engine::ProgramWord{.offset = 8, .instruction = system_call},
     };
-    const std::array tags{
-        engine::AllocationTag{
-            .offset = static_cast<std::size_t>(physical_base - data_base),
-            .value = logical_tag,
-        },
-        engine::AllocationTag{
-            .offset =
-                static_cast<std::size_t>(physical_base - data_base + 16U),
-            .value = mismatching_tag,
-        },
-    };
     const std::array regions{
         engine::MemoryRegion{
             .address = data_base,
             .initial = initial_memory,
             .expected = expected_memory,
-            .initial_tags = tags,
         },
     };
     harness.check_program({
@@ -627,7 +603,7 @@ void tagged_state_fallback_is_exact(engine::EngineHarness &harness) {
         .native = memory::single_native(),
         .fault =
             {
-                .address = physical_base + 16U,
+                .address = data_base + page_size,
                 .access = arm64::MemoryAccess::read,
             },
         .compare_fault = true,
@@ -638,7 +614,7 @@ void tagged_state_fallback_is_exact(engine::EngineHarness &harness) {
 
   {
     auto initial = memory::seeded_state(0xd800'0000'0000'0003ULL);
-    initial.set_mte_configuration(true, 0);
+    initial.tbi_enabled = true;
     initial.sp = physical_base;
     auto expected = initial;
     auto expected_memory = initial_memory;

@@ -92,6 +92,19 @@ void primary_translation_and_dead_gadget_audit()
 	}
 }
 
+void pointer_authentication_hints_are_nops()
+{
+	for (const auto immediate : arm64_hint_test::pointer_auth_hints) {
+		const auto built =
+			build(arm64_hint_test::primary_instruction(immediate));
+		arm64_hint_test::require(
+			built.complete && built.program.words().size() >= 1U &&
+				built.program.words().front() ==
+					address(uml_arm64_gadget_nop),
+			"a pointer-authentication hint did not translate to NOP");
+	}
+}
+
 void gsb_profile_translation()
 {
 	for (unsigned operation = 0; operation < 2U; ++operation)
@@ -112,6 +125,7 @@ void gsb_profile_translation()
 int main()
 {
 	primary_translation_and_dead_gadget_audit();
+	pointer_authentication_hints_are_nops();
 	gsb_profile_translation();
 	return 0;
 }

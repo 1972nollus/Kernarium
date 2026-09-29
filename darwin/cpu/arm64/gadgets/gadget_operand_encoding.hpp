@@ -101,31 +101,6 @@ namespace uml::cpu::arm64::gadgets::selection {
 		(static_cast<std::uintptr_t>(second_offset) << 32);
 }
 
-[[nodiscard]] constexpr std::uintptr_t mte_register_offset(
-	unsigned index) noexcept
-{
-	static_assert(offsetof(CpuState, registers) == 0);
-	static_assert(offsetof(CpuState, sp) <= 0xffffU);
-	return index == 31U ? offsetof(CpuState, sp) :
-		index * sizeof(std::uint64_t);
-}
-
-[[nodiscard]] constexpr std::uintptr_t mte_pointer_operand(
-	std::uint32_t instruction) noexcept
-{
-	return mte_register_offset(instruction & 31U) |
-		(mte_register_offset((instruction >> 5) & 31U) << 16) |
-		(mte_register_offset((instruction >> 16) & 31U) << 32);
-}
-
-[[nodiscard]] constexpr std::uintptr_t cpa_pointer_operand(
-	std::uint32_t instruction) noexcept
-{
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16);
-}
-
 [[nodiscard]] constexpr std::uintptr_t arithmetic_register_offset(
 	unsigned index) noexcept
 {
@@ -147,29 +122,11 @@ namespace uml::cpu::arm64::gadgets::selection {
 [[nodiscard]] constexpr std::uintptr_t mops_operand(
 	std::uint32_t instruction) noexcept
 {
-	/* MOPS never treats register 31 as SP. The only valid use is SET/SETG
+	/* MOPS never treats register 31 as SP. The only valid use is SET
 	 * source XZR, which translation maps to the immutable zero slot. */
 	return arithmetic_register_offset(instruction & 31U) |
 		(arithmetic_register_offset((instruction >> 5) & 31U) << 16) |
 		(arithmetic_register_offset((instruction >> 16) & 31U) << 32);
-}
-
-[[nodiscard]] constexpr std::uintptr_t cpa_multiply_operand(
-	std::uint32_t instruction) noexcept
-{
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16) |
-		(static_cast<std::uintptr_t>((instruction >> 10) & 31U) << 24);
-}
-
-[[nodiscard]] constexpr std::uintptr_t mte_tag_operand(
-	std::uint32_t instruction) noexcept
-{
-	return mte_register_offset(instruction & 31U) |
-		(mte_register_offset((instruction >> 5) & 31U) << 16) |
-		(static_cast<std::uintptr_t>((instruction >> 10) & 15U) << 32) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 63U) << 40);
 }
 
 } // namespace uml::cpu::arm64::gadgets::selection

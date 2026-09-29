@@ -541,22 +541,20 @@ void codegen_profile_partitions_the_cache_identity()
 	auto same = compiled;
 	require(same == compiled);
 
-	auto authenticated = compiled;
-	authenticated.pointer_authentication =
-		!compiled.pointer_authentication;
-	require(!(authenticated == compiled));
+	auto other = compiled;
+	other.capabilities.cssc = !compiled.capabilities.cssc;
+	require(!(other == compiled));
 
 	const auto compiled_entry = cache.insert(
 		compiled, guest_pc, guest_words,
 		make_translation(guest_words, 1));
-	const auto authenticated_entry = cache.insert(
-		authenticated, guest_pc, guest_words,
+	const auto other_entry = cache.insert(
+		other, guest_pc, guest_words,
 		make_translation(guest_words, 2));
-	require(compiled_entry != nullptr && authenticated_entry != nullptr);
-	require(compiled_entry != authenticated_entry);
+	require(compiled_entry != nullptr && other_entry != nullptr);
+	require(compiled_entry != other_entry);
 	require(cache.find(compiled, guest_pc, guest_words) == compiled_entry);
-	require(cache.find(authenticated, guest_pc, guest_words) ==
-		authenticated_entry);
+	require(cache.find(other, guest_pc, guest_words) == other_entry);
 	require(cache.statistics().entries == 2);
 	cache.remove_executor();
 	cache.remove_executor();

@@ -27,10 +27,8 @@
 #include "../detail/floating_scale.hpp"
 #include "../detail/fp_state_access.hpp"
 #include "../detail/fp8.hpp"
-#include "../detail/gcs.hpp"
 #include "../detail/instruction_primitives.hpp"
 #include "../detail/integer_multiply.hpp"
-#include "../detail/pointer_auth.hpp"
 #include "cpu/host_capabilities.hpp"
 
 #include <algorithm>
@@ -42,17 +40,6 @@
 #include <span>
 #include <type_traits>
 #include <utility>
-
-extern "C" [[gnu::noinline]] std::uint64_t
-uml_arm64_guest_pointer_auth(
-	uml::cpu::arm64::CpuState *cpu, std::uint64_t value,
-	std::uint64_t modifier, unsigned operation) noexcept
-{
-	return uml::cpu::arm64::detail::execute_pointer_auth(
-		*cpu, value, modifier,
-		static_cast<uml::cpu::arm64::detail::PointerAuthOperation>(
-			operation));
-}
 
 namespace {
 

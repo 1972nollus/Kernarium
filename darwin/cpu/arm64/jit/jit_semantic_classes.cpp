@@ -3,7 +3,6 @@
 #include "jit_semantic_instructions.hpp"
 
 #include "cpu/arm64/detail/atomic_floating.hpp"
-#include "cpu/arm64/detail/gcs.hpp"
 #include "cpu/arm64/detail/read_check_write.hpp"
 
 #include <cstdint>
@@ -48,37 +47,6 @@ namespace {
 } // namespace
 
 Handler memory_handler(std::uint32_t instruction) noexcept {
-  /* Pointer-authentication hints that use a guest key. */
-  switch (instruction) {
-  case 0xd503'20ffU: // XPACLRI
-    return pointer_auth_strip;
-  case 0xd503'211fU: // PACIA1716
-  case 0xd503'215fU: // PACIB1716
-  case 0xd503'219fU: // AUTIA1716
-  case 0xd503'21dfU: // AUTIB1716
-  case 0xd503'231fU: // PACIAZ
-  case 0xd503'233fU: // PACIASP
-  case 0xd503'235fU: // PACIBZ
-  case 0xd503'237fU: // PACIBSP
-  case 0xd503'239fU: // AUTIAZ
-  case 0xd503'23bfU: // AUTIASP
-  case 0xd503'23dfU: // AUTIBZ
-  case 0xd503'23ffU: // AUTIBSP
-    return pointer_auth_code;
-  default:
-    break;
-  }
-  /* BRAA, BRAB, BLRAA, BLRAB and their zero-modifier forms; RETAA, RETAB. */
-  if (matches(instruction, 0xfedf'f800U, 0xd61f'0800U) ||
-      matches(instruction, 0xffff'fbffU, 0xd65f'0bffU))
-    return branch_authenticated;
-  if (matches(instruction, 0xffe0'fc00U, 0x9ac0'3000U)) // PACGA
-    return pointer_auth_generic;
-  if (matches(instruction, 0xffff'c000U, 0xdac1'0000U)) // PAC*, AUT*
-    return pointer_auth_code;
-  if (matches(instruction, 0xffff'f800U, 0xdac1'4000U)) // XPACI, XPACD
-    return pointer_auth_strip;
-
   /* LDAP1 and STL1; LDAPUR and STLUR to SIMD&FP registers. */
   if (matches(instruction, 0xbfbf'fc00U, 0x0d01'8400U) ||
       matches(instruction, 0x3f20'0c00U, 0x1d00'0800U))
@@ -100,9 +68,6 @@ Handler memory_handler(std::uint32_t instruction) noexcept {
     return memory_copy_set;
   if (arm64::detail::decode_atomic_floating(instruction).recognized)
     return load_store_atomic_floating;
-  /* LDRAA and LDRAB. */
-  if (matches(instruction, 0xff20'0400U, 0xf820'0400U))
-    return load_pointer_authenticated;
 
   /* Literal loads, except the non-faulting literal PRFM hint. */
   if (matches(instruction, 0x3b00'0000U, 0x1800'0000U) &&
@@ -130,8 +95,8 @@ Handler exclusive_handler(std::uint32_t instruction) noexcept {
   if (matches(instruction, 0xbf20'0c00U, 0x1920'0000U))
     return load_store_atomic_pair_128;
   /* LSE and FEAT_LSUI atomic memory operations. LDAPR and LS64 share the LSE
-   * allocation, and the allocation-tag instructions share the size-3 LSUI
-   * cells; none of them reaches this helper. */
+   * allocation, and the unimplemented FEAT_MTE tag-memory cells share the
+   * size-3 LSUI cells; none of them reaches this helper. */
   if ((matches(instruction, 0x3f20'0c00U, 0x3820'0000U) &&
        !matches(instruction, 0x3fff'fc00U, 0x38bf'c000U) &&
        !load_store_64b_form(instruction)) ||
@@ -159,14 +124,6 @@ Handler ordered_store_handler(std::uint32_t instruction) noexcept {
   if (matches(instruction, 0x3fe0'0000U, 0x0880'0000U))
     return load_store_exclusive;
   return nullptr;
-}
-
-Handler gcs_handler(std::uint32_t instruction) noexcept {
-  const auto decoded = arm64::detail::decode_gcs(instruction);
-  if (!decoded ||
-      arm64::detail::gcs_is_privileged_exception_operation(decoded.operation))
-    return nullptr;
-  return guarded_control_stack;
 }
 
 } // namespace uml::cpu::arm64::jit::semantic
