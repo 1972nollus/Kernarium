@@ -19,8 +19,6 @@ target_link_libraries(uml_static_runtime PRIVATE
     uml_static_guest_memory)
 target_include_directories(uml_static_runtime PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_definitions(uml_static_runtime PRIVATE
-    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 
 add_library(uml_runtime_context OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/context.cpp

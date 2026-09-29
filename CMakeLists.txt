@@ -112,8 +112,6 @@ if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64" AND
         "The fixed x86_64 userspace product does not use the arm64 unit or "
         "integration suites")
 endif()
-option(UML_ENABLE_RUNTIME_PROFILING
-    "Compile optional runtime, MMU, and device profiling into products" OFF)
 
 if(UML_GUEST_16K_PAGES)
     set(UML_GUEST_PAGE_SIZE 16384)
