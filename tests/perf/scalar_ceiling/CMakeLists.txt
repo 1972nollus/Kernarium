@@ -13,6 +13,4 @@ if(UML_TARGET_MACOS)
         ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_definitions(uml_scalar_ceiling_bench PRIVATE
         UML_SCALAR_CEILING_GADGETS=1)
-    target_compile_options(uml_scalar_ceiling_bench PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 endif()

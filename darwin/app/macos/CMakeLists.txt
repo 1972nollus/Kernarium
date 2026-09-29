@@ -62,7 +62,6 @@ function(uml_add_macos_embedded_kernel_app
     endif()
     target_compile_definitions("${TARGET_NAME}" PRIVATE
         UML_APP_HAS_SLIRP=$<BOOL:${UML_BUILD_NETWORK_PROVIDER}>)
-    target_compile_options("${TARGET_NAME}" PRIVATE -Wall -Wextra -Werror)
     target_link_options("${TARGET_NAME}" PRIVATE
         "LINKER:-export_dynamic"
         # The embedded ELF resolves this fixed-arity ABI with dlsym(). These

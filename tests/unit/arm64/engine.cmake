@@ -85,9 +85,6 @@
     target_include_directories(uml_arm64_engine_test_support PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_arm64_engine_test_support PUBLIC cxx_std_20)
-    target_compile_options(uml_arm64_engine_test_support PRIVATE
-        -Wall -Wextra -Werror)
 
     # The checked-in A64 instruction corpus runs through the production gadget
     # and JIT engines in one process. tests/unit/arm64/corpus/README.md owns
@@ -100,10 +97,6 @@
         ${_uml_arm64_corpus_zlib})
     target_include_directories(uml_arm64_instruction_corpus_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_arm64_instruction_corpus_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(uml_arm64_instruction_corpus_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-instruction-corpus
         COMMAND uml_arm64_instruction_corpus_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack)
@@ -112,8 +105,6 @@
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support_tests.cpp)
     target_link_libraries(uml_arm64_engine_test_support_tests PRIVATE
         uml_arm64_engine_test_support)
-    target_compile_options(uml_arm64_engine_test_support_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-engine-harness
         COMMAND uml_arm64_engine_test_support_tests)
 
@@ -121,8 +112,6 @@
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_deferred_fp_state_tests.cpp)
     target_link_libraries(uml_arm64_deferred_fp_state_tests PRIVATE
         uml_arm64_engine_test_support)
-    target_compile_options(uml_arm64_deferred_fp_state_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-deferred-fp-state
         COMMAND uml_arm64_deferred_fp_state_tests)
 
@@ -130,27 +119,18 @@
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/host_instruction_probe_tests.cpp)
     target_include_directories(uml_host_instruction_probe_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_host_instruction_probe_tests PRIVATE cxx_std_20)
-    target_compile_options(uml_host_instruction_probe_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-host-instruction-probe
         COMMAND uml_host_instruction_probe_tests)
 
     add_executable(uml_tlb_sync_range_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/tlb_sync_range_tests.cpp)
     target_link_libraries(uml_tlb_sync_range_tests PRIVATE UML::BridgeAbi)
-    target_compile_features(uml_tlb_sync_range_tests PRIVATE cxx_std_20)
-    target_compile_options(uml_tlb_sync_range_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME uml-tlb-sync-ranges COMMAND uml_tlb_sync_range_tests)
 
     add_executable(uml_arm64_gadget_tlb_layout_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_tlb_layout_tests.cpp)
     target_include_directories(uml_arm64_gadget_tlb_layout_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_arm64_gadget_tlb_layout_tests PRIVATE cxx_std_20)
-    target_compile_options(uml_arm64_gadget_tlb_layout_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-tlb-layout
         COMMAND uml_arm64_gadget_tlb_layout_tests)
 
@@ -162,9 +142,6 @@
 	target_include_directories(uml_cpu_engine_contract_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/darwin/emulator)
-	target_compile_features(uml_cpu_engine_contract_tests PRIVATE cxx_std_20)
-	target_compile_options(uml_cpu_engine_contract_tests PRIVATE
-		-Wall -Wextra -Werror)
 	uml_add_unit_test(NAME cpu-engine-contract COMMAND uml_cpu_engine_contract_tests)
 
 	add_executable(uml_arm64_pc_alignment_contract_tests
@@ -175,10 +152,6 @@
 	target_include_directories(uml_arm64_pc_alignment_contract_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-	target_compile_features(uml_arm64_pc_alignment_contract_tests PRIVATE
-		cxx_std_20)
-	target_compile_options(uml_arm64_pc_alignment_contract_tests PRIVATE
-		-Wall -Wextra -Werror)
 	uml_add_unit_test(NAME arm64-pc-alignment-contract
 		COMMAND uml_arm64_pc_alignment_contract_tests
 		LABELS tsan)
@@ -187,8 +160,6 @@
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_exception_tests.cpp)
     target_include_directories(uml_arm64_floating_exception_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_options(uml_arm64_floating_exception_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-floating-exception
         COMMAND uml_arm64_floating_exception_tests)
 
@@ -216,10 +187,6 @@
         uml_cpu_jit_component)
     target_include_directories(uml_arm64_jit_cache_geometry_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_arm64_jit_cache_geometry_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(uml_arm64_jit_cache_geometry_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-cache-geometry
         COMMAND uml_arm64_jit_cache_geometry_tests
         LABELS tsan)
@@ -233,10 +200,6 @@
     target_include_directories(
         uml_arm64_jit_shared_translation_cache_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_arm64_jit_shared_translation_cache_tests
-        PRIVATE cxx_std_20)
-    target_compile_options(uml_arm64_jit_shared_translation_cache_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-shared-translation-cache
         COMMAND uml_arm64_jit_shared_translation_cache_tests
         LABELS tsan)
@@ -253,12 +216,8 @@
     target_include_directories(uml_arm64_jit_executor_pool_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_arm64_jit_executor_pool_tests PRIVATE
-        cxx_std_20)
     target_compile_definitions(uml_arm64_jit_executor_pool_tests PRIVATE
         UML_JIT_RUNTIME_DIAGNOSTICS=1)
-    target_compile_options(uml_arm64_jit_executor_pool_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-executor-pool
         COMMAND uml_arm64_jit_executor_pool_tests
         LABELS tsan)
@@ -274,9 +233,6 @@
     target_include_directories(uml_arm64_single_step_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_arm64_single_step_tests PRIVATE cxx_std_20)
-    target_compile_options(uml_arm64_single_step_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-single-step
         COMMAND uml_arm64_single_step_tests)
 
@@ -293,12 +249,8 @@
         uml_arm64_jit_executor_pool_multislot_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_arm64_jit_executor_pool_multislot_tests
-        PRIVATE cxx_std_20)
     target_compile_definitions(uml_arm64_jit_executor_pool_multislot_tests
         PRIVATE UML_JIT_RUNTIME_DIAGNOSTICS=1)
-    target_compile_options(uml_arm64_jit_executor_pool_multislot_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-executor-pool-multislot
         COMMAND uml_arm64_jit_executor_pool_multislot_tests
         LABELS tsan)
@@ -328,8 +280,6 @@
             UML::BridgeAbi)
         target_include_directories(uml_arm64_jit_${JIT_TEST}_tests PRIVATE
             ${PROJECT_SOURCE_DIR}/darwin)
-        target_compile_options(uml_arm64_jit_${JIT_TEST}_tests PRIVATE
-            -Wall -Wextra -Werror)
         if(JIT_TEST STREQUAL "cache_validation")
             target_compile_definitions(
                 uml_arm64_jit_${JIT_TEST}_tests PRIVATE
@@ -391,9 +341,6 @@
     target_link_libraries(
         uml_arm64_jit_tlb_miss_preservation_tests PRIVATE
         uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_tlb_miss_preservation_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-tlb-miss-preservation
         COMMAND uml_arm64_jit_tlb_miss_preservation_tests)
 
@@ -405,9 +352,6 @@
     target_link_libraries(
         uml_arm64_jit_sp_memory_run_runtime_tests PRIVATE
         uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_sp_memory_run_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-sp-memory-run-runtime
         COMMAND uml_arm64_jit_sp_memory_run_runtime_tests)
 
@@ -419,9 +363,6 @@
     target_link_libraries(
         uml_arm64_jit_gpr_memory_run_runtime_tests PRIVATE
         uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_gpr_memory_run_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-gpr-memory-run-runtime
         COMMAND uml_arm64_jit_gpr_memory_run_runtime_tests)
 
@@ -433,9 +374,6 @@
     target_link_libraries(
         uml_arm64_jit_simd_memory_run_runtime_tests PRIVATE
         uml_arm64_engine_test_support)
-    target_compile_options(
-        uml_arm64_jit_simd_memory_run_runtime_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-jit-simd-memory-run-runtime
         COMMAND uml_arm64_jit_simd_memory_run_runtime_tests)
 
@@ -470,9 +408,6 @@
         uml_arm64_gadget_cache_validation_tests PRIVATE
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
-    target_compile_options(
-        uml_arm64_gadget_cache_validation_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-cache-validation
         COMMAND uml_arm64_gadget_cache_validation_tests)
 
@@ -488,9 +423,6 @@
         uml_arm64_gadget_inline_fallthrough_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_options(
-        uml_arm64_gadget_inline_fallthrough_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-inline-fallthrough
         COMMAND uml_arm64_gadget_inline_fallthrough_tests)
 
@@ -511,7 +443,6 @@
         UML::CpuContract uml_arm64_engine_test_support)
     target_include_directories(uml_arm64_gadget_dependency_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_options(uml_arm64_gadget_dependency_tests PRIVATE -Wall -Wextra -Werror)
     uml_add_unit_test(NAME arm64-gadget-dependencies COMMAND uml_arm64_gadget_dependency_tests)
 
     # The test's exit hold must be registered before any destructor it
@@ -525,7 +456,5 @@
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/gadget_record_table_tests.cpp)
     target_include_directories(uml_gadget_record_table_tests PRIVATE
 		${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_options(uml_gadget_record_table_tests PRIVATE
-		-Wall -Wextra -Werror)
     uml_add_unit_test(NAME gadget-record-table
 		COMMAND uml_gadget_record_table_tests)

@@ -380,8 +380,6 @@ uml_add_guest_integration_test(
 # thread has left the image the loader then unmaps.
 add_executable(uml_run_end_stop_tests kernel/run_end_stop_tests.cpp)
 target_link_libraries(uml_run_end_stop_tests PRIVATE UML::Emulator)
-target_compile_features(uml_run_end_stop_tests PRIVATE cxx_std_20)
-target_compile_options(uml_run_end_stop_tests PRIVATE -Wall -Wextra -Werror)
 # The embedded ELF resolves the host ABI with dlsym(), as in uml-darwin.
 target_link_options(uml_run_end_stop_tests PRIVATE
     "LINKER:-export_dynamic"

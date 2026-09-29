@@ -9,9 +9,6 @@ target_include_directories(uml_balloon_device
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
-target_compile_features(uml_balloon_device PUBLIC cxx_std_20)
-target_compile_options(uml_balloon_device PRIVATE
-    -Wall -Wextra -Werror)
 target_link_libraries(uml_balloon_device PRIVATE
     UML::VhostUserTransport
     UML::MemorySharedBacking
