@@ -232,7 +232,6 @@ private:
   unsigned long link_generation_{};
   std::uint64_t link_code_changes_{};
   std::uint64_t link_epoch_{1};
-  std::uint64_t compiled_in_link_sequence_{};
   std::uint64_t stamp_{};
   std::array<JitStoreRange, maximum_block_instructions>
       tracked_store_ranges_{};
