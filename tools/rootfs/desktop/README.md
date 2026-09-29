@@ -11,8 +11,8 @@ into a new image, so a launcher never edits an image while it boots.
 and SHA-256, the setup script, the compressor that reproduces the source's
 layout, and the accepted output with the digest of the setup that produced it.
 [`derive.py`](derive.py) refuses a source that does not match and never
-replaces an existing output. A setup change is accepted only with a new
-release derived from it.
+replaces an existing output. A change to a setup or to the derivation is
+accepted only with a new release derived from it.
 
 ## What each image carries
 
