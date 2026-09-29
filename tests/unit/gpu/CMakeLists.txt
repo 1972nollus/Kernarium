@@ -6,8 +6,6 @@ cmake_path(GET CMAKE_CURRENT_BINARY_DIR PARENT_PATH
 find_package(Threads REQUIRED)
 add_executable(uml_gpu_metal_submit_timing_tests metal_submit_timing_tests.cpp)
 target_link_libraries(uml_gpu_metal_submit_timing_tests PRIVATE Threads::Threads)
-target_compile_features(uml_gpu_metal_submit_timing_tests PRIVATE cxx_std_20)
-target_compile_options(uml_gpu_metal_submit_timing_tests PRIVATE -Wall -Wextra -Werror)
 uml_add_unit_test(
     NAME gpu-metal-submit-timing-collector
     COMMAND uml_gpu_metal_submit_timing_tests
@@ -20,9 +18,6 @@ if(TARGET uml_gpu_device_memory_pool)
     target_link_libraries(uml_gpu_device_memory_pool_tests PRIVATE
         UML::GpuDeviceMemoryPool
         Threads::Threads)
-    target_compile_features(uml_gpu_device_memory_pool_tests PRIVATE cxx_std_20)
-    target_compile_options(uml_gpu_device_memory_pool_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-device-memory-pool
         COMMAND uml_gpu_device_memory_pool_tests
@@ -38,12 +33,6 @@ if(TARGET uml_balloon_device)
         UML::BalloonDevice
         UML::HostGpuMemory
         "-framework Metal")
-    target_compile_features(uml_gpu_host_graphics_footprint_tests PRIVATE cxx_std_20)
-    set_target_properties(uml_gpu_host_graphics_footprint_tests PROPERTIES
-        OBJCXX_STANDARD 20)
-    target_compile_options(uml_gpu_host_graphics_footprint_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-host-graphics-footprint
         COMMAND uml_gpu_host_graphics_footprint_tests
@@ -58,9 +47,6 @@ if(TARGET uml_gpu_kosmickrisp_capability_probe)
         kosmickrisp_external_image_alias_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_external_image_alias_tests PRIVATE
         UML::ThirdPartyKosmicKrisp)
-    target_compile_features(uml_gpu_kosmickrisp_external_image_alias_tests PRIVATE cxx_std_20)
-    target_compile_options(uml_gpu_kosmickrisp_external_image_alias_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-external-image-alias
         COMMAND uml_gpu_kosmickrisp_external_image_alias_tests
@@ -71,9 +57,6 @@ if(TARGET uml_gpu_kosmickrisp_capability_probe)
         kosmickrisp_timestamp_availability_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_timestamp_availability_tests PRIVATE
         UML::ThirdPartyKosmicKrisp)
-    target_compile_features(uml_gpu_kosmickrisp_timestamp_availability_tests PRIVATE cxx_std_20)
-    target_compile_options(uml_gpu_kosmickrisp_timestamp_availability_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-timestamp-availability
         COMMAND uml_gpu_kosmickrisp_timestamp_availability_tests
@@ -86,15 +69,10 @@ if(TARGET uml_gpu_kosmickrisp_capability_probe)
         UML::ThirdPartyKosmicKrisp)
     target_include_directories(uml_gpu_vulkan_draw_test_support PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(uml_gpu_vulkan_draw_test_support PUBLIC cxx_std_20)
-    target_compile_options(uml_gpu_vulkan_draw_test_support PRIVATE
-        -Wall -Wextra -Werror)
     add_executable(uml_gpu_kosmickrisp_line_multiview_tests
         kosmickrisp_line_multiview_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_line_multiview_tests PRIVATE
         uml_gpu_vulkan_draw_test_support)
-    target_compile_options(uml_gpu_kosmickrisp_line_multiview_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-line-multiview
         COMMAND uml_gpu_kosmickrisp_line_multiview_tests
@@ -114,8 +92,6 @@ if(TARGET uml_gpu_kosmickrisp_capability_probe)
             UML::GpuKosmicKrispCapabilityProbe)
         target_include_directories(${target} PRIVATE
             ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-        target_compile_features(${target} PRIVATE cxx_std_20)
-        target_compile_options(${target} PRIVATE -Wall -Wextra -Werror)
         uml_add_unit_test(
             NAME gpu-kosmickrisp-${test_name}-capabilities
             COMMAND ${target}
@@ -128,8 +104,6 @@ if(TARGET uml_gpu_kosmickrisp_capability_probe)
         kosmickrisp_legacy_vertex_input_draw_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests PRIVATE
         uml_gpu_vulkan_draw_test_support)
-    target_compile_options(uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-legacy-vertex-input-draws
         COMMAND uml_gpu_kosmickrisp_legacy_vertex_input_draw_tests
@@ -141,8 +115,6 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         vulkan_device_address_commands_tests.cpp)
     target_link_libraries(uml_gpu_vulkan_device_address_commands_tests PRIVATE
         uml_gpu_vulkan_draw_test_support)
-    target_compile_options(uml_gpu_vulkan_device_address_commands_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-vulkan-device-address-commands
         COMMAND uml_gpu_vulkan_device_address_commands_tests
@@ -153,8 +125,6 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         kosmickrisp_geometry_invocations_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_geometry_invocations_tests PRIVATE
         uml_gpu_vulkan_draw_test_support Threads::Threads)
-    target_compile_options(uml_gpu_kosmickrisp_geometry_invocations_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-geometry-invocations
         COMMAND uml_gpu_kosmickrisp_geometry_invocations_tests
@@ -164,8 +134,6 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         kosmickrisp_partial_position_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_partial_position_tests PRIVATE
         uml_gpu_vulkan_draw_test_support)
-    target_compile_options(uml_gpu_kosmickrisp_partial_position_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-partial-position
         COMMAND uml_gpu_kosmickrisp_partial_position_tests
@@ -175,8 +143,6 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         kosmickrisp_pipeline_statistics_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_pipeline_statistics_tests PRIVATE
         uml_gpu_vulkan_draw_test_support)
-    target_compile_options(uml_gpu_kosmickrisp_pipeline_statistics_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-pipeline-statistics
         COMMAND uml_gpu_kosmickrisp_pipeline_statistics_tests
@@ -187,8 +153,6 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         kosmickrisp_point_clipping_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_point_clipping_tests PRIVATE
         uml_gpu_vulkan_draw_test_support)
-    target_compile_options(uml_gpu_kosmickrisp_point_clipping_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-point-clipping
         COMMAND uml_gpu_kosmickrisp_point_clipping_tests
@@ -199,8 +163,6 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         kosmickrisp_tessellation_feedback_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_tessellation_feedback_tests PRIVATE
         uml_gpu_vulkan_draw_test_support)
-    target_compile_options(uml_gpu_kosmickrisp_tessellation_feedback_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-tessellation-feedback
         COMMAND uml_gpu_kosmickrisp_tessellation_feedback_tests
@@ -211,8 +173,6 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         kosmickrisp_command_storage_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_command_storage_tests PRIVATE
         uml_gpu_vulkan_draw_test_support)
-    target_compile_options(uml_gpu_kosmickrisp_command_storage_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-command-storage
         COMMAND uml_gpu_kosmickrisp_command_storage_tests
@@ -223,8 +183,6 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         kosmickrisp_raster_polygon_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_raster_polygon_tests PRIVATE
         uml_gpu_vulkan_draw_test_support)
-    target_compile_options(uml_gpu_kosmickrisp_raster_polygon_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-raster-polygon
         COMMAND uml_gpu_kosmickrisp_raster_polygon_tests
@@ -235,8 +193,6 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         kosmickrisp_raster_line_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_raster_line_tests PRIVATE
         uml_gpu_vulkan_draw_test_support Threads::Threads)
-    target_compile_options(uml_gpu_kosmickrisp_raster_line_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-raster-line
         COMMAND uml_gpu_kosmickrisp_raster_line_tests
@@ -247,8 +203,6 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         kosmickrisp_raster_state_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_raster_state_tests PRIVATE
         uml_gpu_vulkan_draw_test_support)
-    target_compile_options(uml_gpu_kosmickrisp_raster_state_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-raster-state
         COMMAND uml_gpu_kosmickrisp_raster_state_tests
@@ -259,8 +213,6 @@ if(TARGET uml_gpu_vulkan_draw_test_support)
         kosmickrisp_geometry_side_effects_tests.cpp)
     target_link_libraries(uml_gpu_kosmickrisp_geometry_side_effects_tests PRIVATE
         uml_gpu_vulkan_draw_test_support Threads::Threads)
-    target_compile_options(uml_gpu_kosmickrisp_geometry_side_effects_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(
         NAME gpu-kosmickrisp-geometry-side-effects
         COMMAND uml_gpu_kosmickrisp_geometry_side_effects_tests
@@ -276,9 +228,8 @@ if(TARGET uml_gpu_service)
         UML::ThirdPartyVirglrenderer)
     target_include_directories(uml_gpu_host_gl_provider_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(uml_gpu_host_gl_provider_tests PRIVATE cxx_std_20)
     target_compile_options(uml_gpu_host_gl_provider_tests PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-host-gl-provider-lifetime
         COMMAND uml_gpu_host_gl_provider_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -294,9 +245,8 @@ if(TARGET uml_gpu_service)
         UML::ThirdPartyEpoxy)
     target_include_directories(uml_gpu_host_pointer_image_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(uml_gpu_host_pointer_image_tests PRIVATE cxx_std_20)
     target_compile_options(uml_gpu_host_pointer_image_tests PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-host-pointer-image
         COMMAND uml_gpu_host_pointer_image_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -313,10 +263,8 @@ if(TARGET uml_gpu_service)
         UML::ThirdPartyEpoxy)
     target_include_directories(uml_gpu_transfer_context_error_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(uml_gpu_transfer_context_error_tests PRIVATE
-        cxx_std_20)
     target_compile_options(uml_gpu_transfer_context_error_tests PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-transfer-context-error
         COMMAND uml_gpu_transfer_context_error_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -334,12 +282,8 @@ if(TARGET uml_gpu_service)
         "-framework Metal")
     target_include_directories(uml_gpu_import_bounds_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(uml_gpu_import_bounds_tests PRIVATE cxx_std_20)
-    set_target_properties(uml_gpu_import_bounds_tests PROPERTIES
-        OBJCXX_STANDARD 20)
     target_compile_options(uml_gpu_import_bounds_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-import-bounds
         COMMAND uml_gpu_import_bounds_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -359,13 +303,8 @@ if(TARGET uml_gpu_service)
         "-framework Metal")
     target_include_directories(uml_gpu_resource_metal_texture_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(uml_gpu_resource_metal_texture_tests PRIVATE
-        cxx_std_20)
-    set_target_properties(uml_gpu_resource_metal_texture_tests PROPERTIES
-        OBJCXX_STANDARD 20)
     target_compile_options(uml_gpu_resource_metal_texture_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-resource-metal-texture
         COMMAND uml_gpu_resource_metal_texture_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -383,10 +322,8 @@ if(TARGET uml_gpu_service)
         UML::ThirdPartyEpoxy)
     target_include_directories(uml_gpu_cross_context_readback_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(uml_gpu_cross_context_readback_tests PRIVATE
-        cxx_std_20)
     target_compile_options(uml_gpu_cross_context_readback_tests PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-cross-context-readback
         COMMAND uml_gpu_cross_context_readback_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -404,10 +341,8 @@ if(TARGET uml_gpu_service)
         UML::ThirdPartyEpoxy)
     target_include_directories(uml_gpu_depth_format_advertisement_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(uml_gpu_depth_format_advertisement_tests PRIVATE
-        cxx_std_20)
     target_compile_options(uml_gpu_depth_format_advertisement_tests PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-depth-format-advertisement
         COMMAND uml_gpu_depth_format_advertisement_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -426,10 +361,8 @@ if(TARGET uml_gpu_service)
         UML::ThirdPartyEpoxy)
     target_include_directories(uml_gpu_line_loop_statistics_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(uml_gpu_line_loop_statistics_tests PRIVATE
-        cxx_std_20)
     target_compile_options(uml_gpu_line_loop_statistics_tests PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-line-loop-statistics
         COMMAND uml_gpu_line_loop_statistics_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -443,9 +376,6 @@ if(TARGET uml_gpu_service)
         virgl_fence_table_ownership_tests.cpp)
     target_link_libraries(uml_gpu_virgl_fence_table_tests PRIVATE
         UML::ThirdPartyVirglrenderer)
-    target_compile_features(uml_gpu_virgl_fence_table_tests PRIVATE cxx_std_20)
-    target_compile_options(uml_gpu_virgl_fence_table_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME gpu-virgl-fence-table-ownership
         COMMAND uml_gpu_virgl_fence_table_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -460,9 +390,8 @@ if(TARGET uml_gpu_service)
     target_include_directories(uml_gpu_transport_wire_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(uml_gpu_transport_wire_tests PRIVATE cxx_std_20)
     target_compile_options(uml_gpu_transport_wire_tests PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-transport-wire-ownership
         COMMAND uml_gpu_transport_wire_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -479,9 +408,8 @@ if(TARGET uml_gpu_service)
     target_include_directories(uml_gpu_transport_ceiling_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(uml_gpu_transport_ceiling_tests PRIVATE cxx_std_20)
     target_compile_options(uml_gpu_transport_ceiling_tests PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-transport-descriptor-ceiling
         COMMAND uml_gpu_transport_ceiling_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -498,9 +426,8 @@ if(TARGET uml_gpu_service)
     target_include_directories(uml_gpu_service_fd_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(uml_gpu_service_fd_tests PRIVATE cxx_std_20)
     target_compile_options(uml_gpu_service_fd_tests PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-service-fd-ownership
         COMMAND uml_gpu_service_fd_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -513,9 +440,8 @@ if(TARGET uml_gpu_service)
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
         ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(uml_gpu_service_stop_wake_tests PRIVATE cxx_std_20)
     target_compile_options(uml_gpu_service_stop_wake_tests PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     target_link_libraries(uml_gpu_service_stop_wake_tests PRIVATE
         uml_gpu_service_slow_stop_test_variant)
     uml_add_unit_test(NAME gpu-service-stop-wake
@@ -532,9 +458,8 @@ if(TARGET uml_gpu_service)
     target_include_directories(uml_gpu_device_atomicity_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu
         ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(uml_gpu_device_atomicity_tests PRIVATE cxx_std_20)
     target_compile_options(uml_gpu_device_atomicity_tests PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-device-command-atomicity
         COMMAND uml_gpu_device_atomicity_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -547,9 +472,6 @@ if(TARGET uml_gpu_display)
         display_resize_tests.cpp)
     target_link_libraries(uml_gpu_display_resize_tests PRIVATE
         uml_gpu_display)
-    target_compile_features(uml_gpu_display_resize_tests PRIVATE cxx_std_20)
-    target_compile_options(uml_gpu_display_resize_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME gpu-display-resize
         COMMAND uml_gpu_display_resize_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -563,12 +485,8 @@ if(TARGET uml_gpu_display)
         uml_gpu_display_test_variant
         "-framework Foundation"
         "-framework Metal")
-    target_compile_features(uml_gpu_vnc_lifetime_tests PRIVATE cxx_std_20)
-    set_target_properties(uml_gpu_vnc_lifetime_tests PROPERTIES
-        OBJCXX_STANDARD 20)
     target_compile_options(uml_gpu_vnc_lifetime_tests PRIVATE
-        $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     uml_add_unit_test(NAME gpu-vnc-lifetime
         COMMAND uml_gpu_vnc_lifetime_tests
         WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -584,12 +502,8 @@ if(TARGET uml_gpu_display)
             uml_gpu_display
             "-framework Foundation"
             "-framework Metal")
-        target_compile_features(uml_gpu_vnc_product_tests PRIVATE cxx_std_20)
-        set_target_properties(uml_gpu_vnc_product_tests PROPERTIES
-            OBJCXX_STANDARD 20)
         target_compile_options(uml_gpu_vnc_product_tests PRIVATE
-            $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
-            -Wall -Wextra -Werror -Wno-deprecated-declarations)
+            -Wno-deprecated-declarations)
         uml_add_unit_test(NAME gpu-vnc-product-readback
             COMMAND uml_gpu_vnc_product_tests
             WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -606,13 +520,6 @@ if(TARGET uml_gpu_display)
             "-framework CoreGraphics")
         target_include_directories(uml_gpu_native_display_menu_teardown_tests
             PRIVATE ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-        target_compile_features(uml_gpu_native_display_menu_teardown_tests
-            PRIVATE cxx_std_20)
-        set_target_properties(uml_gpu_native_display_menu_teardown_tests
-            PROPERTIES OBJCXX_STANDARD 20)
-        target_compile_options(uml_gpu_native_display_menu_teardown_tests PRIVATE
-            $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
-            -Wall -Wextra -Werror)
         uml_add_unit_test(NAME gpu-native-display-menu-teardown
             COMMAND uml_gpu_native_display_menu_teardown_tests
             WORKING_DIRECTORY "${_uml_unit_binary_directory}"
@@ -634,13 +541,6 @@ if(TARGET uml_gpu_display)
             "-framework QuartzCore")
         target_include_directories(uml_gpu_metal_presentation_tests
             PRIVATE ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-        target_compile_features(uml_gpu_metal_presentation_tests
-            PRIVATE cxx_std_20)
-        set_target_properties(uml_gpu_metal_presentation_tests
-            PROPERTIES OBJCXX_STANDARD 20)
-        target_compile_options(uml_gpu_metal_presentation_tests PRIVATE
-            $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
-            -Wall -Wextra -Werror)
         uml_add_unit_test(NAME gpu-native-metal-presentation
             COMMAND uml_gpu_metal_presentation_tests
             WORKING_DIRECTORY "${_uml_unit_binary_directory}"

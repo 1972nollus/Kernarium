@@ -9,11 +9,8 @@ target_link_libraries(uml_memory_domain_lifetime_tests PRIVATE
 target_include_directories(uml_memory_domain_lifetime_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/memory
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
-target_compile_features(uml_memory_domain_lifetime_tests PRIVATE cxx_std_20)
 target_compile_definitions(uml_memory_domain_lifetime_tests PRIVATE
     UML_MEMORY_ALLOCATION_TESTING=1)
-target_compile_options(uml_memory_domain_lifetime_tests PRIVATE
-    -Wall -Wextra -Werror)
 if(TARGET uml_native_mmu_test_variant)
     target_sources(uml_memory_domain_lifetime_tests PRIVATE
         $<TARGET_OBJECTS:uml_native_mmu_test_variant>)
@@ -29,9 +26,6 @@ uml_add_unit_test(NAME memory-domain-lifetime
 add_executable(uml_memory_address_window_tests address_window_tests.cpp)
 target_link_libraries(uml_memory_address_window_tests PRIVATE
     uml_address_layout_test_variant)
-target_compile_features(uml_memory_address_window_tests PRIVATE cxx_std_20)
-target_compile_options(uml_memory_address_window_tests PRIVATE
-    -Wall -Wextra -Werror)
 uml_add_unit_test(NAME memory-address-window-reads
     COMMAND uml_memory_address_window_tests)
 
@@ -40,9 +34,6 @@ add_executable(uml_execution_gate_profile_tests
 target_link_libraries(uml_execution_gate_profile_tests PRIVATE
     UML::BridgeAbi
     uml_execution_gate_profile_test_variant)
-target_compile_features(uml_execution_gate_profile_tests PRIVATE cxx_std_20)
-target_compile_options(uml_execution_gate_profile_tests PRIVATE
-    -Wall -Wextra -Werror)
 uml_add_unit_test(NAME memory-execution-gate-profile
     COMMAND uml_execution_gate_profile_tests)
 
@@ -57,10 +48,6 @@ if(TARGET uml_native_mmu_test_variant)
     target_include_directories(uml_native_window_reservation_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_native_window_reservation_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(uml_native_window_reservation_tests PRIVATE
-        -Wall -Wextra -Werror)
     # The test asserts where the host places allocations, which a concurrent
     # VM-heavy test can perturb.
     uml_add_unit_test(NAME memory-native-window-reservation
@@ -83,10 +70,6 @@ if(TARGET uml_native_mmu_test_variant AND NOT UML_GUEST_16K_PAGES)
     target_include_directories(uml_native_direct_conversion_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_native_direct_conversion_tests PRIVATE
-        cxx_std_20)
-    target_compile_options(uml_native_direct_conversion_tests PRIVATE
-        -Wall -Wextra -Werror)
     # Like the other native-window tests, it maps at fixed window addresses
     # that a concurrent VM-heavy test can occupy.
     uml_add_unit_test(NAME memory-native-direct-conversion
@@ -98,27 +81,18 @@ endif()
 add_executable(uml_shared_backing_view_tests shared_backing_view_tests.cpp)
 target_link_libraries(uml_shared_backing_view_tests PRIVATE
     UML::MemorySharedBacking)
-target_compile_features(uml_shared_backing_view_tests PRIVATE cxx_std_20)
-target_compile_options(uml_shared_backing_view_tests PRIVATE
-    -Wall -Wextra -Werror)
 uml_add_unit_test(NAME memory-shared-backing-view
     COMMAND uml_shared_backing_view_tests)
 
 add_executable(uml_word_shared_mutex_tests word_shared_mutex_tests.cpp)
 target_include_directories(uml_word_shared_mutex_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
-target_compile_features(uml_word_shared_mutex_tests PRIVATE cxx_std_20)
-target_compile_options(uml_word_shared_mutex_tests PRIVATE
-    -Wall -Wextra -Werror)
 uml_add_unit_test(NAME memory-word-shared-mutex
     COMMAND uml_word_shared_mutex_tests LABELS tsan)
 
 add_executable(uml_guest_ram_commitment_tests guest_ram_commitment_tests.cpp)
 target_link_libraries(uml_guest_ram_commitment_tests PRIVATE
     UML::MemorySharedBacking)
-target_compile_features(uml_guest_ram_commitment_tests PRIVATE cxx_std_20)
-target_compile_options(uml_guest_ram_commitment_tests PRIVATE
-    -Wall -Wextra -Werror)
 # The footprint assertions read the whole process, which a concurrent
 # memory-heavy test would move.
 uml_add_unit_test(NAME memory-guest-ram-commitment
@@ -135,11 +109,8 @@ target_link_libraries(uml_static_mmu_batch_tests PRIVATE
     UML::MemorySharedBacking)
 target_include_directories(uml_static_mmu_batch_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
-target_compile_features(uml_static_mmu_batch_tests PRIVATE cxx_std_20)
 target_compile_definitions(uml_static_mmu_batch_tests PRIVATE
     UML_MEMORY_ALLOCATION_TESTING=1)
-target_compile_options(uml_static_mmu_batch_tests PRIVATE
-    -Wall -Wextra -Werror)
 uml_add_unit_test(NAME static-mmu-batch COMMAND uml_static_mmu_batch_tests
     LABELS tsan)
 
@@ -155,11 +126,8 @@ if(NOT UML_GUEST_16K_PAGES)
     target_include_directories(uml_native_mmu_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_native_mmu_tests PRIVATE cxx_std_20)
     target_compile_definitions(uml_native_mmu_tests PRIVATE
         UML_MEMORY_ALLOCATION_TESTING=1)
-    target_compile_options(uml_native_mmu_tests PRIVATE
-        -Wall -Wextra -Werror)
     uml_add_unit_test(NAME native-4k-shadow-mmu COMMAND uml_native_mmu_tests)
     # The test reserves the fixed Darwin native bridge window. Running after
     # several concurrent VM-heavy tests can make that host reservation fail

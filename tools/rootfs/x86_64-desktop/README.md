@@ -18,7 +18,9 @@ tools/rootfs/x86_64-desktop/build.sh \
 The output is immutable. Its adjacent package and ELF inventories describe
 the installed inputs, and the adjacent checksum covers the EROFS image. The
 GPU guest harness mounts it as a read-only lower filesystem with a disposable
-tmpfs overlay. SDDM logs the `uml` account into the Plasma Wayland session;
+tmpfs overlay. The image carries no machine ID: `/etc/machine-id` is empty,
+and D-Bus's `/var/lib/dbus/machine-id` links to it, so every guest generates
+its own at first boot. SDDM logs the `uml` account into the Plasma Wayland session;
 that account has passwordless sudo for qualification work. The image does not
 unconditionally enable an `hvc0` getty. The KDE launcher requests the stock
 getty only when `--virtio-console-socket` attaches that device, while

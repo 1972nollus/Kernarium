@@ -9,7 +9,4 @@ target_include_directories(uml_virtio_input
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
-target_compile_features(uml_virtio_input PUBLIC cxx_std_20)
-target_compile_options(uml_virtio_input PRIVATE
-    -Wall -Wextra -Werror)
 target_link_libraries(uml_virtio_input PRIVATE UML::VhostUserTransport)

@@ -30,13 +30,10 @@ function(_uml_add_emulator_boundary TARGET ADMISSION_TESTING)
         target_include_directories(${TARGET} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/loader)
     endif()
-    target_compile_features(${TARGET} PUBLIC cxx_std_20)
-    target_compile_options(${TARGET} PRIVATE -Wall -Wextra -Werror)
     target_compile_definitions(${TARGET} PRIVATE
         UML_APPLE_PLATFORM_NAME="${UML_APPLE_PLATFORM}"
         UML_EMULATOR_HAS_KERNEL_RUNNER=$<BOOL:${UML_BUILD_KERNEL_RUNNER}>
         UML_EMULATOR_ADMISSION_TESTING=${ADMISSION_TESTING})
-    set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endfunction()
 
 _uml_add_emulator_boundary(uml_emulator_boundary 0)
@@ -63,20 +60,12 @@ target_link_libraries(uml_emulator PRIVATE
     UML::NetworkDevice
     UML::RuntimeCore
     UML::RuntimeContract)
-target_include_directories(uml_emulator
-    PUBLIC
-        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/darwin/api/include>
-        $<INSTALL_INTERFACE:include>
-    PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/network
-        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
-        ${PROJECT_SOURCE_DIR}/darwin/runtime
-        ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(uml_emulator PUBLIC cxx_std_20)
+target_include_directories(uml_emulator PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/darwin/api/include>
+    $<INSTALL_INTERFACE:include>)
 
 set_target_properties(uml_emulator PROPERTIES
     OUTPUT_NAME uml_emulator
-    POSITION_INDEPENDENT_CODE ON
     PUBLIC_HEADER
         "${PROJECT_SOURCE_DIR}/darwin/api/include/uml/emulator.h;${PROJECT_SOURCE_DIR}/darwin/api/include/uml/abi_identity.h")
 
@@ -108,17 +97,8 @@ if(_uml_need_admission_test_variant)
         UML::NetworkDevice
         ${_uml_test_runtime_core}
         UML::RuntimeContract)
-    target_include_directories(uml_emulator_admission_test_variant
-        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/api/include
-        PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin/device/network
-            ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
-            ${PROJECT_SOURCE_DIR}/darwin/runtime
-            ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(uml_emulator_admission_test_variant PUBLIC
-        cxx_std_20)
-    set_target_properties(uml_emulator_admission_test_variant PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
+    target_include_directories(uml_emulator_admission_test_variant PUBLIC
+        ${PROJECT_SOURCE_DIR}/darwin/api/include)
 endif()
 
 install(TARGETS uml_emulator

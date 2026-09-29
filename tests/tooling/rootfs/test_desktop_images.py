@@ -8,9 +8,12 @@ __import__("sys").dont_write_bytecode = True
 
 import hashlib
 import importlib.util
+import inspect
 import json
+import os
 import pathlib
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -62,6 +65,31 @@ class DesktopImageTests(unittest.TestCase):
                     re.fullmatch(r"(zstd,level=\d+|lz4hc)", entry["compression"])
                 )
 
+    def test_kernarium_defaults_to_the_accepted_kde_image(self) -> None:
+        descriptor = json.loads(
+            (DESKTOP / "images.json").read_text(encoding="utf-8")
+        )
+        accepted = descriptor["images"]["kde"]["accepted"]["file"]
+        kernarium = DESKTOP.parents[2] / "Kernarium"
+        source = (kernarium / "Kernarium/EmulatorConfiguration.swift").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(
+            re.findall(r'static let defaultFilename = "([^"]*)"', source),
+            [accepted],
+        )
+        tests = (kernarium / "KernariumTests/KernariumTests.swift").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(
+            set(re.findall(r'rootfsFilename == "(kde-[^"]*)"', tests)),
+            {accepted},
+        )
+        self.assertIn(
+            f"`{accepted}`",
+            (kernarium / "README.md").read_text(encoding="utf-8"),
+        )
+
     def test_derivation_refuses_a_source_that_does_not_match(self) -> None:
         derive = load_derive()
         with tempfile.TemporaryDirectory() as name:
@@ -77,6 +105,80 @@ class DesktopImageTests(unittest.TestCase):
                     "gnome", source, directory / "out.erofs", directory
                 )
             self.assertEqual(sorted(directory.iterdir()), [source])
+
+    @staticmethod
+    def make_root(directory: pathlib.Path, *, systemd: bool) -> pathlib.Path:
+        """A source tree carrying the machine ID of the build that made it."""
+        root = directory / ("systemd" if systemd else "openrc")
+        (root / "etc").mkdir(parents=True)
+        if systemd:
+            (root / "usr/lib/systemd").mkdir(parents=True)
+            (root / "usr/lib/systemd/systemd").write_bytes(b"")
+            (root / "lib").symlink_to("usr/lib")
+        else:
+            (root / "lib").mkdir()
+        machine_id = root / "etc/machine-id"
+        machine_id.write_text("0982c3c086124c19948eea126de9f9f6\n")
+        machine_id.chmod(0o444)
+        return root
+
+    def test_derived_images_carry_no_machine_id(self) -> None:
+        derive = load_derive()
+        with tempfile.TemporaryDirectory() as name:
+            directory = pathlib.Path(name)
+
+            # systemd fills an empty file; D-Bus's copy follows it.
+            root = self.make_root(directory, systemd=True)
+            (root / "var/lib/dbus").mkdir(parents=True)
+            (root / "var/lib/dbus/machine-id").write_text(
+                "0982c3c086124c19948eea126de9f9f6\n"
+            )
+            derive.reset_machine_id(root)
+            machine_id = root / "etc/machine-id"
+            self.assertFalse(machine_id.is_symlink())
+            self.assertTrue(machine_id.is_file())
+            self.assertEqual(machine_id.read_bytes(), b"")
+            self.assertEqual(machine_id.stat().st_mode & 0o7777, 0o444)
+            copy = root / "var/lib/dbus/machine-id"
+            self.assertTrue(copy.is_symlink())
+            self.assertEqual(os.readlink(copy), "/etc/machine-id")
+
+            # dbus-uuidgen --ensure creates a missing file but rejects an
+            # empty one, so an image without systemd has none.
+            root = self.make_root(directory, systemd=False)
+            (root / "var/lib/dbus").mkdir(parents=True)
+            derive.reset_machine_id(root)
+            self.assertFalse(os.path.lexists(root / "etc/machine-id"))
+            self.assertEqual(
+                os.readlink(root / "var/lib/dbus/machine-id"), "/etc/machine-id"
+            )
+
+            # An image without D-Bus state gains none.
+            (root / "etc/machine-id").write_text("96662f44ec16583a845a46f66a803704\n")
+            shutil.rmtree(root / "var")
+            derive.reset_machine_id(root)
+            self.assertFalse(os.path.lexists(root / "etc/machine-id"))
+            self.assertFalse(os.path.lexists(root / "var"))
+
+            # A path that could lead outside the tree is refused.
+            (root / "var").mkdir()
+            (root / "var/lib").symlink_to("/var/lib")
+            with self.assertRaisesRegex(derive.DerivationError, "/var/lib is"):
+                derive.reset_machine_id(root)
+            (root / "var/lib").unlink()
+            (root / "etc/machine-id").symlink_to("/etc/machine-id")
+            with self.assertRaisesRegex(derive.DerivationError, "not a file"):
+                derive.reset_machine_id(root)
+
+    def test_derivation_resets_the_machine_id_after_the_setup(self) -> None:
+        # The setup may install packages that write a machine ID, so the
+        # reset follows it.
+        source = inspect.getsource(load_derive().derive)
+        setup = source.index('["chroot", str(root), "/bin/sh", "-s"]')
+        reset = source.index("reset_machine_id(root)")
+        image = source.index('"mkfs.erofs"')
+        self.assertLess(setup, reset)
+        self.assertLess(reset, image)
 
 
 if __name__ == "__main__":

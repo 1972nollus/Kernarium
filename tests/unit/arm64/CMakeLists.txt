@@ -5,6 +5,11 @@
 # compositions retain the production memory component's link contract.
 link_libraries(UML::MemorySharedBacking)
 
+# The root's warning policy covers C++; these hand-written assembly sources
+# opt in to it.
+set_source_files_properties(arm64_jit_chain_abi_probe.S arm64-neon-inventory.s
+    PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
+
 # uml_add_arm64_unit_test(<stem> [NAME <test>] [WITHOUT_HARNESS]
 #     [SOURCES <sources>...] [OBJECTS <sources>...] [LABELS <labels>...])
 #
@@ -29,7 +34,6 @@ function(uml_add_arm64_unit_test STEM)
     target_link_libraries(${_target} PRIVATE UML::BridgeAbi)
     target_include_directories(${_target} PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_options(${_target} PRIVATE -Wall -Wextra -Werror)
     if(NOT _arm64_test_WITHOUT_HARNESS)
         target_link_libraries(${_target} PRIVATE uml_arm64_engine_test_support)
     endif()

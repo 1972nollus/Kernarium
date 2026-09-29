@@ -3,9 +3,6 @@
 add_library(uml_test_allocation_failure STATIC allocation_failure.cpp)
 target_include_directories(uml_test_allocation_failure PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(uml_test_allocation_failure PUBLIC cxx_std_20)
-target_compile_options(uml_test_allocation_failure PRIVATE
-    -Wall -Wextra -Werror)
 
 # CPU conformance and engine/runtime tests have their own directory scope.
 # This keeps the suite entry point small while preserving one explicit source

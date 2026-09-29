@@ -8,7 +8,6 @@ target_link_libraries(uml_cpu_contract INTERFACE
     UML::PlatformContract
     UML::GuestPageConfiguration
     UML::JitProfileConfiguration)
-target_compile_features(uml_cpu_contract INTERFACE cxx_std_20)
 
 # A private cache holds one translation per slot, so the slot count is the
 # working set an executor can keep. Counted on Geekbench 6 Clang, the workload
@@ -84,15 +83,10 @@ if(UML_BUILD_X86_64_GUEST)
         PRIVATE UML::CpuContract)
     target_include_directories(uml_x86_64_gadgets PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_x86_64_gadgets PUBLIC cxx_std_20)
-    target_compile_options(uml_x86_64_gadgets PRIVATE
-        -Wall -Wextra -Werror)
     target_compile_definitions(uml_x86_64_gadgets PRIVATE
         UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
-    set_target_properties(uml_x86_64_gadgets PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
 
     # The register-baked scalar bank is enumerated by a generator: one entry
     # per operand combination is thousands of entries, which the assembler's
@@ -110,7 +104,8 @@ if(UML_BUILD_X86_64_GUEST)
         COMMENT "Generating the x86-64 register-baked gadget bank"
         VERBATIM)
     set_source_files_properties(x86_64/gadgets/engine.S PROPERTIES
-        OBJECT_DEPENDS ${_uml_x86_64_baked_dir}/baked_scalar.inc)
+        OBJECT_DEPENDS ${_uml_x86_64_baked_dir}/baked_scalar.inc
+        COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
     target_include_directories(uml_x86_64_gadgets PRIVATE
         ${_uml_x86_64_baked_dir})
 endif()
@@ -127,11 +122,6 @@ target_link_libraries(uml_arm64_execution_helpers PRIVATE
     UML::CpuContract)
 target_include_directories(uml_arm64_execution_helpers PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_arm64_execution_helpers PUBLIC cxx_std_20)
-target_compile_options(uml_arm64_execution_helpers PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
-set_target_properties(uml_arm64_execution_helpers PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 # Off by default so ordinary translation has no diagnostic instrumentation. A
 # threaded counter gadget indexes a table keyed by the exact selected entry,
@@ -179,10 +169,6 @@ target_link_libraries(uml_arm64_gadgets PRIVATE UML::BridgeAbi UML::CpuContract)
 target_link_libraries(uml_arm64_gadgets PUBLIC uml_arm64_execution_helpers)
 target_include_directories(uml_arm64_gadgets PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_arm64_gadgets PUBLIC cxx_std_20)
-target_compile_options(uml_arm64_gadgets PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
-set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(uml_arm64_gadgets PUBLIC
     UML::GadgetHistogramConfiguration)
 
@@ -230,10 +216,6 @@ target_link_libraries(uml_arm64_jit PRIVATE
     UML::CpuContract)
 target_include_directories(uml_arm64_jit PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_arm64_jit PUBLIC cxx_std_20)
-target_compile_options(uml_arm64_jit PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
-set_target_properties(uml_arm64_jit PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(_uml_cpu_jit_executor_sources
     arm64/jit/jit_cache_geometry.cpp
@@ -269,12 +251,8 @@ target_link_libraries(uml_arm64_jit_executor PUBLIC
     uml_arm64_execution_helpers)
 target_include_directories(uml_arm64_jit_executor PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_arm64_jit_executor PUBLIC cxx_std_20)
-target_compile_options(uml_arm64_jit_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_jit_executor PRIVATE
     UML_JIT_RUNTIME_DIAGNOSTICS=0)
-set_target_properties(uml_arm64_jit_executor PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 if(UML_BUILD_UNIT_TESTS)
     # Counter-heavy cache/link diagnostics are useful for focused unit tests,
@@ -293,14 +271,8 @@ if(UML_BUILD_UNIT_TESTS)
         uml_arm64_execution_helpers)
     target_include_directories(uml_arm64_jit_diagnostics_executor PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_arm64_jit_diagnostics_executor PUBLIC
-        cxx_std_20)
-    target_compile_options(uml_arm64_jit_diagnostics_executor PRIVATE
-        -Wall -Wextra -Werror)
     target_compile_definitions(uml_arm64_jit_diagnostics_executor PRIVATE
         UML_JIT_RUNTIME_DIAGNOSTICS=1)
-    set_target_properties(uml_arm64_jit_diagnostics_executor PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
 endif()
 
 # Some CPU implementation translation units contain inline assembly using the
@@ -339,11 +311,6 @@ if(UML_BUILD_UNIT_TESTS)
         uml_arm64_execution_helpers)
     target_include_directories(uml_arm64_jit_test_support PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_arm64_jit_test_support PUBLIC cxx_std_20)
-    target_compile_options(uml_arm64_jit_test_support PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
-    set_target_properties(uml_arm64_jit_test_support PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
 endif()
 
 add_library(uml_arm64_gadget_executor OBJECT
@@ -355,15 +322,11 @@ target_link_libraries(uml_arm64_gadget_executor PRIVATE
 target_link_libraries(uml_arm64_gadget_executor PUBLIC uml_arm64_gadgets)
 target_include_directories(uml_arm64_gadget_executor PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_arm64_gadget_executor PUBLIC cxx_std_20)
-target_compile_options(uml_arm64_gadget_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
     UML_GADGET_BLOCK_INSTRUCTIONS=${UML_GADGET_BLOCK_INSTRUCTIONS}
     UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
-set_target_properties(uml_arm64_gadget_executor PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_arm64_gadget_engine OBJECT arm64/gadgets/engine_adapter.cpp)
 uml_declare_architecture_target(uml_arm64_gadget_engine cpu gadget)
@@ -373,10 +336,6 @@ target_link_libraries(uml_arm64_gadget_engine PRIVATE
 target_link_libraries(uml_arm64_gadget_engine PUBLIC uml_arm64_gadget_executor)
 target_include_directories(uml_arm64_gadget_engine PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_arm64_gadget_engine PUBLIC cxx_std_20)
-target_compile_options(uml_arm64_gadget_engine PRIVATE -Wall -Wextra -Werror)
-set_target_properties(uml_arm64_gadget_engine PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_arm64_jit_engine OBJECT arm64/jit/engine_adapter.cpp)
 uml_declare_architecture_target(uml_arm64_jit_engine cpu native)
@@ -388,10 +347,6 @@ target_link_libraries(uml_arm64_jit_engine PUBLIC
     uml_arm64_jit_executor)
 target_include_directories(uml_arm64_jit_engine PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_arm64_jit_engine PUBLIC cxx_std_20)
-target_compile_options(uml_arm64_jit_engine PRIVATE -Wall -Wextra -Werror)
-set_target_properties(uml_arm64_jit_engine PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_cpu_engine_factory OBJECT engine_factory.cpp)
 uml_declare_architecture_target(uml_cpu_engine_factory cpu mixed)
@@ -404,10 +359,6 @@ target_link_libraries(uml_cpu_engine_factory PUBLIC
     uml_arm64_execution_helpers)
 target_include_directories(uml_cpu_engine_factory PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_cpu_engine_factory PUBLIC cxx_std_20)
-target_compile_options(uml_cpu_engine_factory PRIVATE -Wall -Wextra -Werror)
-set_target_properties(uml_cpu_engine_factory PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 # OBJECT libraries avoid duplicate compilation, but CMake does not propagate
 # their contents transitively. These link components expose the supported

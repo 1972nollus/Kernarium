@@ -8,7 +8,6 @@ target_link_libraries(uml_runtime_contract INTERFACE
     UML::CpuContract
     UML::MemoryContract
     UML::PlatformContract)
-target_compile_features(uml_runtime_contract INTERFACE cxx_std_20)
 
 add_library(uml_static_runtime OBJECT
     ${CMAKE_CURRENT_SOURCE_DIR}/static_guest.cpp
@@ -20,11 +19,8 @@ target_link_libraries(uml_static_runtime PRIVATE
     uml_static_guest_memory)
 target_include_directories(uml_static_runtime PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_static_runtime PUBLIC cxx_std_20)
-target_compile_options(uml_static_runtime PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_static_runtime PRIVATE
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
-set_target_properties(uml_static_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_runtime_context OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/context.cpp
@@ -38,14 +34,10 @@ target_link_libraries(uml_runtime_context PRIVATE
     uml_static_guest_memory)
 target_include_directories(uml_runtime_context PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_runtime_context PUBLIC cxx_std_20)
-target_compile_options(uml_runtime_context PRIVATE -Wall -Wextra -Werror)
 # The Simulator can publish into a MAP_JIT arena and so could default to the
 # JIT, but measurement rejects it for the workloads that matter: see G157.
 target_compile_definitions(uml_runtime_context PRIVATE
     UML_DEFAULT_EXECUTION_ENGINE_JIT=$<BOOL:${UML_TARGET_MACOS}>)
-set_target_properties(uml_runtime_context PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 # Process signal state an embedded kernel image leaves behind; the loader
 # closes this scope before it releases the image.
@@ -55,11 +47,6 @@ add_library(UML::RuntimeKernelSignals ALIAS uml_runtime_kernel_signals)
 uml_declare_architecture_target(uml_runtime_kernel_signals runtime)
 target_include_directories(uml_runtime_kernel_signals PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
-target_compile_features(uml_runtime_kernel_signals PUBLIC cxx_std_20)
-target_compile_options(uml_runtime_kernel_signals PRIVATE
-    -Wall -Wextra -Werror)
-set_target_properties(uml_runtime_kernel_signals PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_runtime_guest_selector OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_selector.cpp)
@@ -70,11 +57,6 @@ target_link_libraries(uml_runtime_guest_selector PRIVATE
     uml_static_guest_memory)
 target_include_directories(uml_runtime_guest_selector PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_runtime_guest_selector PUBLIC cxx_std_20)
-target_compile_options(uml_runtime_guest_selector PRIVATE
-    -Wall -Wextra -Werror)
-set_target_properties(uml_runtime_guest_selector PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_runtime_entry OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/bridge.cpp
@@ -90,10 +72,6 @@ target_link_libraries(uml_runtime_entry PRIVATE
 target_include_directories(uml_runtime_entry PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/platform)
-target_compile_features(uml_runtime_entry PUBLIC cxx_std_20)
-target_compile_options(uml_runtime_entry PRIVATE -Wall -Wextra -Werror)
-set_target_properties(uml_runtime_entry PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 if(UML_ENABLE_RUNTIME_PROFILING)
     add_library(uml_runtime_jit_profile_reporter OBJECT
@@ -104,11 +82,6 @@ if(UML_ENABLE_RUNTIME_PROFILING)
         UML::CpuContract)
     target_include_directories(uml_runtime_jit_profile_reporter PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_runtime_jit_profile_reporter PUBLIC cxx_std_20)
-    target_compile_options(uml_runtime_jit_profile_reporter PRIVATE
-        -Wall -Wextra -Werror)
-    set_target_properties(uml_runtime_jit_profile_reporter PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
 endif()
 
 add_library(uml_runtime_objects INTERFACE)
@@ -138,7 +111,6 @@ target_link_libraries(uml_runtime_core INTERFACE
     UML::PlatformComponent)
 target_include_directories(uml_runtime_core INTERFACE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_runtime_core INTERFACE cxx_std_20)
 
 if(TARGET uml_memory_test_component)
     add_library(uml_runtime_core_test_variant INTERFACE)
@@ -153,5 +125,4 @@ if(TARGET uml_memory_test_component)
         UML::PlatformComponent)
     target_include_directories(uml_runtime_core_test_variant INTERFACE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_runtime_core_test_variant INTERFACE cxx_std_20)
 endif()
