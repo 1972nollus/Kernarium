@@ -19,8 +19,6 @@ target_link_libraries(uml_static_runtime PRIVATE
     uml_static_guest_memory)
 target_include_directories(uml_static_runtime PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_definitions(uml_static_runtime PRIVATE
-    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 
 add_library(uml_runtime_context OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/context.cpp
@@ -73,17 +71,6 @@ target_include_directories(uml_runtime_entry PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/platform)
 
-if(UML_ENABLE_RUNTIME_PROFILING)
-    add_library(uml_runtime_jit_profile_reporter OBJECT
-        ${PROJECT_SOURCE_DIR}/darwin/runtime/jit_profile_reporter.cpp)
-    uml_declare_architecture_target(uml_runtime_jit_profile_reporter runtime)
-    target_link_libraries(uml_runtime_jit_profile_reporter PRIVATE
-        UML::RuntimeContract
-        UML::CpuContract)
-    target_include_directories(uml_runtime_jit_profile_reporter PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
-endif()
-
 add_library(uml_runtime_objects INTERFACE)
 add_library(UML::RuntimeObjects ALIAS uml_runtime_objects)
 uml_declare_architecture_target(uml_runtime_objects runtime)
@@ -94,10 +81,6 @@ target_sources(uml_runtime_objects INTERFACE
     $<TARGET_OBJECTS:uml_runtime_guest_selector>
     $<TARGET_OBJECTS:uml_runtime_entry>
     $<TARGET_OBJECTS:uml_static_runtime>)
-if(TARGET uml_runtime_jit_profile_reporter)
-    target_sources(uml_runtime_objects INTERFACE
-        $<TARGET_OBJECTS:uml_runtime_jit_profile_reporter>)
-endif()
 
 # This composition target consumes module-owned object carriers without an
 # unused intermediate archive.

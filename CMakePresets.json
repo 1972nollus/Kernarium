@@ -143,14 +143,6 @@
       }
     },
     {
-      "name": "macos-jitprof",
-      "displayName": "macOS JIT profiling emulator",
-      "inherits": "macos-integration",
-      "cacheVariables": {
-        "UML_ENABLE_RUNTIME_PROFILING": true
-      }
-    },
-    {
       "name": "macos-android17",
       "displayName": "macOS Android 17 guest executable",
       "inherits": "macos-unit-16k",
@@ -337,11 +329,6 @@
       "name": "macos-integration-venus-4k",
       "configurePreset": "macos-integration-venus-4k",
       "targets": ["tooling-test-binaries", "integration-test-binaries", "architecture-audit"]
-    },
-    {
-      "name": "macos-jitprof",
-      "configurePreset": "macos-jitprof",
-      "targets": ["tooling-test-binaries", "architecture-audit"]
     },
     {
       "name": "macos-android17",
@@ -606,19 +593,6 @@
       "configurePreset": "macos-integration-venus-4k"
     },
     {
-      "name": "tooling-jitprof",
-      "inherits": "test-defaults",
-      "configurePreset": "macos-jitprof",
-      "filter": {
-        "include": {
-          "name": "^jit-profile-final-report-contract$"
-        }
-      },
-      "execution": {
-        "jobs": 1
-      }
-    },
-    {
       "name": "tooling-all",
       "inherits": "tooling-unit",
       "configurePreset": "macos-all"
@@ -779,14 +753,6 @@
         {"type": "build", "name": "macos-integration-venus-4k"},
         {"type": "test", "name": "tooling-integration-venus-4k"},
         {"type": "test", "name": "integration-fast-venus-4k"}
-      ]
-    },
-    {
-      "name": "check-jitprof",
-      "steps": [
-        {"type": "configure", "name": "macos-jitprof"},
-        {"type": "build", "name": "macos-jitprof"},
-        {"type": "test", "name": "tooling-jitprof"}
       ]
     },
     {

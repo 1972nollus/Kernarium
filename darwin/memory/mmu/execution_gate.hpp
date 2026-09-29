@@ -7,14 +7,6 @@
 #include <cstddef>
 #include <memory>
 
-#ifndef UML_RUNTIME_PROFILING
-#define UML_RUNTIME_PROFILING 0
-#endif
-
-#ifndef UML_MEMORY_PROFILE_TESTING
-#define UML_MEMORY_PROFILE_TESTING 0
-#endif
-
 namespace uml::memory {
 
 [[nodiscard]] bool execution_reader_begin(
@@ -39,15 +31,6 @@ public:
 
 private:
 	std::shared_ptr<GenerationState> state_;
-#if UML_RUNTIME_PROFILING
-	std::uint64_t generation_;
-#endif
 };
-
-#if UML_RUNTIME_PROFILING && UML_MEMORY_PROFILE_TESTING
-namespace testing {
-[[nodiscard]] std::size_t execution_gate_profile_count() noexcept;
-}
-#endif
 
 } // namespace uml::memory

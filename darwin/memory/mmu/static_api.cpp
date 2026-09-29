@@ -10,10 +10,6 @@
 #include "native_address_space.hpp"
 #endif
 
-#ifndef UML_RUNTIME_PROFILING
-#define UML_RUNTIME_PROFILING 0
-#endif
-
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -22,10 +18,6 @@
 #include <new>
 #include <utility>
 #if UML_MEMORY_HAS_NATIVE_VM
-#if UML_RUNTIME_PROFILING
-#include <cstdio>
-#include <cstdlib>
-#endif
 #include <sys/mman.h>
 #endif
 
@@ -48,17 +40,6 @@ using uml::memory::ConfiguredAddressLayout;
 }
 
 #if UML_MEMORY_HAS_NATIVE_VM
-#if UML_RUNTIME_PROFILING
-[[nodiscard]] bool trace_enabled() noexcept
-{
-	static const bool enabled = [] {
-		const auto *value = std::getenv("UML_MMU_TRACE");
-		return value != nullptr && value[0] != '\0' && value[0] != '0';
-	}();
-	return enabled;
-}
-#endif
-
 #if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 [[nodiscard]] bool use_native_shadow(
 	const uml::memory::NativeAddressSpace &space, const void *address,
@@ -134,14 +115,6 @@ extern "C" int darwin_uml_vm_map(void *address, int fd, unsigned long long offse
 	return native_address_call(native_space, [&](auto &space) {
 		const bool shadow = use_native_shadow(
 			space, address, offset, length);
-#if UML_RUNTIME_PROFILING
-		if (trace_enabled())
-			std::fprintf(
-				stderr,
-				"Darwin native map address=%p fd=%d offset=%#llx "
-				"length=%#lx protection=%#x shadow=%d\n",
-				address, fd, offset, length, protection, shadow);
-#endif
 		if (shadow)
 			return space.map(
 				reinterpret_cast<std::uintptr_t>(address), fd, offset,
@@ -158,14 +131,6 @@ extern "C" int darwin_uml_vm_map(void *address, int fd, unsigned long long offse
 			reinterpret_cast<std::uintptr_t>(address), fd, offset,
 			length, protection);
 	});
-#if UML_RUNTIME_PROFILING
-	if (trace_enabled())
-		std::fprintf(
-			stderr,
-			"Darwin static native map address=%p offset=%#llx length=%#lx "
-			"protection=%#x result=%d\n",
-			address, offset, length, protection, result);
-#endif
 	return result;
 #endif
 #else
@@ -212,14 +177,6 @@ extern "C" int darwin_uml_vm_protect(void *address, unsigned long length,
 	return native_address_call(native_space, [&](auto &space) {
 		const bool shadow = space.contains_shadow(
 			reinterpret_cast<std::uintptr_t>(address), length);
-#if UML_RUNTIME_PROFILING
-		if (trace_enabled())
-			std::fprintf(
-				stderr,
-				"Darwin native protect address=%p length=%#lx "
-				"protection=%#x shadow=%d\n",
-				address, length, protection, shadow);
-#endif
 		if (shadow || uml::memory::NativeAddressSpace::needs_shadow(
 				reinterpret_cast<std::uintptr_t>(address), 0, length))
 			return space.protect(
@@ -253,13 +210,6 @@ extern "C" int darwin_uml_vm_unmap(void *address, unsigned long length)
 	return native_address_call(native_space, [&](auto &space) {
 		const bool shadow = space.contains_shadow(
 			reinterpret_cast<std::uintptr_t>(address), length);
-#if UML_RUNTIME_PROFILING
-		if (trace_enabled())
-			std::fprintf(
-				stderr,
-				"Darwin native unmap address=%p length=%#lx shadow=%d\n",
-				address, length, shadow);
-#endif
 		if (shadow || uml::memory::NativeAddressSpace::needs_shadow(
 				reinterpret_cast<std::uintptr_t>(address), 0, length))
 			return space.unmap(

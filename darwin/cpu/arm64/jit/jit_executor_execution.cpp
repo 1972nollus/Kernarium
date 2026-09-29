@@ -124,9 +124,6 @@ namespace uml::cpu::arm64 {
       };
       // Compile once on a miss. Speculatively lowering the whole block a
       // second time for GPR residency delays cold multi-process workloads.
-#if UML_ENABLE_JIT_PROFILE
-      const auto local_compile_path_started = jit_profile_timestamp_ns();
-#endif
       const auto compiled = compiler.compile(cpu.pc, fetched);
 #if UML_JIT_RUNTIME_DIAGNOSTICS
       cache_validation_diagnostics_.direct_link_refusals +=
@@ -182,17 +179,12 @@ namespace uml::cpu::arm64 {
           auto shared = publish_shared_translation(cpu.pc, fetched, compiled);
           block = install_compilation(compiled, stored, shared);
         } else {
-          if (stored.links_exhausted) {
-            profile_jit_link_table_reset();
 #if UML_JIT_RUNTIME_DIAGNOSTICS
+          if (stored.links_exhausted)
             ++cache_validation_diagnostics_.link_table_resets;
-#endif
-          } else {
-            profile_jit_arena_reset();
-#if UML_JIT_RUNTIME_DIAGNOSTICS
+          else
             ++cache_validation_diagnostics_.arena_resets;
 #endif
-          }
           clear_cache();
           arena_.reset();
 
@@ -226,14 +218,6 @@ namespace uml::cpu::arm64 {
           block = install_compilation(retry_compiled, stored, shared);
         }
       }
-#if UML_ENABLE_JIT_PROFILE
-      /* Compare complete successful miss paths: compiler lowering, private
-       * arena publication, optional canonical publication, and block install
-       * versus shared lookup, relocation, private publication, and install.
-       */
-      profile_jit_local_compile_latency(
-          jit_profile_timestamp_ns() - local_compile_path_started);
-#endif
     }
   }
   if (pending_source)
@@ -650,10 +634,7 @@ void JitExecutor::Implementation::prepare_links(unsigned long generation, std::u
   if (link_generation_ == generation && link_code_changes_ == changes &&
       link_context_ != nullptr)
     return;
-  if (link_sequence_initialized_)
-    profile_jit_sequence_transition(link_generation_ != generation,
-                                    compiled_in_link_sequence_);
-  else
+  if (!link_sequence_initialized_)
     link_sequence_initialized_ = true;
   compiled_in_link_sequence_ = 0;
   pending_indirect_ = {};

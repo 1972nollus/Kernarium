@@ -1,18 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_shared_translations.hpp"
 
-#include "jit_diagnostics.hpp"
 #include "jit_linking.hpp"
-#if UML_ENABLE_JIT_PROFILE
-#include "jit_profile_output.hpp"
-#endif
 
 #include <algorithm>
 #include <limits>
 #include <mutex>
-#if UML_ENABLE_JIT_PROFILE
-#include <cstdlib>
-#endif
 
 namespace uml::cpu::arm64 {
 
@@ -34,19 +27,6 @@ saturating_add_array(std::size_t total, std::size_t count,
     return maximum_size;
   return total + count * element_size;
 }
-
-#if UML_ENABLE_JIT_PROFILE
-/* Compiled out of ordinary builds, which must carry no optional profiling
- * control. The profiling preset contract pins that selection.
- */
-[[nodiscard]] bool shared_translation_report_enabled() noexcept {
-  static const bool enabled = [] {
-    const auto *value = std::getenv("UML_JIT_PROFILE_SHARED_TRANSLATIONS");
-    return value != nullptr && value[0] != '\0' && value[0] != '0';
-  }();
-  return enabled;
-}
-#endif
 
 [[nodiscard]] bool same_guest_words(
     const SharedTranslation &stored,
@@ -141,81 +121,7 @@ translation_payload_bytes(const SharedTranslation &translation) noexcept {
                               sizeof(std::uint32_t));
 }
 
-#if UML_ENABLE_JIT_PROFILE
-struct SharedTranslationFinalReportState final {
-  std::mutex mutex;
-  SharedTranslationStatistics statistics;
-  bool reported{};
-};
-
-SharedTranslationFinalReportState &shared_translation_final_report_state() {
-  /* Intentionally leaked: the normal-exit callback can run after function-
-   * local static destruction, just like the cache and TLS registries it reads.
-   */
-  static auto *state = new SharedTranslationFinalReportState;
-  return *state;
-}
-
-void write_final_shared_translation_statistics(
-    const SharedTranslationStatistics &statistics) noexcept {
-  write_jit_profile_record(
-      "Darwin JIT shared translations final entries=%llu "
-      "published=%llu evicted=%llu matched=%llu reused=%llu missed=%llu "
-      "rejected=%llu degraded-rejected=%llu "
-      "malformed-rejected=%llu insertion-failures=%llu "
-      "failed-insertion-retained-accounted-bytes=%llu "
-      "materialization-failures=%llu "
-      "invalid-metadata=%llu direct-link-capacity=%llu "
-      "indirect-link-capacity=%llu arena-exhaustion=%llu "
-      "payload-bytes=%llu accounted-bytes=%llu "
-      "maximum-accounted-bytes=%llu\n",
-      static_cast<unsigned long long>(statistics.entries),
-      static_cast<unsigned long long>(statistics.insertions),
-      static_cast<unsigned long long>(statistics.evictions),
-      static_cast<unsigned long long>(statistics.matches),
-      static_cast<unsigned long long>(statistics.reuses),
-      static_cast<unsigned long long>(statistics.misses),
-      static_cast<unsigned long long>(statistics.rejected),
-      static_cast<unsigned long long>(statistics.degraded_rejected),
-      static_cast<unsigned long long>(statistics.malformed_rejected),
-      static_cast<unsigned long long>(statistics.insertion_failures),
-      static_cast<unsigned long long>(
-          statistics.failed_insertion_retained_accounted_bytes),
-      static_cast<unsigned long long>(statistics.materialization_failures()),
-      static_cast<unsigned long long>(
-          statistics.materialization_invalid_metadata_failures),
-      static_cast<unsigned long long>(
-          statistics.materialization_direct_link_failures),
-      static_cast<unsigned long long>(
-          statistics.materialization_indirect_link_failures),
-      static_cast<unsigned long long>(
-          statistics.materialization_arena_failures),
-      static_cast<unsigned long long>(statistics.payload_bytes),
-      static_cast<unsigned long long>(statistics.accounted_bytes),
-      static_cast<unsigned long long>(statistics.maximum_accounted_bytes));
-}
-#endif
-
 } // namespace
-
-#if UML_ENABLE_JIT_PROFILE
-void report_final_shared_translation_statistics() noexcept {
-  if (!shared_translation_report_enabled())
-    return;
-  auto &cache = SharedTranslationCache::instance();
-  const auto statistics = cache.statistics();
-  auto &state = shared_translation_final_report_state();
-  {
-    const std::scoped_lock state_lock{state.mutex};
-    if (state.reported &&
-        state.statistics == statistics)
-      return;
-    state.statistics = statistics;
-    state.reported = true;
-  }
-  write_final_shared_translation_statistics(statistics);
-}
-#endif
 
 bool valid_shared_translation(
     const SharedTranslation &translation,
@@ -416,69 +322,7 @@ std::shared_ptr<const SharedTranslation> SharedTranslationCache::insert(
   shard.index_credit -= budget_charge - additional_charge;
   ++shard.count;
   payload_bytes_.fetch_add(payload_bytes, std::memory_order_relaxed);
-  const auto published =
-      insertions_.fetch_add(1, std::memory_order_relaxed) + 1U;
-#if UML_ENABLE_JIT_PROFILE
-  /* Formatting and descriptor I/O must not extend the cache ownership
-   * interval. In particular, the explicit final reporter may snapshot every
-   * shard while a task-carrier thread retires after a periodic record.
-   */
-  cache_lock.unlock();
-  if (shared_translation_report_enabled() && (published % 65536U) == 0U)
-    {
-      const auto invalid = materialization_invalid_metadata_failures_.load(
-          std::memory_order_relaxed);
-      const auto direct = materialization_direct_link_failures_.load(
-          std::memory_order_relaxed);
-      const auto indirect = materialization_indirect_link_failures_.load(
-          std::memory_order_relaxed);
-      const auto arena = materialization_arena_failures_.load(
-          std::memory_order_relaxed);
-      write_jit_profile_record(
-          "Darwin JIT shared translations entries=%llu "
-          "published=%llu evicted=%llu matched=%llu reused=%llu missed=%llu "
-          "rejected=%llu degraded-rejected=%llu "
-          "malformed-rejected=%llu insertion-failures=%llu "
-          "failed-insertion-retained-accounted-bytes=%llu "
-          "materialization-failures=%llu invalid-metadata=%llu "
-          "direct-link-capacity=%llu indirect-link-capacity=%llu "
-          "arena-exhaustion=%llu payload-bytes=%llu "
-          "accounted-bytes=%llu maximum-accounted-bytes=%llu\n",
-          static_cast<unsigned long long>(statistics().entries),
-          static_cast<unsigned long long>(published),
-          static_cast<unsigned long long>(
-              evictions_.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              matches_.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              reuses_.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              misses_.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              rejected_.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              degraded_rejected_.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              malformed_rejected_.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              insertion_failures_.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              failed_insertion_retained_accounted_bytes_.load(
-                  std::memory_order_relaxed)),
-          static_cast<unsigned long long>(invalid + direct + indirect + arena),
-          static_cast<unsigned long long>(invalid),
-          static_cast<unsigned long long>(direct),
-          static_cast<unsigned long long>(indirect),
-          static_cast<unsigned long long>(arena),
-          static_cast<unsigned long long>(
-              payload_bytes_.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              accounted_bytes_.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(maximum_accounted_bytes_));
-    }
-#else
-  (void)published;
-#endif
+  insertions_.fetch_add(1, std::memory_order_relaxed);
   return translation;
 }
 
@@ -721,14 +565,6 @@ SharedTranslationCache &SharedTranslationCache::instance() noexcept {
   static auto *cache = new SharedTranslationCache{
       unlimited_shard_entries,
       jit_shared_translation_cache_budget()};
-#if UML_ENABLE_JIT_PROFILE
-  static const bool report_registered = [] {
-    if (shared_translation_report_enabled())
-      std::atexit(report_final_shared_translation_statistics);
-    return true;
-  }();
-  (void)report_registered;
-#endif
   return *cache;
 }
 

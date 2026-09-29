@@ -1306,7 +1306,6 @@ void VhostUserServer::processQueue(std::uint32_t index)
         case uml::virtio::VhostUserQueueAction::complete:
             if (result.response.size() > responseCapacity)
                 throw std::runtime_error("short virtio response buffer");
-            device_->traceQueue(index, request, result.response);
             completeRequest(position->second, result.response);
             pendingRequests_.erase(position);
             ++queue.lastAvailable;

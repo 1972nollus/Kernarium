@@ -14,7 +14,6 @@
 #include "gpu/protocol.hpp"
 #include "launcher.hpp"
 #include "guest_memory_argument.hpp"
-#include "profile_reporter.hpp"
 #include "sockets/socket_paths.hpp"
 #include "uml/emulator.h"
 #if UML_APP_HAS_SLIRP
@@ -704,9 +703,6 @@ int uml::app::runEmbeddedKernel(
 		run();
 	if (app_network)
 		app_network->shutdown();
-#if UML_ENABLE_JIT_PROFILE
-	uml::emulator::report_jit_profiles();
-#endif
 	if (audio_service)
 		audio_service->stop();
 	if (battery_service)

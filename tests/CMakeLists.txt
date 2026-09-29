@@ -64,8 +64,7 @@ if(UML_BUILD_UNIT_TESTS)
         uml_test_mach_vm_region
         uml_static_mmu_test_support
         UML::GadgetHistogramConfiguration
-        UML::GuestPageConfiguration
-        UML::JitProfileConfiguration)
+        UML::GuestPageConfiguration)
     add_subdirectory(unit)
 endif()
 

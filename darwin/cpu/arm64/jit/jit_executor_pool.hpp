@@ -14,10 +14,6 @@ namespace uml::cpu::arm64 {
 
 using JitExecutorPoolSessionToken = std::uint64_t;
 
-#if UML_ENABLE_JIT_PROFILE
-class JitExecutorPoolProfile;
-#endif
-
 #if UML_JIT_RUNTIME_DIAGNOSTICS
 using JitExecutorPoolSessionCheckedHook = void (*)(void *) noexcept;
 #endif
@@ -47,11 +43,7 @@ public:
 
 private:
   friend JitExecutorPoolBorrow borrow_jit_executor(
-      JitExecutorPoolSessionToken, unsigned
-#if UML_ENABLE_JIT_PROFILE
-      , JitExecutorPoolProfile *
-#endif
-      );
+      JitExecutorPoolSessionToken, unsigned);
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   friend JitExecutorPoolBorrow
   borrow_jit_executor_after_session_check_for_test(
@@ -95,11 +87,7 @@ active_jit_executor_pool_session() noexcept;
  * handoff queue and take priority over a tight preferred-slot reborrow. */
 [[nodiscard]] JitExecutorPoolBorrow borrow_jit_executor(
     JitExecutorPoolSessionToken session,
-    unsigned preferred_slot = 64U
-#if UML_ENABLE_JIT_PROFILE
-    , JitExecutorPoolProfile *profile = nullptr
-#endif
-    );
+    unsigned preferred_slot = 64U);
 
 #if UML_JIT_RUNTIME_DIAGNOSTICS
 struct JitExecutorPoolDiagnostics final {

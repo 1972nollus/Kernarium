@@ -113,10 +113,7 @@ JitExecutor::Implementation::validate_stale_block(
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   ++cache_validation_diagnostics_.validation_attempts;
 #endif
-  const auto validation =
-      validate_stale_block(*stale, changes, memory);
-  profile_jit_cache_validation(validation);
-  switch (validation) {
+  switch (validate_stale_block(*stale, changes, memory)) {
   case JitCacheValidationResult::hit:
 #if UML_JIT_RUNTIME_DIAGNOSTICS
     ++cache_validation_diagnostics_.validation_hits;
@@ -157,10 +154,9 @@ JitExecutor::Implementation::validate_stale_block(
         set.ways[way].stamp < set.ways[selected_way].stamp)
       selected_way = way;
   auto *selected = &set.ways[selected_way];
-  const bool eviction = selected->function != nullptr;
-  profile_jit_cache_replacement(eviction);
 #if UML_JIT_RUNTIME_DIAGNOSTICS
-  cache_validation_diagnostics_.cache_replacements += eviction;
+  cache_validation_diagnostics_.cache_replacements +=
+      selected->function != nullptr;
 #endif
   *selected = {};
   selected->generation = generation;
@@ -206,12 +202,6 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
   block.function = function;
   block.internal_entry = internal_entry;
   block.link = target_link;
-#if UML_ENABLE_JIT_PROFILE
-  profile_jit_target_link_refusal(block.link == nullptr);
-  profile_jit_link_table_state(links_.size(), links_.capacity(),
-                               indirect_links_.size(),
-                               indirect_links_.capacity());
-#endif
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   cache_validation_diagnostics_.target_link_refusals +=
       block.link == nullptr;
@@ -313,9 +303,6 @@ JitExecutor::Implementation::materialize_shared_translation(
 JitExecutor::Implementation::install_shared_translation(
     unsigned long generation, std::uint64_t changes, std::uint64_t pc,
     std::span<const std::uint32_t> guest_words) {
-#if UML_ENABLE_JIT_PROFILE
-  const auto materialization_started = jit_profile_timestamp_ns();
-#endif
   auto &cache = SharedTranslationCache::instance();
   const auto translation =
       cache.find(shared_codegen_profile(), pc, guest_words);
@@ -357,10 +344,6 @@ JitExecutor::Implementation::install_shared_translation(
       translation->guest_illegal
   );
   cache.record_reuse();
-#if UML_ENABLE_JIT_PROFILE
-  profile_jit_shared_materialization_latency(
-      jit_profile_timestamp_ns() - materialization_started);
-#endif
   return block;
 }
 

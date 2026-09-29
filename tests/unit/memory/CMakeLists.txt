@@ -29,14 +29,6 @@ target_link_libraries(uml_memory_address_window_tests PRIVATE
 uml_add_unit_test(NAME memory-address-window-reads
     COMMAND uml_memory_address_window_tests)
 
-add_executable(uml_execution_gate_profile_tests
-    execution_gate_profile_tests.cpp)
-target_link_libraries(uml_execution_gate_profile_tests PRIVATE
-    UML::BridgeAbi
-    uml_execution_gate_profile_test_variant)
-uml_add_unit_test(NAME memory-execution-gate-profile
-    COMMAND uml_execution_gate_profile_tests)
-
 if(TARGET uml_native_mmu_test_variant)
     add_executable(uml_native_window_reservation_tests
         native_window_reservation_tests.cpp)

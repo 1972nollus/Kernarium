@@ -2,7 +2,6 @@
 #include "uml/emulator.h"
 #include "device.hpp"
 #include "options.hpp"
-#include "profile_reporter.hpp"
 #include "context.hpp"
 #include "guest_sync.hpp"
 #include "guest_console.hpp"
@@ -376,14 +375,6 @@ public:
 			native_layout.reserved ? native_layout.window_end : 0U,
 			static_cast<int>(arguments.size()), argument_pointers.data(),
 			environment_pointers.data());
-#if UML_ENABLE_JIT_PROFILE
-		/* The maintained embedded entry returns only after its execution
-		 * carriers have retired. Capture the quiescent profile before the
-		 * session-owned executor pool releases several GiB of cache storage;
-		 * the app boundary repeats this idempotently before its std::_Exit().
-		 */
-		report_jit_profiles();
-#endif
 		return result;
 #else
 		return -UML_EMULATOR_UNSUPPORTED;

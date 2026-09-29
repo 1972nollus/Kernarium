@@ -38,11 +38,6 @@ JitExecutor::Implementation::resolve_indirect_link(void *context, std::uint64_t 
 [[nodiscard]] JitIndirectLink *
 JitExecutor::Implementation::indirect_link_for(std::uint64_t source_pc) {
   auto *site = indirect_links_.find_or_create(source_pc, link_generation_);
-#if UML_ENABLE_JIT_PROFILE
-  profile_jit_link_table_state(links_.size(), links_.capacity(),
-                               indirect_links_.size(),
-                               indirect_links_.capacity());
-#endif
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   indirect_link_diagnostics_.capacity_refusals += site == nullptr;
   if (indirect_links_.size() > indirect_link_diagnostics_.table_high_water)

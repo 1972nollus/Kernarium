@@ -64,7 +64,6 @@ Specialized workflows are:
 cmake --workflow --preset check-gpu
 cmake --workflow --preset check-gpu-asan-ubsan
 cmake --workflow --preset check-loader-asan-ubsan
-cmake --workflow --preset check-jitprof
 ```
 
 The `unit-gpu` test preset's name filter is the one list of GPU workflow unit

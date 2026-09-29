@@ -146,9 +146,6 @@ private:
 
 	JitCacheGeometry geometry_{};
 	bool admitted_{};
-#if UML_ENABLE_JIT_PROFILE
-	bool profiled_standalone_{};
-#endif
 };
 
 /* Emulator runs take a process-wide session before entering a JIT-capable
