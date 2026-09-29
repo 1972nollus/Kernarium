@@ -7,8 +7,6 @@ target_include_directories(uml_network_device PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(uml_network_device PUBLIC UML::BridgeAbi)
 target_link_libraries(uml_network_device PRIVATE UML::RunRouting)
-set_target_properties(uml_network_device PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 if(UML_BUILD_NETWORK_PROVIDER)
     add_library(uml_network_provider STATIC
@@ -25,8 +23,6 @@ if(UML_BUILD_NETWORK_PROVIDER)
             ${CMAKE_CURRENT_SOURCE_DIR}/slirp)
     target_compile_definitions(uml_network_provider PRIVATE
         UML_SLIRP_TESTING=0)
-    set_target_properties(uml_network_provider PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
 
     target_link_libraries(uml_network_provider PUBLIC UML::BridgeAbi)
     target_link_libraries(uml_network_provider PRIVATE

@@ -10,5 +10,3 @@ add_library(UML::DeviceSocketPaths ALIAS uml_device_socket_paths)
 uml_declare_architecture_target(uml_device_socket_paths device)
 target_include_directories(uml_device_socket_paths PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
-set_target_properties(uml_device_socket_paths PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)

@@ -50,8 +50,6 @@ target_include_directories(uml_run_routing PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(uml_run_routing PRIVATE
     UML_RUN_ROUTING_TESTING=0)
-set_target_properties(uml_run_routing PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 if(UML_BUILD_UNIT_TESTS)
     # The same source with its failure-injection points, for the routing
     # transaction tests; products compile it without them.
@@ -69,8 +67,6 @@ uml_declare_architecture_target(uml_host_topology platform)
 target_link_libraries(uml_host_topology PRIVATE UML::PlatformContract)
 target_include_directories(uml_host_topology PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
-set_target_properties(uml_host_topology PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_host_environment OBJECT apple/host_environment.mm)
 add_library(UML::HostEnvironment ALIAS uml_host_environment)
@@ -79,8 +75,6 @@ target_link_libraries(uml_host_environment PRIVATE
     UML::PlatformContract)
 target_include_directories(uml_host_environment PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
-set_target_properties(uml_host_environment PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_guest_files OBJECT guest_files.cpp)
 add_library(UML::GuestFiles ALIAS uml_guest_files)
@@ -88,8 +82,6 @@ uml_declare_architecture_target(uml_guest_files platform)
 target_link_libraries(uml_guest_files PRIVATE UML::PlatformContract)
 target_include_directories(uml_guest_files PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
-set_target_properties(uml_guest_files PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_platform_component INTERFACE)
 add_library(UML::PlatformComponent ALIAS uml_platform_component)

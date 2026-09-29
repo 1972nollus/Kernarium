@@ -21,7 +21,6 @@ target_include_directories(uml_static_runtime PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_definitions(uml_static_runtime PRIVATE
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
-set_target_properties(uml_static_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_runtime_context OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/context.cpp
@@ -39,8 +38,6 @@ target_include_directories(uml_runtime_context PRIVATE
 # JIT, but measurement rejects it for the workloads that matter: see G157.
 target_compile_definitions(uml_runtime_context PRIVATE
     UML_DEFAULT_EXECUTION_ENGINE_JIT=$<BOOL:${UML_TARGET_MACOS}>)
-set_target_properties(uml_runtime_context PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 # Process signal state an embedded kernel image leaves behind; the loader
 # closes this scope before it releases the image.
@@ -50,8 +47,6 @@ add_library(UML::RuntimeKernelSignals ALIAS uml_runtime_kernel_signals)
 uml_declare_architecture_target(uml_runtime_kernel_signals runtime)
 target_include_directories(uml_runtime_kernel_signals PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
-set_target_properties(uml_runtime_kernel_signals PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_runtime_guest_selector OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/guest_selector.cpp)
@@ -62,8 +57,6 @@ target_link_libraries(uml_runtime_guest_selector PRIVATE
     uml_static_guest_memory)
 target_include_directories(uml_runtime_guest_selector PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-set_target_properties(uml_runtime_guest_selector PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_runtime_entry OBJECT
     ${PROJECT_SOURCE_DIR}/darwin/runtime/bridge.cpp
@@ -79,8 +72,6 @@ target_link_libraries(uml_runtime_entry PRIVATE
 target_include_directories(uml_runtime_entry PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/platform)
-set_target_properties(uml_runtime_entry PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 if(UML_ENABLE_RUNTIME_PROFILING)
     add_library(uml_runtime_jit_profile_reporter OBJECT
@@ -91,8 +82,6 @@ if(UML_ENABLE_RUNTIME_PROFILING)
         UML::CpuContract)
     target_include_directories(uml_runtime_jit_profile_reporter PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    set_target_properties(uml_runtime_jit_profile_reporter PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
 endif()
 
 add_library(uml_runtime_objects INTERFACE)

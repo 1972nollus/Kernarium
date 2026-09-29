@@ -16,8 +16,6 @@ target_include_directories(uml_memory_shared_backing PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin)
 target_compile_definitions(uml_memory_shared_backing PRIVATE
     UML_WIRE_ANONYMOUS_GUEST_RAM=$<STREQUAL:${UML_APPLE_PLATFORM},ios>)
-set_target_properties(uml_memory_shared_backing PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 set(_uml_static_mmu_sources
     mmu/address_layout.cpp
@@ -34,7 +32,6 @@ target_compile_definitions(uml_static_mmu PRIVATE
     UML_MEMORY_ALLOCATION_TESTING=0
     UML_MEMORY_PROFILE_TESTING=0
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
-set_target_properties(uml_static_mmu PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_static_guest_memory OBJECT static_guest_memory.cpp)
 uml_declare_architecture_target(uml_static_guest_memory memory)
@@ -43,8 +40,6 @@ target_link_libraries(uml_static_guest_memory PRIVATE
     UML::MemoryContract)
 target_include_directories(uml_static_guest_memory PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-set_target_properties(uml_static_guest_memory PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 add_library(uml_memory_vm_bridge OBJECT mmu/static_api.cpp)
 uml_declare_architecture_target(uml_memory_vm_bridge memory)
@@ -68,8 +63,6 @@ target_compile_definitions(uml_memory_vm_bridge PRIVATE
     # embedded ELF runner is disabled.
     UML_MEMORY_HAS_NATIVE_VM=$<BOOL:${_uml_memory_has_native_vm}>
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
-set_target_properties(uml_memory_vm_bridge PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
 
 if(_uml_memory_has_native_vm)
     set(_uml_native_mmu_sources
@@ -81,7 +74,6 @@ if(_uml_memory_has_native_vm)
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
     target_compile_definitions(uml_native_mmu PRIVATE
         UML_MEMORY_ALLOCATION_TESTING=0)
-    set_target_properties(uml_native_mmu PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
 
 # Keep complete memory-object composition in the owning module. Consumers
@@ -122,8 +114,6 @@ if(UML_BUILD_UNIT_TESTS)
         UML_MEMORY_ALLOCATION_TESTING=1
         UML_MEMORY_PROFILE_TESTING=0
         UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
-    set_target_properties(uml_static_mmu_test_variant PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
 
     if(TARGET uml_native_mmu)
         add_library(uml_native_mmu_test_variant OBJECT
@@ -135,8 +125,6 @@ if(UML_BUILD_UNIT_TESTS)
             ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
         target_compile_definitions(uml_native_mmu_test_variant PUBLIC
             UML_MEMORY_ALLOCATION_TESTING=1)
-        set_target_properties(uml_native_mmu_test_variant PROPERTIES
-            POSITION_INDEPENDENT_CODE ON)
     endif()
 
     # The execution gate with its profile counters, for the profile test;

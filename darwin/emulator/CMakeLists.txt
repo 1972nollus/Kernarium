@@ -34,7 +34,6 @@ function(_uml_add_emulator_boundary TARGET ADMISSION_TESTING)
         UML_APPLE_PLATFORM_NAME="${UML_APPLE_PLATFORM}"
         UML_EMULATOR_HAS_KERNEL_RUNNER=$<BOOL:${UML_BUILD_KERNEL_RUNNER}>
         UML_EMULATOR_ADMISSION_TESTING=${ADMISSION_TESTING})
-    set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endfunction()
 
 _uml_add_emulator_boundary(uml_emulator_boundary 0)
@@ -73,7 +72,6 @@ target_include_directories(uml_emulator
 
 set_target_properties(uml_emulator PROPERTIES
     OUTPUT_NAME uml_emulator
-    POSITION_INDEPENDENT_CODE ON
     PUBLIC_HEADER
         "${PROJECT_SOURCE_DIR}/darwin/api/include/uml/emulator.h;${PROJECT_SOURCE_DIR}/darwin/api/include/uml/abi_identity.h")
 
@@ -112,8 +110,6 @@ if(_uml_need_admission_test_variant)
             ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
             ${PROJECT_SOURCE_DIR}/darwin/runtime
             ${CMAKE_CURRENT_SOURCE_DIR})
-    set_target_properties(uml_emulator_admission_test_variant PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
 endif()
 
 install(TARGETS uml_emulator

@@ -7,5 +7,3 @@ target_link_libraries(uml_device_guest_console PUBLIC UML::DeviceSocketPaths)
 target_include_directories(uml_device_guest_console
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${PROJECT_SOURCE_DIR}/darwin/device)
-set_target_properties(uml_device_guest_console PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)

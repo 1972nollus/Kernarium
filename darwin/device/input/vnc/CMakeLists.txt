@@ -5,5 +5,3 @@ add_library(UML::VncInput ALIAS uml_vnc_input)
 uml_declare_architecture_target(uml_vnc_input device)
 target_include_directories(uml_vnc_input
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-set_target_properties(uml_vnc_input PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
