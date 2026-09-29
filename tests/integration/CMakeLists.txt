@@ -49,17 +49,11 @@ if(UML_TEST_APPLE_AUDIO)
     add_subdirectory(audio)
 endif()
 
-set(_uml_integration_emulator uml-darwin)
-if(NOT TARGET "${_uml_integration_emulator}")
-    message(FATAL_ERROR
-        "Integration emulator target is unavailable: ${_uml_integration_emulator}")
-endif()
-
 # uml_add_guest_integration_test(NAME <test> SCRIPT <runner> [ARGS <arg>...]
 #     CPUS <n> [GPUS <n>] [LABELS <label>...] [TIMEOUT <seconds>])
 #
 # Registers a rootfs integration test that runs the Python <runner>, relative
-# to the calling directory, with the integration emulator and rootfs and then
+# to the calling directory, with uml-darwin and the integration rootfs and then
 # ARGS. It reserves CPUS processors, and GPUS GPUs, from the resource spec.
 function(uml_add_guest_integration_test)
     cmake_parse_arguments(_guest "" "NAME;SCRIPT;CPUS;GPUS;TIMEOUT"
@@ -76,7 +70,7 @@ function(uml_add_guest_integration_test)
         NAME "${_guest_NAME}"
         COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/${_guest_SCRIPT}"
-            --emulator "$<TARGET_FILE:${_uml_integration_emulator}>"
+            --emulator "$<TARGET_FILE:uml-darwin>"
             --rootfs "${UML_INTEGRATION_ROOTFS}"
             ${_guest_ARGS}
         LABELS ${_guest_LABELS}
@@ -99,7 +93,7 @@ if(UML_V4L2_PROBE_BINARY)
     uml_add_integration_test(NAME guest-v4l2-decode
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/video/run_v4l2_decode.py"
-            --emulator "$<TARGET_FILE:${_uml_integration_emulator}>"
+            --emulator "$<TARGET_FILE:uml-darwin>"
             --rootfs "${UML_INTEGRATION_ROOTFS}"
             --probe "${UML_V4L2_PROBE_BINARY}"
             --page-size "${_uml_video_page_size}"
@@ -121,7 +115,7 @@ if(UML_FUTEX_PROBE_BINARY)
     uml_add_integration_test(NAME guest-futex-atomic
         COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/futex/run_futex_atomic.py"
-            --emulator "$<TARGET_FILE:${_uml_integration_emulator}>"
+            --emulator "$<TARGET_FILE:uml-darwin>"
             --rootfs "${UML_INTEGRATION_ROOTFS}"
             --probe "${UML_FUTEX_PROBE_BINARY}"
             --page-size "${_uml_futex_page_size}"
@@ -150,7 +144,7 @@ add_custom_target(guest-smp-parallel
     COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
         ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/integration/smp/run_guest_smp.py
-        --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+        --emulator $<TARGET_FILE:uml-darwin>
         --rootfs ${UML_INTEGRATION_ROOTFS}
     DEPENDS uml-darwin
     COMMENT "Running standalone guest SMP integration suite"
@@ -164,7 +158,7 @@ function(uml_add_ltp_engine_campaign ENGINE)
         COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
             ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/tests/integration/ltp/run_guest_ltp.py
-            --emulator $<TARGET_FILE:${_uml_integration_emulator}>
+            --emulator $<TARGET_FILE:uml-darwin>
             --rootfs ${UML_INTEGRATION_ROOTFS}
             --manifest ${PROJECT_SOURCE_DIR}/tests/integration/ltp/verified-tests.tsv
             --modules-builtin ${_uml_integration_modules_builtin}
