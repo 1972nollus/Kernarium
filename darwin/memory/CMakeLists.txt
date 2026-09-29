@@ -29,9 +29,7 @@ target_link_libraries(uml_static_mmu PRIVATE UML::BridgeAbi UML::MemoryContract)
 target_include_directories(uml_static_mmu PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
 target_compile_definitions(uml_static_mmu PRIVATE
-    UML_MEMORY_ALLOCATION_TESTING=0
-    UML_MEMORY_PROFILE_TESTING=0
-    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
+    UML_MEMORY_ALLOCATION_TESTING=0)
 
 add_library(uml_static_guest_memory OBJECT static_guest_memory.cpp)
 uml_declare_architecture_target(uml_static_guest_memory memory)
@@ -61,8 +59,7 @@ endif()
 target_compile_definitions(uml_memory_vm_bridge PRIVATE
     # A caller-supplied native Mach-O kernel also needs this bridge when the
     # embedded ELF runner is disabled.
-    UML_MEMORY_HAS_NATIVE_VM=$<BOOL:${_uml_memory_has_native_vm}>
-    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
+    UML_MEMORY_HAS_NATIVE_VM=$<BOOL:${_uml_memory_has_native_vm}>)
 
 if(_uml_memory_has_native_vm)
     set(_uml_native_mmu_sources
@@ -111,9 +108,7 @@ if(UML_BUILD_UNIT_TESTS)
     target_include_directories(uml_static_mmu_test_variant PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
     target_compile_definitions(uml_static_mmu_test_variant PUBLIC
-        UML_MEMORY_ALLOCATION_TESTING=1
-        UML_MEMORY_PROFILE_TESTING=0
-        UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
+        UML_MEMORY_ALLOCATION_TESTING=1)
 
     if(TARGET uml_native_mmu)
         add_library(uml_native_mmu_test_variant OBJECT
@@ -126,21 +121,6 @@ if(UML_BUILD_UNIT_TESTS)
         target_compile_definitions(uml_native_mmu_test_variant PUBLIC
             UML_MEMORY_ALLOCATION_TESTING=1)
     endif()
-
-    # The execution gate with its profile counters, for the profile test;
-    # products compile it into uml_static_mmu without them.
-    add_library(uml_execution_gate_profile_test_variant OBJECT
-        mmu/execution_gate.cpp)
-    uml_declare_architecture_target(uml_execution_gate_profile_test_variant
-        memory)
-    target_link_libraries(uml_execution_gate_profile_test_variant PRIVATE
-        UML::BridgeAbi
-        UML::MemoryContract)
-    target_include_directories(uml_execution_gate_profile_test_variant PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
-    target_compile_definitions(uml_execution_gate_profile_test_variant PUBLIC
-        UML_MEMORY_PROFILE_TESTING=1
-        UML_RUNTIME_PROFILING=1)
 
     # The published address window alone, for its reader test; products
     # compile it into uml_static_mmu.
