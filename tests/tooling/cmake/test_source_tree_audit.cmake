@@ -196,13 +196,18 @@ list(APPEND ACCEPTED
 uml_write_audit_fixture(tests/fixture/CMakeLists.txt
     "add_test(NAME fixture COMMAND fixture)")
 uml_write_audit_fixture(tests/fixture/Suite.cmake "ADD_TEST (fixture fixture)")
+# CMake reads a carriage return as a space, before the command and before its
+# parenthesis alike.
+uml_write_audit_fixture(tests/fixture/Carriage.cmake
+    "\t\r add_test \r(NAME fixture COMMAND fixture)")
 uml_write_audit_fixture(tests/fixture/Commented.cmake
     "# add_test(NAME fixture COMMAND fixture)")
 uml_write_audit_fixture(cmake/UmlTesting.cmake
     "add_test(NAME fixture COMMAND fixture)")
 list(APPEND REJECTED
     "fixture/CMakeLists\\.txt: raw add_test bypasses"
-    "fixture/Suite\\.cmake: raw add_test bypasses")
+    "fixture/Suite\\.cmake: raw add_test bypasses"
+    "fixture/Carriage\\.cmake: raw add_test bypasses")
 list(APPEND ACCEPTED
     "Commented\\.cmake: raw add_test"
     "UmlTesting\\.cmake: raw add_test")
