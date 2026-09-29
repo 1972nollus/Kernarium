@@ -134,6 +134,14 @@ list(APPEND REJECTED
 uml_write_audit_fixture(darwin/memory/fixture/tab_layer.cpp
     "#include\t\"runtime/fixture.hpp\"")
 list(APPEND REJECTED "tab_layer\\.cpp: [A-Za-z]+ layer includes")
+# Neither memory nor device code depends on the CPU.
+uml_write_audit_fixture(darwin/memory/fixture/memory_cpu.cpp
+    "#include \"cpu/fixture.hpp\"")
+uml_write_audit_fixture(darwin/device/fixture/device_cpu.cpp
+    "#include <darwin/cpu/fixture.hpp>")
+list(APPEND REJECTED
+    "memory_cpu\\.cpp: memory layer includes the cpu layer"
+    "device_cpu\\.cpp: device layer includes the cpu layer")
 list(APPEND ACCEPTED
     "device_memory\\.cpp: [A-Za-z]+ layer"
     "runtime_device\\.cpp: [A-Za-z]+ layer")

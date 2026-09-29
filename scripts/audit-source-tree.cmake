@@ -192,8 +192,8 @@ endforeach()
 
 # The layers whose files each layer may not include.
 set(FORBIDDEN_LAYERS_cpu "runtime|device|app")
-set(FORBIDDEN_LAYERS_memory "runtime|device|app")
-set(FORBIDDEN_LAYERS_device "runtime|app")
+set(FORBIDDEN_LAYERS_memory "cpu|runtime|device|app")
+set(FORBIDDEN_LAYERS_device "cpu|runtime|app")
 set(FORBIDDEN_LAYERS_platform "cpu")
 set(LAYER_GLOBS)
 foreach(EXTENSION IN ITEMS
