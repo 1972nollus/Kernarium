@@ -38,7 +38,7 @@ index 3daaa5c4b35dfec4a053a4436c5aecd8003ec6df..960950e4030b167de0f480ac09b5d74b
  extern void uml_pm_wake(void);
  
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index c60a3bb348c207db5c9bbe31f009b40f0bc54a48..45ed6821735894d9d275021d20d05cfb8ba9f617 100644
+index 096e5ef82dca50bcf61ad08c2e752432d9d0abcd..ac0fc4c0d9f16b932eff1453a5051778c5f7a3df 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -229,6 +229,31 @@ static struct page *maybe_map(unsigned long virt, int is_write)

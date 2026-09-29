@@ -54,7 +54,7 @@ constexpr std::size_t x86_64_fs_base_slot = 17;
 constexpr std::size_t x86_64_gs_base_slot = 18;
 constexpr std::size_t x86_64_x87_significand_slot = 19;
 constexpr std::size_t x86_64_x87_exponent_slot = 27;
-constexpr std::size_t x86_32_tls_entry_count = 3;
+constexpr std::size_t x86_32_tls_entry_count = DARWIN_UML_COMPAT_TLS_COUNT;
 constexpr std::uint64_t x86_64_compatibility_syscall = 1ULL << 32U;
 constexpr std::uint64_t x86_64_compat32_execution = 1ULL << 33U;
 /* The x86 slice's PR_SET_TSC(PR_TSC_SIGSEGV) task state. */
@@ -302,8 +302,8 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 	cpu.compat_tls_present = 0;
 	if (cpu.execution_mode == x86_64::ExecutionMode::compat32) {
 		for (std::size_t index = 0; index < x86_32_tls_entry_count; ++index) {
-			const auto head = registers.pointer_auth_keys[index][0];
-			const auto tail = registers.pointer_auth_keys[index][1];
+			const auto head = registers.compat_tls[index][0];
+			const auto tail = registers.compat_tls[index][1];
 			if ((head | tail) == 0)
 				continue;
 			cpu.compat_tls_bases[index] = static_cast<std::uint32_t>(head >> 32U);

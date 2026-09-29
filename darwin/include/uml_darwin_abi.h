@@ -32,7 +32,7 @@ typedef unsigned long long darwin_uml_abi_u64;
 
 enum {
 	DARWIN_UML_VECTOR_REGISTER_COUNT = 32,
-	DARWIN_UML_POINTER_AUTH_KEY_COUNT = 5,
+	DARWIN_UML_COMPAT_TLS_COUNT = 3,
 };
 
 enum darwin_uml_guest_event {
@@ -41,7 +41,7 @@ enum darwin_uml_guest_event {
 	DARWIN_UML_EVENT_INTERRUPT = 3,
 	DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION = 4,
 	DARWIN_UML_EVENT_BREAKPOINT = 5,
-	DARWIN_UML_EVENT_GCS_FAULT = 6,
+	/* 6 was the guarded-control-stack fault of the removed FEAT_GCS. */
 	DARWIN_UML_EVENT_FLOATING_POINT_TRAP = 7,
 	DARWIN_UML_EVENT_PC_ALIGNMENT = 8,
 	DARWIN_UML_EVENT_STOP = 9,
@@ -98,7 +98,9 @@ struct darwin_uml_guest_registers {
 	darwin_uml_abi_s32 padding;
 	darwin_uml_abi_u64 fpmr;
 	darwin_uml_abi_u64 svcr;
-	darwin_uml_abi_u64 pointer_auth_keys[DARWIN_UML_POINTER_AUTH_KEY_COUNT][2];
+	/* The i386 TLS descriptors of an x86_64-userspace kernel's compat
+	 * task, one struct user_desc each; zero for every other task. */
+	darwin_uml_abi_u64 compat_tls[DARWIN_UML_COMPAT_TLS_COUNT][2];
 };
 
 struct darwin_uml_guest_fp_registers {
@@ -114,8 +116,8 @@ struct darwin_uml_guest_fp_registers {
 #define DARWIN_UML_ABI_GUEST_REGISTERS_FAULT_OFFSET 280U
 #define DARWIN_UML_ABI_GUEST_REGISTERS_SYSCALL_OFFSET 304U
 #define DARWIN_UML_ABI_GUEST_REGISTERS_FPMR_OFFSET 320U
-#define DARWIN_UML_ABI_GUEST_REGISTERS_POINTER_AUTH_KEYS_OFFSET 336U
-#define DARWIN_UML_ABI_GUEST_REGISTERS_SIZE 416U
+#define DARWIN_UML_ABI_GUEST_REGISTERS_COMPAT_TLS_OFFSET 336U
+#define DARWIN_UML_ABI_GUEST_REGISTERS_SIZE 384U
 #define DARWIN_UML_ABI_GUEST_FP_REGISTERS_SIZE 528U
 
 #if defined(__cplusplus)
@@ -137,8 +139,8 @@ static_assert(offsetof(struct darwin_uml_guest_registers, syscall) ==
 		DARWIN_UML_ABI_GUEST_REGISTERS_SYSCALL_OFFSET);
 static_assert(offsetof(struct darwin_uml_guest_registers, fpmr) ==
 		DARWIN_UML_ABI_GUEST_REGISTERS_FPMR_OFFSET);
-static_assert(offsetof(struct darwin_uml_guest_registers, pointer_auth_keys) ==
-		DARWIN_UML_ABI_GUEST_REGISTERS_POINTER_AUTH_KEYS_OFFSET);
+static_assert(offsetof(struct darwin_uml_guest_registers, compat_tls) ==
+		DARWIN_UML_ABI_GUEST_REGISTERS_COMPAT_TLS_OFFSET);
 static_assert(sizeof(struct darwin_uml_guest_registers) ==
 		DARWIN_UML_ABI_GUEST_REGISTERS_SIZE);
 static_assert(sizeof(struct darwin_uml_faultinfo) == 24U);

@@ -47,7 +47,7 @@ index 1b1a49ace5a0613dda53b4b7ed026af383611974..f3d75ef6be4c70c8af7123526855df9e
  extern int raw(int fd);
  extern void setup_machinename(char *machine_out);
 diff --git a/arch/um/kernel/skas/uaccess.c b/arch/um/kernel/skas/uaccess.c
-index 453006a2c76ad4c89f7e65640c0637593b85ace9..3d88f6421646d160d8fba2180810f92492c1ea55 100644
+index 72373f2d1d2412dfdb81f84a374c8c30795eb695..3c06ba294795ae3254c49f74e3c1c8b3aa1c8dd9 100644
 --- a/arch/um/kernel/skas/uaccess.c
 +++ b/arch/um/kernel/skas/uaccess.c
 @@ -208,26 +208,20 @@ static struct page *maybe_map(unsigned long virt, int is_write)
