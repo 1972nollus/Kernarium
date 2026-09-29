@@ -54,14 +54,14 @@ it in two allocators larger than 16 MiB.
  src/kosmickrisp/vulkan/kk_cmd_buffer.h        |   7 +
  src/kosmickrisp/vulkan/kk_device.c            |  15 +-
  src/kosmickrisp/vulkan/kk_device.h            |  14 +
- src/kosmickrisp/vulkan/kk_queue.c             | 186 ++++++++--
+ src/kosmickrisp/vulkan/kk_queue.c             | 177 +++++++--
  src/kosmickrisp/vulkan/kk_queue.h             |   6 +
  src/kosmickrisp/vulkan/meson.build            |  41 +++
  .../tests/test_command_allocator_budget.c     | 343 ++++++++++++++++++
  .../vulkan/tests/test_command_completion.m    |  57 ++-
  .../vulkan/tests/test_command_pool_release.m  |   4 +-
  .../vulkan/tests/test_command_resubmit.c      | 273 ++++++++++++++
- 14 files changed, 945 insertions(+), 139 deletions(-)
+ 14 files changed, 941 insertions(+), 134 deletions(-)
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_allocator_budget.c
  create mode 100644 src/kosmickrisp/vulkan/tests/test_command_resubmit.c
 
@@ -116,10 +116,10 @@ index d87a8dc077cdb06eab7902968a3aec805e9bb356..1c5ecad4c45b7daef95a04041addbf91
  mtl_begin_command_buffer(mtl_command_buffer *command_buffer,
                           mtl_command_allocator *allocator)
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.c b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-index 09bd4024837bdb01f2966fc1efb64dd7cb8ed43b..dca01ef8c07903f18046695efa79529b81b61a28 100644
+index 6dfad3baa264126aed1ae40623c3f10b60ed431f..e79eb91ae6a693cd3bca677fa0209eece0347ae4 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.c
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.c
-@@ -100,6 +100,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
+@@ -101,6 +101,7 @@ kk_destroy_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer)
     cs_flush(cmd);
  
     mtl_release(cmd->argument_table);
@@ -127,7 +127,7 @@ index 09bd4024837bdb01f2966fc1efb64dd7cb8ed43b..dca01ef8c07903f18046695efa79529b
     kk_destroy_encoder_state(&cmd->cmp[0]);
     kk_destroy_encoder_state(&cmd->cmp[1]);
     kk_destroy_encoder_state(&cmd->gfx);
-@@ -126,13 +127,31 @@ kk_acquire_command_allocator(struct kk_device *dev)
+@@ -128,13 +129,31 @@ kk_acquire_command_allocator(struct kk_device *dev)
     return allocator ? allocator : mtl_new_command_allocator(dev->mtl_handle);
  }
  
@@ -163,7 +163,7 @@ index 09bd4024837bdb01f2966fc1efb64dd7cb8ed43b..dca01ef8c07903f18046695efa79529b
  }
  
  static VkResult
-@@ -162,14 +181,9 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+@@ -164,14 +183,9 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
  
     cmd->pre_gfx = &cmd->cmp[0];
     cmd->post_gfx = &cmd->cmp[1];
@@ -181,7 +181,7 @@ index 09bd4024837bdb01f2966fc1efb64dd7cb8ed43b..dca01ef8c07903f18046695efa79529b
  
     {
        mtl_argument_table_descriptor *desc = mtl_new_argument_table_descriptor();
-@@ -204,23 +218,19 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
+@@ -207,23 +221,19 @@ kk_create_cmd_buffer(struct vk_command_pool *vk_pool,
  
     return VK_SUCCESS;
  
@@ -211,7 +211,7 @@ index 09bd4024837bdb01f2966fc1efb64dd7cb8ed43b..dca01ef8c07903f18046695efa79529b
  }
  
  void
-@@ -232,9 +242,9 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -235,9 +245,9 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
     cs_flush(cmd);
     kk_cmd_release_resources(dev, cmd);
  
@@ -224,7 +224,7 @@ index 09bd4024837bdb01f2966fc1efb64dd7cb8ed43b..dca01ef8c07903f18046695efa79529b
  
     cmd->uploader.bo = NULL;
     cmd->uploader.offset = 0;
-@@ -247,23 +257,18 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
+@@ -250,23 +260,18 @@ kk_reset_cmd_buffer_internal(struct kk_cmd_buffer *cmd)
  
  static void
  kk_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
@@ -254,7 +254,7 @@ index 09bd4024837bdb01f2966fc1efb64dd7cb8ed43b..dca01ef8c07903f18046695efa79529b
     cmd->submitted = false;
     cmd->one_time_submit = false;
  }
-@@ -274,17 +279,6 @@ const struct vk_command_buffer_ops kk_cmd_buffer_ops = {
+@@ -277,17 +282,6 @@ const struct vk_command_buffer_ops kk_cmd_buffer_ops = {
     .destroy = kk_destroy_cmd_buffer,
  };
  
@@ -272,7 +272,7 @@ index 09bd4024837bdb01f2966fc1efb64dd7cb8ed43b..dca01ef8c07903f18046695efa79529b
  VKAPI_ATTR VkResult VKAPI_CALL
  kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                        const VkCommandBufferBeginInfo *pBeginInfo)
-@@ -292,18 +286,6 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+@@ -295,18 +289,6 @@ kk_BeginCommandBuffer(VkCommandBuffer commandBuffer,
     VK_FROM_HANDLE(kk_cmd_buffer, cmd, commandBuffer);
  
     kk_reset_cmd_buffer(&cmd->vk, 0u);
@@ -291,7 +291,7 @@ index 09bd4024837bdb01f2966fc1efb64dd7cb8ed43b..dca01ef8c07903f18046695efa79529b
     vk_command_buffer_begin(&cmd->vk, pBeginInfo);
     cmd->one_time_submit =
        pBeginInfo->flags & VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-@@ -339,11 +321,8 @@ static void kk_stop_encoder(struct kk_cmd_buffer *cmd,
+@@ -342,11 +324,8 @@ static void kk_stop_encoder(struct kk_cmd_buffer *cmd,
  static mtl_command_buffer *
  cs_open_main(struct kk_cmd_buffer *cmd)
  {
@@ -305,17 +305,17 @@ index 09bd4024837bdb01f2966fc1efb64dd7cb8ed43b..dca01ef8c07903f18046695efa79529b
     return cmd->main.cmd_buf;
  }
  
-@@ -388,6 +367,9 @@ cs_start_render(struct kk_cmd_buffer *cmd)
+@@ -401,6 +380,9 @@ cs_start_render(struct kk_cmd_buffer *cmd)
  
     cmd->main.render_follows_work = cmd->main.cmd_buf != NULL;
     cmd->gfx.cmd_buf = cs_open_main(cmd);
 +   /* The recording has already failed; its draws record nothing. */
 +   if (!cmd->gfx.cmd_buf)
 +      return;
+    if (layered)
+       cmd->main.queue_wait = true;
     cmd->gfx.in_main = true;
-    cmd->gfx.encoder = mtl_new_render_command_encoder_with_descriptor(
-       cmd->gfx.cmd_buf, state->render_pass_descriptor);
-@@ -454,13 +436,10 @@ static void
+@@ -469,13 +451,10 @@ static void
  kk_start_compute_encoder(struct kk_cmd_buffer *cmd,
                           struct kk_encoder_state *es, bool in_main)
  {
@@ -334,7 +334,7 @@ index 09bd4024837bdb01f2966fc1efb64dd7cb8ed43b..dca01ef8c07903f18046695efa79529b
     es->encoder = mtl_new_compute_command_encoder(es->cmd_buf);
  
 diff --git a/src/kosmickrisp/vulkan/kk_cmd_buffer.h b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
-index 407655ec567a1030142c9c618f3967e353d195ea..22ad4cb0130e346b6cc177f5643a8c774cc04fbb 100644
+index 80f9e0229f910e56cad37da173924c29be20652d..83b586ca33347b5aec06c7d6b31c77d57c6f3a37 100644
 --- a/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 +++ b/src/kosmickrisp/vulkan/kk_cmd_buffer.h
 @@ -335,6 +335,9 @@ struct kk_ts_sample {
@@ -347,7 +347,7 @@ index 407655ec567a1030142c9c618f3967e353d195ea..22ad4cb0130e346b6cc177f5643a8c77
     mtl_command_allocator *allocator;
     mtl_command_buffer *cmd_buf;
     /* Pending timestamp resolves (struct kk_ts_resolve), flushed at cs_end. */
-@@ -418,6 +421,10 @@ struct kk_cmd_buffer {
+@@ -425,6 +428,10 @@ struct kk_cmd_buffer {
     /* Metal command buffers are single-shot: a resubmission must re-record
      * by replaying the enqueued commands (see rerecord_cmd_buffer). */
     bool submitted;
@@ -436,7 +436,7 @@ index b6abffab30bf792984aa9890ae4d44b0abf3ba76..2510dec553f9390ee83dc6e421672e5c
  
  struct kk_command_allocator_cache *kk_command_allocator_cache_create(void);
 diff --git a/src/kosmickrisp/vulkan/kk_queue.c b/src/kosmickrisp/vulkan/kk_queue.c
-index 8087aeb090f7a451e67d6aa2fd0bee91579130e5..3f7064d74a2cba668a749862551825410a7f13ad 100644
+index 0decc0c1ac88df0ef1269a6ddf8d01007da76a82..5ddfada86b6bdd7f86be41081aaa625b1e9185f3 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.c
 +++ b/src/kosmickrisp/vulkan/kk_queue.c
 @@ -19,6 +19,11 @@
@@ -644,8 +644,8 @@ index 8087aeb090f7a451e67d6aa2fd0bee91579130e5..3f7064d74a2cba668a74986255182541
 +   return VK_SUCCESS;
  }
  
- static VkResult
-@@ -544,8 +666,12 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+ /* KK_WORKAROUND_18: everything committed after this runs only once
+@@ -579,8 +701,12 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
  
        /* Submitted command buffers require re-recording since Metal does not
         * support multiple submissions. */
@@ -660,38 +660,38 @@ index 8087aeb090f7a451e67d6aa2fd0bee91579130e5..3f7064d74a2cba668a74986255182541
        cmd_buffer->submitted = true;
  
        mtl_command_buffer **cmds =
-@@ -576,26 +702,28 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
-                                      "Failed to allocate Metal submission feedback");
+@@ -614,13 +740,11 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+             parts[p].submission = kk_queue_submission_new(queue->feedback, 0u);
+             allocated = parts[p].options && parts[p].submission;
           }
- 
 -         struct kk_completed_recording *recording = NULL;
--         if (cmd_buffer->one_time_submit) {
+-         if (allocated && cmd_buffer->one_time_submit) {
 -            recording = kk_detach_completed_recording(cmd_buffer,
 -                                                      queue->mtl_handle);
--            if (!recording) {
--               mtl_release(options);
--               kk_queue_feedback_unref(submission->feedback);
--               free(submission);
--               return vk_queue_set_lost(&queue->vk,
--                                        "Failed to allocate Metal completion storage");
--            }
--            mtl_commit_options_add_feedback_handler(
--               options, kk_completed_recording_callback, recording);
+-            allocated = recording != NULL;
+-         }
+-         if (!allocated) {
 +         struct kk_completed_recording *recording =
-+            kk_detach_completed_recording(cmd_buffer, queue->mtl_handle);
++            allocated
++               ? kk_detach_completed_recording(cmd_buffer, queue->mtl_handle)
++               : NULL;
 +         if (!recording) {
-+            mtl_release(options);
-+            kk_queue_feedback_unref(submission->feedback);
-+            free(submission);
-+            return vk_queue_set_lost(&queue->vk,
-+                                     "Failed to allocate Metal completion storage");
+             kk_commit_parts_free(parts, part_count);
+             /* Earlier waits or command buffers may already be queued. */
+             return vk_queue_set_lost(&queue->vk,
+@@ -641,7 +765,7 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
+              * the signals ordered behind it. */
+             struct kk_queue_submission *submission = parts[p].submission;
+             submission->serial = kk_queue_reserve_serial(queue->feedback);
+-            if (recording && p + 1u == part_count)
++            if (p + 1u == part_count)
+                mtl_commit_options_add_feedback_handler(
+                   parts[p].options, kk_completed_recording_callback,
+                   recording);
+@@ -654,8 +778,13 @@ kk_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit)
           }
-+         mtl_commit_options_add_feedback_handler(
-+            options, kk_completed_recording_callback, recording);
-          mtl_commit_options_add_feedback_handler(
-             options, queue->feedback_callback, submission);
-          mtl_command_queue_commit(queue->mtl_handle, cmds, count, options);
-          mtl_release(options);
+          assert(start == count && w == wait_count);
+          free(parts);
 -         if (recording)
 -            kk_completed_recording_unref(recording);
 +         kk_completed_recording_release_storage(recording);
@@ -705,10 +705,10 @@ index 8087aeb090f7a451e67d6aa2fd0bee91579130e5..3f7064d74a2cba668a74986255182541
  
        if (cmd_buffer->drawable) {
 diff --git a/src/kosmickrisp/vulkan/kk_queue.h b/src/kosmickrisp/vulkan/kk_queue.h
-index d33225848e610e7f93746cb46d86556bde7e2b86..9c014699d4c9ddda040d181c4cdd35ccaad62a2b 100644
+index ae6c1a741200462b3214208228a99db68f8b5460..f3f129f7ba523dfbbf5df7eda2c3e07010a33733 100644
 --- a/src/kosmickrisp/vulkan/kk_queue.h
 +++ b/src/kosmickrisp/vulkan/kk_queue.h
-@@ -177,6 +177,12 @@ kk_queue_has_stopped(const struct kk_queue_progress *progress,
+@@ -181,6 +181,12 @@ kk_queue_has_stopped(const struct kk_queue_progress *progress,
     return now - clock->since >= KK_STOPPED_QUEUE_TIMEOUT_NS;
  }
  
