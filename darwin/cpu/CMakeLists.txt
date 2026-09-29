@@ -83,8 +83,6 @@ if(UML_BUILD_X86_64_GUEST)
         PRIVATE UML::CpuContract)
     target_include_directories(uml_x86_64_gadgets PUBLIC
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_options(uml_x86_64_gadgets PRIVATE
-        -Wall -Wextra -Werror)
     target_compile_definitions(uml_x86_64_gadgets PRIVATE
         UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
@@ -108,7 +106,8 @@ if(UML_BUILD_X86_64_GUEST)
         COMMENT "Generating the x86-64 register-baked gadget bank"
         VERBATIM)
     set_source_files_properties(x86_64/gadgets/engine.S PROPERTIES
-        OBJECT_DEPENDS ${_uml_x86_64_baked_dir}/baked_scalar.inc)
+        OBJECT_DEPENDS ${_uml_x86_64_baked_dir}/baked_scalar.inc
+        COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
     target_include_directories(uml_x86_64_gadgets PRIVATE
         ${_uml_x86_64_baked_dir})
 endif()
@@ -125,8 +124,6 @@ target_link_libraries(uml_arm64_execution_helpers PRIVATE
     UML::CpuContract)
 target_include_directories(uml_arm64_execution_helpers PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_arm64_execution_helpers PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml_arm64_execution_helpers PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
@@ -176,8 +173,6 @@ target_link_libraries(uml_arm64_gadgets PRIVATE UML::BridgeAbi UML::CpuContract)
 target_link_libraries(uml_arm64_gadgets PUBLIC uml_arm64_execution_helpers)
 target_include_directories(uml_arm64_gadgets PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_arm64_gadgets PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml_arm64_gadgets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(uml_arm64_gadgets PUBLIC
     UML::GadgetHistogramConfiguration)
@@ -226,8 +221,6 @@ target_link_libraries(uml_arm64_jit PRIVATE
     UML::CpuContract)
 target_include_directories(uml_arm64_jit PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_arm64_jit PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml_arm64_jit PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(_uml_cpu_jit_executor_sources
@@ -265,7 +258,6 @@ target_link_libraries(uml_arm64_jit_executor PUBLIC
     uml_arm64_execution_helpers)
 target_include_directories(uml_arm64_jit_executor PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_arm64_jit_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_jit_executor PRIVATE
     UML_JIT_RUNTIME_DIAGNOSTICS=0)
 set_target_properties(uml_arm64_jit_executor PROPERTIES
@@ -288,8 +280,6 @@ if(UML_BUILD_UNIT_TESTS)
         uml_arm64_execution_helpers)
     target_include_directories(uml_arm64_jit_diagnostics_executor PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_options(uml_arm64_jit_diagnostics_executor PRIVATE
-        -Wall -Wextra -Werror)
     target_compile_definitions(uml_arm64_jit_diagnostics_executor PRIVATE
         UML_JIT_RUNTIME_DIAGNOSTICS=1)
     set_target_properties(uml_arm64_jit_diagnostics_executor PROPERTIES
@@ -332,8 +322,6 @@ if(UML_BUILD_UNIT_TESTS)
         uml_arm64_execution_helpers)
     target_include_directories(uml_arm64_jit_test_support PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_options(uml_arm64_jit_test_support PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
     set_target_properties(uml_arm64_jit_test_support PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
 endif()
@@ -347,7 +335,6 @@ target_link_libraries(uml_arm64_gadget_executor PRIVATE
 target_link_libraries(uml_arm64_gadget_executor PUBLIC uml_arm64_gadgets)
 target_include_directories(uml_arm64_gadget_executor PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_arm64_gadget_executor PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_arm64_gadget_executor PRIVATE
     UML_GADGET_CACHE_CENSUS=$<BOOL:${UML_GADGET_CACHE_CENSUS}>
     UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
@@ -364,7 +351,6 @@ target_link_libraries(uml_arm64_gadget_engine PRIVATE
 target_link_libraries(uml_arm64_gadget_engine PUBLIC uml_arm64_gadget_executor)
 target_include_directories(uml_arm64_gadget_engine PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_arm64_gadget_engine PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_arm64_gadget_engine PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
@@ -378,7 +364,6 @@ target_link_libraries(uml_arm64_jit_engine PUBLIC
     uml_arm64_jit_executor)
 target_include_directories(uml_arm64_jit_engine PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_arm64_jit_engine PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_arm64_jit_engine PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
@@ -393,7 +378,6 @@ target_link_libraries(uml_cpu_engine_factory PUBLIC
     uml_arm64_execution_helpers)
 target_include_directories(uml_cpu_engine_factory PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_cpu_engine_factory PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_cpu_engine_factory PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 

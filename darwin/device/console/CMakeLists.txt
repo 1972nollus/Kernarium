@@ -11,8 +11,6 @@ target_include_directories(uml_console_device
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
-target_compile_options(uml_console_device PRIVATE
-    -Wall -Wextra -Werror)
 target_link_libraries(uml_console_device
     PUBLIC UML::DeviceSocketPaths
     PRIVATE UML::VhostUserTransport)

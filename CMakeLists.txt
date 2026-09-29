@@ -4,6 +4,10 @@ project(uml_apple LANGUAGES C CXX ASM)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# The one owner of the warning policy: every first-party C++ and
+# Objective-C++ source builds warning-clean. Hand-written assembly opts in
+# with a source COMPILE_OPTIONS property.
+add_compile_options("$<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall;-Wextra;-Werror>")
 
 list(APPEND CMAKE_MODULE_PATH
     "${PROJECT_SOURCE_DIR}/cmake"

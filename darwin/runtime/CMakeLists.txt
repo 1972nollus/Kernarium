@@ -19,7 +19,6 @@ target_link_libraries(uml_static_runtime PRIVATE
     uml_static_guest_memory)
 target_include_directories(uml_static_runtime PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_static_runtime PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_static_runtime PRIVATE
     UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 set_target_properties(uml_static_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -36,7 +35,6 @@ target_link_libraries(uml_runtime_context PRIVATE
     uml_static_guest_memory)
 target_include_directories(uml_runtime_context PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_runtime_context PRIVATE -Wall -Wextra -Werror)
 # The Simulator can publish into a MAP_JIT arena and so could default to the
 # JIT, but measurement rejects it for the workloads that matter: see G157.
 target_compile_definitions(uml_runtime_context PRIVATE
@@ -52,8 +50,6 @@ add_library(UML::RuntimeKernelSignals ALIAS uml_runtime_kernel_signals)
 uml_declare_architecture_target(uml_runtime_kernel_signals runtime)
 target_include_directories(uml_runtime_kernel_signals PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin/runtime)
-target_compile_options(uml_runtime_kernel_signals PRIVATE
-    -Wall -Wextra -Werror)
 set_target_properties(uml_runtime_kernel_signals PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
@@ -66,8 +62,6 @@ target_link_libraries(uml_runtime_guest_selector PRIVATE
     uml_static_guest_memory)
 target_include_directories(uml_runtime_guest_selector PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_runtime_guest_selector PRIVATE
-    -Wall -Wextra -Werror)
 set_target_properties(uml_runtime_guest_selector PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
@@ -85,7 +79,6 @@ target_link_libraries(uml_runtime_entry PRIVATE
 target_include_directories(uml_runtime_entry PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/platform)
-target_compile_options(uml_runtime_entry PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_runtime_entry PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
@@ -98,8 +91,6 @@ if(UML_ENABLE_RUNTIME_PROFILING)
         UML::CpuContract)
     target_include_directories(uml_runtime_jit_profile_reporter PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_options(uml_runtime_jit_profile_reporter PRIVATE
-        -Wall -Wextra -Werror)
     set_target_properties(uml_runtime_jit_profile_reporter PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
 endif()

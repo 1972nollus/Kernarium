@@ -14,8 +14,6 @@ uml_declare_architecture_target(uml_memory_shared_backing memory)
 target_link_libraries(uml_memory_shared_backing PUBLIC UML::MemoryContract)
 target_include_directories(uml_memory_shared_backing PUBLIC
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_memory_shared_backing PRIVATE
-    -Wall -Wextra -Werror)
 target_compile_definitions(uml_memory_shared_backing PRIVATE
     UML_WIRE_ANONYMOUS_GUEST_RAM=$<STREQUAL:${UML_APPLE_PLATFORM},ios>)
 set_target_properties(uml_memory_shared_backing PROPERTIES
@@ -32,7 +30,6 @@ uml_declare_architecture_target(uml_static_mmu memory)
 target_link_libraries(uml_static_mmu PRIVATE UML::BridgeAbi UML::MemoryContract)
 target_include_directories(uml_static_mmu PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
-target_compile_options(uml_static_mmu PRIVATE -Wall -Wextra -Werror)
 target_compile_definitions(uml_static_mmu PRIVATE
     UML_MEMORY_ALLOCATION_TESTING=0
     UML_MEMORY_PROFILE_TESTING=0
@@ -46,7 +43,6 @@ target_link_libraries(uml_static_guest_memory PRIVATE
     UML::MemoryContract)
 target_include_directories(uml_static_guest_memory PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_static_guest_memory PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml_static_guest_memory PROPERTIES
     POSITION_INDEPENDENT_CODE ON)
 
@@ -58,7 +54,6 @@ target_link_libraries(uml_memory_vm_bridge PRIVATE
 target_include_directories(uml_memory_vm_bridge PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
     ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
-target_compile_options(uml_memory_vm_bridge PRIVATE -Wall -Wextra -Werror)
 set(_uml_memory_has_native_vm ${UML_TARGET_MACOS})
 if(UML_APPLE_PLATFORM MATCHES "^ios" AND
    UML_BUILD_KERNEL_RUNNER)
@@ -84,7 +79,6 @@ if(_uml_memory_has_native_vm)
     target_link_libraries(uml_native_mmu PRIVATE UML::MemoryContract)
     target_include_directories(uml_native_mmu PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
-    target_compile_options(uml_native_mmu PRIVATE -Wall -Wextra -Werror)
     target_compile_definitions(uml_native_mmu PRIVATE
         UML_MEMORY_ALLOCATION_TESTING=0)
     set_target_properties(uml_native_mmu PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -124,8 +118,6 @@ if(UML_BUILD_UNIT_TESTS)
         UML::MemoryContract)
     target_include_directories(uml_static_mmu_test_variant PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
-    target_compile_options(uml_static_mmu_test_variant PRIVATE
-        -Wall -Wextra -Werror)
     target_compile_definitions(uml_static_mmu_test_variant PUBLIC
         UML_MEMORY_ALLOCATION_TESTING=1
         UML_MEMORY_PROFILE_TESTING=0
@@ -141,8 +133,6 @@ if(UML_BUILD_UNIT_TESTS)
             UML::MemoryContract)
         target_include_directories(uml_native_mmu_test_variant PRIVATE
             ${PROJECT_SOURCE_DIR}/darwin/memory/mmu)
-        target_compile_options(uml_native_mmu_test_variant PRIVATE
-            -Wall -Wextra -Werror)
         target_compile_definitions(uml_native_mmu_test_variant PUBLIC
             UML_MEMORY_ALLOCATION_TESTING=1)
         set_target_properties(uml_native_mmu_test_variant PROPERTIES
@@ -163,8 +153,6 @@ if(UML_BUILD_UNIT_TESTS)
     target_compile_definitions(uml_execution_gate_profile_test_variant PUBLIC
         UML_MEMORY_PROFILE_TESTING=1
         UML_RUNTIME_PROFILING=1)
-    target_compile_options(uml_execution_gate_profile_test_variant PRIVATE
-        -Wall -Wextra -Werror)
 
     # The published address window alone, for its reader test; products
     # compile it into uml_static_mmu.
@@ -174,8 +162,6 @@ if(UML_BUILD_UNIT_TESTS)
         UML::MemoryContract)
     target_include_directories(uml_address_layout_test_variant PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/mmu)
-    target_compile_options(uml_address_layout_test_variant PRIVATE
-        -Wall -Wextra -Werror)
 
     add_library(uml_memory_test_component INTERFACE)
     add_library(UML::MemoryTestComponent ALIAS uml_memory_test_component)

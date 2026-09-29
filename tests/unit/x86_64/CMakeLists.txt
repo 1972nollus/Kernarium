@@ -7,8 +7,6 @@ target_link_libraries(uml_x86_64_gadget_bootstrap_tests PRIVATE
     UML::CpuContract)
 target_include_directories(uml_x86_64_gadget_bootstrap_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_x86_64_gadget_bootstrap_tests PRIVATE
-    -Wall -Wextra -Werror)
 uml_add_unit_test(
     NAME x86-64-gadget-bootstrap
     COMMAND uml_x86_64_gadget_bootstrap_tests
@@ -21,8 +19,6 @@ target_link_libraries(uml_x86_64_code_page_registry_tests PRIVATE
     UML::CpuContract)
 target_include_directories(uml_x86_64_code_page_registry_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_x86_64_code_page_registry_tests PRIVATE
-    -Wall -Wextra -Werror)
 uml_add_unit_test(
     NAME x86-64-code-page-registry
     COMMAND uml_x86_64_code_page_registry_tests
@@ -45,8 +41,6 @@ target_link_libraries(uml_x86_64_fex_asm_runner PRIVATE
     UML::CpuContract)
 target_include_directories(uml_x86_64_fex_asm_runner PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_options(uml_x86_64_fex_asm_runner PRIVATE
-    -Wall -Wextra -Werror)
 set_target_properties(uml_x86_64_fex_asm_runner PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 uml_add_unit_test(

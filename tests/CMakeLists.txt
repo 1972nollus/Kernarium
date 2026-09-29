@@ -15,7 +15,7 @@ if(_uml_need_vnc_fixtures AND TARGET uml_gpu_service)
     target_include_directories(uml-virtio-gpu PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
     target_compile_options(uml-virtio-gpu PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     set_target_properties(uml-virtio-gpu PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
@@ -25,7 +25,7 @@ if(_uml_need_vnc_fixtures AND TARGET uml_gpu_service)
         UML::ThirdPartyVncClient
         "-framework CoreFoundation")
     target_compile_options(uml-vnc-smoke-client PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
     set_target_properties(uml-vnc-smoke-client PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 endif()
@@ -42,16 +42,12 @@ if(UML_BUILD_UNIT_TESTS)
         UML::PlatformContract)
     target_include_directories(uml_host_capabilities_test_support PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_options(uml_host_capabilities_test_support PRIVATE
-        -Wall -Wextra -Werror)
     # Unit tests keep scratch files in the per-test build-tree directory that
     # uml_add_unit_test() names, instead of a host-global path.
     add_library(uml_test_scratch_directory OBJECT
         unit/scratch/scratch_directory.cpp)
     target_include_directories(uml_test_scratch_directory PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/unit/scratch)
-    target_compile_options(uml_test_scratch_directory PRIVATE
-        -Wall -Wextra -Werror)
     # One Mach VM region query for every test that inspects this task's map.
     add_library(uml_test_mach_vm_region INTERFACE)
     target_include_directories(uml_test_mach_vm_region INTERFACE
@@ -63,8 +59,6 @@ if(UML_BUILD_UNIT_TESTS)
     target_link_libraries(uml_static_mmu_test_support PRIVATE UML::BridgeAbi)
     target_include_directories(uml_static_mmu_test_support PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/unit/static_mmu)
-    target_compile_options(uml_static_mmu_test_support PRIVATE
-        -Wall -Wextra -Werror)
     # Unit binaries are independent consumers of the same scoped build
     # configuration as production targets; no directory-global definitions
     # are needed.

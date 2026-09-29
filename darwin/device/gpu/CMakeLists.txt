@@ -6,7 +6,7 @@ function(uml_configure_gpu_component target)
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
     target_compile_options(${target} PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
 endfunction()
 
 if(TARGET uml_third_party_kosmickrisp)

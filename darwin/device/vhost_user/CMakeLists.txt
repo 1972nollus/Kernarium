@@ -7,7 +7,7 @@ function(uml_configure_vhost_user_component target)
     target_include_directories(${target} PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_options(${target} PRIVATE
-        -Wall -Wextra -Werror -Wno-deprecated-declarations)
+        -Wno-deprecated-declarations)
 endfunction()
 
 add_library(uml_vhost_user_wire STATIC vhost_user_message.cpp)

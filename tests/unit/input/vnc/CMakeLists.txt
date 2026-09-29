@@ -4,7 +4,5 @@ add_executable(uml_vnc_input_tests vnc_input_tests.cpp)
 target_link_libraries(uml_vnc_input_tests PRIVATE UML::VncInput)
 target_include_directories(uml_vnc_input_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin/device/input/vnc)
-target_compile_options(uml_vnc_input_tests PRIVATE
-    -Wall -Wextra -Werror)
 uml_add_unit_test(NAME vnc-input-boundary COMMAND uml_vnc_input_tests
     LABELS input)

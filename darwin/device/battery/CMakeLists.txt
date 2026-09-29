@@ -10,8 +10,6 @@ target_include_directories(uml_battery_device
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
         ${PROJECT_SOURCE_DIR}/darwin/platform)
-target_compile_options(uml_battery_device PRIVATE
-    -Wall -Wextra -Werror)
 target_link_libraries(uml_battery_device PRIVATE
     UML::VhostUserTransport
     UML::HostBattery)

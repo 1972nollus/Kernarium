@@ -10,5 +10,4 @@ target_include_directories(uml_video_device PUBLIC
     ${PROJECT_SOURCE_DIR}/kernel/common/video
     ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user
     ${PROJECT_SOURCE_DIR}/darwin/platform)
-target_compile_options(uml_video_device PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(uml_video_device PRIVATE UML::VhostUserTransport UML::VideoDecoder)

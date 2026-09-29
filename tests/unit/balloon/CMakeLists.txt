@@ -2,7 +2,5 @@
 
 add_executable(uml_virtio_balloon_tests virtio_balloon_tests.cpp)
 target_link_libraries(uml_virtio_balloon_tests PRIVATE UML::BalloonDevice)
-target_compile_options(uml_virtio_balloon_tests PRIVATE
-    -Wall -Wextra -Werror)
 uml_add_unit_test(NAME virtio-balloon-protocol COMMAND uml_virtio_balloon_tests
     LABELS "device;balloon")

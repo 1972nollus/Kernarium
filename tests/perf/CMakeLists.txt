@@ -97,16 +97,12 @@ target_link_libraries(uml-gadget-ceiling-bench PRIVATE
     UML::CpuContract UML::MemorySharedBacking)
 target_compile_definitions(uml-gadget-ceiling-bench PRIVATE
     UML_GADGET_CEILING_WITH_IDEAL=1)
-target_compile_options(uml-gadget-ceiling-bench PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml-gadget-ceiling-bench PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
 add_executable(uml-gadget-ceiling-native EXCLUDE_FROM_ALL
     gadget_ceiling_bench.cpp
     gadget_ceiling_workload.S)
-target_compile_options(uml-gadget-ceiling-native PRIVATE
-    $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Werror>)
 set_target_properties(uml-gadget-ceiling-native PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
@@ -116,7 +112,6 @@ add_custom_target(gadget-ceiling-binaries
 # Manual host microbenchmark: 128-bit load and vector-ALU issue rates per
 # cycle on whichever core class runs it. It uses no project code.
 add_executable(uml-host-issue-ratio EXCLUDE_FROM_ALL host_issue_ratio.cpp)
-target_compile_options(uml-host-issue-ratio PRIVATE -Wall -Wextra -Werror)
 set_target_properties(uml-host-issue-ratio PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
@@ -130,6 +125,4 @@ if(TARGET UML::ThirdPartyKosmicKrisp)
         UML::ThirdPartyKosmicKrisp)
     target_include_directories(uml-kosmickrisp-rgb32-texel-bench PRIVATE
         "${PROJECT_SOURCE_DIR}/tests/unit/gpu")
-    target_compile_options(uml-kosmickrisp-rgb32-texel-bench PRIVATE
-        -Wall -Wextra -Werror)
 endif()

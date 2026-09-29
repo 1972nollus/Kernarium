@@ -30,7 +30,6 @@ function(_uml_add_emulator_boundary TARGET ADMISSION_TESTING)
         target_include_directories(${TARGET} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/loader)
     endif()
-    target_compile_options(${TARGET} PRIVATE -Wall -Wextra -Werror)
     target_compile_definitions(${TARGET} PRIVATE
         UML_APPLE_PLATFORM_NAME="${UML_APPLE_PLATFORM}"
         UML_EMULATOR_HAS_KERNEL_RUNNER=$<BOOL:${UML_BUILD_KERNEL_RUNNER}>
