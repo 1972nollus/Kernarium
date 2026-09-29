@@ -8,6 +8,13 @@ series under `tools/rootfs/vulkan/`, and the generated Android port series
 beside this metadata. A guest replay assigns new commit identities every time
 it is recreated, so the guest half of the contract is pinned by tree, not by
 commit.
+
+The port also carries the Venus protocol codec, generated from the protocol
+series and the Vulkan-Headers registry under `tools/rootfs/vulkan/`, which
+the renderer and the guest rootfs generate their own halves from. Both are
+pinned by tree, and the codec's first line must name exactly those trees, so
+a protocol or registry change that the port has not been regenerated for is
+refused here.
 """
 
 from __future__ import annotations
@@ -32,12 +39,25 @@ REQUIRED_METADATA = {
     "MESA_VENUS_GUEST_EPOCH",
     "MESA_VENUS_GUEST_SERIES",
     "MESA_VENUS_GUEST_TREE",
+    "MESA_VENUS_PROTOCOL_SERIES",
+    "MESA_VENUS_PROTOCOL_TREE",
+    "MESA_VENUS_VULKAN_HEADERS_TREE",
     "MESA_VENUS_PATCH_BRANCH",
     "MESA_VENUS_FINAL_TREE",
     "MESA_VENUS_DESTINATION",
     "MESA_VENUS_HAL_MODULE",
     "MESA_VENUS_LICENSE",
 }
+VULKAN_SOURCES = "tools/rootfs/vulkan/sources.tsv"
+VULKAN_SOURCES_HEADER = (
+    "component",
+    "repository",
+    "base_commit",
+    "base_tree",
+    "release_ref",
+    "release_object",
+    "series",
+)
 
 
 class VerificationError(ValueError):
@@ -55,7 +75,7 @@ def parse_metadata(path: Path) -> dict[str, str]:
 
 
 def validate_metadata(values: dict[str, str]) -> None:
-    if values["MESA_VENUS_SOURCE_SCHEMA"] != "1":
+    if values["MESA_VENUS_SOURCE_SCHEMA"] != "2":
         raise VerificationError("unsupported Mesa Venus source schema")
     if values["MESA_VENUS_UPSTREAM_REPOSITORY"] != (
         "https://gitlab.freedesktop.org/mesa/mesa.git"
@@ -69,12 +89,18 @@ def validate_metadata(values: dict[str, str]) -> None:
         raise VerificationError("Mesa Venus license metadata changed")
     if values["MESA_VENUS_GUEST_SERIES"] != "tools/rootfs/vulkan/patches/mesa":
         raise VerificationError("the guest Mesa series moved")
+    if values["MESA_VENUS_PROTOCOL_SERIES"] != (
+        "tools/rootfs/vulkan/patches/venus-protocol"
+    ):
+        raise VerificationError("the Venus protocol series moved")
     pinned_source.check_object_ids(
         values,
         (
             "MESA_VENUS_UPSTREAM_COMMIT",
             "MESA_VENUS_UPSTREAM_TREE",
             "MESA_VENUS_GUEST_TREE",
+            "MESA_VENUS_PROTOCOL_TREE",
+            "MESA_VENUS_VULKAN_HEADERS_TREE",
             "MESA_VENUS_FINAL_TREE",
         ),
         VerificationError,
@@ -103,11 +129,60 @@ def verify_guest_pin(repository_root: Path, values: dict[str, str]) -> int:
     return len(series.names)
 
 
-def verify_series(root: Path) -> int:
-    """Return how many Android port patches the checked-in series holds."""
-    return pinned_source.read_generated_series(
-        root / "third_party/mesa-venus/series", "Mesa Venus", VerificationError
+def verify_protocol_pins(repository_root: Path, values: dict[str, str]) -> None:
+    """The codec's two inputs are pinned by the trees their owners record."""
+    try:
+        series = patch_series.read_series(
+            repository_root / values["MESA_VENUS_PROTOCOL_SERIES"]
+        )
+    except patch_series.SeriesError as error:
+        raise VerificationError(f"Venus protocol series: {error}") from error
+    if series.tree != values["MESA_VENUS_PROTOCOL_TREE"] or not series.names:
+        raise VerificationError(
+            "the pinned Venus protocol series changed; regenerate the port's "
+            "protocol codec from it with generate-mesa-venus-port.py protocol, "
+            "bump MESA_VENUS_PROTOCOL_TREE, and regenerate the port series"
+        )
+    rows = pinned_source.table(
+        repository_root / VULKAN_SOURCES, VULKAN_SOURCES_HEADER, VerificationError
     )
+    registry = [row for row in rows if row[0] == "vulkan-headers"]
+    if len(registry) != 1 or registry[0][6] != "-":
+        raise VerificationError(
+            f"{VULKAN_SOURCES} must pin exactly one unpatched vulkan-headers source"
+        )
+    if registry[0][3] != values["MESA_VENUS_VULKAN_HEADERS_TREE"]:
+        raise VerificationError(
+            "the pinned Vulkan-Headers source changed; regenerate the port's "
+            "protocol codec from it with generate-mesa-venus-port.py protocol, "
+            "bump MESA_VENUS_VULKAN_HEADERS_TREE, and regenerate the port series"
+        )
+
+
+def verify_series(root: Path, values: dict[str, str]) -> int:
+    """Return how many Android port patches the checked-in series holds.
+
+    Exactly one line the series adds is a generated-codec banner, and it names
+    the pinned protocol and Vulkan-Headers trees.
+    """
+    series_dir = root / "third_party/mesa-venus/series"
+    count = pinned_source.read_generated_series(
+        series_dir, "Mesa Venus", VerificationError
+    )
+    prefix = "+" + pinned_source.VENUS_PROTOCOL_BANNER
+    banners = [
+        line[1:]
+        for name in patch_series.read_series(series_dir).names
+        for line in (series_dir / name).read_text(encoding="utf-8").splitlines()
+        if line.startswith(prefix)
+    ]
+    if banners != [pinned_source.venus_protocol_banner(values)]:
+        raise VerificationError(
+            "the port's Venus protocol codec was not generated from the pinned "
+            "protocol and Vulkan-Headers trees; regenerate it with "
+            "generate-mesa-venus-port.py protocol and regenerate the port series"
+        )
+    return count
 
 
 def verify_checkout(
@@ -174,7 +249,8 @@ def main() -> None:
         values = parse_metadata(metadata_path)
         validate_metadata(values)
         guest_count = verify_guest_pin(root.parents[1], values)
-        count = verify_series(root)
+        verify_protocol_pins(root.parents[1], values)
+        count = verify_series(root, values)
         if args.aosp_source is not None:
             verify_checkout(args.aosp_source.resolve(), values, guest_count, count)
     except (OSError, UnicodeError, VerificationError) as error:

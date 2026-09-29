@@ -181,7 +181,7 @@ tree. Moving to a newer guest epoch is a metadata bump, a replay, and a
 regeneration; the verifier refuses a guest series that changed underneath the
 recorded pin.
 
-The port itself is generated. `tools/generate-mesa-venus-port.py` runs AOSP's
+The port itself is generated. `tools/generate-mesa-venus-port.py soong` runs AOSP's
 `meson2hermetic` converter with the checked `soong-port.toml`, repairs the few
 places where Soong needs more than Meson states, drops every module the
 installed modules neither build from nor link, and then scopes every remaining
@@ -192,9 +192,23 @@ The installed modules keep the names the platform loaders resolve:
 libraries through `ro.hardware.egl`. Soong makes every warning an error outside
 `device/` and `vendor/`; a warning Mesa's own build tolerates therefore needs a
 per-module `[[kernarium.warning_exception]]` entry, with its reason, in
-`soong-port.toml`. Soong has no equivalent of the guest build's out-of-tree
-`-Dvenus-protocol-dir`, so the port carries the paired generated Venus protocol
-codec at the tree path the upstream snapshot reserves for it.
+`soong-port.toml`.
+
+Soong has no equivalent of the guest build's out-of-tree
+`-Dvenus-protocol-dir`, so the port carries the driver half of the Venus
+protocol codec at the tree path the upstream snapshot reserves for it.
+`tools/generate-mesa-venus-port.py protocol` writes it by running
+venus-protocol's own generator from clean replays of the two sources the
+renderer and the guest rootfs generate their halves from: the protocol series
+under [`../../tools/rootfs/vulkan/`](../../tools/rootfs/vulkan/README.md) and the
+Vulkan-Headers registry its `sources.tsv` pins. `metadata.env` records both
+trees, and the generator refuses a replay whose tree is not the recorded one.
+The codec's first line names the two trees rather than venus-protocol's replay
+commit, which changes whenever a replay is recreated, so the same pins always
+reproduce the same bytes; `--check` compares a checkout's codec with that
+generation. Release s35 predates these pins: it was built from port tree
+`e3c8c759`, whose codec is byte-identical to the pinned generation apart from
+that first line.
 
 The converter is a pinned builder input too:
 `third_party/meson2hermetic/` records its upstream commit and a local series,
@@ -238,9 +252,12 @@ this driver has not been qualified against Android's Vulkan dEQP must-pass list.
 The Android hardware buffer handle type a swapchain needs is guest Mesa work,
 so it arrives with the guest Vulkan epoch pinned in
 `third_party/mesa-venus/metadata.env`. The HAL and the host renderer must also
-speak the same Venus protocol revision: a guest epoch that changes the paired
-protocol leaves an older release's HAL unable to talk to a newer renderer, so
-such an epoch needs a port replay and a new release.
+speak the same Venus protocol revision: a change to the protocol series or the
+Vulkan-Headers pin leaves an older release's HAL unable to talk to a newer
+renderer. `tools/verify-mesa-venus-source.py` therefore refuses a protocol or
+registry pin that differs from its owner, and a port codec whose first line
+does not name the recorded pins; such a change needs a regenerated codec, a
+port replay and a new release.
 
 ## Payload reduction
 
