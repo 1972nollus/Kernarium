@@ -39,6 +39,9 @@ def write_fixture(
     (android_root / "tools").mkdir()
     shutil.copy2(verifier, android_root / "tools/verify-aosp-patches.py")
     os.chmod(android_root / "tools/verify-aosp-patches.py", 0o755)
+    shutil.copy2(
+        verifier.with_name("pinned_source.py"), android_root / "tools/pinned_source.py"
+    )
     artifacts = root / "kernel/common/artifacts"
     artifacts.mkdir(parents=True)
     shutil.copy2(
@@ -131,7 +134,81 @@ def main() -> None:
         ).read_bytes() != series_before:
             raise SystemExit("dirty-topic rejection changed the route series")
 
+        verify_strict_contract(android_root)
+
     print("AOSP 17 patch-regenerator fixture passed")
+
+
+def verify_strict_contract(android_root: Path) -> None:
+    """The route table, manifest and digest checks refuse what they once let by."""
+    verifier = android_root / "tools/verify-aosp-patches.py"
+    projects = android_root / "patches/projects.tsv"
+    manifest = android_root / "metadata/base-manifest.xml"
+    metadata = android_root / "metadata/aosp.env"
+    saved = {path: path.read_bytes() for path in (projects, manifest, metadata)}
+
+    def restore() -> None:
+        for path, payload in saved.items():
+            if path.is_symlink():
+                path.unlink()
+            path.write_bytes(payload)
+
+    def refused(case: str, expected: str) -> None:
+        result = subprocess.run(
+            (sys.executable, "-B", str(verifier), "--android-root", str(android_root)),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if result.returncode == 0 or expected not in result.stdout:
+            raise SystemExit(
+                f"AOSP patch verifier did not refuse {case} with '{expected}': "
+                f"{result.stdout.strip()}"
+            )
+        restore()
+
+    def write_manifest(text: str) -> None:
+        manifest.write_text(text)
+        manifest_digest = hashlib.sha256(text.encode()).hexdigest()
+        metadata.write_text(
+            "AOSP_SOURCE_SCHEMA=1\n"
+            f"ANDROID17_BASE_MANIFEST_SHA256='{manifest_digest}'\n"
+        )
+
+    # A line of only white space is a malformed row, not a blank line.
+    projects.write_bytes(saved[projects] + b"   \n")
+    lines = len(saved[projects].decode().splitlines()) + 1
+    refused("a white-space line", f"projects.tsv:{lines}: malformed row")
+
+    # A checkout path must be spelled in its normalized form everywhere.
+    for spelling in ("fixture/project/", "fixture/./project", "fixture//project"):
+        write_manifest(saved[manifest].decode().replace(
+            'path="fixture/project"', f'path="{spelling}"'
+        ))
+        projects.write_text(saved[projects].decode().replace(
+            "\tfixture/project\trefs/", f"\t{spelling}\trefs/"
+        ))
+        refused(
+            f"the checkout path {spelling}",
+            f"unsafe manifest checkout path: {spelling}",
+        )
+
+    # The pinned manifest is read only as a regular file.
+    real = manifest.with_name("base-manifest.real.xml")
+    real.write_bytes(saved[manifest])
+    manifest.unlink()
+    manifest.symlink_to(real.name)
+    refused("a symlinked base manifest", "required regular file is missing")
+    real.unlink()
+
+    # A manifest with no projects pins nothing, even when no route names one.
+    write_manifest("<manifest/>\n")
+    header = next(
+        line for line in saved[projects].decode().splitlines()
+        if not line.startswith("#")
+    )
+    projects.write_text(header + "\n")
+    refused("an empty base manifest", "resolved manifest has no projects")
 
 
 if __name__ == "__main__":

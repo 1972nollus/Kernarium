@@ -468,6 +468,19 @@ done
 RECEIPT_DIR="$STAGE/share/uml-dependencies"
 mkdir -p -- "$RECEIPT_DIR"
 cp "$MANIFEST" "$RECEIPT_DIR/manifest.tsv"
+# A patched source is identified by the tree its series produces, which the
+# verified preparation above left checked out.
+patched_sources=$(awk -F '\t' '
+	/^#/ || /^[[:space:]]*$/ || $1 == "name" { next }
+	index("," $3 ",", ",macos,") && $7 != "-" { print $1 }
+' "$MANIFEST")
+printf 'source\ttree\n' > "$RECEIPT_DIR/source-trees.tsv"
+for patched in $patched_sources; do
+	patched_tree=$(git -C "$SOURCE_ROOT/$patched" rev-parse 'HEAD^{tree}') ||
+		fail "could not read the prepared tree of $patched"
+	printf '%s\t%s\n' "$patched" "$patched_tree" \
+		>> "$RECEIPT_DIR/source-trees.tsv"
+done
 # manifest_sha256 is read only by checkouts that predate the row comparison.
 manifest_sha256=$($SHASUM -a 256 "$MANIFEST" | awk '{print $1}')
 {

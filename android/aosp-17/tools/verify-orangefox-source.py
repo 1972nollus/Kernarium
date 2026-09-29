@@ -7,22 +7,19 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import csv
-import hashlib
 import re
 import subprocess
-import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"))
+import pinned_source
+# pinned_source puts scripts/ and the contract checks on sys.path.
 from contract_checks import parse_assignments  # noqa: E402
 import patch_series  # noqa: E402
 
 
-HEX40 = re.compile(r"[0-9a-f]{40}")
+HEX40 = pinned_source.HEX40
 HEX64 = re.compile(r"[0-9a-f]{64}")
 PROJECT_HEADER = (
     "order", "route_id", "manifest_project", "checkout_path",
@@ -66,63 +63,24 @@ class Route:
     final_tree: str
 
 
-def run(*command: str, cwd: Path | None = None, payload: bytes | None = None) -> str:
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        input=payload,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.decode(errors="replace").strip()
-        raise VerificationError(f"command failed ({' '.join(command)}): {detail}")
-    return result.stdout.decode(errors="strict").strip()
+def run(*command: str, cwd: Path | None = None) -> str:
+    return pinned_source.run(*command, cwd=cwd, error=VerificationError)
 
 
 def digest(path: Path) -> str:
-    if path.is_symlink() or not path.is_file():
-        raise VerificationError(f"required regular file is missing: {path}")
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return pinned_source.digest(path, VerificationError)
 
 
 def table(path: Path, expected: tuple[str, ...]) -> list[tuple[str, ...]]:
-    lines = [
-        line for line in path.read_text(encoding="utf-8").splitlines()
-        if line and not line.startswith("#")
-    ]
-    rows = [tuple(row) for row in csv.reader(lines, delimiter="\t")]
-    if not rows or rows[0] != expected:
-        raise VerificationError(f"table header is invalid: {path}")
-    if any(len(row) != len(expected) or any(not value for value in row) for row in rows[1:]):
-        raise VerificationError(f"table contains a malformed row: {path}")
-    return rows[1:]
+    return pinned_source.table(path, expected, VerificationError)
 
 
 def safe_relative(value: str, label: str) -> None:
-    path = PurePosixPath(value)
-    if (
-        not value or value.startswith("/") or "\\" in value or str(path) != value
-        or any(part in ("", ".", "..", ".git", ".repo") for part in path.parts)
-    ):
-        raise VerificationError(f"unsafe {label}: {value}")
+    pinned_source.safe_relative(value, label, VerificationError)
 
 
 def manifest_projects(root: ET.Element) -> dict[str, ET.Element]:
-    projects: dict[str, ET.Element] = {}
-    for project in root.findall("project"):
-        name = project.get("name")
-        path = project.get("path", name or "")
-        if not name:
-            raise VerificationError("resolved manifest project has no name")
-        safe_relative(path, "manifest path")
-        if path in projects:
-            raise VerificationError(f"resolved manifest repeats checkout path: {path}")
-        projects[path] = project
-    if not projects:
-        raise VerificationError("resolved OrangeFox manifest has no projects")
-    return projects
+    return pinned_source.manifest_projects(root, VerificationError)
 
 
 def verify_metadata(root: Path) -> tuple[dict[str, str], dict[str, ET.Element]]:

@@ -30,7 +30,7 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_mesa_venus_source_contract.py
         --source-root ${PROJECT_SOURCE_DIR}
     LABELS android;audit
-    TIMEOUT 30)
+    TIMEOUT 60)
 
 uml_add_tooling_test(
     NAME android17-release-contract

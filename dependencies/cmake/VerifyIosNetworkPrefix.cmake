@@ -46,7 +46,9 @@ uml_verify_dependency_manifest_product(
 uml_verify_source_trees(
     INSTALLED "${PREFIX}/share/uml-dependencies/source-trees.tsv"
     LABEL "iOS network"
-    SOURCES glib-ios "${SOURCE_ROOT}/dependencies/patches/glib-ios/series.tsv")
+    SOURCES
+        glib-ios "${SOURCE_ROOT}/dependencies/patches/glib-ios/series.tsv"
+        libslirp "${SOURCE_ROOT}/dependencies/patches/libslirp/series.tsv")
 set(_provenance_files "${_platform_receipt}")
 foreach(_relative IN LISTS _provenance_files)
     set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
