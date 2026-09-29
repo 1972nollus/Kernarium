@@ -141,6 +141,41 @@ function(uml_audit_foreign_darwin_sources ROOT OUT_VIOLATIONS)
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
 
+# All first-party CTest registrations pass through the suite helpers in
+# cmake/UmlTesting.cmake, so suite labels, fixture policy, and aggregate
+# binary dependencies cannot be bypassed by a raw add_test() in another
+# directory. CMake command names are case-insensitive, so the source text is
+# normalized before matching.
+function(uml_audit_raw_test_registrations ROOT OUT_VIOLATIONS)
+    set(_manifests "${ROOT}/CMakeLists.txt")
+    foreach(_scope IN ITEMS android cmake darwin dependencies kernel Kernarium tests)
+        if(NOT IS_DIRECTORY "${ROOT}/${_scope}")
+            continue()
+        endif()
+        file(GLOB_RECURSE _scoped_manifests LIST_DIRECTORIES false
+            "${ROOT}/${_scope}/CMakeLists.txt"
+            "${ROOT}/${_scope}/*.cmake")
+        list(APPEND _manifests ${_scoped_manifests})
+    endforeach()
+    list(REMOVE_DUPLICATES _manifests)
+
+    set(_violations)
+    foreach(_path IN LISTS _manifests)
+        if(_path STREQUAL "${ROOT}/cmake/UmlTesting.cmake")
+            continue()
+        endif()
+        file(READ "${_path}" _code)
+        string(REGEX REPLACE "#[^\n]*" "" _code "${_code}")
+        string(TOLOWER "${_code}" _normalized_code)
+        if(_normalized_code MATCHES
+           "(^|[\r\n])[ \t]*add_test[ \t\r\n]*\\(")
+            list(APPEND _violations
+                "${_path}: raw add_test bypasses the centralized suite helpers")
+        endif()
+    endforeach()
+    set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
+endfunction()
+
 set(VIOLATIONS)
 
 file(GLOB ROOT_C_SOURCES LIST_DIRECTORIES false
@@ -259,13 +294,7 @@ list(APPEND VIOLATIONS ${IMPLEMENTATION_FRAGMENT_VIOLATIONS})
 uml_audit_test_only_includes("${SOURCE_ROOT}" TEST_ONLY_INCLUDE_VIOLATIONS)
 list(APPEND VIOLATIONS ${TEST_ONLY_INCLUDE_VIOLATIONS})
 
-# All first-party CTest registrations must pass through the suite helpers so
-# suite labels, fixture policy, and aggregate binary dependencies cannot be
-# bypassed by a raw add_test() in another directory.
-include("${SOURCE_ROOT}/cmake/TestRegistrationPolicy.cmake")
-uml_find_raw_test_registrations(
-    SOURCE_ROOT "${SOURCE_ROOT}"
-    OUT_VIOLATIONS RAW_TEST_REGISTRATION_VIOLATIONS)
+uml_audit_raw_test_registrations("${SOURCE_ROOT}" RAW_TEST_REGISTRATION_VIOLATIONS)
 list(APPEND VIOLATIONS ${RAW_TEST_REGISTRATION_VIOLATIONS})
 
 file(GLOB_RECURSE UNIT_SCRIPT_RUNNERS LIST_DIRECTORIES false

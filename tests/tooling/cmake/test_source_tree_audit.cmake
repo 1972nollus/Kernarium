@@ -108,8 +108,6 @@ endif()
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(WRITE "${TEST_ROOT}/CMakeLists.txt" "")
 file(WRITE "${TEST_ROOT}/docs/architecture.md" "")
-file(COPY "${SOURCE_ROOT}/cmake/TestRegistrationPolicy.cmake"
-    DESTINATION "${TEST_ROOT}/cmake")
 function(uml_write_audit_fixture PATH TEXT)
     file(WRITE "${TEST_ROOT}/${PATH}" "// fixture\n${TEXT}\n")
 endfunction()
