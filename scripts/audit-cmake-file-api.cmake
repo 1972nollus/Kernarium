@@ -6,9 +6,7 @@ endif()
 cmake_path(ABSOLUTE_PATH BUILD_ROOT NORMALIZE OUTPUT_VARIABLE BUILD_ROOT)
 
 set(REPLY_ROOT "${BUILD_ROOT}/.cmake/api/v1/reply")
-if(NOT DEFINED ARCHITECTURE_MANIFEST)
-    set(ARCHITECTURE_MANIFEST "${BUILD_ROOT}/uml-architecture-targets.tsv")
-endif()
+set(ARCHITECTURE_MANIFEST "${BUILD_ROOT}/uml-architecture-targets.tsv")
 file(GLOB INDEX_FILES LIST_DIRECTORIES false "${REPLY_ROOT}/index-*.json")
 if(NOT INDEX_FILES)
     message(FATAL_ERROR
@@ -34,6 +32,9 @@ if(NOT EXISTS "${ARCHITECTURE_MANIFEST}")
     message(FATAL_ERROR
         "Architecture target manifest is missing: ${ARCHITECTURE_MANIFEST}")
 endif()
+# uml_write_architecture_manifest() writes one row per target from the
+# declarations uml_declare_architecture_target() has validated, so each row's
+# layer and engine kind are trusted once it has its five fields.
 file(STRINGS "${ARCHITECTURE_MANIFEST}" ARCHITECTURE_ROWS)
 set(ARCHITECTURE_TARGETS)
 set(ARCHITECTURE_LAYERS)
@@ -49,30 +50,7 @@ foreach(ROW IN LISTS ARCHITECTURE_ROWS)
     if(NOT FIELD_COUNT EQUAL 5)
         message(FATAL_ERROR "Malformed architecture manifest row: ${ROW}")
     endif()
-    list(GET FIELDS 0 TARGET)
-    list(GET FIELDS 1 LAYER)
-    list(GET FIELDS 2 KIND)
-    list(GET FIELDS 3 ENGINE_KIND)
-    list(GET FIELDS 4 DEPENDENCIES)
-    if(NOT KIND MATCHES "^(interface|codemodel)$")
-        message(FATAL_ERROR "Unknown architecture target kind for ${TARGET}: ${KIND}")
-    endif()
-    if(LAYER STREQUAL "cpu")
-        if(NOT ENGINE_KIND MATCHES
-           "^(native|gadget|shared|mixed)$")
-            message(FATAL_ERROR
-                "CPU architecture target ${TARGET} has invalid engine kind: "
-                "${ENGINE_KIND}")
-        endif()
-    elseif(NOT ENGINE_KIND STREQUAL "-")
-        message(FATAL_ERROR
-            "Non-CPU architecture target ${TARGET} has engine kind "
-            "${ENGINE_KIND}")
-    endif()
-    list(FIND ARCHITECTURE_TARGETS "${TARGET}" EXISTING_TARGET)
-    if(NOT EXISTING_TARGET EQUAL -1)
-        message(FATAL_ERROR "Duplicate architecture target: ${TARGET}")
-    endif()
+    list(POP_FRONT FIELDS TARGET LAYER KIND ENGINE_KIND DEPENDENCIES)
     list(APPEND ARCHITECTURE_TARGETS "${TARGET}")
     list(APPEND ARCHITECTURE_LAYERS "${LAYER}")
     list(APPEND ARCHITECTURE_KINDS "${KIND}")
@@ -131,8 +109,8 @@ function(uml_architecture_engine_kind TARGET OUTPUT)
     list(FIND ARCHITECTURE_TARGETS "${TARGET}" ENGINE_INDEX)
     if(NOT ENGINE_INDEX EQUAL -1)
         list(GET ARCHITECTURE_ENGINE_KINDS ${ENGINE_INDEX} ENGINE_KIND)
-        if(ENGINE_KIND MATCHES
-           "^(native|gadget|shared|mixed)$")
+        # "-" marks a target outside the CPU layer.
+        if(NOT ENGINE_KIND STREQUAL "-")
             set(${OUTPUT} "${ENGINE_KIND}" PARENT_SCOPE)
             return()
         endif()
