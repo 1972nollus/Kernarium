@@ -10,8 +10,7 @@
 #include <cstdint>
 #include <utility>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 extern "C" {
 void uml_arm64_gadget_svc();
@@ -173,17 +172,10 @@ void every_table_form_has_resolved_wrapped_offsets()
 
 void require_branch_free(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(gadget);
-	bool reached_dispatch = false;
-	for (unsigned index = 0; index < 64U; ++index) {
-		base::require(!conditional_branch(instructions[index]));
-		if (indirect_branch(instructions[index])) {
-			reached_dispatch = true;
-			break;
-		}
-	}
-	base::require(reached_dispatch);
+	const auto shape = a64::body_shape(
+		reinterpret_cast<std::uintptr_t>(gadget), {.window = 64U});
+	base::require(shape.conditional_branches == 0U);
+	base::require(shape.reached_dispatch);
 }
 
 void every_specialized_hot_path_is_branch_free()

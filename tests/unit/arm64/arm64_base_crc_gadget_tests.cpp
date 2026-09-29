@@ -12,8 +12,7 @@
 #include <memory_resource>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 extern "C" {
 #define UML_DECLARE_CHECKSUM_SOURCES(prefix) \
@@ -170,28 +169,22 @@ struct PathAudit final {
 
 [[nodiscard]] PathAudit audit_path(Gadget gadget)
 {
-	const auto *pc = reinterpret_cast<const std::uint32_t *>(gadget);
 	PathAudit audit{};
-	for (unsigned step = 0; step < 512U; ++step) {
-		const auto instruction = *pc;
-		require(!conditional_branch(instruction),
-			"checksum gadget retained a conditional runtime branch");
-		if (native_checksum(instruction)) {
-			++audit.native_operations;
-			audit.native_instruction = instruction;
-		}
-		if (indirect_branch(instruction))
-			return audit;
-		if (direct_branch(instruction)) {
-			++audit.direct_branches;
-			const auto displacement =
-				static_cast<std::int32_t>(instruction << 6) >> 6;
-			pc += displacement;
-		} else {
-			++pc;
-		}
-	}
-	fail("checksum gadget did not reach threaded dispatch");
+	const auto shape = a64::body_shape(
+		reinterpret_cast<std::uintptr_t>(gadget),
+		{.window = 512U, .follow_branches = true},
+		[&](std::uint32_t instruction) {
+			require(!a64::conditional_branch(instruction),
+				"checksum gadget retained a conditional runtime branch");
+			if (native_checksum(instruction)) {
+				++audit.native_operations;
+				audit.native_instruction = instruction;
+			}
+			audit.direct_branches += direct_branch(instruction);
+		});
+	if (!shape.reached_dispatch)
+		fail("checksum gadget did not reach threaded dispatch");
+	return audit;
 }
 
 void native_hot_paths_and_software_fallbacks_are_distinct()

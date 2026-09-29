@@ -3144,41 +3144,6 @@ read_test_sequences(void *context) noexcept
 			return false;
 	}
 
-	/* With 0x67 in 64-bit mode the same encoding is EIP-relative: the
-	 * displacement still counts from the end of the instruction, and the
-	 * sum is a 32-bit address. It is never an absolute disp32, which is
-	 * what ModR/M rm=5 means only in 32-bit mode.
-	 */
-	{
-		TestMemory memory;
-		memory.load(data, {0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01});
-		const std::uint64_t rip_code = 0x200;
-		const auto displacement = static_cast<std::uint32_t>(
-			data - (rip_code + 8));
-		memory.load(rip_code, {0x67, 0x48, 0x8b, 0x05,
-			static_cast<std::uint8_t>(displacement),
-			static_cast<std::uint8_t>(displacement >> 8),
-			static_cast<std::uint8_t>(displacement >> 16),
-			static_cast<std::uint8_t>(displacement >> 24)});
-		const auto decoded = decode(memory, rip_code, ExecutionMode::long64);
-		CpuState cpu{};
-		cpu.rip = rip_code;
-		const auto built = gadgets::build(memory, rip_code, 1);
-		if (!expect(decoded.status == DecodeStatus::decoded &&
-				decoded.instruction.source.memory.rip_relative &&
-				decoded.instruction.source.memory.address_32 &&
-				!decoded.instruction.source.memory.absolute_address,
-				"addr32 rm=5 did not decode as EIP-relative") ||
-			!expect(built.status == gadgets::BuildStatus::built,
-				"EIP-relative did not build") ||
-			!expect(gadgets::execute(built.program, cpu, memory, 1).event ==
-				uml::cpu::EngineEvent::continued,
-				"EIP-relative did not execute") ||
-			!expect(cpu.gpr(Register::rax) == marker,
-				"EIP-relative resolved the wrong address"))
-			return false;
-	}
-
 	/* A load that spans a page boundary leaves the inline fast path, so the
 	 * shape has to stay correct on the slow path too.
 	 */

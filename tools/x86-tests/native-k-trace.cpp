@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* Native Linux/x86-64 oracle for the K assembly corpus producer. */
+/* Native Linux/x86-64 oracle for the x86 unit-corpus producer: it traces K
+ * programs one instruction at a time and runs repository cases to their HLT. */
 
 namespace {
 
@@ -27,6 +28,7 @@ constexpr isize sys_exit = 60;
 constexpr isize sys_wait4 = 61;
 constexpr isize sys_kill = 62;
 constexpr isize sys_getpid = 39;
+constexpr isize sys_alarm = 37;
 constexpr isize sys_ptrace = 101;
 
 constexpr isize prot_read = 1;
@@ -35,21 +37,29 @@ constexpr isize prot_execute = 4;
 constexpr isize map_private = 2;
 constexpr isize map_fixed = 0x10;
 constexpr isize map_anonymous = 0x20;
+constexpr isize map_fixed_noreplace = 0x100000;
 
 constexpr isize ptrace_traceme = 0;
+constexpr isize ptrace_continue = 7;
 constexpr isize ptrace_single_step = 9;
 constexpr isize ptrace_get_regs = 12;
 constexpr isize ptrace_set_regs = 13;
 constexpr isize ptrace_get_regset = 0x4204;
 constexpr isize ptrace_set_regset = 0x4205;
+constexpr isize ptrace_set_options = 0x4200;
+constexpr isize ptrace_option_exit_kill = 0x100000;
 constexpr isize nt_x86_xstate = 0x202;
 
 constexpr int signal_ill = 4;
 constexpr int signal_trap = 5;
+constexpr int signal_bus = 7;
 constexpr int signal_fpe = 8;
 constexpr int signal_kill = 9;
 constexpr int signal_segv = 11;
+constexpr int signal_alarm = 14;
 constexpr int signal_stop = 19;
+/* A repository case that has not reached its HLT by then never will. */
+constexpr isize case_time_limit_seconds = 10;
 
 alignas(page_size) u8 request_bytes[request_capacity];
 alignas(64) u8 xstate[xstate_capacity];
@@ -127,6 +137,17 @@ struct Record final {
 	const u8 *code;
 };
 
+/* A repository case: its code, loaded at code_address, and the regions its
+ * configuration maps. */
+struct CaseRecord final {
+	u32 name_size;
+	u32 code_size;
+	u32 region_count;
+	const u8 *region_bytes;
+	const u8 *name;
+	const u8 *code;
+};
+
 [[nodiscard]] inline isize syscall6(isize number, isize first = 0,
 	isize second = 0, isize third = 0, isize fourth = 0, isize fifth = 0,
 	isize sixth = 0)
@@ -182,6 +203,12 @@ struct Record final {
 		(static_cast<u32>(bytes[1]) << 8) |
 		(static_cast<u32>(bytes[2]) << 16) |
 		(static_cast<u32>(bytes[3]) << 24);
+}
+
+[[nodiscard]] u64 load_u64(const u8 *bytes)
+{
+	return static_cast<u64>(load_u32(bytes)) |
+		(static_cast<u64>(load_u32(bytes + 4)) << 32);
 }
 
 void store_u16(u8 *bytes, u16 value)
@@ -293,7 +320,7 @@ void require_profile(char vendor[12], u32 &signature)
 		nt_x86_xstate, reinterpret_cast<isize>(&vector)));
 }
 
-[[nodiscard]] int set_initial_state(isize child)
+[[nodiscard]] int set_initial_state(isize child, u64 stack)
 {
 	Registers registers{};
 	if (failed(syscall6(sys_ptrace, ptrace_get_regs, child, 0,
@@ -302,8 +329,8 @@ void require_profile(char vendor[12], u32 &signature)
 	const auto cs = registers.cs;
 	const auto ss = registers.ss;
 	zero(reinterpret_cast<u8 *>(&registers), sizeof(registers));
-	registers.rbp = stack_pointer;
-	registers.rsp = stack_pointer;
+	registers.rbp = stack;
+	registers.rsp = stack;
 	registers.orig_rax = ~u64{};
 	registers.rip = code_address;
 	registers.cs = cs;
@@ -381,18 +408,13 @@ void require_profile(char vendor[12], u32 &signature)
 	return (status >> 8) & 0xff;
 }
 
-void trace_record(const Record &record)
+void initialize_child(isize child, u64 stack)
 {
-	const auto child = syscall6(sys_fork);
-	if (failed(child))
-		UML_NATIVE_FATAL("fork failed");
-	if (child == 0)
-		child_run(record);
 	int status{};
 	if (failed(syscall6(sys_wait4, child, reinterpret_cast<isize>(&status), 0, 0)) ||
 		stopped_signal(status) != signal_stop)
 		UML_NATIVE_FATAL("child did not reach its initial trace stop");
-	switch (set_initial_state(child)) {
+	switch (set_initial_state(child, stack)) {
 	case 0:
 		break;
 	case 1:
@@ -404,6 +426,17 @@ void trace_record(const Record &record)
 	default:
 		UML_NATIVE_FATAL("cannot write initial native XSAVE state");
 	}
+}
+
+void trace_record(const Record &record)
+{
+	const auto child = syscall6(sys_fork);
+	if (failed(child))
+		UML_NATIVE_FATAL("fork failed");
+	if (child == 0)
+		child_run(record);
+	int status{};
+	initialize_child(child, stack_pointer);
 	if (path_index(record, 0) != 0 || !write_state(child, 0, 0))
 		UML_NATIVE_FATAL("cannot write initial native state");
 	for (u32 state_index = 1; state_index < record.state_count; ++state_index) {
@@ -447,6 +480,102 @@ void trace_record(const Record &record)
 	(void)syscall6(sys_wait4, child, reinterpret_cast<isize>(&status), 0, 0);
 }
 
+[[nodiscard]] bool parse_case_record(Cursor &cursor, CaseRecord &record)
+{
+	if (!cursor.read_u32(record.name_size) ||
+		!cursor.read_u32(record.code_size) ||
+		!cursor.read_u32(record.region_count) ||
+		record.name_size == 0 || record.code_size == 0 ||
+		record.region_count > 64)
+		return false;
+	return cursor.take(static_cast<usize>(record.region_count) * 16,
+			record.region_bytes) &&
+		cursor.take(record.name_size, record.name) &&
+		cursor.take(record.code_size, record.code);
+}
+
+[[noreturn]] void case_fatal(const CaseRecord &record, const char *message,
+	usize size)
+{
+	(void)write_all(2, record.name, record.name_size);
+	(void)write_all(2, ": ", 2);
+	fatal(message, size);
+}
+
+#define UML_CASE_FATAL(record, text) case_fatal(record, text "\n", sizeof(text))
+
+/* The case's regions and code are mapped where the unit runner maps them.
+ * No mapping may replace one the helper itself occupies. */
+[[noreturn]] void case_child_run(const CaseRecord &record)
+{
+	(void)syscall6(sys_alarm, case_time_limit_seconds);
+	for (u32 index = 0; index < record.region_count; ++index) {
+		const auto address = load_u64(record.region_bytes + index * 16);
+		const auto size = load_u64(record.region_bytes + index * 16 + 8);
+		const auto mapped = syscall6(sys_mmap, static_cast<isize>(address),
+			static_cast<isize>(size), prot_read | prot_write | prot_execute,
+			map_private | map_fixed_noreplace | map_anonymous, -1, 0);
+		if (failed(mapped) || static_cast<u64>(mapped) != address)
+			terminate(121);
+	}
+	const auto rounded_code =
+		(static_cast<usize>(record.code_size) + page_size - 1) & ~(page_size - 1);
+	const auto mapped_code = syscall6(sys_mmap, code_address, rounded_code,
+		prot_read | prot_write | prot_execute,
+		map_private | map_fixed_noreplace | map_anonymous, -1, 0);
+	if (failed(mapped_code) || static_cast<u64>(mapped_code) != code_address)
+		terminate(122);
+	copy(reinterpret_cast<u8 *>(code_address), record.code, record.code_size);
+	if (failed(syscall6(sys_ptrace, ptrace_traceme)))
+		terminate(123);
+	if (failed(syscall6(sys_kill, syscall6(sys_getpid), signal_stop)))
+		terminate(124);
+	terminate(125);
+}
+
+/* Runs a case from zeroed registers to its HLT, which raises #GP at CPL 3,
+ * without single-stepping: a trap flag the tracer set would otherwise show
+ * in the flags image PUSHF stores. */
+void run_case(const CaseRecord &record)
+{
+	const auto child = syscall6(sys_fork);
+	if (failed(child))
+		UML_NATIVE_FATAL("fork failed");
+	if (child == 0)
+		case_child_run(record);
+	initialize_child(child, 0);
+	if (failed(syscall6(sys_ptrace, ptrace_set_options, child, 0,
+		ptrace_option_exit_kill)) ||
+		failed(syscall6(sys_ptrace, ptrace_continue, child, 0, 0)))
+		UML_CASE_FATAL(record, "cannot start the native case");
+	int status{};
+	if (failed(syscall6(sys_wait4, child, reinterpret_cast<isize>(&status), 0, 0)))
+		UML_CASE_FATAL(record, "native case wait failed");
+	if ((status & 0xff) != 0x7f)
+		UML_CASE_FATAL(record, "native case exited before its HLT");
+	const auto signal = stopped_signal(status);
+	Registers registers{};
+	if (failed(syscall6(sys_ptrace, ptrace_get_regs, child, 0,
+		reinterpret_cast<isize>(&registers))))
+		UML_CASE_FATAL(record, "cannot read native registers");
+	const auto offset = registers.rip - code_address;
+	if (signal == signal_ill)
+		UML_CASE_FATAL(record, "native case encountered an illegal instruction");
+	if (signal == signal_alarm)
+		UML_CASE_FATAL(record, "native case did not reach its HLT in time");
+	if (signal == signal_bus)
+		UML_CASE_FATAL(record, "native case raised an alignment or bus fault");
+	if (signal != signal_segv)
+		UML_CASE_FATAL(record, "native case stopped on an unexpected signal");
+	if (registers.rip < code_address || offset >= record.code_size ||
+		record.code[offset] != 0xf4)
+		UML_CASE_FATAL(record, "native case raised a memory fault");
+	if (!write_state(child, 0, static_cast<u32>(offset)))
+		UML_CASE_FATAL(record, "cannot write native case state");
+	(void)syscall6(sys_kill, child, signal_kill);
+	(void)syscall6(sys_wait4, child, reinterpret_cast<isize>(&status), 0, 0);
+}
+
 int run()
 {
 	usize size{};
@@ -466,15 +595,18 @@ int run()
 	u32 version{};
 	u32 record_count{};
 	const u8 *request_identity{};
-	if (!cursor.take(8, magic) || !equal(magic, "UMLKREQ\0", 8) ||
+	if (!cursor.take(8, magic) || (!equal(magic, "UMLKREQ\0", 8) &&
+		!equal(magic, "UMLCREQ\0", 8)) ||
 		!cursor.read_u32(version) || version != 1 ||
 		!cursor.read_u32(record_count) || record_count == 0 ||
 		!cursor.take(32, request_identity))
 		UML_NATIVE_FATAL("invalid native trace request header");
+	const bool cases = magic[3] == 'C';
 	char vendor[12];
 	u32 signature{};
 	require_profile(vendor, signature);
-	const char response_magic[8]{'U', 'M', 'L', 'K', 'R', 'S', 'P', 0};
+	const char response_magic[8]{'U', 'M', 'L', cases ? 'C' : 'K', 'R', 'S',
+		'P', 0};
 	if (!write_all(1, response_magic, sizeof(response_magic)) ||
 		!write_all(1, &version, sizeof(version)) ||
 		!write_all(1, &record_count, sizeof(record_count)) ||
@@ -482,7 +614,16 @@ int run()
 		!write_all(1, &signature, sizeof(signature)) ||
 		!write_all(1, request_identity, 32))
 		UML_NATIVE_FATAL("cannot write native response header");
-	for (u32 index = 0; index < record_count; ++index) {
+	for (u32 index = 0; cases && index < record_count; ++index) {
+		CaseRecord record{};
+		if (!parse_case_record(cursor, record))
+			UML_NATIVE_FATAL("invalid native case request record");
+		if (!write_all(1, &record.name_size, sizeof(record.name_size)) ||
+			!write_all(1, record.name, record.name_size))
+			UML_NATIVE_FATAL("cannot write native response record");
+		run_case(record);
+	}
+	for (u32 index = 0; !cases && index < record_count; ++index) {
 		Record record{};
 		if (!parse_record(cursor, record))
 			UML_NATIVE_FATAL("invalid native trace request record");

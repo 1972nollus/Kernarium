@@ -9,8 +9,7 @@
 #include <cstdint>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace test = uml::emulator::tests::base_immediate_memory;
 namespace engine_tests = uml::emulator::tests;
@@ -315,16 +314,9 @@ void select_all_reachable_gadgets()
 
 [[nodiscard]] unsigned conditional_branches(Gadget gadget)
 {
-	const auto *code = reinterpret_cast<const std::uint32_t *>(
-		address(gadget));
-	unsigned branches = 0;
-	for (unsigned index = 0; index < 160U; ++index) {
-		const auto instruction = code[index];
-		if (indirect_branch(instruction))
-			return branches;
-		if (conditional_branch(instruction))
-			++branches;
-	}
+	const auto shape = a64::body_shape(address(gadget), {.window = 160U});
+	if (shape.reached_dispatch)
+		return shape.conditional_branches;
 	test::require(false,
 		"scalar immediate-memory gadget has no threaded dispatch");
 	return 0;
@@ -332,15 +324,13 @@ void select_all_reachable_gadgets()
 
 [[nodiscard]] unsigned instruction_count(Gadget gadget, std::uint32_t expected)
 {
-	const auto *code = reinterpret_cast<const std::uint32_t *>(
-		address(gadget));
 	unsigned count = 0;
-	for (unsigned index = 0; index < 160U; ++index) {
-		const auto instruction = code[index];
-		if (indirect_branch(instruction))
-			return count;
-		count += instruction == expected;
-	}
+	const auto shape = a64::body_shape(address(gadget), {.window = 160U},
+		[&](std::uint32_t instruction) {
+			count += instruction == expected;
+		});
+	if (shape.reached_dispatch)
+		return count;
 	test::require(false,
 		"scalar immediate-memory gadget has no threaded dispatch");
 	return 0;
