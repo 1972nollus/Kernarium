@@ -42,7 +42,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  5 files changed, 113 insertions(+)
 
 diff --git a/src/virglrenderer.c b/src/virglrenderer.c
-index 2229e47acfb0c6acf5b3ea2245b90c4729882e42..1062aa6f2e2e5355917d1e54aa5b46013f94177e 100644
+index 086bbb985c82597ed8aa48a547f06115a1798f4b..c13846ab9dd420ed8112d761f062d7ec3b6aaa0a 100644
 --- a/src/virglrenderer.c
 +++ b/src/virglrenderer.c
 @@ -558,6 +558,19 @@ int virgl_renderer_resource_get_info_ext(int res_handle,

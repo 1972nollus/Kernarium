@@ -13,6 +13,23 @@ uml_add_unit_test(
     COMMAND uml_gpu_metal_submit_timing_tests
     LABELS gpu;vulkan)
 
+# Guest allocations and the host GPU driver's own share one reserving pool.
+if(TARGET uml_gpu_device_memory_pool)
+    add_executable(uml_gpu_device_memory_pool_tests
+        device_memory_pool_tests.cpp)
+    target_link_libraries(uml_gpu_device_memory_pool_tests PRIVATE
+        UML::GpuDeviceMemoryPool
+        Threads::Threads)
+    target_compile_features(uml_gpu_device_memory_pool_tests PRIVATE cxx_std_20)
+    target_compile_options(uml_gpu_device_memory_pool_tests PRIVATE
+        -Wall -Wextra -Werror)
+    uml_add_unit_test(
+        NAME gpu-device-memory-pool
+        COMMAND uml_gpu_device_memory_pool_tests
+        LABELS gpu
+        TIMEOUT 60)
+endif()
+
 # The balloon follows host GPU memory that Metal's allocated size omits.
 if(TARGET uml_balloon_device)
     add_executable(uml_gpu_host_graphics_footprint_tests

@@ -476,6 +476,14 @@ KOSMICKRISP_BINARY="$MESA_BUILD/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dyl
 mkdir -p -- "$STAGE/include/vulkan" "$STAGE/include/vk_video"
 $RSYNC -a "$VULKAN_HEADERS_SOURCE/include/vulkan/" "$STAGE/include/vulkan/"
 $RSYNC -a "$VULKAN_HEADERS_SOURCE/include/vk_video/" "$STAGE/include/vk_video/"
+# The Venus renderer charges each device it creates for a guest to the host's
+# device-memory pool through KosmicKrisp's private device-creation structure.
+# The header is an interface between two libraries of this prefix, so it is
+# staged for the renderer's build and removed before the prefix is published.
+mkdir -p -- "$STAGE/include/kosmickrisp"
+install -m 0644 \
+	"$SOURCES/Mesa/src/kosmickrisp/vulkan/kk_device_memory_pool.h" \
+	"$STAGE/include/kosmickrisp/kk_device_memory_pool.h"
 # The Vulkan driver is packaged before the OpenGL pass so that Zink links
 # against the published framework and records its runtime install name.
 install_framework KosmicKrisp "$KOSMICKRISP_BINARY" \
@@ -564,8 +572,9 @@ install -m 0644 "$SOURCES/virglrenderer/src/virgl_hw.h" \
 
 # CMake imports exact archives and headers. Build-only pkg-config metadata
 # contains the exclusive staging path and must not enter the published prefix,
-# and upstream's vtest development server is not part of the product payload.
-rm -rf -- "$STAGE/lib/pkgconfig" "$STAGE/bin"
+# upstream's vtest development server is not part of the product payload, and
+# the renderer's driver interface is not an API of the prefix.
+rm -rf -- "$STAGE/lib/pkgconfig" "$STAGE/bin" "$STAGE/include/kosmickrisp"
 
 
 KOSMICKRISP_FRAMEWORK="$STAGE/Frameworks/KosmicKrisp.framework"
