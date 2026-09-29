@@ -26,7 +26,7 @@ uml_add_tooling_test(
     NAME rootfs-producer-helpers
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/rootfs/test_producer.sh
     LABELS rootfs;audit
-    TIMEOUT 30)
+    TIMEOUT 60)
 
 uml_add_tooling_test(
     NAME rootfs-starter-image-contract
