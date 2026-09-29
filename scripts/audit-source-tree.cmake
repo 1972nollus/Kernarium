@@ -169,6 +169,11 @@ foreach(PATH IN LISTS C_SOURCES)
     list(APPEND VIOLATIONS "${PATH}: project C source is not allowed")
 endforeach()
 
+# The layers whose files each layer may not include.
+set(FORBIDDEN_LAYERS_cpu "runtime|device|app")
+set(FORBIDDEN_LAYERS_memory "runtime|device|app")
+set(FORBIDDEN_LAYERS_device "runtime|app")
+set(FORBIDDEN_LAYERS_platform "cpu")
 set(LAYER_GLOBS)
 foreach(EXTENSION IN ITEMS
         c cc cpp cxx m mm h hh hpp hxx ipp inl def S s asm inc)
@@ -208,31 +213,13 @@ foreach(PATH IN LISTS LAYER_SOURCES)
         list(APPEND NORMALIZED_INCLUDES "${NORMALIZED_INCLUDE}")
     endforeach()
     string(JOIN "\n" NORMALIZED_INCLUDE_TEXT ${NORMALIZED_INCLUDES})
-    if(SOURCE_PATH MATCHES "^darwin/cpu/")
+    string(REGEX REPLACE "^darwin/([a-z]+)/.*$" "\\1" LAYER "${SOURCE_PATH}")
+    if(DEFINED FORBIDDEN_LAYERS_${LAYER})
         if(NORMALIZED_INCLUDE_TEXT MATCHES
-           "(^|\n)(darwin/)?(runtime|device|app)/")
+           "(^|\n)(darwin/)?(${FORBIDDEN_LAYERS_${LAYER}})/")
             list(APPEND VIOLATIONS
-                "${PATH}: CPU layer includes runtime, device, or application implementation")
+                "${PATH}: ${LAYER} layer includes the ${CMAKE_MATCH_3} layer")
         endif()
-    endif()
-    if(SOURCE_PATH MATCHES "^darwin/memory/")
-        if(NORMALIZED_INCLUDE_TEXT MATCHES
-           "(^|\n)(darwin/)?(runtime|device|app)/")
-            list(APPEND VIOLATIONS
-                "${PATH}: memory layer includes runtime, device, or application implementation")
-        endif()
-    endif()
-    if(SOURCE_PATH MATCHES "^darwin/device/")
-        if(NORMALIZED_INCLUDE_TEXT MATCHES
-           "(^|\n)(darwin/)?(runtime|app)/")
-            list(APPEND VIOLATIONS
-                "${PATH}: device layer includes runtime or application implementation")
-        endif()
-    endif()
-    if(SOURCE_PATH MATCHES "^darwin/platform/" AND
-       NORMALIZED_INCLUDE_TEXT MATCHES "(^|\n)(darwin/)?cpu/")
-        list(APPEND VIOLATIONS
-            "${PATH}: platform layer includes a CPU-owned contract")
     endif()
     # Engines do not include one another and shared CPU code includes neither.
     # The JIT owns arm64/jit/, the gadget engines own arm64/gadgets/ and
@@ -260,13 +247,8 @@ foreach(PATH IN LISTS LAYER_SOURCES)
        NOT SOURCE_PATH MATCHES "^darwin/cpu/arm64/jit/jit_arena\\.cpp$" AND
        CONTENT MATCHES
        "(MAP_JIT|PROT_EXEC|VM_PROT_EXECUTE|mprotect[ \t]*\\(|mach_vm_protect[ \t]*\\(|vm_protect[ \t]*\\(|pthread_jit_write_protect|sys_icache_invalidate[ \t]*\\()")
-        if(SOURCE_PATH MATCHES "^darwin/cpu/arm64/gadgets/")
-            list(APPEND VIOLATIONS
-                "${PATH}: non-JIT engine uses an executable-memory or code-publication primitive")
-        else()
-            list(APPEND VIOLATIONS
-                "${PATH}: CPU executable-memory primitives must be owned by the JIT arena")
-        endif()
+        list(APPEND VIOLATIONS
+            "${PATH}: only the JIT arena may use executable-memory or code-publication primitives")
     endif()
 endforeach()
 
