@@ -242,29 +242,28 @@ if(ARCHITECTURE_TARGET_COUNT GREATER 0)
     endforeach()
 endif()
 
-# Traverse the configured declaration graph separately from the codemodel so
-# cycles made entirely of interface libraries cannot disappear from the audit.
-function(uml_audit_declared_visit NODE PATH)
-    get_property(STATE GLOBAL PROPERTY "UML_DECLARED_AUDIT_STATE_${NODE}")
+# Depth-first search over the dependency lists in the global properties
+# ${PREFIX}_DEPS_<node>; reaching a node that is still active closes a cycle.
+function(uml_audit_cycle_visit PREFIX NODE PATH MESSAGE)
+    get_property(STATE GLOBAL PROPERTY "${PREFIX}_STATE_${NODE}")
     if(STATE STREQUAL "active")
-        set(CYCLE_PATH "${PATH};${NODE}")
-        string(REPLACE ";" " -> " CYCLE_TEXT "${CYCLE_PATH}")
-        message(FATAL_ERROR
-            "Declared architecture target dependency cycle: ${CYCLE_TEXT}")
+        string(REPLACE ";" " -> " CYCLE_TEXT "${PATH};${NODE}")
+        message(FATAL_ERROR "${MESSAGE}: ${CYCLE_TEXT}")
     endif()
     if(STATE STREQUAL "done")
         return()
     endif()
-    set_property(GLOBAL PROPERTY "UML_DECLARED_AUDIT_STATE_${NODE}" active)
-    set(NEXT_PATH "${PATH};${NODE}")
-    get_property(DEPENDENCIES GLOBAL PROPERTY
-        "UML_DECLARED_AUDIT_DEPS_${NODE}")
+    set_property(GLOBAL PROPERTY "${PREFIX}_STATE_${NODE}" active)
+    get_property(DEPENDENCIES GLOBAL PROPERTY "${PREFIX}_DEPS_${NODE}")
     foreach(DEPENDENCY IN LISTS DEPENDENCIES)
-        uml_audit_declared_visit("${DEPENDENCY}" "${NEXT_PATH}")
+        uml_audit_cycle_visit(
+            "${PREFIX}" "${DEPENDENCY}" "${PATH};${NODE}" "${MESSAGE}")
     endforeach()
-    set_property(GLOBAL PROPERTY "UML_DECLARED_AUDIT_STATE_${NODE}" done)
+    set_property(GLOBAL PROPERTY "${PREFIX}_STATE_${NODE}" done)
 endfunction()
 
+# Traverse the configured declaration graph separately from the codemodel so
+# cycles made entirely of interface libraries cannot disappear from the audit.
 if(ARCHITECTURE_TARGET_COUNT GREATER 0)
     foreach(ARCHITECTURE_TARGET_INDEX RANGE 0 ${ARCHITECTURE_TARGET_LAST_INDEX})
         list(GET ARCHITECTURE_TARGETS ${ARCHITECTURE_TARGET_INDEX} TARGET_NAME)
@@ -285,7 +284,8 @@ if(ARCHITECTURE_TARGET_COUNT GREATER 0)
             "${DECLARED_TARGET_DEPENDENCIES}")
     endforeach()
     foreach(TARGET_NAME IN LISTS ARCHITECTURE_TARGETS)
-        uml_audit_declared_visit("${TARGET_NAME}" "")
+        uml_audit_cycle_visit(UML_DECLARED_AUDIT "${TARGET_NAME}" ""
+            "Declared architecture target dependency cycle")
     endforeach()
 endif()
 
@@ -339,26 +339,6 @@ foreach(TARGET_NAME IN LISTS ARCHITECTURE_TARGETS)
     endif()
 endforeach()
 
-function(uml_audit_visit NODE PATH)
-    get_property(STATE GLOBAL PROPERTY "UML_AUDIT_STATE_${NODE}")
-    if(STATE STREQUAL "active")
-        set(CYCLE_PATH "${PATH};${NODE}")
-        string(REPLACE ";" " -> " CYCLE_TEXT "${CYCLE_PATH}")
-        message(FATAL_ERROR "CMake target dependency cycle: ${CYCLE_TEXT}")
-    endif()
-    if(STATE STREQUAL "done")
-        return()
-    endif()
-
-    set_property(GLOBAL PROPERTY "UML_AUDIT_STATE_${NODE}" active)
-    set(NEXT_PATH "${PATH};${NODE}")
-    get_property(DEPENDENCIES GLOBAL PROPERTY "UML_AUDIT_DEPS_${NODE}")
-    foreach(DEPENDENCY IN LISTS DEPENDENCIES)
-        uml_audit_visit(${DEPENDENCY} "${NEXT_PATH}")
-    endforeach()
-    set_property(GLOBAL PROPERTY "UML_AUDIT_STATE_${NODE}" done)
-endfunction()
-
 foreach(INDEX RANGE 0 ${TARGET_COUNT})
     if(INDEX EQUAL TARGET_COUNT)
         break()
@@ -406,7 +386,8 @@ foreach(INDEX RANGE 0 ${TARGET_COUNT})
     if(INDEX EQUAL TARGET_COUNT)
         break()
     endif()
-    uml_audit_visit(${INDEX} "")
+    uml_audit_cycle_visit(UML_AUDIT ${INDEX} ""
+        "CMake target dependency cycle")
 endforeach()
 
 list(LENGTH ARCHITECTURE_TARGETS ARCHITECTURE_TARGET_TOTAL)
