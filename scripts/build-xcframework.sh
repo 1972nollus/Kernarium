@@ -40,25 +40,22 @@ clean_build_environment()
 		"$@"
 }
 
+# A packaged header tree holds exactly the public headers, as regular files
+# with their source's bytes.
 verify_public_headers()
 {
 	header_root=$1
-	audit_dir=$2
-	mkdir -p -- "$audit_dir"
-	[ -f "$header_root/uml/emulator.h" ] ||
-		fail "missing public header: $header_root/uml/emulator.h"
-	[ -f "$header_root/uml/abi_identity.h" ] ||
-		fail "missing public header: $header_root/uml/abi_identity.h"
 	symlink=$(find "$header_root" -type l -print -quit)
 	[ -z "$symlink" ] || fail "public header tree contains a symlink: $symlink"
-	find "$header_root" -type f -print > "$audit_dir/headers.unsorted"
-	LC_ALL=C sort "$audit_dir/headers.unsorted" > "$audit_dir/headers.actual"
-	printf '%s\n' \
-		"$header_root/uml/abi_identity.h" \
-		"$header_root/uml/emulator.h" > "$audit_dir/headers.expected"
-	LC_ALL=C sort "$audit_dir/headers.expected" > "$audit_dir/headers.expected.sorted"
-	cmp "$audit_dir/headers.expected.sorted" "$audit_dir/headers.actual" ||
+	expected=$(printf '%s\n' \
+		"$header_root/uml/abi_identity.h" "$header_root/uml/emulator.h")
+	[ "$(find "$header_root" -type f | LC_ALL=C sort)" = "$expected" ] ||
 		fail "public header tree contains an unexpected or missing file: $header_root"
+	for header in abi_identity.h emulator.h; do
+		cmp "$project_root/darwin/api/include/uml/$header" \
+			"$header_root/uml/$header" ||
+			fail "public header differs from its source: $header_root/uml/$header"
+	done
 }
 
 verify_archive()
@@ -240,12 +237,8 @@ build_slice()
 	install_dir="$build_dir/install"
 	cmake --install "$build_dir" --config Release --prefix "$install_dir"
 	installed_library="$install_dir/lib/libuml_emulator.a"
-	cmp "$project_root/darwin/api/include/uml/emulator.h" \
-		"$install_dir/include/uml/emulator.h"
-	cmp "$project_root/darwin/api/include/uml/abi_identity.h" \
-		"$install_dir/include/uml/abi_identity.h"
-	verify_public_headers "$install_dir/include" \
-		"$build_dir/package-audit/installed-headers"
+	# The stager refuses an install tree with other headers or a symlink,
+	# and the final package's headers are compared with their sources.
 	[ -f "$install_dir/lib/cmake/UMLEmulator/UMLEmulatorConfig.cmake" ] ||
 		fail "$platform install is missing its CMake package metadata"
 	verify_archive "$platform" "$installed_library" \
@@ -270,18 +263,12 @@ verify_final_slice()
 {
 	platform=$1
 	identifier=$2
-	install_dir=$3
 	slice_root="$staged_output/$identifier"
 	final_library="$slice_root/libuml_emulator.a"
 	final_headers="$slice_root/Headers"
 	verify_archive "$platform" "$final_library" \
 		"$work_root/final-audit/$platform"
-	cmp "$install_dir/include/uml/emulator.h" \
-		"$final_headers/uml/emulator.h"
-	cmp "$install_dir/include/uml/abi_identity.h" \
-		"$final_headers/uml/abi_identity.h"
-	verify_public_headers "$final_headers" \
-		"$work_root/final-audit/$platform-headers"
+	verify_public_headers "$final_headers"
 	build_consumer "$platform" raw "$final_library" "$final_headers" \
 		"$work_root/final-consumer/$platform"
 }
@@ -378,9 +365,9 @@ fi
 	[ "$saw_simulator" -eq 1 ] ||
 	fail "XCFramework does not contain one exact supported slice per platform"
 
-verify_final_slice macos macos-arm64 "$macos_install"
-verify_final_slice ios ios-arm64 "$ios_install"
-verify_final_slice ios-simulator ios-arm64-simulator "$ios_simulator_install"
+verify_final_slice macos macos-arm64
+verify_final_slice ios ios-arm64
+verify_final_slice ios-simulator ios-arm64-simulator
 build_xcode_xcframework_consumer "$staged_output" \
 	"$work_root/final-xcode-consumer/macos"
 
