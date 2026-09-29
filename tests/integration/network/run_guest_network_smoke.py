@@ -8,6 +8,12 @@ runner starts the one the product rootfs ships, ``systemd-networkd``, and then
 proves the emulator's user-mode network answered with the documented lease:
 address 10.0.2.15/24 and a default route through the gateway 10.0.2.2.
 
+Every campaign then carries a burst of concurrent host connections through a
+loopback host forward into an echo server in the guest.  SLiRP accepts one
+connection per event-loop pass, so the host kernel queues the rest of the
+burst on the forward's listening socket, and every client must read back its
+own line.
+
 The default campaign reaches only the SLiRP host gateway.  An explicit
 ``--external`` switch is deliberately required before the guest resolves or
 contacts an Internet host; CMake registers that variant only when the caller
@@ -22,7 +28,10 @@ import argparse
 import json
 import pathlib
 import shlex
+import socket
 import sys
+import threading
+import time
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
@@ -57,8 +66,77 @@ SLIRP_DNS_PROBE = (
 )
 
 
+FORWARD_GUEST_PORT = 7777
+FORWARD_CLIENTS = 16
+FORWARD_ECHO_SERVER = (
+    'require("net").createServer(socket=>socket.pipe(socket))'
+    f'.listen({FORWARD_GUEST_PORT},"0.0.0.0",'
+    '()=>console.log("forward-echo-ready"));'
+)
+
+
 def run_node(guest: Guest, script: str, timeout: int = 30) -> str:
     return guest.check_command(f"{NODE} -e {shlex.quote(script)}", timeout)
+
+
+def unused_loopback_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def verify_concurrent_forward(guest: Guest, host_port: int) -> None:
+    """Connect a burst of host clients through one forward at once."""
+    guest.check_command(
+        f"({NODE} -e {shlex.quote(FORWARD_ECHO_SERVER)} "
+        ">/run/forward-echo.log 2>&1 </dev/null &)"
+    )
+    deadline = time.monotonic() + 30
+    while "forward-echo-ready" not in guest.check_command(
+        "cat /run/forward-echo.log"
+    ):
+        if time.monotonic() > deadline:
+            raise RuntimeError("the guest echo server never became ready")
+        time.sleep(0.5)
+
+    start = threading.Barrier(FORWARD_CLIENTS)
+    failures: list[str] = []
+
+    def client(index: int) -> None:
+        line = f"forward-client-{index}\n".encode()
+        try:
+            start.wait(10)
+            with socket.create_connection(
+                ("127.0.0.1", host_port), timeout=30
+            ) as connection:
+                connection.sendall(line)
+                reply = b""
+                while not reply.endswith(b"\n"):
+                    chunk = connection.recv(64)
+                    if not chunk:
+                        break
+                    reply += chunk
+            if reply != line:
+                failures.append(f"client {index} read back {reply!r}")
+        except (OSError, threading.BrokenBarrierError) as error:
+            failures.append(f"client {index}: {error!r}")
+
+    clients = [
+        threading.Thread(target=client, args=(index,))
+        for index in range(FORWARD_CLIENTS)
+    ]
+    for thread in clients:
+        thread.start()
+    for thread in clients:
+        thread.join(60)
+    if any(thread.is_alive() for thread in clients):
+        raise RuntimeError("a host forward client did not finish")
+    if failures:
+        raise RuntimeError(
+            f"{len(failures)} of {FORWARD_CLIENTS} concurrent host forward "
+            "clients failed:\n" + "\n".join(failures)
+        )
+    print(f"{FORWARD_CLIENTS} concurrent host forward connections echoed")
 
 
 def external_probe(host: str) -> str:
@@ -86,13 +164,14 @@ def main() -> int:
     parser.add_argument("--external", action="store_true")
     parser.add_argument("--external-host", default="example.com")
     arguments = parser.parse_args()
+    forward_port = unused_loopback_port()
 
     with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
         "1024M",
         "tmpfs",
-        (),
+        (f"--net-forward=tcp:127.0.0.1:{forward_port}-{FORWARD_GUEST_PORT}",),
         # The production rootfs is raw EROFS and is intentionally entered
         # through a temporary init shell, which keeps this smoke to the
         # emulator's network device and the guest's own DHCP client.
@@ -103,6 +182,7 @@ def main() -> int:
         guest.boot_to_shell(180)
         start_guest_dhcp_client(guest)
         verify_slirp_lease(*wait_for_slirp_lease(guest))
+        verify_concurrent_forward(guest, forward_port)
         if arguments.external:
             dns_output = run_node(guest, SLIRP_DNS_PROBE, 15)
             if "slirp-dns-ok" not in dns_output:
