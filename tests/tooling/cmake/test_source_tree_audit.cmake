@@ -75,7 +75,7 @@ file(WRITE "${TEST_ROOT}/tests/unit/fixture/CMakeLists.txt"
 file(WRITE "${TEST_ROOT}/Kernarium/Fixture.xcodeproj/project.pbxproj"
     "\t\tD1 /* fixture.mm */ = {isa = PBXFileReference; name = fixture.mm; "
     "path = ../${FIXTURE_TREE}/platform/apple/fixture.mm; sourceTree = SOURCE_ROOT; };\n")
-uml_audit_foreign_darwin_sources("${TEST_ROOT}" FOREIGN_SOURCE_VIOLATIONS)
+uml_audit_build_files("${TEST_ROOT}" FOREIGN_SOURCE_VIOLATIONS)
 if(NOT FOREIGN_SOURCE_VIOLATIONS MATCHES
    "fixture/CMakeLists.txt: compiles ${FIXTURE_TREE}/device/fixture/fixture_device\\.cpp")
     message(FATAL_ERROR "source audit accepted a test CMake file compiling a darwin/ source")
@@ -94,7 +94,7 @@ file(WRITE "${TEST_ROOT}/Kernarium/Fixture.xcodeproj/project.pbxproj"
     "name = Fixture.xcframework; "
     "path = \"../.build/kernarium-xcframeworks/Fixture.xcframework\"; "
     "sourceTree = SOURCE_ROOT; };\n")
-uml_audit_foreign_darwin_sources("${TEST_ROOT}" OWNER_PRODUCT_VIOLATIONS)
+uml_audit_build_files("${TEST_ROOT}" OWNER_PRODUCT_VIOLATIONS)
 if(OWNER_PRODUCT_VIOLATIONS)
     message(FATAL_ERROR
         "source audit rejected targets linking the owner's product: ${OWNER_PRODUCT_VIOLATIONS}")

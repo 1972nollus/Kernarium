@@ -98,33 +98,54 @@ function(uml_audit_guest_runner_imports ROOT OUT_VIOLATIONS)
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
 
+# First-party CMake files and Xcode projects are each read once for two rules.
+#
 # A darwin/ implementation source is compiled only by the CMake owner beneath
 # darwin/ that lists it. Any other target reaches it through a product that
 # owner builds: a CMake test links the owner's target or test variant, and an
 # Xcode target links a framework or archive packaged from the owner's build.
 # Naming the source from another CMake file or from an Xcode project compiles
 # a second copy under other flags.
-function(uml_audit_foreign_darwin_sources ROOT OUT_VIOLATIONS)
+#
+# All first-party CTest registrations pass through the suite helpers in
+# cmake/UmlTesting.cmake, so suite labels, fixture policy, and aggregate
+# binary dependencies cannot be bypassed by a raw add_test() in another
+# directory. CMake command names are case-insensitive, so the source text is
+# normalized before matching. A command starts its line, and CMake refuses a
+# newline or comment before its parenthesis, so a commented-out registration
+# never matches.
+function(uml_audit_build_files ROOT OUT_VIOLATIONS)
     set(_source "darwin/[A-Za-z0-9_./-]+\\.(cpp|cxx|cc|mm|m|S|s)")
     set(_violations)
     set(_cmake_globs)
-    foreach(_scope IN ITEMS android cmake dependencies kernel Kernarium scripts tests
-            tools)
+    foreach(_scope IN ITEMS android cmake darwin dependencies kernel Kernarium
+            scripts tests tools)
         list(APPEND _cmake_globs
             "${ROOT}/${_scope}/*CMakeLists.txt" "${ROOT}/${_scope}/*.cmake")
     endforeach()
     file(GLOB_RECURSE _cmake_files LIST_DIRECTORIES false ${_cmake_globs})
     file(GLOB _root_files LIST_DIRECTORIES false "${ROOT}/CMakeLists.txt")
     foreach(_path IN LISTS _root_files _cmake_files)
+        file(RELATIVE_PATH _relative "${ROOT}" "${_path}")
         file(READ "${_path}" _text)
-        string(REGEX REPLACE "#[^\n]*" "" _code "${_text}")
-        string(REGEX MATCHALL "(_SOURCE_DIR}/|\\.\\./)${_source}" _named
-            "${_code}")
-        foreach(_name IN LISTS _named)
-            string(REGEX REPLACE "^(_SOURCE_DIR}/|\\.\\./)" "" _name "${_name}")
+        if(NOT _relative MATCHES "^darwin/")
+            string(REGEX REPLACE "#[^\n]*" "" _code "${_text}")
+            string(REGEX MATCHALL "(_SOURCE_DIR}/|\\.\\./)${_source}" _named
+                "${_code}")
+            foreach(_name IN LISTS _named)
+                string(REGEX REPLACE "^(_SOURCE_DIR}/|\\.\\./)" "" _name "${_name}")
+                list(APPEND _violations
+                    "${_path}: compiles ${_name}, which only its darwin/ owner may build")
+            endforeach()
+        endif()
+        string(TOLOWER "${_text}" _normalized_text)
+        if(_relative MATCHES
+           "^(CMakeLists\\.txt$|(android|cmake|darwin|dependencies|kernel|Kernarium|tests)/)"
+           AND NOT _relative STREQUAL "cmake/UmlTesting.cmake" AND
+           _normalized_text MATCHES "(^|[\r\n])[ \t]*add_test[ \t\r]*\\(")
             list(APPEND _violations
-                "${_path}: compiles ${_name}, which only its darwin/ owner may build")
-        endforeach()
+                "${_path}: raw add_test bypasses the centralized suite helpers")
+        endif()
     endforeach()
     file(GLOB_RECURSE _projects LIST_DIRECTORIES false
         "${ROOT}/Kernarium/*.pbxproj")
@@ -137,42 +158,6 @@ function(uml_audit_foreign_darwin_sources ROOT OUT_VIOLATIONS)
             list(APPEND _violations
                 "${_path}: an Xcode target compiles ${_name}, which only its darwin/ owner may build")
         endforeach()
-    endforeach()
-    set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
-endfunction()
-
-# All first-party CTest registrations pass through the suite helpers in
-# cmake/UmlTesting.cmake, so suite labels, fixture policy, and aggregate
-# binary dependencies cannot be bypassed by a raw add_test() in another
-# directory. CMake command names are case-insensitive, so the source text is
-# normalized before matching. A command starts its line, and CMake refuses a
-# newline or comment before its parenthesis, so a commented-out registration
-# never matches.
-function(uml_audit_raw_test_registrations ROOT OUT_VIOLATIONS)
-    set(_manifests "${ROOT}/CMakeLists.txt")
-    foreach(_scope IN ITEMS android cmake darwin dependencies kernel Kernarium tests)
-        if(NOT IS_DIRECTORY "${ROOT}/${_scope}")
-            continue()
-        endif()
-        file(GLOB_RECURSE _scoped_manifests LIST_DIRECTORIES false
-            "${ROOT}/${_scope}/CMakeLists.txt"
-            "${ROOT}/${_scope}/*.cmake")
-        list(APPEND _manifests ${_scoped_manifests})
-    endforeach()
-    list(REMOVE_DUPLICATES _manifests)
-
-    set(_violations)
-    foreach(_path IN LISTS _manifests)
-        if(_path STREQUAL "${ROOT}/cmake/UmlTesting.cmake")
-            continue()
-        endif()
-        file(READ "${_path}" _code)
-        string(TOLOWER "${_code}" _normalized_code)
-        if(_normalized_code MATCHES
-           "(^|[\r\n])[ \t]*add_test[ \t\r]*\\(")
-            list(APPEND _violations
-                "${_path}: raw add_test bypasses the centralized suite helpers")
-        endif()
     endforeach()
     set(${OUT_VIOLATIONS} "${_violations}" PARENT_SCOPE)
 endfunction()
@@ -295,9 +280,6 @@ list(APPEND VIOLATIONS ${IMPLEMENTATION_FRAGMENT_VIOLATIONS})
 uml_audit_test_only_includes("${SOURCE_ROOT}" TEST_ONLY_INCLUDE_VIOLATIONS)
 list(APPEND VIOLATIONS ${TEST_ONLY_INCLUDE_VIOLATIONS})
 
-uml_audit_raw_test_registrations("${SOURCE_ROOT}" RAW_TEST_REGISTRATION_VIOLATIONS)
-list(APPEND VIOLATIONS ${RAW_TEST_REGISTRATION_VIOLATIONS})
-
 file(GLOB_RECURSE UNIT_SCRIPT_RUNNERS LIST_DIRECTORIES false
     "${SOURCE_ROOT}/tests/unit/*.py"
     "${SOURCE_ROOT}/tests/unit/*.sh")
@@ -309,8 +291,8 @@ endforeach()
 uml_audit_guest_runner_imports("${SOURCE_ROOT}" GUEST_RUNNER_IMPORT_VIOLATIONS)
 list(APPEND VIOLATIONS ${GUEST_RUNNER_IMPORT_VIOLATIONS})
 
-uml_audit_foreign_darwin_sources("${SOURCE_ROOT}" FOREIGN_DARWIN_SOURCE_VIOLATIONS)
-list(APPEND VIOLATIONS ${FOREIGN_DARWIN_SOURCE_VIOLATIONS})
+uml_audit_build_files("${SOURCE_ROOT}" BUILD_FILE_VIOLATIONS)
+list(APPEND VIOLATIONS ${BUILD_FILE_VIOLATIONS})
 
 # Verify that every implementation source is owned by the nearest CMakeLists.txt
 # at or above it, using its complete module-relative path. A same-named source
