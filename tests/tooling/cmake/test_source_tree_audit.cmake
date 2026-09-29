@@ -204,13 +204,22 @@ uml_write_audit_fixture(tests/fixture/Commented.cmake
     "# add_test(NAME fixture COMMAND fixture)")
 uml_write_audit_fixture(cmake/UmlTesting.cmake
     "add_test(NAME fixture COMMAND fixture)")
+# tools/ holds guest-side CMake projects that never join the host build.
+uml_write_audit_fixture(tools/fixture/CMakeLists.txt
+    "add_test(NAME fixture COMMAND fixture)")
 list(APPEND REJECTED
     "fixture/CMakeLists\\.txt: raw add_test bypasses"
     "fixture/Suite\\.cmake: raw add_test bypasses"
     "fixture/Carriage\\.cmake: raw add_test bypasses")
 list(APPEND ACCEPTED
     "Commented\\.cmake: raw add_test"
-    "UmlTesting\\.cmake: raw add_test")
+    "UmlTesting\\.cmake: raw add_test"
+    "tools/fixture/CMakeLists\\.txt: raw add_test")
+
+# A darwin/ owner names its own sources.
+uml_write_audit_fixture(darwin/fixture/CMakeLists.txt
+    "add_library(fixture \${PROJECT_SOURCE_DIR}/${FIXTURE_TREE}/fixture/owned.cpp)")
+list(APPEND ACCEPTED "darwin/fixture/CMakeLists\\.txt: compiles")
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_ROOT=${TEST_ROOT}" -P "${AUDIT_SCRIPT}"
