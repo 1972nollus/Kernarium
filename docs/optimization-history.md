@@ -483,6 +483,12 @@ count how often it is taken before assuming its cost is the thing to reduce.
 | Read the MMU trace switches once per process | Accepted. The per-page trace checks called `getenv` three times, reading the address variables before the enable switch. On an x86-64 guest with four vCPUs, ABBA medians of 1000 process spawns fell 13 percent; tmpfs streaming was neutral. A sampled 2 percent share understated the effect on exec-heavy work. |
 | Reach guest RAM through the mapping's recorded backing identity | Accepted. Each shadow-page read or write called `fstat` three times to recognize and size guest RAM, although a mapping already records the backing's device and inode; identifying guest RAM from that record made process spawns and tmpfs streaming faster on an x86-64 guest. |
 
+## Kernel uaccess bridge
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Repair a stale uaccess mapping with one bridge call | Accepted with bridge ABI 14. Every uaccess page had asked whether the host mapping matched and, when it was absent or different, made a second call that also published the page's 4 KiB native shadows; one `darwin_uml_vm_discard_if_stale()` call replaced both and publishes nothing. In ABBA runs against the ABI-13 kernels, a uaccess into a mapped page was level at both page sizes, while one into a freshly faulted page got 5 percent faster on 16 KiB pages and 8 percent faster on 4 KiB. The call saved on the common path is below the noise; the absent path saved a second call, a backing lookup, a generation reference and, on 4 KiB, the publish. |
+
 ## Kernarium startup display
 
 | Attempt | Disposition and lesson |

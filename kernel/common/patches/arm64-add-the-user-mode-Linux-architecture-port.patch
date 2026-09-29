@@ -17,7 +17,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/asm/memory.h                   |   8 +
  arch/arm64/um/asm/mman.h                     |   7 +
  arch/arm64/um/asm/perf_event.h               |  19 ++
- arch/arm64/um/asm/processor.h                |  51 ++++
+ arch/arm64/um/asm/processor.h                |  60 +++++
  arch/arm64/um/asm/ptrace-abi.h               |  15 ++
  arch/arm64/um/asm/ptrace.h                   |  50 ++++
  arch/arm64/um/asm/rqspinlock.h               |  10 +
@@ -52,7 +52,7 @@ Apply the reviewed final-state topic without intermediate churn.
  arch/arm64/um/sysrq.c                        |  18 ++
  arch/arm64/um/tls.c                          |  22 ++
  arch/arm64/um/user-offsets.c                 |  63 +++++
- 47 files changed, 1625 insertions(+)
+ 47 files changed, 1634 insertions(+)
  create mode 100644 arch/arm64/Makefile.um
  create mode 100644 arch/arm64/um/Kconfig
  create mode 100644 arch/arm64/um/Makefile
@@ -513,10 +513,10 @@ index 0000000000000000000000000000000000000000..26374c04b7f3e50c59c9b870e9c3f4ff
 +#endif /* _ASM_UM_ARM64_PERF_EVENT_H */
 diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..f503747b0908286678542c2c57ae58d536f3726d
+index 0000000000000000000000000000000000000000..6fd6da6c5816a452cec29b2cc4fe7605845236ad
 --- /dev/null
 +++ b/arch/arm64/um/asm/processor.h
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,60 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef _ASM_UM_ARM64_PROCESSOR_H
 +#define _ASM_UM_ARM64_PROCESSOR_H
@@ -554,13 +554,22 @@ index 0000000000000000000000000000000000000000..f503747b0908286678542c2c57ae58d5
 +#define KSTK_ESP(task) KSTK_REG(task, HOST_SP)
 +#define KSTK_EBP(task) KSTK_REG(task, HOST_FP)
 +
++#ifdef UML_HOST_DARWIN
++void darwin_cpu_relax(void);
++#endif
++
 +static __always_inline void cpu_relax(void)
 +{
 +	if (time_travel_mode == TT_MODE_INFCPU ||
 +	    time_travel_mode == TT_MODE_EXTERNAL)
 +		time_travel_ndelay(1);
++#ifdef UML_HOST_DARWIN
++	else
++		darwin_cpu_relax();
++#else
 +	else
 +		asm volatile("yield" : : : "memory");
++#endif
 +}
 +
 +#define task_pt_regs(task) (&(task)->thread.regs)

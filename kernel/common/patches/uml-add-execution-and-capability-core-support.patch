@@ -8,10 +8,10 @@ Keep task lifecycle, architecture capability reporting, stack handling, and exec
  arch/um/kernel/capflags_arm64.c | 17 +++++++++
  arch/um/kernel/exec.c           |  9 +++++
  arch/um/kernel/ksyms.c          |  4 ++-
- arch/um/kernel/process.c        | 44 ++++++++++++++++++++---
+ arch/um/kernel/process.c        | 42 +++++++++++++++++++---
  arch/um/kernel/stacktrace.c     | 13 ++++++-
  arch/um/kernel/um_arch.c        | 62 +++++++++++++++++++++++++++++++--
- 6 files changed, 140 insertions(+), 9 deletions(-)
+ 6 files changed, 138 insertions(+), 9 deletions(-)
  create mode 100644 arch/um/kernel/capflags_arm64.c
 
 diff --git a/arch/um/kernel/capflags_arm64.c b/arch/um/kernel/capflags_arm64.c
@@ -79,7 +79,7 @@ index f2fb77da08cff0be3f34d4d34a9b6e58cbb04562..9449ad05fc7df19b2d2f7e05e4d16d1d
  EXPORT_SYMBOL(syscall);
 +#endif
 diff --git a/arch/um/kernel/process.c b/arch/um/kernel/process.c
-index 13d461712c997288c8274d3b47a101f7efb20b43..9dcd8758ffb3648b055b801886c121e8c5002355 100644
+index 13d461712c997288c8274d3b47a101f7efb20b43..838272e9b62f582c94227f216f0b8ca2943ce8a8 100644
 --- a/arch/um/kernel/process.c
 +++ b/arch/um/kernel/process.c
 @@ -75,7 +75,12 @@ struct task_struct *__switch_to(struct task_struct *from, struct task_struct *to
@@ -95,7 +95,7 @@ index 13d461712c997288c8274d3b47a101f7efb20b43..9dcd8758ffb3648b055b801886c121e8
  	arch_switch_to(current);
  
  	return current->thread.prev_sched;
-@@ -112,8 +117,21 @@ void new_thread_handler(void)
+@@ -112,8 +117,19 @@ void new_thread_handler(void)
  	int (*fn)(void *);
  	void *arg;
  
@@ -104,13 +104,11 @@ index 13d461712c997288c8274d3b47a101f7efb20b43..9dcd8758ffb3648b055b801886c121e8
  		schedule_tail(current->thread.prev_sched);
 +#ifdef UML_HOST_DARWIN
 +		/*
-+		 * Linux-host UML transfers to a new kernel stack with siglongjmp(),
-+		 * which restores the signal/IRQ state saved by the scheduler.  Darwin
-+		 * gives every Linux task its own pthread instead, so a first-run task
-+		 * has no suspended schedule() frame to perform the matching
-+		 * local_irq_enable().  The runqueue lock is gone after schedule_tail()
-+		 * and a newly scheduled task must enter both kernel-thread code and
-+		 * userspace with local interrupts enabled.
++		 * A first-run task has no suspended schedule() frame to perform the
++		 * matching local_irq_enable().  The runqueue lock is gone after
++		 * schedule_tail(), and the task now owns its selected fixed vCPU carrier,
++		 * so it must enter kernel-thread code or userspace with local interrupts
++		 * enabled.
 +		 */
 +		local_irq_enable();
 +#endif
@@ -118,18 +116,18 @@ index 13d461712c997288c8274d3b47a101f7efb20b43..9dcd8758ffb3648b055b801886c121e8
  	current->thread.prev_sched = NULL;
  
  	fn = current->thread.request.thread.proc;
-@@ -130,6 +148,10 @@ void new_thread_handler(void)
+@@ -130,6 +146,10 @@ void new_thread_handler(void)
  static void fork_handler(void)
  {
  	schedule_tail(current->thread.prev_sched);
 +#ifdef UML_HOST_DARWIN
-+	/* See new_thread_handler(): this is the first activation of a pthread. */
++	/* See new_thread_handler(): this is the task's first carrier activation. */
 +	local_irq_enable();
 +#endif
  
  	/*
  	 * XXX: if interrupt_end() calls schedule, this call to
-@@ -156,6 +178,12 @@ int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
+@@ -156,6 +176,12 @@ int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
  	if (!args->fn) {
  	  	memcpy(&p->thread.regs.regs, current_pt_regs(),
  		       sizeof(p->thread.regs.regs));
@@ -142,7 +140,7 @@ index 13d461712c997288c8274d3b47a101f7efb20b43..9dcd8758ffb3648b055b801886c121e8
  		PT_REGS_SET_SYSCALL_RETURN(&p->thread.regs, 0);
  		if (sp != 0)
  			REGS_SP(p->thread.regs.regs.gp) = sp;
-@@ -187,11 +215,7 @@ int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
+@@ -187,11 +213,7 @@ int copy_thread(struct task_struct * p, const struct kernel_clone_args *args)
  
  void initial_thread_cb(void (*proc)(void *), void *arg)
  {
@@ -154,7 +152,7 @@ index 13d461712c997288c8274d3b47a101f7efb20b43..9dcd8758ffb3648b055b801886c121e8
  }
  
  int arch_dup_task_struct(struct task_struct *dst,
-@@ -222,11 +246,21 @@ void arch_cpu_idle(void)
+@@ -222,11 +244,21 @@ void arch_cpu_idle(void)
  	um_idle_sleep();
  }
  
