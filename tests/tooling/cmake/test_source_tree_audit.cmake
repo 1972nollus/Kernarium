@@ -103,7 +103,7 @@ endif()
 # The layer, engine-ownership, executable-memory, implementation-include,
 # CPU-header and test-registration rules read the whole tree, so the audit
 # itself runs over a fixture tree that breaks each rule beside a file the rule
-# accepts. Every fixture starts below a comment, so a rule cannot pass by
+# accepts. Every fixture starts on its second line, so a rule cannot pass by
 # matching only at the start of a file.
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(WRITE "${TEST_ROOT}/CMakeLists.txt" "")
