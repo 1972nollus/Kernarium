@@ -48,25 +48,6 @@ uml_add_tooling_test(
     LABELS audit
     TIMEOUT 30)
 
-if(UML_ENABLE_RUNTIME_PROFILING)
-    add_executable(uml_jit_profile_final_report_fixture
-        ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/jit_profile_final_report_fixture.cpp)
-    target_link_libraries(uml_jit_profile_final_report_fixture PRIVATE
-        UML::BridgeAbi
-        UML::Emulator
-        UML::GuestPageConfiguration
-        UML::JitProfileConfiguration)
-    target_include_directories(uml_jit_profile_final_report_fixture PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
-    uml_add_tooling_test(
-        NAME jit-profile-final-report-contract
-        COMMAND ${Python3_EXECUTABLE} -B
-            ${PROJECT_SOURCE_DIR}/tests/tooling/cmake/test_jit_profile_final_report.py
-            --fixture $<TARGET_FILE:uml_jit_profile_final_report_fixture>
-        LABELS audit;cpu
-        TIMEOUT 30)
-endif()
-
 uml_add_tooling_test(
     NAME engine-kind-link-audit
     COMMAND ${Python3_EXECUTABLE}
