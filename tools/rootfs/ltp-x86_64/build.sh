@@ -28,74 +28,10 @@ package inventory, ELF inventory, and checksum are published after validation.
 EOF
 }
 
-work_dir=
-output=
-while [ "$#" -gt 0 ]; do
-	case "$1" in
-	--work)
-		[ "$#" -ge 2 ] || fail "--work requires a path"
-		work_dir=$2
-		shift 2
-		;;
-	--output)
-		[ "$#" -ge 2 ] || fail "--output requires a path"
-		output=$2
-		shift 2
-		;;
-	-h|--help)
-		usage
-		exit 0
-		;;
-	*) fail "unknown option: $1" ;;
-	esac
-done
-
-[ -n "$work_dir" ] && [ -n "$output" ] || {
-	usage >&2
-	exit 2
-}
-case "$work_dir:$output" in
-/*:/*) ;;
-*) fail "--work and --output must be absolute" ;;
-esac
-[ "$work_dir" != "$output" ] || fail "work and output paths must differ"
-case "$work_dir" in /|/home|/tmp|/usr|/var) fail "unsafe work path: $work_dir" ;; esac
-case "$output" in /|/home|/tmp|/usr|/var) fail "unsafe output path: $output" ;; esac
-case "$output" in *.erofs) ;; *) fail "--output must end in .erofs" ;; esac
-[ ! -e "$work_dir" ] && [ ! -L "$work_dir" ] || \
-	fail "refusing to replace work path: $work_dir"
-for artifact in "$output" "$output.packages.tsv" "$output.elf.tsv" \
-	"$output.sha256"; do
-	[ ! -e "$artifact" ] && [ ! -L "$artifact" ] || \
-		fail "refusing to replace output: $artifact"
-done
-[ "$(uname -s)" = Linux ] || fail "the producer requires Linux"
-[ "$(uname -m)" = x86_64 ] || fail "the producer requires native x86-64"
-[ "$(id -u)" -ne 0 ] || fail "run as an ordinary user; sudo is used narrowly"
-sudo -n true 2>/dev/null || fail "passwordless sudo is required"
-for command in chroot debootstrap git mkfs.erofs mountpoint python3 \
-	sha256sum sort sudo; do
-	command -v "$command" >/dev/null 2>&1 || \
-		fail "required command is unavailable: $command"
-done
-
-output_parent=$(dirname -- "$output")
-output_name=$(basename -- "$output")
-case "$output_name" in ''|.|..) fail "unsafe output name: $output_name" ;; esac
-mkdir -p -- "$output_parent"
-output_parent=$(CDPATH= cd -- "$output_parent" && pwd -P)
-output=$output_parent/$output_name
-mkdir -p -- "$work_dir"
-work_dir=$(CDPATH= cd -- "$work_dir" && pwd -P)
-root=$work_dir/root
-mkdir -p -- "$root"
-
-owner_uid=$(id -u)
-owner_gid=$(id -g)
-# Stage in a directory this user owns beside the output, so the name root's
-# mkfs.erofs writes stays reserved and publication is a same-directory rename.
-staging_dir=$(mktemp -d "$output_parent/.$output_name.partial.XXXXXX")
-staging=$staging_dir/$output_name
+. "$SCRIPT_DIR/../producer.sh"
+producer_parse_erofs_options "$@"
+producer_require_host x86_64 chroot debootstrap git mkfs.erofs mountpoint \
+	python3 sha256sum sort sudo
 unmount_root()
 {
 	for mount_point in dev sys proc; do
@@ -104,19 +40,8 @@ unmount_root()
 		fi
 	done
 }
-cleanup()
-{
-	unmount_root || true
-	[ -n "$staging_dir" ] || return
-	sudo rm -rf -- "$staging_dir"
-}
-publish()
-{
-	mv -T -n -- "$1" "$2"
-	[ ! -e "$1" ] || fail "output appeared during publication: $2"
-}
-trap cleanup EXIT
-trap 'exit 1' HUP INT TERM
+producer_exit_hook=unmount_root
+producer_stage_erofs_output
 
 # The runtime set matches the LTP-relevant userspace of the arm64 product
 # rootfs. The build set stays installed because several LTP command
@@ -179,15 +104,5 @@ sudo truncate -s 0 "$root/etc/machine-id"
 
 printf '%s\n' '==> Building EROFS'
 sudo mkfs.erofs -L uml-ltp-x86-64 -zlz4hc "$staging" "$root"
-sudo chown "$owner_uid:$owner_gid" "$staging"
-checksum=$(sha256sum "$staging" | awk '{print $1}')
-printf '%s  %s\n' "$checksum" "$output_name" > "$staging.sha256"
-
-publish "$staging" "$output"
-publish "$staging.packages.tsv" "$output.packages.tsv"
-publish "$staging.elf.tsv" "$output.elf.tsv"
-publish "$staging.sha256" "$output.sha256"
-rmdir -- "$staging_dir"
-staging_dir=
-trap - EXIT HUP INT TERM
+producer_publish_erofs
 printf '%s\n' "Built x86-64 LTP rootfs: $output"

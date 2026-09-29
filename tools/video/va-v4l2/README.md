@@ -98,7 +98,7 @@ host already produced.
 | --- | --- |
 | the device does not enumerate `AR24` on its CAPTURE queue | NV12, always |
 | `UML_VA_V4L2_RGB=off` | NV12 |
-| `auto` (default) or `force` | packed RGB |
+| `auto` (default) | packed RGB |
 
 It is the single largest thing in the guest-side video path: converting NV12
 in the guest is a scalar pass over every pixel, while copying packed `AR24` is
@@ -182,7 +182,7 @@ converts never pays for that.
 | `UML_VA_V4L2_DEVICE` | the decoder node, instead of `/dev/video-dec0` or a scan of `/dev/video*` |
 | `UML_VA_V4L2_SURFACES` | the backing store, as above |
 | `UML_VA_V4L2_HIDDEN` | `show` (default) or `skip`, as above |
-| `UML_VA_V4L2_RGB` | `auto` (default), `off` or `force`, as above |
+| `UML_VA_V4L2_RGB` | `auto` (default) or `off`, as above |
 | `UML_VA_V4L2_CAPTURE` | `auto` (default) or `device`: who owns the decoded pictures' memory, as above |
 | `UML_VA_DRM_DEVICE` | the render node for GBM surfaces, instead of `/dev/dri/renderD128` |
 | `UML_VA_V4L2_LOG` | a file to append diagnostics to; unset, the driver writes nothing |
