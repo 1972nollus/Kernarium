@@ -239,7 +239,6 @@ function(uml_audit_engine_reachability ROOT NODE PATH)
     set_property(GLOBAL PROPERTY
         "UML_ENGINE_REACHABILITY_${ROOT}_${NODE}" TRUE)
 
-    uml_architecture_engine_kind("${ROOT}" ROOT_ENGINE_KIND)
     uml_architecture_engine_kind("${NODE}" NODE_ENGINE_KIND)
     uml_architecture_engine_edge_allowed(
         "${ROOT}" "${NODE}" REACHABILITY_ALLOWED)
@@ -308,10 +307,9 @@ foreach(INDEX RANGE 0 ${TARGET_COUNT})
                 # File API dependencies include transitive static-link
                 # archives.  They remain authoritative for cycle detection,
                 # and for engine isolation: interface carriers must not hide
-                # a concrete engine dependency. Direct configured edges above
-                # retain the finer direct-link diagnostics and layer
-                # direction without mistaking archive propagation for a
-                # source-level architecture dependency.
+                # a concrete engine dependency. The declared edges above keep
+                # the layer direction without mistaking archive propagation
+                # for a source-level architecture dependency.
             endif()
         endforeach()
     endif()
