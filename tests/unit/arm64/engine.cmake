@@ -101,19 +101,9 @@
         COMMAND uml_arm64_instruction_corpus_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack)
 
-    add_executable(uml_arm64_engine_test_support_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support_tests.cpp)
-    target_link_libraries(uml_arm64_engine_test_support_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-engine-harness
-        COMMAND uml_arm64_engine_test_support_tests)
-
-    add_executable(uml_arm64_deferred_fp_state_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_deferred_fp_state_tests.cpp)
-    target_link_libraries(uml_arm64_deferred_fp_state_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-deferred-fp-state
-        COMMAND uml_arm64_deferred_fp_state_tests)
+    uml_add_arm64_unit_test(engine_test_support NAME arm64-engine-harness
+        NO_OBJECTS)
+    uml_add_arm64_unit_test(deferred_fp_state NO_OBJECTS)
 
     add_executable(uml_host_instruction_probe_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/host_instruction_probe_tests.cpp)
@@ -127,12 +117,7 @@
     target_link_libraries(uml_tlb_sync_range_tests PRIVATE UML::BridgeAbi)
     uml_add_unit_test(NAME uml-tlb-sync-ranges COMMAND uml_tlb_sync_range_tests)
 
-    add_executable(uml_arm64_gadget_tlb_layout_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_tlb_layout_tests.cpp)
-    target_include_directories(uml_arm64_gadget_tlb_layout_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
-    uml_add_unit_test(NAME arm64-gadget-tlb-layout
-        COMMAND uml_arm64_gadget_tlb_layout_tests)
+    uml_add_arm64_unit_test(gadget_tlb_layout WITHOUT_HARNESS NO_OBJECTS)
 
 	add_executable(uml_cpu_engine_contract_tests
 		${PROJECT_SOURCE_DIR}/tests/unit/arm64/cpu_engine_contract_tests.cpp)
@@ -144,24 +129,12 @@
 		${PROJECT_SOURCE_DIR}/darwin/emulator)
 	uml_add_unit_test(NAME cpu-engine-contract COMMAND uml_cpu_engine_contract_tests)
 
-	add_executable(uml_arm64_pc_alignment_contract_tests
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_pc_alignment_contract_tests.cpp)
-	target_link_libraries(uml_arm64_pc_alignment_contract_tests PRIVATE
-		UML::BridgeAbi
-		UML::Emulator)
-	target_include_directories(uml_arm64_pc_alignment_contract_tests PRIVATE
-		${PROJECT_SOURCE_DIR}/darwin
-		${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-	uml_add_unit_test(NAME arm64-pc-alignment-contract
-		COMMAND uml_arm64_pc_alignment_contract_tests
-		LABELS tsan)
+    uml_add_arm64_unit_test(pc_alignment_contract WITHOUT_HARNESS NO_OBJECTS
+        LABELS tsan)
+    target_link_libraries(uml_arm64_pc_alignment_contract_tests PRIVATE
+        UML::Emulator)
 
-    add_executable(uml_arm64_floating_exception_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_floating_exception_tests.cpp)
-    target_include_directories(uml_arm64_floating_exception_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
-    uml_add_unit_test(NAME arm64-floating-exception
-        COMMAND uml_arm64_floating_exception_tests)
+    uml_add_arm64_unit_test(floating_exception WITHOUT_HARNESS NO_OBJECTS)
 
     uml_add_arm64_unit_test(floating_trap_control)
 
@@ -180,81 +153,27 @@
     uml_add_arm64_unit_test(tlb WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_STATIC_TEST_OBJECTS})
 
-    add_executable(uml_arm64_jit_cache_geometry_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_cache_geometry_tests.cpp)
-    target_link_libraries(uml_arm64_jit_cache_geometry_tests PRIVATE
-        UML::BridgeAbi
-        uml_cpu_jit_component)
-    target_include_directories(uml_arm64_jit_cache_geometry_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
-    uml_add_unit_test(NAME arm64-jit-cache-geometry
-        COMMAND uml_arm64_jit_cache_geometry_tests
-        LABELS tsan)
-
-    add_executable(uml_arm64_jit_shared_translation_cache_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_shared_translation_cache_tests.cpp)
+    foreach(JIT_CACHE_TEST IN ITEMS cache_geometry shared_translation_cache)
+        uml_add_arm64_unit_test(jit_${JIT_CACHE_TEST} WITHOUT_HARNESS NO_OBJECTS
+            LABELS tsan)
+        target_link_libraries(uml_arm64_jit_${JIT_CACHE_TEST}_tests PRIVATE
+            uml_cpu_jit_component)
+    endforeach()
     target_link_libraries(uml_arm64_jit_shared_translation_cache_tests PRIVATE
-        UML::BridgeAbi
-        uml_cpu_jit_component
         uml_test_allocation_failure)
-    target_include_directories(
-        uml_arm64_jit_shared_translation_cache_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
-    uml_add_unit_test(NAME arm64-jit-shared-translation-cache
-        COMMAND uml_arm64_jit_shared_translation_cache_tests
-        LABELS tsan)
 
-    add_executable(uml_arm64_jit_executor_pool_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_executor_pool_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
-    target_link_libraries(uml_arm64_jit_executor_pool_tests PRIVATE
-        UML::BridgeAbi)
-    target_include_directories(uml_arm64_jit_executor_pool_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_definitions(uml_arm64_jit_executor_pool_tests PRIVATE
-        UML_JIT_RUNTIME_DIAGNOSTICS=1)
-    uml_add_unit_test(NAME arm64-jit-executor-pool
-        COMMAND uml_arm64_jit_executor_pool_tests
-        LABELS tsan)
+    uml_add_arm64_unit_test(jit_executor_pool WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_DIAGNOSTIC_TEST_OBJECTS} LABELS tsan)
+    uml_add_arm64_unit_test(single_step WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
+    uml_add_arm64_unit_test(jit_executor_pool_multislot WITHOUT_HARNESS
+        OBJECTS ${UML_ARM64_RUNTIME_DIAGNOSTIC_TEST_OBJECTS} LABELS tsan)
+    foreach(JIT_POOL_TEST IN ITEMS executor_pool executor_pool_multislot)
+        target_compile_definitions(uml_arm64_jit_${JIT_POOL_TEST}_tests PRIVATE
+            UML_JIT_RUNTIME_DIAGNOSTICS=1)
+    endforeach()
 
-    add_executable(uml_arm64_single_step_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_single_step_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_link_libraries(uml_arm64_single_step_tests PRIVATE UML::BridgeAbi)
-    target_include_directories(uml_arm64_single_step_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    uml_add_unit_test(NAME arm64-single-step
-        COMMAND uml_arm64_single_step_tests)
-
-    add_executable(uml_arm64_jit_executor_pool_multislot_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_executor_pool_multislot_tests.cpp
-        $<TARGET_OBJECTS:uml_runtime_guest_selector>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        $<TARGET_OBJECTS:uml_static_mmu>
-        ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
-    target_link_libraries(uml_arm64_jit_executor_pool_multislot_tests PRIVATE
-        UML::BridgeAbi)
-    target_include_directories(
-        uml_arm64_jit_executor_pool_multislot_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_definitions(uml_arm64_jit_executor_pool_multislot_tests
-        PRIVATE UML_JIT_RUNTIME_DIAGNOSTICS=1)
-    uml_add_unit_test(NAME arm64-jit-executor-pool-multislot
-        COMMAND uml_arm64_jit_executor_pool_multislot_tests
-        LABELS tsan)
-
+    # These keep their underscores in the test name: arm64-jit-cache_validation.
     foreach(JIT_TEST IN ITEMS
             runtime
             capability
@@ -264,33 +183,17 @@
             illegal_runtime
             publication_gate
             reservation_alias)
-        set(_jit_test_runtime_objects ${UML_STATIC_RUNTIME_TEST_OBJECTS})
+        set(_jit_test_objects ${UML_ARM64_RUNTIME_TEST_OBJECTS})
         if(JIT_TEST STREQUAL "cache_validation")
-            set(_jit_test_runtime_objects
-                ${UML_STATIC_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
+            set(_jit_test_objects ${UML_ARM64_RUNTIME_DIAGNOSTIC_TEST_OBJECTS})
         endif()
-        add_executable(uml_arm64_jit_${JIT_TEST}_tests
-            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_${JIT_TEST}_tests.cpp
-            $<TARGET_OBJECTS:uml_runtime_guest_selector>
-            $<TARGET_OBJECTS:uml_arm64_gadgets>
-            $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-            $<TARGET_OBJECTS:uml_static_mmu>
-            ${_jit_test_runtime_objects})
-        target_link_libraries(uml_arm64_jit_${JIT_TEST}_tests PRIVATE
-            UML::BridgeAbi)
-        target_include_directories(uml_arm64_jit_${JIT_TEST}_tests PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin)
-        if(JIT_TEST STREQUAL "cache_validation")
-            target_compile_definitions(
-                uml_arm64_jit_${JIT_TEST}_tests PRIVATE
-                UML_JIT_RUNTIME_DIAGNOSTICS=1)
-            target_link_libraries(
-                uml_arm64_jit_${JIT_TEST}_tests PRIVATE
-                uml_test_allocation_failure)
-        endif()
-        uml_add_unit_test(NAME arm64-jit-${JIT_TEST}
-            COMMAND uml_arm64_jit_${JIT_TEST}_tests)
+        uml_add_arm64_unit_test(jit_${JIT_TEST} NAME arm64-jit-${JIT_TEST}
+            WITHOUT_HARNESS OBJECTS ${_jit_test_objects})
     endforeach()
+    target_compile_definitions(uml_arm64_jit_cache_validation_tests PRIVATE
+        UML_JIT_RUNTIME_DIAGNOSTICS=1)
+    target_link_libraries(uml_arm64_jit_cache_validation_tests PRIVATE
+        uml_test_allocation_failure)
     set_property(TEST arm64-jit-publication_gate APPEND PROPERTY LABELS tsan)
 
     uml_add_arm64_unit_test(jit_lazy_flags_runtime WITHOUT_HARNESS
@@ -334,48 +237,25 @@
             OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     endforeach()
 
-    add_executable(uml_arm64_jit_tlb_miss_preservation_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_tlb_miss_preservation_tests.cpp
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS}
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
-    target_link_libraries(
-        uml_arm64_jit_tlb_miss_preservation_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-jit-tlb-miss-preservation
-        COMMAND uml_arm64_jit_tlb_miss_preservation_tests)
+    uml_add_arm64_unit_test(jit_tlb_miss_preservation
+        OBJECTS
+            ${UML_STATIC_RUNTIME_TEST_OBJECTS}
+            $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
 
     uml_add_arm64_unit_test(jit_sp_memory_run_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
-    add_executable(uml_arm64_jit_sp_memory_run_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_sp_memory_run_runtime_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_sp_memory_run_runtime_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-jit-sp-memory-run-runtime
-        COMMAND uml_arm64_jit_sp_memory_run_runtime_tests)
+    uml_add_arm64_unit_test(jit_sp_memory_run_runtime NO_OBJECTS)
 
     uml_add_arm64_unit_test(jit_gpr_memory_run_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
-    add_executable(uml_arm64_jit_gpr_memory_run_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_gpr_memory_run_runtime_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_gpr_memory_run_runtime_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-jit-gpr-memory-run-runtime
-        COMMAND uml_arm64_jit_gpr_memory_run_runtime_tests)
+    uml_add_arm64_unit_test(jit_gpr_memory_run_runtime NO_OBJECTS)
 
     uml_add_arm64_unit_test(jit_simd_memory_run_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
 
-    add_executable(uml_arm64_jit_simd_memory_run_runtime_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_jit_simd_memory_run_runtime_tests.cpp)
-    target_link_libraries(
-        uml_arm64_jit_simd_memory_run_runtime_tests PRIVATE
-        uml_arm64_engine_test_support)
-    uml_add_unit_test(NAME arm64-jit-simd-memory-run-runtime
-        COMMAND uml_arm64_jit_simd_memory_run_runtime_tests)
+    uml_add_arm64_unit_test(jit_simd_memory_run_runtime NO_OBJECTS)
 
     uml_add_arm64_unit_test(jit_scalar_atomic_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
@@ -392,58 +272,32 @@
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(gadget_runtime WITHOUT_HARNESS)
 
-    add_executable(uml_arm64_gadget_cache_validation_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_cache_validation_tests.cpp
-        $<TARGET_OBJECTS:uml_static_mmu>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_link_libraries(uml_arm64_gadget_cache_validation_tests PRIVATE
-        UML::BridgeAbi)
-    target_include_directories(
-        uml_arm64_gadget_cache_validation_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_definitions(
-        uml_arm64_gadget_cache_validation_tests PRIVATE
+    # The static MMU and gadget objects precede the runtime's, unlike
+    # UML_ARM64_STATIC_TEST_OBJECTS.
+    foreach(GADGET_RUNTIME_TEST IN ITEMS cache_validation inline_fallthrough)
+        uml_add_arm64_unit_test(gadget_${GADGET_RUNTIME_TEST} WITHOUT_HARNESS
+            OBJECTS
+                $<TARGET_OBJECTS:uml_static_mmu>
+                $<TARGET_OBJECTS:uml_arm64_gadgets>
+                $<TARGET_OBJECTS:uml_arm64_execution_helpers>
+                ${UML_STATIC_RUNTIME_TEST_OBJECTS})
+    endforeach()
+    target_compile_definitions(uml_arm64_gadget_cache_validation_tests PRIVATE
         UML_GADGET_CACHE_SLOTS=${UML_GADGET_CACHE_SLOTS}
         UML_GADGET_RESIDENT_GENERATIONS=${UML_GADGET_RESIDENT_GENERATIONS})
-    uml_add_unit_test(NAME arm64-gadget-cache-validation
-        COMMAND uml_arm64_gadget_cache_validation_tests)
-
-    add_executable(uml_arm64_gadget_inline_fallthrough_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_inline_fallthrough_tests.cpp
-        $<TARGET_OBJECTS:uml_static_mmu>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>
-        ${UML_STATIC_RUNTIME_TEST_OBJECTS})
-    target_link_libraries(uml_arm64_gadget_inline_fallthrough_tests PRIVATE
-        UML::BridgeAbi)
-    target_include_directories(
-        uml_arm64_gadget_inline_fallthrough_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    uml_add_unit_test(NAME arm64-gadget-inline-fallthrough
-        COMMAND uml_arm64_gadget_inline_fallthrough_tests)
 
     uml_add_arm64_unit_test(gadget_hot_path WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_nzcv_residency WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_fp_environment WITHOUT_HARNESS)
 
-    add_executable(uml_arm64_gadget_dependency_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_tests.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_reference.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_dependency_memory_tests.cpp
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_gadget_vector_dependency_tests.cpp
-        $<TARGET_OBJECTS:uml_static_mmu>
-        $<TARGET_OBJECTS:uml_arm64_gadgets>
-        $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
+    uml_add_arm64_unit_test(gadget_dependency NAME arm64-gadget-dependencies
+        WITHOUT_HARNESS
+        SOURCES
+            ${CMAKE_CURRENT_SOURCE_DIR}/arm64_gadget_dependency_reference.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/arm64_gadget_dependency_memory_tests.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/arm64_gadget_vector_dependency_tests.cpp)
     target_link_libraries(uml_arm64_gadget_dependency_tests PRIVATE
-        UML::BridgeAbi
         UML::CpuContract uml_arm64_engine_test_support)
-    target_include_directories(uml_arm64_gadget_dependency_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
-    uml_add_unit_test(NAME arm64-gadget-dependencies COMMAND uml_arm64_gadget_dependency_tests)
 
     # The test's exit hold must be registered before any destructor it
     # outlasts: keep engine state lazy or in libraries linked after it.
