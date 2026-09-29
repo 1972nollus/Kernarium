@@ -161,7 +161,7 @@ def main() -> int:
                     "target_link_libraries(second INTERFACE first)",
                 ],
                 "Declared architecture target dependency cycle: "
-                "-> first -> second -> first",
+                "first -> second -> first",
             ),
             "layer": (
                 [
