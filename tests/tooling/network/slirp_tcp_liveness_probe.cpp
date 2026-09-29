@@ -5,7 +5,9 @@
  * vanished leaves the host client waiting until SLiRP gives up on it. Both
  * ways SLiRP waits must give up in bounded time: retransmitting data the
  * guest never acknowledges, and probing a window the guest closed and never
- * reopens. The clock is SLiRP's own, advanced one 500 ms tick per pass.
+ * reopens. A guest that answers every probe is alive, and SLiRP must keep its
+ * closed window open however long its reader stalls. The clock is SLiRP's
+ * own, advanced one 500 ms tick per pass.
  */
 #include "slirp_tcp_harness.hpp"
 
@@ -71,12 +73,14 @@ bool host_closed(int client)
 }
 
 /* Forward a host connection to a guest that answers the handshake with
- * `window`, acknowledges the first data segment with `ack_window` when
- * `acknowledge` is set, and then goes silent. Returns how long after the
- * guest's last segment SLiRP closed the host end, or -1 if it held it for
- * the whole observation. */
+ * `window` and acknowledges the first data segment with `ack_window` when
+ * `acknowledge` is set. It then goes silent, or with `answer_probes` answers
+ * every later segment with the same zero-window acknowledgement, as a live
+ * guest whose reader has stalled does. Returns how long after that SLiRP
+ * closed the host end, or -1 if it held it for the whole observation. */
 std::int64_t hold_time(const char *label, std::uint16_t window,
-		       bool acknowledge, std::uint16_t ack_window)
+		       bool acknowledge, std::uint16_t ack_window,
+		       bool answer_probes = false)
 {
 	Network network;
 	const std::uint16_t host_port = unused_loopback_port();
@@ -150,7 +154,15 @@ std::int64_t hold_time(const char *label, std::uint16_t window,
 	std::int64_t closed_after = -1;
 	while (network.now_ms() - silent_from < observation_ms) {
 		network.pump(500);
-		network.frames().clear();
+		bool probed = false;
+		while (next_segment(network))
+			probed = true;
+		if (answer_probes && probed)
+			network.input(tcp_frame(
+				guest_address, slirp_address, guest_port, slirp_port,
+				guest_iss + 1,
+				first->seq + static_cast<std::uint32_t>(first->payload),
+				tcp_ack, 0));
 		if (host_closed(client)) {
 			closed_after = network.now_ms() - silent_from;
 			break;
@@ -195,10 +207,27 @@ int main(void)
 			hold_time("unacknowledged data", 65535, false, 0));
 	expect_given_up("closed window",
 			hold_time("closed window", 1460, true, 0));
+	/* A guest that keeps its window closed but answers every probe is
+	 * alive, however long its reader stalls. */
+	const std::int64_t answered =
+		hold_time("answered probes", 1460, true, 0, true);
+	if (answered != -1) {
+		if (answered >= 0)
+			fprintf(stderr,
+				"answered probes: SLiRP closed a live guest's "
+				"connection after %lld s\n",
+				static_cast<long long>(answered / 1000));
+		failures++;
+	} else {
+		printf("answered probes: SLiRP held a live guest's closed "
+		       "window for %lld minutes\n",
+		       static_cast<long long>(observation_ms / 60000));
+	}
 	if (failures != 0)
 		return 1;
 	printf("PASS: SLiRP gives up a silent guest's forwarded connection "
-	       "within %lld s, retransmitting or probing a closed window\n",
+	       "within %lld s, retransmitting or probing a closed window, and "
+	       "keeps a live guest's closed window open\n",
 	       static_cast<long long>(give_up_bound_ms / 1000));
 	return 0;
 }
