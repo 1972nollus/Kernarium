@@ -125,75 +125,36 @@ verify_archive()
 		fail "$platform archive does not carry every first-party object it references"
 }
 
+# Configure and build the external consumers against the package the
+# trailing -D options name, and run them where the host can.
 build_consumer()
 {
 	platform=$1
-	mode=$2
-	location=$3
-	headers=$4
-	consumer_dir=$5
-
-	if [ "$mode" = package ]; then
-		clean_build_environment cmake \
-			-S "$project_root/tests/consumer/apple" \
-			-B "$consumer_dir" -G Ninja \
-			-DCMAKE_TOOLCHAIN_FILE="$toolchain" \
-			-DUML_APPLE_PLATFORM="$platform" \
-			-DUML_EMULATOR_PACKAGE_PREFIX="$location" \
-			-DUML_EXPECTED_GUEST_PAGE_SIZE=16384 \
-			-DCMAKE_BUILD_TYPE=Release \
-			-DCMAKE_C_FLAGS:STRING= \
-			-DCMAKE_CXX_FLAGS:STRING= \
-			-DCMAKE_OBJC_FLAGS:STRING= \
-			-DCMAKE_EXE_LINKER_FLAGS:STRING=
-	else
-		clean_build_environment cmake \
-			-S "$project_root/tests/consumer/apple" \
-			-B "$consumer_dir" -G Ninja \
-			-DCMAKE_TOOLCHAIN_FILE="$toolchain" \
-			-DUML_APPLE_PLATFORM="$platform" \
-			-DUML_EMULATOR_LIBRARY="$location" \
-			-DUML_EMULATOR_HEADERS="$headers" \
-			-DUML_EXPECTED_GUEST_PAGE_SIZE=16384 \
-			-DCMAKE_BUILD_TYPE=Release \
-			-DCMAKE_C_FLAGS:STRING= \
-			-DCMAKE_CXX_FLAGS:STRING= \
-			-DCMAKE_OBJC_FLAGS:STRING= \
-			-DCMAKE_EXE_LINKER_FLAGS:STRING=
-	fi
+	generator=$2
+	consumer_dir=$3
+	shift 3
+	clean_build_environment cmake \
+		-S "$project_root/tests/consumer/apple" \
+		-B "$consumer_dir" -G "$generator" \
+		-DCMAKE_TOOLCHAIN_FILE="$toolchain" \
+		-DUML_APPLE_PLATFORM="$platform" \
+		-DUML_EXPECTED_GUEST_PAGE_SIZE=16384 \
+		-DCMAKE_C_FLAGS:STRING= \
+		-DCMAKE_CXX_FLAGS:STRING= \
+		-DCMAKE_OBJC_FLAGS:STRING= \
+		-DCMAKE_EXE_LINKER_FLAGS:STRING= \
+		"$@"
 	cmake --build "$consumer_dir" --config Release \
 		--target uml-emulator-external-consumer \
 			uml-emulator-external-c-consumer \
 			uml-emulator-external-objc-consumer --parallel
 	if [ "$platform" = macos ]; then
-		"$consumer_dir/uml-emulator-external-consumer"
-		"$consumer_dir/uml-emulator-external-c-consumer"
-		"$consumer_dir/uml-emulator-external-objc-consumer"
+		binaries=$consumer_dir
+		[ "$generator" = Ninja ] || binaries="$consumer_dir/Release"
+		"$binaries/uml-emulator-external-consumer"
+		"$binaries/uml-emulator-external-c-consumer"
+		"$binaries/uml-emulator-external-objc-consumer"
 	fi
-}
-
-build_xcode_xcframework_consumer()
-{
-	xcframework=$1
-	consumer_dir=$2
-	clean_build_environment cmake \
-		-S "$project_root/tests/consumer/apple" \
-		-B "$consumer_dir" -G Xcode \
-		-DCMAKE_TOOLCHAIN_FILE="$toolchain" \
-		-DUML_APPLE_PLATFORM=macos \
-		-DUML_EMULATOR_XCFRAMEWORK="$xcframework" \
-		-DUML_EXPECTED_GUEST_PAGE_SIZE=16384 \
-		-DCMAKE_C_FLAGS:STRING= \
-		-DCMAKE_CXX_FLAGS:STRING= \
-		-DCMAKE_OBJC_FLAGS:STRING= \
-		-DCMAKE_EXE_LINKER_FLAGS:STRING=
-	cmake --build "$consumer_dir" --config Release \
-		--target uml-emulator-external-consumer \
-			uml-emulator-external-c-consumer \
-			uml-emulator-external-objc-consumer --parallel
-	"$consumer_dir/Release/uml-emulator-external-consumer"
-	"$consumer_dir/Release/uml-emulator-external-c-consumer"
-	"$consumer_dir/Release/uml-emulator-external-objc-consumer"
 }
 
 build_slice()
@@ -243,8 +204,9 @@ build_slice()
 		fail "$platform install is missing its CMake package metadata"
 	verify_archive "$platform" "$installed_library" \
 		"$build_dir/package-audit/installed"
-	build_consumer "$platform" package "$install_dir" "" \
-		"$build_dir/installed-external-consumer"
+	build_consumer "$platform" Ninja "$build_dir/installed-external-consumer" \
+		-DUML_EMULATOR_PACKAGE_PREFIX="$install_dir" \
+		-DCMAKE_BUILD_TYPE=Release
 
 	case "$platform" in
 	macos)
@@ -269,8 +231,10 @@ verify_final_slice()
 	verify_archive "$platform" "$final_library" \
 		"$work_root/final-audit/$platform"
 	verify_public_headers "$final_headers"
-	build_consumer "$platform" raw "$final_library" "$final_headers" \
-		"$work_root/final-consumer/$platform"
+	build_consumer "$platform" Ninja "$work_root/final-consumer/$platform" \
+		-DUML_EMULATOR_LIBRARY="$final_library" \
+		-DUML_EMULATOR_HEADERS="$final_headers" \
+		-DCMAKE_BUILD_TYPE=Release
 }
 
 build_root=$(canonical_destination "$build_root")
@@ -344,8 +308,8 @@ fi
 verify_final_slice macos macos-arm64
 verify_final_slice ios ios-arm64
 verify_final_slice ios-simulator ios-arm64-simulator
-build_xcode_xcframework_consumer "$staged_output" \
-	"$work_root/final-xcode-consumer/macos"
+build_consumer macos Xcode "$work_root/final-xcode-consumer/macos" \
+	-DUML_EMULATOR_XCFRAMEWORK="$staged_output"
 
 # An existing package is exchanged with the staged one in a single rename;
 # the previous package then sits in the stage, which cleanup removes. A first
