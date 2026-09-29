@@ -14,7 +14,6 @@ if(_uml_need_vnc_fixtures AND TARGET uml_gpu_service)
     target_link_libraries(uml-virtio-gpu PRIVATE UML::GpuDevice)
     target_include_directories(uml-virtio-gpu PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
-    target_compile_features(uml-virtio-gpu PRIVATE cxx_std_20)
     target_compile_options(uml-virtio-gpu PRIVATE
         -Wall -Wextra -Werror -Wno-deprecated-declarations)
     set_target_properties(uml-virtio-gpu PROPERTIES
@@ -43,8 +42,6 @@ if(UML_BUILD_UNIT_TESTS)
         UML::PlatformContract)
     target_include_directories(uml_host_capabilities_test_support PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_host_capabilities_test_support PRIVATE
-        cxx_std_20)
     target_compile_options(uml_host_capabilities_test_support PRIVATE
         -Wall -Wextra -Werror)
     # Unit tests keep scratch files in the per-test build-tree directory that
@@ -53,7 +50,6 @@ if(UML_BUILD_UNIT_TESTS)
         unit/scratch/scratch_directory.cpp)
     target_include_directories(uml_test_scratch_directory PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/unit/scratch)
-    target_compile_features(uml_test_scratch_directory PUBLIC cxx_std_20)
     target_compile_options(uml_test_scratch_directory PRIVATE
         -Wall -Wextra -Werror)
     # One Mach VM region query for every test that inspects this task's map.
@@ -67,7 +63,6 @@ if(UML_BUILD_UNIT_TESTS)
     target_link_libraries(uml_static_mmu_test_support PRIVATE UML::BridgeAbi)
     target_include_directories(uml_static_mmu_test_support PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/unit/static_mmu)
-    target_compile_features(uml_static_mmu_test_support PUBLIC cxx_std_20)
     target_compile_options(uml_static_mmu_test_support PRIVATE
         -Wall -Wextra -Werror)
     # Unit binaries are independent consumers of the same scoped build

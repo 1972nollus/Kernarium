@@ -30,7 +30,6 @@ function(_uml_add_emulator_boundary TARGET ADMISSION_TESTING)
         target_include_directories(${TARGET} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/loader)
     endif()
-    target_compile_features(${TARGET} PUBLIC cxx_std_20)
     target_compile_options(${TARGET} PRIVATE -Wall -Wextra -Werror)
     target_compile_definitions(${TARGET} PRIVATE
         UML_APPLE_PLATFORM_NAME="${UML_APPLE_PLATFORM}"
@@ -72,7 +71,6 @@ target_include_directories(uml_emulator
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
         ${PROJECT_SOURCE_DIR}/darwin/runtime
         ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(uml_emulator PUBLIC cxx_std_20)
 
 set_target_properties(uml_emulator PROPERTIES
     OUTPUT_NAME uml_emulator
@@ -115,8 +113,6 @@ if(_uml_need_admission_test_variant)
             ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
             ${PROJECT_SOURCE_DIR}/darwin/runtime
             ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(uml_emulator_admission_test_variant PUBLIC
-        cxx_std_20)
     set_target_properties(uml_emulator_admission_test_variant PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
 endif()

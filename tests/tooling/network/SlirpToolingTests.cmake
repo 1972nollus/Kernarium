@@ -34,7 +34,6 @@ if(UML_BUILD_NETWORK_PROVIDER)
             UML::ThirdPartySlirp)
         target_include_directories(${_uml_slirp_target} PRIVATE
             ${PROJECT_SOURCE_DIR}/darwin/device/network/slirp)
-        target_compile_features(${_uml_slirp_target} PRIVATE cxx_std_20)
         target_compile_options(${_uml_slirp_target} PRIVATE
             -Wall -Wextra -Werror)
 

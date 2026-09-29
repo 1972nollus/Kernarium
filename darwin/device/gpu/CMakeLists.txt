@@ -5,7 +5,6 @@ function(uml_configure_gpu_component target)
     target_include_directories(${target} PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/darwin/device/vhost_user)
-    target_compile_features(${target} PUBLIC cxx_std_20)
     target_compile_options(${target} PRIVATE
         -Wall -Wextra -Werror -Wno-deprecated-declarations)
 endfunction()
@@ -16,8 +15,6 @@ if(TARGET uml_third_party_kosmickrisp)
     add_library(UML::GpuKosmicKrispCapabilityProbe ALIAS
         uml_gpu_kosmickrisp_capability_probe)
     uml_configure_gpu_component(uml_gpu_kosmickrisp_capability_probe)
-    set_target_properties(uml_gpu_kosmickrisp_capability_probe PROPERTIES
-        OBJCXX_STANDARD 20)
     target_compile_definitions(uml_gpu_kosmickrisp_capability_probe PRIVATE
         VK_ENABLE_BETA_EXTENSIONS=1)
     target_compile_options(uml_gpu_kosmickrisp_capability_probe PRIVATE
@@ -72,7 +69,6 @@ else()
 endif()
 add_library(uml_gpu_display STATIC ${_uml_gpu_display_sources})
 uml_configure_gpu_component(uml_gpu_display)
-set_target_properties(uml_gpu_display PROPERTIES OBJCXX_STANDARD 20)
 target_compile_options(uml_gpu_display PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
 target_compile_definitions(uml_gpu_display PRIVATE
@@ -109,8 +105,6 @@ if(UML_BUILD_UNIT_TESTS AND UML_TARGET_MACOS)
         scanout_framebuffer.cpp
         vnc_display.cpp)
     uml_configure_gpu_component(uml_gpu_display_test_variant)
-    set_target_properties(uml_gpu_display_test_variant PROPERTIES
-        OBJCXX_STANDARD 20)
     target_compile_options(uml_gpu_display_test_variant PRIVATE
         $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
     target_compile_definitions(uml_gpu_display_test_variant PUBLIC

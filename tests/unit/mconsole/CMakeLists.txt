@@ -2,7 +2,6 @@
 
 add_executable(uml_guest_console_tests guest_console_tests.cpp)
 target_link_libraries(uml_guest_console_tests PRIVATE UML::DeviceGuestConsole)
-target_compile_features(uml_guest_console_tests PRIVATE cxx_std_20)
 target_compile_options(uml_guest_console_tests PRIVATE -Wall -Wextra -Werror)
 uml_add_unit_test(NAME guest-console-suspend-timeout
     COMMAND uml_guest_console_tests suspend-timeout

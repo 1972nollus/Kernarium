@@ -5,7 +5,6 @@ add_library(UML::NetworkDevice ALIAS uml_network_device)
 uml_declare_architecture_target(uml_network_device device)
 target_include_directories(uml_network_device PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(uml_network_device PUBLIC cxx_std_20)
 target_compile_options(uml_network_device PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(uml_network_device PUBLIC UML::BridgeAbi)
 target_link_libraries(uml_network_device PRIVATE UML::RunRouting)
@@ -25,7 +24,6 @@ if(UML_BUILD_NETWORK_PROVIDER)
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/slirp)
-    target_compile_features(uml_network_provider PUBLIC cxx_std_20)
     target_compile_options(uml_network_provider PRIVATE -Wall -Wextra -Werror)
     target_compile_definitions(uml_network_provider PRIVATE
         UML_SLIRP_TESTING=0)
@@ -61,8 +59,6 @@ if(UML_BUILD_NETWORK_PROVIDER)
                 ${CMAKE_CURRENT_SOURCE_DIR})
         target_compile_definitions(uml_network_provider_test_variant PUBLIC
             UML_SLIRP_TESTING=1)
-        target_compile_features(uml_network_provider_test_variant PUBLIC
-            cxx_std_20)
         target_compile_options(uml_network_provider_test_variant PRIVATE
             -Wall -Wextra -Werror)
         target_link_libraries(uml_network_provider_test_variant PUBLIC

@@ -10,7 +10,6 @@ add_executable(uml_emulator_c_api_boundary_tests
 target_link_libraries(uml_emulator_c_api_boundary_tests PRIVATE
     UML::BridgeAbi
     UML::Emulator)
-target_compile_features(uml_emulator_c_api_boundary_tests PRIVATE cxx_std_20)
 target_compile_options(uml_emulator_c_api_boundary_tests PRIVATE
     -Wall -Wextra -Werror)
 uml_add_unit_test(
@@ -25,7 +24,6 @@ target_link_libraries(uml_emulator_options_tests PRIVATE
 target_include_directories(uml_emulator_options_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/darwin/emulator/src)
-target_compile_features(uml_emulator_options_tests PRIVATE cxx_std_20)
 target_compile_options(uml_emulator_options_tests PRIVATE
     -Wall -Wextra -Werror)
 uml_add_unit_test(NAME emulator-options COMMAND uml_emulator_options_tests)
@@ -39,7 +37,6 @@ target_link_libraries(uml_emulator_api_tests PRIVATE
 target_include_directories(uml_emulator_api_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin
     ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-target_compile_features(uml_emulator_api_tests PRIVATE cxx_std_20)
 target_compile_definitions(uml_emulator_api_tests PRIVATE
     UML_EMULATOR_TEST_HAS_SLIRP=$<BOOL:${UML_BUILD_NETWORK_PROVIDER}>)
 if(TARGET uml_network_provider)
@@ -62,7 +59,6 @@ if(NOT UML_GUEST_16K_PAGES)
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
     target_compile_definitions(uml_native_4k_admission_tests PRIVATE
         UML_EMULATOR_ADMISSION_TESTING=1)
-    target_compile_features(uml_native_4k_admission_tests PRIVATE cxx_std_20)
     target_compile_options(uml_native_4k_admission_tests PRIVATE
         -Wall -Wextra -Werror)
     uml_add_unit_test(
@@ -81,7 +77,6 @@ if(UML_GUEST_16K_PAGES AND UML_TARGET_MACOS)
     target_include_directories(uml_native_16k_ownership_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64)
-    target_compile_features(uml_native_16k_ownership_tests PRIVATE cxx_std_20)
     target_compile_options(uml_native_16k_ownership_tests PRIVATE
         -Wall -Wextra -Werror)
     uml_add_unit_test(

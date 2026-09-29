@@ -16,8 +16,6 @@ if(UML_BUILD_KERNEL_RUNNER)
         UML::GuestPageConfiguration)
     target_include_directories(uml_embedded_kernel_serialization_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin/emulator/src)
-    target_compile_features(uml_embedded_kernel_serialization_tests PRIVATE
-        cxx_std_20)
     target_compile_options(uml_embedded_kernel_serialization_tests PRIVATE
         -Wall -Wextra -Werror)
     target_compile_definitions(uml_embedded_kernel_serialization_tests PRIVATE

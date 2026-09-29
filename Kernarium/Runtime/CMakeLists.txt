@@ -129,7 +129,6 @@ target_link_libraries(KernariumRuntime PRIVATE
     "-framework Metal"
     "-framework MetalKit"
     "-framework UIKit")
-target_compile_features(KernariumRuntime PRIVATE cxx_std_20)
 target_compile_options(KernariumRuntime PRIVATE
     $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>
     -Wall -Wextra -Werror)

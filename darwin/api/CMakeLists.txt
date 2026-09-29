@@ -6,4 +6,3 @@ uml_declare_architecture_target(uml_api_contract api)
 target_include_directories(uml_api_contract INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
-target_compile_features(uml_api_contract INTERFACE cxx_std_20)

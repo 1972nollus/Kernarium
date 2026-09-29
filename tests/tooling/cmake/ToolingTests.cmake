@@ -58,8 +58,6 @@ if(UML_ENABLE_RUNTIME_PROFILING)
         UML::JitProfileConfiguration)
     target_include_directories(uml_jit_profile_final_report_fixture PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
-    target_compile_features(uml_jit_profile_final_report_fixture PRIVATE
-        cxx_std_20)
     target_compile_options(uml_jit_profile_final_report_fixture PRIVATE
         -Wall -Wextra -Werror)
     uml_add_tooling_test(

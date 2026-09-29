@@ -7,7 +7,6 @@ target_link_libraries(uml_runtime_context_tests PRIVATE
     uml_test_allocation_failure)
 target_include_directories(uml_runtime_context_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_runtime_context_tests PRIVATE cxx_std_20)
 target_compile_options(uml_runtime_context_tests PRIVATE
     -Wall -Wextra -Werror)
 uml_add_unit_test(
@@ -21,7 +20,6 @@ target_link_libraries(uml_runtime_exit_order_tests PRIVATE
     UML::Emulator)
 target_include_directories(uml_runtime_exit_order_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
-target_compile_features(uml_runtime_exit_order_tests PRIVATE cxx_std_20)
 target_compile_options(uml_runtime_exit_order_tests PRIVATE
     -Wall -Wextra -Werror)
 uml_add_unit_test(
@@ -32,8 +30,6 @@ add_executable(uml_runtime_kernel_signal_scope_tests
     kernel_signal_scope_tests.cpp)
 target_link_libraries(uml_runtime_kernel_signal_scope_tests PRIVATE
     UML::RuntimeKernelSignals)
-target_compile_features(uml_runtime_kernel_signal_scope_tests PRIVATE
-    cxx_std_20)
 target_compile_options(uml_runtime_kernel_signal_scope_tests PRIVATE
     -Wall -Wextra -Werror)
 uml_add_unit_test(
@@ -44,7 +40,6 @@ add_executable(uml_runtime_sequential_run_tests sequential_run_tests.cpp)
 target_link_libraries(uml_runtime_sequential_run_tests PRIVATE
     UML::BridgeAbi
     UML::Emulator)
-target_compile_features(uml_runtime_sequential_run_tests PRIVATE cxx_std_20)
 target_compile_options(uml_runtime_sequential_run_tests PRIVATE
     -Wall -Wextra -Werror)
 uml_add_unit_test(

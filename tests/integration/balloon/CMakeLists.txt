@@ -8,7 +8,6 @@ target_include_directories(uml-balloon-churn-server PRIVATE
 target_link_libraries(uml-balloon-churn-server PRIVATE
     UML::BalloonDevice
     UML::VhostUserTransport)
-target_compile_features(uml-balloon-churn-server PRIVATE cxx_std_20)
 target_compile_options(uml-balloon-churn-server PRIVATE
     -Wall -Wextra -Werror)
 add_dependencies(integration-test-binaries uml-balloon-churn-server)
