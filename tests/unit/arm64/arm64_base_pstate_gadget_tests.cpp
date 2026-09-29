@@ -9,8 +9,7 @@
 #include <cstdint>
 #include <memory_resource>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace uml::emulator::tests::base_pstate {
 namespace {
@@ -167,27 +166,18 @@ constexpr std::array<Gadget, 16> daif_clear_gadgets{
 
 [[nodiscard]] unsigned runtime_instruction_count(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(address(gadget));
-	for (unsigned index = 0; index < 20U; ++index)
-		if (indirect_branch(instructions[index]))
-			return index + 1U;
+	const auto shape = a64::body_shape(address(gadget), {.window = 20U});
+	if (shape.reached_dispatch)
+		return shape.instructions + 1U;
 	arm64_system_test::require(false);
 	return 0;
 }
 
 [[nodiscard]] unsigned conditional_branch_count(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(address(gadget));
-	unsigned branches = 0;
-	for (unsigned index = 0; index < 20U; ++index) {
-		const auto instruction = instructions[index];
-		if (indirect_branch(instruction))
-			return branches;
-		if (conditional_branch(instruction))
-			++branches;
-	}
+	const auto shape = a64::body_shape(address(gadget), {.window = 20U});
+	if (shape.reached_dispatch)
+		return shape.conditional_branches;
 	arm64_system_test::require(false);
 	return 0;
 }

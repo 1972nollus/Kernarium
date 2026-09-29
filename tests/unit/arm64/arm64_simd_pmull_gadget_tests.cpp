@@ -11,8 +11,7 @@
 #include <memory_resource>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 extern "C" {
 void uml_arm64_gadget_simd_pmull_8b_direct();
@@ -152,19 +151,18 @@ struct PathAudit final {
 
 [[nodiscard]] PathAudit audit(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(gadget);
 	PathAudit result{};
-	for (unsigned index = 0; index < 32U; ++index) {
-		const auto current = instructions[index];
-		if (indirect_branch(current))
-			return result;
-		++result.instructions_before_dispatch;
-		result.conditional_branches += conditional_branch(current);
-		result.direct_branches += direct_branch(current);
-		result.native_operations += native_pmull(current);
-	}
-	test::fail("PMULL gadget did not reach threaded dispatch");
+	const auto shape = a64::body_shape(
+		reinterpret_cast<std::uintptr_t>(gadget), {.window = 32U},
+		[&](std::uint32_t instruction) {
+			result.direct_branches += direct_branch(instruction);
+			result.native_operations += native_pmull(instruction);
+		});
+	if (!shape.reached_dispatch)
+		test::fail("PMULL gadget did not reach threaded dispatch");
+	result.instructions_before_dispatch = shape.instructions;
+	result.conditional_branches = shape.conditional_branches;
+	return result;
 }
 
 void exact_definition_and_hot_path_budgets()

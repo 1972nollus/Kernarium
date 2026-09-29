@@ -9,8 +9,7 @@
 #include <cstdint>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace test = arm64_floating_absolute_minmax_test;
 
@@ -59,29 +58,6 @@ template<typename Function>
 		reg * sizeof(test::arm64::VectorRegister);
 }
 
-struct BodyShape final {
-	unsigned instructions{};
-	unsigned conditional_branches{};
-	bool terminal{};
-};
-
-[[nodiscard]] BodyShape body_shape(std::uintptr_t entry)
-{
-	const auto *code = reinterpret_cast<const std::uint32_t *>(entry);
-	BodyShape result{};
-	for (unsigned index = 0; index < 24U; ++index) {
-		const auto instruction = code[index];
-		if (indirect_branch(instruction)) {
-			result.terminal = true;
-			break;
-		}
-		if (conditional_branch(instruction))
-			++result.conditional_branches;
-		++result.instructions;
-	}
-	return result;
-}
-
 void translation_selection_and_native_hot_shapes()
 {
 	const bool native = test::engine_tests::host_supports(
@@ -126,8 +102,8 @@ void translation_selection_and_native_hot_shapes()
 	});
 	test::common::require(native_symbols.size() == 10U);
 	for (const auto entry : native_symbols) {
-		const auto shape = body_shape(entry);
-		test::common::require(shape.terminal);
+		const auto shape = a64::body_shape(entry, {.window = 24U});
+		test::common::require(shape.reached_dispatch);
 		test::common::require(shape.conditional_branches <= 1U);
 		test::common::require(shape.instructions <= 14U);
 	}

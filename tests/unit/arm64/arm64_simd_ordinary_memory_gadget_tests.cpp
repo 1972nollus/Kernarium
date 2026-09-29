@@ -14,8 +14,7 @@
 #include <numeric>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace memory = arm64_simd_ordinary_memory_test;
 namespace arm64 = uml::cpu::arm64;
@@ -462,34 +461,32 @@ struct Shape final {
 
 [[nodiscard]] Shape shape(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(gadget);
 	Shape result;
-	for (unsigned index = 0; index < 96U; ++index) {
-		const auto instruction = instructions[index];
-		if (conditional_branch(instruction)) {
-			const bool condition_form =
-				(instruction & 0xff00'0010U) == 0x5400'0000U;
-			if (condition_form) {
-				const unsigned condition = instruction & 15U;
-				require(condition <= 1U,
-					"ordinary-memory hot path has a non-fault condition");
-			} else {
-				const unsigned tested_register = instruction & 31U;
-				require(tested_register == 0U ||
-						tested_register == 9U,
-					"ordinary-memory hot path branches on a decode field");
+	const auto body = a64::body_shape(
+		reinterpret_cast<std::uintptr_t>(gadget), {.window = 96U},
+		[&](std::uint32_t instruction) {
+			if (a64::conditional_branch(instruction)) {
+				const bool condition_form =
+					(instruction & 0xff00'0010U) == 0x5400'0000U;
+				if (condition_form) {
+					const unsigned condition = instruction & 15U;
+					require(condition <= 1U,
+						"ordinary-memory hot path has a non-fault condition");
+				} else {
+					const unsigned tested_register = instruction & 31U;
+					require(tested_register == 0U ||
+							tested_register == 9U,
+						"ordinary-memory hot path branches on a decode field");
+				}
 			}
-			++result.conditional_branches;
-		}
-		if (direct_call(instruction))
-			++result.calls;
-		if (indirect_branch(instruction)) {
-			result.instructions = index + 1U;
-			return result;
-		}
-	}
-	fail("ordinary-memory gadget did not reach threaded dispatch");
+			if (direct_call(instruction))
+				++result.calls;
+		});
+	if (!body.reached_dispatch)
+		fail("ordinary-memory gadget did not reach threaded dispatch");
+	result.instructions = body.instructions + 1U;
+	result.conditional_branches = body.conditional_branches;
+	return result;
 }
 
 void bounded_decode_free_hot_paths(

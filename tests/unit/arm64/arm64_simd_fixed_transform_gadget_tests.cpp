@@ -12,8 +12,7 @@
 #include <memory_resource>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 extern "C" {
 #define UML_DECLARE_FIXED_GADGET(name)                                         \
@@ -255,15 +254,11 @@ struct GadgetShape final {
 };
 
 [[nodiscard]] GadgetShape shape(Gadget gadget) {
-  const auto *instructions = reinterpret_cast<const std::uint32_t *>(gadget);
-  unsigned branches = 0;
-  for (unsigned index = 0; index < 192U; ++index) {
-    if (conditional_branch(instructions[index]))
-      ++branches;
-    if (indirect_branch(instructions[index]))
-      return {index + 1U, branches};
-  }
-  test::fail("fixed transform gadget did not reach threaded dispatch");
+  const auto body = a64::body_shape(reinterpret_cast<std::uintptr_t>(gadget),
+                                    {.window = 192U});
+  if (!body.reached_dispatch)
+    test::fail("fixed transform gadget did not reach threaded dispatch");
+  return {body.instructions + 1U, body.conditional_branches};
 }
 
 void every_definition_is_unique_branch_free_and_bounded() {
