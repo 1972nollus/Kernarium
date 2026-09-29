@@ -146,7 +146,12 @@ def git(
     *arguments: str,
     environment: dict[str, str] | None = None,
     check: bool = True,
+    error: str | None = None,
 ) -> str:
+    """Run Git and return its standard output.
+
+    A failure raises ``error``, or by default the command, with Git's output.
+    """
     result = subprocess.run(
         ["git", "-C", str(repository), *GIT_OPTIONS, *arguments],
         stdout=subprocess.PIPE,
@@ -155,8 +160,9 @@ def git(
         check=False,
     )
     if check and result.returncode != 0:
-        detail = result.stderr.decode(errors="replace").strip()
-        raise SeriesError(f"git {' '.join(arguments)} failed: {detail}")
+        detail = (result.stdout + result.stderr).decode(errors="replace").strip()
+        message = error or f"git {' '.join(arguments)} failed"
+        raise SeriesError(f"{message}: {detail}" if detail else message)
     return result.stdout.decode(errors="strict")
 
 
@@ -247,17 +253,8 @@ def series_tree(repository: Path, base: str, directories: list[Path]) -> str:
         git(repository, "read-tree", base_commit, environment=environment)
         for directory in directories:
             for patch in read_series(directory).patches:
-                result = subprocess.run(
-                    ["git", "-C", str(repository), "apply", "--cached",
-                     "--whitespace=nowarn", str(patch)],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    env=environment,
-                    check=False,
-                )
-                if result.returncode != 0:
-                    detail = result.stderr.decode(errors="replace").strip()
-                    raise SeriesError(f"{patch.name} does not apply: {detail}")
+                git(repository, "apply", "--cached", "--whitespace=nowarn", str(patch),
+                    environment=environment, error=f"{patch.name} does not apply")
         return git(repository, "write-tree", environment=environment).strip()
 
 
@@ -269,18 +266,12 @@ def apply_series(
         raise SeriesError(f"{repository}: checkout is not clean")
     patches = [str(patch) for directory in directories for patch in read_series(directory).patches]
     if patches:
-        result = subprocess.run(
-            ["git", "-C", str(repository), *GIT_OPTIONS,
-             "am", *AM_OPTIONS, *patches],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=isolated_environment(),
-            check=False,
-        )
-        if result.returncode != 0:
-            detail = (result.stdout + result.stderr).decode(errors="replace").strip()
+        try:
+            git(repository, "am", *AM_OPTIONS, *patches,
+                error=f"{repository}: series does not apply")
+        except SeriesError:
             git(repository, "am", "--abort", check=False)
-            raise SeriesError(f"{repository}: series does not apply: {detail}")
+            raise
     tree = tree_of(repository, "HEAD")
     if expected_tree is not None and tree != expected_tree:
         raise SeriesError(f"{repository}: replayed tree is {tree}, expected {expected_tree}")
@@ -377,13 +368,8 @@ def export_series(
         raise SeriesError(f"{source}: topic checkout is not clean")
     base_commit = resolve_commit(source, base)
     head_commit = resolve_commit(source, head)
-    ancestor = subprocess.run(
-        ["git", "-C", str(source), "merge-base", "--is-ancestor", base_commit, head_commit],
-        env=isolated_environment(),
-        check=False,
-    )
-    if ancestor.returncode != 0:
-        raise SeriesError(f"{source}: {head} is not based on {base}")
+    git(source, "merge-base", "--is-ancestor", base_commit, head_commit,
+        error=f"{source}: {head} is not based on {base}")
     if git(source, "rev-list", "--merges", f"{base_commit}..{head_commit}").strip():
         raise SeriesError(f"{source}: {base}..{head} contains a merge")
     commits = git(source, "rev-list", "--reverse", f"{base_commit}..{head_commit}").split()
