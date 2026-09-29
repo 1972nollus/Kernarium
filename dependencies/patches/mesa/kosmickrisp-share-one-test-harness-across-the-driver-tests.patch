@@ -2423,10 +2423,10 @@ index 9ff35085d14d6115368734d3c6d98fa9d806f60e..8ffc0f27f0016086bc1af4af6f5df59b
  static const uint32_t draw_id_vertex_spirv[] =
  #include "layered_draw_shaders/draw_id.vert.h"
 diff --git a/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp b/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
-index 49abc983536d7bff19b40e827768e37e649d7445..9cb94899dc6b8769081decb6e9ee5325278491d6 100644
+index 782d1f97a94fc6312d868fe24258634fea33eadf..8438c03b69ea9aef6ca4a43561d9bddc43420be0 100644
 --- a/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
 +++ b/src/kosmickrisp/vulkan/tests/test_layered_draw_sequence.cpp
-@@ -22,25 +22,7 @@
+@@ -27,25 +27,7 @@
  
  extern "C" PFN_vkVoidFunction vkGetInstanceProcAddr(VkInstance, const char *);
  

@@ -735,7 +735,12 @@ variant, including after pipeline-cache reload.
 
 Sequential encoders of one recording share a Metal command buffer. Only
 compute that must run before or after a whole render pass, and each encoder of
-a layered or multiview pass, gets a Metal command buffer of its own. A command
+a layered or multiview pass, gets a Metal command buffer of its own. The queue
+starts such an encoder's command buffer only once everything committed before
+it has completed, so a recording that holds one reaches Metal as several
+commits with a queue-level event wait before each such command buffer: Metal
+otherwise loses leading vertex batches of a layer-selecting draw that is
+ordered behind another layer's draw only by a barrier or fence. A command
 buffer takes a native command allocator for a lane only when that lane
 records. Every submission takes its allocators and Metal command buffers with
 it and hands the allocators to the device's allocator cache when the GPU
