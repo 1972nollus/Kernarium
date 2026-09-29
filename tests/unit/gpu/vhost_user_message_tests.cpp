@@ -4,6 +4,7 @@
 #include "vhost_user_message.hpp"
 #include "vhost_user_message_testing.hpp"
 
+#include <cstdio>
 #include <stdexcept>
 #include <thread>
 
@@ -261,8 +262,12 @@ void descriptorLimitIsCoherent()
 
 } // namespace
 
-void runVhostUserMessageTests()
+} // namespace uml::gpu::testing
+
+int main()
 {
+    using namespace uml::gpu::testing;
+
     for (unsigned iteration = 0; iteration < 8; ++iteration) {
         malformedVersionDoesNotLeak();
         oversizedMessageDoesNotLeak();
@@ -272,6 +277,6 @@ void runVhostUserMessageTests()
     }
     fragmentedHeaderAdoptsLaterDescriptors();
     descriptorLimitIsCoherent();
+    std::puts("GPU transport wire ownership tests passed");
+    return 0;
 }
-
-} // namespace uml::gpu::testing

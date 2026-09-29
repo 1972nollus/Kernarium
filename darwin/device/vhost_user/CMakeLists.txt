@@ -6,8 +6,6 @@ function(uml_configure_vhost_user_component target)
     uml_declare_architecture_target(${target} device)
     target_include_directories(${target} PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_options(${target} PRIVATE
-        -Wno-deprecated-declarations)
 endfunction()
 
 add_library(uml_vhost_user_wire STATIC vhost_user_message.cpp)

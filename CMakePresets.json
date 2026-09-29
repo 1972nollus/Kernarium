@@ -406,35 +406,40 @@
   ],
   "testPresets": [
     {
-      "name": "unit",
-      "configurePreset": "macos-unit-16k",
+      "name": "test-defaults",
+      "hidden": true,
+      "description": "Output and resource settings for every test preset outside the unit-gpu family; unit-gpu owns the GPU name filter and has no parent",
       "output": {
         "outputOnFailure": true
       },
-      "filter": {
-        "include": {
-          "label": "^unit$"
-        }
-      },
       "execution": {
-        "jobs": 10,
         "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
       }
     },
     {
-      "name": "unit-4k",
-      "configurePreset": "macos-unit-4k",
-      "output": {
-        "outputOnFailure": true
-      },
+      "name": "unit",
+      "inherits": "test-defaults",
+      "configurePreset": "macos-unit-16k",
       "filter": {
         "include": {
           "label": "^unit$"
         }
       },
       "execution": {
-        "jobs": 10,
-        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+        "jobs": 10
+      }
+    },
+    {
+      "name": "unit-4k",
+      "inherits": "test-defaults",
+      "configurePreset": "macos-unit-4k",
+      "filter": {
+        "include": {
+          "label": "^unit$"
+        }
+      },
+      "execution": {
+        "jobs": 10
       }
     },
     {
@@ -474,18 +479,15 @@
     },
     {
       "name": "tooling-gpu-vnc",
+      "inherits": "test-defaults",
       "configurePreset": "macos-unit-gpu",
-      "output": {
-        "outputOnFailure": true
-      },
       "filter": {
         "include": {
           "name": "^virtio-gpu-vnc-smoke$"
         }
       },
       "execution": {
-        "jobs": 1,
-        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+        "jobs": 1
       }
     },
     {
@@ -510,10 +512,8 @@
     },
     {
       "name": "integration-fast",
+      "inherits": "test-defaults",
       "configurePreset": "macos-integration",
-      "output": {
-        "outputOnFailure": true
-      },
       "filter": {
         "include": {
           "label": "^integration$"
@@ -523,24 +523,20 @@
         }
       },
       "execution": {
-        "jobs": 1,
-        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+        "jobs": 1
       }
     },
     {
       "name": "integration-full",
+      "inherits": "test-defaults",
       "configurePreset": "macos-integration",
-      "output": {
-        "outputOnFailure": true
-      },
       "filter": {
         "include": {
           "label": "^integration$"
         }
       },
       "execution": {
-        "jobs": 1,
-        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+        "jobs": 1
       }
     },
     {
@@ -565,18 +561,15 @@
     },
     {
       "name": "tooling",
+      "inherits": "test-defaults",
       "configurePreset": "macos-tooling",
-      "output": {
-        "outputOnFailure": true
-      },
       "filter": {
         "include": {
           "label": "^tooling$"
         }
       },
       "execution": {
-        "jobs": 10,
-        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+        "jobs": 10
       }
     },
     {
@@ -594,8 +587,7 @@
       "inherits": "tooling",
       "configurePreset": "macos-integration",
       "execution": {
-        "jobs": 1,
-        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+        "jobs": 1
       }
     },
     {
@@ -615,18 +607,15 @@
     },
     {
       "name": "tooling-jitprof",
+      "inherits": "test-defaults",
       "configurePreset": "macos-jitprof",
-      "output": {
-        "outputOnFailure": true
-      },
       "filter": {
         "include": {
           "name": "^jit-profile-final-report-contract$"
         }
       },
       "execution": {
-        "jobs": 1,
-        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+        "jobs": 1
       }
     },
     {
@@ -636,26 +625,21 @@
     },
     {
       "name": "all",
+      "inherits": "test-defaults",
       "configurePreset": "macos-all",
-      "output": {
-        "outputOnFailure": true
-      },
       "filter": {
         "include": {
           "label": "^(unit|integration)$"
         }
       },
       "execution": {
-        "jobs": 1,
-        "resourceSpecFile": "${sourceDir}/cmake/ctest-resources.json"
+        "jobs": 1
       }
     },
     {
       "name": "unit-asan-ubsan",
+      "inherits": "test-defaults",
       "configurePreset": "macos-unit-16k-asan-ubsan",
-      "output": {
-        "outputOnFailure": true
-      },
       "filter": {
         "include": {
           "label": "^unit$"
@@ -664,10 +648,8 @@
     },
     {
       "name": "unit-tsan",
+      "inherits": "test-defaults",
       "configurePreset": "macos-unit-16k-tsan",
-      "output": {
-        "outputOnFailure": true
-      },
       "filter": {
         "include": {
           "label": "tsan"
@@ -679,10 +661,8 @@
     },
     {
       "name": "loader-asan-ubsan",
+      "inherits": "test-defaults",
       "configurePreset": "macos-loader-asan-ubsan",
-      "output": {
-        "outputOnFailure": true
-      },
       "filter": {
         "include": {
           "name": "^embedded-kernel-handle-serialization$"
