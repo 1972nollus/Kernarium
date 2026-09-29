@@ -154,24 +154,25 @@ foreach(INDEX RANGE 0 ${TARGET_COUNT})
     list(APPEND TARGET_FILES "${TARGET_FILE}")
 endforeach()
 
-# Depth-first search over the dependency lists in the global properties
-# ${PREFIX}_DEPS_<node>; reaching a node that is still active closes a cycle.
-function(uml_audit_cycle_visit PREFIX NODE PATH MESSAGE)
-    get_property(STATE GLOBAL PROPERTY "${PREFIX}_STATE_${NODE}")
+# Depth-first search over the declared dependency lists in the global
+# properties UML_DECLARED_AUDIT_DEPS_<target>; reaching a target that is still
+# active closes a cycle.
+function(uml_audit_cycle_visit NODE PATH)
+    get_property(STATE GLOBAL PROPERTY "UML_DECLARED_AUDIT_STATE_${NODE}")
     if(STATE STREQUAL "active")
         string(REPLACE ";" " -> " CYCLE_TEXT "${PATH};${NODE}")
-        message(FATAL_ERROR "${MESSAGE}: ${CYCLE_TEXT}")
+        message(FATAL_ERROR
+            "Declared architecture target dependency cycle: ${CYCLE_TEXT}")
     endif()
     if(STATE STREQUAL "done")
         return()
     endif()
-    set_property(GLOBAL PROPERTY "${PREFIX}_STATE_${NODE}" active)
-    get_property(DEPENDENCIES GLOBAL PROPERTY "${PREFIX}_DEPS_${NODE}")
+    set_property(GLOBAL PROPERTY "UML_DECLARED_AUDIT_STATE_${NODE}" active)
+    get_property(DEPENDENCIES GLOBAL PROPERTY "UML_DECLARED_AUDIT_DEPS_${NODE}")
     foreach(DEPENDENCY IN LISTS DEPENDENCIES)
-        uml_audit_cycle_visit(
-            "${PREFIX}" "${DEPENDENCY}" "${PATH};${NODE}" "${MESSAGE}")
+        uml_audit_cycle_visit("${DEPENDENCY}" "${PATH};${NODE}")
     endforeach()
-    set_property(GLOBAL PROPERTY "${PREFIX}_STATE_${NODE}" done)
+    set_property(GLOBAL PROPERTY "UML_DECLARED_AUDIT_STATE_${NODE}" done)
 endfunction()
 
 # Completeness in the other direction, every Darwin target declared, is
@@ -216,11 +217,11 @@ foreach(TARGET_NAME TARGET_LAYER TARGET_KIND DEPENDENCY_TEXT IN ZIP_LISTS
         "${DEPENDENCY_NAMES}")
 endforeach()
 
-# Traverse the configured declaration graph separately from the codemodel so
-# cycles made entirely of interface libraries cannot disappear from the audit.
+# Search the declared graph for cycles. It carries the interface libraries
+# the codemodel omits, and CMake has already refused any other cycle or, for
+# static libraries, ordered it into a chain in the codemodel.
 foreach(TARGET_NAME IN LISTS ARCHITECTURE_TARGETS)
-    uml_audit_cycle_visit(UML_DECLARED_AUDIT "${TARGET_NAME}" ""
-        "Declared architecture target dependency cycle")
+    uml_audit_cycle_visit("${TARGET_NAME}" "")
 endforeach()
 
 # An engine links its own kind or shared code, shared code links only shared
@@ -282,7 +283,6 @@ foreach(INDEX RANGE 0 ${TARGET_COUNT})
     file(READ "${REPLY_ROOT}/${TARGET_FILE}" TARGET_JSON)
     string(JSON DEPENDENCY_COUNT ERROR_VARIABLE DEPENDENCY_ERROR
         LENGTH "${TARGET_JSON}" dependencies)
-    set(DEPENDENCY_INDICES)
     if(NOT DEPENDENCY_ERROR)
         foreach(DEPENDENCY_INDEX RANGE 0 ${DEPENDENCY_COUNT})
             if(DEPENDENCY_INDEX EQUAL DEPENDENCY_COUNT)
@@ -292,7 +292,6 @@ foreach(INDEX RANGE 0 ${TARGET_COUNT})
                 dependencies ${DEPENDENCY_INDEX} id)
             list(FIND TARGET_IDS "${DEPENDENCY_ID}" DEPENDENCY_TARGET_INDEX)
             if(NOT DEPENDENCY_TARGET_INDEX EQUAL -1)
-                list(APPEND DEPENDENCY_INDICES ${DEPENDENCY_TARGET_INDEX})
                 list(GET TARGET_NAMES ${INDEX} DEPENDENT_TARGET_NAME)
                 list(GET TARGET_NAMES ${DEPENDENCY_TARGET_INDEX}
                     DEPENDENCY_TARGET_NAME)
@@ -305,23 +304,14 @@ foreach(INDEX RANGE 0 ${TARGET_COUNT})
                         "${DEPENDENT_TARGET_NAME} -> ${DEPENDENCY_TARGET_NAME}")
                 endif()
                 # File API dependencies include transitive static-link
-                # archives.  They remain authoritative for cycle detection,
-                # and for engine isolation: interface carriers must not hide
-                # a concrete engine dependency. The declared edges above keep
-                # the layer direction without mistaking archive propagation
-                # for a source-level architecture dependency.
+                # archives. They remain authoritative for engine isolation:
+                # interface carriers must not hide a concrete engine
+                # dependency. The declared edges above keep the layer
+                # direction without mistaking archive propagation for a
+                # source-level architecture dependency.
             endif()
         endforeach()
     endif()
-    set_property(GLOBAL PROPERTY "UML_AUDIT_DEPS_${INDEX}" "${DEPENDENCY_INDICES}")
-endforeach()
-
-foreach(INDEX RANGE 0 ${TARGET_COUNT})
-    if(INDEX EQUAL TARGET_COUNT)
-        break()
-    endif()
-    uml_audit_cycle_visit(UML_AUDIT ${INDEX} ""
-        "CMake target dependency cycle")
 endforeach()
 
 list(LENGTH ARCHITECTURE_TARGETS ARCHITECTURE_TARGET_TOTAL)
