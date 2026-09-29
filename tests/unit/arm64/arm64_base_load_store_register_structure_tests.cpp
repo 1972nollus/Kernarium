@@ -9,8 +9,7 @@
 #include <cstdint>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace test = arm64_load_store_register_test;
 namespace engine_tests = uml::emulator::tests;
@@ -245,22 +244,16 @@ struct BodyShape final {
 		(static_cast<std::uint32_t>(
 			offsetof(arm64::CpuState, tbi_enabled)) << 10U) |
 		(1U << 5U) | 9U;
-	const auto *code = reinterpret_cast<const std::uint32_t *>(
-		function_address(gadget));
 	BodyShape result{};
-	for (unsigned index = 0; index < 192U; ++index) {
-		const auto instruction = code[index];
-		if (indirect_branch(instruction)) {
-			result.threaded_dispatch = true;
-			return result;
-		}
-		++result.instructions;
-		if (conditional_branch(instruction))
-			++result.conditional_branches;
-		else if ((instruction & 0x7c00'0000U) == 0x1400'0000U)
-			++result.direct_branches;
-		result.tbi_state_loads += instruction == tbi_state_load;
-	}
+	const auto shape = a64::body_shape(function_address(gadget),
+		{.window = 192U}, [&](std::uint32_t instruction) {
+			result.direct_branches +=
+				(instruction & 0x7c00'0000U) == 0x1400'0000U;
+			result.tbi_state_loads += instruction == tbi_state_load;
+		});
+	result.instructions = shape.instructions;
+	result.conditional_branches = shape.conditional_branches;
+	result.threaded_dispatch = shape.reached_dispatch;
 	return result;
 }
 

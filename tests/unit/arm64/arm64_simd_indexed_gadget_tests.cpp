@@ -10,8 +10,7 @@
 #include <cstdint>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 extern "C" {
 #define UML_DECLARE_INDEXED_ONE(name, shape, index) \
@@ -248,20 +247,16 @@ struct Body final {
 
 [[nodiscard]] Body body(std::uintptr_t entry)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(entry);
 	Body result{};
-	for (unsigned index = 0; index < 64U; ++index) {
-		const auto instruction = instructions[index];
-		++result.instructions;
-		if (conditional_branch(instruction))
-			++result.conditional_branches;
-		if ((instruction & 0xfc00'0000U) == 0x9400'0000U)
-			++result.calls;
-		if (indirect_branch(instruction))
-			return result;
-	}
-	test::fail("multiply gadget did not reach indirect dispatch");
+	const auto shape = a64::body_shape(entry, {.window = 64U},
+		[&](std::uint32_t instruction) {
+			result.calls += (instruction & 0xfc00'0000U) == 0x9400'0000U;
+		});
+	if (!shape.reached_dispatch)
+		test::fail("multiply gadget did not reach indirect dispatch");
+	result.instructions = shape.instructions + 1U;
+	result.conditional_branches = shape.conditional_branches;
+	return result;
 }
 
 void every_form_uses_direct_offsets_and_no_gadget_is_dead()

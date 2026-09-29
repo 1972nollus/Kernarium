@@ -252,6 +252,9 @@ pop_register 64, ldr, x, str, x
 gadget push_flags_\width
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x24, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	/* PUSHF stores RF and VM as zero whatever RFLAGS holds; IRET may have
+	 * loaded RF. */
+	and x24, x24, #~0x30000
 	ldp x23, x22, [_stream], #16
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 8)

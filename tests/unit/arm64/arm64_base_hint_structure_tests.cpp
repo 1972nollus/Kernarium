@@ -8,8 +8,7 @@
 #include <cstdint>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace {
 
@@ -54,29 +53,6 @@ template<typename Function>
 	}
 }
 
-struct BodyShape final {
-	unsigned instructions{};
-	unsigned conditional_branches{};
-	bool terminal{};
-};
-
-[[nodiscard]] BodyShape body_shape(std::uintptr_t entry)
-{
-	const auto *code = reinterpret_cast<const std::uint32_t *>(entry);
-	BodyShape result{};
-	for (unsigned index = 0; index < 32U; ++index) {
-		const auto instruction = code[index];
-		if (indirect_branch(instruction)) {
-			result.terminal = true;
-			break;
-		}
-		if (conditional_branch(instruction))
-			++result.conditional_branches;
-		++result.instructions;
-	}
-	return result;
-}
-
 void primary_translation_and_dead_gadget_audit()
 {
 	std::set<std::uintptr_t> selected;
@@ -106,8 +82,8 @@ void primary_translation_and_dead_gadget_audit()
 		"HINT gadget bank contains an unselected or missing entry");
 
 	for (const auto entry : expected) {
-		const auto shape = body_shape(entry);
-		arm64_hint_test::require(shape.terminal,
+		const auto shape = a64::body_shape(entry, {.window = 32U});
+		arm64_hint_test::require(shape.reached_dispatch,
 			"HINT gadget did not terminate in the inspection window");
 		arm64_hint_test::require(shape.conditional_branches == 0U,
 			"HINT gadget retained a runtime conditional branch");

@@ -10,8 +10,7 @@
 #include <cstdint>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 extern "C" {
 #define UML_DECLARE_HIGH_NARROW(name) \
@@ -65,18 +64,11 @@ constexpr std::array expected_gadgets{
 
 void require_branch_free(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(gadget);
-	bool reached_dispatch = false;
-	for (unsigned index = 0; index < 64U; ++index) {
-		test::require(!conditional_branch(instructions[index]),
-			"high-narrow gadget contains a conditional branch");
-		if (indirect_branch(instructions[index])) {
-			reached_dispatch = true;
-			break;
-		}
-	}
-	test::require(reached_dispatch,
+	const auto shape = a64::body_shape(
+		reinterpret_cast<std::uintptr_t>(gadget), {.window = 64U});
+	test::require(shape.conditional_branches == 0U,
+		"high-narrow gadget contains a conditional branch");
+	test::require(shape.reached_dispatch,
 		"high-narrow gadget did not reach indirect dispatch");
 }
 

@@ -10,8 +10,7 @@
 #include <cstdint>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace test = arm64_fused_floating_test;
 
@@ -76,29 +75,6 @@ template<typename Function>
 		reg * sizeof(arm64::VectorRegister);
 }
 
-struct BodyShape final {
-	unsigned instructions{};
-	unsigned conditional_branches{};
-	bool terminal{};
-};
-
-[[nodiscard]] BodyShape body_shape(std::uintptr_t entry)
-{
-	const auto *code = reinterpret_cast<const std::uint32_t *>(entry);
-	BodyShape result{};
-	for (unsigned index = 0; index < 32U; ++index) {
-		const auto instruction = code[index];
-		if (indirect_branch(instruction)) {
-			result.terminal = true;
-			break;
-		}
-		if (conditional_branch(instruction))
-			++result.conditional_branches;
-		++result.instructions;
-	}
-	return result;
-}
-
 void direct_operands_and_live_bank()
 {
 	std::set<std::uintptr_t> selected;
@@ -142,8 +118,8 @@ void direct_operands_and_live_bank()
 	test::common::require(selected == expected);
 
 	for (const auto entry : expected) {
-		const auto shape = body_shape(entry);
-		test::common::require(shape.terminal);
+		const auto shape = a64::body_shape(entry, {.window = 32U});
+		test::common::require(shape.reached_dispatch);
 		const bool scalar =
 			entry == address(uml_arm64_gadget_floating_madd_half) ||
 			entry == address(uml_arm64_gadget_floating_madd_single) ||
