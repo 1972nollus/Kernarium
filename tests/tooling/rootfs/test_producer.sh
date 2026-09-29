@@ -226,6 +226,27 @@ write_root_file "$P/writer-root/etc/deep/file" 0640 < "$P/writer-input"
 		grep -qx "sudo -n ln -sfn /etc/machine-id $P/machine-root/var/lib/dbus/machine-id" \
 			"$LOG" || fail "$shell: the machine ID was not reset through sudo -n"
 
+	# A command that lowers its own file-size limit, as BusyBox passwd does,
+	# dies writing to a standard error that is a log file past that limit.
+	# Captured, it runs, and its output and status reach the caller. The log
+	# grows through its own descriptor, as a producer's log does, because
+	# XNU checks the limit against the descriptor's offset before appending.
+	run_fixture '
+exec 2> "$P/direct-log"
+head -c 65536 /dev/zero >&2
+sh -c "ulimit -f 1; printf %s%s direct- output >&2"'
+	[ "$status" -ne 0 ] && ! grep -q direct-output "$P/direct-log" ||
+		fail "$shell: a command wrote past its file-size limit ($status)"
+	run_fixture '
+exec 2> "$P/captured-log"
+head -c 65536 /dev/zero >&2
+producer_run_captured sh -c "ulimit -f 1; echo captured >&2"
+producer_run_captured sh -c "echo failed; exit 3" || printf "%s\n" "$?"'
+	[ "$status" -eq 0 ] && [ "$(cat "$TEST_ROOT/out")" = 3 ] ||
+		fail "$shell: a captured command failed ($status) or lost its status"
+	[ "$(tail -c 16 "$P/captured-log")" = "$(printf 'captured\nfailed')" ] ||
+		fail "$shell: a captured command's output did not reach standard error"
+
 	# Publication renames onto an absent name and fails when a concurrent
 	# run took the name first, leaving that run's output alone.
 	expect_success "publication" '
@@ -335,6 +356,10 @@ for producer in starter/build-all.sh x86_64-desktop/build.sh; do
 		"$ROOT_DIR/tools/rootfs/$producer" ||
 		fail "$producer does not reset its machine ID"
 done
+# The starter's BusyBox passwd writes nothing to the producer's log itself.
+grep -qx '[[:space:]]*producer_run_captured as_root chroot "$root" /usr/bin/passwd -d root' \
+	"$ROOT_DIR/tools/rootfs/starter/build-all.sh" ||
+	fail "the starter's BusyBox passwd writes to the caller's standard error"
 
 tested=
 for shell in sh dash bash; do

@@ -326,7 +326,7 @@ EOF
 	if ! as_root grep -qx hvc0 "$root/etc/securetty"; then
 		printf '%s\n' hvc0 | as_root tee -a "$root/etc/securetty" >/dev/null
 	fi
-	as_root chroot "$root" /usr/bin/passwd -d root
+	producer_run_captured as_root chroot "$root" /usr/bin/passwd -d root
 	as_root rm -rf -- "$root/var/cache/apk"/* "$root/tmp"/* "$root/var/tmp"/*
 	: > "$work_dir/alpine.packages.tsv"
 	as_root chroot "$root" /sbin/apk info -v | sort > "$work_dir/alpine.packages.tsv"
