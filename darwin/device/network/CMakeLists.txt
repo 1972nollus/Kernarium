@@ -8,59 +8,43 @@ target_include_directories(uml_network_device PUBLIC
 target_link_libraries(uml_network_device PUBLIC UML::BridgeAbi)
 target_link_libraries(uml_network_device PRIVATE UML::RunRouting)
 
-if(UML_BUILD_NETWORK_PROVIDER)
-    add_library(uml_network_provider STATIC
+# The product provider builds without its test hooks. The SLiRP probes drive
+# a test variant that publishes the hooks and the provider's own headers.
+function(_uml_add_network_provider TARGET TESTING)
+    add_library(${TARGET} STATIC
         slirp/provider.cpp
         slirp/event_loop.cpp
         slirp/frame_queue.cpp)
-    add_library(UML::NetworkProvider ALIAS uml_network_provider)
-    uml_declare_architecture_target(uml_network_provider device)
-    target_include_directories(uml_network_provider
+    uml_declare_architecture_target(${TARGET} device)
+    if(TESTING)
+        target_include_directories(${TARGET} PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/slirp)
+        target_compile_definitions(${TARGET} PUBLIC UML_SLIRP_TESTING=1)
+    else()
+        target_compile_definitions(${TARGET} PRIVATE UML_SLIRP_TESTING=0)
+    endif()
+    target_include_directories(${TARGET}
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/slirp/include
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/slirp)
-    target_compile_definitions(uml_network_provider PRIVATE
-        UML_SLIRP_TESTING=0)
-
-    target_link_libraries(uml_network_provider PUBLIC UML::BridgeAbi)
-    target_link_libraries(uml_network_provider PRIVATE
+    target_link_libraries(${TARGET} PUBLIC UML::BridgeAbi)
+    target_link_libraries(${TARGET} PRIVATE
         UML::GuestTimerMask
         UML::ThirdPartySlirp)
-    if(TARGET uml_dependency_prefix_verify)
-        add_dependencies(uml_network_provider uml_dependency_prefix_verify)
-    endif()
-    if(TARGET uml_ios_network_prefix_verify)
-        add_dependencies(uml_network_provider
-            uml_ios_network_prefix_verify)
-    endif()
-
-    if(UML_BUILD_TOOLING_TESTS)
-        # The provider with its test hooks, for the SLiRP probes; products
-        # build it with UML_SLIRP_TESTING=0.
-        add_library(uml_network_provider_test_variant STATIC
-            slirp/provider.cpp
-            slirp/event_loop.cpp
-            slirp/frame_queue.cpp)
-        uml_declare_architecture_target(uml_network_provider_test_variant
-            device)
-        target_include_directories(uml_network_provider_test_variant
-            PUBLIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/slirp
-                ${CMAKE_CURRENT_SOURCE_DIR}/slirp/include
-            PRIVATE
-                ${CMAKE_CURRENT_SOURCE_DIR})
-        target_compile_definitions(uml_network_provider_test_variant PUBLIC
-            UML_SLIRP_TESTING=1)
-        target_link_libraries(uml_network_provider_test_variant PUBLIC
-            UML::BridgeAbi)
-        target_link_libraries(uml_network_provider_test_variant PRIVATE
-            UML::GuestTimerMask
-            UML::ThirdPartySlirp)
-        if(TARGET uml_dependency_prefix_verify)
-            add_dependencies(uml_network_provider_test_variant
-                uml_dependency_prefix_verify)
+    foreach(_verify IN ITEMS
+            uml_dependency_prefix_verify uml_ios_network_prefix_verify)
+        if(TARGET ${_verify})
+            add_dependencies(${TARGET} ${_verify})
         endif()
+    endforeach()
+endfunction()
+
+if(UML_BUILD_NETWORK_PROVIDER)
+    _uml_add_network_provider(uml_network_provider 0)
+    add_library(UML::NetworkProvider ALIAS uml_network_provider)
+    if(UML_BUILD_TOOLING_TESTS)
+        _uml_add_network_provider(uml_network_provider_test_variant 1)
     endif()
 endif()
