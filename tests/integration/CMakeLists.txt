@@ -90,15 +90,16 @@ if(UML_V4L2_PROBE_BINARY)
     else()
         set(_uml_video_page_size 4096)
     endif()
-    uml_add_integration_test(NAME guest-v4l2-decode
-        COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/video/run_v4l2_decode.py"
-            --emulator "$<TARGET_FILE:uml-darwin>"
-            --rootfs "${UML_INTEGRATION_ROOTFS}"
-            --probe "${UML_V4L2_PROBE_BINARY}"
+    # The runner boots a two-vCPU guest.
+    uml_add_guest_integration_test(
+        NAME guest-v4l2-decode
+        SCRIPT video/run_v4l2_decode.py
+        ARGS --probe "${UML_V4L2_PROBE_BINARY}"
             --page-size "${_uml_video_page_size}"
             --log "${CMAKE_CURRENT_BINARY_DIR}/v4l2-guest.log"
-        LABELS video TIMEOUT 600)
+        LABELS guest;video
+        TIMEOUT 600
+        CPUS 2)
 endif()
 
 set(UML_FUTEX_PROBE_BINARY "" CACHE FILEPATH
@@ -112,15 +113,16 @@ if(UML_FUTEX_PROBE_BINARY)
     else()
         set(_uml_futex_page_size 4096)
     endif()
-    uml_add_integration_test(NAME guest-futex-atomic
-        COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/futex/run_futex_atomic.py"
-            --emulator "$<TARGET_FILE:uml-darwin>"
-            --rootfs "${UML_INTEGRATION_ROOTFS}"
-            --probe "${UML_FUTEX_PROBE_BINARY}"
+    # The runner boots a four-vCPU guest.
+    uml_add_guest_integration_test(
+        NAME guest-futex-atomic
+        SCRIPT futex/run_futex_atomic.py
+        ARGS --probe "${UML_FUTEX_PROBE_BINARY}"
             --page-size "${_uml_futex_page_size}"
             --log "${CMAKE_CURRENT_BINARY_DIR}/futex-guest.log"
-        LABELS futex TIMEOUT 320)
+        LABELS guest;futex
+        TIMEOUT 320
+        CPUS 4)
 endif()
 
 if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
