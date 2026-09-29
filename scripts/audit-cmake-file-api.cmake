@@ -154,72 +154,6 @@ foreach(INDEX RANGE 0 ${TARGET_COUNT})
     list(APPEND TARGET_FILES "${TARGET_FILE}")
 endforeach()
 
-foreach(DECLARED_TARGET IN LISTS ARCHITECTURE_TARGETS)
-    list(FIND ARCHITECTURE_TARGETS "${DECLARED_TARGET}" DECLARED_TARGET_LIST_INDEX)
-    list(GET ARCHITECTURE_KINDS ${DECLARED_TARGET_LIST_INDEX} DECLARED_TARGET_KIND)
-    if(DECLARED_TARGET_KIND STREQUAL "interface")
-        # CMake's codemodel intentionally omits pure interface libraries.
-        # Their configured dependency edges are still audited below from the
-        # generated architecture manifest.
-        continue()
-    endif()
-    list(FIND TARGET_NAMES "${DECLARED_TARGET}" DECLARED_TARGET_INDEX)
-    if(DECLARED_TARGET_INDEX EQUAL -1)
-        message(FATAL_ERROR
-            "Declared architecture target is absent from the CMake File API: ${DECLARED_TARGET}")
-    endif()
-endforeach()
-
-# Completeness in the other direction, every Darwin target declared, is
-# enforced at configure time by uml_write_architecture_manifest(), which walks
-# every configured target of every type.
-
-# Audit every declared first-party edge, including pure interface contracts
-# which do not appear in CMake's File API codemodel.  The manifest is emitted
-# from the configured target LINK_LIBRARIES properties, not handwritten data.
-list(LENGTH ARCHITECTURE_TARGETS ARCHITECTURE_TARGET_COUNT)
-if(ARCHITECTURE_TARGET_COUNT GREATER 0)
-    math(EXPR ARCHITECTURE_TARGET_LAST_INDEX "${ARCHITECTURE_TARGET_COUNT} - 1")
-    foreach(ARCHITECTURE_TARGET_INDEX RANGE 0 ${ARCHITECTURE_TARGET_LAST_INDEX})
-        list(GET ARCHITECTURE_TARGETS ${ARCHITECTURE_TARGET_INDEX} TARGET_NAME)
-        list(GET ARCHITECTURE_LAYERS ${ARCHITECTURE_TARGET_INDEX} TARGET_LAYER)
-        list(GET ARCHITECTURE_DECLARED_DEPENDENCIES ${ARCHITECTURE_TARGET_INDEX}
-            DEPENDENCY_TEXT)
-        if(DEPENDENCY_TEXT STREQUAL "-")
-            continue()
-        endif()
-        string(REPLACE "," ";" DECLARED_DEPENDENCIES "${DEPENDENCY_TEXT}")
-        foreach(DEPENDENCY IN LISTS DECLARED_DEPENDENCIES)
-            if(NOT DEPENDENCY MATCHES "^link@([A-Za-z0-9_.+-]+)$")
-                message(FATAL_ERROR
-                    "Malformed architecture dependency for ${TARGET_NAME}: ${DEPENDENCY}")
-            endif()
-            set(DEPENDENCY_NAME "${CMAKE_MATCH_1}")
-            uml_architecture_layer("${DEPENDENCY_NAME}" DEPENDENCY_LAYER)
-            if(NOT DEPENDENCY_LAYER)
-                message(FATAL_ERROR
-                    "Architecture manifest references an undeclared dependency: "
-                    "${TARGET_NAME} -> ${DEPENDENCY_NAME}")
-            endif()
-            uml_architecture_engine_edge_allowed(
-                "${TARGET_NAME}" "${DEPENDENCY_NAME}" ENGINE_EDGE_ALLOWED)
-            if(NOT ENGINE_EDGE_ALLOWED)
-                message(FATAL_ERROR
-                    "Forbidden cross-engine link edge: "
-                    "${TARGET_NAME} -> ${DEPENDENCY_NAME}")
-            endif()
-            uml_architecture_edge_allowed(
-                "${TARGET_LAYER}" "${DEPENDENCY_LAYER}" EDGE_ALLOWED)
-            if(NOT EDGE_ALLOWED)
-                message(FATAL_ERROR
-                    "Forbidden declared link architecture edge: "
-                    "${TARGET_NAME} (${TARGET_LAYER}) -> "
-                    "${DEPENDENCY_NAME} (${DEPENDENCY_LAYER})")
-            endif()
-        endforeach()
-    endforeach()
-endif()
-
 # Depth-first search over the dependency lists in the global properties
 # ${PREFIX}_DEPS_<node>; reaching a node that is still active closes a cycle.
 function(uml_audit_cycle_visit PREFIX NODE PATH MESSAGE)
@@ -240,32 +174,61 @@ function(uml_audit_cycle_visit PREFIX NODE PATH MESSAGE)
     set_property(GLOBAL PROPERTY "${PREFIX}_STATE_${NODE}" done)
 endfunction()
 
+# Completeness in the other direction, every Darwin target declared, is
+# enforced at configure time by uml_write_architecture_manifest(), which walks
+# every configured target of every type.
+
+# Audit every declared first-party edge, including pure interface contracts,
+# which CMake's codemodel omits. The manifest is emitted from the configured
+# targets' LINK_LIBRARIES properties, not handwritten data.
+foreach(TARGET_NAME TARGET_LAYER TARGET_KIND DEPENDENCY_TEXT IN ZIP_LISTS
+        ARCHITECTURE_TARGETS ARCHITECTURE_LAYERS ARCHITECTURE_KINDS
+        ARCHITECTURE_DECLARED_DEPENDENCIES)
+    if(TARGET_KIND STREQUAL "codemodel")
+        list(FIND TARGET_NAMES "${TARGET_NAME}" TARGET_INDEX)
+        if(TARGET_INDEX EQUAL -1)
+            message(FATAL_ERROR
+                "Declared architecture target is absent from the CMake File API: ${TARGET_NAME}")
+        endif()
+    endif()
+    set(DEPENDENCY_NAMES)
+    if(NOT DEPENDENCY_TEXT STREQUAL "-")
+        string(REPLACE "," ";" DECLARED_DEPENDENCIES "${DEPENDENCY_TEXT}")
+        foreach(DEPENDENCY IN LISTS DECLARED_DEPENDENCIES)
+            if(NOT DEPENDENCY MATCHES "^link@([A-Za-z0-9_.+-]+)$")
+                message(FATAL_ERROR
+                    "Malformed architecture dependency for ${TARGET_NAME}: ${DEPENDENCY}")
+            endif()
+            set(DEPENDENCY_NAME "${CMAKE_MATCH_1}")
+            uml_architecture_engine_edge_allowed(
+                "${TARGET_NAME}" "${DEPENDENCY_NAME}" ENGINE_EDGE_ALLOWED)
+            if(NOT ENGINE_EDGE_ALLOWED)
+                message(FATAL_ERROR
+                    "Forbidden cross-engine link edge: "
+                    "${TARGET_NAME} -> ${DEPENDENCY_NAME}")
+            endif()
+            uml_architecture_layer("${DEPENDENCY_NAME}" DEPENDENCY_LAYER)
+            uml_architecture_edge_allowed(
+                "${TARGET_LAYER}" "${DEPENDENCY_LAYER}" EDGE_ALLOWED)
+            if(NOT EDGE_ALLOWED)
+                message(FATAL_ERROR
+                    "Forbidden declared link architecture edge: "
+                    "${TARGET_NAME} (${TARGET_LAYER}) -> "
+                    "${DEPENDENCY_NAME} (${DEPENDENCY_LAYER})")
+            endif()
+            list(APPEND DEPENDENCY_NAMES "${DEPENDENCY_NAME}")
+        endforeach()
+    endif()
+    set_property(GLOBAL PROPERTY "UML_DECLARED_AUDIT_DEPS_${TARGET_NAME}"
+        "${DEPENDENCY_NAMES}")
+endforeach()
+
 # Traverse the configured declaration graph separately from the codemodel so
 # cycles made entirely of interface libraries cannot disappear from the audit.
-if(ARCHITECTURE_TARGET_COUNT GREATER 0)
-    foreach(ARCHITECTURE_TARGET_INDEX RANGE 0 ${ARCHITECTURE_TARGET_LAST_INDEX})
-        list(GET ARCHITECTURE_TARGETS ${ARCHITECTURE_TARGET_INDEX} TARGET_NAME)
-        list(GET ARCHITECTURE_DECLARED_DEPENDENCIES ${ARCHITECTURE_TARGET_INDEX}
-            DEPENDENCY_TEXT)
-        set(DECLARED_TARGET_DEPENDENCIES)
-        if(NOT DEPENDENCY_TEXT STREQUAL "-")
-            string(REPLACE "," ";" DECLARED_DEPENDENCIES "${DEPENDENCY_TEXT}")
-            foreach(DEPENDENCY IN LISTS DECLARED_DEPENDENCIES)
-                if(DEPENDENCY MATCHES "^link@([A-Za-z0-9_.+-]+)$")
-                    list(APPEND DECLARED_TARGET_DEPENDENCIES
-                        "${CMAKE_MATCH_1}")
-                endif()
-            endforeach()
-        endif()
-        set_property(GLOBAL PROPERTY
-            "UML_DECLARED_AUDIT_DEPS_${TARGET_NAME}"
-            "${DECLARED_TARGET_DEPENDENCIES}")
-    endforeach()
-    foreach(TARGET_NAME IN LISTS ARCHITECTURE_TARGETS)
-        uml_audit_cycle_visit(UML_DECLARED_AUDIT "${TARGET_NAME}" ""
-            "Declared architecture target dependency cycle")
-    endforeach()
-endif()
+foreach(TARGET_NAME IN LISTS ARCHITECTURE_TARGETS)
+    uml_audit_cycle_visit(UML_DECLARED_AUDIT "${TARGET_NAME}" ""
+        "Declared architecture target dependency cycle")
+endforeach()
 
 # A neutral interface carrier must not conceal an engine-to-engine dependency.
 # Check reachability from every declared engine owner after the direct-edge and
