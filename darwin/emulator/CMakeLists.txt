@@ -60,15 +60,9 @@ target_link_libraries(uml_emulator PRIVATE
     UML::NetworkDevice
     UML::RuntimeCore
     UML::RuntimeContract)
-target_include_directories(uml_emulator
-    PUBLIC
-        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/darwin/api/include>
-        $<INSTALL_INTERFACE:include>
-    PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin/device/network
-        ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
-        ${PROJECT_SOURCE_DIR}/darwin/runtime
-        ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(uml_emulator PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/darwin/api/include>
+    $<INSTALL_INTERFACE:include>)
 
 set_target_properties(uml_emulator PROPERTIES
     OUTPUT_NAME uml_emulator
@@ -103,13 +97,8 @@ if(_uml_need_admission_test_variant)
         UML::NetworkDevice
         ${_uml_test_runtime_core}
         UML::RuntimeContract)
-    target_include_directories(uml_emulator_admission_test_variant
-        PUBLIC ${PROJECT_SOURCE_DIR}/darwin/api/include
-        PRIVATE
-            ${PROJECT_SOURCE_DIR}/darwin/device/network
-            ${PROJECT_SOURCE_DIR}/darwin/memory/mmu
-            ${PROJECT_SOURCE_DIR}/darwin/runtime
-            ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(uml_emulator_admission_test_variant PUBLIC
+        ${PROJECT_SOURCE_DIR}/darwin/api/include)
 endif()
 
 install(TARGETS uml_emulator
