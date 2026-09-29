@@ -36,6 +36,8 @@ never pass its limit together. Its heaps:
   draw that needs a heap creates one at what it then needs.
 
 A device created without a pool behaves as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/kosmickrisp/vulkan/kk_cmd_draw.c          | 220 ++++++++--
  src/kosmickrisp/vulkan/kk_device.c            |   8 +

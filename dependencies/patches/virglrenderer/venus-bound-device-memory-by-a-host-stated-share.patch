@@ -29,6 +29,8 @@ every device the renderer creates is given the same pool through
 KosmicKrisp's device-memory pool structure and reserves before it
 allocates too. A guest cannot name that structure: the protocol decoder
 rejects a chain member it does not know.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/venus/vkr_device.c          | 38 +++++++++++++++++++++
  src/venus/vkr_device_memory.c   | 32 ++++++++++++++++--
