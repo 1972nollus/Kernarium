@@ -21,11 +21,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import pinned_source  # noqa: E402
 from release_common import (  # noqa: E402
     DIRECTORY_PREFIX,
     PAYLOAD_SPECS,
     PRODUCT_FAMILY,
     RELEASE_ID_RE,
+    error,
     fail,
     kernel_series_provenance,
     parse_env,
@@ -77,19 +79,9 @@ def run(
     env: dict[str, str] | None = None,
     capture: bool = False,
 ) -> str:
-    result = subprocess.run(
-        arguments,
-        cwd=cwd,
-        env=env,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.PIPE if capture else None,
-        text=True,
-        check=False,
+    return pinned_source.run(
+        *arguments, cwd=cwd, env=env, capture=capture, error=error
     )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip() if capture else ""
-        fail(f"command failed ({result.returncode}): {arguments[0]} {detail}")
-    return result.stdout.strip() if capture else ""
 
 
 def first_version(arguments: list[str], *, cwd: Path | None = None) -> str:
@@ -453,7 +445,7 @@ def main() -> None:
                 ["git", "rev-parse", "HEAD"],
                 cwd=aosp_source / jelly_metadata["JELLY_DESTINATION"],
                 capture=True,
-            ).strip()
+            )
             aosp_routes = read_routes(android_root / "patches/projects.tsv", android_root)
             orangefox_routes = read_routes(
                 android_root / "third_party/orangefox/patches/projects.tsv",

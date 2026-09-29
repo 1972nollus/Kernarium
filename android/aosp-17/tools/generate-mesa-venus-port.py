@@ -1,26 +1,41 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Generate the Kernarium Mesa Soong port inside the materialized checkout.
+"""Generate the Kernarium Mesa port inside the materialized checkout.
 
-AOSP builds Mesa through `meson2hermetic`, the upstream Meson fork that
-transpiles a meson build into Android.bp files. This tool runs that converter
-with the checked project configuration, repairs the converter's output where
-Soong needs more than Meson does, drops every module the installed modules do
-not need, and then scopes every remaining module name so the port cannot
-collide with the AOSP `external/mesa3d` project, whose module names are
-otherwise identical and global at the Make layer. The port builds the
-Venus Vulkan HAL and the Virgl EGL and GLES libraries. It also deletes Mesa's
-legacy Android.mk makefiles: Soong refuses a makefile under a denylisted
-directory, and the Android.bp files alone describe the port.
+The port carries two generated topics, and each has a subcommand here.
+
+`protocol` writes the Venus protocol codec Mesa's Venus driver includes. The
+guest build generates it out of tree through `-Dvenus-protocol-dir`, which
+Soong cannot express, so the port carries the driver half of the codec at
+`src/virtio/venus-protocol`. It runs venus-protocol's own generator from a
+clean replay of the pinned protocol series against the registry of the pinned
+Vulkan-Headers source, and refuses either input unless its tree is the one
+`third_party/mesa-venus/metadata.env` records. The first line names both trees
+instead of the replay commit, so the same pins always reproduce the same
+bytes. `--check` compares instead of writing.
+
+`soong` builds the Android.bp files. AOSP builds Mesa through
+`meson2hermetic`, the upstream Meson fork that transpiles a meson build into
+Android.bp files. This tool runs that converter with the checked project
+configuration, repairs the converter's output where Soong needs more than
+Meson does, drops every module the installed modules do not need, and then
+scopes every remaining module name so the port cannot collide with the AOSP
+`external/mesa3d` project, whose module names are otherwise identical and
+global at the Make layer. The port builds the Venus Vulkan HAL and the Virgl
+EGL and GLES libraries. It also deletes Mesa's legacy Android.mk makefiles:
+Soong refuses a makefile under a denylisted directory, and the Android.bp
+files alone describe the port.
 
 The converter is a builder toolchain input pinned by `third_party/meson2hermetic`:
 an upstream commit and a local series. This tool refuses a converter checkout
 whose tree is not the recorded final tree. The builder-local platform
 description stays outside this repository.
 
-Run this tool, commit the result on the maintained topic branch, and then
-regenerate the series with `regenerate-mesa-venus-patches.py`. Never edit the
-generated Android.bp files by hand.
+Run each step on the maintained topic branch and commit its result into its
+own topic: `protocol` into "Mesa Venus pair the generated protocol headers",
+`soong` into "Mesa Venus generated Soong port". Then regenerate the series
+with `regenerate-mesa-venus-patches.py`. Never edit the generated headers or
+Android.bp files by hand.
 """
 
 from __future__ import annotations
@@ -31,10 +46,12 @@ import argparse
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"))
+import pinned_source
+# pinned_source puts the contract checks on sys.path.
 from contract_checks import parse_assignments  # noqa: E402
 
 PREFIX = "venus_"
@@ -637,34 +654,113 @@ def convert(args: argparse.Namespace) -> None:
     subprocess.run(command, cwd=args.checkout, check=True)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Generate the Kernarium Mesa Soong port"
+PROTOCOL_DIRECTORY = "src/virtio/venus-protocol"
+PROTOCOL_HEADERS = "vn_protocol_driver*.h"
+
+
+def pinned_checkout(path: Path, label: str, tree: str) -> Path:
+    """A clean Git checkout root whose tree is the pinned one."""
+    path = path.resolve()
+    if not path.is_dir():
+        raise SystemExit(f"generate-mesa-venus-port.py: the {label} is missing: {path}")
+    if Path(git(path, "rev-parse", "--show-toplevel")).resolve() != path:
+        raise SystemExit(
+            f"generate-mesa-venus-port.py: the {label} is not a Git checkout root: {path}"
+        )
+    if git(path, "status", "--porcelain", "--untracked-files=all"):
+        raise SystemExit(f"generate-mesa-venus-port.py: the {label} has local changes")
+    actual = git(path, "rev-parse", "HEAD^{tree}")
+    if actual != tree:
+        raise SystemExit(
+            f"generate-mesa-venus-port.py: the {label} at {path} has tree {actual}, "
+            f"not the pinned {tree}"
+        )
+    return path
+
+
+def generate_protocol(args: argparse.Namespace, metadata: dict[str, str]) -> None:
+    """Write, or with --check compare, the port's Venus protocol codec."""
+    target = args.checkout / PROTOCOL_DIRECTORY
+    if target.is_symlink() or not target.is_dir():
+        raise SystemExit(
+            f"generate-mesa-venus-port.py: the checkout has no {PROTOCOL_DIRECTORY}"
+        )
+    for key in ("MESA_VENUS_PROTOCOL_TREE", "MESA_VENUS_VULKAN_HEADERS_TREE"):
+        if key not in metadata:
+            raise SystemExit(f"generate-mesa-venus-port.py: the metadata lacks {key}")
+    protocol = pinned_checkout(
+        args.protocol_source, "venus-protocol source", metadata["MESA_VENUS_PROTOCOL_TREE"]
     )
-    parser.add_argument("--android-root", type=Path, required=True)
-    parser.add_argument(
-        "--checkout",
-        type=Path,
-        required=True,
-        help="materialized external/mesa3d-venus checkout",
+    headers = pinned_checkout(
+        args.vulkan_headers,
+        "Vulkan-Headers source",
+        metadata["MESA_VENUS_VULKAN_HEADERS_TREE"],
     )
-    parser.add_argument(
-        "--converter",
-        type=Path,
-        required=True,
-        help="builder-local meson2hermetic meson.py",
+    banner = pinned_source.venus_protocol_banner(metadata)
+    with tempfile.TemporaryDirectory(prefix="venus-protocol-") as temporary:
+        output = Path(temporary) / "codec"
+        output.mkdir()
+        banner_file = Path(temporary) / "banner"
+        # venus-protocol's banner template ends in a blank line.
+        banner_file.write_text(banner + "\n\n")
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(protocol / "vn_protocol.py"),
+                "--outdir",
+                str(output),
+                "--registry",
+                str(headers / "registry/vk.xml"),
+                "--banner",
+                str(banner_file),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise SystemExit(
+                "generate-mesa-venus-port.py: the venus-protocol generator failed: "
+                f"{(result.stderr or result.stdout).strip()}"
+            )
+        if git(protocol, "status", "--porcelain", "--untracked-files=all"):
+            raise SystemExit(
+                "generate-mesa-venus-port.py: the venus-protocol generator wrote into "
+                "its source"
+            )
+        generated = {path.name: path.read_bytes() for path in output.glob(PROTOCOL_HEADERS)}
+        main_header = generated.get("vn_protocol_driver.h", b"")
+        if main_header.split(b"\n", 1)[0] != banner.encode():
+            raise SystemExit(
+                "generate-mesa-venus-port.py: the generator did not write the pinned "
+                "banner into vn_protocol_driver.h"
+            )
+        existing = {path.name: path for path in target.glob(PROTOCOL_HEADERS)}
+        stale = sorted(existing.keys() - generated.keys())
+        changed = sorted(
+            name for name, payload in generated.items()
+            if name not in existing or existing[name].read_bytes() != payload
+        )
+        if args.check:
+            if stale or changed:
+                raise SystemExit(
+                    "generate-mesa-venus-port.py: the checkout's protocol codec differs "
+                    f"from the pinned generation: changed {changed}, stale {stale}"
+                )
+            print(f"the {len(generated)} protocol headers match the pinned generation")
+            return
+        for name in stale:
+            existing[name].unlink()
+        for name in changed:
+            (target / name).write_bytes(generated[name])
+    print(
+        f"wrote {len(generated)} protocol headers: {len(changed)} changed, "
+        f"{len(stale)} removed"
     )
-    parser.add_argument(
-        "--platforms", type=Path, required=True, help="builder-local platforms toml"
-    )
-    parser.add_argument(
-        "--dependencies",
-        type=Path,
-        help="dependency map override; defaults to the port's own map",
-    )
-    args = parser.parse_args()
-    args.android_root = args.android_root.resolve()
-    args.checkout = args.checkout.resolve()
+
+
+def generate_soong(args: argparse.Namespace, metadata: dict[str, str]) -> None:
     args.config = args.android_root / "third_party/mesa-venus/soong-port.toml"
     if not args.config.is_file():
         raise SystemExit("generate-mesa-venus-port.py: the port configuration is missing")
@@ -674,10 +770,6 @@ def main() -> None:
         )
     if not args.dependencies.is_file():
         raise SystemExit("generate-mesa-venus-port.py: the dependency map is missing")
-    metadata = parse_assignments(
-        args.android_root / "third_party/mesa-venus/metadata.env",
-        lambda message: SystemExit(f"generate-mesa-venus-port.py: {message}"),
-    )
     port = Port(args.config, metadata.get("MESA_VENUS_HAL_MODULE", ""))
     verify_converter(args.android_root, args.converter)
     convert(args)
@@ -688,6 +780,65 @@ def main() -> None:
     scope(args.checkout, blueprints, port.keep)
     saved = sum(1 for bp in blueprints if bp.save())
     print(f"wrote {saved} Android.bp files")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Generate the Kernarium Mesa port")
+    steps = parser.add_subparsers(dest="step", required=True)
+    protocol = steps.add_parser(
+        "protocol", help="write the paired Venus protocol codec"
+    )
+    protocol.add_argument(
+        "--protocol-source",
+        type=Path,
+        required=True,
+        help="clean venus-protocol replay at MESA_VENUS_PROTOCOL_TREE",
+    )
+    protocol.add_argument(
+        "--vulkan-headers",
+        type=Path,
+        required=True,
+        help="clean Vulkan-Headers checkout at MESA_VENUS_VULKAN_HEADERS_TREE",
+    )
+    protocol.add_argument(
+        "--check",
+        action="store_true",
+        help="compare the checkout's codec with the generation; write nothing",
+    )
+    soong = steps.add_parser("soong", help="write the Android.bp files")
+    soong.add_argument(
+        "--converter",
+        type=Path,
+        required=True,
+        help="builder-local meson2hermetic meson.py",
+    )
+    soong.add_argument(
+        "--platforms", type=Path, required=True, help="builder-local platforms toml"
+    )
+    soong.add_argument(
+        "--dependencies",
+        type=Path,
+        help="dependency map override; defaults to the port's own map",
+    )
+    for step in (protocol, soong):
+        step.add_argument("--android-root", type=Path, required=True)
+        step.add_argument(
+            "--checkout",
+            type=Path,
+            required=True,
+            help="materialized external/mesa3d-venus checkout",
+        )
+    args = parser.parse_args()
+    args.android_root = args.android_root.resolve()
+    args.checkout = args.checkout.resolve()
+    metadata = parse_assignments(
+        args.android_root / "third_party/mesa-venus/metadata.env",
+        lambda message: SystemExit(f"generate-mesa-venus-port.py: {message}"),
+    )
+    if args.step == "protocol":
+        generate_protocol(args, metadata)
+    else:
+        generate_soong(args, metadata)
 
 
 LABEL = re.compile(r":([A-Za-z0-9_.+-]+)")

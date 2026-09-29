@@ -21,6 +21,7 @@ if _ARTIFACTS not in sys.path:
 from contract_checks import ContractChecks, parse_config, sha256_path  # noqa: E402
 
 _CHECKS = ContractChecks("Android release verifier")
+error = _CHECKS.error
 fail = _CHECKS.fail
 require_exact_keys = _CHECKS.require_exact_keys
 require_string = _CHECKS.require_string
