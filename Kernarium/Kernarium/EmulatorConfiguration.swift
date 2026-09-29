@@ -319,7 +319,7 @@ enum RootfsImage {
     /// The accepted KDE desktop image (tools/rootfs/desktop/images.json),
     /// which carries its own session setup. It applies only while the
     /// settings store no name: a stored name, `rootfs.erofs` included, is kept.
-    static let defaultFilename = "kde-20260928-r1.erofs"
+    static let defaultFilename = "kde-20260929-r2.erofs"
     static let environmentKey = "KERNARIUM_ROOTFS"
 
     static var documentsDirectory: URL {

@@ -65,6 +65,31 @@ class DesktopImageTests(unittest.TestCase):
                     re.fullmatch(r"(zstd,level=\d+|lz4hc)", entry["compression"])
                 )
 
+    def test_kernarium_defaults_to_the_accepted_kde_image(self) -> None:
+        descriptor = json.loads(
+            (DESKTOP / "images.json").read_text(encoding="utf-8")
+        )
+        accepted = descriptor["images"]["kde"]["accepted"]["file"]
+        kernarium = DESKTOP.parents[2] / "Kernarium"
+        source = (kernarium / "Kernarium/EmulatorConfiguration.swift").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(
+            re.findall(r'static let defaultFilename = "([^"]*)"', source),
+            [accepted],
+        )
+        tests = (kernarium / "KernariumTests/KernariumTests.swift").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(
+            set(re.findall(r'rootfsFilename == "(kde-[^"]*)"', tests)),
+            {accepted},
+        )
+        self.assertIn(
+            f"`{accepted}`",
+            (kernarium / "README.md").read_text(encoding="utf-8"),
+        )
+
     def test_derivation_refuses_a_source_that_does_not_match(self) -> None:
         derive = load_derive()
         with tempfile.TemporaryDirectory() as name:

@@ -61,4 +61,6 @@ sudo tools/rootfs/desktop/derive.py --image kde \
 Publish a new release under a new name and record it in `images.json`; never
 replace an accepted image or the source it came from. A new KDE release also
 renames Kernarium's default image, `RootfsImage.defaultFilename` in
-`Kernarium/Kernarium/EmulatorConfiguration.swift`, and its tests.
+`Kernarium/Kernarium/EmulatorConfiguration.swift`, its tests and the
+Kernarium README; `tests/tooling/rootfs/test_desktop_images.py` holds them
+to `images.json`.
