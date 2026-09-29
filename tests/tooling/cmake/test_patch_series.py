@@ -174,6 +174,20 @@ def run(scratch: Path) -> None:
     git(composed, "checkout", "-q", "-b", "composed", base)
     patch_series.apply_series(composed, [common, overlay], expected_tree=head_tree)
 
+    # A series that does not apply names its first failing patch, and a failed
+    # replay aborts git am and leaves the checkout where it found it.
+    expect_error("tree on a conflicting base", "fix-change-a.patch does not apply",
+                 lambda: patch_series.series_tree(source, "topic", [series]))
+    conflict = scratch / "conflict"
+    git(scratch, "clone", "-q", "--no-hardlinks", str(source), str(conflict))
+    git(conflict, "checkout", "-q", "-b", "conflict", base)
+    before_replay = commit(conflict, "conflict", {"crlf.txt": b"one\r\nZWEI\r\nthree\r\n"}, 12)
+    expect_error("conflicting replay", "series does not apply",
+                 lambda: patch_series.apply_series(conflict, [series]))
+    assert git(conflict, "rev-parse", "HEAD").strip() == before_replay
+    assert not git(conflict, "status", "--porcelain", "--untracked-files=all").strip()
+    assert not (conflict / ".git" / "rebase-apply").exists()
+
     # Anything that did not come from the topic branch is rejected.
     tampered = scratch / "tampered"
     shutil.copytree(series, tampered)
