@@ -50,6 +50,11 @@ void JitCompiler::set_table_list_planning_enabled(bool enabled) noexcept {
 
 JitCompiler::Result JitCompiler::compile(std::uint64_t guest_pc,
                  std::span<const std::uint32_t> instructions) {
+    return compile_once(guest_pc, instructions);
+  }
+
+JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
+                      std::span<const std::uint32_t> instructions) {
     begin_link_observation();
     select_constrained_vector_pins(instructions);
     if (table_list_planning_enabled_)

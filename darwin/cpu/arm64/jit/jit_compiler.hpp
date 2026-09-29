@@ -62,6 +62,9 @@ public:
   Result compile(std::uint64_t guest_pc,
                  std::span<const std::uint32_t> instructions);
 
+  Result compile_once(std::uint64_t guest_pc,
+                      std::span<const std::uint32_t> instructions);
+
 private:
   enum class Action {
     keep_going,

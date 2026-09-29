@@ -634,7 +634,9 @@ void JitExecutor::Implementation::prepare_links(unsigned long generation, std::u
   if (link_generation_ == generation && link_code_changes_ == changes &&
       link_context_ != nullptr)
     return;
-  link_sequence_initialized_ = true;
+  if (!link_sequence_initialized_)
+    link_sequence_initialized_ = true;
+  compiled_in_link_sequence_ = 0;
   pending_indirect_ = {};
 
   auto *selected = &link_contexts_.front();

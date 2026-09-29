@@ -120,6 +120,7 @@ JitExecutor::Implementation::validate_stale_block(
 #endif
     stale->code_changes = changes;
     stale->stamp = ++stamp_;
+    ++compiled_in_link_sequence_;
     activate_link(*stale);
     return stale;
   case JitCacheValidationResult::mismatch:
@@ -227,6 +228,7 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
   else
     ++cache_validation_diagnostics_.private_validation_word_installs;
 #endif
+  ++compiled_in_link_sequence_;
   for (const auto &relocation : relocations)
     if (relocation.kind == JitRelocationKind::direct_link)
       refresh_cached_link_target(relocation.key);
@@ -253,6 +255,7 @@ void JitExecutor::Implementation::clear_cache() noexcept {
   tracked_store_arena_.reset();
   link_generation_ = 0;
   link_code_changes_ = 0;
+  compiled_in_link_sequence_ = 0;
   link_sequence_initialized_ = false;
   if (initialized)
     prepare_links(generation, changes);
