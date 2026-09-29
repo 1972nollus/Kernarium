@@ -1,14 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-# The standalone GPU server and VNC client are host test fixtures. Build them
-# when either their tooling smoke or the external integration workflows own a
-# use, without making either suite depend on the other suite being enabled.
-set(_uml_need_vnc_fixtures OFF)
-if(UML_BUILD_TOOLING_TESTS OR
-   (UML_BUILD_INTEGRATION_TESTS AND UML_ENABLE_EXTERNAL_NETWORK_TESTS))
-    set(_uml_need_vnc_fixtures ON)
-endif()
-if(_uml_need_vnc_fixtures AND TARGET uml_gpu_service)
+# Host test fixtures for GPU builds. The standalone GPU server serves only the
+# VNC tooling smoke; the VNC client serves that smoke and the external
+# integration workflows, so either suite can use it without the other.
+if(TARGET uml_gpu_service AND UML_BUILD_TOOLING_TESTS)
     add_executable(uml-virtio-gpu
         ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/virtio_gpu_fixture.cpp)
     target_link_libraries(uml-virtio-gpu PRIVATE UML::GpuDevice)
@@ -16,7 +11,9 @@ if(_uml_need_vnc_fixtures AND TARGET uml_gpu_service)
         ${PROJECT_SOURCE_DIR}/darwin/device/gpu)
     set_target_properties(uml-virtio-gpu PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
-
+endif()
+if(TARGET uml_gpu_service AND (UML_BUILD_TOOLING_TESTS OR
+   (UML_BUILD_INTEGRATION_TESTS AND UML_ENABLE_EXTERNAL_NETWORK_TESTS)))
     add_executable(uml-vnc-smoke-client
         ${PROJECT_SOURCE_DIR}/tests/tooling/gpu/vnc_smoke_client.cpp)
     target_link_libraries(uml-vnc-smoke-client PRIVATE
