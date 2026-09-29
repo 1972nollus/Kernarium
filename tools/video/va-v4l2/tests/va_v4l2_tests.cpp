@@ -300,14 +300,15 @@ void testCapturePolicy()
           "an unset request leaves the policy automatic");
     check(uml::va::rgbCaptureRequest("off") == RgbCapture::off, "off is honoured");
     check(uml::va::rgbCaptureRequest("nv12") == RgbCapture::off, "nv12 means off");
-    check(uml::va::rgbCaptureRequest("force") == RgbCapture::force, "force is honoured");
+    for (const char* request : {"force", "1", "rgb"})
+        check(uml::va::rgbCaptureRequest(request) == RgbCapture::automatic,
+              "a retired force request keeps the automatic policy");
     check(uml::va::rgbCaptureRequest("nonsense") == RgbCapture::automatic,
           "an unrecognised request leaves the policy automatic");
 
-    check(!uml::va::useRgbCapture(RgbCapture::force, false),
+    check(!uml::va::useRgbCapture(RgbCapture::automatic, false),
           "a device that does not offer packed RGB is never asked for it");
     check(!uml::va::useRgbCapture(RgbCapture::off, true), "off never asks for packed RGB");
-    check(uml::va::useRgbCapture(RgbCapture::force, true), "force asks for packed RGB");
     check(uml::va::useRgbCapture(RgbCapture::automatic, true),
           "automatic asks for packed RGB, which makes a browser's mandatory blit a copy");
 

@@ -12,8 +12,7 @@
 #include <cstdint>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 extern "C" {
 void uml_arm64_gadget_simd_eor3_native();
@@ -169,26 +168,18 @@ constexpr auto software_xar = UML_XAR_GADGETS(soft);
 
 [[nodiscard]] unsigned instruction_count(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(gadget);
-	for (unsigned index = 0; index < 32U; ++index)
-		if (indirect_branch(instructions[index]))
-			return index + 1U;
-	test::fail("logical/rotation gadget did not reach threaded dispatch");
+	const auto shape = a64::body_shape(reinterpret_cast<std::uintptr_t>(gadget), {.window = 32U});
+	if (!shape.reached_dispatch)
+		test::fail("logical/rotation gadget did not reach threaded dispatch");
+	return shape.instructions + 1U;
 }
 
 [[nodiscard]] unsigned conditional_branches(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(gadget);
-	unsigned branches = 0;
-	for (unsigned index = 0; index < 32U; ++index) {
-		if (indirect_branch(instructions[index]))
-			return branches;
-		if (conditional_branch(instructions[index]))
-			++branches;
-	}
-	test::fail("logical/rotation gadget did not reach threaded dispatch");
+	const auto shape = a64::body_shape(reinterpret_cast<std::uintptr_t>(gadget), {.window = 32U});
+	if (!shape.reached_dispatch)
+		test::fail("logical/rotation gadget did not reach threaded dispatch");
+	return shape.conditional_branches;
 }
 
 void translation_specializes_operation_immediate_and_registers()

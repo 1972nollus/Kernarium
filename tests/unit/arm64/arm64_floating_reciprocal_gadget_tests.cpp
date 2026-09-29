@@ -13,8 +13,7 @@
 #include <cstdlib>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 extern "C" {
 #define UML_DECLARE_RECIPROCAL_SCALAR(host, name) \
@@ -126,26 +125,18 @@ void require(bool condition, const char *message)
 
 [[nodiscard]] unsigned conditional_branches(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(gadget);
-	unsigned result = 0;
-	for (unsigned index = 0; index < 64U; ++index) {
-		if (indirect_branch(instructions[index]))
-			return result;
-		if (conditional_branch(instructions[index]))
-			++result;
-	}
-	fail("reciprocal gadget did not reach threaded dispatch");
+	const auto shape = a64::body_shape(reinterpret_cast<std::uintptr_t>(gadget), {.window = 64U});
+	if (!shape.reached_dispatch)
+		fail("reciprocal gadget did not reach threaded dispatch");
+	return shape.conditional_branches;
 }
 
 [[nodiscard]] unsigned instruction_count(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(gadget);
-	for (unsigned index = 0; index < 64U; ++index)
-		if (indirect_branch(instructions[index]))
-			return index + 1U;
-	fail("reciprocal gadget did not reach threaded dispatch");
+	const auto shape = a64::body_shape(reinterpret_cast<std::uintptr_t>(gadget), {.window = 64U});
+	if (!shape.reached_dispatch)
+		fail("reciprocal gadget did not reach threaded dispatch");
+	return shape.instructions + 1U;
 }
 
 [[nodiscard]] Gadget expected_gadget(const test::Form &form,

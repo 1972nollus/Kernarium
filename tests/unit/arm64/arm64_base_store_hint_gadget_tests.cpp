@@ -8,8 +8,7 @@
 #include <array>
 #include <cstdint>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace store_hint = arm64_base_store_hint_test;
 namespace gadgets = uml::cpu::arm64::gadgets;
@@ -47,16 +46,10 @@ void all_forms_fold_to_nop()
 			"store hint retained runtime decode or a dedicated gadget");
 	}
 
-	const auto *body = reinterpret_cast<const std::uint32_t *>(nop);
-	unsigned instructions = 0;
-	for (; instructions < 4U; ++instructions) {
-		const auto instruction = body[instructions];
-		if (indirect_branch(instruction))
-			break;
-		arm64_hint_test::require(!conditional_branch(instruction),
-			"NOP gadget contains a conditional branch");
-	}
-	arm64_hint_test::require(instructions <= 1U,
+	const auto shape = a64::body_shape(nop, {.window = 4U});
+	arm64_hint_test::require(shape.conditional_branches == 0U,
+		"NOP gadget contains a conditional branch");
+	arm64_hint_test::require(shape.instructions <= 1U,
 		"NOP gadget contains unexpected runtime work");
 }
 

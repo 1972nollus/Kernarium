@@ -69,7 +69,6 @@ RgbCapture rgbCaptureRequest(const char* request) noexcept
     if (!request || !*request) return RgbCapture::automatic;
     const std::string wanted = request;
     if (wanted == "off" || wanted == "0" || wanted == "nv12") return RgbCapture::off;
-    if (wanted == "force" || wanted == "1" || wanted == "rgb") return RgbCapture::force;
     return RgbCapture::automatic;
 }
 

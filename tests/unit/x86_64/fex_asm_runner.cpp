@@ -31,6 +31,9 @@ constexpr std::uint64_t code_address = 0x1'0000;
 constexpr std::uint64_t scratch_address = 0xe000'0000;
 constexpr std::uint64_t sib_address = 0xe800'0000;
 constexpr std::size_t instruction_limit = 1'000'000;
+/* The address-space generation cached runs share their code-page registry
+ * under; each case's executor releases it before the next case starts. */
+constexpr std::uint64_t cached_generation = 1;
 
 struct Region final {
 	std::uint64_t begin{};
@@ -113,6 +116,41 @@ public:
 			iterator->second.fill(std::byte{});
 		return iterator->second.data() +
 			static_cast<std::size_t>(address % page_size);
+	}
+
+	/* Repository cases run on the product's code-page model: every mapped
+	 * page may hold code, as under READ_IMPLIES_EXEC, and only a code
+	 * publication moves a page's stamp and the address space's code-change
+	 * sequence, so a cached translation survives exactly the stores nobody
+	 * published. */
+	void model_code_pages(std::uint64_t *code_changes) noexcept
+	{
+		code_changes_ = code_changes;
+	}
+
+	[[nodiscard]] bool is_executable(std::uint64_t address) noexcept override
+	{
+		return code_changes_ != nullptr && mapped(address, 1);
+	}
+
+	[[nodiscard]] bool code_page_stamp(std::uint64_t address, void *,
+		uml::memory::CodePageStamp &stamp) noexcept override
+	{
+		if (code_changes_ == nullptr || !mapped(address, 1))
+			return false;
+		const auto page_number = address / page_size;
+		const auto version = code_versions_.find(page_number);
+		stamp = {page_number + 1U,
+			version == code_versions_.end() ? 0 : version->second};
+		return true;
+	}
+
+	void invalidate_code(std::uint64_t address) override
+	{
+		if (code_changes_ == nullptr)
+			return;
+		++code_versions_[address / page_size];
+		++*code_changes_;
 	}
 
 	[[nodiscard]] uml::memory::MemoryFault last_fault() const noexcept override
@@ -210,9 +248,36 @@ private:
 
 	std::vector<Region> regions_;
 	std::map<std::uint64_t, Page> pages_;
+	std::map<std::uint64_t, std::uint64_t> code_versions_;
+	std::uint64_t *code_changes_{};
 	uml::memory::MemoryFault fault_{};
 	bool faulted_{};
 };
+
+/* How a case reaches its blocks. Upstream FEX programs build each block
+ * afresh; repository cases dispatch through the executor's program cache on
+ * the product's code-page model, so they can also hold the engine to its
+ * code-publication contract. */
+enum class Dispatch {
+	fresh,
+	cached,
+};
+
+struct CodeSequences final {
+	std::uint64_t mapping_changes{1};
+	std::uint64_t code_changes{1};
+};
+
+[[nodiscard]] uml::cpu::x86_64::gadgets::ProgramCacheSequences
+read_code_sequences(void *opaque) noexcept
+{
+	const auto &sequences = *static_cast<const CodeSequences *>(opaque);
+	return {
+		.mapping_changes = sequences.mapping_changes,
+		.code_changes = sequences.code_changes,
+		.interrupted = false,
+	};
+}
 
 struct RegisterExpectation final {
 	std::uint64_t key{};
@@ -559,7 +624,7 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 
 [[nodiscard]] int run_fex_case(std::span<const std::byte> binary,
 	std::span<const std::byte> config_bytes, std::string_view test,
-	bool quiet_success = false)
+	bool quiet_success = false, Dispatch dispatch = Dispatch::fresh)
 {
 	std::string error;
 	if (binary.empty()) {
@@ -574,6 +639,9 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 	}
 
 	SparseMemory memory;
+	CodeSequences sequences;
+	if (dispatch == Dispatch::cached)
+		memory.model_code_pages(&sequences.code_changes);
 	const auto code_size = (binary.size() + page_size - 1U) &
 		~(page_size - 1U);
 	if (!memory.map(scratch_address, page_size * 10U) ||
@@ -604,7 +672,21 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 
 	uml::cpu::x86_64::CpuState cpu{};
 	uml::cpu::x86_64::gadgets::Executor executor;
-	executor.prepare(memory);
+	/* A cached run prepares the executor as the product's dispatch loop
+	 * does: again whenever the code-change sequence has moved past the one
+	 * it was prepared with. */
+	std::uint64_t prepared_code_changes{};
+	const auto prepare = [&]() {
+		if (dispatch == Dispatch::fresh) {
+			executor.prepare(memory);
+			return;
+		}
+		executor.prepare(memory, cached_generation,
+			sequences.mapping_changes, sequences.code_changes, &sequences,
+			read_code_sequences);
+		prepared_code_changes = sequences.code_changes;
+	};
+	prepare();
 	cpu.rip = code_address;
 	cpu.rflags = 0x202;
 	cpu.execution_mode = configuration.mode;
@@ -626,9 +708,22 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 			return passed ? 0 : 1;
 		}
 
-		const auto built = uml::cpu::x86_64::gadgets::build(
-			memory, cpu.rip, cpu.execution_mode);
-		if (built.status != uml::cpu::x86_64::gadgets::BuildStatus::built) {
+		uml::cpu::x86_64::gadgets::BuildResult built{};
+		const uml::cpu::x86_64::gadgets::Program *program{};
+		if (dispatch == Dispatch::cached) {
+			if (prepared_code_changes != sequences.code_changes)
+				prepare();
+			const auto selected = executor.select_program(
+				memory, cpu.rip, cpu.execution_mode);
+			built.status = selected.status;
+			program = selected.program;
+		} else {
+			built = uml::cpu::x86_64::gadgets::build(
+				memory, cpu.rip, cpu.execution_mode);
+			program = &built.program;
+		}
+		if (built.status != uml::cpu::x86_64::gadgets::BuildStatus::built ||
+			program == nullptr) {
 			std::string_view status = "illegal_instruction";
 			std::string_view detail = "decoder rejected opcode";
 			if (built.status ==
@@ -645,8 +740,10 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 		}
 		const auto remaining = instruction_limit - retired;
 		const auto result = uml::cpu::x86_64::gadgets::execute(
-			built.program, cpu, memory, executor, remaining);
+			*program, cpu, memory, executor, remaining);
 		retired += result.retired_instructions;
+		if (dispatch == Dispatch::cached)
+			prepared_code_changes = executor.prepared_code_changes();
 		/* One upstream decoder test uses Linux time(2) only to prove that
 		 * SYSCALL reached a live boundary. Keep that test-local service in
 		 * the adapter instead of teaching the CPU engine about Linux ABIs.
@@ -717,6 +814,11 @@ constexpr std::array<std::byte, 8> corpus_magic{
 	std::byte{'U'}, std::byte{'M'}, std::byte{'L'}, std::byte{'X'},
 	std::byte{'8'}, std::byte{'6'}, std::byte{'T'}, std::byte{0}};
 constexpr std::uint32_t corpus_version = 1;
+/* FEX programs and repository cases share FEX's final-state configuration;
+ * K records are per-instruction traces. */
+constexpr std::uint8_t corpus_kind_fex = 1;
+constexpr std::uint8_t corpus_kind_k = 2;
+constexpr std::uint8_t corpus_kind_repository = 3;
 constexpr std::uint64_t k_low_mapping_size = 0x1'0000'0000;
 
 class ByteCursor final {
@@ -1086,8 +1188,10 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 			!cursor.read(source_size) || !cursor.read(code_size) ||
 			!cursor.read(payload_size) || !cursor.read(case_count) ||
 			reserved != 0 || (flags & ~std::uint8_t{3}) != 0 ||
-			(kind != 1 && kind != 2) ||
-			(kind == 1 && (flags & 2U) != 0) ||
+			kind < corpus_kind_fex || kind > corpus_kind_repository ||
+			(kind != corpus_kind_k && (flags & 2U) != 0) ||
+			(kind == corpus_kind_repository &&
+				(flags != 0 || case_count != 1)) ||
 			case_count == 0) {
 			print_result("malformed_input", record_index, 0, {},
 				"invalid corpus record header");
@@ -1107,10 +1211,12 @@ void initialize_k_cpu(uml::cpu::x86_64::CpuState &cpu,
 		}
 		const std::string_view name{
 			reinterpret_cast<const char *>(name_bytes.data()), name_bytes.size()};
-		const auto result = kind == 1 ?
-			run_fex_case(code, payload, name, true) :
+		const auto result = kind == corpus_kind_k ?
 			run_k_trace(code, payload, case_count, name,
-				(flags & 2U) != 0);
+				(flags & 2U) != 0) :
+			run_fex_case(code, payload, name, true,
+				kind == corpus_kind_repository ?
+					Dispatch::cached : Dispatch::fresh);
 		cases += case_count;
 		failures += result != 0;
 	}
@@ -1138,16 +1244,21 @@ int main(int argc, char **argv)
 		}
 		return run_corpus(first);
 	}
-	if (argc == 3) {
+	const bool repository = argc == 4 &&
+		std::string_view{argv[1]} == "--repository";
+	if (argc == 3 || repository) {
+		const auto *binary = argv[argc - 2];
+		const auto *config = argv[argc - 1];
 		std::vector<std::byte> second;
-		if (!load_file(argv[1], first, error) ||
-			!load_file(argv[2], second, error)) {
+		if (!load_file(binary, first, error) ||
+			!load_file(config, second, error)) {
 			print_result("malformed_input", 0, 0, {}, error);
 			return 2;
 		}
-		return run_fex_case(first, second, argv[1]);
+		return run_fex_case(first, second, binary, false,
+			repository ? Dispatch::cached : Dispatch::fresh);
 	}
 	print_result("malformed_input", 0, 0, {},
-		"usage: runner CORPUS | runner BINARY CONFIG");
+		"usage: runner CORPUS | runner [--repository] BINARY CONFIG");
 	return 2;
 }

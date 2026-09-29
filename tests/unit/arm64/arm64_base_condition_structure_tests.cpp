@@ -11,8 +11,7 @@
 #include <cstdlib>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 namespace test = uml::emulator::tests::base_condition;
 namespace engine_tests = uml::emulator::tests;
@@ -117,19 +116,14 @@ struct BranchCounts final {
 
 [[nodiscard]] BranchCounts branch_counts(std::uintptr_t entry)
 {
-	const auto *code = reinterpret_cast<const std::uint32_t *>(entry);
 	BranchCounts result{};
-	for (unsigned index = 0; index < 64U; ++index) {
-		const auto instruction = code[index];
-		if (indirect_branch(instruction)) {
-			result.terminal = true;
-			break;
-		}
-		if (conditional_branch(instruction))
-			++result.conditional;
-		else if ((instruction & 0x7c00'0000U) == 0x1400'0000U)
-			++result.direct;
-	}
+	const auto shape = a64::body_shape(entry, {.window = 64U},
+		[&](std::uint32_t instruction) {
+			result.direct +=
+				(instruction & 0x7c00'0000U) == 0x1400'0000U;
+		});
+	result.conditional = shape.conditional_branches;
+	result.terminal = shape.reached_dispatch;
 	return result;
 }
 

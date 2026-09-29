@@ -10,8 +10,7 @@
 #include <cstdint>
 #include <set>
 
-using uml::testing::a64::conditional_branch;
-using uml::testing::a64::indirect_branch;
+namespace a64 = uml::testing::a64;
 
 extern "C" {
 void uml_arm64_gadget_half_dot_native_vector_2s();
@@ -74,23 +73,21 @@ constexpr std::array<Gadget, 10> native_gadgets{
 
 void require_native_straight_line(Gadget gadget)
 {
-	const auto *instructions =
-		reinterpret_cast<const std::uint32_t *>(gadget);
 	/*
 	 * The common three-instruction lazy FP-environment prefix is shared by
 	 * every FP gadget. Once active, this family's translated body is entirely
 	 * straight-line through indirect dispatch.
 	 */
-	for (unsigned index = 3U; index < 48U; ++index) {
-		test::require(!conditional_branch(instructions[index]),
-			"FDOT native gadget contains a conditional branch");
-		test::require(
-			(instructions[index] & 0xfc00'0000U) != 0x9400'0000U,
-			"FDOT native gadget contains a helper call");
-		if (indirect_branch(instructions[index]))
-			return;
-	}
-	test::fail("FDOT native gadget did not reach indirect dispatch");
+	const auto shape = a64::body_shape(
+		reinterpret_cast<std::uintptr_t>(gadget),
+		{.window = 48U, .skip = 3U}, [](std::uint32_t instruction) {
+			test::require(!a64::conditional_branch(instruction),
+				"FDOT native gadget contains a conditional branch");
+			test::require((instruction & 0xfc00'0000U) != 0x9400'0000U,
+				"FDOT native gadget contains a helper call");
+		});
+	if (!shape.reached_dispatch)
+		test::fail("FDOT native gadget did not reach indirect dispatch");
 }
 
 void translation_selects_shape_host_path_and_direct_offsets()
