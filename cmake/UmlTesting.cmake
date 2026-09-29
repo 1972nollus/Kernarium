@@ -11,11 +11,6 @@ function(uml_record_registered_test SUITE NAME)
         set(_command_target "")
         if(_argument MATCHES "^\\$<TARGET_FILE:([^>]+)>$")
             set(_command_target "${CMAKE_MATCH_1}")
-        elseif(_argument MATCHES
-               "^\\$<JOIN:\\$<TARGET_OBJECTS:([^>]+)>,\\|>$")
-            set(_command_target "${CMAKE_MATCH_1}")
-        elseif(_argument MATCHES "^\\$<TARGET_OBJECTS:([^>]+)>$")
-            set(_command_target "${CMAKE_MATCH_1}")
         elseif(TARGET "${_argument}")
             set(_command_target "${_argument}")
         endif()
@@ -149,123 +144,53 @@ function(uml_finalize_test_preset_binary_target TEST_PRESET AGGREGATE_TARGET)
     endif()
 endfunction()
 
-function(uml_apply_test_properties NAME)
-    cmake_parse_arguments(TEST "" "WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
-        "LABELS;RESOURCE_GROUPS" ${ARGN})
-
-    if(NOT TEST_LABELS)
-        message(FATAL_ERROR "${NAME}: a suite label is required")
-    endif()
-    set(_suites)
-    foreach(_label IN LISTS TEST_LABELS)
-        if(_label MATCHES "^(unit|tooling|integration)$")
-            list(APPEND _suites "${_label}")
-        endif()
-    endforeach()
-    list(LENGTH _suites _suite_count)
-    if(NOT _suite_count EQUAL 1)
-        message(FATAL_ERROR
-            "${NAME}: exactly one primary suite label is required, got: ${_suites}")
-    endif()
-    set_tests_properties("${NAME}" PROPERTIES LABELS "${TEST_LABELS}")
-    if(TEST_WORKING_DIRECTORY)
-        set_tests_properties("${NAME}" PROPERTIES
-            WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}")
-    endif()
-    if(TEST_TIMEOUT)
-        set_tests_properties("${NAME}" PROPERTIES TIMEOUT "${TEST_TIMEOUT}")
-    endif()
-    if(TEST_PROCESSORS)
-        set_tests_properties("${NAME}" PROPERTIES PROCESSORS "${TEST_PROCESSORS}")
-    endif()
-    if(TEST_RESOURCE_GROUPS)
-        set_tests_properties("${NAME}" PROPERTIES RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
-    endif()
-endfunction()
-
 set(UML_UNIT_TEST_DEFAULT_TIMEOUT 600)
 
-function(uml_add_unit_test)
-    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
-        "COMMAND;LABELS;RESOURCE_GROUPS" ${ARGN})
-    if(NOT TEST_NAME OR NOT TEST_COMMAND)
-        message(FATAL_ERROR
-            "uml_add_unit_test requires NAME and COMMAND")
-    endif()
-
-    # Unit tests are native host binaries (or CMake-only setup actions).  Keep
-    # Python and shell runners in the tooling/integration suites even when a
-    # caller attempts to hide one behind an absolute interpreter path.
-    foreach(_command_argument IN LISTS TEST_COMMAND)
-        if(_command_argument MATCHES "(^|/)(python[0-9.]*|sh|bash|zsh)$" OR
-           _command_argument MATCHES "\\.(py|sh)$")
-            message(FATAL_ERROR
-                "${TEST_NAME}: unit tests may not invoke Python or shell: "
-                "${_command_argument}")
-        endif()
-    endforeach()
-
-    add_test(NAME "${TEST_NAME}" COMMAND ${TEST_COMMAND})
-    set(_labels "unit")
-    if(TEST_LABELS)
-        list(APPEND _labels ${TEST_LABELS})
-    endif()
-    # A wedged unit binary fails its suite instead of stalling it. The default
-    # stays several times above the slowest unit test measured without an
-    # explicit bound, sanitizer presets and a loaded host included; a test
-    # that needs longer passes its own TIMEOUT.
-    if(NOT TEST_TIMEOUT)
-        set(TEST_TIMEOUT "${UML_UNIT_TEST_DEFAULT_TIMEOUT}")
-    endif()
-    uml_apply_test_properties("${TEST_NAME}"
-        LABELS "${_labels}"
-        WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
-        TIMEOUT "${TEST_TIMEOUT}"
-        PROCESSORS "${TEST_PROCESSORS}"
-        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
-    # Scratch files stay in a per-test build-tree directory; see
-    # tests/unit/scratch/scratch_directory.hpp. UML_UNIT_TEST_NAME gives each
-    # test its registered name.
-    set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT
-        "UML_UNIT_TEST_NAME=${TEST_NAME}"
-        "UML_TEST_SCRATCH_DIRECTORY=${CMAKE_BINARY_DIR}/test-scratch/${TEST_NAME}")
-    uml_record_registered_test(unit "${TEST_NAME}" ${TEST_COMMAND})
-endfunction()
-
-function(uml_add_tooling_test)
-    cmake_parse_arguments(TEST "" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
-        "COMMAND;LABELS;RESOURCE_GROUPS" ${ARGN})
-    if(NOT TEST_NAME OR NOT TEST_COMMAND)
-        message(FATAL_ERROR
-            "uml_add_tooling_test requires NAME and COMMAND")
-    endif()
-
-    add_test(NAME "${TEST_NAME}" COMMAND ${TEST_COMMAND})
-    set(_labels "tooling")
-    if(TEST_LABELS)
-        list(APPEND _labels ${TEST_LABELS})
-    endif()
-    uml_apply_test_properties("${TEST_NAME}"
-        LABELS "${_labels}"
-        WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
-        TIMEOUT "${TEST_TIMEOUT}"
-        PROCESSORS "${TEST_PROCESSORS}"
-        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
-    set_property(TEST "${TEST_NAME}" APPEND PROPERTY
-        ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
-    uml_record_registered_test(tooling "${TEST_NAME}" ${TEST_COMMAND})
-endfunction()
-
-function(uml_add_integration_test)
+# Registers one test in SUITE (unit, tooling or integration). Its labels are
+# the suite, then rootfs for a ROOTFS test, then the caller's LABELS, and must
+# name exactly one primary suite. Its command targets join the suite's binary
+# aggregate.
+function(_uml_add_suite_test SUITE)
     cmake_parse_arguments(TEST "ROOTFS" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
         "COMMAND;LABELS;RESOURCE_GROUPS" ${ARGN})
     if(NOT TEST_NAME OR NOT TEST_COMMAND)
         message(FATAL_ERROR
-            "uml_add_integration_test requires NAME and COMMAND")
+            "uml_add_${SUITE}_test requires NAME and COMMAND")
     endif()
 
-    set(_command ${TEST_COMMAND})
-    set(_labels "integration")
+    set(_labels "${SUITE}")
+    if(SUITE STREQUAL "unit")
+        # Unit tests are native host binaries (or CMake-only setup actions).
+        # Keep Python and shell runners in the tooling/integration suites even
+        # when a caller attempts to hide one behind an absolute interpreter
+        # path.
+        foreach(_command_argument IN LISTS TEST_COMMAND)
+            if(_command_argument MATCHES "(^|/)(python[0-9.]*|sh|bash|zsh)$" OR
+               _command_argument MATCHES "\\.(py|sh)$")
+                message(FATAL_ERROR
+                    "${TEST_NAME}: unit tests may not invoke Python or shell: "
+                    "${_command_argument}")
+            endif()
+        endforeach()
+        # A wedged unit binary fails its suite instead of stalling it. The
+        # default stays several times above the slowest unit test measured
+        # without an explicit bound, sanitizer presets and a loaded host
+        # included; a test that needs longer passes its own TIMEOUT.
+        if(NOT TEST_TIMEOUT)
+            set(TEST_TIMEOUT "${UML_UNIT_TEST_DEFAULT_TIMEOUT}")
+        endif()
+        # Scratch files stay in a per-test build-tree directory; see
+        # tests/unit/scratch/scratch_directory.hpp. UML_UNIT_TEST_NAME gives
+        # each test its registered name.
+        set(_environment
+            "UML_UNIT_TEST_NAME=${TEST_NAME}"
+            "UML_TEST_SCRATCH_DIRECTORY=${CMAKE_BINARY_DIR}/test-scratch/${TEST_NAME}")
+    else()
+        # Tooling and integration runners import helpers from neighboring
+        # source directories. Keep validation from recreating source-adjacent
+        # __pycache__ debris.
+        set(_environment "PYTHONDONTWRITEBYTECODE=1")
+    endif()
     if(TEST_ROOTFS)
         if(NOT UML_INTEGRATION_ROOTFS)
             message(FATAL_ERROR
@@ -273,23 +198,43 @@ function(uml_add_integration_test)
         endif()
         list(APPEND _labels rootfs)
     endif()
-    add_test(NAME "${TEST_NAME}" COMMAND ${_command})
-    if(TEST_LABELS)
-        list(APPEND _labels ${TEST_LABELS})
+    list(APPEND _labels ${TEST_LABELS})
+    set(_suites)
+    foreach(_label IN LISTS _labels)
+        if(_label MATCHES "^(unit|tooling|integration)$")
+            list(APPEND _suites "${_label}")
+        endif()
+    endforeach()
+    list(LENGTH _suites _suite_count)
+    if(NOT _suite_count EQUAL 1)
+        message(FATAL_ERROR
+            "${TEST_NAME}: exactly one primary suite label is required, got: ${_suites}")
     endif()
-    uml_apply_test_properties("${TEST_NAME}"
-        LABELS "${_labels}"
-        WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}"
-        TIMEOUT "${TEST_TIMEOUT}"
-        PROCESSORS "${TEST_PROCESSORS}"
-        RESOURCE_GROUPS "${TEST_RESOURCE_GROUPS}")
-    # Integration runners import helpers from neighboring source directories.
-    # Keep validation from recreating source-adjacent __pycache__ debris.
-    set_property(TEST "${TEST_NAME}" APPEND PROPERTY
-        ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
-    uml_record_registered_test(integration "${TEST_NAME}" ${_command})
+
+    add_test(NAME "${TEST_NAME}" COMMAND ${TEST_COMMAND})
+    set_tests_properties("${TEST_NAME}" PROPERTIES LABELS "${_labels}")
+    foreach(_property IN ITEMS WORKING_DIRECTORY TIMEOUT PROCESSORS RESOURCE_GROUPS)
+        if(TEST_${_property})
+            set_tests_properties("${TEST_NAME}" PROPERTIES
+                ${_property} "${TEST_${_property}}")
+        endif()
+    endforeach()
+    set_property(TEST "${TEST_NAME}" APPEND PROPERTY ENVIRONMENT ${_environment})
+    uml_record_registered_test(${SUITE} "${TEST_NAME}" ${TEST_COMMAND})
+endfunction()
+
+function(uml_add_unit_test)
+    _uml_add_suite_test(unit ${ARGN})
+endfunction()
+
+function(uml_add_tooling_test)
+    _uml_add_suite_test(tooling ${ARGN})
+endfunction()
+
+function(uml_add_integration_test)
+    _uml_add_suite_test(integration ${ARGN})
 endfunction()
 
 function(uml_add_guest_integration_test)
-    uml_add_integration_test(ROOTFS ${ARGN})
+    _uml_add_suite_test(integration ROOTFS ${ARGN})
 endfunction()
