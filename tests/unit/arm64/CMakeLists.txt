@@ -11,17 +11,18 @@ set_source_files_properties(arm64_jit_chain_abi_probe.S arm64-neon-inventory.s
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
 
 # uml_add_arm64_unit_test(<stem> [NAME <test>] [WITHOUT_HARNESS]
-#     [SOURCES <sources>...] [OBJECTS <sources>...] [LABELS <labels>...])
+#     [SOURCES <sources>...] [OBJECTS <sources>... | NO_OBJECTS]
+#     [LABELS <labels>...])
 #
 # Builds uml_arm64_<stem>_tests from arm64_<stem>_tests.cpp and any SOURCES,
-# composed with the static MMU and gadget engine objects (or OBJECTS instead)
-# and linked to the engine test harness unless WITHOUT_HARNESS, then registers
-# it as arm64-<stem with dashes>, or as NAME.
+# composed with the static MMU and gadget engine objects (or OBJECTS instead,
+# or none for NO_OBJECTS) and linked to the engine test harness unless
+# WITHOUT_HARNESS, then registers it as arm64-<stem with dashes>, or as NAME.
 function(uml_add_arm64_unit_test STEM)
-    cmake_parse_arguments(PARSE_ARGV 1 _arm64_test "WITHOUT_HARNESS" "NAME"
-        "SOURCES;OBJECTS;LABELS")
+    cmake_parse_arguments(PARSE_ARGV 1 _arm64_test "WITHOUT_HARNESS;NO_OBJECTS"
+        "NAME" "SOURCES;OBJECTS;LABELS")
     set(_target uml_arm64_${STEM}_tests)
-    if(NOT DEFINED _arm64_test_OBJECTS)
+    if(NOT DEFINED _arm64_test_OBJECTS AND NOT _arm64_test_NO_OBJECTS)
         set(_arm64_test_OBJECTS
             $<TARGET_OBJECTS:uml_static_mmu>
             $<TARGET_OBJECTS:uml_arm64_gadgets>
