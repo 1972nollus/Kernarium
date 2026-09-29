@@ -30,7 +30,8 @@ if(NOT UML_KERNEL_PRODUCT STREQUAL "mainline-6.18")
 endif()
 
 # The root rejects every slice other than arm64 and x86_64, and x86_64 with
-# 16 KiB pages.
+# 16 KiB pages. The descriptor only names the bundle; the import verifies the
+# bundle's own slice and page size against this configuration.
 if(UML_MAINLINE_KERNEL_SLICE STREQUAL "x86_64")
     set(_uml_mainline_acceptance
         "${UML_KERNEL_LINE_ROOT}/slices/x86_64/artifacts/accepted-4k.env")
@@ -48,16 +49,6 @@ uml_read_artifact_env(
     "${_uml_mainline_acceptance}"
     UML_KERNEL_ARTIFACT_DIRECTORY_NAME
     _uml_mainline_directory_name)
-uml_read_artifact_env(
-    "${_uml_mainline_acceptance}"
-    UML_KERNEL_ARTIFACT_SLICE
-    _uml_mainline_accepted_slice)
-if(NOT "${_uml_mainline_accepted_slice}" STREQUAL
-       "${UML_MAINLINE_KERNEL_SLICE}")
-    message(FATAL_ERROR
-        "Accepted mainline kernel slice ${_uml_mainline_accepted_slice} does "
-        "not match configured ${UML_MAINLINE_KERNEL_SLICE}")
-endif()
 uml_watch_artifact_inputs("${_uml_mainline_acceptance}")
 set(_uml_mainline_artifact_default
     "${PROJECT_SOURCE_DIR}/.build/kernel/artifacts/${_uml_mainline_directory_name}")
