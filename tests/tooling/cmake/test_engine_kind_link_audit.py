@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Exercise the architecture audit's CPU engine-kind link rule on real graphs."""
+"""Exercise the File API architecture audit on real configured graphs."""
 
 from __future__ import annotations
 
@@ -147,11 +147,89 @@ def main() -> int:
                         f"accepted forbidden {label}:\n{audited.stdout}"
                     )
 
+        # The same audit rejects a declared cycle, a link against the layer
+        # direction, a declared target the codemodel lacks, and a dependency
+        # whose name the manifest cannot carry.
+        graphs = {
+            "cycle": (
+                [
+                    "add_library(first INTERFACE)",
+                    "add_library(second INTERFACE)",
+                    "uml_declare_architecture_target(first platform)",
+                    "uml_declare_architecture_target(second platform)",
+                    "target_link_libraries(first INTERFACE second)",
+                    "target_link_libraries(second INTERFACE first)",
+                ],
+                "Declared architecture target dependency cycle: "
+                "-> first -> second -> first",
+            ),
+            "layer": (
+                [
+                    "add_library(memory_contract INTERFACE)",
+                    "add_library(cpu_contract INTERFACE)",
+                    "uml_declare_architecture_target(memory_contract memory)",
+                    "uml_declare_architecture_target(cpu_contract cpu shared)",
+                    "target_link_libraries(memory_contract INTERFACE "
+                    "cpu_contract)",
+                ],
+                "Forbidden declared link architecture edge: "
+                "memory_contract (memory) -> cpu_contract (cpu)",
+            ),
+            "absent": (
+                [
+                    "add_library(imported_platform STATIC IMPORTED)",
+                    "uml_declare_architecture_target(imported_platform "
+                    "platform)",
+                ],
+                "Declared architecture target is absent from the CMake File "
+                "API: imported_platform",
+            ),
+            "malformed": (
+                [
+                    "add_library(Fixture::contract INTERFACE IMPORTED)",
+                    "add_library(platform_user INTERFACE)",
+                    "uml_declare_architecture_target(Fixture::contract "
+                    "platform)",
+                    "uml_declare_architecture_target(platform_user platform)",
+                    "target_link_libraries(platform_user INTERFACE "
+                    "Fixture::contract)",
+                ],
+                "Malformed architecture dependency for platform_user: "
+                "link@Fixture::contract",
+            ),
+        }
+        for label, (body, message) in graphs.items():
+            fixture = root / label
+            configured = configure(
+                options.cmake,
+                module,
+                fixture,
+                [*body, "uml_write_architecture_manifest()"],
+            )
+            if configured.returncode != 0:
+                failures.append(
+                    f"could not configure {label}:\n{configured.stdout}"
+                )
+                continue
+            audited = run(
+                [
+                    str(options.cmake),
+                    f"-DBUILD_ROOT={fixture / 'build'}",
+                    "-P",
+                    str(options.audit),
+                ]
+            )
+            rejected += 1
+            if audited.returncode == 0 or message not in normalized(
+                audited.stdout
+            ):
+                failures.append(f"accepted {label}:\n{audited.stdout}")
+
     if failures:
         raise SystemExit("\n".join(failures))
     print(
-        f"engine-kind audit accepted {accepted} and rejected {rejected} "
-        "link edges"
+        f"architecture audit accepted {accepted} and rejected {rejected} "
+        "configured graphs"
     )
     return 0
 
