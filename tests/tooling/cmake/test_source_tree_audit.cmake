@@ -100,10 +100,11 @@ if(OWNER_PRODUCT_VIOLATIONS)
         "source audit rejected targets linking the owner's product: ${OWNER_PRODUCT_VIOLATIONS}")
 endif()
 
-# The layer, engine-ownership, executable-memory and test-registration rules
-# read the whole tree, so the audit itself runs over a fixture tree that breaks
-# each rule beside a file the rule accepts. Every fixture starts below a
-# comment, so a rule cannot pass by matching only at the start of a file.
+# The layer, engine-ownership, executable-memory, implementation-include,
+# CPU-header and test-registration rules read the whole tree, so the audit
+# itself runs over a fixture tree that breaks each rule beside a file the rule
+# accepts. Every fixture starts below a comment, so a rule cannot pass by
+# matching only at the start of a file.
 file(REMOVE_RECURSE "${TEST_ROOT}")
 file(WRITE "${TEST_ROOT}/CMakeLists.txt" "")
 file(WRITE "${TEST_ROOT}/docs/architecture.md" "")
@@ -132,9 +133,38 @@ list(APPEND REJECTED
     "memory/fixture/memory_layer\\.cpp: [A-Za-z]+ layer includes"
     "device/fixture/device_layer\\.cpp: [A-Za-z]+ layer includes"
     "platform/fixture/platform_layer\\.hpp: [A-Za-z]+ layer includes")
+uml_write_audit_fixture(darwin/memory/fixture/tab_layer.cpp
+    "#include\t\"runtime/fixture.hpp\"")
+list(APPEND REJECTED "tab_layer\\.cpp: [A-Za-z]+ layer includes")
 list(APPEND ACCEPTED
     "device_memory\\.cpp: [A-Za-z]+ layer"
     "runtime_device\\.cpp: [A-Za-z]+ layer")
+
+uml_write_audit_fixture(darwin/cpu/fixture/fragment_source.cpp
+    "#include \"fixture_table.cpp\"")
+uml_write_audit_fixture(tests/fixture/fragment_contract.cpp
+    "#include \"fixture_contract.inc\"")
+uml_write_audit_fixture(Kernarium/Runtime/fragment_impl.mm
+    "#include \"runtime_impl.hpp\"")
+uml_write_audit_fixture(darwin/cpu/fixture/header_include.cpp
+    "#include \"fixture_contract.hpp\"")
+list(APPEND REJECTED
+    "fragment_source\\.cpp: C/C\\+\\+ source includes an implementation fragment"
+    "fragment_contract\\.cpp: C/C\\+\\+ source includes an implementation fragment"
+    "fragment_impl\\.mm: C/C\\+\\+ source includes an implementation fragment")
+list(APPEND ACCEPTED "header_include\\.cpp: C/C\\+\\+ source")
+
+uml_write_audit_fixture(darwin/cpu/fixture/anonymous.hpp
+    "namespace fixture {\nnamespace {\n}\n}")
+uml_write_audit_fixture(darwin/cpu/fixture/anonymous_source.cpp
+    "namespace {\n}")
+uml_write_audit_fixture(darwin/device/fixture/anonymous_device.hpp
+    "namespace {\n}")
+list(APPEND REJECTED
+    "anonymous\\.hpp: CPU header creates anonymous per-translation-unit ownership")
+list(APPEND ACCEPTED
+    "anonymous_source\\.cpp: CPU header"
+    "anonymous_device\\.hpp: CPU header")
 
 uml_write_audit_fixture(darwin/cpu/arm64/jit/jit_fixture.cpp
     "#include \"cpu/arm64/gadgets/fixture.hpp\"")

@@ -189,12 +189,12 @@ foreach(PATH IN LISTS LAYER_SOURCES)
     file(RELATIVE_PATH SOURCE_PATH "${SOURCE_ROOT}" "${PATH}")
     set(NORMALIZED_INCLUDES)
     string(REGEX MATCHALL
-        "#[ \\t]*include[ \\t]*[\"<][^\">]+[\">]"
+        "#[ \t]*include[ \t]*[\"<][^\">]+[\">]"
         INCLUDE_DIRECTIVES "${CONTENT}")
     get_filename_component(SOURCE_DIRECTORY "${PATH}" DIRECTORY)
     foreach(INCLUDE_DIRECTIVE IN LISTS INCLUDE_DIRECTIVES)
         string(REGEX REPLACE
-            "^#[ \\t]*include[ \\t]*[\"<]([^\">]+)[\">]$"
+            "^#[ \t]*include[ \t]*[\"<]([^\">]+)[\">]$"
             "\\1" INCLUDE_NAME "${INCLUDE_DIRECTIVE}")
         set(INCLUDE_CANDIDATES
             "${SOURCE_DIRECTORY}/${INCLUDE_NAME}"
@@ -261,7 +261,7 @@ foreach(PATH IN LISTS LAYER_SOURCES)
     # simultaneous W+X mapping is not sufficient because an RW-to-RX
     # transition is also dynamic code publication.
     if(SOURCE_PATH MATCHES "^darwin/cpu/" AND
-       NOT SOURCE_PATH MATCHES "^darwin/cpu/arm64/jit/jit_arena\.cpp$" AND
+       NOT SOURCE_PATH MATCHES "^darwin/cpu/arm64/jit/jit_arena\\.cpp$" AND
        CONTENT MATCHES
        "(MAP_JIT|PROT_EXEC|VM_PROT_EXECUTE|mprotect[ \t]*\\(|mach_vm_protect[ \t]*\\(|vm_protect[ \t]*\\(|pthread_jit_write_protect|sys_icache_invalidate[ \t]*\\()")
         if(SOURCE_PATH MATCHES "^darwin/cpu/arm64/gadgets/")
@@ -301,12 +301,12 @@ foreach(PATH IN LISTS CXX_SOURCES)
     file(READ "${PATH}" CONTENT)
     file(RELATIVE_PATH SOURCE_PATH "${SOURCE_ROOT}" "${PATH}")
     if(CONTENT MATCHES
-       "(^|\\n)[ \\t]*#[ \\t]*include[ \\t]+[^\\n]*(\\.(cpp|cc|cxx|inc)|_impl\\.hpp)[\">]")
+       "(^|\n)[ \t]*#[ \t]*include[ \t]+[^\n]*(\\.(cpp|cc|cxx|inc)|_impl\\.hpp)[\">]")
         list(APPEND VIOLATIONS
             "${PATH}: C/C++ source includes an implementation fragment")
     endif()
     if(SOURCE_PATH MATCHES "^darwin/cpu/.*\\.(h|hh|hpp|hxx)$" AND
-       CONTENT MATCHES "(^|\\n)[ \\t]*namespace[ \\t]*\\{")
+       CONTENT MATCHES "(^|\n)[ \t]*namespace[ \t]*\\{")
         list(APPEND VIOLATIONS
             "${PATH}: CPU header creates anonymous per-translation-unit ownership")
     endif()
