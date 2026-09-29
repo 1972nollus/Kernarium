@@ -59,6 +59,16 @@ shared with Kbuild's host tools. The prefix publishes only `bin/pahole` and
 libelf; the tools target macOS 15.4, the first release with the `strchrnul`
 that elfutils calls.
 
+The `macos` and `ios-network` prefixes build libslirp from one patch-managed
+series, [`patches/libslirp`](patches/libslirp/series.tsv), so both record its
+tree in `source-trees.tsv`. Its topics let a host forward's listening socket
+queue up to the host's `SOMAXCONN` connections instead of one, keep the
+advertised receive window within the buffer when the peer has passed the last
+advertised edge (an LP64 widening bug), and drop a connection whose peer stops
+answering window probes. Upstream master at 62b29862 has none of them; drop a
+topic when a libslirp update absorbs it. The user-network contract they
+provide is in [`../darwin/README.md`](../darwin/README.md).
+
 Kernarium's serial console uses the `GhosttyTerminal` product of
 [libghostty-spm](https://github.com/Lakr233/libghostty-spm), an Xcode Swift
 Package that the Kernarium project pins to exactly `1.6.20260922`. Its

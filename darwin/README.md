@@ -196,6 +196,18 @@ An unavailable individual host port is reported without removing the guest's
 network interface. Filesystem socket paths are removed only by their owning
 guards or the common termination cleanup.
 
+libslirp comes from the maintained series in
+[`../dependencies/README.md`](../dependencies/README.md). A forward's listening
+socket queues up to the host's `SOMAXCONN` pending connections, so each of a
+burst of concurrent host connects reaches the guest
+(`slirp-network-forward-backlog`, and through a booted guest in
+`guest-slirp-network`). The receive window SLiRP advertises never exceeds its
+free buffer (`slirp-network-tcp-window`). SLiRP closes the host end of a
+connection whose guest end stops answering within about ten minutes, whether
+it was retransmitting to the guest or probing a window the guest closed
+(`slirp-network-tcp-liveness`). An idle connection has no keep-alive, the
+RFC 1122 default, and stays open until one side closes it.
+
 The guest network driver has no transmit flow control, so a frame the provider
 refuses is lost and TCP must retransmit it. A guest transmit into a full
 transmit ring therefore waits, up to 500 ms, for the SLiRP event loop to free a
