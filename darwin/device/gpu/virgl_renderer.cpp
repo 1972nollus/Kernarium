@@ -2,6 +2,7 @@
 
 #include "virgl_renderer.hpp"
 
+#include "device_memory_pool.hpp"
 #include "host_gl_provider.hpp"
 #include "host_gpu_memory.hpp"
 #include "protocol.hpp"
@@ -14,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <epoxy/gl.h>
 #include <stdexcept>
 #include <string>
@@ -46,10 +48,24 @@ constexpr std::uint32_t venusCapsetId = 4;
 std::atomic_bool missingGlEntryPoint;
 std::atomic_bool rendererInstanceActive;
 std::atomic<std::uint64_t> deviceMemoryLimit;
+// The pool the renderer and the host GPU driver charge the guest's device
+// memory to. virgl_renderer_init() keeps its address until cleanup, and a
+// renderer replaces it only once the one before has been cleaned up.
+std::unique_ptr<DeviceMemoryPool> deviceMemoryPool;
 
-std::uint64_t hostDeviceMemoryUsage(void*)
+std::uint64_t deviceMemoryPoolUsage(void* data) noexcept
 {
-    return uml::platform::hostGpuAllocatedBytes();
+    return static_cast<DeviceMemoryPool*>(data)->usage();
+}
+
+bool reserveDeviceMemory(void* data, std::uint64_t size) noexcept
+{
+    return static_cast<DeviceMemoryPool*>(data)->reserve(size);
+}
+
+void releaseDeviceMemory(void* data, std::uint64_t size) noexcept
+{
+    static_cast<DeviceMemoryPool*>(data)->release(size);
 }
 
 [[nodiscard]] bool capabilityReportEnabled() noexcept
@@ -236,12 +252,28 @@ VirglRenderer::VirglRenderer()
          * The guest is shown, and may allocate, only the share the host
          * granted it, counted against everything the GPU holds for the
          * process so that the presentation path and the host GL driver draw
-         * on the same share.
+         * on the same share. Guest allocations and the memory the Venus
+         * devices allocate for themselves reserve from the share before they
+         * allocate, in the host pages Metal counts.
          */
-        virgl_renderer_set_device_memory_limit(
-            deviceMemoryLimit.load(std::memory_order_acquire),
-            &hostDeviceMemoryUsage,
-            nullptr);
+        const std::uint64_t limit =
+            deviceMemoryLimit.load(std::memory_order_acquire);
+        deviceMemoryPool.reset();
+        if (limit != 0) {
+            deviceMemoryPool = std::make_unique<DeviceMemoryPool>(limit,
+                [] { return uml::platform::hostGpuAllocatedBytes(); },
+                static_cast<std::uint64_t>(getpagesize()));
+            const virgl_renderer_device_memory_pool pool {
+                .limit = limit,
+                .data = deviceMemoryPool.get(),
+                .usage = &deviceMemoryPoolUsage,
+                .reserve = &reserveDeviceMemory,
+                .release = &releaseDeviceMemory,
+            };
+            virgl_renderer_set_device_memory_pool(&pool);
+        } else {
+            virgl_renderer_set_device_memory_pool(nullptr);
+        }
         const int result =
             virgl_renderer_init(this, rendererFlags, &callbacks);
         const int checkedResult = checkGlDispatchResult(result);

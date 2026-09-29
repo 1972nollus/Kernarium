@@ -432,16 +432,35 @@ aperture has room. A host-visible heap of one aperture therefore leaves a
 mapping of a quarter of it usable with room to spare.
 
 Device memory is charged to the application like guest RAM, so the host gives
-Venus a share of the guest's allocation: half of `mem=`. The renderer shrinks
-every advertised heap and budget to that share, so a guest sizes its
-allocations from the share instead of from the host's memory. The Virtio
-balloon then takes the same amount out of the guest's RAM (see [memory
+Venus a share of the guest's allocation: half of `mem=`. The share is one pool
+(`device/gpu/device_memory_pool.*`) for everything the host GPU holds for the
+process. Its usage is the process's Metal allocation
+(`MTLDevice.currentAllocatedSize`, which also counts presentation, host GL
+memory and the host driver's own memory) plus the reservations of allocations
+under way. The renderer shrinks every advertised heap to the share and bounds
+every heap budget it reports by the heap's usage plus what the pool has left,
+so a guest sizes its allocations from the share, less what the host already
+holds, instead of from the host's memory. The guest driver passes budgets on
+only under `VN_DEBUG=mem_budget`. The Virtio balloon then takes the same amount
+out of the guest's RAM (see [memory
 architecture](architecture.md#memory-and-executable-code)).
 
-The renderer also refuses a new, non-import allocation that would take the
-process's Metal allocation (`MTLDevice.currentAllocatedSize`, which also counts
-presentation and host GL memory) past the share. The application does not see
-that refusal as `VK_ERROR_OUT_OF_DEVICE_MEMORY`. Venus allocates
+Every consumer of the pool reserves an allocation's size, in whole host pages,
+before it allocates, and releases the reservation once Metal counts the
+allocation or it has failed. One lock decides every reservation, so
+allocations that each fit alone never together take the process past the
+share, whichever threads make them. The renderer reserves each new, non-import
+guest allocation. KosmicKrisp reserves its geometry heap (see [memory
+budget](#memory-budget)) through a driver-private structure that the renderer
+chains to every device it creates for a guest (`kk_device_memory_pool.h`,
+staged for the renderer's build and absent from the published prefix). A guest
+cannot chain that structure itself: the protocol decoder rejects a chain member
+it does not know. The driver's other internal allocations, such as upload
+buffers, are small; the pool counts them once Metal does and does not reserve
+them.
+
+The renderer refuses a guest allocation the pool cannot reserve. The
+application does not see that refusal as `VK_ERROR_OUT_OF_DEVICE_MEMORY`. Venus allocates
 asynchronously, so `vkAllocateMemory` has already succeeded in the guest; the
 first later command that names the missing memory fails in the renderer, which
 marks the Venus ring fatal, and the guest driver aborts the process. The
@@ -991,6 +1010,28 @@ TCS computes its levels the heap grows with the patches a render pass draws
 directly, whatever their levels: past about a thousand quad patches it reaches
 the cap. Constant levels bound it by the level written instead, and 65,536
 triangle patches at level 1 fit the starting 16 MiB.
+
+A Venus device charges its heap to the renderer's device-memory pool (see [the
+Venus share](#host-visible-memory-is-bounded-by-the-blob-aperture)), so the
+heap and the guest's allocations share one bound. A heap the device creates or
+grows takes at most half of the pool's headroom, rounded down to 64 KiB, so it
+never takes more than it leaves the guest. Only a device's first heap may take
+1 MiB even when that is more than half of what is left, and the pool still
+refuses it when not even that fits. A bound the driver computes still grows the heap no
+further than the cap above, because it overstates a draw's need up to 4096
+times for levels a TCS computes. Growth to what refused reservations measured
+goes as far as the pool allows, up to 4095 MiB, the most the header can
+address, or Metal's largest buffer if that is smaller. A heap the pool cannot
+hold is not created. The device keeps the heap it has, and draws that do not
+fit it lose their output through the refusal path above. A device with no heap
+yet fails the command buffer of a draw that needs one, as when Metal refuses
+the first heap, and tries again at its next such draw. Heaps a recording still
+holds are Metal allocations and count against the headroom. When a reset, freed or re-recorded recording leaves
+the device's heap held by nothing else, a heap grown past its start is freed
+once the headroom has fallen below half its size, and the next draw that needs
+a heap creates one from what the pool then leaves. A device created without a
+pool, as host GL through Zink creates, keeps the fixed cap and counts in the
+pool only as Metal memory.
 
 An uninterrupted released mustpass fraction runs about 200,000 cases in one
 `deqp-vk` process, and a 1536 MiB guest cannot hold every group in that
