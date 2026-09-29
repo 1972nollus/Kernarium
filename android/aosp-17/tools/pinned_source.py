@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-"""What the pinned external sources under third_party/ share.
+"""What the Android producer's pinned-source tools share.
 
 Jelly and Mesa Venus each keep a metadata.env with one key prefix, a
 generated patch series and a maintained Git topic. Their verifiers and
 regenerators differ in their constants, in how a materialized checkout must
 sit on its base, and in how the regenerator finds the topic's export base;
-everything else is here. Each caller passes its own error type, so
-diagnostics keep their per-tool prefixes.
+everything else is here. The AOSP and OrangeFox route verifiers read the same
+kind of tab-separated route table and resolved Repo manifest, so their table,
+path, manifest and digest checks are here too, as is the one command runner
+every verifier, regenerator and the release publisher uses. Each caller
+passes its own error type, so diagnostics keep their per-tool prefixes.
 """
 
 from __future__ import annotations
@@ -14,19 +17,26 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import csv
 import re
 import subprocess
 import sys
-from pathlib import Path
+import xml.etree.ElementTree as ET
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"))
-from contract_checks import parse_assignments, replace_assignment  # noqa: E402
+from contract_checks import (  # noqa: E402
+    parse_assignments,
+    replace_assignment,
+    sha256_path,
+)
 import patch_series  # noqa: E402
 
 
 HEX40 = re.compile(r"[0-9a-f]{40}")
+UNSAFE_PARTS = frozenset(("", ".", "..", ".git", ".repo"))
 Error = Callable[[str], Exception]
 
 
@@ -34,19 +44,99 @@ def run(
     *command: str,
     cwd: Path | None = None,
     payload: bytes | None = None,
+    env: dict[str, str] | None = None,
+    capture: bool = True,
     error: Error = ValueError,
 ) -> str:
+    """Run a command and return its standard output without surrounding space.
+
+    A nonzero exit raises `error` naming the command, its status and, for a
+    captured command, what it printed. Output that is not UTF-8 is refused.
+    An uncaptured command writes to this process's streams and returns "".
+    """
     result = subprocess.run(
         command,
         cwd=cwd,
+        env=env,
         input=payload,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
     )
     if result.returncode != 0:
-        detail = result.stderr.decode(errors="replace").strip()
-        raise error(f"command failed: {' '.join(command)}: {detail}")
-    return result.stdout.decode(errors="strict").strip()
+        detail = ""
+        if capture:
+            detail = (result.stderr or result.stdout).decode(errors="replace").strip()
+        raise error(
+            f"command failed ({result.returncode}): {' '.join(command)}"
+            + (f": {detail}" if detail else "")
+        )
+    if not capture:
+        return ""
+    try:
+        return result.stdout.decode("utf-8", errors="strict").strip()
+    except UnicodeDecodeError as failure:
+        raise error(f"command output is not UTF-8: {' '.join(command)}") from failure
+
+
+def digest(path: Path, error: Error) -> str:
+    """Return the SHA-256 of a regular, non-symlink file."""
+    if path.is_symlink() or not path.is_file():
+        raise error(f"required regular file is missing: {path}")
+    return sha256_path(path)
+
+
+def table(path: Path, header: tuple[str, ...], error: Error) -> list[tuple[str, ...]]:
+    """Return the rows of a tab-separated table below its exact header.
+
+    Empty lines and `#` comments are skipped. Every other line, one holding
+    only white space included, must be a row with every field filled in.
+    """
+    numbered = [
+        (number, line)
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if line and not line.startswith("#")
+    ]
+    if not numbered:
+        raise error(f"table is empty: {path}")
+    reader = csv.reader((line for _, line in numbered), delimiter="\t")
+    rows = [(numbered[reader.line_num - 1][0], tuple(row)) for row in reader]
+    (first, found), *data = rows
+    if found != header:
+        raise error(f"{path}:{first}: table header is invalid")
+    for number, row in data:
+        if len(row) != len(header) or not all(row):
+            raise error(f"{path}:{number}: malformed row")
+    return [row for _, row in data]
+
+
+def safe_relative(value: str, label: str, error: Error) -> None:
+    """Refuse anything but a normalized relative path outside Git and Repo state."""
+    path = PurePosixPath(value)
+    if (
+        not value
+        or value.startswith("/")
+        or "\\" in value
+        or str(path) != value
+        or any(part in UNSAFE_PARTS for part in path.parts)
+    ):
+        raise error(f"unsafe {label}: {value}")
+
+
+def manifest_projects(root: ET.Element, error: Error) -> dict[str, ET.Element]:
+    """Map each project of a resolved Repo manifest by its checkout path."""
+    projects: dict[str, ET.Element] = {}
+    for project in root.findall("project"):
+        name = project.get("name")
+        if not name:
+            raise error("resolved manifest has a project without a name")
+        path = project.get("path", name)
+        safe_relative(path, "manifest checkout path", error)
+        if path in projects:
+            raise error(f"resolved manifest repeats checkout path: {path}")
+        projects[path] = project
+    if not projects:
+        raise error("resolved manifest has no projects")
+    return projects
 
 
 def read_metadata(
