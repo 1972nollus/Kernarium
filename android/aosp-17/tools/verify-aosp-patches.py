@@ -6,17 +6,14 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import csv
-import hashlib
 import re
 import subprocess
-import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "kernel/common/artifacts"))
+import pinned_source
+# pinned_source puts scripts/ and the contract checks on sys.path.
 from contract_checks import parse_assignments  # noqa: E402
 import patch_series  # noqa: E402
 
@@ -32,69 +29,35 @@ PROJECT_HEADER = (
     "final_tree",
     "series_dir",
 )
-HEX40 = re.compile(r"[0-9a-f]{40}")
+HEX40 = pinned_source.HEX40
+
+
+def error(message: str) -> SystemExit:
+    return SystemExit(f"AOSP 17 patch verifier: {message}")
 
 
 def fail(message: str) -> None:
-    raise SystemExit(f"AOSP 17 patch verifier: {message}")
+    raise error(message)
 
 
-def run(*command: str, cwd: Path | None = None, payload: bytes | None = None) -> str:
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        input=payload,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.decode(errors="replace").strip()
-        fail(f"command failed ({' '.join(command)}): {detail}")
-    return result.stdout.decode(errors="strict")
+def run(*command: str, cwd: Path | None = None) -> str:
+    return pinned_source.run(*command, cwd=cwd, error=error)
 
 
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return pinned_source.digest(path, error)
 
 
 def table(path: Path, expected_header: tuple[str, ...]) -> list[tuple[str, ...]]:
-    lines = [
-        line
-        for line in path.read_text().splitlines()
-        if line.strip() and not line.startswith("#")
-    ]
-    if not lines:
-        fail(f"table is empty: {path}")
-    rows = [tuple(row) for row in csv.reader(lines, delimiter="\t")]
-    if rows[0] != expected_header:
-        fail(f"table header is invalid: {path}")
-    for number, row in enumerate(rows[1:], 2):
-        if len(row) != len(expected_header) or any(not field for field in row):
-            fail(f"{path}:{number}: malformed row")
-    return rows[1:]
+    return pinned_source.table(path, expected_header, error)
 
 
 def safe_relative(path: str, label: str) -> None:
-    if "\\" in path or path.startswith("/"):
-        fail(f"unsafe {label}: {path}")
-    parts = PurePosixPath(path).parts
-    if not parts or any(part in {"", ".", "..", ".git", ".repo"} for part in parts):
-        fail(f"unsafe {label}: {path}")
+    pinned_source.safe_relative(path, label, error)
 
 
 def manifest_projects(root: ET.Element) -> dict[str, ET.Element]:
-    projects: dict[str, ET.Element] = {}
-    for project in root.findall("project"):
-        name = project.get("name")
-        if not name:
-            fail("resolved manifest contains a project without a name")
-        path = project.get("path", name)
-        safe_relative(path, "manifest checkout path")
-        if path in projects:
-            fail(f"resolved manifest repeats checkout path: {path}")
-        projects[path] = project
-    return projects
+    return pinned_source.manifest_projects(root, error)
 
 
 @dataclass(frozen=True)
@@ -186,7 +149,7 @@ def verify_source(
         "-c",
         'if test -n "$(git status --porcelain)"; then printf "%s\\n" "$REPO_PATH"; fi',
         cwd=source,
-    ).strip()
+    )
     if dirty:
         fail(f"AOSP projects have uncommitted changes: {dirty}")
 
@@ -198,8 +161,8 @@ def verify_source(
             fail(f"route {route.route_id} checkout escapes the AOSP source")
         if not (checkout / ".git").exists():
             fail(f"route {route.route_id} is not a Git checkout")
-        head = run("git", "rev-parse", "HEAD", cwd=checkout).strip()
-        tree = run("git", "rev-parse", "HEAD^{tree}", cwd=checkout).strip()
+        head = run("git", "rev-parse", "HEAD", cwd=checkout)
+        tree = run("git", "rev-parse", "HEAD^{tree}", cwd=checkout)
         if current_projects[route.path].get("name") != route.project:
             fail(f"route {route.route_id} maps to the wrong manifest project")
         if current_projects[route.path].get("revision") != head:

@@ -7,11 +7,10 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import re
-import subprocess
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+import pinned_source
+# pinned_source puts scripts/ on sys.path.
 import patch_series  # noqa: E402
 
 
@@ -26,7 +25,7 @@ PROJECT_HEADER = (
     "final_tree",
     "series_dir",
 )
-HEX40 = re.compile(r"[0-9a-f]{40}")
+HEX40 = pinned_source.HEX40
 SAFE_ROUTE = re.compile(r"p[0-9]{4}")
 
 
@@ -35,16 +34,7 @@ class RegenerationError(ValueError):
 
 
 def run(*command: str, cwd: Path | None = None) -> str:
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.decode(errors="replace").strip()
-        raise RegenerationError(f"command failed: {' '.join(command)}: {detail}")
-    return result.stdout.decode(errors="strict")
+    return pinned_source.run(*command, cwd=cwd, error=RegenerationError)
 
 
 def read_project_rows(path: Path) -> tuple[list[str], list[list[str]]]:
@@ -84,10 +74,10 @@ def safe_series_path(android_root: Path, value: str, route_id: str) -> Path:
 def verify_topic(topic: Path, base_tree: str, base_commit: str) -> None:
     if topic.is_symlink() or not topic.is_dir():
         raise RegenerationError("topic checkout must be a non-symlink directory")
-    top = Path(run("git", "rev-parse", "--show-toplevel", cwd=topic).strip()).resolve()
+    top = Path(run("git", "rev-parse", "--show-toplevel", cwd=topic)).resolve()
     if top != topic:
         raise RegenerationError("topic path is not the root of its Git checkout")
-    if run("git", "rev-parse", f"{base_commit}^{{tree}}", cwd=topic).strip() != base_tree:
+    if run("git", "rev-parse", f"{base_commit}^{{tree}}", cwd=topic) != base_tree:
         raise RegenerationError("topic base commit has the wrong tree")
 
 

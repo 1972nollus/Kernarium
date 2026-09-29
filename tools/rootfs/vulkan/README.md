@@ -10,7 +10,11 @@ ICD manifest rather than a portability-subset driver. Guest and renderer
 codecs are generated offline into build directories from the same patched
 Venus protocol and pinned SDK registry; existing command IDs and aliases
 remain unchanged. Generated codecs, SDK headers, and registry copies are not
-carried in the downstream patch series.
+carried in the downstream patch series. The Android Vulkan HAL's port is the
+one carrier of a generated codec, because Soong cannot generate it out of
+tree. It pins the protocol series and Vulkan-Headers trees recorded here, so
+a change to either needs that port regenerated, as the
+[Android producer](../../../android/aosp-17/README.md#graphics) describes.
 
 The guest Mesa series ([`patches/mesa/series.tsv`](patches/mesa/series.tsv))
 is intentionally downstream and carries transport, reporting, and sharing
