@@ -10,12 +10,12 @@ Keep page-table synchronization, precise nested invalidation ranges, same-proces
  arch/um/kernel/skas/Makefile     |   5 +
  arch/um/kernel/skas/mmu.c        |  33 ++-
  arch/um/kernel/skas/mmu_darwin.c | 102 +++++++
- arch/um/kernel/skas/process.c    |  88 +++++-
+ arch/um/kernel/skas/process.c    |  90 +++++-
  arch/um/kernel/skas/uaccess.c    | 339 +++++++++++++++++----
  arch/um/kernel/tlb.c             | 489 +++++++++++++++++++++++++++++--
  arch/um/kernel/trap.c            |  58 +++-
  mm/mmu_gather.c                  |   7 +-
- 10 files changed, 1031 insertions(+), 112 deletions(-)
+ 10 files changed, 1033 insertions(+), 112 deletions(-)
  create mode 100644 arch/um/kernel/skas/mmu_darwin.c
 
 diff --git a/arch/um/include/asm/tlb.h b/arch/um/include/asm/tlb.h
@@ -270,7 +270,7 @@ index 0000000000000000000000000000000000000000..5ad85f4e04e6fb438998e6b0891fb550
 +	id->pid = -1;
 +}
 diff --git a/arch/um/kernel/skas/process.c b/arch/um/kernel/skas/process.c
-index 5881b17eb9874256cef33ca69643aa0f737e4cab..3273efe8362a19ed8434f51c21e672d2d96592a2 100644
+index 5881b17eb9874256cef33ca69643aa0f737e4cab..5e153236cbc104c5ac60297c9de16773e1a325dd 100644
 --- a/arch/um/kernel/skas/process.c
 +++ b/arch/um/kernel/skas/process.c
 @@ -4,14 +4,17 @@
@@ -291,7 +291,7 @@ index 5881b17eb9874256cef33ca69643aa0f737e4cab..3273efe8362a19ed8434f51c21e672d2
  #include <os.h>
  #include <skas.h>
  #include <kern_util.h>
-@@ -26,12 +29,12 @@ static int __init start_kernel_proc(void *unused)
+@@ -26,12 +29,14 @@ static int __init start_kernel_proc(void *unused)
  	return 0;
  }
  
@@ -303,11 +303,13 @@ index 5881b17eb9874256cef33ca69643aa0f737e4cab..3273efe8362a19ed8434f51c21e672d2
 -	stack_protections((unsigned long) &cpu0_irqstack);
 -	set_sigstack(cpu0_irqstack, THREAD_SIZE);
 +	stack_protections((unsigned long) &cpu_irqstacks[0]);
++#ifndef UML_HOST_DARWIN
 +	set_sigstack(cpu_irqstacks[0], THREAD_SIZE);
++#endif
  
  	init_new_thread_signals();
  
-@@ -57,10 +60,87 @@ struct mm_id *current_mm_id(void)
+@@ -57,10 +62,87 @@ struct mm_id *current_mm_id(void)
  	return &current->mm->context.id;
  }
  

@@ -16,7 +16,6 @@ patch	mm-handle-zero-length-cachestat-ranges.patch
 patch	smack-use-the-connected-socket-for-stream-sendmsg-checks.patch
 patch	virtio-uml-use-a-64-bit-DMA-mask-for-vhost-user-transports.patch
 patch	uml-use-one-scalable-Darwin-native-address-profile.patch
-patch	uml-run-Darwin-guests-on-fixed-vCPU-carriers.patch
 patch	drm-virtio-shut-down-atomic-state-before-unplug.patch
 patch	uml-raise-irq-work-locally-instead-of-at-the-tick.patch
 patch	service-cooperative-progress-at-kernel-quiescent-points.patch
