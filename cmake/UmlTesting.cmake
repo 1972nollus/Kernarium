@@ -147,9 +147,9 @@ endfunction()
 set(UML_UNIT_TEST_DEFAULT_TIMEOUT 600)
 
 # Registers one test in SUITE (unit, tooling or integration). Its labels are
-# the suite, then rootfs for a ROOTFS test, then the caller's LABELS, and must
-# name exactly one primary suite. Its command targets join the suite's binary
-# aggregate.
+# the suite, then rootfs for a ROOTFS integration test, then the caller's
+# LABELS, and must name exactly one primary suite. Its command targets join
+# the suite's binary aggregate.
 function(_uml_add_suite_test SUITE)
     cmake_parse_arguments(TEST "ROOTFS" "NAME;WORKING_DIRECTORY;TIMEOUT;PROCESSORS"
         "COMMAND;LABELS;RESOURCE_GROUPS" ${ARGN})
@@ -192,6 +192,10 @@ function(_uml_add_suite_test SUITE)
         set(_environment "PYTHONDONTWRITEBYTECODE=1")
     endif()
     if(TEST_ROOTFS)
+        if(NOT SUITE STREQUAL "integration")
+            message(FATAL_ERROR
+                "${TEST_NAME}: only integration tests take ROOTFS")
+        endif()
         if(NOT UML_INTEGRATION_ROOTFS)
             message(FATAL_ERROR
                 "${TEST_NAME}: ROOTFS integration tests require UML_INTEGRATION_ROOTFS")
