@@ -161,12 +161,6 @@ public:
     {
         return {};
     }
-    virtual void traceQueue(
-        std::uint32_t,
-        std::span<const std::uint8_t>,
-        std::span<const std::uint8_t>) const noexcept
-    {
-    }
 };
 
 } // namespace uml::virtio

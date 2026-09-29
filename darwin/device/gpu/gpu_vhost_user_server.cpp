@@ -11,8 +11,6 @@
 #include <array>
 #include <cerrno>
 #include <cstddef>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <optional>
@@ -23,20 +21,8 @@
 #include <utility>
 #include <vector>
 
-#ifndef UML_RUNTIME_PROFILING
-#define UML_RUNTIME_PROFILING 0
-#endif
-
 namespace uml::gpu {
 namespace {
-
-#if UML_RUNTIME_PROFILING
-[[nodiscard]] bool traceGpuCommandsEnabled() noexcept
-{
-    static const bool enabled = std::getenv("UML_GPU_TRACE") != nullptr;
-    return enabled;
-}
-#endif
 
 void setCloseOnExec(int descriptor)
 {
@@ -321,12 +307,6 @@ public:
         DeferredFences::Completion completed;
         if (!fences_.takeCompletion(completed))
             return false;
-        const auto* requestBytes =
-            reinterpret_cast<const std::uint8_t*>(&completed.requestHeader);
-        traceQueue(
-            protocol::gpuControlQueue,
-            {requestBytes, sizeof(completed.requestHeader)},
-            completed.response);
         completion = {
             .requestId = completed.requestId,
             .response = std::move(completed.response),
@@ -418,71 +398,6 @@ public:
                 size + ")\n";
         }
         return "Native Metal display: " + size + "\n";
-    }
-
-    void traceQueue(
-        std::uint32_t index,
-        std::span<const std::uint8_t> request,
-        std::span<const std::uint8_t> response) const noexcept override
-    {
-#if UML_RUNTIME_PROFILING
-        if (traceGpuCommandsEnabled() &&
-            request.size() >= sizeof(protocol::GpuControlHeader) &&
-            response.size() >= sizeof(protocol::GpuControlHeader)) {
-            const auto requestHeader =
-                loadUnaligned<protocol::GpuControlHeader>(request.data());
-            const auto responseHeader =
-                loadUnaligned<protocol::GpuControlHeader>(response.data());
-            std::fprintf(
-                stderr,
-                "Virtio-GPU queue %u command=0x%x response=0x%x bytes=%zu\n",
-                index,
-                requestHeader.type,
-                responseHeader.type,
-                response.size());
-            if (requestHeader.type == static_cast<std::uint32_t>(
-                    protocol::GpuCommand::resourceCreateBlob) &&
-                request.size() >= sizeof(protocol::GpuResourceCreateBlob)) {
-                const auto create =
-                    loadUnaligned<protocol::GpuResourceCreateBlob>(
-                        request.data());
-                std::fprintf(
-                    stderr,
-                    "Virtio-GPU blob create resource=%u size=%llu "
-                    "blob=%llu flags=0x%x\n",
-                    create.resourceId,
-                    static_cast<unsigned long long>(create.size),
-                    static_cast<unsigned long long>(create.blobId),
-                    create.flags);
-            } else if (requestHeader.type == static_cast<std::uint32_t>(
-                           protocol::GpuCommand::resourceMapBlob) &&
-                       request.size() >=
-                           sizeof(protocol::GpuResourceMapBlob)) {
-                const auto map = loadUnaligned<protocol::GpuResourceMapBlob>(
-                    request.data());
-                std::fprintf(
-                    stderr,
-                    "Virtio-GPU blob map resource=%u offset=%llu\n",
-                    map.resourceId,
-                    static_cast<unsigned long long>(map.offset));
-            } else if (requestHeader.type == static_cast<std::uint32_t>(
-                           protocol::GpuCommand::resourceUnmapBlob) &&
-                       request.size() >=
-                           sizeof(protocol::GpuResourceUnmapBlob)) {
-                const auto unmap =
-                    loadUnaligned<protocol::GpuResourceUnmapBlob>(
-                        request.data());
-                std::fprintf(
-                    stderr,
-                    "Virtio-GPU blob unmap resource=%u\n",
-                    unmap.resourceId);
-            }
-        }
-#else
-        (void)index;
-        (void)request;
-        (void)response;
-#endif
     }
 
 private:

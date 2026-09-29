@@ -124,8 +124,6 @@ add_library(uml_gpu_vhost_user_device STATIC
     deferred_fences.cpp
     gpu_vhost_user_server.cpp)
 uml_configure_gpu_component(uml_gpu_vhost_user_device)
-target_compile_definitions(uml_gpu_vhost_user_device PRIVATE
-    UML_RUNTIME_PROFILING=$<BOOL:${UML_ENABLE_RUNTIME_PROFILING}>)
 target_link_libraries(uml_gpu_vhost_user_device PUBLIC
     UML::VhostUserTransport
     uml_gpu_protocol_device
