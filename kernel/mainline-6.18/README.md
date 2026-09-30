@@ -125,7 +125,10 @@ repeated string instruction between elements; a trap's show it clear.
 delivers `SIGTRAP` with `TRAP_BRKPT` after itself. `#OF` from INT 4 or INTO,
 `#BR` from an i386 BOUND outside its bounds and `#GP` reach the task as
 `SIGSEGV` with `SI_KERNEL` and no address, `#OF` after the instruction and the
-two faults at it.
+two faults at it. An i386 tracer's register requests use the i386 layouts, as
+on Linux, with `PTRACE_GETFPREGS` and `NT_PRFPREG` the i387 FSAVE image, and a
+tracer of either ABI reaches the task's i386 TLS entries through the
+thread-area requests.
 `tests/integration/x86_64/run_guest_x86_64_exceptions.py` checks these. Host
 instruction execution is qualified against the pinned FEX handwritten x86-64
 corpus; distribution and complete Linux syscall compatibility require separate

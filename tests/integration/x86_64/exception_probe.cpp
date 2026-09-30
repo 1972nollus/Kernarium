@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* Freestanding x86-64 and i386 Linux guest probe: what the x86_64-userspace
- * slice delivers for x86 exceptions and interrupts, against native Linux
- * x86.
+ * slice delivers for x86 exceptions and interrupts, and what a tracer of the
+ * same ABI reads and writes, against native Linux x86.
  *
  * A repeated string instruction retires once however long it runs, and the
  * kernel services its timer only when the engine returns to it, so a loop of
@@ -15,6 +15,7 @@
 
 namespace {
 
+using u16 = unsigned short;
 using u32 = unsigned int;
 using u64 = unsigned long long;
 using word = unsigned long;
@@ -26,6 +27,8 @@ constexpr long nr_setitimer = 38;
 constexpr long nr_fork = 57;
 constexpr long nr_execve = 59;
 constexpr long nr_wait4 = 61;
+constexpr long nr_kill = 62;
+constexpr long nr_ptrace = 101;
 constexpr long nr_clock_gettime = 228;
 constexpr long nr_exit_group = 231;
 
@@ -95,7 +98,33 @@ __asm__(".text\n"
 	"	fldpi\n"
 	"	int3\n"
 	"	fstpl (%rdi)\n"
-	"	ret\n");
+	"	ret\n"
+	/* The traced child: known x87, SSE and general register state, then
+	 * #UD for the tracer's stop. The tracer resumes it at
+	 * probe_traced_resume, which exits with RBX's low byte. */
+	".global probe_traced\n"
+	"probe_traced:\n"
+	"	fninit\n"
+	"	fldcw probe_control_word(%rip)\n"
+	"	ldmxcsr probe_mxcsr_value(%rip)\n"
+	"	fld1\n"
+	"	movabs $0x1122334455667788, %rbx\n"
+	".global probe_traced_stop\n"
+	"probe_traced_stop:\n"
+	"	ud2\n"
+	".global probe_traced_resume\n"
+	"probe_traced_resume:\n"
+	"	mov %ebx, %edi\n"
+	"	mov $231, %eax\n"
+	"	syscall\n"
+	"	hlt\n"
+	".section .rodata\n"
+	"probe_control_word:\n"
+	"	.short 0x027f\n"
+	"	.balign 4\n"
+	"probe_mxcsr_value:\n"
+	"	.long 0x3f80\n"
+	".text\n");
 
 /* uc_mcontext: uc_flags, uc_link and a 24-byte stack_t, then r8-r15, rdi,
  * rsi, rbp, rbx, rdx, rax, rcx, rsp, rip, eflags, csgsfs, err and trapno. */
@@ -105,10 +134,28 @@ constexpr unsigned frame_error_offset = 40 + 19 * 8;
 constexpr unsigned frame_trapno_offset = 40 + 20 * 8;
 constexpr unsigned siginfo_address_offset = 16;
 
+/* struct user_regs_struct and struct user. */
+constexpr unsigned user_regs_words = 27;
+constexpr unsigned user_bx = 5;
+constexpr unsigned user_ip = 16;
+constexpr unsigned user_cs = 17;
+constexpr unsigned user_flags = 18;
+constexpr unsigned user_ss = 20;
+constexpr word user_debugreg7 = 848 + 7 * 8;
+/* sizeof(struct user): PTRACE_PEEKUSER rejects it and beyond. */
+constexpr word user_past = 928;
+constexpr word expected_bx = 0x1122334455667788UL;
+constexpr word expected_cs = 0x33;
 #elif defined(__i386__)
+constexpr long nr_fork = 2;
 constexpr long nr_write = 4;
+constexpr long nr_ptrace = 26;
+constexpr long nr_kill = 37;
 constexpr long nr_setitimer = 104;
+constexpr long nr_wait4 = 114;
 constexpr long nr_rt_sigaction = 174;
+constexpr long nr_set_thread_area = 243;
+constexpr long nr_exit_group = 252;
 constexpr long nr_clock_gettime = 265;
 
 inline long raw_syscall(long number, long a0 = 0, long a1 = 0, long a2 = 0,
@@ -216,7 +263,31 @@ __asm__(".text\n"
 	"	fldpi\n"
 	"	int3\n"
 	"	fstpl (%eax)\n"
-	"	ret\n");
+	"	ret\n"
+	/* (tls_entry), which the tracer reads from ESI. */
+	".global probe_traced\n"
+	"probe_traced:\n"
+	"	movl 4(%esp), %esi\n"
+	"	fninit\n"
+	"	fldcw probe_control_word\n"
+	"	ldmxcsr probe_mxcsr_value\n"
+	"	fld1\n"
+	"	movl $0x11223344, %ebx\n"
+	".global probe_traced_stop\n"
+	"probe_traced_stop:\n"
+	"	ud2\n"
+	".global probe_traced_resume\n"
+	"probe_traced_resume:\n"
+	"	movl $252, %eax\n"
+	"	int $0x80\n"
+	"	hlt\n"
+	".section .rodata\n"
+	"probe_control_word:\n"
+	"	.short 0x027f\n"
+	"	.balign 4\n"
+	"probe_mxcsr_value:\n"
+	"	.long 0x3f80\n"
+	".text\n");
 
 /* uc_mcontext: uc_flags, uc_link and a 12-byte stack_t, then gs, fs, es, ds,
  * edi, esi, ebp, esp, ebx, edx, ecx, eax, trapno, err, eip, cs and eflags. */
@@ -226,6 +297,19 @@ constexpr unsigned frame_ip_offset = 20 + 14 * 4;
 constexpr unsigned frame_flags_offset = 20 + 16 * 4;
 constexpr unsigned siginfo_address_offset = 12;
 
+/* struct user_regs_struct and struct user of i386. */
+constexpr unsigned user_regs_words = 17;
+constexpr unsigned user_bx = 0;
+constexpr unsigned user_si = 3;
+constexpr unsigned user_ip = 12;
+constexpr unsigned user_cs = 13;
+constexpr unsigned user_flags = 14;
+constexpr unsigned user_ss = 16;
+constexpr word user_debugreg7 = 252 + 7 * 4;
+/* Linux accepts sizeof(struct user32), 284, itself and rejects beyond. */
+constexpr word user_past = 288;
+constexpr word expected_bx = 0x11223344UL;
+constexpr word expected_cs = 0x23;
 #else
 #error "the exception probe is an x86-64 or i386 program"
 #endif
@@ -234,11 +318,14 @@ constexpr word sa_siginfo = 4;
 constexpr word sa_restorer = 0x04000000;
 constexpr long sigill = 4;
 constexpr long sigtrap = 5;
+constexpr long sigkill = 9;
 constexpr long sigsegv = 11;
 constexpr long sigalrm = 14;
 constexpr long trap_brkpt = 1;
 constexpr long si_kernel = 0x80;
+constexpr word flag_reserved = 1UL << 1;
 constexpr word flag_rf = 1UL << 16;
+constexpr long eio = 5;
 
 struct KernelSigaction {
 	word handler;
@@ -648,12 +735,224 @@ bool bound_checks()
 }
 #endif
 
-#if defined(__x86_64__)
+constexpr long ptrace_traceme = 0;
+constexpr long ptrace_peekuser = 3;
+constexpr long ptrace_pokeuser = 6;
+constexpr long ptrace_cont = 7;
+constexpr long ptrace_getregs = 12;
+constexpr long ptrace_setregs = 13;
+constexpr long ptrace_getfpregs = 14;
+constexpr long ptrace_setfpregs = 15;
+#if defined(__i386__)
+constexpr long ptrace_getfpxregs = 18;
+constexpr long ptrace_get_thread_area = 25;
+#endif
+
+long ptrace(long request, long child, word address, const void *data)
+{
+	return raw_syscall(nr_ptrace, request, child, static_cast<long>(address),
+			   reinterpret_cast<long>(data));
+}
+
 long wait_for(long pid, int &status)
 {
 	return raw_syscall(nr_wait4, pid, reinterpret_cast<long>(&status), 0, 0);
 }
 
+extern "C" [[noreturn]] void probe_traced(word tls_entry);
+extern "C" char probe_traced_stop[];
+extern "C" char probe_traced_resume[];
+
+#if defined(__i386__)
+constexpr u32 tls_base = 0x12345000;
+#endif
+
+struct UserDesc {
+	u32 entry_number;
+	u32 base_addr;
+	u32 limit;
+	u32 flags;
+};
+
+/* FXSAVE: cwd, swd, the abridged tag byte, MXCSR and ST(0). */
+constexpr unsigned fxsave_swd = 2;
+constexpr unsigned fxsave_twd = 4;
+constexpr unsigned fxsave_mxcsr = 24;
+constexpr unsigned fxsave_st0 = 32;
+#if defined(__i386__)
+/* The i387 FSAVE image: 32-bit cwd, swd and twd, then after the pointers
+ * eight packed 10-byte registers. */
+constexpr unsigned fsave_swd = 4;
+constexpr unsigned fsave_twd = 8;
+constexpr unsigned fsave_st0 = 28;
+#endif
+
+template <typename T> T field(const unsigned char *image, unsigned offset)
+{
+	T value;
+	__builtin_memcpy(&value, image + offset, sizeof(value));
+	return value;
+}
+
+/* ST(0) holds 1.0 and is the only register in use, at physical 7. */
+bool holds_one(const unsigned char *image, unsigned st0)
+{
+	bool ok = expect("ST(0) significand", field<u64>(image, st0),
+			 0x8000000000000000ULL);
+	ok &= expect("ST(0) exponent", field<u16>(image, st0 + 8), 0x3fff);
+	return ok;
+}
+
+bool fxsave_image(const unsigned char *image, u16 control)
+{
+	bool ok = expect("FXSAVE cwd", field<u16>(image, 0), control);
+	ok &= expect("FXSAVE TOP", (field<u16>(image, fxsave_swd) >> 11) & 7, 7);
+	ok &= expect("FXSAVE tag", image[fxsave_twd], 0x80);
+	ok &= expect("FXSAVE mxcsr", field<u32>(image, fxsave_mxcsr), 0x3f80);
+	ok &= holds_one(image, fxsave_st0);
+	return ok;
+}
+
+#if defined(__i386__)
+bool fsave_image(const unsigned char *image, u16 control)
+{
+	bool ok = expect("FSAVE cwd", field<u32>(image, 0) & 0xffff, control);
+	ok &= expect("FSAVE TOP", (field<u32>(image, fsave_swd) >> 11) & 7, 7);
+	ok &= expect("FSAVE tag", field<u32>(image, fsave_twd) & 0xffff, 0x3fff);
+	ok &= holds_one(image, fsave_st0);
+	return ok;
+}
+#endif
+
+/* What the tracer checks at the child's #UD stop; the child still runs
+ * afterwards, so a failure here is not fatal to it. */
+bool check_stop(long child)
+{
+	word regs[user_regs_words] = {};
+	bool ok = expect("PTRACE_GETREGS", static_cast<word>(ptrace(
+		ptrace_getregs, child, 0, regs)), 0);
+	ok &= expect("ip", regs[user_ip], address_of(probe_traced_stop));
+	ok &= expect("bx", regs[user_bx], expected_bx);
+	ok &= expect("cs", regs[user_cs], expected_cs);
+	ok &= expect("ss", regs[user_ss], 0x2b);
+	ok &= expect("flags reserved bit and RF",
+		     regs[user_flags] & (flag_reserved | flag_rf),
+		     flag_reserved | flag_rf);
+
+	word value = 1;
+	ok &= expect("PTRACE_PEEKUSER ip", static_cast<word>(ptrace(
+		ptrace_peekuser, child, user_ip * sizeof(word), &value)), 0);
+	ok &= expect("peeked ip", value, address_of(probe_traced_stop));
+	value = 1;
+	ok &= expect("PTRACE_PEEKUSER DR7", static_cast<word>(ptrace(
+		ptrace_peekuser, child, user_debugreg7, &value)), 0);
+	ok &= expect("peeked DR7", value, 0);
+	ok &= expect("PTRACE_PEEKUSER past struct user", static_cast<word>(
+		ptrace(ptrace_peekuser, child, user_past, &value)),
+		static_cast<word>(-eio));
+
+	alignas(16) unsigned char image[512] = {};
+#if defined(__x86_64__)
+	ok &= expect("PTRACE_GETFPREGS", static_cast<word>(ptrace(
+		ptrace_getfpregs, child, 0, image)), 0);
+	ok &= fxsave_image(image, 0x027f);
+	image[0] = 0x7f;
+	image[1] = 0x03;
+	ok &= expect("PTRACE_SETFPREGS", static_cast<word>(ptrace(
+		ptrace_setfpregs, child, 0, image)), 0);
+	__builtin_memset(image, 0, sizeof(image));
+	ptrace(ptrace_getfpregs, child, 0, image);
+	ok &= fxsave_image(image, 0x037f);
+#else
+	ok &= expect("PTRACE_GETFPREGS", static_cast<word>(ptrace(
+		ptrace_getfpregs, child, 0, image)), 0);
+	ok &= fsave_image(image, 0x027f);
+	ok &= expect("PTRACE_GETFPXREGS", static_cast<word>(ptrace(
+		ptrace_getfpxregs, child, 0, image)), 0);
+	ok &= fxsave_image(image, 0x027f);
+	/* An FSAVE write changes x87 state and keeps SSE state. */
+	ptrace(ptrace_getfpregs, child, 0, image);
+	image[0] = 0x7f;
+	image[1] = 0x03;
+	ok &= expect("PTRACE_SETFPREGS", static_cast<word>(ptrace(
+		ptrace_setfpregs, child, 0, image)), 0);
+	__builtin_memset(image, 0, sizeof(image));
+	ptrace(ptrace_getfpregs, child, 0, image);
+	ok &= fsave_image(image, 0x037f);
+	__builtin_memset(image, 0, sizeof(image));
+	ptrace(ptrace_getfpxregs, child, 0, image);
+	ok &= fxsave_image(image, 0x037f);
+
+	UserDesc descriptor = {};
+	ok &= expect("PTRACE_GET_THREAD_AREA", static_cast<word>(ptrace(
+		ptrace_get_thread_area, child, regs[user_si], &descriptor)), 0);
+	ok &= expect("thread area entry", descriptor.entry_number,
+		     regs[user_si]);
+	ok &= expect("thread area base", descriptor.base_addr, tls_base);
+#endif
+
+	regs[user_ip] = address_of(probe_traced_resume);
+	ok &= expect("PTRACE_SETREGS", static_cast<word>(ptrace(
+		ptrace_setregs, child, 0, regs)), 0);
+	word reread[user_regs_words] = {};
+	ptrace(ptrace_getregs, child, 0, reread);
+	ok &= expect("ip after PTRACE_SETREGS", reread[user_ip],
+		     address_of(probe_traced_resume));
+	ok &= expect("PTRACE_POKEUSER bx", static_cast<word>(ptrace(
+		ptrace_pokeuser, child, user_bx * sizeof(word),
+		reinterpret_cast<const void *>(42))), 0);
+	value = 0;
+	ptrace(ptrace_peekuser, child, user_bx * sizeof(word), &value);
+	ok &= expect("peeked bx after PTRACE_POKEUSER", value, 42);
+	return ok;
+}
+
+/* A tracer of the same ABI reads the child's registers, FP state and TLS at
+ * a signal stop, and its register writes take effect. */
+bool tracer_sees_registers()
+{
+	const long child = raw_syscall(nr_fork);
+	if (child == 0) {
+		word tls_entry = 0;
+#if defined(__i386__)
+		/* 32-bit, 4 KiB-granular, usable: flags seg_32bit,
+		 * limit_in_pages and useable. */
+		UserDesc descriptor = {~0U, tls_base, 0xfffff,
+				       1U | 1U << 4 | 1U << 6};
+		if (raw_syscall(nr_set_thread_area,
+				reinterpret_cast<long>(&descriptor)) != 0)
+			raw_syscall(nr_exit_group, 3);
+		tls_entry = descriptor.entry_number;
+#endif
+		raw_syscall(nr_ptrace, ptrace_traceme, 0, 0, 0);
+		probe_traced(tls_entry);
+	}
+	int status = 0;
+	if (child < 0 || wait_for(child, status) != child) {
+		put("  fork or wait failed\n");
+		return false;
+	}
+	if ((status & 0xff) != 0x7f || ((status >> 8) & 0xff) != sigill) {
+		put("  the child did not stop with SIGILL: status ");
+		put_hex(static_cast<u32>(status));
+		put("\n");
+		raw_syscall(nr_kill, child, sigkill);
+		wait_for(child, status);
+		return false;
+	}
+	bool ok = check_stop(child);
+	if (ptrace(ptrace_cont, child, 0, nullptr) != 0 ||
+	    wait_for(child, status) != child) {
+		put("  PTRACE_CONT failed\n");
+		raw_syscall(nr_kill, child, sigkill);
+		wait_for(child, status);
+		return false;
+	}
+	ok &= expect("child exit status", static_cast<u32>(status), 42 << 8);
+	return ok;
+}
+
+#if defined(__x86_64__)
 /* Runs `path mode` and reports whether it exited 0. */
 bool in_child(const char *path, const char *mode)
 {
@@ -714,6 +1013,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "x87-signal"));
 	report("i386 a signal keeps the x87 stack",
 	       in_child(i386_probe, "x87-signal"));
+	report("x86-64 tracer reads and writes registers, FP state",
+	       in_child(self, "tracer"));
+	report("i386 tracer reads and writes registers, FP state and TLS",
+	       in_child(i386_probe, "tracer"));
 	return failures;
 }
 #endif
@@ -738,6 +1041,8 @@ extern "C" int probe_main(word *stack)
 			return int4_traps() ? 0 : 1;
 		if (equal(mode, "x87-signal"))
 			return x87_stack_survives_a_signal() ? 0 : 1;
+		if (equal(mode, "tracer"))
+			return tracer_sees_registers() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;

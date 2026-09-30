@@ -5,8 +5,9 @@ Cross-builds the freestanding exception_probe.cpp for x86-64 and i386, boots an
 x86-64 image on an emulator built with the macos-x86_64 preset, and runs the
 probes there. As on Linux x86, a 1 ms interval timer keeps firing while a task
 runs long repeated string instructions; ICEBP, BOUND, INT 4 and INTO deliver
-Linux's signals; and an x87 stack survives a signal. The kernel must relay
-every such signal without complaint.
+Linux's signals; an x87 stack survives a signal; and a tracer of either ABI
+reads and writes registers, FP state and TLS. The kernel must relay every such
+signal without complaint.
 """
 
 from __future__ import annotations
