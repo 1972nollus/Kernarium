@@ -19,8 +19,8 @@ exc_debug_user(), each #DB restarts the DR6 a tracer reads from that
 BS bit.
 ---
  arch/arm64/um/ptrace.c           | 49 ++++++++++++++++++++++++++++
- arch/um/os-Darwin/skas/process.c | 55 +++++++++++++++++++++++++++++---
- 2 files changed, 100 insertions(+), 4 deletions(-)
+ arch/um/os-Darwin/skas/process.c | 56 +++++++++++++++++++++++++++++---
+ 2 files changed, 101 insertions(+), 4 deletions(-)
 
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
 index f355df97e151ed1cc8dd53909aad7f4c0fee4696..b5928e08d6271161496d9163b97032d115abc5d9 100644
@@ -83,7 +83,7 @@ index f355df97e151ed1cc8dd53909aad7f4c0fee4696..b5928e08d6271161496d9163b97032d1
  {
  	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 838fa2665b09c1e9a4be3c7de5a25a4f531c042c..fbfdc983d08c808a044008a5e737a4aca1992d27 100644
+index 9accbdb86fbb679b3c42eb2bd97c0d9afdd3edf5..afbd814a25894e654ab7f2f5bf291b49e33aeea7 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -80,6 +80,35 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
@@ -130,7 +130,7 @@ index 838fa2665b09c1e9a4be3c7de5a25a4f531c042c..fbfdc983d08c808a044008a5e737a4ac
  
  static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
-@@ -602,18 +632,35 @@ void userspace(struct uml_pt_regs *registers)
+@@ -602,17 +632,35 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_BREAKPOINT:
  		{
  			siginfo_t signal_info = { 0 };
@@ -146,7 +146,6 @@ index 838fa2665b09c1e9a4be3c7de5a25a4f531c042c..fbfdc983d08c808a044008a5e737a4ac
  				DARWIN_GUEST_SOFTWARE_STEP;
 +#endif
  
- 			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
  #ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 -			if (registers->faultinfo.trap_no == 4 ||
@@ -157,6 +156,7 @@ index 838fa2665b09c1e9a4be3c7de5a25a4f531c042c..fbfdc983d08c808a044008a5e737a4ac
 +				 * marks a TF single step, reported as TRAP_TRACE, and
 +				 * ICEBP leaves DR6 clear and gets TRAP_BRKPT; both name
 +				 * the next instruction. */
++				registers->faultinfo.error_code = 0;
 +				uml_x86_64_note_debug_status(debug_status);
 +				signal_info.si_signo = SIGTRAP;
 +				signal_info.si_errno = 0;

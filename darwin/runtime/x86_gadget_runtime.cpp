@@ -131,6 +131,26 @@ void trace_fatal(const char *stage, const x86_64::CpuState &cpu,
 	std::fflush(stderr);
 }
 
+/* The x86 exception vector the runtime reports as a breakpoint's syndrome
+ * for #GP. */
+constexpr std::uint32_t general_protection = 13;
+
+/* The #GP error code of the instruction at RIP. INT n that user mode may
+ * not use names its IDT entry, (n << 3) | 2, as the hardware pushes when
+ * the gate refuses it; every other #GP the engine raises has none. */
+[[nodiscard]] std::int32_t general_protection_error(
+	StaticGuestMemory &memory, const x86_64::CpuState &cpu) noexcept
+{
+	const auto decoded = x86_64::decode(memory, cpu.rip, cpu.execution_mode);
+	if (decoded.status != x86_64::DecodeStatus::decoded)
+		return 0;
+	const auto &instruction = decoded.instruction;
+	if (instruction.operation != x86_64::Operation::privileged ||
+		instruction.vector_opcode != 0xcd)
+		return 0;
+	return static_cast<std::int32_t>((instruction.source.immediate << 3U) | 2U);
+}
+
 } // namespace
 
 X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
@@ -277,7 +297,8 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		case ::uml::cpu::EngineEvent::general_protection:
 			result.reason = ::uml::cpu::ExitReason::breakpoint;
-			result.syndrome = 13;
+			result.syndrome = general_protection;
+			run.error_code = general_protection_error(memory, cpu);
 			return run;
 		case ::uml::cpu::EngineEvent::debug_trap:
 			result.reason = ::uml::cpu::ExitReason::breakpoint;

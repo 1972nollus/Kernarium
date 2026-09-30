@@ -5953,6 +5953,20 @@ read_test_sequences(void *context) noexcept
 		"INT 80h showed the RF its flags started with");
 }
 
+/* INT n names its vector for the #GP error code. */
+[[nodiscard]] bool decode_names_int_vectors()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {0xcd, 0x41});
+	const auto interrupt = decode(memory, 0);
+	return expect(interrupt.status == DecodeStatus::decoded &&
+			interrupt.instruction.operation == Operation::privileged &&
+			interrupt.instruction.vector_opcode == 0xcd &&
+			interrupt.instruction.source.immediate == 0x41,
+		"INT 0x41 did not decode with its vector");
+}
+
 /* INT 3 and INT 4 are the user-callable software interrupts besides 0x80:
  * both trap after the instruction. */
 [[nodiscard]] bool software_interrupt_vectors_trap()
@@ -7418,6 +7432,7 @@ int main()
 		popf_setting_trap_flag_leaves_at_the_next_instruction() &&
 		iret_setting_trap_flag_arms_the_next_instruction() &&
 		resume_flag_lasts_until_an_instruction_starts() &&
+		decode_names_int_vectors() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&
 		vector_results_cross_only_a_transfer_that_stays_inline() &&

@@ -3126,7 +3126,12 @@ private:
 				return true;
 			}
 			if (vector != 0x80) {
+				/* #GP, whose error code names the vector's IDT
+				 * entry. */
 				instruction.operation = Operation::privileged;
+				instruction.vector_opcode = opcode;
+				instruction.source = immediate_operand(
+					vector, OperandWidth::byte);
 				return true;
 			}
 			instruction.operation = Operation::system_call;

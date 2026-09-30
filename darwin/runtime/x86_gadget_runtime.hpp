@@ -15,6 +15,9 @@ namespace uml::runtime {
 
 struct X86GadgetRunResult final {
 	::uml::cpu::ExecutionResult execution;
+	/* The error code of a #GP the run ended in: for INT n, the vector's
+	 * IDT entry. */
+	std::int32_t error_code{};
 };
 
 /* `instruction_budget` bounds how long one dispatch runs, and the block that

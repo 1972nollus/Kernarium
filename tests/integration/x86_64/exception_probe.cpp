@@ -406,6 +406,34 @@ constexpr word user_debugreg = 252;
 #error "the exception probe is an x86-64 or i386 program"
 #endif
 
+/* INT n of a vector user mode may not use raises #GP. */
+__asm__(".text\n"
+	".global probe_int_1\n"
+	"probe_int_1:\n"
+	"	int $0x1\n"
+	".global probe_int_1_end\n"
+	"probe_int_1_end:\n"
+	"	ret\n"
+	".global probe_int_2\n"
+	"probe_int_2:\n"
+	"	int $0x2\n"
+	".global probe_int_2_end\n"
+	"probe_int_2_end:\n"
+	"	ret\n"
+	".global probe_int_41\n"
+	"probe_int_41:\n"
+	"	int $0x41\n"
+	".global probe_int_41_end\n"
+	"probe_int_41_end:\n"
+	"	ret\n"
+	".global probe_int_ff\n"
+	"probe_int_ff:\n"
+	"	int $0xff\n"
+	".global probe_int_ff_end\n"
+	"probe_int_ff_end:\n"
+	"	ret\n"
+	);
+
 /* The debug-register tracee's work: one instruction to step, then ICEBP. */
 __asm__(".text\n"
 	".global probe_debug_child\n"
@@ -949,6 +977,41 @@ bool page_faults_are_user()
 			     address_of(probe_pf_write_insn), 14, true, 6});
 	ok = ok && delivers("fetch", pf_fetch, address_of(probe_pf_fetch_end),
 			    {sigsegv, segv_maperr, page, page, 14, true, 0x14});
+	return ok;
+}
+
+extern "C" void probe_int_1();
+extern "C" char probe_int_1_end[];
+extern "C" void probe_int_2();
+extern "C" char probe_int_2_end[];
+extern "C" void probe_int_41();
+extern "C" char probe_int_41_end[];
+extern "C" void probe_int_ff();
+extern "C" char probe_int_ff_end[];
+
+/* INT n that its gate refuses to user mode raises #GP, a fault: SIGSEGV
+ * with SI_KERNEL, and an error code naming the IDT entry, (n << 3) | 2. */
+bool int_n_faults()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *end;
+		word error;
+	};
+	const Case cases[] = {
+		{"INT 1", probe_int_1, probe_int_1_end, 0xa},
+		{"INT 2", probe_int_2, probe_int_2_end, 0x12},
+		{"INT 0x41", probe_int_41, probe_int_41_end, 0x20a},
+		{"INT 0xff", probe_int_ff, probe_int_ff_end, 0x7fa},
+	};
+	bool ok = install_fault_handlers();
+	for (const Case &one : cases) {
+		const word insn = reinterpret_cast<word>(one.work);
+		ok = ok && delivers(one.what, one.work, address_of(one.end),
+				    {sigsegv, si_kernel, 0, insn, 13, true,
+				     one.error});
+	}
 	return ok;
 }
 
@@ -1503,6 +1566,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(i386_probe, "tracer-debug"));
 	report("i386 TLS takes GDT entries 12 to 14",
 	       in_child(i386_probe, "tls"));
+	report("x86-64 INT n raises #GP naming its IDT entry",
+	       in_child(self, "int-n"));
+	report("i386 INT n raises #GP naming its IDT entry",
+	       in_child(i386_probe, "int-n"));
 	return failures;
 }
 #endif
@@ -1539,6 +1606,8 @@ extern "C" int probe_main(word *stack)
 			return page_faults_are_user() ? 0 : 1;
 		if (equal(mode, "tracer-debug"))
 			return tracer_debug_registers() ? 0 : 1;
+		if (equal(mode, "int-n"))
+			return int_n_faults() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;

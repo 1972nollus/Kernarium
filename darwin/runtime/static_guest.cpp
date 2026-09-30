@@ -340,7 +340,7 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		break;
 	case uml::cpu::ExitReason::breakpoint:
 		/* #DB from ICEBP, #BP and #OF are traps; #BR and #GP are faults. */
-		registers.fault.error_code = 0;
+		registers.fault.error_code = run.error_code;
 		registers.fault.address = cpu.rip;
 		registers.fault.trap_number = static_cast<std::int32_t>(
 			result.syndrome);
