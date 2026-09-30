@@ -49,7 +49,6 @@ constexpr std::uint64_t x86_64_timestamp_faults = 1ULL << 34U;
 constexpr std::size_t dispatch_budget = 64 * 1024;
 constexpr std::uint32_t pstate_nzcv = 0xf000'0000U;
 constexpr std::uint32_t pstate_dit = 0x0100'0000U;
-constexpr std::uint32_t pstate_ssbs = 0x0000'1000U;
 constexpr std::uint32_t pstate_daif = 0x0000'03c0U;
 /* PSTATE.SS: the kernel asks for one instruction, as for a stepped eret. */
 constexpr std::uint32_t pstate_ss = 0x0020'0000U;
@@ -66,8 +65,6 @@ constexpr std::int32_t x86_64_alignment_check = 17;
 constexpr std::int32_t x86_64_debug_single_step = 1 << 14;
 #endif
 constexpr std::int32_t arm64_software_step = 0x32;
-constexpr std::uint64_t svcr_sm = 1U;
-constexpr std::uint64_t svcr_za = 2U;
 constexpr std::uint32_t public_floating_point_flags =
 	DARWIN_UML_FLOATING_POINT_INVALID |
 	DARWIN_UML_FLOATING_POINT_DIVIDE_BY_ZERO |
@@ -99,11 +96,8 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.pc = registers.pc;
 	cpu.nzcv = registers.pstate & pstate_nzcv;
 	cpu.pstate_dit = (registers.pstate & pstate_dit) != 0;
-	cpu.pstate_ssbs = (registers.pstate & pstate_ssbs) != 0;
 	cpu.pstate_daif = static_cast<std::uint8_t>(
 		(registers.pstate & pstate_daif) >> 6);
-	cpu.pstate_sm = (registers.svcr & svcr_sm) != 0;
-	cpu.pstate_za = (registers.svcr & svcr_za) != 0;
 	cpu.tls = tls;
 	/* An exception return may clear the local monitor, and the emulator has
 	 * no architectural reservation token in uml_pt_regs.  Clear every
@@ -131,18 +125,16 @@ void save_cpu(arm64::CpuState &cpu,
 	registers.lr = cpu.registers[30];
 	registers.sp = cpu.sp;
 	registers.pc = cpu.pc;
+	/* The virtual CPU implements neither FEAT_SSBS nor FEAT_SME, so the
+	 * kernel's PSTATE.SSBS passes through untouched and SVCR is zero. */
 	registers.pstate =
 		(registers.pstate &
-		 ~(pstate_nzcv | pstate_dit |
-		   pstate_ssbs | pstate_daif)) |
+		 ~(pstate_nzcv | pstate_dit | pstate_daif)) |
 		(cpu.nzcv & pstate_nzcv) |
 		(cpu.pstate_dit ? pstate_dit : 0U) |
-		(cpu.pstate_ssbs ? pstate_ssbs : 0U) |
 		(static_cast<std::uint32_t>(cpu.pstate_daif & 15U) << 6);
 	registers.fpmr = 0;
-	registers.svcr =
-		(cpu.pstate_sm ? svcr_sm : 0U) |
-		(cpu.pstate_za ? svcr_za : 0U);
+	registers.svcr = 0;
 	tls = static_cast<unsigned long>(cpu.tls);
 	/* Like a context switch on hardware, report the FPCR the task ran with:
 	 * load_cpu masked it, and an untouched FP image still holds the value

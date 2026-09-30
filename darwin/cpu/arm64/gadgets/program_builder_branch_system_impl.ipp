@@ -47,7 +47,14 @@ DecodeResult decode_branch_system(DecodeContext &context)
 			emit(words, address + sizeof(instruction));
 		++compiled;
 		return DecodeResult::terminal;
-	} else if ((instruction & 0xff00'0000U) == 0x5400'0000U) {
+	} else if ((instruction & 0xff00'0010U) == 0x5400'0010U) {
+		/* BC.cond needs FEAT_HBC, which the virtual CPU does not
+		 * implement. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0xff00'0010U) == 0x5400'0000U) {
 		const auto displacement = sign_extend(
 			static_cast<std::uint64_t>((instruction >> 5) & 0x7ffffU) << 2,
 			21);
@@ -76,65 +83,10 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		++compiled;
 		return DecodeResult::terminal;
 	} else if ((instruction & 0x7e00'0000U) == 0x7400'0000U) {
-		const bool immediate = (instruction & 0x0100'0000U) != 0;
-		const unsigned narrow_control = (instruction >> 14) & 3U;
-		const unsigned cc = (instruction >> 21) & 7U;
-		const bool valid_form = immediate ?
-			(instruction & 0x0000'4000U) == 0 :
-			(narrow_control == 0 ||
-			 (((instruction >> 31) == 0) && narrow_control >= 2));
-		if (!valid_form || cc == 4 || cc == 5) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const auto displacement = sign_extend(
-			static_cast<std::uint64_t>(
-				(instruction >> 5) & 0x1ffU) << 2,
-			11);
-		const auto target = static_cast<std::uint64_t>(
-			static_cast<std::int64_t>(address) + displacement);
-		const auto fallthrough = address + sizeof(instruction);
-		const unsigned left = instruction & 31U;
-		const unsigned right = (instruction >> 16) & 31U;
-		bool constant = false;
-		bool take = false;
-		if (immediate && left == 31) {
-			constant = true;
-			take = cmpbr_immediate_zero_result(
-				cc, (instruction >> 15) & 63U);
-		} else if (!immediate && left == right) {
-			constant = true;
-			take = cmpbr_equal_register_result(cc);
-		}
-		if (constant) {
-			if (resolve_link) {
-				emit(words, uml_arm64_gadget_branch_always_linked);
-				emit_link(context, take ? target : fallthrough);
-			} else {
-				emit(words, uml_arm64_gadget_branch_always);
-				emit(words, take ? target : fallthrough);
-			}
-		} else if (immediate) {
-			emit(words, cmpbr_immediate_gadget(
-				(instruction >> 31) != 0, cc));
-			emit(words, left |
-				(static_cast<std::uintptr_t>(
-					(instruction >> 15) & 63U) << 8));
-			emit(words, target);
-			emit(words, fallthrough);
-		} else {
-			const unsigned width = narrow_control == 2 ? 8U :
-				narrow_control == 3 ? 16U :
-				(instruction >> 31) != 0 ? 64U : 32U;
-			emit(words, cmpbr_register_gadget(width, cc,
-				left == 31, right == 31));
-			emit(words, left |
-				(static_cast<std::uintptr_t>(right) << 8));
-			emit(words, target);
-			emit(words, fallthrough);
-		}
+		/* The virtual CPU implements no FEAT_CMPBR: the compare-and-branch
+		 * class is unallocated. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
 		++compiled;
 		return DecodeResult::terminal;
 	} else if ((instruction & 0x7e00'0000U) == 0x3400'0000U) {
@@ -427,24 +379,27 @@ DecodeResult decode_branch_system(DecodeContext &context)
 	} else if ((instruction & 0xffff'f0ffU) == 0xd503'309fU ||
 		   (instruction & 0xffff'f0ffU) == 0xd503'30bfU ||
 		   (instruction & 0xffff'f0ffU) == 0xd503'30dfU ||
-		   (instruction & 0xffff'f3ffU) == 0xd503'323fU ||
 		   instruction == 0xd503'30ffU) {
 		emit(words, memory_barrier_gadget(instruction));
-	} else if ((instruction & 0xffff'f0ffU) == 0xd503'30ffU) {
+	} else if ((instruction & 0xffff'f0ffU) == 0xd503'30ffU ||
+		   (instruction & 0xffff'f3ffU) == 0xd503'323fU) {
+		/* SB with a nonzero CRm is reserved, and DSB nXS needs
+		 * FEAT_XS, which the virtual CPU does not implement. */
 		emit(words, uml_arm64_gadget_illegal);
 		emit(words, address);
 		++compiled;
 		return DecodeResult::terminal;
 	} else if ((instruction & 0xffff'f01fU) == 0xd503'201fU) {
 		emit(words, architectural_hint_gadget(instruction));
-	} else if ((instruction & 0xffd8'f000U) == 0xd500'2000U ||
-		   (instruction & 0xffff'ffe0U) == 0xd503'1000U ||
-		   (instruction & 0xffff'ffe0U) == 0xd503'1020U) {
+	} else if ((instruction & 0xffd8'f000U) == 0xd500'2000U) {
 		emit(words, uml_arm64_gadget_nop);
-	} else if (instruction == 0xd6bf'03e0U ||
+	} else if ((instruction & 0xffff'ffc0U) == 0xd503'1000U ||
+		   instruction == 0xd6bf'03e0U ||
 		   instruction == 0xd69f'03e0U ||
 		   instruction == 0xd69f'0bffU ||
 		   instruction == 0xd69f'0fffU) {
+		/* WFET and WFIT need FEAT_WFxT, which the virtual CPU does not
+		 * implement; DRPS and the ERET forms are not EL0 instructions. */
 		emit(words, uml_arm64_gadget_illegal);
 		emit(words, address);
 		++compiled;

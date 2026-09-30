@@ -44,10 +44,7 @@ inline void require(
 	cpu.fpsr = 0xf800'009fU;
 	cpu.tls = 0x1234'5678'9abc'def0ULL;
 	cpu.tbi_enabled = true;
-	cpu.pstate_ssbs = true;
 	cpu.pstate_dit = true;
-	cpu.pstate_sm = true;
-	cpu.pstate_za = true;
 	cpu.pstate_daif = 0xaU;
 	cpu.exclusive_address = 0x2000;
 	cpu.exclusive_key = 0x3456;

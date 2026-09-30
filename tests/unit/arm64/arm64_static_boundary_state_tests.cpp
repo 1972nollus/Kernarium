@@ -65,32 +65,42 @@ void fpmr_is_not_guest_state()
 	require(registers.fpmr == 0);
 }
 
-void pstate_and_svcr_survive_boundary()
+void pstate_survives_boundary()
 {
+	/* DIT is guest state. The virtual CPU implements neither FEAT_SSBS nor
+	 * FEAT_SME: MSR SSBS and SMSTART are undefined, the kernel's
+	 * PSTATE.SSBS passes through untouched, and SVCR comes back zero. */
 	constexpr unsigned long generation = 201;
 	constexpr std::uint64_t base = 0x51'0000;
+	constexpr std::uint32_t pstate_ssbs = 0x0000'1000U;
+	constexpr std::uint32_t pstate_dit = 0x0100'0000U;
 	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
-	backing.put32(0, pstate(1, 1));  // msr ssbs, #1
-	backing.put32(4, pstate(1, 2));  // msr dit, #1
-	backing.put32(8, 0xd503'201fU);  // nop
-	backing.put32(12, pstate(7, 3)); // smstart smza
-	backing.put32(16, 0xd400'0001U); // svc #0
-	backing.put32(20, pstate(0, 1)); // msr ssbs, #0
-	backing.put32(24, 0xd400'0001U); // svc #0
+	backing.put32(0, pstate(1, 2));  // msr dit, #1
+	backing.put32(4, 0xd503'201fU);  // nop
+	backing.put32(8, 0xd400'0001U);  // svc #0
+	backing.put32(12, pstate(0, 1)); // msr ssbs, #0
+	backing.put32(16, pstate(7, 3)); // smstart
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
 	darwin_uml_guest_fp_registers fp{};
 	registers.pc = base;
+	registers.pstate = pstate_ssbs;
+	registers.svcr = 3;
 
 	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
-	require(registers.pc == base + 20);
-	require((registers.pstate & 0x0100'1000U) == 0x0100'1000U);
-	require(registers.svcr == 3);
-	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
-	require(registers.pc == base + 28);
-	require((registers.pstate & 0x0000'1000U) == 0);
-	require((registers.pstate & 0x0100'0000U) == 0x0100'0000U);
-	require(registers.svcr == 3);
+	require(registers.pc == base + 12);
+	require((registers.pstate & (pstate_dit | pstate_ssbs)) ==
+		(pstate_dit | pstate_ssbs));
+	require(registers.svcr == 0);
+	require(enter(registers, fp, generation) ==
+		DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION);
+	require(registers.pc == base + 12);
+	require((registers.pstate & pstate_ssbs) == pstate_ssbs);
+	registers.pc = base + 16;
+	require(enter(registers, fp, generation) ==
+		DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION);
+	require(registers.pc == base + 16);
+	require(registers.svcr == 0);
 }
 
 void exclusive_monitor_is_cleared_at_boundary()
@@ -177,7 +187,7 @@ void deferred_fp_source_is_materialized_on_linked_target()
 int main()
 {
 	fpmr_is_not_guest_state();
-	pstate_and_svcr_survive_boundary();
+	pstate_survives_boundary();
 	exclusive_monitor_is_cleared_at_boundary();
 	deferred_fp_source_is_refreshed_at_boundary();
 	deferred_fp_source_is_materialized_on_linked_target();

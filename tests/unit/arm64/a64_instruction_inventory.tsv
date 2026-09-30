@@ -34,7 +34,7 @@ BASE-0032	Base	AUTIBSPPCR	shared-base-data-processing	register-width+operand-for
 BASE-0033	Base	AXFLAG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	flag_m2	verified
 BASE-0034	Base	B	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0035	Base	B.cond	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
-BASE-0036	Base	BC.cond	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	hbc	verified
+BASE-0036	Base	BC.cond	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	hbc	absent
 BASE-0037	Base	BFC	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	asmv8p2	verified
 BASE-0038	Base	BFI	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0039	Base	BFM	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
@@ -55,26 +55,26 @@ BASE-0053	Base	CASH, CASAH, CASALH, CASLH	shared-base-memory	access-size+address
 BASE-0054	Base	CASP, CASPA, CASPAL, CASPL	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lse	verified
 BASE-0055	Base	CASPT, CASPAT, CASPALT, CASPLT	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	absent
 BASE-0056	Base	CAST, CASAT, CASALT, CASLT	shared-base-memory	access-size+addressing-mode+writeback+register-alias+fault-ordering+reserved	lsui	absent
-BASE-0057	Base	CB<cc> (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0058	Base	CB<cc> (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0059	Base	CBB<cc>	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0060	Base	CBBLE	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0061	Base	CBBLO	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0062	Base	CBBLS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0063	Base	CBBLT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0064	Base	CBGE (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0065	Base	CBH<cc>	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0066	Base	CBHLE	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0067	Base	CBHLO	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0068	Base	CBHLS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0069	Base	CBHLT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0070	Base	CBHS (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0071	Base	CBLE (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0072	Base	CBLE (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0073	Base	CBLO (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0074	Base	CBLS (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0075	Base	CBLS (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
-BASE-0076	Base	CBLT (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	verified
+BASE-0057	Base	CB<cc> (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0058	Base	CB<cc> (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0059	Base	CBB<cc>	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0060	Base	CBBLE	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0061	Base	CBBLO	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0062	Base	CBBLS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0063	Base	CBBLT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0064	Base	CBGE (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0065	Base	CBH<cc>	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0066	Base	CBHLE	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0067	Base	CBHLO	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0068	Base	CBHLS	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0069	Base	CBHLT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0070	Base	CBHS (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0071	Base	CBLE (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0072	Base	CBLE (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0073	Base	CBLO (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0074	Base	CBLS (immediate)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0075	Base	CBLS (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
+BASE-0076	Base	CBLT (register)	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	cmpbr	absent
 BASE-0077	Base	CBNZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0078	Base	CBZ	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
 BASE-0079	Base	CCMN (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
@@ -380,8 +380,8 @@ BASE-0378	Base	SMC	shared-base-control-system	condition+target-form+register-ali
 BASE-0379	Base	SMIN (immediate)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
 BASE-0380	Base	SMIN (register)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	cssc	verified
 BASE-0381	Base	SMNEGL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
-BASE-0382	Base	SMSTART	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	sme	verified
-BASE-0383	Base	SMSTOP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	sme	verified
+BASE-0382	Base	SMSTART	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	sme	absent
+BASE-0383	Base	SMSTOP	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	sme	absent
 BASE-0384	Base	SMSUBL	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0385	Base	SMULH	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0386	Base	SMULL (32-bit)	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
@@ -509,9 +509,9 @@ BASE-0507	Base	UMULL (32-bit)	shared-base-data-processing	register-width+operand
 BASE-0508	Base	UXTB	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0509	Base	UXTH	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	baseline	verified
 BASE-0510	Base	WFE	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
-BASE-0511	Base	WFET	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	wfxt	verified
+BASE-0511	Base	WFET	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	wfxt	absent
 BASE-0512	Base	WFI	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified
-BASE-0513	Base	WFIT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	wfxt	verified
+BASE-0513	Base	WFIT	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	wfxt	absent
 BASE-0514	Base	XAFLAG	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	flag_m2	verified
 BASE-0515	Base	XPACD, XPACI, XPACLRI	shared-base-data-processing	register-width+operand-form+register-alias+flags+reserved	pauth	absent
 BASE-0516	Base	YIELD	shared-base-control-system	condition+target-form+register-alias+architectural-state+reserved	baseline	verified

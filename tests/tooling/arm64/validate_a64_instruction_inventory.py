@@ -28,10 +28,11 @@ ENGINE_STATUSES = {"absent", "pending", "verified"}
 # Features the virtual CPU omits. An absent entry needs one of them in every
 # alternative; its corpus cases expect its encodings to be UNDEFINED.
 ABSENT_FEATURES = {
-    "cpa", "d128", "f16f32dot", "f16f32mm", "f16mm", "f8f16mm", "f8f32mm",
-    "faminmax", "fp8", "fp8dot2", "fp8dot4", "fp8fma", "fprcvt", "gcs", "lor",
-    "lrcpc3", "ls64", "ls64_accdata", "ls64_v", "lscp", "lse128", "lsfe",
-    "lsui", "lut", "mte", "mte2", "mtetc", "pauth", "sm3", "sm4", "the",
+    "cmpbr", "cpa", "d128", "f16f32dot", "f16f32mm", "f16mm", "f8f16mm",
+    "f8f32mm", "faminmax", "fp8", "fp8dot2", "fp8dot4", "fp8fma", "fprcvt",
+    "gcs", "hbc", "lor", "lrcpc3", "ls64", "ls64_accdata", "ls64_v", "lscp",
+    "lse128", "lsfe", "lsui", "lut", "mte", "mte2", "mtetc", "pauth", "sm3",
+    "sm4", "sme", "ssbs", "the", "wfxt", "xs",
 }
 SUITE_VARIANT_MODELS = {
     "shared-base-control-system": {

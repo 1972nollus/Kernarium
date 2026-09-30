@@ -373,75 +373,6 @@ void emit(std::vector<std::uintptr_t, Allocator> &words,
 	return table[nonzero][linked];
 }
 
-#define UML_CMPBR_I_GADGETS(size) \
-	std::array<Gadget, 6>{ \
-		uml_arm64_gadget_cmpbr_i_##size##_sgt, \
-		uml_arm64_gadget_cmpbr_i_##size##_slt, \
-		uml_arm64_gadget_cmpbr_i_##size##_ugt, \
-		uml_arm64_gadget_cmpbr_i_##size##_ult, \
-		uml_arm64_gadget_cmpbr_i_##size##_eq, \
-		uml_arm64_gadget_cmpbr_i_##size##_ne}
-
-[[nodiscard]] Gadget cmpbr_immediate_gadget(bool is_64_bit,
-	unsigned cc) noexcept
-{
-	static constexpr std::array table{
-		UML_CMPBR_I_GADGETS(w), UML_CMPBR_I_GADGETS(x)};
-	const unsigned condition = cc < 4 ? cc : cc - 2;
-	return table[is_64_bit ? 1U : 0U][condition];
-}
-
-#undef UML_CMPBR_I_GADGETS
-
-#define UML_CMPBR_R_MODES(size, condition) \
-	std::array<Gadget, 3>{ \
-		uml_arm64_gadget_cmpbr_r_##size##_##condition##_rr, \
-		uml_arm64_gadget_cmpbr_r_##size##_##condition##_rz, \
-		uml_arm64_gadget_cmpbr_r_##size##_##condition##_zr}
-#define UML_CMPBR_R_GADGETS(size) \
-	std::array<std::array<Gadget, 3>, 6>{ \
-		UML_CMPBR_R_MODES(size, sgt), \
-		UML_CMPBR_R_MODES(size, sge), \
-		UML_CMPBR_R_MODES(size, ugt), \
-		UML_CMPBR_R_MODES(size, uge), \
-		UML_CMPBR_R_MODES(size, eq), \
-		UML_CMPBR_R_MODES(size, ne)}
-
-[[nodiscard]] Gadget cmpbr_register_gadget(unsigned width, unsigned cc,
-	bool left_zero, bool right_zero) noexcept
-{
-	static constexpr std::array table{
-		UML_CMPBR_R_GADGETS(b), UML_CMPBR_R_GADGETS(h),
-		UML_CMPBR_R_GADGETS(w), UML_CMPBR_R_GADGETS(x)};
-	const unsigned size = width == 8 ? 0U : width == 16 ? 1U :
-		width == 32 ? 2U : 3U;
-	const unsigned condition = cc < 4 ? cc : cc - 2;
-	const unsigned mode = left_zero ? 2U : right_zero ? 1U : 0U;
-	return table[size][condition][mode];
-}
-
-#undef UML_CMPBR_R_GADGETS
-#undef UML_CMPBR_R_MODES
-
-[[nodiscard]] bool cmpbr_immediate_zero_result(
-	unsigned cc, unsigned immediate) noexcept
-{
-	switch (cc) {
-	case 0: return false;
-	case 1: return immediate != 0;
-	case 2: return false;
-	case 3: return immediate != 0;
-	case 6: return immediate == 0;
-	case 7: return immediate != 0;
-	default: return false;
-	}
-}
-
-[[nodiscard]] bool cmpbr_equal_register_result(unsigned cc) noexcept
-{
-	return cc == 1 || cc == 3 || cc == 6;
-}
-
 [[nodiscard]] Gadget mops_gadget(
 	unsigned family, unsigned stage, bool source_zero) noexcept
 {
@@ -525,34 +456,13 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 	const unsigned op2 = (instruction >> 5) & 7U;
 	if (op1 != 3U)
 		return {uml_arm64_gadget_illegal, false, false};
+	/* The virtual CPU implements neither FEAT_SSBS (op2 1) nor FEAT_SME
+	 * (op2 3, SMSTART and SMSTOP): their fields are unallocated. */
 	switch (op2) {
-	case 1:
-		return pstate_boolean_gadget(
-			uml_arm64_gadget_pstate_ssbs_0,
-			uml_arm64_gadget_pstate_ssbs_1, immediate);
 	case 2:
 		return pstate_boolean_gadget(
 			uml_arm64_gadget_pstate_dit_0,
 			uml_arm64_gadget_pstate_dit_1, immediate);
-	case 3:
-		if ((immediate & 8U) != 0)
-			break;
-		switch ((immediate >> 1) & 3U) {
-		case 1:
-			return pstate_boolean_gadget(
-				uml_arm64_gadget_pstate_sm_0,
-				uml_arm64_gadget_pstate_sm_1, immediate);
-		case 2:
-			return pstate_boolean_gadget(
-				uml_arm64_gadget_pstate_za_0,
-				uml_arm64_gadget_pstate_za_1, immediate);
-		case 3:
-			return pstate_boolean_gadget(
-				uml_arm64_gadget_pstate_smza_0,
-				uml_arm64_gadget_pstate_smza_1, immediate);
-		default: break;
-		}
-		break;
 	case 6:
 		return {pstate_daif_set_gadgets[immediate], true, true};
 	case 7:
@@ -713,21 +623,6 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 		return host_capabilities().has(ArmFeature::sb) ?
 			uml_arm64_gadget_speculation_barrier :
 			uml_arm64_gadget_speculation_barrier_fallback;
-	if ((instruction & 0xffff'f3ffU) == 0xd503'323fU) {
-		if (host_capabilities().has(ArmFeature::xs)) {
-			static constexpr std::array<Gadget, 4> native{
-				uml_arm64_gadget_dsb_nxs_0,
-				uml_arm64_gadget_dsb_nxs_1,
-				uml_arm64_gadget_dsb_nxs_2,
-				uml_arm64_gadget_dsb_nxs_3};
-			return native[(instruction >> 10) & 3U];
-		}
-		/* A full DSB is stronger than its nXS counterpart. Preserve the
-		 * requested shareability scope on hosts without FEAT_XS. */
-		static constexpr std::array<unsigned, 4> options{3, 7, 11, 15};
-		return data_memory_barrier_gadget(
-			true, options[(instruction >> 10) & 3U]);
-	}
 	if ((instruction & 0xffff'f0ffU) == 0xd503'30dfU)
 		return uml_arm64_gadget_isb;
 	return data_memory_barrier_gadget(

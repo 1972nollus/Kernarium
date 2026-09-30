@@ -1611,11 +1611,7 @@ void uml_arm64_gadget_code_synchronize_z();
 #define UML_DECLARE_PSTATE_FIELD(name) \
 	void uml_arm64_gadget_pstate_##name##_0(); \
 	void uml_arm64_gadget_pstate_##name##_1();
-UML_DECLARE_PSTATE_FIELD(ssbs)
 UML_DECLARE_PSTATE_FIELD(dit)
-UML_DECLARE_PSTATE_FIELD(sm)
-UML_DECLARE_PSTATE_FIELD(za)
-UML_DECLARE_PSTATE_FIELD(smza)
 #undef UML_DECLARE_PSTATE_FIELD
 #define UML_DECLARE_PSTATE_DAIF(name, immediate) \
 	void uml_arm64_gadget_pstate_daif_##name##_##immediate();
@@ -1666,13 +1662,6 @@ DECLARE_MEMORY_BARRIER_OPTION(15)
 void uml_arm64_gadget_isb();
 void uml_arm64_gadget_speculation_barrier();
 void uml_arm64_gadget_speculation_barrier_fallback();
-#define DECLARE_NXS_BARRIER(option) \
-	void uml_arm64_gadget_dsb_nxs_##option();
-DECLARE_NXS_BARRIER(0)
-DECLARE_NXS_BARRIER(1)
-DECLARE_NXS_BARRIER(2)
-DECLARE_NXS_BARRIER(3)
-#undef DECLARE_NXS_BARRIER
 void uml_arm64_gadget_clear_exclusive();
 void uml_arm64_gadget_atomic_sp_alignment_read();
 void uml_arm64_gadget_atomic_sp_alignment_write();
@@ -2216,33 +2205,6 @@ UML_DECLARE_LINKED_CONDITION(lt)
 UML_DECLARE_LINKED_CONDITION(gt)
 UML_DECLARE_LINKED_CONDITION(le)
 #undef UML_DECLARE_LINKED_CONDITION
-#define UML_DECLARE_CMPBR_I_SIZE(size) \
-	void uml_arm64_gadget_cmpbr_i_##size##_sgt(); \
-	void uml_arm64_gadget_cmpbr_i_##size##_slt(); \
-	void uml_arm64_gadget_cmpbr_i_##size##_ugt(); \
-	void uml_arm64_gadget_cmpbr_i_##size##_ult(); \
-	void uml_arm64_gadget_cmpbr_i_##size##_eq(); \
-	void uml_arm64_gadget_cmpbr_i_##size##_ne();
-UML_DECLARE_CMPBR_I_SIZE(w)
-UML_DECLARE_CMPBR_I_SIZE(x)
-#undef UML_DECLARE_CMPBR_I_SIZE
-#define UML_DECLARE_CMPBR_R_MODES(size, condition) \
-	void uml_arm64_gadget_cmpbr_r_##size##_##condition##_rr(); \
-	void uml_arm64_gadget_cmpbr_r_##size##_##condition##_rz(); \
-	void uml_arm64_gadget_cmpbr_r_##size##_##condition##_zr();
-#define UML_DECLARE_CMPBR_R_SIZE(size) \
-	UML_DECLARE_CMPBR_R_MODES(size, sgt) \
-	UML_DECLARE_CMPBR_R_MODES(size, sge) \
-	UML_DECLARE_CMPBR_R_MODES(size, ugt) \
-	UML_DECLARE_CMPBR_R_MODES(size, uge) \
-	UML_DECLARE_CMPBR_R_MODES(size, eq) \
-	UML_DECLARE_CMPBR_R_MODES(size, ne)
-UML_DECLARE_CMPBR_R_SIZE(b)
-UML_DECLARE_CMPBR_R_SIZE(h)
-UML_DECLARE_CMPBR_R_SIZE(w)
-UML_DECLARE_CMPBR_R_SIZE(x)
-#undef UML_DECLARE_CMPBR_R_SIZE
-#undef UML_DECLARE_CMPBR_R_MODES
 void uml_arm64_gadget_branch_always();
 void uml_arm64_gadget_branch_always_linked();
 void uml_arm64_gadget_branch_eq_inline();

@@ -213,8 +213,6 @@ void stateful_system_instructions_are_translation_feature_gated()
 
 	for (unsigned immediate = 0; immediate < 16; ++immediate) {
 		require_translation_feature_gate(
-			pstate_immediate(immediate, 1), ArmFeature::ssbs);
-		require_translation_feature_gate(
 			pstate_immediate(immediate, 2), ArmFeature::dit);
 		/* MSR TCO stays UNDEFINED even on an MTE host: it compiles to
 		 * the same illegal terminal as an unallocated field. */
@@ -229,27 +227,30 @@ void stateful_system_instructions_are_translation_feature_gated()
 		require(compiled.guest_instructions == 1);
 		require(compiled.words == reference.words);
 	}
-	for (unsigned immediate = 2; immediate < 8; ++immediate)
-		require_translation_feature_gate(
-			pstate_immediate(immediate, 3), ArmFeature::sme);
 
-	/* The virtual CPU implements no FEAT_FP8: MRS and MSR of FPMR compile
-	 * to the same illegal terminal as an unknown word, even on a host that
-	 * has it. */
-	const std::array unknown{0xffff'ffffU};
-	const auto reference = uml::cpu::arm64::jit::testing::
-		compile_block_with_feature_override(
-			feature_gate_pc, unknown, ArmFeature::fp8, true);
+	/* The virtual CPU implements none of FEAT_SSBS, FEAT_SME, and FEAT_FP8:
+	 * MSR SSBS, SMSTART, SMSTOP, and MRS and MSR of FPMR compile to the same
+	 * illegal terminal as an unknown word, even on a host that has them. */
+	const auto require_absent = [](std::uint32_t instruction,
+					  ArmFeature feature) {
+		const std::array unknown{0xffff'ffffU};
+		const std::array guest{instruction};
+		const auto reference = uml::cpu::arm64::jit::testing::
+			compile_block_with_feature_override(
+				feature_gate_pc, unknown, feature, true);
+		const auto compiled = uml::cpu::arm64::jit::testing::
+			compile_block_with_feature_override(
+				feature_gate_pc, guest, feature, true);
+		require(compiled.guest_instructions == 1);
+		require(compiled.words == reference.words);
+	};
+	for (unsigned immediate = 0; immediate < 16; ++immediate) {
+		require_absent(pstate_immediate(immediate, 1), ArmFeature::ssbs);
+		require_absent(pstate_immediate(immediate, 3), ArmFeature::sme);
+	}
 	for (unsigned transfer = 0; transfer < 32; ++transfer)
-		for (const std::uint32_t access : {0xd53b'4440U, 0xd51b'4440U}) {
-			const std::array guest{access | transfer};
-			const auto compiled = uml::cpu::arm64::jit::testing::
-				compile_block_with_feature_override(
-					feature_gate_pc, guest, ArmFeature::fp8,
-					true);
-			require(compiled.guest_instructions == 1);
-			require(compiled.words == reference.words);
-		}
+		for (const std::uint32_t access : {0xd53b'4440U, 0xd51b'4440U})
+			require_absent(access | transfer, ArmFeature::fp8);
 }
 
 void linked_blocks_use_persistent_internal_entry()

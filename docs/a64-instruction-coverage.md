@@ -6,18 +6,19 @@ representative cases in the checked-in
 through the gadget and JIT engines. Each case passed the interpreter and gadget
 lanes, and the JIT lane where the export host implements its features, before
 it was exported. `tests/unit/arm64/corpus/coverage.tsv` counts the cases of each
-entry. In `tests/unit/arm64/a64_instruction_inventory.tsv`, 809 entries are
-marked `verified`. The other 174 are marked `absent`: they need FEAT_MTE,
+entry. In `tests/unit/arm64/a64_instruction_inventory.tsv`, 784 entries are
+marked `verified`. The other 199 are marked `absent`: they need FEAT_MTE,
 FEAT_GCS, FEAT_CPA, FEAT_PAuth, one of the memory extensions FEAT_LSE128,
 FEAT_THE, FEAT_D128, FEAT_LRCPC3, FEAT_LSCP, FEAT_LS64, FEAT_LSFE, FEAT_LSUI,
-and FEAT_LOR, or one of the SIMD&FP extensions FEAT_FP8 (with its dot-product,
+and FEAT_LOR, one of the SIMD&FP extensions FEAT_FP8 (with its dot-product,
 multiply-add, and matrix forms), FEAT_F16F32DOT, FEAT_F16MM, FEAT_F16F32MM,
-FEAT_LUT, FEAT_FAMINMAX, FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, which the
-virtual CPU omits. Their non-hint encodings are
-UNDEFINED, and their hint-space forms (GCSB, PACIASP, AUTIASP, XPACLRI, and
-the other PAC and AUT hints) are NOPs. Their corpus cases expect exactly that.
-LDAPR and STLR stay `verified`: only their FEAT_LRCPC3 writeback forms are
-UNDEFINED.
+FEAT_LUT, FEAT_FAMINMAX, FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, or one of
+FEAT_CMPBR, FEAT_HBC, FEAT_SME, and FEAT_WFxT, which the virtual CPU omits.
+Their non-hint encodings are UNDEFINED, and their hint-space forms (GCSB,
+PACIASP, AUTIASP, XPACLRI, and the other PAC and AUT hints) are NOPs. Their
+corpus cases expect exactly that. LDAPR and STLR stay `verified`: only their
+FEAT_LRCPC3 writeback forms are UNDEFINED. So do DSB, whose FEAT_XS nXS form
+is UNDEFINED, and MSR (immediate), whose FEAT_SSBS form is.
 
 The virtual CPU also omits FEAT_AFP, which has no instructions, whether or not
 the host implements it. FPCR.FIZ, AH, and NEP are RES0: MSR FPCR and every

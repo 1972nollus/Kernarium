@@ -73,8 +73,7 @@ compile_two_stable_pointer_loads_for_testing(
 materialize_constant_for_testing(unsigned destination, std::uint64_t value);
 
 [[nodiscard]] std::vector<std::uint32_t>
-lower_memory_barrier_for_testing(std::uint32_t instruction, bool native_sb,
-                                 bool native_xs);
+lower_memory_barrier_for_testing(std::uint32_t instruction, bool native_sb);
 
 [[nodiscard]] std::size_t successful_link_host_word_savings() noexcept;
 [[nodiscard]] std::size_t link_chain_instruction_limit() noexcept;

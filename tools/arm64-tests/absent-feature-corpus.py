@@ -14,9 +14,11 @@ and FEAT_D128, FEAT_LRCPC3, FEAT_LSCP, FEAT_LS64 with its _V and _ACCDATA
 forms, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR, nor the FP/SIMD extensions FEAT_FP8
 with its dot-product, multiply-add, and matrix forms and FPMR,
 FEAT_F16F32DOT, FEAT_F16MM and FEAT_F16F32MM, FEAT_LUT, FEAT_FAMINMAX,
-FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT: their non-hint instructions are
-UNDEFINED, their hint-space instructions are NOPs, FPCR.FIZ, AH, NEP, and EBF
-are RES0, and the ID registers report them absent. The producer checks
+FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, nor FEAT_CMPBR, FEAT_HBC, FEAT_SSBS,
+FEAT_SME with its SVCR and PSTATE.SM and ZA, FEAT_XS, and FEAT_WFxT: their
+non-hint instructions are UNDEFINED, their hint-space instructions are NOPs,
+FPCR.FIZ, AH, NEP, and EBF are RES0, and the ID registers report them
+absent. The producer checks
 predate that choice, and their harness enabled these features in most cases'
 state or ran their instructions, so this script rewrites a dump after export.
 For each named feature it
@@ -83,16 +85,21 @@ SITE = "tools/arm64-tests/absent-feature-corpus.py"
 DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "afp", "ebf16", "lse128",
                     "the", "lrcpc3", "lscp", "ls64", "lsfe", "lsui", "lor",
                     "fp8", "f16f32dot", "f16mm", "lut", "faminmax", "sm3",
-                    "sm4", "fprcvt")
+                    "sm4", "fprcvt", "cmpbr", "hbc", "ssbs", "sme", "xs",
+                    "wfxt")
 SVC = 0xD400_0001
 
 
 class Feature:
     def __init__(self, tokens, conditions, fields, validators=(), events=(),
                  options=(), tags=False, encodings=(),
-                 stripped_options=(), fpcr_bits=0) -> None:
+                 stripped_options=(), fpcr_bits=0, allocation=True) -> None:
         # Host and allocation feature tokens, and decode-partition conditions.
         self.tokens = frozenset(tokens)
+        # False when the allocation table names the feature for a whole
+        # baseline class: MSR (immediate) is filed under FEAT_SSBS, so the
+        # SSBS form is named in encodings instead.
+        self.allocation = allocation
         self.conditions = frozenset(conditions)
         self.fields = frozenset(fields)
         self.validators = frozenset(validators)
@@ -242,12 +249,39 @@ FEATURES = {
         tokens=("fprcvt",),
         conditions=("FEAT_FPRCVT",),
         fields=()),
+    "cmpbr": Feature(
+        tokens=("cmpbr",),
+        conditions=("FEAT_CMPBR",),
+        fields=()),
+    "hbc": Feature(
+        tokens=("hbc",),
+        conditions=("FEAT_HBC",),
+        fields=()),
+    "ssbs": Feature(
+        tokens=("ssbs",),
+        conditions=("FEAT_SSBS",),
+        fields=("pstate_ssbs",),
+        allocation=False,
+        encodings=((0xFFFF_F0FF, 0xD503_403F),)),  # MSR SSBS, #imm
+    "sme": Feature(
+        tokens=("sme",),
+        conditions=("FEAT_SME",),
+        fields=("pstate_sm", "pstate_za"),
+        encodings=((0xFFDF_FFE0, 0xD51B_4240),)),  # MRS and MSR SVCR
+    "xs": Feature(
+        tokens=("xs",),
+        conditions=("FEAT_XS",),
+        fields=()),
+    "wfxt": Feature(
+        tokens=("wfxt",),
+        conditions=("FEAT_WFxT",),
+        fields=()),
 }
 
 # Illegal-word records: one case per encoding class and operand extreme.
 # Each word was checked against llvm-mc with the feature enabled (22.1.8 for
-# MTE, GCS, and CPA; 23.1.1 for PAuth and the memory and FP/SIMD
-# extensions).
+# MTE, GCS, and CPA; 23.1.1 for PAuth and the memory, FP/SIMD, branch, and
+# system extensions).
 UNDEFINED = {
     "mte": (
         ("ADDG", 0x9181_0420), ("ADDG SP", 0x91BF_3FFF),
@@ -485,6 +519,41 @@ UNDEFINED = {
         ("SCVTF H D V31", 0x9EFC_03FF), ("UCVTF S D", 0x9E3D_0020),
         ("UCVTF D S V31", 0x1E7D_03FF),
     ),
+    "cmpbr": (
+        ("CBGT W", 0x7401_0040), ("CBGE X", 0xF423_3FE2),
+        ("CBHI W", 0x7445_1FE4), ("CBHS X", 0xF467_2006),
+        ("CBEQ W", 0x74C9_0028), ("CBNE X XZR", 0xF4FE_003F),
+        ("CBBGT", 0x7401_8040), ("CBBGE", 0x7423_8042), ("CBBHI", 0x7445_8044),
+        ("CBBHS", 0x7467_8046), ("CBBEQ", 0x74C9_8048),
+        ("CBBNE WZR", 0x74FF_805E), ("CBHGT", 0x7401_C040),
+        ("CBHGE", 0x7423_C042), ("CBHHI", 0x7445_C044), ("CBHHS", 0x7467_C046),
+        ("CBHEQ", 0x74C9_C048), ("CBHNE", 0x74FD_C05E),
+        ("CBGT W imm", 0x7500_0040), ("CBLT X imm", 0xF53F_8041),
+        ("CBHI W imm", 0x7542_8042), ("CBLO X imm", 0xF560_8043),
+        ("CBEQ W imm", 0x75C0_2004), ("CBNE X imm", 0xF5FF_9FFE),
+    ),
+    "hbc": (
+        ("BC.EQ", 0x5400_0030), ("BC.NE back", 0x54FF_FFF1),
+        ("BC.HS far", 0x547F_FFF2), ("BC.LT far back", 0x5480_001B),
+        ("BC.GT", 0x5400_005C), ("BC.AL", 0x5400_005E), ("BC.NV", 0x5400_005F),
+    ),
+    "ssbs": (
+        ("MSR SSBS 0", 0xD503_403F), ("MSR SSBS 1", 0xD503_413F),
+    ),
+    "sme": (
+        ("SMSTART", 0xD503_477F), ("SMSTART SM", 0xD503_437F),
+        ("SMSTART ZA", 0xD503_457F), ("SMSTOP", 0xD503_467F),
+        ("SMSTOP SM", 0xD503_427F), ("SMSTOP ZA", 0xD503_447F),
+        ("MRS SVCR", 0xD53B_4240), ("MSR SVCR", 0xD51B_425E),
+    ),
+    "xs": (
+        ("DSB OSHNXS", 0xD503_323F), ("DSB NSHNXS", 0xD503_363F),
+        ("DSB ISHNXS", 0xD503_3A3F), ("DSB SYNXS", 0xD503_3E3F),
+    ),
+    "wfxt": (
+        ("WFET", 0xD503_1000), ("WFET X30", 0xD503_101E),
+        ("WFIT", 0xD503_1023), ("WFIT XZR", 0xD503_103F),
+    ),
 }
 HINTS = {
     "gcs": (("GCSB DSYNC", 0xD503_227F), ("CHKFEAT X16", 0xD503_251F)),
@@ -530,7 +599,8 @@ class Rewriter:
             for row in csv.DictReader(source, delimiter="\t"):
                 tokens = set(row["architecture_native_feature_alternatives"]
                              .replace("|", "+").split("+"))
-                self.add(row, lambda feature: bool(tokens & feature.tokens))
+                self.add(row, lambda feature: feature.allocation and
+                         bool(tokens & feature.tokens))
         with corpus.PARTITIONS.open(encoding="utf-8") as source:
             for row in csv.DictReader(source, delimiter="\t"):
                 if row["partition_kind"] != "allocated":

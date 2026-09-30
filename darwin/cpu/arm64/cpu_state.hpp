@@ -49,10 +49,7 @@ struct CpuState final {
 	/* EL0-visible PSTATE fields controlled by MSR (immediate).  DAIF access is
 	 * explicitly gated because SCTLR_EL1.UMA determines whether userspace may
 	 * use DAIFSet/DAIFClr; the other fields are effective feature state. */
-	bool pstate_ssbs{};
 	bool pstate_dit{};
-	bool pstate_sm{};
-	bool pstate_za{};
 	bool pstate_daif_access{};
 	std::uint8_t pstate_daif{};
 	std::uint64_t exclusive_address{~std::uint64_t{0}};

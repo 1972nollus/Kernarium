@@ -1,8 +1,9 @@
 {
   "absent_features": {
-    "added_cases": 394,
+    "added_cases": 443,
     "dropped_cases": {
       "afp/feature-case": 2825,
+      "cmpbr/feature-case": 4399,
       "cpa/feature-case": 503,
       "ebf16/feature-case": 38,
       "f16f32dot/feature-case": 126,
@@ -11,6 +12,7 @@
       "fp8/feature-case": 1836,
       "fprcvt/feature-case": 1585,
       "gcs/feature-case": 271,
+      "hbc/feature-case": 230,
       "lor/feature-case": 656,
       "lrcpc3/feature-case": 2044,
       "ls64/feature-case": 278,
@@ -25,7 +27,11 @@
       "pauth/removed-encoding": 15,
       "sm3/feature-case": 274,
       "sm4/feature-case": 53,
-      "the/feature-case": 2318
+      "sme/feature-case": 28,
+      "ssbs/feature-case": 22,
+      "the/feature-case": 2318,
+      "wfxt/feature-case": 18,
+      "xs/feature-case": 13
     },
     "failing": {
       "file": "tests/unit/arm64/corpus/absent-feature-failing.tsv",
@@ -53,32 +59,38 @@
       "faminmax",
       "sm3",
       "sm4",
-      "fprcvt"
+      "fprcvt",
+      "cmpbr",
+      "hbc",
+      "ssbs",
+      "sme",
+      "xs",
+      "wfxt"
     ],
     "input_sha256": "383dad7ffad78db8d32f29146862b2599f99fa799a2ce079158db3952673a029",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
-    "sha256": "25e370dfd840f7df141fd47705e04b7e052173353a516d3a1b5e25af52146ee7",
-    "stripped_cases": 111548,
+    "sha256": "6d588eb47de65f18be6d6a76a1becc5b3a16094ddeab702246391a665fbab3e7",
+    "stripped_cases": 106838,
     "tbi_replacement_cases": 4284
   },
-  "cases": 143973,
+  "cases": 139312,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
-    "illegal-instruction": 24995,
-    "instruction-budget": 863,
+    "illegal-instruction": 25044,
+    "instruction-budget": 186,
     "memory-fault": 9271,
-    "system-call": 108748
+    "system-call": 104715
   },
   "cases_by_profile": {
-    "16k": 27729,
-    "16k+4k": 88527,
-    "4k": 27717
+    "16k": 27615,
+    "16k+4k": 84096,
+    "4k": 27601
   },
   "coverage": {
     "entries": 983,
-    "entries_with_cases": 772,
-    "entries_with_illegal_cases": 836,
+    "entries_with_cases": 747,
+    "entries_with_illegal_cases": 852,
     "unattributed_cases": 0,
     "unattributed_illegal_cases": 1289
   },
@@ -135,17 +147,17 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 13278464,
-  "pack_sha256": "82b39fa4dd44a428946ef9ba2797993702572f8ec3e2c6e58473ca4918191fd2",
+  "pack_bytes": 13180420,
+  "pack_sha256": "a4af328c360c31088cfa11ab2558c6c49151a0a53bce931b7bace1c9802ea251",
   "producer_commit": "2f11d75926e9da8ec0857a9e35b2ac32825dee83",
-  "programs": 129411,
-  "records": 1067,
+  "programs": 124957,
+  "records": 1068,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
-    "full": 819,
-    "narrow": 143154
+    "full": 868,
+    "narrow": 138444
   },
   "validator_cases": {
     "ignore-host-counter-register/v1": 1,

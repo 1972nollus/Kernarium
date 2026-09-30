@@ -305,33 +305,12 @@ gadget pstate_\name\()_\value
 	pstate_store \name, \offset, 1
 .endm
 
-pstate_store_field ssbs, UML_GADGET_CPU_PSTATE_SSBS
 pstate_store_field dit, UML_GADGET_CPU_PSTATE_DIT
 /* Unreachable padding where the FEAT_MTE PSTATE.TCO entries were. */
 removed_gadget 32
-pstate_store_field sm, UML_GADGET_CPU_PSTATE_SM
-pstate_store_field za, UML_GADGET_CPU_PSTATE_ZA
 
 .purgem pstate_store_field
 .purgem pstate_store
-
-.macro pstate_smza value
-gadget pstate_smza_\value
-.if \value
-	mov w8, #1
-	strb w8, [_cpu, #UML_GADGET_CPU_PSTATE_SM]
-	strb w8, [_cpu, #UML_GADGET_CPU_PSTATE_ZA]
-.else
-	strb wzr, [_cpu, #UML_GADGET_CPU_PSTATE_SM]
-	strb wzr, [_cpu, #UML_GADGET_CPU_PSTATE_ZA]
-.endif
-	next_gadget
-.endm
-
-pstate_smza 0
-pstate_smza 1
-
-.purgem pstate_smza
 
 .macro pstate_daif name, operation, immediate
 gadget pstate_daif_\name\()_\immediate
@@ -420,19 +399,6 @@ gadget speculation_barrier_fallback
 	dsb sy
 	isb
 	next_gadget
-
-.macro memory_nxs_barrier option
-gadget dsb_nxs_\option
-	.inst (0xd503323f | (\option << 10))
-	next_gadget
-.endm
-
-memory_nxs_barrier 0
-memory_nxs_barrier 1
-memory_nxs_barrier 2
-memory_nxs_barrier 3
-
-.purgem memory_nxs_barrier
 
 /* CLREX's CRm immediate is ignored, so all encodings share this branch-free
  * native implementation. Clear the contiguous software-monitor image with

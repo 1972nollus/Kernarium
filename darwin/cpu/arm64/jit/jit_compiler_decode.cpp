@@ -32,7 +32,7 @@ bool JitCompiler::emit_common_control_flow(std::uint32_t instruction, std::uint6
       emit_direct_branch(target, resulting_count);
       return true;
     }
-    if ((instruction & 0xff00'0000U) == 0x5400'0000U) {
+    if ((instruction & 0xff00'0010U) == 0x5400'0000U) {
       const auto target =
           pc + sign_extend((instruction >> 5) & 0x7ffffU, 19) * 4;
       emit_conditional_pc(instruction & 15U, target, pc + 4,
@@ -81,6 +81,12 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if ((instruction & 0xffe0'001fU) == 0xd420'0000U) {
       store_pc(pc);
       emitter_.return_constant(Event::breakpoint, resulting_count);
+      return Action::terminate;
+    }
+    /* BC.cond needs FEAT_HBC, which the virtual CPU does not implement. */
+    if ((instruction & 0xff00'0010U) == 0x5400'0010U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
     if (emit_common_control_flow(instruction, pc, resulting_count))
@@ -234,42 +240,17 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           emitter_.load_constant(8, immediate & 1U);
           emitter_.store_b(8, 15, offset);
         };
+        /*
+         * The virtual CPU implements neither FEAT_SSBS (op2 1) nor FEAT_SME
+         * (op2 3, SMSTART and SMSTOP), and MSR TCO (op2 4) needs FEAT_MTE:
+         * those fields are unallocated.
+         */
         switch (op2) {
-        case 1:
-          if (!translation_supports(ArmFeature::ssbs))
-            return Action::unsupported;
-          store_boolean(offsetof(CpuState, pstate_ssbs));
-          return Action::keep_going;
         case 2:
           if (!translation_supports(ArmFeature::dit))
             return Action::unsupported;
           store_boolean(offsetof(CpuState, pstate_dit));
           return Action::keep_going;
-        case 3:
-          if ((immediate & 8U) != 0)
-            return reject();
-          switch ((immediate >> 1) & 3U) {
-          case 1:
-            if (!translation_supports(ArmFeature::sme))
-              return Action::unsupported;
-            store_boolean(offsetof(CpuState, pstate_sm));
-            return Action::keep_going;
-          case 2:
-            if (!translation_supports(ArmFeature::sme))
-              return Action::unsupported;
-            store_boolean(offsetof(CpuState, pstate_za));
-            return Action::keep_going;
-          case 3:
-            if (!translation_supports(ArmFeature::sme))
-              return Action::unsupported;
-            store_boolean(offsetof(CpuState, pstate_sm));
-            store_boolean(offsetof(CpuState, pstate_za));
-            return Action::keep_going;
-          default:
-            return reject();
-          }
-        case 4: /* MSR TCO needs FEAT_MTE. */
-          return reject();
         case 6:
         case 7: {
           const auto denied = emitter_.make_label();
@@ -309,16 +290,17 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if ((instruction & 0xffff'f0ffU) == 0xd503'309fU ||
         (instruction & 0xffff'f0ffU) == 0xd503'30bfU ||
         (instruction & 0xffff'f0ffU) == 0xd503'30dfU ||
-        (instruction & 0xffff'f3ffU) == 0xd503'323fU ||
         instruction == 0xd503'30ffU) {
       const auto lowered = lower_memory_barrier(
-          instruction, host_capabilities().has(ArmFeature::sb),
-          host_capabilities().has(ArmFeature::xs));
+          instruction, host_capabilities().has(ArmFeature::sb));
       for (std::size_t index = 0; index < lowered.count; ++index)
         emitter_.emit(lowered.words[index]);
       return Action::keep_going;
     }
-    if ((instruction & 0xffff'f0ffU) == 0xd503'30ffU) {
+    /* SB with a nonzero CRm is reserved, and DSB nXS needs FEAT_XS, which
+     * the virtual CPU does not implement. */
+    if ((instruction & 0xffff'f0ffU) == 0xd503'30ffU ||
+        (instruction & 0xffff'f3ffU) == 0xd503'323fU) {
       store_pc(pc);
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
@@ -362,26 +344,19 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
-    if ((instruction & 0xffff'ffe0U) == 0xd503'1000U ||
-        (instruction & 0xffff'ffe0U) == 0xd503'1020U) {
-      /* A timed wait is a hint and is permitted to complete immediately. */
-      return Action::keep_going;
+    /* WFET and WFIT need FEAT_WFxT, which the virtual CPU does not
+     * implement. */
+    if ((instruction & 0xffff'ffc0U) == 0xd503'1000U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
+    /* The virtual CPU implements no FEAT_CMPBR: the compare-and-branch class
+     * is unallocated. */
     if ((instruction & 0x7e00'0000U) == 0x7400'0000U) {
-      const bool immediate = (instruction & 0x0100'0000U) != 0;
-      const unsigned narrow_control = (instruction >> 14) & 3U;
-      const unsigned condition = (instruction >> 21) & 7U;
-      const bool valid_form =
-          immediate ? (instruction & 0x0000'4000U) == 0
-                    : (narrow_control == 0U ||
-                       ((instruction >> 31) == 0U &&
-                        narrow_control >= 2U));
-      if (!valid_form || condition == 4U || condition == 5U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      return Action::unsupported;
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     if ((instruction & 0x1f00'0000U) == 0x1000'0000U) {
       emit_pc_relative(instruction, pc);

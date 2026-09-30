@@ -245,8 +245,9 @@ struct Record final {
 
 /* Every encoded non-register state field; see the README field table. Ids
  * 7, 9-16, 20, and 32-37 held the retired FEAT_MTE, FEAT_CPA, FEAT_GCS, and
- * FEAT_PAuth state, 17 the retired FEAT_LS64 ACCDATA, and 5 the retired
- * FEAT_FP8 FPMR; all stay reserved. */
+ * FEAT_PAuth state, 17 the retired FEAT_LS64 ACCDATA, 5 the retired FEAT_FP8
+ * FPMR, 18 the retired PSTATE.SSBS, and 21 and 22 the retired FEAT_SME
+ * PSTATE.SM and ZA; all stay reserved. */
 enum class Field : std::uint8_t {
   pc = 1,
   nzcv,
@@ -254,11 +255,8 @@ enum class Field : std::uint8_t {
   fpsr,
   tls = 6,
   tbi_enabled = 8,
-  pstate_ssbs = 18,
-  pstate_dit,
-  pstate_sm = 21,
-  pstate_za,
-  pstate_daif_access,
+  pstate_dit = 19,
+  pstate_daif_access = 23,
   pstate_daif,
   exclusive_address,
   exclusive_key,
@@ -284,10 +282,7 @@ enum class Field : std::uint8_t {
   case Field::fpsr:
     return 4;
   case Field::tbi_enabled:
-  case Field::pstate_ssbs:
   case Field::pstate_dit:
-  case Field::pstate_sm:
-  case Field::pstate_za:
   case Field::pstate_daif_access:
   case Field::pstate_daif:
   case Field::exclusive_size:
@@ -339,10 +334,7 @@ sparse_state(Reader &reader, std::span<const std::byte> body) {
   state.fpsr = 0;
   state.tls = 0;
   state.tbi_enabled = false;
-  state.pstate_ssbs = false;
   state.pstate_dit = false;
-  state.pstate_sm = false;
-  state.pstate_za = false;
   state.pstate_daif_access = false;
   state.pstate_daif = 0;
   state.exclusive_address = ~std::uint64_t{0};
@@ -395,17 +387,8 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
     case Field::tbi_enabled:
       state.tbi_enabled = flag();
       break;
-    case Field::pstate_ssbs:
-      state.pstate_ssbs = flag();
-      break;
     case Field::pstate_dit:
       state.pstate_dit = flag();
-      break;
-    case Field::pstate_sm:
-      state.pstate_sm = flag();
-      break;
-    case Field::pstate_za:
-      state.pstate_za = flag();
       break;
     case Field::pstate_daif_access:
       state.pstate_daif_access = flag();
