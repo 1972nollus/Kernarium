@@ -189,8 +189,8 @@ gadget sysreg_nzcv_read
 gadget sysreg_fpcr_read
 	ldr x8, [_stream], #8
 	ldr w9, [_cpu, #UML_GADGET_CPU_FPCR]
-	mov w10, #0x9f07
-	movk w10, #0x07f7, lsl #16
+	mov w10, #(UML_ARM64_FPCR_WRITABLE & 0xffff)
+	movk w10, #(UML_ARM64_FPCR_WRITABLE >> 16), lsl #16
 	and w9, w9, w10
 	str x9, [_cpu, x8]
 	next_gadget
@@ -240,16 +240,16 @@ gadget sysreg_fpsr_read
 	str x9, [_cpu, x8]
 	next_gadget
 
-.macro sysreg_fp_write name, field, system, low_mask, high_mask
+.macro sysreg_fp_write name, field, system, mask
 gadget sysreg_\name\()_write_r
 	ldr x8, [_stream], #8
 	.ifc \name,fpcr
 	ldr x13, [_stream], #8
-	mov w12, #0x9f00
+	mov w12, #UML_ARM64_FPCR_TRAP_ENABLES
 	.endif
 	ldr w9, [_cpu, x8]
-	mov w10, #\low_mask
-	movk w10, #\high_mask, lsl #16
+	mov w10, #(\mask & 0xffff)
+	movk w10, #(\mask >> 16), lsl #16
 	and w9, w9, w10
 	str w9, [_cpu, #\field]
 	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
@@ -280,8 +280,8 @@ gadget sysreg_\name\()_write_z
 	next_gadget
 .endm
 
-sysreg_fp_write fpcr, UML_GADGET_CPU_FPCR, fpcr, 0x9f07, 0x07f7
-sysreg_fp_write fpsr, UML_GADGET_CPU_FPSR, fpsr, 0x009f, 0xf800
+sysreg_fp_write fpcr, UML_GADGET_CPU_FPCR, fpcr, UML_ARM64_FPCR_WRITABLE
+sysreg_fp_write fpsr, UML_GADGET_CPU_FPSR, fpsr, 0xf800009f
 
 .purgem sysreg_fp_write
 

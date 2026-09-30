@@ -3,7 +3,6 @@
 #include "arm64_floating_reciprocal_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
-#include "platform/apple/host_features.hpp"
 
 #include <algorithm>
 #include <array>
@@ -27,11 +26,9 @@ extern "C" {
 	void uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_4s(); \
 	void uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_2d();
 #define UML_DECLARE_RECIPROCAL_SCALAR_PAIR(name) \
-	UML_DECLARE_RECIPROCAL_SCALAR(native, name) \
-	UML_DECLARE_RECIPROCAL_SCALAR(checked, name)
+	UML_DECLARE_RECIPROCAL_SCALAR(native, name)
 #define UML_DECLARE_RECIPROCAL_VECTOR_PAIR(name) \
-	UML_DECLARE_RECIPROCAL_VECTOR(native, name) \
-	UML_DECLARE_RECIPROCAL_VECTOR(checked, name)
+	UML_DECLARE_RECIPROCAL_VECTOR(native, name)
 UML_DECLARE_RECIPROCAL_SCALAR_PAIR(frecpe)
 UML_DECLARE_RECIPROCAL_VECTOR_PAIR(frecpe)
 UML_DECLARE_RECIPROCAL_SCALAR_PAIR(frecps)
@@ -64,12 +61,8 @@ using Gadget = void (*)();
 	uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_2s, \
 	uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_4s, \
 	uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_2d}
-#define UML_RECIPROCAL_SCALAR_PAIR(name) std::array{ \
-	UML_RECIPROCAL_SCALAR(native, name), \
-	UML_RECIPROCAL_SCALAR(checked, name)}
-#define UML_RECIPROCAL_VECTOR_PAIR(name) std::array{ \
-	UML_RECIPROCAL_VECTOR(native, name), \
-	UML_RECIPROCAL_VECTOR(checked, name)}
+#define UML_RECIPROCAL_SCALAR_PAIR(name) UML_RECIPROCAL_SCALAR(native, name)
+#define UML_RECIPROCAL_VECTOR_PAIR(name) UML_RECIPROCAL_VECTOR(native, name)
 
 constexpr std::array scalar_gadgets{
 	UML_RECIPROCAL_SCALAR_PAIR(frecpe),
@@ -81,7 +74,7 @@ constexpr std::array scalar_gadgets{
 constexpr std::array vector_gadgets{
 	UML_RECIPROCAL_VECTOR_PAIR(frecpe),
 	UML_RECIPROCAL_VECTOR_PAIR(frecps),
-	std::array{std::array<Gadget, 5>{}, std::array<Gadget, 5>{}},
+	std::array<Gadget, 5>{},
 	UML_RECIPROCAL_VECTOR_PAIR(frsqrte),
 	UML_RECIPROCAL_VECTOR_PAIR(frsqrts),
 };
@@ -139,14 +132,12 @@ void require(bool condition, const char *message)
 	return shape.instructions + 1U;
 }
 
-[[nodiscard]] Gadget expected_gadget(const test::Form &form,
-	unsigned host_variant)
+[[nodiscard]] Gadget expected_gadget(const test::Form &form)
 {
 	const unsigned operation = static_cast<unsigned>(form.operation);
 	return form.scalar ?
-		scalar_gadgets[operation][host_variant][
-			test::scalar_shape(form.width)] :
-		vector_gadgets[operation][host_variant][
+		scalar_gadgets[operation][test::scalar_shape(form.width)] :
+		vector_gadgets[operation][
 			test::vector_shape(form.width, form.vector_bytes)];
 }
 
@@ -167,8 +158,6 @@ void translation_selects_every_shape_and_direct_offset()
 	constexpr auto base =
 		test::engine_tests::engine_test_code_base;
 	constexpr std::array code_tail{std::uint32_t{0xd400'0001U}};
-	const unsigned host_variant =
-		::uml::platform::apple::probed_host_capabilities().afp ? 0U : 1U;
 	std::set<std::uintptr_t> selected;
 	std::set<std::uintptr_t> expected;
 	test::for_each_form([&](const test::Form &form) {
@@ -180,7 +169,7 @@ void translation_selects_every_shape_and_direct_offset()
 		const auto words = built.program.words();
 		require(words.size() >= 2U,
 			"reciprocal gadget stream is truncated");
-		const auto gadget = expected_gadget(form, host_variant);
+		const auto gadget = expected_gadget(form);
 		require(words[0] == address(gadget),
 			"operation or shape remained in the runtime stream");
 		require(words[1] == translated_operand(form, registers),
@@ -194,44 +183,24 @@ void translation_selects_every_shape_and_direct_offset()
 		"reciprocal gadget table contains dead or unselected entries");
 }
 
-void every_host_variant_is_declared()
-{
-	std::set<std::uintptr_t> declared;
-	test::for_each_form([&](const test::Form &form) {
-		declared.insert(address(expected_gadget(form, 0U)));
-		declared.insert(address(expected_gadget(form, 1U)));
-	});
-	require(declared.size() == valid_form_count() * 2U,
-		"reciprocal host-variant table contains a dead duplicate");
-}
-
 void hot_paths_have_only_the_required_branches()
 {
 	std::set<std::uintptr_t> checked;
-	unsigned maximum_native = 0U;
-	unsigned maximum_checked = 0U;
+	unsigned maximum = 0U;
 	test::for_each_form([&](const test::Form &form) {
-		for (unsigned host_variant = 0; host_variant < 2U;
-		     ++host_variant) {
-			const auto gadget =
-				expected_gadget(form, host_variant);
-			if (!checked.insert(address(gadget)).second)
-				continue;
-			require(conditional_branches(gadget) ==
-					(host_variant == 0U ? 1U : 2U),
-				"reciprocal hot path has an unexpected branch");
-			const auto instructions = instruction_count(gadget);
-			require(instructions <=
-					(host_variant == 0U ? 17U : 20U),
-				"reciprocal hot path exceeds its instruction budget");
-			auto &maximum = host_variant == 0U ?
-				maximum_native : maximum_checked;
-			maximum = std::max(maximum, instructions);
-		}
+		const auto gadget = expected_gadget(form);
+		if (!checked.insert(address(gadget)).second)
+			return;
+		require(conditional_branches(gadget) == 1U,
+			"reciprocal hot path has an unexpected branch");
+		const auto instructions = instruction_count(gadget);
+		require(instructions <= 17U,
+			"reciprocal hot path exceeds its instruction budget");
+		maximum = std::max(maximum, instructions);
 	});
-	require(checked.size() == valid_form_count() * 2U,
+	require(checked.size() == valid_form_count(),
 		"reciprocal hot-path audit missed a gadget");
-	require(maximum_native == 17U && maximum_checked == 20U,
+	require(maximum == 17U,
 		"reciprocal hot-path audit did not cover the largest form");
 }
 
@@ -240,7 +209,6 @@ void hot_paths_have_only_the_required_branches()
 int main()
 {
 	translation_selects_every_shape_and_direct_offset();
-	every_host_variant_is_declared();
 	hot_paths_have_only_the_required_branches();
 	return 0;
 }

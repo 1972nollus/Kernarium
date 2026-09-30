@@ -385,8 +385,8 @@ struct SignedExact final {
 struct RoundResult final {
 	std::uint32_t bits{};
 	bool inexact{};
-	bool pre_tiny{};
-	bool post_tiny{};
+	/* Tininess is detected before rounding. */
+	bool tiny{};
 	bool overflow{};
 };
 
@@ -417,7 +417,7 @@ struct RoundResult final {
 	if (bits == 0)
 		return result;
 	int exponent = common_exponent + static_cast<int>(bits) - 1;
-	result.pre_tiny = exponent < minimum_exponent;
+	result.tiny = exponent < minimum_exponent;
 	std::uint64_t significand;
 	if (exponent >= minimum_exponent) {
 		const int discard = static_cast<int>(bits) -
@@ -453,7 +453,6 @@ struct RoundResult final {
 		result.bits = 1U << fraction_bits;
 	else
 		result.bits = static_cast<std::uint32_t>(significand);
-	result.post_tiny = result.bits != 0 && result.bits < (1U << fraction_bits);
 	return result;
 }
 
@@ -463,14 +462,12 @@ struct Converted16 final {
 };
 
 [[nodiscard]] inline Converted16 fp8_to_binary(
-	std::uint8_t input, bool source2, bool bfloat, std::uint32_t fpcr,
+	std::uint8_t input, bool source2, bool bfloat,
 	std::uint64_t fpmr) noexcept
 {
 	const auto value = unpack_fp8(input, fp8_source_format(fpmr, source2));
 	if (value.type == FpClass::snan || value.type == FpClass::qnan)
-		return {static_cast<std::uint16_t>(
-			(bfloat ? 0x7fc0U : 0x7e00U) |
-			((fpcr & 2U) != 0U ? 0x8000U : 0U)),
+		return {static_cast<std::uint16_t>(bfloat ? 0x7fc0U : 0x7e00U),
 			value.type == FpClass::snan ? 1U : 0U};
 	if (value.type == FpClass::infinity)
 		return {static_cast<std::uint16_t>((value.negative ? 0x8000U : 0U) |
@@ -489,8 +486,7 @@ struct Converted16 final {
 		exceptions |= 4U;
 	if (rounded.inexact)
 		exceptions |= 16U;
-	const bool alternate = (fpcr & 2U) != 0;
-	if (rounded.inexact && (alternate ? rounded.post_tiny : rounded.pre_tiny))
+	if (rounded.inexact && rounded.tiny)
 		exceptions |= 8U;
 	return {static_cast<std::uint16_t>(rounded.bits |
 		(value.negative ? 0x8000U : 0U)), exceptions};
@@ -502,19 +498,16 @@ struct Converted8 final {
 };
 
 [[nodiscard]] inline Converted8 binary_to_fp8(
-	std::uint32_t input, unsigned width, std::uint32_t fpcr,
-	std::uint64_t fpmr) noexcept
+	std::uint32_t input, unsigned width, std::uint64_t fpmr) noexcept
 {
 	const auto format = fp8_destination_format(fpmr);
 	if (format == Fp8Format::unsupported)
 		return {0xffU, 1U};
 	const auto value = unpack_binary(input, width);
-	const bool nan_sign = (fpcr & 2U) != 0;
 	const std::uint8_t sign = value.negative ? 0x80U : 0U;
 	const bool e4 = format == Fp8Format::e4m3;
 	if (value.type == FpClass::snan || value.type == FpClass::qnan)
-		return {static_cast<std::uint8_t>((nan_sign ? 0x80U : 0U) |
-			(e4 ? 0x7fU : 0x7eU)),
+		return {static_cast<std::uint8_t>(e4 ? 0x7fU : 0x7eU),
 			value.type == FpClass::snan ? 1U : 0U};
 	const bool saturate = (fpmr & (std::uint64_t{1} << 15)) != 0;
 	if (value.type == FpClass::infinity)
@@ -550,18 +543,15 @@ struct Converted8 final {
 		exceptions |= 4U;
 	if (rounded.inexact)
 		exceptions |= 16U;
-	const bool alternate = (fpcr & 2U) != 0;
-	if (rounded.inexact && (alternate ? rounded.post_tiny : rounded.pre_tiny))
+	if (rounded.inexact && rounded.tiny)
 		exceptions |= 8U;
 	return {result, exceptions};
 }
 
 [[nodiscard]] constexpr std::uint32_t binary_default_nan(
-	unsigned width, std::uint32_t fpcr) noexcept
+	unsigned width) noexcept
 {
-	return (width == 16U ? 0x7e00U : 0x7fc0'0000U) |
-		((fpcr & 2U) != 0U ?
-			(width == 16U ? 0x8000U : 0x8000'0000U) : 0U);
+	return width == 16U ? 0x7e00U : 0x7fc0'0000U;
 }
 
 [[nodiscard]] constexpr std::uint32_t binary_infinity(
@@ -574,7 +564,7 @@ struct Converted8 final {
 [[nodiscard]] inline std::uint32_t fp8_dot_add(
 	std::uint32_t addend_bits, unsigned width,
 	std::span<const std::uint8_t> left, std::span<const std::uint8_t> right,
-	std::uint32_t fpcr, std::uint64_t fpmr) noexcept
+	std::uint64_t fpmr) noexcept
 {
 	const auto addend = unpack_binary(addend_bits, width);
 	const auto format1 = fp8_source_format(fpmr, false);
@@ -591,7 +581,7 @@ struct Converted8 final {
 			second[i].type == FpClass::qnan;
 	}
 	if (any_nan)
-		return binary_default_nan(width, fpcr);
+		return binary_default_nan(width);
 	bool positive_infinity = addend.type == FpClass::infinity && !addend.negative;
 	bool negative_infinity = addend.type == FpClass::infinity && addend.negative;
 	bool same_signed_zero = addend.type == FpClass::zero;
@@ -624,7 +614,7 @@ struct Converted8 final {
 	}
 	invalid = invalid || (positive_infinity && negative_infinity);
 	if (invalid)
-		return binary_default_nan(width, fpcr);
+		return binary_default_nan(width);
 	if (positive_infinity)
 		return binary_infinity(width, false);
 	if (negative_infinity)

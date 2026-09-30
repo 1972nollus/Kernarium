@@ -19,10 +19,8 @@
 #include "../detail/floating_conversion.hpp"
 #include "../detail/floating_fused.hpp"
 #include "../detail/floating_horizontal.hpp"
-#include "../detail/floating_indexed.hpp"
 #include "../detail/floating_integer_conversion.hpp"
 #include "../detail/floating_reciprocal.hpp"
-#include "../detail/floating_reciprocal_software.hpp"
 #include "../detail/floating_round.hpp"
 #include "../detail/floating_scale.hpp"
 #include "../detail/fp_state_access.hpp"
@@ -596,11 +594,6 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 	return host_capabilities().has(ArmFeature::frintts);
 }
 
-[[nodiscard]] bool host_has_afp() noexcept
-{
-	return host_capabilities().afp;
-}
-
 [[nodiscard]] bool host_has_faminmax() noexcept
 {
 	return host_capabilities().has(ArmFeature::faminmax);
@@ -639,11 +632,6 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 [[nodiscard]] bool host_has_bf16() noexcept
 {
 	return host_capabilities().has(ArmFeature::bf16);
-}
-
-[[nodiscard]] bool host_has_ebf16() noexcept
-{
-	return host_capabilities().has(ArmFeature::ebf16);
 }
 
 [[nodiscard]] bool host_has_fhm() noexcept

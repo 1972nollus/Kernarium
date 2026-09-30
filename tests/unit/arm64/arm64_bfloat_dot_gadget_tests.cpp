@@ -74,8 +74,7 @@ void translation_selects_shape_host_path_and_direct_offsets()
 		test::engine_tests::engine_test_code_base;
 	constexpr test::Registers registers{31U, 30U, 29U};
 	const auto &host = ::uml::platform::apple::probed_host_capabilities();
-	const bool native = host.has(::uml::cpu::ArmFeature::bf16) &&
-		host.has(::uml::cpu::ArmFeature::ebf16);
+	const bool native = host.has(::uml::cpu::ArmFeature::bf16);
 	std::set<std::uintptr_t> selected;
 	for (unsigned index = 0U; index < test::forms.size(); ++index) {
 		const auto form = test::forms[index];

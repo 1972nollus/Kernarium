@@ -31,11 +31,8 @@ JitCompilerFamilies::emit_basic_floating(std::uint32_t instruction) {
   const unsigned left = (instruction >> 5) & 31U;
   const unsigned right = (instruction >> 16) & 31U;
   /*
-   * Scalar binary forms merge inactive bits from the first source under
-   * FPCR.NEP, so the native instruction does not read its destination.
-   * Scalar FSQRT is the one basic form whose merging source is the old
-   * destination. Vector forms always overwrite or architecturally zero every
-   * destination bit outside their active lanes.
+   * FPCR.NEP is RES0, so every form overwrites or architecturally zeroes each
+   * destination bit outside its active lanes.
    */
   const auto native_left = read_native_vector(left, 1);
   const auto native_right =
@@ -44,7 +41,7 @@ JitCompilerFamilies::emit_basic_floating(std::uint32_t instruction) {
           : right == left ? native_left
                           : read_native_vector(right, 2);
   const auto native_destination = write_native_vector(
-      destination, decoded.scalar && decoded.unary && host.afp, 0);
+      destination, false, 0);
   auto native = instruction & ~(31U | (31U << 5));
   native |= native_destination.host | (native_left.host << 5);
   if (!decoded.unary) {
@@ -151,7 +148,7 @@ JitCompilerFamilies::emit_integer_to_floating(std::uint32_t instruction) {
     const auto native_source =
         read_native_gpr(source, false, 8);
     const auto native_destination =
-        write_native_vector(destination, decoded.scalar && host.afp, 0);
+        write_native_vector(destination, false, 0);
     emit((instruction & ~0x3ffU) | (native_source.host << 5) |
          native_destination.host);
     commit_native_vector(native_destination, destination);
@@ -163,7 +160,7 @@ JitCompilerFamilies::emit_integer_to_floating(std::uint32_t instruction) {
      */
     const auto native_source = read_native_vector(source, 1);
     const auto native_destination =
-        write_native_vector(destination, decoded.scalar && host.afp, 0);
+        write_native_vector(destination, false, 0);
     emit((instruction & ~0x3ffU) | (native_source.host << 5) |
          native_destination.host);
     commit_native_vector(native_destination, destination);
@@ -197,7 +194,7 @@ JitCompilerFamilies::emit_floating_to_integer(std::uint32_t instruction) {
     commit_native_gpr(native_destination, destination, false);
   } else {
     const auto native_destination =
-        write_native_vector(destination, decoded.scalar && host.afp, 0);
+        write_native_vector(destination, false, 0);
     emit((instruction & ~0x3ffU) | (native_source.host << 5) |
          native_destination.host);
     commit_native_vector(native_destination, destination);
@@ -315,9 +312,8 @@ JitCompilerFamilies::emit_fp8_convert_down(std::uint32_t instruction) {
     const unsigned destination = instruction & 31U;
     const unsigned source = (instruction >> 5) & 31U;
     const auto native_source = read_native_vector(source, 1);
-    const auto &host = host_capabilities();
     const auto native_destination = write_native_vector(
-        destination, reduced.upper || (reduced.scalar && host.afp), 0);
+        destination, reduced.upper, 0);
     emit((instruction & ~0x3ffU) | (native_source.host << 5) |
          native_destination.host);
     commit_native_vector(native_destination, destination);
@@ -335,13 +331,10 @@ JitCompilerFamilies::emit_fp8_convert_down(std::uint32_t instruction) {
     /*
      * Narrowing upper forms preserve the lower half. Widening upper forms
      * merely select the upper source half and overwrite the destination.
-     * Scalar FCVTXN can preserve inactive lanes under FPCR.NEP.
      */
     const auto native_source = read_native_vector(source, 1);
     const auto native_destination = write_native_vector(
-        destination, (vector.narrow && vector.upper) ||
-                         (vector.scalar && host.afp),
-        0);
+        destination, vector.narrow && vector.upper, 0);
     emit((instruction & ~0x3ffU) | (native_source.host << 5) |
          native_destination.host);
     commit_native_vector(native_destination, destination);
@@ -362,14 +355,9 @@ JitCompilerFamilies::emit_fp8_convert_down(std::uint32_t instruction) {
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned source = (instruction >> 5) & 31U;
-  /*
-   * On an AFP host the scalar instruction can observe FPCR.NEP and preserve
-   * the old inactive lanes. Hosts without AFP always use the zeroing form.
-   */
-  const auto &host = host_capabilities();
   const auto native_source = read_native_vector(source, 1);
   const auto native_destination =
-      write_native_vector(destination, host.afp, 0);
+      write_native_vector(destination, false, 0);
   emit((instruction & ~0x3ffU) | (native_source.host << 5) |
        native_destination.host);
   commit_native_vector(native_destination, destination);
@@ -497,7 +485,7 @@ JitCompilerFamilies::emit_floating_round(std::uint32_t instruction) {
   const unsigned source = (instruction >> 5) & 31U;
   const auto native_source = read_native_vector(source, 1);
   const auto native_destination = write_native_vector(
-      destination, decoded.scalar && host.afp, 0);
+      destination, false, 0);
   emit((instruction & ~0x3ffU) | (native_source.host << 5) |
        native_destination.host);
   commit_native_vector(native_destination, destination);
@@ -539,10 +527,9 @@ JitCompilerFamilies::emit_floating_unary(std::uint32_t instruction) {
     return false;
   const unsigned destination = instruction & 31U;
   const unsigned source = (instruction >> 5) & 31U;
-  /* Only scalar AFP forms can preserve the old upper lanes through NEP. */
   const auto native_source = read_native_vector(source, 1);
   const auto native_destination =
-      write_native_vector(destination, !vector && host.afp, 0);
+      write_native_vector(destination, false, 0);
   emit((instruction & ~0x3ffU) | (native_source.host << 5) |
        native_destination.host);
   commit_native_vector(native_destination, destination);
@@ -606,11 +593,7 @@ JitCompilerFamilies::emit_floating_reciprocal(std::uint32_t instruction) {
   const unsigned first = (instruction >> 5) & 31U;
   const unsigned second = (instruction >> 16) & 31U;
 
-  /*
-   * Only scalar unary forms merge from the old destination under FPCR.NEP.
-   * Scalar binary forms merge from the first source, and vector forms do not
-   * read the old destination.
-   */
+  /* FPCR.NEP is RES0, so no form reads the old destination. */
   const auto native_first = read_native_vector(first, 1);
   const auto native_second =
       decoded.unary
@@ -618,7 +601,7 @@ JitCompilerFamilies::emit_floating_reciprocal(std::uint32_t instruction) {
           : second == first ? native_first
                             : read_native_vector(second, 2);
   const auto native_destination = write_native_vector(
-      destination, decoded.scalar && decoded.unary && host.afp, 0);
+      destination, false, 0);
   auto native = (instruction & ~(31U | (31U << 5))) |
                 native_destination.host | (native_first.host << 5);
   if (!decoded.unary) {

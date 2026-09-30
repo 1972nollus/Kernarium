@@ -317,7 +317,7 @@ uml_arm64_gadget_activate_native_fp_environment:
 	mov w6, #1
 	strb w6, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
 	ldr w6, [_cpu, #UML_GADGET_CPU_FPCR]
-	mov w5, #0x9f00
+	mov w5, #UML_ARM64_FPCR_TRAP_ENABLES
 	bic w6, w6, w5
 	msr fpcr, x6
 	ldr w6, [_cpu, #UML_GADGET_CPU_FPSR]

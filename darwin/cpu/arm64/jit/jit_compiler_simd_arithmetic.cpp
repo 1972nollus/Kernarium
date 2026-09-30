@@ -159,13 +159,8 @@ JitCompilerFamilies::emit_half_fused_long(std::uint32_t instruction) {
   const auto decoded =
       arm64::detail::decode_half_fused_long(instruction);
   const auto &host = host_capabilities();
-  /* FEAT_AFP is deliberately not required here. It selects alternate handling
-   * of denormals and NaNs through FPCR.AH/FIZ/NEP and says nothing about
-   * whether FMLAL/FMLSL exist or how they compute. Requiring it made the JIT
-   * refuse a perfectly executable instruction on every host without AFP - this
-   * one included - so a guest that took the ASIMDFHM advertisement at its word
-   * got SIGILL under the JIT while the gadget bank, which gates on `fhm`
-   * alone, ran it correctly. */
+  /* FEAT_AFP is not required: FPCR.AH, FIZ and NEP are RES0, so the native
+   * FMLAL/FMLSL compute the architected result on every host with FHM. */
   if (!decoded.recognized || !host.has(ArmFeature::fhm))
     return false;
   const unsigned destination = instruction & 31U;

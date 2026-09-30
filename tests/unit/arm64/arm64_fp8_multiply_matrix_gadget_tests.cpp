@@ -129,8 +129,7 @@ void for_each_form(Function &&function)
 			ArmFeature::fp8fma :
 		form.width == 16U ? ArmFeature::f8f16mm :
 			ArmFeature::f8f32mm;
-	return features.has(operation_feature) &&
-		features.has(ArmFeature::afp);
+	return features.has(operation_feature);
 }
 
 void native_words_direct_operands_and_selected_path()

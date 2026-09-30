@@ -2,7 +2,10 @@
   "absent_features": {
     "added_cases": 174,
     "dropped_cases": {
+      "afp/fails-stripped": 57,
+      "afp/feature-case": 2827,
       "cpa/feature-case": 503,
+      "ebf16/feature-case": 38,
       "gcs/feature-case": 271,
       "mte/fails-stripped": 5524,
       "mte/feature-case": 2775,
@@ -11,33 +14,35 @@
     },
     "failing": {
       "file": "tests/unit/arm64/corpus/absent-feature-failing.tsv",
-      "sha256": "be4267a602b18551b865eb903cdecd623470e5422cdef08ea7db0e43fca83458"
+      "sha256": "5ca48c28d18304e86d66f8cf1c73b10ac83309adb0d296127dd0fa42d590e84e"
     },
     "features": [
       "mte",
       "gcs",
       "cpa",
-      "pauth"
+      "pauth",
+      "afp",
+      "ebf16"
     ],
-    "input_sha256": "d615e04926ae49256ff27b88155620e4808682b63de73ea80c7abae88743ecb5",
+    "input_sha256": "7f26e6b1749ae63ff4613da60b38fbc3685062609febfc64d13f1b6dc0a5a984",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
-    "sha256": "810bac3a5b11d66ca14fb66f0585ed5f7564b3b88b61df710782916882bd4f03",
-    "stripped_cases": 73695,
+    "sha256": "3d9d991e0674c83a9efaedbbf50adcb1d621511564c017d1c4011f1e06d525d5",
+    "stripped_cases": 74346,
     "tbi_replacement_cases": 5496
   },
-  "cases": 166800,
+  "cases": 163893,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
     "illegal-instruction": 24775,
     "instruction-budget": 863,
     "memory-fault": 14073,
-    "system-call": 126993
+    "system-call": 124086
   },
   "cases_by_profile": {
-    "16k": 35660,
-    "16k+4k": 95494,
-    "4k": 35646
+    "16k": 35643,
+    "16k+4k": 92627,
+    "4k": 35623
   },
   "coverage": {
     "entries": 983,
@@ -48,9 +53,9 @@
   },
   "exports": {
     "16k": {
-      "classes": 24350,
+      "classes": 24353,
       "covering_cases": 16778,
-      "declared_cases": 18218402,
+      "declared_cases": 18218417,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -63,14 +68,14 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 134449,
+      "exported_cases": 134464,
       "forced_cases": 4285,
       "producers": 452
     },
     "4k": {
-      "classes": 24349,
+      "classes": 24352,
       "covering_cases": 16791,
-      "declared_cases": 18218401,
+      "declared_cases": 18218416,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -83,7 +88,7 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 134461,
+      "exported_cases": 134476,
       "forced_cases": 4285,
       "producers": 452
     }
@@ -99,18 +104,18 @@
     "sha256": "7930348c920a379aea8484c922d55e93d68bfdac9746580c3ffe83816a839316"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 14627821,
-  "pack_sha256": "e1252a44ae7ed879bec91df70f5eea923e01db20a8487ea161462c97fefdb3ec",
-  "producer_commit": "9d405bbcffb3f1a39d4febac6549d4141c6c8c8c",
-  "programs": 145591,
-  "records": 1199,
+  "pack_bytes": 14464249,
+  "pack_sha256": "68f70db2d898339c27401c2c9d8d991b60bd8b0d8eef5df77aa4d57e97dc6a0e",
+  "producer_commit": "6e681809dc86e5feb137c803da3e12eba4be608c",
+  "programs": 144665,
+  "records": 1196,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
     "broad": 51,
-    "full": 1026,
-    "narrow": 165723
+    "full": 997,
+    "narrow": 162845
   },
   "validator_cases": {
     "ignore-host-counter-register/v1": 1,

@@ -65,16 +65,8 @@ inline void require(bool condition, const char *message)
 [[nodiscard]] inline engine_tests::NativeRequirements
 native_requirements() noexcept
 {
-	using ::uml::cpu::ArmFeature;
-	/*
-	 * Native execution is enabled only when the host implements both the
-	 * instruction and its complete alternative-control behavior. This is the
-	 * same requirement enforced by the production JIT emitter.
-	 */
-	return engine_tests::NativeRequirements::features({
-		ArmFeature::f16f32dot,
-		ArmFeature::afp,
-	});
+	return engine_tests::NativeRequirements::features(
+		::uml::cpu::ArmFeature::f16f32dot);
 }
 
 } // namespace arm64_half_dot_test

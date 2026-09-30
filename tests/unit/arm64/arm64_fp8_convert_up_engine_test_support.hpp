@@ -18,7 +18,6 @@ namespace engine_tests = uml::emulator::tests;
 inline constexpr std::uint32_t fpsr_invalid = 1U << 0;
 inline constexpr std::uint32_t fpsr_underflow = 1U << 3;
 inline constexpr std::uint32_t fpsr_inexact = 1U << 4;
-inline constexpr std::uint32_t fpcr_ah = 1U << 1;
 
 struct Form final {
 	bool bfloat;
@@ -55,7 +54,6 @@ struct Rounded final {
 	std::uint32_t bits{};
 	bool inexact{};
 	bool pre_tiny{};
-	bool post_tiny{};
 };
 
 inline constexpr std::array forms{
@@ -191,8 +189,6 @@ inline constexpr std::array register_edges{
 		result.bits = 1U << fraction_bits;
 	else
 		result.bits = static_cast<std::uint32_t>(rounded);
-	result.post_tiny =
-		result.bits != 0U && result.bits < (1U << fraction_bits);
 	return result;
 }
 
@@ -212,18 +208,15 @@ inline constexpr std::array register_edges{
 }
 
 [[nodiscard]] constexpr Conversion convert(
-	std::uint8_t input, const Form &form,
-	std::uint32_t fpcr, std::uint64_t fpmr) noexcept
+	std::uint8_t input, const Form &form, std::uint64_t fpmr) noexcept
 {
 	const auto value = unpack(input, source_format(fpmr, form.source2));
-	const bool alternate = (fpcr & fpcr_ah) != 0U;
 	const std::uint16_t sign =
 		value.negative ? std::uint16_t{0x8000U} : std::uint16_t{};
 	if (value.type == Class::quiet_nan ||
 	    value.type == Class::signaling_nan) {
 		const auto nan = static_cast<std::uint16_t>(
-			(form.bfloat ? 0x7fc0U : 0x7e00U) |
-			(alternate ? 0x8000U : 0U));
+			form.bfloat ? 0x7fc0U : 0x7e00U);
 		return {nan, value.type == Class::signaling_nan ?
 			fpsr_invalid : 0U};
 	}
@@ -242,8 +235,7 @@ inline constexpr std::array register_edges{
 	std::uint32_t flags{};
 	if (rounded.inexact)
 		flags |= fpsr_inexact;
-	if (rounded.inexact &&
-	    (alternate ? rounded.post_tiny : rounded.pre_tiny))
+	if (rounded.inexact && rounded.pre_tiny)
 		flags |= fpsr_underflow;
 	return {static_cast<std::uint16_t>(sign | rounded.bits), flags};
 }
@@ -287,7 +279,7 @@ inline void fill_source(
 	for (unsigned lane = 0U; lane < 8U; ++lane) {
 		const auto converted = convert(
 			std::to_integer<std::uint8_t>(source[base + lane]),
-			form, initial.fpcr, initial.fpmr);
+			form, initial.fpmr);
 		write_lane(output, lane, converted.bits);
 		flags |= converted.flags;
 	}

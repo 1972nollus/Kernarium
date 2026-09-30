@@ -18,10 +18,8 @@
 #include "../detail/floating_conversion.hpp"
 #include "../detail/floating_fused.hpp"
 #include "../detail/floating_horizontal.hpp"
-#include "../detail/floating_indexed.hpp"
 #include "../detail/floating_integer_conversion.hpp"
 #include "../detail/floating_reciprocal.hpp"
-#include "../detail/floating_reciprocal_software.hpp"
 #include "../detail/floating_round.hpp"
 #include "../detail/floating_scale.hpp"
 #include "../detail/fp_state_access.hpp"
@@ -45,222 +43,33 @@ namespace {
 
 using uml::cpu::arm64::gadgets::vector_at;
 
-template<typename Floating>
-using HorizontalInteger = std::conditional_t<sizeof(Floating) == 2,
-	std::uint16_t, std::conditional_t<sizeof(Floating) == 4,
-		std::uint32_t, std::uint64_t>>;
-
-template<typename Floating>
-[[nodiscard]] Floating decode_horizontal_lane(
-	const std::array<std::byte, 16> &source, unsigned lane) noexcept
-{
-	return std::bit_cast<Floating>(static_cast<HorizontalInteger<Floating>>(
-		uml::cpu::arm64::detail::decode_little_endian(
-			std::span{source}.subspan(lane * sizeof(Floating),
-				sizeof(Floating)))));
-}
-
-template<typename Floating>
-void encode_horizontal_lane(std::array<std::byte, 16> &destination,
-	unsigned lane, Floating value) noexcept
-{
-	uml::cpu::arm64::detail::encode_little_endian(
-		std::bit_cast<HorizontalInteger<Floating>>(value),
-		std::span{destination}.subspan(lane * sizeof(Floating),
-			sizeof(Floating)));
-}
-
-template<typename Floating>
-[[nodiscard]] Floating native_horizontal_arithmetic(
-	uml::cpu::arm64::detail::FloatingHorizontalOperation operation,
-	Floating first, Floating second) noexcept
-{
-	Floating result;
-#define UML_HORIZONTAL_ARITHMETIC_ASM(suffix, instruction) \
-	__asm__ volatile(#instruction " %" #suffix "0, %" #suffix "1, %" #suffix \
-		"2" : "=w"(result) : "w"(first), "w"(second))
-#define UML_HORIZONTAL_ARITHMETIC_WIDTH(suffix) \
-	do { \
-		if (operation == uml::cpu::arm64::detail:: \
-			FloatingHorizontalOperation::absolute_difference) \
-			UML_HORIZONTAL_ARITHMETIC_ASM(suffix, fabd); \
-		else \
-			UML_HORIZONTAL_ARITHMETIC_ASM(suffix, fadd); \
-	} while (false)
-	if constexpr (sizeof(Floating) == 2U)
-		UML_HORIZONTAL_ARITHMETIC_WIDTH(h);
-	else if constexpr (sizeof(Floating) == 4U)
-		UML_HORIZONTAL_ARITHMETIC_WIDTH(s);
-	else
-		UML_HORIZONTAL_ARITHMETIC_WIDTH(d);
-#undef UML_HORIZONTAL_ARITHMETIC_WIDTH
-#undef UML_HORIZONTAL_ARITHMETIC_ASM
-	return result;
-}
-
-template<typename Floating>
-[[nodiscard]] Floating horizontal_ah_element(
-	uml::cpu::arm64::CpuState &cpu,
-	uml::cpu::arm64::detail::FloatingHorizontalOperation operation,
-	Floating first, Floating second) noexcept
-{
-	using Integer = HorizontalInteger<Floating>;
-	const auto first_bits = std::bit_cast<Integer>(first);
-	const auto second_bits = std::bit_cast<Integer>(second);
-	if (operation == uml::cpu::arm64::detail::
-			FloatingHorizontalOperation::absolute_difference ||
-	    operation == uml::cpu::arm64::detail::
-			FloatingHorizontalOperation::add) {
-		const auto prepared =
-			uml::cpu::arm64::detail::
-				prepare_floating_controlled_arithmetic(
-					first_bits, second_bits, cpu.fpcr,
-					operation == uml::cpu::arm64::detail::
-						FloatingHorizontalOperation::
-							absolute_difference);
-		cpu.fpsr |= prepared.exceptions;
-		if (prepared.complete)
-			return std::bit_cast<Floating>(prepared.bits);
-		first = std::bit_cast<Floating>(prepared.first);
-		second = std::bit_cast<Floating>(prepared.second);
-		std::uint64_t saved_fpcr{};
-		std::uint64_t saved_fpsr{};
-		__asm__ volatile("mrs %0, fpcr" : "=r"(saved_fpcr) : : "memory");
-		__asm__ volatile("mrs %0, fpsr" : "=r"(saved_fpsr) : : "memory");
-		const auto local_fpcr = (cpu.fpcr & 2U) != 0U ?
-			saved_fpcr & ~((std::uint64_t{1} << 24) |
-				(std::uint64_t{1} << 19)) : saved_fpcr;
-		if (local_fpcr != saved_fpcr)
-			__asm__ volatile("msr fpcr, %0" : :
-				"r"(local_fpcr) : "memory");
-		__asm__ volatile("msr fpsr, xzr" : : : "memory");
-		const auto result =
-			native_horizontal_arithmetic(operation, first, second);
-		std::uint64_t raised{};
-		__asm__ volatile("mrs %0, fpsr" : "=r"(raised) : : "memory");
-		__asm__ volatile("msr fpsr, %0" : :
-			"r"(saved_fpsr) : "memory");
-		if (local_fpcr != saved_fpcr)
-			__asm__ volatile("msr fpcr, %0" : :
-				"r"(saved_fpcr) : "memory");
-		const auto completed =
-			uml::cpu::arm64::detail::
-				complete_floating_controlled_arithmetic(
-					std::bit_cast<Integer>(result), cpu.fpcr,
-					static_cast<std::uint32_t>(raised));
-		cpu.fpsr |= completed.exceptions;
-		return std::bit_cast<Floating>(completed.bits);
-	}
-	if (operation == uml::cpu::arm64::detail::
-			FloatingHorizontalOperation::absolute_maximum ||
-	    operation == uml::cpu::arm64::detail::
-			FloatingHorizontalOperation::absolute_minimum) {
-		const auto result =
-			uml::cpu::arm64::detail::floating_absolute_minmax(
-				first_bits, second_bits,
-				operation == uml::cpu::arm64::detail::
-					FloatingHorizontalOperation::absolute_maximum,
-				(cpu.fpcr & (1U << 25)) != 0U);
-		cpu.fpsr |= result.exceptions;
-		return std::bit_cast<Floating>(result.bits);
-	}
-	const auto result =
-		uml::cpu::arm64::detail::floating_alternate_minmax(
-			first_bits, second_bits,
-			operation == uml::cpu::arm64::detail::
-					FloatingHorizontalOperation::maximum ||
-				operation == uml::cpu::arm64::detail::
-					FloatingHorizontalOperation::maximum_number,
-			cpu.fpcr,
-			operation == uml::cpu::arm64::detail::
-					FloatingHorizontalOperation::maximum_number ||
-				operation == uml::cpu::arm64::detail::
-					FloatingHorizontalOperation::minimum_number);
-	cpu.fpsr |= result.exceptions;
-	return std::bit_cast<Floating>(result.bits);
-}
-
-template<typename Floating>
-void floating_horizontal_ah_software(uml::cpu::arm64::CpuState &cpu,
+/* FAMAX/FAMIN on hosts without FEAT_FAMINMAX. */
+template<typename Integer>
+void floating_horizontal_absolute_software(uml::cpu::arm64::CpuState &cpu,
 	unsigned destination, unsigned first_register, unsigned second_register,
-	uml::cpu::arm64::detail::FloatingHorizontalOperation operation,
-	uml::cpu::arm64::detail::FloatingHorizontalForm form,
-	unsigned vector_bytes) noexcept
+	bool maximum, unsigned vector_bytes) noexcept
 {
 	const auto first_source = cpu.vectors[first_register].bytes;
 	const auto second_source = cpu.vectors[second_register].bytes;
 	std::array<std::byte, 16> result{};
-	if (operation == uml::cpu::arm64::detail::
-			FloatingHorizontalOperation::absolute_maximum ||
-	    operation == uml::cpu::arm64::detail::
-			FloatingHorizontalOperation::absolute_minimum) {
-		using Integer = HorizontalInteger<Floating>;
-		const unsigned lanes = vector_bytes / sizeof(Integer);
-		for (unsigned lane = 0; lane < lanes; ++lane) {
-			const auto first = static_cast<Integer>(
-				uml::cpu::arm64::detail::decode_little_endian(
-					std::span{first_source}.subspan(
-						lane * sizeof(Integer), sizeof(Integer))));
-			const auto second = static_cast<Integer>(
-				uml::cpu::arm64::detail::decode_little_endian(
-					std::span{second_source}.subspan(
-						lane * sizeof(Integer), sizeof(Integer))));
-			const auto value =
-				uml::cpu::arm64::detail::floating_absolute_minmax(
-					first, second,
-					operation == uml::cpu::arm64::detail::
-						FloatingHorizontalOperation::absolute_maximum,
-					(cpu.fpcr & (1U << 25)) != 0U);
-			uml::cpu::arm64::detail::encode_little_endian(value.bits,
-				std::span{result}.subspan(
-					lane * sizeof(Integer), sizeof(Integer)));
-			cpu.fpsr |= value.exceptions;
-		}
-		cpu.vectors[destination].bytes = result;
-		return;
-	}
-	if (form == uml::cpu::arm64::detail::
-			FloatingHorizontalForm::scalar_binary &&
-	    (cpu.fpcr & 4U) != 0U)
-		result = first_source;
-	const auto apply = [&](Floating first, Floating second) {
-		return horizontal_ah_element(cpu, operation, first, second);
-	};
-	using Form = uml::cpu::arm64::detail::FloatingHorizontalForm;
-	if (form == Form::scalar_binary) {
-		encode_horizontal_lane(result, 0, apply(
-			decode_horizontal_lane<Floating>(first_source, 0),
-			decode_horizontal_lane<Floating>(second_source, 0)));
-	} else if (form == Form::scalar_pairwise) {
-		encode_horizontal_lane(result, 0, apply(
-			decode_horizontal_lane<Floating>(first_source, 0),
-			decode_horizontal_lane<Floating>(first_source, 1)));
-	} else if (form == Form::vector_binary) {
-		const unsigned lanes = vector_bytes / sizeof(Floating);
-		for (unsigned lane = 0; lane < lanes; ++lane)
-			encode_horizontal_lane(result, lane, apply(
-				decode_horizontal_lane<Floating>(first_source, lane),
-				decode_horizontal_lane<Floating>(second_source, lane)));
-	} else if (form == Form::vector_pairwise) {
-		const unsigned lanes = vector_bytes / sizeof(Floating);
-		for (unsigned lane = 0; lane < lanes; ++lane) {
-			const auto &source = lane < lanes / 2U ?
-				first_source : second_source;
-			const unsigned pair = (lane % (lanes / 2U)) * 2U;
-			encode_horizontal_lane(result, lane, apply(
-				decode_horizontal_lane<Floating>(source, pair),
-				decode_horizontal_lane<Floating>(source, pair + 1U)));
-		}
-	} else {
-		const unsigned lanes = vector_bytes / sizeof(Floating);
-		std::array<Floating, 8> values{};
-		for (unsigned lane = 0; lane < lanes; ++lane)
-			values[lane] = decode_horizontal_lane<Floating>(first_source, lane);
-		for (unsigned remaining = lanes; remaining > 1U; remaining /= 2U)
-			for (unsigned lane = 0; lane < remaining / 2U; ++lane)
-				values[lane] = apply(values[lane * 2U],
-					values[lane * 2U + 1U]);
-		encode_horizontal_lane(result, 0, values[0]);
+	const unsigned lanes = vector_bytes / sizeof(Integer);
+	for (unsigned lane = 0; lane < lanes; ++lane) {
+		const auto first = static_cast<Integer>(
+			uml::cpu::arm64::detail::decode_little_endian(
+				std::span{first_source}.subspan(
+					lane * sizeof(Integer), sizeof(Integer))));
+		const auto second = static_cast<Integer>(
+			uml::cpu::arm64::detail::decode_little_endian(
+				std::span{second_source}.subspan(
+					lane * sizeof(Integer), sizeof(Integer))));
+		const auto value =
+			uml::cpu::arm64::detail::floating_absolute_minmax(
+				first, second, maximum,
+				(cpu.fpcr & (1U << 25)) != 0U);
+		uml::cpu::arm64::detail::encode_little_endian(value.bits,
+			std::span{result}.subspan(
+				lane * sizeof(Integer), sizeof(Integer)));
+		cpu.fpsr |= value.exceptions;
 	}
 	cpu.vectors[destination].bytes = result;
 }
@@ -298,116 +107,32 @@ void floating_scale_software(uml::cpu::arm64::CpuState &cpu,
 
 } // namespace
 
-extern "C" [[gnu::noinline]] void uml_arm64_floating_horizontal_ah_software(
+extern "C" [[gnu::noinline]] void
+uml_arm64_floating_horizontal_absolute_software(
 	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
 {
 	using Operation =
 		uml::cpu::arm64::detail::FloatingHorizontalOperation;
-	using Form = uml::cpu::arm64::detail::FloatingHorizontalForm;
 	const unsigned destination = operand & 31U;
 	const unsigned first_register = (operand >> 8) & 31U;
 	const unsigned second_register = (operand >> 16) & 31U;
-	const auto operation = static_cast<Operation>((operand >> 24) & 15U);
-	const auto form = static_cast<Form>((operand >> 28) & 15U);
+	const bool maximum = static_cast<Operation>((operand >> 24) & 15U) ==
+		Operation::absolute_maximum;
 	const unsigned width_code = (operand >> 32) & 3U;
 	const unsigned vector_bytes = (operand & (std::uintptr_t{1} << 34)) != 0U ?
 		16U : 8U;
 	if (width_code == 0U)
-		floating_horizontal_ah_software<_Float16>(*cpu, destination,
-			first_register, second_register, operation, form, vector_bytes);
+		floating_horizontal_absolute_software<std::uint16_t>(*cpu,
+			destination, first_register, second_register, maximum,
+			vector_bytes);
 	else if (width_code == 1U)
-		floating_horizontal_ah_software<float>(*cpu, destination,
-			first_register, second_register, operation, form, vector_bytes);
+		floating_horizontal_absolute_software<std::uint32_t>(*cpu,
+			destination, first_register, second_register, maximum,
+			vector_bytes);
 	else
-		floating_horizontal_ah_software<double>(*cpu, destination,
-			first_register, second_register, operation, form, vector_bytes);
-}
-
-namespace {
-
-template<typename Floating>
-void simd_indexed_floating_software(
-	uml::cpu::arm64::CpuState &cpu,
-	std::uint32_t instruction) noexcept
-{
-	using Integer = std::conditional_t<sizeof(Floating) == 2U,
-		std::uint16_t, std::conditional_t<sizeof(Floating) == 4U,
-			std::uint32_t, std::uint64_t>>;
-	using Operation =
-		uml::cpu::arm64::detail::IndexedFloatingOperation;
-	const unsigned destination = instruction & 31U;
-	const unsigned left_register = (instruction >> 5) & 31U;
-	unsigned element_register = (instruction >> 16) & 15U;
-	const bool scalar = (instruction & 0x1000'0000U) != 0U;
-	const bool q = (instruction & 0x4000'0000U) != 0U;
-	const bool extended = (instruction & 0x2000'0000U) != 0U;
-	const unsigned operation_bits = (instruction >> 12) & 15U;
-	unsigned index;
-	if constexpr (sizeof(Floating) == 2U) {
-		index = ((instruction >> 9) & 4U) |
-			((instruction >> 20) & 1U) |
-			((instruction >> 20) & 2U);
-	} else {
-		element_register |= ((instruction >> 20) & 1U) << 4;
-		if constexpr (sizeof(Floating) == 4U)
-			index = ((instruction >> 10) & 2U) |
-				((instruction >> 21) & 1U);
-		else
-			index = (instruction >> 11) & 1U;
-	}
-	const auto left_source = cpu.vectors[left_register].bytes;
-	const auto element_source = cpu.vectors[element_register].bytes;
-	const auto accumulator = cpu.vectors[destination].bytes;
-	std::array<std::byte, 16> result{};
-	const bool accumulating = operation_bits == 1U ||
-		operation_bits == 5U;
-	if (scalar && (cpu.fpcr & 4U) != 0U)
-		result = accumulating ? accumulator : left_source;
-	const auto selected_bits = static_cast<Integer>(
-		uml::cpu::arm64::detail::decode_little_endian(
-			std::span{element_source}.subspan(
-				index * sizeof(Floating), sizeof(Floating))));
-	const auto selected = std::bit_cast<Floating>(selected_bits);
-	const unsigned active_bytes = scalar ? sizeof(Floating) : q ? 16U : 8U;
-	const auto operation = operation_bits == 1U ? Operation::add :
-		operation_bits == 5U ? Operation::subtract :
-		extended ? Operation::multiply_extended : Operation::multiply;
-	for (unsigned lane = 0; lane < active_bytes / sizeof(Floating); ++lane) {
-		const auto left_bits = static_cast<Integer>(
-			uml::cpu::arm64::detail::decode_little_endian(
-				std::span{left_source}.subspan(
-					lane * sizeof(Floating), sizeof(Floating))));
-		const auto addend_bits = static_cast<Integer>(
-			uml::cpu::arm64::detail::decode_little_endian(
-				std::span{accumulator}.subspan(
-					lane * sizeof(Floating), sizeof(Floating))));
-		const auto lane_result =
-			uml::cpu::arm64::detail::indexed_floating_software(
-				std::bit_cast<Floating>(addend_bits),
-				std::bit_cast<Floating>(left_bits), selected,
-				operation, cpu.fpcr);
-		uml::cpu::arm64::detail::encode_little_endian(
-			lane_result.bits, std::span{result}.subspan(
-				lane * sizeof(Floating), sizeof(Floating)));
-		cpu.fpsr |= lane_result.exceptions;
-	}
-	cpu.vectors[destination].bytes = result;
-}
-
-} // namespace
-
-extern "C" [[gnu::noinline]] void
-uml_arm64_simd_indexed_floating_software(
-	uml::cpu::arm64::CpuState *cpu,
-	std::uint32_t instruction) noexcept
-{
-	const unsigned size = (instruction >> 22) & 3U;
-	if (size == 0U)
-		simd_indexed_floating_software<_Float16>(*cpu, instruction);
-	else if (size == 2U)
-		simd_indexed_floating_software<float>(*cpu, instruction);
-	else
-		simd_indexed_floating_software<double>(*cpu, instruction);
+		floating_horizontal_absolute_software<std::uint64_t>(*cpu,
+			destination, first_register, second_register, maximum,
+			vector_bytes);
 }
 
 extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software_4h(
@@ -449,10 +174,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_conversion_software(
 	const bool upper = (operand & (std::uintptr_t{1} << 33)) != 0U;
 	auto &destination = vector_at(cpu, destination_offset);
 	const auto source = vector_at(cpu, source_offset).bytes;
-	auto result = scalar && (cpu->fpcr & 4U) != 0U ?
-		destination.bytes :
-		upper ? destination.bytes :
-			std::array<std::byte, 16>{};
+	auto result = upper ? destination.bytes : std::array<std::byte, 16>{};
 	const unsigned lanes = scalar ? 1U : 4U;
 	const unsigned first_lane = upper ? 4U : 0U;
 	for (unsigned lane = 0; lane < lanes; ++lane) {
@@ -497,7 +219,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_multiply_long_software(
 				std::span{second}.subspan(second_lane * 2U, 2U)));
 		uml::cpu::arm64::detail::encode_little_endian(
 			uml::cpu::arm64::detail::bfloat_multiply_add(
-				addend, left, right, cpu->fpcr),
+				addend, left, right),
 			std::span{result}.subspan(lane * 4U, 4U));
 	}
 	destination.bytes = result;
@@ -535,7 +257,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_dot_software(
 				read_bfloat(first, first_pair),
 				read_bfloat(first, first_pair + 1U),
 				read_bfloat(second, second_pair),
-				read_bfloat(second, second_pair + 1U), cpu->fpcr),
+				read_bfloat(second, second_pair + 1U)),
 			std::span{result}.subspan(lane * 4U, 4U));
 	}
 	destination.bytes = result;
@@ -554,7 +276,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_matrix_software(
 	const auto right = vector(32U).bytes;
 	destination.bytes =
 		uml::cpu::arm64::detail::bfloat_matrix_multiply_add(
-			addends, left, right, cpu->fpcr);
+			addends, left, right);
 }
 
 extern "C" [[gnu::noinline]] void uml_arm64_half_fused_long_software(
@@ -667,8 +389,7 @@ uml_arm64_simd_floating_precision_vector_software(
 	const unsigned source_bytes = source_width / 8U;
 	const unsigned destination_bytes = destination_width / 8U;
 	const auto source = cpu->vectors[source_register].bytes;
-	auto result = (narrow && upper) || (scalar && (cpu->fpcr & 4U) != 0U) ?
-		cpu->vectors[destination].bytes :
+	auto result = narrow && upper ? cpu->vectors[destination].bytes :
 		std::array<std::byte, 16>{};
 	const unsigned source_base = !narrow && upper ? 8U : 0U;
 	const unsigned destination_base = narrow && upper ? 8U : 0U;
@@ -729,8 +450,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_floating_to_integer_software(
 				static_cast<std::uint32_t>(converted.value), false);
 		exceptions = converted.exceptions;
 	} else {
-		auto result = scalar && (cpu->fpcr & 4U) != 0U ?
-			cpu->vectors[destination].bytes : std::array<std::byte, 16>{};
+		std::array<std::byte, 16> result{};
 		const unsigned lanes = scalar ? 1U : bytes / lane_bytes;
 		for (unsigned lane = 0; lane < lanes; ++lane) {
 			const auto input =
@@ -794,8 +514,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_integer_to_floating_software(
 		cpu->vectors[source_register].bytes;
 	const std::uint64_t gpr_source = source_gpr ?
 		cpu->read_register(source_register, false) : 0U;
-	auto result = scalar && (cpu->fpcr & 4U) != 0U ?
-		cpu->vectors[destination].bytes : std::array<std::byte, 16>{};
+	std::array<std::byte, 16> result{};
 	std::uint32_t exceptions{};
 	for (unsigned lane = 0; lane < lanes; ++lane) {
 		const auto input = source_gpr ? gpr_source :
@@ -810,65 +529,6 @@ extern "C" [[gnu::noinline]] void uml_arm64_integer_to_floating_software(
 			std::span{result}.subspan(
 				lane * destination_bytes, destination_bytes));
 		exceptions |= converted.exceptions;
-	}
-	cpu->vectors[destination].bytes = result;
-	cpu->fpsr |= exceptions;
-}
-
-extern "C" [[gnu::noinline]] void uml_arm64_simd_floating_compare_software(
-	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
-{
-	using uml::cpu::arm64::detail::SimdFloatingCompareOperation;
-	const unsigned destination = operand & 31U;
-	const unsigned left_register = (operand >> 8) & 31U;
-	const unsigned right_register = (operand >> 16) & 31U;
-	const unsigned shape = (operand >> 24) & 15U;
-	const auto operation = static_cast<SimdFloatingCompareOperation>(
-		(operand >> 28) & 7U);
-	const bool zero = ((operand >> 32) & 1U) != 0U;
-	const bool scalar = ((operand >> 33) & 1U) != 0U;
-	constexpr std::array widths{16U, 32U, 64U, 16U, 16U, 32U, 32U, 64U};
-	constexpr std::array vector_bytes{2U, 4U, 8U, 8U, 16U, 8U, 16U, 16U};
-	const unsigned width = widths[shape];
-	const unsigned bytes = vector_bytes[shape];
-	const unsigned lane_bytes = width / 8U;
-	const auto left = cpu->vectors[left_register].bytes;
-	const auto right = zero ? std::array<std::byte, 16>{} :
-		cpu->vectors[right_register].bytes;
-	std::array<std::byte, 16> result{};
-	if (scalar && !zero && (cpu->fpcr & 4U) != 0U)
-		result = right;
-	std::uint32_t exceptions{};
-	for (unsigned offset = 0; offset < bytes; offset += lane_bytes) {
-		const auto first = uml::cpu::arm64::detail::decode_little_endian(
-			std::span{left}.subspan(offset, lane_bytes));
-		const auto second = zero ? 0U :
-			uml::cpu::arm64::detail::decode_little_endian(
-				std::span{right}.subspan(offset, lane_bytes));
-		const bool absolute =
-			operation == SimdFloatingCompareOperation::absolute_greater_equal ||
-			operation == SimdFloatingCompareOperation::absolute_greater;
-		const auto sign_mask = std::uint64_t{1} << (width - 1U);
-		const bool reverse = operation == SimdFloatingCompareOperation::less ||
-			operation == SimdFloatingCompareOperation::less_equal;
-		const auto comparison =
-			uml::cpu::arm64::detail::compare_floating_bits(
-				reverse ? second : absolute ? first & ~sign_mask : first,
-				reverse ? first : absolute ? second & ~sign_mask : second, width,
-				operation != SimdFloatingCompareOperation::equal, cpu->fpcr);
-		exceptions |= comparison.exceptions;
-		const bool match = operation == SimdFloatingCompareOperation::equal ?
-			comparison.nzcv == 0x6000'0000U :
-			operation == SimdFloatingCompareOperation::greater_equal ||
-			operation == SimdFloatingCompareOperation::less_equal ||
-			operation == SimdFloatingCompareOperation::absolute_greater_equal ?
-				comparison.nzcv == 0x6000'0000U ||
-				comparison.nzcv == 0x2000'0000U :
-				comparison.nzcv == 0x2000'0000U;
-		const auto lane = match ? width == 64U ? ~std::uint64_t{0} :
-			(std::uint64_t{1} << width) - 1U : 0U;
-		uml::cpu::arm64::detail::encode_little_endian(lane,
-			std::span{result}.subspan(offset, lane_bytes));
 	}
 	cpu->vectors[destination].bytes = result;
 	cpu->fpsr |= exceptions;

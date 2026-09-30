@@ -17,7 +17,7 @@ namespace engine = uml::emulator::tests;
 namespace {
 
 constexpr std::size_t transfer_offset = 64;
-constexpr std::uint32_t fpcr_mask = 0x07f7'9f07U;
+constexpr std::uint32_t fpcr_mask = arm64::fpcr_writable_mask;
 constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
 
 [[nodiscard]] engine::NativeRequirements native_requirements() {
@@ -130,6 +130,33 @@ void deferred_control_reads(engine::EngineHarness &harness) {
   });
 }
 
+void deferred_restore_masks_control(engine::EngineHarness &harness) {
+  // A signal-frame or ptrace restore reaches the engines through
+  // defer_fp_load. It must mask the saved FPCR as MSR FPCR does: FIZ, AH and
+  // NEP (no FEAT_AFP), Len and Stride (no AArch32), EBF (no FEAT_EBF16) and
+  // the RES0 bits read as zero, while FZ16, RMode, FZ, DN and AHP stay set.
+  // The trap enables stay clear here; deferred-trap-enable covers them.
+  constexpr std::uint32_t restored_fpcr = 0xffff'60ffU;
+  constexpr std::uint32_t architectural_fpcr = 0x07c8'0000U;
+  const auto vectors = deferred_vectors();
+  const auto initial = deferred_state(vectors, restored_fpcr, 0U);
+  if (initial.deferred_fpcr != architectural_fpcr ||
+      initial.effective_fpcr() != architectural_fpcr)
+    std::abort();
+
+  auto expected = initial;
+  expected.access_fp_state();
+  expected.fpcr = architectural_fpcr;
+  expected.registers[3] = architectural_fpcr;
+  harness.check({
+      .name = "deferred-restore-masks-control",
+      .instruction = 0xd53b'4403U, // MRS X3, FPCR
+      .initial = initial,
+      .expected = expected,
+      .native = native_requirements(),
+  });
+}
+
 void deferred_control_writes_persist(engine::EngineHarness &harness) {
   const auto vectors = deferred_vectors();
   auto initial = deferred_state(vectors, 0x0040'0000U, 0x8000'0001U);
@@ -210,13 +237,14 @@ int main() {
   deferred_vector_store(harness);
   deferred_vector_load(harness);
   deferred_control_reads(harness);
+  deferred_restore_masks_control(harness);
   deferred_control_writes_persist(harness);
   deferred_trap_enable(harness);
   deferred_state_survives_integer_block(harness);
   harness.print_summary("arm64-deferred-fp-state");
   const auto &counts = harness.counts();
-  if (counts.gadgets != 7 ||
-      counts.jit + counts.jit_skipped != 7)
+  if (counts.gadgets != 8 ||
+      counts.jit + counts.jit_skipped != 8)
     return 1;
   return 0;
 }

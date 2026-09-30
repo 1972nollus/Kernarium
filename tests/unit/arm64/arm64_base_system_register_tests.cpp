@@ -14,7 +14,7 @@ namespace test = arm64_system_test;
 
 namespace {
 
-constexpr std::uint32_t fpcr_mask = 0x07f7'9f07U;
+constexpr std::uint32_t fpcr_mask = arm64::fpcr_writable_mask;
 constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
 constexpr std::uint64_t fpmr_mask = 0x0000'003f'ff7f'c1ffULL;
 constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
