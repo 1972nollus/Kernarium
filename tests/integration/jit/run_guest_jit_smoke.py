@@ -52,6 +52,7 @@ HWCAP2_I8MM = 1 << 13
 HWCAP2_BF16 = 1 << 14
 HWCAP2_ECV = 1 << 19
 HWCAP2_CSSC = 1 << 34
+HWCAP2_MOPS = 1 << 43
 OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_AES", HWCAP_AES, "aes"),
     ("hw.optional.arm.FEAT_PMULL", HWCAP_PMULL, "pmull"),
@@ -92,9 +93,10 @@ HWCAP_NAMES = {
     **{bit: name for _, bit, name in OPTIONAL_HWCAPS},
 }
 # Advertised on every host.
-REQUIRED_HWCAPS2 = HWCAP2_CSSC
+REQUIRED_HWCAPS2 = HWCAP2_CSSC | HWCAP2_MOPS
 HWCAP2_NAMES = {
     HWCAP2_CSSC: "cssc",
+    HWCAP2_MOPS: "mops",
     **{bit: name for _, bit, name in OPTIONAL_HWCAPS2},
 }
 # The lines of arm64 Linux's /proc/cpuinfo block (arch/arm64/kernel/cpuinfo.c)

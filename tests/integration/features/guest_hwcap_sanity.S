@@ -59,6 +59,7 @@
 	.equ JSCVT_CASES,	16
 	.equ E_ECV,		25
 	.equ E_CSSC,		26
+	.equ E_MOPS,		27
 
 	.equ AT_HWCAP,		16
 	.equ AT_HWCAP2,		26
@@ -83,6 +84,7 @@
 	.equ HWCAP2_FRINT,	8
 	.equ HWCAP2_ECV,	19
 	.equ HWCAP2_CSSC,	34
+	.equ HWCAP2_MOPS,	43
 
 	/* The engine smoke accepts the payload only when it prints exactly "OK"
 	 * and exits zero, so a failure reports the family by name on stdout
@@ -465,6 +467,61 @@ _start:
 	b.ne	.Lfail_cssc
 .Lskip_cssc:
 
+	tbz	x29, #HWCAP2_MOPS, .Lskip_mops
+	/* FEAT_MOPS: a CPY whose destination overlaps above its source, which
+	 * must copy as if backward, then a SET, each as the prologue, main and
+	 * epilogue a compiler emits; ID_AA64ISAR2_EL1.MOPS, the field Linux
+	 * derives HWCAP2_MOPS from, reads 1. The scratch bytes start as their
+	 * own offsets. */
+	adrp	x22, scratch
+	add	x22, x22, :lo12:scratch
+	mov	x23, #0
+1:	strb	w23, [x22, x23]
+	add	x23, x23, #1
+	cmp	x23, #64
+	b.ne	1b
+	add	x23, x22, #8		/* bytes 0-31 to 8-39 */
+	mov	x25, x22
+	mov	x24, #32
+	.inst	0x1d190717		/* cpyp [x23]!, [x25]!, x24! */
+	.inst	0x1d590717		/* cpym [x23]!, [x25]!, x24! */
+	.inst	0x1d990717		/* cpye [x23]!, [x25]!, x24! */
+	cbnz	x24, .Lfail_mops
+	add	x23, x22, #48		/* bytes 48-55 to 0xa5 */
+	mov	x24, #8
+	mov	x25, #0xa5
+	.inst	0x19d90717		/* setp [x23]!, x24!, x25 */
+	.inst	0x19d94717		/* setm [x23]!, x24!, x25 */
+	.inst	0x19d98717		/* sete [x23]!, x24!, x25 */
+	cbnz	x24, .Lfail_mops
+	add	x26, x22, #56
+	cmp	x23, x26
+	b.ne	.Lfail_mops
+	mov	x23, #0
+2:	ldrb	w24, [x22, x23]
+	mov	x25, x23		/* 0-7, 40-47 and 56-63 are untouched */
+	cmp	x23, #8
+	b.lo	3f
+	sub	x25, x23, #8		/* 8-39 hold 0-31 */
+	cmp	x23, #40
+	b.lo	3f
+	mov	x25, x23
+	cmp	x23, #48
+	b.lo	3f
+	mov	x26, #0xa5
+	cmp	x23, #56
+	csel	x25, x26, x25, lo
+3:	cmp	x24, x25
+	b.ne	.Lfail_mops
+	add	x23, x23, #1
+	cmp	x23, #64
+	b.ne	2b
+	mrs	x26, s3_0_c0_c6_2	/* ID_AA64ISAR2_EL1 */
+	ubfx	x26, x26, #16, #4
+	cmp	x26, #1
+	b.ne	.Lfail_mops
+.Lskip_mops:
+
 	adrp	x1, success_message
 	add	x1, x1, :lo12:success_message
 	mov	x0, #1
@@ -499,6 +556,7 @@ _start:
 .Lfail_jscvt_fpsr:	fail E_JSCVT_FPSR, msg_jscvt_fpsr
 .Lfail_ecv:		fail E_ECV, msg_ecv
 .Lfail_cssc:		fail E_CSSC, msg_cssc
+.Lfail_mops:		fail E_MOPS, msg_mops
 
 .Lexit:
 	mov	x8, #NR_EXIT_GROUP
@@ -612,6 +670,8 @@ msg_ecv:
 	.ascii "FAIL ecv        \n"
 msg_cssc:
 	.ascii "FAIL cssc       \n"
+msg_mops:
+	.ascii "FAIL mops       \n"
 success_message:
 	.ascii "OK\n"
 

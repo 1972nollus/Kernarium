@@ -133,9 +133,9 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 		return value;
 	}
 	if (group == 6U && selector == 2U)
-		/* ID_AA64ISAR2_EL1. Both engines execute FEAT_CSSC on every
-		 * host. */
-		return field(1, 52);
+		/* ID_AA64ISAR2_EL1. Both engines execute FEAT_MOPS and
+		 * FEAT_CSSC on every host. */
+		return field(1, 16) | field(1, 52);
 	if (group == 7U && selector == 0U)
 		/* ID_AA64MMFR0_EL1. ECV is the one field Linux shows EL0, and
 		 * where it derives HWCAP2_ECV. */

@@ -42,6 +42,7 @@ constexpr unsigned long hwcap2_i8mm = 1UL << 13;
 constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 constexpr unsigned long hwcap2_ecv = 1UL << 19;
 constexpr unsigned long hwcap2_cssc = 1UL << 34;
+constexpr unsigned long hwcap2_mops = 1UL << 43;
 [[nodiscard]] unsigned long virtual_hwcap() noexcept
 {
 	const auto &host = ::uml::platform::apple::probed_host_capabilities();
@@ -170,6 +171,9 @@ extern "C" unsigned long darwin_uml_guest_hwcap2(void)
 	 * execute on every host: natively where the host has FEAT_CSSC, and
 	 * otherwise as short sequences of base instructions. */
 	unsigned long result = hwcap2_cssc;
+	/* CPY, CPYF and SET, which both engines execute on every host through
+	 * one host memmove or memset per page region. */
+	result |= hwcap2_mops;
 	/* SMMLA/UMMLA/USMMLA, reaching the native matrix emitters in both
 	 * engines. */
 	if (host.has(::uml::platform::ArmFeature::i8mm))

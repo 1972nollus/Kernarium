@@ -37,6 +37,14 @@ and otherwise as short sequences of base instructions, so HWCAP2_CSSC and
 ID_AA64ISAR2_EL1.CSSC are always set. The guest HWCAP sanity payload checks
 one form of each operation in the guest.
 
+FEAT_MOPS is implemented on every host as option B: the prologue formats the
+registers, the main stage moves nothing, and the epilogue moves every byte, one
+host memmove or memset per source and destination page region. A CPY that
+overlaps with its destination above its source copies backward. A forward-only
+CPYF in that arrangement moves each region in 64-byte blocks, and the corpus
+pins that result. Both engines share this code, so HWCAP2_MOPS and
+ID_AA64ISAR2_EL1.MOPS are always set.
+
 That status is not exhaustive variant proof. No inventory entry has an
 independently reviewed complete partition of all forms, widths, aliases,
 architectural state, optional features, reserved encodings, fault ordering, and

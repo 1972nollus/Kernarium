@@ -41,6 +41,7 @@ constexpr unsigned long hwcap2_i8mm = 1UL << 13;
 constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 constexpr unsigned long hwcap2_ecv = 1UL << 19;
 constexpr unsigned long hwcap2_cssc = 1UL << 34;
+constexpr unsigned long hwcap2_mops = 1UL << 43;
 constexpr std::uint64_t feature_gate_pc = 0x4f90'0000;
 
 [[nodiscard]] constexpr std::uint32_t pstate_immediate(
@@ -128,8 +129,10 @@ void guest_capabilities_match_host()
 	require_propagated(capabilities2, hwcap2_ecv,
 			   host.has(::uml::cpu::ArmFeature::ecv));
 	require((capabilities2 & hwcap2_cssc) != 0);
+	require((capabilities2 & hwcap2_mops) != 0);
 	constexpr auto advertised2 = hwcap2_frint | hwcap2_i8mm |
-		hwcap2_bf16 | hwcap2_flagm2 | hwcap2_ecv | hwcap2_cssc;
+		hwcap2_bf16 | hwcap2_flagm2 | hwcap2_ecv | hwcap2_cssc |
+		hwcap2_mops;
 	require((capabilities2 & ~advertised2) == 0);
 }
 
