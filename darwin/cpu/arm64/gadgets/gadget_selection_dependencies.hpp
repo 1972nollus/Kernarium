@@ -18,10 +18,8 @@
 #include "../detail/floating_conversion.hpp"
 #include "../detail/floating_fused.hpp"
 #include "../detail/floating_horizontal.hpp"
-#include "../detail/floating_indexed.hpp"
 #include "../detail/floating_integer_conversion.hpp"
 #include "../detail/floating_reciprocal.hpp"
-#include "../detail/floating_reciprocal_software.hpp"
 #include "../detail/floating_round.hpp"
 #include "../detail/floating_scale.hpp"
 #include "../detail/fp8.hpp"
@@ -63,7 +61,6 @@ using Gadget = void (*)();
 [[nodiscard]] bool host_has_lrcpc3() noexcept;
 [[nodiscard]] bool host_has_lut() noexcept;
 [[nodiscard]] bool host_has_frintts() noexcept;
-[[nodiscard]] bool host_has_afp() noexcept;
 [[nodiscard]] bool host_has_faminmax() noexcept;
 [[nodiscard]] bool host_has_fp8() noexcept;
 [[nodiscard]] bool host_has_fp8dot2() noexcept;
@@ -72,7 +69,6 @@ using Gadget = void (*)();
 [[nodiscard]] bool host_has_f8f16mm() noexcept;
 [[nodiscard]] bool host_has_f8f32mm() noexcept;
 [[nodiscard]] bool host_has_bf16() noexcept;
-[[nodiscard]] bool host_has_ebf16() noexcept;
 [[nodiscard]] bool host_has_fhm() noexcept;
 [[nodiscard]] bool host_has_f16mm() noexcept;
 [[nodiscard]] bool host_has_f16f32mm() noexcept;

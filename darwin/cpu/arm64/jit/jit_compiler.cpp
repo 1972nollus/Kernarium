@@ -359,7 +359,7 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
   }
 
 [[nodiscard]] bool JitCompiler::emit_system_register(std::uint32_t instruction) {
-    constexpr std::uint32_t fpcr_mask = 0x07f7'9f07U;
+    constexpr std::uint32_t fpcr_mask = arm64::fpcr_writable_mask;
     constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
     constexpr std::uint64_t fpmr_mask = 0x0000'003f'ff7f'c1ffULL;
     const auto system = instruction & 0xffff'ffe0U;

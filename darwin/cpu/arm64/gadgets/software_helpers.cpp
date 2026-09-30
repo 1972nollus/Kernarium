@@ -19,10 +19,8 @@
 #include "../detail/floating_conversion.hpp"
 #include "../detail/floating_fused.hpp"
 #include "../detail/floating_horizontal.hpp"
-#include "../detail/floating_indexed.hpp"
 #include "../detail/floating_integer_conversion.hpp"
 #include "../detail/floating_reciprocal.hpp"
-#include "../detail/floating_reciprocal_software.hpp"
 #include "../detail/floating_round.hpp"
 #include "../detail/floating_scale.hpp"
 #include "../detail/fp_state_access.hpp"
@@ -83,37 +81,6 @@ uml_arm64_simd_rdm_software(CpuState *cpu,
 		execute_saturating_rounding_multiply_accumulate(*cpu, instruction);
 }
 
-extern "C" [[gnu::noinline]] void
-uml_arm64_floating_reciprocal_software(CpuState *cpu,
-	std::uintptr_t operand, unsigned descriptor) noexcept
-{
-	constexpr auto vector_base = offsetof(CpuState, vectors);
-	const auto decode_register = [](std::uintptr_t offset) {
-		return static_cast<unsigned>(
-			(offset - vector_base) / sizeof(uml::cpu::arm64::VectorRegister));
-	};
-	const auto operation = static_cast<
-		uml::cpu::arm64::detail::FloatingReciprocalOperation>(
-			descriptor & 7U);
-	const bool scalar = (descriptor & 8U) != 0U;
-	const unsigned width_code = (descriptor >> 4) & 3U;
-	const unsigned width = width_code == 0U ? 16U :
-		width_code == 1U ? 32U : 64U;
-	const unsigned vector_bytes =
-		scalar || (descriptor & 64U) != 0U ? 16U : 8U;
-	const bool unary =
-		operation != uml::cpu::arm64::detail::
-				FloatingReciprocalOperation::reciprocal_step &&
-		operation != uml::cpu::arm64::detail::
-				FloatingReciprocalOperation::reciprocal_sqrt_step;
-	const uml::cpu::arm64::detail::FloatingReciprocal decoded{
-		true, true, scalar, unary, width, vector_bytes, operation};
-	uml::cpu::arm64::detail::execute_floating_reciprocal_software(
-		*cpu, decoded, decode_register(operand & 0xffffU),
-		decode_register((operand >> 16) & 0xffffU),
-		unary ? 0U : decode_register((operand >> 32) & 0xffffU));
-}
-
 [[nodiscard]] std::uint32_t fp8_read_lane(
 	const std::array<std::byte, 16> &bytes, unsigned offset,
 	unsigned width) noexcept
@@ -143,7 +110,7 @@ template<unsigned Count>
 		right[i] = std::to_integer<std::uint8_t>(second[second_offset + i]);
 	}
 	return uml::cpu::arm64::detail::fp8_dot_add(addend, width,
-		left, right, cpu.fpcr, cpu.fpmr);
+		left, right, cpu.fpmr);
 }
 
 template<Fp8Operation Operation, bool Upper = false, bool Source2 = false,
@@ -167,7 +134,7 @@ template<Fp8Operation Operation, bool Upper = false, bool Source2 = false,
 			const auto converted = uml::cpu::arm64::detail::fp8_to_binary(
 				std::to_integer<std::uint8_t>(first[(Upper ? 8U : 0U) + lane]),
 				Source2, Operation == Fp8Operation::convert_to_bfloat,
-				cpu->fpcr, cpu->fpmr);
+				cpu->fpmr);
 			fp8_write_lane(result, lane * 2U, 16U, converted.bits);
 			cpu->fpsr |= converted.exceptions;
 		}
@@ -176,10 +143,10 @@ template<Fp8Operation Operation, bool Upper = false, bool Source2 = false,
 		for (unsigned lane = 0; lane < Lanes; ++lane) {
 			const auto one = uml::cpu::arm64::detail::binary_to_fp8(
 				fp8_read_lane(first, lane * 2U, 16U), 16U,
-				cpu->fpcr, cpu->fpmr);
+				cpu->fpmr);
 			const auto two = uml::cpu::arm64::detail::binary_to_fp8(
 				fp8_read_lane(second, lane * 2U, 16U), 16U,
-				cpu->fpcr, cpu->fpmr);
+				cpu->fpmr);
 			result[lane] = static_cast<std::byte>(one.bits);
 			result[Lanes + lane] = static_cast<std::byte>(two.bits);
 			cpu->fpsr |= one.exceptions | two.exceptions;
@@ -190,10 +157,10 @@ template<Fp8Operation Operation, bool Upper = false, bool Source2 = false,
 		for (unsigned lane = 0; lane < 4U; ++lane) {
 			const auto one = uml::cpu::arm64::detail::binary_to_fp8(
 				fp8_read_lane(first, lane * 4U, 32U), 32U,
-				cpu->fpcr, cpu->fpmr);
+				cpu->fpmr);
 			const auto two = uml::cpu::arm64::detail::binary_to_fp8(
 				fp8_read_lane(second, lane * 4U, 32U), 32U,
-				cpu->fpcr, cpu->fpmr);
+				cpu->fpmr);
 			const unsigned output = Upper ? 8U : 0U;
 			result[output + lane] = static_cast<std::byte>(one.bits);
 			result[output + 4U + lane] = static_cast<std::byte>(two.bits);
@@ -489,8 +456,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_floating_round_sized_software(
 	const unsigned vector_bytes = scalar ? width / 8U :
 		(operand & (std::uintptr_t{1} << 20)) != 0U ? 16U : 8U;
 	const auto source = cpu->vectors[source_register].bytes;
-	auto result = scalar && (cpu->fpcr & 4U) != 0U ?
-		cpu->vectors[destination].bytes : std::array<std::byte, 16>{};
+	std::array<std::byte, 16> result{};
 	const unsigned lane_bytes = width / 8U;
 	const unsigned lanes = scalar ? 1U : vector_bytes / lane_bytes;
 	for (unsigned lane = 0; lane < lanes; ++lane) {

@@ -61,8 +61,7 @@ void translation_selects_host_path_and_direct_offsets()
 	test::shared::require(words.size() >= 2U,
 		"BFMMLA gadget stream is truncated");
 	const auto &host = ::uml::platform::apple::probed_host_capabilities();
-	const bool native = host.has(::uml::cpu::ArmFeature::bf16) &&
-		host.has(::uml::cpu::ArmFeature::ebf16);
+	const bool native = host.has(::uml::cpu::ArmFeature::bf16);
 	const auto expected = native ?
 		uml_arm64_gadget_bfloat_matrix_native :
 		uml_arm64_gadget_bfloat_matrix_software;

@@ -1297,53 +1297,10 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		UML_HORIZONTAL_VECTOR(fmaxnmp_vector),
 		UML_HORIZONTAL_VECTOR(fminp_vector),
 		UML_HORIZONTAL_VECTOR(fminnmp_vector)};
-	static constexpr std::array scalar_arithmetic_checked{
-		UML_HORIZONTAL_SCALAR(fabd_checked_scalar),
-		UML_HORIZONTAL_SCALAR(faddp_checked_scalar)};
-	static constexpr std::array vector_arithmetic_checked{
-		UML_HORIZONTAL_VECTOR(fabd_checked_vector),
-		UML_HORIZONTAL_VECTOR(faddp_checked_vector)};
-	static constexpr std::array scalar_ah{
-		std::array{UML_HORIZONTAL_SCALAR(fmax_ah_scalar),
-			UML_HORIZONTAL_SCALAR(fmaxp_ah_scalar)},
-		std::array{UML_HORIZONTAL_SCALAR(fmaxnm_ah_scalar),
-			UML_HORIZONTAL_SCALAR(fmaxnmp_ah_scalar)},
-		std::array{UML_HORIZONTAL_SCALAR(fmin_ah_scalar),
-			UML_HORIZONTAL_SCALAR(fminp_ah_scalar)},
-		std::array{UML_HORIZONTAL_SCALAR(fminnm_ah_scalar),
-			UML_HORIZONTAL_SCALAR(fminnmp_ah_scalar)}};
-	static constexpr std::array vector_ah{
-		std::array{UML_HORIZONTAL_VECTOR(fmax_ah_vector),
-			UML_HORIZONTAL_VECTOR(fmaxp_ah_vector)},
-		std::array{UML_HORIZONTAL_VECTOR(fmaxnm_ah_vector),
-			UML_HORIZONTAL_VECTOR(fmaxnmp_ah_vector)},
-		std::array{UML_HORIZONTAL_VECTOR(fmin_ah_vector),
-			UML_HORIZONTAL_VECTOR(fminp_ah_vector)},
-		std::array{UML_HORIZONTAL_VECTOR(fminnm_ah_vector),
-			UML_HORIZONTAL_VECTOR(fminnmp_ah_vector)}};
 #undef UML_HORIZONTAL_VECTOR
 #undef UML_HORIZONTAL_SCALAR
 
 	using Form = detail::FloatingHorizontalForm;
-	using Operation = detail::FloatingHorizontalOperation;
-	if (!host_has_afp() && operation <=
-			static_cast<unsigned>(Operation::add)) {
-		if (decoded.form == Form::scalar_binary ||
-		    decoded.form == Form::scalar_pairwise)
-			return scalar_arithmetic_checked[operation][scalar_shape];
-		return vector_arithmetic_checked[operation][vector_shape];
-	}
-	if (decoded.form != Form::reduction &&
-	    detail::floating_horizontal_uses_ah(decoded) && !host_has_afp()) {
-		const unsigned pair = decoded.form == Form::scalar_pairwise ||
-			decoded.form == Form::vector_pairwise;
-		const unsigned ah_operation = operation -
-			static_cast<unsigned>(Operation::maximum);
-		if (decoded.form == Form::scalar_binary ||
-		    decoded.form == Form::scalar_pairwise)
-			return scalar_ah[ah_operation][pair][scalar_shape];
-		return vector_ah[ah_operation][pair][vector_shape];
-	}
 	if (decoded.form == Form::scalar_binary)
 		return scalar_binary[operation][scalar_shape];
 	if (decoded.form == Form::vector_binary)
@@ -1363,17 +1320,9 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		UML_HORIZONTAL_REDUCE(fmaxnmv),
 		UML_HORIZONTAL_REDUCE(fminv),
 		UML_HORIZONTAL_REDUCE(fminnmv)};
-	static constexpr std::array reduction_ah{
-		UML_HORIZONTAL_REDUCE(fmaxv_ah),
-		UML_HORIZONTAL_REDUCE(fmaxnmv_ah),
-		UML_HORIZONTAL_REDUCE(fminv_ah),
-		UML_HORIZONTAL_REDUCE(fminnmv_ah)};
 #undef UML_HORIZONTAL_REDUCE
 	const unsigned shape = decoded.width == 32U ? 2U :
 		decoded.vector_bytes == 16U ? 1U : 0U;
-	if (detail::floating_horizontal_uses_ah(decoded) && !host_has_afp())
-		return reduction_ah[operation -
-			static_cast<unsigned>(Operation::maximum)][shape];
 	return reduction[operation][shape];
 }
 
@@ -1420,7 +1369,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		return uml_arm64_fp8_native_down_table[index];
 	}
 	if (decoded.operation == Operation::dot_half) {
-		if (!host_has_fp8dot2() || !host_has_afp())
+		if (!host_has_fp8dot2())
 			return uml_arm64_gadget_fp8_software;
 		const unsigned q = decoded.lanes == 8U;
 		return decoded.by_element ?
@@ -1428,7 +1377,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_dot_h_vector_table[q];
 	}
 	if (decoded.operation == Operation::dot_single) {
-		if (!host_has_fp8dot4() || !host_has_afp())
+		if (!host_has_fp8dot4())
 			return uml_arm64_gadget_fp8_software;
 		const unsigned q = decoded.lanes == 4U;
 		return decoded.by_element ?
@@ -1436,7 +1385,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_dot_s_vector_table[q];
 	}
 	if (decoded.operation == Operation::multiply_half) {
-		if (!host_has_fp8fma() || !host_has_afp())
+		if (!host_has_fp8fma())
 			return uml_arm64_gadget_fp8_software;
 		return decoded.by_element ?
 			uml_arm64_fp8_native_mul_h_indexed_table[
@@ -1444,7 +1393,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_mul_h_vector_table[decoded.selection];
 	}
 	if (decoded.operation == Operation::multiply_single) {
-		if (!host_has_fp8fma() || !host_has_afp())
+		if (!host_has_fp8fma())
 			return uml_arm64_gadget_fp8_software;
 		return decoded.by_element ?
 			uml_arm64_fp8_native_mul_s_indexed_table[
@@ -1452,10 +1401,10 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_mul_s_vector_table[decoded.selection];
 	}
 	if (decoded.operation == Operation::matrix_half)
-		return host_has_f8f16mm() && host_has_afp() ?
+		return host_has_f8f16mm() ?
 			uml_arm64_fp8_native_matrix_table[0] :
 			uml_arm64_gadget_fp8_software;
-	return host_has_f8f32mm() && host_has_afp() ?
+	return host_has_f8f32mm() ?
 		uml_arm64_fp8_native_matrix_table[1] :
 		uml_arm64_gadget_fp8_software;
 }
@@ -1463,7 +1412,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] Gadget bfloat_conversion_gadget(
 	const detail::BFloatConversion &decoded) noexcept
 {
-	if (!host_has_bf16() || !host_has_afp())
+	if (!host_has_bf16())
 		return uml_arm64_gadget_bfloat_convert_software;
 	if (decoded.scalar)
 		return uml_arm64_gadget_bfloat_convert_scalar_native;
@@ -1474,7 +1423,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] Gadget bfloat_multiply_long_gadget(
 	const detail::BFloatMultiplyLong &decoded) noexcept
 {
-	if (!host_has_bf16() || !host_has_afp())
+	if (!host_has_bf16())
 		return uml_arm64_gadget_bfloat_multiply_long_software;
 	static constexpr std::array vector{
 		uml_arm64_gadget_bfloat_multiply_long_native_vector_b,
@@ -1504,7 +1453,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 
 [[nodiscard]] Gadget bfloat_dot_gadget(const detail::BFloatDot &decoded) noexcept
 {
-	if (!host_has_bf16() || !host_has_ebf16())
+	if (!host_has_bf16())
 		return uml_arm64_gadget_bfloat_dot_software;
 	static constexpr std::array vector{
 		uml_arm64_gadget_bfloat_dot_native_vector_2s,
@@ -1526,7 +1475,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 
 [[nodiscard]] Gadget bfloat_matrix_gadget() noexcept
 {
-	return host_has_bf16() && host_has_ebf16() ?
+	return host_has_bf16() ?
 		uml_arm64_gadget_bfloat_matrix_native :
 		uml_arm64_gadget_bfloat_matrix_software;
 }
@@ -1534,7 +1483,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] Gadget half_fused_long_gadget(
 	const detail::HalfFusedLong &decoded) noexcept
 {
-	if (!host_has_fhm() || !host_has_afp())
+	if (!host_has_fhm())
 		return uml_arm64_gadget_half_fused_long_software;
 #define UML_HALF_FUSED_LONG_NATIVE(name) \
 	uml_arm64_gadget_half_fused_long_native_##name
@@ -1576,8 +1525,8 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 
 [[nodiscard]] Gadget half_matrix_gadget(const detail::HalfMatrix &decoded) noexcept
 {
-	const bool native = host_has_afp() &&
-		(decoded.widening ? host_has_f16f32mm() : host_has_f16mm());
+	const bool native =
+		decoded.widening ? host_has_f16f32mm() : host_has_f16mm();
 	if (!native)
 		return uml_arm64_gadget_half_matrix_software;
 	static constexpr std::array gadgets{
@@ -1588,7 +1537,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 
 [[nodiscard]] Gadget half_dot_gadget(const detail::HalfDot &decoded) noexcept
 {
-	if (!host_has_f16f32dot() || !host_has_afp())
+	if (!host_has_f16f32dot())
 		return uml_arm64_gadget_half_dot_software;
 	static constexpr std::array vector{
 		uml_arm64_gadget_half_dot_native_vector_2s,
@@ -1620,12 +1569,8 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_2s, \
 	uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_4s, \
 	uml_arm64_gadget_floating_reciprocal_##host##_##name##_vector_2d}
-#define UML_RECIPROCAL_SCALAR_PAIR(name) std::array{ \
-	UML_RECIPROCAL_SCALAR(native, name), \
-	UML_RECIPROCAL_SCALAR(checked, name)}
-#define UML_RECIPROCAL_VECTOR_PAIR(name) std::array{ \
-	UML_RECIPROCAL_VECTOR(native, name), \
-	UML_RECIPROCAL_VECTOR(checked, name)}
+#define UML_RECIPROCAL_SCALAR_PAIR(name) UML_RECIPROCAL_SCALAR(native, name)
+#define UML_RECIPROCAL_VECTOR_PAIR(name) UML_RECIPROCAL_VECTOR(native, name)
 	static constexpr std::array scalar{
 		UML_RECIPROCAL_SCALAR_PAIR(frecpe),
 		UML_RECIPROCAL_SCALAR_PAIR(frecps),
@@ -1635,8 +1580,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	static constexpr std::array vector{
 		UML_RECIPROCAL_VECTOR_PAIR(frecpe),
 		UML_RECIPROCAL_VECTOR_PAIR(frecps),
-		std::array{std::array<Gadget, 5>{},
-			std::array<Gadget, 5>{}},
+		std::array<Gadget, 5>{},
 		UML_RECIPROCAL_VECTOR_PAIR(frsqrte),
 		UML_RECIPROCAL_VECTOR_PAIR(frsqrts)};
 #undef UML_RECIPROCAL_VECTOR_PAIR
@@ -1644,17 +1588,16 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 #undef UML_RECIPROCAL_VECTOR
 #undef UML_RECIPROCAL_SCALAR
 	const unsigned operation = static_cast<unsigned>(decoded.operation);
-	const unsigned host_variant = host_has_afp() ? 0U : 1U;
 	if (decoded.scalar) {
 		const unsigned shape = decoded.width == 16U ? 0U :
 			decoded.width == 32U ? 1U : 2U;
-		return scalar[operation][host_variant][shape];
+		return scalar[operation][shape];
 	}
 	const unsigned shape = decoded.width == 16U ?
 		(decoded.vector_bytes == 16U ? 1U : 0U) :
 		decoded.width == 32U ?
 		(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
-	return vector[operation][host_variant][shape];
+	return vector[operation][shape];
 }
 
 [[nodiscard]] Gadget floating_complex_gadget(
@@ -2396,11 +2339,6 @@ enum class SimdSaturatingShiftLeft {
 		UML_SIMD_INDEXED_FLOATING_FAMILY(fmls),
 		UML_SIMD_INDEXED_FLOATING_FAMILY(fmul),
 		UML_SIMD_INDEXED_FLOATING_FAMILY(fmulx)};
-	static constexpr std::array checked_families{
-		UML_SIMD_INDEXED_FLOATING_FAMILY(fmla_checked),
-		UML_SIMD_INDEXED_FLOATING_FAMILY(fmls_checked),
-		UML_SIMD_INDEXED_FLOATING_FAMILY(fmul_checked),
-		UML_SIMD_INDEXED_FLOATING_FAMILY(fmulx_checked)};
 #undef UML_SIMD_INDEXED_FLOATING_FAMILY
 	unsigned family;
 	if (operation == 1U && !extended)
@@ -2420,9 +2358,7 @@ enum class SimdSaturatingShiftLeft {
 		shape = scalar ? 6U : 7U;
 	else
 		return nullptr;
-	const auto &families = host_has_afp() ?
-		native_families : checked_families;
-	return index < 8U ? families[family][shape][index] : nullptr;
+	return index < 8U ? native_families[family][shape][index] : nullptr;
 }
 
 [[nodiscard]] Gadget simd_fmulx_gadget(bool scalar, bool q, bool half,

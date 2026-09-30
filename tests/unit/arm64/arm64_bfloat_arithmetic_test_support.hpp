@@ -17,9 +17,6 @@ namespace arm64_bfloat_arithmetic_test {
 namespace arm64 = uml::cpu::arm64;
 namespace engine_tests = uml::emulator::tests;
 
-inline constexpr std::uint32_t fpcr_fiz = 1U << 0;
-inline constexpr std::uint32_t fpcr_ah = 1U << 1;
-
 [[noreturn]] inline void fail(const char *message)
 {
 	std::fprintf(stderr, "%s\n", message);
@@ -33,16 +30,10 @@ inline void require(bool condition, const char *message)
 }
 
 [[nodiscard]] inline engine_tests::NativeRequirements
-native_requirements(std::uint32_t fpcr, bool extended_dot)
+native_requirements()
 {
-	using ::uml::cpu::ArmFeature;
-	auto requirements =
-		engine_tests::NativeRequirements::features(ArmFeature::bf16);
-	if (extended_dot)
-		requirements = requirements | ArmFeature::ebf16;
-	if ((fpcr & (fpcr_fiz | fpcr_ah)) != 0U)
-		requirements = requirements | ArmFeature::afp;
-	return requirements;
+	return engine_tests::NativeRequirements::features(
+		::uml::cpu::ArmFeature::bf16);
 }
 
 } // namespace arm64_bfloat_arithmetic_test

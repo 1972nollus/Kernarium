@@ -2,8 +2,9 @@
 /*
  * Neutral, assembly-visible ARM64 layout contract.  Both translated engines
  * consume this file; assembly_layout.hpp verifies every relevant offset
- * against the C++ CpuState and memory::Tlb definitions, and every event code
- * a gadget returns against EngineEvent, at compile time.
+ * against the C++ CpuState and memory::Tlb definitions, every event code
+ * a gadget returns against EngineEvent, and the FPCR masks against their C++
+ * constants, at compile time.
  */
 #define UML_ARM64_ASSEMBLY_LAYOUT_VERSION 1
 #define UML_GADGET_CPU_X0 0
@@ -82,6 +83,10 @@
 #define UML_GADGET_EVENT_INTERRUPT 3
 #define UML_GADGET_EVENT_ILLEGAL 4
 #define UML_GADGET_EVENT_BREAKPOINT 5
+
+/* FPCR bits a guest can set, and the trap enables among them. */
+#define UML_ARM64_FPCR_WRITABLE 0x07c89f00
+#define UML_ARM64_FPCR_TRAP_ENABLES 0x9f00
 
 /* Engine-neutral aliases for code that is not part of gadget translation. */
 #define UML_ARM64_CPU_FP_ACTIVE UML_GADGET_CPU_FP_ACTIVE

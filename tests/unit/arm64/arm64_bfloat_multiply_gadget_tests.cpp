@@ -92,8 +92,7 @@ void translation_selects_shape_host_path_and_direct_offsets()
 	constexpr auto base =
 		test::engine_tests::engine_test_code_base;
 	const auto &host = ::uml::platform::apple::probed_host_capabilities();
-	const bool native = host.has(::uml::cpu::ArmFeature::bf16) &&
-		host.has(::uml::cpu::ArmFeature::afp);
+	const bool native = host.has(::uml::cpu::ArmFeature::bf16);
 	std::set<std::uintptr_t> selected;
 	unsigned native_index{};
 	for (const auto form : test::forms)

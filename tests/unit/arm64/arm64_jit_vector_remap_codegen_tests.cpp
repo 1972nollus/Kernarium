@@ -191,7 +191,7 @@ void remaining_simd_arithmetic_families_name_resident_vectors_directly() {
         "bfloat matrix accumulator", 0x6e40'ec00U,
         code_base + 0x31'000U);
   }
-  if (host.has(::uml::cpu::ArmFeature::f16f32dot) && host.afp) {
+  if (host.has(::uml::cpu::ArmFeature::f16f32dot)) {
     require_direct_three_vector_operation(
         "half vector dot accumulator", 0x4e80'fc00U,
         code_base + 0x32'000U);
@@ -199,11 +199,11 @@ void remaining_simd_arithmetic_families_name_resident_vectors_directly() {
         "half indexed dot accumulator", 0x4f40'9000U,
         code_base + 0x33'000U);
   }
-  if (host.has(::uml::cpu::ArmFeature::fhm) && host.afp)
+  if (host.has(::uml::cpu::ArmFeature::fhm))
     require_direct_three_vector_operation(
         "half vector fused-long accumulator", 0x4e20'ec00U,
         code_base + 0x34'000U);
-  if (host.has(::uml::cpu::ArmFeature::f16f32mm) && host.afp)
+  if (host.has(::uml::cpu::ArmFeature::f16f32mm))
     require_direct_three_vector_operation(
         "half widening matrix accumulator", 0x4e40'ec00U,
         code_base + 0x35'000U);
@@ -299,7 +299,7 @@ void restricted_element_families_use_the_low_resident_bank() {
     require_restricted_element_operation(
         "half indexed floating accumulator", 0x4f00'1000U,
         code_base + 0x3b'000U);
-  if (host.has(::uml::cpu::ArmFeature::fhm) && host.afp)
+  if (host.has(::uml::cpu::ArmFeature::fhm))
     require_restricted_element_operation(
         "half indexed fused-long accumulator", 0x4f80'0000U,
         code_base + 0x3c'000U);

@@ -102,16 +102,10 @@ struct Unpacked final {
 	if (exponent_field == 0U) {
 		if (fraction == 0U)
 			return {input, 0U, 0, Class::zero, sign};
-		if (width != 16U) {
-			const bool ah = (fpcr & 2U) != 0U;
-			const bool fz = (fpcr & (1U << 24)) != 0U && !ah;
-			const bool fiz = (fpcr & 1U) != 0U;
-			if (fz || fiz) {
-				if (fz)
-					exceptions |= 1U << 7;
-				return {static_cast<std::uint64_t>(sign) << (width - 1U),
-					0U, 0, Class::zero, sign};
-			}
+		if (width != 16U && (fpcr & (1U << 24)) != 0U) {
+			exceptions |= 1U << 7;
+			return {static_cast<std::uint64_t>(sign) << (width - 1U),
+				0U, 0, Class::zero, sign};
 		}
 		return {input, fraction, 1 - source.bias -
 			static_cast<int>(source.fraction_bits), Class::denormal, sign};
@@ -196,14 +190,10 @@ struct Rounded final {
 {
 	const auto source_format = format(source_width);
 	const auto destination = format(destination_width);
-	if ((fpcr & (1U << 25)) != 0U) {
-		const bool sign = (fpcr & 2U) != 0U;
-		return (static_cast<std::uint64_t>(sign) <<
-			(destination_width - 1U)) |
-			(low_mask(destination.exponent_bits) <<
+	if ((fpcr & (1U << 25)) != 0U)
+		return (low_mask(destination.exponent_bits) <<
 				destination.fraction_bits) |
 			(std::uint64_t{1} << (destination.fraction_bits - 1U));
-	}
 	const auto source_payload = source.bits &
 		low_mask(source_format.fraction_bits - 1U);
 	const unsigned source_payload_bits = source_format.fraction_bits - 1U;
@@ -291,43 +281,26 @@ struct Rounded final {
 			if (rounded.inexact)
 				exceptions |= 1U << 4;
 		}
-	} else {
-		const bool ah = (fpcr & 2U) != 0U;
+	} else if (destination_width != 16U && (fpcr & (1U << 24)) != 0U) {
 		/* FPRoundCV clears FZ16 but retains FZ for single/double output. */
-		if (!ah && destination_width != 16U &&
-		    (fpcr & (1U << 24)) != 0U) {
-			exceptions |= 1U << 3;
-			result = sign_bit;
-		} else {
-			const int unit_exponent = minimum_exponent -
-				static_cast<int>(destination.fraction_bits);
-			const auto rounded = round_shift_right(source.significand,
-				unit_exponent - source.exponent - exponent_adjust,
-				rounding, source.sign);
-			const bool became_normal = rounded.value >=
-				(std::uint64_t{1} << destination.fraction_bits);
-			if (ah && !became_normal && destination_width != 16U &&
-			    (fpcr & (1U << 24)) != 0U) {
-				exceptions |= (1U << 3) | (1U << 4);
-				result = sign_bit;
-			} else {
-				result = sign_bit | (became_normal ?
-					(std::uint64_t{1} << destination.fraction_bits) :
-					rounded.value);
-				if (rounded.inexact) {
-					exceptions |= 1U << 4;
-					/* Standard FP detects tininess before rounding. AH moves
-					 * the test after rounding, so a value promoted to the
-					 * minimum normal number suppresses UFC only under AH. */
-					if (!ah || !became_normal)
-						exceptions |= 1U << 3;
-				}
-			}
-		}
+		exceptions |= 1U << 3;
+		result = sign_bit;
+	} else {
+		const int unit_exponent = minimum_exponent -
+			static_cast<int>(destination.fraction_bits);
+		const auto rounded = round_shift_right(source.significand,
+			unit_exponent - source.exponent - exponent_adjust,
+			rounding, source.sign);
+		const bool became_normal = rounded.value >=
+			(std::uint64_t{1} << destination.fraction_bits);
+		result = sign_bit | (became_normal ?
+			(std::uint64_t{1} << destination.fraction_bits) :
+			rounded.value);
+		/* Tininess is detected before rounding, so an inexact result
+		 * underflows even when it rounds to the minimum normal number. */
+		if (rounded.inexact)
+			exceptions |= (1U << 3) | (1U << 4);
 	}
-	if (source_width != 16U && source.type == Class::denormal &&
-	    (fpcr & 2U) != 0U)
-		exceptions |= 1U << 7;
 	return {result, exceptions};
 }
 
@@ -366,7 +339,7 @@ struct Rounded final {
 	/* Standard FZ16 flushes before rounding whenever the mathematical result
 	 * is below the minimum normal exponent. */
 	if (width == 16U && (fpcr & (1U << 19)) != 0U &&
-	    (fpcr & 2U) == 0U && exponent_field != exponent_max &&
+	    exponent_field != exponent_max &&
 	    (exponent_field != 0U || fraction != 0U)) {
 		std::uint32_t ignored{};
 		const auto unpacked = unpack(input, width, arithmetic_fpcr, ignored);
@@ -377,17 +350,8 @@ struct Rounded final {
 			return {sign_bit, 1U << 3};
 	}
 
-	auto result = convert_floating_precision(input, width, width,
+	return convert_floating_precision(input, width, width,
 		arithmetic_fpcr, ~0U, static_cast<int>(clamped));
-	/* AH detects tininess after rounding. A remaining half subnormal is then
-	 * flushed and necessarily reported as underflow plus inexact. */
-	if (width == 16U && (fpcr & (1U << 19)) != 0U &&
-	    (fpcr & 2U) != 0U && (result.bits & 0x7c00U) == 0U &&
-	    (result.bits & 0x03ffU) != 0U) {
-		result.bits &= 0x8000U;
-		result.exceptions |= (1U << 3) | (1U << 4);
-	}
-	return result;
 }
 
 } // namespace uml::cpu::arm64::detail

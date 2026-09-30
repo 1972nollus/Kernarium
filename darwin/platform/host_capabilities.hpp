@@ -264,7 +264,6 @@ struct HostCapabilities final {
 	bool crc32{};
 	bool sha3{};
 	bool sha512{};
-	bool afp{};
 	bool jscvt_subnormal_flags_correct{};
 
 	[[nodiscard]] bool has(ArmFeature feature) const noexcept

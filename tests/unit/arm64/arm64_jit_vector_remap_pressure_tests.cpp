@@ -612,7 +612,7 @@ void remaining_simd_arithmetic_full_cache_fallbacks_are_exact() {
     check_restricted(
         "half indexed floating accumulator", 0x4f00'1000U,
         code_base + 0x44'000U);
-  if (host.has(::uml::cpu::ArmFeature::fhm) && host.afp)
+  if (host.has(::uml::cpu::ArmFeature::fhm))
     check_restricted(
         "half indexed fused-long accumulator", 0x4f80'0000U,
         code_base + 0x45'000U);
@@ -687,8 +687,8 @@ void destination_live_ins_are_translation_time_exact() {
   require_vector_live_ins(
       "scalar reciprocal step", 0x5e20'fc00U | fields, 2U);
 
-  const auto scalar_destination_live_ins =
-      std::size_t{1U} + (::uml::platform::apple::probed_host_capabilities().afp ? 1U : 0U);
+  // FPCR.NEP is RES0, so no scalar form merges into its old destination.
+  constexpr std::size_t scalar_destination_live_ins = 1U;
   require_vector_live_ins(
       "scalar FSQRT", 0x1e21'c000U | unary_fields,
       scalar_destination_live_ins);
@@ -824,13 +824,13 @@ void remaining_simd_arithmetic_live_ins_are_exact() {
     require_vector_live_ins(
         "bfloat matrix accumulator", 0x6e40'ec00U | fields, 3U);
   }
-  if (host.has(::uml::cpu::ArmFeature::f16f32dot) && host.afp) {
+  if (host.has(::uml::cpu::ArmFeature::f16f32dot)) {
     require_vector_live_ins(
         "half vector dot accumulator", 0x4e80'fc00U | fields, 3U);
     require_vector_live_ins(
         "half indexed dot accumulator", 0x4f40'9000U | fields, 3U);
   }
-  if (host.has(::uml::cpu::ArmFeature::fhm) && host.afp) {
+  if (host.has(::uml::cpu::ArmFeature::fhm)) {
     require_vector_live_ins(
         "half vector fused-long accumulator",
         0x4e20'ec00U | fields, 3U);
@@ -838,7 +838,7 @@ void remaining_simd_arithmetic_live_ins_are_exact() {
         "half indexed fused-long accumulator",
         0x4f80'0000U | fields, 3U);
   }
-  if (host.has(::uml::cpu::ArmFeature::f16f32mm) && host.afp)
+  if (host.has(::uml::cpu::ArmFeature::f16f32mm))
     require_vector_live_ins(
         "half widening matrix accumulator",
         0x4e40'ec00U | fields, 3U);

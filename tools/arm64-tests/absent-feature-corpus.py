@@ -4,28 +4,35 @@
 
 usage: absent-feature-corpus.py [--features LIST] [--failing TSV]
                                 [--report TSV] DUMP OUTPUT
-       absent-feature-corpus.py --collect-failing TSV DUMP LOG...
+       absent-feature-corpus.py --collect-failing TSV --source DUMP
+                                [--previous TSV] [--features LIST]
+                                DUMP LOG...
 
-The virtual CPU implements none of FEAT_MTE, FEAT_GCS, FEAT_CPA, and
-FEAT_PAuth: their non-hint instructions are UNDEFINED, their hint-space
-instructions are NOPs, and the ID registers report them absent. The producer
-checks predate that choice, and their harness enabled these features in most
-cases' state, so this script rewrites a dump after export. For each named
-feature it
+The virtual CPU implements none of FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth,
+FEAT_AFP, and FEAT_EBF16: their non-hint instructions are UNDEFINED, their
+hint-space instructions are NOPs, FPCR.FIZ, AH, NEP, and EBF are RES0, and
+the ID registers report them absent. The producer checks predate that choice, and their
+harness enabled these features in most cases' state, so this script rewrites
+a dump after export. For each named feature it
 
 - drops every case that exercises the feature: one that uses its harness
   option, terminal event, or validator relation, or needs it natively without
-  expecting the undefined-instruction trap;
+  expecting the undefined-instruction trap, which for FEAT_AFP and
+  FEAT_EBF16 means a case whose FPCR sets one of their controls;
 - drops every case whose program holds one of the feature's instruction
   encodings, including the hint-space ones whose result the enabled feature
   set, but does not expect it to be undefined;
-- strips the feature's state fields, harness option, and allocation tags from
-  every other case and record, and drops the cases the --failing file names,
-  which fail once that state is gone;
+- strips the feature's state fields, FPCR bits, native requirement, harness
+  option, and allocation tags from every other case and record, and drops
+  the cases the --failing file names, which fail once that state is gone;
 - appends the arm64-absent-<feature> records, which expect every encoding
   class of the feature to be undefined and its hints to be NOPs; and
-- replaces the coverage that the --failing cases took from each allocation
-  with arm64-absent-mte-tbi cases.
+- replaces the coverage that the MTE cases of the --failing file took from
+  each allocation with arm64-absent-mte-tbi cases.
+
+A native FEAT_AFP or FEAT_EBF16 requirement without FPCR controls set came
+from the engines' old host gates, not from the case, so such a case stays and
+loses the requirement.
 
 A failing case is one whose tagged address relied on the top-byte ignore that
 enabled MTE implied. Each replacement takes a kept two-word case of the same
@@ -38,7 +45,12 @@ one, except that a written-back base keeps its tag.
 Run it on the output of lse2-alignment-corpus.py and --repack the result. To
 refresh the failing list, run the rewrite without --failing, run the corpus
 test on that pack in both page profiles with --max-failures 0, and pass both
-logs to --collect-failing with the rewritten dump.
+logs to --collect-failing with the rewritten dump, the dump it was rewritten
+from as --source, and the failing list in use as --previous. A failing case
+that list names keeps its feature; any other is attributed to the last named
+feature whose state the rewrite stripped from it, since features join the
+list in the order they are retired and a newly failing case lost the newest
+state.
 """
 from __future__ import annotations
 
@@ -62,14 +74,14 @@ sys.modules[_spec.name] = corpus
 _spec.loader.exec_module(corpus)
 
 SITE = "tools/arm64-tests/absent-feature-corpus.py"
-DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth")
+DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "afp", "ebf16")
 SVC = 0xD400_0001
 
 
 class Feature:
     def __init__(self, tokens, conditions, fields, validators=(), events=(),
                  options=(), tags=False, encodings=(),
-                 stripped_options=()) -> None:
+                 stripped_options=(), fpcr_bits=0) -> None:
         # Host and allocation feature tokens, and decode-partition conditions.
         self.tokens = frozenset(tokens)
         self.conditions = frozenset(conditions)
@@ -84,6 +96,8 @@ class Feature:
         # (mask, value): system encodings that the allocation and partition
         # tables file under a baseline instruction (DC, MRS, MSR).
         self.encodings = tuple(encodings)
+        # FPCR controls the feature defines; RES0 without it.
+        self.fpcr_bits = fpcr_bits
 
 
 FEATURES = {
@@ -135,6 +149,20 @@ FEATURES = {
         # or stripped in the producer state.
         encodings=tuple((0xFFFF_FFFF, 0xD503_201F | immediate << 5)
                         for immediate in (7, 8, 10, 12, 14, *range(24, 32)))),
+    # FEAT_AFP has no instructions. Its FPCR.FIZ, AH, and NEP controls are
+    # RES0, so MSR FPCR ignores them and every read returns zero.
+    "afp": Feature(
+        tokens=("afp",),
+        conditions=("FEAT_AFP",),
+        fields=(),
+        fpcr_bits=0x7),
+    # FEAT_EBF16 changes no encoding. Its FPCR.EBF control is RES0, so BFDOT
+    # and BFMMLA always take the standard behavior.
+    "ebf16": Feature(
+        tokens=("ebf16",),
+        conditions=("FEAT_EBF16",),
+        fields=(),
+        fpcr_bits=0x2000),
 }
 
 # Illegal-word records: one case per encoding class and operand extreme.
@@ -318,32 +346,75 @@ class Rewriter:
         stays undefined."""
         undefined = case["event"] == "illegal-instruction"
         for name, feature in self.features.items():
-            if (not undefined and set(case["native"]) & feature.tokens) or \
+            native = not undefined and set(case["native"]) & feature.tokens
+            if native and feature.fpcr_bits and not any(
+                    fpcr_value(state) & feature.fpcr_bits
+                    for state in fpcr_states(case)):
+                native = False
+            if native or \
                     set(record["options"]) & feature.options or \
                     case["event"] in feature.events or \
                     case.get("validator") in feature.validators:
                 return name
         return None
 
-    def strip(self, case: dict) -> bool:
-        """Removes the features' state; returns whether any was present."""
-        present = False
-        for feature in self.features.values():
+    def strip(self, case: dict) -> list[str]:
+        """Removes the features' state; returns the features that had any."""
+        stripped = []
+        for name, feature in self.features.items():
+            present = False
             for state in (case["initial"], case["expected"]):
-                for name in feature.fields:
-                    present |= state.pop(name, None) is not None
+                for field in feature.fields:
+                    present |= state.pop(field, None) is not None
             if feature.tags:
                 for region in case.get("memory", []):
                     present |= bool(region["tags"] or region["expected_tags"])
                     region["tags"] = []
                     region["expected_tags"] = []
-        return present
+            if feature.fpcr_bits:
+                present |= strip_fpcr(case, feature.fpcr_bits)
+                case["native"] = [token for token in case["native"]
+                                  if token not in feature.tokens]
+            if present:
+                stripped.append(name)
+        return stripped
 
 
-def undefined_record(feature: str) -> dict:
+def fpcr_value(state: dict | None) -> int:
+    return 0 if state is None else int(state.get("fpcr", "0x0"), 16)
+
+
+def fpcr_states(case: dict) -> tuple[dict, dict | None]:
+    """The initial FPCR and, if it differs, the expected one. The dump stores
+    initial fields that differ from the base state (FPCR 0) and expected
+    fields that differ from the initial state."""
+    return case["initial"], (case["expected"] if "fpcr" in case["expected"]
+                             else None)
+
+
+def strip_fpcr(case: dict, bits: int) -> bool:
+    """Clears bits from the case's FPCR and keeps the sparse encoding
+    canonical; returns whether any was set."""
+    initial = fpcr_value(case["initial"])
+    expected = fpcr_value(case["expected"]) if "fpcr" in case["expected"] \
+        else initial
+    if not (initial | expected) & bits:
+        return False
+    initial &= ~bits
+    expected &= ~bits
+    case["initial"].pop("fpcr", None)
+    case["expected"].pop("fpcr", None)
+    if initial:
+        case["initial"]["fpcr"] = corpus.hex64(initial)
+    if expected != initial:
+        case["expected"]["fpcr"] = corpus.hex64(expected)
+    return True
+
+
+def undefined_record(feature: str) -> dict | None:
     programs: list[list] = []
     cases = []
-    for name, word in UNDEFINED[feature]:
+    for name, word in UNDEFINED.get(feature, ()):
         programs.append({"entry": 0, "words": [[0, f"{word:08x}"],
                                                [4, f"{SVC:08x}"]]})
         cases.append({
@@ -363,6 +434,8 @@ def undefined_record(feature: str) -> dict:
             "expected": {"pc": corpus.hex64(corpus.CODE_BASE + 8)},
             "retired": 2,
         })
+    if not cases:
+        return None
     return {
         "record": f"arm64-absent-{feature}", "producer": f"arm64-absent-{feature}",
         "site": SITE, "profiles": ["16k", "4k"], "options": [],
@@ -444,9 +517,34 @@ def replacements(kept: list[tuple[dict, dict, int]], lost: collections.Counter,
     return [records[key] for key in sorted(records)]
 
 
+def stripped_features(source: pathlib.Path,
+                      features: tuple[str, ...]) -> dict[tuple, str]:
+    """(record, case name, ordinals) -> the last feature whose state the
+    rewrite strips from the source dump's case."""
+    rewriter = Rewriter(features)
+    owners = {}
+    with source.open(encoding="utf-8") as lines:
+        next(lines)
+        for line in lines:
+            item = json.loads(line)
+            if "cases" not in item:
+                continue
+            for case in item["cases"]:
+                stripped = rewriter.strip(json.loads(json.dumps(case)))
+                if stripped:
+                    owners[(item["record"], case["name"],
+                            *case["ordinals"])] = stripped[-1]
+    return owners
+
+
 def collect_failing(output: pathlib.Path, dump: pathlib.Path,
-                    logs: list[pathlib.Path]) -> int:
+                    logs: list[pathlib.Path], source: pathlib.Path,
+                    previous: pathlib.Path | None,
+                    features: tuple[str, ...]) -> int:
     """Writes the --failing list from corpus-test logs of a rewritten dump."""
+    owners = stripped_features(source, features)
+    owners.update((key, feature) for key, feature in
+                  read_failing(previous).items() if feature in features)
     failing = set()
     for log in logs:
         for line in log.read_text(encoding="utf-8").splitlines():
@@ -464,7 +562,11 @@ def collect_failing(output: pathlib.Path, dump: pathlib.Path,
                     if item["producer"].startswith("arm64-absent-"):
                         corpus.fail(f"{item['record']}: authored case "
                                     f"{case['name']} fails")
-                    rows.add((item["record"], case["name"], *case["ordinals"]))
+                    key = (item["record"], case["name"], *case["ordinals"])
+                    if key not in owners:
+                        corpus.fail(f"{item['record']}: {case['name']} fails "
+                                    "but the rewrite stripped no state")
+                    rows.add((*key, owners[key]))
                     failing.discard((item["record"], index))
     if failing:
         corpus.fail(f"logs name cases the dump lacks: {sorted(failing)[0]}")
@@ -472,8 +574,8 @@ def collect_failing(output: pathlib.Path, dump: pathlib.Path,
         sink.write("# Cases that fail once the absent features' state is "
                    "stripped; see absent-feature-corpus.py.\n")
         sink.write("record\tcase\tordinal_16k\tordinal_4k\tfeature\n")
-        for record, name, first, second in sorted(rows):
-            sink.write(f"{record}\t{name}\t{first}\t{second}\tmte\n")
+        for record, name, first, second, feature in sorted(rows):
+            sink.write(f"{record}\t{name}\t{first}\t{second}\t{feature}\n")
     print(f"wrote {len(rows)} failing cases to {output}")
     return 0
 
@@ -486,6 +588,12 @@ def main() -> int:
                         "--collect-failing")
     parser.add_argument("--collect-failing", type=pathlib.Path, metavar="TSV",
                         help="write the failing list from corpus-test logs")
+    parser.add_argument("--source", type=pathlib.Path, metavar="DUMP",
+                        help="with --collect-failing, the dump the logs' "
+                        "rewrite was made from")
+    parser.add_argument("--previous", type=pathlib.Path, metavar="TSV",
+                        help="with --collect-failing, the failing list whose "
+                        "attributions stand")
     parser.add_argument("--features", default=",".join(DEFAULT_FEATURES),
                         help="comma-separated features (default: %(default)s)")
     parser.add_argument("--failing", type=pathlib.Path,
@@ -493,16 +601,19 @@ def main() -> int:
     parser.add_argument("--report", type=pathlib.Path,
                         help="write per-allocation drop counts as TSV")
     options = parser.parse_args()
-    if options.collect_failing is not None:
-        return collect_failing(options.collect_failing, options.dump,
-                               options.output)
-    if len(options.output) != 1:
-        parser.error("the rewrite takes one output dump")
-    options.output = options.output[0]
     features = tuple(options.features.split(","))
     if not features or set(features) - set(FEATURES) or \
             len(set(features)) != len(features):
         parser.error(f"--features takes names from {', '.join(FEATURES)}")
+    if options.collect_failing is not None:
+        if options.source is None:
+            parser.error("--collect-failing requires --source")
+        return collect_failing(options.collect_failing, options.dump,
+                               options.output, options.source,
+                               options.previous, features)
+    if len(options.output) != 1:
+        parser.error("the rewrite takes one output dump")
+    options.output = options.output[0]
     failing = read_failing(options.failing)
     rewriter = Rewriter(features)
 
@@ -545,7 +656,7 @@ def main() -> int:
                 if feature is not None:
                     reason = "removed-encoding"
             if reason is None:
-                stripped += rewriter.strip(case)
+                stripped += bool(rewriter.strip(case))
                 if key in failing:
                     feature = failing[key]
                     reason = "fails-stripped"
@@ -554,7 +665,8 @@ def main() -> int:
                 dropped[(feature, reason)] += 1
                 for stable_id in rewriter.classifier.classify(entry) or ("none",):
                     by_entry[stable_id][reason] += 1
-                    if reason == "fails-stripped":
+                    if reason == "fails-stripped" and \
+                            rewriter.features[feature].tags:
                         lost[stable_id] += 1
                 continue
             for stable_id in rewriter.classifier.classify(entry) or ("none",):
@@ -578,6 +690,8 @@ def main() -> int:
     added = 0
     for feature in features:
         record = undefined_record(feature)
+        if record is None:
+            continue
         records.append(record)
         added += len(record["cases"])
     replaced = collections.Counter()

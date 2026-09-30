@@ -90,15 +90,12 @@ struct BFloatValue final {
 [[nodiscard]] constexpr std::uint32_t local_fpcr(
 	std::uint32_t fpcr) noexcept
 {
-	/* MemAtomicFP disables AH and every FP trap, forces DN, and makes FZ the
-	 * logical OR of the incoming FZ and FIZ controls. The caller separately
-	 * preserves FPSR so none of the operation's cumulative flags escape.
+	/* MemAtomicFP disables every FP trap and forces DN. It also clears AH and
+	 * ORs FIZ into FZ, but the virtual CPU omits FEAT_AFP, so AH and FIZ are
+	 * RES0. The caller separately preserves FPSR so none of the operation's
+	 * cumulative flags escape.
 	 */
-	fpcr &= ~(2U | 0x0000'9f00U);
-	fpcr |= 1U << 25;
-	if ((fpcr & 1U) != 0U)
-		fpcr |= 1U << 24;
-	return fpcr;
+	return (fpcr & ~0x0000'9f00U) | (1U << 25);
 }
 
 [[nodiscard]] constexpr std::uint16_t flush_bfloat_input(

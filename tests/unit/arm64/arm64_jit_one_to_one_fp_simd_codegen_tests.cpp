@@ -472,21 +472,21 @@ void supported_arithmetic_extensions_are_one_to_one()
 					   contract::vector(5U, first),
 					   contract::vector(0U, destination))});
 	}
-	if (host.has(::uml::cpu::ArmFeature::f16f32dot) && host.afp)
+	if (host.has(::uml::cpu::ArmFeature::f16f32dot))
 		check({"half-width dot accumulator", 0x4e80'fc00U |
 			binary_fields, contract::rm_rn_rd_mask, true,
 			contract::native_fp_metadata,
 			contract::operands(contract::vector(16U, second),
 					   contract::vector(5U, first),
 					   contract::vector(0U, destination))});
-	if (host.has(::uml::cpu::ArmFeature::fhm) && host.afp)
+	if (host.has(::uml::cpu::ArmFeature::fhm))
 		check({"half-width fused-long accumulator", 0x4e20'ec00U |
 			binary_fields, contract::rm_rn_rd_mask, true,
 			contract::native_fp_metadata,
 			contract::operands(contract::vector(16U, second),
 					   contract::vector(5U, first),
 					   contract::vector(0U, destination))});
-	if (host.has(::uml::cpu::ArmFeature::f16f32mm) && host.afp)
+	if (host.has(::uml::cpu::ArmFeature::f16f32mm))
 		check({"half-width matrix accumulator", 0x4e40'ec00U |
 			binary_fields, contract::rm_rn_rd_mask, true,
 			contract::native_fp_metadata,

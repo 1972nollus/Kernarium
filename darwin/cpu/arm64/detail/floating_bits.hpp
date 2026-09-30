@@ -73,20 +73,12 @@ template<Encoding Integer>
 		(value & fraction_mask<Integer>) != 0U;
 }
 
+/* FPDefaultNaN. The virtual CPU omits FEAT_AFP, so FPCR.AH is RES0 and the
+ * sign is clear. */
 template<Encoding Integer>
-[[nodiscard]] constexpr Integer flush_subnormal(Integer value) noexcept
+[[nodiscard]] constexpr Integer default_nan() noexcept
 {
-	return is_subnormal(value) ? value & sign_bit<Integer> : value;
-}
-
-/* FPDefaultNaN: FPCR.AH supplies the sign. */
-template<Encoding Integer>
-[[nodiscard]] constexpr Integer default_nan(std::uint32_t fpcr) noexcept
-{
-	constexpr auto positive =
-		static_cast<Integer>(exponent_mask<Integer> | quiet_bit<Integer>);
-	return (fpcr & 2U) != 0U ?
-		static_cast<Integer>(sign_bit<Integer> | positive) : positive;
+	return static_cast<Integer>(exponent_mask<Integer> | quiet_bit<Integer>);
 }
 
 /* FPProcessNaN's result: the default NaN under FPCR.DN, otherwise the
@@ -95,7 +87,7 @@ template<Encoding Integer>
 [[nodiscard]] constexpr Integer process_nan(Integer selected,
 	std::uint32_t fpcr) noexcept
 {
-	return (fpcr & (1U << 25)) != 0U ? default_nan<Integer>(fpcr) :
+	return (fpcr & (1U << 25)) != 0U ? default_nan<Integer>() :
 		static_cast<Integer>(selected | quiet_bit<Integer>);
 }
 

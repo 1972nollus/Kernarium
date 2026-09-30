@@ -131,9 +131,7 @@ void native_words_direct_operands_and_selected_path()
 			::uml::cpu::ArmFeature::fp8dot2 :
 			::uml::cpu::ArmFeature::fp8dot4;
 		const bool use_native =
-			::uml::platform::apple::probed_host_capabilities().has(feature) &&
-			::uml::platform::apple::probed_host_capabilities().has(
-				::uml::cpu::ArmFeature::afp);
+			::uml::platform::apple::probed_host_capabilities().has(feature);
 		for (const auto registers : test::register_aliases) {
 			if (form.by_element && form.width == 16U &&
 			    registers.second >= 16U)
