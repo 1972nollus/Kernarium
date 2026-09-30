@@ -175,7 +175,12 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 		x86_64::rflags_reserved | x86_64::rflags_interrupt;
 	cpu.compat_tls_bases = {};
 	cpu.compat_tls_present = 0;
+	cpu.compat_tls_first = 0;
 	if (cpu.execution_mode == x86_64::ExecutionMode::compat32) {
+		/* Each descriptor is a struct user_desc: entry number, then base.
+		 * The kernel keeps slot i at GDT entry first + i, so an installed
+		 * descriptor's entry number names the first entry, and the GDT
+		 * numbering stays the kernel's alone. */
 		for (std::size_t index = 0; index < x86_32_tls_entry_count; ++index) {
 			const auto head = registers.compat_tls[index][0];
 			const auto tail = registers.compat_tls[index][1];
@@ -183,6 +188,8 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 				continue;
 			cpu.compat_tls_bases[index] = static_cast<std::uint32_t>(head >> 32U);
 			cpu.compat_tls_present |= static_cast<std::uint8_t>(1U << index);
+			cpu.compat_tls_first = static_cast<std::uint8_t>(
+				static_cast<std::uint32_t>(head) - index);
 		}
 	}
 	cpu.fs_base = registers.x[x86_64_fs_base_slot];

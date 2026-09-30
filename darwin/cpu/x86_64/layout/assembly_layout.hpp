@@ -19,6 +19,11 @@ static_assert(offsetof(CpuState, compat_tls_bases) ==
 	UML_X86_64_CPU_COMPAT_TLS_BASES);
 static_assert(offsetof(CpuState, compat_tls_present) ==
 	UML_X86_64_CPU_COMPAT_TLS_PRESENT);
+static_assert(offsetof(CpuState, compat_tls_first) ==
+	UML_X86_64_CPU_COMPAT_TLS_FIRST);
+static_assert(UML_X86_64_CPU_COMPAT_TLS_FIRST ==
+	UML_X86_64_CPU_COMPAT_TLS_PRESENT + 1,
+	"the TLS refresh loads the present mask and first entry together");
 static_assert(offsetof(CpuState, rip) == UML_X86_64_CPU_RIP);
 static_assert(offsetof(CpuState, rflags) == UML_X86_64_CPU_RFLAGS);
 static_assert(

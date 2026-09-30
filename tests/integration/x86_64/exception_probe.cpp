@@ -202,6 +202,7 @@ constexpr long nr_setitimer = 104;
 constexpr long nr_wait4 = 114;
 constexpr long nr_rt_sigaction = 174;
 constexpr long nr_set_thread_area = 243;
+constexpr long nr_get_thread_area = 244;
 constexpr long nr_exit_group = 252;
 constexpr long nr_clock_gettime = 265;
 
@@ -344,6 +345,13 @@ __asm__(".text\n"
 	"	jmp *%edx\n"
 	".global probe_pf_fetch_end\n"
 	"probe_pf_fetch_end:\n"
+	"	ret\n"
+	/* Reads the word at GS:0 after loading GS with (selector). */
+	".global probe_gs_word\n"
+	"probe_gs_word:\n"
+	"	movl 4(%esp), %eax\n"
+	"	movw %ax, %gs\n"
+	"	movl %gs:0, %eax\n"
 	"	ret\n"
 	/* (tls_entry), which the tracer reads from ESI. */
 	".global probe_traced\n"
@@ -976,6 +984,10 @@ extern "C" char probe_traced_resume[];
 
 #if defined(__i386__)
 constexpr u32 tls_base = 0x12345000;
+/* An x86-64 kernel's GDT holds the i386 TLS entries at 12 to 14, and
+ * set_thread_area hands out the first free one. */
+constexpr u32 tls_first_entry = 12;
+constexpr u32 tls_flags = 1U | 1U << 4 | 1U << 6;
 #endif
 
 struct UserDesc {
@@ -1100,6 +1112,11 @@ bool check_stop(long child)
 	ok &= expect("thread area entry", descriptor.entry_number,
 		     regs[user_si]);
 	ok &= expect("thread area base", descriptor.base_addr, tls_base);
+	ok &= expect("the child's TLS entry", regs[user_si], tls_first_entry);
+	ok &= expect("PTRACE_GET_THREAD_AREA below the TLS entries",
+		     static_cast<word>(ptrace(ptrace_get_thread_area, child, 6,
+					      &descriptor)),
+		     static_cast<word>(-einval));
 #endif
 
 	regs[user_ip] = address_of(probe_traced_resume);
@@ -1128,8 +1145,7 @@ bool tracer_sees_registers()
 #if defined(__i386__)
 		/* 32-bit, 4 KiB-granular, usable: flags seg_32bit,
 		 * limit_in_pages and useable. */
-		UserDesc descriptor = {~0U, tls_base, 0xfffff,
-				       1U | 1U << 4 | 1U << 6};
+		UserDesc descriptor = {~0U, tls_base, 0xfffff, tls_flags};
 		if (raw_syscall(nr_set_thread_area,
 				reinterpret_cast<long>(&descriptor)) != 0)
 			raw_syscall(nr_exit_group, 3);
@@ -1364,6 +1380,42 @@ bool tracer_debug_registers()
 	return expect("child exit status", static_cast<u32>(status), 0);
 }
 
+#if defined(__i386__)
+extern "C" u32 probe_gs_word(u32 selector);
+
+alignas(16) u32 tls_block[4] = {0x5a5aa5a5, 0, 0, 0};
+
+/* set_thread_area with entry -1 takes the first TLS entry, 12, whose
+ * selector 0x63 then addresses the new base, as glibc's GS does; entries
+ * outside 12 to 14 are refused. */
+bool tls_entries()
+{
+	UserDesc descriptor = {~0U, reinterpret_cast<u32>(tls_block), 0xfffff,
+			       tls_flags};
+	bool ok = expect("set_thread_area", static_cast<word>(raw_syscall(
+		nr_set_thread_area, reinterpret_cast<long>(&descriptor))), 0);
+	ok &= expect("entry set_thread_area chose", descriptor.entry_number,
+		     tls_first_entry);
+	const u32 selector = descriptor.entry_number << 3 | 3;
+	ok &= expect("its selector", selector, 0x63);
+	ok &= expect("GS:0 through it", probe_gs_word(selector), tls_block[0]);
+	UserDesc read = {tls_first_entry, 0, 0, 0};
+	ok &= expect("get_thread_area", static_cast<word>(raw_syscall(
+		nr_get_thread_area, reinterpret_cast<long>(&read))), 0);
+	ok &= expect("its base", read.base_addr,
+		     reinterpret_cast<u32>(tls_block));
+	UserDesc old = {6, 0, 0, 0};
+	ok &= expect("get_thread_area of entry 6", static_cast<word>(
+		raw_syscall(nr_get_thread_area, reinterpret_cast<long>(&old))),
+		static_cast<word>(-einval));
+	old = {6, reinterpret_cast<u32>(tls_block), 0xfffff, tls_flags};
+	ok &= expect("set_thread_area of entry 6", static_cast<word>(
+		raw_syscall(nr_set_thread_area, reinterpret_cast<long>(&old))),
+		static_cast<word>(-einval));
+	return ok;
+}
+#endif
+
 #if defined(__x86_64__)
 /* Runs `path mode` and reports whether it exited 0. */
 bool in_child(const char *path, const char *mode)
@@ -1449,6 +1501,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "tracer-debug"));
 	report("i386 tracer reads and writes the debug registers",
 	       in_child(i386_probe, "tracer-debug"));
+	report("i386 TLS takes GDT entries 12 to 14",
+	       in_child(i386_probe, "tls"));
 	return failures;
 }
 #endif
@@ -1490,6 +1544,8 @@ extern "C" int probe_main(word *stack)
 			return into_traps() ? 0 : 1;
 		if (equal(mode, "bound"))
 			return bound_checks() ? 0 : 1;
+		if (equal(mode, "tls"))
+			return tls_entries() ? 0 : 1;
 #else
 		return run_all(arguments[0], arguments[1]);
 #endif

@@ -132,15 +132,18 @@ carries the user bit. A protection fault's error code lacks the present bit.
 An i386 tracer's register requests use the i386 layouts, as on Linux, with
 `PTRACE_GETFPREGS` and `NT_PRFPREG` the i387 FSAVE image, and a tracer of
 either ABI reaches the task's i386 TLS entries through the thread-area
-requests. A tracer reads DR6 as x86 Linux shows it, 0xffff0ff0 with BS set
-after a single step, and DR0 to DR3 and DR7 with x86's checks on the addresses
-and lengths it writes. The slice has no hardware breakpoints, so a DR7 write
-that enables one fails with `EINVAL`: gdb then reports "Couldn't write debug
-register" for a hardware watchpoint or `hbreak`, while its software watchpoints
-(`set can-use-hw-watchpoints 0`), breakpoints and single steps work. A tracer's
-`orig_ax` (`orig_eax`) is the number of the system call the task is in and -1
-at any other stop; writing it at a system call's entry stop runs that call
-instead, and -1 skips the call and leaves AX as the tracer set it.
+requests. i386 `set_thread_area()` allocates GDT entries 12 to 14, selectors
+0x63, 0x6b and 0x73, as an x86-64 kernel does; the host finds the numbering in
+the entries the kernel hands it. A tracer reads DR6 as x86 Linux shows it,
+0xffff0ff0 with BS set after a single step, and DR0 to DR3 and DR7 with x86's
+checks on the addresses and lengths it writes. The slice has no hardware
+breakpoints, so a DR7 write that enables one fails with `EINVAL`: gdb then
+reports "Couldn't write debug register" for a hardware watchpoint or `hbreak`,
+while its software watchpoints (`set can-use-hw-watchpoints 0`), breakpoints
+and single steps work. A tracer's `orig_ax` (`orig_eax`) is the number of the
+system call the task is in and -1 at any other stop; writing it at a system
+call's entry stop runs that call instead, and -1 skips the call and leaves AX
+as the tracer set it.
 `tests/integration/x86_64/run_guest_x86_64_exceptions.py` checks these. Host
 instruction execution is qualified against the pinned FEX handwritten x86-64
 corpus; distribution and complete Linux syscall compatibility require separate

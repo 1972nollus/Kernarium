@@ -17,11 +17,13 @@
 	and w12, \selector_value, #7
 	cmp w12, #3
 	b.ne .Lx86_tls_clear\@
+	/* w13 holds the present mask and, in its second byte, the first TLS
+	 * entry the kernel numbered. */
+	ldrh w13, [_cpu, #UML_X86_64_CPU_COMPAT_TLS_PRESENT]
 	lsr w12, \selector_value, #3
-	sub w12, w12, #6
+	sub w12, w12, w13, lsr #8
 	cmp w12, #4
 	b.hi .Lx86_tls_clear\@
-	ldrb w13, [_cpu, #UML_X86_64_CPU_COMPAT_TLS_PRESENT]
 	lsr w13, w13, w12
 	tbz w13, #0, .Lx86_tls_clear\@
 	add x13, _cpu, #UML_X86_64_CPU_COMPAT_TLS_BASES

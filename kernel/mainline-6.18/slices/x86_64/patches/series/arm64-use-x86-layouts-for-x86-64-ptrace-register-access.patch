@@ -1011,10 +1011,10 @@ index 84b1210e87c4a7280016c2c16f6f2a6d3eb67c4a..0707bdfd0051e48c6eb91afcd6d2d7dd
  }
  
 diff --git a/arch/arm64/um/x86_32_syscalls.c b/arch/arm64/um/x86_32_syscalls.c
-index 557cb730923d9439d7841d729da8a660fedfce03..a2e0eb73ace975b542f4cf112041d39ae329b126 100644
+index 05a36dea0110573f859fc4487e04f89eb3580ab6..e2b7a3efea0cfccde4ed0f388fee7b46ed540455 100644
 --- a/arch/arm64/um/x86_32_syscalls.c
 +++ b/arch/arm64/um/x86_32_syscalls.c
-@@ -105,6 +105,38 @@ uml_x86_32_install_tls(struct task_struct *task,
+@@ -111,6 +111,38 @@ uml_x86_32_install_tls(struct task_struct *task,
  	return 0;
  }
  

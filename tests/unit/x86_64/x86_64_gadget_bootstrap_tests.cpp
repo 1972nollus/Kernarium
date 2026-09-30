@@ -3841,14 +3841,19 @@ read_test_sequences(void *context) noexcept
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
 	memory.load(0, {
-		0xb8, 0x33, 0x00, 0x00, 0x00,             // mov eax, 0x33
+		0xb8, 0x6b, 0x00, 0x00, 0x00,             // mov eax, 0x6b
 		0x8e, 0xe8,                               // mov gs, ax
 		0x65, 0xc7, 0x45, 0x04, 0xff, 0xff, 0xff, 0xff,
+		0xb8, 0x33, 0x00, 0x00, 0x00,             // mov eax, 0x33
+		0x8e, 0xe8,                               // mov gs, ax
 	});
+	/* An x86-64 kernel's TLS entries are 12 to 14; the second, selector
+	 * 0x6b, holds the base, and 0x33, entry 6, is none of them. */
 	CpuState cpu{};
 	cpu.execution_mode = ExecutionMode::compat32;
-	cpu.compat_tls_bases[0] = 0xffff'f000;
-	cpu.compat_tls_present = 1;
+	cpu.compat_tls_bases[1] = 0xffff'f000;
+	cpu.compat_tls_present = 2;
+	cpu.compat_tls_first = 12;
 	cpu.gpr(Register::rbp) = 0x1080;
 	const auto built = gadgets::build(
 		memory, 0, ExecutionMode::compat32, 3);
@@ -3856,14 +3861,25 @@ read_test_sequences(void *context) noexcept
 		"compat32 TLS segment block did not build"))
 		return false;
 	const auto result = gadgets::execute(built.program, cpu, memory, 3);
-	return expect(result.event == uml::cpu::EngineEvent::continued &&
+	if (!expect(result.event == uml::cpu::EngineEvent::continued &&
 		result.retired_instructions == 3,
-		"compat32 TLS segment block did not execute") &&
-		expect(cpu.segment_selectors[5] == 0x33 &&
+		"compat32 TLS segment block did not execute") ||
+		!expect(cpu.segment_selectors[5] == 0x6b &&
 			cpu.gs_base == 0xffff'f000,
-			"compat32 GS selector did not load its TLS base") &&
-		expect(memory.dword(0x84) == 0xffff'ffff,
-			"compat32 segmented linear address did not wrap at 32 bits");
+			"compat32 GS selector did not load its TLS base") ||
+		!expect(memory.dword(0x84) == 0xffff'ffff,
+			"compat32 segmented linear address did not wrap at 32 bits"))
+		return false;
+	const auto stale = gadgets::build(
+		memory, cpu.rip, ExecutionMode::compat32, 2);
+	if (!expect(stale.status == gadgets::BuildStatus::built,
+		"compat32 non-TLS selector block did not build"))
+		return false;
+	const auto cleared = gadgets::execute(stale.program, cpu, memory, 2);
+	return expect(cleared.event == uml::cpu::EngineEvent::continued &&
+		cleared.retired_instructions == 2 &&
+		cpu.segment_selectors[5] == 0x33 && cpu.gs_base == 0,
+		"compat32 selector 0x33 kept a TLS base");
 }
 
 [[nodiscard]] bool reject_program_mode_mismatch()
