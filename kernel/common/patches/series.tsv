@@ -57,3 +57,4 @@ patch	um-copy-a-user-string-without-padding-the-rest-of-its-page.patch
 patch	uml-retire-dead-Darwin-bridge-entries-and-name-a-rejected-batch.patch
 patch	uml-discard-a-stale-uaccess-mapping-with-one-bridge-call.patch
 patch	uml-retire-pointer-authentication-and-GCS-from-the-Darwin-bridge.patch
+patch	uml-describe-the-arm64-virtual-CPU-in-proc-cpuinfo-as-arm64-Linux-do.patch

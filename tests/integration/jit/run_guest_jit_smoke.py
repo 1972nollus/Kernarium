@@ -6,6 +6,7 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import base64
 import ctypes
 import pathlib
 import re
@@ -20,6 +21,7 @@ from guest import Guest, GuestFile  # noqa: E402
 
 
 GUEST_HWCAP_SANITY = "/usr/local/libexec/uml-test/hwcap-sanity"
+GUEST_CPU_IDENTITY = "/usr/local/libexec/uml-test/cpu-identity.py"
 HWCAP_FP = 1 << 0
 HWCAP_ASIMD = 1 << 1
 HWCAP_AES = 1 << 3
@@ -79,19 +81,57 @@ OPTIONAL_HWCAPS2 = (
     ("hw.optional.arm.FEAT_I8MM", HWCAP2_I8MM, "i8mm"),
     ("hw.optional.arm.FEAT_BF16", HWCAP2_BF16, "bf16"),
 )
-# The Darwin kernel's /proc/cpuinfo table is a separate diagnostic contract
-# from auxv. Pin its currently published subset without hiding any extra or
-# missing AT_HWCAP bit from the exact checks above.
-CPUINFO_HWCAPS = (
-    (HWCAP_AES, "aes"),
-    (HWCAP_PMULL, "pmull"),
-    (HWCAP_SHA1, "sha1"),
-    (HWCAP_SHA2, "sha2"),
-    (HWCAP_CRC32, "crc32"),
-    (HWCAP_ATOMICS, "atomics"),
-    (HWCAP_SHA3, "sha3"),
-    (HWCAP_SHA512, "sha512"),
+# Every AT_HWCAP and AT_HWCAP2 bit an engine may advertise, by the name arm64
+# Linux gives it in /proc/cpuinfo. A set bit missing here fails the smoke,
+# so a new advertisement has to name itself.
+HWCAP_NAMES = {
+    HWCAP_FP: "fp",
+    HWCAP_ASIMD: "asimd",
+    HWCAP_CPUID: "cpuid",
+    **{bit: name for _, bit, name in OPTIONAL_HWCAPS + PROBE_DEPENDENT_HWCAPS},
+}
+HWCAP2_NAMES = {bit: name for _, bit, name in OPTIONAL_HWCAPS2}
+# The lines of arm64 Linux's /proc/cpuinfo block (arch/arm64/kernel/cpuinfo.c)
+# up to each value, plus the model name that it prints in the same place for a
+# 32-bit task. A blank line ends every block.
+CPUINFO_LINES = (
+    "processor\t: ",
+    "model name\t: ",
+    "BogoMIPS\t: ",
+    "Features\t: ",
+    "CPU implementer\t: ",
+    "CPU architecture: ",
+    "CPU variant\t: ",
+    "CPU part\t: ",
+    "CPU revision\t: ",
 )
+# Reads MIDR_EL1 with MRS, as any task may, and asks LLVM for the host
+# features it derives from /proc/cpuinfo, as llvmpipe and -mcpu=native do.
+CPU_IDENTITY_PROBE = """\
+import ctypes, glob, mmap, re, tempfile
+libc = ctypes.CDLL(None, use_errno=True)
+libc.mmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int,
+                      ctypes.c_int, ctypes.c_int, ctypes.c_long)
+libc.mmap.restype = ctypes.c_void_p
+# nop; mrs x0, midr_el1; ret, mapped from a file so the kernel keeps the
+# instruction cache coherent.
+with tempfile.TemporaryFile(dir="/tmp") as code:
+    code.write(bytes.fromhex("1f2003d5000038d5c0035fd6"))
+    code.flush()
+    address = libc.mmap(None, mmap.PAGESIZE, mmap.PROT_READ | mmap.PROT_EXEC,
+                        mmap.MAP_PRIVATE, code.fileno(), 0)
+if address in (None, ctypes.c_void_p(-1).value):
+    raise OSError(ctypes.get_errno(), "mmap of the MRS code failed")
+print(f"midr=0x{ctypes.CFUNCTYPE(ctypes.c_uint64)(address)():x}")
+libraries = glob.glob("/usr/lib/*-linux-gnu/libLLVM.so.*")
+if not libraries:
+    raise SystemExit("the rootfs has no libLLVM")
+newest = max(libraries, key=lambda path: [
+    int(part) for part in re.findall(r"[0-9]+", path.rsplit("/", 1)[1])])
+features = ctypes.CDLL(newest).LLVMGetHostCPUFeatures
+features.restype = ctypes.c_char_p
+print(f"llvm={features().decode()}")
+"""
 
 
 def host_feature(name: str) -> bool:
@@ -134,12 +174,94 @@ def auxiliary_vector(guest: Guest) -> dict[int, int]:
     return dict(zip(words[0::2], words[1::2]))
 
 
-def cpuinfo_features(guest: Guest) -> set[str]:
-    output = guest.check_command("grep '^flags' /proc/cpuinfo | head -n 1", 60)
-    match = re.search(r"flags\s*:\s*(.*)", output)
-    if match is None:
-        raise RuntimeError(f"/proc/cpuinfo flags are missing:\n{output}")
-    return set(match.group(1).split())
+def advertised_names(hwcap: int, hwcap2: int) -> list[str]:
+    """The names of the set bits, AT_HWCAP's before AT_HWCAP2's, each word
+    from bit 0 up: arm64 Linux's hwcap_str order."""
+    names = []
+    for word, value, table in (
+        ("AT_HWCAP", hwcap, HWCAP_NAMES),
+        ("AT_HWCAP2", hwcap2, HWCAP2_NAMES),
+    ):
+        for bit in range(64):
+            if value & (1 << bit):
+                if (1 << bit) not in table:
+                    raise RuntimeError(f"{word} bit {bit} has no known name")
+                names.append(table[1 << bit])
+    return names
+
+
+def cpuinfo_blocks(guest: Guest) -> list[dict[str, str]]:
+    """Each processor's block of the file's exact bytes, by line label."""
+    encoded = guest.check_command("base64 -w0 /proc/cpuinfo", 60)
+    text = base64.b64decode("".join(encoded.split())).decode()
+    blocks = text.split("\n\n")
+    if blocks[-1] != "":
+        raise RuntimeError(
+            "/proc/cpuinfo does not end in a blank line: "
+            f"...{text[-160:]!r}"
+        )
+    parsed = []
+    for block in blocks[:-1]:
+        lines = block.split("\n")
+        if len(lines) != len(CPUINFO_LINES) or not all(
+            line.startswith(label) for line, label in zip(lines, CPUINFO_LINES)
+        ):
+            raise RuntimeError(
+                f"/proc/cpuinfo block {block!r} does not have the lines "
+                f"{CPUINFO_LINES}"
+            )
+        parsed.append(
+            {
+                label.partition("\t")[0].partition(":")[0]: line[len(label) :]
+                for line, label in zip(lines, CPUINFO_LINES)
+            }
+        )
+    return parsed
+
+
+def check_cpuinfo(
+    guest: Guest, hwcap: int, hwcap2: int, midr: int
+) -> None:
+    """/proc/cpuinfo describes exactly the CPU a task sees in arm64 Linux's
+    format: the names of its AT_HWCAP and AT_HWCAP2 bits in hwcap_str order,
+    and the MIDR_EL1 fields MRS returns."""
+    online = int(guest.check_command("getconf _NPROCESSORS_ONLN", 60))
+    blocks = cpuinfo_blocks(guest)
+    if len(blocks) != online:
+        raise RuntimeError(
+            f"/proc/cpuinfo has {len(blocks)} blocks for {online} online CPUs"
+        )
+    expected_features = " ".join(advertised_names(hwcap, hwcap2))
+    expected_identity = {
+        "CPU implementer": f"0x{(midr >> 24) & 0xff:02x}",
+        # arm64 Linux prints 8 whatever MIDR_EL1's architecture field holds.
+        "CPU architecture": "8",
+        "CPU variant": f"0x{(midr >> 20) & 0xf:x}",
+        "CPU part": f"0x{(midr >> 4) & 0xfff:03x}",
+        "CPU revision": f"{midr & 0xf}",
+    }
+    for number, values in enumerate(blocks):
+        if values["processor"] != str(number):
+            raise RuntimeError(
+                f"/proc/cpuinfo block {number} names processor "
+                f"{values['processor']}"
+            )
+        if values["Features"] != expected_features:
+            raise RuntimeError(
+                "/proc/cpuinfo Features mismatch: "
+                f"expected {expected_features!r}, got {values['Features']!r}"
+            )
+        for key, expected in expected_identity.items():
+            if values[key] != expected:
+                raise RuntimeError(
+                    f"/proc/cpuinfo {key} is {values[key]!r}; MIDR_EL1 "
+                    f"0x{midr:x} gives {expected!r}"
+                )
+        if {**values, "processor": "0"} != blocks[0]:
+            raise RuntimeError(
+                f"/proc/cpuinfo block {number} differs from block 0 "
+                "beyond its processor number"
+            )
 
 
 def main() -> int:
@@ -163,7 +285,10 @@ def main() -> int:
         "tmpfs",
         init_shell=True,
         engine=arguments.engine,
-        payloads={GUEST_HWCAP_SANITY: GuestFile(hwcap_sanity, 0o755)},
+        payloads={
+            GUEST_HWCAP_SANITY: GuestFile(hwcap_sanity, 0o755),
+            GUEST_CPU_IDENTITY: GuestFile(CPU_IDENTITY_PROBE.encode()),
+        },
     ) as guest:
         guest.boot_to_shell(180)
         guest.check_command(
@@ -195,18 +320,22 @@ def main() -> int:
                 "AT_HWCAP2 mismatch: "
                 f"expected 0x{expected2:x}, got 0x{actual_hwcap2:x}"
             )
-        expected_cpuinfo = {
-            flag
-            for bit, flag in CPUINFO_HWCAPS
-            if actual_hwcap & bit
-        }
-        expected_cpuinfo.update(("fp", "asimd"))
-        actual_cpuinfo = cpuinfo_features(guest)
-        if actual_cpuinfo != expected_cpuinfo:
+        identity = guest.check_command(
+            f"python3 -B {GUEST_CPU_IDENTITY}", 120
+        )
+        midr_match = re.search(r"^midr=0x([0-9a-f]+)$", identity, re.M)
+        llvm_match = re.search(r"^llvm=(.*)$", identity, re.M)
+        if midr_match is None or llvm_match is None:
+            raise RuntimeError(f"CPU identity probe failed:\n{identity}")
+        check_cpuinfo(
+            guest, actual_hwcap, actual_hwcap2, int(midr_match.group(1), 16)
+        )
+        # LLVM finds the host's features only in the Features line; with
+        # none it reports no feature at all, not even the baseline NEON.
+        llvm_features = llvm_match.group(1).strip().split(",")
+        if "+neon" not in llvm_features:
             raise RuntimeError(
-                "/proc/cpuinfo feature mismatch: "
-                f"expected {sorted(expected_cpuinfo)}, "
-                f"got {sorted(actual_cpuinfo)}"
+                f"LLVM sees no host NEON: {llvm_match.group(1)!r}"
             )
 
         # Every advertised family must also execute correctly. The payload

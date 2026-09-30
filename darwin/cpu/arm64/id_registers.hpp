@@ -36,7 +36,10 @@ namespace uml::cpu::arm64::detail {
 /* This virtual CPU holds no JEP106 implementer code, part number or revision.
  * Architecture 0b1111 is the architectural encoding for "the identification
  * registers describe this implementation", which is exactly what a guest
- * reading MIDR_EL1 here must fall back on. */
+ * reading MIDR_EL1 here must fall back on. The kernel, which cannot execute
+ * this read, prints the same fields in /proc/cpuinfo from a copy of the value
+ * (show_arm64_cpuinfo() in the shared kernel series), and the engine smoke
+ * tests fail when the two disagree. */
 inline constexpr std::uint64_t emulated_midr_el1 = 0x000f'0000ULL;
 
 /* Linux reports the reserved-bit-only affinity rather than the caller's
