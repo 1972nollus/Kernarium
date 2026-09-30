@@ -3,6 +3,10 @@
  * slice delivers for x86 exceptions and interrupts, and what a tracer of the
  * same ABI reads and writes, against native Linux x86.
  *
+ * Only a system call's own return can be restarted: a signal taken between
+ * two instructions leaves the accumulator alone even when it holds an
+ * -ERESTART* code.
+ *
  * A repeated string instruction retires once however long it runs, and the
  * kernel services its timer only when the engine returns to it, so a loop of
  * long REP STOSB or REPE CMPSB must still see a 1 ms interval timer about as
@@ -90,6 +94,18 @@ __asm__(".text\n"
 	"	int $4\n"
 	".global probe_int4_end\n"
 	"probe_int4_end:\n"
+	"	ret\n"
+	/* Spins (loops) times in 2-byte instructions with (value) in RAX and
+	 * returns RAX. A signal that wrongly restarted a system call here would
+	 * move RIP back one whole instruction. */
+	".global probe_hold_ax\n"
+	"probe_hold_ax:\n"
+	"	movq %rdi, %rax\n"
+	"	movq %rsi, %rcx\n"
+	".Lprobe_hold_ax_loop:\n"
+	"	.byte 0x66, 0x90\n"
+	"	.byte 0xff, 0xc9\n"
+	"	jnz .Lprobe_hold_ax_loop\n"
 	"	ret\n"
 	/* Stores pi through a SIGTRAP taken with it on the x87 stack: (out). */
 	".global probe_x87_signal\n"
@@ -224,6 +240,15 @@ __asm__(".text\n"
 	".global probe_int4_end\n"
 	"probe_int4_end:\n"
 	"	ret\n"
+	".global probe_hold_ax\n"
+	"probe_hold_ax:\n"
+	"	movl 4(%esp), %eax\n"
+	"	movl 8(%esp), %ecx\n"
+	".Lprobe_hold_ax_loop:\n"
+	"	.byte 0x66, 0x90\n"
+	"	.byte 0xff, 0xc9\n"
+	"	jnz .Lprobe_hold_ax_loop\n"
+	"	ret\n"
 	/* INTO after adding (value) to 0x7fffffff: overflows for 1, not 0. */
 	".global probe_into\n"
 	"probe_into:\n"
@@ -316,6 +341,7 @@ constexpr word expected_cs = 0x23;
 
 constexpr word sa_siginfo = 4;
 constexpr word sa_restorer = 0x04000000;
+constexpr word sa_restart = 0x10000000;
 constexpr long sigill = 4;
 constexpr long sigtrap = 5;
 constexpr long sigkill = 9;
@@ -649,6 +675,64 @@ bool x87_stack_survives_a_signal()
 	__builtin_memcpy(&bits, &result, sizeof(bits));
 	return expect("pi stored after the SIGTRAP", bits,
 		      0x400921fb54442d18ULL);
+}
+
+extern "C" word probe_hold_ax(word value, word loops);
+
+volatile u64 alarms;
+
+void count_alarm(int, void *, void *) { alarms = alarms + 1; }
+
+/* One round spins for about a millisecond or more; the case waits for a few
+ * timer signals. */
+constexpr word hold_loops = 1UL << 22;
+constexpr u64 hold_alarms = 3;
+constexpr int hold_rounds = 10000;
+
+/* A signal taken between two instructions, outside any system call, leaves
+ * AX alone even when it holds one of the -ERESTART* codes an interrupted
+ * system call returns, with SA_RESTART or without. */
+bool signal_keeps_ax()
+{
+	const word restarts[] = {0, sa_restart};
+	const long codes[] = {512, 513, 514, 516};
+	bool ok = true;
+	for (const word restart : restarts) {
+		KernelSigaction action = {};
+		action.handler = reinterpret_cast<word>(count_alarm);
+		action.flags = sa_siginfo | sa_restorer | restart;
+		action.restorer = reinterpret_cast<word>(&probe_restorer);
+		if (raw_syscall(nr_rt_sigaction, sigalrm,
+				reinterpret_cast<long>(&action), 0, 8) != 0) {
+			put("  rt_sigaction failed\n");
+			return false;
+		}
+		for (const long code : codes) {
+			const word value = static_cast<word>(-code);
+			word held = value;
+			alarms = 0;
+			if (!set_interval_timer(1000)) {
+				put("  setitimer failed\n");
+				return false;
+			}
+			for (int round = 0; round < hold_rounds && held == value &&
+			     alarms < hold_alarms; ++round)
+				held = probe_hold_ax(value, hold_loops);
+			set_interval_timer(0);
+			put(restart != 0 ? "  SA_RESTART" : "  no SA_RESTART");
+			put(", AX -");
+			put_decimal(static_cast<u64>(code));
+			put(", ");
+			put_decimal(alarms);
+			put(" SIGALRM\n");
+			ok &= expect("AX", held, value);
+			if (held == value && alarms < hold_alarms) {
+				put("  too few SIGALRM\n");
+				ok = false;
+			}
+		}
+	}
+	return ok;
 }
 
 #if defined(__i386__)
@@ -1013,6 +1097,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "x87-signal"));
 	report("i386 a signal keeps the x87 stack",
 	       in_child(i386_probe, "x87-signal"));
+	report("x86-64 a signal between instructions keeps RAX",
+	       in_child(self, "signal-ax"));
+	report("i386 a signal between instructions keeps EAX",
+	       in_child(i386_probe, "signal-ax"));
 	report("x86-64 tracer reads and writes registers, FP state",
 	       in_child(self, "tracer"));
 	report("i386 tracer reads and writes registers, FP state and TLS",
@@ -1041,6 +1129,8 @@ extern "C" int probe_main(word *stack)
 			return int4_traps() ? 0 : 1;
 		if (equal(mode, "x87-signal"))
 			return x87_stack_survives_a_signal() ? 0 : 1;
+		if (equal(mode, "signal-ax"))
+			return signal_keeps_ax() ? 0 : 1;
 		if (equal(mode, "tracer"))
 			return tracer_sees_registers() ? 0 : 1;
 #if defined(__i386__)

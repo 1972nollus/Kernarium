@@ -2608,7 +2608,7 @@ index 3267358aad21eb46cb76cc8375280bac948f0bc9..bde1affde2a40d95c648c8221d1d5818
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 015a753d6cd3c5539e15d1722bf515aa732de017..565f6b45f19329b4df6b2037c52af0bbef4f53a8 100644
+index 12be3ad3e7c0047ffe90985a1f43303420668364..03bcc9f4ec082826b766cd03f1806e106edf939a 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -53,6 +53,7 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
@@ -2619,8 +2619,8 @@ index 015a753d6cd3c5539e15d1722bf515aa732de017..565f6b45f19329b4df6b2037c52af0bb
  #define DARWIN_GUEST_FPE_FLTDIV 3
  #define DARWIN_GUEST_FPE_FLTOVF 4
  #define DARWIN_GUEST_FPE_FLTUND 5
-@@ -421,7 +422,7 @@ void userspace(struct uml_pt_regs *registers)
- #endif
+@@ -426,7 +427,7 @@ void userspace(struct uml_pt_regs *registers)
+ 		UPT_SYSCALL_NR(registers) = -1;
  		switch (event) {
  		case DARWIN_UML_EVENT_SYSCALL:
 -			registers->orig_x0 = UPT_X(registers, 0);
@@ -2628,7 +2628,7 @@ index 015a753d6cd3c5539e15d1722bf515aa732de017..565f6b45f19329b4df6b2037c52af0bb
  			handle_syscall(registers);
  			/* copy_mm() records the parent's COW protection changes in
  			 * UML's normal TLB synchronization state.  The next userspace
-@@ -482,13 +483,20 @@ void userspace(struct uml_pt_regs *registers)
+@@ -487,13 +488,20 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_FLOATING_POINT_TRAP:
  		{
  			siginfo_t signal_info = { 0 };
@@ -2649,7 +2649,7 @@ index 015a753d6cd3c5539e15d1722bf515aa732de017..565f6b45f19329b4df6b2037c52af0bb
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -574,14 +582,41 @@ void userspace(struct uml_pt_regs *registers)
+@@ -579,14 +587,41 @@ void userspace(struct uml_pt_regs *registers)
  
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);

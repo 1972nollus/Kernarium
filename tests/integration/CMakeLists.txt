@@ -341,6 +341,17 @@ uml_add_guest_integration_test(
     TIMEOUT 300
     CPUS 2)
 
+# A signal taken between two instructions leaves x0 alone even when it holds
+# an -ERESTART* code: only a system call's own return is restarted.
+uml_add_guest_integration_test(
+    NAME guest-signal-restart
+    SCRIPT support/run_guest_probe.py
+    ARGS --probe ${PROJECT_SOURCE_DIR}/tests/integration/kernel/signal_restart_probe.py
+        --ncpus 2 --probe-timeout 120
+    LABELS guest;kernel;smoke
+    TIMEOUT 300
+    CPUS 2)
+
 # Unwinders cross an arm64 signal frame as on native Linux: backtrace() in a
 # handler and cancellation of a thread blocked in a system call.
 uml_add_guest_integration_test(

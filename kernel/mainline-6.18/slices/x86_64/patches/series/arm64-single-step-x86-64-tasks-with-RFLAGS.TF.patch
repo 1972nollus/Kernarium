@@ -71,7 +71,7 @@ index e8691398f7d56e127b34594d9a710d5349e45aec..bd8af46ba60fd0619bd077909ec0f40f
  {
  	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 7ba4e2ccb385621e06e851934fae495e7371716d..6ffcaf433ee6434d876f7ab9d3eb2ad371f5fd7d 100644
+index 951658ed46c2717116d00c28cf0d4ec90928c294..fa536c62b7df3bd8320fe7e4955c9af091bc9732 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -72,6 +72,34 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
@@ -117,7 +117,7 @@ index 7ba4e2ccb385621e06e851934fae495e7371716d..6ffcaf433ee6434d876f7ab9d3eb2ad3
  
  static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
-@@ -578,18 +607,34 @@ void userspace(struct uml_pt_regs *registers)
+@@ -583,18 +612,34 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_BREAKPOINT:
  		{
  			siginfo_t signal_info = { 0 };
