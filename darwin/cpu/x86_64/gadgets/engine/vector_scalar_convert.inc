@@ -18,7 +18,10 @@
 	.endif
 .endm
 
-/* Result is returned in x24 (or zero-extended w24 for 32-bit results). */
+/* Result is returned in x24 (or zero-extended w24 for 32-bit results). A NaN
+ * or out-of-range input raises invalid operation: its path converts the value
+ * at the result's width anyway, so that a checked run finds the host's
+ * invalid-operation flag set as x86 sets MXCSR's. */
 .macro vector_scalar_fp_to_int input, element, width, truncate
 	vector_scalar_round \input, 6, \element, \truncate
 	.if \element == 32
@@ -72,6 +75,19 @@
 	.endif
 	b .Lx86_vector_scalar_integer_ready\@
 .Lx86_vector_scalar_invalid\@:
+	.if \element == 32
+	.if \width == 32
+	fcvtzs w24, s6
+	.else
+	fcvtzs x24, s6
+	.endif
+	.else
+	.if \width == 32
+	fcvtzs w24, d6
+	.else
+	fcvtzs x24, d6
+	.endif
+	.endif
 	mov x24, #1
 	lsl x24, x24, #(\width - 1)
 .Lx86_vector_scalar_integer_ready\@:

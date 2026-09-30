@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* COMISS/UCOMISS and COMISD/UCOMISD architectural flags. */
+/* COMISS/UCOMISS and COMISD/UCOMISD architectural flags. COMIS compares with
+ * FCMPE, which like it raises invalid operation for any NaN; UCOMIS with FCMP,
+ * which raises it only for a signalling one. */
 
 .macro vector_compare_set_flags
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
@@ -25,8 +27,8 @@
 	retire_and_next
 .endm
 
-.macro vector_compare_register width, fp_register
-gadget vector_compare_\width\()_rr
+.macro vector_compare_register name, compare, width, fp_register
+gadget vector_\name\()_\width\()_rr
 	/* Every arithmetic flag is defined below, and the only overrides a gadget
 	 * records lie inside that same set, so a pending record has nothing left
 	 * to contribute: discard it instead of materializing a value this
@@ -37,12 +39,12 @@ gadget vector_compare_\width\()_rr
 	ubfx x10, x8, #16, #16
 	ldr \fp_register\()0, [_cpu, x9]
 	ldr \fp_register\()1, [_cpu, x10]
-	fcmp \fp_register\()0, \fp_register\()1
+	\compare \fp_register\()0, \fp_register\()1
 	vector_compare_set_flags
 .endm
 
-.macro vector_compare_memory width, fp_register, load, host_register
-gadget vector_compare_\width\()_rm
+.macro vector_compare_memory name, compare, width, fp_register, load, host_register
+gadget vector_\name\()_\width\()_rm
 	/* Every arithmetic flag is defined below, and the only overrides a gadget
 	 * records lie inside that same set, so a pending record has nothing left
 	 * to contribute: discard it instead of materializing a value this
@@ -64,14 +66,18 @@ gadget vector_compare_\width\()_rm
 .Lx86_vector_compare_loaded\@:
 	and x8, x23, #0xffff
 	ldr \fp_register\()0, [_cpu, x8]
-	fcmp \fp_register\()0, \fp_register\()1
+	\compare \fp_register\()0, \fp_register\()1
 	vector_compare_set_flags
 .endm
 
-vector_compare_register 32, s
-vector_compare_register 64, d
-vector_compare_memory 32, s, ldr, w
-vector_compare_memory 64, d, ldr, x
+vector_compare_register compare, fcmp, 32, s
+vector_compare_register compare, fcmp, 64, d
+vector_compare_memory compare, fcmp, 32, s, ldr, w
+vector_compare_memory compare, fcmp, 64, d, ldr, x
+vector_compare_register compare_signalling, fcmpe, 32, s
+vector_compare_register compare_signalling, fcmpe, 64, d
+vector_compare_memory compare_signalling, fcmpe, 32, s, ldr, w
+vector_compare_memory compare_signalling, fcmpe, 64, d, ldr, x
 
 .purgem vector_compare_memory
 .purgem vector_compare_register

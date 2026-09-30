@@ -6118,6 +6118,93 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		"a masked division by zero did not only set its flag");
 }
 
+/* Run singly and checked, an SSE instruction raises invalid operation where
+ * x86 does: COMISD for a quiet NaN but UCOMISD only for a signalling one, a
+ * conversion to an integer for a value out of that integer's range, and a
+ * scalar comparison, minimum or maximum only for the lanes it compares. */
+[[nodiscard]] bool checked_simd_invalid_operations_follow_x86()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case {
+		std::string_view name;
+		std::vector<std::uint8_t> bytes;
+		std::array<std::uint64_t, 2> left;
+		std::array<std::uint64_t, 2> right;
+		bool invalid;
+	};
+	constexpr std::uint64_t one = 0x3ff0'0000'0000'0000ULL;
+	constexpr std::uint64_t quiet = 0x7ff8'0000'0000'0000ULL;
+	constexpr std::uint64_t signalling = 0x7ff4'0000'0000'0000ULL;
+	constexpr std::uint64_t ten_billion = 0x4202'a05f'2000'0000ULL;
+	/* 3e9 as a single, then 1.0 as a single, in lane 0 and 1. */
+	constexpr std::uint64_t three_billion_single = 0x3f80'0000'4f32'd05eULL;
+	constexpr std::uint64_t quiet_single_high = 0x7fc0'0000'3f80'0000ULL;
+	const std::vector<Case> cases{
+		{"COMISD of a quiet NaN", {0x66, 0x0f, 0x2f, 0xc1},
+		 {quiet, one}, {one, one}, true},
+		{"UCOMISD of a quiet NaN", {0x66, 0x0f, 0x2e, 0xc1},
+		 {quiet, one}, {one, one}, false},
+		{"UCOMISD of a signalling NaN", {0x66, 0x0f, 0x2e, 0xc1},
+		 {signalling, one}, {one, one}, true},
+		{"CVTTSD2SI EAX of 1e10", {0xf2, 0x0f, 0x2c, 0xc1},
+		 {one, one}, {ten_billion, one}, true},
+		{"CVTTSD2SI RAX of 1e10", {0xf2, 0x48, 0x0f, 0x2c, 0xc1},
+		 {one, one}, {ten_billion, one}, false},
+		{"CVTSD2SI EAX of a NaN", {0xf2, 0x0f, 0x2d, 0xc1},
+		 {one, one}, {quiet, one}, true},
+		{"CVTTSS2SI EAX of 3e9", {0xf3, 0x0f, 0x2c, 0xc1},
+		 {one, one}, {three_billion_single, one}, true},
+		{"CVTTPD2DQ of 1e10", {0x66, 0x0f, 0xe6, 0xc1},
+		 {one, one}, {one, ten_billion}, true},
+		{"CVTPD2DQ in range", {0xf2, 0x0f, 0xe6, 0xc1},
+		 {one, one}, {one, one}, false},
+		{"MINSD of a NaN in lane 1", {0xf2, 0x0f, 0x5d, 0xc1},
+		 {one, one}, {one, quiet}, false},
+		{"MINSD of a NaN in lane 0", {0xf2, 0x0f, 0x5d, 0xc1},
+		 {one, one}, {quiet, one}, true},
+		{"CMPLTSD of a NaN in lane 1", {0xf2, 0x0f, 0xc2, 0xc1, 0x01},
+		 {one, quiet}, {one, one}, false},
+		{"CMPLTSD of a NaN in lane 0", {0xf2, 0x0f, 0xc2, 0xc1, 0x01},
+		 {quiet, one}, {one, one}, true},
+		{"MAXSS of a NaN in lane 1", {0xf3, 0x0f, 0x5f, 0xc1},
+		 {quiet_single_high, one}, {one, one}, false},
+	};
+	for (const auto &test : cases) {
+		TestMemory memory;
+		std::vector<std::byte> code(test.bytes.size());
+		std::memcpy(code.data(), test.bytes.data(), code.size());
+		memory.fill(0, code);
+		const auto built = gadgets::build(memory, 0, ExecutionMode::long64,
+			64, {}, gadgets::check_simd);
+		if (!expect(built.status == gadgets::BuildStatus::built &&
+				built.program.check_head(),
+			"an SSE instruction did not build as a check head"))
+			return false;
+		gadgets::Executor executor;
+		executor.prepare(memory);
+		CpuState cpu{};
+		cpu.mxcsr = 0x1f00;
+		std::memcpy(cpu.vectors[0].data(), test.left.data(), 16);
+		std::memcpy(cpu.vectors[1].data(), test.right.data(), 16);
+		const auto result = gadgets::execute_checked(built.program, cpu,
+			memory, executor, 64, {}, false, gadgets::check_simd);
+		const bool invalid =
+			result.event == uml::cpu::EngineEvent::floating_point_trap &&
+			result.vector == 19 && (result.error & 0x3fU) == 0x1U;
+		if (invalid == test.invalid && (invalid ||
+				result.event == uml::cpu::EngineEvent::continued))
+			continue;
+		std::fprintf(stderr, "x86-64 gadget bootstrap: %.*s: event %d "
+			"error %#llx\n", static_cast<int>(test.name.size()),
+			test.name.data(), static_cast<int>(result.event),
+			static_cast<unsigned long long>(result.error));
+		return expect(false, test.invalid ?
+			"a checked SSE instruction did not raise invalid operation" :
+			"a checked SSE instruction raised invalid operation");
+	}
+	return true;
+}
+
 /* Runs from RIP as the runtime does, checked while `checked_exceptions`
  * says so, until something other than a continued run. */
 [[nodiscard]] uml::cpu::x86_64::gadgets::ExecuteResult run_until_event(
@@ -7861,6 +7948,7 @@ int main()
 		a_single_step_runs_one_repeat_iteration() &&
 		loads_that_unmask_exceptions_leave() &&
 		checked_simd_exceptions_fault_before_the_result() &&
+		checked_simd_invalid_operations_follow_x86() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
 		unmasked_x87_exceptions_leave_linked_blocks() &&

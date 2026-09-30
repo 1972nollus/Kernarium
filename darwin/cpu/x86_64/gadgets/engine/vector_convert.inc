@@ -18,6 +18,19 @@
 	.endif
 .endm
 
+/* A lane whose in-range mask in v7 is clear raises invalid operation. A
+ * conversion of doubles raises the host's invalid-operation flag for it,
+ * which its conversion to 64-bit integers would not, so that a checked run
+ * finds the flag as x86 sets MXCSR's. */
+.macro vector_convert_check_range
+	uminv s18, v7.4s
+	fmov w14, s18
+	cbnz w14, .Lx86_vector_convert_in_range\@
+	movi d18, #0xffffffffffffffff
+	fcmpe d18, d18
+.Lx86_vector_convert_in_range\@:
+.endm
+
 /* Convert one q register of float/double values to signed int32. Double
  * inputs produce two packed dwords in the low d register.
  */
@@ -44,6 +57,7 @@
 	dup v17.2d, x14
 	fcmge v17.2d, v6.2d, v17.2d
 	and v7.16b, v7.16b, v17.16b
+	vector_convert_check_range
 	fcvtzs v16.2d, v6.2d
 	mov x14, #0x80000000
 	dup v17.2d, x14
@@ -213,4 +227,5 @@ vector_convert_family ttpd_dq_256, pd_dq, 128, 32, 0, 1
 .purgem vector_convert_register
 .purgem vector_convert_body
 .purgem vector_convert_fp_i32
+.purgem vector_convert_check_range
 .purgem vector_convert_round

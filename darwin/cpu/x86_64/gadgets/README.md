@@ -333,10 +333,13 @@ with its checks, and runs every other block, linked, as `execute` does:
   and a string instruction's first element. 16- and 32-byte vector accesses,
   gathers and the extended-state images are exempt, as on x86.
 - #XM: the host's cumulative exception flags are cleared around the
-  instruction and read back as MXCSR's. An unmasked one restores the state
-  from before it, a memory destination included, and faults; MXCSR then holds
-  only the flags checked before the computation when one of those was
-  unmasked, and no precision flag when underflow was. Masked flags accumulate.
+  instruction and read back as MXCSR's; a scalar instruction's host code
+  computes lane 0 alone, COMIS compares with FCMPE, and a conversion to an
+  integer out of range raises the host's invalid-operation flag. An unmasked
+  exception restores the state from before it, a memory destination
+  included, and faults; MXCSR then holds only the flags checked before the
+  computation when one of those was unmasked, and no precision flag when
+  underflow was. Masked flags accumulate.
 - x87, run checked: the softfloat helpers set the status word's flags. An
   unmasked invalid operation, denormal or division by zero, or an unmasked
   overflow or underflow of a store, restores the registers, the stack and
@@ -355,8 +358,10 @@ arithmetic runs about 25 times slower while one of its exceptions is unmasked.
 Memory access while AC is set runs about 25 times slower too, and stays so:
 programs rarely set AC. Code without such instructions keeps its speed. The
 host detects neither a denormal operand nor an exact tiny result, so #XM
-misses those two, and an x87 overflow or underflow unmasked for a register
-destination leaves the masked result rather than x87's rebiased one.
+misses those two; it reports precision for an unmasked overflow whose result
+is exact but for its exponent, where x86 does not; and an x87 overflow or
+underflow unmasked for a register destination leaves the masked result
+rather than x87's rebiased one.
 
 ## Code pages
 

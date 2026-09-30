@@ -834,6 +834,88 @@ __asm__(".text\n"
 	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
 	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
 	"	ret\n"
+	/* Under MXCSR $1900 COMISD of a quiet NaN, CVTTSD2SI of a value out
+	 * of range and a MULPD lane that overflows raise #XM too. */
+	".global probe_delphi_comisd\n"
+	"probe_delphi_comisd:\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movsd probe_delphi_values" PROBE_RIP ", %xmm0\n"
+	"	movl $1, %eax\n"
+	"	cvtsi2sd %eax, %xmm1\n"
+	".global probe_delphi_comisd_insn\n"
+	"probe_delphi_comisd_insn:\n"
+	"	comisd %xmm1, %xmm0\n"
+	".global probe_delphi_comisd_end\n"
+	"probe_delphi_comisd_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movq %xmm0, %xmm2\n"
+	"	psrlq $32, %xmm2\n"
+	"	movd %xmm2, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_delphi_cvt\n"
+	"probe_delphi_cvt:\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movsd probe_delphi_values+8" PROBE_RIP ", %xmm0\n"
+	".global probe_delphi_cvt_insn\n"
+	"probe_delphi_cvt_insn:\n"
+	"	cvttsd2si %xmm0, %eax\n"
+	".global probe_delphi_cvt_end\n"
+	"probe_delphi_cvt_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movq %xmm0, %xmm2\n"
+	"	psrlq $32, %xmm2\n"
+	"	movd %xmm2, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_delphi_mulpd\n"
+	"probe_delphi_mulpd:\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movupd probe_delphi_values+16" PROBE_RIP ", %xmm0\n"
+	"	movupd probe_delphi_values+32" PROBE_RIP ", %xmm1\n"
+	".global probe_delphi_mulpd_insn\n"
+	"probe_delphi_mulpd_insn:\n"
+	"	mulpd %xmm1, %xmm0\n"
+	".global probe_delphi_mulpd_end\n"
+	"probe_delphi_mulpd_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movq %xmm0, %xmm2\n"
+	"	psrlq $32, %xmm2\n"
+	"	movd %xmm2, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	/* An infinity plus one, and UCOMISD of a quiet NaN, raise nothing
+	 * under MXCSR $1900; the results and MXCSR go to
+	 * probe_delphi_special_out. */
+	".global probe_delphi_specials\n"
+	"probe_delphi_specials:\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movsd probe_delphi_values+48" PROBE_RIP ", %xmm0\n"
+	"	movl $1, %eax\n"
+	"	cvtsi2sd %eax, %xmm1\n"
+	"	addsd %xmm1, %xmm0\n"
+	"	movsd %xmm0, probe_delphi_special_out" PROBE_RIP "\n"
+	"	movsd probe_delphi_values" PROBE_RIP ", %xmm2\n"
+	"	ucomisd %xmm1, %xmm2\n"
+	"	setp %al\n"
+	"	movzbl %al, %eax\n"
+	"	movl %eax, probe_delphi_special_out+8" PROBE_RIP "\n"
+	"	stmxcsr probe_delphi_special_out+12" PROBE_RIP "\n"
+	".global probe_delphi_specials_end\n"
+	"probe_delphi_specials_end:\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
 	".data\n"
 	".balign 8\n"
 	".global probe_fp_saved\n"
@@ -845,6 +927,15 @@ __asm__(".text\n"
 	".global probe_delphi_out\n"
 	"probe_delphi_out:\n"
 	"	.long 0, 0, 0, 0, 0, 0, 0, 0\n"
+	".global probe_delphi_special_out\n"
+	"probe_delphi_special_out:\n"
+	"	.long 0, 0, 0, 0\n"
+	/* A quiet NaN, 1e20, {1, DBL_MAX}, {1, 1.5} and an infinity. */
+	"probe_delphi_values:\n"
+	"	.quad 0x7ff8000000000000, 0x4415af1d78b58c40\n"
+	"	.quad 0x3ff0000000000000, 0x7fefffffffffffff\n"
+	"	.quad 0x3ff0000000000000, 0x3ff8000000000000\n"
+	"	.quad 0x7ff0000000000000\n"
 	".text\n");
 
 /* INT n of a vector user mode may not use raises #GP. */
@@ -1598,6 +1689,18 @@ extern "C" char probe_delphi_divsd_insn[];
 extern "C" char probe_delphi_divsd_end[];
 extern "C" void probe_delphi_clean();
 extern "C" char probe_delphi_clean_end[];
+extern "C" void probe_delphi_comisd();
+extern "C" char probe_delphi_comisd_insn[];
+extern "C" char probe_delphi_comisd_end[];
+extern "C" void probe_delphi_cvt();
+extern "C" char probe_delphi_cvt_insn[];
+extern "C" char probe_delphi_cvt_end[];
+extern "C" void probe_delphi_mulpd();
+extern "C" char probe_delphi_mulpd_insn[];
+extern "C" char probe_delphi_mulpd_end[];
+extern "C" void probe_delphi_specials();
+extern "C" char probe_delphi_specials_end[];
+extern "C" volatile u32 probe_delphi_special_out[4];
 extern "C" volatile u32 probe_fp_saved[2];
 extern "C" volatile u32 probe_delphi_out[8];
 
@@ -1683,6 +1786,15 @@ bool floating_point_exceptions()
 		{"DIVSD by zero under MXCSR $1900", probe_delphi_divsd,
 		 probe_delphi_divsd_insn, probe_delphi_divsd_end, fpe_fltdiv, 19,
 		 0x1904, 0x3ff00000},
+		{"COMISD of a quiet NaN under MXCSR $1900", probe_delphi_comisd,
+		 probe_delphi_comisd_insn, probe_delphi_comisd_end, fpe_fltinv, 19,
+		 0x1901, 0x7ff80000},
+		{"CVTTSD2SI out of range under MXCSR $1900", probe_delphi_cvt,
+		 probe_delphi_cvt_insn, probe_delphi_cvt_end, fpe_fltinv, 19,
+		 0x1901, 0x4415af1d},
+		{"MULPD overflow under MXCSR $1900", probe_delphi_mulpd,
+		 probe_delphi_mulpd_insn, probe_delphi_mulpd_end, fpe_fltovf, 19,
+		 0x1928, 0x3ff00000},
 	};
 	bool ok = install(sigfpe, record_fp_fault);
 	for (const Case &one : cases) {
@@ -1729,6 +1841,18 @@ bool floating_point_exceptions()
 			(probe_delphi_out[index] & 0xfdffU) :
 			probe_delphi_out[index];
 		ok &= expect(what[index], value, native[index]);
+	}
+	ok &= raises_nothing("an infinity and a quiet NaN under MXCSR $1900",
+			     probe_delphi_specials,
+			     address_of(probe_delphi_specials_end));
+	for (unsigned index = 0; index < 4; ++index) {
+		static const char *const what[] = {
+			"infinity plus one low", "infinity plus one high",
+			"UCOMISD parity", "MXCSR after specials",
+		};
+		static const u32 native[] = {0, 0x7ff00000, 1, 0x1900};
+		ok &= expect(what[index], probe_delphi_special_out[index],
+			     native[index]);
 	}
 	/* A masked exception only sets its flag. */
 	ok &= raises_nothing("masked DIVSS by zero", probe_xm_masked,

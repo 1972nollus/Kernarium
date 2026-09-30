@@ -1980,11 +1980,19 @@ struct EncodedMemory final {
 	const auto left = vector_offset(instruction.source);
 	const bool memory = instruction.auxiliary.kind == OperandKind::memory;
 	const bool doubles = instruction.vector_prefix == 1;
-	const auto entry = doubles ?
-		(memory ? native::uml_x86_64_gadget_vector_compare_64_rm :
-			native::uml_x86_64_gadget_vector_compare_64_rr) :
-		(memory ? native::uml_x86_64_gadget_vector_compare_32_rm :
-			native::uml_x86_64_gadget_vector_compare_32_rr);
+	/* COMIS raises invalid operation for a quiet NaN too, UCOMIS only for
+	 * a signalling one. */
+	const auto entry = instruction.vector_opcode == 0x2f ?
+		(doubles ?
+			(memory ? native::uml_x86_64_gadget_vector_compare_signalling_64_rm :
+				native::uml_x86_64_gadget_vector_compare_signalling_64_rr) :
+			(memory ? native::uml_x86_64_gadget_vector_compare_signalling_32_rm :
+				native::uml_x86_64_gadget_vector_compare_signalling_32_rr)) :
+		(doubles ?
+			(memory ? native::uml_x86_64_gadget_vector_compare_64_rm :
+				native::uml_x86_64_gadget_vector_compare_64_rr) :
+			(memory ? native::uml_x86_64_gadget_vector_compare_32_rm :
+				native::uml_x86_64_gadget_vector_compare_32_rr));
 	if (!left)
 		return false;
 	if (!memory) {
