@@ -45,12 +45,6 @@ using namespace floating_bits;
 	return std::bit_cast<std::uint32_t>(result);
 }
 
-[[nodiscard]] constexpr std::uint32_t process_alternative_nan(
-	std::uint32_t value, bool default_nan) noexcept
-{
-	return default_nan ? 0xffc0'0000U : value | 0x0040'0000U;
-}
-
 [[nodiscard]] inline std::uint32_t controlled_fmadd(std::uint32_t addend,
 	std::uint32_t left, std::uint32_t right, std::uint32_t fpcr,
 	bool suppress_exceptions) noexcept
@@ -126,8 +120,7 @@ using namespace floating_bits;
 	else if (right_nan)
 		selected_nan = right32;
 	if (selected_nan != 0U)
-		return process_alternative_nan(selected_nan,
-			(fpcr & (1U << 25)) != 0U);
+		return process_nan(selected_nan, fpcr);
 
 	const bool left_infinity = is_infinity(left32);
 	const bool right_infinity = is_infinity(right32);

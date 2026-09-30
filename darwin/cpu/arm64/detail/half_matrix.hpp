@@ -43,30 +43,11 @@ namespace half_matrix_detail {
 
 using namespace floating_bits;
 
-[[nodiscard]] constexpr std::uint16_t default_half_nan(
-	std::uint32_t fpcr) noexcept
-{
-	return static_cast<std::uint16_t>((fpcr & 2U) != 0U ? 0xfe00U : 0x7e00U);
-}
-
-[[nodiscard]] constexpr std::uint32_t default_single_nan(
-	std::uint32_t fpcr) noexcept
-{
-	return (fpcr & 2U) != 0U ? 0xffc0'0000U : 0x7fc0'0000U;
-}
-
-[[nodiscard]] constexpr std::uint16_t process_half_nan(std::uint16_t value,
-	std::uint32_t fpcr) noexcept
-{
-	return (fpcr & (1U << 25)) != 0U ? default_half_nan(fpcr) :
-		static_cast<std::uint16_t>(value | 0x0200U);
-}
-
 [[nodiscard]] constexpr std::uint32_t convert_half_nan(std::uint16_t value,
 	std::uint32_t fpcr) noexcept
 {
 	if ((fpcr & (1U << 25)) != 0U)
-		return default_single_nan(fpcr);
+		return default_nan<std::uint32_t>(fpcr);
 	return (static_cast<std::uint32_t>(value & 0x8000U) << 16) |
 		0x7fc0'0000U |
 		(static_cast<std::uint32_t>(value & 0x01ffU) << 13);
@@ -114,7 +95,7 @@ struct BinaryResult final {
 		const bool any_signaling = is_signaling_nan<std::uint16_t>(left) ||
 			is_signaling_nan<std::uint16_t>(right);
 		const std::uint16_t selected = left_nan ? left : right;
-		return {process_half_nan(selected, fpcr), any_signaling ? 1U : 0U};
+		return {process_nan(selected, fpcr), any_signaling ? 1U : 0U};
 	}
 	const bool invalid = multiply ?
 		((is_infinity<std::uint16_t>(left) && is_zero<std::uint16_t>(right)) ||
@@ -122,7 +103,7 @@ struct BinaryResult final {
 		(is_infinity<std::uint16_t>(left) && is_infinity<std::uint16_t>(right) &&
 		 ((left ^ right) & 0x8000U) != 0U);
 	if (invalid)
-		return {default_half_nan(fpcr), 1U};
+		return {default_nan<std::uint16_t>(fpcr), 1U};
 
 	/* AH changes NaN priority and the timing of half underflow.  Run the
 	 * ordinary finite operation with AH disabled, then apply the post-round
@@ -187,13 +168,11 @@ struct BinaryResult final {
 		const bool any_signaling = is_signaling_nan<std::uint32_t>(left) ||
 			is_signaling_nan<std::uint32_t>(right);
 		const auto selected = left_nan ? left : right;
-		const auto result = (fpcr & (1U << 25)) != 0U ?
-			default_single_nan(fpcr) : selected | 0x0040'0000U;
-		return {result, any_signaling ? 1U : 0U};
+		return {process_nan(selected, fpcr), any_signaling ? 1U : 0U};
 	}
 	if (is_infinity<std::uint32_t>(left) && is_infinity<std::uint32_t>(right) &&
 	    ((left ^ right) & 0x8000'0000U) != 0U)
-		return {default_single_nan(fpcr), 1U};
+		return {default_nan<std::uint32_t>(fpcr), 1U};
 
 	auto result = captured_single_add(left, right,
 		fpcr & ~(2U | 1U | (1U << 24)));
@@ -266,7 +245,7 @@ struct BinaryResult final {
 	const bool sign_b = ((left_b ^ right_b) & 0x8000U) != 0U;
 	if ((zero_a && infinity_a) || (zero_b && infinity_b) ||
 	    (infinity_a && infinity_b && sign_a != sign_b))
-		return {default_single_nan(fpcr), 1U};
+		return {default_nan<std::uint32_t>(fpcr), 1U};
 	if (infinity_a || infinity_b)
 		return {(static_cast<std::uint32_t>(
 			infinity_a ? sign_a : sign_b) << 31) | 0x7f80'0000U, 0U};

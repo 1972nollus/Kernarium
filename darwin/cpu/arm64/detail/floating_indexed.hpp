@@ -28,19 +28,10 @@ namespace indexed_floating_detail {
 using namespace floating_bits;
 
 template<typename Integer>
-[[nodiscard]] constexpr Integer default_nan(std::uint32_t fpcr) noexcept
-{
-	return ((fpcr & 2U) != 0U ? sign_bit<Integer> : Integer{0}) |
-		exponent_mask<Integer> | quiet_bit<Integer>;
-}
-
-template<typename Integer>
 [[nodiscard]] constexpr IndexedFloatingResult<Integer> process_nan(
 	Integer selected, bool any_signaling, std::uint32_t fpcr) noexcept
 {
-	return {(fpcr & (1U << 25)) != 0U ?
-			default_nan<Integer>(fpcr) :
-			static_cast<Integer>(selected | quiet_bit<Integer>),
+	return {floating_bits::process_nan(selected, fpcr),
 		any_signaling ? 1U : 0U};
 }
 
