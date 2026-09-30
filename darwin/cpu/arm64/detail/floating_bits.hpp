@@ -79,6 +79,26 @@ template<Encoding Integer>
 	return is_subnormal(value) ? value & sign_bit<Integer> : value;
 }
 
+/* FPDefaultNaN: FPCR.AH supplies the sign. */
+template<Encoding Integer>
+[[nodiscard]] constexpr Integer default_nan(std::uint32_t fpcr) noexcept
+{
+	constexpr auto positive =
+		static_cast<Integer>(exponent_mask<Integer> | quiet_bit<Integer>);
+	return (fpcr & 2U) != 0U ?
+		static_cast<Integer>(sign_bit<Integer> | positive) : positive;
+}
+
+/* FPProcessNaN's result: the default NaN under FPCR.DN, otherwise the
+ * selected NaN made quiet. */
+template<Encoding Integer>
+[[nodiscard]] constexpr Integer process_nan(Integer selected,
+	std::uint32_t fpcr) noexcept
+{
+	return (fpcr & (1U << 25)) != 0U ? default_nan<Integer>(fpcr) :
+		static_cast<Integer>(selected | quiet_bit<Integer>);
+}
+
 /* The same field widths chosen at run time by total width, for code that
  * handles all three formats in one path. */
 struct Format final {
