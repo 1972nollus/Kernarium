@@ -24,10 +24,10 @@
       "afp",
       "ebf16"
     ],
-    "input_sha256": "7f26e6b1749ae63ff4613da60b38fbc3685062609febfc64d13f1b6dc0a5a984",
+    "input_sha256": "095629e080ec46503f42e94010a5ecee4d0257e15d38b657b452b4ba3fcb8d28",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
     "sha256": "3d9d991e0674c83a9efaedbbf50adcb1d621511564c017d1c4011f1e06d525d5",
-    "stripped_cases": 74346,
+    "stripped_cases": 74344,
     "tbi_replacement_cases": 5496
   },
   "cases": 163893,
@@ -104,9 +104,9 @@
     "sha256": "7930348c920a379aea8484c922d55e93d68bfdac9746580c3ffe83816a839316"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 14464249,
-  "pack_sha256": "68f70db2d898339c27401c2c9d8d991b60bd8b0d8eef5df77aa4d57e97dc6a0e",
-  "producer_commit": "6e681809dc86e5feb137c803da3e12eba4be608c",
+  "pack_bytes": 14462949,
+  "pack_sha256": "3c59ee7aa629094e4b2dc6630b357c0a0e2acd6327d15518d61fe96d867867a2",
+  "producer_commit": "2f11d75926e9da8ec0857a9e35b2ac32825dee83",
   "programs": 144665,
   "records": 1196,
   "sample_limit": 8,
