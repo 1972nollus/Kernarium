@@ -156,7 +156,7 @@ that ended at a branch carries none. See X82.
 A dispatch's instruction budget bounds how long it runs, not where a block
 may stop: the block that crosses the budget runs to its end, as the arm64
 engines' blocks do, so a dispatch can retire up to one block more than its
-budget. Only a single step, and the one instruction that a POPF setting TF
+budget. Only a single step, and the instruction that a POPF or IRET setting TF
 leaves before its trap, asks for an exact budget. That is the one case where a
 block is replayed: its first few instructions are assembled into a stream of
 their own, which ends where the budget does. What that replay decodes from is
@@ -183,9 +183,18 @@ kernel's flags carry it after a signal return or a tracer's write. IRET always
 leaves the engine and the kernel's flags always start a dispatch, so `execute`
 clears RF as it enters the engine and no gadget reads or clears it. An exit
 before the engine runs an instruction, for a pending interrupt or a zero
-budget, keeps RF, as an interrupt taken before that instruction does. Hardware
-also sets RF in the flags it pushes for a fault; the engine reports its live
-flags, in which RF is clear.
+budget, keeps RF, as an interrupt taken before that instruction does.
+
+Hardware also sets RF in the flags it saves for every fault but an instruction
+breakpoint, so the resumed instruction does not break again, and saves a
+trap's flags as they are. The runtime does the same in the registers it hands
+the kernel: a page fault, #UD, #GP or #DE exit reports RF set, and a
+breakpoint, INT 4 or single-step exit reports the live flags, in which RF is
+clear. Hardware sets RF as well when an interrupt stops a repeated string
+instruction between elements, so the string gadgets set it at the repeat
+budget's exit, the one place they stop with elements done and elements left;
+`execute` clears it again when the instruction resumes. Signal frames and a
+tracer therefore see what native Linux shows.
 
 ## Software TLB
 

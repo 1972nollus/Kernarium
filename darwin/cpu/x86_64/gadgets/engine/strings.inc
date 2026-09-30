@@ -349,10 +349,12 @@ gadget string_\operation\()_\width
 	b .Lx86_string_iteration\@
 	.endif
 	.endif
+/* The instruction stops between elements; see the run loop's exit. This
+ * block keeps the size it had, so the run loop's code does not move. */
 .Lx86_string_budget_spent\@:
-	str x22, [_cpu, #UML_X86_64_CPU_RIP]
-	mov w0, #UML_X86_64_EVENT_CONTINUED
-	b uml_x86_64_gadget_leave
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	orr x9, x9, #0x10000
+	b .Lx86_string_between_elements\@
 
 /* One page-bounded forward run of a repeated MOVS or STOS.
  *
@@ -523,6 +525,15 @@ gadget string_\operation\()_\width
 	subs w9, w9, w10
 	str w9, [sp, #0x68]
 	b.gt .Lx86_string_bulk_run\@
+	/* The instruction stops between elements with RIP still naming it, which
+	 * is where an interrupt finds it. Hardware then saves RF, so that the
+	 * resumed instruction does not break again, and the runtime leaves it set
+	 * if it returns to the kernel here; `execute` clears it when the
+	 * instruction resumes. */
+	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
+	orr x9, x9, #0x10000
+.Lx86_string_between_elements\@:
+	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave

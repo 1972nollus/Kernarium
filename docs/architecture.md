@@ -348,11 +348,11 @@ x86 RFLAGS.TF). Every engine then retires exactly one instruction and reports a
 single-step exit. The runtime returns that exit as a breakpoint event with trap
 number 0x32 (arm64 software step) or 1 (x86 `#DB`), and Linux delivers
 `SIGTRAP`/`TRAP_TRACE`. A stepped instruction that exits on its own, such as a
-system call, breakpoint or fault, reports that exit instead. A `popf` that sets
-RFLAGS.TF leaves the x86 program at the next instruction, and the runtime
-retires exactly that instruction before it reports the step, as native `#DB`
-timing requires. As in x86 Linux, a ptrace step over `popf` or `iret` leaves the
-TF value that instruction wrote.
+system call, breakpoint or fault, reports that exit instead. A `popf` or `iret`
+that sets RFLAGS.TF leaves the x86 program at the next instruction, and the
+runtime retires exactly that instruction before it reports the step, as native
+`#DB` timing requires. As in x86 Linux, a ptrace step over `popf` or `iret`
+leaves the TF value that instruction wrote.
 
 Linux writes another process's memory, such as ptrace breakpoints, gdb's
 displaced-stepping pad, `/proc/pid/mem` or `process_vm_writev()` stores, through
