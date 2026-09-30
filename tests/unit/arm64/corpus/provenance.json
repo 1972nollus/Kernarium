@@ -5,6 +5,7 @@
       "afp/fails-stripped": 57,
       "afp/feature-case": 2827,
       "cpa/feature-case": 503,
+      "ebf16/feature-case": 38,
       "gcs/feature-case": 271,
       "mte/fails-stripped": 5524,
       "mte/feature-case": 2775,
@@ -20,26 +21,27 @@
       "gcs",
       "cpa",
       "pauth",
-      "afp"
+      "afp",
+      "ebf16"
     ],
     "input_sha256": "7f26e6b1749ae63ff4613da60b38fbc3685062609febfc64d13f1b6dc0a5a984",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
-    "sha256": "f9f949ea9452a3f5af153be7803bb61355c57ccc342d75e793786ace2c863e3b",
-    "stripped_cases": 74384,
+    "sha256": "3d9d991e0674c83a9efaedbbf50adcb1d621511564c017d1c4011f1e06d525d5",
+    "stripped_cases": 74346,
     "tbi_replacement_cases": 5496
   },
-  "cases": 163931,
+  "cases": 163893,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
     "illegal-instruction": 24775,
     "instruction-budget": 863,
     "memory-fault": 14073,
-    "system-call": 124124
+    "system-call": 124086
   },
   "cases_by_profile": {
     "16k": 35643,
-    "16k+4k": 92665,
+    "16k+4k": 92627,
     "4k": 35623
   },
   "coverage": {
@@ -102,8 +104,8 @@
     "sha256": "7930348c920a379aea8484c922d55e93d68bfdac9746580c3ffe83816a839316"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 14467905,
-  "pack_sha256": "3f9044511128f43b89aa819f210358f1ab6ca7744f2be4d4fa50c4d95e324768",
+  "pack_bytes": 14464249,
+  "pack_sha256": "68f70db2d898339c27401c2c9d8d991b60bd8b0d8eef5df77aa4d57e97dc6a0e",
   "producer_commit": "6e681809dc86e5feb137c803da3e12eba4be608c",
   "programs": 144665,
   "records": 1196,
@@ -113,7 +115,7 @@
   "state_minimization": {
     "broad": 51,
     "full": 997,
-    "narrow": 162883
+    "narrow": 162845
   },
   "validator_cases": {
     "ignore-host-counter-register/v1": 1,

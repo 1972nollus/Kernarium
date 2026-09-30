@@ -19,7 +19,8 @@ floating-point instructions behave as if all three were zero. The other FPCR
 fields follow the AArch64 FPCR description for a CPU with FEAT_FP16 and
 trapped exception handling but without FEAT_EBF16 or AArch32. AHP, DN, FZ,
 RMode, FZ16, and the six trap enables are writable; Len, Stride, and EBF read
-as zero. The `arm64-base-system-registers` corpus cases pin that write mask.
+as zero, so BFDOT and BFMMLA always take the standard BFloat16 behavior. The
+`arm64-base-system-registers` corpus cases pin that write mask.
 
 That status is not exhaustive variant proof. No inventory entry has an
 independently reviewed complete partition of all forms, widths, aliases,

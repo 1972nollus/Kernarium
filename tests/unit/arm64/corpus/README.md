@@ -227,12 +227,13 @@ least one word of every encoding class to be undefined and the hints to be
 NOPs, and `arm64-absent-mte-tbi` records that restore the coverage the failing
 cases took from their allocations.
 
-FEAT_AFP has no instructions, and the virtual CPU omits it too: FPCR.FIZ, AH,
-and NEP are RES0. The rewrite drops the cases that set one of them and need
-FEAT_AFP natively, clears them from every other case's FPCR, and drops the
-listed cases that fail once they are clear. A native FEAT_AFP requirement on a
-case whose FPCR sets none of them came from the engines' former host gates,
-and the rewrite removes it. The pack encoder refuses a state that sets them.
+FEAT_AFP and FEAT_EBF16 have no instructions of their own, and the virtual CPU
+omits them too: FPCR.FIZ, AH, NEP, and EBF are RES0. The rewrite drops the
+cases that set one of these controls and need the feature natively, clears
+the controls from every other case's FPCR, and drops the listed cases that
+fail once they are clear. A native requirement on a case whose FPCR sets none
+of them came from the engines' former host gates, and the rewrite removes it.
+The pack encoder refuses a state that sets them.
 
 A failing MTE case's tagged address relied on the top-byte ignore that MTE
 implied. Its replacement takes a kept two-word case of the same SIMD&FP

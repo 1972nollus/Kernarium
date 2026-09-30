@@ -30,14 +30,10 @@ inline void require(bool condition, const char *message)
 }
 
 [[nodiscard]] inline engine_tests::NativeRequirements
-native_requirements(bool extended_dot)
+native_requirements()
 {
-	using ::uml::cpu::ArmFeature;
-	auto requirements =
-		engine_tests::NativeRequirements::features(ArmFeature::bf16);
-	if (extended_dot)
-		requirements = requirements | ArmFeature::ebf16;
-	return requirements;
+	return engine_tests::NativeRequirements::features(
+		::uml::cpu::ArmFeature::bf16);
 }
 
 } // namespace arm64_bfloat_arithmetic_test

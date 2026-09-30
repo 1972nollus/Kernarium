@@ -144,10 +144,10 @@ RETIRED_VALIDATORS = frozenset({
     "transformed-address-fault-state/v1",
 })
 RETIRED_FIELD_NAMES = frozenset(name for _i, name, _f in RETIRED_FIELDS)
-# Nor does it implement FEAT_AFP, whose FPCR.FIZ, AH, and NEP controls are
-# RES0. The rewrite clears them from producer states, and the encoder refuses
-# a state that sets them.
-RETIRED_FPCR_BITS = 0x7
+# Nor does it implement FEAT_AFP or FEAT_EBF16, whose FPCR.FIZ, AH, NEP, and
+# EBF controls are RES0. The rewrite clears them from producer states, and the
+# encoder refuses a state that sets them.
+RETIRED_FPCR_BITS = 0x2007
 # Readable fields, in pack id order.
 READ_FIELDS = tuple(sorted(STATE_FIELDS + RETIRED_FIELDS))
 FIELD_BY_NAME = {name: (identifier, fmt) for identifier, name, fmt in READ_FIELDS}
@@ -800,7 +800,7 @@ def retired_use(record: Record, case: Case) -> str | None:
             if name in RETIRED_FIELD_NAMES:
                 return f"state field {name}"
             if name == "fpcr" and value & RETIRED_FPCR_BITS:
-                return "FPCR.FIZ, AH, or NEP"
+                return "FPCR.FIZ, AH, NEP, or EBF"
     if any(region.tags or region.expected_tags for region in case.memory):
         return "allocation tags"
     return None

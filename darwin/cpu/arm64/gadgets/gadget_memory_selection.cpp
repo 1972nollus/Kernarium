@@ -634,11 +634,6 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 	return host_capabilities().has(ArmFeature::bf16);
 }
 
-[[nodiscard]] bool host_has_ebf16() noexcept
-{
-	return host_capabilities().has(ArmFeature::ebf16);
-}
-
 [[nodiscard]] bool host_has_fhm() noexcept
 {
 	return host_capabilities().has(ArmFeature::fhm);

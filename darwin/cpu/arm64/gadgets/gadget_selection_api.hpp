@@ -274,7 +274,6 @@ extern const std::array<Gadget, 16> pstate_daif_clear_gadgets;
 [[nodiscard]] bool host_has_f8f16mm() noexcept;
 [[nodiscard]] bool host_has_f8f32mm() noexcept;
 [[nodiscard]] bool host_has_bf16() noexcept;
-[[nodiscard]] bool host_has_ebf16() noexcept;
 [[nodiscard]] bool host_has_fhm() noexcept;
 [[nodiscard]] bool host_has_f16mm() noexcept;
 [[nodiscard]] bool host_has_f16f32mm() noexcept;

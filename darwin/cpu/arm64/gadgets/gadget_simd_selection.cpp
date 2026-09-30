@@ -1453,7 +1453,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 
 [[nodiscard]] Gadget bfloat_dot_gadget(const detail::BFloatDot &decoded) noexcept
 {
-	if (!host_has_bf16() || !host_has_ebf16())
+	if (!host_has_bf16())
 		return uml_arm64_gadget_bfloat_dot_software;
 	static constexpr std::array vector{
 		uml_arm64_gadget_bfloat_dot_native_vector_2s,
@@ -1475,7 +1475,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 
 [[nodiscard]] Gadget bfloat_matrix_gadget() noexcept
 {
-	return host_has_bf16() && host_has_ebf16() ?
+	return host_has_bf16() ?
 		uml_arm64_gadget_bfloat_matrix_native :
 		uml_arm64_gadget_bfloat_matrix_software;
 }

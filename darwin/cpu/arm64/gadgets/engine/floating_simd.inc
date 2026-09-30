@@ -429,9 +429,10 @@ gadget bfloat_convert_software
 	msr fpsr, x16
 	next_gadget
 
-/* Native BFDOT is exact only on hosts that implement both BF16 and EBF16,
- * because guest FPCR.EBF is runtime state. Width and indexed pair are still
- * fixed by translation, so these gadgets contain no instruction-shape branch. */
+/* Native BFDOT is exact on every BF16 host: FPCR.EBF is RES0, so the guest
+ * can only select the standard behavior, which ignores FPCR. Width and indexed
+ * pair are fixed by translation, so these gadgets contain no instruction-shape
+ * branch. */
 .macro bfloat_dot_native name, encoding
 gadget bfloat_dot_native_\name
 	ensure_fp_environment

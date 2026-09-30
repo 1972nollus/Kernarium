@@ -9,16 +9,16 @@ usage: absent-feature-corpus.py [--features LIST] [--failing TSV]
                                 DUMP LOG...
 
 The virtual CPU implements none of FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth,
-and FEAT_AFP: their non-hint instructions are UNDEFINED, their hint-space
-instructions are NOPs, FPCR.FIZ, AH, and NEP are RES0, and the ID registers
-report them absent. The producer checks predate that choice, and their
+FEAT_AFP, and FEAT_EBF16: their non-hint instructions are UNDEFINED, their
+hint-space instructions are NOPs, FPCR.FIZ, AH, NEP, and EBF are RES0, and
+the ID registers report them absent. The producer checks predate that choice, and their
 harness enabled these features in most cases' state, so this script rewrites
 a dump after export. For each named feature it
 
 - drops every case that exercises the feature: one that uses its harness
   option, terminal event, or validator relation, or needs it natively without
-  expecting the undefined-instruction trap, which for FEAT_AFP means a case
-  whose FPCR sets one of its controls;
+  expecting the undefined-instruction trap, which for FEAT_AFP and
+  FEAT_EBF16 means a case whose FPCR sets one of their controls;
 - drops every case whose program holds one of the feature's instruction
   encodings, including the hint-space ones whose result the enabled feature
   set, but does not expect it to be undefined;
@@ -30,9 +30,9 @@ a dump after export. For each named feature it
 - replaces the coverage that the MTE cases of the --failing file took from
   each allocation with arm64-absent-mte-tbi cases.
 
-A native FEAT_AFP requirement without FPCR controls set came from the engines'
-old host gates, not from the case, so such a case stays and loses the
-requirement.
+A native FEAT_AFP or FEAT_EBF16 requirement without FPCR controls set came
+from the engines' old host gates, not from the case, so such a case stays and
+loses the requirement.
 
 A failing case is one whose tagged address relied on the top-byte ignore that
 enabled MTE implied. Each replacement takes a kept two-word case of the same
@@ -74,7 +74,7 @@ sys.modules[_spec.name] = corpus
 _spec.loader.exec_module(corpus)
 
 SITE = "tools/arm64-tests/absent-feature-corpus.py"
-DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "afp")
+DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "afp", "ebf16")
 SVC = 0xD400_0001
 
 
@@ -156,6 +156,13 @@ FEATURES = {
         conditions=("FEAT_AFP",),
         fields=(),
         fpcr_bits=0x7),
+    # FEAT_EBF16 changes no encoding. Its FPCR.EBF control is RES0, so BFDOT
+    # and BFMMLA always take the standard behavior.
+    "ebf16": Feature(
+        tokens=("ebf16",),
+        conditions=("FEAT_EBF16",),
+        fields=(),
+        fpcr_bits=0x2000),
 }
 
 # Illegal-word records: one case per encoding class and operand extreme.
