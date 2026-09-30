@@ -515,3 +515,9 @@ on the Mac, and landed only when every probe and workload was neutral or faster.
 | Attempt | Disposition and lesson |
 | --- | --- |
 | Implement and advertise FEAT_PAuth with a cheap FEAT_PACIMP algorithm | Rejected; PAuth was removed. A four-round AES-based PACIMP with PACIxSP+STP and AUTIxSP+RET fused in the gadget engine still cost 1.39 percent on llc (t = 4.64, n = 4 launches per arm on the iPad), against 2.35 percent unfused; gcc and shell stayed within noise. Frame signing runs on every non-leaf call and return, so even a fused hint pair taxes call-heavy code in proportion to its call rate. The hint-space forms stay NOPs, as on a CPU without PAuth. |
+
+## Floating-point control features
+
+| Attempt | Disposition and lesson |
+| --- | --- |
+| Select native FHM, BF16, FP8, and half-precision dot and matrix gadgets on hosts without FEAT_AFP | Accepted. The gates ran these families through software helpers so that a guest's FPCR.AH, FIZ, or NEP would behave as on a CPU with FEAT_AFP. The guest can no longer set those bits, so the native instructions are exact. On the gadget engine FMLAL fell from 110 to 1.3 ns per instruction on the M1 and from 115 to 1.1 ns on the A15. BFMLALB fell from 15.4 to 1.2 ns and BFCVTN from 14.3 to 1.0 ns on the A15. No shipped guest selects on these features, so real workloads are unaffected. A software fallback that exists only to model a RES0 control should go with that control. |

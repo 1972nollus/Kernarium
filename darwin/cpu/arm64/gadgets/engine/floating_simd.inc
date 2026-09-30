@@ -374,8 +374,8 @@ gadget floating_horizontal_absolute_software
 	msr fpsr, x16
 	next_gadget
 
-/* BFCVT/BFCVTN map one-for-one on BF16+AFP hosts. The builder selects these
- * branch-free forms only when the host also implements AH/NEP semantics. */
+/* BFCVT/BFCVTN map one-for-one on BF16 hosts. FPCR.AH and NEP are RES0, so
+ * these branch-free forms need no control check. */
 gadget bfloat_convert_scalar_native
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -495,8 +495,8 @@ gadget bfloat_matrix_software
 	ldp x1, x2, [sp], #16
 	next_gadget
 
-/* Shape and CpuState offsets are resolved by the builder. Native selection
- * requires complete alternative-control support, leaving no runtime test. */
+/* Shape and CpuState offsets are resolved by the builder, leaving no runtime
+ * test. */
 .macro half_fused_long_native name, encoding
 gadget half_fused_long_\name
 	ensure_fp_environment
@@ -597,8 +597,7 @@ gadget half_matrix_software
 	next_gadget
 
 /* FEAT_F16F32DOT maps every vector width and indexed pair to one FDOT.
- * The builder resolves the complete shape and all state offsets. Hosts without
- * AFP use the portable entry so native hot paths need no control branch. */
+ * The builder resolves the complete shape and all state offsets. */
 .macro half_dot_native name, encoding
 gadget half_dot_\name
 	ensure_fp_environment
@@ -641,9 +640,9 @@ gadget half_dot_software
 	msr fpsr, x16
 	next_gadget
 
-/* BFMLALB/BFMLALT map one-for-one to branch-free BF16 instructions when the
- * host also implements AFP. Shape, half selection, and indexed lane are all
- * selected by the builder, leaving only register extraction in the hot path. */
+/* BFMLALB/BFMLALT map one-for-one to branch-free BF16 instructions. Shape,
+ * half selection, and indexed lane are all selected by the builder, leaving
+ * only register extraction in the hot path. */
 .macro bfloat_multiply_long_native name, encoding
 gadget bfloat_multiply_long_native_\name
 	ensure_fp_environment

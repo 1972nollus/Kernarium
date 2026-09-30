@@ -594,11 +594,6 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 	return host_capabilities().has(ArmFeature::frintts);
 }
 
-[[nodiscard]] bool host_has_afp() noexcept
-{
-	return host_capabilities().afp;
-}
-
 [[nodiscard]] bool host_has_faminmax() noexcept
 {
 	return host_capabilities().has(ArmFeature::faminmax);

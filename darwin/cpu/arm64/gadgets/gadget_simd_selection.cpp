@@ -1369,7 +1369,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		return uml_arm64_fp8_native_down_table[index];
 	}
 	if (decoded.operation == Operation::dot_half) {
-		if (!host_has_fp8dot2() || !host_has_afp())
+		if (!host_has_fp8dot2())
 			return uml_arm64_gadget_fp8_software;
 		const unsigned q = decoded.lanes == 8U;
 		return decoded.by_element ?
@@ -1377,7 +1377,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_dot_h_vector_table[q];
 	}
 	if (decoded.operation == Operation::dot_single) {
-		if (!host_has_fp8dot4() || !host_has_afp())
+		if (!host_has_fp8dot4())
 			return uml_arm64_gadget_fp8_software;
 		const unsigned q = decoded.lanes == 4U;
 		return decoded.by_element ?
@@ -1385,7 +1385,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_dot_s_vector_table[q];
 	}
 	if (decoded.operation == Operation::multiply_half) {
-		if (!host_has_fp8fma() || !host_has_afp())
+		if (!host_has_fp8fma())
 			return uml_arm64_gadget_fp8_software;
 		return decoded.by_element ?
 			uml_arm64_fp8_native_mul_h_indexed_table[
@@ -1393,7 +1393,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_mul_h_vector_table[decoded.selection];
 	}
 	if (decoded.operation == Operation::multiply_single) {
-		if (!host_has_fp8fma() || !host_has_afp())
+		if (!host_has_fp8fma())
 			return uml_arm64_gadget_fp8_software;
 		return decoded.by_element ?
 			uml_arm64_fp8_native_mul_s_indexed_table[
@@ -1401,10 +1401,10 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			uml_arm64_fp8_native_mul_s_vector_table[decoded.selection];
 	}
 	if (decoded.operation == Operation::matrix_half)
-		return host_has_f8f16mm() && host_has_afp() ?
+		return host_has_f8f16mm() ?
 			uml_arm64_fp8_native_matrix_table[0] :
 			uml_arm64_gadget_fp8_software;
-	return host_has_f8f32mm() && host_has_afp() ?
+	return host_has_f8f32mm() ?
 		uml_arm64_fp8_native_matrix_table[1] :
 		uml_arm64_gadget_fp8_software;
 }
@@ -1412,7 +1412,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] Gadget bfloat_conversion_gadget(
 	const detail::BFloatConversion &decoded) noexcept
 {
-	if (!host_has_bf16() || !host_has_afp())
+	if (!host_has_bf16())
 		return uml_arm64_gadget_bfloat_convert_software;
 	if (decoded.scalar)
 		return uml_arm64_gadget_bfloat_convert_scalar_native;
@@ -1423,7 +1423,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] Gadget bfloat_multiply_long_gadget(
 	const detail::BFloatMultiplyLong &decoded) noexcept
 {
-	if (!host_has_bf16() || !host_has_afp())
+	if (!host_has_bf16())
 		return uml_arm64_gadget_bfloat_multiply_long_software;
 	static constexpr std::array vector{
 		uml_arm64_gadget_bfloat_multiply_long_native_vector_b,
@@ -1483,7 +1483,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] Gadget half_fused_long_gadget(
 	const detail::HalfFusedLong &decoded) noexcept
 {
-	if (!host_has_fhm() || !host_has_afp())
+	if (!host_has_fhm())
 		return uml_arm64_gadget_half_fused_long_software;
 #define UML_HALF_FUSED_LONG_NATIVE(name) \
 	uml_arm64_gadget_half_fused_long_native_##name
@@ -1525,8 +1525,8 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 
 [[nodiscard]] Gadget half_matrix_gadget(const detail::HalfMatrix &decoded) noexcept
 {
-	const bool native = host_has_afp() &&
-		(decoded.widening ? host_has_f16f32mm() : host_has_f16mm());
+	const bool native =
+		decoded.widening ? host_has_f16f32mm() : host_has_f16mm();
 	if (!native)
 		return uml_arm64_gadget_half_matrix_software;
 	static constexpr std::array gadgets{
@@ -1537,7 +1537,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 
 [[nodiscard]] Gadget half_dot_gadget(const detail::HalfDot &decoded) noexcept
 {
-	if (!host_has_f16f32dot() || !host_has_afp())
+	if (!host_has_f16f32dot())
 		return uml_arm64_gadget_half_dot_software;
 	static constexpr std::array vector{
 		uml_arm64_gadget_half_dot_native_vector_2s,

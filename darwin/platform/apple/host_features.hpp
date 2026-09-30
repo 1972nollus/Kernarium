@@ -262,7 +262,6 @@ probed_host_capabilities() noexcept
 		result.crc32 = result.has(ArmFeature::crc32);
 		result.sha3 = result.has(ArmFeature::sha3);
 		result.sha512 = result.has(ArmFeature::sha512);
-		result.afp = result.has(ArmFeature::afp);
 		if (result.has(ArmFeature::jscvt))
 			result.jscvt_subnormal_flags_correct =
 				detail::native_jscvt_subnormal_flags_correct();

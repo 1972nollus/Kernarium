@@ -266,7 +266,6 @@ extern const std::array<Gadget, 16> pstate_daif_clear_gadgets;
 [[nodiscard]] bool host_has_lrcpc3() noexcept;
 [[nodiscard]] bool host_has_lut() noexcept;
 [[nodiscard]] bool host_has_frintts() noexcept;
-[[nodiscard]] bool host_has_afp() noexcept;
 [[nodiscard]] bool host_has_faminmax() noexcept;
 [[nodiscard]] bool host_has_fp8() noexcept;
 [[nodiscard]] bool host_has_fp8dot2() noexcept;
