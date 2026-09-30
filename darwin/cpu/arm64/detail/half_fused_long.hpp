@@ -159,7 +159,7 @@ namespace half_fused_long_detail {
 	if ((left_infinity && right_zero) || (left_zero && right_infinity) ||
 	    (addend_infinity && product_infinity &&
 	     addend_sign != product_sign))
-		return {0xffc0'0000U, 1U};
+		return {default_nan<std::uint32_t>(fpcr), 1U};
 	if (addend_infinity)
 		return {addend, 0U};
 	if (product_infinity)
