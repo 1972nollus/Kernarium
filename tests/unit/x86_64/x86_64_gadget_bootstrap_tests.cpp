@@ -3902,6 +3902,11 @@ read_test_sequences(void *context) noexcept
 	 * Stopping there is where an interrupt finds the instruction, and
 	 * hardware then saves RF, so both boundaries set it; the exit that runs
 	 * no instruction keeps it, and resuming clears it (audit NC-E6).
+	 *
+	 * The instruction retires nothing at either boundary, so each reports
+	 * that it yielded, and the dispatch charges the work to its instruction
+	 * budget; otherwise a loop of long REP strings never returns to the
+	 * kernel, which services its timer only there (audit NC-E8).
 	 */
 	TestMemory descending;
 	descending.load(0, {0xf3, 0xaa}); // rep stosb
@@ -3923,7 +3928,9 @@ read_test_sequences(void *context) noexcept
 		descending.byte(8192) == 0x5a && descending.byte(4097) == 0x5a,
 		"descending REP STOSB did not yield after its element budget") ||
 		!expect((down.rflags & rflags_resume) != 0,
-			"REP STOSB stopped by its element budget did not set RF"))
+			"REP STOSB stopped by its element budget did not set RF") ||
+		!expect(element.repeat_yielded,
+			"REP STOSB stopped by its element budget did not yield"))
 		return false;
 
 	TestMemory memory{0, 270336};
@@ -3945,7 +3952,9 @@ read_test_sequences(void *context) noexcept
 			memory.byte(4096) == 0x5a && memory.byte(266239) == 0x5a,
 			"REP STOSB chunk did not preserve its partial state") ||
 		!expect((cpu.rflags & rflags_resume) != 0,
-			"REP STOSB stopped by its run budget did not set RF"))
+			"REP STOSB stopped by its run budget did not set RF") ||
+		!expect(first.repeat_yielded,
+			"REP STOSB stopped by its run budget did not yield"))
 		return false;
 	/* 32-bit address arithmetic reaches the same run loop. Its yield
 	 * boundary is the cheapest proof: the element loop would have stopped
@@ -3979,13 +3988,15 @@ read_test_sequences(void *context) noexcept
 		built.program, cpu, memory, 1, interrupt);
 	if (!expect(interrupted.event == uml::cpu::EngineEvent::interrupt &&
 		interrupted.retired_instructions == 0 &&
+		!interrupted.repeat_yielded &&
 		cpu.gpr(Register::rcx) == 1 && cpu.rip == 0 &&
 		(cpu.rflags & rflags_resume) != 0,
 		"REP STOSB chunk did not expose its interrupt boundary with RF"))
 		return false;
 	const auto finished = gadgets::execute(built.program, cpu, memory, 1);
 	return expect(finished.event == uml::cpu::EngineEvent::continued &&
-		finished.retired_instructions == 1 && cpu.rip == 2,
+		finished.retired_instructions == 1 && cpu.rip == 2 &&
+		!finished.repeat_yielded,
 		"REP STOSB did not retire after resuming") &&
 		expect(cpu.gpr(Register::rcx) == 0 &&
 			cpu.gpr(Register::rdi) == 266241 &&
@@ -5345,6 +5356,119 @@ read_test_sequences(void *context) noexcept
 		clear_result.instruction_budget_exhausted &&
 		clear_result.retired_instructions == 1 && clear.rip == 101,
 		"clear-overflow INTO did not retire normally");
+}
+
+/* ICEBP (INT1) raises #DB as a trap in either mode: it retires, and RIP
+ * names the next instruction (audit NC-E10). */
+[[nodiscard]] bool icebp_raises_a_debug_trap_after_itself()
+{
+	using namespace uml::cpu::x86_64;
+	for (const auto mode : {ExecutionMode::long64, ExecutionMode::compat32}) {
+		TestMemory memory;
+		memory.load(100, {0xf1});
+		const auto built = gadgets::build(memory, 100, mode, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"ICEBP did not build"))
+			return false;
+		CpuState cpu{};
+		cpu.execution_mode = mode;
+		cpu.rip = 100;
+		const auto result = gadgets::execute(built.program, cpu, memory, 1);
+		if (!expect(result.event == uml::cpu::EngineEvent::debug_trap &&
+			result.retired_instructions == 1 && cpu.rip == 101,
+			"ICEBP did not raise #DB after itself"))
+			return false;
+	}
+	return true;
+}
+
+/* BOUND compares the signed index in a register with the pair of bounds at
+ * its memory operand. Within them, or at either one, it retires; outside
+ * them it raises #BR without retiring. Only the operand size's bits of the
+ * register count. A register operand makes the byte an EVEX prefix, and 64-bit
+ * mode has no BOUND (audit NC-E10). */
+[[nodiscard]] bool bound_checks_a_signed_range()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case {
+		std::uint64_t address;
+		std::uint64_t index;
+		bool inside;
+	};
+	/* bound ebx, [0x200]; bound ebx, [0xffc]; bound bx, [0x300]. */
+	const Case cases[] = {
+		{0x100, 0, true},
+		{0x100, 0xffff'fff6U, true},
+		{0x100, 20, true},
+		{0x100, 0xffff'fff5U, false},
+		{0x100, 21, false},
+		{0x100, 0x8000'0000U, false},
+		{0x110, 20, true},
+		{0x110, 21, false},
+		{0x120, 5, true},
+		{0x120, 0xfffb, true},
+		{0x120, 0x1234'0003U, true},
+		{0x120, 6, false},
+		{0x120, 0xfffa, false},
+	};
+	TestMemory memory;
+	memory.load(0x100, {0x62, 0x1d, 0x00, 0x02, 0x00, 0x00});
+	memory.load(0x110, {0x62, 0x1d, 0xfc, 0x0f, 0x00, 0x00});
+	memory.load(0x120, {0x66, 0x62, 0x1d, 0x00, 0x03, 0x00, 0x00});
+	memory.load(0x200, {0xf6, 0xff, 0xff, 0xff, 20, 0, 0, 0});
+	memory.load(0xffc, {0xf6, 0xff, 0xff, 0xff, 20, 0, 0, 0});
+	memory.load(0x300, {0xfb, 0xff, 5, 0});
+	for (const auto &shape : cases) {
+		const auto built = gadgets::build(
+			memory, shape.address, ExecutionMode::compat32, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"BOUND did not build"))
+			return false;
+		CpuState cpu{};
+		cpu.execution_mode = ExecutionMode::compat32;
+		cpu.rip = shape.address;
+		cpu.gpr(Register::rbx) = shape.index;
+		const auto result = gadgets::execute(built.program, cpu, memory, 1);
+		const auto length = shape.address == 0x120 ? 7U : 6U;
+		const bool ok = shape.inside ?
+			result.event == uml::cpu::EngineEvent::continued &&
+				result.retired_instructions == 1 &&
+				cpu.rip == shape.address + length :
+			result.event == uml::cpu::EngineEvent::bound_range &&
+				result.retired_instructions == 0 &&
+				cpu.rip == shape.address;
+		if (!expect(ok && cpu.gpr(Register::rbx) == shape.index,
+			shape.inside ? "BOUND within its bounds did not retire" :
+				"BOUND outside its bounds did not raise #BR"))
+			return false;
+	}
+
+	TestMemory unmapped;
+	unmapped.load(0x100, {0x62, 0x1d, 0x00, 0x00, 0x01, 0x00});
+	const auto faulting = gadgets::build(
+		unmapped, 0x100, ExecutionMode::compat32, 1);
+	if (!expect(faulting.status == gadgets::BuildStatus::built,
+		"BOUND with unmapped bounds did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.execution_mode = ExecutionMode::compat32;
+	cpu.rip = 0x100;
+	const auto fault = gadgets::execute(faulting.program, cpu, unmapped, 1);
+	if (!expect(fault.event == uml::cpu::EngineEvent::memory_fault &&
+		fault.retired_instructions == 0 && cpu.rip == 0x100 &&
+		fault.fault.address == 0x10000,
+		"BOUND did not fault precisely on unmapped bounds"))
+		return false;
+
+	TestMemory other;
+	other.load(0x100, {0x62, 0xc3});
+	other.load(0x200, {0x62, 0x1d, 0x00, 0x02, 0x00, 0x00});
+	return expect(gadgets::build(other, 0x100, ExecutionMode::compat32, 1)
+			.status == gadgets::BuildStatus::illegal_instruction,
+		"BOUND with a register operand built") &&
+		expect(gadgets::build(other, 0x200, ExecutionMode::long64, 1)
+			.status == gadgets::BuildStatus::illegal_instruction,
+		"BOUND built in 64-bit mode");
 }
 
 /* User mode runs with IOPL 0 and CR4.TSD under PR_SET_TSC: these raise #GP,
@@ -7267,6 +7391,8 @@ int main()
 		migrated_gadgets_are_native_only() &&
 		native_divide_traps_precisely() &&
 		native_into_reports_overflow_precisely() &&
+		icebp_raises_a_debug_trap_after_itself() &&
+		bound_checks_a_signed_range() &&
 		privileged_instructions_raise_general_protection() &&
 		segment_base_writes_reject_non_canonical_addresses() &&
 		overlong_instructions_raise_general_protection() &&

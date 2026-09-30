@@ -192,6 +192,58 @@ gadget int4
 .purgem legacy_store_flags
 .purgem legacy_set_szp
 
+/* BOUND: the signed index in the register lies within the pair of bounds at
+ * the memory operand, lower then upper, or the instruction raises #BR, a
+ * fault that leaves RIP naming it. The pair is read whole, so either half
+ * faulting is a fault of the instruction. */
+.macro bound_gadget width
+gadget bound_\width
+	effective_address
+	mov x25, x7
+	and x8, x23, #0xffff
+	.if \width == 32
+	ldrsw x24, [_cpu, x8]
+	.else
+	ldrsh x24, [_cpu, x8]
+	.endif
+	page_cross_check (\width / 4), .Lx86_bound_cross\@
+	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 4)
+	.if \width == 32
+	ldr x26, [x7]
+	.else
+	ldr w26, [x7]
+	.endif
+	b .Lx86_bound_loaded\@
+.Lx86_bound_cross\@:
+	mov x0, _context
+	mov x1, x25
+	mov w2, #(\width / 4)
+	bl NAME(uml_x86_64_gadget_cross_page_load)
+	cbz x1, .Lx86_memory_fault
+	mov x26, x0
+.Lx86_bound_loaded\@:
+	.if \width == 32
+	sxtw x9, w26
+	asr x10, x26, #32
+	.else
+	sxth x9, w26
+	sbfx x10, x26, #16, #16
+	.endif
+	cmp x24, x9
+	b.lt .Lx86_bound_range
+	cmp x24, x10
+	b.gt .Lx86_bound_range
+	retire_and_next
+.endm
+
+bound_gadget 16
+bound_gadget 32
+.Lx86_bound_range:
+	str x22, [_cpu, #UML_X86_64_CPU_RIP]
+	mov w0, #UML_X86_64_EVENT_BOUND_RANGE
+	b uml_x86_64_gadget_leave
+.purgem bound_gadget
+
 .macro arpl_flags changed
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]

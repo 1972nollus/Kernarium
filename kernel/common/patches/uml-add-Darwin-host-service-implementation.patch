@@ -28,14 +28,14 @@ without upstream's <umid>/ level, because Darwin's sun_path holds 104 bytes.
  arch/um/os-Darwin/signal.c       | 318 +++++++++++++++
  arch/um/os-Darwin/skas/Makefile  |   7 +
  arch/um/os-Darwin/skas/mem.c     |  33 ++
- arch/um/os-Darwin/skas/process.c | 642 +++++++++++++++++++++++++++++++
+ arch/um/os-Darwin/skas/process.c | 647 +++++++++++++++++++++++++++++++
  arch/um/os-Darwin/smp.c          | 612 +++++++++++++++++++++++++++++
  arch/um/os-Darwin/start_up.c     |  72 ++++
  arch/um/os-Darwin/time.c         | 335 ++++++++++++++++
  arch/um/os-Darwin/tty.c          |  22 ++
  arch/um/os-Darwin/umid.c         |  93 +++++
  arch/um/os-Darwin/util.c         | 133 +++++++
- 22 files changed, 3845 insertions(+)
+ 22 files changed, 3850 insertions(+)
  create mode 100644 arch/um/os-Darwin/Makefile
  create mode 100644 arch/um/os-Darwin/bridge.h
  create mode 100644 arch/um/os-Darwin/compat.c
@@ -2087,10 +2087,10 @@ index 0000000000000000000000000000000000000000..66322482ae2fc166561d4fd0bc3f3651
 +}
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b01c0dfdea53febe8ea7f8b959f8ee99a0e28903
+index 0000000000000000000000000000000000000000..9951a9f2f885b5456fb50ea2e6ef8a9dc8470d3b
 --- /dev/null
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -0,0 +1,642 @@
+@@ -0,0 +1,647 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <errno.h>
@@ -2523,6 +2523,11 @@ index 0000000000000000000000000000000000000000..b01c0dfdea53febe8ea7f8b959f8ee99
 +			fatal_userspace(registers, "stack-quarter reconciliation",
 +					result);
 +#endif
++		/* Only a syscall event runs a system call.  Signal delivery fails or
++		 * restarts an interrupted call by this number, so a fault or an
++		 * interrupt must not leave the previous call's number here for it
++		 * to act on whatever the return register now holds. */
++		UPT_SYSCALL_NR(registers) = -1;
 +		switch (event) {
 +		case DARWIN_UML_EVENT_SYSCALL:
 +			registers->orig_x0 = UPT_X(registers, 0);

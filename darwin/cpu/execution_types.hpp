@@ -25,6 +25,11 @@ enum class EngineEvent : int {
 	/* x86 POPF or IRET set RFLAGS.TF: the next instruction raises #DB after it
 	 * retires. RIP names that instruction. */
 	trap_flag = 11,
+	/* x86 ICEBP raised #DB as a trap. RIP names the next instruction. */
+	debug_trap = 12,
+	/* x86 BOUND found its index outside the bounds: #BR, a fault. RIP names
+	 * the BOUND. */
+	bound_range = 13,
 };
 
 /* An exit of one of these kinds reports the instruction that raised it rather

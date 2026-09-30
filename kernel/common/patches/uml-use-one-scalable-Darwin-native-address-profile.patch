@@ -446,7 +446,7 @@ index 4e2a98df7e9fa594a93e590c40de5e6e58c34fff..87ab3d9503d22267565e895193a234b6
  
  	if (virtmem_size < physmem_size)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index b01c0dfdea53febe8ea7f8b959f8ee99a0e28903..6461c46c41fe0a278318c14ab51fdca497acda65 100644
+index 9951a9f2f885b5456fb50ea2e6ef8a9dc8470d3b..6eea20733cd19ee75b462ae87ec200301618cab9 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -11,6 +11,7 @@
@@ -468,7 +468,7 @@ index b01c0dfdea53febe8ea7f8b959f8ee99a0e28903..6461c46c41fe0a278318c14ab51fdca4
  	       "unexpected ABI fingerprint");
  _Static_assert(offsetof(struct uml_pt_regs, orig_x0) ==
  	      DARWIN_UML_ABI_GUEST_REGISTERS_ORIGINAL_X0_OFFSET,
-@@ -457,7 +458,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -462,7 +463,7 @@ void userspace(struct uml_pt_regs *registers)
  			 * into the shadow MMU before asking Linux to resolve a real
  			 * guest page fault.
  			 */
@@ -477,7 +477,7 @@ index b01c0dfdea53febe8ea7f8b959f8ee99a0e28903..6461c46c41fe0a278318c14ab51fdca4
  				current_mm_force_sync(fault);
  				retry = darwin_uml_vm_retry_fault(fault,
  					FAULT_EXECUTE(registers->faultinfo),
-@@ -492,7 +493,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -497,7 +498,7 @@ void userspace(struct uml_pt_regs *registers)
  			}
  			segv(registers->faultinfo, UPT_IP(registers), 1,
  			     registers, NULL);

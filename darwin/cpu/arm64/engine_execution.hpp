@@ -139,7 +139,10 @@ template<bool PollCallback, typename Executor>
 			case EngineEvent::overflow:
 			case EngineEvent::general_protection:
 			case EngineEvent::trap_flag:
-				/* x86 INTO, #GP and TF are not arm64 engine events. */
+			case EngineEvent::debug_trap:
+			case EngineEvent::bound_range:
+				/* x86 INTO, #GP, TF, ICEBP and BOUND are not arm64 engine
+				 * events. */
 				return finish(ExitReason::fatal, retired);
 			case EngineEvent::fatal:
 				return finish(ExitReason::fatal, retired);

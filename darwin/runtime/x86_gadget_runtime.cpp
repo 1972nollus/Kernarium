@@ -234,6 +234,16 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 		}
 		switch (executed.event) {
 		case ::uml::cpu::EngineEvent::continued:
+			/* A repeated string instruction retires once however many
+			 * elements it moves, and one its repeat budget stopped has
+			 * retired nothing yet, so a loop of long ones would never spend
+			 * this budget. The kernel services its timer only when a
+			 * dispatch returns, so charge the work the repeat budget covered
+			 * instead. A step keeps its exact budget. */
+			if (executed.repeat_yielded && !exact_budget && !trap_armed)
+				instruction_budget -= std::min(
+					instruction_budget - result.retired_instructions,
+					x86_64::gadgets::string_repeat_budget);
 			continue;
 		case ::uml::cpu::EngineEvent::trap_flag:
 			/* With no budget left for the next instruction, the next entry
@@ -268,6 +278,14 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 		case ::uml::cpu::EngineEvent::general_protection:
 			result.reason = ::uml::cpu::ExitReason::breakpoint;
 			result.syndrome = 13;
+			return run;
+		case ::uml::cpu::EngineEvent::debug_trap:
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			result.syndrome = 1;
+			return run;
+		case ::uml::cpu::EngineEvent::bound_range:
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			result.syndrome = 5;
 			return run;
 		case ::uml::cpu::EngineEvent::floating_point_trap:
 			result.reason = ::uml::cpu::ExitReason::floating_point_trap;

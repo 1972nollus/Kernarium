@@ -121,11 +121,22 @@ call that instruction makes, and its signal frame, never show it. A fault's
 signal frame and a tracer's view at its stop show RF set, as the flags x86
 saves for a fault do, and so does the frame of a signal that interrupts a
 repeated string instruction between elements; a trap's show it clear.
-`tests/integration/x86_64/run_guest_x86_64_rflags.py` checks this. Host instruction
-execution is qualified against the pinned FEX handwritten x86-64 corpus;
-distribution and complete Linux syscall compatibility require separate guest
-qualification. Both normal arm64 profiles accept `EM_AARCH64` only. Android
-does not consume the x86_64 overlay.
+`tests/integration/x86_64/run_guest_x86_64_rflags.py` checks this. ICEBP
+delivers `SIGTRAP` with `TRAP_BRKPT` after itself. `#OF` from INT 4 or INTO,
+`#BR` from an i386 BOUND outside its bounds and `#GP` reach the task as
+`SIGSEGV` with `SI_KERNEL` and no address, `#OF` after the instruction and the
+two faults at it. An i386 tracer's register requests use the i386 layouts, as
+on Linux, with `PTRACE_GETFPREGS` and `NT_PRFPREG` the i387 FSAVE image, and a
+tracer of either ABI reaches the task's i386 TLS entries through the
+thread-area requests. A tracer's `orig_ax` (`orig_eax`) is the number of the
+system call the task is in and -1 at any other stop; writing it at a system
+call's entry stop runs that call instead, and -1 skips the call and leaves AX
+as the tracer set it.
+`tests/integration/x86_64/run_guest_x86_64_exceptions.py` checks these. Host
+instruction execution is qualified against the pinned FEX handwritten x86-64
+corpus; distribution and complete Linux syscall compatibility require separate
+guest qualification. Both normal arm64 profiles accept `EM_AARCH64` only.
+Android does not consume the x86_64 overlay.
 
 The x86-family syscall dispatch is generated from the pinned Linux 6.18
 `syscall_64.tbl` and `syscall_32.tbl` files. Both ABIs retain every table slot
