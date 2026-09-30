@@ -687,8 +687,8 @@ void destination_live_ins_are_translation_time_exact() {
   require_vector_live_ins(
       "scalar reciprocal step", 0x5e20'fc00U | fields, 2U);
 
-  const auto scalar_destination_live_ins =
-      std::size_t{1U} + (::uml::platform::apple::probed_host_capabilities().afp ? 1U : 0U);
+  // FPCR.NEP is RES0, so no scalar form merges into its old destination.
+  constexpr std::size_t scalar_destination_live_ins = 1U;
   require_vector_live_ins(
       "scalar FSQRT", 0x1e21'c000U | unary_fields,
       scalar_destination_live_ins);

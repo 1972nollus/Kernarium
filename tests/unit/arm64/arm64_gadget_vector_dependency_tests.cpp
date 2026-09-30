@@ -48,7 +48,7 @@ a::CpuState initial(unsigned seed, std::uint32_t fpcr)
 	cpu.sp = 0x8000;
 	for (unsigned reg = 0; reg < 32; ++reg) {
 		// Mix finite values, special FP payloads, and integer limits. Inactive
-		// lanes remain nonzero so narrow writes and NEP merges are observable.
+		// lanes remain nonzero so narrow writes are observable.
 		for (unsigned lane = 0; lane < 4; ++lane) {
 			std::uint32_t bits = 0x3e80'0001U +
 				((reg * 3 + lane + seed) % 16) * 0x0008'0101U;
