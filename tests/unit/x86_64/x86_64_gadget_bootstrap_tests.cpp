@@ -3727,7 +3727,11 @@ read_test_sequences(void *context) noexcept
 		cpu.segment_selectors[2] = 0x2b;
 		cpu.rflags = shape.current;
 		const auto result = gadgets::execute(built.program, cpu, memory, 1);
-		if (!expect(result.event == uml::cpu::EngineEvent::continued &&
+		/* A popped image that sets TF arms the next instruction. */
+		const auto event = (shape.expected & ~shape.current &
+			rflags_trap) != 0 ? uml::cpu::EngineEvent::trap_flag :
+			uml::cpu::EngineEvent::continued;
+		if (!expect(result.event == event &&
 			result.retired_instructions == 1 && cpu.rip == target,
 			"IRET did not retire") ||
 			!expect(cpu.rflags == shape.expected, shape.message))
@@ -5665,6 +5669,84 @@ read_test_sequences(void *context) noexcept
 		"POPF with TF already set did not run on");
 }
 
+/* IRET that sets TF arms #DB after the instruction it returns to, as POPF
+ * does, so it leaves with the trap-flag event and RIP at that instruction for
+ * the runtime to run it alone. One that leaves TF clear, clears it, or finds
+ * it already set leaves as before, at every operand size (audit NC-E7). */
+[[nodiscard]] bool iret_setting_trap_flag_arms_the_next_instruction()
+{
+	using namespace uml::cpu::x86_64;
+	constexpr auto armed = uml::cpu::EngineEvent::trap_flag;
+	constexpr auto continued = uml::cpu::EngineEvent::continued;
+	struct Case final {
+		ExecutionMode mode;
+		std::array<std::uint8_t, 2> bytes;
+		std::size_t slot;
+		std::uint64_t current;
+		std::uint64_t popped;
+		uml::cpu::EngineEvent event;
+		const char *message;
+	};
+	const std::array cases{
+		Case{ExecutionMode::long64, {0x48, 0xcf}, 8, 0x202, 0x302, armed,
+			"IRETQ setting TF did not arm the next instruction"},
+		Case{ExecutionMode::long64, {0x48, 0xcf}, 8, 0x202, 0x10302,
+			armed, "IRETQ setting TF and RF did not arm the next "
+			"instruction"},
+		Case{ExecutionMode::long64, {0x48, 0xcf}, 8, 0x202, 0x202,
+			continued, "IRETQ leaving TF clear armed a trap"},
+		Case{ExecutionMode::long64, {0x48, 0xcf}, 8, 0x302, 0x302,
+			continued, "IRETQ finding TF set armed it again"},
+		Case{ExecutionMode::long64, {0x48, 0xcf}, 8, 0x302, 0x202,
+			continued, "IRETQ clearing TF armed a trap"},
+		Case{ExecutionMode::long64, {0xcf, 0x90}, 4, 0x202, 0x302, armed,
+			"64-bit IRETD setting TF did not arm the next instruction"},
+		Case{ExecutionMode::long64, {0x66, 0xcf}, 2, 0x202, 0x302, armed,
+			"64-bit 16-bit IRET setting TF did not arm the next "
+			"instruction"},
+		Case{ExecutionMode::compat32, {0xcf, 0x00}, 4, 0x202, 0x302, armed,
+			"compat32 IRETD setting TF did not arm the next instruction"},
+		Case{ExecutionMode::compat32, {0x66, 0xcf}, 2, 0x202, 0x302, armed,
+			"compat32 16-bit IRET setting TF did not arm the next "
+			"instruction"},
+	};
+	constexpr std::uint64_t stack = 0x200;
+	constexpr std::uint64_t target = 0x40;
+	for (const auto &shape : cases) {
+		TestMemory memory;
+		memory.load(0, {shape.bytes[0], shape.bytes[1]});
+		memory.load(target, {0x90}); // nop
+		const std::array<std::uint64_t, 5> frame{
+			target, 0x23, shape.popped, 0x900, 0x2b};
+		for (std::size_t index = 0; index < frame.size(); ++index) {
+			std::array<std::byte, 8> word{};
+			std::memcpy(word.data(), &frame[index], word.size());
+			if (!memory.write(stack + index * shape.slot,
+				std::span{word.data(), shape.slot}))
+				return expect(false, "IRET frame setup failed");
+		}
+		const auto built = gadgets::build(memory, 0, shape.mode, 1);
+		if (!expect(built.status == gadgets::BuildStatus::built,
+			"IRET did not build"))
+			return false;
+		CpuState cpu{};
+		cpu.execution_mode = shape.mode;
+		cpu.gpr(Register::rsp) = stack;
+		cpu.segment_selectors[1] = 0x23;
+		cpu.segment_selectors[2] = 0x2b;
+		cpu.rflags = shape.current;
+		const auto result = gadgets::execute(built.program, cpu, memory, 64);
+		if (!expect(result.event == shape.event &&
+				result.retired_instructions == 1 &&
+				cpu.rip == target &&
+				(cpu.rflags & rflags_trap) ==
+					(shape.popped & rflags_trap),
+				shape.message))
+			return false;
+	}
+	return true;
+}
+
 /* Besides IRET, whose case is in the corpus, RF reaches the engine in the
  * flags the kernel hands over: a signal return or a tracer may set it. It
  * lasts until the next instruction starts, so neither SYSCALL's R11 nor the
@@ -7181,6 +7263,7 @@ int main()
 		software_interrupt_vectors_trap() &&
 		one_instruction_budget_steps_linked_programs() &&
 		popf_setting_trap_flag_leaves_at_the_next_instruction() &&
+		iret_setting_trap_flag_arms_the_next_instruction() &&
 		resume_flag_lasts_until_an_instruction_starts() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&

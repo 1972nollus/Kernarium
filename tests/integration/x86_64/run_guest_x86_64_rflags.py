@@ -6,7 +6,8 @@ x86-64 image on an emulator built with the macos-x86_64 preset, and runs the
 probes there. As on Linux x86, execve() starts a task with RFLAGS 0x202, a
 tracer changes only ptrace's FLAG_MASK bits, and sigreturn restores only
 FIX_EFLAGS; IOPL, VM, VIF, VIP and ID stay the task's, and IF stays set. RF
-from IRET or sigreturn is gone by the next instruction's system call.
+from IRET or sigreturn is gone by the next instruction's system call, and TF
+set by IRET traps after the instruction IRET returns to.
 """
 
 from __future__ import annotations

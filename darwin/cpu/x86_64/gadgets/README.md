@@ -156,7 +156,7 @@ that ended at a branch carries none. See X82.
 A dispatch's instruction budget bounds how long it runs, not where a block
 may stop: the block that crosses the budget runs to its end, as the arm64
 engines' blocks do, so a dispatch can retire up to one block more than its
-budget. Only a single step, and the one instruction that a POPF setting TF
+budget. Only a single step, and the instruction that a POPF or IRET setting TF
 leaves before its trap, asks for an exact budget. That is the one case where a
 block is replayed: its first few instructions are assembled into a stream of
 their own, which ends where the budget does. What that replay decodes from is

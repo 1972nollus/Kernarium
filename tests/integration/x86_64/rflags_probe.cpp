@@ -8,13 +8,15 @@
  * VM, VIF, VIP and ID are never a task's to set that way, and IF stays set.
  * RF, which IRET at CPL 3 and a signal return may set, is cleared as the next
  * instruction starts, so a system call that instruction makes never shows it.
+ * TF that IRET sets raises SIGTRAP after the instruction IRET returns to.
  *
  * The x86-64 build traces an x86-64 and an i386 child stopped after execve(),
  * and raises a signal whose handler sets privileged bits in its frame. The
  * i386 build, whose path is the first argument, is the 32-bit child and runs
  * the same signal case under the i386 ABI. Each build also sets RF and reads
  * the signal frames, and on x86-64 SYSCALL's R11, of the kill() calls that
- * follow. Prints one line per case and exits with the number of failures.
+ * follow, and sets TF with IRET. Prints one line per case and exits with the
+ * number of failures.
  */
 
 namespace {
@@ -74,8 +76,10 @@ word raise_and_read_flags(long pid)
 	return flags;
 }
 
-/* uc_mcontext.rax. */
+/* uc_mcontext.rax and rip, and siginfo's si_addr. */
 constexpr unsigned frame_ax_offset = 40 + 13 * 8;
+constexpr unsigned frame_ip_offset = 40 + 16 * 8;
+constexpr unsigned siginfo_address_offset = 16;
 
 /* IRETQ to the instruction after it, with RFLAGS %[image]. */
 #define PROBE_IRET_TO_NEXT                                                     \
@@ -150,6 +154,41 @@ __asm__(".text\n"
 	"	syscall\n"
 	"	hlt\n"
 	".size _start,.-_start\n");
+
+/* IRETQ with an image of TF, IF and bit 1 to the instruction after it, which
+ * a NOP follows; the second form makes a getpid() system call first. Each
+ * returns from the label named ..._after, where the trap lands. */
+__asm__(".text\n"
+	".global probe_iret_step\n"
+	".global probe_iret_step_after\n"
+	"probe_iret_step:\n"
+	"	movq %rsp, %rcx\n"
+	"	pushq $0x2b\n"
+	"	pushq %rcx\n"
+	"	pushq $0x302\n"
+	"	pushq $0x33\n"
+	"	leaq 1f(%rip), %rcx\n"
+	"	pushq %rcx\n"
+	"	iretq\n"
+	"1:	nop\n"
+	"probe_iret_step_after:\n"
+	"	ret\n"
+	".global probe_iret_syscall\n"
+	".global probe_iret_syscall_after\n"
+	"probe_iret_syscall:\n"
+	"	movq %rsp, %rcx\n"
+	"	pushq $0x2b\n"
+	"	pushq %rcx\n"
+	"	pushq $0x302\n"
+	"	pushq $0x33\n"
+	"	leaq 1f(%rip), %rcx\n"
+	"	pushq %rcx\n"
+	"	movl $39, %eax\n"
+	"	iretq\n"
+	"1:	syscall\n"
+	"	nop\n"
+	"probe_iret_syscall_after:\n"
+	"	ret\n");
 #elif defined(__i386__)
 constexpr long nr_write = 4;
 constexpr long nr_getpid = 20;
@@ -192,8 +231,10 @@ word raise_and_read_flags(long pid)
 	return flags;
 }
 
-/* uc_mcontext.eax. */
+/* uc_mcontext.eax and eip, and siginfo's si_addr. */
 constexpr unsigned frame_ax_offset = 20 + 44;
+constexpr unsigned frame_ip_offset = 20 + 56;
+constexpr unsigned siginfo_address_offset = 12;
 
 /* IRET to the instruction after it, with EFLAGS %[image]. */
 #define PROBE_IRET_TO_NEXT                                                     \
@@ -257,6 +298,31 @@ __asm__(".text\n"
 	"	int $0x80\n"
 	"	hlt\n"
 	".size _start,.-_start\n");
+
+/* The i386 forms of the IRET that sets TF. */
+__asm__(".text\n"
+	".global probe_iret_step\n"
+	".global probe_iret_step_after\n"
+	"probe_iret_step:\n"
+	"	pushl $0x302\n"
+	"	pushl $0x23\n"
+	"	pushl $1f\n"
+	"	iretl\n"
+	"1:	nop\n"
+	"probe_iret_step_after:\n"
+	"	ret\n"
+	".global probe_iret_syscall\n"
+	".global probe_iret_syscall_after\n"
+	"probe_iret_syscall:\n"
+	"	pushl $0x302\n"
+	"	pushl $0x23\n"
+	"	pushl $1f\n"
+	"	movl $20, %eax\n"
+	"	iretl\n"
+	"1:	int $0x80\n"
+	"	nop\n"
+	"probe_iret_syscall_after:\n"
+	"	ret\n");
 #else
 #error "the RFLAGS probe is an x86-64 or i386 program"
 #endif
@@ -442,6 +508,86 @@ bool resume_flag_clears_at_next_instruction()
 	saved = raise_twice(pid);
 	return resume_cleared("kill() right after sigreturn", before, 2,
 			      saved) && ok;
+}
+
+constexpr word flag_tf = 1UL << 8;
+constexpr long trap_signal = 5;
+constexpr int trap_trace = 2;
+
+extern "C" void probe_iret_step();
+extern "C" char probe_iret_step_after[];
+extern "C" void probe_iret_syscall();
+extern "C" char probe_iret_syscall_after[];
+
+volatile int step_traps;
+volatile int step_code;
+volatile word step_ip;
+volatile word step_address;
+volatile word step_flags;
+
+/* Records the #DB and clears TF in its frame, so the task runs on. */
+void record_step(int, void *info, void *context)
+{
+	auto *frame = static_cast<char *>(context);
+	auto *flags = reinterpret_cast<word *>(frame + frame_flags_offset);
+	auto *details = static_cast<char *>(info);
+	step_traps = step_traps + 1;
+	step_code = *reinterpret_cast<int *>(details + 8);
+	step_address =
+		*reinterpret_cast<word *>(details + siginfo_address_offset);
+	step_ip = *reinterpret_cast<word *>(frame + frame_ip_offset);
+	step_flags = *flags;
+	*flags &= ~flag_tf;
+}
+
+/* The stub raised exactly one SIGTRAP, TRAP_TRACE at `after`, whose frame
+ * holds the IRET image: TF, IF and bit 1, and no RF. A system call after the
+ * stub delivers a trap the engine left pending. Prints why not. */
+bool stepped_to(const char *what, void (*stub)(), const char *after)
+{
+	step_traps = 0;
+	stub();
+	raw_syscall(nr_getpid);
+	const word expected = reinterpret_cast<word>(after);
+	const bool ok = step_traps == 1 && step_code == trap_trace &&
+			step_ip == expected && step_address == expected &&
+			step_flags == (flag_tf | initial_flags);
+	if (!ok) {
+		put("  ");
+		put(what);
+		put(": traps ");
+		put_hex(static_cast<u32>(step_traps));
+		put(", si_code ");
+		put_hex(static_cast<u32>(step_code));
+		put(", ip ");
+		put_hex(step_ip);
+		put(" (expected ");
+		put_hex(expected);
+		put("), frame flags ");
+		put_hex(step_flags);
+		put("\n");
+	}
+	return ok;
+}
+
+/* IRET that sets TF raises #DB after the instruction it returns to, as POPF
+ * does; after a system call instead, the trap follows the instruction after
+ * it, because the kernel entry swallows the step of the call itself. */
+bool iret_trap_flag_steps_one_instruction()
+{
+	KernelSigaction action = {};
+	action.handler = reinterpret_cast<word>(&record_step);
+	action.flags = sa_siginfo | sa_restorer;
+	action.restorer = reinterpret_cast<word>(&probe_restorer);
+	if (raw_syscall(nr_rt_sigaction, trap_signal,
+			reinterpret_cast<long>(&action), 0, 8) != 0) {
+		put("  rt_sigaction failed\n");
+		return false;
+	}
+	const bool ok = stepped_to("the instruction after IRET",
+				   probe_iret_step, probe_iret_step_after);
+	return stepped_to("a system call after IRET", probe_iret_syscall,
+			  probe_iret_syscall_after) && ok;
 }
 
 #if defined(__x86_64__)
@@ -647,6 +793,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "sigreturn"));
 	report("x86-64 RF from IRET or sigreturn is gone at the next instruction",
 	       in_child(self, "resume"));
+	report("x86-64 TF set by IRET traps after one instruction",
+	       in_child(self, "step"));
 
 	child = start_traced(i386_probe, "idle");
 	report("i386 execve() starts with EFLAGS 0x202",
@@ -659,6 +807,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(i386_probe, "sigreturn"));
 	report("i386 RF from IRET or sigreturn is gone at the next instruction",
 	       in_child(i386_probe, "resume"));
+	report("i386 TF set by IRET traps after one instruction",
+	       in_child(i386_probe, "step"));
 	return failures;
 }
 #endif
@@ -675,6 +825,8 @@ extern "C" int probe_main(word *stack)
 		return sigreturn_restores_only_fix_eflags() ? 0 : 1;
 	if (count == 2 && equal(arguments[1], "resume"))
 		return resume_flag_clears_at_next_instruction() ? 0 : 1;
+	if (count == 2 && equal(arguments[1], "step"))
+		return iret_trap_flag_steps_one_instruction() ? 0 : 1;
 #if defined(__x86_64__)
 	if (count == 2)
 		return run_all(arguments[0], arguments[1]);
