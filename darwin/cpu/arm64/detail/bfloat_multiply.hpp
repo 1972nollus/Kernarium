@@ -134,7 +134,7 @@ using namespace floating_bits;
 	if ((left_infinity && right_zero) || (left_zero && right_infinity) ||
 	    (addend_infinity && product_infinity &&
 	     addend_sign != product_sign))
-		return 0xffc0'0000U;
+		return default_nan<std::uint32_t>(fpcr);
 	if (addend_infinity)
 		return addend;
 	if (product_infinity)
