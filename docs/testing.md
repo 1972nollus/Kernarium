@@ -378,7 +378,7 @@ INT 4, and i386 BOUND and INTO deliver Linux's signals without a kernel relay
 complaint, that a value on the x87 stack survives a signal, that a signal taken
 between two instructions leaves RAX alone even when it holds an -ERESTART*
 code, and that a tracer of the same ABI reads and writes registers, FP state
-and i386 TLS.
+and i386 TLS and changes or skips a system call through orig_ax.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session

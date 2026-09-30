@@ -21,10 +21,10 @@ does, as SIGTRAP with TRAP_BRKPT at the next instruction.
  2 files changed, 88 insertions(+), 4 deletions(-)
 
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index e8691398f7d56e127b34594d9a710d5349e45aec..bd8af46ba60fd0619bd077909ec0f40fbc236c4e 100644
+index 8a30c5534a6b427e85f5e9877d4482ef824dcd08..d703d28b0296099396f51c343345373da0b00646 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
-@@ -153,6 +153,45 @@ static void set_user_regs32(struct uml_pt_regs *guest,
+@@ -159,6 +159,45 @@ static void set_user_regs32(struct uml_pt_regs *guest,
  	upt_x86_64_set_segment_selector(guest, 2, regs->ss);
  }
  

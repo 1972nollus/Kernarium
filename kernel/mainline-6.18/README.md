@@ -128,7 +128,10 @@ delivers `SIGTRAP` with `TRAP_BRKPT` after itself. `#OF` from INT 4 or INTO,
 two faults at it. An i386 tracer's register requests use the i386 layouts, as
 on Linux, with `PTRACE_GETFPREGS` and `NT_PRFPREG` the i387 FSAVE image, and a
 tracer of either ABI reaches the task's i386 TLS entries through the
-thread-area requests.
+thread-area requests. A tracer's `orig_ax` (`orig_eax`) is the number of the
+system call the task is in and -1 at any other stop; writing it at a system
+call's entry stop runs that call instead, and -1 skips the call and leaves AX
+as the tracer set it.
 `tests/integration/x86_64/run_guest_x86_64_exceptions.py` checks these. Host
 instruction execution is qualified against the pinned FEX handwritten x86-64
 corpus; distribution and complete Linux syscall compatibility require separate

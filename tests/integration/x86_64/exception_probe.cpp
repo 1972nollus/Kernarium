@@ -5,7 +5,8 @@
  *
  * Only a system call's own return can be restarted: a signal taken between
  * two instructions leaves the accumulator alone even when it holds an
- * -ERESTART* code.
+ * -ERESTART* code, and a tracer that rewrites orig_ax at a system call's entry
+ * changes or skips that call.
  *
  * A repeated string instruction retires once however long it runs, and the
  * kernel services its timer only when the engine returns to it, so a loop of
@@ -28,11 +29,13 @@ using word = unsigned long;
 constexpr long nr_write = 1;
 constexpr long nr_rt_sigaction = 13;
 constexpr long nr_setitimer = 38;
+constexpr long nr_getpid = 39;
 constexpr long nr_fork = 57;
 constexpr long nr_execve = 59;
 constexpr long nr_wait4 = 61;
 constexpr long nr_kill = 62;
 constexpr long nr_ptrace = 101;
+constexpr long nr_getppid = 110;
 constexpr long nr_clock_gettime = 228;
 constexpr long nr_exit_group = 231;
 
@@ -153,6 +156,8 @@ constexpr unsigned siginfo_address_offset = 16;
 /* struct user_regs_struct and struct user. */
 constexpr unsigned user_regs_words = 27;
 constexpr unsigned user_bx = 5;
+constexpr unsigned user_ax = 10;
+constexpr unsigned user_orig_ax = 15;
 constexpr unsigned user_ip = 16;
 constexpr unsigned user_cs = 17;
 constexpr unsigned user_flags = 18;
@@ -165,8 +170,10 @@ constexpr word expected_cs = 0x33;
 #elif defined(__i386__)
 constexpr long nr_fork = 2;
 constexpr long nr_write = 4;
+constexpr long nr_getpid = 20;
 constexpr long nr_ptrace = 26;
 constexpr long nr_kill = 37;
+constexpr long nr_getppid = 64;
 constexpr long nr_setitimer = 104;
 constexpr long nr_wait4 = 114;
 constexpr long nr_rt_sigaction = 174;
@@ -326,6 +333,8 @@ constexpr unsigned siginfo_address_offset = 12;
 constexpr unsigned user_regs_words = 17;
 constexpr unsigned user_bx = 0;
 constexpr unsigned user_si = 3;
+constexpr unsigned user_ax = 6;
+constexpr unsigned user_orig_ax = 11;
 constexpr unsigned user_ip = 12;
 constexpr unsigned user_cs = 13;
 constexpr unsigned user_flags = 14;
@@ -347,6 +356,7 @@ constexpr long sigtrap = 5;
 constexpr long sigkill = 9;
 constexpr long sigsegv = 11;
 constexpr long sigalrm = 14;
+constexpr long sigstop = 19;
 constexpr long trap_brkpt = 1;
 constexpr long si_kernel = 0x80;
 constexpr word flag_reserved = 1UL << 1;
@@ -824,6 +834,7 @@ constexpr long ptrace_peekuser = 3;
 constexpr long ptrace_pokeuser = 6;
 constexpr long ptrace_cont = 7;
 constexpr long ptrace_getregs = 12;
+constexpr long ptrace_syscall = 24;
 constexpr long ptrace_setregs = 13;
 constexpr long ptrace_getfpregs = 14;
 constexpr long ptrace_setfpregs = 15;
@@ -1036,6 +1047,91 @@ bool tracer_sees_registers()
 	return ok;
 }
 
+/* Waits for the child's next stop and checks that `signal` caused it. */
+bool stopped_with(long child, long signal, const char *what)
+{
+	int status = 0;
+	if (wait_for(child, status) == child && (status & 0xff) == 0x7f &&
+	    ((status >> 8) & 0xff) == signal)
+		return true;
+	put("  no ");
+	put(what);
+	put(" stop: status ");
+	put_hex(static_cast<u32>(status));
+	put("\n");
+	return false;
+}
+
+/* Resumes the child to its next system call entry or exit. */
+bool syscall_stop(long child, const char *what)
+{
+	return ptrace(ptrace_syscall, child, 0, nullptr) == 0 &&
+	       stopped_with(child, sigtrap, what);
+}
+
+word peek_user(long child, unsigned index)
+{
+	word value = 0x5a5a5a5a;
+	if (ptrace(ptrace_peekuser, child, index * sizeof(word), &value) != 0)
+		put("  PTRACE_PEEKUSER failed\n");
+	return value;
+}
+
+bool poke_user(long child, unsigned index, word value)
+{
+	return expect("PTRACE_POKEUSER", static_cast<word>(ptrace(
+		ptrace_pokeuser, child, index * sizeof(word),
+		reinterpret_cast<const void *>(value))), 0);
+}
+
+/* A tracer that rewrites orig_ax at a system call's entry stop runs another
+ * call in its place, or with -1 skips it and leaves the AX it wrote; at a
+ * stop outside any system call orig_ax reads -1. */
+bool tracer_changes_syscalls()
+{
+	const word self = static_cast<word>(raw_syscall(nr_getpid));
+	const long child = raw_syscall(nr_fork);
+	if (child == 0) {
+		const long parent = raw_syscall(nr_getppid);
+		raw_syscall(nr_ptrace, ptrace_traceme, 0, 0, 0);
+		raw_syscall(nr_kill, raw_syscall(nr_getpid), sigstop);
+		const long replaced = raw_syscall(nr_getpid);
+		const long skipped = raw_syscall(nr_getpid);
+		__asm__ volatile("int3");
+		raw_syscall(nr_exit_group, (replaced == parent ? 0 : 1) |
+			    (skipped == 42 ? 0 : 2));
+	}
+	if (child < 0) {
+		put("  fork failed\n");
+		return false;
+	}
+	bool ok = stopped_with(child, sigstop, "SIGSTOP");
+	ok = ok && syscall_stop(child, "getpid entry");
+	ok = ok && expect("orig_ax at getpid's entry",
+			  peek_user(child, user_orig_ax), nr_getpid);
+	ok = ok && poke_user(child, user_orig_ax, nr_getppid);
+	ok = ok && syscall_stop(child, "replaced call's exit");
+	ok = ok && expect("AX of getppid run in getpid's place",
+			  peek_user(child, user_ax), self);
+	ok = ok && syscall_stop(child, "second getpid entry");
+	ok = ok && poke_user(child, user_orig_ax, ~word{0});
+	ok = ok && poke_user(child, user_ax, 42);
+	ok = ok && syscall_stop(child, "skipped call's exit");
+	ok = ok && expect("AX of a skipped call", peek_user(child, user_ax), 42);
+	ok = ok && ptrace(ptrace_cont, child, 0, nullptr) == 0 &&
+	     stopped_with(child, sigtrap, "INT3");
+	ok = ok && expect("orig_ax at an INT3 stop",
+			  peek_user(child, user_orig_ax), ~word{0});
+	int status = 0;
+	if (!ok || ptrace(ptrace_cont, child, 0, nullptr) != 0 ||
+	    wait_for(child, status) != child) {
+		raw_syscall(nr_kill, child, sigkill);
+		wait_for(child, status);
+		return false;
+	}
+	return expect("child exit status", static_cast<u32>(status), 0);
+}
+
 #if defined(__x86_64__)
 /* Runs `path mode` and reports whether it exited 0. */
 bool in_child(const char *path, const char *mode)
@@ -1105,6 +1201,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "tracer"));
 	report("i386 tracer reads and writes registers, FP state and TLS",
 	       in_child(i386_probe, "tracer"));
+	report("x86-64 tracer changes and skips system calls by orig_ax",
+	       in_child(self, "tracer-syscall"));
+	report("i386 tracer changes and skips system calls by orig_eax",
+	       in_child(i386_probe, "tracer-syscall"));
 	return failures;
 }
 #endif
@@ -1133,6 +1233,8 @@ extern "C" int probe_main(word *stack)
 			return signal_keeps_ax() ? 0 : 1;
 		if (equal(mode, "tracer"))
 			return tracer_sees_registers() ? 0 : 1;
+		if (equal(mode, "tracer-syscall"))
+			return tracer_changes_syscalls() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;

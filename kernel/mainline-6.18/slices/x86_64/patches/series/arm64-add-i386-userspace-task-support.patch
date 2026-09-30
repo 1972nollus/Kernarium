@@ -17,7 +17,7 @@ Generate the i386 dispatch table from the canonical Linux 6.18 syscall specifica
  arch/arm64/um/asm/unistd.h                  |  13 +
  arch/arm64/um/asm/user.h                    |  27 +
  arch/arm64/um/mmap.c                        |   9 +
- arch/arm64/um/ptrace.c                      |  94 ++++
+ arch/arm64/um/ptrace.c                      |  96 ++++
  arch/arm64/um/shared/sysdep/ptrace.h        |  15 +
  arch/arm64/um/signal.c                      | 516 +++++++++++++++++-
  arch/arm64/um/tls.c                         |   3 +
@@ -45,7 +45,7 @@ Generate the i386 dispatch table from the canonical Linux 6.18 syscall specifica
  include/linux/syscall_user_dispatch_types.h |   2 +-
  kernel/entry/Makefile                       |   3 +-
  net/ethtool/ioctl.c                         |   1 +
- 38 files changed, 1794 insertions(+), 189 deletions(-)
+ 38 files changed, 1796 insertions(+), 189 deletions(-)
  create mode 100644 arch/arm64/um/asm/seccomp.h
  create mode 100644 arch/arm64/um/x86_32.h
  create mode 100644 arch/arm64/um/x86_32_syscalls.c
@@ -139,7 +139,7 @@ index 476b8f2426167dd2d1c07c0f7b7d3a6075453492..ea7f7cb331aa9886b14387022a824763
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index 010fbc343a529602a189ec4cec1bed06c4615bba..f20f4ee12ef183ee0cf9f33544d30ba908f2d57d 100644
+index e363e0173077a4e211dce250028f9d4e17096580..ebaddf7f62604ce71600278956eadc155c4cbbd0 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
 @@ -32,9 +32,14 @@
@@ -441,10 +441,10 @@ index 1a8b242f6aa99b62d006f59bfc55f0d609280d26..3294381b9533c3e8892858694bfa03bd
  		return uml_x86_64_get_unmapped_area_32bit(filp, addr, len, flags,
  						     vm_flags);
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index 0e16e611416a790dd3a58a5d688cec2fe0ea4a0a..23145bdaae87aa507991bcbf787bfd680c41ba6a 100644
+index 9b5193e03c41bc20f551bb236f9d96f70ed2926c..e8d509dab1e4e87fe0d4d9db8e065385d5be54b9 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
-@@ -81,6 +81,53 @@ static void set_user_regs(struct uml_pt_regs *guest,
+@@ -85,6 +85,55 @@ static void set_user_regs(struct uml_pt_regs *guest,
  	upt_x86_64_set_segment_selector(guest, 5, regs->gs);
  }
  
@@ -463,7 +463,7 @@ index 0e16e611416a790dd3a58a5d688cec2fe0ea4a0a..23145bdaae87aa507991bcbf787bfd68
 +	regs->es = upt_x86_64_segment_selector(guest, 0);
 +	regs->fs = upt_x86_64_segment_selector(guest, 4);
 +	regs->gs = upt_x86_64_segment_selector(guest, 5);
-+	regs->orig_eax = guest->orig_x0;
++	regs->orig_eax = UPT_SYSCALL_NR(guest);
 +	regs->eip = UPT_X86_64_RIP(guest);
 +	regs->cs = upt_x86_64_segment_selector(guest, 1);
 +	regs->eflags = UPT_X86_64_RFLAGS(guest);
@@ -485,6 +485,8 @@ index 0e16e611416a790dd3a58a5d688cec2fe0ea4a0a..23145bdaae87aa507991bcbf787bfd68
 +	upt_x86_64_set_segment_selector(guest, 0, regs->es);
 +	upt_x86_64_set_segment_selector(guest, 4, regs->fs);
 +	upt_x86_64_set_segment_selector(guest, 5, regs->gs);
++	/* Sign-extended, so a 32-bit tracer's -1 skips the call, as on x86. */
++	UPT_SYSCALL_NR(guest) = (s32)regs->orig_eax;
 +	guest->orig_x0 = regs->orig_eax;
 +	UPT_X86_64_RIP(guest) = regs->eip;
 +	upt_x86_64_set_segment_selector(guest, 1, regs->cs);
@@ -498,7 +500,7 @@ index 0e16e611416a790dd3a58a5d688cec2fe0ea4a0a..23145bdaae87aa507991bcbf787bfd68
  unsigned long getreg(struct task_struct *child, int regno)
  {
  	struct user_regs_struct regs;
-@@ -154,6 +201,32 @@ static int genregs_set(struct task_struct *target,
+@@ -158,6 +207,32 @@ static int genregs_set(struct task_struct *target,
  	return error;
  }
  
@@ -531,7 +533,7 @@ index 0e16e611416a790dd3a58a5d688cec2fe0ea4a0a..23145bdaae87aa507991bcbf787bfd68
  static int fpregs_get(struct task_struct *target,
  		      const struct user_regset *regset, struct membuf to)
  {
-@@ -196,8 +269,29 @@ static const struct user_regset_view uml_x86_64_view = {
+@@ -200,8 +275,29 @@ static const struct user_regset_view uml_x86_64_view = {
  	.n = ARRAY_SIZE(uml_x86_64_regsets),
  };
  
