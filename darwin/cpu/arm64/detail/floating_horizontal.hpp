@@ -52,6 +52,9 @@ floating_absolute_minmax(Integer first, Integer second, bool maximum,
 			(first_absolute < second_absolute ? first_absolute :
 				second_absolute), 0U};
 	}
+	/* FPAbsMax and FPAbsMin clear FPCR.AH before FPProcessNaNs, so FAMAX
+	 * and FAMIN keep the standard NaN priority and a positive default
+	 * NaN. */
 	constexpr Integer quiet = quiet_bit<Integer>;
 	return {default_nan ?
 			static_cast<Integer>(exponent_mask<Integer> | quiet) :
@@ -66,7 +69,6 @@ floating_alternate_minmax(Integer first, Integer second, bool maximum,
 {
 	using namespace floating_bits;
 	constexpr Integer sign = sign_bit<Integer>;
-	constexpr Integer quiet = quiet_bit<Integer>;
 	constexpr auto magnitude_mask = static_cast<Integer>(sign - 1U);
 	const bool alternate = (fpcr & 2U) != 0U;
 	std::uint32_t exceptions{};
@@ -93,12 +95,9 @@ floating_alternate_minmax(Integer first, Integer second, bool maximum,
 		if (alternate && is_nan(first) && is_nan(second)) {
 			const bool invalid = is_signaling_nan(first) ||
 				is_signaling_nan(second);
-			const Integer selected = (fpcr & (1U << 25)) != 0U ?
-				static_cast<Integer>(
-					exponent_mask<Integer> | quiet) :
-				static_cast<Integer>(first | quiet);
-			return {selected, static_cast<std::uint32_t>(
-				exceptions | (invalid ? 1U : 0U))};
+			return {process_nan(first, fpcr),
+				static_cast<std::uint32_t>(
+					exceptions | (invalid ? 1U : 0U))};
 		}
 		const bool first_qnan = is_nan(first) &&
 			!is_signaling_nan(first);
@@ -117,14 +116,12 @@ floating_alternate_minmax(Integer first, Integer second, bool maximum,
 	if (is_nan(first) || is_nan(second)) {
 		const bool invalid =
 			is_signaling_nan(first) || is_signaling_nan(second);
-		Integer selected = is_signaling_nan(first) ? first :
+		const Integer selected = is_signaling_nan(first) ? first :
 			is_signaling_nan(second) ? second :
 			is_nan(first) ? first : second;
-		selected = (fpcr & (1U << 25)) != 0U ?
-			static_cast<Integer>(exponent_mask<Integer> | quiet) :
-			static_cast<Integer>(selected | quiet);
-		return {selected, static_cast<std::uint32_t>(
-			exceptions | (invalid ? 1U : 0U))};
+		return {process_nan(selected, fpcr),
+			static_cast<std::uint32_t>(
+				exceptions | (invalid ? 1U : 0U))};
 	}
 
 	Integer selected;
@@ -212,9 +209,7 @@ prepare_floating_controlled_arithmetic(Integer first, Integer second,
 			selected = second;
 		else
 			selected = first_nan ? first : second;
-		selected = (fpcr & (1U << 25)) != 0U ?
-			static_cast<Integer>(exponent_mask | quiet_bit) :
-			static_cast<Integer>(selected | quiet_bit);
+		selected = floating_bits::process_nan(selected, fpcr);
 		if (absolute_result && !alternate)
 			selected &= static_cast<Integer>(sign - 1U);
 		return {true, selected, first, second,
@@ -257,6 +252,11 @@ complete_floating_controlled_arithmetic(Integer result, std::uint32_t fpcr,
 	if ((fpcr & 2U) == 0U)
 		return {result, exceptions};
 	using namespace floating_bits;
+	/* NaN operands never reach the host operation, so a NaN result is the
+	 * host's default NaN for an invalid operation. FPDefaultNaN takes its
+	 * sign from AH, which a host without FEAT_AFP ignores. */
+	if (is_nan(result))
+		return {default_nan<Integer>(fpcr), exceptions};
 	/* The exponent test is shared with the normal-range branch below. */
 	const bool subnormal = (result & exponent_mask<Integer>) == 0U &&
 		(result & fraction_mask<Integer>) != 0U;
