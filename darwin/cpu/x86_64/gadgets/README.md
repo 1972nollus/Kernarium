@@ -166,6 +166,14 @@ since. A translation is therefore built with no decoded instructions in it at
 all; the first replay of a block keeps what it decoded, in a third allocation
 that only a stepped block has. See X73.
 
+A repeated string instruction retires once however many elements it moves.
+Its gadget stops between elements after `UML_X86_64_STRING_REPEAT_BUDGET` of
+work -- elements, or 64-byte blocks of a page-bounded run -- with RIP still
+naming it, and `execute` reports that yield. The dispatch charges the same
+amount to its instruction budget, so a loop of long REP strings returns to the
+kernel about as often as ordinary code does; the kernel services its
+cooperative timer only there. A step keeps its exact budget.
+
 The retirement counter carries the dispatch's instruction budget as a negative
 bias, so an edge that follows a link tests the sign of one addition instead of
 loading the limit and comparing against it. `uml_x86_64_gadget_leave` takes

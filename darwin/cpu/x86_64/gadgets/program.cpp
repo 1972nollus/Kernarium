@@ -286,7 +286,7 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		return execute(program, cpu, memory, executor,
 			instruction_budget, interrupt);
 	} catch (...) {
-		return {::uml::cpu::EngineEvent::fatal, 0, {}, false};
+		return {::uml::cpu::EngineEvent::fatal, 0, {}, false, false};
 	}
 }
 
@@ -299,12 +299,12 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		cpu.execution_mode != program.execution_mode() ||
 		cpu.rip != program.address()) {
 		trace_fatal("precondition", program, cpu, instruction_budget);
-		return {::uml::cpu::EngineEvent::fatal, 0, {}, false};
+		return {::uml::cpu::EngineEvent::fatal, 0, {}, false, false};
 	}
 	if (interrupt.pending())
-		return {::uml::cpu::EngineEvent::interrupt, 0, {}, false};
+		return {::uml::cpu::EngineEvent::interrupt, 0, {}, false, false};
 	if (instruction_budget == 0)
-		return {::uml::cpu::EngineEvent::continued, 0, {}, true};
+		return {::uml::cpu::EngineEvent::continued, 0, {}, true, false};
 
 	std::vector<std::uintptr_t> limited_stream;
 	std::span<const std::uintptr_t> native_stream = program.native_stream();
@@ -316,7 +316,7 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 				trace_fatal("limited-replay", program, cpu,
 					instruction_budget);
 				return {::uml::cpu::EngineEvent::fatal, 0, {},
-					false};
+					false, false};
 			}
 			limited_stream = build_native_stream(
 				gadgets.first(instruction_budget),
@@ -326,7 +326,7 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		} catch (...) {
 			trace_fatal("limited-stream", program, cpu,
 				instruction_budget);
-			return {::uml::cpu::EngineEvent::fatal, 0, {}, false};
+			return {::uml::cpu::EngineEvent::fatal, 0, {}, false, false};
 		}
 	}
 
@@ -374,7 +374,9 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		if (executor.current_code_changes() == settled)
 			(void)executor.accept_code_changes(settled);
 	}
-	const auto event = static_cast<::uml::cpu::EngineEvent>(result.event);
+	const bool repeat_yielded = result.event == UML_X86_64_EVENT_REPEAT_YIELD;
+	const auto event = repeat_yielded ? ::uml::cpu::EngineEvent::continued :
+		static_cast<::uml::cpu::EngineEvent>(result.event);
 	if (event == ::uml::cpu::EngineEvent::continued &&
 		context.indirect_miss != nullptr)
 		executor.train_indirect(context.indirect_miss, cpu.rip, program.execution_mode());
@@ -387,6 +389,7 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		context.fault,
 		event == ::uml::cpu::EngineEvent::continued &&
 			result.executed == instruction_budget,
+		repeat_yielded,
 	};
 }
 

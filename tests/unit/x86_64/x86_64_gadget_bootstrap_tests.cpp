@@ -3902,6 +3902,11 @@ read_test_sequences(void *context) noexcept
 	 * Stopping there is where an interrupt finds the instruction, and
 	 * hardware then saves RF, so both boundaries set it; the exit that runs
 	 * no instruction keeps it, and resuming clears it (audit NC-E6).
+	 *
+	 * The instruction retires nothing at either boundary, so each reports
+	 * that it yielded, and the dispatch charges the work to its instruction
+	 * budget; otherwise a loop of long REP strings never returns to the
+	 * kernel, which services its timer only there (audit NC-E8).
 	 */
 	TestMemory descending;
 	descending.load(0, {0xf3, 0xaa}); // rep stosb
@@ -3923,7 +3928,9 @@ read_test_sequences(void *context) noexcept
 		descending.byte(8192) == 0x5a && descending.byte(4097) == 0x5a,
 		"descending REP STOSB did not yield after its element budget") ||
 		!expect((down.rflags & rflags_resume) != 0,
-			"REP STOSB stopped by its element budget did not set RF"))
+			"REP STOSB stopped by its element budget did not set RF") ||
+		!expect(element.repeat_yielded,
+			"REP STOSB stopped by its element budget did not yield"))
 		return false;
 
 	TestMemory memory{0, 270336};
@@ -3945,7 +3952,9 @@ read_test_sequences(void *context) noexcept
 			memory.byte(4096) == 0x5a && memory.byte(266239) == 0x5a,
 			"REP STOSB chunk did not preserve its partial state") ||
 		!expect((cpu.rflags & rflags_resume) != 0,
-			"REP STOSB stopped by its run budget did not set RF"))
+			"REP STOSB stopped by its run budget did not set RF") ||
+		!expect(first.repeat_yielded,
+			"REP STOSB stopped by its run budget did not yield"))
 		return false;
 	/* 32-bit address arithmetic reaches the same run loop. Its yield
 	 * boundary is the cheapest proof: the element loop would have stopped
@@ -3979,13 +3988,15 @@ read_test_sequences(void *context) noexcept
 		built.program, cpu, memory, 1, interrupt);
 	if (!expect(interrupted.event == uml::cpu::EngineEvent::interrupt &&
 		interrupted.retired_instructions == 0 &&
+		!interrupted.repeat_yielded &&
 		cpu.gpr(Register::rcx) == 1 && cpu.rip == 0 &&
 		(cpu.rflags & rflags_resume) != 0,
 		"REP STOSB chunk did not expose its interrupt boundary with RF"))
 		return false;
 	const auto finished = gadgets::execute(built.program, cpu, memory, 1);
 	return expect(finished.event == uml::cpu::EngineEvent::continued &&
-		finished.retired_instructions == 1 && cpu.rip == 2,
+		finished.retired_instructions == 1 && cpu.rip == 2 &&
+		!finished.repeat_yielded,
 		"REP STOSB did not retire after resuming") &&
 		expect(cpu.gpr(Register::rcx) == 0 &&
 			cpu.gpr(Register::rdi) == 266241 &&
