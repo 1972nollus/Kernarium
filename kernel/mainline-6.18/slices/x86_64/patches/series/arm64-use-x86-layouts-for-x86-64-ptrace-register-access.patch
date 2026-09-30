@@ -274,7 +274,7 @@ index 23145bdaae87aa507991bcbf787bfd680c41ba6a..e561801a0afa78700dfd700cbe38e738
  
  static const struct user_regset_view uml_x86_32_view = {
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 0f3c17e36482e3db0a9005876062939b72126e4b..4c2e5d9eebe9f4e00cdaa5a28a1c7636d6e10789 100644
+index 84b1210e87c4a7280016c2c16f6f2a6d3eb67c4a..808e237ed9172420173777da485b24d02c25da88 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -12,6 +12,7 @@

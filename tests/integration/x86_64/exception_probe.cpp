@@ -87,6 +87,14 @@ __asm__(".text\n"
 	"	int $4\n"
 	".global probe_int4_end\n"
 	"probe_int4_end:\n"
+	"	ret\n"
+	/* Stores pi through a SIGTRAP taken with it on the x87 stack: (out). */
+	".global probe_x87_signal\n"
+	"probe_x87_signal:\n"
+	"	fninit\n"
+	"	fldpi\n"
+	"	int3\n"
+	"	fstpl (%rdi)\n"
 	"	ret\n");
 
 /* uc_mcontext: uc_flags, uc_link and a 24-byte stack_t, then r8-r15, rdi,
@@ -200,6 +208,14 @@ __asm__(".text\n"
 	"	.byte 0x66, 0x62, 0x02\n"
 	".global probe_bound16_end\n"
 	"probe_bound16_end:\n"
+	"	ret\n"
+	".global probe_x87_signal\n"
+	"probe_x87_signal:\n"
+	"	movl 4(%esp), %eax\n"
+	"	fninit\n"
+	"	fldpi\n"
+	"	int3\n"
+	"	fstpl (%eax)\n"
 	"	ret\n");
 
 /* uc_mcontext: uc_flags, uc_link and a 12-byte stack_t, then gs, fs, es, ds,
@@ -533,6 +549,21 @@ bool int4_traps()
 			{sigsegv, si_kernel, 0, end, 4, false});
 }
 
+extern "C" void probe_x87_signal(double *out);
+
+/* A signal taken with a value on the x87 stack returns to the same stack. */
+bool x87_stack_survives_a_signal()
+{
+	if (!install_fault_handlers())
+		return false;
+	double result = 0;
+	probe_x87_signal(&result);
+	u64 bits;
+	__builtin_memcpy(&bits, &result, sizeof(bits));
+	return expect("pi stored after the SIGTRAP", bits,
+		      0x400921fb54442d18ULL);
+}
+
 #if defined(__i386__)
 /* Runs `work`, resuming after `end` if it faults, and checks that it raised
  * nothing. */
@@ -679,6 +710,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(i386_probe, "int4"));
 	report("i386 INTO delivers SIGSEGV SI_KERNEL on overflow",
 	       in_child(i386_probe, "into"));
+	report("x86-64 a signal keeps the x87 stack",
+	       in_child(self, "x87-signal"));
+	report("i386 a signal keeps the x87 stack",
+	       in_child(i386_probe, "x87-signal"));
 	return failures;
 }
 #endif
@@ -701,6 +736,8 @@ extern "C" int probe_main(word *stack)
 			return icebp_traps() ? 0 : 1;
 		if (equal(mode, "int4"))
 			return int4_traps() ? 0 : 1;
+		if (equal(mode, "x87-signal"))
+			return x87_stack_survives_a_signal() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;

@@ -19,7 +19,7 @@ Generate the i386 dispatch table from the canonical Linux 6.18 syscall specifica
  arch/arm64/um/mmap.c                        |   9 +
  arch/arm64/um/ptrace.c                      |  94 ++++
  arch/arm64/um/shared/sysdep/ptrace.h        |  15 +
- arch/arm64/um/signal.c                      | 513 ++++++++++++++++-
+ arch/arm64/um/signal.c                      | 516 +++++++++++++++++-
  arch/arm64/um/tls.c                         |   3 +
  arch/arm64/um/x86_32.h                      |   9 +
  arch/arm64/um/x86_32_syscalls.c             | 574 ++++++++++++++++++++
@@ -45,7 +45,7 @@ Generate the i386 dispatch table from the canonical Linux 6.18 syscall specifica
  include/linux/syscall_user_dispatch_types.h |   2 +-
  kernel/entry/Makefile                       |   3 +-
  net/ethtool/ioctl.c                         |   1 +
- 38 files changed, 1791 insertions(+), 189 deletions(-)
+ 38 files changed, 1794 insertions(+), 189 deletions(-)
  create mode 100644 arch/arm64/um/asm/seccomp.h
  create mode 100644 arch/arm64/um/x86_32.h
  create mode 100644 arch/arm64/um/x86_32_syscalls.c
@@ -595,7 +595,7 @@ index 51d035e8b6af242cc740041ecf2ec2985ff35cca..a8eed0c855de99366240e2da52e82612
  upt_x86_64_segment_selector(const struct uml_pt_regs *regs, unsigned int index)
  {
 diff --git a/arch/arm64/um/signal.c b/arch/arm64/um/signal.c
-index 775f7b80119886229c864f2b7dd16f9b57b836ba..0f3c17e36482e3db0a9005876062939b72126e4b 100644
+index 775f7b80119886229c864f2b7dd16f9b57b836ba..84b1210e87c4a7280016c2c16f6f2a6d3eb67c4a 100644
 --- a/arch/arm64/um/signal.c
 +++ b/arch/arm64/um/signal.c
 @@ -1,7 +1,9 @@
@@ -780,7 +780,7 @@ index 775f7b80119886229c864f2b7dd16f9b57b836ba..0f3c17e36482e3db0a9005876062939b
  	    state.fpstate.sw_reserved.xstate_size == UML_X86_64_XSTATE_SIZE) {
  		if (get_user(magic2, (unsigned int __user *)
  		    (user_address + UML_X86_64_XSTATE_SIZE)))
-@@ -364,6 +468,328 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
+@@ -364,6 +468,331 @@ static int restore_x86_64_fpstate(struct pt_regs *regs,
  	return 0;
  }
  
@@ -796,11 +796,14 @@ index 775f7b80119886229c864f2b7dd16f9b57b836ba..0f3c17e36482e3db0a9005876062939b
 +	legacy.control = 0x037f;
 +	legacy.tag = 0xffff;
 +	if (task->marker == UML_X86_64_FP_MARKER) {
++		top = (task->x87_tag_top >> 16) & 7;
 +		legacy.control = (u16)task->x87_control_status;
-+		legacy.status = task->x87_control_status >> 16;
++		/* The task keeps TOP apart from its status word; sigreturn
++		 * reads it back from the status word. */
++		legacy.status = ((task->x87_control_status >> 16) &
++				 ~UML_X86_64_X87_TOP_MASK) | (top << 11);
 +		legacy.saved_status = legacy.status;
 +		legacy.tag = (u16)task->x87_tag_top;
-+		top = (task->x87_tag_top >> 16) & 7;
 +	}
 +	for (index = 0; index < 8; index++) {
 +		unsigned int physical = (top + index) & 7;
@@ -1109,7 +1112,7 @@ index 775f7b80119886229c864f2b7dd16f9b57b836ba..0f3c17e36482e3db0a9005876062939b
  static int
  save_x86_64_mcontext(struct uml_x86_64_sigcontext __user *context,
  		     struct pt_regs *regs, unsigned long oldmask,
-@@ -435,7 +861,8 @@ restore_x86_64_mcontext(struct pt_regs *regs,
+@@ -435,7 +864,8 @@ restore_x86_64_mcontext(struct pt_regs *regs,
  		return 1;
  	upt_x86_64_set_segment_selector(guest, 1, state.cs | 3);
  	upt_x86_64_set_segment_selector(guest, 2, state.ss | 3);
@@ -1119,7 +1122,7 @@ index 775f7b80119886229c864f2b7dd16f9b57b836ba..0f3c17e36482e3db0a9005876062939b
  		return 1;
  	guest->svcr &= ~UML_X86_64_COMPAT_SYSCALL;
  	PT_REGS_SYSCALL_NR(regs) = -1;
-@@ -483,7 +910,8 @@ static int setup_x86_64_signal_stack(unsigned long stack_top,
+@@ -483,7 +913,8 @@ static int setup_x86_64_signal_stack(unsigned long stack_top,
  	error |= __save_altstack(&frame->uc.uc_stack,
  		UPT_X86_64(&regs->regs, UML_X86_64_RSP));
  	error |= __copy_to_user(&frame->uc.uc_sigmask, mask, sizeof(*mask));
@@ -1129,7 +1132,7 @@ index 775f7b80119886229c864f2b7dd16f9b57b836ba..0f3c17e36482e3db0a9005876062939b
  	error |= save_x86_64_mcontext(&frame->uc.uc_mcontext, regs,
  		mask->sig[0], (unsigned long)fpstate);
  	if (ksig->ka.sa.sa_flags & SA_SIGINFO)
-@@ -513,6 +941,8 @@ static int setup_x86_64_signal_stack(unsigned long stack_top,
+@@ -513,6 +944,8 @@ static int setup_x86_64_signal_stack(unsigned long stack_top,
  int setup_signal_stack_si(unsigned long stack_top, struct ksignal *ksig,
  			  struct pt_regs *regs, sigset_t *mask)
  {
@@ -1138,7 +1141,7 @@ index 775f7b80119886229c864f2b7dd16f9b57b836ba..0f3c17e36482e3db0a9005876062939b
  	return setup_x86_64_signal_stack(stack_top, ksig, regs, mask);
  }
  
-@@ -540,3 +970,72 @@ SYSCALL_DEFINE0(rt_sigreturn)
+@@ -540,3 +973,72 @@ SYSCALL_DEFINE0(rt_sigreturn)
  	force_sig(SIGSEGV);
  	return 0;
  }

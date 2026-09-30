@@ -370,7 +370,7 @@ TF set by IRET traps after one instruction.
 exception probe the same way and checks, for both ABIs, that a 1 ms interval
 timer keeps firing through long REP STOSB and REPE CMPSB loops and that ICEBP,
 INT 4, and i386 BOUND and INTO deliver Linux's signals without a kernel relay
-complaint.
+complaint, and that a value on the x87 stack survives a signal.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
