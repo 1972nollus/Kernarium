@@ -2,7 +2,6 @@
 
 #include "jit_compiler.hpp"
 
-#include "cpu/arm64/detail/atomic_floating.hpp"
 
 #include <algorithm>
 #include <array>
@@ -361,80 +360,6 @@ void JitCompiler::clear_local_exclusive_monitor() {
     return store_index + 1U;
   }
 
-void JitCompiler::emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool load,
-                 bool status, bool accdata) {
-    const unsigned first = instruction & 31U;
-    const unsigned base = (instruction >> 5) & 31U;
-    const unsigned status_register = (instruction >> 16) & 31U;
-    if (!load)
-      mark_direct_memory_write();
-
-    load_gpr(8, base, true);
-    if (base != 31U) {
-      const auto tag_slow = emitter_.make_label();
-      cold_.push_back(
-          {tag_slow, instruction, pc, count_ + 1,
-           ColdPath::Action::memory_slow});
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(tag_slow, 0, false, true);
-    }
-    const auto alignment = emitter_.make_label();
-    const auto fault = emitter_.make_label();
-    cold_.push_back(
-        {alignment, instruction, pc, count_ + 1, ColdPath::Action::memory_slow});
-    cold_.push_back(
-        {fault, instruction, pc, count_ + 1, ColdPath::Action::memory_fault});
-    /* A 64-byte-aligned transfer cannot cross any supported guest page.
-     * Resolve alignment once, then use the single-page TLB fast path.
-     */
-    emitter_.ubfm(0, 8, 0, 5);
-    emitter_.compare_zero(alignment, 0, true, true);
-    emit_translate(8, load ? Access::read : Access::write, fault, fault, 1);
-    if (!load)
-      track_direct_store(8, 64);
-
-    /*
-     * The native 64-byte forms name x0-x7 implicitly. Some of those registers
-     * are ordinary resident-cache hosts, so publish and invalidate their
-     * values before entering this constrained-register sequence.
-     */
-    flush_and_invalidate_gprs();
-    if (!load)
-      for (unsigned index = 0; index < 8; ++index)
-        emitter_.load_x(index, 15,
-                        register_offset(first + index, false));
-    if (accdata) {
-      emitter_.load_w(9, 15, offsetof(CpuState, accdata));
-      /* bfxil x0, x9, #0, #32: substitute ACCDATA_EL1[31:0] while
-       * preserving the upper half of the first guest register.
-       */
-      emitter_.emit(0xb340'7d20U);
-    }
-
-    if (load) {
-      emitter_.emit(0xf83f'd100U); // ld64b x0, [x8]
-      for (unsigned index = 0; index < 8; ++index)
-        emitter_.store_x(index, 15,
-                         register_offset(first + index, false));
-    } else if (status || accdata) {
-      /* The accumulator form has already materialized its guest-specific
-       * first word, so the native status-returning store is equivalent while
-       * avoiding dependence on host privileged accumulator state.
-       */
-      emitter_.emit(0xf829'b100U); // st64bv x9, x0, [x8]
-    } else {
-      emitter_.emit(0xf83f'9100U); // st64b x0, [x8]
-    }
-    if (!load && (status || accdata) && status_register != 31U) {
-      /* Normal mapped emulator memory defines its successful status as zero,
-       * independent of the host memory system's implementation-defined value.
-       */
-      store_gpr(31, status_register, false);
-    }
-    if (!load)
-      clear_local_exclusive_monitor();
-  }
-
 [[nodiscard]] JitCompiler::Action JitCompiler::emit_exclusive_memory(std::uint32_t instruction,
                                              std::uint64_t pc) {
     const bool load = (instruction & 0x0040'0000U) != 0;
@@ -443,27 +368,22 @@ void JitCompiler::emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool lo
     const unsigned status = (instruction >> 16) & 31U;
     const unsigned second = (instruction >> 10) & 31U;
     const unsigned size = instruction >> 30;
-    const bool unprivileged = (instruction & 0x0100'0000U) != 0;
     const bool pair_compare_swap =
-        (instruction & 0xbfa0'0000U) == 0x0820'0000U ||
-        (instruction & 0xbfa0'0000U) == 0x0980'0000U;
+        (instruction & 0xbfa0'0000U) == 0x0820'0000U;
     const bool scalar_compare_swap =
-        (instruction & 0x3fa0'0000U) == 0x08a0'0000U ||
-        (instruction & 0xbfa0'0000U) == 0x8980'0000U;
+        (instruction & 0x3fa0'0000U) == 0x08a0'0000U;
     const bool pair_exclusive =
         (instruction & 0xbfa0'0000U) == 0x8820'0000U;
     const bool scalar_exclusive =
-        (instruction & 0x3fa0'0000U) == 0x0800'0000U ||
-        (instruction & 0xbfa0'0000U) == 0x8900'0000U;
+        (instruction & 0x3fa0'0000U) == 0x0800'0000U;
 
     bool valid = false;
     if (pair_compare_swap) {
       const unsigned replacement = instruction & 31U;
       valid = second == 31U && (status & 1U) == 0U &&
-              (replacement & 1U) == 0U && size <= 1U &&
-              (!unprivileged || size == 1U);
+              (replacement & 1U) == 0U && size <= 1U;
     } else if (scalar_compare_swap) {
-      valid = second == 31U && (!unprivileged || size == 3U);
+      valid = second == 31U;
     } else if (pair_exclusive) {
       const unsigned first = instruction & 31U;
       valid = size >= 2U &&
@@ -472,8 +392,11 @@ void JitCompiler::emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool lo
       valid = second == 31U && (!load || status == 31U);
     } else {
       /* The remaining allocation is the non-exclusive ordered scalar
-       * load/store family. Preserve its dedicated helper. */
-      valid = !pair && second == 31U && status == 31U && !exclusive;
+       * load/store family. Preserve its dedicated helper. o0 clear selects
+       * LDLAR and STLLR, which need FEAT_LOR; the virtual CPU does not
+       * implement it. */
+      valid = !pair && second == 31U && status == 31U && !exclusive &&
+              (instruction & 0x0000'8000U) != 0U;
       if (!valid)
         return Action::unsupported;
       const auto slow = emitter_.make_label();
@@ -484,8 +407,7 @@ void JitCompiler::emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool lo
     }
     if (!valid)
       return Action::unsupported;
-    if (scalar_compare_swap && !unprivileged &&
-        host_capabilities().has(ArmFeature::lse)) {
+    if (scalar_compare_swap && host_capabilities().has(ArmFeature::lse)) {
       emit_native_scalar_compare_swap(instruction, pc);
       return Action::keep_going;
     }
@@ -501,20 +423,11 @@ void JitCompiler::emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool lo
 
 [[nodiscard]] JitCompiler::Action JitCompiler::emit_atomic_memory(std::uint32_t instruction,
                                           std::uint64_t pc) {
-    const bool unprivileged = (instruction & 0x0100'0000U) != 0;
-    const unsigned size = instruction >> 30;
     const unsigned o3 = (instruction >> 15) & 1U;
     const unsigned opcode = (instruction >> 12) & 7U;
-    const bool valid =
-        unprivileged
-            ? size <= 1U &&
-                  ((!o3 && (opcode == 0U || opcode == 1U || opcode == 3U)) ||
-                   (o3 && opcode == 0U))
-            : !o3 || opcode == 0U;
-    if (!valid)
+    if (o3 && opcode != 0U)
       return Action::unsupported;
-    if (!unprivileged &&
-        host_capabilities().has(ArmFeature::lse)) {
+    if (host_capabilities().has(ArmFeature::lse)) {
       emit_native_scalar_atomic(instruction, pc);
       return Action::keep_going;
     }
@@ -622,73 +535,12 @@ void JitCompiler::emit_native_scalar_compare_swap(std::uint32_t instruction,
     clear_local_exclusive_monitor();
   }
 
-void JitCompiler::emit_atomic_floating_memory(
-      std::uint32_t instruction, std::uint64_t pc,
-      const arm64::detail::AtomicFloating &decoded) {
-    mark_direct_memory_write();
-    const unsigned base = (instruction >> 5) & 31U;
-    const unsigned source = (instruction >> 16) & 31U;
-    const unsigned destination = instruction & 31U;
-    const std::size_t bytes = decoded.width / 8U;
-    load_gpr(8, base, true);
-
-    /*
-     * Every dynamic exceptional condition terminates through the exact
-     * one-instruction semantic bridge. The normal untagged path performs no
-     * opcode decode and reaches one native FEAT_LSFE instruction after a
-     * write-TLB lookup.
-     */
-    const auto slow = emitter_.make_label();
-    const auto fault = emitter_.make_label();
-    cold_.push_back(
-        {slow, instruction, pc, count_ + 1, ColdPath::Action::memory_slow});
-    cold_.push_back(
-        {fault, instruction, pc, count_ + 1, ColdPath::Action::memory_fault});
-    if (base == 31U) {
-      emit_misalignment_check(8, 16, slow);
-    } else {
-      emitter_.load_b(0, 15, offsetof(CpuState, tbi_enabled));
-      emitter_.compare_zero(slow, 0, false, true);
-      emit_misalignment_check(8, bytes, slow);
-    }
-    /* Natural alignment and a page size divisible by eight prove that this
-     * transfer cannot cross a guest-page boundary. */
-    emit_translate(8, Access::write, slow, fault, 1);
-    track_direct_store(8, bytes);
-    /*
-     * Resolve vector bindings only after every exceptional edge and its
-     * architectural-state snapshot have been recorded. In particular, a
-     * fault must not publish an unexecuted result register.
-     *
-     * Import the source before defining the destination: Rs==Rt is valid and
-     * the native instruction must consume the old resident value before
-     * replacing it with the returned memory value.
-     */
-    const auto native_source = read_native_vector(source, 0);
-    const auto native_destination =
-        decoded.return_old
-            ? write_native_vector(destination, false, 1)
-            : NativeVector{31U, true};
-    auto native =
-        instruction & ~((31U << 16) | (31U << 5) | 31U);
-    native |= (native_source.host << 16) | (8U << 5) |
-              native_destination.host;
-    emitter_.emit(native);
-    if (decoded.return_old)
-      commit_native_vector(native_destination, destination);
-    clear_local_exclusive_monitor();
-    native_fp_ = true;
-  }
-
 [[nodiscard]] bool JitCompiler::emit_pair_memory(std::uint32_t instruction,
                                       std::uint64_t pc) {
     const bool vector = (instruction & 0x0400'0000U) != 0;
     const bool load = (instruction & 0x0040'0000U) != 0;
     const unsigned operation = instruction >> 30;
     if (vector && !host_capabilities().floating_point)
-      return false;
-    if (vector && operation == 3U &&
-        !host_capabilities().has(ArmFeature::lsui))
       return false;
     if (!load)
       mark_direct_memory_write();

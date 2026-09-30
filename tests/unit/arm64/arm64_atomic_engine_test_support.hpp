@@ -111,10 +111,4 @@ inline void write_register(arm64::CpuState &cpu, unsigned reg,
 	};
 }
 
-[[nodiscard]] inline engine::NativeRequirements lse128()
-{
-	return engine::NativeRequirements::features(
-		::uml::cpu::ArmFeature::lse128);
-}
-
 } // namespace arm64_atomic_engine_test

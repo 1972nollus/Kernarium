@@ -2,7 +2,6 @@
 
 #include "jit_compiler.hpp"
 
-#include "cpu/arm64/detail/atomic_floating.hpp"
 #include "cpu/arm64/detail/bfloat_dot.hpp"
 #include "cpu/arm64/detail/bfloat_matrix.hpp"
 #include "cpu/arm64/detail/bfloat_multiply.hpp"
@@ -21,7 +20,6 @@
 #include "cpu/arm64/detail/half_fused_long.hpp"
 #include "cpu/arm64/detail/half_matrix.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
-#include "cpu/arm64/detail/read_check_write.hpp"
 #include "cpu/arm64/detail/simd_floating_classes.hpp"
 
 namespace uml::cpu::arm64 {
@@ -134,22 +132,16 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::terminate;
     };
 
-    if ((instruction & 0xbfbf'fc00U) == 0x0d01'8400U) {
-      if (!host_capabilities().has(ArmFeature::advanced_simd) ||
-          !host_capabilities().has(ArmFeature::lrcpc3))
-        return Action::unsupported;
-      return ordered_memory((instruction & 0x0040'0000U) == 0U);
-    }
-    if ((instruction & 0x3f20'0c00U) == 0x1d00'0800U) {
-      const unsigned size = instruction >> 30;
-      const unsigned operation = (instruction >> 22) & 3U;
-      if ((operation & 2U) != 0U && size != 0U)
-        return reject_ordered();
-      if (!host_capabilities().has(ArmFeature::floating_point) ||
-          !host_capabilities().has(ArmFeature::lrcpc3))
-        return Action::unsupported;
-      return ordered_memory((operation & 1U) == 0U);
-    }
+    /*
+     * The virtual CPU implements neither FEAT_LRCPC3 nor FEAT_LSCP: LDAP1,
+     * STL1, LDAPUR and STLUR to SIMD&FP registers, LDAPR and STLR with
+     * writeback, LDIAPP, STILP, and the LDAP, LDAPP, and STLP pairs are
+     * undefined.
+     */
+    if ((instruction & 0xbfbf'fc00U) == 0x0d01'8400U ||
+        (instruction & 0x3f20'0c00U) == 0x1d00'0800U ||
+        (instruction & 0x3f20'0c00U) == 0x1900'0800U)
+      return reject_ordered();
     if ((instruction & 0x3fff'fc00U) == 0x38bf'c000U) {
       if (!host_capabilities().has(ArmFeature::lrcpc))
         return Action::unsupported;
@@ -164,39 +156,6 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       if (!host_capabilities().has(ArmFeature::lrcpc2))
         return Action::unsupported;
       return ordered_memory(operation == 0U);
-    }
-    if ((instruction & 0x3fbf'fc00U) == 0x1980'0800U) {
-      if ((instruction >> 30) < 2U)
-        return reject_ordered();
-      if (!host_capabilities().has(ArmFeature::lrcpc3))
-        return Action::unsupported;
-      return ordered_memory((instruction & 0x0040'0000U) == 0U);
-    }
-    if ((instruction & 0x3f20'0c00U) == 0x1900'0800U) {
-      const auto fixed = instruction & 0xffe0'fc00U;
-      const bool lrcpc3 =
-          fixed == 0x9900'0800U || fixed == 0xd900'0800U ||
-          fixed == 0x9900'1800U || fixed == 0xd900'1800U ||
-          fixed == 0x9940'0800U || fixed == 0xd940'0800U ||
-          fixed == 0x9940'1800U || fixed == 0xd940'1800U;
-      const bool lscp = fixed == 0xd900'5800U ||
-                        fixed == 0xd940'5800U ||
-                        fixed == 0xd940'7800U;
-      if (!lrcpc3 && !lscp)
-        return reject_ordered();
-      const bool load =
-          fixed != 0x9900'0800U && fixed != 0xd900'0800U &&
-          fixed != 0x9900'1800U && fixed != 0xd900'1800U &&
-          fixed != 0xd900'5800U;
-      const unsigned first = instruction & 31U;
-      const unsigned second = (instruction >> 16) & 31U;
-      if (load && first == second && first != 31U)
-        return reject_ordered();
-      const auto required =
-          lrcpc3 ? ArmFeature::lrcpc3 : ArmFeature::lscp;
-      if (!host_capabilities().has(required))
-        return Action::unsupported;
-      return ordered_memory(!load);
     }
     /*
      * The virtual CPU implements no FEAT_MTE. Resolve the tag-immediate
@@ -1541,36 +1500,25 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::terminate;
     }
     /*
-     * LS64 overlaps the broader atomic-memory class. Resolve its complete
-     * allocation and exact native feature at translation time. The semantic
-     * cold path handles alignment faults; valid hot execution uses a
-     * translated host address and a native 64-byte transaction without a
-     * gadget fallback. Unsupported hosts and reserved Rt partitions terminate
-     * as undefined before observing an address.
+     * The virtual CPU implements none of FEAT_LS64, FEAT_LSFE, FEAT_LSE128,
+     * FEAT_THE, FEAT_D128, and FEAT_LSUI. LD64B, ST64B, ST64BV, ST64BV0, the
+     * floating-point atomics, LDCLRP, LDSETP, SWPP, RCWCAS, RCWCASP, the
+     * read-check-write pair modifies, and the unprivileged atomics,
+     * compare-and-swaps, and exclusives are undefined. The scalar
+     * read-check-write modifies fall in cells the atomic decoder rejects.
      */
-    const bool ls64_load =
-        (instruction & 0xffff'fc00U) == 0xf83f'd000U;
-    const bool ls64_store =
-        (instruction & 0xffff'fc00U) == 0xf83f'9000U;
-    const auto ls64_status_opcode = instruction & 0xffe0'fc00U;
-    const bool ls64_status = ls64_status_opcode == 0xf820'b000U;
-    const bool ls64_status_accdata =
-        ls64_status_opcode == 0xf820'a000U;
-    if (ls64_load || ls64_store || ls64_status || ls64_status_accdata) {
-      const unsigned first = instruction & 31U;
-      const auto required =
-          ls64_status_accdata ? ArmFeature::ls64_accdata
-          : ls64_status      ? ArmFeature::ls64_v
-                             : ArmFeature::ls64;
-      if ((first & 1U) != 0U || first >= 24U ||
-          !translation_supports(required)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      emit_ls64(instruction, pc, ls64_load, ls64_status,
-                ls64_status_accdata);
-      return Action::keep_going;
+    if ((instruction & 0xffff'fc00U) == 0xf83f'd000U ||
+        (instruction & 0xffff'fc00U) == 0xf83f'9000U ||
+        (instruction & 0xffe0'fc00U) == 0xf820'b000U ||
+        (instruction & 0xffe0'fc00U) == 0xf820'a000U ||
+        (instruction & 0x3f20'0c00U) == 0x3c20'0000U ||
+        (instruction & 0xbf20'0c00U) == 0x1920'0000U ||
+        (instruction & 0xbf20'0800U) == 0x1920'0800U ||
+        (instruction & 0x3f20'0c00U) == 0x1920'0400U ||
+        (instruction & 0x3f00'0000U) == 0x0900'0000U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     /*
      * MOPS shares major encodings with atomic memory instructions. Decode its
@@ -1605,98 +1553,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emit_memory_slow(instruction, pc, resulting_count);
       return Action::terminate;
     }
-    if (const auto atomic_floating =
-            arm64::detail::decode_atomic_floating(instruction);
-        atomic_floating.recognized) {
-      if (!atomic_floating.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      if (!host_capabilities().has(ArmFeature::lsfe))
-        return Action::unsupported;
-      emit_atomic_floating_memory(instruction, pc, atomic_floating);
-      return Action::keep_going;
-    }
-    /*
-     * Read-check-write shares the scalar atomic and 128-bit pair major
-     * encodings. Resolve the complete allocation before those broader
-     * decoders. Valid words use the existing one-instruction semantic bridge,
-     * which preserves exact guest-memory fault metadata; unsupported native
-     * features and reserved register/operation cells terminate as undefined.
-     */
-    if (const auto rcw = detail::decode_read_check_write(instruction);
-        rcw.recognized) {
-      const bool pair = rcw.pair;
-      const unsigned first = instruction & 31U;
-      const unsigned second = (instruction >> 16) & 31U;
-      const unsigned operation = rcw.operation;
-      const bool valid =
-          pair
-              ? (rcw.compare_swap
-                     ? (first & 1U) == 0U && (second & 1U) == 0U
-                     : operation >= 1U && operation <= 3U && first != 31U &&
-                           second != 31U && first != second)
-              : true;
-      const bool feature =
-          pair ? host_capabilities().has(ArmFeature::d128) &&
-                     host_capabilities().has(ArmFeature::the)
-               : host_capabilities().has(ArmFeature::the);
-      if (!valid || !feature) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      mark_memory_write();
-      const auto slow = emitter_.make_label();
-      cold_.push_back(
-          {slow, instruction, pc, count_ + 1,
-           ColdPath::Action::exclusive_slow});
-      emitter_.branch(slow);
-      /*
-       * The helper always returns to the executor.  Ending the translated
-       * block here also prevents an unreachable later store from publishing
-       * this load-reservation block as a store in flight, which can otherwise
-       * make concurrent reservation loops wait on one another forever.
-       */
-      return Action::terminate;
-    }
-    /*
-     * FEAT_LSE128 shares the pair RCW major allocation. RCW cells above have
-     * already been consumed, leaving the clear/set/swap cells and their
-     * reserved S/opcode neighbours. Resolve feature and register legality
-     * here so an invalid word never becomes an unsupported runtime event.
-     * The semantic memory bridge preserves one-copy atomicity and exact
-     * guest fault metadata while remaining independent of the gadget engine.
-     */
-    if ((instruction & 0xbf20'0c00U) == 0x1920'0000U) {
-      const bool software = (instruction & 0x4000'0000U) != 0U;
-      const unsigned first = instruction & 31U;
-      const unsigned second = (instruction >> 16) & 31U;
-      const unsigned o3 = (instruction >> 15) & 1U;
-      const unsigned operation = (instruction >> 12) & 7U;
-      const bool valid_operation =
-          !software &&
-          ((!o3 && (operation == 1U || operation == 3U)) ||
-           (o3 && operation == 0U));
-      const bool valid_registers =
-          first != 31U && second != 31U && first != second;
-      if (!valid_operation || !valid_registers ||
-          !host_capabilities().has(ArmFeature::lse128)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      mark_memory_write();
-      const auto slow = emitter_.make_label();
-      cold_.push_back(
-          {slow, instruction, pc, count_ + 1,
-           ColdPath::Action::exclusive_slow});
-      emitter_.branch(slow);
-      return Action::terminate;
-    }
-    if ((instruction & 0x3f20'0c00U) == 0x3820'0000U ||
-        (instruction & 0x3f20'0c00U) == 0x1920'0400U) {
+    if ((instruction & 0x3f20'0c00U) == 0x3820'0000U) {
       const auto action = emit_atomic_memory(instruction, pc);
       if (action != Action::unsupported)
         return action;
@@ -1704,8 +1561,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
-    if ((instruction & 0x3f00'0000U) == 0x0800'0000U ||
-        (instruction & 0x3f00'0000U) == 0x0900'0000U) {
+    if ((instruction & 0x3f00'0000U) == 0x0800'0000U) {
       const auto action = emit_exclusive_memory(instruction, pc);
       if (action != Action::unsupported)
         return action;
@@ -1720,16 +1576,13 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const unsigned mode = (instruction >> 23) & 3U;
       const unsigned first = instruction & 31U;
       const unsigned second = (instruction >> 10) & 31U;
+      /* opc 11 holds the FEAT_LSUI LDTP, STTP, LDTNP, and STTNP, which the
+       * virtual CPU does not implement. */
       const bool valid =
+          operation != 3U &&
           (vector || (operation != 1U || (load && mode != 0U))) &&
           (!load || first != second);
       if (!valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      if (!vector && operation == 3U &&
-          !host_capabilities().has(ArmFeature::lsui)) {
         store_pc(pc);
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;

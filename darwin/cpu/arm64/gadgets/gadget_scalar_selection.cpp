@@ -442,52 +442,6 @@ void emit(std::vector<std::uintptr_t, Allocator> &words,
 	return cc == 1 || cc == 3 || cc == 6;
 }
 
-[[nodiscard]] Gadget ls64_gadget(unsigned operation, bool base_sp,
-	bool status_discard) noexcept
-{
-	static constexpr std::array load{
-		uml_arm64_gadget_ls64_load_r, uml_arm64_gadget_ls64_load_s};
-	static constexpr std::array store{
-		uml_arm64_gadget_ls64_store_r, uml_arm64_gadget_ls64_store_s};
-	static constexpr std::array status{
-		std::array{uml_arm64_gadget_ls64_st64bv_rr,
-			uml_arm64_gadget_ls64_st64bv_rz},
-		std::array{uml_arm64_gadget_ls64_st64bv_sr,
-			uml_arm64_gadget_ls64_st64bv_sz}};
-	static constexpr std::array status_accdata{
-		std::array{uml_arm64_gadget_ls64_st64bv0_rr,
-			uml_arm64_gadget_ls64_st64bv0_rz},
-		std::array{uml_arm64_gadget_ls64_st64bv0_sr,
-			uml_arm64_gadget_ls64_st64bv0_sz}};
-	if (operation == 0)
-		return load[base_sp];
-	if (operation == 1)
-		return store[base_sp];
-	return (operation == 2 ? status : status_accdata)
-		[base_sp][status_discard];
-}
-
-[[nodiscard]] std::uint16_t ls64_register_offset(
-	unsigned index) noexcept
-{
-	static_assert(offsetof(CpuState, registers) == 0);
-	return static_cast<std::uint16_t>(
-		offsetof(CpuState, registers) + index * sizeof(std::uint64_t));
-}
-
-[[nodiscard]] std::uintptr_t ls64_operand(unsigned first,
-	unsigned base, unsigned status, bool base_sp,
-	bool status_discard) noexcept
-{
-	const auto base_offset =
-		base_sp ? 0U : ls64_register_offset(base);
-	const auto status_offset =
-		status_discard ? 0U : ls64_register_offset(status);
-	return static_cast<std::uintptr_t>(ls64_register_offset(first)) |
-		(static_cast<std::uintptr_t>(base_offset) << 16) |
-		(static_cast<std::uintptr_t>(status_offset) << 32);
-}
-
 [[nodiscard]] Gadget mops_gadget(
 	unsigned family, unsigned stage, bool source_zero) noexcept
 {

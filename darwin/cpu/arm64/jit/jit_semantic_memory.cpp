@@ -324,12 +324,12 @@ uml_arm64_jit_execute_exclusive(CpuState *cpu, Tlb *tlb,
     return semantic_result(*tlb, memory, result);
   };
   /*
-   * Compare-and-swap, the LSE, LSE128 and read-check-write atomics perform
-   * their memory transaction as one host atomic on the translated page, so
-   * they are single-copy atomic against every other writer without the
-   * publication gate. Only an exclusive load, which creates CpuState's
-   * software reservation, and any instruction run while that reservation is
-   * held, which may consume it, wait out other vCPUs' native store blocks.
+   * Compare-and-swap and the LSE atomics perform their memory transaction
+   * as one host atomic on the translated page, so they are single-copy
+   * atomic against every other writer without the publication gate. Only
+   * an exclusive load, which creates CpuState's software reservation, and
+   * any instruction run while that reservation is held, which may consume
+   * it, wait out other vCPUs' native store blocks.
    */
   if (uses_software_reservation) {
     JitExclusiveOperationScope operation;

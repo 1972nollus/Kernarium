@@ -4,7 +4,6 @@
 #include "jit_runtime_contract.hpp"
 
 #include "cpu/arm64/cpu_state.hpp"
-#include "cpu/arm64/detail/atomic_floating.hpp"
 #include "cpu/arm64/memory.hpp"
 
 #include <atomic>
@@ -76,34 +75,10 @@ void reservation_store(std::uintptr_t key) noexcept;
 	std::uint64_t &observed_first, std::uint64_t &observed_second,
 	std::uintptr_t &key);
 
-[[nodiscard]] bool atomic_floating_rmw_value(GuestMemory &memory,
-	std::uint64_t address, const arm64::detail::AtomicFloating &decoded,
-	std::uint64_t operand, std::uint32_t fpcr,
-	std::uint64_t &observed, std::uintptr_t &key);
-
 [[nodiscard]] bool atomic_rmw_value(GuestMemory &memory,
 	std::uint64_t address, std::size_t size, unsigned operation,
 	std::uint64_t operand, bool acquire, bool release,
 	std::uint64_t &observed, std::uintptr_t &key);
-
-[[nodiscard]] bool atomic_rcw_value(GuestMemory &memory,
-	std::uint64_t address, unsigned operation, bool soft,
-	std::uint64_t compare, std::uint64_t operand, bool acquire, bool release,
-	std::uint64_t &observed, std::uint32_t &nzcv, std::uintptr_t &key);
-
-[[nodiscard]] bool atomic_rcw_pair_value(GuestMemory &memory,
-	std::uint64_t address, unsigned operation, bool soft,
-	std::uint64_t compare_first, std::uint64_t compare_second,
-	std::uint64_t operand_first, std::uint64_t operand_second, bool acquire,
-	bool release, std::uint64_t &observed_first,
-	std::uint64_t &observed_second, std::uint32_t &nzcv,
-	std::uintptr_t &key);
-
-[[nodiscard]] bool atomic_rmw_pair_128_value(GuestMemory &memory,
-	std::uint64_t address, unsigned operation, std::uint64_t operand_first,
-	std::uint64_t operand_second, bool acquire, bool release,
-	std::uint64_t &observed_first, std::uint64_t &observed_second,
-	std::uintptr_t &key);
 
 [[nodiscard]] bool atomic_load_pair_value(GuestMemory &memory,
 	std::uint64_t address, std::size_t element_size, std::memory_order order,

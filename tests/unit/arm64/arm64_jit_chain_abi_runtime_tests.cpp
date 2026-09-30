@@ -490,85 +490,6 @@ void continuing_tlb_helper_reloads_x8_x9() {
   executor.end_execution();
 }
 
-void ls64_x8_group_preserves_guest_x8_x9() {
-  if (!::uml::platform::apple::probed_host_capabilities().has(
-          ::uml::cpu::ArmFeature::ls64))
-    return;
-
-  constexpr unsigned long generation = 8313;
-  constexpr std::uint64_t base = 0xe9'0000;
-  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
-  constexpr auto load_target = base + 0x40;
-  constexpr auto store_source = base + 0x100;
-  constexpr auto load_data = base + page;
-  constexpr auto store_data = load_data + 0x80;
-  constexpr std::array<std::uint64_t, 8> loaded{
-      11, 22, 33, 44, 55, 66, 77, 88,
-  };
-  constexpr std::array<std::uint64_t, 8> stored{
-      100, 200, 300, 400, 500, 600, 700, 800,
-  };
-
-  JitBacking backing{2};
-  backing.put32(0, 0x9100'0508U); // add x8, x8, #1
-  backing.put32(4, 0x9100'0929U); // add x9, x9, #2
-  backing.put32(8, branch(base + 8, load_target));
-  backing.put32(load_target - base,
-                0xf83f'd0c8U); // ld64b x8, [x6]
-  backing.put32(load_target - base + 4,
-                0x8b09'0108U); // add x8, x8, x9
-  backing.put32(load_target - base + 8, system_call);
-  backing.put32(store_source - base,
-                0x9100'0508U); // add x8, x8, #1
-  backing.put32(store_source - base + 4,
-                0x9100'0929U); // add x9, x9, #2
-  backing.put32(store_source - base + 8,
-                0xf83f'90c8U); // st64b x8, [x6]
-  backing.put32(store_source - base + 12, system_call);
-  for (std::size_t index = 0; index < loaded.size(); ++index)
-    backing.put64(page + index * sizeof(std::uint64_t), loaded[index]);
-
-  JitMapping mapping{generation, base, backing, 2};
-  JitExecutor executor;
-  StaticGuestMemory memory;
-  arm64::CpuState cpu{};
-  cpu.pc = load_target;
-  cpu.registers[6] = load_data;
-  require(executor.begin_execution(generation, cpu.pc));
-  auto run = run_block(executor, memory, generation, cpu);
-  require(run.event == ::uml::cpu::EngineEvent::system_call &&
-          run.executed == 3);
-
-  cpu.pc = base;
-  cpu.registers[6] = load_data;
-  cpu.registers[8] = 0x100;
-  cpu.registers[9] = 0x200;
-  run = run_block(executor, memory, generation, cpu);
-  require(run.event == ::uml::cpu::EngineEvent::system_call &&
-          run.executed == 6);
-  require(cpu.registers[8] == loaded[0] + loaded[1] &&
-          cpu.registers[9] == loaded[1]);
-  for (std::size_t index = 2; index < loaded.size(); ++index)
-    require(cpu.registers[8 + index] == loaded[index]);
-
-  cpu.pc = store_source;
-  cpu.registers[6] = store_data;
-  for (std::size_t index = 0; index < stored.size(); ++index)
-    cpu.registers[8 + index] = stored[index];
-  run = run_block(executor, memory, generation, cpu);
-  require(run.event == ::uml::cpu::EngineEvent::system_call &&
-          run.executed == 4);
-  require(cpu.registers[8] == stored[0] + 1 &&
-          cpu.registers[9] == stored[1] + 2);
-  for (std::size_t index = 0; index < stored.size(); ++index) {
-    const auto expected =
-        stored[index] + (index == 0 ? 1U : index == 1 ? 2U : 0U);
-    require(backing.get64(page + 0x80 +
-                          index * sizeof(std::uint64_t)) == expected);
-  }
-  executor.end_execution();
-}
-
 void conditional_and_pic_exits_chain() {
   constexpr unsigned long generation = 8307;
   constexpr std::uint64_t base = 0xe3'0000;
@@ -864,7 +785,6 @@ int main() {
   linked_helper_observes_canonical_x8_x9();
   linked_helper_writes_x8_x9_before_a_linked_consumer();
   continuing_tlb_helper_reloads_x8_x9();
-  ls64_x8_group_preserves_guest_x8_x9();
   conditional_and_pic_exits_chain();
   linked_fault_keeps_precise_count_and_pc();
   linked_illegal_and_breakpoint_publish_carried_state();

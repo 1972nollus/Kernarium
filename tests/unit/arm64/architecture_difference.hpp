@@ -63,8 +63,6 @@ namespace uml::emulator::tests {
 		return values("tls", expected.tls, actual.tls);
 	if (expected.tbi_enabled != actual.tbi_enabled)
 		return values("tbi", expected.tbi_enabled, actual.tbi_enabled);
-	if (expected.accdata != actual.accdata)
-		return values("accdata", expected.accdata, actual.accdata);
 	if (!(expected.pstate_ssbs == actual.pstate_ssbs &&
 	      expected.pstate_dit == actual.pstate_dit &&
 	      expected.pstate_sm == actual.pstate_sm &&

@@ -6,7 +6,6 @@
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/detail/fp_state_access.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
-#include "cpu/arm64/detail/read_check_write.hpp"
 #include "cpu/arm64/id_registers.hpp"
 
 #include <algorithm>
@@ -284,18 +283,11 @@ void JitCompiler::select_consecutive_vector_lists(
          (instruction & 0x3fa0'0000U) == 0x08a0'0000U);
     if (native_scalar_lse)
       return false;
-    const bool read_check_write =
-        detail::decode_read_check_write(instruction).recognized;
-    const bool pair_atomic =
-        (instruction & 0xbf20'0c00U) == 0x1920'0000U;
     const bool scalar_atomic =
-        (instruction & 0x3f20'0c00U) == 0x3820'0000U ||
-        (instruction & 0x3f20'0c00U) == 0x1920'0400U;
+        (instruction & 0x3f20'0c00U) == 0x3820'0000U;
     const bool exclusive_or_ordered =
-        (instruction & 0x3f00'0000U) == 0x0800'0000U ||
-        (instruction & 0x3f00'0000U) == 0x0900'0000U;
-    return read_check_write || pair_atomic || scalar_atomic ||
-           exclusive_or_ordered;
+        (instruction & 0x3f00'0000U) == 0x0800'0000U;
+    return scalar_atomic || exclusive_or_ordered;
   }
 
 void JitCompiler::mark_memory_write() noexcept {

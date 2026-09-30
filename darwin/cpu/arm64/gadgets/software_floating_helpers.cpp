@@ -4,7 +4,6 @@
 
 #include "cpu/arm64/layout/assembly_layout.hpp"
 
-#include "../detail/atomic_floating.hpp"
 #include "../detail/floating_compare.hpp"
 #include "../detail/bfloat_conversion.hpp"
 #include "../detail/bfloat_dot.hpp"

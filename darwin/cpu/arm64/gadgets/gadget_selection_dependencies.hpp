@@ -7,7 +7,6 @@
 
 #include "cpu/arm64/layout/assembly_layout.hpp"
 
-#include "../detail/atomic_floating.hpp"
 #include "../detail/bfloat_conversion.hpp"
 #include "../detail/bfloat_dot.hpp"
 #include "../detail/bfloat_matrix.hpp"
@@ -29,7 +28,6 @@
 #include "../detail/half_matrix.hpp"
 #include "../detail/instruction_primitives.hpp"
 #include "../detail/integer_multiply.hpp"
-#include "../detail/read_check_write.hpp"
 #include "cpu/host_capabilities.hpp"
 #include "uml_darwin_static_mmu.h"
 
@@ -58,7 +56,6 @@ using Gadget = void (*)();
 [[nodiscard]] bool host_has_rdm() noexcept;
 [[nodiscard]] bool host_has_dotprod() noexcept;
 [[nodiscard]] bool host_has_i8mm() noexcept;
-[[nodiscard]] bool host_has_lrcpc3() noexcept;
 [[nodiscard]] bool host_has_lut() noexcept;
 [[nodiscard]] bool host_has_frintts() noexcept;
 [[nodiscard]] bool host_has_faminmax() noexcept;
@@ -73,6 +70,5 @@ using Gadget = void (*)();
 [[nodiscard]] bool host_has_f16mm() noexcept;
 [[nodiscard]] bool host_has_f16f32mm() noexcept;
 [[nodiscard]] bool host_has_f16f32dot() noexcept;
-[[nodiscard]] bool host_has_lsfe() noexcept;
 
 } // namespace uml::cpu::arm64::gadgets::selection

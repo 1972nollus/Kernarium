@@ -2010,62 +2010,6 @@ UML_DECLARE_SIMD_LANE(d)
 #undef UML_DECLARE_SIMD_LANE
 #undef UML_DECLARE_SIMD_LANE_COUNT
 #undef UML_DECLARE_SIMD_LANE_DIRECTION
-#define UML_DECLARE_SIMD_ORDERED_SCALAR(size, address) \
-	void uml_arm64_gadget_simd_ordered_load_##size##_##address(); \
-	void uml_arm64_gadget_simd_ordered_store_##size##_##address();
-UML_DECLARE_SIMD_ORDERED_SCALAR(b, r)
-UML_DECLARE_SIMD_ORDERED_SCALAR(b, s)
-UML_DECLARE_SIMD_ORDERED_SCALAR(h, r)
-UML_DECLARE_SIMD_ORDERED_SCALAR(h, s)
-UML_DECLARE_SIMD_ORDERED_SCALAR(s, r)
-UML_DECLARE_SIMD_ORDERED_SCALAR(s, s)
-UML_DECLARE_SIMD_ORDERED_SCALAR(d, r)
-UML_DECLARE_SIMD_ORDERED_SCALAR(d, s)
-#undef UML_DECLARE_SIMD_ORDERED_SCALAR
-#define UML_DECLARE_SIMD_ORDERED_Q(direction, address, implementation) \
-	void uml_arm64_gadget_simd_ordered_##direction##_q_##address##_##implementation();
-UML_DECLARE_SIMD_ORDERED_Q(load, r, fallback)
-UML_DECLARE_SIMD_ORDERED_Q(load, s, fallback)
-UML_DECLARE_SIMD_ORDERED_Q(load, r, native)
-UML_DECLARE_SIMD_ORDERED_Q(load, s, native)
-UML_DECLARE_SIMD_ORDERED_Q(store, r, fallback)
-UML_DECLARE_SIMD_ORDERED_Q(store, s, fallback)
-UML_DECLARE_SIMD_ORDERED_Q(store, r, native)
-UML_DECLARE_SIMD_ORDERED_Q(store, s, native)
-#undef UML_DECLARE_SIMD_ORDERED_Q
-#define UML_DECLARE_SIMD_ORDERED_LANE(direction, lane, address) \
-	void uml_arm64_gadget_simd_ordered_##direction##_lane##lane##_##address();
-UML_DECLARE_SIMD_ORDERED_LANE(load, 0, r)
-UML_DECLARE_SIMD_ORDERED_LANE(load, 0, s)
-UML_DECLARE_SIMD_ORDERED_LANE(load, 1, r)
-UML_DECLARE_SIMD_ORDERED_LANE(load, 1, s)
-UML_DECLARE_SIMD_ORDERED_LANE(store, 0, r)
-UML_DECLARE_SIMD_ORDERED_LANE(store, 0, s)
-UML_DECLARE_SIMD_ORDERED_LANE(store, 1, r)
-UML_DECLARE_SIMD_ORDERED_LANE(store, 1, s)
-#undef UML_DECLARE_SIMD_ORDERED_LANE
-void uml_arm64_gadget_ordered_writeback_store_w_r();
-void uml_arm64_gadget_ordered_writeback_store_w_z();
-void uml_arm64_gadget_ordered_writeback_store_x_r();
-void uml_arm64_gadget_ordered_writeback_store_x_z();
-void uml_arm64_gadget_ordered_writeback_load_w_r();
-void uml_arm64_gadget_ordered_writeback_load_w_z();
-void uml_arm64_gadget_ordered_writeback_load_w_suppress();
-void uml_arm64_gadget_ordered_writeback_load_x_r();
-void uml_arm64_gadget_ordered_writeback_load_x_z();
-void uml_arm64_gadget_ordered_writeback_load_x_suppress();
-void uml_arm64_gadget_ls64_load_r();
-void uml_arm64_gadget_ls64_load_s();
-void uml_arm64_gadget_ls64_store_r();
-void uml_arm64_gadget_ls64_store_s();
-void uml_arm64_gadget_ls64_st64bv_rr();
-void uml_arm64_gadget_ls64_st64bv_rz();
-void uml_arm64_gadget_ls64_st64bv_sr();
-void uml_arm64_gadget_ls64_st64bv_sz();
-void uml_arm64_gadget_ls64_st64bv0_rr();
-void uml_arm64_gadget_ls64_st64bv0_rz();
-void uml_arm64_gadget_ls64_st64bv0_sr();
-void uml_arm64_gadget_ls64_st64bv0_sz();
 void uml_arm64_gadget_mops_prologue_copy_forward();
 void uml_arm64_gadget_mops_prologue_copy_general();
 void uml_arm64_gadget_mops_prologue_set();
@@ -2081,9 +2025,7 @@ void uml_arm64_gadget_mops_epilogue_set_z();
 	UML_DECLARE_ORDERED_VARIANTS(kind, ordering, h) \
 	UML_DECLARE_ORDERED_VARIANTS(kind, ordering, w) \
 	UML_DECLARE_ORDERED_VARIANTS(kind, ordering, x)
-UML_DECLARE_ORDERED_SIZES(load, relaxed)
 UML_DECLARE_ORDERED_SIZES(load, acquire)
-UML_DECLARE_ORDERED_SIZES(store, limited)
 UML_DECLARE_ORDERED_SIZES(store, release)
 #undef UML_DECLARE_ORDERED_SIZES
 #undef UML_DECLARE_ORDERED_VARIANTS
@@ -2108,33 +2050,6 @@ UML_DECLARE_RCPC_STORE_VARIANTS(h)
 UML_DECLARE_RCPC_STORE_VARIANTS(w)
 UML_DECLARE_RCPC_STORE_VARIANTS(x)
 #undef UML_DECLARE_RCPC_STORE_VARIANTS
-#define UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS(kind, size, address) \
-	void uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_rr(); \
-	void uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_rz(); \
-	void uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_zr(); \
-	void uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_zz();
-#define UML_DECLARE_ORDERED_PAIR_SIZE(kind, size) \
-	UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS(kind, size, no) \
-	UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS(kind, size, post)
-UML_DECLARE_ORDERED_PAIR_SIZE(load, w)
-UML_DECLARE_ORDERED_PAIR_SIZE(load, x)
-#undef UML_DECLARE_ORDERED_PAIR_SIZE
-#define UML_DECLARE_ORDERED_PAIR_SIZE(kind, size) \
-	UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS(kind, size, no) \
-	UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS(kind, size, pre)
-UML_DECLARE_ORDERED_PAIR_SIZE(store, w)
-UML_DECLARE_ORDERED_PAIR_SIZE(store, x)
-#undef UML_DECLARE_ORDERED_PAIR_SIZE
-#undef UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS
-#define UML_DECLARE_CONSISTENT_PAIR_VARIANTS(kind) \
-	void uml_arm64_gadget_consistent_pair_##kind##_rr(); \
-	void uml_arm64_gadget_consistent_pair_##kind##_rz(); \
-	void uml_arm64_gadget_consistent_pair_##kind##_zr(); \
-	void uml_arm64_gadget_consistent_pair_##kind##_zz();
-UML_DECLARE_CONSISTENT_PAIR_VARIANTS(ldap)
-UML_DECLARE_CONSISTENT_PAIR_VARIANTS(ldapp)
-UML_DECLARE_CONSISTENT_PAIR_VARIANTS(store)
-#undef UML_DECLARE_CONSISTENT_PAIR_VARIANTS
 #define UML_DECLARE_COMPARE_SWAP_REGISTER_VARIANTS(ordering, size) \
 	void uml_arm64_gadget_compare_swap_##ordering##_##size##_rr(); \
 	void uml_arm64_gadget_compare_swap_##ordering##_##size##_rz(); \
@@ -2151,57 +2066,6 @@ UML_DECLARE_COMPARE_SWAP_SIZES(acquire)
 UML_DECLARE_COMPARE_SWAP_SIZES(acquire_release)
 #undef UML_DECLARE_COMPARE_SWAP_SIZES
 #undef UML_DECLARE_COMPARE_SWAP_REGISTER_VARIANTS
-#define UML_DECLARE_RCW_SCALAR_FULL_VARIANTS(operation, soft, ordering) \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rr(); \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rz(); \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zr(); \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zz();
-#define UML_DECLARE_RCW_SCALAR_LIVE_RESULT(operation, soft, ordering) \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rr(); \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zr();
-#define UML_DECLARE_RCW_SCALAR_ORDERINGS(operation, soft) \
-	UML_DECLARE_RCW_SCALAR_FULL_VARIANTS(operation, soft, relaxed) \
-	UML_DECLARE_RCW_SCALAR_FULL_VARIANTS(operation, soft, release) \
-	UML_DECLARE_RCW_SCALAR_LIVE_RESULT(operation, soft, acquire) \
-	UML_DECLARE_RCW_SCALAR_LIVE_RESULT(operation, soft, acquire_release)
-#define UML_DECLARE_RCW_SCALAR_SOFTNESS(operation) \
-	UML_DECLARE_RCW_SCALAR_ORDERINGS(operation, hard) \
-	UML_DECLARE_RCW_SCALAR_ORDERINGS(operation, soft)
-UML_DECLARE_RCW_SCALAR_SOFTNESS(cas)
-UML_DECLARE_RCW_SCALAR_SOFTNESS(bic)
-UML_DECLARE_RCW_SCALAR_SOFTNESS(swp)
-UML_DECLARE_RCW_SCALAR_SOFTNESS(orr)
-#undef UML_DECLARE_RCW_SCALAR_SOFTNESS
-#undef UML_DECLARE_RCW_SCALAR_ORDERINGS
-#undef UML_DECLARE_RCW_SCALAR_LIVE_RESULT
-#undef UML_DECLARE_RCW_SCALAR_FULL_VARIANTS
-#define UML_DECLARE_RCW_PAIR_CAS_VARIANTS(soft, ordering) \
-	void uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_rr(); \
-	void uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_rz(); \
-	void uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_zr(); \
-	void uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_zz();
-#define UML_DECLARE_RCW_PAIR_CAS_ORDERS(soft) \
-	UML_DECLARE_RCW_PAIR_CAS_VARIANTS(soft, relaxed) \
-	UML_DECLARE_RCW_PAIR_CAS_VARIANTS(soft, release) \
-	UML_DECLARE_RCW_PAIR_CAS_VARIANTS(soft, acquire) \
-	UML_DECLARE_RCW_PAIR_CAS_VARIANTS(soft, acquire_release)
-UML_DECLARE_RCW_PAIR_CAS_ORDERS(hard)
-UML_DECLARE_RCW_PAIR_CAS_ORDERS(soft)
-#undef UML_DECLARE_RCW_PAIR_CAS_ORDERS
-#undef UML_DECLARE_RCW_PAIR_CAS_VARIANTS
-#define UML_DECLARE_RCW_PAIR_MODIFY_VARIANTS(operation, soft) \
-	void uml_arm64_gadget_rcw_pair_##operation##_##soft##_relaxed(); \
-	void uml_arm64_gadget_rcw_pair_##operation##_##soft##_release(); \
-	void uml_arm64_gadget_rcw_pair_##operation##_##soft##_acquire(); \
-	void uml_arm64_gadget_rcw_pair_##operation##_##soft##_acquire_release();
-#define UML_DECLARE_RCW_PAIR_MODIFY_SOFTNESS(operation) \
-	UML_DECLARE_RCW_PAIR_MODIFY_VARIANTS(operation, hard) \
-	UML_DECLARE_RCW_PAIR_MODIFY_VARIANTS(operation, soft)
-UML_DECLARE_RCW_PAIR_MODIFY_SOFTNESS(bic)
-UML_DECLARE_RCW_PAIR_MODIFY_SOFTNESS(swp)
-UML_DECLARE_RCW_PAIR_MODIFY_SOFTNESS(orr)
-#undef UML_DECLARE_RCW_PAIR_MODIFY_SOFTNESS
-#undef UML_DECLARE_RCW_PAIR_MODIFY_VARIANTS
 #define UML_DECLARE_COMPARE_SWAP_PAIR_REGISTER_VARIANTS(ordering, size) \
 	void uml_arm64_gadget_compare_swap_pair_##ordering##_##size##_rr(); \
 	void uml_arm64_gadget_compare_swap_pair_##ordering##_##size##_rz(); \
@@ -2297,47 +2161,6 @@ UML_DECLARE_ATOMIC_ORDERS(swp)
 #undef UML_DECLARE_ATOMIC_ORDERS
 #undef UML_DECLARE_ATOMIC_SIZES
 #undef UML_DECLARE_ATOMIC_REGISTER_VARIANTS
-#define UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, operation) \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_relaxed(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_relaxed_sp(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_release(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_release_sp(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_sp(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_release(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_release_sp(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_relaxed(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_relaxed_sp(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release_sp();
-#define UML_DECLARE_ATOMIC_FLOATING_OPERATIONS(implementation, size) \
-	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, add) \
-	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, max) \
-	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, maxnm) \
-	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, min) \
-	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, minnm)
-#define UML_DECLARE_ATOMIC_FLOATING_SIZES(implementation) \
-	UML_DECLARE_ATOMIC_FLOATING_OPERATIONS(implementation, bf) \
-	UML_DECLARE_ATOMIC_FLOATING_OPERATIONS(implementation, h) \
-	UML_DECLARE_ATOMIC_FLOATING_OPERATIONS(implementation, s) \
-	UML_DECLARE_ATOMIC_FLOATING_OPERATIONS(implementation, d)
-UML_DECLARE_ATOMIC_FLOATING_SIZES(native)
-UML_DECLARE_ATOMIC_FLOATING_SIZES(software)
-#undef UML_DECLARE_ATOMIC_FLOATING_SIZES
-#undef UML_DECLARE_ATOMIC_FLOATING_OPERATIONS
-#undef UML_DECLARE_ATOMIC_FLOATING_VARIANTS
-#define UML_DECLARE_ATOMIC_PAIR128_ORDER(operation, ordering) \
-	void uml_arm64_gadget_atomic_pair128_##operation##_##ordering();
-#define UML_DECLARE_ATOMIC_PAIR128_ORDERS(operation) \
-	UML_DECLARE_ATOMIC_PAIR128_ORDER(operation, relaxed) \
-	UML_DECLARE_ATOMIC_PAIR128_ORDER(operation, release) \
-	UML_DECLARE_ATOMIC_PAIR128_ORDER(operation, acquire) \
-	UML_DECLARE_ATOMIC_PAIR128_ORDER(operation, acquire_release)
-UML_DECLARE_ATOMIC_PAIR128_ORDERS(clr)
-UML_DECLARE_ATOMIC_PAIR128_ORDERS(set)
-UML_DECLARE_ATOMIC_PAIR128_ORDERS(swp)
-#undef UML_DECLARE_ATOMIC_PAIR128_ORDERS
-#undef UML_DECLARE_ATOMIC_PAIR128_ORDER
 #define UML_DECLARE_LITERAL_INTEGER(name) \
 	void uml_arm64_gadget_##name##_r(); \
 	void uml_arm64_gadget_##name##_z();

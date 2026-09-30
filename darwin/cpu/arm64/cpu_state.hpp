@@ -46,7 +46,6 @@ struct CpuState final {
 	/* Effective TBI0, imported from the task: EL0 data addresses ignore
 	 * their top byte. SP-based addresses are never untagged. */
 	bool tbi_enabled{};
-	std::uint32_t accdata{};
 	/* EL0-visible PSTATE fields controlled by MSR (immediate).  DAIF access is
 	 * explicitly gated because SCTLR_EL1.UMA determines whether userspace may
 	 * use DAIFSet/DAIFClr; the other fields are effective feature state. */

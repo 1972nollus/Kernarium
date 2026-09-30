@@ -106,8 +106,8 @@ gadget bodies. Region flags are readable, writable, executable, guest code,
 and guest writable. Events follow the harness order: system call, memory
 fault, reserved, illegal instruction, breakpoint, floating-point trap, PC
 alignment, instruction budget, fatal. The reserved option bits, event code 2,
-the field ids marked reserved below, and non-empty tag lists held FEAT_PAuth,
-FEAT_MTE, FEAT_GCS, and FEAT_CPA state (see
+the field ids the table below omits, and non-empty tag lists held FEAT_PAuth,
+FEAT_MTE, FEAT_GCS, FEAT_CPA, and FEAT_LS64 state (see
 [Absent-feature cases](#absent-feature-cases)); the runner rejects a pack
 that uses them.
 Validator `0xffff` means exact comparison; retirement maximum `0xffffffff` is
@@ -122,17 +122,16 @@ address is all ones, and every other field is zero. Field ids are:
 
 | Id | Field | Id | Field |
 | --- | --- | --- | --- |
-| 1 | `pc` u64 | 21 | `pstate_sm` u8 |
-| 2 | `nzcv` u32 | 22 | `pstate_za` u8 |
-| 3 | `fpcr` u32 | 23 | `pstate_daif_access` u8 |
-| 4 | `fpsr` u32 | 24 | `pstate_daif` u8 |
-| 5 | `fpmr` u64 | 25 | `exclusive_address` u64 |
-| 6 | `tls` u64 | 26 | `exclusive_key` u64 |
-| 8 | `tbi_enabled` u8 | 27 | `exclusive_value` u64 |
-| 17 | `accdata` u32 | 28 | `exclusive_value2` u64 |
+| 1 | `pc` u64 | 22 | `pstate_za` u8 |
+| 2 | `nzcv` u32 | 23 | `pstate_daif_access` u8 |
+| 3 | `fpcr` u32 | 24 | `pstate_daif` u8 |
+| 4 | `fpsr` u32 | 25 | `exclusive_address` u64 |
+| 5 | `fpmr` u64 | 26 | `exclusive_key` u64 |
+| 6 | `tls` u64 | 27 | `exclusive_value` u64 |
+| 8 | `tbi_enabled` u8 | 28 | `exclusive_value2` u64 |
 | 18 | `pstate_ssbs` u8 | 29 | `exclusive_version` u64 |
 | 19 | `pstate_dit` u8 | 30 | `exclusive_size` u8 |
-| | | 31 | `fp_dirty` u8 |
+| 21 | `pstate_sm` u8 | 31 | `fp_dirty` u8 |
 
 Ids 7, 9-16, 20, and 32-37 are reserved. A region's initial bytes are its
 blob, and its expected bytes are the blob with the runs applied.
@@ -200,7 +199,7 @@ lines form, and `--repack FILE` rebuilds the pack and metadata from it.
 
 The producer checks predate the FEAT_LSE2 alignment rule (see
 [`docs/architecture.md`](../../../../docs/architecture.md)) and expect an
-alignment fault from a misaligned LSE atomic, exclusive, or LSFE access inside
+alignment fault from a misaligned LSE atomic or exclusive access inside
 one 16-byte block, and the producer harness's interpreter lane does not
 implement the rule. [`tools/arm64-tests/lse2-alignment-corpus.py`](../../../../tools/arm64-tests/lse2-alignment-corpus.py)
 therefore rewrites a dump after export: it drops those cases and appends the
@@ -213,7 +212,11 @@ block-crossing cases follow the architecture and match native LSE2 hardware.
 The virtual CPU implements none of FEAT_PAuth, FEAT_MTE, FEAT_GCS, and
 FEAT_CPA: their non-hint encodings are UNDEFINED and their hint-space
 encodings, such as PACIASP, AUTIASP, and GCSB, are NOPs. FEAT_PAuth_LR stays
-unimplemented as before, so its cases are unchanged. The producer harness
+unimplemented as before, so its cases are unchanged. Nor does it implement the
+memory extensions FEAT_LSE128, FEAT_THE and FEAT_D128, FEAT_LRCPC3 (whose
+LDAPR and STLR writeback forms join them), FEAT_LSCP, FEAT_LS64 with its
+ACCDATA state, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR; every encoding they add is
+UNDEFINED. The producer harness
 enabled the removed features in most cases' state, so
 [`tools/arm64-tests/absent-feature-corpus.py`](../../../../tools/arm64-tests/absent-feature-corpus.py)
 rewrites the dump after the LSE2 step. It drops the cases that exercise a

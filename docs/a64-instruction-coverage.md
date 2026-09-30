@@ -6,12 +6,15 @@ representative cases in the checked-in
 through the gadget and JIT engines. Each case passed the interpreter and gadget
 lanes, and the JIT lane where the export host implements its features, before
 it was exported. `tests/unit/arm64/corpus/coverage.tsv` counts the cases of each
-entry. In `tests/unit/arm64/a64_instruction_inventory.tsv`, 934 entries are
-marked `verified`. The other 49 are marked `absent`: they need FEAT_MTE,
-FEAT_GCS, FEAT_CPA, or FEAT_PAuth, which the virtual CPU omits. Their non-hint
-encodings are UNDEFINED, and their hint-space forms (GCSB, PACIASP, AUTIASP,
-XPACLRI, and the other PAC and AUT hints) are NOPs. Their corpus cases expect
-exactly that.
+entry. In `tests/unit/arm64/a64_instruction_inventory.tsv`, 853 entries are
+marked `verified`. The other 130 are marked `absent`: they need FEAT_MTE,
+FEAT_GCS, FEAT_CPA, FEAT_PAuth, or one of the memory extensions FEAT_LSE128,
+FEAT_THE, FEAT_D128, FEAT_LRCPC3, FEAT_LSCP, FEAT_LS64, FEAT_LSFE, FEAT_LSUI,
+and FEAT_LOR, which the virtual CPU omits. Their non-hint encodings are
+UNDEFINED, and their hint-space forms (GCSB, PACIASP, AUTIASP, XPACLRI, and
+the other PAC and AUT hints) are NOPs. Their corpus cases expect exactly that.
+LDAPR and STLR stay `verified`: only their FEAT_LRCPC3 writeback forms are
+UNDEFINED.
 
 The virtual CPU also omits FEAT_AFP, which has no instructions, whether or not
 the host implements it. FPCR.FIZ, AH, and NEP are RES0: MSR FPCR and every

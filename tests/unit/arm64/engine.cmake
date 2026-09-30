@@ -105,13 +105,6 @@
         NO_OBJECTS)
     uml_add_arm64_unit_test(deferred_fp_state NO_OBJECTS)
 
-    add_executable(uml_host_instruction_probe_tests
-        ${PROJECT_SOURCE_DIR}/tests/unit/arm64/host_instruction_probe_tests.cpp)
-    target_include_directories(uml_host_instruction_probe_tests PRIVATE
-        ${PROJECT_SOURCE_DIR}/darwin)
-    uml_add_unit_test(NAME arm64-host-instruction-probe
-        COMMAND uml_host_instruction_probe_tests)
-
     add_executable(uml_tlb_sync_range_tests
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/tlb_sync_range_tests.cpp)
     target_link_libraries(uml_tlb_sync_range_tests PRIVATE UML::BridgeAbi)

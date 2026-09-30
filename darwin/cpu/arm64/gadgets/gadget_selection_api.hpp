@@ -75,14 +75,6 @@ struct SimdLaneGadgets final {
 
 using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 
-using AtomicFloatingVariants = std::array<Gadget, 6>;
-
-using AtomicFloatingBases = std::array<AtomicFloatingVariants, 2>;
-
-using AtomicFloatingOperations = std::array<AtomicFloatingBases, 5>;
-
-using AtomicFloatingGadgets = std::array<AtomicFloatingOperations, 4>;
-
 using AtomicRegisterGadgets = std::array<Gadget, 4>;
 
 using AtomicSizeGadgets = std::array<AtomicRegisterGadgets, 4>;
@@ -91,32 +83,11 @@ using AtomicOrderGadgets = std::array<AtomicSizeGadgets, 4>;
 
 using AtomicOperationGadgets = std::array<AtomicOrderGadgets, 9>;
 
-using AtomicPair128OrderGadgets = std::array<Gadget, 4>;
-
-using AtomicPair128Gadgets = std::array<AtomicPair128OrderGadgets, 3>;
-
 using CompareSwapGadgets = std::array<AtomicSizeGadgets, 4>;
 
 using CompareSwapPairSizeGadgets = std::array<AtomicRegisterGadgets, 2>;
 
 using CompareSwapPairGadgets = std::array<CompareSwapPairSizeGadgets, 4>;
-
-using RcwScalarOrderingGadgets = std::array<AtomicRegisterGadgets, 4>;
-
-using RcwScalarSoftGadgets = std::array<RcwScalarOrderingGadgets, 2>;
-
-using RcwScalarGadgets = std::array<RcwScalarSoftGadgets, 4>;
-
-using RcwPairCasOrderingGadgets = std::array<AtomicRegisterGadgets, 4>;
-
-using RcwPairCasGadgets = std::array<RcwPairCasOrderingGadgets, 2>;
-
-using RcwPairModifyOrderingGadgets = std::array<Gadget, 4>;
-
-using RcwPairModifySoftGadgets =
-	std::array<RcwPairModifyOrderingGadgets, 2>;
-
-using RcwPairModifyGadgets = std::array<RcwPairModifySoftGadgets, 3>;
 
 using ExclusiveLoadRegisterGadgets = std::array<Gadget, 2>;
 
@@ -140,35 +111,15 @@ using ExclusivePairStoreSizeGadgets =
 using ExclusivePairStoreGadgets =
 	std::array<ExclusivePairStoreSizeGadgets, 2>;
 
-using OrderedLoadGadgets = ExclusiveLoadGadgets;
+using OrderedLoadGadgets = ExclusiveLoadSizeGadgets;
 
-using OrderedStoreGadgets = ExclusiveLoadGadgets;
+using OrderedStoreGadgets = ExclusiveLoadSizeGadgets;
 
 using RcpcRegisterGadgets = std::array<Gadget, 2>;
 
 using RcpcLoadGadgets = std::array<RcpcRegisterGadgets, 9>;
 
 using RcpcStoreGadgets = std::array<RcpcRegisterGadgets, 4>;
-
-using SimdOrderedAddressGadgets = std::array<Gadget, 2>;
-
-using SimdOrderedScalarGadgets =
-	std::array<SimdOrderedAddressGadgets, 4>;
-
-using SimdOrderedImplementationGadgets =
-	std::array<SimdOrderedAddressGadgets, 2>;
-
-using SimdOrderedLaneGadgets =
-	std::array<std::array<SimdOrderedAddressGadgets, 2>, 2>;
-
-using OrderedPairRegisterGadgets = std::array<Gadget, 4>;
-
-using OrderedPairAddressGadgets =
-	std::array<OrderedPairRegisterGadgets, 2>;
-
-using OrderedPairGadgets = std::array<OrderedPairAddressGadgets, 2>;
-
-using ConsistentPairGadgets = std::array<Gadget, 4>;
 
 struct SystemRegisterGadget final {
 	Gadget gadget;
@@ -211,14 +162,8 @@ struct SimdIndexedElement final {
 	unsigned lane_index;
 };
 
-extern const AtomicFloatingGadgets atomic_floating_native_gadgets;
-extern const AtomicFloatingGadgets atomic_floating_software_gadgets;
 extern const AtomicOperationGadgets atomic_rmw_gadgets;
-extern const AtomicPair128Gadgets atomic_pair128_gadgets;
 extern const CompareSwapGadgets compare_swap_gadgets;
-extern const RcwScalarGadgets rcw_scalar_gadgets;
-extern const RcwPairCasGadgets rcw_pair_cas_gadgets;
-extern const RcwPairModifyGadgets rcw_pair_modify_gadgets;
 extern const CompareSwapPairGadgets compare_swap_pair_gadgets;
 extern const ExclusiveLoadGadgets exclusive_load_gadgets;
 extern const ExclusiveStoreGadgets exclusive_store_gadgets;
@@ -228,16 +173,6 @@ extern const OrderedLoadGadgets ordered_load_gadgets;
 extern const OrderedStoreGadgets ordered_store_gadgets;
 extern const RcpcLoadGadgets rcpc_load_gadgets;
 extern const RcpcStoreGadgets rcpc_store_gadgets;
-extern const SimdOrderedScalarGadgets simd_ordered_scalar_load_gadgets;
-extern const SimdOrderedScalarGadgets simd_ordered_scalar_store_gadgets;
-extern const SimdOrderedImplementationGadgets simd_ordered_q_load_gadgets;
-extern const SimdOrderedImplementationGadgets simd_ordered_q_store_gadgets;
-extern const SimdOrderedLaneGadgets simd_ordered_lane_gadgets;
-extern const OrderedPairGadgets ordered_pair_load_gadgets;
-extern const OrderedPairGadgets ordered_pair_store_gadgets;
-extern const ConsistentPairGadgets consistent_pair_ldap_gadgets;
-extern const ConsistentPairGadgets consistent_pair_ldapp_gadgets;
-extern const ConsistentPairGadgets consistent_pair_store_gadgets;
 extern const std::array<Gadget, 16> pstate_daif_set_gadgets;
 extern const std::array<Gadget, 16> pstate_daif_clear_gadgets;
 
@@ -263,7 +198,6 @@ extern const std::array<Gadget, 16> pstate_daif_clear_gadgets;
 [[nodiscard]] bool host_has_rdm() noexcept;
 [[nodiscard]] bool host_has_dotprod() noexcept;
 [[nodiscard]] bool host_has_i8mm() noexcept;
-[[nodiscard]] bool host_has_lrcpc3() noexcept;
 [[nodiscard]] bool host_has_lut() noexcept;
 [[nodiscard]] bool host_has_frintts() noexcept;
 [[nodiscard]] bool host_has_faminmax() noexcept;
@@ -278,7 +212,6 @@ extern const std::array<Gadget, 16> pstate_daif_clear_gadgets;
 [[nodiscard]] bool host_has_f16mm() noexcept;
 [[nodiscard]] bool host_has_f16f32mm() noexcept;
 [[nodiscard]] bool host_has_f16f32dot() noexcept;
-[[nodiscard]] bool host_has_lsfe() noexcept;
 [[nodiscard]] bool pointer_auth_lr_unavailable(std::uint32_t) noexcept;
 /* Fused guest CMP of two registers + B.cond. */
 [[nodiscard]] Gadget compare_register_branch_gadget(
@@ -303,9 +236,6 @@ extern const std::array<Gadget, 16> pstate_daif_clear_gadgets;
 [[nodiscard]] Gadget cmpbr_register_gadget(unsigned int, unsigned int, bool, bool) noexcept;
 [[nodiscard]] bool cmpbr_immediate_zero_result(unsigned int, unsigned int) noexcept;
 [[nodiscard]] bool cmpbr_equal_register_result(unsigned int) noexcept;
-[[nodiscard]] Gadget ls64_gadget(unsigned int, bool, bool) noexcept;
-[[nodiscard]] std::uint16_t ls64_register_offset(unsigned int) noexcept;
-[[nodiscard]] std::uintptr_t ls64_operand(unsigned int, unsigned int, unsigned int, bool, bool) noexcept;
 [[nodiscard]] Gadget mops_gadget(unsigned int, unsigned int, bool) noexcept;
 [[nodiscard]] PstateImmediateGadget pstate_boolean_gadget(Gadget, Gadget, unsigned int) noexcept;
 [[nodiscard]] PstateImmediateGadget pstate_immediate_gadget(std::uint32_t) noexcept;

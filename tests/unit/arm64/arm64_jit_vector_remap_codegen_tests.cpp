@@ -638,86 +638,6 @@ void literal_load_names_its_resident_vector_directly() {
           "vector literal load destination escaped the resident cache");
 }
 
-void atomic_floating_names_resident_vectors_directly() {
-  if (!::uml::platform::apple::probed_host_capabilities().has(
-          ::uml::cpu::ArmFeature::lsfe))
-    return;
-
-  const auto require_returning_form = [](bool alias, std::uint64_t pc) {
-    const unsigned result = alias ? 5U : 6U;
-    const std::array guest{
-        bitwise(2, 5, 1, 2),
-        atomic_floating(false, 10, 5, result),
-        bitwise(2, 7, result, 2),
-    };
-    const auto compiled = jit_test::compile_block(pc, guest);
-    require(compiled.guest_instructions == guest.size(),
-            "JIT did not compile the atomic floating-memory chain");
-    const auto hot = std::span<const std::uint32_t>{compiled.words}.first(
-        compiled.hot_words);
-
-    std::optional<std::uint32_t> producer;
-    std::optional<std::uint32_t> atomic;
-    std::optional<std::uint32_t> consumer;
-    for (const auto word : hot) {
-      if ((word & ~register_mask) == (guest[0] & ~register_mask))
-        producer = word;
-      if ((word & ~register_mask) == (guest[1] & ~register_mask))
-        atomic = word;
-      if ((word & ~register_mask) == (guest[2] & ~register_mask))
-        consumer = word;
-    }
-
-    require(producer.has_value(), "JIT did not emit the cached source");
-    require(atomic.has_value(),
-            "JIT did not emit the native atomic floating-memory operation");
-    require(consumer.has_value(), "JIT did not emit the cached result user");
-    require(left(*atomic) == 8U,
-            "native atomic floating-memory base is not translated x8");
-    require(right(*atomic) == destination(*producer),
-            "atomic floating-memory source was staged through v0");
-    require(destination(*atomic) == left(*consumer),
-            "atomic floating-memory result was staged through v1");
-    require(right(*atomic) >= first_cached_vector &&
-                right(*atomic) <= last_cached_vector &&
-                destination(*atomic) >= first_cached_vector &&
-                destination(*atomic) <= last_cached_vector,
-            "atomic floating-memory operand escaped the resident cache");
-    require((right(*atomic) == destination(*atomic)) == alias,
-            "atomic floating-memory source/result alias was not preserved");
-  };
-
-  require_returning_form(false, code_base + 0x5000U);
-  require_returning_form(true, code_base + 0x6000U);
-
-  constexpr std::array store_guest{
-      bitwise(2, 5, 1, 2),
-      atomic_floating(true, 10, 5, 31),
-  };
-  const auto compiled =
-      jit_test::compile_block(code_base + 0x7000U, store_guest);
-  require(compiled.guest_instructions == store_guest.size(),
-          "JIT did not compile the store-only atomic floating-memory chain");
-  const auto hot =
-      std::span<const std::uint32_t>{compiled.words}.first(compiled.hot_words);
-  std::optional<std::uint32_t> producer;
-  std::optional<std::uint32_t> atomic;
-  for (const auto word : hot) {
-    if ((word & ~register_mask) == (store_guest[0] & ~register_mask))
-      producer = word;
-    if ((word & ~register_mask) == (store_guest[1] & ~register_mask))
-      atomic = word;
-  }
-  require(producer.has_value(),
-          "JIT did not emit the store-only cached source");
-  require(atomic.has_value(),
-          "JIT did not emit the store-only native operation");
-  require(right(*atomic) == destination(*producer),
-          "store-only atomic floating-memory source was staged through v0");
-  require(destination(*atomic) == 31U,
-          "store-only atomic floating-memory result is not encoded as v31");
-}
-
 
 } // namespace
 
@@ -737,7 +657,6 @@ int main() {
   unrestricted_fp8_binding_order_is_unchanged();
   ordinary_memory_names_resident_vector_registers_directly();
   literal_load_names_its_resident_vector_directly();
-  atomic_floating_names_resident_vectors_directly();
   run_vector_remap_pressure_tests();
   return 0;
 }

@@ -4,8 +4,6 @@
 
 #include "cpu/arm64/layout/assembly_layout.hpp"
 
-#include "../detail/atomic_floating.hpp"
-#include "../detail/single_copy_alignment.hpp"
 #include "../detail/floating_compare.hpp"
 #include "../detail/bfloat_conversion.hpp"
 #include "../detail/bfloat_dot.hpp"
@@ -31,7 +29,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <bit>
 #include <cstddef>
 #include <optional>
@@ -301,114 +298,6 @@ using Fp8Software = void (*)(CpuState *, std::uintptr_t) noexcept;
 }
 
 } // namespace
-
-namespace {
-
-template<typename Integer,
-	uml::cpu::arm64::detail::AtomicFloatingOperation Operation,
-	unsigned Width, bool BFloat, bool Acquire, bool Release, bool ReturnOld>
-void atomic_floating_transfer(uml::cpu::arm64::CpuState *cpu,
-	std::byte *pointer, std::uintptr_t operand) noexcept
-{
-	using namespace uml::cpu::arm64;
-	const unsigned source = operand & 31U;
-	const auto source_bits = detail::decode_little_endian(
-		std::span{cpu->vectors[source].bytes}.first(sizeof(Integer)));
-	const auto return_old = [&](std::uint64_t observed) {
-		if constexpr (ReturnOld) {
-			const unsigned destination = (operand >> 8) & 31U;
-			cpu->vectors[destination].bytes = {};
-			detail::encode_little_endian(observed,
-				std::span{cpu->vectors[destination].bytes}.first(
-					sizeof(Integer)));
-		}
-	};
-	if (reinterpret_cast<std::uintptr_t>(pointer) % sizeof(Integer) != 0) {
-		/* Admitted by the FEAT_LSE2 rule inside one 16-byte block; the
-		 * host's own LSE2 keeps each CASAL single-copy atomic. */
-		auto expected = detail::lse2_acquire_load(pointer, sizeof(Integer));
-		for (;;) {
-			const auto desired = static_cast<Integer>(
-				detail::atomic_floating_result<Operation>(
-					static_cast<Integer>(expected), source_bits,
-					Width, BFloat, cpu->fpcr));
-			const auto observed = detail::lse2_compare_swap(
-				pointer, sizeof(Integer), expected, desired);
-			if (observed == expected)
-				return return_old(observed);
-			expected = observed;
-		}
-	}
-	auto &location = *reinterpret_cast<Integer *>(pointer);
-	auto reference = std::atomic_ref<Integer>{location};
-	constexpr auto order = Acquire && Release ? std::memory_order_acq_rel :
-		Acquire ? std::memory_order_acquire : Release ?
-		std::memory_order_release : std::memory_order_relaxed;
-	constexpr auto failure_order = Acquire ? std::memory_order_acquire :
-		std::memory_order_relaxed;
-	auto expected = reference.load(std::memory_order_relaxed);
-	for (;;) {
-		const auto observed = expected;
-		const auto desired = static_cast<Integer>(
-			detail::atomic_floating_result<Operation>(observed, source_bits,
-				Width, BFloat, cpu->fpcr));
-		if (!reference.compare_exchange_weak(
-				expected, desired, order, failure_order))
-			continue;
-		return return_old(observed);
-	}
-}
-
-} // namespace
-
-#define UML_ATOMIC_FLOATING_TRANSFER_WRAPPER(size_name, integer, width, bfloat, \
-	operation_name, operation, variant, acquire, release, return_old) \
-extern "C" [[gnu::noinline]] void \
-uml_arm64_atomic_floating_transfer_##size_name##_##operation_name##_##variant( \
-	uml::cpu::arm64::CpuState *cpu, std::byte *pointer, \
-	std::uintptr_t operand) noexcept \
-{ \
-	atomic_floating_transfer<integer, \
-		uml::cpu::arm64::detail::AtomicFloatingOperation::operation, width, \
-		bfloat, acquire, release, return_old>(cpu, pointer, operand); \
-}
-
-#define UML_ATOMIC_FLOATING_TRANSFER_VARIANTS(size_name, integer, width, \
-	bfloat, operation_name, operation) \
-	UML_ATOMIC_FLOATING_TRANSFER_WRAPPER(size_name, integer, width, bfloat, \
-		operation_name, operation, load_relaxed, false, false, true) \
-	UML_ATOMIC_FLOATING_TRANSFER_WRAPPER(size_name, integer, width, bfloat, \
-		operation_name, operation, load_release, false, true, true) \
-	UML_ATOMIC_FLOATING_TRANSFER_WRAPPER(size_name, integer, width, bfloat, \
-		operation_name, operation, load_acquire, true, false, true) \
-	UML_ATOMIC_FLOATING_TRANSFER_WRAPPER(size_name, integer, width, bfloat, \
-		operation_name, operation, load_acquire_release, true, true, true) \
-	UML_ATOMIC_FLOATING_TRANSFER_WRAPPER(size_name, integer, width, bfloat, \
-		operation_name, operation, store_relaxed, false, false, false) \
-	UML_ATOMIC_FLOATING_TRANSFER_WRAPPER(size_name, integer, width, bfloat, \
-		operation_name, operation, store_release, false, true, false)
-
-#define UML_ATOMIC_FLOATING_TRANSFER_OPERATIONS(size_name, integer, width, \
-	bfloat) \
-	UML_ATOMIC_FLOATING_TRANSFER_VARIANTS(size_name, integer, width, bfloat, \
-		add, add) \
-	UML_ATOMIC_FLOATING_TRANSFER_VARIANTS(size_name, integer, width, bfloat, \
-		max, maximum) \
-	UML_ATOMIC_FLOATING_TRANSFER_VARIANTS(size_name, integer, width, bfloat, \
-		maxnm, maximum_number) \
-	UML_ATOMIC_FLOATING_TRANSFER_VARIANTS(size_name, integer, width, bfloat, \
-		min, minimum) \
-	UML_ATOMIC_FLOATING_TRANSFER_VARIANTS(size_name, integer, width, bfloat, \
-		minnm, minimum_number)
-
-UML_ATOMIC_FLOATING_TRANSFER_OPERATIONS(bf, std::uint16_t, 16U, true)
-UML_ATOMIC_FLOATING_TRANSFER_OPERATIONS(h, std::uint16_t, 16U, false)
-UML_ATOMIC_FLOATING_TRANSFER_OPERATIONS(s, std::uint32_t, 32U, false)
-UML_ATOMIC_FLOATING_TRANSFER_OPERATIONS(d, std::uint64_t, 64U, false)
-
-#undef UML_ATOMIC_FLOATING_TRANSFER_OPERATIONS
-#undef UML_ATOMIC_FLOATING_TRANSFER_VARIANTS
-#undef UML_ATOMIC_FLOATING_TRANSFER_WRAPPER
 
 extern "C" [[gnu::noinline]] void uml_arm64_simd_lut_software(
 	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept

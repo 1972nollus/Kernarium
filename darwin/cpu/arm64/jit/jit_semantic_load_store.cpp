@@ -2,7 +2,6 @@
 #include "jit_semantic_instructions.hpp"
 #include "jit_semantic_reservation.hpp"
 
-#include "cpu/arm64/detail/atomic_floating.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 
 #include <algorithm>
@@ -20,66 +19,6 @@ namespace uml::cpu::arm64::jit::semantic {
 using arm64::detail::decode_little_endian;
 using arm64::detail::encode_little_endian;
 using arm64::detail::sign_extend;
-
-RunResult load_store_64b(CpuState &cpu, GuestMemory &memory,
-	std::uint32_t instruction)
-{
-	const auto pc = cpu.pc;
-	const auto opcode = instruction & 0xffe0'fc00U;
-	const bool load = (instruction & 0xffff'fc00U) == 0xf83f'd000U;
-	const bool status_store = opcode == 0xf820'b000U ||
-		opcode == 0xf820'a000U;
-	const bool accdata_store = opcode == 0xf820'a000U;
-	const bool plain_store =
-		(instruction & 0xffff'fc00U) == 0xf83f'9000U;
-	if (!load && !status_store && !plain_store)
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
-
-	const unsigned first = instruction & 31U;
-	if ((first & 1U) != 0 || first >= 24)
-		return {StopReason::illegal_instruction, pc, instruction, 0, false};
-	const unsigned base_register = (instruction >> 5) & 31U;
-	const unsigned status_register = (instruction >> 16) & 31U;
-	const auto tagged_address = cpu.read_register(base_register, true);
-	const auto address =
-		cpu.untag_data_address(tagged_address, base_register == 31U);
-	if ((address & 63U) != 0)
-		return alignment_fault(address, instruction, !load);
-
-	std::array<std::byte, 64> bytes{};
-	if (load) {
-		/* Fetch the complete transfer before committing any destination, so a
-		 * fault cannot expose a partial register update.
-		 */
-		{
-			std::scoped_lock lock{exclusive_memory_mutex};
-			if (!memory.read(address, bytes))
-				return {StopReason::memory_fault, address, instruction, 0,
-					false};
-		}
-		for (unsigned index = 0; index < 8; ++index)
-			cpu.registers[first + index] = decode_little_endian(
-				std::span{bytes}.subspan(index * 8, 8));
-	} else {
-		for (unsigned index = 0; index < 8; ++index) {
-			auto value = cpu.registers[first + index];
-			if (accdata_store && index == 0)
-				value = (value & 0xffff'ffff'0000'0000ULL) |
-					cpu.accdata;
-			encode_little_endian(value,
-				std::span{bytes}.subspan(index * 8, 8));
-		}
-		if (!ordinary_store(memory, address, bytes))
-			return {StopReason::memory_fault, address, instruction, 0, true};
-		/* Normal mapped memory is LS64-capable. Its implementation-defined
-		 * successful peripheral status is zero.
-		 */
-		if (status_store)
-			cpu.write_register(status_register, 0, false);
-	}
-	cpu.pc += 4;
-	return continue_after(pc, instruction);
-}
 
 RunResult memory_copy_set(CpuState &cpu, GuestMemory &memory,
 	std::uint32_t instruction)

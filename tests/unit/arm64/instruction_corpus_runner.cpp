@@ -245,7 +245,8 @@ struct Record final {
 
 /* Every encoded non-register state field; see the README field table. Ids
  * 7, 9-16, 20, and 32-37 held the retired FEAT_MTE, FEAT_CPA, FEAT_GCS, and
- * FEAT_PAuth state and stay reserved. */
+ * FEAT_PAuth state, and 17 the retired FEAT_LS64 ACCDATA; all stay
+ * reserved. */
 enum class Field : std::uint8_t {
   pc = 1,
   nzcv,
@@ -254,8 +255,7 @@ enum class Field : std::uint8_t {
   fpmr,
   tls,
   tbi_enabled = 8,
-  accdata = 17,
-  pstate_ssbs,
+  pstate_ssbs = 18,
   pstate_dit,
   pstate_sm = 21,
   pstate_za,
@@ -284,7 +284,6 @@ enum class Field : std::uint8_t {
   case Field::nzcv:
   case Field::fpcr:
   case Field::fpsr:
-  case Field::accdata:
     return 4;
   case Field::tbi_enabled:
   case Field::pstate_ssbs:
@@ -343,7 +342,6 @@ sparse_state(Reader &reader, std::span<const std::byte> body) {
   state.fpmr = 0;
   state.tls = 0;
   state.tbi_enabled = false;
-  state.accdata = 0;
   state.pstate_ssbs = false;
   state.pstate_dit = false;
   state.pstate_sm = false;
@@ -402,9 +400,6 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
       break;
     case Field::tbi_enabled:
       state.tbi_enabled = flag();
-      break;
-    case Field::accdata:
-      state.accdata = reader.u32();
       break;
     case Field::pstate_ssbs:
       state.pstate_ssbs = flag();

@@ -45,7 +45,6 @@ inline void require(
 	cpu.fpmr = 0x0000'003f'ff7f'c1ffULL;
 	cpu.tls = 0x1234'5678'9abc'def0ULL;
 	cpu.tbi_enabled = true;
-	cpu.accdata = 0xa1b2'c3d4U;
 	cpu.pstate_ssbs = true;
 	cpu.pstate_dit = true;
 	cpu.pstate_sm = true;

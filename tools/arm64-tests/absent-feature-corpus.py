@@ -9,11 +9,14 @@ usage: absent-feature-corpus.py [--features LIST] [--failing TSV]
                                 DUMP LOG...
 
 The virtual CPU implements none of FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth,
-FEAT_AFP, and FEAT_EBF16: their non-hint instructions are UNDEFINED, their
-hint-space instructions are NOPs, FPCR.FIZ, AH, NEP, and EBF are RES0, and
-the ID registers report them absent. The producer checks predate that choice, and their
-harness enabled these features in most cases' state, so this script rewrites
-a dump after export. For each named feature it
+FEAT_AFP, and FEAT_EBF16, nor the memory extensions FEAT_LSE128, FEAT_THE
+and FEAT_D128, FEAT_LRCPC3, FEAT_LSCP, FEAT_LS64 with its _V and _ACCDATA
+forms, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR: their non-hint instructions are
+UNDEFINED, their hint-space instructions are NOPs, FPCR.FIZ, AH, NEP, and EBF
+are RES0, and the ID registers report them absent. The producer checks
+predate that choice, and their harness enabled these features in most cases'
+state or ran their instructions, so this script rewrites a dump after export.
+For each named feature it
 
 - drops every case that exercises the feature: one that uses its harness
   option, terminal event, or validator relation, or needs it natively without
@@ -74,7 +77,8 @@ sys.modules[_spec.name] = corpus
 _spec.loader.exec_module(corpus)
 
 SITE = "tools/arm64-tests/absent-feature-corpus.py"
-DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "afp", "ebf16")
+DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "afp", "ebf16", "lse128",
+                    "the", "lrcpc3", "lscp", "ls64", "lsfe", "lsui", "lor")
 SVC = 0xD400_0001
 
 
@@ -163,11 +167,47 @@ FEATURES = {
         conditions=("FEAT_EBF16",),
         fields=(),
         fpcr_bits=0x2000),
+    # The memory extensions below add instructions and, for FEAT_LS64, the
+    # ACCDATA_EL1 value ST64BV0 stores.
+    "lse128": Feature(
+        tokens=("lse128",),
+        conditions=("FEAT_LSE128",),
+        fields=()),
+    # The read-check-write pairs need FEAT_D128 as well; the other FEAT_D128
+    # instructions are EL1 system instructions, UNDEFINED at EL0 either way.
+    "the": Feature(
+        tokens=("the", "d128"),
+        conditions=("FEAT_THE", "FEAT_D128"),
+        fields=()),
+    "lrcpc3": Feature(
+        tokens=("lrcpc3",),
+        conditions=("FEAT_LRCPC3",),
+        fields=()),
+    "lscp": Feature(
+        tokens=("lscp",),
+        conditions=("FEAT_LSCP",),
+        fields=()),
+    "ls64": Feature(
+        tokens=("ls64", "ls64_v", "ls64_accdata"),
+        conditions=("FEAT_LS64", "FEAT_LS64_V", "FEAT_LS64_ACCDATA"),
+        fields=("accdata",)),
+    "lsfe": Feature(
+        tokens=("lsfe",),
+        conditions=("FEAT_LSFE",),
+        fields=()),
+    "lsui": Feature(
+        tokens=("lsui",),
+        conditions=("FEAT_LSUI",),
+        fields=()),
+    "lor": Feature(
+        tokens=("lor",),
+        conditions=("FEAT_LOR",),
+        fields=()),
 }
 
 # Illegal-word records: one case per encoding class and operand extreme.
 # Each word was checked against llvm-mc with the feature enabled (22.1.8 for
-# MTE, GCS, and CPA; 23.1.1 for PAuth).
+# MTE, GCS, and CPA; 23.1.1 for PAuth and the memory extensions).
 UNDEFINED = {
     "mte": (
         ("ADDG", 0x9181_0420), ("ADDG SP", 0x91BF_3FFF),
@@ -259,6 +299,87 @@ UNDEFINED = {
         ("LDRAA pre", 0xF820_1C20), ("LDRAA pre SP minimum", 0xF860_0FE0),
         ("LDRAB", 0xF8A0_0420), ("LDRAB XZR SP maximum", 0xF8BF_F7FF),
         ("LDRAB pre", 0xF8FF_FC20),
+    ),
+    "lse128": (
+        ("LDCLRP", 0x1921_1040), ("LDCLRPAL SP", 0x19FE_13FD),
+        ("LDSETP", 0x1921_3040), ("LDSETPA SP", 0x19BE_33FD),
+        ("SWPP", 0x1921_8040), ("SWPPL SP", 0x197E_83FD),
+    ),
+    "the": (
+        ("RCWCAS", 0x1920_0841), ("RCWCASAL XZR SP", 0x19FF_0BFF),
+        ("RCWSCAS", 0x5920_0841), ("RCWCASP", 0x1920_0C82),
+        ("RCWSCASPAL SP", 0x59FC_0FFE), ("RCWCLR", 0x3820_9041),
+        ("RCWSCLRA XZR SP", 0x78BF_93FF), ("RCWSET", 0x3820_B041),
+        ("RCWSSETL", 0x7860_B041), ("RCWSWP", 0x3820_A041),
+        ("RCWSSWPAL XZR SP", 0x78FF_A3FF), ("RCWCLRP", 0x1921_9040),
+        ("RCWSCLRPAL SP", 0x59FE_93FD), ("RCWSETP", 0x1921_B040),
+        ("RCWSSETPA SP", 0x59BE_B3FD), ("RCWSWPP", 0x1921_A040),
+        ("RCWSSWPPL SP", 0x597E_A3FD),
+    ),
+    "lrcpc3": (
+        ("LDIAPP w", 0x9941_1840), ("LDIAPP w post", 0x9941_0840),
+        ("LDIAPP x", 0xD941_1840), ("LDIAPP x post SP", 0xD95E_0BFD),
+        ("STILP w", 0x9901_1840), ("STILP w pre", 0x9901_0840),
+        ("STILP x", 0xD901_1840), ("STILP x pre SP", 0xD91F_0BFF),
+        ("LDAPR w post", 0x99C0_0820), ("LDAPR x post SP", 0xD9C0_0BFF),
+        ("STLR w pre", 0x9980_0820), ("STLR x pre SP", 0xD980_0BFF),
+        ("LDAP1 D0", 0x0D41_8420), ("LDAP1 D1 SP", 0x4D41_87FF),
+        ("STL1 D0", 0x0D01_8420), ("STL1 D1 SP", 0x4D01_87FF),
+        ("LDAPUR B", 0x1D40_0820), ("LDAPUR H", 0x5D50_0820),
+        ("LDAPUR S", 0x9D4F_F820), ("LDAPUR D", 0xDD40_0820),
+        ("LDAPUR Q SP", 0x1DDF_FBFF), ("STLUR B", 0x1D00_0820),
+        ("STLUR H", 0x5D10_0820), ("STLUR S", 0x9D0F_F820),
+        ("STLUR D", 0xDD00_0820), ("STLUR Q SP", 0x1D9F_FBFF),
+    ),
+    "lscp": (
+        ("LDAP", 0xD941_5840), ("LDAP SP", 0xD95E_5BFD),
+        ("LDAPP", 0xD941_7840), ("LDAPP SP", 0xD95E_7BFD),
+        ("STLP", 0xD901_5840), ("STLP XZR SP", 0xD91F_5BFF),
+    ),
+    "ls64": (
+        ("LD64B", 0xF83F_D020), ("LD64B SP", 0xF83F_D3F6),
+        ("ST64B", 0xF83F_9020), ("ST64B SP", 0xF83F_93F6),
+        ("ST64BV", 0xF822_B020), ("ST64BV XZR SP", 0xF83F_B3F6),
+        ("ST64BV0", 0xF822_A020), ("ST64BV0 XZR SP", 0xF83F_A3F6),
+    ),
+    "lsfe": (
+        ("LDFADD H", 0x7C20_0041), ("LDFADDA S", 0xBCA0_0041),
+        ("LDFADDAL D SP", 0xFCFF_03FE), ("LDFADDL H", 0x7C60_0041),
+        ("LDFMAX S", 0xBC20_4041), ("LDFMAXNM D", 0xFC20_6041),
+        ("LDFMIN H", 0x7C20_5041), ("LDFMINNM S", 0xBC20_7041),
+        ("LDBFADD", 0x3C20_0041), ("LDBFMAX", 0x3C20_4041),
+        ("LDBFMAXNMAL SP", 0x3CFF_63FE), ("LDBFMIN", 0x3C20_5041),
+        ("LDBFMINNM", 0x3C20_7041), ("STFADD H", 0x7C20_805F),
+        ("STFADDL D SP", 0xFC7F_83FF), ("STFMAX S", 0xBC20_C05F),
+        ("STFMAXNM D", 0xFC20_E05F), ("STFMIN H", 0x7C20_D05F),
+        ("STFMINNM S", 0xBC20_F05F), ("STBFADD", 0x3C20_805F),
+        ("STBFMAX", 0x3C20_C05F), ("STBFMAXNM", 0x3C20_E05F),
+        ("STBFMIN", 0x3C20_D05F), ("STBFMINNML SP", 0x3C7F_F3FF),
+    ),
+    "lsui": (
+        ("LDTADD w", 0x1920_0441), ("LDTADDAL x SP", 0x59FD_07FE),
+        ("LDTCLR w", 0x1920_1441), ("LDTCLRA x", 0x59A0_1441),
+        ("LDTSET w", 0x1920_3441), ("LDTSETL x", 0x5960_3441),
+        ("STTADD w", 0x1920_045F), ("STTCLRL x SP", 0x597E_17FF),
+        ("STTSET w", 0x1920_345F), ("SWPT w", 0x1920_8441),
+        ("SWPTAL x SP", 0x59FD_87FE), ("CAST", 0xC980_7C41),
+        ("CASALT SP", 0xC9DD_FFFE), ("CASPT", 0x4980_7C82),
+        ("CASPALT SP", 0x49DC_FFFE), ("LDTXR w", 0x895F_7C20),
+        ("LDTXR x SP", 0xC95F_7FFE), ("LDATXR x", 0xC95F_FC20),
+        ("STTXR w", 0x8902_7C20), ("STTXR x SP", 0xC902_7FFE),
+        ("STLTXR x", 0xC902_FC20), ("LDTP", 0xE940_0440),
+        ("LDTP post SP", 0xE8E0_7BFD), ("LDTP pre", 0xE9DF_8440),
+        ("STTP", 0xE900_0440), ("STTP pre SP", 0xE9BF_FFFF),
+        ("LDTNP", 0xE840_0440), ("STTNP SP", 0xE81F_FBFD),
+        ("LDTP Q", 0xED40_0440), ("LDTP Q post SP", 0xECE0_7FFE),
+        ("STTP Q pre", 0xED9F_8440), ("LDTNP Q", 0xEC40_0440),
+        ("STTNP Q SP", 0xEC3F_FFFE),
+    ),
+    "lor": (
+        ("LDLARB", 0x08DF_7C20), ("LDLARH SP", 0x48DF_7FFE),
+        ("LDLAR w", 0x88DF_7C20), ("LDLAR x SP", 0xC8DF_7FFF),
+        ("STLLRB", 0x089F_7C20), ("STLLRH SP", 0x489F_7FFF),
+        ("STLLR w", 0x889F_7C20), ("STLLR x SP", 0xC89F_7FFE),
     ),
 }
 HINTS = {

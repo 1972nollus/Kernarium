@@ -652,20 +652,6 @@ void JitCompilerFamilies::spill_gprs_for_terminal_call() {
   exit_vector_mask_set_ = true;
 }
 
-void JitCompilerFamilies::flush_and_invalidate_gprs() {
-  flush_gprs(dirty_gpr_mask());
-  /*
-   * Keep every slot's architectural identity stable for cold exits recorded
-   * before this point. The constrained native sequence may overwrite the host
-   * value, so subsequent hot-path users must reload it from the state just
-   * published above.
-   */
-  for (auto &slot : gpr_slots_) {
-    slot.loaded = false;
-    slot.dirty = false;
-  }
-}
-
 void JitCompilerFamilies::store_pc(std::uint64_t pc) {
   auto &emitter = *static_cast<Arm64Emitter *>(family_emitter_);
   emitter.load_literal_constant(8, pc);
