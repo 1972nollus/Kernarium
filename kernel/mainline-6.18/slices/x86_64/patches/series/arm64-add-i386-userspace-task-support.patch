@@ -2695,10 +2695,10 @@ index bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e..300039328b3b4a426d8baa6f2eaebe45
  
  		ret = (*table[syscall])(UPT_SYSCALL_ARG1(&regs->regs),
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 03bcc9f4ec082826b766cd03f1806e106edf939a..951658ed46c2717116d00c28cf0d4ec90928c294 100644
+index ebb237bcd4ba9137fb1e8df42c6a6dfc7c51731c..02b0739fdd9c8792cd19cc8db47f4d6be14beae6 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -364,6 +364,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -369,6 +369,10 @@ void userspace(struct uml_pt_regs *registers)
  		 * scheduler changes mm; map/protect/unmap rebuild affected slots.
  		 */
  		registers->is_user = 1;

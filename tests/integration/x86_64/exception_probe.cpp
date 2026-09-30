@@ -348,6 +348,15 @@ constexpr word expected_cs = 0x23;
 #error "the exception probe is an x86-64 or i386 program"
 #endif
 
+/* Both ABIs assemble these alike. UD2 raises #UD. */
+__asm__(".text\n"
+	".global probe_ud2\n"
+	"probe_ud2:\n"
+	"	ud2\n"
+	".global probe_ud2_end\n"
+	"probe_ud2_end:\n"
+	"	ret\n");
+
 constexpr word sa_siginfo = 4;
 constexpr word sa_restorer = 0x04000000;
 constexpr word sa_restart = 0x10000000;
@@ -362,6 +371,7 @@ constexpr long si_kernel = 0x80;
 constexpr word flag_reserved = 1UL << 1;
 constexpr word flag_rf = 1UL << 16;
 constexpr long eio = 5;
+constexpr long ill_illopn = 2;
 
 struct KernelSigaction {
 	word handler;
@@ -829,6 +839,18 @@ bool bound_checks()
 }
 #endif
 
+extern "C" void probe_ud2();
+extern "C" char probe_ud2_end[];
+
+/* #UD, vector 6, is a fault: SIGILL with ILL_ILLOPN at the instruction. */
+bool ud2_faults()
+{
+	const word insn = reinterpret_cast<word>(&probe_ud2);
+	return install_fault_handlers() &&
+	       delivers("UD2", probe_ud2, address_of(probe_ud2_end),
+			{sigill, ill_illopn, insn, insn, 6, true});
+}
+
 constexpr long ptrace_traceme = 0;
 constexpr long ptrace_peekuser = 3;
 constexpr long ptrace_pokeuser = 6;
@@ -1205,6 +1227,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "tracer-syscall"));
 	report("i386 tracer changes and skips system calls by orig_eax",
 	       in_child(i386_probe, "tracer-syscall"));
+	report("x86-64 UD2 delivers SIGILL ILL_ILLOPN for #UD",
+	       in_child(self, "ud2"));
+	report("i386 UD2 delivers SIGILL ILL_ILLOPN for #UD",
+	       in_child(i386_probe, "ud2"));
 	return failures;
 }
 #endif
@@ -1235,6 +1261,8 @@ extern "C" int probe_main(word *stack)
 			return tracer_sees_registers() ? 0 : 1;
 		if (equal(mode, "tracer-syscall"))
 			return tracer_changes_syscalls() ? 0 : 1;
+		if (equal(mode, "ud2"))
+			return ud2_faults() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;
