@@ -12,9 +12,9 @@ return, so ptrace and signal frames observe the task's own value. As in
 x86's is_setting_trap_flag(), a stepped POPF or IRET writes TF itself,
 so the kernel leaves the value that instruction produced.
 ---
- arch/arm64/um/ptrace.c           | 39 +++++++++++++++++++++++++
- arch/um/os-Darwin/skas/process.c | 49 ++++++++++++++++++++++++++++++--
- 2 files changed, 86 insertions(+), 2 deletions(-)
+ arch/arm64/um/ptrace.c           | 39 +++++++++++++++++++++++
+ arch/um/os-Darwin/skas/process.c | 53 +++++++++++++++++++++++++++++---
+ 2 files changed, 88 insertions(+), 4 deletions(-)
 
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
 index e561801a0afa78700dfd700cbe38e738f007d0bb..d08910007e3c803464902da8fa1d19a367587085 100644
@@ -67,7 +67,7 @@ index e561801a0afa78700dfd700cbe38e738f007d0bb..d08910007e3c803464902da8fa1d19a3
  {
  	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 70c44221751c5fa4ffeba62ec4edfa04cfdf861f..275d8cd59996b5883e9c172ab7ae8a6342110add 100644
+index 7ba4e2ccb385621e06e851934fae495e7371716d..6ffcaf433ee6434d876f7ab9d3eb2ad371f5fd7d 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -72,6 +72,34 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
@@ -113,7 +113,7 @@ index 70c44221751c5fa4ffeba62ec4edfa04cfdf861f..275d8cd59996b5883e9c172ab7ae8a63
  
  static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
-@@ -578,16 +607,32 @@ void userspace(struct uml_pt_regs *registers)
+@@ -578,18 +607,34 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_BREAKPOINT:
  		{
  			siginfo_t signal_info = { 0 };
@@ -132,7 +132,9 @@ index 70c44221751c5fa4ffeba62ec4edfa04cfdf861f..275d8cd59996b5883e9c172ab7ae8a63
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
  #ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
--			if (registers->faultinfo.trap_no == 4) {
+-			if (registers->faultinfo.trap_no == 4 ||
+-			    registers->faultinfo.trap_no == 5 ||
+-			    registers->faultinfo.trap_no == 13) {
 +			if (registers->faultinfo.trap_no == 1) {
 +				/* #DB after an instruction.  As on native Linux, DR6.BS
 +				 * marks a TF single step, reported as TRAP_TRACE, and
@@ -144,7 +146,9 @@ index 70c44221751c5fa4ffeba62ec4edfa04cfdf861f..275d8cd59996b5883e9c172ab7ae8a63
 +					debug_status & DARWIN_GUEST_DR6_BS ?
 +					TRAP_TRACE : TRAP_BRKPT;
 +				signal_info.si_addr = (void *)UPT_IP(registers);
-+			} else if (registers->faultinfo.trap_no == 4) {
- 				/* INTO is the x86 #OF trap.  Native Linux delivers it as
- 				 * SIGSEGV with a zero si_code and no fault address. */
- 				signal_info.si_signo = SIGSEGV;
++			} else if (registers->faultinfo.trap_no == 4 ||
++				   registers->faultinfo.trap_no == 5 ||
++				   registers->faultinfo.trap_no == 13) {
+ 				/* #OF from INTO or INT 4, #BR from BOUND, and a #GP such
+ 				 * as RDTSC under PR_TSC_SIGSEGV reach native userspace
+ 				 * as SIGSEGV with Linux SI_KERNEL, a name Darwin's

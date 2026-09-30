@@ -42,12 +42,12 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  arch/um/kernel/process.c              |   2 +-
  arch/um/kernel/skas/syscall.c         |  31 +-
  arch/um/kernel/trap.c                 |   3 +
- arch/um/os-Darwin/skas/process.c      |  45 +-
+ arch/um/os-Darwin/skas/process.c      |  39 +-
  fs/eventpoll.c                        |   2 +-
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
  include/linux/fs.h                    |   2 +
- 27 files changed, 1920 insertions(+), 275 deletions(-)
+ 27 files changed, 1914 insertions(+), 275 deletions(-)
  create mode 100644 arch/arm64/um/asm/unistd.h
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
@@ -2608,7 +2608,7 @@ index 3267358aad21eb46cb76cc8375280bac948f0bc9..bde1affde2a40d95c648c8221d1d5818
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 015a753d6cd3c5539e15d1722bf515aa732de017..b2af3c73db9ff2ad7c1e6a6de2e4c96a2c56b4fd 100644
+index 015a753d6cd3c5539e15d1722bf515aa732de017..565f6b45f19329b4df6b2037c52af0bbef4f53a8 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -53,6 +53,7 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
@@ -2649,24 +2649,18 @@ index 015a753d6cd3c5539e15d1722bf515aa732de017..b2af3c73db9ff2ad7c1e6a6de2e4c96a
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -574,14 +582,47 @@ void userspace(struct uml_pt_regs *registers)
+@@ -574,14 +582,41 @@ void userspace(struct uml_pt_regs *registers)
  
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
-+			if (registers->faultinfo.trap_no == 4) {
-+				/* INTO is the x86 #OF trap.  Native Linux delivers it as
-+				 * SIGSEGV with a zero si_code and no fault address. */
-+				signal_info.si_signo = SIGSEGV;
-+				signal_info.si_errno = 0;
-+				signal_info.si_code = 0;
-+				signal_info.si_addr = NULL;
-+			} else if (registers->faultinfo.trap_no == 5 ||
-+				   registers->faultinfo.trap_no == 13) {
-+				/* #BR from BOUND, and a #GP such as RDTSC under
-+				 * PR_TSC_SIGSEGV, reach native userspace as SIGSEGV
-+				 * with Linux SI_KERNEL, a name Darwin's signal.h does
-+				 * not define, and no fault address. */
++			if (registers->faultinfo.trap_no == 4 ||
++			    registers->faultinfo.trap_no == 5 ||
++			    registers->faultinfo.trap_no == 13) {
++				/* #OF from INTO or INT 4, #BR from BOUND, and a #GP such
++				 * as RDTSC under PR_TSC_SIGSEGV reach native userspace
++				 * as SIGSEGV with Linux SI_KERNEL, a name Darwin's
++				 * signal.h does not define, and no fault address. */
 +				registers->faultinfo.cr2 = 0;
 +				signal_info.si_signo = SIGSEGV;
 +				signal_info.si_errno = 0;

@@ -75,12 +75,18 @@ __asm__(".text\n"
 	"	repe cmpsb\n"
 	"	movq %rcx, %rax\n"
 	"	ret\n"
-	/* ICEBP traps after itself. */
+	/* ICEBP, INT 4: each traps after itself. */
 	".global probe_icebp\n"
 	"probe_icebp:\n"
 	"	.byte 0xf1\n"
 	".global probe_icebp_end\n"
 	"probe_icebp_end:\n"
+	"	ret\n"
+	".global probe_int4\n"
+	"probe_int4:\n"
+	"	int $4\n"
+	".global probe_int4_end\n"
+	"probe_int4_end:\n"
 	"	ret\n");
 
 /* uc_mcontext: uc_flags, uc_link and a 24-byte stack_t, then r8-r15, rdi,
@@ -157,6 +163,23 @@ __asm__(".text\n"
 	".global probe_icebp_end\n"
 	"probe_icebp_end:\n"
 	"	ret\n"
+	".global probe_int4\n"
+	"probe_int4:\n"
+	"	int $4\n"
+	".global probe_int4_end\n"
+	"probe_int4_end:\n"
+	"	ret\n"
+	/* INTO after adding (value) to 0x7fffffff: overflows for 1, not 0. */
+	".global probe_into\n"
+	"probe_into:\n"
+	"	movl 4(%esp), %eax\n"
+	"	addl $0x7fffffff, %eax\n"
+	".global probe_into_insn\n"
+	"probe_into_insn:\n"
+	"	into\n"
+	".global probe_into_end\n"
+	"probe_into_end:\n"
+	"	ret\n"
 	/* BOUND EAX, [EDX] and BOUND AX, [EDX]: (index, bounds). */
 	".global probe_bound32\n"
 	"probe_bound32:\n"
@@ -198,9 +221,7 @@ constexpr long sigtrap = 5;
 constexpr long sigsegv = 11;
 constexpr long sigalrm = 14;
 constexpr long trap_brkpt = 1;
-#if defined(__i386__)
 constexpr long si_kernel = 0x80;
-#endif
 constexpr word flag_rf = 1UL << 16;
 
 struct KernelSigaction {
@@ -484,6 +505,8 @@ bool delivers(const char *what, void (*work)(), word end,
 
 extern "C" void probe_icebp();
 extern "C" char probe_icebp_end[];
+extern "C" void probe_int4();
+extern "C" char probe_int4_end[];
 
 word address_of(const char *label)
 {
@@ -498,6 +521,16 @@ bool icebp_traps()
 	return install_fault_handlers() &&
 	       delivers("ICEBP", probe_icebp, end,
 			{sigtrap, trap_brkpt, end, end, 1, false});
+}
+
+/* INT 4 raises #OF as a trap, which Linux delivers as SIGSEGV with
+ * SI_KERNEL and no address. */
+bool int4_traps()
+{
+	const word end = address_of(probe_int4_end);
+	return install_fault_handlers() &&
+	       delivers("INT 4", probe_int4, end,
+			{sigsegv, si_kernel, 0, end, 4, false});
 }
 
 #if defined(__i386__)
@@ -519,12 +552,28 @@ bool delivers_nothing(const char *what, void (*work)(), word end)
 	return false;
 }
 
+extern "C" void probe_into(word value);
+extern "C" char probe_into_end[];
 extern "C" void probe_bound32(word index, const void *bounds);
 extern "C" char probe_bound32_insn[];
 extern "C" char probe_bound32_end[];
 extern "C" void probe_bound16(word index, const void *bounds);
 extern "C" char probe_bound16_insn[];
 extern "C" char probe_bound16_end[];
+
+void into_overflowed() { probe_into(1); }
+void into_clear() { probe_into(0); }
+
+/* INTO raises #OF only when OF is set, as a trap. */
+bool into_traps()
+{
+	const word end = address_of(probe_into_end);
+	bool ok = install_fault_handlers();
+	ok = ok && delivers_nothing("INTO without overflow", into_clear, end);
+	ok = ok && delivers("INTO with overflow", into_overflowed, end,
+			    {sigsegv, si_kernel, 0, end, 4, false});
+	return ok;
+}
 
 const int bounds32[2] = {-2, 5};
 const short bounds16[2] = {-2, 5};
@@ -624,6 +673,12 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(i386_probe, "icebp"));
 	report("i386 BOUND passes in range and raises #BR outside it",
 	       in_child(i386_probe, "bound"));
+	report("x86-64 INT 4 delivers SIGSEGV SI_KERNEL",
+	       in_child(self, "int4"));
+	report("i386 INT 4 delivers SIGSEGV SI_KERNEL",
+	       in_child(i386_probe, "int4"));
+	report("i386 INTO delivers SIGSEGV SI_KERNEL on overflow",
+	       in_child(i386_probe, "into"));
 	return failures;
 }
 #endif
@@ -644,7 +699,11 @@ extern "C" int probe_main(word *stack)
 			return timer_ticks_during("REPE CMPSB", repeat_cmps) ? 0 : 1;
 		if (equal(mode, "icebp"))
 			return icebp_traps() ? 0 : 1;
+		if (equal(mode, "int4"))
+			return int4_traps() ? 0 : 1;
 #if defined(__i386__)
+		if (equal(mode, "into"))
+			return into_traps() ? 0 : 1;
 		if (equal(mode, "bound"))
 			return bound_checks() ? 0 : 1;
 #else

@@ -4,8 +4,9 @@
 Cross-builds the freestanding exception_probe.cpp for x86-64 and i386, boots an
 x86-64 image on an emulator built with the macos-x86_64 preset, and runs the
 probes there. As on Linux x86, a 1 ms interval timer keeps firing while a task
-runs long repeated string instructions, and ICEBP and BOUND deliver Linux's
-signals.
+runs long repeated string instructions, and ICEBP, BOUND, INT 4 and INTO
+deliver Linux's signals. The kernel must relay every such signal without
+complaint.
 """
 
 from __future__ import annotations
@@ -54,6 +55,8 @@ PROBES = {
 }
 BUILD_TIMEOUT_SECONDS = 120
 PROBE_TIMEOUT_SECONDS = 300
+# relay_signal() prints this for a host signal it cannot classify.
+RELAY_COMPLAINT = "Attempted to relay unknown signal"
 
 
 def build_probes(compiler: str) -> dict[str, bytes]:
@@ -114,9 +117,17 @@ def main() -> int:
             PROBE_TIMEOUT_SECONDS,
         )
         print(result.output.strip())
-    if result.return_code != 0:
+        complaints = [
+            line.strip()
+            for line in guest.output().splitlines()
+            if RELAY_COMPLAINT in line
+        ]
+    for line in complaints:
+        print(f"FAIL kernel: {line}")
+    if result.return_code != 0 or complaints:
         raise RuntimeError(
             f"the exception probe reported {result.return_code} failure(s)"
+            f" and the kernel {len(complaints)} relay complaint(s)"
         )
     return 0
 
