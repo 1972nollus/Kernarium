@@ -12,7 +12,8 @@ constexpr std::uint64_t execution_reader_mask = ~execution_gate_closed;
 
 } // namespace
 
-bool execution_reader_begin(GenerationState &state) noexcept
+bool execution_reader_begin(GenerationState &state, std::uint64_t generation,
+	std::uint64_t guest_pc) noexcept
 {
 	auto value = state.execution_gate.load(std::memory_order_acquire);
 	for (;;) {
@@ -28,8 +29,11 @@ bool execution_reader_begin(GenerationState &state) noexcept
 			return false;
 		if (state.execution_gate.compare_exchange_weak(
 				value, value + 1, std::memory_order_acquire,
-				std::memory_order_relaxed))
+				std::memory_order_relaxed)) {
+			(void)generation;
+			(void)guest_pc;
 			return true;
+		}
 	}
 }
 
@@ -70,9 +74,11 @@ int execution_context_code_changes(void *opaque, std::uint64_t sequence,
 		current_sequence);
 }
 
-ExecutionQuiesce::ExecutionQuiesce(std::shared_ptr<GenerationState> state)
+ExecutionQuiesce::ExecutionQuiesce(std::shared_ptr<GenerationState> state,
+	std::uint64_t generation)
 	: state_{std::move(state)}
 {
+	(void)generation;
 	auto value = state_->execution_gate.load(std::memory_order_acquire);
 	for (;;) {
 		if ((value & execution_gate_closed) != 0) {

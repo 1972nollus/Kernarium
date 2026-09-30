@@ -61,7 +61,7 @@ namespace {
 
 class TranslatedBoundaryExecutor final {
 public:
-	[[nodiscard]] bool begin_execution(unsigned long)
+	[[nodiscard]] bool begin_execution(unsigned long, std::uint64_t)
 	{
 		++begin_calls;
 		return true;
@@ -117,7 +117,7 @@ public:
 
 class ThrowingTranslatedExecutor final {
 public:
-	[[nodiscard]] bool begin_execution(unsigned long)
+	[[nodiscard]] bool begin_execution(unsigned long, std::uint64_t)
 	{
 		++begin_calls;
 		if (entered)

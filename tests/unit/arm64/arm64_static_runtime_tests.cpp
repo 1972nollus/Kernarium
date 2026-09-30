@@ -970,7 +970,7 @@ static void uml_static_tlb_shootdown_quiesces_execution()
 			darwin_uml_static_vm_execution_context_create(generation);
 		require(execution_context != nullptr);
 		require(darwin_uml_static_vm_execution_context_begin(
-			execution_context) == 0);
+			execution_context, base) == 0);
 		context.store(execution_context, std::memory_order_release);
 		execution_entered.arrive_and_wait();
 		release_execution.wait(false, std::memory_order_acquire);
@@ -1013,7 +1013,7 @@ static void uml_static_execution_context_code_publication()
 	void *context =
 		darwin_uml_static_vm_execution_context_create(generation);
 	require(context != nullptr);
-	require(darwin_uml_static_vm_execution_context_begin(context) == 0);
+	require(darwin_uml_static_vm_execution_context_begin(context, base) == 0);
 	const auto before =
 		darwin_uml_static_vm_execution_context_sequences(context);
 	require(uml::memory::execution_context_publish_code_change(

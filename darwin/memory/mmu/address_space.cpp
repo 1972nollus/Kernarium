@@ -409,7 +409,7 @@ public:
 			return 0;
 		}
 		auto state = state_for(generation);
-		ExecutionQuiesce quiesce{state};
+		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
 		map_locked(*state, address, length,
 			Mapping{std::move(backing), offset, fd, protection,
@@ -428,7 +428,7 @@ public:
 				!active.state->retired.load(std::memory_order_acquire) ?
 				active.generation : 0);
 		auto state = state_for(generation);
-		ExecutionQuiesce quiesce{state};
+		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
 		bool changed = false;
 		bool changes_code = false;
@@ -485,7 +485,7 @@ public:
 			return 0;
 		}
 		auto state = state_for(generation);
-		ExecutionQuiesce quiesce{state};
+		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
 		/* Linux invalidates after it changes a PTE and before it frees the
 		 * page.  A walker which sampled the old PTE may not have published it
@@ -500,7 +500,7 @@ public:
 	int flush_generation(std::uint64_t generation)
 	{
 		auto state = state_for(generation);
-		ExecutionQuiesce quiesce{state};
+		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
 		if (state->mappings.empty()) {
 			/* A batch which started before this flush must not publish an old
@@ -548,7 +548,7 @@ public:
 		if (generation == 0)
 			return 0;
 		auto state = state_for(generation);
-		ExecutionQuiesce quiesce{state};
+		ExecutionQuiesce quiesce{state, generation};
 		{
 			std::lock_guard lock{state->mappings_mutex};
 			const std::array changes{
@@ -640,7 +640,7 @@ public:
 				return 0;
 		}
 		auto state = state_for(generation);
-		ExecutionQuiesce quiesce{state};
+		ExecutionQuiesce quiesce{state, generation};
 		std::lock_guard lock{state->mappings_mutex};
 		if (!names_other_backing(*state))
 			return 0;
@@ -959,7 +959,7 @@ public:
 				apply_batch_locked(*state, batch.operations);
 			} else {
 				lock.unlock();
-				ExecutionQuiesce quiesce{state};
+				ExecutionQuiesce quiesce{state, batch.generation};
 				lock.lock();
 				if (state->retired.load(std::memory_order_acquire) ||
 				    state->invalidation_epoch.load(
@@ -1001,7 +1001,8 @@ public:
 	ExecutionContext *create_execution_context(std::uint64_t generation)
 	{
 		auto state = state_for(generation);
-		return new (std::nothrow) ExecutionContext{std::move(state), 0, false};
+		return new (std::nothrow) ExecutionContext{
+			std::move(state), generation, 0, false};
 	}
 
 	static void destroy_execution_context(ExecutionContext *context)
@@ -1013,7 +1014,8 @@ public:
 		delete context;
 	}
 
-	static int execution_context_begin(ExecutionContext *context)
+	static int execution_context_begin(ExecutionContext *context,
+					   std::uint64_t guest_pc)
 	{
 		if (context == nullptr || context->entered ||
 		    context->state->retired.load(std::memory_order_acquire))
@@ -1024,7 +1026,8 @@ public:
 		 */
 		context->execution_interrupts = context->state->execution_interrupts.load(
 			std::memory_order_acquire);
-		if (!execution_reader_begin(*context->state))
+		if (!execution_reader_begin(*context->state, context->generation,
+					    guest_pc))
 			return -1;
 		context->entered = true;
 		return 0;
@@ -2047,12 +2050,13 @@ extern "C" void darwin_uml_static_vm_execution_context_destroy(void *context)
 	}
 }
 
-extern "C" int darwin_uml_static_vm_execution_context_begin(void *context)
+extern "C" int darwin_uml_static_vm_execution_context_begin(
+	void *context, unsigned long guest_pc)
 {
 	try {
 		errno = 0;
 		const int result = uml::memory::AddressSpace::execution_context_begin(
-			static_cast<uml::memory::ExecutionContext *>(context));
+			static_cast<uml::memory::ExecutionContext *>(context), guest_pc);
 		if (result < 0 && errno == 0)
 			errno = EFAULT;
 		return result;

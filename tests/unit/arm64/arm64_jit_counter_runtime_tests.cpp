@@ -27,7 +27,7 @@ void direct_counter_block_executes()
 
 	const auto before =
 		read_host_virtual_counter();
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	std::size_t executed = 0;
 	const auto event =
 		executor.run_block(cpu, memory, generation, executed);

@@ -70,7 +70,7 @@ struct Run final {
 [[nodiscard]] Run run_once(JitExecutor &executor, StaticGuestMemory &memory,
 	unsigned long generation, arm64::CpuState &cpu)
 {
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	std::size_t executed = 0;
 	const auto event = executor.run_block(cpu, memory, generation, executed);
 	executor.end_execution();
@@ -543,7 +543,7 @@ void link_many_short_lived_address_spaces(
 		 * pass from the source must run as one linked chain. */
 		const auto cold_then_linked = [&](std::uint64_t source) {
 			cpu.pc = source;
-			require(executor.begin_execution(generation));
+			require(executor.begin_execution(generation, cpu.pc));
 			std::size_t executed = 0;
 			require(executor.run_block(cpu, memory, generation,
 					executed) ==
@@ -1153,7 +1153,7 @@ void a_second_executor_reuses_an_indirect_translation_safely()
 		require(first.budget_admitted());
 		require(second.budget_admitted());
 		require(!excess.budget_admitted());
-		require(!excess.begin_execution(generation));
+		require(!excess.begin_execution(generation, base));
 		arm64::CpuState excess_cpu{};
 		StaticGuestMemory excess_memory;
 		std::size_t excess_executed = 1;
@@ -1165,7 +1165,7 @@ void a_second_executor_reuses_an_indirect_translation_safely()
 		cpu.registers[5] = target;
 		cpu.registers[8] = 10;
 		cpu.registers[9] = 20;
-		require(first.begin_execution(generation));
+		require(first.begin_execution(generation, cpu.pc));
 
 		auto run = run_active_block(first, cpu);
 		require(run.event == ::uml::cpu::EngineEvent::continued);
@@ -1207,7 +1207,7 @@ void a_second_executor_reuses_an_indirect_translation_safely()
 	cpu.registers[5] = target;
 	cpu.registers[8] = 10;
 	cpu.registers[9] = 20;
-	require(second.begin_execution(generation));
+	require(second.begin_execution(generation, cpu.pc));
 
 	/* A correctly relocated, executor-private PIC starts cold even though the
 	 * destroyed publisher had already trained the same guest target.

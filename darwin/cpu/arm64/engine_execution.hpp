@@ -19,7 +19,7 @@ template<bool PollCallback, typename Executor>
 	Executor &executor, ExecutionRequest &request,
 	::uml::memory::StaticGuestMemory &memory)
 {
-	if (!executor.begin_execution(request.generation))
+	if (!executor.begin_execution(request.generation, request.cpu.pc))
 		return {.reason = ExitReason::fatal};
 	struct ExecutionScope final {
 		Executor &executor;

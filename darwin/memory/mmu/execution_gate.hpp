@@ -9,7 +9,9 @@
 
 namespace uml::memory {
 
-[[nodiscard]] bool execution_reader_begin(GenerationState &state) noexcept;
+[[nodiscard]] bool execution_reader_begin(
+	GenerationState &state, std::uint64_t generation,
+	std::uint64_t guest_pc) noexcept;
 void execution_reader_end(GenerationState &state) noexcept;
 [[nodiscard]] bool execution_context_publish_code_change(
 	void *context, std::uint64_t address) noexcept;
@@ -21,7 +23,8 @@ void execution_reader_end(GenerationState &state) noexcept;
 
 class ExecutionQuiesce final {
 public:
-	explicit ExecutionQuiesce(std::shared_ptr<GenerationState> state);
+	ExecutionQuiesce(std::shared_ptr<GenerationState> state,
+		std::uint64_t generation);
 	ExecutionQuiesce(const ExecutionQuiesce &) = delete;
 	ExecutionQuiesce &operator=(const ExecutionQuiesce &) = delete;
 	~ExecutionQuiesce();

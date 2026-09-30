@@ -597,7 +597,7 @@ struct Run final {
 [[nodiscard]] Run run_once(uml::cpu::arm64::JitExecutor &executor,
                            uml::memory::StaticGuestMemory &memory,
                            unsigned long generation, arm64::CpuState &cpu) {
-  engine::require(executor.begin_execution(generation));
+  engine::require(executor.begin_execution(generation, cpu.pc));
   std::size_t executed = 0;
   const auto event = executor.run_block(cpu, memory, generation, executed);
   executor.end_execution();
@@ -700,7 +700,7 @@ void tracked_store_reservation_case(unsigned size_shift,
   second_cpu.registers[3] = first_value;
   second_cpu.registers[4] = second_value;
 
-  engine::require(first.begin_execution(generation));
+  engine::require(first.begin_execution(generation, first_cpu.pc));
   std::size_t executed = 0;
   engine::require(first.run_block(first_cpu, shared_memory, generation,
                                   executed) ==
@@ -708,7 +708,7 @@ void tracked_store_reservation_case(unsigned size_shift,
   engine::require(executed == 1);
   engine::require(first_cpu.exclusive_size == 1);
 
-  engine::require(second.begin_execution(generation));
+  engine::require(second.begin_execution(generation, second_cpu.pc));
   engine::require(second.run_block(second_cpu, shared_memory, generation,
                                    executed) ==
                   ::uml::cpu::EngineEvent::system_call);

@@ -1448,12 +1448,13 @@ GadgetExecutor::~GadgetExecutor()
 	darwin_uml_static_vm_execution_context_destroy(execution_context_);
 }
 
-bool GadgetExecutor::begin_execution(unsigned long generation)
+bool GadgetExecutor::begin_execution(unsigned long generation,
+				     std::uint64_t guest_pc)
 {
 	preempted_ = false;
 	auto *context = execution_context(generation);
 	if (context == nullptr ||
-	    darwin_uml_static_vm_execution_context_begin(context) != 0)
+	    darwin_uml_static_vm_execution_context_begin(context, guest_pc) != 0)
 		return false;
 	if (sampling_ != nullptr)
 		diagnostics::guest_sampling_enter(*sampling_);

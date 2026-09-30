@@ -58,7 +58,7 @@ void first_word_illegal(unsigned long generation, std::uint64_t base,
   cpu.registers[1] = 0x8877'6655'4433'2211ULL;
   const auto initial = cpu;
 
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
   std::size_t executed = 99;
   require(executor.run_block(cpu, memory, generation, executed) ==
           ::uml::cpu::EngineEvent::illegal_instruction);
@@ -131,7 +131,7 @@ void supported_prefix_stops_before_illegal_word() {
   cpu.registers[1] = 0x0123'4567'89ab'cdefULL;
   cpu.registers[5] = 41;
 
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
   std::size_t executed = 99;
   require(executor.run_block(cpu, memory, generation, executed) ==
           ::uml::cpu::EngineEvent::continued);

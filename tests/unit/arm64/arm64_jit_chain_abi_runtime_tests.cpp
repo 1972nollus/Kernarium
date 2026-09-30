@@ -84,7 +84,7 @@ void host_callee_saved_registers_are_restored() {
   StaticGuestMemory memory;
   arm64::CpuState cpu{};
   cpu.pc = base;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
 
   AbiProbeContext context{&executor, &memory, &cpu, generation};
   std::array<std::uint64_t, 5> observed{};
@@ -115,7 +115,7 @@ void direct_chain_length(std::size_t links, unsigned long generation,
   StaticGuestMemory memory;
   arm64::CpuState cpu{};
   cpu.pc = terminal;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
 
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::system_call && run.executed == 1);
@@ -152,7 +152,7 @@ void exact_fairness_commit_boundary() {
   StaticGuestMemory memory;
   arm64::CpuState cpu{};
   cpu.pc = base;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
 
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued);
@@ -185,7 +185,7 @@ void non_dividing_fairness_quantum_restores_the_source() {
   StaticGuestMemory memory;
   arm64::CpuState cpu{};
   cpu.pc = base;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
 
   const auto limit =
       uml::cpu::arm64::jit::testing::link_chain_instruction_limit();
@@ -233,7 +233,7 @@ void direct_and_pic_links_carry_x8_x9() {
   StaticGuestMemory memory;
   arm64::CpuState cpu{};
   cpu.pc = direct_target;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
   require(run_block(executor, memory, generation, cpu).event ==
           ::uml::cpu::EngineEvent::system_call);
 
@@ -290,7 +290,7 @@ void carried_indirect_operands_survive_miss_and_success() {
   cpu.pc = base;
   cpu.registers[8] = br_target;
   cpu.registers[9] = 10;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
 
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued &&
@@ -369,7 +369,7 @@ void linked_helper_observes_canonical_x8_x9() {
   arm64::CpuState cpu{};
   cpu.pc = target;
   cpu.registers[8] = data;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued &&
           run.executed == 1);
@@ -418,7 +418,7 @@ void linked_helper_writes_x8_x9_before_a_linked_consumer() {
   /* Warm the consumer and the target tail so the helper result's next edge
    * is a successful direct link rather than an outer-dispatch fallback. */
   cpu.pc = consumer;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
   require(run_block(executor, memory, generation, cpu).event ==
           ::uml::cpu::EngineEvent::system_call);
 
@@ -480,7 +480,7 @@ void continuing_tlb_helper_reloads_x8_x9() {
   cpu.registers[6] = base + page;
   cpu.registers[8] = 10;
   cpu.registers[9] = 20;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
 
   const auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::system_call &&
@@ -534,7 +534,7 @@ void ls64_x8_group_preserves_guest_x8_x9() {
   arm64::CpuState cpu{};
   cpu.pc = load_target;
   cpu.registers[6] = load_data;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::system_call &&
           run.executed == 3);
@@ -594,7 +594,7 @@ void conditional_and_pic_exits_chain() {
   cpu.registers[0] = 1;
   cpu.registers[8] = 10;
   cpu.registers[9] = 20;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued &&
           run.executed == 4 && cpu.pc == base + 16);
@@ -661,7 +661,7 @@ void linked_fault_keeps_precise_count_and_pc() {
   arm64::CpuState cpu{};
   cpu.pc = target;
   cpu.registers[8] = 0x1234'0000;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::memory_fault && run.executed == 0);
 
@@ -701,7 +701,7 @@ void linked_illegal_and_breakpoint_publish_carried_state() {
   StaticGuestMemory memory;
   arm64::CpuState cpu{};
   cpu.pc = illegal_target;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
 
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::illegal_instruction &&
@@ -787,7 +787,7 @@ void publication_mode_and_unsafe_targets_remain_isolated() {
   cpu.registers[0] = base + page;
   cpu.registers[1] = 0x1122'3344'5566'7788ULL;
   cpu.pc = terminal;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
   require(run_block(executor, memory, generation, cpu).event ==
           ::uml::cpu::EngineEvent::system_call);
   cpu.pc = store_target;
@@ -817,7 +817,7 @@ void publication_mode_and_unsafe_targets_remain_isolated() {
   cpu.pc = reservation_source;
   cpu.registers[8] = 50;
   cpu.registers[9] = 60;
-  require(executor.begin_execution(generation));
+  require(executor.begin_execution(generation, cpu.pc));
   run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued && run.executed == 3);
   require(cpu.pc == reservation_target);

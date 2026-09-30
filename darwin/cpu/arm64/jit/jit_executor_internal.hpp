@@ -46,7 +46,8 @@ public:
   );
   ~Implementation();
 
-  [[nodiscard]] bool begin_execution(unsigned long generation);
+  [[nodiscard]] bool begin_execution(unsigned long generation,
+                                     std::uint64_t guest_pc);
   void end_execution() noexcept;
   [[nodiscard]] Event run_block(CpuState &cpu, StaticGuestMemory &memory,
                                 unsigned long generation,

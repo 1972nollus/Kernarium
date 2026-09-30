@@ -254,7 +254,7 @@ void cross_vcpu_store_invalidates_jit_reservation()
 	 */
 	second_cpu.registers[2] = observed;
 
-	require(first.begin_execution(generation));
+	require(first.begin_execution(generation, first_cpu.pc));
 	std::size_t executed = 0;
 	require(first.run_block(first_cpu, shared_memory, generation, executed) ==
 		::uml::cpu::EngineEvent::continued);
@@ -263,7 +263,7 @@ void cross_vcpu_store_invalidates_jit_reservation()
 	require(first_cpu.registers[3] == observed);
 	require(first_cpu.exclusive_size == 8);
 
-	require(second.begin_execution(generation));
+	require(second.begin_execution(generation, second_cpu.pc));
 	require(second.run_block(
 			second_cpu, shared_memory, generation, executed) ==
 		::uml::cpu::EngineEvent::system_call);
@@ -318,14 +318,14 @@ void reservation_contention_keeps_native_store_block()
 	second_cpu.registers[4] = observed;
 	second_cpu.registers[6] = other_data;
 
-	require(first.begin_execution(generation));
+	require(first.begin_execution(generation, first_cpu.pc));
 	std::size_t executed = 0;
 	require(first.run_block(first_cpu, shared_memory, generation, executed) ==
 		::uml::cpu::EngineEvent::continued);
 	require(executed == 1);
 	require(first_cpu.exclusive_size == 8);
 
-	require(second.begin_execution(generation));
+	require(second.begin_execution(generation, second_cpu.pc));
 	require(second.run_block(
 			second_cpu, shared_memory, generation, executed) ==
 		::uml::cpu::EngineEvent::system_call);
@@ -412,7 +412,7 @@ void direct_links_are_bounded_to_one_translation_window()
 	uml::cpu::arm64::CpuState cpu{};
 	cpu.pc = base;
 
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	std::size_t executed = 0;
 	const auto chain_limit =
 		uml::cpu::arm64::jit::testing::link_chain_instruction_limit();
@@ -442,7 +442,7 @@ void published_links_can_chain_store_blocks()
 	cpu.registers[0] = base + page;
 	cpu.registers[1] = stored;
 
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	std::size_t executed = 0;
 	/* The first miss compiles the store side and stops at the still-cold
 	 * successor. A read-only outer invocation cannot publish a later store,
@@ -518,7 +518,7 @@ void reservation_helpers_are_isolated_from_published_links()
 	/* Warm the reservation block, then release its monitor while preserving
 	 * the compiled target and its deliberately inactive link cell. */
 	cpu.pc = base + 8;
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	std::size_t executed = 0;
 	require(executor.run_block(cpu, memory, generation, executed) ==
 		::uml::cpu::EngineEvent::continued);
@@ -528,7 +528,7 @@ void reservation_helpers_are_isolated_from_published_links()
 
 	/* A store-published predecessor must stop before the warmed target. */
 	cpu.pc = base;
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	require(executor.run_block(cpu, memory, generation, executed) ==
 		::uml::cpu::EngineEvent::continued);
 	require(executed == 2);
@@ -538,7 +538,7 @@ void reservation_helpers_are_isolated_from_published_links()
 	/* The compiler must also split a sequential block before the same helper,
 	 * so the earlier store publication is gone before a reservation begins. */
 	cpu.pc = base + 16;
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	require(executor.run_block(cpu, memory, generation, executed) ==
 		::uml::cpu::EngineEvent::continued);
 	require(executed == 1);
@@ -570,7 +570,7 @@ void linked_successor_keeps_one_frame_through_tlb_helper_and_exits()
 	/* Compile the predecessor before its successor so the first edge takes
 	 * the nullable fallback. */
 	cpu.pc = base;
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	require(executor.run_block(cpu, memory, generation, executed) ==
 		::uml::cpu::EngineEvent::continued);
 	require(executed == 1);
@@ -581,7 +581,7 @@ void linked_successor_keeps_one_frame_through_tlb_helper_and_exits()
 	 * page. */
 	cpu.registers[0] = base + page;
 	cpu.registers[3] = 1;
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	require(executor.run_block(cpu, memory, generation, executed) ==
 		::uml::cpu::EngineEvent::system_call);
 	require(executed == 4);
@@ -598,7 +598,7 @@ void linked_successor_keeps_one_frame_through_tlb_helper_and_exits()
 	cpu.registers[2] = 0;
 	cpu.registers[3] = 10;
 	cpu.registers[4] = 0;
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	require(executor.run_block(cpu, memory, generation, executed) ==
 		::uml::cpu::EngineEvent::system_call);
 	require(executed == 5);
@@ -615,7 +615,7 @@ void linked_successor_keeps_one_frame_through_tlb_helper_and_exits()
 	cpu.registers[0] = base + 3 * page;
 	cpu.registers[3] = 20;
 	cpu.registers[4] = 0x55;
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	require(executor.run_block(cpu, memory, generation, executed) ==
 		::uml::cpu::EngineEvent::memory_fault);
 	require(executed == 2);

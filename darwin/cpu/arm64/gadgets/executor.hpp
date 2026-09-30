@@ -53,7 +53,8 @@ public:
 	~GadgetExecutor();
 	GadgetExecutor(const GadgetExecutor &) = delete;
 	GadgetExecutor &operator=(const GadgetExecutor &) = delete;
-	[[nodiscard]] bool begin_execution(unsigned long generation);
+	[[nodiscard]] bool begin_execution(unsigned long generation,
+					   std::uint64_t guest_pc);
 	void end_execution() noexcept;
 
 	[[nodiscard]] ::uml::cpu::EngineEvent run_block(

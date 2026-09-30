@@ -33,7 +33,7 @@ using Configure = void (*)(arm64::CpuState &);
 	StaticGuestMemory &memory, unsigned long generation,
 	arm64::CpuState cpu)
 {
-	require(executor.begin_execution(generation));
+	require(executor.begin_execution(generation, cpu.pc));
 	std::size_t executed = 0;
 	const auto event =
 		executor.run_block(cpu, memory, generation, executed);
