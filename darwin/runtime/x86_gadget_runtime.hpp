@@ -15,8 +15,8 @@ namespace uml::runtime {
 
 struct X86GadgetRunResult final {
 	::uml::cpu::ExecutionResult execution;
-	/* The error code of a #GP the run ended in: for INT n, the vector's
-	 * IDT entry. */
+	/* The error code of a #GP or #SS the run ended in: for INT n, the
+	 * vector's IDT entry. */
 	std::int32_t error_code{};
 };
 

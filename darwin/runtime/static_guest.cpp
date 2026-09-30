@@ -58,6 +58,7 @@ constexpr std::uint32_t pstate_ss = 0x0020'0000U;
 #if DARWIN_UML_X86_64_GUEST
 constexpr std::int32_t x86_64_debug_trap = 1;
 constexpr std::uint32_t x86_64_bound_range = 5;
+constexpr std::uint32_t x86_64_stack_segment_fault = 12;
 constexpr std::uint32_t x86_64_general_protection = 13;
 /* DR6.BS: the #DB is a single step. Reported as its error code, so Linux
  * tells a step from ICEBP, which leaves DR6 clear, as x86 Linux reads DR6. */
@@ -339,12 +340,14 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		event = DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION;
 		break;
 	case uml::cpu::ExitReason::breakpoint:
-		/* #DB from ICEBP, #BP and #OF are traps; #BR and #GP are faults. */
+		/* #DB from ICEBP, #BP and #OF are traps; #BR, #SS and #GP are
+		 * faults. */
 		registers.fault.error_code = run.error_code;
 		registers.fault.address = cpu.rip;
 		registers.fault.trap_number = static_cast<std::int32_t>(
 			result.syndrome);
 		if (result.syndrome == x86_64_bound_range ||
+			result.syndrome == x86_64_stack_segment_fault ||
 			result.syndrome == x86_64_general_protection)
 			save_x86_fault_flags(registers);
 		event = DARWIN_UML_EVENT_BREAKPOINT;

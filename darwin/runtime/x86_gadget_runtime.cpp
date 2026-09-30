@@ -131,9 +131,17 @@ void trace_fatal(const char *stage, const x86_64::CpuState &cpu,
 	std::fflush(stderr);
 }
 
-/* The x86 exception vector the runtime reports as a breakpoint's syndrome
- * for #GP. */
+/* x86 exception vectors the runtime reports as a breakpoint's syndrome. */
+constexpr std::uint32_t stack_segment_fault = 12;
 constexpr std::uint32_t general_protection = 13;
+
+/* Bits 63 to 47 all equal: an address of the 4-level paging x86-64 Linux
+ * runs userspace under. */
+[[nodiscard]] constexpr bool canonical(std::uint64_t address) noexcept
+{
+	const auto high = static_cast<std::int64_t>(address) >> 47;
+	return high == 0 || high == -1;
+}
 
 /* The #GP error code of the instruction at RIP. INT n that user mode may
  * not use names its IDT entry, (n << 3) | 2, as the hardware pushes when
@@ -149,6 +157,54 @@ constexpr std::uint32_t general_protection = 13;
 		instruction.vector_opcode != 0xcd)
 		return 0;
 	return static_cast<std::int32_t>((instruction.source.immediate << 3U) | 2U);
+}
+
+/* A non-canonical address raises #SS when the stack segment forms it --
+ * an implicit stack access, or an operand based on RSP or RBP with no
+ * segment override -- and #GP otherwise, neither with an error code. */
+[[nodiscard]] std::uint32_t noncanonical_vector(
+	StaticGuestMemory &memory, const x86_64::CpuState &cpu) noexcept
+{
+	const auto decoded = x86_64::decode(memory, cpu.rip, cpu.execution_mode);
+	if (decoded.status != x86_64::DecodeStatus::decoded)
+		return general_protection;
+	const auto &instruction = decoded.instruction;
+	using x86_64::Operation;
+	switch (instruction.operation) {
+	case Operation::push:
+	case Operation::pop:
+	case Operation::push_all:
+	case Operation::pop_all:
+	case Operation::push_flags:
+	case Operation::pop_flags:
+	case Operation::enter:
+	case Operation::call:
+	case Operation::call_indirect:
+	case Operation::far_call:
+	case Operation::ret:
+	case Operation::far_ret:
+	case Operation::interrupt_ret:
+	case Operation::segment_stack:
+		if (!canonical(cpu.gpr(x86_64::Register::rsp)))
+			return stack_segment_fault;
+		break;
+	case Operation::leave:
+		if (!canonical(cpu.gpr(x86_64::Register::rbp)))
+			return stack_segment_fault;
+		break;
+	default:
+		break;
+	}
+	for (const auto *operand : {&instruction.destination,
+		&instruction.source, &instruction.auxiliary}) {
+		const auto &memory_operand = operand->memory;
+		if (operand->kind == x86_64::OperandKind::memory &&
+			!memory_operand.rip_relative &&
+			memory_operand.segment == x86_64::Segment::none &&
+			(memory_operand.base == 4 || memory_operand.base == 5))
+			return stack_segment_fault;
+	}
+	return general_protection;
 }
 
 } // namespace
@@ -183,6 +239,21 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	const auto budget_reason = [&]() noexcept {
 		return trap_armed ? ::uml::cpu::ExitReason::single_step :
 			::uml::cpu::ExitReason::instruction_budget;
+	};
+	/* A long-mode access to a non-canonical address never reaches the page
+	 * tables: x86 raises #GP or #SS for it, not #PF. A branch to one faults
+	 * at its target here rather than at the branch. */
+	const auto memory_fault = [&]() noexcept {
+		if (cpu.execution_mode == x86_64::ExecutionMode::long64 &&
+			!canonical(result.fault.address)) {
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			result.syndrome = result.fault.access ==
+				::uml::memory::MemoryAccess::execute ?
+				general_protection : noncanonical_vector(memory, cpu);
+			result.fault = {};
+			return;
+		}
+		result.reason = ::uml::cpu::ExitReason::memory_fault;
 	};
 	while (result.retired_instructions < instruction_budget) {
 		const auto sequences = execution.sequences();
@@ -220,10 +291,10 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			std::min(block_instructions, limit));
 		switch (selected.status) {
 		case x86_64::gadgets::BuildStatus::fetch_fault:
-			result.reason = ::uml::cpu::ExitReason::memory_fault;
 			result.fault = {
 				selected.fault_address,
 				::uml::memory::MemoryAccess::execute};
+			memory_fault();
 			return run;
 		case x86_64::gadgets::BuildStatus::illegal_instruction:
 			result.reason = ::uml::cpu::ExitReason::illegal_instruction;
@@ -277,7 +348,7 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			result.reason = ::uml::cpu::ExitReason::system_call;
 			return run;
 		case ::uml::cpu::EngineEvent::memory_fault:
-			result.reason = ::uml::cpu::ExitReason::memory_fault;
+			memory_fault();
 			return run;
 		case ::uml::cpu::EngineEvent::interrupt:
 			result.reason = ::uml::cpu::ExitReason::interrupt;

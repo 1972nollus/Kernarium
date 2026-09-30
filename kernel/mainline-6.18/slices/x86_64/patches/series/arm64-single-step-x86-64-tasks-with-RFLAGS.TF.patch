@@ -18,9 +18,9 @@ does, as SIGTRAP with TRAP_BRKPT at the next instruction.  As in x86's
 exc_debug_user(), each #DB restarts the DR6 a tracer reads from that
 BS bit.
 ---
- arch/arm64/um/ptrace.c           | 49 ++++++++++++++++++++++++++++
- arch/um/os-Darwin/skas/process.c | 56 +++++++++++++++++++++++++++++---
- 2 files changed, 101 insertions(+), 4 deletions(-)
+ arch/arm64/um/ptrace.c           | 49 ++++++++++++++++++++++++++
+ arch/um/os-Darwin/skas/process.c | 60 ++++++++++++++++++++++++++++----
+ 2 files changed, 103 insertions(+), 6 deletions(-)
 
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
 index f355df97e151ed1cc8dd53909aad7f4c0fee4696..b5928e08d6271161496d9163b97032d115abc5d9 100644
@@ -83,10 +83,10 @@ index f355df97e151ed1cc8dd53909aad7f4c0fee4696..b5928e08d6271161496d9163b97032d1
  {
  	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 9accbdb86fbb679b3c42eb2bd97c0d9afdd3edf5..afbd814a25894e654ab7f2f5bf291b49e33aeea7 100644
+index 9f5ef5b1ab6be26104a60400092d76d04e804fef..b60dbb2b7700e0ef74637fa82f92fdabe05d407b 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -80,6 +80,35 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
+@@ -81,6 +81,35 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
   * valid_user_regs() does, so saved, traced and signal-frame registers never
   * carry it.  Returns whether the bit was set for this entry.
   */
@@ -122,7 +122,7 @@ index 9accbdb86fbb679b3c42eb2bd97c0d9afdd3edf5..afbd814a25894e654ab7f2f5bf291b49
  static int begin_guest_step(struct uml_pt_regs *regs)
  {
  	if (!singlestepping())
-@@ -93,6 +122,7 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
+@@ -94,6 +123,7 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
  	if (stepping)
  		UPT_PSTATE(regs) &= ~DARWIN_GUEST_PSTATE_SS;
  }
@@ -130,7 +130,7 @@ index 9accbdb86fbb679b3c42eb2bd97c0d9afdd3edf5..afbd814a25894e654ab7f2f5bf291b49
  
  static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
-@@ -602,17 +632,35 @@ void userspace(struct uml_pt_regs *registers)
+@@ -603,19 +633,37 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_BREAKPOINT:
  		{
  			siginfo_t signal_info = { 0 };
@@ -150,6 +150,8 @@ index 9accbdb86fbb679b3c42eb2bd97c0d9afdd3edf5..afbd814a25894e654ab7f2f5bf291b49
  #ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 -			if (registers->faultinfo.trap_no == 4 ||
 -			    registers->faultinfo.trap_no == 5 ||
+-			    registers->faultinfo.trap_no ==
+-			    DARWIN_GUEST_X86_TRAP_SS ||
 -			    registers->faultinfo.trap_no == 13) {
 +			if (registers->faultinfo.trap_no == 1) {
 +				/* #DB after an instruction.  As on native Linux, DR6.BS
@@ -166,7 +168,9 @@ index 9accbdb86fbb679b3c42eb2bd97c0d9afdd3edf5..afbd814a25894e654ab7f2f5bf291b49
 +				signal_info.si_addr = (void *)UPT_IP(registers);
 +			} else if (registers->faultinfo.trap_no == 4 ||
 +				   registers->faultinfo.trap_no == 5 ||
++				   registers->faultinfo.trap_no ==
++				   DARWIN_GUEST_X86_TRAP_SS ||
 +				   registers->faultinfo.trap_no == 13) {
- 				/* #OF from INTO or INT 4, #BR from BOUND, and a #GP such
- 				 * as RDTSC under PR_TSC_SIGSEGV reach native userspace
- 				 * as SIGSEGV with Linux SI_KERNEL, a name Darwin's
+ 				/* #OF from INTO or INT 4, #BR from BOUND, #SS from a
+ 				 * non-canonical stack address, and a #GP such as RDTSC
+ 				 * under PR_TSC_SIGSEGV reach native userspace with

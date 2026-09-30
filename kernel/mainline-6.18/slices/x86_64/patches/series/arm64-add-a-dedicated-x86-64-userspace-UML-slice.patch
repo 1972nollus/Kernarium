@@ -42,12 +42,12 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  arch/um/kernel/process.c              |   2 +-
  arch/um/kernel/skas/syscall.c         |  31 +-
  arch/um/kernel/trap.c                 |   3 +
- arch/um/os-Darwin/skas/process.c      |  65 ++-
+ arch/um/os-Darwin/skas/process.c      |  72 ++-
  fs/eventpoll.c                        |   2 +-
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
  include/linux/fs.h                    |   2 +
- 27 files changed, 1942 insertions(+), 277 deletions(-)
+ 27 files changed, 1949 insertions(+), 277 deletions(-)
  create mode 100644 arch/arm64/um/asm/unistd.h
  create mode 100644 arch/arm64/um/mmap.c
  create mode 100644 arch/arm64/um/x86_64_syscalls.c
@@ -2612,10 +2612,10 @@ index 3267358aad21eb46cb76cc8375280bac948f0bc9..bde1affde2a40d95c648c8221d1d5818
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 12be3ad3e7c0047ffe90985a1f43303420668364..e172c9318c951cbdd4429423eaaa3a8c7a1ff211 100644
+index 12be3ad3e7c0047ffe90985a1f43303420668364..7031d2fee6a4f851fe0fe4ee7b1dcf1377de4b1e 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -53,12 +53,21 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
+@@ -53,12 +53,22 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
  #define DARWIN_GUEST_SIGBUS 7
  /* Linux asm-generic/siginfo.h values differ from Darwin's floating-point
   * si_code values, so keep the guest ABI numbers explicit at this boundary. */
@@ -2630,6 +2630,7 @@ index 12be3ad3e7c0047ffe90985a1f43303420668364..e172c9318c951cbdd4429423eaaa3a8c
 +/* Linux's ILL_ILLOPN, which Darwin's signal.h numbers 4, for x86 #UD. */
 +#define DARWIN_GUEST_ILL_ILLOPN 2
 +#define DARWIN_GUEST_X86_TRAP_UD 6
++#define DARWIN_GUEST_X86_TRAP_SS 12
 +/* The #PF error code's U bit: every fault the engine reports is a user
 + * access. */
 +#define DARWIN_GUEST_X86_PF_USER 4
@@ -2637,7 +2638,7 @@ index 12be3ad3e7c0047ffe90985a1f43303420668364..e172c9318c951cbdd4429423eaaa3a8c
  /* PSTATE.SS, and the ESR exception class of the software-step exception it
   * raises: the engine retires one instruction and reports that class. */
  #define DARWIN_GUEST_PSTATE_SS (1UL << 21)
-@@ -426,7 +435,7 @@ void userspace(struct uml_pt_regs *registers)
+@@ -426,7 +436,7 @@ void userspace(struct uml_pt_regs *registers)
  		UPT_SYSCALL_NR(registers) = -1;
  		switch (event) {
  		case DARWIN_UML_EVENT_SYSCALL:
@@ -2646,7 +2647,7 @@ index 12be3ad3e7c0047ffe90985a1f43303420668364..e172c9318c951cbdd4429423eaaa3a8c
  			handle_syscall(registers);
  			/* copy_mm() records the parent's COW protection changes in
  			 * UML's normal TLB synchronization state.  The next userspace
-@@ -460,6 +469,10 @@ void userspace(struct uml_pt_regs *registers)
+@@ -460,6 +470,10 @@ void userspace(struct uml_pt_regs *registers)
  				if (retry > 0)
  					break;
  			}
@@ -2657,7 +2658,7 @@ index 12be3ad3e7c0047ffe90985a1f43303420668364..e172c9318c951cbdd4429423eaaa3a8c
  			segv(registers->faultinfo, UPT_IP(registers), 1,
  			     registers, NULL);
  			if (fault >= 4096 && uml_darwin_guest_range(fault, 1)) {
-@@ -487,13 +500,20 @@ void userspace(struct uml_pt_regs *registers)
+@@ -487,13 +501,20 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_FLOATING_POINT_TRAP:
  		{
  			siginfo_t signal_info = { 0 };
@@ -2678,7 +2679,7 @@ index 12be3ad3e7c0047ffe90985a1f43303420668364..e172c9318c951cbdd4429423eaaa3a8c
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -514,10 +534,17 @@ void userspace(struct uml_pt_regs *registers)
+@@ -514,10 +535,17 @@ void userspace(struct uml_pt_regs *registers)
  			 */
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
@@ -2697,7 +2698,7 @@ index 12be3ad3e7c0047ffe90985a1f43303420668364..e172c9318c951cbdd4429423eaaa3a8c
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -577,16 +604,46 @@ void userspace(struct uml_pt_regs *registers)
+@@ -577,16 +605,52 @@ void userspace(struct uml_pt_regs *registers)
  			int stepped = registers->faultinfo.trap_no ==
  				DARWIN_GUEST_SOFTWARE_STEP;
  
@@ -2706,15 +2707,21 @@ index 12be3ad3e7c0047ffe90985a1f43303420668364..e172c9318c951cbdd4429423eaaa3a8c
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +			if (registers->faultinfo.trap_no == 4 ||
 +			    registers->faultinfo.trap_no == 5 ||
++			    registers->faultinfo.trap_no ==
++			    DARWIN_GUEST_X86_TRAP_SS ||
 +			    registers->faultinfo.trap_no == 13) {
-+				/* #OF from INTO or INT 4, #BR from BOUND, and a #GP such
-+				 * as RDTSC under PR_TSC_SIGSEGV reach native userspace
-+				 * as SIGSEGV with Linux SI_KERNEL, a name Darwin's
-+				 * signal.h does not define, and no fault address.  The
-+				 * host's error code stays, as the selector index a #GP
-+				 * from INT n names. */
++				/* #OF from INTO or INT 4, #BR from BOUND, #SS from a
++				 * non-canonical stack address, and a #GP such as RDTSC
++				 * under PR_TSC_SIGSEGV reach native userspace with
++				 * Linux SI_KERNEL, a name Darwin's signal.h does not
++				 * define, and no fault address: #SS as SIGBUS and the
++				 * rest as SIGSEGV.  The host's error code stays, as
++				 * the selector index a #GP from INT n names. */
 +				registers->faultinfo.cr2 = 0;
-+				signal_info.si_signo = SIGSEGV;
++				signal_info.si_signo =
++					registers->faultinfo.trap_no ==
++					DARWIN_GUEST_X86_TRAP_SS ?
++					DARWIN_GUEST_SIGBUS : SIGSEGV;
 +				signal_info.si_errno = 0;
 +				signal_info.si_code = 0x80;
 +				signal_info.si_addr = NULL;

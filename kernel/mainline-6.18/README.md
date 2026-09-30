@@ -128,8 +128,11 @@ ICEBP delivers `SIGTRAP` with `TRAP_BRKPT` after itself. `#UD` is `SIGILL` with
 bounds and `#GP` reach the task as `SIGSEGV` with `SI_KERNEL` and no address,
 `#OF` after the instruction and the two faults at it; INT n of a vector user
 mode may not use names that vector's IDT entry, `(n << 3) | 2`, in the error
-code. A page fault's error code carries the user bit. A protection fault's
-error code lacks the present bit.
+code. A long-mode access to a non-canonical address raises `#GP`, or `#SS`,
+`SIGBUS` with `SI_KERNEL`, when the stack segment forms the address. A page
+fault's error code carries the user bit. A protection fault's error code lacks
+the present bit, and a branch to a non-canonical target faults at the target
+rather than at the branch.
 
 An i386 tracer's register requests use the i386 layouts, as on Linux, with
 `PTRACE_GETFPREGS` and `NT_PRFPREG` the i387 FSAVE image, and a tracer of

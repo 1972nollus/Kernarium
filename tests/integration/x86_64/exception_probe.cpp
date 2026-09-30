@@ -36,6 +36,7 @@ constexpr long nr_wait4 = 61;
 constexpr long nr_kill = 62;
 constexpr long nr_ptrace = 101;
 constexpr long nr_getppid = 110;
+constexpr long nr_sigaltstack = 131;
 constexpr long nr_clock_gettime = 228;
 constexpr long nr_exit_group = 231;
 
@@ -141,6 +142,78 @@ __asm__(".text\n"
 	".global probe_pf_fetch_end\n"
 	"probe_pf_fetch_end:\n"
 	"	ret\n"
+	/* One access through a non-canonical (address): a load and a store
+	 * through RAX, a load based on RBP and one indexed by it, MOVSB from
+	 * it, and a push with it as RSP. */
+	".global probe_nc_load\n"
+	"probe_nc_load:\n"
+	"	movq %rdi, %rax\n"
+	".global probe_nc_load_insn\n"
+	"probe_nc_load_insn:\n"
+	"	movq (%rax), %rax\n"
+	".global probe_nc_load_end\n"
+	"probe_nc_load_end:\n"
+	"	ret\n"
+	".global probe_nc_store\n"
+	"probe_nc_store:\n"
+	"	movq %rdi, %rax\n"
+	".global probe_nc_store_insn\n"
+	"probe_nc_store_insn:\n"
+	"	movq %rcx, (%rax)\n"
+	".global probe_nc_store_end\n"
+	"probe_nc_store_end:\n"
+	"	ret\n"
+	".global probe_nc_rbp\n"
+	"probe_nc_rbp:\n"
+	"	pushq %rbp\n"
+	"	movq %rdi, %rbp\n"
+	".global probe_nc_rbp_insn\n"
+	"probe_nc_rbp_insn:\n"
+	"	movq 8(%rbp), %rax\n"
+	".global probe_nc_rbp_end\n"
+	"probe_nc_rbp_end:\n"
+	"	popq %rbp\n"
+	"	ret\n"
+	".global probe_nc_rbp_index\n"
+	"probe_nc_rbp_index:\n"
+	"	pushq %rbp\n"
+	"	movq %rdi, %rbp\n"
+	"	xorl %eax, %eax\n"
+	".global probe_nc_rbp_index_insn\n"
+	"probe_nc_rbp_index_insn:\n"
+	"	movq (%rax,%rbp,1), %rax\n"
+	".global probe_nc_rbp_index_end\n"
+	"probe_nc_rbp_index_end:\n"
+	"	popq %rbp\n"
+	"	ret\n"
+	".global probe_nc_movs\n"
+	"probe_nc_movs:\n"
+	"	movq %rdi, %rsi\n"
+	"	leaq probe_nc_scratch(%rip), %rdi\n"
+	".global probe_nc_movs_insn\n"
+	"probe_nc_movs_insn:\n"
+	"	movsb\n"
+	".global probe_nc_movs_end\n"
+	"probe_nc_movs_end:\n"
+	"	ret\n"
+	".global probe_nc_push\n"
+	"probe_nc_push:\n"
+	"	movq %rsp, probe_nc_saved_sp(%rip)\n"
+	"	movq %rdi, %rsp\n"
+	".global probe_nc_push_insn\n"
+	"probe_nc_push_insn:\n"
+	"	pushq %rax\n"
+	".global probe_nc_push_end\n"
+	"probe_nc_push_end:\n"
+	"	movq probe_nc_saved_sp(%rip), %rsp\n"
+	"	ret\n"
+	".data\n"
+	".balign 8\n"
+	"probe_nc_saved_sp:\n"
+	"	.quad 0\n"
+	"probe_nc_scratch:\n"
+	"	.quad 0\n"
+	".text\n"
 	/* The traced child: known x87, SSE and general register state, then
 	 * #UD for the tracer's stop. The tracer resumes it at
 	 * probe_traced_resume, which exits with RBX's low byte. */
@@ -465,6 +538,7 @@ constexpr long si_kernel = 0x80;
 constexpr word flag_reserved = 1UL << 1;
 constexpr word flag_rf = 1UL << 16;
 constexpr long eio = 5;
+constexpr long sigbus = 7;
 constexpr long einval = 22;
 constexpr long segv_maperr = 1;
 /* Below every mapping of a static program, and at mmap_min_addr. */
@@ -695,7 +769,7 @@ void record_fault(int signal, void *info, void *context)
 bool install_fault_handlers()
 {
 	if (install(sigill, record_fault) && install(sigtrap, record_fault) &&
-	    install(sigsegv, record_fault))
+	    install(sigsegv, record_fault) && install(sigbus, record_fault))
 		return true;
 	put("  rt_sigaction failed\n");
 	return false;
@@ -1014,6 +1088,96 @@ bool int_n_faults()
 	}
 	return ok;
 }
+
+#if defined(__x86_64__)
+extern "C" void probe_nc_load(word address);
+extern "C" char probe_nc_load_insn[];
+extern "C" char probe_nc_load_end[];
+extern "C" void probe_nc_store(word address);
+extern "C" char probe_nc_store_insn[];
+extern "C" char probe_nc_store_end[];
+extern "C" void probe_nc_rbp(word address);
+extern "C" char probe_nc_rbp_insn[];
+extern "C" char probe_nc_rbp_end[];
+extern "C" void probe_nc_rbp_index(word address);
+extern "C" char probe_nc_rbp_index_insn[];
+extern "C" char probe_nc_rbp_index_end[];
+extern "C" void probe_nc_movs(word address);
+extern "C" char probe_nc_movs_insn[];
+extern "C" char probe_nc_movs_end[];
+extern "C" void probe_nc_push(word address);
+extern "C" char probe_nc_push_insn[];
+extern "C" char probe_nc_push_end[];
+
+/* Non-canonical under 4-level and 5-level paging alike. */
+constexpr word noncanonical = 0x8000000000000000UL;
+constexpr word sa_onstack = 0x08000000;
+
+alignas(16) unsigned char alternate_stack[16384];
+
+void nc_load() { probe_nc_load(noncanonical); }
+void nc_store() { probe_nc_store(noncanonical); }
+void nc_rbp() { probe_nc_rbp(noncanonical); }
+void nc_rbp_index() { probe_nc_rbp_index(noncanonical); }
+void nc_movs() { probe_nc_movs(noncanonical); }
+void nc_push() { probe_nc_push(noncanonical); }
+
+/* A push through a non-canonical RSP can deliver its signal only on an
+ * alternate stack. */
+bool handle_on_alternate_stack(long signal)
+{
+	const struct {
+		word sp;
+		long flags;
+		word size;
+	} stack = {reinterpret_cast<word>(alternate_stack), 0,
+		   sizeof(alternate_stack)};
+	KernelSigaction action = {};
+	action.handler = reinterpret_cast<word>(record_fault);
+	action.flags = sa_siginfo | sa_restorer | sa_onstack;
+	action.restorer = reinterpret_cast<word>(&probe_restorer);
+	return raw_syscall(nr_sigaltstack, reinterpret_cast<long>(&stack), 0) ==
+		       0 &&
+	       raw_syscall(nr_rt_sigaction, signal,
+			   reinterpret_cast<long>(&action), 0, 8) == 0;
+}
+
+/* A non-canonical address raises #GP, SIGSEGV with SI_KERNEL, or #SS,
+ * SIGBUS with SI_KERNEL, when the stack segment forms it; neither has an
+ * address, both are faults. */
+bool noncanonical_faults()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+		long signal;
+		word vector;
+	};
+	const Case cases[] = {
+		{"load", nc_load, probe_nc_load_insn, probe_nc_load_end,
+		 sigsegv, 13},
+		{"store", nc_store, probe_nc_store_insn, probe_nc_store_end,
+		 sigsegv, 13},
+		{"load based on RBP", nc_rbp, probe_nc_rbp_insn,
+		 probe_nc_rbp_end, sigbus, 12},
+		{"load indexed by RBP", nc_rbp_index, probe_nc_rbp_index_insn,
+		 probe_nc_rbp_index_end, sigsegv, 13},
+		{"MOVSB", nc_movs, probe_nc_movs_insn, probe_nc_movs_end,
+		 sigsegv, 13},
+		{"push", nc_push, probe_nc_push_insn, probe_nc_push_end,
+		 sigbus, 12},
+	};
+	bool ok = install_fault_handlers() && handle_on_alternate_stack(sigbus);
+	for (const Case &one : cases)
+		ok = ok && delivers(one.what, one.work, address_of(one.end),
+				    {one.signal, si_kernel, 0,
+				     address_of(one.insn), one.vector, true,
+				     0});
+	return ok;
+}
+#endif
 
 constexpr long ptrace_traceme = 0;
 constexpr long ptrace_peekuser = 3;
@@ -1570,6 +1734,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "int-n"));
 	report("i386 INT n raises #GP naming its IDT entry",
 	       in_child(i386_probe, "int-n"));
+	report("x86-64 a non-canonical address raises #GP or #SS",
+	       in_child(self, "noncanonical"));
 	return failures;
 }
 #endif
@@ -1616,6 +1782,8 @@ extern "C" int probe_main(word *stack)
 		if (equal(mode, "tls"))
 			return tls_entries() ? 0 : 1;
 #else
+		if (equal(mode, "noncanonical"))
+			return noncanonical_faults() ? 0 : 1;
 		return run_all(arguments[0], arguments[1]);
 #endif
 	}

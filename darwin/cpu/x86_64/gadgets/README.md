@@ -196,7 +196,7 @@ budget, keeps RF, as an interrupt taken before that instruction does.
 Hardware also sets RF in the flags it saves for every fault but an instruction
 breakpoint, so the resumed instruction does not break again, and saves a
 trap's flags as they are. The runtime does the same in the registers it hands
-the kernel: a page fault, #UD, #GP or #DE exit reports RF set, and a
+the kernel: a page fault, #UD, #SS, #GP or #DE exit reports RF set, and a
 breakpoint, INT 4 or single-step exit reports the live flags, in which RF is
 clear. Hardware sets RF as well when an interrupt stops a repeated string
 instruction between elements, so the string gadgets set it at the repeat
