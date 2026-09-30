@@ -126,7 +126,8 @@ repeated string instruction between elements; a trap's show it clear.
 ICEBP delivers `SIGTRAP` with `TRAP_BRKPT` after itself. `#UD` is `SIGILL` with
 `ILL_ILLOPN`. `#OF` from INT 4 or INTO, `#BR` from an i386 BOUND outside its
 bounds and `#GP` reach the task as `SIGSEGV` with `SI_KERNEL` and no address,
-`#OF` after the instruction and the two faults at it.
+`#OF` after the instruction and the two faults at it. A page fault's error code
+carries the user bit. A protection fault's error code lacks the present bit.
 
 An i386 tracer's register requests use the i386 layouts, as on Linux, with
 `PTRACE_GETFPREGS` and `NT_PRFPREG` the i387 FSAVE image, and a tracer of

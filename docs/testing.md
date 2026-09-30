@@ -374,13 +374,13 @@ TF set by IRET traps after one instruction.
 `tests/integration/x86_64/run_guest_x86_64_exceptions.py` builds and runs its
 exception probe the same way and checks, for both ABIs, that a 1 ms interval
 timer keeps firing through long REP STOSB and REPE CMPSB loops and that ICEBP,
-INT 4, UD2, and i386 BOUND and INTO deliver Linux's signals, codes, trap
-numbers and error codes without a kernel relay complaint, that a value on the
-x87 stack survives a signal, that a signal taken between two instructions
-leaves RAX alone even when it holds an -ERESTART* code, and that a tracer of
-the same ABI reads and writes registers, FP state and i386 TLS and changes or
-skips a system call through orig_ax. Its expected values are native x86
-Linux's.
+INT 4, UD2, page faults, and i386 BOUND and INTO deliver Linux's signals,
+codes, trap numbers and error codes without a kernel relay complaint, that a
+value on the x87 stack survives a signal, that a signal taken between two
+instructions leaves RAX alone even when it holds an -ERESTART* code, and that a
+tracer of the same ABI reads and writes registers, FP state and i386 TLS and
+changes or skips a system call through orig_ax. Its expected values are native
+x86 Linux's.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session

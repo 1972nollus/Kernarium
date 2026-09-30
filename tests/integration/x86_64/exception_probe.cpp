@@ -118,6 +118,29 @@ __asm__(".text\n"
 	"	int3\n"
 	"	fstpl (%rdi)\n"
 	"	ret\n"
+	/* One access at (address): a read, a write, and a fetch. */
+	".global probe_pf_read\n"
+	"probe_pf_read:\n"
+	".global probe_pf_read_insn\n"
+	"probe_pf_read_insn:\n"
+	"	movl (%rdi), %eax\n"
+	".global probe_pf_read_end\n"
+	"probe_pf_read_end:\n"
+	"	ret\n"
+	".global probe_pf_write\n"
+	"probe_pf_write:\n"
+	".global probe_pf_write_insn\n"
+	"probe_pf_write_insn:\n"
+	"	movl %eax, (%rdi)\n"
+	".global probe_pf_write_end\n"
+	"probe_pf_write_end:\n"
+	"	ret\n"
+	".global probe_pf_fetch\n"
+	"probe_pf_fetch:\n"
+	"	jmp *%rdi\n"
+	".global probe_pf_fetch_end\n"
+	"probe_pf_fetch_end:\n"
+	"	ret\n"
 	/* The traced child: known x87, SSE and general register state, then
 	 * #UD for the tracer's stop. The tracer resumes it at
 	 * probe_traced_resume, which exits with RBX's low byte. */
@@ -296,6 +319,31 @@ __asm__(".text\n"
 	"	int3\n"
 	"	fstpl (%eax)\n"
 	"	ret\n"
+	".global probe_pf_read\n"
+	"probe_pf_read:\n"
+	"	movl 4(%esp), %edx\n"
+	".global probe_pf_read_insn\n"
+	"probe_pf_read_insn:\n"
+	"	movl (%edx), %eax\n"
+	".global probe_pf_read_end\n"
+	"probe_pf_read_end:\n"
+	"	ret\n"
+	".global probe_pf_write\n"
+	"probe_pf_write:\n"
+	"	movl 4(%esp), %edx\n"
+	".global probe_pf_write_insn\n"
+	"probe_pf_write_insn:\n"
+	"	movl %eax, (%edx)\n"
+	".global probe_pf_write_end\n"
+	"probe_pf_write_end:\n"
+	"	ret\n"
+	".global probe_pf_fetch\n"
+	"probe_pf_fetch:\n"
+	"	movl 4(%esp), %edx\n"
+	"	jmp *%edx\n"
+	".global probe_pf_fetch_end\n"
+	"probe_pf_fetch_end:\n"
+	"	ret\n"
 	/* (tls_entry), which the tracer reads from ESI. */
 	".global probe_traced\n"
 	"probe_traced:\n"
@@ -371,6 +419,9 @@ constexpr long si_kernel = 0x80;
 constexpr word flag_reserved = 1UL << 1;
 constexpr word flag_rf = 1UL << 16;
 constexpr long eio = 5;
+constexpr long segv_maperr = 1;
+/* Below every mapping of a static program, and at mmap_min_addr. */
+constexpr word unmapped_page = 0x10000;
 constexpr long ill_illopn = 2;
 
 struct KernelSigaction {
@@ -610,6 +661,7 @@ struct Delivery {
 	word ip;
 	word trapno;
 	bool resume_flag;
+	word error;
 };
 
 /* Runs `work`, resuming after `end` if it faults, and checks that it raised
@@ -641,7 +693,7 @@ bool delivers(const char *what, void (*work)(), word end,
 	ok &= expect("si_addr", observed[observed_address], expected.address);
 	ok &= expect("frame ip", observed[observed_ip], expected.ip);
 	ok &= expect("trapno", observed[observed_trapno], expected.trapno);
-	ok &= expect("err", observed[observed_error], 0);
+	ok &= expect("err", observed[observed_error], expected.error);
 	ok &= expect("RF", (observed[observed_flags] & flag_rf) != 0,
 		     expected.resume_flag);
 	if (!ok) {
@@ -669,7 +721,7 @@ bool icebp_traps()
 	const word end = address_of(probe_icebp_end);
 	return install_fault_handlers() &&
 	       delivers("ICEBP", probe_icebp, end,
-			{sigtrap, trap_brkpt, end, end, 1, false});
+			{sigtrap, trap_brkpt, end, end, 1, false, 0});
 }
 
 /* INT 4 raises #OF as a trap, which Linux delivers as SIGSEGV with
@@ -679,7 +731,7 @@ bool int4_traps()
 	const word end = address_of(probe_int4_end);
 	return install_fault_handlers() &&
 	       delivers("INT 4", probe_int4, end,
-			{sigsegv, si_kernel, 0, end, 4, false});
+			{sigsegv, si_kernel, 0, end, 4, false, 0});
 }
 
 extern "C" void probe_x87_signal(double *out);
@@ -793,7 +845,7 @@ bool into_traps()
 	bool ok = install_fault_handlers();
 	ok = ok && delivers_nothing("INTO without overflow", into_clear, end);
 	ok = ok && delivers("INTO with overflow", into_overflowed, end,
-			    {sigsegv, si_kernel, 0, end, 4, false});
+			    {sigsegv, si_kernel, 0, end, 4, false, 0});
 	return ok;
 }
 
@@ -827,11 +879,11 @@ bool bound_checks()
 	for (const long index : outside32) {
 		bound_index = static_cast<word>(index);
 		ok &= delivers("BOUND r32 out of range", bound32, end32,
-			       {sigsegv, si_kernel, 0, insn32, 5, true});
+			       {sigsegv, si_kernel, 0, insn32, 5, true, 0});
 	}
 	bound_index = 0x7fff;
 	ok &= delivers("BOUND r16 out of range", bound16, end16,
-		       {sigsegv, si_kernel, 0, insn16, 5, true});
+		       {sigsegv, si_kernel, 0, insn16, 5, true, 0});
 	bound_index = 0x10000;
 	ok &= delivers_nothing("BOUND r16 of a truncated index", bound16,
 			       end16);
@@ -848,7 +900,37 @@ bool ud2_faults()
 	const word insn = reinterpret_cast<word>(&probe_ud2);
 	return install_fault_handlers() &&
 	       delivers("UD2", probe_ud2, address_of(probe_ud2_end),
-			{sigill, ill_illopn, insn, insn, 6, true});
+			{sigill, ill_illopn, insn, insn, 6, true, 0});
+}
+
+extern "C" void probe_pf_read(word address);
+extern "C" char probe_pf_read_insn[];
+extern "C" char probe_pf_read_end[];
+extern "C" void probe_pf_write(word address);
+extern "C" char probe_pf_write_insn[];
+extern "C" char probe_pf_write_end[];
+extern "C" void probe_pf_fetch(word address);
+extern "C" char probe_pf_fetch_end[];
+
+void pf_read() { probe_pf_read(unmapped_page); }
+void pf_write() { probe_pf_write(unmapped_page); }
+void pf_fetch() { probe_pf_fetch(unmapped_page); }
+
+/* A user access to an unmapped page raises #PF with the U bit, 4, in its
+ * error code, and W, 2, for a write or I/D, 0x10, for a fetch. */
+bool page_faults_are_user()
+{
+	const word page = unmapped_page;
+	bool ok = install_fault_handlers();
+	ok = ok && delivers("read", pf_read, address_of(probe_pf_read_end),
+			    {sigsegv, segv_maperr, page,
+			     address_of(probe_pf_read_insn), 14, true, 4});
+	ok = ok && delivers("write", pf_write, address_of(probe_pf_write_end),
+			    {sigsegv, segv_maperr, page,
+			     address_of(probe_pf_write_insn), 14, true, 6});
+	ok = ok && delivers("fetch", pf_fetch, address_of(probe_pf_fetch_end),
+			    {sigsegv, segv_maperr, page, page, 14, true, 0x14});
+	return ok;
 }
 
 constexpr long ptrace_traceme = 0;
@@ -1231,6 +1313,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "ud2"));
 	report("i386 UD2 delivers SIGILL ILL_ILLOPN for #UD",
 	       in_child(i386_probe, "ud2"));
+	report("x86-64 #PF error codes carry the user bit",
+	       in_child(self, "page-fault"));
+	report("i386 #PF error codes carry the user bit",
+	       in_child(i386_probe, "page-fault"));
 	return failures;
 }
 #endif
@@ -1263,6 +1349,8 @@ extern "C" int probe_main(word *stack)
 			return tracer_changes_syscalls() ? 0 : 1;
 		if (equal(mode, "ud2"))
 			return ud2_faults() ? 0 : 1;
+		if (equal(mode, "page-fault"))
+			return page_faults_are_user() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;
