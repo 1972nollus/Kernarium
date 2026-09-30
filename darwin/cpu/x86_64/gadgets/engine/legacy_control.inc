@@ -278,16 +278,19 @@ gadget interrupt_return_\name
 	 * kept bits is an arithmetic flag, so a deferred result need not be
 	 * materialized first.  RF lasts until the next instruction starts.
 	 * IRET always leaves the engine, and `execute` clears RF as it enters
-	 * to start that instruction, so no gadget has to. */
+	 * to start that instruction, so no gadget has to.  As for POPF, setting
+	 * TF arms #DB after the next instruction, which the runtime then runs
+	 * alone. */
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x4dd5
 	.if \width != 16
 	movk x10, #0x25, lsl #16
 	.endif
-	bic x9, x9, x10
+	bic x11, x9, x10
 	and x25, x25, x10
-	orr x25, x9, x25
+	orr x25, x11, x25
 	orr x25, x25, #2
+	bic x12, x25, x9
 	str x19, [_cpu, #UML_X86_64_CPU_RIP]
 	strh w24, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
 	str x25, [_cpu, #UML_X86_64_CPU_RFLAGS]
@@ -299,6 +302,9 @@ gadget interrupt_return_\name
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
+	tbz x12, #8, .Lx86_iret_leave\@
+	mov w0, #UML_X86_64_EVENT_TRAP_FLAG
+.Lx86_iret_leave\@:
 	b uml_x86_64_gadget_leave
 .endm
 

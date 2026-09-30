@@ -157,8 +157,8 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	bool executor_prepared = false;
 	std::uint64_t prepared_mapping_changes{};
 	std::uint64_t prepared_code_changes{};
-	/* Set once POPF arms RFLAGS.TF: the run ends after one more instruction
-	 * and reports the #DB that instruction raises. */
+	/* Set once POPF or IRET arms RFLAGS.TF: the run ends after one more
+	 * instruction and reports the #DB that instruction raises. */
 	bool trap_armed = false;
 	const auto budget_reason = [&]() noexcept {
 		return trap_armed ? ::uml::cpu::ExitReason::single_step :
