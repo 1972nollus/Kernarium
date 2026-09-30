@@ -203,9 +203,9 @@ budget, keeps RF, as an interrupt taken before that instruction does.
 Hardware also sets RF in the flags it saves for every fault but an instruction
 breakpoint, so the resumed instruction does not break again, and saves a
 trap's flags as they are. The runtime does the same in the registers it hands
-the kernel: a page fault, #UD, #SS, #GP, #DE, #MF or #XM exit reports RF set,
-and a breakpoint, INT 4 or single-step exit reports the live flags, in which
-RF is clear. Hardware sets RF as well when an interrupt stops a repeated
+the kernel: a page fault, #UD, #SS, #GP, #AC, #DE, #MF or #XM exit reports RF
+set, and a breakpoint, INT 4 or single-step exit reports the live flags, in
+which RF is clear. Hardware sets RF as well when an interrupt stops a repeated
 string instruction between elements, so the string gadgets set it at the
 repeat budget's exit, the one place they stop with elements done and elements
 left; `execute` clears it again when the instruction resumes. Signal frames
@@ -299,21 +299,25 @@ registers.
 
 ## Exceptions the guest enables
 
-x86 raises #XM for a SIMD floating-point exception that MXCSR unmasks, and #MF
-at the next waiting x87 instruction after an exception that the control word
-unmasks. Guests rarely enable either, so no gadget checks for them: while
-`checked_exceptions` finds both disabled, a dispatch runs as it always has.
-While it does not, the runtime dispatches through a second executor whose
-blocks end before every instruction that could raise an enabled exception.
-Such an instruction is a block of its own, a check head, that no link enters;
-`execute_checked` runs it alone, with its checks, and runs every other block,
-linked, as `execute` does. The runtime creates that executor when the guest
-first enables a check and replaces it when the guest enables one its blocks
-were not split for:
+x86 raises #XM for a SIMD floating-point exception that MXCSR unmasks, #MF at
+the next waiting x87 instruction after an exception that the control word
+unmasks, and #AC for a misaligned access while RFLAGS.AC is set. Guests rarely
+enable any of them, so no gadget checks for them: while `checked_exceptions`
+finds all three disabled, a dispatch runs as it always has. While it does not,
+the runtime dispatches through a second executor whose blocks end before every
+instruction that could raise an enabled exception. Such an instruction is a
+block of its own, a check head, that no link enters; `execute_checked` runs it
+alone, with its checks, and runs every other block, linked, as `execute` does.
+The runtime creates that executor when the guest first enables a check and
+replaces it when the guest enables one its blocks were not split for:
 
 - #MF: a waiting instruction -- every x87 instruction but FNINIT, FNCLEX,
   FNSTSW, FNSTCW, FNSTENV and FNSAVE, and FWAIT, EMMS and every MMX
   instruction -- faults before it runs while an unmasked exception is pending.
+- #AC: an access of two, four or eight bytes off its alignment faults before it
+  runs: memory operands at their width or x87 operand size, stack accesses,
+  and a string instruction's first element. 16- and 32-byte vector accesses,
+  gathers and the extended-state images are exempt, as on x86.
 - #XM: the host's cumulative exception flags are cleared around the
   instruction and read back as MXCSR's. An unmasked one restores the state
   from before it, a memory destination included, and faults; MXCSR then holds
@@ -325,17 +329,18 @@ were not split for:
   unmasked exception sets ES and B for the next waiting instruction.
 
 An instruction that enables a check retires and leaves the engine, so linked
-code never runs past it unchecked: LDMXCSR, FLDCW, FLDENV, FRSTOR, FXRSTOR or
-XRSTOR loading a clear mask bit. That costs FLDCW and LDMXCSR three
-instructions when nothing is unmasked. LDMXCSR keeps the masks and flags the
-guest loads.
+code never runs past it unchecked: POPF setting AC, and LDMXCSR, FLDCW,
+FLDENV, FRSTOR, FXRSTOR or XRSTOR loading a clear mask bit. That costs POPF one
+branch and FLDCW and LDMXCSR three instructions when nothing is unmasked.
+LDMXCSR keeps the masks and flags the guest loads.
 
 A check head costs a dispatch, about 100 ns on an M-series Mac, so x87 or SSE
-arithmetic runs 10 to 25 times slower while one of its exceptions is unmasked;
-code without such instructions keeps its speed. The host detects neither a
-denormal operand nor an exact tiny result, so #XM misses those two, and an x87
-overflow or underflow unmasked for a register destination leaves the masked
-result rather than x87's rebiased one.
+arithmetic runs 10 to 25 times slower while one of its exceptions is unmasked,
+as does memory access while AC is set; code without such instructions keeps
+its speed. The host detects neither a denormal operand nor an exact tiny
+result, so #XM misses those two, and an x87 overflow or underflow unmasked for
+a register destination leaves the masked result rather than x87's rebiased
+one.
 
 ## Code pages
 

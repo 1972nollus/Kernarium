@@ -60,6 +60,7 @@ constexpr std::int32_t x86_64_debug_trap = 1;
 constexpr std::uint32_t x86_64_bound_range = 5;
 constexpr std::uint32_t x86_64_stack_segment_fault = 12;
 constexpr std::uint32_t x86_64_general_protection = 13;
+constexpr std::int32_t x86_64_alignment_check = 17;
 /* DR6.BS: the #DB is a single step. Reported as its error code, so Linux
  * tells a step from ICEBP, which leaves DR6 clear, as x86 Linux reads DR6. */
 constexpr std::int32_t x86_64_debug_single_step = 1 << 14;
@@ -322,6 +323,16 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		event = DARWIN_UML_EVENT_SYSCALL;
 		break;
 	case uml::cpu::ExitReason::memory_fault:
+		if (result.fault.alignment) {
+			/* #AC, a fault with an error code of zero, which x86 Linux
+			 * delivers with no address. */
+			registers.fault.error_code = 0;
+			registers.fault.address = 0;
+			registers.fault.trap_number = x86_64_alignment_check;
+			save_x86_fault_flags(registers);
+			event = DARWIN_UML_EVENT_DATA_ALIGNMENT;
+			break;
+		}
 		registers.fault.error_code = result.fault.access ==
 			uml::memory::MemoryAccess::write ? DARWIN_UML_FAULT_WRITE :
 			result.fault.access == uml::memory::MemoryAccess::execute ?

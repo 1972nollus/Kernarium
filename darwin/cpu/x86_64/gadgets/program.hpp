@@ -283,8 +283,8 @@ struct ExecuteResult final {
  * the program comes from a build for `checked` or more. A block without a
  * check head runs as `execute` runs it. A check head's instruction runs
  * alone, with its checks: #MF for a waiting x87 instruction with an unmasked
- * exception pending, and after it #XM, or the pending #MF an x87 instruction
- * leaves for the next one. */
+ * exception pending, #AC for a misaligned access, and after it #XM, or the
+ * pending #MF an x87 instruction leaves for the next one. */
 [[nodiscard]] ExecuteResult execute_checked(const Program &program,
 	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory,
 	Executor &executor, std::size_t instruction_budget,

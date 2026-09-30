@@ -28,7 +28,7 @@ struct X86GadgetRunResult final {
  * `exact_budget` the run instead stops at exactly that many instructions,
  * which is what a single step needs.
  *
- * While the guest enables #MF or #XM, the run uses `checked_executor`,
+ * While the guest enables #AC, #MF or #XM, the run uses `checked_executor`,
  * made on first use and made again when the guest enables more, whose blocks
  * stop before every instruction that could raise one; it runs those singly,
  * checked, and the rest linked, as `executor` runs everything otherwise. */

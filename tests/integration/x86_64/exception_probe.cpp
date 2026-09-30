@@ -821,6 +821,7 @@ constexpr long si_kernel = 0x80;
 constexpr word flag_reserved = 1UL << 1;
 constexpr word flag_rf = 1UL << 16;
 constexpr long eio = 5;
+constexpr long bus_adraln = 1;
 constexpr long sigfpe = 8;
 constexpr long fpe_fltdiv = 3;
 constexpr long fpe_fltovf = 4;
@@ -1617,6 +1618,190 @@ bool floating_point_exceptions()
 	return ok;
 }
 
+/* With RFLAGS.AC set, one access through (buffer); each case clears AC, and
+ * restores the stack, after its instruction. */
+__asm__(".text\n"
+	".global probe_ac_load\n"
+	"probe_ac_load:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_load_insn\n"
+	"probe_ac_load_insn:\n"
+	"	movl 1(" PROBE_AX "), %edx\n"
+	".global probe_ac_load_end\n"
+	"probe_ac_load_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	ret\n"
+	".global probe_ac_word\n"
+	"probe_ac_word:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_word_insn\n"
+	"probe_ac_word_insn:\n"
+	"	movw 2(" PROBE_AX "), %dx\n"
+	".global probe_ac_word_end\n"
+	"probe_ac_word_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	ret\n"
+	".global probe_ac_byte\n"
+	"probe_ac_byte:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_byte_insn\n"
+	"probe_ac_byte_insn:\n"
+	"	movb 1(" PROBE_AX "), %dl\n"
+	".global probe_ac_byte_end\n"
+	"probe_ac_byte_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	ret\n"
+	".global probe_ac_x87\n"
+	"probe_ac_x87:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_x87_insn\n"
+	"probe_ac_x87_insn:\n"
+	"	fldl 4(" PROBE_AX ")\n"
+	".global probe_ac_x87_end\n"
+	"probe_ac_x87_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	fninit\n"
+	"	ret\n"
+	".global probe_ac_sse\n"
+	"probe_ac_sse:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_sse_insn\n"
+	"probe_ac_sse_insn:\n"
+	"	movsd 4(" PROBE_AX "), %xmm0\n"
+	".global probe_ac_sse_end\n"
+	"probe_ac_sse_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	ret\n"
+	".global probe_ac_movups\n"
+	"probe_ac_movups:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_movups_insn\n"
+	"probe_ac_movups_insn:\n"
+	"	movups 8(" PROBE_AX "), %xmm0\n"
+	".global probe_ac_movups_end\n"
+	"probe_ac_movups_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	ret\n"
+	".global probe_ac_push\n"
+	"probe_ac_push:\n"
+	"	push " PROBE_BP "\n"
+	"	mov " PROBE_SP ", " PROBE_BP "\n"
+	"	sub $2, " PROBE_SP "\n"
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_push_insn\n"
+	"probe_ac_push_insn:\n"
+	"	push " PROBE_AX "\n"
+	".global probe_ac_push_end\n"
+	"probe_ac_push_end:\n"
+	"	mov " PROBE_BP ", " PROBE_SP "\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	pop " PROBE_BP "\n"
+	"	ret\n"
+	);
+
+extern "C" void probe_ac_load(void *buffer);
+extern "C" char probe_ac_load_insn[];
+extern "C" char probe_ac_load_end[];
+extern "C" void probe_ac_word(void *buffer);
+extern "C" char probe_ac_word_insn[];
+extern "C" char probe_ac_word_end[];
+extern "C" void probe_ac_byte(void *buffer);
+extern "C" char probe_ac_byte_insn[];
+extern "C" char probe_ac_byte_end[];
+extern "C" void probe_ac_x87(void *buffer);
+extern "C" char probe_ac_x87_insn[];
+extern "C" char probe_ac_x87_end[];
+extern "C" void probe_ac_sse(void *buffer);
+extern "C" char probe_ac_sse_insn[];
+extern "C" char probe_ac_sse_end[];
+extern "C" void probe_ac_movups(void *buffer);
+extern "C" char probe_ac_movups_insn[];
+extern "C" char probe_ac_movups_end[];
+extern "C" void probe_ac_push(void *buffer);
+extern "C" char probe_ac_push_insn[];
+extern "C" char probe_ac_push_end[];
+
+alignas(64) unsigned char alignment_buffer[64];
+
+void ac_load() { probe_ac_load(alignment_buffer); }
+void ac_word() { probe_ac_word(alignment_buffer); }
+void ac_byte() { probe_ac_byte(alignment_buffer); }
+void ac_x87() { probe_ac_x87(alignment_buffer); }
+void ac_sse() { probe_ac_sse(alignment_buffer); }
+void ac_movups() { probe_ac_movups(alignment_buffer); }
+void ac_push() { probe_ac_push(alignment_buffer); }
+
+/* With RFLAGS.AC set, a misaligned access of two, four or eight bytes, an
+ * x87 or SSE one included, or a push through a misaligned stack, raises
+ * #AC, a fault: SIGBUS with BUS_ADRALN and no address, error code zero. A
+ * byte, an aligned access and an unaligned 16-byte SSE access raise
+ * nothing. */
+bool alignment_checks()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+	};
+	const Case faults[] = {
+		{"MOV of four bytes at +1", ac_load, probe_ac_load_insn,
+		 probe_ac_load_end},
+		{"FLD of eight bytes at +4", ac_x87, probe_ac_x87_insn,
+		 probe_ac_x87_end},
+		{"MOVSD of eight bytes at +4", ac_sse, probe_ac_sse_insn,
+		 probe_ac_sse_end},
+		{"PUSH with the stack two bytes off", ac_push, probe_ac_push_insn,
+		 probe_ac_push_end},
+	};
+	bool ok = install_fault_handlers();
+	for (const Case &one : faults)
+		ok &= delivers(one.what, one.work, address_of(one.end),
+			       {sigbus, bus_adraln, 0, address_of(one.insn), 17,
+				true, 0});
+	ok &= raises_nothing("MOV of two bytes at +2", ac_word,
+			     address_of(probe_ac_word_end));
+	ok &= raises_nothing("MOV of a byte at +1", ac_byte,
+			     address_of(probe_ac_byte_end));
+	ok &= raises_nothing("MOVUPS at +8", ac_movups,
+			     address_of(probe_ac_movups_end));
+	return ok;
+}
+
 constexpr long ptrace_traceme = 0;
 constexpr long ptrace_peekuser = 3;
 constexpr long ptrace_pokeuser = 6;
@@ -2274,6 +2459,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "fp-exceptions"));
 	report("i386 unmasked SSE and x87 exceptions raise #XM and #MF",
 	       in_child(i386_probe, "fp-exceptions"));
+	report("x86-64 RFLAGS.AC checks alignment",
+	       in_child(self, "alignment-check"));
+	report("i386 RFLAGS.AC checks alignment",
+	       in_child(i386_probe, "alignment-check"));
 	return failures;
 }
 #endif
@@ -2316,6 +2505,8 @@ extern "C" int probe_main(word *stack)
 			return tracer_steps_repeats() ? 0 : 1;
 		if (equal(mode, "fp-exceptions"))
 			return floating_point_exceptions() ? 0 : 1;
+		if (equal(mode, "alignment-check"))
+			return alignment_checks() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;

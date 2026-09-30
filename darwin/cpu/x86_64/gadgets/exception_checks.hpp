@@ -13,14 +13,16 @@ namespace uml::cpu::x86_64::gadgets {
 
 /* Exceptions the engine does not check for, because a guest that has not
  * asked for them never sees them: #MF while the x87 control word unmasks an
- * exception, and #XM while MXCSR does. While either is enabled the runtime
- * runs the instructions that could raise one singly, through
- * `execute_checked`. */
+ * exception, #XM while MXCSR does, and #AC while RFLAGS.AC is set. While
+ * any is enabled the runtime runs the instructions that could raise one
+ * singly, through `execute_checked`. */
 enum CheckedException : unsigned {
 	check_x87 = 1U << 0U,
 	check_simd = 1U << 1U,
+	check_alignment = 1U << 2U,
 };
 
+inline constexpr std::uint64_t rflags_alignment_check = 1ULL << 18U;
 /* The status word's error summary and busy bits, which x87 sets together
  * while an unmasked exception is pending. */
 inline constexpr std::uint16_t x87_status_pending = 0x8080U;
@@ -33,7 +35,9 @@ inline constexpr std::uint32_t mxcsr_exception_masks = 0x1f80U;
 	return ((cpu.x87_control & x87_exception_flags) != x87_exception_flags ?
 			unsigned{check_x87} : 0U) |
 		((cpu.mxcsr & mxcsr_exception_masks) != mxcsr_exception_masks ?
-			unsigned{check_simd} : 0U);
+			unsigned{check_simd} : 0U) |
+		((cpu.rflags & rflags_alignment_check) != 0 ?
+			unsigned{check_alignment} : 0U);
 }
 
 /* The unmasked x87 exceptions pending in the status word. */
@@ -71,6 +75,11 @@ inline constexpr std::uint32_t mxcsr_exception_masks = 0x1f80U;
  * engine's address generation forms it. */
 [[nodiscard]] std::uint64_t effective_address(const CpuState &cpu,
 	const Gadget &gadget, const Operand &operand) noexcept;
+
+/* Whether the instruction's first data access is misaligned for its size,
+ * which raises #AC while RFLAGS.AC is set. */
+[[nodiscard]] bool misaligned_access(const CpuState &cpu,
+	const Gadget &gadget) noexcept;
 
 /* The host's cumulative floating-point exception flags, as the MXCSR flags
  * they correspond to. */

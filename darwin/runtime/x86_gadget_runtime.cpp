@@ -271,9 +271,9 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		}
 		memory.prepare(generation, sequences.mapping_changes);
-		/* #MF and #XM exist only while the guest enables them, and only
-		 * then does the run check the instructions that could raise one,
-		 * with an executor of its own. Its blocks were built for the
+		/* #AC, #MF and #XM exist only while the guest enables them, and
+		 * only then does the run check the instructions that could raise
+		 * one, with an executor of its own. Its blocks were built for the
 		 * exceptions it was made for, so enabling more makes another. */
 		const auto checked = x86_64::gadgets::checked_exceptions(cpu);
 		auto *active = &executor;

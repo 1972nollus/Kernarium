@@ -6222,6 +6222,55 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		"a check head did not run its instruction checked");
 }
 
+/* While RFLAGS.AC is set, a misaligned access raises #AC before it
+ * happens, and POPF that sets AC leaves so the runtime checks what
+ * follows. */
+[[nodiscard]] bool alignment_checks_follow_rflags_ac()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x8b, 0x43, 0x01, // mov eax, [rbx + 1]
+		0x8b, 0x43, 0x04, // mov eax, [rbx + 4]
+		0x0f, 0x05,       // syscall
+	});
+	CpuState cpu{};
+	cpu.rflags = 0x2 | (1ULL << 18U);
+	cpu.gpr(Register::rbx) = 0x800;
+	const auto first = run_until_event(memory, cpu);
+	if (!expect(first.event == uml::cpu::EngineEvent::memory_fault &&
+			first.fault.alignment && first.retired_instructions == 0 &&
+			cpu.rip == 0,
+		"a misaligned load under AC did not raise #AC"))
+		return false;
+	cpu.gpr(Register::rbx) = 0x7ff;
+	const auto second = run_until_event(memory, cpu);
+	if (!expect(second.event == uml::cpu::EngineEvent::memory_fault &&
+			second.fault.alignment && cpu.rip == 3,
+		"an aligned load under AC faulted, or the next did not"))
+		return false;
+
+	TestMemory flags;
+	flags.load(0, {
+		0x68, 0x02, 0x00, 0x04, 0x00, // push 0x40002 (AC)
+		0x9d,                         // popfq
+		0x48, 0xff, 0xc0,             // inc rax
+		0x0f, 0x05,                   // syscall
+	});
+	const auto built = gadgets::build(flags, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"POPF block did not build"))
+		return false;
+	cpu = CpuState{};
+	cpu.gpr(Register::rsp) = 0x200;
+	const auto set = gadgets::execute(built.program, cpu, flags, 64);
+	return expect(set.event == uml::cpu::EngineEvent::continued &&
+			set.retired_instructions == 2 && cpu.rip == 6 &&
+			(cpu.rflags & (1ULL << 18U)) != 0 &&
+			cpu.gpr(Register::rax) == 0,
+		"POPF setting AC did not leave at the next instruction");
+}
+
 /* INT 3 and INT 4 are the user-callable software interrupts besides 0x80:
  * both trap after the instruction. */
 [[nodiscard]] bool software_interrupt_vectors_trap()
@@ -7693,6 +7742,7 @@ int main()
 		checked_simd_exceptions_fault_before_the_result() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
+		alignment_checks_follow_rflags_ac() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&
 		vector_results_cross_only_a_transfer_that_stays_inline() &&

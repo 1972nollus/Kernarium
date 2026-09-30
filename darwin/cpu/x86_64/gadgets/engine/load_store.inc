@@ -317,10 +317,18 @@ gadget pop_flags_\width
 	.endif
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	/* Setting TF arms #DB after the next instruction: leave at it so the
-	 * runtime can run exactly that one. */
+	 * runtime can run exactly that one. Setting AC leaves too, for the
+	 * runtime checks alignment while it is set. */
 	ldr x8, [_stream], #8
 	tbnz x12, #8, .Lx86_pop_flags_trap\@
+	tbnz x12, #18, .Lx86_pop_flags_alignment\@
 	retire_and_next
+.Lx86_pop_flags_alignment\@:
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	add _executed, _executed, #1
+	x86_memory_order_boundary
+	mov w0, #UML_X86_64_EVENT_CONTINUED
+	b uml_x86_64_gadget_leave
 .Lx86_pop_flags_trap\@:
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
 	add _executed, _executed, #1

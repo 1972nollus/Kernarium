@@ -585,6 +585,11 @@ ExecuteResult execute_checked(const Program &program, CpuState &cpu,
 				cpu.x87_status |
 					(std::uint32_t{cpu.x87_control} << 16U));
 		}
+		if ((checked & check_alignment) != 0 &&
+			misaligned_access(cpu, first))
+			return {::uml::cpu::EngineEvent::memory_fault, 0,
+				{0, ::uml::memory::MemoryAccess::read, true},
+				false, false};
 
 		const auto stream = step_string ?
 			build_repeat_step_stream(first, mode) :
