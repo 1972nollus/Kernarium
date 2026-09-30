@@ -108,16 +108,10 @@ function(uml_import_kernel_artifact)
             "${_uml_artifact_output}${_uml_artifact_error}")
     endif()
 
-    set(_uml_manifest "${ARTIFACT_ARTIFACT_ROOT}/kernel-artifact.json")
-    file(READ "${_uml_manifest}" _uml_manifest_json)
-    string(JSON _uml_family GET "${_uml_manifest_json}" family)
-    string(JSON _uml_page_size GET "${_uml_manifest_json}" page_size)
-
+    # The verifier admitted the bundle only with the expected identity.
     add_library("${ARTIFACT_TARGET}" INTERFACE)
     set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
-        UML_ARTIFACT_FAMILY "${_uml_family}")
-    set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
-        UML_KERNEL_PAGE_SIZE "${_uml_page_size}")
+        UML_ARTIFACT_FAMILY "${ARTIFACT_EXPECTED_FAMILY}")
     set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
         UML_KERNEL_IMAGE "${ARTIFACT_ARTIFACT_ROOT}/kernel/vmlinux")
     set_property(TARGET "${ARTIFACT_TARGET}" PROPERTY
@@ -125,7 +119,7 @@ function(uml_import_kernel_artifact)
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/modules.builtin")
 
     uml_watch_artifact_inputs(
-        "${_uml_manifest}"
+        "${ARTIFACT_ARTIFACT_ROOT}/kernel-artifact.json"
         "${_uml_abi_metadata}"
         "${_uml_verifier}"
         "${ARTIFACT_COMMON_ROOT}/artifacts/contract_checks.py"

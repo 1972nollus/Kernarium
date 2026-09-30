@@ -21,12 +21,11 @@ struct NativeKernelLayout final {
 };
 
 template<std::uint64_t LinkAddress, std::uint64_t AddressCeiling,
-	std::uint64_t AuxiliaryDivisor, std::uint64_t MinimumAuxiliarySize,
-	std::uint64_t MaximumAuxiliarySize, std::uint64_t PageSize,
-	std::uint64_t SharedMemoryReservationSize, std::uint64_t StubPageCount>
+	std::uint64_t MinimumAuxiliarySize, std::uint64_t MaximumAuxiliarySize,
+	std::uint64_t PageSize, std::uint64_t SharedMemoryReservationSize,
+	std::uint64_t StubPageCount>
 class NativeKernelLayoutGeometry final {
 	static_assert(PageSize != 0 && (PageSize & (PageSize - 1U)) == 0);
-	static_assert(AuxiliaryDivisor != 0);
 	static_assert(LinkAddress <= AddressCeiling);
 	static_assert(MinimumAuxiliarySize <= MaximumAuxiliarySize);
 	static_assert(MaximumAuxiliarySize <= AddressCeiling - LinkAddress);
@@ -60,15 +59,11 @@ public:
 			return {};
 		const auto rounded = (guest_memory + PageSize - 1U) &
 			~(PageSize - 1U);
-		const auto proportional = rounded / AuxiliaryDivisor +
-			(rounded % AuxiliaryDivisor != 0 ? 1U : 0U);
-		if (proportional > std::numeric_limits<std::uint64_t>::max() -
-			(PageSize - 1U))
-			return {};
-		const auto scaled_auxiliary =
-			(proportional + PageSize - 1U) & ~(PageSize - 1U);
-		const auto floored = scaled_auxiliary < MinimumAuxiliarySize ?
-			MinimumAuxiliarySize : scaled_auxiliary;
+		/* The auxiliary allowance tracks the page-rounded RAM
+		 * one-for-one between its floor and its ceiling, as the kernel
+		 * derives it. */
+		const auto floored = rounded < MinimumAuxiliarySize ?
+			MinimumAuxiliarySize : rounded;
 		/* Capped so RAM plus the vmalloc allowance stays inside the
 		 * signed iOS envelope; vmalloc's own consumption is bounded by
 		 * the page allocator rather than by this reservation. The fixed

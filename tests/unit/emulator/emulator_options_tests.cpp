@@ -254,7 +254,6 @@ void test_scalable_native_kernel_layout_geometry()
 	static_assert(DARWIN_UML_NATIVE_LINK_ADDRESS == 48ULL * gib);
 	static_assert(DARWIN_UML_NATIVE_ADDRESS_CEILING == 62ULL * gib);
 	static_assert(DARWIN_UML_MACOS_NATIVE_ADDRESS == 96ULL * 1024ULL * gib);
-	static_assert(DARWIN_UML_NATIVE_AUXILIARY_DIVISOR == 1);
 	static_assert(DARWIN_UML_NATIVE_AUXILIARY_MINIMUM == gib);
 	static_assert(DARWIN_UML_NATIVE_AUXILIARY_MAXIMUM == 4ULL * gib);
 	static_assert(DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION ==
@@ -273,7 +272,7 @@ void test_scalable_native_kernel_layout_geometry()
 		DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION +
 		DARWIN_UML_NATIVE_STUB_PAGES * DARWIN_UML_GUEST_PAGE_SIZE;
 	using Geometry = uml::runtime::NativeKernelLayoutGeometry<
-		48ULL * gib, 62ULL * gib, 1, gib, 4ULL * gib, 16ULL * kib,
+		48ULL * gib, 62ULL * gib, gib, 4ULL * gib, 16ULL * kib,
 		DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION,
 		DARWIN_UML_NATIVE_STUB_PAGES>;
 	/* Auxiliary tracks RAM one-for-one between the floor and the ceiling,
@@ -315,7 +314,7 @@ void test_scalable_native_kernel_layout_geometry()
 		gib + 16ULL * kib + reserved_16k,
 		"native window did not page-round RAM or retain its floor");
 	using FourKGeometry = uml::runtime::NativeKernelLayoutGeometry<
-		48ULL * gib, 62ULL * gib, 1, gib, 4ULL * gib, 4ULL * kib,
+		48ULL * gib, 62ULL * gib, gib, 4ULL * gib, 4ULL * kib,
 		DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION,
 		DARWIN_UML_NATIVE_STUB_PAGES>;
 	const auto four_kib_rounded = FourKGeometry::derive(gib + 1U);
@@ -324,7 +323,7 @@ void test_scalable_native_kernel_layout_geometry()
 			2ULL * gib + 8ULL * kib + reserved_4k,
 		"4 KiB geometry did not independently round RAM and auxiliary space");
 	using HighGeometry = uml::runtime::NativeKernelLayoutGeometry<
-		48ULL * gib, 128ULL * 1024ULL * gib, 1, gib, 4ULL * gib,
+		48ULL * gib, 128ULL * 1024ULL * gib, gib, 4ULL * gib,
 		16ULL * kib, DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION,
 		DARWIN_UML_NATIVE_STUB_PAGES>;
 	const auto high = HighGeometry::derive_at(

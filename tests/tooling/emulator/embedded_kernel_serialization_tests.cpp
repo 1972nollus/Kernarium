@@ -53,15 +53,10 @@ constexpr char admission_engine_argument[] = "--execution-engine=gadgets";
 constexpr std::uint64_t native_window_start =
 	DARWIN_UML_MACOS_NATIVE_ADDRESS;
 #else
+/* Page-aligned in both profiles, so the auxiliary allowance is this RAM. */
 constexpr std::uint64_t default_guest_memory = 256ULL * 1024ULL * 1024ULL;
-constexpr std::uint64_t proportional_auxiliary_memory =
-	(default_guest_memory / DARWIN_UML_NATIVE_AUXILIARY_DIVISOR) +
-	(default_guest_memory % DARWIN_UML_NATIVE_AUXILIARY_DIVISOR != 0 ? 1U : 0U);
-constexpr std::uint64_t scaled_auxiliary_memory =
-	(proportional_auxiliary_memory + DARWIN_UML_GUEST_PAGE_SIZE - 1U) &
-	~(DARWIN_UML_GUEST_PAGE_SIZE - 1U);
 constexpr std::uint64_t default_auxiliary_memory =
-	std::max(scaled_auxiliary_memory,
+	std::max(default_guest_memory,
 		static_cast<std::uint64_t>(
 			DARWIN_UML_NATIVE_AUXILIARY_MINIMUM)) +
 	DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION +

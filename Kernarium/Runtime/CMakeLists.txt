@@ -16,44 +16,31 @@ get_target_property(_kernarium_artifact_family
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_ARTIFACT_FAMILY)
 get_target_property(_kernarium_kernel_image
     "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_IMAGE)
-get_target_property(_kernarium_kernel_page_size
-    "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}" UML_KERNEL_PAGE_SIZE)
+# The import verified the artifact as release series 6.18 with this
+# configuration's page size, and admits Android only with 16 KiB pages.
 if(_kernarium_artifact_family STREQUAL "android-6.18")
     set(KERNARIUM_RUNTIME_ANDROID_GUEST 1)
     set(KERNARIUM_RUNTIME_GUEST_FLAVOR
         KERNARIUM_RUNTIME_GUEST_ANDROID)
-    set(KERNARIUM_KERNEL_RELEASE_SERIES "6.18")
 elseif(_kernarium_artifact_family STREQUAL "mainline-6.18")
     set(KERNARIUM_RUNTIME_ANDROID_GUEST 0)
     set(KERNARIUM_RUNTIME_GUEST_FLAVOR
         KERNARIUM_RUNTIME_GUEST_LINUX)
-    set(KERNARIUM_KERNEL_RELEASE_SERIES "6.18")
 else()
     message(FATAL_ERROR
         "KernariumRuntime requires the mainline-6.18 or Android 17 artifact")
 endif()
-string(REPLACE "." "_" KERNARIUM_KERNEL_RELEASE_COMPONENT
-    "${KERNARIUM_KERNEL_RELEASE_SERIES}")
-
+set(KERNARIUM_KERNEL_RELEASE_COMPONENT 6_18)
 if(UML_GUEST_16K_PAGES)
     set(KERNARIUM_KERNEL_PAGE_VARIANT 16K)
-    set(_kernarium_guest_page_size 16384)
 else()
     set(KERNARIUM_KERNEL_PAGE_VARIANT 4K)
-    set(_kernarium_guest_page_size 4096)
-endif()
-if(NOT _kernarium_kernel_page_size EQUAL _kernarium_guest_page_size)
-    message(FATAL_ERROR "Kernarium page profile differs from its kernel artifact")
 endif()
 # The application matches an embedded framework by name before it dares load
 # one, so the guest flavour has to lead the identity rather than trail it: a
 # trailing marker would leave the Android framework matching the Linux
 # page-profile suffix as well.
 if(KERNARIUM_RUNTIME_ANDROID_GUEST)
-    if(NOT UML_GUEST_16K_PAGES)
-        message(FATAL_ERROR
-            "The Kernarium Android runtime supports only 16 KiB guest pages")
-    endif()
     set(KERNARIUM_RUNTIME_FRAMEWORK_NAME
         "KRuntime_ACK_${KERNARIUM_KERNEL_RELEASE_COMPONENT}_${KERNARIUM_KERNEL_PAGE_VARIANT}")
 else()
