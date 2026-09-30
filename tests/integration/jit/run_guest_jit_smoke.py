@@ -60,6 +60,7 @@ OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_FP16", HWCAP_FPHP, "fphp"),
     ("hw.optional.arm.FEAT_FP16", HWCAP_ASIMDHP, "asimdhp"),
     ("hw.optional.arm.FEAT_RDM", HWCAP_ASIMDRDM, "asimdrdm"),
+    ("hw.optional.arm.FEAT_JSCVT", HWCAP_JSCVT, "jscvt"),
     ("hw.optional.arm.FEAT_FCMA", HWCAP_FCMA, "fcma"),
     ("hw.optional.arm.FEAT_LRCPC", HWCAP_LRCPC, "lrcpc"),
     ("hw.optional.arm.FEAT_SHA3", HWCAP_SHA3, "sha3"),
@@ -71,9 +72,6 @@ OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_LRCPC2", HWCAP_ILRCPC, "ilrcpc"),
     ("hw.optional.arm.FEAT_FlagM", HWCAP_FLAGM, "flagm"),
     ("hw.optional.arm.FEAT_SB", HWCAP_SB, "sb"),
-)
-PROBE_DEPENDENT_HWCAPS = (
-    ("hw.optional.arm.FEAT_JSCVT", HWCAP_JSCVT, "jscvt"),
 )
 OPTIONAL_HWCAPS2 = (
     ("hw.optional.arm.FEAT_FlagM2", HWCAP2_FLAGM2, "flagm2"),
@@ -88,7 +86,7 @@ HWCAP_NAMES = {
     HWCAP_FP: "fp",
     HWCAP_ASIMD: "asimd",
     HWCAP_CPUID: "cpuid",
-    **{bit: name for _, bit, name in OPTIONAL_HWCAPS + PROBE_DEPENDENT_HWCAPS},
+    **{bit: name for _, bit, name in OPTIONAL_HWCAPS},
 }
 HWCAP2_NAMES = {bit: name for _, bit, name in OPTIONAL_HWCAPS2}
 # The lines of arm64 Linux's /proc/cpuinfo block (arch/arm64/kernel/cpuinfo.c)
@@ -303,16 +301,10 @@ def main() -> int:
         expected = expected_hwcap(
             OPTIONAL_HWCAPS, HWCAP_FP | HWCAP_ASIMD | HWCAP_CPUID
         )
-        probe_permitted = expected_hwcap(PROBE_DEPENDENT_HWCAPS)
-        if (
-            actual_hwcap is None
-            or (actual_hwcap & ~HWCAP_JSCVT) != expected
-            or (actual_hwcap & HWCAP_JSCVT & ~probe_permitted) != 0
-        ):
+        if actual_hwcap != expected:
             raise RuntimeError(
                 "AT_HWCAP mismatch: "
-                f"expected 0x{expected:x} with probe-dependent mask "
-                f"0x{probe_permitted:x}, got {actual_hwcap!r}"
+                f"expected 0x{expected:x}, got {actual_hwcap!r}"
             )
         expected2 = expected_hwcap(OPTIONAL_HWCAPS2)
         if actual_hwcap2 != expected2:

@@ -53,6 +53,10 @@
 	.equ E_SB,		19
 	.equ E_DIT,		20
 	.equ E_AUXV,		21
+	.equ E_JSCVT_VALUE,	22
+	.equ E_JSCVT_NZCV,	23
+	.equ E_JSCVT_FPSR,	24
+	.equ JSCVT_CASES,	16
 
 	.equ AT_HWCAP,		16
 	.equ AT_HWCAP2,		26
@@ -232,6 +236,39 @@ _start:
 	fjcvtzs	w16, d24
 	cmn	w16, #2
 	b.ne	.Lfail_fjcvtzs
+
+	/* The special inputs, each from NZCV all set and FPSR clear. FJCVTZS
+	 * sets NZCV to 0:Z:0:0, where Z says the result is exact: FPToFixedJS
+	 * clears it for a NaN, an out-of-range or inexact value, and for any
+	 * zero but +0.0, including a subnormal that FPCR.FZ flushes. Some
+	 * cores, such as the M1, set Z for a flushed positive subnormal, and an
+	 * engine that forwards that is wrong. */
+	adrp	x15, jscvt_cases
+	add	x15, x15, :lo12:jscvt_cases
+	mov	x14, #JSCVT_CASES
+.Ljscvt_case:
+	ldp	x9, x10, [x15]
+	msr	fpcr, x10
+	msr	fpsr, xzr
+	mov	x11, #0xf0000000
+	msr	nzcv, x11
+	fmov	d24, x9
+	fjcvtzs	w16, d24
+	mrs	x11, nzcv
+	mrs	x12, fpsr
+	msr	fpcr, xzr
+	msr	fpsr, xzr
+	ldp	x9, x10, [x15, #16]
+	cmp	w16, w9
+	b.ne	.Lfail_jscvt_value
+	cmp	x11, x10
+	b.ne	.Lfail_jscvt_nzcv
+	ldr	x9, [x15, #32]
+	cmp	x12, x9
+	b.ne	.Lfail_jscvt_fpsr
+	add	x15, x15, #40
+	subs	x14, x14, #1
+	b.ne	.Ljscvt_case
 .Lskip_jscvt:
 
 	tbz	x29, #HWCAP2_FRINT, .Lskip_frint
@@ -405,6 +442,9 @@ _start:
 .Lfail_uscat:		fail E_USCAT, msg_uscat
 .Lfail_dit:		fail E_DIT, msg_dit
 .Lfail_auxv:		fail E_AUXV, msg_auxv
+.Lfail_jscvt_value:	fail E_JSCVT_VALUE, msg_jscvt_value
+.Lfail_jscvt_nzcv:	fail E_JSCVT_NZCV, msg_jscvt_nzcv
+.Lfail_jscvt_fpsr:	fail E_JSCVT_FPSR, msg_jscvt_fpsr
 
 .Lexit:
 	mov	x8, #NR_EXIT_GROUP
@@ -429,6 +469,31 @@ rdm_input:
 	.hword 0x4000, 0, 0, 0
 jscvt_input:
 	.double -2.5
+	/* input, FPCR, result, NZCV, FPSR; FZ is FPCR bit 24, and the FPSR
+	 * flags are IOC 0x01, IXC 0x10 and IDC 0x80. Derived from the Arm ARM's
+	 * FPToFixedJS and FPUnpack. */
+	.equ FZ, 1 << 24
+	.equ JSCVT_Z, 0x40000000
+jscvt_cases:
+	.quad 0x0000000000000001, FZ, 0, 0, 0x80		/* +subnormal, flushed */
+	.quad 0x000fffffffffffff, FZ, 0, 0, 0x80		/* largest +subnormal */
+	.quad 0x8000000000000001, FZ, 0, 0, 0x80		/* -subnormal, flushed */
+	.quad 0x0000000000000001, 0, 0, 0, 0x10		/* +subnormal, inexact */
+	.quad 0x8000000000000001, 0, 0, 0, 0x10		/* -subnormal, inexact */
+	.quad 0x0000000000000000, FZ, 0, JSCVT_Z, 0		/* +0.0 is exact */
+	.quad 0x8000000000000000, FZ, 0, 0, 0		/* -0.0 is not */
+	.quad 0x7ff8000000000000, FZ, 0, 0, 0x01		/* quiet NaN */
+	.quad 0x7ff4000000000000, FZ, 0, 0, 0x01		/* signalling NaN */
+	.quad 0x7ff0000000000000, FZ, 0, 0, 0x01		/* +infinity */
+	.quad 0xfff0000000000000, FZ, 0, 0, 0x01		/* -infinity */
+	.quad 0x41e0000000000000, FZ, 0x80000000, 0, 0x01	/* 2^31 overflows */
+	.quad 0xc1e0000000000000, FZ, 0x80000000, JSCVT_Z, 0	/* -2^31 fits */
+	.quad 0xc1e0000000200000, FZ, 0x7fffffff, 0, 0x01	/* -2^31 - 1 */
+	.quad 0x41f0000000500000, FZ, 5, 0, 0x01		/* 2^32 + 5 wraps */
+	.quad 0x4014000000000000, FZ, 5, JSCVT_Z, 0		/* 5.0 */
+	.if (. - jscvt_cases) != JSCVT_CASES * 40
+	.error "JSCVT_CASES does not count jscvt_cases"
+	.endif
 frint_input:
 	.double 2.7
 frint_expected:
@@ -483,6 +548,12 @@ msg_dit:
 	.ascii "FAIL dit        \n"
 msg_auxv:
 	.ascii "FAIL auxv       \n"
+msg_jscvt_value:
+	.ascii "FAIL jscvt value\n"
+msg_jscvt_nzcv:
+	.ascii "FAIL jscvt nzcv \n"
+msg_jscvt_fpsr:
+	.ascii "FAIL jscvt fpsr \n"
 success_message:
 	.ascii "OK\n"
 

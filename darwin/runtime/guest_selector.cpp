@@ -89,12 +89,14 @@ constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 	/* FMLAL/FMLSL. */
 	if (host.has(::uml::platform::ArmFeature::fhm))
 		result |= hwcap_asimdfhm;
-	/* FJCVTZS. The host probe additionally verifies that this core raises the
-	 * subnormal flags the architecture requires; without that the engines
-	 * decline the native encoding, so the guest must not be told it exists.
+	/* FJCVTZS. Some cores, such as the M1, set Z for a subnormal input that
+	 * FPCR.FZ flushes, where the architecture clears it. The host probe
+	 * `jscvt_subnormal_flags_correct` finds them, and both engines then
+	 * correct the flags: the JIT after the native instruction, the gadget
+	 * bank by taking its software path whenever FPCR.FZ is set. The
+	 * instruction is therefore correct on every host that has it.
 	 */
-	if (host.has(::uml::platform::ArmFeature::jscvt) &&
-	    host.jscvt_subnormal_flags_correct)
+	if (host.has(::uml::platform::ArmFeature::jscvt))
 		result |= hwcap_jscvt;
 	/* FCADD/FCMLA. The gadget bank carries a dedicated complex family
 	 * (`floating_complex_vector`, selected through `floating_complex_gadget`)

@@ -84,9 +84,11 @@ void guest_capabilities_match_host()
 			   host.has(::uml::cpu::ArmFeature::rdm));
 	require_propagated(capabilities, hwcap_asimdfhm,
 			   host.has(::uml::cpu::ArmFeature::fhm));
+	/* Both engines correct the subnormal flags of a host whose native
+	 * FJCVTZS gets them wrong, so the advertisement follows the host
+	 * feature alone. */
 	require_propagated(capabilities, hwcap_jscvt,
-			   host.has(::uml::cpu::ArmFeature::jscvt) &&
-				   host.jscvt_subnormal_flags_correct);
+			   host.has(::uml::cpu::ArmFeature::jscvt));
 	require_propagated(capabilities, hwcap_fcma,
 			   host.has(::uml::cpu::ArmFeature::fcma));
 	require_propagated(capabilities, hwcap_lrcpc,

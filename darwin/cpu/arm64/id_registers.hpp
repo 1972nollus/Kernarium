@@ -115,8 +115,7 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 		 * DC CVAP, and the pointer-authentication fields stay zero
 		 * because AT_HWCAP does not advertise PACA/PACG either. */
 		std::uint64_t value = 0;
-		if (host.has(ArmFeature::jscvt) &&
-		    host.jscvt_subnormal_flags_correct)
+		if (host.has(ArmFeature::jscvt))
 			value |= field(1, 12);
 		if (host.has(ArmFeature::fcma))
 			value |= field(1, 16);
