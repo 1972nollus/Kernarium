@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Yi Xie <imxieyi@users.noreply.github.com>
-Date: Thu, 3 Sep 2026 19:19:23 +0900
+Date: Wed, 30 Sep 2026 22:53:47 +0900
 Subject: [PATCH] arm64: describe the emulated x86 CPU in /proc/cpuinfo
 
 The x86-userspace slice runs an arm64 kernel, so setup_arch asks the host
@@ -20,17 +20,19 @@ them, and the identification lines gain the family, model, stepping and
 brand string a reader of this file expects.
 
 The kernel cannot execute CPUID to discover any of this, so the words
-mirror darwin/cpu/x86_64/cpuid.hpp in the host emulator, exactly as
-capflags_arm64.c mirrors the bits darwin_uml_guest_hwcap() advertises.
-The host's x86-64-gadget-bootstrap test executes the CPUID gadget for
-every leaf and fails if the emulator's table and its gadget disagree.
+mirror darwin/cpu/x86_64/cpuid.hpp in the host emulator, as the arm64
+slices mirror the emulator's MIDR_EL1. The host's x86-64-gadget-bootstrap
+test executes the CPUID gadget for every leaf and fails if the emulator's
+table and its gadget disagree. The slice builds none of the arm64
+slices' /proc/cpuinfo printer.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  arch/arm64/um/asm/cpufeatures.h | 11 ++++++
- arch/um/kernel/Makefile         |  6 ++++
- arch/um/kernel/um_arch.c        | 64 +++++++++++++++++++++++++++++++++
- 3 files changed, 81 insertions(+)
+ arch/um/kernel/Makefile         |  6 +++
+ arch/um/kernel/um_arch.c        | 68 ++++++++++++++++++++++++++++++++-
+ 3 files changed, 83 insertions(+), 2 deletions(-)
 
 diff --git a/arch/arm64/um/asm/cpufeatures.h b/arch/arm64/um/asm/cpufeatures.h
 index c224dfb5c3ac46768c8ac1e0304ee6224193df36..3cb07f3bc42f64756253629f30dd397b743396c6 100644
@@ -57,7 +59,7 @@ index c224dfb5c3ac46768c8ac1e0304ee6224193df36..3cb07f3bc42f64756253629f30dd397b
  
  #endif
 diff --git a/arch/um/kernel/Makefile b/arch/um/kernel/Makefile
-index 4dfa286cf6bae567dee545ec05f313929688e204..6e3354460427678eb477bfcf5b5ac05e1f917512 100644
+index 7408e51525d40fef0245583ad2ad07fa9c83cead..87cd74720ba427763b3af99d864c5262daa607ba 100644
 --- a/arch/um/kernel/Makefile
 +++ b/arch/um/kernel/Makefile
 @@ -20,7 +20,13 @@ obj-y = config.o exec.o exitcode.o irq.o ksyms.o mem.o \
@@ -69,18 +71,27 @@ index 4dfa286cf6bae567dee545ec05f313929688e204..6e3354460427678eb477bfcf5b5ac05e
 +# on, so this slice names features the way x86 Linux does.
 +obj-y += capflags.o
 +else
- obj-$(CONFIG_UML_ARM64) += capflags_arm64.o
+ obj-$(CONFIG_UML_ARM64) += hwcaps_arm64.o
 +endif
  obj-$(CONFIG_UML_X86) += capflags.o
  
  obj-$(CONFIG_BLK_DEV_INITRD) += initrd.o
 diff --git a/arch/um/kernel/um_arch.c b/arch/um/kernel/um_arch.c
-index d652bc357fc73b734fea7f25ebda7b316f385312..469121147eb3838e8572040a1777ebab474e3404 100644
+index 2f0047ce9139729dda2dbe6b351be946a8b47851..89da8eddf129e52fb0da6a8828cc31f2d888e0cf 100644
 --- a/arch/um/kernel/um_arch.c
 +++ b/arch/um/kernel/um_arch.c
-@@ -85,6 +85,57 @@ static const char *uml_cpu_model_name(void)
+@@ -85,7 +85,7 @@ static const char *uml_cpu_model_name(void)
  #endif
  }
+ 
+-#ifdef CONFIG_UML_ARM64
++#if defined(CONFIG_UML_ARM64) && !defined(CONFIG_UML_X86_64_USERSPACE_ONLY)
+ /*
+  * arm64 userspace reads this file in arm64 Linux's format
+  * (arch/arm64/kernel/cpuinfo.c), and software chooses its instructions from
+@@ -143,6 +143,57 @@ static void show_arm64_cpuinfo(struct seq_file *m, int cpu)
+ }
+ #endif
  
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +/*
@@ -94,10 +105,10 @@ index d652bc357fc73b734fea7f25ebda7b316f385312..469121147eb3838e8572040a1777ebab
 + * among them: it comes from the emulator directly, so it is the one CPUID
 + * answer this file cannot get out of step with.
 + *
-+ * The capability words mirror darwin/cpu/x86_64/cpuid.hpp in the host emulator
-+ * the same way capflags_arm64.c mirrors the bits darwin_uml_guest_hwcap()
-+ * advertises, and the host's x86-64-gadget-bootstrap test fails if that table
-+ * and the gadget ever disagree.  The indices are the x86 capability words that
++ * The capability words mirror darwin/cpu/x86_64/cpuid.hpp in the host emulator,
++ * as the arm64 slices mirror the emulator's MIDR_EL1, and the host's
++ * x86-64-gadget-bootstrap test fails if that table and the gadget ever
++ * disagree.  The indices are the x86 capability words that
 + * arch/x86/include/asm/cpufeature.h enumerates; the generated capflags.c this
 + * slice links names its bits by the same numbering.
 + */
@@ -136,9 +147,14 @@ index d652bc357fc73b734fea7f25ebda7b316f385312..469121147eb3838e8572040a1777ebab
  static int show_cpuinfo(struct seq_file *m, void *v)
  {
  	int i = 0;
-@@ -96,8 +147,17 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+@@ -153,12 +204,21 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 		return 0;
  #endif
  
+-#ifdef CONFIG_UML_ARM64
++#if defined(CONFIG_UML_ARM64) && !defined(CONFIG_UML_X86_64_USERSPACE_ONLY)
+ 	show_arm64_cpuinfo(m, i);
+ #else
  	seq_printf(m, "processor\t: %d\n", i);
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 +	seq_printf(m, "vendor_id\t: %s\n", emulated_x86_vendor);
@@ -154,7 +170,7 @@ index d652bc357fc73b734fea7f25ebda7b316f385312..469121147eb3838e8572040a1777ebab
  	seq_printf(m, "mode\t\t: skas\n");
  	seq_printf(m, "host\t\t: %s\n", host_info);
  	seq_printf(m, "fpu\t\t: %s\n", str_yes_no(cpu_has(&boot_cpu_data, X86_FEATURE_FPU)));
-@@ -434,7 +494,11 @@ int __init linux_main(int argc, char **argv, char **envp)
+@@ -504,7 +564,11 @@ int __init linux_main(int argc, char **argv, char **envp)
  	/* OS sanity checks that need to happen before the kernel runs */
  	os_early_checks();
  
