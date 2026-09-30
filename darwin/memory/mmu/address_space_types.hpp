@@ -190,7 +190,6 @@ struct GenerationReference final {
 
 struct ExecutionContext final {
 	std::shared_ptr<GenerationState> state;
-	std::uint64_t generation{};
 	std::uint64_t execution_interrupts{};
 	bool entered{};
 };

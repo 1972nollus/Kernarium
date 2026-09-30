@@ -48,7 +48,7 @@ void native_single_block_case() {
   uml::cpu::arm64::CpuState cpu{};
   cpu.pc = base;
   cpu.registers[1] = data;
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   std::size_t executed = 0;
   require(executor.run_block(cpu, memory, generation, executed) ==
           ::uml::cpu::EngineEvent::continued);
@@ -86,7 +86,7 @@ void native_linked_loop_case() {
   cpu.pc = base;
   cpu.registers[1] = data;
   cpu.registers[19] = 500;
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   std::size_t executed = 0;
   auto event = ::uml::cpu::EngineEvent::continued;
   for (unsigned attempt = 0;
@@ -144,7 +144,7 @@ void native_compare_retry_case(unsigned size, bool acquire_release,
   cpu.registers[2] = replacement;
   cpu.registers[4] = matches ? loaded : loaded + 1U;
   cpu.registers[5] = 7;
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   std::size_t total_executed = 0;
   auto event = ::uml::cpu::EngineEvent::continued;
   for (std::size_t attempt = 0;
@@ -188,7 +188,7 @@ void compare_lookahead_preserves_fetch_faults(bool matches) {
   cpu.pc = base + page - 12U;
   cpu.registers[1] = base;
   cpu.registers[4] = matches ? 41U : 42U;
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto event = ::uml::cpu::EngineEvent::continued;
   std::size_t retired = 0;
   for (unsigned attempt = 0; attempt < 10U &&
@@ -240,7 +240,7 @@ void concurrent_compare_retry_case(bool mixed_semantic) {
       auto &executor = (*executors)[index];
       cpu.registers[1] = data;
       cpu.tbi_enabled = mixed_semantic && index == 0;
-      require(executor.begin_execution(generation, base));
+      require(executor.begin_execution(generation));
       start.arrive_and_wait();
       std::uint64_t expected = 0;
       unsigned successes = 0;
@@ -339,7 +339,7 @@ void same_backing_alias_case(bool overlaps, bool semantic_store = false,
    */
   second_cpu.tbi_enabled = semantic_store;
 
-  require(first.begin_execution(generation, first_cpu.pc));
+  require(first.begin_execution(generation));
   std::size_t executed = 0;
   require(first.run_block(first_cpu, shared_memory, generation, executed) ==
           ::uml::cpu::EngineEvent::continued);
@@ -348,7 +348,7 @@ void same_backing_alias_case(bool overlaps, bool semantic_store = false,
   require(first_cpu.registers[3] == observed);
 
   if (store == AliasStore::plain) {
-    require(second.begin_execution(generation, second_cpu.pc));
+    require(second.begin_execution(generation));
     auto event = ::uml::cpu::EngineEvent::continued;
     std::size_t retired = 0;
     unsigned blocks = 0;
@@ -422,7 +422,7 @@ void native_store_invalidates_semantic_reservation_case() {
   native_cpu.pc = base + 8U;
   native_cpu.registers[1] = data;
 
-  require(semantic_executor.begin_execution(generation, semantic_cpu.pc));
+  require(semantic_executor.begin_execution(generation));
   std::size_t executed = 0;
   require(semantic_executor.run_block(
               semantic_cpu, memory, generation, executed) ==
@@ -430,7 +430,7 @@ void native_store_invalidates_semantic_reservation_case() {
   require(executed == 1U);
   require(semantic_cpu.exclusive_size == 8U);
 
-  require(native_executor.begin_execution(generation, native_cpu.pc));
+  require(native_executor.begin_execution(generation));
   auto native_event = ::uml::cpu::EngineEvent::continued;
   for (unsigned attempt = 0;
        attempt < 4U &&
@@ -500,7 +500,7 @@ void slow_store_invalidates_semantic_reservation_case(bool structure) {
   std::memcpy(store_cpu.vectors[0].bytes.data(), &observed, 8U);
   std::memcpy(store_cpu.vectors[0].bytes.data() + 8U, &observed, 8U);
 
-  require(semantic_executor.begin_execution(generation, semantic_cpu.pc));
+  require(semantic_executor.begin_execution(generation));
   std::size_t executed = 0;
   require(semantic_executor.run_block(
               semantic_cpu, memory, generation, executed) ==
@@ -508,7 +508,7 @@ void slow_store_invalidates_semantic_reservation_case(bool structure) {
   require(executed == 1U);
   require(semantic_cpu.exclusive_size == 8U);
 
-  require(store_executor.begin_execution(generation, store_cpu.pc));
+  require(store_executor.begin_execution(generation));
   auto store_event = ::uml::cpu::EngineEvent::continued;
   std::size_t retired = 0;
   for (unsigned attempt = 0;
@@ -570,7 +570,7 @@ void concurrent_native_cold_paths_leave_publication_before_helper() {
     auto &cpu = (*cpus)[index];
     cpu.pc = base;
     cpu.registers[1] = data + index * sizeof(std::uint64_t);
-    require((*executors)[index].begin_execution(generation, cpu.pc));
+    require((*executors)[index].begin_execution(generation));
     std::size_t executed = 0;
     require((*executors)[index].run_block(
                 cpu, (*memories)[index], generation, executed) ==
@@ -589,7 +589,7 @@ void concurrent_native_cold_paths_leave_publication_before_helper() {
     threads.emplace_back([&, index] {
       auto &cpu = (*cpus)[index];
       auto &executor = (*executors)[index];
-      if (!executor.begin_execution(generation, cpu.pc)) {
+      if (!executor.begin_execution(generation)) {
         valid.store(false, std::memory_order_relaxed);
         start.arrive_and_drop();
         return;
@@ -664,7 +664,7 @@ void helper_swap_keeps_native_updates(const HelperSwapRace &race) {
   std::atomic<bool> valid{true};
   std::barrier start{2};
   std::thread adder{[&] {
-    if (!add_executor.begin_execution(race.generation, add_cpu.pc))
+    if (!add_executor.begin_execution(race.generation))
       valid.store(false, std::memory_order_relaxed);
     start.arrive_and_wait();
     std::size_t executed = 0;
@@ -677,7 +677,7 @@ void helper_swap_keeps_native_updates(const HelperSwapRace &race) {
     }
     add_executor.end_execution();
   }};
-  if (!swap_executor.begin_execution(race.generation, swap_cpu.pc))
+  if (!swap_executor.begin_execution(race.generation))
     valid.store(false, std::memory_order_relaxed);
   start.arrive_and_wait();
   auto event = ::uml::cpu::EngineEvent::continued;

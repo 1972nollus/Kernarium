@@ -92,7 +92,7 @@ void monomorphic_and_bimorphic_sites_chain() {
   cpu.pc = base;
   cpu.registers[5] = first;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued);
   require(run.executed == 1);
@@ -179,7 +179,7 @@ void resident_blr_x30_and_ret_chain_correctly() {
   arm64::CpuState cpu{};
   cpu.pc = base;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued);
   require(run.executed == 2);
@@ -222,7 +222,7 @@ void target_mutation_deactivates_and_retrains_site() {
   cpu.pc = base;
   cpu.registers[5] = target;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   require(run_block(executor, memory, generation, cpu).event ==
           ::uml::cpu::EngineEvent::continued);
   require(run_block(executor, memory, generation, cpu).event ==
@@ -270,7 +270,7 @@ void permission_loss_and_unmapped_host_value_never_branch_natively() {
   cpu.pc = base;
   cpu.registers[5] = target;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   require(run_block(executor, memory, generation, cpu).event ==
           ::uml::cpu::EngineEvent::continued);
   require(run_block(executor, memory, generation, cpu).event ==
@@ -284,7 +284,7 @@ void permission_loss_and_unmapped_host_value_never_branch_natively() {
               reinterpret_cast<void *>(target), page,
               PROT_READ | PROT_WRITE) == 0);
   cpu.pc = base;
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued);
   require(run.executed == 1);
@@ -298,7 +298,7 @@ void permission_loss_and_unmapped_host_value_never_branch_natively() {
               PROT_READ | PROT_WRITE | PROT_EXEC) == 0);
   cpu.pc = base;
   cpu.registers[5] = reinterpret_cast<std::uintptr_t>(&cpu);
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued);
   require(run.executed == 1);
@@ -328,7 +328,7 @@ void unsafe_target_is_never_trained() {
   cpu.registers[1] = data;
   cpu.registers[5] = target;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   require(run_block(executor, memory, generation, cpu).event ==
           ::uml::cpu::EngineEvent::continued);
   auto run = run_block(executor, memory, generation, cpu);
@@ -364,7 +364,7 @@ void stateful_target_trains_and_links_with_matching_capability() {
   cpu.pc = base;
   cpu.registers[5] = target;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   require(run_block(executor, memory, generation, cpu).event ==
           ::uml::cpu::EngineEvent::continued);
   auto run = run_block(executor, memory, generation, cpu);
@@ -399,7 +399,7 @@ void trained_target_with_missing_native_environment_falls_back() {
   cpu.pc = base;
   cpu.registers[5] = target;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued && run.executed == 2);
   run = run_block(executor, memory, generation, cpu);
@@ -431,21 +431,21 @@ void pending_training_does_not_cross_task_boundary() {
   first.pc = base;
   first.registers[5] = target;
 
-  require(executor.begin_execution(generation, first.pc));
+  require(executor.begin_execution(generation));
   require(run_block(executor, memory, generation, first).event ==
           ::uml::cpu::EngineEvent::continued);
   executor.end_execution();
 
   arm64::CpuState second{};
   second.pc = target;
-  require(executor.begin_execution(generation, second.pc));
+  require(executor.begin_execution(generation));
   require(run_block(executor, memory, generation, second).event ==
           ::uml::cpu::EngineEvent::system_call);
   executor.end_execution();
   require(executor.indirect_link_diagnostics().trains == 0);
 
   first.pc = base;
-  require(executor.begin_execution(generation, first.pc));
+  require(executor.begin_execution(generation));
   const auto run = run_block(executor, memory, generation, first);
   require(run.event == ::uml::cpu::EngineEvent::continued);
   require(run.executed == 1);
@@ -477,7 +477,7 @@ void trained_sites_remain_scoped_to_their_address_space() {
     cpu.pc = base;
     cpu.registers[5] = target;
     cpu.registers[0] = 0;
-    require(executor.begin_execution(generation, cpu.pc));
+    require(executor.begin_execution(generation));
     auto result = run_block(executor, memory, generation, cpu);
     if (linked) {
       require(result.event == ::uml::cpu::EngineEvent::system_call);
@@ -522,7 +522,7 @@ void indirect_cycles_obey_fairness_checkpoint() {
   cpu.registers[5] = other;
   cpu.registers[6] = base;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued);
   require(run.executed == 1);

@@ -63,7 +63,7 @@ void direct_constant_terminal(unsigned long generation, std::uint64_t base,
   StaticGuestMemory memory;
   arm64::CpuState cpu{};
   cpu.pc = target;
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
 
   auto result = run(executor, memory, generation, cpu);
   require(result.event == expected_event);
@@ -90,7 +90,7 @@ void pic_constant_terminal(unsigned long generation, std::uint64_t base,
   arm64::CpuState cpu{};
   cpu.pc = base;
   cpu.registers[5] = target;
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
 
   auto result = run(executor, memory, generation, cpu);
   require(result.event == ::uml::cpu::EngineEvent::continued);
@@ -147,7 +147,7 @@ void dynamic_success_with_odd_prefix_is_exact() {
   cpu.pc = base;
   cpu.registers[0] = base + page - 16U;
   cpu.registers[5] = 41;
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
 
   const auto result = run(executor, memory, generation, cpu);
   require(result.event == ::uml::cpu::EngineEvent::continued);
@@ -176,7 +176,7 @@ void dynamic_fault_with_odd_prefix_is_exact() {
   cpu.pc = base;
   cpu.registers[0] = base + page - 16U;
   cpu.registers[5] = 41;
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
 
   const auto result = run(executor, memory, generation, cpu);
   require(result.event == ::uml::cpu::EngineEvent::memory_fault);

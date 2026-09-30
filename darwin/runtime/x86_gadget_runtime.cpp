@@ -26,12 +26,11 @@ constexpr std::size_t block_instructions = 64;
 
 class X86StaticExecutionScope final {
 public:
-	X86StaticExecutionScope(unsigned long generation, std::uint64_t guest_pc)
+	explicit X86StaticExecutionScope(unsigned long generation)
 		: context_{darwin_uml_static_vm_execution_context_create(generation)}
 	{
 		entered_ = context_ != nullptr &&
-			darwin_uml_static_vm_execution_context_begin(
-				context_, guest_pc) == 0;
+			darwin_uml_static_vm_execution_context_begin(context_) == 0;
 	}
 
 	~X86StaticExecutionScope()
@@ -141,7 +140,7 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	X86GadgetRunResult run{};
 	auto &result = run.execution;
 	result.reason = ::uml::cpu::ExitReason::fatal;
-	X86StaticExecutionScope execution{generation, cpu.rip};
+	X86StaticExecutionScope execution{generation};
 	if (!execution.entered()) {
 		trace_fatal("execution-scope", cpu, generation, errno);
 		return run;

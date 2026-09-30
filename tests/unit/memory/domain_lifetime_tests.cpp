@@ -240,8 +240,7 @@ void test_software_thread_state_recovers_after_domain_retirement()
 			darwin_uml_static_vm_execution_context_create(
 				retired_generation);
 		const bool execution_started = execution != nullptr &&
-			darwin_uml_static_vm_execution_context_begin(
-				execution, 0) == 0;
+			darwin_uml_static_vm_execution_context_begin(execution) == 0;
 		initial_state_ready.store(activated && batch_started && walker_locked &&
 			execution_started, std::memory_order_release);
 		prepared.store(true, std::memory_order_release);
@@ -256,8 +255,7 @@ void test_software_thread_state_recovers_after_domain_retirement()
 		 * refuses to enter again. */
 		const bool old_execution_closed = execution != nullptr &&
 			darwin_uml_static_vm_execution_context_end(execution) == 0 &&
-			darwin_uml_static_vm_execution_context_begin(
-				execution, 0) == -1;
+			darwin_uml_static_vm_execution_context_begin(execution) == -1;
 		darwin_uml_static_vm_execution_context_destroy(execution);
 		stale_operations_failed.store(old_batch_closed && old_walker_closed &&
 			old_execution_closed, std::memory_order_release);
@@ -275,7 +273,7 @@ void test_software_thread_state_recovers_after_domain_retirement()
 				replacement_generation);
 		const bool replacement_execution = replacement_context != nullptr &&
 			darwin_uml_static_vm_execution_context_begin(
-				replacement_context, 0) == 0 &&
+				replacement_context) == 0 &&
 			darwin_uml_static_vm_execution_context_end(
 				replacement_context) == 0;
 		darwin_uml_static_vm_execution_context_destroy(replacement_context);
@@ -399,7 +397,7 @@ void test_software_thread_exit_closes_walker()
 	require(darwin_uml_static_vm_walker_lock(generation) == 0);
 	require(darwin_uml_static_vm_walker_unlock(generation) == 0);
 	require(state.execution_gate.load(std::memory_order_acquire) == 0);
-	require(darwin_uml_static_vm_execution_context_begin(context, 0) == 0);
+	require(darwin_uml_static_vm_execution_context_begin(context) == 0);
 	require(darwin_uml_static_vm_execution_context_end(context) == 0);
 	require(darwin_uml_static_vm_destroy(generation) == 0);
 	darwin_uml_static_vm_execution_context_destroy(context);

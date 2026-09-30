@@ -49,7 +49,7 @@ void current_host_barriers_execute() {
   const auto initial_registers = cpu.registers;
   cpu.pc = base;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   std::size_t executed = 0;
   require(executor.run_block(cpu, memory, generation, executed) ==
           ::uml::cpu::EngineEvent::system_call);

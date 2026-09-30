@@ -95,7 +95,7 @@ void deferred_vector_self_loop_obeys_fairness() {
   cpu.defer_fp_load(deferred.data(), 0, 0);
   cpu.pc = base;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   const auto run = run_block(executor, memory, generation, cpu);
   const auto limit =
       uml::cpu::arm64::jit::testing::link_chain_instruction_limit();
@@ -141,7 +141,7 @@ void direct_capability_requirements_are_exact() {
   set_vector_lanes(cpu.vectors[1], 1);
   cpu.pc = vector_target;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   require(run_block(executor, memory, generation, cpu).event ==
           ::uml::cpu::EngineEvent::system_call);
   cpu.pc = native_target;
@@ -198,7 +198,7 @@ void control_and_status_state_survives_links() {
   arm64::CpuState cpu{};
   cpu.pc = status_target;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   require(run_block(executor, memory, generation, cpu).event ==
           ::uml::cpu::EngineEvent::system_call);
   arm64::restore_native_fp_environment(cpu);
@@ -244,7 +244,7 @@ void native_status_is_deferred_until_an_architectural_observer() {
   const auto host_fpcr = native_fpcr();
   const auto host_fpsr = native_fpsr();
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::system_call && run.executed == 2);
   require(cpu.gadget_fp_active);
@@ -285,7 +285,7 @@ void semantic_helper_materializes_status_and_restores_host() {
   const auto host_fpcr = native_fpcr();
   const auto host_fpsr = native_fpsr();
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued && run.executed == 1);
   require(cpu.pc == base + 4);
@@ -326,7 +326,7 @@ void changing_cpu_materializes_the_previous_owner() {
   const auto host_fpcr = native_fpcr();
   const auto host_fpsr = native_fpsr();
 
-  require(executor.begin_execution(generation, first.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, first);
   require(run.event == ::uml::cpu::EngineEvent::system_call && run.executed == 2);
   require(first.gadget_fp_active);
@@ -367,7 +367,7 @@ void returning_miss_preserves_native_control_and_status() {
   const auto host_fpcr = native_fpcr();
   const auto host_fpsr = native_fpsr();
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   const auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::system_call && run.executed == 6);
   require(cpu.registers[3] == value);
@@ -423,7 +423,7 @@ void returning_miss_preserves_native_auxiliary_mode() {
       conversion::expected_state(expected_input, form, registers);
   const auto host_mode = native_fpmr();
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   const auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::system_call && run.executed == 4);
   require(cpu.registers[3] == value);
@@ -460,7 +460,7 @@ void terminal_helper_restores_native_auxiliary_mode() {
   cpu.pc = base;
   const auto host_mode = native_fpmr();
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   const auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued && run.executed == 2);
   require(cpu.pc == base + 8);
@@ -503,7 +503,7 @@ void auxiliary_mode_requires_owned_environment_and_restores() {
   cpu.pc = target;
   const auto host_mode = native_fpmr();
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::memory_fault && run.executed == 1);
   require(native_fpmr() == host_mode);
@@ -551,7 +551,7 @@ void stateful_store_links_require_publication() {
   cpu.registers[3] = base + page;
   cpu.pc = target;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   require(run_block(executor, memory, generation, cpu).event ==
           ::uml::cpu::EngineEvent::system_call);
 
@@ -600,7 +600,7 @@ void linked_successor_observes_dirty_constrained_binding() {
    * after flushing dirty q6; compiling the target then proves it imports the
    * published architectural value.
    */
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued && run.executed == 2U);
   require(cpu.pc == target);
@@ -618,7 +618,7 @@ void linked_successor_observes_dirty_constrained_binding() {
   set_vector_lanes(cpu.vectors[0], input_lanes);
   set_vector_lanes(cpu.vectors[1], 0U);
   cpu.pc = source;
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::system_call && run.executed == 4U);
   require(first_vector_lane(cpu.vectors[0]) == result_lanes);
@@ -644,7 +644,7 @@ void linked_vector_fault_is_precise_for_page_size() {
   cpu.registers[0] = base + page;
   cpu.pc = target;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::memory_fault && run.executed == 0);
 
@@ -681,7 +681,7 @@ void trap_mode_runs_a_deferred_atomic() {
   cpu.registers[1] = 2;
   cpu.pc = base;
 
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   auto run = run_block(executor, memory, generation, cpu);
   require(run.event == ::uml::cpu::EngineEvent::continued && run.executed == 1);
   require(cpu.pc == base + 4);

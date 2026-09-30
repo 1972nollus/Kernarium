@@ -84,14 +84,13 @@ JitExecutor::Implementation::~Implementation() {
   darwin_uml_static_vm_execution_context_destroy(execution_context_);
 }
 
-[[nodiscard]] bool JitExecutor::Implementation::begin_execution(unsigned long generation,
-                                   std::uint64_t guest_pc) {
+[[nodiscard]] bool JitExecutor::Implementation::begin_execution(unsigned long generation) {
   if (!cache_lease_.admitted())
     return false;
   prepared_memory_ = nullptr;
   auto *context = execution_context(generation);
   return context != nullptr &&
-         darwin_uml_static_vm_execution_context_begin(context, guest_pc) == 0;
+         darwin_uml_static_vm_execution_context_begin(context) == 0;
 }
 
 void JitExecutor::Implementation::end_execution() noexcept {
@@ -193,10 +192,9 @@ JitExecutor::JitExecutor(JitExecutorOptions options,
 
 JitExecutor::~JitExecutor() = default;
 
-bool JitExecutor::begin_execution(unsigned long generation,
-                                  std::uint64_t guest_pc) {
+bool JitExecutor::begin_execution(unsigned long generation) {
   return implementation_ != nullptr &&
-         implementation_->begin_execution(generation, guest_pc);
+         implementation_->begin_execution(generation);
 }
 
 void JitExecutor::end_execution() noexcept {

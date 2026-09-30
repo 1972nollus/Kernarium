@@ -44,13 +44,12 @@ void require(bool condition,
 
 class HeldExecution final {
 public:
-	HeldExecution(unsigned long generation, unsigned long guest_pc)
+	explicit HeldExecution(unsigned long generation)
 	{
 		context_ =
 			darwin_uml_static_vm_execution_context_create(generation);
 		require(context_ != nullptr);
-		require(darwin_uml_static_vm_execution_context_begin(
-				context_, guest_pc) == 0);
+		require(darwin_uml_static_vm_execution_context_begin(context_) == 0);
 	}
 
 	HeldExecution(const HeldExecution &) = delete;
@@ -90,7 +89,7 @@ void test_additive_batch_does_not_stop_execution()
 			DARWIN_UML_GUEST_PAGE_SIZE, PROT_READ | PROT_WRITE, 0, 1) ==
 		0);
 	{
-		HeldExecution execution{generation, base};
+		HeldExecution execution{generation};
 		std::atomic_bool started{};
 		std::atomic_bool complete{};
 		std::thread publisher{[&] {
@@ -134,7 +133,7 @@ void test_replacing_batch_still_quiesces_execution()
 	void *context =
 		darwin_uml_static_vm_execution_context_create(generation);
 	require(context != nullptr);
-	require(darwin_uml_static_vm_execution_context_begin(context, base) == 0);
+	require(darwin_uml_static_vm_execution_context_begin(context) == 0);
 	std::atomic_bool started{};
 	std::atomic_bool complete{};
 	std::thread replacer{[&] {
@@ -921,12 +920,10 @@ void test_retired_batch_cannot_commit_into_replacement_generation()
 void test_waiting_execution_context_cannot_enter_retired_generation()
 {
 	constexpr unsigned long generation = 309;
-	constexpr unsigned long guest_pc = 0xd'0000;
 	void *active = darwin_uml_static_vm_execution_context_create(generation);
 	void *waiting = darwin_uml_static_vm_execution_context_create(generation);
 	require(active != nullptr && waiting != nullptr);
-	require(darwin_uml_static_vm_execution_context_begin(
-		active, guest_pc) == 0);
+	require(darwin_uml_static_vm_execution_context_begin(active) == 0);
 
 	std::atomic_int destroy_result{-2};
 	std::thread destroyer{[&] {
@@ -944,7 +941,7 @@ void test_waiting_execution_context_cannot_enter_retired_generation()
 	std::atomic_int waiting_result{-2};
 	std::thread waiter{[&] {
 		waiting_result.store(
-			darwin_uml_static_vm_execution_context_begin(waiting, guest_pc),
+			darwin_uml_static_vm_execution_context_begin(waiting),
 			std::memory_order_release);
 	}};
 	std::this_thread::sleep_for(20ms);

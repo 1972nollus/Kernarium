@@ -111,8 +111,7 @@ int darwin_uml_static_vm_mapping_changes(
  * thread-local address-space state at every translated-block boundary. */
 void *darwin_uml_static_vm_execution_context_create(unsigned long generation);
 void darwin_uml_static_vm_execution_context_destroy(void *context);
-int darwin_uml_static_vm_execution_context_begin(void *context,
-						 unsigned long guest_pc);
+int darwin_uml_static_vm_execution_context_begin(void *context);
 int darwin_uml_static_vm_execution_context_end(void *context);
 struct darwin_uml_static_sequences darwin_uml_static_vm_execution_context_sequences(
 	void *context);

@@ -33,7 +33,7 @@ struct Outcome final {
 [[nodiscard]] Outcome run_once(gadgets::GadgetExecutor &executor,
 	StaticGuestMemory &memory, unsigned long generation, arm64::CpuState &cpu)
 {
-	require(executor.begin_execution(generation, cpu.pc));
+	require(executor.begin_execution(generation));
 	std::size_t executed = 0;
 	const auto event = executor.run_block(cpu, memory, generation, executed);
 	executor.end_execution();

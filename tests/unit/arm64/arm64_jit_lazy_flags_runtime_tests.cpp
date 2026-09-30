@@ -20,7 +20,7 @@ using Event = ::uml::cpu::EngineEvent;
                              uml::memory::StaticGuestMemory &memory,
                              unsigned long generation,
                              std::size_t &executed) {
-  require(executor.begin_execution(generation, cpu.pc));
+  require(executor.begin_execution(generation));
   const auto event = executor.run_block(cpu, memory, generation, executed);
   executor.end_execution();
   return event;
