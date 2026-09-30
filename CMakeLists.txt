@@ -39,19 +39,16 @@ endif()
 
 if(UML_APPLE_PLATFORM STREQUAL "macos")
     set(UML_TARGET_MACOS ON)
-    option(UML_BUILD_CLI "Build the arm64 macOS command-line app" ON)
-    option(UML_BUILD_ANDROID17_CLI
-        "Build the separate Android 17 arm64 macOS executable" OFF)
-    option(UML_BUILD_KERNEL_RUNNER
-           "Build the embedded ELF kernel runner for the macOS CLI" ON)
-elseif(UML_APPLE_PLATFORM MATCHES "^ios")
+else()
     set(UML_TARGET_MACOS OFF)
-    option(UML_BUILD_CLI "Build the arm64 macOS command-line app" OFF)
-    option(UML_BUILD_ANDROID17_CLI
-        "Build the separate Android 17 arm64 macOS executable" OFF)
-    option(UML_BUILD_KERNEL_RUNNER
-        "Build the prototype embedded ELF runner for Kernarium on iOS" OFF)
 endif()
+option(UML_BUILD_CLI "Build the arm64 macOS command-line app"
+    ${UML_TARGET_MACOS})
+option(UML_BUILD_ANDROID17_CLI
+    "Build the separate Android 17 arm64 macOS executable" OFF)
+option(UML_BUILD_KERNEL_RUNNER
+    "Build the embedded ELF kernel runner for the macOS CLI or Kernarium"
+    ${UML_TARGET_MACOS})
 
 option(UML_BUILD_UNIT_TESTS
     "Build host-only C++/assembly unit tests"
@@ -213,9 +210,6 @@ if(UML_BUILD_GPU)
 endif()
 
 if(UML_BUILD_NETWORK_PROVIDER AND NOT UML_TARGET_MACOS)
-    if(NOT UML_APPLE_PLATFORM MATCHES "^ios")
-        message(FATAL_ERROR "The Kernarium network provider requires iOS")
-    endif()
     include(dependencies/cmake/IosNetworkDependencies.cmake)
 endif()
 
