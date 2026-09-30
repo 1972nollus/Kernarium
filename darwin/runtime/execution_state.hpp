@@ -72,6 +72,9 @@ struct ThreadExecutionState final {
 #if DARWIN_UML_X86_64_GUEST
 	::uml::cpu::x86_64::CpuState x86_cpu{};
 	::uml::cpu::x86_64::gadgets::Executor x86_executor{};
+	/* Made the first time the guest enables #MF or #XM. */
+	std::unique_ptr<::uml::cpu::x86_64::gadgets::Executor>
+		x86_checked_executor;
 #endif
 	::uml::memory::StaticGuestMemory memory;
 	ThreadEngineSlots engines;

@@ -3010,7 +3010,11 @@ private:
 			instruction.operation = Operation::lahf;
 			return true;
 		case 0x9b:
+			/* FWAIT does nothing unless an unmasked x87 exception is
+			 * pending, which the runtime checks for; the opcode names
+			 * it for that check. */
 			instruction.operation = Operation::nop;
+			instruction.vector_opcode = opcode;
 			return true;
 		case 0xa0:
 		case 0xa1:

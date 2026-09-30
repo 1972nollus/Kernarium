@@ -304,7 +304,8 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	const bool stepping = (cpu.rflags & x86_64::rflags_trap) != 0;
 	const auto &registered_interrupt = runtime.interrupt;
 	auto run = ::uml::runtime::run_x86_gadgets(
-		cpu, runtime.memory, runtime.x86_executor, generation,
+		cpu, runtime.memory, runtime.x86_executor,
+		runtime.x86_checked_executor, generation,
 		stepping ? 1 : dispatch_budget, stepping, {
 		.sequence = registered_interrupt.sequence,
 		.snapshot = registered_interrupt.snapshot,
@@ -359,10 +360,12 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		event = DARWIN_UML_EVENT_BREAKPOINT;
 		break;
 	case uml::cpu::ExitReason::floating_point_trap:
-		/* #DE, a fault; the engine raises no other arithmetic exception. */
-		registers.fault.error_code = 0;
+		/* #DE, #MF or #XM, each a fault. The kernel derives the code of
+		 * #MF and #XM from the error code, then clears it. */
+		registers.fault.error_code = run.error_code;
 		registers.fault.address = cpu.rip;
-		registers.fault.trap_number = 0;
+		registers.fault.trap_number = static_cast<std::int32_t>(
+			result.syndrome);
 		save_x86_fault_flags(registers);
 		event = DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
 		break;

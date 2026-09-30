@@ -162,7 +162,7 @@ gadget x87_load_control
 	effective_address
 	x87_scalar_load 2, x9
 	strh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
-	retire_and_next
+	retire_unless_unmasked w9, 0x3f
 
 gadget x87_store_control
 	effective_address
@@ -225,7 +225,8 @@ gadget x87_environment_restore_\name
 	b.ne .Lx86_x87_environment_restore_loop\@
 	.endif
 	add sp, sp, #.Lx86_x87_environment_stack\@
-	retire_and_next
+	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	retire_unless_unmasked w9, 0x3f
 .Lx86_x87_environment_restore_fault\@:
 	add sp, sp, #.Lx86_x87_environment_stack\@
 	b .Lx86_memory_fault

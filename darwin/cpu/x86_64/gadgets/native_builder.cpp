@@ -7190,4 +7190,13 @@ std::vector<std::uintptr_t> build_repeat_step_stream(
 	return stream;
 }
 
+void append_leave_stream(std::vector<std::uintptr_t> &stream,
+	std::uint64_t rip)
+{
+	/* Unlinked: a linked exit to its own address would enter itself again
+	 * without retiring anything, and never spend the budget. */
+	stream.push_back(entry_address(native::uml_x86_64_gadget_block_exit));
+	stream.push_back(rip);
+}
+
 } // namespace uml::cpu::x86_64::gadgets

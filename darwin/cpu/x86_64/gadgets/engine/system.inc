@@ -308,12 +308,12 @@ gadget mxcsr_load
 	translate 0, UML_X86_64_TLB_READ_PAGE, 4
 	ldr w24, [x7]
 .Lx86_mxcsr_load_done:
-	mov w8, #0xe040
-	and w24, w24, w8
-	orr w24, w24, #0x1f80
+	/* MXCSR holds what the guest loads, masks and flags included, as
+	 * STMXCSR shows; its reserved high half reads as zero. */
+	and w24, w24, #0xffff
 	str w24, [_cpu, #UML_X86_64_CPU_MXCSR]
 	publish_guest_rounding 9, 10, 11
-	retire_and_next
+	retire_unless_unmasked w24, 0x1f80
 .Lx86_mxcsr_load_cross:
 	mov x0, _context
 	mov x1, x25

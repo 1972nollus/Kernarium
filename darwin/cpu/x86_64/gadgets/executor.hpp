@@ -98,6 +98,12 @@ public:
 		std::uint64_t address, std::size_t size) noexcept;
 	[[nodiscard]] bool accept_code_changes(
 		std::uint64_t code_changes) noexcept;
+	/* Build for a guest that has enabled the exceptions in `checked`
+	 * (`checked_exceptions`), so that no linked block runs an instruction
+	 * that needs a check. The mask holds for everything the cache keeps: a
+	 * caller that needs another sets it on a fresh executor. */
+	void check_exceptions(unsigned checked) noexcept;
+	[[nodiscard]] unsigned checked_exceptions() const noexcept;
 	[[nodiscard]] ProgramSelection select_program(
 		::uml::memory::GuestAddressSpace &memory, std::uint64_t address,
 		ExecutionMode mode,

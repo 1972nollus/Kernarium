@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "program.hpp"
+#include "exception_checks.hpp"
 #include "executor.hpp"
 #include "native_builder.hpp"
 #include "native_entry.hpp"
@@ -151,9 +152,10 @@ std::span<const Gadget> Program::replay_instructions() const noexcept
 
 Program::Program(ExecutionMode mode, std::uint64_t address,
 	std::size_t byte_count, std::span<const Gadget> gadgets,
-	std::span<const std::byte> source, std::span<const std::uintptr_t> words)
+	std::span<const std::byte> source, std::span<const std::uintptr_t> words,
+	bool check_head)
 	: address_{normalize_instruction_pointer(mode, address)},
-	  byte_count_{byte_count}, mode_{mode}
+	  byte_count_{byte_count}, mode_{mode}, check_head_{check_head}
 {
 	words_storage_ =
 		std::make_unique_for_overwrite<std::uintptr_t[]>(words.size());
@@ -188,7 +190,16 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t address, ExecutionMode mode,
 	std::size_t maximum_instructions, ProgramLinkResolver links) noexcept
 {
+	return build(memory, address, mode, maximum_instructions, links, 0);
+}
+
+BuildResult build(::uml::memory::GuestAddressSpace &memory,
+	std::uint64_t address, ExecutionMode mode,
+	std::size_t maximum_instructions, ProgramLinkResolver links,
+	unsigned checked) noexcept
+{
 	try {
+		bool check_head = false;
 		auto &stream = decoded_scratch();
 		stream.clear();
 		stream.reserve(maximum_instructions);
@@ -219,12 +230,22 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 						decoded.fault_address};
 				return {BuildStatus::illegal_instruction, {}, current};
 			}
+			/* An instruction that could raise an exception the guest
+			 * enabled ends the block before it, or is the whole block. */
+			if (checked != 0 &&
+				needs_check(decoded.instruction, checked)) {
+				if (!stream.empty())
+					break;
+				check_head = true;
+			}
 			stream.push_back({current, decoded.instruction});
 			source.insert(source.end(), consumed.data(),
 				consumed.data() + decoded.instruction.length);
 			current = advance_instruction_pointer(
 				mode, current, decoded.instruction.length);
 			bytes += decoded.instruction.length;
+			if (check_head)
+				break;
 			if (decoded.instruction.terminal()) {
 				/* A conditional branch's fall-through continues in this same
 				 * block, so not taking the branch costs one dispatch instead
@@ -244,6 +265,25 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 		 * decode failure does: the prefix retires, and dispatch reports the
 		 * refused instruction at its own address when it starts a block. */
 		auto &words = native_scratch();
+		if (check_head) {
+			/* The instruction must have a form, as any other block's
+			 * must, but the stream only leaves at it: a link that enters
+			 * this block reaches the runtime, which runs it checked. */
+			words.clear();
+			if (append_native_stream(words, std::span<const Gadget>{stream},
+				advance_instruction_pointer(mode,
+					normalize_instruction_pointer(mode, address), bytes),
+				mode))
+				return {BuildStatus::illegal_instruction, {}, address};
+			words.clear();
+			append_leave_stream(words, stream.front().address);
+			return {BuildStatus::built,
+				Program{mode, address, bytes,
+					std::span<const Gadget>{stream},
+					std::span<const std::byte>{source},
+					std::span<const std::uintptr_t>{words}, true},
+				0};
+		}
 		for (;;) {
 			words.clear();
 			const auto refused = append_native_stream(words,
@@ -273,6 +313,88 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 		return {BuildStatus::allocation_failure, {}, 0};
 	}
 }
+
+namespace {
+
+/* Runs `native_stream`, the program's own stream or one built from its
+ * instructions, for at most `limit` instructions of the caller's
+ * `instruction_budget`. With `WatchFloating` the host's floating-point
+ * exception flags are cleared as the stream starts and reported, as MXCSR
+ * flags, in `floating_exceptions` as it ends. */
+template<bool WatchFloating>
+[[nodiscard, gnu::always_inline]] inline ExecuteResult run_stream(const Program &program, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory, Executor &executor,
+	std::span<const std::uintptr_t> native_stream, std::size_t limit,
+	std::size_t instruction_budget,
+	std::uint32_t *floating_exceptions = nullptr) noexcept
+{
+	NativeExecutionContext context{
+		.memory = &memory,
+		.tlb_entries = executor.tlb_entries(),
+		.program_begin = program.address(),
+		.program_end = program.address() + program.byte_count(),
+		.unaligned_exclusives = executor.unaligned_exclusives(),
+		.instruction_limit = std::min<std::size_t>(limit, 4096),
+		.target_links = executor.target_links(program.execution_mode()),
+		.execution_context = executor.execution_context(),
+		.sequence_context = &executor,
+		.code_change_reader = [](void *opaque) noexcept {
+			return static_cast<Executor *>(opaque)->current_code_changes();
+		},
+		.code_changes = executor.prepared_code_changes(),
+		.code_publications = 0,
+		.code_pages = executor.code_page_registry(),
+		.stack_entry = executor.tlb_entries(),
+	};
+	/* RF is cleared as the next instruction starts, after the
+	 * instruction-breakpoint check it exists to suppress. It reaches the
+	 * engine only from IRET, which always leaves it, and in the flags the
+	 * kernel hands over, so that instruction always starts here. A caller's
+	 * exits before this run no instruction and keep it, as an interrupt
+	 * taken before the instruction does. */
+	cpu.rflags &= ~rflags_resume;
+	executor.enter_engine();
+	if constexpr (WatchFloating)
+		clear_host_floating_exceptions();
+	const auto result = uml_x86_64_gadget_enter(
+		native_stream.data(), &cpu, &context);
+	if constexpr (WatchFloating)
+		*floating_exceptions = host_floating_exceptions();
+	executor.leave_engine();
+	/* A block that published a code write and then left the stream never
+	 * reached the link-following test that settles its own publication, so
+	 * the sequence it leaves behind reads as somebody else's change and cools
+	 * every link in the address space. Settle it here on the same terms: the
+	 * global sequence advanced by exactly this run's own publications, each of
+	 * which already cooled the blocks it actually overlapped.
+	 */
+	if (context.code_publications != 0 &&
+		context.code_publications <=
+			std::numeric_limits<std::uint64_t>::max() - context.code_changes) {
+		const auto settled = context.code_changes + context.code_publications;
+		if (executor.current_code_changes() == settled)
+			(void)executor.accept_code_changes(settled);
+	}
+	const bool repeat_yielded = result.event == UML_X86_64_EVENT_REPEAT_YIELD;
+	const auto event = repeat_yielded ? ::uml::cpu::EngineEvent::continued :
+		static_cast<::uml::cpu::EngineEvent>(result.event);
+	if (event == ::uml::cpu::EngineEvent::continued &&
+		context.indirect_miss != nullptr)
+		executor.train_indirect(context.indirect_miss, cpu.rip, program.execution_mode());
+	if (event == ::uml::cpu::EngineEvent::fatal)
+		trace_fatal("native-entry", program, cpu, instruction_budget,
+			result.executed);
+	return {
+		event,
+		result.executed,
+		context.fault,
+		event == ::uml::cpu::EngineEvent::continued &&
+			result.executed == instruction_budget,
+		repeat_yielded,
+	};
+}
+
+} // namespace
 
 ExecuteResult execute(const Program &program, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &memory,
@@ -337,67 +459,211 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 		}
 	}
 
-	NativeExecutionContext context{
-		.memory = &memory,
-		.tlb_entries = executor.tlb_entries(),
-		.program_begin = program.address(),
-		.program_end = program.address() + program.byte_count(),
-		.unaligned_exclusives = executor.unaligned_exclusives(),
-		.instruction_limit =
-			std::min<std::size_t>(instruction_budget, 4096),
-		.target_links = executor.target_links(program.execution_mode()),
-		.execution_context = executor.execution_context(),
-		.sequence_context = &executor,
-		.code_change_reader = [](void *opaque) noexcept {
-			return static_cast<Executor *>(opaque)->current_code_changes();
-		},
-		.code_changes = executor.prepared_code_changes(),
-		.code_publications = 0,
-		.code_pages = executor.code_page_registry(),
-		.stack_entry = executor.tlb_entries(),
-	};
-	/* RF is cleared as the next instruction starts, after the
-	 * instruction-breakpoint check it exists to suppress. It reaches the
-	 * engine only from IRET, which always leaves it, and in the flags the
-	 * kernel hands over, so that instruction always starts here. The exits
-	 * above run no instruction and keep it, as an interrupt taken before the
-	 * instruction does. */
-	cpu.rflags &= ~rflags_resume;
-	executor.enter_engine();
-	const auto result = uml_x86_64_gadget_enter(
-		native_stream.data(), &cpu, &context);
-	executor.leave_engine();
-	/* A block that published a code write and then left the stream never
-	 * reached the link-following test that settles its own publication, so
-	 * the sequence it leaves behind reads as somebody else's change and cools
-	 * every link in the address space. Settle it here on the same terms: the
-	 * global sequence advanced by exactly this run's own publications, each of
-	 * which already cooled the blocks it actually overlapped.
-	 */
-	if (context.code_publications != 0 &&
-		context.code_publications <=
-			std::numeric_limits<std::uint64_t>::max() - context.code_changes) {
-		const auto settled = context.code_changes + context.code_publications;
-		if (executor.current_code_changes() == settled)
-			(void)executor.accept_code_changes(settled);
+	return run_stream<false>(program, cpu, memory, executor, native_stream,
+		instruction_budget, instruction_budget);
+}
+
+namespace {
+
+/* The guest bytes a checked instruction may store before the exception the
+ * runtime raises for it, which undoes the store: an x87 store, or
+ * VCVTPS2PH to memory. */
+struct SavedStore final {
+	std::uint64_t address{};
+	std::size_t bytes{};
+	std::array<std::byte, 16> data{};
+};
+
+[[nodiscard]] SavedStore save_store(const CpuState &cpu,
+	const Gadget &gadget, ::uml::memory::GuestAddressSpace &memory,
+	unsigned checked)
+{
+	const auto &instruction = gadget.instruction;
+	const Operand *operand = nullptr;
+	std::size_t bytes{};
+	if ((checked & check_x87) != 0 && x87_store_bytes(instruction) != 0) {
+		operand = &instruction.source;
+		bytes = x87_store_bytes(instruction);
+	} else if ((checked & check_simd) != 0 && simd_floating(instruction) &&
+		instruction.destination.kind == OperandKind::memory) {
+		operand = &instruction.destination;
+		bytes = static_cast<std::size_t>(instruction.destination.width);
 	}
-	const bool repeat_yielded = result.event == UML_X86_64_EVENT_REPEAT_YIELD;
-	const auto event = repeat_yielded ? ::uml::cpu::EngineEvent::continued :
-		static_cast<::uml::cpu::EngineEvent>(result.event);
-	if (event == ::uml::cpu::EngineEvent::continued &&
-		context.indirect_miss != nullptr)
-		executor.train_indirect(context.indirect_miss, cpu.rip, program.execution_mode());
-	if (event == ::uml::cpu::EngineEvent::fatal)
-		trace_fatal("native-entry", program, cpu, instruction_budget,
-			result.executed);
-	return {
-		event,
-		result.executed,
-		context.fault,
-		event == ::uml::cpu::EngineEvent::continued &&
-			result.executed == instruction_budget,
-		repeat_yielded,
-	};
+	SavedStore saved{};
+	if (operand == nullptr || bytes > saved.data.size())
+		return saved;
+	saved.address = effective_address(cpu, gadget, *operand);
+	if (memory.read(saved.address,
+		std::span<std::byte>{saved.data}.first(bytes)))
+		saved.bytes = bytes;
+	return saved;
+}
+
+void restore_store(const SavedStore &saved,
+	::uml::memory::GuestAddressSpace &memory)
+{
+	if (saved.bytes != 0)
+		(void)memory.write(saved.address,
+			std::span<const std::byte>{saved.data}.first(saved.bytes));
+}
+
+[[nodiscard]] ExecuteResult floating_point_trap(std::uint8_t vector,
+	std::uint32_t error) noexcept
+{
+	ExecuteResult trap{::uml::cpu::EngineEvent::floating_point_trap, 0, {},
+		false, false};
+	trap.vector = vector;
+	trap.error = error;
+	return trap;
+}
+
+/* MXCSR's and the x87 status word's exception flags that x86 checks before
+ * it computes a result: invalid operation, denormal operand and division by
+ * zero. An unmasked one leaves the destination alone. */
+constexpr std::uint32_t precomputation_exceptions = 0x07U;
+constexpr std::uint32_t overflow_underflow = 0x18U;
+constexpr std::uint32_t underflow_exception = 0x10U;
+constexpr std::uint32_t precision_exception = 0x20U;
+constexpr std::uint8_t x87_error_vector = 16;
+constexpr std::uint8_t simd_error_vector = 19;
+/* The x87 status word's C0, C2, C3 and TOP, which an instruction that
+ * raised an unmasked invalid operation or division by zero leaves as they
+ * were, and its C1, stack fault and exception flags, which it sets. */
+constexpr std::uint16_t x87_kept_status = 0x7d00U;
+constexpr std::uint16_t x87_raised_status = 0x027fU;
+
+} // namespace
+
+ExecuteResult execute_checked(const Program &program, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory, Executor &executor,
+	std::size_t instruction_budget,
+	const ::uml::cpu::InterruptToken &interrupt, bool single_step,
+	unsigned checked) noexcept
+{
+	if (program.native_stream().empty() ||
+		cpu.execution_mode != program.execution_mode() ||
+		cpu.rip != program.address()) {
+		trace_fatal("checked-precondition", program, cpu,
+			instruction_budget);
+		return {::uml::cpu::EngineEvent::fatal, 0, {}, false, false};
+	}
+	if (interrupt.pending())
+		return {::uml::cpu::EngineEvent::interrupt, 0, {}, false, false};
+	if (instruction_budget == 0)
+		return {::uml::cpu::EngineEvent::continued, 0, {}, true, false};
+	/* The build left every instruction that needs a check out of this
+	 * block, and its links reach only blocks built the same way. */
+	if (!program.check_head())
+		return execute(program, cpu, memory, executor, instruction_budget,
+			interrupt, single_step);
+	try {
+		const auto gadgets = program.replay_instructions();
+		if (gadgets.size() != program.instruction_count()) {
+			trace_fatal("checked-replay", program, cpu,
+				instruction_budget);
+			return {::uml::cpu::EngineEvent::fatal, 0, {},
+				false, false};
+		}
+		const auto mode = program.execution_mode();
+		const auto &first = gadgets.front();
+		/* Where the one instruction's stream leaves when it falls off. */
+		const auto final_rip = gadgets.size() > 1 ? gadgets[1].address :
+			advance_instruction_pointer(mode,
+				normalize_instruction_pointer(mode, program.address()),
+				program.byte_count());
+		const bool step_string = single_step &&
+			repeated_string(first.instruction);
+
+		const auto &instruction = first.instruction;
+		/* The exits that follow raise their fault as the instruction
+		 * starts, which is when RF clears. */
+		cpu.rflags &= ~rflags_resume;
+		if ((checked & check_x87) != 0 && waits_for_x87(instruction) &&
+			x87_pending(cpu) != 0) {
+			cpu.x87_status |= x87_status_pending;
+			return floating_point_trap(x87_error_vector,
+				cpu.x87_status |
+					(std::uint32_t{cpu.x87_control} << 16U));
+		}
+
+		const auto stream = step_string ?
+			build_repeat_step_stream(first, mode) :
+			build_native_stream(gadgets.first(1), final_rip, mode);
+		const bool simd = (checked & check_simd) != 0 &&
+			simd_floating(instruction);
+		const bool x87 = (checked & check_x87) != 0 &&
+			(x87_computes(instruction) || x87_loads_state(instruction));
+		if (!simd && !x87)
+			return run_stream<false>(program, cpu, memory, executor,
+				stream, 1, instruction_budget);
+
+		const CpuState before = cpu;
+		const auto saved = save_store(cpu, first, memory, checked);
+		std::uint32_t raised{};
+		const auto result = simd ?
+			run_stream<true>(program, cpu, memory, executor, stream, 1,
+				instruction_budget, &raised) :
+			run_stream<false>(program, cpu, memory, executor, stream, 1,
+				instruction_budget);
+		if (result.event != ::uml::cpu::EngineEvent::continued ||
+			result.retired_instructions != 1)
+			return result;
+		if (simd) {
+			/* #XM is a fault: an unmasked exception leaves the
+			 * instruction's destination and RIP as they were, with
+			 * MXCSR's flags for it. One raised before the computation
+			 * reports only those, and an unmasked underflow reports no
+			 * precision exception, as x86 does. */
+			auto flags = raised;
+			const auto unmasked = flags & ~(before.mxcsr >> 7U) & 0x3fU;
+			if (unmasked == 0) {
+				cpu.mxcsr |= flags;
+				return result;
+			}
+			if ((unmasked & precomputation_exceptions) != 0)
+				flags &= precomputation_exceptions;
+			else if ((unmasked & underflow_exception) != 0)
+				flags &= ~precision_exception;
+			cpu = before;
+			restore_store(saved, memory);
+			cpu.mxcsr |= flags;
+			return floating_point_trap(simd_error_vector, cpu.mxcsr);
+		}
+		const auto pending = x87_pending(cpu);
+		if (x87_loads_state(instruction)) {
+			/* Unmasking a pending exception makes it the next waiting
+			 * instruction's #MF, which the status word shows at once. */
+			if (pending != 0)
+				cpu.x87_status |= x87_status_pending;
+			else
+				cpu.x87_status &= static_cast<std::uint16_t>(
+					~x87_status_pending);
+			return result;
+		}
+		if (pending == 0)
+			return result;
+		/* x87 reports its exception at the next waiting instruction. One
+		 * checked before the computation, or an overflow or underflow of
+		 * a store, leaves the registers, the stack and memory alone; the
+		 * rest leave their result. */
+		if ((pending & precomputation_exceptions) != 0 ||
+			(x87_store_bytes(instruction) != 0 &&
+				(pending & overflow_underflow) != 0)) {
+			const auto rip = cpu.rip;
+			const auto status = cpu.x87_status;
+			cpu = before;
+			cpu.rip = rip;
+			restore_store(saved, memory);
+			cpu.x87_status = static_cast<std::uint16_t>(
+				(before.x87_status & x87_kept_status) |
+				(status & x87_raised_status));
+		}
+		cpu.x87_status |= x87_status_pending;
+		return result;
+	} catch (...) {
+		trace_fatal("checked-stream", program, cpu, instruction_budget);
+		return {::uml::cpu::EngineEvent::fatal, 0, {}, false, false};
+	}
 }
 
 } // namespace uml::cpu::x86_64::gadgets

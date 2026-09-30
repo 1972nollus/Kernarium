@@ -519,6 +519,249 @@ constexpr word user_debugreg = 252;
 #error "the exception probe is an x86-64 or i386 program"
 #endif
 
+#if defined(__x86_64__)
+#define PROBE_RIP "(%rip)"
+#define PROBE_SP "%rsp"
+#define PROBE_BP "%rbp"
+#define PROBE_ARG_AX "	movq %rdi, %rax\n"
+#define PROBE_AX "%rax"
+#else
+#define PROBE_RIP ""
+#define PROBE_SP "%esp"
+#define PROBE_BP "%ebp"
+#define PROBE_ARG_AX "	movl 4(%esp), %eax\n"
+#define PROBE_AX "%eax"
+#endif
+
+/* An unmasked SIMD exception raises #XM at its instruction; an unmasked x87
+ * one raises #MF at the next waiting instruction. Each case leaves MXCSR or
+ * the x87 status word as the handler returned them in probe_fp_saved[0],
+ * and XMM0 or the FISTP destination in probe_fp_saved[1]. */
+__asm__(".text\n"
+	".global probe_xm_div\n"
+	"probe_xm_div:\n"
+	"	movl $0x1d80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x3f800000, %eax\n"
+	"	movd %eax, %xmm0\n"
+	"	xorps %xmm1, %xmm1\n"
+	".global probe_xm_div_insn\n"
+	"probe_xm_div_insn:\n"
+	"	divss %xmm1, %xmm0\n"
+	".global probe_xm_div_end\n"
+	"probe_xm_div_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_xm_over\n"
+	"probe_xm_over:\n"
+	"	movl $0x1b80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x7f7fffff, %eax\n"
+	"	movd %eax, %xmm0\n"
+	"	movaps %xmm0, %xmm1\n"
+	".global probe_xm_over_insn\n"
+	"probe_xm_over_insn:\n"
+	"	mulss %xmm1, %xmm0\n"
+	".global probe_xm_over_end\n"
+	"probe_xm_over_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_xm_under\n"
+	"probe_xm_under:\n"
+	"	movl $0x1780, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x00800001, %eax\n"
+	"	movd %eax, %xmm0\n"
+	"	movl $0x3f000000, %eax\n"
+	"	movd %eax, %xmm1\n"
+	".global probe_xm_under_insn\n"
+	"probe_xm_under_insn:\n"
+	"	mulss %xmm1, %xmm0\n"
+	".global probe_xm_under_end\n"
+	"probe_xm_under_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_xm_prec\n"
+	"probe_xm_prec:\n"
+	"	movl $0x0f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x3f800000, %eax\n"
+	"	movd %eax, %xmm0\n"
+	"	movl $0x40400000, %eax\n"
+	"	movd %eax, %xmm1\n"
+	".global probe_xm_prec_insn\n"
+	"probe_xm_prec_insn:\n"
+	"	divss %xmm1, %xmm0\n"
+	".global probe_xm_prec_end\n"
+	"probe_xm_prec_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_xm_inv\n"
+	"probe_xm_inv:\n"
+	"	movl $0x1f00, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0xbf800000, %eax\n"
+	"	movd %eax, %xmm1\n"
+	"	movl $0x3f800000, %eax\n"
+	"	movd %eax, %xmm0\n"
+	".global probe_xm_inv_insn\n"
+	"probe_xm_inv_insn:\n"
+	"	sqrtss %xmm1, %xmm0\n"
+	".global probe_xm_inv_end\n"
+	"probe_xm_inv_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_xm_masked\n"
+	"probe_xm_masked:\n"
+	"	movl $0x0f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x3f800000, %eax\n"
+	"	movd %eax, %xmm0\n"
+	"	xorps %xmm1, %xmm1\n"
+	".global probe_xm_masked_insn\n"
+	"probe_xm_masked_insn:\n"
+	"	divss %xmm1, %xmm0\n"
+	".global probe_xm_masked_end\n"
+	"probe_xm_masked_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_mf_div\n"
+	"probe_mf_div:\n"
+	"	fninit\n"
+	"	movw $0x37b, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	fldz\n"
+	"	fld1\n"
+	"	fdivp\n"
+	".global probe_mf_div_insn\n"
+	"probe_mf_div_insn:\n"
+	"	fwait\n"
+	".global probe_mf_div_end\n"
+	"probe_mf_div_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	".global probe_mf_inv\n"
+	"probe_mf_inv:\n"
+	"	fninit\n"
+	"	movw $0x37e, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	fld1\n"
+	"	fchs\n"
+	"	fsqrt\n"
+	".global probe_mf_inv_insn\n"
+	"probe_mf_inv_insn:\n"
+	"	fwait\n"
+	".global probe_mf_inv_end\n"
+	"probe_mf_inv_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	".global probe_mf_stack\n"
+	"probe_mf_stack:\n"
+	"	fninit\n"
+	"	movw $0x37e, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	".global probe_mf_stack_insn\n"
+	"probe_mf_stack_insn:\n"
+	"	fwait\n"
+	".global probe_mf_stack_end\n"
+	"probe_mf_stack_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	".global probe_mf_unmask\n"
+	"probe_mf_unmask:\n"
+	"	fninit\n"
+	"	fldz\n"
+	"	fld1\n"
+	"	fdivp\n"
+	"	movw $0x37b, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	".global probe_mf_unmask_insn\n"
+	"probe_mf_unmask_insn:\n"
+	"	fwait\n"
+	".global probe_mf_unmask_end\n"
+	"probe_mf_unmask_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	".global probe_mf_mmx\n"
+	"probe_mf_mmx:\n"
+	"	fninit\n"
+	"	movw $0x37b, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	fldz\n"
+	"	fld1\n"
+	"	fdivp\n"
+	".global probe_mf_mmx_insn\n"
+	"probe_mf_mmx_insn:\n"
+	"	movq %mm0, %mm1\n"
+	".global probe_mf_mmx_end\n"
+	"probe_mf_mmx_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	emms\n"
+	"	ret\n"
+	".global probe_mf_fist\n"
+	"probe_mf_fist:\n"
+	"	movl $0x12345678, probe_fp_saved+4" PROBE_RIP "\n"
+	"	fninit\n"
+	"	movw $0x37e, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x7f000000, probe_fp_scratch" PROBE_RIP "\n"
+	"	flds probe_fp_scratch" PROBE_RIP "\n"
+	"	fistpl probe_fp_saved+4" PROBE_RIP "\n"
+	".global probe_mf_fist_insn\n"
+	"probe_mf_fist_insn:\n"
+	"	fwait\n"
+	".global probe_mf_fist_end\n"
+	"probe_mf_fist_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	".data\n"
+	".balign 8\n"
+	".global probe_fp_saved\n"
+	"probe_fp_saved:\n"
+	"	.long 0, 0\n"
+	"probe_fp_scratch:\n"
+	"	.long 0\n"
+	".text\n");
+
 /* INT n of a vector user mode may not use raises #GP. */
 __asm__(".text\n"
 	".global probe_int_1\n"
@@ -578,6 +821,12 @@ constexpr long si_kernel = 0x80;
 constexpr word flag_reserved = 1UL << 1;
 constexpr word flag_rf = 1UL << 16;
 constexpr long eio = 5;
+constexpr long sigfpe = 8;
+constexpr long fpe_fltdiv = 3;
+constexpr long fpe_fltovf = 4;
+constexpr long fpe_fltund = 5;
+constexpr long fpe_fltres = 6;
+constexpr long fpe_fltinv = 7;
 constexpr long sigbus = 7;
 constexpr long einval = 22;
 constexpr long segv_maperr = 1;
@@ -1218,6 +1467,155 @@ bool noncanonical_faults()
 	return ok;
 }
 #endif
+
+extern "C" void probe_xm_div();
+extern "C" char probe_xm_div_insn[];
+extern "C" char probe_xm_div_end[];
+extern "C" void probe_xm_over();
+extern "C" char probe_xm_over_insn[];
+extern "C" char probe_xm_over_end[];
+extern "C" void probe_xm_under();
+extern "C" char probe_xm_under_insn[];
+extern "C" char probe_xm_under_end[];
+extern "C" void probe_xm_prec();
+extern "C" char probe_xm_prec_insn[];
+extern "C" char probe_xm_prec_end[];
+extern "C" void probe_xm_inv();
+extern "C" char probe_xm_inv_insn[];
+extern "C" char probe_xm_inv_end[];
+extern "C" void probe_xm_masked();
+extern "C" char probe_xm_masked_insn[];
+extern "C" char probe_xm_masked_end[];
+extern "C" void probe_mf_div();
+extern "C" char probe_mf_div_insn[];
+extern "C" char probe_mf_div_end[];
+extern "C" void probe_mf_inv();
+extern "C" char probe_mf_inv_insn[];
+extern "C" char probe_mf_inv_end[];
+extern "C" void probe_mf_stack();
+extern "C" char probe_mf_stack_insn[];
+extern "C" char probe_mf_stack_end[];
+extern "C" void probe_mf_unmask();
+extern "C" char probe_mf_unmask_insn[];
+extern "C" char probe_mf_unmask_end[];
+extern "C" void probe_mf_mmx();
+extern "C" char probe_mf_mmx_insn[];
+extern "C" char probe_mf_mmx_end[];
+extern "C" void probe_mf_fist();
+extern "C" char probe_mf_fist_insn[];
+extern "C" char probe_mf_fist_end[];
+extern "C" volatile u32 probe_fp_saved[2];
+
+/* The MXCSR and x87 control word a signal handler starts with. */
+volatile u32 handler_mxcsr;
+volatile u16 handler_control;
+
+void record_fp_fault(int signal, void *info, void *context)
+{
+	u32 mxcsr = 0;
+	u16 control = 0;
+	__asm__ volatile("stmxcsr %0\n\tfnstcw %1" : "=m"(mxcsr), "=m"(control));
+	handler_mxcsr = mxcsr;
+	handler_control = control;
+	record_fault(signal, info, context);
+}
+
+/* Runs `work`, resuming after `end` if it faults, and checks it raised
+ * nothing. */
+bool raises_nothing(const char *what, void (*work)(), word end)
+{
+	observed[observed_count] = 0;
+	resume_ip = end;
+	work();
+	resume_ip = 0;
+	if (observed[observed_count] == 0)
+		return true;
+	put("  ");
+	put(what);
+	put(" raised signal ");
+	put_decimal(observed[observed_signal]);
+	put("\n");
+	return false;
+}
+
+/* An unmasked SIMD floating-point exception raises #XM, a fault: SIGFPE
+ * with the code of the highest-priority unmasked flag, at the instruction,
+ * whose destination it leaves alone. An unmasked x87 exception sets the
+ * status word's ES and B and raises #MF, also SIGFPE, at the next waiting
+ * instruction, an MMX one included; one checked before the computation
+ * leaves the stack and a memory destination alone. Either handler starts
+ * with every exception masked. */
+bool floating_point_exceptions()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+		long code;
+		word trapno;
+		u32 state;
+		u32 value;
+	};
+	/* A `value` of zero is not checked. */
+	const Case cases[] = {
+		{"DIVSS by zero", probe_xm_div, probe_xm_div_insn, probe_xm_div_end,
+		 fpe_fltdiv, 19, 0x1d84, 0x3f800000},
+		{"MULSS overflow", probe_xm_over, probe_xm_over_insn,
+		 probe_xm_over_end, fpe_fltovf, 19, 0x1ba8, 0x7f7fffff},
+		{"MULSS underflow", probe_xm_under, probe_xm_under_insn,
+		 probe_xm_under_end, fpe_fltund, 19, 0x1790, 0x00800001},
+		{"DIVSS inexact", probe_xm_prec, probe_xm_prec_insn,
+		 probe_xm_prec_end, fpe_fltres, 19, 0x0fa0, 0x3f800000},
+		{"SQRTSS of -1", probe_xm_inv, probe_xm_inv_insn,
+		 probe_xm_inv_end, fpe_fltinv, 19, 0x1f01, 0x3f800000},
+		{"FDIVP by zero", probe_mf_div, probe_mf_div_insn,
+		 probe_mf_div_end, fpe_fltdiv, 16, 0xb084, 0},
+		{"FSQRT of -1", probe_mf_inv, probe_mf_inv_insn,
+		 probe_mf_inv_end, fpe_fltinv, 16, 0xb881, 0},
+		{"x87 stack overflow", probe_mf_stack, probe_mf_stack_insn,
+		 probe_mf_stack_end, fpe_fltinv, 16, 0x82c1, 0},
+		{"FLDCW unmasking a pending flag", probe_mf_unmask,
+		 probe_mf_unmask_insn, probe_mf_unmask_end, fpe_fltdiv, 16,
+		 0xb884, 0},
+		{"MMX after a pending exception", probe_mf_mmx,
+		 probe_mf_mmx_insn, probe_mf_mmx_end, fpe_fltdiv, 16, 0xb084, 0},
+		{"FISTP out of range", probe_mf_fist, probe_mf_fist_insn,
+		 probe_mf_fist_end, fpe_fltinv, 16, 0xb881, 0x12345678},
+	};
+	bool ok = install(sigfpe, record_fp_fault);
+	for (const Case &one : cases) {
+		const word insn = address_of(one.insn);
+		handler_mxcsr = 0;
+		handler_control = 0;
+		bool one_ok = delivers(one.what, one.work, address_of(one.end),
+				       {sigfpe, one.code, insn, insn, one.trapno,
+					true, 0});
+		one_ok &= expect(one.trapno == 19 ? "MXCSR after" :
+					"x87 status after", probe_fp_saved[0],
+				 one.state);
+		if (one.value != 0)
+			one_ok &= expect(one.trapno == 19 ? "XMM0 after" :
+						"FISTP destination after",
+					 probe_fp_saved[1], one.value);
+		one_ok &= expect("handler MXCSR", handler_mxcsr, 0x1f80);
+		one_ok &= expect("handler x87 control", handler_control, 0x37f);
+		if (!one_ok) {
+			put("  in ");
+			put(one.what);
+			put("\n");
+		}
+		ok &= one_ok;
+	}
+	/* A masked exception only sets its flag. */
+	ok &= raises_nothing("masked DIVSS by zero", probe_xm_masked,
+			     address_of(probe_xm_masked_end));
+	ok &= expect("MXCSR after a masked exception", probe_fp_saved[0],
+		     0x0f84);
+	ok &= expect("XMM0 after a masked exception", probe_fp_saved[1],
+		     0x7f800000);
+	return ok;
+}
 
 constexpr long ptrace_traceme = 0;
 constexpr long ptrace_peekuser = 3;
@@ -1872,6 +2270,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "tracer-step"));
 	report("i386 a single step runs one iteration of a REP string",
 	       in_child(i386_probe, "tracer-step"));
+	report("x86-64 unmasked SSE and x87 exceptions raise #XM and #MF",
+	       in_child(self, "fp-exceptions"));
+	report("i386 unmasked SSE and x87 exceptions raise #XM and #MF",
+	       in_child(i386_probe, "fp-exceptions"));
 	return failures;
 }
 #endif
@@ -1912,6 +2314,8 @@ extern "C" int probe_main(word *stack)
 			return int_n_faults() ? 0 : 1;
 		if (equal(mode, "tracer-step"))
 			return tracer_steps_repeats() ? 0 : 1;
+		if (equal(mode, "fp-exceptions"))
+			return floating_point_exceptions() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;

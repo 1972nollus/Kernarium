@@ -3,6 +3,7 @@
 
 #if DARWIN_UML_X86_64_GUEST
 
+#include "cpu/x86_64/gadgets/exception_checks.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "platform/apple/host_features.hpp"
 #include "uml_darwin_static_mmu.h"
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 
 namespace uml::runtime {
 namespace {
@@ -211,6 +213,7 @@ constexpr std::uint32_t general_protection = 13;
 
 X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	StaticGuestMemory &memory, x86_64::gadgets::Executor &executor,
+	std::unique_ptr<x86_64::gadgets::Executor> &checked_executor,
 	unsigned long generation, std::size_t instruction_budget,
 	bool exact_budget, const ::uml::cpu::InterruptToken &interrupt) noexcept
 {
@@ -224,15 +227,21 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	}
 	/* A reset executor starts without the permission, so every run restates
 	 * what the host reported. */
-	executor.permit_unaligned_exclusives(
+	const bool unaligned_exclusives =
 		::uml::platform::apple::probed_host_capabilities().has(
-			::uml::platform::ArmFeature::lse2));
+			::uml::platform::ArmFeature::lse2);
+	executor.permit_unaligned_exclusives(unaligned_exclusives);
 	auto guarded_interrupt = interrupt;
 	guarded_interrupt.poll = execution_interrupt_boundary;
 	guarded_interrupt.poll_context = &execution;
-	bool executor_prepared = false;
-	std::uint64_t prepared_mapping_changes{};
-	std::uint64_t prepared_code_changes{};
+	/* What each executor was last prepared for: the ordinary one, then the
+	 * checked one. */
+	struct Prepared final {
+		bool done{};
+		std::uint64_t mapping_changes{};
+		std::uint64_t code_changes{};
+	};
+	std::array<Prepared, 2> prepared{};
 	/* Set once POPF or IRET arms RFLAGS.TF: the run ends after one more
 	 * instruction and reports the #DB that instruction raises. */
 	bool trap_armed = false;
@@ -262,15 +271,41 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		}
 		memory.prepare(generation, sequences.mapping_changes);
-		if (!executor_prepared ||
-			prepared_mapping_changes != sequences.mapping_changes ||
-			prepared_code_changes != sequences.code_changes) {
-			executor.prepare(memory, generation, sequences.mapping_changes,
+		/* #MF and #XM exist only while the guest enables them, and only
+		 * then does the run check the instructions that could raise one,
+		 * with an executor of its own. Its blocks were built for the
+		 * exceptions it was made for, so enabling more makes another. */
+		const auto checked = x86_64::gadgets::checked_exceptions(cpu);
+		auto *active = &executor;
+		auto *state = &prepared[0];
+		if (checked != 0) {
+			if (!checked_executor ||
+				(checked & ~checked_executor->checked_exceptions()) != 0) {
+				try {
+					checked_executor =
+						std::make_unique<x86_64::gadgets::Executor>();
+				} catch (...) {
+					trace_fatal("checked-executor", cpu, generation, 0,
+						result.retired_instructions);
+					return run;
+				}
+				checked_executor->check_exceptions(checked);
+				prepared[1] = {};
+			}
+			checked_executor->permit_unaligned_exclusives(
+				unaligned_exclusives);
+			active = checked_executor.get();
+			state = &prepared[1];
+		}
+		if (!state->done ||
+			state->mapping_changes != sequences.mapping_changes ||
+			state->code_changes != sequences.code_changes) {
+			active->prepare(memory, generation, sequences.mapping_changes,
 				sequences.code_changes, execution.context(), cache_sequences,
 				cache_code_changes, cache_mapping_changes);
-			prepared_mapping_changes = sequences.mapping_changes;
-			prepared_code_changes = sequences.code_changes;
-			executor_prepared = true;
+			state->mapping_changes = sequences.mapping_changes;
+			state->code_changes = sequences.code_changes;
+			state->done = true;
 		}
 		if (cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
 			cpu.gpr(x86_64::Register::rax) = 15;
@@ -286,7 +321,7 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 		 * would build short blocks that a later full budget throws away. */
 		const std::size_t limit = exact_budget || trap_armed ? available :
 			std::max<std::size_t>(available, block_instructions);
-		const auto selected = executor.select_program(
+		const auto selected = active->select_program(
 			memory, cpu.rip, cpu.execution_mode,
 			std::min(block_instructions, limit));
 		switch (selected.status) {
@@ -315,11 +350,14 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 		}
 		/* A step of a repeated string instruction is one iteration. */
 		const bool stepping = (exact_budget || trap_armed) && limit == 1;
-		const auto executed = x86_64::gadgets::execute(
-			*selected.program, cpu, memory, executor, limit,
-			guarded_interrupt, stepping);
+		const auto executed = checked == 0 ?
+			x86_64::gadgets::execute(*selected.program, cpu, memory,
+				executor, limit, guarded_interrupt, stepping) :
+			x86_64::gadgets::execute_checked(*selected.program, cpu,
+				memory, *active, limit, guarded_interrupt, stepping,
+				checked);
 		result.retired_instructions += executed.retired_instructions;
-		prepared_code_changes = executor.prepared_code_changes();
+		state->code_changes = active->prepared_code_changes();
 		result.fault = executed.fault;
 		if (executed.instruction_budget_exhausted) {
 			result.reason = budget_reason();
@@ -391,6 +429,8 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		case ::uml::cpu::EngineEvent::floating_point_trap:
 			result.reason = ::uml::cpu::ExitReason::floating_point_trap;
+			result.syndrome = executed.vector;
+			run.error_code = static_cast<std::int32_t>(executed.error);
 			return run;
 		case ::uml::cpu::EngineEvent::pc_alignment:
 		case ::uml::cpu::EngineEvent::fatal:

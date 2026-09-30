@@ -5,12 +5,13 @@ Cross-builds the freestanding exception_probe.cpp for x86-64 and i386, boots an
 x86-64 image on an emulator built with the macos-x86_64 preset, and runs the
 probes there. As on Linux x86, a 1 ms interval timer keeps firing while a task
 runs long repeated string instructions; ICEBP, BOUND, INT 4, INTO, INT n, UD2,
-page faults and non-canonical addresses deliver Linux's signals, codes, trap
-numbers and error codes; an x87 stack survives a signal; a signal taken between
-two instructions leaves the accumulator alone; and a tracer of either ABI reads
-and writes registers, FP state, debug registers and TLS, steps a repeated
-string instruction one iteration at a time, and changes or skips a system call
-through orig_ax. The kernel must relay every such signal without complaint.
+page faults, non-canonical addresses and unmasked SSE and x87 exceptions
+deliver Linux's signals, codes, trap numbers and error codes; an x87 stack
+survives a signal; a signal taken between two instructions leaves the
+accumulator alone; and a tracer of either ABI reads and writes registers, FP
+state, debug registers and TLS, steps a repeated string instruction one
+iteration at a time, and changes or skips a system call through orig_ax. The
+kernel must relay every such signal without complaint.
 """
 
 from __future__ import annotations

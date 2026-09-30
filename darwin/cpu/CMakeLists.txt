@@ -71,6 +71,7 @@ if(UML_BUILD_X86_64_GUEST)
         x86_64/decoder.cpp
 		x86_64/gadgets/code_page_registry.cpp
 		x86_64/gadgets/engine.S
+		x86_64/gadgets/exception_checks.cpp
 		x86_64/gadgets/executor.cpp
 		x86_64/gadgets/native_builder.cpp
 		x86_64/gadgets/native_memory.cpp

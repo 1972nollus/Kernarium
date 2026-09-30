@@ -34,4 +34,9 @@ namespace uml::cpu::x86_64::gadgets {
 [[nodiscard]] std::vector<std::uintptr_t> build_repeat_step_stream(
 	const Gadget &gadget, ExecutionMode mode);
 
+/* A stream that runs nothing and leaves with RIP at `rip`: a check head's,
+ * whose instruction the runtime runs itself. */
+void append_leave_stream(std::vector<std::uintptr_t> &stream,
+	std::uint64_t rip);
+
 } // namespace uml::cpu::x86_64::gadgets

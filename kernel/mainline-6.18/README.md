@@ -131,9 +131,15 @@ bounds and `#GP` reach the task as `SIGSEGV` with `SI_KERNEL` and no address,
 mode may not use names that vector's IDT entry, `(n << 3) | 2`, in the error
 code. A long-mode access to a non-canonical address raises `#GP`, or `#SS`,
 `SIGBUS` with `SI_KERNEL`, when the stack segment forms the address. A page
-fault's error code carries the user bit. A protection fault's error code lacks
-the present bit, and a branch to a non-canonical target faults at the target
-rather than at the branch.
+fault's error code carries the user bit. An unmasked SIMD floating-point
+exception raises `#XM` at its instruction, and an unmasked x87 exception `#MF`
+at the next waiting instruction; both are `SIGFPE` with the code of the
+highest-priority unmasked flag, which the slice derives from MXCSR or the x87
+status and control words the host reports as the error code, as Linux does. The
+host's limits on these are the gadget engine's
+([README](../../darwin/cpu/x86_64/gadgets/README.md)). A protection fault's
+error code lacks the present bit, and a branch to a non-canonical target faults
+at the target rather than at the branch.
 
 An i386 tracer's register requests use the i386 layouts, as on Linux, with
 `PTRACE_GETFPREGS` and `NT_PRFPREG` the i387 FSAVE image, and a tracer of

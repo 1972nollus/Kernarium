@@ -135,7 +135,7 @@ public:
 	Program(ExecutionMode mode, std::uint64_t address, std::size_t byte_count,
 		std::span<const Gadget> gadgets,
 		std::span<const std::byte> source,
-		std::span<const std::uintptr_t> words);
+		std::span<const std::uintptr_t> words, bool check_head = false);
 
 	[[nodiscard]] ExecutionMode execution_mode() const noexcept { return mode_; }
 	[[nodiscard]] std::uint64_t address() const noexcept { return address_; }
@@ -153,6 +153,10 @@ public:
 	 * cache's successor chain needs to know; the program answers it from a
 	 * flag rather than from decoded instructions it no longer carries. */
 	[[nodiscard]] bool terminal() const noexcept { return terminal_; }
+	/* A block built for exceptions the guest enabled whose one instruction
+	 * needs a check: its stream only leaves, at that instruction, so the
+	 * runtime runs it with `execute_checked` however it was entered. */
+	[[nodiscard]] bool check_head() const noexcept { return check_head_; }
 	/* The guest bytes the decoder read for this block. A cached translation
 	 * and the source that stands for it are one object as well as one
 	 * observation, and the block's instructions are recoverable from it
@@ -201,6 +205,7 @@ private:
 	std::uint32_t source_{};
 	ExecutionMode mode_{ExecutionMode::long64};
 	bool terminal_{};
+	bool check_head_{};
 };
 
 enum class BuildStatus : std::uint8_t {
@@ -229,6 +234,15 @@ struct BuildResult final {
 [[nodiscard]] BuildResult build(::uml::memory::GuestAddressSpace &memory,
 	std::uint64_t address, ExecutionMode mode,
 	std::size_t maximum_instructions, ProgramLinkResolver links) noexcept;
+/* A build for a guest that has enabled the exceptions in `checked`, which
+ * `checked_exceptions` reports: the block ends before the first instruction
+ * that could raise one, and a block that starts with such an instruction
+ * holds it alone and is a check head. Every block of a cache built this way
+ * is safe to link to under `checked` or any part of it. */
+[[nodiscard]] BuildResult build(::uml::memory::GuestAddressSpace &memory,
+	std::uint64_t address, ExecutionMode mode,
+	std::size_t maximum_instructions, ProgramLinkResolver links,
+	unsigned checked) noexcept;
 
 /* The work, in elements or 64-byte blocks, that a repeated string
  * instruction does before it stops between elements. */
@@ -244,6 +258,11 @@ struct ExecuteResult final {
 	 * between elements after `string_repeat_budget` of work. It retired
 	 * nothing for that work, and RIP still names it. */
 	bool repeat_yielded{};
+	/* A floating-point trap's x86 vector: #DE, 0, from the engine, or #MF,
+	 * 16, or #XM, 19, from `execute_checked`, whose `error` is then the
+	 * x87 status word with the control word above it, or MXCSR. */
+	std::uint8_t vector{};
+	std::uint32_t error{};
 };
 
 [[nodiscard]] ExecuteResult execute(const Program &program, CpuState &cpu,
@@ -259,5 +278,17 @@ struct ExecuteResult final {
 	std::size_t instruction_budget,
 	const ::uml::cpu::InterruptToken &interrupt = {},
 	bool single_step = false) noexcept;
+/* `execute` while the guest has enabled an exception the engine does not
+ * check for: `checked` is `checked_exceptions(cpu)`, which is not zero, and
+ * the program comes from a build for `checked` or more. A block without a
+ * check head runs as `execute` runs it. A check head's instruction runs
+ * alone, with its checks: #MF for a waiting x87 instruction with an unmasked
+ * exception pending, and after it #XM, or the pending #MF an x87 instruction
+ * leaves for the next one. */
+[[nodiscard]] ExecuteResult execute_checked(const Program &program,
+	CpuState &cpu, ::uml::memory::GuestAddressSpace &memory,
+	Executor &executor, std::size_t instruction_budget,
+	const ::uml::cpu::InterruptToken &interrupt, bool single_step,
+	unsigned checked) noexcept;
 
 } // namespace uml::cpu::x86_64::gadgets

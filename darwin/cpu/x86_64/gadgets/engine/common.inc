@@ -89,6 +89,37 @@ NAME(uml_x86_64_gadget_\name):
 	next_gadget
 .endm
 
+/* The engine leaves #MF and #XM to the runtime, which runs the x87 and
+ * SIMD instructions one at a time, checked, while the guest has an exception
+ * unmasked in the x87 control word or MXCSR. An instruction that loads
+ * either one therefore retires and leaves when `value` has a clear bit among
+ * `masks`, so the runtime sees the change before the next instruction runs.
+ * For a gadget that computed its effective address: x22 and the
+ * descriptor's length name the next instruction. */
+.macro retire_unless_unmasked value, masks
+	mvn w8, \value
+	tst w8, #\masks
+	b.ne .Lx86_exceptions_unmasked\@
+	retire_and_next
+.Lx86_exceptions_unmasked\@:
+	ubfx x8, x23, #56, #4
+	add x8, x22, x8
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	add _executed, _executed, #1
+	x86_memory_order_boundary
+	mov w0, #UML_X86_64_EVENT_CONTINUED
+	b uml_x86_64_gadget_leave
+.endm
+
+/* The same for an instruction that loads both: a mask that either leaves
+ * clear. */
+.macro retire_unless_any_unmasked
+	ldr w8, [_cpu, #UML_X86_64_CPU_MXCSR]
+	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	and w8, w9, w8, lsr #7
+	retire_unless_unmasked w8, 0x3f
+.endm
+
 /* Bytes 24..31 of the record hold operation, width, carry, one padding byte,
  * and the two override halves. Both varying fields are macro parameters, so
  * that whole tail is a single link-time constant and the record costs three

@@ -2,6 +2,7 @@
 #include "cpu/x86_64/cpu_state.hpp"
 #include "cpu/x86_64/cpuid.hpp"
 #include "cpu/x86_64/decoder.hpp"
+#include "cpu/x86_64/gadgets/exception_checks.hpp"
 #include "cpu/x86_64/gadgets/executor.hpp"
 #include "cpu/x86_64/gadgets/native_baked.hpp"
 #include "cpu/x86_64/gadgets/native_entry.hpp"
@@ -5953,18 +5954,24 @@ read_test_sequences(void *context) noexcept
 		"INT 80h showed the RF its flags started with");
 }
 
-/* INT n names its vector for the #GP error code. */
-[[nodiscard]] bool decode_names_int_vectors()
+/* INT n names its vector for the #GP error code, and FWAIT its opcode for
+ * the #MF check. */
+[[nodiscard]] bool decode_names_int_vectors_and_fwait()
 {
 	using namespace uml::cpu::x86_64;
 	TestMemory memory;
-	memory.load(0, {0xcd, 0x41});
+	memory.load(0, {0xcd, 0x41, 0x9b});
 	const auto interrupt = decode(memory, 0);
+	const auto wait = decode(memory, 2);
 	return expect(interrupt.status == DecodeStatus::decoded &&
 			interrupt.instruction.operation == Operation::privileged &&
 			interrupt.instruction.vector_opcode == 0xcd &&
 			interrupt.instruction.source.immediate == 0x41,
-		"INT 0x41 did not decode with its vector");
+		"INT 0x41 did not decode with its vector") &&
+		expect(wait.status == DecodeStatus::decoded &&
+			wait.instruction.operation == Operation::nop &&
+			wait.instruction.vector_opcode == 0x9b,
+			"FWAIT did not decode as itself");
 }
 
 /* A single step of a repeated string instruction runs one iteration and
@@ -6007,6 +6014,212 @@ read_test_sequences(void *context) noexcept
 			cpu.rip == 2 && cpu.gpr(Register::rcx) == 2 &&
 			cpu.gpr(Register::rsi) == 0x803,
 		"the iteration that ended a stepped REPE CMPSB did not retire it");
+}
+
+/* LDMXCSR keeps what the guest loads, and LDMXCSR and FLDCW that unmask an
+ * exception retire and leave, so the runtime checks what follows. */
+[[nodiscard]] bool loads_that_unmask_exceptions_leave()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x0f, 0xae, 0x13, // ldmxcsr [rbx]
+		0x48, 0xff, 0xc0, // inc rax
+		0xd9, 0x2e,       // fldcw [rsi]
+		0x48, 0xff, 0xc0, // inc rax
+		0x0f, 0x05,       // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"LDMXCSR/FLDCW block did not build"))
+		return false;
+	const auto run = [&](std::initializer_list<std::uint8_t> mxcsr,
+		std::initializer_list<std::uint8_t> control, CpuState &cpu) {
+		memory.load(0x800, mxcsr);
+		memory.load(0x810, control);
+		cpu = CpuState{};
+		cpu.gpr(Register::rbx) = 0x800;
+		cpu.gpr(Register::rsi) = 0x810;
+		return gadgets::execute(built.program, cpu, memory, 64);
+	};
+	CpuState cpu{};
+	const auto masked = run({0xa0, 0x1f, 0, 0}, {0x7f, 0x03}, cpu);
+	if (!expect(masked.event == uml::cpu::EngineEvent::system_call &&
+			cpu.mxcsr == 0x1fa0 && cpu.x87_control == 0x37f &&
+			cpu.gpr(Register::rax) == 2,
+		"LDMXCSR lost the flags it loaded, or a masked load left"))
+		return false;
+	const auto simd = run({0x80, 0x1d, 0, 0}, {0x7f, 0x03}, cpu);
+	if (!expect(simd.event == uml::cpu::EngineEvent::continued &&
+			simd.retired_instructions == 1 && cpu.rip == 3 &&
+			cpu.mxcsr == 0x1d80,
+		"LDMXCSR unmasking #Z did not leave after itself"))
+		return false;
+	const auto x87 = run({0x80, 0x1f, 0, 0}, {0x7b, 0x03}, cpu);
+	return expect(x87.event == uml::cpu::EngineEvent::continued &&
+			x87.retired_instructions == 3 && cpu.rip == 8 &&
+			cpu.x87_control == 0x37b && cpu.gpr(Register::rax) == 1,
+		"FLDCW unmasking #Z did not leave after itself");
+}
+
+[[nodiscard]] std::uint32_t xmm_low(const uml::cpu::x86_64::CpuState &cpu,
+	std::size_t index) noexcept
+{
+	std::uint32_t bits{};
+	std::memcpy(&bits, cpu.vectors[index].data(), sizeof(bits));
+	return bits;
+}
+
+void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
+	std::uint32_t bits) noexcept
+{
+	std::memcpy(cpu.vectors[index].data(), &bits, sizeof(bits));
+}
+
+/* While MXCSR unmasks an exception, a SIMD instruction that raises it
+ * faults with #XM before its result: the destination keeps its value and
+ * MXCSR gains the flag. A masked exception only sets its flag. */
+[[nodiscard]] bool checked_simd_exceptions_fault_before_the_result()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xf3, 0x0f, 0x5e, 0xc1, // divss xmm0, xmm1
+		0x0f, 0x05,             // syscall
+	});
+	const auto built = gadgets::build(memory, 0, ExecutionMode::long64, 64,
+		{}, gadgets::check_simd);
+	if (!expect(built.status == gadgets::BuildStatus::built &&
+			built.program.check_head() &&
+			built.program.instruction_count() == 1,
+		"DIVSS did not build as a check head"))
+		return false;
+	gadgets::Executor executor;
+	executor.prepare(memory);
+	CpuState cpu{};
+	cpu.mxcsr = 0x1d80;
+	set_xmm_low(cpu, 0, 0x3f800000);
+	const auto trap = gadgets::execute_checked(built.program, cpu, memory,
+		executor, 64, {}, false, gadgets::checked_exceptions(cpu));
+	if (!expect(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
+			trap.vector == 19 && trap.error == 0x1d84 &&
+			trap.retired_instructions == 0 && cpu.rip == 0 &&
+			cpu.mxcsr == 0x1d84 && xmm_low(cpu, 0) == 0x3f800000,
+		"an unmasked division by zero did not fault with #XM"))
+		return false;
+	cpu = CpuState{};
+	cpu.mxcsr = 0x0f80;
+	set_xmm_low(cpu, 0, 0x3f800000);
+	const auto masked = gadgets::execute_checked(built.program, cpu, memory,
+		executor, 64, {}, false, gadgets::checked_exceptions(cpu));
+	return expect(masked.event == uml::cpu::EngineEvent::continued &&
+			masked.retired_instructions == 1 && cpu.rip == 4 &&
+			cpu.mxcsr == 0x0f84 && xmm_low(cpu, 0) == 0x7f800000,
+		"a masked division by zero did not only set its flag");
+}
+
+/* Runs from RIP as the runtime does, checked while `checked_exceptions`
+ * says so, until something other than a continued run. */
+[[nodiscard]] uml::cpu::x86_64::gadgets::ExecuteResult run_until_event(
+	TestMemory &memory, uml::cpu::x86_64::CpuState &cpu)
+{
+	using namespace uml::cpu::x86_64;
+	gadgets::Executor executor;
+	executor.prepare(memory);
+	gadgets::ExecuteResult result{};
+	for (int dispatch = 0; dispatch < 32; ++dispatch) {
+		const auto checked = gadgets::checked_exceptions(cpu);
+		const auto built = gadgets::build(memory, cpu.rip,
+			ExecutionMode::long64, 64, {}, checked);
+		if (built.status != gadgets::BuildStatus::built)
+			return {};
+		result = checked == 0 ?
+			gadgets::execute(built.program, cpu, memory, executor, 64) :
+			gadgets::execute_checked(built.program, cpu, memory,
+				executor, 64, {}, false, checked);
+		if (result.event != uml::cpu::EngineEvent::continued)
+			break;
+	}
+	return result;
+}
+
+/* An unmasked x87 exception leaves its operands, sets ES and B, and raises
+ * #MF at the next waiting instruction. */
+[[nodiscard]] bool checked_x87_exceptions_wait_for_the_next_instruction()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xd9, 0xee, // fldz
+		0xd9, 0xe8, // fld1
+		0xde, 0xf1, // fdivrp st(1), st: one by zero
+		0x9b,       // fwait
+		0x0f, 0x05, // syscall
+	});
+	CpuState cpu{};
+	cpu.x87_control = 0x37b;
+	const auto trap = run_until_event(memory, cpu);
+	return expect(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
+			trap.vector == 16 && cpu.rip == 6 &&
+			(trap.error & 0x80ffU) == 0x8084U &&
+			(trap.error >> 16U) == 0x37bU &&
+			cpu.x87_top == 6 && (cpu.x87_status & 0x8080U) == 0x8080U,
+		"an unmasked x87 division by zero did not raise #MF at FWAIT");
+}
+
+/* A cache built for enabled exceptions splits its blocks at every
+ * instruction that needs a check, so a linked run never reaches one: the
+ * block before it runs linked, and a link into it leaves at once. */
+[[nodiscard]] bool checked_builds_stop_before_checked_instructions()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x48, 0xff, 0xc0, // inc rax
+		0xd9, 0xe8,       // fld1
+		0x48, 0xff, 0xc0, // inc rax
+		0x0f, 0x05,       // syscall
+	});
+	gadgets::Executor executor;
+	executor.prepare(memory);
+	executor.check_exceptions(gadgets::check_x87);
+	const auto head = executor.select_program(memory, 0,
+		ExecutionMode::long64);
+	if (!expect(head.status == gadgets::BuildStatus::built &&
+			head.program != nullptr &&
+			head.program->instruction_count() == 1 &&
+			!head.program->check_head(),
+		"a checked build did not end its block before FLD1"))
+		return false;
+	CpuState cpu{};
+	cpu.x87_control = 0x37b;
+	const auto before = gadgets::execute_checked(*head.program, cpu, memory,
+		executor, 64, {}, false, gadgets::checked_exceptions(cpu));
+	if (!expect(before.event == uml::cpu::EngineEvent::continued &&
+			before.retired_instructions == 1 && cpu.rip == 3 &&
+			cpu.gpr(Register::rax) == 1,
+		"the block before a check head did not stop at it"))
+		return false;
+	const auto check = executor.select_program(memory, 3,
+		ExecutionMode::long64);
+	if (!expect(check.status == gadgets::BuildStatus::built &&
+			check.program != nullptr && check.program->check_head(),
+		"FLD1 did not build as a check head"))
+		return false;
+	/* Entered as a link would enter it, the stream only leaves. */
+	const auto entered = gadgets::execute(*check.program, cpu, memory,
+		executor, 64);
+	if (!expect(entered.event == uml::cpu::EngineEvent::continued &&
+			entered.retired_instructions == 0 && cpu.rip == 3 &&
+			cpu.x87_top == 0,
+		"a check head's own stream ran its instruction"))
+		return false;
+	const auto ran = gadgets::execute_checked(*check.program, cpu, memory,
+		executor, 64, {}, false, gadgets::checked_exceptions(cpu));
+	return expect(ran.event == uml::cpu::EngineEvent::continued &&
+			ran.retired_instructions == 1 && cpu.rip == 5 &&
+			cpu.x87_top == 7,
+		"a check head did not run its instruction checked");
 }
 
 /* INT 3 and INT 4 are the user-callable software interrupts besides 0x80:
@@ -7474,8 +7687,12 @@ int main()
 		popf_setting_trap_flag_leaves_at_the_next_instruction() &&
 		iret_setting_trap_flag_arms_the_next_instruction() &&
 		resume_flag_lasts_until_an_instruction_starts() &&
-		decode_names_int_vectors() &&
+		decode_names_int_vectors_and_fwait() &&
 		a_single_step_runs_one_repeat_iteration() &&
+		loads_that_unmask_exceptions_leave() &&
+		checked_simd_exceptions_fault_before_the_result() &&
+		checked_x87_exceptions_wait_for_the_next_instruction() &&
+		checked_builds_stop_before_checked_instructions() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&
 		vector_results_cross_only_a_transfer_that_stays_inline() &&

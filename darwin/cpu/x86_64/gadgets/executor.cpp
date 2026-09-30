@@ -1697,6 +1697,7 @@ struct Executor::Storage final {
 	bool prepared{};
 	bool cache_ready{};
 	bool unaligned_exclusives{};
+	unsigned checked{};
 };
 
 Executor::Executor() : storage_{std::make_unique<Storage>()}
@@ -1848,6 +1849,16 @@ void Executor::leave_engine() noexcept
 		1, std::memory_order_release);
 }
 
+void Executor::check_exceptions(unsigned checked) noexcept
+{
+	storage_->checked = checked;
+}
+
+unsigned Executor::checked_exceptions() const noexcept
+{
+	return storage_->checked;
+}
+
 void Executor::permit_unaligned_exclusives(bool value) noexcept
 {
 	storage_->unaligned_exclusives = value;
@@ -1947,7 +1958,8 @@ ProgramSelection Executor::select_program(
 	 * ahead of the read or moves the stamp this reads. */
 	const auto held_stamps = capture_held_code_stamps(
 		memory, hold.pages(), storage_->execution_context);
-	auto built = build(memory, address, mode, maximum_instructions, links);
+	auto built = build(memory, address, mode, maximum_instructions, links,
+		storage_->checked);
 	if (built.status != BuildStatus::built) {
 		storage_->programs.cancel_selection();
 		return {
