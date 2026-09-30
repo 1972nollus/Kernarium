@@ -80,5 +80,9 @@ static_assert(UML_X86_64_EVENT_GENERAL_PROTECTION ==
 	static_cast<int>(EngineEvent::general_protection));
 static_assert(UML_X86_64_EVENT_TRAP_FLAG ==
 	static_cast<int>(EngineEvent::trap_flag));
+static_assert(UML_X86_64_EVENT_DEBUG_TRAP ==
+	static_cast<int>(EngineEvent::debug_trap));
+static_assert(UML_X86_64_EVENT_BOUND_RANGE ==
+	static_cast<int>(EngineEvent::bound_range));
 
 } // namespace uml::cpu::x86_64::layout

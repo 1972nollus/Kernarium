@@ -6161,6 +6161,27 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 				instruction.operation == Operation::move_sign_extend,
 				instruction.source.width, instruction.destination.width),
 			instruction.destination, instruction.source);
+	case Operation::bound: {
+		const auto index = register_offset(instruction.destination);
+		const auto encoded = index ? encode_memory(
+			gadget, instruction.source, *index) : std::nullopt;
+		if (!encoded)
+			return false;
+		switch (instruction.destination.width) {
+		case OperandWidth::word:
+			stream.push_back(entry_address(native::uml_x86_64_gadget_bound_16));
+			break;
+		case OperandWidth::dword:
+			stream.push_back(entry_address(native::uml_x86_64_gadget_bound_32));
+			break;
+		default:
+			return false;
+		}
+		stream.push_back(encoded->descriptor);
+		stream.push_back(encoded->displacement);
+		stream.push_back(gadget.address);
+		return true;
+	}
 	case Operation::adjust_rpl:
 		if (instruction.destination.kind == OperandKind::memory) {
 			const auto source = register_offset(instruction.source);
@@ -6845,6 +6866,10 @@ UML_X86_BAKED_CARRY_TABLES(decrement)
 		return true;
 	case Operation::breakpoint:
 		stream.push_back(entry_address(native::uml_x86_64_gadget_breakpoint));
+		stream.push_back(next_instruction_pointer(gadget, mode));
+		return true;
+	case Operation::debug_trap:
+		stream.push_back(entry_address(native::uml_x86_64_gadget_icebp));
 		stream.push_back(next_instruction_pointer(gadget, mode));
 		return true;
 	case Operation::privileged:

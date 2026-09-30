@@ -197,6 +197,11 @@ enum class Operation : std::uint8_t {
 	mxcsr,
 	system_call,
 	breakpoint,
+	/* ICEBP (INT1): #DB as a trap after the instruction. */
+	debug_trap,
+	/* BOUND, outside 64-bit mode: #BR when the signed index in the
+	 * destination lies outside the pair of bounds in memory. */
+	bound,
 	/* Raises #GP at user privilege: port I/O, HLT, CLI/STI, INT n, MSRs. */
 	privileged,
 };

@@ -30,7 +30,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  arch/arm64/um/asm/unistd.h            |  33 ++
  arch/arm64/um/asm/user.h              |  29 +-
  arch/arm64/um/mmap.c                  | 128 ++++
- arch/arm64/um/ptrace.c                | 151 +++--
+ arch/arm64/um/ptrace.c                | 155 +++--
  arch/arm64/um/shared/sysdep/ptrace.h  | 150 ++++-
  arch/arm64/um/signal.c                | 598 ++++++++++++++-----
  arch/arm64/um/tls.c                   |   3 +-
@@ -42,7 +42,7 @@ Signed-off-by: Yi Xie <imxieyi@users.noreply.github.com>
  arch/um/kernel/process.c              |   2 +-
  arch/um/kernel/skas/syscall.c         |  31 +-
  arch/um/kernel/trap.c                 |   3 +
- arch/um/os-Darwin/skas/process.c      |  43 +-
+ arch/um/os-Darwin/skas/process.c      |  39 +-
  fs/eventpoll.c                        |   2 +-
  fs/open.c                             |   4 +-
  include/linux/eventpoll.h             |  24 +
@@ -104,7 +104,7 @@ index b3bbae6cd5a149976a91c3df809f696e79d83ef0..476b8f2426167dd2d1c07c0f7b7d3a60
  $(obj)/user-offsets.s: c_flags = -Wp,-MD,$(depfile) $(USER_CFLAGS)
  targets += user-offsets.s
 diff --git a/arch/arm64/um/asm/elf.h b/arch/arm64/um/asm/elf.h
-index baaa7c8c27de70be2f0513cc137f7bf645fa19ab..010fbc343a529602a189ec4cec1bed06c4615bba 100644
+index baaa7c8c27de70be2f0513cc137f7bf645fa19ab..e363e0173077a4e211dce250028f9d4e17096580 100644
 --- a/arch/arm64/um/asm/elf.h
 +++ b/arch/arm64/um/asm/elf.h
 @@ -22,31 +22,29 @@
@@ -189,7 +189,7 @@ index baaa7c8c27de70be2f0513cc137f7bf645fa19ab..010fbc343a529602a189ec4cec1bed06
 +	(destination)[12] = UPT_X86_64(guest, UML_X86_64_RDX); \
 +	(destination)[13] = UPT_X86_64(guest, UML_X86_64_RSI); \
 +	(destination)[14] = UPT_X86_64(guest, UML_X86_64_RDI); \
-+	(destination)[15] = guest->orig_x0; \
++	(destination)[15] = UPT_SYSCALL_NR(guest); \
 +	(destination)[16] = UPT_X86_64_RIP(guest); \
 +	(destination)[17] = upt_x86_64_segment_selector(guest, 1); \
 +	(destination)[18] = UPT_X86_64_RFLAGS(guest); \
@@ -522,7 +522,7 @@ index 0000000000000000000000000000000000000000..1a8b242f6aa99b62d006f59bfc55f0d6
 +	return vm_unmapped_area(&info);
 +}
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index 52e976dc7f84880c40d4616989f8eea484a7c172..0e16e611416a790dd3a58a5d688cec2fe0ea4a0a 100644
+index 52e976dc7f84880c40d4616989f8eea484a7c172..9b5193e03c41bc20f551bb236f9d96f70ed2926c 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
 @@ -1,6 +1,5 @@
@@ -532,7 +532,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..0e16e611416a790dd3a58a5d688cec2f
  #include <linux/elf.h>
  #include <linux/regset.h>
  #include <linux/sched.h>
-@@ -10,59 +9,99 @@
+@@ -10,59 +9,103 @@
  
  static int register_index(int regno)
  {
@@ -561,7 +561,8 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..0e16e611416a790dd3a58a5d688cec2f
 +	regs->dx = UPT_X86_64(guest, UML_X86_64_RDX);
 +	regs->si = UPT_X86_64(guest, UML_X86_64_RSI);
 +	regs->di = UPT_X86_64(guest, UML_X86_64_RDI);
-+	regs->orig_ax = guest->orig_x0;
++	/* The system call the task is in, or -1 at any other stop. */
++	regs->orig_ax = UPT_SYSCALL_NR(guest);
 +	regs->ip = UPT_X86_64_RIP(guest);
 +	regs->cs = upt_x86_64_segment_selector(guest, 1);
 +	regs->flags = UPT_X86_64_RFLAGS(guest);
@@ -593,6 +594,9 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..0e16e611416a790dd3a58a5d688cec2f
 +	UPT_X86_64(guest, UML_X86_64_RDX) = regs->dx;
 +	UPT_X86_64(guest, UML_X86_64_RSI) = regs->si;
 +	UPT_X86_64(guest, UML_X86_64_RDI) = regs->di;
++	/* At a system call's entry this runs another call instead, or with -1
++	 * none, as on x86. */
++	UPT_SYSCALL_NR(guest) = regs->orig_ax;
 +	guest->orig_x0 = regs->orig_ax;
 +	UPT_X86_64_RIP(guest) = regs->ip;
 +	upt_x86_64_set_segment_selector(guest, 1, regs->cs);
@@ -666,7 +670,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..0e16e611416a790dd3a58a5d688cec2f
  	return 0;
  }
  
-@@ -92,8 +131,10 @@ long subarch_ptrace(struct task_struct *child, long request,
+@@ -92,8 +135,10 @@ long subarch_ptrace(struct task_struct *child, long request,
  static int genregs_get(struct task_struct *target,
  		       const struct user_regset *regset, struct membuf to)
  {
@@ -679,7 +683,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..0e16e611416a790dd3a58a5d688cec2f
  	return 0;
  }
  
-@@ -102,19 +143,15 @@ static int genregs_set(struct task_struct *target,
+@@ -102,19 +147,15 @@ static int genregs_set(struct task_struct *target,
  		       unsigned int pos, unsigned int count,
  		       const void *kbuf, const void __user *ubuf)
  {
@@ -708,7 +712,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..0e16e611416a790dd3a58a5d688cec2f
  }
  
  static int fpregs_get(struct task_struct *target,
-@@ -133,7 +170,7 @@ static int fpregs_set(struct task_struct *target,
+@@ -133,7 +174,7 @@ static int fpregs_set(struct task_struct *target,
  		target->thread.regs.regs.fp, 0, host_fp_size);
  }
  
@@ -717,7 +721,7 @@ index 52e976dc7f84880c40d4616989f8eea484a7c172..0e16e611416a790dd3a58a5d688cec2f
  	[REGSET_GENERAL] = {
  		USER_REGSET_NOTE_TYPE(PRSTATUS),
  		.n = sizeof(struct user_regs_struct) / sizeof(unsigned long),
-@@ -152,15 +189,15 @@ static const struct user_regset uml_arm64_regsets[] = {
+@@ -152,15 +193,15 @@ static const struct user_regset uml_arm64_regsets[] = {
  	},
  };
  
@@ -2608,7 +2612,7 @@ index 3267358aad21eb46cb76cc8375280bac948f0bc9..bde1affde2a40d95c648c8221d1d5818
  		printk(KERN_ERR "Attempted to relay unknown signal %d (si_code = %d) with errno %d\n",
  		       sig, code, err);
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 015a753d6cd3c5539e15d1722bf515aa732de017..0aba40dac51992b04acad8cc230442a202e82d3e 100644
+index 12be3ad3e7c0047ffe90985a1f43303420668364..03bcc9f4ec082826b766cd03f1806e106edf939a 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -53,6 +53,7 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
@@ -2619,8 +2623,8 @@ index 015a753d6cd3c5539e15d1722bf515aa732de017..0aba40dac51992b04acad8cc230442a2
  #define DARWIN_GUEST_FPE_FLTDIV 3
  #define DARWIN_GUEST_FPE_FLTOVF 4
  #define DARWIN_GUEST_FPE_FLTUND 5
-@@ -421,7 +422,7 @@ void userspace(struct uml_pt_regs *registers)
- #endif
+@@ -426,7 +427,7 @@ void userspace(struct uml_pt_regs *registers)
+ 		UPT_SYSCALL_NR(registers) = -1;
  		switch (event) {
  		case DARWIN_UML_EVENT_SYSCALL:
 -			registers->orig_x0 = UPT_X(registers, 0);
@@ -2628,7 +2632,7 @@ index 015a753d6cd3c5539e15d1722bf515aa732de017..0aba40dac51992b04acad8cc230442a2
  			handle_syscall(registers);
  			/* copy_mm() records the parent's COW protection changes in
  			 * UML's normal TLB synchronization state.  The next userspace
-@@ -482,13 +483,20 @@ void userspace(struct uml_pt_regs *registers)
+@@ -487,13 +488,20 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_FLOATING_POINT_TRAP:
  		{
  			siginfo_t signal_info = { 0 };
@@ -2649,22 +2653,18 @@ index 015a753d6cd3c5539e15d1722bf515aa732de017..0aba40dac51992b04acad8cc230442a2
  			signal_info.si_addr = (void *)UPT_IP(registers);
  			registers->is_user = 1;
  			block_signals_trace();
-@@ -574,14 +582,45 @@ void userspace(struct uml_pt_regs *registers)
+@@ -579,14 +587,41 @@ void userspace(struct uml_pt_regs *registers)
  
  			registers->faultinfo.error_code = 0;
  			registers->faultinfo.cr2 = UPT_IP(registers);
 +#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
-+			if (registers->faultinfo.trap_no == 4) {
-+				/* INTO is the x86 #OF trap.  Native Linux delivers it as
-+				 * SIGSEGV with a zero si_code and no fault address. */
-+				signal_info.si_signo = SIGSEGV;
-+				signal_info.si_errno = 0;
-+				signal_info.si_code = 0;
-+				signal_info.si_addr = NULL;
-+			} else if (registers->faultinfo.trap_no == 13) {
-+				/* A #GP, such as RDTSC under PR_TSC_SIGSEGV, reaches
-+				 * native userspace as SIGSEGV with Linux SI_KERNEL,
-+				 * a name Darwin's signal.h does not define. */
++			if (registers->faultinfo.trap_no == 4 ||
++			    registers->faultinfo.trap_no == 5 ||
++			    registers->faultinfo.trap_no == 13) {
++				/* #OF from INTO or INT 4, #BR from BOUND, and a #GP such
++				 * as RDTSC under PR_TSC_SIGSEGV reach native userspace
++				 * as SIGSEGV with Linux SI_KERNEL, a name Darwin's
++				 * signal.h does not define, and no fault address. */
 +				registers->faultinfo.cr2 = 0;
 +				signal_info.si_signo = SIGSEGV;
 +				signal_info.si_errno = 0;

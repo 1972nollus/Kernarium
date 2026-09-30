@@ -343,7 +343,7 @@ index 182e71b7517618d359bdb9a25526d18c5dc7951c..12e4934ffda251dc11e4aaefde4bd645
 +	return 0;
 +}
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 63d41bc992da2208e953c3ebfb51a072c2ee2608..d4284e564057261937a1b4dcc6a3269fb322354f 100644
+index 605e4e25ab86e6a4b0e154940c88c8336f4cea8e..27bc8eb41e2550126d41139303b1de4f0554d795 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -23,8 +23,8 @@

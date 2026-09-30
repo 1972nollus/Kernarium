@@ -185,7 +185,7 @@ index 28ab8dbe589f95dfba5654a2fb08c756c190bf19..dfcf40a0ea376cd35d2467e432323513
  
  void block_signals_hard(void)
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index d4284e564057261937a1b4dcc6a3269fb322354f..1fb66557b1dd0af709865e6671f80d6a2e6897c5 100644
+index 27bc8eb41e2550126d41139303b1de4f0554d795..002a2aa7e1bfe762a4de6a7e5ac569d8aec9d679 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -389,7 +389,7 @@ void userspace(struct uml_pt_regs *registers)

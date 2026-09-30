@@ -124,7 +124,7 @@ index 3567ccaff54965fa2380c592b1781ef0d022f8cf..6fff9ef7ddbdc6637f2574fabd89c21b
  			if (full)
  				ret = 0;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 1fb66557b1dd0af709865e6671f80d6a2e6897c5..01bea1dff640b72d0da2213b37d2841617d651d5 100644
+index 002a2aa7e1bfe762a4de6a7e5ac569d8aec9d679..37172ca87f4039915304ed1eb315946cc6a594fa 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -7,7 +7,6 @@
@@ -201,7 +201,7 @@ index 1fb66557b1dd0af709865e6671f80d6a2e6897c5..01bea1dff640b72d0da2213b37d28416
  
  		/*
  		 * This loop is Darwin's user-mode return path.  Cooperative timer or
-@@ -464,11 +425,6 @@ void userspace(struct uml_pt_regs *registers)
+@@ -469,11 +430,6 @@ void userspace(struct uml_pt_regs *registers)
  		switch (event) {
  		case DARWIN_UML_EVENT_SYSCALL:
  			registers->orig_x0 = UPT_X(registers, 0);
@@ -213,7 +213,7 @@ index 1fb66557b1dd0af709865e6671f80d6a2e6897c5..01bea1dff640b72d0da2213b37d28416
  			handle_syscall(registers);
  			/* copy_mm() records the parent's COW protection changes in
  			 * UML's normal TLB synchronization state.  The next userspace
-@@ -499,29 +455,6 @@ void userspace(struct uml_pt_regs *registers)
+@@ -504,29 +460,6 @@ void userspace(struct uml_pt_regs *registers)
  					FAULT_WRITE(registers->faultinfo));
  				if (retry < 0)
  					fatal_userspace(registers, "fault retry", retry);
@@ -243,7 +243,7 @@ index 1fb66557b1dd0af709865e6671f80d6a2e6897c5..01bea1dff640b72d0da2213b37d28416
  				if (retry > 0)
  					break;
  			}
-@@ -536,19 +469,13 @@ void userspace(struct uml_pt_regs *registers)
+@@ -541,19 +474,13 @@ void userspace(struct uml_pt_regs *registers)
  				/* A store which Linux just resolved should not take a
  				 * second protection fault merely to mark its clean Darwin
  				 * shadow dirty.  Grant the now-writable slot before retrying

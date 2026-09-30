@@ -238,8 +238,9 @@ gadget string_\operation\()_\width
 	ubfx w8, w23, #8, #8
 	cbz w8, .Lx86_string_nonrepeating\@
 	/* Long REP operations must periodically return to the executor so an
-	 * MMU mapping-change interrupt can release its execution read gate. */
-	mov w9, #4096
+	 * MMU mapping-change interrupt can release its execution read gate, and
+	 * so the dispatch can charge the work to its instruction budget. */
+	mov w9, #UML_X86_64_STRING_REPEAT_BUDGET
 	str w9, [sp, #0x68]
 	tbnz x23, #3, .Lx86_string_count_16\@
 	tbz x23, #0, .Lx86_string_count_64\@
@@ -529,13 +530,14 @@ gadget string_\operation\()_\width
 	 * is where an interrupt finds it. Hardware then saves RF, so that the
 	 * resumed instruction does not break again, and the runtime leaves it set
 	 * if it returns to the kernel here; `execute` clears it when the
-	 * instruction resumes. */
+	 * instruction resumes. The instruction has retired nothing, so the exit
+	 * tells the dispatch what its repeat budget covered. */
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	orr x9, x9, #0x10000
 .Lx86_string_between_elements\@:
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	str x22, [_cpu, #UML_X86_64_CPU_RIP]
-	mov w0, #UML_X86_64_EVENT_CONTINUED
+	mov w0, #UML_X86_64_EVENT_REPEAT_YIELD
 	b uml_x86_64_gadget_leave
 .Lx86_string_finish\@:
 	tbz x23, #32, .Lx86_string_continue\@

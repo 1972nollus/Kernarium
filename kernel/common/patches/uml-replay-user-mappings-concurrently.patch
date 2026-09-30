@@ -675,10 +675,10 @@ index 232d63abc0cc8b6641377db31be49583103bad10..b6ea5a11d548c4b9ac21c79fa2f3c0c9
  #endif
  
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index ba51d9f2dd935366a555c2bee0784d6ec35d316e..079f05488b2999c32b2e15cd8e3d8e44b1b4b0f7 100644
+index a9c1048fb1cc6873b070f7270343e22a224537ab..fb4f652c4fc0b7221ca38e0aa1dd7c319781b4d2 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -455,12 +455,16 @@ void userspace(struct uml_pt_regs *registers)
+@@ -460,12 +460,16 @@ void userspace(struct uml_pt_regs *registers)
  			unsigned long fault = FAULT_ADDRESS(registers->faultinfo);
  			int retry;
  

@@ -101,6 +101,13 @@ never fires, because the host returns from the handler before fetching there.
 `guest-signal-unwind` checks the unwinds, the frame record and a tracer's
 write.
 
+Signal delivery fails or restarts only a system call the task is still in.
+Every other entry from userspace, a fault, an interrupt or a trap, leaves the
+task's system call number at -1, so whatever the task holds in its return
+register, even one of the -ERESTART* codes an interrupted call returns,
+reaches a signal handler and survives it unchanged. `guest-signal-restart`
+checks x0 on arm64 and the x86 exception probe checks RAX.
+
 Both maintained kernel lines perform futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value
 observed by that operation, and wake-operation arithmetic retries competing

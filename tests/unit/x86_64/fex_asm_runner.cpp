@@ -615,6 +615,8 @@ constexpr std::array<std::uint64_t, 7> pack_flags{
 	case uml::cpu::EngineEvent::overflow: return "overflow";
 	case uml::cpu::EngineEvent::general_protection: return "general_protection";
 	case uml::cpu::EngineEvent::trap_flag: return "trap_flag";
+	case uml::cpu::EngineEvent::debug_trap: return "debug_trap";
+	case uml::cpu::EngineEvent::bound_range: return "bound_range";
 	}
 	return "unknown";
 }

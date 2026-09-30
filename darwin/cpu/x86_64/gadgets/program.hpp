@@ -230,11 +230,20 @@ struct BuildResult final {
 	std::uint64_t address, ExecutionMode mode,
 	std::size_t maximum_instructions, ProgramLinkResolver links) noexcept;
 
+/* The work, in elements or 64-byte blocks, that a repeated string
+ * instruction does before it stops between elements. */
+inline constexpr std::size_t string_repeat_budget =
+	UML_X86_64_STRING_REPEAT_BUDGET;
+
 struct ExecuteResult final {
 	::uml::cpu::EngineEvent event{::uml::cpu::EngineEvent::fatal};
 	std::size_t retired_instructions{};
 	::uml::cpu::FaultInfo fault{};
 	bool instruction_budget_exhausted{};
+	/* A continued run that ended in a repeated string instruction stopped
+	 * between elements after `string_repeat_budget` of work. It retired
+	 * nothing for that work, and RIP still names it. */
+	bool repeat_yielded{};
 };
 
 [[nodiscard]] ExecuteResult execute(const Program &program, CpuState &cpu,

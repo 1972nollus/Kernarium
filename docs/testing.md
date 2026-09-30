@@ -306,6 +306,11 @@ must hold the interrupted x29 and x30, cancelling a thread blocked in
 `read()` must run its cleanup handler, and a tracer must be able to write
 back the word at the handler's return address.
 
+`guest-signal-restart` spins in machine code with x0 holding each -ERESTART*
+code while a 1 ms interval timer's `SIGALRM` interrupts it, with and without
+`SA_RESTART`, and requires x0 back unchanged, as
+[`../kernel/common/README.md`](../kernel/common/README.md) specifies.
+
 `guest-run-end-stop` needs only the kernel image: it stops embedded guests
 throughout their boot and checks the run-end and SIGALRM contracts in
 [`../kernel/common/README.md`](../kernel/common/README.md).
@@ -366,6 +371,14 @@ RF from IRET or a signal return is gone by the next instruction's system call,
 that fault frames, a tracer's view at a fault's stop, and a REP string that a
 signal from another CPU interrupts show RF while trap frames do not, and that
 TF set by IRET traps after one instruction.
+`tests/integration/x86_64/run_guest_x86_64_exceptions.py` builds and runs its
+exception probe the same way and checks, for both ABIs, that a 1 ms interval
+timer keeps firing through long REP STOSB and REPE CMPSB loops and that ICEBP,
+INT 4, and i386 BOUND and INTO deliver Linux's signals without a kernel relay
+complaint, that a value on the x87 stack survives a signal, that a signal taken
+between two instructions leaves RAX alone even when it holds an -ERESTART*
+code, and that a tracer of the same ABI reads and writes registers, FP state
+and i386 TLS and changes or skips a system call through orig_ax.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
