@@ -51,6 +51,7 @@ HWCAP2_FRINT = 1 << 8
 HWCAP2_I8MM = 1 << 13
 HWCAP2_BF16 = 1 << 14
 HWCAP2_ECV = 1 << 19
+HWCAP2_CSSC = 1 << 34
 OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_AES", HWCAP_AES, "aes"),
     ("hw.optional.arm.FEAT_PMULL", HWCAP_PMULL, "pmull"),
@@ -90,7 +91,12 @@ HWCAP_NAMES = {
     HWCAP_CPUID: "cpuid",
     **{bit: name for _, bit, name in OPTIONAL_HWCAPS},
 }
-HWCAP2_NAMES = {bit: name for _, bit, name in OPTIONAL_HWCAPS2}
+# Advertised on every host.
+REQUIRED_HWCAPS2 = HWCAP2_CSSC
+HWCAP2_NAMES = {
+    HWCAP2_CSSC: "cssc",
+    **{bit: name for _, bit, name in OPTIONAL_HWCAPS2},
+}
 # The lines of arm64 Linux's /proc/cpuinfo block (arch/arm64/kernel/cpuinfo.c)
 # up to each value, plus the model name that it prints in the same place for a
 # 32-bit task. A blank line ends every block.
@@ -308,7 +314,7 @@ def main() -> int:
                 "AT_HWCAP mismatch: "
                 f"expected 0x{expected:x}, got {actual_hwcap!r}"
             )
-        expected2 = expected_hwcap(OPTIONAL_HWCAPS2)
+        expected2 = expected_hwcap(OPTIONAL_HWCAPS2, REQUIRED_HWCAPS2)
         if actual_hwcap2 != expected2:
             raise RuntimeError(
                 "AT_HWCAP2 mismatch: "

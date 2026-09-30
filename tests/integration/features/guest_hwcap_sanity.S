@@ -58,6 +58,7 @@
 	.equ E_JSCVT_FPSR,	24
 	.equ JSCVT_CASES,	16
 	.equ E_ECV,		25
+	.equ E_CSSC,		26
 
 	.equ AT_HWCAP,		16
 	.equ AT_HWCAP2,		26
@@ -81,6 +82,7 @@
 	.equ HWCAP2_FLAGM2,	7
 	.equ HWCAP2_FRINT,	8
 	.equ HWCAP2_ECV,	19
+	.equ HWCAP2_CSSC,	34
 
 	/* The engine smoke accepts the payload only when it prints exactly "OK"
 	 * and exits zero, so a failure reports the family by name on stdout
@@ -435,6 +437,34 @@ _start:
 	b.ne	.Lfail_ecv
 .Lskip_ecv:
 
+	tbz	x29, #HWCAP2_CSSC, .Lskip_cssc
+	/* FEAT_CSSC: one form of each operation, and ID_AA64ISAR2_EL1.CSSC,
+	 * the field Linux derives HWCAP2_CSSC from, reads 1. The words are
+	 * spelled out for assemblers that predate the extension. */
+	mov	x23, #0x0100
+	movk	x23, #0x00f0, lsl #48	/* 0x00f0000000000100 */
+	mov	x25, #-5
+	.inst	0xdac01ef8		/* cnt x24, x23 */
+	cmp	x24, #5
+	b.ne	.Lfail_cssc
+	.inst	0xdac01af8		/* ctz x24, x23 */
+	cmp	x24, #8
+	b.ne	.Lfail_cssc
+	.inst	0xdac02338		/* abs x24, x25 */
+	cmp	x24, #5
+	b.ne	.Lfail_cssc
+	.inst	0x91c00f38		/* smax x24, x25, #3 */
+	cmp	x24, #3
+	b.ne	.Lfail_cssc
+	.inst	0x9ad76f38		/* umin x24, x25, x23 */
+	cmp	x24, x23
+	b.ne	.Lfail_cssc
+	mrs	x26, s3_0_c0_c6_2	/* ID_AA64ISAR2_EL1 */
+	ubfx	x26, x26, #52, #4
+	cmp	x26, #1
+	b.ne	.Lfail_cssc
+.Lskip_cssc:
+
 	adrp	x1, success_message
 	add	x1, x1, :lo12:success_message
 	mov	x0, #1
@@ -468,6 +498,7 @@ _start:
 .Lfail_jscvt_nzcv:	fail E_JSCVT_NZCV, msg_jscvt_nzcv
 .Lfail_jscvt_fpsr:	fail E_JSCVT_FPSR, msg_jscvt_fpsr
 .Lfail_ecv:		fail E_ECV, msg_ecv
+.Lfail_cssc:		fail E_CSSC, msg_cssc
 
 .Lexit:
 	mov	x8, #NR_EXIT_GROUP
@@ -579,6 +610,8 @@ msg_jscvt_fpsr:
 	.ascii "FAIL jscvt fpsr \n"
 msg_ecv:
 	.ascii "FAIL ecv        \n"
+msg_cssc:
+	.ascii "FAIL cssc       \n"
 success_message:
 	.ascii "OK\n"
 

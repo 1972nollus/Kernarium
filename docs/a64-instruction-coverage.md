@@ -31,6 +31,12 @@ Linux gives EL0 no physical count. A counter value cannot be pinned in the
 corpus, so `arm64-base-system-registers` and the guest HWCAP sanity payload
 check it on each host.
 
+FEAT_CSSC is implemented on every host. Both engines execute ABS, CNT, CTZ,
+and the integer minimum and maximum natively where the host has the extension
+and otherwise as short sequences of base instructions, so HWCAP2_CSSC and
+ID_AA64ISAR2_EL1.CSSC are always set. The guest HWCAP sanity payload checks
+one form of each operation in the guest.
+
 That status is not exhaustive variant proof. No inventory entry has an
 independently reviewed complete partition of all forms, widths, aliases,
 architectural state, optional features, reserved encodings, fault ordering, and

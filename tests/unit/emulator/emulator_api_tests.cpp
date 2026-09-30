@@ -318,7 +318,8 @@ unsigned long expected_guest_hwcap()
 
 unsigned long expected_guest_hwcap2()
 {
-	unsigned long result = 0;
+	/* FEAT_CSSC runs on every host. */
+	unsigned long result = 1UL << 34;
 	const struct {
 		const char *sysctl;
 		unsigned bit;
