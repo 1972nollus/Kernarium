@@ -117,7 +117,9 @@ ZF, SF, TF, DF, OF, RF and AC), and a tracer may change those bits and NT.
 IOPL, VM, VIF, VIP and ID stay the task's and IF stays set; the Darwin host
 also sets IF and bit 1 on every entry to the task. RF, which IRET at CPL 3 and
 a signal return may set, is gone when the next instruction starts, so a system
-call that instruction makes, and its signal frame, never show it.
+call that instruction makes, and its signal frame, never show it. A fault's
+signal frame and a tracer's view at its stop show RF set, as the flags x86
+saves for a fault do, and a trap's show it clear.
 `tests/integration/x86_64/run_guest_x86_64_rflags.py` checks this. Host instruction
 execution is qualified against the pinned FEX handwritten x86-64 corpus;
 distribution and complete Linux syscall compatibility require separate guest

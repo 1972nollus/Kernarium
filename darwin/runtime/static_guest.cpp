@@ -72,6 +72,7 @@ constexpr std::uint32_t pstate_ss = 0x0020'0000U;
  * and the arm64 software-step exception class. */
 #if DARWIN_UML_X86_64_GUEST
 constexpr std::int32_t x86_64_debug_trap = 1;
+constexpr std::uint32_t x86_64_general_protection = 13;
 #endif
 constexpr std::int32_t arm64_software_step = 0x32;
 constexpr std::uint64_t svcr_sm = 1U;
@@ -397,6 +398,15 @@ void save_x86_cpu(x86_64::CpuState &cpu,
 	fp.reserved[1] = x86_64_fp_marker;
 }
 
+/* A fault-class exception saves RFLAGS with RF set, so that the faulting
+ * instruction does not raise its instruction breakpoint again when it is
+ * resumed; a trap saves the flags as they are, and RF is clear by then.
+ * Native Linux shows that image in the signal frame and to a tracer. */
+void save_x86_fault_flags(darwin_uml_guest_registers &registers) noexcept
+{
+	registers.x[x86_64_rflags_slot] |= x86_64::rflags_resume;
+}
+
 template<uml::cpu::EngineKind Kind>
 int run_x86_guest(darwin_uml_guest_registers &registers,
 	darwin_uml_guest_fp_registers &fp,
@@ -438,6 +448,7 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 				DARWIN_UML_FAULT_EXECUTE : 0;
 		registers.fault.address = result.fault.address;
 		registers.fault.trap_number = DARWIN_UML_FAULT_PAGE;
+		save_x86_fault_flags(registers);
 		event = DARWIN_UML_EVENT_FAULT;
 		break;
 	case uml::cpu::ExitReason::interrupt:
@@ -446,13 +457,17 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 			DARWIN_UML_EVENT_STOP : DARWIN_UML_EVENT_INTERRUPT;
 		break;
 	case uml::cpu::ExitReason::illegal_instruction:
+		save_x86_fault_flags(registers);
 		event = DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION;
 		break;
 	case uml::cpu::ExitReason::breakpoint:
+		/* #BP and #OF are traps; #GP is a fault. */
 		registers.fault.error_code = 0;
 		registers.fault.address = cpu.rip;
 		registers.fault.trap_number = static_cast<std::int32_t>(
 			result.syndrome);
+		if (result.syndrome == x86_64_general_protection)
+			save_x86_fault_flags(registers);
 		event = DARWIN_UML_EVENT_BREAKPOINT;
 		break;
 	case uml::cpu::ExitReason::single_step:
@@ -462,9 +477,11 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		event = DARWIN_UML_EVENT_BREAKPOINT;
 		break;
 	case uml::cpu::ExitReason::floating_point_trap:
+		/* #DE, a fault; the engine raises no other arithmetic exception. */
 		registers.fault.error_code = 0;
 		registers.fault.address = cpu.rip;
 		registers.fault.trap_number = 0;
+		save_x86_fault_flags(registers);
 		event = DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
 		break;
 	case uml::cpu::ExitReason::pc_alignment:

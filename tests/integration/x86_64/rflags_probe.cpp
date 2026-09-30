@@ -7,7 +7,8 @@
  * and starts a task from execve() with IF and reserved bit 1, 0x202. IOPL,
  * VM, VIF, VIP and ID are never a task's to set that way, and IF stays set.
  * RF, which IRET at CPL 3 and a signal return may set, is cleared as the next
- * instruction starts, so a system call that instruction makes never shows it.
+ * instruction starts, so a system call that instruction makes never shows it,
+ * but a fault saves the flags with RF set and a trap saves them as they are.
  * TF that IRET sets raises SIGTRAP after the instruction IRET returns to.
  *
  * The x86-64 build traces an x86-64 and an i386 child stopped after execve(),
@@ -15,8 +16,9 @@
  * i386 build, whose path is the first argument, is the 32-bit child and runs
  * the same signal case under the i386 ABI. Each build also sets RF and reads
  * the signal frames, and on x86-64 SYSCALL's R11, of the kill() calls that
- * follow, and sets TF with IRET. Prints one line per case and exits with the
- * number of failures.
+ * follow, sets TF with IRET, and raises faults and traps. The x86-64 build
+ * also reads the flags of both children stopped at a fault. Prints one line
+ * per case and exits with the number of failures.
  */
 
 namespace {
@@ -590,6 +592,166 @@ bool iret_trap_flag_steps_one_instruction()
 			  probe_iret_syscall_after) && ok;
 }
 
+/* One instruction of each exception class the engine raises, at ..._insn in
+ * a stub that returns from ..._end. The same code assembles for both ABIs. */
+__asm__(".text\n"
+	".global probe_ud2\n"
+	".global probe_ud2_insn\n"
+	".global probe_ud2_end\n"
+	"probe_ud2:\n"
+	"probe_ud2_insn:\n"
+	"	ud2\n"
+	"probe_ud2_end:\n"
+	"	ret\n"
+	".global probe_hlt\n"
+	".global probe_hlt_insn\n"
+	".global probe_hlt_end\n"
+	"probe_hlt:\n"
+	"probe_hlt_insn:\n"
+	"	hlt\n"
+	"probe_hlt_end:\n"
+	"	ret\n"
+	".global probe_divide\n"
+	".global probe_divide_insn\n"
+	".global probe_divide_end\n"
+	"probe_divide:\n"
+	"	xorl %eax, %eax\n"
+	"	xorl %ecx, %ecx\n"
+	"	xorl %edx, %edx\n"
+	"probe_divide_insn:\n"
+	"	divl %ecx\n"
+	"probe_divide_end:\n"
+	"	ret\n"
+	".global probe_page\n"
+	".global probe_page_insn\n"
+	".global probe_page_end\n"
+	"probe_page:\n"
+	"probe_page_insn:\n"
+	"	movl 0, %eax\n"
+	"probe_page_end:\n"
+	"	ret\n"
+	".global probe_int3\n"
+	".global probe_int3_insn\n"
+	".global probe_int3_end\n"
+	"probe_int3:\n"
+	"probe_int3_insn:\n"
+	"	int3\n"
+	"probe_int3_end:\n"
+	"	ret\n"
+	".global probe_int4\n"
+	".global probe_int4_insn\n"
+	".global probe_int4_end\n"
+	"probe_int4:\n"
+	"probe_int4_insn:\n"
+	"	int $4\n"
+	"probe_int4_end:\n"
+	"	ret\n");
+
+#define PROBE_STUB(name)                                                       \
+	extern "C" void probe_##name();                                        \
+	extern "C" char probe_##name##_insn[];                                 \
+	extern "C" char probe_##name##_end[];
+PROBE_STUB(ud2)
+PROBE_STUB(hlt)
+PROBE_STUB(divide)
+PROBE_STUB(page)
+PROBE_STUB(int3)
+PROBE_STUB(int4)
+#undef PROBE_STUB
+
+constexpr long sigill = 4;
+constexpr long sigfpe = 8;
+constexpr long sigsegv = 11;
+
+volatile int fault_signal;
+volatile word fault_ip;
+volatile word fault_flags;
+volatile word fault_resume;
+
+/* Records the frame and resumes at the stub's return. */
+void record_fault(int signal, void *, void *context)
+{
+	auto *frame = static_cast<char *>(context);
+	auto *ip = reinterpret_cast<word *>(frame + frame_ip_offset);
+	fault_signal = signal;
+	fault_ip = *ip;
+	fault_flags = *reinterpret_cast<word *>(frame + frame_flags_offset);
+	*ip = fault_resume;
+}
+
+struct ExceptionCase {
+	const char *name;
+	void (*stub)();
+	const char *instruction;
+	const char *end;
+	long signal;
+	bool fault;
+};
+
+/* A fault's frame names the instruction and has RF set; a trap's names the
+ * next one and has it clear. Prints why not. */
+bool exception_frame(const ExceptionCase &shape)
+{
+	fault_signal = 0;
+	fault_resume = reinterpret_cast<word>(shape.end);
+	shape.stub();
+	const word ip = reinterpret_cast<word>(
+		shape.fault ? shape.instruction : shape.end);
+	const bool ok = fault_signal == shape.signal && fault_ip == ip &&
+			((fault_flags & flag_rf) != 0) == shape.fault;
+	if (!ok) {
+		put("  ");
+		put(shape.name);
+		put(": signal ");
+		put_hex(static_cast<u32>(fault_signal));
+		put(", ip ");
+		put_hex(fault_ip);
+		put(" (expected ");
+		put_hex(ip);
+		put("), frame flags ");
+		put_hex(fault_flags);
+		put(shape.fault ? ", Linux sets RF\n" : ", Linux clears RF\n");
+	}
+	return ok;
+}
+
+/* Hardware sets RF in the flags it saves for every fault but an instruction
+ * breakpoint, so the resumed instruction does not break again; a trap saves
+ * the flags as they are. */
+bool fault_frames_set_resume_flag()
+{
+	KernelSigaction action = {};
+	action.handler = reinterpret_cast<word>(&record_fault);
+	action.flags = sa_siginfo | sa_restorer;
+	action.restorer = reinterpret_cast<word>(&probe_restorer);
+	const long signals[] = {sigill, trap_signal, sigfpe, sigsegv};
+	for (const long signal : signals) {
+		if (raw_syscall(nr_rt_sigaction, signal,
+				reinterpret_cast<long>(&action), 0, 8) != 0) {
+			put("  rt_sigaction failed\n");
+			return false;
+		}
+	}
+	const ExceptionCase cases[] = {
+		{"#UD from UD2", probe_ud2, probe_ud2_insn, probe_ud2_end, sigill,
+		 true},
+		{"#GP from HLT", probe_hlt, probe_hlt_insn, probe_hlt_end, sigsegv,
+		 true},
+		{"#DE from DIV by zero", probe_divide, probe_divide_insn,
+		 probe_divide_end, sigfpe, true},
+		{"#PF from a load at address zero", probe_page, probe_page_insn,
+		 probe_page_end, sigsegv, true},
+		{"#BP from INT3", probe_int3, probe_int3_insn, probe_int3_end,
+		 trap_signal, false},
+		{"#OF from INT 4", probe_int4, probe_int4_insn, probe_int4_end,
+		 sigsegv, false},
+	};
+	bool ok = true;
+	for (const auto &shape : cases)
+		ok = exception_frame(shape) && ok;
+	return ok;
+}
+
 #if defined(__x86_64__)
 constexpr word flag_vm = 1UL << 17;
 constexpr word tracer_privileged = frame_privileged | flag_vm;
@@ -741,6 +903,43 @@ bool setregset32_changes_only_flag_mask(long child)
 			     flag_nt | flag_ac | flag_cf);
 }
 
+constexpr long ptrace_cont = 7;
+
+/* The traced child raises #UD. At its signal-delivery stop a tracer reads
+ * the flags the fault saved, with RF set. */
+bool fault_stop_shows_resume_flag(long child, bool i386)
+{
+	int status = 0;
+	if (raw_syscall(nr_ptrace, ptrace_cont, child, 0, 0) != 0 ||
+	    wait_for(child, status) != child || (status & 0xff) != 0x7f ||
+	    ((status >> 8) & 0xff) != sigill) {
+		put("  no SIGILL stop: status ");
+		put_hex(static_cast<u32>(status));
+		put("\n");
+		return false;
+	}
+	u64 flags = 0;
+	if (i386) {
+		u32 regs[user_regs32_words] = {};
+		Iovec vector = {regs, sizeof(regs)};
+		if (raw_syscall(nr_ptrace, ptrace_getregset, child, nt_prstatus,
+				reinterpret_cast<long>(&vector)) != 0)
+			return false;
+		flags = regs[user_regs32_flags_index];
+	} else {
+		u64 regs[user_regs_words] = {};
+		if (!get_regs(child, regs))
+			return false;
+		flags = regs[user_flags_index];
+	}
+	if ((flags & flag_rf) != 0)
+		return true;
+	put("  RFLAGS at the SIGILL stop ");
+	put_hex(flags);
+	put(", Linux sets RF\n");
+	return false;
+}
+
 /* The signal cases run in a child, since no popf can clear an IOPL a
  * sigreturn wrongly installed, and no instruction the task has can clear an
  * RF that stays set. */
@@ -795,6 +994,13 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "resume"));
 	report("x86-64 TF set by IRET traps after one instruction",
 	       in_child(self, "step"));
+	report("x86-64 fault frames set RF and trap frames do not",
+	       in_child(self, "faults"));
+	child = start_traced(self, "ud2");
+	report("x86-64 a tracer sees RF at a fault's stop",
+	       child > 0 && fault_stop_shows_resume_flag(child, false));
+	if (child > 0)
+		finish(child);
 
 	child = start_traced(i386_probe, "idle");
 	report("i386 execve() starts with EFLAGS 0x202",
@@ -809,6 +1015,13 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(i386_probe, "resume"));
 	report("i386 TF set by IRET traps after one instruction",
 	       in_child(i386_probe, "step"));
+	report("i386 fault frames set RF and trap frames do not",
+	       in_child(i386_probe, "faults"));
+	child = start_traced(i386_probe, "ud2");
+	report("i386 a tracer sees RF at a fault's stop",
+	       child > 0 && fault_stop_shows_resume_flag(child, true));
+	if (child > 0)
+		finish(child);
 	return failures;
 }
 #endif
@@ -827,6 +1040,12 @@ extern "C" int probe_main(word *stack)
 		return resume_flag_clears_at_next_instruction() ? 0 : 1;
 	if (count == 2 && equal(arguments[1], "step"))
 		return iret_trap_flag_steps_one_instruction() ? 0 : 1;
+	if (count == 2 && equal(arguments[1], "faults"))
+		return fault_frames_set_resume_flag() ? 0 : 1;
+	if (count == 2 && equal(arguments[1], "ud2")) {
+		probe_ud2();
+		return 1;
+	}
 #if defined(__x86_64__)
 	if (count == 2)
 		return run_all(arguments[0], arguments[1]);

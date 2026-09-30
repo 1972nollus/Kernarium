@@ -183,9 +183,14 @@ kernel's flags carry it after a signal return or a tracer's write. IRET always
 leaves the engine and the kernel's flags always start a dispatch, so `execute`
 clears RF as it enters the engine and no gadget reads or clears it. An exit
 before the engine runs an instruction, for a pending interrupt or a zero
-budget, keeps RF, as an interrupt taken before that instruction does. Hardware
-also sets RF in the flags it pushes for a fault; the engine reports its live
-flags, in which RF is clear.
+budget, keeps RF, as an interrupt taken before that instruction does.
+
+Hardware also sets RF in the flags it saves for every fault but an instruction
+breakpoint, so the resumed instruction does not break again, and saves a
+trap's flags as they are. The runtime does the same in the registers it hands
+the kernel: a page fault, #UD, #GP or #DE exit reports RF set, and a
+breakpoint, INT 4 or single-step exit reports the live flags, in which RF is
+clear. Signal frames and a tracer therefore see what native Linux shows.
 
 ## Software TLB
 
