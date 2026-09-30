@@ -29,7 +29,6 @@ struct BFloatConversionResult final {
 [[nodiscard]] constexpr BFloatConversionResult convert_to_bfloat(
 	std::uint32_t input, std::uint32_t fpcr) noexcept
 {
-	const bool ah = (fpcr & 2U) != 0U;
 	const bool sign = (input >> 31) != 0U;
 	const unsigned exponent = (input >> 23) & 0xffU;
 	const unsigned fraction = input & 0x7f'ffffU;
@@ -39,22 +38,17 @@ struct BFloatConversionResult final {
 		if (fraction == 0U)
 			return {static_cast<std::uint16_t>(input >> 16), 0U};
 		if ((fpcr & (1U << 25)) != 0U)
-			return {static_cast<std::uint16_t>(
-				(ah ? 0xffc0U : 0x7fc0U)),
-				!ah && signaling_nan ? 1U : 0U};
+			return {0x7fc0U, signaling_nan ? 1U : 0U};
 		return {static_cast<std::uint16_t>(
 			(input | 0x0040'0000U) >> 16),
-			!ah && signaling_nan ? 1U : 0U};
+			signaling_nan ? 1U : 0U};
 	}
 	if (exponent == 0U && fraction == 0U)
 		return {static_cast<std::uint16_t>(input >> 16), 0U};
-	const bool fz = (fpcr & (1U << 24)) != 0U && !ah;
-	const bool fiz = (fpcr & 1U) != 0U || ah;
-	if (exponent == 0U && (fz || fiz))
-		return {static_cast<std::uint16_t>(sign ? 0x8000U : 0U),
-			fz ? 1U << 7 : 0U};
+	if (exponent == 0U && (fpcr & (1U << 24)) != 0U)
+		return {static_cast<std::uint16_t>(sign ? 0x8000U : 0U), 1U << 7};
 
-	const unsigned rounding = ah ? 0U : (fpcr >> 22) & 3U;
+	const unsigned rounding = (fpcr >> 22) & 3U;
 	const std::uint16_t truncated = static_cast<std::uint16_t>(input >> 16);
 	const unsigned remainder = input & 0xffffU;
 	if (remainder == 0U)
@@ -71,10 +65,10 @@ struct BFloatConversionResult final {
 	}
 	const auto result = static_cast<std::uint16_t>(
 		truncated + static_cast<unsigned>(increment));
-	std::uint32_t exceptions = ah ? 0U : 1U << 4;
-	if (!ah && exponent == 0U)
+	std::uint32_t exceptions = 1U << 4;
+	if (exponent == 0U)
 		exceptions |= 1U << 3;
-	if (!ah && exponent != 0U &&
+	if (exponent != 0U &&
 	    (result & 0x7f80U) == 0x7f80U &&
 	    (result & 0x007fU) == 0U)
 		exceptions |= 1U << 2;

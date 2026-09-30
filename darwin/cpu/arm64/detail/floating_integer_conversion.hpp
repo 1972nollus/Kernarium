@@ -74,36 +74,23 @@ convert_integer_to_floating_bits(std::uint64_t input, unsigned integer_width,
 			if (rounded.inexact)
 				exceptions |= 1U << 4;
 		}
+	} else if (destination_width == 16U ? (fpcr & (1U << 19)) != 0U :
+		   (fpcr & (1U << 24)) != 0U) {
+		exceptions |= 1U << 3;
+		result = sign_bit;
 	} else {
-		const bool ah = (fpcr & 2U) != 0U;
-		const bool flush = destination_width == 16U ?
-			(fpcr & (1U << 19)) != 0U :
-			(fpcr & (1U << 24)) != 0U;
-		if (!ah && flush) {
-			exceptions |= 1U << 3;
-			result = sign_bit;
-		} else {
-			const int unit_exponent = minimum_exponent -
-				static_cast<int>(destination.fraction_bits);
-			const auto rounded = round_shift_right(magnitude,
-				unit_exponent + static_cast<int>(fractional_bits),
-				rounding, sign);
-			const bool became_normal = rounded.value >=
-				(std::uint64_t{1} << destination.fraction_bits);
-			if (ah && !became_normal && flush) {
-				exceptions |= (1U << 3) | (1U << 4);
-				result = sign_bit;
-			} else {
-				result = sign_bit | (became_normal ?
-					(std::uint64_t{1} << destination.fraction_bits) :
-					rounded.value);
-				if (rounded.inexact) {
-					exceptions |= 1U << 4;
-					if (!ah || !became_normal)
-						exceptions |= 1U << 3;
-				}
-			}
-		}
+		const int unit_exponent = minimum_exponent -
+			static_cast<int>(destination.fraction_bits);
+		const auto rounded = round_shift_right(magnitude,
+			unit_exponent + static_cast<int>(fractional_bits),
+			rounding, sign);
+		const bool became_normal = rounded.value >=
+			(std::uint64_t{1} << destination.fraction_bits);
+		result = sign_bit | (became_normal ?
+			(std::uint64_t{1} << destination.fraction_bits) :
+			rounded.value);
+		if (rounded.inexact)
+			exceptions |= (1U << 3) | (1U << 4);
 	}
 	return {result, exceptions};
 }

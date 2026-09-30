@@ -205,8 +205,6 @@ inline constexpr std::uint32_t fpsr_underflow = 1U << 3;
 inline constexpr std::uint32_t fpsr_inexact = 1U << 4;
 inline constexpr std::uint32_t fpsr_input_denormal = 1U << 7;
 
-inline constexpr std::uint32_t fpcr_fiz = 1U << 0;
-inline constexpr std::uint32_t fpcr_ah = 1U << 1;
 inline constexpr std::uint32_t fpcr_fz16 = 1U << 19;
 inline constexpr std::uint32_t fpcr_fz = 1U << 24;
 inline constexpr std::uint32_t fpcr_dn = 1U << 25;
@@ -354,10 +352,9 @@ inline void require(bool condition, const char *message)
 }
 
 [[nodiscard]] constexpr std::uint64_t default_nan_bits(
-	const Format &value, std::uint32_t fpcr) noexcept
+	const Format &value) noexcept
 {
-	return zero_bits(value, (fpcr & fpcr_ah) != 0U) |
-		exponent_mask(value) |
+	return exponent_mask(value) |
 		(std::uint64_t{1} << (value.fraction_bits - 1U));
 }
 
@@ -371,7 +368,7 @@ inline void require(bool condition, const char *message)
 }
 
 [[nodiscard]] inline Unpacked unpack(std::uint64_t raw, const Format &value,
-	std::uint32_t fpcr, bool suppress_exceptions)
+	std::uint32_t fpcr)
 {
 	raw &= low_mask(value.width);
 	const bool negative = (raw & sign_mask(value)) != 0U;
@@ -396,20 +393,9 @@ inline void require(bool condition, const char *message)
 	if (subnormal && value.width == 16U &&
 	    (fpcr & fpcr_fz16) != 0U)
 		return {ValueClass::zero, negative, 0, 0, 0, raw};
-	if (subnormal && value.width != 16U) {
-		const bool alternative = (fpcr & fpcr_ah) != 0U;
-		const bool classic_flush =
-			(fpcr & fpcr_fz) != 0U && !alternative;
-		const bool silent_flush =
-			(fpcr & fpcr_fiz) != 0U || alternative;
-		if (classic_flush || silent_flush)
-			return {
-				ValueClass::zero, negative, 0, 0,
-				classic_flush && !suppress_exceptions ?
-					fpsr_input_denormal : 0U,
-				raw,
-			};
-	}
+	if (subnormal && value.width != 16U && (fpcr & fpcr_fz) != 0U)
+		return {ValueClass::zero, negative, 0, 0, fpsr_input_denormal,
+			raw};
 
 	const auto significand = subnormal ? fraction :
 		(std::uint64_t{1} << value.fraction_bits) + fraction;
@@ -428,42 +414,26 @@ inline void require(bool condition, const char *message)
 }
 
 [[nodiscard]] constexpr LaneResult process_nan(std::uint64_t raw,
-	const Format &value, std::uint32_t fpcr, bool signaling,
-	bool suppress_exceptions) noexcept
+	const Format &value, std::uint32_t fpcr, bool signaling) noexcept
 {
 	const auto quiet =
 		std::uint64_t{1} << (value.fraction_bits - 1U);
 	return {
-		(fpcr & fpcr_dn) != 0U ?
-			default_nan_bits(value, fpcr) : raw | quiet,
-		signaling && !suppress_exceptions ? fpsr_invalid : 0U,
+		(fpcr & fpcr_dn) != 0U ? default_nan_bits(value) : raw | quiet,
+		signaling ? fpsr_invalid : 0U,
 	};
 }
 
 [[nodiscard]] inline LaneResult process_binary_nan(const Unpacked &first,
-	const Unpacked &second, const Format &value, std::uint32_t fpcr,
-	bool suppress_exceptions)
+	const Unpacked &second, const Format &value, std::uint32_t fpcr)
 {
-	const bool alternative = (fpcr & fpcr_ah) != 0U;
-	const bool first_nan = is_nan(first.type);
-	const bool second_nan = is_nan(second.type);
-	const bool any_signaling =
-		first.type == ValueClass::signaling_nan ||
-		second.type == ValueClass::signaling_nan;
-	if (alternative && first_nan && second_nan)
-		return process_nan(first.raw, value, fpcr, any_signaling,
-			suppress_exceptions);
 	if (first.type == ValueClass::signaling_nan)
-		return process_nan(first.raw, value, fpcr, true,
-			suppress_exceptions);
+		return process_nan(first.raw, value, fpcr, true);
 	if (second.type == ValueClass::signaling_nan)
-		return process_nan(second.raw, value, fpcr, true,
-			suppress_exceptions);
-	if (first_nan)
-		return process_nan(first.raw, value, fpcr, false,
-			suppress_exceptions);
-	return process_nan(second.raw, value, fpcr, false,
-		suppress_exceptions);
+		return process_nan(second.raw, value, fpcr, true);
+	if (is_nan(first.type))
+		return process_nan(first.raw, value, fpcr, false);
+	return process_nan(second.raw, value, fpcr, false);
 }
 
 [[nodiscard]] inline unsigned reciprocal_estimate_integer(unsigned scaled)
@@ -490,13 +460,11 @@ inline void require(bool condition, const char *message)
 [[nodiscard]] inline LaneResult reciprocal_estimate(std::uint64_t raw,
 	const Format &value, std::uint32_t fpcr)
 {
-	const bool alternative = (fpcr & fpcr_ah) != 0U;
-	const bool suppress = alternative;
-	auto decoded = unpack(raw, value, fpcr, suppress);
+	auto decoded = unpack(raw, value, fpcr);
 	std::uint32_t flags = decoded.flags;
 	if (is_nan(decoded.type)) {
 		auto result = process_nan(decoded.raw, value, fpcr,
-			decoded.type == ValueClass::signaling_nan, suppress);
+			decoded.type == ValueClass::signaling_nan);
 		result.flags |= flags;
 		return result;
 	}
@@ -505,7 +473,7 @@ inline void require(bool condition, const char *message)
 	if (decoded.type == ValueClass::zero)
 		return {
 			infinity_bits(value, decoded.negative),
-			flags | (suppress ? 0U : fpsr_divide_by_zero),
+			flags | fpsr_divide_by_zero,
 		};
 
 	const auto exponent =
@@ -513,27 +481,25 @@ inline void require(bool condition, const char *message)
 	const auto fraction = raw & fraction_mask(value);
 	if (exponent == 0U &&
 	    fraction < (std::uint64_t{1} << (value.fraction_bits - 2U))) {
-		const unsigned rounding = alternative ? 0U : (fpcr >> 22U) & 3U;
+		const unsigned rounding = (fpcr >> 22U) & 3U;
 		const bool to_infinity = rounding == 0U ||
 			(rounding == 1U && !decoded.negative) ||
 			(rounding == 2U && decoded.negative);
 		return {
 			to_infinity ? infinity_bits(value, decoded.negative) :
 				maximum_finite_bits(value, decoded.negative),
-			flags | (suppress ? 0U :
-				fpsr_overflow | fpsr_inexact),
+			flags | fpsr_overflow | fpsr_inexact,
 		};
 	}
 
 	const bool output_flush = value.width == 16U ?
-		(fpcr & fpcr_fz16) != 0U :
-		((fpcr & fpcr_fz) != 0U || alternative);
+		(fpcr & fpcr_fz16) != 0U : (fpcr & fpcr_fz) != 0U;
 	const unsigned flush_exponent = value.width == 16U ? 29U :
 		value.width == 32U ? 253U : 2045U;
 	if (output_flush && exponent >= flush_exponent)
 		return {
 			zero_bits(value, decoded.negative),
-			flags | (suppress ? 0U : fpsr_underflow),
+			flags | fpsr_underflow,
 		};
 
 	std::uint64_t fraction52 =
@@ -574,25 +540,23 @@ inline void require(bool condition, const char *message)
 [[nodiscard]] inline LaneResult reciprocal_sqrt_estimate(
 	std::uint64_t raw, const Format &value, std::uint32_t fpcr)
 {
-	const bool alternative = (fpcr & fpcr_ah) != 0U;
-	const bool suppress = alternative;
-	auto decoded = unpack(raw, value, fpcr, suppress);
+	auto decoded = unpack(raw, value, fpcr);
 	std::uint32_t flags = decoded.flags;
 	if (is_nan(decoded.type)) {
 		auto result = process_nan(decoded.raw, value, fpcr,
-			decoded.type == ValueClass::signaling_nan, suppress);
+			decoded.type == ValueClass::signaling_nan);
 		result.flags |= flags;
 		return result;
 	}
 	if (decoded.type == ValueClass::zero)
 		return {
 			infinity_bits(value, decoded.negative),
-			flags | (suppress ? 0U : fpsr_divide_by_zero),
+			flags | fpsr_divide_by_zero,
 		};
 	if (decoded.negative)
 		return {
-			default_nan_bits(value, fpcr),
-			flags | (suppress ? 0U : fpsr_invalid),
+			default_nan_bits(value),
+			flags | fpsr_invalid,
 		};
 	if (decoded.type == ValueClass::infinity)
 		return {zero_bits(value), flags};
@@ -631,11 +595,10 @@ inline void require(bool condition, const char *message)
 [[nodiscard]] inline LaneResult reciprocal_exponent(std::uint64_t raw,
 	const Format &value, std::uint32_t fpcr)
 {
-	const bool suppress = (fpcr & fpcr_ah) != 0U;
-	auto decoded = unpack(raw, value, fpcr, suppress);
+	auto decoded = unpack(raw, value, fpcr);
 	if (is_nan(decoded.type)) {
 		auto result = process_nan(decoded.raw, value, fpcr,
-			decoded.type == ValueClass::signaling_nan, suppress);
+			decoded.type == ValueClass::signaling_nan);
 		result.flags |= decoded.flags;
 		return result;
 	}
@@ -655,8 +618,7 @@ inline void require(bool condition, const char *message)
 	const BigUnsigned &magnitude, bool negative, int binary_exponent,
 	const Format &value, std::uint32_t fpcr)
 {
-	const bool alternative = (fpcr & fpcr_ah) != 0U;
-	const unsigned rounding = alternative ? 0U : (fpcr >> 22U) & 3U;
+	const unsigned rounding = (fpcr >> 22U) & 3U;
 	if (magnitude.empty())
 		return {zero_bits(value, rounding == 2U), 0U};
 	const int highest = static_cast<int>(magnitude.highest_bit());
@@ -678,9 +640,8 @@ inline void require(bool condition, const char *message)
 	}
 
 	const bool output_flush = value.width == 16U ?
-		(fpcr & fpcr_fz16) != 0U :
-		(fpcr & fpcr_fz) != 0U || alternative;
-	if (!alternative && output_flush && real_exponent < minimum_normal)
+		(fpcr & fpcr_fz16) != 0U : (fpcr & fpcr_fz) != 0U;
+	if (output_flush && real_exponent < minimum_normal)
 		return {
 			zero_bits(value, negative),
 			fpsr_underflow,
@@ -709,8 +670,7 @@ inline void require(bool condition, const char *message)
 	if (retained == 0)
 		return {
 			zero_bits(value, negative),
-			alternative ? 0U :
-				(inexact ? fpsr_underflow | fpsr_inexact : 0U),
+			inexact ? fpsr_underflow | fpsr_inexact : 0U,
 		};
 
 	int rounded_highest = 63 - static_cast<int>(
@@ -731,7 +691,7 @@ inline void require(bool condition, const char *message)
 		return {
 			to_infinity ? infinity_bits(value, negative) :
 				maximum_finite_bits(value, negative),
-			alternative ? 0U : fpsr_overflow | fpsr_inexact,
+			fpsr_overflow | fpsr_inexact,
 		};
 	}
 
@@ -742,13 +702,10 @@ inline void require(bool condition, const char *message)
 				value.fraction_bits) |
 			(retained & fraction_mask(value));
 	} else {
-		const auto fraction = retained;
-		if (alternative && output_flush && fraction != 0U)
-			return {zero_bits(value, negative), 0U};
-		result = zero_bits(value, negative) | fraction;
+		result = zero_bits(value, negative) | retained;
 	}
 	std::uint32_t flags = 0;
-	if (!alternative && inexact) {
+	if (inexact) {
 		flags |= fpsr_inexact;
 		if (real_exponent < minimum_normal)
 			flags |= fpsr_underflow;
@@ -760,25 +717,12 @@ inline void require(bool condition, const char *message)
 	std::uint64_t second_raw, const Format &value, std::uint32_t fpcr,
 	bool square_root)
 {
-	const bool alternative = (fpcr & fpcr_ah) != 0U;
-	const auto raw_mask = low_mask(value.width);
-	const auto first_unnegated = first_raw & raw_mask;
-	const auto first_fraction =
-		first_unnegated & fraction_mask(value);
-	const auto first_exponent =
-		(first_unnegated & exponent_mask(value)) >>
-			value.fraction_bits;
-	const bool first_nan =
-		first_exponent == maximum_exponent(value) &&
-		first_fraction != 0U;
-	const auto first_negated = alternative && first_nan ?
-		first_unnegated : first_unnegated ^ sign_mask(value);
-	auto first = unpack(first_negated, value, fpcr, alternative);
-	auto second = unpack(second_raw, value, fpcr, alternative);
+	auto first = unpack((first_raw & low_mask(value.width)) ^
+		sign_mask(value), value, fpcr);
+	auto second = unpack(second_raw, value, fpcr);
 	std::uint32_t flags = first.flags | second.flags;
 	if (is_nan(first.type) || is_nan(second.type)) {
-		auto result = process_binary_nan(first, second, value, fpcr,
-			alternative);
+		auto result = process_binary_nan(first, second, value, fpcr);
 		result.flags |= flags;
 		return result;
 	}

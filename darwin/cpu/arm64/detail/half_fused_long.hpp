@@ -2,7 +2,6 @@
 #pragma once
 
 #include "bfloat_multiply.hpp"
-#include "floating_bits.hpp"
 #include "floating_exception.hpp"
 
 #include <bit>
@@ -103,86 +102,11 @@ namespace half_fused_long_detail {
 	std::uint32_t addend, std::uint16_t left_half, std::uint16_t right_half,
 	bool subtract, std::uint32_t fpcr) noexcept
 {
-	using namespace bfloat_multiply_detail;
 	using namespace half_fused_long_detail;
-	if (subtract && !((fpcr & 2U) != 0U && is_nan<std::uint16_t>(left_half)))
+	if (subtract)
 		left_half ^= 0x8000U;
-	std::uint32_t left = expand_half(left_half, fpcr);
-	std::uint32_t right = expand_half(right_half, fpcr);
-	const bool alternative = (fpcr & 2U) != 0U;
-	if (!alternative) {
-		if ((fpcr & 1U) != 0U && (fpcr & (1U << 24)) == 0U) {
-			addend = flush_subnormal(addend);
-			return captured_fmadd(addend, left, right, fpcr & ~1U);
-		}
-		return captured_fmadd(addend, left, right, fpcr);
-	}
-
-	const bool addend_denormal = is_subnormal<std::uint32_t>(addend) &&
-		(fpcr & 1U) == 0U;
-	if ((fpcr & 1U) != 0U)
-		addend = flush_subnormal(addend);
-	const bool addend_nan = is_nan(addend);
-	const bool left_nan = is_nan(left);
-	const bool right_nan = is_nan(right);
-	const bool any_signaling = is_signaling_nan(addend) ||
-		is_signaling_nan(left) || is_signaling_nan(right);
-	std::uint32_t selected_nan{};
-	if (left_nan && (addend_nan || right_nan))
-		selected_nan = left;
-	else if (right_nan && addend_nan)
-		selected_nan = right;
-	else if (is_signaling_nan(addend))
-		selected_nan = addend;
-	else if (is_signaling_nan(left))
-		selected_nan = left;
-	else if (is_signaling_nan(right))
-		selected_nan = right;
-	else if (addend_nan)
-		selected_nan = addend;
-	else if (left_nan)
-		selected_nan = left;
-	else if (right_nan)
-		selected_nan = right;
-	if (selected_nan != 0U)
-		return {process_nan(selected_nan, fpcr), any_signaling ? 1U : 0U};
-
-	const bool left_infinity = is_infinity(left);
-	const bool right_infinity = is_infinity(right);
-	const bool left_zero = is_zero(left);
-	const bool right_zero = is_zero(right);
-	const bool addend_infinity = is_infinity(addend);
-	const bool product_infinity = left_infinity || right_infinity;
-	const bool product_zero = left_zero || right_zero;
-	const bool product_sign = ((left ^ right) >> 31) != 0U;
-	const bool addend_sign = (addend >> 31) != 0U;
-	if ((left_infinity && right_zero) || (left_zero && right_infinity) ||
-	    (addend_infinity && product_infinity &&
-	     addend_sign != product_sign))
-		return {default_nan<std::uint32_t>(fpcr), 1U};
-	if (addend_infinity)
-		return {addend, 0U};
-	if (product_infinity)
-		return {(static_cast<std::uint32_t>(product_sign) << 31) |
-			0x7f80'0000U, 0U};
-	if (is_zero(addend) && product_zero && addend_sign == product_sign)
-		return {static_cast<std::uint32_t>(addend_sign) << 31, 0U};
-
-	const std::uint32_t local_fpcr = fpcr & ~(2U | 1U | (1U << 24));
-	auto result = captured_fmadd(addend, left, right, local_fpcr);
-	if (addend_denormal)
-		result.exceptions |= 1U << 7;
-	const bool result_subnormal = is_subnormal<std::uint32_t>(result.bits);
-	const bool result_zero = (result.bits & 0x7fff'ffffU) == 0U;
-	if (!result_subnormal)
-		result.exceptions &= ~(1U << 3);
-	if (result_zero)
-		result.exceptions &= ~(1U << 3);
-	if ((fpcr & (1U << 24)) != 0U && result_subnormal) {
-		result.bits &= 0x8000'0000U;
-		result.exceptions |= (1U << 3) | (1U << 4);
-	}
-	return result;
+	return captured_fmadd(addend, expand_half(left_half, fpcr),
+		expand_half(right_half, fpcr), fpcr);
 }
 
 } // namespace uml::cpu::arm64::detail

@@ -367,15 +367,6 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 				detail::FloatingHorizontalOperation::
 					absolute_minimum) &&
 			!host_has_faminmax();
-		const bool fp_controls_checked =
-			!host_has_afp() &&
-			(floating_horizontal.operation ==
-					detail::FloatingHorizontalOperation::
-						absolute_difference ||
-			 floating_horizontal.operation ==
-					detail::FloatingHorizontalOperation::add ||
-			 detail::floating_horizontal_uses_ah(
-					floating_horizontal));
 		if (absolute_software) {
 			emit(words, detail::floating_horizontal_operand(
 				instruction, floating_horizontal));
@@ -399,11 +390,6 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 				emit(words, simd_unary_operand(
 					instruction & 31U,
 					(instruction >> 5) & 31U));
-			if (fp_controls_checked)
-				emit(words,
-					detail::floating_horizontal_operand(
-						instruction,
-						floating_horizontal));
 		}
 	} else if (const auto floating_round =
 			detail::decode_floating_round(instruction);
@@ -1064,9 +1050,8 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                             (((instruction >> 12) & 15U) == 5U &&
                              (instruction & 0x2000'0000U) == 0) ||
                             ((instruction >> 12) & 15U) == 9U)) {
-                  /* All decode choices are fixed here.  AFP hosts select a
-                   * branch-free native gadget; older hosts select a checked
-                   * gadget whose AH=0 path remains native. */
+                  /* All decode choices are fixed here; the gadget is one
+                   * branch-free native instruction. */
                   const auto element =
                       decode_simd_indexed_floating_element(instruction);
                   const auto gadget =
@@ -1092,8 +1077,6 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                   (static_cast<std::uintptr_t>(
                                        vector_operand_offset(element->register_index))
                                    << 32));
-                  if (!host_has_afp())
-                    emit(words, instruction);
                 } else if ((((instruction & 0x9f00'0400U) == 0x0f00'0000U) ||
                             ((instruction & 0xdf00'0400U) == 0x5f00'0000U)) &&
                            is_simd_indexed_integer_group(

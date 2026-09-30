@@ -79,32 +79,12 @@ vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, s
 	movi v2.16b, #0
 	.endif
 	\operation \destination, \source
-	/* Scalar FSQRT merges from the old destination when FPCR.NEP is set. */
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #2, 1f
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-1:
 	str q2, [x13]
 	next_gadget
 	vector_variants \forward, vector_register8, scalar_none, scalar_none, floating_unary, \name, \source, \destination, \element, \operation
 .endm
 
-/* FPCR.AH preserves a NaN's sign for FPAbs/FPNeg. Apple Silicon currently
- * ignores AH for these native operations, so retain the fast native common
- * path and repair only the rare AH path with integer vector operations. The
- * left-shifted IEEE encoding is greater than twice infinity exactly for a
- * NaN, giving a compact signaling/quiet-agnostic mask without FP exceptions.
- * Scalar forms additionally branch on FPCR.NEP to merge inactive bits from
- * the old destination as required by FEAT_AFP. */
-.macro floating_nan_mask arrangement, shift
-	movi v4.16b, #0xff
-	shl v4.\arrangement, v4.\arrangement, #\shift
-	shl v3.\arrangement, v0.\arrangement, #1
-	cmhi v3.\arrangement, v3.\arrangement, v4.\arrangement
-.endm
-
+/* Scalar FABS/FNEG: one native instruction. */
 .macro floating_sign_scalar name, source, destination, element, arrangement, shift, operation, forward=0
 vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, scalar_none, 1
 	ldr x8, [_stream], #8
@@ -115,16 +95,7 @@ vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, s
 	add x13, x11, x9, lsl #4
 	vector_read \forward, 1, \source, [x12]
 	\operation \destination, \source
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #1, 1f
-	floating_nan_mask \arrangement, \shift
-	bsl v3.16b, v0.16b, v2.16b
-	ins v2.\element[0], v3.\element[0]
-1:	tbz w16, #2, 2f
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-2:	str q2, [x13]
+	str q2, [x13]
 	next_gadget
 	vector_variants \forward, vector_register8, scalar_none, scalar_none, floating_sign_scalar, \name, \source, \destination, \element, \arrangement, \shift, \operation
 .endm
@@ -142,8 +113,7 @@ floating_unary floating_sqrt_single, s0, s2, s, fsqrt
 floating_unary floating_sqrt_double, d0, d2, d, fsqrt
 
 /* FRINT operation, precision, vector width, and integer bound are selected
- * during translation. Standard forms are one exact host instruction; the
- * valid hot path has only the rare scalar NEP merge branch. */
+ * during translation. Standard forms are one exact host instruction. */
 .macro floating_round_scalar name, operation, source, destination, element
 gadget floating_round_\name
 	ensure_fp_environment
@@ -156,12 +126,6 @@ gadget floating_round_\name
 	movi v1.16b, #0
 	ldr \source, [x12]
 	\operation \destination, \source
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #2, 1f
-	ldr q2, [x13]
-	ins v2.\element[0], v1.\element[0]
-	mov v1.16b, v2.16b
-1:
 	str q1, [x13]
 	next_gadget
 .endm
@@ -255,193 +219,106 @@ gadget floating_round_sized_software
 	next_gadget
 
 /* Horizontal/pairwise FP operations are completely specialized by operation
- * and shape. Hosts with FEAT_AFP use the branch-free native variants for
- * FMAX/FMIN; older hosts use variants with one rare FPCR.AH fallback branch. */
-.macro floating_horizontal_scalar_binary name, operation, source, destination, control_mask
+ * and shape and execute one branch-free native instruction. */
+.macro floating_horizontal_scalar_binary name, operation, source, destination
 gadget floating_horizontal_\name
 	ensure_fp_environment
-	.if \control_mask
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #\control_mask
-	b.ne .Lfloating_horizontal_scalar_binary_software_\@
-	ldr x11, [_stream], #16
-	unpack_u16_3 x11, x8, x9, x10
-	ldr q0, [_cpu, x9]
-	ldr \destination, [_cpu, x10]
-	.else
 	ldr x11, [_stream], #8
 	unpack_u16_3 x11, x8, x9, x10
 	ldr q0, [_cpu, x9]
 	ldr \destination, [_cpu, x10]
-	.endif
 	\operation \source, \source, \destination
 	str q0, [_cpu, x8]
 	next_gadget
-	.if \control_mask
-.Lfloating_horizontal_scalar_binary_software_\@:
-	ldr x8, [_stream, #8]
-	add _stream, _stream, #16
-	b .Lfloating_horizontal_ah_software
-	.endif
 .endm
 
-.macro floating_horizontal_scalar_binary_shapes name, operation, checked
-	floating_horizontal_scalar_binary \name\()_h, \operation, h0, h1, (\checked * 6)
-	floating_horizontal_scalar_binary \name\()_s, \operation, s0, s1, (\checked * 7)
-	floating_horizontal_scalar_binary \name\()_d, \operation, d0, d1, (\checked * 7)
+.macro floating_horizontal_scalar_binary_shapes name, operation
+	floating_horizontal_scalar_binary \name\()_h, \operation, h0, h1
+	floating_horizontal_scalar_binary \name\()_s, \operation, s0, s1
+	floating_horizontal_scalar_binary \name\()_d, \operation, d0, d1
 .endm
 
-.macro floating_horizontal_vector name, operation, arrangement, control_mask
+.macro floating_horizontal_vector name, operation, arrangement
 gadget floating_horizontal_\name
 	ensure_fp_environment
-	.if \control_mask
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #\control_mask
-	b.ne .Lfloating_horizontal_vector_software_\@
-	ldr x11, [_stream], #16
-	unpack_u16_3 x11, x8, x9, x10
-	ldr q0, [_cpu, x9]
-	ldr q1, [_cpu, x10]
-	.else
 	ldr x11, [_stream], #8
 	unpack_u16_3 x11, x8, x9, x10
 	ldr q0, [_cpu, x9]
 	ldr q1, [_cpu, x10]
-	.endif
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
 	str q2, [_cpu, x8]
 	next_gadget
-	.if \control_mask
-.Lfloating_horizontal_vector_software_\@:
-	ldr x8, [_stream, #8]
-	add _stream, _stream, #16
-	b .Lfloating_horizontal_ah_software
-	.endif
 .endm
 
-.macro floating_horizontal_vector_shapes name, operation, checked
-	floating_horizontal_vector \name\()_4h, \operation, 4h, (\checked * 2)
-	floating_horizontal_vector \name\()_8h, \operation, 8h, (\checked * 2)
-	floating_horizontal_vector \name\()_2s, \operation, 2s, (\checked * 3)
-	floating_horizontal_vector \name\()_4s, \operation, 4s, (\checked * 3)
-	floating_horizontal_vector \name\()_2d, \operation, 2d, (\checked * 3)
+.macro floating_horizontal_vector_shapes name, operation
+	floating_horizontal_vector \name\()_4h, \operation, 4h
+	floating_horizontal_vector \name\()_8h, \operation, 8h
+	floating_horizontal_vector \name\()_2s, \operation, 2s
+	floating_horizontal_vector \name\()_4s, \operation, 4s
+	floating_horizontal_vector \name\()_2d, \operation, 2d
 .endm
 
-.macro floating_horizontal_scalar_pair name, operation, destination, arrangement, control_mask
+.macro floating_horizontal_scalar_pair name, operation, destination, arrangement
 gadget floating_horizontal_\name
 	ensure_fp_environment
-	.if \control_mask
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #\control_mask
-	b.ne .Lfloating_horizontal_scalar_pair_software_\@
-	ldr x10, [_stream], #16
-	unpack_u16_2 x10, x8, x9
-	ldr q0, [_cpu, x9]
-	.else
 	ldr x10, [_stream], #8
 	unpack_u16_2 x10, x8, x9
 	ldr q0, [_cpu, x9]
-	.endif
 	\operation \destination, v0.\arrangement
 	str q1, [_cpu, x8]
 	next_gadget
-	.if \control_mask
-.Lfloating_horizontal_scalar_pair_software_\@:
-	ldr x8, [_stream, #8]
-	add _stream, _stream, #16
-	b .Lfloating_horizontal_ah_software
-	.endif
 .endm
 
-.macro floating_horizontal_scalar_pair_shapes name, operation, checked
-	floating_horizontal_scalar_pair \name\()_h, \operation, h1, 2h, (\checked * 2)
-	floating_horizontal_scalar_pair \name\()_s, \operation, s1, 2s, (\checked * 3)
-	floating_horizontal_scalar_pair \name\()_d, \operation, d1, 2d, (\checked * 3)
+.macro floating_horizontal_scalar_pair_shapes name, operation
+	floating_horizontal_scalar_pair \name\()_h, \operation, h1, 2h
+	floating_horizontal_scalar_pair \name\()_s, \operation, s1, 2s
+	floating_horizontal_scalar_pair \name\()_d, \operation, d1, 2d
 .endm
 
-.macro floating_horizontal_reduce name, operation, destination, arrangement, control_mask
+.macro floating_horizontal_reduce name, operation, destination, arrangement
 gadget floating_horizontal_\name
 	ensure_fp_environment
-	.if \control_mask
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #\control_mask
-	b.ne .Lfloating_horizontal_reduce_software_\@
-	ldr x10, [_stream], #16
-	unpack_u16_2 x10, x8, x9
-	ldr q0, [_cpu, x9]
-	.else
 	ldr x10, [_stream], #8
 	unpack_u16_2 x10, x8, x9
 	ldr q0, [_cpu, x9]
-	.endif
 	\operation \destination, v0.\arrangement
 	str q1, [_cpu, x8]
 	next_gadget
-	.if \control_mask
-.Lfloating_horizontal_reduce_software_\@:
-	ldr x8, [_stream, #8]
-	add _stream, _stream, #16
-	b .Lfloating_horizontal_ah_software
-	.endif
 .endm
 
-.macro floating_horizontal_reduce_shapes name, operation, checked
-	floating_horizontal_reduce \name\()_4h, \operation, h1, 4h, (\checked * 2)
-	floating_horizontal_reduce \name\()_8h, \operation, h1, 8h, (\checked * 2)
-	floating_horizontal_reduce \name\()_4s, \operation, s1, 4s, (\checked * 3)
+.macro floating_horizontal_reduce_shapes name, operation
+	floating_horizontal_reduce \name\()_4h, \operation, h1, 4h
+	floating_horizontal_reduce \name\()_8h, \operation, h1, 8h
+	floating_horizontal_reduce \name\()_4s, \operation, s1, 4s
 .endm
 
-floating_horizontal_scalar_binary_shapes fabd_scalar, fabd, 0
-floating_horizontal_vector_shapes fabd_vector, fabd, 0
-floating_horizontal_scalar_pair_shapes faddp_scalar, faddp, 0
-floating_horizontal_vector_shapes faddp_vector, faddp, 0
-floating_horizontal_scalar_binary_shapes fabd_checked_scalar, fabd, 1
-floating_horizontal_vector_shapes fabd_checked_vector, fabd, 1
-floating_horizontal_scalar_pair_shapes faddp_checked_scalar, faddp, 1
-floating_horizontal_vector_shapes faddp_checked_vector, faddp, 1
+floating_horizontal_scalar_binary_shapes fabd_scalar, fabd
+floating_horizontal_vector_shapes fabd_vector, fabd
+floating_horizontal_scalar_pair_shapes faddp_scalar, faddp
+floating_horizontal_vector_shapes faddp_vector, faddp
 
-floating_horizontal_scalar_binary_shapes fmax_scalar, fmax, 0
-floating_horizontal_scalar_binary_shapes fmax_ah_scalar, fmax, 1
-floating_horizontal_vector_shapes fmax_vector, fmax, 0
-floating_horizontal_vector_shapes fmax_ah_vector, fmax, 1
-floating_horizontal_scalar_binary_shapes fmaxnm_scalar, fmaxnm, 0
-floating_horizontal_scalar_binary_shapes fmaxnm_ah_scalar, fmaxnm, 1
-floating_horizontal_vector_shapes fmaxnm_vector, fmaxnm, 0
-floating_horizontal_vector_shapes fmaxnm_ah_vector, fmaxnm, 1
-floating_horizontal_scalar_binary_shapes fmin_scalar, fmin, 0
-floating_horizontal_scalar_binary_shapes fmin_ah_scalar, fmin, 1
-floating_horizontal_vector_shapes fmin_vector, fmin, 0
-floating_horizontal_vector_shapes fmin_ah_vector, fmin, 1
-floating_horizontal_scalar_binary_shapes fminnm_scalar, fminnm, 0
-floating_horizontal_scalar_binary_shapes fminnm_ah_scalar, fminnm, 1
-floating_horizontal_vector_shapes fminnm_vector, fminnm, 0
-floating_horizontal_vector_shapes fminnm_ah_vector, fminnm, 1
+floating_horizontal_scalar_binary_shapes fmax_scalar, fmax
+floating_horizontal_vector_shapes fmax_vector, fmax
+floating_horizontal_scalar_binary_shapes fmaxnm_scalar, fmaxnm
+floating_horizontal_vector_shapes fmaxnm_vector, fmaxnm
+floating_horizontal_scalar_binary_shapes fmin_scalar, fmin
+floating_horizontal_vector_shapes fmin_vector, fmin
+floating_horizontal_scalar_binary_shapes fminnm_scalar, fminnm
+floating_horizontal_vector_shapes fminnm_vector, fminnm
 
-floating_horizontal_scalar_pair_shapes fmaxp_scalar, fmaxp, 0
-floating_horizontal_scalar_pair_shapes fmaxp_ah_scalar, fmaxp, 1
-floating_horizontal_vector_shapes fmaxp_vector, fmaxp, 0
-floating_horizontal_vector_shapes fmaxp_ah_vector, fmaxp, 1
-floating_horizontal_scalar_pair_shapes fmaxnmp_scalar, fmaxnmp, 0
-floating_horizontal_scalar_pair_shapes fmaxnmp_ah_scalar, fmaxnmp, 1
-floating_horizontal_vector_shapes fmaxnmp_vector, fmaxnmp, 0
-floating_horizontal_vector_shapes fmaxnmp_ah_vector, fmaxnmp, 1
-floating_horizontal_scalar_pair_shapes fminp_scalar, fminp, 0
-floating_horizontal_scalar_pair_shapes fminp_ah_scalar, fminp, 1
-floating_horizontal_vector_shapes fminp_vector, fminp, 0
-floating_horizontal_vector_shapes fminp_ah_vector, fminp, 1
-floating_horizontal_scalar_pair_shapes fminnmp_scalar, fminnmp, 0
-floating_horizontal_scalar_pair_shapes fminnmp_ah_scalar, fminnmp, 1
-floating_horizontal_vector_shapes fminnmp_vector, fminnmp, 0
-floating_horizontal_vector_shapes fminnmp_ah_vector, fminnmp, 1
+floating_horizontal_scalar_pair_shapes fmaxp_scalar, fmaxp
+floating_horizontal_vector_shapes fmaxp_vector, fmaxp
+floating_horizontal_scalar_pair_shapes fmaxnmp_scalar, fmaxnmp
+floating_horizontal_vector_shapes fmaxnmp_vector, fmaxnmp
+floating_horizontal_scalar_pair_shapes fminp_scalar, fminp
+floating_horizontal_vector_shapes fminp_vector, fminp
+floating_horizontal_scalar_pair_shapes fminnmp_scalar, fminnmp
+floating_horizontal_vector_shapes fminnmp_vector, fminnmp
 
-floating_horizontal_reduce_shapes fmaxv, fmaxv, 0
-floating_horizontal_reduce_shapes fmaxv_ah, fmaxv, 1
-floating_horizontal_reduce_shapes fmaxnmv, fmaxnmv, 0
-floating_horizontal_reduce_shapes fmaxnmv_ah, fmaxnmv, 1
-floating_horizontal_reduce_shapes fminv, fminv, 0
-floating_horizontal_reduce_shapes fminv_ah, fminv, 1
-floating_horizontal_reduce_shapes fminnmv, fminnmv, 0
-floating_horizontal_reduce_shapes fminnmv_ah, fminnmv, 1
+floating_horizontal_reduce_shapes fmaxv, fmaxv
+floating_horizontal_reduce_shapes fmaxnmv, fmaxnmv
+floating_horizontal_reduce_shapes fminv, fminv
+floating_horizontal_reduce_shapes fminnmv, fminnmv
 
 /* FEAT_FAMINMAX is selected once by the builder. Native hosts execute one
  * branch-free instruction; older hosts enter the exact bitwise fallback. */
@@ -484,12 +361,11 @@ gadget floating_horizontal_absolute_software
 	ldr x8, [_stream], #8
 	b .Lfloating_horizontal_software
 
-.Lfloating_horizontal_ah_software:
 .Lfloating_horizontal_software:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
-	bl NAME(uml_arm64_floating_horizontal_ah_software)
+	bl NAME(uml_arm64_floating_horizontal_absolute_software)
 	ldp x1, x2, [sp], #16
 	mrs x17, fpsr
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
@@ -873,108 +749,54 @@ floating_scale_software 2d
 .purgem floating_scale_software
 
 /* Reciprocal operation, arity, precision, and vector width are selected at
- * translation time. AFP-capable hosts use branch-free native variants.
- * Older hosts retain one predictable control check and enter the strict cold
- * path only when the guest enables behavior that their hardware lacks. */
-.macro floating_reciprocal_scalar_unary name, operation, source, destination, descriptor, checked
+ * translation time. Each gadget is one branch-free native instruction. */
+.macro floating_reciprocal_scalar_unary name, operation, source, destination
 gadget floating_reciprocal_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-.if \checked
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #7
-	b.ne .Lfloating_reciprocal_software_\@
-.endif
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
 	add x12, _cpu, x10
 	add x13, _cpu, x9
-	/* The native scalar operation either preserves this old destination
-	 * under FPCR.NEP or zeroes the inactive bytes itself. */
-	ldr q1, [x13]
 	ldr \source, [x12]
 	\operation \destination, \source
 	str q1, [x13]
 	next_gadget
-.if \checked
-.Lfloating_reciprocal_software_\@:
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	mov w2, #\descriptor
-	bl NAME(uml_arm64_floating_reciprocal_software)
-	ldp x1, x2, [sp], #16
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x16
-	next_gadget
-.endif
 .endm
 
-.macro floating_reciprocal_scalar_unary_shapes name, operation, opcode, checked
-	floating_reciprocal_scalar_unary \name\()_h, \operation, h0, h1, \
-		(\opcode | 8), \checked
-	floating_reciprocal_scalar_unary \name\()_s, \operation, s0, s1, \
-		(\opcode | 8 | 16), \checked
-	floating_reciprocal_scalar_unary \name\()_d, \operation, d0, d1, \
-		(\opcode | 8 | 32), \checked
+.macro floating_reciprocal_scalar_unary_shapes name, operation
+	floating_reciprocal_scalar_unary \name\()_h, \operation, h0, h1
+	floating_reciprocal_scalar_unary \name\()_s, \operation, s0, s1
+	floating_reciprocal_scalar_unary \name\()_d, \operation, d0, d1
 .endm
 
-.macro floating_reciprocal_scalar_binary name, operation, source0, source1, destination, descriptor, checked
+.macro floating_reciprocal_scalar_binary name, operation, source0, source1, destination
 gadget floating_reciprocal_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-.if \checked
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #7
-	b.ne .Lfloating_reciprocal_software_\@
-.endif
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
 	ubfx x11, x8, #32, #16
 	add x13, _cpu, x10
 	add x14, _cpu, x11
-	/* Scalar step operations merge inactive bytes from the first source,
-	 * not from the old destination. Native FPCR.NEP selects this copy
-	 * without a runtime branch. */
-	ldr q0, [x13]
+	ldr \source0, [x13]
 	ldr \source1, [x14]
-	mov v2.16b, v0.16b
 	\operation \destination, \source0, \source1
 	add x13, _cpu, x9
 	str q2, [x13]
 	next_gadget
-.if \checked
-.Lfloating_reciprocal_software_\@:
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	mov w2, #\descriptor
-	bl NAME(uml_arm64_floating_reciprocal_software)
-	ldp x1, x2, [sp], #16
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x16
-	next_gadget
-.endif
 .endm
 
-.macro floating_reciprocal_scalar_binary_shapes name, operation, opcode, checked
-	floating_reciprocal_scalar_binary \name\()_h, \operation, h0, h1, h2, \
-		(\opcode | 8), \checked
-	floating_reciprocal_scalar_binary \name\()_s, \operation, s0, s1, s2, \
-		(\opcode | 8 | 16), \checked
-	floating_reciprocal_scalar_binary \name\()_d, \operation, d0, d1, d2, \
-		(\opcode | 8 | 32), \checked
+.macro floating_reciprocal_scalar_binary_shapes name, operation
+	floating_reciprocal_scalar_binary \name\()_h, \operation, h0, h1, h2
+	floating_reciprocal_scalar_binary \name\()_s, \operation, s0, s1, s2
+	floating_reciprocal_scalar_binary \name\()_d, \operation, d0, d1, d2
 .endm
 
-.macro floating_reciprocal_vector name, operation, arrangement, unary, descriptor, checked
+.macro floating_reciprocal_vector name, operation, arrangement, unary
 gadget floating_reciprocal_\name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-.if \checked
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lfloating_reciprocal_software_\@
-.endif
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
 	add x12, _cpu, x10
@@ -993,51 +815,25 @@ gadget floating_reciprocal_\name
 	add x12, _cpu, x9
 	str q2, [x12]
 	next_gadget
-.if \checked
-.Lfloating_reciprocal_software_\@:
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	mov w2, #\descriptor
-	bl NAME(uml_arm64_floating_reciprocal_software)
-	ldp x1, x2, [sp], #16
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x16
-	next_gadget
-.endif
 .endm
 
-.macro floating_reciprocal_vector_shapes name, operation, unary, opcode, checked
-	floating_reciprocal_vector \name\()_4h, \operation, 4h, \unary, \
-		\opcode, \checked
-	floating_reciprocal_vector \name\()_8h, \operation, 8h, \unary, \
-		(\opcode | 64), \checked
-	floating_reciprocal_vector \name\()_2s, \operation, 2s, \unary, \
-		(\opcode | 16), \checked
-	floating_reciprocal_vector \name\()_4s, \operation, 4s, \unary, \
-		(\opcode | 16 | 64), \checked
-	floating_reciprocal_vector \name\()_2d, \operation, 2d, \unary, \
-		(\opcode | 32 | 64), \checked
+.macro floating_reciprocal_vector_shapes name, operation, unary
+	floating_reciprocal_vector \name\()_4h, \operation, 4h, \unary
+	floating_reciprocal_vector \name\()_8h, \operation, 8h, \unary
+	floating_reciprocal_vector \name\()_2s, \operation, 2s, \unary
+	floating_reciprocal_vector \name\()_4s, \operation, 4s, \unary
+	floating_reciprocal_vector \name\()_2d, \operation, 2d, \unary
 .endm
 
-floating_reciprocal_scalar_unary_shapes native_frecpe_scalar, frecpe, 0, 0
-floating_reciprocal_scalar_unary_shapes checked_frecpe_scalar, frecpe, 0, 1
-floating_reciprocal_vector_shapes native_frecpe_vector, frecpe, 1, 0, 0
-floating_reciprocal_vector_shapes checked_frecpe_vector, frecpe, 1, 0, 1
-floating_reciprocal_scalar_binary_shapes native_frecps_scalar, frecps, 1, 0
-floating_reciprocal_scalar_binary_shapes checked_frecps_scalar, frecps, 1, 1
-floating_reciprocal_vector_shapes native_frecps_vector, frecps, 0, 1, 0
-floating_reciprocal_vector_shapes checked_frecps_vector, frecps, 0, 1, 1
-floating_reciprocal_scalar_unary_shapes native_frecpx_scalar, frecpx, 2, 0
-floating_reciprocal_scalar_unary_shapes checked_frecpx_scalar, frecpx, 2, 1
-floating_reciprocal_scalar_unary_shapes native_frsqrte_scalar, frsqrte, 3, 0
-floating_reciprocal_scalar_unary_shapes checked_frsqrte_scalar, frsqrte, 3, 1
-floating_reciprocal_vector_shapes native_frsqrte_vector, frsqrte, 1, 3, 0
-floating_reciprocal_vector_shapes checked_frsqrte_vector, frsqrte, 1, 3, 1
-floating_reciprocal_scalar_binary_shapes native_frsqrts_scalar, frsqrts, 4, 0
-floating_reciprocal_scalar_binary_shapes checked_frsqrts_scalar, frsqrts, 4, 1
-floating_reciprocal_vector_shapes native_frsqrts_vector, frsqrts, 0, 4, 0
-floating_reciprocal_vector_shapes checked_frsqrts_vector, frsqrts, 0, 4, 1
+floating_reciprocal_scalar_unary_shapes native_frecpe_scalar, frecpe
+floating_reciprocal_vector_shapes native_frecpe_vector, frecpe, 1
+floating_reciprocal_scalar_binary_shapes native_frecps_scalar, frecps
+floating_reciprocal_vector_shapes native_frecps_vector, frecps, 0
+floating_reciprocal_scalar_unary_shapes native_frecpx_scalar, frecpx
+floating_reciprocal_scalar_unary_shapes native_frsqrte_scalar, frsqrte
+floating_reciprocal_vector_shapes native_frsqrte_vector, frsqrte, 1
+floating_reciprocal_scalar_binary_shapes native_frsqrts_scalar, frsqrts
+floating_reciprocal_vector_shapes native_frsqrts_vector, frsqrts, 0
 
 .purgem floating_reciprocal_vector_shapes
 .purgem floating_reciprocal_vector
@@ -1155,13 +951,6 @@ vector_entry \name, \forward, vector_register0, vector_register8, vector_registe
 	movi v2.16b, #0
 	.endif
 	\operation \destination, \left, \right
-	/* Scalar two-source arithmetic merges from Vn only for rare NEP state. */
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #2, 1f
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-1:
 	str q2, [x15]
 	next_gadget
 	vector_variants \forward, vector_register8, vector_register16, scalar_none, floating_binary, \name, \left, \right, \destination, \element, \operation
@@ -1243,191 +1032,7 @@ simd_basic_floating_unary fsqrt_2d, fsqrt, 2d
 
 /* FCMP/FCMPE and FCCMP/FCCMPE are specialized by precision, NaN signaling,
  * zero/register form, and (for conditional forms) condition at translation
- * time. The normal FPCR path is one native host comparison. Apple Silicon
- * does not currently implement AFP's AH/FIZ comparison semantics, so the one
- * rare AH/FIZ branch uses an integer IEEE comparison and updates FPSR exactly.
- * Code size is deliberately traded for a branch-light production hot path. */
-.macro floating_compare_software bits, signal
-	mov w15, wzr                       /* original denormal operands */
-	mov w16, wzr                       /* FPSR exceptions to add */
-
-	.if \bits == 16
-	/* FZ16 turns half subnormals into signed zero without raising IDC. */
-	tbz w11, #19, .Lfloating_denorm_done_\@
-	mov w12, #0x7c00
-	ands w13, w9, w12
-	b.ne .Lfloating_half_right_\@
-	tst w9, #0x03ff
-	b.eq .Lfloating_half_right_\@
-	and w9, w9, #0x8000
-.Lfloating_half_right_\@:
-	ands w13, w10, w12
-	b.ne .Lfloating_denorm_done_\@
-	tst w10, #0x03ff
-	b.eq .Lfloating_denorm_done_\@
-	and w10, w10, #0x8000
-	.else
-	/* Remember unflushed denormals for AH's deferred IDC behavior. */
-	.if \bits == 32
-	mov x12, #0x7f800000
-	.else
-	mov x12, #0x7ff0000000000000
-	.endif
-	ands x13, x9, x12
-	b.ne .Lfloating_right_denorm_\@
-	.if \bits == 32
-	tst x9, #0x007fffff
-	.else
-	mov x14, #0x000fffffffffffff
-	tst x9, x14
-	.endif
-	b.eq .Lfloating_right_denorm_\@
-	orr w15, w15, #1
-.Lfloating_right_denorm_\@:
-	ands x13, x10, x12
-	b.ne .Lfloating_flush_check_\@
-	.if \bits == 32
-	tst x10, #0x007fffff
-	.else
-	mov x14, #0x000fffffffffffff
-	tst x10, x14
-	.endif
-	b.eq .Lfloating_flush_check_\@
-	orr w15, w15, #2
-.Lfloating_flush_check_\@:
-	cbz w15, .Lfloating_denorm_done_\@
-	/* FZ is ignored under AH. FIZ flushes independently; FZ raises IDC
-	 * when it is the active reason even if FIZ is also set. */
-	tbnz w11, #1, .Lfloating_check_fiz_\@
-	tbz w11, #24, .Lfloating_check_fiz_\@
-	orr w16, w16, #0x80
-	b .Lfloating_flush_denorms_\@
-.Lfloating_check_fiz_\@:
-	tbz w11, #0, .Lfloating_denorm_done_\@
-.Lfloating_flush_denorms_\@:
-	.if \bits == 32
-	mov x12, #0x80000000
-	.else
-	mov x12, #0x8000000000000000
-	.endif
-	tbz w15, #0, .Lfloating_flush_right_\@
-	and x9, x9, x12
-.Lfloating_flush_right_\@:
-	tbz w15, #1, .Lfloating_denorm_done_\@
-	and x10, x10, x12
-	.endif
-
-.Lfloating_denorm_done_\@:
-	/* Classify both operands without quieting an SNaN. */
-	mov w17, wzr                       /* bit 0: NaN, bit 1: SNaN */
-	.if \bits == 16
-	mov x12, #0x7c00
-	mov x14, #0x03ff
-	.elseif \bits == 32
-	mov x12, #0x7f800000
-	mov x14, #0x007fffff
-	.else
-	mov x12, #0x7ff0000000000000
-	mov x14, #0x000fffffffffffff
-	.endif
-	and x13, x9, x12
-	cmp x13, x12
-	b.ne .Lfloating_right_nan_\@
-	tst x9, x14
-	b.eq .Lfloating_right_nan_\@
-	orr w17, w17, #1
-	.if \bits == 16
-	tst x9, #0x0200
-	.elseif \bits == 32
-	tst x9, #0x00400000
-	.else
-	mov x13, #0x0008000000000000
-	tst x9, x13
-	.endif
-	b.ne .Lfloating_right_nan_\@
-	orr w17, w17, #2
-.Lfloating_right_nan_\@:
-	and x13, x10, x12
-	cmp x13, x12
-	b.ne .Lfloating_nan_done_\@
-	tst x10, x14
-	b.eq .Lfloating_nan_done_\@
-	orr w17, w17, #1
-	.if \bits == 16
-	tst x10, #0x0200
-	.elseif \bits == 32
-	tst x10, #0x00400000
-	.else
-	mov x13, #0x0008000000000000
-	tst x10, x13
-	.endif
-	b.ne .Lfloating_nan_done_\@
-	orr w17, w17, #2
-.Lfloating_nan_done_\@:
-	tbz w17, #0, .Lfloating_ordered_\@
-	.if \signal
-	orr w16, w16, #1
-	.else
-	tbz w17, #1, .Lfloating_unordered_\@
-	orr w16, w16, #1
-	.endif
-.Lfloating_unordered_\@:
-	mov w14, #0x30000000
-	b .Lfloating_commit_\@
-
-.Lfloating_ordered_\@:
-	.if \bits != 16
-	/* FPProcessDenorms reports IDC only for AH and only after an ordered
-	 * comparison. A FIZ-flushed operand has type Zero, not Denormal. */
-	tbz w11, #1, .Lfloating_numeric_\@
-	tbnz w11, #0, .Lfloating_numeric_\@
-	cbz w15, .Lfloating_numeric_\@
-	orr w16, w16, #0x80
-	.endif
-.Lfloating_numeric_\@:
-	.if \bits == 16
-	mov x12, #0x7fff
-	.elseif \bits == 32
-	mov x12, #0x7fffffff
-	.else
-	mov x12, #0x7fffffffffffffff
-	.endif
-	and x13, x9, x12
-	and x14, x10, x12
-	orr x12, x13, x14
-	cbz x12, .Lfloating_equal_\@       /* +0 == -0 */
-	cmp x9, x10
-	b.eq .Lfloating_equal_\@
-	eor x12, x9, x10
-	tbnz x12, #(\bits - 1), .Lfloating_different_sign_\@
-	tbnz x9, #(\bits - 1), .Lfloating_both_negative_\@
-	cmp x13, x14
-	b.lo .Lfloating_less_\@
-	b .Lfloating_greater_\@
-.Lfloating_both_negative_\@:
-	cmp x13, x14
-	b.hi .Lfloating_less_\@
-	b .Lfloating_greater_\@
-.Lfloating_different_sign_\@:
-	tbnz x9, #(\bits - 1), .Lfloating_less_\@
-.Lfloating_greater_\@:
-	mov w14, #0x20000000
-	b .Lfloating_commit_\@
-.Lfloating_equal_\@:
-	mov w14, #0x60000000
-	b .Lfloating_commit_\@
-.Lfloating_less_\@:
-	mov w14, #0x80000000
-.Lfloating_commit_\@:
-	cbz w16, .Lfloating_store_\@
-	mrs x15, fpsr
-	orr x15, x15, x16
-	msr fpsr, x15
-.Lfloating_store_\@:
-	mov w27, w14
-	next_gadget
-.endm
-
+ * time. Each is one native host comparison. */
 .macro floating_compare_body bits, signal, zero
 	ensure_fp_environment
 	ubfx w9, w8, #8, #5
@@ -1453,9 +1058,6 @@ simd_basic_floating_unary fsqrt_2d, fsqrt, 2d
 	ldr d1, [x13]
 	.endif
 	.endif
-	ldr w11, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w11, #3
-	b.ne .Lfloating_software_\@
 	.if \bits == 16
 		.if \signal
 			.if \zero
@@ -1501,30 +1103,6 @@ simd_basic_floating_unary fsqrt_2d, fsqrt, 2d
 	.endif
 	mrs x27, nzcv
 	next_gadget
-.Lfloating_software_\@:
-	.if \bits == 16
-	umov w9, v0.h[0]
-	.if !\zero
-	umov w10, v1.h[0]
-	.else
-	mov w10, wzr
-	.endif
-	.elseif \bits == 32
-	fmov w9, s0
-	.if !\zero
-	fmov w10, s1
-	.else
-	mov w10, wzr
-	.endif
-	.else
-	fmov x9, d0
-	.if !\zero
-	fmov x10, d1
-	.else
-	mov x10, xzr
-	.endif
-	.endif
-	floating_compare_software \bits, \signal
 .endm
 
 .macro floating_compare_direct name, bits, signal, zero
@@ -1584,31 +1162,8 @@ floating_conditional_compare_variants gt, gt
 floating_conditional_compare_variants le, le
 
 /* Advanced SIMD floating comparisons are specialized by operation and exact
- * scalar/vector shape. Valid programs use the matching native FP16/FP32/FP64
- * instruction directly. Only AH/FIZ takes the shared integer reference path;
- * scalar register forms additionally honor NEP's merge-from-Vm semantics. */
-.macro simd_floating_compare_software
-	mov x19, x1
-	mov x20, x2
-	mov x0, x1
-	mov x1, x8
-	bl NAME(uml_arm64_simd_floating_compare_software)
-	mov x1, x19
-	mov x2, x20
-	/* Keep the active native FPSR synchronized so the eventual leave cannot
-	 * overwrite exceptions accumulated by the software rare path. */
-	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x17
-	/* The software helper clobbers SIMD scratch registers. Reestablish the
-	 * complete result only on this cold path before forwarding can resume. */
-	ldr x8, [_stream, #-8]
-	and w9, w8, #0x1f
-	add x11, _cpu, #UML_GADGET_CPU_V0
-	add x12, x11, x9, lsl #4
-	ldr q2, [x12]
-	next_gadget
-.endm
-
+ * scalar/vector shape and execute the matching native FP16/FP32/FP64
+ * instruction directly. */
 .macro simd_floating_compare_register_scalar name, operation, element, forward=0
 vector_entry \name, \forward, vector_register0, vector_register8, vector_register16, scalar_none, 1
 	ensure_fp_environment
@@ -1626,21 +1181,11 @@ vector_entry \name, \forward, vector_register0, vector_register8, vector_registe
 	.if \forward
 	movi v2.16b, #0
 	.endif
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lsimd_fcmp_software_\@
 	\operation \element\()2, \element\()0, \element\()1
-	tbz w16, #2, .Lsimd_fcmp_store_\@
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-.Lsimd_fcmp_store_\@:
 	and w9, w8, #0x1f
 	add x12, x11, x9, lsl #4
 	str q2, [x12]
 	next_gadget
-.Lsimd_fcmp_software_\@:
-	simd_floating_compare_software
 	vector_variants \forward, vector_register8, vector_register16, scalar_none, simd_floating_compare_register_scalar, \name, \operation, \element
 .endm
 
@@ -1655,16 +1200,11 @@ vector_entry \name, \forward, vector_register0, vector_register8, vector_registe
 	add x13, x11, x10, lsl #4
 	vector_read \forward, 1, q0, [x12]
 	vector_read \forward, 2, q1, [x13]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lsimd_fcmp_software_\@
 	\operation v2.\arrangement, v0.\arrangement, v1.\arrangement
 	and w9, w8, #0x1f
 	add x12, x11, x9, lsl #4
 	str q2, [x12]
 	next_gadget
-.Lsimd_fcmp_software_\@:
-	simd_floating_compare_software
 	vector_variants \forward, vector_register8, vector_register16, scalar_none, simd_floating_compare_register_vector, \name, \operation, \arrangement
 .endm
 
@@ -1682,16 +1222,11 @@ vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, s
 	.if \forward
 	movi v2.16b, #0
 	.endif
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lsimd_fcmp_software_\@
 	\operation \element\()2, \element\()0, #0.0
 	and w9, w8, #0x1f
 	add x12, x11, x9, lsl #4
 	str q2, [x12]
 	next_gadget
-.Lsimd_fcmp_software_\@:
-	simd_floating_compare_software
 	vector_variants \forward, vector_register8, scalar_none, scalar_none, simd_floating_compare_zero_scalar, \name, \operation, \element
 .endm
 
@@ -1703,16 +1238,11 @@ vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, s
 	add x11, _cpu, #UML_GADGET_CPU_V0
 	add x12, x11, x9, lsl #4
 	vector_read \forward, 1, q0, [x12]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lsimd_fcmp_software_\@
 	\operation v2.\arrangement, v0.\arrangement, #0.0
 	and w9, w8, #0x1f
 	add x12, x11, x9, lsl #4
 	str q2, [x12]
 	next_gadget
-.Lsimd_fcmp_software_\@:
-	simd_floating_compare_software
 	vector_variants \forward, vector_register8, scalar_none, scalar_none, simd_floating_compare_zero_vector, \name, \operation, \arrangement
 .endm
 
@@ -1751,7 +1281,7 @@ simd_floating_compare_zero_variants lt0, fcmlt
 
 /* FCVTL/FCVTL2 and FCVTN/FCVTN2 are specialized by conversion pair and
  * destination half. The normal path is exactly one native conversion; only
- * AFP input controls or AHP for half conversions use the integer-only helper. */
+ * AHP for half conversions uses the integer-only helper. */
 .macro simd_floating_precision_vector_software
 	mov x19, x1
 	mov x20, x2
@@ -1775,10 +1305,8 @@ gadget \name
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr q0, [x12]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lsimd_fcvt_vector_software_\@
 	.if \half_involved
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #26, .Lsimd_fcvt_vector_software_\@
 	.endif
 	.if \upper_narrow
@@ -1789,8 +1317,10 @@ gadget \name
 	\operation v2.\destination_arrangement, v0.\source_arrangement
 	str q2, [x13]
 	next_gadget
+	.if \half_involved
 .Lsimd_fcvt_vector_software_\@:
 	simd_floating_precision_vector_software
+	.endif
 .endm
 
 simd_floating_precision_vector simd_fcvtl_hs, fcvtl, 4s, 4h, 0, 1
@@ -1815,25 +1345,13 @@ gadget simd_fcvtxn_scalar
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr d0, [x12]
-	movi v2.16b, #0
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lsimd_fcvtxn_scalar_software
 	fcvtxn s2, d0
-	tbz w16, #2, .Lsimd_fcvtxn_scalar_store
-	ldr q3, [x13]
-	ins v3.s[0], v2.s[0]
-	mov v2.16b, v3.16b
-.Lsimd_fcvtxn_scalar_store:
 	str q2, [x13]
 	next_gadget
-.Lsimd_fcvtxn_scalar_software:
-	simd_floating_precision_vector_software
 
 /* FCVT is specialized to all six source/destination precision pairs. The
- * ordinary FPCR path is one native conversion. AFP/AHP controls take a rare
- * integer-only helper path because Apple Silicon does not expose compatible
- * AH/FIZ behavior. NEP is the sole merge branch after conversion. */
+ * ordinary FPCR path is one native conversion. FPCR.AHP takes a rare
+ * integer-only helper path for half-precision pairs. */
 .macro floating_convert_precision name, source_bits, destination_bits
 gadget \name
 	ensure_fp_environment
@@ -1842,7 +1360,6 @@ gadget \name
 	lsr x10, x8, #16
 	add x12, _cpu, x10
 	add x13, _cpu, x9
-	movi v2.16b, #0
 	.if \source_bits == 16
 	ldr h0, [x12]
 	.elseif \source_bits == 32
@@ -1850,11 +1367,10 @@ gadget \name
 	.else
 	ldr d0, [x12]
 	.endif
+	.if \source_bits == 16 || \destination_bits == 16
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	mov w17, #3
-	movk w17, #0x0400, lsl #16       /* AHP | AH | FIZ */
-	tst w16, w17
-	b.ne .Lfloating_convert_software_\@
+	tbnz w16, #26, .Lfloating_convert_software_\@
+	.endif
 	.if \source_bits == 16 && \destination_bits == 32
 	fcvt s2, h0
 	.elseif \source_bits == 16 && \destination_bits == 64
@@ -1868,8 +1384,10 @@ gadget \name
 	.else
 	fcvt s2, d0
 	.endif
-	b .Lfloating_convert_merge_\@
+	str q2, [x13]
+	next_gadget
 
+	.if \source_bits == 16 || \destination_bits == 16
 .Lfloating_convert_software_\@:
 	/* x1/x2 are the threaded engine's CpuState/TLB registers. Preserve them
 	 * in ABI callee-saved registers across the integer-only helper call. */
@@ -1905,22 +1423,9 @@ gadget \name
 	.else
 	fmov d2, x14
 	.endif
-
-.Lfloating_convert_merge_\@:
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #2, .Lfloating_convert_store_\@
-	ldr q3, [x13]
-	.if \destination_bits == 16
-	ins v3.h[0], v2.h[0]
-	.elseif \destination_bits == 32
-	ins v3.s[0], v2.s[0]
-	.else
-	ins v3.d[0], v2.d[0]
-	.endif
-	mov v2.16b, v3.16b
-.Lfloating_convert_store_\@:
 	str q2, [x13]
 	next_gadget
+	.endif
 .endm
 
 floating_convert_precision floating_convert_h_to_s, 16, 32
@@ -1932,8 +1437,8 @@ floating_convert_precision floating_convert_d_to_s, 64, 32
 
 /* Floating-to-integer conversions are specialized by rounding operation,
  * destination kind, signedness, source precision, integer width, vector
- * shape, and discard-at-XZR. Ordinary code executes one native conversion;
- * AFP/AHP controls alone use the checked integer-only helper. */
+ * shape, and discard-at-XZR. Each executes one native conversion; forms the
+ * host lacks select the integer-only fallback gadget. */
 .macro floating_to_integer_software
 	mov x19, x1
 	mov x20, x2
@@ -1980,8 +1485,6 @@ gadget \name
 	add x12, x11, x10, lsl #4
 	ldr d0, [x12]
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lfloating_javascript_convert_software_\@
 	tbnz w16, #24, .Lfloating_javascript_convert_software_\@
 	fjcvtzs w14, d0
 	mrs x27, nzcv
@@ -2034,18 +1537,9 @@ gadget \name
 	ldr x14, [x12, x10, lsl #3]
 	.endif
 	movi v2.16b, #0
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #1, .Lgpr_to_floating_software_\@
 	\operation \floating\()2, \integer\()14
-	tbz w16, #2, .Lgpr_to_floating_store_\@
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-.Lgpr_to_floating_store_\@:
 	str q2, [x13]
 	next_gadget
-.Lgpr_to_floating_software_\@:
-	integer_to_floating_software
 .endm
 
 .macro gpr_to_floating_widths name, operation, integer, zero
@@ -2079,18 +1573,9 @@ gadget \name
 	add x13, x11, x9, lsl #4
 	ldr \element\()0, [x12]
 	movi v2.16b, #0
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #1, .Lsimd_integer_to_floating_software_\@
 	\operation \element\()2, \element\()0
-	tbz w16, #2, .Lsimd_integer_to_floating_store_\@
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-.Lsimd_integer_to_floating_store_\@:
 	str q2, [x13]
 	next_gadget
-.Lsimd_integer_to_floating_software_\@:
-	integer_to_floating_software
 .endm
 
 .macro simd_integer_to_floating_vector name, operation, arrangement
@@ -2103,13 +1588,9 @@ gadget \name
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr q0, [x12]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #1, .Lsimd_integer_to_floating_software_\@
 	\operation v2.\arrangement, v0.\arrangement
 	str q2, [x13]
 	next_gadget
-.Lsimd_integer_to_floating_software_\@:
-	integer_to_floating_software
 .endm
 
 .macro simd_integer_to_floating_variants name, operation
@@ -2141,18 +1622,9 @@ gadget \name
 	add x13, x11, x9, lsl #4
 	ldr \integer\()14, [x12]
 	movi v2.16b, #0
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #1, .Lsimd_cross_integer_to_floating_software_\@
 	\operation \floating\()2, \integer\()14
-	tbz w16, #2, .Lsimd_cross_integer_to_floating_store_\@
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-.Lsimd_cross_integer_to_floating_store_\@:
 	str q2, [x13]
 	next_gadget
-.Lsimd_cross_integer_to_floating_software_\@:
-	integer_to_floating_software
 .endm
 
 .macro simd_cross_integer_to_floating_variants name, operation
@@ -2176,9 +1648,6 @@ gadget \name
 	add x11, _cpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	ldr \floating\()0, [x12]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lfloating_to_gpr_zero_software_\@
 	\operation \integer\()14, \floating\()0
 	.if \discard == 0
 	and w9, w8, #0x1f
@@ -2186,8 +1655,6 @@ gadget \name
 	str x14, [x13, x9, lsl #3]
 	.endif
 	next_gadget
-.Lfloating_to_gpr_zero_software_\@:
-	floating_to_integer_software
 .endm
 
 .macro floating_to_gpr_widths name, operation, floating
@@ -2229,19 +1696,9 @@ gadget \name
 	add x13, x11, x9, lsl #4
 	ldr \element\()0, [x12]
 	movi v2.16b, #0
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lsimd_floating_to_integer_zero_software_\@
 	\operation \element\()2, \element\()0
-	tbz w16, #2, .Lsimd_floating_to_integer_zero_store_\@
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-.Lsimd_floating_to_integer_zero_store_\@:
 	str q2, [x13]
 	next_gadget
-.Lsimd_floating_to_integer_zero_software_\@:
-	floating_to_integer_software
 .endm
 
 .macro simd_floating_to_integer_vector name, operation, arrangement
@@ -2254,14 +1711,9 @@ gadget \name
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr q0, [x12]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lsimd_floating_to_integer_zero_software_\@
 	\operation v2.\arrangement, v0.\arrangement
 	str q2, [x13]
 	next_gadget
-.Lsimd_floating_to_integer_zero_software_\@:
-	floating_to_integer_software
 .endm
 
 .macro simd_floating_to_integer_variants name, operation
@@ -2303,21 +1755,11 @@ gadget \name
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr \floating\()0, [x12]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lfloating_to_simd_integer_software_\@
 	\operation \integer\()14, \floating\()0
 	movi v2.16b, #0
 	fmov \element\()2, \integer\()14
-	tbz w16, #2, .Lfloating_to_simd_integer_store_\@
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-.Lfloating_to_simd_integer_store_\@:
 	str q2, [x13]
 	next_gadget
-.Lfloating_to_simd_integer_software_\@:
-	floating_to_integer_software
 .endm
 
 .macro floating_to_simd_integer_variants name, operation
@@ -2364,9 +1806,6 @@ NAME(uml_arm64_gadget_\name\()_end):
 	add x11, _cpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	ldr \floating\()0, [x12]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lfloating_to_gpr_fixed_software_\@
 	\operation \integer\()14, \floating\()0, #\fraction
 	.if \discard == 0
 	and w9, w8, #0x1f
@@ -2374,8 +1813,6 @@ NAME(uml_arm64_gadget_\name\()_end):
 	str x14, [x13, x9, lsl #3]
 	.endif
 	next_gadget
-.Lfloating_to_gpr_fixed_software_\@:
-	floating_to_integer_software
 .endm
 
 .macro floating_to_gpr_fixed_table name, operation, integer, floating, discard, count
@@ -2420,19 +1857,9 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 	add x13, x11, x9, lsl #4
 	ldr \element\()0, [x12]
 	movi v2.16b, #0
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lsimd_floating_fixed_software_\@
 	\operation \element\()2, \element\()0, #\fraction
-	tbz w16, #2, .Lsimd_floating_fixed_store_\@
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-.Lsimd_floating_fixed_store_\@:
 	str q2, [x13]
 	next_gadget
-.Lsimd_floating_fixed_software_\@:
-	floating_to_integer_software
 .endm
 
 .macro simd_floating_to_integer_fixed_vector_body operation, arrangement, fraction
@@ -2445,14 +1872,9 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr q0, [x12]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tst w16, #3
-	b.ne .Lsimd_floating_fixed_software_\@
 	\operation v2.\arrangement, v0.\arrangement, #\fraction
 	str q2, [x13]
 	next_gadget
-.Lsimd_floating_fixed_software_\@:
-	floating_to_integer_software
 .endm
 
 .macro simd_floating_to_integer_fixed_table name, operation, shape, scalar, count
@@ -2503,18 +1925,9 @@ simd_floating_to_integer_fixed_variants fcvtzu, fcvtzu
 	ldr x14, [x12, x10, lsl #3]
 	.endif
 	movi v2.16b, #0
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #1, .Lgpr_to_floating_fixed_software_\@
 	\operation \floating\()2, \integer\()14, #\fraction
-	tbz w16, #2, .Lgpr_to_floating_fixed_store_\@
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-.Lgpr_to_floating_fixed_store_\@:
 	str q2, [x13]
 	next_gadget
-.Lgpr_to_floating_fixed_software_\@:
-	integer_to_floating_software
 .endm
 
 .macro gpr_to_floating_fixed_table name, operation, integer, floating, element, zero, count
@@ -2559,18 +1972,9 @@ gpr_to_floating_fixed_variants ucvtf, ucvtf
 	add x13, x11, x9, lsl #4
 	ldr \element\()0, [x12]
 	movi v2.16b, #0
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #1, .Lsimd_integer_to_floating_fixed_software_\@
 	\operation \element\()2, \element\()0, #\fraction
-	tbz w16, #2, .Lsimd_integer_to_floating_fixed_store_\@
-	ldr q3, [x13]
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-.Lsimd_integer_to_floating_fixed_store_\@:
 	str q2, [x13]
 	next_gadget
-.Lsimd_integer_to_floating_fixed_software_\@:
-	integer_to_floating_software
 .endm
 
 .macro simd_integer_to_floating_fixed_vector_body operation, arrangement, fraction
@@ -2583,13 +1987,9 @@ gpr_to_floating_fixed_variants ucvtf, ucvtf
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr q0, [x12]
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbnz w16, #1, .Lsimd_integer_to_floating_fixed_software_\@
 	\operation v2.\arrangement, v0.\arrangement, #\fraction
 	str q2, [x13]
 	next_gadget
-.Lsimd_integer_to_floating_fixed_software_\@:
-	integer_to_floating_software
 .endm
 
 .macro simd_integer_to_floating_fixed_table name, operation, shape, scalar, count
@@ -2639,13 +2039,6 @@ gadget \name
 	ldr \second, [_cpu, x10]
 	ldr \addend, [_cpu, x11]
 	\operation \destination, \first, \second, \addend
-	/* All scalar fused forms merge inactive bits from Va for FPCR.NEP. */
-	ldr w12, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w12, #2, 1f
-	ldr q4, [_cpu, x11]
-	ins v4.\element[0], v3.\element[0]
-	mov v3.16b, v4.16b
-1:
 	str q3, [_cpu, x8]
 	next_gadget
 .endm
@@ -2677,8 +2070,7 @@ removed_vector_forward_gadget 64
 .endr
 
 /* Translation-specialized vector FABS/FNEG. Valid guest programs execute with
- * no opcode, precision, or Q decode branches. Only FPCR.AH selects the rare
- * NaN-sign repair described above. */
+ * no opcode, precision, or Q decode branches. */
 .macro simd_floating_sign name, operation, arrangement, shift, forward=0
 vector_entry simd_floating_\name, \forward, vector_register0, vector_register8, scalar_none, scalar_none, 1
 	ldr x8, [_stream], #8
@@ -2688,12 +2080,7 @@ vector_entry simd_floating_\name, \forward, vector_register0, vector_register8, 
 	add x12, x11, x10, lsl #4
 	vector_read \forward, 1, q0, [x12]
 	\operation v2.\arrangement, v0.\arrangement
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #1, 1f
-	floating_nan_mask \arrangement, \shift
-	bsl v3.16b, v0.16b, v2.16b
-	mov v2.16b, v3.16b
-1:	add x12, x11, x9, lsl #4
+	add x12, x11, x9, lsl #4
 	str q2, [x12]
 	next_gadget
 	vector_variants \forward, vector_register8, scalar_none, scalar_none, simd_floating_sign, \name, \operation, \arrangement, \shift
@@ -2711,7 +2098,6 @@ simd_floating_sign fneg_4s, fneg, 4s, 24
 simd_floating_sign fneg_2d, fneg, 2d, 53
 
 .purgem simd_floating_sign
-.purgem floating_nan_mask
 
 /* Translation-specialized same-width integer AdvSIMD gadgets. The builder
  * selects the exact operation and arrangement, so a valid guest instruction
@@ -5228,29 +4614,16 @@ simd_indexed_saturating_accumulate_high_family sqrdmlsh, sqrdmlsh
 .purgem simd_indexed_saturating_accumulate_high_shape
 
 /* Floating-point by-element operations are specialized by operation,
- * arrangement, scalar/vector form, and element index.  The normal vector hot
- * path has no decode branches.  Scalar forms only test FPCR.NEP because that
- * architectural state controls whether the inactive destination bits merge
- * from the accumulator/source instead of being cleared. */
-.macro simd_indexed_floating_shape name, operation, shape, destination, source, element, index, scalar, accumulate, checked, fiz, forward=0
+ * arrangement, scalar/vector form, and element index. The hot path has no
+ * decode or control branches. */
+.macro simd_indexed_floating_shape name, operation, shape, destination, source, element, index, accumulate, forward=0
 .set .Lvector_old\@, scalar_none
 .if \accumulate
 .set .Lvector_old\@, scalar_offset0
 .endif
-vector_entry simd_indexed_\name\()_\shape\()_\index, \forward, scalar_offset0, scalar_offset16, scalar_offset32, .Lvector_old\@, (1 + \checked)
+vector_entry simd_indexed_\name\()_\shape\()_\index, \forward, scalar_offset0, scalar_offset16, scalar_offset32, .Lvector_old\@, 1
 	ensure_fp_environment
-	.if \checked
-	ldr x8, [_stream], #16
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	.if \fiz
-	tst w16, #3
-	b.ne .Lsimd_indexed_floating_software_\@
-	.else
-	tbnz w16, #1, .Lsimd_indexed_floating_software_\@
-	.endif
-	.else
 	ldr x8, [_stream], #8
-	.endif
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
 	lsr x11, x8, #32
@@ -5259,70 +4632,33 @@ vector_entry simd_indexed_\name\()_\shape\()_\index, \forward, scalar_offset0, s
 	.if \accumulate
 	vector_read \forward, 4, q2, [_cpu, x9]
 	.endif
-	.if \scalar
-	.if \accumulate
-	mov v3.16b, v2.16b
-	.else
-	mov v3.16b, v0.16b
-	.endif
-	.endif
 	\operation \destination, \source, v1.\element[\index]
-	.if \scalar
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #2, 1f
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-1:
-	.endif
 	str q2, [_cpu, x9]
 	next_gadget
-	.if \checked
-.Lsimd_indexed_floating_software_\@:
-	ldr w15, [_stream, #-8]
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov w1, w15
-	bl NAME(uml_arm64_simd_indexed_floating_software)
-	ldp x1, x2, [sp], #16
-	mrs x17, fpsr
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	orr w16, w16, w17
-	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x16
-	/* The cold helper publishes CpuState, not a native vector result. */
-	ldr x8, [_stream, #-16]
-	uxth w9, w8
-	ldr q2, [_cpu, x9]
-	next_gadget
-	.endif
-	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, simd_indexed_floating_shape, \name, \operation, \shape, \destination, \source, \element, \index, \scalar, \accumulate, \checked, \fiz
+	vector_variants \forward, scalar_offset16, scalar_offset32, .Lvector_old\@, simd_indexed_floating_shape, \name, \operation, \shape, \destination, \source, \element, \index, \accumulate
 .endm
 
-.macro simd_indexed_floating_family name, operation, accumulate, checked
+.macro simd_indexed_floating_family name, operation, accumulate
 	.irp index, 0, 1, 2, 3, 4, 5, 6, 7
-		simd_indexed_floating_shape \name, \operation, h, h2, h0, h, \index, 1, \accumulate, \checked, 0
-		simd_indexed_floating_shape \name, \operation, 4h, v2.4h, v0.4h, h, \index, 0, \accumulate, \checked, 0
-		simd_indexed_floating_shape \name, \operation, 8h, v2.8h, v0.8h, h, \index, 0, \accumulate, \checked, 0
+		simd_indexed_floating_shape \name, \operation, h, h2, h0, h, \index, \accumulate
+		simd_indexed_floating_shape \name, \operation, 4h, v2.4h, v0.4h, h, \index, \accumulate
+		simd_indexed_floating_shape \name, \operation, 8h, v2.8h, v0.8h, h, \index, \accumulate
 	.endr
 	.irp index, 0, 1, 2, 3
-		simd_indexed_floating_shape \name, \operation, s, s2, s0, s, \index, 1, \accumulate, \checked, 1
-		simd_indexed_floating_shape \name, \operation, 2s, v2.2s, v0.2s, s, \index, 0, \accumulate, \checked, 1
-		simd_indexed_floating_shape \name, \operation, 4s, v2.4s, v0.4s, s, \index, 0, \accumulate, \checked, 1
+		simd_indexed_floating_shape \name, \operation, s, s2, s0, s, \index, \accumulate
+		simd_indexed_floating_shape \name, \operation, 2s, v2.2s, v0.2s, s, \index, \accumulate
+		simd_indexed_floating_shape \name, \operation, 4s, v2.4s, v0.4s, s, \index, \accumulate
 	.endr
 	.irp index, 0, 1
-		simd_indexed_floating_shape \name, \operation, d, d2, d0, d, \index, 1, \accumulate, \checked, 1
-		simd_indexed_floating_shape \name, \operation, 2d, v2.2d, v0.2d, d, \index, 0, \accumulate, \checked, 1
+		simd_indexed_floating_shape \name, \operation, d, d2, d0, d, \index, \accumulate
+		simd_indexed_floating_shape \name, \operation, 2d, v2.2d, v0.2d, d, \index, \accumulate
 	.endr
 .endm
 
-simd_indexed_floating_family fmla, fmla, 1, 0
-simd_indexed_floating_family fmls, fmls, 1, 0
-simd_indexed_floating_family fmul, fmul, 0, 0
-simd_indexed_floating_family fmulx, fmulx, 0, 0
-simd_indexed_floating_family fmla_checked, fmla, 1, 1
-simd_indexed_floating_family fmls_checked, fmls, 1, 1
-simd_indexed_floating_family fmul_checked, fmul, 0, 1
-simd_indexed_floating_family fmulx_checked, fmulx, 0, 1
+simd_indexed_floating_family fmla, fmla, 1
+simd_indexed_floating_family fmls, fmls, 1
+simd_indexed_floating_family fmul, fmul, 0
+simd_indexed_floating_family fmulx, fmulx, 0
 
 .purgem simd_indexed_floating_family
 .purgem simd_indexed_floating_shape
@@ -5340,17 +4676,7 @@ gadget simd_fmulx_\name
 	add x15, x12, x11, lsl #4
 	ldr q0, [x14]
 	ldr q1, [x15]
-	.if \scalar
-	mov v3.16b, v0.16b
-	.endif
 	fmulx \destination, \left, \right
-	.if \scalar
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
-	tbz w16, #2, 1f
-	ins v3.\element[0], v2.\element[0]
-	mov v2.16b, v3.16b
-1:
-	.endif
 	str q2, [x13]
 	next_gadget
 .endm

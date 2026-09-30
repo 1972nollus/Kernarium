@@ -64,8 +64,7 @@ struct Value final {
 	const unsigned exponent = (bits >> 7) & 0xffU;
 	const unsigned fraction = bits & 0x7fU;
 	if (exponent == 0U) {
-		if (fraction == 0U || (fpcr & 1U) != 0U ||
-		    ((fpcr & (1U << 24)) != 0U && (fpcr & 2U) == 0U))
+		if (fraction == 0U || (fpcr & (1U << 24)) != 0U)
 			return {Class::zero, sign, 0U, 0};
 		return {Class::finite, sign, fraction, -126 - 7};
 	}
@@ -98,8 +97,7 @@ struct Value final {
 	const unsigned exponent = (bits >> 23) & 0xffU;
 	const unsigned fraction = bits & 0x7f'ffffU;
 	if (exponent == 0U) {
-		if (fraction == 0U || (fpcr & 1U) != 0U ||
-		    ((fpcr & (1U << 24)) != 0U && (fpcr & 2U) == 0U))
+		if (fraction == 0U || (fpcr & (1U << 24)) != 0U)
 			return {Class::zero, sign, 0U, 0};
 		return {Class::finite, sign, fraction, -149};
 	}
@@ -182,9 +180,8 @@ struct Rounded final {
 	int value_exponent = unit_exponent + static_cast<int>(high);
 	if (fixed_bfloat_behavior && value_exponent < -126)
 		return static_cast<std::uint32_t>(sign) << 31;
-	const bool alternative = (fpcr & 2U) != 0U;
-	if (!fixed_bfloat_behavior && !alternative &&
-	    (fpcr & (1U << 24)) != 0U && value_exponent < -126)
+	if (!fixed_bfloat_behavior && (fpcr & (1U << 24)) != 0U &&
+	    value_exponent < -126)
 		return static_cast<std::uint32_t>(sign) << 31;
 
 	const bool normal = value_exponent >= -126;
@@ -219,14 +216,9 @@ struct Rounded final {
 		return (static_cast<std::uint32_t>(sign) << 31) |
 			(to_infinity ? 0x7f80'0000U : 0x7f7f'ffffU);
 	}
-	std::uint32_t result = (static_cast<std::uint32_t>(sign) << 31) |
+	return (static_cast<std::uint32_t>(sign) << 31) |
 		(exponent_field << 23) |
 		(static_cast<std::uint32_t>(significand) & 0x7f'ffffU);
-	if (!fixed_bfloat_behavior && alternative &&
-	    (fpcr & (1U << 24)) != 0U && exponent_field == 0U &&
-	    (result & 0x7f'ffffU) != 0U)
-		result = static_cast<std::uint32_t>(sign) << 31;
-	return result;
 }
 
 [[nodiscard]] constexpr std::uint32_t add_finite(Value left, Value right,
@@ -272,16 +264,17 @@ struct Rounded final {
 		fpcr, rounding, fixed_bfloat_behavior);
 }
 
+/* The standard BFloat16 behaviors ignore FPCR, apart from EBF. */
 [[nodiscard]] constexpr std::uint32_t standard_multiply(std::uint16_t left_bits,
-	std::uint16_t right_bits, std::uint32_t fpcr) noexcept
+	std::uint16_t right_bits) noexcept
 {
 	const auto left = unpack_standard_bfloat(left_bits);
 	const auto right = unpack_standard_bfloat(right_bits);
 	if (left.type == Class::nan || right.type == Class::nan)
-		return default_nan<std::uint32_t>(fpcr);
+		return default_nan<std::uint32_t>();
 	if ((left.type == Class::infinity && right.type == Class::zero) ||
 	    (left.type == Class::zero && right.type == Class::infinity))
-		return default_nan<std::uint32_t>(fpcr);
+		return default_nan<std::uint32_t>();
 	const bool sign = left.sign != right.sign;
 	if (left.type == Class::infinity || right.type == Class::infinity)
 		return (static_cast<std::uint32_t>(sign) << 31) | 0x7f80'0000U;
@@ -289,24 +282,24 @@ struct Rounded final {
 		return static_cast<std::uint32_t>(sign) << 31;
 	const auto multiplied = product(left, right);
 	return round_finite(multiplied.significand, multiplied.exponent, sign,
-		fpcr, 4U, true);
+		0U, 4U, true);
 }
 
 [[nodiscard]] constexpr std::uint32_t standard_add(std::uint32_t left_bits,
-	std::uint32_t right_bits, std::uint32_t fpcr) noexcept
+	std::uint32_t right_bits) noexcept
 {
 	const auto left = unpack_standard_single(left_bits);
 	const auto right = unpack_standard_single(right_bits);
 	if (left.type == Class::nan || right.type == Class::nan)
-		return default_nan<std::uint32_t>(fpcr);
+		return default_nan<std::uint32_t>();
 	if (left.type == Class::infinity && right.type == Class::infinity &&
 	    left.sign != right.sign)
-		return default_nan<std::uint32_t>(fpcr);
+		return default_nan<std::uint32_t>();
 	if (left.type == Class::infinity)
 		return left_bits;
 	if (right.type == Class::infinity)
 		return right_bits;
-	return add_finite(left, right, fpcr, 4U, true);
+	return add_finite(left, right, 0U, 4U, true);
 }
 
 [[nodiscard]] constexpr std::uint32_t extended_product_sum(
@@ -320,7 +313,7 @@ struct Rounded final {
 	const auto right_b = unpack_extended_bfloat(right_b_bits, fpcr);
 	if (left_a.type == Class::nan || left_b.type == Class::nan ||
 	    right_a.type == Class::nan || right_b.type == Class::nan)
-		return default_nan<std::uint32_t>(fpcr);
+		return default_nan<std::uint32_t>();
 	const bool zero_a = left_a.type == Class::zero ||
 		right_a.type == Class::zero;
 	const bool zero_b = left_b.type == Class::zero ||
@@ -333,7 +326,7 @@ struct Rounded final {
 	const bool sign_b = left_b.sign != right_b.sign;
 	if ((zero_a && infinity_a) || (zero_b && infinity_b) ||
 	    (infinity_a && infinity_b && sign_a != sign_b))
-		return default_nan<std::uint32_t>(fpcr);
+		return default_nan<std::uint32_t>();
 	if (infinity_a || infinity_b) {
 		const bool sign = infinity_a ? sign_a : sign_b;
 		return (static_cast<std::uint32_t>(sign) << 31) | 0x7f80'0000U;
@@ -354,10 +347,10 @@ struct Rounded final {
 	const auto left = unpack_extended_single(left_bits, fpcr);
 	const auto right = unpack_extended_single(right_bits, fpcr);
 	if (left.type == Class::nan || right.type == Class::nan)
-		return default_nan<std::uint32_t>(fpcr);
+		return default_nan<std::uint32_t>();
 	if (left.type == Class::infinity && right.type == Class::infinity &&
 	    left.sign != right.sign)
-		return default_nan<std::uint32_t>(fpcr);
+		return default_nan<std::uint32_t>();
 	if (left.type == Class::infinity)
 		return left_bits;
 	if (right.type == Class::infinity)
@@ -373,10 +366,9 @@ struct Rounded final {
 {
 	using namespace bfloat_dot_detail;
 	if ((fpcr & (1U << 13)) == 0U) {
-		const auto product_a = standard_multiply(left_a, right_a, fpcr);
-		const auto product_b = standard_multiply(left_b, right_b, fpcr);
-		return standard_add(addend,
-			standard_add(product_a, product_b, fpcr), fpcr);
+		const auto product_a = standard_multiply(left_a, right_a);
+		const auto product_b = standard_multiply(left_b, right_b);
+		return standard_add(addend, standard_add(product_a, product_b));
 	}
 	const auto product_sum = extended_product_sum(left_a, left_b,
 		right_a, right_b, fpcr | (1U << 25));
