@@ -190,6 +190,7 @@ constexpr word user_debugreg7 = 848 + 7 * 8;
 constexpr word user_past = 928;
 constexpr word expected_bx = 0x1122334455667788UL;
 constexpr word expected_cs = 0x33;
+constexpr word user_debugreg = 848;
 #elif defined(__i386__)
 constexpr long nr_fork = 2;
 constexpr long nr_write = 4;
@@ -392,9 +393,18 @@ constexpr word user_debugreg7 = 252 + 7 * 4;
 constexpr word user_past = 288;
 constexpr word expected_bx = 0x11223344UL;
 constexpr word expected_cs = 0x23;
+constexpr word user_debugreg = 252;
 #else
 #error "the exception probe is an x86-64 or i386 program"
 #endif
+
+/* The debug-register tracee's work: one instruction to step, then ICEBP. */
+__asm__(".text\n"
+	".global probe_debug_child\n"
+	"probe_debug_child:\n"
+	"	nop\n"
+	"	.byte 0xf1\n"
+	"	ret\n");
 
 /* Both ABIs assemble these alike. UD2 raises #UD. */
 __asm__(".text\n"
@@ -419,6 +429,7 @@ constexpr long si_kernel = 0x80;
 constexpr word flag_reserved = 1UL << 1;
 constexpr word flag_rf = 1UL << 16;
 constexpr long eio = 5;
+constexpr long einval = 22;
 constexpr long segv_maperr = 1;
 /* Below every mapping of a static program, and at mmap_min_addr. */
 constexpr word unmapped_page = 0x10000;
@@ -938,6 +949,7 @@ constexpr long ptrace_peekuser = 3;
 constexpr long ptrace_pokeuser = 6;
 constexpr long ptrace_cont = 7;
 constexpr long ptrace_getregs = 12;
+constexpr long ptrace_singlestep = 9;
 constexpr long ptrace_syscall = 24;
 constexpr long ptrace_setregs = 13;
 constexpr long ptrace_getfpregs = 14;
@@ -1236,6 +1248,122 @@ bool tracer_changes_syscalls()
 	return expect("child exit status", static_cast<u32>(status), 0);
 }
 
+extern "C" void probe_debug_child();
+
+/* DR6 reads with its reserved bits set; BS, 0x4000, marks a single step. */
+constexpr word dr6_idle = 0xffff0ff0;
+constexpr word dr6_step = 0x4000;
+/* DR7: breakpoint 0 enabled, a 4-byte write watchpoint. */
+constexpr word dr7_watch_write = 0xd0001;
+
+alignas(8) volatile u32 watched;
+
+word peek_debugreg(long child, unsigned index)
+{
+	word value = 0x5a5a5a5a;
+	if (ptrace(ptrace_peekuser, child,
+		   user_debugreg + index * sizeof(word), &value) != 0)
+		put("  PTRACE_PEEKUSER of a debug register failed\n");
+	return value;
+}
+
+word poke_debugreg(long child, unsigned index, word value)
+{
+	return static_cast<word>(ptrace(ptrace_pokeuser, child,
+		user_debugreg + index * sizeof(word),
+		reinterpret_cast<const void *>(value)));
+}
+
+/* A tracer sees the debug registers x86 Linux keeps: DR6 with its reserved
+ * bits set, BS after a single step and clear after ICEBP; DR0 to DR3 and
+ * DR7 as written, a kernel address or an invalid length and type refused.
+ * A write that enables a watchpoint either arms one that fires or fails. */
+bool tracer_debug_registers()
+{
+	const long child = raw_syscall(nr_fork);
+	if (child == 0) {
+		raw_syscall(nr_ptrace, ptrace_traceme, 0, 0, 0);
+		raw_syscall(nr_kill, raw_syscall(nr_getpid), sigstop);
+		probe_debug_child();
+		watched = 1;
+		raw_syscall(nr_exit_group, 0);
+	}
+	if (child < 0) {
+		put("  fork failed\n");
+		return false;
+	}
+	bool ok = stopped_with(child, sigstop, "SIGSTOP");
+	ok = ok && expect("DR6 of a new task", peek_debugreg(child, 6),
+			  dr6_idle);
+	ok = ok && expect("DR7 of a new task", peek_debugreg(child, 7), 0);
+	ok = ok && ptrace(ptrace_singlestep, child, 0, nullptr) == 0 &&
+	     stopped_with(child, sigtrap, "single-step");
+	ok = ok && expect("DR6 after a single step", peek_debugreg(child, 6),
+			  dr6_idle | dr6_step);
+	ok = ok && ptrace(ptrace_cont, child, 0, nullptr) == 0 &&
+	     stopped_with(child, sigtrap, "ICEBP");
+	ok = ok && expect("DR6 after ICEBP", peek_debugreg(child, 6), dr6_idle);
+	long armed = -1;
+	if (ok) {
+		const word address = reinterpret_cast<word>(&watched);
+		ok &= expect("PTRACE_POKEUSER DR6", poke_debugreg(child, 6, 0), 0);
+		ok &= expect("DR6 as written", peek_debugreg(child, 6), 0);
+		ok &= expect("PTRACE_POKEUSER DR6 back",
+			     poke_debugreg(child, 6, dr6_idle), 0);
+		ok &= expect("PTRACE_POKEUSER DR4", poke_debugreg(child, 4, 1),
+			     static_cast<word>(-eio));
+		ok &= expect("PTRACE_POKEUSER DR5", poke_debugreg(child, 5, 0),
+			     static_cast<word>(-eio));
+		ok &= expect("PTRACE_POKEUSER DR1",
+			     poke_debugreg(child, 1, address), 0);
+		ok &= expect("DR1 as written", peek_debugreg(child, 1), address);
+#if defined(__x86_64__)
+		ok &= expect("PTRACE_POKEUSER DR2 of a kernel address",
+			     poke_debugreg(child, 2, 0xffffffff81000000UL),
+			     static_cast<word>(-einval));
+		ok &= expect("DR2 after a refused write",
+			     peek_debugreg(child, 2), 0);
+#endif
+		ok &= expect("PTRACE_POKEUSER DR7 without an enable",
+			     poke_debugreg(child, 7, 0x100), 0);
+		ok &= expect("DR7 as written", peek_debugreg(child, 7), 0x100);
+		ok &= expect("PTRACE_POKEUSER DR7 of a 4-byte execute breakpoint",
+			     poke_debugreg(child, 7, 0xc0001),
+			     static_cast<word>(-einval));
+		ok &= expect("DR7 after a refused write",
+			     peek_debugreg(child, 7), 0x100);
+		ok &= expect("PTRACE_POKEUSER DR0",
+			     poke_debugreg(child, 0, address), 0);
+		armed = static_cast<long>(
+			poke_debugreg(child, 7, dr7_watch_write));
+		if (armed == 0)
+			ok &= expect("DR7 as armed", peek_debugreg(child, 7),
+				     dr7_watch_write);
+		else
+			ok &= expect("PTRACE_POKEUSER DR7 arming",
+				     static_cast<word>(armed),
+				     static_cast<word>(-einval)) &&
+			      expect("DR7 after refused arming",
+				     peek_debugreg(child, 7), 0x100);
+	}
+	if (ok && armed == 0) {
+		ok = ptrace(ptrace_cont, child, 0, nullptr) == 0 &&
+		     stopped_with(child, sigtrap, "watchpoint");
+		ok = ok && expect("DR6 B0 after the watchpoint",
+				  peek_debugreg(child, 6) & 0xf, 1);
+		ok = ok && expect("PTRACE_POKEUSER DR7 clear",
+				  poke_debugreg(child, 7, 0), 0);
+	}
+	int status = 0;
+	if (!ok || ptrace(ptrace_cont, child, 0, nullptr) != 0 ||
+	    wait_for(child, status) != child) {
+		raw_syscall(nr_kill, child, sigkill);
+		wait_for(child, status);
+		return false;
+	}
+	return expect("child exit status", static_cast<u32>(status), 0);
+}
+
 #if defined(__x86_64__)
 /* Runs `path mode` and reports whether it exited 0. */
 bool in_child(const char *path, const char *mode)
@@ -1317,6 +1445,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "page-fault"));
 	report("i386 #PF error codes carry the user bit",
 	       in_child(i386_probe, "page-fault"));
+	report("x86-64 tracer reads and writes the debug registers",
+	       in_child(self, "tracer-debug"));
+	report("i386 tracer reads and writes the debug registers",
+	       in_child(i386_probe, "tracer-debug"));
 	return failures;
 }
 #endif
@@ -1351,6 +1483,8 @@ extern "C" int probe_main(word *stack)
 			return ud2_faults() ? 0 : 1;
 		if (equal(mode, "page-fault"))
 			return page_faults_are_user() ? 0 : 1;
+		if (equal(mode, "tracer-debug"))
+			return tracer_debug_registers() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;

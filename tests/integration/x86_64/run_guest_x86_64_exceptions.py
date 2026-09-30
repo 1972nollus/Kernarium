@@ -8,8 +8,8 @@ runs long repeated string instructions; ICEBP, BOUND, INT 4, INTO, UD2 and page
 faults deliver Linux's signals, codes, trap numbers and error codes; an x87
 stack survives a signal; a signal taken between two instructions leaves the
 accumulator alone; and a tracer of either ABI reads and writes registers, FP
-state and TLS and changes or skips a system call through orig_ax. The kernel
-must relay every such signal without complaint.
+state, debug registers and TLS and changes or skips a system call through
+orig_ax. The kernel must relay every such signal without complaint.
 """
 
 from __future__ import annotations
