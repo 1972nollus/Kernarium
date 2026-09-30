@@ -21,6 +21,7 @@
 #include "cpu/arm64/detail/half_fused_long.hpp"
 #include "cpu/arm64/detail/half_matrix.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
+#include "cpu/arm64/detail/memory_copy_set.hpp"
 #include "cpu/arm64/detail/read_check_write.hpp"
 #include "cpu/arm64/detail/simd_floating_classes.hpp"
 
@@ -1573,35 +1574,23 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     }
     /*
      * MOPS shares major encodings with atomic memory instructions. Decode its
-     * complete allocation first. Translation resolves every legality choice;
-     * valid instructions take the checked memory bridge only on hosts that
-     * advertise FEAT_MOPS, while every reserved encoding terminates here.
+     * complete allocation first. Translation resolves every legality choice,
+     * and every reserved encoding terminates here. The main stage transfers
+     * nothing (arm64::detail::mops_prologue); a prologue or epilogue that the
+     * compile loop could not fuse with its neighbours takes the helper alone.
      */
-    if ((instruction & 0x3b20'0c00U) == 0x1900'0400U) {
-      const unsigned size = instruction >> 30;
-      const unsigned op1 = (instruction >> 22) & 3U;
-      const unsigned op2 = (instruction >> 12) & 15U;
-      const unsigned destination = instruction & 31U;
-      const unsigned count = (instruction >> 5) & 31U;
-      const unsigned source = (instruction >> 16) & 31U;
-      const bool set = op1 == 3U;
-      const bool set_allocation_tags =
-          set && (instruction & 0x0400'0000U) != 0U;
-      const bool allocated = size == 0U && (!set || op2 < 12U);
-      const bool valid_registers =
-          destination != 31U && count != 31U && destination != count &&
-          source != destination && source != count && (set || source != 31U);
-      /* SETG* needs FEAT_MTE, which the virtual CPU does not implement. */
-      if (!allocated || !valid_registers || set_allocation_tags ||
-          !host_capabilities().has(ArmFeature::mops)) {
+    if (const auto mops = arm64::detail::decode_mops(instruction);
+        mops.recognized) {
+      if (!mops.valid) {
         store_pc(pc);
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;
       }
-      const unsigned stage = set ? op2 >> 2 : op1;
-      if (stage == 2U)
+      if (mops.stage == 1U)
+        return Action::keep_going;
+      if (mops.stage == 2U)
         mark_memory_write();
-      emit_memory_slow(instruction, pc, resulting_count);
+      emit_memory_copy_set(instruction, pc, resulting_count, 1U);
       return Action::terminate;
     }
     if (const auto atomic_floating =

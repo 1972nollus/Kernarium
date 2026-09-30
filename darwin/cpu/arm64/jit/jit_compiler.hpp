@@ -188,6 +188,15 @@ private:
   void emit_memory_slow(std::uint32_t instruction, std::uint64_t pc,
                         std::size_t count);
 
+  /* A terminal FEAT_MOPS helper call for one stage, or for a whole
+   * prologue/main/epilogue sequence when stages is 3. */
+  void emit_memory_copy_set(std::uint32_t instruction, std::uint64_t pc,
+                            std::size_t count, unsigned stages);
+
+  [[nodiscard]] std::size_t
+  try_emit_memory_copy_set_sequence(
+      std::span<const std::uint32_t> instructions, std::uint64_t pc);
+
 
   void emit_simd_modified_immediate(std::uint32_t instruction,
                                     bool reads_destination);

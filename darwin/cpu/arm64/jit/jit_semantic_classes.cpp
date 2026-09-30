@@ -64,8 +64,6 @@ Handler memory_handler(std::uint32_t instruction) noexcept {
 
   if (load_store_64b_form(instruction))
     return load_store_64b;
-  if (matches(instruction, 0x3b20'0c00U, 0x1900'0400U)) // CPY*, SET*
-    return memory_copy_set;
   if (arm64::detail::decode_atomic_floating(instruction).recognized)
     return load_store_atomic_floating;
 

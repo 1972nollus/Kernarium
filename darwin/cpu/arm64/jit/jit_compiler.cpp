@@ -6,6 +6,7 @@
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/detail/fp_state_access.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
+#include "cpu/arm64/detail/memory_copy_set.hpp"
 #include "cpu/arm64/detail/read_check_write.hpp"
 #include "cpu/arm64/id_registers.hpp"
 
@@ -84,6 +85,13 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
       }
       if (try_emit_native_exclusive_run(instructions.subspan(count_), pc))
         continue;
+      if (const auto run = try_emit_memory_copy_set_sequence(
+              instructions.subspan(count_), pc);
+          run != 0) {
+        count_ += run;
+        terminated_ = true;
+        break;
+      }
       const auto instruction = instructions[count_];
       if (reservation_sensitive_allocation(instruction)) {
         /*
@@ -658,6 +666,44 @@ void JitCompiler::emit_memory_slow(std::uint32_t instruction, std::uint64_t pc,
     emitter_.call(
         reinterpret_cast<const void *>(&uml_arm64_jit_execute_memory));
     emitter_.return_dynamic(count);
+  }
+
+void JitCompiler::emit_memory_copy_set(std::uint32_t instruction,
+                                       std::uint64_t pc, std::size_t count,
+                                       unsigned stages) {
+    store_pc(pc);
+    spill_gprs_for_terminal_call();
+    emitter_.move_x(0, 15);
+    emitter_.move_x(1, 14);
+    emitter_.load_constant(2, instruction);
+    emitter_.load_constant(3, stages);
+    emitter_.call(
+        reinterpret_cast<const void *>(&uml_arm64_jit_execute_mops));
+    emitter_.return_dynamic(count);
+  }
+
+[[nodiscard]] std::size_t JitCompiler::try_emit_memory_copy_set_sequence(
+      std::span<const std::uint32_t> instructions, std::uint64_t pc) {
+    /*
+     * A compiler emits each operation as its prologue, main and epilogue in
+     * sequence. Run the three as one helper call, and so one block exit, when
+     * the words agree in everything but their stage. Any other arrangement
+     * executes stage by stage through emit_instruction().
+     */
+    if (instructions.size() < 3U)
+      return 0;
+    const auto prologue = instructions[0];
+    const auto mops = arm64::detail::decode_mops(prologue);
+    if (!mops.recognized || !mops.valid || mops.stage != 0U ||
+        instructions[1] !=
+            arm64::detail::mops_stage_word(prologue, mops.family, 1U) ||
+        instructions[2] !=
+            arm64::detail::mops_stage_word(prologue, mops.family, 2U))
+      return 0;
+    if (count_ + 2U < maximum_block_instructions)
+      memory_write_mask_ |= std::uint64_t{1} << (count_ + 2U);
+    emit_memory_copy_set(prologue, pc, count_ + 1U, 3U);
+    return 3;
   }
 
 void JitCompiler::emit_simd_modified_immediate(std::uint32_t instruction,
