@@ -227,7 +227,14 @@ least one word of every encoding class to be undefined and the hints to be
 NOPs, and `arm64-absent-mte-tbi` records that restore the coverage the failing
 cases took from their allocations.
 
-A failing case's tagged address relied on the top-byte ignore that MTE
+FEAT_AFP has no instructions, and the virtual CPU omits it too: FPCR.FIZ, AH,
+and NEP are RES0. The rewrite drops the cases that set one of them and need
+FEAT_AFP natively, clears them from every other case's FPCR, and drops the
+listed cases that fail once they are clear. A native FEAT_AFP requirement on a
+case whose FPCR sets none of them came from the engines' former host gates,
+and the rewrite removes it. The pack encoder refuses a state that sets them.
+
+A failing MTE case's tagged address relied on the top-byte ignore that MTE
 implied. Its replacement takes a kept two-word case of the same SIMD&FP
 load/store allocation that completes through a general-register base with a
 zero top byte, sets `tbi_enabled`, and tags the base; the architectural result
@@ -255,4 +262,7 @@ python3 -B tools/arm64-tests/build-unit-corpus.py --repack absent.jsonl \
 A regeneration that changes which stripped cases fail refreshes the failing
 list: rewrite without `--failing`, run the corpus test on that pack in both
 page profiles with `--max-failures 0`, and pass both logs to
-`absent-feature-corpus.py --collect-failing`.
+`absent-feature-corpus.py --collect-failing` with the rewrite's input dump as
+`--source` and the current list as `--previous`. A case the current list
+names keeps its feature; a newly failing case is attributed to the newest
+feature whose state the rewrite stripped from it.

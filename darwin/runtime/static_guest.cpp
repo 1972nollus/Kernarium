@@ -145,10 +145,13 @@ void save_cpu(arm64::CpuState &cpu,
 		(cpu.pstate_sm ? svcr_sm : 0U) |
 		(cpu.pstate_za ? svcr_za : 0U);
 	tls = static_cast<unsigned long>(cpu.tls);
+	/* Like a context switch on hardware, report the FPCR the task ran with:
+	 * load_cpu masked it, and an untouched FP image still holds the value
+	 * the kernel restored. */
+	fp.fpcr = cpu.effective_fpcr();
 	if (cpu.fp_dirty) {
 		std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
 		fp.fpsr = cpu.fpsr;
-		fp.fpcr = cpu.fpcr;
 	}
 }
 

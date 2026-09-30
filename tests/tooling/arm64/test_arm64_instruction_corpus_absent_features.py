@@ -3,11 +3,12 @@
 """Check the absent-feature rewrite of the A64 instruction corpus.
 
 The checked-in pack is absent-feature-corpus.py applied to a dump of the pack
-that preceded the removal of FEAT_MTE, FEAT_GCS, FEAT_CPA, and FEAT_PAuth.
-Rebuild that rewrite from the earlier pack in Git history and require the same
-bytes, and require every kept case to equal its source case except for the
-stripped feature state and allocation tags, and every kept record to keep its
-identity except for the stripped harness options.
+that preceded the removal of FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth, and
+FEAT_AFP. Rebuild that rewrite from the earlier pack in Git history and require
+the same bytes, and require every kept case to equal its source case except for
+the stripped feature state, FPCR controls, native requirement, and allocation
+tags, and every kept record to keep its identity except for the stripped
+harness options.
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ TOOLS = REPOSITORY / "tools" / "arm64-tests"
 # Git blob of the corpus pack before the features were removed.
 PRE_REMOVAL_PACK = "a62f612c8f4c88841eb211560a2d72ffc78fac95"
 SKIP = 77
+# FPCR.FIZ, AH, and NEP, RES0 without FEAT_AFP.
+AFP_FPCR_BITS = 0x7
 
 
 def load(name: str, path: pathlib.Path):
@@ -38,6 +41,25 @@ def load(name: str, path: pathlib.Path):
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def strip_afp(case: dict) -> None:
+    """Clears the FEAT_AFP controls from a dumped case, whose initial FPCR is
+    stored when it is nonzero and whose expected FPCR is stored when it
+    differs from the initial one, and removes its native requirement."""
+    case["native"] = [token for token in case["native"] if token != "afp"]
+    initial = int(case["initial"].get("fpcr", "0x0"), 16)
+    expected = int(case["expected"].get("fpcr", hex(initial)), 16)
+    if not (initial | expected) & AFP_FPCR_BITS:
+        return
+    case["initial"].pop("fpcr", None)
+    case["expected"].pop("fpcr", None)
+    initial &= ~AFP_FPCR_BITS
+    expected &= ~AFP_FPCR_BITS
+    if initial:
+        case["initial"]["fpcr"] = f"0x{initial:016x}"
+    if expected != initial:
+        case["expected"]["fpcr"] = f"0x{expected:016x}"
 
 
 def main() -> int:
@@ -114,6 +136,8 @@ def main() -> int:
             for region in expected.get("memory", []):
                 region["tags"] = []
                 region["expected_tags"] = []
+            if "afp" in step["features"]:
+                strip_afp(expected)
             actual = dict(case, program=item["programs"][case["program"]])
             if actual != expected:
                 raise SystemExit(f"{key}: kept case differs from its source "

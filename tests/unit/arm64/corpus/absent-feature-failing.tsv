@@ -1,5 +1,21 @@
 # Cases that fail once the absent features' state is stripped; see absent-feature-corpus.py.
 record	case	ordinal_16k	ordinal_4k	feature
+arm64-atomic-floating-bfloat/arm64_atomic_floating_bfloat_tests.cpp:81/16k	bfloat exact case=23 load A=0 R=0	139	0	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_bfloat_tests.cpp:81/16k	bfloat exact case=23 load A=0 R=1	140	0	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_bfloat_tests.cpp:81/16k	bfloat exact case=23 load A=1 R=0	141	0	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_bfloat_tests.cpp:81/16k	bfloat exact case=23 load A=1 R=1	142	0	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_bfloat_tests.cpp:81/16k	bfloat exact case=7 load A=1 R=0	45	0	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_bfloat_tests.cpp:81/4k	bfloat exact case=23 load A=0 R=0	0	139	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_bfloat_tests.cpp:81/4k	bfloat exact case=23 load A=0 R=1	0	140	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_bfloat_tests.cpp:81/4k	bfloat exact case=23 load A=1 R=0	0	141	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_bfloat_tests.cpp:81/4k	bfloat exact case=23 load A=1 R=1	0	142	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_bfloat_tests.cpp:81/4k	bfloat exact case=7 load A=1 R=0	0	45	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_test_support.hpp:248/16k	bfloat exact case=23 store R=0	143	0	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_test_support.hpp:248/16k	bfloat exact case=23 store R=1	144	0	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_test_support.hpp:248/16k	bfloat exact case=7 store R=0	47	0	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_test_support.hpp:248/4k	bfloat exact case=23 store R=0	0	143	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_test_support.hpp:248/4k	bfloat exact case=23 store R=1	0	144	afp
+arm64-atomic-floating-bfloat/arm64_atomic_floating_test_support.hpp:248/4k	bfloat exact case=7 store R=0	0	47	afp
 arm64-atomic-floating-fault/arm64_atomic_floating_test_support.hpp:248/16k	every logical tag=1 size=0 store=0 A=0 R=1	3386	0	mte
 arm64-atomic-floating-fault/arm64_atomic_floating_test_support.hpp:248/16k	every logical tag=1 size=0 store=0 A=1 R=1	3388	0	mte
 arm64-atomic-floating-fault/arm64_atomic_floating_test_support.hpp:248/16k	every logical tag=1 size=1 store=1 A=0 R=0	3395	0	mte
@@ -1156,6 +1172,30 @@ arm64-atomic-floating-fault/arm64_atomic_floating_test_support.hpp:306/4k	mismat
 arm64-atomic-floating-fault/arm64_atomic_floating_test_support.hpp:306/4k	mismatching tag size=3 opc=7 store=0 A=1 R=1	0	3350	mte
 arm64-atomic-floating-fault/arm64_atomic_floating_test_support.hpp:306/4k	mismatching tag size=3 opc=7 store=1 A=0 R=0	0	3354	mte
 arm64-atomic-floating-fault/arm64_atomic_floating_test_support.hpp:306/4k	mismatching tag size=3 opc=7 store=1 A=0 R=1	0	3358	mte
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=2 exact case=12 load A=0 R=0	151	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=2 exact case=12 load A=0 R=1	152	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=2 exact case=12 load A=1 R=0	153	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=2 exact case=12 load A=1 R=1	154	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=2 exact case=12 store R=0	155	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=2 exact case=12 store R=1	156	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=3 exact case=12 load A=0 R=0	235	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=3 exact case=12 load A=0 R=1	236	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=3 exact case=12 load A=1 R=0	237	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=3 exact case=12 load A=1 R=1	238	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=3 exact case=12 store R=0	239	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/16k	precision=3 exact case=12 store R=1	240	0	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=2 exact case=12 load A=0 R=0	0	151	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=2 exact case=12 load A=0 R=1	0	152	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=2 exact case=12 load A=1 R=0	0	153	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=2 exact case=12 load A=1 R=1	0	154	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=2 exact case=12 store R=0	0	155	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=2 exact case=12 store R=1	0	156	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=3 exact case=12 load A=0 R=0	0	235	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=3 exact case=12 load A=0 R=1	0	236	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=3 exact case=12 load A=1 R=0	0	237	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=3 exact case=12 load A=1 R=1	0	238	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=3 exact case=12 store R=0	0	239	afp
+arm64-atomic-floating-precision/arm64_atomic_floating_test_support.hpp:248/4k	precision=3 exact case=12 store R=1	0	240	afp
 arm64-base-ls64-behavior/arm64_base_ls64_behavior_tests.cpp:118/16k	ls64-matching-tags-op0	27	0	mte
 arm64-base-ls64-behavior/arm64_base_ls64_behavior_tests.cpp:118/16k	ls64-matching-tags-op1	28	0	mte
 arm64-base-ls64-behavior/arm64_base_ls64_behavior_tests.cpp:118/16k	ls64-matching-tags-op2	29	0	mte
@@ -1180,6 +1220,23 @@ arm64-base-ls64-fault/arm64_base_ls64_fault_tests.cpp:153/4k	ls64-fault-allocati
 arm64-base-ls64-fault/arm64_base_ls64_fault_tests.cpp:153/4k	ls64-fault-allocation-tag-op1	0	22	mte
 arm64-base-ls64-fault/arm64_base_ls64_fault_tests.cpp:153/4k	ls64-fault-allocation-tag-op2	0	23	mte
 arm64-base-ls64-fault/arm64_base_ls64_fault_tests.cpp:153/4k	ls64-fault-allocation-tag-op3	0	24	mte
+arm64-floating-scale-control/arm64_floating_scale_control_tests.cpp:24	floating-scale-not-a-number-control	138	138	afp
+arm64-floating-scale-control/arm64_floating_scale_control_tests.cpp:24	floating-scale-not-a-number-control	150	150	afp
+arm64-floating-scale-control/arm64_floating_scale_control_tests.cpp:24	floating-scale-output-flush	84	84	afp
+arm64-fp8-convert-down-control/arm64_fp8_convert_down_engine_test_support.hpp:350	fp8-convert-down-control source=16 upper=0 fpcr=2 input=2	9	9	afp
+arm64-fp8-convert-down-control/arm64_fp8_convert_down_engine_test_support.hpp:350	fp8-convert-down-control source=16 upper=0 fpcr=c00002 input=17	36	36	afp
+arm64-fp8-convert-down-control/arm64_fp8_convert_down_engine_test_support.hpp:350	fp8-convert-down-control source=16 upper=1 fpcr=2 input=17	54	54	afp
+arm64-fp8-convert-down-control/arm64_fp8_convert_down_engine_test_support.hpp:350	fp8-convert-down-control source=32 upper=1 fpcr=3 input=16	141	141	afp
+arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-control bfloat=0 source2=0 upper=0 format=0 ah=1 input=fd	10	10	afp
+arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-control bfloat=0 source2=1 upper=1 format=0 ah=1 input=7f	83	83	afp
+arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-control bfloat=0 source2=1 upper=1 format=0 ah=1 input=81	80	80	afp
+arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=0 source2=0 upper=1 format=7 fpcr=c80003	336	336	afp
+arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=0 source2=1 upper=0 format=7 fpcr=c80003	288	288	afp
+arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=0 source2=1 upper=1 format=7 fpcr=c80003	384	384	afp
+arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=1 source2=0 upper=1 format=5 fpcr=c80003	512	512	afp
+arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=1 source2=0 upper=1 format=7 fpcr=c80003	528	528	afp
+arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=1 source2=1 upper=0 format=4 fpcr=2	451	451	afp
+arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=1 source2=1 upper=1 format=7 fpcr=c80003	576	576	afp
 arm64-jit-simd-memory-run-runtime/arm64_jit_simd_memory_run_runtime_tests.cpp:621/16k	jit-simd-run-tagged-state-second-fault	114	0	mte
 arm64-jit-simd-memory-run-runtime/arm64_jit_simd_memory_run_runtime_tests.cpp:621/4k	jit-simd-run-tagged-state-second-fault	0	114	mte
 arm64-jit-simd-memory-run-runtime/arm64_jit_simd_memory_run_runtime_tests.cpp:89/16k	jit-simd-run-tagged-state-matching	113	0	mte

@@ -8,6 +8,21 @@
 
 namespace uml::cpu::arm64 {
 
+/* The FPCR bits an MSR FPCR, a signal-frame or ptrace restore, or any other
+ * context load can set; the rest read as zero and ignore writes. From the
+ * AArch64 FPCR description (DDI 0601, 2026-06), for this virtual CPU:
+ * - AHP, DN, FZ and RMode are unconditional fields;
+ * - FZ16 exists with FEAT_FP16, which every supported host provides;
+ * - FIZ, AH and NEP exist only with FEAT_AFP, which is not implemented;
+ * - EBF exists only with FEAT_EBF16, which ID_AA64ISAR1_EL1.BF16 = 1 omits;
+ * - the trap enables are RAZ/WI only without trapped exception handling,
+ *   which both engines implement;
+ * - Len and Stride serve only to save and restore the AArch32 FPSCR, and
+ *   whether they are programmable or RAZ/WI is IMPLEMENTATION DEFINED.
+ *   Without AArch32 they are RAZ/WI.
+ * The gadget assembly uses UML_ARM64_FPCR_WRITABLE, checked against this. */
+inline constexpr std::uint32_t fpcr_writable_mask = 0x07c8'9f00U;
+
 struct alignas(16) VectorRegister final {
 	std::array<std::byte, 16> bytes{};
 };
@@ -105,11 +120,13 @@ struct CpuState final {
 			address & 0x00ff'ffff'ffff'ffffULL : address;
 	}
 
+	/* Loads a saved context lazily. Its FPCR is masked as an MSR FPCR
+	 * write is. */
 	void defer_fp_load(const void *source, std::uint32_t source_fpcr,
 			  std::uint32_t source_fpsr) noexcept
 	{
 		deferred_vectors = static_cast<const std::byte *>(source);
-		deferred_fpcr = source_fpcr;
+		deferred_fpcr = source_fpcr & fpcr_writable_mask;
 		deferred_fpsr = source_fpsr;
 		fp_loaded = false;
 		fp_dirty = false;
