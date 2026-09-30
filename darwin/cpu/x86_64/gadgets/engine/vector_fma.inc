@@ -130,6 +130,7 @@
 .macro vector_fma_body form, operation, element_bits, width, scalar
 	.if \scalar
 	vector_fma_scalar \form, \operation, \element_bits
+	simd_check_scalar \element_bits, 6
 	.else
 	.if \element_bits == 32
 	vector_fma_packed_lane \form, \operation, 4s, 6, 0, 1, 2
@@ -141,6 +142,11 @@
 	.if \width == 256
 	vector_fma_packed_lane \form, \operation, 2d, 7, 3, 4, 5
 	.endif
+	.endif
+	.if \width == 256
+	simd_check_packed \element_bits, 6, 7
+	.else
+	simd_check_packed \element_bits, 6
 	.endif
 	.endif
 .endm

@@ -14,10 +14,11 @@ namespace uml::cpu::x86_64::gadgets {
 /* Exceptions a guest that has not asked for them never sees: #MF while the
  * x87 control word unmasks an exception, #XM while MXCSR does, and #AC while
  * RFLAGS.AC is set. The gadgets check x87 exceptions themselves while one is
- * unmasked (`gadget_checks`); for the others, and for an x87 exception left
- * pending for the next waiting instruction, the runtime runs the
- * instructions that could raise one singly, through `execute_checked`
- * (`checked_exceptions`). */
+ * unmasked, and SIMD ones while MXCSR masks underflow and precision
+ * (`gadget_checks`). For the others -- #AC, #XM while underflow or precision
+ * is unmasked, and an x87 exception left pending for the next waiting
+ * instruction -- the runtime runs the instructions that could raise one
+ * singly, through `execute_checked` (`checked_exceptions`). */
 enum CheckedException : unsigned {
 	check_x87 = 1U << 0U,
 	check_simd = 1U << 1U,
@@ -30,6 +31,9 @@ inline constexpr std::uint64_t rflags_alignment_check = 1ULL << 18U;
 inline constexpr std::uint16_t x87_status_pending = 0x8080U;
 inline constexpr std::uint16_t x87_exception_flags = 0x3fU;
 inline constexpr std::uint32_t mxcsr_exception_masks = 0x1f80U;
+/* Underflow and precision: the gadgets cannot tell from a value whether an
+ * instruction raised either. */
+inline constexpr std::uint32_t mxcsr_unchecked_masks = 0x1800U;
 
 /* The unmasked x87 exceptions pending in the status word. */
 [[nodiscard]] constexpr unsigned x87_pending(const CpuState &cpu) noexcept
@@ -51,23 +55,29 @@ inline constexpr std::uint32_t mxcsr_exception_masks = 0x1f80U;
 			unsigned{check_alignment} : 0U);
 }
 
-/* The exceptions whose instructions the runtime runs singly: an enabled #XM
- * or #AC, and #MF while an unmasked x87 exception is pending, which every
- * waiting instruction raises before it runs. An x87 instruction that raises
- * one otherwise checks it itself. */
+/* The exceptions whose instructions the runtime runs singly: an enabled #AC,
+ * #XM while underflow or precision is unmasked, and #MF while an unmasked x87
+ * exception is pending, which every waiting instruction raises before it
+ * runs. An instruction that raises another checks it itself. */
 [[nodiscard]] constexpr unsigned checked_exceptions(
 	const CpuState &cpu) noexcept
 {
 	return (x87_pending(cpu) != 0 ? unsigned{check_x87} : 0U) |
-		(enabled_exceptions(cpu) & ~unsigned{check_x87});
+		((cpu.mxcsr & mxcsr_unchecked_masks) != mxcsr_unchecked_masks ?
+			unsigned{check_simd} : 0U) |
+		(enabled_exceptions(cpu) & unsigned{check_alignment});
 }
 
 /* What the gadgets check themselves, as CpuState::exception_checks. */
 [[nodiscard]] constexpr std::uint8_t gadget_checks(
 	const CpuState &cpu) noexcept
 {
-	return (cpu.x87_control & x87_exception_flags) != x87_exception_flags ?
-		exception_check_x87 : std::uint8_t{};
+	return static_cast<std::uint8_t>(
+		((cpu.x87_control & x87_exception_flags) != x87_exception_flags ?
+			exception_check_x87 : 0U) |
+		((cpu.mxcsr & mxcsr_exception_masks) != mxcsr_exception_masks &&
+			(cpu.mxcsr & mxcsr_unchecked_masks) == mxcsr_unchecked_masks ?
+			exception_check_simd : 0U));
 }
 
 /* Whether `instruction` could raise an exception `checked` enables, so that

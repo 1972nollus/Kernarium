@@ -83,23 +83,29 @@
 	.endif
 .endm
 
+/* Rounding raises invalid operation only for a signalling NaN, which it
+ * leaves a NaN. */
 .macro vector_map3_round_body opcode, width
 	.if \opcode == 0x08
 	vector_map3_round_apply 32, 4, 1, 0
 	.if \width == 256
 	vector_map3_round_apply 32, 5, 3, 0
 	.endif
+	simd_check_result 32, \width
 	.elseif \opcode == 0x09
 	vector_map3_round_apply 64, 4, 1, 0
 	.if \width == 256
 	vector_map3_round_apply 64, 5, 3, 0
 	.endif
+	simd_check_result 64, \width
 	.elseif \opcode == 0x0a
 	mov v4.16b, v0.16b
 	vector_map3_round_apply 32, 4, 1, 1
+	simd_check_scalar 32, 4
 	.else
 	mov v4.16b, v0.16b
 	vector_map3_round_apply 64, 4, 1, 1
+	simd_check_scalar 64, 4
 	.endif
 .endm
 
@@ -223,6 +229,7 @@ vector_map3_round_memory 0b, 0x0b, 128, 8
 	mov v4.d[1], v5.d[0]
 	.endif
 	msr fpcr, x16
+	simd_check_packed 16, 4
 .endm
 
 .macro vector_map3_half_register width

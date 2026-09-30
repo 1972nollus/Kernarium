@@ -313,7 +313,7 @@ gadget mxcsr_load
 	and w24, w24, #0xffff
 	str w24, [_cpu, #UML_X86_64_CPU_MXCSR]
 	publish_guest_rounding 9, 10, 11
-	retire_unless_unmasked w24, 0x1f80
+	retire_unless_simd_unchecked w24
 .Lx86_mxcsr_load_cross:
 	mov x0, _context
 	mov x1, x25

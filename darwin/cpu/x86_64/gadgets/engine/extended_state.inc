@@ -278,7 +278,7 @@ gadget extended_state_fxrstor
 	extended_state_restore_x87
 	extended_state_restore_sse
 	add sp, sp, #.Lx86_extended_size
-	retire_unless_any_unmasked
+	retire_unless_any_unchecked
 
 gadget extended_state_xsave
 	effective_address
@@ -307,7 +307,7 @@ gadget extended_state_xrstor
 	extended_state_restore_sse
 	extended_state_restore_avx
 	add sp, sp, #.Lx86_extended_size
-	retire_unless_any_unmasked
+	retire_unless_any_unchecked
 
 .purgem extended_state_restore_avx
 .purgem extended_state_restore_sse

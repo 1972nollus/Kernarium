@@ -6430,6 +6430,360 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		"FLDCW unmasking a set invalid-operation flag did not leave");
 }
 
+/* While MXCSR unmasks invalid operation, division by zero or overflow and
+ * masks underflow and precision, as Delphi's default $1900 does, SIMD code
+ * runs in ordinary linked blocks. An instruction whose values could have
+ * raised an unmasked exception leaves before it stores anything, also inside
+ * a block a link reached, and runs again checked, which faults with #XM. */
+[[nodiscard]] bool unmasked_simd_exceptions_leave_linked_blocks()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {0xeb, 0x0e}); // jmp 0x10
+	memory.load(0x10, {
+		0xf2, 0x0f, 0x58, 0xd3, // addsd xmm2, xmm3
+		0xf2, 0x0f, 0x5e, 0xc1, // divsd xmm0, xmm1: one by zero
+		0x0f, 0x05,             // syscall
+	});
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, 1, 1);
+	const auto run = [&](CpuState &cpu) {
+		const auto selected = executor.select_program(memory, cpu.rip,
+			ExecutionMode::long64);
+		if (selected.status != gadgets::BuildStatus::built ||
+			selected.program == nullptr)
+			return gadgets::ExecuteResult{};
+		return gadgets::execute(*selected.program, cpu, memory, executor,
+			64);
+	};
+	const auto start = [] {
+		CpuState cpu{};
+		cpu.mxcsr = 0x1900;
+		set_xmm_low(cpu, 0, 0x3f800000);
+		set_xmm_low(cpu, 2, 0x3f800000);
+		set_xmm_low(cpu, 3, 0x3f800000);
+		std::uint64_t one = 0x3ff0'0000'0000'0000ULL;
+		std::memcpy(cpu.vectors[0].data(), &one, sizeof(one));
+		return cpu;
+	};
+	const auto faulted = [](const gadgets::ExecuteResult &result,
+		const CpuState &cpu, std::size_t retired) {
+		std::uint64_t dividend{};
+		std::memcpy(&dividend, cpu.vectors[0].data(), sizeof(dividend));
+		return result.event == uml::cpu::EngineEvent::floating_point_trap &&
+			result.vector == 19 && result.error == 0x1904 &&
+			result.retired_instructions == retired && cpu.rip == 0x14 &&
+			cpu.mxcsr == 0x1904 && dividend == 0x3ff0'0000'0000'0000ULL;
+	};
+	auto cold = start();
+	const auto jump = run(cold);
+	const auto block = run(cold);
+	if (!expect(jump.event == uml::cpu::EngineEvent::continued &&
+			jump.retired_instructions == 1 && faulted(block, cold, 1),
+		"an unmasked SIMD division by zero did not fault in its block"))
+		return false;
+	auto cpu = start();
+	return expect(faulted(run(cpu), cpu, 2),
+		"an unmasked SIMD division by zero did not fault in a linked block");
+}
+
+/* The gadgets' own SIMD checks raise exactly what running each instruction
+ * singly and checked raises, whatever its values: every instruction #XM
+ * covers, register and memory forms, scalar, 128- and 256-bit, under MXCSRs
+ * that unmask invalid operation, division by zero, overflow or a denormal
+ * operand in any mix and round either way. Only the masked underflow,
+ * precision and denormal flags differ: the gadgets record flags only for an
+ * instruction they run again. */
+[[nodiscard]] bool simd_checks_match_the_checked_path()
+{
+	using namespace uml::cpu::x86_64;
+	struct Case {
+		std::string_view name;
+		std::vector<std::uint8_t> bytes;
+		unsigned element;
+	};
+	/* xmm0 (ymm0) is the destination and first source, xmm1 and xmm2 the
+	 * others, and [rbx] holds what xmm1 does. */
+	const std::vector<Case> cases{
+		{"addss", {0xf3, 0x0f, 0x58, 0xc1}, 32},
+		{"addsd", {0xf2, 0x0f, 0x58, 0xc1}, 64},
+		{"subss", {0xf3, 0x0f, 0x5c, 0xc1}, 32},
+		{"subsd m", {0xf2, 0x0f, 0x5c, 0x03}, 64},
+		{"mulss m", {0xf3, 0x0f, 0x59, 0x03}, 32},
+		{"mulsd", {0xf2, 0x0f, 0x59, 0xc1}, 64},
+		{"divss", {0xf3, 0x0f, 0x5e, 0xc1}, 32},
+		{"divsd", {0xf2, 0x0f, 0x5e, 0xc1}, 64},
+		{"sqrtss", {0xf3, 0x0f, 0x51, 0xc1}, 32},
+		{"sqrtsd", {0xf2, 0x0f, 0x51, 0xc1}, 64},
+		{"minss", {0xf3, 0x0f, 0x5d, 0xc1}, 32},
+		{"maxsd m", {0xf2, 0x0f, 0x5f, 0x03}, 64},
+		{"addps", {0x0f, 0x58, 0xc1}, 32},
+		{"addpd m", {0x66, 0x0f, 0x58, 0x03}, 64},
+		{"mulps m", {0x0f, 0x59, 0x03}, 32},
+		{"divpd", {0x66, 0x0f, 0x5e, 0xc1}, 64},
+		{"sqrtps", {0x0f, 0x51, 0xc1}, 32},
+		{"minps", {0x0f, 0x5d, 0xc1}, 32},
+		{"maxpd", {0x66, 0x0f, 0x5f, 0xc1}, 64},
+		{"cmpeqss", {0xf3, 0x0f, 0xc2, 0xc1, 0x00}, 32},
+		{"cmpltsd", {0xf2, 0x0f, 0xc2, 0xc1, 0x01}, 64},
+		{"cmpunordsd m", {0xf2, 0x0f, 0xc2, 0x03, 0x03}, 64},
+		{"cmpltps", {0x0f, 0xc2, 0xc1, 0x01}, 32},
+		{"cmpneqpd", {0x66, 0x0f, 0xc2, 0xc1, 0x04}, 64},
+		{"comiss", {0x0f, 0x2f, 0xc1}, 32},
+		{"comisd m", {0x66, 0x0f, 0x2f, 0x03}, 64},
+		{"ucomiss", {0x0f, 0x2e, 0xc1}, 32},
+		{"ucomisd", {0x66, 0x0f, 0x2e, 0xc1}, 64},
+		{"cvtss2sd", {0xf3, 0x0f, 0x5a, 0xc1}, 32},
+		{"cvtsd2ss", {0xf2, 0x0f, 0x5a, 0xc1}, 64},
+		{"cvtsd2ss m", {0xf2, 0x0f, 0x5a, 0x03}, 64},
+		{"cvtps2pd", {0x0f, 0x5a, 0xc1}, 32},
+		{"cvtpd2ps", {0x66, 0x0f, 0x5a, 0xc1}, 64},
+		{"cvtps2dq", {0x66, 0x0f, 0x5b, 0xc1}, 32},
+		{"cvttps2dq", {0xf3, 0x0f, 0x5b, 0xc1}, 32},
+		{"cvtpd2dq", {0xf2, 0x0f, 0xe6, 0xc1}, 64},
+		{"cvttpd2dq m", {0x66, 0x0f, 0xe6, 0x03}, 64},
+		{"cvttss2si eax", {0xf3, 0x0f, 0x2c, 0xc1}, 32},
+		{"cvtss2si rax", {0xf3, 0x48, 0x0f, 0x2d, 0xc1}, 32},
+		{"cvttsd2si eax m", {0xf2, 0x0f, 0x2c, 0x03}, 64},
+		{"cvtsd2si rax", {0xf2, 0x48, 0x0f, 0x2d, 0xc1}, 64},
+		{"cvttps2pi", {0x0f, 0x2c, 0xc1}, 32},
+		{"cvtpd2pi", {0x66, 0x0f, 0x2d, 0xc1}, 64},
+		{"haddps", {0xf2, 0x0f, 0x7c, 0xc1}, 32},
+		{"haddpd m", {0x66, 0x0f, 0x7c, 0x03}, 64},
+		{"hsubps", {0xf2, 0x0f, 0x7d, 0xc1}, 32},
+		{"hsubpd", {0x66, 0x0f, 0x7d, 0xc1}, 64},
+		{"addsubps", {0xf2, 0x0f, 0xd0, 0xc1}, 32},
+		{"addsubpd", {0x66, 0x0f, 0xd0, 0xc1}, 64},
+		{"roundss", {0x66, 0x0f, 0x3a, 0x0a, 0xc1, 0x00}, 32},
+		{"roundsd m", {0x66, 0x0f, 0x3a, 0x0b, 0x03, 0x04}, 64},
+		{"roundps", {0x66, 0x0f, 0x3a, 0x08, 0xc1, 0x03}, 32},
+		{"roundpd", {0x66, 0x0f, 0x3a, 0x09, 0xc1, 0x01}, 64},
+		{"dpps", {0x66, 0x0f, 0x3a, 0x40, 0xc1, 0xf1}, 32},
+		{"dpps none", {0x66, 0x0f, 0x3a, 0x40, 0xc1, 0xf0}, 32},
+		{"dppd m", {0x66, 0x0f, 0x3a, 0x41, 0x03, 0x33}, 64},
+		{"vfmadd231sd", {0xc4, 0xe2, 0xf1, 0xb9, 0xc2}, 64},
+		{"vfmadd213ss m", {0xc4, 0xe2, 0x71, 0xa9, 0x03}, 32},
+		{"vfmadd231ps", {0xc4, 0xe2, 0x71, 0xb8, 0xc2}, 32},
+		{"vfnmsub132pd", {0xc4, 0xe2, 0xf1, 0x9e, 0xc2}, 64},
+		{"vcvtph2ps", {0xc4, 0xe2, 0x79, 0x13, 0xc1}, 32},
+		{"vcvtps2ph", {0xc4, 0xe3, 0x79, 0x1d, 0xc1, 0x00}, 32},
+		{"vcvtps2ph m", {0xc4, 0xe3, 0x79, 0x1d, 0x03, 0x04}, 32},
+		{"vaddps ymm", {0xc5, 0xfc, 0x58, 0xc1}, 32},
+		{"vmulpd ymm m", {0xc5, 0xfd, 0x59, 0x03}, 64},
+		{"vmaxps ymm", {0xc5, 0xfc, 0x5f, 0xc1}, 32},
+		{"vcmpltpd ymm", {0xc5, 0xfd, 0xc2, 0xc1, 0x01}, 64},
+		{"vcvtps2pd ymm", {0xc5, 0xfc, 0x5a, 0xc1}, 32},
+		{"vcvtpd2ps ymm", {0xc5, 0xfd, 0x5a, 0xc1}, 64},
+		{"vcvttps2dq ymm", {0xc5, 0xfe, 0x5b, 0xc1}, 32},
+		{"vcvtpd2dq ymm", {0xc5, 0xff, 0xe6, 0xc1}, 64},
+		{"vhaddps ymm", {0xc5, 0xff, 0x7c, 0xc1}, 32},
+		{"vaddsubpd ymm", {0xc5, 0xfd, 0xd0, 0xc1}, 64},
+		{"vroundps ymm", {0xc4, 0xe3, 0x7d, 0x08, 0xc1, 0x00}, 32},
+		{"vdpps ymm", {0xc4, 0xe3, 0x7d, 0x40, 0xc1, 0xff}, 32},
+		{"vfmadd231pd ymm", {0xc4, 0xe2, 0xf5, 0xb8, 0xc2}, 64},
+		{"vcvtph2ps ymm", {0xc4, 0xe2, 0x7d, 0x13, 0xc1}, 32},
+		{"vcvtps2ph ymm", {0xc4, 0xe3, 0x7d, 0x1d, 0xc1, 0x00}, 32},
+	};
+	const std::array<std::uint32_t, 13> singles{
+		0x3fc00000, 0x00000000, 0x80000000, 0x7f800000, 0xff800000,
+		0x7fc00000, 0x7fa00000, 0x7f7fffff, 0x7f000000, 0x00000001,
+		0xc0000000, 0xcf000000, 0x4f000000,
+	};
+	const std::array<std::uint64_t, 13> doubles{
+		0x3ff8000000000000, 0x0000000000000000, 0x8000000000000000,
+		0x7ff0000000000000, 0xfff0000000000000, 0x7ff8000000000000,
+		0x7ff4000000000000, 0x7fefffffffffffff, 0x7fe0000000000000,
+		0x0000000000000001, 0xc000000000000000, 0xc1e0000000000000,
+		0x41e0000000000000,
+	};
+	const std::array<std::uint32_t, 4> controls{0x1900, 0x1d80, 0x7900, 0x1800};
+	const auto fill = [&](CpuState &cpu, std::size_t index, unsigned element,
+		std::size_t value, bool upper) {
+		auto &bytes = cpu.vectors[index];
+		const std::size_t size = element / 8U;
+		for (std::size_t lane = 0; lane < 32U / size; ++lane) {
+			/* Upper: the value only in the top lane of each half. */
+			const bool special = !upper ||
+				(lane + 1U) % (16U / size) == 0;
+			if (element == 32) {
+				const auto bits = special ? singles[value] : singles[0];
+				std::memcpy(bytes.data() + lane * size, &bits, size);
+			} else {
+				const auto bits = special ? doubles[value] : doubles[0];
+				std::memcpy(bytes.data() + lane * size, &bits, size);
+			}
+		}
+	};
+	const auto run = [](TestMemory &memory, CpuState &cpu, bool checked) {
+		gadgets::Executor executor;
+		executor.prepare(memory);
+		gadgets::ExecuteResult result{};
+		for (int dispatch = 0; dispatch < 8; ++dispatch) {
+			const unsigned mask = checked ? unsigned{gadgets::check_simd} :
+				gadgets::checked_exceptions(cpu);
+			const auto built = gadgets::build(memory, cpu.rip,
+				ExecutionMode::long64, 64, {}, mask);
+			if (built.status != gadgets::BuildStatus::built)
+				return gadgets::ExecuteResult{};
+			result = mask == 0 ?
+				gadgets::execute(built.program, cpu, memory, executor, 64) :
+				gadgets::execute_checked(built.program, cpu, memory,
+					executor, 64, {}, false, mask);
+			if (result.event != uml::cpu::EngineEvent::continued)
+				break;
+		}
+		return result;
+	};
+	std::size_t compared{};
+	std::size_t faults{};
+	for (const auto &test : cases) {
+		std::vector<std::byte> code(test.bytes.size() + 2U);
+		std::memcpy(code.data(), test.bytes.data(), test.bytes.size());
+		code[test.bytes.size()] = std::byte{0x0f};
+		code[test.bytes.size() + 1U] = std::byte{0x05};
+		for (const auto control : controls)
+		for (std::size_t left = 0; left < singles.size(); ++left)
+		for (std::size_t right = 0; right < singles.size(); ++right)
+		for (const bool upper : {false, true}) {
+			CpuState start{};
+			start.mxcsr = control;
+			start.gpr(Register::rbx) = 0x800;
+			fill(start, 0, test.element, left, upper);
+			fill(start, 1, test.element, right, upper);
+			fill(start, 2, test.element, right, upper);
+			std::array<CpuState, 2> cpu{start, start};
+			std::array<gadgets::ExecuteResult, 2> result{};
+			std::array<std::array<std::byte, 32>, 2> stored{};
+			for (std::size_t path = 0; path < 2; ++path) {
+				TestMemory memory;
+				memory.fill(0, code);
+				memory.fill(0x800, std::span<const std::byte>{
+					start.vectors[1].data(), 32});
+				result[path] = run(memory, cpu[path], path == 1);
+				(void)memory.read(0x800, stored[path]);
+			}
+			const auto flags = [](std::uint32_t mxcsr) {
+				return mxcsr & ~0x32U;
+			};
+			const bool trap = result[0].event ==
+				uml::cpu::EngineEvent::floating_point_trap;
+			faults += trap ? 1U : 0U;
+			++compared;
+			if (result[0].event == uml::cpu::EngineEvent::system_call &&
+				result[1].event == uml::cpu::EngineEvent::system_call &&
+				cpu[0].rip == cpu[1].rip &&
+				cpu[0].vectors == cpu[1].vectors &&
+				cpu[0].registers == cpu[1].registers &&
+				cpu[0].mmx == cpu[1].mmx &&
+				cpu[0].rflags == cpu[1].rflags &&
+				flags(cpu[0].mxcsr) == flags(cpu[1].mxcsr) &&
+				stored[0] == stored[1])
+				continue;
+			if (trap && result[1].event == result[0].event &&
+				result[0].vector == result[1].vector &&
+				result[0].error == result[1].error &&
+				cpu[0].rip == cpu[1].rip &&
+				cpu[0].vectors == cpu[1].vectors &&
+				cpu[0].registers == cpu[1].registers &&
+				cpu[0].mxcsr == cpu[1].mxcsr && stored[0] == stored[1])
+				continue;
+			std::fprintf(stderr,
+				"x86-64 gadget bootstrap: %.*s mxcsr %#x left %zu right "
+				"%zu upper %d: event %d/%d vector %u/%u error %#llx/%#llx "
+				"rip %#llx/%#llx mxcsr %#x/%#x\n",
+				static_cast<int>(test.name.size()), test.name.data(),
+				control, left, right, upper ? 1 : 0,
+				static_cast<int>(result[0].event),
+				static_cast<int>(result[1].event),
+				static_cast<unsigned>(result[0].vector),
+				static_cast<unsigned>(result[1].vector),
+				static_cast<unsigned long long>(result[0].error),
+				static_cast<unsigned long long>(result[1].error),
+				static_cast<unsigned long long>(cpu[0].rip),
+				static_cast<unsigned long long>(cpu[1].rip),
+				cpu[0].mxcsr, cpu[1].mxcsr);
+			return expect(false,
+				"the gadgets' SIMD checks disagree with the checked path");
+		}
+	}
+	return expect(faults > compared / 8U && faults < compared,
+		"the SIMD check comparison raised too few or too many faults");
+}
+
+/* LDMXCSR leaves only when what a run checks changes: when it unmasks an
+ * exception while the gadgets do not check SIMD exceptions, or unmasks
+ * underflow or precision, which only a checked run sees. */
+[[nodiscard]] bool mxcsr_loads_leave_when_checks_change()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x0f, 0xae, 0x13, // ldmxcsr [rbx]
+		0x48, 0xff, 0xc0, // inc rax
+		0x0f, 0x05,       // syscall
+	});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"LDMXCSR block did not build"))
+		return false;
+	CpuState cpu{};
+	const auto run = [&](std::uint32_t before, std::uint32_t loaded) {
+		std::array<std::byte, 4> bytes{};
+		std::memcpy(bytes.data(), &loaded, sizeof(loaded));
+		memory.fill(0x800, bytes);
+		cpu = CpuState{};
+		cpu.mxcsr = before;
+		cpu.gpr(Register::rbx) = 0x800;
+		return gadgets::execute(built.program, cpu, memory, 64);
+	};
+	const auto checking = run(0x1900, 0x1d00);
+	if (!expect(checking.event == uml::cpu::EngineEvent::system_call &&
+			cpu.mxcsr == 0x1d00 && cpu.gpr(Register::rax) == 1,
+		"LDMXCSR left while the gadgets already checked SIMD exceptions"))
+		return false;
+	const auto unchecked = run(0x1f80, 0x1900);
+	if (!expect(unchecked.event == uml::cpu::EngineEvent::continued &&
+			unchecked.retired_instructions == 1 && cpu.rip == 3 &&
+			cpu.mxcsr == 0x1900,
+		"LDMXCSR $1900 did not leave when the gadgets were not checking"))
+		return false;
+	const auto precision = run(0x1900, 0x0900);
+	if (!expect(precision.event == uml::cpu::EngineEvent::continued &&
+			precision.retired_instructions == 1 && cpu.rip == 3,
+		"LDMXCSR unmasking precision did not leave"))
+		return false;
+	const auto masked = run(0x0900, 0x1f80);
+	return expect(masked.event == uml::cpu::EngineEvent::system_call &&
+			cpu.mxcsr == 0x1f80 && cpu.gpr(Register::rax) == 1,
+		"LDMXCSR masking everything left");
+}
+
+/* COMISD raises invalid operation for a NaN, and its #XM leaves RFLAGS as
+ * the instruction before it made them, even while those are still only
+ * recorded. */
+[[nodiscard]] bool faulting_comisd_keeps_earlier_flags()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0x48, 0x39, 0xd8,       // cmp rax, rbx: 1 - 2 sets CF, PF, AF, SF
+		0x66, 0x0f, 0x2f, 0xc1, // comisd xmm0, xmm1
+		0x0f, 0x05,             // syscall
+	});
+	CpuState cpu{};
+	cpu.mxcsr = 0x1900;
+	cpu.gpr(Register::rax) = 1;
+	cpu.gpr(Register::rbx) = 2;
+	const std::uint64_t nan = 0x7ff8'0000'0000'0000ULL;
+	std::memcpy(cpu.vectors[0].data(), &nan, sizeof(nan));
+	const auto trap = run_until_event(memory, cpu);
+	materialize_flags(cpu);
+	return expect(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
+			trap.vector == 19 && cpu.rip == 3 && cpu.mxcsr == 0x1901 &&
+			(cpu.rflags & 0x8d5U) == 0x95U,
+		"a faulting COMISD lost the flags the instruction before it set");
+}
+
 /* While RFLAGS.AC is set, a misaligned access raises #AC before it
  * happens, and POPF that sets AC leaves so the runtime checks what
  * follows. */
@@ -7953,6 +8307,10 @@ int main()
 		checked_builds_stop_before_checked_instructions() &&
 		unmasked_x87_exceptions_leave_linked_blocks() &&
 		unmasked_x87_control_words_run_clean_code_through() &&
+		unmasked_simd_exceptions_leave_linked_blocks() &&
+		simd_checks_match_the_checked_path() &&
+		mxcsr_loads_leave_when_checks_change() &&
+		faulting_comisd_keeps_earlier_flags() &&
 		alignment_checks_follow_rflags_ac() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&

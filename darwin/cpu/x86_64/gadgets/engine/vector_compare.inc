@@ -3,6 +3,12 @@
  * FCMPE, which like it raises invalid operation for any NaN; UCOMIS with FCMP,
  * which raises it only for a signalling one. */
 
+/* Every arithmetic flag is defined below, and the only overrides a gadget
+ * records lie inside that same set, so a pending record has nothing left to
+ * contribute: it is discarded instead of materializing a value this gadget
+ * overwrites. That happens only as the flags are stored, so a fault before
+ * them, or a NaN that could raise an unmasked invalid operation, leaves the
+ * guest's flags as they were. */
 .macro vector_compare_set_flags
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	mov x10, #0x8d5
@@ -13,6 +19,7 @@
 	b.mi .Lx86_vector_compare_less\@
 	b .Lx86_vector_compare_done\@
 .Lx86_vector_compare_unordered\@:
+	simd_leave_if_checking
 	orr x9, x9, #1
 	orr x9, x9, #4
 	orr x9, x9, #0x40
@@ -23,17 +30,13 @@
 .Lx86_vector_compare_less\@:
 	orr x9, x9, #1
 .Lx86_vector_compare_done\@:
+	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	retire_and_next
 .endm
 
 .macro vector_compare_register name, compare, width, fp_register
 gadget vector_\name\()_\width\()_rr
-	/* Every arithmetic flag is defined below, and the only overrides a gadget
-	 * records lie inside that same set, so a pending record has nothing left
-	 * to contribute: discard it instead of materializing a value this
-	 * gadget immediately overwrites. */
-	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	ldr x8, [_stream], #8
 	and x9, x8, #0xffff
 	ubfx x10, x8, #16, #16
@@ -45,11 +48,6 @@ gadget vector_\name\()_\width\()_rr
 
 .macro vector_compare_memory name, compare, width, fp_register, load, host_register
 gadget vector_\name\()_\width\()_rm
-	/* Every arithmetic flag is defined below, and the only overrides a gadget
-	 * records lie inside that same set, so a pending record has nothing left
-	 * to contribute: discard it instead of materializing a value this
-	 * gadget immediately overwrites. */
-	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	effective_address
 	mov x25, x7
 	page_cross_check (\width / 8), .Lx86_vector_compare_cross\@

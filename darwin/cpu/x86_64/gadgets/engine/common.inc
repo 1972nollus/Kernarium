@@ -89,17 +89,18 @@ NAME(uml_x86_64_gadget_\name):
 	next_gadget
 .endm
 
-/* The engine leaves #XM, and #MF for an x87 exception already pending, to
- * the runtime, which runs the instructions that could raise them one at a
- * time, checked, while the guest has one enabled; the gadgets check an
- * unmasked x87 exception themselves while the run's `exception_checks` says
- * so. An instruction that loads MXCSR or the x87 control word therefore
- * retires and leaves when it could change what a run checks, so the runtime
- * sees the change before the next instruction runs: when it unmasks a SIMD
- * exception, when it unmasks an x87 one in a run that does not check them, or
- * when it unmasks one whose flag is set, which is then pending. For a gadget
- * that computed its effective address: x22 and the descriptor's length name
- * the next instruction. */
+/* The engine leaves #MF for an x87 exception already pending, and #XM while
+ * MXCSR unmasks underflow or precision, to the runtime, which runs the
+ * instructions that could raise them one at a time, checked; the gadgets check
+ * other unmasked x87 and SIMD exceptions themselves while the run's
+ * `exception_checks` says so. An instruction that loads MXCSR or the x87
+ * control word therefore retires and leaves when it could change what a run
+ * checks, so the runtime sees the change before the next instruction runs:
+ * when it unmasks an exception in a run that does not check that kind, when it
+ * unmasks SIMD underflow or precision, or when it unmasks an x87 exception
+ * whose flag is set, which is then pending. For a gadget that computed its
+ * effective address: x22 and the descriptor's length name the next
+ * instruction. */
 .macro retire_and_leave
 	ubfx x8, x23, #56, #4
 	add x8, x22, x8
@@ -110,12 +111,19 @@ NAME(uml_x86_64_gadget_\name):
 	b uml_x86_64_gadget_leave
 .endm
 
-.macro retire_unless_unmasked value, masks
+/* `value` is the MXCSR just loaded. */
+.macro retire_unless_simd_unchecked value
 	mvn w8, \value
-	tst w8, #\masks
-	b.ne .Lx86_exceptions_unmasked\@
+	tst w8, #0x1f80
+	b.ne .Lx86_simd_unmasked\@
 	retire_and_next
-.Lx86_exceptions_unmasked\@:
+.Lx86_simd_unmasked\@:
+	tst w8, #0x1800
+	b.ne .Lx86_simd_unchecked\@
+	ldrb w8, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w8, #1, .Lx86_simd_unchecked\@
+	retire_and_next
+.Lx86_simd_unchecked\@:
 	retire_and_leave
 .endm
 
@@ -139,15 +147,160 @@ NAME(uml_x86_64_gadget_\name):
 .endm
 
 /* The same for an instruction that loads both. */
-.macro retire_unless_any_unmasked
+.macro retire_unless_any_unchecked
 	ldr w8, [_cpu, #UML_X86_64_CPU_MXCSR]
 	mvn w8, w8
 	tst w8, #0x1f80
-	b.ne .Lx86_simd_unmasked\@
+	b.eq .Lx86_simd_masked\@
+	tst w8, #0x1800
+	b.ne .Lx86_simd_unchecked\@
+	ldrb w8, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w8, #1, .Lx86_simd_unchecked\@
+.Lx86_simd_masked\@:
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
 	retire_unless_x87_unchecked w9
-.Lx86_simd_unmasked\@:
+.Lx86_simd_unchecked\@:
 	retire_and_leave
+.endm
+
+/* While MXCSR unmasks invalid operation, division by zero, overflow or a
+ * denormal operand, and masks underflow and precision, the runtime sets
+ * `exception_check_simd` in `exception_checks`. The SIMD floating-point
+ * gadgets then test their values for anything that could have raised an
+ * unmasked exception, before they store anything: a result whose exponent is
+ * all ones or one below -- a NaN, an infinity, or the largest finite value an
+ * overflow rounds to -- a NaN input to a comparison, minimum or maximum, and a
+ * conversion to an integer out of its range. Such an instruction leaves, and
+ * the runtime runs it again, checked, which raises #XM or completes it with
+ * its exact flags. Where the gadget already takes a separate path for such a
+ * value the test costs nothing more; elsewhere it costs a load and a branch
+ * while the gadgets do not check.
+ *
+ * Leaves while the gadgets check SIMD exceptions: on a path taken only for a
+ * special value, or for an instruction whose intermediate results no test of
+ * its result can see. */
+.macro simd_leave_if_checking
+	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w14, #1, .Lx86_simd_unchecked\@
+	b uml_x86_64_gadget_exception_check
+.Lx86_simd_unchecked\@:
+.endm
+
+/* w14 = nonzero when a lane of v`register` (`element` bits wide) has an
+ * exponent of all ones or one below. Uses v17 and v18. */
+.macro simd_special_lanes element, register
+	.if \element == 16
+	shl v17.8h, v\register\().8h, #1
+	movi v18.8h, #0xf0, lsl #8
+	cmhs v17.8h, v17.8h, v18.8h
+	.elseif \element == 32
+	shl v17.4s, v\register\().4s, #1
+	movi v18.4s, #0xfe, lsl #24
+	cmhs v17.4s, v17.4s, v18.4s
+	.else
+	shl v17.2d, v\register\().2d, #1
+	mov x14, #0xffc0000000000000
+	dup v18.2d, x14
+	cmhs v17.2d, v17.2d, v18.2d
+	.endif
+	umaxv s17, v17.4s
+	fmov w14, s17
+.endm
+
+/* Branches to `label` when lane 0 of v`register` has an exponent of all ones
+ * or one below, or with `condition` lo when it does not. Uses x14. */
+.macro simd_special_scalar element, register, label, condition=hs
+	.if \element == 32
+	fmov w14, s\register
+	ubfx w14, w14, #23, #8
+	cmp w14, #0xfe
+	.else
+	fmov x14, d\register
+	ubfx x14, x14, #52, #11
+	cmp x14, #0x7fe
+	.endif
+	b.\condition \label
+.endm
+
+/* w14 = all ones when no lane of v`left` or v`right` is a NaN, else zero.
+ * Uses v17 and v18. */
+.macro simd_ordered_lanes element, left, right
+	.if \element == 32
+	fcmeq v17.4s, v\left\().4s, v\left\().4s
+	fcmeq v18.4s, v\right\().4s, v\right\().4s
+	.else
+	fcmeq v17.2d, v\left\().2d, v\left\().2d
+	fcmeq v18.2d, v\right\().2d, v\right\().2d
+	.endif
+	and v17.16b, v17.16b, v18.16b
+	uminv s17, v17.4s
+	fmov w14, s17
+.endm
+
+/* While the gadgets check SIMD exceptions, leave when a lane of a packed
+ * result -- v`first`, and v`second` for a 256-bit one -- is special. */
+.macro simd_check_packed element, first, second=-1
+	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w14, #1, .Lx86_simd_packed_ok\@
+	simd_special_lanes \element, \first
+	.if \second >= 0
+	cbnz w14, .Lx86_simd_packed_special\@
+	simd_special_lanes \element, \second
+	.endif
+	cbz w14, .Lx86_simd_packed_ok\@
+.Lx86_simd_packed_special\@:
+	b uml_x86_64_gadget_exception_check
+.Lx86_simd_packed_ok\@:
+.endm
+
+/* The same for a packed result in v4, and v5 for a 256-bit one. */
+.macro simd_check_result element, width
+	.if \width == 256
+	simd_check_packed \element, 4, 5
+	.else
+	simd_check_packed \element, 4
+	.endif
+.endm
+
+/* The same for the scalar result in lane 0 of v`register`. */
+.macro simd_check_scalar element, register
+	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w14, #1, .Lx86_simd_scalar_ok\@
+	simd_special_scalar \element, \register, .Lx86_simd_scalar_special\@
+	b .Lx86_simd_scalar_ok\@
+.Lx86_simd_scalar_special\@:
+	b uml_x86_64_gadget_exception_check
+.Lx86_simd_scalar_ok\@:
+.endm
+
+/* The same for a NaN in a lane of the packed inputs v`left` and v`right`, and
+ * v`left2` and v`right2` for 256-bit ones. */
+.macro simd_check_packed_nan element, left, right, left2=-1, right2=-1
+	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w14, #1, .Lx86_simd_inputs_ok\@
+	simd_ordered_lanes \element, \left, \right
+	cbz w14, .Lx86_simd_inputs_nan\@
+	.if \left2 >= 0
+	simd_ordered_lanes \element, \left2, \right2
+	cbz w14, .Lx86_simd_inputs_nan\@
+	.endif
+	b .Lx86_simd_inputs_ok\@
+.Lx86_simd_inputs_nan\@:
+	b uml_x86_64_gadget_exception_check
+.Lx86_simd_inputs_ok\@:
+.endm
+
+/* The same for a NaN in lane 0 of v`left` or v`right`, tested in any case:
+ * the test costs no more than the gate would. */
+.macro simd_check_scalar_nan element, left, right
+	.if \element == 32
+	fcmp s\left, s\right
+	.else
+	fcmp d\left, d\right
+	.endif
+	b.vc .Lx86_simd_ordered\@
+	simd_leave_if_checking
+.Lx86_simd_ordered\@:
 .endm
 
 /* Bytes 24..31 of the record hold operation, width, carry, one padding byte,

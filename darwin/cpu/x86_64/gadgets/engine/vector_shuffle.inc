@@ -99,6 +99,7 @@
 	mov v5.d[1], v6.d[0]
 	.endif
 	.endif
+	simd_check_result \element, \width
 	.endif
 	.ifc \operation,hsub
 	.if \element == 32
@@ -128,6 +129,7 @@
 	mov v5.d[1], v6.d[0]
 	.endif
 	.endif
+	simd_check_result \element, \width
 	.endif
 	.ifc \operation,addsub
 	.if \element == 32
@@ -151,6 +153,7 @@
 	mov v5.d[1], v6.d[1]
 	.endif
 	.endif
+	simd_check_result \element, \width
 	.endif
 .endm
 

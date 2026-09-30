@@ -53,13 +53,17 @@
 	uabal v\output\().8h, v11.8b, v10.8b
 .endm
 
+/* A dot product can overflow and cancel on the way to its result, so while
+ * the gadgets check SIMD exceptions one always runs checked. */
 .macro vector_map3_math_body opcode, width
 	.if \opcode == 0x40
+	simd_leave_if_checking
 	vector_map3_dpps_lane 4, 0, 1
 	.if \width == 256
 	vector_map3_dpps_lane 5, 2, 3
 	.endif
 	.elseif \opcode == 0x41
+	simd_leave_if_checking
 	vector_map3_dppd_lane 4, 0, 1
 	.if \width == 256
 	vector_map3_dppd_lane 5, 2, 3

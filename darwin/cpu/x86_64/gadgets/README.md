@@ -302,28 +302,45 @@ registers.
 x86 raises #XM for a SIMD floating-point exception that MXCSR unmasks, #MF at
 the next waiting x87 instruction after an exception that the control word
 unmasks, and #AC for a misaligned access while RFLAGS.AC is set. Most guests
-enable none of them and a dispatch then runs as it always has, but a
-Delphi or C++Builder program runs with its default control word $1332, which
-unmasks invalid operation, division by zero and overflow.
+enable none of them and a dispatch then runs as it always has, but a Delphi or
+C++Builder program runs with its default control word $1332 and MXCSR $1900,
+which unmask invalid operation, division by zero and overflow.
 
-x87 arithmetic checks for itself. While the control word unmasks an exception,
-each run sets `exception_checks` in CpuState (`gadget_checks`), and a softfloat
-helper that raises an unmasked exception records it in `exception_raised`
-instead of the status word. The gadget tests that after each helper call and,
-before it stores anything, leaves with `UML_X86_64_EVENT_EXCEPTION_CHECK` and
-the stream position. The runtime finds the instruction, in the entered stream
-or in the cached block a link reached, and runs it again alone and checked,
-which leaves the exception pending. Stack faults and control word loads that
-unmask a set flag leave the same way. The test costs a load and a branch per
-helper call: x87 arithmetic under $1332 runs within about 1% of the masked
-speed, and a loop of FLDCW about 3 to 4% slower.
+The gadgets check themselves for x87 exceptions, and for SIMD ones while MXCSR
+masks underflow and precision. While the guest unmasks such an exception, each
+run sets `exception_checks` in CpuState (`gadget_checks`), and:
+
+- x87: a softfloat helper that raises an unmasked exception records it in
+  `exception_raised` instead of the status word, and the gadget tests that
+  after each helper call. Stack faults, and control word loads that unmask a
+  flag already set, leave the same way.
+- SIMD: the gadget tests its values for anything that could have raised an
+  unmasked exception -- a result whose exponent is all ones or one below (a
+  NaN, an infinity, or the largest finite value an overflow rounds to), a NaN
+  input to a comparison, minimum or maximum, or a conversion to an integer out
+  of its range. A dot product, whose intermediate results no test of its
+  result sees, always leaves.
+
+Either leaves before it stores anything, with
+`UML_X86_64_EVENT_EXCEPTION_CHECK` and the stream position. The runtime finds
+the instruction, in the entered stream or in the cached block a link reached,
+and runs it again alone and checked: that raises #XM, leaves the x87 exception
+pending, or completes an instruction whose special value raised nothing. The
+x87 test costs a load and a branch per helper call, and most SIMD tests sit on
+a path the gadget already took only for a NaN, so code under $1332 and $1900
+runs within about 3% of the masked speed. An instruction the test sends to the
+runtime that raises nothing, such as an addition to an infinity, costs about
+140 ns. While the gadgets check SIMD exceptions, the flags of masked ones
+accumulate only for the instructions the runtime runs checked, as they never
+do while MXCSR masks every exception.
 
 The other checks split blocks. While `checked_exceptions` finds one enabled --
-an unmasked MXCSR exception, RFLAGS.AC, or an unmasked x87 exception pending --
-the runtime dispatches through an executor built for that set, whose blocks end
-before every instruction that could raise one. Such an instruction is a block
-of its own, a check head, that no link enters; `execute_checked` runs it alone,
-with its checks, and runs every other block, linked, as `execute` does:
+RFLAGS.AC, MXCSR unmasking underflow or precision, which no value shows, or an
+unmasked x87 exception pending -- the runtime dispatches through an executor
+built for that set, whose blocks end before every instruction that could raise
+one. Such an instruction is a block of its own, a check head, that no link
+enters; `execute_checked` runs it alone, with its checks, and runs every other
+block, linked, as `execute` does:
 
 - #MF: a waiting instruction -- every x87 instruction but FNINIT, FNCLEX,
   FNSTSW, FNSTCW, FNSTENV and FNSAVE, and FWAIT, EMMS and every MMX
@@ -332,8 +349,8 @@ with its checks, and runs every other block, linked, as `execute` does:
   runs: memory operands at their width or x87 operand size, stack accesses,
   and a string instruction's first element. 16- and 32-byte vector accesses,
   gathers and the extended-state images are exempt, as on x86.
-- #XM: the host's cumulative exception flags are cleared around the
-  instruction and read back as MXCSR's; a scalar instruction's host code
+- #XM, run checked: the host's cumulative exception flags are cleared around
+  the instruction and read back as MXCSR's; a scalar instruction's host code
   computes lane 0 alone, COMIS compares with FCMPE, and a conversion to an
   integer out of range raises the host's invalid-operation flag. An unmasked
   exception restores the state from before it, a memory destination
@@ -346,21 +363,23 @@ with its checks, and runs every other block, linked, as `execute` does:
   memory, and any unmasked exception sets ES and B for the next waiting
   instruction.
 
-An instruction that enables a check retires and leaves the engine, so linked
-code never runs past it unchecked: POPF setting AC, LDMXCSR loading a clear
-mask bit, and FLDCW, FLDENV, FRSTOR, FXRSTOR or XRSTOR unmasking an x87
-exception while the gadgets are not checking or unmasking one whose flag is
-set. That costs POPF one branch and FLDCW and LDMXCSR three instructions when
-nothing is unmasked. LDMXCSR keeps the masks and flags the guest loads.
+An instruction that could change what a run checks retires and leaves the
+engine, so linked code never runs past it unchecked: POPF setting AC; LDMXCSR,
+FXRSTOR or XRSTOR unmasking a SIMD exception while the gadgets do not check
+them, or unmasking underflow or precision; and FLDCW, FLDENV, FRSTOR, FXRSTOR
+or XRSTOR unmasking an x87 exception while the gadgets are not checking or
+unmasking one whose flag is set. That costs POPF one branch and FLDCW and
+LDMXCSR three instructions when nothing is unmasked. LDMXCSR keeps the masks
+and flags the guest loads.
 
 A check head costs a dispatch, about 100 ns on an M-series Mac, so SSE
-arithmetic runs about 25 times slower while one of its exceptions is unmasked.
-Memory access while AC is set runs about 25 times slower too, and stays so:
-programs rarely set AC. Code without such instructions keeps its speed. The
-host detects neither a denormal operand nor an exact tiny result, so #XM
-misses those two; it reports precision for an unmasked overflow whose result
-is exact but for its exponent, where x86 does not; and an x87 overflow or
-underflow unmasked for a register destination leaves the masked result
+arithmetic runs about 25 times slower while MXCSR unmasks underflow or
+precision. Memory access while AC is set runs about 25 times slower too, and
+stays so: programs rarely set AC. Code without such instructions keeps its
+speed. The host detects neither a denormal operand nor an exact tiny result,
+so #XM misses those two; it reports precision for an unmasked overflow whose
+result is exact but for its exponent, where x86 does not; and an x87 overflow
+or underflow unmasked for a register destination leaves the masked result
 rather than x87's rebiased one.
 
 ## Code pages

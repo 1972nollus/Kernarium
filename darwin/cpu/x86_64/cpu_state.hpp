@@ -80,8 +80,10 @@ struct X87Register final {
 };
 
 /* CpuState::exception_checks: the gadgets check for x87 exceptions the
- * guest unmasked. */
+ * guest unmasked, and for SIMD ones while underflow and precision stay
+ * masked. */
 inline constexpr std::uint8_t exception_check_x87 = 1U << 0U;
+inline constexpr std::uint8_t exception_check_simd = 1U << 1U;
 
 struct CpuState final {
 	std::array<std::uint64_t, 16> registers{};
