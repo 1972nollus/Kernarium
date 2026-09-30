@@ -14,25 +14,10 @@
 #include "uml_darwin_static_mmu.h"
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
-
-#ifndef UML_RUNTIME_PROFILING
-#define UML_RUNTIME_PROFILING 0
-#endif
-
-#if UML_RUNTIME_PROFILING
-#include <chrono>
-#include <cstdio>
-#include <cstdlib>
-#include <pthread.h>
-#include <time.h>
-#endif
 
 namespace uml::emulator {
 
@@ -93,121 +78,6 @@ static_assert(::uml::cpu::floating_point_status_exception_mask ==
 	      public_floating_point_flags);
 static_assert(::uml::cpu::floating_point_syndrome(0) ==
 	      DARWIN_UML_FLOATING_POINT_SYNDROME_BASE);
-
-#if UML_RUNTIME_PROFILING
-enum class DispatchExit : std::size_t {
-	system_call,
-	memory_fault,
-	interrupt,
-	budget,
-	illegal_instruction,
-	breakpoint,
-	floating_point_trap,
-	pc_alignment,
-	fatal,
-	count,
-};
-
-[[nodiscard]] bool dispatch_profile_enabled() noexcept
-{
-	static const bool enabled = [] {
-		const auto *setting = std::getenv("UML_PROFILE_DISPATCH");
-		return setting != nullptr && setting[0] != '\0' && setting[0] != '0';
-	}();
-	return enabled;
-}
-
-using DispatchClock = std::chrono::steady_clock;
-
-struct ThreadCpuReading final {
-	std::uint64_t nanoseconds;
-	bool valid;
-};
-
-[[nodiscard]] ThreadCpuReading thread_cpu_reading() noexcept
-{
-	timespec value{};
-	if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) != 0)
-		return {
-			.nanoseconds = 0,
-			.valid = false,
-		};
-	return {
-		.nanoseconds =
-			static_cast<std::uint64_t>(value.tv_sec) *
-				1'000'000'000ULL +
-			static_cast<std::uint64_t>(value.tv_nsec),
-		.valid = true,
-	};
-}
-
-void profile_dispatch(DispatchClock::time_point started,
-		      std::size_t instructions, DispatchExit reason)
-{
-	if (!dispatch_profile_enabled())
-		return;
-	struct Statistics final {
-		std::uint64_t calls{};
-		std::uint64_t nanoseconds{};
-		std::uint64_t instructions{};
-		std::uint64_t maximum_nanoseconds{};
-		std::array<std::uint64_t,
-			static_cast<std::size_t>(DispatchExit::count)> exits{};
-	};
-	static thread_local Statistics statistics;
-	static thread_local const auto cpu_origin = thread_cpu_reading();
-	const auto elapsed = static_cast<std::uint64_t>(
-		std::chrono::duration_cast<std::chrono::nanoseconds>(
-			DispatchClock::now() - started).count());
-	++statistics.calls;
-	statistics.nanoseconds += elapsed;
-	statistics.instructions += instructions;
-	statistics.maximum_nanoseconds = std::max(
-		statistics.maximum_nanoseconds, elapsed);
-	++statistics.exits[static_cast<std::size_t>(reason)];
-	// Keep full-guest profiling sparse enough that forwarding the diagnostic
-	// through an iOS console cannot become part of the workload being measured:
-	// report about once per second of dispatch time, so the cadence does not
-	// depend on how often a guest leaves the engine.
-	static thread_local std::uint64_t last_report{};
-	if (statistics.nanoseconds - last_report < 1'000'000'000ULL)
-		return;
-	last_report = statistics.nanoseconds;
-	const auto current_cpu = thread_cpu_reading();
-	const auto carrier_cpu_nanoseconds = cpu_origin.valid && current_cpu.valid &&
-		current_cpu.nanoseconds >= cpu_origin.nanoseconds
-		? current_cpu.nanoseconds - cpu_origin.nanoseconds
-		: 0;
-	std::array<char, 64> thread_name{};
-	if (pthread_getname_np(pthread_self(), thread_name.data(),
-		    thread_name.size()) != 0 || thread_name[0] == '\0')
-		std::memcpy(thread_name.data(), "unnamed", sizeof("unnamed"));
-	std::fprintf(stderr,
-		"Darwin dispatch profile thread=%s calls=%llu nanoseconds=%llu "
-		"carrier-cpu-nanoseconds=%llu instructions=%llu "
-		"average-us=%.1f max-us=%.1f "
-		"average-instructions=%.1f syscall=%llu fault=%llu interrupt=%llu "
-		"budget=%llu illegal=%llu breakpoint=%llu fp-trap=%llu "
-		"pc-alignment=%llu fatal=%llu\n",
-		thread_name.data(),
-		static_cast<unsigned long long>(statistics.calls),
-		static_cast<unsigned long long>(statistics.nanoseconds),
-		static_cast<unsigned long long>(carrier_cpu_nanoseconds),
-		static_cast<unsigned long long>(statistics.instructions),
-		statistics.nanoseconds / (statistics.calls * 1000.0),
-		statistics.maximum_nanoseconds / 1000.0,
-		statistics.instructions / static_cast<double>(statistics.calls),
-		static_cast<unsigned long long>(statistics.exits[0]),
-		static_cast<unsigned long long>(statistics.exits[1]),
-		static_cast<unsigned long long>(statistics.exits[2]),
-		static_cast<unsigned long long>(statistics.exits[3]),
-		static_cast<unsigned long long>(statistics.exits[4]),
-		static_cast<unsigned long long>(statistics.exits[5]),
-		static_cast<unsigned long long>(statistics.exits[6]),
-		static_cast<unsigned long long>(statistics.exits[7]),
-		static_cast<unsigned long long>(statistics.exits[8]));
-}
-#endif
 
 void load_cpu(arm64::CpuState &cpu,
 	      const darwin_uml_guest_registers &registers,
@@ -414,9 +284,6 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	::uml::runtime::ThreadExecutionState &runtime) noexcept
 {
 	(void)Kind;
-#if UML_RUNTIME_PROFILING
-	const auto started = DispatchClock::now();
-#endif
 	auto &cpu = runtime.x86_cpu;
 	load_x86_cpu(cpu, registers, fp);
 	/* RFLAGS.TF raises #DB after each instruction. Held to an exact
@@ -488,13 +355,6 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	case uml::cpu::ExitReason::fatal:
 		break;
 	}
-#if UML_RUNTIME_PROFILING
-	profile_dispatch(started, result.retired_instructions,
-		result.reason == uml::cpu::ExitReason::system_call ? DispatchExit::system_call :
-		result.reason == uml::cpu::ExitReason::memory_fault ? DispatchExit::memory_fault :
-		result.reason == uml::cpu::ExitReason::interrupt ? DispatchExit::interrupt :
-		DispatchExit::budget);
-#endif
 	return event;
 }
 #endif
@@ -543,35 +403,6 @@ bool signal_return_boundary(arm64::CpuState &cpu, void *) noexcept
 	return prepare_signal_return(cpu);
 }
 
-#if UML_RUNTIME_PROFILING
-[[nodiscard]] DispatchExit dispatch_exit_for(
-	uml::cpu::ExitReason reason) noexcept
-{
-	switch (reason) {
-	case uml::cpu::ExitReason::system_call:
-		return DispatchExit::system_call;
-	case uml::cpu::ExitReason::memory_fault:
-		return DispatchExit::memory_fault;
-	case uml::cpu::ExitReason::interrupt:
-		return DispatchExit::interrupt;
-	case uml::cpu::ExitReason::illegal_instruction:
-		return DispatchExit::illegal_instruction;
-	case uml::cpu::ExitReason::breakpoint:
-	case uml::cpu::ExitReason::single_step:
-		return DispatchExit::breakpoint;
-	case uml::cpu::ExitReason::floating_point_trap:
-		return DispatchExit::floating_point_trap;
-	case uml::cpu::ExitReason::pc_alignment:
-		return DispatchExit::pc_alignment;
-	case uml::cpu::ExitReason::instruction_budget:
-		return DispatchExit::budget;
-	case uml::cpu::ExitReason::fatal:
-		return DispatchExit::fatal;
-	}
-	return DispatchExit::fatal;
-}
-#endif
-
 template<uml::cpu::EngineKind Kind>
 int run_common_guest(
 	void *register_pointer, void *fp_pointer,
@@ -618,9 +449,6 @@ int run_common_guest(
 	if (engine == nullptr)
 		return DARWIN_UML_EVENT_FATAL;
 
-#if UML_RUNTIME_PROFILING
-	const auto started = DispatchClock::now();
-#endif
 	const auto &interrupt = runtime->interrupt;
 	uml::cpu::ExecutionRequest request{
 		.cpu = cpu,
@@ -700,10 +528,6 @@ int run_common_guest(
 		event = DARWIN_UML_EVENT_FATAL;
 		break;
 	}
-#if UML_RUNTIME_PROFILING
-	profile_dispatch(started, result.retired_instructions,
-		dispatch_exit_for(result.reason));
-#endif
 	return event;
 }
 
