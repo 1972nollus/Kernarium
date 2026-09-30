@@ -50,6 +50,7 @@ HWCAP2_FLAGM2 = 1 << 7
 HWCAP2_FRINT = 1 << 8
 HWCAP2_I8MM = 1 << 13
 HWCAP2_BF16 = 1 << 14
+HWCAP2_ECV = 1 << 19
 OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_AES", HWCAP_AES, "aes"),
     ("hw.optional.arm.FEAT_PMULL", HWCAP_PMULL, "pmull"),
@@ -78,6 +79,7 @@ OPTIONAL_HWCAPS2 = (
     ("hw.optional.arm.FEAT_FRINTTS", HWCAP2_FRINT, "frint"),
     ("hw.optional.arm.FEAT_I8MM", HWCAP2_I8MM, "i8mm"),
     ("hw.optional.arm.FEAT_BF16", HWCAP2_BF16, "bf16"),
+    ("hw.optional.arm.FEAT_ECV", HWCAP2_ECV, "ecv"),
 )
 # Every AT_HWCAP and AT_HWCAP2 bit an engine may advertise, by the name arm64
 # Linux gives it in /proc/cpuinfo. A set bit missing here fails the smoke,

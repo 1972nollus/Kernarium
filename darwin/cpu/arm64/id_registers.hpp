@@ -132,6 +132,10 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 			value |= field(1, 52);
 		return value;
 	}
+	if (group == 7U && selector == 0U)
+		/* ID_AA64MMFR0_EL1. ECV is the one field Linux shows EL0, and
+		 * where it derives HWCAP2_ECV. */
+		return host.has(ArmFeature::ecv) ? field(1, 60) : 0;
 	if (group == 7U && selector == 2U)
 		/* ID_AA64MMFR2_EL1.AT is where Linux derives HWCAP_USCAT, the
 		 * single-copy atomicity guarantee for an unaligned LSE atomic. */

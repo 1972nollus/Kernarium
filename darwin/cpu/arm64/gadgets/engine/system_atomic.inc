@@ -142,9 +142,19 @@ mops_epilogue copy_general
 mops_epilogue set_r
 mops_epilogue set_z
 
+/* FEAT_ECV's self-synchronized virtual count, selected only on a host that
+ * implements it. It occupies the head of the padding below, so no later
+ * entry moves. */
+gadget sysreg_cntvctss_read
+	ldr x8, [_stream], #8
+	mrs x9, s3_3_c14_c0_6	/* CNTVCTSS_EL0 */
+	str x9, [_cpu, x8]
+	next_gadget
+
 /* Unreachable padding where the FEAT_MOPS+FEAT_MTE SETG* entries and the
- * FEAT_MTE LDG/STG/ST2G/STZG/STZ2G/STGP entries were. */
-removed_gadget 2688
+ * FEAT_MTE LDG/STG/ST2G/STZG/STZ2G/STGP entries were, less the 32 bytes of
+ * sysreg_cntvctss_read above. */
+removed_gadget 2656
 
 gadget pc_relative
 	ldr x8, [_stream], #8

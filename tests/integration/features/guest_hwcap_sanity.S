@@ -57,6 +57,7 @@
 	.equ E_JSCVT_NZCV,	23
 	.equ E_JSCVT_FPSR,	24
 	.equ JSCVT_CASES,	16
+	.equ E_ECV,		25
 
 	.equ AT_HWCAP,		16
 	.equ AT_HWCAP2,		26
@@ -79,6 +80,7 @@
 	.equ HWCAP_SB,		29
 	.equ HWCAP2_FLAGM2,	7
 	.equ HWCAP2_FRINT,	8
+	.equ HWCAP2_ECV,	19
 
 	/* The engine smoke accepts the payload only when it prints exactly "OK"
 	 * and exits zero, so a failure reports the family by name on stdout
@@ -413,6 +415,26 @@ _start:
 	msr	dit, #0
 .Lskip_dit:
 
+	tbz	x29, #HWCAP2_ECV, .Lskip_ecv
+	/* FEAT_ECV: CNTVCTSS_EL0 reads the same count as CNTVCT_EL0, so it
+	 * lies between two reads of that, and ID_AA64MMFR0_EL1.ECV, the field
+	 * Linux derives HWCAP2_ECV from, reads 1. */
+	isb
+	mrs	x23, cntvct_el0
+	isb
+	mrs	x24, s3_3_c14_c0_6	/* CNTVCTSS_EL0 */
+	isb
+	mrs	x25, cntvct_el0
+	cmp	x24, x23
+	b.lo	.Lfail_ecv
+	cmp	x25, x24
+	b.lo	.Lfail_ecv
+	mrs	x26, id_aa64mmfr0_el1
+	lsr	x26, x26, #60
+	cmp	x26, #1
+	b.ne	.Lfail_ecv
+.Lskip_ecv:
+
 	adrp	x1, success_message
 	add	x1, x1, :lo12:success_message
 	mov	x0, #1
@@ -445,6 +467,7 @@ _start:
 .Lfail_jscvt_value:	fail E_JSCVT_VALUE, msg_jscvt_value
 .Lfail_jscvt_nzcv:	fail E_JSCVT_NZCV, msg_jscvt_nzcv
 .Lfail_jscvt_fpsr:	fail E_JSCVT_FPSR, msg_jscvt_fpsr
+.Lfail_ecv:		fail E_ECV, msg_ecv
 
 .Lexit:
 	mov	x8, #NR_EXIT_GROUP
@@ -554,6 +577,8 @@ msg_jscvt_nzcv:
 	.ascii "FAIL jscvt nzcv \n"
 msg_jscvt_fpsr:
 	.ascii "FAIL jscvt fpsr \n"
+msg_ecv:
+	.ascii "FAIL ecv        \n"
 success_message:
 	.ascii "OK\n"
 

@@ -40,6 +40,7 @@ constexpr unsigned long hwcap2_flagm2 = 1UL << 7;
 constexpr unsigned long hwcap2_frint = 1UL << 8;
 constexpr unsigned long hwcap2_i8mm = 1UL << 13;
 constexpr unsigned long hwcap2_bf16 = 1UL << 14;
+constexpr unsigned long hwcap2_ecv = 1UL << 19;
 [[nodiscard]] unsigned long virtual_hwcap() noexcept
 {
 	const auto &host = ::uml::platform::apple::probed_host_capabilities();
@@ -179,6 +180,10 @@ extern "C" unsigned long darwin_uml_guest_hwcap2(void)
 	 * floating-point condition-flag encodings. */
 	if (host.has(::uml::platform::ArmFeature::flag_m2))
 		result |= hwcap2_flagm2;
+	/* CNTVCTSS_EL0, which both engines read with the host's own
+	 * instruction, so only a host with FEAT_ECV can offer it. */
+	if (host.has(::uml::platform::ArmFeature::ecv))
+		result |= hwcap2_ecv;
 	return result;
 }
 

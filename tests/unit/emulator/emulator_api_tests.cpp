@@ -327,6 +327,7 @@ unsigned long expected_guest_hwcap2()
 		{"hw.optional.arm.FEAT_FRINTTS", 8},
 		{"hw.optional.arm.FEAT_I8MM", 13},
 		{"hw.optional.arm.FEAT_BF16", 14},
+		{"hw.optional.arm.FEAT_ECV", 19},
 	};
 	for (const auto &feature : optional)
 		if (host_feature(feature.sysctl))

@@ -23,6 +23,14 @@ Stride, and EBF read as zero, so BFDOT and BFMMLA always take the standard
 BFloat16 behavior. The `arm64-base-system-registers` corpus cases pin that
 write mask.
 
+FEAT_ECV, which also has no instructions, is implemented exactly where the
+host implements it, and HWCAP2_ECV and ID_AA64MMFR0_EL1.ECV say so. Both
+engines read CNTVCTSS_EL0 with the host's own instruction; on other hosts it
+is UNDEFINED. CNTPCTSS_EL0, like CNTPCT_EL0, is UNDEFINED everywhere, because
+Linux gives EL0 no physical count. A counter value cannot be pinned in the
+corpus, so `arm64-base-system-registers` and the guest HWCAP sanity payload
+check it on each host.
+
 That status is not exhaustive variant proof. No inventory entry has an
 independently reviewed complete partition of all forms, widths, aliases,
 architectural state, optional features, reserved encodings, fault ordering, and

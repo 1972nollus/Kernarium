@@ -119,6 +119,9 @@ enum class ArmFeature : std::size_t {
 	inventory_count,
 	afp = inventory_count,
 	lse2,
+	/* FEAT_ECV adds no instruction, only the self-synchronized counter
+	 * registers CNTVCTSS_EL0 and CNTPCTSS_EL0. */
+	ecv,
 	count,
 };
 
@@ -177,7 +180,7 @@ inline constexpr std::array arm_feature_labels{
 	std::string_view{"TRF"}, std::string_view{"UAO"},
 	std::string_view{"VHE"}, std::string_view{"WFxT"},
 	std::string_view{"XS"}, std::string_view{"AFP"},
-	std::string_view{"LSE2"},
+	std::string_view{"LSE2"}, std::string_view{"ECV"},
 };
 
 /* Stable machine-readable names shared with the architectural instruction
@@ -238,7 +241,7 @@ inline constexpr std::array arm_feature_tokens{
 	std::string_view{"trf"}, std::string_view{"uao"},
 	std::string_view{"vhe"}, std::string_view{"wfxt"},
 	std::string_view{"xs"}, std::string_view{"afp"},
-	std::string_view{"lse2"},
+	std::string_view{"lse2"}, std::string_view{"ecv"},
 };
 
 inline constexpr std::size_t arm_inventory_feature_count =

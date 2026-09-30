@@ -495,6 +495,17 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
         emitter_.emit(0xd53b'e040U | destination);
       });
       return true;
+    /* FEAT_ECV's self-synchronized view of the same count, for which a
+     * guest need not order earlier loads with an ISB. Only a host that
+     * implements it can execute the register. CNTPCTSS_EL0 stays UNDEFINED
+     * with CNTPCT_EL0: Linux gives EL0 no physical count. */
+    case 0xd53b'e0c0U: // CNTVCTSS_EL0
+      if (!translation_supports(ArmFeature::ecv))
+        return false;
+      write_destination([&](unsigned destination) {
+        emitter_.emit(0xd53b'e0c0U | destination);
+      });
+      return true;
     default:
       break;
     }
