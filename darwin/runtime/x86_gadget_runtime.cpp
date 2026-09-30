@@ -313,13 +313,23 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 				result.retired_instructions);
 			return run;
 		}
+		/* A step of a repeated string instruction is one iteration. */
+		const bool stepping = (exact_budget || trap_armed) && limit == 1;
 		const auto executed = x86_64::gadgets::execute(
 			*selected.program, cpu, memory, executor, limit,
-			guarded_interrupt);
+			guarded_interrupt, stepping);
 		result.retired_instructions += executed.retired_instructions;
 		prepared_code_changes = executor.prepared_code_changes();
 		result.fault = executed.fault;
 		if (executed.instruction_budget_exhausted) {
+			result.reason = budget_reason();
+			return run;
+		}
+		if (stepping && executed.repeat_yielded) {
+			/* An iteration that did not end its instruction is a whole
+			 * step: #DB follows it with RIP naming the instruction and,
+			 * as the gadget leaves it, RF set, as it follows each
+			 * iteration on x86. */
 			result.reason = budget_reason();
 			return run;
 		}

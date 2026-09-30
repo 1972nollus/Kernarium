@@ -250,9 +250,14 @@ struct ExecuteResult final {
 	::uml::memory::GuestAddressSpace &memory,
 	std::size_t instruction_budget,
 	const ::uml::cpu::InterruptToken &interrupt = {}) noexcept;
+/* With `single_step` a repeated string instruction at the block's start
+ * runs one iteration, as x86 raises #DB after each: it retires if that
+ * iteration ends it and otherwise leaves between elements, a repeat yield
+ * with RF set. */
 [[nodiscard]] ExecuteResult execute(const Program &program, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &memory, Executor &executor,
 	std::size_t instruction_budget,
-	const ::uml::cpu::InterruptToken &interrupt = {}) noexcept;
+	const ::uml::cpu::InterruptToken &interrupt = {},
+	bool single_step = false) noexcept;
 
 } // namespace uml::cpu::x86_64::gadgets

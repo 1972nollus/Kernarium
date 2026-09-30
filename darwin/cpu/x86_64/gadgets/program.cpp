@@ -293,7 +293,7 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 ExecuteResult execute(const Program &program, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &memory, Executor &executor,
 	std::size_t instruction_budget,
-	const ::uml::cpu::InterruptToken &interrupt) noexcept
+	const ::uml::cpu::InterruptToken &interrupt, bool single_step) noexcept
 {
 	if (program.native_stream().empty() ||
 		cpu.execution_mode != program.execution_mode() ||
@@ -309,7 +309,7 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 	std::vector<std::uintptr_t> limited_stream;
 	std::span<const std::uintptr_t> native_stream = program.native_stream();
 	const bool limited = instruction_budget < program.instruction_count();
-	if (limited) {
+	if (limited || single_step) {
 		try {
 			const auto gadgets = program.replay_instructions();
 			if (gadgets.size() != program.instruction_count()) {
@@ -318,11 +318,18 @@ ExecuteResult execute(const Program &program, CpuState &cpu,
 				return {::uml::cpu::EngineEvent::fatal, 0, {},
 					false, false};
 			}
-			limited_stream = build_native_stream(
-				gadgets.first(instruction_budget),
-				gadgets[instruction_budget].address,
-				program.execution_mode());
-			native_stream = limited_stream;
+			if (single_step &&
+				repeated_string(gadgets.front().instruction)) {
+				limited_stream = build_repeat_step_stream(
+					gadgets.front(), program.execution_mode());
+				native_stream = limited_stream;
+			} else if (limited) {
+				limited_stream = build_native_stream(
+					gadgets.first(instruction_budget),
+					gadgets[instruction_budget].address,
+					program.execution_mode());
+				native_stream = limited_stream;
+			}
 		} catch (...) {
 			trace_fatal("limited-stream", program, cpu,
 				instruction_budget);

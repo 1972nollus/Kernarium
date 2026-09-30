@@ -174,6 +174,13 @@ amount to its instruction budget, so a loop of long REP strings returns to the
 kernel about as often as ordinary code does; the kernel services its
 cooperative timer only there. A step keeps its exact budget.
 
+A step of a repeated string instruction is one iteration, as x86 raises #DB
+after each. `execute` given `single_step` enters the instruction through its
+`_step` entry, which sets a repeat budget of one and joins the gadget's element
+loop: the iteration stops between elements with RIP naming the instruction and
+RF set, or retires the instruction when it ends it. The entries follow the
+string gadgets and leave their layout alone.
+
 The retirement counter carries the dispatch's instruction budget as a negative
 bias, so an edge that follows a link tests the sign of one addition instead of
 loading the limit and comparing against it. `uml_x86_64_gadget_leave` takes

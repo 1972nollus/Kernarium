@@ -550,6 +550,29 @@ gadget string_\operation\()_\width
 	b uml_x86_64_gadget_leave
 .Lx86_string_continue\@:
 	retire_and_next
+
+/* A single-stepped repeated instruction, which raises #DB after each
+ * iteration. One element runs, and a repeat budget of one stops the element
+ * loop after it with RF set and RIP still naming the instruction, unless the
+ * count or the comparison ends the instruction first, which retires it. The
+ * bulk run is never entered. The gadget above keeps its layout; this entry
+ * only joins it. */
+gadget string_\operation\()_\width\()_step
+	ldp x23, x22, [_stream], #16
+	mov w9, #1
+	str w9, [sp, #0x68]
+	tbnz x23, #3, .Lx86_string_step_count_16\@
+	tbz x23, #0, .Lx86_string_step_count_64\@
+	ldr w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	b .Lx86_string_step_count_ready\@
+.Lx86_string_step_count_16\@:
+	ldrh w24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+	b .Lx86_string_step_count_ready\@
+.Lx86_string_step_count_64\@:
+	ldr x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
+.Lx86_string_step_count_ready\@:
+	cbz x24, .Lx86_string_finish\@
+	b .Lx86_string_iteration\@
 .endm
 
 .macro string_width operation, width, load, store, host_register, store_register, shift

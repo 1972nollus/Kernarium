@@ -5967,6 +5967,48 @@ read_test_sequences(void *context) noexcept
 		"INT 0x41 did not decode with its vector");
 }
 
+/* A single step of a repeated string instruction runs one iteration and
+ * leaves between elements with RIP naming the instruction, until an
+ * iteration ends it, which retires it (audit NC-E12). */
+[[nodiscard]] bool a_single_step_runs_one_repeat_iteration()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xf3, 0xa6, // repe cmpsb
+		0x0f, 0x05, // syscall
+	});
+	memory.load(0x800, {1, 2, 3, 4, 5});
+	memory.load(0x900, {1, 2, 9, 4, 5});
+	const auto built = gadgets::build(memory, 0);
+	if (!expect(built.status == gadgets::BuildStatus::built,
+		"REPE CMPSB block did not build"))
+		return false;
+	gadgets::Executor executor;
+	executor.prepare(memory);
+	CpuState cpu{};
+	cpu.gpr(Register::rsi) = 0x800;
+	cpu.gpr(Register::rdi) = 0x900;
+	cpu.gpr(Register::rcx) = 5;
+	for (std::uint64_t left = 4; left >= 3; --left) {
+		const auto step = gadgets::execute(built.program, cpu, memory,
+			executor, 1, {}, true);
+		if (!expect(step.event == uml::cpu::EngineEvent::continued &&
+				step.repeat_yielded &&
+				step.retired_instructions == 0 && cpu.rip == 0 &&
+				cpu.gpr(Register::rcx) == left,
+			"a stepped REPE CMPSB did not stop after one iteration"))
+			return false;
+	}
+	const auto last = gadgets::execute(built.program, cpu, memory,
+		executor, 1, {}, true);
+	return expect(last.event == uml::cpu::EngineEvent::continued &&
+			!last.repeat_yielded && last.retired_instructions == 1 &&
+			cpu.rip == 2 && cpu.gpr(Register::rcx) == 2 &&
+			cpu.gpr(Register::rsi) == 0x803,
+		"the iteration that ended a stepped REPE CMPSB did not retire it");
+}
+
 /* INT 3 and INT 4 are the user-callable software interrupts besides 0x80:
  * both trap after the instruction. */
 [[nodiscard]] bool software_interrupt_vectors_trap()
@@ -7433,6 +7475,7 @@ int main()
 		iret_setting_trap_flag_arms_the_next_instruction() &&
 		resume_flag_lasts_until_an_instruction_starts() &&
 		decode_names_int_vectors() &&
+		a_single_step_runs_one_repeat_iteration() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&
 		vector_results_cross_only_a_transfer_that_stays_inline() &&

@@ -5143,18 +5143,26 @@ struct FlagState final {
 }
 
 [[nodiscard]] NativeEntry string_entry(
-	Operation operation, OperandWidth width) noexcept
+	Operation operation, OperandWidth width, bool step = false) noexcept
 {
 #define UML_X86_STRING_WIDTH(operation_name) \
 	switch (width) { \
 	case OperandWidth::byte: \
-		return native::uml_x86_64_gadget_string_##operation_name##_8; \
+		return step ? \
+			native::uml_x86_64_gadget_string_##operation_name##_8_step : \
+			native::uml_x86_64_gadget_string_##operation_name##_8; \
 	case OperandWidth::word: \
-		return native::uml_x86_64_gadget_string_##operation_name##_16; \
+		return step ? \
+			native::uml_x86_64_gadget_string_##operation_name##_16_step : \
+			native::uml_x86_64_gadget_string_##operation_name##_16; \
 	case OperandWidth::dword: \
-		return native::uml_x86_64_gadget_string_##operation_name##_32; \
+		return step ? \
+			native::uml_x86_64_gadget_string_##operation_name##_32_step : \
+			native::uml_x86_64_gadget_string_##operation_name##_32; \
 	case OperandWidth::qword: \
-		return native::uml_x86_64_gadget_string_##operation_name##_64; \
+		return step ? \
+			native::uml_x86_64_gadget_string_##operation_name##_64_step : \
+			native::uml_x86_64_gadget_string_##operation_name##_64; \
 	default: return nullptr; \
 	}
 	switch (operation) {
@@ -5169,13 +5177,13 @@ struct FlagState final {
 	return nullptr;
 }
 
-[[nodiscard]] bool append_string(
-	std::vector<std::uintptr_t> &stream, const Gadget &gadget) noexcept
+[[nodiscard]] bool append_string(std::vector<std::uintptr_t> &stream,
+	const Gadget &gadget, bool step = false) noexcept
 {
 	const auto &instruction = gadget.instruction;
 	const auto width = instruction.destination.kind == OperandKind::none ?
 		instruction.source.width : instruction.destination.width;
-	const auto entry = string_entry(instruction.operation, width);
+	const auto entry = string_entry(instruction.operation, width, step);
 	const auto *memory = instruction.destination.kind == OperandKind::memory ?
 		&instruction.destination : instruction.source.kind == OperandKind::memory ?
 		&instruction.source : nullptr;
@@ -7152,6 +7160,33 @@ std::vector<std::uintptr_t> build_native_stream(
 	if (append_native_stream(stream, gadgets, final_rip, mode, links))
 		throw std::logic_error{
 			"x86-64 operation has no native assembly gadget"};
+	return stream;
+}
+
+bool repeated_string(const Instruction &instruction) noexcept
+{
+	switch (instruction.operation) {
+	case Operation::string_move:
+	case Operation::string_compare:
+	case Operation::string_store:
+	case Operation::string_load:
+	case Operation::string_scan:
+		return instruction.repeat != 0;
+	default:
+		return false;
+	}
+}
+
+std::vector<std::uintptr_t> build_repeat_step_stream(
+	const Gadget &gadget, ExecutionMode mode)
+{
+	std::vector<std::uintptr_t> stream;
+	if (!repeated_string(gadget.instruction) ||
+		!append_string(stream, gadget, true))
+		throw std::logic_error{
+			"x86-64 step of a non-repeated instruction"};
+	stream.push_back(entry_address(native::uml_x86_64_gadget_block_exit));
+	stream.push_back(next_instruction_pointer(gadget, mode));
 	return stream;
 }
 

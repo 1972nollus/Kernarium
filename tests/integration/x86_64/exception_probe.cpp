@@ -214,6 +214,23 @@ __asm__(".text\n"
 	"probe_nc_scratch:\n"
 	"	.quad 0\n"
 	".text\n"
+	/* REPE CMPSB of five bytes that differ at the third, then REP STOSB
+	 * of none: (left, right). */
+	".global probe_rep_step\n"
+	"probe_rep_step:\n"
+	"	movl $5, %ecx\n"
+	".global probe_rep_step_insn\n"
+	"probe_rep_step_insn:\n"
+	"	repe cmpsb\n"
+	".global probe_rep_step_end\n"
+	"probe_rep_step_end:\n"
+	"	xorl %ecx, %ecx\n"
+	".global probe_rep_zero_insn\n"
+	"probe_rep_zero_insn:\n"
+	"	rep stosb\n"
+	".global probe_rep_zero_end\n"
+	"probe_rep_zero_end:\n"
+	"	ret\n"
 	/* The traced child: known x87, SSE and general register state, then
 	 * #UD for the tracer's stop. The tracer resumes it at
 	 * probe_traced_resume, which exits with RBX's low byte. */
@@ -252,6 +269,7 @@ constexpr unsigned siginfo_address_offset = 16;
 /* struct user_regs_struct and struct user. */
 constexpr unsigned user_regs_words = 27;
 constexpr unsigned user_bx = 5;
+constexpr unsigned user_cx = 11;
 constexpr unsigned user_ax = 10;
 constexpr unsigned user_orig_ax = 15;
 constexpr unsigned user_ip = 16;
@@ -426,6 +444,27 @@ __asm__(".text\n"
 	"	movw %ax, %gs\n"
 	"	movl %gs:0, %eax\n"
 	"	ret\n"
+	".global probe_rep_step\n"
+	"probe_rep_step:\n"
+	"	pushl %esi\n"
+	"	pushl %edi\n"
+	"	movl 12(%esp), %esi\n"
+	"	movl 16(%esp), %edi\n"
+	"	movl $5, %ecx\n"
+	".global probe_rep_step_insn\n"
+	"probe_rep_step_insn:\n"
+	"	repe cmpsb\n"
+	".global probe_rep_step_end\n"
+	"probe_rep_step_end:\n"
+	"	xorl %ecx, %ecx\n"
+	".global probe_rep_zero_insn\n"
+	"probe_rep_zero_insn:\n"
+	"	rep stosb\n"
+	".global probe_rep_zero_end\n"
+	"probe_rep_zero_end:\n"
+	"	popl %edi\n"
+	"	popl %esi\n"
+	"	ret\n"
 	/* (tls_entry), which the tracer reads from ESI. */
 	".global probe_traced\n"
 	"probe_traced:\n"
@@ -463,6 +502,7 @@ constexpr unsigned siginfo_address_offset = 12;
 constexpr unsigned user_regs_words = 17;
 constexpr unsigned user_bx = 0;
 constexpr unsigned user_si = 3;
+constexpr unsigned user_cx = 1;
 constexpr unsigned user_ax = 6;
 constexpr unsigned user_orig_ax = 11;
 constexpr unsigned user_ip = 12;
@@ -1643,6 +1683,98 @@ bool tls_entries()
 }
 #endif
 
+extern "C" void probe_rep_step(const void *left, const void *right);
+extern "C" char probe_rep_step_insn[];
+extern "C" char probe_rep_step_end[];
+extern "C" char probe_rep_zero_insn[];
+extern "C" char probe_rep_zero_end[];
+
+const unsigned char rep_left[5] = {1, 2, 3, 4, 5};
+const unsigned char rep_right[5] = {1, 2, 9, 4, 5};
+
+struct StepStop {
+	word ip;
+	word cx;
+	bool resume_flag;
+};
+
+/* Steps the child until it leaves the instruction at `insn`, which it
+ * must be at, and checks each stop against `expected`. */
+bool steps_through(long child, word insn, const StepStop *expected,
+		   unsigned count)
+{
+	bool ok = true;
+	for (unsigned index = 0; ok && index < count; ++index) {
+		ok = ptrace(ptrace_singlestep, child, 0, nullptr) == 0 &&
+		     stopped_with(child, sigtrap, "single-step");
+		word regs[user_regs_words] = {};
+		ok = ok && ptrace(ptrace_getregs, child, 0, regs) == 0;
+		ok = ok && expect("ip after a step", regs[user_ip],
+				  expected[index].ip);
+		ok = ok && expect("cx after a step", regs[user_cx],
+				  expected[index].cx);
+		ok = ok && expect("RF after a step",
+				  (regs[user_flags] & flag_rf) != 0,
+				  expected[index].resume_flag);
+		if (!ok) {
+			put("  at step ");
+			put_decimal(index + 1);
+			put(" of the instruction at ");
+			put_hex(insn);
+			put("\n");
+		}
+	}
+	return ok;
+}
+
+/* A single step of a repeated string instruction runs one iteration and
+ * traps with RIP still naming the instruction and RF set, until an
+ * iteration ends it; one with a zero count steps over once. */
+bool tracer_steps_repeats()
+{
+	const long child = raw_syscall(nr_fork);
+	if (child == 0) {
+		raw_syscall(nr_ptrace, ptrace_traceme, 0, 0, 0);
+		raw_syscall(nr_kill, raw_syscall(nr_getpid), sigstop);
+		probe_rep_step(rep_left, rep_right);
+		raw_syscall(nr_exit_group, 0);
+	}
+	if (child < 0) {
+		put("  fork failed\n");
+		return false;
+	}
+	bool ok = stopped_with(child, sigstop, "SIGSTOP");
+	const word insn = address_of(probe_rep_step_insn);
+	/* Up to the REPE CMPSB, a few instructions of the child's own. */
+	for (int steps = 0; ok; ++steps) {
+		word regs[user_regs_words] = {};
+		ok = ptrace(ptrace_getregs, child, 0, regs) == 0;
+		if (!ok || regs[user_ip] == insn)
+			break;
+		ok = steps < 1000 &&
+		     ptrace(ptrace_singlestep, child, 0, nullptr) == 0 &&
+		     stopped_with(child, sigtrap, "single-step");
+	}
+	const StepStop compare[] = {
+		{insn, 4, true},
+		{insn, 3, true},
+		{address_of(probe_rep_step_end), 2, false},
+	};
+	ok = ok && steps_through(child, insn, compare, 3);
+	const StepStop clear[] = {{address_of(probe_rep_zero_insn), 0, false}};
+	ok = ok && steps_through(child, address_of(probe_rep_step_end), clear, 1);
+	const StepStop none[] = {{address_of(probe_rep_zero_end), 0, false}};
+	ok = ok && steps_through(child, address_of(probe_rep_zero_insn), none, 1);
+	int status = 0;
+	if (!ok || ptrace(ptrace_cont, child, 0, nullptr) != 0 ||
+	    wait_for(child, status) != child) {
+		raw_syscall(nr_kill, child, sigkill);
+		wait_for(child, status);
+		return false;
+	}
+	return expect("child exit status", static_cast<u32>(status), 0);
+}
+
 #if defined(__x86_64__)
 /* Runs `path mode` and reports whether it exited 0. */
 bool in_child(const char *path, const char *mode)
@@ -1736,6 +1868,10 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(i386_probe, "int-n"));
 	report("x86-64 a non-canonical address raises #GP or #SS",
 	       in_child(self, "noncanonical"));
+	report("x86-64 a single step runs one iteration of a REP string",
+	       in_child(self, "tracer-step"));
+	report("i386 a single step runs one iteration of a REP string",
+	       in_child(i386_probe, "tracer-step"));
 	return failures;
 }
 #endif
@@ -1774,6 +1910,8 @@ extern "C" int probe_main(word *stack)
 			return tracer_debug_registers() ? 0 : 1;
 		if (equal(mode, "int-n"))
 			return int_n_faults() ? 0 : 1;
+		if (equal(mode, "tracer-step"))
+			return tracer_steps_repeats() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;

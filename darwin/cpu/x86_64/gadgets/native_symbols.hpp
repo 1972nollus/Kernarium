@@ -124,7 +124,8 @@ void uml_x86_64_gadget_x87_sine();
 void uml_x86_64_gadget_x87_cosine();
 
 #define UML_X86_DECLARE_STRING_WIDTH(operation, width) \
-	void uml_x86_64_gadget_string_##operation##_##width();
+	void uml_x86_64_gadget_string_##operation##_##width(); \
+	void uml_x86_64_gadget_string_##operation##_##width##_step();
 #define UML_X86_DECLARE_STRING(operation) \
 	UML_X86_DECLARE_STRING_WIDTH(operation, 8) \
 	UML_X86_DECLARE_STRING_WIDTH(operation, 16) \
