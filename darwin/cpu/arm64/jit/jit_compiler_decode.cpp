@@ -201,9 +201,12 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     /*
      * The virtual CPU implements no FEAT_MTE. Resolve the tag-immediate
      * (ADDG, SUBG) and tag-memory allocations as undefined before the
-     * ordinary immediate-arithmetic and load/store decoders see them.
+     * ordinary immediate-arithmetic and load/store decoders see them. The
+     * FEAT_CSSC min/max immediates share the tag-immediate class's major
+     * encoding and keep their own decoder.
      */
-    if ((instruction & 0x1f80'0000U) == 0x1180'0000U ||
+    if (((instruction & 0x1f80'0000U) == 0x1180'0000U &&
+         (instruction & 0x7ff0'0000U) != 0x11c0'0000U) ||
         (instruction & 0xff20'0000U) == 0xd920'0000U) {
       store_pc(pc);
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
@@ -447,8 +450,6 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::keep_going;
     }
     if ((instruction & 0x7ff0'0000U) == 0x11c0'0000U) {
-      if (!host_capabilities().cssc)
-        return Action::unsupported;
       emit_integer_min_max(instruction, true);
       return Action::keep_going;
     }
@@ -569,8 +570,6 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::keep_going;
     }
     if ((instruction & 0x7fe0'f000U) == 0x1ac0'6000U) {
-      if (!host_capabilities().cssc)
-        return Action::unsupported;
       emit_integer_min_max(instruction, false);
       return Action::keep_going;
     }
@@ -622,7 +621,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;
       }
-      emit_native_unary(instruction);
+      emit_bit_reverse_count(instruction);
       return Action::keep_going;
     }
     /*
