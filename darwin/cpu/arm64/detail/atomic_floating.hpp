@@ -91,9 +91,9 @@ struct BFloatValue final {
 	std::uint32_t fpcr) noexcept
 {
 	/* MemAtomicFP disables every FP trap and forces DN. It also clears AH and
-	 * ORs FIZ into FZ, but both are RES0 without FEAT_AFP. The caller
-	 * separately preserves FPSR so none of the operation's cumulative flags
-	 * escape.
+	 * ORs FIZ into FZ, but the virtual CPU omits FEAT_AFP, so AH and FIZ are
+	 * RES0. The caller separately preserves FPSR so none of the operation's
+	 * cumulative flags escape.
 	 */
 	return (fpcr & ~0x0000'9f00U) | (1U << 25);
 }

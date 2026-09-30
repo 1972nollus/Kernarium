@@ -73,7 +73,8 @@ template<Encoding Integer>
 		(value & fraction_mask<Integer>) != 0U;
 }
 
-/* FPDefaultNaN. Without FEAT_AFP, FPCR.AH is RES0 and the sign is clear. */
+/* FPDefaultNaN. The virtual CPU omits FEAT_AFP, so FPCR.AH is RES0 and the
+ * sign is clear. */
 template<Encoding Integer>
 [[nodiscard]] constexpr Integer default_nan() noexcept
 {
