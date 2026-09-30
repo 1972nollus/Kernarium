@@ -368,7 +368,8 @@ signal from another CPU interrupts show RF while trap frames do not, and that
 TF set by IRET traps after one instruction.
 `tests/integration/x86_64/run_guest_x86_64_exceptions.py` builds and runs its
 exception probe the same way and checks, for both ABIs, that a 1 ms interval
-timer keeps firing through long REP STOSB and REPE CMPSB loops.
+timer keeps firing through long REP STOSB and REPE CMPSB loops and that ICEBP,
+and i386 BOUND, deliver Linux's signals.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session

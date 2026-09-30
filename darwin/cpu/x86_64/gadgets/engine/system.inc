@@ -32,6 +32,16 @@ gadget breakpoint
 	mov w0, #UML_X86_64_EVENT_BREAKPOINT
 	b uml_x86_64_gadget_leave
 
+/* ICEBP (INT1) raises #DB as a trap: it retires, and RIP names the next
+ * instruction. */
+gadget icebp
+	ldr x8, [_stream]
+	str x8, [_cpu, #UML_X86_64_CPU_RIP]
+	add _executed, _executed, #1
+	x86_memory_order_boundary
+	mov w0, #UML_X86_64_EVENT_DEBUG_TRAP
+	b uml_x86_64_gadget_leave
+
 gadget cpuid
 	ldr w5, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	ldr w10, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* Freestanding x86-64 and i386 Linux guest probe: what the x86_64-userspace
- * slice delivers for x86 exceptions and interrupts, against native Linux x86.
+ * slice delivers for x86 exceptions and interrupts, against native Linux
+ * x86.
  *
  * A repeated string instruction retires once however long it runs, and the
  * kernel services its timer only when the engine returns to it, so a loop of
@@ -73,7 +74,23 @@ __asm__(".text\n"
 	"	movq %rdx, %rcx\n"
 	"	repe cmpsb\n"
 	"	movq %rcx, %rax\n"
+	"	ret\n"
+	/* ICEBP traps after itself. */
+	".global probe_icebp\n"
+	"probe_icebp:\n"
+	"	.byte 0xf1\n"
+	".global probe_icebp_end\n"
+	"probe_icebp_end:\n"
 	"	ret\n");
+
+/* uc_mcontext: uc_flags, uc_link and a 24-byte stack_t, then r8-r15, rdi,
+ * rsi, rbp, rbx, rdx, rax, rcx, rsp, rip, eflags, csgsfs, err and trapno. */
+constexpr unsigned frame_ip_offset = 40 + 16 * 8;
+constexpr unsigned frame_flags_offset = 40 + 17 * 8;
+constexpr unsigned frame_error_offset = 40 + 19 * 8;
+constexpr unsigned frame_trapno_offset = 40 + 20 * 8;
+constexpr unsigned siginfo_address_offset = 16;
+
 #elif defined(__i386__)
 constexpr long nr_write = 4;
 constexpr long nr_setitimer = 104;
@@ -133,14 +150,58 @@ __asm__(".text\n"
 	"	movl %ecx, %eax\n"
 	"	popl %edi\n"
 	"	popl %esi\n"
+	"	ret\n"
+	".global probe_icebp\n"
+	"probe_icebp:\n"
+	"	.byte 0xf1\n"
+	".global probe_icebp_end\n"
+	"probe_icebp_end:\n"
+	"	ret\n"
+	/* BOUND EAX, [EDX] and BOUND AX, [EDX]: (index, bounds). */
+	".global probe_bound32\n"
+	"probe_bound32:\n"
+	"	movl 4(%esp), %eax\n"
+	"	movl 8(%esp), %edx\n"
+	".global probe_bound32_insn\n"
+	"probe_bound32_insn:\n"
+	"	.byte 0x62, 0x02\n"
+	".global probe_bound32_end\n"
+	"probe_bound32_end:\n"
+	"	ret\n"
+	".global probe_bound16\n"
+	"probe_bound16:\n"
+	"	movl 4(%esp), %eax\n"
+	"	movl 8(%esp), %edx\n"
+	".global probe_bound16_insn\n"
+	"probe_bound16_insn:\n"
+	"	.byte 0x66, 0x62, 0x02\n"
+	".global probe_bound16_end\n"
+	"probe_bound16_end:\n"
 	"	ret\n");
+
+/* uc_mcontext: uc_flags, uc_link and a 12-byte stack_t, then gs, fs, es, ds,
+ * edi, esi, ebp, esp, ebx, edx, ecx, eax, trapno, err, eip, cs and eflags. */
+constexpr unsigned frame_trapno_offset = 20 + 12 * 4;
+constexpr unsigned frame_error_offset = 20 + 13 * 4;
+constexpr unsigned frame_ip_offset = 20 + 14 * 4;
+constexpr unsigned frame_flags_offset = 20 + 16 * 4;
+constexpr unsigned siginfo_address_offset = 12;
+
 #else
 #error "the exception probe is an x86-64 or i386 program"
 #endif
 
 constexpr word sa_siginfo = 4;
 constexpr word sa_restorer = 0x04000000;
+constexpr long sigill = 4;
+constexpr long sigtrap = 5;
+constexpr long sigsegv = 11;
 constexpr long sigalrm = 14;
+constexpr long trap_brkpt = 1;
+#if defined(__i386__)
+constexpr long si_kernel = 0x80;
+#endif
+constexpr word flag_rf = 1UL << 16;
 
 struct KernelSigaction {
 	word handler;
@@ -181,6 +242,20 @@ void put_decimal(u64 value)
 	put(text + position);
 }
 
+void put_hex(u64 value)
+{
+	char text[19];
+	int position = 18;
+	text[position] = '\0';
+	do {
+		text[--position] = "0123456789abcdef"[value & 15];
+		value >>= 4;
+	} while (value != 0);
+	text[--position] = 'x';
+	text[--position] = '0';
+	put(text + position);
+}
+
 bool equal(const char *left, const char *right)
 {
 	while (*left != '\0' && *left == *right) {
@@ -188,6 +263,21 @@ bool equal(const char *left, const char *right)
 		++right;
 	}
 	return *left == *right;
+}
+
+/* Prints a mismatch and returns whether there was none. */
+bool expect(const char *what, u64 actual, u64 expected)
+{
+	if (actual == expected)
+		return true;
+	put("  ");
+	put(what);
+	put(" is ");
+	put_hex(actual);
+	put(", expected ");
+	put_hex(expected);
+	put("\n");
+	return false;
 }
 
 extern "C" void probe_restorer();
@@ -294,6 +384,190 @@ void repeat_cmps()
 		cmps_left_over = probe_cmps(cmps_left, cmps_right, cmps_bytes);
 }
 
+/* What the last synchronous signal showed its handler. */
+enum Observed {
+	observed_count,
+	observed_signal,
+	observed_code,
+	observed_address,
+	observed_ip,
+	observed_flags,
+	observed_trapno,
+	observed_error,
+	observed_fields,
+};
+
+volatile word observed[observed_fields];
+/* Where the handler resumes the task, so an unexpected fault cannot repeat. */
+volatile word resume_ip;
+
+word &frame_word(void *context, unsigned offset)
+{
+	return *reinterpret_cast<word *>(static_cast<unsigned char *>(context) +
+					 offset);
+}
+
+void record_fault(int signal, void *info, void *context)
+{
+	const auto *details = static_cast<const unsigned char *>(info);
+	observed[observed_count] = observed[observed_count] + 1;
+	observed[observed_signal] = static_cast<word>(signal);
+	observed[observed_code] =
+		static_cast<word>(*reinterpret_cast<const int *>(details + 8));
+	observed[observed_address] = *reinterpret_cast<const word *>(
+		details + siginfo_address_offset);
+	observed[observed_ip] = frame_word(context, frame_ip_offset);
+	observed[observed_flags] = frame_word(context, frame_flags_offset);
+	observed[observed_trapno] = frame_word(context, frame_trapno_offset);
+	observed[observed_error] = frame_word(context, frame_error_offset);
+	if (resume_ip != 0)
+		frame_word(context, frame_ip_offset) = resume_ip;
+}
+
+bool install_fault_handlers()
+{
+	if (install(sigill, record_fault) && install(sigtrap, record_fault) &&
+	    install(sigsegv, record_fault))
+		return true;
+	put("  rt_sigaction failed\n");
+	return false;
+}
+
+struct Delivery {
+	long signal;
+	long code;
+	word address;
+	word ip;
+	word trapno;
+	bool resume_flag;
+};
+
+/* Runs `work`, resuming after `end` if it faults, and checks that it raised
+ * exactly `expected`. */
+bool delivers(const char *what, void (*work)(), word end,
+	      const Delivery &expected)
+{
+	for (unsigned index = 0; index < observed_fields; ++index)
+		observed[index] = 0;
+	resume_ip = end;
+	work();
+	resume_ip = 0;
+	if (observed[observed_count] != 1) {
+		put("  ");
+		put(what);
+		put(" raised ");
+		put_decimal(observed[observed_count]);
+		put(" signals, the last ");
+		put_decimal(observed[observed_signal]);
+		put(" code ");
+		put_hex(observed[observed_code]);
+		put("\n");
+		return false;
+	}
+	bool ok = expect("signal", observed[observed_signal],
+			 static_cast<word>(expected.signal));
+	ok &= expect("si_code", observed[observed_code],
+		     static_cast<word>(expected.code));
+	ok &= expect("si_addr", observed[observed_address], expected.address);
+	ok &= expect("frame ip", observed[observed_ip], expected.ip);
+	ok &= expect("trapno", observed[observed_trapno], expected.trapno);
+	ok &= expect("err", observed[observed_error], 0);
+	ok &= expect("RF", (observed[observed_flags] & flag_rf) != 0,
+		     expected.resume_flag);
+	if (!ok) {
+		put("  in ");
+		put(what);
+		put("\n");
+	}
+	return ok;
+}
+
+extern "C" void probe_icebp();
+extern "C" char probe_icebp_end[];
+
+word address_of(const char *label)
+{
+	return reinterpret_cast<word>(label);
+}
+
+/* ICEBP (INT1) raises #DB as a trap: SIGTRAP with TRAP_BRKPT, naming the
+ * next instruction. */
+bool icebp_traps()
+{
+	const word end = address_of(probe_icebp_end);
+	return install_fault_handlers() &&
+	       delivers("ICEBP", probe_icebp, end,
+			{sigtrap, trap_brkpt, end, end, 1, false});
+}
+
+#if defined(__i386__)
+/* Runs `work`, resuming after `end` if it faults, and checks that it raised
+ * nothing. */
+bool delivers_nothing(const char *what, void (*work)(), word end)
+{
+	observed[observed_count] = 0;
+	resume_ip = end;
+	work();
+	resume_ip = 0;
+	if (observed[observed_count] == 0)
+		return true;
+	put("  ");
+	put(what);
+	put(" raised signal ");
+	put_decimal(observed[observed_signal]);
+	put("\n");
+	return false;
+}
+
+extern "C" void probe_bound32(word index, const void *bounds);
+extern "C" char probe_bound32_insn[];
+extern "C" char probe_bound32_end[];
+extern "C" void probe_bound16(word index, const void *bounds);
+extern "C" char probe_bound16_insn[];
+extern "C" char probe_bound16_end[];
+
+const int bounds32[2] = {-2, 5};
+const short bounds16[2] = {-2, 5};
+volatile word bound_index;
+
+void bound32() { probe_bound32(bound_index, bounds32); }
+void bound16() { probe_bound16(bound_index, bounds16); }
+
+/* BOUND compares a signed index with an inclusive pair of bounds and raises
+ * #BR, a fault, outside them: SIGSEGV with SI_KERNEL at the instruction. */
+bool bound_checks()
+{
+	if (!install_fault_handlers())
+		return false;
+	const word insn32 = address_of(probe_bound32_insn);
+	const word end32 = address_of(probe_bound32_end);
+	const word insn16 = address_of(probe_bound16_insn);
+	const word end16 = address_of(probe_bound16_end);
+	bool ok = true;
+	const long inside[] = {-2, 0, 5};
+	for (const long index : inside) {
+		bound_index = static_cast<word>(index);
+		ok &= delivers_nothing("BOUND r32 in range", bound32, end32);
+		ok &= delivers_nothing("BOUND r16 in range", bound16, end16);
+	}
+	/* 0x7fff is 32767 to the 16-bit form, above its bounds; 0x10000 is
+	 * zero to it, within them. */
+	const long outside32[] = {-3, 6, 0x7fff};
+	for (const long index : outside32) {
+		bound_index = static_cast<word>(index);
+		ok &= delivers("BOUND r32 out of range", bound32, end32,
+			       {sigsegv, si_kernel, 0, insn32, 5, true});
+	}
+	bound_index = 0x7fff;
+	ok &= delivers("BOUND r16 out of range", bound16, end16,
+		       {sigsegv, si_kernel, 0, insn16, 5, true});
+	bound_index = 0x10000;
+	ok &= delivers_nothing("BOUND r16 of a truncated index", bound16,
+			       end16);
+	return ok;
+}
+#endif
+
 #if defined(__x86_64__)
 long wait_for(long pid, int &status)
 {
@@ -344,6 +618,12 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(i386_probe, "timer-stos"));
 	report("i386 a 1 ms timer fires during long REPE CMPSB",
 	       in_child(i386_probe, "timer-cmps"));
+	report("x86-64 ICEBP delivers SIGTRAP TRAP_BRKPT after itself",
+	       in_child(self, "icebp"));
+	report("i386 ICEBP delivers SIGTRAP TRAP_BRKPT after itself",
+	       in_child(i386_probe, "icebp"));
+	report("i386 BOUND passes in range and raises #BR outside it",
+	       in_child(i386_probe, "bound"));
 	return failures;
 }
 #endif
@@ -354,15 +634,24 @@ extern "C" int probe_main(word *stack)
 {
 	const long count = static_cast<long>(stack[0]);
 	char **arguments = reinterpret_cast<char **>(stack + 1);
-	if (count == 2 && equal(arguments[1], "idle"))
-		return 0;
-	if (count == 2 && equal(arguments[1], "timer-stos"))
-		return timer_ticks_during("REP STOSB", repeat_stos) ? 0 : 1;
-	if (count == 2 && equal(arguments[1], "timer-cmps"))
-		return timer_ticks_during("REPE CMPSB", repeat_cmps) ? 0 : 1;
-#if defined(__x86_64__)
-	if (count == 2)
+	if (count == 2) {
+		const char *mode = arguments[1];
+		if (equal(mode, "idle"))
+			return 0;
+		if (equal(mode, "timer-stos"))
+			return timer_ticks_during("REP STOSB", repeat_stos) ? 0 : 1;
+		if (equal(mode, "timer-cmps"))
+			return timer_ticks_during("REPE CMPSB", repeat_cmps) ? 0 : 1;
+		if (equal(mode, "icebp"))
+			return icebp_traps() ? 0 : 1;
+#if defined(__i386__)
+		if (equal(mode, "bound"))
+			return bound_checks() ? 0 : 1;
+#else
 		return run_all(arguments[0], arguments[1]);
+#endif
+	}
+#if defined(__x86_64__)
 	put("usage: exception-probe I386_PROBE\n");
 #endif
 	return 100;

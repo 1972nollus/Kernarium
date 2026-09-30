@@ -2690,7 +2690,7 @@ index bcb5f2d9ca82d9bb8ff67340478400ba6e2ca01e..300039328b3b4a426d8baa6f2eaebe45
  
  		ret = (*table[syscall])(UPT_SYSCALL_ARG1(&regs->regs),
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 0aba40dac51992b04acad8cc230442a202e82d3e..398ff0418a2f58bd716f46cce2d01bec5627f34b 100644
+index b2af3c73db9ff2ad7c1e6a6de2e4c96a2c56b4fd..70c44221751c5fa4ffeba62ec4edfa04cfdf861f 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
 @@ -364,6 +364,10 @@ void userspace(struct uml_pt_regs *registers)

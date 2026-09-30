@@ -78,6 +78,8 @@
 #define UML_X86_64_EVENT_OVERFLOW 9
 #define UML_X86_64_EVENT_GENERAL_PROTECTION 10
 #define UML_X86_64_EVENT_TRAP_FLAG 11
+#define UML_X86_64_EVENT_DEBUG_TRAP 12
+#define UML_X86_64_EVENT_BOUND_RANGE 13
 /* Not an EngineEvent: a repeated string instruction spent its repeat budget
  * and stopped between elements, with RIP still naming it. `execute` reports
  * it as continued and sets ExecuteResult::repeat_yielded. */

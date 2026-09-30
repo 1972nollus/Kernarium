@@ -346,8 +346,10 @@ Guest debuggers depend on two kernel/host contracts. To single-step a task,
 Linux sets the architectural step bit in the entry registers (arm64 PSTATE.SS,
 x86 RFLAGS.TF). Every engine then retires exactly one instruction and reports a
 single-step exit. The runtime returns that exit as a breakpoint event with trap
-number 0x32 (arm64 software step) or 1 (x86 `#DB`), and Linux delivers
-`SIGTRAP`/`TRAP_TRACE`. A stepped instruction that exits on its own, such as a
+number 0x32 (arm64 software step) or 1 (x86 `#DB`, whose error code carries
+DR6 with its single-step bit BS set), and Linux delivers `SIGTRAP`/`TRAP_TRACE`.
+x86 ICEBP raises `#DB` after itself with BS clear, which Linux delivers as
+`TRAP_BRKPT`. A stepped instruction that exits on its own, such as a
 system call, breakpoint or fault, reports that exit instead. A `popf` or `iret`
 that sets RFLAGS.TF leaves the x86 program at the next instruction, and the
 runtime retires exactly that instruction before it reports the step, as native

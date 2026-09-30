@@ -12,9 +12,9 @@ return, so ptrace and signal frames observe the task's own value. As in
 x86's is_setting_trap_flag(), a stepped POPF or IRET writes TF itself,
 so the kernel leaves the value that instruction produced.
 ---
- arch/arm64/um/ptrace.c           | 39 ++++++++++++++++++++++++++++++++
- arch/um/os-Darwin/skas/process.c | 39 ++++++++++++++++++++++++++++++--
- 2 files changed, 76 insertions(+), 2 deletions(-)
+ arch/arm64/um/ptrace.c           | 39 +++++++++++++++++++++++++
+ arch/um/os-Darwin/skas/process.c | 49 ++++++++++++++++++++++++++++++--
+ 2 files changed, 86 insertions(+), 2 deletions(-)
 
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
 index e561801a0afa78700dfd700cbe38e738f007d0bb..d08910007e3c803464902da8fa1d19a367587085 100644
@@ -67,10 +67,10 @@ index e561801a0afa78700dfd700cbe38e738f007d0bb..d08910007e3c803464902da8fa1d19a3
  {
  	struct user_regs_struct regs;
 diff --git a/arch/um/os-Darwin/skas/process.c b/arch/um/os-Darwin/skas/process.c
-index 398ff0418a2f58bd716f46cce2d01bec5627f34b..f657f29037b4d7cb823d76bd1de68ebddf2c2e11 100644
+index 70c44221751c5fa4ffeba62ec4edfa04cfdf861f..275d8cd59996b5883e9c172ab7ae8a6342110add 100644
 --- a/arch/um/os-Darwin/skas/process.c
 +++ b/arch/um/os-Darwin/skas/process.c
-@@ -72,6 +72,32 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
+@@ -72,6 +72,34 @@ _Static_assert(UML_ARM64_FAULT_PAGE == DARWIN_UML_FAULT_PAGE,
   * valid_user_regs() does, so saved, traced and signal-frame registers never
   * carry it.  Returns whether the bit was set for this entry.
   */
@@ -81,6 +81,8 @@ index 398ff0418a2f58bd716f46cce2d01bec5627f34b..f657f29037b4d7cb823d76bd1de68ebd
 + * so ptrace and signal frames observe the task's own value.
 + */
 +#define DARWIN_GUEST_RFLAGS_TF (1UL << 8)
++/* DR6.BS: the #DB is a single step rather than ICEBP. */
++#define DARWIN_GUEST_DR6_BS (1UL << 14)
 +
 +extern int uml_x86_64_step_sets_trap_flag(const struct uml_pt_regs *regs);
 +
@@ -103,7 +105,7 @@ index 398ff0418a2f58bd716f46cce2d01bec5627f34b..f657f29037b4d7cb823d76bd1de68ebd
  static int begin_guest_step(struct uml_pt_regs *regs)
  {
  	if (!singlestepping())
-@@ -85,6 +111,7 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
+@@ -85,6 +113,7 @@ static void end_guest_step(struct uml_pt_regs *regs, int stepping)
  	if (stepping)
  		UPT_PSTATE(regs) &= ~DARWIN_GUEST_PSTATE_SS;
  }
@@ -111,12 +113,16 @@ index 398ff0418a2f58bd716f46cce2d01bec5627f34b..f657f29037b4d7cb823d76bd1de68ebd
  
  static pthread_mutex_t shutdown_lock = PTHREAD_MUTEX_INITIALIZER;
  static pthread_cond_t shutdown_condition = PTHREAD_COND_INITIALIZER;
-@@ -578,16 +605,24 @@ void userspace(struct uml_pt_regs *registers)
+@@ -578,16 +607,32 @@ void userspace(struct uml_pt_regs *registers)
  		case DARWIN_UML_EVENT_BREAKPOINT:
  		{
  			siginfo_t signal_info = { 0 };
 -
-+#ifndef CONFIG_UML_X86_64_USERSPACE_ONLY
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++			/* The host reports a #DB's DR6 as its error code. */
++			unsigned long debug_status =
++				(unsigned long)registers->faultinfo.error_code;
++#else
  			/* A completed single step is the software-step exception,
  			 * which native arm64 reports as TRAP_TRACE at the next PC. */
  			int stepped = registers->faultinfo.trap_no ==
@@ -128,11 +134,15 @@ index 398ff0418a2f58bd716f46cce2d01bec5627f34b..f657f29037b4d7cb823d76bd1de68ebd
  #ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
 -			if (registers->faultinfo.trap_no == 4) {
 +			if (registers->faultinfo.trap_no == 1) {
-+				/* #DB after a TF single step.  Native Linux reports
-+				 * TRAP_TRACE at the next instruction. */
++				/* #DB after an instruction.  As on native Linux, DR6.BS
++				 * marks a TF single step, reported as TRAP_TRACE, and
++				 * ICEBP leaves DR6 clear and gets TRAP_BRKPT; both name
++				 * the next instruction. */
 +				signal_info.si_signo = SIGTRAP;
 +				signal_info.si_errno = 0;
-+				signal_info.si_code = TRAP_TRACE;
++				signal_info.si_code =
++					debug_status & DARWIN_GUEST_DR6_BS ?
++					TRAP_TRACE : TRAP_BRKPT;
 +				signal_info.si_addr = (void *)UPT_IP(registers);
 +			} else if (registers->faultinfo.trap_no == 4) {
  				/* INTO is the x86 #OF trap.  Native Linux delivers it as

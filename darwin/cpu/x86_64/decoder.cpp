@@ -2910,6 +2910,19 @@ private:
 		case 0x3c: return decode_accumulator_immediate(instruction,
 			Operation::compare, OperandWidth::byte);
 		case 0x3d: return decode_accumulator_immediate(instruction, Operation::compare, width);
+		case 0x62: {
+			/* BOUND exists only outside 64-bit mode. With a register
+			 * operand the byte starts an EVEX prefix, which this CPU does
+			 * not offer. */
+			if (prefixes_.mode != ExecutionMode::compat32)
+				return false;
+			std::uint8_t modrm{};
+			if (!read(modrm) || (modrm >> 6U) == 3U)
+				return false;
+			instruction.operation = Operation::bound;
+			instruction.destination = reg_field(modrm, width);
+			return rm_operand(modrm, width, instruction.source);
+		}
 		case 0x63: {
 			std::uint8_t modrm{};
 			if (!read(modrm))
@@ -3175,6 +3188,9 @@ private:
 			instruction.vector_control = address_16(prefixes_) ? 2U :
 				address_32(prefixes_) ? 1U : 0U;
 			return true;
+		case 0xf1:
+			instruction.operation = Operation::debug_trap;
+			return true;
 		case 0xf5:
 			instruction.operation = Operation::carry_complement;
 			return true;
@@ -3245,6 +3261,7 @@ bool Instruction::terminal() const noexcept
 	case Operation::interrupt_ret:
 	case Operation::system_call:
 	case Operation::breakpoint:
+	case Operation::debug_trap:
 	case Operation::privileged:
 		return true;
 	default:

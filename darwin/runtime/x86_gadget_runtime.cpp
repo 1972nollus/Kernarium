@@ -279,6 +279,14 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			result.reason = ::uml::cpu::ExitReason::breakpoint;
 			result.syndrome = 13;
 			return run;
+		case ::uml::cpu::EngineEvent::debug_trap:
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			result.syndrome = 1;
+			return run;
+		case ::uml::cpu::EngineEvent::bound_range:
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			result.syndrome = 5;
+			return run;
 		case ::uml::cpu::EngineEvent::floating_point_trap:
 			result.reason = ::uml::cpu::ExitReason::floating_point_trap;
 			return run;

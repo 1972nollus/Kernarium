@@ -4,7 +4,8 @@
 Cross-builds the freestanding exception_probe.cpp for x86-64 and i386, boots an
 x86-64 image on an emulator built with the macos-x86_64 preset, and runs the
 probes there. As on Linux x86, a 1 ms interval timer keeps firing while a task
-runs long repeated string instructions.
+runs long repeated string instructions, and ICEBP and BOUND deliver Linux's
+signals.
 """
 
 from __future__ import annotations
@@ -113,10 +114,10 @@ def main() -> int:
             PROBE_TIMEOUT_SECONDS,
         )
         print(result.output.strip())
-        if result.return_code != 0:
-            raise RuntimeError(
-                f"the exception probe reported {result.return_code} failure(s)"
-            )
+    if result.return_code != 0:
+        raise RuntimeError(
+            f"the exception probe reported {result.return_code} failure(s)"
+        )
     return 0
 
 
