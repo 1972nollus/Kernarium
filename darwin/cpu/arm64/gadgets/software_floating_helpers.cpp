@@ -257,7 +257,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_dot_software(
 				read_bfloat(first, first_pair),
 				read_bfloat(first, first_pair + 1U),
 				read_bfloat(second, second_pair),
-				read_bfloat(second, second_pair + 1U), cpu->fpcr),
+				read_bfloat(second, second_pair + 1U)),
 			std::span{result}.subspan(lane * 4U, 4U));
 	}
 	destination.bytes = result;
@@ -276,7 +276,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_bfloat_matrix_software(
 	const auto right = vector(32U).bytes;
 	destination.bytes =
 		uml::cpu::arm64::detail::bfloat_matrix_multiply_add(
-			addends, left, right, cpu->fpcr);
+			addends, left, right);
 }
 
 extern "C" [[gnu::noinline]] void uml_arm64_half_fused_long_software(

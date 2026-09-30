@@ -20,7 +20,7 @@ namespace uml::cpu::arm64::detail {
 [[nodiscard]] inline std::array<std::byte, 16> bfloat_matrix_multiply_add(
 	const std::array<std::byte, 16> &addends,
 	const std::array<std::byte, 16> &left,
-	const std::array<std::byte, 16> &right, std::uint32_t fpcr) noexcept
+	const std::array<std::byte, 16> &right) noexcept
 {
 	const auto read_bfloat = [](const auto &source, unsigned element) {
 		return static_cast<std::uint16_t>(decode_little_endian(
@@ -39,7 +39,7 @@ namespace uml::cpu::arm64::detail {
 					read_bfloat(left, left_element),
 					read_bfloat(left, left_element + 1U),
 					read_bfloat(right, right_element),
-					read_bfloat(right, right_element + 1U), fpcr);
+					read_bfloat(right, right_element + 1U));
 			}
 			encode_little_endian(sum,
 				std::span{result}.subspan(lane * 4U, 4U));
