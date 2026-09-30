@@ -11,8 +11,6 @@
 #include "../detail/bfloat_matrix.hpp"
 #include "../detail/bfloat_multiply.hpp"
 #include "../detail/half_fused_long.hpp"
-#include "../detail/half_dot.hpp"
-#include "../detail/half_matrix.hpp"
 #include "../detail/floating_complex.hpp"
 #include "../detail/floating_arithmetic.hpp"
 #include "../detail/floating_conversion.hpp"
@@ -21,9 +19,7 @@
 #include "../detail/floating_integer_conversion.hpp"
 #include "../detail/floating_reciprocal.hpp"
 #include "../detail/floating_round.hpp"
-#include "../detail/floating_scale.hpp"
 #include "../detail/fp_state_access.hpp"
-#include "../detail/fp8.hpp"
 #include "../detail/instruction_primitives.hpp"
 #include "../detail/integer_multiply.hpp"
 #include "cpu/host_capabilities.hpp"
@@ -522,16 +518,6 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 #undef UML_SIMD_LANE_COUNT
 #undef UML_SIMD_LANE_DIRECTION
 
-[[nodiscard]] bool host_has_sm3() noexcept
-{
-	return host_capabilities().has(ArmFeature::sm3);
-}
-
-[[nodiscard]] bool host_has_sm4() noexcept
-{
-	return host_capabilities().has(ArmFeature::sm4);
-}
-
 [[nodiscard]] bool host_has_sha1() noexcept
 {
 	return host_capabilities().has(ArmFeature::sha1);
@@ -578,49 +564,9 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 	return host_capabilities().has(ArmFeature::i8mm);
 }
 
-[[nodiscard]] bool host_has_lut() noexcept
-{
-	return host_capabilities().has(ArmFeature::lut);
-}
-
 [[nodiscard]] bool host_has_frintts() noexcept
 {
 	return host_capabilities().has(ArmFeature::frintts);
-}
-
-[[nodiscard]] bool host_has_faminmax() noexcept
-{
-	return host_capabilities().has(ArmFeature::faminmax);
-}
-
-[[nodiscard]] bool host_has_fp8() noexcept
-{
-	return host_capabilities().has(ArmFeature::fp8);
-}
-
-[[nodiscard]] bool host_has_fp8dot2() noexcept
-{
-	return host_capabilities().has(ArmFeature::fp8dot2);
-}
-
-[[nodiscard]] bool host_has_fp8dot4() noexcept
-{
-	return host_capabilities().has(ArmFeature::fp8dot4);
-}
-
-[[nodiscard]] bool host_has_fp8fma() noexcept
-{
-	return host_capabilities().has(ArmFeature::fp8fma);
-}
-
-[[nodiscard]] bool host_has_f8f16mm() noexcept
-{
-	return host_capabilities().has(ArmFeature::f8f16mm);
-}
-
-[[nodiscard]] bool host_has_f8f32mm() noexcept
-{
-	return host_capabilities().has(ArmFeature::f8f32mm);
 }
 
 [[nodiscard]] bool host_has_bf16() noexcept
@@ -631,21 +577,6 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 [[nodiscard]] bool host_has_fhm() noexcept
 {
 	return host_capabilities().has(ArmFeature::fhm);
-}
-
-[[nodiscard]] bool host_has_f16mm() noexcept
-{
-	return host_capabilities().has(ArmFeature::f16mm);
-}
-
-[[nodiscard]] bool host_has_f16f32mm() noexcept
-{
-	return host_capabilities().has(ArmFeature::f16f32mm);
-}
-
-[[nodiscard]] bool host_has_f16f32dot() noexcept
-{
-	return host_capabilities().has(ArmFeature::f16f32dot);
 }
 
 using AtomicRegisterGadgets = std::array<Gadget, 4>;
@@ -892,13 +823,10 @@ static_assert(offsetof(CpuState, deferred_fpcr) == 864);
 static_assert(offsetof(CpuState, deferred_fpsr) == 868);
 static_assert(offsetof(CpuState, fp_loaded) == 872);
 static_assert(offsetof(CpuState, fp_dirty) == 873);
-static_assert(offsetof(CpuState, fpmr) == 880);
-static_assert(offsetof(CpuState, gadget_zero) == 888);
-static_assert(offsetof(CpuState, gadget_host_fpcr) == 896);
-static_assert(offsetof(CpuState, gadget_host_fpsr) == 904);
-static_assert(offsetof(CpuState, gadget_fp_active) == 912);
-static_assert(offsetof(CpuState, gadget_indirect_miss) == 920);
-static_assert(offsetof(CpuState, gadget_host_fpmr) == 928);
-static_assert(offsetof(CpuState, gadget_fpmr_active) == 936);
+static_assert(offsetof(CpuState, gadget_zero) == 880);
+static_assert(offsetof(CpuState, gadget_host_fpcr) == 888);
+static_assert(offsetof(CpuState, gadget_host_fpsr) == 896);
+static_assert(offsetof(CpuState, gadget_fp_active) == 904);
+static_assert(offsetof(CpuState, gadget_indirect_miss) == 912);
 
 } // namespace uml::cpu::arm64::gadgets::selection

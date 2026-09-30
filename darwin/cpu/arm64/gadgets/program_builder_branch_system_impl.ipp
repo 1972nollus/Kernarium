@@ -344,8 +344,6 @@ DecodeResult decode_branch_system(DecodeContext &context)
 		   (instruction & 0xffff'ffe0U) == 0xd51b'4400U ||
 		   (instruction & 0xffff'ffe0U) == 0xd53b'4420U ||
 		   (instruction & 0xffff'ffe0U) == 0xd51b'4420U ||
-		   (instruction & 0xffff'ffe0U) == 0xd53b'4440U ||
-		   (instruction & 0xffff'ffe0U) == 0xd51b'4440U ||
 		   (instruction & 0xffff'ffe0U) == 0xd53b'4200U ||
 		   (instruction & 0xffff'ffe0U) == 0xd51b'4200U ||
 		   (instruction & 0xffff'ffe0U) == 0xd53b'e000U ||

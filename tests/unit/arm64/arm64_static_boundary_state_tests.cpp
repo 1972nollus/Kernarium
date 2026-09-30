@@ -46,29 +46,23 @@ int enter(darwin_uml_guest_registers &registers,
 		&registers, &fp, sizeof(fp), generation, &tls);
 }
 
-void fpmr_survives_boundary()
+void fpmr_is_not_guest_state()
 {
+	/* The virtual CPU implements no FEAT_FP8, so an arm64 guest ignores the
+	 * bridge's FPMR slot on entry and reports it as zero. */
 	constexpr unsigned long generation = 200;
 	constexpr std::uint64_t base = 0x50'0000;
-	constexpr std::uint64_t source = 0xffff'ffff'ffff'ffffULL;
-	constexpr std::uint64_t expected = 0x0000'003f'ff7f'c1ffULL;
 	ScratchBacking backing{backing_name, DARWIN_UML_GUEST_PAGE_SIZE};
-	backing.put32(0, 0xd51b'4440U);  // msr fpmr, x0
-	backing.put32(4, 0xd400'0001U);  // svc #0
-	backing.put32(8, 0xd53b'4441U);  // mrs x1, fpmr
-	backing.put32(12, 0xd400'0001U); // svc #0
+	backing.put32(0, 0xd400'0001U); // svc #0
 	JitMapping mapping{generation, base, backing, 1};
 	darwin_uml_guest_registers registers{};
 	darwin_uml_guest_fp_registers fp{};
 	registers.pc = base;
-	registers.x[0] = source;
+	registers.fpmr = 0x0000'003f'ff7f'c1ffULL;
 
 	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
-	require(registers.pc == base + 8);
-	require(registers.fpmr == expected);
-	require(enter(registers, fp, generation) == DARWIN_UML_EVENT_SYSCALL);
-	require(registers.pc == base + 16);
-	require(registers.x[1] == expected);
+	require(registers.pc == base + 4);
+	require(registers.fpmr == 0);
 }
 
 void pstate_and_svcr_survive_boundary()
@@ -182,7 +176,7 @@ void deferred_fp_source_is_materialized_on_linked_target()
 
 int main()
 {
-	fpmr_survives_boundary();
+	fpmr_is_not_guest_state();
 	pstate_and_svcr_survive_boundary();
 	exclusive_monitor_is_cleared_at_boundary();
 	deferred_fp_source_is_refreshed_at_boundary();

@@ -482,19 +482,6 @@ UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmax)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmaxnm)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmin)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fminnm)
-UML_DECLARE_FLOATING_HORIZONTAL_VECTOR(famax_native)
-UML_DECLARE_FLOATING_HORIZONTAL_VECTOR(famin_native)
-void uml_arm64_gadget_floating_horizontal_absolute_software();
-void uml_arm64_gadget_floating_scale_native_4h();
-void uml_arm64_gadget_floating_scale_native_8h();
-void uml_arm64_gadget_floating_scale_native_2s();
-void uml_arm64_gadget_floating_scale_native_4s();
-void uml_arm64_gadget_floating_scale_native_2d();
-void uml_arm64_gadget_floating_scale_software_4h();
-void uml_arm64_gadget_floating_scale_software_8h();
-void uml_arm64_gadget_floating_scale_software_2s();
-void uml_arm64_gadget_floating_scale_software_4s();
-void uml_arm64_gadget_floating_scale_software_2d();
 void uml_arm64_gadget_bfloat_convert_scalar_native();
 void uml_arm64_gadget_bfloat_convert_lower_native();
 void uml_arm64_gadget_bfloat_convert_upper_native();
@@ -545,26 +532,6 @@ UML_DECLARE_HALF_FUSED_LONG_INDEXED(sub, upper, 4s)
 #undef UML_DECLARE_HALF_FUSED_LONG_INDEXED
 #undef UML_DECLARE_HALF_FUSED_LONG_VARIANTS
 void uml_arm64_gadget_half_fused_long_software();
-void uml_arm64_gadget_half_matrix_native_non_widening();
-void uml_arm64_gadget_half_matrix_native_widening();
-void uml_arm64_gadget_half_matrix_software();
-#define UML_DECLARE_HALF_DOT_VARIANTS(name) \
-	void uml_arm64_gadget_half_dot_native_##name();
-UML_DECLARE_HALF_DOT_VARIANTS(vector_2s)
-UML_DECLARE_HALF_DOT_VARIANTS(vector_4s)
-#define UML_DECLARE_HALF_DOT_INDEXED(shape, index) \
-	UML_DECLARE_HALF_DOT_VARIANTS(indexed_##shape##_##index)
-UML_DECLARE_HALF_DOT_INDEXED(2s, 0)
-UML_DECLARE_HALF_DOT_INDEXED(2s, 1)
-UML_DECLARE_HALF_DOT_INDEXED(2s, 2)
-UML_DECLARE_HALF_DOT_INDEXED(2s, 3)
-UML_DECLARE_HALF_DOT_INDEXED(4s, 0)
-UML_DECLARE_HALF_DOT_INDEXED(4s, 1)
-UML_DECLARE_HALF_DOT_INDEXED(4s, 2)
-UML_DECLARE_HALF_DOT_INDEXED(4s, 3)
-#undef UML_DECLARE_HALF_DOT_INDEXED
-#undef UML_DECLARE_HALF_DOT_VARIANTS
-void uml_arm64_gadget_half_dot_software();
 void uml_arm64_gadget_bfloat_multiply_long_native_vector_b();
 void uml_arm64_gadget_bfloat_multiply_long_native_vector_t();
 #define UML_DECLARE_BFLOAT_MULTIPLY_LONG_INDEXED(half, index) \
@@ -770,22 +737,6 @@ UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtzu)
 UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtas)
 UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtau)
 #undef UML_DECLARE_SIMD_FLOATING_TO_INTEGER
-#define UML_DECLARE_FLOATING_TO_SIMD_INTEGER(operation) \
-	void uml_arm64_gadget_floating_to_simd_##operation##_w_h(); \
-	void uml_arm64_gadget_floating_to_simd_##operation##_x_h(); \
-	void uml_arm64_gadget_floating_to_simd_##operation##_x_s(); \
-	void uml_arm64_gadget_floating_to_simd_##operation##_w_d();
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtns)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtnu)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtps)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtpu)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtms)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtmu)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtzs)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtzu)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtas)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtau)
-#undef UML_DECLARE_FLOATING_TO_SIMD_INTEGER
 #define UML_DECLARE_FIXED_TABLE(name) \
 	void uml_arm64_gadget_##name(); \
 	void uml_arm64_gadget_##name##_end();
@@ -842,11 +793,7 @@ void uml_arm64_gadget_integer_to_floating_software_fallback();
 	void uml_arm64_gadget_simd_##operation##_8h(); \
 	void uml_arm64_gadget_simd_##operation##_2s(); \
 	void uml_arm64_gadget_simd_##operation##_4s(); \
-	void uml_arm64_gadget_simd_##operation##_2d(); \
-	void uml_arm64_gadget_simd_cross_##operation##_h_w(); \
-	void uml_arm64_gadget_simd_cross_##operation##_h_x(); \
-	void uml_arm64_gadget_simd_cross_##operation##_s_x(); \
-	void uml_arm64_gadget_simd_cross_##operation##_d_w();
+	void uml_arm64_gadget_simd_##operation##_2d();
 UML_DECLARE_SIMD_INTEGER_TO_FLOATING(scvtf)
 UML_DECLARE_SIMD_INTEGER_TO_FLOATING(ucvtf)
 #undef UML_DECLARE_SIMD_INTEGER_TO_FLOATING
@@ -1039,28 +986,6 @@ UML_DECLARE_SIMD_TABLE(tbl)
 UML_DECLARE_SIMD_TABLE(tbx)
 #undef UML_DECLARE_SIMD_TABLE
 #undef UML_DECLARE_SIMD_TABLE_COUNT
-#define UML_DECLARE_SIMD_LUT_PART(name, part) \
-	void uml_arm64_gadget_simd_lut_native_##name##_##part();
-UML_DECLARE_SIMD_LUT_PART(luti2_b, 0)
-UML_DECLARE_SIMD_LUT_PART(luti2_b, 1)
-UML_DECLARE_SIMD_LUT_PART(luti2_b, 2)
-UML_DECLARE_SIMD_LUT_PART(luti2_b, 3)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 0)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 1)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 2)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 3)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 4)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 5)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 6)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 7)
-UML_DECLARE_SIMD_LUT_PART(luti4_b, 0)
-UML_DECLARE_SIMD_LUT_PART(luti4_b, 1)
-UML_DECLARE_SIMD_LUT_PART(luti4_h, 0)
-UML_DECLARE_SIMD_LUT_PART(luti4_h, 1)
-UML_DECLARE_SIMD_LUT_PART(luti4_h, 2)
-UML_DECLARE_SIMD_LUT_PART(luti4_h, 3)
-#undef UML_DECLARE_SIMD_LUT_PART
-void uml_arm64_gadget_simd_lut_software();
 #define UML_DECLARE_SIMD_PERMUTE(name) \
 	void uml_arm64_gadget_simd_permute_##name##_8b(); \
 	void uml_arm64_gadget_simd_permute_##name##_4h(); \
@@ -1180,30 +1105,6 @@ void uml_arm64_gadget_simd_sha512su0();
 void uml_arm64_gadget_simd_sha512su0_soft();
 void uml_arm64_gadget_simd_sha512su1();
 void uml_arm64_gadget_simd_sha512su1_soft();
-void uml_arm64_gadget_simd_sm3partw1();
-void uml_arm64_gadget_simd_sm3partw2();
-void uml_arm64_gadget_simd_sm3ss1();
-void uml_arm64_gadget_simd_sm3partw1_soft();
-void uml_arm64_gadget_simd_sm3partw2_soft();
-void uml_arm64_gadget_simd_sm3ss1_soft();
-#define UML_DECLARE_SIMD_SM3TT(name) \
-	void uml_arm64_gadget_simd_##name##_0(); \
-	void uml_arm64_gadget_simd_##name##_1(); \
-	void uml_arm64_gadget_simd_##name##_2(); \
-	void uml_arm64_gadget_simd_##name##_3(); \
-	void uml_arm64_gadget_simd_##name##_0_soft(); \
-	void uml_arm64_gadget_simd_##name##_1_soft(); \
-	void uml_arm64_gadget_simd_##name##_2_soft(); \
-	void uml_arm64_gadget_simd_##name##_3_soft();
-UML_DECLARE_SIMD_SM3TT(sm3tt1a)
-UML_DECLARE_SIMD_SM3TT(sm3tt1b)
-UML_DECLARE_SIMD_SM3TT(sm3tt2a)
-UML_DECLARE_SIMD_SM3TT(sm3tt2b)
-#undef UML_DECLARE_SIMD_SM3TT
-void uml_arm64_gadget_simd_sm4e();
-void uml_arm64_gadget_simd_sm4ekey();
-void uml_arm64_gadget_simd_sm4e_soft();
-void uml_arm64_gadget_simd_sm4ekey_soft();
 #define UML_DECLARE_SIMD_INDEXED_ONE(name, shape, index) \
 	void uml_arm64_gadget_simd_indexed_##name##_##shape##_##index();
 #define UML_DECLARE_SIMD_INDEXED_4(name, shape) \
@@ -1683,18 +1584,6 @@ UML_DECLARE_FLOATING_SELECT(le)
 UML_DECLARE_FLOATING_SELECT(always)
 #undef UML_DECLARE_FLOATING_SELECT
 void uml_arm64_gadget_pc_relative();
-void uml_arm64_gadget_fp8_software();
-extern void (*uml_arm64_fp8_native_up_table[])();
-extern void (*uml_arm64_fp8_native_down_table[])();
-extern void (*uml_arm64_fp8_native_dot_h_vector_table[])();
-extern void (*uml_arm64_fp8_native_dot_h_indexed_table[])();
-extern void (*uml_arm64_fp8_native_dot_s_vector_table[])();
-extern void (*uml_arm64_fp8_native_dot_s_indexed_table[])();
-extern void (*uml_arm64_fp8_native_mul_h_vector_table[])();
-extern void (*uml_arm64_fp8_native_mul_h_indexed_table[])();
-extern void (*uml_arm64_fp8_native_mul_s_vector_table[])();
-extern void (*uml_arm64_fp8_native_mul_s_indexed_table[])();
-extern void (*uml_arm64_fp8_native_matrix_table[])();
 void uml_arm64_gadget_sysreg_tls_read();
 void uml_arm64_gadget_sysreg_tls_write_r();
 void uml_arm64_gadget_sysreg_tls_write_z();
@@ -1704,9 +1593,6 @@ void uml_arm64_gadget_sysreg_ctr_read();
 void uml_arm64_gadget_sysreg_fpcr_read();
 void uml_arm64_gadget_sysreg_fpcr_write_r();
 void uml_arm64_gadget_sysreg_fpcr_write_z();
-void uml_arm64_gadget_sysreg_fpmr_read();
-void uml_arm64_gadget_sysreg_fpmr_write_r();
-void uml_arm64_gadget_sysreg_fpmr_write_z();
 void uml_arm64_gadget_sysreg_fpsr_read();
 void uml_arm64_gadget_sysreg_fpsr_write_r();
 void uml_arm64_gadget_sysreg_fpsr_write_z();

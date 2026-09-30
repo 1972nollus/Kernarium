@@ -245,15 +245,14 @@ struct Record final {
 
 /* Every encoded non-register state field; see the README field table. Ids
  * 7, 9-16, 20, and 32-37 held the retired FEAT_MTE, FEAT_CPA, FEAT_GCS, and
- * FEAT_PAuth state, and 17 the retired FEAT_LS64 ACCDATA; all stay
- * reserved. */
+ * FEAT_PAuth state, 17 the retired FEAT_LS64 ACCDATA, and 5 the retired
+ * FEAT_FP8 FPMR; all stay reserved. */
 enum class Field : std::uint8_t {
   pc = 1,
   nzcv,
   fpcr,
   fpsr,
-  fpmr,
-  tls,
+  tls = 6,
   tbi_enabled = 8,
   pstate_ssbs = 18,
   pstate_dit,
@@ -273,7 +272,6 @@ enum class Field : std::uint8_t {
 [[nodiscard]] std::size_t field_size(std::uint8_t identifier) {
   switch (static_cast<Field>(identifier)) {
   case Field::pc:
-  case Field::fpmr:
   case Field::tls:
   case Field::exclusive_address:
   case Field::exclusive_key:
@@ -339,7 +337,6 @@ sparse_state(Reader &reader, std::span<const std::byte> body) {
   state.nzcv = 0;
   state.fpcr = 0;
   state.fpsr = 0;
-  state.fpmr = 0;
   state.tls = 0;
   state.tbi_enabled = false;
   state.pstate_ssbs = false;
@@ -391,9 +388,6 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
       break;
     case Field::fpsr:
       state.fpsr = reader.u32();
-      break;
-    case Field::fpmr:
-      state.fpmr = reader.u64();
       break;
     case Field::tls:
       state.tls = reader.u64();
@@ -1148,7 +1142,7 @@ private:
         const arm64::CpuState &initial, const arm64::CpuState &expected,
         const Outcome &outcome,
         const std::vector<std::unique_ptr<CaseRegion>> &regions) const {
-    if (outcome.cpu.gadget_fp_active || outcome.cpu.gadget_fpmr_active ||
+    if (outcome.cpu.gadget_fp_active ||
         outcome.cpu.gadget_indirect_miss != nullptr)
       return std::string{
           "engine-private execution state escaped the public boundary"};

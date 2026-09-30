@@ -88,7 +88,6 @@ STATE_FIELDS = (
     (2, "nzcv", "I"),
     (3, "fpcr", "I"),
     (4, "fpsr", "I"),
-    (5, "fpmr", "Q"),
     (6, "tls", "Q"),
     (8, "tbi_enabled", "B"),
     (18, "pstate_ssbs", "B"),
@@ -106,12 +105,13 @@ STATE_FIELDS = (
     (31, "fp_dirty", "B"),
 )
 
-# The virtual CPU implements no FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth, or
-# FEAT_LS64. Producer exports and packs made before their removal still carry
-# these option, event, state, allocation-tag, and validator slots, so they
-# stay readable; the absent-feature-corpus.py rewrite removes them, and the
-# pack encoder refuses them. Their pack ids and codes stay reserved.
+# The virtual CPU implements no FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth,
+# FEAT_LS64, or FEAT_FP8. Producer exports and packs made before their removal
+# still carry these option, event, state, allocation-tag, and validator slots,
+# so they stay readable; the absent-feature-corpus.py rewrite removes them,
+# and the pack encoder refuses them. Their pack ids and codes stay reserved.
 RETIRED_FIELDS = (
+    (5, "fpmr", "Q"),
     (7, "mte_enabled", "B"),
     (9, "mte_exclude", "H"),
     (10, "mte_tag_choices", "256s"),

@@ -1,11 +1,15 @@
 {
   "absent_features": {
-    "added_cases": 302,
+    "added_cases": 394,
     "dropped_cases": {
-      "afp/fails-stripped": 17,
-      "afp/feature-case": 2827,
+      "afp/feature-case": 2825,
       "cpa/feature-case": 503,
       "ebf16/feature-case": 38,
+      "f16f32dot/feature-case": 126,
+      "f16mm/feature-case": 45,
+      "faminmax/feature-case": 161,
+      "fp8/feature-case": 1836,
+      "fprcvt/feature-case": 1585,
       "gcs/feature-case": 271,
       "lor/feature-case": 656,
       "lrcpc3/feature-case": 2044,
@@ -14,15 +18,18 @@
       "lse128/feature-case": 500,
       "lsfe/feature-case": 8528,
       "lsui/feature-case": 1958,
+      "lut/feature-case": 198,
       "mte/fails-stripped": 4288,
       "mte/feature-case": 2775,
       "pauth/feature-case": 1222,
       "pauth/removed-encoding": 15,
+      "sm3/feature-case": 274,
+      "sm4/feature-case": 53,
       "the/feature-case": 2318
     },
     "failing": {
       "file": "tests/unit/arm64/corpus/absent-feature-failing.tsv",
-      "sha256": "421bfbb2c4b25736b04e9f3b3c2922c2188d6ff18ba4548261d7fb9b105ac13e"
+      "sha256": "9b81788a14b048d02218ac76d353dff2c23f95019bd179a3c0d2cead2f75cda1"
     },
     "features": [
       "mte",
@@ -38,32 +45,40 @@
       "ls64",
       "lsfe",
       "lsui",
-      "lor"
+      "lor",
+      "fp8",
+      "f16f32dot",
+      "f16mm",
+      "lut",
+      "faminmax",
+      "sm3",
+      "sm4",
+      "fprcvt"
     ],
-    "input_sha256": "e0e26421f625a0b841fc63304720088d90c5c78b4580ae64855a1a8b312ab3cb",
+    "input_sha256": "383dad7ffad78db8d32f29146862b2599f99fa799a2ce079158db3952673a029",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
-    "sha256": "a5d7ad60df66d03dc9e48af8794ebf2d03727b4fe9eadcc11d6c400dfd52071a",
-    "stripped_cases": 69920,
+    "sha256": "25e370dfd840f7df141fd47705e04b7e052173353a516d3a1b5e25af52146ee7",
+    "stripped_cases": 111548,
     "tbi_replacement_cases": 4284
   },
-  "cases": 148151,
+  "cases": 143973,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
-    "illegal-instruction": 24903,
+    "illegal-instruction": 24995,
     "instruction-budget": 863,
     "memory-fault": 9271,
-    "system-call": 113018
+    "system-call": 108748
   },
   "cases_by_profile": {
     "16k": 27729,
-    "16k+4k": 92705,
+    "16k+4k": 88527,
     "4k": 27717
   },
   "coverage": {
     "entries": 983,
-    "entries_with_cases": 816,
-    "entries_with_illegal_cases": 832,
+    "entries_with_cases": 772,
+    "entries_with_illegal_cases": 836,
     "unattributed_cases": 0,
     "unattributed_illegal_cases": 1289
   },
@@ -84,8 +99,8 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 134464,
-      "forced_cases": 4285,
+      "exported_cases": 134453,
+      "forced_cases": 4274,
       "producers": 452
     },
     "4k": {
@@ -104,14 +119,14 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 134476,
-      "forced_cases": 4285,
+      "exported_cases": 134465,
+      "forced_cases": 4274,
       "producers": 452
     }
   },
   "force_include": {
     "file": "tests/unit/arm64/corpus/forced-cases.tsv",
-    "sha256": "123cd7f0950983d858b577a972819fd79577635596eed0b9b3bd7f1aab354c34"
+    "sha256": "218c08a25f6fa3001f64a275e84eb5583c263a83747aa7f96fdd43ba7b2a78ef"
   },
   "lse2_alignment": {
     "added_cases": 106,
@@ -120,18 +135,17 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 13780526,
-  "pack_sha256": "bf082aa98cb7852fee415ce0c7101e7ea6e32b8b7525ef552034385e8e712cca",
+  "pack_bytes": 13278464,
+  "pack_sha256": "82b39fa4dd44a428946ef9ba2797993702572f8ec3e2c6e58473ca4918191fd2",
   "producer_commit": "2f11d75926e9da8ec0857a9e35b2ac32825dee83",
-  "programs": 132236,
-  "records": 1117,
+  "programs": 129411,
+  "records": 1067,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
-    "broad": 1,
-    "full": 1055,
-    "narrow": 147095
+    "full": 819,
+    "narrow": 143154
   },
   "validator_cases": {
     "ignore-host-counter-register/v1": 1,

@@ -182,7 +182,7 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
                             std::uint64_t memory_write_mask,
                             std::uint64_t direct_memory_write_mask,
                             bool accesses_fp_state, bool link_target_safe,
-                            bool native_fp, bool native_fpmr,
+                            bool native_fp,
                             bool guest_illegal
 ) {
 #if !UML_JIT_RUNTIME_DIAGNOSTICS
@@ -219,7 +219,6 @@ CompiledBlock &JitExecutor::Implementation::store_native(unsigned long generatio
   block.accesses_fp_state = accesses_fp_state;
   block.link_target_safe = link_target_safe;
   block.native_fp = native_fp;
-  block.native_fpmr = native_fpmr;
   block.guest_illegal = guest_illegal;
 #if UML_JIT_RUNTIME_DIAGNOSTICS
   ++cache_validation_diagnostics_.translations;
@@ -340,7 +339,7 @@ JitExecutor::Implementation::install_shared_translation(
       translation->guest_words,
       translation->memory_write_mask, translation->direct_memory_write_mask,
       translation->accesses_fp_state, translation->link_target_safe,
-      translation->native_fp, translation->native_fpmr,
+      translation->native_fp,
       translation->guest_illegal
   );
   cache.record_reuse();
@@ -406,7 +405,6 @@ JitExecutor::Implementation::publish_shared_translation(
     translation->accesses_fp_state = compiled.accesses_fp_state;
     translation->link_target_safe = compiled.link_target_safe;
     translation->native_fp = compiled.native_fp;
-    translation->native_fpmr = compiled.native_fpmr;
     translation->guest_illegal = compiled.guest_illegal;
     return cache.insert(profile, pc, validation_words, std::move(translation));
   } catch (const std::bad_alloc &) {

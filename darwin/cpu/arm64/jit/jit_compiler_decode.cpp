@@ -14,11 +14,7 @@
 #include "cpu/arm64/detail/floating_integer_conversion.hpp"
 #include "cpu/arm64/detail/floating_reciprocal.hpp"
 #include "cpu/arm64/detail/floating_round.hpp"
-#include "cpu/arm64/detail/floating_scale.hpp"
-#include "cpu/arm64/detail/fp8.hpp"
-#include "cpu/arm64/detail/half_dot.hpp"
 #include "cpu/arm64/detail/half_fused_long.hpp"
-#include "cpu/arm64/detail/half_matrix.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/simd_floating_classes.hpp"
 
@@ -168,11 +164,6 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
-    const auto system_register = instruction & 0xffff'ffe0U;
-    if ((system_register == 0xd53b'4440U ||
-         system_register == 0xd51b'4440U) &&
-        !translation_supports(ArmFeature::fp8))
-      return Action::unsupported;
     if (emit_system_register(instruction)) {
       /*
        * A register-sourced FPCR write may enable precise guest exception
@@ -608,55 +599,22 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return Action::keep_going;
     }
-    if (const auto fp8 = arm64::detail::decode_fp8(instruction);
-        fp8.recognized &&
-        (fp8.operation == arm64::detail::Fp8Operation::convert_to_half ||
-         fp8.operation == arm64::detail::Fp8Operation::convert_to_bfloat ||
-         fp8.operation == arm64::detail::Fp8Operation::convert_from_half ||
-         fp8.operation == arm64::detail::Fp8Operation::convert_from_single)) {
-      if (!fp8.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      const bool converted_up =
-          fp8.operation == arm64::detail::Fp8Operation::convert_to_half ||
-          fp8.operation == arm64::detail::Fp8Operation::convert_to_bfloat;
-      if (!(converted_up ? emit_fp8_convert_up(instruction)
-                         : emit_fp8_convert_down(instruction)))
-        return Action::unsupported;
-      return Action::keep_going;
-    }
-    if (const auto fp8 = arm64::detail::decode_fp8(instruction);
-        fp8.recognized &&
-        (fp8.operation == arm64::detail::Fp8Operation::dot_half ||
-         fp8.operation == arm64::detail::Fp8Operation::dot_single)) {
-      if (!fp8.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (!emit_fp8_dot(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
-    }
-    if (const auto fp8 = arm64::detail::decode_fp8(instruction);
-        fp8.recognized &&
-        (fp8.operation == arm64::detail::Fp8Operation::multiply_half ||
-         fp8.operation == arm64::detail::Fp8Operation::multiply_single ||
-         fp8.operation == arm64::detail::Fp8Operation::matrix_half ||
-         fp8.operation == arm64::detail::Fp8Operation::matrix_single)) {
-      if (!fp8.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (!emit_fp8_multiply_matrix(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
+    /*
+     * The virtual CPU implements no FEAT_FP8: its conversions, dot products,
+     * multiply-adds, and matrix multiplies are undefined.
+     */
+    if ((instruction & 0xbf3f'fc00U) == 0x2e21'7800U ||
+        (instruction & 0xbfa0'fc00U) == 0x0e00'f400U ||
+        (instruction & 0xbf80'f400U) == 0x0f00'0000U ||
+        (instruction & 0xbfa0'fc00U) == 0x0e00'fc00U ||
+        (instruction & 0xbfc0'f400U) == 0x0fc0'0000U ||
+        (instruction & 0xbfe0'fc00U) == 0x0ec0'fc00U ||
+        (instruction & 0xbf80'f400U) == 0x2f00'8000U ||
+        (instruction & 0xbfa0'fc00U) == 0x0e00'c400U ||
+        (instruction & 0xff60'fc00U) == 0x6e00'ec00U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     if (const auto complex =
             arm64::detail::decode_floating_complex(instruction);
@@ -870,18 +828,12 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return Action::keep_going;
     }
-    if (const auto floating_scale =
-            arm64::detail::decode_floating_scale(instruction);
-        floating_scale.recognized) {
-      if (!floating_scale.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (!emit_floating_scale(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
+    /* FSCALE belongs to FEAT_FP8, which the virtual CPU does not implement. */
+    if ((instruction & 0xbfe0'fc00U) == 0x2ec0'3c00U ||
+        (instruction & 0xbfa0'fc00U) == 0x2ea0'fc00U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     if (const auto integer_to_floating =
             arm64::detail::decode_integer_to_floating(instruction);
@@ -896,14 +848,16 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return Action::keep_going;
     }
-    if (arm64::detail::decode_half_dot(instruction).recognized) {
-      if (!emit_half_dot(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
-    }
-    const bool half_dot_scalar_hole =
-        arm64::detail::reserved_half_dot_scalar_class(instruction);
-    if (half_dot_scalar_hole) {
+    /*
+     * The virtual CPU implements no FEAT_F16F32DOT: FDOT is undefined. Bit
+     * 28 set moves its fields into the scalar classes; the fused decoder
+     * owns the words it recognizes there, and the rest are reserved.
+     */
+    if (((instruction & 0xafe0'fc00U) == 0x0e80'fc00U ||
+         (instruction & 0xafc0'f400U) == 0x0f40'9000U) &&
+        ((instruction & 0x1000'0000U) == 0U ||
+         !arm64::detail::decode_fused_floating_arithmetic(instruction)
+              .recognized)) {
       store_pc(pc);
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
@@ -913,18 +867,12 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return Action::keep_going;
     }
-    if (const auto half_matrix =
-            arm64::detail::decode_half_matrix(instruction);
-        half_matrix.recognized) {
-      if (!half_matrix.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (!emit_half_matrix(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
+    /* The virtual CPU implements neither FEAT_F16MM nor FEAT_F16F32MM. */
+    if ((instruction & 0x9fe0'fc00U) == 0x0ec0'ec00U ||
+        (instruction & 0xbfe0'fc00U) == 0x0e40'ec00U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     if (arm64::detail::reserved_half_fused_long(instruction)) {
       store_pc(pc);
@@ -1013,24 +961,13 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return Action::keep_going;
     }
+    /* LUTI2 and LUTI4 need FEAT_LUT, which the virtual CPU does not
+     * implement. */
     if ((instruction & 0xff20'8c00U) == 0x4e00'0000U &&
         (instruction & 0x00c0'0000U) != 0U) {
-      const unsigned op2 = (instruction >> 22) & 3U;
-      const unsigned len = (instruction >> 13) & 3U;
-      const unsigned op = (instruction >> 12) & 1U;
-      const bool valid =
-          op2 == 3U ||
-          (op2 == 2U && op != 0U) ||
-          (op2 == 1U && (op != 0U || (len & 1U) != 0U));
-      if (!valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (!emit_simd_lut(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     if (emit_simd_table_lookup(instruction))
       return Action::keep_going;
@@ -1082,11 +1019,17 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::keep_going;
     if (emit_simd_sha512(instruction))
       return Action::keep_going;
-    if (emit_simd_sm(instruction))
-      return Action::keep_going;
+    /*
+     * SM3PARTW1, SM3PARTW2, SM4EKEY, SM3SS1, SM3TT*, and SM4E need FEAT_SM3
+     * and FEAT_SM4, which the virtual CPU does not implement; the other
+     * cells are reserved.
+     */
     const bool reserved_simd_logic =
-        (instruction & 0xffe0'fc00U) == 0xce60'cc00U ||
+        (instruction & 0xffe0'f000U) == 0xce60'c000U ||
+        (instruction & 0xffe0'8000U) == 0xce40'0000U ||
+        (instruction & 0xffe0'c000U) == 0xce40'8000U ||
         (instruction & 0xffe0'8000U) == 0xce60'0000U ||
+        (instruction & 0xffff'fc00U) == 0xcec0'8400U ||
         (instruction & 0xffff'fc00U) == 0xcec0'8800U ||
         (instruction & 0xffff'fc00U) == 0xcec0'8c00U;
     if (reserved_simd_logic) {

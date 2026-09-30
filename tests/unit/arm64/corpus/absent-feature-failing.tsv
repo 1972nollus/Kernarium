@@ -1,22 +1,5 @@
 # Cases that fail once the absent features' state is stripped; see absent-feature-corpus.py.
 record	case	ordinal_16k	ordinal_4k	feature
-arm64-floating-scale-control/arm64_floating_scale_control_tests.cpp:24	floating-scale-not-a-number-control	138	138	afp
-arm64-floating-scale-control/arm64_floating_scale_control_tests.cpp:24	floating-scale-not-a-number-control	150	150	afp
-arm64-floating-scale-control/arm64_floating_scale_control_tests.cpp:24	floating-scale-output-flush	84	84	afp
-arm64-fp8-convert-down-control/arm64_fp8_convert_down_engine_test_support.hpp:350	fp8-convert-down-control source=16 upper=0 fpcr=2 input=2	9	9	afp
-arm64-fp8-convert-down-control/arm64_fp8_convert_down_engine_test_support.hpp:350	fp8-convert-down-control source=16 upper=0 fpcr=c00002 input=17	36	36	afp
-arm64-fp8-convert-down-control/arm64_fp8_convert_down_engine_test_support.hpp:350	fp8-convert-down-control source=16 upper=1 fpcr=2 input=17	54	54	afp
-arm64-fp8-convert-down-control/arm64_fp8_convert_down_engine_test_support.hpp:350	fp8-convert-down-control source=32 upper=1 fpcr=3 input=16	141	141	afp
-arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-control bfloat=0 source2=0 upper=0 format=0 ah=1 input=fd	10	10	afp
-arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-control bfloat=0 source2=1 upper=1 format=0 ah=1 input=7f	83	83	afp
-arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-control bfloat=0 source2=1 upper=1 format=0 ah=1 input=81	80	80	afp
-arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=0 source2=0 upper=1 format=7 fpcr=c80003	336	336	afp
-arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=0 source2=1 upper=0 format=7 fpcr=c80003	288	288	afp
-arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=0 source2=1 upper=1 format=7 fpcr=c80003	384	384	afp
-arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=1 source2=0 upper=1 format=5 fpcr=c80003	512	512	afp
-arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=1 source2=0 upper=1 format=7 fpcr=c80003	528	528	afp
-arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=1 source2=1 upper=0 format=4 fpcr=2	451	451	afp
-arm64-fp8-convert-up-control/arm64_fp8_convert_up_engine_test_support.hpp:342	fp8-convert-up-unsupported bfloat=1 source2=1 upper=1 format=7 fpcr=c80003	576	576	afp
 arm64-jit-simd-memory-run-runtime/arm64_jit_simd_memory_run_runtime_tests.cpp:621/16k	jit-simd-run-tagged-state-second-fault	114	0	mte
 arm64-jit-simd-memory-run-runtime/arm64_jit_simd_memory_run_runtime_tests.cpp:621/4k	jit-simd-run-tagged-state-second-fault	0	114	mte
 arm64-jit-simd-memory-run-runtime/arm64_jit_simd_memory_run_runtime_tests.cpp:89/16k	jit-simd-run-tagged-state-matching	113	0	mte

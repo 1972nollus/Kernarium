@@ -82,18 +82,8 @@ void JitCompiler::emit_translation_cold(const TranslationColdPath &path) {
     emitter_.move_x(1, path.address);
     emitter_.load_constant(
         2, path.access == Access::write ? 1U : 0U);
-    /*
-     * Select the complete preservation contract while translating. Hosts
-     * without FPMR never execute its system-register encodings, and generated
-     * code pays no runtime feature branch.
-     */
-    const auto *miss_bridge =
-        host_capabilities().has(ArmFeature::fp8)
-            ? reinterpret_cast<const void *>(
-                  &uml_arm64_jit_tlb_translate_preserving_fpmr)
-            : reinterpret_cast<const void *>(
-                  &uml_arm64_jit_tlb_translate_preserving);
-    emitter_.call_preserving_flags(miss_bridge);
+    emitter_.call_preserving_flags(reinterpret_cast<const void *>(
+        &uml_arm64_jit_tlb_translate_preserving));
     emitter_.move_x(path.address, 0);
     emitter_.compare_zero(path.fault, path.address, true, false);
     emitter_.branch(path.continuation);

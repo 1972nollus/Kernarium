@@ -6,7 +6,6 @@
 #include "jit_runtime_contract.hpp"
 
 #include "cpu/arm64/detail/bfloat_multiply.hpp"
-#include "cpu/arm64/detail/fp8.hpp"
 #include "cpu/arm64/detail/half_fused_long.hpp"
 
 #include <algorithm>
@@ -15,11 +14,9 @@ namespace uml::cpu::arm64::jit {
 
 void JitCompilerFamilies::attach_family_emitter(void *emitter,
                                                 bool *native_fp,
-                                                bool *native_fpmr,
                                                 bool enable_gpr_cache) noexcept {
   family_emitter_ = emitter;
   family_native_fp_ = native_fp;
-  family_native_fpmr_ = native_fpmr;
   gpr_cache_enabled_ = enable_gpr_cache;
 }
 
@@ -283,18 +280,6 @@ std::optional<unsigned> JitCompilerFamilies::constrained_vector_source(
       host.has(ArmFeature::bf16))
     return (instruction >> 16U) & 15U;
 
-  const auto fp8 = arm64::detail::decode_fp8(instruction);
-  if (fp8.recognized && fp8.valid && fp8.by_element) {
-    using Operation = arm64::detail::Fp8Operation;
-    if (fp8.operation == Operation::dot_half &&
-        host.has(ArmFeature::fp8dot2))
-      return fp8.second;
-    if ((fp8.operation == Operation::multiply_half ||
-         fp8.operation == Operation::multiply_single) &&
-        host.has(ArmFeature::fp8fma))
-      return fp8.second;
-  }
-
   const unsigned size = (instruction >> 22U) & 3U;
   if (size == 1U && valid_simd_integer_indexed(instruction) &&
       host.advanced_simd) {
@@ -334,24 +319,6 @@ JitCompilerFamilies::consecutive_vector_list(
   const auto &host = host_capabilities();
   if (!host.advanced_simd)
     return std::nullopt;
-
-  if ((instruction & 0xff20'8c00U) == 0x4e00'0000U &&
-      (instruction & 0x00c0'0000U) != 0U) {
-    if (!host.has(ArmFeature::lut))
-      return std::nullopt;
-    const unsigned op2 = (instruction >> 22U) & 3U;
-    const unsigned len = (instruction >> 13U) & 3U;
-    const unsigned op = (instruction >> 12U) & 1U;
-    const bool valid =
-        op2 == 3U || (op2 == 2U && op != 0U) ||
-        (op2 == 1U && (op != 0U || (len & 1U) != 0U));
-    if (!valid || op2 != 1U || op == 0U)
-      return std::nullopt;
-    return ConsecutiveVectorList{
-        .first = (instruction >> 5U) & 31U,
-        .count = 2U,
-    };
-  }
 
   if ((instruction & 0xbfe0'8c00U) != 0x0e00'0000U)
     return std::nullopt;
@@ -719,10 +686,6 @@ void JitCompilerFamilies::read_flags(unsigned destination) {
 
 void JitCompilerFamilies::mark_native_fp() noexcept {
   *family_native_fp_ = true;
-}
-
-void JitCompilerFamilies::mark_native_fpmr() noexcept {
-  *family_native_fpmr_ = true;
 }
 
 void JitCompilerFamilies::emit_linked_exit(std::uint64_t target,

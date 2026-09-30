@@ -163,20 +163,21 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		emit(words, (instruction & 15U) |
 			(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
 			(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16));
-	} else if (const auto fp8 = detail::decode_fp8(instruction);
-		   fp8.recognized) {
-		if (!fp8.valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const auto selected = fp8_gadget(fp8);
-		emit(words, selected);
-		if (selected == uml_arm64_gadget_fp8_software)
-			emit(words, reinterpret_cast<std::uintptr_t>(
-				software::fp8_software_function_for(fp8)));
-		emit(words, software::fp8_software_operand(fp8));
+	} else if ((instruction & 0xbf3f'fc00U) == 0x2e21'7800U ||
+		   (instruction & 0xbfa0'fc00U) == 0x0e00'f400U ||
+		   (instruction & 0xbf80'f400U) == 0x0f00'0000U ||
+		   (instruction & 0xbfa0'fc00U) == 0x0e00'fc00U ||
+		   (instruction & 0xbfc0'f400U) == 0x0fc0'0000U ||
+		   (instruction & 0xbfe0'fc00U) == 0x0ec0'fc00U ||
+		   (instruction & 0xbf80'f400U) == 0x2f00'8000U ||
+		   (instruction & 0xbfa0'fc00U) == 0x0e00'c400U ||
+		   (instruction & 0xff60'fc00U) == 0x6e00'ec00U) {
+		/* The FEAT_FP8 conversions, dot products, multiply-adds, and
+		 * matrix multiplies: the virtual CPU does not implement FEAT_FP8. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
 	} else if (const auto bfloat =
 			detail::decode_bfloat_conversion(instruction);
 		   bfloat.recognized) {
@@ -249,31 +250,19 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		emit(words, address);
 		++compiled;
 		return DecodeResult::terminal;
-	} else if (const auto half_matrix = detail::decode_half_matrix(instruction);
-		   half_matrix.recognized) {
-		if (!half_matrix.valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		emit(words, half_matrix_gadget(half_matrix));
-		emit(words, simd_ternary_operand(
-			instruction & 31U, (instruction >> 5) & 31U,
-			(instruction >> 16) & 31U,
-			static_cast<unsigned>(half_matrix.widening)));
-	} else if (const auto half_dot = detail::decode_half_dot(instruction);
-		   half_dot.recognized) {
-		emit(words, half_dot_gadget(half_dot));
-		emit(words, simd_ternary_operand(
-			instruction & 31U, (instruction >> 5) & 31U,
-			(instruction >> 16) & 31U,
-			static_cast<unsigned>(half_dot.by_element) |
-				(static_cast<unsigned>(half_dot.wide) << 1U) |
-				(half_dot.index << 2U)));
-		} else if (detail::reserved_half_dot_scalar_class(instruction)) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
+	} else if ((instruction & 0x9fe0'fc00U) == 0x0ec0'ec00U ||
+		   (instruction & 0xbfe0'fc00U) == 0x0e40'ec00U ||
+		   (((instruction & 0xafe0'fc00U) == 0x0e80'fc00U ||
+		     (instruction & 0xafc0'f400U) == 0x0f40'9000U) &&
+		    ((instruction & 0x1000'0000U) == 0U ||
+		     !detail::decode_fused_floating_arithmetic(
+			     instruction).recognized))) {
+		/* The FEAT_F16MM and FEAT_F16F32MM FMMLA and the FEAT_F16F32DOT
+		 * FDOT: the virtual CPU implements none of them. Bit 28 set moves
+		 * the FDOT fields into the scalar classes; the fused decoder below
+		 * owns the words it recognizes there, and the rest are reserved. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
 		++compiled;
 		return DecodeResult::terminal;
 	} else if ((instruction & 0xff20'7c00U) == 0x1e20'4000U &&
@@ -321,18 +310,14 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 		emit(words, gadget);
 		emit(words, floating_complex_operand(
 			instruction, floating_complex));
-	} else if (const auto floating_scale =
-			detail::decode_floating_scale(instruction);
-		   floating_scale.recognized) {
-		if (!floating_scale.valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		emit(words, floating_scale_gadget(floating_scale));
-		emit(words, detail::floating_scale_operand(
-			instruction, floating_scale));
+	} else if ((instruction & 0xbfe0'fc00U) == 0x2ec0'3c00U ||
+		   (instruction & 0xbfa0'fc00U) == 0x2ea0'fc00U) {
+		/* FSCALE belongs to FEAT_FP8, which the virtual CPU does not
+		 * implement. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
 	} else if (const auto floating_reciprocal =
 			detail::decode_floating_reciprocal(instruction);
 		   floating_reciprocal.recognized) {
@@ -359,38 +344,20 @@ DecodeResult decode_floating_simd(DecodeContext &context)
 			return DecodeResult::terminal;
 		}
 		emit(words, gadget);
-		const bool absolute_software =
-			(floating_horizontal.operation ==
-				detail::FloatingHorizontalOperation::
-					absolute_maximum ||
-			 floating_horizontal.operation ==
-				detail::FloatingHorizontalOperation::
-					absolute_minimum) &&
-			!host_has_faminmax();
-		if (absolute_software) {
-			emit(words, detail::floating_horizontal_operand(
-				instruction, floating_horizontal));
-		} else {
-			const bool uses_second =
-				floating_horizontal.form ==
-					detail::FloatingHorizontalForm::
-						scalar_binary ||
-			    floating_horizontal.form ==
-					detail::FloatingHorizontalForm::
-						vector_binary ||
-			    floating_horizontal.form ==
-					detail::FloatingHorizontalForm::
-						vector_pairwise;
-			if (uses_second)
-				emit(words, simd_ternary_operand(
-					instruction & 31U,
-					(instruction >> 5) & 31U,
-					(instruction >> 16) & 31U));
-			else
-				emit(words, simd_unary_operand(
-					instruction & 31U,
-					(instruction >> 5) & 31U));
-		}
+		const bool uses_second =
+			floating_horizontal.form ==
+				detail::FloatingHorizontalForm::scalar_binary ||
+		    floating_horizontal.form ==
+				detail::FloatingHorizontalForm::vector_binary ||
+		    floating_horizontal.form ==
+				detail::FloatingHorizontalForm::vector_pairwise;
+		if (uses_second)
+			emit(words, simd_ternary_operand(
+				instruction & 31U, (instruction >> 5) & 31U,
+				(instruction >> 16) & 31U));
+		else
+			emit(words, simd_unary_operand(
+				instruction & 31U, (instruction >> 5) & 31U));
 	} else if (const auto floating_round =
 			detail::decode_floating_round(instruction);
 		   floating_round.recognized) {
@@ -595,61 +562,16 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                   emit(words, simd_unary_operand(
                                   instruction & 31U,
                                   (instruction >> 5) & 31U));
-                } else if ((instruction & 0xffe0'fc00U) == 0xce60'c000U ||
-                           (instruction & 0xffe0'fc00U) == 0xce60'c400U ||
-                           (instruction & 0xffe0'fc00U) == 0xce60'c800U) {
-                  const auto operation = instruction & 0xffe0'fc00U;
-                  const auto gadget =
-                      operation == 0xce60'c000U
-                          ? (!options.force_software_fixed_transforms &&
-                                     host_has_sm3()
-                                 ? uml_arm64_gadget_simd_sm3partw1
-                                 : uml_arm64_gadget_simd_sm3partw1_soft)
-                      : operation == 0xce60'c400U
-                          ? (!options.force_software_fixed_transforms &&
-                                     host_has_sm3()
-                                 ? uml_arm64_gadget_simd_sm3partw2
-                                 : uml_arm64_gadget_simd_sm3partw2_soft)
-                          : (!options.force_software_fixed_transforms &&
-                                     host_has_sm4()
-                                 ? uml_arm64_gadget_simd_sm4ekey
-                                 : uml_arm64_gadget_simd_sm4ekey_soft);
-                  emit(words, gadget);
-                  emit(words, simd_ternary_operand(
-                                  instruction & 31U,
-                                  (instruction >> 5) & 31U,
-                                  (instruction >> 16) & 31U));
-                } else if ((instruction & 0xffe0'8000U) == 0xce40'0000U) {
-                  emit(words, !options.force_software_fixed_transforms &&
-                                      host_has_sm3()
-                                  ? uml_arm64_gadget_simd_sm3ss1
-                                  : uml_arm64_gadget_simd_sm3ss1_soft);
-                  emit(words, simd_quaternary_operand(
-                                  instruction & 31U,
-                                  (instruction >> 5) & 31U,
-                                  (instruction >> 16) & 31U,
-                                  (instruction >> 10) & 31U));
-                } else if ((instruction & 0xffe0'c000U) == 0xce40'8000U) {
-                  emit(words,
-                       simd_sm3tt_gadget(
-                           (instruction >> 10) & 3U, (instruction >> 12) & 3U,
-                           options.force_software_fixed_transforms));
-                  emit(words, simd_ternary_operand(
-                                  instruction & 31U,
-                                  (instruction >> 5) & 31U,
-                                  (instruction >> 16) & 31U));
-                } else if ((instruction & 0xffff'fc00U) == 0xcec0'8400U) {
-                  emit(words, !options.force_software_fixed_transforms &&
-                                      host_has_sm4()
-                                  ? uml_arm64_gadget_simd_sm4e
-                                  : uml_arm64_gadget_simd_sm4e_soft);
-                  emit(words, simd_unary_operand(
-                                  instruction & 31U,
-                                  (instruction >> 5) & 31U));
-                } else if ((instruction & 0xffe0'fc00U) == 0xce60'cc00U ||
+                } else if ((instruction & 0xffe0'f000U) == 0xce60'c000U ||
+                           (instruction & 0xffe0'8000U) == 0xce40'0000U ||
+                           (instruction & 0xffe0'c000U) == 0xce40'8000U ||
                            (instruction & 0xffe0'8000U) == 0xce60'0000U ||
+                           (instruction & 0xffff'fc00U) == 0xcec0'8400U ||
                            (instruction & 0xffff'fc00U) == 0xcec0'8800U ||
                            (instruction & 0xffff'fc00U) == 0xcec0'8c00U) {
+                  /* SM3PARTW1, SM3PARTW2, SM4EKEY, SM3SS1, SM3TT*, and
+                   * SM4E need FEAT_SM3 and FEAT_SM4, which the virtual CPU
+                   * does not implement; the other cells are reserved. */
                   emit(words, uml_arm64_gadget_illegal);
                   emit(words, address);
                   ++compiled;
@@ -838,42 +760,12 @@ DecodeResult decode_floating_simd(DecodeContext &context)
                                    << 32));
                 } else if ((instruction & 0xff20'8c00U) == 0x4e00'0000U &&
                            (instruction & 0x00c0'0000U) != 0U) {
-                  /* FEAT_LUT allocation validity and the native instruction
-                   * shape are resolved once here. Native gadgets consequently
-                   * have no valid-path operation, element-size, or immediate
-                   * branches. */
-                  const unsigned op2 = (instruction >> 22) & 3U;
-                  const unsigned len = (instruction >> 13) & 3U;
-                  const unsigned op = (instruction >> 12) & 1U;
-                  unsigned shape{};
-                  unsigned part{};
-                  bool valid = true;
-                  if (op2 == 1U) {
-                    valid = op != 0U || (len & 1U) != 0U;
-                    shape = op != 0U ? 3U : 2U;
-                    part = op != 0U ? len : len >> 1;
-                  } else if (op2 == 2U) {
-                    valid = op != 0U;
-                    shape = 0U;
-                    part = len;
-                  } else if (op2 == 3U) {
-                    shape = 1U;
-                    part = (len << 1) | op;
-                  } else {
-                    valid = false;
-                  }
-                  const auto native =
-                      valid ? simd_lut_native_gadget(shape, part) : nullptr;
-                  if (native == nullptr) {
-                    emit(words, uml_arm64_gadget_illegal);
-                    emit(words, address);
-                    ++compiled;
-                    return DecodeResult::terminal;
-                  }
-                  emit(words, host_has_lut()
-                                  ? native
-                                  : uml_arm64_gadget_simd_lut_software);
-                  emit(words, simd_lut_operand(instruction, shape, part));
+                  /* LUTI2 and LUTI4 need FEAT_LUT, which the virtual CPU
+                   * does not implement. */
+                  emit(words, uml_arm64_gadget_illegal);
+                  emit(words, address);
+                  ++compiled;
+                  return DecodeResult::terminal;
                 } else if ((instruction & 0xbfe0'8c00U) == 0x0e00'0000U) {
                   const unsigned count = ((instruction >> 13) & 3U) + 1U;
                   emit(words, simd_table_lookup_gadget(

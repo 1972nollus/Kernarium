@@ -30,14 +30,3 @@ NAME(uml_arm64_restore_native_fp_environment):
 	strb wzr, [x0, #UML_ARM64_CPU_FP_ACTIVE]
 97:
 	ret
-
-.globl NAME(uml_arm64_restore_native_fpmr_environment)
-.p2align 4
-NAME(uml_arm64_restore_native_fpmr_environment):
-	ldrb w8, [x0, #UML_ARM64_CPU_FPMR_ACTIVE]
-	cbz w8, 98f
-	ldr x9, [x0, #UML_ARM64_CPU_HOST_FPMR]
-	.inst 0xd51b4449 /* msr FPMR, x9 */
-	strb wzr, [x0, #UML_ARM64_CPU_FPMR_ACTIVE]
-98:
-	ret

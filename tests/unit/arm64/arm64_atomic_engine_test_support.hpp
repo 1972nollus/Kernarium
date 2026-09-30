@@ -44,7 +44,6 @@ inline void put(Page &page, std::size_t offset, std::uint64_t value,
 	cpu.nzcv = 0xa000'0000U;
 	cpu.fpcr = 0x0040'0000U;
 	cpu.fpsr = seed & 1U;
-	cpu.fpmr = 0x1234'5678'9abc'def0ULL;
 	cpu.tls = 0xfedc'ba98'7654'3210ULL;
 	return cpu;
 }

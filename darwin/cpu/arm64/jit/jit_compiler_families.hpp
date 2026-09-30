@@ -31,7 +31,6 @@ protected:
   JitCompilerFamilies() = default;
 
   void attach_family_emitter(void *emitter, bool *native_fp,
-                             bool *native_fpmr,
                              bool enable_gpr_cache) noexcept;
   void attach_link_resolver(void *context, LinkResolver resolver) noexcept;
   void begin_link_observation() noexcept;
@@ -135,7 +134,6 @@ protected:
   void publish_cold_flags(GuestFlagsState state);
   void read_flags(unsigned destination);
   void mark_native_fp() noexcept;
-  void mark_native_fpmr() noexcept;
   void emit_linked_exit(std::uint64_t target, std::size_t count);
   void emit_indirect_linked_exit(unsigned target_host, bool writes_link,
                                  std::uint64_t source_pc,
@@ -187,16 +185,10 @@ protected:
   [[nodiscard]] bool
   emit_floating_javascript_convert(std::uint32_t instruction);
   [[nodiscard]] bool emit_floating_precision_convert(std::uint32_t instruction);
-  [[nodiscard]] bool emit_fp8_convert_up(std::uint32_t instruction);
-  [[nodiscard]] bool emit_fp8_convert_down(std::uint32_t instruction);
-  [[nodiscard]] bool emit_fp8_dot(std::uint32_t instruction);
-  [[nodiscard]] bool
-  emit_fp8_multiply_matrix(std::uint32_t instruction);
   [[nodiscard]] bool emit_floating_round(std::uint32_t instruction);
   [[nodiscard]] bool emit_floating_unary(std::uint32_t instruction);
   [[nodiscard]] bool emit_floating_horizontal(std::uint32_t instruction);
   [[nodiscard]] bool emit_floating_reciprocal(std::uint32_t instruction);
-  [[nodiscard]] bool emit_floating_scale(std::uint32_t instruction);
   [[nodiscard]] bool
   host_supports_floating_type(std::uint32_t instruction) const;
   void emit_floating_compare(std::uint32_t instruction, bool conditional);
@@ -219,9 +211,7 @@ protected:
   valid_simd_fmulx(std::uint32_t instruction) noexcept;
   [[nodiscard]] bool emit_simd_fmulx(std::uint32_t instruction);
   [[nodiscard]] bool emit_bfloat_dot(std::uint32_t instruction);
-  [[nodiscard]] bool emit_half_dot(std::uint32_t instruction);
   [[nodiscard]] bool emit_half_fused_long(std::uint32_t instruction);
-  [[nodiscard]] bool emit_half_matrix(std::uint32_t instruction);
   [[nodiscard]] bool emit_bfloat_multiply_long(std::uint32_t instruction);
   [[nodiscard]] bool emit_bfloat_matrix(std::uint32_t instruction);
   [[nodiscard]] static bool
@@ -255,7 +245,6 @@ protected:
   [[nodiscard]] bool emit_simd_floating_indexed(std::uint32_t instruction);
   [[nodiscard]] bool emit_simd_extract(std::uint32_t instruction);
   [[nodiscard]] bool emit_simd_table_lookup(std::uint32_t instruction);
-  [[nodiscard]] bool emit_simd_lut(std::uint32_t instruction);
   [[nodiscard]] bool emit_simd_permute(std::uint32_t instruction);
 
   [[nodiscard]] bool emit_crc32(std::uint32_t instruction);
@@ -263,7 +252,6 @@ protected:
   [[nodiscard]] bool emit_simd_pmull(std::uint32_t instruction);
   [[nodiscard]] bool emit_simd_sha1_sha2(std::uint32_t instruction);
   [[nodiscard]] bool emit_simd_sha512(std::uint32_t instruction);
-  [[nodiscard]] bool emit_simd_sm(std::uint32_t instruction);
   [[nodiscard]] bool emit_simd_sha3(std::uint32_t instruction);
 
 private:
@@ -315,7 +303,6 @@ private:
   bool gpr_cache_enabled_{};
   void *family_emitter_{};
   bool *family_native_fp_{};
-  bool *family_native_fpmr_{};
   void *link_context_{};
   LinkResolver link_resolver_{};
   std::size_t direct_link_refusals_{};

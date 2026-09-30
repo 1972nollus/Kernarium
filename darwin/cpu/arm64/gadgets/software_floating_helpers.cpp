@@ -10,8 +10,6 @@
 #include "../detail/bfloat_matrix.hpp"
 #include "../detail/bfloat_multiply.hpp"
 #include "../detail/half_fused_long.hpp"
-#include "../detail/half_dot.hpp"
-#include "../detail/half_matrix.hpp"
 #include "../detail/floating_complex.hpp"
 #include "../detail/floating_arithmetic.hpp"
 #include "../detail/floating_conversion.hpp"
@@ -20,9 +18,7 @@
 #include "../detail/floating_integer_conversion.hpp"
 #include "../detail/floating_reciprocal.hpp"
 #include "../detail/floating_round.hpp"
-#include "../detail/floating_scale.hpp"
 #include "../detail/fp_state_access.hpp"
-#include "../detail/fp8.hpp"
 #include "../detail/instruction_primitives.hpp"
 #include "../detail/integer_multiply.hpp"
 #include "cpu/host_capabilities.hpp"
@@ -42,127 +38,7 @@ namespace {
 
 using uml::cpu::arm64::gadgets::vector_at;
 
-/* FAMAX/FAMIN on hosts without FEAT_FAMINMAX. */
-template<typename Integer>
-void floating_horizontal_absolute_software(uml::cpu::arm64::CpuState &cpu,
-	unsigned destination, unsigned first_register, unsigned second_register,
-	bool maximum, unsigned vector_bytes) noexcept
-{
-	const auto first_source = cpu.vectors[first_register].bytes;
-	const auto second_source = cpu.vectors[second_register].bytes;
-	std::array<std::byte, 16> result{};
-	const unsigned lanes = vector_bytes / sizeof(Integer);
-	for (unsigned lane = 0; lane < lanes; ++lane) {
-		const auto first = static_cast<Integer>(
-			uml::cpu::arm64::detail::decode_little_endian(
-				std::span{first_source}.subspan(
-					lane * sizeof(Integer), sizeof(Integer))));
-		const auto second = static_cast<Integer>(
-			uml::cpu::arm64::detail::decode_little_endian(
-				std::span{second_source}.subspan(
-					lane * sizeof(Integer), sizeof(Integer))));
-		const auto value =
-			uml::cpu::arm64::detail::floating_absolute_minmax(
-				first, second, maximum,
-				(cpu.fpcr & (1U << 25)) != 0U);
-		uml::cpu::arm64::detail::encode_little_endian(value.bits,
-			std::span{result}.subspan(
-				lane * sizeof(Integer), sizeof(Integer)));
-		cpu.fpsr |= value.exceptions;
-	}
-	cpu.vectors[destination].bytes = result;
-}
-
-template<typename Integer, unsigned VectorBytes>
-void floating_scale_software(uml::cpu::arm64::CpuState &cpu,
-	std::uintptr_t operand) noexcept
-{
-	const unsigned destination = operand & 31U;
-	const unsigned first_register = (operand >> 8) & 31U;
-	const unsigned second_register = (operand >> 16) & 31U;
-	const auto first = cpu.vectors[first_register].bytes;
-	const auto second = cpu.vectors[second_register].bytes;
-	std::array<std::byte, 16> result{};
-	using Signed = std::make_signed_t<Integer>;
-	for (unsigned lane = 0; lane < VectorBytes / sizeof(Integer); ++lane) {
-		const auto value = static_cast<Integer>(
-			uml::cpu::arm64::detail::decode_little_endian(
-				std::span{first}.subspan(
-					lane * sizeof(Integer), sizeof(Integer))));
-		const auto scale_bits = static_cast<Integer>(
-			uml::cpu::arm64::detail::decode_little_endian(
-				std::span{second}.subspan(
-					lane * sizeof(Integer), sizeof(Integer))));
-		const auto scaled = uml::cpu::arm64::detail::scale_floating(
-			value, sizeof(Integer) * 8U, static_cast<std::int64_t>(
-				std::bit_cast<Signed>(scale_bits)), cpu.fpcr);
-		uml::cpu::arm64::detail::encode_little_endian(scaled.bits,
-			std::span{result}.subspan(
-				lane * sizeof(Integer), sizeof(Integer)));
-		cpu.fpsr |= scaled.exceptions;
-	}
-	cpu.vectors[destination].bytes = result;
-}
-
 } // namespace
-
-extern "C" [[gnu::noinline]] void
-uml_arm64_floating_horizontal_absolute_software(
-	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
-{
-	using Operation =
-		uml::cpu::arm64::detail::FloatingHorizontalOperation;
-	const unsigned destination = operand & 31U;
-	const unsigned first_register = (operand >> 8) & 31U;
-	const unsigned second_register = (operand >> 16) & 31U;
-	const bool maximum = static_cast<Operation>((operand >> 24) & 15U) ==
-		Operation::absolute_maximum;
-	const unsigned width_code = (operand >> 32) & 3U;
-	const unsigned vector_bytes = (operand & (std::uintptr_t{1} << 34)) != 0U ?
-		16U : 8U;
-	if (width_code == 0U)
-		floating_horizontal_absolute_software<std::uint16_t>(*cpu,
-			destination, first_register, second_register, maximum,
-			vector_bytes);
-	else if (width_code == 1U)
-		floating_horizontal_absolute_software<std::uint32_t>(*cpu,
-			destination, first_register, second_register, maximum,
-			vector_bytes);
-	else
-		floating_horizontal_absolute_software<std::uint64_t>(*cpu,
-			destination, first_register, second_register, maximum,
-			vector_bytes);
-}
-
-extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software_4h(
-	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
-{
-	floating_scale_software<std::uint16_t, 8U>(*cpu, operand);
-}
-
-extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software_8h(
-	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
-{
-	floating_scale_software<std::uint16_t, 16U>(*cpu, operand);
-}
-
-extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software_2s(
-	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
-{
-	floating_scale_software<std::uint32_t, 8U>(*cpu, operand);
-}
-
-extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software_4s(
-	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
-{
-	floating_scale_software<std::uint32_t, 16U>(*cpu, operand);
-}
-
-extern "C" [[gnu::noinline]] void uml_arm64_floating_scale_software_2d(
-	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
-{
-	floating_scale_software<std::uint64_t, 16U>(*cpu, operand);
-}
 
 extern "C" [[gnu::noinline]] void uml_arm64_bfloat_conversion_software(
 	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
@@ -318,47 +194,6 @@ extern "C" [[gnu::noinline]] void uml_arm64_half_fused_long_software(
 	destination.bytes = result;
 }
 
-extern "C" [[gnu::noinline]] void uml_arm64_half_matrix_software(
-	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
-{
-	const auto vector = [cpu, operand](unsigned shift)
-		-> uml::cpu::arm64::VectorRegister & {
-		return vector_at(cpu, (operand >> shift) & 0xffffU);
-	};
-	auto &destination = vector(0U);
-	const auto addends = destination.bytes;
-	const auto first = vector(16U).bytes;
-	const auto second = vector(32U).bytes;
-	const bool widening = (operand >> 48U) != 0U;
-	const auto result = uml::cpu::arm64::detail::half_matrix_multiply_add(
-		addends, first, second, widening, cpu->fpcr);
-	destination.bytes = result.bytes;
-	cpu->fpsr |= result.exceptions;
-}
-
-extern "C" [[gnu::noinline]] void uml_arm64_half_dot_software(
-	uml::cpu::arm64::CpuState *cpu, std::uintptr_t operand) noexcept
-{
-	const auto vector = [cpu](unsigned offset)
-		-> uml::cpu::arm64::VectorRegister & {
-		return vector_at(cpu, offset);
-	};
-	const unsigned destination = operand & 0xffffU;
-	const unsigned first_offset = (operand >> 16U) & 0xffffU;
-	const unsigned second_offset = (operand >> 32U) & 0xffffU;
-	const unsigned descriptor = operand >> 48U;
-	const bool by_element = (descriptor & 1U) != 0U;
-	const bool wide = (descriptor & 2U) != 0U;
-	const unsigned index = (descriptor >> 2U) & 3U;
-	const auto addends = vector(destination).bytes;
-	const auto first = vector(first_offset).bytes;
-	const auto second = vector(second_offset).bytes;
-	const auto result = uml::cpu::arm64::detail::half_dot_add(addends,
-		first, second, {true, by_element, wide, index}, cpu->fpcr);
-	vector(destination).bytes = result.bytes;
-	cpu->fpsr |= result.exceptions;
-}
-
 extern "C" [[gnu::noinline]]
 uml::cpu::arm64::detail::FloatingPrecisionConversion
 uml_arm64_convert_floating_precision(std::uint64_t input,
@@ -426,9 +261,8 @@ extern "C" [[gnu::noinline]] void uml_arm64_floating_to_integer_software(
 	constexpr std::array widths{16U, 32U, 64U, 16U, 16U, 32U, 32U, 64U};
 	constexpr std::array vector_bytes{2U, 4U, 8U, 8U, 16U, 8U, 16U, 16U};
 	const unsigned width = widths[shape];
-	const bool cross_width = ((operand >> 27) & 1U) != 0U;
 	const unsigned fractional_bits = (operand >> 28) & 127U;
-	const unsigned integer_width = destination_gpr || cross_width ?
+	const unsigned integer_width = destination_gpr ?
 		(((operand >> 22) & 1U) != 0U ? 64U : 32U) : width;
 	const bool scalar = ((operand >> 23) & 1U) != 0U;
 	const unsigned bytes = destination_gpr ? width / 8U :
@@ -499,8 +333,7 @@ extern "C" [[gnu::noinline]] void uml_arm64_integer_to_floating_software(
 	const unsigned destination_width =
 		destination_code == 0U ? 16U :
 		destination_code == 1U ? 32U : 64U;
-	const bool cross_width = ((operand >> 34) & 1U) != 0U;
-	const unsigned integer_width = !source_gpr && !cross_width ?
+	const unsigned integer_width = !source_gpr ?
 		destination_width : ((operand >> 22) & 1U) != 0U ? 64U : 32U;
 	const unsigned fractional_bits = (operand >> 26) & 127U;
 	constexpr std::array vector_bytes{2U, 4U, 8U, 8U, 16U, 8U, 16U, 16U};

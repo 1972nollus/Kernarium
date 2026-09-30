@@ -591,11 +591,6 @@ extern constexpr std::array<Gadget, 16> pstate_daif_clear_gadgets{
 	if (system == 0xd51b'4420U)
 		return {zero ? uml_arm64_gadget_sysreg_fpsr_write_z :
 			uml_arm64_gadget_sysreg_fpsr_write_r, !zero};
-	if (system == 0xd53b'4440U)
-		return {uml_arm64_gadget_sysreg_fpmr_read, true};
-	if (system == 0xd51b'4440U)
-		return {zero ? uml_arm64_gadget_sysreg_fpmr_write_z :
-			uml_arm64_gadget_sysreg_fpmr_write_r, !zero};
 	if (system == 0xd53b'4200U)
 		return {uml_arm64_gadget_sysreg_nzcv_read, true};
 	if (system == 0xd51b'4200U)

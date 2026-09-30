@@ -57,8 +57,6 @@ namespace uml::emulator::tests {
 		return values("fpcr", expected.fpcr, actual.fpcr);
 	if (expected.fpsr != actual.fpsr)
 		return values("fpsr", expected.fpsr, actual.fpsr);
-	if (expected.fpmr != actual.fpmr)
-		return values("fpmr", expected.fpmr, actual.fpmr);
 	if (expected.tls != actual.tls)
 		return values("tls", expected.tls, actual.tls);
 	if (expected.tbi_enabled != actual.tbi_enabled)

@@ -35,7 +35,6 @@ namespace {
       .accesses_fp_state = compiled.accesses_fp_state,
       .link_target_safe = compiled.link_target_safe,
       .native_fp = compiled.native_fp,
-      .native_fpmr = compiled.native_fpmr,
       .guest_illegal = compiled.guest_illegal,
   };
   return result;

@@ -33,22 +33,6 @@ activate_native_fp_environment(CpuState &cpu) noexcept {
   __asm__ volatile("msr fpsr, %0" : : "r"(fpsr) : "memory");
 }
 
-void
-activate_native_fpmr_environment(CpuState &cpu) noexcept {
-  if (cpu.gadget_fpmr_active)
-    return;
-  __asm__ volatile("mrs %0, S3_3_C4_C4_2"
-                   : "=r"(cpu.gadget_host_fpmr)
-                   :
-                   : "memory");
-  cpu.gadget_fpmr_active = true;
-  const std::uint64_t guest_fpmr = cpu.fpmr;
-  __asm__ volatile("msr S3_3_C4_C4_2, %0"
-                   :
-                   : "r"(guest_fpmr)
-                   : "memory");
-}
-
 namespace {
 
 void materialize_semantic_cpu_state(CpuState &cpu) noexcept {

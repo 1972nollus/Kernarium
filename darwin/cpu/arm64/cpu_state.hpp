@@ -66,9 +66,6 @@ struct CpuState final {
 	std::uint32_t deferred_fpsr{};
 	bool fp_loaded{true};
 	bool fp_dirty{};
-	/* FEAT_FPMR state is kept separately from the lazily imported legacy
-	 * FPCR/FPSR/vector image.  Its reset value selects E5M2 with zero scales. */
-	std::uint64_t fpmr{};
 	/* Read-only zero slot for translation-specialized production gadgets.
 	 * Builder may map an architectural XZR source to this byte offset, avoiding
 	 * a runtime register-number comparison. No destination is ever mapped here. */
@@ -90,11 +87,6 @@ struct CpuState final {
 	 * taken for a cache cell. A new exit that records its stream must keep
 	 * to that rule. */
 	void *gadget_indirect_miss{};
-	/* JIT blocks using the optional native mode register retain the host value
-	 * here so returning and terminal C++ helpers can run in the host-owned
-	 * environment without losing the live guest value. */
-	std::uint64_t gadget_host_fpmr{};
-	bool gadget_fpmr_active{};
 	/* Private gadget-engine return predictor: linked calls push the return
 	 * PC with the BlockLink of its block, and a cached return whose site
 	 * cells miss pops the newest record when it names the live link

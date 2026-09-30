@@ -14,53 +14,7 @@ enum class FloatingHorizontalOperation : unsigned {
 	maximum_number,
 	minimum,
 	minimum_number,
-	absolute_maximum,
-	absolute_minimum,
 };
-
-template<typename Integer>
-struct FloatingAbsoluteMinMaxResult final {
-	Integer bits;
-	std::uint32_t exceptions;
-};
-
-template<typename Integer>
-[[nodiscard]] constexpr FloatingAbsoluteMinMaxResult<Integer>
-floating_absolute_minmax(Integer first, Integer second, bool maximum,
-	bool default_nan) noexcept
-{
-	using namespace floating_bits;
-	constexpr auto magnitude_mask =
-		static_cast<Integer>(sign_bit<Integer> - 1U);
-	const bool first_signaling = is_signaling_nan(first);
-	const bool second_signaling = is_signaling_nan(second);
-	Integer selected{};
-	if (first_signaling)
-		selected = first;
-	else if (second_signaling)
-		selected = second;
-	else if (is_nan(first))
-		selected = first;
-	else if (is_nan(second))
-		selected = second;
-	else {
-		const Integer first_absolute = first & magnitude_mask;
-		const Integer second_absolute = second & magnitude_mask;
-		return {maximum ?
-			(first_absolute > second_absolute ? first_absolute :
-				second_absolute) :
-			(first_absolute < second_absolute ? first_absolute :
-				second_absolute), 0U};
-	}
-	/* FPAbsMax and FPAbsMin clear FPCR.AH before FPProcessNaNs, so FAMAX
-	 * and FAMIN keep the standard NaN priority and a positive default
-	 * NaN. */
-	constexpr Integer quiet = quiet_bit<Integer>;
-	return {default_nan ?
-			static_cast<Integer>(exponent_mask<Integer> | quiet) :
-			static_cast<Integer>(selected | quiet),
-		(first_signaling || second_signaling) ? 1U : 0U};
-}
 
 enum class FloatingHorizontalForm : unsigned {
 	scalar_binary,
@@ -118,34 +72,11 @@ struct FloatingHorizontal final {
 	}
 
 	const bool q = (instruction & 0x4000'0000U) != 0U;
-	/* FEAT_FAMINMAX vector absolute min/max. These instructions deliberately
-	 * ignore AH and all input/output flush controls. */
-	matched = true;
-	switch (instruction & 0xbfe0'fc00U) {
-	case 0x0ec0'1c00U:
-		operation = FloatingHorizontalOperation::absolute_maximum; break;
-	case 0x2ec0'1c00U:
-		operation = FloatingHorizontalOperation::absolute_minimum; break;
-	default: matched = false; break;
-	}
-	if (matched)
-		return {true, true, operation,
-			FloatingHorizontalForm::vector_binary, 16U, q ? 16U : 8U};
-
-	matched = true;
-	switch (instruction & 0xbfa0'fc00U) {
-	case 0x0ea0'dc00U:
-		operation = FloatingHorizontalOperation::absolute_maximum; break;
-	case 0x2ea0'dc00U:
-		operation = FloatingHorizontalOperation::absolute_minimum; break;
-	default: matched = false; break;
-	}
-	if (matched) {
-		const bool is_double = (instruction & 0x0040'0000U) != 0U;
-		return {true, !is_double || q, operation,
-			FloatingHorizontalForm::vector_binary,
-			is_double ? 64U : 32U, q ? 16U : 8U};
-	}
+	/* FEAT_FAMINMAX FAMAX and FAMIN: the virtual CPU does not implement
+	 * FEAT_FAMINMAX, so both engines reject them as undefined. */
+	if ((instruction & 0x9fe0'fc00U) == 0x0ec0'1c00U ||
+	    (instruction & 0x9fa0'fc00U) == 0x0ea0'dc00U)
+		return {true, false};
 	/* Vector FP16 FABD/FADDP and min/max families. */
 	matched = true;
 	switch (instruction & 0xbfe0'fc00U) {
@@ -260,19 +191,6 @@ struct FloatingHorizontal final {
 			32U, 16U};
 	}
 	return {};
-}
-
-[[nodiscard]] constexpr std::uintptr_t floating_horizontal_operand(
-	std::uint32_t instruction, const FloatingHorizontal &decoded) noexcept
-{
-	return (instruction & 31U) |
-		(static_cast<std::uintptr_t>((instruction >> 5) & 31U) << 8) |
-		(static_cast<std::uintptr_t>((instruction >> 16) & 31U) << 16) |
-		(static_cast<std::uintptr_t>(decoded.operation) << 24) |
-		(static_cast<std::uintptr_t>(decoded.form) << 28) |
-		(static_cast<std::uintptr_t>(decoded.width == 32U ? 1U :
-			decoded.width == 64U ? 2U : 0U) << 32) |
-		(static_cast<std::uintptr_t>(decoded.vector_bytes == 16U) << 34);
 }
 
 } // namespace uml::cpu::arm64::detail

@@ -51,7 +51,6 @@ public:
     bool accesses_fp_state{};
     bool link_target_safe{true};
     bool native_fp{};
-    bool native_fpmr{};
     bool guest_illegal{};
   };
 
@@ -319,7 +318,6 @@ private:
   bool accesses_fp_state_{};
   bool link_target_safe_{true};
   bool native_fp_{};
-  bool native_fpmr_{};
   bool guest_illegal_{};
   void *configured_link_context_{};
   LinkResolver configured_link_resolver_{};

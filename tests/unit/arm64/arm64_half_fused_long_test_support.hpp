@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include "arm64_half_dot_test_support.hpp"
+#include "arm64_bfloat_arithmetic_test_support.hpp"
 #include "cpu/arm64/detail/half_fused_long.hpp"
 
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <string_view>
 
 namespace arm64_half_fused_long_test {
 
-namespace shared = arm64_half_dot_test;
 namespace arm64 = uml::cpu::arm64;
 
 struct Form final {
@@ -71,7 +72,10 @@ inline constexpr std::array vector_forms{
 
 inline void require(bool condition, const char *message)
 {
-	shared::require(condition, message);
+	if (!condition) {
+		std::fprintf(stderr, "%s\n", message);
+		std::abort();
+	}
 }
 
 } // namespace arm64_half_fused_long_test

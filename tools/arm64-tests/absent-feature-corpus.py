@@ -11,7 +11,10 @@ usage: absent-feature-corpus.py [--features LIST] [--failing TSV]
 The virtual CPU implements none of FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth,
 FEAT_AFP, and FEAT_EBF16, nor the memory extensions FEAT_LSE128, FEAT_THE
 and FEAT_D128, FEAT_LRCPC3, FEAT_LSCP, FEAT_LS64 with its _V and _ACCDATA
-forms, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR: their non-hint instructions are
+forms, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR, nor the FP/SIMD extensions FEAT_FP8
+with its dot-product, multiply-add, and matrix forms and FPMR,
+FEAT_F16F32DOT, FEAT_F16MM and FEAT_F16F32MM, FEAT_LUT, FEAT_FAMINMAX,
+FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT: their non-hint instructions are
 UNDEFINED, their hint-space instructions are NOPs, FPCR.FIZ, AH, NEP, and EBF
 are RES0, and the ID registers report them absent. The producer checks
 predate that choice, and their harness enabled these features in most cases'
@@ -78,7 +81,9 @@ _spec.loader.exec_module(corpus)
 
 SITE = "tools/arm64-tests/absent-feature-corpus.py"
 DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "afp", "ebf16", "lse128",
-                    "the", "lrcpc3", "lscp", "ls64", "lsfe", "lsui", "lor")
+                    "the", "lrcpc3", "lscp", "ls64", "lsfe", "lsui", "lor",
+                    "fp8", "f16f32dot", "f16mm", "lut", "faminmax", "sm3",
+                    "sm4", "fprcvt")
 SVC = 0xD400_0001
 
 
@@ -203,11 +208,46 @@ FEATURES = {
         tokens=("lor",),
         conditions=("FEAT_LOR",),
         fields=()),
+    "fp8": Feature(
+        tokens=("fp8", "fp8dot2", "fp8dot4", "fp8fma", "f8f16mm", "f8f32mm"),
+        conditions=("FEAT_FP8", "FEAT_FP8DOT2", "FEAT_FP8DOT4",
+                    "FEAT_FP8FMA", "FEAT_F8F16MM", "FEAT_F8F32MM"),
+        fields=("fpmr",),
+        encodings=((0xFFDF_FFE0, 0xD51B_4440),)),  # MRS and MSR FPMR
+    "f16f32dot": Feature(
+        tokens=("f16f32dot",),
+        conditions=("FEAT_F16F32DOT",),
+        fields=()),
+    "f16mm": Feature(
+        tokens=("f16mm", "f16f32mm"),
+        conditions=("FEAT_F16MM", "FEAT_F16F32MM"),
+        fields=()),
+    "lut": Feature(
+        tokens=("lut",),
+        conditions=("FEAT_LUT",),
+        fields=()),
+    "faminmax": Feature(
+        tokens=("faminmax",),
+        conditions=("FEAT_FAMINMAX",),
+        fields=()),
+    "sm3": Feature(
+        tokens=("sm3",),
+        conditions=("FEAT_SM3",),
+        fields=()),
+    "sm4": Feature(
+        tokens=("sm4",),
+        conditions=("FEAT_SM4",),
+        fields=()),
+    "fprcvt": Feature(
+        tokens=("fprcvt",),
+        conditions=("FEAT_FPRCVT",),
+        fields=()),
 }
 
 # Illegal-word records: one case per encoding class and operand extreme.
 # Each word was checked against llvm-mc with the feature enabled (22.1.8 for
-# MTE, GCS, and CPA; 23.1.1 for PAuth and the memory extensions).
+# MTE, GCS, and CPA; 23.1.1 for PAuth and the memory and FP/SIMD
+# extensions).
 UNDEFINED = {
     "mte": (
         ("ADDG", 0x9181_0420), ("ADDG SP", 0x91BF_3FFF),
@@ -380,6 +420,70 @@ UNDEFINED = {
         ("LDLAR w", 0x88DF_7C20), ("LDLAR x SP", 0xC8DF_7FFF),
         ("STLLRB", 0x089F_7C20), ("STLLRH SP", 0x489F_7FFF),
         ("STLLR w", 0x889F_7C20), ("STLLR x SP", 0xC89F_7FFE),
+    ),
+    "fp8": (
+        ("F1CVTL", 0x2E21_7820), ("F1CVTL2 V31", 0x6E21_7BFF),
+        ("F2CVTL", 0x2E61_7820), ("BF1CVTL", 0x2EA1_7820),
+        ("BF2CVTL2 V31", 0x6EE1_7BFF), ("FCVTN half", 0x0E42_F420),
+        ("FCVTN half Q", 0x4E42_F420), ("FCVTN single", 0x0E02_F420),
+        ("FCVTN2 single V31", 0x4E1F_F7FF), ("FSCALE 4H", 0x2EC2_3C20),
+        ("FSCALE 8H V31", 0x6EDF_3FFF), ("FSCALE 2S", 0x2EA2_FC20),
+        ("FSCALE 4S", 0x6EA2_FC20), ("FSCALE 2D V31", 0x6EFF_FFFF),
+        ("FDOT half", 0x0E42_FC20), ("FDOT half Q", 0x4E42_FC20),
+        ("FDOT half indexed", 0x0F42_0020),
+        ("FDOT half indexed V31", 0x4F7F_0BFF), ("FDOT single", 0x0E02_FC20),
+        ("FDOT single indexed", 0x0F02_0020),
+        ("FDOT single indexed V31", 0x4F3F_0BFF), ("FMLALB", 0x0EC2_FC20),
+        ("FMLALT V31", 0x4EDF_FFFF), ("FMLALB indexed", 0x0FC2_0020),
+        ("FMLALT indexed V31", 0x4FFF_0BFF), ("FMLALLBB", 0x0E02_C420),
+        ("FMLALLBT", 0x0E42_C420), ("FMLALLTB", 0x4E02_C420),
+        ("FMLALLTT V31", 0x4E5F_C7FF), ("FMLALLBB indexed", 0x2F02_8020),
+        ("FMLALLTT indexed V31", 0x6F7F_8BFF), ("FMMLA half", 0x6E02_EC20),
+        ("FMMLA single V31", 0x6E9F_EFFF), ("MRS FPMR", 0xD53B_4440),
+        ("MSR FPMR XZR", 0xD51B_445F),
+    ),
+    "f16f32dot": (
+        ("FDOT 2S", 0x0E82_FC20), ("FDOT 4S V31", 0x4E9F_FFFF),
+        ("FDOT indexed", 0x0F42_9020), ("FDOT indexed V31", 0x4F7F_9BFF),
+    ),
+    "f16mm": (
+        ("FMMLA half", 0x4EC2_EC20), ("FMMLA half V31", 0x4EDF_EFFF),
+        ("FMMLA widening", 0x4E42_EC20), ("FMMLA widening V31", 0x4E5F_EFFF),
+    ),
+    "lut": (
+        ("LUTI2 B", 0x4E82_1020), ("LUTI2 B V31", 0x4E9F_73FF),
+        ("LUTI2 H", 0x4EC2_0020), ("LUTI2 H V31", 0x4EDF_73FF),
+        ("LUTI4 B", 0x4E42_2020), ("LUTI4 B V31", 0x4E5F_63FF),
+        ("LUTI4 H", 0x4E43_1020), ("LUTI4 H V31 wrap", 0x4E5F_73FF),
+    ),
+    "faminmax": (
+        ("FAMAX 4H", 0x0EC2_1C20), ("FAMAX 8H V31", 0x4EDF_1FFF),
+        ("FAMAX 2S", 0x0EA2_DC20), ("FAMAX 4S", 0x4EA2_DC20),
+        ("FAMAX 2D V31", 0x4EFF_DFFF), ("FAMIN 4H", 0x2EC2_1C20),
+        ("FAMIN 8H V31", 0x6EDF_1FFF), ("FAMIN 2S", 0x2EA2_DC20),
+        ("FAMIN 4S", 0x6EA2_DC20), ("FAMIN 2D V31", 0x6EFF_DFFF),
+    ),
+    "sm3": (
+        ("SM3PARTW1", 0xCE62_C020), ("SM3PARTW2 V31", 0xCE7F_C7FF),
+        ("SM3SS1", 0xCE42_0C20), ("SM3SS1 V31", 0xCE5F_7FFF),
+        ("SM3TT1A", 0xCE42_8020), ("SM3TT1B", 0xCE42_9420),
+        ("SM3TT2A", 0xCE42_A820), ("SM3TT2B V31", 0xCE5F_BFFF),
+    ),
+    "sm4": (
+        ("SM4E", 0xCEC0_8420), ("SM4E V31", 0xCEC0_87FF),
+        ("SM4EKEY", 0xCE62_C820), ("SM4EKEY V31", 0xCE7F_CBFF),
+    ),
+    "fprcvt": (
+        ("FCVTAS S D", 0x1E7A_0020), ("FCVTAS D S", 0x9E3A_0020),
+        ("FCVTAS S H", 0x1EFA_0020), ("FCVTAS D H V31", 0x9EFA_03FF),
+        ("FCVTAU S D", 0x1E7B_0020), ("FCVTMS D S", 0x9E34_0020),
+        ("FCVTMU S H", 0x1EF5_0020), ("FCVTNS D H", 0x9EEA_0020),
+        ("FCVTNU S D", 0x1E6B_0020), ("FCVTPS D S", 0x9E32_0020),
+        ("FCVTPU S H", 0x1EF3_0020), ("FCVTZS D H", 0x9EF6_0020),
+        ("FCVTZU S D V31", 0x1E77_03FF), ("SCVTF S D", 0x9E3C_0020),
+        ("SCVTF D S", 0x1E7C_0020), ("SCVTF H S", 0x1EFC_0020),
+        ("SCVTF H D V31", 0x9EFC_03FF), ("UCVTF S D", 0x9E3D_0020),
+        ("UCVTF D S V31", 0x1E7D_03FF),
     ),
 }
 HINTS = {

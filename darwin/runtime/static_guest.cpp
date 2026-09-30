@@ -104,7 +104,6 @@ void load_cpu(arm64::CpuState &cpu,
 		(registers.pstate & pstate_daif) >> 6);
 	cpu.pstate_sm = (registers.svcr & svcr_sm) != 0;
 	cpu.pstate_za = (registers.svcr & svcr_za) != 0;
-	cpu.fpmr = registers.fpmr;
 	cpu.tls = tls;
 	/* An exception return may clear the local monitor, and the emulator has
 	 * no architectural reservation token in uml_pt_regs.  Clear every
@@ -119,8 +118,6 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.exclusive_size = 0;
 	cpu.gadget_zero = 0;
 	cpu.gadget_indirect_miss = nullptr;
-	cpu.gadget_host_fpmr = 0;
-	cpu.gadget_fpmr_active = false;
 	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr);
 }
 
@@ -142,7 +139,7 @@ void save_cpu(arm64::CpuState &cpu,
 		(cpu.pstate_dit ? pstate_dit : 0U) |
 		(cpu.pstate_ssbs ? pstate_ssbs : 0U) |
 		(static_cast<std::uint32_t>(cpu.pstate_daif & 15U) << 6);
-	registers.fpmr = cpu.fpmr;
+	registers.fpmr = 0;
 	registers.svcr =
 		(cpu.pstate_sm ? svcr_sm : 0U) |
 		(cpu.pstate_za ? svcr_za : 0U);

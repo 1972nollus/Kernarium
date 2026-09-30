@@ -40,14 +40,11 @@ static_assert(offsetof(CpuState, deferred_fpcr) == UML_GADGET_CPU_DEFERRED_FPCR)
 static_assert(offsetof(CpuState, deferred_fpsr) == UML_GADGET_CPU_DEFERRED_FPSR);
 static_assert(offsetof(CpuState, fp_loaded) == UML_GADGET_CPU_FP_LOADED);
 static_assert(offsetof(CpuState, fp_dirty) == UML_GADGET_CPU_FP_DIRTY);
-static_assert(offsetof(CpuState, fpmr) == UML_GADGET_CPU_FPMR);
 static_assert(offsetof(CpuState, gadget_zero) == UML_GADGET_CPU_ZERO);
 static_assert(offsetof(CpuState, gadget_host_fpcr) == UML_ARM64_CPU_HOST_FPCR);
 static_assert(offsetof(CpuState, gadget_host_fpsr) == UML_ARM64_CPU_HOST_FPSR);
 static_assert(offsetof(CpuState, gadget_fp_active) == UML_ARM64_CPU_FP_ACTIVE);
 static_assert(offsetof(CpuState, gadget_indirect_miss) == UML_GADGET_CPU_INDIRECT_MISS);
-static_assert(offsetof(CpuState, gadget_host_fpmr) == UML_ARM64_CPU_HOST_FPMR);
-static_assert(offsetof(CpuState, gadget_fpmr_active) == UML_ARM64_CPU_FPMR_ACTIVE);
 static_assert(offsetof(CpuState, gadget_return_stack) == UML_GADGET_CPU_RETURN_STACK);
 static_assert(offsetof(CpuState, gadget_return_top) == UML_GADGET_CPU_RETURN_TOP);
 static_assert(CpuState::return_stack_entries == UML_GADGET_RETURN_STACK_ENTRIES);

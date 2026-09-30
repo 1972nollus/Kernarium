@@ -7,7 +7,7 @@
 
 /* Apple Silicon exposes the Armv8 CRC and cryptographic extensions. Keep the
  * assembler aware of them so extension-backed gadgets can use native ops. */
-.arch armv8.6-a+crc+crypto+sha3+sm4+lor+rcpc+i8mm+fp16
+.arch armv8.6-a+crc+crypto+sha3+rcpc+i8mm+fp16
 
 #if __APPLE__
 #define NAME(value) _##value
@@ -75,31 +75,6 @@ NAME(uml_arm64_gadget_\name):
 	cbnz w6, 99f
 	bl uml_arm64_gadget_activate_native_fp_environment
 99:
-.endm
-
-/* Native FEAT_FP8 instructions consume FPMR.  Save it only for blocks that
- * actually execute such a gadget, then load the current guest value directly
- * before the instruction.  The production builder never selects these paths
- * on a host without the corresponding FP8 feature. */
-.macro ensure_fpmr_environment
-	ldrb w6, [sp, #0x84]
-	cbnz w6, 97f
-	.inst 0xd53b4446 /* mrs x6, FPMR */
-	str x6, [sp, #0x88]
-	mov w6, #1
-	strb w6, [sp, #0x84]
-97:
-	ldr x6, [_cpu, #UML_GADGET_CPU_FPMR]
-	.inst 0xd51b4446 /* msr FPMR, x6 */
-.endm
-
-.macro restore_fpmr_environment
-	ldrb w6, [sp, #0x84]
-	cbz w6, 98f
-	ldr x6, [sp, #0x88]
-	.inst 0xd51b4446 /* msr FPMR, x6 */
-	strb wzr, [sp, #0x84]
-98:
 .endm
 
 /* Translate guest address x7 through the persistent iSH-style TLB. The 16 KiB
@@ -333,7 +308,7 @@ NAME(uml_arm64_gadget_enter):
 	 * returns the event in w0 and completed count in x1 without a hot-boundary
 	 * memory store. Apple reserves x18, so it remains untouched.
 	 */
-	stp x18, x19, [sp, #-0x90]!
+	stp x18, x19, [sp, #-0x80]!
 	stp x20, x21, [sp, #0x10]
 	stp x22, x23, [sp, #0x20]
 	stp x24, x25, [sp, #0x30]
@@ -343,7 +318,6 @@ NAME(uml_arm64_gadget_enter):
 #if UML_GADGET_EXECUTION_HISTOGRAM
 	str x4, [sp, #0x70]
 #endif
-	str wzr, [sp, #0x84]
 	mov _stream, x0
 	/* Bias the retirement accumulator by the linked-chain limit. This lets
 	 * follow_block_link test its sign bit in one instruction while preserving
@@ -358,7 +332,6 @@ NAME(uml_arm64_gadget_enter):
 .p2align 4
 uml_arm64_gadget_leave:
 	str w27, [_cpu, #UML_GADGET_CPU_NZCV]
-	restore_fpmr_environment
 	add x1, x29, #1, lsl #12
 	ldr lr, [sp, #0x60]
 	ldp x28, x29, [sp, #0x50]
@@ -366,7 +339,7 @@ uml_arm64_gadget_leave:
 	ldp x24, x25, [sp, #0x30]
 	ldp x22, x23, [sp, #0x20]
 	ldp x20, x21, [sp, #0x10]
-	ldp x18, x19, [sp], #0x90
+	ldp x18, x19, [sp], #0x80
 	ret
 	/* Retain the established alignment of the core integer gadget bank. */
 	.space 32

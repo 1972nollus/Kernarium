@@ -42,7 +42,6 @@ inline void require(
 	cpu.nzcv = 0xa000'0000U;
 	cpu.fpcr = arm64::fpcr_writable_mask;
 	cpu.fpsr = 0xf800'009fU;
-	cpu.fpmr = 0x0000'003f'ff7f'c1ffULL;
 	cpu.tls = 0x1234'5678'9abc'def0ULL;
 	cpu.tbi_enabled = true;
 	cpu.pstate_ssbs = true;

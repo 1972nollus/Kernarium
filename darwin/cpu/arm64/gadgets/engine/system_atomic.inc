@@ -254,33 +254,6 @@ sysreg_fp_write fpsr, UML_GADGET_CPU_FPSR, fpsr, 0xf800009f
 
 .purgem sysreg_fp_write
 
-/* FPMR is guest architectural state even when the host lacks FEAT_FP8.  FP8
- * native gadgets synchronize it separately; ordinary reads and writes remain
- * direct and translation-time-specialized. */
-gadget sysreg_fpmr_read
-	ldr x8, [_stream], #8
-	ldr x9, [_cpu, #UML_GADGET_CPU_FPMR]
-	mov x10, #0xc1ff
-	movk x10, #0xff7f, lsl #16
-	movk x10, #0x003f, lsl #32
-	and x9, x9, x10
-	str x9, [_cpu, x8]
-	next_gadget
-
-gadget sysreg_fpmr_write_r
-	ldr x8, [_stream], #8
-	ldr x9, [_cpu, x8]
-	mov x10, #0xc1ff
-	movk x10, #0xff7f, lsl #16
-	movk x10, #0x003f, lsl #32
-	and x9, x9, x10
-	str x9, [_cpu, #UML_GADGET_CPU_FPMR]
-	next_gadget
-
-gadget sysreg_fpmr_write_z
-	str xzr, [_cpu, #UML_GADGET_CPU_FPMR]
-	next_gadget
-
 gadget sysreg_nzcv_write_r
 	ldr x8, [_stream], #8
 	ldr w9, [_cpu, x8]
