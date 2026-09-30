@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_bits.hpp"
+
 #include <cstdint>
 
 namespace uml::cpu::arm64::detail {
@@ -27,26 +29,11 @@ template<typename Integer>
 floating_absolute_minmax(Integer first, Integer second, bool maximum,
 	bool default_nan) noexcept
 {
-	constexpr unsigned bits = sizeof(Integer) * 8U;
-	constexpr unsigned fraction_bits = sizeof(Integer) == 2 ? 10U :
-		sizeof(Integer) == 4 ? 23U : 52U;
-	constexpr Integer fraction_mask =
-		static_cast<Integer>((Integer{1} << fraction_bits) - 1U);
-	constexpr Integer exponent_mask = static_cast<Integer>(
-		((Integer{1} << (bits - fraction_bits - 1U)) - 1U) <<
-		fraction_bits);
-	constexpr Integer quiet_bit = Integer{1} << (fraction_bits - 1U);
-	constexpr Integer magnitude_mask = static_cast<Integer>(
-		(Integer{1} << (bits - 1U)) - 1U);
-	const auto is_nan = [](Integer value) {
-		return (value & exponent_mask) == exponent_mask &&
-			(value & fraction_mask) != 0U;
-	};
-	const auto is_signaling = [&](Integer value) {
-		return is_nan(value) && (value & quiet_bit) == 0U;
-	};
-	const bool first_signaling = is_signaling(first);
-	const bool second_signaling = is_signaling(second);
+	using namespace floating_bits;
+	constexpr auto magnitude_mask =
+		static_cast<Integer>(sign_bit<Integer> - 1U);
+	const bool first_signaling = is_signaling_nan(first);
+	const bool second_signaling = is_signaling_nan(second);
 	Integer selected{};
 	if (first_signaling)
 		selected = first;
@@ -65,8 +52,10 @@ floating_absolute_minmax(Integer first, Integer second, bool maximum,
 			(first_absolute < second_absolute ? first_absolute :
 				second_absolute), 0U};
 	}
-	return {default_nan ? static_cast<Integer>(exponent_mask | quiet_bit) :
-		static_cast<Integer>(selected | quiet_bit),
+	constexpr Integer quiet = quiet_bit<Integer>;
+	return {default_nan ?
+			static_cast<Integer>(exponent_mask<Integer> | quiet) :
+			static_cast<Integer>(selected | quiet),
 		(first_signaling || second_signaling) ? 1U : 0U};
 }
 
@@ -75,25 +64,10 @@ template<typename Integer>
 floating_alternate_minmax(Integer first, Integer second, bool maximum,
 	std::uint32_t fpcr, bool number = false) noexcept
 {
-	constexpr unsigned bits = sizeof(Integer) * 8U;
-	constexpr unsigned fraction_bits = sizeof(Integer) == 2 ? 10U :
-		sizeof(Integer) == 4 ? 23U : 52U;
-	constexpr Integer sign = Integer{1} << (bits - 1U);
-	constexpr Integer fraction_mask =
-		static_cast<Integer>((Integer{1} << fraction_bits) - 1U);
-	constexpr Integer exponent_mask = static_cast<Integer>(
-		((Integer{1} << (bits - fraction_bits - 1U)) - 1U) <<
-		fraction_bits);
-	constexpr Integer quiet_bit = Integer{1} << (fraction_bits - 1U);
-	constexpr Integer magnitude_mask = static_cast<Integer>(sign - 1U);
-	const auto is_nan = [](Integer value) {
-		return (value & exponent_mask) == exponent_mask &&
-			(value & fraction_mask) != 0U;
-	};
-	const auto is_subnormal = [](Integer value) {
-		return (value & exponent_mask) == 0U &&
-			(value & fraction_mask) != 0U;
-	};
+	using namespace floating_bits;
+	constexpr Integer sign = sign_bit<Integer>;
+	constexpr Integer quiet = quiet_bit<Integer>;
+	constexpr auto magnitude_mask = static_cast<Integer>(sign - 1U);
 	const bool alternate = (fpcr & 2U) != 0U;
 	std::uint32_t exceptions{};
 	const auto flush_input = [&](Integer value) {
@@ -115,26 +89,23 @@ floating_alternate_minmax(Integer first, Integer second, bool maximum,
 	};
 	first = flush_input(first);
 	second = flush_input(second);
-	const auto is_zero = [](Integer value) {
-		return (value & magnitude_mask) == 0U;
-	};
-	const auto is_signaling = [&](Integer value) {
-		return is_nan(value) && (value & quiet_bit) == 0U;
-	};
 	if (number) {
 		if (alternate && is_nan(first) && is_nan(second)) {
-			const bool invalid =
-				is_signaling(first) || is_signaling(second);
+			const bool invalid = is_signaling_nan(first) ||
+				is_signaling_nan(second);
 			const Integer selected = (fpcr & (1U << 25)) != 0U ?
-				static_cast<Integer>(exponent_mask | quiet_bit) :
-				static_cast<Integer>(first | quiet_bit);
+				static_cast<Integer>(
+					exponent_mask<Integer> | quiet) :
+				static_cast<Integer>(first | quiet);
 			return {selected, static_cast<std::uint32_t>(
 				exceptions | (invalid ? 1U : 0U))};
 		}
-		const bool first_qnan = is_nan(first) && !is_signaling(first);
-		const bool second_qnan = is_nan(second) && !is_signaling(second);
+		const bool first_qnan = is_nan(first) &&
+			!is_signaling_nan(first);
+		const bool second_qnan = is_nan(second) &&
+			!is_signaling_nan(second);
 		const Integer replacement = static_cast<Integer>(
-			exponent_mask | (maximum ? sign : Integer{}));
+			exponent_mask<Integer> | (maximum ? sign : Integer{}));
 		if (first_qnan && !second_qnan)
 			first = replacement;
 		else if (!first_qnan && second_qnan)
@@ -145,13 +116,13 @@ floating_alternate_minmax(Integer first, Integer second, bool maximum,
 	}
 	if (is_nan(first) || is_nan(second)) {
 		const bool invalid =
-			is_signaling(first) || is_signaling(second);
-		Integer selected = is_signaling(first) ? first :
-			is_signaling(second) ? second :
+			is_signaling_nan(first) || is_signaling_nan(second);
+		Integer selected = is_signaling_nan(first) ? first :
+			is_signaling_nan(second) ? second :
 			is_nan(first) ? first : second;
 		selected = (fpcr & (1U << 25)) != 0U ?
-			static_cast<Integer>(exponent_mask | quiet_bit) :
-			static_cast<Integer>(selected | quiet_bit);
+			static_cast<Integer>(exponent_mask<Integer> | quiet) :
+			static_cast<Integer>(selected | quiet);
 		return {selected, static_cast<std::uint32_t>(
 			exceptions | (invalid ? 1U : 0U))};
 	}
@@ -285,26 +256,19 @@ complete_floating_controlled_arithmetic(Integer result, std::uint32_t fpcr,
 {
 	if ((fpcr & 2U) == 0U)
 		return {result, exceptions};
-	constexpr unsigned bits = sizeof(Integer) * 8U;
-	constexpr unsigned fraction_bits = sizeof(Integer) == 2 ? 10U :
-		sizeof(Integer) == 4 ? 23U : 52U;
-	constexpr Integer sign = Integer{1} << (bits - 1U);
-	constexpr Integer fraction_mask =
-		static_cast<Integer>((Integer{1} << fraction_bits) - 1U);
-	constexpr Integer exponent_mask = static_cast<Integer>(
-		((Integer{1} << (bits - fraction_bits - 1U)) - 1U) <<
-		fraction_bits);
-	const bool subnormal = (result & exponent_mask) == 0U &&
-		(result & fraction_mask) != 0U;
+	using namespace floating_bits;
+	/* The exponent test is shared with the normal-range branch below. */
+	const bool subnormal = (result & exponent_mask<Integer>) == 0U &&
+		(result & fraction_mask<Integer>) != 0U;
 	if (subnormal) {
 		const bool flush = sizeof(Integer) == 2U ?
 			(fpcr & (1U << 19)) != 0U :
 			(fpcr & (1U << 24)) != 0U;
 		if (flush)
-			return {static_cast<Integer>(result & sign),
+			return {static_cast<Integer>(result & sign_bit<Integer>),
 				static_cast<std::uint32_t>(
 					exceptions | (1U << 3) | (1U << 4))};
-	} else if ((result & exponent_mask) != 0U) {
+	} else if ((result & exponent_mask<Integer>) != 0U) {
 		/* Alternative mode detects tininess after unconstrained rounding.
 		 * A legacy host can therefore report underflow for a value that
 		 * rounded back into the normal range. */

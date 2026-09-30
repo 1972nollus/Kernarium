@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "floating_bits.hpp"
+
 #include <algorithm>
 #include <bit>
 #include <cstdint>
@@ -29,6 +31,8 @@ struct BFloatDot final {
 
 namespace bfloat_dot_detail {
 
+using floating_bits::default_nan;
+
 enum class Class : unsigned { zero, finite, infinity, nan };
 
 struct Value final {
@@ -37,11 +41,6 @@ struct Value final {
 	std::uint64_t significand{};
 	int exponent{};
 };
-
-[[nodiscard]] constexpr std::uint32_t default_nan(std::uint32_t fpcr) noexcept
-{
-	return (fpcr & 2U) != 0U ? 0xffc0'0000U : 0x7fc0'0000U;
-}
 
 [[nodiscard]] constexpr Value unpack_standard_bfloat(
 	std::uint16_t bits) noexcept
@@ -279,10 +278,10 @@ struct Rounded final {
 	const auto left = unpack_standard_bfloat(left_bits);
 	const auto right = unpack_standard_bfloat(right_bits);
 	if (left.type == Class::nan || right.type == Class::nan)
-		return default_nan(fpcr);
+		return default_nan<std::uint32_t>(fpcr);
 	if ((left.type == Class::infinity && right.type == Class::zero) ||
 	    (left.type == Class::zero && right.type == Class::infinity))
-		return default_nan(fpcr);
+		return default_nan<std::uint32_t>(fpcr);
 	const bool sign = left.sign != right.sign;
 	if (left.type == Class::infinity || right.type == Class::infinity)
 		return (static_cast<std::uint32_t>(sign) << 31) | 0x7f80'0000U;
@@ -299,10 +298,10 @@ struct Rounded final {
 	const auto left = unpack_standard_single(left_bits);
 	const auto right = unpack_standard_single(right_bits);
 	if (left.type == Class::nan || right.type == Class::nan)
-		return default_nan(fpcr);
+		return default_nan<std::uint32_t>(fpcr);
 	if (left.type == Class::infinity && right.type == Class::infinity &&
 	    left.sign != right.sign)
-		return default_nan(fpcr);
+		return default_nan<std::uint32_t>(fpcr);
 	if (left.type == Class::infinity)
 		return left_bits;
 	if (right.type == Class::infinity)
@@ -321,7 +320,7 @@ struct Rounded final {
 	const auto right_b = unpack_extended_bfloat(right_b_bits, fpcr);
 	if (left_a.type == Class::nan || left_b.type == Class::nan ||
 	    right_a.type == Class::nan || right_b.type == Class::nan)
-		return default_nan(fpcr);
+		return default_nan<std::uint32_t>(fpcr);
 	const bool zero_a = left_a.type == Class::zero ||
 		right_a.type == Class::zero;
 	const bool zero_b = left_b.type == Class::zero ||
@@ -334,7 +333,7 @@ struct Rounded final {
 	const bool sign_b = left_b.sign != right_b.sign;
 	if ((zero_a && infinity_a) || (zero_b && infinity_b) ||
 	    (infinity_a && infinity_b && sign_a != sign_b))
-		return default_nan(fpcr);
+		return default_nan<std::uint32_t>(fpcr);
 	if (infinity_a || infinity_b) {
 		const bool sign = infinity_a ? sign_a : sign_b;
 		return (static_cast<std::uint32_t>(sign) << 31) | 0x7f80'0000U;
@@ -355,10 +354,10 @@ struct Rounded final {
 	const auto left = unpack_extended_single(left_bits, fpcr);
 	const auto right = unpack_extended_single(right_bits, fpcr);
 	if (left.type == Class::nan || right.type == Class::nan)
-		return default_nan(fpcr);
+		return default_nan<std::uint32_t>(fpcr);
 	if (left.type == Class::infinity && right.type == Class::infinity &&
 	    left.sign != right.sign)
-		return default_nan(fpcr);
+		return default_nan<std::uint32_t>(fpcr);
 	if (left.type == Class::infinity)
 		return left_bits;
 	if (right.type == Class::infinity)

@@ -145,8 +145,7 @@ namespace half_fused_long_detail {
 	else if (right_nan)
 		selected_nan = right;
 	if (selected_nan != 0U)
-		return {process_alternative_nan(selected_nan,
-			(fpcr & (1U << 25)) != 0U), any_signaling ? 1U : 0U};
+		return {process_nan(selected_nan, fpcr), any_signaling ? 1U : 0U};
 
 	const bool left_infinity = is_infinity(left);
 	const bool right_infinity = is_infinity(right);

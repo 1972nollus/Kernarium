@@ -2,6 +2,7 @@
 #pragma once
 
 #include "../cpu_state.hpp"
+#include "floating_bits.hpp"
 
 #include <array>
 #include <cstddef>
@@ -14,17 +15,13 @@ namespace integer_multiply_detail {
 using Wide = __int128;
 using UnsignedWide = unsigned __int128;
 
-[[nodiscard]] constexpr std::uint64_t mask(unsigned bits) noexcept
-{
-	return bits == 64U ? ~std::uint64_t{0} :
-		(std::uint64_t{1} << bits) - 1U;
-}
+using floating_bits::low_mask;
 
 [[nodiscard]] constexpr Wide signed_value(
 	std::uint64_t raw, unsigned bits) noexcept
 {
 	const auto sign = std::uint64_t{1} << (bits - 1U);
-	raw &= mask(bits);
+	raw &= low_mask(bits);
 	return (raw & sign) != 0 ?
 		static_cast<Wide>(raw) - (Wide{1} << bits) :
 		static_cast<Wide>(raw);
@@ -72,7 +69,7 @@ inline void write_lane(std::array<std::byte, 16> &bytes, unsigned offset,
 		saturated = true;
 	}
 	return static_cast<std::uint64_t>(
-		static_cast<UnsignedWide>(value)) & mask(bits);
+		static_cast<UnsignedWide>(value)) & low_mask(bits);
 }
 
 struct Decoded final {
