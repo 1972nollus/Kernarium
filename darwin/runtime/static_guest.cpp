@@ -58,7 +58,9 @@ constexpr std::uint32_t pstate_ss = 0x0020'0000U;
 #if DARWIN_UML_X86_64_GUEST
 constexpr std::int32_t x86_64_debug_trap = 1;
 constexpr std::uint32_t x86_64_bound_range = 5;
+constexpr std::uint32_t x86_64_stack_segment_fault = 12;
 constexpr std::uint32_t x86_64_general_protection = 13;
+constexpr std::int32_t x86_64_alignment_check = 17;
 /* DR6.BS: the #DB is a single step. Reported as its error code, so Linux
  * tells a step from ICEBP, which leaves DR6 clear, as x86 Linux reads DR6. */
 constexpr std::int32_t x86_64_debug_single_step = 1 << 14;
@@ -175,7 +177,12 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 		x86_64::rflags_reserved | x86_64::rflags_interrupt;
 	cpu.compat_tls_bases = {};
 	cpu.compat_tls_present = 0;
+	cpu.compat_tls_first = 0;
 	if (cpu.execution_mode == x86_64::ExecutionMode::compat32) {
+		/* Each descriptor is a struct user_desc: entry number, then base.
+		 * The kernel keeps slot i at GDT entry first + i, so an installed
+		 * descriptor's entry number names the first entry, and the GDT
+		 * numbering stays the kernel's alone. */
 		for (std::size_t index = 0; index < x86_32_tls_entry_count; ++index) {
 			const auto head = registers.compat_tls[index][0];
 			const auto tail = registers.compat_tls[index][1];
@@ -183,6 +190,8 @@ void load_x86_cpu(x86_64::CpuState &cpu,
 				continue;
 			cpu.compat_tls_bases[index] = static_cast<std::uint32_t>(head >> 32U);
 			cpu.compat_tls_present |= static_cast<std::uint8_t>(1U << index);
+			cpu.compat_tls_first = static_cast<std::uint8_t>(
+				static_cast<std::uint32_t>(head) - index);
 		}
 	}
 	cpu.fs_base = registers.x[x86_64_fs_base_slot];
@@ -296,7 +305,8 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	const bool stepping = (cpu.rflags & x86_64::rflags_trap) != 0;
 	const auto &registered_interrupt = runtime.interrupt;
 	auto run = ::uml::runtime::run_x86_gadgets(
-		cpu, runtime.memory, runtime.x86_executor, generation,
+		cpu, runtime.memory, runtime.x86_executor,
+		runtime.x86_checked_executors, generation,
 		stepping ? 1 : dispatch_budget, stepping, {
 		.sequence = registered_interrupt.sequence,
 		.snapshot = registered_interrupt.snapshot,
@@ -313,6 +323,16 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		event = DARWIN_UML_EVENT_SYSCALL;
 		break;
 	case uml::cpu::ExitReason::memory_fault:
+		if (result.fault.alignment) {
+			/* #AC, a fault with an error code of zero, which x86 Linux
+			 * delivers with no address. */
+			registers.fault.error_code = 0;
+			registers.fault.address = 0;
+			registers.fault.trap_number = x86_64_alignment_check;
+			save_x86_fault_flags(registers);
+			event = DARWIN_UML_EVENT_DATA_ALIGNMENT;
+			break;
+		}
 		registers.fault.error_code = result.fault.access ==
 			uml::memory::MemoryAccess::write ? DARWIN_UML_FAULT_WRITE :
 			result.fault.access == uml::memory::MemoryAccess::execute ?
@@ -332,12 +352,14 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		event = DARWIN_UML_EVENT_ILLEGAL_INSTRUCTION;
 		break;
 	case uml::cpu::ExitReason::breakpoint:
-		/* #DB from ICEBP, #BP and #OF are traps; #BR and #GP are faults. */
-		registers.fault.error_code = 0;
+		/* #DB from ICEBP, #BP and #OF are traps; #BR, #SS and #GP are
+		 * faults. */
+		registers.fault.error_code = run.error_code;
 		registers.fault.address = cpu.rip;
 		registers.fault.trap_number = static_cast<std::int32_t>(
 			result.syndrome);
 		if (result.syndrome == x86_64_bound_range ||
+			result.syndrome == x86_64_stack_segment_fault ||
 			result.syndrome == x86_64_general_protection)
 			save_x86_fault_flags(registers);
 		event = DARWIN_UML_EVENT_BREAKPOINT;
@@ -349,10 +371,12 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 		event = DARWIN_UML_EVENT_BREAKPOINT;
 		break;
 	case uml::cpu::ExitReason::floating_point_trap:
-		/* #DE, a fault; the engine raises no other arithmetic exception. */
-		registers.fault.error_code = 0;
+		/* #DE, #MF or #XM, each a fault. The kernel derives the code of
+		 * #MF and #XM from the error code, then clears it. */
+		registers.fault.error_code = run.error_code;
 		registers.fault.address = cpu.rip;
-		registers.fault.trap_number = 0;
+		registers.fault.trap_number = static_cast<std::int32_t>(
+			result.syndrome);
 		save_x86_fault_flags(registers);
 		event = DARWIN_UML_EVENT_FLOATING_POINT_TRAP;
 		break;

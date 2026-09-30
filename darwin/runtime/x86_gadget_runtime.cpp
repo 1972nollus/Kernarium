@@ -3,6 +3,7 @@
 
 #if DARWIN_UML_X86_64_GUEST
 
+#include "cpu/x86_64/gadgets/exception_checks.hpp"
 #include "cpu/x86_64/gadgets/program.hpp"
 #include "platform/apple/host_features.hpp"
 #include "uml_darwin_static_mmu.h"
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 
 namespace uml::runtime {
 namespace {
@@ -131,10 +133,92 @@ void trace_fatal(const char *stage, const x86_64::CpuState &cpu,
 	std::fflush(stderr);
 }
 
+/* x86 exception vectors the runtime reports as a breakpoint's syndrome. */
+constexpr std::uint32_t stack_segment_fault = 12;
+constexpr std::uint32_t general_protection = 13;
+
+/* Bits 63 to 47 all equal: an address of the 4-level paging x86-64 Linux
+ * runs userspace under. */
+[[nodiscard]] constexpr bool canonical(std::uint64_t address) noexcept
+{
+	const auto high = static_cast<std::int64_t>(address) >> 47;
+	return high == 0 || high == -1;
+}
+
+/* The #GP error code of the instruction at RIP. INT n that user mode may
+ * not use names its IDT entry, (n << 3) | 2, as the hardware pushes when
+ * the gate refuses it; every other #GP the engine raises has none. */
+[[nodiscard]] std::int32_t general_protection_error(
+	StaticGuestMemory &memory, const x86_64::CpuState &cpu) noexcept
+{
+	const auto decoded = x86_64::decode(memory, cpu.rip, cpu.execution_mode);
+	if (decoded.status != x86_64::DecodeStatus::decoded)
+		return 0;
+	const auto &instruction = decoded.instruction;
+	if (instruction.operation != x86_64::Operation::privileged ||
+		instruction.vector_opcode != 0xcd)
+		return 0;
+	return static_cast<std::int32_t>((instruction.source.immediate << 3U) | 2U);
+}
+
+/* A non-canonical address raises #SS when the stack segment forms it --
+ * an implicit stack access, or an operand based on RSP or RBP with no
+ * segment override -- and #GP otherwise, neither with an error code. */
+[[nodiscard]] std::uint32_t noncanonical_vector(
+	StaticGuestMemory &memory, const x86_64::CpuState &cpu) noexcept
+{
+	const auto decoded = x86_64::decode(memory, cpu.rip, cpu.execution_mode);
+	if (decoded.status != x86_64::DecodeStatus::decoded)
+		return general_protection;
+	const auto &instruction = decoded.instruction;
+	using x86_64::Operation;
+	switch (instruction.operation) {
+	case Operation::push:
+	case Operation::pop:
+	case Operation::push_all:
+	case Operation::pop_all:
+	case Operation::push_flags:
+	case Operation::pop_flags:
+	case Operation::enter:
+	case Operation::call:
+	case Operation::call_indirect:
+	case Operation::far_call:
+	case Operation::ret:
+	case Operation::far_ret:
+	case Operation::interrupt_ret:
+	case Operation::segment_stack:
+		if (!canonical(cpu.gpr(x86_64::Register::rsp)))
+			return stack_segment_fault;
+		break;
+	case Operation::leave:
+		if (!canonical(cpu.gpr(x86_64::Register::rbp)))
+			return stack_segment_fault;
+		break;
+	default:
+		break;
+	}
+	for (const auto *operand : {&instruction.destination,
+		&instruction.source, &instruction.auxiliary}) {
+		const auto &memory_operand = operand->memory;
+		if (operand->kind == x86_64::OperandKind::memory &&
+			!memory_operand.rip_relative &&
+			memory_operand.segment == x86_64::Segment::none &&
+			(memory_operand.base == 4 || memory_operand.base == 5))
+			return stack_segment_fault;
+	}
+	return general_protection;
+}
+
 } // namespace
+
+static_assert((x86_64::gadgets::check_x87 | x86_64::gadgets::check_simd |
+	x86_64::gadgets::check_alignment) <
+	std::tuple_size_v<X86CheckedExecutors>,
+	"every set of checked exceptions names its own executor");
 
 X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	StaticGuestMemory &memory, x86_64::gadgets::Executor &executor,
+	X86CheckedExecutors &checked_executors,
 	unsigned long generation, std::size_t instruction_budget,
 	bool exact_budget, const ::uml::cpu::InterruptToken &interrupt) noexcept
 {
@@ -148,21 +232,42 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	}
 	/* A reset executor starts without the permission, so every run restates
 	 * what the host reported. */
-	executor.permit_unaligned_exclusives(
+	const bool unaligned_exclusives =
 		::uml::platform::apple::probed_host_capabilities().has(
-			::uml::platform::ArmFeature::lse2));
+			::uml::platform::ArmFeature::lse2);
+	executor.permit_unaligned_exclusives(unaligned_exclusives);
 	auto guarded_interrupt = interrupt;
 	guarded_interrupt.poll = execution_interrupt_boundary;
 	guarded_interrupt.poll_context = &execution;
-	bool executor_prepared = false;
-	std::uint64_t prepared_mapping_changes{};
-	std::uint64_t prepared_code_changes{};
+	/* What each executor was last prepared for: the ordinary one, then the
+	 * checked one for each set of checked exceptions. */
+	struct Prepared final {
+		bool done{};
+		std::uint64_t mapping_changes{};
+		std::uint64_t code_changes{};
+	};
+	std::array<Prepared, std::tuple_size_v<X86CheckedExecutors>> prepared{};
 	/* Set once POPF or IRET arms RFLAGS.TF: the run ends after one more
 	 * instruction and reports the #DB that instruction raises. */
 	bool trap_armed = false;
 	const auto budget_reason = [&]() noexcept {
 		return trap_armed ? ::uml::cpu::ExitReason::single_step :
 			::uml::cpu::ExitReason::instruction_budget;
+	};
+	/* A long-mode access to a non-canonical address never reaches the page
+	 * tables: x86 raises #GP or #SS for it, not #PF. A branch to one faults
+	 * at its target here rather than at the branch. */
+	const auto memory_fault = [&]() noexcept {
+		if (cpu.execution_mode == x86_64::ExecutionMode::long64 &&
+			!canonical(result.fault.address)) {
+			result.reason = ::uml::cpu::ExitReason::breakpoint;
+			result.syndrome = result.fault.access ==
+				::uml::memory::MemoryAccess::execute ?
+				general_protection : noncanonical_vector(memory, cpu);
+			result.fault = {};
+			return;
+		}
+		result.reason = ::uml::cpu::ExitReason::memory_fault;
 	};
 	while (result.retired_instructions < instruction_budget) {
 		const auto sequences = execution.sequences();
@@ -171,15 +276,41 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		}
 		memory.prepare(generation, sequences.mapping_changes);
-		if (!executor_prepared ||
-			prepared_mapping_changes != sequences.mapping_changes ||
-			prepared_code_changes != sequences.code_changes) {
-			executor.prepare(memory, generation, sequences.mapping_changes,
+		/* #AC, #XM and a pending #MF exist only while the guest enables
+		 * them, and only then does the run check the instructions that
+		 * could raise one, with an executor of its own for each set. Its
+		 * blocks were built for exactly that set: one built for more would
+		 * run singly what the gadgets check themselves. */
+		const auto checked = x86_64::gadgets::checked_exceptions(cpu);
+		auto *active = &executor;
+		auto *state = &prepared[0];
+		if (checked != 0) {
+			auto &checked_executor = checked_executors[checked];
+			if (!checked_executor) {
+				try {
+					checked_executor =
+						std::make_unique<x86_64::gadgets::Executor>();
+				} catch (...) {
+					trace_fatal("checked-executor", cpu, generation, 0,
+						result.retired_instructions);
+					return run;
+				}
+				checked_executor->check_exceptions(checked);
+			}
+			checked_executor->permit_unaligned_exclusives(
+				unaligned_exclusives);
+			active = checked_executor.get();
+			state = &prepared[checked];
+		}
+		if (!state->done ||
+			state->mapping_changes != sequences.mapping_changes ||
+			state->code_changes != sequences.code_changes) {
+			active->prepare(memory, generation, sequences.mapping_changes,
 				sequences.code_changes, execution.context(), cache_sequences,
 				cache_code_changes, cache_mapping_changes);
-			prepared_mapping_changes = sequences.mapping_changes;
-			prepared_code_changes = sequences.code_changes;
-			executor_prepared = true;
+			state->mapping_changes = sequences.mapping_changes;
+			state->code_changes = sequences.code_changes;
+			state->done = true;
 		}
 		if (cpu.rip == DARWIN_UML_SIGRETURN_TRAMPOLINE) {
 			cpu.gpr(x86_64::Register::rax) = 15;
@@ -195,15 +326,15 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 		 * would build short blocks that a later full budget throws away. */
 		const std::size_t limit = exact_budget || trap_armed ? available :
 			std::max<std::size_t>(available, block_instructions);
-		const auto selected = executor.select_program(
+		const auto selected = active->select_program(
 			memory, cpu.rip, cpu.execution_mode,
 			std::min(block_instructions, limit));
 		switch (selected.status) {
 		case x86_64::gadgets::BuildStatus::fetch_fault:
-			result.reason = ::uml::cpu::ExitReason::memory_fault;
 			result.fault = {
 				selected.fault_address,
 				::uml::memory::MemoryAccess::execute};
+			memory_fault();
 			return run;
 		case x86_64::gadgets::BuildStatus::illegal_instruction:
 			result.reason = ::uml::cpu::ExitReason::illegal_instruction;
@@ -222,13 +353,26 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 				result.retired_instructions);
 			return run;
 		}
-		const auto executed = x86_64::gadgets::execute(
-			*selected.program, cpu, memory, executor, limit,
-			guarded_interrupt);
+		/* A step of a repeated string instruction is one iteration. */
+		const bool stepping = (exact_budget || trap_armed) && limit == 1;
+		const auto executed = checked == 0 ?
+			x86_64::gadgets::execute(*selected.program, cpu, memory,
+				executor, limit, guarded_interrupt, stepping) :
+			x86_64::gadgets::execute_checked(*selected.program, cpu,
+				memory, *active, limit, guarded_interrupt, stepping,
+				checked);
 		result.retired_instructions += executed.retired_instructions;
-		prepared_code_changes = executor.prepared_code_changes();
+		state->code_changes = active->prepared_code_changes();
 		result.fault = executed.fault;
 		if (executed.instruction_budget_exhausted) {
+			result.reason = budget_reason();
+			return run;
+		}
+		if (stepping && executed.repeat_yielded) {
+			/* An iteration that did not end its instruction is a whole
+			 * step: #DB follows it with RIP naming the instruction and,
+			 * as the gadget leaves it, RF set, as it follows each
+			 * iteration on x86. */
 			result.reason = budget_reason();
 			return run;
 		}
@@ -257,7 +401,7 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			result.reason = ::uml::cpu::ExitReason::system_call;
 			return run;
 		case ::uml::cpu::EngineEvent::memory_fault:
-			result.reason = ::uml::cpu::ExitReason::memory_fault;
+			memory_fault();
 			return run;
 		case ::uml::cpu::EngineEvent::interrupt:
 			result.reason = ::uml::cpu::ExitReason::interrupt;
@@ -277,7 +421,8 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		case ::uml::cpu::EngineEvent::general_protection:
 			result.reason = ::uml::cpu::ExitReason::breakpoint;
-			result.syndrome = 13;
+			result.syndrome = general_protection;
+			run.error_code = general_protection_error(memory, cpu);
 			return run;
 		case ::uml::cpu::EngineEvent::debug_trap:
 			result.reason = ::uml::cpu::ExitReason::breakpoint;
@@ -289,6 +434,8 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		case ::uml::cpu::EngineEvent::floating_point_trap:
 			result.reason = ::uml::cpu::ExitReason::floating_point_trap;
+			result.syndrome = executed.vector;
+			run.error_code = static_cast<std::int32_t>(executed.error);
 			return run;
 		case ::uml::cpu::EngineEvent::pc_alignment:
 		case ::uml::cpu::EngineEvent::fatal:

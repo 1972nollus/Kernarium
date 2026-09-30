@@ -2383,7 +2383,7 @@ vinsertps:imm,mem,xmm,xmm	0	2	0
 vinsertps:imm,xmm,xmm,xmm	0	2	0
 vlddqu:mem,xmm	0	3	0
 vlddqu:mem,ymm	0	2	0
-vldmxcsr:mem	0	7	0
+vldmxcsr:mem	0	6	0
 vmaskmovdqu:xmm,xmm	0	1	0
 vmaskmovpd:mem,xmm,xmm	0	1	0
 vmaskmovpd:mem,ymm,ymm	0	1	0
@@ -3109,7 +3109,7 @@ vsqrtsd:mem,xmm,xmm	0	2	0
 vsqrtsd:xmm,xmm,xmm	0	2	0
 vsqrtss:mem,xmm,xmm	0	2	0
 vsqrtss:xmm,xmm,xmm	0	2	0
-vstmxcsr:mem	0	2	0
+vstmxcsr:mem	0	1	0
 vsubpd:mem,xmm,xmm	97	2	0
 vsubpd:mem,ymm,ymm	97	2	0
 vsubpd:xmm,xmm,xmm	1378	2	0

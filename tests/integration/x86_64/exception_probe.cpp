@@ -36,6 +36,7 @@ constexpr long nr_wait4 = 61;
 constexpr long nr_kill = 62;
 constexpr long nr_ptrace = 101;
 constexpr long nr_getppid = 110;
+constexpr long nr_sigaltstack = 131;
 constexpr long nr_clock_gettime = 228;
 constexpr long nr_exit_group = 231;
 
@@ -118,6 +119,118 @@ __asm__(".text\n"
 	"	int3\n"
 	"	fstpl (%rdi)\n"
 	"	ret\n"
+	/* One access at (address): a read, a write, and a fetch. */
+	".global probe_pf_read\n"
+	"probe_pf_read:\n"
+	".global probe_pf_read_insn\n"
+	"probe_pf_read_insn:\n"
+	"	movl (%rdi), %eax\n"
+	".global probe_pf_read_end\n"
+	"probe_pf_read_end:\n"
+	"	ret\n"
+	".global probe_pf_write\n"
+	"probe_pf_write:\n"
+	".global probe_pf_write_insn\n"
+	"probe_pf_write_insn:\n"
+	"	movl %eax, (%rdi)\n"
+	".global probe_pf_write_end\n"
+	"probe_pf_write_end:\n"
+	"	ret\n"
+	".global probe_pf_fetch\n"
+	"probe_pf_fetch:\n"
+	"	jmp *%rdi\n"
+	".global probe_pf_fetch_end\n"
+	"probe_pf_fetch_end:\n"
+	"	ret\n"
+	/* One access through a non-canonical (address): a load and a store
+	 * through RAX, a load based on RBP and one indexed by it, MOVSB from
+	 * it, and a push with it as RSP. */
+	".global probe_nc_load\n"
+	"probe_nc_load:\n"
+	"	movq %rdi, %rax\n"
+	".global probe_nc_load_insn\n"
+	"probe_nc_load_insn:\n"
+	"	movq (%rax), %rax\n"
+	".global probe_nc_load_end\n"
+	"probe_nc_load_end:\n"
+	"	ret\n"
+	".global probe_nc_store\n"
+	"probe_nc_store:\n"
+	"	movq %rdi, %rax\n"
+	".global probe_nc_store_insn\n"
+	"probe_nc_store_insn:\n"
+	"	movq %rcx, (%rax)\n"
+	".global probe_nc_store_end\n"
+	"probe_nc_store_end:\n"
+	"	ret\n"
+	".global probe_nc_rbp\n"
+	"probe_nc_rbp:\n"
+	"	pushq %rbp\n"
+	"	movq %rdi, %rbp\n"
+	".global probe_nc_rbp_insn\n"
+	"probe_nc_rbp_insn:\n"
+	"	movq 8(%rbp), %rax\n"
+	".global probe_nc_rbp_end\n"
+	"probe_nc_rbp_end:\n"
+	"	popq %rbp\n"
+	"	ret\n"
+	".global probe_nc_rbp_index\n"
+	"probe_nc_rbp_index:\n"
+	"	pushq %rbp\n"
+	"	movq %rdi, %rbp\n"
+	"	xorl %eax, %eax\n"
+	".global probe_nc_rbp_index_insn\n"
+	"probe_nc_rbp_index_insn:\n"
+	"	movq (%rax,%rbp,1), %rax\n"
+	".global probe_nc_rbp_index_end\n"
+	"probe_nc_rbp_index_end:\n"
+	"	popq %rbp\n"
+	"	ret\n"
+	".global probe_nc_movs\n"
+	"probe_nc_movs:\n"
+	"	movq %rdi, %rsi\n"
+	"	leaq probe_nc_scratch(%rip), %rdi\n"
+	".global probe_nc_movs_insn\n"
+	"probe_nc_movs_insn:\n"
+	"	movsb\n"
+	".global probe_nc_movs_end\n"
+	"probe_nc_movs_end:\n"
+	"	ret\n"
+	".global probe_nc_push\n"
+	"probe_nc_push:\n"
+	"	movq %rsp, probe_nc_saved_sp(%rip)\n"
+	"	movq %rdi, %rsp\n"
+	".global probe_nc_push_insn\n"
+	"probe_nc_push_insn:\n"
+	"	pushq %rax\n"
+	".global probe_nc_push_end\n"
+	"probe_nc_push_end:\n"
+	"	movq probe_nc_saved_sp(%rip), %rsp\n"
+	"	ret\n"
+	".data\n"
+	".balign 8\n"
+	"probe_nc_saved_sp:\n"
+	"	.quad 0\n"
+	"probe_nc_scratch:\n"
+	"	.quad 0\n"
+	".text\n"
+	/* REPE CMPSB of five bytes that differ at the third, then REP STOSB
+	 * of none: (left, right). */
+	".global probe_rep_step\n"
+	"probe_rep_step:\n"
+	"	movl $5, %ecx\n"
+	".global probe_rep_step_insn\n"
+	"probe_rep_step_insn:\n"
+	"	repe cmpsb\n"
+	".global probe_rep_step_end\n"
+	"probe_rep_step_end:\n"
+	"	xorl %ecx, %ecx\n"
+	".global probe_rep_zero_insn\n"
+	"probe_rep_zero_insn:\n"
+	"	rep stosb\n"
+	".global probe_rep_zero_end\n"
+	"probe_rep_zero_end:\n"
+	"	ret\n"
 	/* The traced child: known x87, SSE and general register state, then
 	 * #UD for the tracer's stop. The tracer resumes it at
 	 * probe_traced_resume, which exits with RBX's low byte. */
@@ -156,6 +269,7 @@ constexpr unsigned siginfo_address_offset = 16;
 /* struct user_regs_struct and struct user. */
 constexpr unsigned user_regs_words = 27;
 constexpr unsigned user_bx = 5;
+constexpr unsigned user_cx = 11;
 constexpr unsigned user_ax = 10;
 constexpr unsigned user_orig_ax = 15;
 constexpr unsigned user_ip = 16;
@@ -167,6 +281,7 @@ constexpr word user_debugreg7 = 848 + 7 * 8;
 constexpr word user_past = 928;
 constexpr word expected_bx = 0x1122334455667788UL;
 constexpr word expected_cs = 0x33;
+constexpr word user_debugreg = 848;
 #elif defined(__i386__)
 constexpr long nr_fork = 2;
 constexpr long nr_write = 4;
@@ -178,6 +293,7 @@ constexpr long nr_setitimer = 104;
 constexpr long nr_wait4 = 114;
 constexpr long nr_rt_sigaction = 174;
 constexpr long nr_set_thread_area = 243;
+constexpr long nr_get_thread_area = 244;
 constexpr long nr_exit_group = 252;
 constexpr long nr_clock_gettime = 265;
 
@@ -296,6 +412,59 @@ __asm__(".text\n"
 	"	int3\n"
 	"	fstpl (%eax)\n"
 	"	ret\n"
+	".global probe_pf_read\n"
+	"probe_pf_read:\n"
+	"	movl 4(%esp), %edx\n"
+	".global probe_pf_read_insn\n"
+	"probe_pf_read_insn:\n"
+	"	movl (%edx), %eax\n"
+	".global probe_pf_read_end\n"
+	"probe_pf_read_end:\n"
+	"	ret\n"
+	".global probe_pf_write\n"
+	"probe_pf_write:\n"
+	"	movl 4(%esp), %edx\n"
+	".global probe_pf_write_insn\n"
+	"probe_pf_write_insn:\n"
+	"	movl %eax, (%edx)\n"
+	".global probe_pf_write_end\n"
+	"probe_pf_write_end:\n"
+	"	ret\n"
+	".global probe_pf_fetch\n"
+	"probe_pf_fetch:\n"
+	"	movl 4(%esp), %edx\n"
+	"	jmp *%edx\n"
+	".global probe_pf_fetch_end\n"
+	"probe_pf_fetch_end:\n"
+	"	ret\n"
+	/* Reads the word at GS:0 after loading GS with (selector). */
+	".global probe_gs_word\n"
+	"probe_gs_word:\n"
+	"	movl 4(%esp), %eax\n"
+	"	movw %ax, %gs\n"
+	"	movl %gs:0, %eax\n"
+	"	ret\n"
+	".global probe_rep_step\n"
+	"probe_rep_step:\n"
+	"	pushl %esi\n"
+	"	pushl %edi\n"
+	"	movl 12(%esp), %esi\n"
+	"	movl 16(%esp), %edi\n"
+	"	movl $5, %ecx\n"
+	".global probe_rep_step_insn\n"
+	"probe_rep_step_insn:\n"
+	"	repe cmpsb\n"
+	".global probe_rep_step_end\n"
+	"probe_rep_step_end:\n"
+	"	xorl %ecx, %ecx\n"
+	".global probe_rep_zero_insn\n"
+	"probe_rep_zero_insn:\n"
+	"	rep stosb\n"
+	".global probe_rep_zero_end\n"
+	"probe_rep_zero_end:\n"
+	"	popl %edi\n"
+	"	popl %esi\n"
+	"	ret\n"
 	/* (tls_entry), which the tracer reads from ESI. */
 	".global probe_traced\n"
 	"probe_traced:\n"
@@ -333,6 +502,7 @@ constexpr unsigned siginfo_address_offset = 12;
 constexpr unsigned user_regs_words = 17;
 constexpr unsigned user_bx = 0;
 constexpr unsigned user_si = 3;
+constexpr unsigned user_cx = 1;
 constexpr unsigned user_ax = 6;
 constexpr unsigned user_orig_ax = 11;
 constexpr unsigned user_ip = 12;
@@ -344,9 +514,474 @@ constexpr word user_debugreg7 = 252 + 7 * 4;
 constexpr word user_past = 288;
 constexpr word expected_bx = 0x11223344UL;
 constexpr word expected_cs = 0x23;
+constexpr word user_debugreg = 252;
 #else
 #error "the exception probe is an x86-64 or i386 program"
 #endif
+
+#if defined(__x86_64__)
+#define PROBE_RIP "(%rip)"
+#define PROBE_SP "%rsp"
+#define PROBE_BP "%rbp"
+#define PROBE_ARG_AX "	movq %rdi, %rax\n"
+#define PROBE_AX "%rax"
+#else
+#define PROBE_RIP ""
+#define PROBE_SP "%esp"
+#define PROBE_BP "%ebp"
+#define PROBE_ARG_AX "	movl 4(%esp), %eax\n"
+#define PROBE_AX "%eax"
+#endif
+
+/* An unmasked SIMD exception raises #XM at its instruction; an unmasked x87
+ * one raises #MF at the next waiting instruction. Each case leaves MXCSR or
+ * the x87 status word as the handler returned them in probe_fp_saved[0],
+ * and XMM0 or the FISTP destination in probe_fp_saved[1]. */
+__asm__(".text\n"
+	".global probe_xm_div\n"
+	"probe_xm_div:\n"
+	"	movl $0x1d80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x3f800000, %eax\n"
+	"	movd %eax, %xmm0\n"
+	"	xorps %xmm1, %xmm1\n"
+	".global probe_xm_div_insn\n"
+	"probe_xm_div_insn:\n"
+	"	divss %xmm1, %xmm0\n"
+	".global probe_xm_div_end\n"
+	"probe_xm_div_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_xm_over\n"
+	"probe_xm_over:\n"
+	"	movl $0x1b80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x7f7fffff, %eax\n"
+	"	movd %eax, %xmm0\n"
+	"	movaps %xmm0, %xmm1\n"
+	".global probe_xm_over_insn\n"
+	"probe_xm_over_insn:\n"
+	"	mulss %xmm1, %xmm0\n"
+	".global probe_xm_over_end\n"
+	"probe_xm_over_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_xm_under\n"
+	"probe_xm_under:\n"
+	"	movl $0x1780, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x00800001, %eax\n"
+	"	movd %eax, %xmm0\n"
+	"	movl $0x3f000000, %eax\n"
+	"	movd %eax, %xmm1\n"
+	".global probe_xm_under_insn\n"
+	"probe_xm_under_insn:\n"
+	"	mulss %xmm1, %xmm0\n"
+	".global probe_xm_under_end\n"
+	"probe_xm_under_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_xm_prec\n"
+	"probe_xm_prec:\n"
+	"	movl $0x0f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x3f800000, %eax\n"
+	"	movd %eax, %xmm0\n"
+	"	movl $0x40400000, %eax\n"
+	"	movd %eax, %xmm1\n"
+	".global probe_xm_prec_insn\n"
+	"probe_xm_prec_insn:\n"
+	"	divss %xmm1, %xmm0\n"
+	".global probe_xm_prec_end\n"
+	"probe_xm_prec_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_xm_inv\n"
+	"probe_xm_inv:\n"
+	"	movl $0x1f00, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0xbf800000, %eax\n"
+	"	movd %eax, %xmm1\n"
+	"	movl $0x3f800000, %eax\n"
+	"	movd %eax, %xmm0\n"
+	".global probe_xm_inv_insn\n"
+	"probe_xm_inv_insn:\n"
+	"	sqrtss %xmm1, %xmm0\n"
+	".global probe_xm_inv_end\n"
+	"probe_xm_inv_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_xm_masked\n"
+	"probe_xm_masked:\n"
+	"	movl $0x0f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x3f800000, %eax\n"
+	"	movd %eax, %xmm0\n"
+	"	xorps %xmm1, %xmm1\n"
+	".global probe_xm_masked_insn\n"
+	"probe_xm_masked_insn:\n"
+	"	divss %xmm1, %xmm0\n"
+	".global probe_xm_masked_end\n"
+	"probe_xm_masked_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movd %xmm0, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_mf_div\n"
+	"probe_mf_div:\n"
+	"	fninit\n"
+	"	movw $0x37b, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	fldz\n"
+	"	fld1\n"
+	"	fdivp\n"
+	".global probe_mf_div_insn\n"
+	"probe_mf_div_insn:\n"
+	"	fwait\n"
+	".global probe_mf_div_end\n"
+	"probe_mf_div_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	".global probe_mf_inv\n"
+	"probe_mf_inv:\n"
+	"	fninit\n"
+	"	movw $0x37e, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	fld1\n"
+	"	fchs\n"
+	"	fsqrt\n"
+	".global probe_mf_inv_insn\n"
+	"probe_mf_inv_insn:\n"
+	"	fwait\n"
+	".global probe_mf_inv_end\n"
+	"probe_mf_inv_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	".global probe_mf_stack\n"
+	"probe_mf_stack:\n"
+	"	fninit\n"
+	"	movw $0x37e, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	"	fld1\n"
+	".global probe_mf_stack_insn\n"
+	"probe_mf_stack_insn:\n"
+	"	fwait\n"
+	".global probe_mf_stack_end\n"
+	"probe_mf_stack_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	".global probe_mf_unmask\n"
+	"probe_mf_unmask:\n"
+	"	fninit\n"
+	"	fldz\n"
+	"	fld1\n"
+	"	fdivp\n"
+	"	movw $0x37b, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	".global probe_mf_unmask_insn\n"
+	"probe_mf_unmask_insn:\n"
+	"	fwait\n"
+	".global probe_mf_unmask_end\n"
+	"probe_mf_unmask_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	".global probe_mf_mmx\n"
+	"probe_mf_mmx:\n"
+	"	fninit\n"
+	"	movw $0x37b, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	fldz\n"
+	"	fld1\n"
+	"	fdivp\n"
+	".global probe_mf_mmx_insn\n"
+	"probe_mf_mmx_insn:\n"
+	"	movq %mm0, %mm1\n"
+	".global probe_mf_mmx_end\n"
+	"probe_mf_mmx_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	emms\n"
+	"	ret\n"
+	".global probe_mf_fist\n"
+	"probe_mf_fist:\n"
+	"	movl $0x12345678, probe_fp_saved+4" PROBE_RIP "\n"
+	"	fninit\n"
+	"	movw $0x37e, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x7f000000, probe_fp_scratch" PROBE_RIP "\n"
+	"	flds probe_fp_scratch" PROBE_RIP "\n"
+	"	fistpl probe_fp_saved+4" PROBE_RIP "\n"
+	".global probe_mf_fist_insn\n"
+	"probe_mf_fist_insn:\n"
+	"	fwait\n"
+	".global probe_mf_fist_end\n"
+	"probe_mf_fist_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	/* Delphi's control words: FCW $1332 and MXCSR $1900 unmask invalid
+	 * operation, division by zero and overflow. Arithmetic that raises
+	 * none of them runs as it would masked, leaving its results, the
+	 * inexact flags and the status word in probe_delphi_out. */
+	".global probe_delphi_clean\n"
+	"probe_delphi_clean:\n"
+	"	fninit\n"
+	"	movw $0x1332, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $3, probe_fp_scratch" PROBE_RIP "\n"
+	"	fildl probe_fp_scratch" PROBE_RIP "\n"
+	"	fld1\n"
+	"	fdivrp\n"
+	"	fld %st(0)\n"
+	"	fmulp\n"
+	"	fsqrt\n"
+	"	fldpi\n"
+	"	faddp\n"
+	"	fld %st(0)\n"
+	"	fstpl probe_delphi_out+8" PROBE_RIP "\n"
+	"	fistpl probe_delphi_out" PROBE_RIP "\n"
+	"	fnstsw probe_delphi_out+4" PROBE_RIP "\n"
+	"	movl $7, %eax\n"
+	"	cvtsi2sd %eax, %xmm0\n"
+	"	movl $3, %eax\n"
+	"	cvtsi2sd %eax, %xmm1\n"
+	"	divsd %xmm1, %xmm0\n"
+	"	mulsd %xmm0, %xmm0\n"
+	"	sqrtsd %xmm0, %xmm0\n"
+	"	addsd %xmm1, %xmm0\n"
+	"	movsd %xmm0, probe_delphi_out+16" PROBE_RIP "\n"
+	"	cvttsd2si %xmm0, %eax\n"
+	"	movl %eax, probe_delphi_out+24" PROBE_RIP "\n"
+	"	stmxcsr probe_delphi_out+28" PROBE_RIP "\n"
+	".global probe_delphi_clean_end\n"
+	"probe_delphi_clean_end:\n"
+	"	fninit\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	/* Under FCW $1332 a division by zero raises #MF at the next x87
+	 * instruction, here FLD1, which does not run. */
+	".global probe_delphi_div\n"
+	"probe_delphi_div:\n"
+	"	fninit\n"
+	"	movw $0x1332, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	fldz\n"
+	"	fld1\n"
+	"	fdivp\n"
+	".global probe_delphi_div_insn\n"
+	"probe_delphi_div_insn:\n"
+	"	fld1\n"
+	".global probe_delphi_div_end\n"
+	"probe_delphi_div_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	/* Under MXCSR $1900 a division by zero raises #XM at DIVSD. */
+	".global probe_delphi_divsd\n"
+	"probe_delphi_divsd:\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $1, %eax\n"
+	"	cvtsi2sd %eax, %xmm0\n"
+	"	xorpd %xmm1, %xmm1\n"
+	".global probe_delphi_divsd_insn\n"
+	"probe_delphi_divsd_insn:\n"
+	"	divsd %xmm1, %xmm0\n"
+	".global probe_delphi_divsd_end\n"
+	"probe_delphi_divsd_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movq %xmm0, %xmm2\n"
+	"	psrlq $32, %xmm2\n"
+	"	movd %xmm2, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	/* Under MXCSR $1900 COMISD of a quiet NaN, CVTTSD2SI of a value out
+	 * of range and a MULPD lane that overflows raise #XM too. */
+	".global probe_delphi_comisd\n"
+	"probe_delphi_comisd:\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movsd probe_delphi_values" PROBE_RIP ", %xmm0\n"
+	"	movl $1, %eax\n"
+	"	cvtsi2sd %eax, %xmm1\n"
+	".global probe_delphi_comisd_insn\n"
+	"probe_delphi_comisd_insn:\n"
+	"	comisd %xmm1, %xmm0\n"
+	".global probe_delphi_comisd_end\n"
+	"probe_delphi_comisd_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movq %xmm0, %xmm2\n"
+	"	psrlq $32, %xmm2\n"
+	"	movd %xmm2, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_delphi_cvt\n"
+	"probe_delphi_cvt:\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movsd probe_delphi_values+8" PROBE_RIP ", %xmm0\n"
+	".global probe_delphi_cvt_insn\n"
+	"probe_delphi_cvt_insn:\n"
+	"	cvttsd2si %xmm0, %eax\n"
+	".global probe_delphi_cvt_end\n"
+	"probe_delphi_cvt_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movq %xmm0, %xmm2\n"
+	"	psrlq $32, %xmm2\n"
+	"	movd %xmm2, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".global probe_delphi_mulpd\n"
+	"probe_delphi_mulpd:\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movupd probe_delphi_values+16" PROBE_RIP ", %xmm0\n"
+	"	movupd probe_delphi_values+32" PROBE_RIP ", %xmm1\n"
+	".global probe_delphi_mulpd_insn\n"
+	"probe_delphi_mulpd_insn:\n"
+	"	mulpd %xmm1, %xmm0\n"
+	".global probe_delphi_mulpd_end\n"
+	"probe_delphi_mulpd_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movq %xmm0, %xmm2\n"
+	"	psrlq $32, %xmm2\n"
+	"	movd %xmm2, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	/* An infinity plus one, and UCOMISD of a quiet NaN, raise nothing
+	 * under MXCSR $1900; the results and MXCSR go to
+	 * probe_delphi_special_out. */
+	".global probe_delphi_specials\n"
+	"probe_delphi_specials:\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movsd probe_delphi_values+48" PROBE_RIP ", %xmm0\n"
+	"	movl $1, %eax\n"
+	"	cvtsi2sd %eax, %xmm1\n"
+	"	addsd %xmm1, %xmm0\n"
+	"	movsd %xmm0, probe_delphi_special_out" PROBE_RIP "\n"
+	"	movsd probe_delphi_values" PROBE_RIP ", %xmm2\n"
+	"	ucomisd %xmm1, %xmm2\n"
+	"	setp %al\n"
+	"	movzbl %al, %eax\n"
+	"	movl %eax, probe_delphi_special_out+8" PROBE_RIP "\n"
+	"	stmxcsr probe_delphi_special_out+12" PROBE_RIP "\n"
+	".global probe_delphi_specials_end\n"
+	"probe_delphi_specials_end:\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	".data\n"
+	".balign 8\n"
+	".global probe_fp_saved\n"
+	"probe_fp_saved:\n"
+	"	.long 0, 0\n"
+	"probe_fp_scratch:\n"
+	"	.long 0\n"
+	".balign 8\n"
+	".global probe_delphi_out\n"
+	"probe_delphi_out:\n"
+	"	.long 0, 0, 0, 0, 0, 0, 0, 0\n"
+	".global probe_delphi_special_out\n"
+	"probe_delphi_special_out:\n"
+	"	.long 0, 0, 0, 0\n"
+	/* A quiet NaN, 1e20, {1, DBL_MAX}, {1, 1.5} and an infinity. */
+	"probe_delphi_values:\n"
+	"	.quad 0x7ff8000000000000, 0x4415af1d78b58c40\n"
+	"	.quad 0x3ff0000000000000, 0x7fefffffffffffff\n"
+	"	.quad 0x3ff0000000000000, 0x3ff8000000000000\n"
+	"	.quad 0x7ff0000000000000\n"
+	".text\n");
+
+/* INT n of a vector user mode may not use raises #GP. */
+__asm__(".text\n"
+	".global probe_int_1\n"
+	"probe_int_1:\n"
+	"	int $0x1\n"
+	".global probe_int_1_end\n"
+	"probe_int_1_end:\n"
+	"	ret\n"
+	".global probe_int_2\n"
+	"probe_int_2:\n"
+	"	int $0x2\n"
+	".global probe_int_2_end\n"
+	"probe_int_2_end:\n"
+	"	ret\n"
+	".global probe_int_41\n"
+	"probe_int_41:\n"
+	"	int $0x41\n"
+	".global probe_int_41_end\n"
+	"probe_int_41_end:\n"
+	"	ret\n"
+	".global probe_int_ff\n"
+	"probe_int_ff:\n"
+	"	int $0xff\n"
+	".global probe_int_ff_end\n"
+	"probe_int_ff_end:\n"
+	"	ret\n"
+	);
+
+/* The debug-register tracee's work: one instruction to step, then ICEBP. */
+__asm__(".text\n"
+	".global probe_debug_child\n"
+	"probe_debug_child:\n"
+	"	nop\n"
+	"	.byte 0xf1\n"
+	"	ret\n");
+
+/* Both ABIs assemble these alike. UD2 raises #UD. */
+__asm__(".text\n"
+	".global probe_ud2\n"
+	"probe_ud2:\n"
+	"	ud2\n"
+	".global probe_ud2_end\n"
+	"probe_ud2_end:\n"
+	"	ret\n");
 
 constexpr word sa_siginfo = 4;
 constexpr word sa_restorer = 0x04000000;
@@ -362,6 +997,19 @@ constexpr long si_kernel = 0x80;
 constexpr word flag_reserved = 1UL << 1;
 constexpr word flag_rf = 1UL << 16;
 constexpr long eio = 5;
+constexpr long bus_adraln = 1;
+constexpr long sigfpe = 8;
+constexpr long fpe_fltdiv = 3;
+constexpr long fpe_fltovf = 4;
+constexpr long fpe_fltund = 5;
+constexpr long fpe_fltres = 6;
+constexpr long fpe_fltinv = 7;
+constexpr long sigbus = 7;
+constexpr long einval = 22;
+constexpr long segv_maperr = 1;
+/* Below every mapping of a static program, and at mmap_min_addr. */
+constexpr word unmapped_page = 0x10000;
+constexpr long ill_illopn = 2;
 
 struct KernelSigaction {
 	word handler;
@@ -587,7 +1235,7 @@ void record_fault(int signal, void *info, void *context)
 bool install_fault_handlers()
 {
 	if (install(sigill, record_fault) && install(sigtrap, record_fault) &&
-	    install(sigsegv, record_fault))
+	    install(sigsegv, record_fault) && install(sigbus, record_fault))
 		return true;
 	put("  rt_sigaction failed\n");
 	return false;
@@ -600,6 +1248,7 @@ struct Delivery {
 	word ip;
 	word trapno;
 	bool resume_flag;
+	word error;
 };
 
 /* Runs `work`, resuming after `end` if it faults, and checks that it raised
@@ -631,7 +1280,7 @@ bool delivers(const char *what, void (*work)(), word end,
 	ok &= expect("si_addr", observed[observed_address], expected.address);
 	ok &= expect("frame ip", observed[observed_ip], expected.ip);
 	ok &= expect("trapno", observed[observed_trapno], expected.trapno);
-	ok &= expect("err", observed[observed_error], 0);
+	ok &= expect("err", observed[observed_error], expected.error);
 	ok &= expect("RF", (observed[observed_flags] & flag_rf) != 0,
 		     expected.resume_flag);
 	if (!ok) {
@@ -659,7 +1308,7 @@ bool icebp_traps()
 	const word end = address_of(probe_icebp_end);
 	return install_fault_handlers() &&
 	       delivers("ICEBP", probe_icebp, end,
-			{sigtrap, trap_brkpt, end, end, 1, false});
+			{sigtrap, trap_brkpt, end, end, 1, false, 0});
 }
 
 /* INT 4 raises #OF as a trap, which Linux delivers as SIGSEGV with
@@ -669,7 +1318,7 @@ bool int4_traps()
 	const word end = address_of(probe_int4_end);
 	return install_fault_handlers() &&
 	       delivers("INT 4", probe_int4, end,
-			{sigsegv, si_kernel, 0, end, 4, false});
+			{sigsegv, si_kernel, 0, end, 4, false, 0});
 }
 
 extern "C" void probe_x87_signal(double *out);
@@ -783,7 +1432,7 @@ bool into_traps()
 	bool ok = install_fault_handlers();
 	ok = ok && delivers_nothing("INTO without overflow", into_clear, end);
 	ok = ok && delivers("INTO with overflow", into_overflowed, end,
-			    {sigsegv, si_kernel, 0, end, 4, false});
+			    {sigsegv, si_kernel, 0, end, 4, false, 0});
 	return ok;
 }
 
@@ -817,11 +1466,11 @@ bool bound_checks()
 	for (const long index : outside32) {
 		bound_index = static_cast<word>(index);
 		ok &= delivers("BOUND r32 out of range", bound32, end32,
-			       {sigsegv, si_kernel, 0, insn32, 5, true});
+			       {sigsegv, si_kernel, 0, insn32, 5, true, 0});
 	}
 	bound_index = 0x7fff;
 	ok &= delivers("BOUND r16 out of range", bound16, end16,
-		       {sigsegv, si_kernel, 0, insn16, 5, true});
+		       {sigsegv, si_kernel, 0, insn16, 5, true, 0});
 	bound_index = 0x10000;
 	ok &= delivers_nothing("BOUND r16 of a truncated index", bound16,
 			       end16);
@@ -829,11 +1478,585 @@ bool bound_checks()
 }
 #endif
 
+extern "C" void probe_ud2();
+extern "C" char probe_ud2_end[];
+
+/* #UD, vector 6, is a fault: SIGILL with ILL_ILLOPN at the instruction. */
+bool ud2_faults()
+{
+	const word insn = reinterpret_cast<word>(&probe_ud2);
+	return install_fault_handlers() &&
+	       delivers("UD2", probe_ud2, address_of(probe_ud2_end),
+			{sigill, ill_illopn, insn, insn, 6, true, 0});
+}
+
+extern "C" void probe_pf_read(word address);
+extern "C" char probe_pf_read_insn[];
+extern "C" char probe_pf_read_end[];
+extern "C" void probe_pf_write(word address);
+extern "C" char probe_pf_write_insn[];
+extern "C" char probe_pf_write_end[];
+extern "C" void probe_pf_fetch(word address);
+extern "C" char probe_pf_fetch_end[];
+
+void pf_read() { probe_pf_read(unmapped_page); }
+void pf_write() { probe_pf_write(unmapped_page); }
+void pf_fetch() { probe_pf_fetch(unmapped_page); }
+
+/* A user access to an unmapped page raises #PF with the U bit, 4, in its
+ * error code, and W, 2, for a write or I/D, 0x10, for a fetch. */
+bool page_faults_are_user()
+{
+	const word page = unmapped_page;
+	bool ok = install_fault_handlers();
+	ok = ok && delivers("read", pf_read, address_of(probe_pf_read_end),
+			    {sigsegv, segv_maperr, page,
+			     address_of(probe_pf_read_insn), 14, true, 4});
+	ok = ok && delivers("write", pf_write, address_of(probe_pf_write_end),
+			    {sigsegv, segv_maperr, page,
+			     address_of(probe_pf_write_insn), 14, true, 6});
+	ok = ok && delivers("fetch", pf_fetch, address_of(probe_pf_fetch_end),
+			    {sigsegv, segv_maperr, page, page, 14, true, 0x14});
+	return ok;
+}
+
+extern "C" void probe_int_1();
+extern "C" char probe_int_1_end[];
+extern "C" void probe_int_2();
+extern "C" char probe_int_2_end[];
+extern "C" void probe_int_41();
+extern "C" char probe_int_41_end[];
+extern "C" void probe_int_ff();
+extern "C" char probe_int_ff_end[];
+
+/* INT n that its gate refuses to user mode raises #GP, a fault: SIGSEGV
+ * with SI_KERNEL, and an error code naming the IDT entry, (n << 3) | 2. */
+bool int_n_faults()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *end;
+		word error;
+	};
+	const Case cases[] = {
+		{"INT 1", probe_int_1, probe_int_1_end, 0xa},
+		{"INT 2", probe_int_2, probe_int_2_end, 0x12},
+		{"INT 0x41", probe_int_41, probe_int_41_end, 0x20a},
+		{"INT 0xff", probe_int_ff, probe_int_ff_end, 0x7fa},
+	};
+	bool ok = install_fault_handlers();
+	for (const Case &one : cases) {
+		const word insn = reinterpret_cast<word>(one.work);
+		ok = ok && delivers(one.what, one.work, address_of(one.end),
+				    {sigsegv, si_kernel, 0, insn, 13, true,
+				     one.error});
+	}
+	return ok;
+}
+
+#if defined(__x86_64__)
+extern "C" void probe_nc_load(word address);
+extern "C" char probe_nc_load_insn[];
+extern "C" char probe_nc_load_end[];
+extern "C" void probe_nc_store(word address);
+extern "C" char probe_nc_store_insn[];
+extern "C" char probe_nc_store_end[];
+extern "C" void probe_nc_rbp(word address);
+extern "C" char probe_nc_rbp_insn[];
+extern "C" char probe_nc_rbp_end[];
+extern "C" void probe_nc_rbp_index(word address);
+extern "C" char probe_nc_rbp_index_insn[];
+extern "C" char probe_nc_rbp_index_end[];
+extern "C" void probe_nc_movs(word address);
+extern "C" char probe_nc_movs_insn[];
+extern "C" char probe_nc_movs_end[];
+extern "C" void probe_nc_push(word address);
+extern "C" char probe_nc_push_insn[];
+extern "C" char probe_nc_push_end[];
+
+/* Non-canonical under 4-level and 5-level paging alike. */
+constexpr word noncanonical = 0x8000000000000000UL;
+constexpr word sa_onstack = 0x08000000;
+
+alignas(16) unsigned char alternate_stack[16384];
+
+void nc_load() { probe_nc_load(noncanonical); }
+void nc_store() { probe_nc_store(noncanonical); }
+void nc_rbp() { probe_nc_rbp(noncanonical); }
+void nc_rbp_index() { probe_nc_rbp_index(noncanonical); }
+void nc_movs() { probe_nc_movs(noncanonical); }
+void nc_push() { probe_nc_push(noncanonical); }
+
+/* A push through a non-canonical RSP can deliver its signal only on an
+ * alternate stack. */
+bool handle_on_alternate_stack(long signal)
+{
+	const struct {
+		word sp;
+		long flags;
+		word size;
+	} stack = {reinterpret_cast<word>(alternate_stack), 0,
+		   sizeof(alternate_stack)};
+	KernelSigaction action = {};
+	action.handler = reinterpret_cast<word>(record_fault);
+	action.flags = sa_siginfo | sa_restorer | sa_onstack;
+	action.restorer = reinterpret_cast<word>(&probe_restorer);
+	return raw_syscall(nr_sigaltstack, reinterpret_cast<long>(&stack), 0) ==
+		       0 &&
+	       raw_syscall(nr_rt_sigaction, signal,
+			   reinterpret_cast<long>(&action), 0, 8) == 0;
+}
+
+/* A non-canonical address raises #GP, SIGSEGV with SI_KERNEL, or #SS,
+ * SIGBUS with SI_KERNEL, when the stack segment forms it; neither has an
+ * address, both are faults. */
+bool noncanonical_faults()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+		long signal;
+		word vector;
+	};
+	const Case cases[] = {
+		{"load", nc_load, probe_nc_load_insn, probe_nc_load_end,
+		 sigsegv, 13},
+		{"store", nc_store, probe_nc_store_insn, probe_nc_store_end,
+		 sigsegv, 13},
+		{"load based on RBP", nc_rbp, probe_nc_rbp_insn,
+		 probe_nc_rbp_end, sigbus, 12},
+		{"load indexed by RBP", nc_rbp_index, probe_nc_rbp_index_insn,
+		 probe_nc_rbp_index_end, sigsegv, 13},
+		{"MOVSB", nc_movs, probe_nc_movs_insn, probe_nc_movs_end,
+		 sigsegv, 13},
+		{"push", nc_push, probe_nc_push_insn, probe_nc_push_end,
+		 sigbus, 12},
+	};
+	bool ok = install_fault_handlers() && handle_on_alternate_stack(sigbus);
+	for (const Case &one : cases)
+		ok = ok && delivers(one.what, one.work, address_of(one.end),
+				    {one.signal, si_kernel, 0,
+				     address_of(one.insn), one.vector, true,
+				     0});
+	return ok;
+}
+#endif
+
+extern "C" void probe_xm_div();
+extern "C" char probe_xm_div_insn[];
+extern "C" char probe_xm_div_end[];
+extern "C" void probe_xm_over();
+extern "C" char probe_xm_over_insn[];
+extern "C" char probe_xm_over_end[];
+extern "C" void probe_xm_under();
+extern "C" char probe_xm_under_insn[];
+extern "C" char probe_xm_under_end[];
+extern "C" void probe_xm_prec();
+extern "C" char probe_xm_prec_insn[];
+extern "C" char probe_xm_prec_end[];
+extern "C" void probe_xm_inv();
+extern "C" char probe_xm_inv_insn[];
+extern "C" char probe_xm_inv_end[];
+extern "C" void probe_xm_masked();
+extern "C" char probe_xm_masked_insn[];
+extern "C" char probe_xm_masked_end[];
+extern "C" void probe_mf_div();
+extern "C" char probe_mf_div_insn[];
+extern "C" char probe_mf_div_end[];
+extern "C" void probe_mf_inv();
+extern "C" char probe_mf_inv_insn[];
+extern "C" char probe_mf_inv_end[];
+extern "C" void probe_mf_stack();
+extern "C" char probe_mf_stack_insn[];
+extern "C" char probe_mf_stack_end[];
+extern "C" void probe_mf_unmask();
+extern "C" char probe_mf_unmask_insn[];
+extern "C" char probe_mf_unmask_end[];
+extern "C" void probe_mf_mmx();
+extern "C" char probe_mf_mmx_insn[];
+extern "C" char probe_mf_mmx_end[];
+extern "C" void probe_mf_fist();
+extern "C" char probe_mf_fist_insn[];
+extern "C" char probe_mf_fist_end[];
+extern "C" void probe_delphi_div();
+extern "C" char probe_delphi_div_insn[];
+extern "C" char probe_delphi_div_end[];
+extern "C" void probe_delphi_divsd();
+extern "C" char probe_delphi_divsd_insn[];
+extern "C" char probe_delphi_divsd_end[];
+extern "C" void probe_delphi_clean();
+extern "C" char probe_delphi_clean_end[];
+extern "C" void probe_delphi_comisd();
+extern "C" char probe_delphi_comisd_insn[];
+extern "C" char probe_delphi_comisd_end[];
+extern "C" void probe_delphi_cvt();
+extern "C" char probe_delphi_cvt_insn[];
+extern "C" char probe_delphi_cvt_end[];
+extern "C" void probe_delphi_mulpd();
+extern "C" char probe_delphi_mulpd_insn[];
+extern "C" char probe_delphi_mulpd_end[];
+extern "C" void probe_delphi_specials();
+extern "C" char probe_delphi_specials_end[];
+extern "C" volatile u32 probe_delphi_special_out[4];
+extern "C" volatile u32 probe_fp_saved[2];
+extern "C" volatile u32 probe_delphi_out[8];
+
+/* The MXCSR and x87 control word a signal handler starts with. */
+volatile u32 handler_mxcsr;
+volatile u16 handler_control;
+
+void record_fp_fault(int signal, void *info, void *context)
+{
+	u32 mxcsr = 0;
+	u16 control = 0;
+	__asm__ volatile("stmxcsr %0\n\tfnstcw %1" : "=m"(mxcsr), "=m"(control));
+	handler_mxcsr = mxcsr;
+	handler_control = control;
+	record_fault(signal, info, context);
+}
+
+/* Runs `work`, resuming after `end` if it faults, and checks it raised
+ * nothing. */
+bool raises_nothing(const char *what, void (*work)(), word end)
+{
+	observed[observed_count] = 0;
+	resume_ip = end;
+	work();
+	resume_ip = 0;
+	if (observed[observed_count] == 0)
+		return true;
+	put("  ");
+	put(what);
+	put(" raised signal ");
+	put_decimal(observed[observed_signal]);
+	put("\n");
+	return false;
+}
+
+/* An unmasked SIMD floating-point exception raises #XM, a fault: SIGFPE
+ * with the code of the highest-priority unmasked flag, at the instruction,
+ * whose destination it leaves alone. An unmasked x87 exception sets the
+ * status word's ES and B and raises #MF, also SIGFPE, at the next waiting
+ * instruction, an MMX one included; one checked before the computation
+ * leaves the stack and a memory destination alone. Either handler starts
+ * with every exception masked. */
+bool floating_point_exceptions()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+		long code;
+		word trapno;
+		u32 state;
+		u32 value;
+	};
+	/* A `value` of zero is not checked. */
+	const Case cases[] = {
+		{"DIVSS by zero", probe_xm_div, probe_xm_div_insn, probe_xm_div_end,
+		 fpe_fltdiv, 19, 0x1d84, 0x3f800000},
+		{"MULSS overflow", probe_xm_over, probe_xm_over_insn,
+		 probe_xm_over_end, fpe_fltovf, 19, 0x1ba8, 0x7f7fffff},
+		{"MULSS underflow", probe_xm_under, probe_xm_under_insn,
+		 probe_xm_under_end, fpe_fltund, 19, 0x1790, 0x00800001},
+		{"DIVSS inexact", probe_xm_prec, probe_xm_prec_insn,
+		 probe_xm_prec_end, fpe_fltres, 19, 0x0fa0, 0x3f800000},
+		{"SQRTSS of -1", probe_xm_inv, probe_xm_inv_insn,
+		 probe_xm_inv_end, fpe_fltinv, 19, 0x1f01, 0x3f800000},
+		{"FDIVP by zero", probe_mf_div, probe_mf_div_insn,
+		 probe_mf_div_end, fpe_fltdiv, 16, 0xb084, 0},
+		{"FSQRT of -1", probe_mf_inv, probe_mf_inv_insn,
+		 probe_mf_inv_end, fpe_fltinv, 16, 0xb881, 0},
+		{"x87 stack overflow", probe_mf_stack, probe_mf_stack_insn,
+		 probe_mf_stack_end, fpe_fltinv, 16, 0x82c1, 0},
+		{"FLDCW unmasking a pending flag", probe_mf_unmask,
+		 probe_mf_unmask_insn, probe_mf_unmask_end, fpe_fltdiv, 16,
+		 0xb884, 0},
+		{"MMX after a pending exception", probe_mf_mmx,
+		 probe_mf_mmx_insn, probe_mf_mmx_end, fpe_fltdiv, 16, 0xb084, 0},
+		{"FISTP out of range", probe_mf_fist, probe_mf_fist_insn,
+		 probe_mf_fist_end, fpe_fltinv, 16, 0xb881, 0x12345678},
+		{"FDIVP by zero under FCW $1332", probe_delphi_div,
+		 probe_delphi_div_insn, probe_delphi_div_end, fpe_fltdiv, 16,
+		 0xb084, 0},
+		{"DIVSD by zero under MXCSR $1900", probe_delphi_divsd,
+		 probe_delphi_divsd_insn, probe_delphi_divsd_end, fpe_fltdiv, 19,
+		 0x1904, 0x3ff00000},
+		{"COMISD of a quiet NaN under MXCSR $1900", probe_delphi_comisd,
+		 probe_delphi_comisd_insn, probe_delphi_comisd_end, fpe_fltinv, 19,
+		 0x1901, 0x7ff80000},
+		{"CVTTSD2SI out of range under MXCSR $1900", probe_delphi_cvt,
+		 probe_delphi_cvt_insn, probe_delphi_cvt_end, fpe_fltinv, 19,
+		 0x1901, 0x4415af1d},
+		{"MULPD overflow under MXCSR $1900", probe_delphi_mulpd,
+		 probe_delphi_mulpd_insn, probe_delphi_mulpd_end, fpe_fltovf, 19,
+		 0x1928, 0x3ff00000},
+	};
+	bool ok = install(sigfpe, record_fp_fault);
+	for (const Case &one : cases) {
+		const word insn = address_of(one.insn);
+		handler_mxcsr = 0;
+		handler_control = 0;
+		bool one_ok = delivers(one.what, one.work, address_of(one.end),
+				       {sigfpe, one.code, insn, insn, one.trapno,
+					true, 0});
+		one_ok &= expect(one.trapno == 19 ? "MXCSR after" :
+					"x87 status after", probe_fp_saved[0],
+				 one.state);
+		if (one.value != 0)
+			one_ok &= expect(one.trapno == 19 ? "XMM0 after" :
+						"FISTP destination after",
+					 probe_fp_saved[1], one.value);
+		one_ok &= expect("handler MXCSR", handler_mxcsr, 0x1f80);
+		one_ok &= expect("handler x87 control", handler_control, 0x37f);
+		if (!one_ok) {
+			put("  in ");
+			put(one.what);
+			put("\n");
+		}
+		ok &= one_ok;
+	}
+	/* Delphi's control words raise nothing for arithmetic that raises
+	 * none of the exceptions they unmask. The status word is compared
+	 * without C1, which records whether the last rounding went up, and
+	 * MXCSR without the flags of the masked denormal, underflow and
+	 * precision exceptions, which the engine records only for an
+	 * instruction it runs checked. */
+	ok &= raises_nothing("arithmetic under FCW $1332 and MXCSR $1900",
+			     probe_delphi_clean,
+			     address_of(probe_delphi_clean_end));
+	for (unsigned index = 0; index < 8; ++index) {
+		static const char *const what[] = {
+			"x87 result", "x87 status", "x87 double low",
+			"x87 double high", "SSE double low", "SSE double high",
+			"SSE result", "MXCSR",
+		};
+		/* As native Linux reports them. */
+		static const u32 native[] = {
+			6, 0x20, 0xaa22168c, 0x401890fd, 0x55555556, 0x40155555,
+			5, 0x1920,
+		};
+		const u32 mask = index == 1 ? 0xfdffU : index == 7 ? ~0x32U :
+			~0U;
+		ok &= expect(what[index], probe_delphi_out[index] & mask,
+			     native[index] & mask);
+	}
+	ok &= raises_nothing("an infinity and a quiet NaN under MXCSR $1900",
+			     probe_delphi_specials,
+			     address_of(probe_delphi_specials_end));
+	for (unsigned index = 0; index < 4; ++index) {
+		static const char *const what[] = {
+			"infinity plus one low", "infinity plus one high",
+			"UCOMISD parity", "MXCSR after specials",
+		};
+		static const u32 native[] = {0, 0x7ff00000, 1, 0x1900};
+		ok &= expect(what[index], probe_delphi_special_out[index],
+			     native[index]);
+	}
+	/* A masked exception only sets its flag. */
+	ok &= raises_nothing("masked DIVSS by zero", probe_xm_masked,
+			     address_of(probe_xm_masked_end));
+	ok &= expect("MXCSR after a masked exception", probe_fp_saved[0],
+		     0x0f84);
+	ok &= expect("XMM0 after a masked exception", probe_fp_saved[1],
+		     0x7f800000);
+	return ok;
+}
+
+/* With RFLAGS.AC set, one access through (buffer); each case clears AC, and
+ * restores the stack, after its instruction. */
+__asm__(".text\n"
+	".global probe_ac_load\n"
+	"probe_ac_load:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_load_insn\n"
+	"probe_ac_load_insn:\n"
+	"	movl 1(" PROBE_AX "), %edx\n"
+	".global probe_ac_load_end\n"
+	"probe_ac_load_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	ret\n"
+	".global probe_ac_word\n"
+	"probe_ac_word:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_word_insn\n"
+	"probe_ac_word_insn:\n"
+	"	movw 2(" PROBE_AX "), %dx\n"
+	".global probe_ac_word_end\n"
+	"probe_ac_word_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	ret\n"
+	".global probe_ac_byte\n"
+	"probe_ac_byte:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_byte_insn\n"
+	"probe_ac_byte_insn:\n"
+	"	movb 1(" PROBE_AX "), %dl\n"
+	".global probe_ac_byte_end\n"
+	"probe_ac_byte_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	ret\n"
+	".global probe_ac_x87\n"
+	"probe_ac_x87:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_x87_insn\n"
+	"probe_ac_x87_insn:\n"
+	"	fldl 4(" PROBE_AX ")\n"
+	".global probe_ac_x87_end\n"
+	"probe_ac_x87_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	fninit\n"
+	"	ret\n"
+	".global probe_ac_sse\n"
+	"probe_ac_sse:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_sse_insn\n"
+	"probe_ac_sse_insn:\n"
+	"	movsd 4(" PROBE_AX "), %xmm0\n"
+	".global probe_ac_sse_end\n"
+	"probe_ac_sse_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	ret\n"
+	".global probe_ac_movups\n"
+	"probe_ac_movups:\n"
+	PROBE_ARG_AX
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_movups_insn\n"
+	"probe_ac_movups_insn:\n"
+	"	movups 8(" PROBE_AX "), %xmm0\n"
+	".global probe_ac_movups_end\n"
+	"probe_ac_movups_end:\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	ret\n"
+	".global probe_ac_push\n"
+	"probe_ac_push:\n"
+	"	push " PROBE_BP "\n"
+	"	mov " PROBE_SP ", " PROBE_BP "\n"
+	"	sub $2, " PROBE_SP "\n"
+	"	pushf\n"
+	"	orl $0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	".global probe_ac_push_insn\n"
+	"probe_ac_push_insn:\n"
+	"	push " PROBE_AX "\n"
+	".global probe_ac_push_end\n"
+	"probe_ac_push_end:\n"
+	"	mov " PROBE_BP ", " PROBE_SP "\n"
+	"	pushf\n"
+	"	andl $~0x40000, (" PROBE_SP ")\n"
+	"	popf\n"
+	"	pop " PROBE_BP "\n"
+	"	ret\n"
+	);
+
+extern "C" void probe_ac_load(void *buffer);
+extern "C" char probe_ac_load_insn[];
+extern "C" char probe_ac_load_end[];
+extern "C" void probe_ac_word(void *buffer);
+extern "C" char probe_ac_word_insn[];
+extern "C" char probe_ac_word_end[];
+extern "C" void probe_ac_byte(void *buffer);
+extern "C" char probe_ac_byte_insn[];
+extern "C" char probe_ac_byte_end[];
+extern "C" void probe_ac_x87(void *buffer);
+extern "C" char probe_ac_x87_insn[];
+extern "C" char probe_ac_x87_end[];
+extern "C" void probe_ac_sse(void *buffer);
+extern "C" char probe_ac_sse_insn[];
+extern "C" char probe_ac_sse_end[];
+extern "C" void probe_ac_movups(void *buffer);
+extern "C" char probe_ac_movups_insn[];
+extern "C" char probe_ac_movups_end[];
+extern "C" void probe_ac_push(void *buffer);
+extern "C" char probe_ac_push_insn[];
+extern "C" char probe_ac_push_end[];
+
+alignas(64) unsigned char alignment_buffer[64];
+
+void ac_load() { probe_ac_load(alignment_buffer); }
+void ac_word() { probe_ac_word(alignment_buffer); }
+void ac_byte() { probe_ac_byte(alignment_buffer); }
+void ac_x87() { probe_ac_x87(alignment_buffer); }
+void ac_sse() { probe_ac_sse(alignment_buffer); }
+void ac_movups() { probe_ac_movups(alignment_buffer); }
+void ac_push() { probe_ac_push(alignment_buffer); }
+
+/* With RFLAGS.AC set, a misaligned access of two, four or eight bytes, an
+ * x87 or SSE one included, or a push through a misaligned stack, raises
+ * #AC, a fault: SIGBUS with BUS_ADRALN and no address, error code zero. A
+ * byte, an aligned access and an unaligned 16-byte SSE access raise
+ * nothing. */
+bool alignment_checks()
+{
+	struct Case {
+		const char *what;
+		void (*work)();
+		const char *insn;
+		const char *end;
+	};
+	const Case faults[] = {
+		{"MOV of four bytes at +1", ac_load, probe_ac_load_insn,
+		 probe_ac_load_end},
+		{"FLD of eight bytes at +4", ac_x87, probe_ac_x87_insn,
+		 probe_ac_x87_end},
+		{"MOVSD of eight bytes at +4", ac_sse, probe_ac_sse_insn,
+		 probe_ac_sse_end},
+		{"PUSH with the stack two bytes off", ac_push, probe_ac_push_insn,
+		 probe_ac_push_end},
+	};
+	bool ok = install_fault_handlers();
+	for (const Case &one : faults)
+		ok &= delivers(one.what, one.work, address_of(one.end),
+			       {sigbus, bus_adraln, 0, address_of(one.insn), 17,
+				true, 0});
+	ok &= raises_nothing("MOV of two bytes at +2", ac_word,
+			     address_of(probe_ac_word_end));
+	ok &= raises_nothing("MOV of a byte at +1", ac_byte,
+			     address_of(probe_ac_byte_end));
+	ok &= raises_nothing("MOVUPS at +8", ac_movups,
+			     address_of(probe_ac_movups_end));
+	return ok;
+}
+
 constexpr long ptrace_traceme = 0;
 constexpr long ptrace_peekuser = 3;
 constexpr long ptrace_pokeuser = 6;
 constexpr long ptrace_cont = 7;
 constexpr long ptrace_getregs = 12;
+constexpr long ptrace_singlestep = 9;
 constexpr long ptrace_syscall = 24;
 constexpr long ptrace_setregs = 13;
 constexpr long ptrace_getfpregs = 14;
@@ -860,6 +2083,10 @@ extern "C" char probe_traced_resume[];
 
 #if defined(__i386__)
 constexpr u32 tls_base = 0x12345000;
+/* An x86-64 kernel's GDT holds the i386 TLS entries at 12 to 14, and
+ * set_thread_area hands out the first free one. */
+constexpr u32 tls_first_entry = 12;
+constexpr u32 tls_flags = 1U | 1U << 4 | 1U << 6;
 #endif
 
 struct UserDesc {
@@ -984,6 +2211,11 @@ bool check_stop(long child)
 	ok &= expect("thread area entry", descriptor.entry_number,
 		     regs[user_si]);
 	ok &= expect("thread area base", descriptor.base_addr, tls_base);
+	ok &= expect("the child's TLS entry", regs[user_si], tls_first_entry);
+	ok &= expect("PTRACE_GET_THREAD_AREA below the TLS entries",
+		     static_cast<word>(ptrace(ptrace_get_thread_area, child, 6,
+					      &descriptor)),
+		     static_cast<word>(-einval));
 #endif
 
 	regs[user_ip] = address_of(probe_traced_resume);
@@ -1012,8 +2244,7 @@ bool tracer_sees_registers()
 #if defined(__i386__)
 		/* 32-bit, 4 KiB-granular, usable: flags seg_32bit,
 		 * limit_in_pages and useable. */
-		UserDesc descriptor = {~0U, tls_base, 0xfffff,
-				       1U | 1U << 4 | 1U << 6};
+		UserDesc descriptor = {~0U, tls_base, 0xfffff, tls_flags};
 		if (raw_syscall(nr_set_thread_area,
 				reinterpret_cast<long>(&descriptor)) != 0)
 			raw_syscall(nr_exit_group, 3);
@@ -1132,6 +2363,250 @@ bool tracer_changes_syscalls()
 	return expect("child exit status", static_cast<u32>(status), 0);
 }
 
+extern "C" void probe_debug_child();
+
+/* DR6 reads with its reserved bits set; BS, 0x4000, marks a single step. */
+constexpr word dr6_idle = 0xffff0ff0;
+constexpr word dr6_step = 0x4000;
+/* DR7: breakpoint 0 enabled, a 4-byte write watchpoint. */
+constexpr word dr7_watch_write = 0xd0001;
+
+alignas(8) volatile u32 watched;
+
+word peek_debugreg(long child, unsigned index)
+{
+	word value = 0x5a5a5a5a;
+	if (ptrace(ptrace_peekuser, child,
+		   user_debugreg + index * sizeof(word), &value) != 0)
+		put("  PTRACE_PEEKUSER of a debug register failed\n");
+	return value;
+}
+
+word poke_debugreg(long child, unsigned index, word value)
+{
+	return static_cast<word>(ptrace(ptrace_pokeuser, child,
+		user_debugreg + index * sizeof(word),
+		reinterpret_cast<const void *>(value)));
+}
+
+/* A tracer sees the debug registers x86 Linux keeps: DR6 with its reserved
+ * bits set, BS after a single step and clear after ICEBP; DR0 to DR3 and
+ * DR7 as written, a kernel address or an invalid length and type refused.
+ * A write that enables a watchpoint either arms one that fires or fails. */
+bool tracer_debug_registers()
+{
+	const long child = raw_syscall(nr_fork);
+	if (child == 0) {
+		raw_syscall(nr_ptrace, ptrace_traceme, 0, 0, 0);
+		raw_syscall(nr_kill, raw_syscall(nr_getpid), sigstop);
+		probe_debug_child();
+		watched = 1;
+		raw_syscall(nr_exit_group, 0);
+	}
+	if (child < 0) {
+		put("  fork failed\n");
+		return false;
+	}
+	bool ok = stopped_with(child, sigstop, "SIGSTOP");
+	ok = ok && expect("DR6 of a new task", peek_debugreg(child, 6),
+			  dr6_idle);
+	ok = ok && expect("DR7 of a new task", peek_debugreg(child, 7), 0);
+	ok = ok && ptrace(ptrace_singlestep, child, 0, nullptr) == 0 &&
+	     stopped_with(child, sigtrap, "single-step");
+	ok = ok && expect("DR6 after a single step", peek_debugreg(child, 6),
+			  dr6_idle | dr6_step);
+	ok = ok && ptrace(ptrace_cont, child, 0, nullptr) == 0 &&
+	     stopped_with(child, sigtrap, "ICEBP");
+	ok = ok && expect("DR6 after ICEBP", peek_debugreg(child, 6), dr6_idle);
+	long armed = -1;
+	if (ok) {
+		const word address = reinterpret_cast<word>(&watched);
+		ok &= expect("PTRACE_POKEUSER DR6", poke_debugreg(child, 6, 0), 0);
+		ok &= expect("DR6 as written", peek_debugreg(child, 6), 0);
+		ok &= expect("PTRACE_POKEUSER DR6 back",
+			     poke_debugreg(child, 6, dr6_idle), 0);
+		ok &= expect("PTRACE_POKEUSER DR4", poke_debugreg(child, 4, 1),
+			     static_cast<word>(-eio));
+		ok &= expect("PTRACE_POKEUSER DR5", poke_debugreg(child, 5, 0),
+			     static_cast<word>(-eio));
+		ok &= expect("PTRACE_POKEUSER DR1",
+			     poke_debugreg(child, 1, address), 0);
+		ok &= expect("DR1 as written", peek_debugreg(child, 1), address);
+#if defined(__x86_64__)
+		ok &= expect("PTRACE_POKEUSER DR2 of a kernel address",
+			     poke_debugreg(child, 2, 0xffffffff81000000UL),
+			     static_cast<word>(-einval));
+		ok &= expect("DR2 after a refused write",
+			     peek_debugreg(child, 2), 0);
+#endif
+		ok &= expect("PTRACE_POKEUSER DR7 without an enable",
+			     poke_debugreg(child, 7, 0x100), 0);
+		ok &= expect("DR7 as written", peek_debugreg(child, 7), 0x100);
+		ok &= expect("PTRACE_POKEUSER DR7 of a 4-byte execute breakpoint",
+			     poke_debugreg(child, 7, 0xc0001),
+			     static_cast<word>(-einval));
+		ok &= expect("DR7 after a refused write",
+			     peek_debugreg(child, 7), 0x100);
+		ok &= expect("PTRACE_POKEUSER DR0",
+			     poke_debugreg(child, 0, address), 0);
+		armed = static_cast<long>(
+			poke_debugreg(child, 7, dr7_watch_write));
+		if (armed == 0)
+			ok &= expect("DR7 as armed", peek_debugreg(child, 7),
+				     dr7_watch_write);
+		else
+			ok &= expect("PTRACE_POKEUSER DR7 arming",
+				     static_cast<word>(armed),
+				     static_cast<word>(-einval)) &&
+			      expect("DR7 after refused arming",
+				     peek_debugreg(child, 7), 0x100);
+	}
+	if (ok && armed == 0) {
+		ok = ptrace(ptrace_cont, child, 0, nullptr) == 0 &&
+		     stopped_with(child, sigtrap, "watchpoint");
+		ok = ok && expect("DR6 B0 after the watchpoint",
+				  peek_debugreg(child, 6) & 0xf, 1);
+		ok = ok && expect("PTRACE_POKEUSER DR7 clear",
+				  poke_debugreg(child, 7, 0), 0);
+	}
+	int status = 0;
+	if (!ok || ptrace(ptrace_cont, child, 0, nullptr) != 0 ||
+	    wait_for(child, status) != child) {
+		raw_syscall(nr_kill, child, sigkill);
+		wait_for(child, status);
+		return false;
+	}
+	return expect("child exit status", static_cast<u32>(status), 0);
+}
+
+#if defined(__i386__)
+extern "C" u32 probe_gs_word(u32 selector);
+
+alignas(16) u32 tls_block[4] = {0x5a5aa5a5, 0, 0, 0};
+
+/* set_thread_area with entry -1 takes the first TLS entry, 12, whose
+ * selector 0x63 then addresses the new base, as glibc's GS does; entries
+ * outside 12 to 14 are refused. */
+bool tls_entries()
+{
+	UserDesc descriptor = {~0U, reinterpret_cast<u32>(tls_block), 0xfffff,
+			       tls_flags};
+	bool ok = expect("set_thread_area", static_cast<word>(raw_syscall(
+		nr_set_thread_area, reinterpret_cast<long>(&descriptor))), 0);
+	ok &= expect("entry set_thread_area chose", descriptor.entry_number,
+		     tls_first_entry);
+	const u32 selector = descriptor.entry_number << 3 | 3;
+	ok &= expect("its selector", selector, 0x63);
+	ok &= expect("GS:0 through it", probe_gs_word(selector), tls_block[0]);
+	UserDesc read = {tls_first_entry, 0, 0, 0};
+	ok &= expect("get_thread_area", static_cast<word>(raw_syscall(
+		nr_get_thread_area, reinterpret_cast<long>(&read))), 0);
+	ok &= expect("its base", read.base_addr,
+		     reinterpret_cast<u32>(tls_block));
+	UserDesc old = {6, 0, 0, 0};
+	ok &= expect("get_thread_area of entry 6", static_cast<word>(
+		raw_syscall(nr_get_thread_area, reinterpret_cast<long>(&old))),
+		static_cast<word>(-einval));
+	old = {6, reinterpret_cast<u32>(tls_block), 0xfffff, tls_flags};
+	ok &= expect("set_thread_area of entry 6", static_cast<word>(
+		raw_syscall(nr_set_thread_area, reinterpret_cast<long>(&old))),
+		static_cast<word>(-einval));
+	return ok;
+}
+#endif
+
+extern "C" void probe_rep_step(const void *left, const void *right);
+extern "C" char probe_rep_step_insn[];
+extern "C" char probe_rep_step_end[];
+extern "C" char probe_rep_zero_insn[];
+extern "C" char probe_rep_zero_end[];
+
+const unsigned char rep_left[5] = {1, 2, 3, 4, 5};
+const unsigned char rep_right[5] = {1, 2, 9, 4, 5};
+
+struct StepStop {
+	word ip;
+	word cx;
+	bool resume_flag;
+};
+
+/* Steps the child until it leaves the instruction at `insn`, which it
+ * must be at, and checks each stop against `expected`. */
+bool steps_through(long child, word insn, const StepStop *expected,
+		   unsigned count)
+{
+	bool ok = true;
+	for (unsigned index = 0; ok && index < count; ++index) {
+		ok = ptrace(ptrace_singlestep, child, 0, nullptr) == 0 &&
+		     stopped_with(child, sigtrap, "single-step");
+		word regs[user_regs_words] = {};
+		ok = ok && ptrace(ptrace_getregs, child, 0, regs) == 0;
+		ok = ok && expect("ip after a step", regs[user_ip],
+				  expected[index].ip);
+		ok = ok && expect("cx after a step", regs[user_cx],
+				  expected[index].cx);
+		ok = ok && expect("RF after a step",
+				  (regs[user_flags] & flag_rf) != 0,
+				  expected[index].resume_flag);
+		if (!ok) {
+			put("  at step ");
+			put_decimal(index + 1);
+			put(" of the instruction at ");
+			put_hex(insn);
+			put("\n");
+		}
+	}
+	return ok;
+}
+
+/* A single step of a repeated string instruction runs one iteration and
+ * traps with RIP still naming the instruction and RF set, until an
+ * iteration ends it; one with a zero count steps over once. */
+bool tracer_steps_repeats()
+{
+	const long child = raw_syscall(nr_fork);
+	if (child == 0) {
+		raw_syscall(nr_ptrace, ptrace_traceme, 0, 0, 0);
+		raw_syscall(nr_kill, raw_syscall(nr_getpid), sigstop);
+		probe_rep_step(rep_left, rep_right);
+		raw_syscall(nr_exit_group, 0);
+	}
+	if (child < 0) {
+		put("  fork failed\n");
+		return false;
+	}
+	bool ok = stopped_with(child, sigstop, "SIGSTOP");
+	const word insn = address_of(probe_rep_step_insn);
+	/* Up to the REPE CMPSB, a few instructions of the child's own. */
+	for (int steps = 0; ok; ++steps) {
+		word regs[user_regs_words] = {};
+		ok = ptrace(ptrace_getregs, child, 0, regs) == 0;
+		if (!ok || regs[user_ip] == insn)
+			break;
+		ok = steps < 1000 &&
+		     ptrace(ptrace_singlestep, child, 0, nullptr) == 0 &&
+		     stopped_with(child, sigtrap, "single-step");
+	}
+	const StepStop compare[] = {
+		{insn, 4, true},
+		{insn, 3, true},
+		{address_of(probe_rep_step_end), 2, false},
+	};
+	ok = ok && steps_through(child, insn, compare, 3);
+	const StepStop clear[] = {{address_of(probe_rep_zero_insn), 0, false}};
+	ok = ok && steps_through(child, address_of(probe_rep_step_end), clear, 1);
+	const StepStop none[] = {{address_of(probe_rep_zero_end), 0, false}};
+	ok = ok && steps_through(child, address_of(probe_rep_zero_insn), none, 1);
+	int status = 0;
+	if (!ok || ptrace(ptrace_cont, child, 0, nullptr) != 0 ||
+	    wait_for(child, status) != child) {
+		raw_syscall(nr_kill, child, sigkill);
+		wait_for(child, status);
+		return false;
+	}
+	return expect("child exit status", static_cast<u32>(status), 0);
+}
+
 #if defined(__x86_64__)
 /* Runs `path mode` and reports whether it exited 0. */
 bool in_child(const char *path, const char *mode)
@@ -1205,6 +2680,38 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "tracer-syscall"));
 	report("i386 tracer changes and skips system calls by orig_eax",
 	       in_child(i386_probe, "tracer-syscall"));
+	report("x86-64 UD2 delivers SIGILL ILL_ILLOPN for #UD",
+	       in_child(self, "ud2"));
+	report("i386 UD2 delivers SIGILL ILL_ILLOPN for #UD",
+	       in_child(i386_probe, "ud2"));
+	report("x86-64 #PF error codes carry the user bit",
+	       in_child(self, "page-fault"));
+	report("i386 #PF error codes carry the user bit",
+	       in_child(i386_probe, "page-fault"));
+	report("x86-64 tracer reads and writes the debug registers",
+	       in_child(self, "tracer-debug"));
+	report("i386 tracer reads and writes the debug registers",
+	       in_child(i386_probe, "tracer-debug"));
+	report("i386 TLS takes GDT entries 12 to 14",
+	       in_child(i386_probe, "tls"));
+	report("x86-64 INT n raises #GP naming its IDT entry",
+	       in_child(self, "int-n"));
+	report("i386 INT n raises #GP naming its IDT entry",
+	       in_child(i386_probe, "int-n"));
+	report("x86-64 a non-canonical address raises #GP or #SS",
+	       in_child(self, "noncanonical"));
+	report("x86-64 a single step runs one iteration of a REP string",
+	       in_child(self, "tracer-step"));
+	report("i386 a single step runs one iteration of a REP string",
+	       in_child(i386_probe, "tracer-step"));
+	report("x86-64 unmasked SSE and x87 exceptions raise #XM and #MF",
+	       in_child(self, "fp-exceptions"));
+	report("i386 unmasked SSE and x87 exceptions raise #XM and #MF",
+	       in_child(i386_probe, "fp-exceptions"));
+	report("x86-64 RFLAGS.AC checks alignment",
+	       in_child(self, "alignment-check"));
+	report("i386 RFLAGS.AC checks alignment",
+	       in_child(i386_probe, "alignment-check"));
 	return failures;
 }
 #endif
@@ -1235,12 +2742,30 @@ extern "C" int probe_main(word *stack)
 			return tracer_sees_registers() ? 0 : 1;
 		if (equal(mode, "tracer-syscall"))
 			return tracer_changes_syscalls() ? 0 : 1;
+		if (equal(mode, "ud2"))
+			return ud2_faults() ? 0 : 1;
+		if (equal(mode, "page-fault"))
+			return page_faults_are_user() ? 0 : 1;
+		if (equal(mode, "tracer-debug"))
+			return tracer_debug_registers() ? 0 : 1;
+		if (equal(mode, "int-n"))
+			return int_n_faults() ? 0 : 1;
+		if (equal(mode, "tracer-step"))
+			return tracer_steps_repeats() ? 0 : 1;
+		if (equal(mode, "fp-exceptions"))
+			return floating_point_exceptions() ? 0 : 1;
+		if (equal(mode, "alignment-check"))
+			return alignment_checks() ? 0 : 1;
 #if defined(__i386__)
 		if (equal(mode, "into"))
 			return into_traps() ? 0 : 1;
 		if (equal(mode, "bound"))
 			return bound_checks() ? 0 : 1;
+		if (equal(mode, "tls"))
+			return tls_entries() ? 0 : 1;
 #else
+		if (equal(mode, "noncanonical"))
+			return noncanonical_faults() ? 0 : 1;
 		return run_all(arguments[0], arguments[1]);
 #endif
 	}

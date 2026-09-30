@@ -11,6 +11,7 @@ gadget x87_\name
 	mov x1, sp
 	add x2, sp, #16
 	bl NAME(uml_x86_64_x87_\helper)
+	x87_leave_if_raised
 	add x11, sp, #16
 	x87_load_value x11, x9, w10
 	add sp, sp, #32
@@ -45,6 +46,7 @@ gadget x87_\name
 	.endif
 	add x3, sp, #32
 	bl NAME(uml_x86_64_x87_\helper)
+	x87_leave_if_raised
 	add x11, sp, #32
 	x87_load_value x11, x9, w10
 	add sp, sp, #48
@@ -62,6 +64,7 @@ x87_two_input atan, atan, 1, 1
 x87_two_input scale, scale, 0, 0
 
 gadget x87_tangent
+	x87_push_fault_check
 	sub sp, sp, #32
 	mov w13, #0
 	x87_load_stack w13, x9, w10
@@ -70,6 +73,7 @@ gadget x87_tangent
 	mov x1, sp
 	add x2, sp, #16
 	bl NAME(uml_x86_64_x87_tangent)
+	x87_leave_if_raised
 	add x11, sp, #16
 	x87_load_value x11, x9, w10
 	add sp, sp, #32
@@ -81,6 +85,7 @@ gadget x87_tangent
 	retire_and_next
 
 gadget x87_extract
+	x87_push_fault_check
 	sub sp, sp, #48
 	mov w13, #0
 	x87_load_stack w13, x9, w10
@@ -100,6 +105,7 @@ gadget x87_extract
 	retire_and_next
 
 gadget x87_sincos
+	x87_push_fault_check
 	sub sp, sp, #48
 	mov w13, #0
 	x87_load_stack w13, x9, w10
@@ -109,6 +115,7 @@ gadget x87_sincos
 	add x2, sp, #16
 	add x3, sp, #32
 	bl NAME(uml_x86_64_x87_sincos)
+	x87_leave_if_raised
 	add x11, sp, #16
 	x87_load_value x11, x9, w10
 	mov w13, #0
@@ -139,6 +146,7 @@ NAME(uml_x86_64_gadget_x87_\name\()_with_flags):
 	add x2, sp, #16
 	add x3, sp, #32
 	bl NAME(uml_x86_64_x87_\name)
+	x87_leave_if_raised
 	add x11, sp, #32
 	x87_load_value x11, x9, w10
 	add sp, sp, #48
@@ -158,6 +166,7 @@ x87_clear_remainder_flags fprem1
 .purgem x87_two_input
 .purgem x87_unary
 .purgem x87_initialize_state
+.purgem x87_push_fault_check
 .purgem x87_bulk_store
 .purgem x87_bulk_load
 .purgem x87_scalar_store
@@ -172,5 +181,7 @@ x87_clear_remainder_flags fprem1
 .purgem x87_store_physical
 .purgem x87_set_tag
 .purgem x87_load_stack
+.purgem x87_stack_fault_check
+.purgem x87_leave_if_raised
 .purgem x87_physical
 .purgem x87_load_u64

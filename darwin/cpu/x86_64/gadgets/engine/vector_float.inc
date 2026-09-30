@@ -22,113 +22,75 @@
 	mov v\vector\().16b, v17.16b
 .endm
 
-.macro vector_fp_compare_mask predicate, element, output, left, right, temporary
+/* One comparison of a whole vector, or of lane 0 alone for a scalar
+ * instruction, whose other lanes x86 does not compare and so must raise no
+ * exception. */
+.macro vector_fp_cmp operation, element, scalar, output, left, right
+	.if \scalar
 	.if \element == 32
+	\operation s\output, s\left, s\right
+	.else
+	\operation d\output, d\left, d\right
+	.endif
+	.elseif \element == 32
+	\operation v\output\().4s, v\left\().4s, v\right\().4s
+	.else
+	\operation v\output\().2d, v\left\().2d, v\right\().2d
+	.endif
+.endm
+
+.macro vector_fp_compare_mask predicate, element, scalar, output, left, right, temporary
 	.if \predicate == 0
-	fcmeq v\output\().4s, v\left\().4s, v\right\().4s
+	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \right
 	.elseif \predicate == 1
-	fcmgt v\output\().4s, v\right\().4s, v\left\().4s
+	vector_fp_cmp fcmgt, \element, \scalar, \output, \right, \left
 	.elseif \predicate == 2
-	fcmge v\output\().4s, v\right\().4s, v\left\().4s
+	vector_fp_cmp fcmge, \element, \scalar, \output, \right, \left
 	.elseif \predicate == 3
-	fcmeq v\output\().4s, v\left\().4s, v\left\().4s
-	fcmeq v\temporary\().4s, v\right\().4s, v\right\().4s
+	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \left
+	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \right, \right
 	and v\output\().16b, v\output\().16b, v\temporary\().16b
 	mvn v\output\().16b, v\output\().16b
 	.elseif \predicate == 4
-	fcmeq v\output\().4s, v\left\().4s, v\right\().4s
+	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \right
 	mvn v\output\().16b, v\output\().16b
 	.elseif \predicate == 5
-	fcmgt v\output\().4s, v\right\().4s, v\left\().4s
+	vector_fp_cmp fcmgt, \element, \scalar, \output, \right, \left
 	mvn v\output\().16b, v\output\().16b
 	.elseif \predicate == 6
-	fcmge v\output\().4s, v\right\().4s, v\left\().4s
+	vector_fp_cmp fcmge, \element, \scalar, \output, \right, \left
 	mvn v\output\().16b, v\output\().16b
 	.elseif \predicate == 7
-	fcmeq v\output\().4s, v\left\().4s, v\left\().4s
-	fcmeq v\temporary\().4s, v\right\().4s, v\right\().4s
+	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \left
+	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \right, \right
 	and v\output\().16b, v\output\().16b, v\temporary\().16b
 	.elseif \predicate == 8
-	fcmeq v\output\().4s, v\left\().4s, v\left\().4s
-	fcmeq v\temporary\().4s, v\right\().4s, v\right\().4s
+	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \left
+	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \right, \right
 	and v\output\().16b, v\output\().16b, v\temporary\().16b
 	mvn v\output\().16b, v\output\().16b
-	fcmeq v\temporary\().4s, v\left\().4s, v\right\().4s
+	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \left, \right
 	orr v\output\().16b, v\output\().16b, v\temporary\().16b
 	.elseif \predicate == 9
-	fcmge v\output\().4s, v\left\().4s, v\right\().4s
+	vector_fp_cmp fcmge, \element, \scalar, \output, \left, \right
 	mvn v\output\().16b, v\output\().16b
 	.elseif \predicate == 10
-	fcmgt v\output\().4s, v\left\().4s, v\right\().4s
+	vector_fp_cmp fcmgt, \element, \scalar, \output, \left, \right
 	mvn v\output\().16b, v\output\().16b
 	.elseif \predicate == 11
 	movi v\output\().16b, #0
 	.elseif \predicate == 12
-	fcmeq v\output\().4s, v\left\().4s, v\left\().4s
-	fcmeq v\temporary\().4s, v\right\().4s, v\right\().4s
+	vector_fp_cmp fcmeq, \element, \scalar, \output, \left, \left
+	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \right, \right
 	and v\output\().16b, v\output\().16b, v\temporary\().16b
-	fcmeq v\temporary\().4s, v\left\().4s, v\right\().4s
+	vector_fp_cmp fcmeq, \element, \scalar, \temporary, \left, \right
 	bic v\output\().16b, v\output\().16b, v\temporary\().16b
 	.elseif \predicate == 13
-	fcmge v\output\().4s, v\left\().4s, v\right\().4s
+	vector_fp_cmp fcmge, \element, \scalar, \output, \left, \right
 	.elseif \predicate == 14
-	fcmgt v\output\().4s, v\left\().4s, v\right\().4s
+	vector_fp_cmp fcmgt, \element, \scalar, \output, \left, \right
 	.else
 	movi v\output\().16b, #0xff
-	.endif
-	.else
-	.if \predicate == 0
-	fcmeq v\output\().2d, v\left\().2d, v\right\().2d
-	.elseif \predicate == 1
-	fcmgt v\output\().2d, v\right\().2d, v\left\().2d
-	.elseif \predicate == 2
-	fcmge v\output\().2d, v\right\().2d, v\left\().2d
-	.elseif \predicate == 3
-	fcmeq v\output\().2d, v\left\().2d, v\left\().2d
-	fcmeq v\temporary\().2d, v\right\().2d, v\right\().2d
-	and v\output\().16b, v\output\().16b, v\temporary\().16b
-	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 4
-	fcmeq v\output\().2d, v\left\().2d, v\right\().2d
-	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 5
-	fcmgt v\output\().2d, v\right\().2d, v\left\().2d
-	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 6
-	fcmge v\output\().2d, v\right\().2d, v\left\().2d
-	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 7
-	fcmeq v\output\().2d, v\left\().2d, v\left\().2d
-	fcmeq v\temporary\().2d, v\right\().2d, v\right\().2d
-	and v\output\().16b, v\output\().16b, v\temporary\().16b
-	.elseif \predicate == 8
-	fcmeq v\output\().2d, v\left\().2d, v\left\().2d
-	fcmeq v\temporary\().2d, v\right\().2d, v\right\().2d
-	and v\output\().16b, v\output\().16b, v\temporary\().16b
-	mvn v\output\().16b, v\output\().16b
-	fcmeq v\temporary\().2d, v\left\().2d, v\right\().2d
-	orr v\output\().16b, v\output\().16b, v\temporary\().16b
-	.elseif \predicate == 9
-	fcmge v\output\().2d, v\left\().2d, v\right\().2d
-	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 10
-	fcmgt v\output\().2d, v\left\().2d, v\right\().2d
-	mvn v\output\().16b, v\output\().16b
-	.elseif \predicate == 11
-	movi v\output\().16b, #0
-	.elseif \predicate == 12
-	fcmeq v\output\().2d, v\left\().2d, v\left\().2d
-	fcmeq v\temporary\().2d, v\right\().2d, v\right\().2d
-	and v\output\().16b, v\output\().16b, v\temporary\().16b
-	fcmeq v\temporary\().2d, v\left\().2d, v\right\().2d
-	bic v\output\().16b, v\output\().16b, v\temporary\().16b
-	.elseif \predicate == 13
-	fcmge v\output\().2d, v\left\().2d, v\right\().2d
-	.elseif \predicate == 14
-	fcmgt v\output\().2d, v\left\().2d, v\right\().2d
-	.else
-	movi v\output\().16b, #0xff
-	.endif
 	.endif
 .endm
 
@@ -159,11 +121,11 @@
 	fdiv s\output, s\left, s\right
 	.endif
 	.ifc \operation,min
-	fcmgt v\output\().4s, v\right\().4s, v\left\().4s
+	fcmgt s\output, s\right, s\left
 	bsl v\output\().16b, v\left\().16b, v\right\().16b
 	.endif
 	.ifc \operation,max
-	fcmgt v\output\().4s, v\left\().4s, v\right\().4s
+	fcmgt s\output, s\left, s\right
 	bsl v\output\().16b, v\left\().16b, v\right\().16b
 	.endif
 	.else
@@ -192,11 +154,11 @@
 	fdiv d\output, d\left, d\right
 	.endif
 	.ifc \operation,min
-	fcmgt v\output\().2d, v\right\().2d, v\left\().2d
+	fcmgt d\output, d\right, d\left
 	bsl v\output\().16b, v\left\().16b, v\right\().16b
 	.endif
 	.ifc \operation,max
-	fcmgt v\output\().2d, v\left\().2d, v\right\().2d
+	fcmgt d\output, d\left, d\right
 	bsl v\output\().16b, v\left\().16b, v\right\().16b
 	.endif
 	.endif
@@ -272,13 +234,19 @@
 	.endif
 .endm
 
-.macro vector_fp_fix_indefinite element, output, left, right, binary, scalar
+.macro vector_fp_fix_indefinite element, output, left, right, binary, scalar, check
 	/* AArch64 produces its positive default NaN for invalid operations.
 	 * x86 instead requires the negative quiet-NaN indefinite when no input
 	 * operand was already a NaN.  Preserve native payload propagation for
 	 * input NaNs and replace only NaNs generated by the operation itself.
+	 * With `check` the path for a NaN is also the one for any other result
+	 * that could have raised an exception the guest unmasks.
 	 */
 	.if \scalar
+	.if \check
+	simd_special_scalar \element, \output, .Lx86_vector_fp_no_generated_nan\@, lo
+	simd_leave_if_checking
+	.endif
 	.if \element == 32
 	fcmeq s17, s\output, s\output
 	fmov w14, s17
@@ -309,6 +277,11 @@
 	fmov d\output, x14
 	.endif
 	.else
+	.if \check
+	simd_special_lanes \element, \output
+	cbz w14, .Lx86_vector_fp_no_generated_nan\@
+	simd_leave_if_checking
+	.endif
 	.if \element == 32
 	fcmeq v17.4s, v\output\().4s, v\output\().4s
 	uminv s18, v17.4s
@@ -345,24 +318,49 @@
 .Lx86_vector_fp_no_generated_nan\@:
 .endm
 
+/* RSQRT raises no exception, so only it goes unchecked. */
 .macro vector_fp_fix_generated_nan operation, element, output, left, right, scalar
 	.ifc \operation,sqrt
-	vector_fp_fix_indefinite \element, \output, \left, \right, 0, \scalar
+	vector_fp_fix_indefinite \element, \output, \left, \right, 0, \scalar, 1
 	.endif
 	.ifc \operation,rsqrt
-	vector_fp_fix_indefinite \element, \output, \left, \right, 0, \scalar
+	vector_fp_fix_indefinite \element, \output, \left, \right, 0, \scalar, 0
 	.endif
 	.ifc \operation,add
-	vector_fp_fix_indefinite \element, \output, \left, \right, 1, \scalar
+	vector_fp_fix_indefinite \element, \output, \left, \right, 1, \scalar, 1
 	.endif
 	.ifc \operation,mul
-	vector_fp_fix_indefinite \element, \output, \left, \right, 1, \scalar
+	vector_fp_fix_indefinite \element, \output, \left, \right, 1, \scalar, 1
 	.endif
 	.ifc \operation,sub
-	vector_fp_fix_indefinite \element, \output, \left, \right, 1, \scalar
+	vector_fp_fix_indefinite \element, \output, \left, \right, 1, \scalar, 1
 	.endif
 	.ifc \operation,div
-	vector_fp_fix_indefinite \element, \output, \left, \right, 1, \scalar
+	vector_fp_fix_indefinite \element, \output, \left, \right, 1, \scalar, 1
+	.endif
+.endm
+
+/* Comparisons, minimum and maximum raise invalid operation for a NaN input,
+ * whatever their result. */
+.macro vector_fp_nan_inputs element, width, scalar
+	.if \scalar
+	simd_check_scalar_nan \element, 0, 1
+	.elseif \width == 256
+	simd_check_packed_nan \element, 0, 1, 2, 3
+	.else
+	simd_check_packed_nan \element, 0, 1
+	.endif
+.endm
+
+.macro vector_fp_check_inputs operation, element, width, scalar
+	.ifc \operation,compare
+	vector_fp_nan_inputs \element, \width, \scalar
+	.endif
+	.ifc \operation,min
+	vector_fp_nan_inputs \element, \width, \scalar
+	.endif
+	.ifc \operation,max
+	vector_fp_nan_inputs \element, \width, \scalar
 	.endif
 .endm
 
@@ -379,8 +377,9 @@
 	vector_fp_flush_subnormals 3, \element
 	.endif
 .Lx86_vector_fp_inputs_ready\@:
+	vector_fp_check_inputs \operation, \element, \width, \scalar
 	.ifc \operation,compare
-	vector_fp_compare_mask \predicate, \element, 6, 0, 1, 7
+	vector_fp_compare_mask \predicate, \element, \scalar, 6, 0, 1, 7
 	.if \scalar
 	.if \element == 32
 	mov v4.s[0], v6.s[0]
@@ -390,7 +389,7 @@
 	.else
 	mov v4.16b, v6.16b
 	.if \width == 256
-	vector_fp_compare_mask \predicate, \element, 6, 2, 3, 7
+	vector_fp_compare_mask \predicate, \element, 0, 6, 2, 3, 7
 	mov v5.16b, v6.16b
 	.endif
 	.endif
@@ -565,9 +564,12 @@ vector_fp_predicate 15
 .purgem vector_fp_memory
 .purgem vector_fp_register
 .purgem vector_fp_compute
+.purgem vector_fp_check_inputs
+.purgem vector_fp_nan_inputs
 .purgem vector_fp_fix_generated_nan
 .purgem vector_fp_fix_indefinite
 .purgem vector_fp_packed_value
 .purgem vector_fp_regular_value
 .purgem vector_fp_compare_mask
+.purgem vector_fp_cmp
 .purgem vector_fp_flush_subnormals

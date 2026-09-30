@@ -73,6 +73,7 @@ fex	VEX/vaesdec256.asm	post-AVX2 vector AES extension
 fex	VEX/vaesdeclast256.asm	post-AVX2 vector AES extension
 fex	VEX/vaesenc256.asm	post-AVX2 vector AES extension
 fex	VEX/vaesenclast256.asm	post-AVX2 vector AES extension
+fex	VEX/vldmxcsr.asm	expects FEX's MXCSR, which drops the exception flags LDMXCSR loads and x86 keeps; upstream disables it on native hosts
 fex	X87/D9_F2.asm	upstream marks this source unsupported
 fex	X87/D9_F8.asm	upstream marks this source unsupported
 fex	X87/D9_F9.asm	upstream marks this source unsupported

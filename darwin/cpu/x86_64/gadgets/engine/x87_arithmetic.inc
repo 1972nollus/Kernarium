@@ -30,6 +30,7 @@ gadget x87_register_\opcode\()_\group
 	.endif
 	add x3, sp, #32
 	bl NAME(uml_x86_64_x87_\helper)
+	x87_leave_if_raised
 	add x11, sp, #32
 	x87_load_value x11, x9, w10
 	add sp, sp, #48
@@ -81,6 +82,7 @@ gadget x87_compare_\name
 	mov x1, sp
 	add x2, sp, #16
 	bl NAME(uml_x86_64_x87_compare)
+	x87_leave_if_raised
 	add sp, sp, #32
 	.if \integer
 	x87_set_integer_compare w0
@@ -145,6 +147,7 @@ gadget x87_test_zero
 	mov x1, sp
 	add x2, sp, #16
 	bl NAME(uml_x86_64_x87_compare)
+	x87_leave_if_raised
 	add sp, sp, #32
 	x87_set_status_compare w0
 	retire_and_next
@@ -169,6 +172,9 @@ gadget x87_test_zero
 	mov x1, \output
 	.endif
 	bl NAME(uml_x86_64_x87_\helper)
+	.if \has_cpu
+	x87_leave_if_raised
+	.endif
 .endm
 
 .macro x87_memory_binary type, size, converter, signed16, has_cpu, name, helper, reverse
@@ -192,6 +198,7 @@ gadget x87_memory_\type\()_\name
 	.endif
 	add x3, sp, #32
 	bl NAME(uml_x86_64_x87_\helper)
+	x87_leave_if_raised
 	add x11, sp, #32
 	x87_load_value x11, x9, w10
 	add sp, sp, #48
@@ -229,6 +236,7 @@ gadget x87_memory_\type\()_compare_\pop
 	mov x1, sp
 	add x2, sp, #16
 	bl NAME(uml_x86_64_x87_compare)
+	x87_leave_if_raised
 	add sp, sp, #32
 	x87_set_status_compare w0
 	.if \pop

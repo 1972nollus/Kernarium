@@ -18,6 +18,27 @@
 	.endif
 .endm
 
+/* A lane whose in-range mask in v7 is clear raises invalid operation. While
+ * the gadgets check SIMD exceptions its conversion leaves. A conversion of
+ * doubles also raises the host's invalid-operation flag for it, which its
+ * conversion to 64-bit integers would not, so that a checked run finds the
+ * flag as x86 sets MXCSR's. */
+.macro vector_convert_check_range element
+	.if \element == 32
+	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w14, #1, .Lx86_vector_convert_in_range\@
+	.endif
+	uminv s18, v7.4s
+	fmov w14, s18
+	cbnz w14, .Lx86_vector_convert_in_range\@
+	simd_leave_if_checking
+	.if \element == 64
+	movi d18, #0xffffffffffffffff
+	fcmpe d18, d18
+	.endif
+.Lx86_vector_convert_in_range\@:
+.endm
+
 /* Convert one q register of float/double values to signed int32. Double
  * inputs produce two packed dwords in the low d register.
  */
@@ -31,6 +52,7 @@
 	dup v17.4s, w14
 	fcmge v17.4s, v6.4s, v17.4s
 	and v7.16b, v7.16b, v17.16b
+	vector_convert_check_range 32
 	fcvtzs v16.4s, v6.4s
 	mov w14, #0x80000000
 	dup v17.4s, w14
@@ -44,6 +66,7 @@
 	dup v17.2d, x14
 	fcmge v17.2d, v6.2d, v17.2d
 	and v7.16b, v7.16b, v17.16b
+	vector_convert_check_range 64
 	fcvtzs v16.2d, v6.2d
 	mov x14, #0x80000000
 	dup v17.2d, x14
@@ -52,11 +75,17 @@
 	.endif
 .endm
 
+/* A conversion from integers raises at most precision, which the gadgets
+ * never check. One to a wider format raises invalid operation only for a
+ * signalling NaN, which its result shows as a NaN. */
 .macro vector_convert_body operation, output_width, input_size, scalar, truncate
 	.ifc \operation,ps_pd
 	fcvtl v4.2d, v1.2s
 	.if \output_width == 256
 	fcvtl2 v5.2d, v1.4s
+	simd_check_packed 64, 4, 5
+	.else
+	simd_check_packed 64, 4
 	.endif
 	.endif
 	.ifc \operation,pd_ps
@@ -65,15 +94,18 @@
 	.if \input_size == 32
 	fcvtn2 v4.4s, v3.2d
 	.endif
+	simd_check_packed 32, 4
 	.endif
 	.ifc \operation,ss_sd
 	mov v4.16b, v0.16b
 	fcvt d6, s1
+	simd_check_scalar 64, 6
 	mov v4.d[0], v6.d[0]
 	.endif
 	.ifc \operation,sd_ss
 	mov v4.16b, v0.16b
 	fcvt s6, d1
+	simd_check_scalar 32, 6
 	mov v4.s[0], v6.s[0]
 	.endif
 	.ifc \operation,dq_ps
@@ -213,4 +245,5 @@ vector_convert_family ttpd_dq_256, pd_dq, 128, 32, 0, 1
 .purgem vector_convert_register
 .purgem vector_convert_body
 .purgem vector_convert_fp_i32
+.purgem vector_convert_check_range
 .purgem vector_convert_round

@@ -8,6 +8,7 @@
 #endif
 #include "memory/static_guest_memory.hpp"
 
+#include <array>
 #include <cstddef>
 #include <memory>
 
@@ -72,6 +73,10 @@ struct ThreadExecutionState final {
 #if DARWIN_UML_X86_64_GUEST
 	::uml::cpu::x86_64::CpuState x86_cpu{};
 	::uml::cpu::x86_64::gadgets::Executor x86_executor{};
+	/* One for each set of exceptions the runtime checks
+	 * (`checked_exceptions`), made the first time the guest needs it. */
+	std::array<std::unique_ptr<::uml::cpu::x86_64::gadgets::Executor>, 8>
+		x86_checked_executors;
 #endif
 	::uml::memory::StaticGuestMemory memory;
 	ThreadEngineSlots engines;

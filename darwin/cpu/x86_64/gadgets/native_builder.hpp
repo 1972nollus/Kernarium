@@ -20,8 +20,29 @@ namespace uml::cpu::x86_64::gadgets {
 	std::uint64_t final_rip, ExecutionMode mode,
 	ProgramLinkResolver links = {});
 
+/* The instruction of `gadgets` whose words in `stream`, the block's stream,
+ * include word `word`, or nothing when the stream is not theirs. */
+[[nodiscard]] std::optional<std::size_t> instruction_at_word(
+	std::span<const Gadget> gadgets, std::span<const std::uintptr_t> stream,
+	std::size_t word, ExecutionMode mode);
+
 [[nodiscard]] std::vector<std::uintptr_t> build_native_stream(
 	std::span<const Gadget> gadgets, std::uint64_t final_rip,
 	ExecutionMode mode, ProgramLinkResolver links = {});
+
+/* Whether the instruction is a string operation with a REP, REPE or REPNE
+ * prefix. */
+[[nodiscard]] bool repeated_string(const Instruction &instruction) noexcept;
+
+/* One iteration of a repeated string instruction, as a single step runs
+ * it: the stream leaves between elements with RIP naming the instruction,
+ * or retires it when the iteration ends it. */
+[[nodiscard]] std::vector<std::uintptr_t> build_repeat_step_stream(
+	const Gadget &gadget, ExecutionMode mode);
+
+/* A stream that runs nothing and leaves with RIP at `rip`: a check head's,
+ * whose instruction the runtime runs itself. */
+void append_leave_stream(std::vector<std::uintptr_t> &stream,
+	std::uint64_t rip);
 
 } // namespace uml::cpu::x86_64::gadgets

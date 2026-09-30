@@ -25,20 +25,88 @@ SET_THREAD_AREA reach the task's i386 TLS entries for a tracer of
 either ABI.
 
 PTRACE_PEEKUSER and POKEUSER follow x86 struct user rules: other fields
-read as zero, and debug registers read as idle.  A tracer may clear them
-or stage addresses, but enabling a hardware breakpoint fails because UML
-cannot arm one.
+read as zero, and the debug registers hold what x86 Linux keeps without
+an armed breakpoint.  DR6 reads with its reserved bits set, DR7 reads as
+last written, and DR0 to DR3 stage addresses under x86's length,
+alignment and user-space checks.  UML cannot arm a hardware breakpoint,
+so a DR7 value that enables one fails with EINVAL, as an invalid value
+does on x86, and a debugger never believes one armed.  Exec clears the
+debug registers, and a child inherits DR6 and DR7 but no staged
+breakpoint.
 ---
+ arch/arm64/um/asm/processor.h   |  34 +++
  arch/arm64/um/asm/ptrace-abi.h  |   3 +
  arch/arm64/um/asm/ptrace.h      |   8 +
- arch/arm64/um/ptrace.c          | 303 ++++++++++++++++++++++++++++++--
- arch/arm64/um/signal.c          | 239 +++++++++++--------------
- arch/arm64/um/x86_32_syscalls.c |  32 ++++
- arch/arm64/um/x86_fpstate.h     | 107 +++++++++++
+ arch/arm64/um/ptrace.c          | 395 +++++++++++++++++++++++++++++++-
+ arch/arm64/um/signal.c          | 239 ++++++++-----------
+ arch/arm64/um/x86_32_syscalls.c |  32 +++
+ arch/arm64/um/x86_fpstate.h     | 107 +++++++++
  arch/um/kernel/ptrace.c         |  15 +-
- 7 files changed, 546 insertions(+), 161 deletions(-)
+ 8 files changed, 672 insertions(+), 161 deletions(-)
  create mode 100644 arch/arm64/um/x86_fpstate.h
 
+diff --git a/arch/arm64/um/asm/processor.h b/arch/arm64/um/asm/processor.h
+index 7670607444d68b6a76bd5593fd032b0fa5cb81fb..2e23124ae289711b66d214e99197ffc15ba7fe3b 100644
+--- a/arch/arm64/um/asm/processor.h
++++ b/arch/arm64/um/asm/processor.h
+@@ -7,10 +7,31 @@
+ #include <linux/time-internal.h>
+ #include <sysdep/faultinfo.h>
+ 
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++/*
++ * The x86 debug registers a tracer sees.  UML arms no hardware breakpoint,
++ * so they hold only what x86 Linux keeps without one: DR0 to DR3 addresses
++ * staged for a disabled breakpoint, with the length and type its checks
++ * apply to them, DR6 as the last #DB left it, and DR7 as last written.
++ */
++struct uml_x86_64_debugregs {
++	unsigned long address[4];
++	unsigned long dr6;
++	unsigned long dr7;
++	/* Slots holding a staged breakpoint, and each one's DR7 length
++	 * and type field. */
++	unsigned char staged;
++	unsigned char control[4];
++};
++#endif
++
+ struct arch_thread {
+ 	unsigned long tpidr_el0;
+ 	void *darwin_task;
+ 	struct faultinfo faultinfo;
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++	struct uml_x86_64_debugregs debugregs;
++#endif
+ };
+ 
+ #define INIT_ARCH_THREAD { .tpidr_el0 = 0, .darwin_task = NULL, \
+@@ -19,12 +40,25 @@ struct arch_thread {
+ static inline void arch_flush_thread(struct arch_thread *thread)
+ {
+ 	thread->tpidr_el0 = 0;
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++	/* Like flush_ptrace_hw_breakpoint(): exec drops every breakpoint
++	 * and clears DR6 and DR7. */
++	thread->debugregs = (struct uml_x86_64_debugregs) { 0 };
++#endif
+ }
+ 
+ static inline void arch_copy_thread(struct arch_thread *from,
+ 			    struct arch_thread *to)
+ {
+ 	to->tpidr_el0 = from->tpidr_el0;
++#ifdef CONFIG_UML_X86_64_USERSPACE_ONLY
++	/* Like x86 copy_thread(): a child inherits DR6 and DR7 but none of
++	 * the parent's breakpoints. */
++	to->debugregs = (struct uml_x86_64_debugregs) {
++		.dr6 = from->debugregs.dr6,
++		.dr7 = from->debugregs.dr7,
++	};
++#endif
+ }
+ 
+ #define current_sp() ({ void *sp; asm("mov %0, sp" : "=r"(sp)); sp; })
 diff --git a/arch/arm64/um/asm/ptrace-abi.h b/arch/arm64/um/asm/ptrace-abi.h
 index 3afa6ed84585b358f068303471d9b3d640f20421..7af74c93f494f76334b7b6610fbe1ad56c8a58ee 100644
 --- a/arch/arm64/um/asm/ptrace-abi.h
@@ -82,10 +150,10 @@ index 50bb312cff0f0d9e22d268238c92cc5e6aa1a5be..f0ec293ba7b1a9bb5e977f0f6d0bdb83
  extern void arch_switch_to(struct task_struct *to);
  
 diff --git a/arch/arm64/um/ptrace.c b/arch/arm64/um/ptrace.c
-index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef824dcd08 100644
+index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..f355df97e151ed1cc8dd53909aad7f4c0fee4696 100644
 --- a/arch/arm64/um/ptrace.c
 +++ b/arch/arm64/um/ptrace.c
-@@ -1,11 +1,36 @@
+@@ -1,11 +1,44 @@
  // SPDX-License-Identifier: GPL-2.0
  
 +#include <linux/compat.h>
@@ -105,7 +173,15 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
 +/* struct user32 offsets for the i386 requests. */
 +#define UML_X86_32_USER_DEBUGREG 252
 +#define UML_X86_32_USER_SIZE 284
++/* DR6 bits x86 reads as set, which Linux keeps flipped in its copy so
++ * that zero is the idle state, and DR6.BS. */
++#define UML_X86_64_DR6_RESERVED 0xffff0ff0UL
++#define UML_X86_64_DR6_STEP 0x4000UL
++/* DR7's local and global enable bits for DR0 to DR3. */
 +#define UML_X86_64_DR7_ENABLE_MASK 0xffUL
++/* TASK_SIZE_MAX of a 4-level x86-64 kernel: a breakpoint reaching it would
++ * watch kernel space. */
++#define UML_X86_64_TASK_SIZE_MAX ((1UL << 47) - 4096)
 +/* x86 request numbers, which i386 shares. */
 +#define UML_X86_64_PTRACE_GETREGS 12
 +#define UML_X86_64_PTRACE_SETREGS 13
@@ -122,7 +198,7 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
  
  static int register_index(int regno)
  {
-@@ -158,26 +183,78 @@ int putreg(struct task_struct *child, int regno, unsigned long value)
+@@ -158,26 +191,158 @@ int putreg(struct task_struct *child, int regno, unsigned long value)
  	return 0;
  }
  
@@ -132,15 +208,92 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
 +		addr < UML_X86_64_USER_DEBUGREG + 8 * sizeof(unsigned long);
 +}
 +
-+/* UML cannot arm x86 hardware breakpoints.  Debug registers read as idle,
-+ * and a tracer may clear them or stage addresses, but enabling one fails.
-+ */
-+static int set_debugreg(unsigned long n, unsigned long value)
++/* The DR7 length and type field of breakpoint n. */
++static unsigned int dr7_control(unsigned long dr7, unsigned int n)
 +{
-+	if (n == 4 || n == 5)
++	return (dr7 >> (16 + 4 * n)) & 0xf;
++}
++
++/*
++ * Whether a breakpoint of this DR7 length and type at this address is one
++ * x86 Linux accepts, as arch_build_bp_info(), hw_breakpoint_arch_parse()
++ * and arch_check_bp_in_kernelspace() judge it: no I/O type, an execute
++ * breakpoint of length one, an address aligned to its length, and a range
++ * wholly in user space.
++ */
++static bool debugreg_valid(unsigned long address, unsigned int control)
++{
++	static const unsigned char length[] = { 1, 2, 8, 4 };
++	unsigned int type = control & 3;
++	unsigned long bytes = length[control >> 2];
++
++	if (type == 2 || (type == 0 && bytes != 1))
++		return false;
++	if (address & (bytes - 1))
++		return false;
++	return address < UML_X86_64_TASK_SIZE_MAX &&
++		address + bytes - 1 < UML_X86_64_TASK_SIZE_MAX;
++}
++
++/*
++ * Like x86's ptrace_get_debugreg(): DR0 to DR3 read a staged breakpoint's
++ * address, DR6 the last #DB's status with its reserved bits set, and DR7
++ * the last value written.
++ */
++static unsigned long get_debugreg(struct task_struct *child, unsigned long n)
++{
++	const struct uml_x86_64_debugregs *debug = &child->thread.arch.debugregs;
++
++	if (n < 4)
++		return debug->staged & (1U << n) ? debug->address[n] : 0;
++	if (n == 6)
++		return debug->dr6 ^ UML_X86_64_DR6_RESERVED;
++	if (n == 7)
++		return debug->dr7;
++	return 0;
++}
++
++/*
++ * Like x86's ptrace_set_debugreg(), except that UML arms no hardware
++ * breakpoint.  An address in DR0 to DR3 stages a disabled breakpoint, and
++ * DR7 may change a staged one's length and type, both under x86's checks.
++ * A DR7 value that enables a breakpoint fails with EINVAL, as an invalid
++ * one does on x86, so a debugger knows the breakpoint is not armed.
++ */
++static int set_debugreg(struct task_struct *child, unsigned long n,
++			unsigned long value)
++{
++	struct uml_x86_64_debugregs *debug = &child->thread.arch.debugregs;
++	unsigned int i;
++
++	if (n < 4) {
++		/* A new breakpoint starts as x86's one-byte write stub. */
++		unsigned int control = debug->staged & (1U << n) ?
++			debug->control[n] : 1;
++
++		if (!debugreg_valid(value, control))
++			return -EINVAL;
++		debug->address[n] = value;
++		debug->control[n] = control;
++		debug->staged |= 1U << n;
++		return 0;
++	}
++	if (n == 6) {
++		debug->dr6 = value ^ UML_X86_64_DR6_RESERVED;
++		return 0;
++	}
++	if (n != 7)
 +		return -EIO;
-+	if (n == 7 && (value & UML_X86_64_DR7_ENABLE_MASK))
++	if (value & UML_X86_64_DR7_ENABLE_MASK)
 +		return -EINVAL;
++	for (i = 0; i < 4; i++)
++		if ((debug->staged & (1U << i)) &&
++		    !debugreg_valid(debug->address[i], dr7_control(value, i)))
++			return -EINVAL;
++	for (i = 0; i < 4; i++)
++		if (debug->staged & (1U << i))
++			debug->control[i] = dr7_control(value, i);
++	debug->dr7 = value;
 +	return 0;
 +}
 +
@@ -156,6 +309,9 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
 -	value = getreg(child, addr);
 +	if (register_index(addr) >= 0)
 +		value = getreg(child, addr);
++	else if (debugreg_offset(addr))
++		value = get_debugreg(child, (addr - UML_X86_64_USER_DEBUGREG) /
++				     sizeof(unsigned long));
  	return put_user(value, (unsigned long __user *)data);
  }
  
@@ -169,7 +325,7 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
 +	if (register_index(addr) >= 0)
 +		return putreg(child, addr, data);
 +	if (debugreg_offset(addr))
-+		return set_debugreg((addr - UML_X86_64_USER_DEBUGREG) /
++		return set_debugreg(child, (addr - UML_X86_64_USER_DEBUGREG) /
 +				    sizeof(unsigned long), data);
 +	return -EIO;
  }
@@ -206,7 +362,7 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
  	return -EIO;
  }
  
-@@ -233,11 +310,40 @@ static int genregs32_set(struct task_struct *target,
+@@ -233,11 +398,40 @@ static int genregs32_set(struct task_struct *target,
  	return error;
  }
  
@@ -249,7 +405,7 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
  }
  
  static int fpregs_set(struct task_struct *target,
-@@ -245,8 +351,55 @@ static int fpregs_set(struct task_struct *target,
+@@ -245,8 +439,55 @@ static int fpregs_set(struct task_struct *target,
  		      unsigned int pos, unsigned int count,
  		      const void *kbuf, const void __user *ubuf)
  {
@@ -307,7 +463,7 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
  }
  
  static const struct user_regset uml_x86_64_regsets[] = {
-@@ -260,12 +413,20 @@ static const struct user_regset uml_x86_64_regsets[] = {
+@@ -260,12 +501,20 @@ static const struct user_regset uml_x86_64_regsets[] = {
  	},
  	[REGSET_FP] = {
  		USER_REGSET_NOTE_TYPE(PRFPREG),
@@ -331,7 +487,7 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
  };
  
  static const struct user_regset_view uml_x86_64_view = {
-@@ -284,6 +445,30 @@ static const struct user_regset uml_x86_32_regsets[] = {
+@@ -284,6 +533,30 @@ static const struct user_regset uml_x86_32_regsets[] = {
  		.regset_get = genregs32_get,
  		.set = genregs32_set,
  	},
@@ -362,13 +518,13 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
  };
  
  static const struct user_regset_view uml_x86_32_view = {
-@@ -301,3 +486,97 @@ task_user_regset_view(struct task_struct *task)
+@@ -301,3 +574,101 @@ task_user_regset_view(struct task_struct *task)
  		return &uml_x86_32_view;
  	return &uml_x86_64_view;
  }
 +
 +#ifdef CONFIG_COMPAT
-+/* Like Linux's getreg32(): struct user32 holds the general registers and idle
++/* Like Linux's getreg32(): struct user32 holds the general registers and the
 + * debug registers, and its other fields, up to and including the offset
 + * just past it, read as zero.
 + */
@@ -383,6 +539,10 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
 +	if (addr < sizeof(regs)) {
 +		get_user_regs32(&child->thread.regs.regs, &regs);
 +		*value = ((u32 *)&regs)[addr / sizeof(u32)];
++	} else if (addr >= UML_X86_32_USER_DEBUGREG &&
++		   addr < UML_X86_32_USER_SIZE) {
++		*value = get_debugreg(child, (addr - UML_X86_32_USER_DEBUGREG) /
++				      sizeof(u32));
 +	}
 +	return 0;
 +}
@@ -396,7 +556,7 @@ index e8d509dab1e4e87fe0d4d9db8e065385d5be54b9..8a30c5534a6b427e85f5e9877d4482ef
 +	if (addr > UML_X86_32_USER_SIZE || (addr & 3))
 +		return -EIO;
 +	if (addr >= UML_X86_32_USER_DEBUGREG && addr < UML_X86_32_USER_SIZE)
-+		return set_debugreg((addr - UML_X86_32_USER_DEBUGREG) /
++		return set_debugreg(child, (addr - UML_X86_32_USER_DEBUGREG) /
 +				    sizeof(u32), value);
 +	if (addr >= sizeof(regs))
 +		return 0;
@@ -851,10 +1011,10 @@ index 84b1210e87c4a7280016c2c16f6f2a6d3eb67c4a..0707bdfd0051e48c6eb91afcd6d2d7dd
  }
  
 diff --git a/arch/arm64/um/x86_32_syscalls.c b/arch/arm64/um/x86_32_syscalls.c
-index 557cb730923d9439d7841d729da8a660fedfce03..a2e0eb73ace975b542f4cf112041d39ae329b126 100644
+index 05a36dea0110573f859fc4487e04f89eb3580ab6..e2b7a3efea0cfccde4ed0f388fee7b46ed540455 100644
 --- a/arch/arm64/um/x86_32_syscalls.c
 +++ b/arch/arm64/um/x86_32_syscalls.c
-@@ -105,6 +105,38 @@ uml_x86_32_install_tls(struct task_struct *task,
+@@ -111,6 +111,38 @@ uml_x86_32_install_tls(struct task_struct *task,
  	return 0;
  }
  

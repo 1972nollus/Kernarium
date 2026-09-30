@@ -146,6 +146,13 @@ EXCLUDED_FEX_FEATURES = {
     "CLWB": "post-AVX2 cache-management extension",
 }
 
+# FEX programs whose expected state is FEX's own emulation where x86 differs.
+# FEX lists each among the programs its native-host runner cannot pass.
+EXCLUDED_FEX_SOURCES = {
+    "VEX/vldmxcsr.asm": "expects FEX's MXCSR, which drops the exception flags "
+    "LDMXCSR loads and x86 keeps; upstream disables it on native hosts",
+}
+
 # HLT is the FEX test terminator and is not part of a case's userspace form.
 # The other instructions are either privileged or belong to Intel-only
 # facilities explicitly outside the product profile.
@@ -1085,6 +1092,9 @@ def collect_fex_records(
             exclusions.append(
                 Exclusion("fex", source, "upstream marks this source unsupported")
             )
+            continue
+        if source in EXCLUDED_FEX_SOURCES:
+            exclusions.append(Exclusion("fex", source, EXCLUDED_FEX_SOURCES[source]))
             continue
         features = set(item.get("host_features", []))
         unknown = features - ALLOWED_FEX_FEATURES - EXCLUDED_FEX_FEATURES.keys()

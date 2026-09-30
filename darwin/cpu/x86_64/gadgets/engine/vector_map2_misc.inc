@@ -376,11 +376,14 @@ vector_map2_broadcast_family 128, 256
 .purgem vector_map2_broadcast_register
 .purgem vector_map2_broadcast_body
 
+/* Widening raises invalid operation only for a signalling NaN, which it
+ * leaves a NaN. */
 .macro vector_map2_half_body width
 	fcvtl v4.4s, v1.4h
 	.if \width == 256
 	fcvtl2 v5.4s, v1.8h
 	.endif
+	simd_check_result 32, \width
 .endm
 
 .macro vector_map2_half_register width

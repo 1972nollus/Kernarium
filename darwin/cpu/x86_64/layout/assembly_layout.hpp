@@ -19,6 +19,11 @@ static_assert(offsetof(CpuState, compat_tls_bases) ==
 	UML_X86_64_CPU_COMPAT_TLS_BASES);
 static_assert(offsetof(CpuState, compat_tls_present) ==
 	UML_X86_64_CPU_COMPAT_TLS_PRESENT);
+static_assert(offsetof(CpuState, compat_tls_first) ==
+	UML_X86_64_CPU_COMPAT_TLS_FIRST);
+static_assert(UML_X86_64_CPU_COMPAT_TLS_FIRST ==
+	UML_X86_64_CPU_COMPAT_TLS_PRESENT + 1,
+	"the TLS refresh loads the present mask and first entry together");
 static_assert(offsetof(CpuState, rip) == UML_X86_64_CPU_RIP);
 static_assert(offsetof(CpuState, rflags) == UML_X86_64_CPU_RFLAGS);
 static_assert(
@@ -33,12 +38,16 @@ static_assert(offsetof(CpuState, x87_control) == UML_X86_64_CPU_X87_CONTROL);
 static_assert(offsetof(CpuState, x87_status) == UML_X86_64_CPU_X87_STATUS);
 static_assert(offsetof(CpuState, x87_tag) == UML_X86_64_CPU_X87_TAG);
 static_assert(offsetof(CpuState, x87_top) == UML_X86_64_CPU_X87_TOP);
+static_assert(offsetof(CpuState, exception_checks) ==
+	UML_X86_64_CPU_EXCEPTION_CHECKS);
 static_assert(offsetof(CpuState, system_call_32bit) ==
 	UML_X86_64_CPU_SYSTEM_CALL_32BIT);
 static_assert(offsetof(CpuState, execution_mode) ==
 	UML_X86_64_CPU_EXECUTION_MODE);
 static_assert(offsetof(CpuState, timestamp_faults) ==
 	UML_X86_64_CPU_TIMESTAMP_FAULTS);
+static_assert(offsetof(CpuState, exception_raised) ==
+	UML_X86_64_CPU_EXCEPTION_RAISED);
 static_assert(offsetof(CpuState, deferred_flags) +
 	offsetof(DeferredFlags, left) == UML_X86_64_CPU_DEFERRED_LEFT);
 static_assert(offsetof(CpuState, deferred_flags) +

@@ -14,6 +14,33 @@
 	movk \destination, #(((\value) >> 48) & 0xffff), lsl #48
 .endm
 
+/* While the guest has an x87 exception unmasked the runtime sets
+ * `exception_checks`, and an instruction that raises one leaves before it
+ * commits anything; the runtime runs it again, checked, which leaves the
+ * exception pending for the next waiting instruction as x87 does. A helper
+ * reports one in `exception_raised`, which its caller tests before it stores a
+ * result: a load and a branch after each helper call, whether or not the guest
+ * unmasks anything. */
+.p2align 4
+.Lx86_x87_raised:
+	b uml_x86_64_gadget_exception_check
+
+.macro x87_leave_if_raised
+	ldrb w9, [_cpu, #UML_X86_64_CPU_EXCEPTION_RAISED]
+	cbnz w9, .Lx86_x87_raised
+.endm
+
+/* A stack fault is an invalid operation: an unmasked one leaves the same way,
+ * before the fault touches the status word or the stack. */
+.macro x87_stack_fault_check
+	ldrb w17, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w17, #0, .Lx86_x87_stack_fault_masked\@
+	ldrh w17, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
+	tbnz w17, #0, .Lx86_x87_stack_fault_masked\@
+	b uml_x86_64_gadget_exception_check
+.Lx86_x87_stack_fault_masked\@:
+.endm
+
 .macro x87_physical logical, physical
 	ldrb \physical, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	add \physical, \physical, \logical
@@ -28,6 +55,7 @@
 	and w15, w15, #3
 	cmp w15, #.Lx86_x87_tag_empty
 	b.ne .Lx86_x87_load_present\@
+	x87_stack_fault_check
 	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	mov w17, #0x41
 	orr w15, w15, w17
@@ -97,12 +125,29 @@
 	and w16, w16, #3
 	cmp w16, #.Lx86_x87_tag_empty
 	b.eq .Lx86_x87_push_slot_ready\@
+	x87_stack_fault_check
 	mov w16, #0x241
 	orr w15, w15, w16
 .Lx86_x87_push_slot_ready\@:
 	strh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	strb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	x87_store_physical w14, \significand, \exponent
+.endm
+
+/* FPTAN, FSINCOS and FXTRACT store ST0 before they push, so while the
+ * gadgets check x87 exceptions they test for the stack overflow first. */
+.macro x87_push_fault_check
+	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
+	sub w14, w14, #1
+	and w14, w14, #7
+	ldrh w16, [_cpu, #UML_X86_64_CPU_X87_TAG]
+	lsl w17, w14, #1
+	lsr w16, w16, w17
+	and w16, w16, #3
+	cmp w16, #.Lx86_x87_tag_empty
+	b.eq .Lx86_x87_push_fault_none\@
+	x87_stack_fault_check
+.Lx86_x87_push_fault_none\@:
 .endm
 
 .macro x87_pop

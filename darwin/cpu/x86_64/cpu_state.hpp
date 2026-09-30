@@ -79,20 +79,30 @@ struct X87Register final {
 	std::uint16_t sign_exponent{};
 };
 
+/* CpuState::exception_checks: the gadgets check for x87 exceptions the
+ * guest unmasked, and for SIMD ones while underflow and precision stay
+ * masked. */
+inline constexpr std::uint8_t exception_check_x87 = 1U << 0U;
+inline constexpr std::uint8_t exception_check_simd = 1U << 1U;
+
 struct CpuState final {
 	std::array<std::uint64_t, 16> registers{};
 	std::array<std::array<std::byte, 32>, 16> vectors{};
 	std::array<std::uint64_t, 8> mmx{};
 	std::array<X87Register, 8> x87{};
 	std::array<std::uint16_t, 6> segment_selectors{};
-	/* Compat-mode TLS bases for GDT entries 6 onward. Linux has three TLS
-	 * entries (6 to 8, selectors 0x33 to 0x43), and the runtime fills and
-	 * marks present only those. The array and the refresh gadget's bound
-	 * still admit entries 9 and 10; a selector for either finds its present
-	 * bit clear, and trimming them would move every later CpuState offset
-	 * and change the bank. */
+	/* Compat-mode TLS bases for the GDT entries from compat_tls_first on.
+	 * The kernel owns the numbering: an x86-64 kernel's three TLS entries
+	 * are 12 to 14 (selectors 0x63 to 0x73), and each descriptor it hands
+	 * over carries its entry number, from which the runtime sets the first
+	 * entry and fills and marks present only those three. The array and the
+	 * refresh gadget's bound still admit two more; a selector for either
+	 * finds its present bit clear, and trimming them would move every later
+	 * CpuState offset and change the bank. The refresh gadget reads
+	 * compat_tls_present and compat_tls_first as one halfword. */
 	std::array<std::uint32_t, 5> compat_tls_bases{};
 	std::uint8_t compat_tls_present{};
+	std::uint8_t compat_tls_first{};
 	std::uint64_t rip{};
 	std::uint64_t rflags{2};
 	/* Address generation indexes {segment_zero, fs_base, gs_base} with the
@@ -107,13 +117,20 @@ struct CpuState final {
 	std::uint16_t x87_status{};
 	std::uint16_t x87_tag{0xffff};
 	std::uint8_t x87_top{};
-	/* Unused. It keeps system_call_32bit, execution_mode and every later
-	 * member at the offsets the gadget bank bakes in. */
-	std::uint8_t reserved{};
+	/* The exceptions the gadgets check for themselves during a dispatch,
+	 * the `exception_check_*` bits. The runtime sets it as
+	 * each dispatch enters the engine and clears it for an instruction it
+	 * runs checked; it is not architectural state. */
+	std::uint8_t exception_checks{};
 	bool system_call_32bit{};
 	ExecutionMode execution_mode{ExecutionMode::long64};
 	/* PR_SET_TSC(PR_TSC_SIGSEGV): RDTSC and RDTSCP raise #GP. */
 	bool timestamp_faults{};
+	/* Set by a check `exception_checks` enables when the instruction running
+	 * raised an exception the guest unmasked; the gadget leaves before it
+	 * commits anything, and the runtime runs that instruction again,
+	 * checked. */
+	std::uint8_t exception_raised{};
 	DeferredFlags deferred_flags{};
 	/* The record an INC or DEC displaced without settling its carry. Only a
 	 * pending INC or DEC record reads it, and only for the carry flag. */
