@@ -79,6 +79,10 @@ struct X87Register final {
 	std::uint16_t sign_exponent{};
 };
 
+/* CpuState::exception_checks: the gadgets check for x87 exceptions the
+ * guest unmasked. */
+inline constexpr std::uint8_t exception_check_x87 = 1U << 0U;
+
 struct CpuState final {
 	std::array<std::uint64_t, 16> registers{};
 	std::array<std::array<std::byte, 32>, 16> vectors{};
@@ -111,13 +115,20 @@ struct CpuState final {
 	std::uint16_t x87_status{};
 	std::uint16_t x87_tag{0xffff};
 	std::uint8_t x87_top{};
-	/* Unused. It keeps system_call_32bit, execution_mode and every later
-	 * member at the offsets the gadget bank bakes in. */
-	std::uint8_t reserved{};
+	/* The exceptions the gadgets check for themselves during a dispatch,
+	 * the `exception_check_*` bits. The runtime sets it as
+	 * each dispatch enters the engine and clears it for an instruction it
+	 * runs checked; it is not architectural state. */
+	std::uint8_t exception_checks{};
 	bool system_call_32bit{};
 	ExecutionMode execution_mode{ExecutionMode::long64};
 	/* PR_SET_TSC(PR_TSC_SIGSEGV): RDTSC and RDTSCP raise #GP. */
 	bool timestamp_faults{};
+	/* Set by a check `exception_checks` enables when the instruction running
+	 * raised an exception the guest unmasked; the gadget leaves before it
+	 * commits anything, and the runtime runs that instruction again,
+	 * checked. */
+	std::uint8_t exception_raised{};
 	DeferredFlags deferred_flags{};
 	/* The record an INC or DEC displaced without settling its carry. Only a
 	 * pending INC or DEC record reads it, and only for the carry flag. */

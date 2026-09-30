@@ -211,9 +211,14 @@ constexpr std::uint32_t general_protection = 13;
 
 } // namespace
 
+static_assert((x86_64::gadgets::check_x87 | x86_64::gadgets::check_simd |
+	x86_64::gadgets::check_alignment) <
+	std::tuple_size_v<X86CheckedExecutors>,
+	"every set of checked exceptions names its own executor");
+
 X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	StaticGuestMemory &memory, x86_64::gadgets::Executor &executor,
-	std::unique_ptr<x86_64::gadgets::Executor> &checked_executor,
+	X86CheckedExecutors &checked_executors,
 	unsigned long generation, std::size_t instruction_budget,
 	bool exact_budget, const ::uml::cpu::InterruptToken &interrupt) noexcept
 {
@@ -235,13 +240,13 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 	guarded_interrupt.poll = execution_interrupt_boundary;
 	guarded_interrupt.poll_context = &execution;
 	/* What each executor was last prepared for: the ordinary one, then the
-	 * checked one. */
+	 * checked one for each set of checked exceptions. */
 	struct Prepared final {
 		bool done{};
 		std::uint64_t mapping_changes{};
 		std::uint64_t code_changes{};
 	};
-	std::array<Prepared, 2> prepared{};
+	std::array<Prepared, std::tuple_size_v<X86CheckedExecutors>> prepared{};
 	/* Set once POPF or IRET arms RFLAGS.TF: the run ends after one more
 	 * instruction and reports the #DB that instruction raises. */
 	bool trap_armed = false;
@@ -271,16 +276,17 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 			return run;
 		}
 		memory.prepare(generation, sequences.mapping_changes);
-		/* #AC, #MF and #XM exist only while the guest enables them, and
-		 * only then does the run check the instructions that could raise
-		 * one, with an executor of its own. Its blocks were built for the
-		 * exceptions it was made for, so enabling more makes another. */
+		/* #AC, #XM and a pending #MF exist only while the guest enables
+		 * them, and only then does the run check the instructions that
+		 * could raise one, with an executor of its own for each set. Its
+		 * blocks were built for exactly that set: one built for more would
+		 * run singly what the gadgets check themselves. */
 		const auto checked = x86_64::gadgets::checked_exceptions(cpu);
 		auto *active = &executor;
 		auto *state = &prepared[0];
 		if (checked != 0) {
-			if (!checked_executor ||
-				(checked & ~checked_executor->checked_exceptions()) != 0) {
+			auto &checked_executor = checked_executors[checked];
+			if (!checked_executor) {
 				try {
 					checked_executor =
 						std::make_unique<x86_64::gadgets::Executor>();
@@ -290,12 +296,11 @@ X86GadgetRunResult run_x86_gadgets(x86_64::CpuState &cpu,
 					return run;
 				}
 				checked_executor->check_exceptions(checked);
-				prepared[1] = {};
 			}
 			checked_executor->permit_unaligned_exclusives(
 				unaligned_exclusives);
 			active = checked_executor.get();
-			state = &prepared[1];
+			state = &prepared[checked];
 		}
 		if (!state->done ||
 			state->mapping_changes != sequences.mapping_changes ||

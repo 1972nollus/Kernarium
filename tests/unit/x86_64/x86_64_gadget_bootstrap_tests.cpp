@@ -6222,6 +6222,127 @@ void set_xmm_low(uml::cpu::x86_64::CpuState &cpu, std::size_t index,
 		"a check head did not run its instruction checked");
 }
 
+/* While the x87 control word unmasks an exception, as Delphi's default
+ * $1332 does, x87 code runs in ordinary linked blocks. An instruction that
+ * raises an unmasked exception leaves before it commits, also inside a
+ * block a link reached, and runs again checked, so the run retires it with
+ * the exception pending for the next waiting instruction. */
+[[nodiscard]] bool unmasked_x87_exceptions_leave_linked_blocks()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {0xeb, 0x0e}); // jmp 0x10
+	memory.load(0x10, {
+		0xd9, 0xee, // fldz
+		0xd9, 0xe8, // fld1
+		0xde, 0xf1, // fdivrp st(1), st: one by zero
+		0x9b,       // fwait
+		0x0f, 0x05, // syscall
+	});
+	gadgets::Executor executor;
+	executor.prepare(memory, 42, 1, 1);
+	const auto run = [&](CpuState &cpu) {
+		const auto selected = executor.select_program(memory, cpu.rip,
+			ExecutionMode::long64);
+		if (selected.status != gadgets::BuildStatus::built ||
+			selected.program == nullptr)
+			return gadgets::ExecuteResult{};
+		return gadgets::execute(*selected.program, cpu, memory, executor,
+			64);
+	};
+	const auto raised = [](const gadgets::ExecuteResult &result,
+		const CpuState &cpu, std::size_t retired) {
+		return result.event == uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == retired && cpu.rip == 0x16 &&
+			cpu.x87_top == 6 && cpu.exception_raised == 0 &&
+			(cpu.x87_status & 0x80ffU) == 0x8084U;
+	};
+	CpuState cold{};
+	cold.x87_control = 0x1332;
+	const auto jump = run(cold);
+	const auto block = run(cold);
+	if (!expect(jump.event == uml::cpu::EngineEvent::continued &&
+			jump.retired_instructions == 1 && raised(block, cold, 3),
+		"an unmasked x87 division by zero did not leave its block"))
+		return false;
+	CpuState cpu{};
+	cpu.x87_control = 0x1332;
+	const auto linked = run(cpu);
+	if (!expect(raised(linked, cpu, 4),
+		"an unmasked x87 division by zero did not leave a linked block"))
+		return false;
+	const auto trap = run_until_event(memory, cpu);
+	return expect(trap.event == uml::cpu::EngineEvent::floating_point_trap &&
+			trap.vector == 16 && cpu.rip == 0x16,
+		"the pending x87 division by zero did not raise #MF at FWAIT");
+}
+
+/* x87 arithmetic that raises only masked exceptions runs through under an
+ * unmasked control word, and a control word load leaves only when the
+ * gadgets were not checking or it unmasks a flag already set. */
+[[nodiscard]] bool unmasked_x87_control_words_run_clean_code_through()
+{
+	using namespace uml::cpu::x86_64;
+	TestMemory memory;
+	memory.load(0, {
+		0xd9, 0xe8, // fld1
+		0xd9, 0xe8, // fld1
+		0xde, 0xc1, // faddp st(1), st
+		0xd9, 0xfa, // fsqrt: inexact, masked
+		0xdd, 0x1b, // fstp qword [rbx]
+		0x0f, 0x05, // syscall
+	});
+	const auto arithmetic = gadgets::build(memory, 0);
+	if (!expect(arithmetic.status == gadgets::BuildStatus::built,
+		"x87 arithmetic did not build"))
+		return false;
+	CpuState cpu{};
+	cpu.x87_control = 0x1332;
+	cpu.gpr(Register::rbx) = 0x800;
+	const auto clean = gadgets::execute(arithmetic.program, cpu, memory, 64);
+	if (!expect(clean.event == uml::cpu::EngineEvent::system_call &&
+			clean.retired_instructions == 6 &&
+			memory.qword(0x800) == 0x3ff6'a09e'667f'3bcdULL &&
+			(cpu.x87_status & 0x80a0U) == 0x0020U,
+		"clean x87 arithmetic under FCW $1332 did not run through"))
+		return false;
+
+	memory.load(0x100, {
+		0xd9, 0x2e,       // fldcw [rsi]
+		0x48, 0xff, 0xc0, // inc rax
+		0x0f, 0x05,       // syscall
+	});
+	memory.load(0x810, {0x32, 0x13});
+	const auto load = gadgets::build(memory, 0x100);
+	if (!expect(load.status == gadgets::BuildStatus::built,
+		"FLDCW block did not build"))
+		return false;
+	const auto run = [&](std::uint16_t control, std::uint16_t status) {
+		cpu = CpuState{};
+		cpu.rip = 0x100;
+		cpu.x87_control = control;
+		cpu.x87_status = status;
+		cpu.gpr(Register::rsi) = 0x810;
+		return gadgets::execute(load.program, cpu, memory, 64);
+	};
+	const auto checking = run(0x37b, 0);
+	if (!expect(checking.event == uml::cpu::EngineEvent::system_call &&
+			cpu.x87_control == 0x1332 && cpu.gpr(Register::rax) == 1,
+		"FLDCW $1332 left while the gadgets were already checking"))
+		return false;
+	const auto unchecked = run(0x37f, 0);
+	if (!expect(unchecked.event == uml::cpu::EngineEvent::continued &&
+			unchecked.retired_instructions == 1 && cpu.rip == 0x102 &&
+			(cpu.x87_status & 0x8080U) == 0,
+		"FLDCW $1332 did not leave when the gadgets were not checking"))
+		return false;
+	const auto pending = run(0x37b, 0x0001);
+	return expect(pending.event == uml::cpu::EngineEvent::continued &&
+			pending.retired_instructions == 1 && cpu.rip == 0x102 &&
+			(cpu.x87_status & 0x8081U) == 0x8081U,
+		"FLDCW unmasking a set invalid-operation flag did not leave");
+}
+
 /* While RFLAGS.AC is set, a misaligned access raises #AC before it
  * happens, and POPF that sets AC leaves so the runtime checks what
  * follows. */
@@ -7742,6 +7863,8 @@ int main()
 		checked_simd_exceptions_fault_before_the_result() &&
 		checked_x87_exceptions_wait_for_the_next_instruction() &&
 		checked_builds_stop_before_checked_instructions() &&
+		unmasked_x87_exceptions_leave_linked_blocks() &&
+		unmasked_x87_control_words_run_clean_code_through() &&
 		alignment_checks_follow_rflags_ac() &&
 		byte_shifts_discard_a_lane_for_an_oversized_count() &&
 		vex_vmovlhps_preserves_aliased_source() &&

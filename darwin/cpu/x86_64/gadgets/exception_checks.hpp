@@ -11,11 +11,13 @@
 
 namespace uml::cpu::x86_64::gadgets {
 
-/* Exceptions the engine does not check for, because a guest that has not
- * asked for them never sees them: #MF while the x87 control word unmasks an
- * exception, #XM while MXCSR does, and #AC while RFLAGS.AC is set. While
- * any is enabled the runtime runs the instructions that could raise one
- * singly, through `execute_checked`. */
+/* Exceptions a guest that has not asked for them never sees: #MF while the
+ * x87 control word unmasks an exception, #XM while MXCSR does, and #AC while
+ * RFLAGS.AC is set. The gadgets check x87 exceptions themselves while one is
+ * unmasked (`gadget_checks`); for the others, and for an x87 exception left
+ * pending for the next waiting instruction, the runtime runs the
+ * instructions that could raise one singly, through `execute_checked`
+ * (`checked_exceptions`). */
 enum CheckedException : unsigned {
 	check_x87 = 1U << 0U,
 	check_simd = 1U << 1U,
@@ -29,7 +31,16 @@ inline constexpr std::uint16_t x87_status_pending = 0x8080U;
 inline constexpr std::uint16_t x87_exception_flags = 0x3fU;
 inline constexpr std::uint32_t mxcsr_exception_masks = 0x1f80U;
 
-[[nodiscard]] constexpr unsigned checked_exceptions(
+/* The unmasked x87 exceptions pending in the status word. */
+[[nodiscard]] constexpr unsigned x87_pending(const CpuState &cpu) noexcept
+{
+	return static_cast<unsigned>(cpu.x87_status & ~cpu.x87_control &
+		x87_exception_flags);
+}
+
+/* Every exception the guest enables: what an instruction run singly is
+ * checked for. */
+[[nodiscard]] constexpr unsigned enabled_exceptions(
 	const CpuState &cpu) noexcept
 {
 	return ((cpu.x87_control & x87_exception_flags) != x87_exception_flags ?
@@ -40,11 +51,23 @@ inline constexpr std::uint32_t mxcsr_exception_masks = 0x1f80U;
 			unsigned{check_alignment} : 0U);
 }
 
-/* The unmasked x87 exceptions pending in the status word. */
-[[nodiscard]] constexpr unsigned x87_pending(const CpuState &cpu) noexcept
+/* The exceptions whose instructions the runtime runs singly: an enabled #XM
+ * or #AC, and #MF while an unmasked x87 exception is pending, which every
+ * waiting instruction raises before it runs. An x87 instruction that raises
+ * one otherwise checks it itself. */
+[[nodiscard]] constexpr unsigned checked_exceptions(
+	const CpuState &cpu) noexcept
 {
-	return static_cast<unsigned>(cpu.x87_status & ~cpu.x87_control &
-		x87_exception_flags);
+	return (x87_pending(cpu) != 0 ? unsigned{check_x87} : 0U) |
+		(enabled_exceptions(cpu) & ~unsigned{check_x87});
+}
+
+/* What the gadgets check themselves, as CpuState::exception_checks. */
+[[nodiscard]] constexpr std::uint8_t gadget_checks(
+	const CpuState &cpu) noexcept
+{
+	return (cpu.x87_control & x87_exception_flags) != x87_exception_flags ?
+		exception_check_x87 : std::uint8_t{};
 }
 
 /* Whether `instruction` could raise an exception `checked` enables, so that

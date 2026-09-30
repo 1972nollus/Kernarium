@@ -8,6 +8,7 @@
 #include "cpu/x86_64/gadgets/executor.hpp"
 #include "memory/static_guest_memory.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -28,15 +29,20 @@ struct X86GadgetRunResult final {
  * `exact_budget` the run instead stops at exactly that many instructions,
  * which is what a single step needs.
  *
- * While the guest enables #AC, #MF or #XM, the run uses `checked_executor`,
- * made on first use and made again when the guest enables more, whose blocks
- * stop before every instruction that could raise one; it runs those singly,
- * checked, and the rest linked, as `executor` runs everything otherwise. */
+ * While `checked_exceptions` finds exceptions whose instructions the runtime
+ * checks -- #AC, #XM, or #MF pending for the next waiting x87 instruction --
+ * the run uses the executor of `checked_executors` for that set, made on
+ * first use, whose blocks stop before every instruction that could raise one;
+ * it runs those singly, checked, and the rest linked, as `executor` runs
+ * everything otherwise. */
+using X86CheckedExecutors = std::array<
+	std::unique_ptr<::uml::cpu::x86_64::gadgets::Executor>, 8>;
+
 [[nodiscard]] X86GadgetRunResult run_x86_gadgets(
 	::uml::cpu::x86_64::CpuState &cpu,
 	::uml::memory::StaticGuestMemory &memory,
 	::uml::cpu::x86_64::gadgets::Executor &executor,
-	std::unique_ptr<::uml::cpu::x86_64::gadgets::Executor> &checked_executor,
+	X86CheckedExecutors &checked_executors,
 	unsigned long generation, std::size_t instruction_budget,
 	bool exact_budget, const ::uml::cpu::InterruptToken &interrupt) noexcept;
 

@@ -7152,6 +7152,50 @@ std::optional<std::size_t> append_native_stream(
 	return std::nullopt;
 }
 
+std::optional<std::size_t> instruction_at_word(
+	std::span<const Gadget> gadgets, std::span<const std::uintptr_t> stream,
+	std::size_t word, ExecutionMode mode)
+{
+	/* Only a branch's form depends on the links its build found, and the
+	 * forms differ in their first word, so each instruction is built both
+	 * ways and the one the stream holds says how far it reaches. */
+	static BlockLink placeholder_link{};
+	static IndirectLink placeholder_site{};
+	const ProgramLinkResolver linked{
+		.context = nullptr,
+		.resolve = [](void *, std::uint64_t, ExecutionMode) noexcept ->
+			const BlockLink * { return &placeholder_link; },
+		.resolve_indirect = [](void *, std::uint64_t, ExecutionMode) noexcept ->
+			IndirectLink * { return &placeholder_site; },
+	};
+	std::vector<std::uintptr_t> words;
+	FlagState state{};
+	std::size_t position{};
+	for (std::size_t index = 0; index < gadgets.size(); ++index) {
+		FlagState produced{};
+		bool found = false;
+		for (const auto links : {ProgramLinkResolver{}, linked}) {
+			words.clear();
+			produced = {};
+			if (!append_native(words, gadgets[index], mode, links, state,
+				index + 1U < gadgets.size(), produced))
+				return std::nullopt;
+			if (!words.empty() && position + words.size() <= stream.size() &&
+				words.front() == stream[position]) {
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+			return std::nullopt;
+		position += words.size();
+		if (word < position)
+			return index;
+		state = produced;
+	}
+	return std::nullopt;
+}
+
 std::vector<std::uintptr_t> build_native_stream(
 	std::span<const Gadget> gadgets, std::uint64_t final_rip,
 	ExecutionMode mode, ProgramLinkResolver links)

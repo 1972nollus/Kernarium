@@ -23,6 +23,8 @@ constexpr std::uint16_t status_underflow = 1U << 4U;
 constexpr std::uint16_t status_precision = 1U << 5U;
 constexpr std::uint16_t status_error_summary = 1U << 7U;
 constexpr std::uint16_t status_exception_mask = 0x7fU;
+/* The six exceptions the control word masks. */
+constexpr std::uint16_t status_maskable_exceptions = 0x3fU;
 
 [[nodiscard]] constexpr extFloat80_t to_soft(
 	const X87Register &value) noexcept
@@ -62,16 +64,26 @@ constexpr std::uint16_t status_exception_mask = 0x7fU;
 void commit_exceptions(CpuState &cpu,
 	const softfloat_state &state) noexcept
 {
+	std::uint16_t raised{};
 	if ((state.exceptionFlags & softfloat_flag_invalid) != 0)
-		cpu.x87_status |= status_invalid;
+		raised |= status_invalid;
 	if ((state.exceptionFlags & softfloat_flag_infinite) != 0)
-		cpu.x87_status |= status_zero_divide;
+		raised |= status_zero_divide;
 	if ((state.exceptionFlags & softfloat_flag_overflow) != 0)
-		cpu.x87_status |= status_overflow;
+		raised |= status_overflow;
 	if ((state.exceptionFlags & softfloat_flag_underflow) != 0)
-		cpu.x87_status |= status_underflow;
+		raised |= status_underflow;
 	if ((state.exceptionFlags & softfloat_flag_inexact) != 0)
-		cpu.x87_status |= status_precision;
+		raised |= status_precision;
+	/* While the gadgets check x87 exceptions, one the guest unmasked
+	 * leaves the status word alone: the gadget leaves before it commits
+	 * the result, and the runtime runs the instruction again, checked. */
+	if ((cpu.exception_checks & exception_check_x87) != 0 &&
+		(raised & ~cpu.x87_control & status_maskable_exceptions) != 0) {
+		cpu.exception_raised = 1;
+		return;
+	}
+	cpu.x87_status |= raised;
 	const auto pending = static_cast<std::uint16_t>(
 		cpu.x87_status & status_exception_mask & ~cpu.x87_control);
 	if (pending != 0)

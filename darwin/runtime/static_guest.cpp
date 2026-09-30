@@ -306,7 +306,7 @@ int run_x86_guest(darwin_uml_guest_registers &registers,
 	const auto &registered_interrupt = runtime.interrupt;
 	auto run = ::uml::runtime::run_x86_gadgets(
 		cpu, runtime.memory, runtime.x86_executor,
-		runtime.x86_checked_executor, generation,
+		runtime.x86_checked_executors, generation,
 		stepping ? 1 : dispatch_budget, stepping, {
 		.sequence = registered_interrupt.sequence,
 		.snapshot = registered_interrupt.snapshot,

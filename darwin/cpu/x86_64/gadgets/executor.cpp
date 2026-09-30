@@ -814,6 +814,30 @@ public:
 
 	void cancel_selection() noexcept { preceding_ = nullptr; }
 
+	/* The resident program at `address` whose stream holds `word`, which a
+	 * linked run can be inside of: every block a link enters is resident. */
+	[[nodiscard]] const Program *holding(std::uint64_t address,
+		ExecutionMode mode, const std::uintptr_t *word) const noexcept
+	{
+		if (current_ == nullptr)
+			return nullptr;
+		const auto location = locate_program(
+			current_generation_, address, mode);
+		if (location.slab >= slabs_.size() || !slabs_[location.slab])
+			return nullptr;
+		const auto &slab = *slabs_[location.slab];
+		for (std::size_t way = 0; way < program_cache_ways; ++way) {
+			const auto &slot = slab.slots[location.offset + way];
+			if (!matches(slot, address, mode) || !slot.translation)
+				continue;
+			const auto stream = slot.translation->program.native_stream();
+			if (word >= stream.data() &&
+				word < stream.data() + stream.size())
+				return &slot.translation->program;
+		}
+		return nullptr;
+	}
+
 	[[nodiscard]] const Program &store(Program &&program,
 		std::uint64_t changes,
 		std::size_t instruction_limit, ProgramCodeStamps code_stamps)
@@ -2001,6 +2025,18 @@ ProgramSelection Executor::select_program(
 	} catch (...) {
 		return use_transient();
 	}
+}
+
+const Program *Executor::program_holding(std::uint64_t address,
+	ExecutionMode mode, const std::uintptr_t *word) const noexcept
+{
+	if (const auto &transient = storage_->transient_program; transient) {
+		const auto stream = transient->native_stream();
+		if (word >= stream.data() && word < stream.data() + stream.size())
+			return &*transient;
+	}
+	return storage_->programs.holding(
+		normalize_instruction_pointer(mode, address), mode, word);
 }
 
 void Executor::train_indirect(IndirectLink *site, std::uint64_t target,

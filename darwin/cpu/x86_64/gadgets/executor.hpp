@@ -108,6 +108,10 @@ public:
 		::uml::memory::GuestAddressSpace &memory, std::uint64_t address,
 		ExecutionMode mode,
 		std::size_t maximum_instructions = 64) noexcept;
+	/* The cached program at `address`, the block a run is in, whose
+	 * stream holds `word`, or null. */
+	[[nodiscard]] const Program *program_holding(std::uint64_t address,
+		ExecutionMode mode, const std::uintptr_t *word) const noexcept;
 	void train_indirect(IndirectLink *site, std::uint64_t target,
 		ExecutionMode mode) noexcept;
 	[[nodiscard]] const TargetLinkEntry *target_links(

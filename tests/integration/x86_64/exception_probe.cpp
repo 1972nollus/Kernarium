@@ -753,6 +753,87 @@ __asm__(".text\n"
 	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
 	"	fninit\n"
 	"	ret\n"
+	/* Delphi's control words: FCW $1332 and MXCSR $1900 unmask invalid
+	 * operation, division by zero and overflow. Arithmetic that raises
+	 * none of them runs as it would masked, leaving its results, the
+	 * inexact flags and the status word in probe_delphi_out. */
+	".global probe_delphi_clean\n"
+	"probe_delphi_clean:\n"
+	"	fninit\n"
+	"	movw $0x1332, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $3, probe_fp_scratch" PROBE_RIP "\n"
+	"	fildl probe_fp_scratch" PROBE_RIP "\n"
+	"	fld1\n"
+	"	fdivrp\n"
+	"	fld %st(0)\n"
+	"	fmulp\n"
+	"	fsqrt\n"
+	"	fldpi\n"
+	"	faddp\n"
+	"	fld %st(0)\n"
+	"	fstpl probe_delphi_out+8" PROBE_RIP "\n"
+	"	fistpl probe_delphi_out" PROBE_RIP "\n"
+	"	fnstsw probe_delphi_out+4" PROBE_RIP "\n"
+	"	movl $7, %eax\n"
+	"	cvtsi2sd %eax, %xmm0\n"
+	"	movl $3, %eax\n"
+	"	cvtsi2sd %eax, %xmm1\n"
+	"	divsd %xmm1, %xmm0\n"
+	"	mulsd %xmm0, %xmm0\n"
+	"	sqrtsd %xmm0, %xmm0\n"
+	"	addsd %xmm1, %xmm0\n"
+	"	movsd %xmm0, probe_delphi_out+16" PROBE_RIP "\n"
+	"	cvttsd2si %xmm0, %eax\n"
+	"	movl %eax, probe_delphi_out+24" PROBE_RIP "\n"
+	"	stmxcsr probe_delphi_out+28" PROBE_RIP "\n"
+	".global probe_delphi_clean_end\n"
+	"probe_delphi_clean_end:\n"
+	"	fninit\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
+	/* Under FCW $1332 a division by zero raises #MF at the next x87
+	 * instruction, here FLD1, which does not run. */
+	".global probe_delphi_div\n"
+	"probe_delphi_div:\n"
+	"	fninit\n"
+	"	movw $0x1332, probe_fp_scratch" PROBE_RIP "\n"
+	"	fldcw probe_fp_scratch" PROBE_RIP "\n"
+	"	fldz\n"
+	"	fld1\n"
+	"	fdivp\n"
+	".global probe_delphi_div_insn\n"
+	"probe_delphi_div_insn:\n"
+	"	fld1\n"
+	".global probe_delphi_div_end\n"
+	"probe_delphi_div_end:\n"
+	"	fnstsw probe_fp_saved" PROBE_RIP "\n"
+	"	fninit\n"
+	"	ret\n"
+	/* Under MXCSR $1900 a division by zero raises #XM at DIVSD. */
+	".global probe_delphi_divsd\n"
+	"probe_delphi_divsd:\n"
+	"	movl $0x1900, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	movl $1, %eax\n"
+	"	cvtsi2sd %eax, %xmm0\n"
+	"	xorpd %xmm1, %xmm1\n"
+	".global probe_delphi_divsd_insn\n"
+	"probe_delphi_divsd_insn:\n"
+	"	divsd %xmm1, %xmm0\n"
+	".global probe_delphi_divsd_end\n"
+	"probe_delphi_divsd_end:\n"
+	"	stmxcsr probe_fp_saved" PROBE_RIP "\n"
+	"	movq %xmm0, %xmm2\n"
+	"	psrlq $32, %xmm2\n"
+	"	movd %xmm2, %eax\n"
+	"	movl %eax, probe_fp_saved+4" PROBE_RIP "\n"
+	"	movl $0x1f80, probe_fp_scratch" PROBE_RIP "\n"
+	"	ldmxcsr probe_fp_scratch" PROBE_RIP "\n"
+	"	ret\n"
 	".data\n"
 	".balign 8\n"
 	".global probe_fp_saved\n"
@@ -760,6 +841,10 @@ __asm__(".text\n"
 	"	.long 0, 0\n"
 	"probe_fp_scratch:\n"
 	"	.long 0\n"
+	".balign 8\n"
+	".global probe_delphi_out\n"
+	"probe_delphi_out:\n"
+	"	.long 0, 0, 0, 0, 0, 0, 0, 0\n"
 	".text\n");
 
 /* INT n of a vector user mode may not use raises #GP. */
@@ -1505,7 +1590,16 @@ extern "C" char probe_mf_mmx_end[];
 extern "C" void probe_mf_fist();
 extern "C" char probe_mf_fist_insn[];
 extern "C" char probe_mf_fist_end[];
+extern "C" void probe_delphi_div();
+extern "C" char probe_delphi_div_insn[];
+extern "C" char probe_delphi_div_end[];
+extern "C" void probe_delphi_divsd();
+extern "C" char probe_delphi_divsd_insn[];
+extern "C" char probe_delphi_divsd_end[];
+extern "C" void probe_delphi_clean();
+extern "C" char probe_delphi_clean_end[];
 extern "C" volatile u32 probe_fp_saved[2];
+extern "C" volatile u32 probe_delphi_out[8];
 
 /* The MXCSR and x87 control word a signal handler starts with. */
 volatile u32 handler_mxcsr;
@@ -1583,6 +1677,12 @@ bool floating_point_exceptions()
 		 probe_mf_mmx_insn, probe_mf_mmx_end, fpe_fltdiv, 16, 0xb084, 0},
 		{"FISTP out of range", probe_mf_fist, probe_mf_fist_insn,
 		 probe_mf_fist_end, fpe_fltinv, 16, 0xb881, 0x12345678},
+		{"FDIVP by zero under FCW $1332", probe_delphi_div,
+		 probe_delphi_div_insn, probe_delphi_div_end, fpe_fltdiv, 16,
+		 0xb084, 0},
+		{"DIVSD by zero under MXCSR $1900", probe_delphi_divsd,
+		 probe_delphi_divsd_insn, probe_delphi_divsd_end, fpe_fltdiv, 19,
+		 0x1904, 0x3ff00000},
 	};
 	bool ok = install(sigfpe, record_fp_fault);
 	for (const Case &one : cases) {
@@ -1607,6 +1707,28 @@ bool floating_point_exceptions()
 			put("\n");
 		}
 		ok &= one_ok;
+	}
+	/* Delphi's control words raise nothing for arithmetic that raises
+	 * none of the exceptions they unmask. The status word is compared
+	 * without C1, which records whether the last rounding went up. */
+	ok &= raises_nothing("arithmetic under FCW $1332 and MXCSR $1900",
+			     probe_delphi_clean,
+			     address_of(probe_delphi_clean_end));
+	for (unsigned index = 0; index < 8; ++index) {
+		static const char *const what[] = {
+			"x87 result", "x87 status", "x87 double low",
+			"x87 double high", "SSE double low", "SSE double high",
+			"SSE result", "MXCSR",
+		};
+		/* As native Linux reports them. */
+		static const u32 native[] = {
+			6, 0x20, 0xaa22168c, 0x401890fd, 0x55555556, 0x40155555,
+			5, 0x1920,
+		};
+		const u32 value = index == 1 ?
+			(probe_delphi_out[index] & 0xfdffU) :
+			probe_delphi_out[index];
+		ok &= expect(what[index], value, native[index]);
 	}
 	/* A masked exception only sets its flag. */
 	ok &= raises_nothing("masked DIVSS by zero", probe_xm_masked,

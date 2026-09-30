@@ -23,9 +23,11 @@
 #define UML_X86_64_CPU_X87_STATUS 918
 #define UML_X86_64_CPU_X87_TAG 920
 #define UML_X86_64_CPU_X87_TOP 922
+#define UML_X86_64_CPU_EXCEPTION_CHECKS 923
 #define UML_X86_64_CPU_SYSTEM_CALL_32BIT 924
 #define UML_X86_64_CPU_EXECUTION_MODE 925
 #define UML_X86_64_CPU_TIMESTAMP_FAULTS 926
+#define UML_X86_64_CPU_EXCEPTION_RAISED 927
 #define UML_X86_64_CPU_DEFERRED_LEFT 928
 #define UML_X86_64_CPU_DEFERRED_RIGHT 936
 #define UML_X86_64_CPU_DEFERRED_RESULT 944
@@ -68,6 +70,8 @@
 #define UML_X86_64_CONTEXT_TARGET_LINKS 72
 #define UML_X86_64_CONTEXT_STACK_ENTRY 128
 #define UML_X86_64_CONTEXT_CODE_PAGE 136
+#define UML_X86_64_CONTEXT_ENTRY_STACK 144
+#define UML_X86_64_CONTEXT_EXCEPTION_STREAM 152
 #define UML_X86_64_TARGET_LINK_FOLD 12
 #define UML_X86_64_TARGET_LINK_MASK 4095
 
@@ -85,6 +89,10 @@
  * and stopped between elements, with RIP still naming it. `execute` reports
  * it as continued and sets ExecuteResult::repeat_yielded. */
 #define UML_X86_64_EVENT_REPEAT_YIELD 64
+/* Not an EngineEvent: an instruction raised an exception the guest unmasked
+ * and left before committing anything, with the context's exception stream
+ * just past a stream word of its own. `execute` runs it again, checked. */
+#define UML_X86_64_EVENT_EXCEPTION_CHECK 65
 
 /* The work a repeated string instruction does before it stops between
  * elements: elements in its element loop, 64-byte blocks in a page-bounded

@@ -69,6 +69,12 @@ struct NativeExecutionContext final {
 	 * link that settles this program's publications puts it back to no page,
 	 * so this is exactly the set of pages `write_code` still speaks for. */
 	std::uint64_t code_page{UML_X86_64_CODE_PAGE_NONE};
+	/* The stack pointer entry left the frame at, to which an exit that a
+	 * gadget takes from inside its own frame returns. */
+	std::uintptr_t entry_stack{};
+	/* An exception-check exit's stream pointer, just past a stream word of
+	 * the instruction that raised the exception. */
+	const std::uintptr_t *exception_stream{};
 };
 
 static_assert(sizeof(NativeTlbEntry) == 32);
@@ -110,6 +116,10 @@ static_assert(offsetof(NativeExecutionContext, stack_entry) ==
 	UML_X86_64_CONTEXT_STACK_ENTRY);
 static_assert(offsetof(NativeExecutionContext, code_page) ==
 	UML_X86_64_CONTEXT_CODE_PAGE);
+static_assert(offsetof(NativeExecutionContext, entry_stack) ==
+	UML_X86_64_CONTEXT_ENTRY_STACK);
+static_assert(offsetof(NativeExecutionContext, exception_stream) ==
+	UML_X86_64_CONTEXT_EXCEPTION_STREAM);
 
 struct NativeEngineResult final {
 	std::int32_t event;

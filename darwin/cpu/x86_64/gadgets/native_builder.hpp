@@ -20,6 +20,12 @@ namespace uml::cpu::x86_64::gadgets {
 	std::uint64_t final_rip, ExecutionMode mode,
 	ProgramLinkResolver links = {});
 
+/* The instruction of `gadgets` whose words in `stream`, the block's stream,
+ * include word `word`, or nothing when the stream is not theirs. */
+[[nodiscard]] std::optional<std::size_t> instruction_at_word(
+	std::span<const Gadget> gadgets, std::span<const std::uintptr_t> stream,
+	std::size_t word, ExecutionMode mode);
+
 [[nodiscard]] std::vector<std::uintptr_t> build_native_stream(
 	std::span<const Gadget> gadgets, std::uint64_t final_rip,
 	ExecutionMode mode, ProgramLinkResolver links = {});

@@ -25,6 +25,9 @@ gadget x87_load_\name
 	mov x1, sp
 	.endif
 	bl NAME(uml_x86_64_x87_\helper)
+	.if \has_cpu
+	x87_leave_if_raised
+	.endif
 	x87_load_value sp, x9, w10
 	add sp, sp, #16
 	x87_push x9, w10
@@ -79,6 +82,7 @@ gadget x87_store_\name
 	mov x0, _cpu
 	mov x1, sp
 	bl NAME(uml_x86_64_x87_to_\helper)
+	x87_leave_if_raised
 	mov x9, x0
 	add sp, sp, #16
 	x87_scalar_store \size, x9
@@ -105,6 +109,7 @@ gadget x87_store_\name
 	mov x1, sp
 	mov w2, #\truncate
 	bl NAME(uml_x86_64_x87_to_\helper)
+	x87_leave_if_raised
 	mov x9, x0
 	add sp, sp, #16
 	x87_scalar_store \size, x9
@@ -149,6 +154,7 @@ gadget x87_store_bcd_pop
 	mov x1, sp
 	add x2, sp, #16
 	bl NAME(uml_x86_64_x87_to_bcd)
+	x87_leave_if_raised
 	add x11, sp, #16
 	x87_bulk_store 10, x11, .Lx86_x87_store_bcd_fault
 	add sp, sp, #32
@@ -162,7 +168,7 @@ gadget x87_load_control
 	effective_address
 	x87_scalar_load 2, x9
 	strh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
-	retire_unless_unmasked w9, 0x3f
+	retire_unless_x87_unchecked w9
 
 gadget x87_store_control
 	effective_address
@@ -226,7 +232,7 @@ gadget x87_environment_restore_\name
 	.endif
 	add sp, sp, #.Lx86_x87_environment_stack\@
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
-	retire_unless_unmasked w9, 0x3f
+	retire_unless_x87_unchecked w9
 .Lx86_x87_environment_restore_fault\@:
 	add sp, sp, #.Lx86_x87_environment_stack\@
 	b .Lx86_memory_fault

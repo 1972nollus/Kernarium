@@ -316,12 +316,20 @@ BuildResult build(::uml::memory::GuestAddressSpace &memory,
 
 namespace {
 
+[[nodiscard]] ExecuteResult run_raised(const Program &program, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory, Executor &executor,
+	std::span<const std::uintptr_t> native_stream,
+	const NativeExecutionContext &context, std::size_t executed,
+	std::size_t instruction_budget) noexcept;
+
 /* Runs `native_stream`, the program's own stream or one built from its
  * instructions, for at most `limit` instructions of the caller's
  * `instruction_budget`. With `WatchFloating` the host's floating-point
  * exception flags are cleared as the stream starts and reported, as MXCSR
- * flags, in `floating_exceptions` as it ends. */
-template<bool WatchFloating>
+ * flags, in `floating_exceptions` as it ends. A `Checked` run is one
+ * instruction the runtime checks itself, so the gadgets check nothing; any
+ * other run has them check what `gadget_checks` asks for. */
+template<bool WatchFloating, bool Checked = false>
 [[nodiscard, gnu::always_inline]] inline ExecuteResult run_stream(const Program &program, CpuState &cpu,
 	::uml::memory::GuestAddressSpace &memory, Executor &executor,
 	std::span<const std::uintptr_t> native_stream, std::size_t limit,
@@ -353,6 +361,7 @@ template<bool WatchFloating>
 	 * exits before this run no instruction and keep it, as an interrupt
 	 * taken before the instruction does. */
 	cpu.rflags &= ~rflags_resume;
+	cpu.exception_checks = Checked ? std::uint8_t{} : gadget_checks(cpu);
 	executor.enter_engine();
 	if constexpr (WatchFloating)
 		clear_host_floating_exceptions();
@@ -375,6 +384,25 @@ template<bool WatchFloating>
 		if (executor.current_code_changes() == settled)
 			(void)executor.accept_code_changes(settled);
 	}
+	if (result.event == UML_X86_64_EVENT_EXCEPTION_CHECK) {
+		if constexpr (Checked) {
+			trace_fatal("checked-exception", program, cpu,
+				instruction_budget, result.executed);
+			return {::uml::cpu::EngineEvent::fatal, result.executed, {},
+				false, false};
+		} else {
+			return run_raised(program, cpu, memory, executor,
+				native_stream, context, result.executed,
+				instruction_budget);
+		}
+	}
+	/* An instruction that loads the x87 control word or environment and
+	 * unmasks an exception whose flag is set leaves the engine, and the
+	 * exception is then pending: the status word shows it, and the next
+	 * waiting instruction raises it. */
+	if constexpr (!Checked)
+		if (x87_pending(cpu) != 0)
+			cpu.x87_status |= x87_status_pending;
 	const bool repeat_yielded = result.event == UML_X86_64_EVENT_REPEAT_YIELD;
 	const auto event = repeat_yielded ? ::uml::cpu::EngineEvent::continued :
 		static_cast<::uml::cpu::EngineEvent>(result.event);
@@ -532,6 +560,174 @@ constexpr std::uint8_t simd_error_vector = 19;
 constexpr std::uint16_t x87_kept_status = 0x7d00U;
 constexpr std::uint16_t x87_raised_status = 0x027fU;
 
+/* Runs instruction `index` of `program`, whose decoded instructions are
+ * `gadgets`, alone and checked for the exceptions in `checked`: #MF for a
+ * waiting x87 instruction with an unmasked exception pending, #AC for a
+ * misaligned access, and after it #XM, or the pending #MF an x87
+ * instruction leaves for the next one. The gadgets check nothing while it
+ * runs. */
+[[nodiscard]] ExecuteResult run_checked_instruction(const Program &program,
+	std::span<const Gadget> gadgets, std::size_t index, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory, Executor &executor,
+	std::size_t instruction_budget, bool single_step, unsigned checked)
+{
+	const auto mode = program.execution_mode();
+	const auto &first = gadgets[index];
+	/* Where the one instruction's stream leaves when it falls off. */
+	const auto final_rip = advance_instruction_pointer(mode,
+		normalize_instruction_pointer(mode, first.address),
+		first.instruction.length);
+	const bool step_string = single_step &&
+		repeated_string(first.instruction);
+
+	const auto &instruction = first.instruction;
+	/* The exits that follow raise their fault as the instruction starts,
+	 * which is when RF clears. */
+	cpu.rflags &= ~rflags_resume;
+	if ((checked & check_x87) != 0 && waits_for_x87(instruction) &&
+		x87_pending(cpu) != 0) {
+		cpu.x87_status |= x87_status_pending;
+		return floating_point_trap(x87_error_vector,
+			cpu.x87_status | (std::uint32_t{cpu.x87_control} << 16U));
+	}
+	if ((checked & check_alignment) != 0 && misaligned_access(cpu, first))
+		return {::uml::cpu::EngineEvent::memory_fault, 0,
+			{0, ::uml::memory::MemoryAccess::read, true}, false, false};
+
+	const auto stream = step_string ?
+		build_repeat_step_stream(first, mode) :
+		build_native_stream(gadgets.subspan(index, 1), final_rip, mode);
+	const bool simd = (checked & check_simd) != 0 &&
+		simd_floating(instruction);
+	const bool x87 = (checked & check_x87) != 0 &&
+		(x87_computes(instruction) || x87_loads_state(instruction));
+	if (!simd && !x87)
+		return run_stream<false, true>(program, cpu, memory, executor,
+			stream, 1, instruction_budget);
+
+	const CpuState before = cpu;
+	const auto saved = save_store(cpu, first, memory, checked);
+	std::uint32_t raised{};
+	const auto result = simd ?
+		run_stream<true, true>(program, cpu, memory, executor, stream, 1,
+			instruction_budget, &raised) :
+		run_stream<false, true>(program, cpu, memory, executor, stream, 1,
+			instruction_budget);
+	if (result.event != ::uml::cpu::EngineEvent::continued ||
+		result.retired_instructions != 1)
+		return result;
+	if (simd) {
+		/* #XM is a fault: an unmasked exception leaves the instruction's
+		 * destination and RIP as they were, with MXCSR's flags for it.
+		 * One raised before the computation reports only those, and an
+		 * unmasked underflow reports no precision exception, as x86
+		 * does. */
+		auto flags = raised;
+		const auto unmasked = flags & ~(before.mxcsr >> 7U) & 0x3fU;
+		if (unmasked == 0) {
+			cpu.mxcsr |= flags;
+			return result;
+		}
+		if ((unmasked & precomputation_exceptions) != 0)
+			flags &= precomputation_exceptions;
+		else if ((unmasked & underflow_exception) != 0)
+			flags &= ~precision_exception;
+		cpu = before;
+		restore_store(saved, memory);
+		cpu.mxcsr |= flags;
+		return floating_point_trap(simd_error_vector, cpu.mxcsr);
+	}
+	const auto pending = x87_pending(cpu);
+	if (x87_loads_state(instruction)) {
+		/* Unmasking a pending exception makes it the next waiting
+		 * instruction's #MF, which the status word shows at once. */
+		if (pending != 0)
+			cpu.x87_status |= x87_status_pending;
+		else
+			cpu.x87_status &= static_cast<std::uint16_t>(
+				~x87_status_pending);
+		return result;
+	}
+	if (pending == 0)
+		return result;
+	/* x87 reports its exception at the next waiting instruction. One
+	 * checked before the computation, or an overflow or underflow of a
+	 * store, leaves the registers, the stack and memory alone; the rest
+	 * leave their result. */
+	if ((pending & precomputation_exceptions) != 0 ||
+		(x87_store_bytes(instruction) != 0 &&
+			(pending & overflow_underflow) != 0)) {
+		const auto rip = cpu.rip;
+		const auto status = cpu.x87_status;
+		cpu = before;
+		cpu.rip = rip;
+		restore_store(saved, memory);
+		cpu.x87_status = static_cast<std::uint16_t>(
+			(before.x87_status & x87_kept_status) |
+			(status & x87_raised_status));
+	}
+	cpu.x87_status |= x87_status_pending;
+	return result;
+}
+
+/* A gadget left before it committed an instruction that raised an
+ * exception the guest unmasked. The stream word just before the context's
+ * exception stream is one of that instruction's: in the stream this run
+ * entered, or in a cached block a link reached, which is the block the
+ * context names. The instruction runs again, checked, and the run reports
+ * both parts. */
+ExecuteResult run_raised(const Program &program, CpuState &cpu,
+	::uml::memory::GuestAddressSpace &memory, Executor &executor,
+	std::span<const std::uintptr_t> native_stream,
+	const NativeExecutionContext &context, std::size_t executed,
+	std::size_t instruction_budget) noexcept
+{
+	cpu.exception_raised = 0;
+	try {
+		const auto mode = program.execution_mode();
+		const auto *word = context.exception_stream - 1;
+		const Program *holder = &program;
+		auto stream = native_stream;
+		if (context.exception_stream == nullptr || word < stream.data() ||
+			word >= stream.data() + stream.size()) {
+			holder = context.exception_stream == nullptr ? nullptr :
+				executor.program_holding(context.program_begin, mode,
+					word);
+			if (holder == nullptr) {
+				trace_fatal("raised-block", program, cpu,
+					instruction_budget, executed);
+				return {::uml::cpu::EngineEvent::fatal, executed, {},
+					false, false};
+			}
+			stream = holder->native_stream();
+		}
+		const auto gadgets = holder->replay_instructions();
+		const auto index = gadgets.size() == holder->instruction_count() ?
+			instruction_at_word(gadgets, stream,
+				static_cast<std::size_t>(word - stream.data()), mode) :
+			std::nullopt;
+		if (!index || executed >= instruction_budget) {
+			trace_fatal("raised-instruction", *holder, cpu,
+				instruction_budget, executed);
+			return {::uml::cpu::EngineEvent::fatal, executed, {},
+				false, false};
+		}
+		cpu.rip = gadgets[*index].address;
+		auto result = run_checked_instruction(*holder, gadgets, *index,
+			cpu, memory, executor, instruction_budget - executed, false,
+			enabled_exceptions(cpu));
+		result.retired_instructions += executed;
+		result.instruction_budget_exhausted =
+			result.event == ::uml::cpu::EngineEvent::continued &&
+			result.retired_instructions == instruction_budget;
+		return result;
+	} catch (...) {
+		trace_fatal("raised-stream", program, cpu, instruction_budget,
+			executed);
+		return {::uml::cpu::EngineEvent::fatal, executed, {}, false, false};
+	}
+}
+
 } // namespace
 
 ExecuteResult execute_checked(const Program &program, CpuState &cpu,
@@ -564,107 +760,11 @@ ExecuteResult execute_checked(const Program &program, CpuState &cpu,
 			return {::uml::cpu::EngineEvent::fatal, 0, {},
 				false, false};
 		}
-		const auto mode = program.execution_mode();
-		const auto &first = gadgets.front();
-		/* Where the one instruction's stream leaves when it falls off. */
-		const auto final_rip = gadgets.size() > 1 ? gadgets[1].address :
-			advance_instruction_pointer(mode,
-				normalize_instruction_pointer(mode, program.address()),
-				program.byte_count());
-		const bool step_string = single_step &&
-			repeated_string(first.instruction);
-
-		const auto &instruction = first.instruction;
-		/* The exits that follow raise their fault as the instruction
-		 * starts, which is when RF clears. */
-		cpu.rflags &= ~rflags_resume;
-		if ((checked & check_x87) != 0 && waits_for_x87(instruction) &&
-			x87_pending(cpu) != 0) {
-			cpu.x87_status |= x87_status_pending;
-			return floating_point_trap(x87_error_vector,
-				cpu.x87_status |
-					(std::uint32_t{cpu.x87_control} << 16U));
-		}
-		if ((checked & check_alignment) != 0 &&
-			misaligned_access(cpu, first))
-			return {::uml::cpu::EngineEvent::memory_fault, 0,
-				{0, ::uml::memory::MemoryAccess::read, true},
-				false, false};
-
-		const auto stream = step_string ?
-			build_repeat_step_stream(first, mode) :
-			build_native_stream(gadgets.first(1), final_rip, mode);
-		const bool simd = (checked & check_simd) != 0 &&
-			simd_floating(instruction);
-		const bool x87 = (checked & check_x87) != 0 &&
-			(x87_computes(instruction) || x87_loads_state(instruction));
-		if (!simd && !x87)
-			return run_stream<false>(program, cpu, memory, executor,
-				stream, 1, instruction_budget);
-
-		const CpuState before = cpu;
-		const auto saved = save_store(cpu, first, memory, checked);
-		std::uint32_t raised{};
-		const auto result = simd ?
-			run_stream<true>(program, cpu, memory, executor, stream, 1,
-				instruction_budget, &raised) :
-			run_stream<false>(program, cpu, memory, executor, stream, 1,
-				instruction_budget);
-		if (result.event != ::uml::cpu::EngineEvent::continued ||
-			result.retired_instructions != 1)
-			return result;
-		if (simd) {
-			/* #XM is a fault: an unmasked exception leaves the
-			 * instruction's destination and RIP as they were, with
-			 * MXCSR's flags for it. One raised before the computation
-			 * reports only those, and an unmasked underflow reports no
-			 * precision exception, as x86 does. */
-			auto flags = raised;
-			const auto unmasked = flags & ~(before.mxcsr >> 7U) & 0x3fU;
-			if (unmasked == 0) {
-				cpu.mxcsr |= flags;
-				return result;
-			}
-			if ((unmasked & precomputation_exceptions) != 0)
-				flags &= precomputation_exceptions;
-			else if ((unmasked & underflow_exception) != 0)
-				flags &= ~precision_exception;
-			cpu = before;
-			restore_store(saved, memory);
-			cpu.mxcsr |= flags;
-			return floating_point_trap(simd_error_vector, cpu.mxcsr);
-		}
-		const auto pending = x87_pending(cpu);
-		if (x87_loads_state(instruction)) {
-			/* Unmasking a pending exception makes it the next waiting
-			 * instruction's #MF, which the status word shows at once. */
-			if (pending != 0)
-				cpu.x87_status |= x87_status_pending;
-			else
-				cpu.x87_status &= static_cast<std::uint16_t>(
-					~x87_status_pending);
-			return result;
-		}
-		if (pending == 0)
-			return result;
-		/* x87 reports its exception at the next waiting instruction. One
-		 * checked before the computation, or an overflow or underflow of
-		 * a store, leaves the registers, the stack and memory alone; the
-		 * rest leave their result. */
-		if ((pending & precomputation_exceptions) != 0 ||
-			(x87_store_bytes(instruction) != 0 &&
-				(pending & overflow_underflow) != 0)) {
-			const auto rip = cpu.rip;
-			const auto status = cpu.x87_status;
-			cpu = before;
-			cpu.rip = rip;
-			restore_store(saved, memory);
-			cpu.x87_status = static_cast<std::uint16_t>(
-				(before.x87_status & x87_kept_status) |
-				(status & x87_raised_status));
-		}
-		cpu.x87_status |= x87_status_pending;
-		return result;
+		/* The block was split for `checked`; the instruction is checked
+		 * for every exception the guest enables. */
+		return run_checked_instruction(program, gadgets, 0, cpu, memory,
+			executor, instruction_budget, single_step,
+			checked | enabled_exceptions(cpu));
 	} catch (...) {
 		trace_fatal("checked-stream", program, cpu, instruction_budget);
 		return {::uml::cpu::EngineEvent::fatal, 0, {}, false, false};

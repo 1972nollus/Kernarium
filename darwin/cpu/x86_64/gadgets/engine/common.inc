@@ -89,19 +89,18 @@ NAME(uml_x86_64_gadget_\name):
 	next_gadget
 .endm
 
-/* The engine leaves #MF and #XM to the runtime, which runs the x87 and
- * SIMD instructions one at a time, checked, while the guest has an exception
- * unmasked in the x87 control word or MXCSR. An instruction that loads
- * either one therefore retires and leaves when `value` has a clear bit among
- * `masks`, so the runtime sees the change before the next instruction runs.
- * For a gadget that computed its effective address: x22 and the
- * descriptor's length name the next instruction. */
-.macro retire_unless_unmasked value, masks
-	mvn w8, \value
-	tst w8, #\masks
-	b.ne .Lx86_exceptions_unmasked\@
-	retire_and_next
-.Lx86_exceptions_unmasked\@:
+/* The engine leaves #XM, and #MF for an x87 exception already pending, to
+ * the runtime, which runs the instructions that could raise them one at a
+ * time, checked, while the guest has one enabled; the gadgets check an
+ * unmasked x87 exception themselves while the run's `exception_checks` says
+ * so. An instruction that loads MXCSR or the x87 control word therefore
+ * retires and leaves when it could change what a run checks, so the runtime
+ * sees the change before the next instruction runs: when it unmasks a SIMD
+ * exception, when it unmasks an x87 one in a run that does not check them, or
+ * when it unmasks one whose flag is set, which is then pending. For a gadget
+ * that computed its effective address: x22 and the descriptor's length name
+ * the next instruction. */
+.macro retire_and_leave
 	ubfx x8, x23, #56, #4
 	add x8, x22, x8
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
@@ -111,13 +110,44 @@ NAME(uml_x86_64_gadget_\name):
 	b uml_x86_64_gadget_leave
 .endm
 
-/* The same for an instruction that loads both: a mask that either leaves
- * clear. */
+.macro retire_unless_unmasked value, masks
+	mvn w8, \value
+	tst w8, #\masks
+	b.ne .Lx86_exceptions_unmasked\@
+	retire_and_next
+.Lx86_exceptions_unmasked\@:
+	retire_and_leave
+.endm
+
+/* `control` is the x87 control word just loaded, and the status word is
+ * already the one the instruction leaves. */
+.macro retire_unless_x87_unchecked control
+	mvn w8, \control
+	tst w8, #0x3f
+	b.ne .Lx86_x87_unmasked\@
+	retire_and_next
+.Lx86_x87_unmasked\@:
+	ldrb w8, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
+	tbz w8, #0, .Lx86_x87_unchecked\@
+	ldrh w8, [_cpu, #UML_X86_64_CPU_X87_STATUS]
+	bic w8, w8, \control
+	tst w8, #0x3f
+	b.ne .Lx86_x87_unchecked\@
+	retire_and_next
+.Lx86_x87_unchecked\@:
+	retire_and_leave
+.endm
+
+/* The same for an instruction that loads both. */
 .macro retire_unless_any_unmasked
 	ldr w8, [_cpu, #UML_X86_64_CPU_MXCSR]
+	mvn w8, w8
+	tst w8, #0x1f80
+	b.ne .Lx86_simd_unmasked\@
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
-	and w8, w9, w8, lsr #7
-	retire_unless_unmasked w8, 0x3f
+	retire_unless_x87_unchecked w9
+.Lx86_simd_unmasked\@:
+	retire_and_leave
 .endm
 
 /* Bytes 24..31 of the record hold operation, width, carry, one padding byte,
@@ -678,6 +708,8 @@ NAME(uml_x86_64_gadget_enter):
 	mov _stream, x0
 	mov _cpu, x1
 	mov _context, x2
+	mov x9, sp
+	str x9, [_context, #UML_X86_64_CONTEXT_ENTRY_STACK]
 	/* Run the dispatch in the guest's rounding mode. */
 	publish_guest_rounding 9, 10, 11
 	/* The retirement counter carries this run's budget as a bias, so every
@@ -687,6 +719,20 @@ NAME(uml_x86_64_gadget_enter):
 	neg _executed, x9
 	x86_memory_order_boundary
 	next_gadget
+
+/* The instruction running raised an exception the guest unmasked, which the
+ * engine does not deliver itself, and left before it committed anything: the
+ * runtime runs it again, checked. A gadget can leave from inside a frame of
+ * its own, so the exit takes the stack back to the entry frame, and it hands
+ * the runtime its stream pointer, which is past a stream word of that
+ * instruction and so names it. */
+.p2align 4
+uml_x86_64_gadget_exception_check:
+	ldr x9, [_context, #UML_X86_64_CONTEXT_ENTRY_STACK]
+	mov sp, x9
+	str _stream, [_context, #UML_X86_64_CONTEXT_EXCEPTION_STREAM]
+	mov w0, #UML_X86_64_EVENT_EXCEPTION_CHECK
+	b uml_x86_64_gadget_leave
 
 .p2align 4
 uml_x86_64_gadget_leave:
