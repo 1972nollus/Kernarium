@@ -39,19 +39,16 @@ endif()
 
 if(UML_APPLE_PLATFORM STREQUAL "macos")
     set(UML_TARGET_MACOS ON)
-    option(UML_BUILD_CLI "Build the arm64 macOS command-line app" ON)
-    option(UML_BUILD_ANDROID17_CLI
-        "Build the separate Android 17 arm64 macOS executable" OFF)
-    option(UML_BUILD_KERNEL_RUNNER
-           "Build the embedded ELF kernel runner for the macOS CLI" ON)
-elseif(UML_APPLE_PLATFORM MATCHES "^ios")
+else()
     set(UML_TARGET_MACOS OFF)
-    option(UML_BUILD_CLI "Build the arm64 macOS command-line app" OFF)
-    option(UML_BUILD_ANDROID17_CLI
-        "Build the separate Android 17 arm64 macOS executable" OFF)
-    option(UML_BUILD_KERNEL_RUNNER
-        "Build the prototype embedded ELF runner for Kernarium on iOS" OFF)
 endif()
+option(UML_BUILD_CLI "Build the arm64 macOS command-line app"
+    ${UML_TARGET_MACOS})
+option(UML_BUILD_ANDROID17_CLI
+    "Build the separate Android 17 arm64 macOS executable" OFF)
+option(UML_BUILD_KERNEL_RUNNER
+    "Build the embedded ELF kernel runner for the macOS CLI or Kernarium"
+    ${UML_TARGET_MACOS})
 
 option(UML_BUILD_UNIT_TESTS
     "Build host-only C++/assembly unit tests"
@@ -160,7 +157,6 @@ set(UML_MACOS_NATIVE_ADDRESS 0x0000600000000000ULL)
 # ceiling, together with the reserved space below, keeps RAM plus auxiliary
 # inside the 14 GiB iOS envelope for every guest up to 9 GiB; no Apple product
 # configures more than 4 GiB.
-set(UML_NATIVE_AUXILIARY_DIVISOR 1)
 set(UML_NATIVE_AUXILIARY_MINIMUM 0x0000000040000000ULL)
 set(UML_NATIVE_AUXILIARY_MAXIMUM 0x0000000100000000ULL)
 # The kernel reserves a guarded 1 GiB guest-physical aperture for negotiated
@@ -192,7 +188,6 @@ target_compile_definitions(uml_guest_page_configuration INTERFACE
     DARWIN_UML_NATIVE_ADDRESS_CEILING=${UML_NATIVE_ADDRESS_CEILING}
     DARWIN_UML_MACOS_NATIVE_ADDRESS=${UML_MACOS_NATIVE_ADDRESS}
     DARWIN_UML_NATIVE_HIGH_PLACEMENT=$<BOOL:${UML_TARGET_MACOS}>
-    DARWIN_UML_NATIVE_AUXILIARY_DIVISOR=${UML_NATIVE_AUXILIARY_DIVISOR}
     DARWIN_UML_NATIVE_AUXILIARY_MINIMUM=${UML_NATIVE_AUXILIARY_MINIMUM}
     DARWIN_UML_NATIVE_AUXILIARY_MAXIMUM=${UML_NATIVE_AUXILIARY_MAXIMUM}
     DARWIN_UML_NATIVE_VHOST_USER_SHMEM_RESERVATION=${UML_NATIVE_VHOST_USER_SHMEM_RESERVATION}
@@ -215,9 +210,6 @@ if(UML_BUILD_GPU)
 endif()
 
 if(UML_BUILD_NETWORK_PROVIDER AND NOT UML_TARGET_MACOS)
-    if(NOT UML_APPLE_PLATFORM MATCHES "^ios")
-        message(FATAL_ERROR "The Kernarium network provider requires iOS")
-    endif()
     include(dependencies/cmake/IosNetworkDependencies.cmake)
 endif()
 

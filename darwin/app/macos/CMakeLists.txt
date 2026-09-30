@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 function(uml_add_macos_embedded_kernel_app
-        TARGET_NAME MAIN_SOURCE ARTIFACT_TARGET
-        EMULATOR_TARGET EMULATOR_ARCHIVE_TARGET)
+        TARGET_NAME MAIN_SOURCE ARTIFACT_TARGET)
     if(NOT TARGET "${ARTIFACT_TARGET}")
         message(FATAL_ERROR
             "${TARGET_NAME} requires the artifact target ${ARTIFACT_TARGET}")
@@ -48,7 +47,7 @@ function(uml_add_macos_embedded_kernel_app
                 $<TARGET_FILE_DIR:${TARGET_NAME}>/Frameworks/KosmicKrisp.framework)
     endif()
     target_link_libraries("${TARGET_NAME}" PRIVATE
-        "${EMULATOR_TARGET}"
+        UML::Emulator
         UML::AudioDevice
         UML::BatteryDevice
         UML::BalloonDevice
@@ -66,7 +65,7 @@ function(uml_add_macos_embedded_kernel_app
         # The embedded ELF resolves this fixed-arity ABI with dlsym(). These
         # symbols have no native Mach-O callers, so force-load the deliberately
         # aggregated emulator product at the application boundary.
-        "LINKER:-force_load,$<TARGET_FILE:${EMULATOR_ARCHIVE_TARGET}>"
+        "LINKER:-force_load,$<TARGET_FILE:uml_emulator>"
         "LINKER:-sectcreate,__DATA,__uml_elf,${_uml_kernel_image}")
 
     set_target_properties("${TARGET_NAME}" PROPERTIES
@@ -94,8 +93,7 @@ if(UML_BUILD_CLI)
         message(FATAL_ERROR "uml-darwin requires a selected mainline artifact")
     endif()
     uml_add_macos_embedded_kernel_app(
-        uml-darwin linux_main.cpp "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
-        UML::Emulator uml_emulator)
+        uml-darwin linux_main.cpp "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
     # Linux guests boot the accepted base archive for their userspace
     # architecture plus a per-run archive the launcher writes; the Android
     # launcher boots Android's own ramdisk and embeds neither.
@@ -115,15 +113,12 @@ if(UML_BUILD_CLI)
 endif()
 
 if(UML_BUILD_ANDROID17_CLI)
-    if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET OR
-       NOT TARGET "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
+    if(NOT UML_ACTIVE_KERNEL_ARTIFACT_TARGET)
         message(FATAL_ERROR
             "uml-darwin-android17 requires a compatible ACK artifact")
     endif()
-
     uml_add_macos_embedded_kernel_app(
         uml-darwin-android17 android17_main.cpp
-        "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}"
-        UML::Emulator uml_emulator)
+        "${UML_ACTIVE_KERNEL_ARTIFACT_TARGET}")
     target_link_libraries(uml-darwin-android17 PRIVATE UML::AndroidBoot)
 endif()

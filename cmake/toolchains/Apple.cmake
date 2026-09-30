@@ -5,41 +5,28 @@ set(UML_APPLE_PLATFORM "macos" CACHE STRING "Apple target platform")
 list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES UML_APPLE_PLATFORM)
 set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "Apple architectures" FORCE)
 
-function(uml_apple_sdk_path sdk result)
-    execute_process(
-        COMMAND xcrun --sdk ${sdk} --show-sdk-path
-        OUTPUT_VARIABLE sdk_path
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        COMMAND_ERROR_IS_FATAL ANY)
-    set(${result} "${sdk_path}" PARENT_SCOPE)
-endfunction()
-
+# Each platform's SDK, CMake system name and default deployment target.
 if(UML_APPLE_PLATFORM STREQUAL "macos")
-    uml_apple_sdk_path(macosx UML_APPLE_SDK_PATH)
-    set(CMAKE_SYSTEM_NAME Darwin)
-    set(CMAKE_OSX_SYSROOT "${UML_APPLE_SDK_PATH}" CACHE PATH "Apple SDK" FORCE)
-    if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET OR
-            CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
-        set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "Deployment target")
-    endif()
+    set(_uml_apple_platform macosx Darwin 14.0)
 elseif(UML_APPLE_PLATFORM STREQUAL "ios")
-    uml_apple_sdk_path(iphoneos UML_APPLE_SDK_PATH)
-    set(CMAKE_SYSTEM_NAME iOS)
-    set(CMAKE_OSX_SYSROOT "${UML_APPLE_SDK_PATH}" CACHE PATH "Apple SDK" FORCE)
-    if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET OR
-            CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
-        set(CMAKE_OSX_DEPLOYMENT_TARGET 26.0 CACHE STRING "Deployment target")
-    endif()
+    set(_uml_apple_platform iphoneos iOS 26.0)
 elseif(UML_APPLE_PLATFORM STREQUAL "ios-simulator")
-    uml_apple_sdk_path(iphonesimulator UML_APPLE_SDK_PATH)
-    set(CMAKE_SYSTEM_NAME iOS)
-    set(CMAKE_OSX_SYSROOT "${UML_APPLE_SDK_PATH}" CACHE PATH "Apple SDK" FORCE)
-    if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET OR
-            CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
-        set(CMAKE_OSX_DEPLOYMENT_TARGET 26.0 CACHE STRING "Deployment target")
-    endif()
+    set(_uml_apple_platform iphonesimulator iOS 26.0)
 else()
     message(FATAL_ERROR "Unknown UML_APPLE_PLATFORM=${UML_APPLE_PLATFORM}")
+endif()
+list(POP_FRONT _uml_apple_platform
+    _uml_apple_sdk CMAKE_SYSTEM_NAME _uml_apple_deployment_target)
+execute_process(
+    COMMAND xcrun --sdk ${_uml_apple_sdk} --show-sdk-path
+    OUTPUT_VARIABLE _uml_apple_sdk_path
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    COMMAND_ERROR_IS_FATAL ANY)
+set(CMAKE_OSX_SYSROOT "${_uml_apple_sdk_path}" CACHE PATH "Apple SDK" FORCE)
+if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET OR
+        CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET ${_uml_apple_deployment_target}
+        CACHE STRING "Deployment target")
 endif()
 
 # The macOS arm64 default target enables the optional mnemonics used by the
