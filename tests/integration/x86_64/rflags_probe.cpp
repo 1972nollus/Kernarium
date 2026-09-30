@@ -8,17 +8,20 @@
  * VM, VIF, VIP and ID are never a task's to set that way, and IF stays set.
  * RF, which IRET at CPL 3 and a signal return may set, is cleared as the next
  * instruction starts, so a system call that instruction makes never shows it,
- * but a fault saves the flags with RF set and a trap saves them as they are.
- * TF that IRET sets raises SIGTRAP after the instruction IRET returns to.
+ * but a fault saves the flags with RF set and a trap saves them as they are,
+ * and an interrupt between the elements of a repeated string instruction
+ * saves RF too. TF that IRET sets raises SIGTRAP after the instruction IRET
+ * returns to.
  *
  * The x86-64 build traces an x86-64 and an i386 child stopped after execve(),
  * and raises a signal whose handler sets privileged bits in its frame. The
  * i386 build, whose path is the first argument, is the 32-bit child and runs
  * the same signal case under the i386 ABI. Each build also sets RF and reads
  * the signal frames, and on x86-64 SYSCALL's R11, of the kill() calls that
- * follow, sets TF with IRET, and raises faults and traps. The x86-64 build
- * also reads the flags of both children stopped at a fault. Prints one line
- * per case and exits with the number of failures.
+ * follow, sets TF with IRET, raises faults and traps, and signals a REP STOSB
+ * from another CPU, which needs a second CPU. The x86-64 build also reads the
+ * flags of both children stopped at a fault. Prints one line per case and
+ * exits with the number of failures.
  */
 
 namespace {
@@ -28,14 +31,18 @@ using u64 = unsigned long long;
 using word = unsigned long;
 
 #if defined(__x86_64__)
+constexpr long nr_read = 0;
 constexpr long nr_write = 1;
 constexpr long nr_rt_sigaction = 13;
+constexpr long nr_pipe = 22;
+constexpr long nr_nanosleep = 35;
 constexpr long nr_getpid = 39;
 constexpr long nr_fork = 57;
 constexpr long nr_execve = 59;
 constexpr long nr_wait4 = 61;
 constexpr long nr_kill = 62;
 constexpr long nr_ptrace = 101;
+constexpr long nr_sched_setaffinity = 203;
 constexpr long nr_exit_group = 231;
 /* uc_mcontext.eflags: uc_flags, uc_link and a 24-byte stack_t, then
  * r8-r15, rdi, rsi, rbp, rbx, rdx, rax, rcx, rsp and rip. */
@@ -78,8 +85,9 @@ word raise_and_read_flags(long pid)
 	return flags;
 }
 
-/* uc_mcontext.rax and rip, and siginfo's si_addr. */
+/* uc_mcontext.rax, rcx and rip, and siginfo's si_addr. */
 constexpr unsigned frame_ax_offset = 40 + 13 * 8;
+constexpr unsigned frame_cx_offset = 40 + 14 * 8;
 constexpr unsigned frame_ip_offset = 40 + 16 * 8;
 constexpr unsigned siginfo_address_offset = 16;
 
@@ -190,12 +198,27 @@ __asm__(".text\n"
 	"1:	syscall\n"
 	"	nop\n"
 	"probe_iret_syscall_after:\n"
+	"	ret\n"
+	".global probe_rep\n"
+	".global probe_rep_insn\n"
+	"probe_rep:\n"
+	"	movq %rsi, %rcx\n"
+	"	xorl %eax, %eax\n"
+	"probe_rep_insn:\n"
+	"	rep stosb\n"
 	"	ret\n");
 #elif defined(__i386__)
+constexpr long nr_fork = 2;
+constexpr long nr_read = 3;
 constexpr long nr_write = 4;
 constexpr long nr_getpid = 20;
 constexpr long nr_kill = 37;
+constexpr long nr_pipe = 42;
+constexpr long nr_wait4 = 114;
+constexpr long nr_nanosleep = 162;
 constexpr long nr_rt_sigaction = 174;
+constexpr long nr_sched_setaffinity = 241;
+constexpr long nr_exit_group = 252;
 /* uc_mcontext.eflags: uc_flags, uc_link and a 12-byte stack_t, then gs, fs,
  * es and ds, edi-eax, trapno, err, eip and cs. */
 constexpr unsigned frame_flags_offset = 20 + 64;
@@ -233,8 +256,9 @@ word raise_and_read_flags(long pid)
 	return flags;
 }
 
-/* uc_mcontext.eax and eip, and siginfo's si_addr. */
+/* uc_mcontext.eax, ecx and eip, and siginfo's si_addr. */
 constexpr unsigned frame_ax_offset = 20 + 44;
+constexpr unsigned frame_cx_offset = 20 + 40;
 constexpr unsigned frame_ip_offset = 20 + 56;
 constexpr unsigned siginfo_address_offset = 12;
 
@@ -324,6 +348,17 @@ __asm__(".text\n"
 	"1:	int $0x80\n"
 	"	nop\n"
 	"probe_iret_syscall_after:\n"
+	"	ret\n"
+	".global probe_rep\n"
+	".global probe_rep_insn\n"
+	"probe_rep:\n"
+	"	pushl %edi\n"
+	"	movl 8(%esp), %edi\n"
+	"	movl 12(%esp), %ecx\n"
+	"	xorl %eax, %eax\n"
+	"probe_rep_insn:\n"
+	"	rep stosb\n"
+	"	popl %edi\n"
 	"	ret\n");
 #else
 #error "the RFLAGS probe is an x86-64 or i386 program"
@@ -752,6 +787,125 @@ bool fault_frames_set_resume_flag()
 	return ok;
 }
 
+/* REP STOSB of `count` bytes of zero at `buffer`, at probe_rep_insn. */
+extern "C" void probe_rep(void *buffer, word count);
+extern "C" char probe_rep_insn[];
+
+constexpr long sigusr2 = 12;
+constexpr word rep_bytes = 1UL << 22;
+constexpr word rep_minimum = 20;
+constexpr int rep_signals = 200;
+
+struct Timespec {
+	long seconds;
+	long nanoseconds;
+};
+
+alignas(4096) unsigned char rep_buffer[rep_bytes];
+volatile word rep_resumed;
+volatile word rep_cleared;
+volatile word rep_elsewhere;
+volatile bool rep_done;
+
+/* Classifies where a signal found the task: inside the REP STOSB, with
+ * elements done and elements left, or anywhere else. */
+void record_rep(int, void *, void *context)
+{
+	auto *frame = static_cast<char *>(context);
+	const word ip = *reinterpret_cast<word *>(frame + frame_ip_offset);
+	const word count = *reinterpret_cast<word *>(frame + frame_cx_offset);
+	const word flags = *reinterpret_cast<word *>(frame + frame_flags_offset);
+	if (ip != reinterpret_cast<word>(probe_rep_insn) || count == 0 ||
+	    count == rep_bytes)
+		rep_elsewhere = rep_elsewhere + 1;
+	else if ((flags & flag_rf) != 0)
+		rep_resumed = rep_resumed + 1;
+	else
+		rep_cleared = rep_cleared + 1;
+}
+
+void stop_rep(int, void *, void *)
+{
+	rep_done = true;
+}
+
+bool install(long signal, void (*handler)(int, void *, void *))
+{
+	KernelSigaction action = {};
+	action.handler = reinterpret_cast<word>(handler);
+	action.flags = sa_siginfo | sa_restorer;
+	action.restorer = reinterpret_cast<word>(&probe_restorer);
+	return raw_syscall(nr_rt_sigaction, signal,
+			   reinterpret_cast<long>(&action), 0, 8) == 0;
+}
+
+bool pin_to(long cpu)
+{
+	word mask = 1UL << cpu;
+	return raw_syscall(nr_sched_setaffinity, 0, sizeof(mask),
+			   reinterpret_cast<long>(&mask)) == 0;
+}
+
+/* The child repeats the REP STOSB on CPU 0 until SIGUSR2 and exits 0 when
+ * enough of the SIGUSR1s found it mid-string and every one showed RF. */
+int repeat_until_stopped(long ready)
+{
+	if (!pin_to(0) || !install(sigusr1, record_rep) ||
+	    !install(sigusr2, stop_rep))
+		return 2;
+	const char byte = 1;
+	raw_syscall(nr_write, ready, reinterpret_cast<long>(&byte), 1);
+	for (long round = 0; !rep_done && round < 100000; ++round)
+		probe_rep(rep_buffer, rep_bytes);
+	if (rep_resumed >= rep_minimum && rep_cleared == 0)
+		return 0;
+	put("  signals mid-string with RF ");
+	put_hex(rep_resumed);
+	put(", without RF ");
+	put_hex(rep_cleared);
+	put(", elsewhere ");
+	put_hex(rep_elsewhere);
+	put("\n");
+	return 1;
+}
+
+/* A signal from another CPU interrupts a REP STOSB between elements. The
+ * frame names the instruction with its count part done, and hardware saves
+ * RF there, so the resumed instruction does not break again. */
+bool interrupted_rep_string_sets_resume_flag()
+{
+	int ready[2] = {};
+	if (raw_syscall(nr_pipe, reinterpret_cast<long>(ready)) != 0) {
+		put("  pipe failed\n");
+		return false;
+	}
+	const long child = raw_syscall(nr_fork);
+	if (child == 0)
+		raw_syscall(nr_exit_group, repeat_until_stopped(ready[1]));
+	char byte = 0;
+	const bool started = child > 0 && pin_to(1) &&
+		raw_syscall(nr_read, ready[0], reinterpret_cast<long>(&byte),
+			    1) == 1;
+	if (started) {
+		const Timespec gap = {0, 1000000};
+		for (int sent = 0; sent < rep_signals; ++sent) {
+			raw_syscall(nr_kill, child, sigusr1);
+			raw_syscall(nr_nanosleep,
+				    reinterpret_cast<long>(&gap), 0);
+		}
+		raw_syscall(nr_kill, child, sigusr2);
+	} else {
+		put("  the REP STOSB child did not start on another CPU\n");
+		if (child > 0)
+			raw_syscall(nr_kill, child, 9);
+	}
+	int status = 0;
+	if (child > 0)
+		raw_syscall(nr_wait4, child, reinterpret_cast<long>(&status), 0,
+			    0);
+	return started && (status & 0x7f) == 0 && ((status >> 8) & 0xff) == 0;
+}
+
 #if defined(__x86_64__)
 constexpr word flag_vm = 1UL << 17;
 constexpr word tracer_privileged = frame_privileged | flag_vm;
@@ -996,6 +1150,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(self, "step"));
 	report("x86-64 fault frames set RF and trap frames do not",
 	       in_child(self, "faults"));
+	report("x86-64 a REP string interrupted between elements shows RF",
+	       in_child(self, "rep"));
 	child = start_traced(self, "ud2");
 	report("x86-64 a tracer sees RF at a fault's stop",
 	       child > 0 && fault_stop_shows_resume_flag(child, false));
@@ -1017,6 +1173,8 @@ int run_all(const char *self, const char *i386_probe)
 	       in_child(i386_probe, "step"));
 	report("i386 fault frames set RF and trap frames do not",
 	       in_child(i386_probe, "faults"));
+	report("i386 a REP string interrupted between elements shows RF",
+	       in_child(i386_probe, "rep"));
 	child = start_traced(i386_probe, "ud2");
 	report("i386 a tracer sees RF at a fault's stop",
 	       child > 0 && fault_stop_shows_resume_flag(child, true));
@@ -1042,6 +1200,8 @@ extern "C" int probe_main(word *stack)
 		return iret_trap_flag_steps_one_instruction() ? 0 : 1;
 	if (count == 2 && equal(arguments[1], "faults"))
 		return fault_frames_set_resume_flag() ? 0 : 1;
+	if (count == 2 && equal(arguments[1], "rep"))
+		return interrupted_rep_string_sets_resume_flag() ? 0 : 1;
 	if (count == 2 && equal(arguments[1], "ud2")) {
 		probe_ud2();
 		return 1;

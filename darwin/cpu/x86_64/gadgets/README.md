@@ -190,7 +190,11 @@ breakpoint, so the resumed instruction does not break again, and saves a
 trap's flags as they are. The runtime does the same in the registers it hands
 the kernel: a page fault, #UD, #GP or #DE exit reports RF set, and a
 breakpoint, INT 4 or single-step exit reports the live flags, in which RF is
-clear. Signal frames and a tracer therefore see what native Linux shows.
+clear. Hardware sets RF as well when an interrupt stops a repeated string
+instruction between elements, so the string gadgets set it at the repeat
+budget's exit, the one place they stop with elements done and elements left;
+`execute` clears it again when the instruction resumes. Signal frames and a
+tracer therefore see what native Linux shows.
 
 ## Software TLB
 

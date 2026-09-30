@@ -3898,6 +3898,10 @@ read_test_sequences(void *context) noexcept
 	 * counts elements. The run loop counts the bytes it moves instead: one
 	 * run stands for thousands of elements, so counting runs would let a long
 	 * copy hold the gate far longer than the element loop ever did.
+	 *
+	 * Stopping there is where an interrupt finds the instruction, and
+	 * hardware then saves RF, so both boundaries set it; the exit that runs
+	 * no instruction keeps it, and resuming clears it (audit NC-E6).
 	 */
 	TestMemory descending;
 	descending.load(0, {0xf3, 0xaa}); // rep stosb
@@ -3917,7 +3921,9 @@ read_test_sequences(void *context) noexcept
 		down.gpr(Register::rcx) == 1 &&
 		down.gpr(Register::rdi) == 4096 &&
 		descending.byte(8192) == 0x5a && descending.byte(4097) == 0x5a,
-		"descending REP STOSB did not yield after its element budget"))
+		"descending REP STOSB did not yield after its element budget") ||
+		!expect((down.rflags & rflags_resume) != 0,
+			"REP STOSB stopped by its element budget did not set RF"))
 		return false;
 
 	TestMemory memory{0, 270336};
@@ -3937,7 +3943,9 @@ read_test_sequences(void *context) noexcept
 		!expect(cpu.gpr(Register::rcx) == 1 &&
 			cpu.gpr(Register::rdi) == 266240 &&
 			memory.byte(4096) == 0x5a && memory.byte(266239) == 0x5a,
-			"REP STOSB chunk did not preserve its partial state"))
+			"REP STOSB chunk did not preserve its partial state") ||
+		!expect((cpu.rflags & rflags_resume) != 0,
+			"REP STOSB stopped by its run budget did not set RF"))
 		return false;
 	/* 32-bit address arithmetic reaches the same run loop. Its yield
 	 * boundary is the cheapest proof: the element loop would have stopped
@@ -3971,8 +3979,9 @@ read_test_sequences(void *context) noexcept
 		built.program, cpu, memory, 1, interrupt);
 	if (!expect(interrupted.event == uml::cpu::EngineEvent::interrupt &&
 		interrupted.retired_instructions == 0 &&
-		cpu.gpr(Register::rcx) == 1 && cpu.rip == 0,
-		"REP STOSB chunk did not expose its interrupt boundary"))
+		cpu.gpr(Register::rcx) == 1 && cpu.rip == 0 &&
+		(cpu.rflags & rflags_resume) != 0,
+		"REP STOSB chunk did not expose its interrupt boundary with RF"))
 		return false;
 	const auto finished = gadgets::execute(built.program, cpu, memory, 1);
 	return expect(finished.event == uml::cpu::EngineEvent::continued &&
@@ -3981,7 +3990,9 @@ read_test_sequences(void *context) noexcept
 		expect(cpu.gpr(Register::rcx) == 0 &&
 			cpu.gpr(Register::rdi) == 266241 &&
 			memory.byte(266240) == 0x5a,
-			"REP STOSB did not complete from its partial state");
+			"REP STOSB did not complete from its partial state") &&
+		expect((cpu.rflags & rflags_resume) == 0,
+			"resumed REP STOSB kept RF");
 }
 
 [[nodiscard]] bool repeated_store_into_executable_page_publishes_its_run()

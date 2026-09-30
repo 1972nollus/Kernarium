@@ -363,8 +363,9 @@ slice's user-RFLAGS contract from the
 [mainline README](../kernel/mainline-6.18/README.md): the value `execve()`
 starts a task with, the bits a tracer and a signal return may change, that
 RF from IRET or a signal return is gone by the next instruction's system call,
-that fault frames and a tracer's view at a fault's stop show RF while trap
-frames do not, and that TF set by IRET traps after one instruction.
+that fault frames, a tracer's view at a fault's stop, and a REP string that a
+signal from another CPU interrupts show RF while trap frames do not, and that
+TF set by IRET traps after one instruction.
 
 `tools/rootfs/steam-x86_64` owns the gaming-only Steam image for that slice.
 Its tooling audit is the `rootfs-steam-x86-64-image-audit` test; boot, session
