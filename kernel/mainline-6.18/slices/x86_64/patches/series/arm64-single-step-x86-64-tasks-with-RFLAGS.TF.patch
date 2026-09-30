@@ -11,6 +11,10 @@ itself also raises #DB, and only a flag the kernel forced is cleared on
 return, so ptrace and signal frames observe the task's own value. As in
 x86's is_setting_trap_flag(), a stepped POPF or IRET writes TF itself,
 so the kernel leaves the value that instruction produced.
+
+The host reports a step's #DB with DR6.BS in its error code. ICEBP
+raises #DB with BS clear, and the kernel delivers it, as x86 Linux
+does, as SIGTRAP with TRAP_BRKPT at the next instruction.
 ---
  arch/arm64/um/ptrace.c           | 39 +++++++++++++++++++++++
  arch/um/os-Darwin/skas/process.c | 53 +++++++++++++++++++++++++++++---
