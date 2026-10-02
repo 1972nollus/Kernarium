@@ -163,7 +163,7 @@ export mode, `tools/arm64-tests/export-unit-corpus.py`, and the producers whose
 cases the corpus holds. To add a case, check out the producer commit and copy
 the current `forced-cases.tsv` into it, add or extend a check in a producer
 unit test under the rule above or force an existing producer check into the
-export, build both page profiles there, and regenerate:
+export, and build and export both page profiles there:
 
 ```sh
 python3 -B tools/arm64-tests/export-unit-corpus.py \
@@ -172,10 +172,18 @@ python3 -B tools/arm64-tests/export-unit-corpus.py \
 python3 -B tools/arm64-tests/export-unit-corpus.py \
   --build-dir .build/presets/macos-unit-4k --output .build/a64-corpus/4k \
   --include tests/unit/arm64/corpus/forced-cases.tsv
+```
+
+The exports still hold the state of features the virtual CPU no longer
+implements, so this checkout's builder writes them as a dump, not a pack, for
+the post-export rewrites below, with `PRODUCER` naming the producer checkout:
+
+```sh
 python3 -B tools/arm64-tests/build-unit-corpus.py \
-  --export-16k .build/a64-corpus/16k --export-4k .build/a64-corpus/4k \
+  --export-16k "$PRODUCER/.build/a64-corpus/16k" \
+  --export-4k "$PRODUCER/.build/a64-corpus/4k" \
   --include tests/unit/arm64/corpus/forced-cases.tsv \
-  --producer-commit "$(git rev-parse HEAD)"
+  --producer-commit "$(git -C "$PRODUCER" rev-parse HEAD)" --text corpus.jsonl
 ```
 
 `forced-cases.tsv` holds the force-include directives; their syntax is
@@ -258,12 +266,10 @@ file's hash, and the drop, strip, host-gate, and addition counts under
 from the pre-removal pack and checks that every kept case differs from its
 source only by the stripped state.
 
-Run both steps on a `--dump` of every regenerated pack and `--repack` the
+Run both steps on the dump of every regenerated export and `--repack` the
 result:
 
 ```sh
-python3 -B tools/arm64-tests/build-unit-corpus.py \
-  --dump tests/unit/arm64/corpus/a64_instruction_corpus.pack --text corpus.jsonl
 python3 -B tools/arm64-tests/lse2-alignment-corpus.py corpus.jsonl lse2.jsonl
 python3 -B tools/arm64-tests/absent-feature-corpus.py \
   --failing tests/unit/arm64/corpus/absent-feature-failing.tsv lse2.jsonl absent.jsonl
