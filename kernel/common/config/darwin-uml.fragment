@@ -1,17 +1,18 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# The single Darwin UML production kernel policy.
+# The Darwin UML kernel policy every maintained kernel line shares.
 #
-# One mainline-family kernel line ships. Only the guest page size varies,
-# through kernel/common/config/page-16k.fragment and
-# kernel/mainline-6.18/config/page-4k.fragment.
-# kernel/mainline-6.18/build/build-kernel.sh copies this file verbatim as the
-# starting .config,
-# applies the page-size fragment through scripts/config, then runs
-# `olddefconfig` so every unlisted symbol takes its Kconfig default.
+# Each line's build-kernel.sh copies this file verbatim as the starting
+# .config, applies the line's overlay and a page-size fragment through
+# kernel/common/tooling/config-fragments.sh, and runs `olddefconfig` so every
+# unlisted symbol takes its Kconfig default. The overlays,
+# kernel/mainline-6.18/config/mainline.fragment and
+# kernel/android-6.18/config/android.fragment, list only the settings in which
+# their line differs; a setting both lines need belongs here.
 #
 # UML deliberately ships without loadable-module support, so every capability
-# a guest distribution may expect has to be built in here. Symbols left out of
-# this file are not "optional extras"; they are absent from the product.
+# a guest distribution may expect has to be built in here or in an overlay.
+# Symbols left out of both are not "optional extras"; they are absent from the
+# product.
 
 # --- Boot, init, and image identity -----------------------------------------
 CONFIG_BINFMT_ELF=y
@@ -19,8 +20,9 @@ CONFIG_BINFMT_MISC=y
 # Accept an external initramfs for recovery, image inspection, and read-only
 # overlay boots without modifying the guest's root partition.
 CONFIG_BLK_DEV_INITRD=y
-# The boot base archive that launchers put before the per-run initramfs is
-# gzip-compressed; pin its decompressor instead of relying on the RD_* defaults.
+# A gzip initramfs, such as the boot base archive that launchers put before the
+# per-run initramfs, must unpack; pin its decompressor instead of relying on
+# the RD_* defaults.
 CONFIG_RD_GZIP=y
 CONFIG_IKCONFIG=y
 CONFIG_IKCONFIG_PROC=y
@@ -179,7 +181,9 @@ CONFIG_HOTPLUG_CPU=y
 CONFIG_NR_CPUS=64
 # Lifecycle quiesce enters full system suspend so CLOCK_MONOTONIC and Android-
 # style uptime do not advance while an Apple host has frozen the process. The
-# management console remains the explicit host-owned wake source.
+# management console remains the explicit host-owned wake source, and generic
+# suspend hotplugs every secondary vCPU before entering host sleep. Android-
+# facing drivers also need the device power-management bookkeeping.
 CONFIG_PM=y
 CONFIG_SUSPEND=y
 # A 1 kHz periodic tick wakes every fixed vCPU carrier even when its guest CPU
@@ -196,7 +200,6 @@ CONFIG_NO_HZ_IDLE=y
 # event is one-shot for NO_HZ_IDLE already, so arming it for an hrtimer only
 # records a deadline that idle carriers wait on and busy ones poll.
 CONFIG_HIGH_RES_TIMERS=y
-CONFIG_CHECKPOINT_RESTORE=y
 # CONFIG_EXPERT makes NAMESPACES a visible prompt whose default becomes n
 # (init/Kconfig: `default !EXPERT`), so it must be requested explicitly.  Every
 # namespace symbol below lives inside its menu and is silently discarded
@@ -256,9 +259,10 @@ CONFIG_IPV6=y
 CONFIG_SYN_COOKIES=y
 CONFIG_NETDEVICES=y
 CONFIG_TUN=y
-# Guest init systems own DHCP and DNS setup.  Keep the kernel from assigning
-# addresses before userspace starts, including when a legacy launcher retains
-# an otherwise inert ip=dhcp command-line argument.
+# Guest userspace owns DHCP, routes, and DNS: a Linux guest's init system, or
+# Android's Ethernet IpClient.  Keep the kernel from assigning addresses before
+# userspace starts, including when a legacy launcher retains an otherwise inert
+# ip=dhcp command-line argument.
 # CONFIG_IP_PNP is not set
 # CONFIG_IP_PNP_DHCP is not set
 # Software-only peer interfaces back network namespaces without modeling
@@ -376,13 +380,10 @@ CONFIG_USER_DECRYPTED_DATA=y
 
 # --- Security modules -------------------------------------------------------
 # SELinux, Smack, and AppArmor are all LSM_FLAG_EXCLUSIVE: exactly one may be
-# active. Smack is the validated choice for this port; changing it invalidates
-# the recorded LTP results that depend on it.
+# active. Each line's overlay selects it and sets CONFIG_LSM to match.
 CONFIG_SECURITY=y
 CONFIG_SECURITYFS=y
-CONFIG_SECURITY_SMACK=y
 CONFIG_SECURITY_LANDLOCK=y
-CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,smack,ipe,bpf"
 
 # --- Display and input ------------------------------------------------------
 # uinput and evdev are software-only interfaces: they let guest userspace
@@ -403,8 +404,9 @@ CONFIG_VIRTIO_INPUT=y
 # through a standard Virtio balloon, so guest RAM and GPU memory together stay
 # within what the user configured.
 CONFIG_VIRTIO_BALLOON=y
-# The outer macOS emulator can attach an optional single console or named
-# multiport serial endpoint; ttyS0 remains the default host console.
+# The macOS products can attach a Virtio console: an optional single console
+# or named multiport serial endpoint for Linux guests, where ttyS0 remains the
+# default host console, and one standard single-port console for Android.
 CONFIG_VIRTIO_CONSOLE=y
 CONFIG_DRM=y
 CONFIG_DRM_VIRTIO_GPU=y
@@ -509,20 +511,22 @@ CONFIG_SND_VIRTIO=y
 # CONFIG_RCU_TRACE is not set
 
 # --- BTF type information ---------------------------------------------------
-# /sys/kernel/btf/vmlinux lets CO-RE BPF programs, such as systemd-networkd's
-# sysctl monitor, relocate against this kernel's types. pahole encodes .BTF
-# from DWARF 5, which Clang emits and pahole reads; one unsplit, uncompressed,
-# full DWARF image is its only input. .BTF is allocated and stays resident, but
-# the published artifact strips the DWARF, which nothing loads.
+# /sys/kernel/btf/vmlinux describes this kernel's types to bpftool and lets
+# CO-RE BPF programs, such as systemd-networkd's sysctl monitor, relocate
+# against them. pahole encodes .BTF from DWARF 5, which Clang emits and pahole
+# reads; split or reduced debug info would starve it of types. Each line's
+# overlay chooses whether that DWARF is compressed, for its build host's
+# pahole. .BTF is allocated and stays resident, but the published artifact
+# strips the DWARF, which nothing loads.
 CONFIG_DEBUG_INFO_DWARF5=y
 # CONFIG_DEBUG_INFO_REDUCED is not set
 # CONFIG_DEBUG_INFO_SPLIT is not set
-CONFIG_DEBUG_INFO_COMPRESSED_NONE=y
 CONFIG_DEBUG_INFO_BTF=y
 # Frame pointers are chosen for reliable stack traces, not inherited from
 # UML's DEBUG_INFO default: the stack walker follows their frame records, so
-# every WARN, BUG and sysrq trace lists only reliable entries. They cost about
-# 1% on the iPad, at most 1.1% for a directory walk, and 4% more kernel text.
+# every WARN, BUG and sysrq trace lists only reliable entries. On the mainline
+# kernel they cost about 1% on the iPad, at most 1.1% for a directory walk, and
+# 4% more kernel text.
 CONFIG_FRAME_POINTER=y
 
 # Stateful Virtio video decoding is shared by every product profile.

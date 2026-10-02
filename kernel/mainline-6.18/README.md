@@ -1,7 +1,7 @@
 # Mainline Linux 6.18 source policy
 
 This directory owns the maintained stable Linux 6.18 source identity, local
-Darwin UML patch series, complete kernel configuration, standalone build
+Darwin UML patch series, kernel configuration overlay, standalone build
 policy, and accepted artifact descriptors.
 
 Exact upstream commit/tree, the ordered series, and the final tree they
@@ -90,9 +90,21 @@ The series is maintained locally; no tooling submits or pushes it.
 
 ## Kernel configuration
 
-`config/common.fragment` is the complete shipped policy. The build copies it
-as the starting `.config`, applies exactly one page fragment, runs
-`olddefconfig`, and verifies that every requested symbol resolved as declared.
+The shipped policy is the shared
+[`kernel/common/config/darwin-uml.fragment`](../common/config/darwin-uml.fragment)
+plus this line's overlay, `config/mainline.fragment`. The build copies the
+shared policy as the starting `.config`, applies the overlay and exactly one
+page fragment, runs `olddefconfig`, and verifies that every requested symbol
+resolved as declared. The overlay holds only what differs from the Android
+line:
+
+- `CHECKPOINT_RESTORE` stays on for Linux guests. Its Kconfig dependency
+  excludes `MSEAL_SYSTEM_MAPPINGS`, which Android enables instead.
+- Smack is the exclusive LSM, with the matching `CONFIG_LSM` order, because
+  the recorded LTP results depend on it. Android uses SELinux.
+- DWARF stays uncompressed for the Darwin host's pahole, whose elfutils is
+  built without zstd. Android compresses it with zstd.
+
 `build/build-kernel.sh --lockdep` also applies `config/lockdep.fragment`
 last, for a lock-checking probe with lockdep, its hardirq-state tracking,
 `DEBUG_ATOMIC_SLEEP`, and `DEBUG_VM`. Publish such a kernel only to a scratch output root and select it
@@ -104,10 +116,10 @@ The normal arm64-userspace profiles are:
 - 16 KiB pages from `kernel/common/config/page-16k.fragment` (default); and
 - 4 KiB pages from `config/page-4k.fragment` (compatibility).
 
-The separate x86_64-userspace slice is 4 KiB only. It composes
-`slices/x86_64/config/userspace.fragment` after the shared common and 4 KiB
-fragments and applies only the patches in `slices/x86_64/patches`. The kernel
-still executes its UML kernel mode as native arm64, but its userspace ABI is
+The separate x86_64-userspace slice is 4 KiB only. Its
+`slices/x86_64/config/userspace.fragment` follows the shared policy, this
+line's overlay and the 4 KiB fragment, and it applies only the patches in
+`slices/x86_64/patches`. The kernel still executes its UML kernel mode as native arm64, but its userspace ABI is
 fixed to the x86 family: it accepts x86_64 and i386 tasks and never arm64
 userspace. Signal delivery exposes the native x86 XSAVE layout for x87, SSE,
 and AVX state and restores user edits through the matching ABI's signal-return

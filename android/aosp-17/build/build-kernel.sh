@@ -8,6 +8,7 @@ ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../.." && pwd)
 LINE_ROOT="$ROOT_DIR/kernel/android-6.18"
 COMMON_ROOT="$ROOT_DIR/kernel/common"
 METADATA="$LINE_ROOT/patches/metadata.env"
+SHARED_FRAGMENT="$COMMON_ROOT/config/darwin-uml.fragment"
 CONFIG_FRAGMENT="$LINE_ROOT/config/android.fragment"
 PAGE_FRAGMENT="$COMMON_ROOT/config/page-16k.fragment"
 CONFIG_FRAGMENTS="$COMMON_ROOT/tooling/config-fragments.sh"
@@ -111,8 +112,9 @@ case "$JOBS" in
 esac
 [ "$JOBS" -gt 0 ] || fail "jobs must be a positive integer"
 
-for input in "$METADATA" "$CONFIG_FRAGMENT" "$PAGE_FRAGMENT" \
-	"$CONFIG_FRAGMENTS" "$REQUIRED_BUILTINS" "$FORBIDDEN_OPTIONS"; do
+for input in "$METADATA" "$SHARED_FRAGMENT" "$CONFIG_FRAGMENT" \
+	"$PAGE_FRAGMENT" "$CONFIG_FRAGMENTS" "$REQUIRED_BUILTINS" \
+	"$FORBIDDEN_OPTIONS"; do
 	[ -f "$input" ] || fail "required input is missing: $input"
 done
 for tool in "$TARGET_WRAPPER" "$HOST_WRAPPER" "$ELF_VERIFIER"; do
@@ -237,7 +239,7 @@ verify_config_policy()
 	fi
 }
 
-set -- "$CONFIG_FRAGMENT" "$PAGE_FRAGMENT"
+set -- "$SHARED_FRAGMENT" "$CONFIG_FRAGMENT" "$PAGE_FRAGMENT"
 uml_kernel_config_compose "$KERNEL_SOURCE" "$BUILD_DIR/.config" "$@" ||
 	fail "cannot compose the kernel configuration"
 run_make olddefconfig

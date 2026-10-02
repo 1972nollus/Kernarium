@@ -34,16 +34,18 @@ and the static libelf used for BTF come from UML_KERNEL_HOST_TOOLS_PREFIX
 (default .build/dependencies/kernel-host-tools, built by
 dependencies/build-kernel-host-tools.sh); UML_KERNEL_PAHOLE may select another
 pahole v1.29 or newer.
-The arm64 slice supports 16 KiB and 4 KiB pages. The x86_64 userspace slice is
-4 KiB only and composes its own config fragment after the shared common and
-page fragments. The output directory must be outside
-the Linux source tree. Darwin host-tool compatibility is injected from
-kernel/mainline-6.18/build/toolchain/darwin-host. macOS, iOS Simulator, and physical iOS all use
-the same constrained native address-space profile. An omitted jobs value uses
-all online host processors. The source is always read from the required,
-Git-ignored kernel/mainline-6.18/source-location.conf. --lockdep also applies
-config/lockdep.fragment for a lock-checking probe kernel, which is never an
-accepted artifact.
+The configuration is the shared kernel/common/config/darwin-uml.fragment
+policy, then this line's config/mainline.fragment overlay, then a page-size
+fragment. The arm64 slice supports 16 KiB and 4 KiB pages. The x86_64
+userspace slice is 4 KiB only and applies its own config fragment after those.
+The output directory must be outside the Linux source tree. Darwin host-tool
+compatibility is injected from kernel/mainline-6.18/build/toolchain/darwin-host.
+macOS, iOS Simulator, and physical iOS all use the same constrained native
+address-space profile. An omitted jobs value uses all online host processors.
+The source is always read from the required, Git-ignored
+kernel/mainline-6.18/source-location.conf. --lockdep also applies
+config/lockdep.fragment last, for a lock-checking probe kernel, which is never
+an accepted artifact.
 EOF
 }
 
@@ -246,7 +248,8 @@ case "$PAGE_SIZE" in
 16k) PAGE_FRAGMENT="$COMMON_ROOT/config/page-16k.fragment" ;;
 4k) PAGE_FRAGMENT="$CONFIG_DIR/page-4k.fragment" ;;
 esac
-set -- "$CONFIG_DIR/common.fragment" "$PAGE_FRAGMENT"
+set -- "$COMMON_ROOT/config/darwin-uml.fragment" "$CONFIG_DIR/mainline.fragment" \
+	"$PAGE_FRAGMENT"
 if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
 	set -- "$@" "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
 fi

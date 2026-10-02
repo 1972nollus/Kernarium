@@ -20,8 +20,10 @@ The host exposes hardware decoding through V4L2 independently of the GPU.
 
 ## Product contract
 
-The line has one 16 KiB ARM64 configuration in
-[`config/android.fragment`](config/android.fragment). It is built-in-only:
+The line has one 16 KiB ARM64 configuration: the shared
+[`kernel/common/config/darwin-uml.fragment`](../common/config/darwin-uml.fragment)
+policy, this line's overlay [`config/android.fragment`](config/android.fragment),
+and the shared 16 KiB page fragment. It is built-in-only:
 `CONFIG_MODULES=n`, no `.ko` or DLKM payloads, and no 4 KiB variant. The
 kernel build and the release verifier require every symbol in
 [`config/required-builtins.txt`](config/required-builtins.txt) to be `y` and
@@ -30,11 +32,29 @@ to be absent.
 
 The configuration includes the Android Binder, SELinux/audit, cgroups, storage,
 DMA-BUF heaps, networking, BPF interpreter, Virtio devices, and Darwin UML
-scheduling support required by the product. The current rootfs uses unencrypted
-ext4 userdata, but the fscrypt, inline-encryption fallback, HCTR2, and
-dm-default-key stack remains built in for ordinary Android application and
-framework compatibility. The
-native arm64 eBPF JIT is not exposed because its execution contracts do not
+scheduling support required by the product. The overlay holds only what
+differs from the mainline line:
+
+- SELinux with audit syscall records is the exclusive LSM, with the matching
+  `CONFIG_LSM` order, because Android owns the SELinux policy. Mainline uses
+  Smack.
+- `CHECKPOINT_RESTORE` is off, as in GKI, so that `MSEAL_SYSTEM_MAPPINGS` can
+  seal userspace's system mappings.
+- DWARF is zstd-compressed, as in GKI, for the ACK kernel-build-tools pahole.
+- Android's own facilities: Binder and binderfs, Rust ashmem with memfd, the
+  DMA-BUF heaps and udmabuf, bootconfig, the metadata-encryption stack, PF_KEY
+  for the network statistics path, socket destruction for netd, further
+  xtables matches and targets, the gpu_mem tracepoints, per-UID statistics,
+  the Kernarium battery, and hvc for the single-port Virtio console. ACK's
+  `WERROR` default is turned off.
+- Settings the shared policy leaves to their Kconfig defaults, which this line
+  pins: seccomp, delay accounting, utilization clamping (off), policy routing,
+  XFRM interfaces and statistics, conntrack events and netlink, and Unicode.
+
+The current rootfs uses unencrypted ext4 userdata, but the fscrypt,
+inline-encryption fallback, HCTR2, and dm-default-key stack remains built in
+for ordinary Android application and framework compatibility. The native arm64
+eBPF JIT is not exposed because its execution contracts do not
 match UML; the AOSP product uses the generic BPF interpreter, which runs
 callbacks through the entry-point pool the
 [mainline README](../mainline-6.18/README.md) describes. The kernel

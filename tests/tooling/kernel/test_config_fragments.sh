@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Kernel configuration composition and verification from
 # kernel/common/tooling/config-fragments.sh, run against a fake Linux tree whose
-# scripts/config records its arguments.
+# scripts/config records its arguments, and the split of the maintained policy
+# into a shared fragment and per-line overlays.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
@@ -163,5 +164,29 @@ check_mismatch 'CONFIG_NR=32' \
 	"CONFIG_NR: $TEST_ROOT/mismatch.fragment requested 32, resolved 64"
 check_mismatch 'CONFIG_LSM="landlock,selinux"' \
 	"CONFIG_LSM: $TEST_ROOT/mismatch.fragment requested \"landlock,selinux\", resolved \"landlock,smack\""
+
+# Every maintained line starts from the shared policy, and each line's overlay
+# lists only where that line differs: an overlay never names a shared symbol,
+# and a setting both overlays make identically belongs in the shared policy.
+policy_problems=$(awk '
+	/^CONFIG_[A-Za-z0-9_]+=/ {
+		symbol = substr($0, 1, index($0, "=") - 1)
+		value = substr($0, index($0, "=") + 1)
+	}
+	/^# CONFIG_[A-Za-z0-9_]+ is not set$/ { symbol = $2; value = "n" }
+	!/^CONFIG_[A-Za-z0-9_]+=/ && !/^# CONFIG_[A-Za-z0-9_]+ is not set$/ { next }
+	FILENAME == ARGV[1] { shared[symbol] = 1; next }
+	symbol in shared { print FILENAME ": " symbol " repeats the shared policy" }
+	FILENAME == ARGV[2] { first[symbol] = value; next }
+	(symbol in first) && first[symbol] == value {
+		print symbol " is set identically in both overlays"
+	}
+' "$ROOT_DIR/kernel/common/config/darwin-uml.fragment" \
+	"$ROOT_DIR/kernel/mainline-6.18/config/mainline.fragment" \
+	"$ROOT_DIR/kernel/android-6.18/config/android.fragment" </dev/null)
+[ -z "$policy_problems" ] || {
+	printf '%s\n' "$policy_problems" >&2
+	fail "a line overlay repeats shared kernel configuration"
+}
 
 printf '%s\n' "kernel config fragment composition tests passed"

@@ -4,6 +4,9 @@ This directory contains only source-family-independent inputs:
 
 - [`abi/`](abi/README.md): canonical plain-C host/kernel bridge, identity,
   generated-copy authority, and import policy;
+- `config/darwin-uml.fragment`: the kernel configuration policy every line
+  shares. Each line applies its own overlay after it, which lists only the
+  settings in which that line differs and whose README says why;
 - `config/page-16k.fragment`: shared 16 KiB page and 128 KiB task-stack
   geometry;
 - `artifacts/`: compact prebuilt-kernel bundle schema and verifier, plus the
@@ -24,7 +27,7 @@ This directory contains only source-family-independent inputs:
 - [`video/`](video/README.md): the private Virtio video wire contract and the
   tool that syncs it into each kernel checkout.
 
-Pinned commits, complete configurations, toolchains, source locations, the
+Pinned commits, configuration overlays, toolchains, source locations, the
 bytes of each line's own overlay series, and build commands stay in the owning
 versioned kernel line. The common artifact verifier is local and read-only; it
 checks semantic source/ABI identity, page and module policy, ELF geometry,
