@@ -284,7 +284,7 @@ void concurrent_compare_retry_case(bool mixed_semantic) {
   require(backing.get64(page) == workers * iterations);
 }
 
-enum class AliasStore : unsigned { plain, release, limited_release };
+enum class AliasStore : unsigned { plain, release };
 
 void same_backing_alias_case(bool overlaps, bool semantic_store = false,
                              AliasStore store = AliasStore::plain) {
@@ -368,8 +368,7 @@ void same_backing_alias_case(bool overlaps, bool semantic_store = false,
     // software reservation on an ordered instruction's cold path.
     uml::memory::Tlb tlb;
     tlb.prepare(generation, darwin_uml_static_vm_changes(generation));
-    const auto instruction = store == AliasStore::release ?
-        0xc89f'fcc2U : 0xc89f'7cc2U; // stlr/stllr x2, [x6]
+    constexpr std::uint32_t instruction = 0xc89f'fcc2U; // stlr x2, [x6]
     const auto result = uml::cpu::arm64::uml_arm64_jit_execute_ordered(
         &second_cpu, &tlb, instruction);
     require((result >> 32U) == 1U);
@@ -796,10 +795,8 @@ int main() {
   same_backing_alias_case(false);
   same_backing_alias_case(true, true);
   same_backing_alias_case(false, true);
-  for (const auto store : {AliasStore::release, AliasStore::limited_release}) {
-    same_backing_alias_case(true, false, store);
-    same_backing_alias_case(false, false, store);
-  }
+  same_backing_alias_case(true, false, AliasStore::release);
+  same_backing_alias_case(false, false, AliasStore::release);
   native_store_invalidates_semantic_reservation_case();
   slow_store_invalidates_semantic_reservation_case(false);
   slow_store_invalidates_semantic_reservation_case(true);

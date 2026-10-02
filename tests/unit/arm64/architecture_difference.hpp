@@ -57,18 +57,11 @@ namespace uml::emulator::tests {
 		return values("fpcr", expected.fpcr, actual.fpcr);
 	if (expected.fpsr != actual.fpsr)
 		return values("fpsr", expected.fpsr, actual.fpsr);
-	if (expected.fpmr != actual.fpmr)
-		return values("fpmr", expected.fpmr, actual.fpmr);
 	if (expected.tls != actual.tls)
 		return values("tls", expected.tls, actual.tls);
 	if (expected.tbi_enabled != actual.tbi_enabled)
 		return values("tbi", expected.tbi_enabled, actual.tbi_enabled);
-	if (expected.accdata != actual.accdata)
-		return values("accdata", expected.accdata, actual.accdata);
-	if (!(expected.pstate_ssbs == actual.pstate_ssbs &&
-	      expected.pstate_dit == actual.pstate_dit &&
-	      expected.pstate_sm == actual.pstate_sm &&
-	      expected.pstate_za == actual.pstate_za &&
+	if (!(expected.pstate_dit == actual.pstate_dit &&
 	      expected.pstate_daif_access == actual.pstate_daif_access &&
 	      expected.pstate_daif == actual.pstate_daif))
 		return std::string{"pstate"};

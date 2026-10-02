@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "memory_transfer.hpp"
-#include "detail/single_copy_alignment.hpp"
 
 #include "uml_darwin_guest.h"
 
@@ -71,34 +70,6 @@ extern "C" std::uint32_t uml_arm64_simd_structure_memory_transfer(
 	if (transferred != 0U && direction == Access::write)
 		cpu->exclusive_size = 0;
 	return transferred;
-}
-
-extern "C" std::byte *uml_arm64_atomic_floating_pointer(
-	uml::cpu::arm64::CpuState *cpu,
-	::uml::memory::Tlb *tlb, std::uint64_t tagged_address,
-	std::size_t size, std::uint32_t base_sp) noexcept
-{
-	using ::uml::memory::Access;
-	if (cpu == nullptr || tlb == nullptr ||
-	    (size != 2U && size != 4U && size != 8U))
-		return nullptr;
-	if (base_sp != 0U && (tagged_address & 15U) != 0U) {
-		tlb->fault_alignment = 1;
-		tlb->fault_address = tagged_address;
-		tlb->fault_access = Access::write;
-		return nullptr;
-	}
-	const auto address =
-		cpu->untag_data_address(tagged_address, base_sp != 0U);
-	if (uml::cpu::arm64::detail::single_copy_alignment_faults(
-		    address, size, tlb->unaligned_atomics)) {
-		tlb->fault_alignment = 1;
-		tlb->fault_address = address;
-		tlb->fault_access = Access::write;
-		return nullptr;
-	}
-
-	return tlb->translate(address, Access::write);
 }
 
 extern "C" void uml_arm64_alignment_fault(

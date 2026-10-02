@@ -29,7 +29,6 @@ import hashlib
 import importlib.util
 import json
 import pathlib
-import struct
 import sys
 import zlib
 
@@ -61,14 +60,9 @@ def superseded_size(name: str, word: int) -> int | None:
                 "scalar compare-and-swap natural alignment",
                 "scalar exclusive natural alignment"):
         return 1 << (word >> 30)
-    if name == "atomic RMW unprivileged natural alignment":
-        return 4 << (word >> 30 & 1)
     if name in ("pair compare-and-swap transfer alignment",
                 "pair exclusive transfer alignment"):
         return 8 << (word >> 30 & 1)
-    if name.startswith("GPR element alignment "):
-        size = word >> 30
-        return 2 if size == 0 else 1 << size
     return None
 
 
@@ -105,9 +99,6 @@ RMW = {
     "umin": lambda old, source, size: min(old, source & mask(size)),
     "swp": lambda old, source, size: source,
 }
-
-FP_FORMAT = {2: "<e", 4: "<f", 8: "<d"}
-
 
 class Case:
     """One case: a program, its slot address, and how it changes state."""
@@ -247,7 +238,7 @@ def cases() -> list[Case]:
     fault("ldxp x misaligned", 0xC87F_1844, 16, 8, "read")
 
     def load(name, word, size, offset, native, displacement=0, sign=False,
-             writeback=0, fault=False):
+             fault=False):
         case = add(Case(name, [word, SVC], offset, size, "read", native, fault))
         case.base_adjust = displacement
 
@@ -256,20 +247,15 @@ def cases() -> list[Case]:
             if sign:
                 value = signed(value, size) & mask(8)
             registers[word & 31] = value
-            if writeback:
-                registers[2] = registers[2] + writeback
         case.apply = apply
 
-    def store(name, word, size, offset, native, displacement=0, writeback=False,
-              fault=False):
+    def store(name, word, size, offset, native, displacement=0, fault=False):
         case = add(Case(name, [word, SVC], offset, size, "write", native, fault))
         case.registers = {3: X3}
         case.base_adjust = displacement
 
         def apply(memory, registers, vectors):
             memory[:size] = (X3 & mask(size)).to_bytes(size, "little")
-            if writeback:
-                registers[2] = registers[2] + displacement
         case.apply = apply
 
     load("ldar x in block", 0xC8DF_FC44, 8, 4, [])
@@ -291,66 +277,6 @@ def cases() -> list[Case]:
     store("stlurh in block", 0x5900_1043, 2, 3, ["lrcpc2"], displacement=1)
     store("stlurh across a block", 0x5900_1043, 2, 15, ["lrcpc2"],
           displacement=1, fault=True)
-
-    # FEAT_LRCPC3 writeback forms: STLR pre-decrement, LDAPR post-increment.
-    store("stlr w pre-index in block", 0x9980_0843, 4, 1, ["lrcpc3"],
-          displacement=-4, writeback=True)
-    store("stlr x pre-index across a block", 0xD980_0843, 8, 12, ["lrcpc3"],
-          displacement=-8, writeback=True, fault=True)
-    load("ldapr w post-index in block", 0x99C0_0843, 4, 12, ["lrcpc3"],
-         writeback=4)
-    load("ldapr x post-index across a block", 0xD9C0_0843, 8, 12, ["lrcpc3"],
-         writeback=8, fault=True)
-
-    # FEAT_LRCPC3 SIMD&FP forms: Vt = V3.
-    def simd(name, word, size, offset, lane, is_load, fault=False,
-             native=("floating_point", "lrcpc3")):
-        case = add(Case(name, [word, SVC], offset, size,
-                        "read" if is_load else "write", list(native), fault))
-        case.vectors = {3: bytes(range(0x30, 0x40))}
-
-        def apply(memory, registers, vectors):
-            if is_load:
-                data = bytearray(16) if lane is None else bytearray(vectors[3])
-                start = 0 if lane is None else 8 * lane
-                data[start:start + size] = memory[:size]
-                vectors[3] = bytes(data)
-            else:
-                start = 0 if lane is None else 8 * lane
-                memory[:size] = vectors[3][start:start + size]
-        case.apply = apply
-
-    simd("ldapur d in block", 0xDD40_0843, 8, 4, None, True)
-    simd("stlur s in block", 0x9D00_0843, 4, 12, None, False)
-    simd("stlur s across a block", 0x9D00_0843, 4, 13, None, False, fault=True)
-    simd("ldapur h across a block", 0x5D40_0843, 2, 15, None, True, fault=True)
-    simd("ldap1 d lane 0 in block", 0x0D41_8443, 8, 4, 0, True,
-         native=("advanced_simd", "lrcpc3"))
-    simd("stl1 d lane 1 in block", 0x4D01_8443, 8, 2, 1, False,
-         native=("advanced_simd", "lrcpc3"))
-    simd("ldap1 d lane 0 across a block", 0x0D41_8443, 8, 12, 0, True,
-         native=("advanced_simd", "lrcpc3"), fault=True)
-
-    # FEAT_LSFE LDFADD: Vs = V3 is the operand, Vt = V4 receives the old
-    # value. 1.5 + 2.25 is exact in every width, so no status flag is set.
-    def floating(name, word, size, offset, fault=False):
-        case = add(Case(name, [word, SVC], offset, size, "write", ["lsfe"], fault))
-        fmt = FP_FORMAT[size]
-        case.memory_value = struct.pack(fmt, 1.5)
-        case.vectors = {3: struct.pack(fmt, 2.25) + bytes(16 - size),
-                        4: bytes(range(0x40, 0x50))}
-
-        def apply(memory, registers, vectors):
-            old = bytes(memory[:size])
-            memory[:size] = struct.pack(fmt, struct.unpack(fmt, old)[0] + 2.25)
-            vectors[4] = old + bytes(16 - size)
-        case.apply = apply
-
-    floating("ldfadd h in block", 0x7C23_0044, 2, 1)
-    floating("ldfadd s in block", 0xBC23_0044, 4, 12)
-    floating("ldfadd d in block", 0xFC23_0044, 8, 4)
-    floating("ldfadd h across a block", 0x7C23_0044, 2, 15, fault=True)
-    floating("ldfadd d across a block", 0xFC23_0044, 8, 12, fault=True)
     return result
 
 

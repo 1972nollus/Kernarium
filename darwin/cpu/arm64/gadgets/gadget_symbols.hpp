@@ -482,19 +482,6 @@ UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmax)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmaxnm)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fmin)
 UML_DECLARE_FLOATING_HORIZONTAL_BINARY(fminnm)
-UML_DECLARE_FLOATING_HORIZONTAL_VECTOR(famax_native)
-UML_DECLARE_FLOATING_HORIZONTAL_VECTOR(famin_native)
-void uml_arm64_gadget_floating_horizontal_absolute_software();
-void uml_arm64_gadget_floating_scale_native_4h();
-void uml_arm64_gadget_floating_scale_native_8h();
-void uml_arm64_gadget_floating_scale_native_2s();
-void uml_arm64_gadget_floating_scale_native_4s();
-void uml_arm64_gadget_floating_scale_native_2d();
-void uml_arm64_gadget_floating_scale_software_4h();
-void uml_arm64_gadget_floating_scale_software_8h();
-void uml_arm64_gadget_floating_scale_software_2s();
-void uml_arm64_gadget_floating_scale_software_4s();
-void uml_arm64_gadget_floating_scale_software_2d();
 void uml_arm64_gadget_bfloat_convert_scalar_native();
 void uml_arm64_gadget_bfloat_convert_lower_native();
 void uml_arm64_gadget_bfloat_convert_upper_native();
@@ -545,26 +532,6 @@ UML_DECLARE_HALF_FUSED_LONG_INDEXED(sub, upper, 4s)
 #undef UML_DECLARE_HALF_FUSED_LONG_INDEXED
 #undef UML_DECLARE_HALF_FUSED_LONG_VARIANTS
 void uml_arm64_gadget_half_fused_long_software();
-void uml_arm64_gadget_half_matrix_native_non_widening();
-void uml_arm64_gadget_half_matrix_native_widening();
-void uml_arm64_gadget_half_matrix_software();
-#define UML_DECLARE_HALF_DOT_VARIANTS(name) \
-	void uml_arm64_gadget_half_dot_native_##name();
-UML_DECLARE_HALF_DOT_VARIANTS(vector_2s)
-UML_DECLARE_HALF_DOT_VARIANTS(vector_4s)
-#define UML_DECLARE_HALF_DOT_INDEXED(shape, index) \
-	UML_DECLARE_HALF_DOT_VARIANTS(indexed_##shape##_##index)
-UML_DECLARE_HALF_DOT_INDEXED(2s, 0)
-UML_DECLARE_HALF_DOT_INDEXED(2s, 1)
-UML_DECLARE_HALF_DOT_INDEXED(2s, 2)
-UML_DECLARE_HALF_DOT_INDEXED(2s, 3)
-UML_DECLARE_HALF_DOT_INDEXED(4s, 0)
-UML_DECLARE_HALF_DOT_INDEXED(4s, 1)
-UML_DECLARE_HALF_DOT_INDEXED(4s, 2)
-UML_DECLARE_HALF_DOT_INDEXED(4s, 3)
-#undef UML_DECLARE_HALF_DOT_INDEXED
-#undef UML_DECLARE_HALF_DOT_VARIANTS
-void uml_arm64_gadget_half_dot_software();
 void uml_arm64_gadget_bfloat_multiply_long_native_vector_b();
 void uml_arm64_gadget_bfloat_multiply_long_native_vector_t();
 #define UML_DECLARE_BFLOAT_MULTIPLY_LONG_INDEXED(half, index) \
@@ -770,22 +737,6 @@ UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtzu)
 UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtas)
 UML_DECLARE_SIMD_FLOATING_TO_INTEGER(fcvtau)
 #undef UML_DECLARE_SIMD_FLOATING_TO_INTEGER
-#define UML_DECLARE_FLOATING_TO_SIMD_INTEGER(operation) \
-	void uml_arm64_gadget_floating_to_simd_##operation##_w_h(); \
-	void uml_arm64_gadget_floating_to_simd_##operation##_x_h(); \
-	void uml_arm64_gadget_floating_to_simd_##operation##_x_s(); \
-	void uml_arm64_gadget_floating_to_simd_##operation##_w_d();
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtns)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtnu)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtps)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtpu)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtms)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtmu)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtzs)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtzu)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtas)
-UML_DECLARE_FLOATING_TO_SIMD_INTEGER(fcvtau)
-#undef UML_DECLARE_FLOATING_TO_SIMD_INTEGER
 #define UML_DECLARE_FIXED_TABLE(name) \
 	void uml_arm64_gadget_##name(); \
 	void uml_arm64_gadget_##name##_end();
@@ -842,11 +793,7 @@ void uml_arm64_gadget_integer_to_floating_software_fallback();
 	void uml_arm64_gadget_simd_##operation##_8h(); \
 	void uml_arm64_gadget_simd_##operation##_2s(); \
 	void uml_arm64_gadget_simd_##operation##_4s(); \
-	void uml_arm64_gadget_simd_##operation##_2d(); \
-	void uml_arm64_gadget_simd_cross_##operation##_h_w(); \
-	void uml_arm64_gadget_simd_cross_##operation##_h_x(); \
-	void uml_arm64_gadget_simd_cross_##operation##_s_x(); \
-	void uml_arm64_gadget_simd_cross_##operation##_d_w();
+	void uml_arm64_gadget_simd_##operation##_2d();
 UML_DECLARE_SIMD_INTEGER_TO_FLOATING(scvtf)
 UML_DECLARE_SIMD_INTEGER_TO_FLOATING(ucvtf)
 #undef UML_DECLARE_SIMD_INTEGER_TO_FLOATING
@@ -1039,28 +986,6 @@ UML_DECLARE_SIMD_TABLE(tbl)
 UML_DECLARE_SIMD_TABLE(tbx)
 #undef UML_DECLARE_SIMD_TABLE
 #undef UML_DECLARE_SIMD_TABLE_COUNT
-#define UML_DECLARE_SIMD_LUT_PART(name, part) \
-	void uml_arm64_gadget_simd_lut_native_##name##_##part();
-UML_DECLARE_SIMD_LUT_PART(luti2_b, 0)
-UML_DECLARE_SIMD_LUT_PART(luti2_b, 1)
-UML_DECLARE_SIMD_LUT_PART(luti2_b, 2)
-UML_DECLARE_SIMD_LUT_PART(luti2_b, 3)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 0)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 1)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 2)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 3)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 4)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 5)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 6)
-UML_DECLARE_SIMD_LUT_PART(luti2_h, 7)
-UML_DECLARE_SIMD_LUT_PART(luti4_b, 0)
-UML_DECLARE_SIMD_LUT_PART(luti4_b, 1)
-UML_DECLARE_SIMD_LUT_PART(luti4_h, 0)
-UML_DECLARE_SIMD_LUT_PART(luti4_h, 1)
-UML_DECLARE_SIMD_LUT_PART(luti4_h, 2)
-UML_DECLARE_SIMD_LUT_PART(luti4_h, 3)
-#undef UML_DECLARE_SIMD_LUT_PART
-void uml_arm64_gadget_simd_lut_software();
 #define UML_DECLARE_SIMD_PERMUTE(name) \
 	void uml_arm64_gadget_simd_permute_##name##_8b(); \
 	void uml_arm64_gadget_simd_permute_##name##_4h(); \
@@ -1180,30 +1105,6 @@ void uml_arm64_gadget_simd_sha512su0();
 void uml_arm64_gadget_simd_sha512su0_soft();
 void uml_arm64_gadget_simd_sha512su1();
 void uml_arm64_gadget_simd_sha512su1_soft();
-void uml_arm64_gadget_simd_sm3partw1();
-void uml_arm64_gadget_simd_sm3partw2();
-void uml_arm64_gadget_simd_sm3ss1();
-void uml_arm64_gadget_simd_sm3partw1_soft();
-void uml_arm64_gadget_simd_sm3partw2_soft();
-void uml_arm64_gadget_simd_sm3ss1_soft();
-#define UML_DECLARE_SIMD_SM3TT(name) \
-	void uml_arm64_gadget_simd_##name##_0(); \
-	void uml_arm64_gadget_simd_##name##_1(); \
-	void uml_arm64_gadget_simd_##name##_2(); \
-	void uml_arm64_gadget_simd_##name##_3(); \
-	void uml_arm64_gadget_simd_##name##_0_soft(); \
-	void uml_arm64_gadget_simd_##name##_1_soft(); \
-	void uml_arm64_gadget_simd_##name##_2_soft(); \
-	void uml_arm64_gadget_simd_##name##_3_soft();
-UML_DECLARE_SIMD_SM3TT(sm3tt1a)
-UML_DECLARE_SIMD_SM3TT(sm3tt1b)
-UML_DECLARE_SIMD_SM3TT(sm3tt2a)
-UML_DECLARE_SIMD_SM3TT(sm3tt2b)
-#undef UML_DECLARE_SIMD_SM3TT
-void uml_arm64_gadget_simd_sm4e();
-void uml_arm64_gadget_simd_sm4ekey();
-void uml_arm64_gadget_simd_sm4e_soft();
-void uml_arm64_gadget_simd_sm4ekey_soft();
 #define UML_DECLARE_SIMD_INDEXED_ONE(name, shape, index) \
 	void uml_arm64_gadget_simd_indexed_##name##_##shape##_##index();
 #define UML_DECLARE_SIMD_INDEXED_4(name, shape) \
@@ -1683,18 +1584,6 @@ UML_DECLARE_FLOATING_SELECT(le)
 UML_DECLARE_FLOATING_SELECT(always)
 #undef UML_DECLARE_FLOATING_SELECT
 void uml_arm64_gadget_pc_relative();
-void uml_arm64_gadget_fp8_software();
-extern void (*uml_arm64_fp8_native_up_table[])();
-extern void (*uml_arm64_fp8_native_down_table[])();
-extern void (*uml_arm64_fp8_native_dot_h_vector_table[])();
-extern void (*uml_arm64_fp8_native_dot_h_indexed_table[])();
-extern void (*uml_arm64_fp8_native_dot_s_vector_table[])();
-extern void (*uml_arm64_fp8_native_dot_s_indexed_table[])();
-extern void (*uml_arm64_fp8_native_mul_h_vector_table[])();
-extern void (*uml_arm64_fp8_native_mul_h_indexed_table[])();
-extern void (*uml_arm64_fp8_native_mul_s_vector_table[])();
-extern void (*uml_arm64_fp8_native_mul_s_indexed_table[])();
-extern void (*uml_arm64_fp8_native_matrix_table[])();
 void uml_arm64_gadget_sysreg_tls_read();
 void uml_arm64_gadget_sysreg_tls_write_r();
 void uml_arm64_gadget_sysreg_tls_write_z();
@@ -1704,9 +1593,6 @@ void uml_arm64_gadget_sysreg_ctr_read();
 void uml_arm64_gadget_sysreg_fpcr_read();
 void uml_arm64_gadget_sysreg_fpcr_write_r();
 void uml_arm64_gadget_sysreg_fpcr_write_z();
-void uml_arm64_gadget_sysreg_fpmr_read();
-void uml_arm64_gadget_sysreg_fpmr_write_r();
-void uml_arm64_gadget_sysreg_fpmr_write_z();
 void uml_arm64_gadget_sysreg_fpsr_read();
 void uml_arm64_gadget_sysreg_fpsr_write_r();
 void uml_arm64_gadget_sysreg_fpsr_write_z();
@@ -1726,11 +1612,7 @@ void uml_arm64_gadget_code_synchronize_z();
 #define UML_DECLARE_PSTATE_FIELD(name) \
 	void uml_arm64_gadget_pstate_##name##_0(); \
 	void uml_arm64_gadget_pstate_##name##_1();
-UML_DECLARE_PSTATE_FIELD(ssbs)
 UML_DECLARE_PSTATE_FIELD(dit)
-UML_DECLARE_PSTATE_FIELD(sm)
-UML_DECLARE_PSTATE_FIELD(za)
-UML_DECLARE_PSTATE_FIELD(smza)
 #undef UML_DECLARE_PSTATE_FIELD
 #define UML_DECLARE_PSTATE_DAIF(name, immediate) \
 	void uml_arm64_gadget_pstate_daif_##name##_##immediate();
@@ -1781,13 +1663,6 @@ DECLARE_MEMORY_BARRIER_OPTION(15)
 void uml_arm64_gadget_isb();
 void uml_arm64_gadget_speculation_barrier();
 void uml_arm64_gadget_speculation_barrier_fallback();
-#define DECLARE_NXS_BARRIER(option) \
-	void uml_arm64_gadget_dsb_nxs_##option();
-DECLARE_NXS_BARRIER(0)
-DECLARE_NXS_BARRIER(1)
-DECLARE_NXS_BARRIER(2)
-DECLARE_NXS_BARRIER(3)
-#undef DECLARE_NXS_BARRIER
 void uml_arm64_gadget_clear_exclusive();
 void uml_arm64_gadget_atomic_sp_alignment_read();
 void uml_arm64_gadget_atomic_sp_alignment_write();
@@ -2011,62 +1886,6 @@ UML_DECLARE_SIMD_LANE(d)
 #undef UML_DECLARE_SIMD_LANE
 #undef UML_DECLARE_SIMD_LANE_COUNT
 #undef UML_DECLARE_SIMD_LANE_DIRECTION
-#define UML_DECLARE_SIMD_ORDERED_SCALAR(size, address) \
-	void uml_arm64_gadget_simd_ordered_load_##size##_##address(); \
-	void uml_arm64_gadget_simd_ordered_store_##size##_##address();
-UML_DECLARE_SIMD_ORDERED_SCALAR(b, r)
-UML_DECLARE_SIMD_ORDERED_SCALAR(b, s)
-UML_DECLARE_SIMD_ORDERED_SCALAR(h, r)
-UML_DECLARE_SIMD_ORDERED_SCALAR(h, s)
-UML_DECLARE_SIMD_ORDERED_SCALAR(s, r)
-UML_DECLARE_SIMD_ORDERED_SCALAR(s, s)
-UML_DECLARE_SIMD_ORDERED_SCALAR(d, r)
-UML_DECLARE_SIMD_ORDERED_SCALAR(d, s)
-#undef UML_DECLARE_SIMD_ORDERED_SCALAR
-#define UML_DECLARE_SIMD_ORDERED_Q(direction, address, implementation) \
-	void uml_arm64_gadget_simd_ordered_##direction##_q_##address##_##implementation();
-UML_DECLARE_SIMD_ORDERED_Q(load, r, fallback)
-UML_DECLARE_SIMD_ORDERED_Q(load, s, fallback)
-UML_DECLARE_SIMD_ORDERED_Q(load, r, native)
-UML_DECLARE_SIMD_ORDERED_Q(load, s, native)
-UML_DECLARE_SIMD_ORDERED_Q(store, r, fallback)
-UML_DECLARE_SIMD_ORDERED_Q(store, s, fallback)
-UML_DECLARE_SIMD_ORDERED_Q(store, r, native)
-UML_DECLARE_SIMD_ORDERED_Q(store, s, native)
-#undef UML_DECLARE_SIMD_ORDERED_Q
-#define UML_DECLARE_SIMD_ORDERED_LANE(direction, lane, address) \
-	void uml_arm64_gadget_simd_ordered_##direction##_lane##lane##_##address();
-UML_DECLARE_SIMD_ORDERED_LANE(load, 0, r)
-UML_DECLARE_SIMD_ORDERED_LANE(load, 0, s)
-UML_DECLARE_SIMD_ORDERED_LANE(load, 1, r)
-UML_DECLARE_SIMD_ORDERED_LANE(load, 1, s)
-UML_DECLARE_SIMD_ORDERED_LANE(store, 0, r)
-UML_DECLARE_SIMD_ORDERED_LANE(store, 0, s)
-UML_DECLARE_SIMD_ORDERED_LANE(store, 1, r)
-UML_DECLARE_SIMD_ORDERED_LANE(store, 1, s)
-#undef UML_DECLARE_SIMD_ORDERED_LANE
-void uml_arm64_gadget_ordered_writeback_store_w_r();
-void uml_arm64_gadget_ordered_writeback_store_w_z();
-void uml_arm64_gadget_ordered_writeback_store_x_r();
-void uml_arm64_gadget_ordered_writeback_store_x_z();
-void uml_arm64_gadget_ordered_writeback_load_w_r();
-void uml_arm64_gadget_ordered_writeback_load_w_z();
-void uml_arm64_gadget_ordered_writeback_load_w_suppress();
-void uml_arm64_gadget_ordered_writeback_load_x_r();
-void uml_arm64_gadget_ordered_writeback_load_x_z();
-void uml_arm64_gadget_ordered_writeback_load_x_suppress();
-void uml_arm64_gadget_ls64_load_r();
-void uml_arm64_gadget_ls64_load_s();
-void uml_arm64_gadget_ls64_store_r();
-void uml_arm64_gadget_ls64_store_s();
-void uml_arm64_gadget_ls64_st64bv_rr();
-void uml_arm64_gadget_ls64_st64bv_rz();
-void uml_arm64_gadget_ls64_st64bv_sr();
-void uml_arm64_gadget_ls64_st64bv_sz();
-void uml_arm64_gadget_ls64_st64bv0_rr();
-void uml_arm64_gadget_ls64_st64bv0_rz();
-void uml_arm64_gadget_ls64_st64bv0_sr();
-void uml_arm64_gadget_ls64_st64bv0_sz();
 void uml_arm64_gadget_mops_prologue_copy_forward();
 void uml_arm64_gadget_mops_prologue_copy_general();
 void uml_arm64_gadget_mops_prologue_set();
@@ -2082,9 +1901,7 @@ void uml_arm64_gadget_mops_epilogue_set_z();
 	UML_DECLARE_ORDERED_VARIANTS(kind, ordering, h) \
 	UML_DECLARE_ORDERED_VARIANTS(kind, ordering, w) \
 	UML_DECLARE_ORDERED_VARIANTS(kind, ordering, x)
-UML_DECLARE_ORDERED_SIZES(load, relaxed)
 UML_DECLARE_ORDERED_SIZES(load, acquire)
-UML_DECLARE_ORDERED_SIZES(store, limited)
 UML_DECLARE_ORDERED_SIZES(store, release)
 #undef UML_DECLARE_ORDERED_SIZES
 #undef UML_DECLARE_ORDERED_VARIANTS
@@ -2109,33 +1926,6 @@ UML_DECLARE_RCPC_STORE_VARIANTS(h)
 UML_DECLARE_RCPC_STORE_VARIANTS(w)
 UML_DECLARE_RCPC_STORE_VARIANTS(x)
 #undef UML_DECLARE_RCPC_STORE_VARIANTS
-#define UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS(kind, size, address) \
-	void uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_rr(); \
-	void uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_rz(); \
-	void uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_zr(); \
-	void uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_zz();
-#define UML_DECLARE_ORDERED_PAIR_SIZE(kind, size) \
-	UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS(kind, size, no) \
-	UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS(kind, size, post)
-UML_DECLARE_ORDERED_PAIR_SIZE(load, w)
-UML_DECLARE_ORDERED_PAIR_SIZE(load, x)
-#undef UML_DECLARE_ORDERED_PAIR_SIZE
-#define UML_DECLARE_ORDERED_PAIR_SIZE(kind, size) \
-	UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS(kind, size, no) \
-	UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS(kind, size, pre)
-UML_DECLARE_ORDERED_PAIR_SIZE(store, w)
-UML_DECLARE_ORDERED_PAIR_SIZE(store, x)
-#undef UML_DECLARE_ORDERED_PAIR_SIZE
-#undef UML_DECLARE_ORDERED_PAIR_REGISTER_VARIANTS
-#define UML_DECLARE_CONSISTENT_PAIR_VARIANTS(kind) \
-	void uml_arm64_gadget_consistent_pair_##kind##_rr(); \
-	void uml_arm64_gadget_consistent_pair_##kind##_rz(); \
-	void uml_arm64_gadget_consistent_pair_##kind##_zr(); \
-	void uml_arm64_gadget_consistent_pair_##kind##_zz();
-UML_DECLARE_CONSISTENT_PAIR_VARIANTS(ldap)
-UML_DECLARE_CONSISTENT_PAIR_VARIANTS(ldapp)
-UML_DECLARE_CONSISTENT_PAIR_VARIANTS(store)
-#undef UML_DECLARE_CONSISTENT_PAIR_VARIANTS
 #define UML_DECLARE_COMPARE_SWAP_REGISTER_VARIANTS(ordering, size) \
 	void uml_arm64_gadget_compare_swap_##ordering##_##size##_rr(); \
 	void uml_arm64_gadget_compare_swap_##ordering##_##size##_rz(); \
@@ -2152,57 +1942,6 @@ UML_DECLARE_COMPARE_SWAP_SIZES(acquire)
 UML_DECLARE_COMPARE_SWAP_SIZES(acquire_release)
 #undef UML_DECLARE_COMPARE_SWAP_SIZES
 #undef UML_DECLARE_COMPARE_SWAP_REGISTER_VARIANTS
-#define UML_DECLARE_RCW_SCALAR_FULL_VARIANTS(operation, soft, ordering) \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rr(); \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rz(); \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zr(); \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zz();
-#define UML_DECLARE_RCW_SCALAR_LIVE_RESULT(operation, soft, ordering) \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rr(); \
-	void uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zr();
-#define UML_DECLARE_RCW_SCALAR_ORDERINGS(operation, soft) \
-	UML_DECLARE_RCW_SCALAR_FULL_VARIANTS(operation, soft, relaxed) \
-	UML_DECLARE_RCW_SCALAR_FULL_VARIANTS(operation, soft, release) \
-	UML_DECLARE_RCW_SCALAR_LIVE_RESULT(operation, soft, acquire) \
-	UML_DECLARE_RCW_SCALAR_LIVE_RESULT(operation, soft, acquire_release)
-#define UML_DECLARE_RCW_SCALAR_SOFTNESS(operation) \
-	UML_DECLARE_RCW_SCALAR_ORDERINGS(operation, hard) \
-	UML_DECLARE_RCW_SCALAR_ORDERINGS(operation, soft)
-UML_DECLARE_RCW_SCALAR_SOFTNESS(cas)
-UML_DECLARE_RCW_SCALAR_SOFTNESS(bic)
-UML_DECLARE_RCW_SCALAR_SOFTNESS(swp)
-UML_DECLARE_RCW_SCALAR_SOFTNESS(orr)
-#undef UML_DECLARE_RCW_SCALAR_SOFTNESS
-#undef UML_DECLARE_RCW_SCALAR_ORDERINGS
-#undef UML_DECLARE_RCW_SCALAR_LIVE_RESULT
-#undef UML_DECLARE_RCW_SCALAR_FULL_VARIANTS
-#define UML_DECLARE_RCW_PAIR_CAS_VARIANTS(soft, ordering) \
-	void uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_rr(); \
-	void uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_rz(); \
-	void uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_zr(); \
-	void uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_zz();
-#define UML_DECLARE_RCW_PAIR_CAS_ORDERS(soft) \
-	UML_DECLARE_RCW_PAIR_CAS_VARIANTS(soft, relaxed) \
-	UML_DECLARE_RCW_PAIR_CAS_VARIANTS(soft, release) \
-	UML_DECLARE_RCW_PAIR_CAS_VARIANTS(soft, acquire) \
-	UML_DECLARE_RCW_PAIR_CAS_VARIANTS(soft, acquire_release)
-UML_DECLARE_RCW_PAIR_CAS_ORDERS(hard)
-UML_DECLARE_RCW_PAIR_CAS_ORDERS(soft)
-#undef UML_DECLARE_RCW_PAIR_CAS_ORDERS
-#undef UML_DECLARE_RCW_PAIR_CAS_VARIANTS
-#define UML_DECLARE_RCW_PAIR_MODIFY_VARIANTS(operation, soft) \
-	void uml_arm64_gadget_rcw_pair_##operation##_##soft##_relaxed(); \
-	void uml_arm64_gadget_rcw_pair_##operation##_##soft##_release(); \
-	void uml_arm64_gadget_rcw_pair_##operation##_##soft##_acquire(); \
-	void uml_arm64_gadget_rcw_pair_##operation##_##soft##_acquire_release();
-#define UML_DECLARE_RCW_PAIR_MODIFY_SOFTNESS(operation) \
-	UML_DECLARE_RCW_PAIR_MODIFY_VARIANTS(operation, hard) \
-	UML_DECLARE_RCW_PAIR_MODIFY_VARIANTS(operation, soft)
-UML_DECLARE_RCW_PAIR_MODIFY_SOFTNESS(bic)
-UML_DECLARE_RCW_PAIR_MODIFY_SOFTNESS(swp)
-UML_DECLARE_RCW_PAIR_MODIFY_SOFTNESS(orr)
-#undef UML_DECLARE_RCW_PAIR_MODIFY_SOFTNESS
-#undef UML_DECLARE_RCW_PAIR_MODIFY_VARIANTS
 #define UML_DECLARE_COMPARE_SWAP_PAIR_REGISTER_VARIANTS(ordering, size) \
 	void uml_arm64_gadget_compare_swap_pair_##ordering##_##size##_rr(); \
 	void uml_arm64_gadget_compare_swap_pair_##ordering##_##size##_rz(); \
@@ -2298,47 +2037,6 @@ UML_DECLARE_ATOMIC_ORDERS(swp)
 #undef UML_DECLARE_ATOMIC_ORDERS
 #undef UML_DECLARE_ATOMIC_SIZES
 #undef UML_DECLARE_ATOMIC_REGISTER_VARIANTS
-#define UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, operation) \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_relaxed(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_relaxed_sp(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_release(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_release_sp(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_sp(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_release(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_release_sp(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_relaxed(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_relaxed_sp(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release(); \
-	void uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release_sp();
-#define UML_DECLARE_ATOMIC_FLOATING_OPERATIONS(implementation, size) \
-	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, add) \
-	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, max) \
-	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, maxnm) \
-	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, min) \
-	UML_DECLARE_ATOMIC_FLOATING_VARIANTS(implementation, size, minnm)
-#define UML_DECLARE_ATOMIC_FLOATING_SIZES(implementation) \
-	UML_DECLARE_ATOMIC_FLOATING_OPERATIONS(implementation, bf) \
-	UML_DECLARE_ATOMIC_FLOATING_OPERATIONS(implementation, h) \
-	UML_DECLARE_ATOMIC_FLOATING_OPERATIONS(implementation, s) \
-	UML_DECLARE_ATOMIC_FLOATING_OPERATIONS(implementation, d)
-UML_DECLARE_ATOMIC_FLOATING_SIZES(native)
-UML_DECLARE_ATOMIC_FLOATING_SIZES(software)
-#undef UML_DECLARE_ATOMIC_FLOATING_SIZES
-#undef UML_DECLARE_ATOMIC_FLOATING_OPERATIONS
-#undef UML_DECLARE_ATOMIC_FLOATING_VARIANTS
-#define UML_DECLARE_ATOMIC_PAIR128_ORDER(operation, ordering) \
-	void uml_arm64_gadget_atomic_pair128_##operation##_##ordering();
-#define UML_DECLARE_ATOMIC_PAIR128_ORDERS(operation) \
-	UML_DECLARE_ATOMIC_PAIR128_ORDER(operation, relaxed) \
-	UML_DECLARE_ATOMIC_PAIR128_ORDER(operation, release) \
-	UML_DECLARE_ATOMIC_PAIR128_ORDER(operation, acquire) \
-	UML_DECLARE_ATOMIC_PAIR128_ORDER(operation, acquire_release)
-UML_DECLARE_ATOMIC_PAIR128_ORDERS(clr)
-UML_DECLARE_ATOMIC_PAIR128_ORDERS(set)
-UML_DECLARE_ATOMIC_PAIR128_ORDERS(swp)
-#undef UML_DECLARE_ATOMIC_PAIR128_ORDERS
-#undef UML_DECLARE_ATOMIC_PAIR128_ORDER
 #define UML_DECLARE_LITERAL_INTEGER(name) \
 	void uml_arm64_gadget_##name##_r(); \
 	void uml_arm64_gadget_##name##_z();
@@ -2508,33 +2206,6 @@ UML_DECLARE_LINKED_CONDITION(lt)
 UML_DECLARE_LINKED_CONDITION(gt)
 UML_DECLARE_LINKED_CONDITION(le)
 #undef UML_DECLARE_LINKED_CONDITION
-#define UML_DECLARE_CMPBR_I_SIZE(size) \
-	void uml_arm64_gadget_cmpbr_i_##size##_sgt(); \
-	void uml_arm64_gadget_cmpbr_i_##size##_slt(); \
-	void uml_arm64_gadget_cmpbr_i_##size##_ugt(); \
-	void uml_arm64_gadget_cmpbr_i_##size##_ult(); \
-	void uml_arm64_gadget_cmpbr_i_##size##_eq(); \
-	void uml_arm64_gadget_cmpbr_i_##size##_ne();
-UML_DECLARE_CMPBR_I_SIZE(w)
-UML_DECLARE_CMPBR_I_SIZE(x)
-#undef UML_DECLARE_CMPBR_I_SIZE
-#define UML_DECLARE_CMPBR_R_MODES(size, condition) \
-	void uml_arm64_gadget_cmpbr_r_##size##_##condition##_rr(); \
-	void uml_arm64_gadget_cmpbr_r_##size##_##condition##_rz(); \
-	void uml_arm64_gadget_cmpbr_r_##size##_##condition##_zr();
-#define UML_DECLARE_CMPBR_R_SIZE(size) \
-	UML_DECLARE_CMPBR_R_MODES(size, sgt) \
-	UML_DECLARE_CMPBR_R_MODES(size, sge) \
-	UML_DECLARE_CMPBR_R_MODES(size, ugt) \
-	UML_DECLARE_CMPBR_R_MODES(size, uge) \
-	UML_DECLARE_CMPBR_R_MODES(size, eq) \
-	UML_DECLARE_CMPBR_R_MODES(size, ne)
-UML_DECLARE_CMPBR_R_SIZE(b)
-UML_DECLARE_CMPBR_R_SIZE(h)
-UML_DECLARE_CMPBR_R_SIZE(w)
-UML_DECLARE_CMPBR_R_SIZE(x)
-#undef UML_DECLARE_CMPBR_R_SIZE
-#undef UML_DECLARE_CMPBR_R_MODES
 void uml_arm64_gadget_branch_always();
 void uml_arm64_gadget_branch_always_linked();
 void uml_arm64_gadget_branch_eq_inline();

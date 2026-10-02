@@ -11,8 +11,6 @@ DecodeResult decode_load_store(DecodeContext &context)
 	const auto address = context.address;
 	const auto instruction = context.instruction;
 	auto &compiled = context.compiled;
-	auto &program_accesses_fp_state =
-		context.program_accesses_fp_state;
 	auto &words = context.words;
 
 	if ((instruction & 0xffff'ec00U) == 0xd91f'0c00U) {
@@ -46,36 +44,14 @@ DecodeResult decode_load_store(DecodeContext &context)
 		emit(words, destination_offset |
 			(static_cast<std::uint64_t>(displacement) << 16));
 		emit(words, address);
-	} else if ((instruction & 0xbfbf'fc00U) == 0x0d01'8400U) {
-		const bool load = (instruction & 0x0040'0000U) != 0U;
-		const unsigned lane = instruction >> 30;
-		const bool sp_base = ((instruction >> 5) & 31U) == 31U;
-		emit(words, simd_ordered_lane_gadgets[load][lane][sp_base]);
-		emit(words, simd_ordered_memory_operand(instruction));
+	} else if ((instruction & 0xbfbf'fc00U) == 0x0d01'8400U ||
+		   (instruction & 0x3f20'0c00U) == 0x1d00'0800U) {
+		/* FEAT_LRCPC3 LDAP1 and STL1, and LDAPUR and STLUR to SIMD&FP
+		 * registers: the virtual CPU does not implement FEAT_LRCPC3. */
+		emit(words, uml_arm64_gadget_illegal);
 		emit(words, address);
-	} else if ((instruction & 0x3f20'0c00U) == 0x1d00'0800U) {
-		const unsigned size = instruction >> 30;
-		const unsigned opc = (instruction >> 22) & 3U;
-		if ((opc & 2U) != 0U && size != 0U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const bool load = (opc & 1U) != 0U;
-		const bool sp_base = ((instruction >> 5) & 31U) == 31U;
-		if ((opc & 2U) != 0U) {
-			const unsigned native = host_has_lrcpc3();
-			emit(words, (load ? simd_ordered_q_load_gadgets :
-				simd_ordered_q_store_gadgets)[native][sp_base]);
-		} else {
-			emit(words, (load ? simd_ordered_scalar_load_gadgets :
-				simd_ordered_scalar_store_gadgets)[size][sp_base]);
-		}
-		const auto offset = sign_extend(
-			(instruction >> 12) & 0x1ffU, 9);
-		emit(words, simd_ordered_memory_operand(instruction, offset));
-		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
 	} else if ((instruction & 0xbf20'0000U) == 0x0c00'0000U) {
 		const unsigned opcode = (instruction >> 12) & 15U;
 		const bool interleaved = opcode == 8U || opcode == 4U ||
@@ -229,62 +205,14 @@ DecodeResult decode_load_store(DecodeContext &context)
 			(static_cast<std::uintptr_t>(base_offset) << 16) |
 			(static_cast<std::uintptr_t>(offset) << 32) |
 			fault_position(context));
-	} else if ((instruction & 0x3f20'0c00U) == 0x1900'0800U &&
-		   (instruction & 0x3fbf'fc00U) != 0x1980'0800U) {
-		const auto fixed = instruction & 0xffe0'fc00U;
-		const bool lrcpc3 = fixed == 0x9900'0800U ||
-			fixed == 0xd900'0800U || fixed == 0x9900'1800U ||
-			fixed == 0xd900'1800U || fixed == 0x9940'0800U ||
-			fixed == 0xd940'0800U || fixed == 0x9940'1800U ||
-			fixed == 0xd940'1800U;
-		const bool lscp = fixed == 0xd900'5800U ||
-			fixed == 0xd940'5800U || fixed == 0xd940'7800U;
-		if (!lrcpc3 && !lscp) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const bool load = fixed != 0x9900'0800U &&
-			fixed != 0xd900'0800U && fixed != 0x9900'1800U &&
-			fixed != 0xd900'1800U && fixed != 0xd900'5800U;
-		const bool writeback = lrcpc3 &&
-			(instruction & 0x0000'1000U) == 0;
-		const unsigned first = instruction & 31U;
-		const unsigned second = (instruction >> 16) & 31U;
-		if (load && first == second && first != 31U) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const unsigned base = (instruction >> 5) & 31U;
-		const unsigned register_mode = (first == 31U ? 2U : 0U) |
-			(second == 31U ? 1U : 0U);
-		if (lscp) {
-			const auto &gadgets = fixed == 0xd940'5800U ?
-				consistent_pair_ldap_gadgets :
-				fixed == 0xd940'7800U ?
-				consistent_pair_ldapp_gadgets :
-				consistent_pair_store_gadgets;
-			emit(words, gadgets[register_mode]);
-			emit(words, ordered_pair_operand(instruction));
-			emit(words, address);
-		} else {
-			const unsigned size = (instruction >> 30) - 2U;
-			/* LDIAPP post-index overlap selects WBSUPPRESS, which is the
-			 * no-writeback gadget operating at the original address. */
-			const bool effective_writeback = writeback &&
-				(!load || base == 31U ||
-				 (base != first && base != second));
-			emit(words, load ?
-				ordered_pair_load_gadgets[size][effective_writeback]
-					[register_mode] :
-				ordered_pair_store_gadgets[size][writeback]
-					[register_mode]);
-			emit(words, ordered_pair_operand(instruction));
-			emit(words, address);
-		}
+	} else if ((instruction & 0x3f20'0c00U) == 0x1900'0800U) {
+		/* FEAT_LRCPC3 LDIAPP, STILP, and LDAPR and STLR with writeback,
+		 * and the FEAT_LSCP LDAP, LDAPP, and STLP pairs: the virtual CPU
+		 * implements neither feature. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
 	} else if ((instruction & 0x3fff'fc00U) == 0x38bf'c000U ||
 		   (instruction & 0x3f20'0c00U) == 0x1900'0000U) {
 		const bool no_offset =
@@ -318,67 +246,21 @@ DecodeResult decode_load_store(DecodeContext &context)
 		}
 		emit(words, rcpc_memory_operand(instruction, offset));
 		emit(words, address);
-	} else if ((instruction & 0x3fbf'fc00U) == 0x1980'0800U) {
-		if ((instruction >> 30) >= 2U) {
-			const bool load =
-				(instruction & 0x0040'0000U) != 0;
-			const bool wide = (instruction >> 30) == 3U;
-			const unsigned transfer = instruction & 31U;
-			const unsigned base = (instruction >> 5) & 31U;
-			const bool suppress = load && base != 31U && base == transfer;
-			Gadget gadget{};
-			if (load) {
-				if (wide)
-					gadget = suppress ?
-						uml_arm64_gadget_ordered_writeback_load_x_suppress :
-						transfer == 31U ?
-						uml_arm64_gadget_ordered_writeback_load_x_z :
-						uml_arm64_gadget_ordered_writeback_load_x_r;
-				else
-					gadget = suppress ?
-						uml_arm64_gadget_ordered_writeback_load_w_suppress :
-						transfer == 31U ?
-						uml_arm64_gadget_ordered_writeback_load_w_z :
-						uml_arm64_gadget_ordered_writeback_load_w_r;
-			} else if (wide) {
-				gadget = transfer == 31U ?
-					uml_arm64_gadget_ordered_writeback_store_x_z :
-					uml_arm64_gadget_ordered_writeback_store_x_r;
-			} else {
-				gadget = transfer == 31U ?
-					uml_arm64_gadget_ordered_writeback_store_w_z :
-					uml_arm64_gadget_ordered_writeback_store_w_r;
-			}
-			const auto transfer_offset = transfer < 31U ?
-				transfer * sizeof(std::uint64_t) : 0U;
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
-			emit(words, gadget);
-			emit(words, transfer_offset |
-				(static_cast<std::uintptr_t>(base_offset) << 16));
-			emit(words, address);
-		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
 	} else if ((instruction & 0x3fa0'0000U) == 0x0880'0000U) {
+		/* o0 clear selects LDLAR and STLLR, which need FEAT_LOR; the
+		 * virtual CPU does not implement it. */
 		const bool valid = ((instruction >> 16) & 31U) == 31U &&
-			((instruction >> 10) & 31U) == 31U;
+			((instruction >> 10) & 31U) == 31U &&
+			(instruction & 0x0000'8000U) != 0;
 		if (valid) {
 			const bool load =
 				(instruction & 0x0040'0000U) != 0;
-			const unsigned ordering =
-				(instruction & 0x0000'8000U) != 0;
 			const unsigned size = instruction >> 30;
 			const unsigned transfer = instruction & 31U;
 			const unsigned base = (instruction >> 5) & 31U;
 			emit(words, load ?
-				ordered_load_gadgets[ordering][size]
-					[transfer == 31U] :
-				ordered_store_gadgets[ordering][size]
-					[transfer == 31U]);
+				ordered_load_gadgets[size][transfer == 31U] :
+				ordered_store_gadgets[size][transfer == 31U]);
 			const auto transfer_offset = transfer < 31U ?
 				transfer * sizeof(std::uint64_t) : 0U;
 			const auto base_offset = base < 31U ?
@@ -392,117 +274,17 @@ DecodeResult decode_load_store(DecodeContext &context)
 			++compiled;
 			return DecodeResult::terminal;
 		}
-	} else if (const auto rcw = detail::decode_read_check_write(instruction);
-		   rcw.recognized && !rcw.pair) {
-		const bool compare_swap = rcw.compare_swap;
-		const unsigned encoded_operation = rcw.operation;
-		const bool valid = compare_swap ||
-			(encoded_operation >= 1U && encoded_operation <= 3U);
-		if (!valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const unsigned first = (instruction >> 16) & 31U;
-		const unsigned second = instruction & 31U;
-		const unsigned source = compare_swap ? second : first;
-		const unsigned result = compare_swap ? first : second;
-		const bool acquire =
-			(instruction & 0x0080'0000U) != 0 && result != 31U;
-		const bool release =
-			(instruction & 0x0040'0000U) != 0;
-		const unsigned ordering =
-			(acquire ? 2U : 0U) | (release ? 1U : 0U);
-		const unsigned registers = (source == 31U ? 2U : 0U) |
-			(result == 31U ? 1U : 0U);
-		const unsigned operation = compare_swap ? 0U :
-			encoded_operation;
-		const unsigned soft = rcw.soft;
-		const unsigned base = (instruction >> 5) & 31U;
-		if (base == 31U)
-			emit(words,
-				uml_arm64_gadget_atomic_sp_alignment_write);
-		emit(words, rcw_scalar_gadgets[operation][soft][ordering]
-			[registers]);
-		emit(words, rcw_scalar_operand(instruction, compare_swap));
+	} else if ((instruction & 0xbf20'0c00U) == 0x1920'0000U ||
+		   (instruction & 0xbf20'0800U) == 0x1920'0800U) {
+		/* FEAT_LSE128 LDCLRP, LDSETP, and SWPP, and read-check-write
+		 * RCWCAS, RCWCASP, and the pair modifies: the virtual CPU
+		 * implements none of FEAT_LSE128, FEAT_THE, and FEAT_D128. The
+		 * scalar read-check-write modifies fall in atomic-memory cells
+		 * that the atomic decoder below rejects. */
+		emit(words, uml_arm64_gadget_illegal);
 		emit(words, address);
-	} else if (rcw.recognized) {
-		const bool compare_swap = rcw.compare_swap;
-		const unsigned operation = rcw.operation;
-		const unsigned first = instruction & 31U;
-		const unsigned second = (instruction >> 16) & 31U;
-		const bool valid_operation = compare_swap ||
-			(operation >= 1U && operation <= 3U);
-		const bool valid_registers = compare_swap ?
-			(first & 1U) == 0 && (second & 1U) == 0 :
-			first != 31U && second != 31U && first != second;
-		if (!valid_operation || !valid_registers) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const bool acquire =
-			(instruction & 0x0080'0000U) != 0;
-		const bool release =
-			(instruction & 0x0040'0000U) != 0;
-		const unsigned ordering =
-			(acquire ? 2U : 0U) | (release ? 1U : 0U);
-		const unsigned soft = rcw.soft;
-		const unsigned base = (instruction >> 5) & 31U;
-		if (base == 31U)
-			emit(words,
-				uml_arm64_gadget_atomic_sp_alignment_write);
-		if (compare_swap) {
-			const unsigned registers =
-				(first == 30U ? 2U : 0U) |
-				(second == 30U ? 1U : 0U);
-			emit(words,
-				rcw_pair_cas_gadgets[soft][ordering][registers]);
-		} else {
-			emit(words, rcw_pair_modify_gadgets[operation - 1U]
-				[soft][ordering]);
-		}
-		emit(words, rcw_pair_operand(instruction));
-		emit(words, address);
-	} else if ((instruction & 0xbf20'0c00U) == 0x1920'0000U) {
-		const unsigned first = instruction & 31U;
-		const unsigned second = (instruction >> 16) & 31U;
-		const unsigned o3 = (instruction >> 15) & 1U;
-		const unsigned opcode = (instruction >> 12) & 7U;
-		const unsigned operation = o3 ? 8U : opcode;
-		const bool valid_operation =
-			(instruction & 0x4000'0000U) == 0U &&
-			(!o3 || opcode == 0U) &&
-			(operation == 1U || operation == 3U || operation == 8U);
-		const bool valid_registers = first != 31U && second != 31U &&
-			first != second;
-		if (valid_operation && valid_registers) {
-			const bool acquire =
-				(instruction & 0x0080'0000U) != 0;
-			const bool release =
-				(instruction & 0x0040'0000U) != 0;
-			const unsigned ordering =
-				(acquire ? 2U : 0U) | (release ? 1U : 0U);
-			const unsigned family = operation == 1U ? 0U :
-				operation == 3U ? 1U : 2U;
-			emit(words, atomic_pair128_gadgets[family][ordering]);
-			const unsigned base = (instruction >> 5) & 31U;
-			const auto first_offset = first * sizeof(std::uint64_t);
-			const auto second_offset = second * sizeof(std::uint64_t);
-			const auto base_offset = base < 31U ?
-				base * sizeof(std::uint64_t) : offsetof(CpuState, sp);
-			emit(words, first_offset |
-				(static_cast<std::uintptr_t>(second_offset) << 16) |
-				(static_cast<std::uintptr_t>(base_offset) << 32));
-			emit(words, address);
-		} else {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
+		++compiled;
+		return DecodeResult::terminal;
 	} else if ((instruction & 0x3f20'0c00U) == 0x1900'0400U ||
 		   (instruction & 0x3f20'0c00U) == 0x1d00'0400U ||
 		   (instruction & 0x3fe0'0c00U) == 0x19c0'0400U ||
@@ -549,70 +331,32 @@ DecodeResult decode_load_store(DecodeContext &context)
 		emit(words, address);
 		++compiled;
 		return DecodeResult::terminal;
-	} else if (const auto atomic_floating =
-			detail::decode_atomic_floating(instruction);
-		   atomic_floating.recognized) {
-		if (!atomic_floating.valid) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const unsigned size = instruction >> 30;
-		const unsigned operation =
-			static_cast<unsigned>(atomic_floating.operation);
-		const unsigned variant = atomic_floating.return_old ?
-			(atomic_floating.acquire ? 2U : 0U) |
-				(atomic_floating.release ? 1U : 0U) :
-			atomic_floating.release ? 5U : 4U;
-		const unsigned base = (instruction >> 5) & 31U;
-		const auto &gadgets = host_has_lsfe() ?
-			atomic_floating_native_gadgets :
-			atomic_floating_software_gadgets;
-		emit(words, gadgets[size][operation][base == 31U][variant]);
-		emit(words, detail::atomic_floating_operand(instruction));
-		emit(words, address);
-		program_accesses_fp_state = true;
-	} else if ((instruction & 0xffff'fc00U) == 0xf83f'd000U ||
+	} else if ((instruction & 0x3f20'0c00U) == 0x3c20'0000U ||
+		   (instruction & 0xffff'fc00U) == 0xf83f'd000U ||
 		   (instruction & 0xffff'fc00U) == 0xf83f'9000U ||
 		   (instruction & 0xffe0'fc00U) == 0xf820'b000U ||
 		   (instruction & 0xffe0'fc00U) == 0xf820'a000U) {
-		const unsigned first = instruction & 31U;
-		if ((first & 1U) != 0 || first >= 24) {
-			emit(words, uml_arm64_gadget_illegal);
-			emit(words, address);
-			++compiled;
-			return DecodeResult::terminal;
-		}
-		const auto fixed = instruction & 0xffe0'fc00U;
-		const unsigned operation =
-			(instruction & 0xffff'fc00U) == 0xf83f'd000U ? 0U :
-			(instruction & 0xffff'fc00U) == 0xf83f'9000U ? 1U :
-			fixed == 0xf820'b000U ? 2U : 3U;
-		const unsigned base = (instruction >> 5) & 31U;
-		const unsigned status = (instruction >> 16) & 31U;
-		emit(words, ls64_gadget(
-			operation, base == 31U, status == 31U));
-		emit(words, ls64_operand(first, base, status,
-			base == 31U, status == 31U));
+		/* The FEAT_LSFE floating-point atomics, and FEAT_LS64 LD64B,
+		 * ST64B, ST64BV, and ST64BV0: the virtual CPU implements neither
+		 * feature. */
+		emit(words, uml_arm64_gadget_illegal);
 		emit(words, address);
-	} else if ((instruction & 0x3f20'0c00U) == 0x3820'0000U ||
-		   (instruction & 0x3f20'0c00U) == 0x1920'0400U) {
-		const bool unprivileged =
-			(instruction & 0x0100'0000U) != 0;
-		const unsigned encoded_size = instruction >> 30;
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0x3f20'0c00U) == 0x1920'0400U ||
+		   (instruction & 0x3f00'0000U) == 0x0900'0000U) {
+		/* The FEAT_LSUI atomics, compare-and-swaps, and exclusives: the
+		 * virtual CPU does not implement FEAT_LSUI. */
+		emit(words, uml_arm64_gadget_illegal);
+		emit(words, address);
+		++compiled;
+		return DecodeResult::terminal;
+	} else if ((instruction & 0x3f20'0c00U) == 0x3820'0000U) {
 		const unsigned o3 = (instruction >> 15) & 1U;
 		const unsigned opcode = (instruction >> 12) & 7U;
-		const bool supported = unprivileged ?
-			(encoded_size <= 1U &&
-			 ((!o3 && (opcode == 0U || opcode == 1U ||
-				     opcode == 3U)) ||
-			  (o3 && opcode == 0U))) :
-			(!o3 || opcode == 0U);
-		if (supported) {
+		if (!o3 || opcode == 0U) {
 			const unsigned operation = o3 ? 8U : opcode;
-			const unsigned size = unprivileged ?
-				encoded_size + 2U : encoded_size;
+			const unsigned size = instruction >> 30;
 			const unsigned source = (instruction >> 16) & 31U;
 			const unsigned destination = instruction & 31U;
 			const bool acquire =
@@ -647,15 +391,13 @@ DecodeResult decode_load_store(DecodeContext &context)
 			++compiled;
 			return DecodeResult::terminal;
 		}
-	} else if ((instruction & 0xbfa0'0000U) == 0x0820'0000U ||
-		   (instruction & 0xbfa0'0000U) == 0x0980'0000U) {
+	} else if ((instruction & 0xbfa0'0000U) == 0x0820'0000U) {
 		const unsigned compare = (instruction >> 16) & 31U;
 		const unsigned replacement = instruction & 31U;
-		const bool unprivileged = (instruction & 0x0100'0000U) != 0;
 		const unsigned size_code = instruction >> 30;
 		const bool valid = ((instruction >> 10) & 31U) == 31U &&
 			(compare & 1U) == 0 && (replacement & 1U) == 0 &&
-			size_code <= 1U && (!unprivileged || size_code == 1U);
+			size_code <= 1U;
 		if (valid) {
 			const bool acquire =
 				(instruction & 0x0040'0000U) != 0;
@@ -687,12 +429,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 			++compiled;
 			return DecodeResult::terminal;
 		}
-	} else if ((instruction & 0x3fa0'0000U) == 0x08a0'0000U ||
-		   (instruction & 0xbfa0'0000U) == 0x8980'0000U) {
-		const bool unprivileged = (instruction & 0x0100'0000U) != 0;
-		const bool valid = ((instruction >> 10) & 31U) == 31U &&
-			(!unprivileged || (instruction >> 30) == 3U);
-		if (valid) {
+	} else if ((instruction & 0x3fa0'0000U) == 0x08a0'0000U) {
+		if (((instruction >> 10) & 31U) == 31U) {
 			const unsigned compare = (instruction >> 16) & 31U;
 			const unsigned replacement = instruction & 31U;
 			const bool acquire =
@@ -785,8 +523,7 @@ DecodeResult decode_load_store(DecodeContext &context)
 			++compiled;
 			return DecodeResult::terminal;
 		}
-	} else if ((instruction & 0x3fa0'0000U) == 0x0800'0000U ||
-		   (instruction & 0xbfa0'0000U) == 0x8900'0000U) {
+	} else if ((instruction & 0x3fa0'0000U) == 0x0800'0000U) {
 		const bool load = (instruction & 0x0040'0000U) != 0;
 		const unsigned transfer = instruction & 31U;
 		const unsigned status = (instruction >> 16) & 31U;
@@ -1017,7 +754,9 @@ DecodeResult decode_load_store(DecodeContext &context)
 		const auto mode = (instruction >> 23) & 3U;
 		const auto first = instruction & 31U;
 		const auto second = (instruction >> 10) & 31U;
-		const bool valid =
+		/* opc 11 holds the FEAT_LSUI LDTP, STTP, LDTNP, and STTNP, which
+		 * the virtual CPU does not implement. */
+		const bool valid = operation != 3U &&
 			(operation != 1U || (load && mode != 0U)) &&
 			(!load || first != second);
 		if (valid) {
@@ -1061,7 +800,8 @@ DecodeResult decode_load_store(DecodeContext &context)
 		const bool load = (instruction & 0x0040'0000U) != 0;
 		const auto first = instruction & 31U;
 		const auto second = (instruction >> 10) & 31U;
-		if (!load || first != second) {
+		/* opc 11 holds the FEAT_LSUI LDTP, STTP, LDTNP, and STTNP. */
+		if (operation != 3U && (!load || first != second)) {
 			const unsigned base = (instruction >> 5) & 31U;
 			const unsigned mode = (instruction >> 23) & 3U;
 			const unsigned address_mode = mode == 1U ? 2U :

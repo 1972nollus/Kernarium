@@ -49,13 +49,6 @@ table_lookup(bool extend, unsigned count, unsigned destination,
          (destination & 31U);
 }
 
-[[nodiscard]] constexpr std::uint32_t
-two_table_lut(unsigned destination, unsigned first,
-              unsigned indices) noexcept {
-  return 0x4e40'1000U | ((indices & 31U) << 16U) |
-         ((first & 31U) << 5U) | (destination & 31U);
-}
-
 [[nodiscard]] constexpr unsigned destination(std::uint32_t word) noexcept {
   return word & 31U;
 }
@@ -233,26 +226,6 @@ void independent_lists_receive_disjoint_runs() {
           "independent table lists emitted a staging move");
 }
 
-void two_member_lut_is_planned() {
-  const auto &host = ::uml::platform::apple::probed_host_capabilities();
-  if (!host.advanced_simd ||
-      !host.has(::uml::cpu::ArmFeature::lut))
-    return;
-  constexpr auto target = two_table_lut(0U, 1U, 3U);
-  constexpr std::array guest{target};
-  const auto compiled =
-      jit_test::compile_block(code_base + 0x4000U, guest);
-  const auto hot = hot_code(compiled);
-  const auto native = find_native(hot, target);
-  require(native.has_value(),
-          "JIT omitted a two-member LUT semantic word");
-  require(first(*native) == 30U && indices(*native) == 16U &&
-              destination(*native) == 17U,
-          "two-member LUT was not reserved in q30-q31");
-  require(count_if(hot, &is_vector_move) == 0U,
-          "two-member LUT emitted a staging move");
-}
-
 void planning_stops_at_a_translated_terminal() {
   if (!::uml::platform::apple::probed_host_capabilities().advanced_simd)
     return;
@@ -274,8 +247,7 @@ void planning_stops_at_a_translated_terminal() {
               actual.direct_memory_write_mask ==
                   expected.direct_memory_write_mask &&
               actual.accesses_fp_state == expected.accesses_fp_state &&
-              actual.native_fp == expected.native_fp &&
-              actual.native_fpmr == expected.native_fpmr,
+              actual.native_fp == expected.native_fp,
           "future table list changed a terminal prefix");
 }
 
@@ -286,7 +258,6 @@ int main() {
   interleaved_members_are_prebound_before_first_use();
   wrapped_aliases_use_one_consecutive_native_list();
   independent_lists_receive_disjoint_runs();
-  two_member_lut_is_planned();
   planning_stops_at_a_translated_terminal();
   return 0;
 }

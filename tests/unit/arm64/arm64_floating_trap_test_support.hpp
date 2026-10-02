@@ -50,7 +50,6 @@ inline constexpr std::uint32_t syndrome_base =
 	cpu.nzcv = static_cast<std::uint32_t>(seed << 28U) & 0xf000'0000U;
 	cpu.fpsr = 1U << 27U;
 	cpu.tls = 0xcafe'0000'0000'0000ULL | seed;
-	cpu.fpmr = seed & 0x3f'ff7f'c1ffULL;
 	return cpu;
 }
 

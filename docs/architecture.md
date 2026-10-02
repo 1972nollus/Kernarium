@@ -260,20 +260,16 @@ load-acquire/store-release access that is misaligned but lies inside one
 block takes the alignment fault. A pair counts as one access of its total
 size. Without host LSE2 every misaligned such access faults. Each executor
 records the choice in its TLB. Gadgets execute the native host instruction on
-an admitted address, and a host CASAL loop for software floating-point
-atomics; the JIT applies the same rule in its semantic path, which performs
-each such access as one host instruction, with LDAR and STLR for the ordered
-forms and a CASAL loop for a misaligned read-modify-write. The rule matches
-native LSE2 hardware for the LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2
-forms. The LRCPC3 and LSFE forms follow the architecture's rule, which current
-hosts cannot execute natively. LDIAPP/STILP and the LSCP pairs keep their
-element alignment, and LSE128, RCW, and LS64 accesses stay naturally
-aligned.
+an admitted address; the JIT applies the same rule in its semantic path, which
+performs each such access as one host instruction, with LDAR and STLR for the
+ordered forms and a CASAL loop for a misaligned read-modify-write. The rule
+matches native LSE2 hardware for every form the virtual CPU implements: the
+LSE, exclusive, LDAR/STLR, and LRCPC/LRCPC2 forms.
 
-Both engines complete WFE, WFI and the timed WFET and WFIT at once and treat
-SEV and SEVL as no-ops, so no wait ever depends on an event. AT_HWCAP
-therefore always carries EVTSTRM, arm64 Linux's promise that WFE wakes at
-least once per event-stream period, 100 µs, without an SEV.
+Both engines complete WFE and WFI at once and treat SEV and SEVL as no-ops,
+so no wait ever depends on an event. AT_HWCAP therefore always carries
+EVTSTRM, arm64 Linux's promise that WFE wakes at least once per event-stream
+period, 100 µs, without an SEV.
 `guest-gadgets-smoke` and `guest-jit-smoke` time a WFE loop against that
 period.
 

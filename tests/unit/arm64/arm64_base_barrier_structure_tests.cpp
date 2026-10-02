@@ -41,10 +41,6 @@ DECLARE_STANDARD_OPTION(14)
 DECLARE_STANDARD_OPTION(15)
 #undef DECLARE_STANDARD_OPTION
 #undef DECLARE_STANDARD_BARRIER
-void uml_arm64_gadget_dsb_nxs_0();
-void uml_arm64_gadget_dsb_nxs_1();
-void uml_arm64_gadget_dsb_nxs_2();
-void uml_arm64_gadget_dsb_nxs_3();
 void uml_arm64_gadget_isb();
 void uml_arm64_gadget_speculation_barrier();
 void uml_arm64_gadget_speculation_barrier_fallback();
@@ -83,13 +79,6 @@ const std::array<std::uintptr_t, 16> dsb_gadgets{
 };
 
 #undef BARRIER_ADDRESS
-
-const std::array<std::uintptr_t, 4> nxs_gadgets{
-	address(uml_arm64_gadget_dsb_nxs_0),
-	address(uml_arm64_gadget_dsb_nxs_1),
-	address(uml_arm64_gadget_dsb_nxs_2),
-	address(uml_arm64_gadget_dsb_nxs_3),
-};
 
 [[nodiscard]] gadgets::BuildResult build(std::uint32_t instruction)
 {
@@ -135,15 +124,13 @@ void standard_translation()
 
 void extension_translation()
 {
-	const bool native_xs = ::uml::platform::apple::probed_host_capabilities().has(ArmFeature::xs);
-	constexpr std::array fallback_options{3U, 7U, 11U, 15U};
+	/* The virtual CPU implements no FEAT_XS, so DSB nXS is UNDEFINED. */
 	for (unsigned scope = 0; scope < 4U; ++scope) {
 		const auto program = build(encode_nxs(scope));
-		const auto expected = native_xs ?
-			nxs_gadgets[scope] : dsb_gadgets[fallback_options[scope]];
-		require(program.complete && program.program.words().size() == 3U &&
-				program.program.words().front() == expected,
-			"DSB nXS host choice was not resolved at translation");
+		require(program.complete && program.program.words().size() == 2U &&
+				program.program.words().front() ==
+					address(uml_arm64_gadget_illegal),
+			"DSB nXS did not select strict illegal");
 	}
 
 	const auto sb = build(sb_base);
@@ -176,12 +163,6 @@ void hot_path_shape()
 			"DSB hot path retained a conditional branch");
 		require(runtime_instruction_count(entry) == 3U,
 			"DSB hot path is not one barrier plus dispatch");
-	}
-	for (const auto entry : nxs_gadgets) {
-		require(conditional_branches(entry) == 0U,
-			"DSB nXS hot path retained a conditional branch");
-		require(runtime_instruction_count(entry) == 3U,
-			"DSB nXS hot path is not one barrier plus dispatch");
 	}
 	require(conditional_branches(address(uml_arm64_gadget_isb)) == 0U &&
 			runtime_instruction_count(

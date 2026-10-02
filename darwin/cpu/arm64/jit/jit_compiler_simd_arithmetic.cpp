@@ -5,9 +5,7 @@
 #include "cpu/arm64/detail/bfloat_matrix.hpp"
 #include "cpu/arm64/detail/bfloat_multiply.hpp"
 #include "cpu/arm64/detail/floating_complex.hpp"
-#include "cpu/arm64/detail/half_dot.hpp"
 #include "cpu/arm64/detail/half_fused_long.hpp"
-#include "cpu/arm64/detail/half_matrix.hpp"
 #include "cpu/arm64/detail/floating_compare.hpp"
 #include "cpu/host_capabilities.hpp"
 
@@ -132,29 +130,6 @@ JitCompilerFamilies::emit_bfloat_dot(std::uint32_t instruction) {
 }
 
 [[nodiscard]] bool
-JitCompilerFamilies::emit_half_dot(std::uint32_t instruction) {
-  const auto decoded = arm64::detail::decode_half_dot(instruction);
-  const auto &host = host_capabilities();
-  if (!decoded.recognized || !host.has(ArmFeature::f16f32dot))
-    return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5U) & 31U;
-  const unsigned right = (instruction >> 16U) & 31U;
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
-  const auto native_destination =
-      write_native_vector(destination, true, 2U);
-  auto native = instruction & ~((31U << 16U) | (31U << 5U) | 31U);
-  native |= (native_right.host << 16U) | (native_left.host << 5U) |
-            native_destination.host;
-  emit(native);
-  commit_native_vector(native_destination, destination);
-  mark_native_fp();
-  return true;
-}
-
-[[nodiscard]] bool
 JitCompilerFamilies::emit_half_fused_long(std::uint32_t instruction) {
   const auto decoded =
       arm64::detail::decode_half_fused_long(instruction);
@@ -187,32 +162,6 @@ JitCompilerFamilies::emit_half_fused_long(std::uint32_t instruction) {
       instruction & ~((31U << 5U) | 31U);
   native &= decoded.by_element ?
       ~(15U << 16U) : ~(31U << 16U);
-  native |= (native_right.host << 16U) | (native_left.host << 5U) |
-            native_destination.host;
-  emit(native);
-  commit_native_vector(native_destination, destination);
-  mark_native_fp();
-  return true;
-}
-
-[[nodiscard]] bool
-JitCompilerFamilies::emit_half_matrix(std::uint32_t instruction) {
-  const auto decoded = arm64::detail::decode_half_matrix(instruction);
-  const auto &host = host_capabilities();
-  const auto feature = decoded.widening ?
-      ArmFeature::f16f32mm : ArmFeature::f16mm;
-  if (!decoded.valid || !host.has(feature))
-    return false;
-  const unsigned destination = instruction & 31U;
-  const unsigned left = (instruction >> 5U) & 31U;
-  const unsigned right = (instruction >> 16U) & 31U;
-  const auto native_left = read_native_vector(left, 0U);
-  const auto native_right =
-      right == left ? native_left : read_native_vector(right, 1U);
-  const auto native_destination =
-      write_native_vector(destination, true, 2U);
-  auto native =
-      instruction & ~((31U << 16U) | (31U << 5U) | 31U);
   native |= (native_right.host << 16U) | (native_left.host << 5U) |
             native_destination.host;
   emit(native);

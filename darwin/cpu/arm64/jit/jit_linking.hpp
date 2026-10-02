@@ -12,7 +12,6 @@ enum class JitLinkCapability : std::uint8_t {
   store_publication = 1U << 0U,
   fp_state_materialized = 1U << 1U,
   native_fp_environment = 1U << 2U,
-  native_fpmr_environment = 1U << 3U,
 };
 
 [[nodiscard]] constexpr std::uint8_t
@@ -20,7 +19,7 @@ link_capability(JitLinkCapability capability) noexcept {
   return static_cast<std::uint8_t>(capability);
 }
 
-constexpr std::array<std::uint8_t, 10> jit_link_selector_capabilities{
+constexpr std::array<std::uint8_t, 6> jit_link_selector_capabilities{
     0,
     link_capability(JitLinkCapability::store_publication),
     link_capability(JitLinkCapability::fp_state_materialized),
@@ -31,18 +30,6 @@ constexpr std::array<std::uint8_t, 10> jit_link_selector_capabilities{
     link_capability(JitLinkCapability::store_publication) |
         link_capability(JitLinkCapability::fp_state_materialized) |
         link_capability(JitLinkCapability::native_fp_environment),
-    link_capability(JitLinkCapability::fp_state_materialized) |
-        link_capability(JitLinkCapability::native_fpmr_environment),
-    link_capability(JitLinkCapability::store_publication) |
-        link_capability(JitLinkCapability::fp_state_materialized) |
-        link_capability(JitLinkCapability::native_fpmr_environment),
-    link_capability(JitLinkCapability::fp_state_materialized) |
-        link_capability(JitLinkCapability::native_fp_environment) |
-        link_capability(JitLinkCapability::native_fpmr_environment),
-    link_capability(JitLinkCapability::store_publication) |
-        link_capability(JitLinkCapability::fp_state_materialized) |
-        link_capability(JitLinkCapability::native_fp_environment) |
-        link_capability(JitLinkCapability::native_fpmr_environment),
 };
 constexpr std::size_t jit_link_selector_count =
     jit_link_selector_capabilities.size();
@@ -53,8 +40,7 @@ valid_link_capabilities(std::uint8_t capabilities) noexcept {
   const auto materialized =
       link_capability(JitLinkCapability::fp_state_materialized);
   const auto native =
-      link_capability(JitLinkCapability::native_fp_environment) |
-      link_capability(JitLinkCapability::native_fpmr_environment);
+      link_capability(JitLinkCapability::native_fp_environment);
   return (capabilities & native) == 0U ||
          (capabilities & materialized) != 0U;
 }
@@ -72,25 +58,20 @@ link_selector_for_capabilities(std::uint8_t capabilities) noexcept {
 checked_link_selector(std::uint8_t capabilities) noexcept;
 
 [[nodiscard]] constexpr std::uint8_t
-link_state_requirements(bool accesses_fp_state, bool native_fp,
-                        bool native_fpmr) noexcept {
+link_state_requirements(bool accesses_fp_state, bool native_fp) noexcept {
   std::uint8_t requirements = 0;
-  if (accesses_fp_state || native_fp || native_fpmr)
+  if (accesses_fp_state || native_fp)
     requirements |=
         link_capability(JitLinkCapability::fp_state_materialized);
   if (native_fp)
     requirements |=
         link_capability(JitLinkCapability::native_fp_environment);
-  if (native_fpmr)
-    requirements |=
-        link_capability(JitLinkCapability::native_fpmr_environment);
   return requirements;
 }
 
 [[nodiscard]] constexpr bool
-valid_link_state_metadata(bool accesses_fp_state, bool native_fp,
-                          bool native_fpmr) noexcept {
-  return accesses_fp_state || (!native_fp && !native_fpmr);
+valid_link_state_metadata(bool accesses_fp_state, bool native_fp) noexcept {
+  return accesses_fp_state || !native_fp;
 }
 
 struct alignas(64) JitBlockLink final {
@@ -105,8 +86,8 @@ struct alignas(64) JitBlockLink final {
    * architectural-state requirements have not been established.
    *
    * All accepted setup combinations enter the same native address. A compact
-   * bit mask says which of the ten host-owned selectors may use it, avoiding
-   * ten duplicate pointers in every target anchor.
+   * bit mask says which of the six host-owned selectors may use it, avoiding
+   * six duplicate pointers in every target anchor.
    */
   std::uint64_t guest_pc{};
   std::uint64_t instruction_count{};
@@ -213,19 +194,15 @@ private:
 
 static_assert(
     link_capability(JitLinkCapability::store_publication) == 1U);
-static_assert(jit_link_selector_count == 10);
+static_assert(jit_link_selector_count == 6);
 static_assert(valid_link_capabilities(0));
 static_assert(valid_link_capabilities(1));
 static_assert(valid_link_capabilities(2));
 static_assert(valid_link_capabilities(3));
 static_assert(valid_link_capabilities(6));
 static_assert(valid_link_capabilities(7));
-static_assert(valid_link_capabilities(10));
-static_assert(valid_link_capabilities(11));
-static_assert(valid_link_capabilities(14));
-static_assert(valid_link_capabilities(15));
 static_assert(link_selector_for_capabilities(0) == 0);
-static_assert(link_selector_for_capabilities(15) == 9);
+static_assert(link_selector_for_capabilities(7) == 5);
 static_assert(link_selector_for_capabilities(4) ==
               invalid_link_selector);
 static_assert(alignof(JitBlockLink) == 64);

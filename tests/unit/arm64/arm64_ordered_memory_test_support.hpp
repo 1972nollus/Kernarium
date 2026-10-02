@@ -38,7 +38,6 @@ enum class ScalarClass {
 	ordered,
 	rcpc_no_offset,
 	rcpc_unscaled,
-	writeback,
 };
 
 struct ScalarVariant final {
@@ -58,34 +57,18 @@ struct ScalarVariant final {
  * once so their complete encoding allocation is exercised.
  */
 inline constexpr std::array scalar_variants{
-	ScalarVariant{"BASE-0407", "stllrb", ScalarClass::ordered, 0, 0, false,
-		::uml::cpu::ArmFeature::lor},
-	ScalarVariant{"BASE-0216", "ldlarb", ScalarClass::ordered, 0, 0, true,
-		::uml::cpu::ArmFeature::lor},
 	ScalarVariant{"BASE-0411", "stlrb", ScalarClass::ordered, 0, 1, false,
 		::uml::cpu::ArmFeature::inventory_count},
 	ScalarVariant{"BASE-0198", "ldarb", ScalarClass::ordered, 0, 1, true,
 		::uml::cpu::ArmFeature::inventory_count},
-	ScalarVariant{"BASE-0408", "stllrh", ScalarClass::ordered, 1, 0, false,
-		::uml::cpu::ArmFeature::lor},
-	ScalarVariant{"BASE-0217", "ldlarh", ScalarClass::ordered, 1, 0, true,
-		::uml::cpu::ArmFeature::lor},
 	ScalarVariant{"BASE-0412", "stlrh", ScalarClass::ordered, 1, 1, false,
 		::uml::cpu::ArmFeature::inventory_count},
 	ScalarVariant{"BASE-0199", "ldarh", ScalarClass::ordered, 1, 1, true,
 		::uml::cpu::ArmFeature::inventory_count},
-	ScalarVariant{"BASE-0406", "stllr-w", ScalarClass::ordered, 2, 0, false,
-		::uml::cpu::ArmFeature::lor},
-	ScalarVariant{"BASE-0215", "ldlar-w", ScalarClass::ordered, 2, 0, true,
-		::uml::cpu::ArmFeature::lor},
 	ScalarVariant{"BASE-0410", "stlr-w", ScalarClass::ordered, 2, 1, false,
 		::uml::cpu::ArmFeature::inventory_count},
 	ScalarVariant{"BASE-0197", "ldar-w", ScalarClass::ordered, 2, 1, true,
 		::uml::cpu::ArmFeature::inventory_count},
-	ScalarVariant{"BASE-0406", "stllr-x", ScalarClass::ordered, 3, 0, false,
-		::uml::cpu::ArmFeature::lor},
-	ScalarVariant{"BASE-0215", "ldlar-x", ScalarClass::ordered, 3, 0, true,
-		::uml::cpu::ArmFeature::lor},
 	ScalarVariant{"BASE-0410", "stlr-x", ScalarClass::ordered, 3, 1, false,
 		::uml::cpu::ArmFeature::inventory_count},
 	ScalarVariant{"BASE-0197", "ldar-x", ScalarClass::ordered, 3, 1, true,
@@ -126,108 +109,6 @@ inline constexpr std::array scalar_variants{
 		true, ::uml::cpu::ArmFeature::lrcpc2},
 	ScalarVariant{"BASE-0195", "ldapursh-w", ScalarClass::rcpc_unscaled, 1, 3,
 		true, ::uml::cpu::ArmFeature::lrcpc2},
-
-	ScalarVariant{"BASE-0410", "stlr-w-pre", ScalarClass::writeback, 2, 0,
-		false, ::uml::cpu::ArmFeature::lrcpc3},
-	ScalarVariant{"BASE-0188", "ldapr-w-post", ScalarClass::writeback, 2, 1,
-		true, ::uml::cpu::ArmFeature::lrcpc3},
-	ScalarVariant{"BASE-0410", "stlr-x-pre", ScalarClass::writeback, 3, 0,
-		false, ::uml::cpu::ArmFeature::lrcpc3},
-	ScalarVariant{"BASE-0188", "ldapr-x-post", ScalarClass::writeback, 3, 1,
-		true, ::uml::cpu::ArmFeature::lrcpc3},
-};
-
-enum class PairKind {
-	stilp,
-	ldiapp,
-	stlp,
-	ldap,
-	ldapp,
-};
-
-struct PairVariant final {
-	std::string_view row;
-	std::string_view name;
-	PairKind kind;
-	unsigned size_code;
-	bool writeback;
-	bool load;
-	::uml::cpu::ArmFeature feature;
-};
-
-inline constexpr std::array pair_variants{
-	PairVariant{"BASE-0405", "stilp-w-pre", PairKind::stilp, 2, true, false,
-		::uml::cpu::ArmFeature::lrcpc3},
-	PairVariant{"BASE-0405", "stilp-w", PairKind::stilp, 2, false, false,
-		::uml::cpu::ArmFeature::lrcpc3},
-	PairVariant{"BASE-0405", "stilp-x-pre", PairKind::stilp, 3, true, false,
-		::uml::cpu::ArmFeature::lrcpc3},
-	PairVariant{"BASE-0405", "stilp-x", PairKind::stilp, 3, false, false,
-		::uml::cpu::ArmFeature::lrcpc3},
-	PairVariant{"BASE-0214", "ldiapp-w-post", PairKind::ldiapp, 2, true, true,
-		::uml::cpu::ArmFeature::lrcpc3},
-	PairVariant{"BASE-0214", "ldiapp-w", PairKind::ldiapp, 2, false, true,
-		::uml::cpu::ArmFeature::lrcpc3},
-	PairVariant{"BASE-0214", "ldiapp-x-post", PairKind::ldiapp, 3, true, true,
-		::uml::cpu::ArmFeature::lrcpc3},
-	PairVariant{"BASE-0214", "ldiapp-x", PairKind::ldiapp, 3, false, true,
-		::uml::cpu::ArmFeature::lrcpc3},
-	PairVariant{"BASE-0409", "BASE-0409 STLP", PairKind::stlp, 3, false, false,
-		::uml::cpu::ArmFeature::lscp},
-	PairVariant{"BASE-0186", "BASE-0186 LDAP", PairKind::ldap, 3, false, true,
-		::uml::cpu::ArmFeature::lscp},
-	PairVariant{"BASE-0187", "BASE-0187 LDAPP", PairKind::ldapp, 3, false, true,
-		::uml::cpu::ArmFeature::lscp},
-};
-
-enum class SimdKind {
-	unscaled,
-	lane,
-};
-
-struct SimdVariant final {
-	std::string_view row;
-	std::string_view name;
-	SimdKind kind;
-	unsigned size_code;
-	unsigned operation;
-	std::size_t size;
-	bool load;
-	bool upper;
-};
-
-inline constexpr std::array simd_unscaled_variants{
-	SimdVariant{"FPSIMD-0388", "stlur-b", SimdKind::unscaled, 0, 0, 1,
-		false, false},
-	SimdVariant{"FPSIMD-0221", "ldapur-b", SimdKind::unscaled, 0, 1, 1,
-		true, false},
-	SimdVariant{"FPSIMD-0388", "stlur-h", SimdKind::unscaled, 1, 0, 2,
-		false, false},
-	SimdVariant{"FPSIMD-0221", "ldapur-h", SimdKind::unscaled, 1, 1, 2,
-		true, false},
-	SimdVariant{"FPSIMD-0388", "stlur-s", SimdKind::unscaled, 2, 0, 4,
-		false, false},
-	SimdVariant{"FPSIMD-0221", "ldapur-s", SimdKind::unscaled, 2, 1, 4,
-		true, false},
-	SimdVariant{"FPSIMD-0388", "stlur-d", SimdKind::unscaled, 3, 0, 8,
-		false, false},
-	SimdVariant{"FPSIMD-0221", "ldapur-d", SimdKind::unscaled, 3, 1, 8,
-		true, false},
-	SimdVariant{"FPSIMD-0388", "stlur-q", SimdKind::unscaled, 0, 2, 16,
-		false, false},
-	SimdVariant{"FPSIMD-0221", "ldapur-q", SimdKind::unscaled, 0, 3, 16,
-		true, false},
-};
-
-inline constexpr std::array simd_lane_variants{
-	SimdVariant{"FPSIMD-0387", "stl1-d0", SimdKind::lane, 0, 0, 8,
-		false, false},
-	SimdVariant{"FPSIMD-0387", "stl1-d1", SimdKind::lane, 0, 0, 8,
-		false, true},
-	SimdVariant{"FPSIMD-0220", "ldap1-d0", SimdKind::lane, 0, 0, 8,
-		true, false},
-	SimdVariant{"FPSIMD-0220", "ldap1-d1", SimdKind::lane, 0, 0, 8,
-		true, true},
 };
 
 [[nodiscard]] constexpr std::uint32_t scalar_instruction(
@@ -250,51 +131,8 @@ inline constexpr std::array simd_lane_variants{
 			((variant.operation & 3U) << 22) |
 			((static_cast<unsigned>(offset) & 0x1ffU) << 12) |
 			((rn & 31U) << 5) | (rt & 31U);
-	case ScalarClass::writeback:
-		return 0x1980'0800U |
-			((variant.size_code & 3U) << 30) |
-			(static_cast<unsigned>(variant.load) << 22) |
-			((rn & 31U) << 5) | (rt & 31U);
 	}
 	return 0;
-}
-
-[[nodiscard]] constexpr std::uint32_t pair_instruction(
-	const PairVariant &variant, unsigned rn, unsigned rt, unsigned rt2)
-{
-	std::uint32_t fixed = 0;
-	switch (variant.kind) {
-	case PairKind::stilp:
-		fixed = 0x1900'0800U |
-			((variant.size_code & 3U) << 30) |
-			(static_cast<unsigned>(!variant.writeback) << 12);
-		break;
-	case PairKind::ldiapp:
-		fixed = 0x1940'0800U |
-			((variant.size_code & 3U) << 30) |
-			(static_cast<unsigned>(!variant.writeback) << 12);
-		break;
-	case PairKind::stlp: fixed = 0xd900'5800U; break;
-	case PairKind::ldap: fixed = 0xd940'5800U; break;
-	case PairKind::ldapp: fixed = 0xd940'7800U; break;
-	}
-	return fixed | ((rt2 & 31U) << 16) |
-		((rn & 31U) << 5) | (rt & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t simd_instruction(
-	const SimdVariant &variant, int offset, unsigned rn, unsigned rt)
-{
-	if (variant.kind == SimdKind::lane)
-		return 0x0d01'8400U |
-			(static_cast<unsigned>(variant.upper) << 30) |
-			(static_cast<unsigned>(variant.load) << 22) |
-			((rn & 31U) << 5) | (rt & 31U);
-	return 0x1d00'0800U |
-		((variant.size_code & 3U) << 30) |
-		((variant.operation & 3U) << 22) |
-		((static_cast<unsigned>(offset) & 0x1ffU) << 12) |
-		((rn & 31U) << 5) | (rt & 31U);
 }
 
 [[nodiscard]] inline engine::NativeRequirements native(
@@ -303,26 +141,6 @@ inline constexpr std::array simd_lane_variants{
 	if (variant.feature == ::uml::cpu::ArmFeature::inventory_count)
 		return engine::NativeRequirements::baseline();
 	return engine::NativeRequirements::features(variant.feature);
-}
-
-[[nodiscard]] inline engine::NativeRequirements native(
-	const PairVariant &variant)
-{
-	return engine::NativeRequirements::features(variant.feature);
-}
-
-[[nodiscard]] inline engine::NativeRequirements native(
-	const SimdVariant &variant)
-{
-	if (variant.kind == SimdKind::lane)
-		return engine::NativeRequirements::features({
-			::uml::cpu::ArmFeature::advanced_simd,
-			::uml::cpu::ArmFeature::lrcpc3,
-		});
-	return engine::NativeRequirements::features({
-		::uml::cpu::ArmFeature::floating_point,
-		::uml::cpu::ArmFeature::lrcpc3,
-	});
 }
 
 [[nodiscard]] inline arm64::CpuState seeded_state(std::uint64_t seed)
@@ -431,8 +249,6 @@ inline void write_gpr(arm64::CpuState &cpu, unsigned rt,
 	if (variant.instruction_class == ScalarClass::rcpc_unscaled)
 		return target - static_cast<std::uint64_t>(
 			static_cast<std::int64_t>(offset));
-	if (variant.instruction_class == ScalarClass::writeback && !variant.load)
-		return target + (std::uint64_t{1} << variant.size_code);
 	return target;
 }
 

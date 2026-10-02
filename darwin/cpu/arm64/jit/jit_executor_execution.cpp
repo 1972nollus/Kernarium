@@ -136,8 +136,7 @@ namespace uml::cpu::arm64 {
           return !candidate.words.empty() && candidate.guest_instructions != 0 &&
                  candidate.guest_instructions <= instructions.size() &&
                  valid_link_state_metadata(candidate.accesses_fp_state,
-                                           candidate.native_fp,
-                                           candidate.native_fpmr);
+                                           candidate.native_fp);
         };
         const auto install_compilation =
             [&](const auto &candidate,
@@ -159,7 +158,7 @@ namespace uml::cpu::arm64 {
               std::move(saved_guest_words),
               candidate.memory_write_mask, candidate.direct_memory_write_mask,
               candidate.accesses_fp_state, candidate.link_target_safe,
-              candidate.native_fp, candidate.native_fpmr,
+              candidate.native_fp,
               candidate.guest_illegal
           );
         };
@@ -244,15 +243,8 @@ namespace uml::cpu::arm64 {
             link_capability(JitLinkCapability::native_fp_environment);
       }
     }
-    if (block->native_fpmr) {
-      activate_native_fpmr_environment(cpu);
-      link_capabilities |=
-          link_capability(JitLinkCapability::native_fpmr_environment);
-    }
     chain.link_selector = checked_link_selector(link_capabilities);
     const auto result = function(&cpu, &tlb_, &chain);
-    if (block->native_fpmr)
-      arm64::restore_native_fpmr_environment(cpu);
     if (tracked_stores)
       jit::semantic::invalidate_store_ranges(
           std::span<const JitStoreRange>{tracked_store_ranges_}.first(
@@ -330,8 +322,7 @@ JitExecutor::Implementation::tracked_store_function(CompiledBlock &block, Static
   if (compiled.words.empty() ||
       compiled.guest_instructions != block.instruction_count ||
       !valid_link_state_metadata(compiled.accesses_fp_state,
-                                 compiled.native_fp,
-                                 compiled.native_fpmr) ||
+                                 compiled.native_fp) ||
       compiled.direct_memory_write_mask != block.direct_memory_write_mask)
     return nullptr;
 
@@ -387,8 +378,6 @@ void JitExecutor::Implementation::clear_tracked_store_cache() noexcept {
   isolated.gadget_host_fpsr = 0;
   isolated.gadget_fp_active = false;
   isolated.gadget_indirect_miss = nullptr;
-  isolated.gadget_host_fpmr = 0;
-  isolated.gadget_fpmr_active = false;
   std::uint32_t deferred_exclusive = 0;
   const auto event = invoke_single_instruction(
       *translation, isolated, false, true, executed, deferred_exclusive);
@@ -431,7 +420,7 @@ JitExecutor::Implementation::translate_single_instruction(
       compiler.compile(pc, std::span{&instruction, std::size_t{1}});
   if (compiled.words.empty() || compiled.guest_instructions != 1U ||
       !valid_link_state_metadata(compiled.accesses_fp_state,
-                                 compiled.native_fp, compiled.native_fpmr))
+                                 compiled.native_fp))
     return std::nullopt;
   /* The arena holds only the translation about to run, so a reset cannot
    * discard code that is still executing. */
@@ -445,7 +434,6 @@ JitExecutor::Implementation::translate_single_instruction(
       .direct_memory_write_mask = compiled.direct_memory_write_mask,
       .accesses_fp_state = compiled.accesses_fp_state,
       .native_fp = compiled.native_fp,
-      .native_fpmr = compiled.native_fpmr,
   };
 }
 
@@ -472,15 +460,8 @@ JitExecutor::Implementation::translate_single_instruction(
           link_capability(JitLinkCapability::native_fp_environment);
     }
   }
-  if (translation.native_fpmr) {
-    activate_native_fpmr_environment(target);
-    link_capabilities |=
-        link_capability(JitLinkCapability::native_fpmr_environment);
-  }
   chain.link_selector = checked_link_selector(link_capabilities);
   const auto result = translation.function(&target, &tlb_, &chain);
-  if (translation.native_fpmr)
-    arm64::restore_native_fpmr_environment(target);
   if (restore_environment)
     arm64::restore_native_fp_environment(target);
   if (tracked_stores)

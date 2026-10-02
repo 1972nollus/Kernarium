@@ -17,7 +17,7 @@ using ::uml::cpu::EngineEvent;
 
 constexpr std::uint32_t allocated_tag_add = 0x9180'0020U;
 constexpr std::uint32_t guarded_pop = 0xd52b'7720U;
-constexpr std::uint32_t set_ssbs = 0xd503'413fU;
+constexpr std::uint32_t set_dit = 0xd503'415fU;
 constexpr std::uint32_t unknown_encoding = 0xffff'ffffU;
 constexpr std::uint32_t add_x5_one = 0x9100'04a5U;
 constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
@@ -77,17 +77,17 @@ void first_word_illegal(unsigned long generation, std::uint64_t base,
 }
 
 void valid_host_unavailable_is_guest_illegal() {
-  // MSR SSBS translates only when the host implements FEAT_SSBS.
+  // MSR DIT translates only when the host implements FEAT_DIT.
   constexpr std::uint64_t base = 0x4fa0'0000;
-  const std::array code{set_ssbs};
+  const std::array code{set_dit};
   const auto compiled = jit_test::compile_block_with_feature_override(
-      base, code, ::uml::cpu::ArmFeature::ssbs, false);
+      base, code, ::uml::cpu::ArmFeature::dit, false);
   require(compiled.guest_illegal);
   require(compiled.guest_instructions == 1);
   uml::cpu::arm64::JitExecutorOptions options{};
   options.host_capabilities.supported.reset(
-      static_cast<std::size_t>(::uml::cpu::ArmFeature::ssbs));
-  first_word_illegal(851, base, set_ssbs, options);
+      static_cast<std::size_t>(::uml::cpu::ArmFeature::dit));
+  first_word_illegal(851, base, set_dit, options);
 }
 
 void valid_contract_unavailable_is_guest_illegal() {
@@ -98,6 +98,18 @@ void valid_contract_unavailable_is_guest_illegal() {
   constexpr std::uint64_t guarded_base = 0x4fb1'0000;
   require_undefined_compilation(guarded_base, guarded_pop);
   first_word_illegal(855, guarded_base, guarded_pop);
+  // Nor does it implement FEAT_SSBS, FEAT_SME, FEAT_HBC, FEAT_CMPBR,
+  // FEAT_XS, or FEAT_WFxT.
+  for (const std::uint32_t instruction : {
+           0xd503'413fU, // msr ssbs, #1
+           0xd503'477fU, // smstart
+           0x5400'0030U, // bc.eq .+4
+           0x7400'0022U, // cbgt w2, w0, .+4
+           0xd503'323fU, // dsb oshnxs
+           0xd503'1003U, // wfet x3
+           0xd503'103eU, // wfit x30
+       })
+    require_undefined_compilation(guarded_base + 0x1000, instruction);
 }
 
 void unknown_word_is_guest_illegal() {

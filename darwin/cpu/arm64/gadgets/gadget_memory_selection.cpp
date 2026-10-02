@@ -5,15 +5,12 @@
 
 #include "cpu/arm64/layout/assembly_layout.hpp"
 
-#include "../detail/atomic_floating.hpp"
 #include "../detail/floating_compare.hpp"
 #include "../detail/bfloat_conversion.hpp"
 #include "../detail/bfloat_dot.hpp"
 #include "../detail/bfloat_matrix.hpp"
 #include "../detail/bfloat_multiply.hpp"
 #include "../detail/half_fused_long.hpp"
-#include "../detail/half_dot.hpp"
-#include "../detail/half_matrix.hpp"
 #include "../detail/floating_complex.hpp"
 #include "../detail/floating_arithmetic.hpp"
 #include "../detail/floating_conversion.hpp"
@@ -22,9 +19,7 @@
 #include "../detail/floating_integer_conversion.hpp"
 #include "../detail/floating_reciprocal.hpp"
 #include "../detail/floating_round.hpp"
-#include "../detail/floating_scale.hpp"
 #include "../detail/fp_state_access.hpp"
-#include "../detail/fp8.hpp"
 #include "../detail/instruction_primitives.hpp"
 #include "../detail/integer_multiply.hpp"
 #include "cpu/host_capabilities.hpp"
@@ -523,16 +518,6 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 #undef UML_SIMD_LANE_COUNT
 #undef UML_SIMD_LANE_DIRECTION
 
-[[nodiscard]] bool host_has_sm3() noexcept
-{
-	return host_capabilities().has(ArmFeature::sm3);
-}
-
-[[nodiscard]] bool host_has_sm4() noexcept
-{
-	return host_capabilities().has(ArmFeature::sm4);
-}
-
 [[nodiscard]] bool host_has_sha1() noexcept
 {
 	return host_capabilities().has(ArmFeature::sha1);
@@ -579,54 +564,9 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 	return host_capabilities().has(ArmFeature::i8mm);
 }
 
-[[nodiscard]] bool host_has_lrcpc3() noexcept
-{
-	return host_capabilities().has(ArmFeature::lrcpc3);
-}
-
-[[nodiscard]] bool host_has_lut() noexcept
-{
-	return host_capabilities().has(ArmFeature::lut);
-}
-
 [[nodiscard]] bool host_has_frintts() noexcept
 {
 	return host_capabilities().has(ArmFeature::frintts);
-}
-
-[[nodiscard]] bool host_has_faminmax() noexcept
-{
-	return host_capabilities().has(ArmFeature::faminmax);
-}
-
-[[nodiscard]] bool host_has_fp8() noexcept
-{
-	return host_capabilities().has(ArmFeature::fp8);
-}
-
-[[nodiscard]] bool host_has_fp8dot2() noexcept
-{
-	return host_capabilities().has(ArmFeature::fp8dot2);
-}
-
-[[nodiscard]] bool host_has_fp8dot4() noexcept
-{
-	return host_capabilities().has(ArmFeature::fp8dot4);
-}
-
-[[nodiscard]] bool host_has_fp8fma() noexcept
-{
-	return host_capabilities().has(ArmFeature::fp8fma);
-}
-
-[[nodiscard]] bool host_has_f8f16mm() noexcept
-{
-	return host_capabilities().has(ArmFeature::f8f16mm);
-}
-
-[[nodiscard]] bool host_has_f8f32mm() noexcept
-{
-	return host_capabilities().has(ArmFeature::f8f32mm);
 }
 
 [[nodiscard]] bool host_has_bf16() noexcept
@@ -638,69 +578,6 @@ using SimdLaneCounts = std::array<SimdLaneGadgets, 4>;
 {
 	return host_capabilities().has(ArmFeature::fhm);
 }
-
-[[nodiscard]] bool host_has_f16mm() noexcept
-{
-	return host_capabilities().has(ArmFeature::f16mm);
-}
-
-[[nodiscard]] bool host_has_f16f32mm() noexcept
-{
-	return host_capabilities().has(ArmFeature::f16f32mm);
-}
-
-[[nodiscard]] bool host_has_f16f32dot() noexcept
-{
-	return host_capabilities().has(ArmFeature::f16f32dot);
-}
-
-[[nodiscard]] bool host_has_lsfe() noexcept
-{
-	return host_capabilities().has(ArmFeature::lsfe);
-}
-
-using AtomicFloatingVariants = std::array<Gadget, 6>;
-using AtomicFloatingBases = std::array<AtomicFloatingVariants, 2>;
-using AtomicFloatingOperations = std::array<AtomicFloatingBases, 5>;
-using AtomicFloatingGadgets = std::array<AtomicFloatingOperations, 4>;
-
-#define UML_ATOMIC_FLOATING_VARIANTS(implementation, size, operation) \
-	AtomicFloatingBases{ \
-		AtomicFloatingVariants{ \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_relaxed, \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_release, \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire, \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_release, \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_relaxed, \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release}, \
-		AtomicFloatingVariants{ \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_relaxed_sp, \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_release_sp, \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_sp, \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_load_acquire_release_sp, \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_relaxed_sp, \
-			uml_arm64_gadget_atomic_floating_##implementation##_##size##_##operation##_store_release_sp}}
-#define UML_ATOMIC_FLOATING_OPERATIONS(implementation, size) \
-	AtomicFloatingOperations{ \
-		UML_ATOMIC_FLOATING_VARIANTS(implementation, size, add), \
-		UML_ATOMIC_FLOATING_VARIANTS(implementation, size, max), \
-		UML_ATOMIC_FLOATING_VARIANTS(implementation, size, maxnm), \
-		UML_ATOMIC_FLOATING_VARIANTS(implementation, size, min), \
-		UML_ATOMIC_FLOATING_VARIANTS(implementation, size, minnm)}
-#define UML_ATOMIC_FLOATING_GADGETS(implementation) AtomicFloatingGadgets{ \
-	UML_ATOMIC_FLOATING_OPERATIONS(implementation, bf), \
-	UML_ATOMIC_FLOATING_OPERATIONS(implementation, h), \
-	UML_ATOMIC_FLOATING_OPERATIONS(implementation, s), \
-	UML_ATOMIC_FLOATING_OPERATIONS(implementation, d)}
-
-extern constexpr auto atomic_floating_native_gadgets =
-	UML_ATOMIC_FLOATING_GADGETS(native);
-extern constexpr auto atomic_floating_software_gadgets =
-	UML_ATOMIC_FLOATING_GADGETS(software);
-
-#undef UML_ATOMIC_FLOATING_GADGETS
-#undef UML_ATOMIC_FLOATING_OPERATIONS
-#undef UML_ATOMIC_FLOATING_VARIANTS
 
 using AtomicRegisterGadgets = std::array<Gadget, 4>;
 using AtomicSizeGadgets = std::array<AtomicRegisterGadgets, 4>;
@@ -742,21 +619,6 @@ extern constexpr AtomicOperationGadgets atomic_rmw_gadgets{
 #undef UML_ATOMIC_SIZE_GADGETS
 #undef UML_ATOMIC_REGISTER_GADGETS
 
-using AtomicPair128OrderGadgets = std::array<Gadget, 4>;
-using AtomicPair128Gadgets = std::array<AtomicPair128OrderGadgets, 3>;
-#define UML_ATOMIC_PAIR128_GADGETS(operation) \
-	AtomicPair128OrderGadgets{ \
-		uml_arm64_gadget_atomic_pair128_##operation##_relaxed, \
-		uml_arm64_gadget_atomic_pair128_##operation##_release, \
-		uml_arm64_gadget_atomic_pair128_##operation##_acquire, \
-		uml_arm64_gadget_atomic_pair128_##operation##_acquire_release}
-extern constexpr AtomicPair128Gadgets atomic_pair128_gadgets{
-	UML_ATOMIC_PAIR128_GADGETS(clr),
-	UML_ATOMIC_PAIR128_GADGETS(set),
-	UML_ATOMIC_PAIR128_GADGETS(swp),
-};
-#undef UML_ATOMIC_PAIR128_GADGETS
-
 using CompareSwapGadgets = std::array<AtomicSizeGadgets, 4>;
 using CompareSwapPairSizeGadgets = std::array<AtomicRegisterGadgets, 2>;
 using CompareSwapPairGadgets = std::array<CompareSwapPairSizeGadgets, 4>;
@@ -781,83 +643,6 @@ extern constexpr CompareSwapGadgets compare_swap_gadgets{
 };
 #undef UML_COMPARE_SWAP_SIZE_GADGETS
 #undef UML_COMPARE_SWAP_REGISTER_GADGETS
-
-using RcwScalarOrderingGadgets = std::array<AtomicRegisterGadgets, 4>;
-using RcwScalarSoftGadgets = std::array<RcwScalarOrderingGadgets, 2>;
-using RcwScalarGadgets = std::array<RcwScalarSoftGadgets, 4>;
-#define UML_RCW_SCALAR_REGISTER_GADGETS(operation, soft, ordering) \
-	AtomicRegisterGadgets{ \
-		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rr, \
-		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rz, \
-		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zr, \
-		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zz}
-#define UML_RCW_SCALAR_ACQUIRE_GADGETS(operation, soft, ordering, suppressed) \
-	AtomicRegisterGadgets{ \
-		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_rr, \
-		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##suppressed##_rz, \
-		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##ordering##_zr, \
-		uml_arm64_gadget_rcw_scalar_##operation##_##soft##_##suppressed##_zz}
-#define UML_RCW_SCALAR_ORDERING_GADGETS(operation, soft) \
-	RcwScalarOrderingGadgets{ \
-		UML_RCW_SCALAR_REGISTER_GADGETS(operation, soft, relaxed), \
-		UML_RCW_SCALAR_REGISTER_GADGETS(operation, soft, release), \
-		UML_RCW_SCALAR_ACQUIRE_GADGETS( \
-			operation, soft, acquire, relaxed), \
-		UML_RCW_SCALAR_ACQUIRE_GADGETS( \
-			operation, soft, acquire_release, release)}
-#define UML_RCW_SCALAR_SOFT_GADGETS(operation) RcwScalarSoftGadgets{ \
-	UML_RCW_SCALAR_ORDERING_GADGETS(operation, hard), \
-	UML_RCW_SCALAR_ORDERING_GADGETS(operation, soft)}
-extern constexpr RcwScalarGadgets rcw_scalar_gadgets{
-	UML_RCW_SCALAR_SOFT_GADGETS(cas),
-	UML_RCW_SCALAR_SOFT_GADGETS(bic),
-	UML_RCW_SCALAR_SOFT_GADGETS(swp),
-	UML_RCW_SCALAR_SOFT_GADGETS(orr),
-};
-#undef UML_RCW_SCALAR_SOFT_GADGETS
-#undef UML_RCW_SCALAR_ORDERING_GADGETS
-#undef UML_RCW_SCALAR_ACQUIRE_GADGETS
-#undef UML_RCW_SCALAR_REGISTER_GADGETS
-
-using RcwPairCasOrderingGadgets = std::array<AtomicRegisterGadgets, 4>;
-using RcwPairCasGadgets = std::array<RcwPairCasOrderingGadgets, 2>;
-#define UML_RCW_PAIR_CAS_VARIANTS(soft, ordering) AtomicRegisterGadgets{ \
-	uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_rr, \
-	uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_rz, \
-	uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_zr, \
-	uml_arm64_gadget_rcw_pair_cas_##soft##_##ordering##_zz}
-#define UML_RCW_PAIR_CAS_ORDERINGS(soft) RcwPairCasOrderingGadgets{ \
-	UML_RCW_PAIR_CAS_VARIANTS(soft, relaxed), \
-	UML_RCW_PAIR_CAS_VARIANTS(soft, release), \
-	UML_RCW_PAIR_CAS_VARIANTS(soft, acquire), \
-	UML_RCW_PAIR_CAS_VARIANTS(soft, acquire_release)}
-extern constexpr RcwPairCasGadgets rcw_pair_cas_gadgets{
-	UML_RCW_PAIR_CAS_ORDERINGS(hard),
-	UML_RCW_PAIR_CAS_ORDERINGS(soft),
-};
-#undef UML_RCW_PAIR_CAS_ORDERINGS
-#undef UML_RCW_PAIR_CAS_VARIANTS
-
-using RcwPairModifyOrderingGadgets = std::array<Gadget, 4>;
-using RcwPairModifySoftGadgets =
-	std::array<RcwPairModifyOrderingGadgets, 2>;
-using RcwPairModifyGadgets = std::array<RcwPairModifySoftGadgets, 3>;
-#define UML_RCW_PAIR_MODIFY_ORDERINGS(operation, soft) \
-	RcwPairModifyOrderingGadgets{ \
-		uml_arm64_gadget_rcw_pair_##operation##_##soft##_relaxed, \
-		uml_arm64_gadget_rcw_pair_##operation##_##soft##_release, \
-		uml_arm64_gadget_rcw_pair_##operation##_##soft##_acquire, \
-		uml_arm64_gadget_rcw_pair_##operation##_##soft##_acquire_release}
-#define UML_RCW_PAIR_MODIFY_SOFTNESS(operation) RcwPairModifySoftGadgets{ \
-	UML_RCW_PAIR_MODIFY_ORDERINGS(operation, hard), \
-	UML_RCW_PAIR_MODIFY_ORDERINGS(operation, soft)}
-extern constexpr RcwPairModifyGadgets rcw_pair_modify_gadgets{
-	UML_RCW_PAIR_MODIFY_SOFTNESS(bic),
-	UML_RCW_PAIR_MODIFY_SOFTNESS(swp),
-	UML_RCW_PAIR_MODIFY_SOFTNESS(orr),
-};
-#undef UML_RCW_PAIR_MODIFY_SOFTNESS
-#undef UML_RCW_PAIR_MODIFY_ORDERINGS
 
 #define UML_COMPARE_SWAP_PAIR_REGISTER_GADGETS(ordering, size) \
 	AtomicRegisterGadgets{ \
@@ -966,8 +751,8 @@ extern constexpr ExclusivePairStoreGadgets exclusive_pair_store_gadgets{
 #undef UML_EXCLUSIVE_PAIR_STORE_SIZE_GADGETS
 #undef UML_EXCLUSIVE_PAIR_STORE_REGISTER_GADGETS
 
-using OrderedLoadGadgets = ExclusiveLoadGadgets;
-using OrderedStoreGadgets = ExclusiveLoadGadgets;
+using OrderedLoadGadgets = ExclusiveLoadSizeGadgets;
+using OrderedStoreGadgets = ExclusiveLoadSizeGadgets;
 
 #define UML_ORDERED_REGISTER_GADGETS(kind, ordering, size) \
 	ExclusiveLoadRegisterGadgets{ \
@@ -979,14 +764,10 @@ using OrderedStoreGadgets = ExclusiveLoadGadgets;
 		UML_ORDERED_REGISTER_GADGETS(kind, ordering, h), \
 		UML_ORDERED_REGISTER_GADGETS(kind, ordering, w), \
 		UML_ORDERED_REGISTER_GADGETS(kind, ordering, x)}
-extern constexpr OrderedLoadGadgets ordered_load_gadgets{
-	UML_ORDERED_SIZE_GADGETS(load, relaxed),
-	UML_ORDERED_SIZE_GADGETS(load, acquire),
-};
-extern constexpr OrderedStoreGadgets ordered_store_gadgets{
-	UML_ORDERED_SIZE_GADGETS(store, limited),
-	UML_ORDERED_SIZE_GADGETS(store, release),
-};
+extern constexpr OrderedLoadGadgets ordered_load_gadgets =
+	UML_ORDERED_SIZE_GADGETS(load, acquire);
+extern constexpr OrderedStoreGadgets ordered_store_gadgets =
+	UML_ORDERED_SIZE_GADGETS(store, release);
 #undef UML_ORDERED_SIZE_GADGETS
 #undef UML_ORDERED_REGISTER_GADGETS
 
@@ -1016,107 +797,6 @@ extern constexpr RcpcStoreGadgets rcpc_store_gadgets{
 };
 #undef UML_RCPC_REGISTER_GADGETS
 
-using SimdOrderedAddressGadgets = std::array<Gadget, 2>;
-using SimdOrderedScalarGadgets =
-	std::array<SimdOrderedAddressGadgets, 4>;
-#define UML_SIMD_ORDERED_ADDRESS_GADGETS(direction, size) \
-	SimdOrderedAddressGadgets{ \
-		uml_arm64_gadget_simd_ordered_##direction##_##size##_r, \
-		uml_arm64_gadget_simd_ordered_##direction##_##size##_s}
-extern constexpr SimdOrderedScalarGadgets simd_ordered_scalar_load_gadgets{
-	UML_SIMD_ORDERED_ADDRESS_GADGETS(load, b),
-	UML_SIMD_ORDERED_ADDRESS_GADGETS(load, h),
-	UML_SIMD_ORDERED_ADDRESS_GADGETS(load, s),
-	UML_SIMD_ORDERED_ADDRESS_GADGETS(load, d),
-};
-extern constexpr SimdOrderedScalarGadgets simd_ordered_scalar_store_gadgets{
-	UML_SIMD_ORDERED_ADDRESS_GADGETS(store, b),
-	UML_SIMD_ORDERED_ADDRESS_GADGETS(store, h),
-	UML_SIMD_ORDERED_ADDRESS_GADGETS(store, s),
-	UML_SIMD_ORDERED_ADDRESS_GADGETS(store, d),
-};
-#undef UML_SIMD_ORDERED_ADDRESS_GADGETS
-
-using SimdOrderedImplementationGadgets =
-	std::array<SimdOrderedAddressGadgets, 2>;
-extern constexpr SimdOrderedImplementationGadgets simd_ordered_q_load_gadgets{
-	SimdOrderedAddressGadgets{
-		uml_arm64_gadget_simd_ordered_load_q_r_fallback,
-		uml_arm64_gadget_simd_ordered_load_q_s_fallback},
-	SimdOrderedAddressGadgets{
-		uml_arm64_gadget_simd_ordered_load_q_r_native,
-		uml_arm64_gadget_simd_ordered_load_q_s_native},
-};
-extern constexpr SimdOrderedImplementationGadgets simd_ordered_q_store_gadgets{
-	SimdOrderedAddressGadgets{
-		uml_arm64_gadget_simd_ordered_store_q_r_fallback,
-		uml_arm64_gadget_simd_ordered_store_q_s_fallback},
-	SimdOrderedAddressGadgets{
-		uml_arm64_gadget_simd_ordered_store_q_r_native,
-		uml_arm64_gadget_simd_ordered_store_q_s_native},
-};
-
-using SimdOrderedLaneGadgets =
-	std::array<std::array<SimdOrderedAddressGadgets, 2>, 2>;
-extern constexpr SimdOrderedLaneGadgets simd_ordered_lane_gadgets{
-	std::array<SimdOrderedAddressGadgets, 2>{
-		SimdOrderedAddressGadgets{
-			uml_arm64_gadget_simd_ordered_store_lane0_r,
-			uml_arm64_gadget_simd_ordered_store_lane0_s},
-		SimdOrderedAddressGadgets{
-			uml_arm64_gadget_simd_ordered_store_lane1_r,
-			uml_arm64_gadget_simd_ordered_store_lane1_s}},
-	std::array<SimdOrderedAddressGadgets, 2>{
-		SimdOrderedAddressGadgets{
-			uml_arm64_gadget_simd_ordered_load_lane0_r,
-			uml_arm64_gadget_simd_ordered_load_lane0_s},
-		SimdOrderedAddressGadgets{
-			uml_arm64_gadget_simd_ordered_load_lane1_r,
-			uml_arm64_gadget_simd_ordered_load_lane1_s}},
-};
-
-using OrderedPairRegisterGadgets = std::array<Gadget, 4>;
-using OrderedPairAddressGadgets =
-	std::array<OrderedPairRegisterGadgets, 2>;
-using OrderedPairGadgets = std::array<OrderedPairAddressGadgets, 2>;
-#define UML_ORDERED_PAIR_REGISTER_GADGETS(kind, size, address) \
-	OrderedPairRegisterGadgets{ \
-		uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_rr, \
-		uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_rz, \
-		uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_zr, \
-		uml_arm64_gadget_ordered_pair_##kind##_##size##_##address##_zz}
-extern constexpr OrderedPairGadgets ordered_pair_load_gadgets{
-	OrderedPairAddressGadgets{
-		UML_ORDERED_PAIR_REGISTER_GADGETS(load, w, no),
-		UML_ORDERED_PAIR_REGISTER_GADGETS(load, w, post)},
-	OrderedPairAddressGadgets{
-		UML_ORDERED_PAIR_REGISTER_GADGETS(load, x, no),
-		UML_ORDERED_PAIR_REGISTER_GADGETS(load, x, post)},
-};
-extern constexpr OrderedPairGadgets ordered_pair_store_gadgets{
-	OrderedPairAddressGadgets{
-		UML_ORDERED_PAIR_REGISTER_GADGETS(store, w, no),
-		UML_ORDERED_PAIR_REGISTER_GADGETS(store, w, pre)},
-	OrderedPairAddressGadgets{
-		UML_ORDERED_PAIR_REGISTER_GADGETS(store, x, no),
-		UML_ORDERED_PAIR_REGISTER_GADGETS(store, x, pre)},
-};
-#undef UML_ORDERED_PAIR_REGISTER_GADGETS
-
-using ConsistentPairGadgets = std::array<Gadget, 4>;
-#define UML_CONSISTENT_PAIR_GADGETS(kind) ConsistentPairGadgets{ \
-	uml_arm64_gadget_consistent_pair_##kind##_rr, \
-	uml_arm64_gadget_consistent_pair_##kind##_rz, \
-	uml_arm64_gadget_consistent_pair_##kind##_zr, \
-	uml_arm64_gadget_consistent_pair_##kind##_zz}
-extern constexpr auto consistent_pair_ldap_gadgets =
-	UML_CONSISTENT_PAIR_GADGETS(ldap);
-extern constexpr auto consistent_pair_ldapp_gadgets =
-	UML_CONSISTENT_PAIR_GADGETS(ldapp);
-extern constexpr auto consistent_pair_store_gadgets =
-	UML_CONSISTENT_PAIR_GADGETS(store);
-#undef UML_CONSISTENT_PAIR_GADGETS
-
 static_assert(offsetof(CpuState, registers) == 0);
 static_assert(offsetof(CpuState, sp) == 248);
 static_assert(offsetof(CpuState, pc) == 256);
@@ -1126,31 +806,24 @@ static_assert(offsetof(CpuState, fpcr) == 784);
 static_assert(offsetof(CpuState, fpsr) == 788);
 static_assert(offsetof(CpuState, tls) == 792);
 static_assert(offsetof(CpuState, tbi_enabled) == 800);
-static_assert(offsetof(CpuState, accdata) == 804);
-static_assert(offsetof(CpuState, pstate_ssbs) == 808);
-static_assert(offsetof(CpuState, pstate_dit) == 809);
-static_assert(offsetof(CpuState, pstate_sm) == 810);
-static_assert(offsetof(CpuState, pstate_za) == 811);
-static_assert(offsetof(CpuState, pstate_daif_access) == 812);
-static_assert(offsetof(CpuState, pstate_daif) == 813);
-static_assert(offsetof(CpuState, exclusive_address) == 816);
-static_assert(offsetof(CpuState, exclusive_key) == 824);
-static_assert(offsetof(CpuState, exclusive_value) == 832);
-static_assert(offsetof(CpuState, exclusive_value2) == 840);
-static_assert(offsetof(CpuState, exclusive_version) == 848);
-static_assert(offsetof(CpuState, exclusive_size) == 856);
-static_assert(offsetof(CpuState, deferred_vectors) == 864);
-static_assert(offsetof(CpuState, deferred_fpcr) == 872);
-static_assert(offsetof(CpuState, deferred_fpsr) == 876);
-static_assert(offsetof(CpuState, fp_loaded) == 880);
-static_assert(offsetof(CpuState, fp_dirty) == 881);
-static_assert(offsetof(CpuState, fpmr) == 888);
-static_assert(offsetof(CpuState, gadget_zero) == 896);
-static_assert(offsetof(CpuState, gadget_host_fpcr) == 904);
-static_assert(offsetof(CpuState, gadget_host_fpsr) == 912);
-static_assert(offsetof(CpuState, gadget_fp_active) == 920);
-static_assert(offsetof(CpuState, gadget_indirect_miss) == 928);
-static_assert(offsetof(CpuState, gadget_host_fpmr) == 936);
-static_assert(offsetof(CpuState, gadget_fpmr_active) == 944);
+static_assert(offsetof(CpuState, pstate_dit) == 801);
+static_assert(offsetof(CpuState, pstate_daif_access) == 802);
+static_assert(offsetof(CpuState, pstate_daif) == 803);
+static_assert(offsetof(CpuState, exclusive_address) == 808);
+static_assert(offsetof(CpuState, exclusive_key) == 816);
+static_assert(offsetof(CpuState, exclusive_value) == 824);
+static_assert(offsetof(CpuState, exclusive_value2) == 832);
+static_assert(offsetof(CpuState, exclusive_version) == 840);
+static_assert(offsetof(CpuState, exclusive_size) == 848);
+static_assert(offsetof(CpuState, deferred_vectors) == 856);
+static_assert(offsetof(CpuState, deferred_fpcr) == 864);
+static_assert(offsetof(CpuState, deferred_fpsr) == 868);
+static_assert(offsetof(CpuState, fp_loaded) == 872);
+static_assert(offsetof(CpuState, fp_dirty) == 873);
+static_assert(offsetof(CpuState, gadget_zero) == 880);
+static_assert(offsetof(CpuState, gadget_host_fpcr) == 888);
+static_assert(offsetof(CpuState, gadget_host_fpsr) == 896);
+static_assert(offsetof(CpuState, gadget_fp_active) == 904);
+static_assert(offsetof(CpuState, gadget_indirect_miss) == 912);
 
 } // namespace uml::cpu::arm64::gadgets::selection

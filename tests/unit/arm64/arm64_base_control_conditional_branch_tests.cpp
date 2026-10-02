@@ -12,6 +12,8 @@ namespace {
 
 namespace gadgets = arm64::gadgets;
 
+extern "C" void uml_arm64_gadget_illegal();
+
 void production_specialization()
 {
 	constexpr auto base = engine_test_code_base;
@@ -30,18 +32,17 @@ void production_specialization()
 			"B.cond targets were not resolved during translation");
 		entries.insert(built.program.words()[0]);
 
+		/* BC.cond needs FEAT_HBC, which the virtual CPU does not
+		 * implement. */
 		const auto consistent = gadgets::Builder{}.build(
 			base, std::array{instruction | 0x10U});
 		require(consistent.complete &&
-				consistent.program.words().size() ==
-					built.program.words().size() &&
+				consistent.program.words().size() == 2U &&
 				consistent.program.words()[0] ==
-					built.program.words()[0] &&
-				consistent.program.words()[1] ==
-					built.program.words()[1] &&
-				consistent.program.words()[2] ==
-					built.program.words()[2],
-			"BC.cond did not share the preselected condition gadget");
+					reinterpret_cast<std::uintptr_t>(
+						uml_arm64_gadget_illegal) &&
+				consistent.program.words()[1] == base,
+			"BC.cond did not select strict illegal");
 	}
 	require(entries.size() == 15U,
 		"B.cond did not select 14 conditions plus the always form");

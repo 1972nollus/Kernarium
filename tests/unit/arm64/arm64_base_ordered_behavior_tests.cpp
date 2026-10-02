@@ -94,12 +94,6 @@ void check_success(engine::EngineHarness &harness,
 		const auto source = ordered::read_gpr(initial, rt);
 		ordered::store_integer(expected_memory, memory_offset, size, source);
 	}
-	if (variant.instruction_class == ordered::ScalarClass::writeback) {
-		const auto adjusted = variant.load ? base + size : base - size;
-		const bool suppress = variant.load && rn != 31U && rn == rt;
-		if (!suppress)
-			ordered::write_base(expected, rn, adjusted);
-	}
 
 	const std::array regions{
 		engine::MemoryRegion{
@@ -174,8 +168,6 @@ void stores_invalidate_reservations(engine::EngineHarness &harness)
 		auto expected = initial;
 		expected.registers[5] = monitored;
 		expected.registers[6] = 1;
-		if (variant.instruction_class == ordered::ScalarClass::writeback)
-			expected.registers[3] = ordered::address;
 		expected.exclusive_address = ~std::uint64_t{0};
 		expected.exclusive_key = 0;
 		expected.exclusive_size = 0;
@@ -215,7 +207,7 @@ void stores_invalidate_reservations(engine::EngineHarness &harness)
 
 void stores_are_single_copy_atomic(engine::EngineHarness &harness)
 {
-	constexpr auto &variant = ordered::scalar_variants[10];
+	constexpr auto &variant = ordered::scalar_variants[4];
 	static_assert(variant.name == "stlr-w");
 	constexpr std::uint32_t initial_value = 0x1357'9bdfU;
 	constexpr std::uint32_t first_value = 0xaaaa'aaaaU;

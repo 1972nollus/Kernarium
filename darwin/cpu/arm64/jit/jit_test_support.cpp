@@ -35,7 +35,6 @@ namespace {
       .accesses_fp_state = compiled.accesses_fp_state,
       .link_target_safe = compiled.link_target_safe,
       .native_fp = compiled.native_fp,
-      .native_fpmr = compiled.native_fpmr,
       .guest_illegal = compiled.guest_illegal,
   };
   return result;
@@ -677,10 +676,8 @@ CompiledCode compile_block_with_feature_override(
 }
 
 std::vector<std::uint32_t>
-lower_memory_barrier_for_testing(std::uint32_t instruction, bool native_sb,
-                                 bool native_xs) {
-  const auto lowered =
-      lower_memory_barrier(instruction, native_sb, native_xs);
+lower_memory_barrier_for_testing(std::uint32_t instruction, bool native_sb) {
+  const auto lowered = lower_memory_barrier(instruction, native_sb);
   return {lowered.words.begin(), lowered.words.begin() + lowered.count};
 }
 

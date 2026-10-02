@@ -18,9 +18,7 @@ extern "C" {
 	UML_DECLARE_ORDERED(kind, ordering, h) \
 	UML_DECLARE_ORDERED(kind, ordering, w) \
 	UML_DECLARE_ORDERED(kind, ordering, x)
-UML_DECLARE_ORDERED_SIZES(load, relaxed)
 UML_DECLARE_ORDERED_SIZES(load, acquire)
-UML_DECLARE_ORDERED_SIZES(store, limited)
 UML_DECLARE_ORDERED_SIZES(store, release)
 #undef UML_DECLARE_ORDERED_SIZES
 #undef UML_DECLARE_ORDERED
@@ -47,20 +45,6 @@ UML_DECLARE_RCPC_STORE(h)
 UML_DECLARE_RCPC_STORE(w)
 UML_DECLARE_RCPC_STORE(x)
 #undef UML_DECLARE_RCPC_STORE
-
-#define UML_DECLARE_WRITEBACK(kind, size, mode) \
-	void uml_arm64_gadget_ordered_writeback_##kind##_##size##_##mode();
-UML_DECLARE_WRITEBACK(store, w, r)
-UML_DECLARE_WRITEBACK(store, w, z)
-UML_DECLARE_WRITEBACK(store, x, r)
-UML_DECLARE_WRITEBACK(store, x, z)
-UML_DECLARE_WRITEBACK(load, w, r)
-UML_DECLARE_WRITEBACK(load, w, z)
-UML_DECLARE_WRITEBACK(load, w, suppress)
-UML_DECLARE_WRITEBACK(load, x, r)
-UML_DECLARE_WRITEBACK(load, x, z)
-UML_DECLARE_WRITEBACK(load, x, suppress)
-#undef UML_DECLARE_WRITEBACK
 }
 
 namespace ordered = arm64_ordered_memory_test;
@@ -72,7 +56,6 @@ namespace {
 using Gadget = void (*)();
 using RegisterModes = std::array<Gadget, 2>;
 using SizeModes = std::array<RegisterModes, 4>;
-using OrderingModes = std::array<SizeModes, 2>;
 
 #define UML_REGISTER_MODES(kind, ordering, size) RegisterModes{ \
 	uml_arm64_gadget_ordered_##kind##_##ordering##_##size##_r, \
@@ -82,14 +65,8 @@ using OrderingModes = std::array<SizeModes, 2>;
 	UML_REGISTER_MODES(kind, ordering, h), \
 	UML_REGISTER_MODES(kind, ordering, w), \
 	UML_REGISTER_MODES(kind, ordering, x)}
-constexpr OrderingModes ordered_load{
-	UML_SIZE_MODES(load, relaxed),
-	UML_SIZE_MODES(load, acquire),
-};
-constexpr OrderingModes ordered_store{
-	UML_SIZE_MODES(store, limited),
-	UML_SIZE_MODES(store, release),
-};
+constexpr SizeModes ordered_load = UML_SIZE_MODES(load, acquire);
+constexpr SizeModes ordered_store = UML_SIZE_MODES(store, release);
 #undef UML_SIZE_MODES
 #undef UML_REGISTER_MODES
 
@@ -114,25 +91,6 @@ constexpr std::array rcpc_store{
 	UML_RCPC_MODES(store, x),
 };
 #undef UML_RCPC_MODES
-
-constexpr std::array writeback_store{
-	RegisterModes{
-		uml_arm64_gadget_ordered_writeback_store_w_r,
-		uml_arm64_gadget_ordered_writeback_store_w_z},
-	RegisterModes{
-		uml_arm64_gadget_ordered_writeback_store_x_r,
-		uml_arm64_gadget_ordered_writeback_store_x_z},
-};
-constexpr std::array writeback_load{
-	std::array<Gadget, 3>{
-		uml_arm64_gadget_ordered_writeback_load_w_r,
-		uml_arm64_gadget_ordered_writeback_load_w_z,
-		uml_arm64_gadget_ordered_writeback_load_w_suppress},
-	std::array<Gadget, 3>{
-		uml_arm64_gadget_ordered_writeback_load_x_r,
-		uml_arm64_gadget_ordered_writeback_load_x_z,
-		uml_arm64_gadget_ordered_writeback_load_x_suppress},
-};
 
 [[nodiscard]] std::uintptr_t address_of(Gadget gadget)
 {
@@ -188,21 +146,14 @@ void exact_translation_selection()
 {
 	std::set<std::uintptr_t> selected;
 	std::set<std::uintptr_t> expected;
-	for (const auto &orders : {ordered_load, ordered_store})
-		for (const auto &sizes : orders)
-			for (const auto &modes : sizes)
-				for (const auto gadget : modes)
-					expected.insert(address_of(gadget));
+	for (const auto &sizes : {ordered_load, ordered_store})
+		for (const auto &modes : sizes)
+			for (const auto gadget : modes)
+				expected.insert(address_of(gadget));
 	for (const auto &modes : rcpc_load)
 		for (const auto gadget : modes)
 			expected.insert(address_of(gadget));
 	for (const auto &modes : rcpc_store)
-		for (const auto gadget : modes)
-			expected.insert(address_of(gadget));
-	for (const auto &modes : writeback_store)
-		for (const auto gadget : modes)
-			expected.insert(address_of(gadget));
-	for (const auto &modes : writeback_load)
 		for (const auto gadget : modes)
 			expected.insert(address_of(gadget));
 
@@ -212,8 +163,7 @@ void exact_translation_selection()
 				for (const unsigned rt : {3U, 31U}) {
 					const auto gadget =
 						(variant.load ? ordered_load : ordered_store)
-							[variant.operation][variant.size_code]
-							[rt == 31U];
+							[variant.size_code][rt == 31U];
 					require_selected(
 						ordered::scalar_instruction(
 							variant, 0, rn, rt),
@@ -221,57 +171,31 @@ void exact_translation_selection()
 				}
 			continue;
 		}
-		if (variant.instruction_class ==
-		    ordered::ScalarClass::rcpc_no_offset ||
-		    variant.instruction_class ==
-		    ordered::ScalarClass::rcpc_unscaled) {
-			const int offset =
-				variant.instruction_class ==
-						ordered::ScalarClass::rcpc_unscaled ?
-					-17 : 0;
-			for (const unsigned rn : {2U, 31U})
-				for (const unsigned rt : {3U, 31U}) {
-					const auto gadget =
-						variant.load ?
-							rcpc_load[rcpc_load_variant(variant)]
-								[rt == 31U] :
-							rcpc_store[variant.size_code]
-								[rt == 31U];
-					const auto operand =
-						rn | (static_cast<std::uintptr_t>(rt) << 5) |
-						(static_cast<std::uintptr_t>(
-							static_cast<std::uint64_t>(
-								static_cast<std::int64_t>(
-									offset))) << 10);
-					require_selected(
-						ordered::scalar_instruction(
-							variant, offset, rn, rt),
-						gadget, operand, selected);
-				}
-			continue;
-		}
-
-		const unsigned size_index = variant.size_code - 2U;
+		const int offset =
+			variant.instruction_class ==
+					ordered::ScalarClass::rcpc_unscaled ?
+				-17 : 0;
 		for (const unsigned rn : {2U, 31U})
 			for (const unsigned rt : {3U, 31U}) {
 				const auto gadget =
 					variant.load ?
-						writeback_load[size_index][rt == 31U] :
-						writeback_store[size_index][rt == 31U];
+						rcpc_load[rcpc_load_variant(variant)]
+							[rt == 31U] :
+						rcpc_store[variant.size_code]
+							[rt == 31U];
+				const auto operand =
+					rn | (static_cast<std::uintptr_t>(rt) << 5) |
+					(static_cast<std::uintptr_t>(
+						static_cast<std::uint64_t>(
+							static_cast<std::int64_t>(
+								offset))) << 10);
 				require_selected(
-					ordered::scalar_instruction(variant, 0, rn, rt),
-					gadget, scalar_operand(rn, rt), selected);
+					ordered::scalar_instruction(
+						variant, offset, rn, rt),
+					gadget, operand, selected);
 			}
-		if (variant.load) {
-			constexpr unsigned overlap = 2U;
-			require_selected(
-				ordered::scalar_instruction(
-					variant, 0, overlap, overlap),
-				writeback_load[size_index][2],
-				scalar_operand(overlap, overlap), selected);
-		}
 	}
-	if (selected != expected || selected.size() != 68U)
+	if (selected != expected || selected.size() != 42U)
 		std::abort();
 }
 

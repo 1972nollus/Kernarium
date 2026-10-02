@@ -64,27 +64,22 @@ struct RunResult final {
 
 using Handler = RunResult (*)(CpuState &, GuestMemory &, std::uint32_t);
 
-/* uml_arm64_jit_execute_memory: ordered and exact-fault memory forms, LS64,
- * and FEAT_LSFE atomics. FEAT_MOPS has its own helper,
- * uml_arm64_jit_execute_mops. */
+/* uml_arm64_jit_execute_memory: ordered and exact-fault memory forms.
+ * FEAT_MOPS has its own helper, uml_arm64_jit_execute_mops. */
 [[nodiscard]] Handler memory_handler(std::uint32_t instruction) noexcept;
-/* uml_arm64_jit_execute_exclusive: exclusives, compare-and-swap, LSE and
- * LSUI atomics, FEAT_LSE128, and read-check-write. */
+/* uml_arm64_jit_execute_exclusive: exclusives, compare-and-swap, and LSE
+ * atomics. */
 [[nodiscard]] Handler exclusive_handler(std::uint32_t instruction) noexcept;
 /* uml_arm64_jit_execute_ordered: the store half of the ordered scalar
- * load/store family, STLR and STLLR. */
+ * load/store family, STLR. */
 [[nodiscard]] Handler ordered_store_handler(std::uint32_t instruction) noexcept;
 
-[[nodiscard]] RunResult load_store_64b(CpuState &, GuestMemory &,
-                                       std::uint32_t);
 [[nodiscard]] RunResult load_store_unsigned(CpuState &, GuestMemory &,
                                             std::uint32_t);
 [[nodiscard]] RunResult load_literal(CpuState &, GuestMemory &,
                                      std::uint32_t);
 [[nodiscard]] RunResult load_store_other(CpuState &, GuestMemory &,
                                          std::uint32_t);
-[[nodiscard]] RunResult load_store_simd_ordered(CpuState &, GuestMemory &,
-                                                std::uint32_t);
 [[nodiscard]] RunResult load_store_exclusive(CpuState &, GuestMemory &,
                                              std::uint32_t);
 [[nodiscard]] RunResult load_store_compare_swap(CpuState &, GuestMemory &,
@@ -94,20 +89,7 @@ using Handler = RunResult (*)(CpuState &, GuestMemory &, std::uint32_t);
                                                      std::uint32_t);
 [[nodiscard]] RunResult load_store_atomic(CpuState &, GuestMemory &,
                                           std::uint32_t);
-[[nodiscard]] RunResult load_store_atomic_floating(CpuState &, GuestMemory &,
-                                                   std::uint32_t);
-[[nodiscard]] RunResult load_store_atomic_pair_128(CpuState &, GuestMemory &,
-                                                   std::uint32_t);
-[[nodiscard]] RunResult load_store_rcw(CpuState &, GuestMemory &,
-                                       std::uint32_t);
-[[nodiscard]] RunResult load_store_rcw_pair(CpuState &, GuestMemory &,
-                                            std::uint32_t);
 [[nodiscard]] RunResult load_store_rcpc(CpuState &, GuestMemory &,
                                         std::uint32_t);
-[[nodiscard]] RunResult load_store_ordered_pair(CpuState &, GuestMemory &,
-                                                std::uint32_t);
-[[nodiscard]] RunResult load_store_ordered_writeback(CpuState &,
-                                                     GuestMemory &,
-                                                     std::uint32_t);
 
 } // namespace uml::cpu::arm64::jit::semantic

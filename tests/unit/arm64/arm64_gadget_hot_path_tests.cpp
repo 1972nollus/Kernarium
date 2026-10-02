@@ -37,7 +37,7 @@ void uml_arm64_gadget_vector_pair_load128_2();
 void uml_arm64_gadget_simd_structure_contig_q_2_load_1();
 void uml_arm64_gadget_simd_replicate_s_q_3_0();
 void uml_arm64_gadget_simd_lane_h_4_load_2();
-void uml_arm64_gadget_ordered_writeback_load_x_r();
+void uml_arm64_gadget_ordered_load_acquire_x_r();
 void uml_arm64_gadget_atomic_ldadd_relaxed_x_rr();
 void uml_arm64_gadget_exclusive_load_relaxed_x_r();
 void uml_arm64_gadget_simd_three_same_sshl_8b();
@@ -397,10 +397,9 @@ int main()
 		require_predecoded(program, instruction);
 	}
 	{
-		constexpr std::uint32_t instruction =
-			0x1980'0800U | (3U << 30) | (1U << 22) | (3U << 5) | 2U;
-		const auto program = build_one(instruction); // ldapr x2,[x3],#8
-		require_gadget(program, uml_arm64_gadget_ordered_writeback_load_x_r);
+		constexpr std::uint32_t instruction = 0xc8df'fc62U;
+		const auto program = build_one(instruction); // ldar x2,[x3]
+		require_gadget(program, uml_arm64_gadget_ordered_load_acquire_x_r);
 		require_predecoded(program, instruction);
 	}
 	{

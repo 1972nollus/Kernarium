@@ -435,13 +435,6 @@ void supported_arithmetic_extensions_are_one_to_one()
 			contract::operands(contract::vector(16U, second),
 					   contract::vector(5U, first),
 					   contract::vector(0U, destination))});
-	if (host.has(::uml::cpu::ArmFeature::lut))
-		check({"vector lookup", 0x4e40'2000U |
-			binary_fields, contract::rm_rn_rd_mask, true,
-			contract::vector_state_metadata,
-			contract::operands(contract::vector(16U, second),
-					   contract::vector(5U, first),
-					   contract::vector(0U, destination))});
 
 	if (host.has(::uml::cpu::ArmFeature::bf16)) {
 		check({"reduced-precision conversion",
@@ -472,58 +465,10 @@ void supported_arithmetic_extensions_are_one_to_one()
 					   contract::vector(5U, first),
 					   contract::vector(0U, destination))});
 	}
-	if (host.has(::uml::cpu::ArmFeature::f16f32dot))
-		check({"half-width dot accumulator", 0x4e80'fc00U |
-			binary_fields, contract::rm_rn_rd_mask, true,
-			contract::native_fp_metadata,
-			contract::operands(contract::vector(16U, second),
-					   contract::vector(5U, first),
-					   contract::vector(0U, destination))});
 	if (host.has(::uml::cpu::ArmFeature::fhm))
 		check({"half-width fused-long accumulator", 0x4e20'ec00U |
 			binary_fields, contract::rm_rn_rd_mask, true,
 			contract::native_fp_metadata,
-			contract::operands(contract::vector(16U, second),
-					   contract::vector(5U, first),
-					   contract::vector(0U, destination))});
-	if (host.has(::uml::cpu::ArmFeature::f16f32mm))
-		check({"half-width matrix accumulator", 0x4e40'ec00U |
-			binary_fields, contract::rm_rn_rd_mask, true,
-			contract::native_fp_metadata,
-			contract::operands(contract::vector(16U, second),
-					   contract::vector(5U, first),
-					   contract::vector(0U, destination))});
-
-	if (host.has(::uml::cpu::ArmFeature::fp8)) {
-		check({"compact floating convert up", 0x2e21'7800U |
-			unary_fields, contract::rn_rd_mask, true,
-			contract::native_fp_fpmr_metadata,
-			contract::operands(contract::vector(5U, first),
-					   contract::vector(0U, destination))});
-		check({"compact floating convert down", 0x0e40'f400U |
-			binary_fields, contract::rm_rn_rd_mask, true,
-			contract::native_fp_fpmr_metadata,
-			contract::operands(contract::vector(16U, second),
-					   contract::vector(5U, first),
-					   contract::vector(0U, destination))});
-		check({"compact floating scale", 0x6ea0'fc00U |
-			binary_fields, contract::rm_rn_rd_mask, true,
-			contract::native_fp_metadata,
-			contract::operands(contract::vector(16U, second),
-					   contract::vector(5U, first),
-					   contract::vector(0U, destination))});
-	}
-	if (host.has(::uml::cpu::ArmFeature::fp8dot4))
-		check({"compact floating dot accumulator", 0x0e00'fc00U |
-			binary_fields, contract::rm_rn_rd_mask, true,
-			contract::native_fp_fpmr_metadata,
-			contract::operands(contract::vector(16U, second),
-					   contract::vector(5U, first),
-					   contract::vector(0U, destination))});
-	if (host.has(::uml::cpu::ArmFeature::f8f32mm))
-		check({"compact floating matrix accumulator", 0x6e80'ec00U |
-			binary_fields, contract::rm_rn_rd_mask, true,
-			contract::native_fp_fpmr_metadata,
 			contract::operands(contract::vector(16U, second),
 					   contract::vector(5U, first),
 					   contract::vector(0U, destination))});
@@ -565,21 +510,8 @@ void supported_vector_transform_extensions_are_one_to_one()
 			contract::operands(contract::vector(16U, second),
 					   contract::vector(5U, first),
 					   contract::vector(0U, destination))});
-	if (host.has(::uml::cpu::ArmFeature::sm3))
-		check({"optional vector transform 5", 0xce60'c000U |
-			binary_fields, contract::rm_rn_rd_mask, true,
-			contract::vector_state_metadata,
-			contract::operands(contract::vector(16U, second),
-					   contract::vector(5U, first),
-					   contract::vector(0U, destination))});
-	if (host.has(::uml::cpu::ArmFeature::sm4))
-		check({"optional vector transform 6", 0xcec0'8400U |
-			unary_fields, contract::rn_rd_mask, true,
-			contract::vector_state_metadata,
-			contract::operands(contract::vector(5U, first),
-					   contract::vector(0U, destination))});
 	if (host.sha3)
-		check({"optional vector transform 7", 0xce60'8c00U |
+		check({"optional vector transform 5", 0xce60'8c00U |
 			binary_fields, contract::rm_rn_rd_mask, true,
 			contract::vector_state_metadata,
 			contract::operands(contract::vector(16U, second),

@@ -16,7 +16,6 @@ namespace {
 
 constexpr std::uint32_t fpcr_mask = arm64::fpcr_writable_mask;
 constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
-constexpr std::uint64_t fpmr_mask = 0x0000'003f'ff7f'c1ffULL;
 constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
 
 struct CounterBounds final {
@@ -187,20 +186,6 @@ void floating_status_boundary_round_trips(test::Harness &harness)
 		.event = engine_tests::ExpectedEvent::system_call,
 		.native = floating,
 	});
-}
-
-void floating_mode(test::Harness &harness)
-{
-	const auto mode_feature =
-		engine_tests::NativeRequirements::features(
-			::uml::cpu::ArmFeature::fp8);
-	check_read(harness, "base-read-floating-mode", 0xd53b'4440U,
-		test::state().fpmr & fpmr_mask, mode_feature);
-	check_write(harness, "base-write-floating-mode", 0xd51b'4440U,
-		mode_feature,
-		[](arm64::CpuState &expected, std::uint64_t source) {
-			expected.fpmr = source & fpmr_mask;
-		});
 }
 
 void condition_flags(test::Harness &harness)
@@ -404,6 +389,7 @@ void inaccessible_and_reserved(test::Harness &harness)
 	for (const auto instruction : {
 		0xd538'1000U, 0xd518'1000U, // SCTLR_EL1
 		0xd53f'ffe3U, 0xd51f'ffe3U,
+		0xd53b'4440U, 0xd51b'4440U, // FPMR (FEAT_FP8)
 		0xd550'0000U, 0xd570'0000U, // system-register pair
 		0xd550'0001U, 0xd570'0001U, // reserved odd Rt
 		0xd55f'ffe2U, 0xd57f'ffe2U,
@@ -429,7 +415,6 @@ int main()
 	thread_pointer(harness);
 	floating_control_status(harness);
 	floating_status_boundary_round_trips(harness);
-	floating_mode(harness);
 	condition_flags(harness);
 	data_independent_timing(harness);
 	fixed_read_only_registers(harness);

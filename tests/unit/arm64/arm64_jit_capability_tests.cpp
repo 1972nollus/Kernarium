@@ -203,7 +203,7 @@ void pointer_authentication_compiles_as_absent()
 }
 
 void require_translation_feature_gate(std::uint32_t instruction,
-	uml::cpu::ArmFeature feature, bool writes_native_fpmr = false)
+	uml::cpu::ArmFeature feature)
 {
 	const std::array guest{instruction};
 	const auto unavailable =
@@ -212,7 +212,6 @@ void require_translation_feature_gate(std::uint32_t instruction,
 	require(unavailable.guest_illegal);
 	require(unavailable.guest_instructions == 1);
 	require(!unavailable.native_fp);
-	require(!unavailable.native_fpmr);
 
 	const auto available =
 		uml::cpu::arm64::jit::testing::compile_block_with_feature_override(
@@ -220,7 +219,6 @@ void require_translation_feature_gate(std::uint32_t instruction,
 	require(!available.guest_illegal);
 	require(available.guest_instructions == 1);
 	require(!available.native_fp);
-	require(available.native_fpmr == writes_native_fpmr);
 }
 
 void stateful_system_instructions_are_translation_feature_gated()
@@ -228,8 +226,6 @@ void stateful_system_instructions_are_translation_feature_gated()
 	using uml::cpu::ArmFeature;
 
 	for (unsigned immediate = 0; immediate < 16; ++immediate) {
-		require_translation_feature_gate(
-			pstate_immediate(immediate, 1), ArmFeature::ssbs);
 		require_translation_feature_gate(
 			pstate_immediate(immediate, 2), ArmFeature::dit);
 		/* MSR TCO stays UNDEFINED even on an MTE host: it compiles to
@@ -245,16 +241,30 @@ void stateful_system_instructions_are_translation_feature_gated()
 		require(compiled.guest_instructions == 1);
 		require(compiled.words == reference.words);
 	}
-	for (unsigned immediate = 2; immediate < 8; ++immediate)
-		require_translation_feature_gate(
-			pstate_immediate(immediate, 3), ArmFeature::sme);
 
-	for (unsigned transfer = 0; transfer < 32; ++transfer) {
-		require_translation_feature_gate(
-			0xd53b'4440U | transfer, ArmFeature::fp8);
-		require_translation_feature_gate(
-			0xd51b'4440U | transfer, ArmFeature::fp8, true);
+	/* The virtual CPU implements none of FEAT_SSBS, FEAT_SME, and FEAT_FP8:
+	 * MSR SSBS, SMSTART, SMSTOP, and MRS and MSR of FPMR compile to the same
+	 * illegal terminal as an unknown word, even on a host that has them. */
+	const auto require_absent = [](std::uint32_t instruction,
+					  ArmFeature feature) {
+		const std::array unknown{0xffff'ffffU};
+		const std::array guest{instruction};
+		const auto reference = uml::cpu::arm64::jit::testing::
+			compile_block_with_feature_override(
+				feature_gate_pc, unknown, feature, true);
+		const auto compiled = uml::cpu::arm64::jit::testing::
+			compile_block_with_feature_override(
+				feature_gate_pc, guest, feature, true);
+		require(compiled.guest_instructions == 1);
+		require(compiled.words == reference.words);
+	};
+	for (unsigned immediate = 0; immediate < 16; ++immediate) {
+		require_absent(pstate_immediate(immediate, 1), ArmFeature::ssbs);
+		require_absent(pstate_immediate(immediate, 3), ArmFeature::sme);
 	}
+	for (unsigned transfer = 0; transfer < 32; ++transfer)
+		for (const std::uint32_t access : {0xd53b'4440U, 0xd51b'4440U})
+			require_absent(access | transfer, ArmFeature::fp8);
 }
 
 void linked_blocks_use_persistent_internal_entry()
@@ -320,9 +330,6 @@ void link_state_metadata_is_consistent()
 	constexpr std::array native_environment{
 		0x1e62'2820U, // fadd d0, d1, d2
 	};
-	constexpr std::array auxiliary_write{
-		0xd51b'4440U, // msr fpmr, x0
-	};
 	const auto plain =
 		uml::cpu::arm64::jit::testing::compile_block(pc, ordinary);
 	const auto vector =
@@ -331,30 +338,18 @@ void link_state_metadata_is_consistent()
 	const auto native =
 		uml::cpu::arm64::jit::testing::compile_block(
 			pc + 0x2000, native_environment);
-	const auto auxiliary =
-		uml::cpu::arm64::jit::testing::compile_block(
-			pc + 0x3000, auxiliary_write);
 
-	require(!plain.accesses_fp_state && !plain.native_fp &&
-		!plain.native_fpmr);
-	require(vector.accesses_fp_state && !vector.native_fp &&
-		!vector.native_fpmr);
+	require(!plain.accesses_fp_state && !plain.native_fp);
+	require(vector.accesses_fp_state && !vector.native_fp);
 	require(native.accesses_fp_state && native.native_fp);
-	const bool native_fp8 = ::uml::platform::apple::probed_host_capabilities().has(
-		::uml::cpu::ArmFeature::fp8);
-	require(auxiliary.guest_illegal == !native_fp8);
-	require(auxiliary.accesses_fp_state == native_fp8);
-	require(auxiliary.native_fpmr == native_fp8);
-	for (const auto *compiled :
-	     std::array{&plain, &vector, &native, &auxiliary})
-		require(compiled->accesses_fp_state ||
-			(!compiled->native_fp && !compiled->native_fpmr));
+	for (const auto *compiled : std::array{&plain, &vector, &native})
+		require(compiled->accesses_fp_state || !compiled->native_fp);
 }
 
 void link_selector_layout_is_dense_and_compact()
 {
-	constexpr std::array<std::uint8_t, 10> capability_masks{
-		0, 1, 2, 3, 6, 7, 10, 11, 14, 15,
+	constexpr std::array<std::uint8_t, 6> capability_masks{
+		0, 1, 2, 3, 6, 7,
 	};
 	require(uml::cpu::arm64::jit::testing::
 			link_capability_selector_count() ==

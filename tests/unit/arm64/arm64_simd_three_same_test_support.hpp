@@ -46,7 +46,6 @@ struct Registers final {
 	cpu.nzcv = 0xa000'0000U;
 	cpu.fpcr = 0x0040'0000U;
 	cpu.fpsr = seed & 1U;
-	cpu.fpmr = 0x0123'4567'89ab'cdefULL;
 	cpu.tls = 0xfedc'ba98'7654'3210ULL;
 	return cpu;
 }
