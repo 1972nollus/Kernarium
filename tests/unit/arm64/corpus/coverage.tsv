@@ -627,7 +627,7 @@ FPSIMD-0109	FP&SIMD	FCVTZU (scalar, fixed-point)	766	40	758
 FPSIMD-0110	FP&SIMD	FCVTZU (scalar, integer)	196	115	188
 FPSIMD-0111	FP&SIMD	FCVTZU (vector, fixed-point)	499	471	937
 FPSIMD-0112	FP&SIMD	FCVTZU (vector, integer)	181	161	261
-FPSIMD-0113	FP&SIMD	FDIV (scalar)	141	73	132
+FPSIMD-0113	FP&SIMD	FDIV (scalar)	151	73	133
 FPSIMD-0114	FP&SIMD	FDIV (vector)	171	32	102
 FPSIMD-0115	FP&SIMD	FDOT (8-bit floating-point to half-precision, by element)	0	22	22
 FPSIMD-0116	FP&SIMD	FDOT (8-bit floating-point to half-precision, vector)	0	47	43
