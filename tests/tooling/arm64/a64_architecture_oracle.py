@@ -14,7 +14,7 @@ __import__("sys").dont_write_bytecode = True
 
 import re
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -435,20 +435,13 @@ class ArchitectureCatalog:
                 word,
             )
             result.append(
-                ArchitectureVariant(
-                    section=variant.section,
-                    form=variant.form,
-                    file=variant.file,
-                    encoding=variant.encoding,
-                    mask=variant.mask,
-                    value=variant.value,
-                    constraints=variant.constraints,
+                replace(
+                    variant,
                     feature_expressions=tuple(
                         dict.fromkeys(
                             list(variant.feature_expressions) + dynamic
                         )
                     ),
-                    fields=variant.fields,
                 )
             )
         return result
