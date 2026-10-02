@@ -5,6 +5,7 @@ from __future__ import annotations
 
 __import__("sys").dont_write_bytecode = True
 
+import csv
 import json
 import os
 import re
@@ -237,25 +238,7 @@ def validate_manifest(value: object) -> dict:
     require_hex(aosp["manifest_tree"], 40, "AOSP manifest tree")
     require_hex(aosp["base_manifest_sha256"], 64, "base manifest SHA-256")
     require_hex(aosp["projects_manifest_sha256"], 64, "projects manifest SHA-256")
-    routes = aosp["routes"]
-    if not isinstance(routes, list) or not routes:
-        fail("AOSP routes must be a nonempty array")
-    seen_routes: set[str] = set()
-    for index, raw_route in enumerate(routes):
-        route = require_exact_keys(raw_route, ROUTE_KEYS, f"AOSP route {index}")
-        route_id = require_string(route["route_id"], f"AOSP route {index} ID")
-        if route_id in seen_routes:
-            fail(f"duplicate AOSP route ID: {route_id}")
-        seen_routes.add(route_id)
-        for key in ("manifest_project", "checkout_path"):
-            safe_relative(route[key], f"AOSP route {route_id} {key}")
-        for key in ("base_commit", "base_tree", "final_tree"):
-            require_hex(route[key], 40, f"AOSP route {route_id} {key}")
-        require_integer(route["patch_count"], f"AOSP route {route_id} patch count", minimum=1)
-        require_hex(
-            route["series_manifest_sha256"], 64,
-            f"AOSP route {route_id} series manifest SHA-256",
-        )
+    validate_routes(aosp["routes"], "AOSP")
 
     jelly = require_exact_keys(manifest["jelly"], JELLY_KEYS, "jelly")
     if jelly["repository"] != (
@@ -314,28 +297,7 @@ def validate_manifest(value: object) -> dict:
     ):
         require_hex(orangefox[key], 64, f"orangefox.{key}")
     require_integer(orangefox["patch_count"], "OrangeFox patch count", minimum=1)
-    routes = orangefox["routes"]
-    if not isinstance(routes, list) or not routes:
-        fail("OrangeFox routes must be a nonempty array")
-    seen_routes = set()
-    for index, raw_route in enumerate(routes):
-        route = require_exact_keys(raw_route, ROUTE_KEYS, f"OrangeFox route {index}")
-        route_id = require_string(route["route_id"], f"OrangeFox route {index} ID")
-        if route_id in seen_routes:
-            fail(f"duplicate OrangeFox route ID: {route_id}")
-        seen_routes.add(route_id)
-        for key in ("manifest_project", "checkout_path"):
-            safe_relative(route[key], f"OrangeFox route {route_id} {key}")
-        for key in ("base_commit", "base_tree", "final_tree"):
-            require_hex(route[key], 40, f"OrangeFox route {route_id} {key}")
-        require_integer(
-            route["patch_count"], f"OrangeFox route {route_id} patch count",
-            minimum=1,
-        )
-        require_hex(
-            route["series_manifest_sha256"], 64,
-            f"OrangeFox route {route_id} series manifest SHA-256",
-        )
+    validate_routes(orangefox["routes"], "OrangeFox")
 
     kernel = require_exact_keys(manifest["kernel"], KERNEL_KEYS, "kernel")
     if kernel["family"] != "android-6.18":
@@ -402,6 +364,30 @@ def validate_manifest(value: object) -> dict:
     return manifest
 
 
+def validate_routes(routes: object, label: str) -> None:
+    """Check one route table of a release manifest."""
+    if not isinstance(routes, list) or not routes:
+        fail(f"{label} routes must be a nonempty array")
+    seen_routes: set[str] = set()
+    for index, raw_route in enumerate(routes):
+        route = require_exact_keys(raw_route, ROUTE_KEYS, f"{label} route {index}")
+        route_id = require_string(route["route_id"], f"{label} route {index} ID")
+        if route_id in seen_routes:
+            fail(f"duplicate {label} route ID: {route_id}")
+        seen_routes.add(route_id)
+        for key in ("manifest_project", "checkout_path"):
+            safe_relative(route[key], f"{label} route {route_id} {key}")
+        for key in ("base_commit", "base_tree", "final_tree"):
+            require_hex(route[key], 40, f"{label} route {route_id} {key}")
+        require_integer(
+            route["patch_count"], f"{label} route {route_id} patch count", minimum=1
+        )
+        require_hex(
+            route["series_manifest_sha256"], 64,
+            f"{label} route {route_id} series manifest SHA-256",
+        )
+
+
 def kernel_series_provenance(outer_root: Path) -> tuple[int, str]:
     """Return the ACK line's patch count and ordered patch-content digest."""
     tooling = str(outer_root / "kernel/common/tooling")
@@ -441,16 +427,54 @@ def route_series(android_root: Path, projects: Path) -> list[Path]:
     return [android_root / line.split("\t")[column] for line in lines[1:]]
 
 
-def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
-    aosp_metadata = parse_env(android_root / "metadata/aosp.env")
-    jelly_metadata = parse_env(android_root / "third_party/jelly/metadata.env")
-    orangefox_metadata = parse_env(
-        android_root / "third_party/orangefox/metadata.env"
-    )
+def read_routes(projects: Path, android_root: Path, label: str) -> list[dict]:
+    """Return a route table's release-manifest routes, with series provenance."""
+    lines = [
+        line for line in projects.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    ]
+    routes = []
+    for row in csv.DictReader(lines, delimiter="\t"):
+        patch_count, series_digest = series_provenance(
+            android_root.parents[1], android_root / row["series_dir"]
+        )
+        routes.append({
+            "route_id": row["route_id"],
+            "manifest_project": row["manifest_project"],
+            "checkout_path": row["checkout_path"],
+            "base_commit": row["base_commit"],
+            "base_tree": row["base_tree"],
+            "final_tree": row["final_tree"],
+            "patch_count": patch_count,
+            "series_manifest_sha256": series_digest,
+        })
+    if not routes:
+        fail(f"{label} projects manifest has no routes")
+    return routes
+
+
+TRACKED_SECTIONS = {
+    "aosp": "AOSP",
+    "jelly": "Jelly",
+    "orangefox": "OrangeFox",
+    "kernel": "kernel",
+}
+
+
+def tracked_identity(android_root: Path) -> dict[str, dict]:
+    """Return the release-manifest fields the tracked tree determines.
+
+    The publisher adds each section's per-build fields: the AOSP and
+    OrangeFox routes, Jelly's final commit, and the kernel's release, page
+    size and ELF role. The verifier compares an accepted release against
+    these fields.
+    """
     outer_root = android_root.parents[1]
-    kernel_root = outer_root / "kernel/android-6.18"
-    kernel_metadata = parse_env(kernel_root / "patches/metadata.env")
-    abi_metadata = parse_env(outer_root / "kernel/common/abi/identity.env")
+    aosp = parse_env(android_root / "metadata/aosp.env")
+    jelly = parse_env(android_root / "third_party/jelly/metadata.env")
+    orangefox = parse_env(android_root / "third_party/orangefox/metadata.env")
+    kernel = parse_env(outer_root / "kernel/android-6.18/patches/metadata.env")
+    abi = parse_env(outer_root / "kernel/common/abi/identity.env")
     jelly_count, jelly_digest = series_provenance(
         outer_root, android_root / "third_party/jelly/series"
     )
@@ -458,85 +482,79 @@ def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
     orangefox_count, _ = series_provenance(
         outer_root, *route_series(android_root, orangefox_projects)
     )
-
-    expected = {
-        "manifest_repository": aosp_metadata["ANDROID17_MANIFEST_REPOSITORY"],
-        "manifest_tag": aosp_metadata["ANDROID17_MANIFEST_TAG"],
-        "manifest_commit": aosp_metadata["ANDROID17_MANIFEST_COMMIT"],
-        "manifest_tree": aosp_metadata["ANDROID17_MANIFEST_TREE"],
-        "base_manifest_sha256": aosp_metadata["ANDROID17_BASE_MANIFEST_SHA256"],
-        "projects_manifest_sha256": sha256_path(android_root / "patches/projects.tsv"),
+    kernel_count, kernel_digest = kernel_series_provenance(outer_root)
+    return {
+        "aosp": {
+            "manifest_repository": aosp["ANDROID17_MANIFEST_REPOSITORY"],
+            "manifest_tag": aosp["ANDROID17_MANIFEST_TAG"],
+            "manifest_commit": aosp["ANDROID17_MANIFEST_COMMIT"],
+            "manifest_tree": aosp["ANDROID17_MANIFEST_TREE"],
+            "base_manifest_sha256": aosp["ANDROID17_BASE_MANIFEST_SHA256"],
+            "projects_manifest_sha256": sha256_path(android_root / "patches/projects.tsv"),
+        },
+        "jelly": {
+            "repository": jelly["JELLY_UPSTREAM_REPOSITORY"],
+            "branch": jelly["JELLY_UPSTREAM_BRANCH"],
+            "base_commit": jelly["JELLY_UPSTREAM_COMMIT"],
+            "base_tree": jelly["JELLY_UPSTREAM_TREE"],
+            "final_tree": jelly["JELLY_FINAL_TREE"],
+            "patch_count": jelly_count,
+            "patch_manifest_sha256": jelly_digest,
+            "destination": jelly["JELLY_DESTINATION"],
+            "license": jelly["JELLY_LICENSE"],
+        },
+        "orangefox": {
+            "sync_repository": orangefox["ORANGEFOX_SYNC_REPOSITORY"],
+            "sync_branch": orangefox["ORANGEFOX_SYNC_BRANCH"],
+            "sync_commit": orangefox["ORANGEFOX_SYNC_COMMIT"],
+            "sync_tree": orangefox["ORANGEFOX_SYNC_TREE"],
+            "sync_script_sha256": orangefox["ORANGEFOX_SYNC_SCRIPT_SHA256"],
+            "manifest_repository": orangefox["ORANGEFOX_MANIFEST_REPOSITORY"],
+            "manifest_branch": orangefox["ORANGEFOX_MANIFEST_BRANCH"],
+            "manifest_commit": orangefox["ORANGEFOX_MANIFEST_COMMIT"],
+            "manifest_tree": orangefox["ORANGEFOX_MANIFEST_TREE"],
+            "base_manifest_sha256": orangefox["ORANGEFOX_BASE_MANIFEST_SHA256"],
+            "branch": orangefox["ORANGEFOX_BRANCH"],
+            "bootable_recovery_repository": orangefox["ORANGEFOX_BOOTABLE_RECOVERY_REPOSITORY"],
+            "bootable_recovery_commit": orangefox["ORANGEFOX_BOOTABLE_RECOVERY_COMMIT"],
+            "bootable_recovery_tree": orangefox["ORANGEFOX_BOOTABLE_RECOVERY_TREE"],
+            "vendor_recovery_repository": orangefox["ORANGEFOX_VENDOR_RECOVERY_REPOSITORY"],
+            "vendor_recovery_commit": orangefox["ORANGEFOX_VENDOR_RECOVERY_COMMIT"],
+            "vendor_recovery_tree": orangefox["ORANGEFOX_VENDOR_RECOVERY_TREE"],
+            "se_omapi_repository": orangefox["ORANGEFOX_SE_OMAPI_REPOSITORY"],
+            "se_omapi_commit": orangefox["ORANGEFOX_SE_OMAPI_COMMIT"],
+            "se_omapi_tree": orangefox["ORANGEFOX_SE_OMAPI_TREE"],
+            "device_destination": orangefox["ORANGEFOX_DEVICE_OVERLAY_DESTINATION"],
+            "product": orangefox["ORANGEFOX_PRODUCT"],
+            "release_config": orangefox["ORANGEFOX_RELEASE_CONFIG"],
+            "patch_count": orangefox_count,
+            "projects_manifest_sha256": sha256_path(orangefox_projects),
+            "license": orangefox["ORANGEFOX_LICENSE"],
+        },
+        "kernel": {
+            "family": kernel["UML_KERNEL_FAMILY"],
+            "repository": kernel["UML_KERNEL_UPSTREAM_REPOSITORY"],
+            "branch": kernel["UML_KERNEL_UPSTREAM_BRANCH"],
+            "tag": kernel["UML_KERNEL_UPSTREAM_TAG"],
+            "base_commit": kernel["UML_KERNEL_UPSTREAM_COMMIT"],
+            "base_tree": kernel["UML_KERNEL_UPSTREAM_TREE"],
+            "final_tree": kernel["UML_KERNEL_FINAL_TREE"],
+            "patch_count": kernel_count,
+            "patch_manifest_sha256": kernel_digest,
+            "abi_version": int(abi["DARWIN_UML_ABI_VERSION"]),
+            "abi_fingerprint": abi["DARWIN_UML_ABI_FINGERPRINT"],
+        },
     }
-    for key, value in expected.items():
-        if manifest["aosp"][key] != value:
-            fail(f"release AOSP identity differs from tracked {key}")
 
-    jelly_expected = {
-        "repository": jelly_metadata["JELLY_UPSTREAM_REPOSITORY"],
-        "branch": jelly_metadata["JELLY_UPSTREAM_BRANCH"],
-        "base_commit": jelly_metadata["JELLY_UPSTREAM_COMMIT"],
-        "base_tree": jelly_metadata["JELLY_UPSTREAM_TREE"],
-        "final_tree": jelly_metadata["JELLY_FINAL_TREE"],
-        "patch_count": jelly_count,
-        "patch_manifest_sha256": jelly_digest,
-        "destination": jelly_metadata["JELLY_DESTINATION"],
-        "license": jelly_metadata["JELLY_LICENSE"],
-    }
-    for key, value in jelly_expected.items():
-        if manifest["jelly"][key] != value:
-            fail(f"release Jelly identity differs from tracked {key}")
 
-    orangefox_expected = {
-        "sync_repository": orangefox_metadata["ORANGEFOX_SYNC_REPOSITORY"],
-        "sync_branch": orangefox_metadata["ORANGEFOX_SYNC_BRANCH"],
-        "sync_commit": orangefox_metadata["ORANGEFOX_SYNC_COMMIT"],
-        "sync_tree": orangefox_metadata["ORANGEFOX_SYNC_TREE"],
-        "sync_script_sha256": orangefox_metadata["ORANGEFOX_SYNC_SCRIPT_SHA256"],
-        "manifest_repository": orangefox_metadata["ORANGEFOX_MANIFEST_REPOSITORY"],
-        "manifest_branch": orangefox_metadata["ORANGEFOX_MANIFEST_BRANCH"],
-        "manifest_commit": orangefox_metadata["ORANGEFOX_MANIFEST_COMMIT"],
-        "manifest_tree": orangefox_metadata["ORANGEFOX_MANIFEST_TREE"],
-        "base_manifest_sha256": orangefox_metadata["ORANGEFOX_BASE_MANIFEST_SHA256"],
-        "branch": orangefox_metadata["ORANGEFOX_BRANCH"],
-        "bootable_recovery_repository": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_REPOSITORY"],
-        "bootable_recovery_commit": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_COMMIT"],
-        "bootable_recovery_tree": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_TREE"],
-        "vendor_recovery_repository": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_REPOSITORY"],
-        "vendor_recovery_commit": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_COMMIT"],
-        "vendor_recovery_tree": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_TREE"],
-        "se_omapi_repository": orangefox_metadata["ORANGEFOX_SE_OMAPI_REPOSITORY"],
-        "se_omapi_commit": orangefox_metadata["ORANGEFOX_SE_OMAPI_COMMIT"],
-        "se_omapi_tree": orangefox_metadata["ORANGEFOX_SE_OMAPI_TREE"],
-        "device_destination": orangefox_metadata["ORANGEFOX_DEVICE_OVERLAY_DESTINATION"],
-        "product": orangefox_metadata["ORANGEFOX_PRODUCT"],
-        "release_config": orangefox_metadata["ORANGEFOX_RELEASE_CONFIG"],
-        "patch_count": orangefox_count,
-        "projects_manifest_sha256": sha256_path(orangefox_projects),
-        "license": orangefox_metadata["ORANGEFOX_LICENSE"],
-    }
-    for key, value in orangefox_expected.items():
-        if manifest["orangefox"][key] != value:
-            fail(f"release OrangeFox identity differs from tracked {key}")
-
-    kernel_patch_count, kernel_patch_digest = kernel_series_provenance(
-        android_root.parents[1]
-    )
-    kernel_expected = {
-        "family": kernel_metadata["UML_KERNEL_FAMILY"],
-        "repository": kernel_metadata["UML_KERNEL_UPSTREAM_REPOSITORY"],
-        "branch": kernel_metadata["UML_KERNEL_UPSTREAM_BRANCH"],
-        "tag": kernel_metadata["UML_KERNEL_UPSTREAM_TAG"],
-        "base_commit": kernel_metadata["UML_KERNEL_UPSTREAM_COMMIT"],
-        "base_tree": kernel_metadata["UML_KERNEL_UPSTREAM_TREE"],
-        "final_tree": kernel_metadata["UML_KERNEL_FINAL_TREE"],
-        "patch_count": kernel_patch_count,
-        "patch_manifest_sha256": kernel_patch_digest,
-        "abi_version": int(abi_metadata["DARWIN_UML_ABI_VERSION"]),
-        "abi_fingerprint": abi_metadata["DARWIN_UML_ABI_FINGERPRINT"],
-    }
-    for key, value in kernel_expected.items():
-        if manifest["kernel"][key] != value:
-            fail(f"release kernel identity differs from tracked {key}")
+def verify_tracked_identity(manifest: dict, android_root: Path) -> None:
+    for section, expected in tracked_identity(android_root).items():
+        for key, value in expected.items():
+            if manifest[section][key] != value:
+                fail(
+                    f"release {TRACKED_SECTIONS[section]} identity differs "
+                    f"from tracked {key}"
+                )
 
 
 def verify_acceptance(manifest: dict, acceptance_path: Path) -> None:
