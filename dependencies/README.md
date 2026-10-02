@@ -198,9 +198,9 @@ topic changes both sides at once and needs a matching guest epoch.
 KosmicKrisp's Mesa regressions are enabled with `-Dbuild-tests=true` and
 `-Db_ndebug=false` and selected with
 `meson test -C BUILD --suite kosmickrisp`; the common Vulkan command-lowering
-regressions use `--suite vulkan`, and Apple's emulated `util_barrier` has
-`util_tests --gtest_filter='util_barrier.*'` in `--suite util`. Assertions
-must stay active in those builds.
+regressions use `--suite vulkan`. Assertions must stay active in those builds.
+Apple's emulated `util_barrier` has `util_tests --gtest_filter='util_barrier.*'`
+in `--suite util`, which runs in any `-Dbuild-tests=true` tree.
 
 KosmicKrisp's runtime behaviour is specified in
 [`../docs/graphics.md`](../docs/graphics.md#kosmickrisp-driver-contracts).
