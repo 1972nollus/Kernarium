@@ -6,16 +6,16 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import hashlib
 import json
 import pathlib
 import shutil
-import subprocess
+import sys
 import tempfile
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from pinned_source import manifest_identity, sha256_file, verify_checkout  # noqa: E402
 
-REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
-MANIFEST = REPOSITORY / "dependencies" / "manifest.tsv"
+
 FIXED_FILES = (
     pathlib.Path("LICENSE"),
     pathlib.Path("unittests/Readme.md"),
@@ -28,39 +28,12 @@ def fail(message: str) -> "NoReturn":
     raise SystemExit(f"export-asm-source.py: {message}")
 
 
-def fex_identity() -> tuple[str, str]:
-    for row in MANIFEST.read_text().splitlines():
-        if not row or row.startswith("#") or row.startswith("name\t"):
-            continue
-        fields = row.split("\t")
-        if len(fields) == 7 and fields[0] == "fex":
-            return fields[1], fields[4]
-    fail("the dependency manifest has no FEX input")
-
-
-def git_output(source: pathlib.Path, *arguments: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(source), *arguments],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    return result.stdout.strip()
-
-
-def sha256(path: pathlib.Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def export(source: pathlib.Path, output: pathlib.Path) -> None:
-    version, expected_commit = fex_identity()
-    if not (source / ".git").is_dir():
-        fail(f"FEX source is not a prepared Git checkout: {source}")
-    if git_output(source, "rev-parse", "HEAD") != expected_commit:
-        fail("FEX source is not at the dependency-manifest commit")
-    if git_output(source, "status", "--porcelain", "--untracked-files=all"):
-        fail("FEX source checkout is dirty")
+    try:
+        version, expected_commit = manifest_identity("fex")
+        verify_checkout(source, expected_commit, "FEX")
+    except ValueError as error:
+        fail(str(error))
     if output.exists() or output.is_symlink():
         fail(f"output already exists: {output}")
 
@@ -94,7 +67,7 @@ def export(source: pathlib.Path, output: pathlib.Path) -> None:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source_file, destination)
             records.append(
-                {"path": relative.as_posix(), "sha256": sha256(destination)}
+                {"path": relative.as_posix(), "sha256": sha256_file(destination)}
             )
         identity = {
             "schema": 1,

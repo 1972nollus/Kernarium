@@ -7,7 +7,6 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import concurrent.futures
-import hashlib
 import json
 import os
 import pathlib
@@ -21,18 +20,11 @@ from typing import Any
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import fex_config  # noqa: E402
+from pinned_source import sha256_file  # noqa: E402
 
 
 def fail(message: str) -> "NoReturn":
     raise SystemExit(f"run-asm-corpus.py: {message}")
-
-
-def sha256(path: pathlib.Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def corpus_path(root: pathlib.Path, relative: object) -> pathlib.Path:
@@ -63,9 +55,9 @@ def load_corpus(root: pathlib.Path) -> tuple[dict[str, Any], list[dict[str, Any]
             fail("corpus contains a malformed test record")
         binary = corpus_path(root, record.get("binary"))
         config = corpus_path(root, record.get("config"))
-        if sha256(binary) != record.get("binary_sha256"):
+        if sha256_file(binary) != record.get("binary_sha256"):
             fail(f"binary hash mismatch: {record.get('test')}")
-        if sha256(config) != record.get("config_sha256"):
+        if sha256_file(config) != record.get("config_sha256"):
             fail(f"configuration hash mismatch: {record.get('test')}")
     return metadata, tests
 

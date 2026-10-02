@@ -6,7 +6,6 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import hashlib
 import json
 import os
 import pathlib
@@ -15,45 +14,12 @@ import subprocess
 import sys
 import tempfile
 
-
-REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
-MANIFEST = REPOSITORY / "dependencies" / "manifest.tsv"
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from pinned_source import manifest_identity, sha256_file, verify_checkout  # noqa: E402
 
 
 def fail(message: str) -> "NoReturn":
     raise SystemExit(f"build-asm-corpus.py: {message}")
-
-
-def fex_identity() -> tuple[str, str]:
-    rows = MANIFEST.read_text().splitlines()
-    for row in rows:
-        if not row or row.startswith("#") or row.startswith("name\t"):
-            continue
-        fields = row.split("\t")
-        if len(fields) == 7 and fields[0] == "fex":
-            if "x86-conformance" not in fields[2].split(","):
-                fail("the FEX dependency is not scoped to x86-conformance")
-            return fields[1], fields[4]
-    fail("the dependency manifest has no FEX x86-conformance input")
-
-
-def git_output(source: pathlib.Path, *arguments: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(source), *arguments],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    return result.stdout.strip()
-
-
-def sha256(path: pathlib.Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def verify_export(source: pathlib.Path, expected_commit: str) -> None:
@@ -77,7 +43,7 @@ def verify_export(source: pathlib.Path, expected_commit: str) -> None:
             fail(f"exported FEX source has an unsafe path: {relative}")
         expected_paths.add(relative)
         path = source / relative
-        if not path.is_file() or sha256(path) != record.get("sha256"):
+        if not path.is_file() or sha256_file(path) != record.get("sha256"):
             fail(f"exported FEX source hash mismatch: {relative}")
 
     actual_paths = {
@@ -90,11 +56,8 @@ def verify_export(source: pathlib.Path, expected_commit: str) -> None:
 
 
 def verify_source(source: pathlib.Path, expected_commit: str) -> None:
-    if (source / ".git").is_dir():
-        if git_output(source, "rev-parse", "HEAD") != expected_commit:
-            fail("FEX source is not at the dependency-manifest commit")
-        if git_output(source, "status", "--porcelain", "--untracked-files=all"):
-            fail("FEX source checkout is dirty")
+    if (source / ".git").exists():
+        verify_checkout(source, expected_commit, "FEX")
         return
     verify_export(source, expected_commit)
 
@@ -153,8 +116,11 @@ def assemble(
 
 
 def build(source: pathlib.Path, output: pathlib.Path, mode: str) -> None:
-    version, expected_commit = fex_identity()
-    verify_source(source, expected_commit)
+    try:
+        version, expected_commit = manifest_identity("fex")
+        verify_source(source, expected_commit)
+    except ValueError as error:
+        fail(str(error))
     if output.exists() or output.is_symlink():
         fail(f"output already exists: {output}")
     nasm = os.environ.get("UML_FEX_NASM", "nasm")
@@ -202,8 +168,8 @@ def build(source: pathlib.Path, output: pathlib.Path, mode: str) -> None:
                     "source": relative.as_posix(),
                     "binary": binary.relative_to(temporary_root).as_posix(),
                     "config": config.relative_to(temporary_root).as_posix(),
-                    "binary_sha256": sha256(binary),
-                    "config_sha256": sha256(config),
+                    "binary_sha256": sha256_file(binary),
+                    "config_sha256": sha256_file(config),
                     "host_features": parsed.get("HOSTFEATURES", []),
                     "disabled_upstream": test_name in disabled,
                 }
