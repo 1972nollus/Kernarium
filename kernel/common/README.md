@@ -14,6 +14,11 @@ This directory contains only source-family-independent inputs:
 - `tooling/kernel_series.py`: replay, verification, and regeneration of a
   line's ordered generated series; it reads and writes `metadata.env` through
   that parser;
+- `tooling/config-fragments.sh`: the kernel configuration composition both
+  kernel builds source. It copies a product's first fragment as the starting
+  `.config`, applies each later one through `scripts/config`, and after
+  `olddefconfig` requires every requested symbol to hold the value its last
+  fragment asked for;
 - `tooling/verify-console-input.py` and `tooling/console_input_probe.cpp`: the
   console PTY assertion described below; and
 - [`video/`](video/README.md): the private Virtio video wire contract and the

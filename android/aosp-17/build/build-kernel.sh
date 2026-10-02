@@ -10,6 +10,7 @@ COMMON_ROOT="$ROOT_DIR/kernel/common"
 METADATA="$LINE_ROOT/patches/metadata.env"
 CONFIG_FRAGMENT="$LINE_ROOT/config/android.fragment"
 PAGE_FRAGMENT="$COMMON_ROOT/config/page-16k.fragment"
+CONFIG_FRAGMENTS="$COMMON_ROOT/tooling/config-fragments.sh"
 REQUIRED_BUILTINS="$LINE_ROOT/config/required-builtins.txt"
 FORBIDDEN_OPTIONS="$LINE_ROOT/config/forbidden-options.txt"
 TARGET_WRAPPER="$SCRIPT_DIR/toolchain/aarch64-linux-clang.sh"
@@ -111,7 +112,7 @@ esac
 [ "$JOBS" -gt 0 ] || fail "jobs must be a positive integer"
 
 for input in "$METADATA" "$CONFIG_FRAGMENT" "$PAGE_FRAGMENT" \
-	"$REQUIRED_BUILTINS" "$FORBIDDEN_OPTIONS"; do
+	"$CONFIG_FRAGMENTS" "$REQUIRED_BUILTINS" "$FORBIDDEN_OPTIONS"; do
 	[ -f "$input" ] || fail "required input is missing: $input"
 done
 for tool in "$TARGET_WRAPPER" "$HOST_WRAPPER" "$ELF_VERIFIER"; do
@@ -119,6 +120,8 @@ for tool in "$TARGET_WRAPPER" "$HOST_WRAPPER" "$ELF_VERIFIER"; do
 done
 # shellcheck disable=SC1090
 . "$METADATA"
+# shellcheck disable=SC1090
+. "$CONFIG_FRAGMENTS"
 
 [ -f "$KERNEL_SOURCE/Makefile" ] ||
 	fail "kernel source is not an ACK tree: $KERNEL_SOURCE"
@@ -216,84 +219,6 @@ run_make()
 		"PAHOLE=$PAHOLE" "$@"
 }
 
-apply_page_fragment()
-{
-	while IFS= read -r line; do
-		case "$line" in
-		CONFIG_*=y)
-			symbol=${line%%=*}
-			"$KERNEL_SOURCE/scripts/config" --file "$BUILD_DIR/.config" \
-				-e "${symbol#CONFIG_}"
-			;;
-		CONFIG_*=*)
-			symbol=${line%%=*}
-			value=${line#*=}
-			case "$value" in
-			''|*[!0-9]*) fail "unsupported page-size value: $line" ;;
-			esac
-			"$KERNEL_SOURCE/scripts/config" --file "$BUILD_DIR/.config" \
-				--set-val "${symbol#CONFIG_}" "$value"
-			;;
-		'# CONFIG_'*' is not set')
-			symbol=${line#\# CONFIG_}
-			symbol=${symbol% is not set}
-			"$KERNEL_SOURCE/scripts/config" --file "$BUILD_DIR/.config" \
-				-d "$symbol"
-			;;
-		\#*|'') ;;
-		*) fail "unsupported page-size fragment line: $line" ;;
-		esac
-	done < "$PAGE_FRAGMENT"
-}
-
-verify_config_fragment()
-{
-	fragment=$1
-	mismatches=$(awk -v config="$BUILD_DIR/.config" '
-	function record(symbol, wanted, got) {
-		problems = problems sprintf("  %s: requested %s, resolved %s\n",
-			symbol, wanted, got)
-		count++
-	}
-	BEGIN {
-		while ((getline line < config) > 0) {
-			if (match(line, /^CONFIG_[A-Za-z0-9_]+=/)) {
-				split(line, parts, "=")
-				built[parts[1]] = substr(line, index(line, "=") + 1)
-			} else if (match(line,
-				/^# CONFIG_[A-Za-z0-9_]+ is not set$/)) {
-				split(line, parts, " ")
-				built[parts[2]] = "n"
-			}
-		}
-		close(config)
-	}
-	/^#/ && !/^# CONFIG_[A-Za-z0-9_]+ is not set$/ { next }
-	/^$/ { next }
-	{
-		if (match($0, /^CONFIG_[A-Za-z0-9_]+=/)) {
-			symbol = substr($0, 1, index($0, "=") - 1)
-			wanted = substr($0, index($0, "=") + 1)
-		} else if (match($0, /^# CONFIG_[A-Za-z0-9_]+ is not set$/)) {
-			symbol = $2
-			wanted = "n"
-		} else {
-			next
-		}
-		got = (symbol in built) ? built[symbol] : "n"
-		if (got == wanted || (wanted == "n" && !(symbol in built)))
-			next
-		record(symbol, wanted, (symbol in built) ? got : "absent")
-	}
-	END { if (count > 0) printf "%s", problems }
-	' "$fragment")
-	[ -z "$mismatches" ] || {
-		printf '%s\n' "$fragment did not survive olddefconfig:" >&2
-		printf '%s\n' "$mismatches" >&2
-		fail "kernel configuration differs from its tracked fragment"
-	}
-}
-
 verify_config_policy()
 {
 	while IFS= read -r symbol; do
@@ -312,11 +237,12 @@ verify_config_policy()
 	fi
 }
 
-cp -- "$CONFIG_FRAGMENT" "$BUILD_DIR/.config"
-apply_page_fragment
+set -- "$CONFIG_FRAGMENT" "$PAGE_FRAGMENT"
+uml_kernel_config_compose "$KERNEL_SOURCE" "$BUILD_DIR/.config" "$@" ||
+	fail "cannot compose the kernel configuration"
 run_make olddefconfig
-verify_config_fragment "$CONFIG_FRAGMENT"
-verify_config_fragment "$PAGE_FRAGMENT"
+uml_kernel_config_verify "$BUILD_DIR/.config" "$@" ||
+	fail "kernel configuration does not match its fragments"
 verify_config_policy
 run_make -j"$JOBS"
 
