@@ -7,9 +7,9 @@ Each `uml_emulator` handle owns its runtime context, engine, stop state, and
 copied network callbacks. The callback provider itself remains caller-owned.
 
 A handle admits one run at a time, and so does the process: a run maps its
-embedded kernel at fixed host addresses, so a run on another handle queues at
-the process address-space gate. An unbound callback that cannot identify one
-active context fails closed.
+embedded kernel at fixed host addresses, so runs on different handles
+serialize through the process address-space gate. An unbound callback that
+cannot identify one active context fails closed.
 
 A process runs one guest. A kernel claims guest RAM early in its boot, and a
 process hands guest RAM out once. After a run has claimed it, every later run

@@ -78,10 +78,9 @@ int uml_emulator_get_capabilities(const struct uml_emulator *emulator,
 				 struct uml_emulator_capabilities *capabilities);
 /* A run is synchronous. It copies argv, envp, and all referenced strings
  * before entering the kernel and retains none of them after returning. At
- * most one run may be active on a handle; concurrent runs fail. A process
- * admits one run at a time; a run on another handle queues at process
- * admission until the active run returns. Native mappings belong to the run
- * and are flushed and unmapped before that run returns.
+ * most one run may be active on a handle; concurrent runs fail. An embedded
+ * kernel run is admitted only while no other run is active. Native mappings
+ * belong to the run and are flushed and unmapped before that run returns.
  *
  * A process runs one guest. A kernel claims guest RAM early in its boot, and
  * a process hands guest RAM out once. After a run has claimed it, every later
