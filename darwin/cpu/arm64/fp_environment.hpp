@@ -6,7 +6,6 @@
 namespace uml::cpu::arm64 {
 
 void restore_native_fp_environment(CpuState &cpu) noexcept;
-void restore_native_fpmr_environment(CpuState &cpu) noexcept;
 
 } // namespace uml::cpu::arm64
 

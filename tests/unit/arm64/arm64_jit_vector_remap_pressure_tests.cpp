@@ -620,14 +620,6 @@ void remaining_simd_arithmetic_full_cache_fallbacks_are_exact() {
     check_restricted(
         "bfloat indexed multiply-long accumulator", 0x4fc0'f000U,
         code_base + 0x46'000U);
-  if (host.has(::uml::cpu::ArmFeature::lut)) {
-    check_table(
-        "single-table LUT", 0x4e40'2000U, 12U, 0U, 2U, 3U,
-        code_base + 0x47'000U);
-    check_table(
-        "two-table LUT", 0x4e40'1000U, 11U, 30U, 30U, 30U,
-        code_base + 0x48'000U);
-  }
 }
 
 void destination_live_ins_are_translation_time_exact() {
@@ -712,22 +704,6 @@ void destination_live_ins_are_translation_time_exact() {
       "scalar horizontal pairwise", 0x7e70'd800U | unary_fields, 1U);
   require_vector_live_ins(
       "vector horizontal reduction", 0x6e30'f800U | unary_fields, 1U);
-
-  const auto &host = ::uml::platform::apple::probed_host_capabilities();
-  if (host.has(::uml::cpu::ArmFeature::fp8)) {
-    require_vector_live_ins(
-        "eight-bit convert up", 0x2e21'7800U | unary_fields, 1U);
-    require_vector_live_ins(
-        "eight-bit convert down lower", 0x0e40'f400U | fields, 2U);
-    require_vector_live_ins(
-        "eight-bit convert down upper", 0x4e00'f400U | fields, 3U);
-  }
-  if (host.has(::uml::cpu::ArmFeature::fp8dot4))
-    require_vector_live_ins(
-        "eight-bit dot accumulator", 0x0e00'fc00U | fields, 3U);
-  if (host.has(::uml::cpu::ArmFeature::f8f32mm))
-    require_vector_live_ins(
-        "eight-bit matrix accumulator", 0x6e80'ec00U | fields, 3U);
 }
 
 void lane_reduce_and_shift_live_ins_are_exact() {
@@ -824,12 +800,6 @@ void remaining_simd_arithmetic_live_ins_are_exact() {
     require_vector_live_ins(
         "bfloat matrix accumulator", 0x6e40'ec00U | fields, 3U);
   }
-  if (host.has(::uml::cpu::ArmFeature::f16f32dot)) {
-    require_vector_live_ins(
-        "half vector dot accumulator", 0x4e80'fc00U | fields, 3U);
-    require_vector_live_ins(
-        "half indexed dot accumulator", 0x4f40'9000U | fields, 3U);
-  }
   if (host.has(::uml::cpu::ArmFeature::fhm)) {
     require_vector_live_ins(
         "half vector fused-long accumulator",
@@ -838,10 +808,6 @@ void remaining_simd_arithmetic_live_ins_are_exact() {
         "half indexed fused-long accumulator",
         0x4f80'0000U | fields, 3U);
   }
-  if (host.has(::uml::cpu::ArmFeature::f16f32mm))
-    require_vector_live_ins(
-        "half widening matrix accumulator",
-        0x4e40'ec00U | fields, 3U);
   if (host.has(::uml::cpu::ArmFeature::dotprod)) {
     require_vector_live_ins(
         "integer vector dot accumulator", 0x4e80'9400U | fields, 3U);
@@ -851,13 +817,6 @@ void remaining_simd_arithmetic_live_ins_are_exact() {
   if (host.has(::uml::cpu::ArmFeature::i8mm))
     require_vector_live_ins(
         "integer matrix accumulator", 0x4e80'a400U | fields, 3U);
-  if (host.has(::uml::cpu::ArmFeature::lut)) {
-    require_vector_live_ins(
-        "single-table LUT overwrite", 0x4e40'2000U | fields, 2U);
-    require_vector_live_ins(
-        "two-table LUT overwrite",
-        0x4e40'1000U | (3U << 16U) | (1U << 5U), 3U);
-  }
 }
 
 } // namespace

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "jit_test_support.hpp"
-#include "arm64_fp8_convert_up_engine_test_support.hpp"
 #include "platform/apple/host_features.hpp"
 #include "cpu/arm64/jit/jit_executor.hpp"
 #include "cpu/arm64/jit/jit_test_api.hpp"
@@ -16,7 +15,6 @@ using namespace uml::emulator::tests;
 namespace {
 
 namespace arm64 = uml::cpu::arm64;
-namespace conversion = arm64_fp8_convert_up_engine_test;
 using uml::cpu::arm64::JitExecutor;
 using uml::memory::StaticGuestMemory;
 using Event = ::uml::cpu::EngineEvent;
@@ -380,149 +378,6 @@ void returning_miss_preserves_native_control_and_status() {
   require(native_fpsr() == host_fpsr);
 }
 
-[[nodiscard]] std::uint64_t native_fpmr() {
-  std::uint64_t result{};
-  __asm__ volatile("mrs %0, S3_3_C4_C4_2"
-                   : "=r"(result)
-                   :
-                   : "memory");
-  return result;
-}
-
-void returning_miss_preserves_native_auxiliary_mode() {
-  if (!::uml::platform::apple::probed_host_capabilities().has(
-          ::uml::cpu::ArmFeature::fp8))
-    return;
-  constexpr unsigned long generation = 8412;
-  constexpr std::uint64_t base = 0x118'0000;
-  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
-  constexpr std::uint64_t value = 0xfedc'ba98'7654'3210ULL;
-  constexpr conversion::Form form{false, false, false};
-  constexpr conversion::Registers registers{0, 1};
-  const auto guest_mode = conversion::fpmr(1U, 0U, 3U, 0U);
-
-  JitBacking backing{2};
-  backing.put32(0, 0xd51b'4445U); // msr fpmr, x5
-  backing.put32(4, 0xf940'00e3U); // ldr x3, [x7]
-  backing.put32(8, conversion::instruction(form, registers));
-  backing.put32(12, system_call);
-  backing.put64(page, value);
-  JitMapping mapping{generation, base, backing, 2};
-  JitExecutor executor;
-  StaticGuestMemory memory;
-  arm64::CpuState cpu{};
-  const std::array<std::uint8_t, 8> inputs{
-      0x38U, 0x3cU, 0x40U, 0x44U, 0x48U, 0x4cU, 0x50U, 0x54U};
-  conversion::fill_source(cpu, registers, inputs);
-  cpu.registers[5] = guest_mode;
-  cpu.registers[7] = base + page;
-  cpu.pc = base;
-  auto expected_input = cpu;
-  expected_input.fpmr = guest_mode;
-  const auto expected =
-      conversion::expected_state(expected_input, form, registers);
-  const auto host_mode = native_fpmr();
-
-  require(executor.begin_execution(generation, cpu.pc));
-  const auto run = run_block(executor, memory, generation, cpu);
-  require(run.event == ::uml::cpu::EngineEvent::system_call && run.executed == 4);
-  require(cpu.registers[3] == value);
-  require(cpu.vectors[registers.destination].bytes ==
-          expected.vectors[registers.destination].bytes);
-  require(cpu.fpmr == guest_mode);
-  require(!cpu.gadget_fpmr_active);
-  require(native_fpmr() == host_mode);
-  executor.end_execution();
-  require(native_fpmr() == host_mode);
-}
-
-void terminal_helper_restores_native_auxiliary_mode() {
-  if (!::uml::platform::apple::probed_host_capabilities().has(
-          ::uml::cpu::ArmFeature::fp8))
-    return;
-  constexpr unsigned long generation = 8413;
-  constexpr std::uint64_t base = 0x11c'0000;
-  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
-  constexpr std::uint64_t value = 0x89ab'cdef'0123'4567ULL;
-  constexpr std::uint64_t guest_mode =
-      1U | (std::uint64_t{5} << 16U);
-  JitBacking backing{2};
-  backing.put32(0, 0xd51b'4445U); // msr fpmr, x5
-  backing.put32(4, 0xc8df'fc83U); // ldar x3, [x4]
-  backing.put32(8, system_call);
-  backing.put64(page, value);
-  JitMapping mapping{generation, base, backing, 2};
-  JitExecutor executor;
-  StaticGuestMemory memory;
-  arm64::CpuState cpu{};
-  cpu.registers[4] = base + page;
-  cpu.registers[5] = guest_mode;
-  cpu.pc = base;
-  const auto host_mode = native_fpmr();
-
-  require(executor.begin_execution(generation, cpu.pc));
-  const auto run = run_block(executor, memory, generation, cpu);
-  require(run.event == ::uml::cpu::EngineEvent::continued && run.executed == 2);
-  require(cpu.pc == base + 8);
-  require(cpu.registers[3] == value);
-  require(cpu.fpmr == guest_mode);
-  require(!cpu.gadget_fpmr_active);
-  require(native_fpmr() == host_mode);
-  executor.end_execution();
-  require(native_fpmr() == host_mode);
-}
-
-void auxiliary_mode_requires_owned_environment_and_restores() {
-  if (!::uml::platform::apple::probed_host_capabilities().has(
-          ::uml::cpu::ArmFeature::fp8))
-    return;
-  constexpr unsigned long generation = 8404;
-  constexpr std::uint64_t base = 0xf8'0000;
-  constexpr auto target = base + 0x100;
-  constexpr auto state_source = base + 0x200;
-  constexpr auto auxiliary_source = base + 0x300;
-  constexpr auto page = DARWIN_UML_GUEST_PAGE_SIZE;
-  JitBacking backing{1};
-  backing.put32(target - base, 0xd51b'4443U); // msr fpmr, x3
-  backing.put32(target - base + 4, 0x3dc0'0000U); // ldr q0, [x0]
-  backing.put32(target - base + 8, system_call);
-  backing.put32(state_source - base, vector_add);
-  backing.put32(state_source - base + 4,
-                branch(state_source + 4, target));
-  backing.put32(auxiliary_source - base,
-                0xd51b'4444U); // msr fpmr, x4
-  backing.put32(auxiliary_source - base + 4,
-                branch(auxiliary_source + 4, target));
-  JitMapping mapping{generation, base, backing, 1};
-  JitExecutor executor;
-  StaticGuestMemory memory;
-  arm64::CpuState cpu{};
-  cpu.registers[0] = base + page;
-  cpu.registers[3] = 1;
-  cpu.registers[4] = 2;
-  cpu.pc = target;
-  const auto host_mode = native_fpmr();
-
-  require(executor.begin_execution(generation, cpu.pc));
-  auto run = run_block(executor, memory, generation, cpu);
-  require(run.event == ::uml::cpu::EngineEvent::memory_fault && run.executed == 1);
-  require(native_fpmr() == host_mode);
-
-  cpu.pc = state_source;
-  run = run_block(executor, memory, generation, cpu);
-  require(run.event == ::uml::cpu::EngineEvent::continued && run.executed == 2);
-  require(cpu.pc == target);
-  require(native_fpmr() == host_mode);
-
-  cpu.pc = auxiliary_source;
-  run = run_block(executor, memory, generation, cpu);
-  require(run.event == ::uml::cpu::EngineEvent::memory_fault && run.executed == 3);
-  require(cpu.pc == target + 4);
-  require(executor.fault_address() == cpu.registers[0]);
-  require(native_fpmr() == host_mode);
-  executor.end_execution();
-}
-
 void stateful_store_links_require_publication() {
   constexpr unsigned long generation = 8405;
   constexpr std::uint64_t base = 0xfc'0000;
@@ -709,9 +564,6 @@ int main() {
   semantic_helper_materializes_status_and_restores_host();
   changing_cpu_materializes_the_previous_owner();
   returning_miss_preserves_native_control_and_status();
-  returning_miss_preserves_native_auxiliary_mode();
-  terminal_helper_restores_native_auxiliary_mode();
-  auxiliary_mode_requires_owned_environment_and_restores();
   stateful_store_links_require_publication();
   linked_successor_observes_dirty_constrained_binding();
   linked_vector_fault_is_precise_for_page_size();

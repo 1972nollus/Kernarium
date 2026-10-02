@@ -46,14 +46,10 @@ struct CpuState final {
 	/* Effective TBI0, imported from the task: EL0 data addresses ignore
 	 * their top byte. SP-based addresses are never untagged. */
 	bool tbi_enabled{};
-	std::uint32_t accdata{};
 	/* EL0-visible PSTATE fields controlled by MSR (immediate).  DAIF access is
 	 * explicitly gated because SCTLR_EL1.UMA determines whether userspace may
 	 * use DAIFSet/DAIFClr; the other fields are effective feature state. */
-	bool pstate_ssbs{};
 	bool pstate_dit{};
-	bool pstate_sm{};
-	bool pstate_za{};
 	bool pstate_daif_access{};
 	std::uint8_t pstate_daif{};
 	std::uint64_t exclusive_address{~std::uint64_t{0}};
@@ -67,9 +63,6 @@ struct CpuState final {
 	std::uint32_t deferred_fpsr{};
 	bool fp_loaded{true};
 	bool fp_dirty{};
-	/* FEAT_FPMR state is kept separately from the lazily imported legacy
-	 * FPCR/FPSR/vector image.  Its reset value selects E5M2 with zero scales. */
-	std::uint64_t fpmr{};
 	/* Read-only zero slot for translation-specialized production gadgets.
 	 * Builder may map an architectural XZR source to this byte offset, avoiding
 	 * a runtime register-number comparison. No destination is ever mapped here. */
@@ -91,11 +84,6 @@ struct CpuState final {
 	 * taken for a cache cell. A new exit that records its stream must keep
 	 * to that rule. */
 	void *gadget_indirect_miss{};
-	/* JIT blocks using the optional native mode register retain the host value
-	 * here so returning and terminal C++ helpers can run in the host-owned
-	 * environment without losing the live guest value. */
-	std::uint64_t gadget_host_fpmr{};
-	bool gadget_fpmr_active{};
 	/* Private gadget-engine return predictor: linked calls push the return
 	 * PC with the BlockLink of its block, and a cached return whose site
 	 * cells miss pops the newest record when it names the live link

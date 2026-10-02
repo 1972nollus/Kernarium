@@ -36,7 +36,6 @@ struct CompiledBlock final {
   bool accesses_fp_state{};
   bool link_target_safe{};
   bool native_fp{};
-  bool native_fpmr{};
   bool guest_illegal{};
 };
 

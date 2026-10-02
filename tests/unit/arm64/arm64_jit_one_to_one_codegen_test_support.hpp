@@ -28,13 +28,11 @@ inline constexpr std::uint32_t ra_rm_rn_rd_mask =
 struct Metadata final {
 	bool accesses_fp_state{};
 	bool native_fp{};
-	bool native_fpmr{};
 };
 
 inline constexpr Metadata no_fp_metadata{};
-inline constexpr Metadata vector_state_metadata{true, false, false};
-inline constexpr Metadata native_fp_metadata{true, true, false};
-inline constexpr Metadata native_fp_fpmr_metadata{true, true, true};
+inline constexpr Metadata vector_state_metadata{true, false};
+inline constexpr Metadata native_fp_metadata{true, true};
 
 enum class OperandRole : std::uint8_t {
 	gpr,
@@ -389,8 +387,6 @@ inline void require_metadata(
 		test.name, "generated block has wrong FP-state metadata");
 	require(compiled.native_fp == test.metadata.native_fp, test.name,
 		"generated block has wrong native FP-environment metadata");
-	require(compiled.native_fpmr == test.metadata.native_fpmr, test.name,
-		"generated block has wrong auxiliary FP-environment metadata");
 }
 
 struct OperandRoleCheck final {

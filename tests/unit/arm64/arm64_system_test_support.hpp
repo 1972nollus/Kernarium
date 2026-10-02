@@ -42,14 +42,9 @@ inline void require(
 	cpu.nzcv = 0xa000'0000U;
 	cpu.fpcr = arm64::fpcr_writable_mask;
 	cpu.fpsr = 0xf800'009fU;
-	cpu.fpmr = 0x0000'003f'ff7f'c1ffULL;
 	cpu.tls = 0x1234'5678'9abc'def0ULL;
 	cpu.tbi_enabled = true;
-	cpu.accdata = 0xa1b2'c3d4U;
-	cpu.pstate_ssbs = true;
 	cpu.pstate_dit = true;
-	cpu.pstate_sm = true;
-	cpu.pstate_za = true;
 	cpu.pstate_daif = 0xaU;
 	cpu.exclusive_address = 0x2000;
 	cpu.exclusive_key = 0x3456;

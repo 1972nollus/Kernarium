@@ -8,39 +8,26 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import os
 import pathlib
-import statistics
 import sys
-import time
 
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "integration" / "support"))
-from guest import CORE_CLASSES, Guest  # noqa: E402
-from host_metrics import cpu_time_seconds  # noqa: E402
+from guest import Guest  # noqa: E402
+from guest_bench import (  # noqa: E402
+    add_guest_arguments,
+    halt,
+    measure,
+    print_median,
+)
 
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--emulator", required=True, type=pathlib.Path)
-    parser.add_argument("--rootfs", required=True, type=pathlib.Path)
-    parser.add_argument("--cpus", type=int, default=10)
+    add_guest_arguments(parser, cpus=10, memory=None, engine="gadgets")
     parser.add_argument("--workers", type=int, default=10)
     parser.add_argument("--executions", type=int, default=5000)
     parser.add_argument("--repetitions", type=int, default=5)
-    parser.add_argument(
-        "--engine",
-        choices=("jit", "gadgets"),
-        default="gadgets",
-    )
-    parser.add_argument(
-        "--core-class",
-        choices=CORE_CLASSES,
-        default="performance",
-        help=(
-            "host core class to measure on; 'efficiency' clamps the emulator "
-            "to background QoS so it runs on the E-cores that dominate iOS"
-        ),
-    )
     return parser.parse_args()
 
 
@@ -88,46 +75,19 @@ def main() -> int:
         engine=arguments.engine,
         core_class=arguments.core_class,
     )
-    elapsed_samples: list[float] = []
-    utilization_samples: list[float] = []
     try:
         guest.boot_and_login()
-        command = workload_command(arguments.workers, arguments.executions)
-        for repetition in range(arguments.repetitions):
-            before_cpu = cpu_time_seconds(guest.process_id)
-            before_wall = time.monotonic()
-            result = guest.run_command(command)
-            elapsed = time.monotonic() - before_wall
-            consumed = cpu_time_seconds(guest.process_id) - before_cpu
-            if result.return_code != 0:
-                raise RuntimeError(
-                    f"repetition {repetition + 1} failed "
-                    f"({result.return_code})\n{result.output}"
-                )
-            utilization = consumed / elapsed
-            elapsed_samples.append(elapsed)
-            utilization_samples.append(utilization)
-            print(
-                f"run {repetition + 1}: {elapsed:.3f}s wall, "
-                f"{consumed:.3f}s host CPU ({utilization:.2f} cores)",
-                flush=True,
-            )
-        shutdown_ok = guest.shutdown(60)
-        emulator_status = guest.return_code
-        if not shutdown_ok:
-            raise RuntimeError("emulator did not halt cleanly within 60 seconds")
-        if emulator_status != 0:
-            raise RuntimeError(
-                f"emulator exited with status {emulator_status}"
-            )
+        elapsed, utilization = measure(
+            guest,
+            workload_command(arguments.workers, arguments.executions),
+            arguments.repetitions,
+            30,
+        )
+        halt(guest)
     finally:
         guest.close()
 
-    print(
-        f"median: {statistics.median(elapsed_samples):.3f}s wall, "
-        f"{statistics.median(utilization_samples):.2f} host cores",
-        flush=True,
-    )
+    print_median(elapsed, utilization)
     return 0
 
 

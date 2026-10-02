@@ -84,7 +84,6 @@ private:
     std::uint64_t direct_memory_write_mask{};
     bool accesses_fp_state{};
     bool native_fp{};
-    bool native_fpmr{};
   };
 
   [[nodiscard]] JitFunction
@@ -189,7 +188,7 @@ private:
                               std::uint64_t memory_write_mask,
                               std::uint64_t direct_memory_write_mask,
                               bool accesses_fp_state, bool link_target_safe,
-                              bool native_fp, bool native_fpmr,
+                              bool native_fp,
                               bool guest_illegal
   );
   void clear_cache() noexcept;

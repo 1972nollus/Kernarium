@@ -305,24 +305,6 @@ void frame_shape_saves_and_restores_host_chain_registers() {
           "persistent linked-block epilogue changed");
 }
 
-void ls64_x8_group_keeps_its_native_operation() {
-  constexpr std::uint64_t pc = 0x5a00'2000;
-  constexpr std::array cases{
-      std::array{0xf83f'd0c8U, 0xd400'0001U}, // ld64b x8, [x6]
-      std::array{0xf83f'90c8U, 0xd400'0001U}, // st64b x8, [x6]
-  };
-  constexpr std::array native_words{0xf83f'd100U, 0xf83f'9100U};
-
-  for (std::size_t index = 0; index < cases.size(); ++index) {
-    const auto compiled = jit_test::compile_block_with_feature_override(
-        pc + index * 0x100U, cases[index],
-        ::uml::cpu::ArmFeature::ls64, true);
-    const auto hot = hot_code(compiled);
-    const auto native = std::find(hot.begin(), hot.end(), native_words[index]);
-    require(native != hot.end(), "LS64 did not retain its native operation");
-  }
-}
-
 void memory_base_x8_loads_from_cpu_state() {
   constexpr std::uint64_t pc = 0x5a00'4000;
   constexpr std::array guest{
@@ -508,7 +490,6 @@ int main() {
   two_pointer_literals_use_the_fixed_capacity_pool();
   two_out_of_range_literals_use_independent_cold_fallbacks();
   frame_shape_saves_and_restores_host_chain_registers();
-  ls64_x8_group_keeps_its_native_operation();
   memory_base_x8_loads_from_cpu_state();
   direct_success_path_has_scheduled_remaining_budget();
   conditional_arms_each_use_the_persistent_path();

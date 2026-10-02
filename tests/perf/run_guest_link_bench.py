@@ -6,17 +6,22 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import functools
 import os
 import pathlib
-import statistics
 import sys
-import time
 
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "integration" / "support"))
-from guest import CORE_CLASSES, Guest, GuestFile  # noqa: E402
-from host_metrics import cpu_time_seconds  # noqa: E402
+from guest import CommandResult, Guest, GuestFile  # noqa: E402
+from guest_bench import (  # noqa: E402
+    add_guest_arguments,
+    boot,
+    halt,
+    measure,
+    print_median,
+)
 
 
 GUEST_LINK_LOOP = "/usr/local/libexec/uml-test/guest-link-loop"
@@ -24,33 +29,16 @@ GUEST_LINK_LOOP = "/usr/local/libexec/uml-test/guest-link-loop"
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--emulator", required=True, type=pathlib.Path)
-    parser.add_argument("--rootfs", required=True, type=pathlib.Path)
+    add_guest_arguments(parser, cpus=10, memory="1024M")
     parser.add_argument("--binary", required=True, type=pathlib.Path)
-    parser.add_argument("--cpus", type=int, default=10)
     parser.add_argument("--workers", type=int, default=10)
     parser.add_argument("--repetitions", type=int, default=5)
-    parser.add_argument("--memory", default="1024M")
     parser.add_argument("--boot-timeout", type=int, default=180)
     parser.add_argument(
         "--command-timeout",
         type=int,
         default=30,
         help="seconds allowed for each measured guest repetition",
-    )
-    parser.add_argument(
-        "--engine",
-        choices=("jit", "gadgets"),
-        default="jit",
-    )
-    parser.add_argument(
-        "--core-class",
-        choices=CORE_CLASSES,
-        default="performance",
-        help=(
-            "host core class to measure on; 'efficiency' clamps the emulator "
-            "to background QoS so it runs on the E-cores that dominate iOS"
-        ),
     )
     parser.add_argument(
         "--guest-top-byte-ignore",
@@ -95,6 +83,21 @@ def workload_command(workers: int) -> str:
     )
 
 
+def check_probe_output(
+    workers: int, repetition: int, result: CommandResult
+) -> None:
+    """Print each probe report; require one OK line from every worker."""
+    output_lines = result.output.splitlines()
+    for line in output_lines:
+        if line.startswith("UML_PERF_PROBE "):
+            print(f"guest run {repetition}: {line}", flush=True)
+    if [line for line in output_lines if line == "OK"] != ["OK"] * workers:
+        raise RuntimeError(
+            f"repetition {repetition} returned "
+            f"unexpected output {result.output!r}"
+        )
+
+
 def main() -> int:
     arguments = parse_arguments()
     host_cpus = min(os.cpu_count() or 1, 64)
@@ -107,8 +110,6 @@ def main() -> int:
     if arguments.command_timeout < 1:
         raise ValueError("--command-timeout must be positive")
 
-    elapsed_samples: list[float] = []
-    utilization_samples: list[float] = []
     with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
@@ -129,66 +130,21 @@ def main() -> int:
             )
         },
     ) as guest:
-        if arguments.shell_init:
-            guest.boot_to_shell(arguments.boot_timeout)
-            mounts = guest.run_command(
-                "mount -t tmpfs -o mode=1777 tmpfs /tmp", 30
-            )
-            if mounts.return_code != 0:
-                raise RuntimeError(
-                    f"guest mount setup failed\n{mounts.output}"
-                )
-        else:
-            guest.boot_and_login(arguments.boot_timeout)
-        command = workload_command(arguments.workers)
-        for repetition in range(arguments.repetitions):
-            before_cpu = cpu_time_seconds(guest.process_id)
-            before_wall = time.monotonic()
-            result = guest.run_command(command, arguments.command_timeout)
-            elapsed = time.monotonic() - before_wall
-            consumed = cpu_time_seconds(guest.process_id) - before_cpu
-            if result.return_code != 0:
-                raise RuntimeError(
-                    f"repetition {repetition + 1} failed "
-                    f"({result.return_code})\n{result.output}"
-                )
-            output_lines = result.output.splitlines()
-            probe_lines = [
-                line
-                for line in output_lines
-                if line.startswith("UML_PERF_PROBE ")
-            ]
-            for line in probe_lines:
-                print(f"guest run {repetition + 1}: {line}", flush=True)
-            success_lines = [line for line in output_lines if line == "OK"]
-            if success_lines != ["OK"] * arguments.workers:
-                raise RuntimeError(
-                    f"repetition {repetition + 1} returned "
-                    f"unexpected output {result.output!r}"
-                )
-            utilization = consumed / elapsed
-            elapsed_samples.append(elapsed)
-            utilization_samples.append(utilization)
-            print(
-                f"run {repetition + 1}: {elapsed:.3f}s wall, "
-                f"{consumed:.3f}s host CPU ({utilization:.2f} cores)",
-                flush=True,
-            )
-        shutdown_ok = guest.shutdown(60)
-        emulator_status = guest.return_code
-        if not shutdown_ok:
-            raise RuntimeError("emulator did not halt cleanly within 60 seconds")
-        if emulator_status != 0:
-            raise RuntimeError(
-                f"emulator exited with status {emulator_status}"
-            )
+        boot(guest, arguments.shell_init, arguments.boot_timeout)
+        elapsed, utilization = measure(
+            guest,
+            workload_command(arguments.workers),
+            arguments.repetitions,
+            arguments.command_timeout,
+            check=functools.partial(check_probe_output, arguments.workers),
+        )
+        halt(guest)
 
-    print(
-        f"median: {statistics.median(elapsed_samples):.3f}s wall, "
-        f"{statistics.median(utilization_samples):.2f} host cores "
-        f"[engine={arguments.engine} cores={arguments.core_class} "
+    print_median(
+        elapsed,
+        utilization,
+        f" [engine={arguments.engine} cores={arguments.core_class} "
         f"cpus={arguments.cpus} workers={arguments.workers}]",
-        flush=True,
     )
     return 0
 

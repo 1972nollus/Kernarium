@@ -68,54 +68,6 @@ lse2_alignment_rule 7, write
 	lse2_stub_widths \prefix, z, \write
 .endm
 
-/* SIMD&FP ordered scalar and lane transfers (FEAT_LRCPC3). */
-.irp base, r, s
-	lse2_stub simd_ordered_load_h_\base, 1, 0
-	lse2_stub simd_ordered_load_s_\base, 3, 0
-	lse2_stub simd_ordered_load_d_\base, 7, 0
-	lse2_stub simd_ordered_store_h_\base, 1, 1
-	lse2_stub simd_ordered_store_s_\base, 3, 1
-	lse2_stub simd_ordered_store_d_\base, 7, 1
-.endr
-.irp lane, lane0_r, lane0_s, lane1_r, lane1_s
-	lse2_stub simd_ordered_load_\lane, 7, 0
-	lse2_stub simd_ordered_store_\lane, 7, 1
-.endr
-
-/* STLR pre-index and LDAPR post-index (FEAT_LRCPC3). */
-.irp mode, r, z
-	lse2_stub ordered_writeback_store_w_\mode, 3, 1
-	lse2_stub ordered_writeback_store_x_\mode, 7, 1
-.endr
-.irp mode, r, z, suppress
-	lse2_stub ordered_writeback_load_w_\mode, 3, 0
-	lse2_stub ordered_writeback_load_x_\mode, 7, 0
-.endr
-
-/* Floating-point atomics (FEAT_LSFE) with a general-purpose base. A nested
- * .irp would consume an inner parameter's \() separator, so every level
- * below the outermost is a macro. */
-.macro lse2_stub_floating kind, operation, variant
-	lse2_stub atomic_floating_\kind\()_bf_\operation\()_\variant, 1, 1
-	lse2_stub atomic_floating_\kind\()_h_\operation\()_\variant, 1, 1
-	lse2_stub atomic_floating_\kind\()_s_\operation\()_\variant, 3, 1
-	lse2_stub atomic_floating_\kind\()_d_\operation\()_\variant, 7, 1
-.endm
-
-.macro lse2_stub_floating_variants operation
-	.irp variant, load_relaxed, load_release, load_acquire, load_acquire_release, store_relaxed, store_release
-	lse2_stub_floating software, \operation, \variant
-	lse2_stub_floating native, \operation, \variant
-	.endr
-.endm
-
-.irp operation, add, max, maxnm, min, minnm
-	lse2_stub_floating_variants \operation
-.endr
-
-.purgem lse2_stub_floating_variants
-.purgem lse2_stub_floating
-
 /* LSE read-modify-write and compare-and-swap. */
 .macro lse2_stub_rmw_orders operation
 	.irp order, relaxed, release, acquire, acquire_release
@@ -153,12 +105,8 @@ lse2_alignment_rule 7, write
 .purgem lse2_stub_pair
 
 /* Load-acquire and store-release, including LDAPR, LDAPUR and STLUR. */
-.irp order, relaxed, acquire
-	lse2_stub_modes2 ordered_load_\order, 0
-.endr
-.irp order, limited, release
-	lse2_stub_modes2 ordered_store_\order, 1
-.endr
+	lse2_stub_modes2 ordered_load_acquire, 0
+	lse2_stub_modes2 ordered_store_release, 1
 .irp mode, r, z
 	lse2_stub rcpc_load_zero_h_\mode, 1, 0
 	lse2_stub rcpc_load_zero_w_\mode, 3, 0

@@ -7,7 +7,6 @@
 #include "cpu/arm64/detail/fp_state_access.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/memory_copy_set.hpp"
-#include "cpu/arm64/detail/read_check_write.hpp"
 #include "cpu/arm64/id_registers.hpp"
 
 #include <algorithm>
@@ -26,8 +25,7 @@ JitCompiler::JitCompiler(void *link_context,
         configured_link_resolver_{link_resolver},
         configured_indirect_link_resolver_{indirect_link_resolver},
         track_direct_stores_{track_direct_stores} {
-    attach_family_emitter(&emitter_, &native_fp_, &native_fpmr_,
-                          !track_direct_stores_);
+    attach_family_emitter(&emitter_, &native_fp_, !track_direct_stores_);
     attach_link_resolver(link_context, link_resolver);
     attach_indirect_link_resolver(link_context, indirect_link_resolver);
     emitter_.attach_exit_flush(this, [](void *context) {
@@ -215,7 +213,6 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
         .accesses_fp_state = accesses_fp_state_,
         .link_target_safe = link_target_safe_,
         .native_fp = native_fp_,
-        .native_fpmr = native_fpmr_,
         .guest_illegal = guest_illegal_,
     };
     return result;
@@ -293,18 +290,11 @@ void JitCompiler::select_consecutive_vector_lists(
          (instruction & 0x3fa0'0000U) == 0x08a0'0000U);
     if (native_scalar_lse)
       return false;
-    const bool read_check_write =
-        detail::decode_read_check_write(instruction).recognized;
-    const bool pair_atomic =
-        (instruction & 0xbf20'0c00U) == 0x1920'0000U;
     const bool scalar_atomic =
-        (instruction & 0x3f20'0c00U) == 0x3820'0000U ||
-        (instruction & 0x3f20'0c00U) == 0x1920'0400U;
+        (instruction & 0x3f20'0c00U) == 0x3820'0000U;
     const bool exclusive_or_ordered =
-        (instruction & 0x3f00'0000U) == 0x0800'0000U ||
-        (instruction & 0x3f00'0000U) == 0x0900'0000U;
-    return read_check_write || pair_atomic || scalar_atomic ||
-           exclusive_or_ordered;
+        (instruction & 0x3f00'0000U) == 0x0800'0000U;
+    return scalar_atomic || exclusive_or_ordered;
   }
 
 void JitCompiler::mark_memory_write() noexcept {
@@ -384,7 +374,6 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
 [[nodiscard]] bool JitCompiler::emit_system_register(std::uint32_t instruction) {
     constexpr std::uint32_t fpcr_mask = arm64::fpcr_writable_mask;
     constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
-    constexpr std::uint64_t fpmr_mask = 0x0000'003f'ff7f'c1ffULL;
     const auto system = instruction & 0xffff'ffe0U;
     const unsigned transfer = instruction & 31U;
     const auto write_destination = [&](auto emit_value) {
@@ -462,20 +451,6 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
       emitter_.store_w(8, 15, offsetof(CpuState, fpsr));
       emitter_.emit(0xd51b'4428U); // msr fpsr, x8
       native_fp_ = true;
-      return true;
-    case 0xd53b'4440U: // FPMR
-      write_destination([&](unsigned destination) {
-        emitter_.load_x(destination, 15, offsetof(CpuState, fpmr));
-      });
-      return true;
-    case 0xd51b'4440U:
-      copy_source_to_scratch();
-      mask_register(8, fpmr_mask, true);
-      emitter_.store_x(8, 15, offsetof(CpuState, fpmr));
-      if (translation_supports(ArmFeature::fp8)) {
-        emitter_.emit(0xd51b'4448U); // msr FPMR, x8
-        native_fpmr_ = true;
-      }
       return true;
     case 0xd53b'4200U: // NZCV
       write_destination([&](unsigned destination) {

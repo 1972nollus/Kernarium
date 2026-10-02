@@ -57,7 +57,7 @@ constexpr unsigned long hwcap2_mops = 1UL << 43;
 	/* The timer event stream. arm64 Linux advertises it whenever its
 	 * architected timer generates one, as a promise that WFE wakes at least
 	 * once per period (about 100 us) without an SEV. Both engines complete
-	 * WFE, and the timed WFET, at once, so the promise holds on every host. */
+	 * WFE at once, so the promise holds on every host. */
 	result |= hwcap_evtstrm;
 	if (host.aes)
 		result |= hwcap_aes;

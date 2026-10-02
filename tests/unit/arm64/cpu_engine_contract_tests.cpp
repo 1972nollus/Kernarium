@@ -645,8 +645,7 @@ void test_production_translated_exception_contract()
 		require(boundary.blocks == 1 &&
 			!allocation_injection::fail_next.load(std::memory_order_acquire),
 			"second-block allocation injection was not consumed precisely");
-		require(!cpu.gadget_fp_active && !cpu.gadget_fpmr_active &&
-			native_fpcr() == caller_fpcr,
+		require(!cpu.gadget_fp_active && native_fpcr() == caller_fpcr,
 			"fatal translated cleanup leaked the guest host environment");
 
 		request.boundary = nullptr;
@@ -705,7 +704,7 @@ void test_gadget_post_execution_failure_preserves_prefix_and_reuse()
 		warm.retired_instructions == 2 && cpu.pc == first_target + 4,
 		"gadget indirect-link cache warmup did not reach its boundary");
 	require(cpu.gadget_indirect_miss == nullptr &&
-		!cpu.gadget_fp_active && !cpu.gadget_fpmr_active &&
+		!cpu.gadget_fp_active &&
 		native_fpcr() == caller_fpcr,
 		"gadget cache warmup leaked transient execution state");
 
@@ -722,7 +721,7 @@ void test_gadget_post_execution_failure_preserves_prefix_and_reuse()
 	require(!allocation_injection::fail_next.load(std::memory_order_acquire),
 		"post-execution cache allocation injection was not consumed");
 	require(cpu.gadget_indirect_miss == nullptr &&
-		!cpu.gadget_fp_active && !cpu.gadget_fpmr_active &&
+		!cpu.gadget_fp_active &&
 		native_fpcr() == caller_fpcr,
 		"post-execution cache failure leaked executor-private state");
 

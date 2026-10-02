@@ -159,7 +159,6 @@ static_assert(pair_instruction(
 	cpu.nzcv = 0xa000'0000U;
 	cpu.fpcr = 0x0040'0000U;
 	cpu.fpsr = 0x0800'009fU;
-	cpu.fpmr = seed ^ 0x0000'0000'0021'0042ULL;
 	cpu.tls = seed ^ 0xfedc'ba98'7654'3210ULL;
 	for (unsigned reg = 0; reg < cpu.vectors.size(); ++reg)
 		for (unsigned byte = 0; byte < cpu.vectors[reg].bytes.size(); ++byte)

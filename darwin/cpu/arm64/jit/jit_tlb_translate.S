@@ -3,14 +3,11 @@
 
 /* Keep the rare bridge coupled to the verified neutral ABI, not to gadget
  * implementation headers.  C++ static assertions live in assembly_layout.hpp. */
-.if UML_ARM64_CPU_FP_ACTIVE != 920
+.if UML_ARM64_CPU_FP_ACTIVE != 904
     .error "CpuState gadget_fp_active layout changed"
 .endif
-.if UML_ARM64_CPU_HOST_FPCR != 904 || UML_ARM64_CPU_HOST_FPSR != 912
+.if UML_ARM64_CPU_HOST_FPCR != 888 || UML_ARM64_CPU_HOST_FPSR != 896
     .error "CpuState native FP layout changed"
-.endif
-.if UML_ARM64_CPU_FPMR_ACTIVE != 944 || UML_ARM64_CPU_HOST_FPMR != 936
-    .error "CpuState native FPMR layout changed"
 .endif
 
 /*
@@ -82,26 +79,4 @@ _uml_arm64_jit_tlb_translate_preserving:
 	msr	fpsr, x11
 	add	sp, sp, #400
 	msr	nzcv, x9
-	ret
-
-	/*
-	 * FPMR is optional. Translation selects this entry only after the host
-	 * probe succeeds, so an older host can never reach these encodings.
-	 */
-	.p2align	2
-	.private_extern _uml_arm64_jit_tlb_translate_preserving_fpmr
-	.globl	_uml_arm64_jit_tlb_translate_preserving_fpmr
-_uml_arm64_jit_tlb_translate_preserving_fpmr:
-	sub	sp, sp, #16
-	.inst	0xd53b4449	/* mrs x9, FPMR */
-	stp	x30, x9, [sp]
-	ldrb	w9, [x15, #UML_ARM64_CPU_FPMR_ACTIVE]
-	cbz	w9, 2f
-	ldr	x9, [x15, #UML_ARM64_CPU_HOST_FPMR]
-	.inst	0xd51b4449	/* msr FPMR, x9 */
-2:
-	bl	_uml_arm64_jit_tlb_translate_preserving
-	ldp	x30, x9, [sp]
-	.inst	0xd51b4449	/* msr FPMR, x9 */
-	add	sp, sp, #16
 	ret

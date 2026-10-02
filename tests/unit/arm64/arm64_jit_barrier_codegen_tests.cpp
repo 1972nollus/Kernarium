@@ -61,37 +61,37 @@ void forced_feature_selection() {
     for (unsigned option = 0; option < 16U; ++option) {
       const auto instruction = standard(base, option);
       require_words(
-          jit_test::lower_memory_barrier_for_testing(instruction, false, false),
+          jit_test::lower_memory_barrier_for_testing(instruction, false),
           std::array{instruction},
           "baseline barrier changed under the forced feature-off selector");
     }
 
-  require_words(jit_test::lower_memory_barrier_for_testing(sb, true, false),
+  require_words(jit_test::lower_memory_barrier_for_testing(sb, true),
                 std::array{sb},
                 "native speculation barrier was not emitted one-for-one");
-  require_words(jit_test::lower_memory_barrier_for_testing(sb, false, true),
+  require_words(jit_test::lower_memory_barrier_for_testing(sb, false),
                 std::array{standard(dsb_base, 15U), standard(isb_base, 15U)},
                 "portable speculation barrier substitution is incorrect");
+}
 
-  constexpr std::array fallback_options{3U, 7U, 11U, 15U};
+/* The virtual CPU implements no FEAT_XS: DSB nXS compiles to the same
+ * illegal terminal as an unknown word. */
+void restricted_completion_barrier_is_absent() {
+  constexpr std::uint64_t pc = 0x4f81'0000;
+  const std::array unknown{0xffff'ffffU};
+  const auto reference = jit_test::compile_block(pc, unknown);
   for (unsigned scope = 0; scope < 4U; ++scope) {
-    const auto instruction = nxs(scope);
-    require_words(
-        jit_test::lower_memory_barrier_for_testing(instruction, false, true),
-        std::array{instruction},
-        "native restricted-completion barrier was not emitted one-for-one");
-    require_words(
-        jit_test::lower_memory_barrier_for_testing(instruction, true, false),
-        std::array{standard(dsb_base, fallback_options[scope])},
-        "portable restricted-completion barrier substitution is incorrect");
+    const std::array guest{nxs(scope), terminal_system_call};
+    const auto compiled = jit_test::compile_block(pc, guest);
+    require(compiled.guest_instructions == 1U &&
+                compiled.words == reference.words,
+            "DSB nXS did not compile to the illegal terminal");
   }
 }
 
 void current_host_compiler_selection() {
   constexpr std::uint64_t pc = 0x4f80'0000;
-  const std::array guest{
-      sb, nxs(0), nxs(1), nxs(2), nxs(3), terminal_system_call,
-  };
+  const std::array guest{sb, terminal_system_call};
   const auto compiled = jit_test::compile_block(pc, guest);
   require(!compiled.guest_illegal,
           "allocated barrier sequence compiled as guest illegal");
@@ -104,33 +104,20 @@ void current_host_compiler_selection() {
 
   const auto &features = ::uml::platform::apple::probed_host_capabilities();
   const auto selected_sb = jit_test::lower_memory_barrier_for_testing(
-      sb, features.has(::uml::cpu::ArmFeature::sb),
-      features.has(::uml::cpu::ArmFeature::xs));
+      sb, features.has(::uml::cpu::ArmFeature::sb));
   require(std::search(hot.begin(), hot.end(), selected_sb.begin(),
                       selected_sb.end()) != hot.end(),
           "current-host speculation barrier lowering is absent from hot code");
   if (!features.has(::uml::cpu::ArmFeature::sb))
     require(std::find(hot.begin(), hot.end(), sb) == hot.end(),
             "unsupported speculation barrier remained in hot code");
-
-  constexpr std::array fallback_options{3U, 7U, 11U, 15U};
-  for (unsigned scope = 0; scope < 4U; ++scope) {
-    const auto instruction = nxs(scope);
-    const auto expected = features.has(::uml::cpu::ArmFeature::xs)
-                              ? instruction
-                              : standard(dsb_base, fallback_options[scope]);
-    require(contains(hot, std::array{expected}),
-            "current-host restricted-completion lowering is absent");
-    if (!features.has(::uml::cpu::ArmFeature::xs))
-      require(std::find(hot.begin(), hot.end(), instruction) == hot.end(),
-              "unsupported restricted-completion word remained in hot code");
-  }
 }
 
 } // namespace
 
 int main() {
   forced_feature_selection();
+  restricted_completion_barrier_is_absent();
   current_host_compiler_selection();
   std::puts("arm64-jit-barrier-codegen: translation selection passed");
   return 0;

@@ -14,10 +14,6 @@ namespace {
   return base | ((option & 15U) << 8U);
 }
 
-[[nodiscard]] constexpr std::uint32_t nxs(unsigned scope) noexcept {
-  return 0xd503'323fU | ((scope & 3U) << 10U);
-}
-
 void current_host_barriers_execute() {
   constexpr unsigned long generation = 841;
   constexpr std::uint64_t base = 0x4f90'0000;
@@ -29,10 +25,6 @@ void current_host_barriers_execute() {
       standard(dsb_base, 15),
       standard(isb_base, 15),
       std::uint32_t{0xd503'30ffU},
-      nxs(0),
-      nxs(1),
-      nxs(2),
-      nxs(3),
       std::uint32_t{0xd400'0001U},
   };
 

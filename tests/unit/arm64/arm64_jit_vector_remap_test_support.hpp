@@ -87,15 +87,6 @@ vector_unsigned_memory(bool load, unsigned base, unsigned transfer) noexcept {
          ((base & 31U) << 5U) | (transfer & 31U);
 }
 
-[[nodiscard]] constexpr std::uint32_t
-atomic_floating(bool store_only, unsigned base, unsigned source,
-                unsigned result) noexcept {
-  /* Binary32 FADD, relaxed ordering. */
-  return 0xbc20'0000U | ((source & 31U) << 16U) |
-         (static_cast<unsigned>(store_only) << 15U) |
-         ((base & 31U) << 5U) | (result & 31U);
-}
-
 [[nodiscard]] constexpr bool is_cached_gpr(unsigned reg) noexcept {
   return reg == 3U || reg == 4U || reg == 5U || reg == 6U ||
          reg == 7U || reg == 12U || reg == 13U || reg == 17U;
