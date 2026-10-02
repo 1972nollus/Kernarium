@@ -30,7 +30,7 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import calendar
 import contextlib
-import importlib
+import importlib.util
 import json
 import os
 import pathlib
@@ -54,8 +54,12 @@ def _load_disk_preparation():
     benchmark must create disks exactly the way a real launch does. The
     appliance launcher owns that layout.
     """
-    sys.path.insert(0, str(REPOSITORY / "tools/rootfs/steam-x86_64"))
-    return importlib.import_module("launcher").prepare_disk
+    specification = importlib.util.spec_from_file_location(
+        "steam_x86_64_boot", REPOSITORY / "tools/rootfs/steam-x86_64/boot.py")
+    assert specification is not None and specification.loader is not None
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module.prepare_disk
 
 
 prepare_disk = _load_disk_preparation()
