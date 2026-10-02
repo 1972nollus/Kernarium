@@ -635,7 +635,7 @@ FPSIMD-0117	FP&SIMD	FDOT (8-bit floating-point to single-precision, by element)	
 FPSIMD-0118	FP&SIMD	FDOT (8-bit floating-point to single-precision, vector)	0	46	42
 FPSIMD-0119	FP&SIMD	FDOT (half-precision to single-precision, by element)	0	22	22
 FPSIMD-0120	FP&SIMD	FDOT (half-precision to single-precision, vector)	0	47	43
-FPSIMD-0121	FP&SIMD	FJCVTZS	35	115	123
+FPSIMD-0121	FP&SIMD	FJCVTZS	39	115	123
 FPSIMD-0122	FP&SIMD	FMADD	70	33	90
 FPSIMD-0123	FP&SIMD	FMAX (scalar)	64	73	124
 FPSIMD-0124	FP&SIMD	FMAX (vector)	76	33	88

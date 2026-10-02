@@ -71,24 +71,24 @@
       "cssc": 968,
       "mops": 1316
     },
-    "input_sha256": "b96d0d7240d15ffddbf08bc3f35fed7d7700af4df24f044475968eea9eb4e02d",
+    "input_sha256": "6b43afd5fe4a8fb59133d65bdf030fec31b6ff2214a94c78cadda81f7c963f07",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
     "sha256": "7131ca96af2e8c035beab6b3faaf253830090d005c9108723c4453e74f077a3e",
-    "stripped_cases": 106838,
+    "stripped_cases": 106842,
     "tbi_replacement_cases": 4284
   },
-  "cases": 139312,
+  "cases": 139316,
   "cases_by_event": {
     "breakpoint": 75,
     "floating-point-trap": 21,
     "illegal-instruction": 25044,
     "instruction-budget": 186,
     "memory-fault": 9271,
-    "system-call": 104715
+    "system-call": 104719
   },
   "cases_by_profile": {
     "16k": 27615,
-    "16k+4k": 84096,
+    "16k+4k": 84100,
     "4k": 27601
   },
   "coverage": {
@@ -100,9 +100,9 @@
   },
   "exports": {
     "16k": {
-      "classes": 24353,
+      "classes": 24354,
       "covering_cases": 16778,
-      "declared_cases": 18218417,
+      "declared_cases": 18218421,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -115,14 +115,14 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 134453,
+      "exported_cases": 134457,
       "forced_cases": 4274,
       "producers": 452
     },
     "4k": {
-      "classes": 24352,
+      "classes": 24353,
       "covering_cases": 16791,
-      "declared_cases": 18218416,
+      "declared_cases": 18218420,
       "excluded_cases": {
         "deferred-fp-entry": {
           "arm64-deferred-fp-state": 6
@@ -135,7 +135,7 @@
           "arm64-floating-trap-control": 1
         }
       },
-      "exported_cases": 134465,
+      "exported_cases": 134469,
       "forced_cases": 4274,
       "producers": 452
     }
@@ -151,17 +151,17 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 13180391,
-  "pack_sha256": "1338f731f6822f9422a54cd67459073672d52a27c7aaea9a0cdcf90955ddc417",
-  "producer_commit": "2f11d75926e9da8ec0857a9e35b2ac32825dee83",
-  "programs": 124957,
-  "records": 1068,
+  "pack_bytes": 13180566,
+  "pack_sha256": "70bdd912315e4cd3c83836e151ae6a9689a18b0f143ad58333547486a73bdfba",
+  "producer_commit": "09b436a65d78c6b2ee263bb314f3ad841faf9188",
+  "programs": 124958,
+  "records": 1069,
   "sample_limit": 8,
   "schema": 1,
   "seed": "0xa64c0b055eed2026",
   "state_minimization": {
     "full": 868,
-    "narrow": 138444
+    "narrow": 138448
   },
   "validator_cases": {
     "ignore-host-counter-register/v1": 1,
