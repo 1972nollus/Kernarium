@@ -77,9 +77,7 @@ class ArchitectureVariant:
     value: int
     constraints: tuple[FieldConstraint, ...]
     feature_expressions: tuple[str, ...]
-    feature_rules: tuple[str, ...]
     feature_fallbacks: tuple[str, ...]
-    feature_fallback_rules: tuple[str, ...]
     fields: tuple[tuple[str, int, int], ...]
 
     def matches(self, word: int) -> bool:
@@ -312,53 +310,6 @@ def _matching_table_features(
     return result
 
 
-def _table_feature_rules(
-    root: ET.Element, fields: dict[str, tuple[int, int]]
-) -> list[str]:
-    """Return canonical word-dependent feature rules from Arm value tables."""
-    result: list[str] = []
-    for table in root.findall(".//table[@class='valuetable']"):
-        header = table.find("./tgroup/thead/row")
-        body = table.find("./tgroup/tbody")
-        if header is None or body is None:
-            continue
-        headers = header.findall("entry")
-        names = ["".join(entry.itertext()).strip() for entry in headers]
-        bit_columns = [
-            (index, names[index])
-            for index, entry in enumerate(headers)
-            if entry.get("class") == "bitfield" and names[index] in fields
-        ]
-        if not bit_columns:
-            continue
-        for table_row in body.findall("row"):
-            entries = table_row.findall("entry")
-            if len(entries) != len(names):
-                continue
-            conditions: list[str] = []
-            valid = True
-            for index, name in bit_columns:
-                low, width = fields[name]
-                pattern = "".join(entries[index].itertext()).strip()
-                if len(pattern) != width or re.fullmatch(r"[01x]+", pattern) is None:
-                    valid = False
-                    break
-                conditions.append(f"{name}@{low}:{width}={pattern}")
-            if not valid:
-                continue
-            for entry in entries:
-                for variant in entry.findall(".//arch_variant"):
-                    feature = variant.get("feature")
-                    if feature:
-                        if FEATURE_EXPRESSION.fullmatch(feature) is None:
-                            raise ValueError(
-                                "unsupported Arm XML feature expression "
-                                f"{feature!r}"
-                            )
-                        result.append("&".join(conditions) + "=>" + feature)
-    return list(dict.fromkeys(result))
-
-
 def _feature_names(expression: str) -> set[str]:
     return set(FEATURE_NAME.findall(expression))
 
@@ -475,7 +426,6 @@ class ArchitectureCatalog:
             )
         root = self._tree(filename)
         result: list[ArchitectureVariant] = []
-        is_alias = root.find("./aliasto") is not None
         for instruction_class in root.findall("./classes/iclass"):
             diagram = instruction_class.find("regdiagram")
             if diagram is None:
@@ -484,7 +434,7 @@ class ArchitectureCatalog:
                 0, 0, diagram.findall("box")
             )
             class_features = _declared_features(instruction_class)
-            decode_features, nop_fallbacks = _decode_feature_policy(
+            _predicates, nop_fallbacks = _decode_feature_policy(
                 instruction_class
             )
             for encoding in instruction_class.findall("encoding"):
@@ -500,22 +450,12 @@ class ArchitectureCatalog:
                 features = tuple(
                     dict.fromkeys(class_features + _declared_features(encoding))
                 )
-                feature_rules = tuple(_table_feature_rules(root, all_fields))
                 feature_fallbacks = tuple(sorted(
                     feature
                     for expression in features
                     for feature in _feature_names(expression)
                     if feature in nop_fallbacks
                 ))
-                feature_fallback_rules: tuple[str, ...] = ()
-                if not is_alias:
-                    feature_fallback_rules = tuple(
-                        rule
-                        for rule in feature_rules
-                        if _feature_names(rule.split("=>", 1)[1]).isdisjoint(
-                            decode_features - nop_fallbacks
-                        )
-                    )
                 variant = ArchitectureVariant(
                     section=section,
                     form=form,
@@ -525,9 +465,7 @@ class ArchitectureCatalog:
                     value=encoding_value,
                     constraints=all_constraints,
                     feature_expressions=features,
-                    feature_rules=feature_rules,
                     feature_fallbacks=feature_fallbacks,
-                    feature_fallback_rules=feature_fallback_rules,
                     fields=tuple(
                         sorted(
                             (name, low, width)
@@ -565,9 +503,7 @@ class ArchitectureCatalog:
                             list(variant.feature_expressions) + dynamic
                         )
                     ),
-                    feature_rules=variant.feature_rules,
                     feature_fallbacks=variant.feature_fallbacks,
-                    feature_fallback_rules=variant.feature_fallback_rules,
                     fields=variant.fields,
                 )
             )
