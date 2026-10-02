@@ -77,7 +77,7 @@ gadget fp_link_entry
 97:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
-	bl NAME(uml_arm64_gadget_access_fp_state)
+	helper_call uml_arm64_gadget_access_fp_state
 	ldp x1, x2, [sp], #16
 	b 98b
 
@@ -204,11 +204,7 @@ gadget return
 	 * trip -- which is what a site with more targets than cells needs.
 	 * A hit trains the site's next cell as the ring does, so a site that
 	 * settles on few targets goes back to its cells. */
-#if __APPLE__
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-#else
-	.pushsection .text.gadget_cold,"ax"
-#endif
+	.pushsection GADGET_SECTION_COLD
 .Ltarget_tier\@:
 	ldr x13, [_cpu, #UML_GADGET_CPU_TARGET_TIER]
 	cbz x13, .Ltarget_tier_miss\@

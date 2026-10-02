@@ -55,7 +55,7 @@ gadget code_synchronize_\name
 .Lcode_synchronize_untagged\@:
 	.endif
 	stp x1, x2, [sp, #-16]!
-	bl NAME(uml_arm64_guest_code_synchronize)
+	helper_call uml_arm64_guest_code_synchronize
 	ldp x1, x2, [sp], #16
 	ldr x8, [_stream]
 	str x8, [_cpu, #UML_GADGET_CPU_PC]
@@ -78,7 +78,7 @@ gadget mops_prologue_\name
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
-	bl NAME(uml_arm64_gadget_mops_prologue_transfer_\name)
+	helper_call uml_arm64_gadget_mops_prologue_transfer_\name
 	ldp x1, x2, [sp], #16
 	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	next_gadget
@@ -92,7 +92,7 @@ gadget mops_epilogue_\name
 	mov x0, x1
 	mov x1, x2
 	mov x2, x8
-	bl NAME(uml_arm64_gadget_mops_epilogue_transfer_\name)
+	helper_call uml_arm64_gadget_mops_epilogue_transfer_\name
 	ldp x1, x2, [sp], #16
 	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
 	cbz w0, uml_arm64_gadget_memory_fault
@@ -750,7 +750,7 @@ gadget simd_structure_\name
 	mov x4, #(\count * (8 << \q))
 	mov w5, #0
 	mov w6, #\base_sp
-	bl NAME(uml_arm64_simd_structure_memory_transfer)
+	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #64]
 	cbz w0, .Lsimd_structure_fault\@
 	mov x7, sp
@@ -767,7 +767,7 @@ gadget simd_structure_\name
 	mov x4, #(\count * (8 << \q))
 	mov w5, #1
 	mov w6, #\base_sp
-	bl NAME(uml_arm64_simd_structure_memory_transfer)
+	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #64]
 	cbz w0, .Lsimd_structure_fault\@
 	.endif
@@ -957,7 +957,7 @@ gadget simd_replicate_\name
 	mov x4, #(\count * \width)
 	mov w5, #0
 	mov w6, #\base_sp
-	bl NAME(uml_arm64_simd_structure_memory_transfer)
+	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_replicate_fault\@
 	mov x7, sp
@@ -1153,7 +1153,7 @@ gadget simd_lane_\name
 	mov x4, #(\count * \width)
 	mov w5, #0
 	mov w6, #\base_sp
-	bl NAME(uml_arm64_simd_structure_memory_transfer)
+	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_lane_fault\@
 	mov x7, sp
@@ -1168,7 +1168,7 @@ gadget simd_lane_\name
 	mov x4, #(\count * \width)
 	mov w5, #1
 	mov w6, #\base_sp
-	bl NAME(uml_arm64_simd_structure_memory_transfer)
+	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #32]
 	cbz w0, .Lsimd_lane_fault\@
 	.endif
@@ -1288,7 +1288,7 @@ uml_arm64_gadget_atomic_alignment_fault_read:
 	mov x0, x2
 	mov x1, x7
 	mov w2, #0
-	bl NAME(uml_arm64_alignment_fault)
+	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 
@@ -1298,7 +1298,7 @@ uml_arm64_gadget_atomic_alignment_fault_write:
 	mov x0, x2
 	mov x1, x7
 	mov w2, #1
-	bl NAME(uml_arm64_alignment_fault)
+	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 

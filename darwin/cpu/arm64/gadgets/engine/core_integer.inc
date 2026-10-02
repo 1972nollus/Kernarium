@@ -35,21 +35,13 @@ NAME(uml_arm64_gadget_\name):
 .endm
 
 .macro removed_forward_gadget bytes
-#if __APPLE__
-	.pushsection __TEXT,__gadget_forward,regular,pure_instructions
-#else
-	.pushsection .text.gadget_forward,"ax"
-#endif
+	.pushsection GADGET_SECTION_FORWARD
 	removed_gadget \bytes
 	.popsection
 .endm
 
 .macro removed_vector_forward_gadget bytes
-#if __APPLE__
-	.pushsection __TEXT,__vector_forward,regular,pure_instructions
-#else
-	.pushsection .text.vector_forward,"ax"
-#endif
+	.pushsection GADGET_SECTION_VECTOR_FORWARD
 	removed_gadget \bytes
 	.popsection
 .endm
@@ -112,7 +104,7 @@ NAME(uml_arm64_gadget_\name):
 	mov x0, x2
 	mov x1, x7
 	mov w2, #\access
-	bl NAME(uml_arm64_tlb_miss)
+	helper_call uml_arm64_tlb_miss
 	ldp x1, x2, [sp], #16
 	.if \forward
 	/* Cross-section conditional relocations are not available on Mach-O.
@@ -215,7 +207,7 @@ NAME(uml_arm64_gadget_\name):
 	mov x0, x2
 	mov x1, \address
 	mov w2, #\access
-	bl NAME(uml_arm64_tlb_miss)
+	helper_call uml_arm64_tlb_miss
 	ldp x1, x2, [sp], #16
 	.if \forward || \outofline
 	cbnz x0, 94f
@@ -268,7 +260,7 @@ NAME(uml_arm64_gadget_\name):
 	mov x2, sp
 	mov x3, #\size
 	mov w4, #\access
-	bl NAME(uml_arm64_memory_transfer)
+	helper_call uml_arm64_memory_transfer
 	ldp x1, x2, [sp, #32]
 	cbz w0, 97f
 	.if !\access
@@ -282,7 +274,7 @@ NAME(uml_arm64_gadget_\name):
 98:
 .endm
 
-.text
+.section GADGET_SECTION_BANK
 .p2align 4
 uml_arm64_gadget_activate_native_fp_environment:
 	mrs x6, fpcr

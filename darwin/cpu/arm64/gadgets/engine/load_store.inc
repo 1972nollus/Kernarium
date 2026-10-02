@@ -254,11 +254,7 @@ scalar_entry \suffix, \forward, (17 - \load), .Lsd\@, .Lsn\@, .Lsm\@, scalar_non
 	b .Ltt_cold_out\@
 .Lscalar_unsigned_cross\@:
 	b .Lscalar_unsigned_cross_out\@
-#if __APPLE__
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-#else
-	.pushsection .text.gadget_cold,"ax"
-#endif
+	.pushsection GADGET_SECTION_COLD
 	.endif
 	.if \load
 	.if \baked
@@ -809,7 +805,7 @@ scalar_other_immediate_operation load64u, 1, ldr, x, 8, 0
 	mov x0, x2
 	ldr x1, [_cpu, #UML_GADGET_CPU_SP]
 	mov w2, #0
-	bl NAME(uml_arm64_alignment_fault)
+	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 
@@ -819,7 +815,7 @@ scalar_other_immediate_operation load64u, 1, ldr, x, 8, 0
 	mov x0, x2
 	ldr x1, [_cpu, #UML_GADGET_CPU_SP]
 	mov w2, #1
-	bl NAME(uml_arm64_alignment_fault)
+	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 
@@ -830,7 +826,7 @@ scalar_other_immediate_operation load64u, 1, ldr, x, 8, 0
 	mov x0, x2
 	ldr x1, [_cpu, #UML_GADGET_CPU_SP]
 	mov w2, #0
-	bl NAME(uml_arm64_alignment_fault)
+	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault_indexed
 
@@ -840,7 +836,7 @@ scalar_other_immediate_operation load64u, 1, ldr, x, 8, 0
 	mov x0, x2
 	ldr x1, [_cpu, #UML_GADGET_CPU_SP]
 	mov w2, #1
-	bl NAME(uml_arm64_alignment_fault)
+	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault_indexed
 
@@ -1567,7 +1563,7 @@ uml_arm64_gadget_pair_alignment_fault_read:
 	mov x0, x2
 	mov x1, x16
 	mov w2, #0
-	bl NAME(uml_arm64_alignment_fault)
+	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 
@@ -1577,7 +1573,7 @@ uml_arm64_gadget_pair_alignment_fault_write:
 	mov x0, x2
 	mov x1, x16
 	mov w2, #1
-	bl NAME(uml_arm64_alignment_fault)
+	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault
 
@@ -1588,7 +1584,7 @@ uml_arm64_gadget_pair_alignment_fault_read_indexed:
 	mov x0, x2
 	mov x1, x16
 	mov w2, #0
-	bl NAME(uml_arm64_alignment_fault)
+	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault_indexed
 
@@ -1598,7 +1594,7 @@ uml_arm64_gadget_pair_alignment_fault_write_indexed:
 	mov x0, x2
 	mov x1, x16
 	mov w2, #1
-	bl NAME(uml_arm64_alignment_fault)
+	helper_call uml_arm64_alignment_fault
 	ldp x1, x2, [sp], #16
 	b uml_arm64_gadget_memory_fault_indexed
 

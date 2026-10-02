@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The arm64 gadget region, first in __TEXT,__text and in this order; engine.S
+# names each part's offset-0 label.
+_uml_arm64_gadget_region_bank
+_uml_arm64_gadget_region_forward
+_uml_arm64_gadget_region_vector_forward
+_uml_arm64_gadget_region_cold
+_uml_arm64_gadget_region_afp
+_uml_arm64_gadget_region_veneer

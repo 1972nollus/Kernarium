@@ -50,11 +50,7 @@ NAME(uml_arm64_vector_contract_begin):
 .macro vector_variants forward, first, second, third, generator, arguments:vararg
  .set .Lvector_masks\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
  .if \forward == 0 && .Lvector_masks\@ != 0
-#if __APPLE__
- .pushsection __TEXT,__vector_forward,regular,pure_instructions
-#else
- .pushsection .text.vector_forward,"ax"
-#endif
+ .pushsection GADGET_SECTION_VECTOR_FORWARD
  .irp mask, 1, 2, 3, 4, 5, 6, 7
  .if (\mask & .Lvector_masks\@) == \mask
  \generator \arguments, \mask

@@ -20,11 +20,7 @@ NAME(uml_arm64_afp_twin_begin):
 .popsection
 
 .macro afp_twins_begin
-#if __APPLE__
-	.pushsection __TEXT,__gadget_afp,regular,pure_instructions
-#else
-	.pushsection .text.gadget_afp,"ax"
-#endif
+	.pushsection GADGET_SECTION_AFP
 .endm
 
 .macro afp_twins_end
