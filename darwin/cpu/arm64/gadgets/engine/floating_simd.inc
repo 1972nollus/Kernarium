@@ -392,8 +392,10 @@ floating_horizontal_reduce_shapes fminnmv, fminnmv
 .purgem floating_horizontal_scalar_binary_shapes
 .purgem floating_horizontal_scalar_binary
 
-/* BFCVT/BFCVTN map one-for-one on BF16 hosts. FPCR.AH and NEP are RES0, so
- * these branch-free forms need no control check. */
+/* BFCVT/BFCVTN map one-for-one on BF16 hosts. The native instruction runs
+ * under the guest FPCR, so it follows FPCR.AH, and scalar BFCVT starts from
+ * the old destination that FPCR.NEP merges into, so these branch-free forms
+ * need no control check or FEAT_AFP twin. */
 gadget bfloat_convert_scalar_native
 	ensure_fp_environment
 	ldr x8, [_stream], #8

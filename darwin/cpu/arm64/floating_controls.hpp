@@ -17,9 +17,9 @@ namespace uml::cpu::arm64 {
  * with FPCR.AHP, FJCVTZS under FPCR.FZ) through models that follow all three
  * controls. Other software models stand in for a host extension, so a host
  * that lacks FEAT_FP16, FEAT_FHM, FEAT_BF16, FEAT_FRINTTS, FEAT_FCMA or
- * FEAT_JSCVT keeps the controls RES0 even if it has FEAT_AFP. This is the one predicate behind HWCAP2_AFP,
- * ID_AA64MMFR1_EL1.AFP, the FPCR write mask, and the engines' choice of code
- * for those controls. */
+ * FEAT_JSCVT keeps the controls RES0 even if it has FEAT_AFP. This is the
+ * one predicate behind HWCAP2_AFP, ID_AA64MMFR1_EL1.AFP, the FPCR write
+ * mask, and the engines' choice of code for those controls. */
 [[nodiscard]] inline bool implements_afp(const ArmFeatureSet &host) noexcept
 {
 	constexpr std::array required{
