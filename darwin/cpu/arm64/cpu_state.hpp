@@ -9,24 +9,28 @@
 namespace uml::cpu::arm64 {
 
 /* The FPCR bits an MSR FPCR, a signal-frame or ptrace restore, or any other
- * context load can set; the rest read as zero and ignore writes. From the
- * AArch64 FPCR description (DDI 0601, 2026-06), for this virtual CPU:
+ * context load can set on a host where the virtual CPU omits FEAT_AFP; the
+ * rest read as zero and ignore writes. From the AArch64 FPCR description
+ * (DDI 0601, 2026-06), for this virtual CPU:
  * - AHP, DN, FZ and RMode are unconditional fields;
  * - FZ16 exists with FEAT_FP16, which every supported host provides;
- * - FIZ, AH and NEP exist only with FEAT_AFP, which the virtual CPU does not
- *   implement, even on a host that has it (fpcr_afp_controls);
+ * - FIZ, AH and NEP exist only with FEAT_AFP (fpcr_afp_controls), which the
+ *   virtual CPU implements only where floating_controls.hpp says so;
  * - EBF exists only with FEAT_EBF16, which ID_AA64ISAR1_EL1.BF16 = 1 omits;
  * - the trap enables are RAZ/WI only without trapped exception handling,
  *   which both engines implement;
  * - Len and Stride serve only to save and restore the AArch32 FPSCR, and
  *   whether they are programmable or RAZ/WI is IMPLEMENTATION DEFINED.
  *   Without AArch32 they are RAZ/WI.
- * This is the one definition of the mask; the JIT, the context restore
+ * This and fpcr_afp_controls are the one definition of the mask:
+ * fpcr_writable_mask_for() selects the host's, the JIT, the context restore
  * path and the tests read it, and the gadget assembly's
- * UML_ARM64_FPCR_WRITABLE is checked against it. */
+ * UML_ARM64_FPCR_WRITABLE and UML_ARM64_FPCR_AFP_CONTROLS are checked
+ * against them. */
 inline constexpr std::uint32_t fpcr_writable_mask = 0x07c8'9f00U;
 
-/* FPCR.NEP, AH and FIZ: RES0 because the virtual CPU omits FEAT_AFP. */
+/* FPCR.NEP, AH and FIZ: writable where the virtual CPU implements FEAT_AFP,
+ * RES0 everywhere else. */
 inline constexpr std::uint32_t fpcr_afp_controls = 0x0000'0007U;
 static_assert((fpcr_writable_mask & fpcr_afp_controls) == 0U);
 
@@ -116,12 +120,13 @@ struct CpuState final {
 	}
 
 	/* Loads a saved context lazily. Its FPCR is masked as an MSR FPCR
-	 * write is. */
+	 * write is, with the host's fpcr_writable_mask_for(). */
 	void defer_fp_load(const void *source, std::uint32_t source_fpcr,
-			  std::uint32_t source_fpsr) noexcept
+			  std::uint32_t source_fpsr,
+			  std::uint32_t fpcr_writable) noexcept
 	{
 		deferred_vectors = static_cast<const std::byte *>(source);
-		deferred_fpcr = source_fpcr & fpcr_writable_mask;
+		deferred_fpcr = source_fpcr & fpcr_writable;
 		deferred_fpsr = source_fpsr;
 		fp_loaded = false;
 		fp_dirty = false;

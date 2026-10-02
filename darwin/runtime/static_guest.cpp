@@ -5,6 +5,7 @@
 #include "runtime/x86_gadget_runtime.hpp"
 #endif
 #include "platform/apple/host_features.hpp"
+#include "cpu/arm64/floating_controls.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/floating_point_contract.hpp"
 #include "runtime/context.hpp"
@@ -82,6 +83,15 @@ static_assert(::uml::cpu::floating_point_status_exception_mask ==
 static_assert(::uml::cpu::floating_point_syndrome(0) ==
 	      DARWIN_UML_FLOATING_POINT_SYNDROME_BASE);
 
+/* The FPCR fields a restored context may set: those of an MSR FPCR on this
+ * host, decided once from the host the engines translate for. */
+[[nodiscard]] std::uint32_t restored_fpcr_mask() noexcept
+{
+	static const std::uint32_t mask = arm64::fpcr_writable_mask_for(
+		::uml::platform::apple::probed_host_capabilities());
+	return mask;
+}
+
 void load_cpu(arm64::CpuState &cpu,
 	      const darwin_uml_guest_registers &registers,
 	      const darwin_uml_guest_fp_registers &fp, std::uint64_t tls,
@@ -112,7 +122,7 @@ void load_cpu(arm64::CpuState &cpu,
 	cpu.exclusive_size = 0;
 	cpu.gadget_zero = 0;
 	cpu.gadget_indirect_miss = nullptr;
-	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr);
+	cpu.defer_fp_load(fp.vectors, fp.fpcr, fp.fpsr, restored_fpcr_mask());
 }
 
 void save_cpu(arm64::CpuState &cpu,

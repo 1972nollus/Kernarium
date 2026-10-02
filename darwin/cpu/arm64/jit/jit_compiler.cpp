@@ -7,6 +7,7 @@
 #include "cpu/arm64/detail/fp_state_access.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/memory_copy_set.hpp"
+#include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/id_registers.hpp"
 
 #include <algorithm>
@@ -372,7 +373,12 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
   }
 
 [[nodiscard]] bool JitCompiler::emit_system_register(std::uint32_t instruction) {
-    constexpr std::uint32_t fpcr_mask = arm64::fpcr_writable_mask;
+    /* FIZ, AH and NEP join the writable fields only where the virtual CPU
+     * implements FEAT_AFP; the choice is fixed per translation. */
+    const std::uint32_t fpcr_mask =
+        translation_features_ != nullptr
+            ? arm64::fpcr_writable_mask_for(*translation_features_)
+            : arm64::fpcr_writable_mask_for(host_capabilities());
     constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
     const auto system = instruction & 0xffff'ffe0U;
     const unsigned transfer = instruction & 31U;

@@ -90,7 +90,7 @@ void deferred_vector_self_loop_obeys_fairness() {
   std::array<arm64::VectorRegister, 32> deferred{};
   set_vector_lanes(deferred[1], 1);
   arm64::CpuState cpu{};
-  cpu.defer_fp_load(deferred.data(), 0, 0);
+  cpu.defer_fp_load(deferred.data(), 0, 0, arm64::fpcr_writable_mask);
   cpu.pc = base;
 
   require(executor.begin_execution(generation, cpu.pc));

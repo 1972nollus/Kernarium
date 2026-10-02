@@ -2,6 +2,8 @@
 #include "arm64_host_counter_test_support.hpp"
 #include "arm64_system_test_support.hpp"
 
+#include "cpu/arm64/floating_controls.hpp"
+
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -14,7 +16,11 @@ namespace test = arm64_system_test;
 
 namespace {
 
-constexpr std::uint32_t fpcr_mask = arm64::fpcr_writable_mask;
+/* The FPCR fields MSR FPCR can set on this host. */
+[[nodiscard]] std::uint32_t fpcr_mask() noexcept
+{
+	return arm64::fpcr_writable_mask_for(::uml::cpu::host_capabilities());
+}
 constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
 constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
 
@@ -102,12 +108,12 @@ void floating_control_status(test::Harness &harness)
 		engine_tests::NativeRequirements::features(
 			::uml::cpu::ArmFeature::floating_point);
 	check_read(harness, "base-read-floating-control", 0xd53b'4400U,
-		test::state().fpcr & fpcr_mask, floating);
+		test::state().fpcr & fpcr_mask(), floating);
 	check_write(harness, "base-write-floating-control", 0xd51b'4400U,
 		floating,
 		[](arm64::CpuState &expected, std::uint64_t source) {
 			expected.fpcr = static_cast<std::uint32_t>(source) &
-				fpcr_mask;
+				fpcr_mask();
 		});
 	check_read(harness, "base-read-floating-status", 0xd53b'4420U,
 		test::state().fpsr & fpsr_mask, floating);
