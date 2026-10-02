@@ -128,7 +128,10 @@ one beside it. Prefix verification checks the manifest rows, the tree in
 `share/uml-dependencies/source-trees.tsv` of each patched source (every row of
 the product with a patch series) against its series, architecture, Apple
 platform and deployment target, expected static payloads, framework install
-names, and the absence of undeclared or legacy providers.
+names, and the absence of undeclared or legacy providers. In iOS and Apple GPU
+prefixes, every object of a checked binary, each archive member included, is
+Mach-O with exactly one build-version command, so an LLVM bitcode member is
+rejected.
 Every iOS prefix builds and verifies at an iOS 26.0 deployment target.
 
 Every prefix installs the manifest it was built from and compares only the

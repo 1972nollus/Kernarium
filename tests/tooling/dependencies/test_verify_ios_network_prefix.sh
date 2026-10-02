@@ -70,6 +70,7 @@ copy_fixture()
 }
 
 command -v xcrun >/dev/null 2>&1 || fail "xcrun is required"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 printf '%s\n' 'int uml_ios_network_fixture(void) { return 0; }' \
 	>"$TEST_ROOT/fixture.c"
 DEVICE="$TEST_ROOT/device"
@@ -109,6 +110,12 @@ copy_fixture "$CASE"
 archive "$CASE/lib/libglib-2.0.a" iphoneos arm64-apple-ios18.0
 expect_cmake_diagnostic "lib/libglib-2.0.a" verify "$CASE" ios
 
+# The whole minimum OS version counts, so iOS 26.0.1 is not iOS 26.0.
+CASE="$TEST_ROOT/patch-deployment-target"
+copy_fixture "$CASE"
+archive "$CASE/lib/libglib-2.0.a" iphoneos arm64-apple-ios26.0.1
+expect_cmake_diagnostic "lib/libglib-2.0.a: minos 26.0.1" verify "$CASE" ios
+
 # Every member counts, not only the first one that matches. A member built
 # for iOS 11 carries a legacy minimum-version command instead of a
 # build-version command.
@@ -121,6 +128,56 @@ for member in iphoneos:arm64-apple-ios18.0 \
 		-c "$TEST_ROOT/fixture.c" -o "$TEST_ROOT/other-member.o"
 	xcrun ar rs "$CASE/lib/libslirp.a" "$TEST_ROOT/other-member.o" 2>/dev/null
 	expect_cmake_diagnostic "lib/libslirp.a" verify "$CASE" ios
+done
+
+# Every member carries exactly one build-version command. Each of these
+# members, added beside a valid one, leaves every platform row in the archive
+# valid: a member without the command, a member with two iOS 26.0 commands,
+# and a bitcode member, which otool cannot read as Mach-O.
+MEMBERS="$TEST_ROOT/members"
+mkdir "$MEMBERS"
+xcrun --sdk iphoneos clang -target arm64-apple-ios26.0 \
+	-c "$TEST_ROOT/fixture.c" -o "$MEMBERS/ios.o"
+xcrun vtool -remove-build-version ios -output "$MEMBERS/no-build-version.o" \
+	"$MEMBERS/ios.o"
+xcrun ld -r -arch arm64 -headerpad 0x100 "$MEMBERS/ios.o" \
+	-o "$MEMBERS/two-build-versions.o"
+# Copy the build-version command into the header padding ld left.
+python3 - "$MEMBERS/two-build-versions.o" <<'EOF'
+import struct
+import sys
+
+LC_BUILD_VERSION = 0x32
+path = sys.argv[1]
+with open(path, "rb") as stream:
+    data = bytearray(stream.read())
+if struct.unpack_from("<I", data, 0)[0] != 0xFEEDFACF:
+    sys.exit(f"{path} is not a 64-bit Mach-O object")
+count, size = struct.unpack_from("<2I", data, 16)
+offset = 32
+for _ in range(count):
+    command, command_size = struct.unpack_from("<2I", data, offset)
+    if command == LC_BUILD_VERSION:
+        build_version = data[offset:offset + command_size]
+    offset += command_size
+end = 32 + size
+if any(data[end:end + len(build_version)]):
+    sys.exit(f"{path} has no header padding for another command")
+data[end:end + len(build_version)] = build_version
+struct.pack_into("<2I", data, 16, count + 1, size + len(build_version))
+with open(path, "wb") as stream:
+    stream.write(data)
+EOF
+[ "$(otool -l "$MEMBERS/two-build-versions.o" |
+	grep -c 'cmd LC_BUILD_VERSION$')" -eq 2 ] ||
+	fail "the fixture member lacks a second build-version command"
+xcrun --sdk iphoneos clang -target arm64-apple-ios26.0 -flto \
+	-c "$TEST_ROOT/fixture.c" -o "$MEMBERS/bitcode.o"
+for member in no-build-version two-build-versions bitcode; do
+	CASE="$TEST_ROOT/member-$member"
+	copy_fixture "$CASE"
+	xcrun ar rs "$CASE/lib/libslirp.a" "$MEMBERS/$member.o" 2>/dev/null
+	expect_cmake_diagnostic "lib/libslirp.a($member.o)" verify "$CASE" ios
 done
 
 CASE="$TEST_ROOT/intel-archive"

@@ -113,10 +113,11 @@ endfunction()
 
 # uml_verify_apple_binary(PATH <file> [PLATFORM <number> MINOS <version>]
 #     [LIPO <tool>] [OTOOL <tool>])
-# PATH holds only arm64 code. With PLATFORM, every build-version command in it,
-# one per archive member, names that Mach-O platform and minimum OS version,
-# and no member carries a legacy minimum-version command instead, which names
-# no platform row for this check to see.
+# PATH holds only arm64 code. With PLATFORM, every object in it, each archive
+# member or the binary itself, is Mach-O with exactly one build-version
+# command, which names that Mach-O platform and minimum OS version. A legacy
+# minimum-version command names no platform row for this check to see, so no
+# object may carry one.
 function(uml_verify_apple_binary)
     cmake_parse_arguments(PARSE_ARGV 0 _arg ""
         "PATH;PLATFORM;MINOS;LIPO;OTOOL" "")
@@ -149,9 +150,34 @@ function(uml_verify_apple_binary)
         message(FATAL_ERROR
             "${_arg_PATH} has a legacy ${CMAKE_MATCH_0} command")
     endif()
+    # otool starts a line with PATH for the binary, for each archive member,
+    # and for each member it cannot read as Mach-O, such as LLVM bitcode.
+    # List separators and brackets in a member name would split the rows.
+    string(REPLACE "\n${_arg_PATH}" "\n@OBJECT@" _objects "\n${_load_commands}")
+    string(REGEX REPLACE "[][;]" "_" _objects "${_objects}")
+    string(REGEX MATCHALL "@OBJECT@[^\n]*|\n[ \t]+cmd LC_BUILD_VERSION\n"
+        _rows "${_objects}")
+    if(NOT _rows MATCHES "^@OBJECT@")
+        message(FATAL_ERROR "otool listed no object in ${_arg_PATH}")
+    endif()
+    # A final marker closes the last object; the first marker has no object
+    # before it to check.
+    set(_count 1)
+    foreach(_row IN LISTS _rows ITEMS @OBJECT@)
+        if(NOT _row MATCHES "^@OBJECT@(.*)$")
+            math(EXPR _count "${_count} + 1")
+        elseif(NOT _count EQUAL 1)
+            message(FATAL_ERROR
+                "Expected one build-version command, found ${_count}, in "
+                "${_arg_PATH}${_object}")
+        else()
+            set(_object "${CMAKE_MATCH_1}")
+            set(_count 0)
+        endif()
+    endforeach()
     string(REGEX MATCHALL "platform [0-9]+" _platform_rows "${_load_commands}")
-    string(REGEX MATCHALL "minos [0-9]+\\.[0-9]+" _minimum_rows
-        "${_load_commands}")
+    # A row runs to the end of its line, so the whole version is compared.
+    string(REGEX MATCHALL "minos [^\n]*" _minimum_rows "${_load_commands}")
     if(NOT _platform_rows OR NOT _minimum_rows)
         message(FATAL_ERROR
             "Apple binary has no build-version command: ${_arg_PATH}")
