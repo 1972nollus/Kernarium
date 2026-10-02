@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "program_builder_decode.hpp"
+#include "afp_twin.hpp"
 #include "gadget_selection.hpp"
 #include "execution_histogram.hpp"
 #include "scalar_forwarding.hpp"
+
+#include "cpu/arm64/floating_controls.hpp"
 
 #include <algorithm>
 #include <array>
@@ -97,6 +100,10 @@ BuildResult Builder::build(
 #endif
 	std::uint16_t previous_scalar = scalar_no_register;
 	std::uint16_t previous_vector = scalar_no_register;
+	/* FIZ, AH and NEP are guest state only where the virtual CPU implements
+	 * FEAT_AFP; there every entry that would ignore them runs as its twin,
+	 * which carries no forwarding contract. */
+	const bool afp = implements_afp(options.host_capabilities);
 	/* Indexed rather than ranged, because a decoder that fuses a pair needs to
 	 * see what follows the instruction it was handed. `compiled` is the loop
 	 * position as well as the retired count, and a fusing decoder advances it
@@ -159,6 +166,8 @@ BuildResult Builder::build(
 			decoded = decode_exception(context);
 			break;
 		}
+		if (afp && words.size() > emitted_start)
+			words[emitted_start] = afp_twin(words[emitted_start]);
 		const auto current_vector = decoded == DecodeResult::decoded &&
 			compiled == compiled_before ?
 			vector_access(std::span{words.data(), words.size()}.subspan(emitted_start)) : ScalarAccess{};

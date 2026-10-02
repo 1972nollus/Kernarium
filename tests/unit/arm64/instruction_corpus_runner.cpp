@@ -7,6 +7,7 @@
 #include "architecture_difference.hpp"
 #include "cpu/arm64/cpu_state.hpp"
 #include "cpu/arm64/engine_execution.hpp"
+#include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/gadgets/executor.hpp"
 #include "cpu/engine.hpp"
 #include "cpu/engine_factory.hpp"
@@ -68,6 +69,9 @@ constexpr std::uint32_t unbounded = 0xffff'ffffU;
 constexpr std::uint16_t no_validator = 0xffffU;
 /* Option bits 0 and 1 enabled the retired FEAT_PAuth and FEAT_GCS. */
 constexpr std::uint16_t retired_options = 3U;
+/* Option bit 10 runs a record on a virtual CPU without FEAT_AFP on any host:
+ * its cases pin FPCR.FIZ, AH and NEP as RES0. */
+constexpr std::uint16_t without_afp_option = 0x400U;
 
 class CorpusError final : public std::runtime_error {
 public:
@@ -885,10 +889,12 @@ struct Outcome final {
  * that produced those cases did. */
 class Engines final {
 public:
-  explicit Engines(std::uint16_t options) {
-    const auto &host = ::uml::platform::apple::probed_host_capabilities();
+  Engines(std::uint16_t options, ::uml::platform::HostCapabilities host)
+      : host_{std::move(host)} {
+    if ((options & without_afp_option) != 0U)
+      host_.supported.reset(static_cast<std::size_t>(ArmFeature::afp));
     const ::uml::cpu::EngineConfiguration configuration{
-        .host_capabilities = host,
+        .host_capabilities = host_,
     };
     if ((options & 0x3fcU) == 0U) {
       gadgets_ =
@@ -904,7 +910,7 @@ public:
               .force_software_pmull = (options & 128U) != 0U,
               .force_software_dotprod = (options & 256U) != 0U,
               .force_software_i8mm = (options & 512U) != 0U,
-              .host_capabilities = host,
+              .host_capabilities = host_,
           });
     }
     if (::uml::cpu::cpu_engine_available(EngineKind::jit))
@@ -912,6 +918,11 @@ public:
   }
 
   [[nodiscard]] bool jit_available() const noexcept { return jit_ != nullptr; }
+
+  /* The host the engines translate for. */
+  [[nodiscard]] const ::uml::platform::HostCapabilities &host() const noexcept {
+    return host_;
+  }
 
   [[nodiscard]] Outcome run(Lane lane, const arm64::CpuState &initial,
                             StaticGuestMemory &memory) {
@@ -939,6 +950,7 @@ public:
   }
 
 private:
+  ::uml::platform::HostCapabilities host_;
   std::unique_ptr<::uml::cpu::CpuEngine> gadgets_;
   std::unique_ptr<arm64::gadgets::GadgetExecutor> forced_;
   std::unique_ptr<::uml::cpu::CpuEngine> jit_;
@@ -949,6 +961,10 @@ private:
 
 struct Options final {
   const char *pack{};
+  /* Feature tokens the engines treat as host features. A host without them
+   * still runs every case that does not need them natively, which is how the
+   * FEAT_AFP twins are exercised on hosts that cannot select them. */
+  std::vector<std::string_view> assumed_features;
   std::vector<std::string_view> records;
   std::vector<std::string_view> producers;
   std::vector<std::string_view> cases;
@@ -971,11 +987,38 @@ struct Counts final {
   std::map<std::string_view, std::size_t> missing_features;
 };
 
+/* The feature a case needs that the virtual CPU for `host` lacks although
+ * the host may have it: FEAT_AFP or FEAT_RPRES outside their predicates. */
+[[nodiscard]] std::optional<ArmFeature>
+virtual_cpu_lacks(const ::uml::cpu::ArmFeatureSet &native,
+                  const ::uml::platform::HostCapabilities &host) {
+  if (native.test(static_cast<std::size_t>(ArmFeature::afp)) &&
+      !arm64::implements_afp(host))
+    return ArmFeature::afp;
+  if (native.test(static_cast<std::size_t>(ArmFeature::rpres)) &&
+      !arm64::implements_rpres(host))
+    return ArmFeature::rpres;
+  return std::nullopt;
+}
+
+/* The probed host plus any assumed features. */
+[[nodiscard]] ::uml::platform::HostCapabilities
+runner_host(const Options &options) {
+  auto host = ::uml::platform::apple::probed_host_capabilities();
+  const auto &tokens = ::uml::platform::arm_feature_tokens;
+  for (const auto token : options.assumed_features) {
+    const auto found = std::ranges::find(tokens, token);
+    if (found == tokens.end())
+      throw CorpusError{"unknown feature token " + std::string{token}};
+    host.supported.set(static_cast<std::size_t>(found - tokens.begin()));
+  }
+  return host;
+}
+
 class Runner final {
 public:
   Runner(const Corpus &corpus, const Options &options)
-      : corpus_{corpus}, options_{options},
-        host_{::uml::platform::apple::probed_host_capabilities()},
+      : corpus_{corpus}, options_{options}, host_{runner_host(options)},
         code_backing_{page_size},
         code_mapping_{code_base, code_backing_, page_size,
                       PROT_READ | PROT_EXEC, true, false} {
@@ -990,7 +1033,7 @@ public:
     for (const auto *record : records) {
       if (!engine_options.has_value() || *engine_options != record->options) {
         engines.reset();
-        engines = std::make_unique<Engines>(record->options);
+        engines = std::make_unique<Engines>(record->options, host_);
         engine_options = record->options;
       }
       if (!run_record(*record, *engines))
@@ -1073,17 +1116,34 @@ private:
       regions.push_back(std::make_unique<CaseRegion>(
           region, corpus_.blobs[region.blob]));
 
+    /* FEAT_AFP and FEAT_RPRES are implemented exactly where the virtual
+     * CPU's predicates say so, and only the hardware's own floating-point
+     * instructions honour them, so a case that needs either runs in neither
+     * lane elsewhere. */
+    const auto &native = corpus_.native_sets[test_case.native];
+    const auto lacking = virtual_cpu_lacks(native, engines.host());
+
     for (const auto lane : {Lane::gadgets, Lane::jit}) {
       if (lane == Lane::gadgets) {
         if (!options_.run_gadgets)
           continue;
+        if (lacking.has_value()) {
+          ++counts_.gadgets_skipped_host_feature;
+          continue;
+        }
         /* The gadget engine emulates every other feature, but it completes
          * a misaligned single-copy-atomic access with the host's own
          * FEAT_LSE2, so a case that needs LSE2 has no gadget result on a
          * host without it. */
-        if (corpus_.native_sets[test_case.native].test(
-                static_cast<std::size_t>(ArmFeature::lse2)) &&
-            !host_.has(ArmFeature::lse2)) {
+        if (native.test(static_cast<std::size_t>(ArmFeature::lse2)) &&
+            !native_host_.has(ArmFeature::lse2)) {
+          ++counts_.gadgets_skipped_host_feature;
+          continue;
+        }
+        /* An assumed feature the hardware lacks selects native gadgets the
+         * hardware cannot run. */
+        if ((native & engines.host().supported & ~native_host_.supported)
+                .any()) {
           ++counts_.gadgets_skipped_host_feature;
           continue;
         }
@@ -1095,14 +1155,19 @@ private:
           ++counts_.jit_unavailable;
           continue;
         }
-        const auto &native = corpus_.native_sets[test_case.native];
-        if (!test_case.invalid_encoding && !host_.supports(native)) {
+        if (!test_case.invalid_encoding && !native_host_.supports(native)) {
           ++counts_.jit_skipped_host_feature;
-          const auto missing = native & ~host_.supported;
+          const auto missing = native & ~native_host_.supported;
           for (std::size_t feature = 0; feature < missing.size(); ++feature)
             if (missing.test(feature))
               ++counts_.missing_features
                     [::uml::platform::arm_feature_tokens[feature]];
+          continue;
+        }
+        if (lacking.has_value()) {
+          ++counts_.jit_skipped_host_feature;
+          ++counts_.missing_features[::uml::platform::arm_feature_tokens
+                                         [static_cast<std::size_t>(*lacking)]];
           continue;
         }
       }
@@ -1228,7 +1293,10 @@ private:
 
   const Corpus &corpus_;
   const Options &options_;
-  const ::uml::platform::HostCapabilities &host_;
+  /* What the engines translate for, and what the hardware runs. */
+  const ::uml::platform::HostCapabilities host_;
+  const ::uml::platform::HostCapabilities &native_host_{
+      ::uml::platform::apple::probed_host_capabilities()};
   AddressSpace address_space_;
   SharedBacking code_backing_;
   GuestMapping code_mapping_;
@@ -1248,6 +1316,10 @@ void usage() {
       "  --ordinal N        run the case exported by producer check N of this\n"
       "                     page profile (repeatable, with --producer)\n"
       "  --engine NAME      run only the gadgets or jit lane\n"
+      "  --assume-host-feature TOKEN\n"
+      "                     translate as if the host had feature TOKEN\n"
+      "                     (repeatable); cases needing it natively still\n"
+      "                     need the real host to have it\n"
       "  --max-failures N   stop after N failures (default 25, 0: never)\n"
       "  --fail-fast        stop at the first failure\n"
       "  --list             list the selected records without running them\n");
@@ -1264,11 +1336,14 @@ void usage() {
     };
     if (argument == "--record" || argument == "--producer" ||
         argument == "--case" || argument == "--ordinal" ||
-        argument == "--engine" || argument == "--max-failures") {
+        argument == "--engine" || argument == "--max-failures" ||
+        argument == "--assume-host-feature") {
       const auto text = value();
       if (!text.has_value())
         return std::nullopt;
-      if (argument == "--record")
+      if (argument == "--assume-host-feature")
+        options.assumed_features.push_back(*text);
+      else if (argument == "--record")
         options.records.push_back(*text);
       else if (argument == "--producer")
         options.producers.push_back(*text);

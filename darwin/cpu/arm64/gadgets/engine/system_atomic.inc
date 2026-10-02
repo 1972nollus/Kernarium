@@ -165,14 +165,27 @@ gadget sysreg_nzcv_read
 .purgem sysreg_write64
 .purgem sysreg_read64
 
+/* The FEAT_AFP twins of the FPCR accesses also keep FIZ, AH and NEP. */
+.macro sysreg_fpcr_read mask, afp=0
+.if \afp
+afp_gadget sysreg_fpcr_read
+.else
 gadget sysreg_fpcr_read
+.endif
 	ldr x8, [_stream], #8
 	ldr w9, [_cpu, #UML_GADGET_CPU_FPCR]
-	mov w10, #(UML_ARM64_FPCR_WRITABLE & 0xffff)
-	movk w10, #(UML_ARM64_FPCR_WRITABLE >> 16), lsl #16
+	mov w10, #((\mask) & 0xffff)
+	movk w10, #((\mask) >> 16), lsl #16
 	and w9, w9, w10
 	str x9, [_cpu, x8]
 	next_gadget
+.endm
+
+sysreg_fpcr_read UML_ARM64_FPCR_WRITABLE
+afp_twins_begin
+sysreg_fpcr_read (UML_ARM64_FPCR_WRITABLE | UML_ARM64_FPCR_AFP_CONTROLS), 1
+afp_twins_end
+.purgem sysreg_fpcr_read
 
 gadget sysreg_dczid_read
 	ldr x8, [_stream], #8
@@ -219,16 +232,20 @@ gadget sysreg_fpsr_read
 	str x9, [_cpu, x8]
 	next_gadget
 
-.macro sysreg_fp_write name, field, system, mask
+.macro sysreg_fp_write name, field, system, mask, afp=0
+.if \afp
+afp_gadget sysreg_\name\()_write_r
+.else
 gadget sysreg_\name\()_write_r
+.endif
 	ldr x8, [_stream], #8
 	.ifc \name,fpcr
 	ldr x13, [_stream], #8
 	mov w12, #UML_ARM64_FPCR_TRAP_ENABLES
 	.endif
 	ldr w9, [_cpu, x8]
-	mov w10, #(\mask & 0xffff)
-	movk w10, #(\mask >> 16), lsl #16
+	mov w10, #((\mask) & 0xffff)
+	movk w10, #((\mask) >> 16), lsl #16
 	and w9, w9, w10
 	str w9, [_cpu, #\field]
 	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
@@ -250,6 +267,7 @@ gadget sysreg_\name\()_write_r
 9:
 	.endif
 	next_gadget
+	.if !\afp
 gadget sysreg_\name\()_write_z
 	str wzr, [_cpu, #\field]
 	ldrb w11, [_cpu, #UML_GADGET_CPU_FP_ACTIVE]
@@ -257,10 +275,14 @@ gadget sysreg_\name\()_write_z
 	msr \system, xzr
 9:
 	next_gadget
+	.endif
 .endm
 
 sysreg_fp_write fpcr, UML_GADGET_CPU_FPCR, fpcr, UML_ARM64_FPCR_WRITABLE
 sysreg_fp_write fpsr, UML_GADGET_CPU_FPSR, fpsr, 0xf800009f
+afp_twins_begin
+sysreg_fp_write fpcr, UML_GADGET_CPU_FPCR, fpcr, (UML_ARM64_FPCR_WRITABLE | UML_ARM64_FPCR_AFP_CONTROLS), 1
+afp_twins_end
 
 .purgem sysreg_fp_write
 

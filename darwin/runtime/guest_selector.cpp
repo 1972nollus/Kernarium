@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "uml_darwin_cpu.h"
 
+#include "cpu/arm64/floating_controls.hpp"
 #include "cpu/guest_identity.hpp"
 #include "platform/apple/host_features.hpp"
 #include "runtime/context.hpp"
@@ -42,6 +43,8 @@ constexpr unsigned long hwcap2_frint = 1UL << 8;
 constexpr unsigned long hwcap2_i8mm = 1UL << 13;
 constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 constexpr unsigned long hwcap2_ecv = 1UL << 19;
+constexpr unsigned long hwcap2_afp = 1UL << 20;
+constexpr unsigned long hwcap2_rpres = 1UL << 21;
 constexpr unsigned long hwcap2_cssc = 1UL << 34;
 constexpr unsigned long hwcap2_mops = 1UL << 43;
 [[nodiscard]] unsigned long virtual_hwcap() noexcept
@@ -198,6 +201,14 @@ extern "C" unsigned long darwin_uml_guest_hwcap2(void)
 	 * instruction, so only a host with FEAT_ECV can offer it. */
 	if (host.has(::uml::platform::ArmFeature::ecv))
 		result |= hwcap2_ecv;
+	/* FPCR.FIZ, AH and NEP, where both engines honour them exactly; the
+	 * predicate names the host features that takes. */
+	if (::uml::cpu::arm64::implements_afp(host))
+		result |= hwcap2_afp;
+	/* The 12-bit FRECPE and FRSQRTE estimates under FPCR.AH, which both
+	 * engines take from the host's own instructions. */
+	if (::uml::cpu::arm64::implements_rpres(host))
+		result |= hwcap2_rpres;
 	return result;
 }
 

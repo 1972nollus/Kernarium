@@ -100,6 +100,17 @@
     uml_add_unit_test(NAME arm64-instruction-corpus
         COMMAND uml_arm64_instruction_corpus_tests
             ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack)
+    # The same pack translated as for a host with FEAT_AFP and every feature
+    # implements_afp() needs, which selects the FEAT_AFP twins on any host.
+    # Without the hardware feature only the cases whose FPCR leaves FIZ, AH
+    # and NEP clear run, and the twins must match the base entries on them.
+    uml_add_unit_test(NAME arm64-instruction-corpus-afp-twins
+        COMMAND uml_arm64_instruction_corpus_tests
+            ${PROJECT_SOURCE_DIR}/tests/unit/arm64/corpus/a64_instruction_corpus.pack
+            --assume-host-feature afp --assume-host-feature fp16
+            --assume-host-feature fhm --assume-host-feature bf16
+            --assume-host-feature frintts --assume-host-feature fcma
+            --assume-host-feature jscvt)
 
     uml_add_arm64_unit_test(engine_test_support NAME arm64-engine-harness
         NO_OBJECTS)
@@ -284,6 +295,7 @@
     uml_add_arm64_unit_test(gadget_hot_path WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_nzcv_residency WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_fp_environment WITHOUT_HARNESS)
+    uml_add_arm64_unit_test(gadget_afp_twin WITHOUT_HARNESS)
 
     uml_add_arm64_unit_test(gadget_dependency NAME arm64-gadget-dependencies
         WITHOUT_HARNESS

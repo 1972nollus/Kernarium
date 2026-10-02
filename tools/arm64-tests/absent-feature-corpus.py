@@ -9,7 +9,7 @@ usage: absent-feature-corpus.py [--features LIST] [--failing TSV]
                                 DUMP LOG...
 
 The virtual CPU implements none of FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth,
-FEAT_AFP, and FEAT_EBF16, nor the memory extensions FEAT_LSE128, FEAT_THE
+and FEAT_EBF16, nor the memory extensions FEAT_LSE128, FEAT_THE
 and FEAT_D128, FEAT_LRCPC3, FEAT_LSCP, FEAT_LS64 with its _V and _ACCDATA
 forms, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR, nor the FP/SIMD extensions FEAT_FP8
 with its dot-product, multiply-add, and matrix forms and FPMR,
@@ -17,16 +17,15 @@ FEAT_F16F32DOT, FEAT_F16MM and FEAT_F16F32MM, FEAT_LUT, FEAT_FAMINMAX,
 FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, nor FEAT_CMPBR, FEAT_HBC, FEAT_SSBS,
 FEAT_SME with its SVCR and PSTATE.SM and ZA, FEAT_XS, and FEAT_WFxT: their
 non-hint instructions are UNDEFINED, their hint-space instructions are NOPs,
-FPCR.FIZ, AH, NEP, and EBF are RES0, and the ID registers report them
-absent. The producer checks
+FPCR.EBF is RES0, and the ID registers report them absent. The producer checks
 predate that choice, and their harness enabled these features in most cases'
 state or ran their instructions, so this script rewrites a dump after export.
 For each named feature it
 
 - drops every case that exercises the feature: one that uses its harness
   option, terminal event, or validator relation, or needs it natively without
-  expecting the undefined-instruction trap, which for FEAT_AFP and
-  FEAT_EBF16 means a case whose FPCR sets one of their controls;
+  expecting the undefined-instruction trap, which for FEAT_EBF16 means a
+  case whose FPCR sets EBF;
 - drops every case whose program holds one of the feature's instruction
   encodings, including the hint-space ones whose result the enabled feature
   set, but does not expect it to be undefined;
@@ -38,12 +37,25 @@ For each named feature it
 - replaces the coverage that the MTE cases of the --failing file took from
   each allocation with arm64-absent-mte-tbi cases.
 
-A native FEAT_AFP or FEAT_EBF16 requirement without FPCR controls set came
-from the engines' old host gates, not from the case, so such a case stays and
-loses the requirement. So did every FEAT_CSSC and FEAT_MOPS requirement: both
-engines implement those features on every host, so the rewrite removes them
-from every case, including one that expects the undefined-instruction trap,
-and the JIT lane runs those cases on hosts without the features.
+A native FEAT_EBF16 requirement without FPCR.EBF set came from the engines'
+old host gates, not from the case, so such a case stays and loses the
+requirement. So did every FEAT_CSSC and FEAT_MOPS requirement: both engines
+implement those features on every host, so the rewrite removes them from
+every case, including one that expects the undefined-instruction trap, and
+the JIT lane runs those cases on hosts without the features.
+
+FEAT_AFP is different: the virtual CPU implements it exactly where the host
+does (with the host features implements_afp() in
+darwin/cpu/arm64/floating_controls.hpp also needs), so its cases stay. A case
+whose FPCR sets FIZ, AH, or NEP keeps them and needs FEAT_AFP natively,
+gaining the requirement where the producer's harness left it out, and the
+runner runs it only where the virtual CPU implements the feature. A native
+FEAT_AFP requirement without those controls set came from the old host
+gates, like the FEAT_CSSC and FEAT_MOPS ones, and is removed. A case whose
+entry MSR FPCR writes one of the controls that its FPCR state never holds
+pins them RES0, as a virtual CPU without FEAT_AFP does; it moves to a
+sibling record with the without_afp option, which the runner translates for
+such a CPU on every host.
 
 A failing case is one whose tagged address relied on the top-byte ignore that
 enabled MTE implied. Each replacement takes a kept two-word case of the same
@@ -85,7 +97,7 @@ sys.modules[_spec.name] = corpus
 _spec.loader.exec_module(corpus)
 
 SITE = "tools/arm64-tests/absent-feature-corpus.py"
-DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "afp", "ebf16", "lse128",
+DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "ebf16", "lse128",
                     "the", "lrcpc3", "lscp", "ls64", "lsfe", "lsui", "lor",
                     "fp8", "f16f32dot", "f16mm", "lut", "faminmax", "sm3",
                     "sm4", "fprcvt", "cmpbr", "hbc", "ssbs", "sme", "xs",
@@ -94,6 +106,11 @@ SVC = 0xD400_0001
 # Native requirements that were only the producer JIT's host gates: both
 # engines implement these features on every host.
 HOST_GATES = ("cssc", "mops")
+# FPCR.FIZ, AH, and NEP: FEAT_AFP's controls, which exist where the host
+# implements the feature.
+AFP_CONTROLS = 0x7
+WITHOUT_AFP = "without_afp"
+MSR_FPCR = (0xFFFF_FFE0, 0xD51B_4400)
 
 
 class Feature:
@@ -171,13 +188,6 @@ FEATURES = {
         # or stripped in the producer state.
         encodings=tuple((0xFFFF_FFFF, 0xD503_201F | immediate << 5)
                         for immediate in (7, 8, 10, 12, 14, *range(24, 32)))),
-    # FEAT_AFP has no instructions. Its FPCR.FIZ, AH, and NEP controls are
-    # RES0, so MSR FPCR ignores them and every read returns zero.
-    "afp": Feature(
-        tokens=("afp",),
-        conditions=("FEAT_AFP",),
-        fields=(),
-        fpcr_bits=0x7),
     # FEAT_EBF16 changes no encoding. Its FPCR.EBF control is RES0, so BFDOT
     # and BFMMLA always take the standard behavior.
     "ebf16": Feature(
@@ -712,6 +722,56 @@ def strip_fpcr(case: dict, bits: int) -> bool:
     return True
 
 
+def afp_rule(case: dict, entry: int) -> str:
+    """Applies the FEAT_AFP rule to a kept case and names its outcome:
+    "controls" when its FPCR sets one of the controls, or "added" when it
+    also gains the native requirement; otherwise the case loses any native
+    requirement and is a "pin" when its entry MSR FPCR writes a control that
+    its FPCR state never holds, a "gate" when it lost the requirement, and
+    "none" else."""
+    controls = any(fpcr_value(state) & AFP_CONTROLS
+                   for state in fpcr_states(case))
+    if controls:
+        if "afp" in case["native"]:
+            return "controls"
+        order = {token: index
+                 for index, token in enumerate(corpus.feature_tokens())}
+        case["native"] = sorted([*case["native"], "afp"],
+                                key=lambda token: order.get(token, len(order)))
+        return "added"
+    gate = "afp" in case["native"]
+    case["native"] = [token for token in case["native"] if token != "afp"]
+    mask, value = MSR_FPCR
+    register = entry & 31
+    if entry & mask == value and register != 31 and \
+            int(case["initial"].get(f"x{register}", "0x0"), 16) & AFP_CONTROLS:
+        return "pin"
+    return "gate" if gate else "none"
+
+
+def without_afp_record(item: dict, cases: list[dict]) -> dict:
+    """A sibling of item holding the cases that pin FEAT_AFP's controls RES0,
+    under the without_afp option and the name build-unit-corpus.py gives a
+    record with those options."""
+    options = sorted({*item["options"], WITHOUT_AFP},
+                     key=corpus.OPTION_NAMES.index)
+    bits = sum(1 << corpus.OPTION_NAMES.index(name) for name in options)
+    name = item["record"]
+    profile = ""
+    for suffix in ("/16k", "/4k"):
+        if name.endswith(suffix):
+            name, profile = name[:-len(suffix)], suffix
+    name = re.sub(r"/options=[0-9a-f]+$", "", name)
+    used = sorted({case["program"] for case in cases})
+    renumber = {old: new for new, old in enumerate(used)}
+    sibling = {**item, "record": f"{name}/options={bits:x}{profile}",
+               "options": options,
+               "programs": [item["programs"][index] for index in used],
+               "cases": [{**case, "program": renumber[case["program"]]}
+                         for case in cases]}
+    return sibling
+
+
 def undefined_record(feature: str) -> dict | None:
     programs: list[list] = []
     cases = []
@@ -931,6 +991,7 @@ def main() -> int:
     ungated = collections.Counter()
     kept_cases: list[tuple[dict, dict, int]] = []
     lost = collections.Counter()
+    afp = collections.Counter()
     for line in lines[1:]:
         if not line.strip():
             continue
@@ -943,6 +1004,7 @@ def main() -> int:
         item["options"] = [name for name in item["options"]
                            if name not in rewriter.stripped_options]
         kept = []
+        pinned = []
         for case in item["cases"]:
             program = item["programs"][case["program"]]
             words = [int(word, 16) for _offset, word in program["words"]]
@@ -977,18 +1039,25 @@ def main() -> int:
                 ungated[token] += 1
             case["native"] = [token for token in case["native"]
                               if token not in HOST_GATES]
+            rule = afp_rule(case, entry)
+            afp[rule] += 1
+            if rule == "pin":
+                pinned.append(case)
+                continue
             kept.append(case)
             if len(words) == 2 and words[1] == SVC and program["entry"] == 0:
                 kept_cases.append((item, case, entry))
-        if not kept:
-            continue
-        used = sorted({case["program"] for case in kept})
-        renumber = {old: new for new, old in enumerate(used)}
-        item["programs"] = [item["programs"][index] for index in used]
-        for case in kept:
-            case["program"] = renumber[case["program"]]
-        item["cases"] = kept
-        records.append(item)
+        sibling = without_afp_record(item, pinned) if pinned else None
+        if kept:
+            used = sorted({case["program"] for case in kept})
+            renumber = {old: new for new, old in enumerate(used)}
+            item["programs"] = [item["programs"][index] for index in used]
+            for case in kept:
+                case["program"] = renumber[case["program"]]
+            item["cases"] = kept
+            records.append(item)
+        if sibling is not None:
+            records.append(sibling)
     unmatched = set(failing) - matched_failing
     if unmatched:
         corpus.fail(f"--failing names {len(unmatched)} cases the dump lacks "
@@ -1025,6 +1094,9 @@ def main() -> int:
             for (feature, reason), count in sorted(dropped.items())},
         "stripped_cases": stripped,
         "host_gates": {token: ungated[token] for token in HOST_GATES},
+        "afp": {"controls": afp["controls"], "added_requirement": afp["added"],
+                "removed_requirement": afp["gate"],
+                "without_afp_cases": afp["pin"]},
         "added_cases": added,
         "tbi_replacement_cases": replacement_cases,
     }
@@ -1049,6 +1121,9 @@ def main() -> int:
           f"({', '.join(f'{f}/{r} {n}' for (f, r), n in sorted(dropped.items()))}), "
           f"stripped {stripped}, removed host gates "
           f"({', '.join(f'{t} {ungated[t]}' for t in HOST_GATES)}), "
+          f"kept {afp['controls'] + afp['added']} FEAT_AFP cases "
+          f"({afp['added']} gained the requirement, {afp['gate']} lost it), "
+          f"moved {afp['pin']} RES0 pins to without_afp records, "
           f"added {added} absent-feature cases and "
           f"{replacement_cases} TBI replacements")
     return 0

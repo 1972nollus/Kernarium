@@ -77,8 +77,10 @@
 #define UML_GADGET_EVENT_ILLEGAL 4
 #define UML_GADGET_EVENT_BREAKPOINT 5
 
-/* FPCR bits a guest can set, and the trap enables among them. */
+/* FPCR bits a guest can set, and the trap enables among them. FIZ, AH and
+ * NEP join them where the virtual CPU implements FEAT_AFP. */
 #define UML_ARM64_FPCR_WRITABLE 0x07c89f00
+#define UML_ARM64_FPCR_AFP_CONTROLS 0x7
 #define UML_ARM64_FPCR_TRAP_ENABLES 0x9f00
 
 /* Engine-neutral aliases for code that is not part of gadget translation. */

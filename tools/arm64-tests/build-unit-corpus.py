@@ -50,6 +50,10 @@ OPTION_NAMES = (
     "force_software_pmull",
     "force_software_dotprod",
     "force_software_i8mm",
+    # Not a producer harness option: absent-feature-corpus.py sets it on the
+    # cases that pin FPCR.FIZ, AH and NEP as RES0, and the runner then
+    # translates them for a virtual CPU without FEAT_AFP on every host.
+    "without_afp",
 )
 EVENTS = (
     "system-call",
@@ -145,10 +149,13 @@ RETIRED_VALIDATORS = frozenset({
     "transformed-address-fault-state/v1",
 })
 RETIRED_FIELD_NAMES = frozenset(name for _i, name, _f in RETIRED_FIELDS)
-# Nor does it implement FEAT_AFP or FEAT_EBF16, whose FPCR.FIZ, AH, NEP, and
-# EBF controls are RES0. The rewrite clears them from producer states, and the
-# encoder refuses a state that sets them.
-RETIRED_FPCR_BITS = 0x2007
+# Nor does it implement FEAT_EBF16, whose FPCR.EBF control is RES0. The
+# rewrite clears it from producer states, and the encoder refuses a state that
+# sets it.
+RETIRED_FPCR_BITS = 0x2000
+# FPCR.FIZ, AH and NEP exist where the virtual CPU implements FEAT_AFP, which
+# follows the host, so a state that sets one needs FEAT_AFP natively.
+AFP_FPCR_BITS = 0x7
 # Readable fields, in pack id order.
 READ_FIELDS = tuple(sorted(STATE_FIELDS + RETIRED_FIELDS))
 FIELD_BY_NAME = {name: (identifier, fmt) for identifier, name, fmt in READ_FIELDS}
@@ -801,7 +808,10 @@ def retired_use(record: Record, case: Case) -> str | None:
             if name in RETIRED_FIELD_NAMES:
                 return f"state field {name}"
             if name == "fpcr" and value & RETIRED_FPCR_BITS:
-                return "FPCR.FIZ, AH, NEP, or EBF"
+                return "FPCR.EBF"
+            if name == "fpcr" and value & AFP_FPCR_BITS and \
+                    "afp" not in case.native:
+                return "FPCR.FIZ, AH, or NEP without native FEAT_AFP"
     if any(region.tags or region.expected_tags for region in case.memory):
         return "allocation tags"
     return None

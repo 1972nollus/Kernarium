@@ -134,8 +134,10 @@ JitCompilerFamilies::emit_half_fused_long(std::uint32_t instruction) {
   const auto decoded =
       arm64::detail::decode_half_fused_long(instruction);
   const auto &host = host_capabilities();
-  /* FEAT_AFP is not required: FPCR.AH, FIZ and NEP are RES0, so the native
-   * FMLAL/FMLSL compute the architected result on every host with FHM. */
+  /* FEAT_AFP is not required: the native FMLAL/FMLSL follow FPCR.AH and FIZ
+   * where the virtual CPU implements FEAT_AFP and the controls are RES0
+   * elsewhere, so they compute the architected result on every host with
+   * FHM. */
   if (!decoded.recognized || !host.has(ArmFeature::fhm))
     return false;
   const unsigned destination = instruction & 31U;

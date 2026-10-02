@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_engine_test_support.hpp"
 
+#include "cpu/arm64/floating_controls.hpp"
 #include "cpu/floating_point_contract.hpp"
 #include "uml_darwin_guest.h"
 
@@ -17,7 +18,10 @@ namespace engine = uml::emulator::tests;
 namespace {
 
 constexpr std::size_t transfer_offset = 64;
-constexpr std::uint32_t fpcr_mask = arm64::fpcr_writable_mask;
+// The FPCR fields MSR FPCR and a context restore can set on this host.
+[[nodiscard]] std::uint32_t fpcr_mask() noexcept {
+  return arm64::fpcr_writable_mask_for(::uml::cpu::host_capabilities());
+}
 constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
 
 [[nodiscard]] engine::NativeRequirements native_requirements() {
@@ -41,7 +45,7 @@ deferred_state(const std::array<arm64::VectorRegister, 32> &vectors,
   for (std::size_t index = 0; index < cpu.registers.size(); ++index)
     cpu.registers[index] =
         0x1234'5000'0000'0000ULL | static_cast<std::uint64_t>(index);
-  cpu.defer_fp_load(vectors.data(), fpcr, fpsr);
+  cpu.defer_fp_load(vectors.data(), fpcr, fpsr, fpcr_mask());
   return cpu;
 }
 
@@ -109,7 +113,7 @@ void deferred_control_reads(engine::EngineHarness &harness) {
 
   auto expected = initial;
   expected.access_fp_state();
-  expected.registers[3] = deferred_fpcr & fpcr_mask;
+  expected.registers[3] = deferred_fpcr & fpcr_mask();
   harness.check({
       .name = "deferred-control-read",
       .instruction = 0xd53b'4403U, // MRS X3, FPCR
@@ -132,12 +136,14 @@ void deferred_control_reads(engine::EngineHarness &harness) {
 
 void deferred_restore_masks_control(engine::EngineHarness &harness) {
   // A signal-frame or ptrace restore reaches the engines through
-  // defer_fp_load. It must mask the saved FPCR as MSR FPCR does: FIZ, AH and
-  // NEP (no FEAT_AFP), Len and Stride (no AArch32), EBF (no FEAT_EBF16) and
-  // the RES0 bits read as zero, while FZ16, RMode, FZ, DN and AHP stay set.
-  // The trap enables stay clear here; deferred-trap-enable covers them.
+  // defer_fp_load. It must mask the saved FPCR as MSR FPCR does: Len and
+  // Stride (no AArch32), EBF (no FEAT_EBF16) and the RES0 bits read as zero,
+  // and so do FIZ, AH and NEP unless the virtual CPU implements FEAT_AFP on
+  // this host, while FZ16, RMode, FZ, DN and AHP stay set. The trap enables
+  // stay clear here; deferred-trap-enable covers them.
   constexpr std::uint32_t restored_fpcr = 0xffff'60ffU;
-  constexpr std::uint32_t architectural_fpcr = 0x07c8'0000U;
+  const std::uint32_t architectural_fpcr =
+      0x07c8'0000U | (restored_fpcr & fpcr_mask() & arm64::fpcr_afp_controls);
   const auto vectors = deferred_vectors();
   const auto initial = deferred_state(vectors, restored_fpcr, 0U);
   if (initial.deferred_fpcr != architectural_fpcr ||
@@ -165,7 +171,7 @@ void deferred_control_writes_persist(engine::EngineHarness &harness) {
 
   auto expected = initial;
   expected.access_fp_state();
-  expected.fpcr = static_cast<std::uint32_t>(initial.registers[5]) & fpcr_mask;
+  expected.fpcr = static_cast<std::uint32_t>(initial.registers[5]) & fpcr_mask();
   expected.fpsr = static_cast<std::uint32_t>(initial.registers[6]) & fpsr_mask;
   expected.registers[7] = expected.fpcr;
   expected.registers[8] = expected.fpsr;

@@ -60,6 +60,8 @@
 	.equ E_ECV,		25
 	.equ E_CSSC,		26
 	.equ E_MOPS,		27
+	.equ E_AFP,		28
+	.equ E_RPRES,		29
 
 	.equ AT_HWCAP,		16
 	.equ AT_HWCAP2,		26
@@ -83,8 +85,14 @@
 	.equ HWCAP2_FLAGM2,	7
 	.equ HWCAP2_FRINT,	8
 	.equ HWCAP2_ECV,	19
+	.equ HWCAP2_AFP,	20
+	.equ HWCAP2_RPRES,	21
 	.equ HWCAP2_CSSC,	34
 	.equ HWCAP2_MOPS,	43
+
+	/* FPCR.FIZ, AH and NEP, the FEAT_AFP controls, are bits 0, 1 and 2. */
+	.equ FPCR_AH,		1 << 1
+	.equ FPCR_AFP_CONTROLS,	7
 
 	/* The engine smoke accepts the payload only when it prints exactly "OK"
 	 * and exits zero, so a failure reports the family by name on stdout
@@ -522,6 +530,99 @@ _start:
 	b.ne	.Lfail_mops
 .Lskip_mops:
 
+	tbz	x29, #HWCAP2_AFP, .Lno_afp
+	/* FEAT_AFP: ID_AA64MMFR1_EL1.AFP, the field Linux derives HWCAP2_AFP
+	 * from, reads 1 and FPCR keeps FIZ, AH and NEP. Under NEP a scalar
+	 * result keeps the upper lanes of its merge source: FADD's Vn and
+	 * FSQRT's Vd. Under AH, FABS leaves a NaN's sign alone, and FIZ flushes
+	 * a subnormal input without raising Input Denormal. */
+	mrs	x26, id_aa64mmfr1_el1
+	ubfx	x26, x26, #44, #4
+	cmp	x26, #1
+	b.ne	.Lfail_afp
+	mov	x10, #FPCR_AFP_CONTROLS
+	msr	fpcr, x10
+	mrs	x11, fpcr
+	and	x11, x11, #FPCR_AFP_CONTROLS
+	cmp	x11, #FPCR_AFP_CONTROLS
+	b.ne	.Lfail_afp
+	adrp	x15, afp_vectors
+	add	x15, x15, :lo12:afp_vectors
+	ldp	q1, q2, [x15]
+	ldr	q3, [x15, #32]
+	fadd	s0, s1, s2
+	fsqrt	s3, s2
+	fmov	x11, d0
+	umov	x12, v0.d[1]
+	ldp	x9, x10, [x15, #48]
+	cmp	x11, x9
+	b.ne	.Lfail_afp
+	cmp	x12, x10
+	b.ne	.Lfail_afp
+	fmov	x11, d3
+	umov	x12, v3.d[1]
+	ldp	x9, x10, [x15, #64]
+	cmp	x11, x9
+	b.ne	.Lfail_afp
+	cmp	x12, x10
+	b.ne	.Lfail_afp
+	mov	w9, #0xffc00000		/* the default NaN, sign set */
+	fmov	s4, w9
+	fabs	s4, s4
+	fmov	w11, s4
+	cmp	w11, w9
+	b.ne	.Lfail_afp
+	mov	w9, #1			/* the smallest positive subnormal */
+	fmov	s6, w9
+	fmov	s7, wzr
+	msr	fpsr, xzr
+	fadd	s5, s6, s7
+	mrs	x12, fpsr
+	fmov	w11, s5
+	cbnz	w11, .Lfail_afp
+	cbnz	x12, .Lfail_afp
+	msr	fpcr, xzr
+	b	.Ldone_afp
+.Lno_afp:
+	/* Without FEAT_AFP the field reads 0 and the controls are RES0. */
+	mrs	x26, id_aa64mmfr1_el1
+	ubfx	x26, x26, #44, #4
+	cbnz	x26, .Lfail_afp
+	mov	x10, #FPCR_AFP_CONTROLS
+	msr	fpcr, x10
+	mrs	x11, fpcr
+	msr	fpcr, xzr
+	tst	x11, #FPCR_AFP_CONTROLS
+	b.ne	.Lfail_afp
+.Ldone_afp:
+
+	tbz	x29, #HWCAP2_RPRES, .Lskip_rpres
+	/* FEAT_RPRES: ID_AA64ISAR2_EL1.RPRES, the field Linux derives
+	 * HWCAP2_RPRES from, reads 1, and a single-precision FRECPE has a
+	 * 12-bit mantissa under FPCR.AH and the 8-bit one otherwise. */
+	mrs	x26, s3_0_c0_c6_2	/* ID_AA64ISAR2_EL1 */
+	ubfx	x26, x26, #4, #4
+	cmp	x26, #1
+	b.ne	.Lfail_rpres
+	fmov	s1, #3.0
+	frecpe	s0, s1
+	fmov	w11, s0
+	mov	w9, #0x8000
+	movk	w9, #0x3eaa, lsl #16	/* RecipEstimate(384) */
+	cmp	w11, w9
+	b.ne	.Lfail_rpres
+	mov	x10, #FPCR_AH
+	msr	fpcr, x10
+	frecpe	s0, s1
+	msr	fpcr, xzr
+	fmov	w11, s0
+	mov	w9, #0xa000
+	movk	w9, #0x3eaa, lsl #16	/* RecipEstimate(3072) at 12 bits */
+	cmp	w11, w9
+	b.ne	.Lfail_rpres
+	msr	fpsr, xzr
+.Lskip_rpres:
+
 	adrp	x1, success_message
 	add	x1, x1, :lo12:success_message
 	mov	x0, #1
@@ -557,6 +658,8 @@ _start:
 .Lfail_ecv:		fail E_ECV, msg_ecv
 .Lfail_cssc:		fail E_CSSC, msg_cssc
 .Lfail_mops:		fail E_MOPS, msg_mops
+.Lfail_afp:		fail E_AFP, msg_afp
+.Lfail_rpres:		fail E_RPRES, msg_rpres
 
 .Lexit:
 	mov	x8, #NR_EXIT_GROUP
@@ -606,6 +709,13 @@ jscvt_cases:
 	.if (. - jscvt_cases) != JSCVT_CASES * 40
 	.error "JSCVT_CASES does not count jscvt_cases"
 	.endif
+	.p2align 4
+afp_vectors:
+	.word 0x3f800000, 0x11111111, 0x22222222, 0x33333333	/* Vn: 1.0 */
+	.word 0x40800000, 0x55555555, 0x66666666, 0x77777777	/* Vm: 4.0 */
+	.word 0x00000000, 0x44444444, 0x88888888, 0x99999999	/* FSQRT's Vd */
+	.quad 0x1111111140a00000, 0x3333333322222222	/* FADD: 5.0 over Vn */
+	.quad 0x4444444440000000, 0x9999999988888888	/* FSQRT: 2.0 over Vd */
 frint_input:
 	.double 2.7
 frint_expected:
@@ -672,6 +782,10 @@ msg_cssc:
 	.ascii "FAIL cssc       \n"
 msg_mops:
 	.ascii "FAIL mops       \n"
+msg_afp:
+	.ascii "FAIL afp        \n"
+msg_rpres:
+	.ascii "FAIL rpres      \n"
 success_message:
 	.ascii "OK\n"
 

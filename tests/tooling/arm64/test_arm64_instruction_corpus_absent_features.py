@@ -3,12 +3,14 @@
 """Check the absent-feature rewrite of the A64 instruction corpus.
 
 The checked-in pack is absent-feature-corpus.py applied to a dump of the pack
-that preceded the removal of FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth,
-FEAT_AFP, and FEAT_EBF16. Rebuild that rewrite from the earlier pack in Git history and require
-the same bytes, and require every kept case to equal its source case except for
-the stripped feature state, FPCR controls, native requirement, host-gate
-requirements, and allocation tags, and every kept record to keep its identity
-except for the stripped harness options.
+that preceded the removal of FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth, and
+FEAT_EBF16. Rebuild that rewrite from the earlier pack in Git history and
+require the same bytes, and require every kept case to equal its source case
+except for the stripped feature state, FPCR controls, native requirement,
+host-gate requirements, the FEAT_AFP requirement the rewrite adds or removes,
+and allocation tags, and every kept record to keep its identity except for
+the stripped harness options and the without_afp option of the cases that
+pin FEAT_AFP's controls RES0.
 """
 
 from __future__ import annotations
@@ -31,9 +33,10 @@ TOOLS = REPOSITORY / "tools" / "arm64-tests"
 # Git blob of the corpus pack before the features were removed.
 PRE_REMOVAL_PACK = "a62f612c8f4c88841eb211560a2d72ffc78fac95"
 SKIP = 77
-# FPCR controls, RES0 without their feature: FIZ, AH, and NEP (FEAT_AFP) and
-# EBF (FEAT_EBF16).
-FPCR_FEATURES = {"afp": 0x7, "ebf16": 0x2000}
+# FPCR controls, RES0 without their feature: EBF (FEAT_EBF16).
+FPCR_FEATURES = {"ebf16": 0x2000}
+# FEAT_AFP's FIZ, AH, and NEP, which exist where the host implements it.
+AFP_CONTROLS = 0x7
 
 
 def load(name: str, path: pathlib.Path):
@@ -96,8 +99,12 @@ def main() -> int:
     if builder.encode_pack(rewritten, tokens) != pack:
         raise SystemExit("the rewrite of the earlier pack is not the pack")
 
-    # Every kept case is its source case without the removed state. Cases
-    # that share a key keep their order within a record.
+    # Every kept case is its source case without the removed state. A case is
+    # keyed by its producer and check ordinals, which no other case of the
+    # producer shares, so the cases the rewrite moves to a without_afp
+    # sibling record still find their source. Cases that share a key keep
+    # their order within a record.
+    order = {token: index for index, token in enumerate(tokens)}
     sources: dict[tuple, collections.deque] = collections.defaultdict(
         collections.deque)
     for line in dump.splitlines()[1:]:
@@ -105,7 +112,7 @@ def main() -> int:
         if "cases" not in item:
             continue
         for case in item["cases"]:
-            key = (item["record"], case["name"], *case["ordinals"])
+            key = (item["producer"], case["name"], *case["ordinals"])
             case["program"] = item["programs"][case["program"]]
             sources[key].append((item, case))
     retired = builder.RETIRED_FIELD_NAMES
@@ -118,7 +125,7 @@ def main() -> int:
             authored += len(item["cases"])
             continue
         for case in item["cases"]:
-            key = (item["record"], case["name"], *case["ordinals"])
+            key = (item["producer"], case["name"], *case["ordinals"])
             if not sources[key]:
                 raise SystemExit(f"{key}: kept case has no source case")
             source_record, source_case = sources[key].popleft()
@@ -127,6 +134,8 @@ def main() -> int:
             identity["options"] = [
                 name for name in source_record["options"]
                 if name not in builder.RETIRED_OPTIONS]
+            if "without_afp" in item["options"]:
+                identity["options"].append("without_afp")
             if identity != {name: item[name] for name in
                             ("producer", "site", "profiles", "options")}:
                 raise SystemExit(f"{key}: record identity changed")
@@ -142,6 +151,17 @@ def main() -> int:
                     strip_fpcr(expected, feature, bits)
             expected["native"] = [token for token in expected["native"]
                                   if token not in step.get("host_gates", {})]
+            if "afp" in step:
+                controls = any(
+                    int(state.get("fpcr", "0x0"), 16) & AFP_CONTROLS
+                    for state in (expected["initial"], expected["expected"]))
+                if not controls:
+                    expected["native"] = [token for token in expected["native"]
+                                          if token != "afp"]
+                elif "afp" not in expected["native"]:
+                    expected["native"] = sorted(
+                        [*expected["native"], "afp"],
+                        key=lambda token: order.get(token, len(order)))
             actual = dict(case, program=item["programs"][case["program"]])
             if actual != expected:
                 raise SystemExit(f"{key}: kept case differs from its source "

@@ -38,10 +38,18 @@ _\name:
 #endif
 	gadget_bank_bound uml_arm64_gadget_cold_section_\edge
 	.popsection
+#if __APPLE__
+	.pushsection __TEXT,__gadget_afp,regular,pure_instructions
+#else
+	.pushsection .text.gadget_afp,"ax"
+#endif
+	gadget_bank_bound uml_arm64_gadget_afp_section_\edge
+	.popsection
 .endm
 
 	gadget_bank_bounds begin
 #include "engine/core_integer.inc"
+#include "engine/afp_twin.inc"
 /* Keep the FP/SIMD bank on its established 64-byte cache-line phase after
  * factoring the native-environment cold path into one shared routine. */
 .space 16
@@ -61,4 +69,5 @@ _\name:
 /* The cold FEAT_LSE2 alignment stubs of the atomic families go last, in reach
  * of their conditional branches, so no established gadget moves for them. */
 #include "engine/lse2_alignment.inc"
+	afp_twin_table_end
 	gadget_bank_bounds end

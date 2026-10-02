@@ -20,15 +20,29 @@ corpus cases expect exactly that. LDAPR and STLR stay `verified`: only their
 FEAT_LRCPC3 writeback forms are UNDEFINED. So do DSB, whose FEAT_XS nXS form
 is UNDEFINED, and MSR (immediate), whose FEAT_SSBS form is.
 
-The virtual CPU also omits FEAT_AFP, which has no instructions, whether or not
-the host implements it. FPCR.FIZ, AH, and NEP are RES0: MSR FPCR and every
-context restore clear them, and floating-point instructions behave as if all
-three were zero. The other FPCR fields follow the AArch64 FPCR description for
-a CPU with FEAT_FP16 and trapped exception handling but without FEAT_EBF16 or
-AArch32. AHP, DN, FZ, RMode, FZ16, and the six trap enables are writable; Len,
-Stride, and EBF read as zero, so BFDOT and BFMMLA always take the standard
-BFloat16 behavior. The `arm64-base-system-registers` corpus cases pin that
-write mask.
+FEAT_AFP, which has no instructions, is implemented exactly where the host
+implements it along with FEAT_FP16, FEAT_FHM, FEAT_BF16, FEAT_FRINTTS,
+FEAT_FCMA, and FEAT_JSCVT, whose software stand-ins do not model it
+(`implements_afp()` in
+[`darwin/cpu/arm64/floating_controls.hpp`](../darwin/cpu/arm64/floating_controls.hpp)).
+HWCAP2_AFP and ID_AA64MMFR1_EL1.AFP say so, and FPCR.FIZ, AH, and NEP are
+writable. Both engines then run every floating-point instruction as the
+host's own under the guest's FPCR and keep a scalar result's architectural
+merge source in the host register that NEP merges from: the gadget engine
+translates with FEAT_AFP twins of the entries that would not, and the JIT
+reads the old destination where NEP merges into it. FEAT_RPRES, which raises
+the single-precision FRECPE and FRSQRTE estimates to 12 bits under AH, follows
+the host wherever FEAT_AFP is implemented, with HWCAP2_RPRES and
+ID_AA64ISAR2_EL1.RPRES. Elsewhere FIZ, AH, and NEP are RES0: MSR FPCR and
+every context restore clear them, and floating-point instructions behave as
+if all three were zero. The other FPCR fields follow the AArch64 FPCR
+description for a CPU with FEAT_FP16 and trapped exception handling but
+without FEAT_EBF16 or AArch32. AHP, DN, FZ, RMode, FZ16, and the six trap
+enables are writable; Len, Stride, and EBF read as zero, so BFDOT and BFMMLA
+always take the standard BFloat16 behavior. The `arm64-base-system-registers`
+corpus cases pin that write mask for a CPU without FEAT_AFP on every host, the
+corpus's FEAT_AFP and FEAT_RPRES cases run where they are implemented, and
+the guest HWCAP sanity payload checks the controls on each host.
 
 FEAT_ECV, which also has no instructions, is implemented exactly where the
 host implements it, and HWCAP2_ECV and ID_AA64MMFR0_EL1.ECV say so. Both
