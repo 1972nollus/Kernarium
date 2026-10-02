@@ -9,7 +9,7 @@ __import__("sys").dont_write_bytecode = True
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "steam-common"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import launcher  # noqa: E402
 from launcher import launch, parser  # noqa: E402
 
