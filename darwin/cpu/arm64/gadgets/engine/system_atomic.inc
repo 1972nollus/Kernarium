@@ -215,8 +215,8 @@ gadget sysreg_fpsr_read
 	b 9f
 8:	ldr w9, [_cpu, #UML_GADGET_CPU_FPSR]
 9:
-	mov w10, #0x9f
-	movk w10, #0xf800, lsl #16
+	mov w10, #(UML_ARM64_FPSR_WRITABLE & 0xffff)
+	movk w10, #(UML_ARM64_FPSR_WRITABLE >> 16), lsl #16
 	and w9, w9, w10
 	str w9, [_cpu, #UML_GADGET_CPU_FPSR]
 	str x9, [_cpu, x8]
@@ -269,7 +269,7 @@ gadget sysreg_\name\()_write_z
 .endm
 
 sysreg_fp_write fpcr, UML_GADGET_CPU_FPCR, fpcr, UML_ARM64_FPCR_WRITABLE
-sysreg_fp_write fpsr, UML_GADGET_CPU_FPSR, fpsr, 0xf800009f
+sysreg_fp_write fpsr, UML_GADGET_CPU_FPSR, fpsr, UML_ARM64_FPSR_WRITABLE
 afp_twins_begin
 sysreg_fp_write fpcr, UML_GADGET_CPU_FPCR, fpcr, (UML_ARM64_FPCR_WRITABLE | UML_ARM64_FPCR_AFP_CONTROLS), 1
 afp_twins_end

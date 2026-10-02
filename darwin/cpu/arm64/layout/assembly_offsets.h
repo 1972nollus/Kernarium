@@ -83,6 +83,9 @@
 #define UML_ARM64_FPCR_AFP_CONTROLS 0x7
 #define UML_ARM64_FPCR_TRAP_ENABLES 0x9f00
 
+/* FPSR bits a guest can set: QC and the cumulative exception flags. */
+#define UML_ARM64_FPSR_WRITABLE 0x0800009f
+
 /* Engine-neutral aliases for code that is not part of gadget translation. */
 #define UML_ARM64_CPU_FP_ACTIVE UML_GADGET_CPU_FP_ACTIVE
 #define UML_ARM64_CPU_FPSR UML_GADGET_CPU_FPSR

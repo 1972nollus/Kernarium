@@ -17,9 +17,9 @@ inline constexpr std::uint32_t fpcr_exception_enable_mask = 0x0000'9f00U;
 inline constexpr std::uint32_t fpsr_exception_cumulative_mask =
 	::uml::cpu::floating_point_status_exception_mask;
 
-/* The FPSR bits a natively executed operation reports: the condition flags,
- * QC, and the cumulative exception flags including IDC. */
-inline constexpr std::uint32_t fpsr_reported_mask = 0xf800'009fU;
+/* The FPSR bits a natively executed operation reports: QC and the cumulative
+ * exception flags including IDC. */
+inline constexpr std::uint32_t fpsr_reported_mask = 0x0800'009fU;
 
 [[nodiscard]] constexpr std::uint32_t host_fpcr(
 	std::uint32_t guest_fpcr) noexcept

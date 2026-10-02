@@ -379,7 +379,6 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
         translation_features_ != nullptr
             ? arm64::fpcr_writable_mask_for(*translation_features_)
             : arm64::fpcr_writable_mask_for(host_capabilities());
-    constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
     const auto system = instruction & 0xffff'ffe0U;
     const unsigned transfer = instruction & 31U;
     const auto write_destination = [&](auto emit_value) {
@@ -443,17 +442,13 @@ void JitCompiler::mask_register(unsigned reg, std::uint64_t mask, bool wide) {
     case 0xd53b'4420U:             // FPSR
       write_destination([&](unsigned destination) {
         emitter_.emit(0xd53b'4420U | destination);
-        mask_register(destination, native_fpsr_mutable_mask, false);
-        emitter_.load_w(10, 15, offsetof(CpuState, fpsr));
-        mask_register(10, 0xf000'0000U, false);
-        emitter_.emit(0x2a00'0000U | (10U << 16) |
-                      (destination << 5) | destination);
+        mask_register(destination, arm64::fpsr_writable_mask, false);
       });
       native_fp_ = true;
       return true;
     case 0xd51b'4420U:
       copy_source_to_scratch();
-      mask_register(8, fpsr_mask, false);
+      mask_register(8, arm64::fpsr_writable_mask, false);
       emitter_.store_w(8, 15, offsetof(CpuState, fpsr));
       emitter_.emit(0xd51b'4428U); // msr fpsr, x8
       native_fp_ = true;

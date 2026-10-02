@@ -21,7 +21,7 @@ namespace {
 {
 	return arm64::fpcr_writable_mask_for(::uml::cpu::host_capabilities());
 }
-constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
+constexpr std::uint32_t fpsr_mask = arm64::fpsr_writable_mask;
 constexpr std::uint32_t terminal_system_call = 0xd400'0001U;
 
 struct CounterBounds final {
@@ -136,11 +136,11 @@ void floating_status_boundary_round_trips(test::Harness &harness)
 	}) {
 		auto initial = test::state();
 		initial.fpcr = 0;
-		initial.fpsr = condition_bit;
-		initial.registers[4] = 0;
+		initial.fpsr = 0;
+		initial.registers[4] = condition_bit;
 		auto expected = initial;
-		harness.check("base-preserve-floating-status-condition",
-			0xd51b'4404U, initial, expected, floating);
+		harness.check("base-discard-floating-status-condition",
+			0xd51b'4424U, initial, expected, floating);
 	}
 
 	for (const auto mutable_flag : {
@@ -415,6 +415,71 @@ void inaccessible_and_reserved(test::Harness &harness)
 
 } // namespace
 
+/* FPSR.N, Z, C and V are the AArch32 comparison flags, RES0 on this
+ * AArch64-only virtual CPU: MSR FPSR discards them with QC and IXC set, and
+ * MRS FPSR reads them as zero, before and after a native operation, as an M1
+ * does. */
+void floating_status_condition_is_res0(test::Harness &harness)
+{
+	const auto floating =
+		engine_tests::NativeRequirements::features(
+			::uml::cpu::ArmFeature::floating_point);
+	constexpr std::uint32_t inexact = 0x0000'0010U;
+	constexpr std::uint32_t saturation = 0x0800'0000U;
+	constexpr std::uint32_t condition = 0xf000'0000U;
+	for (const bool divide : {false, true}) {
+		const std::array code{
+			engine_tests::ProgramWord{
+				.offset = 0,
+				.instruction = 0xd51b'4424U, // MSR FPSR, X4
+			},
+			engine_tests::ProgramWord{
+				.offset = 4,
+				.instruction = divide ? 0x1e21'1802U : // FDIV S2, S0, S1
+					0xd503'201fU, // NOP
+			},
+			engine_tests::ProgramWord{
+				.offset = 8,
+				.instruction = 0xd53b'4425U, // MRS X5, FPSR
+			},
+			engine_tests::ProgramWord{
+				.offset = 12,
+				.instruction = terminal_system_call,
+			},
+		};
+		auto initial = test::state();
+		initial.fpcr = 0;
+		initial.fpsr = 0;
+		initial.registers[4] = condition | saturation |
+			(divide ? 0U : inexact);
+		const std::uint32_t one = 0x3f80'0000U;
+		const std::uint32_t three = 0x4040'0000U;
+		initial.vectors[0] = {};
+		initial.vectors[1] = {};
+		std::memcpy(initial.vectors[0].bytes.data(), &one, sizeof(one));
+		std::memcpy(initial.vectors[1].bytes.data(), &three,
+			sizeof(three));
+		auto expected = initial;
+		expected.fpsr = saturation | inexact;
+		expected.registers[5] = saturation | inexact;
+		if (divide) {
+			const std::uint32_t third = 0x3eaa'aaabU;
+			expected.vectors[2] = {};
+			std::memcpy(expected.vectors[2].bytes.data(), &third,
+				sizeof(third));
+		}
+		expected.pc = engine_tests::engine_test_code_base + 16;
+		harness.engines().check_program({
+			.name = "base-floating-status-condition-reads-zero",
+			.code = std::span<const engine_tests::ProgramWord>{code},
+			.initial = initial,
+			.expected = expected,
+			.event = engine_tests::ExpectedEvent::system_call,
+			.native = floating,
+		});
+	}
+}
+
 int main()
 {
 	test::Harness harness;
@@ -428,6 +493,7 @@ int main()
 	virtual_counter_is_monotonic(harness);
 	inaccessible_and_reserved(harness);
 	self_synchronized_counter(harness);
+	floating_status_condition_is_res0(harness);
 	harness.print_summary("arm64-base-system-registers");
 	return 0;
 }
