@@ -5,11 +5,12 @@ Jelly and Mesa Venus each keep a metadata.env with one key prefix, a
 generated patch series and a maintained Git topic. Their verifiers and
 regenerators differ in their constants, in how a materialized checkout must
 sit on its base, and in how the regenerator finds the topic's export base;
-everything else is here. The AOSP and OrangeFox route verifiers read the same
-kind of tab-separated route table and resolved Repo manifest, so their table,
-path, manifest and digest checks are here too, as is the one command runner
-every verifier, regenerator and the release publisher uses. Each caller
-passes its own error type, so diagnostics keep their per-tool prefixes.
+everything else is here. The AOSP and OrangeFox route verifiers check the
+same kind of tab-separated route table against a resolved Repo manifest and
+the same kind of routed Repo workspace, so those checks are here too, as is
+the one command runner every verifier, regenerator and the release publisher
+uses. Each caller passes its own error type, so diagnostics keep their
+per-tool prefixes.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
@@ -38,6 +40,19 @@ import patch_series  # noqa: E402
 HEX40 = re.compile(r"[0-9a-f]{40}")
 UNSAFE_PARTS = frozenset(("", ".", "..", ".git", ".repo"))
 Error = Callable[[str], Exception]
+AOSP_ROUTE_HEADER = (
+    "order",
+    "route_id",
+    "manifest_project",
+    "checkout_path",
+    "manifest_revision",
+    "base_commit",
+    "base_tree",
+    "final_tree",
+    "series_dir",
+)
+ROUTE_ID = re.compile(r"p[0-9]{4}")
+DIRTY_PROJECTS = 'if test -n "$(git status --porcelain)"; then printf "%s\\n" "$REPO_PATH"; fi'
 
 
 def run(
@@ -137,6 +152,175 @@ def manifest_projects(root: ET.Element, error: Error) -> dict[str, ET.Element]:
     if not projects:
         raise error("resolved manifest has no projects")
     return projects
+
+
+@dataclass(frozen=True)
+class Route:
+    order: int
+    route_id: str
+    project: str
+    path: str
+    upstream: str
+    base_commit: str
+    base_tree: str
+    final_tree: str
+    series_dir: Path
+
+
+def read_route_table(
+    path: Path,
+    header: tuple[str, ...],
+    android_root: Path,
+    series_root: str,
+    base_projects: dict[str, ET.Element],
+    error: Error,
+) -> list[Route]:
+    """Return a route table's routes, checked against the resolved base manifest.
+
+    The order column counts from 1, and no route ID, project or checkout path
+    repeats. Each route names its base-manifest project at the pinned revision
+    and upstream, and its own nonempty series at
+    `<series_root>/<route_id>/series` below the Android root.
+    """
+    routes: list[Route] = []
+    for index, values in enumerate(table(path, header, error), 1):
+        (
+            order_text,
+            route_id,
+            project,
+            checkout_path,
+            upstream,
+            base_commit,
+            base_tree,
+            final_tree,
+            series_dir_text,
+        ) = values
+        if order_text != str(index):
+            raise error("project route order is not contiguous")
+        if not ROUTE_ID.fullmatch(route_id):
+            raise error(f"invalid route ID: {route_id}")
+        safe_relative(project, "manifest project name", error)
+        safe_relative(checkout_path, "checkout path", error)
+        safe_relative(series_dir_text, "series directory", error)
+        expected_series_dir = f"{series_root}/{route_id}/series"
+        if series_dir_text != expected_series_dir:
+            raise error(f"route {route_id} series must be isolated at {expected_series_dir}")
+        for label, value in (
+            ("base commit", base_commit),
+            ("base tree", base_tree),
+            ("final tree", final_tree),
+        ):
+            if not HEX40.fullmatch(value):
+                raise error(f"route {route_id} has invalid {label}")
+        read_generated_series(android_root / series_dir_text, f"route {route_id}", error)
+        routes.append(Route(
+            index,
+            route_id,
+            project,
+            checkout_path,
+            upstream,
+            base_commit,
+            base_tree,
+            final_tree,
+            android_root / series_dir_text,
+        ))
+    if len({route.route_id for route in routes}) != len(routes):
+        raise error("project route IDs are not unique")
+    if len({route.project for route in routes}) != len(routes):
+        raise error("manifest projects are routed more than once")
+    if len({route.path for route in routes}) != len(routes):
+        raise error("checkout paths are routed more than once")
+    for route in routes:
+        locked = base_projects.get(route.path)
+        if locked is None or locked.get("name") != route.project:
+            raise error(f"route {route.route_id} is absent from the base manifest")
+        if locked.get("revision") != route.base_commit:
+            raise error(f"route {route.route_id} base commit differs from the manifest lock")
+        if locked.get("upstream") != route.upstream:
+            raise error(f"route {route.route_id} manifest revision differs from the lock")
+    return routes
+
+
+def verify_repo_routes(
+    source: Path,
+    base_projects: dict[str, ET.Element],
+    routes: list[Route],
+    expect: str,
+    label: str,
+    error: Error,
+) -> None:
+    """Check a routed Repo workspace against its base manifest and routes.
+
+    Repo must resolve exactly the base manifest's project paths, with every
+    unrouted project at its pinned revision and no project dirty. Each route
+    is a Git checkout inside the workspace whose HEAD Repo resolves: at its
+    exact base for `base`, or at its final tree on a history containing its
+    base for `final`.
+    """
+    source = source.resolve()
+    if not (source / ".repo/manifests").is_dir():
+        raise error(f"{label} source lacks Repo metadata: {source}")
+    current_projects = manifest_projects(
+        ET.fromstring(run("repo", "manifest", "-r", cwd=source, error=error)), error
+    )
+    if set(current_projects) != set(base_projects):
+        raise error("current Repo project paths differ from the resolved base manifest")
+    route_paths = {route.path for route in routes}
+    for path, base in base_projects.items():
+        if path not in route_paths and current_projects[path].get("revision") != base.get(
+            "revision"
+        ):
+            raise error(f"unrouted {label} project moved from its pinned revision: {path}")
+    dirty = run("repo", "forall", "-c", DIRTY_PROJECTS, cwd=source, error=error)
+    if dirty:
+        raise error(f"{label} projects have uncommitted changes: {dirty}")
+
+    for route in routes:
+        checkout = (source / route.path).resolve()
+        if not checkout.is_relative_to(source):
+            raise error(f"route {route.route_id} checkout escapes the {label} source")
+        if not (checkout / ".git").exists():
+            raise error(f"route {route.route_id} is not a Git checkout")
+        head = run("git", "rev-parse", "HEAD", cwd=checkout, error=error)
+        tree = run("git", "rev-parse", "HEAD^{tree}", cwd=checkout, error=error)
+        if current_projects[route.path].get("name") != route.project:
+            raise error(f"route {route.route_id} maps to the wrong manifest project")
+        if current_projects[route.path].get("revision") != head:
+            raise error(f"Repo did not resolve route {route.route_id} to its current HEAD")
+        if expect == "base":
+            if head != route.base_commit or tree != route.base_tree:
+                raise error(f"route {route.route_id} is not at its exact base")
+            continue
+        if tree != route.final_tree:
+            raise error(f"route {route.route_id} tree is {tree}, expected {route.final_tree}")
+        ancestor = subprocess.run(
+            ("git", "merge-base", "--is-ancestor", route.base_commit, "HEAD"),
+            cwd=checkout,
+            check=False,
+        )
+        if ancestor.returncode != 0:
+            raise error(f"route {route.route_id} is not based on its pinned base")
+
+
+def verify_device_tree(
+    android_root: Path, tree: str, workspace: Path, error: Error, *options: str
+) -> None:
+    """Require the workspace's device tree to equal the checked one."""
+    tool = android_root / "tools/sync-device-tree.py"
+    if not tool.is_file():
+        raise error("device-tree sync tool is missing")
+    run(
+        str(tool),
+        "--android-root",
+        str(android_root),
+        "--tree",
+        tree,
+        "--workspace",
+        str(workspace.resolve()),
+        "--verify",
+        *options,
+        error=error,
+    )
 
 
 def read_metadata(

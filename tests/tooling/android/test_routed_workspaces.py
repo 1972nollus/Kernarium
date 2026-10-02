@@ -199,6 +199,29 @@ def check_route_states(verifier: Verifier, routes: list[tuple[Path, str, str]],
     verifier.accepts(f"the restored {label} routes", "final", *final_extra)
 
 
+def check_route_checkout(verifier: Verifier, root: Path, workspace: Path,
+                         projects: list[tuple[str, str, str]], label: str) -> None:
+    """The first route must keep its manifest name and stay inside the workspace."""
+    name, path, upstream = projects[0]
+    write_projects(workspace, [(f"{name}-renamed", path, upstream), *projects[1:]])
+    verifier.refuses(
+        f"a {label} route whose current manifest names another project",
+        "route p0001 maps to the wrong manifest project", "final",
+    )
+    write_projects(workspace, projects)
+
+    route = workspace / path
+    outside = root / f"outside-{label}"
+    route.rename(outside)
+    route.symlink_to(outside)
+    verifier.refuses(
+        f"a {label} route checkout outside the workspace",
+        f"route p0001 checkout escapes the {label} source", "final",
+    )
+    route.unlink()
+    outside.rename(route)
+
+
 def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> None:
     android_root = root / "aosp-policy"
     workspace = root / "aosp"
@@ -263,29 +286,13 @@ def check_aosp(source_root: Path, root: Path, environment: dict[str, str]) -> No
     )
     write_projects(workspace, projects)
 
-    write_projects(workspace, [("platform/renamed", "build/make", "refs/tags/fixture"),
-                               projects[1]])
-    verifier.refuses(
-        "an AOSP route whose current manifest names another project",
-        "route p0001 maps to the wrong manifest project", "final",
-    )
-    write_projects(workspace, projects)
-
     (workspace / "device/kernarium/darwin/device.mk").unlink()
     verifier.refuses(
         "an unsynchronized AOSP device overlay", "destination inventory differs", "final"
     )
     copy_device_tree(overlay, workspace)
 
-    outside = root / "outside-make"
-    route.rename(outside)
-    route.symlink_to(outside)
-    verifier.refuses(
-        "an AOSP route checkout outside the workspace",
-        "route p0001 checkout escapes the AOSP source", "final",
-    )
-    route.unlink()
-    outside.rename(route)
+    check_route_checkout(verifier, root, workspace, projects, "AOSP")
     verifier.accepts("the restored AOSP workspace", "final")
 
 
@@ -428,6 +435,7 @@ def check_orangefox(source_root: Path, root: Path, environment: dict[str, str]) 
         "Repo project paths differ", "final",
     )
     write_projects(workspace, projects)
+    check_route_checkout(verifier, root, workspace, projects, "OrangeFox")
     verifier.accepts("the restored OrangeFox workspace", "final")
 
 

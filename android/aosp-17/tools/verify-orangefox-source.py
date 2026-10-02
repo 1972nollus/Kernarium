@@ -8,15 +8,12 @@ __import__("sys").dont_write_bytecode = True
 
 import argparse
 import re
-import subprocess
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
 from pathlib import Path
 
 import pinned_source
 # pinned_source puts scripts/ and the contract checks on sys.path.
 from contract_checks import parse_assignments  # noqa: E402
-import patch_series  # noqa: E402
 
 
 HEX40 = pinned_source.HEX40
@@ -51,32 +48,12 @@ class VerificationError(ValueError):
     pass
 
 
-@dataclass(frozen=True)
-class Route:
-    order: int
-    route_id: str
-    project: str
-    path: str
-    upstream: str
-    base_commit: str
-    base_tree: str
-    final_tree: str
-
-
 def run(*command: str, cwd: Path | None = None) -> str:
     return pinned_source.run(*command, cwd=cwd, error=VerificationError)
 
 
 def digest(path: Path) -> str:
     return pinned_source.digest(path, VerificationError)
-
-
-def table(path: Path, expected: tuple[str, ...]) -> list[tuple[str, ...]]:
-    return pinned_source.table(path, expected, VerificationError)
-
-
-def safe_relative(value: str, label: str) -> None:
-    pinned_source.safe_relative(value, label, VerificationError)
 
 
 def manifest_projects(root: ET.Element) -> dict[str, ET.Element]:
@@ -131,40 +108,19 @@ def verify_metadata(root: Path) -> tuple[dict[str, str], dict[str, ET.Element]]:
     return values, manifest_projects(ET.parse(manifest_path).getroot())
 
 
-def inspect_routes(root: Path, projects: dict[str, ET.Element]) -> list[Route]:
-    routes: list[Route] = []
-    project_rows = table(
-        root / "third_party/orangefox/patches/projects.tsv", PROJECT_HEADER
+def inspect_routes(
+    root: Path, projects: dict[str, ET.Element]
+) -> list[pinned_source.Route]:
+    routes = pinned_source.read_route_table(
+        root / "third_party/orangefox/patches/projects.tsv",
+        PROJECT_HEADER,
+        root,
+        "third_party/orangefox/patches/projects",
+        projects,
+        VerificationError,
     )
-    for expected_order, row in enumerate(project_rows, 1):
-        (
-            order_text, route_id, project_name, checkout_path, upstream,
-            base_commit, base_tree, final_tree, series_dir_text,
-        ) = row
-        if order_text != str(expected_order) or route_id != f"p{expected_order:04d}":
-            raise VerificationError("OrangeFox route order or ID is invalid")
-        safe_relative(checkout_path, "route checkout")
-        safe_relative(series_dir_text, "route series")
-        if any(HEX40.fullmatch(value) is None for value in (base_commit, base_tree, final_tree)):
-            raise VerificationError(f"route {route_id} has malformed Git identity")
-        project = projects.get(checkout_path)
-        if (
-            project is None or project.get("name") != project_name
-            or project.get("revision") != base_commit or project.get("upstream") != upstream
-        ):
-            raise VerificationError(f"route {route_id} differs from the manifest lock")
-        try:
-            series = patch_series.read_series(root / series_dir_text)
-        except patch_series.SeriesError as error:
-            raise VerificationError(f"route {route_id}: {error}") from error
-        if not series.names:
-            raise VerificationError(f"route {route_id} series is empty")
-        routes.append(
-            Route(
-                expected_order, route_id, project_name, checkout_path, upstream,
-                base_commit, base_tree, final_tree,
-            )
-        )
+    if any(route.route_id != f"p{route.order:04d}" for route in routes):
+        raise VerificationError("OrangeFox route order or ID is invalid")
     return routes
 
 
@@ -178,7 +134,7 @@ def verify_checkout(
     source: Path,
     values: dict[str, str],
     base_projects: dict[str, ET.Element],
-    routes: list[Route],
+    routes: list[pinned_source.Route],
     expect: str,
     allow_kernel: bool,
 ) -> None:
@@ -190,22 +146,10 @@ def verify_checkout(
     if run("git", "rev-parse", "HEAD^{tree}", cwd=manifest_git) != values["ORANGEFOX_MANIFEST_TREE"]:
         raise VerificationError("OrangeFox manifest tree moved from its pin")
 
-    current_projects = manifest_projects(ET.fromstring(run("repo", "manifest", "-r", cwd=source)))
-    if set(current_projects) != set(base_projects):
-        raise VerificationError("OrangeFox Repo project paths differ from the lock")
-    route_paths = {route.path for route in routes}
-    for path, base in base_projects.items():
-        current_revision = current_projects[path].get("revision")
-        if path not in route_paths and current_revision != base.get("revision"):
-            raise VerificationError(f"unrouted OrangeFox project moved: {path}")
-    dirty = run(
-        "repo", "forall", "-c",
-        'if test -n "$(git status --porcelain)"; then printf "%s\\n" "$REPO_PATH"; fi',
-        cwd=source,
+    pinned_source.verify_repo_routes(
+        source, base_projects, routes, expect, "OrangeFox", VerificationError
     )
-    if dirty:
-        raise VerificationError(f"OrangeFox Repo projects are dirty: {dirty}")
-
+    route_paths = {route.path for route in routes}
     for path, repository_key, commit_key, tree_key in EXTERNALS:
         checkout = source / path
         if not checkout.is_dir() or checkout.is_symlink():
@@ -223,33 +167,9 @@ def verify_checkout(
         if run("git", "rev-parse", "HEAD^{tree}", cwd=checkout) != values[tree_key]:
             raise VerificationError(f"OrangeFox external tree differs: {path}")
 
-    for route in routes:
-        checkout = source / route.path
-        head = run("git", "rev-parse", "HEAD", cwd=checkout)
-        tree = run("git", "rev-parse", "HEAD^{tree}", cwd=checkout)
-        if current_projects[route.path].get("revision") != head:
-            raise VerificationError(f"Repo did not resolve route HEAD: {route.route_id}")
-        if expect == "base":
-            if head != route.base_commit or tree != route.base_tree:
-                raise VerificationError(f"route {route.route_id} is not at its exact base")
-            continue
-        if tree != route.final_tree:
-            raise VerificationError(f"route {route.route_id} final tree differs")
-        ancestor = subprocess.run(
-            ("git", "merge-base", "--is-ancestor", route.base_commit, "HEAD"),
-            cwd=checkout, check=False,
-        )
-        if ancestor.returncode != 0:
-            raise VerificationError(f"route {route.route_id} is not based on its pinned base")
     if expect == "final":
-        command = [
-            str(root / "tools/sync-device-tree.py"),
-            "--android-root", str(root), "--tree", "orangefox",
-            "--workspace", str(source), "--verify",
-        ]
-        if allow_kernel:
-            command.append("--allow-prebuilt-kernel")
-        run(*command)
+        options = ("--allow-prebuilt-kernel",) if allow_kernel else ()
+        pinned_source.verify_device_tree(root, "orangefox", source, VerificationError, *options)
 
 
 def main() -> None:
