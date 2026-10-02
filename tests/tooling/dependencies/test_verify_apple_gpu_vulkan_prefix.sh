@@ -24,16 +24,20 @@ copy_fixture()
 	cp -R "$BASE_PREFIX" "$1"
 }
 
+# make_framework PREFIX FRAMEWORK SOURCE [CLANG-ARGUMENT...]: build a fixture
+# framework into PREFIX. INSTALL_NAME and MINIMUM_OS override its install name
+# and Info.plist deployment target.
 make_framework()
 {
-	framework=$1
-	source=$2
-	shift 2
-	binary="$BASE_PREFIX/Frameworks/$framework.framework/$framework"
+	prefix=$1
+	framework=$2
+	source=$3
+	shift 3
+	binary="$prefix/Frameworks/$framework.framework/$framework"
 	mkdir -p "$(dirname -- "$binary")"
 	xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=26.0 \
 		-dynamiclib "$source" "$@" \
-		-Wl,-install_name,"@rpath/$framework.framework/$framework" \
+		-Wl,-install_name,"${INSTALL_NAME:-@rpath/$framework.framework/$framework}" \
 		-o "$binary"
 	cat >"$(dirname -- "$binary")/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -42,9 +46,24 @@ make_framework()
 <key>CFBundleExecutable</key><string>$framework</string>
 <key>CFBundleIdentifier</key><string>org.linux-um-darwin.fixture.$framework</string>
 <key>CFBundlePackageType</key><string>FMWK</string>
-<key>LSMinimumSystemVersion</key><string>26.0</string>
+<key>LSMinimumSystemVersion</key><string>${MINIMUM_OS:-26.0}</string>
 </dict></plist>
 EOF
+}
+
+# expect_framework_rejection DIAGNOSTIC FRAMEWORK SOURCE [CLANG-ARGUMENT...]:
+# a copy of the fixture whose FRAMEWORK is rebuilt from SOURCE must be
+# rejected with DIAGNOSTIC.
+FRAMEWORK_CASE=0
+expect_framework_rejection()
+{
+	diagnostic=$1
+	shift
+	FRAMEWORK_CASE=$((FRAMEWORK_CASE + 1))
+	CASE_PREFIX="$TEST_ROOT/framework-$FRAMEWORK_CASE"
+	copy_fixture "$CASE_PREFIX"
+	make_framework "$CASE_PREFIX" "$@"
+	expect_cmake_diagnostic "$diagnostic" verify "$CASE_PREFIX"
 }
 
 command -v xcrun >/dev/null 2>&1 || fail "xcrun is required"
@@ -97,10 +116,10 @@ xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=26.0 \
 	-c "$TEST_ROOT/virgl.c" -o "$TEST_ROOT/virgl.o"
 xcrun ar rcs "$BASE_PREFIX/lib/libepoxy.a" "$TEST_ROOT/fixture.o"
 xcrun ar rcs "$BASE_PREFIX/lib/libvirglrenderer.a" "$TEST_ROOT/virgl.o"
-make_framework KosmicKrisp "$TEST_ROOT/kosmickrisp.c"
-make_framework MesaGallium "$TEST_ROOT/mesa-gallium.c" \
+make_framework "$BASE_PREFIX" KosmicKrisp "$TEST_ROOT/kosmickrisp.c"
+make_framework "$BASE_PREFIX" MesaGallium "$TEST_ROOT/mesa-gallium.c" \
 	"$BASE_PREFIX/Frameworks/KosmicKrisp.framework/KosmicKrisp"
-make_framework MesaEGL "$TEST_ROOT/mesa-egl.c" \
+make_framework "$BASE_PREFIX" MesaEGL "$TEST_ROOT/mesa-egl.c" \
 	"$BASE_PREFIX/Frameworks/MesaGallium.framework/MesaGallium"
 
 for header in \
@@ -236,6 +255,90 @@ copy_fixture "$CASE_PREFIX"
 cp -R "$CASE_PREFIX/Frameworks/KosmicKrisp.framework" \
 	"$CASE_PREFIX/Frameworks/Vulkan.framework"
 expect_failure "duplicate Vulkan provider" verify "$CASE_PREFIX"
+
+# Each framework has its own dependency allowlist. The GL pair may use
+# libexpat, Foundation, and its two Mesa edges; KosmicKrisp may use only Metal,
+# QuartzCore, and the base system libraries.
+GALLIUM="$BASE_PREFIX/Frameworks/MesaGallium.framework/MesaGallium"
+KOSMICKRISP="$BASE_PREFIX/Frameworks/KosmicKrisp.framework/KosmicKrisp"
+CASE_PREFIX="$TEST_ROOT/gl-allowlist"
+copy_fixture "$CASE_PREFIX"
+make_framework "$CASE_PREFIX" MesaEGL "$TEST_ROOT/mesa-egl.c" "$GALLIUM" \
+	-lexpat -framework Foundation
+verify "$CASE_PREFIX" >/dev/null ||
+	fail "a GL framework using its allowed dependencies was rejected"
+
+expect_framework_rejection \
+	"KosmicKrisp.framework dependency: /usr/lib/libexpat.1.dylib" \
+	KosmicKrisp "$TEST_ROOT/kosmickrisp.c" -lexpat
+expect_framework_rejection \
+	"KosmicKrisp.framework dependency: /System/Library/Frameworks/Foundation.framework" \
+	KosmicKrisp "$TEST_ROOT/kosmickrisp.c" -framework Foundation
+expect_framework_rejection \
+	"MesaGallium.framework dependency: @rpath/MesaEGL.framework/MesaEGL" \
+	MesaGallium "$TEST_ROOT/mesa-gallium.c" "$KOSMICKRISP" \
+	"$BASE_PREFIX/Frameworks/MesaEGL.framework/MesaEGL"
+expect_framework_rejection \
+	"MesaEGL.framework dependency: /System/Library/Frameworks/OpenGL.framework" \
+	MesaEGL "$TEST_ROOT/mesa-egl.c" "$GALLIUM" -framework OpenGL
+
+# Install names, load commands, and deployment targets.
+expect_framework_rejection "KosmicKrisp.framework has an invalid" \
+	KosmicKrisp "$TEST_ROOT/kosmickrisp.c" -Wl,-rpath,@loader_path
+expect_framework_rejection "MesaEGL.framework has an invalid" \
+	MesaEGL "$TEST_ROOT/mesa-egl.c" "$GALLIUM" -Wl,-rpath,@loader_path
+# sh may keep an assignment that prefixes a function call, so these are set
+# and unset explicitly.
+INSTALL_NAME=@rpath/Other.framework/Other
+expect_framework_rejection \
+	"KosmicKrisp.framework has an invalid install name" \
+	KosmicKrisp "$TEST_ROOT/kosmickrisp.c"
+expect_framework_rejection \
+	"MesaGallium.framework has an invalid install name" \
+	MesaGallium "$TEST_ROOT/mesa-gallium.c" "$KOSMICKRISP"
+unset INSTALL_NAME
+MINIMUM_OS=25.0
+expect_framework_rejection \
+	"KosmicKrisp.framework has an invalid deployment target" \
+	KosmicKrisp "$TEST_ROOT/kosmickrisp.c"
+expect_framework_rejection \
+	"MesaGallium.framework has an invalid deployment target" \
+	MesaGallium "$TEST_ROOT/mesa-gallium.c" "$KOSMICKRISP"
+unset MINIMUM_OS
+
+# Symbols and payloads.
+expect_framework_rejection \
+	"KosmicKrisp.framework does not export vkGetInstanceProcAddr" \
+	KosmicKrisp "$TEST_ROOT/fixture.c"
+expect_framework_rejection \
+	"MesaEGL.framework does not export the EGL platform bootstrap" \
+	MesaEGL "$TEST_ROOT/fixture.c"
+cat >"$TEST_ROOT/mesa-gallium-provider.c" <<'EOF'
+extern void *vkGetInstanceProcAddr(void *, const char *);
+extern int vkCreateInstance(const void *, const void *, void **);
+void *uml_mesa_gallium_fixture(void)
+{
+    (void)vkCreateInstance(0, 0, 0);
+    return vkGetInstanceProcAddr(0, "vkCreateInstance");
+}
+EOF
+expect_framework_rejection \
+	"MesaGallium.framework contains a forbidden provider symbol" \
+	MesaGallium "$TEST_ROOT/mesa-gallium-provider.c" "$KOSMICKRISP" \
+	-Wl,-U,_vkCreateInstance
+
+CASE_PREFIX="$TEST_ROOT/gl-payload"
+copy_fixture "$CASE_PREFIX"
+mkdir -p "$CASE_PREFIX/Frameworks/MesaEGL.framework/Headers"
+printf '%s\n' fixture >"$CASE_PREFIX/Frameworks/MesaEGL.framework/Headers/EGL.h"
+expect_cmake_diagnostic "Unexpected MesaEGL.framework payload" verify "$CASE_PREFIX"
+
+CASE_PREFIX="$TEST_ROOT/module-map"
+copy_fixture "$CASE_PREFIX"
+printf '%s\n' 'module Other {}' \
+	>"$CASE_PREFIX/Frameworks/KosmicKrisp.framework/Modules/module.modulemap"
+expect_cmake_diagnostic "KosmicKrisp.framework has an invalid module map" \
+	verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/invalid-existing-prefix"
 copy_fixture "$CASE_PREFIX"
