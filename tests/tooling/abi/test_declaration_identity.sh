@@ -143,11 +143,14 @@ expect_failure "16 KiB import audit missing an active symbol" \
 	"                 U _pthread_sigmask"; } > "$TEST_ROOT/16k-thread-mask.nm"
 "$IMPORT_VERIFY" --nm-output "$TEST_ROOT/16k-thread-mask.nm" \
 	--page-size 16k --slice arm64 >/dev/null
-{ cat "$TEST_ROOT/16k.nm"; printf '%s\n' \
-	"                 U sigprocmask"; } > "$TEST_ROOT/16k-process-mask.nm"
-expect_diagnostic 'imports the process-wide Darwin sigprocmask' \
-	"$IMPORT_VERIFY" --nm-output "$TEST_ROOT/16k-process-mask.nm" \
-	--page-size 16k --slice arm64
+for symbol in sigprocmask _sigprocmask 'sigprocmask$UNIX2003' \
+	'_sigprocmask$UNIX2003'; do
+	{ cat "$TEST_ROOT/16k.nm"; printf '                 U %s\n' "$symbol"; } \
+		> "$TEST_ROOT/16k-process-mask.nm"
+	expect_diagnostic 'imports the process-wide Darwin sigprocmask' \
+		"$IMPORT_VERIFY" --nm-output "$TEST_ROOT/16k-process-mask.nm" \
+		--page-size 16k --slice arm64
+done
 # Host code must call darwin_uml_fcntl(); a direct import of the variadic
 # Darwin fcntl, in any of its Mach-O spellings, is refused.
 for symbol in fcntl _fcntl '_fcntl$NOCANCEL'; do
@@ -157,6 +160,54 @@ for symbol in fcntl _fcntl '_fcntl$NOCANCEL'; do
 		"$IMPORT_VERIFY" --nm-output "$TEST_ROOT/16k-fcntl.nm" \
 		--page-size 16k --slice arm64
 done
+
+expect_failure "import audit without an image" \
+	"$IMPORT_VERIFY" --page-size 16k --slice arm64
+expect_failure "import audit of an unknown page size" \
+	"$IMPORT_VERIFY" --nm-output "$TEST_ROOT/16k.nm" --page-size 8k \
+	--slice arm64
+expect_failure "import audit of an unknown slice" \
+	"$IMPORT_VERIFY" --nm-output "$TEST_ROOT/16k.nm" --page-size 16k \
+	--slice riscv64
+expect_diagnostic 'the x86_64 slice supports only 4k imports' \
+	"$IMPORT_VERIFY" --nm-output "$TEST_ROOT/x86-4k.nm" --page-size 16k \
+	--slice x86_64
+expect_diagnostic 'is missing' \
+	"$IMPORT_VERIFY" --nm-output "$TEST_ROOT/absent.nm" --page-size 16k \
+	--slice arm64
+expect_diagnostic 'is missing' \
+	"$IMPORT_VERIFY" --kernel-binary "$TEST_ROOT/absent" --page-size 16k \
+	--slice arm64
+
+# The policy names each conditional symbol once, with a known availability
+# and a rationale, and only declared symbols. The copied audit resolves the
+# fixture tree as its repository root.
+POLICY="$TEST_ROOT/kernel/common/abi/import-policy.tsv"
+COPIED_IMPORT_VERIFY="$TEST_ROOT/kernel/common/abi/verify-linux-imports.sh"
+cp "$POLICY" "$TEST_ROOT/import-policy.tsv"
+for row in 'darwin_uml_fixture_two_fields\t4k-only' \
+	'darwin_uml_fixture_availability\t16k-only\tfixture' \
+	'darwin_uml_fixture_rationale\t4k-only\t' \
+	"$(sed -n 2p "$TEST_ROOT/import-policy.tsv")" \
+	'uml_fixture_not_bridge\t4k-only\tfixture'; do
+	{ cat "$TEST_ROOT/import-policy.tsv"; printf '%b\n' "$row"; } > "$POLICY"
+	expect_diagnostic 'import policy is malformed' \
+		"$COPIED_IMPORT_VERIFY" --nm-output "$TEST_ROOT/16k.nm" \
+		--page-size 16k --slice arm64
+done
+{ printf 'symbol\tavailability\n'; sed 1d "$TEST_ROOT/import-policy.tsv"; } \
+	> "$POLICY"
+expect_diagnostic 'import policy is malformed' \
+	"$COPIED_IMPORT_VERIFY" --nm-output "$TEST_ROOT/16k.nm" \
+	--page-size 16k --slice arm64
+{ cat "$TEST_ROOT/import-policy.tsv"
+	printf 'darwin_uml_fixture_undeclared\t4k-only\tfixture\n'; } > "$POLICY"
+expect_diagnostic 'import policy names undeclared bridge symbols' \
+	"$COPIED_IMPORT_VERIFY" --nm-output "$TEST_ROOT/16k.nm" \
+	--page-size 16k --slice arm64
+cp "$TEST_ROOT/import-policy.tsv" "$POLICY"
+"$COPIED_IMPORT_VERIFY" --nm-output "$TEST_ROOT/16k.nm" --page-size 16k \
+	--slice arm64 >/dev/null
 
 printf '%s\n' \
 	"independent ABI identity and page-specific import negative tests passed"

@@ -143,6 +143,70 @@ def synthetic_apex(filesystem: str = "ext4") -> bytes:
     return output.getvalue()
 
 
+def synthetic_kernel_elf() -> bytearray:
+    """Return a 16 KiB AArch64 ET_DYN kernel: R+X and R+W loads and a GNU stack."""
+    payload = bytearray(64 + 56 * 3)
+    payload[:7] = b"\x7fELF\x02\x01\x01"
+    struct.pack_into("<HHI", payload, 16, 3, 183, 1)
+    struct.pack_into("<Q", payload, 32, 64)
+    struct.pack_into("<HHH", payload, 52, 64, 56, 3)
+    for index, (kind, flags, address, size, alignment) in enumerate(
+        (
+            (1, 5, 0, len(payload), 0x4000),
+            (1, 6, 0x10000, len(payload), 0x4000),
+            (0x6474E551, 6, 0, 0, 16),
+        )
+    ):
+        struct.pack_into(
+            "<IIQQQQQQ", payload, 64 + 56 * index,
+            kind, flags, 0, address, address, size, size, alignment,
+        )
+    return payload
+
+
+def verify_kernel_elf_fixtures(verifier: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="android-kernel-elf-") as temporary:
+        kernel = Path(temporary) / "vmlinux"
+
+        def verify(payload: bytes) -> subprocess.CompletedProcess:
+            kernel.write_bytes(payload)
+            return subprocess.run(
+                [sys.executable, "-B", str(verifier), str(kernel)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        accepted = verify(synthetic_kernel_elf())
+        if accepted.returncode != 0:
+            fail(f"kernel ELF verifier rejected a valid kernel: {accepted.stderr}")
+        load, data, stack = 64, 120, 176
+        for layout, offset, value, diagnostic in (
+            ("<B", 4, 1, "little-endian ELF64 image"),
+            ("<B", 5, 2, "little-endian ELF64 image"),
+            ("<H", 16, 2, "ET_DYN"),
+            ("<H", 18, 62, "AArch64"),
+            ("<H", 54, 32, "program-header"),
+            ("<H", 56, 1000, "program-header"),
+            ("<Q", load + 40, 1, "program header 0 has file size above memory size"),
+            ("<I", stack + 4, 7, "GNU stack is executable"),
+            ("<I", data + 4, 7, "load segment 1 is writable and executable"),
+            ("<Q", load + 48, 0x1000, "load segment 0 has invalid alignment 0x1000"),
+            ("<Q", load + 48, 0x6000, "load segment 0 has invalid alignment 0x6000"),
+            ("<Q", data + 16, 0x10010, "alignment congruence"),
+            ("<I", data, 0, "separated executable and writable"),
+            ("<I", data + 4, 4, "separated executable and writable"),
+        ):
+            payload = synthetic_kernel_elf()
+            struct.pack_into(layout, payload, offset, value)
+            rejected = verify(payload)
+            if rejected.returncode == 0 or diagnostic not in rejected.stderr:
+                fail(
+                    f"kernel ELF verifier did not reject with {diagnostic!r}: "
+                    f"{rejected.stderr}"
+                )
+
+
 def verify_target_files_fixtures(verifier: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="android-target-files-") as temporary:
         root = Path(temporary)
@@ -1205,6 +1269,7 @@ def main() -> None:
         ],
         check=True,
     )
+    verify_kernel_elf_fixtures(android_root / "build/verify-kernel-elf.py")
     verify_target_files_fixtures(android_root / "tools/verify-target-files.py")
     verify_hal_selections(android_root)
     verify_initramfs_fixtures(android_root / "tools/verify-initramfs.py")
