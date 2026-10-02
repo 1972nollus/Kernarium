@@ -14,7 +14,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from xml.etree import ElementTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "integration/gpu"))
 import opengl_cts_plan as plan  # noqa: E402
@@ -22,55 +21,9 @@ import run_vk_gl_cts as common  # noqa: E402
 import test_run_vk_gl_cts as fixtures  # noqa: E402
 
 
-def fixture() -> dict[str, bytes]:
-    files = {}
-    for collection, directory, package_name, _ in plan.COLLECTIONS:
-        document = ElementTree.Element("Mustpass", version="main")
-        package = ElementTree.SubElement(document, "TestPackage", name=package_name)
-        if collection == "es-for-gl":
-            rows = [("gl45-es3-main", True, 256, 256, None, "rgba8888d24s8ms0"),
-                    ("gl45-es31-main", True, 256, 256, None, "rgba8888d24s8ms0")]
-        elif collection == "no-context":
-            rows = [(f"gl{api}-khr-main", True, 64, 64, 1, None)
-                    for api in (30, 40, 43, 45)]
-        elif collection == "single":
-            rows = [("gl43-khr-single", True, 64, 64, 1, None),
-                    ("gl46-khr-single", True, 64, 64, 1, None)]
-        else:
-            rows = [("gl46-main", True, 64, 64, 1, None),
-                    ("gl46-main", True, 113, 47, 2, None),
-                    ("gl46-main", True, 64, -1, 3, "rgba8888d24s8"),
-                    ("gl46-main", True, -1, 64, 3, "rgba8888d24s8"),
-                    ("gl46-main", False, 64, 64, 1, None),
-                    ("gl46-main", False, 113, 47, 2, None),
-                    ("gl42-compat-main", True, 64, 64, 1, None)]
-        for stem, first, width, height, seed, config in rows:
-            command = ["--deqp-screen-rotation=unspecified",
-                       f"--deqp-surface-width={width}",
-                       f"--deqp-surface-height={height}", "--deqp-watchdog=disable"]
-            if seed is not None:
-                command.append(f"--deqp-base-seed={seed}")
-            if config:
-                command.append(f"--deqp-gl-config-name={config}")
-                if collection != "es-for-gl":
-                    command.append("--deqp-surface-type=fbo")
-            name = stem.split("-", 1)[1].removeprefix("compat-")
-            ElementTree.SubElement(package, "Configuration", {
-                "caseListFile": stem + ".txt", "commandLine": " ".join(command),
-                "name": name, "os": "any", "useForFirstEGLConfig": str(first),
-            })
-            count = 1 if stem in {"gl30-khr-main", "gl40-khr-main"} else 10
-            files[f"{plan.ROOT}/{directory}/main/{stem}.txt"] = "".join(
-                f"KHR-{stem.replace('-', '.')}.case{index}\n" for index in range(count)
-            ).encode()
-        files[f"{plan.ROOT}/{directory}/main/mustpass.xml"] = ElementTree.tostring(document)
-    files[f"{plan.ROOT}/khronos_mustpass/main/gl46-gtf-main.txt"] = b"GTF-GL46.obsolete\n"
-    return files
-
-
 class OpenGLPlanTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.files = fixture()
+        self.files = fixtures.opengl_mustpass_files()
         self.manifest = plan.build_manifest(self.files.__getitem__)
         self.configs = [{"id": 7, "surface_types": ["pixmap", "pbuffer", "window"]},
                         {"id": 3, "surface_types": ["pixmap", "pbuffer"]},
@@ -175,11 +128,7 @@ class OpenGLPlanTests(unittest.TestCase):
                 plan.case_list(payload)
 
     def receipt(self) -> dict:
-        receipt = fixtures.zink_gl_derivative_receipt(common.load_identity())
-        receipt["schema_version"] = 4
-        receipt["opengl_cts"]["release"] = "vulkan-cts-1.4.6.2"
-        receipt["opengl_cts"]["mustpass"] = self.manifest
-        return receipt
+        return fixtures.zink_gl_derivative_receipt(common.load_identity())
 
     def test_current_receipt_derives_scope_and_rejects_source_or_xml_drift(self) -> None:
         receipt = self.receipt()
@@ -218,7 +167,8 @@ class OpenGLPlanTests(unittest.TestCase):
 
     def test_legacy_receipt_and_wrong_egl_xml_role_cannot_run_full_matrix(self) -> None:
         configs = (common.EglConfig(1, ("window",)), common.EglConfig(2, ("pbuffer",)))
-        legacy = fixtures.zink_gl_derivative_receipt(common.load_identity())
+        legacy = self.receipt()
+        legacy["schema_version"] = 3
         with self.assertRaisesRegex(common.CampaignError, "schema-4"):
             common.opengl_matrix_run(legacy, configs, "1" * 64, 0, 7, (0, 8))
         for config_index, xml_index in ((0, 11), (1, 0), (1, 7), (2, 11), (0, 99)):

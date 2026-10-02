@@ -96,6 +96,71 @@ def baseline_artifacts(
     }
 
 
+# The display stack every receipt-backed WSI fraction reports first.
+WSI_RENDERER = (
+    "x11_server=xorg\n"
+    "x11_dri3=1\n"
+    "x11_present=1\n"
+    "x11_glamor=1\n"
+    "x11_connected=1\n"
+    "x11_drm_fd=1\n"
+    "x11_blanking=off\n"
+    "wayland_server=kwin-x11\n"
+    "wayland_lockscreen=off\n"
+    "device=/dev/dri/card0\n"
+    "device=/dev/dri/renderD128\n"
+)
+
+
+def receipt_renderer(receipt: dict[str, object]) -> bytes:
+    """The renderer report of a receipt-backed fraction run from ``receipt``."""
+    loader = receipt["vulkan_loader"]["runtime"]
+    return (
+        WSI_RENDERER
+        + "vk_driver_files=/usr/share/vulkan/icd.d/virtio_icd.json\n"
+        + f"receipt_sha256={cts.common.sha256_file(cts.RECEIPT_PATH)}\n"
+        + f"vulkan_loader={loader['path']}\n"
+        + f"vulkan_loader_sha256={loader['sha256']}\n"
+        + '"library_path": "libvulkan_virtio.so"\n'
+    ).encode()
+
+
+def write_run(
+    root: Path,
+    selection: cts.DevelopmentSelection,
+    artifacts: dict[str, bytes],
+    transcript: str,
+    result: dict[str, object],
+    **fields: object,
+) -> dict[str, object]:
+    """Lay out a schema-1 smoke run the way verify_only() reads it back."""
+    artifact_root = root / "artifacts"
+    artifact_root.mkdir()
+    for name, payload in artifacts.items():
+        (artifact_root / name).write_bytes(payload)
+    (root / "console.log").write_text(transcript)
+    metadata = {
+        "schema_version": 1,
+        "qualification": False,
+        **fields,
+        "selection": {
+            "mode": "smoke",
+            "exact_cases": [],
+            "family": None,
+            "fraction": [0, 1],
+            "expected_cases": list(selection.expected_cases),
+        },
+        "console_sha256": hashlib.sha256(transcript.encode()).hexdigest(),
+        "artifact_sha256": {
+            name: hashlib.sha256(payload).hexdigest()
+            for name, payload in artifacts.items()
+        },
+        "result": result,
+    }
+    (root / "run.json").write_text(json.dumps(metadata))
+    return metadata
+
+
 class VulkanCtsToolingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.identity = cts.load_identity()
@@ -117,26 +182,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         selected = (cases[0], cases[2], cases[3])
         receipt_digest = cts.common.sha256_file(cts.RECEIPT_PATH)
         artifacts = {
-            "renderer.txt": (
-                "x11_server=xorg\n"
-                "x11_dri3=1\n"
-                "x11_present=1\n"
-                "x11_glamor=1\n"
-                "x11_connected=1\n"
-                "x11_drm_fd=1\n"
-                "x11_blanking=off\n"
-                "wayland_server=kwin-x11\n"
-                "wayland_lockscreen=off\n"
-                "device=/dev/dri/card0\n"
-                "device=/dev/dri/renderD128\n"
-                "vk_driver_files=/usr/share/vulkan/icd.d/virtio_icd.json\n"
-                f"receipt_sha256={receipt_digest}\n"
-                "vulkan_loader="
-                f"{self.receipt['vulkan_loader']['runtime']['path']}\n"
-                "vulkan_loader_sha256="
-                f"{self.receipt['vulkan_loader']['runtime']['sha256']}\n"
-                '"library_path": "libvulkan_virtio.so"\n'
-            ).encode(),
+            "renderer.txt": receipt_renderer(self.receipt),
             "selected.txt": "".join(
                 f"{case}\n" for case in selected
             ).encode(),
@@ -476,26 +522,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         ).encode()
         receipt_digest = cts.common.sha256_file(cts.RECEIPT_PATH)
         artifacts = {
-            "renderer.txt": (
-                "x11_server=xorg\n"
-                "x11_dri3=1\n"
-                "x11_present=1\n"
-                "x11_glamor=1\n"
-                "x11_connected=1\n"
-                "x11_drm_fd=1\n"
-                "x11_blanking=off\n"
-                "wayland_server=kwin-x11\n"
-                "wayland_lockscreen=off\n"
-                "device=/dev/dri/card0\n"
-                "device=/dev/dri/renderD128\n"
-                "vk_driver_files=/usr/share/vulkan/icd.d/virtio_icd.json\n"
-                f"receipt_sha256={receipt_digest}\n"
-                "vulkan_loader="
-                f"{receipt['vulkan_loader']['runtime']['path']}\n"
-                "vulkan_loader_sha256="
-                f"{receipt['vulkan_loader']['runtime']['sha256']}\n"
-                '"library_path": "libvulkan_virtio.so"\n'
-            ).encode(),
+            "renderer.txt": receipt_renderer(receipt),
             "selected.txt": selected_payload,
             "expected.txt": "".join(f"{case}\n" for case in cases).encode(),
             "results.qpa": qpa_payload,
@@ -581,31 +608,9 @@ class VulkanCtsToolingTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            artifact_root = root / "artifacts"
-            artifact_root.mkdir()
-            for name, payload in artifacts.items():
-                (artifact_root / name).write_bytes(payload)
-            (root / "console.log").write_text(transcript)
-            metadata = {
-                "schema_version": 1,
-                "qualification": False,
-                "selection": {
-                    "mode": "smoke",
-                    "exact_cases": [],
-                    "family": None,
-                    "fraction": [0, 1],
-                    "expected_cases": list(self.selection.expected_cases),
-                },
-                "console_sha256": hashlib.sha256(transcript.encode()).hexdigest(),
-                "artifact_sha256": {
-                    name: hashlib.sha256(payload).hexdigest()
-                    for name, payload in artifacts.items()
-                },
-                "result": result,
-            }
-            (root / "run.json").write_text(json.dumps(metadata))
+            write_run(root, self.selection, artifacts, transcript, result)
             self.assertEqual(cts.verify_only(root, self.identity), result)
-            (artifact_root / "summary.txt").write_bytes(b"tampered\n")
+            (root / "artifacts/summary.txt").write_bytes(b"tampered\n")
             with self.assertRaisesRegex(cts.CampaignError, "digest changed"):
                 cts.verify_only(root, self.identity)
 
@@ -626,30 +631,8 @@ class VulkanCtsToolingTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            artifact_root = root / "artifacts"
-            artifact_root.mkdir()
-            for name, payload in artifacts.items():
-                (artifact_root / name).write_bytes(payload)
-            (root / "console.log").write_text(transcript)
-            metadata = {
-                "schema_version": 1,
-                "qualification": False,
-                "experimental_venus": True,
-                "selection": {
-                    "mode": "smoke",
-                    "exact_cases": [],
-                    "family": None,
-                    "fraction": [0, 1],
-                    "expected_cases": list(self.selection.expected_cases),
-                },
-                "console_sha256": hashlib.sha256(transcript.encode()).hexdigest(),
-                "artifact_sha256": {
-                    name: hashlib.sha256(payload).hexdigest()
-                    for name, payload in artifacts.items()
-                },
-                "result": result,
-            }
-            (root / "run.json").write_text(json.dumps(metadata))
+            metadata = write_run(root, self.selection, artifacts, transcript,
+                                 result, experimental_venus=True)
             self.assertEqual(cts.verify_only(root, self.identity), result)
 
             metadata["schema_version"] = 3
@@ -890,19 +873,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
             )
 
     def test_full_receipt_fractions_use_wsi_without_changing_selection(self) -> None:
-        renderer = (
-            "x11_server=xorg\n"
-            "x11_dri3=1\n"
-            "x11_present=1\n"
-            "x11_glamor=1\n"
-            "x11_connected=1\n"
-            "x11_drm_fd=1\n"
-            "x11_blanking=off\n"
-            "wayland_server=kwin-x11\n"
-            "wayland_lockscreen=off\n"
-            "device=/dev/dri/card0\n"
-            "device=/dev/dri/renderD128\n"
-        )
+        renderer = WSI_RENDERER
         for index in range(8):
             with self.subTest(fraction=index):
                 selection = cts.resolve_receipt_selection(
@@ -989,19 +960,7 @@ class VulkanCtsToolingTests(unittest.TestCase):
         )
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
 
-        renderer = (
-            "x11_server=xorg\n"
-            "x11_dri3=1\n"
-            "x11_present=1\n"
-            "x11_glamor=1\n"
-            "x11_connected=1\n"
-            "x11_drm_fd=1\n"
-            "x11_blanking=off\n"
-            "wayland_server=kwin-x11\n"
-            "wayland_lockscreen=off\n"
-            "device=/dev/dri/card0\n"
-            "device=/dev/dri/renderD128\n"
-        )
+        renderer = WSI_RENDERER
         with self.assertRaisesRegex(cts.CampaignError, "Pass pair"):
             cts.validate_wsi_operation(
                 selection,

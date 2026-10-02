@@ -727,7 +727,7 @@ def load_derivative_receipt(
         ) from error
     if (
         isinstance(receipt, dict)
-        and receipt.get("schema_version") in {3, 4}
+        and receipt.get("schema_version") == 4
         and receipt.get("artifact") == "uml-vulkan-zink-gl-rootfs"
     ):
         return load_zink_gl_derivative_receipt(receipt, base_identity)
@@ -865,7 +865,7 @@ def load_zink_gl_derivative_receipt(
         "guest_receipt",
     }
     if (set(receipt) != expected_keys
-            or receipt["schema_version"] not in {3, 4}
+            or receipt["schema_version"] != 4
             or receipt["artifact"] != "uml-vulkan-zink-gl-rootfs"):
         raise CampaignError("invalid Zink/OpenGL derivative receipt")
     try:
@@ -931,10 +931,7 @@ def load_zink_gl_derivative_receipt(
         glcts.get("executable"), "OpenGL CTS executable"
     )
     if (
-        glcts.get("release") != (
-            "vulkan-cts-1.4.6.2" if receipt["schema_version"] == 4
-            else "opengl-cts-1.4.6.2"
-        )
+        glcts.get("release") != "vulkan-cts-1.4.6.2"
         or glcts.get("install_prefix") != "/opt/vk-gl-cts/openglcts"
         or glcts.get("reported_cpu") != "DE_CPU_ARM_64"
         or glcts.get("reported_target") != "Default"
@@ -971,13 +968,10 @@ def load_zink_gl_derivative_receipt(
             or not resource["verified_against"]
         ):
             raise CampaignError(f"invalid OpenGL CTS resource at {index}")
-    if receipt["schema_version"] == 4:
-        try:
-            opengl_cts_plan.validate_manifest(glcts.get("mustpass"))
-        except opengl_cts_plan.PlanError as error:
-            raise CampaignError(f"invalid OpenGL runner scope: {error}") from error
-    else:
-        validate_legacy_opengl_mustpass(glcts.get("mustpass"))
+    try:
+        opengl_cts_plan.validate_manifest(glcts.get("mustpass"))
+    except opengl_cts_plan.PlanError as error:
+        raise CampaignError(f"invalid OpenGL runner scope: {error}") from error
     guest_receipt = checked_file_identity(
         receipt["guest_receipt"], "in-guest build receipt"
     )
@@ -1008,77 +1002,6 @@ def load_zink_gl_derivative_receipt(
         guest_receipt_path=guest_receipt["path"],
         guest_receipt_sha256=guest_receipt["sha256"],
     )
-
-
-def validate_legacy_opengl_mustpass(mustpass: Any) -> None:
-    """Read historical schema-3 evidence, not a current qualification plan."""
-    if not isinstance(mustpass, dict) or set(mustpass) != {
-        "xml",
-        "leaves",
-        "leaf_count",
-        "case_count",
-        "unique_case_count",
-        "duplicate_occurrence_count",
-        "coverage_semantics",
-    }:
-        raise CampaignError("invalid OpenGL 4.6 must-pass identity")
-    mustpass_xml = checked_file_identity(
-        mustpass["xml"], "OpenGL must-pass XML"
-    )
-    if mustpass_xml["path"] != (
-        "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gl/"
-        "khronos_mustpass/main/mustpass.xml"
-    ):
-        raise CampaignError("invalid OpenGL must-pass XML path")
-    leaves = mustpass["leaves"]
-    if not isinstance(leaves, list) or len(leaves) != 2:
-        raise CampaignError("invalid OpenGL 4.6 must-pass leaves")
-    expected_paths = {
-        "gl46": (
-            "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gl/"
-            "khronos_mustpass/main/gl46-main.txt"
-        ),
-        "gl46-gtf": (
-            "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gl/"
-            "khronos_mustpass/main/gl46-gtf-main.txt"
-        ),
-    }
-    seen_ids: set[str] = set()
-    total = 0
-    for index, leaf in enumerate(leaves):
-        if not isinstance(leaf, dict) or set(leaf) != {
-            "id",
-            "path",
-            "size",
-            "sha256",
-            "case_count",
-        }:
-            raise CampaignError(f"invalid OpenGL leaf identity at {index}")
-        checked_file_identity(
-            {key: leaf[key] for key in ("path", "size", "sha256")},
-            f"OpenGL leaf {index}",
-        )
-        identifier = leaf["id"]
-        if (
-            identifier not in expected_paths
-            or identifier in seen_ids
-            or leaf["path"] != expected_paths[identifier]
-            or type(leaf["case_count"]) is not int
-            or leaf["case_count"] < 1
-        ):
-            raise CampaignError(f"invalid OpenGL leaf identity at {index}")
-        seen_ids.add(identifier)
-        total += leaf["case_count"]
-    if (
-        seen_ids != set(expected_paths)
-        or mustpass["leaf_count"] != 2
-        or mustpass["case_count"] != total
-        or mustpass["unique_case_count"] != total
-        or mustpass["duplicate_occurrence_count"] != 0
-        or not isinstance(mustpass["coverage_semantics"], str)
-        or not mustpass["coverage_semantics"]
-    ):
-        raise CampaignError("inconsistent OpenGL 4.6 must-pass coverage")
 
 
 def select_rootfs_contract(
@@ -3117,6 +3040,7 @@ def artifact_transport_program(
     error_prefix: str,
     base64_line_length: int,
     missing_source_status: int,
+    console_transport: bool = False,
 ) -> str:
     """The guest side of the acknowledged artifact transport.
 
@@ -3138,9 +3062,53 @@ def artifact_transport_program(
     already on the wire.  Only a failure before the first frame may be
     retried: re-sending a name the host has already opened is a duplicate
     start, which fails its decode outright, salvage lane included.
+
+    ``prepare_channel`` opens the virtio-serial ``channel`` as descriptor 3
+    and ``emit_frame`` sends one frame through it, failing unless the host
+    acknowledges exactly that frame.  The caller defines ``output``,
+    ``channel``, ``channel_ready=0`` and ``artifact_framed=0``.  With
+    ``console_transport`` it also defines ``artifact_transport``, and a
+    console launcher prints its frames without acknowledgement.
     """
 
-    return f"""artifact_discard()
+    console_open = (
+        '    [ "$artifact_transport" = virtio-serial ] || return 0\n'
+        if console_transport else ""
+    )
+    console_frame = (
+        '    if [ "$artifact_transport" = console ]; then\n'
+        "        printf '%s\\n' \"$frame\"\n"
+        "        return 0\n"
+        "    fi\n"
+        if console_transport else ""
+    )
+    return f"""prepare_channel()
+{{
+{console_open}    [ "$channel_ready" -eq 0 ] || return 0
+    remaining=60
+    while [ ! -c "$channel" ]; do
+        [ "$remaining" -gt 0 ] || return 1
+        remaining=$((remaining - 1))
+        sleep 1
+    done
+    exec 3<> "$channel" || return 1
+    channel_ready=1
+}}
+
+emit_frame()
+{{
+    frame="$1"
+    expected_ack="$2"
+{console_frame}    [ "$channel_ready" -eq 1 ] || return 1
+    printf '%s\\n' "$frame" >&3 || return 1
+    actual_ack=$(timeout --signal=TERM 30 head -n 1 <&3) || return 1
+    [ "$actual_ack" = "$expected_ack" ] || {{
+        echo '{error_prefix} artifact acknowledgement changed'
+        return 1
+    }}
+}}
+
+artifact_discard()
 {{
     rm -f "$output/$1.gz" "$output/$1.gz.b64"
 }}
@@ -3952,6 +3920,7 @@ actual_waiver_sha=$(sha256sum {shlex.quote(GUEST_WAIVER_PATH)} | cut -d ' ' -f 1
         error_prefix="UML_CTS_ERROR:",
         base64_line_length=1024,
         missing_source_status=0,
+        console_transport=True,
     )
     checkpoint_function = qpa_checkpoint_program()
     return f"""#!/bin/sh
@@ -3966,8 +3935,8 @@ inventory_report={shlex.quote(inventory_report)}
 hierarchy_inventory_mode={1 if hierarchy_inventory else 0}
 selected_mode={1 if selection is not None else 0}
 artifact_transport={shlex.quote(artifact_transport)}
-artifact_channel={shlex.quote(VIRTIO_SERIAL_GUEST_DEVICE)}
-artifact_fd_ready=0
+channel={shlex.quote(VIRTIO_SERIAL_GUEST_DEVICE)}
+channel_ready=0
 checkpoint_mode={checkpoint}
 checkpoint_bytes={checkpoint_bytes}
 progress_timeout={progress_timeout}
@@ -3983,37 +3952,6 @@ qpa_segments=0
 checkpoint_failures=0
 progress_timed_out=0
 status=1
-
-prepare_artifact_transport()
-{{
-    [ "$artifact_transport" = virtio-serial ] || return 0
-    [ "$artifact_fd_ready" -eq 0 ] || return 0
-    remaining=60
-    while [ ! -c "$artifact_channel" ]; do
-        [ "$remaining" -gt 0 ] || return 1
-        remaining=$((remaining - 1))
-        sleep 1
-    done
-    exec 3<> "$artifact_channel" || return 1
-    artifact_fd_ready=1
-}}
-
-emit_frame()
-{{
-    frame="$1"
-    acknowledgement="$2"
-    if [ "$artifact_transport" = console ]; then
-        printf '%s\n' "$frame"
-        return 0
-    fi
-    [ "$artifact_fd_ready" -eq 1 ] || return 1
-    printf '%s\n' "$frame" >&3 || return 1
-    actual_ack=$(timeout --signal=TERM 30 head -n 1 <&3) || return 1
-    [ "$actual_ack" = "$acknowledgement" ] || {{
-        echo 'UML_CTS_ERROR: artifact acknowledgement changed'
-        return 1
-    }}
-}}
 
 {transport_functions}
 {checkpoint_function}
@@ -4108,7 +4046,7 @@ finish()
     set +e
     printf 'UML_CTS_STATUS|rc=%s\n' "$status"
     transfer_status=0
-    if ! prepare_artifact_transport; then
+    if ! prepare_channel; then
         echo 'UML_CTS_ERROR: artifact transport did not become ready'
         transfer_status=1
     fi
@@ -4128,7 +4066,7 @@ finish()
     # Sent last, and never withheld: a session that lost results still
     # reports its verdict, and the host's wait ends on this frame.
     emit_artifact summary.txt "$summary" || transfer_status=1
-    if [ "$artifact_fd_ready" -eq 1 ]; then
+    if [ "$channel_ready" -eq 1 ]; then
         exec 3>&-
     fi
     if [ "$transfer_status" -ne 0 ]; then
@@ -4176,7 +4114,7 @@ runuser -u uml -- env \
 {prepare_command}
 
 if [ "$checkpoint_mode" -eq 1 ]; then
-    prepare_artifact_transport || {{
+    prepare_channel || {{
         echo 'UML_CTS_ERROR: artifact transport did not become ready'
         exit 1
     }}
