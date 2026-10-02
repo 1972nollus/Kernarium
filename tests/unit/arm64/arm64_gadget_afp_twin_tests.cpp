@@ -2,12 +2,14 @@
 /* The FEAT_AFP twin table and its selection. The twins' results under every
  * other FPCR control are the corpus's business (arm64-instruction-corpus
  * with FEAT_AFP assumed); this checks the table's shape, which entry the
- * builder emits on each kind of host, and the FPCR accesses the twins keep
- * FIZ, AH and NEP through. */
+ * builder emits on each kind of host, the FPCR accesses the twins keep
+ * FIZ, AH and NEP through, and the identification fields that follow the
+ * same predicates. */
 #include "cpu/arm64/detail/floating_exception.hpp"
 #include "cpu/arm64/floating_controls.hpp"
 #include "cpu/arm64/gadgets/afp_twin.hpp"
 #include "cpu/arm64/gadgets/program.hpp"
+#include "cpu/arm64/id_registers.hpp"
 #include "platform/apple/host_features.hpp"
 
 #include <algorithm>
@@ -193,6 +195,29 @@ void fpcr_keeps_the_alternate_controls_where_implemented()
 	require(masked.registers[2] == masked.fpcr);
 }
 
+void identification_follows_the_predicate()
+{
+	constexpr std::uint32_t mrs_isar2 = 0xd538'0640U;
+	constexpr std::uint32_t mrs_mmfr1 = 0xd538'0720U;
+	auto afp = afp_host();
+	afp.supported.set(static_cast<std::size_t>(uml::cpu::ArmFeature::rpres));
+	{
+		const ::uml::cpu::HostCapabilitiesScope scope{afp};
+		require(((arm64::detail::emulated_id_register_value(mrs_mmfr1) >>
+			44U) & 15U) == 1U);
+		require(((arm64::detail::emulated_id_register_value(mrs_isar2) >>
+			4U) & 15U) == 1U);
+	}
+	const auto none = without_afp(afp);
+	{
+		const ::uml::cpu::HostCapabilitiesScope scope{none};
+		require(arm64::detail::emulated_id_register_value(mrs_mmfr1) == 0U);
+		require(((arm64::detail::emulated_id_register_value(mrs_isar2) >>
+			4U) & 15U) == 0U);
+		require(!arm64::implements_rpres(none));
+	}
+}
+
 } // namespace
 
 int main()
@@ -201,6 +226,7 @@ int main()
 	lookup_maps_entries_and_table_offsets();
 	builder_selects_twins_only_where_afp_is_implemented();
 	fpcr_keeps_the_alternate_controls_where_implemented();
+	identification_follows_the_predicate();
 	std::printf("arm64 gadget FEAT_AFP twin tests passed (%zu rows)\n",
 		gadgets::afp_twins().size());
 	return 0;

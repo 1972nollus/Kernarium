@@ -52,6 +52,8 @@ HWCAP2_FRINT = 1 << 8
 HWCAP2_I8MM = 1 << 13
 HWCAP2_BF16 = 1 << 14
 HWCAP2_ECV = 1 << 19
+HWCAP2_AFP = 1 << 20
+HWCAP2_RPRES = 1 << 21
 HWCAP2_CSSC = 1 << 34
 HWCAP2_MOPS = 1 << 43
 OPTIONAL_HWCAPS = (
@@ -77,12 +79,26 @@ OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_FlagM", HWCAP_FLAGM, "flagm"),
     ("hw.optional.arm.FEAT_SB", HWCAP_SB, "sb"),
 )
+AFP_HOST_FEATURES = (
+    "hw.optional.arm.FEAT_AFP",
+    "hw.optional.arm.FEAT_FP16",
+    "hw.optional.arm.FEAT_FHM",
+    "hw.optional.arm.FEAT_BF16",
+    "hw.optional.arm.FEAT_FRINTTS",
+    "hw.optional.arm.FEAT_FCMA",
+    "hw.optional.arm.FEAT_JSCVT",
+)
 OPTIONAL_HWCAPS2 = (
     ("hw.optional.arm.FEAT_FlagM2", HWCAP2_FLAGM2, "flagm2"),
     ("hw.optional.arm.FEAT_FRINTTS", HWCAP2_FRINT, "frint"),
     ("hw.optional.arm.FEAT_I8MM", HWCAP2_I8MM, "i8mm"),
     ("hw.optional.arm.FEAT_BF16", HWCAP2_BF16, "bf16"),
     ("hw.optional.arm.FEAT_ECV", HWCAP2_ECV, "ecv"),
+    # implements_afp(): FEAT_AFP and every host feature whose instructions
+    # would otherwise take a software model without FIZ, AH and NEP.
+    (AFP_HOST_FEATURES, HWCAP2_AFP, "afp"),
+    (AFP_HOST_FEATURES + ("hw.optional.arm.FEAT_RPRES",), HWCAP2_RPRES,
+     "rpres"),
 )
 # arm64 Linux 6.18's name for every AT_HWCAP and AT_HWCAP2 bit, indexed by
 # bit: its hwcap_str table in arch/arm64/kernel/cpuinfo.c, which the guest
@@ -191,11 +207,15 @@ def host_feature(name: str) -> bool:
 
 
 def expected_hwcap(
-    features: tuple[tuple[str, int, str], ...], initial: int = 0
+    features: tuple[tuple[str | tuple[str, ...], int, str], ...],
+    initial: int = 0,
 ) -> int:
+    """The bits whose host sysctl, or every one of whose sysctls, is set."""
     result = initial
-    for name, bit, _ in features:
-        if host_feature(name):
+    for names, bit, _ in features:
+        if isinstance(names, str):
+            names = (names,)
+        if all(host_feature(name) for name in names):
             result |= bit
     return result
 

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #pragma once
 
+#include "cpu/arm64/floating_controls.hpp"
 #include "cpu/host_capabilities.hpp"
 
 #include <cstdint>
@@ -52,9 +53,10 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
  * same contract AT_HWCAP already follows: a guest may select an opcode only
  * where an engine has committed to executing it, and an identification
  * register is just the second way to ask. Fields Linux hides from userspace
- * (the exception levels, the whole of ID_AA64MMFR0_EL1 except ECV, debug and
- * IMPLEMENTATION DEFINED registers) read as zero here for the same reason they
- * do on arm64: they describe state EL0 cannot act on.
+ * (the exception levels, ID_AA64MMFR0_EL1 except ECV, ID_AA64MMFR1_EL1
+ * except AFP, debug and IMPLEMENTATION DEFINED registers) read as zero here
+ * for the same reason they do on arm64: they describe state EL0 cannot act
+ * on.
  */
 [[nodiscard]] inline std::uint64_t emulated_id_register_value(
 	std::uint32_t instruction) noexcept
@@ -134,12 +136,17 @@ inline constexpr std::uint64_t emulated_mpidr_el1 = 0x8000'0000ULL;
 	}
 	if (group == 6U && selector == 2U)
 		/* ID_AA64ISAR2_EL1. Both engines execute FEAT_MOPS and
-		 * FEAT_CSSC on every host. */
-		return field(1, 16) | field(1, 52);
+		 * FEAT_CSSC on every host; RPRES follows the host. */
+		return field(1, 16) | field(1, 52) |
+			(implements_rpres(host) ? field(1, 4) : 0);
 	if (group == 7U && selector == 0U)
 		/* ID_AA64MMFR0_EL1. ECV is the one field Linux shows EL0, and
 		 * where it derives HWCAP2_ECV. */
 		return host.has(ArmFeature::ecv) ? field(1, 60) : 0;
+	if (group == 7U && selector == 1U)
+		/* ID_AA64MMFR1_EL1.AFP is the one field of it Linux shows EL0,
+		 * and where it derives HWCAP2_AFP. */
+		return implements_afp(host) ? field(1, 44) : 0;
 	if (group == 7U && selector == 2U)
 		/* ID_AA64MMFR2_EL1.AT is where Linux derives HWCAP_USCAT, the
 		 * single-copy atomicity guarantee for an unaligned LSE atomic. */
