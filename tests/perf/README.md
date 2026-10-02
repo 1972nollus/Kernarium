@@ -70,50 +70,19 @@ MESA_KK_DEBUG=submit_timing BUILD/tests/perf/uml-kosmickrisp-rgb32-texel-bench \
 ```
 
 It compares RGB32 float, signed integer, and unsigned integer uniform texel
-views with matching native RGBA32 views through the same compute shader per
-type. Four bounded sizes (4,099 through 1,048,579 texels) exercise partial work
-groups and nonzero aligned view offsets. Every result component, including the
-implicit alpha, is checked exactly; input/output guards and a zero-active-count
-dispatch are separate correctness controls. Native measurements do not use a
-guest, shared draw fixture, CTest registration, or ordinary suite aggregate.
-
-RGB/RGBA order alternates across three warmups and nine retained samples.
-`--samples`, `--warmup`, and `--max-elements` allow bounded manual subsets; see
-`--help`. The default `vulkan-queries` mode preserves raw dispatch timestamp
-intervals; `metal-whole-submit` instead uses the provider's opt-in
-[`MESA_KK_DEBUG=submit_timing` callback contract](#native-whole-submit-timing) and emits no
-Vulkan query commands. Its interval covers the entire GPU submission, including
-barriers and output stores, not just the texel loads. These timing domains are
-explicitly labeled and must not be compared as equivalent intervals.
-
-Both modes report medians and every raw sample, instrumented CPU command
-recording and view-creation costs, and logical texel completions per nanosecond.
-CPU view creation uses fixed batches of 32 simultaneous views to span the host
-clock's finite resolution. Raw batch totals and their medians are reported
-separately from amortized per-view medians. These include call setup and loop
-overhead, exclude all destruction, and are not single-call latency measurements.
-Initial CPU filling, pipeline creation, mapped readback checks, and view
-destruction are outside the respective timed regions. Submission through fence
-wait is recorded separately as a wall-time bound, not as GPU time. The
-whole-submit collector permits exactly one outstanding command-buffer submission
-and requires one valid callback for every control, warmup, and retained sample;
-it drains the callback stream before accepting the final coverage count.
-Missing, duplicate, late, zero, nonfinite, reversed, device-changing, error, or
-wall-bound-violating callback records fail closed. In query mode any invalid
-tick pair, including a control or warmup, causes exit 2; an invalid retained
-pair also suppresses that row's GPU median/throughput. Raw values are never
-clamped or selectively discarded. Exit 1 denotes a correctness, API, CPU timer,
-or callback-validation error. No speed threshold determines success.
-
-These repeated-resource measurements are not physical memory bandwidth,
-cold-cache results, or uninstrumented CPU costs. Record host/power/compiler/
-provider identity and exclude other GPU work when comparing results.
-
-`--correctness-only` reuses the same shader, formats, aligned offsets, exact
-component checks, and guards, with one zero-active control and one full-data
-dispatch per format/size. It creates no query pool or callback collector,
-records no CPU/GPU timings, and reports no throughput. It cannot be combined
-with `--timing`, `--samples`, or `--warmup`.
+views with matching native RGBA32 views through the same compute shader, at
+four sizes up to 1,048,579 texels, and checks every result component, the
+implicit alpha included, exactly. The default `vulkan-queries` mode times each
+dispatch with timestamp queries; `metal-whole-submit` uses the
+[whole-submit callback](#native-whole-submit-timing), whose interval covers
+the entire GPU submission. The output labels the two timing domains, which
+must not be compared. Every raw sample is reported and none is clamped or
+discarded; an invalid retained query sample leaves its row without a GPU
+median, and the submit-to-fence time is a wall-clock bound, not GPU time.
+These repeated-resource figures are not physical memory bandwidth, cold-cache
+results, or uninstrumented CPU costs: record host, power, compiler, and
+provider identity and exclude other GPU work when comparing them. `--help`
+gives the options, the sampling and CPU-timing rules, and the exit statuses.
 
 For the native texture-view residency regression, run correctness-only with
 Metal API and shader validation enabled:
@@ -124,32 +93,23 @@ MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 \
 ```
 
 Pair it with `MTL_SHADER_VALIDATION=0`; both runs must pass all 48 exact
-data/guard controls. The enabled run also must report no Metal shader-validation
-errors. This checks native RGBA view identity registration alongside unchanged
-RGB raw-address reads, not performance.
+data/guard controls, and the enabled run must report no Metal shader-validation
+errors.
 
-Released guest coverage can use the unchanged OpenGL case
-`KHR-GL46.texture_buffer.texture_buffer_texture_buffer_range` through Zink/Venus.
-Its vertex shader samples all three RGB32 formats and checks their three stored
-components; this one-texel range check does not replace the native large-resource,
-implicit-alpha, or guard controls. Released Vulkan RGBA32 uniform-buffer controls
-provide separate native-format coverage. A case that stops at a format-support
-check is not execution coverage.
-
-For an optional supplemental guest regression, an offline AArch64/Linux build of
-this same source must run in correctness-only mode and prove `VK_DRIVER_ID_MESA_VENUS`
-with `UML_VULKAN_REQUIRE_VENUS=1`. The existing authenticated guest-probe runner
-owns device selection, payload injection, the final success marker, and clean
-shutdown:
+Guest coverage is the OpenGL CTS case
+`KHR-GL46.texture_buffer.texture_buffer_texture_buffer_range` through
+Zink/Venus, which samples all three RGB32 formats in a one-texel range; it
+counts only when it executes rather than stopping at a format-support check.
+An AArch64 Linux build of this source can also run correctness-only in a Venus
+guest through the guest-probe runner. Neither replaces the native
+large-resource, implicit-alpha, and guard controls, and neither is guest
+performance evidence.
 
 ```sh
 python3 tests/integration/gpu/run_vulkan_probe.py \
   --emulator EMULATOR --rootfs VULKAN_ROOTFS --probe RGB32_PROBE \
   --page-size 16384 -- --correctness-only --max-elements 4099
 ```
-
-This separate RGB32/RGBA32 behavioral regression supplements targeted released
-CTS controls; it is neither CTS nor guest performance evidence.
 
 The shader source and generated header are owned here. Regenerate with an
 explicit offline compiler (append `--verify` for a read-only freshness check):
