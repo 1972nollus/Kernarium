@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Export only the pinned FEX files needed to assemble its ASM corpora."""
 
 from __future__ import annotations

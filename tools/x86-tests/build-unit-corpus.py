@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Normalize pinned K and FEX x86-64 cases, and the repository's own cases,
 into the checked-in unit corpus."""
 

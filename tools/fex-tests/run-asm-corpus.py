@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Run every materialized FEX ASM test through the x86 gadget backend."""
 
 from __future__ import annotations
