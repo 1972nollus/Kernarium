@@ -1,34 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "in_process_vhost_user_service.hpp"
+
 #include <filesystem>
 #include <memory>
 #include <string>
 
-namespace uml::gpu {
-class InProcessVhostUserService;
-}
-
 namespace uml::console {
 
-class InProcessConsoleService final {
-public:
-    explicit InProcessConsoleService(
-        std::filesystem::path socketPath,
-        std::string portName = {});
-    // Duplicates an already-connected SOCK_STREAM descriptor, served as the
-    // named serial port `portName`, which must not be empty.
-    InProcessConsoleService(int connectedDescriptor, std::string portName);
-    ~InProcessConsoleService();
-
-    InProcessConsoleService(const InProcessConsoleService&) = delete;
-    InProcessConsoleService& operator=(const InProcessConsoleService&) = delete;
-
-    [[nodiscard]] std::string takeConnectionName();
-    void stop() noexcept;
-
-private:
-    std::unique_ptr<uml::gpu::InProcessVhostUserService> service_;
-};
+[[nodiscard]] std::unique_ptr<uml::gpu::InProcessVhostUserService>
+makeInProcessService(
+    std::filesystem::path socketPath,
+    std::string portName = {});
+// Duplicates an already-connected SOCK_STREAM descriptor, served as the
+// named serial port `portName`, which must not be empty.
+[[nodiscard]] std::unique_ptr<uml::gpu::InProcessVhostUserService>
+makeInProcessService(int connectedDescriptor, std::string portName);
 
 } // namespace uml::console

@@ -788,7 +788,7 @@ int runtimeRun(
                 .sharedMemoryRegions = sharedMemoryRegions,
                 .deviceMemoryLimit = deviceMemoryLimit,
             });
-        uml::balloon::InProcessBalloonService balloonService(
+        const auto balloonService = uml::balloon::makeInProcessService(
             uml::balloon::BalloonOptions {
                 .guestMemoryBytes = guestMemoryBytes,
                 .target = uml::balloon::hostGpuMemoryTarget(deviceMemoryLimit),
@@ -798,13 +798,12 @@ int runtimeRun(
             uml::input::virtio::DeviceKind::touchscreen, width, height);
         uml::input::virtio::InProcessInputService keyboard(
             uml::input::virtio::DeviceKind::keyboard, width, height);
-        uml::audio::InProcessAudioService audioService;
-        std::unique_ptr<uml::video::InProcessVideoService> videoService;
+        const auto audioService = uml::audio::makeInProcessService();
+        std::unique_ptr<uml::gpu::InProcessVhostUserService> videoService;
         if (!uml::platform::videoDecodeCapabilities().empty())
-            videoService = std::make_unique<uml::video::InProcessVideoService>(
-                sharedMemoryRegions);
+            videoService = uml::video::makeInProcessService(sharedMemoryRegions);
 #if KERNARIUM_RUNTIME_ANDROID_GUEST
-        uml::battery::InProcessBatteryService batteryService;
+        const auto batteryService = uml::battery::makeInProcessService();
 #endif
         AppNetwork network;
         auto networkCallbacks = network.callbacks();
@@ -871,11 +870,11 @@ int runtimeRun(
          * after the GPU it is always virtio-uml.1/virtio1, whatever optional
          * devices follow. */
         arguments.emplace_back(
-            "virtio_uml.device=" + batteryService.takeConnectionName() + ":" +
+            "virtio_uml.device=" + batteryService->takeConnectionName() + ":" +
             std::to_string(uml::battery::protocol::deviceId));
 #endif
         arguments.emplace_back(
-            "virtio_uml.device=" + balloonService.takeConnectionName() + ":" +
+            "virtio_uml.device=" + balloonService->takeConnectionName() + ":" +
             std::to_string(uml::balloon::protocol::deviceId));
         arguments.emplace_back(
             "virtio_uml.device=" + touchscreen.takeConnectionName() + ":" +
@@ -884,7 +883,7 @@ int runtimeRun(
             "virtio_uml.device=" + keyboard.takeConnectionName() + ":" +
             std::to_string(uml::input::virtio::protocol::deviceId));
         arguments.emplace_back(
-            "virtio_uml.device=" + audioService.takeConnectionName() + ":" +
+            "virtio_uml.device=" + audioService->takeConnectionName() + ":" +
             std::to_string(uml::audio::protocol::deviceId));
         if (videoService) {
             arguments.emplace_back(

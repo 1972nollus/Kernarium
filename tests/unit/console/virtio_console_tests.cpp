@@ -625,26 +625,26 @@ void inProcessServicePublishesAndRemovesTheExternalSocket()
 {
     TemporaryDirectory temporary;
     const auto path = temporary.path() / "service.sock";
-    uml::console::InProcessConsoleService service(path);
+    const auto service = uml::console::makeInProcessService(path);
     struct stat status {};
     require(::lstat(path.c_str(), &status) == 0 && S_ISSOCK(status.st_mode));
-    const auto connection = service.takeConnectionName();
+    const auto connection = service->takeConnectionName();
     require(connection.starts_with("fd="));
     const int descriptor = std::stoi(connection.substr(3));
     require(descriptor >= 0);
     (void)::close(descriptor);
-    service.stop();
+    service->stop();
     require(::lstat(path.c_str(), &status) != 0 && errno == ENOENT);
 
     const auto serialPath = temporary.path() / "serial.sock";
-    uml::console::InProcessConsoleService serialService(
+    const auto serialService = uml::console::makeInProcessService(
         serialPath, std::string(protocol::hostSerialPortName));
     require(
         ::lstat(serialPath.c_str(), &status) == 0 && S_ISSOCK(status.st_mode));
-    const auto serialConnection = serialService.takeConnectionName();
+    const auto serialConnection = serialService->takeConnectionName();
     require(serialConnection.starts_with("fd="));
     (void)::close(std::stoi(serialConnection.substr(3)));
-    serialService.stop();
+    serialService->stop();
     require(::lstat(serialPath.c_str(), &status) != 0 && errno == ENOENT);
 }
 

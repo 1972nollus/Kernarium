@@ -558,7 +558,7 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 	}
-	std::unique_ptr<uml::battery::InProcessBatteryService> battery_service;
+	std::unique_ptr<uml::gpu::InProcessVhostUserService> battery_service;
 	if (prepared.battery && !information_only) {
 		if (has_virtio_device_argument(
 			prepared.kernel, uml::battery::protocol::deviceId)) {
@@ -568,8 +568,7 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 		try {
-			battery_service =
-				std::make_unique<uml::battery::InProcessBatteryService>();
+			battery_service = uml::battery::makeInProcessService();
 			/* Android's vendor policy labels the battery's sysfs
 			 * path by its position among the Virtio devices
 			 * (android/aosp-17/overlay/sepolicy/vendor/genfs_contexts).
@@ -586,20 +585,19 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 	}
-	std::unique_ptr<uml::balloon::InProcessBalloonService> balloon_service;
+	std::unique_ptr<uml::gpu::InProcessVhostUserService> balloon_service;
 	if (gpu_service && device_memory_limit != 0 &&
 	    !has_virtio_device_argument(
 		    prepared.kernel, uml::balloon::protocol::deviceId)) {
 		try {
-			balloon_service =
-				std::make_unique<uml::balloon::InProcessBalloonService>(
-					uml::balloon::BalloonOptions{
-						.guestMemoryBytes = guest_memory,
-						.target = uml::balloon::hostGpuMemoryTarget(
-							device_memory_limit),
-						.hostPageSize = static_cast<std::size_t>(
-							getpagesize()),
-					});
+			balloon_service = uml::balloon::makeInProcessService(
+				uml::balloon::BalloonOptions{
+					.guestMemoryBytes = guest_memory,
+					.target = uml::balloon::hostGpuMemoryTarget(
+						device_memory_limit),
+					.hostPageSize = static_cast<std::size_t>(
+						getpagesize()),
+				});
 			prepared.kernel.emplace_back(
 				"virtio_uml.device=" +
 				balloon_service->takeConnectionName() + ":" +
@@ -611,14 +609,14 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 	}
-	std::unique_ptr<uml::video::InProcessVideoService> video_service;
+	std::unique_ptr<uml::gpu::InProcessVhostUserService> video_service;
 	if (prepared.video && !information_only) {
 		if (has_virtio_device_argument(prepared.kernel, uml::video::deviceId)) {
 			std::fputs("--video cannot be combined with an explicit Virtio video transport argument\n", stderr);
 			return 1;
 		}
 		try {
-			video_service = std::make_unique<uml::video::InProcessVideoService>(
+			video_service = uml::video::makeInProcessService(
 				gpu_service ? shared_memory_regions : nullptr);
 			prepared.kernel.emplace_back("virtio_uml.device=" +
 				video_service->takeConnectionName() + ":" + std::to_string(uml::video::deviceId));
@@ -627,7 +625,7 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 	}
-	std::unique_ptr<uml::audio::InProcessAudioService> audio_service;
+	std::unique_ptr<uml::gpu::InProcessVhostUserService> audio_service;
 	if (prepared.audio && !information_only) {
 		if (has_virtio_device_argument(
 			prepared.kernel, uml::audio::protocol::deviceId)) {
@@ -637,8 +635,7 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 		try {
-			audio_service =
-				std::make_unique<uml::audio::InProcessAudioService>();
+			audio_service = uml::audio::makeInProcessService();
 			prepared.kernel.emplace_back(
 				"virtio_uml.device=" +
 				audio_service->takeConnectionName() + ":" +
@@ -650,7 +647,7 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 	}
-	std::unique_ptr<uml::console::InProcessConsoleService> console_service;
+	std::unique_ptr<uml::gpu::InProcessVhostUserService> console_service;
 	if ((!prepared.console_socket.empty() || !prepared.serial_socket.empty()) &&
 	    !information_only) {
 		const bool named_serial = !prepared.serial_socket.empty();
@@ -663,14 +660,13 @@ int uml::app::runEmbeddedKernel(
 			return 1;
 		}
 		try {
-			console_service =
-				std::make_unique<uml::console::InProcessConsoleService>(
-					named_serial ? prepared.serial_socket :
-						prepared.console_socket,
-					named_serial ?
-						std::string(
-							uml::console::protocol::hostSerialPortName) :
-						std::string {});
+			console_service = uml::console::makeInProcessService(
+				named_serial ? prepared.serial_socket :
+					prepared.console_socket,
+				named_serial ?
+					std::string(
+						uml::console::protocol::hostSerialPortName) :
+					std::string {});
 			prepared.kernel.emplace_back(
 				"virtio_uml.device=" +
 				console_service->takeConnectionName() + ":" +

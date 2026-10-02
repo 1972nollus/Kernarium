@@ -1,28 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
-#include <memory>
-#include <string>
+#include "in_process_vhost_user_service.hpp"
 
-namespace uml::gpu {
-class InProcessVhostUserService;
-}
+#include <memory>
 
 namespace uml::battery {
 
-class InProcessBatteryService final {
-public:
-    InProcessBatteryService();
-    ~InProcessBatteryService();
-
-    InProcessBatteryService(const InProcessBatteryService&) = delete;
-    InProcessBatteryService& operator=(const InProcessBatteryService&) = delete;
-
-    [[nodiscard]] std::string takeConnectionName();
-    void stop() noexcept;
-
-private:
-    std::unique_ptr<uml::gpu::InProcessVhostUserService> service_;
-};
+[[nodiscard]] std::unique_ptr<uml::gpu::InProcessVhostUserService>
+makeInProcessService();
 
 } // namespace uml::battery
