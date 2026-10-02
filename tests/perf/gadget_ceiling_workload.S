@@ -39,7 +39,7 @@ uml_gadget_ceiling_native_\name:
 	movi	v16.16b, #0
 	movi	v17.16b, #0
 	movi	v18.16b, #0
-	\body uml_gadget_ceiling_\name\()_begin, .Lfail_\name
+	\body uml_gadget_ceiling_\name\()_begin, Lfail_\name
 uml_gadget_ceiling_\name\()_end:
 	stp	x24, x25, [x26]
 	mov	x0, x20
@@ -48,7 +48,7 @@ uml_gadget_ceiling_\name\()_end:
 	ldp	x21, x22, [sp, #16]
 	ldp	x19, x20, [sp], #64
 	ret
-.Lfail_\name:
+Lfail_\name:
 	brk	#0
 .endm
 
