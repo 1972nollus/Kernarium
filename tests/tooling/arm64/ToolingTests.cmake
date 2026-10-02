@@ -22,3 +22,16 @@ uml_add_tooling_test(
     TIMEOUT 300)
 set_tests_properties(arm64-instruction-corpus-absent-features PROPERTIES
     SKIP_RETURN_CODE 77)
+
+# Opt-in: the pinned Arm XML archive is not a managed dependency.
+set(UML_A64_ARCHITECTURE_ARCHIVE "" CACHE FILEPATH
+    "Pinned Arm A64 XML archive for arm64-instruction-oracle-freshness")
+uml_add_tooling_test(
+    NAME arm64-instruction-oracle-freshness
+    COMMAND ${Python3_EXECUTABLE}
+        ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_a64_instruction_oracle_freshness.py
+        --architecture-archive=${UML_A64_ARCHITECTURE_ARCHIVE}
+    LABELS cpu
+    TIMEOUT 900)
+set_tests_properties(arm64-instruction-oracle-freshness PROPERTIES
+    SKIP_RETURN_CODE 77)
