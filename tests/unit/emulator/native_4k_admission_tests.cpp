@@ -301,7 +301,7 @@ void test_same_address_is_serialized_and_isolated(const NativeSlot &slot)
 	{
 		std::lock_guard lock{kernel_coordinator.mutex};
 		require(!state_b.entered,
-			"same-address native callbacks overlapped in a 4 KiB build");
+			"same-address kernels overlapped across handles");
 	}
 	release(state_a);
 	first.join();
@@ -374,7 +374,7 @@ void test_queued_stop_cancels_and_retry_is_fresh(const NativeSlot &slot)
 	{
 		std::lock_guard lock{kernel_coordinator.mutex};
 		require(!state_b.entered,
-			"cancelled queued native callback entered the shared address space");
+			"cancelled queued kernel entered the shared address space");
 	}
 	require(status_b == -UML_EMULATOR_RUNTIME_ERROR,
 		"cancelled queued native run returned the wrong status");

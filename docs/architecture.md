@@ -42,11 +42,10 @@ later run in the process, on any handle, returns `UML_EMULATOR_UNSUPPORTED`
 without entering a kernel; see
 [ADR 0002](decisions/0002-emulator-handle-lifetime.md).
 
-Different 16 KiB native-callback handles may run concurrently when their host
-mappings do not overlap. Embedded kernels and 4 KiB native-callback runs use a
-process address-space gate because their fixed host mappings cannot be safely
-shared. Ambiguous unbound callbacks fail closed rather than borrowing another
-handle's context.
+Runs on different handles serialize through a process address-space gate,
+because an embedded kernel's fixed host mappings cannot be shared. A stop
+request cancels a run queued there. Ambiguous unbound callbacks fail closed
+rather than borrowing another handle's context.
 
 The caller owns provider lifetimes. The macOS app therefore creates and
 destroys SLiRP around emulator use; the library has no process-global network
