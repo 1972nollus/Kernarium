@@ -17,11 +17,8 @@ WORK_ROOT=
 RELEASE_ROOT=
 SOURCE_ONLY=0
 
-fail()
-{
-	printf '%s\n' "android/aosp-17/build/preflight.sh: $*" >&2
-	exit 1
-}
+# shellcheck disable=SC1090
+. "$SCRIPT_DIR/common.sh"
 
 usage()
 {
@@ -40,19 +37,6 @@ Darwin SDK, pinned checked-out toolchains, and writable builder-local roots.
 EOF
 }
 
-absolute_path()
-{
-	name=$1
-	value=$2
-	case "$value" in
-	/*) ;;
-	*) fail "$name must be an absolute local path" ;;
-	esac
-	case "$value" in
-	/|*/../*|*/..|*/./*|*/.) fail "$name must be normalized" ;;
-	esac
-}
-
 require_pinned_checkout()
 {
 	repository=$1
@@ -69,18 +53,6 @@ require_pinned_checkout()
 		fail "$label tree is $actual_tree, expected $expected_tree"
 	[ -z "$(git -C "$repository" status --porcelain)" ] ||
 		fail "$label checkout is dirty"
-}
-
-dirty_repo_projects()
-{
-	(
-		cd "$AOSP_SOURCE"
-		repo forall -c '
-			if test -n "$(git status --porcelain)"; then
-				printf "%s\n" "$REPO_PATH"
-			fi
-		'
-	)
 }
 
 while [ "$#" -gt 0 ]; do
@@ -158,7 +130,7 @@ require_pinned_checkout "$AOSP_SOURCE/.repo/manifests" \
 require_pinned_checkout "$ACK_WORKSPACE/common" \
 	"$UML_KERNEL_UPSTREAM_COMMIT" "$UML_KERNEL_UPSTREAM_TREE" \
 	"ACK common"
-dirty_projects=$(dirty_repo_projects)
+dirty_projects=$(dirty_repo_projects "$AOSP_SOURCE")
 if [ -n "$dirty_projects" ]; then
 	fail "AOSP Repo workspace has dirty projects: $dirty_projects"
 fi

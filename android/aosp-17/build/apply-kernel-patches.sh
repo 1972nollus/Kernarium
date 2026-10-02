@@ -13,11 +13,8 @@ KERNEL_SERIES="$COMMON_ROOT/tooling/kernel_series.py"
 ACK_WORKSPACE=
 KERNEL_SOURCE=
 
-fail()
-{
-	printf '%s\n' "android/aosp-17/build/apply-kernel-patches.sh: $*" >&2
-	exit 1
-}
+# shellcheck disable=SC1090
+. "$SCRIPT_DIR/common.sh"
 
 usage()
 {
@@ -31,19 +28,6 @@ The destination must not exist. The command creates a detached Git worktree
 from the pinned ACK common checkout and applies the generated local patch
 series. It performs no source fetch and no transport operation.
 EOF
-}
-
-absolute_path()
-{
-	name=$1
-	value=$2
-	case "$value" in
-	/*) ;;
-	*) fail "$name must be an absolute local path" ;;
-	esac
-	case "$value" in
-	/|*/../*|*/..|*/./*|*/.) fail "$name must be normalized" ;;
-	esac
 }
 
 while [ "$#" -gt 0 ]; do

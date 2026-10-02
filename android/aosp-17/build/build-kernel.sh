@@ -24,11 +24,8 @@ DARWIN_SDK=
 BUILD_DIR=
 JOBS=
 
-fail()
-{
-	printf '%s\n' "android/aosp-17/build/build-kernel.sh: $*" >&2
-	exit 1
-}
+# shellcheck disable=SC1090
+. "$SCRIPT_DIR/common.sh"
 
 usage()
 {
@@ -44,19 +41,6 @@ replayed ACK tree and checked-out ACK prebuilts. It always builds an AArch64
 Darwin UML ET_DYN image with 16 KiB pages, CONFIG_MODULES=n, and every selected
 facility linked into vmlinux. There is no page-size or module mode selector.
 EOF
-}
-
-absolute_path()
-{
-	name=$1
-	value=$2
-	case "$value" in
-	/*) ;;
-	*) fail "$name must be an absolute local path" ;;
-	esac
-	case "$value" in
-	/|*/../*|*/..|*/./*|*/.) fail "$name must be normalized" ;;
-	esac
 }
 
 while [ "$#" -gt 0 ]; do

@@ -16,11 +16,8 @@ KERNEL_ELF=
 OUTPUT=
 JOBS=
 
-fail()
-{
-	printf '%s\n' "android/aosp-17/build/build-orangefox.sh: $*" >&2
-	exit 1
-}
+# shellcheck disable=SC1090
+source "$SCRIPT_DIR/common.sh"
 
 usage()
 {
@@ -36,19 +33,6 @@ The output directory must be inside the OrangeFox Repo workspace. The ACK ELF
 is copied only as a build-time VINTF input; the verified boot-image-v4 result
 has a zero-byte kernel section. An existing output image is never replaced.
 EOF
-}
-
-absolute_path()
-{
-	local name=$1
-	local value=$2
-	case "$value" in
-	/*) ;;
-	*) fail "$name must be an absolute local path" ;;
-	esac
-	case "$value" in
-	/|*/../*|*/..|*/./*|*/.) fail "$name must be normalized" ;;
-	esac
 }
 
 while [[ $# -gt 0 ]]; do
