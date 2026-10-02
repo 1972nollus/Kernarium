@@ -29,14 +29,6 @@ SIMPLE_CONSTRAINT = re.compile(r"(!=|==) ([01x]+)\Z")
 FEATURE_EXPRESSION = re.compile(
     r"FEAT_[A-Za-z0-9_]+(?: (?:&&|\|\|) FEAT_[A-Za-z0-9_]+)*\Z"
 )
-FEATURE_PREDICATE = re.compile(
-    r"IsFeatureImplemented\((FEAT_[A-Za-z0-9_]+)\)"
-)
-FEATURE_NAME = re.compile(r"\b(FEAT_[A-Za-z0-9_]+)\b")
-FEATURE_NOP_GUARD = re.compile(
-    r"if\s+!IsFeatureImplemented\((FEAT_[A-Za-z0-9_]+)\)\s+then\s+"
-    r"EndOfDecode\(Decode_NOP\);\s+end;"
-)
 
 
 @dataclass(frozen=True)
@@ -77,7 +69,6 @@ class ArchitectureVariant:
     value: int
     constraints: tuple[FieldConstraint, ...]
     feature_expressions: tuple[str, ...]
-    feature_fallbacks: tuple[str, ...]
     fields: tuple[tuple[str, int, int], ...]
 
     def matches(self, word: int) -> bool:
@@ -99,11 +90,6 @@ class DecodePartition:
     value: int
     constraints: tuple[FieldConstraint, ...]
     feature_expressions: tuple[str, ...]
-
-    def matches(self, word: int) -> bool:
-        return word & self.mask == self.value and all(
-            constraint.matches(word) for constraint in self.constraints
-        )
 
 
 def _box_bits(box: ET.Element) -> list[tuple[int, str]]:
@@ -310,31 +296,6 @@ def _matching_table_features(
     return result
 
 
-def _feature_names(expression: str) -> set[str]:
-    return set(FEATURE_NAME.findall(expression))
-
-
-def _decode_feature_policy(
-    instruction_class: ET.Element,
-) -> tuple[set[str], set[str]]:
-    """Return direct feature predicates and architected NOP fallbacks.
-
-    A feature mentioned by instruction metadata is not necessarily required
-    for safe native execution.  The official decode ASL explicitly turns a
-    small family of optional instructions into NOP when their feature is
-    absent.  Keep that outcome distinct from Decode_UNDEF feature guards.
-    """
-    text = "\n".join(
-        "".join(element.itertext())
-        for element in instruction_class.findall(
-            ".//pstext[@section='Decode']"
-        )
-    )
-    predicates = set(FEATURE_PREDICATE.findall(text))
-    nop_fallbacks = set(FEATURE_NOP_GUARD.findall(text))
-    return predicates, nop_fallbacks
-
-
 class ArchitectureCatalog:
     """Validated index and instruction forms from the pinned Arm XML release."""
 
@@ -343,8 +304,6 @@ class ArchitectureCatalog:
         self._files: dict[tuple[str, str], str] = {}
         self._stable_forms: dict[str, tuple[str, str, str]] = {}
         self._trees: dict[str, ET.Element] = {}
-        self._shared_feature_dependencies: dict[str, frozenset[str]] | None = None
-        self._semantic_features: dict[str, tuple[str, ...]] = {}
         for section, (index_name, expected_count) in INDEXES.items():
             index_path = root / index_name
             if not index_path.is_file():
@@ -372,10 +331,6 @@ class ArchitectureCatalog:
                     heading,
                     filename,
                 )
-
-    @property
-    def forms(self) -> set[tuple[str, str]]:
-        return set(self._files)
 
     @property
     def stable_forms(self) -> dict[str, tuple[str, str, str]]:
@@ -434,9 +389,6 @@ class ArchitectureCatalog:
                 0, 0, diagram.findall("box")
             )
             class_features = _declared_features(instruction_class)
-            _predicates, nop_fallbacks = _decode_feature_policy(
-                instruction_class
-            )
             for encoding in instruction_class.findall("encoding"):
                 (
                     encoding_mask,
@@ -450,12 +402,6 @@ class ArchitectureCatalog:
                 features = tuple(
                     dict.fromkeys(class_features + _declared_features(encoding))
                 )
-                feature_fallbacks = tuple(sorted(
-                    feature
-                    for expression in features
-                    for feature in _feature_names(expression)
-                    if feature in nop_fallbacks
-                ))
                 variant = ArchitectureVariant(
                     section=section,
                     form=form,
@@ -465,7 +411,6 @@ class ArchitectureCatalog:
                     value=encoding_value,
                     constraints=all_constraints,
                     feature_expressions=features,
-                    feature_fallbacks=feature_fallbacks,
                     fields=tuple(
                         sorted(
                             (name, low, width)
@@ -503,119 +448,10 @@ class ArchitectureCatalog:
                             list(variant.feature_expressions) + dynamic
                         )
                     ),
-                    feature_fallbacks=variant.feature_fallbacks,
                     fields=variant.fields,
                 )
             )
         return result
-
-    def _shared_features(self) -> dict[str, frozenset[str]]:
-        """Return transitive feature predicates for shared ASL definitions."""
-        if self._shared_feature_dependencies is not None:
-            return self._shared_feature_dependencies
-        path = self.root / "shared_pseudocode.xml"
-        if not path.is_file():
-            raise ValueError("Arm XML release lacks shared_pseudocode.xml")
-        root = ET.parse(path).getroot()
-        direct: dict[str, set[str]] = {}
-        calls: dict[str, set[str]] = {}
-        for pseudocode in root.findall(".//ps"):
-            definitions = {
-                anchor.get("link", "")
-                for anchor in pseudocode.findall(".//anchor")
-                if anchor.get("link")
-            }
-            if not definitions:
-                continue
-            text = "".join(pseudocode.itertext())
-            features = {
-                _host_feature(match)
-                for match in FEATURE_PREDICATE.findall(text)
-            }
-            dependencies = {
-                link.get("link", "")
-                for link in pseudocode.findall(".//a")
-                if link.get("file") == "shared_pseudocode.xml"
-                and link.get("link")
-            }
-            for definition in definitions:
-                direct.setdefault(definition, set()).update(features)
-                calls.setdefault(definition, set()).update(dependencies)
-
-        closure = {name: set(features) for name, features in direct.items()}
-        changed = True
-        while changed:
-            changed = False
-            for name, dependencies in calls.items():
-                expanded = set(closure.get(name, set()))
-                for dependency in dependencies:
-                    expanded.update(closure.get(dependency, set()))
-                if expanded != closure.get(name, set()):
-                    closure[name] = expanded
-                    changed = True
-        self._shared_feature_dependencies = {
-            name: frozenset(features) for name, features in closure.items()
-        }
-        return self._shared_feature_dependencies
-
-    def form_semantic_features(
-        self, section: str, form: str
-    ) -> tuple[str, ...]:
-        """Return feature predicates reachable from a form's official ASL.
-
-        This is deliberately a conservative dependency set, not an assertion
-        that every feature affects every encoding or operand value.  It is
-        suitable for proving that an extra native gate is specification-
-        related, while allocation requirements remain exact and separate.
-        """
-        filename = self._files.get((section, form))
-        if filename is None:
-            raise ValueError(f"Arm {RELEASE} XML has no {section} form {form!r}")
-        cached = self._semantic_features.get(filename)
-        if cached is not None:
-            return cached
-        root = self._tree(filename)
-        sections = root.findall(".//ps_section")
-        text = "\n".join("".join(element.itertext()) for element in sections)
-        features = {
-            _host_feature(match) for match in FEATURE_PREDICATE.findall(text)
-        }
-        # Feature metadata and surrounding architectural prose can affect an
-        # operand's semantics even when the decode ASL does not make the raw
-        # encoding UNDEFINED (PRFMSLC and MTE2 are examples).  This remains a
-        # conservative relevance set, never an allocation requirement.
-        document_text = "\n".join(root.itertext())
-        features.update(
-            _host_feature(match) for match in FEATURE_NAME.findall(document_text)
-        )
-        shared = self._shared_features()
-        for section_element in sections:
-            for link in section_element.findall(".//a"):
-                if link.get("file") == "shared_pseudocode.xml":
-                    features.update(shared.get(link.get("link", ""), ()))
-        alias = self.alias_target(section, form)
-        if alias and alias != filename:
-            alias_key = next(
-                (
-                    key
-                    for key, candidate in self._files.items()
-                    if candidate == alias
-                ),
-                None,
-            )
-            if alias_key is not None:
-                features.update(self.form_semantic_features(*alias_key))
-        result = tuple(sorted(features))
-        self._semantic_features[filename] = result
-        return result
-
-    def alias_target(self, section: str, form: str) -> str:
-        """Return the official target file for an alias form, if any."""
-        filename = self._files.get((section, form))
-        if filename is None:
-            raise ValueError(f"Arm {RELEASE} XML has no {section} form {form!r}")
-        element = self._tree(filename).find("./aliasto")
-        return "" if element is None else element.get("refiform", "")
 
     def resolve(self, section: str, form: str, word: int) -> ArchitectureVariant:
         matches = self.variants(section, form, word)
