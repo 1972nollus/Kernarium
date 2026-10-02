@@ -89,8 +89,7 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
               instructions.subspan(count_), pc);
           run != 0) {
         count_ += run;
-        terminated_ = true;
-        break;
+        continue;
       }
       const auto instruction = instructions[count_];
       if (reservation_sensitive_allocation(instruction)) {
@@ -192,6 +191,8 @@ JitCompiler::Result JitCompiler::compile_once(std::uint64_t guest_pc,
         emit_deferred_exclusive_slow(cold.instruction, cold.pc, cold.count);
       } else if (cold.action == ColdPath::Action::memory_slow) {
         emit_memory_slow(cold.instruction, cold.pc, cold.count);
+      } else if (cold.action == ColdPath::Action::memory_copy_set_slow) {
+        emit_memory_copy_set(cold.instruction, cold.pc, cold.count, 3U);
       } else if (cold.action == ColdPath::Action::exclusive_compare_mismatch) {
         emitter_.emit(0xd503'3f5fU); // clrex
         clear_local_exclusive_monitor();
@@ -336,6 +337,20 @@ void JitCompiler::track_direct_store(unsigned address, std::size_t size,
     emitter_.store_x(address, 3, offset + offsetof(JitStoreRange, address));
     emitter_.load_constant(4, size);
     emitter_.store_x(4, 3, offset + offsetof(JitStoreRange, size));
+  }
+
+void JitCompiler::track_direct_store_register(unsigned address,
+                                              unsigned size,
+                                              std::size_t instruction_index) {
+    if (!track_direct_stores_ ||
+        instruction_index >= maximum_block_instructions)
+      return;
+    const auto offset =
+        instruction_index * sizeof(JitStoreRange);
+    emitter_.load_x(3, 31, 32);
+    emitter_.load_x(3, 3, offsetof(JitChainState, stores));
+    emitter_.store_x(address, 3, offset + offsetof(JitStoreRange, address));
+    emitter_.store_x(size, 3, offset + offsetof(JitStoreRange, size));
   }
 
 [[nodiscard]] bool JitCompiler::emit_primary_hint(std::uint32_t instruction) {
@@ -682,13 +697,119 @@ void JitCompiler::emit_memory_copy_set(std::uint32_t instruction,
     emitter_.return_dynamic(count);
   }
 
+namespace {
+
+/* LDP/STP of two Q registers, signed offset. */
+[[nodiscard]] constexpr std::uint32_t pair_q(bool load, unsigned first,
+                                             unsigned second, unsigned base,
+                                             int offset) noexcept {
+  return (load ? 0xad40'0000U : 0xad00'0000U) |
+         ((static_cast<std::uint32_t>(offset / 16) & 0x7fU) << 15) |
+         (second << 10) | (base << 5) | first;
+}
+
+/* LDUR/STUR of one SIMD&FP register of 1 << size_log2 bytes. */
+[[nodiscard]] constexpr std::uint32_t single_simd(bool load,
+                                                  unsigned size_log2,
+                                                  unsigned reg, unsigned base,
+                                                  int offset) noexcept {
+  const std::uint32_t size = size_log2 == 4U ? 0U : size_log2;
+  const std::uint32_t opc =
+      (size_log2 == 4U ? 2U : 0U) | (load ? 1U : 0U);
+  return 0x3c00'0000U | (size << 30) | (opc << 22) |
+         ((static_cast<std::uint32_t>(offset) & 0x1ffU) << 12) |
+         (base << 5) | reg;
+}
+
+[[nodiscard]] constexpr std::uint32_t add_x(unsigned destination,
+                                            unsigned left,
+                                            unsigned right) noexcept {
+  return 0x8b00'0000U | (right << 16) | (left << 5) | destination;
+}
+
+[[nodiscard]] constexpr std::uint32_t subtract_x(unsigned destination,
+                                                 unsigned left,
+                                                 unsigned right) noexcept {
+  return 0xcb00'0000U | (right << 16) | (left << 5) | destination;
+}
+
+/* cmp Xn, #imm, with imm below 4096. */
+[[nodiscard]] constexpr std::uint32_t compare_immediate(
+    unsigned reg, unsigned immediate) noexcept {
+  return 0xf100'001fU | (immediate << 10) | (reg << 5);
+}
+
+} // namespace
+
+void JitCompiler::emit_small_copy_set(bool set, unsigned source_start,
+                                      unsigned source_end,
+                                      unsigned destination_start,
+                                      unsigned destination_end,
+                                      unsigned remaining,
+                                      Arm64Emitter::Label done) {
+    /*
+     * 1 to 63 bytes. Each size class moves the first and the last bytes of
+     * its width, which together cover every count in the class, and loads
+     * both before it stores either: one block, in either direction.
+     */
+    std::array<Arm64Emitter::Label, 5> classes{};
+    for (auto &label : classes)
+      label = emitter_.make_label();
+    for (std::size_t index = 0; index < classes.size(); ++index) {
+      emitter_.emit_internal_flag_clobber(
+          compare_immediate(remaining, 32U >> index));
+      emitter_.branch_condition(classes[index], 2); // b.hs
+    }
+    if (!set)
+      emitter_.emit(single_simd(true, 0, 0, source_start, 0));
+    emitter_.emit(single_simd(false, 0, 0, destination_start, 0));
+    emitter_.branch(done);
+    for (std::size_t index = 0; index < classes.size(); ++index) {
+      emitter_.bind(classes[index]);
+      if (index == 0U) {
+        if (set) {
+          emitter_.emit(pair_q(false, 0, 0, destination_start, 0));
+          emitter_.emit(pair_q(false, 0, 0, destination_end, -32));
+        } else {
+          emitter_.emit(pair_q(true, 0, 1, source_start, 0));
+          emitter_.emit(pair_q(true, 2, 3, source_end, -32));
+          emitter_.emit(pair_q(false, 0, 1, destination_start, 0));
+          emitter_.emit(pair_q(false, 2, 3, destination_end, -32));
+        }
+      } else {
+        const unsigned size_log2 = 5U - static_cast<unsigned>(index);
+        const int width = 1 << size_log2;
+        if (set) {
+          emitter_.emit(single_simd(false, size_log2, 0, destination_start, 0));
+          emitter_.emit(
+              single_simd(false, size_log2, 0, destination_end, -width));
+        } else {
+          emitter_.emit(single_simd(true, size_log2, 0, source_start, 0));
+          emitter_.emit(single_simd(true, size_log2, 1, source_end, -width));
+          emitter_.emit(single_simd(false, size_log2, 0, destination_start, 0));
+          emitter_.emit(
+              single_simd(false, size_log2, 1, destination_end, -width));
+        }
+      }
+      emitter_.branch(done);
+    }
+  }
+
 [[nodiscard]] std::size_t JitCompiler::try_emit_memory_copy_set_sequence(
       std::span<const std::uint32_t> instructions, std::uint64_t pc) {
     /*
      * A compiler emits each operation as its prologue, main and epilogue in
-     * sequence. Run the three as one helper call, and so one block exit, when
-     * the words agree in everything but their stage. Any other arrangement
-     * executes stage by stage through emit_instruction().
+     * sequence, and glibc's memcpy, memmove and memset are exactly that. When
+     * the three words agree in everything but their stage, an untagged
+     * transfer that stays inside one destination page and one source page
+     * runs inline, with the shared helper's choices: 64-byte blocks, each
+     * loaded completely before it is stored, from the first byte in the
+     * copy's direction, and a CPY whose source starts below an overlapping
+     * destination running backward. Where the helper would move a whole
+     * region with one memmove, the blocks give the same bytes. Any other
+     * transfer, and a TLB miss, takes the helper for the whole sequence from
+     * its prologue. Any other arrangement executes stage by stage through
+     * emit_instruction().
      */
     if (instructions.size() < 3U)
       return 0;
@@ -700,9 +821,159 @@ void JitCompiler::emit_memory_copy_set(std::uint32_t instruction,
         instructions[2] !=
             arm64::detail::mops_stage_word(prologue, mops.family, 2U))
       return 0;
-    if (count_ + 2U < maximum_block_instructions)
-      memory_write_mask_ |= std::uint64_t{1} << (count_ + 2U);
-    emit_memory_copy_set(prologue, pc, count_ + 1U, 3U);
+    using arm64::detail::MopsFamily;
+    const bool set = mops.family == MopsFamily::set;
+    const std::size_t epilogue = count_ + 2U;
+    if (epilogue < maximum_block_instructions) {
+      memory_write_mask_ |= std::uint64_t{1} << epilogue;
+      direct_memory_write_mask_ |= std::uint64_t{1} << epilogue;
+    }
+
+    /* The guards compare, so publish the guest NZCV first; the helper arm
+     * then starts from CpuState with every operand unmodified. */
+    spill_flags_for_internal_clobber();
+    const auto destination = read_native_gpr(mops.destination, false, 11);
+    const auto count = read_native_gpr(mops.count, false, 10);
+    const auto source = read_native_gpr(mops.source, false, 8);
+    if (destination.host != 11U)
+      emitter_.move_x(11, destination.host);
+    if (count.host != 10U)
+      emitter_.move_x(10, count.host);
+    if (!set && source.host != 8U)
+      emitter_.move_x(8, source.host);
+    const auto slow = emitter_.make_label();
+    cold_.push_back({slow, prologue, pc, count_ + 1U,
+                     ColdPath::Action::memory_copy_set_slow});
+    const auto forward_done = emitter_.make_label();
+    const auto update = emitter_.make_label();
+    emitter_.compare_zero(forward_done, 10, true, false);
+    static_assert(page_size % 4096U == 0U && page_size / 4096U < 4096U);
+    constexpr auto page_compare = 0xf140'001fU |
+        static_cast<std::uint32_t>((page_size / 4096U) << 10); // cmp xN, #page
+    /* The count bound comes first, so the page sums below cannot wrap. */
+    emitter_.emit_internal_flag_clobber(page_compare | (10U << 5));
+    emitter_.branch_condition(slow, 8); // b.hi
+    /* A tagged address takes the helper, so these checks and the direction
+     * test see the 56-bit addresses the prologue compares. */
+    if (set) {
+      emitter_.ubfm(0, 11, 56, 63);
+    } else {
+      emitter_.emit(0xaa0b'0100U); // orr x0, x8, x11
+      emitter_.ubfm(0, 0, 56, 63);
+    }
+    emitter_.compare_zero(slow, 0, true, true);
+    for (const unsigned address : {11U, 8U}) {
+      if (set && address == 8U)
+        break;
+      emitter_.ubfm(0, address, 0, page_shift - 1U);
+      emitter_.emit(add_x(0, 0, 10));
+      emitter_.emit_internal_flag_clobber(page_compare);
+      emitter_.branch_condition(slow, 8); // b.hi
+    }
+    const auto backward = emitter_.make_label();
+    if (mops.family == MopsFamily::copy_general) {
+      /* A destination above an overlapping source copies backward. */
+      const auto forward = emitter_.make_label();
+      emitter_.emit(subtract_x(0, 11, 8));
+      emitter_.emit_internal_flag_clobber(0xeb0a'001fU); // cmp x0, x10
+      emitter_.branch_condition(forward, 2);             // b.hs
+      emitter_.compare_zero(backward, 0, true, true);
+      emitter_.bind(forward);
+    }
+
+    /* Forward: x11 and x8 advance, x9 counts down. */
+    emit_translate(11, Access::write, slow, slow, 1, false);
+    if (!set)
+      emit_translate(8, Access::read, slow, slow, 1, false);
+    track_direct_store_register(11, 10, epilogue);
+    if (set)
+      emitter_.emit(0x4e01'0c00U | (source.host << 5)); // dup v0.16b, ws
+    emitter_.move_x(9, 10);
+    {
+      const auto loop = emitter_.make_label();
+      const auto tail = emitter_.make_label();
+      emitter_.emit_internal_flag_clobber(compare_immediate(9, 64));
+      emitter_.branch_condition(tail, 3); // b.lo
+      emitter_.bind(loop);
+      if (set) {
+        emitter_.emit(pair_q(false, 0, 0, 11, 0));
+        emitter_.emit(pair_q(false, 0, 0, 11, 32));
+      } else {
+        emitter_.emit(pair_q(true, 0, 1, 8, 0));
+        emitter_.emit(pair_q(true, 2, 3, 8, 32));
+        emitter_.emit(pair_q(false, 0, 1, 11, 0));
+        emitter_.emit(pair_q(false, 2, 3, 11, 32));
+        emitter_.add_immediate(8, 8, 64);
+      }
+      emitter_.add_immediate(11, 11, 64);
+      emitter_.subtract_immediate(9, 9, 64);
+      emitter_.emit_internal_flag_clobber(compare_immediate(9, 64));
+      emitter_.branch_condition(loop, 2); // b.hs
+      emitter_.compare_zero(forward_done, 9, true, false);
+      emitter_.bind(tail);
+      if (!set)
+        emitter_.emit(add_x(2, 8, 9));
+      emitter_.emit(add_x(0, 11, 9));
+      emit_small_copy_set(set, 8, 2, 11, 0, 9, forward_done);
+    }
+    emitter_.bind(forward_done);
+    /* The addresses advance by the count; NZCV keeps the forward format. */
+    emitter_.move_x(9, 10);
+    emitter_.load_constant(0, 0x2000'0000U);
+
+    if (mops.family == MopsFamily::copy_general) {
+      emitter_.branch(update);
+      /* Backward: x1 and x2 retreat from the ends, x9 counts down. */
+      emitter_.bind(backward);
+      const auto backward_done = emitter_.make_label();
+      emit_translate(11, Access::write, slow, slow, 1, false);
+      emit_translate(8, Access::read, slow, slow, 1, false);
+      track_direct_store_register(11, 10, epilogue);
+      emitter_.emit(add_x(1, 11, 10));
+      emitter_.emit(add_x(2, 8, 10));
+      emitter_.move_x(9, 10);
+      const auto loop = emitter_.make_label();
+      const auto tail = emitter_.make_label();
+      emitter_.emit_internal_flag_clobber(compare_immediate(9, 64));
+      emitter_.branch_condition(tail, 3); // b.lo
+      emitter_.bind(loop);
+      emitter_.emit(pair_q(true, 0, 1, 2, -64));
+      emitter_.emit(pair_q(true, 2, 3, 2, -32));
+      emitter_.emit(pair_q(false, 0, 1, 1, -64));
+      emitter_.emit(pair_q(false, 2, 3, 1, -32));
+      emitter_.subtract_immediate(2, 2, 64);
+      emitter_.subtract_immediate(1, 1, 64);
+      emitter_.subtract_immediate(9, 9, 64);
+      emitter_.emit_internal_flag_clobber(compare_immediate(9, 64));
+      emitter_.branch_condition(loop, 2); // b.hs
+      emitter_.compare_zero(backward_done, 9, true, false);
+      emitter_.bind(tail);
+      emitter_.emit(subtract_x(8, 2, 9));
+      emitter_.emit(subtract_x(11, 1, 9));
+      emit_small_copy_set(false, 8, 2, 11, 1, 9, backward_done);
+      emitter_.bind(backward_done);
+      /* The prologue moved the addresses to the ends and the epilogue back
+       * to the start; NZCV keeps the backward format (N and C set). */
+      emitter_.move_x(9, 31);
+      emitter_.load_constant(0, 0xa000'0000U);
+    }
+    emitter_.bind(update);
+
+    /* The epilogue's result: the addresses advance by x9, the count is
+     * zero, and NZCV is x0. */
+    if (!set) {
+      const auto advanced = write_native_gpr(mops.source, false, true, 10);
+      emitter_.emit(add_x(advanced.host, advanced.host, 9));
+      commit_native_gpr(advanced, mops.source, false);
+    }
+    const auto advanced = write_native_gpr(mops.destination, false, true, 10);
+    emitter_.emit(add_x(advanced.host, advanced.host, 9));
+    commit_native_gpr(advanced, mops.destination, false);
+    const auto remaining = write_native_gpr(mops.count, false, false, 10);
+    emitter_.emit(0xaa1f'03e0U | remaining.host); // mov xN, #0
+    commit_native_gpr(remaining, mops.count, false);
+    emitter_.emit(0xd51b'4200U); // msr nzcv, x0
+    store_flags();
     return 3;
   }
 

@@ -43,7 +43,12 @@ host memmove or memset per source and destination page region. A CPY that
 overlaps with its destination above its source copies backward. A forward-only
 CPYF in that arrangement moves each region in 64-byte blocks, and the corpus
 pins that result. Both engines share this code, so HWCAP2_MOPS and
-ID_AA64ISAR2_EL1.MOPS are always set.
+ID_AA64ISAR2_EL1.MOPS are always set. The JIT translates a prologue, main and
+epilogue that name the same registers as one unit: an untagged transfer that
+stays inside one destination page and one source page runs inline, in the
+same 64-byte blocks and direction, and any other takes the shared code from
+its prologue; `arm64-jit-mops-run-runtime` checks both arms against a byte
+model.
 
 That status is not exhaustive variant proof. No inventory entry has an
 independently reviewed complete partition of all forms, widths, aliases,

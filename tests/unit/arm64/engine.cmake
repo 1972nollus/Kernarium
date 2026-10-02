@@ -257,6 +257,8 @@
 
     uml_add_arm64_unit_test(jit_simd_memory_run_runtime NO_OBJECTS)
 
+    uml_add_arm64_unit_test(jit_mops_run_runtime NO_OBJECTS)
+
     uml_add_arm64_unit_test(jit_scalar_atomic_codegen WITHOUT_HARNESS
         OBJECTS ${UML_ARM64_RUNTIME_TEST_OBJECTS})
     uml_add_arm64_unit_test(jit_simd_structure_remap_codegen WITHOUT_HARNESS
