@@ -15,8 +15,7 @@ everything else. In every image given this checks that:
   call to a helper outside it goes through its veneer in the island, whose
   words are all branches.
 
-usage: test_gadget_region_layout.py --engine engine.S --order region.order
-       IMAGE...
+usage: test_gadget_region_layout.py IMAGE...
 """
 
 from __future__ import annotations
@@ -35,6 +34,7 @@ LC_SEGMENT_64 = 0x19
 LC_SYMTAB = 0x2
 N_STAB = 0xE0
 HOST_PAGE = 16384
+GADGETS = Path(__file__).resolve().parents[3] / "darwin/cpu/arm64/gadgets"
 # The bound symbols of each part, by its gadget_region_start name.
 BOUNDS = {
     "bank": "uml_arm64_gadget_bank",
@@ -232,8 +232,9 @@ def check(image: Image, parts: list[Part]) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--engine", type=Path, required=True)
-    parser.add_argument("--order", type=Path, required=True)
+    parser.add_argument("--engine", type=Path, default=GADGETS / "engine.S")
+    parser.add_argument("--order", type=Path,
+                        default=GADGETS / "gadget_region.order")
     parser.add_argument("images", type=Path, nargs="+")
     arguments = parser.parse_args()
     parts = engine_parts(arguments.engine)

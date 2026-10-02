@@ -55,8 +55,6 @@ if(_uml_gadget_region_images AND APPLE)
         NAME arm64-gadget-region-layout
         COMMAND ${Python3_EXECUTABLE} -B
             ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_gadget_region_layout.py
-            --engine ${PROJECT_SOURCE_DIR}/darwin/cpu/arm64/gadgets/engine.S
-            --order ${PROJECT_SOURCE_DIR}/darwin/cpu/arm64/gadgets/gadget_region.order
             ${_uml_gadget_region_images}
         LABELS cpu
         TIMEOUT 120)
