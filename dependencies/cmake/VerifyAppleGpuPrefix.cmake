@@ -248,21 +248,22 @@ foreach(_binary IN LISTS _static_archives _framework_binaries)
         LIPO "${_tool_lipo}" OTOOL "${_tool_otool}")
 endforeach()
 
-# _verify_framework(<name> SYSTEM <regex> [DEPENDENCIES <path>...]
-#     FORBIDDEN <regex>)
+# _verify_framework(<name> SYSTEM <regex> [DEPENDENCIES <path>...])
 # Checks a framework's install name, load commands, and Info.plist deployment
 # target, and that it links only itself, the base system libraries, the system
 # frameworks SYSTEM matches, and the exact DEPENDENCIES. Each framework keeps
-# its own allowlist.
+# its own allowlist. A system framework admits any path below its directory,
+# so no framework may name a GL or Vulkan framework or loader anywhere.
 function(_verify_framework _name)
-    cmake_parse_arguments(PARSE_ARGV 1 _arg "" "SYSTEM;FORBIDDEN"
-        "DEPENDENCIES")
+    cmake_parse_arguments(PARSE_ARGV 1 _arg "" "SYSTEM" "DEPENDENCIES")
     set(_bundle "${PREFIX}/Frameworks/${_name}.framework")
     set(_binary "${_bundle}/${_name}")
     execute_process(COMMAND "${_tool_otool}" -D "${_binary}"
-        RESULT_VARIABLE _id_status OUTPUT_VARIABLE _install_name_output)
+        RESULT_VARIABLE _id_status OUTPUT_VARIABLE _install_name_output
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    # otool prints the binary's path line, then its install name.
     if(NOT _id_status EQUAL 0 OR NOT _install_name_output MATCHES
-       "@rpath/${_name}\\.framework/${_name}")
+       "\n@rpath/${_name}\\.framework/${_name}$")
         message(FATAL_ERROR "${_name}.framework has an invalid install name")
     endif()
     execute_process(COMMAND "${_tool_otool}" -l "${_binary}"
@@ -303,7 +304,8 @@ function(_verify_framework _name)
         message(FATAL_ERROR
             "Unexpected ${_name}.framework dependency: ${_dependency}")
     endforeach()
-    if(_closure MATCHES "${_arg_FORBIDDEN}")
+    if(_closure MATCHES
+       "OpenGL\\.framework|OpenGLES\\.framework|Vulkan\\.framework|libvulkan")
         message(FATAL_ERROR
             "${_name}.framework contains a forbidden GL/Vulkan dependency")
     endif()
@@ -332,8 +334,7 @@ foreach(_framework IN LISTS _gl_frameworks)
     _verify_framework(${_framework}
         SYSTEM "CoreFoundation|CoreGraphics|Foundation|IOKit|IOSurface|Metal|QuartzCore"
         DEPENDENCIES
-            /usr/lib/libexpat.1.dylib "@rpath/${_next}.framework/${_next}"
-        FORBIDDEN "OpenGL\\.framework|OpenGLES\\.framework|libvulkan")
+            /usr/lib/libexpat.1.dylib "@rpath/${_next}.framework/${_next}")
     execute_process(COMMAND "${_tool_nm}" -u "${_binary}"
         RESULT_VARIABLE _nm_status OUTPUT_VARIABLE _undefined_symbols)
     if(_framework STREQUAL "MesaGallium")
@@ -365,9 +366,7 @@ foreach(_framework IN LISTS _gl_frameworks)
 endforeach()
 
 set(_binary "${PREFIX}/Frameworks/KosmicKrisp.framework/KosmicKrisp")
-_verify_framework(KosmicKrisp
-    SYSTEM "Metal|QuartzCore"
-    FORBIDDEN "libvulkan|Vulkan\\.framework")
+_verify_framework(KosmicKrisp SYSTEM "Metal|QuartzCore")
 execute_process(COMMAND "${_tool_nm}" -gU "${_binary}"
     RESULT_VARIABLE _export_status OUTPUT_VARIABLE _exports)
 if(NOT _export_status EQUAL 0 OR

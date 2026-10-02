@@ -285,6 +285,22 @@ expect_framework_rejection \
 	"MesaEGL.framework dependency: /System/Library/Frameworks/OpenGL.framework" \
 	MesaEGL "$TEST_ROOT/mesa-egl.c" "$GALLIUM" -framework OpenGL
 
+# An allowed system framework directory admits any path below it, so no
+# framework may name a GL or Vulkan framework or loader anywhere in its closure.
+printf '%s\n' 'int uml_apple_gpu_stub(void) { return 0; }' >"$TEST_ROOT/stub.c"
+for nested in OpenGL Vulkan; do
+	xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=26.0 \
+		-dynamiclib "$TEST_ROOT/stub.c" \
+		-Wl,-install_name,/System/Library/Frameworks/Metal.framework/Frameworks/$nested.framework/$nested \
+		-o "$TEST_ROOT/nested-$nested.dylib"
+done
+expect_framework_rejection \
+	"KosmicKrisp.framework contains a forbidden GL/Vulkan dependency" \
+	KosmicKrisp "$TEST_ROOT/kosmickrisp.c" "$TEST_ROOT/nested-OpenGL.dylib"
+expect_framework_rejection \
+	"MesaEGL.framework contains a forbidden GL/Vulkan dependency" \
+	MesaEGL "$TEST_ROOT/mesa-egl.c" "$GALLIUM" "$TEST_ROOT/nested-Vulkan.dylib"
+
 # Install names, load commands, and deployment targets.
 expect_framework_rejection "KosmicKrisp.framework has an invalid" \
 	KosmicKrisp "$TEST_ROOT/kosmickrisp.c" -Wl,-rpath,@loader_path
@@ -296,6 +312,15 @@ INSTALL_NAME=@rpath/Other.framework/Other
 expect_framework_rejection \
 	"KosmicKrisp.framework has an invalid install name" \
 	KosmicKrisp "$TEST_ROOT/kosmickrisp.c"
+expect_framework_rejection \
+	"MesaGallium.framework has an invalid install name" \
+	MesaGallium "$TEST_ROOT/mesa-gallium.c" "$KOSMICKRISP"
+# The install name is the whole name, not a prefix of it.
+INSTALL_NAME="@rpath/KosmicKrisp.framework/KosmicKrisp extra"
+expect_framework_rejection \
+	"KosmicKrisp.framework has an invalid install name" \
+	KosmicKrisp "$TEST_ROOT/kosmickrisp.c"
+INSTALL_NAME="@rpath/MesaGallium.framework/MesaGallium extra"
 expect_framework_rejection \
 	"MesaGallium.framework has an invalid install name" \
 	MesaGallium "$TEST_ROOT/mesa-gallium.c" "$KOSMICKRISP"
