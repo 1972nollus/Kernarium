@@ -648,6 +648,31 @@ void inProcessServicePublishesAndRemovesTheExternalSocket()
     require(::lstat(serialPath.c_str(), &status) != 0 && errno == ENOENT);
 }
 
+void inProcessServiceServesAConnectedDescriptor()
+{
+    std::array<int, 2> descriptors {-1, -1};
+    require(::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors.data()) == 0);
+    uml::gpu::UniqueDescriptor local {descriptors[0]};
+    uml::gpu::UniqueDescriptor peer {descriptors[1]};
+    // Only a named serial port watches the descriptor for room to resume.
+    requireThrows([&] {
+        (void)uml::console::makeInProcessService(local.get(), std::string {});
+    });
+    requireThrows([] {
+        (void)uml::console::makeInProcessService(
+            -1, std::string(protocol::hostSerialPortName));
+    });
+    const auto service = uml::console::makeInProcessService(
+        local.get(), std::string(protocol::hostSerialPortName));
+    // The service serves a duplicate; the caller keeps its own descriptor.
+    require(::fcntl(local.get(), F_GETFD) >= 0);
+    const auto connection = service->takeConnectionName();
+    require(connection.starts_with("fd="));
+    (void)::close(std::stoi(connection.substr(3)));
+    service->stop();
+    require(::fcntl(local.get(), F_GETFD) >= 0);
+}
+
 } // namespace
 
 int main()
@@ -662,5 +687,6 @@ int main()
     connectedSocketChannelBoundsItsReadBuffer();
     connectedSerialPortKeepsOutputTheRelayHasNoRoomFor();
     inProcessServicePublishesAndRemovesTheExternalSocket();
+    inProcessServiceServesAConnectedDescriptor();
     return EXIT_SUCCESS;
 }
