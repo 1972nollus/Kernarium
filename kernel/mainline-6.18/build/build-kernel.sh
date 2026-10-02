@@ -12,6 +12,7 @@ COMMON_ROOT="$ROOT_DIR/kernel/common"
 CONFIG_DIR="$LINE_ROOT/config"
 SOURCE_LOCATION="$LINE_ROOT/scripts/source-location.sh"
 SLICE_SELECTOR="$LINE_ROOT/scripts/select-slice.sh"
+CONFIG_FRAGMENTS="$COMMON_ROOT/tooling/config-fragments.sh"
 
 fail()
 {
@@ -33,16 +34,18 @@ and the static libelf used for BTF come from UML_KERNEL_HOST_TOOLS_PREFIX
 (default .build/dependencies/kernel-host-tools, built by
 dependencies/build-kernel-host-tools.sh); UML_KERNEL_PAHOLE may select another
 pahole v1.29 or newer.
-The arm64 slice supports 16 KiB and 4 KiB pages. The x86_64 userspace slice is
-4 KiB only and composes its own config fragment after the shared common and
-page fragments. The output directory must be outside
-the Linux source tree. Darwin host-tool compatibility is injected from
-kernel/mainline-6.18/build/toolchain/darwin-host. macOS, iOS Simulator, and physical iOS all use
-the same constrained native address-space profile. An omitted jobs value uses
-all online host processors. The source is always read from the required,
-Git-ignored kernel/mainline-6.18/source-location.conf. --lockdep also applies
-config/lockdep.fragment for a lock-checking probe kernel, which is never an
-accepted artifact.
+The configuration is the shared kernel/common/config/darwin-uml.fragment
+policy, then this line's config/mainline.fragment overlay, then a page-size
+fragment. The arm64 slice supports 16 KiB and 4 KiB pages. The x86_64
+userspace slice is 4 KiB only and applies its own config fragment after those.
+The output directory must be outside the Linux source tree. Darwin host-tool
+compatibility is injected from kernel/mainline-6.18/build/toolchain/darwin-host.
+macOS, iOS Simulator, and physical iOS all use the same constrained native
+address-space profile. An omitted jobs value uses all online host processors.
+The source is always read from the required, Git-ignored
+kernel/mainline-6.18/source-location.conf. --lockdep also applies
+config/lockdep.fragment last, for a lock-checking probe kernel, which is never
+an accepted artifact.
 EOF
 }
 
@@ -89,6 +92,9 @@ done
 [ -r "$SLICE_SELECTOR" ] || fail "missing slice selector: $SLICE_SELECTOR"
 # shellcheck disable=SC1090
 . "$SLICE_SELECTOR"
+[ -r "$CONFIG_FRAGMENTS" ] || fail "missing config fragment helper: $CONFIG_FRAGMENTS"
+# shellcheck disable=SC1090
+. "$CONFIG_FRAGMENTS"
 uml_kernel_select_slice "$LINE_ROOT" "$SLICE" ||
 	fail "cannot select kernel slice: $SLICE"
 
@@ -238,139 +244,23 @@ run_make()
 		"LD=$UML_KERNEL_LD" "CROSS_COMPILE=$UML_KERNEL_CROSS_COMPILE" "$@"
 }
 
-apply_config_fragment()
-{
-	fragment=$1
-	while IFS= read -r line; do
-		case "$line" in
-		CONFIG_*=y)
-			symbol=${line%%=*}
-			"$SOURCE_DIR/scripts/config" --file "$BUILD_DIR/.config" \
-				-e "${symbol#CONFIG_}"
-			;;
-		CONFIG_*=*)
-			symbol=${line%%=*}
-			value=${line#*=}
-			case "$value" in
-			''|*[!0-9]*)
-				fail "unsupported numeric kernel config value: $line"
-				;;
-			esac
-			"$SOURCE_DIR/scripts/config" --file "$BUILD_DIR/.config" \
-				--set-val "${symbol#CONFIG_}" "$value"
-			;;
-		'# CONFIG_'*' is not set')
-			symbol=${line#\# CONFIG_}
-			symbol=${symbol% is not set}
-			"$SOURCE_DIR/scripts/config" --file "$BUILD_DIR/.config" \
-				-d "$symbol"
-			;;
-		\#*|'') ;;
-		*) fail "unsupported kernel config fragment line: $line" ;;
-		esac
-	done < "$fragment"
-}
-
-# `olddefconfig` resolves a requested symbol against its dependencies in
-# silence.  A symbol whose menu is closed is simply dropped, and one that
-# another symbol selects is force-enabled, so the composed fragments can
-# disagree with every kernel they produce without anything saying so.
-# CONFIG_NAMESPACES defaulting off under EXPERT cost USER_NS and TIME_NS that
-# way, and the guest lost every namespace while the fragment still claimed two
-# of them.  Compare what was asked for against what the resolved configuration
-# actually holds.  Later fragments intentionally override earlier policy for a
-# product slice.
-verify_composed_config()
-{
-	mismatches=$(awk -v config="$BUILD_DIR/.config" '
-	function record(symbol, wanted, got) {
-		problems = problems sprintf("  %s: %s requested %s, resolved %s\n",
-			symbol, owner[symbol], wanted, got)
-		count++
-	}
-	BEGIN {
-		while ((getline line < config) > 0) {
-			if (match(line, /^CONFIG_[A-Za-z0-9_]+=/)) {
-				split(line, parts, "=")
-				built[parts[1]] = substr(line, index(line, "=") + 1)
-			} else if (match(line,
-				/^# CONFIG_[A-Za-z0-9_]+ is not set$/)) {
-				split(line, parts, " ")
-				built[parts[2]] = "n"
-			}
-		}
-		close(config)
-	}
-	/^#/ && !/^# CONFIG_[A-Za-z0-9_]+ is not set$/ { next }
-	/^$/ { next }
-	{
-		if (match($0, /^CONFIG_[A-Za-z0-9_]+=/)) {
-			symbol = substr($0, 1, index($0, "=") - 1)
-			requested[symbol] = substr($0, index($0, "=") + 1)
-		} else if (match($0, /^# CONFIG_[A-Za-z0-9_]+ is not set$/)) {
-			symbol = $2
-			requested[symbol] = "n"
-		} else {
-			next
-		}
-		owner[symbol] = FILENAME
-	}
-	END {
-		for (symbol in requested) {
-			wanted = requested[symbol]
-			# An absent symbol is one whose dependencies were never met.
-			got = (symbol in built) ? built[symbol] : "n"
-			if (got == wanted)
-				continue
-			# A .config records a disabled symbol as a comment or omits it,
-			# so both spellings of "off" agree.
-			if (wanted == "n" && !(symbol in built))
-				continue
-			record(symbol, wanted, (symbol in built) ? got : "absent")
-		}
-		if (count > 0)
-			printf "%s", problems
-	}
-	' "$@")
-	[ -z "$mismatches" ] || {
-		printf '%s\n' \
-			"kernel/mainline-6.18/build/build-kernel.sh: composed configuration did not survive olddefconfig:" >&2
-		printf '%s\n' "$mismatches" >&2
-		fail "kernel configuration does not match its fragment"
-	}
-}
-
 case "$PAGE_SIZE" in
-16k)
-	CONFIG_FRAGMENT="$COMMON_ROOT/config/page-16k.fragment"
-		;;
-4k)
-	CONFIG_FRAGMENT="$CONFIG_DIR/page-4k.fragment"
-		;;
+16k) PAGE_FRAGMENT="$COMMON_ROOT/config/page-16k.fragment" ;;
+4k) PAGE_FRAGMENT="$CONFIG_DIR/page-4k.fragment" ;;
 esac
-[ -f "$CONFIG_FRAGMENT" ] || fail "missing page-size config fragment: $CONFIG_FRAGMENT"
-[ -f "$CONFIG_DIR/common.fragment" ] || fail "missing common config fragment"
-cp "$CONFIG_DIR/common.fragment" "$BUILD_DIR/.config"
-apply_config_fragment "$CONFIG_FRAGMENT"
-if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
-	[ -f "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ] ||
-		fail "missing slice config fragment: $UML_KERNEL_SLICE_CONFIG_FRAGMENT"
-	apply_config_fragment "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
-fi
-if [ "$LOCKDEP" -eq 1 ]; then
-	[ -f "$CONFIG_DIR/lockdep.fragment" ] ||
-		fail "missing lockdep config fragment: $CONFIG_DIR/lockdep.fragment"
-	apply_config_fragment "$CONFIG_DIR/lockdep.fragment"
-fi
-run_make olddefconfig
-set -- "$CONFIG_DIR/common.fragment" "$CONFIG_FRAGMENT"
+set -- "$COMMON_ROOT/config/darwin-uml.fragment" "$CONFIG_DIR/mainline.fragment" \
+	"$PAGE_FRAGMENT"
 if [ -n "$UML_KERNEL_SLICE_CONFIG_FRAGMENT" ]; then
 	set -- "$@" "$UML_KERNEL_SLICE_CONFIG_FRAGMENT"
 fi
 if [ "$LOCKDEP" -eq 1 ]; then
 	set -- "$@" "$CONFIG_DIR/lockdep.fragment"
 fi
-verify_composed_config "$@"
+uml_kernel_config_compose "$SOURCE_DIR" "$BUILD_DIR/.config" "$@" ||
+	fail "cannot compose the kernel configuration"
+run_make olddefconfig
+uml_kernel_config_verify "$BUILD_DIR/.config" "$@" ||
+	fail "kernel configuration does not match its fragments"
 run_make -j"$UML_KERNEL_JOBS"
 [ -f "$BUILD_DIR/vmlinux" ] ||
 	fail "Kbuild completed without producing $BUILD_DIR/vmlinux"

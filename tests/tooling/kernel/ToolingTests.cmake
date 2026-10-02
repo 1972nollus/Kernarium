@@ -8,6 +8,12 @@ uml_add_tooling_test(
     TIMEOUT 30)
 
 uml_add_tooling_test(
+    NAME kernel-config-fragments
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_config_fragments.sh
+    LABELS kernel;audit
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME kernel-series-contract
     COMMAND ${Python3_EXECUTABLE} -B
         ${PROJECT_SOURCE_DIR}/tests/tooling/kernel/test_kernel_series.py

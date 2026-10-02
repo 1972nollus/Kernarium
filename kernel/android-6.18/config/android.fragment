@@ -1,61 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# The AOSP 17 Darwin UML kernel policy for ACK 6.18.
-#
-# This file is the complete product input and is always combined with
-# kernel/common/config/page-16k.fragment. There is no Android 4 KiB profile.
-# android/aosp-17/build/build-kernel.sh copies it as the starting .config,
-# applies that fixed geometry, then runs `olddefconfig` against the pinned ACK
-# source so every unlisted symbol takes its Kconfig default.
-#
-# UML deliberately ships without loadable-module support, so every capability
-# a guest distribution may expect has to be built in here. Symbols left out of
-# this file are not "optional extras"; they are absent from the product.
+# The AOSP 17 line's overlay for ACK 6.18 on the shared Darwin UML kernel
+# policy in kernel/common/config/darwin-uml.fragment. It lists only the
+# settings in which this line differs from mainline.
+# android/aosp-17/build/build-kernel.sh applies it after the shared policy and
+# before kernel/common/config/page-16k.fragment, then runs `olddefconfig`
+# against the pinned ACK source. There is no Android 4 KiB profile.
 
 # --- Boot, init, and image identity -----------------------------------------
-CONFIG_BINFMT_ELF=y
-CONFIG_BINFMT_MISC=y
-# Accept an external initramfs for recovery, image inspection, and read-only
-# overlay boots without modifying the guest's root partition.
-CONFIG_BLK_DEV_INITRD=y
-# The product ramdisk is uncompressed, but a gzip initramfs such as the Linux
-# boot base must unpack too; pin it instead of relying on the RD_* defaults.
-CONFIG_RD_GZIP=y
-CONFIG_IKCONFIG=y
-CONFIG_IKCONFIG_PROC=y
-CONFIG_PRINTK_TIME=y
-CONFIG_DEVTMPFS=y
-CONFIG_DEVTMPFS_MOUNT=y
 # Android init consumes bootconfig when one is supplied by the image builder.
 CONFIG_BOOT_CONFIG=y
-# Device power-management bookkeeping is required by Android-facing drivers.
-# The host lifecycle uses UML system suspend through the management console;
-# generic suspend hotplugs every secondary vCPU before entering host sleep.
-CONFIG_PM=y
-CONFIG_SUSPEND=y
 
 # --- Block devices and the storage stack ------------------------------------
-CONFIG_BLK_DEV_UBD=y
-CONFIG_BLK_DEV_LOOP=y
-CONFIG_BLK_DEV_LOOP_MIN_COUNT=16
-CONFIG_BLK_DEV_NBD=y
-CONFIG_BLK_DEV_RAM=y
-# Keep the compressed swap cache built in and active whenever the guest enables
-# a backing swap device or file. The current desktop launchers deliberately do
-# not create backing swap, so merely enabling zswap does not consume a pool.
-# Reuse zstd for zswap and zram rather than carrying two compression policies.
-CONFIG_SWAP=y
-CONFIG_ZSWAP=y
-CONFIG_ZSWAP_DEFAULT_ON=y
-# CONFIG_ZSWAP_SHRINKER_DEFAULT_ON is not set
-CONFIG_ZSWAP_COMPRESSOR_DEFAULT_ZSTD=y
-CONFIG_ZRAM=y
-CONFIG_ZRAM_BACKEND_ZSTD=y
-CONFIG_ZRAM_DEF_COMP_ZSTD=y
-# Device mapper backs LVM, LUKS/dm-crypt, cryptsetup, veritysetup, and the
-# container thin-pool storage drivers. Without it none of those exist.
-CONFIG_MD=y
-CONFIG_BLK_DEV_DM=y
-CONFIG_DM_CRYPT=y
 # Android metadata encryption places dm-default-key above userdata. UML's UBD
 # device has no hardware inline-encryption capability, so the block-crypto
 # software fallback, fscrypt hooks, and target must all be built into the one
@@ -68,128 +23,9 @@ CONFIG_DM_DEFAULT_KEY=y
 # filenames. Keep the software HCTR2 transform and everything it selects in
 # the signed kernel because this product cannot load crypto modules on iOS.
 CONFIG_CRYPTO_HCTR2=y
-CONFIG_DM_SNAPSHOT=y
-CONFIG_DM_THIN_PROVISIONING=y
-CONFIG_DM_VERITY=y
-# The RAID6 implementation-selection benchmark dominates boot under instruction
-# emulation; all functional implementations remain available without it.
-# CONFIG_RAID6_PQ_BENCHMARK is not set
 
 # --- Root and general-purpose filesystems -----------------------------------
-CONFIG_EXT2_FS=y
-CONFIG_EXT2_FS_XATTR=y
-CONFIG_EXT2_FS_SECURITY=y
-CONFIG_EXT4_FS=y
-CONFIG_EXT4_FS_POSIX_ACL=y
-# Security xattrs are what a labelled root filesystem stores its LSM contexts
-# in. They are storage support, independent of which LSM is active.
-CONFIG_EXT4_FS_SECURITY=y
-CONFIG_XFS_FS=y
-CONFIG_BTRFS_FS=y
-CONFIG_QUOTA=y
-CONFIG_QUOTA_NETLINK_INTERFACE=y
-CONFIG_QFMT_V1=y
-CONFIG_QFMT_V2=y
-CONFIG_OVERLAY_FS=y
-CONFIG_PROC_FS=y
-CONFIG_SYSFS=y
-CONFIG_TMPFS=y
-CONFIG_TMPFS_XATTR=y
-# Per-file fscrypt is a general-purpose ext4 capability and is exercised by
-# the unified rootfs LTP payload against disposable loop-backed filesystems.
-CONFIG_FS_ENCRYPTION=y
-CONFIG_FS_VERITY=y
 CONFIG_UNICODE=y
-CONFIG_FANOTIFY=y
-CONFIG_FANOTIFY_ACCESS_PERMISSIONS=y
-# systemd expresses .automount units and proc-sys-fs-binfmt_misc through
-# autofs; without it those units fail rather than degrade.
-CONFIG_AUTOFS_FS=y
-
-# --- Read-only disk image formats -------------------------------------------
-# Distribution images, application bundles, and container layers are shipped as
-# these formats. All four are read-only and decompress in the guest kernel, so
-# they cost native host cycles rather than emulated guest-userspace cycles.
-CONFIG_EROFS_FS=y
-CONFIG_EROFS_FS_XATTR=y
-CONFIG_EROFS_FS_POSIX_ACL=y
-CONFIG_EROFS_FS_SECURITY=y
-CONFIG_EROFS_FS_ZIP=y
-CONFIG_EROFS_FS_ZIP_LZMA=y
-CONFIG_EROFS_FS_ZIP_DEFLATE=y
-CONFIG_EROFS_FS_ZIP_ZSTD=y
-CONFIG_SQUASHFS=y
-CONFIG_SQUASHFS_FILE_DIRECT=y
-CONFIG_SQUASHFS_COMPILE_DECOMP_MULTI_PERCPU=y
-CONFIG_SQUASHFS_XATTR=y
-CONFIG_SQUASHFS_ZLIB=y
-CONFIG_SQUASHFS_LZ4=y
-CONFIG_SQUASHFS_LZO=y
-CONFIG_SQUASHFS_XZ=y
-CONFIG_SQUASHFS_ZSTD=y
-CONFIG_ISO9660_FS=y
-CONFIG_JOLIET=y
-CONFIG_ZISOFS=y
-CONFIG_UDF_FS=y
-
-# --- Interchange filesystems ------------------------------------------------
-# FAT and exFAT are how disk images, EFI system partitions, and files handed to
-# the guest from the host arrive. Without them such an image cannot be read.
-CONFIG_FAT_FS=y
-CONFIG_MSDOS_FS=y
-CONFIG_VFAT_FS=y
-CONFIG_FAT_DEFAULT_UTF8=y
-CONFIG_EXFAT_FS=y
-CONFIG_NLS=y
-CONFIG_NLS_DEFAULT="utf8"
-CONFIG_NLS_CODEPAGE_437=y
-CONFIG_NLS_ISO8859_1=y
-CONFIG_NLS_UTF8=y
-
-# --- Userspace and host-backed filesystems ----------------------------------
-# FUSE is a hard requirement for AppImage, Flatpak, rootless container storage,
-# sshfs/rclone, and the GVFS/KIO backends that desktop file managers use for
-# every non-local location.
-CONFIG_FUSE_FS=y
-CONFIG_FUSE_PASSTHROUGH=y
-# hostfs is deliberately absent. It lets the guest mount an arbitrary host
-# directory, which would put the reachable host filesystem under guest control
-# rather than under an emulator-side policy. Share host data through an
-# explicit device or image instead.
-# CONFIG_HOSTFS is not set
-
-# --- Network filesystems ----------------------------------------------------
-CONFIG_NFS_FS=y
-CONFIG_NFS_V4=y
-CONFIG_NFS_V4_1=y
-CONFIG_NFS_V4_2=y
-CONFIG_CIFS=y
-CONFIG_CIFS_XATTR=y
-
-# --- Memory management ------------------------------------------------------
-# KSM's background page-content scanning is not useful for this emulator: the
-# host already owns the single physical backing and KSM adds VMA hooks plus a
-# permanent guest worker without reducing the host allocation.
-# CONFIG_KSM is not set
-CONFIG_USERFAULTFD=y
-CONFIG_CMA=y
-# mem= is a ceiling rather than a reservation. arch/um registers a free-page
-# reporting driver that hands free chunks of guest RAM back to the host, which
-# drops them from the emulator's footprint (and unwires them on iOS), and
-# commits a released chunk again the first time the allocator hands out a page
-# of it.
-CONFIG_PAGE_REPORTING=y
-# Huge pages are deliberately absent. The guest's pages are host allocations
-# behind a software MMU, so a second huge-page tier buys no TLB reach here and
-# only adds fault-path and khugepaged work. Guest userspace that asks for
-# hugetlbfs or THP falls back to ordinary pages.
-# CONFIG_HUGETLBFS is not set
-# CONFIG_TRANSPARENT_HUGEPAGE is not set
-# Pressure stall information is how guest userspace notices memory pressure
-# before the host's own memory manager reclaims the whole emulator. The
-# accounting runs in the guest kernel, so it is paid at native host speed.
-CONFIG_PSI=y
-# CONFIG_PSI_DEFAULT_DISABLED is not set
 
 # --- Android memory, IPC, and allocator interfaces -------------------------
 # Android 17 uses memfd for new shared-memory clients while retaining the
@@ -219,177 +55,40 @@ CONFIG_DMABUF_HEAPS_SYSTEM=y
 CONFIG_VIRTIO_DMA_SHARED_BUFFER=y
 
 # --- Processes, scheduling, and namespaces ----------------------------------
-CONFIG_SMP=y
-CONFIG_HOTPLUG_CPU=y
-CONFIG_NR_CPUS=64
-# A 1 kHz periodic tick wakes every fixed vCPU carrier even when its guest CPU
-# is idle.  Keep interactive latency timer-driven while limiting compulsory
-# host wakeups to 100 Hz, and suppress those ticks entirely on idle vCPUs.
-# UML declares its own integer CONFIG_HZ in arch/um/Kconfig and never sources
-# kernel/Kconfig.hz, so the HZ_100/HZ_250/HZ_300/HZ_1000 choice symbols other
-# architectures use do not exist here.  This one line is the whole setting.
-CONFIG_HZ=100
-# CONFIG_HZ_PERIODIC is not set
-CONFIG_NO_HZ_IDLE=y
-# CONFIG_NO_HZ_FULL is not set
 # CONFIG_CHECKPOINT_RESTORE is not set
 CONFIG_SECCOMP=y
 CONFIG_SECCOMP_FILTER=y
-CONFIG_HIGH_RES_TIMERS=y
 CONFIG_TASK_DELAY_ACCT=y
 # Utilization clamping is tied to a physical CPU-frequency governor. UML has
 # no cpufreq device and schedules fixed virtual CPUs on host carriers, so these
 # controls cannot provide their advertised semantics.
 # CONFIG_UCLAMP_TASK is not set
 # CONFIG_UCLAMP_TASK_GROUP is not set
-# CONFIG_EXPERT makes NAMESPACES a visible prompt whose default becomes n
-# (init/Kconfig: `default !EXPERT`), so it must be requested explicitly.  Every
-# namespace symbol below lives inside its menu and is silently discarded
-# without it: the guest then has no /proc/<pid>/ns/pid, which is what dockerd
-# stats while initializing buildkit.
-CONFIG_NAMESPACES=y
-CONFIG_USER_NS=y
-CONFIG_SYSVIPC=y
-CONFIG_POSIX_MQUEUE=y
-CONFIG_WATCH_QUEUE=y
-CONFIG_TIME_NS=y
-CONFIG_POSIX_AUX_CLOCKS=y
-CONFIG_RTC_CLASS=y
-CONFIG_UML_RTC=y
-CONFIG_TASKSTATS=y
-CONFIG_TASK_XACCT=y
-CONFIG_TASK_IO_ACCOUNTING=y
-CONFIG_BSD_PROCESS_ACCT=y
-CONFIG_BSD_PROCESS_ACCT_V3=y
-CONFIG_CONNECTOR=y
-CONFIG_PROC_EVENTS=y
-
-# --- Control groups ---------------------------------------------------------
-# systemd requires CONFIG_CGROUPS to start at all, so this is base policy for
-# every guest distribution rather than container-only policy. The individual
-# controllers additionally back container resource limits.
-CONFIG_CGROUPS=y
-CONFIG_CGROUP_SCHED=y
-CONFIG_FAIR_GROUP_SCHED=y
-CONFIG_CFS_BANDWIDTH=y
-CONFIG_SCHED_AUTOGROUP=y
-CONFIG_MEMCG=y
-CONFIG_MEMCG_V1=y
-CONFIG_BLK_CGROUP=y
-CONFIG_CGROUP_PIDS=y
-CONFIG_CGROUP_FREEZER=y
-CONFIG_CPUSETS=y
-CONFIG_CPUSETS_V1=y
-CONFIG_CGROUP_DEVICE=y
-CONFIG_CGROUP_CPUACCT=y
-CONFIG_CGROUP_PERF=y
-CONFIG_CGROUP_BPF=y
-CONFIG_CGROUP_MISC=y
-# CONFIG_CGROUP_DEBUG is not set
-CONFIG_CGROUP_NET_PRIO=y
-CONFIG_CGROUP_NET_CLASSID=y
-# UML has no RDMA or device-memory hardware to account.
-# CONFIG_CGROUP_RDMA is not set
-# CONFIG_CGROUP_DMEM is not set
 
 # --- Core networking --------------------------------------------------------
-CONFIG_NET=y
-CONFIG_PACKET=y
-CONFIG_UNIX=y
-CONFIG_INET=y
-CONFIG_IPV6=y
 CONFIG_IP_ADVANCED_ROUTER=y
 CONFIG_IP_MULTIPLE_TABLES=y
 CONFIG_IPV6_MULTIPLE_TABLES=y
 CONFIG_IPV6_ROUTER_PREF=y
-CONFIG_SYN_COOKIES=y
-CONFIG_NETDEVICES=y
-CONFIG_TUN=y
-# Android's Ethernet IpClient owns DHCP, routes, and DNS after init starts.
-# Recovery configures only its fixed local host-forward endpoint in userspace.
-# CONFIG_IP_PNP is not set
-# CONFIG_IP_PNP_DHCP is not set
-# Software-only peer interfaces back network namespaces without modeling
-# physical host hardware.
-CONFIG_VETH=y
-CONFIG_DUMMY=y
-CONFIG_VSOCKETS=y
-CONFIG_VSOCKETS_LOOPBACK=y
-CONFIG_TLS=y
 # Android's network statistics path calls synchronizeKernelRCU(), which opens
 # and immediately closes an AF_KEY socket purely so that pfkey_release() runs
 # synchronize_rcu(). Without PF_KEY the socket() call fails EAFNOSUPPORT and
 # BatteryStatsImpl.readWifiNetworkStatsLocked throws a fatal exception in the
 # system process, restarting the runtime before boot completes.
 CONFIG_NET_KEY=y
-CONFIG_NET_SCHED=y
-CONFIG_NET_SCH_HTB=y
-# Queueing and congestion control that behave well over the host NAT transport.
-# BBR lives inside the advanced congestion-control menu, so that menu has to be
-# open for it to exist at all. CUBIC stays built in and stays the system
-# default; BBR is made available for guest userspace to select by sysctl.
-CONFIG_NET_SCH_FQ=y
-CONFIG_NET_SCH_FQ_CODEL=y
-CONFIG_TCP_CONG_ADVANCED=y
-CONFIG_TCP_CONG_CUBIC=y
-CONFIG_TCP_CONG_BBR=y
-# In-kernel WireGuard needs no host device model and is the ordinary VPN
-# expected of a general-purpose guest.
-CONFIG_WIREGUARD=y
-# Software XFRM policy/state management and its NETLINK_XFRM control plane.
-CONFIG_XFRM_USER=y
 CONFIG_XFRM_INTERFACE=y
 CONFIG_XFRM_STATISTICS=y
-CONFIG_IP_SCTP=y
-CONFIG_RDS=y
-CONFIG_RDS_TCP=y
-CONFIG_DNS_RESOLVER=y
-# Socket-CAN is deliberately absent. There is no CAN hardware to model on an
-# Apple host, and a virtual-only bus is not part of this product's workloads.
-# CONFIG_CAN is not set
-# Socket monitoring interfaces used by ss, lsof, and systemd introspection.
-CONFIG_INET_DIAG=y
 # netd closes a network's sockets through SOCK_DESTROY when the network goes
 # away, so apps and adb reconnect on the new one. GKI enables it in
 # gki_defconfig.
 CONFIG_INET_DIAG_DESTROY=y
-CONFIG_INET_UDP_DIAG=y
-CONFIG_NETLINK_DIAG=y
-CONFIG_PACKET_DIAG=y
-CONFIG_UNIX_DIAG=y
 
 # --- Netfilter and container networking -------------------------------------
-CONFIG_NETFILTER=y
-CONFIG_NETFILTER_ADVANCED=y
-CONFIG_NF_CONNTRACK=y
 CONFIG_NF_CONNTRACK_EVENTS=y
 CONFIG_NF_CT_NETLINK=y
-# Docker's default bridge needs built-in connection tracking, NAT, bridge
-# filtering, and the xtables compatibility expressions used by iptables-nft.
-# UML does not support loadable modules, so keep the complete path built in.
-CONFIG_NF_NAT=y
-CONFIG_NF_TABLES=y
-# postmarketOS uses one mixed-family stateful nftables ruleset for its default
-# firewall. Keep the inet table plus its conntrack and reject expressions
-# built in, matching this static kernel's existing IPv4/IPv6 nftables policy.
-CONFIG_NF_TABLES_INET=y
-CONFIG_NF_TABLES_IPV4=y
-CONFIG_NF_TABLES_IPV6=y
-CONFIG_NFT_CT=y
-CONFIG_NFT_REJECT=y
-CONFIG_NFT_REJECT_INET=y
-CONFIG_NFT_NAT=y
-CONFIG_NFT_MASQ=y
-CONFIG_NFT_COMPAT=y
-CONFIG_NETFILTER_XTABLES=y
-CONFIG_NETFILTER_XTABLES_LEGACY=y
-CONFIG_NETFILTER_XT_NAT=y
-CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y
-CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
 CONFIG_NETFILTER_XT_MATCH_BPF=y
 CONFIG_NETFILTER_XT_MATCH_COMMENT=y
 CONFIG_NETFILTER_XT_MATCH_CONNMARK=y
-CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y
 CONFIG_NETFILTER_XT_MATCH_ESP=y
 CONFIG_NETFILTER_XT_MATCH_HASHLIMIT=y
 CONFIG_NETFILTER_XT_MATCH_IPRANGE=y
@@ -402,7 +101,6 @@ CONFIG_NETFILTER_XT_MATCH_PKTTYPE=y
 CONFIG_NETFILTER_XT_MATCH_POLICY=y
 CONFIG_NETFILTER_XT_MATCH_QUOTA2=y
 CONFIG_NETFILTER_XT_MATCH_SOCKET=y
-CONFIG_NETFILTER_XT_MATCH_STATE=y
 CONFIG_NETFILTER_XT_MATCH_STATISTIC=y
 CONFIG_NETFILTER_XT_MATCH_STRING=y
 CONFIG_NETFILTER_XT_MATCH_TIME=y
@@ -415,137 +113,31 @@ CONFIG_NETFILTER_XT_TARGET_NFQUEUE=y
 CONFIG_NETFILTER_XT_TARGET_NOTRACK=y
 CONFIG_NETFILTER_XT_TARGET_SECMARK=y
 CONFIG_NETFILTER_XT_TARGET_TCPMSS=y
-CONFIG_IP_NF_IPTABLES=y
-CONFIG_IP_NF_IPTABLES_LEGACY=y
-CONFIG_IP_NF_FILTER=y
-CONFIG_IP_NF_TARGET_REJECT=y
-CONFIG_IP_NF_NAT=y
 CONFIG_IP_NF_RAW=y
 CONFIG_IP_NF_SECURITY=y
 CONFIG_IP_NF_TARGET_MASQUERADE=y
 CONFIG_IP_NF_TARGET_REDIRECT=y
-# The IPv6 half of the same policy, so a dual-stack guest firewall and a
-# container runtime with IPv6 enabled behave like the IPv4 path.
-CONFIG_IP6_NF_IPTABLES=y
-CONFIG_IP6_NF_IPTABLES_LEGACY=y
-CONFIG_IP6_NF_FILTER=y
-CONFIG_IP6_NF_NAT=y
 CONFIG_IP6_NF_RAW=y
 CONFIG_IP6_NF_TARGET_REJECT=y
-CONFIG_BRIDGE=y
-CONFIG_BRIDGE_NETFILTER=y
-
-# --- eBPF -------------------------------------------------------------------
-# UML has no BPF JIT backend, so programs run through the interpreter. The
-# syscall ABI and verifier are complete; only their throughput is reduced.
-CONFIG_BPF_SYSCALL=y
-# Exercise the guest's unprivileged verifier/interpreter ABI; this affects
-# guest policy only and cannot grant capabilities in the Darwin host.
-# CONFIG_BPF_UNPRIV_DEFAULT_OFF is not set
-
-# --- Crypto and keys --------------------------------------------------------
-CONFIG_ASYMMETRIC_KEY_TYPE=y
-CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE=y
-CONFIG_X509_CERTIFICATE_PARSER=y
-CONFIG_CRYPTO_RSA=y
-CONFIG_CRYPTO_USER=y
-CONFIG_CRYPTO_PCRYPT=y
-CONFIG_CRYPTO_AUTHENC=y
-CONFIG_CRYPTO_HMAC=y
-CONFIG_CRYPTO_MD5=y
-CONFIG_CRYPTO_SHA1=y
-CONFIG_CRYPTO_SHA256=y
-CONFIG_CRYPTO_SHA3=y
-CONFIG_CRYPTO_SM3_GENERIC=y
-CONFIG_CRYPTO_CHACHA20POLY1305=y
-# Software AF_ALG interfaces for guest userspace crypto workloads.
-CONFIG_CRYPTO_USER_API_HASH=y
-CONFIG_CRYPTO_USER_API_SKCIPHER=y
-CONFIG_CRYPTO_USER_API_RNG=y
-CONFIG_CRYPTO_USER_API_AEAD=y
-CONFIG_KEYS=y
-CONFIG_KEY_NOTIFICATIONS=y
-CONFIG_BIG_KEYS=y
-CONFIG_ENCRYPTED_KEYS=y
-CONFIG_USER_DECRYPTED_DATA=y
 
 # --- Android security policy ------------------------------------------------
 # Android owns the SELinux policy and requires audit syscall records. Smack is
 # mutually exclusive with SELinux and must never survive into this product.
 CONFIG_AUDIT=y
 CONFIG_AUDITSYSCALL=y
-CONFIG_SECURITY=y
-CONFIG_SECURITYFS=y
 CONFIG_SECURITY_NETWORK=y
 CONFIG_SECURITY_SELINUX=y
 # CONFIG_SECURITY_SELINUX_BOOTPARAM is not set
 CONFIG_SECURITY_SELINUX_DEVELOP=y
 # CONFIG_SECURITY_SMACK is not set
-CONFIG_SECURITY_LANDLOCK=y
 CONFIG_DEFAULT_SECURITY_SELINUX=y
 CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,selinux,ipe,bpf"
 
 # --- Display and input ------------------------------------------------------
-# uinput and evdev are software-only interfaces: they let guest userspace
-# construct and consume virtual input devices without exposing host hardware.
-CONFIG_INPUT=y
-CONFIG_INPUT_MOUSEDEV=y
-CONFIG_INPUT_EVDEV=y
-CONFIG_INPUT_MISC=y
-CONFIG_INPUT_UINPUT=y
-CONFIG_UML_VNC_INPUT=y
-# The host GPU service is exposed through UML's direct vhost-user transport.
-# DRM, Virtio-GPU, and Virtio input must be built in because UML deliberately
-# ships without loadable-module support.
-CONFIG_VIRTIO_MENU=y
-CONFIG_VIRTIO_UML=y
-CONFIG_VIRTIO_INPUT=y
-# The host carves the memory its GPU uses out of the guest's allocation
-# through a standard Virtio balloon, so guest RAM and GPU memory together stay
-# within what the user configured.
-CONFIG_VIRTIO_BALLOON=y
 # The Android macOS product exposes one standard single-port console as
-# VIRTIO_ID_CONSOLE. Keep both the device and its hvc infrastructure in the
-# signed ELF; loadable modules are unavailable on iOS.
-CONFIG_VIRTIO_CONSOLE=y
+# VIRTIO_ID_CONSOLE. Keep its hvc infrastructure in the signed ELF; loadable
+# modules are unavailable on iOS.
 CONFIG_HVC_DRIVER=y
-CONFIG_DRM=y
-CONFIG_DRM_VIRTIO_GPU=y
-CONFIG_DRM_VIRTIO_GPU_KMS=y
-# Virtio-GPU's fbdev client backs the standard virtual-terminal console, so
-# both normal kernel boot output and distro gettys use the same DRM scanout.
-CONFIG_DRM_FBDEV_EMULATION=y
-CONFIG_DRM_CLIENT_DEFAULT_FBDEV=y
-# CONFIG_DRM_CLIENT_LOG is not set
-CONFIG_TTY=y
-CONFIG_EXPERT=y
-CONFIG_VT=y
-CONFIG_CONSOLE_TRANSLATIONS=y
-CONFIG_VT_CONSOLE=y
-CONFIG_VT_HW_CONSOLE_BINDING=y
-CONFIG_FRAMEBUFFER_CONSOLE=y
-CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
-# CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION is not set
-# CONFIG_FRAMEBUFFER_CONSOLE_ROTATION is not set
-# CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER is not set
-# Point-resolution guests use the ordinary 8x16 console font. Retina EDID
-# densities select the doubled Terminus font with fbcon=font:TER16x32.
-CONFIG_FONTS=y
-CONFIG_FONT_8x16=y
-CONFIG_FONT_TER16x32=y
-# Modern distributions allocate PTYs dynamically from devpts. The legacy BSD
-# bank creates hundreds of unused pty/tty nodes and has no supported consumer.
-CONFIG_UNIX98_PTYS=y
-# CONFIG_LEGACY_PTYS is not set
-# Keep the host-facing console on four UML serial lines. The standard VT stack
-# owns tty0-tty63, so the legacy UML stdio tty driver must not claim that major.
-CONFIG_SSL=y
-CONFIG_SSL_PORTS=4
-CONFIG_SSL_CHAN="fd:0,fd:1"
-# CONFIG_UML_STDIO_CONSOLE is not set
-# CONFIG_STDERR_CONSOLE is not set
-# logind grants session access to DRM and input devices through tmpfs ACLs.
-CONFIG_TMPFS_POSIX_ACL=y
 
 # --- Host battery -----------------------------------------------------------
 # The Apple launcher provides a local experimental Virtio device carrying the
@@ -557,99 +149,24 @@ CONFIG_POWER_SUPPLY=y
 CONFIG_KERNARIUM_VIRTIO_BATTERY=y
 
 # --- Tracing and diagnostics ------------------------------------------------
-CONFIG_MAGIC_SYSRQ=y
-CONFIG_FTRACE=y
-CONFIG_SCHED_TRACER=y
 # Android's libmeminfo reads the gpu_mem_total BPF map and calls abort() from
 # BpfMapRO::abortOnMismatch when the map is missing, so Debug.getGpuTotalUsageKb
 # takes down system_server. The map only exists when the gpu_mem tracepoints are
 # built, and the upstream help text states plainly that this is required for
 # Android.
 CONFIG_TRACE_GPU_MEM=y
-CONFIG_PERF_EVENTS=y
 # Per-UID CPU and I/O accounting depends on the profiling infrastructure.
 CONFIG_PROFILING=y
 CONFIG_UID_SYS_STATS=y
-# UML exposes software perf events only; the native ARM PMU is not present.
-CONFIG_ARM_PMU=n
-# debugfs is where bpftool, tracing front ends, and driver diagnostics live.
-# It is independent of CONFIG_DEBUG_KERNEL and costs nothing at runtime.
-CONFIG_DEBUG_FS=y
 
 # --- Kernel build policy ----------------------------------------------------
-# Darwin resumes each stackful UML task on one of the fixed vCPU carriers, and
-# the page profile selects the order that produces a 128 KiB task stack. As a
-# physically contiguous order-3 allocation on the 16 KiB profile that pinned
-# roughly 176 MiB of the zone in unmovable blocks on a booted Android guest and
-# fragmented the buddy allocator past what compaction could recover: 147 MiB
-# free and 2.6 GiB MemAvailable with no free block at order 3 or above, 188 of
-# 230 compaction attempts failing, and six global OOM kills of healthy
-# applications.
-#
-# Virtually mapped stacks are backed by order-0 pages and remove the
-# contiguity requirement entirely. The stacks stay 128 KiB. This needs the
-# widened auxiliary window that gives vmalloc a 1 GiB floor rather than one
-# eighth of RAM; at the old 504 MiB the vmapped stacks exhausted the window and
-# panicked the guest.
-CONFIG_VMAP_STACK=y
-CONFIG_NULL_CHAN=y
-CONFIG_CC_OPTIMIZE_FOR_SIZE=y
 # ACK enables compile warnings as errors by default. The maintained port keeps
 # warnings visible but does not let ACK-only warning policy reject its existing
 # UML and generic-driver code.
 # CONFIG_WERROR is not set
-# Module text would be dynamically published executable memory inside the host
-# process, which requires the same Apple dynamic-code entitlement as the JIT
-# engine. Every capability is therefore built in above rather than loadable.
-# CONFIG_MODULES is not set
-# The Apple applications expose one standard Virtio Sound playback stream.
-# Keep the obsolete UML /dev/dsp relay disabled: audio crosses the same
-# vhost-user Virtio boundary as the GPU and input devices instead.
-CONFIG_SOUND=y
-CONFIG_SND=y
-CONFIG_SND_VIRTIO=y
-# CONFIG_UML_SOUND is not set
-# Keep the shipped emulator on the production kernel profile.  Optional
-# diagnostics substantially affect guest scheduling and synchronization costs.
-# CONFIG_DEBUG_KERNEL cannot be requested off here: EXPERT selects it
-# unconditionally (init/Kconfig), so asking for it produced a fragment that
-# disagreed with every kernel actually built.  It is a Kconfig menu gate that
-# compiles no code of its own; its one direct effect is BPF_WARN_ONCE in the
-# verifier's internal-bug path (include/linux/bpf.h).  What it does do is
-# default two other symbols on that nothing here asked for, and both are turned
-# back off below.  Those three are the whole of its reach: no other symbol in
-# the tree depends on or defaults from DEBUG_KERNEL in this configuration.
-# Netfilter's hooks_validate() is the only applicable DEBUG_MISC site and runs
-# at hook registration, so this costs little; it is off because the shipped
-# profile should carry no diagnostic the configuration never requested.
-# CONFIG_DEBUG_MISC is not set
-# RCU_TRACE is the one with a hot path.  It ungates 116 trace_rcu_* sites in
-# kernel/rcu, and with CONFIG_JUMP_LABEL absent for this port each is a load
-# and a branch rather than a patched NOP, on grace-period and callback work the
-# emulator pays for at emulation rates.  No A/B measured that cost; the reason
-# to drop it is that `default y if TREE_RCU` under a selected DEBUG_KERNEL is
-# the only thing that ever turned it on.
-# CONFIG_RCU_TRACE is not set
-# BTF describes the kernel's types to BPF CO-RE programs and bpftool through
-# /sys/kernel/btf/vmlinux. pahole derives it from DWARF, so the build emits
-# DWARF 5, with zstd-compressed object sections as in GKI, and uses the pinned
-# ACK kernel-build-tools pahole. The published artifact drops the DWARF sections
-# and keeps .BTF. Split or reduced debug info would starve pahole of types.
-CONFIG_DEBUG_INFO=y
-CONFIG_DEBUG_INFO_DWARF5=y
-CONFIG_DEBUG_INFO_COMPRESSED_ZSTD=y
-# CONFIG_DEBUG_INFO_REDUCED is not set
-# CONFIG_DEBUG_INFO_SPLIT is not set
-CONFIG_DEBUG_INFO_BTF=y
-# Frame pointers are chosen for reliable stack traces, not inherited from
-# UML's DEBUG_INFO default: the stack walker follows their frame records, so
-# every WARN, BUG and sysrq trace lists only reliable entries. They cost about
-# 1% on the iPad in the mainline kernel.
-CONFIG_FRAME_POINTER=y
 
-# Stateful Virtio video decoding is shared by every product profile.
-CONFIG_MEDIA_SUPPORT=y
-CONFIG_MEDIA_SUPPORT_FILTER=y
-CONFIG_MEDIA_PLATFORM_SUPPORT=y
-CONFIG_VIDEO_DEV=y
-CONFIG_VIRTIO_VIDEO=y
+# --- BTF type information ---------------------------------------------------
+# The build compresses DWARF object sections with zstd, as GKI does, for the
+# pinned ACK kernel-build-tools pahole.
+CONFIG_DEBUG_INFO=y
+CONFIG_DEBUG_INFO_COMPRESSED_ZSTD=y

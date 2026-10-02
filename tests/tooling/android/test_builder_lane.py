@@ -1311,6 +1311,7 @@ def main() -> None:
             android_root / "metadata/aosp.env",
             android_root / "third_party/orangefox/metadata.env",
             kernel_root / "README.md",
+            root / "kernel/common/config/darwin-uml.fragment",
             kernel_root / "config/android.fragment",
             kernel_root / "patches/metadata.env",
         )
