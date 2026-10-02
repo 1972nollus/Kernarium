@@ -49,6 +49,24 @@ uml_add_tooling_test(
     TIMEOUT 45)
 
 uml_add_tooling_test(
+    NAME dependency-ios-network-prefix-verifier
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_ios_network_prefix.sh
+    LABELS dependency
+    TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME dependency-ios-static-xcframework-verifier
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_ios_static_xcframework.sh
+    LABELS dependency
+    TIMEOUT 30)
+
+uml_add_tooling_test(
+    NAME dependency-kernel-host-tools-prefix-verifier
+    COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_kernel_host_tools_prefix.sh
+    LABELS dependency
+    TIMEOUT 30)
+
+uml_add_tooling_test(
     NAME dependency-runtime-closure
     COMMAND ${PROJECT_SOURCE_DIR}/tests/tooling/dependencies/test_verify_runtime_dependencies.sh
     LABELS dependency
