@@ -4,8 +4,6 @@
 #include "scratch_backing.hpp"
 
 #include "cpu/engine.hpp"
-#include "cpu/arm64/engine_execution.hpp"
-#include "cpu/arm64/gadgets/executor.hpp"
 #include "platform/apple/host_features.hpp"
 #include "cpu/engine_factory.hpp"
 #include "memory/static_guest_memory.hpp"
@@ -346,30 +344,6 @@ void install_program(
   return outcome;
 }
 
-[[nodiscard]] Outcome run_forced_gadget_executor(
-    const arm64::CpuState &initial, StaticGuestMemory &memory,
-    unsigned long generation,
-    ::uml::cpu::arm64::gadgets::GadgetExecutor &executor) {
-  Outcome outcome{};
-  outcome.cpu = initial;
-  const auto sequences = darwin_uml_static_vm_sequences(generation);
-  memory.prepare(generation, sequences.mapping_changes);
-  ::uml::cpu::ExecutionRequest request{
-      .cpu = outcome.cpu,
-      .memory = memory,
-      .translated_memory = &memory,
-      .generation = generation,
-      .instruction_budget = execution_limit,
-  };
-  const auto result =
-      ::uml::cpu::arm64::detail::run_translated(executor, request);
-  outcome.event = event_for(result.reason);
-  outcome.instructions = result.retired_instructions;
-  outcome.fault = {result.fault.address, result.fault.access};
-  outcome.syndrome = result.syndrome;
-  return outcome;
-}
-
 } // namespace
 
 bool host_supports(NativeRequirements requirements) noexcept {
@@ -388,7 +362,7 @@ void require_architecture_equal(const arm64::CpuState &expected,
 
 class EngineHarness::Implementation final {
 public:
-  explicit Implementation(EngineHarnessOptions options)
+  Implementation()
       : generation_{next_generation()},
         address_space_{generation_},
         backing_{backing_name, DARWIN_UML_GUEST_PAGE_SIZE},
@@ -402,31 +376,8 @@ public:
     const ::uml::cpu::EngineConfiguration configuration{
         .host_capabilities = ::uml::platform::apple::probed_host_capabilities(),
     };
-    const bool forced_gadget_path = options.force_software_checksum ||
-        options.force_software_flags || options.force_software_sha3 ||
-        options.force_software_fixed_transforms ||
-        options.force_software_aes || options.force_software_pmull ||
-        options.force_software_dotprod || options.force_software_i8mm;
-    if (!forced_gadget_path) {
-      gadget_engine_ = ::uml::cpu::make_cpu_engine(
-          ::uml::cpu::EngineKind::gadgets, configuration);
-    } else {
-      forced_gadget_executor_ =
-          std::make_unique<::uml::cpu::arm64::gadgets::GadgetExecutor>(
-          ::uml::cpu::arm64::gadgets::BuildOptions{
-            .force_software_checksum = options.force_software_checksum,
-            .force_software_flags = options.force_software_flags,
-            .force_software_sha3 = options.force_software_sha3,
-            .force_software_fixed_transforms =
-                options.force_software_fixed_transforms,
-            .force_software_aes = options.force_software_aes,
-            .force_software_pmull = options.force_software_pmull,
-            .force_software_dotprod = options.force_software_dotprod,
-            .force_software_i8mm = options.force_software_i8mm,
-            .host_capabilities =
-                ::uml::platform::apple::probed_host_capabilities(),
-          });
-    }
+    gadget_engine_ = ::uml::cpu::make_cpu_engine(
+        ::uml::cpu::EngineKind::gadgets, configuration);
     jit_engine_ = ::uml::cpu::make_cpu_engine(
         ::uml::cpu::EngineKind::jit, configuration);
   }
@@ -532,17 +483,12 @@ public:
       if (test_case.before_engine != nullptr)
         test_case.before_engine(
             test_case.execution_context, current_engine, generation_);
-      Outcome outcome;
-      if (engine == Engine::gadgets && forced_gadget_executor_ != nullptr) {
-        outcome = run_forced_gadget_executor(
-            initial, memory, generation_, *forced_gadget_executor_);
-      } else {
-        auto *selected_engine = engine_instance(engine);
-        if (selected_engine == nullptr)
-          fail(test_case.name, "setup", diagnostic_instruction,
-               "selected CPU engine was not constructed", location);
-        outcome = run_engine(initial, memory, generation_, *selected_engine);
-      }
+      auto *selected_engine = engine_instance(engine);
+      if (selected_engine == nullptr)
+        fail(test_case.name, "setup", diagnostic_instruction,
+             "selected CPU engine was not constructed", location);
+      const auto outcome =
+          run_engine(initial, memory, generation_, *selected_engine);
       switch (engine) {
       case Engine::gadgets:
         ++counts_.gadgets;
@@ -675,13 +621,11 @@ private:
   std::array<std::byte, DARWIN_UML_GUEST_PAGE_SIZE> installed_page_{};
   std::unique_ptr<::uml::cpu::CpuEngine> gadget_engine_;
   std::unique_ptr<::uml::cpu::CpuEngine> jit_engine_;
-  std::unique_ptr<::uml::cpu::arm64::gadgets::GadgetExecutor>
-      forced_gadget_executor_;
   EngineTestCounts counts_;
 };
 
-EngineHarness::EngineHarness(EngineHarnessOptions options)
-    : implementation_{std::make_unique<Implementation>(options)} {}
+EngineHarness::EngineHarness()
+    : implementation_{std::make_unique<Implementation>()} {}
 
 EngineHarness::~EngineHarness() = default;
 
