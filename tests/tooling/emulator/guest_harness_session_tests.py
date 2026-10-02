@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Prove the guest harness boots its session through the per-run initramfs,
-drives the console, and cannot leave an emulator running after it dies."""
+drives the console, and cannot leave an emulator running after it dies, nor
+its staged guest files for longer than the next guest's start."""
 
 from __future__ import annotations
 # Standalone runners must not leave source-adjacent bytecode caches.
@@ -17,6 +18,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 SUPPORT = pathlib.Path(__file__).resolve().parents[2] / "integration/support"
 sys.path.insert(0, str(SUPPORT))
@@ -75,6 +77,13 @@ class AttachedGuestSessionTests(unittest.TestCase):
         self.emulator = pathlib.Path(directory.name, "emulator")
         self.emulator.write_text(STAND_IN, encoding="utf-8")
         self.emulator.chmod(0o755)
+        # The temporary directory of this test's guests, which no other
+        # process shares.
+        self.temporary = pathlib.Path(directory.name, "tmp")
+        self.temporary.mkdir()
+
+    def private_temporary_directory(self) -> contextlib.AbstractContextManager:
+        return mock.patch.object(tempfile, "tempdir", str(self.temporary))
 
     def test_the_emulator_joins_the_harness_process_group(self) -> None:
         # This is the whole mechanism: sharing the group is what makes a group
@@ -343,7 +352,11 @@ class AttachedGuestSessionTests(unittest.TestCase):
             "/usr/probe=1",
             guest_support.SESSION_GUEST_PATH,
         ):
-            with self.subTest(path=path), self.assertRaises(ValueError):
+            with (
+                self.subTest(path=path),
+                self.assertRaises(ValueError),
+                self.private_temporary_directory(),
+            ):
                 guest_support.Guest(
                     emulator=self.emulator,
                     rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
@@ -353,12 +366,7 @@ class AttachedGuestSessionTests(unittest.TestCase):
                     payloads={path: guest_support.GuestFile(b"")},
                 )
         self.assertFalse((record / "arguments").exists())
-        leftovers = list(
-            pathlib.Path(tempfile.gettempdir()).glob(
-                f"uml-guest-files-{os.getpid()}-*"
-            )
-        )
-        self.assertEqual(leftovers, [])
+        self.assertEqual(list(self.temporary.iterdir()), [])
 
     def test_boot_waits_for_the_session_before_the_prompt(self) -> None:
         # A prompt-shaped line before the session reports ready, such as one
@@ -400,17 +408,25 @@ class AttachedGuestSessionTests(unittest.TestCase):
             guest.boot_to_shell(10)
         self.assertIn("UML_SESSION_ERROR:cannot mount /run", guest.output())
 
-    def test_a_killed_harness_group_takes_its_guest_with_it(self) -> None:
+    def start_harness(self) -> tuple[subprocess.Popen[str], int]:
+        """Start HARNESS in a process group of its own and return it with the
+        process ID of its guest. Its guest files go to this test's temporary
+        directory, since a harness killed outright cannot remove them."""
         harness = subprocess.Popen(
             [sys.executable, "-c", HARNESS, str(self.emulator)],
             stdout=subprocess.PIPE,
             text=True,
             start_new_session=True,
+            env={**os.environ, "TMPDIR": str(self.temporary)},
         )
         self.addCleanup(self.reap, harness)
         assert harness.stdout is not None
         emulator_pid = int(harness.stdout.readline().strip())
         self.addCleanup(self.reap_emulator, emulator_pid)
+        return harness, emulator_pid
+
+    def test_a_killed_harness_group_takes_its_guest_with_it(self) -> None:
+        harness, emulator_pid = self.start_harness()
         self.assertTrue(process_alive(emulator_pid))
 
         os.killpg(harness.pid, signal.SIGKILL)
@@ -420,6 +436,44 @@ class AttachedGuestSessionTests(unittest.TestCase):
             "the guest outlived its harness group; an orphan boots to idle and "
             "still burns host cores, quietly oversubscribing later benchmarks",
         )
+
+    def test_the_next_guest_removes_a_killed_harness_guest_files(self) -> None:
+        harness, _ = self.start_harness()
+        abandoned = list(self.temporary.glob(f"uml-guest-files-{harness.pid}-*"))
+        self.assertEqual(len(abandoned), 1)
+        # Staged files of a process that is still running are kept.
+        live = self.temporary / f"uml-guest-files-{os.getpid()}-live"
+        live.mkdir()
+
+        os.killpg(harness.pid, signal.SIGKILL)
+        harness.wait()
+        self.assertTrue(abandoned[0].is_dir())
+        with self.private_temporary_directory():
+            guest = guest_support.Guest(
+                emulator=self.emulator,
+                rootfs=pathlib.Path("/nonexistent/rootfs.erofs"),
+                memory="4G",
+                workspace="tmpfs",
+                init_shell=True,
+            )
+        self.addCleanup(guest.close)
+        self.assertFalse(
+            abandoned[0].exists(),
+            "a killed harness's guest files outlived the next guest's start",
+        )
+        self.assertTrue(live.is_dir())
+
+    def test_swap_images_of_exited_processes_are_removed(self) -> None:
+        finished = subprocess.Popen(["/usr/bin/true"])
+        finished.wait()
+        abandoned = self.temporary / f"uml-ltp-swap-{finished.pid}-a.img"
+        live = self.temporary / f"uml-ltp-swap-{os.getpid()}-b.img"
+        abandoned.touch()
+        live.touch()
+        with self.private_temporary_directory():
+            guest_support.cleanup_stale_swap_images()
+        self.assertFalse(abandoned.exists())
+        self.assertTrue(live.exists())
 
     def reap(self, harness: subprocess.Popen[str]) -> None:
         if harness.poll() is None:

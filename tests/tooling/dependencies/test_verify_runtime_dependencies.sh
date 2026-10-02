@@ -8,21 +8,8 @@ TEST_PARENT=${TMPDIR:-/tmp}
 TEST_ROOT=$(mktemp -d "${TEST_PARENT%/}/uml-runtime-dependencies.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
-expect_rejection()
-{
-	diagnostic=$1
-	shift
-	if "$VERIFIER" "$@" >"$TEST_ROOT/rejected.out" \
-		2>"$TEST_ROOT/rejected.err"; then
-		printf '%s\n' "runtime dependency verifier accepted: $diagnostic" >&2
-		exit 1
-	fi
-	grep -F "$diagnostic" "$TEST_ROOT/rejected.err" >/dev/null || {
-		printf '%s\n' "runtime rejection lacked diagnostic: $diagnostic" >&2
-		cat "$TEST_ROOT/rejected.err" >&2
-		exit 1
-	}
-}
+TEST_NAME='runtime dependency verifier'
+. "$(dirname -- "$0")/../support/expect.sh"
 
 "$VERIFIER" --binary /usr/bin/true >/dev/null
 
@@ -38,7 +25,7 @@ xcrun --sdk macosx clang -arch arm64 -dynamiclib \
 	"$TEST_ROOT/library.c" -o "$TEST_ROOT/libambient.dylib"
 xcrun --sdk macosx clang -arch arm64 "$TEST_ROOT/main.c" \
 	"$TEST_ROOT/libambient.dylib" -o "$TEST_ROOT/ambient-client"
-expect_rejection 'non-system dynamic dependency' \
+expect_diagnostic 'non-system dynamic dependency' "$VERIFIER" \
 	--binary "$TEST_ROOT/ambient-client"
 
 PREFIX="$TEST_ROOT/prefix"
@@ -50,7 +37,7 @@ int main(void) { return CGLGetCurrentContext() != 0; }
 EOF
 xcrun --sdk macosx clang -arch arm64 "$TEST_ROOT/opengl-main.c" \
 	-framework OpenGL -o "$TEST_ROOT/opengl-client"
-expect_rejection 'forbidden graphics dependency' \
+expect_diagnostic 'forbidden graphics dependency' "$VERIFIER" \
 	--binary "$TEST_ROOT/opengl-client"
 
 mkdir -p -- "$PREFIX/Frameworks/KosmicKrisp.framework/Headers" \
@@ -128,7 +115,7 @@ xcrun --sdk macosx clang -arch arm64 \
 	-F"$PREFIX/Frameworks" -framework MesaEGL -framework MesaGallium \
 	-framework KosmicKrisp -Wl,-rpath,@executable_path/Frameworks \
 	-o "$VULKAN_RUNTIME/apple-gpu-vulkan-client-missing-marker"
-expect_rejection 'unauthenticated Apple GPU dependency' \
+expect_diagnostic 'unauthenticated Apple GPU dependency' "$VERIFIER" \
 	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client"
 verify_vulkan_runtime()
 {
@@ -138,21 +125,21 @@ verify_vulkan_runtime()
 }
 verify_vulkan_runtime >/dev/null
 
-expect_rejection 'host GL provider marker' \
+expect_diagnostic 'host GL provider marker' "$VERIFIER" \
 	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client-missing-marker" \
 	--apple-gpu-prefix "$PREFIX" \
 	--framework-directory "$VULKAN_RUNTIME/Frameworks"
 
 mkdir -p -- "$VULKAN_RUNTIME/duplicate"
 cp -R "$PREFIX/Frameworks/MesaEGL.framework" "$VULKAN_RUNTIME/duplicate/"
-expect_rejection 'exactly one MesaEGL.framework copy' \
+expect_diagnostic 'exactly one MesaEGL.framework copy' "$VERIFIER" \
 	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
 	--apple-gpu-prefix "$PREFIX" \
 	--framework-directory "$VULKAN_RUNTIME/Frameworks"
 rm -rf -- "$VULKAN_RUNTIME/duplicate"
 
 touch "$VULKAN_RUNTIME/Frameworks/MesaGallium.framework/unexpected"
-expect_rejection 'payload is not exact' \
+expect_diagnostic 'payload is not exact' "$VERIFIER" \
 	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
 	--apple-gpu-prefix "$PREFIX" \
 	--framework-directory "$VULKAN_RUNTIME/Frameworks"
@@ -160,7 +147,7 @@ rm -- "$VULKAN_RUNTIME/Frameworks/MesaGallium.framework/unexpected"
 verify_vulkan_runtime >/dev/null
 
 printf '\0' >>"$VULKAN_RUNTIME/Frameworks/KosmicKrisp.framework/KosmicKrisp"
-expect_rejection 'does not match the authenticated prefix' \
+expect_diagnostic 'does not match the authenticated prefix' "$VERIFIER" \
 	--binary "$VULKAN_RUNTIME/apple-gpu-vulkan-client" \
 	--apple-gpu-prefix "$PREFIX" \
 	--framework-directory "$VULKAN_RUNTIME/Frameworks"

@@ -28,6 +28,8 @@ CONSOLE_WRITE_TIMEOUT_SECONDS = 30
 FAILURE_TRANSCRIPT_CHARACTERS = 16384
 SIZE_VALUE = re.compile(r"^(\d+)([KMGT]?)$", re.IGNORECASE)
 SWAP_IMAGE = re.compile(r"^uml-ltp-swap-(\d+)-.*\.img$")
+STAGING_PREFIX = "uml-guest-files-"
+STAGING_DIRECTORY = re.compile(rf"^{STAGING_PREFIX}(\d+)-.+$")
 REPOSITORY = pathlib.Path(__file__).resolve().parents[3]
 # The launcher boots every guest through its base archive and a per-run
 # initramfs (tools/rootfs/boot-ramdisk/README.md); this session prepares the
@@ -214,18 +216,38 @@ def size_bytes(value: str) -> int:
     return size
 
 
-def cleanup_stale_swap_images() -> None:
-    """Remove sparse swap backings left by terminated harness processes."""
-    for path in pathlib.Path(tempfile.gettempdir()).glob("uml-ltp-swap-*.img"):
-        match = SWAP_IMAGE.fullmatch(path.name)
+def abandoned_host_files(pattern: re.Pattern[str]) -> list[pathlib.Path]:
+    """Return the temporary files ``pattern`` names whose process has exited.
+
+    A harness names each per-run host file after its process. One killed by a
+    signal it cannot handle runs no cleanup, so later harnesses remove what it
+    left, as the launcher does for its initrd scratch. A process that is alive,
+    or that this user may not signal, keeps its files."""
+    abandoned = []
+    for path in pathlib.Path(tempfile.gettempdir()).glob("uml-*"):
+        match = pattern.fullmatch(path.name)
         if match is None:
             continue
         try:
             os.kill(int(match.group(1)), 0)
         except ProcessLookupError:
-            path.unlink(missing_ok=True)
-        except PermissionError:
+            abandoned.append(path)
+        except (PermissionError, OverflowError):
             pass
+    return abandoned
+
+
+def cleanup_stale_swap_images() -> None:
+    """Remove sparse swap backings left by terminated harness processes."""
+    for path in abandoned_host_files(SWAP_IMAGE):
+        path.unlink(missing_ok=True)
+
+
+def cleanup_stale_guest_files() -> None:
+    """Remove the staged guest files of terminated harness processes."""
+    for path in abandoned_host_files(STAGING_DIRECTORY):
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def create_swap_image(value: str) -> pathlib.Path:
@@ -614,8 +636,9 @@ class Guest(ConsoleProcess):
                 cgroup2_nsdelegate=cgroup2_nsdelegate,
             )
             self._swap_path = create_swap_image(swap_size) if swap_size else None
+            cleanup_stale_guest_files()
             self._staging = pathlib.Path(
-                tempfile.mkdtemp(prefix=f"uml-guest-files-{os.getpid()}-")
+                tempfile.mkdtemp(prefix=f"{STAGING_PREFIX}{os.getpid()}-")
             )
             guest_files = stage_guest_files(self._staging, session, payloads)
             super().__init__(

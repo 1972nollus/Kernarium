@@ -7,11 +7,8 @@ REGENERATOR="$ROOT_DIR/dependencies/rebase-patches.sh"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-dependency-rebase.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 
-fail()
-{
-	printf '%s\n' "test-rebase-patches.sh: $*" >&2
-	exit 1
-}
+TEST_NAME=test-rebase-patches.sh
+. "$(dirname -- "$0")/../support/expect.sh"
 
 SOURCE="$TEST_ROOT/source"
 METADATA="$TEST_ROOT/dependencies"

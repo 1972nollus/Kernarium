@@ -18,11 +18,8 @@ cp "$SOURCE_DEPENDENCY_DIR/../scripts/patch_series.py" "$TEST_ROOT/scripts/"
 VERIFIER="$DEPENDENCY_DIR/verify-prefix.sh"
 PREPARE="$DEPENDENCY_DIR/prepare.sh"
 
-fail()
-{
-	printf '%s\n' "test-verify-prefix.sh: $*" >&2
-	exit 1
-}
+TEST_NAME=test-verify-prefix.sh
+. "$(dirname -- "$0")/../support/expect.sh"
 
 sha256_file()
 {
@@ -43,25 +40,11 @@ copy_fixture()
 	cp -R "$BASE_PREFIX" "$destination"
 }
 
-expect_failure()
-{
-	description=$1
-	prefix=$2
-	FAILURE_NUMBER=$((FAILURE_NUMBER + 1))
-	if verify "$prefix" >"$TEST_ROOT/rejected-$FAILURE_NUMBER.out" \
-		2>"$TEST_ROOT/rejected-$FAILURE_NUMBER.err"; then
-		fail "$description was incorrectly accepted"
-	fi
-	[ -s "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" ] ||
-		fail "$description was rejected without a diagnostic"
-}
-
 command -v xcrun >/dev/null 2>&1 || fail "xcrun is required"
 MANIFEST="$DEPENDENCY_DIR/manifest.tsv"
 PATCH_DIRECTORY="$DEPENDENCY_DIR/patches/fixture"
 PATCH="$PATCH_DIRECTORY/fixture-maintained-change.patch"
 BASE_PREFIX="$TEST_ROOT/prefix"
-FAILURE_NUMBER=0
 mkdir -p "$BASE_PREFIX/include/glib-2.0" \
 	"$BASE_PREFIX/include/SoftFloat-3e" \
 	"$BASE_PREFIX/include/slirp" \
@@ -160,65 +143,65 @@ verify "$BASE_PREFIX" >/dev/null
 
 sed '1s/^From 0\{40\}/From 1111111111111111111111111111111111111111/' \
 	"$PATCH.original" >"$PATCH"
-expect_failure "patch not produced by the series exporter" "$BASE_PREFIX"
+expect_failure "patch not produced by the series exporter" verify "$BASE_PREFIX"
 cp "$PATCH.original" "$PATCH"
 
 printf '%s\n' stray >"$PATCH_DIRECTORY/unlisted.patch"
-expect_failure "unlisted dependency patch" "$BASE_PREFIX"
+expect_failure "unlisted dependency patch" verify "$BASE_PREFIX"
 rm "$PATCH_DIRECTORY/unlisted.patch"
 
 mv "$PATCH" "$PATCH.absent"
-expect_failure "deleted dependency patch" "$BASE_PREFIX"
+expect_failure "deleted dependency patch" verify "$BASE_PREFIX"
 mv "$PATCH.absent" "$PATCH"
 
 CASE_PREFIX="$TEST_ROOT/missing-file"
 copy_fixture "$CASE_PREFIX"
 rm "$CASE_PREFIX/include/zlib.h"
-expect_failure "missing required file" "$CASE_PREFIX"
+expect_failure "missing required file" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/symlinked-header"
 copy_fixture "$CASE_PREFIX"
 printf '%s\n' ambient >"$TEST_ROOT/ambient-zlib.h"
 rm "$CASE_PREFIX/include/zlib.h"
 ln -s "$TEST_ROOT/ambient-zlib.h" "$CASE_PREFIX/include/zlib.h"
-expect_failure "symlinked required header" "$CASE_PREFIX"
+expect_failure "symlinked required header" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/symlinked-archive"
 copy_fixture "$CASE_PREFIX"
 rm "$CASE_PREFIX/lib/libz.a"
 ln -s "$TEST_ROOT/fixture-arm64.a" "$CASE_PREFIX/lib/libz.a"
-expect_failure "symlinked required archive" "$CASE_PREFIX"
+expect_failure "symlinked required archive" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/dynamic-library"
 copy_fixture "$CASE_PREFIX"
 printf '%s\n' forbidden >"$CASE_PREFIX/lib/libforbidden.dylib"
-expect_failure "dynamic library" "$CASE_PREFIX"
+expect_failure "dynamic library" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/disguised-dynamic-library"
 copy_fixture "$CASE_PREFIX"
 xcrun --sdk macosx clang -arch arm64 -dynamiclib "$TEST_ROOT/fixture.c" \
 	-o "$TEST_ROOT/fixture-arm64.dylib"
 cp "$TEST_ROOT/fixture-arm64.dylib" "$CASE_PREFIX/lib/hidden.bundle"
-expect_failure "dynamic library with a nonstandard suffix" "$CASE_PREFIX"
+expect_failure "dynamic library with a nonstandard suffix" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/nested-invalid-archive"
 copy_fixture "$CASE_PREFIX"
 mkdir -p "$CASE_PREFIX/lib/plugins"
 printf '%s\n' 'not an archive' >"$CASE_PREFIX/lib/plugins/hidden.a"
-expect_failure "nested invalid static archive" "$CASE_PREFIX"
+expect_failure "nested invalid static archive" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/cmake-package-metadata"
 copy_fixture "$CASE_PREFIX"
 mkdir -p "$CASE_PREFIX/lib/cmake/Fixture"
 printf '%s\n' '# unused export' \
 	>"$CASE_PREFIX/lib/cmake/Fixture/FixtureTargets.cmake"
-expect_failure "installed CMake package metadata" "$CASE_PREFIX"
+expect_failure "installed CMake package metadata" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/duplicate-receipt"
 copy_fixture "$CASE_PREFIX"
 printf '%s\n' 'schema	1' \
 	>>"$CASE_PREFIX/share/uml-dependencies/receipt.tsv"
-expect_failure "duplicate receipt field" "$CASE_PREFIX"
+expect_failure "duplicate receipt field" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/missing-sdk-observation"
 copy_fixture "$CASE_PREFIX"
@@ -226,17 +209,17 @@ sed '/^sdk_version	/d' "$CASE_PREFIX/share/uml-dependencies/receipt.tsv" \
 	>"$CASE_PREFIX/share/uml-dependencies/receipt.tsv.changed"
 mv "$CASE_PREFIX/share/uml-dependencies/receipt.tsv.changed" \
 	"$CASE_PREFIX/share/uml-dependencies/receipt.tsv"
-expect_failure "missing SDK observation" "$CASE_PREFIX"
+expect_failure "missing SDK observation" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/unrecorded-manifest"
 copy_fixture "$CASE_PREFIX"
 rm "$CASE_PREFIX/share/uml-dependencies/manifest.tsv"
-expect_failure "prefix without its dependency manifest" "$CASE_PREFIX"
+expect_failure "prefix without its dependency manifest" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/unrecorded-source-trees"
 copy_fixture "$CASE_PREFIX"
 rm "$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
-expect_failure "prefix without its patched source trees" "$CASE_PREFIX"
+expect_failure "prefix without its patched source trees" verify "$CASE_PREFIX"
 
 # A series change that alters the tree keeps the manifest row, so only the
 # recorded tree tells the prefix is stale.
@@ -245,13 +228,13 @@ copy_fixture "$CASE_PREFIX"
 printf 'source\ttree\nfixture\t%s\n' \
 	"$(git -C "$PATCH_REPOSITORY" rev-parse 'HEAD~1^{tree}')" \
 	>"$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
-expect_failure "prefix built from another patched tree" "$CASE_PREFIX"
+expect_failure "prefix built from another patched tree" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/headerless-source-trees"
 copy_fixture "$CASE_PREFIX"
 printf 'fixture\t%s\n' "$FIXTURE_TREE" \
 	>"$CASE_PREFIX/share/uml-dependencies/source-trees.tsv"
-expect_failure "source trees without their header" "$CASE_PREFIX"
+expect_failure "source trees without their header" verify "$CASE_PREFIX"
 
 # Rows of other products and the products column itself do not identify this
 # prefix; a changed macos row does.
@@ -264,13 +247,13 @@ verify "$BASE_PREFIX" >/dev/null ||
 	fail "another product's row or a shared products column rejected the prefix"
 cp "$MANIFEST.original" "$MANIFEST"
 sed 's/	1\.0	macos	/	1.1	macos	/' "$MANIFEST.original" >"$MANIFEST"
-expect_failure "changed macos dependency row" "$BASE_PREFIX"
+expect_failure "changed macos dependency row" verify "$BASE_PREFIX"
 cp "$MANIFEST.original" "$MANIFEST"
 
 CASE_PREFIX="$TEST_ROOT/manifest-tamper"
 copy_fixture "$CASE_PREFIX"
 printf '%s\n' changed >>"$MANIFEST"
-expect_failure "changed dependency manifest" "$CASE_PREFIX"
+expect_failure "changed dependency manifest" verify "$CASE_PREFIX"
 cp "$MANIFEST.original" "$MANIFEST"
 
 CASE_PREFIX="$TEST_ROOT/wrong-architecture"
@@ -279,17 +262,17 @@ xcrun --sdk macosx clang -arch x86_64 -c "$TEST_ROOT/fixture.c" \
 	-o "$TEST_ROOT/fixture-x86_64.o"
 xcrun ar rcs "$TEST_ROOT/fixture-x86_64.a" "$TEST_ROOT/fixture-x86_64.o"
 cp "$TEST_ROOT/fixture-x86_64.a" "$CASE_PREFIX/lib/libz.a"
-expect_failure "non-arm64 static archive" "$CASE_PREFIX"
+expect_failure "non-arm64 static archive" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/renamed-dynamic-library"
 copy_fixture "$CASE_PREFIX"
 cp "$TEST_ROOT/fixture-arm64.dylib" "$CASE_PREFIX/lib/libz.a"
-expect_failure "dynamic library renamed as an archive" "$CASE_PREFIX"
+expect_failure "dynamic library renamed as an archive" verify "$CASE_PREFIX"
 
 CASE_PREFIX="$TEST_ROOT/wrong-deployment-target"
 copy_fixture "$CASE_PREFIX"
 DEPLOYMENT_TARGET=15.0
-expect_failure "incompatible deployment target" "$CASE_PREFIX"
+expect_failure "incompatible deployment target" verify "$CASE_PREFIX"
 DEPLOYMENT_TARGET=14.0
 
 printf '%s\n' "dependency prefix verification tests passed"
