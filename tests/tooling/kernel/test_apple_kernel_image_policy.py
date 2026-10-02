@@ -235,6 +235,68 @@ endif()
         )
 
 
+def verify_artifact_configure_inputs(artifact_cmake: Path) -> None:
+    """An imported bundle is re-verified when anything its verifier reads changes."""
+    with tempfile.TemporaryDirectory(prefix="artifact-configure-inputs-") as directory:
+        root = Path(directory)
+        common = root / "common"
+        artifact = root / "artifact"
+        watched = [
+            common / "abi/identity.env",
+            common / "abi/import-policy.tsv",
+            common / "abi/darwin_uml_first.h",
+            common / "abi/darwin_uml_second.h",
+            common / "abi/bridge_imports.py",
+            common / "artifacts/contract_checks.py",
+            common / "artifacts/kernel_artifact.py",
+            common / "artifacts/verify-kernel-artifact.py",
+            artifact / "kernel-artifact.json",
+            artifact / "kernel/vmlinux",
+        ]
+        for path in watched:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+        # The fixture verifier admits any bundle.
+        watched[7].write_text("raise SystemExit(0)\n", encoding="utf-8")
+        source = root / "source"
+        source.mkdir()
+        expected = "\n    ".join(f"[=[{path}]=]" for path in watched)
+        (source / "CMakeLists.txt").write_text(
+            f'''cmake_minimum_required(VERSION 3.27)
+project(artifact_configure_inputs LANGUAGES NONE)
+include([=[{artifact_cmake.resolve()}]=])
+uml_import_kernel_artifact(
+    TARGET fixture_kernel_artifact
+    ARTIFACT_ROOT [=[{artifact}]=]
+    COMMON_ROOT [=[{common}]=]
+    EXPECTED_FAMILY mainline-6.18
+    EXPECTED_SLICE arm64
+    EXPECTED_RELEASE_SERIES 6.18
+    EXPECTED_PAGE_SIZE 16384)
+get_property(_watched DIRECTORY PROPERTY CMAKE_CONFIGURE_DEPENDS)
+foreach(_input IN ITEMS
+    {expected})
+    if(NOT _input IN_LIST _watched)
+        message(FATAL_ERROR "configure does not watch ${{_input}}")
+    endif()
+endforeach()
+''',
+            encoding="utf-8",
+        )
+        configured = subprocess.run(
+            ["cmake", "-G", "Ninja", "-S", str(source), "-B", str(root / "build")],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        require(
+            configured.returncode == 0,
+            "artifact import does not watch its verifier's inputs:\n"
+            f"{configured.stdout}{configured.stderr}",
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-cmake", type=Path, required=True)
@@ -242,6 +304,7 @@ def main() -> int:
     arguments = parser.parse_args()
 
     verify_accepted_artifact_cache(arguments.artifact_cmake)
+    verify_artifact_configure_inputs(arguments.artifact_cmake)
     verify_carrier_tool(arguments.carrier_verifier)
 
     print("Apple kernel carrier and artifact cache policy verified")
