@@ -343,8 +343,8 @@ Recovery screen blanking, its separate idle lock timeout, haptics, and USB-only
 device paths are disabled for the virtual hardware. The pinned recovery cgroup
 and task-profile maps keep OrangeFox 14.1's logd/logcat path functional.
 
-`build/build-orangefox.sh`, `build/assemble-ramdisk.sh`, and
-`build/assemble-image.sh` own recovery construction, disk assembly, and
+`build/build-orangefox.sh` and `build/assemble-image.sh` own recovery
+construction, `init_boot` ramdisk composition, disk assembly, and
 verification. The assembler requires an explicit verified OrangeFox image and
 refuses unsafe paths, partition overflow, module payloads, or replacement of an
 existing output.
