@@ -20,8 +20,6 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_arm64_instruction_corpus_absent_features.py
     LABELS cpu
     TIMEOUT 300)
-set_tests_properties(arm64-instruction-corpus-absent-features PROPERTIES
-    SKIP_RETURN_CODE 77)
 
 # Opt-in: the pinned Arm XML archive is not a managed dependency.
 set(UML_A64_ARCHITECTURE_ARCHIVE "" CACHE FILEPATH

@@ -275,9 +275,12 @@ is the kept case's, except that a written-back base keeps its tag.
 `provenance.json` records the script's hash, its feature list, the failing
 file's hash, and the drop, strip, host-gate, FEAT_AFP, and addition counts
 under `absent_features`, and `build-unit-corpus.py --check` verifies them. The
-`arm64-instruction-corpus-absent-features` tooling test replays the rewrite
-from the pre-removal pack and checks that every kept case differs from its
-source only by the stripped state.
+`arm64-instruction-corpus-absent-features` tooling test checks the pack
+against the rewrite's rules: no kept case exercises a removed feature, holds
+one of its encodings without expecting the undefined-instruction trap, or
+keeps a host gate or a FEAT_AFP requirement its FPCR does not need; the RES0
+pins are exactly the `without_afp` records' cases; and every authored record
+and case is the rewrite's, in the counts it recorded.
 
 Run both steps on the dump of every regenerated export and `--repack` the
 result:
