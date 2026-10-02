@@ -10,12 +10,10 @@
  * the change buys. Baking both costs one entry per base register per
  * transferred register, which no template can afford; baking one costs 31.
  *
- * A host microbenchmark alternating a memory gadget with the in-place ALU entry
- * G196 already bakes, three chains in flight, measured 3.71 cycles a gadget as
- * the engine ships, 3.15 with the base read baked and 2.43 with the transferred
- * register baked. The transferred register is therefore the one taken here: a
- * loaded value is nearly always consumed soon afterwards, while a base is
- * commonly a long-lived pointer whose producer is far away or absent.
+ * Baking the transferred register gains more than baking the base read (G199),
+ * so it is the one taken here: a loaded value is nearly always consumed soon
+ * afterwards, while a base is commonly a long-lived pointer whose producer is
+ * far away or absent.
  *
  * Baking the transferred register is also what keeps an in-place update from
  * regressing. When only the ALU entry is baked, both of the loaded register's
