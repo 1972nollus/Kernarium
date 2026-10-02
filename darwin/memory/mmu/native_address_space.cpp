@@ -757,6 +757,16 @@ HostOwnershipRegistry *host_ownership_registry() noexcept
 		});
 }
 
+/* Passes host_ownership_registry() through, setting ENOMEM when it could not
+ * be created.  Not noexcept, for the reason refuse_retired_locked() gives. */
+[[nodiscard]] HostOwnershipRegistry *registry_or_enomem(
+	HostOwnershipRegistry *registry)
+{
+	if (registry == nullptr)
+		errno = ENOMEM;
+	return registry;
+}
+
 std::atomic_uint64_t next_ownership_id{1};
 
 [[nodiscard]] std::uint64_t fresh_ownership_id() noexcept
@@ -787,11 +797,9 @@ int NativeAddressSpace::map_direct(
 	std::lock_guard lock{mutex_};
 	if (refuse_retired_locked())
 		return -1;
-	auto *registry = host_ownership_registry();
-	if (registry == nullptr) {
-		errno = ENOMEM;
+	auto *registry = registry_or_enomem(host_ownership_registry());
+	if (registry == nullptr)
 		return -1;
-	}
 	std::vector<std::uintptr_t> inserted;
 	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
 	struct DirectSnapshot final {
@@ -875,11 +883,9 @@ int NativeAddressSpace::protect_direct(
 	std::lock_guard lock{mutex_};
 	if (refuse_retired_locked())
 		return -1;
-	auto *registry = host_ownership_registry();
-	if (registry == nullptr) {
-		errno = ENOMEM;
+	auto *registry = registry_or_enomem(host_ownership_registry());
+	if (registry == nullptr)
 		return -1;
-	}
 	const auto result = registry->protect_direct(
 		ownership_id_, address, length, protection);
 	#if DARWIN_UML_GUEST_PAGE_SIZE == 4096
@@ -941,11 +947,9 @@ int NativeAddressSpace::flush_direct(
 	std::lock_guard lock{mutex_};
 	if (refuse_retired_locked())
 		return -1;
-	auto *registry = host_ownership_registry();
-	if (registry == nullptr) {
-		errno = ENOMEM;
+	auto *registry = registry_or_enomem(host_ownership_registry());
+	if (registry == nullptr)
 		return -1;
-	}
 	return registry->flush_direct(
 		ownership_id_, address, length);
 }
@@ -956,11 +960,9 @@ int NativeAddressSpace::sync_direct(
 	std::lock_guard lock{mutex_};
 	if (refuse_retired_locked())
 		return -1;
-	auto *registry = host_ownership_registry();
-	if (registry == nullptr) {
-		errno = ENOMEM;
+	auto *registry = registry_or_enomem(host_ownership_registry());
+	if (registry == nullptr)
 		return -1;
-	}
 	/* Direct mappings are MAP_SHARED, so there is no shadow buffer to refill.
 	 * Validation still prevents a foreign domain from treating another run's
 	 * high mapping as its own. */
@@ -973,11 +975,9 @@ int NativeAddressSpace::retry_direct(
 	std::lock_guard lock{mutex_};
 	if (refuse_retired_locked())
 		return -1;
-	auto *registry = host_ownership_registry();
-	if (registry == nullptr) {
-		errno = ENOMEM;
+	auto *registry = registry_or_enomem(host_ownership_registry());
+	if (registry == nullptr)
 		return -1;
-	}
 	HostOwnershipRegistry::DirectRetryStatus status;
 	if (registry->inspect_direct_retry(
 		    ownership_id_, address, execute, write, status) != 0)
@@ -1092,11 +1092,9 @@ int NativeAddressSpace::convert_direct_slot_to_shadow_locked(
 			errno = EBUSY;
 			return -1;
 		}
-	auto *registry = host_ownership_registry();
-	if (registry == nullptr) {
-		errno = ENOMEM;
+	auto *registry = registry_or_enomem(host_ownership_registry());
+	if (registry == nullptr)
 		return -1;
-	}
 
 	/* A temporary, fully populated host page lets vm_remap replace the
 	 * direct slot atomically.  No CPU can observe the zero-filled interval
@@ -1601,11 +1599,9 @@ int NativeAddressSpace::materialize_slot_locked(std::uintptr_t slot)
 		errno = EBUSY;
 		return -1;
 	}
-	auto *registry = host_ownership_registry();
-	if (registry == nullptr) {
-		errno = ENOMEM;
+	auto *registry = registry_or_enomem(host_ownership_registry());
+	if (registry == nullptr)
 		return -1;
-	}
 	try {
 		UML_MEMORY_ALLOCATION_CHECKPOINT(
 			testing::AllocationSite::native_slot);
@@ -1678,11 +1674,9 @@ int NativeAddressSpace::update_slot_protection_locked(std::uintptr_t slot)
 	}
 	if (!populated) {
 		if (materialized_slots_.contains(slot)) {
-			auto *registry = host_ownership_registry();
-			if (registry == nullptr) {
-				errno = ENOMEM;
+			auto *registry = registry_or_enomem(host_ownership_registry());
+			if (registry == nullptr)
 				return -1;
-			}
 			if (registry->release_shadow(ownership_id_, slot) != 0)
 				return -1;
 		}
