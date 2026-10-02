@@ -294,10 +294,16 @@ function(_verify_framework _name)
     if(NOT _closure_status EQUAL 0)
         message(FATAL_ERROR "Could not inspect ${_name}.framework closure")
     endif()
+    # Each indented line is a dependency's whole path, which may contain
+    # spaces, then its versions in parentheses.
     string(REPLACE "\n" ";" _closure_lines "${_closure}")
     foreach(_line IN LISTS _closure_lines)
-        if(NOT _line MATCHES "^[ \t]+([^ \t]+)")
+        if(NOT _line MATCHES "^[ \t]")
             continue()
+        endif()
+        if(NOT _line MATCHES "^[ \t]+(.+) \\(compatibility version [^()]*\\)$")
+            message(FATAL_ERROR
+                "Could not parse ${_name}.framework dependency: ${_line}")
         endif()
         set(_dependency "${CMAKE_MATCH_1}")
         list(FIND _arg_DEPENDENCIES "${_dependency}" _allowed)

@@ -301,6 +301,23 @@ expect_framework_rejection \
 	"MesaEGL.framework contains a forbidden GL/Vulkan dependency" \
 	MesaEGL "$TEST_ROOT/mesa-egl.c" "$GALLIUM" "$TEST_ROOT/nested-Vulkan.dylib"
 
+# A dependency is its whole path, which may contain spaces, not its first
+# word.
+for spaced in "@rpath/KosmicKrisp.framework/KosmicKrisp extra" \
+	"@rpath/MesaGallium.framework/MesaGallium extra"; do
+	xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=26.0 \
+		-dynamiclib "$TEST_ROOT/stub.c" -Wl,-install_name,"$spaced" \
+		-o "$TEST_ROOT/spaced-${spaced##*/}.dylib"
+done
+expect_framework_rejection \
+	"KosmicKrisp.framework dependency: @rpath/KosmicKrisp.framework/KosmicKrisp extra" \
+	KosmicKrisp "$TEST_ROOT/kosmickrisp.c" \
+	"$TEST_ROOT/spaced-KosmicKrisp extra.dylib"
+expect_framework_rejection \
+	"MesaEGL.framework dependency: @rpath/MesaGallium.framework/MesaGallium extra" \
+	MesaEGL "$TEST_ROOT/mesa-egl.c" "$GALLIUM" \
+	"$TEST_ROOT/spaced-MesaGallium extra.dylib"
+
 # Install names, load commands, and deployment targets.
 expect_framework_rejection "KosmicKrisp.framework has an invalid" \
 	KosmicKrisp "$TEST_ROOT/kosmickrisp.c" -Wl,-rpath,@loader_path
