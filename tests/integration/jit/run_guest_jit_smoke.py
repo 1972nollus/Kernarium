@@ -51,6 +51,9 @@ HWCAP2_FLAGM2 = 1 << 7
 HWCAP2_FRINT = 1 << 8
 HWCAP2_I8MM = 1 << 13
 HWCAP2_BF16 = 1 << 14
+HWCAP2_ECV = 1 << 19
+HWCAP2_CSSC = 1 << 34
+HWCAP2_MOPS = 1 << 43
 OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_AES", HWCAP_AES, "aes"),
     ("hw.optional.arm.FEAT_PMULL", HWCAP_PMULL, "pmull"),
@@ -61,6 +64,7 @@ OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_FP16", HWCAP_FPHP, "fphp"),
     ("hw.optional.arm.FEAT_FP16", HWCAP_ASIMDHP, "asimdhp"),
     ("hw.optional.arm.FEAT_RDM", HWCAP_ASIMDRDM, "asimdrdm"),
+    ("hw.optional.arm.FEAT_JSCVT", HWCAP_JSCVT, "jscvt"),
     ("hw.optional.arm.FEAT_FCMA", HWCAP_FCMA, "fcma"),
     ("hw.optional.arm.FEAT_LRCPC", HWCAP_LRCPC, "lrcpc"),
     ("hw.optional.arm.FEAT_SHA3", HWCAP_SHA3, "sha3"),
@@ -73,14 +77,12 @@ OPTIONAL_HWCAPS = (
     ("hw.optional.arm.FEAT_FlagM", HWCAP_FLAGM, "flagm"),
     ("hw.optional.arm.FEAT_SB", HWCAP_SB, "sb"),
 )
-PROBE_DEPENDENT_HWCAPS = (
-    ("hw.optional.arm.FEAT_JSCVT", HWCAP_JSCVT, "jscvt"),
-)
 OPTIONAL_HWCAPS2 = (
     ("hw.optional.arm.FEAT_FlagM2", HWCAP2_FLAGM2, "flagm2"),
     ("hw.optional.arm.FEAT_FRINTTS", HWCAP2_FRINT, "frint"),
     ("hw.optional.arm.FEAT_I8MM", HWCAP2_I8MM, "i8mm"),
     ("hw.optional.arm.FEAT_BF16", HWCAP2_BF16, "bf16"),
+    ("hw.optional.arm.FEAT_ECV", HWCAP2_ECV, "ecv"),
 )
 # arm64 Linux 6.18's name for every AT_HWCAP and AT_HWCAP2 bit, indexed by
 # bit: its hwcap_str table in arch/arm64/kernel/cpuinfo.c, which the guest
@@ -108,6 +110,8 @@ HWCAP2_NAMES = (
     "f8dp4", "f8dp2", "f8e4m3", "f8e5m2", "smelutv2", "smef8f16",
     "smef8f32", "smesf8fma", "smesf8dp4", "smesf8dp2", "poe",
 )
+# Advertised on every host.
+REQUIRED_HWCAPS2 = HWCAP2_CSSC | HWCAP2_MOPS
 # The lines of the block arm64 Linux's c_show() (arch/arm64/kernel/cpuinfo.c)
 # prints for a 64-bit task, up to each value. It prints a model name only to
 # a 32-bit task. A blank line ends every block.
@@ -362,18 +366,12 @@ def main() -> int:
             OPTIONAL_HWCAPS,
             HWCAP_FP | HWCAP_ASIMD | HWCAP_EVTSTRM | HWCAP_CPUID,
         )
-        probe_permitted = expected_hwcap(PROBE_DEPENDENT_HWCAPS)
-        if (
-            actual_hwcap is None
-            or (actual_hwcap & ~HWCAP_JSCVT) != expected
-            or (actual_hwcap & HWCAP_JSCVT & ~probe_permitted) != 0
-        ):
+        if actual_hwcap != expected:
             raise RuntimeError(
                 "AT_HWCAP mismatch: "
-                f"expected 0x{expected:x} with probe-dependent mask "
-                f"0x{probe_permitted:x}, got {actual_hwcap!r}"
+                f"expected 0x{expected:x}, got {actual_hwcap!r}"
             )
-        expected2 = expected_hwcap(OPTIONAL_HWCAPS2)
+        expected2 = expected_hwcap(OPTIONAL_HWCAPS2, REQUIRED_HWCAPS2)
         if actual_hwcap2 != expected2:
             raise RuntimeError(
                 "AT_HWCAP2 mismatch: "

@@ -12,7 +12,7 @@ namespace uml::cpu::arm64 {
 
 void JitCompiler::emit_translate(unsigned address, Access access,
                       Arm64Emitter::Label fallback, Arm64Emitter::Label fault,
-                      std::size_t bytes) {
+                      std::size_t bytes, bool bridge) {
     if (bytes > 1) {
       emitter_.ubfm(0, address, 0, page_shift - 1);
       emitter_.add_immediate(0, 0, static_cast<unsigned>(bytes - 1));
@@ -63,6 +63,7 @@ void JitCompiler::emit_translate(unsigned address, Access access,
         .fault = fault,
         .address = address,
         .access = access,
+        .bridge = bridge,
     });
   }
 
@@ -79,6 +80,10 @@ void JitCompiler::emit_translation_cold(const TranslationColdPath &path) {
     emitter_.branch(path.continuation);
     emitter_.bind(miss);
 #endif
+    if (!path.bridge) {
+      emitter_.branch(path.fault);
+      return;
+    }
     emitter_.move_x(0, 14);
     emitter_.move_x(1, path.address);
     emitter_.load_constant(

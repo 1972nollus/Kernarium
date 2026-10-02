@@ -53,6 +53,13 @@
 	.equ E_SB,		19
 	.equ E_DIT,		20
 	.equ E_AUXV,		21
+	.equ E_JSCVT_VALUE,	22
+	.equ E_JSCVT_NZCV,	23
+	.equ E_JSCVT_FPSR,	24
+	.equ JSCVT_CASES,	16
+	.equ E_ECV,		25
+	.equ E_CSSC,		26
+	.equ E_MOPS,		27
 
 	.equ AT_HWCAP,		16
 	.equ AT_HWCAP2,		26
@@ -75,6 +82,9 @@
 	.equ HWCAP_SB,		29
 	.equ HWCAP2_FLAGM2,	7
 	.equ HWCAP2_FRINT,	8
+	.equ HWCAP2_ECV,	19
+	.equ HWCAP2_CSSC,	34
+	.equ HWCAP2_MOPS,	43
 
 	/* The engine smoke accepts the payload only when it prints exactly "OK"
 	 * and exits zero, so a failure reports the family by name on stdout
@@ -232,6 +242,39 @@ _start:
 	fjcvtzs	w16, d24
 	cmn	w16, #2
 	b.ne	.Lfail_fjcvtzs
+
+	/* The special inputs, each from NZCV all set and FPSR clear. FJCVTZS
+	 * sets NZCV to 0:Z:0:0, where Z says the result is exact: FPToFixedJS
+	 * clears it for a NaN, an out-of-range or inexact value, and for any
+	 * zero but +0.0, including a subnormal that FPCR.FZ flushes. Some
+	 * cores, such as the M1, set Z for a flushed positive subnormal, and an
+	 * engine that forwards that is wrong. */
+	adrp	x15, jscvt_cases
+	add	x15, x15, :lo12:jscvt_cases
+	mov	x14, #JSCVT_CASES
+.Ljscvt_case:
+	ldp	x9, x10, [x15]
+	msr	fpcr, x10
+	msr	fpsr, xzr
+	mov	x11, #0xf0000000
+	msr	nzcv, x11
+	fmov	d24, x9
+	fjcvtzs	w16, d24
+	mrs	x11, nzcv
+	mrs	x12, fpsr
+	msr	fpcr, xzr
+	msr	fpsr, xzr
+	ldp	x9, x10, [x15, #16]
+	cmp	w16, w9
+	b.ne	.Lfail_jscvt_value
+	cmp	x11, x10
+	b.ne	.Lfail_jscvt_nzcv
+	ldr	x9, [x15, #32]
+	cmp	x12, x9
+	b.ne	.Lfail_jscvt_fpsr
+	add	x15, x15, #40
+	subs	x14, x14, #1
+	b.ne	.Ljscvt_case
 .Lskip_jscvt:
 
 	tbz	x29, #HWCAP2_FRINT, .Lskip_frint
@@ -376,6 +419,109 @@ _start:
 	msr	dit, #0
 .Lskip_dit:
 
+	tbz	x29, #HWCAP2_ECV, .Lskip_ecv
+	/* FEAT_ECV: CNTVCTSS_EL0 reads the same count as CNTVCT_EL0, so it
+	 * lies between two reads of that, and ID_AA64MMFR0_EL1.ECV, the field
+	 * Linux derives HWCAP2_ECV from, reads 1. */
+	isb
+	mrs	x23, cntvct_el0
+	isb
+	mrs	x24, s3_3_c14_c0_6	/* CNTVCTSS_EL0 */
+	isb
+	mrs	x25, cntvct_el0
+	cmp	x24, x23
+	b.lo	.Lfail_ecv
+	cmp	x25, x24
+	b.lo	.Lfail_ecv
+	mrs	x26, id_aa64mmfr0_el1
+	lsr	x26, x26, #60
+	cmp	x26, #1
+	b.ne	.Lfail_ecv
+.Lskip_ecv:
+
+	tbz	x29, #HWCAP2_CSSC, .Lskip_cssc
+	/* FEAT_CSSC: one form of each operation, and ID_AA64ISAR2_EL1.CSSC,
+	 * the field Linux derives HWCAP2_CSSC from, reads 1. The words are
+	 * spelled out for assemblers that predate the extension. */
+	mov	x23, #0x0100
+	movk	x23, #0x00f0, lsl #48	/* 0x00f0000000000100 */
+	mov	x25, #-5
+	.inst	0xdac01ef8		/* cnt x24, x23 */
+	cmp	x24, #5
+	b.ne	.Lfail_cssc
+	.inst	0xdac01af8		/* ctz x24, x23 */
+	cmp	x24, #8
+	b.ne	.Lfail_cssc
+	.inst	0xdac02338		/* abs x24, x25 */
+	cmp	x24, #5
+	b.ne	.Lfail_cssc
+	.inst	0x91c00f38		/* smax x24, x25, #3 */
+	cmp	x24, #3
+	b.ne	.Lfail_cssc
+	.inst	0x9ad76f38		/* umin x24, x25, x23 */
+	cmp	x24, x23
+	b.ne	.Lfail_cssc
+	mrs	x26, s3_0_c0_c6_2	/* ID_AA64ISAR2_EL1 */
+	ubfx	x26, x26, #52, #4
+	cmp	x26, #1
+	b.ne	.Lfail_cssc
+.Lskip_cssc:
+
+	tbz	x29, #HWCAP2_MOPS, .Lskip_mops
+	/* FEAT_MOPS: a CPY whose destination overlaps above its source, which
+	 * must copy as if backward, then a SET, each as the prologue, main and
+	 * epilogue a compiler emits; ID_AA64ISAR2_EL1.MOPS, the field Linux
+	 * derives HWCAP2_MOPS from, reads 1. The scratch bytes start as their
+	 * own offsets. */
+	adrp	x22, scratch
+	add	x22, x22, :lo12:scratch
+	mov	x23, #0
+1:	strb	w23, [x22, x23]
+	add	x23, x23, #1
+	cmp	x23, #64
+	b.ne	1b
+	add	x23, x22, #8		/* bytes 0-31 to 8-39 */
+	mov	x25, x22
+	mov	x24, #32
+	.inst	0x1d190717		/* cpyp [x23]!, [x25]!, x24! */
+	.inst	0x1d590717		/* cpym [x23]!, [x25]!, x24! */
+	.inst	0x1d990717		/* cpye [x23]!, [x25]!, x24! */
+	cbnz	x24, .Lfail_mops
+	add	x23, x22, #48		/* bytes 48-55 to 0xa5 */
+	mov	x24, #8
+	mov	x25, #0xa5
+	.inst	0x19d90717		/* setp [x23]!, x24!, x25 */
+	.inst	0x19d94717		/* setm [x23]!, x24!, x25 */
+	.inst	0x19d98717		/* sete [x23]!, x24!, x25 */
+	cbnz	x24, .Lfail_mops
+	add	x26, x22, #56
+	cmp	x23, x26
+	b.ne	.Lfail_mops
+	mov	x23, #0
+2:	ldrb	w24, [x22, x23]
+	mov	x25, x23		/* 0-7, 40-47 and 56-63 are untouched */
+	cmp	x23, #8
+	b.lo	3f
+	sub	x25, x23, #8		/* 8-39 hold 0-31 */
+	cmp	x23, #40
+	b.lo	3f
+	mov	x25, x23
+	cmp	x23, #48
+	b.lo	3f
+	mov	x26, #0xa5
+	cmp	x23, #56
+	csel	x25, x26, x25, lo
+3:	cmp	x24, x25
+	b.ne	.Lfail_mops
+	add	x23, x23, #1
+	cmp	x23, #64
+	b.ne	2b
+	mrs	x26, s3_0_c0_c6_2	/* ID_AA64ISAR2_EL1 */
+	ubfx	x26, x26, #16, #4
+	cmp	x26, #1
+	b.ne	.Lfail_mops
+.Lskip_mops:
+
 	adrp	x1, success_message
 	add	x1, x1, :lo12:success_message
 	mov	x0, #1
@@ -405,6 +551,12 @@ _start:
 .Lfail_uscat:		fail E_USCAT, msg_uscat
 .Lfail_dit:		fail E_DIT, msg_dit
 .Lfail_auxv:		fail E_AUXV, msg_auxv
+.Lfail_jscvt_value:	fail E_JSCVT_VALUE, msg_jscvt_value
+.Lfail_jscvt_nzcv:	fail E_JSCVT_NZCV, msg_jscvt_nzcv
+.Lfail_jscvt_fpsr:	fail E_JSCVT_FPSR, msg_jscvt_fpsr
+.Lfail_ecv:		fail E_ECV, msg_ecv
+.Lfail_cssc:		fail E_CSSC, msg_cssc
+.Lfail_mops:		fail E_MOPS, msg_mops
 
 .Lexit:
 	mov	x8, #NR_EXIT_GROUP
@@ -429,6 +581,31 @@ rdm_input:
 	.hword 0x4000, 0, 0, 0
 jscvt_input:
 	.double -2.5
+	/* input, FPCR, result, NZCV, FPSR; FZ is FPCR bit 24, and the FPSR
+	 * flags are IOC 0x01, IXC 0x10 and IDC 0x80. Derived from the Arm ARM's
+	 * FPToFixedJS and FPUnpack. */
+	.equ FZ, 1 << 24
+	.equ JSCVT_Z, 0x40000000
+jscvt_cases:
+	.quad 0x0000000000000001, FZ, 0, 0, 0x80		/* +subnormal, flushed */
+	.quad 0x000fffffffffffff, FZ, 0, 0, 0x80		/* largest +subnormal */
+	.quad 0x8000000000000001, FZ, 0, 0, 0x80		/* -subnormal, flushed */
+	.quad 0x0000000000000001, 0, 0, 0, 0x10		/* +subnormal, inexact */
+	.quad 0x8000000000000001, 0, 0, 0, 0x10		/* -subnormal, inexact */
+	.quad 0x0000000000000000, FZ, 0, JSCVT_Z, 0		/* +0.0 is exact */
+	.quad 0x8000000000000000, FZ, 0, 0, 0		/* -0.0 is not */
+	.quad 0x7ff8000000000000, FZ, 0, 0, 0x01		/* quiet NaN */
+	.quad 0x7ff4000000000000, FZ, 0, 0, 0x01		/* signalling NaN */
+	.quad 0x7ff0000000000000, FZ, 0, 0, 0x01		/* +infinity */
+	.quad 0xfff0000000000000, FZ, 0, 0, 0x01		/* -infinity */
+	.quad 0x41e0000000000000, FZ, 0x80000000, 0, 0x01	/* 2^31 overflows */
+	.quad 0xc1e0000000000000, FZ, 0x80000000, JSCVT_Z, 0	/* -2^31 fits */
+	.quad 0xc1e0000000200000, FZ, 0x7fffffff, 0, 0x01	/* -2^31 - 1 */
+	.quad 0x41f0000000500000, FZ, 5, 0, 0x01		/* 2^32 + 5 wraps */
+	.quad 0x4014000000000000, FZ, 5, JSCVT_Z, 0		/* 5.0 */
+	.if (. - jscvt_cases) != JSCVT_CASES * 40
+	.error "JSCVT_CASES does not count jscvt_cases"
+	.endif
 frint_input:
 	.double 2.7
 frint_expected:
@@ -483,6 +660,18 @@ msg_dit:
 	.ascii "FAIL dit        \n"
 msg_auxv:
 	.ascii "FAIL auxv       \n"
+msg_jscvt_value:
+	.ascii "FAIL jscvt value\n"
+msg_jscvt_nzcv:
+	.ascii "FAIL jscvt nzcv \n"
+msg_jscvt_fpsr:
+	.ascii "FAIL jscvt fpsr \n"
+msg_ecv:
+	.ascii "FAIL ecv        \n"
+msg_cssc:
+	.ascii "FAIL cssc       \n"
+msg_mops:
+	.ascii "FAIL mops       \n"
 success_message:
 	.ascii "OK\n"
 

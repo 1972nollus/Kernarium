@@ -41,6 +41,9 @@ constexpr unsigned long hwcap2_flagm2 = 1UL << 7;
 constexpr unsigned long hwcap2_frint = 1UL << 8;
 constexpr unsigned long hwcap2_i8mm = 1UL << 13;
 constexpr unsigned long hwcap2_bf16 = 1UL << 14;
+constexpr unsigned long hwcap2_ecv = 1UL << 19;
+constexpr unsigned long hwcap2_cssc = 1UL << 34;
+constexpr unsigned long hwcap2_mops = 1UL << 43;
 [[nodiscard]] unsigned long virtual_hwcap() noexcept
 {
 	const auto &host = ::uml::platform::apple::probed_host_capabilities();
@@ -95,12 +98,14 @@ constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 	/* FMLAL/FMLSL. */
 	if (host.has(::uml::platform::ArmFeature::fhm))
 		result |= hwcap_asimdfhm;
-	/* FJCVTZS. The host probe additionally verifies that this core raises the
-	 * subnormal flags the architecture requires; without that the engines
-	 * decline the native encoding, so the guest must not be told it exists.
+	/* FJCVTZS. Some cores, such as the M1, set Z for a subnormal input that
+	 * FPCR.FZ flushes, where the architecture clears it. The host probe
+	 * `jscvt_subnormal_flags_correct` finds them, and both engines then
+	 * correct the flags: the JIT after the native instruction, the gadget
+	 * bank by taking its software path whenever FPCR.FZ is set. The
+	 * instruction is therefore correct on every host that has it.
 	 */
-	if (host.has(::uml::platform::ArmFeature::jscvt) &&
-	    host.jscvt_subnormal_flags_correct)
+	if (host.has(::uml::platform::ArmFeature::jscvt))
 		result |= hwcap_jscvt;
 	/* FCADD/FCMLA. The gadget bank carries a dedicated complex family
 	 * (`floating_complex_vector`, selected through `floating_complex_gadget`)
@@ -168,7 +173,13 @@ extern "C" unsigned long darwin_uml_guest_hwcap2(void)
 	 * executing, on the identical host predicate the native paths use.
 	 */
 	const auto &host = ::uml::platform::apple::probed_host_capabilities();
-	unsigned long result = 0;
+	/* ABS, CNT, CTZ and the integer minimum and maximum, which both engines
+	 * execute on every host: natively where the host has FEAT_CSSC, and
+	 * otherwise as short sequences of base instructions. */
+	unsigned long result = hwcap2_cssc;
+	/* CPY, CPYF and SET, which both engines execute on every host through
+	 * one host memmove or memset per page region. */
+	result |= hwcap2_mops;
 	/* SMMLA/UMMLA/USMMLA, reaching the native matrix emitters in both
 	 * engines. */
 	if (host.has(::uml::platform::ArmFeature::i8mm))
@@ -183,6 +194,10 @@ extern "C" unsigned long darwin_uml_guest_hwcap2(void)
 	 * floating-point condition-flag encodings. */
 	if (host.has(::uml::platform::ArmFeature::flag_m2))
 		result |= hwcap2_flagm2;
+	/* CNTVCTSS_EL0, which both engines read with the host's own
+	 * instruction, so only a host with FEAT_ECV can offer it. */
+	if (host.has(::uml::platform::ArmFeature::ecv))
+		result |= hwcap2_ecv;
 	return result;
 }
 

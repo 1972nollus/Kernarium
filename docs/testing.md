@@ -529,6 +529,16 @@ not exhaustive variant proof.
 [`a64-instruction-coverage.md`](a64-instruction-coverage.md) owns the
 inventory tables and that completeness boundary.
 
+A gadget that runs an instruction as the host's own, such as FEAT_ECV,
+FEAT_I8MM, FEAT_BF16, or FEAT_FHM on the iPad's A15, runs that path only on a
+host with the feature, and the M1 has none of the first three. Check a change
+to such a path on the iPad by hand: launch Kernarium on the device with the
+`guest-hwcap-sanity` payload, which executes every family the guest
+advertises, and with the corpus cases of the touched families built into one
+static guest program, and require the same results as a gadget-engine run of
+both programs on a Mac. The device runs only the gadget engine, so a JIT path
+that needs one of these features has no available host.
+
 ## x86 instruction conformance
 
 The 4 KiB x86 gadget backend uses both handwritten x86-64 and i386 ASM suites
