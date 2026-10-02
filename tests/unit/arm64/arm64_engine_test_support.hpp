@@ -178,21 +178,6 @@ struct EngineTestCounts final {
   std::size_t jit_unavailable{};
 };
 
-struct EngineHarnessOptions final {
-  /* These switches alter only the gadget translation choice. The JIT still
-   * runs in sequence, so portable gadget paths use the same case definition
-   * as the ordinary two-engine run.
-   */
-  bool force_software_checksum{};
-  bool force_software_flags{};
-  bool force_software_sha3{};
-  bool force_software_fixed_transforms{};
-  bool force_software_aes{};
-  bool force_software_pmull{};
-  bool force_software_dotprod{};
-  bool force_software_i8mm{};
-};
-
 [[nodiscard]] bool host_supports(NativeRequirements requirements) noexcept;
 
 void require_architecture_equal(
@@ -207,12 +192,11 @@ void require_architecture_equal(
  * the JIT. Every result must match the case's expected architectural state,
  * terminal event, memory, and retired count. The instruction corpus
  * (tests/unit/arm64/corpus/README.md) owns ordinary A64 behavior; this harness
- * serves focused tests that need engine hooks, host-private entry state, or
- * engine options.
+ * serves focused tests that need engine hooks or host-private entry state.
  */
 class EngineHarness final {
 public:
-  explicit EngineHarness(EngineHarnessOptions options = {});
+  EngineHarness();
   ~EngineHarness();
 
   EngineHarness(const EngineHarness &) = delete;
