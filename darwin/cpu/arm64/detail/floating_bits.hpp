@@ -73,8 +73,9 @@ template<Encoding Integer>
 		(value & fraction_mask<Integer>) != 0U;
 }
 
-/* FPDefaultNaN. The virtual CPU omits FEAT_AFP, so FPCR.AH is RES0 and the
- * sign is clear. */
+/* FPDefaultNaN with FPCR.AH clear. The software models that use it stand in
+ * for host features that implements_afp() requires, so they never run where
+ * the guest can set AH, and the sign is clear. */
 template<Encoding Integer>
 [[nodiscard]] constexpr Integer default_nan() noexcept
 {

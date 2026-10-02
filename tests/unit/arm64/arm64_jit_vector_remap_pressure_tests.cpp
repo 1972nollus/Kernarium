@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "arm64_jit_vector_remap_test_support.hpp"
+#include "cpu/arm64/floating_controls.hpp"
 #include "platform/apple/host_features.hpp"
 
 namespace {
@@ -679,24 +680,53 @@ void destination_live_ins_are_translation_time_exact() {
   require_vector_live_ins(
       "scalar reciprocal step", 0x5e20'fc00U | fields, 2U);
 
-  // FPCR.NEP is RES0, so no scalar form merges into its old destination.
-  constexpr std::size_t scalar_destination_live_ins = 1U;
-  require_vector_live_ins(
-      "scalar FSQRT", 0x1e21'c000U | unary_fields,
-      scalar_destination_live_ins);
-  require_vector_live_ins(
-      "scalar FRINTN", 0x1e24'4000U | unary_fields,
-      scalar_destination_live_ins);
-  require_vector_live_ins(
-      "scalar FABS", 0x1e20'c000U | unary_fields,
-      scalar_destination_live_ins);
-  require_vector_live_ins(
-      "scalar precision conversion",
-      0x1e22'4000U | (1U << 15U) | unary_fields,
-      scalar_destination_live_ins);
-  require_vector_live_ins(
-      "scalar reciprocal estimate", 0x5ea1'd800U | unary_fields,
-      scalar_destination_live_ins);
+  /*
+   * These scalar forms merge into their old destination under FPCR.NEP, so
+   * they import Rd exactly where the virtual CPU implements FEAT_AFP. The
+   * profile is assumed, not probed: translation alone never runs it.
+   */
+  for (const bool afp : {false, true}) {
+    auto host = ::uml::platform::apple::probed_host_capabilities();
+    host.supported.reset(static_cast<std::size_t>(::uml::cpu::ArmFeature::afp));
+    if (afp)
+      for (const auto feature :
+           {::uml::cpu::ArmFeature::afp, ::uml::cpu::ArmFeature::fp16,
+            ::uml::cpu::ArmFeature::fhm, ::uml::cpu::ArmFeature::bf16,
+            ::uml::cpu::ArmFeature::frintts, ::uml::cpu::ArmFeature::fcma,
+            ::uml::cpu::ArmFeature::jscvt})
+        host.supported.set(static_cast<std::size_t>(feature));
+    require(::uml::cpu::arm64::implements_afp(host) == afp,
+            "assumed FEAT_AFP profile does not select the twins");
+    const ::uml::cpu::HostCapabilitiesScope scope{host};
+    const std::size_t scalar_destination_live_ins = afp ? 2U : 1U;
+    require_vector_live_ins(
+        "scalar FSQRT", 0x1e21'c000U | unary_fields,
+        scalar_destination_live_ins);
+    require_vector_live_ins(
+        "scalar FRINTN", 0x1e24'4000U | unary_fields,
+        scalar_destination_live_ins);
+    require_vector_live_ins(
+        "scalar FABS", 0x1e20'c000U | unary_fields,
+        scalar_destination_live_ins);
+    require_vector_live_ins(
+        "scalar precision conversion",
+        0x1e22'4000U | (1U << 15U) | unary_fields,
+        scalar_destination_live_ins);
+    require_vector_live_ins(
+        "scalar reciprocal estimate", 0x5ea1'd800U | unary_fields,
+        scalar_destination_live_ins);
+    require_vector_live_ins(
+        "scalar integer conversion", 0x5e21'd800U | unary_fields,
+        scalar_destination_live_ins);
+    require_vector_live_ins(
+        "scalar conversion from a general register",
+        0x1e22'0000U | unary_fields, scalar_destination_live_ins - 1U);
+    /* Merging into a source needs no extra import: sources are whole. */
+    require_vector_live_ins(
+        "scalar FADD", 0x1e20'0800U | (2U << 12U) | fields, 2U);
+    require_vector_live_ins(
+        "scalar FMADD", 0x1f00'0000U | (3U << 10U) | fields, 3U);
+  }
 
   require_vector_live_ins(
       "vector horizontal binary", 0x6e20'd400U | fields, 2U);
