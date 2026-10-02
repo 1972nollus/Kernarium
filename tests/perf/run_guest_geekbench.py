@@ -13,7 +13,8 @@ import sys
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "integration" / "support"))
-from guest import CORE_CLASSES, Guest, GuestFile  # noqa: E402
+from guest import Guest, GuestFile  # noqa: E402
+from guest_bench import add_guest_arguments  # noqa: E402
 
 
 # The workload script Kernarium runs as well; it prints the run's markers.
@@ -25,8 +26,7 @@ WORKLOAD_LIST = re.compile(r"[0-9]+(?:,[0-9]+)*")
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--emulator", required=True, type=pathlib.Path)
-    parser.add_argument("--rootfs", required=True, type=pathlib.Path)
+    add_guest_arguments(parser, cpus=10, memory="8G")
     parser.add_argument("--console-log", required=True, type=pathlib.Path)
     parser.add_argument(
         "--workloads",
@@ -45,22 +45,6 @@ def parse_arguments() -> argparse.Namespace:
             "append one extra guest kernel argument; repeatable. Isolating a "
             "kernel policy that the config turns on by default, such as "
             "'psi=0', needs a matched pair of runs that differ only here"
-        ),
-    )
-    parser.add_argument("--memory", default="8G")
-    parser.add_argument("--cpus", type=int, default=10)
-    parser.add_argument(
-        "--engine",
-        choices=("jit", "gadgets"),
-        default="jit",
-    )
-    parser.add_argument(
-        "--core-class",
-        choices=CORE_CLASSES,
-        default="performance",
-        help=(
-            "host core class to measure on; 'efficiency' clamps the emulator "
-            "to background QoS so it runs on the E-cores that dominate iOS"
         ),
     )
     parser.add_argument("--timeout", type=int, default=7200)

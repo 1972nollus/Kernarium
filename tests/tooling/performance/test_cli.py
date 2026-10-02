@@ -502,7 +502,7 @@ def verify_timed_sessions() -> None:
             mock.call(emulator, rootfs, "1024M", "tmpfs", ("ncpus=1",),
                       init_shell=False, overlay_shell=True, engine="jit",
                       core_class="performance", payloads={}),
-            [("boot_and_login",),
+            [("boot_and_login", 180),
              (*sample, "DIR/profile-1.txt"), *timed("uname -m"), ("reap",),
              (*sample, "DIR/profile-2.txt"), *timed("uname -m"), ("reap",),
              ("shutdown", 60)],
