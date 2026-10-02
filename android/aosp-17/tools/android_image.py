@@ -99,14 +99,8 @@ def parse_boot_image(
     if ramdisk_offset + ramdisk_size > container_offset + container_size:
         raise error("boot image ramdisk exceeds its container")
     return BootImage(
-        container_offset,
-        container_size,
-        header_version,
-        header_size,
-        kernel_size,
-        ramdisk_offset,
-        ramdisk_size,
-        signature_size,
+        container_offset, container_size, header_version, header_size,
+        kernel_size, ramdisk_offset, ramdisk_size, signature_size,
     )
 
 
@@ -127,8 +121,7 @@ def partition_range(
     if not isinstance(partitions, list):
         raise error("partition layout inventory is invalid")
     matches = [
-        entry
-        for entry in partitions
+        entry for entry in partitions
         if isinstance(entry, dict) and entry.get("name") == name
     ]
     if len(matches) != 1:
@@ -136,12 +129,8 @@ def partition_range(
     start = matches[0].get("start_bytes")
     size = matches[0].get("size_bytes")
     if (
-        isinstance(start, bool)
-        or not isinstance(start, int)
-        or isinstance(size, bool)
-        or not isinstance(size, int)
-        or start < 0
-        or size <= 0
+        isinstance(start, bool) or not isinstance(start, int) or start < 0
+        or isinstance(size, bool) or not isinstance(size, int) or size <= 0
         or start + size > disk_size
     ):
         raise error(f"partition range is invalid: {name}")
@@ -260,8 +249,7 @@ def parse_newc(
         source.seek(align4(source.tell()))
         previous = entries.get(name)
         if previous is not None and not (
-            stat.S_ISDIR(previous.mode)
-            and stat.S_ISDIR(mode)
+            stat.S_ISDIR(previous.mode) and stat.S_ISDIR(mode)
             and stat.S_IMODE(previous.mode) == stat.S_IMODE(mode)
             and previous.size == file_size == 0
         ):
@@ -284,16 +272,9 @@ def program_headers(payload: bytes) -> list[Segment]:
     entry_size, entry_count = struct.unpack_from("<HH", payload, 54)
     segments = []
     for index in range(entry_count):
-        (
-            kind,
-            _flags,
-            offset,
-            address,
-            _physical_address,
-            file_size,
-            _memory_size,
-            alignment,
-        ) = struct.unpack_from("<IIQQQQQQ", payload, program_offset + index * entry_size)
+        kind, _, offset, address, _, file_size, _, alignment = struct.unpack_from(
+            "<IIQQQQQQ", payload, program_offset + index * entry_size
+        )
         segments.append(Segment(kind, offset, address, file_size, alignment))
     return segments
 

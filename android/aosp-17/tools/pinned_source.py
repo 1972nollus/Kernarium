@@ -41,15 +41,8 @@ HEX40 = re.compile(r"[0-9a-f]{40}")
 UNSAFE_PARTS = frozenset(("", ".", "..", ".git", ".repo"))
 Error = Callable[[str], Exception]
 AOSP_ROUTE_HEADER = (
-    "order",
-    "route_id",
-    "manifest_project",
-    "checkout_path",
-    "manifest_revision",
-    "base_commit",
-    "base_tree",
-    "final_tree",
-    "series_dir",
+    "order", "route_id", "manifest_project", "checkout_path",
+    "manifest_revision", "base_commit", "base_tree", "final_tree", "series_dir",
 )
 ROUTE_ID = re.compile(r"p[0-9]{4}")
 DIRTY_PROJECTS = 'if test -n "$(git status --porcelain)"; then printf "%s\\n" "$REPO_PATH"; fi'
@@ -185,15 +178,8 @@ def read_route_table(
     routes: list[Route] = []
     for index, values in enumerate(table(path, header, error), 1):
         (
-            order_text,
-            route_id,
-            project,
-            checkout_path,
-            upstream,
-            base_commit,
-            base_tree,
-            final_tree,
-            series_dir_text,
+            order_text, route_id, project, checkout_path, upstream,
+            base_commit, base_tree, final_tree, series_dir_text,
         ) = values
         if order_text != str(index):
             raise error("project route order is not contiguous")
@@ -206,23 +192,14 @@ def read_route_table(
         if series_dir_text != expected_series_dir:
             raise error(f"route {route_id} series must be isolated at {expected_series_dir}")
         for label, value in (
-            ("base commit", base_commit),
-            ("base tree", base_tree),
-            ("final tree", final_tree),
+            ("base commit", base_commit), ("base tree", base_tree), ("final tree", final_tree)
         ):
             if not HEX40.fullmatch(value):
                 raise error(f"route {route_id} has invalid {label}")
         read_generated_series(android_root / series_dir_text, f"route {route_id}", error)
         routes.append(Route(
-            index,
-            route_id,
-            project,
-            checkout_path,
-            upstream,
-            base_commit,
-            base_tree,
-            final_tree,
-            android_root / series_dir_text,
+            index, route_id, project, checkout_path, upstream,
+            base_commit, base_tree, final_tree, android_root / series_dir_text,
         ))
     if len({route.route_id for route in routes}) != len(routes):
         raise error("project route IDs are not unique")
@@ -267,9 +244,8 @@ def verify_repo_routes(
         raise error("current Repo project paths differ from the resolved base manifest")
     route_paths = {route.path for route in routes}
     for path, base in base_projects.items():
-        if path not in route_paths and current_projects[path].get("revision") != base.get(
-            "revision"
-        ):
+        moved = current_projects[path].get("revision") != base.get("revision")
+        if path not in route_paths and moved:
             raise error(f"unrouted {label} project moved from its pinned revision: {path}")
     dirty = run("repo", "forall", "-c", DIRTY_PROJECTS, cwd=source, error=error)
     if dirty:
@@ -294,9 +270,7 @@ def verify_repo_routes(
         if tree != route.final_tree:
             raise error(f"route {route.route_id} tree is {tree}, expected {route.final_tree}")
         ancestor = subprocess.run(
-            ("git", "merge-base", "--is-ancestor", route.base_commit, "HEAD"),
-            cwd=checkout,
-            check=False,
+            ("git", "merge-base", "--is-ancestor", route.base_commit, "HEAD"), cwd=checkout
         )
         if ancestor.returncode != 0:
             raise error(f"route {route.route_id} is not based on its pinned base")
@@ -310,16 +284,8 @@ def verify_device_tree(
     if not tool.is_file():
         raise error("device-tree sync tool is missing")
     run(
-        str(tool),
-        "--android-root",
-        str(android_root),
-        "--tree",
-        tree,
-        "--workspace",
-        str(workspace.resolve()),
-        "--verify",
-        *options,
-        error=error,
+        str(tool), "--android-root", str(android_root), "--tree", tree,
+        "--workspace", str(workspace.resolve()), "--verify", *options, error=error,
     )
 
 
