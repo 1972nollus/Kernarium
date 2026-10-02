@@ -29,6 +29,23 @@ SIMPLE_CONSTRAINT = re.compile(r"(!=|==) ([01x]+)\Z")
 FEATURE_EXPRESSION = re.compile(
     r"FEAT_[A-Za-z0-9_]+(?: (?:&&|\|\|) FEAT_[A-Za-z0-9_]+)*\Z"
 )
+UNDEF_GUARD = re.compile(r"if (.+) then EndOfDecode\(Decode_UNDEF\); end;\Z")
+GUARD_FEATURE = re.compile(r"!IsFeatureImplemented\((FEAT_[A-Za-z0-9_]+)\)\Z")
+GUARD_FIELD = re.compile(r"([A-Za-z][A-Za-z0-9_]*) (==|!=) '([01x]+)'\Z")
+# Decode statements the pinned XML transcribes wrongly, as (wrong, right).
+# FCMLA (by element) guards FEAT_FP16 on size == '10', the single-precision
+# arrangement by the file's own <Ts> table. DDI 0487G.a C7.2.62 decodes it
+# as "esize = 8 << UInt(size); if !HaveFP16Ext() && esize == 16 then
+# UNDEFINED;", which is size == '01', the half-precision arrangement, as in
+# FCMLA (vector) and FCADD.
+DECODE_ERRATA = {
+    "fcmla_advsimd_elt.xml": (
+        "if !IsFeatureImplemented(FEAT_FP16) && size == '10' then "
+        "EndOfDecode(Decode_UNDEF); end;",
+        "if !IsFeatureImplemented(FEAT_FP16) && size == '01' then "
+        "EndOfDecode(Decode_UNDEF); end;",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -70,11 +87,20 @@ class ArchitectureVariant:
     constraints: tuple[FieldConstraint, ...]
     feature_expressions: tuple[str, ...]
     fields: tuple[tuple[str, int, int], ...]
+    feature_guards: tuple[tuple[str, tuple[FieldConstraint, ...]], ...]
 
     def matches(self, word: int) -> bool:
         return word & self.mask == self.value and all(
             constraint.matches(word) for constraint in self.constraints
         )
+
+    def guarded_features(self, word: int) -> list[str]:
+        """Return the decode-guard features this word's field values select."""
+        return [
+            feature
+            for feature, conditions in self.feature_guards
+            if all(condition.matches(word) for condition in conditions)
+        ]
 
 
 @dataclass(frozen=True)
@@ -296,6 +322,65 @@ def _matching_table_features(
     return result
 
 
+def _decode_feature_guards(
+    filename: str,
+    instruction_class: ET.Element,
+    fields: dict[str, tuple[int, int]],
+) -> tuple[tuple[str, tuple[FieldConstraint, ...]], ...]:
+    """Return field-conditional feature requirements from the decode ASL.
+
+    Some encodings need an extra feature only for certain field values, and
+    the XML records that only in a top-level decode statement such as
+    ``if size == '01' && !IsFeatureImplemented(FEAT_FP16) then
+    EndOfDecode(Decode_UNDEF); end;`` (the half-precision FCADD and FCMLA
+    arrangements).  Each such statement whose condition is a conjunction of
+    field comparisons and exactly one negated feature test yields that
+    feature and its field conditions.  Top-level unconditional guards only
+    repeat the declared features.  Statements nested in a case arm, which
+    also depend on their selector, and other shapes (IN sets, disjunctions)
+    are not read.  DECODE_ERRATA corrects statements the XML gets wrong.
+    """
+    text = "\n".join(
+        "".join(element.itertext())
+        for element in instruction_class.findall(
+            ".//pstext[@section='Decode']"
+        )
+    )
+    if filename in DECODE_ERRATA:
+        wrong, right = DECODE_ERRATA[filename]
+        if text.count(wrong) != 1:
+            raise ValueError(f"{filename}: decode erratum no longer applies")
+        text = text.replace(wrong, right)
+    result: list[tuple[str, tuple[FieldConstraint, ...]]] = []
+    for line in text.splitlines():
+        statement = UNDEF_GUARD.fullmatch(line)
+        if statement is None:
+            continue
+        features: list[str] = []
+        conditions: list[FieldConstraint] = []
+        for atom in statement.group(1).split(" && "):
+            feature = GUARD_FEATURE.fullmatch(atom)
+            field = GUARD_FIELD.fullmatch(atom)
+            if feature is not None:
+                features.append(feature.group(1))
+            elif field is not None:
+                name, operator, pattern = field.groups()
+                if name not in fields:
+                    raise ValueError(
+                        f"decode guard {line!r} names unknown field {name!r}"
+                    )
+                low, width = fields[name]
+                conditions.append(
+                    FieldConstraint(name, low, width, f"{operator} {pattern}")
+                )
+            else:
+                break
+        else:
+            if len(features) == 1 and conditions:
+                result.append((features[0], tuple(conditions)))
+    return tuple(result)
+
+
 class ArchitectureCatalog:
     """Validated index and instruction forms from the pinned Arm XML release."""
 
@@ -331,6 +416,11 @@ class ArchitectureCatalog:
                     heading,
                     filename,
                 )
+        self._forms_by_file = {
+            filename: key for key, filename in self._files.items()
+        }
+        if len(self._forms_by_file) != len(self._files):
+            raise ValueError("Arm XML indexes name a form file twice")
 
     @property
     def stable_forms(self) -> dict[str, tuple[str, str, str]]:
@@ -417,22 +507,60 @@ class ArchitectureCatalog:
                             for name, (low, width) in all_fields.items()
                         )
                     ),
+                    feature_guards=_decode_feature_guards(
+                        filename, instruction_class, all_fields
+                    ),
                 )
                 if not variant.encoding:
                     raise ValueError(f"{filename}: encoding has no name")
                 result.append(variant)
         return result
 
+    def _alias_operation_features(
+        self, root: ET.Element, word: int
+    ) -> list[str]:
+        """Return the features an alias's operation table gives this word.
+
+        SYS and SYSP pass their operation to an implementation-defined
+        dispatcher, and the XML records which operations exist, and under
+        which features, only in the operation tables of their aliases (AT,
+        BRB, DC, TLBI and TLBIP).  A word that names such an operation needs
+        those features: SYSP with TLBIP RVAE1OSNXS's operands needs
+        FEAT_D128 || FEAT_TLBID as well as FEAT_SYSINSTR128.  An alias's own
+        declared features are not inherited, because a base form can give
+        them an architected NOP fallback, as HINT does for BTI.
+        """
+        result: list[str] = []
+        for reference in root.findall("./alias_list/aliasref"):
+            alias_file = reference.get("aliasfile", "")
+            alias_form = self._forms_by_file.get(alias_file)
+            if alias_form is None:
+                raise ValueError(f"alias file {alias_file!r} is not indexed")
+            alias_root = self._tree(alias_file)
+            for alias in self.all_variants(*alias_form):
+                if alias.matches(word):
+                    result += _matching_table_features(
+                        alias_root,
+                        {name: (low, width) for name, low, width in alias.fields},
+                        word,
+                    )
+        return result
+
     def variants(self, section: str, form: str, word: int) -> list[ArchitectureVariant]:
         result: list[ArchitectureVariant] = []
         root = self._tree(self._files[(section, form)])
+        operation_features = self._alias_operation_features(root, word)
         for variant in self.all_variants(section, form):
             if not variant.matches(word):
                 continue
-            dynamic = _matching_table_features(
-                root,
-                {name: (low, width) for name, low, width in variant.fields},
-                word,
+            dynamic = (
+                _matching_table_features(
+                    root,
+                    {name: (low, width) for name, low, width in variant.fields},
+                    word,
+                )
+                + variant.guarded_features(word)
+                + operation_features
             )
             result.append(
                 replace(
