@@ -270,7 +270,7 @@ gadget floating_round_sized_software
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
-	bl NAME(uml_arm64_floating_round_sized_software)
+	helper_call uml_arm64_floating_round_sized_software
 	ldp x1, x2, [sp], #16
 	/* Merge any host IDC/other status raised while classifying operands with
 	 * the explicit IOC/IXC produced by the bounded reference helper. */
@@ -440,7 +440,7 @@ gadget bfloat_convert_software
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
-	bl NAME(uml_arm64_bfloat_conversion_software)
+	helper_call uml_arm64_bfloat_conversion_software
 	ldp x1, x2, [sp], #16
 	mrs x17, fpsr
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
@@ -486,7 +486,7 @@ gadget bfloat_dot_software
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
-	bl NAME(uml_arm64_bfloat_dot_software)
+	helper_call uml_arm64_bfloat_dot_software
 	ldp x1, x2, [sp], #16
 	next_gadget
 
@@ -512,7 +512,7 @@ gadget bfloat_matrix_software
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
-	bl NAME(uml_arm64_bfloat_matrix_software)
+	helper_call uml_arm64_bfloat_matrix_software
 	ldp x1, x2, [sp], #16
 	next_gadget
 
@@ -623,7 +623,7 @@ gadget bfloat_multiply_long_software
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov x1, x8
-	bl NAME(uml_arm64_bfloat_multiply_long_software)
+	helper_call uml_arm64_bfloat_multiply_long_software
 	ldp x1, x2, [sp], #16
 	mrs x17, fpsr
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
@@ -1398,7 +1398,7 @@ gadget \name
 	mov w1, #\source_bits
 	mov w2, #\destination_bits
 	mov w3, w16
-	bl NAME(uml_arm64_convert_floating_precision)
+	helper_call uml_arm64_convert_floating_precision
 	mov x14, x0
 	mov x15, x1
 	mov x1, x19
@@ -2098,17 +2098,6 @@ afp_twins_end
 
 .purgem floating_fused
 
-/* Unreachable padding where the ordinary vector FMLA/FMLS entries (4h, 8h,
- * 2s, 4s and 2d of each) and their seven forwarding variants each were:
- * FMLA/FMLS accumulate into Vd, so every one takes the in-place family,
- * which bakes Vd. */
-.rept 10
-removed_gadget 64
-.endr
-.rept 70
-removed_vector_forward_gadget 64
-.endr
-
 /* Translation-specialized vector FABS/FNEG. Valid guest programs execute with
  * no opcode, precision, or Q decode branches. */
 /* Only FPCR.AH changes these, so the base entries need no guest FP
@@ -2367,7 +2356,7 @@ gadget simd_rdm_software
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
 	mov w1, w8
-	bl NAME(uml_arm64_simd_rdm_software)
+	helper_call uml_arm64_simd_rdm_software
 	ldp x1, x2, [sp], #16
 	cbz w0, NAME(uml_arm64_gadget_illegal)
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
@@ -3152,7 +3141,7 @@ gadget \name\()_soft
 	mov x0, x1
 	mov x1, x8
 	mov x2, x9
-	bl NAME(uml_arm64_\name\()_software)
+	helper_call uml_arm64_\name\()_software
 	ldp x1, x2, [sp], #16
 	next_gadget
 .endm
@@ -3229,7 +3218,7 @@ gadget \name\()_soft
 	mov x1, x8
 	mov x2, x9
 	mov x3, x10
-	bl NAME(uml_arm64_\name\()_software)
+	helper_call uml_arm64_\name\()_software
 	ldp x1, x2, [sp], #16
 	next_gadget
 .endm
@@ -3255,7 +3244,7 @@ gadget \name\()_soft
 	mov x0, x1
 	mov x1, x8
 	mov x2, x9
-	bl NAME(uml_arm64_\name\()_software)
+	helper_call uml_arm64_\name\()_software
 	ldp x1, x2, [sp], #16
 	next_gadget
 .endm
@@ -3436,7 +3425,7 @@ gadget \name
 	mov x0, x1
 	mov x1, x8
 	mov w2, #\high
-	bl NAME(uml_arm64_simd_pmull_software)
+	helper_call uml_arm64_simd_pmull_software
 	ldp x1, x2, [sp], #16
 	next_gadget
 .endm

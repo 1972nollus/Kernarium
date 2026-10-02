@@ -23,9 +23,6 @@ gadget breakpoint
 	mov w0, #UML_GADGET_EVENT_BREAKPOINT
 	b uml_arm64_gadget_leave
 
-/* Unreachable padding where the FEAT_GCS fault exit was. */
-removed_gadget 32
-
 /* A BlockLink contains {stream, instruction_count, guest_pc}. An unlinked
  * target points at the one-word {link_exit} stream in front of it, so the hot
  * path needs no linked/unlinked test. Resolved edges defer the architectural PC store
@@ -55,11 +52,6 @@ gadget link_exit
 	mov w0, wzr
 	b uml_arm64_gadget_leave
 
-/* Unreachable padding where the inlined-call entries were, so every later
- * entry keeps the address it was measured at. */
-	.p2align 4
-	.space 64
-
 /*
  * A block that accesses FP/SIMD state keeps this entry word in front of its
  * stream, and links to the block name that word, so the entry falls through
@@ -77,7 +69,7 @@ gadget fp_link_entry
 97:
 	stp x1, x2, [sp, #-16]!
 	mov x0, x1
-	bl NAME(uml_arm64_gadget_access_fp_state)
+	helper_call uml_arm64_gadget_access_fp_state
 	ldp x1, x2, [sp], #16
 	b 98b
 
@@ -189,26 +181,17 @@ gadget return
 	b 98f
 97:
 	.endif
-	/* The target table is consulted out of line; the unreachable padding
-	 * keeps every later entry at the address it was measured at. */
+	/* The target table is consulted out of line. */
 	b .Ltarget_tier\@
-	.space 12
 98:
 	follow_block_link x12
-	/* Unreachable padding that keeps every later entry at the address
-	 * it was measured at. */
-	.space 24
 	/* Every site of the address space shares one direct-mapped table of
 	 * {target, BlockLink}, filled by the cold helper at each miss, so a
 	 * target any site has missed on before is followed without a round
 	 * trip -- which is what a site with more targets than cells needs.
 	 * A hit trains the site's next cell as the ring does, so a site that
 	 * settles on few targets goes back to its cells. */
-#if __APPLE__
-	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
-#else
-	.pushsection .text.gadget_cold,"ax"
-#endif
+	.pushsection GADGET_SECTION_COLD
 .Ltarget_tier\@:
 	ldr x13, [_cpu, #UML_GADGET_CPU_TARGET_TIER]
 	cbz x13, .Ltarget_tier_miss\@
@@ -252,10 +235,6 @@ gadget return_cached
 .purgem follow_indirect_link
 .purgem train_indirect_cell
 .purgem push_return_record
-
-/* Unreachable padding where the FEAT_PAuth authenticated branches and the
- * FEAT_GCS guarded authenticated calls and returns were. */
-removed_gadget 2432
 
 /* B.cond's condition is fixed when its data-only program is built.  Selecting
  * one of these precompiled gadgets avoids a C++ helper call at every loop

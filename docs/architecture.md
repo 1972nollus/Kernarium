@@ -248,6 +248,37 @@ the JIT's native lowering leaves to a helper run in the JIT's own semantic
 slow path, never in another engine; a helper treats any word outside its
 routed classes as a fatal internal error.
 
+The arm64 gadget code is one region in `darwin/cpu/arm64/gadgets/engine.S`:
+the bank, the sections its gadgets push forwarding variants, cold paths and
+FEAT_AFP twins into, and an island of veneers. Every image that carries it
+links `UML::GadgetRegionLayout`, which merges those sections into
+`__TEXT,__text` and orders them first, so the region starts the image's text
+on a 16 KiB page and each part starts on its boundary plus the phase
+`engine.S` defines. The region's bytes and image offsets therefore depend on
+`engine.S` alone, and uml-darwin and the shipped and automation iOS runtimes
+carry it identically; only the C++ code after it moves with unrelated changes.
+A call to a helper outside the region branches to that helper's veneer, the
+only words that encode a distance out of the region. The FEAT_AFP twins
+follow every base part: they run only on a host with FEAT_AFP, where they need
+the same fixed placement, and elsewhere their position moves no base entry.
+
+The bank holds no padding. A new entry or family is appended after the
+established ones of its part, which moves none of them. Removing one re-packs
+the region and moves every later entry, so a removal, like any gadget change,
+is measured on the iPad and the phases are reselected if it costs time.
+`arm64-gadget-region-layout` checks this contract on the images each tree
+builds. An image linked outside this build, such as a consumer of the
+XCFramework's static archive, keeps the parts as separate page-aligned
+sections after `__text`.
+
+The pin fixes the region and nothing else. The C++ code after it still moves
+with unrelated changes, and dyld maps the runtime at an address that varies per
+launch among a few clusters that move with the sizes of the images it loads.
+A probe whose mode follows the load address, or is set by code outside the
+region, can therefore still change its odds when an unrelated image changes
+size, so an iPad layout comparison logs each launch's load address and counts
+modes per arm.
+
 Data-alignment faults retain the effective data address and the faulting PC.
 The host exports a distinct bridge event, and both kernel lines deliver
 `SIGBUS/BUS_ADRALN` so a guest handler can repair the access and resume. They

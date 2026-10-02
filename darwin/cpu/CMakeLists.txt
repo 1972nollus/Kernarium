@@ -173,6 +173,29 @@ target_include_directories(uml_arm64_gadgets PRIVATE
 target_link_libraries(uml_arm64_gadgets PUBLIC
     UML::GadgetHistogramConfiguration)
 
+# Every image that carries uml_arm64_gadgets links this, including those that
+# compose its objects directly. It merges the gadget region's sections into
+# __TEXT,__text and orders them first, so the region keeps one image offset
+# and its own bytes whatever else the image holds (engine.S).
+add_library(uml_arm64_gadget_region_layout INTERFACE)
+add_library(UML::GadgetRegionLayout ALIAS uml_arm64_gadget_region_layout)
+uml_declare_architecture_target(uml_arm64_gadget_region_layout cpu gadget)
+if(APPLE)
+    set(_uml_gadget_region_order
+        ${CMAKE_CURRENT_SOURCE_DIR}/arm64/gadgets/gadget_region.order)
+    set(_uml_gadget_region_options)
+    foreach(_uml_gadget_region_part IN ITEMS
+            bank forward vforward cold afp veneer)
+        list(APPEND _uml_gadget_region_options
+            "LINKER:-rename_section,__TEXT,__a64_${_uml_gadget_region_part},__TEXT,__text")
+    endforeach()
+    target_link_options(uml_arm64_gadget_region_layout INTERFACE
+        ${_uml_gadget_region_options}
+        "LINKER:-order_file,${_uml_gadget_region_order}")
+    set_property(TARGET uml_arm64_gadget_region_layout APPEND PROPERTY
+        INTERFACE_LINK_DEPENDS ${_uml_gadget_region_order})
+endif()
+
 # The gadget library is still many translation units, and the selection tables
 # the decode families call into are among them. Interprocedural optimization
 # restores the cross-unit inlining that splitting the library cost; it is worth
@@ -376,7 +399,8 @@ add_library(uml_cpu_engine_objects INTERFACE)
 add_library(UML::CpuEngineObjects ALIAS uml_cpu_engine_objects)
 uml_declare_architecture_target(uml_cpu_engine_objects cpu mixed)
 target_link_libraries(uml_cpu_engine_objects INTERFACE
-    UML::CpuContract)
+    UML::CpuContract
+    UML::GadgetRegionLayout)
 target_sources(uml_cpu_engine_objects INTERFACE
     $<TARGET_OBJECTS:uml_cpu_engine_factory>
     $<TARGET_OBJECTS:uml_arm64_gadget_engine>

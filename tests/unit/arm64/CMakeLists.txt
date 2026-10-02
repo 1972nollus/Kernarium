@@ -33,6 +33,10 @@ function(uml_add_arm64_unit_test STEM)
         ${_arm64_test_SOURCES}
         ${_arm64_test_OBJECTS})
     target_link_libraries(${_target} PRIVATE UML::BridgeAbi)
+    # An image that carries the gadget region lays it out as the products do.
+    if("$<TARGET_OBJECTS:uml_arm64_gadgets>" IN_LIST _arm64_test_OBJECTS)
+        target_link_libraries(${_target} PRIVATE UML::GadgetRegionLayout)
+    endif()
     target_include_directories(${_target} PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
     if(NOT _arm64_test_WITHOUT_HARNESS)

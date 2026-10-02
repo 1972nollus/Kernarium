@@ -35,3 +35,27 @@ uml_add_tooling_test(
     TIMEOUT 900)
 set_tests_properties(arm64-instruction-oracle-freshness PROPERTIES
     SKIP_RETURN_CODE 77)
+
+# The pinned gadget region (darwin/cpu/arm64/gadgets/engine.S) in the linked
+# images this tree builds: the product in an integration tree, and in a unit
+# tree an image composed from the gadget objects and one linked through the
+# emulator archive.
+set(_uml_gadget_region_images)
+foreach(_uml_gadget_region_image IN ITEMS
+        uml-darwin
+        uml_arm64_gadget_hot_path_tests
+        uml_arm64_instruction_corpus_tests)
+    if(TARGET ${_uml_gadget_region_image})
+        list(APPEND _uml_gadget_region_images
+            $<TARGET_FILE:${_uml_gadget_region_image}>)
+    endif()
+endforeach()
+if(_uml_gadget_region_images AND APPLE)
+    uml_add_tooling_test(
+        NAME arm64-gadget-region-layout
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${PROJECT_SOURCE_DIR}/tests/tooling/arm64/test_gadget_region_layout.py
+            ${_uml_gadget_region_images}
+        LABELS cpu
+        TIMEOUT 120)
+endif()

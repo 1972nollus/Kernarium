@@ -8,7 +8,7 @@ if(UML_TARGET_MACOS)
         $<TARGET_OBJECTS:uml_arm64_execution_helpers>)
     target_link_libraries(uml_scalar_ceiling_bench PRIVATE
         UML::BridgeAbi
-        UML::CpuContract UML::MemorySharedBacking)
+        UML::CpuContract UML::GadgetRegionLayout UML::MemorySharedBacking)
     target_include_directories(uml_scalar_ceiling_bench PRIVATE
         ${PROJECT_SOURCE_DIR}/darwin)
     target_compile_definitions(uml_scalar_ceiling_bench PRIVATE

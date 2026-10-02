@@ -91,14 +91,13 @@ constexpr std::array<Entry, 32> entries{{
 }};
 #undef UML_ENTRY
 
-[[nodiscard]] constexpr std::size_t baseline_branch_index(
-	const Entry &entry) noexcept
+[[nodiscard]] constexpr std::size_t branch_index(const Entry &entry) noexcept
 {
 	const std::size_t source_instructions = entry.source_sp ? 1U : 2U;
 	const std::size_t flag_instructions = entry.flags ? 1U : 0U;
 	const std::size_t destination_instructions = entry.destination_special ?
 		(entry.flags ? 0U : 1U) : 2U;
-	return 4U + source_instructions + flag_instructions +
+	return 3U + source_instructions + flag_instructions +
 		destination_instructions;
 }
 
@@ -131,9 +130,8 @@ void all_32_entries_keep_shape_and_reserve_x14()
 			address(entries[index + 1U].gadget) :
 			address(selection::
 				uml_arm64_gadget_add_sub_register_w_add_n_sh_n_rr_r);
-		const auto baseline_branch = baseline_branch_index(entry);
-		const auto expected_bytes = aligned_entry_bytes(
-			baseline_branch + 1U);
+		const auto branch = branch_index(entry);
+		const auto expected_bytes = aligned_entry_bytes(branch + 1U);
 		const auto expected_words = expected_bytes / sizeof(std::uint32_t);
 		std::array<std::uint32_t, 12> expected{};
 		expected.fill(nop);
@@ -168,9 +166,8 @@ void all_32_entries_keep_shape_and_reserve_x14()
 			append(destination_register);
 			append(destination_value);
 		}
-		require(word + 1U == baseline_branch);
+		require(word == branch);
 		append(branch_x14);
-		append(0U);
 		require(word <= expected_words);
 
 		require((begin & 15U) == 0U);

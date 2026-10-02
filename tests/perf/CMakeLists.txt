@@ -94,7 +94,7 @@ target_include_directories(uml-gadget-ceiling-bench PRIVATE
     ${PROJECT_SOURCE_DIR}/darwin)
 target_link_libraries(uml-gadget-ceiling-bench PRIVATE
     UML::BridgeAbi
-    UML::CpuContract UML::MemorySharedBacking)
+    UML::CpuContract UML::GadgetRegionLayout UML::MemorySharedBacking)
 target_compile_definitions(uml-gadget-ceiling-bench PRIVATE
     UML_GADGET_CEILING_WITH_IDEAL=1)
 set_target_properties(uml-gadget-ceiling-bench PROPERTIES

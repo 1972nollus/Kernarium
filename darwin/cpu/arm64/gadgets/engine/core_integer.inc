@@ -25,35 +25,6 @@ _stream .req x28
 NAME(uml_arm64_gadget_\name):
 .endm
 
-/* Unreachable padding in place of a removed entry, or of a removed entry's
- * forwarding variant, so every later entry keeps the address and 64-byte
- * phase it was measured at. The size is the removed entry's distance to the
- * next one. */
-.macro removed_gadget bytes
-	.p2align 4
-	.space \bytes
-.endm
-
-.macro removed_forward_gadget bytes
-#if __APPLE__
-	.pushsection __TEXT,__gadget_forward,regular,pure_instructions
-#else
-	.pushsection .text.gadget_forward,"ax"
-#endif
-	removed_gadget \bytes
-	.popsection
-.endm
-
-.macro removed_vector_forward_gadget bytes
-#if __APPLE__
-	.pushsection __TEXT,__vector_forward,regular,pure_instructions
-#else
-	.pushsection .text.vector_forward,"ax"
-#endif
-	removed_gadget \bytes
-	.popsection
-.endm
-
 #include "scalar_contract.inc"
 #include "vector_contract.inc"
 
@@ -96,7 +67,7 @@ NAME(uml_arm64_gadget_\name):
 	mov x20, x2
 	mov x0, x1
 	mov x1, x8
-	bl NAME(uml_arm64_\helper)
+	helper_call uml_arm64_\helper
 	mov x1, x19
 	mov x2, x20
 	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
@@ -138,7 +109,7 @@ NAME(uml_arm64_gadget_\name):
 	mov x0, x2
 	mov x1, x7
 	mov w2, #\access
-	bl NAME(uml_arm64_tlb_miss)
+	helper_call uml_arm64_tlb_miss
 	ldp x1, x2, [sp], #16
 	.if \forward
 	/* Cross-section conditional relocations are not available on Mach-O.
@@ -174,9 +145,7 @@ NAME(uml_arm64_gadget_\name):
  * which becomes the host address on the fall-through path. The pair
  * transfer_translate / transfer_translate_cold replaces branch_if_cross_page
  * plus translate; the cold half is placed after the gadget's dispatch and
- * resumes at \resume. One-byte transfers cannot cross and are never checked;
- * \check1 marks those whose retired unfused form checked them anyway, which
- * the cold half's layout padding accounts for.
+ * resumes at \resume. One-byte transfers cannot cross and are never checked.
  *
  * The 16 KiB build keys the lookup by the
  * page of the transfer's final byte while indexing by its first: pages n and
@@ -187,7 +156,7 @@ NAME(uml_arm64_gadget_\name):
  * resolved the branch late enough to cost two percent on transfer-bound
  * loops. Scratch: x8-x12.
  */
-.macro transfer_translate access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0, fault=uml_arm64_gadget_memory_fault
+.macro transfer_translate access, page_offset, bytes, address, cold, resume, cross, forward=0, fault=uml_arm64_gadget_memory_fault
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	.if \bytes > 1
 	add x8, \address, #(\bytes - 1)
@@ -217,13 +186,11 @@ NAME(uml_arm64_gadget_\name):
 \resume:
 .endm
 
-/* Second way, crossing, miss and fault handling for transfer_translate. It
- * pads after its last branch to the word count the retired unfused form had,
- * so every later entry keeps the address it was measured at. */
+/* Second way, crossing, miss and fault handling for transfer_translate. */
 /* outofline=1 when the caller places this tail in a section of its own: a
  * conditional branch cannot leave its section, so the fault exit takes the
  * same trampoline the forwarding arm already uses. */
-.macro transfer_translate_cold access, page_offset, bytes, address, cold, resume, cross, forward=0, check1=0, outofline=0, fault=uml_arm64_gadget_memory_fault
+.macro transfer_translate_cold access, page_offset, bytes, address, cold, resume, cross, forward=0, outofline=0, fault=uml_arm64_gadget_memory_fault
 \cold:
 #if DARWIN_UML_GUEST_PAGE_SIZE == 16384
 	.if \access
@@ -241,7 +208,7 @@ NAME(uml_arm64_gadget_\name):
 	mov x0, x2
 	mov x1, \address
 	mov w2, #\access
-	bl NAME(uml_arm64_tlb_miss)
+	helper_call uml_arm64_tlb_miss
 	ldp x1, x2, [sp], #16
 	.if \forward || \outofline
 	cbnz x0, 94f
@@ -257,22 +224,6 @@ NAME(uml_arm64_gadget_\name):
 	add \address, x12, \address
 	b \resume
 #endif
-	/* Words the unfused form had and this one lacks: three when it
-	 * checked a one-byte transfer, two for the pair moves, minus one for the
-	 * relocated cross-page check of a wider transfer (16 KiB). */
-	.set .Ltt_pad\@, 0
-	.if \bytes == 1 && \check1
-	.set .Ltt_pad\@, .Ltt_pad\@ + 3
-	.endif
-	.ifnc \address, x7
-	.set .Ltt_pad\@, .Ltt_pad\@ + 2
-	.endif
-	.if \bytes > 1 && DARWIN_UML_GUEST_PAGE_SIZE == 16384
-	.set .Ltt_pad\@, .Ltt_pad\@ - 1
-	.endif
-	.if .Ltt_pad\@ > 0
-	.space 4 * .Ltt_pad\@
-	.endif
 .endm
 
 /* Rare cross-page accesses stay on the gadget path. The helper validates all
@@ -294,7 +245,7 @@ NAME(uml_arm64_gadget_\name):
 	mov x2, sp
 	mov x3, #\size
 	mov w4, #\access
-	bl NAME(uml_arm64_memory_transfer)
+	helper_call uml_arm64_memory_transfer
 	ldp x1, x2, [sp, #32]
 	cbz w0, 97f
 	.if !\access
@@ -308,7 +259,7 @@ NAME(uml_arm64_gadget_\name):
 98:
 .endm
 
-.text
+.section GADGET_SECTION_BANK
 .p2align 4
 uml_arm64_gadget_activate_native_fp_environment:
 	mrs x6, fpcr
@@ -367,8 +318,6 @@ uml_arm64_gadget_leave:
 	ldp x20, x21, [sp, #0x10]
 	ldp x18, x19, [sp], #0x80
 	ret
-	/* Retain the established alignment of the core integer gadget bank. */
-	.space 32
 
 /* MOVZ/MOVN are folded to a full constant by the translator.  Rd==XZR is
  * folded to NOP, so the live entry is a three-load straight-line store. */
@@ -378,21 +327,6 @@ scalar_entry move_wide_constant, 0, 0, scalar_offset0, scalar_none, scalar_none,
 	add x13, _cpu, #UML_GADGET_CPU_X0
 	str _scalar_x11, [x13, x8]
 	next_gadget
-
-/* Unreachable padding where the ordinary MOVK entries and their forwarding
- * variants were: every MOVK takes the in-place family, which bakes Rd. */
-removed_gadget 48	/* move_wide_keep_w0 */
-removed_gadget 64	/* move_wide_keep_w1 */
-removed_gadget 48	/* move_wide_keep_x0 */
-removed_gadget 64	/* move_wide_keep_x1 */
-removed_gadget 64	/* move_wide_keep_x2 */
-removed_gadget 64	/* move_wide_keep_x3 */
-removed_forward_gadget 48
-removed_forward_gadget 64
-removed_forward_gadget 48
-removed_forward_gadget 64
-removed_forward_gadget 64
-removed_forward_gadget 64
 
 /* Production ADD/SUB-immediate entries.  Width, operation, flag update and
  * both architectural register-31 meanings are fixed by the translator.  The
@@ -462,10 +396,6 @@ scalar_entry add_sub_immediate_\suffix, \forward, 1, .Lsd\@, .Lsn\@, scalar_none
 	str _scalar_x16, [_cpu, x9, lsl #3]
 	.endif
 	br x14
-	/* The removed successor LDR is restored as unreachable padding. Every
-	 * affected entry therefore retains its baseline size and all later entry
-	 * addresses and 64-byte phases remain unchanged. */
-	.space 4
 	scalar_variants \forward, .Lsn\@, scalar_none, scalar_none, add_sub_immediate_fast, \bits64, \subtract, \flags, \source_sp, \destination_special, \suffix
 .endm
 
@@ -788,11 +718,6 @@ add_sub_carry_source_modes 1, 1, 1, x_sbc_s
 .purgem add_sub_carry_source_modes
 .purgem add_sub_carry_destinations
 .purgem add_sub_carry_fast
-
-/* Unreachable padding where the FEAT_MTE GMI/SUBP/SUBPS, ADDG/SUBG and IRG
- * entries and the FEAT_CPA ADDPT/SUBPT/MADDPT/MSUBPT entries were: the
- * virtual CPU implements neither feature, so their words are UNDEFINED. */
-removed_gadget 21328
 
 /* Production multiply family. The validated operation and every XZR choice
  * are translation-selected; discarded results are removed by Builder. Stream:
@@ -1249,12 +1174,6 @@ scalar_entry extract_register_\suffix, \forward, 8, .Lsd\@, .Lsn\@, .Lsm\@, scal
 	str _scalar_x16, [x13, x9, lsl #3]
 	.endif
 	next_gadget
-	/* Hold this entry's length, and so every later entry's address and
-	 * 64-byte phase, at what it was before the neg, so the change was
-	 * measured against an otherwise identical bank (G96). */
-	.if \shift_nonzero
-	.space 4
-	.endif
 	scalar_variants \forward, .Lsn\@, .Lsm\@, scalar_none, extract_register_fast, \bits64, \shift_nonzero, \left_zero, \right_zero, \destination_zero, \suffix
 .endm
 .macro extract_destinations bits64, shift_nonzero, left_zero, right_zero, prefix
@@ -1868,10 +1787,6 @@ bit_reverse_count_fast 7, 1, 1, x_cnt_native
 bit_reverse_count_fast 8, 1, 1, x_abs_native
 
 .purgem bit_reverse_count_fast
-
-/* Unreachable padding where the FEAT_PAuth XPAC, PAC, AUT, and PACGA entries
- * were. */
-removed_gadget 1472
 
 /* Production FEAT_CSSC min/max. Width, operation and operand form are fixed;
  * source fields are translation-resolved CpuState offsets. For immediates the

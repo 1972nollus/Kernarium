@@ -113,11 +113,7 @@ NAME(uml_arm64_scalar_contract_begin):
 .macro scalar_variants forward, first, second, third, generator, arguments:vararg
  .set .Lvariant_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
  .if \forward == 0 && .Lvariant_sources\@ != 0
-#if __APPLE__
- .pushsection __TEXT,__gadget_forward,regular,pure_instructions
-#else
- .pushsection .text.gadget_forward,"ax"
-#endif
+ .pushsection GADGET_SECTION_FORWARD
  .irp mask, 1, 2, 3, 4, 5, 6, 7
  .if (\mask & .Lvariant_sources\@) == \mask
  \generator \arguments, \mask
