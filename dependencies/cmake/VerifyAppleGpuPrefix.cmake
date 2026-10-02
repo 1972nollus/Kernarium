@@ -248,6 +248,67 @@ foreach(_binary IN LISTS _static_archives _framework_binaries)
         LIPO "${_tool_lipo}" OTOOL "${_tool_otool}")
 endforeach()
 
+# _verify_framework(<name> SYSTEM <regex> [DEPENDENCIES <path>...]
+#     FORBIDDEN <regex>)
+# Checks a framework's install name, load commands, and Info.plist deployment
+# target, and that it links only itself, the base system libraries, the system
+# frameworks SYSTEM matches, and the exact DEPENDENCIES. Each framework keeps
+# its own allowlist.
+function(_verify_framework _name)
+    cmake_parse_arguments(PARSE_ARGV 1 _arg "" "SYSTEM;FORBIDDEN"
+        "DEPENDENCIES")
+    set(_bundle "${PREFIX}/Frameworks/${_name}.framework")
+    set(_binary "${_bundle}/${_name}")
+    execute_process(COMMAND "${_tool_otool}" -D "${_binary}"
+        RESULT_VARIABLE _id_status OUTPUT_VARIABLE _install_name_output)
+    if(NOT _id_status EQUAL 0 OR NOT _install_name_output MATCHES
+       "@rpath/${_name}\\.framework/${_name}")
+        message(FATAL_ERROR "${_name}.framework has an invalid install name")
+    endif()
+    execute_process(COMMAND "${_tool_otool}" -l "${_binary}"
+        RESULT_VARIABLE _load_status OUTPUT_VARIABLE _load_commands)
+    if(NOT _load_status EQUAL 0 OR _load_commands MATCHES "LC_SUB_CLIENT" OR
+       _load_commands MATCHES "LC_RPATH")
+        message(FATAL_ERROR
+            "${_name}.framework has an invalid client or rpath command")
+    endif()
+    execute_process(COMMAND plutil -extract "${_minimum_os_key}" raw -o -
+        "${_bundle}/Info.plist"
+        RESULT_VARIABLE _plist_status OUTPUT_VARIABLE _minimum_os
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT _plist_status EQUAL 0 OR
+       NOT _minimum_os STREQUAL "${_deployment_target}")
+        message(FATAL_ERROR
+            "${_name}.framework has an invalid deployment target")
+    endif()
+
+    execute_process(COMMAND "${_tool_otool}" -L "${_binary}"
+        RESULT_VARIABLE _closure_status OUTPUT_VARIABLE _closure)
+    if(NOT _closure_status EQUAL 0)
+        message(FATAL_ERROR "Could not inspect ${_name}.framework closure")
+    endif()
+    string(REPLACE "\n" ";" _closure_lines "${_closure}")
+    foreach(_line IN LISTS _closure_lines)
+        if(NOT _line MATCHES "^[ \t]+([^ \t]+)")
+            continue()
+        endif()
+        set(_dependency "${CMAKE_MATCH_1}")
+        list(FIND _arg_DEPENDENCIES "${_dependency}" _allowed)
+        if(_dependency STREQUAL "@rpath/${_name}.framework/${_name}" OR
+           NOT _allowed EQUAL -1 OR
+           _dependency MATCHES "^/usr/lib/(libc\\+\\+\\.1|libSystem\\.B|libobjc\\.A|libz\\.1)\\.dylib$" OR
+           _dependency MATCHES "^/System/Library/Frameworks/(${_arg_SYSTEM})\\.framework/")
+            continue()
+        endif()
+        message(FATAL_ERROR
+            "Unexpected ${_name}.framework dependency: ${_dependency}")
+    endforeach()
+    if(_closure MATCHES "${_arg_FORBIDDEN}")
+        message(FATAL_ERROR
+            "${_name}.framework contains a forbidden GL/Vulkan dependency")
+    endif()
+endfunction()
+
 foreach(_framework IN LISTS _gl_frameworks)
     set(_binary "${PREFIX}/Frameworks/${_framework}.framework/${_framework}")
     file(GLOB_RECURSE _framework_payload LIST_DIRECTORIES false
@@ -261,66 +322,18 @@ foreach(_framework IN LISTS _gl_frameworks)
             "Unexpected ${_framework}.framework payload: ${_framework_payload}")
     endif()
 
-    execute_process(COMMAND "${_tool_otool}" -D "${_binary}"
-        RESULT_VARIABLE _id_status OUTPUT_VARIABLE _install_name_output)
-    if(NOT _id_status EQUAL 0 OR NOT _install_name_output MATCHES
-       "@rpath/${_framework}\\.framework/${_framework}")
-        message(FATAL_ERROR "${_framework}.framework has an invalid install name")
+    # The OpenGL provider is a two-library Mesa stack rendering on the
+    # packaged Vulkan driver, so each links exactly the next one down.
+    if(_framework STREQUAL "MesaEGL")
+        set(_next MesaGallium)
+    else()
+        set(_next KosmicKrisp)
     endif()
-    execute_process(COMMAND "${_tool_otool}" -l "${_binary}"
-        RESULT_VARIABLE _load_status OUTPUT_VARIABLE _load_commands)
-    if(NOT _load_status EQUAL 0 OR _load_commands MATCHES "LC_SUB_CLIENT" OR
-       _load_commands MATCHES "LC_RPATH")
-        message(FATAL_ERROR
-            "${_framework}.framework has an invalid client or rpath command")
-    endif()
-    execute_process(COMMAND plutil -extract "${_minimum_os_key}" raw -o -
-        "${PREFIX}/Frameworks/${_framework}.framework/Info.plist"
-        RESULT_VARIABLE _plist_status OUTPUT_VARIABLE _minimum_os
-        OUTPUT_STRIP_TRAILING_WHITESPACE)
-    if(NOT _plist_status EQUAL 0 OR
-       NOT _minimum_os STREQUAL "${_deployment_target}")
-        message(FATAL_ERROR
-            "${_framework}.framework has an invalid deployment target")
-    endif()
-
-    execute_process(COMMAND "${_tool_otool}" -L "${_binary}"
-        RESULT_VARIABLE _closure_status OUTPUT_VARIABLE _closure)
-    if(NOT _closure_status EQUAL 0)
-        message(FATAL_ERROR "Could not inspect ${_framework}.framework closure")
-    endif()
-    string(REPLACE "\n" ";" _closure_lines "${_closure}")
-    foreach(_line IN LISTS _closure_lines)
-        if(NOT _line MATCHES "^[ \t]+([^ \t]+)")
-            continue()
-        endif()
-        set(_dependency "${CMAKE_MATCH_1}")
-        if(_dependency STREQUAL "@rpath/${_framework}.framework/${_framework}" OR
-           _dependency MATCHES "^/usr/lib/(libc\\+\\+\\.1|libSystem\\.B|libobjc\\.A|libz\\.1)\\.dylib$" OR
-           _dependency MATCHES "^/System/Library/Frameworks/(CoreFoundation|CoreGraphics|Foundation|IOKit|IOSurface|Metal|QuartzCore)\\.framework/")
-            continue()
-        endif()
-        # The OpenGL provider is a two-library Mesa stack rendering on the
-        # packaged Vulkan driver, so those exact edges are expected.
-        if(_framework STREQUAL "MesaEGL" AND _dependency STREQUAL
-               "@rpath/MesaGallium.framework/MesaGallium")
-            continue()
-        endif()
-        if(_framework STREQUAL "MesaGallium" AND _dependency STREQUAL
-               "@rpath/KosmicKrisp.framework/KosmicKrisp")
-            continue()
-        endif()
-        if(_dependency STREQUAL "/usr/lib/libexpat.1.dylib")
-            continue()
-        endif()
-        message(FATAL_ERROR
-            "Unexpected ${_framework}.framework dependency: ${_dependency}")
-    endforeach()
-    set(_forbidden_closure "OpenGL\\.framework|OpenGLES\\.framework|libvulkan")
-    if(_closure MATCHES "${_forbidden_closure}")
-        message(FATAL_ERROR
-            "${_framework}.framework contains a forbidden GL/Vulkan dependency")
-    endif()
+    _verify_framework(${_framework}
+        SYSTEM "CoreFoundation|CoreGraphics|Foundation|IOKit|IOSurface|Metal|QuartzCore"
+        DEPENDENCIES
+            /usr/lib/libexpat.1.dylib "@rpath/${_next}.framework/${_next}"
+        FORBIDDEN "OpenGL\\.framework|OpenGLES\\.framework|libvulkan")
     execute_process(COMMAND "${_tool_nm}" -u "${_binary}"
         RESULT_VARIABLE _nm_status OUTPUT_VARIABLE _undefined_symbols)
     if(_framework STREQUAL "MesaGallium")
@@ -351,59 +364,10 @@ foreach(_framework IN LISTS _gl_frameworks)
     endif()
 endforeach()
 
-set(_framework KosmicKrisp)
-set(_binary
-    "${PREFIX}/Frameworks/KosmicKrisp.framework/KosmicKrisp")
-execute_process(COMMAND "${_tool_otool}" -D "${_binary}"
-    RESULT_VARIABLE _id_status OUTPUT_VARIABLE _install_name_output)
-if(NOT _id_status EQUAL 0 OR NOT _install_name_output MATCHES
-   "@rpath/KosmicKrisp\\.framework/KosmicKrisp")
-    message(FATAL_ERROR
-        "KosmicKrisp.framework has an invalid install name")
-endif()
-execute_process(COMMAND "${_tool_otool}" -l "${_binary}"
-    RESULT_VARIABLE _load_status OUTPUT_VARIABLE _load_commands)
-if(NOT _load_status EQUAL 0 OR _load_commands MATCHES "LC_SUB_CLIENT" OR
-   _load_commands MATCHES "LC_RPATH")
-    message(FATAL_ERROR
-        "KosmicKrisp.framework has an invalid load command")
-endif()
-execute_process(COMMAND plutil -extract "${_minimum_os_key}" raw -o -
-    "${PREFIX}/Frameworks/KosmicKrisp.framework/Info.plist"
-    RESULT_VARIABLE _plist_status OUTPUT_VARIABLE _minimum_os
-    OUTPUT_STRIP_TRAILING_WHITESPACE)
-if(NOT _plist_status EQUAL 0 OR
-   NOT _minimum_os STREQUAL "${_deployment_target}")
-    message(FATAL_ERROR
-        "KosmicKrisp.framework has an invalid deployment target")
-endif()
-execute_process(COMMAND "${_tool_otool}" -L "${_binary}"
-    RESULT_VARIABLE _closure_status OUTPUT_VARIABLE _closure)
-if(NOT _closure_status EQUAL 0)
-    message(FATAL_ERROR
-        "Could not inspect KosmicKrisp.framework closure")
-endif()
-string(REPLACE "\n" ";" _closure_lines "${_closure}")
-foreach(_line IN LISTS _closure_lines)
-    if(NOT _line MATCHES "^[ \t]+([^ \t]+)")
-        continue()
-    endif()
-    set(_dependency "${CMAKE_MATCH_1}")
-    if(_dependency STREQUAL
-           "@rpath/KosmicKrisp.framework/KosmicKrisp" OR
-       _dependency MATCHES
-           "^/usr/lib/(libc\\+\\+\\.1|libSystem\\.B|libobjc\\.A|libz\\.1)\\.dylib$" OR
-       _dependency MATCHES
-           "^/System/Library/Frameworks/(Metal|QuartzCore)\\.framework/")
-        continue()
-    endif()
-    message(FATAL_ERROR
-        "Unexpected KosmicKrisp.framework dependency: ${_dependency}")
-endforeach()
-if(_closure MATCHES "libvulkan|Vulkan\\.framework")
-    message(FATAL_ERROR
-        "KosmicKrisp.framework depends on an ambient Vulkan loader")
-endif()
+set(_binary "${PREFIX}/Frameworks/KosmicKrisp.framework/KosmicKrisp")
+_verify_framework(KosmicKrisp
+    SYSTEM "Metal|QuartzCore"
+    FORBIDDEN "libvulkan|Vulkan\\.framework")
 execute_process(COMMAND "${_tool_nm}" -gU "${_binary}"
     RESULT_VARIABLE _export_status OUTPUT_VARIABLE _exports)
 if(NOT _export_status EQUAL 0 OR
