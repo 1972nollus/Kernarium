@@ -27,6 +27,11 @@ extern "C" std::uint64_t
 uml_arm64_jit_execute_memory(CpuState *, Tlb *, std::uint32_t) noexcept;
 extern "C" std::uint64_t
 uml_arm64_jit_execute_pair(CpuState *, Tlb *, std::uint32_t) noexcept;
+/* FEAT_MOPS: one stage, or a whole prologue/main/epilogue sequence when
+ * stages is 3. */
+extern "C" std::uint64_t
+uml_arm64_jit_execute_mops(CpuState *, Tlb *, std::uint32_t,
+                           std::uint32_t stages) noexcept;
 extern "C" std::uint64_t
 uml_arm64_jit_execute_ordered(CpuState *, Tlb *, std::uint32_t) noexcept;
 extern "C" std::uint64_t
