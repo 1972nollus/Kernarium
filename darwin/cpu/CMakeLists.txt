@@ -148,6 +148,7 @@ target_link_libraries(uml_cpu_contract INTERFACE
 set(UML_GADGET_BLOCK_INSTRUCTIONS "64" CACHE STRING
     "Guest instructions fetched per translation attempt")
 add_library(uml_arm64_gadgets OBJECT
+    arm64/gadgets/afp_twin.cpp
     arm64/gadgets/gadget_memory_selection.cpp
     arm64/gadgets/gadget_scalar_selection.cpp
     arm64/gadgets/gadget_simd_selection.cpp

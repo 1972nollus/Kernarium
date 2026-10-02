@@ -284,6 +284,7 @@
     uml_add_arm64_unit_test(gadget_hot_path WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_nzcv_residency WITHOUT_HARNESS)
     uml_add_arm64_unit_test(gadget_fp_environment WITHOUT_HARNESS)
+    uml_add_arm64_unit_test(gadget_afp_twin WITHOUT_HARNESS)
 
     uml_add_arm64_unit_test(gadget_dependency NAME arm64-gadget-dependencies
         WITHOUT_HARNESS

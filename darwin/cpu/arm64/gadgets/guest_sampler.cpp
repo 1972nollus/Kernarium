@@ -22,7 +22,7 @@
 
 /* Zero-size labels around each section the gadget bank (engine.S) emits
  * code into: the bank itself and the sections its gadgets push forwarding
- * variants and cold paths into. */
+ * variants, cold paths and FEAT_AFP twins into. */
 extern "C" const char uml_arm64_gadget_bank_begin[];
 extern "C" const char uml_arm64_gadget_bank_end[];
 extern "C" const char uml_arm64_gadget_forward_section_begin[];
@@ -31,6 +31,8 @@ extern "C" const char uml_arm64_gadget_vector_forward_section_begin[];
 extern "C" const char uml_arm64_gadget_vector_forward_section_end[];
 extern "C" const char uml_arm64_gadget_cold_section_begin[];
 extern "C" const char uml_arm64_gadget_cold_section_end[];
+extern "C" const char uml_arm64_gadget_afp_section_begin[];
+extern "C" const char uml_arm64_gadget_afp_section_end[];
 
 namespace uml::cpu::arm64::gadgets::diagnostics {
 
@@ -63,6 +65,8 @@ namespace {
 			uml_arm64_gadget_vector_forward_section_end},
 		{uml_arm64_gadget_cold_section_begin,
 			uml_arm64_gadget_cold_section_end},
+		{uml_arm64_gadget_afp_section_begin,
+			uml_arm64_gadget_afp_section_end},
 	};
 	return std::ranges::any_of(sections, [pc](const auto &section) {
 		return pc >= reinterpret_cast<std::uintptr_t>(section.first) &&

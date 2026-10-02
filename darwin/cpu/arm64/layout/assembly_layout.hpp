@@ -67,6 +67,7 @@ static_assert(UML_GADGET_EVENT_ILLEGAL == static_cast<int>(EngineEvent::illegal_
 static_assert(UML_GADGET_EVENT_BREAKPOINT == static_cast<int>(EngineEvent::breakpoint));
 
 static_assert(UML_ARM64_FPCR_WRITABLE == fpcr_writable_mask);
+static_assert(UML_ARM64_FPCR_AFP_CONTROLS == fpcr_afp_controls);
 static_assert(UML_ARM64_FPCR_TRAP_ENABLES == detail::fpcr_exception_enable_mask);
 static_assert((fpcr_writable_mask & detail::fpcr_exception_enable_mask) ==
 	detail::fpcr_exception_enable_mask);

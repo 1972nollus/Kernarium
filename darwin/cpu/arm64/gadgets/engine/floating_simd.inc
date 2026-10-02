@@ -62,8 +62,14 @@ floating_move_register floating_move_half, 2
 floating_move_register floating_move_single, 4
 floating_move_register floating_move_double, 8
 
-.macro floating_unary name, source, destination, element, operation, forward=0
+/* An FEAT_AFP twin (afp=1) starts the destination from the old Vd, the
+ * operand FPCR.NEP merges a scalar result into. */
+.macro floating_unary name, source, destination, element, operation, forward=0, afp=0
+.if \afp
+afp_gadget \name
+.else
 vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, scalar_none, 1
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
@@ -71,7 +77,9 @@ vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, s
 	add x11, _cpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
-	.if !\forward
+	.if \afp
+	ldr q2, [x13]
+	.elseif !\forward
 	movi v2.16b, #0
 	.endif
 	vector_read \forward, 1, \source, [x12]
@@ -81,23 +89,37 @@ vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, s
 	\operation \destination, \source
 	str q2, [x13]
 	next_gadget
+	.if !\afp
 	vector_variants \forward, vector_register8, scalar_none, scalar_none, floating_unary, \name, \source, \destination, \element, \operation
+	.endif
 .endm
 
-/* Scalar FABS/FNEG: one native instruction. */
-.macro floating_sign_scalar name, source, destination, element, arrangement, shift, operation, forward=0
+/* Scalar FABS/FNEG: one native instruction. Only FPCR.AH and NEP change it,
+ * so the base entry needs no guest FP environment; its FEAT_AFP twin installs
+ * one and starts the destination from the old Vd. */
+.macro floating_sign_scalar name, source, destination, element, arrangement, shift, operation, forward=0, afp=0
+.if \afp
+afp_gadget \name
+	ensure_fp_environment
+.else
 vector_entry \name, \forward, vector_register0, vector_register8, scalar_none, scalar_none, 1
+.endif
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
 	add x11, _cpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
+	.if \afp
+	ldr q2, [x13]
+	.endif
 	vector_read \forward, 1, \source, [x12]
 	\operation \destination, \source
 	str q2, [x13]
 	next_gadget
+	.if !\afp
 	vector_variants \forward, vector_register8, scalar_none, scalar_none, floating_sign_scalar, \name, \source, \destination, \element, \arrangement, \shift, \operation
+	.endif
 .endm
 
 floating_sign_scalar floating_absolute_half, h0, h2, h, 8h, 11, fabs
@@ -107,15 +129,34 @@ floating_sign_scalar floating_negate_half, h0, h2, h, 8h, 11, fneg
 floating_sign_scalar floating_negate_single, s0, s2, s, 4s, 24, fneg
 floating_sign_scalar floating_negate_double, d0, d2, d, 2d, 53, fneg
 
+afp_twins_begin
+floating_sign_scalar floating_absolute_half, h0, h2, h, 8h, 11, fabs, afp=1
+floating_sign_scalar floating_absolute_single, s0, s2, s, 4s, 24, fabs, afp=1
+floating_sign_scalar floating_absolute_double, d0, d2, d, 2d, 53, fabs, afp=1
+floating_sign_scalar floating_negate_half, h0, h2, h, 8h, 11, fneg, afp=1
+floating_sign_scalar floating_negate_single, s0, s2, s, 4s, 24, fneg, afp=1
+floating_sign_scalar floating_negate_double, d0, d2, d, 2d, 53, fneg, afp=1
+afp_twins_end
+
 .purgem floating_sign_scalar
 floating_unary floating_sqrt_half, h0, h2, h, fsqrt
 floating_unary floating_sqrt_single, s0, s2, s, fsqrt
 floating_unary floating_sqrt_double, d0, d2, d, fsqrt
 
+afp_twins_begin
+floating_unary floating_sqrt_half, h0, h2, h, fsqrt, afp=1
+floating_unary floating_sqrt_single, s0, s2, s, fsqrt, afp=1
+floating_unary floating_sqrt_double, d0, d2, d, fsqrt, afp=1
+afp_twins_end
+
 /* FRINT operation, precision, vector width, and integer bound are selected
  * during translation. Standard forms are one exact host instruction. */
-.macro floating_round_scalar name, operation, source, destination, element
+.macro floating_round_scalar name, operation, source, destination, element, afp=0
+.if \afp
+afp_gadget floating_round_\name
+.else
 gadget floating_round_\name
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
@@ -123,17 +164,21 @@ gadget floating_round_\name
 	add x11, _cpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
+	.if \afp
+	ldr q1, [x13]
+	.else
 	movi v1.16b, #0
+	.endif
 	ldr \source, [x12]
 	\operation \destination, \source
 	str q1, [x13]
 	next_gadget
 .endm
 
-.macro floating_round_scalar_shapes name, operation
-	floating_round_scalar \name\()_h, \operation, h0, h1, h
-	floating_round_scalar \name\()_s, \operation, s0, s1, s
-	floating_round_scalar \name\()_d, \operation, d0, d1, d
+.macro floating_round_scalar_shapes name, operation, afp=0
+	floating_round_scalar \name\()_h, \operation, h0, h1, h, \afp
+	floating_round_scalar \name\()_s, \operation, s0, s1, s, \afp
+	floating_round_scalar \name\()_d, \operation, d0, d1, d, \afp
 .endm
 
 .macro floating_round_vector name, operation, arrangement
@@ -195,6 +240,24 @@ floating_round_vector 64x_2d, frint64x, 2d
 floating_round_vector 64z_2s, frint64z, 2s
 floating_round_vector 64z_4s, frint64z, 4s
 floating_round_vector 64z_2d, frint64z, 2d
+
+afp_twins_begin
+floating_round_scalar_shapes n, frintn, 1
+floating_round_scalar_shapes p, frintp, 1
+floating_round_scalar_shapes m, frintm, 1
+floating_round_scalar_shapes z, frintz, 1
+floating_round_scalar_shapes a, frinta, 1
+floating_round_scalar_shapes x, frintx, 1
+floating_round_scalar_shapes i, frinti, 1
+floating_round_scalar 32x_s, frint32x, s0, s1, s, 1
+floating_round_scalar 32x_d, frint32x, d0, d1, d, 1
+floating_round_scalar 32z_s, frint32z, s0, s1, s, 1
+floating_round_scalar 32z_d, frint32z, d0, d1, d, 1
+floating_round_scalar 64x_s, frint64x, s0, s1, s, 1
+floating_round_scalar 64x_d, frint64x, d0, d1, d, 1
+floating_round_scalar 64z_s, frint64z, s0, s1, s, 1
+floating_round_scalar 64z_d, frint64z, d0, d1, d, 1
+afp_twins_end
 
 .purgem floating_round_vector_shapes
 .purgem floating_round_vector
@@ -575,28 +638,41 @@ gadget bfloat_multiply_long_software
 
 /* Reciprocal operation, arity, precision, and vector width are selected at
  * translation time. Each gadget is one branch-free native instruction. */
-.macro floating_reciprocal_scalar_unary name, operation, source, destination
+.macro floating_reciprocal_scalar_unary name, operation, source, destination, afp=0
+.if \afp
+afp_gadget floating_reciprocal_\name
+.else
 gadget floating_reciprocal_\name
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	uxth w9, w8
 	ubfx x10, x8, #16, #16
 	add x12, _cpu, x10
 	add x13, _cpu, x9
+	.if \afp
+	ldr q1, [x13]
+	.endif
 	ldr \source, [x12]
 	\operation \destination, \source
 	str q1, [x13]
 	next_gadget
 .endm
 
-.macro floating_reciprocal_scalar_unary_shapes name, operation
-	floating_reciprocal_scalar_unary \name\()_h, \operation, h0, h1
-	floating_reciprocal_scalar_unary \name\()_s, \operation, s0, s1
-	floating_reciprocal_scalar_unary \name\()_d, \operation, d0, d1
+.macro floating_reciprocal_scalar_unary_shapes name, operation, afp=0
+	floating_reciprocal_scalar_unary \name\()_h, \operation, h0, h1, \afp
+	floating_reciprocal_scalar_unary \name\()_s, \operation, s0, s1, \afp
+	floating_reciprocal_scalar_unary \name\()_d, \operation, d0, d1, \afp
 .endm
 
-.macro floating_reciprocal_scalar_binary name, operation, source0, source1, destination
+/* FRECPS and FRSQRTS merge into the whole first source, which the FEAT_AFP
+ * twin loads. */
+.macro floating_reciprocal_scalar_binary name, operation, source0, source1, destination, afp=0
+.if \afp
+afp_gadget floating_reciprocal_\name
+.else
 gadget floating_reciprocal_\name
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	uxth w9, w8
@@ -604,7 +680,11 @@ gadget floating_reciprocal_\name
 	ubfx x11, x8, #32, #16
 	add x13, _cpu, x10
 	add x14, _cpu, x11
+	.if \afp
+	ldr q0, [x13]
+	.else
 	ldr \source0, [x13]
+	.endif
 	ldr \source1, [x14]
 	\operation \destination, \source0, \source1
 	add x13, _cpu, x9
@@ -612,10 +692,10 @@ gadget floating_reciprocal_\name
 	next_gadget
 .endm
 
-.macro floating_reciprocal_scalar_binary_shapes name, operation
-	floating_reciprocal_scalar_binary \name\()_h, \operation, h0, h1, h2
-	floating_reciprocal_scalar_binary \name\()_s, \operation, s0, s1, s2
-	floating_reciprocal_scalar_binary \name\()_d, \operation, d0, d1, d2
+.macro floating_reciprocal_scalar_binary_shapes name, operation, afp=0
+	floating_reciprocal_scalar_binary \name\()_h, \operation, h0, h1, h2, \afp
+	floating_reciprocal_scalar_binary \name\()_s, \operation, s0, s1, s2, \afp
+	floating_reciprocal_scalar_binary \name\()_d, \operation, d0, d1, d2, \afp
 .endm
 
 .macro floating_reciprocal_vector name, operation, arrangement, unary
@@ -659,6 +739,14 @@ floating_reciprocal_scalar_unary_shapes native_frsqrte_scalar, frsqrte
 floating_reciprocal_vector_shapes native_frsqrte_vector, frsqrte, 1
 floating_reciprocal_scalar_binary_shapes native_frsqrts_scalar, frsqrts
 floating_reciprocal_vector_shapes native_frsqrts_vector, frsqrts, 0
+
+afp_twins_begin
+floating_reciprocal_scalar_unary_shapes native_frecpe_scalar, frecpe, 1
+floating_reciprocal_scalar_binary_shapes native_frecps_scalar, frecps, 1
+floating_reciprocal_scalar_unary_shapes native_frecpx_scalar, frecpx, 1
+floating_reciprocal_scalar_unary_shapes native_frsqrte_scalar, frsqrte, 1
+floating_reciprocal_scalar_binary_shapes native_frsqrts_scalar, frsqrts, 1
+afp_twins_end
 
 .purgem floating_reciprocal_vector_shapes
 .purgem floating_reciprocal_vector
@@ -756,8 +844,14 @@ floating_complex_element_rotations fcmla_element, 4s, s, 1
 .purgem floating_complex_vector_rotations
 .purgem floating_complex_vector
 
-.macro floating_binary name, left, right, destination, element, operation, forward=0
+/* The scalar result merges into the whole first source under FPCR.NEP, so
+ * the FEAT_AFP twin loads all of it. */
+.macro floating_binary name, left, right, destination, element, operation, forward=0, afp=0
+.if \afp
+afp_gadget \name
+.else
 vector_entry \name, \forward, vector_register0, vector_register8, vector_register16, scalar_none, 1
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
@@ -770,7 +864,11 @@ vector_entry \name, \forward, vector_register0, vector_register8, vector_registe
 	.if !\forward
 	movi v2.16b, #0
 	.endif
+	.if \afp
+	ldr q0, [x13]
+	.else
 	vector_read \forward, 1, \left, [x13]
+	.endif
 	vector_read \forward, 2, \right, [x14]
 	.if \forward
 	movi v2.16b, #0
@@ -778,7 +876,9 @@ vector_entry \name, \forward, vector_register0, vector_register8, vector_registe
 	\operation \destination, \left, \right
 	str q2, [x15]
 	next_gadget
+	.if !\afp
 	vector_variants \forward, vector_register8, vector_register16, scalar_none, floating_binary, \name, \left, \right, \destination, \element, \operation
+	.endif
 .endm
 
 floating_binary floating_multiply_half, h0, h1, h2, h, fmul
@@ -796,6 +896,24 @@ floating_binary floating_subtract_double, d0, d1, d2, d, fsub
 floating_binary floating_negative_multiply_half, h0, h1, h2, h, fnmul
 floating_binary floating_negative_multiply_single, s0, s1, s2, s, fnmul
 floating_binary floating_negative_multiply_double, d0, d1, d2, d, fnmul
+
+afp_twins_begin
+floating_binary floating_multiply_half, h0, h1, h2, h, fmul, afp=1
+floating_binary floating_multiply_single, s0, s1, s2, s, fmul, afp=1
+floating_binary floating_multiply_double, d0, d1, d2, d, fmul, afp=1
+floating_binary floating_divide_half, h0, h1, h2, h, fdiv, afp=1
+floating_binary floating_divide_single, s0, s1, s2, s, fdiv, afp=1
+floating_binary floating_divide_double, d0, d1, d2, d, fdiv, afp=1
+floating_binary floating_add_half, h0, h1, h2, h, fadd, afp=1
+floating_binary floating_add_single, s0, s1, s2, s, fadd, afp=1
+floating_binary floating_add_double, d0, d1, d2, d, fadd, afp=1
+floating_binary floating_subtract_half, h0, h1, h2, h, fsub, afp=1
+floating_binary floating_subtract_single, s0, s1, s2, s, fsub, afp=1
+floating_binary floating_subtract_double, d0, d1, d2, d, fsub, afp=1
+floating_binary floating_negative_multiply_half, h0, h1, h2, h, fnmul, afp=1
+floating_binary floating_negative_multiply_single, s0, s1, s2, s, fnmul, afp=1
+floating_binary floating_negative_multiply_double, d0, d1, d2, d, fnmul, afp=1
+afp_twins_end
 
 .purgem floating_binary
 .purgem floating_unary
@@ -989,8 +1107,15 @@ floating_conditional_compare_variants le, le
 /* Advanced SIMD floating comparisons are specialized by operation and exact
  * scalar/vector shape and execute the matching native FP16/FP32/FP64
  * instruction directly. */
-.macro simd_floating_compare_register_scalar name, operation, element, forward=0
+/* The register forms merge a scalar result into the whole second source
+ * under FPCR.NEP, so the FEAT_AFP twin loads all of it; the zero forms do not
+ * merge. */
+.macro simd_floating_compare_register_scalar name, operation, element, forward=0, afp=0
+.if \afp
+afp_gadget \name
+.else
 vector_entry \name, \forward, vector_register0, vector_register8, vector_register16, scalar_none, 1
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	ubfx w9, w8, #8, #5
@@ -1002,7 +1127,11 @@ vector_entry \name, \forward, vector_register0, vector_register8, vector_registe
 	movi v2.16b, #0
 	.endif
 	vector_read \forward, 1, \element\()0, [x12]
+	.if \afp
+	ldr q1, [x13]
+	.else
 	vector_read \forward, 2, \element\()1, [x13]
+	.endif
 	.if \forward
 	movi v2.16b, #0
 	.endif
@@ -1011,7 +1140,9 @@ vector_entry \name, \forward, vector_register0, vector_register8, vector_registe
 	add x12, x11, x9, lsl #4
 	str q2, [x12]
 	next_gadget
+	.if !\afp
 	vector_variants \forward, vector_register8, vector_register16, scalar_none, simd_floating_compare_register_scalar, \name, \operation, \element
+	.endif
 .endm
 
 .macro simd_floating_compare_register_vector name, operation, arrangement, forward=0
@@ -1104,6 +1235,24 @@ simd_floating_compare_zero_variants gt0, fcmgt
 simd_floating_compare_zero_variants le0, fcmle
 simd_floating_compare_zero_variants lt0, fcmlt
 
+afp_twins_begin
+simd_floating_compare_register_scalar simd_fcmp_eq_h, fcmeq, h, afp=1
+simd_floating_compare_register_scalar simd_fcmp_eq_s, fcmeq, s, afp=1
+simd_floating_compare_register_scalar simd_fcmp_eq_d, fcmeq, d, afp=1
+simd_floating_compare_register_scalar simd_fcmp_ge_h, fcmge, h, afp=1
+simd_floating_compare_register_scalar simd_fcmp_ge_s, fcmge, s, afp=1
+simd_floating_compare_register_scalar simd_fcmp_ge_d, fcmge, d, afp=1
+simd_floating_compare_register_scalar simd_fcmp_gt_h, fcmgt, h, afp=1
+simd_floating_compare_register_scalar simd_fcmp_gt_s, fcmgt, s, afp=1
+simd_floating_compare_register_scalar simd_fcmp_gt_d, fcmgt, d, afp=1
+simd_floating_compare_register_scalar simd_fcmp_facge_h, facge, h, afp=1
+simd_floating_compare_register_scalar simd_fcmp_facge_s, facge, s, afp=1
+simd_floating_compare_register_scalar simd_fcmp_facge_d, facge, d, afp=1
+simd_floating_compare_register_scalar simd_fcmp_facgt_h, facgt, h, afp=1
+simd_floating_compare_register_scalar simd_fcmp_facgt_s, facgt, s, afp=1
+simd_floating_compare_register_scalar simd_fcmp_facgt_d, facgt, d, afp=1
+afp_twins_end
+
 /* FCVTL/FCVTL2 and FCVTN/FCVTN2 are specialized by conversion pair and
  * destination half. The normal path is exactly one native conversion; only
  * AHP for half conversions uses the integer-only helper. */
@@ -1120,8 +1269,12 @@ simd_floating_compare_zero_variants lt0, fcmlt
 	next_gadget
 .endm
 
-.macro simd_floating_precision_vector name, operation, destination_arrangement, source_arrangement, upper_narrow, half_involved
+.macro simd_floating_precision_vector name, operation, destination_arrangement, source_arrangement, upper_narrow, half_involved, afp=0
+.if \afp
+afp_gadget \name
+.else
 gadget \name
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
@@ -1130,7 +1283,7 @@ gadget \name
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr q0, [x12]
-	.if \half_involved
+	.if \half_involved && !\afp
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #26, .Lsimd_fcvt_vector_software_\@
 	.endif
@@ -1142,7 +1295,7 @@ gadget \name
 	\operation v2.\destination_arrangement, v0.\source_arrangement
 	str q2, [x13]
 	next_gadget
-	.if \half_involved
+	.if \half_involved && !\afp
 .Lsimd_fcvt_vector_software_\@:
 	simd_floating_precision_vector_software
 	.endif
@@ -1159,9 +1312,23 @@ simd_floating_precision_vector simd_fcvtn2_ds, fcvtn2, 4s, 2d, 1, 0
 simd_floating_precision_vector simd_fcvtxn_vector, fcvtxn, 2s, 2d, 0, 0
 simd_floating_precision_vector simd_fcvtxn2_vector, fcvtxn2, 4s, 2d, 1, 0
 
+/* The host converts half precision under FPCR.AHP itself, which the FEAT_AFP
+ * twins rely on: the integer-only helper does not model FIZ or AH. */
+afp_twins_begin
+simd_floating_precision_vector simd_fcvtl_hs, fcvtl, 4s, 4h, 0, 1, 1
+simd_floating_precision_vector simd_fcvtl2_hs, fcvtl2, 4s, 8h, 0, 1, 1
+simd_floating_precision_vector simd_fcvtn_sh, fcvtn, 4h, 4s, 0, 1, 1
+simd_floating_precision_vector simd_fcvtn2_sh, fcvtn2, 8h, 4s, 1, 1, 1
+afp_twins_end
+
 .purgem simd_floating_precision_vector
 
+.macro simd_fcvtxn_scalar afp=0
+.if \afp
+afp_gadget simd_fcvtxn_scalar
+.else
 gadget simd_fcvtxn_scalar
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
@@ -1169,16 +1336,32 @@ gadget simd_fcvtxn_scalar
 	add x11, _cpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
+	.if \afp
+	ldr q2, [x13]
+	.endif
 	ldr d0, [x12]
 	fcvtxn s2, d0
 	str q2, [x13]
 	next_gadget
+.endm
+
+simd_fcvtxn_scalar
+afp_twins_begin
+simd_fcvtxn_scalar 1
+afp_twins_end
+
+.purgem simd_fcvtxn_scalar
 
 /* FCVT is specialized to all six source/destination precision pairs. The
  * ordinary FPCR path is one native conversion. FPCR.AHP takes a rare
- * integer-only helper path for half-precision pairs. */
-.macro floating_convert_precision name, source_bits, destination_bits
+ * integer-only helper path for half-precision pairs, except in the FEAT_AFP
+ * twins, which convert natively from the old Vd under every FPCR. */
+.macro floating_convert_precision name, source_bits, destination_bits, afp=0
+.if \afp
+afp_gadget \name
+.else
 gadget \name
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	uxth w9, w8
@@ -1192,7 +1375,9 @@ gadget \name
 	.else
 	ldr d0, [x12]
 	.endif
-	.if \source_bits == 16 || \destination_bits == 16
+	.if \afp
+	ldr q2, [x13]
+	.elseif \source_bits == 16 || \destination_bits == 16
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #26, .Lfloating_convert_software_\@
 	.endif
@@ -1212,7 +1397,7 @@ gadget \name
 	str q2, [x13]
 	next_gadget
 
-	.if \source_bits == 16 || \destination_bits == 16
+	.if (\source_bits == 16 || \destination_bits == 16) && !\afp
 .Lfloating_convert_software_\@:
 	/* x1/x2 are the threaded engine's CpuState/TLB registers. Preserve them
 	 * in ABI callee-saved registers across the integer-only helper call. */
@@ -1260,6 +1445,15 @@ floating_convert_precision floating_convert_s_to_d, 32, 64
 floating_convert_precision floating_convert_d_to_h, 64, 16
 floating_convert_precision floating_convert_d_to_s, 64, 32
 
+afp_twins_begin
+floating_convert_precision floating_convert_h_to_s, 16, 32, 1
+floating_convert_precision floating_convert_h_to_d, 16, 64, 1
+floating_convert_precision floating_convert_s_to_h, 32, 16, 1
+floating_convert_precision floating_convert_s_to_d, 32, 64, 1
+floating_convert_precision floating_convert_d_to_h, 64, 16, 1
+floating_convert_precision floating_convert_d_to_s, 64, 32, 1
+afp_twins_end
+
 /* Floating-to-integer conversions are specialized by rounding operation,
  * destination kind, signedness, source precision, integer width, vector
  * shape, and discard-at-XZR. Each executes one native conversion; forms the
@@ -1301,30 +1495,56 @@ gadget floating_javascript_convert_software_fallback
 	ldr x8, [_stream], #8
 	floating_javascript_convert_software
 
-.macro floating_javascript_convert name, discard
+/* The software path under FPCR.FZ corrects the Z flag some hosts set for a
+ * flushed subnormal input. Its model has no FIZ or AH, so the FEAT_AFP twins
+ * instead correct the flag after the native instruction under every FPCR, as
+ * the JIT does: a subnormal input always clears Z. */
+.macro floating_javascript_convert name, discard, afp=0
+.if \afp
+afp_gadget \name
+.else
 gadget \name
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	ubfx w10, w8, #8, #5
 	add x11, _cpu, #UML_GADGET_CPU_V0
 	add x12, x11, x10, lsl #4
 	ldr d0, [x12]
+	.if !\afp
 	ldr w16, [_cpu, #UML_GADGET_CPU_FPCR]
 	tbnz w16, #24, .Lfloating_javascript_convert_software_\@
+	.endif
 	fjcvtzs w14, d0
 	mrs x27, nzcv
+	.if \afp
+	fmov x15, d0
+	ubfx x16, x15, #52, #11
+	cbnz x16, .Lfloating_javascript_convert_flags_\@
+	lsl x16, x15, #12
+	cbz x16, .Lfloating_javascript_convert_flags_\@
+	mov w27, wzr
+.Lfloating_javascript_convert_flags_\@:
+	.endif
 	.if \discard == 0
 	and w9, w8, #0x1f
 	add x13, _cpu, #UML_GADGET_CPU_X0
 	str x14, [x13, x9, lsl #3]
 	.endif
 	next_gadget
+	.if !\afp
 .Lfloating_javascript_convert_software_\@:
 	floating_javascript_convert_software
+	.endif
 .endm
 
 floating_javascript_convert floating_javascript_convert, 0
 floating_javascript_convert floating_javascript_convert_discard, 1
+
+afp_twins_begin
+floating_javascript_convert floating_javascript_convert, 0, 1
+floating_javascript_convert floating_javascript_convert_discard, 1, 1
+afp_twins_end
 
 .purgem floating_javascript_convert
 .purgem floating_javascript_convert_software
@@ -1347,8 +1567,12 @@ gadget integer_to_floating_software_fallback
 	ldr x8, [_stream], #8
 	integer_to_floating_software
 
-.macro gpr_to_floating name, operation, integer, floating, element, zero
+.macro gpr_to_floating name, operation, integer, floating, element, zero, afp=0
+.if \afp
+afp_gadget \name
+.else
 gadget \name
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
@@ -1361,34 +1585,47 @@ gadget \name
 	add x12, _cpu, #UML_GADGET_CPU_X0
 	ldr x14, [x12, x10, lsl #3]
 	.endif
+	.if \afp
+	ldr q2, [x13]
+	.else
 	movi v2.16b, #0
+	.endif
 	\operation \floating\()2, \integer\()14
 	str q2, [x13]
 	next_gadget
 .endm
 
-.macro gpr_to_floating_widths name, operation, integer, zero
-	gpr_to_floating gpr_to_floating_\name\()_\integer\()_h\zero, \operation, \integer, h, h, \zero
-	gpr_to_floating gpr_to_floating_\name\()_\integer\()_s\zero, \operation, \integer, s, s, \zero
-	gpr_to_floating gpr_to_floating_\name\()_\integer\()_d\zero, \operation, \integer, d, d, \zero
+.macro gpr_to_floating_widths name, operation, integer, zero, afp=0
+	gpr_to_floating gpr_to_floating_\name\()_\integer\()_h\zero, \operation, \integer, h, h, \zero, \afp
+	gpr_to_floating gpr_to_floating_\name\()_\integer\()_s\zero, \operation, \integer, s, s, \zero, \afp
+	gpr_to_floating gpr_to_floating_\name\()_\integer\()_d\zero, \operation, \integer, d, d, \zero, \afp
 .endm
 
-.macro gpr_to_floating_variants name, operation
-	gpr_to_floating_widths \name, \operation, w, 0
-	gpr_to_floating_widths \name, \operation, x, 0
-	gpr_to_floating_widths \name, \operation, w, 1
-	gpr_to_floating_widths \name, \operation, x, 1
+.macro gpr_to_floating_variants name, operation, afp=0
+	gpr_to_floating_widths \name, \operation, w, 0, \afp
+	gpr_to_floating_widths \name, \operation, x, 0, \afp
+	gpr_to_floating_widths \name, \operation, w, 1, \afp
+	gpr_to_floating_widths \name, \operation, x, 1, \afp
 .endm
 
 gpr_to_floating_variants scvtf, scvtf
 gpr_to_floating_variants ucvtf, ucvtf
 
+afp_twins_begin
+gpr_to_floating_variants scvtf, scvtf, 1
+gpr_to_floating_variants ucvtf, ucvtf, 1
+afp_twins_end
+
 .purgem gpr_to_floating_variants
 .purgem gpr_to_floating_widths
 .purgem gpr_to_floating
 
-.macro simd_integer_to_floating_scalar name, operation, element
+.macro simd_integer_to_floating_scalar name, operation, element, afp=0
+.if \afp
+afp_gadget \name
+.else
 gadget \name
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
@@ -1397,7 +1634,11 @@ gadget \name
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr \element\()0, [x12]
+	.if \afp
+	ldr q2, [x13]
+	.else
 	movi v2.16b, #0
+	.endif
 	\operation \element\()2, \element\()0
 	str q2, [x13]
 	next_gadget
@@ -1431,6 +1672,13 @@ gadget \name
 
 simd_integer_to_floating_variants scvtf, scvtf
 simd_integer_to_floating_variants ucvtf, ucvtf
+
+afp_twins_begin
+.irp element, h, s, d
+simd_integer_to_floating_scalar simd_scvtf_\element, scvtf, \element, 1
+simd_integer_to_floating_scalar simd_ucvtf_\element, ucvtf, \element, 1
+.endr
+afp_twins_end
 
 .purgem simd_integer_to_floating_variants
 .purgem simd_integer_to_floating_vector
@@ -1481,8 +1729,12 @@ floating_to_gpr_variants fcvtau, fcvtau
 .purgem floating_to_gpr_widths
 .purgem floating_to_gpr
 
-.macro simd_floating_to_integer_scalar name, operation, element
+.macro simd_floating_to_integer_scalar name, operation, element, afp=0
+.if \afp
+afp_gadget \name
+.else
 gadget \name
+.endif
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
@@ -1491,7 +1743,11 @@ gadget \name
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr \element\()0, [x12]
+	.if \afp
+	ldr q2, [x13]
+	.else
 	movi v2.16b, #0
+	.endif
 	\operation \element\()2, \element\()0
 	str q2, [x13]
 	next_gadget
@@ -1534,6 +1790,14 @@ simd_floating_to_integer_variants fcvtzu, fcvtzu
 simd_floating_to_integer_variants fcvtas, fcvtas
 simd_floating_to_integer_variants fcvtau, fcvtau
 
+afp_twins_begin
+.irp operation, fcvtns, fcvtnu, fcvtps, fcvtpu, fcvtms, fcvtmu, fcvtzs, fcvtzu, fcvtas, fcvtau
+.irp element, h, s, d
+simd_floating_to_integer_scalar simd_\operation\()_\element, \operation, \element, 1
+.endr
+.endr
+afp_twins_end
+
 .purgem simd_floating_to_integer_variants
 .purgem simd_floating_to_integer_vector
 .purgem simd_floating_to_integer_scalar
@@ -1551,6 +1815,25 @@ NAME(uml_arm64_gadget_\name):
 	.p2align 4
 	.globl NAME(uml_arm64_gadget_\name\()_end)
 NAME(uml_arm64_gadget_\name\()_end):
+.endm
+
+/* A FEAT_AFP twin table has the same stride as its base, which the unit
+ * suite checks, so the builder maps an entry by its offset. */
+.macro floating_fixed_twin_begin name, afp
+	.if \afp
+	floating_fixed_table_begin \name\()_afp
+	.else
+	floating_fixed_table_begin \name
+	.endif
+.endm
+
+.macro floating_fixed_twin_end name, afp
+	.if \afp
+	floating_fixed_table_end \name\()_afp
+	afp_table_row \name
+	.else
+	floating_fixed_table_end \name
+	.endif
 .endm
 
 .macro floating_to_gpr_fixed_body operation, integer, floating, discard, fraction
@@ -1601,7 +1884,7 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 .purgem floating_to_gpr_fixed_table
 .purgem floating_to_gpr_fixed_body
 
-.macro simd_floating_to_integer_fixed_scalar_body operation, element, fraction
+.macro simd_floating_to_integer_fixed_scalar_body operation, element, fraction, afp=0
 	.p2align 4
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -1611,7 +1894,11 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr \element\()0, [x12]
+	.if \afp
+	ldr q2, [x13]
+	.else
 	movi v2.16b, #0
+	.endif
 	\operation \element\()2, \element\()0, #\fraction
 	str q2, [x13]
 	next_gadget
@@ -1632,18 +1919,18 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 	next_gadget
 .endm
 
-.macro simd_floating_to_integer_fixed_table name, operation, shape, scalar, count
-	floating_fixed_table_begin \name
+.macro simd_floating_to_integer_fixed_table name, operation, shape, scalar, count, afp=0
+	floating_fixed_twin_begin \name, \afp
 	.irp fraction, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64
 		.if \fraction <= \count
 			.if \scalar
-				simd_floating_to_integer_fixed_scalar_body \operation, \shape, \fraction
+				simd_floating_to_integer_fixed_scalar_body \operation, \shape, \fraction, \afp
 			.else
 				simd_floating_to_integer_fixed_vector_body \operation, \shape, \fraction
 			.endif
 		.endif
 	.endr
-	floating_fixed_table_end \name
+	floating_fixed_twin_end \name, \afp
 .endm
 
 .macro simd_floating_to_integer_fixed_variants name, operation
@@ -1660,12 +1947,20 @@ floating_to_gpr_fixed_variants fcvtzu, fcvtzu
 simd_floating_to_integer_fixed_variants fcvtzs, fcvtzs
 simd_floating_to_integer_fixed_variants fcvtzu, fcvtzu
 
+afp_twins_begin
+.irp operation, fcvtzs, fcvtzu
+simd_floating_to_integer_fixed_table simd_fixed_\operation\()_h, \operation, h, 1, 16, 1
+simd_floating_to_integer_fixed_table simd_fixed_\operation\()_s, \operation, s, 1, 32, 1
+simd_floating_to_integer_fixed_table simd_fixed_\operation\()_d, \operation, d, 1, 64, 1
+.endr
+afp_twins_end
+
 .purgem simd_floating_to_integer_fixed_variants
 .purgem simd_floating_to_integer_fixed_table
 .purgem simd_floating_to_integer_fixed_vector_body
 .purgem simd_floating_to_integer_fixed_scalar_body
 
-.macro gpr_to_floating_fixed_body operation, integer, floating, element, zero, fraction
+.macro gpr_to_floating_fixed_body operation, integer, floating, element, zero, fraction, afp=0
 	.p2align 4
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -1679,44 +1974,53 @@ simd_floating_to_integer_fixed_variants fcvtzu, fcvtzu
 	add x12, _cpu, #UML_GADGET_CPU_X0
 	ldr x14, [x12, x10, lsl #3]
 	.endif
+	.if \afp
+	ldr q2, [x13]
+	.else
 	movi v2.16b, #0
+	.endif
 	\operation \floating\()2, \integer\()14, #\fraction
 	str q2, [x13]
 	next_gadget
 .endm
 
-.macro gpr_to_floating_fixed_table name, operation, integer, floating, element, zero, count
-	floating_fixed_table_begin \name
+.macro gpr_to_floating_fixed_table name, operation, integer, floating, element, zero, count, afp=0
+	floating_fixed_twin_begin \name, \afp
 	.irp fraction, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64
 		.if \fraction <= \count
-			gpr_to_floating_fixed_body \operation, \integer, \floating, \element, \zero, \fraction
+			gpr_to_floating_fixed_body \operation, \integer, \floating, \element, \zero, \fraction, \afp
 		.endif
 	.endr
-	floating_fixed_table_end \name
+	floating_fixed_twin_end \name, \afp
 .endm
 
-.macro gpr_to_floating_fixed_widths name, operation, integer, zero, count
-	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_h\zero, \operation, \integer, h, h, \zero, \count
-	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_s\zero, \operation, \integer, s, s, \zero, \count
-	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_d\zero, \operation, \integer, d, d, \zero, \count
+.macro gpr_to_floating_fixed_widths name, operation, integer, zero, count, afp=0
+	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_h\zero, \operation, \integer, h, h, \zero, \count, \afp
+	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_s\zero, \operation, \integer, s, s, \zero, \count, \afp
+	gpr_to_floating_fixed_table gpr_to_floating_fixed_\name\()_\integer\()_d\zero, \operation, \integer, d, d, \zero, \count, \afp
 .endm
 
-.macro gpr_to_floating_fixed_variants name, operation
-	gpr_to_floating_fixed_widths \name, \operation, w, 0, 32
-	gpr_to_floating_fixed_widths \name, \operation, x, 0, 64
-	gpr_to_floating_fixed_widths \name, \operation, w, 1, 32
-	gpr_to_floating_fixed_widths \name, \operation, x, 1, 64
+.macro gpr_to_floating_fixed_variants name, operation, afp=0
+	gpr_to_floating_fixed_widths \name, \operation, w, 0, 32, \afp
+	gpr_to_floating_fixed_widths \name, \operation, x, 0, 64, \afp
+	gpr_to_floating_fixed_widths \name, \operation, w, 1, 32, \afp
+	gpr_to_floating_fixed_widths \name, \operation, x, 1, 64, \afp
 .endm
 
 gpr_to_floating_fixed_variants scvtf, scvtf
 gpr_to_floating_fixed_variants ucvtf, ucvtf
+
+afp_twins_begin
+gpr_to_floating_fixed_variants scvtf, scvtf, 1
+gpr_to_floating_fixed_variants ucvtf, ucvtf, 1
+afp_twins_end
 
 .purgem gpr_to_floating_fixed_variants
 .purgem gpr_to_floating_fixed_widths
 .purgem gpr_to_floating_fixed_table
 .purgem gpr_to_floating_fixed_body
 
-.macro simd_integer_to_floating_fixed_scalar_body operation, element, fraction
+.macro simd_integer_to_floating_fixed_scalar_body operation, element, fraction, afp=0
 	.p2align 4
 	ensure_fp_environment
 	ldr x8, [_stream], #8
@@ -1726,7 +2030,11 @@ gpr_to_floating_fixed_variants ucvtf, ucvtf
 	add x12, x11, x10, lsl #4
 	add x13, x11, x9, lsl #4
 	ldr \element\()0, [x12]
+	.if \afp
+	ldr q2, [x13]
+	.else
 	movi v2.16b, #0
+	.endif
 	\operation \element\()2, \element\()0, #\fraction
 	str q2, [x13]
 	next_gadget
@@ -1747,18 +2055,18 @@ gpr_to_floating_fixed_variants ucvtf, ucvtf
 	next_gadget
 .endm
 
-.macro simd_integer_to_floating_fixed_table name, operation, shape, scalar, count
-	floating_fixed_table_begin \name
+.macro simd_integer_to_floating_fixed_table name, operation, shape, scalar, count, afp=0
+	floating_fixed_twin_begin \name, \afp
 	.irp fraction, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64
 		.if \fraction <= \count
 			.if \scalar
-				simd_integer_to_floating_fixed_scalar_body \operation, \shape, \fraction
+				simd_integer_to_floating_fixed_scalar_body \operation, \shape, \fraction, \afp
 			.else
 				simd_integer_to_floating_fixed_vector_body \operation, \shape, \fraction
 			.endif
 		.endif
 	.endr
-	floating_fixed_table_end \name
+	floating_fixed_twin_end \name, \afp
 .endm
 
 .macro simd_integer_to_floating_fixed_variants name, operation
@@ -1775,24 +2083,44 @@ gpr_to_floating_fixed_variants ucvtf, ucvtf
 simd_integer_to_floating_fixed_variants scvtf, scvtf
 simd_integer_to_floating_fixed_variants ucvtf, ucvtf
 
+afp_twins_begin
+.irp operation, scvtf, ucvtf
+simd_integer_to_floating_fixed_table simd_fixed_\operation\()_h, \operation, h, 1, 16, 1
+simd_integer_to_floating_fixed_table simd_fixed_\operation\()_s, \operation, s, 1, 32, 1
+simd_integer_to_floating_fixed_table simd_fixed_\operation\()_d, \operation, d, 1, 64, 1
+.endr
+afp_twins_end
+
 .purgem simd_integer_to_floating_fixed_variants
 .purgem simd_integer_to_floating_fixed_table
 .purgem simd_integer_to_floating_fixed_vector_body
 .purgem simd_integer_to_floating_fixed_scalar_body
+.purgem floating_fixed_twin_end
+.purgem floating_fixed_twin_begin
 .purgem floating_fixed_table_end
 .purgem floating_fixed_table_begin
 
 /* Translation packs four direct CpuState vector offsets in destination,
- * first multiplicand, second multiplicand, and addend order. */
-.macro floating_fused name, first, second, addend, destination, element, operation
+ * first multiplicand, second multiplicand, and addend order. The result
+ * merges into the whole addend under FPCR.NEP, so the FEAT_AFP twin loads all
+ * of it. */
+.macro floating_fused name, first, second, addend, destination, element, operation, afp=0
+.if \afp
+afp_gadget \name
+.else
 gadget \name
+.endif
 	ensure_fp_environment
 	ldr x12, [_stream], #8
 	unpack_u16_4 x12, x8, x9, x10, x11
 	movi v3.16b, #0
 	ldr \first, [_cpu, x9]
 	ldr \second, [_cpu, x10]
+	.if \afp
+	ldr q2, [_cpu, x11]
+	.else
 	ldr \addend, [_cpu, x11]
+	.endif
 	\operation \destination, \first, \second, \addend
 	str q3, [_cpu, x8]
 	next_gadget
@@ -1811,6 +2139,14 @@ floating_fused floating_nmsub_half, h0, h1, h2, h3, h, fnmsub
 floating_fused floating_nmsub_single, s0, s1, s2, s3, s, fnmsub
 floating_fused floating_nmsub_double, d0, d1, d2, d3, d, fnmsub
 
+afp_twins_begin
+.irp operation, madd, msub, nmadd, nmsub
+floating_fused floating_\operation\()_half, h0, h1, h2, h3, h, f\operation, 1
+floating_fused floating_\operation\()_single, s0, s1, s2, s3, s, f\operation, 1
+floating_fused floating_\operation\()_double, d0, d1, d2, d3, d, f\operation, 1
+.endr
+afp_twins_end
+
 .purgem floating_fused
 
 /* Unreachable padding where the ordinary vector FMLA/FMLS entries (4h, 8h,
@@ -1826,8 +2162,15 @@ removed_vector_forward_gadget 64
 
 /* Translation-specialized vector FABS/FNEG. Valid guest programs execute with
  * no opcode, precision, or Q decode branches. */
-.macro simd_floating_sign name, operation, arrangement, shift, forward=0
+/* Only FPCR.AH changes these, so the base entries need no guest FP
+ * environment and their FEAT_AFP twins install one. */
+.macro simd_floating_sign name, operation, arrangement, shift, forward=0, afp=0
+.if \afp
+afp_gadget simd_floating_\name
+	ensure_fp_environment
+.else
 vector_entry simd_floating_\name, \forward, vector_register0, vector_register8, scalar_none, scalar_none, 1
+.endif
 	ldr x8, [_stream], #8
 	and w9, w8, #0x1f
 	ubfx w10, w8, #8, #5
@@ -1838,7 +2181,9 @@ vector_entry simd_floating_\name, \forward, vector_register0, vector_register8, 
 	add x12, x11, x9, lsl #4
 	str q2, [x12]
 	next_gadget
+	.if !\afp
 	vector_variants \forward, vector_register8, scalar_none, scalar_none, simd_floating_sign, \name, \operation, \arrangement, \shift
+	.endif
 .endm
 
 simd_floating_sign fabs_4h, fabs, 4h, 11
@@ -1851,6 +2196,19 @@ simd_floating_sign fneg_8h, fneg, 8h, 11
 simd_floating_sign fneg_2s, fneg, 2s, 24
 simd_floating_sign fneg_4s, fneg, 4s, 24
 simd_floating_sign fneg_2d, fneg, 2d, 53
+
+afp_twins_begin
+simd_floating_sign fabs_4h, fabs, 4h, 11, afp=1
+simd_floating_sign fabs_8h, fabs, 8h, 11, afp=1
+simd_floating_sign fabs_2s, fabs, 2s, 24, afp=1
+simd_floating_sign fabs_4s, fabs, 4s, 24, afp=1
+simd_floating_sign fabs_2d, fabs, 2d, 53, afp=1
+simd_floating_sign fneg_4h, fneg, 4h, 11, afp=1
+simd_floating_sign fneg_8h, fneg, 8h, 11, afp=1
+simd_floating_sign fneg_2s, fneg, 2s, 24, afp=1
+simd_floating_sign fneg_4s, fneg, 4s, 24, afp=1
+simd_floating_sign fneg_2d, fneg, 2d, 53, afp=1
+afp_twins_end
 
 .purgem simd_floating_sign
 
