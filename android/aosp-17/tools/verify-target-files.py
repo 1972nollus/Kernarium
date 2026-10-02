@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import android_image  # noqa: E402
 from release_common import sha256_path  # noqa: E402
 
 
@@ -25,13 +26,6 @@ ELFDATA2LSB = 1
 ET_EXEC = 2
 ET_DYN = 3
 EM_AARCH64 = 183
-PT_LOAD = 1
-PT_DYNAMIC = 2
-DT_NULL = 0
-DT_NEEDED = 1
-DT_STRTAB = 5
-DT_STRSZ = 10
-PAGE_SIZE = 16384
 MAX_PROGRAM_HEADERS_SIZE = 1 << 20
 APEX_PAYLOAD_MAGIC_SIZE = 1024 + 0x38 + 2
 EXT4_MAGIC_OFFSET = 1024 + 0x38
@@ -391,8 +385,12 @@ UML_INIT_FORBIDDEN = (
 )
 
 
+def error(message: str) -> SystemExit:
+    return SystemExit(f"Android target-files verifier: {message}")
+
+
 def fail(message: str) -> None:
-    raise SystemExit(f"Android target-files verifier: {message}")
+    raise error(message)
 
 
 def sha256_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> str:
@@ -802,106 +800,10 @@ def check_target_elf(info: zipfile.ZipInfo, payload: bytes) -> None:
     if machine != EM_AARCH64:
         fail(f"target executable is not AArch64: {info.filename}")
 
-    program_offset = struct.unpack_from("<Q", payload, 32)[0]
-    entry_size, entry_count = struct.unpack_from("<HH", payload, 54)
+    entry_size = struct.unpack_from("<H", payload, 54)[0]
     if entry_size < 56:
         fail(f"malformed ELF program-header size: {info.filename}")
-    for index in range(entry_count):
-        offset = program_offset + index * entry_size
-        (
-            kind,
-            _flags,
-            file_offset,
-            virtual_address,
-            _physical_address,
-            _file_size,
-            _memory_size,
-            alignment,
-        ) = struct.unpack_from("<IIQQQQQQ", payload, offset)
-        if kind != PT_LOAD:
-            continue
-        if alignment < PAGE_SIZE or alignment & (alignment - 1):
-            fail(
-                f"target ELF load alignment is below 16 KiB: {info.filename} "
-                f"({alignment:#x})"
-            )
-        if virtual_address % alignment != file_offset % alignment:
-            fail(f"target ELF load alignment is incongruent: {info.filename}")
-
-
-def elf_needed(info: zipfile.ZipInfo, payload: bytes) -> set[str]:
-    program_offset = struct.unpack_from("<Q", payload, 32)[0]
-    entry_size, entry_count = struct.unpack_from("<HH", payload, 54)
-    loads: list[tuple[int, int, int]] = []
-    dynamic: tuple[int, int] | None = None
-    for index in range(entry_count):
-        offset = program_offset + index * entry_size
-        (
-            kind,
-            _flags,
-            file_offset,
-            virtual_address,
-            _physical_address,
-            file_size,
-            _memory_size,
-            _alignment,
-        ) = struct.unpack_from("<IIQQQQQQ", payload, offset)
-        if file_offset + file_size > len(payload):
-            fail(f"ELF segment extends beyond payload: {info.filename}")
-        if kind == PT_LOAD:
-            loads.append((file_offset, virtual_address, file_size))
-        elif kind == PT_DYNAMIC:
-            if dynamic is not None:
-                fail(f"ELF has multiple dynamic segments: {info.filename}")
-            dynamic = (file_offset, file_size)
-    if dynamic is None:
-        return set()
-
-    dynamic_offset, dynamic_size = dynamic
-    if dynamic_size % 16:
-        fail(f"ELF dynamic segment is malformed: {info.filename}")
-    string_address: int | None = None
-    string_size: int | None = None
-    needed_offsets: list[int] = []
-    terminated = False
-    for offset in range(dynamic_offset, dynamic_offset + dynamic_size, 16):
-        tag, value = struct.unpack_from("<qQ", payload, offset)
-        if tag == DT_NULL:
-            terminated = True
-            break
-        if tag == DT_NEEDED:
-            needed_offsets.append(value)
-        elif tag == DT_STRTAB:
-            string_address = value
-        elif tag == DT_STRSZ:
-            string_size = value
-    if not terminated:
-        fail(f"ELF dynamic segment lacks DT_NULL: {info.filename}")
-    if not needed_offsets:
-        return set()
-    if string_address is None or string_size is None:
-        fail(f"ELF dynamic string table is incomplete: {info.filename}")
-
-    string_offset: int | None = None
-    for file_offset, virtual_address, file_size in loads:
-        if virtual_address <= string_address < virtual_address + file_size:
-            string_offset = file_offset + string_address - virtual_address
-            break
-    if string_offset is None or string_offset + string_size > len(payload):
-        fail(f"ELF dynamic string table is outside a load segment: {info.filename}")
-    string_table = payload[string_offset : string_offset + string_size]
-    needed: set[str] = set()
-    for offset in needed_offsets:
-        if offset >= len(string_table):
-            fail(f"ELF DT_NEEDED offset is out of bounds: {info.filename}")
-        end = string_table.find(b"\0", offset)
-        if end < 0:
-            fail(f"ELF DT_NEEDED string is unterminated: {info.filename}")
-        try:
-            needed.add(string_table[offset:end].decode("utf-8", errors="strict"))
-        except UnicodeDecodeError as error:
-            fail(f"ELF DT_NEEDED string is not UTF-8: {info.filename}: {error}")
-    return needed
+    android_image.check_load_alignment(info.filename, payload, error)
 
 
 def check_mesa_gles_stack(
@@ -917,7 +819,7 @@ def check_mesa_gles_stack(
             fail(f"Mesa GLES component is not AArch64 ET_DYN: {entry}")
         check_target_elf(info, payload)
         if entry in MESA_EGL_ENTRIES:
-            needed = elf_needed(info, archive.read(info))
+            needed = android_image.elf_needed(info.filename, archive.read(info), error)
             if MESA_GALLIUM_DRIVER not in needed:
                 fail(f"Mesa GLES component does not link the gallium driver: {entry}")
 
