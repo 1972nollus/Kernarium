@@ -271,6 +271,14 @@ builds. An image linked outside this build, such as a consumer of the
 XCFramework's static archive, keeps the parts as separate page-aligned
 sections after `__text`.
 
+The pin fixes the region and nothing else. The C++ code after it still moves
+with unrelated changes, and dyld maps the runtime at an address that varies per
+launch among a few clusters that move with the sizes of the images it loads.
+A probe whose mode follows the load address, or is set by code outside the
+region, can therefore still change its odds when an unrelated image changes
+size, so an iPad layout comparison logs each launch's load address and counts
+modes per arm.
+
 Data-alignment faults retain the effective data address and the faulting PC.
 The host exports a distinct bridge event, and both kernel lines deliver
 `SIGBUS/BUS_ADRALN` so a guest handler can repair the access and resume. They
