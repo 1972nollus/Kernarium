@@ -1715,6 +1715,7 @@ void uml_arm64_gadget_sysreg_nzcv_write_r();
 void uml_arm64_gadget_sysreg_nzcv_write_z();
 void uml_arm64_gadget_sysreg_cntfrq_read();
 void uml_arm64_gadget_sysreg_cntvct_read();
+void uml_arm64_gadget_sysreg_cntvctss_read();
 void uml_arm64_gadget_sysreg_dit_read();
 void uml_arm64_gadget_sysreg_dit_write_r();
 void uml_arm64_gadget_sysreg_dit_write_z();

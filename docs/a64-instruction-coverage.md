@@ -23,6 +23,38 @@ Stride, and EBF read as zero, so BFDOT and BFMMLA always take the standard
 BFloat16 behavior. The `arm64-base-system-registers` corpus cases pin that
 write mask.
 
+FEAT_ECV, which also has no instructions, is implemented exactly where the
+host implements it, and HWCAP2_ECV and ID_AA64MMFR0_EL1.ECV say so. Both
+engines read CNTVCTSS_EL0 with the host's own instruction; on other hosts it
+is UNDEFINED. CNTPCTSS_EL0, like CNTPCT_EL0, is UNDEFINED everywhere, because
+Linux gives EL0 no physical count. A counter value cannot be pinned in the
+corpus, so `arm64-base-system-registers` and the guest HWCAP sanity payload
+check it on each host.
+
+FEAT_JSCVT is advertised exactly where the host implements it. Both engines
+run FJCVTZS with the host's instruction and correct the Z flag that some
+cores, such as the M1, set for a positive subnormal that FPCR.FZ flushes. The
+guest HWCAP sanity payload checks FJCVTZS on its special inputs.
+
+FEAT_CSSC is implemented on every host. Both engines execute ABS, CNT, CTZ,
+and the integer minimum and maximum natively where the host has the extension
+and otherwise as short sequences of base instructions, so HWCAP2_CSSC and
+ID_AA64ISAR2_EL1.CSSC are always set. The guest HWCAP sanity payload checks
+one form of each operation in the guest.
+
+FEAT_MOPS is implemented on every host as option B: the prologue formats the
+registers, the main stage moves nothing, and the epilogue moves every byte, one
+host memmove or memset per source and destination page region. A CPY that
+overlaps with its destination above its source copies backward. A forward-only
+CPYF in that arrangement moves each region in 64-byte blocks, and the corpus
+pins that result. Both engines share this code, so HWCAP2_MOPS and
+ID_AA64ISAR2_EL1.MOPS are always set. The JIT translates a prologue, main and
+epilogue that name the same registers as one unit: an untagged transfer that
+stays inside one destination page and one source page runs inline, in the
+same 64-byte blocks and direction, and any other takes the shared code from
+its prologue; `arm64-jit-mops-run-runtime` checks both arms against a byte
+model.
+
 That status is not exhaustive variant proof. No inventory entry has an
 independently reviewed complete partition of all forms, widths, aliases,
 architectural state, optional features, reserved encodings, fault ordering, and
