@@ -8,16 +8,13 @@
  * immediately visible without depending on a large application workload.
  */
 
-	.equ NR_WRITE,		64
-	.equ NR_EXIT_GROUP,	94
+#include "probe_harness.inc"
+
 	.equ ITERATIONS,	5000000
 	.equ ALIAS_DISTANCE,	(128 * 1024 * 1024)
 	.equ GUEST_PAGE_SIZE,	16384
 
-	.section .text
-	.global _start
-	.type _start, %function
-_start:
+	probe_start
 	adrp	x0, first_page
 	add	x0, x0, :lo12:first_page
 	adrp	x1, second_page
@@ -44,27 +41,9 @@ _start:
 	cmp	x3, x4
 	b.ne	.Lfailure
 
-	adrp	x1, success_message
-	add	x1, x1, :lo12:success_message
-	mov	x0, #1
-	mov	x2, #3
-	mov	x8, #NR_WRITE
-	svc	#0
-	mov	x0, #0
-	b	.Lexit
+	probe_finish
 
-.Lfailure:
-	mov	x0, #1
-.Lexit:
-	mov	x8, #NR_EXIT_GROUP
-	svc	#0
-	brk	#0
-
-	.size _start, .-_start
-
-	.section .rodata
-success_message:
-	.ascii "OK\n"
+	probe_end
 
 	.section .bss
 	.p2align 14

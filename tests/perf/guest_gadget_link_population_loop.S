@@ -20,8 +20,8 @@
  * removing the sequence advance that triggers a reset.
  */
 
-	.equ NR_WRITE,		64
-	.equ NR_EXIT_GROUP,	94
+#include "probe_harness.inc"
+
 #ifndef BENCH_ITERATIONS
 #define BENCH_ITERATIONS 500000
 #endif
@@ -30,10 +30,7 @@
 #endif
 	.equ ITERATIONS,	BENCH_ITERATIONS
 
-	.section .text
-	.global _start
-	.type _start, %function
-_start:
+	probe_start
 	b	.Lchain_last
 
 /* Each block branches to the instruction before it, so the target always lies
@@ -68,26 +65,6 @@ _start:
 	cmp	x20, x21
 	b.ne	.Lfailure
 
-	adrp	x1, success_message
-	add	x1, x1, :lo12:success_message
-	mov	x0, #1
-	mov	x2, #3
-	mov	x8, #NR_WRITE
-	svc	#0
-	mov	x0, #0
-	b	.Lexit
+	probe_finish	nop_label=.Lunrelated
 
-.Lfailure:
-	mov	x0, #1
-.Lexit:
-	mov	x8, #NR_EXIT_GROUP
-	svc	#0
-.Lunrelated:
-	nop
-	brk	#0
-
-	.size _start, .-_start
-
-	.section .rodata
-success_message:
-	.ascii "OK\n"
+	probe_end
