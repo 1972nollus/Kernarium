@@ -23,7 +23,6 @@ inline constexpr std::size_t cache_ways = 4;
 inline constexpr std::size_t single_instruction_arena_size = 16U * 1024U;
 inline constexpr std::uint64_t page_size = DARWIN_UML_GUEST_PAGE_SIZE;
 inline constexpr unsigned page_shift = DARWIN_UML_GUEST_PAGE_SHIFT;
-inline constexpr std::uint32_t native_fpsr_mutable_mask = 0x0800'009fU;
 inline constexpr std::size_t maximum_chain_instructions = 4096;
 
 [[nodiscard]] constexpr bool

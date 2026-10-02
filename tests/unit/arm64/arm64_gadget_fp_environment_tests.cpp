@@ -223,10 +223,11 @@ int main()
 			0x1e7e'0064U, cpu); // fjcvtzs w4,d3
 		require(cpu.registers[4] == 2U && cpu.nzcv == 0x4000'0000U);
 
-		/* CpuState keeps FPSR bits 31:28, which the host holds as RES0;
-		 * materializing the live FPSR for the model keeps them, as the
-		 * execution boundary does. */
+		/* FPSR bits 31:28 are RES0: an MSR FPSR that sets them leaves
+		 * nothing for the model's materialization or the execution
+		 * boundary to commit. */
 		const std::array convert{
+			0xd51b'4426U, // msr fpsr,x6
 			0x1e7e'0064U, // fjcvtzs w4,d3
 			0xd400'0001U, // svc #0
 		};
@@ -237,12 +238,12 @@ int main()
 		require(built.complete);
 		cpu = {};
 		cpu.fpcr = 1U << 24; // FZ
-		cpu.fpsr = 0x8000'0000U | fpsr_saturation;
+		cpu.registers[6] = 0xf000'0000U | fpsr_saturation;
 		std::memcpy(cpu.vectors[3].bytes.data(), &two, sizeof(two));
 		::uml::memory::Tlb tlb;
 		require(gadgets::execute(built.program, cpu, tlb) ==
 			::uml::cpu::EngineEvent::system_call);
 		require(cpu.registers[4] == 2U);
-		require(cpu.fpsr == (0x8000'0000U | fpsr_saturation));
+		require(cpu.fpsr == fpsr_saturation);
 	}
 }

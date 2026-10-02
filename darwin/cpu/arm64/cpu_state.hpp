@@ -34,6 +34,16 @@ inline constexpr std::uint32_t fpcr_writable_mask = 0x07c8'9f00U;
 inline constexpr std::uint32_t fpcr_afp_controls = 0x0000'0007U;
 static_assert((fpcr_writable_mask & fpcr_afp_controls) == 0U);
 
+/* The FPSR bits an MSR FPSR or any context load can set; the rest read as
+ * zero and ignore writes. From the AArch64 FPSR description (DDI 0601,
+ * 2026-06), for this virtual CPU: QC and the cumulative exception flags,
+ * IDC included, are unconditional fields, and N, Z, C and V, the AArch32
+ * floating-point comparison flags, exist only when AArch32 is implemented.
+ * The guest is AArch64-only, so they are RES0, and the hosts implement them
+ * as RAZ/WI. The JIT, the context restore path and the tests read this mask,
+ * and the gadget assembly's UML_ARM64_FPSR_WRITABLE is checked against it. */
+inline constexpr std::uint32_t fpsr_writable_mask = 0x0800'009fU;
+
 struct alignas(16) VectorRegister final {
 	std::array<std::byte, 16> bytes{};
 };
@@ -120,14 +130,15 @@ struct CpuState final {
 	}
 
 	/* Loads a saved context lazily. Its FPCR is masked as an MSR FPCR
-	 * write is, with the host's fpcr_writable_mask_for(). */
+	 * write is, with the host's fpcr_writable_mask_for(), and its FPSR as
+	 * an MSR FPSR write is. */
 	void defer_fp_load(const void *source, std::uint32_t source_fpcr,
 			  std::uint32_t source_fpsr,
 			  std::uint32_t fpcr_writable) noexcept
 	{
 		deferred_vectors = static_cast<const std::byte *>(source);
 		deferred_fpcr = source_fpcr & fpcr_writable;
-		deferred_fpsr = source_fpsr;
+		deferred_fpsr = source_fpsr & fpsr_writable_mask;
 		fp_loaded = false;
 		fp_dirty = false;
 	}
@@ -147,6 +158,12 @@ struct CpuState final {
 	[[nodiscard]] std::uint32_t effective_fpcr() const noexcept
 	{
 		return fp_loaded ? fpcr : deferred_fpcr;
+	}
+
+	/* The guest FPSR, whether or not the deferred image is loaded yet. */
+	[[nodiscard]] std::uint32_t effective_fpsr() const noexcept
+	{
+		return fp_loaded ? fpsr : deferred_fpsr;
 	}
 
 	[[nodiscard]] std::uint64_t read_register(unsigned index,
