@@ -6,8 +6,10 @@
 executes every case of the build's page profile through the production gadget
 engine and, when the host implements the case's native features or the case
 is an invalid encoding, through the JIT. A case that needs FEAT_LSE2 runs in
-neither lane on a host without it. The runner needs no Python, network, or
-file other than the pack.
+neither lane on a host without it, and a case that needs FEAT_AFP or
+FEAT_RPRES runs in neither lane where the virtual CPU does not implement it
+(see [FEAT_AFP cases](#feat_afp-cases)). The runner needs no Python, network,
+or file other than the pack.
 
 A case is one engine-harness check exported from a producer unit test of a
 producer commit (see [Regeneration](#regeneration-and-new-cases)): a program
@@ -100,10 +102,11 @@ index the stable `arm_feature_tokens` table of
 `darwin/platform/host_capabilities.hpp`. Case flags hold the invalid-encoding
 bit, the fault-compared bit, and the minimization level (0 full, 1 narrow,
 2 broad) in bits 2-3. `profiles` has bit 0 for 16 KiB and bit 1 for 4 KiB.
-Option bits 0 and 1 are reserved, and bits 2-9, in order, force the portable
+Option bits 0 and 1 are reserved, bits 2-9, in order, force the portable
 checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
-gadget bodies. Region flags are readable, writable, executable, guest code,
-and guest writable. Events follow the harness order: system call, memory
+gadget bodies, and bit 10 (`without_afp`) translates the record for a virtual
+CPU without FEAT_AFP on every host. Region flags are readable, writable,
+executable, guest code, and guest writable. Events follow the harness order: system call, memory
 fault, reserved, illegal instruction, breakpoint, floating-point trap, PC
 alignment, instruction budget, fatal. The reserved option bits, event code 2,
 the field ids the table below omits, and non-empty tag lists held FEAT_PAuth,
@@ -141,11 +144,17 @@ blob, and its expected bytes are the blob with the runs applied.
 ```sh
 uml_arm64_instruction_corpus_tests tests/unit/arm64/corpus/a64_instruction_corpus.pack \
   [--record TEXT] [--producer NAME] [--case TEXT] [--ordinal N] \
-  [--engine gadgets|jit] [--max-failures N | --fail-fast] [--list]
+  [--engine gadgets|jit] [--assume-host-feature TOKEN] \
+  [--max-failures N | --fail-fast] [--list]
 ```
 
 Filters combine; `--ordinal` selects producer check ordinals of the build's
-page profile. The default stops after 25 failures; `--max-failures 0` never
+page profile. `--assume-host-feature` translates as if the host had the
+feature; a case that needs it natively still needs the hardware to have it.
+The `arm64-instruction-corpus-afp-twins` CTest runs the pack with every
+feature `implements_afp()` needs assumed, so the FEAT_AFP twins run on every
+host and must match the base entries on the cases whose FPCR leaves the
+controls clear. The default stops after 25 failures; `--max-failures 0` never
 stops early.
 A failure names the record, case index, producer check ordinals, entry word,
 engine, and the first mismatch. The summary counts gadget and JIT runs and the
@@ -242,13 +251,12 @@ least one word of every encoding class to be undefined and the hints to be
 NOPs, and `arm64-absent-mte-tbi` records that restore the coverage the failing
 cases took from their allocations.
 
-FEAT_AFP and FEAT_EBF16 have no instructions of their own, and the virtual CPU
-omits them too: FPCR.FIZ, AH, NEP, and EBF are RES0. The rewrite drops the
-cases that set one of these controls and need the feature natively, clears
-the controls from every other case's FPCR, and drops the listed cases that
-fail once they are clear. A native requirement on a case whose FPCR sets none
-of them came from the engines' former host gates, and the rewrite removes it.
-The pack encoder refuses a state that sets them.
+FEAT_EBF16 has no instructions of its own, and the virtual CPU omits it too:
+FPCR.EBF is RES0. The rewrite drops the cases that set EBF and need the
+feature natively, clears it from every other case's FPCR, and drops the
+listed cases that fail once it is clear. A native requirement on a case whose
+FPCR does not set it came from the engines' former host gates, and the
+rewrite removes it. The pack encoder refuses a state that sets EBF.
 
 Both engines implement FEAT_CSSC and FEAT_MOPS on every host, so their native
 requirements were likewise only the producer JIT's host gates. The rewrite
@@ -260,8 +268,8 @@ load/store allocation that completes through a general-register base with a
 zero top byte, sets `tbi_enabled`, and tags the base; the architectural result
 is the kept case's, except that a written-back base keeps its tag.
 `provenance.json` records the script's hash, its feature list, the failing
-file's hash, and the drop, strip, host-gate, and addition counts under
-`absent_features`, and `build-unit-corpus.py --check` verifies them. The
+file's hash, and the drop, strip, host-gate, FEAT_AFP, and addition counts
+under `absent_features`, and `build-unit-corpus.py --check` verifies them. The
 `arm64-instruction-corpus-absent-features` tooling test replays the rewrite
 from the pre-removal pack and checks that every kept case differs from its
 source only by the stripped state.
@@ -284,3 +292,20 @@ page profiles with `--max-failures 0`, and pass both logs to
 `--source` and the current list as `--previous`. A case the current list
 names keeps its feature; a newly failing case is attributed to the newest
 feature whose state the rewrite stripped from it.
+
+## FEAT_AFP cases
+
+FEAT_AFP has no instructions of its own. The virtual CPU implements it
+exactly where `implements_afp()` in
+[`darwin/cpu/arm64/floating_controls.hpp`](../../../../darwin/cpu/arm64/floating_controls.hpp)
+says, and FEAT_RPRES where `implements_rpres()` says. The absent-feature
+rewrite keeps every case whose FPCR sets FIZ, AH, or NEP, with those controls
+and a native `afp` requirement, adding the requirement where the producer
+harness left it out; the runner skips such a case in both lanes elsewhere. A native `afp`
+requirement on a case whose FPCR sets none of them was a former host gate and
+is removed. A case whose entry `MSR FPCR` writes a control that its FPCR
+state never holds pins the controls RES0; the rewrite moves it to a sibling
+record with the `without_afp` option. The pack encoder refuses a state that
+sets the controls without the native requirement. The single-precision
+FRECPE and FRSQRTE cases under FPCR.AH also need `rpres`: their producer
+models FEAT_RPRES with FEAT_AFP, as both engines do on hosts with both.
