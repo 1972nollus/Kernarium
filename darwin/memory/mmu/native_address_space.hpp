@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -184,6 +185,18 @@ private:
 	void note_shadow_offset_locked(std::uint64_t offset) noexcept;
 	void rebuild_shadow_filter_locked() noexcept;
 #endif
+	/* Every operation asks this under mutex_ and fails with ESHUTDOWN once
+	 * retire() has run.  It is not noexcept: errno's accessor may throw as far
+	 * as the compiler knows, and a noexcept wrapper would add a terminate
+	 * handler to every caller. */
+	[[nodiscard]] bool refuse_retired_locked()
+	{
+		if (!retired_.load(std::memory_order_acquire))
+			return false;
+		errno = ESHUTDOWN;
+		return true;
+	}
+
 	PageAddressSet direct_slots_;
 	std::uint64_t ownership_id_{};
 	std::atomic_bool retired_{};

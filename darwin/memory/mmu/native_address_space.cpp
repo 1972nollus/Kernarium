@@ -785,10 +785,8 @@ int NativeAddressSpace::map_direct(
 		return -1;
 	}
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	auto *registry = host_ownership_registry();
 	if (registry == nullptr) {
 		errno = ENOMEM;
@@ -875,10 +873,8 @@ int NativeAddressSpace::protect_direct(
 	std::uintptr_t address, std::uint64_t length, int protection)
 {
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	auto *registry = host_ownership_registry();
 	if (registry == nullptr) {
 		errno = ENOMEM;
@@ -908,10 +904,8 @@ int NativeAddressSpace::unmap_direct(
 		return -1;
 	}
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	auto *registry = host_ownership_registry();
 	if (registry == nullptr) {
 		errno = ENOMEM;
@@ -945,10 +939,8 @@ int NativeAddressSpace::flush_direct(
 	std::uintptr_t address, std::uint64_t length)
 {
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	auto *registry = host_ownership_registry();
 	if (registry == nullptr) {
 		errno = ENOMEM;
@@ -962,10 +954,8 @@ int NativeAddressSpace::sync_direct(
 	std::uintptr_t address, std::uint64_t length)
 {
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	auto *registry = host_ownership_registry();
 	if (registry == nullptr) {
 		errno = ENOMEM;
@@ -981,10 +971,8 @@ int NativeAddressSpace::retry_direct(
 	std::uintptr_t address, bool execute, bool write)
 {
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	auto *registry = host_ownership_registry();
 	if (registry == nullptr) {
 		errno = ENOMEM;
@@ -1352,10 +1340,8 @@ int NativeAddressSpace::stage_kernel_stack(std::uintptr_t address)
 		return -1;
 	}
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	const auto carrier = current_carrier_id();
 	auto [found, inserted] = active_kernel_stacks_.try_emplace(carrier);
 	(void)inserted;
@@ -1391,10 +1377,8 @@ int NativeAddressSpace::finish_kernel_stack(std::uintptr_t address)
 		return -1;
 	}
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	const auto carrier = current_carrier_id();
 	const auto found = active_kernel_stacks_.find(carrier);
 	if (found == active_kernel_stacks_.end() ||
@@ -1744,10 +1728,8 @@ int NativeAddressSpace::map(
 	if (identify_backing(fd, identity) < 0)
 		return -1;
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	/* Linux can repeat one 4 KiB PTE from an already-published, contiguous
 	 * 16 KiB native alias. Keep that mapping shared when the backing page and
 	 * permissions are unchanged. Converting the complete Darwin slot would be
@@ -2101,10 +2083,8 @@ int NativeAddressSpace::publish_backing(
 	if (identify_backing(fd, identity) < 0)
 		return -1;
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	/* Keep every potentially throwing bookkeeping operation ahead of the first
 	 * write to shared backing.  A failed software-map publication can therefore
 	 * be retried without a half-built index or partially visible mapping. */
@@ -2190,10 +2170,8 @@ int NativeAddressSpace::protect(
 		return -1;
 	}
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	DirectTransitionGuard transitions{*this,
 		static_cast<std::size_t>(
 			(slot_for(address + length - 1) - slot_for(address)) /
@@ -2279,10 +2257,8 @@ int NativeAddressSpace::unmap(
 		return -1;
 	}
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	for (auto slot = slot_for(address); slot < address + length;
 	     slot += host_page_size())
 		if (live_kernel_stack_slot_locked(slot)) {
@@ -2340,10 +2316,8 @@ int NativeAddressSpace::flush(
 		return -1;
 	}
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	const auto first = slot_for(address);
 	const auto end = address + length;
 	for (auto slot = first; slot < end; slot += host_page_size())
@@ -2362,10 +2336,8 @@ int NativeAddressSpace::refresh(
 		return -1;
 	}
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	std::vector<std::uintptr_t> pages;
 	std::vector<std::uintptr_t> slots;
 	const auto first = address & ~(guest_page_size - 1);
@@ -2405,10 +2377,8 @@ int NativeAddressSpace::reload_from_backing(
 		return -1;
 	}
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	std::vector<std::uintptr_t> pages;
 	std::vector<std::uintptr_t> slots;
 	const auto first = address & ~(guest_page_size - 1);
@@ -2437,10 +2407,8 @@ int NativeAddressSpace::retry(
 	std::uintptr_t address, bool execute, bool write)
 {
 	std::lock_guard lock{mutex_};
-	if (retired_.load(std::memory_order_acquire)) {
-		errno = ESHUTDOWN;
+	if (refuse_retired_locked())
 		return -1;
-	}
 	const auto page = address & ~(guest_page_size - 1);
 	const auto mapping = mappings_.find(page);
 	if (mapping == mappings_.end() ||
