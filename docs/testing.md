@@ -526,6 +526,13 @@ that run the production gadget and JIT engines through
 
 The corpus covers every A64 inventory entry with representative cases; it is
 not exhaustive variant proof.
+
+When changing the A64 architecture oracle, its generators, the evidence
+bindings, or the pinned Arm release, configure with
+`-DUML_A64_ARCHITECTURE_ARCHIVE=<path>/ISA_A64_xml_A_profile-2026-06.tar.gz`
+and run the opt-in `arm64-instruction-oracle-freshness` tooling test. It
+regenerates the allocation and decode-partition tables with the pinned LLVM MC
+and requires the checked-in bytes; without the archive or that LLVM MC it skips.
 [`a64-instruction-coverage.md`](a64-instruction-coverage.md) owns the
 inventory tables and that completeness boundary.
 
