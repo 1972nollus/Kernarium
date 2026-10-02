@@ -64,10 +64,9 @@
 	/* Sum of the page indices the parent seeds, checked after every pass. */
 	.equ EXPECTED_SUM,	(PAGES * (PAGES - 1) / 2)
 
-	.section .text
-	.global _start
-	.type _start, %function
-_start:
+#include "probe_harness.inc"
+
+	probe_start
 	/* Seed each page before any thread exists, so the working set is faulted
 	 * in once and the measured passes contain no first-touch faults. */
 	adrp	x0, region
@@ -141,21 +140,7 @@ _start:
 	b	.Lwait_loop
 
 .Lsucceed:
-	adrp	x1, success_message
-	add	x1, x1, :lo12:success_message
-	mov	x0, #1
-	mov	x2, #3
-	mov	x8, #NR_WRITE
-	svc	#0
-	mov	x0, #0
-	b	.Lexit
-
-.Lfailure:
-	mov	x0, #1
-.Lexit:
-	mov	x8, #NR_EXIT_GROUP
-	svc	#0
-	brk	#0
+	probe_finish
 
 	/* PASSES linear walks of the working set. Returns 0 on success, 1 if any
 	 * pass read a value the parent did not write. */
@@ -195,11 +180,7 @@ _start:
 	ret
 	.size .Lwork, .-.Lwork
 
-	.size _start, .-_start
-
-	.section .rodata
-success_message:
-	.ascii "OK\n"
+	probe_end
 
 	.section .bss
 	.balign 16

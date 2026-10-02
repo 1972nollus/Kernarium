@@ -18,8 +18,13 @@
  * probe_end closes _start and emits the "OK\n" success_message.
  */
 
+/* A probe with a longer system call table defines these two in it first. */
+	.ifndef NR_WRITE
 	.equ NR_WRITE,		64
+	.endif
+	.ifndef NR_EXIT_GROUP
 	.equ NR_EXIT_GROUP,	94
+	.endif
 
 .macro probe_start
 	.section .text
