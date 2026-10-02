@@ -44,13 +44,6 @@ public:
     return NativeRequirements{required};
   }
 
-  [[nodiscard]] NativeRequirements
-  operator|(ArmFeature feature) const noexcept {
-    auto result = requirements_;
-    result.set(static_cast<std::size_t>(feature));
-    return NativeRequirements{result};
-  }
-
   [[nodiscard]] const ArmFeatureSet &features() const noexcept {
     return requirements_;
   }

@@ -210,8 +210,12 @@ and each export directory lists the ordinal of every exported case in
 `coverage.tsv`, `provenance.json`, and `forced-cases.tsv` back as one change.
 
 `build-unit-corpus.py --check` verifies that the metadata and the canonical
-encoding match the pack. `--dump PACK --text FILE` writes a reviewable JSON
-lines form, and `--repack FILE` rebuilds the pack and metadata from it.
+encoding match the pack, and that every row of
+[`../a64_instruction_evidence_bindings.tsv`](../a64_instruction_evidence_bindings.tsv)
+names a producer with a record in the pack, or `-`; a regeneration that drops
+a producer's last record sets its bindings' `ctest` and `case` to `-`.
+`--dump PACK --text FILE` writes a reviewable JSON lines form, and
+`--repack FILE` rebuilds the pack and metadata from it.
 
 ## LSE2 alignment cases
 
@@ -271,9 +275,12 @@ is the kept case's, except that a written-back base keeps its tag.
 `provenance.json` records the script's hash, its feature list, the failing
 file's hash, and the drop, strip, host-gate, FEAT_AFP, and addition counts
 under `absent_features`, and `build-unit-corpus.py --check` verifies them. The
-`arm64-instruction-corpus-absent-features` tooling test replays the rewrite
-from the pre-removal pack and checks that every kept case differs from its
-source only by the stripped state.
+`arm64-instruction-corpus-absent-features` tooling test checks the pack
+against the rewrite's rules: no kept case exercises a removed feature, holds
+one of its encodings without expecting the undefined-instruction trap, or
+keeps a host gate or a FEAT_AFP requirement its FPCR does not need; the RES0
+pins are exactly the `without_afp` records' cases; and every authored record
+and case is the rewrite's, in the counts it recorded.
 
 Run both steps on the dump of every regenerated export and `--repack` the
 result:

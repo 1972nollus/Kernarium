@@ -14,8 +14,6 @@
 
 namespace uml::emulator::tests::base_min_max {
 
-namespace arm64 = uml::cpu::arm64;
-
 enum class Operation : unsigned {
 	signed_maximum,
 	unsigned_maximum,

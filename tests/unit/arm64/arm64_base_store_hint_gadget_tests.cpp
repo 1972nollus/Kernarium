@@ -11,8 +11,6 @@
 
 namespace arm64_base_store_hint_test {
 
-namespace engine = uml::emulator::tests;
-
 struct Variant final {
 	std::string_view row;
 	std::string_view name;
