@@ -6,27 +6,13 @@ STAGER=${1:?create-apple-xcframework.py is required}
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-apple-xcframework.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 TEST_ROOT=$(CDPATH= cd -- "$TEST_ROOT" && pwd -P)
-failure_index=0
 
-fail()
-{
-	printf '%s\n' "test_create_apple_xcframework.sh: $*" >&2
-	exit 1
-}
+TEST_NAME=test_create_apple_xcframework.sh
+. "$(dirname -- "$0")/../support/expect.sh"
 
-expect_failure()
+stage()
 {
-	pattern=$1
-	shift
-	failure_index=$((failure_index + 1))
-	log="$TEST_ROOT/failure-$failure_index.log"
-	if python3 -B "$STAGER" "$@" >"$log" 2>&1; then
-		fail "unexpected success: $*"
-	fi
-	grep -F "$pattern" "$log" >/dev/null || {
-		cat "$log" >&2
-		fail "failure lacked expected diagnostic: $pattern"
-	}
+	python3 -B "$STAGER" "$@"
 }
 
 make_slice()
@@ -44,7 +30,7 @@ for platform in macos ios ios-simulator; do
 done
 
 OUTPUT="$TEST_ROOT/output/UMLEmulator.xcframework"
-python3 -B "$STAGER" \
+stage \
 	--slice "macos=$TEST_ROOT/install-macos" \
 	--slice "ios=$TEST_ROOT/install-ios" \
 	--slice "ios-simulator=$TEST_ROOT/install-ios-simulator" \
@@ -128,22 +114,22 @@ do
 		fail "$platform public API header is empty"
 done
 
-expect_failure 'malformed --slice' \
+expect_diagnostic 'malformed --slice' stage \
 	--slice "macos=$TEST_ROOT/install-macos" \
 	--slice "ios=$TEST_ROOT/install-ios" \
 	--slice malformed \
 	--output "$TEST_ROOT/malformed/UMLEmulator.xcframework"
-expect_failure 'duplicate Apple slice platform: macos' \
+expect_diagnostic 'duplicate Apple slice platform: macos' stage \
 	--slice "macos=$TEST_ROOT/install-macos" \
 	--slice "macos=$TEST_ROOT/install-macos" \
 	--slice "ios=$TEST_ROOT/install-ios" \
 	--slice "ios-simulator=$TEST_ROOT/install-ios-simulator" \
 	--output "$TEST_ROOT/duplicate/UMLEmulator.xcframework"
-expect_failure 'missing required Apple slices: ios-simulator' \
+expect_diagnostic 'missing required Apple slices: ios-simulator' stage \
 	--slice "macos=$TEST_ROOT/install-macos" \
 	--slice "ios=$TEST_ROOT/install-ios" \
 	--output "$TEST_ROOT/missing/UMLEmulator.xcframework"
-expect_failure 'unsupported Apple slice platform' \
+expect_diagnostic 'unsupported Apple slice platform' stage \
 	--slice "macos=$TEST_ROOT/install-macos" \
 	--slice "ios=$TEST_ROOT/install-ios" \
 	--slice "tvos=$TEST_ROOT/install-ios-simulator" \
@@ -156,13 +142,13 @@ cp "$TEST_ROOT/install-macos/include/uml/abi_identity.h" \
 	"$TEST_ROOT/symlink-install/include/uml/abi_identity.h"
 ln -s "$TEST_ROOT/install-macos/include/uml/emulator.h" \
 	"$TEST_ROOT/symlink-install/include/uml/emulator.h"
-expect_failure 'public header tree contains a symlink' \
+expect_diagnostic 'public header tree contains a symlink' stage \
 	--slice "macos=$TEST_ROOT/symlink-install" \
 	--slice "ios=$TEST_ROOT/install-ios" \
 	--slice "ios-simulator=$TEST_ROOT/install-ios-simulator" \
 	--output "$TEST_ROOT/symlink/UMLEmulator.xcframework"
 
-expect_failure 'refusing to replace existing XCFramework output' \
+expect_diagnostic 'refusing to replace existing XCFramework output' stage \
 	--slice "macos=$TEST_ROOT/install-macos" \
 	--slice "ios=$TEST_ROOT/install-ios" \
 	--slice "ios-simulator=$TEST_ROOT/install-ios-simulator" \
