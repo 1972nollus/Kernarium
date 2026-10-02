@@ -108,21 +108,25 @@ register, even one of the -ERESTART* codes an interrupted call returns,
 reaches a signal handler and survives it unchanged. `guest-signal-restart`
 checks x0 on arm64 and the x86 exception probe checks RAX.
 
-An arm64 task reads `/proc/cpuinfo` in arm64 Linux's format. Each online CPU
-has a block of `processor`, `model name`, `BogoMIPS`, `Features`,
-`CPU implementer`, `CPU architecture`, `CPU variant`, `CPU part` and
-`CPU revision` lines, ended by a blank line. `model name`, which arm64 Linux
-prints in that place only for a 32-bit task, is the emulator's name for the
-CPU. `Features` names exactly the AT_HWCAP and AT_HWCAP2 bits every task
-receives, in the order and spelling of arm64 Linux's own `hwcap_str` table,
-which the build takes from `arch/arm64/kernel/cpuinfo.c`. The identification
-lines decode the MIDR_EL1 value a task reads with MRS, which the kernel
-mirrors from `darwin/cpu/arm64/id_registers.hpp`, and `CPU architecture` is 8,
-as on arm64 Linux. LLVM's host feature query, and with it llvmpipe and
-`-mcpu=native`, reads the `Features` line. `guest-gadgets-smoke` and
-`guest-jit-smoke` compare the file with the auxiliary vector and MRS and
-require LLVM to see the host's NEON. The x86_64-userspace slice describes its
-emulated x86 CPU instead.
+An arm64 task reads `/proc/cpuinfo` exactly as arm64 Linux's `c_show()`
+prints it for a 64-bit task, and both engines give the same bytes. Each online
+CPU has a block of `processor`, `BogoMIPS`, `Features`, `CPU implementer`,
+`CPU architecture`, `CPU variant`, `CPU part` and `CPU revision` lines, ended
+by a blank line. There is no `model name`: arm64 Linux prints one only to a
+32-bit task. `BogoMIPS` is what arm64 Linux derives from its architected timer,
+`DIV_ROUND_CLOSEST(CNTFRQ_EL0, HZ)` taken as `loops_per_jiffy`, for the counter
+frequency a task reads; UML's calibrated delay loop still times `udelay()` but
+no longer reaches the file. `Features` names exactly the AT_HWCAP and AT_HWCAP2
+bits every task receives, in the order and spelling of arm64 Linux's own
+`hwcap_str` table, which the build takes from `arch/arm64/kernel/cpuinfo.c`.
+The identification lines decode the MIDR_EL1 value a task reads with MRS,
+which the kernel mirrors from `darwin/cpu/arm64/id_registers.hpp`, and
+`CPU architecture` is 8, as on arm64 Linux. LLVM's host feature query, and
+with it llvmpipe and `-mcpu=native`, reads the `Features` line.
+`guest-gadgets-smoke` and `guest-jit-smoke` compare the file with the
+auxiliary vector, MRS and the kernel's `CONFIG_HZ`, and require LLVM to see the
+host's NEON. The x86_64-userspace slice describes its emulated x86 CPU
+instead.
 
 Both maintained kernel lines perform futex updates atomically against native
 userspace running on other vCPUs. Compare-and-exchange reports the value
