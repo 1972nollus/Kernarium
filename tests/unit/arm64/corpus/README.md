@@ -210,8 +210,12 @@ and each export directory lists the ordinal of every exported case in
 `coverage.tsv`, `provenance.json`, and `forced-cases.tsv` back as one change.
 
 `build-unit-corpus.py --check` verifies that the metadata and the canonical
-encoding match the pack. `--dump PACK --text FILE` writes a reviewable JSON
-lines form, and `--repack FILE` rebuilds the pack and metadata from it.
+encoding match the pack, and that every row of
+[`../a64_instruction_evidence_bindings.tsv`](../a64_instruction_evidence_bindings.tsv)
+names a producer with a record in the pack, or `-`; a regeneration that drops
+a producer's last record sets its bindings' `ctest` and `case` to `-`.
+`--dump PACK --text FILE` writes a reviewable JSON lines form, and
+`--repack FILE` rebuilds the pack and metadata from it.
 
 ## LSE2 alignment cases
 
