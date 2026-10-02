@@ -82,13 +82,61 @@ def derivative_receipt(identity: dict[str, object]) -> dict[str, object]:
     }
 
 
+def opengl_mustpass_files() -> dict[str, bytes]:
+    """A small upstream-shaped OpenGL must-pass tree: each XML and its leaves, by guest path."""
+    plan = cts.opengl_cts_plan
+    files = {}
+    for collection, directory, package_name, _ in plan.COLLECTIONS:
+        document = ElementTree.Element("Mustpass", version="main")
+        package = ElementTree.SubElement(document, "TestPackage", name=package_name)
+        if collection == "es-for-gl":
+            rows = [("gl45-es3-main", True, 256, 256, None, "rgba8888d24s8ms0"),
+                    ("gl45-es31-main", True, 256, 256, None, "rgba8888d24s8ms0")]
+        elif collection == "no-context":
+            rows = [(f"gl{api}-khr-main", True, 64, 64, 1, None)
+                    for api in (30, 40, 43, 45)]
+        elif collection == "single":
+            rows = [("gl43-khr-single", True, 64, 64, 1, None),
+                    ("gl46-khr-single", True, 64, 64, 1, None)]
+        else:
+            rows = [("gl46-main", True, 64, 64, 1, None),
+                    ("gl46-main", True, 113, 47, 2, None),
+                    ("gl46-main", True, 64, -1, 3, "rgba8888d24s8"),
+                    ("gl46-main", True, -1, 64, 3, "rgba8888d24s8"),
+                    ("gl46-main", False, 64, 64, 1, None),
+                    ("gl46-main", False, 113, 47, 2, None),
+                    ("gl42-compat-main", True, 64, 64, 1, None)]
+        for stem, first, width, height, seed, config in rows:
+            command = ["--deqp-screen-rotation=unspecified",
+                       f"--deqp-surface-width={width}",
+                       f"--deqp-surface-height={height}", "--deqp-watchdog=disable"]
+            if seed is not None:
+                command.append(f"--deqp-base-seed={seed}")
+            if config:
+                command.append(f"--deqp-gl-config-name={config}")
+                if collection != "es-for-gl":
+                    command.append("--deqp-surface-type=fbo")
+            name = stem.split("-", 1)[1].removeprefix("compat-")
+            ElementTree.SubElement(package, "Configuration", {
+                "caseListFile": stem + ".txt", "commandLine": " ".join(command),
+                "name": name, "os": "any", "useForFirstEGLConfig": str(first),
+            })
+            count = 1 if stem in {"gl30-khr-main", "gl40-khr-main"} else 10
+            files[f"{plan.ROOT}/{directory}/main/{stem}.txt"] = "".join(
+                f"KHR-{stem.replace('-', '.')}.case{index}\n" for index in range(count)
+            ).encode()
+        files[f"{plan.ROOT}/{directory}/main/mustpass.xml"] = ElementTree.tostring(document)
+    files[f"{plan.ROOT}/khronos_mustpass/main/gl46-gtf-main.txt"] = b"GTF-GL46.obsolete\n"
+    return files
+
+
 def zink_gl_derivative_receipt(
     identity: dict[str, object],
 ) -> dict[str, object]:
     receipt = receipt_fixtures.current_epoch_receipt(
         receipt_fixtures.VULKAN_RECEIPT
     )
-    receipt["schema_version"] = 3
+    receipt["schema_version"] = 4
     receipt["artifact"] = "uml-vulkan-zink-gl-rootfs"
     receipt["base_rootfs"]["size"] = identity["rootfs"]["size"]
     receipt["base_rootfs"]["sha256"] = identity["rootfs"]["sha256"]
@@ -100,12 +148,8 @@ def zink_gl_derivative_receipt(
         "filesystem_uuid": "3b59fbc9-4b35-4a2b-890d-286a77b04afd",
         "read_only": True,
     }
-    root = (
-        "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gl/"
-        "khronos_mustpass/main"
-    )
     receipt["opengl_cts"] = {
-        "release": "opengl-cts-1.4.6.2",
+        "release": "vulkan-cts-1.4.6.2",
         "configure_argv": ["cmake"],
         "build_targets": ["cmake", "--build", "build", "--target", "glcts"],
         "install_prefix": "/opt/vk-gl-cts/openglcts",
@@ -126,34 +170,9 @@ def zink_gl_derivative_receipt(
         "build_id": "abcd1234",
         "reported_cpu": "DE_CPU_ARM_64",
         "reported_target": "Default",
-        "mustpass": {
-            "xml": {
-                "path": f"{root}/mustpass.xml",
-                "size": 1234,
-                "sha256": "6" * 64,
-            },
-            "leaves": [
-                {
-                    "id": "gl46",
-                    "path": f"{root}/gl46-main.txt",
-                    "size": 111,
-                    "sha256": "7" * 64,
-                    "case_count": 19714,
-                },
-                {
-                    "id": "gl46-gtf",
-                    "path": f"{root}/gl46-gtf-main.txt",
-                    "size": 222,
-                    "sha256": "8" * 64,
-                    "case_count": 1742,
-                },
-            ],
-            "leaf_count": 2,
-            "case_count": 21456,
-            "unique_case_count": 21456,
-            "duplicate_occurrence_count": 0,
-            "coverage_semantics": "exact OpenGL 4.6 leaf union",
-        },
+        "mustpass": cts.opengl_cts_plan.build_manifest(
+            opengl_mustpass_files().__getitem__
+        ),
     }
     return receipt
 
@@ -601,12 +620,12 @@ class VkGlCtsToolingTests(unittest.TestCase):
 
     def test_zink_gl_receipt_owns_exact_gl46_leaves_and_launcher(self) -> None:
         identity = cts.load_identity()
+        receipt = zink_gl_derivative_receipt(identity)
+        leaf = next(row for row in receipt["opengl_cts"]["mustpass"]["leaves"]
+                    if row["id"] == "gl46")
         with tempfile.TemporaryDirectory() as temporary:
             receipt_path = Path(temporary) / "zink-gl-receipt.json"
-            receipt_path.write_text(
-                json.dumps(zink_gl_derivative_receipt(identity)),
-                encoding="utf-8",
-            )
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
             options = cts.parse_arguments(
                 [
                     "--renderer",
@@ -626,8 +645,8 @@ class VkGlCtsToolingTests(unittest.TestCase):
                 ]
             )
             self.assertEqual(options.rootfs_contract.glcts_sha256, "5" * 64)
-            self.assertEqual(options.leaves["gl46"].case_count, 19714)
-            self.assertEqual(options.leaves["gl46"].sha256, "7" * 64)
+            self.assertEqual(options.leaves["gl46"].case_count, leaf["case_count"])
+            self.assertEqual(options.leaves["gl46"].sha256, leaf["sha256"])
             selection = cts.Selection(options.leaves["gl46"], (), 3, 8)
             launcher = cts.build_guest_launcher(
                 selection,
@@ -685,6 +704,24 @@ class VkGlCtsToolingTests(unittest.TestCase):
             cts.gl_scope_launch_environment(gles3),
             ("UML_GPU_CAPABILITY_REPORT",),
         )
+
+    def test_zink_gl_receipt_requires_schema_4(self) -> None:
+        identity = cts.load_identity()
+        for version in (3, 5):
+            receipt = zink_gl_derivative_receipt(identity)
+            receipt["schema_version"] = version
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(
+                    cts.CampaignError, "invalid Zink/OpenGL derivative receipt"
+                ):
+                    cts.load_zink_gl_derivative_receipt(receipt, identity)
+                with tempfile.TemporaryDirectory() as temporary:
+                    path = Path(temporary) / "receipt.json"
+                    path.write_text(json.dumps(receipt), encoding="utf-8")
+                    with self.assertRaisesRegex(
+                        cts.CampaignError, "invalid derivative rootfs receipt"
+                    ):
+                        cts.load_derivative_receipt(path, identity)
 
     def test_zink_gl_receipt_requires_each_source_identity(self) -> None:
         identity = cts.load_identity()

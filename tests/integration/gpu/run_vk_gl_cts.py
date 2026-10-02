@@ -727,7 +727,7 @@ def load_derivative_receipt(
         ) from error
     if (
         isinstance(receipt, dict)
-        and receipt.get("schema_version") in {3, 4}
+        and receipt.get("schema_version") == 4
         and receipt.get("artifact") == "uml-vulkan-zink-gl-rootfs"
     ):
         return load_zink_gl_derivative_receipt(receipt, base_identity)
@@ -865,7 +865,7 @@ def load_zink_gl_derivative_receipt(
         "guest_receipt",
     }
     if (set(receipt) != expected_keys
-            or receipt["schema_version"] not in {3, 4}
+            or receipt["schema_version"] != 4
             or receipt["artifact"] != "uml-vulkan-zink-gl-rootfs"):
         raise CampaignError("invalid Zink/OpenGL derivative receipt")
     try:
@@ -931,10 +931,7 @@ def load_zink_gl_derivative_receipt(
         glcts.get("executable"), "OpenGL CTS executable"
     )
     if (
-        glcts.get("release") != (
-            "vulkan-cts-1.4.6.2" if receipt["schema_version"] == 4
-            else "opengl-cts-1.4.6.2"
-        )
+        glcts.get("release") != "vulkan-cts-1.4.6.2"
         or glcts.get("install_prefix") != "/opt/vk-gl-cts/openglcts"
         or glcts.get("reported_cpu") != "DE_CPU_ARM_64"
         or glcts.get("reported_target") != "Default"
@@ -971,13 +968,10 @@ def load_zink_gl_derivative_receipt(
             or not resource["verified_against"]
         ):
             raise CampaignError(f"invalid OpenGL CTS resource at {index}")
-    if receipt["schema_version"] == 4:
-        try:
-            opengl_cts_plan.validate_manifest(glcts.get("mustpass"))
-        except opengl_cts_plan.PlanError as error:
-            raise CampaignError(f"invalid OpenGL runner scope: {error}") from error
-    else:
-        validate_legacy_opengl_mustpass(glcts.get("mustpass"))
+    try:
+        opengl_cts_plan.validate_manifest(glcts.get("mustpass"))
+    except opengl_cts_plan.PlanError as error:
+        raise CampaignError(f"invalid OpenGL runner scope: {error}") from error
     guest_receipt = checked_file_identity(
         receipt["guest_receipt"], "in-guest build receipt"
     )
@@ -1008,77 +1002,6 @@ def load_zink_gl_derivative_receipt(
         guest_receipt_path=guest_receipt["path"],
         guest_receipt_sha256=guest_receipt["sha256"],
     )
-
-
-def validate_legacy_opengl_mustpass(mustpass: Any) -> None:
-    """Read historical schema-3 evidence, not a current qualification plan."""
-    if not isinstance(mustpass, dict) or set(mustpass) != {
-        "xml",
-        "leaves",
-        "leaf_count",
-        "case_count",
-        "unique_case_count",
-        "duplicate_occurrence_count",
-        "coverage_semantics",
-    }:
-        raise CampaignError("invalid OpenGL 4.6 must-pass identity")
-    mustpass_xml = checked_file_identity(
-        mustpass["xml"], "OpenGL must-pass XML"
-    )
-    if mustpass_xml["path"] != (
-        "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gl/"
-        "khronos_mustpass/main/mustpass.xml"
-    ):
-        raise CampaignError("invalid OpenGL must-pass XML path")
-    leaves = mustpass["leaves"]
-    if not isinstance(leaves, list) or len(leaves) != 2:
-        raise CampaignError("invalid OpenGL 4.6 must-pass leaves")
-    expected_paths = {
-        "gl46": (
-            "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gl/"
-            "khronos_mustpass/main/gl46-main.txt"
-        ),
-        "gl46-gtf": (
-            "/opt/vk-gl-cts/openglcts/gl_cts/data/mustpass/gl/"
-            "khronos_mustpass/main/gl46-gtf-main.txt"
-        ),
-    }
-    seen_ids: set[str] = set()
-    total = 0
-    for index, leaf in enumerate(leaves):
-        if not isinstance(leaf, dict) or set(leaf) != {
-            "id",
-            "path",
-            "size",
-            "sha256",
-            "case_count",
-        }:
-            raise CampaignError(f"invalid OpenGL leaf identity at {index}")
-        checked_file_identity(
-            {key: leaf[key] for key in ("path", "size", "sha256")},
-            f"OpenGL leaf {index}",
-        )
-        identifier = leaf["id"]
-        if (
-            identifier not in expected_paths
-            or identifier in seen_ids
-            or leaf["path"] != expected_paths[identifier]
-            or type(leaf["case_count"]) is not int
-            or leaf["case_count"] < 1
-        ):
-            raise CampaignError(f"invalid OpenGL leaf identity at {index}")
-        seen_ids.add(identifier)
-        total += leaf["case_count"]
-    if (
-        seen_ids != set(expected_paths)
-        or mustpass["leaf_count"] != 2
-        or mustpass["case_count"] != total
-        or mustpass["unique_case_count"] != total
-        or mustpass["duplicate_occurrence_count"] != 0
-        or not isinstance(mustpass["coverage_semantics"], str)
-        or not mustpass["coverage_semantics"]
-    ):
-        raise CampaignError("inconsistent OpenGL 4.6 must-pass coverage")
 
 
 def select_rootfs_contract(

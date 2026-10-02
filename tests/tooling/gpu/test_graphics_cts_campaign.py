@@ -26,7 +26,6 @@ sys.path.insert(0, str(INTEGRATION))
 import run_graphics_cts_campaign as campaign  # noqa: E402
 import run_vk_gl_cts as gl  # noqa: E402
 import test_run_vk_gl_cts as fixtures  # noqa: E402
-import test_opengl_cts_plan as plan_fixtures  # noqa: E402
 import receipt_fixtures  # noqa: E402
 
 
@@ -74,9 +73,6 @@ def renderer_probe(definition: dict) -> bytes:
 
 def spec(directory: Path, renderer: str = "zink") -> dict:
     receipt = fixtures.zink_gl_derivative_receipt(gl.load_identity())
-    receipt["schema_version"] = 4
-    receipt["opengl_cts"]["release"] = "vulkan-cts-1.4.6.2"
-    receipt["opengl_cts"]["mustpass"] = plan_fixtures.plan.build_manifest(plan_fixtures.fixture().__getitem__)
     emulator = directory / "uml-darwin"
     emulator.write_bytes(b"fixture executable")
     emulator.chmod(0o755)
@@ -108,7 +104,7 @@ def spec(directory: Path, renderer: str = "zink") -> dict:
                    "receipt_path": str(path), "receipt_sha256": gl.sha256_file(path),
                    "config_inventory_run": str(inventory), "egl_configs": config_rows,
                    "egl_config_sha256": "e" * 64,
-                   "runs": plan_fixtures.plan.expand_runs(receipt["opengl_cts"]["mustpass"], config_rows)},
+                   "runs": gl.opengl_cts_plan.expand_runs(receipt["opengl_cts"]["mustpass"], config_rows)},
     }
 
 
@@ -144,9 +140,9 @@ def results(shard: campaign.Shard) -> dict[str, str]:
     if shard.suite == "vulkan":
         return {"dEQP-VK.mandatory0": "Pass", "dEQP-VK.mandatory1": "Pass",
                 f"dEQP-VK.case{shard.index}": "NotSupported"}
-    files = plan_fixtures.fixture()
-    manifest = plan_fixtures.plan.build_manifest(files.__getitem__)
-    runs = plan_fixtures.plan.expand_runs(manifest, [
+    files = fixtures.opengl_mustpass_files()
+    manifest = gl.opengl_cts_plan.build_manifest(files.__getitem__)
+    runs = gl.opengl_cts_plan.expand_runs(manifest, [
         {"id": 1, "surface_types": ["window", "pixmap", "pbuffer"]},
         {"id": 2, "surface_types": ["pbuffer", "pixmap"]},
     ])
@@ -557,6 +553,7 @@ class GraphicsCampaignTests(unittest.TestCase):
             definition = spec(root)
             receipt = fixtures.zink_gl_derivative_receipt(gl.load_identity())
             _, contract = gl.load_zink_gl_derivative_receipt(receipt, gl.load_identity())
+            receipt["schema_version"] = 3
             args = ["--suite", "opengl", "--campaign-dir", str(root / "campaign"),
                     "--emulator", definition["emulator"], "--opengl-rootfs", str(root / "gl.ext4"),
                     "--opengl-receipt", str(root / "gl.json"),

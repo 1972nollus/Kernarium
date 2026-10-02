@@ -104,10 +104,9 @@ eight referenced leaf identities. Full qualification additionally freezes an ord
 `CTS-Configs.gl46` inventory: the first actual EGL configuration receives the
 one-time suites and first-config records; later configurations receive their
 other-config records. XML surface sizes, seeds, and named FBO configurations
-are retained. Historical schema-3 receipts remain readable for diagnostics,
-but cannot define a full GL46 campaign. The OpenGL runner proves both the
-Zink Gallium renderer and the underlying Virtio-GPU Venus device before
-executing a shard. Vulkan and OpenGL qualification require the same current
+are retained. The OpenGL runner proves both the Zink Gallium renderer and the
+underlying Virtio-GPU Venus device before executing a shard. Vulkan and OpenGL
+qualification require the same current
 patched source trees for Mesa, Venus protocol, and CTS, plus the pinned
 Vulkan-Headers and Vulkan-Loader sources. Their image, executable,
 and runtime-closure identities remain separate.
