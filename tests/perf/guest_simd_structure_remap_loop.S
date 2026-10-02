@@ -8,17 +8,14 @@
  * a fixed temporary for every instruction.
  */
 
-	.equ NR_WRITE,		64
-	.equ NR_EXIT_GROUP,	94
+#include "probe_harness.inc"
+
 #ifndef BENCH_ITERATIONS
 #define BENCH_ITERATIONS 20000000
 #endif
 	.equ ITERATIONS,	BENCH_ITERATIONS
 
-	.section .text
-	.global _start
-	.type _start, %function
-_start:
+	probe_start
 	sub	sp, sp, #64
 	mov	x13, sp
 	add	x14, sp, #4
@@ -91,27 +88,8 @@ _start:
 	b.ne	.Lfailure
 
 	add	sp, sp, #64
-	adrp	x1, success_message
-	add	x1, x1, :lo12:success_message
-	mov	x0, #1
-	mov	x2, #3
-	mov	x8, #NR_WRITE
-	svc	#0
-	mov	x0, #0
-	b	.Lexit
+	probe_finish	failure_stack=64
 
-.Lfailure:
-	add	sp, sp, #64
-	mov	x0, #1
-.Lexit:
-	mov	x8, #NR_EXIT_GROUP
-	svc	#0
-	brk	#0
-
-	.size _start, .-_start
-
-	.section .rodata
-success_message:
-	.ascii "OK\n"
+	probe_end
 
 	.section .note.GNU-stack, "", %progbits

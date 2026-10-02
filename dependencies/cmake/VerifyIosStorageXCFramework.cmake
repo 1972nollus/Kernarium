@@ -7,8 +7,6 @@ uml_verify_ios_static_xcframework(
     PRODUCT ios-storage
     FRAMEWORK GPTFDisk
     HEADERS GPTFDisk.h
-    SOURCE_TREES
-        gptfdisk "${SOURCE_ROOT}/dependencies/patches/gptfdisk/series.tsv"
     SYMBOLS
         kernarium_gptfdisk_read_partition
         kernarium_gptfdisk_grow_partition_to_fill

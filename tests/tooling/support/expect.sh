@@ -40,3 +40,18 @@ expect_diagnostic()
 		fail "rejection lacked the expected diagnostic: $pattern"
 	}
 }
+
+# expect_cmake_diagnostic PATTERN COMMAND...: as expect_diagnostic, for a
+# CMake script whose message() wraps long text at whitespace. PATTERN is matched
+# with every run of whitespace in standard error collapsed to one space.
+expect_cmake_diagnostic()
+{
+	pattern=$1
+	shift
+	expect_failure "$pattern" "$@"
+	tr -s '[:space:]' ' ' <"$TEST_ROOT/rejected-$FAILURE_NUMBER.err" |
+		grep -F -- "$pattern" >/dev/null || {
+		cat "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" >&2
+		fail "rejection lacked the expected diagnostic: $pattern"
+	}
+}

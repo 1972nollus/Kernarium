@@ -124,10 +124,11 @@ A prepared source is identified by the tree its series records in
 by `prepare.sh --recreate`, and only when it is clean and its branches point
 at commits the Git cache already holds; anything else is refused with a
 diagnostic. An installed prefix is never replaced automatically: build the new
-one beside it. Prefix verification checks the manifest rows, each patched
-source's tree in `share/uml-dependencies/source-trees.tsv` against its series,
-architecture, Apple platform and deployment target, expected static payloads,
-framework install names, and the absence of undeclared or legacy providers.
+one beside it. Prefix verification checks the manifest rows, the tree in
+`share/uml-dependencies/source-trees.tsv` of each patched source (every row of
+the product with a patch series) against its series, architecture, Apple
+platform and deployment target, expected static payloads, framework install
+names, and the absence of undeclared or legacy providers.
 Every iOS prefix builds and verifies at an iOS 26.0 deployment target.
 
 Every prefix installs the manifest it was built from and compares only the

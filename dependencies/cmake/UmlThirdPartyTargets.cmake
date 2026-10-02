@@ -2,15 +2,19 @@
 
 include_guard(GLOBAL)
 
+# _uml_import_static_dependency(<name> <archive> ALIAS <alias>
+#     [INCLUDES <dir>...] [DEFINITIONS <definition>...] [LINKS <item>...])
+# Imports <archive> as uml_third_party_<name> and names it <alias>.
 function(_uml_import_static_dependency name archive)
     set(options)
-    set(one_value)
+    set(one_value ALIAS)
     set(multi_value INCLUDES DEFINITIONS LINKS)
     cmake_parse_arguments(ARG "${options}" "${one_value}" "${multi_value}"
         ${ARGN})
 
     set(_target "uml_third_party_${name}")
     add_library(${_target} STATIC IMPORTED GLOBAL)
+    add_library(${ARG_ALIAS} ALIAS ${_target})
     set_target_properties(${_target} PROPERTIES
         IMPORTED_LOCATION "${archive}")
     if(ARG_INCLUDES)
@@ -54,30 +58,31 @@ function(uml_define_third_party_targets prefix)
     set(_lib "${prefix}/lib")
 
     _uml_import_static_dependency(zlib "${_lib}/libz.a"
+        ALIAS UML::ThirdPartyZlib
         INCLUDES "${_include}")
-    add_library(UML::ThirdPartyZlib ALIAS uml_third_party_zlib)
 
     _uml_import_static_dependency(pcre2 "${_lib}/libpcre2-8.a"
+        ALIAS UML::ThirdPartyPcre2
         INCLUDES "${_include}"
         DEFINITIONS PCRE2_STATIC
         LINKS Threads::Threads)
-    add_library(UML::ThirdPartyPcre2 ALIAS uml_third_party_pcre2)
 
     _uml_import_static_dependency(charset "${_lib}/libcharset.a"
+        ALIAS UML::ThirdPartyCharset
         INCLUDES "${_include}")
-    add_library(UML::ThirdPartyCharset ALIAS uml_third_party_charset)
 
     _uml_import_static_dependency(iconv "${_lib}/libiconv.a"
+        ALIAS UML::ThirdPartyIconv
         INCLUDES "${_include}"
         LINKS UML::ThirdPartyCharset)
-    add_library(UML::ThirdPartyIconv ALIAS uml_third_party_iconv)
 
     _uml_import_static_dependency(intl "${_lib}/libintl.a"
+        ALIAS UML::ThirdPartyIntl
         INCLUDES "${_include}"
         DEFINITIONS G_INTL_STATIC_COMPILATION)
-    add_library(UML::ThirdPartyIntl ALIAS uml_third_party_intl)
 
     _uml_import_static_dependency(glib "${_lib}/libglib-2.0.a"
+        ALIAS UML::ThirdPartyGlib
         INCLUDES
             "${_include}/glib-2.0"
             "${_lib}/glib-2.0/include"
@@ -91,35 +96,33 @@ function(uml_define_third_party_targets prefix)
             "${_uml_sdk_CoreFoundation}"
             "${_uml_sdk_AppKit}"
             "${_uml_sdk_Carbon}")
-    add_library(UML::ThirdPartyGlib ALIAS uml_third_party_glib)
 
     _uml_import_static_dependency(slirp "${_lib}/libslirp.a"
+        ALIAS UML::ThirdPartySlirp
         INCLUDES "${_include}/slirp"
         LINKS UML::ThirdPartyGlib "${_uml_sdk_resolver}")
-    add_library(UML::ThirdPartySlirp ALIAS uml_third_party_slirp)
 
     _uml_import_static_dependency(vnc_server "${_lib}/libvncserver.a"
+        ALIAS UML::ThirdPartyVncServer
         INCLUDES "${_include}"
         LINKS UML::ThirdPartyZlib Threads::Threads)
-    add_library(UML::ThirdPartyVncServer ALIAS uml_third_party_vnc_server)
 
     _uml_import_static_dependency(vnc_client "${_lib}/libvncclient.a"
+        ALIAS UML::ThirdPartyVncClient
         INCLUDES "${_include}"
         LINKS UML::ThirdPartyZlib Threads::Threads)
-    add_library(UML::ThirdPartyVncClient ALIAS uml_third_party_vnc_client)
 
     _uml_import_static_dependency(softfloat "${_lib}/libsoftfloat_3e.a"
+        ALIAS UML::ThirdPartySoftFloat
         INCLUDES "${_include}"
         DEFINITIONS
             FEXCORE_PRESERVE_ALL_ATTR=
             FEXCORE_HAS_PRESERVE_ALL_ATTR=0
             SOFTFLOAT_FAST_INT64=1)
-    add_library(UML::ThirdPartySoftFloat ALIAS uml_third_party_softfloat)
 
     _uml_import_static_dependency(cephes_128bit
         "${_lib}/libcephes_128bit.a"
+        ALIAS UML::ThirdPartyCephes128
         INCLUDES "${_include}"
         LINKS UML::ThirdPartySoftFloat)
-    add_library(UML::ThirdPartyCephes128 ALIAS
-        uml_third_party_cephes_128bit)
 endfunction()

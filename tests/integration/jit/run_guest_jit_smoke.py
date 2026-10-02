@@ -24,6 +24,7 @@ GUEST_HWCAP_SANITY = "/usr/local/libexec/uml-test/hwcap-sanity"
 GUEST_CPU_IDENTITY = "/usr/local/libexec/uml-test/cpu-identity.py"
 HWCAP_FP = 1 << 0
 HWCAP_ASIMD = 1 << 1
+HWCAP_EVTSTRM = 1 << 2
 HWCAP_AES = 1 << 3
 HWCAP_PMULL = 1 << 4
 HWCAP_SHA1 = 1 << 5
@@ -83,28 +84,39 @@ OPTIONAL_HWCAPS2 = (
     ("hw.optional.arm.FEAT_BF16", HWCAP2_BF16, "bf16"),
     ("hw.optional.arm.FEAT_ECV", HWCAP2_ECV, "ecv"),
 )
-# Every AT_HWCAP and AT_HWCAP2 bit an engine may advertise, by the name arm64
-# Linux gives it in /proc/cpuinfo. A set bit missing here fails the smoke,
-# so a new advertisement has to name itself.
-HWCAP_NAMES = {
-    HWCAP_FP: "fp",
-    HWCAP_ASIMD: "asimd",
-    HWCAP_CPUID: "cpuid",
-    **{bit: name for _, bit, name in OPTIONAL_HWCAPS},
-}
+# arm64 Linux 6.18's name for every AT_HWCAP and AT_HWCAP2 bit, indexed by
+# bit: its hwcap_str table in arch/arm64/kernel/cpuinfo.c, which the guest
+# kernel prints from. The Features line is checked against whatever the
+# auxiliary vector holds, so an engine that advertises a further feature
+# needs no change here; a bit arm64 Linux has no name for fails the smoke.
+HWCAP_NAMES = (
+    "fp", "asimd", "evtstrm", "aes", "pmull", "sha1", "sha2", "crc32",
+    "atomics", "fphp", "asimdhp", "cpuid", "asimdrdm", "jscvt", "fcma",
+    "lrcpc", "dcpop", "sha3", "sm3", "sm4", "asimddp", "sha512", "sve",
+    "asimdfhm", "dit", "uscat", "ilrcpc", "flagm", "ssbs", "sb", "paca",
+    "pacg", "gcs", "cmpbr", "fprcvt", "f8mm8", "f8mm4", "svef16mm",
+    "sveeltperm", "sveaes2", "svebfscale", "sve2p2", "sme2p2",
+    "smesbitperm", "smeaes", "smesfexpa", "smestmop", "smesmop4",
+)
+HWCAP2_NAMES = (
+    "dcpodp", "sve2", "sveaes", "svepmull", "svebitperm", "svesha3",
+    "svesm4", "flagm2", "frint", "svei8mm", "svef32mm", "svef64mm",
+    "svebf16", "i8mm", "bf16", "dgh", "rng", "bti", "mte", "ecv", "afp",
+    "rpres", "mte3", "sme", "smei16i64", "smef64f64", "smei8i32",
+    "smef16f32", "smeb16f32", "smef32f32", "smefa64", "wfxt", "ebf16",
+    "sveebf16", "cssc", "rprfm", "sve2p1", "sme2", "sme2p1", "smei16i32",
+    "smebi32i32", "smeb16b16", "smef16f16", "mops", "hbc", "sveb16b16",
+    "lrcpc3", "lse128", "fpmr", "lut", "faminmax", "f8cvt", "f8fma",
+    "f8dp4", "f8dp2", "f8e4m3", "f8e5m2", "smelutv2", "smef8f16",
+    "smef8f32", "smesf8fma", "smesf8dp4", "smesf8dp2", "poe",
+)
 # Advertised on every host.
 REQUIRED_HWCAPS2 = HWCAP2_CSSC | HWCAP2_MOPS
-HWCAP2_NAMES = {
-    HWCAP2_CSSC: "cssc",
-    HWCAP2_MOPS: "mops",
-    **{bit: name for _, bit, name in OPTIONAL_HWCAPS2},
-}
-# The lines of arm64 Linux's /proc/cpuinfo block (arch/arm64/kernel/cpuinfo.c)
-# up to each value, plus the model name that it prints in the same place for a
-# 32-bit task. A blank line ends every block.
+# The lines of the block arm64 Linux's c_show() (arch/arm64/kernel/cpuinfo.c)
+# prints for a 64-bit task, up to each value. It prints a model name only to
+# a 32-bit task. A blank line ends every block.
 CPUINFO_LINES = (
     "processor\t: ",
-    "model name\t: ",
     "BogoMIPS\t: ",
     "Features\t: ",
     "CPU implementer\t: ",
@@ -113,24 +125,38 @@ CPUINFO_LINES = (
     "CPU part\t: ",
     "CPU revision\t: ",
 )
-# Reads MIDR_EL1 with MRS, as any task may, and asks LLVM for the host
-# features it derives from /proc/cpuinfo, as llvmpipe and -mcpu=native do.
-CPU_IDENTITY_PROBE = """\
+# arm64 Linux's ARCH_TIMER_EVT_STREAM_PERIOD_US: HWCAP_EVTSTRM promises that
+# WFE wakes at least this often without an SEV.
+EVENT_STREAM_PERIOD_US = 100
+WFE_ITERATIONS = 100000
+# Reads MIDR_EL1 and CNTFRQ_EL0 with MRS, as any task may, times WFE with no
+# SEV against the counter, and asks LLVM for the host features it derives from
+# /proc/cpuinfo, as llvmpipe and -mcpu=native do.
+CPU_IDENTITY_PROBE = f"""\
 import ctypes, glob, mmap, re, tempfile
 libc = ctypes.CDLL(None, use_errno=True)
 libc.mmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int,
                       ctypes.c_int, ctypes.c_int, ctypes.c_long)
 libc.mmap.restype = ctypes.c_void_p
-# nop; mrs x0, midr_el1; ret, mapped from a file so the kernel keeps the
-# instruction cache coherent.
-with tempfile.TemporaryFile(dir="/tmp") as code:
-    code.write(bytes.fromhex("1f2003d5000038d5c0035fd6"))
-    code.flush()
-    address = libc.mmap(None, mmap.PAGESIZE, mmap.PROT_READ | mmap.PROT_EXEC,
-                        mmap.MAP_PRIVATE, code.fileno(), 0)
-if address in (None, ctypes.c_void_p(-1).value):
-    raise OSError(ctypes.get_errno(), "mmap of the MRS code failed")
-print(f"midr=0x{ctypes.CFUNCTYPE(ctypes.c_uint64)(address)():x}")
+def function(words):
+    # Mapped from a file so the kernel keeps the instruction cache coherent.
+    with tempfile.TemporaryFile(dir="/tmp") as code:
+        code.write(bytes.fromhex(words))
+        code.flush()
+        address = libc.mmap(None, mmap.PAGESIZE,
+                            mmap.PROT_READ | mmap.PROT_EXEC,
+                            mmap.MAP_PRIVATE, code.fileno(), 0)
+    if address in (None, ctypes.c_void_p(-1).value):
+        raise OSError(ctypes.get_errno(), "mmap of the MRS code failed")
+    return ctypes.CFUNCTYPE(ctypes.c_uint64, ctypes.c_uint64)(address)
+# nop; mrs x0, midr_el1; ret
+print(f"midr=0x{{function('1f2003d5000038d5c0035fd6')(0):x}}")
+# nop; mrs x0, cntfrq_el0; ret
+print(f"cntfrq={{function('1f2003d500e03bd5c0035fd6')(0)}}")
+# mrs x1, cntvct_el0; 1: wfe; subs x0, x0, #1; b.ne 1b; mrs x2, cntvct_el0;
+# sub x0, x2, x1; ret: the counter ticks x0 WFEs take, with no SEV anywhere.
+wfe = function("41e03bd55f2003d5000400f1c1ffff5442e03bd5400001cbc0035fd6")
+print(f"wfe_ticks={{wfe({WFE_ITERATIONS})}}")
 libraries = glob.glob("/usr/lib/*-linux-gnu/libLLVM.so.*")
 if not libraries:
     raise SystemExit("the rootfs has no libLLVM")
@@ -138,7 +164,7 @@ newest = max(libraries, key=lambda path: [
     int(part) for part in re.findall(r"[0-9]+", path.rsplit("/", 1)[1])])
 features = ctypes.CDLL(newest).LLVMGetHostCPUFeatures
 features.restype = ctypes.c_char_p
-print(f"llvm={features().decode()}")
+print(f"llvm={{features().decode()}}")
 """
 
 
@@ -192,10 +218,23 @@ def advertised_names(hwcap: int, hwcap2: int) -> list[str]:
     ):
         for bit in range(64):
             if value & (1 << bit):
-                if (1 << bit) not in table:
-                    raise RuntimeError(f"{word} bit {bit} has no known name")
-                names.append(table[1 << bit])
+                if bit >= len(table):
+                    raise RuntimeError(
+                        f"{word} bit {bit} has no name in arm64 Linux"
+                    )
+                names.append(table[bit])
     return names
+
+
+def arm64_bogomips(counter_frequency: int, hz: int) -> str:
+    """What arm64 Linux prints for a counter of this frequency: its
+    architected timer sets lpj_fine to DIV_ROUND_CLOSEST(rate, HZ), which
+    calibrate_delay() takes as loops_per_jiffy, and c_show() formats that."""
+    loops_per_jiffy = (counter_frequency + hz // 2) // hz
+    return (
+        f"{loops_per_jiffy // (500000 // hz)}."
+        f"{loops_per_jiffy // (5000 // hz) % 100:02d}"
+    )
 
 
 def cpuinfo_blocks(guest: Guest) -> list[dict[str, str]]:
@@ -228,12 +267,19 @@ def cpuinfo_blocks(guest: Guest) -> list[dict[str, str]]:
 
 
 def check_cpuinfo(
-    guest: Guest, hwcap: int, hwcap2: int, midr: int
+    guest: Guest, hwcap: int, hwcap2: int, midr: int, counter_frequency: int
 ) -> None:
-    """/proc/cpuinfo describes exactly the CPU a task sees in arm64 Linux's
-    format: the names of its AT_HWCAP and AT_HWCAP2 bits in hwcap_str order,
-    and the MIDR_EL1 fields MRS returns."""
+    """/proc/cpuinfo is the file arm64 Linux prints for the CPU a task sees:
+    the BogoMIPS its counter frequency gives, the names of its AT_HWCAP and
+    AT_HWCAP2 bits in hwcap_str order, and the MIDR_EL1 fields MRS
+    returns."""
     online = int(guest.check_command("getconf _NPROCESSORS_ONLN", 60))
+    hz = int(
+        guest.check_command(
+            "zcat /proc/config.gz | sed -n 's/^CONFIG_HZ=//p'", 60
+        )
+    )
+    expected_bogomips = arm64_bogomips(counter_frequency, hz)
     blocks = cpuinfo_blocks(guest)
     if len(blocks) != online:
         raise RuntimeError(
@@ -253,6 +299,12 @@ def check_cpuinfo(
             raise RuntimeError(
                 f"/proc/cpuinfo block {number} names processor "
                 f"{values['processor']}"
+            )
+        if values["BogoMIPS"] != expected_bogomips:
+            raise RuntimeError(
+                f"/proc/cpuinfo BogoMIPS is {values['BogoMIPS']!r}; arm64 "
+                f"Linux prints {expected_bogomips!r} for a {counter_frequency} "
+                f"Hz counter at HZ={hz}"
             )
         if values["Features"] != expected_features:
             raise RuntimeError(
@@ -308,8 +360,11 @@ def main() -> int:
         actual_hwcap2 = auxv.get(26, 0)
         # HWCAP_CPUID is unconditional, exactly as arm64 Linux advertises it:
         # every engine emulates the EL0 identification-register reads.
+        # HWCAP_EVTSTRM is too: every engine completes WFE at once, which the
+        # WFE timing below checks.
         expected = expected_hwcap(
-            OPTIONAL_HWCAPS, HWCAP_FP | HWCAP_ASIMD | HWCAP_CPUID
+            OPTIONAL_HWCAPS,
+            HWCAP_FP | HWCAP_ASIMD | HWCAP_EVTSTRM | HWCAP_CPUID,
         )
         if actual_hwcap != expected:
             raise RuntimeError(
@@ -326,11 +381,34 @@ def main() -> int:
             f"python3 -B {GUEST_CPU_IDENTITY}", 120
         )
         midr_match = re.search(r"^midr=0x([0-9a-f]+)$", identity, re.M)
+        counter_match = re.search(r"^cntfrq=([0-9]+)$", identity, re.M)
+        wfe_match = re.search(r"^wfe_ticks=([0-9]+)$", identity, re.M)
         llvm_match = re.search(r"^llvm=(.*)$", identity, re.M)
-        if midr_match is None or llvm_match is None:
+        if (
+            midr_match is None
+            or counter_match is None
+            or wfe_match is None
+            or llvm_match is None
+        ):
             raise RuntimeError(f"CPU identity probe failed:\n{identity}")
+        # AT_HWCAP's EVTSTRM promises that a WFE with no SEV wakes within the
+        # event-stream period; one that waited for an event would never let
+        # the probe finish.
+        period_ticks = (
+            int(counter_match.group(1)) * EVENT_STREAM_PERIOD_US // 1000000
+        )
+        wfe_ticks = int(wfe_match.group(1))
+        if wfe_ticks >= WFE_ITERATIONS * period_ticks:
+            raise RuntimeError(
+                f"{WFE_ITERATIONS} WFEs took {wfe_ticks} counter ticks, more "
+                f"than the {period_ticks}-tick event-stream period each"
+            )
         check_cpuinfo(
-            guest, actual_hwcap, actual_hwcap2, int(midr_match.group(1), 16)
+            guest,
+            actual_hwcap,
+            actual_hwcap2,
+            int(midr_match.group(1), 16),
+            int(counter_match.group(1)),
         )
         # LLVM finds the host's features only in the Features line; with
         # none it reports no feature at all, not even the baseline NEON.
@@ -388,7 +466,8 @@ def main() -> int:
 
         print(
             f"PASS engine={arguments.engine} "
-            f"AT_HWCAP=0x{actual_hwcap:x} AT_HWCAP2=0x{actual_hwcap2:x}"
+            f"AT_HWCAP=0x{actual_hwcap:x} AT_HWCAP2=0x{actual_hwcap2:x} "
+            f"WFE={wfe_ticks / WFE_ITERATIONS:.3f} ticks"
         )
         return 0
 
