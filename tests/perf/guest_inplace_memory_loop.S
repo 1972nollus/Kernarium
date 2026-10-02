@@ -20,17 +20,14 @@
  * Twenty instructions per iteration.
  */
 
-	.equ NR_WRITE,		64
-	.equ NR_EXIT_GROUP,	94
+#include "probe_harness.inc"
+
 #ifndef BENCH_ITERATIONS
 #define BENCH_ITERATIONS 30000000
 #endif
 	.equ ITERATIONS,	BENCH_ITERATIONS
 
-	.section .text
-	.global _start
-	.type _start, %function
-_start:
+	probe_start
 	movz	x19, #(ITERATIONS & 0xffff)
 	movk	x19, #((ITERATIONS >> 16) & 0xffff), lsl #16
 	adrp	x21, buffer
@@ -67,22 +64,9 @@ _start:
 	eor	x20, x20, x22
 	eor	x20, x20, x23
 
-	adrp	x1, success_message
-	add	x1, x1, :lo12:success_message
-	mov	x0, #1
-	mov	x2, #3
-	mov	x8, #NR_WRITE
-	svc	#0
-	mov	x0, #0
-	mov	x8, #NR_EXIT_GROUP
-	svc	#0
-	brk	#0
+	probe_finish	failure=0
 
-	.size _start, .-_start
-
-	.section .rodata
-success_message:
-	.ascii "OK\n"
+	probe_end
 
 	.section .bss
 	.align 6

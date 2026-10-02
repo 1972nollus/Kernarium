@@ -37,10 +37,9 @@
 	.equ TOUCH_PAGES,	BENCH_TOUCH_PAGES
 	.equ GUEST_PAGE_SIZE,	16384
 
-	.section .text
-	.global _start
-	.type _start, %function
-_start:
+#include "probe_harness.inc"
+
+	probe_start
 	/* Seed each page with its index before the fork, so both processes
 	 * check the same values through their own mappings. */
 	adrp	x0, region
@@ -122,21 +121,7 @@ _start:
 	ldr	w4, [sp]
 	cbnz	w4, .Lfailure
 
-	adrp	x1, success_message
-	add	x1, x1, :lo12:success_message
-	mov	x0, #1
-	mov	x2, #3
-	mov	x8, #NR_WRITE
-	svc	#0
-	mov	x0, #0
-	b	.Lexit
-
-.Lfailure:
-	mov	x0, #1
-.Lexit:
-	mov	x8, #NR_EXIT_GROUP
-	svc	#0
-	brk	#0
+	probe_finish
 
 	/* Child: wait for the parent, touch its working set, reply. */
 .Lchild:
@@ -237,11 +222,7 @@ _start:
 	ret
 	.size .Ltouch, .-.Ltouch
 
-	.size _start, .-_start
-
-	.section .rodata
-success_message:
-	.ascii "OK\n"
+	probe_end
 
 	.section .data
 	.balign 8
