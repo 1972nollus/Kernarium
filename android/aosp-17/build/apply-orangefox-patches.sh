@@ -12,11 +12,8 @@ VERIFIER="$ANDROID_ROOT/tools/verify-orangefox-source.py"
 DEVICE_SYNC="$ANDROID_ROOT/tools/sync-device-tree.py"
 ORANGEFOX_SOURCE=
 
-fail()
-{
-	printf '%s\n' "android/aosp-17/build/apply-orangefox-patches.sh: $*" >&2
-	exit 1
-}
+# shellcheck disable=SC1090
+. "$SCRIPT_DIR/common.sh"
 
 usage()
 {
@@ -47,13 +44,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$ORANGEFOX_SOURCE" ] || fail "--orangefox-source is required"
-case "$ORANGEFOX_SOURCE" in
-/*) ;;
-*) fail "OrangeFox source must be an absolute local path" ;;
-esac
-case "$ORANGEFOX_SOURCE" in
-/|*/../*|*/..|*/./*|*/.) fail "OrangeFox source must be normalized" ;;
-esac
+absolute_path "OrangeFox source" "$ORANGEFOX_SOURCE"
 [ "$(uname -s)" = Linux ] || fail "builder host must be Linux"
 [ "$(uname -m)" = x86_64 ] || fail "builder host must be x86_64"
 [ -d "$ORANGEFOX_SOURCE/.repo/manifests" ] || fail "OrangeFox Repo metadata is missing"

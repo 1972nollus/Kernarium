@@ -20,11 +20,8 @@ MKBOOTIMG=
 OUTPUT=
 WORK_DIR=
 
-fail()
-{
-	printf '%s\n' "android/aosp-17/build/assemble-image.sh: $*" >&2
-	exit 1
-}
+# shellcheck disable=SC1090
+source "$SCRIPT_DIR/common.sh"
 
 usage()
 {
@@ -44,19 +41,6 @@ kernelless boot-image v4 init_boot partition. The separately built, verified
 OrangeFox image replaces the target-files stock recovery. The output is a new
 raw GPT disk; an existing path is never replaced.
 EOF
-}
-
-absolute_path()
-{
-	local name=$1
-	local value=$2
-	case "$value" in
-	/*) ;;
-	*) fail "$name must be an absolute local path" ;;
-	esac
-	case "$value" in
-	/|*/../*|*/..|*/./*|*/.) fail "$name must be normalized" ;;
-	esac
 }
 
 cleanup()

@@ -14,11 +14,8 @@ JOBS=
 STAGING=
 MANIFEST_OUTPUT=
 
-fail()
-{
-	printf '%s\n' "android/aosp-17/build/prepare-orangefox-source.sh: $*" >&2
-	exit 1
-}
+# shellcheck disable=SC1090
+. "$SCRIPT_DIR/common.sh"
 
 usage()
 {
@@ -44,19 +41,6 @@ cleanup()
 	fi
 }
 trap cleanup EXIT HUP INT TERM
-
-absolute_path()
-{
-	name=$1
-	value=$2
-	case "$value" in
-	/*) ;;
-	*) fail "$name must be an absolute local path" ;;
-	esac
-	case "$value" in
-	/|*/../*|*/..|*/./*|*/.) fail "$name must be normalized" ;;
-	esac
-}
 
 materialize_external()
 {

@@ -20,11 +20,8 @@ OUT_DIR=
 KERNEL_ARTIFACT=
 JOBS=
 
-fail()
-{
-	printf '%s\n' "android/aosp-17/build/build-aosp.sh: $*" >&2
-	exit 1
-}
+# shellcheck disable=SC1090
+source "$SCRIPT_DIR/common.sh"
 
 usage()
 {
@@ -42,19 +39,6 @@ from an external absolute OUT_DIR. Reusing the same output path lets the
 Android build system select and preserve its compatible incremental state; a
 missing output path is initialized automatically.
 EOF
-}
-
-absolute_path()
-{
-	local name=$1
-	local value=$2
-	case "$value" in
-	/*) ;;
-	*) fail "$name must be an absolute local path" ;;
-	esac
-	case "$value" in
-	/|*/../*|*/..|*/./*|*/.) fail "$name must be normalized" ;;
-	esac
 }
 
 partition_size_from_layout()

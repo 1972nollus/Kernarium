@@ -14,11 +14,8 @@ JELLY_VERIFIER="$ANDROID_ROOT/tools/verify-jelly-source.py"
 MESA_VENUS_VERIFIER="$ANDROID_ROOT/tools/verify-mesa-venus-source.py"
 AOSP_SOURCE=
 
-fail()
-{
-	printf '%s\n' "android/aosp-17/build/apply-aosp-patches.sh: $*" >&2
-	exit 1
-}
+# shellcheck disable=SC1090
+. "$SCRIPT_DIR/common.sh"
 
 usage()
 {
@@ -50,13 +47,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$AOSP_SOURCE" ] || fail "--aosp-source is required"
-case "$AOSP_SOURCE" in
-/*) ;;
-*) fail "AOSP source must be an absolute local path" ;;
-esac
-case "$AOSP_SOURCE" in
-/|*/../*|*/..|*/./*|*/.) fail "AOSP source must be normalized" ;;
-esac
+absolute_path "AOSP source" "$AOSP_SOURCE"
 [ "$(uname -s)" = Linux ] || fail "builder host must be Linux"
 [ "$(uname -m)" = x86_64 ] || fail "builder host must be x86_64"
 [ -d "$AOSP_SOURCE/.repo/manifests" ] || fail "AOSP Repo metadata is missing"

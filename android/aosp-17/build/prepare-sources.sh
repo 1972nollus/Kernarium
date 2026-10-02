@@ -17,11 +17,8 @@ ACK_WORKSPACE=
 JOBS=
 STAGING=
 
-fail()
-{
-	printf '%s\n' "android/aosp-17/build/prepare-sources.sh: $*" >&2
-	exit 1
-}
+# shellcheck disable=SC1090
+. "$SCRIPT_DIR/common.sh"
 
 usage()
 {
@@ -46,32 +43,6 @@ cleanup()
 	fi
 }
 trap cleanup EXIT HUP INT TERM
-
-absolute_directory()
-{
-	name=$1
-	value=$2
-	case "$value" in
-	/*) ;;
-	*) fail "$name must be an absolute local path" ;;
-	esac
-	case "$value" in
-	/|*/../*|*/..|*/./*|*/.) fail "$name must be normalized" ;;
-	esac
-	[ -d "$value" ] || fail "$name does not exist: $value"
-}
-
-dirty_repo_projects()
-{
-	(
-		cd "$AOSP_SOURCE"
-		repo forall -c '
-			if test -n "$(git status --porcelain)"; then
-				printf "%s\n" "$REPO_PATH"
-			fi
-		'
-	)
-}
 
 pinned_git()
 {
@@ -155,8 +126,10 @@ done
 
 [ -n "$AOSP_SOURCE" ] || fail "--aosp-source is required"
 [ -n "$ACK_WORKSPACE" ] || fail "--ack-workspace is required"
-absolute_directory "AOSP source" "$AOSP_SOURCE"
-absolute_directory "ACK workspace" "$ACK_WORKSPACE"
+absolute_path "AOSP source" "$AOSP_SOURCE"
+[ -d "$AOSP_SOURCE" ] || fail "AOSP source does not exist: $AOSP_SOURCE"
+absolute_path "ACK workspace" "$ACK_WORKSPACE"
+[ -d "$ACK_WORKSPACE" ] || fail "ACK workspace does not exist: $ACK_WORKSPACE"
 
 [ "$(uname -s)" = Linux ] || fail "builder host must be Linux"
 [ "$(uname -m)" = x86_64 ] || fail "builder host must be x86_64"
@@ -192,7 +165,7 @@ command -v git >/dev/null 2>&1 || fail "git is not available on PATH"
 [ -d "$ACK_WORKSPACE/.repo" ] || fail "ACK workspace is not a Repo workspace"
 [ -e "$ACK_WORKSPACE/common/.git" ] || fail "ACK common checkout is missing"
 
-dirty_projects=$(dirty_repo_projects)
+dirty_projects=$(dirty_repo_projects "$AOSP_SOURCE")
 if [ -n "$dirty_projects" ]; then
 	fail "AOSP Repo workspace has dirty projects: $dirty_projects"
 fi
