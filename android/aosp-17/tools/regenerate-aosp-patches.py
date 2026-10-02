@@ -14,17 +14,7 @@ import pinned_source
 import patch_series  # noqa: E402
 
 
-PROJECT_HEADER = (
-    "order",
-    "route_id",
-    "manifest_project",
-    "checkout_path",
-    "manifest_revision",
-    "base_commit",
-    "base_tree",
-    "final_tree",
-    "series_dir",
-)
+PROJECT_HEADER = pinned_source.AOSP_ROUTE_HEADER
 HEX40 = pinned_source.HEX40
 SAFE_ROUTE = re.compile(r"p[0-9]{4}")
 

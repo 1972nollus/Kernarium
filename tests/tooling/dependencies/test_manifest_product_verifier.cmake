@@ -74,5 +74,43 @@ if(NOT _changed_diagnostic MATCHES
         "${_changed_diagnostic}")
 endif()
 
+# A row owns the last layer of its patch series, and a rootfs-vulkan layer is
+# below tools/rootfs/vulkan. A product matches whole products-column entries.
+set(_series_manifest "${_fixture_root}/series.tsv")
+file(WRITE "${_series_manifest}" "${_header}${_gpu_row}"
+    "stack\t1\tapple-gpu\thttps://example.invalid/stack.git\t5555555\t.\t"
+    "rootfs-vulkan:patches/stack/series.tsv+patches/stack/series.tsv\n"
+    "${_zstd_row}"
+    "net\t1\tios-network,apple-gpu-extra\thttps://example.invalid/net.git\t"
+    "6666666\t.\tpatches/net/series.tsv\n")
+function(_expect_series product owned_expected layers_expected)
+    set(_product)
+    if(product)
+        set(_product PRODUCT "${product}")
+    endif()
+    uml_manifest_patch_series(
+        MANIFEST "${_series_manifest}"
+        SOURCE_ROOT /source
+        ${_product}
+        OWNED _owned
+        LAYERS _layers)
+    if(NOT "${_owned}" STREQUAL "${owned_expected}" OR
+       NOT "${_layers}" STREQUAL "${layers_expected}")
+        message(FATAL_ERROR
+            "Patch series of '${product}' are '${_owned}' and '${_layers}', "
+            "expected '${owned_expected}' and '${layers_expected}'")
+    endif()
+endfunction()
+_expect_series(apple-gpu
+    "stack;/source/dependencies/patches/stack/series.tsv"
+    "/source/tools/rootfs/vulkan/patches/stack/series.tsv;/source/dependencies/patches/stack/series.tsv")
+_expect_series(ios-network
+    "net;/source/dependencies/patches/net/series.tsv"
+    "/source/dependencies/patches/net/series.tsv")
+_expect_series(ios-compression "" "")
+_expect_series(""
+    "stack;/source/dependencies/patches/stack/series.tsv;net;/source/dependencies/patches/net/series.tsv"
+    "/source/tools/rootfs/vulkan/patches/stack/series.tsv;/source/dependencies/patches/stack/series.tsv;/source/dependencies/patches/net/series.tsv")
+
 file(REMOVE_RECURSE "${_fixture_root}")
 message(STATUS "Dependency product manifest verifier tests passed")

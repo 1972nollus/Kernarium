@@ -51,10 +51,9 @@
 	.equ ITERATIONS,	BENCH_ITERATIONS
 	.equ STACK_SIZE,	16384
 
-	.section .text
-	.global _start
-	.type _start, %function
-_start:
+#include "probe_harness.inc"
+
+	probe_start
 	mov	x21, #0				/* children already started */
 
 .Lspawn:
@@ -114,21 +113,7 @@ _start:
 	cmp	x4, x5
 	b.ne	.Lfailure
 
-	adrp	x1, success_message
-	add	x1, x1, :lo12:success_message
-	mov	x0, #1
-	mov	x2, #3
-	mov	x8, #NR_WRITE
-	svc	#0
-	mov	x0, #0
-	b	.Lexit
-
-.Lfailure:
-	mov	x0, #1
-.Lexit:
-	mov	x8, #NR_EXIT_GROUP
-	svc	#0
-	brk	#0
+	probe_finish
 
 	/* ITERATIONS acquire/release cycles against the shared lock. */
 	.type .Lwork, %function
@@ -170,11 +155,7 @@ _start:
 	ret
 	.size .Lwork, .-.Lwork
 
-	.size _start, .-_start
-
-	.section .rodata
-success_message:
-	.ascii "OK\n"
+	probe_end
 
 	/* Keep the lock and the counter on separate 64-byte lines so the
 	 * measurement reflects contention for the lock itself rather than false

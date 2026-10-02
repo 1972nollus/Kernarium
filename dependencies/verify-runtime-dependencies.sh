@@ -71,10 +71,7 @@ while IFS= read -r dependency; do
 	case "$dependency" in
 	/System/Library/*|/usr/lib/*) ;;
 	@rpath/MesaEGL.framework/MesaEGL|\
-	@rpath/MesaGallium.framework/MesaGallium)
-		[ -n "$APPLE_GPU_PREFIX" ] ||
-			fail "production executable has an unauthenticated Apple GPU dependency: $dependency"
-		;;
+	@rpath/MesaGallium.framework/MesaGallium|\
 	@rpath/KosmicKrisp.framework/KosmicKrisp)
 		[ -n "$APPLE_GPU_PREFIX" ] ||
 			fail "production executable has an unauthenticated Apple GPU dependency: $dependency"

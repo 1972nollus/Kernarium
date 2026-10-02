@@ -45,10 +45,9 @@
 	.equ SPINNERS,		BENCH_SPINNERS
 	.equ STACK_SIZE,	16384
 
-	.section .text
-	.global _start
-	.type _start, %function
-_start:
+#include "probe_harness.inc"
+
+	probe_start
 	mov	x21, #0				/* spinners started */
 .Lspawn:
 	cmp	x21, #SPINNERS
@@ -153,25 +152,8 @@ _start:
 	b	.Lreap
 
 .Lsucceed:
-	adrp	x1, success_message
-	add	x1, x1, :lo12:success_message
-	mov	x0, #1
-	mov	x2, #3
-	mov	x8, #NR_WRITE
-	svc	#0
-	mov	x0, #0
-	b	.Lexit
-.Lfailure:
-	mov	x0, #1
-.Lexit:
-	mov	x8, #NR_EXIT_GROUP
-	svc	#0
-	brk	#0
-	.size _start, .-_start
-
-	.section .rodata
-success_message:
-	.ascii "OK\n"
+	probe_finish
+	probe_end
 
 	.section .bss
 	.balign 16

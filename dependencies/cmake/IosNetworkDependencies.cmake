@@ -34,58 +34,44 @@ foreach(_uml_ios_network_input IN LISTS _uml_ios_network_inputs)
 endforeach()
 
 find_package(Threads REQUIRED)
-find_library(_uml_ios_network_math
-    NAMES m
-    PATHS "${CMAKE_OSX_SYSROOT}/usr/lib"
-    NO_DEFAULT_PATH REQUIRED)
-find_library(_uml_ios_network_resolver
-    NAMES resolv
-    PATHS "${CMAKE_OSX_SYSROOT}/usr/lib"
-    NO_DEFAULT_PATH REQUIRED)
-find_library(_uml_ios_network_iconv
-    NAMES iconv
-    PATHS "${CMAKE_OSX_SYSROOT}/usr/lib"
-    NO_DEFAULT_PATH REQUIRED)
-find_library(_uml_ios_network_foundation
-    NAMES Foundation
-    PATHS "${CMAKE_OSX_SYSROOT}/System/Library/Frameworks"
-    NO_DEFAULT_PATH REQUIRED)
-find_library(_uml_ios_network_core_foundation
-    NAMES CoreFoundation
-    PATHS "${CMAKE_OSX_SYSROOT}/System/Library/Frameworks"
-    NO_DEFAULT_PATH REQUIRED)
+include("${CMAKE_CURRENT_LIST_DIR}/UmlThirdPartyTargets.cmake")
+foreach(_uml_sdk_library IN ITEMS m resolv iconv)
+    _uml_find_sdk_library(_uml_sdk_${_uml_sdk_library} ${_uml_sdk_library})
+endforeach()
+foreach(_uml_framework IN ITEMS Foundation CoreFoundation)
+    _uml_find_sdk_framework(_uml_sdk_${_uml_framework} ${_uml_framework})
+endforeach()
 
-add_library(uml_third_party_pcre2 STATIC IMPORTED GLOBAL)
-set_target_properties(uml_third_party_pcre2 PROPERTIES
-    IMPORTED_LOCATION "${_uml_ios_network_lib}/libpcre2-8.a"
-    INTERFACE_INCLUDE_DIRECTORIES "${_uml_ios_network_include}"
-    INTERFACE_COMPILE_DEFINITIONS PCRE2_STATIC
-    INTERFACE_LINK_LIBRARIES Threads::Threads)
-add_library(UML::ThirdPartyPcre2 ALIAS uml_third_party_pcre2)
+_uml_import_static_dependency(pcre2 "${_uml_ios_network_lib}/libpcre2-8.a"
+    ALIAS UML::ThirdPartyPcre2
+    INCLUDES "${_uml_ios_network_include}"
+    DEFINITIONS PCRE2_STATIC
+    LINKS Threads::Threads)
 
-add_library(uml_third_party_intl STATIC IMPORTED GLOBAL)
-set_target_properties(uml_third_party_intl PROPERTIES
-    IMPORTED_LOCATION "${_uml_ios_network_lib}/libintl.a"
-    INTERFACE_INCLUDE_DIRECTORIES "${_uml_ios_network_include}"
-    INTERFACE_COMPILE_DEFINITIONS G_INTL_STATIC_COMPILATION)
-add_library(UML::ThirdPartyIntl ALIAS uml_third_party_intl)
+_uml_import_static_dependency(intl "${_uml_ios_network_lib}/libintl.a"
+    ALIAS UML::ThirdPartyIntl
+    INCLUDES "${_uml_ios_network_include}"
+    DEFINITIONS G_INTL_STATIC_COMPILATION)
 
-add_library(uml_third_party_glib STATIC IMPORTED GLOBAL)
-set_target_properties(uml_third_party_glib PROPERTIES
-    IMPORTED_LOCATION "${_uml_ios_network_lib}/libglib-2.0.a"
-    INTERFACE_INCLUDE_DIRECTORIES
-        "${_uml_ios_network_include}/glib-2.0;${_uml_ios_network_lib}/glib-2.0/include"
-    INTERFACE_LINK_LIBRARIES
-        "UML::ThirdPartyPcre2;UML::ThirdPartyIntl;Threads::Threads;${_uml_ios_network_iconv};${_uml_ios_network_math};${_uml_ios_network_foundation};${_uml_ios_network_core_foundation}")
-add_library(UML::ThirdPartyGlib ALIAS uml_third_party_glib)
+# iOS GLib uses the SDK's libiconv and needs no AppKit or Carbon.
+_uml_import_static_dependency(glib "${_uml_ios_network_lib}/libglib-2.0.a"
+    ALIAS UML::ThirdPartyGlib
+    INCLUDES
+        "${_uml_ios_network_include}/glib-2.0"
+        "${_uml_ios_network_lib}/glib-2.0/include"
+    LINKS
+        UML::ThirdPartyPcre2
+        UML::ThirdPartyIntl
+        Threads::Threads
+        "${_uml_sdk_iconv}"
+        "${_uml_sdk_m}"
+        "${_uml_sdk_Foundation}"
+        "${_uml_sdk_CoreFoundation}")
 
-add_library(uml_third_party_slirp STATIC IMPORTED GLOBAL)
-set_target_properties(uml_third_party_slirp PROPERTIES
-    IMPORTED_LOCATION "${_uml_ios_network_lib}/libslirp.a"
-    INTERFACE_INCLUDE_DIRECTORIES "${_uml_ios_network_include}/slirp"
-    INTERFACE_LINK_LIBRARIES
-        "UML::ThirdPartyGlib;${_uml_ios_network_resolver}")
-add_library(UML::ThirdPartySlirp ALIAS uml_third_party_slirp)
+_uml_import_static_dependency(slirp "${_uml_ios_network_lib}/libslirp.a"
+    ALIAS UML::ThirdPartySlirp
+    INCLUDES "${_uml_ios_network_include}/slirp"
+    LINKS UML::ThirdPartyGlib "${_uml_sdk_resolv}")
 
 add_custom_target(uml_ios_network_prefix_verify
     COMMAND "${CMAKE_COMMAND}"
