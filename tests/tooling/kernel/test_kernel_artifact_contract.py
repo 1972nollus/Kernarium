@@ -9,7 +9,9 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import importlib.util
 import json
+import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -419,6 +421,56 @@ def verify_kernel_elf_contract(module: ModuleType, root: Path) -> None:
         (unterminated, "ELF symbol name is unterminated"),
     ):
         check(image, diagnostic)
+
+    # Host code must not import the process-wide sigprocmask or the variadic
+    # fcntl, in any Mach-O spelling.
+    for symbol, description in (
+        ("sigprocmask", "the process-wide Darwin sigprocmask"),
+        ("_sigprocmask$UNIX2003", "the process-wide Darwin sigprocmask"),
+        ("fcntl", "the variadic Darwin fcntl"),
+        ("_fcntl$NOCANCEL", "the variadic Darwin fcntl"),
+    ):
+        check(kernel_elf([*active_16k, symbol]), f"the Linux image imports {description}")
+    check(kernel_elf([*active_16k, "pthread_sigmask"]), None)
+
+    # Kernel builds run the module's command line on the image they built. The
+    # copy in the fixture directory reads the fixture declarations and policy.
+    command_line = abi / "bridge_imports.py"
+    shutil.copyfile(
+        Path(module.__file__).resolve().parents[1] / "abi/bridge_imports.py",
+        command_line,
+    )
+
+    def run(*arguments: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-B", str(command_line), *arguments],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    for page, kernel_slice, symbols in (
+        ("16k", "arm64", active_16k),
+        ("4k", "arm64", [everywhere, small, arm64]),
+        ("4k", "x86_64", [everywhere, small]),
+    ):
+        printed = run("--print-expected", "--page-size", page, "--slice", kernel_slice)
+        require(
+            printed.returncode == 0 and printed.stdout.split() == sorted(symbols),
+            f"{page} {kernel_slice} expected imports printed wrongly: {printed}",
+        )
+    for imports, diagnostic in (
+        (active_16k, None),
+        ([everywhere, small, arm64], "kernel bridge imports differ"),
+        ([*active_16k, "_fcntl"], "the Linux image imports the variadic Darwin fcntl"),
+    ):
+        path.write_bytes(kernel_elf(imports))
+        result = run("--kernel-binary", str(path), "--page-size", "16k", "--slice", "arm64")
+        require(
+            (result.returncode == 0) == (diagnostic is None)
+            and (diagnostic is None or diagnostic in result.stderr),
+            f"bridge import command line misjudged {imports}: {result.stderr}",
+        )
 
     # The policy is a three-column table of declared conditional symbols.
     for row in (

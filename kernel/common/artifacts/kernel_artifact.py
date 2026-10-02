@@ -16,10 +16,21 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
-from pathlib import Path, PurePosixPath
-from typing import NamedTuple, NoReturn
+from pathlib import Path
+from typing import NoReturn
 
 from contract_checks import ContractChecks, parse_config
+
+_ABI = str(Path(__file__).resolve().parents[1] / "abi")
+if _ABI not in sys.path:
+    sys.path.insert(0, _ABI)
+from bridge_imports import (  # noqa: E402
+    SHT_NOBITS,
+    bounded_slice,
+    section_headers,
+    undefined_symbols,
+    verify_imports,
+)
 
 
 SCHEMA_VERSION = 3
@@ -66,6 +77,7 @@ PAYLOAD_SPECS = {
 }
 
 _CHECKS = ContractChecks("kernel artifact verifier")
+error = _CHECKS.error
 fail = _CHECKS.fail
 require_exact_keys = _CHECKS.require_exact_keys
 require_string = _CHECKS.require_string
@@ -80,10 +92,6 @@ PT_LOAD = 1
 PT_GNU_STACK = 0x6474E551
 PF_X = 1
 PF_W = 2
-SHT_SYMTAB = 2
-SHT_NOBITS = 8
-SHT_DYNSYM = 11
-SHN_UNDEF = 0
 SHF_ALLOC = 2
 DWARF_SECTION_PREFIXES = (".debug_", ".zdebug_")
 
@@ -249,129 +257,6 @@ def verify_config(path: Path, page_size: int, kernel_slice: str) -> None:
         fail(f"kernel artifact contains loadable-module values: {modular[:8]}")
 
 
-def bounded_slice(payload: bytes, offset: int, size: int, label: str) -> bytes:
-    if offset < 0 or size < 0 or offset > len(payload) or size > len(payload) - offset:
-        fail(f"ELF {label} is outside the file")
-    return payload[offset : offset + size]
-
-
-class SectionHeader(NamedTuple):
-    name: int
-    kind: int
-    flags: int
-    offset: int
-    size: int
-    link: int
-    entry_size: int
-
-
-def section_headers(payload: bytes) -> list[SectionHeader]:
-    """Return every ELF64 section header, each with contents inside the file."""
-    section_offset = struct.unpack_from("<Q", payload, 40)[0]
-    section_entry_size, section_count = struct.unpack_from("<HH", payload, 58)
-    if section_entry_size < 64 or section_count == 0:
-        fail("ELF section-header table is missing or malformed")
-    bounded_slice(
-        payload,
-        section_offset,
-        section_entry_size * section_count,
-        "section-header table",
-    )
-    headers = []
-    for index in range(section_count):
-        offset = section_offset + index * section_entry_size
-        name, kind, flags = struct.unpack_from("<IIQ", payload, offset)
-        file_offset, size = struct.unpack_from("<QQ", payload, offset + 24)
-        link = struct.unpack_from("<I", payload, offset + 40)[0]
-        entry_size = struct.unpack_from("<Q", payload, offset + 56)[0]
-        if kind != SHT_NOBITS:
-            bounded_slice(payload, file_offset, size, f"section {index}")
-        headers.append(
-            SectionHeader(name, kind, flags, file_offset, size, link, entry_size)
-        )
-    return headers
-
-
-def elf_imports(payload: bytes) -> set[str]:
-    sections = section_headers(payload)
-    imported: set[str] = set()
-    found_symbol_table = False
-    for index, section in enumerate(sections):
-        if section.kind not in (SHT_SYMTAB, SHT_DYNSYM):
-            continue
-        found_symbol_table = True
-        entry_size = section.entry_size
-        if entry_size < 24 or section.size % entry_size != 0:
-            fail(f"ELF symbol table {index} is malformed")
-        if section.link >= len(sections):
-            fail(f"ELF symbol table {index} has an invalid string table")
-        string_table = sections[section.link]
-        strings = bounded_slice(
-            payload, string_table.offset, string_table.size, "string table"
-        )
-        end = section.offset + section.size
-        for symbol_offset in range(section.offset, end, entry_size):
-            name_offset = struct.unpack_from("<I", payload, symbol_offset)[0]
-            section_index = struct.unpack_from("<H", payload, symbol_offset + 6)[0]
-            if section_index != SHN_UNDEF or name_offset >= len(strings):
-                continue
-            terminator = strings.find(b"\0", name_offset)
-            if terminator < 0:
-                fail("ELF symbol name is unterminated")
-            try:
-                name = strings[name_offset:terminator].decode("ascii")
-            except UnicodeDecodeError:
-                continue
-            if re.fullmatch(r"darwin_uml_[A-Za-z0-9_]+", name):
-                imported.add(name)
-    if not found_symbol_table:
-        fail("ELF contains no symbol table for bridge verification")
-    return imported
-
-
-def expected_imports(
-    common_root: Path, page_size: int, kernel_slice: str
-) -> set[str]:
-    if kernel_slice not in {"arm64", "x86_64"}:
-        fail(f"unsupported kernel slice for bridge imports: {kernel_slice}")
-    if kernel_slice == "x86_64" and page_size != 4096:
-        fail("x86_64 bridge imports require 4096-byte pages")
-    declared: set[str] = set()
-    declaration = re.compile(r"\b(darwin_uml_[A-Za-z0-9_]+)\s*\(")
-    for path in sorted((common_root / "abi").glob("darwin_uml_*.h")):
-        declared.update(declaration.findall(path.read_text(encoding="utf-8")))
-    if not declared:
-        fail("shared ABI declarations are missing")
-    conditional: dict[str, set[str]] = {
-        "4k-only": set(),
-        "arm64-only": set(),
-    }
-    policy = common_root / "abi/import-policy.tsv"
-    rows = policy.read_text(encoding="utf-8").splitlines()
-    if not rows or rows[0] != "symbol\tavailability\trationale":
-        fail("ABI import policy is malformed")
-    for line_number, row in enumerate(rows[1:], 2):
-        fields = row.split("\t")
-        if (
-            len(fields) != 3
-            or re.fullmatch(r"darwin_uml_[A-Za-z0-9_]+", fields[0]) is None
-            or fields[1] not in conditional
-            or not fields[2]
-            or any(fields[0] in symbols for symbols in conditional.values())
-        ):
-            fail(f"ABI import policy is malformed at line {line_number}")
-        conditional[fields[1]].add(fields[0])
-    all_conditional = set().union(*conditional.values())
-    if not all_conditional <= declared:
-        fail("ABI import policy names undeclared bridge symbols")
-    expected = set(declared)
-    if page_size == 16384:
-        expected -= conditional["4k-only"]
-    if kernel_slice == "x86_64":
-        expected -= conditional["arm64-only"]
-    return expected
-
-
 def verify_elf(
     path: Path, page_size: int, common_root: Path, kernel_slice: str
 ) -> bytes:
@@ -391,6 +276,7 @@ def verify_elf(
         program_offset,
         program_entry_size * program_count,
         "program-header table",
+        error,
     )
     load_count = 0
     executable = False
@@ -404,7 +290,7 @@ def verify_elf(
         )
         if file_size > memory_size:
             fail(f"ELF program header {index} has file size above memory size")
-        bounded_slice(payload, file_offset, file_size, f"segment {index}")
+        bounded_slice(payload, file_offset, file_size, f"segment {index}", error)
         if kind == PT_GNU_STACK and flags & PF_X:
             fail("kernel GNU stack is executable")
         if kind != PT_LOAD:
@@ -420,27 +306,27 @@ def verify_elf(
         writable |= bool(flags & PF_W)
     if load_count < 2 or not executable or not writable:
         fail("kernel lacks separated executable and writable load segments")
-    imported = elf_imports(payload)
-    expected = expected_imports(common_root, page_size, kernel_slice)
-    if imported != expected:
-        fail(
-            "kernel bridge imports differ "
-            f"(missing={sorted(expected - imported)}, extra={sorted(imported - expected)})"
-        )
+    verify_imports(
+        undefined_symbols(payload, error),
+        page_size,
+        kernel_slice,
+        common_root / "abi",
+        error,
+    )
     return payload
 
 
 def elf_sections(payload: bytes) -> list[tuple[str, int, int, int]]:
     """Return (name, type, flags, size) for every ELF64 section."""
     names_index = struct.unpack_from("<H", payload, 62)[0]
-    headers = section_headers(payload)
+    headers = section_headers(payload, error)
     if names_index >= len(headers):
         fail("ELF section-header table is missing or malformed")
     names_header = headers[names_index]
     if names_header.kind == SHT_NOBITS:
         fail("ELF section-name table has no contents")
     names = bounded_slice(
-        payload, names_header.offset, names_header.size, "section-name table"
+        payload, names_header.offset, names_header.size, "section-name table", error
     )
     sections = []
     for header in headers:

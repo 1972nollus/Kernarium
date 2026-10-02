@@ -374,15 +374,9 @@ verify_composed_config "$@"
 run_make -j"$UML_KERNEL_JOBS"
 [ -f "$BUILD_DIR/vmlinux" ] ||
 	fail "Kbuild completed without producing $BUILD_DIR/vmlinux"
-if [ -n "$UML_KERNEL_NM" ]; then
-	"$COMMON_ROOT/abi/verify-linux-imports.sh" \
-		--kernel-binary "$BUILD_DIR/vmlinux" --nm "$UML_KERNEL_NM" \
-		--page-size "$PAGE_SIZE" --slice "$UML_KERNEL_SLICE"
-else
-	"$COMMON_ROOT/abi/verify-linux-imports.sh" \
-		--kernel-binary "$BUILD_DIR/vmlinux" --page-size "$PAGE_SIZE" \
-		--slice "$UML_KERNEL_SLICE"
-fi
+python3 -B "$COMMON_ROOT/abi/bridge_imports.py" \
+	--kernel-binary "$BUILD_DIR/vmlinux" --page-size "$PAGE_SIZE" \
+	--slice "$UML_KERNEL_SLICE"
 if [ "$(uname -s)" = Darwin ]; then
 	python3 "$COMMON_ROOT/tooling/verify-console-input.py" \
 		--source "$SOURCE_DIR" --build "$BUILD_DIR"
