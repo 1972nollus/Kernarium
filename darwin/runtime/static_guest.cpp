@@ -146,14 +146,13 @@ void save_cpu(arm64::CpuState &cpu,
 	registers.fpmr = 0;
 	registers.svcr = 0;
 	tls = static_cast<unsigned long>(cpu.tls);
-	/* Like a context switch on hardware, report the FPCR the task ran with:
-	 * load_cpu masked it, and an untouched FP image still holds the value
-	 * the kernel restored. */
+	/* Like a context switch on hardware, report the FPCR and FPSR the task
+	 * ran with: load_cpu masked them, and an untouched FP image still holds
+	 * the values the kernel restored. */
 	fp.fpcr = cpu.effective_fpcr();
-	if (cpu.fp_dirty) {
+	fp.fpsr = cpu.effective_fpsr();
+	if (cpu.fp_dirty)
 		std::memcpy(fp.vectors, cpu.vectors.data(), sizeof(fp.vectors));
-		fp.fpsr = cpu.fpsr;
-	}
 }
 
 #if DARWIN_UML_X86_64_GUEST

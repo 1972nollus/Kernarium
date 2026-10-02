@@ -22,7 +22,7 @@ constexpr std::size_t transfer_offset = 64;
 [[nodiscard]] std::uint32_t fpcr_mask() noexcept {
   return arm64::fpcr_writable_mask_for(::uml::cpu::host_capabilities());
 }
-constexpr std::uint32_t fpsr_mask = 0xf800'009fU;
+constexpr std::uint32_t fpsr_mask = arm64::fpsr_writable_mask;
 
 [[nodiscard]] engine::NativeRequirements native_requirements() {
   return engine::NativeRequirements::features(

@@ -77,6 +77,32 @@ NAME(uml_arm64_gadget_\name):
 99:
 .endm
 
+/* Call uml_arm64_\helper(CpuState, x8) inside the active guest FP
+ * environment, for a helper that models an instruction in software and
+ * reports its exceptions by ORing them into CpuState.fpsr. The live FPSR is
+ * the host register, so CpuState's copy can lack cumulative flags that
+ * earlier native gadgets of the block raised: materialize it before the call
+ * and reinstall it after. The host register holds only the writable FPSR
+ * fields, so storing it commits what the execution boundary would. The guest
+ * sees exactly the prior FPSR plus the modelled exceptions, and any status
+ * the host raises while running the helper is discarded. A helper whose
+ * exceptions come from host instructions run under the guest FPCR instead
+ * merges the host register after the call. x1/x2 survive in x19/x20.
+ */
+.macro fpsr_model_helper helper
+	mrs x16, fpsr
+	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	mov x19, x1
+	mov x20, x2
+	mov x0, x1
+	mov x1, x8
+	bl NAME(uml_arm64_\helper)
+	mov x1, x19
+	mov x2, x20
+	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x17
+.endm
+
 /* Translate guest address x7 through the persistent iSH-style TLB. The 16 KiB
  * build uses 16,384 two-way direct sets; the 4 KiB fallback retains 8,192
  * one-way folded entries. On success x7 is the host address. The miss helper
