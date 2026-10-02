@@ -32,11 +32,7 @@ set(_required
     "${PREFIX}/include/glib-2.0/glib.h"
     "${PREFIX}/lib/glib-2.0/include/glibconfig.h"
     "${PREFIX}/include/slirp/libslirp.h")
-foreach(_file IN LISTS _required)
-    if(NOT EXISTS "${_file}" OR IS_SYMLINK "${_file}")
-        message(FATAL_ERROR "Invalid iOS network dependency: ${_file}")
-    endif()
-endforeach()
+uml_require_prefix_files(LABEL "iOS network" FILES ${_required})
 
 uml_verify_dependency_manifest_product(
     SOURCE "${SOURCE_ROOT}/dependencies/manifest.tsv"
@@ -49,45 +45,13 @@ uml_verify_source_trees(
     SOURCES
         glib-ios "${SOURCE_ROOT}/dependencies/patches/glib-ios/series.tsv"
         libslirp "${SOURCE_ROOT}/dependencies/patches/libslirp/series.tsv")
-set(_provenance_files "${_platform_receipt}")
-foreach(_relative IN LISTS _provenance_files)
-    set(_source "${SOURCE_ROOT}/dependencies/platforms/${_relative}")
-    set(_installed "${PREFIX}/share/uml-dependencies/${_relative}")
-    if(NOT EXISTS "${_installed}" OR IS_SYMLINK "${_installed}")
-        message(FATAL_ERROR
-            "Missing iOS network dependency provenance: ${_installed}")
-    endif()
-    execute_process(
-        COMMAND "${CMAKE_COMMAND}" -E compare_files
-            "${_source}" "${_installed}"
-        RESULT_VARIABLE _provenance_status)
-    if(NOT _provenance_status EQUAL 0)
-        message(FATAL_ERROR
-            "iOS network dependency provenance does not match: ${_relative}")
-    endif()
-endforeach()
+uml_verify_provenance_copy(
+    LABEL "iOS network"
+    SOURCE "${SOURCE_ROOT}/dependencies/platforms/${_platform_receipt}"
+    INSTALLED "${PREFIX}/share/uml-dependencies/${_platform_receipt}")
 
 foreach(_archive IN ITEMS
         libpcre2-8.a libffi.a libintl.a libglib-2.0.a libslirp.a)
-    set(_path "${PREFIX}/lib/${_archive}")
-    execute_process(
-        COMMAND lipo -archs "${_path}"
-        RESULT_VARIABLE _lipo_status
-        OUTPUT_VARIABLE _architectures
-        OUTPUT_STRIP_TRAILING_WHITESPACE)
-    if(NOT _lipo_status EQUAL 0 OR NOT _architectures STREQUAL "arm64")
-        message(FATAL_ERROR
-            "${_path} is not an arm64-only Apple archive: ${_architectures}")
-    endif()
-
-    execute_process(
-        COMMAND otool -l "${_path}"
-        RESULT_VARIABLE _otool_status
-        OUTPUT_VARIABLE _load_commands)
-    if(NOT _otool_status EQUAL 0 OR
-       NOT _load_commands MATCHES "platform ${_mach_platform}([^0-9]|$)" OR
-       NOT _load_commands MATCHES "minos 26\\.0")
-        message(FATAL_ERROR
-            "${_path} is not a ${PLATFORM} 26.0 archive")
-    endif()
+    uml_verify_apple_binary(PATH "${PREFIX}/lib/${_archive}"
+        PLATFORM ${_mach_platform} MINOS 26.0)
 endforeach()

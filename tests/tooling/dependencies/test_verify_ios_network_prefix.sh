@@ -109,6 +109,17 @@ copy_fixture "$CASE"
 archive "$CASE/lib/libglib-2.0.a" iphoneos arm64-apple-ios18.0
 expect_cmake_diagnostic "lib/libglib-2.0.a" verify "$CASE" ios
 
+# Every member counts, not only the first one that matches.
+for member in iphoneos:arm64-apple-ios18.0 \
+	iphonesimulator:arm64-apple-ios26.0-simulator; do
+	CASE="$TEST_ROOT/mixed-members-${member#*:}"
+	copy_fixture "$CASE"
+	xcrun --sdk "${member%%:*}" clang -target "${member#*:}" \
+		-c "$TEST_ROOT/fixture.c" -o "$TEST_ROOT/other-member.o"
+	xcrun ar rs "$CASE/lib/libslirp.a" "$TEST_ROOT/other-member.o" 2>/dev/null
+	expect_cmake_diagnostic "lib/libslirp.a" verify "$CASE" ios
+done
+
 CASE="$TEST_ROOT/intel-archive"
 copy_fixture "$CASE"
 archive "$CASE/lib/libffi.a" iphonesimulator x86_64-apple-ios26.0-simulator

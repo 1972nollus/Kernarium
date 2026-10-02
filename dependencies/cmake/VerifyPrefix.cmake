@@ -2,6 +2,9 @@
 
 include_guard(GLOBAL)
 
+# Checks the CMake dependency prefix verifiers share. LABEL names the prefix in
+# diagnostics.
+
 # A patched source is identified by the tree its generated series records.
 # Builders install source-trees.tsv from the prepared sources; the prefix is
 # current exactly while every listed tree matches its series.
@@ -61,4 +64,91 @@ function(uml_verify_source_trees)
             "${_arg_LABEL} source trees list ${_installed_names}, "
             "expected ${_expected_names}")
     endif()
+endfunction()
+
+# uml_require_prefix_files(LABEL <text> FILES <file>...)
+# Every file exists and is not a symlink.
+function(uml_require_prefix_files)
+    cmake_parse_arguments(PARSE_ARGV 0 _arg "" "LABEL" "FILES")
+    foreach(_file IN LISTS _arg_FILES)
+        if(NOT EXISTS "${_file}" OR IS_SYMLINK "${_file}")
+            message(FATAL_ERROR
+                "${_arg_LABEL} prefix file is missing or a symlink: ${_file}")
+        endif()
+    endforeach()
+endfunction()
+
+# uml_verify_provenance_copy(LABEL <text> SOURCE <file> INSTALLED <file>)
+# The prefix installed the checked-in SOURCE byte for byte as INSTALLED, so
+# its fields need no separate checks.
+function(uml_verify_provenance_copy)
+    cmake_parse_arguments(PARSE_ARGV 0 _arg "" "LABEL;SOURCE;INSTALLED" "")
+    foreach(_role IN ITEMS SOURCE INSTALLED)
+        if(NOT EXISTS "${_arg_${_role}}" OR IS_SYMLINK "${_arg_${_role}}")
+            message(FATAL_ERROR
+                "${_arg_LABEL} provenance is missing or a symlink: "
+                "${_arg_${_role}}")
+        endif()
+    endforeach()
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E compare_files
+            "${_arg_SOURCE}" "${_arg_INSTALLED}"
+        RESULT_VARIABLE _status)
+    if(NOT _status EQUAL 0)
+        get_filename_component(_name "${_arg_INSTALLED}" NAME)
+        message(FATAL_ERROR
+            "${_arg_LABEL} provenance does not match: ${_name}")
+    endif()
+endfunction()
+
+# uml_verify_apple_binary(PATH <file> [PLATFORM <number> MINOS <version>]
+#     [LIPO <tool>] [OTOOL <tool>])
+# PATH holds only arm64 code. With PLATFORM, every build-version command in it,
+# one per archive member, names that Mach-O platform and minimum OS version.
+function(uml_verify_apple_binary)
+    cmake_parse_arguments(PARSE_ARGV 0 _arg ""
+        "PATH;PLATFORM;MINOS;LIPO;OTOOL" "")
+    if(NOT _arg_LIPO)
+        set(_arg_LIPO lipo)
+    endif()
+    if(NOT _arg_OTOOL)
+        set(_arg_OTOOL otool)
+    endif()
+    execute_process(
+        COMMAND "${_arg_LIPO}" -archs "${_arg_PATH}"
+        RESULT_VARIABLE _status
+        OUTPUT_VARIABLE _architectures
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT _status EQUAL 0 OR NOT _architectures STREQUAL "arm64")
+        message(FATAL_ERROR
+            "${_arg_PATH} is not an arm64-only Apple binary: ${_architectures}")
+    endif()
+    if(NOT DEFINED _arg_PLATFORM)
+        return()
+    endif()
+    execute_process(
+        COMMAND "${_arg_OTOOL}" -l "${_arg_PATH}"
+        RESULT_VARIABLE _status
+        OUTPUT_VARIABLE _load_commands)
+    if(NOT _status EQUAL 0)
+        message(FATAL_ERROR "Could not inspect Apple binary: ${_arg_PATH}")
+    endif()
+    string(REGEX MATCHALL "platform [0-9]+" _platform_rows "${_load_commands}")
+    string(REGEX MATCHALL "minos [0-9]+\\.[0-9]+" _minimum_rows
+        "${_load_commands}")
+    if(NOT _platform_rows OR NOT _minimum_rows)
+        message(FATAL_ERROR
+            "Apple binary has no build-version command: ${_arg_PATH}")
+    endif()
+    foreach(_row IN LISTS _platform_rows)
+        if(NOT _row STREQUAL "platform ${_arg_PLATFORM}")
+            message(FATAL_ERROR "Wrong Mach-O platform in ${_arg_PATH}: ${_row}")
+        endif()
+    endforeach()
+    foreach(_row IN LISTS _minimum_rows)
+        if(NOT _row STREQUAL "minos ${_arg_MINOS}")
+            message(FATAL_ERROR
+                "Wrong deployment target in ${_arg_PATH}: ${_row}")
+        endif()
+    endforeach()
 endfunction()
