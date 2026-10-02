@@ -106,10 +106,11 @@ Option bits 0 and 1 are reserved, bits 2-9, in order, force the portable
 checksum, flag, SHA3, fixed-transform, AES, PMULL, dot-product, and I8MM
 gadget bodies, and bit 10 (`without_afp`) translates the record for a virtual
 CPU without FEAT_AFP on every host. Region flags are readable, writable,
-executable, guest code, and guest writable. Events follow the harness order: system call, memory
-fault, reserved, illegal instruction, breakpoint, floating-point trap, PC
-alignment, instruction budget, fatal. The reserved option bits, event code 2,
-the field ids the table below omits, and non-empty tag lists held FEAT_PAuth,
+executable, guest code, and guest writable. Events follow the harness order:
+system call, memory fault, reserved, illegal instruction, breakpoint,
+floating-point trap, PC alignment, instruction budget, fatal. The reserved
+option bits, event code 2, the field ids the table below omits, and non-empty
+tag lists held FEAT_PAuth,
 FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_LS64, FEAT_FP8, FEAT_SSBS, and FEAT_SME
 state (see
 [Absent-feature cases](#absent-feature-cases)); the runner rejects a pack
@@ -301,11 +302,12 @@ exactly where `implements_afp()` in
 says, and FEAT_RPRES where `implements_rpres()` says. The absent-feature
 rewrite keeps every case whose FPCR sets FIZ, AH, or NEP, with those controls
 and a native `afp` requirement, adding the requirement where the producer
-harness left it out; the runner skips such a case in both lanes elsewhere. A native `afp`
-requirement on a case whose FPCR sets none of them was a former host gate and
-is removed. A case whose entry `MSR FPCR` writes a control that its FPCR
-state never holds pins the controls RES0; the rewrite moves it to a sibling
-record with the `without_afp` option. The pack encoder refuses a state that
-sets the controls without the native requirement. The single-precision
-FRECPE and FRSQRTE cases under FPCR.AH also need `rpres`: their producer
-models FEAT_RPRES with FEAT_AFP, as both engines do on hosts with both.
+harness left it out; the runner skips such a case in both lanes elsewhere. A
+native `afp` requirement on a case whose FPCR sets none of them was a former
+host gate and is removed. A case whose entry `MSR FPCR` writes a control that
+its FPCR state never holds pins the controls RES0; the rewrite moves it to a
+sibling record with the `without_afp` option. The pack encoder refuses a
+state that sets the controls without the native requirement. The
+single-precision FRECPE and FRSQRTE cases under FPCR.AH also need `rpres`:
+their producer models FEAT_RPRES with FEAT_AFP, as both engines do on hosts
+with both.
