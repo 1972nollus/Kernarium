@@ -40,7 +40,10 @@ For each named feature it
 
 A native FEAT_AFP or FEAT_EBF16 requirement without FPCR controls set came
 from the engines' old host gates, not from the case, so such a case stays and
-loses the requirement.
+loses the requirement. So did every FEAT_CSSC and FEAT_MOPS requirement: both
+engines implement those features on every host, so the rewrite removes them
+from every case, including one that expects the undefined-instruction trap,
+and the JIT lane runs those cases on hosts without the features.
 
 A failing case is one whose tagged address relied on the top-byte ignore that
 enabled MTE implied. Each replacement takes a kept two-word case of the same
@@ -88,6 +91,9 @@ DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "afp", "ebf16", "lse128",
                     "sm4", "fprcvt", "cmpbr", "hbc", "ssbs", "sme", "xs",
                     "wfxt")
 SVC = 0xD400_0001
+# Native requirements that were only the producer JIT's host gates: both
+# engines implement these features on every host.
+HOST_GATES = ("cssc", "mops")
 
 
 class Feature:
@@ -922,6 +928,7 @@ def main() -> int:
     kept_by_entry = collections.Counter()
     matched_failing = set()
     stripped = 0
+    ungated = collections.Counter()
     kept_cases: list[tuple[dict, dict, int]] = []
     lost = collections.Counter()
     for line in lines[1:]:
@@ -966,6 +973,10 @@ def main() -> int:
                 continue
             for stable_id in rewriter.classifier.classify(entry) or ("none",):
                 kept_by_entry[stable_id] += 1
+            for token in set(case["native"]) & set(HOST_GATES):
+                ungated[token] += 1
+            case["native"] = [token for token in case["native"]
+                              if token not in HOST_GATES]
             kept.append(case)
             if len(words) == 2 and words[1] == SVC and program["entry"] == 0:
                 kept_cases.append((item, case, entry))
@@ -1013,6 +1024,7 @@ def main() -> int:
             f"{feature}/{reason}": count
             for (feature, reason), count in sorted(dropped.items())},
         "stripped_cases": stripped,
+        "host_gates": {token: ungated[token] for token in HOST_GATES},
         "added_cases": added,
         "tbi_replacement_cases": replacement_cases,
     }
@@ -1035,7 +1047,9 @@ def main() -> int:
                                       str(replaced[stable_id])]) + "\n")
     print(f"dropped {sum(dropped.values())} cases "
           f"({', '.join(f'{f}/{r} {n}' for (f, r), n in sorted(dropped.items()))}), "
-          f"stripped {stripped}, added {added} absent-feature cases and "
+          f"stripped {stripped}, removed host gates "
+          f"({', '.join(f'{t} {ungated[t]}' for t in HOST_GATES)}), "
+          f"added {added} absent-feature cases and "
           f"{replacement_cases} TBI replacements")
     return 0
 

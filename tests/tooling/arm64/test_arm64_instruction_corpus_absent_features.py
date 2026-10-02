@@ -6,9 +6,9 @@ The checked-in pack is absent-feature-corpus.py applied to a dump of the pack
 that preceded the removal of FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth,
 FEAT_AFP, and FEAT_EBF16. Rebuild that rewrite from the earlier pack in Git history and require
 the same bytes, and require every kept case to equal its source case except for
-the stripped feature state, FPCR controls, native requirement, and allocation
-tags, and every kept record to keep its identity except for the stripped
-harness options.
+the stripped feature state, FPCR controls, native requirement, host-gate
+requirements, and allocation tags, and every kept record to keep its identity
+except for the stripped harness options.
 """
 
 from __future__ import annotations
@@ -140,6 +140,8 @@ def main() -> int:
             for feature, bits in FPCR_FEATURES.items():
                 if feature in step["features"]:
                     strip_fpcr(expected, feature, bits)
+            expected["native"] = [token for token in expected["native"]
+                                  if token not in step.get("host_gates", {})]
             actual = dict(case, program=item["programs"][case["program"]])
             if actual != expected:
                 raise SystemExit(f"{key}: kept case differs from its source "
