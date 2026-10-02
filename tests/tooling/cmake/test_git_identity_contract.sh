@@ -9,11 +9,8 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 
-fail()
-{
-	printf '%s\n' "git identity contract: $*" >&2
-	exit 1
-}
+TEST_NAME='git identity contract'
+. "$(dirname -- "$0")/../support/expect.sh"
 
 # Generated mail series carry the authentic author of each topic and are not
 # tooling configuration.

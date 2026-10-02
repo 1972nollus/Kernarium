@@ -15,26 +15,9 @@ if [ -f "$LINE_ROOT/source-location.conf" ]; then
 fi
 TEST_ROOT=$(mktemp -d "$TEST_PARENT/.uml-kernel-git.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
-FAILURE_NUMBER=0
 
-fail()
-{
-	printf '%s\n' "test-materialize-git.sh: $*" >&2
-	exit 1
-}
-
-expect_failure()
-{
-	description=$1
-	shift
-	FAILURE_NUMBER=$((FAILURE_NUMBER + 1))
-	if "$@" >"$TEST_ROOT/rejected-$FAILURE_NUMBER.out" \
-		2>"$TEST_ROOT/rejected-$FAILURE_NUMBER.err"; then
-		fail "$description was incorrectly accepted"
-	fi
-	[ -s "$TEST_ROOT/rejected-$FAILURE_NUMBER.err" ] ||
-		fail "$description was rejected without a diagnostic"
-}
+TEST_NAME=test-materialize-git.sh
+. "$(dirname -- "$0")/../support/expect.sh"
 
 # Linux and configured Apple acceptance hosts exercise the complete fixture on
 # a case-sensitive filesystem. An otherwise unconfigured case-insensitive

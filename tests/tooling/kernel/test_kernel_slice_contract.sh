@@ -12,11 +12,8 @@ TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/uml-kernel-slices.XXXXXX")
 trap 'rm -rf -- "$TEST_ROOT"' EXIT HUP INT TERM
 WRONG_TREE=ffffffffffffffffffffffffffffffffffffffff
 
-fail()
-{
-	printf '%s\n' "kernel slice contract fixture: $*" >&2
-	exit 1
-}
+TEST_NAME='kernel slice contract fixture'
+. "$(dirname -- "$0")/../support/expect.sh"
 
 require_file()
 {

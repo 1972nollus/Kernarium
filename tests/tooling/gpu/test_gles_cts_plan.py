@@ -21,7 +21,6 @@ import gles_cts_plan as plan  # noqa: E402
 import opengl_cts_plan as gl_plan  # noqa: E402
 import run_vk_gl_cts as common  # noqa: E402
 import test_run_vk_gl_cts as fixtures  # noqa: E402
-import test_opengl_cts_plan as gl_fixtures  # noqa: E402
 
 
 CONFIGS = [
@@ -228,12 +227,7 @@ class GlesCtsPlanTests(unittest.TestCase):
     def receipt(self) -> dict:
         # The ES 3.2 matrix runs from the same sealed image as GL46, so its
         # receipt carries the GL46 scope and the shared runner source.
-        receipt = fixtures.zink_gl_derivative_receipt(common.load_identity())
-        receipt["schema_version"] = 4
-        receipt["opengl_cts"]["release"] = "vulkan-cts-1.4.6.2"
-        receipt["opengl_cts"]["mustpass"] = gl_plan.build_manifest(
-            gl_fixtures.fixture().__getitem__)
-        return receipt
+        return fixtures.zink_gl_derivative_receipt(common.load_identity())
 
     def test_typed_matrix_matches_every_xml_role_and_guest_identity_checks(self) -> None:
         receipt = self.receipt()
@@ -266,7 +260,8 @@ class GlesCtsPlanTests(unittest.TestCase):
     def test_a_legacy_receipt_or_wrong_role_cannot_run_the_matrix(self) -> None:
         configs = tuple(common.EglConfig(row["id"], tuple(row["surface_types"]))
                         for row in CONFIGS)
-        legacy = fixtures.zink_gl_derivative_receipt(common.load_identity())
+        legacy = self.receipt()
+        legacy["schema_version"] = 3
         with self.assertRaisesRegex(common.CampaignError, "schema-4"):
             common.gles32_matrix_run(self.manifest, legacy, configs, "1" * 64,
                                      0, 3, (0, 8), (), ATTRIBUTES)

@@ -4,8 +4,6 @@
 set -euo pipefail
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository=$(CDPATH= cd -- "$here/../../.." && pwd)
-# Storage, session and splash assets from the shared Steam directory.
-shared=$(CDPATH= cd -- "$here/../steam-common" && pwd)
 fail()
 {
 	printf '%s\n' "tools/rootfs/steam-x86_64/build.sh: $*" >&2
@@ -41,7 +39,6 @@ mkdir -p "$work_dir/root" "$(dirname "$output")"
 work_dir=$(realpath "$work_dir")
 root=$work_dir/root
 sudo -n tar -xf "$inputs/base.tar.zst" -C "$root"
-sudo -n cp -a "$shared/overlay/." "$root/"
 sudo -n cp -a "$here/overlay/." "$root/"
 sudo -n chroot "$root" useradd -m -s /bin/bash uml
 sudo -n chroot "$root" passwd -d uml
@@ -111,7 +108,7 @@ sudo -n systemctl --root="$root" mask getty@tty1.service
 builder=$work_dir/builder
 mkdir -p "$builder"
 sudo -n tar -xf "$inputs/builder.tar.zst" -C "$builder"
-sudo -n cp -a "$shared/splash" "$builder/splash"
+sudo -n cp -a "$here/splash" "$builder/splash"
 sudo -n chroot "$builder" env CCACHE_DISABLE=1 sh -eu -c \
 	'cd /splash; cmake --preset steam-sdk -B /splash-build; cmake --build /splash-build'
 sudo -n install -m 0755 "$builder/splash-build/kernarium-screen" "$root/usr/local/libexec/kernarium-screen"

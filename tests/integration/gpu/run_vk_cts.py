@@ -1026,29 +1026,6 @@ channel_ready=0
 artifact_framed=0
 status=1
 
-prepare_channel()
-{{
-    [ "$channel_ready" -eq 0 ] || return 0
-    remaining=60
-    while [ ! -c "$channel" ]; do
-        [ "$remaining" -gt 0 ] || return 1
-        remaining=$((remaining - 1))
-        sleep 1
-    done
-    exec 3<> "$channel" || return 1
-    channel_ready=1
-}}
-
-emit_frame()
-{{
-    frame="$1"
-    expected_ack="$2"
-    [ "$channel_ready" -eq 1 ] || return 1
-    printf '%s\n' "$frame" >&3 || return 1
-    actual_ack=$(timeout --signal=TERM 30 head -n 1 <&3) || return 1
-    [ "$actual_ack" = "$expected_ack" ]
-}}
-
 {transport_functions}
 finish()
 {{
@@ -1559,29 +1536,6 @@ cts_sessions=0
 cts_cases=0
 selected_count=0
 {planned_restart_state}
-prepare_channel()
-{{
-    [ "$channel_ready" -eq 0 ] || return 0
-    remaining=60
-    while [ ! -c "$channel" ]; do
-        [ "$remaining" -gt 0 ] || return 1
-        remaining=$((remaining - 1))
-        sleep 1
-    done
-    exec 3<> "$channel" || return 1
-    channel_ready=1
-}}
-
-emit_frame()
-{{
-    frame="$1"
-    expected_ack="$2"
-    [ "$channel_ready" -eq 1 ] || return 1
-    printf '%s\n' "$frame" >&3 || return 1
-    actual_ack=$(timeout --signal=TERM 30 head -n 1 <&3) || return 1
-    [ "$actual_ack" = "$expected_ack" ]
-}}
-
 {transport_functions}
 {checkpoint_function}
 emit_prerun()

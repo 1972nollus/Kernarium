@@ -104,10 +104,9 @@ eight referenced leaf identities. Full qualification additionally freezes an ord
 `CTS-Configs.gl46` inventory: the first actual EGL configuration receives the
 one-time suites and first-config records; later configurations receive their
 other-config records. XML surface sizes, seeds, and named FBO configurations
-are retained. Historical schema-3 receipts remain readable for diagnostics,
-but cannot define a full GL46 campaign. The OpenGL runner proves both the
-Zink Gallium renderer and the underlying Virtio-GPU Venus device before
-executing a shard. Vulkan and OpenGL qualification require the same current
+are retained. The OpenGL runner proves both the Zink Gallium renderer and the
+underlying Virtio-GPU Venus device before executing a shard. Vulkan and OpenGL
+qualification require the same current
 patched source trees for Mesa, Venus protocol, and CTS, plus the pinned
 Vulkan-Headers and Vulkan-Loader sources. Their image, executable,
 and runtime-closure identities remain separate.
@@ -124,20 +123,16 @@ sudo tools/rootfs/vulkan/seal-in-vm.py --work-root WORK \
 
 Add `--include-opengl-cts` for a combined qualification image.
 
-The sealer refuses existing output paths. It authenticates each source's base
-and the tree its series records, independently regenerates every driver header from the
-selected protocol source and SDK, checks the selected build's complete header
-inventory and bytes, and records their digests. Mesa must explicitly select
-that generated-header directory; it cannot fall back to its older vendored
-codecs. The sealer synchronizes the selected offline Mesa build and byte-compares the
-supplied runtime stage with a fresh runtime-only Meson install. It then audits
-the CTS build's exact source/build directories and options, and reads each
-CTS binary's embedded release back against the authenticated source revision.
-This CTS check does not rebuild the executables. It audits dynamic dependencies,
-extracts the EROFS base afresh, emits the guest receipt,
-creates ext4 with `mkfs.ext4 -d`, runs a repairing check followed by a read-only
-zero-error check, reads key bytes back with `debugfs`, and changes the image to
-mode 0444. It never mounts or boots an image writable.
+The sealer refuses existing output paths and never mounts or boots an image
+writable. It authenticates each source's base and the tree its series records;
+regenerates every driver header from the selected protocol source and SDK into
+a directory Mesa must select explicitly instead of its older vendored codecs,
+and byte-checks the build's complete header inventory; byte-compares the
+supplied runtime stage with a fresh runtime-only install; checks the CTS
+build's directories, options and embedded releases against the authenticated
+source without rebuilding it; and audits dynamic dependencies. The image it
+publishes passes a read-only zero-error ext4 check and is mode 0444. `seal()`
+holds the order of operations.
 
 After direct transfer from the VM, verify both the receipt and image:
 

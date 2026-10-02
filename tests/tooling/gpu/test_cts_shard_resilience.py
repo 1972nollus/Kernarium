@@ -31,6 +31,7 @@ sys.path.insert(0, str(INTEGRATION_GPU))
 import run_vk_gl_cts as gl  # noqa: E402
 import run_vk_cts as vk  # noqa: E402
 import receipt_fixtures  # noqa: E402
+import test_run_vk_gl_cts as gl_fixtures  # noqa: E402
 
 
 def setUpModule() -> None:
@@ -830,6 +831,69 @@ class GuestCheckpointProgramTests(unittest.TestCase):
         environment = dict(os.environ)
         environment["PATH"] = f"{binaries}:{environment['PATH']}"
         return environment
+
+    def test_a_changed_acknowledgement_fails_its_frame_in_every_launcher(self) -> None:
+        """Only the host's exact acknowledgement lets a frame count as sent.
+
+        Each launcher's emit_frame writes the frame to descriptor 3 and reads
+        the reply back from it. A regular file holding the frame and then a
+        reply stands in for the channel: the write rewrites the first line in
+        place and the read takes the second.
+        """
+
+        shell = shutil.which("sh")
+        self.assertIsNotNone(shell)
+        identity = vk.load_identity()
+        development = vk.resolve_selection(
+            identity, "smoke", (), None, vk.Fraction(0, 1)
+        )
+        leaf = gl.leaf_identities(gl.load_identity())["gles3"]
+        launchers = (
+            ("UML_VK_CTS_ERROR:", vk.build_guest_launcher(
+                identity, development, page_size=16384, timeout=900,
+                case_list=vk.GUEST_CASE_LIST_PATH,
+            )),
+            ("UML_VK_CTS_ERROR:", self.device_launcher()),
+            ("UML_CTS_ERROR:", gl.build_guest_launcher(
+                gl.Selection(leaf, (), 1, 8), 7, 300, 16384,
+                gl_fixtures.erofs_contract(), artifact_transport="virtio-serial",
+            )),
+        )
+        frame = "UML_CTS_ARTIFACT_END|results.qpa|1"
+        expected = "UML_CTS_ARTIFACT_ACK|results.qpa|end"
+        for index, (prefix, launcher) in enumerate(launchers):
+            for reply in (expected, "UML_CTS_ARTIFACT_ACK|results.qpa|0"):
+                with self.subTest(launcher=index, reply=reply), \
+                        tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    binaries = root / "bin"
+                    binaries.mkdir()
+                    (binaries / "timeout").write_text(
+                        '#!/bin/sh\nshift 2\nexec "$@"\n'
+                    )
+                    (binaries / "timeout").chmod(0o755)
+                    channel = root / "channel"
+                    channel.write_text(f"{frame}\n{reply}\n")
+                    harness = f"""set -u
+artifact_transport=virtio-serial
+channel_ready=1
+exec 3<> {channel}
+{self.shell_function(launcher, "emit_frame")}
+emit_frame '{frame}' '{expected}'
+"""
+                    environment = dict(os.environ)
+                    environment["PATH"] = f"{binaries}:{environment['PATH']}"
+                    finished = subprocess.run(
+                        [shell, "-c", harness], capture_output=True, text=True,
+                        env=environment, timeout=30, check=False,
+                    )
+                    self.assertEqual(finished.returncode, int(reply != expected))
+                    self.assertEqual(
+                        finished.stdout,
+                        "" if reply == expected
+                        else f"{prefix} artifact acknowledgement changed\n",
+                    )
+                    self.assertEqual(channel.read_text(), f"{frame}\n{reply}\n")
 
     def test_a_failed_checkpoint_keeps_its_bytes_and_frames_nothing(self) -> None:
         """The defect: a checkpoint no one could compress looked delivered.
