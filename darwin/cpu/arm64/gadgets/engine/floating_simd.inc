@@ -573,13 +573,7 @@ half_fused_long_indexed_shapes sub, upper, 4s, 0x6f81c002
 gadget half_fused_long_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	bl NAME(uml_arm64_half_fused_long_software)
-	ldp x1, x2, [sp], #16
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x16
+	fpsr_model_helper half_fused_long_software
 	next_gadget
 
 /* BFMLALB/BFMLALT map one-for-one to branch-free BF16 instructions. Shape,
@@ -1258,19 +1252,6 @@ afp_twins_end
 /* FCVTL/FCVTL2 and FCVTN/FCVTN2 are specialized by conversion pair and
  * destination half. The normal path is exactly one native conversion; only
  * AHP for half conversions uses the integer-only helper. */
-.macro simd_floating_precision_vector_software
-	mov x19, x1
-	mov x20, x2
-	mov x0, x1
-	mov x1, x8
-	bl NAME(uml_arm64_simd_floating_precision_vector_software)
-	mov x1, x19
-	mov x2, x20
-	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x17
-	next_gadget
-.endm
-
 .macro simd_floating_precision_vector name, operation, destination_arrangement, source_arrangement, upper_narrow, half_involved, afp=0
 .if \afp
 afp_gadget \name
@@ -1299,7 +1280,8 @@ gadget \name
 	next_gadget
 	.if \half_involved && !\afp
 .Lsimd_fcvt_vector_software_\@:
-	simd_floating_precision_vector_software
+	fpsr_model_helper simd_floating_precision_vector_software
+	next_gadget
 	.endif
 .endm
 
@@ -1460,42 +1442,18 @@ afp_twins_end
  * destination kind, signedness, source precision, integer width, vector
  * shape, and discard-at-XZR. Each executes one native conversion; forms the
  * host lacks select the integer-only fallback gadget. */
-.macro floating_to_integer_software
-	mov x19, x1
-	mov x20, x2
-	mov x0, x1
-	mov x1, x8
-	bl NAME(uml_arm64_floating_to_integer_software)
-	mov x1, x19
-	mov x2, x20
-	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x17
-	next_gadget
-.endm
-
 gadget floating_to_integer_software_fallback
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	floating_to_integer_software
-
-.macro floating_javascript_convert_software
-	mov x19, x1
-	mov x20, x2
-	mov x0, x1
-	mov x1, x8
-	bl NAME(uml_arm64_floating_javascript_convert_software)
-	mov x1, x19
-	mov x2, x20
-	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
-	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x17
+	fpsr_model_helper floating_to_integer_software
 	next_gadget
-.endm
 
 gadget floating_javascript_convert_software_fallback
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	floating_javascript_convert_software
+	fpsr_model_helper floating_javascript_convert_software
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	next_gadget
 
 /* The software path under FPCR.FZ corrects the Z flag some hosts set for a
  * flushed subnormal input. Its model has no FIZ or AH, so the FEAT_AFP twins
@@ -1536,7 +1494,9 @@ gadget \name
 	next_gadget
 	.if !\afp
 .Lfloating_javascript_convert_software_\@:
-	floating_javascript_convert_software
+	fpsr_model_helper floating_javascript_convert_software
+	ldr w27, [_cpu, #UML_GADGET_CPU_NZCV]
+	next_gadget
 	.endif
 .endm
 
@@ -1549,25 +1509,12 @@ floating_javascript_convert floating_javascript_convert_discard, 1, 1
 afp_twins_end
 
 .purgem floating_javascript_convert
-.purgem floating_javascript_convert_software
-
-.macro integer_to_floating_software
-	mov x19, x1
-	mov x20, x2
-	mov x0, x1
-	mov x1, x8
-	bl NAME(uml_arm64_integer_to_floating_software)
-	mov x1, x19
-	mov x2, x20
-	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x17
-	next_gadget
-.endm
 
 gadget integer_to_floating_software_fallback
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	integer_to_floating_software
+	fpsr_model_helper integer_to_floating_software
+	next_gadget
 
 .macro gpr_to_floating name, operation, integer, floating, element, zero, afp=0
 .if \afp
