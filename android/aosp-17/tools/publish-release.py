@@ -6,7 +6,6 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
-import csv
 import datetime
 import json
 import os
@@ -29,11 +28,10 @@ from release_common import (  # noqa: E402
     RELEASE_ID_RE,
     error,
     fail,
-    kernel_series_provenance,
     parse_env,
-    series_provenance,
+    read_routes,
     resolve_zstd,
-    sha256_path,
+    tracked_identity,
     verify_disk_boot_payloads,
     verify_kernel_config,
     verify_release,
@@ -118,31 +116,6 @@ def property_value(values: dict[str, str], keys: tuple[str, ...], label: str) ->
         if value:
             return value
     fail(f"packaged Android properties omit {label}")
-
-
-def read_routes(path: Path, android_root: Path) -> list[dict]:
-    lines = [
-        line for line in path.read_text(encoding="utf-8").splitlines()
-        if line and not line.startswith("#")
-    ]
-    routes = []
-    for row in csv.DictReader(lines, delimiter="\t"):
-        patch_count, series_digest = series_provenance(
-            android_root.parents[1], android_root / row["series_dir"]
-        )
-        routes.append({
-            "route_id": row["route_id"],
-            "manifest_project": row["manifest_project"],
-            "checkout_path": row["checkout_path"],
-            "base_commit": row["base_commit"],
-            "base_tree": row["base_tree"],
-            "final_tree": row["final_tree"],
-            "patch_count": patch_count,
-            "series_manifest_sha256": series_digest,
-        })
-    if not routes:
-        fail("AOSP projects manifest has no routes")
-    return routes
 
 
 def copy_regular(source: Path, destination: Path) -> None:
@@ -251,13 +224,8 @@ def main() -> None:
         fail("release destination already exists")
 
     aosp_metadata = parse_env(android_root / "metadata/aosp.env")
-    jelly_metadata = parse_env(android_root / "third_party/jelly/metadata.env")
-    orangefox_metadata = parse_env(
-        android_root / "third_party/orangefox/metadata.env"
-    )
+    tracked = tracked_identity(android_root)
     kernel_root = outer_root / "kernel/android-6.18"
-    kernel_metadata = parse_env(kernel_root / "patches/metadata.env")
-    abi_metadata = parse_env(outer_root / "kernel/common/abi/identity.env")
     outer_revision = verify_clean_git(outer_root, "outer project")
     # The release ships the kernel as its published artifact: the tracked
     # source's runtime image, without the DWARF the build's vmlinux keeps.
@@ -301,7 +269,6 @@ def main() -> None:
         "final",
         "--allow-prebuilt-kernel",
     ])
-    kernel_patch_count, kernel_manifest_sha = kernel_series_provenance(outer_root)
 
     # verify-kernel-artifact.py has checked the payload files and the ELF.
     kernel_payload = kernel_artifact / "kernel"
@@ -437,22 +404,21 @@ def main() -> None:
             kernel_release = kernel_release_file.read_text(
                 encoding="utf-8", errors="strict"
             ).strip()
-            projects_manifest_sha = sha256_path(android_root / "patches/projects.tsv")
-            jelly_patch_count, jelly_manifest_sha = series_provenance(
-                outer_root, android_root / "third_party/jelly/series"
+            aosp, jelly, orangefox, kernel = (
+                tracked["aosp"], tracked["jelly"], tracked["orangefox"], tracked["kernel"]
             )
             jelly_final_commit = run(
                 ["git", "rev-parse", "HEAD"],
-                cwd=aosp_source / jelly_metadata["JELLY_DESTINATION"],
+                cwd=aosp_source / jelly["destination"],
                 capture=True,
             )
-            aosp_routes = read_routes(android_root / "patches/projects.tsv", android_root)
+            aosp_routes = read_routes(
+                android_root / "patches/projects.tsv", android_root, "AOSP"
+            )
             orangefox_routes = read_routes(
                 android_root / "third_party/orangefox/patches/projects.tsv",
                 android_root,
-            )
-            orangefox_projects_sha = sha256_path(
-                android_root / "third_party/orangefox/patches/projects.tsv"
+                "OrangeFox",
             )
             receipt_rows = [
                 ("schema", 2),
@@ -461,23 +427,23 @@ def main() -> None:
                 ("producer", "android/aosp-17/build/publish-release.sh"),
                 ("outer_revision", outer_revision),
                 ("outer_dirty", "false"),
-                ("aosp_manifest_commit", aosp_metadata["ANDROID17_MANIFEST_COMMIT"]),
-                ("aosp_projects_manifest_sha256", projects_manifest_sha),
-                ("jelly_upstream_commit", jelly_metadata["JELLY_UPSTREAM_COMMIT"]),
-                ("jelly_final_tree", jelly_metadata["JELLY_FINAL_TREE"]),
-                ("jelly_patch_manifest_sha256", jelly_manifest_sha),
-                ("orangefox_manifest_commit", orangefox_metadata["ORANGEFOX_MANIFEST_COMMIT"]),
-                ("orangefox_base_manifest_sha256", orangefox_metadata["ORANGEFOX_BASE_MANIFEST_SHA256"]),
-                ("orangefox_projects_manifest_sha256", orangefox_projects_sha),
-                ("orangefox_bootable_recovery_commit", orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_COMMIT"]),
-                ("orangefox_vendor_recovery_commit", orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_COMMIT"]),
-                ("orangefox_se_omapi_commit", orangefox_metadata["ORANGEFOX_SE_OMAPI_COMMIT"]),
-                ("ack_final_tree", kernel_metadata["UML_KERNEL_FINAL_TREE"]),
-                ("ack_patch_manifest_sha256", kernel_manifest_sha),
+                ("aosp_manifest_commit", aosp["manifest_commit"]),
+                ("aosp_projects_manifest_sha256", aosp["projects_manifest_sha256"]),
+                ("jelly_upstream_commit", jelly["base_commit"]),
+                ("jelly_final_tree", jelly["final_tree"]),
+                ("jelly_patch_manifest_sha256", jelly["patch_manifest_sha256"]),
+                ("orangefox_manifest_commit", orangefox["manifest_commit"]),
+                ("orangefox_base_manifest_sha256", orangefox["base_manifest_sha256"]),
+                ("orangefox_projects_manifest_sha256", orangefox["projects_manifest_sha256"]),
+                ("orangefox_bootable_recovery_commit", orangefox["bootable_recovery_commit"]),
+                ("orangefox_vendor_recovery_commit", orangefox["vendor_recovery_commit"]),
+                ("orangefox_se_omapi_commit", orangefox["se_omapi_commit"]),
+                ("ack_final_tree", kernel["final_tree"]),
+                ("ack_patch_manifest_sha256", kernel["patch_manifest_sha256"]),
                 ("kernel_release", kernel_release),
                 ("page_size", 16384),
-                ("abi_version", abi_metadata["DARWIN_UML_ABI_VERSION"]),
-                ("abi_fingerprint", abi_metadata["DARWIN_UML_ABI_FINGERPRINT"]),
+                ("abi_version", kernel["abi_version"]),
+                ("abi_fingerprint", kernel["abi_fingerprint"]),
                 ("android_product", aosp_metadata["ANDROID17_PRODUCT"]),
                 ("android_build_id", build_id),
                 ("source_role_aosp", "pinned AOSP 17 Repo workspace"),
@@ -508,70 +474,13 @@ def main() -> None:
                     "product": aosp_metadata["ANDROID17_PRODUCT"],
                     "release_config": aosp_metadata["ANDROID17_RELEASE_CONFIG"],
                 },
-                "aosp": {
-                    "manifest_repository": aosp_metadata["ANDROID17_MANIFEST_REPOSITORY"],
-                    "manifest_tag": aosp_metadata["ANDROID17_MANIFEST_TAG"],
-                    "manifest_commit": aosp_metadata["ANDROID17_MANIFEST_COMMIT"],
-                    "manifest_tree": aosp_metadata["ANDROID17_MANIFEST_TREE"],
-                    "base_manifest_sha256": aosp_metadata["ANDROID17_BASE_MANIFEST_SHA256"],
-                    "projects_manifest_sha256": projects_manifest_sha,
-                    "routes": aosp_routes,
-                },
-                "jelly": {
-                    "repository": jelly_metadata["JELLY_UPSTREAM_REPOSITORY"],
-                    "branch": jelly_metadata["JELLY_UPSTREAM_BRANCH"],
-                    "base_commit": jelly_metadata["JELLY_UPSTREAM_COMMIT"],
-                    "base_tree": jelly_metadata["JELLY_UPSTREAM_TREE"],
-                    "final_commit": jelly_final_commit,
-                    "final_tree": jelly_metadata["JELLY_FINAL_TREE"],
-                    "patch_count": jelly_patch_count,
-                    "patch_manifest_sha256": jelly_manifest_sha,
-                    "destination": jelly_metadata["JELLY_DESTINATION"],
-                    "license": jelly_metadata["JELLY_LICENSE"],
-                },
-                "orangefox": {
-                    "sync_repository": orangefox_metadata["ORANGEFOX_SYNC_REPOSITORY"],
-                    "sync_branch": orangefox_metadata["ORANGEFOX_SYNC_BRANCH"],
-                    "sync_commit": orangefox_metadata["ORANGEFOX_SYNC_COMMIT"],
-                    "sync_tree": orangefox_metadata["ORANGEFOX_SYNC_TREE"],
-                    "sync_script_sha256": orangefox_metadata["ORANGEFOX_SYNC_SCRIPT_SHA256"],
-                    "manifest_repository": orangefox_metadata["ORANGEFOX_MANIFEST_REPOSITORY"],
-                    "manifest_branch": orangefox_metadata["ORANGEFOX_MANIFEST_BRANCH"],
-                    "manifest_commit": orangefox_metadata["ORANGEFOX_MANIFEST_COMMIT"],
-                    "manifest_tree": orangefox_metadata["ORANGEFOX_MANIFEST_TREE"],
-                    "base_manifest_sha256": orangefox_metadata["ORANGEFOX_BASE_MANIFEST_SHA256"],
-                    "branch": orangefox_metadata["ORANGEFOX_BRANCH"],
-                    "bootable_recovery_repository": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_REPOSITORY"],
-                    "bootable_recovery_commit": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_COMMIT"],
-                    "bootable_recovery_tree": orangefox_metadata["ORANGEFOX_BOOTABLE_RECOVERY_TREE"],
-                    "vendor_recovery_repository": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_REPOSITORY"],
-                    "vendor_recovery_commit": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_COMMIT"],
-                    "vendor_recovery_tree": orangefox_metadata["ORANGEFOX_VENDOR_RECOVERY_TREE"],
-                    "se_omapi_repository": orangefox_metadata["ORANGEFOX_SE_OMAPI_REPOSITORY"],
-                    "se_omapi_commit": orangefox_metadata["ORANGEFOX_SE_OMAPI_COMMIT"],
-                    "se_omapi_tree": orangefox_metadata["ORANGEFOX_SE_OMAPI_TREE"],
-                    "device_destination": orangefox_metadata["ORANGEFOX_DEVICE_OVERLAY_DESTINATION"],
-                    "product": orangefox_metadata["ORANGEFOX_PRODUCT"],
-                    "release_config": orangefox_metadata["ORANGEFOX_RELEASE_CONFIG"],
-                    "patch_count": sum(route["patch_count"] for route in orangefox_routes),
-                    "projects_manifest_sha256": orangefox_projects_sha,
-                    "routes": orangefox_routes,
-                    "license": orangefox_metadata["ORANGEFOX_LICENSE"],
-                },
+                "aosp": {**aosp, "routes": aosp_routes},
+                "jelly": {**jelly, "final_commit": jelly_final_commit},
+                "orangefox": {**orangefox, "routes": orangefox_routes},
                 "kernel": {
-                    "family": kernel_metadata["UML_KERNEL_FAMILY"],
-                    "repository": kernel_metadata["UML_KERNEL_UPSTREAM_REPOSITORY"],
-                    "branch": kernel_metadata["UML_KERNEL_UPSTREAM_BRANCH"],
-                    "tag": kernel_metadata["UML_KERNEL_UPSTREAM_TAG"],
-                    "base_commit": kernel_metadata["UML_KERNEL_UPSTREAM_COMMIT"],
-                    "base_tree": kernel_metadata["UML_KERNEL_UPSTREAM_TREE"],
-                    "final_tree": kernel_metadata["UML_KERNEL_FINAL_TREE"],
-                    "patch_count": kernel_patch_count,
-                    "patch_manifest_sha256": kernel_manifest_sha,
+                    **kernel,
                     "release": kernel_release,
                     "page_size": 16384,
-                    "abi_version": int(abi_metadata["DARWIN_UML_ABI_VERSION"]),
-                    "abi_fingerprint": abi_metadata["DARWIN_UML_ABI_FINGERPRINT"],
                     "elf_role": "darwin-uml",
                 },
                 "outer": {"revision": outer_revision, "dirty": False},
