@@ -11,7 +11,8 @@ them out of the symbol table. A branch to one from another section encodes its
 distance past the nearest named symbol before it as a signed 24-bit addend, so
 such a target must lie within 8 MiB of one; the cold section names only its
 start and is 0.3 MB. The assembler rejects a larger addend, and a named local
-symbol ahead of the target fixes it.
+symbol ahead of the target fixes it. `gadget-engine-temporary-labels` fails on
+a `.L` symbol in the engine object.
 
 ## Gadget banks
 
