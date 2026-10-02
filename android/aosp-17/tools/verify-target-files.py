@@ -332,19 +332,6 @@ FORBIDDEN_FEATURE_NAMES = {
     "android.hardware.wifi.passpoint",
     "android.hardware.wifi",
 }
-UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
-/dev/block/by-name/system /system ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/system_ext /system_ext ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/product /product ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid,discard wait,check,formattable,first_stage_mount
-/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid,discard wait,check,first_stage_mount
-# Static non-A/B storage uses neither userdata checkpointing nor BootControl.
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,wait,check,formattable
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,reservedsize=128M,wait,check
-/dev/block/by-name/misc /misc emmc defaults defaults
-"""
 UML_FSTAB_ENTRIES = (
     "VENDOR/etc/fstab.uml",
     "VENDOR_BOOT/RAMDISK/first_stage_ramdisk/fstab.uml",
@@ -513,8 +500,9 @@ def check_boot_policy(archive: zipfile.ZipFile, infos: dict[str, zipfile.ZipInfo
                 f"{system_property_map.get(property_name)!r}"
             )
 
+    fstab = android_image.tracked_fstab(error)
     for entry in UML_FSTAB_ENTRIES:
-        if read_small(archive, infos[entry]) != UML_FSTAB:
+        if read_small(archive, infos[entry]) != fstab:
             fail(f"UML fstab differs from the fixed UBD contract: {entry}")
 
     misc_info: dict[str, str] = {}

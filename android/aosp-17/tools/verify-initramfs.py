@@ -14,19 +14,6 @@ import android_image
 
 MAX_INITRAMFS_SIZE = 256 * 1024 * 1024
 UML_FSTAB_PATH = "first_stage_ramdisk/system/etc/fstab.uml"
-UML_FSTAB = b"""# Fixed GPT partitions exposed by the Darwin UML UBD device.
-/dev/block/by-name/system /system ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/system_ext /system_ext ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/product /product ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/vendor /vendor ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/odm /odm ext4 noatime,ro,errors=panic wait,first_stage_mount
-/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid,discard wait,check,formattable,first_stage_mount
-/dev/block/by-name/metadata /metadata ext4 nodev,noatime,nosuid,discard wait,check,first_stage_mount
-# Static non-A/B storage uses neither userdata checkpointing nor BootControl.
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,wait,check,formattable
-/dev/block/by-name/userdata /data ext4 nodev,noatime,nosuid,discard,errors=panic latemount,reservedsize=128M,wait,check
-/dev/block/by-name/misc /misc emmc defaults defaults
-"""
 FORBIDDEN_PATHS = {
     "system/bin/modprobe",
     "system/bin/snapuserd",
@@ -97,7 +84,7 @@ def main() -> None:
     fstab = entries.get(UML_FSTAB_PATH)
     if fstab is None or not stat.S_ISREG(fstab.mode):
         fail("archive does not contain a regular UML first-stage fstab")
-    if not args.structural and fstab.payload != UML_FSTAB:
+    if not args.structural and fstab.payload != android_image.tracked_fstab(error):
         fail("archive does not contain the exact current UML first-stage fstab")
 
     for name, entry in entries.items():

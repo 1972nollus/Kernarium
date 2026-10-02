@@ -23,6 +23,7 @@ from typing import BinaryIO, Callable
 
 Error = Callable[[str], Exception]
 
+ANDROID_ROOT = Path(__file__).resolve().parents[1]
 BOOT_MAGIC = b"ANDROID!"
 BOOT_HEADER_VERSION = 4
 BOOT_HEADER_SIZE = 1584
@@ -36,6 +37,14 @@ DT_NULL = 0
 DT_NEEDED = 1
 DT_STRTAB = 5
 DT_STRSZ = 10
+
+
+def tracked_fstab(error: Error) -> bytes:
+    """Return the UML fstab the product installs in vendor and first stage."""
+    path = ANDROID_ROOT / "overlay/config/fstab.uml"
+    if path.is_symlink() or not path.is_file():
+        raise error(f"tracked UML fstab is missing: {path}")
+    return path.read_bytes()
 
 
 def read_exact(source: BinaryIO, count: int, label: str, error: Error) -> bytes:
