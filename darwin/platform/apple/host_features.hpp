@@ -30,7 +30,6 @@ namespace detail {
 [[nodiscard]] inline bool
 native_jscvt_subnormal_flags_correct() noexcept
 {
-#if defined(__APPLE__) && defined(__aarch64__)
 	constexpr std::uint64_t positive_subnormal = 1;
 	constexpr std::array<std::uint64_t, 9> controls{
 		0U, 1U, 2U, std::uint64_t{1} << 24U,
@@ -75,9 +74,6 @@ native_jscvt_subnormal_flags_correct() noexcept
 		  [saved_fpsr] "r"(saved_fpsr)
 		: "cc", "memory");
 	return correct;
-#else
-	return false;
-#endif
 }
 
 } // namespace detail
@@ -105,12 +101,7 @@ native_jscvt_subnormal_flags_correct() noexcept
 	 * Sandboxes may deny sysctl while those instructions remain available.
 	 * Every optional extension fails closed.
 	 */
-#if defined(__APPLE__) && defined(__aarch64__)
 	return architectural_minimum;
-#else
-	(void)architectural_minimum;
-	return false;
-#endif
 }
 
 [[nodiscard]] inline bool query_host_arm_feature(

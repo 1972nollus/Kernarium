@@ -40,19 +40,19 @@ std::unique_ptr<uml::gpu::InProcessVhostUserService> startService(
 
 } // namespace
 
-InProcessConsoleService::InProcessConsoleService(
+std::unique_ptr<uml::gpu::InProcessVhostUserService> makeInProcessService(
     std::filesystem::path socketPath,
     std::string portName)
-    : service_(startService(
-          [socketPath = std::move(socketPath)]()
-              -> std::unique_ptr<ConsoleChannel> {
-              return std::make_unique<UnixSocketChannel>(socketPath);
-          },
-          std::move(portName)))
 {
+    return startService(
+        [socketPath = std::move(socketPath)]()
+            -> std::unique_ptr<ConsoleChannel> {
+            return std::make_unique<UnixSocketChannel>(socketPath);
+        },
+        std::move(portName));
 }
 
-InProcessConsoleService::InProcessConsoleService(
+std::unique_ptr<uml::gpu::InProcessVhostUserService> makeInProcessService(
     int connectedDescriptor,
     std::string portName)
 {
@@ -72,24 +72,12 @@ InProcessConsoleService::InProcessConsoleService(
             "duplicating the connected Virtio console descriptor failed: " +
             std::string(std::strerror(errno)));
     }
-    service_ = startService(
+    return startService(
         [connection]() -> std::unique_ptr<ConsoleChannel> {
             return std::make_unique<ConnectedSocketChannel>(
                 connection->release());
         },
         std::move(portName));
-}
-
-InProcessConsoleService::~InProcessConsoleService() = default;
-
-std::string InProcessConsoleService::takeConnectionName()
-{
-    return service_->takeConnectionName();
-}
-
-void InProcessConsoleService::stop() noexcept
-{
-    service_->stop();
 }
 
 } // namespace uml::console

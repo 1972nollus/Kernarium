@@ -8,25 +8,13 @@
 
 namespace uml::battery {
 
-InProcessBatteryService::InProcessBatteryService()
-    : service_(std::make_unique<uml::gpu::InProcessVhostUserService>(
-          "Virtio battery", "uml-battery", [] {
-              return std::make_unique<VirtioBatteryDevice>(
-                  uml::platform::makeAppleHostBatteryProvider());
-          }))
+std::unique_ptr<uml::gpu::InProcessVhostUserService> makeInProcessService()
 {
-}
-
-InProcessBatteryService::~InProcessBatteryService() = default;
-
-std::string InProcessBatteryService::takeConnectionName()
-{
-    return service_->takeConnectionName();
-}
-
-void InProcessBatteryService::stop() noexcept
-{
-    service_->stop();
+    return std::make_unique<uml::gpu::InProcessVhostUserService>(
+        "Virtio battery", "uml-battery", [] {
+            return std::make_unique<VirtioBatteryDevice>(
+                uml::platform::makeAppleHostBatteryProvider());
+        });
 }
 
 } // namespace uml::battery
