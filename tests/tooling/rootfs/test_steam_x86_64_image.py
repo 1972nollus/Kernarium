@@ -17,7 +17,6 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 PRODUCER = "tools/rootfs/steam-x86_64"
-SHARED = "tools/rootfs/steam-common"
 SESSION = "usr/local/bin/steam-gaming-session"
 LAUNCHER = "usr/local/libexec/kernarium-steam.py"
 STEAM = "usr/share/uml-steam/home/uml/.local/share/Steam"
@@ -69,10 +68,10 @@ class ImageAudit(unittest.TestCase):
         icd.write_text("{}\n")
         # The real session and launcher, so the audit is applied to what the
         # image actually installs.
-        for source, relative in ((PRODUCER, SESSION), (SHARED, LAUNCHER)):
+        for relative in (SESSION, LAUNCHER):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text((ROOT / source / "overlay" / relative).read_text())
+            destination.write_text((ROOT / PRODUCER / "overlay" / relative).read_text())
 
     def test_complete_image_is_accepted(self) -> None:
         entries = image.inventory(self.root)
@@ -206,6 +205,13 @@ class Provenance(unittest.TestCase):
             # The producer's shared helpers are part of its sources.
             self.assertIn("tools/rootfs/producer.sh", recorded["producer_sources"])
             self.assertIn("tools/rootfs/steam-x86_64/build.sh", recorded["producer_sources"])
+            # Every other source, including what the overlay and the splash
+            # build install, is in the producer's own directory.
+            sources = set(recorded["producer_sources"]) - {"tools/rootfs/producer.sh"}
+            self.assertTrue(all(path.startswith(f"{PRODUCER}/") for path in sources))
+            for relative in (f"overlay/{LAUNCHER}", "overlay/usr/local/libexec/kernarium-init",
+                             "splash/screen.cpp"):
+                self.assertIn(f"{PRODUCER}/{relative}", sources)
 
 
 if __name__ == "__main__":

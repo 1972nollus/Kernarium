@@ -189,9 +189,8 @@ to reach its own readiness contract: an X window named `Steam Big Picture Mode`
 whose map state is `IsViewable`. One run creates a fresh GPT user-data disk,
 times a first boot while Steam downloads and installs its own update, shuts the
 guest down through systemd, then times a second boot on that same disk with no
-download. It works for any image that uses the shared Kernarium init and
-session supervisor, so two images or two emulator builds are directly
-comparable.
+download. It works for any image that uses the Kernarium init and session
+supervisor, so two images or two emulator builds are directly comparable.
 
 ```sh
 python3 tests/perf/run_steam_boot_bench.py \
