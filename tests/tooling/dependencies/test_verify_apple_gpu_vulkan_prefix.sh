@@ -279,6 +279,9 @@ expect_framework_rejection \
 	MesaGallium "$TEST_ROOT/mesa-gallium.c" "$KOSMICKRISP" \
 	"$BASE_PREFIX/Frameworks/MesaEGL.framework/MesaEGL"
 expect_framework_rejection \
+	"MesaEGL.framework dependency: @rpath/KosmicKrisp.framework/KosmicKrisp" \
+	MesaEGL "$TEST_ROOT/mesa-egl.c" "$GALLIUM" "$KOSMICKRISP"
+expect_framework_rejection \
 	"MesaEGL.framework dependency: /System/Library/Frameworks/OpenGL.framework" \
 	MesaEGL "$TEST_ROOT/mesa-egl.c" "$GALLIUM" -framework OpenGL
 
