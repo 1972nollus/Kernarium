@@ -265,11 +265,7 @@ simd_fused_inplace_shapes fmls, fmls
 	.endr
 .endm
 
-#if __APPLE__
 .pushsection __DATA_CONST,__gadget_inplace
-#else
-.pushsection .data.rel.ro.gadget_inplace,"aw"
-#endif
 .p2align 3
 
 /* index = ((bits64 * 2 + operation) ... ) see the C++ selectors. */

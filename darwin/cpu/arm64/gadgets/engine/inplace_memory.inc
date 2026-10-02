@@ -60,11 +60,7 @@ scalar_unsigned_inplace_modes 1, 1, load64_unsigned_inplace
 	.endr
 .endm
 
-#if __APPLE__
 .pushsection __DATA_CONST,__gadget_inplace
-#else
-.pushsection .data.rel.ro.gadget_inplace,"aw"
-#endif
 .p2align 3
 .globl NAME(uml_arm64_gadget_scalar_unsigned_inplace_table)
 NAME(uml_arm64_gadget_scalar_unsigned_inplace_table):

@@ -9,11 +9,7 @@
  * assembler aware of them so extension-backed gadgets can use native ops. */
 .arch armv8.6-a+crc+crypto+sha3+rcpc+i8mm+fp16
 
-#if __APPLE__
 #define NAME(value) _##value
-#else
-#define NAME(value) value
-#endif
 
 _cpu .req x1
 _tlb .req x2

@@ -9,11 +9,7 @@
  * so no established entry moves and other hosts translate exactly as before.
  * Each row of the table below maps one entry, or one equal-stride
  * fixed-point table, to its twin. */
-#if __APPLE__
 .pushsection __DATA_CONST,__gadget_afp
-#else
-.pushsection .data.rel.ro.gadget_afp,"aw"
-#endif
 .p2align 3
 .globl NAME(uml_arm64_afp_twin_begin)
 NAME(uml_arm64_afp_twin_begin):
@@ -29,11 +25,7 @@ NAME(uml_arm64_afp_twin_begin):
 
 /* Entries [base_begin, base_end) run as [twin_begin, twin_end). */
 .macro afp_twin_row base_begin, base_end, twin_begin, twin_end
-#if __APPLE__
 	.pushsection __DATA_CONST,__gadget_afp
-#else
-	.pushsection .data.rel.ro.gadget_afp,"aw"
-#endif
 	.quad \base_begin, \base_end, \twin_begin, \twin_end
 	.popsection
 .endm
@@ -51,11 +43,7 @@ NAME(uml_arm64_afp_twin_begin):
 .endm
 
 .macro afp_twin_table_end
-#if __APPLE__
 	.pushsection __DATA_CONST,__gadget_afp
-#else
-	.pushsection .data.rel.ro.gadget_afp,"aw"
-#endif
 	.globl NAME(uml_arm64_afp_twin_end)
 NAME(uml_arm64_afp_twin_end):
 	.popsection

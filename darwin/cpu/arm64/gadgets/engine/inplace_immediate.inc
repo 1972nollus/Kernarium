@@ -114,11 +114,7 @@ add_sub_immediate_inplace_modes 1, 1, 1, x_sub_s
 	.endr
 .endm
 
-#if __APPLE__
 .pushsection __DATA_CONST,__gadget_inplace
-#else
-.pushsection .data.rel.ro.gadget_inplace,"aw"
-#endif
 .p2align 3
 .globl NAME(uml_arm64_gadget_add_sub_immediate_inplace_table)
 NAME(uml_arm64_gadget_add_sub_immediate_inplace_table):
