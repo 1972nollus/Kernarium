@@ -157,7 +157,6 @@ class Route:
     base_commit: str
     base_tree: str
     final_tree: str
-    series_dir: Path
 
 
 def read_route_table(
@@ -198,8 +197,7 @@ def read_route_table(
                 raise error(f"route {route_id} has invalid {label}")
         read_generated_series(android_root / series_dir_text, f"route {route_id}", error)
         routes.append(Route(
-            index, route_id, project, checkout_path, upstream,
-            base_commit, base_tree, final_tree, android_root / series_dir_text,
+            index, route_id, project, checkout_path, upstream, base_commit, base_tree, final_tree
         ))
     if len({route.route_id for route in routes}) != len(routes):
         raise error("project route IDs are not unique")
