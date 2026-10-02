@@ -71,35 +71,4 @@ inline void require(bool condition, const char *message)
 		(variant.registers.destination & 31U);
 }
 
-[[nodiscard]] constexpr std::uint16_t carryless_byte(
-	unsigned left, unsigned right) noexcept
-{
-	std::uint16_t result = 0;
-	for (unsigned right_bit = 0; right_bit < 8U; ++right_bit)
-		if ((right & (1U << right_bit)) != 0)
-			result ^= static_cast<std::uint16_t>(
-				(left & 0xffU) << right_bit);
-	return result;
-}
-
-using WideUnsigned = unsigned __int128;
-
-[[nodiscard]] constexpr WideUnsigned carryless_doubleword(
-	std::uint64_t left, std::uint64_t right) noexcept
-{
-	WideUnsigned result = 0;
-	for (unsigned right_bit = 0; right_bit < 64U; ++right_bit)
-		if ((right & (std::uint64_t{1} << right_bit)) != 0)
-			result ^= static_cast<WideUnsigned>(left) << right_bit;
-	return result;
-}
-
-static_assert(carryless_byte(0x57U, 0x83U) == 0x2b79U);
-static_assert(carryless_byte(0xffU, 0xffU) == 0x5555U);
-static_assert(carryless_doubleword(~std::uint64_t{}, 1U) ==
-	static_cast<WideUnsigned>(~std::uint64_t{}));
-static_assert(carryless_doubleword(
-	std::uint64_t{1} << 63U, std::uint64_t{1} << 63U) ==
-	(static_cast<WideUnsigned>(1) << 126U));
-
 } // namespace arm64_simd_pmull_test

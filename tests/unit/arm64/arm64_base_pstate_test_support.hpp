@@ -35,7 +35,6 @@ struct Decoded final {
 	Field field{Field::reserved};
 	bool allocated{};
 	bool el0_accessible{};
-	NativeRequirements native{NativeRequirements::baseline()};
 };
 
 [[nodiscard]] constexpr std::uint32_t encode(
@@ -51,37 +50,6 @@ struct Decoded final {
 	return op1 == 0U && immediate == 0U && op2 <= 2U;
 }
 
-[[nodiscard]] inline NativeRequirements requirements_for(Field field) noexcept
-{
-	switch (field) {
-	case Field::uao:
-		return NativeRequirements::features(ArmFeature::uao);
-	case Field::pan:
-		return NativeRequirements::features(ArmFeature::pan);
-	case Field::all_interrupt_mask:
-		return NativeRequirements::features(ArmFeature::nmi);
-	case Field::profiling_mask:
-		return NativeRequirements::features(ArmFeature::ebep);
-	case Field::ssbs:
-		return NativeRequirements::features(ArmFeature::ssbs);
-	case Field::dit:
-		return NativeRequirements::features(ArmFeature::dit);
-	case Field::streaming_mode:
-	case Field::array_state:
-	case Field::streaming_and_array_state:
-		return NativeRequirements::features(ArmFeature::sme);
-	case Field::tag_check_override:
-		return NativeRequirements::features(ArmFeature::mte);
-	case Field::flag_alias:
-	case Field::reserved:
-	case Field::stack_pointer_select:
-	case Field::interrupt_mask_set:
-	case Field::interrupt_mask_clear:
-		return NativeRequirements::baseline();
-	}
-	return NativeRequirements::baseline();
-}
-
 /*
  * Independent transcription of the MSR (immediate) allocation tables.  The
  * emulator runs an EL0 guest process, so architecturally allocated fields with
@@ -95,9 +63,6 @@ struct Decoded final {
 			.field = Field::flag_alias,
 			.allocated = true,
 			.el0_accessible = true,
-			.native = op2 == 0U ?
-				NativeRequirements::features(ArmFeature::flag_m) :
-				NativeRequirements::features(ArmFeature::flag_m2),
 		};
 
 	Field field = Field::reserved;
@@ -181,7 +146,6 @@ struct Decoded final {
 		.field = field,
 		.allocated = allocated,
 		.el0_accessible = el0_accessible,
-		.native = requirements_for(field),
 	};
 }
 
