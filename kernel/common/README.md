@@ -35,7 +35,7 @@ source/build paths; Apple product configuration still consumes only bundles.
 
 Darwin's `sigprocmask()` sets the mask of every thread in the process, vCPU
 carriers included, so host-side kernel code changes a signal mask only with
-`pthread_sigmask()`. Every kernel build rejects an image that imports
+`pthread_sigmask()`. The bridge import check rejects an image that imports
 `sigprocmask`, and the console PTY assertion checks that a console write
 leaves another thread's mask unchanged.
 

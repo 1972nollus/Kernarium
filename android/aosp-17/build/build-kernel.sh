@@ -326,7 +326,6 @@ run_make -j"$JOBS"
 module_file=$(find "$BUILD_DIR" -type f -name '*.ko' -print -quit)
 [ -z "$module_file" ] || fail "loadable module output is forbidden: $module_file"
 "$ELF_VERIFIER" "$BUILD_DIR/vmlinux"
-"$COMMON_ROOT/abi/verify-linux-imports.sh" \
-	--kernel-binary "$BUILD_DIR/vmlinux" --nm "$CLANG_BIN/llvm-nm" \
-	--page-size 16k --slice arm64
+python3 -B "$COMMON_ROOT/abi/bridge_imports.py" \
+	--kernel-binary "$BUILD_DIR/vmlinux" --page-size 16k --slice arm64
 printf '%s\n' "built Android 17 ACK 6.18 kernel: $BUILD_DIR/vmlinux"

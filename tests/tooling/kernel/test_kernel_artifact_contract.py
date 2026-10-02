@@ -9,7 +9,9 @@ __import__("sys").dont_write_bytecode = True
 import argparse
 import importlib.util
 import json
+import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -216,6 +218,283 @@ def require_runtime_image(
         require(diagnostic is None, f"runtime image {label} was accepted")
 
 
+PT_LOAD = 1
+PT_GNU_STACK = 0x6474E551
+PF_X = 1
+PF_W = 2
+PF_R = 4
+SHT_SYMTAB = 2
+# The fixture's program headers: an R+X load, an R+W load and the GNU stack.
+PROGRAM_HEADERS = (64, 120, 176)
+
+
+def kernel_elf(imports: list[str]) -> bytearray:
+    """Return a 16 KiB AArch64 ET_DYN kernel image that imports these names.
+
+    Its .symtab also defines darwin_uml_defined_here, which is not an import.
+    """
+    names = bytearray(b"\0")
+    symbols = bytearray(24)
+    for name, section in [("darwin_uml_defined_here", 1)] + [
+        (name, 0) for name in imports
+    ]:
+        symbols += struct.pack("<IBBHQQ", len(names), 0x10, 0, section, 0, 0)
+        names += name.encode("ascii") + b"\0"
+    section_names = b"\0.symtab\0.strtab\0.shstrtab\0"
+    symtab = 64 + 56 * len(PROGRAM_HEADERS)
+    strtab = symtab + len(symbols)
+    shstrtab = strtab + len(names)
+    section_table = shstrtab + len(section_names)
+    image = bytearray(section_table + 64 * 4)
+    image[:7] = b"\x7fELF\x02\x01\x01"
+    struct.pack_into(
+        "<HHIQQQIHHHHHH", image, 16,
+        3, 183, 1, 0, 64, section_table, 0, 64, 56, len(PROGRAM_HEADERS), 64, 4, 3,
+    )
+    for offset, (kind, flags, address, size, alignment) in zip(
+        PROGRAM_HEADERS,
+        (
+            (PT_LOAD, PF_R | PF_X, 0, symtab, 0x4000),
+            (PT_LOAD, PF_R | PF_W, 0x10000, symtab, 0x4000),
+            (PT_GNU_STACK, PF_R | PF_W, 0, 0, 16),
+        ),
+    ):
+        struct.pack_into(
+            "<IIQQQQQQ", image, offset,
+            kind, flags, 0, address, address, size, size, alignment,
+        )
+    image[symtab:section_table] = symbols + names + section_names
+    for index, (name, kind, offset, size, link, entry_size) in enumerate(
+        (
+            (0, 0, 0, 0, 0, 0),
+            (1, SHT_SYMTAB, symtab, len(symbols), 2, 24),
+            (9, SHT_STRTAB, strtab, len(names), 0, 0),
+            (17, SHT_STRTAB, shstrtab, len(section_names), 0, 0),
+        )
+    ):
+        struct.pack_into(
+            "<IIQQQQIIQQ", image, section_table + 64 * index,
+            name, kind, 0, 0, offset, size, link, 0, 1, entry_size,
+        )
+    return image
+
+
+def section_header(image: bytearray, index: int) -> int:
+    return struct.unpack_from("<Q", image, 40)[0] + 64 * index
+
+
+def write_bridge_policy(abi: Path, rows: list[str]) -> None:
+    (abi / "import-policy.tsv").write_text(
+        "\n".join(["symbol\tavailability\trationale", *rows]) + "\n",
+        encoding="utf-8",
+    )
+
+
+def require_kernel_elf(
+    module: ModuleType,
+    path: Path,
+    image: bytes,
+    common_root: Path,
+    page_size: int,
+    kernel_slice: str,
+    diagnostic: str | None,
+) -> None:
+    path.write_bytes(image)
+    try:
+        module.verify_elf(path, page_size, common_root, kernel_slice)
+    except SystemExit as error:
+        require(
+            diagnostic is not None and diagnostic in str(error),
+            f"kernel ELF was rejected for the wrong reason: {error}",
+        )
+    else:
+        require(diagnostic is None, f"kernel ELF was accepted, expected: {diagnostic}")
+
+
+def verify_kernel_elf_contract(module: ModuleType, root: Path) -> None:
+    """Pin the kernel ELF's geometry checks and its bridge import policy."""
+    abi = root / "common/abi"
+    abi.mkdir(parents=True)
+    (abi / "darwin_uml_fixture.h").write_text(
+        "int darwin_uml_everywhere(void);\n"
+        "int darwin_uml_small_pages(int value);\n"
+        "void darwin_uml_arm64_only(void);\n",
+        encoding="utf-8",
+    )
+    policy = [
+        "darwin_uml_small_pages\t4k-only\tfixture",
+        "darwin_uml_arm64_only\tarm64-only\tfixture",
+    ]
+    write_bridge_policy(abi, policy)
+    common = root / "common"
+    path = root / "vmlinux"
+    everywhere, small, arm64 = (
+        "darwin_uml_everywhere",
+        "darwin_uml_small_pages",
+        "darwin_uml_arm64_only",
+    )
+    active_16k = [everywhere, arm64]
+
+    def check(
+        image: bytes,
+        diagnostic: str | None,
+        page_size: int = 16384,
+        kernel_slice: str = "arm64",
+    ) -> None:
+        require_kernel_elf(
+            module, path, image, common, page_size, kernel_slice, diagnostic
+        )
+
+    # Each page profile and slice imports exactly its active symbols.
+    check(kernel_elf(active_16k), None)
+    check(kernel_elf([everywhere, small, arm64]), None, 4096)
+    check(kernel_elf([everywhere, small]), None, 4096, "x86_64")
+    for imports, page_size, kernel_slice, missing, extra in (
+        ([everywhere, small, arm64], 16384, "arm64", [], [small]),
+        ([everywhere, small, arm64], 4096, "x86_64", [], [arm64]),
+        ([everywhere, small], 4096, "arm64", [arm64], []),
+        ([everywhere], 16384, "arm64", [arm64], []),
+        ([*active_16k, "darwin_uml_undeclared"], 16384, "arm64", [],
+         ["darwin_uml_undeclared"]),
+    ):
+        check(
+            kernel_elf(imports),
+            f"kernel bridge imports differ (missing={missing}, extra={extra})",
+            page_size,
+            kernel_slice,
+        )
+    check(kernel_elf(active_16k), "unsupported kernel slice", 16384, "riscv64")
+    check(
+        kernel_elf([everywhere, small]),
+        "x86_64 bridge imports require 4096-byte pages",
+        16384,
+        "x86_64",
+    )
+
+    # A 4 KiB image may align its loads to 4 KiB; a 16 KiB image may not.
+    small_alignment = kernel_elf([everywhere, small, arm64])
+    for offset in PROGRAM_HEADERS[:2]:
+        struct.pack_into("<Q", small_alignment, offset + 48, 0x1000)
+    check(small_alignment, None, 4096)
+
+    def mutated(layout: str, offset: int, value: int) -> bytearray:
+        image = kernel_elf(active_16k)
+        struct.pack_into(layout, image, offset, value)
+        return image
+
+    load, data, stack = PROGRAM_HEADERS
+    not_elf64 = "kernel is not a little-endian ELF64 image"
+    not_et_dyn = "kernel is not an AArch64 ET_DYN image"
+    unseparated = "kernel lacks separated executable and writable load segments"
+    for layout, offset, value, diagnostic in (
+        ("<B", 4, 1, not_elf64),
+        ("<B", 5, 2, not_elf64),
+        ("<B", 6, 0, not_elf64),
+        ("<H", 16, 2, not_et_dyn),
+        ("<H", 18, 62, not_et_dyn),
+        ("<H", 54, 32, "ELF program-header entry size is malformed"),
+        ("<H", 56, 1000, "ELF program-header table is outside the file"),
+        ("<Q", load + 40, 1, "ELF program header 0 has file size above memory size"),
+        ("<Q", data + 8, 0x40000, "ELF segment 1 is outside the file"),
+        ("<I", stack + 4, PF_R | PF_W | PF_X, "kernel GNU stack is executable"),
+        ("<I", data + 4, PF_R | PF_W | PF_X,
+         "ELF load segment 1 is writable and executable"),
+        ("<Q", load + 48, 0x1000, "ELF load segment 0 has invalid alignment 0x1000"),
+        ("<Q", load + 48, 0x6000, "ELF load segment 0 has invalid alignment 0x6000"),
+        ("<Q", data + 16, 0x10010, "ELF load segment 1 violates alignment congruence"),
+        ("<I", data, 0, unseparated),
+        ("<I", data + 4, PF_R, unseparated),
+    ):
+        check(mutated(layout, offset, value), diagnostic)
+
+    symbols = section_header(kernel_elf(active_16k), 1)
+    strings = section_header(kernel_elf(active_16k), 2)
+    unterminated = kernel_elf(active_16k)
+    string_offset, string_size = struct.unpack_from("<QQ", unterminated, strings + 24)
+    unterminated[string_offset + string_size - 1] = ord("x")
+    for image, diagnostic in (
+        (mutated("<I", symbols + 4, 1), "ELF contains no symbol table"),
+        (mutated("<Q", symbols + 56, 16), "ELF symbol table 1 is malformed"),
+        (mutated("<Q", symbols + 32, 25), "ELF symbol table 1 is malformed"),
+        (mutated("<I", symbols + 40, 9),
+         "ELF symbol table 1 has an invalid string table"),
+        (unterminated, "ELF symbol name is unterminated"),
+    ):
+        check(image, diagnostic)
+
+    # Host code must not import the process-wide sigprocmask or the variadic
+    # fcntl, in any Mach-O spelling.
+    for symbol, description in (
+        ("sigprocmask", "the process-wide Darwin sigprocmask"),
+        ("_sigprocmask$UNIX2003", "the process-wide Darwin sigprocmask"),
+        ("fcntl", "the variadic Darwin fcntl"),
+        ("_fcntl$NOCANCEL", "the variadic Darwin fcntl"),
+    ):
+        check(kernel_elf([*active_16k, symbol]), f"the Linux image imports {description}")
+    check(kernel_elf([*active_16k, "pthread_sigmask"]), None)
+
+    # Kernel builds run the module's command line on the image they built. The
+    # copy in the fixture directory reads the fixture declarations and policy.
+    command_line = abi / "bridge_imports.py"
+    shutil.copyfile(
+        Path(module.__file__).resolve().parents[1] / "abi/bridge_imports.py",
+        command_line,
+    )
+
+    def run(*arguments: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-B", str(command_line), *arguments],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    for page, kernel_slice, symbols in (
+        ("16k", "arm64", active_16k),
+        ("4k", "arm64", [everywhere, small, arm64]),
+        ("4k", "x86_64", [everywhere, small]),
+    ):
+        printed = run("--print-expected", "--page-size", page, "--slice", kernel_slice)
+        require(
+            printed.returncode == 0 and printed.stdout.split() == sorted(symbols),
+            f"{page} {kernel_slice} expected imports printed wrongly: {printed}",
+        )
+    for imports, diagnostic in (
+        (active_16k, None),
+        ([everywhere, small, arm64], "kernel bridge imports differ"),
+        ([*active_16k, "_fcntl"], "the Linux image imports the variadic Darwin fcntl"),
+    ):
+        path.write_bytes(kernel_elf(imports))
+        result = run("--kernel-binary", str(path), "--page-size", "16k", "--slice", "arm64")
+        require(
+            (result.returncode == 0) == (diagnostic is None)
+            and (diagnostic is None or diagnostic in result.stderr),
+            f"bridge import command line misjudged {imports}: {result.stderr}",
+        )
+
+    # The policy is a three-column table of declared conditional symbols.
+    for row in (
+        "darwin_uml_everywhere\t4k-only",
+        "darwin_uml_everywhere\t16k-only\tfixture",
+        "darwin_uml_everywhere\t4k-only\t",
+        "darwin_uml_small_pages\tarm64-only\tagain",
+        "uml_everywhere\t4k-only\tfixture",
+    ):
+        write_bridge_policy(abi, [*policy, row])
+        check(kernel_elf(active_16k), "ABI import policy is malformed at line 4")
+    write_bridge_policy(abi, [*policy, "darwin_uml_undeclared\t4k-only\tfixture"])
+    check(kernel_elf(active_16k), "ABI import policy names undeclared bridge symbols")
+    (abi / "import-policy.tsv").write_text(
+        "symbol\tavailability\n" + "\n".join(policy) + "\n", encoding="utf-8"
+    )
+    check(kernel_elf(active_16k), "ABI import policy is malformed")
+    (abi / "import-policy.tsv").write_text("", encoding="utf-8")
+    check(kernel_elf(active_16k), "ABI import policy is malformed")
+    write_bridge_policy(abi, policy)
+    (abi / "darwin_uml_fixture.h").unlink()
+    check(kernel_elf(active_16k), "shared ABI declarations are missing")
+
+
 def write_config(path: Path, values: dict[str, str]) -> None:
     lines = [
         f"# {symbol} is not set" if value == "n" else f"{symbol}={value}"
@@ -352,6 +631,7 @@ def main() -> int:
             [text, (".BTF", SHT_PROGBITS, 0)],
             "kernel .BTF section is not allocated",
         )
+        verify_kernel_elf_contract(module, root)
 
     print("kernel artifact family/slice/page contract verified")
     return 0

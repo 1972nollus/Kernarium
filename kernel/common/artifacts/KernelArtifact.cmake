@@ -118,12 +118,19 @@ function(uml_import_kernel_artifact)
         UML_KERNEL_MODULES_BUILTIN
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/modules.builtin")
 
+    # The bridge import check reads the policy and every bridge header. A
+    # header added with new declarations also changes identity.env, which
+    # re-runs configure and this glob.
+    file(GLOB _uml_bridge_headers "${ARTIFACT_COMMON_ROOT}/abi/darwin_uml_*.h")
     uml_watch_artifact_inputs(
         "${ARTIFACT_ARTIFACT_ROOT}/kernel-artifact.json"
         "${_uml_abi_metadata}"
         "${_uml_verifier}"
         "${ARTIFACT_COMMON_ROOT}/artifacts/contract_checks.py"
         "${ARTIFACT_COMMON_ROOT}/artifacts/kernel_artifact.py"
+        "${ARTIFACT_COMMON_ROOT}/abi/bridge_imports.py"
+        "${ARTIFACT_COMMON_ROOT}/abi/import-policy.tsv"
+        ${_uml_bridge_headers}
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/vmlinux"
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/config"
         "${ARTIFACT_ARTIFACT_ROOT}/kernel/kernel.release"

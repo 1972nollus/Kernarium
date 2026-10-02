@@ -47,6 +47,10 @@ For an intentional bridge declaration change:
 Each artifact descriptor records the bridge identity it was built with, and
 configure rejects an artifact whose identity differs from `identity.env`.
 
-Every kernel build also verifies its exact active `darwin_uml_*` imports for
-the selected page profile. The 4 KiB native-shadow services are inactive in
-the 16 KiB profile; all other shared declarations apply to both.
+`bridge_imports.py` owns the import policy. A kernel image imports exactly
+the declared `darwin_uml_*` functions, less those `import-policy.tsv` limits
+to 4 KiB pages (the native-shadow services) or to the arm64 slice, and never
+Darwin's process-wide `sigprocmask` or variadic `fcntl`. Every kernel build
+runs `bridge_imports.py --kernel-binary` on its image, the artifact verifier
+applies the same check to each bundle, and `--print-expected` lists the set
+for a page size and slice.
