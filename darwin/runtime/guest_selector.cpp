@@ -14,6 +14,7 @@ namespace {
  */
 constexpr unsigned long hwcap_fp = 1UL << 0;
 constexpr unsigned long hwcap_asimd = 1UL << 1;
+constexpr unsigned long hwcap_evtstrm = 1UL << 2;
 constexpr unsigned long hwcap_aes = 1UL << 3;
 constexpr unsigned long hwcap_pmull = 1UL << 4;
 constexpr unsigned long hwcap_sha1 = 1UL << 5;
@@ -50,6 +51,11 @@ constexpr unsigned long hwcap2_bf16 = 1UL << 14;
 	 * return here are built from the same host predicates as the feature bits
 	 * below, so both ways of asking give a guest the same answer. */
 	unsigned long result = hwcap_fp | hwcap_asimd | hwcap_cpuid;
+	/* The timer event stream. arm64 Linux advertises it whenever its
+	 * architected timer generates one, as a promise that WFE wakes at least
+	 * once per period (about 100 us) without an SEV. Both engines complete
+	 * WFE, and the timed WFET, at once, so the promise holds on every host. */
+	result |= hwcap_evtstrm;
 	if (host.aes)
 		result |= hwcap_aes;
 	if (host.pmull)

@@ -13,6 +13,7 @@ namespace {
 
 constexpr unsigned long hwcap_fp = 1UL << 0;
 constexpr unsigned long hwcap_asimd = 1UL << 1;
+constexpr unsigned long hwcap_evtstrm = 1UL << 2;
 constexpr unsigned long hwcap_aes = 1UL << 3;
 constexpr unsigned long hwcap_pmull = 1UL << 4;
 constexpr unsigned long hwcap_sha1 = 1UL << 5;
@@ -64,6 +65,9 @@ void guest_capabilities_match_host()
 	 * of what this host implements, so this bit is unconditional here exactly
 	 * as it is in arm64 Linux's `setup_elf_hwcaps()`. */
 	require_propagated(capabilities, hwcap_cpuid, true);
+	/* WFE completes at once in every engine, so it always wakes within the
+	 * event-stream period this bit promises. */
+	require_propagated(capabilities, hwcap_evtstrm, true);
 	require_propagated(capabilities, hwcap_aes, host.aes);
 	require_propagated(capabilities, hwcap_pmull, host.pmull);
 	require_propagated(capabilities, hwcap_sha1, host.sha1);
@@ -103,7 +107,7 @@ void guest_capabilities_match_host()
 			   host.has(::uml::cpu::ArmFeature::dit));
 
 	constexpr auto advertised =
-		hwcap_fp | hwcap_asimd | hwcap_cpuid |
+		hwcap_fp | hwcap_asimd | hwcap_evtstrm | hwcap_cpuid |
 		hwcap_aes | hwcap_pmull | hwcap_sha1 |
 		hwcap_sha2 | hwcap_crc32 | hwcap_atomics | hwcap_fphp |
 		hwcap_asimdhp | hwcap_asimdrdm | hwcap_jscvt | hwcap_sha3 |

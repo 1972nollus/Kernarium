@@ -277,11 +277,12 @@ bool host_feature(const char *name)
 unsigned long expected_guest_hwcap()
 {
 	unsigned long result =
-		(1UL << 0) | (1UL << 1) | (1UL << 11);
+		(1UL << 0) | (1UL << 1) | (1UL << 2) | (1UL << 11);
 	/* FP and ASIMD are the mandatory guest profile, and HWCAP_CPUID reports
 	 * the emulated EL0 reads of the identification registers that every
 	 * engine implements unconditionally, exactly as arm64 Linux advertises
-	 * them from `setup_elf_hwcaps()`. */
+	 * them from `setup_elf_hwcaps()`. HWCAP_EVTSTRM holds on every host
+	 * because every engine completes WFE at once. */
 	const struct {
 		const char *sysctl;
 		unsigned bit;

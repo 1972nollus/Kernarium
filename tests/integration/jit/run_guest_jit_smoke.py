@@ -24,6 +24,7 @@ GUEST_HWCAP_SANITY = "/usr/local/libexec/uml-test/hwcap-sanity"
 GUEST_CPU_IDENTITY = "/usr/local/libexec/uml-test/cpu-identity.py"
 HWCAP_FP = 1 << 0
 HWCAP_ASIMD = 1 << 1
+HWCAP_EVTSTRM = 1 << 2
 HWCAP_AES = 1 << 3
 HWCAP_PMULL = 1 << 4
 HWCAP_SHA1 = 1 << 5
@@ -120,10 +121,14 @@ CPUINFO_LINES = (
     "CPU part\t: ",
     "CPU revision\t: ",
 )
-# Reads MIDR_EL1 and CNTFRQ_EL0 with MRS, as any task may, and asks LLVM for
-# the host features it derives from /proc/cpuinfo, as llvmpipe and
-# -mcpu=native do.
-CPU_IDENTITY_PROBE = """\
+# arm64 Linux's ARCH_TIMER_EVT_STREAM_PERIOD_US: HWCAP_EVTSTRM promises that
+# WFE wakes at least this often without an SEV.
+EVENT_STREAM_PERIOD_US = 100
+WFE_ITERATIONS = 100000
+# Reads MIDR_EL1 and CNTFRQ_EL0 with MRS, as any task may, times WFE with no
+# SEV against the counter, and asks LLVM for the host features it derives from
+# /proc/cpuinfo, as llvmpipe and -mcpu=native do.
+CPU_IDENTITY_PROBE = f"""\
 import ctypes, glob, mmap, re, tempfile
 libc = ctypes.CDLL(None, use_errno=True)
 libc.mmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int,
@@ -139,11 +144,15 @@ def function(words):
                             mmap.MAP_PRIVATE, code.fileno(), 0)
     if address in (None, ctypes.c_void_p(-1).value):
         raise OSError(ctypes.get_errno(), "mmap of the MRS code failed")
-    return ctypes.CFUNCTYPE(ctypes.c_uint64)(address)
+    return ctypes.CFUNCTYPE(ctypes.c_uint64, ctypes.c_uint64)(address)
 # nop; mrs x0, midr_el1; ret
-print(f"midr=0x{function('1f2003d5000038d5c0035fd6')():x}")
+print(f"midr=0x{{function('1f2003d5000038d5c0035fd6')(0):x}}")
 # nop; mrs x0, cntfrq_el0; ret
-print(f"cntfrq={function('1f2003d500e03bd5c0035fd6')()}")
+print(f"cntfrq={{function('1f2003d500e03bd5c0035fd6')(0)}}")
+# mrs x1, cntvct_el0; 1: wfe; subs x0, x0, #1; b.ne 1b; mrs x2, cntvct_el0;
+# sub x0, x2, x1; ret: the counter ticks x0 WFEs take, with no SEV anywhere.
+wfe = function("41e03bd55f2003d5000400f1c1ffff5442e03bd5400001cbc0035fd6")
+print(f"wfe_ticks={{wfe({WFE_ITERATIONS})}}")
 libraries = glob.glob("/usr/lib/*-linux-gnu/libLLVM.so.*")
 if not libraries:
     raise SystemExit("the rootfs has no libLLVM")
@@ -151,7 +160,7 @@ newest = max(libraries, key=lambda path: [
     int(part) for part in re.findall(r"[0-9]+", path.rsplit("/", 1)[1])])
 features = ctypes.CDLL(newest).LLVMGetHostCPUFeatures
 features.restype = ctypes.c_char_p
-print(f"llvm={features().decode()}")
+print(f"llvm={{features().decode()}}")
 """
 
 
@@ -347,8 +356,11 @@ def main() -> int:
         actual_hwcap2 = auxv.get(26, 0)
         # HWCAP_CPUID is unconditional, exactly as arm64 Linux advertises it:
         # every engine emulates the EL0 identification-register reads.
+        # HWCAP_EVTSTRM is too: every engine completes WFE at once, which the
+        # WFE timing below checks.
         expected = expected_hwcap(
-            OPTIONAL_HWCAPS, HWCAP_FP | HWCAP_ASIMD | HWCAP_CPUID
+            OPTIONAL_HWCAPS,
+            HWCAP_FP | HWCAP_ASIMD | HWCAP_EVTSTRM | HWCAP_CPUID,
         )
         probe_permitted = expected_hwcap(PROBE_DEPENDENT_HWCAPS)
         if (
@@ -372,9 +384,27 @@ def main() -> int:
         )
         midr_match = re.search(r"^midr=0x([0-9a-f]+)$", identity, re.M)
         counter_match = re.search(r"^cntfrq=([0-9]+)$", identity, re.M)
+        wfe_match = re.search(r"^wfe_ticks=([0-9]+)$", identity, re.M)
         llvm_match = re.search(r"^llvm=(.*)$", identity, re.M)
-        if midr_match is None or counter_match is None or llvm_match is None:
+        if (
+            midr_match is None
+            or counter_match is None
+            or wfe_match is None
+            or llvm_match is None
+        ):
             raise RuntimeError(f"CPU identity probe failed:\n{identity}")
+        # AT_HWCAP's EVTSTRM promises that a WFE with no SEV wakes within the
+        # event-stream period; one that waited for an event would never let
+        # the probe finish.
+        period_ticks = (
+            int(counter_match.group(1)) * EVENT_STREAM_PERIOD_US // 1000000
+        )
+        wfe_ticks = int(wfe_match.group(1))
+        if wfe_ticks >= WFE_ITERATIONS * period_ticks:
+            raise RuntimeError(
+                f"{WFE_ITERATIONS} WFEs took {wfe_ticks} counter ticks, more "
+                f"than the {period_ticks}-tick event-stream period each"
+            )
         check_cpuinfo(
             guest,
             actual_hwcap,
@@ -438,7 +468,8 @@ def main() -> int:
 
         print(
             f"PASS engine={arguments.engine} "
-            f"AT_HWCAP=0x{actual_hwcap:x} AT_HWCAP2=0x{actual_hwcap2:x}"
+            f"AT_HWCAP=0x{actual_hwcap:x} AT_HWCAP2=0x{actual_hwcap2:x} "
+            f"WFE={wfe_ticks / WFE_ITERATIONS:.3f} ticks"
         )
         return 0
 
