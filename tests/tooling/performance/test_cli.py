@@ -373,6 +373,220 @@ def verify_geekbench_payloads() -> None:
         raise RuntimeError(f"Geekbench accepted workloads={workloads!r}")
 
 
+# The guest scripts the exec and link benches time, at two workers. Recorded
+# results stay comparable only while this text stays the same.
+EXEC_WORKLOAD = (
+    'rm -f /tmp/exec-bench-pids; : >/tmp/exec-bench-pids; worker=0; '
+    'while [ "$worker" -lt 2 ]; do '
+    '(i=0; while [ "$i" -lt 2 ]; do /bin/true || exit; i=$((i + 1)); done) & '
+    'echo "$!" >>/tmp/exec-bench-pids; worker=$((worker + 1)); done; '
+    'status=0; for pid in $(cat /tmp/exec-bench-pids); do '
+    'wait "$pid" || status=1; done; '
+    'rm -f /tmp/exec-bench-pids; test "$status" -eq 0'
+)
+LINK_WORKLOAD = (
+    'rm -f /tmp/link-loop-output.*; : >/tmp/link-loop-pids; i=0; '
+    'while [ "$i" -lt 2 ]; do /usr/local/libexec/uml-test/guest-link-loop '
+    '>"/tmp/link-loop-output.$i" 2>&1 & '
+    'echo "$!" >>/tmp/link-loop-pids; i=$((i + 1)); done; '
+    'status=0; for pid in $(cat /tmp/link-loop-pids); do '
+    'wait "$pid" || status=1; done; cat /tmp/link-loop-output.*; '
+    'rm -f /tmp/link-loop-output.* /tmp/link-loop-pids; test "$status" -eq 0'
+)
+TIMED_RUNS = (
+    "run 1: 0.500s wall, 1.000s host CPU (2.00 cores)\n",
+    "run 2: 1.000s wall, 3.000s host CPU (3.00 cores)\n",
+)
+TIMED_MEDIAN = "median: 0.750s wall, 2.50 host cores"
+
+
+def timed(command: str, timeout: int = 30) -> list[object]:
+    """The host readings and guest command of one measured repetition."""
+    return ["cpu", "clock", ("run", command, timeout), "clock", "cpu"]
+
+
+def run_timed_session(
+    runner: str,
+    extra: tuple[str, ...],
+    output: str,
+    *,
+    command_status: int = 0,
+    shutdown_ok: bool = True,
+    emulator_status: int = 0,
+) -> tuple[list[object], object, str, str | None]:
+    """Run a timed runner to the end against a stand-in guest.
+
+    Returns, in order, every host reading, sampler and guest call; the Guest
+    construction; stdout; and the RuntimeError text, if any. The two
+    repetitions take 0.5 s and 1 s of wall time and 1 s and 3 s of host CPU.
+    """
+    module = load_runner_module(runner)
+    events: list[object] = []
+    walls = iter((0.0, 0.5, 10.0, 11.0))
+    cpus = iter(("0:00.00", "0:01.00", "0:10.00", "0:13.00"))
+    guest = session_guest()
+    guest.process_id = 4242
+    guest.return_code = emulator_status
+
+    def record(name: str, result: object = None):
+        def call(*arguments: object, **_options: object) -> object:
+            events.append((name, *arguments))
+            return result
+        return call
+
+    def clock() -> float:
+        events.append("clock")
+        return next(walls)
+
+    def cpu_time(*_arguments: object, **_options: object) -> str:
+        events.append("cpu")
+        return next(cpus)
+
+    def run_command(command: str, timeout: int = 30) -> object:
+        events.append(("run", command, timeout))
+        return types.SimpleNamespace(return_code=command_status, output=output)
+
+    guest.boot_to_shell.side_effect = record("boot_to_shell")
+    guest.boot_and_login.side_effect = record("boot_and_login")
+    guest.run_command.side_effect = run_command
+    guest.shutdown.side_effect = record("shutdown", shutdown_ok)
+    stdout = io.StringIO()
+    error = None
+    with tempfile.TemporaryDirectory(prefix="uml-perf-cli-") as directory:
+        resolved = str(pathlib.Path(directory).resolve())
+        pathlib.Path(directory, "link-loop").write_bytes(b"probe")
+
+        def start_sampler(argv: tuple[str, ...], **_options: object) -> object:
+            events.append(
+                ("sample", *(item.replace(resolved, "DIR") for item in argv))
+            )
+            return mock.Mock(wait=mock.Mock(side_effect=record("reap")))
+
+        arguments = [
+            str(ROOT / runner), "--emulator", "emulator",
+            "--rootfs", "rootfs.erofs",
+            *(item.format(directory=directory) for item in extra),
+        ]
+        with (
+            mock.patch.object(sys, "argv", arguments),
+            mock.patch.object(module, "Guest", return_value=guest) as built,
+            mock.patch("time.monotonic", side_effect=clock),
+            mock.patch("subprocess.check_output", side_effect=cpu_time),
+            mock.patch("subprocess.Popen", side_effect=start_sampler),
+            contextlib.redirect_stdout(stdout),
+        ):
+            try:
+                module.main()
+            except RuntimeError as caught:
+                error = str(caught)
+    guest.close.assert_called_once_with()
+    return events, built.call_args, stdout.getvalue(), error
+
+
+def verify_timed_sessions() -> None:
+    """Pin each timed runner's Guest, guest commands, halt and report."""
+    emulator = pathlib.Path("emulator").resolve()
+    rootfs = pathlib.Path("rootfs.erofs").resolve()
+    command = ("--command", "uname -m", "--repetitions", "2")
+    link = ("--binary", "{directory}/link-loop", "--cpus", "2",
+            "--workers", "2", "--repetitions", "2",
+            "--core-class", "efficiency")
+    sample = ("sample", "/usr/bin/sample", "4242", "1", "-file")
+    output = f"aarch64\n{TIMED_RUNS[0]}aarch64\n{TIMED_RUNS[1]}{TIMED_MEDIAN}\n"
+    cases = (
+        (
+            "run_guest_command_bench.py",
+            (*command, "--sample-output", "{directory}/profile.txt",
+             "--sample-seconds", "1"),
+            "aarch64",
+            mock.call(emulator, rootfs, "1024M", "tmpfs", ("ncpus=1",),
+                      init_shell=False, overlay_shell=True, engine="jit",
+                      core_class="performance", payloads={}),
+            [("boot_and_login",),
+             (*sample, "DIR/profile-1.txt"), *timed("uname -m"), ("reap",),
+             (*sample, "DIR/profile-2.txt"), *timed("uname -m"), ("reap",),
+             ("shutdown", 60)],
+            output,
+        ),
+        (
+            "run_guest_command_bench.py",
+            (*command, "--shell-init", "--timeout", "45"),
+            "aarch64",
+            mock.call(emulator, rootfs, "1024M", "tmpfs", ("ncpus=1",),
+                      init_shell=True, overlay_shell=False, engine="jit",
+                      core_class="performance", payloads={}),
+            [("boot_to_shell", 180),
+             ("run", "mount -t tmpfs -o mode=1777 tmpfs /tmp", 30),
+             *timed("uname -m", 45), *timed("uname -m", 45),
+             ("shutdown", 60)],
+            output,
+        ),
+        (
+            "run_guest_exec_bench.py",
+            ("--cpus", "2", "--workers", "2", "--executions", "4",
+             "--repetitions", "2", "--engine", "jit"),
+            "",
+            mock.call(emulator, rootfs, "1024M", "tmpfs", ("ncpus=2",),
+                      overlay_shell=True, engine="jit",
+                      core_class="performance"),
+            [("boot_and_login",), *timed(EXEC_WORKLOAD),
+             *timed(EXEC_WORKLOAD), ("shutdown", 60)],
+            f"{TIMED_RUNS[0]}{TIMED_RUNS[1]}{TIMED_MEDIAN}\n",
+        ),
+        (
+            "run_guest_link_bench.py",
+            link,
+            "UML_PERF_PROBE steps=7\nOK\nOK",
+            mock.call(emulator, rootfs, "1024M", "tmpfs", ("ncpus=2",),
+                      init_shell=False, overlay_shell=True, engine="jit",
+                      core_class="efficiency",
+                      payloads={"/usr/local/libexec/uml-test/guest-link-loop":
+                                mock.ANY}),
+            [("boot_and_login", 180), *timed(LINK_WORKLOAD),
+             *timed(LINK_WORKLOAD), ("shutdown", 60)],
+            f"guest run 1: UML_PERF_PROBE steps=7\n{TIMED_RUNS[0]}"
+            f"guest run 2: UML_PERF_PROBE steps=7\n{TIMED_RUNS[1]}"
+            f"{TIMED_MEDIAN} [engine=jit cores=efficiency cpus=2 workers=2]\n",
+        ),
+    )
+    for runner, extra, guest_output, construction, expected, report in cases:
+        events, built, stdout, error = run_timed_session(
+            runner, extra, guest_output
+        )
+        if (error, built, events, stdout) != (
+            None, construction, expected, report
+        ):
+            raise RuntimeError(
+                f"{runner} {extra}: error={error}\nGuest: {built}\n"
+                f"events: {events}\nstdout: {stdout!r}"
+            )
+        if runner == "run_guest_link_bench.py":
+            probe = built.kwargs["payloads"][
+                "/usr/local/libexec/uml-test/guest-link-loop"
+            ]
+            if (probe.contents, probe.mode) != (b"probe", 0o755):
+                raise RuntimeError(f"link bench installed {probe!r}")
+
+    for runner, extra, guest_output, *_ in (cases[0], *cases[2:]):
+        for options, message in (
+            ({"command_status": 3}, "repetition 1 failed (3)\n"),
+            ({"shutdown_ok": False},
+             "emulator did not halt cleanly within 60 seconds"),
+            ({"emulator_status": 23}, "emulator exited with status 23"),
+        ):
+            *_, error = run_timed_session(
+                runner, extra, guest_output, **options
+            )
+            if error is None or not error.startswith(message):
+                raise RuntimeError(f"{runner} {options}: error={error}")
+    *_, error = run_timed_session(*cases[1][:3], command_status=3)
+    if error != "guest mount setup failed\naarch64":
+        raise RuntimeError(f"shell-init accepted a failed mount: {error}")
+    *_, error = run_timed_session("run_guest_link_bench.py", link, "OK")
+    if error != "repetition 1 returned unexpected output 'OK'":
+        raise RuntimeError(f"link bench accepted one OK of two: {error}")
+
+
 def verify_no_root_device_option() -> None:
     """The launcher chooses the root device; no runner restates it."""
     cases = (
@@ -446,6 +660,7 @@ def main() -> int:
     verify_geekbench_shutdown_contract()
     verify_guest_shell_shutdown_contract()
     verify_geekbench_payloads()
+    verify_timed_sessions()
     verify_no_root_device_option()
     verify_core_class_launcher()
     for runner in RUNNERS:
