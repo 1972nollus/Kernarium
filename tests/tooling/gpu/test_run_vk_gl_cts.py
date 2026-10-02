@@ -1703,15 +1703,15 @@ native_display_cleanup
         )
         self.assertIn("artifact_transport=virtio-serial", virtio_launcher)
         self.assertIn(
-            f"artifact_channel={cts.VIRTIO_SERIAL_GUEST_DEVICE}",
+            f"channel={cts.VIRTIO_SERIAL_GUEST_DEVICE}",
             virtio_launcher,
         )
         protocol = (
             REPO_ROOT / "darwin/device/console/protocol.hpp"
         ).read_text(encoding="utf-8")
         self.assertIn(f'"{cts.VIRTIO_SERIAL_PORT_NAME}"', protocol)
-        self.assertNotIn('stty -F "$artifact_channel"', virtio_launcher)
-        self.assertIn('exec 3<> "$artifact_channel"', virtio_launcher)
+        self.assertNotIn('stty -F "$channel"', virtio_launcher)
+        self.assertIn('exec 3<> "$channel"', virtio_launcher)
         self.assertIn("UML_CTS_ARTIFACT_ACK|$name|$index", virtio_launcher)
         self.assertIn("timeout --signal=TERM 30 head -n 1", virtio_launcher)
         syntax = subprocess.run(

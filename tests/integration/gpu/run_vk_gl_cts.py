@@ -3040,6 +3040,7 @@ def artifact_transport_program(
     error_prefix: str,
     base64_line_length: int,
     missing_source_status: int,
+    console_transport: bool = False,
 ) -> str:
     """The guest side of the acknowledged artifact transport.
 
@@ -3061,9 +3062,53 @@ def artifact_transport_program(
     already on the wire.  Only a failure before the first frame may be
     retried: re-sending a name the host has already opened is a duplicate
     start, which fails its decode outright, salvage lane included.
+
+    ``prepare_channel`` opens the virtio-serial ``channel`` as descriptor 3
+    and ``emit_frame`` sends one frame through it, failing unless the host
+    acknowledges exactly that frame.  The caller defines ``output``,
+    ``channel``, ``channel_ready=0`` and ``artifact_framed=0``.  With
+    ``console_transport`` it also defines ``artifact_transport``, and a
+    console launcher prints its frames without acknowledgement.
     """
 
-    return f"""artifact_discard()
+    console_open = (
+        '    [ "$artifact_transport" = virtio-serial ] || return 0\n'
+        if console_transport else ""
+    )
+    console_frame = (
+        '    if [ "$artifact_transport" = console ]; then\n'
+        "        printf '%s\\n' \"$frame\"\n"
+        "        return 0\n"
+        "    fi\n"
+        if console_transport else ""
+    )
+    return f"""prepare_channel()
+{{
+{console_open}    [ "$channel_ready" -eq 0 ] || return 0
+    remaining=60
+    while [ ! -c "$channel" ]; do
+        [ "$remaining" -gt 0 ] || return 1
+        remaining=$((remaining - 1))
+        sleep 1
+    done
+    exec 3<> "$channel" || return 1
+    channel_ready=1
+}}
+
+emit_frame()
+{{
+    frame="$1"
+    expected_ack="$2"
+{console_frame}    [ "$channel_ready" -eq 1 ] || return 1
+    printf '%s\\n' "$frame" >&3 || return 1
+    actual_ack=$(timeout --signal=TERM 30 head -n 1 <&3) || return 1
+    [ "$actual_ack" = "$expected_ack" ] || {{
+        echo '{error_prefix} artifact acknowledgement changed'
+        return 1
+    }}
+}}
+
+artifact_discard()
 {{
     rm -f "$output/$1.gz" "$output/$1.gz.b64"
 }}
@@ -3875,6 +3920,7 @@ actual_waiver_sha=$(sha256sum {shlex.quote(GUEST_WAIVER_PATH)} | cut -d ' ' -f 1
         error_prefix="UML_CTS_ERROR:",
         base64_line_length=1024,
         missing_source_status=0,
+        console_transport=True,
     )
     checkpoint_function = qpa_checkpoint_program()
     return f"""#!/bin/sh
@@ -3889,8 +3935,8 @@ inventory_report={shlex.quote(inventory_report)}
 hierarchy_inventory_mode={1 if hierarchy_inventory else 0}
 selected_mode={1 if selection is not None else 0}
 artifact_transport={shlex.quote(artifact_transport)}
-artifact_channel={shlex.quote(VIRTIO_SERIAL_GUEST_DEVICE)}
-artifact_fd_ready=0
+channel={shlex.quote(VIRTIO_SERIAL_GUEST_DEVICE)}
+channel_ready=0
 checkpoint_mode={checkpoint}
 checkpoint_bytes={checkpoint_bytes}
 progress_timeout={progress_timeout}
@@ -3906,37 +3952,6 @@ qpa_segments=0
 checkpoint_failures=0
 progress_timed_out=0
 status=1
-
-prepare_artifact_transport()
-{{
-    [ "$artifact_transport" = virtio-serial ] || return 0
-    [ "$artifact_fd_ready" -eq 0 ] || return 0
-    remaining=60
-    while [ ! -c "$artifact_channel" ]; do
-        [ "$remaining" -gt 0 ] || return 1
-        remaining=$((remaining - 1))
-        sleep 1
-    done
-    exec 3<> "$artifact_channel" || return 1
-    artifact_fd_ready=1
-}}
-
-emit_frame()
-{{
-    frame="$1"
-    acknowledgement="$2"
-    if [ "$artifact_transport" = console ]; then
-        printf '%s\n' "$frame"
-        return 0
-    fi
-    [ "$artifact_fd_ready" -eq 1 ] || return 1
-    printf '%s\n' "$frame" >&3 || return 1
-    actual_ack=$(timeout --signal=TERM 30 head -n 1 <&3) || return 1
-    [ "$actual_ack" = "$acknowledgement" ] || {{
-        echo 'UML_CTS_ERROR: artifact acknowledgement changed'
-        return 1
-    }}
-}}
 
 {transport_functions}
 {checkpoint_function}
@@ -4031,7 +4046,7 @@ finish()
     set +e
     printf 'UML_CTS_STATUS|rc=%s\n' "$status"
     transfer_status=0
-    if ! prepare_artifact_transport; then
+    if ! prepare_channel; then
         echo 'UML_CTS_ERROR: artifact transport did not become ready'
         transfer_status=1
     fi
@@ -4051,7 +4066,7 @@ finish()
     # Sent last, and never withheld: a session that lost results still
     # reports its verdict, and the host's wait ends on this frame.
     emit_artifact summary.txt "$summary" || transfer_status=1
-    if [ "$artifact_fd_ready" -eq 1 ]; then
+    if [ "$channel_ready" -eq 1 ]; then
         exec 3>&-
     fi
     if [ "$transfer_status" -ne 0 ]; then
@@ -4099,7 +4114,7 @@ runuser -u uml -- env \
 {prepare_command}
 
 if [ "$checkpoint_mode" -eq 1 ]; then
-    prepare_artifact_transport || {{
+    prepare_channel || {{
         echo 'UML_CTS_ERROR: artifact transport did not become ready'
         exit 1
     }}
