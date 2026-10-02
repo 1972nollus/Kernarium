@@ -338,6 +338,53 @@ unset MINIMUM_OS
 expect_framework_rejection \
 	"KosmicKrisp.framework does not export vkGetInstanceProcAddr" \
 	KosmicKrisp "$TEST_ROOT/fixture.c"
+
+# Venus calls KosmicKrisp's entry point directly, so neither the renderer nor
+# KosmicKrisp loads code at run time. libepoxy may: its Apple topic opens only
+# the packaged MesaEGL.framework.
+cat >"$TEST_ROOT/kosmickrisp-loader.c" <<'EOF'
+#include <dlfcn.h>
+void *vkGetInstanceProcAddr(void *instance, const char *name)
+{
+    (void)instance;
+    return dlsym(dlopen("libvulkan.dylib", RTLD_NOW), name);
+}
+EOF
+expect_framework_rejection \
+	"KosmicKrisp.framework contains a dynamic-loader fallback" \
+	KosmicKrisp "$TEST_ROOT/kosmickrisp-loader.c"
+cat >"$TEST_ROOT/virgl-loader.c" <<'EOF'
+#include <dlfcn.h>
+extern void *vkGetInstanceProcAddr(void *, const char *);
+void *uml_direct_vulkan_provider(void)
+{
+    (void)dlsym(dlopen("libvulkan.dylib", RTLD_NOW), "vkCreateInstance");
+    return vkGetInstanceProcAddr(0, "vkCreateInstance");
+}
+EOF
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=26.0 \
+	-c "$TEST_ROOT/virgl-loader.c" -o "$TEST_ROOT/virgl-loader.o"
+CASE_PREFIX="$TEST_ROOT/renderer-loader"
+copy_fixture "$CASE_PREFIX"
+rm "$CASE_PREFIX/lib/libvirglrenderer.a"
+xcrun ar rcs "$CASE_PREFIX/lib/libvirglrenderer.a" "$TEST_ROOT/virgl-loader.o"
+expect_cmake_diagnostic "libvirglrenderer.a contains a dynamic-loader fallback" \
+	verify "$CASE_PREFIX"
+cat >"$TEST_ROOT/epoxy-loader.c" <<'EOF'
+#include <dlfcn.h>
+void *uml_epoxy_fixture(const char *name)
+{
+    return dlsym(dlopen("@rpath/MesaEGL.framework/MesaEGL", RTLD_NOW), name);
+}
+EOF
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=26.0 \
+	-c "$TEST_ROOT/epoxy-loader.c" -o "$TEST_ROOT/epoxy-loader.o"
+CASE_PREFIX="$TEST_ROOT/epoxy-loader"
+copy_fixture "$CASE_PREFIX"
+rm "$CASE_PREFIX/lib/libepoxy.a"
+xcrun ar rcs "$CASE_PREFIX/lib/libepoxy.a" "$TEST_ROOT/epoxy-loader.o"
+verify "$CASE_PREFIX" >/dev/null ||
+	fail "libepoxy opening its packaged EGL provider was rejected"
 expect_framework_rejection \
 	"MesaEGL.framework does not export the EGL platform bootstrap" \
 	MesaEGL "$TEST_ROOT/fixture.c"

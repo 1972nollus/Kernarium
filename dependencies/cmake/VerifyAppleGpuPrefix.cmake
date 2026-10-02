@@ -222,10 +222,18 @@ foreach(_archive IN LISTS _static_archives)
         RESULT_VARIABLE _archive_nm_status
         OUTPUT_VARIABLE _archive_undefined_symbols)
     get_filename_component(_archive_name "${_archive}" NAME)
+    # Venus calls KosmicKrisp's vkGetInstanceProcAddr directly and loads no
+    # code at run time (venus_dynamic_loading=disabled in the platform
+    # contract). libepoxy may dlopen: its Apple topic opens only the packaged
+    # @rpath/MesaEGL.framework/MesaEGL and resolves GL through EGL.
     if(_archive_name STREQUAL "libvirglrenderer.a")
         if(NOT _archive_undefined_symbols MATCHES "_vkGetInstanceProcAddr")
             message(FATAL_ERROR
                 "${_archive} does not directly reference vkGetInstanceProcAddr")
+        endif()
+        if(_archive_undefined_symbols MATCHES "(^|\n)_(dlopen|dlsym)(\n|$)")
+            message(FATAL_ERROR
+                "${_archive} contains a dynamic-loader fallback")
         endif()
         string(REGEX REPLACE
             "[^\n]*_vkGetInstanceProcAddr[^\n]*(\n|$)" ""
@@ -234,9 +242,7 @@ foreach(_archive IN LISTS _static_archives)
         set(_unexpected_provider_symbols "${_archive_undefined_symbols}")
     endif()
     if(NOT _archive_nm_status EQUAL 0 OR
-       _unexpected_provider_symbols MATCHES "_(CGL|EAGL|vk[A-Z])" OR
-       _archive_undefined_symbols MATCHES
-           "[ \t]_(dlopen|dlsym)([ \t\n]|$)")
+       _unexpected_provider_symbols MATCHES "_(CGL|EAGL|vk[A-Z])")
         message(FATAL_ERROR
             "${_archive} contains a forbidden provider symbol")
     endif()
@@ -377,7 +383,7 @@ endif()
 execute_process(COMMAND "${_tool_nm}" -u "${_binary}"
     RESULT_VARIABLE _undefined_status OUTPUT_VARIABLE _undefined_symbols)
 if(NOT _undefined_status EQUAL 0 OR
-   _undefined_symbols MATCHES "[ \t]_(dlopen|dlsym)([ \t\n]|$)")
+   _undefined_symbols MATCHES "(^|\n)_(dlopen|dlsym)(\n|$)")
     message(FATAL_ERROR
         "KosmicKrisp.framework contains a dynamic-loader fallback")
 endif()
