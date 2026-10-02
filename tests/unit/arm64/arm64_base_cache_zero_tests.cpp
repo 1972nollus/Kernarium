@@ -1,11 +1,26 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "arm64_base_cache_zero_test_support.hpp"
+#include "arm64_engine_test_support.hpp"
 
 #include "cpu/arm64/gadgets/program.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <span>
+
+namespace arm64_base_cache_zero_test {
+
+namespace arm64 = uml::cpu::arm64;
+namespace engine_tests = uml::emulator::tests;
+
+[[nodiscard]] constexpr std::uint32_t instruction(unsigned source)
+{
+	return 0xd50b'7420U | (source & 31U);
+}
+
+} // namespace arm64_base_cache_zero_test
 
 namespace test = arm64_base_cache_zero_test;
 namespace gadgets = uml::cpu::arm64::gadgets;

@@ -74,9 +74,9 @@
         set(_uml_arm64_corpus_zlib uml_arm64_corpus_zlib)
     endif()
 
-    # Focused tests that need engine hooks, host-private entry state, or
-    # engine options run their cases through the production gadget and JIT
-    # engines with this harness.
+    # Focused tests that need engine hooks or host-private entry state run
+    # their cases through the production gadget and JIT engines with this
+    # harness.
     add_library(uml_arm64_engine_test_support STATIC
         ${PROJECT_SOURCE_DIR}/tests/unit/arm64/arm64_engine_test_support.cpp)
     target_link_libraries(uml_arm64_engine_test_support PRIVATE
