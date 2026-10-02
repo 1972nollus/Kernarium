@@ -59,12 +59,8 @@ uml_verify_dependency_manifest_product(
 uml_verify_source_trees(
     INSTALLED "${PREFIX}/share/uml-dependencies/source-trees.tsv"
     LABEL "Apple GPU"
-    SOURCES
-        libepoxy "${SOURCE_ROOT}/dependencies/patches/libepoxy/series.tsv"
-        virglrenderer "${SOURCE_ROOT}/dependencies/patches/virglrenderer/series.tsv"
-        mesa "${SOURCE_ROOT}/dependencies/patches/mesa/series.tsv"
-        venus-protocol
-            "${SOURCE_ROOT}/tools/rootfs/vulkan/patches/venus-protocol/series.tsv")
+    SOURCE_ROOT "${SOURCE_ROOT}"
+    PRODUCT apple-gpu-vulkan-experiment)
 
 file(GLOB_RECURSE _prefix_entries LIST_DIRECTORIES true "${PREFIX}/*")
 foreach(_entry IN LISTS _prefix_entries)

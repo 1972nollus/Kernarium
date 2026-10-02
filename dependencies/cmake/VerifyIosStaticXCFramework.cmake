@@ -7,8 +7,7 @@
 # uml_verify_ios_static_xcframework(
 #     LABEL <text> PRODUCT <manifest product> FRAMEWORK <name>
 #     HEADERS <header>... SYMBOLS <exported symbol>...
-#     FORBIDDEN <regex>... FORBIDDEN_MESSAGE <text>
-#     [SOURCE_TREES <source> <series.tsv>...])
+#     FORBIDDEN <regex>... FORBIDDEN_MESSAGE <text>)
 
 include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/VerifyPrefix.cmake")
@@ -16,7 +15,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/VerifyPrefix.cmake")
 function(uml_verify_ios_static_xcframework)
     cmake_parse_arguments(PARSE_ARGV 0 _arg ""
         "LABEL;PRODUCT;FRAMEWORK;FORBIDDEN_MESSAGE"
-        "HEADERS;SYMBOLS;FORBIDDEN;SOURCE_TREES")
+        "HEADERS;SYMBOLS;FORBIDDEN")
     if(NOT DEFINED PREFIX)
         message(FATAL_ERROR "PREFIX is required for ${_arg_LABEL} verification")
     endif()
@@ -42,12 +41,11 @@ function(uml_verify_ios_static_xcframework)
         INSTALLED "${PREFIX}/share/uml-dependencies/manifest.tsv"
         PRODUCT ${_arg_PRODUCT}
         LABEL "${_arg_LABEL}")
-    if(_arg_SOURCE_TREES)
-        uml_verify_source_trees(
-            INSTALLED "${PREFIX}/share/uml-dependencies/source-trees.tsv"
-            LABEL "${_arg_LABEL}"
-            SOURCES ${_arg_SOURCE_TREES})
-    endif()
+    uml_verify_source_trees(
+        INSTALLED "${PREFIX}/share/uml-dependencies/source-trees.tsv"
+        LABEL "${_arg_LABEL}"
+        SOURCE_ROOT "${SOURCE_ROOT}"
+        PRODUCT ${_arg_PRODUCT})
     string(REGEX REPLACE "^ios-" "" _contract "${_arg_PRODUCT}")
     foreach(_platform IN ITEMS device simulator)
         set(_relative "ios-${_platform}-${_contract}-arm64.tsv")

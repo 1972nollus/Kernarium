@@ -29,11 +29,8 @@ uml_verify_dependency_manifest_product(
 uml_verify_source_trees(
     INSTALLED "${PREFIX}/share/uml-dependencies/source-trees.tsv"
     LABEL "Kernel host tools"
-    SOURCES
-        musl-obstack "${SOURCE_ROOT}/dependencies/patches/musl-obstack/series.tsv"
-        elfutils "${SOURCE_ROOT}/dependencies/patches/elfutils/series.tsv"
-        libbpf "${SOURCE_ROOT}/dependencies/patches/libbpf/series.tsv"
-        dwarves "${SOURCE_ROOT}/dependencies/patches/dwarves/series.tsv")
+    SOURCE_ROOT "${SOURCE_ROOT}"
+    PRODUCT kernel-host-tools)
 
 uml_verify_provenance_copy(
     LABEL "Kernel host tools"

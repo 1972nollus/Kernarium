@@ -1,18 +1,29 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 include_guard(GLOBAL)
+include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
 
 # Checks the CMake dependency prefix verifiers share. LABEL names the prefix in
 # diagnostics.
 
-# A patched source is identified by the tree its generated series records.
+# uml_verify_source_trees(INSTALLED <file> LABEL <text> SOURCE_ROOT <dir>
+#     PRODUCT <name>)
+# A patched source is identified by the tree its generated series records,
+# and a product's patched sources are its manifest rows with a patch series.
 # Builders install source-trees.tsv from the prepared sources; the prefix is
-# current exactly while every listed tree matches its series.
-#
-# uml_verify_source_trees(INSTALLED <file> LABEL <text>
-#     SOURCES <name> <series.tsv> [<name> <series.tsv> ...])
+# current exactly while it lists those sources and every tree matches its
+# series. A product without a patched source records no source trees.
 function(uml_verify_source_trees)
-    cmake_parse_arguments(PARSE_ARGV 0 _arg "" "INSTALLED;LABEL" "SOURCES")
+    cmake_parse_arguments(PARSE_ARGV 0 _arg ""
+        "INSTALLED;LABEL;SOURCE_ROOT;PRODUCT" "")
+    uml_manifest_patch_series(
+        MANIFEST "${_arg_SOURCE_ROOT}/dependencies/manifest.tsv"
+        SOURCE_ROOT "${_arg_SOURCE_ROOT}"
+        PRODUCT "${_arg_PRODUCT}"
+        OWNED _pairs)
+    if(NOT _pairs)
+        return()
+    endif()
     if(NOT EXISTS "${_arg_INSTALLED}" OR IS_SYMLINK "${_arg_INSTALLED}")
         message(FATAL_ERROR
             "${_arg_LABEL} source trees are missing: ${_arg_INSTALLED}")
@@ -37,7 +48,6 @@ function(uml_verify_source_trees)
     endforeach()
 
     set(_expected_names)
-    set(_pairs ${_arg_SOURCES})
     while(_pairs)
         list(POP_FRONT _pairs _name _series)
         list(APPEND _expected_names "${_name}")

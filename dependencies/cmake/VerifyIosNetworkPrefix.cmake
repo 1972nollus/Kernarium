@@ -42,9 +42,8 @@ uml_verify_dependency_manifest_product(
 uml_verify_source_trees(
     INSTALLED "${PREFIX}/share/uml-dependencies/source-trees.tsv"
     LABEL "iOS network"
-    SOURCES
-        glib-ios "${SOURCE_ROOT}/dependencies/patches/glib-ios/series.tsv"
-        libslirp "${SOURCE_ROOT}/dependencies/patches/libslirp/series.tsv")
+    SOURCE_ROOT "${SOURCE_ROOT}"
+    PRODUCT ios-network)
 uml_verify_provenance_copy(
     LABEL "iOS network"
     SOURCE "${SOURCE_ROOT}/dependencies/platforms/${_platform_receipt}"

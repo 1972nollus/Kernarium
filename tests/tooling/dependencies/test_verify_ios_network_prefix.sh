@@ -197,4 +197,37 @@ copy_fixture "$CASE"
 rm "$CASE/share/uml-dependencies/source-trees.tsv"
 expect_cmake_diagnostic "source trees are missing" verify "$CASE" ios
 
+# The patched sources are the product's manifest rows with a patch series, so
+# a series given to another row is required with no verifier change.
+SOURCE="$TEST_ROOT/source"
+mkdir -p "$SOURCE/dependencies/platforms" "$SOURCE/dependencies/patches/pcre2"
+for source in glib-ios libslirp; do
+	mkdir -p "$SOURCE/dependencies/patches/$source"
+	cp "$ROOT_DIR/dependencies/patches/$source/series.tsv" \
+		"$SOURCE/dependencies/patches/$source/series.tsv"
+done
+PCRE2_TREE=1111111111111111111111111111111111111111
+printf 'tree\t%s\n' "$PCRE2_TREE" \
+	>"$SOURCE/dependencies/patches/pcre2/series.tsv"
+cp "$ROOT_DIR/dependencies/platforms/ios-device-network-arm64.tsv" \
+	"$SOURCE/dependencies/platforms/"
+awk -F '\t' -v OFS='\t' \
+	'$1 == "pcre2" { $7 = "patches/pcre2/series.tsv" } { print }' \
+	"$ROOT_DIR/dependencies/manifest.tsv" >"$SOURCE/dependencies/manifest.tsv"
+verify_patched_pcre2()
+{
+	cmake -DPREFIX="$1" -DSOURCE_ROOT="$SOURCE" -DPLATFORM=ios \
+		-P "$VERIFIER"
+}
+CASE="$TEST_ROOT/patched-pcre2"
+copy_fixture "$CASE"
+cp "$SOURCE/dependencies/manifest.tsv" \
+	"$CASE/share/uml-dependencies/manifest.tsv"
+expect_cmake_diagnostic "pcre2 was built from tree ''" \
+	verify_patched_pcre2 "$CASE"
+printf 'pcre2\t%s\n' "$PCRE2_TREE" \
+	>>"$CASE/share/uml-dependencies/source-trees.tsv"
+verify_patched_pcre2 "$CASE" >/dev/null ||
+	fail "a prefix listing every patched source the manifest names was rejected"
+
 printf '%s\n' "iOS network prefix verifier tests passed"

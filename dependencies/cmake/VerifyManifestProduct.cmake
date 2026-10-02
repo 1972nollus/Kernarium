@@ -58,3 +58,59 @@ function(uml_verify_dependency_manifest_product)
             "${ARG_LABEL} dependency manifest rows do not match")
     endif()
 endfunction()
+
+# uml_manifest_patch_series(MANIFEST <file> SOURCE_ROOT <dir> [PRODUCT <name>]
+#     [OWNED <var>] [LAYERS <var>])
+# Reads the patch series of every manifest row that has one, or of PRODUCT's
+# rows only. OWNED receives "<name>;<series.tsv>" pairs naming each row's last
+# layer, whose recorded tree is that of the whole stack. LAYERS receives every
+# layer's series.tsv in manifest and stacking order. series-field.sh owns the
+# field grammar: layers join with "+", a "rootfs-vulkan:PATH" layer is below
+# tools/rootfs/vulkan, and any other layer is below dependencies.
+function(uml_manifest_patch_series)
+    cmake_parse_arguments(PARSE_ARGV 0 _arg ""
+        "MANIFEST;SOURCE_ROOT;PRODUCT;OWNED;LAYERS" "")
+    if(NOT EXISTS "${_arg_MANIFEST}" OR IS_SYMLINK "${_arg_MANIFEST}")
+        message(FATAL_ERROR
+            "Dependency manifest is missing or unsafe: ${_arg_MANIFEST}")
+    endif()
+    file(STRINGS "${_arg_MANIFEST}" _rows)
+    set(_owned)
+    set(_layers)
+    foreach(_row IN LISTS _rows)
+        if(_row MATCHES "^#" OR _row STREQUAL "")
+            continue()
+        endif()
+        string(REPLACE "\t" ";" _fields "${_row}")
+        list(LENGTH _fields _field_count)
+        if(NOT _field_count EQUAL 7)
+            message(FATAL_ERROR "Malformed dependency manifest row: ${_row}")
+        endif()
+        list(GET _fields 0 _name)
+        list(GET _fields 2 _products)
+        list(GET _fields 6 _series)
+        string(REPLACE "," ";" _products "${_products}")
+        list(FIND _products "${_arg_PRODUCT}" _product_index)
+        if(_name STREQUAL "name" OR _series STREQUAL "-" OR
+           (_arg_PRODUCT AND _product_index EQUAL -1))
+            continue()
+        endif()
+        string(REPLACE "+" ";" _series_layers "${_series}")
+        foreach(_layer IN LISTS _series_layers)
+            if(_layer MATCHES "^rootfs-vulkan:(.+)$")
+                set(_path
+                    "${_arg_SOURCE_ROOT}/tools/rootfs/vulkan/${CMAKE_MATCH_1}")
+            else()
+                set(_path "${_arg_SOURCE_ROOT}/dependencies/${_layer}")
+            endif()
+            list(APPEND _layers "${_path}")
+        endforeach()
+        list(APPEND _owned "${_name}" "${_path}")
+    endforeach()
+    if(_arg_OWNED)
+        set(${_arg_OWNED} "${_owned}" PARENT_SCOPE)
+    endif()
+    if(_arg_LAYERS)
+        set(${_arg_LAYERS} "${_layers}" PARENT_SCOPE)
+    endif()
+endfunction()
