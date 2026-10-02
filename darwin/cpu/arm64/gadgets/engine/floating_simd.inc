@@ -267,18 +267,9 @@ afp_twins_end
 gadget floating_round_sized_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	helper_call uml_arm64_floating_round_sized_software
-	ldp x1, x2, [sp], #16
 	/* Merge any host IDC/other status raised while classifying operands with
 	 * the explicit IOC/IXC produced by the bounded reference helper. */
-	mrs x17, fpsr
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	orr w16, w16, w17
-	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x16
+	fpsr_merge_helper floating_round_sized_software
 	next_gadget
 
 /* Horizontal/pairwise FP operations are completely specialized by operation
@@ -437,24 +428,14 @@ gadget bfloat_convert_upper_native
 gadget bfloat_convert_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	helper_call uml_arm64_bfloat_conversion_software
-	ldp x1, x2, [sp], #16
-	mrs x17, fpsr
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	orr w16, w16, w17
-	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x16
+	fpsr_merge_helper bfloat_conversion_software
 	next_gadget
 
-/* Native BFDOT is exact on every BF16 host: FPCR.EBF is RES0, so the guest
- * can only select the standard behavior, which ignores FPCR. Width and indexed
- * pair are fixed by translation, so these gadgets contain no instruction-shape
- * branch. */
-.macro bfloat_dot_native name, encoding
-gadget bfloat_dot_native_\name
+/* One native instruction \encoding on q0, q1 and the accumulator q2, whose
+ * CpuState offsets the operand packs at bits 16, 32 and 0. The two macros
+ * differ only in how they address CpuState. */
+.macro ternary_q_native name, encoding
+gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	uxth w9, w8
@@ -468,29 +449,8 @@ gadget bfloat_dot_native_\name
 	next_gadget
 .endm
 
-bfloat_dot_native vector_2s, 0x2e41fc02
-bfloat_dot_native vector_4s, 0x6e41fc02
-bfloat_dot_native indexed_2s_0, 0x0f41f002
-bfloat_dot_native indexed_2s_1, 0x0f61f002
-bfloat_dot_native indexed_2s_2, 0x0f41f802
-bfloat_dot_native indexed_2s_3, 0x0f61f802
-bfloat_dot_native indexed_4s_0, 0x4f41f002
-bfloat_dot_native indexed_4s_1, 0x4f61f002
-bfloat_dot_native indexed_4s_2, 0x4f41f802
-bfloat_dot_native indexed_4s_3, 0x4f61f802
-.purgem bfloat_dot_native
-
-gadget bfloat_dot_software
-	ensure_fp_environment
-	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	helper_call uml_arm64_bfloat_dot_software
-	ldp x1, x2, [sp], #16
-	next_gadget
-
-gadget bfloat_matrix_native
+.macro ternary_q_native_base name, encoding
+gadget \name
 	ensure_fp_environment
 	ldr x8, [_stream], #8
 	uxth w9, w8
@@ -502,48 +462,54 @@ gadget bfloat_matrix_native
 	ldr q0, [x13]
 	ldr q1, [x14]
 	ldr q2, [x15]
-	.inst 0x6e41ec02
+	.inst \encoding
 	str q2, [x15]
 	next_gadget
+.endm
+
+/* Native BFDOT is exact on every BF16 host: FPCR.EBF is RES0, so the guest
+ * can only select the standard behavior, which ignores FPCR. Width and indexed
+ * pair are fixed by translation, so these gadgets contain no instruction-shape
+ * branch. */
+ternary_q_native bfloat_dot_native_vector_2s, 0x2e41fc02
+ternary_q_native bfloat_dot_native_vector_4s, 0x6e41fc02
+ternary_q_native bfloat_dot_native_indexed_2s_0, 0x0f41f002
+ternary_q_native bfloat_dot_native_indexed_2s_1, 0x0f61f002
+ternary_q_native bfloat_dot_native_indexed_2s_2, 0x0f41f802
+ternary_q_native bfloat_dot_native_indexed_2s_3, 0x0f61f802
+ternary_q_native bfloat_dot_native_indexed_4s_0, 0x4f41f002
+ternary_q_native bfloat_dot_native_indexed_4s_1, 0x4f61f002
+ternary_q_native bfloat_dot_native_indexed_4s_2, 0x4f41f802
+ternary_q_native bfloat_dot_native_indexed_4s_3, 0x4f61f802
+
+gadget bfloat_dot_software
+	ensure_fp_environment
+	ldr x8, [_stream], #8
+	software_helper bfloat_dot_software
+	next_gadget
+
+ternary_q_native_base bfloat_matrix_native, 0x6e41ec02
 
 gadget bfloat_matrix_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	helper_call uml_arm64_bfloat_matrix_software
-	ldp x1, x2, [sp], #16
+	software_helper bfloat_matrix_software
 	next_gadget
 
 /* Shape and CpuState offsets are resolved by the builder, leaving no runtime
  * test. */
-.macro half_fused_long_native name, encoding
-gadget half_fused_long_\name
-	ensure_fp_environment
-	ldr x8, [_stream], #8
-	uxth w9, w8
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	ldr q0, [_cpu, x10]
-	ldr q1, [_cpu, x11]
-	ldr q2, [_cpu, x9]
-	.inst \encoding
-	str q2, [_cpu, x9]
-	next_gadget
-.endm
-
-half_fused_long_native native_vector_add_lower_2s, 0x0e21ec02
-half_fused_long_native native_vector_add_lower_4s, 0x4e21ec02
-half_fused_long_native native_vector_add_upper_2s, 0x2e21cc02
-half_fused_long_native native_vector_add_upper_4s, 0x6e21cc02
-half_fused_long_native native_vector_sub_lower_2s, 0x0ea1ec02
-half_fused_long_native native_vector_sub_lower_4s, 0x4ea1ec02
-half_fused_long_native native_vector_sub_upper_2s, 0x2ea1cc02
-half_fused_long_native native_vector_sub_upper_4s, 0x6ea1cc02
+ternary_q_native half_fused_long_native_vector_add_lower_2s, 0x0e21ec02
+ternary_q_native half_fused_long_native_vector_add_lower_4s, 0x4e21ec02
+ternary_q_native half_fused_long_native_vector_add_upper_2s, 0x2e21cc02
+ternary_q_native half_fused_long_native_vector_add_upper_4s, 0x6e21cc02
+ternary_q_native half_fused_long_native_vector_sub_lower_2s, 0x0ea1ec02
+ternary_q_native half_fused_long_native_vector_sub_lower_4s, 0x4ea1ec02
+ternary_q_native half_fused_long_native_vector_sub_upper_2s, 0x2ea1cc02
+ternary_q_native half_fused_long_native_vector_sub_upper_4s, 0x6ea1cc02
 
 .macro half_fused_long_indexed operation, half, shape, prefix, index, bits
-	half_fused_long_native native_indexed_\operation\()_\half\()_\shape\()_\index, \
+	ternary_q_native \
+		half_fused_long_native_indexed_\operation\()_\half\()_\shape\()_\index, \
 		(\prefix | \bits)
 .endm
 .macro half_fused_long_indexed_shapes operation, half, shape, prefix
@@ -568,7 +534,6 @@ half_fused_long_indexed_shapes sub, upper, 4s, 0x6f81c002
 
 .purgem half_fused_long_indexed_shapes
 .purgem half_fused_long_indexed
-.purgem half_fused_long_native
 
 gadget half_fused_long_software
 	ensure_fp_environment
@@ -579,57 +544,29 @@ gadget half_fused_long_software
 /* BFMLALB/BFMLALT map one-for-one to branch-free BF16 instructions. Shape,
  * half selection, and indexed lane are all selected by the builder, leaving
  * only register extraction in the hot path. */
-.macro bfloat_multiply_long_native name, encoding
-gadget bfloat_multiply_long_native_\name
-	ensure_fp_environment
-	ldr x8, [_stream], #8
-	uxth w9, w8
-	ubfx x10, x8, #16, #16
-	ubfx x11, x8, #32, #16
-	add x13, _cpu, x10
-	add x14, _cpu, x11
-	add x15, _cpu, x9
-	ldr q0, [x13]
-	ldr q1, [x14]
-	ldr q2, [x15]
-	.inst \encoding
-	str q2, [x15]
-	next_gadget
-.endm
-
-bfloat_multiply_long_native vector_b, 0x2ec1fc02
-bfloat_multiply_long_native vector_t, 0x6ec1fc02
-bfloat_multiply_long_native indexed_b_0, 0x0fc1f002
-bfloat_multiply_long_native indexed_b_1, 0x0fd1f002
-bfloat_multiply_long_native indexed_b_2, 0x0fe1f002
-bfloat_multiply_long_native indexed_b_3, 0x0ff1f002
-bfloat_multiply_long_native indexed_b_4, 0x0fc1f802
-bfloat_multiply_long_native indexed_b_5, 0x0fd1f802
-bfloat_multiply_long_native indexed_b_6, 0x0fe1f802
-bfloat_multiply_long_native indexed_b_7, 0x0ff1f802
-bfloat_multiply_long_native indexed_t_0, 0x4fc1f002
-bfloat_multiply_long_native indexed_t_1, 0x4fd1f002
-bfloat_multiply_long_native indexed_t_2, 0x4fe1f002
-bfloat_multiply_long_native indexed_t_3, 0x4ff1f002
-bfloat_multiply_long_native indexed_t_4, 0x4fc1f802
-bfloat_multiply_long_native indexed_t_5, 0x4fd1f802
-bfloat_multiply_long_native indexed_t_6, 0x4fe1f802
-bfloat_multiply_long_native indexed_t_7, 0x4ff1f802
-.purgem bfloat_multiply_long_native
+ternary_q_native_base bfloat_multiply_long_native_vector_b, 0x2ec1fc02
+ternary_q_native_base bfloat_multiply_long_native_vector_t, 0x6ec1fc02
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_0, 0x0fc1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_1, 0x0fd1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_2, 0x0fe1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_3, 0x0ff1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_4, 0x0fc1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_5, 0x0fd1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_6, 0x0fe1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_b_7, 0x0ff1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_0, 0x4fc1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_1, 0x4fd1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_2, 0x4fe1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_3, 0x4ff1f002
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_4, 0x4fc1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_5, 0x4fd1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_6, 0x4fe1f802
+ternary_q_native_base bfloat_multiply_long_native_indexed_t_7, 0x4ff1f802
 
 gadget bfloat_multiply_long_software
 	ensure_fp_environment
 	ldr x8, [_stream], #8
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	helper_call uml_arm64_bfloat_multiply_long_software
-	ldp x1, x2, [sp], #16
-	mrs x17, fpsr
-	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	orr w16, w16, w17
-	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
-	msr fpsr, x16
+	fpsr_merge_helper bfloat_multiply_long_software
 	next_gadget
 
 /* Reciprocal operation, arity, precision, and vector width are selected at
@@ -3133,7 +3070,9 @@ gadget \name\()_native
 	next_gadget
 .endm
 
-.macro simd_aes_software name
+/* A two-register transform in software: the helper takes CpuState and both
+ * vector offsets. The SHA family below shares it. */
+.macro simd_crypto_two_software name
 gadget \name\()_soft
 	ldr x10, [_stream], #8
 	unpack_u16_2 x10, x8, x9
@@ -3150,12 +3089,11 @@ simd_aes_native_binary simd_aese, aese
 simd_aes_native_binary simd_aesd, aesd
 simd_aes_native_unary simd_aesmc, aesmc
 simd_aes_native_unary simd_aesimc, aesimc
-simd_aes_software simd_aese
-simd_aes_software simd_aesd
-simd_aes_software simd_aesmc
-simd_aes_software simd_aesimc
+simd_crypto_two_software simd_aese
+simd_crypto_two_software simd_aesd
+simd_crypto_two_software simd_aesmc
+simd_crypto_two_software simd_aesimc
 
-.purgem simd_aes_software
 .purgem simd_aes_native_unary
 .purgem simd_aes_native_binary
 
@@ -3236,25 +3174,12 @@ simd_sha_three_software simd_sha512su1
 
 .purgem simd_sha_three_software
 
-.macro simd_sha_two_software name
-gadget \name\()_soft
-	ldr x10, [_stream], #8
-	unpack_u16_2 x10, x8, x9
-	stp x1, x2, [sp, #-16]!
-	mov x0, x1
-	mov x1, x8
-	mov x2, x9
-	helper_call uml_arm64_\name\()_software
-	ldp x1, x2, [sp], #16
-	next_gadget
-.endm
+simd_crypto_two_software simd_sha1h
+simd_crypto_two_software simd_sha1su1
+simd_crypto_two_software simd_sha256su0
+simd_crypto_two_software simd_sha512su0
 
-simd_sha_two_software simd_sha1h
-simd_sha_two_software simd_sha1su1
-simd_sha_two_software simd_sha256su0
-simd_sha_two_software simd_sha512su0
-
-.purgem simd_sha_two_software
+.purgem simd_crypto_two_software
 
 .macro simd_four_source_logic name, operation, native, kind
 gadget \name

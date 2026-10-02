@@ -52,9 +52,9 @@ NAME(uml_arm64_gadget_\name):
  * and reinstall it after. The host register holds only the writable FPSR
  * fields, so storing it commits what the execution boundary would. The guest
  * sees exactly the prior FPSR plus the modelled exceptions, and any status
- * the host raises while running the helper is discarded. A helper whose
- * exceptions come from host instructions run under the guest FPCR instead
- * merges the host register after the call. x1/x2 survive in x19/x20.
+ * the host raises while running the helper is discarded. x1/x2 survive in
+ * x19/x20. A helper whose exceptions come from host instructions run under
+ * the guest FPCR uses fpsr_merge_helper instead.
  */
 .macro fpsr_model_helper helper
 	mrs x16, fpsr
@@ -68,6 +68,28 @@ NAME(uml_arm64_gadget_\name):
 	mov x2, x20
 	ldr w17, [_cpu, #UML_GADGET_CPU_FPSR]
 	msr fpsr, x17
+.endm
+
+/* Call uml_arm64_\helper(CpuState, x8), keeping x1/x2 on the stack. */
+.macro software_helper helper
+	stp x1, x2, [sp, #-16]!
+	mov x0, x1
+	mov x1, x8
+	helper_call uml_arm64_\helper
+	ldp x1, x2, [sp], #16
+.endm
+
+/* software_helper for a helper whose exceptions come from host instructions
+ * run under the guest FPCR: the live FPSR, which holds the block's cumulative
+ * status and what those instructions raised, is ORed into CpuState.fpsr, and
+ * the result becomes the live FPSR. */
+.macro fpsr_merge_helper helper
+	software_helper \helper
+	mrs x17, fpsr
+	ldr w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	orr w16, w16, w17
+	str w16, [_cpu, #UML_GADGET_CPU_FPSR]
+	msr fpsr, x16
 .endm
 
 /* Translate guest address x7 through the persistent iSH-style TLB. The 16 KiB
