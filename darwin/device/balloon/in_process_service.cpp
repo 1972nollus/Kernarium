@@ -8,26 +8,15 @@
 
 namespace uml::balloon {
 
-InProcessBalloonService::InProcessBalloonService(BalloonOptions options)
-    : service_(std::make_unique<uml::gpu::InProcessVhostUserService>(
-          "Virtio balloon", "uml-balloon",
-          [options = std::move(options)]() mutable {
-              return std::make_unique<VirtioBalloonDevice>(
-                  std::move(options), makeGuestRamBalloonMemory());
-          }))
+std::unique_ptr<uml::gpu::InProcessVhostUserService> makeInProcessService(
+    BalloonOptions options)
 {
-}
-
-InProcessBalloonService::~InProcessBalloonService() = default;
-
-std::string InProcessBalloonService::takeConnectionName()
-{
-    return service_->takeConnectionName();
-}
-
-void InProcessBalloonService::stop() noexcept
-{
-    service_->stop();
+    return std::make_unique<uml::gpu::InProcessVhostUserService>(
+        "Virtio balloon", "uml-balloon",
+        [options = std::move(options)]() mutable {
+            return std::make_unique<VirtioBalloonDevice>(
+                std::move(options), makeGuestRamBalloonMemory());
+        });
 }
 
 } // namespace uml::balloon

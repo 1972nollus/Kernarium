@@ -105,8 +105,7 @@ public:
                 std::string(std::strerror(errno)));
         }
         try {
-            service_ = std::make_unique<
-                uml::console::InProcessConsoleService>(
+            service_ = uml::console::makeInProcessService(
                 descriptors[0],
                 std::string {
                     uml::console::protocol::hostSerialPortName});
@@ -336,7 +335,7 @@ private:
 
     std::mutex& stdoutMutex_;
     int host_ {-1};
-    std::unique_ptr<uml::console::InProcessConsoleService> service_;
+    std::unique_ptr<uml::gpu::InProcessVhostUserService> service_;
     std::thread relay_;
 };
 
@@ -371,8 +370,8 @@ std::string AutomationBoot::relayDeviceArgument()
 {
     if (!relay_)
         return {};
-    return "virtio_uml.device=" + relay_->takeConnectionName() + ":" +
-        std::to_string(uml::console::protocol::deviceId);
+    return uml::gpu::virtioDeviceArgument(
+        relay_->takeConnectionName(), uml::console::protocol::deviceId);
 }
 
 } // namespace kernarium::harness
