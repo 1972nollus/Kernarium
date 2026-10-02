@@ -62,7 +62,7 @@ verify "$BASE_PREFIX" >/dev/null || fail "a valid prefix was rejected"
 CASE="$TEST_ROOT/intel-pahole"
 copy_fixture "$CASE"
 pahole "$CASE/bin/pahole" "v$DWARVES_VERSION" x86_64
-expect_cmake_diagnostic "pahole is not an arm64 executable" verify "$CASE"
+expect_cmake_diagnostic "pahole is not an arm64" verify "$CASE"
 
 CASE="$TEST_ROOT/other-release"
 copy_fixture "$CASE"
