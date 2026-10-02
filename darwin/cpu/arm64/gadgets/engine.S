@@ -33,10 +33,12 @@
 #endif
 
 /* Unreachable bytes ahead of each part's first entry, which set the part's
- * 64-byte phase: the phases each section had in the shipped
- * KRuntime_6_18_16K at 49a43648, where it began wherever the code before it
- * ended. No host with FEAT_AFP has measured the twins' phase. */
-#define GADGET_PHASE_BANK 16
+ * 64-byte phase. The bank's phase is the one the iPad measured fastest with
+ * the region pinned: at 16, scalar_mix ran in its slow mode in most launches.
+ * The other parts keep the phases their sections had in the shipped
+ * KRuntime_6_18_16K at 49a43648, where each began wherever the code before
+ * it ended. No host with FEAT_AFP has measured the twins' phase. */
+#define GADGET_PHASE_BANK 48
 #define GADGET_PHASE_FORWARD 16
 #define GADGET_PHASE_VECTOR_FORWARD 48
 #define GADGET_PHASE_COLD 4
