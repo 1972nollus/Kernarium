@@ -29,6 +29,9 @@ SIMPLE_CONSTRAINT = re.compile(r"(!=|==) ([01x]+)\Z")
 FEATURE_EXPRESSION = re.compile(
     r"FEAT_[A-Za-z0-9_]+(?: (?:&&|\|\|) FEAT_[A-Za-z0-9_]+)*\Z"
 )
+UNDEF_GUARD = re.compile(r"if (.+) then EndOfDecode\(Decode_UNDEF\); end;\Z")
+GUARD_FEATURE = re.compile(r"!IsFeatureImplemented\((FEAT_[A-Za-z0-9_]+)\)\Z")
+GUARD_FIELD = re.compile(r"([A-Za-z][A-Za-z0-9_]*) (==|!=) '([01x]+)'\Z")
 
 
 @dataclass(frozen=True)
@@ -70,11 +73,20 @@ class ArchitectureVariant:
     constraints: tuple[FieldConstraint, ...]
     feature_expressions: tuple[str, ...]
     fields: tuple[tuple[str, int, int], ...]
+    feature_guards: tuple[tuple[str, tuple[FieldConstraint, ...]], ...]
 
     def matches(self, word: int) -> bool:
         return word & self.mask == self.value and all(
             constraint.matches(word) for constraint in self.constraints
         )
+
+    def guarded_features(self, word: int) -> list[str]:
+        """Return the decode-guard features this word's field values select."""
+        return [
+            feature
+            for feature, conditions in self.feature_guards
+            if all(condition.matches(word) for condition in conditions)
+        ]
 
 
 @dataclass(frozen=True)
@@ -296,6 +308,58 @@ def _matching_table_features(
     return result
 
 
+def _decode_feature_guards(
+    instruction_class: ET.Element, fields: dict[str, tuple[int, int]]
+) -> tuple[tuple[str, tuple[FieldConstraint, ...]], ...]:
+    """Return field-conditional feature requirements from the decode ASL.
+
+    Some encodings need an extra feature only for certain field values, and
+    the XML records that only in a top-level decode statement such as
+    ``if size == '01' && !IsFeatureImplemented(FEAT_FP16) then
+    EndOfDecode(Decode_UNDEF); end;`` (the half-precision FCADD and FCMLA
+    arrangements).  Each such statement whose condition is a conjunction of
+    field comparisons and exactly one negated feature test yields that
+    feature and its field conditions.  Top-level unconditional guards only
+    repeat the declared features.  Statements nested in a case arm, which
+    also depend on their selector, and other shapes (IN sets, disjunctions)
+    are not read.
+    """
+    text = "\n".join(
+        "".join(element.itertext())
+        for element in instruction_class.findall(
+            ".//pstext[@section='Decode']"
+        )
+    )
+    result: list[tuple[str, tuple[FieldConstraint, ...]]] = []
+    for line in text.splitlines():
+        statement = UNDEF_GUARD.fullmatch(line)
+        if statement is None:
+            continue
+        features: list[str] = []
+        conditions: list[FieldConstraint] = []
+        for atom in statement.group(1).split(" && "):
+            feature = GUARD_FEATURE.fullmatch(atom)
+            field = GUARD_FIELD.fullmatch(atom)
+            if feature is not None:
+                features.append(feature.group(1))
+            elif field is not None:
+                name, operator, pattern = field.groups()
+                if name not in fields:
+                    raise ValueError(
+                        f"decode guard {line!r} names unknown field {name!r}"
+                    )
+                low, width = fields[name]
+                conditions.append(
+                    FieldConstraint(name, low, width, f"{operator} {pattern}")
+                )
+            else:
+                break
+        else:
+            if len(features) == 1 and conditions:
+                result.append((features[0], tuple(conditions)))
+    return tuple(result)
+
+
 class ArchitectureCatalog:
     """Validated index and instruction forms from the pinned Arm XML release."""
 
@@ -417,6 +481,9 @@ class ArchitectureCatalog:
                             for name, (low, width) in all_fields.items()
                         )
                     ),
+                    feature_guards=_decode_feature_guards(
+                        instruction_class, all_fields
+                    ),
                 )
                 if not variant.encoding:
                     raise ValueError(f"{filename}: encoding has no name")
@@ -433,7 +500,7 @@ class ArchitectureCatalog:
                 root,
                 {name: (low, width) for name, low, width in variant.fields},
                 word,
-            )
+            ) + variant.guarded_features(word)
             result.append(
                 replace(
                     variant,
