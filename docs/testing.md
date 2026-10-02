@@ -526,6 +526,8 @@ that run the production gadget and JIT engines through
 
 The corpus covers every A64 inventory entry with representative cases; it is
 not exhaustive variant proof.
+[`a64-instruction-coverage.md`](a64-instruction-coverage.md) owns the
+inventory tables and that completeness boundary.
 
 When changing the A64 architecture oracle, its generators, the evidence
 bindings, or the pinned Arm release, configure with
@@ -533,8 +535,6 @@ bindings, or the pinned Arm release, configure with
 and run the opt-in `arm64-instruction-oracle-freshness` tooling test. It
 regenerates the allocation and decode-partition tables with the pinned LLVM MC
 and requires the checked-in bytes; without the archive or that LLVM MC it skips.
-[`a64-instruction-coverage.md`](a64-instruction-coverage.md) owns the
-inventory tables and that completeness boundary.
 
 A gadget that runs an instruction as the host's own, such as FEAT_ECV,
 FEAT_I8MM, FEAT_BF16, or FEAT_FHM on the iPad's A15, runs that path only on a
