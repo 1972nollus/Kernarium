@@ -75,7 +75,7 @@
       "cssc": 968,
       "mops": 1316
     },
-    "input_sha256": "a7903f0da37c8e6a4caa290c9bf49e188d7f2f27a2beea030542d04241dda64a",
+    "input_sha256": "81a4f0eb6f5804f88d76fde955da707b146cc6fd652b04306bfd8f3e24a4cf62",
     "script": "tools/arm64-tests/absent-feature-corpus.py",
     "sha256": "8233f6f6be28846dc52fb7e68d4e313e9c1cadbdde2b58b66cc908fefb2e1282",
     "stripped_cases": 108993,
@@ -155,9 +155,9 @@
     "sha256": "be2341a8b4faa286f71ab475c68ad5ba4046e5c0fc3d97343fea7396db766d26"
   },
   "memory_blobs": 3352,
-  "pack_bytes": 13316210,
-  "pack_sha256": "4dbd24a3c30f1769b9624299626793259a53de93c4e353d45abfe1d89af5982f",
-  "producer_commit": "dc83802e7c7f4c478ac707bf7e1788d533263060",
+  "pack_bytes": 13316219,
+  "pack_sha256": "27dda68f5234a4b93cc087975b8489c47a6adf7ced7727c57fed9a4defca33c2",
+  "producer_commit": "384a66e2ac2d16e63a574355c73548a9205e9a50",
   "programs": 125835,
   "records": 1080,
   "sample_limit": 8,
