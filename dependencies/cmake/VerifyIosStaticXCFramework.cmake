@@ -11,7 +11,7 @@
 #     [SOURCE_TREES <source> <series.tsv>...])
 
 include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/VerifySourceTrees.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/VerifyPrefix.cmake")
 
 function(uml_verify_ios_static_xcframework)
     cmake_parse_arguments(PARSE_ARGV 0 _arg ""

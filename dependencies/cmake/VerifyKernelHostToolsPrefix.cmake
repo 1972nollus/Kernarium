@@ -8,7 +8,7 @@ if(NOT DEFINED SOURCE_ROOT)
         "SOURCE_ROOT is required for kernel host tool verification")
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/VerifySourceTrees.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/VerifyPrefix.cmake")
 
 set(_required
     "${PREFIX}/bin/pahole"

@@ -10,7 +10,7 @@ if(NOT DEFINED PLATFORM)
     set(PLATFORM macos)
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/VerifyManifestProduct.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/VerifySourceTrees.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/VerifyPrefix.cmake")
 
 if(PLATFORM STREQUAL "macos")
     set(_platform_contract macos-gpu-vulkan-arm64.tsv)
