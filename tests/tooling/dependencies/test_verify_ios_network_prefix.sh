@@ -110,6 +110,12 @@ copy_fixture "$CASE"
 archive "$CASE/lib/libglib-2.0.a" iphoneos arm64-apple-ios18.0
 expect_cmake_diagnostic "lib/libglib-2.0.a" verify "$CASE" ios
 
+# The whole minimum OS version counts, so iOS 26.0.1 is not iOS 26.0.
+CASE="$TEST_ROOT/patch-deployment-target"
+copy_fixture "$CASE"
+archive "$CASE/lib/libglib-2.0.a" iphoneos arm64-apple-ios26.0.1
+expect_cmake_diagnostic "lib/libglib-2.0.a: minos 26.0.1" verify "$CASE" ios
+
 # Every member counts, not only the first one that matches. A member built
 # for iOS 11 carries a legacy minimum-version command instead of a
 # build-version command.

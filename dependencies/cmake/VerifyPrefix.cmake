@@ -176,8 +176,8 @@ function(uml_verify_apple_binary)
         endif()
     endforeach()
     string(REGEX MATCHALL "platform [0-9]+" _platform_rows "${_load_commands}")
-    string(REGEX MATCHALL "minos [0-9]+\\.[0-9]+" _minimum_rows
-        "${_load_commands}")
+    # A row runs to the end of its line, so the whole version is compared.
+    string(REGEX MATCHALL "minos [^\n]*" _minimum_rows "${_load_commands}")
     if(NOT _platform_rows OR NOT _minimum_rows)
         message(FATAL_ERROR
             "Apple binary has no build-version command: ${_arg_PATH}")
