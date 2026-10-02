@@ -182,7 +182,7 @@ gadget return
 97:
 	.endif
 	/* The target table is consulted out of line. */
-	b .Ltarget_tier\@
+	b Ltarget_tier\@
 98:
 	follow_block_link x12
 	/* Every site of the address space shares one direct-mapped table of
@@ -192,18 +192,18 @@ gadget return
 	 * A hit trains the site's next cell as the ring does, so a site that
 	 * settles on few targets goes back to its cells. */
 	.pushsection GADGET_SECTION_COLD
-.Ltarget_tier\@:
+Ltarget_tier\@:
 	ldr x13, [_cpu, #UML_GADGET_CPU_TARGET_TIER]
-	cbz x13, .Ltarget_tier_miss\@
+	cbz x13, Ltarget_tier_miss\@
 	eor x14, x10, x10, lsr #10
 	ubfx x14, x14, #2, #UML_GADGET_TARGET_TIER_BITS
 	add x13, x13, x14, lsl #4
 	ldp x11, x12, [x13]
 	cmp x10, x11
-	b.ne .Ltarget_tier_miss\@
+	b.ne Ltarget_tier_miss\@
 	train_indirect_cell
 	follow_block_link x12
-.Ltarget_tier_miss\@:
+Ltarget_tier_miss\@:
 	str x9, [_cpu, #UML_GADGET_CPU_INDIRECT_MISS]
 	str x10, [_cpu, #UML_GADGET_CPU_PC]
 	mov w0, wzr

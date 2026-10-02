@@ -29,6 +29,7 @@ PACK_NAME = "a64_instruction_corpus.pack"
 INVENTORY = UNIT / "a64_instruction_inventory.tsv"
 ALLOCATIONS = UNIT / "a64_instruction_allocations.tsv"
 PARTITIONS = UNIT / "a64_instruction_decode_partitions.tsv"
+BINDINGS = UNIT / "a64_instruction_evidence_bindings.tsv"
 FEATURES = REPOSITORY / "darwin" / "platform" / "host_capabilities.hpp"
 ABSENT_FEATURES_SCRIPT = "tools/arm64-tests/absent-feature-corpus.py"
 
@@ -1490,6 +1491,18 @@ def check(options: argparse.Namespace) -> int:
             stale.append("absent-feature failing list")
     if stale:
         fail("stale corpus files: " + ", ".join(stale))
+    # An evidence binding names the producer check its witness came from, or
+    # "-" for both columns once no record of the pack comes from it.
+    producers = {record.producer for record in corpus.records}
+    with BINDINGS.open(encoding="utf-8", newline="") as source:
+        unbound = [f"{row['stable_id']} ({row['ctest']})"
+                   for row in csv.DictReader(source, delimiter="\t")
+                   if row["ctest"] not in producers and
+                   (row["ctest"], row["case"]) != ("-", "-")]
+    if unbound:
+        fail(f"{BINDINGS.name}: {len(unbound)} bindings name a producer with "
+             "no record in the pack; set their ctest and case to -: " +
+             ", ".join(unbound))
     print(f"A64 instruction corpus is fresh: "
           f"{sum(len(record.cases) for record in corpus.records)} cases in "
           f"{len(corpus.records)} records")

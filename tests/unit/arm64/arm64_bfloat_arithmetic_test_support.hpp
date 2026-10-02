@@ -29,11 +29,4 @@ inline void require(bool condition, const char *message)
 		fail(message);
 }
 
-[[nodiscard]] inline engine_tests::NativeRequirements
-native_requirements()
-{
-	return engine_tests::NativeRequirements::features(
-		::uml::cpu::ArmFeature::bf16);
-}
-
 } // namespace arm64_bfloat_arithmetic_test

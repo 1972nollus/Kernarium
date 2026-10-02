@@ -107,29 +107,29 @@ gadget x87_conditional_move_\condition
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	.if \condition == 0
-	tbz x9, #0, .Lx86_x87_conditional_done\@
+	tbz x9, #0, Lx86_x87_conditional_done\@
 	.elseif \condition == 1
-	tbz x9, #6, .Lx86_x87_conditional_done\@
+	tbz x9, #6, Lx86_x87_conditional_done\@
 	.elseif \condition == 2
-	tbnz x9, #0, .Lx86_x87_conditional_take\@
-	tbz x9, #6, .Lx86_x87_conditional_done\@
+	tbnz x9, #0, Lx86_x87_conditional_take\@
+	tbz x9, #6, Lx86_x87_conditional_done\@
 	.elseif \condition == 3
-	tbz x9, #2, .Lx86_x87_conditional_done\@
+	tbz x9, #2, Lx86_x87_conditional_done\@
 	.elseif \condition == 4
-	tbnz x9, #0, .Lx86_x87_conditional_done\@
+	tbnz x9, #0, Lx86_x87_conditional_done\@
 	.elseif \condition == 5
-	tbnz x9, #6, .Lx86_x87_conditional_done\@
+	tbnz x9, #6, Lx86_x87_conditional_done\@
 	.elseif \condition == 6
-	tbnz x9, #0, .Lx86_x87_conditional_done\@
-	tbnz x9, #6, .Lx86_x87_conditional_done\@
+	tbnz x9, #0, Lx86_x87_conditional_done\@
+	tbnz x9, #6, Lx86_x87_conditional_done\@
 	.else
-	tbnz x9, #2, .Lx86_x87_conditional_done\@
+	tbnz x9, #2, Lx86_x87_conditional_done\@
 	.endif
-.Lx86_x87_conditional_take\@:
+Lx86_x87_conditional_take\@:
 	x87_load_stack w24, x9, w10
 	mov w13, #0
 	x87_store_stack w13, x9, w10
-.Lx86_x87_conditional_done\@:
+Lx86_x87_conditional_done\@:
 	retire_and_next
 .endm
 

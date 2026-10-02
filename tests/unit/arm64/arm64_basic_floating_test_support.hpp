@@ -35,33 +35,11 @@ struct Registers final {
 	unsigned right;
 };
 
-inline constexpr std::array scalar_operations{
-	Operation::multiply, Operation::divide, Operation::add,
-	Operation::subtract, Operation::negative_multiply,
-	Operation::square_root};
-inline constexpr std::array vector_operations{
-	Operation::multiply, Operation::divide, Operation::add,
-	Operation::subtract, Operation::square_root};
 inline constexpr std::array widths{16U, 32U, 64U};
 inline constexpr std::array vector_shapes{
 	std::array{16U, 8U}, std::array{16U, 16U},
 	std::array{32U, 8U}, std::array{32U, 16U},
 	std::array{64U, 16U}};
-inline constexpr std::array register_cases{
-	Registers{0, 1, 2}, Registers{1, 1, 2}, Registers{2, 1, 2},
-	Registers{1, 1, 1}, Registers{31, 30, 29}, Registers{30, 30, 31},
-};
-
-template<typename Function>
-void for_each_form(Function &&function)
-{
-	for (const auto operation : scalar_operations)
-		for (const auto width : widths)
-			function(Form{operation, true, width, 16U});
-	for (const auto operation : vector_operations)
-		for (const auto shape : vector_shapes)
-			function(Form{operation, false, shape[0], shape[1]});
-}
 
 [[nodiscard]] constexpr unsigned scalar_opcode(Operation operation) noexcept
 {

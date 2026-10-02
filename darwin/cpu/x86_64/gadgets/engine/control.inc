@@ -78,16 +78,16 @@
 
 .macro evaluate_deferred_zero condition
 	ldrh w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
-	tbz w10, #6, .Lx86_zero_from_deferred\@
+	tbz w10, #6, Lx86_zero_from_deferred\@
 	ldrh w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 	ubfx w11, w10, #6, #1
 	.ifc \condition,ne
 	eor w11, w11, #1
 	.endif
-	b .Lx86_zero_ready\@
-.Lx86_zero_from_deferred\@:
+	b Lx86_zero_ready\@
+Lx86_zero_from_deferred\@:
 	ldrb w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	cbz w10, .Lx86_zero_from_flags\@
+	cbz w10, Lx86_zero_from_flags\@
 	ldr x10, [_cpu, #UML_X86_64_CPU_DEFERRED_RESULT]
 	cmp x10, #0
 	.ifc \condition,e
@@ -95,14 +95,14 @@
 	.else
 	cset w11, ne
 	.endif
-	b .Lx86_zero_ready\@
-.Lx86_zero_from_flags\@:
+	b Lx86_zero_ready\@
+Lx86_zero_from_flags\@:
 	ldr x10, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	ubfx w11, w10, #6, #1
 	.ifc \condition,ne
 	eor w11, w11, #1
 	.endif
-.Lx86_zero_ready\@:
+Lx86_zero_ready\@:
 .endm
 
 /* The stream an unlinked BlockLink names is the link_exit word right in front
@@ -165,18 +165,18 @@ gadget cmov_\condition\()_\width\()_rr
 gadget cmov_\condition\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_cmov_memory_cross\@
+	page_cross_check (\width / 8), Lx86_cmov_memory_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-	b .Lx86_cmov_memory_loaded\@
-.Lx86_cmov_memory_cross\@:
+	b Lx86_cmov_memory_loaded\@
+Lx86_cmov_memory_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_cmov_memory_loaded\@:
+Lx86_cmov_memory_loaded\@:
 	bl uml_x86_64_gadget_materialize_flags
 	evaluate_condition \condition
 	and x8, x23, #0xffff
@@ -249,9 +249,9 @@ gadget jump_\condition\()_inline
 	ldr x12, [_stream], #8
 	add _executed, _executed, #1
 	x86_memory_order_boundary
-	cbz w11, .Lx86_jump_inline_next\@
+	cbz w11, Lx86_jump_inline_next\@
 	follow_block_link x12
-.Lx86_jump_inline_next\@:
+Lx86_jump_inline_next\@:
 	next_gadget
 .endm
 
@@ -352,9 +352,9 @@ gadget jump_\condition\()_inline_nzcv
 	ldr x12, [_stream], #8
 	add _executed, _executed, #1
 	x86_memory_order_boundary
-	b.\host .Lx86_jump_inline_nzcv_taken\@
+	b.\host Lx86_jump_inline_nzcv_taken\@
 	next_gadget
-.Lx86_jump_inline_nzcv_taken\@:
+Lx86_jump_inline_nzcv_taken\@:
 	follow_block_link x12
 .endm
 
@@ -428,8 +428,8 @@ gadget loop_\opcode\()_\width
 	ldr \host_register\()24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	.endif
 	.ifc \opcode,e3
-	cbz \host_register\()24, .Lx86_loop_taken\@
-	b .Lx86_loop_fallthrough\@
+	cbz \host_register\()24, Lx86_loop_taken\@
+	b Lx86_loop_fallthrough\@
 	.else
 	sub \host_register\()24, \host_register\()24, #1
 	.if \width == 16
@@ -440,26 +440,26 @@ gadget loop_\opcode\()_\width
 	str x24, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	.endif
 	.ifc \opcode,e2
-	cbnz \host_register\()24, .Lx86_loop_taken\@
-	b .Lx86_loop_fallthrough\@
+	cbnz \host_register\()24, Lx86_loop_taken\@
+	b Lx86_loop_fallthrough\@
 	.else
 	bl uml_x86_64_gadget_materialize_flags
-	cbz \host_register\()24, .Lx86_loop_fallthrough\@
+	cbz \host_register\()24, Lx86_loop_fallthrough\@
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	.ifc \opcode,e1
-	tbz x8, #6, .Lx86_loop_fallthrough\@
+	tbz x8, #6, Lx86_loop_fallthrough\@
 	.else
-	tbnz x8, #6, .Lx86_loop_fallthrough\@
+	tbnz x8, #6, Lx86_loop_fallthrough\@
 	.endif
-	b .Lx86_loop_taken\@
+	b Lx86_loop_taken\@
 	.endif
 	.endif
-.Lx86_loop_taken\@:
+Lx86_loop_taken\@:
 	str x26, [_cpu, #UML_X86_64_CPU_RIP]
-	b .Lx86_loop_leave\@
-.Lx86_loop_fallthrough\@:
+	b Lx86_loop_leave\@
+Lx86_loop_fallthrough\@:
 	str x27, [_cpu, #UML_X86_64_CPU_RIP]
-.Lx86_loop_leave\@:
+Lx86_loop_leave\@:
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED

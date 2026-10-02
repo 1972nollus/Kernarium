@@ -12,8 +12,6 @@
 
 namespace uml::emulator::tests::base_arithmetic {
 
-namespace arm64 = uml::cpu::arm64;
-
 enum class ShiftOperation : unsigned {
 	left = 0,
 	right = 1,

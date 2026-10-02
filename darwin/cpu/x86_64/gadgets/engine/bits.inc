@@ -97,8 +97,8 @@ gadget \operation\()_\width\()_m\form
 	.endif
 	mov x25, x7
 	.if \locked
-	locked_aligned \width, .Lx86_bit_split\@
-.Lx86_bit_exclusive\@:
+	locked_aligned \width, Lx86_bit_split\@
+Lx86_bit_exclusive\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 1:
 	load_exclusive \width, 24, x7
@@ -107,39 +107,39 @@ gadget \operation\()_\width\()_m\form
 	cbnz w9, 1b
 	bit_update_carry
 	finish_store (\width / 8)
-.Lx86_bit_split\@:
-	split_operand (\width / 8), .Lx86_bit_exclusive\@
+Lx86_bit_split\@:
+	split_operand (\width / 8), Lx86_bit_exclusive\@
 	.endif
-	page_cross_check (\width / 8), .Lx86_bit_read_cross\@
+	page_cross_check (\width / 8), Lx86_bit_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-	b .Lx86_bit_loaded\@
-.Lx86_bit_read_cross\@:
+	b Lx86_bit_loaded\@
+Lx86_bit_read_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_bit_loaded\@:
+Lx86_bit_loaded\@:
 	bit_compute \operation, \width, \host_register
 	.ifc \operation,bt
 	bit_update_carry
 	retire_and_next
 	.else
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_bit_write_cross\@
+	page_cross_check (\width / 8), Lx86_bit_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
-	b .Lx86_bit_written\@
-.Lx86_bit_write_cross\@:
+	b Lx86_bit_written\@
+Lx86_bit_write_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x27
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-.Lx86_bit_written\@:
+	cbz w0, Lx86_memory_fault
+Lx86_bit_written\@:
 	.if \locked
 	split_lock_leave
 	.endif
@@ -196,24 +196,24 @@ bit_family btc
 	.endif
 	.endif
 	.ifc \operation,tzcnt
-	cbz \host_register\()24, .Lx86_bit_count_zero\@
+	cbz \host_register\()24, Lx86_bit_count_zero\@
 	rbit \host_register\()27, \host_register\()24
 	clz \host_register\()27, \host_register\()27
-	b .Lx86_bit_count_ready\@
-.Lx86_bit_count_zero\@:
+	b Lx86_bit_count_ready\@
+Lx86_bit_count_zero\@:
 	mov \host_register\()27, #\width
-.Lx86_bit_count_ready\@:
+Lx86_bit_count_ready\@:
 	.endif
 	.ifc \operation,lzcnt
-	cbz \host_register\()24, .Lx86_bit_count_zero\@
+	cbz \host_register\()24, Lx86_bit_count_zero\@
 	clz \host_register\()27, \host_register\()24
 	.if \width == 16
 	sub \host_register\()27, \host_register\()27, #16
 	.endif
-	b .Lx86_bit_count_ready\@
-.Lx86_bit_count_zero\@:
+	b Lx86_bit_count_ready\@
+Lx86_bit_count_zero\@:
 	mov \host_register\()27, #\width
-.Lx86_bit_count_ready\@:
+Lx86_bit_count_ready\@:
 	.endif
 	.ifc \operation,popcnt
 	fmov d0, x24
@@ -234,12 +234,12 @@ bit_family btc
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	.ifc \operation,bsf
 	bic x8, x8, #0x40
-	cbnz \host_register\()24, .Lx86_bit_count_flags_done\@
+	cbnz \host_register\()24, Lx86_bit_count_flags_done\@
 	orr x8, x8, #0x40
 	.endif
 	.ifc \operation,bsr
 	bic x8, x8, #0x40
-	cbnz \host_register\()24, .Lx86_bit_count_flags_done\@
+	cbnz \host_register\()24, Lx86_bit_count_flags_done\@
 	orr x8, x8, #0x40
 	.endif
 	.ifnc \operation,bsf
@@ -247,31 +247,31 @@ bit_family btc
 	mov x9, #0x8d5
 	bic x8, x8, x9
 	.ifc \operation,popcnt
-	cbnz \host_register\()24, .Lx86_bit_count_flags_done\@
+	cbnz \host_register\()24, Lx86_bit_count_flags_done\@
 	orr x8, x8, #0x40
 	.else
-	cbnz \host_register\()24, .Lx86_bit_count_source_nonzero\@
+	cbnz \host_register\()24, Lx86_bit_count_source_nonzero\@
 	orr x8, x8, #1
-.Lx86_bit_count_source_nonzero\@:
-	cbnz \host_register\()27, .Lx86_bit_count_flags_done\@
+Lx86_bit_count_source_nonzero\@:
+	cbnz \host_register\()27, Lx86_bit_count_flags_done\@
 	orr x8, x8, #0x40
 	.endif
 	.endif
 	.endif
-.Lx86_bit_count_flags_done\@:
+Lx86_bit_count_flags_done\@:
 	orr x8, x8, #0x2
 	str x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 .endm
 
 .macro bit_count_finish operation, width, store, host_register, store_register
 	.ifc \operation,bsf
-	cbz \host_register\()24, .Lx86_bit_count_no_write\@
+	cbz \host_register\()24, Lx86_bit_count_no_write\@
 	.endif
 	.ifc \operation,bsr
-	cbz \host_register\()24, .Lx86_bit_count_no_write\@
+	cbz \host_register\()24, Lx86_bit_count_no_write\@
 	.endif
 	\store \store_register\()27, [_cpu, x25]
-.Lx86_bit_count_no_write\@:
+Lx86_bit_count_no_write\@:
 	bit_count_flags \operation, \host_register
 	retire_and_next
 .endm
@@ -290,18 +290,18 @@ gadget \operation\()_\width\()_rr
 gadget \operation\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_bit_count_read_cross\@
+	page_cross_check (\width / 8), Lx86_bit_count_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-	b .Lx86_bit_count_loaded\@
-.Lx86_bit_count_read_cross\@:
+	b Lx86_bit_count_loaded\@
+Lx86_bit_count_read_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_bit_count_loaded\@:
+Lx86_bit_count_loaded\@:
 	and x25, x23, #0xffff
 	bit_count_compute \operation, \width, \host_register
 	bit_count_finish \operation, \width, \store, \host_register, \store_register

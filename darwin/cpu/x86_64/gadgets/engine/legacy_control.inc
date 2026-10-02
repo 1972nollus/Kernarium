@@ -7,36 +7,36 @@
 	mov w25, w25
 	.endif
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_enter_push_cross\@
+	page_cross_check (\width / 8), Lx86_enter_push_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
-	b .Lx86_enter_push_done\@
-.Lx86_enter_push_cross\@:
+	b Lx86_enter_push_done\@
+Lx86_enter_push_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x27
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-.Lx86_enter_push_done\@:
+	cbz w0, Lx86_memory_fault
+Lx86_enter_push_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	publish_pending_code x25, (\width / 8)
 .endm
 
 .macro enter_load width, load, host_register
 	mov x7, x24
-	page_cross_check (\width / 8), .Lx86_enter_load_cross\@
+	page_cross_check (\width / 8), Lx86_enter_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()27, [x7]
-	b .Lx86_enter_load_done\@
-.Lx86_enter_load_cross\@:
+	b Lx86_enter_load_done\@
+Lx86_enter_load_cross\@:
 	mov x0, _context
 	mov x1, x24
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x27, x0
-.Lx86_enter_load_done\@:
+Lx86_enter_load_done\@:
 .endm
 
 .macro enter_gadget width, load, load_register, store, store_register
@@ -48,12 +48,12 @@ gadget enter_\width
 	enter_push \width, \store, \store_register
 	mov x26, x25
 	and w8, w23, #0x1f
-	cbz w8, .Lx86_enter_nesting_done\@
+	cbz w8, Lx86_enter_nesting_done\@
 	mov w19, #1
-.Lx86_enter_nesting_loop\@:
+Lx86_enter_nesting_loop\@:
 	and w8, w23, #0x1f
 	cmp w19, w8
-	b.hs .Lx86_enter_push_frame\@
+	b.hs Lx86_enter_push_frame\@
 	sub x24, x24, #(\width / 8)
 	.if \width == 32
 	mov w24, w24
@@ -61,11 +61,11 @@ gadget enter_\width
 	enter_load \width, \load, \load_register
 	enter_push \width, \store, \store_register
 	add w19, w19, #1
-	b .Lx86_enter_nesting_loop\@
-.Lx86_enter_push_frame\@:
+	b Lx86_enter_nesting_loop\@
+Lx86_enter_push_frame\@:
 	mov x27, x26
 	enter_push \width, \store, \store_register
-.Lx86_enter_nesting_done\@:
+Lx86_enter_nesting_done\@:
 	/* A 32-bit frame writes EBP and ESP zero-extended, as every other
 	 * 32-bit stack operation does; its stack wraps at 4 GiB. */
 	.if \width == 32
@@ -98,18 +98,18 @@ enter_gadget 64, ldr, x, str, x
 
 .macro legacy_load width, load, host_register, destination
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_legacy_load_cross\@
+	page_cross_check (\width / 8), Lx86_legacy_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()\destination, [x7]
-	b .Lx86_legacy_load_done\@
-.Lx86_legacy_load_cross\@:
+	b Lx86_legacy_load_done\@
+Lx86_legacy_load_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x\destination, x0
-.Lx86_legacy_load_done\@:
+Lx86_legacy_load_done\@:
 .endm
 
 .macro far_transfer kind, width, load, host_register
@@ -132,7 +132,7 @@ gadget far_\kind\()_\width
 	ldr x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	sub x25, x25, #(\width / 4)
 	mov x7, x25
-	page_cross_check (\width / 4), .Lx86_far_call_cross\@
+	page_cross_check (\width / 4), Lx86_far_call_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 4)
 	.if \width == 16
 	bfi x24, x19, #16, #16
@@ -145,8 +145,8 @@ gadget far_\kind\()_\width
 	.if \width == 64
 	stp x24, x19, [x7]
 	.endif
-	b .Lx86_far_call_done\@
-.Lx86_far_call_cross\@:
+	b Lx86_far_call_done\@
+Lx86_far_call_cross\@:
 	.if \width == 16
 	bfi x24, x19, #16, #16
 	mov x0, _context
@@ -173,8 +173,8 @@ gadget far_\kind\()_\width
 	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
 	add sp, sp, #16
 	.endif
-	cbz w0, .Lx86_memory_fault
-.Lx86_far_call_done\@:
+	cbz w0, Lx86_memory_fault
+Lx86_far_call_done\@:
 	str x25, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	publish_pending_code x25, (\width / 4)
 	.endif
@@ -223,18 +223,18 @@ far_return 64, ldr, x
 .macro iret_load width, load, host_register, destination, offset
 	ldr x7, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
 	add x7, x7, #((\width / 8) * \offset)
-	page_cross_check (\width / 8), .Lx86_iret_load_cross\@
+	page_cross_check (\width / 8), Lx86_iret_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()\destination, [x7]
-	b .Lx86_iret_load_done\@
-.Lx86_iret_load_cross\@:
+	b Lx86_iret_load_done\@
+Lx86_iret_load_cross\@:
 	mov x0, _context
 	mov x1, x7
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x\destination, x0
-.Lx86_iret_load_done\@:
+Lx86_iret_load_done\@:
 .endm
 
 /* \long_mode names the 64-bit-mode forms. There IRET pops SS:RSP at every
@@ -260,18 +260,18 @@ gadget interrupt_return_\name
 	and w8, w8, #3
 	and w9, w24, #3
 	cmp w9, w8
-	b.hi .Lx86_iret_outer_privilege\@
+	b.hi Lx86_iret_outer_privilege\@
 	mov w15, wzr
 	add x26, x23, #((\width / 8) * 3)
 	.if \width == 32
 	mov w26, w26
 	.endif
-	b .Lx86_iret_state_ready\@
-.Lx86_iret_outer_privilege\@:
+	b Lx86_iret_state_ready\@
+Lx86_iret_outer_privilege\@:
 	iret_load \width, \load, \host_register, 26, 3
 	iret_load \width, \load, \host_register, 27, 4
 	mov w15, #1
-.Lx86_iret_state_ready\@:
+Lx86_iret_state_ready\@:
 	.endif
 	/* At CPL 3 IRET loads what POPF loads, plus RF: IF, IOPL, VM, VIF and
 	 * VIP keep their values and the reserved bits stay fixed.  None of the
@@ -295,16 +295,16 @@ gadget interrupt_return_\name
 	strh w24, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 2)]
 	str x25, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 4 * 8)]
-	cbz w15, .Lx86_iret_keep_stack_segment\@
+	cbz w15, Lx86_iret_keep_stack_segment\@
 	strh w27, [_cpu, #(UML_X86_64_CPU_SEGMENT_SELECTORS + 4)]
-.Lx86_iret_keep_stack_segment\@:
+Lx86_iret_keep_stack_segment\@:
 	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	add _executed, _executed, #1
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
-	tbz x12, #8, .Lx86_iret_leave\@
+	tbz x12, #8, Lx86_iret_leave\@
 	mov w0, #UML_X86_64_EVENT_TRAP_FLAG
-.Lx86_iret_leave\@:
+Lx86_iret_leave\@:
 	b uml_x86_64_gadget_leave
 .endm
 

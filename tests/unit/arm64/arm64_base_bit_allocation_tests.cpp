@@ -13,9 +13,6 @@
 
 namespace base_bit_test {
 
-namespace arm64 = uml::cpu::arm64;
-namespace engine_tests = uml::emulator::tests;
-
 [[nodiscard]] constexpr bool allocated(bool wide, unsigned operation) noexcept
 {
 	if (operation <= 2U)

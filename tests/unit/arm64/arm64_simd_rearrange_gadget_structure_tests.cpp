@@ -14,7 +14,6 @@
 
 namespace arm64_simd_rearrange_test {
 
-namespace arm64 = uml::cpu::arm64;
 namespace engine_tests = uml::emulator::tests;
 
 struct PermuteRegisters final {

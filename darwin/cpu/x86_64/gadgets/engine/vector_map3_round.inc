@@ -3,16 +3,16 @@
 
 .macro vector_map3_round_apply element, output, input, scalar
 	and w14, w13, #3
-	tbz w13, #2, .Lx86_vector_map3_round_mode_ready\@
+	tbz w13, #2, Lx86_vector_map3_round_mode_ready\@
 	ldr w14, [_cpu, #UML_X86_64_CPU_MXCSR]
 	ubfx w14, w14, #13, #2
-.Lx86_vector_map3_round_mode_ready\@:
+Lx86_vector_map3_round_mode_ready\@:
 	cmp w14, #1
-	b.eq .Lx86_vector_map3_round_down\@
+	b.eq Lx86_vector_map3_round_down\@
 	cmp w14, #2
-	b.eq .Lx86_vector_map3_round_up\@
+	b.eq Lx86_vector_map3_round_up\@
 	cmp w14, #3
-	b.eq .Lx86_vector_map3_round_zero\@
+	b.eq Lx86_vector_map3_round_zero\@
 	.if \scalar
 	.if \element == 32
 	frintn s6, s\input
@@ -26,8 +26,8 @@
 	frintn v6.2d, v\input\().2d
 	.endif
 	.endif
-	b .Lx86_vector_map3_round_done\@
-.Lx86_vector_map3_round_down\@:
+	b Lx86_vector_map3_round_done\@
+Lx86_vector_map3_round_down\@:
 	.if \scalar
 	.if \element == 32
 	frintm s6, s\input
@@ -41,8 +41,8 @@
 	frintm v6.2d, v\input\().2d
 	.endif
 	.endif
-	b .Lx86_vector_map3_round_done\@
-.Lx86_vector_map3_round_up\@:
+	b Lx86_vector_map3_round_done\@
+Lx86_vector_map3_round_up\@:
 	.if \scalar
 	.if \element == 32
 	frintp s6, s\input
@@ -56,8 +56,8 @@
 	frintp v6.2d, v\input\().2d
 	.endif
 	.endif
-	b .Lx86_vector_map3_round_done\@
-.Lx86_vector_map3_round_zero\@:
+	b Lx86_vector_map3_round_done\@
+Lx86_vector_map3_round_zero\@:
 	.if \scalar
 	.if \element == 32
 	frintz s6, s\input
@@ -71,7 +71,7 @@
 	frintz v6.2d, v\input\().2d
 	.endif
 	.endif
-.Lx86_vector_map3_round_done\@:
+Lx86_vector_map3_round_done\@:
 	.if \scalar
 	.if \element == 32
 	mov v\output\().s[0], v6.s[0]
@@ -131,7 +131,7 @@ gadget vector_map3_round_\symbol\()_\width\()_rm
 	effective_address
 	ldp x26, x27, [_stream], #16
 	mov x25, x7
-	page_cross_check (\input_size), .Lx86_vector_map3_round_cross\@
+	page_cross_check (\input_size), Lx86_vector_map3_round_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \input_size
 	.if \input_size == 4
 	ldr s1, [x7]
@@ -143,14 +143,14 @@ gadget vector_map3_round_\symbol\()_\width\()_rm
 	ldr q3, [x7, #16]
 	.endif
 	.endif
-	b .Lx86_vector_map3_round_loaded\@
-.Lx86_vector_map3_round_cross\@:
+	b Lx86_vector_map3_round_loaded\@
+Lx86_vector_map3_round_cross\@:
 	.if \input_size <= 8
 	mov x0, _context
 	mov x1, x25
 	mov w2, #\input_size
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	.if \input_size == 4
 	fmov s1, w0
 	.else
@@ -163,14 +163,14 @@ gadget vector_map3_round_\symbol\()_\width\()_rm
 	mov x2, sp
 	mov w3, #\input_size
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_map3_round_cross_fault\@
+	cbz w0, Lx86_vector_map3_round_cross_fault\@
 	ldr q1, [sp]
 	.if \input_size == 32
 	ldr q3, [sp, #16]
 	.endif
 	add sp, sp, #32
 	.endif
-.Lx86_vector_map3_round_loaded\@:
+Lx86_vector_map3_round_loaded\@:
 	mov w13, w27
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
@@ -179,9 +179,9 @@ gadget vector_map3_round_\symbol\()_\width\()_rm
 	vector_write_xmm \width, 23
 	retire_and_next
 	.if \input_size > 8
-.Lx86_vector_map3_round_cross_fault\@:
+Lx86_vector_map3_round_cross_fault\@:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 	.endif
 .endm
 
@@ -208,10 +208,10 @@ vector_map3_round_memory 0b, 0x0b, 128, 8
  */
 .macro vector_map3_half_body width
 	and w14, w13, #3
-	tbz w13, #2, .Lx86_vector_map3_half_mode_ready\@
+	tbz w13, #2, Lx86_vector_map3_half_mode_ready\@
 	ldr w14, [_cpu, #UML_X86_64_CPU_MXCSR]
 	ubfx w14, w14, #13, #2
-.Lx86_vector_map3_half_mode_ready\@:
+Lx86_vector_map3_half_mode_ready\@:
 	and w15, w14, #1
 	lsl w15, w15, #1
 	ubfx w17, w14, #1, #1
@@ -264,7 +264,7 @@ gadget vector_map3_half_\width\()_m
 	vector_map3_half_body \width
 	add x9, x25, #(\output_size - 1)
 	eor x9, x9, x25
-	tbnz x9, #12, .Lx86_vector_map3_half_cross\@
+	tbnz x9, #12, Lx86_vector_map3_half_cross\@
 	mov x7, x25
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, \output_size
 	.if \output_size == 8
@@ -273,14 +273,14 @@ gadget vector_map3_half_\width\()_m
 	str q4, [x7]
 	.endif
 	finish_store \output_size
-.Lx86_vector_map3_half_cross\@:
+Lx86_vector_map3_half_cross\@:
 	.if \output_size == 8
 	mov x0, _context
 	mov x1, x25
 	fmov x2, d4
 	mov w3, #8
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
+	cbz w0, Lx86_memory_fault
 	.else
 	sub sp, sp, #16
 	str q4, [sp]
@@ -290,7 +290,7 @@ gadget vector_map3_half_\width\()_m
 	mov w3, #16
 	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
 	add sp, sp, #16
-	cbz w0, .Lx86_memory_fault
+	cbz w0, Lx86_memory_fault
 	.endif
 	finish_store \output_size
 .endm

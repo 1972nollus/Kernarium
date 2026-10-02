@@ -95,14 +95,14 @@
 	and w19, w8, #1
 	mov w16, w26
 	mov \host_register\()27, \host_register\()24
-.Lx86_rotate_carry_loop\@:
+Lx86_rotate_carry_loop\@:
 	lsr \host_register\()8, \host_register\()27, #(\width - 1)
 	lsl \host_register\()27, \host_register\()27, #1
 	orr \host_register\()27, \host_register\()27, \host_register\()19
 	normalize_result \width, \host_register\()27
 	and w19, w8, #1
 	subs w16, w16, #1
-	b.ne .Lx86_rotate_carry_loop\@
+	b.ne Lx86_rotate_carry_loop\@
 	.endif
 
 	.ifc \operation,rcr
@@ -110,7 +110,7 @@
 	and w19, w8, #1
 	mov w16, w26
 	mov \host_register\()27, \host_register\()24
-.Lx86_rotate_carry_loop\@:
+Lx86_rotate_carry_loop\@:
 	and w8, w27, #1
 	lsr \host_register\()27, \host_register\()27, #1
 	lsl \host_register\()9, \host_register\()19, #(\width - 1)
@@ -118,26 +118,26 @@
 	normalize_result \width, \host_register\()27
 	mov w19, w8
 	subs w16, w16, #1
-	b.ne .Lx86_rotate_carry_loop\@
+	b.ne Lx86_rotate_carry_loop\@
 	.endif
 .endm
 
 .macro shift_set_szp width, host_register
 	mov x9, #0xc4
 	bic x8, x8, x9
-	cbnz \host_register\()27, .Lx86_shift_nonzero\@
+	cbnz \host_register\()27, Lx86_shift_nonzero\@
 	orr x8, x8, #0x40
-.Lx86_shift_nonzero\@:
-	tbz \host_register\()27, #(\width - 1), .Lx86_shift_not_sign\@
+Lx86_shift_nonzero\@:
+	tbz \host_register\()27, #(\width - 1), Lx86_shift_not_sign\@
 	orr x8, x8, #0x80
-.Lx86_shift_not_sign\@:
+Lx86_shift_not_sign\@:
 	and w10, w27, #0xff
 	eor w10, w10, w10, lsr #4
 	eor w10, w10, w10, lsr #2
 	eor w10, w10, w10, lsr #1
-	tbnz w10, #0, .Lx86_shift_odd_parity\@
+	tbnz w10, #0, Lx86_shift_odd_parity\@
 	orr x8, x8, #0x4
-.Lx86_shift_odd_parity\@:
+Lx86_shift_odd_parity\@:
 .endm
 
 /* The count in w26 is the effective count. ROL/ROR use width as a marker
@@ -164,7 +164,7 @@
 	shift_set_szp \width, \host_register
 	.endif
 	cmp w26, #1
-	b.ne .Lx86_shift_flags_done\@
+	b.ne Lx86_shift_flags_done\@
 	bic x8, x8, #0x800
 	.ifc \operation,shl
 	lsr \host_register\()9, \host_register\()27, #(\width - 1)
@@ -203,9 +203,9 @@
 	lsr \host_register\()10, \host_register\()27, #(\width - 2)
 	eor w9, w9, w10
 	.endif
-	tbz w9, #0, .Lx86_shift_flags_done\@
+	tbz w9, #0, Lx86_shift_flags_done\@
 	orr x8, x8, #0x800
-.Lx86_shift_flags_done\@:
+Lx86_shift_flags_done\@:
 	orr x8, x8, #0x2
 	str x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 .endm
@@ -238,23 +238,23 @@
 	.else
 	mov w8, #0xc5
 	and w9, w19, #1
-	cbnz \host_register\()27, .Lx86_shift_override_nonzero\@
+	cbnz \host_register\()27, Lx86_shift_override_nonzero\@
 	orr w9, w9, #0x40
-.Lx86_shift_override_nonzero\@:
-	tbz \host_register\()27, #(\width - 1), .Lx86_shift_override_not_sign\@
+Lx86_shift_override_nonzero\@:
+	tbz \host_register\()27, #(\width - 1), Lx86_shift_override_not_sign\@
 	orr w9, w9, #0x80
-.Lx86_shift_override_not_sign\@:
+Lx86_shift_override_not_sign\@:
 	and w10, w27, #0xff
 	eor w10, w10, w10, lsr #4
 	eor w10, w10, w10, lsr #2
 	eor w10, w10, w10, lsr #1
-	tbnz w10, #0, .Lx86_shift_override_szp_done\@
+	tbnz w10, #0, Lx86_shift_override_szp_done\@
 	orr w9, w9, #0x4
-.Lx86_shift_override_szp_done\@:
+Lx86_shift_override_szp_done\@:
 	.endif
 	.endif
 	cmp w26, #1
-	b.ne .Lx86_shift_override_ready\@
+	b.ne Lx86_shift_override_ready\@
 	orr w8, w8, #0x800
 	.ifc \operation,shl
 	lsr \host_register\()10, \host_register\()27, #(\width - 1)
@@ -284,9 +284,9 @@
 	lsr \host_register\()12, \host_register\()27, #(\width - 2)
 	eor w10, w10, w12
 	.endif
-	tbz w10, #0, .Lx86_shift_override_ready\@
+	tbz w10, #0, Lx86_shift_override_ready\@
 	orr w9, w9, #0x800
-.Lx86_shift_override_ready\@:
+Lx86_shift_override_ready\@:
 	ldrh w10, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	ldrh w11, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 	bic w11, w11, w8
@@ -312,7 +312,7 @@ gadget \operation\()_\width\()_r\form
 	.else
 	and w26, w26, #0x1f
 	.endif
-	cbz w26, .Lx86_shift_register_store\@
+	cbz w26, Lx86_shift_register_store\@
 	.ifc \operation,rcl
 	bl uml_x86_64_gadget_materialize_flags
 	.endif
@@ -321,26 +321,26 @@ gadget \operation\()_\width\()_r\form
 	.endif
 	shift_prepare_count \operation, \width
 	.ifc \operation,rcl
-	cbz w26, .Lx86_shift_register_store\@
+	cbz w26, Lx86_shift_register_store\@
 	.endif
 	.ifc \operation,rcr
-	cbz w26, .Lx86_shift_register_store\@
+	cbz w26, Lx86_shift_register_store\@
 	.endif
 	shift_compute \operation, \width, \host_register
 	.ifc \operation,rol
-	cbnz w26, .Lx86_shift_register_write\@
+	cbnz w26, Lx86_shift_register_write\@
 	mov w26, #\width
 	.endif
 	.ifc \operation,ror
-	cbnz w26, .Lx86_shift_register_write\@
+	cbnz w26, Lx86_shift_register_write\@
 	mov w26, #\width
 	.endif
-	b .Lx86_shift_register_write\@
-.Lx86_shift_register_store\@:
+	b Lx86_shift_register_write\@
+Lx86_shift_register_store\@:
 	mov \host_register\()27, \host_register\()24
-.Lx86_shift_register_write\@:
+Lx86_shift_register_write\@:
 	\store \store_register\()27, [_cpu, x25]
-	cbz w26, .Lx86_shift_register_done\@
+	cbz w26, Lx86_shift_register_done\@
 	.ifc \operation,rcl
 	shift_update_flags \operation, \width, \host_register
 	.else
@@ -350,7 +350,7 @@ gadget \operation\()_\width\()_r\form
 	shift_record_flags \operation, \width, \host_register
 	.endif
 	.endif
-.Lx86_shift_register_done\@:
+Lx86_shift_register_done\@:
 	retire_and_next
 .endm
 
@@ -364,24 +364,24 @@ gadget \operation\()_\width\()_m\form
 	.else
 	ldr x26, [_stream], #8
 	.endif
-	page_cross_check (\width / 8), .Lx86_shift_memory_read_cross\@
+	page_cross_check (\width / 8), Lx86_shift_memory_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-	b .Lx86_shift_memory_loaded\@
-.Lx86_shift_memory_read_cross\@:
+	b Lx86_shift_memory_loaded\@
+Lx86_shift_memory_read_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_shift_memory_loaded\@:
+Lx86_shift_memory_loaded\@:
 	.if \width == 64
 	and w26, w26, #0x3f
 	.else
 	and w26, w26, #0x1f
 	.endif
-	cbz w26, .Lx86_shift_memory_store\@
+	cbz w26, Lx86_shift_memory_store\@
 	.ifc \operation,rcl
 	bl uml_x86_64_gadget_materialize_flags
 	.endif
@@ -390,38 +390,38 @@ gadget \operation\()_\width\()_m\form
 	.endif
 	shift_prepare_count \operation, \width
 	.ifc \operation,rcl
-	cbz w26, .Lx86_shift_memory_store\@
+	cbz w26, Lx86_shift_memory_store\@
 	.endif
 	.ifc \operation,rcr
-	cbz w26, .Lx86_shift_memory_store\@
+	cbz w26, Lx86_shift_memory_store\@
 	.endif
 	shift_compute \operation, \width, \host_register
 	.ifc \operation,rol
-	cbnz w26, .Lx86_shift_memory_write\@
+	cbnz w26, Lx86_shift_memory_write\@
 	mov w26, #\width
 	.endif
 	.ifc \operation,ror
-	cbnz w26, .Lx86_shift_memory_write\@
+	cbnz w26, Lx86_shift_memory_write\@
 	mov w26, #\width
 	.endif
-	b .Lx86_shift_memory_write\@
-.Lx86_shift_memory_store\@:
+	b Lx86_shift_memory_write\@
+Lx86_shift_memory_store\@:
 	mov \host_register\()27, \host_register\()24
-.Lx86_shift_memory_write\@:
+Lx86_shift_memory_write\@:
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_shift_memory_write_cross\@
+	page_cross_check (\width / 8), Lx86_shift_memory_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
-	b .Lx86_shift_memory_written\@
-.Lx86_shift_memory_write_cross\@:
+	b Lx86_shift_memory_written\@
+Lx86_shift_memory_write_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x27
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-.Lx86_shift_memory_written\@:
-	cbz w26, .Lx86_shift_memory_done\@
+	cbz w0, Lx86_memory_fault
+Lx86_shift_memory_written\@:
+	cbz w26, Lx86_shift_memory_done\@
 	.ifc \operation,rcl
 	shift_update_flags \operation, \width, \host_register
 	.else
@@ -431,7 +431,7 @@ gadget \operation\()_\width\()_m\form
 	shift_record_flags \operation, \width, \host_register
 	.endif
 	.endif
-.Lx86_shift_memory_done\@:
+Lx86_shift_memory_done\@:
 	finish_store (\width / 8)
 .endm
 
@@ -463,7 +463,7 @@ shift_family rcr
  */
 .macro double_shift_compute operation, width, host_register
 	cmp w26, #\width
-	b.hi .Lx86_double_shift_large_count\@
+	b.hi Lx86_double_shift_large_count\@
 	mov \host_register\()8, #\width
 	sub \host_register\()8, \host_register\()8, \host_register\()26
 	.ifc \operation,shld
@@ -479,8 +479,8 @@ shift_family rcr
 	sub \host_register\()8, \host_register\()26, #1
 	lsrv \host_register\()19, \host_register\()24, \host_register\()8
 	.endif
-	b .Lx86_double_shift_computed\@
-.Lx86_double_shift_large_count\@:
+	b Lx86_double_shift_computed\@
+Lx86_double_shift_large_count\@:
 	sub \host_register\()8, \host_register\()26, #\width
 	.ifc \operation,shld
 	lslv \host_register\()27, \host_register\()15, \host_register\()8
@@ -493,7 +493,7 @@ shift_family rcr
 	sub \host_register\()8, \host_register\()8, #1
 	lsrv \host_register\()19, \host_register\()15, \host_register\()8
 	.endif
-.Lx86_double_shift_computed\@:
+Lx86_double_shift_computed\@:
 	normalize_result \width, \host_register\()27
 	and w19, w19, #1
 .endm
@@ -513,12 +513,12 @@ gadget \operation\()_\width\()_rr\form
 	.else
 	and w26, w26, #0x1f
 	.endif
-	cbz w26, .Lx86_double_shift_register_zero\@
+	cbz w26, Lx86_double_shift_register_zero\@
 	double_shift_compute \operation, \width, \host_register
 	\store \store_register\()27, [_cpu, x25]
 	shift_record_flags \operation, \width, \host_register
 	retire_and_next
-.Lx86_double_shift_register_zero\@:
+Lx86_double_shift_register_zero\@:
 	\store \store_register\()24, [_cpu, x25]
 	retire_and_next
 .endm
@@ -528,18 +528,18 @@ gadget \operation\()_\width\()_mr\form
 	effective_address
 	mov x25, x7
 	ldr x26, [_stream], #8
-	page_cross_check (\width / 8), .Lx86_double_shift_read_cross\@
+	page_cross_check (\width / 8), Lx86_double_shift_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-	b .Lx86_double_shift_loaded\@
-.Lx86_double_shift_read_cross\@:
+	b Lx86_double_shift_loaded\@
+Lx86_double_shift_read_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_double_shift_loaded\@:
+Lx86_double_shift_loaded\@:
 	and x8, x23, #0xffff
 	\load \host_register\()15, [_cpu, x8]
 	.ifc \form,r
@@ -550,24 +550,24 @@ gadget \operation\()_\width\()_mr\form
 	.else
 	and w26, w26, #0x1f
 	.endif
-	cbz w26, .Lx86_double_shift_memory_zero\@
+	cbz w26, Lx86_double_shift_memory_zero\@
 	double_shift_compute \operation, \width, \host_register
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_double_shift_write_cross\@
+	page_cross_check (\width / 8), Lx86_double_shift_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
-	b .Lx86_double_shift_written\@
-.Lx86_double_shift_write_cross\@:
+	b Lx86_double_shift_written\@
+Lx86_double_shift_write_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x27
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-.Lx86_double_shift_written\@:
+	cbz w0, Lx86_memory_fault
+Lx86_double_shift_written\@:
 	shift_record_flags \operation, \width, \host_register
 	finish_store (\width / 8)
-.Lx86_double_shift_memory_zero\@:
+Lx86_double_shift_memory_zero\@:
 	retire_and_next
 .endm
 

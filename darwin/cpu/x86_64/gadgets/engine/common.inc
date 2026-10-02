@@ -16,6 +16,17 @@ _executed .req x29
 
 	.set x86_guest_memory_gadget, 0
 
+/* Name the start of the cold section, whose own labels are temporary, so a
+ * host sample of a cold path names this section rather than whatever precedes
+ * it in the image. It emits no bytes. */
+#if __APPLE__
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+#else
+	.pushsection .text.gadget_cold,"ax"
+#endif
+NAME(uml_x86_64_gadget_cold_section_begin):
+	.popsection
+
 .macro gadget name
 	.globl NAME(uml_x86_64_gadget_\name)
 	.p2align 4
@@ -39,10 +50,10 @@ NAME(uml_x86_64_gadget_\name):
 	lsr w\scratch2, w\scratch2, #30
 	ubfx x\scratch0, x\scratch1, #22, #2
 	cmp x\scratch0, x\scratch2
-	b.eq .Lx86_rounding_ready\@
+	b.eq Lx86_rounding_ready\@
 	bfi x\scratch1, x\scratch2, #22, #2
 	msr fpcr, x\scratch1
-.Lx86_rounding_ready\@:
+Lx86_rounding_ready\@:
 .endm
 
 .macro next_gadget
@@ -115,15 +126,15 @@ NAME(uml_x86_64_gadget_\name):
 .macro retire_unless_simd_unchecked value
 	mvn w8, \value
 	tst w8, #0x1f80
-	b.ne .Lx86_simd_unmasked\@
+	b.ne Lx86_simd_unmasked\@
 	retire_and_next
-.Lx86_simd_unmasked\@:
+Lx86_simd_unmasked\@:
 	tst w8, #0x1800
-	b.ne .Lx86_simd_unchecked\@
+	b.ne Lx86_simd_unchecked\@
 	ldrb w8, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
-	tbz w8, #1, .Lx86_simd_unchecked\@
+	tbz w8, #1, Lx86_simd_unchecked\@
 	retire_and_next
-.Lx86_simd_unchecked\@:
+Lx86_simd_unchecked\@:
 	retire_and_leave
 .endm
 
@@ -132,17 +143,17 @@ NAME(uml_x86_64_gadget_\name):
 .macro retire_unless_x87_unchecked control
 	mvn w8, \control
 	tst w8, #0x3f
-	b.ne .Lx86_x87_unmasked\@
+	b.ne Lx86_x87_unmasked\@
 	retire_and_next
-.Lx86_x87_unmasked\@:
+Lx86_x87_unmasked\@:
 	ldrb w8, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
-	tbz w8, #0, .Lx86_x87_unchecked\@
+	tbz w8, #0, Lx86_x87_unchecked\@
 	ldrh w8, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	bic w8, w8, \control
 	tst w8, #0x3f
-	b.ne .Lx86_x87_unchecked\@
+	b.ne Lx86_x87_unchecked\@
 	retire_and_next
-.Lx86_x87_unchecked\@:
+Lx86_x87_unchecked\@:
 	retire_and_leave
 .endm
 
@@ -151,15 +162,15 @@ NAME(uml_x86_64_gadget_\name):
 	ldr w8, [_cpu, #UML_X86_64_CPU_MXCSR]
 	mvn w8, w8
 	tst w8, #0x1f80
-	b.eq .Lx86_simd_masked\@
+	b.eq Lx86_simd_masked\@
 	tst w8, #0x1800
-	b.ne .Lx86_simd_unchecked\@
+	b.ne Lx86_simd_unchecked\@
 	ldrb w8, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
-	tbz w8, #1, .Lx86_simd_unchecked\@
-.Lx86_simd_masked\@:
+	tbz w8, #1, Lx86_simd_unchecked\@
+Lx86_simd_masked\@:
 	ldrh w9, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
 	retire_unless_x87_unchecked w9
-.Lx86_simd_unchecked\@:
+Lx86_simd_unchecked\@:
 	retire_and_leave
 .endm
 
@@ -181,9 +192,9 @@ NAME(uml_x86_64_gadget_\name):
  * its result can see. */
 .macro simd_leave_if_checking
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
-	tbz w14, #1, .Lx86_simd_unchecked\@
+	tbz w14, #1, Lx86_simd_unchecked\@
 	b uml_x86_64_gadget_exception_check
-.Lx86_simd_unchecked\@:
+Lx86_simd_unchecked\@:
 .endm
 
 /* w14 = nonzero when a lane of v`register` (`element` bits wide) has an
@@ -241,16 +252,16 @@ NAME(uml_x86_64_gadget_\name):
  * result -- v`first`, and v`second` for a 256-bit one -- is special. */
 .macro simd_check_packed element, first, second=-1
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
-	tbz w14, #1, .Lx86_simd_packed_ok\@
+	tbz w14, #1, Lx86_simd_packed_ok\@
 	simd_special_lanes \element, \first
 	.if \second >= 0
-	cbnz w14, .Lx86_simd_packed_special\@
+	cbnz w14, Lx86_simd_packed_special\@
 	simd_special_lanes \element, \second
 	.endif
-	cbz w14, .Lx86_simd_packed_ok\@
-.Lx86_simd_packed_special\@:
+	cbz w14, Lx86_simd_packed_ok\@
+Lx86_simd_packed_special\@:
 	b uml_x86_64_gadget_exception_check
-.Lx86_simd_packed_ok\@:
+Lx86_simd_packed_ok\@:
 .endm
 
 /* The same for a packed result in v4, and v5 for a 256-bit one. */
@@ -265,29 +276,29 @@ NAME(uml_x86_64_gadget_\name):
 /* The same for the scalar result in lane 0 of v`register`. */
 .macro simd_check_scalar element, register
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
-	tbz w14, #1, .Lx86_simd_scalar_ok\@
-	simd_special_scalar \element, \register, .Lx86_simd_scalar_special\@
-	b .Lx86_simd_scalar_ok\@
-.Lx86_simd_scalar_special\@:
+	tbz w14, #1, Lx86_simd_scalar_ok\@
+	simd_special_scalar \element, \register, Lx86_simd_scalar_special\@
+	b Lx86_simd_scalar_ok\@
+Lx86_simd_scalar_special\@:
 	b uml_x86_64_gadget_exception_check
-.Lx86_simd_scalar_ok\@:
+Lx86_simd_scalar_ok\@:
 .endm
 
 /* The same for a NaN in a lane of the packed inputs v`left` and v`right`, and
  * v`left2` and v`right2` for 256-bit ones. */
 .macro simd_check_packed_nan element, left, right, left2=-1, right2=-1
 	ldrb w14, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
-	tbz w14, #1, .Lx86_simd_inputs_ok\@
+	tbz w14, #1, Lx86_simd_inputs_ok\@
 	simd_ordered_lanes \element, \left, \right
-	cbz w14, .Lx86_simd_inputs_nan\@
+	cbz w14, Lx86_simd_inputs_nan\@
 	.if \left2 >= 0
 	simd_ordered_lanes \element, \left2, \right2
-	cbz w14, .Lx86_simd_inputs_nan\@
+	cbz w14, Lx86_simd_inputs_nan\@
 	.endif
-	b .Lx86_simd_inputs_ok\@
-.Lx86_simd_inputs_nan\@:
+	b Lx86_simd_inputs_ok\@
+Lx86_simd_inputs_nan\@:
 	b uml_x86_64_gadget_exception_check
-.Lx86_simd_inputs_ok\@:
+Lx86_simd_inputs_ok\@:
 .endm
 
 /* The same for a NaN in lane 0 of v`left` or v`right`, tested in any case:
@@ -298,9 +309,9 @@ NAME(uml_x86_64_gadget_\name):
 	.else
 	fcmp d\left, d\right
 	.endif
-	b.vc .Lx86_simd_ordered\@
+	b.vc Lx86_simd_ordered\@
 	simd_leave_if_checking
-.Lx86_simd_ordered\@:
+Lx86_simd_ordered\@:
 .endm
 
 /* Bytes 24..31 of the record hold operation, width, carry, one padding byte,
@@ -362,7 +373,7 @@ NAME(uml_x86_64_gadget_\name):
 	/* `sub` keeps the flags `ands` defined, so an empty record forces the
 	 * settled way out without a test of its own. */
 	ccmp w5, #1, #4, ne
-	b.ls .Lx86_lazy_settled\@
+	b.ls Lx86_lazy_settled\@
 	add x15, _cpu, #UML_X86_64_CPU_DEFERRED_LEFT
 	ldp x7, x8, [x15]
 	ldr x10, [x15, #16]
@@ -371,11 +382,11 @@ NAME(uml_x86_64_gadget_\name):
 	stp x10, x14, [x15, #16]
 	mov w16, #1
 	strb w16, [_cpu, #UML_X86_64_CPU_DEFERRED_PENDING]
-	b .Lx86_lazy_ready\@
-.Lx86_lazy_settled\@:
-	tbz x14, #32, .Lx86_lazy_ready\@
+	b Lx86_lazy_ready\@
+Lx86_lazy_settled\@:
+	tbz x14, #32, Lx86_lazy_ready\@
 	bl uml_x86_64_gadget_materialize_carry
-.Lx86_lazy_ready\@:
+Lx86_lazy_ready\@:
 .endm
 
 /* A guest access no wider than one byte lies inside one page by construction,
@@ -439,8 +450,8 @@ NAME(uml_x86_64_gadget_\name):
 	 * Adding a zero segment base and masking nothing are what that work comes
 	 * to in the plain case, so skipping it is the same address.
 	 */
-	tbnz x23, #UML_X86_64_MEMORY_PLAIN_ADDRESS, .Lx86_segment_ready\@
-	b .Lx86_address_general\@
+	tbnz x23, #UML_X86_64_MEMORY_PLAIN_ADDRESS, Lx86_segment_ready\@
+	b Lx86_address_general\@
 	/* What a segment override or a narrow address space still needs is two
 	 * instructions in the entry and its whole body in the cold section, so a
 	 * bank this size keeps only the plain form in the hot stream.
@@ -450,17 +461,17 @@ NAME(uml_x86_64_gadget_\name):
 #else
 	.pushsection .text.gadget_cold,"ax"
 #endif
-.Lx86_address_general\@:
+Lx86_address_general\@:
 	/* Truncation distributes over addition and shifting, so masking the sum
 	 * once is equivalent to masking every component and the sum.
 	 */
-	tbnz x23, #53, .Lx86_address_16\@
-	tbz x23, #52, .Lx86_address_ready\@
+	tbnz x23, #53, Lx86_address_16\@
+	tbz x23, #52, Lx86_address_ready\@
 	mov w7, w7
-	b .Lx86_address_ready\@
-.Lx86_address_16\@:
+	b Lx86_address_ready\@
+Lx86_address_16\@:
 	uxth w7, w7
-.Lx86_address_ready\@:
+Lx86_address_ready\@:
 	/* The selector indexes {segment_zero, fs_base, gs_base}, so no segment is
 	 * an addition of zero rather than a pair of branches.
 	 */
@@ -474,15 +485,15 @@ NAME(uml_x86_64_gadget_\name):
 	 * wrap follows the selector, not the base value, so a zero FS base in
 	 * compat32 still wraps exactly as before.
 	 */
-	cbz x9, .Lx86_address_done\@
+	cbz x9, Lx86_address_done\@
 	ldrb w11, [_cpu, #UML_X86_64_CPU_EXECUTION_MODE]
 	cmp w11, #1
-	b.ne .Lx86_address_done\@
+	b.ne Lx86_address_done\@
 	mov w7, w7
-.Lx86_address_done\@:
-	b .Lx86_segment_ready\@
+Lx86_address_done\@:
+	b Lx86_segment_ready\@
 	.popsection
-.Lx86_segment_ready\@:
+Lx86_segment_ready\@:
 .endm
 
 /* The stack's own entry, re-checked before any hashing: x25 holds the guest
@@ -533,16 +544,16 @@ NAME(uml_x86_64_gadget_\name):
 	.else
 	cmp x9, x12
 	.endif
-	b.eq .Lx86_tlb_hit\@
+	b.eq Lx86_tlb_hit\@
 	mov x0, _context
 	mov x1, x7
 	mov w2, #\access
 	mov w3, #\size
 	bl NAME(uml_x86_64_gadget_tlb_miss)
-	cbz x0, .Lx86_memory_fault
+	cbz x0, Lx86_memory_fault
 	mov x7, x0
-	b .Lx86_tlb_done\@
-.Lx86_tlb_hit\@:
+	b Lx86_tlb_done\@
+Lx86_tlb_hit\@:
 	.if \access == 1
 	/* Reading the context after the guest store costs a memory-disambiguation
 	 * stall, and calling out to publication costs far more. Publication has
@@ -555,18 +566,18 @@ NAME(uml_x86_64_gadget_\name):
 	 * removed.
 	 */
 	ldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	tbz x12, #1, .Lx86_tlb_write_code_ready\@
+	tbz x12, #1, Lx86_tlb_write_code_ready\@
 	/* A test-and-branch reaches 32 KiB and the cold section is a bank away,
 	 * so the rare arm is entered through an unconditional branch. */
-	b .Lx86_tlb_write_code_owed\@
-.Lx86_tlb_write_code_ready\@:
+	b Lx86_tlb_write_code_owed\@
+Lx86_tlb_write_code_ready\@:
 	orr w14, w14, w12, lsr #2
-	tbnz w14, #0, .Lx86_store_publishes\@
+	tbnz w14, #0, Lx86_store_publishes\@
 	orr x23, x23, #(1 << 60)
-.Lx86_store_publishes\@:
+Lx86_store_publishes\@:
 	.endif
 	add x7, x13, x7
-.Lx86_tlb_done\@:
+Lx86_tlb_done\@:
 	.if \access == 1
 	/* A store to a page some executor holds a translation of is the rare one,
 	 * and settling it needs a second context field, so it leaves the hot
@@ -587,15 +598,15 @@ NAME(uml_x86_64_gadget_\name):
 #else
 	.pushsection .text.gadget_cold,"ax"
 #endif
-.Lx86_tlb_write_code_owed\@:
+Lx86_tlb_write_code_owed\@:
 	ldr x14, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
 	eor x14, x9, x14
-	cbz x14, .Lx86_tlb_write_code_kept\@
+	cbz x14, Lx86_tlb_write_code_kept\@
 	mov w14, #UML_X86_64_WRITE_CODE_PENDING
 	strb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-.Lx86_tlb_write_code_kept\@:
+Lx86_tlb_write_code_kept\@:
 	ldrb w14, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	b .Lx86_tlb_write_code_ready\@
+	b Lx86_tlb_write_code_ready\@
 	.popsection
 	.endif
 .endm
@@ -616,7 +627,7 @@ NAME(uml_x86_64_gadget_\name):
 	add x11, x11, x10, lsl #5
 	ldp x12, x13, [x11, #\entry_offset]
 	cmp x9, x12
-	b.eq .Lx86_plain_tlb_hit\@
+	b.eq Lx86_plain_tlb_hit\@
 	mov x0, _context
 	mov x1, x7
 	mov w2, #\access
@@ -624,10 +635,10 @@ NAME(uml_x86_64_gadget_\name):
 	bl NAME(uml_x86_64_gadget_tlb_miss)
 	cbz x0, \fault
 	mov x7, x0
-	b .Lx86_plain_tlb_done\@
-.Lx86_plain_tlb_hit\@:
+	b Lx86_plain_tlb_done\@
+Lx86_plain_tlb_hit\@:
 	add x7, x13, x7
-.Lx86_plain_tlb_done\@:
+Lx86_plain_tlb_done\@:
 .endm
 
 /* x86 LOCK-prefixed read-modify-write.
@@ -662,7 +673,7 @@ NAME(uml_x86_64_gadget_\name):
 /* The split lock brackets the ordinary load and store of an operand that left
  * the exclusive path.  Both ends are calls, so only callee-saved registers
  * survive them; x7 is restored from the guest address in x25.  A fault in
- * between reaches `.Lx86_memory_fault`, which releases the lock.
+ * between reaches `Lx86_memory_fault`, which releases the lock.
  */
 .macro split_lock_enter
 	mov x0, _context
@@ -680,12 +691,12 @@ NAME(uml_x86_64_gadget_\name):
  */
 .macro split_operand size, exclusive
 	ldrb w9, [_context, #UML_X86_64_CONTEXT_UNALIGNED_EXCLUSIVES]
-	cbz w9, .Lx86_split_operand_locked\@
+	cbz w9, Lx86_split_operand_locked\@
 	add x9, x7, #((\size) - 1)
 	eor x9, x9, x7
 	tst x9, #0xfffffffffffffff0
 	b.eq \exclusive
-.Lx86_split_operand_locked\@:
+Lx86_split_operand_locked\@:
 	split_lock_enter
 .endm
 
@@ -714,32 +725,32 @@ NAME(uml_x86_64_gadget_\name):
 .endm
 
 .macro publish_pending_code address, size
-	tbnz x23, #60, .Lx86_code_published\@
+	tbnz x23, #60, Lx86_code_published\@
 	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	cbz w8, .Lx86_code_published\@
+	cbz w8, Lx86_code_published\@
 	mov x0, _context
 	mov x1, \address
 	mov w2, #\size
 	bl NAME(uml_x86_64_gadget_publish_code_write)
-.Lx86_code_published\@:
+Lx86_code_published\@:
 .endm
 
 .macro finish_store size
 	publish_pending_code x25, \size
-.Lx86_store_check_overlap\@:
+Lx86_store_check_overlap\@:
 	ldr x8, [_context, #UML_X86_64_CONTEXT_PROGRAM_END]
 	cmp x25, x8
-	b.hs .Lx86_store_done\@
+	b.hs Lx86_store_done\@
 	add x9, x25, #\size
 	ldr x10, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]
 	cmp x9, x10
-	b.ls .Lx86_store_done\@
+	b.ls Lx86_store_done\@
 	ldrb w8, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	cbnz w8, .Lx86_store_code_exit\@
+	cbnz w8, Lx86_store_code_exit\@
 	mov x0, _context
 	mov x1, x25
 	bl NAME(uml_x86_64_gadget_invalidate_code)
-.Lx86_store_code_exit\@:
+Lx86_store_code_exit\@:
 	ubfx x8, x23, #56, #4
 	add x8, x22, x8
 	str x8, [_cpu, #UML_X86_64_CPU_RIP]
@@ -747,7 +758,7 @@ NAME(uml_x86_64_gadget_\name):
 	x86_memory_order_boundary
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
-.Lx86_store_done\@:
+Lx86_store_done\@:
 	retire_and_next
 .endm
 
@@ -767,31 +778,31 @@ NAME(uml_x86_64_gadget_\name):
 .macro follow_block_link link
 	mov x19, \link
 	ldrb w9, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
-	cbz w9, .Lx86_link_code_ready\@
+	cbz w9, Lx86_link_code_ready\@
 	mov x0, _context
 	bl NAME(uml_x86_64_gadget_code_link_safe)
-	cbz w0, .Lx86_link_code_exit\@
+	cbz w0, Lx86_link_code_exit\@
 	strb wzr, [_context, #UML_X86_64_CONTEXT_WRITE_CODE]
 	/* Those publications are settled, so the page they covered is no longer
 	 * one this program has published: the next store to it owes a record
 	 * again, just as it did before this program made any. */
 	mov w9, #UML_X86_64_CODE_PAGE_NONE
 	str x9, [_context, #UML_X86_64_CONTEXT_CODE_PAGE]
-.Lx86_link_code_exit\@:
-	cbnz w0, .Lx86_link_code_ready\@
+Lx86_link_code_exit\@:
+	cbnz w0, Lx86_link_code_ready\@
 	ldr x9, [x19, #16]
 	str x9, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
-.Lx86_link_code_ready\@:
+Lx86_link_code_ready\@:
 	ldp _stream, x11, [x19]
 	adds x12, _executed, x11
-	b.le .Lx86_link_follow\@
+	b.le Lx86_link_follow\@
 	ldr x9, [x19, #16]
 	str x9, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
-.Lx86_link_follow\@:
+Lx86_link_follow\@:
 	ldp x12, x13, [x19, #24]
 	stp x12, x13, [_context, #UML_X86_64_CONTEXT_PROGRAM_BEGIN]
 	next_gadget
@@ -823,17 +834,17 @@ NAME(uml_x86_64_gadget_\name):
 .macro follow_indirect_link target, site
 	ldp x11, x12, [\site]
 	cmp \target, x11
-	b.eq .Lx86_indirect_follow\@
+	b.eq Lx86_indirect_follow\@
 	ldp x11, x12, [\site, #16]
 	cmp \target, x11
-	b.eq .Lx86_indirect_follow\@
-	follow_target_link \target, .Lx86_indirect_train\@
-.Lx86_indirect_train\@:
+	b.eq Lx86_indirect_follow\@
+	follow_target_link \target, Lx86_indirect_train\@
+Lx86_indirect_train\@:
 	str \site, [_context, #UML_X86_64_CONTEXT_INDIRECT_MISS]
 	str \target, [_cpu, #UML_X86_64_CPU_RIP]
 	mov w0, #UML_X86_64_EVENT_CONTINUED
 	b uml_x86_64_gadget_leave
-.Lx86_indirect_follow\@:
+Lx86_indirect_follow\@:
 	mov x8, x12
 	follow_block_link x8
 .endm
@@ -899,10 +910,10 @@ uml_x86_64_gadget_leave:
 	 * callee-saved registers below are restored from it. */
 	mrs x10, fpcr
 	ubfx x11, x10, #22, #2
-	cbz x11, .Lx86_leave_rounding_ready
+	cbz x11, Lx86_leave_rounding_ready
 	bic x10, x10, #(3 << 22)
 	msr fpcr, x10
-.Lx86_leave_rounding_ready:
+Lx86_leave_rounding_ready:
 	ldr x9, [_context, #UML_X86_64_CONTEXT_INSTRUCTION_LIMIT]
 	add x1, _executed, x9
 	ldp d14, d15, [sp, #0xa0]
@@ -1042,10 +1053,10 @@ uml_x86_64_gadget_leave:
 	orr x9, x9, #0x800
 	.endif
 5:
-	b .Lx86_flags_apply_overrides
+	b Lx86_flags_apply_overrides
 .endm
 
-.macro shift_carry_body operation, width, base=UML_X86_64_CPU_DEFERRED_LEFT, exit=.Lx86_carry_apply_overrides, load_flags=1
+.macro shift_carry_body operation, width, base=UML_X86_64_CPU_DEFERRED_LEFT, exit=Lx86_carry_apply_overrides, load_flags=1
 	add x6, _cpu, #\base
 	ldp x7, x8, [x6]
 	.if \load_flags
@@ -1149,69 +1160,69 @@ uml_x86_64_gadget_leave:
 7:
 	.if (\operation) == 0
 	cmp w5, #1
-	b.eq .Lx86_flags_add
+	b.eq Lx86_flags_add
 	cmp w5, #4
-	b.eq .Lx86_flags_add_preserve_carry
+	b.eq Lx86_flags_add_preserve_carry
 	cmp w5, #6
-	b.eq .Lx86_flags_add_carry
+	b.eq Lx86_flags_add_carry
 	cmp w5, #2
-	b.eq .Lx86_flags_sub
+	b.eq Lx86_flags_sub
 	cmp w5, #5
-	b.eq .Lx86_flags_sub_preserve_carry
+	b.eq Lx86_flags_sub_preserve_carry
 	cmp w5, #7
-	b.eq .Lx86_flags_sub_borrow
-	b .Lx86_flags_apply_overrides
+	b.eq Lx86_flags_sub_borrow
+	b Lx86_flags_apply_overrides
 
-.Lx86_flags_add:
+Lx86_flags_add:
 	cmp x10, x7
-	b.hs .Lx86_flags_add_preserve_carry
+	b.hs Lx86_flags_add_preserve_carry
 	orr x9, x9, #0x1
-.Lx86_flags_add_preserve_carry:
+Lx86_flags_add_preserve_carry:
 	eor x13, x7, x8
 	mvn x13, x13
 	eor x14, x7, x10
 	and x13, x13, x14
-	flags_overflow_from 0, x13, .Lx86_flags_add_aux
-.Lx86_flags_add_aux:
-	b .Lx86_flags_auxiliary
+	flags_overflow_from 0, x13, Lx86_flags_add_aux
+Lx86_flags_add_aux:
+	b Lx86_flags_auxiliary
 
-.Lx86_flags_add_carry:
+Lx86_flags_add_carry:
 	flags_adjusted_carry 0, result
-	cbz w15, .Lx86_flags_add_preserve_carry
+	cbz w15, Lx86_flags_add_preserve_carry
 	orr x9, x9, #0x1
-	b .Lx86_flags_add_preserve_carry
+	b Lx86_flags_add_preserve_carry
 
-.Lx86_flags_sub:
+Lx86_flags_sub:
 	cmp x7, x8
-	b.hs .Lx86_flags_sub_preserve_carry
+	b.hs Lx86_flags_sub_preserve_carry
 	orr x9, x9, #0x1
-.Lx86_flags_sub_preserve_carry:
+Lx86_flags_sub_preserve_carry:
 	eor x13, x7, x8
 	eor x14, x7, x10
 	and x13, x13, x14
-	flags_overflow_from 0, x13, .Lx86_flags_sub_aux
-.Lx86_flags_sub_aux:
-	b .Lx86_flags_auxiliary
+	flags_overflow_from 0, x13, Lx86_flags_sub_aux
+Lx86_flags_sub_aux:
+	b Lx86_flags_auxiliary
 
-.Lx86_flags_sub_borrow:
+Lx86_flags_sub_borrow:
 	flags_adjusted_carry 0, right
-	cbz w15, .Lx86_flags_sub_preserve_carry
+	cbz w15, Lx86_flags_sub_preserve_carry
 	orr x9, x9, #0x1
-	b .Lx86_flags_sub_preserve_carry
+	b Lx86_flags_sub_preserve_carry
 
-.Lx86_flags_auxiliary:
+Lx86_flags_auxiliary:
 	eor x13, x7, x8
 	eor x13, x13, x10
-	tbz x13, #4, .Lx86_flags_auxiliary_done
+	tbz x13, #4, Lx86_flags_auxiliary_done
 	orr x9, x9, #0x10
-.Lx86_flags_auxiliary_done:
+Lx86_flags_auxiliary_done:
 	sub w13, w5, #4
 	cmp w13, #1
-	b.hi .Lx86_flags_apply_overrides
+	b.hi Lx86_flags_apply_overrides
 	ldrb w16, [_cpu, #UML_X86_64_CPU_DEFERRED_PENDING]
-	cbz w16, .Lx86_flags_apply_overrides
-	adr x17, .Lx86_flags_apply_overrides
-	b .Lx86_slot_carry
+	cbz w16, Lx86_flags_apply_overrides
+	adr x17, Lx86_flags_apply_overrides
+	b Lx86_slot_carry
 	.else
 	/* Carry, overflow and auxiliary for one known operation. */
 	.if (\operation) == 1
@@ -1255,28 +1266,28 @@ uml_x86_64_gadget_leave:
 	.if ((\operation) == 4) || ((\operation) == 5)
 	/* The preserved carry may still be pending in the slot. */
 	ldrb w16, [_cpu, #UML_X86_64_CPU_DEFERRED_PENDING]
-	cbz w16, .Lx86_flags_apply_overrides
-	adr x17, .Lx86_flags_apply_overrides
-	b .Lx86_slot_carry
+	cbz w16, Lx86_flags_apply_overrides
+	adr x17, Lx86_flags_apply_overrides
+	b Lx86_slot_carry
 	.endif
-	b .Lx86_flags_apply_overrides
+	b Lx86_flags_apply_overrides
 	.endif
 .endm
 
 .p2align 4
 uml_x86_64_gadget_materialize_flags:
 	ldrb w5, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	cbnz w5, .Lx86_flags_dispatch
+	cbnz w5, Lx86_flags_dispatch
 	ldrh w13, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	cbz w13, 9f
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	b .Lx86_flags_apply_overrides
-.Lx86_flags_dispatch:
+	b Lx86_flags_apply_overrides
+Lx86_flags_dispatch:
 	/* Masking both keys keeps the branch inside the table whatever the
 	 * recorded bytes hold; the slots those values reach are the generic body.
 	 */
 	ldrb w11, [_cpu, #UML_X86_64_CPU_DEFERRED_WIDTH]
-	adr x14, .Lx86_flags_table
+	adr x14, Lx86_flags_table
 	and w12, w5, #15
 	and w13, w11, #0xf
 	add x14, x14, x12, lsl #6
@@ -1284,42 +1295,42 @@ uml_x86_64_gadget_materialize_flags:
 	br x14
 
 .p2align 2
-.Lx86_flags_table:
+Lx86_flags_table:
 .irp op,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 .irp w,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 	.if ((\op) >= 1) && ((\op) <= 10) && (((\w) == 1) || ((\w) == 2) || ((\w) == 4) || ((\w) == 8))
-	b .Lx86_flags_o\op\()_w\w
+	b Lx86_flags_o\op\()_w\w
 	.else
-	b .Lx86_flags_generic
+	b Lx86_flags_generic
 	.endif
 .endr
 .endr
 
 .irp op,1,2,3,4,5,6,7
 .irp w,1,2,4,8
-.Lx86_flags_o\op\()_w\w:
+Lx86_flags_o\op\()_w\w:
 	flags_body \op, \w
 .endr
 .endr
 
 .irp op,8,9,10
 .irp w,1,2,4,8
-.Lx86_flags_o\op\()_w\w:
+Lx86_flags_o\op\()_w\w:
 	shift_flags_body \op, \w
 .endr
 .endr
 
-.Lx86_flags_generic:
+Lx86_flags_generic:
 	flags_body 0, 0
 
-.Lx86_flags_apply_overrides:
+Lx86_flags_apply_overrides:
 	ldrh w13, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
-	cbz w13, .Lx86_flags_store
+	cbz w13, Lx86_flags_store
 	ldrh w14, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 	bic x9, x9, x13
 	and x14, x14, x13
 	orr x9, x9, x14
-.Lx86_flags_store:
+Lx86_flags_store:
 	orr x9, x9, #0x2
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
@@ -1340,7 +1351,7 @@ uml_x86_64_gadget_materialize_flags:
  * are architecturally visible, so a gadget that can leave in that window --
  * every read-modify-write form -- keeps the full routine.
  */
-.macro carry_body operation, width, base=UML_X86_64_CPU_DEFERRED_LEFT, exit=.Lx86_carry_apply_overrides, load_flags=1
+.macro carry_body operation, width, base=UML_X86_64_CPU_DEFERRED_LEFT, exit=Lx86_carry_apply_overrides, load_flags=1
 	.if ((\operation) == 4) || ((\operation) == 5)
 	/* INC and DEC preserve carry, which may still be pending in the slot.
 	 * The slot itself never holds one of their records. */
@@ -1349,7 +1360,7 @@ uml_x86_64_gadget_materialize_flags:
 	ldrb w16, [_cpu, #UML_X86_64_CPU_DEFERRED_PENDING]
 	cbz w16, \exit
 	adr x17, \exit
-	b .Lx86_slot_carry
+	b Lx86_slot_carry
 	.else
 	b \exit
 	.endif
@@ -1423,7 +1434,7 @@ uml_x86_64_gadget_materialize_flags:
 	ldrb w16, [_cpu, #UML_X86_64_CPU_DEFERRED_PENDING]
 	cbz w16, \exit
 	adr x17, \exit
-	b .Lx86_slot_carry
+	b Lx86_slot_carry
 	.else
 	b \exit
 	.endif
@@ -1485,14 +1496,14 @@ uml_x86_64_gadget_materialize_flags:
 .p2align 4
 uml_x86_64_gadget_materialize_carry:
 	ldrb w5, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
-	cbnz w5, .Lx86_carry_dispatch
+	cbnz w5, Lx86_carry_dispatch
 	ldrh w13, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
 	cbz w13, 9f
 	ldr x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
-	b .Lx86_carry_apply_overrides
-.Lx86_carry_dispatch:
+	b Lx86_carry_apply_overrides
+Lx86_carry_dispatch:
 	ldrb w11, [_cpu, #UML_X86_64_CPU_DEFERRED_WIDTH]
-	adr x14, .Lx86_carry_table
+	adr x14, Lx86_carry_table
 	and w12, w5, #15
 	and w13, w11, #0xf
 	add x14, x14, x12, lsl #6
@@ -1500,42 +1511,42 @@ uml_x86_64_gadget_materialize_carry:
 	br x14
 
 .p2align 2
-.Lx86_carry_table:
+Lx86_carry_table:
 .irp op,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 .irp w,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 	.if ((\op) >= 1) && ((\op) <= 10) && (((\w) == 1) || ((\w) == 2) || ((\w) == 4) || ((\w) == 8))
-	b .Lx86_carry_o\op\()_w\w
+	b Lx86_carry_o\op\()_w\w
 	.else
-	b .Lx86_carry_generic
+	b Lx86_carry_generic
 	.endif
 .endr
 .endr
 
 .irp op,1,2,3,4,5,6,7
 .irp w,1,2,4,8
-.Lx86_carry_o\op\()_w\w:
+Lx86_carry_o\op\()_w\w:
 	carry_body \op, \w
 .endr
 .endr
 
 .irp op,8,9,10
 .irp w,1,2,4,8
-.Lx86_carry_o\op\()_w\w:
+Lx86_carry_o\op\()_w\w:
 	shift_carry_body \op, \w
 .endr
 .endr
 
-.Lx86_carry_generic:
+Lx86_carry_generic:
 	carry_body 0, 0
 
-.Lx86_carry_apply_overrides:
+Lx86_carry_apply_overrides:
 	ldrh w13, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_MASK]
-	cbz w13, .Lx86_carry_store
+	cbz w13, Lx86_carry_store
 	ldrh w14, [_cpu, #UML_X86_64_CPU_DEFERRED_OVERRIDE_VALUE]
 	bic x9, x9, x13
 	and x14, x14, x13
 	orr x9, x9, x14
-.Lx86_carry_store:
+Lx86_carry_store:
 	orr x9, x9, #0x2
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
@@ -1549,10 +1560,10 @@ uml_x86_64_gadget_materialize_carry:
  * INC or DEC recorded. Both materializers reach this with x5 to x16 free.
  */
 .p2align 4
-.Lx86_slot_carry:
+Lx86_slot_carry:
 	ldrb w5, [_cpu, #(UML_X86_64_CPU_CARRY_SLOT + 24)]
 	ldrb w11, [_cpu, #(UML_X86_64_CPU_CARRY_SLOT + 25)]
-	adr x14, .Lx86_slot_table
+	adr x14, Lx86_slot_table
 	and w12, w5, #15
 	and w13, w11, #0xf
 	add x14, x14, x12, lsl #6
@@ -1560,35 +1571,35 @@ uml_x86_64_gadget_materialize_carry:
 	br x14
 
 .p2align 2
-.Lx86_slot_table:
+Lx86_slot_table:
 .irp op,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 .irp w,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
 	.if ((\op) >= 1) && ((\op) <= 10) && (((\w) == 1) || ((\w) == 2) || ((\w) == 4) || ((\w) == 8))
-	b .Lx86_slot_o\op\()_w\w
+	b Lx86_slot_o\op\()_w\w
 	.else
-	b .Lx86_slot_generic
+	b Lx86_slot_generic
 	.endif
 .endr
 .endr
 
 .irp op,1,2,3,4,5,6,7
 .irp w,1,2,4,8
-.Lx86_slot_o\op\()_w\w:
-	carry_body \op, \w, UML_X86_64_CPU_CARRY_SLOT, .Lx86_slot_apply_overrides, 0
+Lx86_slot_o\op\()_w\w:
+	carry_body \op, \w, UML_X86_64_CPU_CARRY_SLOT, Lx86_slot_apply_overrides, 0
 .endr
 .endr
 
 .irp op,8,9,10
 .irp w,1,2,4,8
-.Lx86_slot_o\op\()_w\w:
-	shift_carry_body \op, \w, UML_X86_64_CPU_CARRY_SLOT, .Lx86_slot_apply_overrides, 0
+Lx86_slot_o\op\()_w\w:
+	shift_carry_body \op, \w, UML_X86_64_CPU_CARRY_SLOT, Lx86_slot_apply_overrides, 0
 .endr
 .endr
 
-.Lx86_slot_generic:
-	carry_body 0, 0, UML_X86_64_CPU_CARRY_SLOT, .Lx86_slot_apply_overrides, 0
+Lx86_slot_generic:
+	carry_body 0, 0, UML_X86_64_CPU_CARRY_SLOT, Lx86_slot_apply_overrides, 0
 
-.Lx86_slot_apply_overrides:
+Lx86_slot_apply_overrides:
 	ldrh w13, [_cpu, #(UML_X86_64_CPU_CARRY_SLOT + 28)]
 	tbz w13, #0, 9f
 	ldrh w14, [_cpu, #(UML_X86_64_CPU_CARRY_SLOT + 30)]
@@ -1626,10 +1637,10 @@ gadget nop
 	.if \width == 256
 	str q5, [x9, #16]
 	.else
-	tbz x\descriptor, #63, .Lx86_vector_write_done\@
+	tbz x\descriptor, #63, Lx86_vector_write_done\@
 	movi v6.16b, #0
 	str q6, [x9, #16]
-.Lx86_vector_write_done\@:
+Lx86_vector_write_done\@:
 	.endif
 .endm
 

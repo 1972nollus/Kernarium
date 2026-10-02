@@ -40,8 +40,8 @@ lse2_alignment_rule 7, write
 .purgem lse2_alignment_rule
 
 .macro lse2_stub name, mask, write
-.Llse2_stub_\name:
-	adr x8, .Llse2_resume_\name
+Llse2_stub_\name:
+	adr x8, Llse2_resume_\name
 	.if \write
 	b uml_arm64_gadget_lse2_alignment_write_\mask
 	.else

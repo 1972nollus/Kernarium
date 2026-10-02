@@ -29,10 +29,10 @@
 	.if \width == 256
 	str q3, [x9, #16]
 	.else
-	tbz x\descriptor, #63, .Lx86_vector_duplicate_done\@
+	tbz x\descriptor, #63, Lx86_vector_duplicate_done\@
 	movi v4.16b, #0
 	str q4, [x9, #16]
-.Lx86_vector_duplicate_done\@:
+Lx86_vector_duplicate_done\@:
 	.endif
 .endm
 
@@ -54,7 +54,7 @@ gadget vector_duplicate_\kind\()_\width\()_rr
 gadget vector_duplicate_\kind\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\input_size), .Lx86_vector_duplicate_cross\@
+	page_cross_check (\input_size), Lx86_vector_duplicate_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \input_size
 	.if \input_size == 8
 	ldr d0, [x7]
@@ -64,15 +64,15 @@ gadget vector_duplicate_\kind\()_\width\()_rm
 	.if \input_size == 32
 	ldr q1, [x7, #16]
 	.endif
-	b .Lx86_vector_duplicate_loaded\@
-.Lx86_vector_duplicate_cross\@:
+	b Lx86_vector_duplicate_loaded\@
+Lx86_vector_duplicate_cross\@:
 	sub sp, sp, #32
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
 	mov w3, #\input_size
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_duplicate_cross_fault\@
+	cbz w0, Lx86_vector_duplicate_cross_fault\@
 	.if \input_size == 8
 	ldr d0, [sp]
 	.else
@@ -82,13 +82,13 @@ gadget vector_duplicate_\kind\()_\width\()_rm
 	ldr q1, [sp, #16]
 	.endif
 	add sp, sp, #32
-.Lx86_vector_duplicate_loaded\@:
+Lx86_vector_duplicate_loaded\@:
 	vector_duplicate_transform \kind, \width
 	vector_duplicate_write \width, 23
 	retire_and_next
-.Lx86_vector_duplicate_cross_fault\@:
+Lx86_vector_duplicate_cross_fault\@:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 .endm
 
 vector_duplicate_register sldup, 128
@@ -122,24 +122,24 @@ gadget vector_lane_merge_rr
 	add x10, _cpu, x10
 	add x11, _cpu, x11
 	ldr q0, [x10]
-	tbz x8, #49, .Lx86_vector_lane_merge_rr_source_ready
+	tbz x8, #49, Lx86_vector_lane_merge_rr_source_ready
 	add x11, x11, #8
-.Lx86_vector_lane_merge_rr_source_ready:
+Lx86_vector_lane_merge_rr_source_ready:
 	/* All x86 sources are read before the destination is written.  The
 	 * incoming register may alias the destination in three-operand VEX forms.
 	 */
 	ldr x12, [x11]
 	str q0, [x9]
-	tbz x8, #48, .Lx86_vector_lane_merge_rr_store
+	tbz x8, #48, Lx86_vector_lane_merge_rr_store
 	add x9, x9, #8
-.Lx86_vector_lane_merge_rr_store:
+Lx86_vector_lane_merge_rr_store:
 	str x12, [x9]
-	tbz x8, #50, .Lx86_vector_lane_merge_rr_done
+	tbz x8, #50, Lx86_vector_lane_merge_rr_done
 	and x9, x8, #0xffff
 	add x9, _cpu, x9
 	movi v0.16b, #0
 	str q0, [x9, #16]
-.Lx86_vector_lane_merge_rr_done:
+Lx86_vector_lane_merge_rr_done:
 	retire_and_next
 
 /* Memory form config: merge offset in 15:0, destination-high in bit 16,
@@ -149,32 +149,32 @@ gadget vector_lane_merge_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check 8, .Lx86_vector_lane_merge_rm_cross
+	page_cross_check 8, Lx86_vector_lane_merge_rm_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 8
 	ldr x24, [x7]
-	b .Lx86_vector_lane_merge_rm_loaded
-.Lx86_vector_lane_merge_rm_cross:
+	b Lx86_vector_lane_merge_rm_loaded
+Lx86_vector_lane_merge_rm_cross:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #8
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_vector_lane_merge_rm_loaded:
+Lx86_vector_lane_merge_rm_loaded:
 	and x9, x23, #0xffff
 	and x10, x26, #0xffff
 	add x9, _cpu, x9
 	add x10, _cpu, x10
 	ldr q0, [x10]
 	str q0, [x9]
-	tbz x26, #16, .Lx86_vector_lane_merge_rm_store
+	tbz x26, #16, Lx86_vector_lane_merge_rm_store
 	add x9, x9, #8
-.Lx86_vector_lane_merge_rm_store:
+Lx86_vector_lane_merge_rm_store:
 	str x24, [x9]
-	tbz x26, #17, .Lx86_vector_lane_merge_rm_done
+	tbz x26, #17, Lx86_vector_lane_merge_rm_done
 	and x9, x23, #0xffff
 	add x9, _cpu, x9
 	movi v0.16b, #0
 	str q0, [x9, #16]
-.Lx86_vector_lane_merge_rm_done:
+Lx86_vector_lane_merge_rm_done:
 	retire_and_next

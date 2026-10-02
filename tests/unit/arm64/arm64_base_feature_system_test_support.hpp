@@ -13,9 +13,6 @@
 
 namespace arm64_base_feature_system_test {
 
-namespace engine = uml::emulator::tests;
-namespace sys_test = arm64_system_test;
-
 inline void require(bool condition,
 	const std::source_location location = std::source_location::current())
 {

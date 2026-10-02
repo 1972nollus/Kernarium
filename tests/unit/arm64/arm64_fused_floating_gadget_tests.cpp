@@ -18,7 +18,6 @@ namespace arm64_fused_floating_test {
 
 namespace basic = arm64_basic_floating_test;
 namespace common = arm64_simd_test;
-namespace arm64 = uml::cpu::arm64;
 namespace engine_tests = uml::emulator::tests;
 
 struct Form final {

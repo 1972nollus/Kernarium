@@ -110,9 +110,9 @@ _uml_arm64_gadget_region_\part:
  * of the region encodes a distance to code that moves with the rest of the
  * image. */
 .macro helper_call symbol
-	.ifndef .Lveneer_\symbol
+	.ifndef Lveneer_\symbol
 	.pushsection GADGET_SECTION_VENEER
-.Lveneer_\symbol:
+Lveneer_\symbol:
 #if __APPLE__
 	b _\symbol
 #else
@@ -120,7 +120,7 @@ _uml_arm64_gadget_region_\part:
 #endif
 	.popsection
 	.endif
-	bl .Lveneer_\symbol
+	bl Lveneer_\symbol
 .endm
 
 	gadget_bank_bounds begin

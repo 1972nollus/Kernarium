@@ -12,12 +12,12 @@ gadget cmpxchg_\width\()_rr
 	\load \host_register\()26, [_cpu, x10]
 	\load \host_register\()11, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	cmp \host_register\()11, \host_register\()24
-	b.ne .Lx86_cmpxchg_register_unequal\@
+	b.ne Lx86_cmpxchg_register_unequal\@
 	\store \store_register\()26, [_cpu, x9]
-	b .Lx86_cmpxchg_register_flags\@
-.Lx86_cmpxchg_register_unequal\@:
+	b Lx86_cmpxchg_register_flags\@
+Lx86_cmpxchg_register_unequal\@:
 	\store \store_register\()24, [_cpu, #UML_X86_64_CPU_REGISTERS]
-.Lx86_cmpxchg_register_flags\@:
+Lx86_cmpxchg_register_flags\@:
 	mov x12, x24
 	sub \host_register\()13, \host_register\()11, \host_register\()12
 	normalize_result \width, \host_register\()13
@@ -31,8 +31,8 @@ gadget cmpxchg_\width\()_mr
 	mov x25, x7
 	and x8, x23, #0xffff
 	\load \host_register\()26, [_cpu, x8]
-	locked_aligned \width, .Lx86_cmpxchg_split\@
-.Lx86_cmpxchg_exclusive\@:
+	locked_aligned \width, Lx86_cmpxchg_split\@
+Lx86_cmpxchg_exclusive\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\load \host_register\()27, [_cpu, #UML_X86_64_CPU_REGISTERS]
 1:
@@ -56,36 +56,36 @@ gadget cmpxchg_\width\()_mr
 	normalize_result \width, \host_register\()13
 	record_deferred 2, \width
 	retire_and_next
-.Lx86_cmpxchg_split\@:
-	split_operand (\width / 8), .Lx86_cmpxchg_exclusive\@
-	page_cross_check (\width / 8), .Lx86_cmpxchg_read_cross\@
+Lx86_cmpxchg_split\@:
+	split_operand (\width / 8), Lx86_cmpxchg_exclusive\@
+	page_cross_check (\width / 8), Lx86_cmpxchg_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-	b .Lx86_cmpxchg_loaded\@
-.Lx86_cmpxchg_read_cross\@:
+	b Lx86_cmpxchg_loaded\@
+Lx86_cmpxchg_read_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_cmpxchg_loaded\@:
+Lx86_cmpxchg_loaded\@:
 	\load \host_register\()27, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	cmp \host_register\()27, \host_register\()24
-	b.ne .Lx86_cmpxchg_memory_unequal\@
+	b.ne Lx86_cmpxchg_memory_unequal\@
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_cmpxchg_write_cross\@
+	page_cross_check (\width / 8), Lx86_cmpxchg_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()26, [x7]
-	b .Lx86_cmpxchg_memory_written\@
-.Lx86_cmpxchg_write_cross\@:
+	b Lx86_cmpxchg_memory_written\@
+Lx86_cmpxchg_write_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x26
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-.Lx86_cmpxchg_memory_written\@:
+	cbz w0, Lx86_memory_fault
+Lx86_cmpxchg_memory_written\@:
 	split_lock_leave
 	mov x11, x27
 	mov x12, x24
@@ -93,7 +93,7 @@ gadget cmpxchg_\width\()_mr
 	normalize_result \width, \host_register\()13
 	record_deferred 2, \width
 	finish_store (\width / 8)
-.Lx86_cmpxchg_memory_unequal\@:
+Lx86_cmpxchg_memory_unequal\@:
 	split_lock_leave
 	\store \accumulator_store_register\()24, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	mov x11, x27
@@ -142,8 +142,8 @@ gadget xadd_\width\()_mr
 	mov x25, x7
 	and x8, x23, #0xffff
 	\load \host_register\()26, [_cpu, x8]
-	locked_aligned \width, .Lx86_xadd_split\@
-.Lx86_xadd_exclusive\@:
+	locked_aligned \width, Lx86_xadd_split\@
+Lx86_xadd_exclusive\@:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 1:
 	load_exclusive \width, 24, x7
@@ -158,35 +158,35 @@ gadget xadd_\width\()_mr
 	mov x13, x27
 	record_deferred 1, \width
 	finish_store (\width / 8)
-.Lx86_xadd_split\@:
-	split_operand (\width / 8), .Lx86_xadd_exclusive\@
-	page_cross_check (\width / 8), .Lx86_xadd_read_cross\@
+Lx86_xadd_split\@:
+	split_operand (\width / 8), Lx86_xadd_exclusive\@
+	page_cross_check (\width / 8), Lx86_xadd_read_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	\load \host_register\()24, [x7]
-	b .Lx86_xadd_loaded\@
-.Lx86_xadd_read_cross\@:
+	b Lx86_xadd_loaded\@
+Lx86_xadd_read_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_xadd_loaded\@:
+Lx86_xadd_loaded\@:
 	add \host_register\()27, \host_register\()24, \host_register\()26
 	normalize_result \width, \host_register\()27
 	mov x7, x25
-	page_cross_check (\width / 8), .Lx86_xadd_write_cross\@
+	page_cross_check (\width / 8), Lx86_xadd_write_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, (\width / 8)
 	\store \host_register\()27, [x7]
-	b .Lx86_xadd_written\@
-.Lx86_xadd_write_cross\@:
+	b Lx86_xadd_written\@
+Lx86_xadd_write_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x27
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-.Lx86_xadd_written\@:
+	cbz w0, Lx86_memory_fault
+Lx86_xadd_written\@:
 	split_lock_leave
 	and x8, x23, #0xffff
 	\store \source_store_register\()24, [_cpu, x8]
@@ -215,9 +215,9 @@ exchange_add_width 64, ldr, str, x, x
 	bl uml_x86_64_gadget_materialize_flags
 	ldr x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	bic x8, x8, #0x40
-	cbz w19, .Lx86_cmpxchg_pair_flags_done\@
+	cbz w19, Lx86_cmpxchg_pair_flags_done\@
 	orr x8, x8, #0x40
-.Lx86_cmpxchg_pair_flags_done\@:
+Lx86_cmpxchg_pair_flags_done\@:
 	orr x8, x8, #0x2
 	str x8, [_cpu, #UML_X86_64_CPU_RFLAGS]
 .endm
@@ -226,8 +226,8 @@ gadget cmpxchg_pair_8
 	effective_address
 	mov x25, x7
 	tst x7, #7
-	b.ne .Lx86_cmpxchg_pair_8_split
-.Lx86_cmpxchg_pair_8_exclusive:
+	b.ne Lx86_cmpxchg_pair_8_split
+Lx86_cmpxchg_pair_8_exclusive:
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 8
 	ldr w10, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	ldr w11, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
@@ -254,48 +254,48 @@ gadget cmpxchg_pair_8
 	str x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	compare_exchange_pair_flags
 	retire_and_next
-.Lx86_cmpxchg_pair_8_split:
-	split_operand 8, .Lx86_cmpxchg_pair_8_exclusive
-	page_cross_check 8, .Lx86_cmpxchg_pair_8_read_cross
+Lx86_cmpxchg_pair_8_split:
+	split_operand 8, Lx86_cmpxchg_pair_8_exclusive
+	page_cross_check 8, Lx86_cmpxchg_pair_8_read_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 8
 	ldr x24, [x7]
-	b .Lx86_cmpxchg_pair_8_loaded
-.Lx86_cmpxchg_pair_8_read_cross:
+	b Lx86_cmpxchg_pair_8_loaded
+Lx86_cmpxchg_pair_8_read_cross:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #8
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov x24, x0
-.Lx86_cmpxchg_pair_8_loaded:
+Lx86_cmpxchg_pair_8_loaded:
 	ldr w8, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	ldr w9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	cmp w8, w24
-	b.ne .Lx86_cmpxchg_pair_8_unequal
+	b.ne Lx86_cmpxchg_pair_8_unequal
 	lsr x10, x24, #32
 	cmp w9, w10
-	b.ne .Lx86_cmpxchg_pair_8_unequal
+	b.ne Lx86_cmpxchg_pair_8_unequal
 	mov w19, #1
 	ldr w27, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
 	ldr w16, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	orr x27, x27, x16, lsl #32
 	mov x7, x25
-	page_cross_check 8, .Lx86_cmpxchg_pair_8_write_cross
+	page_cross_check 8, Lx86_cmpxchg_pair_8_write_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 8
 	str x27, [x7]
-	b .Lx86_cmpxchg_pair_8_written
-.Lx86_cmpxchg_pair_8_write_cross:
+	b Lx86_cmpxchg_pair_8_written
+Lx86_cmpxchg_pair_8_write_cross:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x27
 	mov w3, #8
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-.Lx86_cmpxchg_pair_8_written:
+	cbz w0, Lx86_memory_fault
+Lx86_cmpxchg_pair_8_written:
 	split_lock_leave
 	compare_exchange_pair_flags
 	finish_store 8
-.Lx86_cmpxchg_pair_8_unequal:
+Lx86_cmpxchg_pair_8_unequal:
 	split_lock_leave
 	mov w19, wzr
 	mov w8, w24
@@ -310,7 +310,7 @@ gadget cmpxchg_pair_16
 	effective_address
 	mov x25, x7
 	tst x7, #15
-	b.ne .Lx86_cmpxchg_pair_16_split
+	b.ne Lx86_cmpxchg_pair_16_split
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
 	ldr x10, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	ldr x11, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
@@ -334,41 +334,41 @@ gadget cmpxchg_pair_16
 	str x26, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	compare_exchange_pair_flags
 	retire_and_next
-.Lx86_cmpxchg_pair_16_split:
+Lx86_cmpxchg_pair_16_split:
 	split_lock_enter
-	page_cross_check 16, .Lx86_cmpxchg_pair_16_read_cross
+	page_cross_check 16, Lx86_cmpxchg_pair_16_read_cross
 	translate 0, UML_X86_64_TLB_READ_PAGE, 16
 	ldp x24, x26, [x7]
-	b .Lx86_cmpxchg_pair_16_loaded
-.Lx86_cmpxchg_pair_16_read_cross:
+	b Lx86_cmpxchg_pair_16_loaded
+Lx86_cmpxchg_pair_16_read_cross:
 	sub sp, sp, #16
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
 	mov w3, #16
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbnz w0, .Lx86_cmpxchg_pair_16_cross_loaded
+	cbnz w0, Lx86_cmpxchg_pair_16_cross_loaded
 	add sp, sp, #16
-	b .Lx86_memory_fault
-.Lx86_cmpxchg_pair_16_cross_loaded:
+	b Lx86_memory_fault
+Lx86_cmpxchg_pair_16_cross_loaded:
 	ldp x24, x26, [sp]
 	add sp, sp, #16
-.Lx86_cmpxchg_pair_16_loaded:
+Lx86_cmpxchg_pair_16_loaded:
 	ldr x8, [_cpu, #UML_X86_64_CPU_REGISTERS]
 	ldr x9, [_cpu, #(UML_X86_64_CPU_REGISTERS + 2 * 8)]
 	cmp x8, x24
-	b.ne .Lx86_cmpxchg_pair_16_unequal
+	b.ne Lx86_cmpxchg_pair_16_unequal
 	cmp x9, x26
-	b.ne .Lx86_cmpxchg_pair_16_unequal
+	b.ne Lx86_cmpxchg_pair_16_unequal
 	mov w19, #1
 	ldr x27, [_cpu, #(UML_X86_64_CPU_REGISTERS + 3 * 8)]
 	ldr x16, [_cpu, #(UML_X86_64_CPU_REGISTERS + 1 * 8)]
 	mov x7, x25
-	page_cross_check 16, .Lx86_cmpxchg_pair_16_write_cross
+	page_cross_check 16, Lx86_cmpxchg_pair_16_write_cross
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, 16
 	stp x27, x16, [x7]
-	b .Lx86_cmpxchg_pair_16_written
-.Lx86_cmpxchg_pair_16_write_cross:
+	b Lx86_cmpxchg_pair_16_written
+Lx86_cmpxchg_pair_16_write_cross:
 	sub sp, sp, #16
 	stp x27, x16, [sp]
 	mov x0, _context
@@ -376,16 +376,16 @@ gadget cmpxchg_pair_16
 	mov x2, sp
 	mov w3, #16
 	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
-	cbnz w0, .Lx86_cmpxchg_pair_16_cross_written
+	cbnz w0, Lx86_cmpxchg_pair_16_cross_written
 	add sp, sp, #16
-	b .Lx86_memory_fault
-.Lx86_cmpxchg_pair_16_cross_written:
+	b Lx86_memory_fault
+Lx86_cmpxchg_pair_16_cross_written:
 	add sp, sp, #16
-.Lx86_cmpxchg_pair_16_written:
+Lx86_cmpxchg_pair_16_written:
 	split_lock_leave
 	compare_exchange_pair_flags
 	finish_store 16
-.Lx86_cmpxchg_pair_16_unequal:
+Lx86_cmpxchg_pair_16_unequal:
 	split_lock_leave
 	mov w19, wzr
 	str x24, [_cpu, #UML_X86_64_CPU_REGISTERS]

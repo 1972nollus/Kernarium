@@ -45,10 +45,10 @@
 	.if \width == 256
 	str q5, [x9, #16]
 	.else
-	tbz x\descriptor, #63, .Lx86_vector_aes_write_done\@
+	tbz x\descriptor, #63, Lx86_vector_aes_write_done\@
 	movi v16.16b, #0
 	str q16, [x9, #16]
-.Lx86_vector_aes_write_done\@:
+Lx86_vector_aes_write_done\@:
 	.endif
 .endm
 
@@ -75,27 +75,27 @@ gadget vector_aes_\opcode\()_\width\()_rm
 	effective_address
 	ldr x26, [_stream], #8
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_vector_aes_cross\@
+	page_cross_check (\width / 8), Lx86_vector_aes_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	ldr q1, [x7]
 	.if \width == 256
 	ldr q3, [x7, #16]
 	.endif
-	b .Lx86_vector_aes_loaded\@
-.Lx86_vector_aes_cross\@:
+	b Lx86_vector_aes_loaded\@
+Lx86_vector_aes_cross\@:
 	sub sp, sp, #32
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
 	mov w3, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_vector_aes_cross_fault\@
+	cbz w0, Lx86_vector_aes_cross_fault\@
 	ldr q1, [sp]
 	.if \width == 256
 	ldr q3, [sp, #16]
 	.endif
 	add sp, sp, #32
-.Lx86_vector_aes_loaded\@:
+Lx86_vector_aes_loaded\@:
 	and x10, x26, #0xffff
 	add x10, _cpu, x10
 	ldr q0, [x10]
@@ -105,9 +105,9 @@ gadget vector_aes_\opcode\()_\width\()_rm
 	vector_aes_body 0x\opcode, \width
 	vector_aes_write \width, 23
 	retire_and_next
-.Lx86_vector_aes_cross_fault\@:
+Lx86_vector_aes_cross_fault\@:
 	add sp, sp, #32
-	b .Lx86_memory_fault
+	b Lx86_memory_fault
 .endm
 
 .macro vector_aes_family opcode, width
