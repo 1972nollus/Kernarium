@@ -44,10 +44,6 @@ capture. Back-to-back device runs need a settle pause, because iOS releases
 the previous guest's wired window asynchronously and a run started too soon
 fails to wire its own.
 
-Profile readers under this directory summarize aggregate stacks, group them by
-workload, and compare two diagnostic captures. They do not decide acceptance
-without a matched benchmark or focused mechanism control.
-
 The physical-iPad UBD discard control compares the shipped 128 MiB request
 limit with a 32 KiB soft limit on the same 512 MiB raw range. It installs an
 already-built automation Kernarium app, reuses an existing named rootfs file in

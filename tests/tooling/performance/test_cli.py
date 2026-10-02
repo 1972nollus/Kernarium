@@ -183,7 +183,6 @@ def run_geekbench_shutdown_case(
     arguments = types.SimpleNamespace(
         emulator=pathlib.Path("emulator"),
         rootfs=pathlib.Path("rootfs.erofs"),
-        profile_dir=None,
         console_log=console_log,
         workloads=workloads,
         kernel_argument=[],
@@ -192,8 +191,6 @@ def run_geekbench_shutdown_case(
         engine="jit",
         core_class="performance",
         timeout=30,
-        sample_seconds=1,
-        sample_command="/usr/bin/sample",
     )
     guest = session_guest()
     guest.run_command.return_value = types.SimpleNamespace(
@@ -215,7 +212,7 @@ def run_geekbench_shutdown_case(
         except RuntimeError as caught:
             error = caught
     guest.close.assert_called_once_with()
-    # The console streams into the log the profiler follows.
+    # The console streams into the log.
     sink = constructor.call_args.kwargs["console_sink"]
     if sink.name != str(console_log) or not sink.closed:
         raise RuntimeError(
