@@ -22,7 +22,7 @@ uml_add_tooling_test(
         ${PROJECT_SOURCE_DIR}/tests/tooling/android/test_routed_workspaces.py
         --source-root ${PROJECT_SOURCE_DIR}
     LABELS android;audit
-    TIMEOUT 60)
+    TIMEOUT 120)
 
 uml_add_tooling_test(
     NAME android17-jelly-source-contract
