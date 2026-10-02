@@ -9,7 +9,7 @@ gadget vector_movmsk_\element\()_\width
 	add x10, _cpu, x10
 	mov x11, xzr
 	mov x12, xzr
-.Lx86_vector_movmsk_loop\@:
+Lx86_vector_movmsk_loop\@:
 	.if \element == 32
 	ldr w14, [x10, x12, lsl #2]
 	lsr w14, w14, #31
@@ -21,7 +21,7 @@ gadget vector_movmsk_\element\()_\width
 	orr x11, x11, x14
 	add x12, x12, #1
 	cmp x12, #(\width / \element)
-	b.lo .Lx86_vector_movmsk_loop\@
+	b.lo Lx86_vector_movmsk_loop\@
 	str x11, [_cpu, x9]
 	retire_and_next
 .endm
@@ -148,18 +148,18 @@ vector_insert_register 128, _vex
 gadget vector_insert_\width\()_rm\vex
 	effective_address
 	mov x25, x7
-	page_cross_check 2, .Lx86_vector_insert_cross\@
+	page_cross_check 2, Lx86_vector_insert_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, 2
 	ldrh w27, [x7]
-	b .Lx86_vector_insert_loaded\@
-.Lx86_vector_insert_cross\@:
+	b Lx86_vector_insert_loaded\@
+Lx86_vector_insert_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #2
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov w27, w0
-.Lx86_vector_insert_loaded\@:
+Lx86_vector_insert_loaded\@:
 	ldr x24, [_stream], #8
 	and x9, x23, #0xffff
 	and x10, x24, #0xffff

@@ -11,9 +11,9 @@ gadget cache_zero_\name
 	ldr x8, [_stream], #8
 	ldr x7, [_cpu, x8]
 	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
-	cbz w9, .Lcache_zero_untagged\@
+	cbz w9, Lcache_zero_untagged\@
 	ubfx x7, x7, #0, #56
-.Lcache_zero_untagged\@:
+Lcache_zero_untagged\@:
 	and x7, x7, #0xffffffffffffffc0
 	.endif
 	translate 1, UML_GADGET_TLB_ENTRY_WRITE_PAGE
@@ -45,9 +45,9 @@ gadget code_synchronize_\name
 	ldr x8, [_stream], #8
 	ldr x0, [_cpu, x8]
 	ldrb w9, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
-	cbz w9, .Lcode_synchronize_untagged\@
+	cbz w9, Lcode_synchronize_untagged\@
 	ubfx x0, x0, #0, #56
-.Lcode_synchronize_untagged\@:
+Lcode_synchronize_untagged\@:
 	.endif
 	stp x1, x2, [sp, #-16]!
 	helper_call uml_arm64_guest_code_synchronize
@@ -686,15 +686,15 @@ gadget simd_structure_\name
 	ldr x20, [_cpu, x24]
 	.if \base_sp
 	tst x20, #0xf
-	b.ne .Lsimd_structure_alignment\@
+	b.ne Lsimd_structure_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
 	ldrb w8, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
-	cbnz w8, .Lsimd_structure_tagged\@
+	cbnz w8, Lsimd_structure_tagged\@
 	.endif
-	branch_if_cross_page x20, (\count * (8 << \q)), x8, .Lsimd_structure_slow\@
+	branch_if_cross_page x20, (\count * (8 << \q)), x8, Lsimd_structure_slow\@
 	mov x7, x20
-.Lsimd_structure_translate\@:
+Lsimd_structure_translate\@:
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	simd_structure_memory_load \count, \elements, \q, \size
@@ -717,14 +717,14 @@ gadget simd_structure_\name
 	next_gadget
 
 	.if \base_sp == 0 || \mode != 0
-.Lsimd_structure_tagged\@:
+Lsimd_structure_tagged\@:
 	/* TBI strips the logical tag and rejoins the fast path. */
-	branch_if_cross_page x20, (\count * (8 << \q)), x8, .Lsimd_structure_slow\@
+	branch_if_cross_page x20, (\count * (8 << \q)), x8, Lsimd_structure_slow\@
 	ubfx x7, x20, #0, #56
-	b .Lsimd_structure_translate\@
+	b Lsimd_structure_translate\@
 	.endif
 
-.Lsimd_structure_slow\@:
+Lsimd_structure_slow\@:
 	sub sp, sp, #80
 	stp x1, x2, [sp, #64]
 	.if \load
@@ -737,7 +737,7 @@ gadget simd_structure_\name
 	mov w6, #\base_sp
 	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #64]
-	cbz w0, .Lsimd_structure_fault\@
+	cbz w0, Lsimd_structure_fault\@
 	mov x7, sp
 	simd_structure_memory_load \count, \elements, \q, \size
 	simd_structure_cpu_store \count
@@ -754,7 +754,7 @@ gadget simd_structure_\name
 	mov w6, #\base_sp
 	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #64]
-	cbz w0, .Lsimd_structure_fault\@
+	cbz w0, Lsimd_structure_fault\@
 	.endif
 	add sp, sp, #80
 	.if \mode == 1
@@ -769,12 +769,12 @@ gadget simd_structure_\name
 	add _stream, _stream, #8
 	next_gadget
 
-.Lsimd_structure_fault\@:
+Lsimd_structure_fault\@:
 	add sp, sp, #80
 	b uml_arm64_gadget_memory_fault
 
 	.if \base_sp
-.Lsimd_structure_alignment\@:
+Lsimd_structure_alignment\@:
 	mov x7, x20
 		.if \load
 	b uml_arm64_gadget_atomic_alignment_fault_read
@@ -877,17 +877,17 @@ gadget simd_replicate_\name
 	ldr x21, [_cpu, x20]
 	.if \base_sp
 	tst x21, #0xf
-	b.ne .Lsimd_replicate_alignment\@
+	b.ne Lsimd_replicate_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
 	ldrb w8, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
-	cbnz w8, .Lsimd_replicate_tagged\@
+	cbnz w8, Lsimd_replicate_tagged\@
 	.endif
 	.if \count * \width > 1
-	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_replicate_slow\@
+	branch_if_cross_page x21, (\count * \width), x8, Lsimd_replicate_slow\@
 	.endif
 	mov x7, x21
-.Lsimd_replicate_translate\@:
+Lsimd_replicate_translate\@:
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	and w26, w19, #31
 	simd_replicate_one \width, \q
@@ -919,16 +919,16 @@ gadget simd_replicate_\name
 	next_gadget
 
 	.if \base_sp == 0 || \mode != 0
-.Lsimd_replicate_tagged\@:
+Lsimd_replicate_tagged\@:
 	/* TBI strips the logical tag and rejoins the fast path. */
 	.if \count * \width > 1
-	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_replicate_slow\@
+	branch_if_cross_page x21, (\count * \width), x8, Lsimd_replicate_slow\@
 	.endif
 	ubfx x7, x21, #0, #56
-	b .Lsimd_replicate_translate\@
+	b Lsimd_replicate_translate\@
 	.endif
 
-.Lsimd_replicate_slow\@:
+Lsimd_replicate_slow\@:
 	sub sp, sp, #48
 	stp x1, x2, [sp, #32]
 	mov x0, x1
@@ -940,7 +940,7 @@ gadget simd_replicate_\name
 	mov w6, #\base_sp
 	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #32]
-	cbz w0, .Lsimd_replicate_fault\@
+	cbz w0, Lsimd_replicate_fault\@
 	mov x7, sp
 	and w26, w19, #31
 	simd_replicate_one \width, \q
@@ -972,12 +972,12 @@ gadget simd_replicate_\name
 	add _stream, _stream, #8
 	next_gadget
 
-.Lsimd_replicate_fault\@:
+Lsimd_replicate_fault\@:
 	add sp, sp, #48
 	b uml_arm64_gadget_memory_fault
 
 	.if \base_sp
-.Lsimd_replicate_alignment\@:
+Lsimd_replicate_alignment\@:
 	mov x7, x21
 	b uml_arm64_gadget_atomic_alignment_fault_read
 	.endif
@@ -1080,17 +1080,17 @@ gadget simd_lane_\name
 	ldr x21, [_cpu, x20]
 	.if \base_sp
 	tst x21, #0xf
-	b.ne .Lsimd_lane_alignment\@
+	b.ne Lsimd_lane_alignment\@
 	.endif
 	.if \base_sp == 0 || \mode != 0
 	ldrb w8, [_cpu, #UML_GADGET_CPU_TBI_ENABLED]
-	cbnz w8, .Lsimd_lane_tagged\@
+	cbnz w8, Lsimd_lane_tagged\@
 	.endif
 	.if \count * \width > 1
-	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_lane_slow\@
+	branch_if_cross_page x21, (\count * \width), x8, Lsimd_lane_slow\@
 	.endif
 	mov x7, x21
-.Lsimd_lane_translate\@:
+Lsimd_lane_translate\@:
 	.if \load
 	translate 0, UML_GADGET_TLB_ENTRY_READ_PAGE
 	.else
@@ -1110,16 +1110,16 @@ gadget simd_lane_\name
 	next_gadget
 
 	.if \base_sp == 0 || \mode != 0
-.Lsimd_lane_tagged\@:
+Lsimd_lane_tagged\@:
 	/* TBI strips the logical tag and rejoins the fast path. */
 	.if \count * \width > 1
-	branch_if_cross_page x21, (\count * \width), x8, .Lsimd_lane_slow\@
+	branch_if_cross_page x21, (\count * \width), x8, Lsimd_lane_slow\@
 	.endif
 	ubfx x7, x21, #0, #56
-	b .Lsimd_lane_translate\@
+	b Lsimd_lane_translate\@
 	.endif
 
-.Lsimd_lane_slow\@:
+Lsimd_lane_slow\@:
 	sub sp, sp, #48
 	stp x1, x2, [sp, #32]
 	.if \load
@@ -1132,7 +1132,7 @@ gadget simd_lane_\name
 	mov w6, #\base_sp
 	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #32]
-	cbz w0, .Lsimd_lane_fault\@
+	cbz w0, Lsimd_lane_fault\@
 	mov x7, sp
 	simd_lane_transfer \load, \count, \width
 	.else
@@ -1147,7 +1147,7 @@ gadget simd_lane_\name
 	mov w6, #\base_sp
 	helper_call uml_arm64_simd_structure_memory_transfer
 	ldp x1, x2, [sp, #32]
-	cbz w0, .Lsimd_lane_fault\@
+	cbz w0, Lsimd_lane_fault\@
 	.endif
 	add sp, sp, #48
 	.if \mode == 1
@@ -1162,12 +1162,12 @@ gadget simd_lane_\name
 	add _stream, _stream, #8
 	next_gadget
 
-.Lsimd_lane_fault\@:
+Lsimd_lane_fault\@:
 	add sp, sp, #48
 	b uml_arm64_gadget_memory_fault
 
 	.if \base_sp
-.Lsimd_lane_alignment\@:
+Lsimd_lane_alignment\@:
 	mov x7, x21
 		.if \load
 	b uml_arm64_gadget_atomic_alignment_fault_read
@@ -1226,8 +1226,8 @@ simd_lane_counts d, 8
 	b.ne uml_arm64_gadget_atomic_alignment_fault_read
 		.endif
 	.else
-	b.ne .Llse2_stub_\name
-.Llse2_resume_\name:
+	b.ne Llse2_stub_\name
+Llse2_resume_\name:
 	.endif
 .endm
 

@@ -14,22 +14,22 @@
 	mov x10, #0x8d5
 	bic x9, x9, x10
 	orr x9, x9, #2
-	b.vs .Lx86_vector_compare_unordered\@
-	b.eq .Lx86_vector_compare_equal\@
-	b.mi .Lx86_vector_compare_less\@
-	b .Lx86_vector_compare_done\@
-.Lx86_vector_compare_unordered\@:
+	b.vs Lx86_vector_compare_unordered\@
+	b.eq Lx86_vector_compare_equal\@
+	b.mi Lx86_vector_compare_less\@
+	b Lx86_vector_compare_done\@
+Lx86_vector_compare_unordered\@:
 	simd_leave_if_checking
 	orr x9, x9, #1
 	orr x9, x9, #4
 	orr x9, x9, #0x40
-	b .Lx86_vector_compare_done\@
-.Lx86_vector_compare_equal\@:
+	b Lx86_vector_compare_done\@
+Lx86_vector_compare_equal\@:
 	orr x9, x9, #0x40
-	b .Lx86_vector_compare_done\@
-.Lx86_vector_compare_less\@:
+	b Lx86_vector_compare_done\@
+Lx86_vector_compare_less\@:
 	orr x9, x9, #1
-.Lx86_vector_compare_done\@:
+Lx86_vector_compare_done\@:
 	str xzr, [_cpu, #UML_X86_64_CPU_DEFERRED_OPERATION]
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 	retire_and_next
@@ -50,18 +50,18 @@ gadget vector_\name\()_\width\()_rr
 gadget vector_\name\()_\width\()_rm
 	effective_address
 	mov x25, x7
-	page_cross_check (\width / 8), .Lx86_vector_compare_cross\@
+	page_cross_check (\width / 8), Lx86_vector_compare_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, (\width / 8)
 	ldr \fp_register\()1, [x7]
-	b .Lx86_vector_compare_loaded\@
-.Lx86_vector_compare_cross\@:
+	b Lx86_vector_compare_loaded\@
+Lx86_vector_compare_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov w2, #(\width / 8)
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	fmov \fp_register\()1, \host_register\()0
-.Lx86_vector_compare_loaded\@:
+Lx86_vector_compare_loaded\@:
 	and x8, x23, #0xffff
 	ldr \fp_register\()0, [_cpu, x8]
 	\compare \fp_register\()0, \fp_register\()1

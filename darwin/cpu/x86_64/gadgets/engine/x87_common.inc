@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Shared x87 stack, tag, memory, and exact-math call machinery. */
 
-.set .Lx86_x87_tag_empty, 3
-.set .Lx86_x87_status_c0, 0x0100
-.set .Lx86_x87_status_c1, 0x0200
-.set .Lx86_x87_status_c2, 0x0400
-.set .Lx86_x87_status_c3, 0x4000
+.set Lx86_x87_tag_empty, 3
+.set Lx86_x87_status_c0, 0x0100
+.set Lx86_x87_status_c1, 0x0200
+.set Lx86_x87_status_c2, 0x0400
+.set Lx86_x87_status_c3, 0x4000
 
 .macro x87_load_u64 destination, value
 	movz \destination, #((\value) & 0xffff)
@@ -22,23 +22,23 @@
  * result: a load and a branch after each helper call, whether or not the guest
  * unmasks anything. */
 .p2align 4
-.Lx86_x87_raised:
+Lx86_x87_raised:
 	b uml_x86_64_gadget_exception_check
 
 .macro x87_leave_if_raised
 	ldrb w9, [_cpu, #UML_X86_64_CPU_EXCEPTION_RAISED]
-	cbnz w9, .Lx86_x87_raised
+	cbnz w9, Lx86_x87_raised
 .endm
 
 /* A stack fault is an invalid operation: an unmasked one leaves the same way,
  * before the fault touches the status word or the stack. */
 .macro x87_stack_fault_check
 	ldrb w17, [_cpu, #UML_X86_64_CPU_EXCEPTION_CHECKS]
-	tbz w17, #0, .Lx86_x87_stack_fault_masked\@
+	tbz w17, #0, Lx86_x87_stack_fault_masked\@
 	ldrh w17, [_cpu, #UML_X86_64_CPU_X87_CONTROL]
-	tbnz w17, #0, .Lx86_x87_stack_fault_masked\@
+	tbnz w17, #0, Lx86_x87_stack_fault_masked\@
 	b uml_x86_64_gadget_exception_check
-.Lx86_x87_stack_fault_masked\@:
+Lx86_x87_stack_fault_masked\@:
 .endm
 
 .macro x87_physical logical, physical
@@ -53,8 +53,8 @@
 	lsl w16, w14, #1
 	lsr w15, w15, w16
 	and w15, w15, #3
-	cmp w15, #.Lx86_x87_tag_empty
-	b.ne .Lx86_x87_load_present\@
+	cmp w15, #Lx86_x87_tag_empty
+	b.ne Lx86_x87_load_present\@
 	x87_stack_fault_check
 	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	mov w17, #0x41
@@ -62,13 +62,13 @@
 	strh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	mov \significand, #0xc000000000000000
 	mov \exponent, #0xffff
-	b .Lx86_x87_load_done\@
-.Lx86_x87_load_present\@:
+	b Lx86_x87_load_done\@
+Lx86_x87_load_present\@:
 	add x15, _cpu, #UML_X86_64_CPU_X87
 	add x15, x15, w14, uxtw #4
 	ldr \significand, [x15]
 	ldrh \exponent, [x15, #8]
-.Lx86_x87_load_done\@:
+Lx86_x87_load_done\@:
 .endm
 
 .macro x87_set_tag physical, tag
@@ -94,17 +94,17 @@
 	/* Recreate the x87 two-bit classification tag. */
 	mov w18, #2
 	and w15, \exponent, #0x7fff
-	cbz w15, .Lx86_x87_store_zero_exp\@
+	cbz w15, Lx86_x87_store_zero_exp\@
 	mov w17, #0x7fff
 	cmp w15, w17
-	b.eq .Lx86_x87_store_classified\@
-	tbz \significand, #63, .Lx86_x87_store_classified\@
+	b.eq Lx86_x87_store_classified\@
+	tbz \significand, #63, Lx86_x87_store_classified\@
 	mov w18, #0
-	b .Lx86_x87_store_classified\@
-.Lx86_x87_store_zero_exp\@:
-	cbnz \significand, .Lx86_x87_store_classified\@
+	b Lx86_x87_store_classified\@
+Lx86_x87_store_zero_exp\@:
+	cbnz \significand, Lx86_x87_store_classified\@
 	mov w18, #1
-.Lx86_x87_store_classified\@:
+Lx86_x87_store_classified\@:
 	x87_set_tag \physical, w18
 .endm
 
@@ -115,7 +115,7 @@
 
 .macro x87_push significand, exponent
 	ldrh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
-	bic w15, w15, #.Lx86_x87_status_c1
+	bic w15, w15, #Lx86_x87_status_c1
 	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	sub w14, w14, #1
 	and w14, w14, #7
@@ -123,12 +123,12 @@
 	lsl w17, w14, #1
 	lsr w16, w16, w17
 	and w16, w16, #3
-	cmp w16, #.Lx86_x87_tag_empty
-	b.eq .Lx86_x87_push_slot_ready\@
+	cmp w16, #Lx86_x87_tag_empty
+	b.eq Lx86_x87_push_slot_ready\@
 	x87_stack_fault_check
 	mov w16, #0x241
 	orr w15, w15, w16
-.Lx86_x87_push_slot_ready\@:
+Lx86_x87_push_slot_ready\@:
 	strh w15, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 	strb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
 	x87_store_physical w14, \significand, \exponent
@@ -144,15 +144,15 @@
 	lsl w17, w14, #1
 	lsr w16, w16, w17
 	and w16, w16, #3
-	cmp w16, #.Lx86_x87_tag_empty
-	b.eq .Lx86_x87_push_fault_none\@
+	cmp w16, #Lx86_x87_tag_empty
+	b.eq Lx86_x87_push_fault_none\@
 	x87_stack_fault_check
-.Lx86_x87_push_fault_none\@:
+Lx86_x87_push_fault_none\@:
 .endm
 
 .macro x87_pop
 	ldrb w14, [_cpu, #UML_X86_64_CPU_X87_TOP]
-	mov w18, #.Lx86_x87_tag_empty
+	mov w18, #Lx86_x87_tag_empty
 	x87_set_tag w14, w18
 	add w14, w14, #1
 	and w14, w14, #7
@@ -174,20 +174,20 @@
 	mov w10, #0x4700
 	bic w9, w9, w10
 	cmp \result, #1
-	b.ne .Lx86_x87_compare_not_less\@
-	orr w9, w9, #.Lx86_x87_status_c0
-	b .Lx86_x87_compare_done\@
-.Lx86_x87_compare_not_less\@:
+	b.ne Lx86_x87_compare_not_less\@
+	orr w9, w9, #Lx86_x87_status_c0
+	b Lx86_x87_compare_done\@
+Lx86_x87_compare_not_less\@:
 	cmp \result, #2
-	b.ne .Lx86_x87_compare_not_equal\@
-	orr w9, w9, #.Lx86_x87_status_c3
-	b .Lx86_x87_compare_done\@
-.Lx86_x87_compare_not_equal\@:
+	b.ne Lx86_x87_compare_not_equal\@
+	orr w9, w9, #Lx86_x87_status_c3
+	b Lx86_x87_compare_done\@
+Lx86_x87_compare_not_equal\@:
 	cmp \result, #3
-	b.ne .Lx86_x87_compare_done\@
+	b.ne Lx86_x87_compare_done\@
 	mov w10, #0x4500
 	orr w9, w9, w10
-.Lx86_x87_compare_done\@:
+Lx86_x87_compare_done\@:
 	strh w9, [_cpu, #UML_X86_64_CPU_X87_STATUS]
 .endm
 
@@ -196,26 +196,26 @@
 	mov x10, #0x8d5
 	bic x9, x9, x10
 	cmp \result, #1
-	b.ne .Lx86_x87_integer_not_less\@
+	b.ne Lx86_x87_integer_not_less\@
 	orr x9, x9, #0x1
-	b .Lx86_x87_integer_compare_done\@
-.Lx86_x87_integer_not_less\@:
+	b Lx86_x87_integer_compare_done\@
+Lx86_x87_integer_not_less\@:
 	cmp \result, #2
-	b.ne .Lx86_x87_integer_not_equal\@
+	b.ne Lx86_x87_integer_not_equal\@
 	orr x9, x9, #0x40
-	b .Lx86_x87_integer_compare_done\@
-.Lx86_x87_integer_not_equal\@:
+	b Lx86_x87_integer_compare_done\@
+Lx86_x87_integer_not_equal\@:
 	cmp \result, #3
-	b.ne .Lx86_x87_integer_compare_done\@
+	b.ne Lx86_x87_integer_compare_done\@
 	mov x10, #0x45
 	orr x9, x9, x10
-.Lx86_x87_integer_compare_done\@:
+Lx86_x87_integer_compare_done\@:
 	orr x9, x9, #0x2
 	str x9, [_cpu, #UML_X86_64_CPU_RFLAGS]
 .endm
 
 .macro x87_scalar_load size, destination
-	page_cross_check (\size), .Lx86_x87_scalar_load_cross\@
+	page_cross_check (\size), Lx86_x87_scalar_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \size
 	.if \size == 2
 	ldrh w9, [x7]
@@ -224,21 +224,21 @@
 	.else
 	ldr x9, [x7]
 	.endif
-	b .Lx86_x87_scalar_load_done\@
-.Lx86_x87_scalar_load_cross\@:
+	b Lx86_x87_scalar_load_done\@
+Lx86_x87_scalar_load_cross\@:
 	mov x0, _context
 	mov x1, x7
 	mov w2, #\size
 	bl NAME(uml_x86_64_gadget_cross_page_load)
-	cbz x1, .Lx86_memory_fault
+	cbz x1, Lx86_memory_fault
 	mov \destination, x0
-.Lx86_x87_scalar_load_done\@:
+Lx86_x87_scalar_load_done\@:
 .endm
 
 .macro x87_scalar_store size, source
 	mov x24, \source
 	mov x7, x25
-	page_cross_check (\size), .Lx86_x87_scalar_store_cross\@
+	page_cross_check (\size), Lx86_x87_scalar_store_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, \size
 	.if \size == 2
 	strh w24, [x7]
@@ -247,15 +247,15 @@
 	.else
 	str x24, [x7]
 	.endif
-	b .Lx86_x87_scalar_store_done\@
-.Lx86_x87_scalar_store_cross\@:
+	b Lx86_x87_scalar_store_done\@
+Lx86_x87_scalar_store_cross\@:
 	mov x0, _context
 	mov x1, x25
 	mov x2, x24
 	mov w3, #\size
 	bl NAME(uml_x86_64_gadget_cross_page_store)
-	cbz w0, .Lx86_memory_fault
-.Lx86_x87_scalar_store_done\@:
+	cbz w0, Lx86_memory_fault
+Lx86_x87_scalar_store_done\@:
 .endm
 
 .macro x87_bulk_load size, buffer, fault

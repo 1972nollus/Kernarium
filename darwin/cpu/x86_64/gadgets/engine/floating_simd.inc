@@ -53,14 +53,14 @@ vector_move_64_128_rr vector_move_64_128_rr_vex, 1
 gadget \name
 	effective_address
 	mov x25, x7
-	page_cross_check (\width), .Lx86_vector_load_cross\@
+	page_cross_check (\width), Lx86_vector_load_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \width
 	.if \width == 16
 	ldr q0, [x7]
 	.else
 	ldp q0, q1, [x7]
 	.endif
-.Lx86_vector_load_write\@:
+Lx86_vector_load_write\@:
 	and x8, x23, #0xffff
 	add x8, _cpu, x8
 	.if \width == 16
@@ -73,14 +73,14 @@ gadget \name
 	stp q0, q1, [x8]
 	.endif
 	retire_and_next
-.Lx86_vector_load_cross\@:
+Lx86_vector_load_cross\@:
 	mov x0, _context
 	mov x1, x25
 	and x8, x23, #0xffff
 	add x2, _cpu, x8
 	mov w3, #\width
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbz w0, .Lx86_memory_fault
+	cbz w0, Lx86_memory_fault
 	.if \zero_upper
 	and x8, x23, #0xffff
 	add x8, _cpu, x8
@@ -100,7 +100,7 @@ vector_move_load vector_move_256_rm, 32, 0
 gadget \name
 	effective_address
 	mov x25, x7
-	page_cross_check (\width), .Lx86_vector_store_cross\@
+	page_cross_check (\width), Lx86_vector_store_cross\@
 	translate 1, UML_X86_64_TLB_WRITE_PAGE, \width
 	and x8, x23, #0xffff
 	add x8, _cpu, x8
@@ -112,14 +112,14 @@ gadget \name
 	stp q0, q1, [x7]
 	.endif
 	finish_store \width
-.Lx86_vector_store_cross\@:
+Lx86_vector_store_cross\@:
 	mov x0, _context
 	mov x1, x25
 	and x8, x23, #0xffff
 	add x2, _cpu, x8
 	mov w3, #\width
 	bl NAME(uml_x86_64_gadget_cross_page_vector_store)
-	cbz w0, .Lx86_memory_fault
+	cbz w0, Lx86_memory_fault
 	finish_store \width
 .endm
 
@@ -239,27 +239,27 @@ gadget \name
 	effective_address
 	mov x25, x7
 	ldr x24, [_stream], #8
-	page_cross_check (\width), .Lx86_vector_bitwise_cross\@
+	page_cross_check (\width), Lx86_vector_bitwise_cross\@
 	translate 0, UML_X86_64_TLB_READ_PAGE, \width
 	ldr q2, [x7]
 	.if \width == 32
 	ldr q3, [x7, #16]
 	.endif
-	b .Lx86_vector_bitwise_compute\@
-.Lx86_vector_bitwise_cross\@:
+	b Lx86_vector_bitwise_compute\@
+Lx86_vector_bitwise_cross\@:
 	sub sp, sp, #32
 	mov x0, _context
 	mov x1, x25
 	mov x2, sp
 	mov w3, #\width
 	bl NAME(uml_x86_64_gadget_cross_page_vector_load)
-	cbnz w0, .Lx86_vector_bitwise_cross_loaded\@
+	cbnz w0, Lx86_vector_bitwise_cross_loaded\@
 	add sp, sp, #32
-	b .Lx86_memory_fault
-.Lx86_vector_bitwise_cross_loaded\@:
+	b Lx86_memory_fault
+Lx86_vector_bitwise_cross_loaded\@:
 	ldp q2, q3, [sp]
 	add sp, sp, #32
-.Lx86_vector_bitwise_compute\@:
+Lx86_vector_bitwise_compute\@:
 	and x8, x23, #0xffff
 	and x9, x24, #0xffff
 	add x8, _cpu, x8
