@@ -4,7 +4,7 @@
 Linux guest decode video through the [Virtio video
 decoder](../../../darwin/device/video/README.md), whose V4L2 stateful
 mem2mem node the guest kernel publishes as `/dev/video0` and the Steam
-appliances alias to `/dev/video-dec0`. It exists because Valve's x86-64 CEF
+image aliases to `/dev/video-dec0`. It exists because Valve's x86-64 CEF
 carries only the VA-API decode path, while the device speaks V4L2, and because
 no packaged libva backend drives a *stateful* decoder.
 
@@ -38,12 +38,9 @@ compressed frame.
 
 ## How a decode is turned into packets
 
-The driver keeps one V4L2 decode session per VA decode context. Each
+The driver keeps one V4L2 decode session per VA decode context, and each
 `vaBeginPicture` / `vaRenderPicture` / `vaEndPicture` becomes one compressed
-packet on the OUTPUT queue, tagged with a unique timestamp; both queues use
-`V4L2_BUF_FLAG_TIMESTAMP_COPY`, so the CAPTURE buffer that comes back names the
-submission that produced it. The decoded NV12 picture is copied into the target
-surface, and the CAPTURE buffer is returned to the decoder.
+packet whose timestamp names the surface it decodes into.
 
 Two VP9 rules need care, because a stateful decoder emits *shown* frames only
 while a VA-API client submits every frame:
@@ -100,21 +97,17 @@ host already produced.
 | `UML_VA_V4L2_RGB=off` | NV12 |
 | `auto` (default) | packed RGB |
 
-It is the single largest thing in the guest-side video path: converting NV12
-in the guest is a scalar pass over every pixel, while copying packed `AR24` is
-a row `memcpy`, so carrying the larger packed frame out of the device costs a
-small fraction of the conversion it saves. The cost is the arithmetic, not the
-memory: a large `memcpy` in this guest runs at the same rate whether it touches
-anonymous memory, a `gbm_bo_map`ped buffer or a V4L2 `MMAP` capture plane. The
-measurement is recorded in
+Converting NV12 in the guest costs far more than copying the larger packed
+frame; the measurement is recorded in
 [`optimization-history.md`](../../../docs/optimization-history.md).
 
 The decision is made once, at initialisation, from what the device offers
 rather than from what a client has done so far, so the first decode session of
-a boot gets the same answer as every later one. A client that reads NV12 back
-rather than blitting pays the conversion in the other direction, and the round
-trip is not bit exact, so `UML_VA_V4L2_RGB=off` stays for a client that wants
-the device's own planes.
+a boot gets the same answer as every later one. The packed picture lives in
+an RGB shadow of the NV12 surface, converted back only when a client asks for
+NV12 through `vaDeriveImage`, `vaGetImage` or `vaExportSurfaceHandle`. That
+round trip is not bit exact, so `UML_VA_V4L2_RGB=off` stays for a client that
+wants the device's own planes.
 
 The format is negotiated before the first packet, not after the source-change
 event: the device keeps the choice across that event, and changing it once the
@@ -132,47 +125,25 @@ client, and the guest never copies the picture at all.
 | `device` | the decoder's own buffers, mapped and copied out. Always available |
 | `auto` (default) | this driver's surfaces wherever they are dma-bufs at all, which is to say GBM, falling back to `device` for any queue that refuses one |
 
-Whether a queue takes a buffer is settled by offering it one, not by asking
-whether it supports the memory type: a queue accepts `V4L2_MEMORY_DMABUF` and
-then refuses the buffer, because it maps an imported one through its own
-memory operations and a buffer with no pages of its own - a host-visible blob,
-which is what a virtualised graphics stack hands out - has nothing there to
-map. Nor can a synthetic queue answer for the real one, since a queue
-negotiates its own geometry. So the real queue is offered a real surface as
-it is built, and one that refuses gets the device's own buffers instead, with
-the reason recorded once: `into device buffers (lend the decoder a buffer:
-Invalid argument)`.
+Whether a queue takes a buffer is settled by offering the real queue a real
+surface as it is built, not by asking whether it supports the memory type: a
+queue can accept `V4L2_MEMORY_DMABUF` and still refuse a host-visible blob,
+which has no pages of its own to map. A queue that refuses gets the device's
+own buffers, with the reason recorded once: `into device buffers (lend the
+decoder a buffer: Invalid argument)`.
 
-The driver holds one buffer per capture slot and a pool of the ones the
-decoder has given back. A surface that shows a picture takes its buffer over;
-the slot is refilled from the pool before it is queued again; and a buffer
-returns to the pool only when nothing refers to it any more, so a surface
-still being read is never decoded over. A surface whose own memory a client
-already holds - through `vaExportSurfaceHandle` or `vaDeriveImage` - keeps
-that memory, and the picture is copied into it instead, because a descriptor
-a client cached must not start naming a different buffer.
-
-A source change gives the whole queue back: `STREAMOFF`, `REQBUFS(0)` naming
-the memory type the queue really had, then the new format and a queue built
-from scratch. The first slot of a new queue takes back everything the old one
-held, so nothing is leaked and nothing is lent twice.
+A surface still being read is never decoded over, a surface whose memory a
+client already holds keeps that memory and has the picture copied into it, and
+a source change takes back every lent buffer before the new queue is built.
+The comments on `provideCapture` and `fillFromLent` in `driver.hpp` and on
+`release` in `v4l2_decoder.hpp` hold the mechanics.
 
 Only a capture format of one plane can be lent today. `AR24` is one plane and
 is lent whole, which is the default path. `NV12M` is two planes and the device
 offers nothing single-planar for it, so the one object that carries both
-planes is refused (`lend the decoder a buffer: Invalid argument`) and an NV12
-decode keeps the decoder's own buffers. When the capture queue learns to take
-one object carrying both planes, the probe finds it and that copy goes away
-with no other change.
-
-What it is worth is one copy a frame and no more: copying a frame out of a
-capture buffer is a row `memcpy` that is small beside the frame's decoding. It
-is here because the copy is real and avoidable, not because it is fast.
-
-The surface's own format stays NV12: the packed picture lives in a shadow
-buffer, and `vaDeriveImage`, `vaGetImage` and `vaExportSurfaceHandle` convert
-it back the moment a client really wants NV12. A client that only ever
-converts never pays for that.
+planes is refused and an NV12 decode keeps the decoder's own buffers. When the
+capture queue learns to take one object carrying both planes, the probe finds
+it with no other change.
 
 ## Environment
 
@@ -211,25 +182,13 @@ LIBVA_DRIVER_NAME=uml LIBVA_DRIVERS_PATH=$PWD/build \
   ./build/va_decode_probe movie.ivf --out - | md5sum
 ```
 
-Both binaries are Linux guest programs; the unit test also runs on any Linux
-build host.
-
-Any VA-API client works, because the driver implements the public interface and
-nothing else. An FFmpeg configured for this one job needs no codec closure:
-
-```sh
-./configure --disable-everything --enable-vaapi --enable-decoder=vp9 \
-  --enable-hwaccel=vp9_vaapi --enable-parser=vp9 --enable-demuxer=ivf \
-  --enable-filter=hwdownload --enable-filter=format --enable-filter=scale \
-  --enable-encoder=rawvideo --enable-muxer=rawvideo --enable-ffmpeg
-ffmpeg -hwaccel vaapi -hwaccel_output_format vaapi -i movie.ivf \
-  -vf hwdownload,format=nv12 -f rawvideo -pix_fmt yuv420p - | md5sum
-```
-
 `--vpp` additionally converts every decoded frame to ARGB through a
 `VAProfileNone` video-processing context, and `--export` exports a decoded
 surface as `DRM_PRIME_2`, re-imports the descriptor and compares the pixels.
-Those are the two paths a browser uses beyond decoding.
+Those are the two paths a browser uses beyond decoding. Both binaries are Linux
+guest programs; the unit test also runs on any Linux build host. Any other
+VA-API client works too, because the driver implements the public interface
+and nothing else.
 
 ## In the Steam x86-64 image
 
