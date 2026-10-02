@@ -16,6 +16,17 @@ _executed .req x29
 
 	.set x86_guest_memory_gadget, 0
 
+/* Name the start of the cold section, whose own labels are temporary, so a
+ * host sample of a cold path names this section rather than whatever precedes
+ * it in the image. It emits no bytes. */
+#if __APPLE__
+	.pushsection __TEXT,__gadget_cold,regular,pure_instructions
+#else
+	.pushsection .text.gadget_cold,"ax"
+#endif
+NAME(uml_x86_64_gadget_cold_section_begin):
+	.popsection
+
 .macro gadget name
 	.globl NAME(uml_x86_64_gadget_\name)
 	.p2align 4
