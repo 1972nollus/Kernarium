@@ -46,8 +46,9 @@ guest HWCAP sanity payload checks FJCVTZS on its special inputs.
 FEAT_CSSC is implemented on every host. Both engines execute ABS, CNT, CTZ,
 and the integer minimum and maximum natively where the host has the extension
 and otherwise as short sequences of base instructions, so HWCAP2_CSSC and
-ID_AA64ISAR2_EL1.CSSC are always set. The guest HWCAP sanity payload checks
-one form of each operation in the guest.
+ID_AA64ISAR2_EL1.CSSC are always set. The corpus runs its CSSC cases through
+both engines on every host, and the guest HWCAP sanity payload checks one
+form of each operation in the guest.
 
 FEAT_MOPS is implemented on every host as option B: the prologue formats the
 registers, the main stage moves nothing, and the epilogue moves every byte, one
@@ -60,7 +61,7 @@ epilogue that name the same registers as one unit: an untagged transfer that
 stays inside one destination page and one source page runs inline, in the
 same 64-byte blocks and direction, and any other takes the shared code from
 its prologue; `arm64-jit-mops-run-runtime` checks both arms against a byte
-model.
+model. The corpus runs its MOPS cases through both engines on every host.
 
 That status is not exhaustive variant proof. No inventory entry has an
 independently reviewed complete partition of all forms, widths, aliases,

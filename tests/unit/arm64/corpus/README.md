@@ -242,13 +242,17 @@ fail once they are clear. A native requirement on a case whose FPCR sets none
 of them came from the engines' former host gates, and the rewrite removes it.
 The pack encoder refuses a state that sets them.
 
+Both engines implement FEAT_CSSC and FEAT_MOPS on every host, so their native
+requirements were likewise only the producer JIT's host gates. The rewrite
+removes them from every case, and the JIT lane runs those cases on every host.
+
 A failing MTE case's tagged address relied on the top-byte ignore that MTE
 implied. Its replacement takes a kept two-word case of the same SIMD&FP
 load/store allocation that completes through a general-register base with a
 zero top byte, sets `tbi_enabled`, and tags the base; the architectural result
 is the kept case's, except that a written-back base keeps its tag.
 `provenance.json` records the script's hash, its feature list, the failing
-file's hash, and the drop, strip, and addition counts under
+file's hash, and the drop, strip, host-gate, and addition counts under
 `absent_features`, and `build-unit-corpus.py --check` verifies them. The
 `arm64-instruction-corpus-absent-features` tooling test replays the rewrite
 from the pre-removal pack and checks that every kept case differs from its
