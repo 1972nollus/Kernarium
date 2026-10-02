@@ -39,7 +39,6 @@
 #include <vector>
 
 #include <mach/arm/thread_status.h>
-#include <sys/sysctl.h>
 #include <sys/ucontext.h>
 #include <unistd.h>
 
@@ -410,15 +409,6 @@ bool has_virtio_device_argument(const std::vector<std::string> &arguments,
 	return false;
 }
 
-bool host_has_lse_atomics()
-{
-	int supported = 0;
-	std::size_t size = sizeof(supported);
-	return sysctlbyname("hw.optional.arm.FEAT_LSE", &supported, &size,
-			    nullptr, 0) == 0 &&
-		size == sizeof(supported) && supported != 0;
-}
-
 } // namespace
 
 bool uml::app::has_argument(
@@ -452,11 +442,6 @@ int uml::app::runEmbeddedKernel(
 		return 1;
 	}
 	const bool information_only = informational(argc, argv);
-	if (!information_only && !host_has_lse_atomics()) {
-		std::fputs("This Darwin UML kernel requires Armv8.1 atomic "
-			   "instructions on the host\n", stderr);
-		return 1;
-	}
 	std::unique_ptr<AppNetwork> app_network;
 	uml_emulator_network_callbacks network_callbacks{};
 	if (user_network_enabled()) {
