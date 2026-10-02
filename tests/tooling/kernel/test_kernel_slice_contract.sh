@@ -379,7 +379,7 @@ done
 # policy test never needs a configured Linux checkout or compiler toolchain.
 BUILD_FIXTURE="$TEST_ROOT/build-fixture"
 mkdir -p \
-	"$BUILD_FIXTURE/kernel/common" \
+	"$BUILD_FIXTURE/kernel/common/tooling" \
 	"$BUILD_FIXTURE/kernel/mainline-6.18/build/toolchain" \
 	"$BUILD_FIXTURE/kernel/mainline-6.18/scripts" \
 	"$BUILD_FIXTURE/kernel/mainline-6.18/patches" \
@@ -390,6 +390,8 @@ cp "$LINE_ROOT/build/toolchain/darwin.env" \
 	"$BUILD_FIXTURE/kernel/mainline-6.18/build/toolchain/darwin.env"
 cp "$LINE_ROOT/scripts/select-slice.sh" \
 	"$BUILD_FIXTURE/kernel/mainline-6.18/scripts/select-slice.sh"
+cp "$ROOT_DIR/kernel/common/tooling/config-fragments.sh" \
+	"$BUILD_FIXTURE/kernel/common/tooling/config-fragments.sh"
 cp "$COMMON_METADATA" \
 	"$BUILD_FIXTURE/kernel/mainline-6.18/patches/metadata.env"
 cp "$SLICE_METADATA" \
