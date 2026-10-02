@@ -2,7 +2,6 @@
 
 #include "jit_compiler.hpp"
 
-#include "cpu/arm64/detail/atomic_floating.hpp"
 #include "cpu/arm64/detail/bfloat_dot.hpp"
 #include "cpu/arm64/detail/bfloat_matrix.hpp"
 #include "cpu/arm64/detail/bfloat_multiply.hpp"
@@ -15,14 +14,9 @@
 #include "cpu/arm64/detail/floating_integer_conversion.hpp"
 #include "cpu/arm64/detail/floating_reciprocal.hpp"
 #include "cpu/arm64/detail/floating_round.hpp"
-#include "cpu/arm64/detail/floating_scale.hpp"
-#include "cpu/arm64/detail/fp8.hpp"
-#include "cpu/arm64/detail/half_dot.hpp"
 #include "cpu/arm64/detail/half_fused_long.hpp"
-#include "cpu/arm64/detail/half_matrix.hpp"
 #include "cpu/arm64/detail/instruction_primitives.hpp"
 #include "cpu/arm64/detail/memory_copy_set.hpp"
-#include "cpu/arm64/detail/read_check_write.hpp"
 #include "cpu/arm64/detail/simd_floating_classes.hpp"
 
 namespace uml::cpu::arm64 {
@@ -39,7 +33,7 @@ bool JitCompiler::emit_common_control_flow(std::uint32_t instruction, std::uint6
       emit_direct_branch(target, resulting_count);
       return true;
     }
-    if ((instruction & 0xff00'0000U) == 0x5400'0000U) {
+    if ((instruction & 0xff00'0010U) == 0x5400'0000U) {
       const auto target =
           pc + sign_extend((instruction >> 5) & 0x7ffffU, 19) * 4;
       emit_conditional_pc(instruction & 15U, target, pc + 4,
@@ -90,6 +84,12 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::breakpoint, resulting_count);
       return Action::terminate;
     }
+    /* BC.cond needs FEAT_HBC, which the virtual CPU does not implement. */
+    if ((instruction & 0xff00'0010U) == 0x5400'0010U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
+    }
     if (emit_common_control_flow(instruction, pc, resulting_count))
       return Action::terminate;
     if ((instruction & 0xffe0'001fU) == 0xd400'0002U ||
@@ -135,22 +135,16 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::terminate;
     };
 
-    if ((instruction & 0xbfbf'fc00U) == 0x0d01'8400U) {
-      if (!host_capabilities().has(ArmFeature::advanced_simd) ||
-          !host_capabilities().has(ArmFeature::lrcpc3))
-        return Action::unsupported;
-      return ordered_memory((instruction & 0x0040'0000U) == 0U);
-    }
-    if ((instruction & 0x3f20'0c00U) == 0x1d00'0800U) {
-      const unsigned size = instruction >> 30;
-      const unsigned operation = (instruction >> 22) & 3U;
-      if ((operation & 2U) != 0U && size != 0U)
-        return reject_ordered();
-      if (!host_capabilities().has(ArmFeature::floating_point) ||
-          !host_capabilities().has(ArmFeature::lrcpc3))
-        return Action::unsupported;
-      return ordered_memory((operation & 1U) == 0U);
-    }
+    /*
+     * The virtual CPU implements neither FEAT_LRCPC3 nor FEAT_LSCP: LDAP1,
+     * STL1, LDAPUR and STLUR to SIMD&FP registers, LDAPR and STLR with
+     * writeback, LDIAPP, STILP, and the LDAP, LDAPP, and STLP pairs are
+     * undefined.
+     */
+    if ((instruction & 0xbfbf'fc00U) == 0x0d01'8400U ||
+        (instruction & 0x3f20'0c00U) == 0x1d00'0800U ||
+        (instruction & 0x3f20'0c00U) == 0x1900'0800U)
+      return reject_ordered();
     if ((instruction & 0x3fff'fc00U) == 0x38bf'c000U) {
       if (!host_capabilities().has(ArmFeature::lrcpc))
         return Action::unsupported;
@@ -166,39 +160,6 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return ordered_memory(operation == 0U);
     }
-    if ((instruction & 0x3fbf'fc00U) == 0x1980'0800U) {
-      if ((instruction >> 30) < 2U)
-        return reject_ordered();
-      if (!host_capabilities().has(ArmFeature::lrcpc3))
-        return Action::unsupported;
-      return ordered_memory((instruction & 0x0040'0000U) == 0U);
-    }
-    if ((instruction & 0x3f20'0c00U) == 0x1900'0800U) {
-      const auto fixed = instruction & 0xffe0'fc00U;
-      const bool lrcpc3 =
-          fixed == 0x9900'0800U || fixed == 0xd900'0800U ||
-          fixed == 0x9900'1800U || fixed == 0xd900'1800U ||
-          fixed == 0x9940'0800U || fixed == 0xd940'0800U ||
-          fixed == 0x9940'1800U || fixed == 0xd940'1800U;
-      const bool lscp = fixed == 0xd900'5800U ||
-                        fixed == 0xd940'5800U ||
-                        fixed == 0xd940'7800U;
-      if (!lrcpc3 && !lscp)
-        return reject_ordered();
-      const bool load =
-          fixed != 0x9900'0800U && fixed != 0xd900'0800U &&
-          fixed != 0x9900'1800U && fixed != 0xd900'1800U &&
-          fixed != 0xd900'5800U;
-      const unsigned first = instruction & 31U;
-      const unsigned second = (instruction >> 16) & 31U;
-      if (load && first == second && first != 31U)
-        return reject_ordered();
-      const auto required =
-          lrcpc3 ? ArmFeature::lrcpc3 : ArmFeature::lscp;
-      if (!host_capabilities().has(required))
-        return Action::unsupported;
-      return ordered_memory(!load);
-    }
     /*
      * The virtual CPU implements no FEAT_MTE. Resolve the tag-immediate
      * (ADDG, SUBG) and tag-memory allocations as undefined before the
@@ -213,11 +174,6 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
-    const auto system_register = instruction & 0xffff'ffe0U;
-    if ((system_register == 0xd53b'4440U ||
-         system_register == 0xd51b'4440U) &&
-        !translation_supports(ArmFeature::fp8))
-      return Action::unsupported;
     if (emit_system_register(instruction)) {
       /*
        * A register-sourced FPCR write may enable precise guest exception
@@ -288,42 +244,17 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
           emitter_.load_constant(8, immediate & 1U);
           emitter_.store_b(8, 15, offset);
         };
+        /*
+         * The virtual CPU implements neither FEAT_SSBS (op2 1) nor FEAT_SME
+         * (op2 3, SMSTART and SMSTOP), and MSR TCO (op2 4) needs FEAT_MTE:
+         * those fields are unallocated.
+         */
         switch (op2) {
-        case 1:
-          if (!translation_supports(ArmFeature::ssbs))
-            return Action::unsupported;
-          store_boolean(offsetof(CpuState, pstate_ssbs));
-          return Action::keep_going;
         case 2:
           if (!translation_supports(ArmFeature::dit))
             return Action::unsupported;
           store_boolean(offsetof(CpuState, pstate_dit));
           return Action::keep_going;
-        case 3:
-          if ((immediate & 8U) != 0)
-            return reject();
-          switch ((immediate >> 1) & 3U) {
-          case 1:
-            if (!translation_supports(ArmFeature::sme))
-              return Action::unsupported;
-            store_boolean(offsetof(CpuState, pstate_sm));
-            return Action::keep_going;
-          case 2:
-            if (!translation_supports(ArmFeature::sme))
-              return Action::unsupported;
-            store_boolean(offsetof(CpuState, pstate_za));
-            return Action::keep_going;
-          case 3:
-            if (!translation_supports(ArmFeature::sme))
-              return Action::unsupported;
-            store_boolean(offsetof(CpuState, pstate_sm));
-            store_boolean(offsetof(CpuState, pstate_za));
-            return Action::keep_going;
-          default:
-            return reject();
-          }
-        case 4: /* MSR TCO needs FEAT_MTE. */
-          return reject();
         case 6:
         case 7: {
           const auto denied = emitter_.make_label();
@@ -363,16 +294,17 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
     if ((instruction & 0xffff'f0ffU) == 0xd503'309fU ||
         (instruction & 0xffff'f0ffU) == 0xd503'30bfU ||
         (instruction & 0xffff'f0ffU) == 0xd503'30dfU ||
-        (instruction & 0xffff'f3ffU) == 0xd503'323fU ||
         instruction == 0xd503'30ffU) {
       const auto lowered = lower_memory_barrier(
-          instruction, host_capabilities().has(ArmFeature::sb),
-          host_capabilities().has(ArmFeature::xs));
+          instruction, host_capabilities().has(ArmFeature::sb));
       for (std::size_t index = 0; index < lowered.count; ++index)
         emitter_.emit(lowered.words[index]);
       return Action::keep_going;
     }
-    if ((instruction & 0xffff'f0ffU) == 0xd503'30ffU) {
+    /* SB with a nonzero CRm is reserved, and DSB nXS needs FEAT_XS, which
+     * the virtual CPU does not implement. */
+    if ((instruction & 0xffff'f0ffU) == 0xd503'30ffU ||
+        (instruction & 0xffff'f3ffU) == 0xd503'323fU) {
       store_pc(pc);
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
@@ -416,26 +348,19 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
-    if ((instruction & 0xffff'ffe0U) == 0xd503'1000U ||
-        (instruction & 0xffff'ffe0U) == 0xd503'1020U) {
-      /* A timed wait is a hint and is permitted to complete immediately. */
-      return Action::keep_going;
+    /* WFET and WFIT need FEAT_WFxT, which the virtual CPU does not
+     * implement. */
+    if ((instruction & 0xffff'ffc0U) == 0xd503'1000U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
+    /* The virtual CPU implements no FEAT_CMPBR: the compare-and-branch class
+     * is unallocated. */
     if ((instruction & 0x7e00'0000U) == 0x7400'0000U) {
-      const bool immediate = (instruction & 0x0100'0000U) != 0;
-      const unsigned narrow_control = (instruction >> 14) & 3U;
-      const unsigned condition = (instruction >> 21) & 7U;
-      const bool valid_form =
-          immediate ? (instruction & 0x0000'4000U) == 0
-                    : (narrow_control == 0U ||
-                       ((instruction >> 31) == 0U &&
-                        narrow_control >= 2U));
-      if (!valid_form || condition == 4U || condition == 5U) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      return Action::unsupported;
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     if ((instruction & 0x1f00'0000U) == 0x1000'0000U) {
       emit_pc_relative(instruction, pc);
@@ -649,55 +574,22 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return Action::keep_going;
     }
-    if (const auto fp8 = arm64::detail::decode_fp8(instruction);
-        fp8.recognized &&
-        (fp8.operation == arm64::detail::Fp8Operation::convert_to_half ||
-         fp8.operation == arm64::detail::Fp8Operation::convert_to_bfloat ||
-         fp8.operation == arm64::detail::Fp8Operation::convert_from_half ||
-         fp8.operation == arm64::detail::Fp8Operation::convert_from_single)) {
-      if (!fp8.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      const bool converted_up =
-          fp8.operation == arm64::detail::Fp8Operation::convert_to_half ||
-          fp8.operation == arm64::detail::Fp8Operation::convert_to_bfloat;
-      if (!(converted_up ? emit_fp8_convert_up(instruction)
-                         : emit_fp8_convert_down(instruction)))
-        return Action::unsupported;
-      return Action::keep_going;
-    }
-    if (const auto fp8 = arm64::detail::decode_fp8(instruction);
-        fp8.recognized &&
-        (fp8.operation == arm64::detail::Fp8Operation::dot_half ||
-         fp8.operation == arm64::detail::Fp8Operation::dot_single)) {
-      if (!fp8.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (!emit_fp8_dot(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
-    }
-    if (const auto fp8 = arm64::detail::decode_fp8(instruction);
-        fp8.recognized &&
-        (fp8.operation == arm64::detail::Fp8Operation::multiply_half ||
-         fp8.operation == arm64::detail::Fp8Operation::multiply_single ||
-         fp8.operation == arm64::detail::Fp8Operation::matrix_half ||
-         fp8.operation == arm64::detail::Fp8Operation::matrix_single)) {
-      if (!fp8.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (!emit_fp8_multiply_matrix(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
+    /*
+     * The virtual CPU implements no FEAT_FP8: its conversions, dot products,
+     * multiply-adds, and matrix multiplies are undefined.
+     */
+    if ((instruction & 0xbf3f'fc00U) == 0x2e21'7800U ||
+        (instruction & 0xbfa0'fc00U) == 0x0e00'f400U ||
+        (instruction & 0xbf80'f400U) == 0x0f00'0000U ||
+        (instruction & 0xbfa0'fc00U) == 0x0e00'fc00U ||
+        (instruction & 0xbfc0'f400U) == 0x0fc0'0000U ||
+        (instruction & 0xbfe0'fc00U) == 0x0ec0'fc00U ||
+        (instruction & 0xbf80'f400U) == 0x2f00'8000U ||
+        (instruction & 0xbfa0'fc00U) == 0x0e00'c400U ||
+        (instruction & 0xff60'fc00U) == 0x6e00'ec00U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     if (const auto complex =
             arm64::detail::decode_floating_complex(instruction);
@@ -911,18 +803,12 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return Action::keep_going;
     }
-    if (const auto floating_scale =
-            arm64::detail::decode_floating_scale(instruction);
-        floating_scale.recognized) {
-      if (!floating_scale.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (!emit_floating_scale(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
+    /* FSCALE belongs to FEAT_FP8, which the virtual CPU does not implement. */
+    if ((instruction & 0xbfe0'fc00U) == 0x2ec0'3c00U ||
+        (instruction & 0xbfa0'fc00U) == 0x2ea0'fc00U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     if (const auto integer_to_floating =
             arm64::detail::decode_integer_to_floating(instruction);
@@ -937,14 +823,16 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return Action::keep_going;
     }
-    if (arm64::detail::decode_half_dot(instruction).recognized) {
-      if (!emit_half_dot(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
-    }
-    const bool half_dot_scalar_hole =
-        arm64::detail::reserved_half_dot_scalar_class(instruction);
-    if (half_dot_scalar_hole) {
+    /*
+     * The virtual CPU implements no FEAT_F16F32DOT: FDOT is undefined. Bit
+     * 28 set moves its fields into the scalar classes; the fused decoder
+     * owns the words it recognizes there, and the rest are reserved.
+     */
+    if (((instruction & 0xafe0'fc00U) == 0x0e80'fc00U ||
+         (instruction & 0xafc0'f400U) == 0x0f40'9000U) &&
+        ((instruction & 0x1000'0000U) == 0U ||
+         !arm64::detail::decode_fused_floating_arithmetic(instruction)
+              .recognized)) {
       store_pc(pc);
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
@@ -954,18 +842,12 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return Action::keep_going;
     }
-    if (const auto half_matrix =
-            arm64::detail::decode_half_matrix(instruction);
-        half_matrix.recognized) {
-      if (!half_matrix.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (!emit_half_matrix(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
+    /* The virtual CPU implements neither FEAT_F16MM nor FEAT_F16F32MM. */
+    if ((instruction & 0x9fe0'fc00U) == 0x0ec0'ec00U ||
+        (instruction & 0xbfe0'fc00U) == 0x0e40'ec00U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     if (arm64::detail::reserved_half_fused_long(instruction)) {
       store_pc(pc);
@@ -1054,24 +936,13 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
         return Action::unsupported;
       return Action::keep_going;
     }
+    /* LUTI2 and LUTI4 need FEAT_LUT, which the virtual CPU does not
+     * implement. */
     if ((instruction & 0xff20'8c00U) == 0x4e00'0000U &&
         (instruction & 0x00c0'0000U) != 0U) {
-      const unsigned op2 = (instruction >> 22) & 3U;
-      const unsigned len = (instruction >> 13) & 3U;
-      const unsigned op = (instruction >> 12) & 1U;
-      const bool valid =
-          op2 == 3U ||
-          (op2 == 2U && op != 0U) ||
-          (op2 == 1U && (op != 0U || (len & 1U) != 0U));
-      if (!valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction,
-                                 resulting_count);
-        return Action::terminate;
-      }
-      if (!emit_simd_lut(instruction))
-        return Action::unsupported;
-      return Action::keep_going;
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     if (emit_simd_table_lookup(instruction))
       return Action::keep_going;
@@ -1123,11 +994,17 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::keep_going;
     if (emit_simd_sha512(instruction))
       return Action::keep_going;
-    if (emit_simd_sm(instruction))
-      return Action::keep_going;
+    /*
+     * SM3PARTW1, SM3PARTW2, SM4EKEY, SM3SS1, SM3TT*, and SM4E need FEAT_SM3
+     * and FEAT_SM4, which the virtual CPU does not implement; the other
+     * cells are reserved.
+     */
     const bool reserved_simd_logic =
-        (instruction & 0xffe0'fc00U) == 0xce60'cc00U ||
+        (instruction & 0xffe0'f000U) == 0xce60'c000U ||
+        (instruction & 0xffe0'8000U) == 0xce40'0000U ||
+        (instruction & 0xffe0'c000U) == 0xce40'8000U ||
         (instruction & 0xffe0'8000U) == 0xce60'0000U ||
+        (instruction & 0xffff'fc00U) == 0xcec0'8400U ||
         (instruction & 0xffff'fc00U) == 0xcec0'8800U ||
         (instruction & 0xffff'fc00U) == 0xcec0'8c00U;
     if (reserved_simd_logic) {
@@ -1541,36 +1418,25 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       return Action::terminate;
     }
     /*
-     * LS64 overlaps the broader atomic-memory class. Resolve its complete
-     * allocation and exact native feature at translation time. The semantic
-     * cold path handles alignment faults; valid hot execution uses a
-     * translated host address and a native 64-byte transaction without a
-     * gadget fallback. Unsupported hosts and reserved Rt partitions terminate
-     * as undefined before observing an address.
+     * The virtual CPU implements none of FEAT_LS64, FEAT_LSFE, FEAT_LSE128,
+     * FEAT_THE, FEAT_D128, and FEAT_LSUI. LD64B, ST64B, ST64BV, ST64BV0, the
+     * floating-point atomics, LDCLRP, LDSETP, SWPP, RCWCAS, RCWCASP, the
+     * read-check-write pair modifies, and the unprivileged atomics,
+     * compare-and-swaps, and exclusives are undefined. The scalar
+     * read-check-write modifies fall in cells the atomic decoder rejects.
      */
-    const bool ls64_load =
-        (instruction & 0xffff'fc00U) == 0xf83f'd000U;
-    const bool ls64_store =
-        (instruction & 0xffff'fc00U) == 0xf83f'9000U;
-    const auto ls64_status_opcode = instruction & 0xffe0'fc00U;
-    const bool ls64_status = ls64_status_opcode == 0xf820'b000U;
-    const bool ls64_status_accdata =
-        ls64_status_opcode == 0xf820'a000U;
-    if (ls64_load || ls64_store || ls64_status || ls64_status_accdata) {
-      const unsigned first = instruction & 31U;
-      const auto required =
-          ls64_status_accdata ? ArmFeature::ls64_accdata
-          : ls64_status      ? ArmFeature::ls64_v
-                             : ArmFeature::ls64;
-      if ((first & 1U) != 0U || first >= 24U ||
-          !translation_supports(required)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      emit_ls64(instruction, pc, ls64_load, ls64_status,
-                ls64_status_accdata);
-      return Action::keep_going;
+    if ((instruction & 0xffff'fc00U) == 0xf83f'd000U ||
+        (instruction & 0xffff'fc00U) == 0xf83f'9000U ||
+        (instruction & 0xffe0'fc00U) == 0xf820'b000U ||
+        (instruction & 0xffe0'fc00U) == 0xf820'a000U ||
+        (instruction & 0x3f20'0c00U) == 0x3c20'0000U ||
+        (instruction & 0xbf20'0c00U) == 0x1920'0000U ||
+        (instruction & 0xbf20'0800U) == 0x1920'0800U ||
+        (instruction & 0x3f20'0c00U) == 0x1920'0400U ||
+        (instruction & 0x3f00'0000U) == 0x0900'0000U) {
+      store_pc(pc);
+      emitter_.return_constant(Event::illegal_instruction, resulting_count);
+      return Action::terminate;
     }
     /*
      * MOPS shares major encodings with atomic memory instructions. Decode its
@@ -1593,98 +1459,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emit_memory_copy_set(instruction, pc, resulting_count, 1U);
       return Action::terminate;
     }
-    if (const auto atomic_floating =
-            arm64::detail::decode_atomic_floating(instruction);
-        atomic_floating.recognized) {
-      if (!atomic_floating.valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      if (!host_capabilities().has(ArmFeature::lsfe))
-        return Action::unsupported;
-      emit_atomic_floating_memory(instruction, pc, atomic_floating);
-      return Action::keep_going;
-    }
-    /*
-     * Read-check-write shares the scalar atomic and 128-bit pair major
-     * encodings. Resolve the complete allocation before those broader
-     * decoders. Valid words use the existing one-instruction semantic bridge,
-     * which preserves exact guest-memory fault metadata; unsupported native
-     * features and reserved register/operation cells terminate as undefined.
-     */
-    if (const auto rcw = detail::decode_read_check_write(instruction);
-        rcw.recognized) {
-      const bool pair = rcw.pair;
-      const unsigned first = instruction & 31U;
-      const unsigned second = (instruction >> 16) & 31U;
-      const unsigned operation = rcw.operation;
-      const bool valid =
-          pair
-              ? (rcw.compare_swap
-                     ? (first & 1U) == 0U && (second & 1U) == 0U
-                     : operation >= 1U && operation <= 3U && first != 31U &&
-                           second != 31U && first != second)
-              : true;
-      const bool feature =
-          pair ? host_capabilities().has(ArmFeature::d128) &&
-                     host_capabilities().has(ArmFeature::the)
-               : host_capabilities().has(ArmFeature::the);
-      if (!valid || !feature) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      mark_memory_write();
-      const auto slow = emitter_.make_label();
-      cold_.push_back(
-          {slow, instruction, pc, count_ + 1,
-           ColdPath::Action::exclusive_slow});
-      emitter_.branch(slow);
-      /*
-       * The helper always returns to the executor.  Ending the translated
-       * block here also prevents an unreachable later store from publishing
-       * this load-reservation block as a store in flight, which can otherwise
-       * make concurrent reservation loops wait on one another forever.
-       */
-      return Action::terminate;
-    }
-    /*
-     * FEAT_LSE128 shares the pair RCW major allocation. RCW cells above have
-     * already been consumed, leaving the clear/set/swap cells and their
-     * reserved S/opcode neighbours. Resolve feature and register legality
-     * here so an invalid word never becomes an unsupported runtime event.
-     * The semantic memory bridge preserves one-copy atomicity and exact
-     * guest fault metadata while remaining independent of the gadget engine.
-     */
-    if ((instruction & 0xbf20'0c00U) == 0x1920'0000U) {
-      const bool software = (instruction & 0x4000'0000U) != 0U;
-      const unsigned first = instruction & 31U;
-      const unsigned second = (instruction >> 16) & 31U;
-      const unsigned o3 = (instruction >> 15) & 1U;
-      const unsigned operation = (instruction >> 12) & 7U;
-      const bool valid_operation =
-          !software &&
-          ((!o3 && (operation == 1U || operation == 3U)) ||
-           (o3 && operation == 0U));
-      const bool valid_registers =
-          first != 31U && second != 31U && first != second;
-      if (!valid_operation || !valid_registers ||
-          !host_capabilities().has(ArmFeature::lse128)) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      mark_memory_write();
-      const auto slow = emitter_.make_label();
-      cold_.push_back(
-          {slow, instruction, pc, count_ + 1,
-           ColdPath::Action::exclusive_slow});
-      emitter_.branch(slow);
-      return Action::terminate;
-    }
-    if ((instruction & 0x3f20'0c00U) == 0x3820'0000U ||
-        (instruction & 0x3f20'0c00U) == 0x1920'0400U) {
+    if ((instruction & 0x3f20'0c00U) == 0x3820'0000U) {
       const auto action = emit_atomic_memory(instruction, pc);
       if (action != Action::unsupported)
         return action;
@@ -1692,8 +1467,7 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       emitter_.return_constant(Event::illegal_instruction, resulting_count);
       return Action::terminate;
     }
-    if ((instruction & 0x3f00'0000U) == 0x0800'0000U ||
-        (instruction & 0x3f00'0000U) == 0x0900'0000U) {
+    if ((instruction & 0x3f00'0000U) == 0x0800'0000U) {
       const auto action = emit_exclusive_memory(instruction, pc);
       if (action != Action::unsupported)
         return action;
@@ -1708,16 +1482,13 @@ JitCompiler::Action JitCompiler::emit_instruction(std::uint32_t instruction, std
       const unsigned mode = (instruction >> 23) & 3U;
       const unsigned first = instruction & 31U;
       const unsigned second = (instruction >> 10) & 31U;
+      /* opc 11 holds the FEAT_LSUI LDTP, STTP, LDTNP, and STTNP, which the
+       * virtual CPU does not implement. */
       const bool valid =
+          operation != 3U &&
           (vector || (operation != 1U || (load && mode != 0U))) &&
           (!load || first != second);
       if (!valid) {
-        store_pc(pc);
-        emitter_.return_constant(Event::illegal_instruction, resulting_count);
-        return Action::terminate;
-      }
-      if (!vector && operation == 3U &&
-          !host_capabilities().has(ArmFeature::lsui)) {
         store_pc(pc);
         emitter_.return_constant(Event::illegal_instruction, resulting_count);
         return Action::terminate;

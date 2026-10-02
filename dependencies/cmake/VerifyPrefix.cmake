@@ -114,7 +114,9 @@ endfunction()
 # uml_verify_apple_binary(PATH <file> [PLATFORM <number> MINOS <version>]
 #     [LIPO <tool>] [OTOOL <tool>])
 # PATH holds only arm64 code. With PLATFORM, every build-version command in it,
-# one per archive member, names that Mach-O platform and minimum OS version.
+# one per archive member, names that Mach-O platform and minimum OS version,
+# and no member carries a legacy minimum-version command instead, which names
+# no platform row for this check to see.
 function(uml_verify_apple_binary)
     cmake_parse_arguments(PARSE_ARGV 0 _arg ""
         "PATH;PLATFORM;MINOS;LIPO;OTOOL" "")
@@ -142,6 +144,10 @@ function(uml_verify_apple_binary)
         OUTPUT_VARIABLE _load_commands)
     if(NOT _status EQUAL 0)
         message(FATAL_ERROR "Could not inspect Apple binary: ${_arg_PATH}")
+    endif()
+    if(_load_commands MATCHES "LC_VERSION_MIN_[A-Z]+")
+        message(FATAL_ERROR
+            "${_arg_PATH} has a legacy ${CMAKE_MATCH_0} command")
     endif()
     string(REGEX MATCHALL "platform [0-9]+" _platform_rows "${_load_commands}")
     string(REGEX MATCHALL "minos [0-9]+\\.[0-9]+" _minimum_rows

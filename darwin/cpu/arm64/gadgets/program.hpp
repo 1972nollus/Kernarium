@@ -401,6 +401,5 @@ execute_preserving_native_fp_environment(
 	const Program &program, CpuState &cpu, ::uml::memory::Tlb &tlb,
 	std::size_t &executed) noexcept;
 using ::uml::cpu::arm64::restore_native_fp_environment;
-using ::uml::cpu::arm64::restore_native_fpmr_environment;
 
 } // namespace uml::cpu::arm64::gadgets

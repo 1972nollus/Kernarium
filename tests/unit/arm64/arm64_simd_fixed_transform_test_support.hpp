@@ -28,13 +28,6 @@ struct Registers3 final {
   unsigned second;
 };
 
-struct Registers4 final {
-  unsigned destination;
-  unsigned first;
-  unsigned second;
-  unsigned third;
-};
-
 [[noreturn]] inline void fail(std::string_view message) {
   std::fprintf(stderr, "%.*s\n", static_cast<int>(message.size()),
                message.data());
@@ -56,14 +49,6 @@ inline void require(bool condition, std::string_view message) {
 
 [[nodiscard]] inline engine::NativeRequirements feature64() {
   return engine::NativeRequirements::features(::uml::cpu::ArmFeature::sha512);
-}
-
-[[nodiscard]] inline engine::NativeRequirements feature3() {
-  return engine::NativeRequirements::features(::uml::cpu::ArmFeature::sm3);
-}
-
-[[nodiscard]] inline engine::NativeRequirements feature4() {
-  return engine::NativeRequirements::features(::uml::cpu::ArmFeature::sm4);
 }
 
 [[nodiscard]] constexpr std::uint32_t transform32_three(unsigned operation,
@@ -93,40 +78,6 @@ inline constexpr std::array transform64_three_bases{
 
 [[nodiscard]] constexpr std::uint32_t transform64_two(Registers2 registers) {
   return 0xcec0'8000U | ((registers.source & 31U) << 5) |
-         (registers.destination & 31U);
-}
-
-inline constexpr std::array transform3_three_bases{
-    0xce60'c000U,
-    0xce60'c400U,
-};
-
-[[nodiscard]] constexpr std::uint32_t transform3_three(unsigned operation,
-                                                       Registers3 registers) {
-  return transform3_three_bases[operation] | ((registers.second & 31U) << 16) |
-         ((registers.first & 31U) << 5) | (registers.destination & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t transform3_four(Registers4 registers) {
-  return 0xce40'0000U | ((registers.second & 31U) << 16) |
-         ((registers.third & 31U) << 10) | ((registers.first & 31U) << 5) |
-         (registers.destination & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t
-transform3_indexed(unsigned operation, unsigned index, Registers3 registers) {
-  return 0xce40'8000U | ((registers.second & 31U) << 16) |
-         ((index & 3U) << 12) | ((operation & 3U) << 10) |
-         ((registers.first & 31U) << 5) | (registers.destination & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t transform4_three(Registers3 registers) {
-  return 0xce60'c800U | ((registers.second & 31U) << 16) |
-         ((registers.first & 31U) << 5) | (registers.destination & 31U);
-}
-
-[[nodiscard]] constexpr std::uint32_t transform4_two(Registers2 registers) {
-  return 0xcec0'8400U | ((registers.source & 31U) << 5) |
          (registers.destination & 31U);
 }
 

@@ -62,8 +62,7 @@ saturating_add_array(std::size_t total, std::size_t count,
       translation.internal_entry_word == 0 ||
       translation.internal_entry_word >= translation.hot_words ||
       !valid_link_state_metadata(translation.accesses_fp_state,
-                                 translation.native_fp,
-                                 translation.native_fpmr) ||
+                                 translation.native_fp) ||
       (translation.direct_memory_write_mask &
        ~translation.memory_write_mask) != 0 ||
       translation.relocations.size() >

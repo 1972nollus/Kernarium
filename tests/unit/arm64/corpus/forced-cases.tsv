@@ -2137,25 +2137,6 @@ case	arm64-floating-reciprocal-control	198
 # branch cpu/arm64/detail/floating_reciprocal_software.hpp:330:7:330:40:T
 # region cpu/arm64/detail/floating_reciprocal_software.hpp:331:4:331:19
 case	arm64-floating-reciprocal-control	491
-# branch cpu/arm64/detail/floating_conversion.hpp:294:25:294:37:T
-case	arm64-floating-scale-control	2
-# branch cpu/arm64/detail/floating_conversion.hpp:295:25:295:36:F
-case	arm64-floating-scale-control	3
-# branch cpu/arm64/detail/floating_conversion.hpp:382:22:382:47:T
-# branch cpu/arm64/detail/floating_conversion.hpp:383:27:383:57:T
-# branch cpu/arm64/detail/floating_conversion.hpp:383:6:383:23:T
-# branch cpu/arm64/detail/floating_conversion.hpp:384:7:384:27:T
-# ... and 8 more
-case	arm64-floating-scale-control	82
-# branch cpu/arm64/detail/floating_conversion.hpp:383:6:383:23:F
-# branch cpu/arm64/detail/floating_conversion.hpp:398:22:398:47:T
-# branch cpu/arm64/detail/floating_conversion.hpp:399:27:399:56:T
-# branch cpu/arm64/detail/floating_conversion.hpp:399:6:399:23:T
-# ... and 5 more
-case	arm64-floating-scale-control	84
-# branch cpu/arm64/detail/floating_conversion.hpp:312:7:312:32:T
-# region cpu/arm64/detail/floating_conversion.hpp:312:34:315:4
-case	arm64-floating-scale-control	90
 # entry .Lfloating_to_gpr_fixed_software_62345+0x38
 # fault poison .Lfloating_to_gpr_fixed_software_62345+0x38
 case	arm64-floating-to-integer-allocation	1097
@@ -4222,13 +4203,10 @@ case	arm64-floating-to-integer-fixed	5053
 case	arm64-floating-to-integer-fixed	5059
 # entry .Lfloating_to_gpr_fixed_software_67183+0x2c
 case	arm64-floating-to-integer-fixed	5071
-# branch cpu/arm64/detail/fp8.hpp:554:26:554:35:T
-# region cpu/arm64/detail/fp8.hpp:554:38:554:55
-case	arm64-fp8-convert-down-control	9
 # branch cpu/arm64/jit/jit_compiler_floating.cpp:82:15:82:30:T
 # region cpu/arm64/jit/jit_compiler_floating.cpp:83:21:83:33
 case	arm64-fused-floating-allocation	68
-# branch cpu/arm64/detail/half_dot.hpp:46:3:46:60:F
+# branch cpu/arm64/gadgets/program_builder_floating_simd_impl.ipp:258:8:259:32:F
 case	arm64-fused-floating-allocation	771
 # entry uml_arm64_gadget_simd_fused_inplace_fmla_4h_1
 case	arm64-fused-floating-allocation	1610
@@ -5029,23 +5007,6 @@ case	arm64-gadget-dependencies	4439
 case	arm64-gadget-dependencies	4457
 # translated entry uml_arm64_gadget_vector_other_load128_sxtw_0_forward_2
 case	arm64-gadget-dependencies	4458
-# branch cpu/arm64/detail/half_matrix.hpp:261:23:261:48:F
-# region cpu/arm64/detail/half_matrix.hpp:262:31:262:54
-case	arm64-half-dot-control	49
-# branch cpu/arm64/detail/half_matrix.hpp:348:21:348:31:T
-# branch cpu/arm64/detail/half_matrix.hpp:348:35:348:51:T
-# region cpu/arm64/detail/half_matrix.hpp:348:35:348:51
-case	arm64-half-dot-control	2564
-# branch cpu/arm64/detail/half_matrix.hpp:265:31:265:53:T
-# branch cpu/arm64/detail/half_matrix.hpp:265:6:265:27:T
-# branch cpu/arm64/detail/half_matrix.hpp:266:6:266:43:T
-# region cpu/arm64/detail/half_matrix.hpp:265:31:265:53
-# ... and 2 more
-case	arm64-half-dot-control	2577
-# branch cpu/arm64/detail/half_matrix.hpp:347:43:347:53:T
-case	arm64-half-dot-indexed	8
-# branch cpu/arm64/detail/half_matrix.hpp:348:35:348:51:F
-case	arm64-half-dot-indexed	71
 # branch cpu/arm64/detail/half_fused_long.hpp:77:25:77:50:T
 case	arm64-half-fused-long-control	4
 # branch cpu/arm64/detail/half_fused_long.hpp:149:3:149:25:T

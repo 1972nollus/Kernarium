@@ -11,10 +11,6 @@
 #include <span>
 #include <vector>
 
-namespace uml::cpu::arm64::detail {
-struct AtomicFloating;
-}
-
 namespace uml::cpu::arm64 {
 
 using ::uml::memory::Access;
@@ -55,7 +51,6 @@ public:
     bool accesses_fp_state{};
     bool link_target_safe{true};
     bool native_fp{};
-    bool native_fpmr{};
     bool guest_illegal{};
   };
 
@@ -250,9 +245,6 @@ private:
   try_emit_native_exclusive_run(
       std::span<const std::uint32_t> instructions, std::uint64_t pc);
 
-  void emit_ls64(std::uint32_t instruction, std::uint64_t pc, bool load,
-                 bool status, bool accdata);
-
   [[nodiscard]] Action emit_exclusive_memory(std::uint32_t instruction,
                                              std::uint64_t pc);
 
@@ -264,10 +256,6 @@ private:
 
   void emit_native_scalar_compare_swap(std::uint32_t instruction,
                                        std::uint64_t pc);
-
-  void emit_atomic_floating_memory(
-      std::uint32_t instruction, std::uint64_t pc,
-      const arm64::detail::AtomicFloating &decoded);
 
   [[nodiscard]] bool emit_pair_memory(std::uint32_t instruction,
                                       std::uint64_t pc);
@@ -353,7 +341,6 @@ private:
   bool accesses_fp_state_{};
   bool link_target_safe_{true};
   bool native_fp_{};
-  bool native_fpmr_{};
   bool guest_illegal_{};
   void *configured_link_context_{};
   LinkResolver configured_link_resolver_{};

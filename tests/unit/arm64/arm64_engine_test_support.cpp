@@ -561,7 +561,6 @@ public:
        * production caller observes an active guest FP environment or a stale
        * indirect-link marker. */
       if (outcome.cpu.gadget_fp_active ||
-          outcome.cpu.gadget_fpmr_active ||
           outcome.cpu.gadget_indirect_miss != nullptr)
         fail(test_case.name, current_engine, diagnostic_instruction,
              "engine-private execution state escaped the public boundary",

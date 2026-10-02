@@ -139,20 +139,6 @@ void remaining_floating_families_name_resident_vectors_directly() {
   require_direct_three_vector_operation(
       "scalar reciprocal step", 0x5e20'fc00U,
       code_base + 0x21'000U);
-
-  const auto &host = ::uml::platform::apple::probed_host_capabilities();
-  if (host.has(::uml::cpu::ArmFeature::fp8))
-    require_direct_three_vector_operation(
-        "eight-bit convert down", 0x0e40'f400U,
-        code_base + 0x24'000U);
-  if (host.has(::uml::cpu::ArmFeature::fp8dot4))
-    require_direct_three_vector_operation(
-        "eight-bit dot accumulator", 0x0e00'fc00U,
-        code_base + 0x25'000U);
-  if (host.has(::uml::cpu::ArmFeature::f8f32mm))
-    require_direct_three_vector_operation(
-        "eight-bit matrix accumulator", 0x6e80'ec00U,
-        code_base + 0x26'000U);
 }
 
 void remaining_simd_arithmetic_families_name_resident_vectors_directly() {
@@ -191,22 +177,10 @@ void remaining_simd_arithmetic_families_name_resident_vectors_directly() {
         "bfloat matrix accumulator", 0x6e40'ec00U,
         code_base + 0x31'000U);
   }
-  if (host.has(::uml::cpu::ArmFeature::f16f32dot)) {
-    require_direct_three_vector_operation(
-        "half vector dot accumulator", 0x4e80'fc00U,
-        code_base + 0x32'000U);
-    require_direct_three_vector_operation(
-        "half indexed dot accumulator", 0x4f40'9000U,
-        code_base + 0x33'000U);
-  }
   if (host.has(::uml::cpu::ArmFeature::fhm))
     require_direct_three_vector_operation(
         "half vector fused-long accumulator", 0x4e20'ec00U,
         code_base + 0x34'000U);
-  if (host.has(::uml::cpu::ArmFeature::f16f32mm))
-    require_direct_three_vector_operation(
-        "half widening matrix accumulator", 0x4e40'ec00U,
-        code_base + 0x35'000U);
   if (host.has(::uml::cpu::ArmFeature::dotprod)) {
     require_direct_three_vector_operation(
         "integer vector dot accumulator", 0x4e80'9400U,
@@ -219,10 +193,6 @@ void remaining_simd_arithmetic_families_name_resident_vectors_directly() {
     require_direct_three_vector_operation(
         "integer matrix accumulator", 0x4e80'a400U,
         code_base + 0x38'000U);
-  if (host.has(::uml::cpu::ArmFeature::lut))
-    require_direct_three_vector_operation(
-        "single-table LUT", 0x4e40'2000U,
-        code_base + 0x39'000U);
 }
 
 void require_restricted_element_operation(std::string_view name,
@@ -307,18 +277,6 @@ void restricted_element_families_use_the_low_resident_bank() {
     require_restricted_element_operation(
         "bfloat indexed multiply-long accumulator", 0x4fc0'f000U,
         code_base + 0x3d'000U);
-  if (host.has(::uml::cpu::ArmFeature::fp8dot2))
-    require_restricted_element_operation(
-        "eight-bit indexed dot-to-half accumulator", 0x0f40'0000U,
-        code_base + 0x49'000U);
-  if (host.has(::uml::cpu::ArmFeature::fp8fma)) {
-    require_restricted_element_operation(
-        "eight-bit indexed multiply-to-half accumulator", 0x0fc0'0000U,
-        code_base + 0x4a'000U);
-    require_restricted_element_operation(
-        "eight-bit indexed multiply-to-single accumulator", 0x2f00'8000U,
-        code_base + 0x4b'000U);
-  }
 }
 
 void constrained_frequency_selects_two_stable_pins() {
@@ -503,34 +461,8 @@ void future_constrained_word_does_not_expand_a_terminal_prefix() {
               actual.direct_memory_write_mask ==
                   expected.direct_memory_write_mask &&
               actual.accesses_fp_state == expected.accesses_fp_state &&
-              actual.native_fp == expected.native_fp &&
-              actual.native_fpmr == expected.native_fpmr,
+              actual.native_fp == expected.native_fp,
           "future constrained word expanded the terminal prefix");
-}
-
-void unrestricted_fp8_binding_order_is_unchanged() {
-  const auto &host = ::uml::platform::apple::probed_host_capabilities();
-  if (!host.has(::uml::cpu::ArmFeature::fp8dot4))
-    return;
-
-  constexpr std::uint32_t guest =
-      0x0e00'fc00U | (2U << 16U) | (1U << 5U);
-  const std::array block{guest};
-  const auto compiled =
-      jit_test::compile_block(code_base + 0x4d'000U, block);
-  require(compiled.guest_instructions == block.size(),
-          "unrestricted eight-bit dot form did not compile");
-  const auto hot =
-      std::span<const std::uint32_t>{compiled.words}.first(compiled.hot_words);
-  std::optional<std::uint32_t> native;
-  for (const auto word : hot)
-    if ((word & ~register_mask) == (guest & ~register_mask))
-      native = word;
-  require(native.has_value(),
-          "unrestricted eight-bit dot form omitted its native word");
-  require(left(*native) == 16U && right(*native) == 17U &&
-              destination(*native) == 18U,
-          "unrestricted eight-bit operand allocation order changed");
 }
 
 void require_ordinary_vector_memory_chain(
@@ -638,86 +570,6 @@ void literal_load_names_its_resident_vector_directly() {
           "vector literal load destination escaped the resident cache");
 }
 
-void atomic_floating_names_resident_vectors_directly() {
-  if (!::uml::platform::apple::probed_host_capabilities().has(
-          ::uml::cpu::ArmFeature::lsfe))
-    return;
-
-  const auto require_returning_form = [](bool alias, std::uint64_t pc) {
-    const unsigned result = alias ? 5U : 6U;
-    const std::array guest{
-        bitwise(2, 5, 1, 2),
-        atomic_floating(false, 10, 5, result),
-        bitwise(2, 7, result, 2),
-    };
-    const auto compiled = jit_test::compile_block(pc, guest);
-    require(compiled.guest_instructions == guest.size(),
-            "JIT did not compile the atomic floating-memory chain");
-    const auto hot = std::span<const std::uint32_t>{compiled.words}.first(
-        compiled.hot_words);
-
-    std::optional<std::uint32_t> producer;
-    std::optional<std::uint32_t> atomic;
-    std::optional<std::uint32_t> consumer;
-    for (const auto word : hot) {
-      if ((word & ~register_mask) == (guest[0] & ~register_mask))
-        producer = word;
-      if ((word & ~register_mask) == (guest[1] & ~register_mask))
-        atomic = word;
-      if ((word & ~register_mask) == (guest[2] & ~register_mask))
-        consumer = word;
-    }
-
-    require(producer.has_value(), "JIT did not emit the cached source");
-    require(atomic.has_value(),
-            "JIT did not emit the native atomic floating-memory operation");
-    require(consumer.has_value(), "JIT did not emit the cached result user");
-    require(left(*atomic) == 8U,
-            "native atomic floating-memory base is not translated x8");
-    require(right(*atomic) == destination(*producer),
-            "atomic floating-memory source was staged through v0");
-    require(destination(*atomic) == left(*consumer),
-            "atomic floating-memory result was staged through v1");
-    require(right(*atomic) >= first_cached_vector &&
-                right(*atomic) <= last_cached_vector &&
-                destination(*atomic) >= first_cached_vector &&
-                destination(*atomic) <= last_cached_vector,
-            "atomic floating-memory operand escaped the resident cache");
-    require((right(*atomic) == destination(*atomic)) == alias,
-            "atomic floating-memory source/result alias was not preserved");
-  };
-
-  require_returning_form(false, code_base + 0x5000U);
-  require_returning_form(true, code_base + 0x6000U);
-
-  constexpr std::array store_guest{
-      bitwise(2, 5, 1, 2),
-      atomic_floating(true, 10, 5, 31),
-  };
-  const auto compiled =
-      jit_test::compile_block(code_base + 0x7000U, store_guest);
-  require(compiled.guest_instructions == store_guest.size(),
-          "JIT did not compile the store-only atomic floating-memory chain");
-  const auto hot =
-      std::span<const std::uint32_t>{compiled.words}.first(compiled.hot_words);
-  std::optional<std::uint32_t> producer;
-  std::optional<std::uint32_t> atomic;
-  for (const auto word : hot) {
-    if ((word & ~register_mask) == (store_guest[0] & ~register_mask))
-      producer = word;
-    if ((word & ~register_mask) == (store_guest[1] & ~register_mask))
-      atomic = word;
-  }
-  require(producer.has_value(),
-          "JIT did not emit the store-only cached source");
-  require(atomic.has_value(),
-          "JIT did not emit the store-only native operation");
-  require(right(*atomic) == destination(*producer),
-          "store-only atomic floating-memory source was staged through v0");
-  require(destination(*atomic) == 31U,
-          "store-only atomic floating-memory result is not encoded as v31");
-}
-
 
 } // namespace
 
@@ -734,10 +586,8 @@ int main() {
   third_constrained_identity_uses_q2_when_high_bank_is_full();
   constrained_planning_stops_at_a_terminal();
   future_constrained_word_does_not_expand_a_terminal_prefix();
-  unrestricted_fp8_binding_order_is_unchanged();
   ordinary_memory_names_resident_vector_registers_directly();
   literal_load_names_its_resident_vector_directly();
-  atomic_floating_names_resident_vectors_directly();
   run_vector_remap_pressure_tests();
   return 0;
 }

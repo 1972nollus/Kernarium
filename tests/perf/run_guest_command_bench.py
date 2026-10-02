@@ -6,47 +6,31 @@ from __future__ import annotations
 __import__("sys").dont_write_bytecode = True
 
 import argparse
+import contextlib
+import functools
 import os
 import pathlib
 import subprocess
-import statistics
 import sys
-import time
 
 
 TESTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(TESTS / "integration" / "support"))
-from guest import (  # noqa: E402
-    CORE_CLASSES,
-    Guest,
-    GuestFile,
-    validate_payload_path,
+from guest import Guest, GuestFile, validate_payload_path  # noqa: E402
+from guest_bench import (  # noqa: E402
+    add_guest_arguments,
+    boot,
+    halt,
+    measure,
+    print_median,
 )
-from host_metrics import cpu_time_seconds  # noqa: E402
 
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--emulator", required=True, type=pathlib.Path)
-    parser.add_argument("--rootfs", required=True, type=pathlib.Path)
+    add_guest_arguments(parser, cpus=1, memory="1024M")
     parser.add_argument("--command", required=True)
-    parser.add_argument("--cpus", type=int, default=1)
     parser.add_argument("--repetitions", type=int, default=3)
-    parser.add_argument("--memory", default="1024M")
-    parser.add_argument(
-        "--engine",
-        choices=("jit", "gadgets"),
-        default="jit",
-    )
-    parser.add_argument(
-        "--core-class",
-        choices=CORE_CLASSES,
-        default="performance",
-        help=(
-            "host core class to measure on; 'efficiency' clamps the emulator "
-            "to background QoS so it runs on the E-cores that dominate iOS"
-        ),
-    )
     parser.add_argument(
         "--sample-output",
         type=pathlib.Path,
@@ -75,6 +59,34 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+@contextlib.contextmanager
+def sample_profile(
+    arguments: argparse.Namespace, process_id: int, repetition: int
+):
+    """Capture a macOS sample profile of the emulator around one command."""
+    path = arguments.sample_output
+    if arguments.repetitions != 1:
+        path = path.with_name(f"{path.stem}-{repetition}{path.suffix}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sampler = subprocess.Popen(
+        (
+            "/usr/bin/sample",
+            str(process_id),
+            str(arguments.sample_seconds),
+            "-file",
+            str(path.resolve()),
+        ),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    yield
+    try:
+        sampler.wait(timeout=arguments.sample_seconds + 5)
+    except subprocess.TimeoutExpired:
+        sampler.terminate()
+        sampler.wait()
+
+
 def main() -> int:
     arguments = parse_arguments()
     if not 1 <= arguments.cpus <= min(os.cpu_count() or 1, 64):
@@ -98,8 +110,6 @@ def main() -> int:
             raise ValueError(f"--upload names {guest_path} twice")
         payloads[guest_path] = GuestFile(host_path.read_bytes(), 0o755)
 
-    elapsed_samples: list[float] = []
-    utilization_samples: list[float] = []
     with Guest(
         arguments.emulator.resolve(),
         arguments.rootfs.resolve(),
@@ -112,75 +122,23 @@ def main() -> int:
         core_class=arguments.core_class,
         payloads=payloads,
     ) as guest:
-        if arguments.shell_init:
-            guest.boot_to_shell(180)
-            mounts = guest.run_command(
-                "mount -t tmpfs -o mode=1777 tmpfs /tmp", 30
+        boot(guest, arguments.shell_init)
+        sampler = None
+        if arguments.sample_output is not None:
+            sampler = functools.partial(
+                sample_profile, arguments, guest.process_id
             )
-            if mounts.return_code != 0:
-                raise RuntimeError(f"guest mount setup failed\n{mounts.output}")
-        else:
-            guest.boot_and_login()
-        for repetition in range(arguments.repetitions):
-            sampler = None
-            if arguments.sample_output is not None:
-                sample_path = arguments.sample_output
-                if arguments.repetitions != 1:
-                    sample_path = sample_path.with_name(
-                        f"{sample_path.stem}-{repetition + 1}"
-                        f"{sample_path.suffix}"
-                    )
-                sample_path.parent.mkdir(parents=True, exist_ok=True)
-                sampler = subprocess.Popen(
-                    (
-                        "/usr/bin/sample",
-                        str(guest.process_id),
-                        str(arguments.sample_seconds),
-                        "-file",
-                        str(sample_path.resolve()),
-                    ),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            before_cpu = cpu_time_seconds(guest.process_id)
-            before_wall = time.monotonic()
-            result = guest.run_command(arguments.command, arguments.timeout)
-            elapsed = time.monotonic() - before_wall
-            consumed = cpu_time_seconds(guest.process_id) - before_cpu
-            if sampler is not None:
-                try:
-                    sampler.wait(timeout=arguments.sample_seconds + 5)
-                except subprocess.TimeoutExpired:
-                    sampler.terminate()
-                    sampler.wait()
-            if result.return_code != 0:
-                raise RuntimeError(
-                    f"repetition {repetition + 1} failed "
-                    f"({result.return_code})\n{result.output}"
-                )
-            utilization = consumed / elapsed
-            elapsed_samples.append(elapsed)
-            utilization_samples.append(utilization)
-            print(result.output, flush=True)
-            print(
-                f"run {repetition + 1}: {elapsed:.3f}s wall, "
-                f"{consumed:.3f}s host CPU ({utilization:.2f} cores)",
-                flush=True,
-            )
-        shutdown_ok = guest.shutdown(60)
-        emulator_status = guest.return_code
-        if not shutdown_ok:
-            raise RuntimeError("emulator did not halt cleanly within 60 seconds")
-        if emulator_status != 0:
-            raise RuntimeError(
-                f"emulator exited with status {emulator_status}"
-            )
+        elapsed, utilization = measure(
+            guest,
+            arguments.command,
+            arguments.repetitions,
+            arguments.timeout,
+            around=sampler,
+            check=lambda _repetition, result: print(result.output, flush=True),
+        )
+        halt(guest)
 
-    print(
-        f"median: {statistics.median(elapsed_samples):.3f}s wall, "
-        f"{statistics.median(utilization_samples):.2f} host cores",
-        flush=True,
-    )
+    print_median(elapsed, utilization)
     return 0
 
 

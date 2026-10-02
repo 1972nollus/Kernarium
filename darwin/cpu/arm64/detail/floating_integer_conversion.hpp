@@ -295,20 +295,11 @@ struct IntegerToFloatingDecode final {
 			fractional_bits};
 	}
 
-	/* FEAT_FPRCVT cross-width SIMD&FP scalar forms. */
+	/* The FEAT_FPRCVT SCVTF and UCVTF from a SIMD&FP register of another
+	 * width: the virtual CPU does not implement FEAT_FPRCVT. */
 	if ((instruction & 0x7f20'fc00U) == 0x1e20'0000U &&
-	    rmode == 3U && (opcode == 4U || opcode == 5U)) {
-		const unsigned type = (instruction >> 22) & 3U;
-		const unsigned destination_width =
-			type == 3U ? 16U : type == 0U ? 32U : 64U;
-		const unsigned integer_width =
-			(instruction & 0x8000'0000U) != 0U ? 64U : 32U;
-		return {true, type != 2U && destination_width != integer_width,
-			false, opcode == 5U, true, false, integer_width,
-			destination_width, destination_width / 8U, 1U,
-			destination_width == 16U ? 0U :
-				destination_width == 32U ? 1U : 2U, 0U};
-	}
+	    rmode == 3U && (opcode == 4U || opcode == 5U))
+		return {true, false};
 
 	IntegerToFloatingDecode decoded{};
 	const auto match_fixed = [&](bool unsigned_source, bool scalar) constexpr {
@@ -391,10 +382,7 @@ struct IntegerToFloatingDecode final {
 		(static_cast<std::uintptr_t>(decoded.scalar) << 23) |
 		(static_cast<std::uintptr_t>(destination_code) << 24) |
 		(static_cast<std::uintptr_t>(decoded.fractional_bits) << 26) |
-		(static_cast<std::uintptr_t>(decoded.fixed_point) << 33) |
-		(static_cast<std::uintptr_t>(
-			!decoded.source_gpr &&
-			decoded.integer_width != decoded.destination_width) << 34);
+		(static_cast<std::uintptr_t>(decoded.fixed_point) << 33);
 }
 
 [[nodiscard]] constexpr FloatingToIntegerDecode decode_floating_to_integer(
@@ -418,9 +406,11 @@ struct IntegerToFloatingDecode final {
 			true, fractional_bits};
 	}
 
-	/* Scalar FP-to-GPR conversions and FEAT_FPRCVT cross-width conversions
-	 * share this encoding class. Classify the exact opcode/rmode pairs here so
-	 * malformed encodings are rejected before any architectural state read. */
+	/* Scalar FP-to-GPR conversions share this encoding class with the
+	 * FEAT_FPRCVT conversions into a SIMD&FP register, which the virtual CPU
+	 * does not implement. Classify the exact opcode/rmode pairs here so those
+	 * and the malformed encodings are rejected before any architectural state
+	 * read. */
 	if ((instruction & 0x7f20'fc00U) == 0x1e20'0000U) {
 		const unsigned type = (instruction >> 22) & 3U;
 		const unsigned rmode = (instruction >> 19) & 3U;
@@ -437,35 +427,23 @@ struct IntegerToFloatingDecode final {
 			fixed_encoding == 0x1e27'0000U ||
 			fixed_encoding == 0x9eae'0000U ||
 			fixed_encoding == 0x9eaf'0000U;
-		bool destination_gpr{};
 		bool recognized{};
 		bool opcode_valid{true};
 		FloatingIntegerRounding rounding{};
 		if (opcode <= 1U) {
-			destination_gpr = true;
 			recognized = true;
 			rounding = rmode == 0U ? FloatingIntegerRounding::tie_even :
 				rmode == 1U ? FloatingIntegerRounding::plus_infinity :
 				rmode == 2U ? FloatingIntegerRounding::minus_infinity :
 					FloatingIntegerRounding::zero;
 		} else if ((opcode == 4U || opcode == 5U) && rmode == 0U) {
-			destination_gpr = true;
 			recognized = true;
 			rounding = FloatingIntegerRounding::tie_away;
-		} else if ((opcode == 2U || opcode == 3U) && rmode != 0U) {
-			recognized = true;
-			rounding = rmode == 1U ? FloatingIntegerRounding::tie_even :
-				rmode == 2U ? FloatingIntegerRounding::plus_infinity :
-					FloatingIntegerRounding::tie_away;
-		} else if ((opcode == 4U || opcode == 5U) && rmode == 2U) {
-			recognized = true;
-			rounding = FloatingIntegerRounding::minus_infinity;
-		} else if ((opcode == 6U || opcode == 7U) && rmode == 2U) {
-			recognized = true;
-			rounding = FloatingIntegerRounding::zero;
-		} else if (opcode >= 4U && !general_move) {
-			/* Remaining opcode 100..111 combinations are reserved members
-			 * of the FP-to-integer encoding space, not integer-to-FP. */
+		} else if (((opcode == 2U || opcode == 3U) && rmode != 0U) ||
+			   (opcode >= 4U && !general_move)) {
+			/* The FEAT_FPRCVT conversions into a SIMD&FP register and the
+			 * remaining reserved opcode 100..111 combinations of the
+			 * FP-to-integer encoding space, not integer-to-FP. */
 			recognized = true;
 			opcode_valid = false;
 		}
@@ -474,9 +452,7 @@ struct IntegerToFloatingDecode final {
 		const unsigned width = type == 3U ? 16U : type == 0U ? 32U : 64U;
 		const unsigned integer_width =
 			(instruction & 0x8000'0000U) != 0U ? 64U : 32U;
-		const bool same_width_fpr = !destination_gpr && width == integer_width;
-		return {true, opcode_valid && type != 2U && !same_width_fpr,
-			destination_gpr,
+		return {true, opcode_valid && type != 2U, true,
 			(instruction & 0x0001'0000U) != 0U, true, rounding, width,
 			integer_width, integer_width / 8U, 1U,
 			width == 16U ? 0U : width == 32U ? 1U : 2U};
@@ -579,9 +555,6 @@ struct IntegerToFloatingDecode final {
 		(static_cast<std::uintptr_t>(decoded.integer_width == 64U) << 22) |
 		(static_cast<std::uintptr_t>(decoded.scalar) << 23) |
 		(static_cast<std::uintptr_t>(decoded.rounding) << 24) |
-		(static_cast<std::uintptr_t>(
-			!decoded.destination_gpr &&
-			decoded.source_width != decoded.integer_width) << 27) |
 		(static_cast<std::uintptr_t>(decoded.fractional_bits) << 28) |
 		(static_cast<std::uintptr_t>(decoded.fixed_point) << 35);
 }

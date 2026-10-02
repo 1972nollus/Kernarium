@@ -360,7 +360,8 @@ void register_translation(std::map<std::uintptr_t, unsigned> &references)
 
 void pair_translation(std::map<std::uintptr_t, unsigned> &references)
 {
-	for (unsigned operation = 0; operation < 4U; ++operation)
+	/* opc 11 holds the FEAT_LSUI LDTP, STTP, LDTNP, and STTNP. */
+	for (unsigned operation = 0; operation < 3U; ++operation)
 		for (const bool load : {false, true})
 			for (unsigned mode = 0; mode < 4U; ++mode)
 				for (const bool sp_base : {false, true}) {
@@ -368,13 +369,11 @@ void pair_translation(std::map<std::uintptr_t, unsigned> &references)
 					constexpr unsigned rt = 3U;
 					constexpr unsigned rt2 = 17U;
 					constexpr unsigned imm7 = 3U;
-					const unsigned width =
-						operation < 2U ? operation : 2U;
+					const unsigned width = operation;
 					const unsigned path =
 						mode == 1U ? 2U :
 						mode == 3U ? 1U : 0U;
-					const unsigned scale =
-						operation < 2U ? operation + 2U : 4U;
+					const unsigned scale = operation + 2U;
 					const auto displacement =
 						static_cast<std::uint64_t>(
 							memory::signed_imm7(imm7))
@@ -428,9 +427,7 @@ void exact_translation_references(
 			for (unsigned mode = 0; mode < directions[width].size();
 			     ++mode)
 				for (const auto gadget : directions[width][mode]) {
-					const unsigned expected =
-						(width == 2U ? 2U : 1U) *
-						(mode == 0U ? 2U : 1U);
+					const unsigned expected = mode == 0U ? 2U : 1U;
 					require(references.at(address_of(gadget)) == expected,
 						"pair gadget reference count is not exact");
 				}
@@ -439,8 +436,8 @@ void exact_translation_references(
 		[](unsigned sum, const auto &entry) {
 			return sum + entry.second;
 		});
-	require(total == 304U,
-		"ordinary-memory translation reference count is not exactly 304");
+	require(total == 288U,
+		"ordinary-memory translation reference count is not exactly 288");
 	for (const auto &[definition, count] : references) {
 		(void)definition;
 		require(count != 0U,

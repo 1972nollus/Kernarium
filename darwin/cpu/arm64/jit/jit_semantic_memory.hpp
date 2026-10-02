@@ -7,7 +7,6 @@
 namespace uml::cpu::arm64 {
 
 void activate_native_fp_environment(CpuState &cpu) noexcept;
-void activate_native_fpmr_environment(CpuState &cpu) noexcept;
 
 using ::uml::memory::Tlb;
 
@@ -18,9 +17,6 @@ uml_arm64_jit_tlb_translate(Tlb *, std::uint64_t, unsigned) noexcept;
 extern "C" void *
 uml_arm64_jit_tlb_translate_preserving(Tlb *, std::uint64_t,
                                        unsigned) noexcept;
-extern "C" void *
-uml_arm64_jit_tlb_translate_preserving_fpmr(Tlb *, std::uint64_t,
-                                            unsigned) noexcept;
 extern "C" std::uint64_t
 uml_arm64_jit_execute_exclusive(CpuState *, Tlb *, std::uint32_t) noexcept;
 extern "C" std::uint64_t

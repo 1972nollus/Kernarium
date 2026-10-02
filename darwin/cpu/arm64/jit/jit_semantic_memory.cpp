@@ -35,22 +35,6 @@ activate_native_fp_environment(CpuState &cpu) noexcept {
   __asm__ volatile("msr fpsr, %0" : : "r"(fpsr) : "memory");
 }
 
-void
-activate_native_fpmr_environment(CpuState &cpu) noexcept {
-  if (cpu.gadget_fpmr_active)
-    return;
-  __asm__ volatile("mrs %0, S3_3_C4_C4_2"
-                   : "=r"(cpu.gadget_host_fpmr)
-                   :
-                   : "memory");
-  cpu.gadget_fpmr_active = true;
-  const std::uint64_t guest_fpmr = cpu.fpmr;
-  __asm__ volatile("msr S3_3_C4_C4_2, %0"
-                   :
-                   : "r"(guest_fpmr)
-                   : "memory");
-}
-
 namespace {
 
 void materialize_semantic_cpu_state(CpuState &cpu) noexcept {
@@ -326,12 +310,12 @@ uml_arm64_jit_execute_exclusive(CpuState *cpu, Tlb *tlb,
     return semantic_result(*tlb, memory, result);
   };
   /*
-   * Compare-and-swap, the LSE, LSE128 and read-check-write atomics perform
-   * their memory transaction as one host atomic on the translated page, so
-   * they are single-copy atomic against every other writer without the
-   * publication gate. Only an exclusive load, which creates CpuState's
-   * software reservation, and any instruction run while that reservation is
-   * held, which may consume it, wait out other vCPUs' native store blocks.
+   * Compare-and-swap and the LSE atomics perform their memory transaction
+   * as one host atomic on the translated page, so they are single-copy
+   * atomic against every other writer without the publication gate. Only
+   * an exclusive load, which creates CpuState's software reservation, and
+   * any instruction run while that reservation is held, which may consume
+   * it, wait out other vCPUs' native store blocks.
    */
   if (uses_software_reservation) {
     JitExclusiveOperationScope operation;

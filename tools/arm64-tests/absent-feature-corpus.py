@@ -9,11 +9,19 @@ usage: absent-feature-corpus.py [--features LIST] [--failing TSV]
                                 DUMP LOG...
 
 The virtual CPU implements none of FEAT_MTE, FEAT_GCS, FEAT_CPA, FEAT_PAuth,
-FEAT_AFP, and FEAT_EBF16: their non-hint instructions are UNDEFINED, their
-hint-space instructions are NOPs, FPCR.FIZ, AH, NEP, and EBF are RES0, and
-the ID registers report them absent. The producer checks predate that choice, and their
-harness enabled these features in most cases' state, so this script rewrites
-a dump after export. For each named feature it
+FEAT_AFP, and FEAT_EBF16, nor the memory extensions FEAT_LSE128, FEAT_THE
+and FEAT_D128, FEAT_LRCPC3, FEAT_LSCP, FEAT_LS64 with its _V and _ACCDATA
+forms, FEAT_LSFE, FEAT_LSUI, and FEAT_LOR, nor the FP/SIMD extensions FEAT_FP8
+with its dot-product, multiply-add, and matrix forms and FPMR,
+FEAT_F16F32DOT, FEAT_F16MM and FEAT_F16F32MM, FEAT_LUT, FEAT_FAMINMAX,
+FEAT_SM3, FEAT_SM4, and FEAT_FPRCVT, nor FEAT_CMPBR, FEAT_HBC, FEAT_SSBS,
+FEAT_SME with its SVCR and PSTATE.SM and ZA, FEAT_XS, and FEAT_WFxT: their
+non-hint instructions are UNDEFINED, their hint-space instructions are NOPs,
+FPCR.FIZ, AH, NEP, and EBF are RES0, and the ID registers report them
+absent. The producer checks
+predate that choice, and their harness enabled these features in most cases'
+state or ran their instructions, so this script rewrites a dump after export.
+For each named feature it
 
 - drops every case that exercises the feature: one that uses its harness
   option, terminal event, or validator relation, or needs it natively without
@@ -74,16 +82,24 @@ sys.modules[_spec.name] = corpus
 _spec.loader.exec_module(corpus)
 
 SITE = "tools/arm64-tests/absent-feature-corpus.py"
-DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "afp", "ebf16")
+DEFAULT_FEATURES = ("mte", "gcs", "cpa", "pauth", "afp", "ebf16", "lse128",
+                    "the", "lrcpc3", "lscp", "ls64", "lsfe", "lsui", "lor",
+                    "fp8", "f16f32dot", "f16mm", "lut", "faminmax", "sm3",
+                    "sm4", "fprcvt", "cmpbr", "hbc", "ssbs", "sme", "xs",
+                    "wfxt")
 SVC = 0xD400_0001
 
 
 class Feature:
     def __init__(self, tokens, conditions, fields, validators=(), events=(),
                  options=(), tags=False, encodings=(),
-                 stripped_options=(), fpcr_bits=0) -> None:
+                 stripped_options=(), fpcr_bits=0, allocation=True) -> None:
         # Host and allocation feature tokens, and decode-partition conditions.
         self.tokens = frozenset(tokens)
+        # False when the allocation table names the feature for a whole
+        # baseline class: MSR (immediate) is filed under FEAT_SSBS, so the
+        # SSBS form is named in encodings instead.
+        self.allocation = allocation
         self.conditions = frozenset(conditions)
         self.fields = frozenset(fields)
         self.validators = frozenset(validators)
@@ -163,11 +179,109 @@ FEATURES = {
         conditions=("FEAT_EBF16",),
         fields=(),
         fpcr_bits=0x2000),
+    # The memory extensions below add instructions and, for FEAT_LS64, the
+    # ACCDATA_EL1 value ST64BV0 stores.
+    "lse128": Feature(
+        tokens=("lse128",),
+        conditions=("FEAT_LSE128",),
+        fields=()),
+    # The read-check-write pairs need FEAT_D128 as well; the other FEAT_D128
+    # instructions are EL1 system instructions, UNDEFINED at EL0 either way.
+    "the": Feature(
+        tokens=("the", "d128"),
+        conditions=("FEAT_THE", "FEAT_D128"),
+        fields=()),
+    "lrcpc3": Feature(
+        tokens=("lrcpc3",),
+        conditions=("FEAT_LRCPC3",),
+        fields=()),
+    "lscp": Feature(
+        tokens=("lscp",),
+        conditions=("FEAT_LSCP",),
+        fields=()),
+    "ls64": Feature(
+        tokens=("ls64", "ls64_v", "ls64_accdata"),
+        conditions=("FEAT_LS64", "FEAT_LS64_V", "FEAT_LS64_ACCDATA"),
+        fields=("accdata",)),
+    "lsfe": Feature(
+        tokens=("lsfe",),
+        conditions=("FEAT_LSFE",),
+        fields=()),
+    "lsui": Feature(
+        tokens=("lsui",),
+        conditions=("FEAT_LSUI",),
+        fields=()),
+    "lor": Feature(
+        tokens=("lor",),
+        conditions=("FEAT_LOR",),
+        fields=()),
+    "fp8": Feature(
+        tokens=("fp8", "fp8dot2", "fp8dot4", "fp8fma", "f8f16mm", "f8f32mm"),
+        conditions=("FEAT_FP8", "FEAT_FP8DOT2", "FEAT_FP8DOT4",
+                    "FEAT_FP8FMA", "FEAT_F8F16MM", "FEAT_F8F32MM"),
+        fields=("fpmr",),
+        encodings=((0xFFDF_FFE0, 0xD51B_4440),)),  # MRS and MSR FPMR
+    "f16f32dot": Feature(
+        tokens=("f16f32dot",),
+        conditions=("FEAT_F16F32DOT",),
+        fields=()),
+    "f16mm": Feature(
+        tokens=("f16mm", "f16f32mm"),
+        conditions=("FEAT_F16MM", "FEAT_F16F32MM"),
+        fields=()),
+    "lut": Feature(
+        tokens=("lut",),
+        conditions=("FEAT_LUT",),
+        fields=()),
+    "faminmax": Feature(
+        tokens=("faminmax",),
+        conditions=("FEAT_FAMINMAX",),
+        fields=()),
+    "sm3": Feature(
+        tokens=("sm3",),
+        conditions=("FEAT_SM3",),
+        fields=()),
+    "sm4": Feature(
+        tokens=("sm4",),
+        conditions=("FEAT_SM4",),
+        fields=()),
+    "fprcvt": Feature(
+        tokens=("fprcvt",),
+        conditions=("FEAT_FPRCVT",),
+        fields=()),
+    "cmpbr": Feature(
+        tokens=("cmpbr",),
+        conditions=("FEAT_CMPBR",),
+        fields=()),
+    "hbc": Feature(
+        tokens=("hbc",),
+        conditions=("FEAT_HBC",),
+        fields=()),
+    "ssbs": Feature(
+        tokens=("ssbs",),
+        conditions=("FEAT_SSBS",),
+        fields=("pstate_ssbs",),
+        allocation=False,
+        encodings=((0xFFFF_F0FF, 0xD503_403F),)),  # MSR SSBS, #imm
+    "sme": Feature(
+        tokens=("sme",),
+        conditions=("FEAT_SME",),
+        fields=("pstate_sm", "pstate_za"),
+        encodings=((0xFFDF_FFE0, 0xD51B_4240),)),  # MRS and MSR SVCR
+    "xs": Feature(
+        tokens=("xs",),
+        conditions=("FEAT_XS",),
+        fields=()),
+    "wfxt": Feature(
+        tokens=("wfxt",),
+        conditions=("FEAT_WFxT",),
+        fields=()),
 }
 
 # Illegal-word records: one case per encoding class and operand extreme.
 # Each word was checked against llvm-mc with the feature enabled (22.1.8 for
-# MTE, GCS, and CPA; 23.1.1 for PAuth).
+# MTE, GCS, and CPA; 23.1.1 for PAuth and the memory, FP/SIMD, branch, and
+# system extensions).
 UNDEFINED = {
     "mte": (
         ("ADDG", 0x9181_0420), ("ADDG SP", 0x91BF_3FFF),
@@ -260,6 +374,186 @@ UNDEFINED = {
         ("LDRAB", 0xF8A0_0420), ("LDRAB XZR SP maximum", 0xF8BF_F7FF),
         ("LDRAB pre", 0xF8FF_FC20),
     ),
+    "lse128": (
+        ("LDCLRP", 0x1921_1040), ("LDCLRPAL SP", 0x19FE_13FD),
+        ("LDSETP", 0x1921_3040), ("LDSETPA SP", 0x19BE_33FD),
+        ("SWPP", 0x1921_8040), ("SWPPL SP", 0x197E_83FD),
+    ),
+    "the": (
+        ("RCWCAS", 0x1920_0841), ("RCWCASAL XZR SP", 0x19FF_0BFF),
+        ("RCWSCAS", 0x5920_0841), ("RCWCASP", 0x1920_0C82),
+        ("RCWSCASPAL SP", 0x59FC_0FFE), ("RCWCLR", 0x3820_9041),
+        ("RCWSCLRA XZR SP", 0x78BF_93FF), ("RCWSET", 0x3820_B041),
+        ("RCWSSETL", 0x7860_B041), ("RCWSWP", 0x3820_A041),
+        ("RCWSSWPAL XZR SP", 0x78FF_A3FF), ("RCWCLRP", 0x1921_9040),
+        ("RCWSCLRPAL SP", 0x59FE_93FD), ("RCWSETP", 0x1921_B040),
+        ("RCWSSETPA SP", 0x59BE_B3FD), ("RCWSWPP", 0x1921_A040),
+        ("RCWSSWPPL SP", 0x597E_A3FD),
+    ),
+    "lrcpc3": (
+        ("LDIAPP w", 0x9941_1840), ("LDIAPP w post", 0x9941_0840),
+        ("LDIAPP x", 0xD941_1840), ("LDIAPP x post SP", 0xD95E_0BFD),
+        ("STILP w", 0x9901_1840), ("STILP w pre", 0x9901_0840),
+        ("STILP x", 0xD901_1840), ("STILP x pre SP", 0xD91F_0BFF),
+        ("LDAPR w post", 0x99C0_0820), ("LDAPR x post SP", 0xD9C0_0BFF),
+        ("STLR w pre", 0x9980_0820), ("STLR x pre SP", 0xD980_0BFF),
+        ("LDAP1 D0", 0x0D41_8420), ("LDAP1 D1 SP", 0x4D41_87FF),
+        ("STL1 D0", 0x0D01_8420), ("STL1 D1 SP", 0x4D01_87FF),
+        ("LDAPUR B", 0x1D40_0820), ("LDAPUR H", 0x5D50_0820),
+        ("LDAPUR S", 0x9D4F_F820), ("LDAPUR D", 0xDD40_0820),
+        ("LDAPUR Q SP", 0x1DDF_FBFF), ("STLUR B", 0x1D00_0820),
+        ("STLUR H", 0x5D10_0820), ("STLUR S", 0x9D0F_F820),
+        ("STLUR D", 0xDD00_0820), ("STLUR Q SP", 0x1D9F_FBFF),
+    ),
+    "lscp": (
+        ("LDAP", 0xD941_5840), ("LDAP SP", 0xD95E_5BFD),
+        ("LDAPP", 0xD941_7840), ("LDAPP SP", 0xD95E_7BFD),
+        ("STLP", 0xD901_5840), ("STLP XZR SP", 0xD91F_5BFF),
+    ),
+    "ls64": (
+        ("LD64B", 0xF83F_D020), ("LD64B SP", 0xF83F_D3F6),
+        ("ST64B", 0xF83F_9020), ("ST64B SP", 0xF83F_93F6),
+        ("ST64BV", 0xF822_B020), ("ST64BV XZR SP", 0xF83F_B3F6),
+        ("ST64BV0", 0xF822_A020), ("ST64BV0 XZR SP", 0xF83F_A3F6),
+    ),
+    "lsfe": (
+        ("LDFADD H", 0x7C20_0041), ("LDFADDA S", 0xBCA0_0041),
+        ("LDFADDAL D SP", 0xFCFF_03FE), ("LDFADDL H", 0x7C60_0041),
+        ("LDFMAX S", 0xBC20_4041), ("LDFMAXNM D", 0xFC20_6041),
+        ("LDFMIN H", 0x7C20_5041), ("LDFMINNM S", 0xBC20_7041),
+        ("LDBFADD", 0x3C20_0041), ("LDBFMAX", 0x3C20_4041),
+        ("LDBFMAXNMAL SP", 0x3CFF_63FE), ("LDBFMIN", 0x3C20_5041),
+        ("LDBFMINNM", 0x3C20_7041), ("STFADD H", 0x7C20_805F),
+        ("STFADDL D SP", 0xFC7F_83FF), ("STFMAX S", 0xBC20_C05F),
+        ("STFMAXNM D", 0xFC20_E05F), ("STFMIN H", 0x7C20_D05F),
+        ("STFMINNM S", 0xBC20_F05F), ("STBFADD", 0x3C20_805F),
+        ("STBFMAX", 0x3C20_C05F), ("STBFMAXNM", 0x3C20_E05F),
+        ("STBFMIN", 0x3C20_D05F), ("STBFMINNML SP", 0x3C7F_F3FF),
+    ),
+    "lsui": (
+        ("LDTADD w", 0x1920_0441), ("LDTADDAL x SP", 0x59FD_07FE),
+        ("LDTCLR w", 0x1920_1441), ("LDTCLRA x", 0x59A0_1441),
+        ("LDTSET w", 0x1920_3441), ("LDTSETL x", 0x5960_3441),
+        ("STTADD w", 0x1920_045F), ("STTCLRL x SP", 0x597E_17FF),
+        ("STTSET w", 0x1920_345F), ("SWPT w", 0x1920_8441),
+        ("SWPTAL x SP", 0x59FD_87FE), ("CAST", 0xC980_7C41),
+        ("CASALT SP", 0xC9DD_FFFE), ("CASPT", 0x4980_7C82),
+        ("CASPALT SP", 0x49DC_FFFE), ("LDTXR w", 0x895F_7C20),
+        ("LDTXR x SP", 0xC95F_7FFE), ("LDATXR x", 0xC95F_FC20),
+        ("STTXR w", 0x8902_7C20), ("STTXR x SP", 0xC902_7FFE),
+        ("STLTXR x", 0xC902_FC20), ("LDTP", 0xE940_0440),
+        ("LDTP post SP", 0xE8E0_7BFD), ("LDTP pre", 0xE9DF_8440),
+        ("STTP", 0xE900_0440), ("STTP pre SP", 0xE9BF_FFFF),
+        ("LDTNP", 0xE840_0440), ("STTNP SP", 0xE81F_FBFD),
+        ("LDTP Q", 0xED40_0440), ("LDTP Q post SP", 0xECE0_7FFE),
+        ("STTP Q pre", 0xED9F_8440), ("LDTNP Q", 0xEC40_0440),
+        ("STTNP Q SP", 0xEC3F_FFFE),
+    ),
+    "lor": (
+        ("LDLARB", 0x08DF_7C20), ("LDLARH SP", 0x48DF_7FFE),
+        ("LDLAR w", 0x88DF_7C20), ("LDLAR x SP", 0xC8DF_7FFF),
+        ("STLLRB", 0x089F_7C20), ("STLLRH SP", 0x489F_7FFF),
+        ("STLLR w", 0x889F_7C20), ("STLLR x SP", 0xC89F_7FFE),
+    ),
+    "fp8": (
+        ("F1CVTL", 0x2E21_7820), ("F1CVTL2 V31", 0x6E21_7BFF),
+        ("F2CVTL", 0x2E61_7820), ("BF1CVTL", 0x2EA1_7820),
+        ("BF2CVTL2 V31", 0x6EE1_7BFF), ("FCVTN half", 0x0E42_F420),
+        ("FCVTN half Q", 0x4E42_F420), ("FCVTN single", 0x0E02_F420),
+        ("FCVTN2 single V31", 0x4E1F_F7FF), ("FSCALE 4H", 0x2EC2_3C20),
+        ("FSCALE 8H V31", 0x6EDF_3FFF), ("FSCALE 2S", 0x2EA2_FC20),
+        ("FSCALE 4S", 0x6EA2_FC20), ("FSCALE 2D V31", 0x6EFF_FFFF),
+        ("FDOT half", 0x0E42_FC20), ("FDOT half Q", 0x4E42_FC20),
+        ("FDOT half indexed", 0x0F42_0020),
+        ("FDOT half indexed V31", 0x4F7F_0BFF), ("FDOT single", 0x0E02_FC20),
+        ("FDOT single indexed", 0x0F02_0020),
+        ("FDOT single indexed V31", 0x4F3F_0BFF), ("FMLALB", 0x0EC2_FC20),
+        ("FMLALT V31", 0x4EDF_FFFF), ("FMLALB indexed", 0x0FC2_0020),
+        ("FMLALT indexed V31", 0x4FFF_0BFF), ("FMLALLBB", 0x0E02_C420),
+        ("FMLALLBT", 0x0E42_C420), ("FMLALLTB", 0x4E02_C420),
+        ("FMLALLTT V31", 0x4E5F_C7FF), ("FMLALLBB indexed", 0x2F02_8020),
+        ("FMLALLTT indexed V31", 0x6F7F_8BFF), ("FMMLA half", 0x6E02_EC20),
+        ("FMMLA single V31", 0x6E9F_EFFF), ("MRS FPMR", 0xD53B_4440),
+        ("MSR FPMR XZR", 0xD51B_445F),
+    ),
+    "f16f32dot": (
+        ("FDOT 2S", 0x0E82_FC20), ("FDOT 4S V31", 0x4E9F_FFFF),
+        ("FDOT indexed", 0x0F42_9020), ("FDOT indexed V31", 0x4F7F_9BFF),
+    ),
+    "f16mm": (
+        ("FMMLA half", 0x4EC2_EC20), ("FMMLA half V31", 0x4EDF_EFFF),
+        ("FMMLA widening", 0x4E42_EC20), ("FMMLA widening V31", 0x4E5F_EFFF),
+    ),
+    "lut": (
+        ("LUTI2 B", 0x4E82_1020), ("LUTI2 B V31", 0x4E9F_73FF),
+        ("LUTI2 H", 0x4EC2_0020), ("LUTI2 H V31", 0x4EDF_73FF),
+        ("LUTI4 B", 0x4E42_2020), ("LUTI4 B V31", 0x4E5F_63FF),
+        ("LUTI4 H", 0x4E43_1020), ("LUTI4 H V31 wrap", 0x4E5F_73FF),
+    ),
+    "faminmax": (
+        ("FAMAX 4H", 0x0EC2_1C20), ("FAMAX 8H V31", 0x4EDF_1FFF),
+        ("FAMAX 2S", 0x0EA2_DC20), ("FAMAX 4S", 0x4EA2_DC20),
+        ("FAMAX 2D V31", 0x4EFF_DFFF), ("FAMIN 4H", 0x2EC2_1C20),
+        ("FAMIN 8H V31", 0x6EDF_1FFF), ("FAMIN 2S", 0x2EA2_DC20),
+        ("FAMIN 4S", 0x6EA2_DC20), ("FAMIN 2D V31", 0x6EFF_DFFF),
+    ),
+    "sm3": (
+        ("SM3PARTW1", 0xCE62_C020), ("SM3PARTW2 V31", 0xCE7F_C7FF),
+        ("SM3SS1", 0xCE42_0C20), ("SM3SS1 V31", 0xCE5F_7FFF),
+        ("SM3TT1A", 0xCE42_8020), ("SM3TT1B", 0xCE42_9420),
+        ("SM3TT2A", 0xCE42_A820), ("SM3TT2B V31", 0xCE5F_BFFF),
+    ),
+    "sm4": (
+        ("SM4E", 0xCEC0_8420), ("SM4E V31", 0xCEC0_87FF),
+        ("SM4EKEY", 0xCE62_C820), ("SM4EKEY V31", 0xCE7F_CBFF),
+    ),
+    "fprcvt": (
+        ("FCVTAS S D", 0x1E7A_0020), ("FCVTAS D S", 0x9E3A_0020),
+        ("FCVTAS S H", 0x1EFA_0020), ("FCVTAS D H V31", 0x9EFA_03FF),
+        ("FCVTAU S D", 0x1E7B_0020), ("FCVTMS D S", 0x9E34_0020),
+        ("FCVTMU S H", 0x1EF5_0020), ("FCVTNS D H", 0x9EEA_0020),
+        ("FCVTNU S D", 0x1E6B_0020), ("FCVTPS D S", 0x9E32_0020),
+        ("FCVTPU S H", 0x1EF3_0020), ("FCVTZS D H", 0x9EF6_0020),
+        ("FCVTZU S D V31", 0x1E77_03FF), ("SCVTF S D", 0x9E3C_0020),
+        ("SCVTF D S", 0x1E7C_0020), ("SCVTF H S", 0x1EFC_0020),
+        ("SCVTF H D V31", 0x9EFC_03FF), ("UCVTF S D", 0x9E3D_0020),
+        ("UCVTF D S V31", 0x1E7D_03FF),
+    ),
+    "cmpbr": (
+        ("CBGT W", 0x7401_0040), ("CBGE X", 0xF423_3FE2),
+        ("CBHI W", 0x7445_1FE4), ("CBHS X", 0xF467_2006),
+        ("CBEQ W", 0x74C9_0028), ("CBNE X XZR", 0xF4FE_003F),
+        ("CBBGT", 0x7401_8040), ("CBBGE", 0x7423_8042), ("CBBHI", 0x7445_8044),
+        ("CBBHS", 0x7467_8046), ("CBBEQ", 0x74C9_8048),
+        ("CBBNE WZR", 0x74FF_805E), ("CBHGT", 0x7401_C040),
+        ("CBHGE", 0x7423_C042), ("CBHHI", 0x7445_C044), ("CBHHS", 0x7467_C046),
+        ("CBHEQ", 0x74C9_C048), ("CBHNE", 0x74FD_C05E),
+        ("CBGT W imm", 0x7500_0040), ("CBLT X imm", 0xF53F_8041),
+        ("CBHI W imm", 0x7542_8042), ("CBLO X imm", 0xF560_8043),
+        ("CBEQ W imm", 0x75C0_2004), ("CBNE X imm", 0xF5FF_9FFE),
+    ),
+    "hbc": (
+        ("BC.EQ", 0x5400_0030), ("BC.NE back", 0x54FF_FFF1),
+        ("BC.HS far", 0x547F_FFF2), ("BC.LT far back", 0x5480_001B),
+        ("BC.GT", 0x5400_005C), ("BC.AL", 0x5400_005E), ("BC.NV", 0x5400_005F),
+    ),
+    "ssbs": (
+        ("MSR SSBS 0", 0xD503_403F), ("MSR SSBS 1", 0xD503_413F),
+    ),
+    "sme": (
+        ("SMSTART", 0xD503_477F), ("SMSTART SM", 0xD503_437F),
+        ("SMSTART ZA", 0xD503_457F), ("SMSTOP", 0xD503_467F),
+        ("SMSTOP SM", 0xD503_427F), ("SMSTOP ZA", 0xD503_447F),
+        ("MRS SVCR", 0xD53B_4240), ("MSR SVCR", 0xD51B_425E),
+    ),
+    "xs": (
+        ("DSB OSHNXS", 0xD503_323F), ("DSB NSHNXS", 0xD503_363F),
+        ("DSB ISHNXS", 0xD503_3A3F), ("DSB SYNXS", 0xD503_3E3F),
+    ),
+    "wfxt": (
+        ("WFET", 0xD503_1000), ("WFET X30", 0xD503_101E),
+        ("WFIT", 0xD503_1023), ("WFIT XZR", 0xD503_103F),
+    ),
 }
 HINTS = {
     "gcs": (("GCSB DSYNC", 0xD503_227F), ("CHKFEAT X16", 0xD503_251F)),
@@ -305,7 +599,8 @@ class Rewriter:
             for row in csv.DictReader(source, delimiter="\t"):
                 tokens = set(row["architecture_native_feature_alternatives"]
                              .replace("|", "+").split("+"))
-                self.add(row, lambda feature: bool(tokens & feature.tokens))
+                self.add(row, lambda feature: feature.allocation and
+                         bool(tokens & feature.tokens))
         with corpus.PARTITIONS.open(encoding="utf-8") as source:
             for row in csv.DictReader(source, delimiter="\t"):
                 if row["partition_kind"] != "allocated":

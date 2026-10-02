@@ -66,24 +66,15 @@ struct JitBarrierLowering final {
 };
 
 [[nodiscard]] constexpr JitBarrierLowering
-lower_memory_barrier(std::uint32_t instruction, bool native_sb,
-                     bool native_xs) noexcept {
+lower_memory_barrier(std::uint32_t instruction, bool native_sb) noexcept {
   constexpr std::uint32_t dsb_base = 0xd503'309fU;
   constexpr std::uint32_t isb_sy = 0xd503'3fdfU;
   constexpr std::uint32_t sb = 0xd503'30ffU;
-  constexpr std::uint32_t dsb_nxs = 0xd503'323fU;
 
   if (instruction == sb) {
     if (native_sb)
       return {{{instruction, 0}}, 1};
     return {{{dsb_base | (15U << 8U), isb_sy}}, 2};
-  }
-  if ((instruction & 0xffff'f3ffU) == dsb_nxs) {
-    if (native_xs)
-      return {{{instruction, 0}}, 1};
-    constexpr std::array<unsigned, 4> full_barrier_options{3, 7, 11, 15};
-    const auto option = full_barrier_options[(instruction >> 10U) & 3U];
-    return {{{dsb_base | (option << 8U), 0}}, 1};
   }
   return {{{instruction, 0}}, 1};
 }

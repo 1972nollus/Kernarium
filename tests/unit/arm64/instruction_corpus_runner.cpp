@@ -245,21 +245,18 @@ struct Record final {
 
 /* Every encoded non-register state field; see the README field table. Ids
  * 7, 9-16, 20, and 32-37 held the retired FEAT_MTE, FEAT_CPA, FEAT_GCS, and
- * FEAT_PAuth state and stay reserved. */
+ * FEAT_PAuth state, 17 the retired FEAT_LS64 ACCDATA, 5 the retired FEAT_FP8
+ * FPMR, 18 the retired PSTATE.SSBS, and 21 and 22 the retired FEAT_SME
+ * PSTATE.SM and ZA; all stay reserved. */
 enum class Field : std::uint8_t {
   pc = 1,
   nzcv,
   fpcr,
   fpsr,
-  fpmr,
-  tls,
+  tls = 6,
   tbi_enabled = 8,
-  accdata = 17,
-  pstate_ssbs,
-  pstate_dit,
-  pstate_sm = 21,
-  pstate_za,
-  pstate_daif_access,
+  pstate_dit = 19,
+  pstate_daif_access = 23,
   pstate_daif,
   exclusive_address,
   exclusive_key,
@@ -273,7 +270,6 @@ enum class Field : std::uint8_t {
 [[nodiscard]] std::size_t field_size(std::uint8_t identifier) {
   switch (static_cast<Field>(identifier)) {
   case Field::pc:
-  case Field::fpmr:
   case Field::tls:
   case Field::exclusive_address:
   case Field::exclusive_key:
@@ -284,13 +280,9 @@ enum class Field : std::uint8_t {
   case Field::nzcv:
   case Field::fpcr:
   case Field::fpsr:
-  case Field::accdata:
     return 4;
   case Field::tbi_enabled:
-  case Field::pstate_ssbs:
   case Field::pstate_dit:
-  case Field::pstate_sm:
-  case Field::pstate_za:
   case Field::pstate_daif_access:
   case Field::pstate_daif:
   case Field::exclusive_size:
@@ -340,14 +332,9 @@ sparse_state(Reader &reader, std::span<const std::byte> body) {
   state.nzcv = 0;
   state.fpcr = 0;
   state.fpsr = 0;
-  state.fpmr = 0;
   state.tls = 0;
   state.tbi_enabled = false;
-  state.accdata = 0;
-  state.pstate_ssbs = false;
   state.pstate_dit = false;
-  state.pstate_sm = false;
-  state.pstate_za = false;
   state.pstate_daif_access = false;
   state.pstate_daif = 0;
   state.exclusive_address = ~std::uint64_t{0};
@@ -394,29 +381,14 @@ void apply_sparse(arm64::CpuState &state, std::span<const std::byte> encoded) {
     case Field::fpsr:
       state.fpsr = reader.u32();
       break;
-    case Field::fpmr:
-      state.fpmr = reader.u64();
-      break;
     case Field::tls:
       state.tls = reader.u64();
       break;
     case Field::tbi_enabled:
       state.tbi_enabled = flag();
       break;
-    case Field::accdata:
-      state.accdata = reader.u32();
-      break;
-    case Field::pstate_ssbs:
-      state.pstate_ssbs = flag();
-      break;
     case Field::pstate_dit:
       state.pstate_dit = flag();
-      break;
-    case Field::pstate_sm:
-      state.pstate_sm = flag();
-      break;
-    case Field::pstate_za:
-      state.pstate_za = flag();
       break;
     case Field::pstate_daif_access:
       state.pstate_daif_access = flag();
@@ -1153,7 +1125,7 @@ private:
         const arm64::CpuState &initial, const arm64::CpuState &expected,
         const Outcome &outcome,
         const std::vector<std::unique_ptr<CaseRegion>> &regions) const {
-    if (outcome.cpu.gadget_fp_active || outcome.cpu.gadget_fpmr_active ||
+    if (outcome.cpu.gadget_fp_active ||
         outcome.cpu.gadget_indirect_miss != nullptr)
       return std::string{
           "engine-private execution state escaped the public boundary"};

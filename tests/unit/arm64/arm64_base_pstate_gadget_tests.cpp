@@ -21,11 +21,7 @@ extern "C" {
 #define UML_DECLARE_PSTATE_FIELD(name) \
 	void uml_arm64_gadget_pstate_##name##_0(); \
 	void uml_arm64_gadget_pstate_##name##_1();
-UML_DECLARE_PSTATE_FIELD(ssbs)
 UML_DECLARE_PSTATE_FIELD(dit)
-UML_DECLARE_PSTATE_FIELD(sm)
-UML_DECLARE_PSTATE_FIELD(za)
-UML_DECLARE_PSTATE_FIELD(smza)
 #undef UML_DECLARE_PSTATE_FIELD
 #define UML_DECLARE_PSTATE_DAIF(name, immediate) \
 	void uml_arm64_gadget_pstate_daif_##name##_##immediate();
@@ -54,25 +50,9 @@ void uml_arm64_gadget_illegal();
 void uml_arm64_gadget_svc();
 }
 
-constexpr std::array<Gadget, 2> ssbs_gadgets{
-	uml_arm64_gadget_pstate_ssbs_0,
-	uml_arm64_gadget_pstate_ssbs_1,
-};
 constexpr std::array<Gadget, 2> dit_gadgets{
 	uml_arm64_gadget_pstate_dit_0,
 	uml_arm64_gadget_pstate_dit_1,
-};
-constexpr std::array<Gadget, 2> sm_gadgets{
-	uml_arm64_gadget_pstate_sm_0,
-	uml_arm64_gadget_pstate_sm_1,
-};
-constexpr std::array<Gadget, 2> za_gadgets{
-	uml_arm64_gadget_pstate_za_0,
-	uml_arm64_gadget_pstate_za_1,
-};
-constexpr std::array<Gadget, 2> smza_gadgets{
-	uml_arm64_gadget_pstate_smza_0,
-	uml_arm64_gadget_pstate_smza_1,
 };
 
 constexpr std::array<Gadget, 16> daif_set_gadgets{
@@ -124,22 +104,19 @@ constexpr std::array<Gadget, 16> daif_clear_gadgets{
 	if (!decoded.allocated || !decoded.el0_accessible)
 		return uml_arm64_gadget_illegal;
 	switch (decoded.field) {
-	case Field::ssbs:
-		return ssbs_gadgets[value];
 	case Field::dit:
 		return dit_gadgets[value];
-	case Field::streaming_mode:
-		return sm_gadgets[value];
-	case Field::array_state:
-		return za_gadgets[value];
-	case Field::streaming_and_array_state:
-		return smza_gadgets[value];
 	case Field::interrupt_mask_set:
 		return daif_set_gadgets[immediate];
 	case Field::interrupt_mask_clear:
 		return daif_clear_gadgets[immediate];
+	case Field::ssbs:
+	case Field::streaming_mode:
+	case Field::array_state:
+	case Field::streaming_and_array_state:
 	case Field::tag_check_override:
-		/* The virtual CPU omits FEAT_MTE, so MSR TCO is UNDEFINED. */
+		/* The virtual CPU omits FEAT_SSBS, FEAT_SME, and FEAT_MTE, so
+		 * MSR SSBS, SMSTART, SMSTOP, and MSR TCO are UNDEFINED. */
 	case Field::flag_alias:
 	case Field::reserved:
 	case Field::uao:
@@ -233,25 +210,13 @@ void exhaustive_translation()
 
 void hot_path_shape()
 {
-	constexpr std::array boolean_fields{
-		ssbs_gadgets, dit_gadgets, sm_gadgets, za_gadgets,
-	};
-	for (const auto &field : boolean_fields) {
-		arm64_system_test::require(
-			runtime_instruction_count(field[0]) == 3U);
-		arm64_system_test::require(
-			runtime_instruction_count(field[1]) == 4U);
-		arm64_system_test::require(
-			conditional_branch_count(field[0]) == 0U &&
-			conditional_branch_count(field[1]) == 0U);
-	}
 	arm64_system_test::require(
-		runtime_instruction_count(smza_gadgets[0]) == 4U);
+		runtime_instruction_count(dit_gadgets[0]) == 3U);
 	arm64_system_test::require(
-		runtime_instruction_count(smza_gadgets[1]) == 5U);
+		runtime_instruction_count(dit_gadgets[1]) == 4U);
 	arm64_system_test::require(
-		conditional_branch_count(smza_gadgets[0]) == 0U &&
-		conditional_branch_count(smza_gadgets[1]) == 0U);
+		conditional_branch_count(dit_gadgets[0]) == 0U &&
+		conditional_branch_count(dit_gadgets[1]) == 0U);
 
 	for (unsigned immediate = 0; immediate < 16U; ++immediate)
 		for (const auto gadget :

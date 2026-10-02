@@ -127,8 +127,7 @@ void JitExecutor::Implementation::deactivate_indirect_links() noexcept {
   const auto first_activation = block.link->activation_epoch != link_epoch_;
   if (block.link_target_safe) {
     const auto requirements =
-        link_state_requirements(block.accesses_fp_state, block.native_fp,
-                                block.native_fpmr);
+        link_state_requirements(block.accesses_fp_state, block.native_fp);
     const auto publication =
         link_capability(JitLinkCapability::store_publication);
     for (std::size_t index = 0;

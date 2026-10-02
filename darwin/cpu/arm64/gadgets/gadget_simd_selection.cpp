@@ -778,37 +778,10 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 		UML_SIMD_FLOATING_TO_INTEGER(fcvtzu),
 		UML_SIMD_FLOATING_TO_INTEGER(fcvtau)};
 #undef UML_SIMD_FLOATING_TO_INTEGER
-#define UML_FLOATING_TO_SIMD_INTEGER(operation) \
-	std::array<Gadget, 4>{ \
-		uml_arm64_gadget_floating_to_simd_##operation##_w_h, \
-		uml_arm64_gadget_floating_to_simd_##operation##_x_h, \
-		uml_arm64_gadget_floating_to_simd_##operation##_x_s, \
-		uml_arm64_gadget_floating_to_simd_##operation##_w_d}
-	static constexpr std::array signed_fpr{
-		UML_FLOATING_TO_SIMD_INTEGER(fcvtns),
-		UML_FLOATING_TO_SIMD_INTEGER(fcvtps),
-		UML_FLOATING_TO_SIMD_INTEGER(fcvtms),
-		UML_FLOATING_TO_SIMD_INTEGER(fcvtzs),
-		UML_FLOATING_TO_SIMD_INTEGER(fcvtas)};
-	static constexpr std::array unsigned_fpr{
-		UML_FLOATING_TO_SIMD_INTEGER(fcvtnu),
-		UML_FLOATING_TO_SIMD_INTEGER(fcvtpu),
-		UML_FLOATING_TO_SIMD_INTEGER(fcvtmu),
-		UML_FLOATING_TO_SIMD_INTEGER(fcvtzu),
-		UML_FLOATING_TO_SIMD_INTEGER(fcvtau)};
-#undef UML_FLOATING_TO_SIMD_INTEGER
 	const unsigned rounding = static_cast<unsigned>(decoded.rounding);
-	if (!decoded.destination_gpr) {
-		if (decoded.source_width != decoded.integer_width) {
-			const unsigned index = decoded.source_width == 16U ?
-				(decoded.integer_width == 64U ? 1U : 0U) :
-				decoded.source_width == 32U ? 2U : 3U;
-			return (decoded.unsigned_result ? unsigned_fpr : signed_fpr)
-				[rounding][index];
-		}
+	if (!decoded.destination_gpr)
 		return (decoded.unsigned_result ? unsigned_simd : signed_simd)
 			[rounding][decoded.shape];
-	}
 	const unsigned index = (decoded.integer_width == 64U ? 3U : 0U) +
 		decoded.shape;
 	if (discard)
@@ -821,11 +794,7 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 [[nodiscard]] Gadget integer_to_floating_gadget(
 	const detail::IntegerToFloatingDecode &decoded, bool zero_source) noexcept
 {
-	const bool cross_width = !decoded.source_gpr &&
-		decoded.integer_width != decoded.destination_width;
-	const auto &host = host_capabilities();
-	if ((cross_width && !host.has(ArmFeature::fprcvt)) ||
-	    (!cross_width && decoded.destination_width == 16U && !host.fp16))
+	if (decoded.destination_width == 16U && !host_capabilities().fp16)
 		return uml_arm64_gadget_integer_to_floating_software_fallback;
 	const auto fixed_table_entry = [](Gadget begin, Gadget end,
 		unsigned count, unsigned index) noexcept {
@@ -922,17 +891,6 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	static constexpr auto signed_simd = UML_SIMD_INTEGER_TO_FLOATING(scvtf);
 	static constexpr auto unsigned_simd = UML_SIMD_INTEGER_TO_FLOATING(ucvtf);
 #undef UML_SIMD_INTEGER_TO_FLOATING
-#define UML_SIMD_CROSS_INTEGER_TO_FLOATING(operation) \
-	std::array<Gadget, 4>{ \
-		uml_arm64_gadget_simd_cross_##operation##_h_w, \
-		uml_arm64_gadget_simd_cross_##operation##_h_x, \
-		uml_arm64_gadget_simd_cross_##operation##_s_x, \
-		uml_arm64_gadget_simd_cross_##operation##_d_w}
-	static constexpr auto signed_cross =
-		UML_SIMD_CROSS_INTEGER_TO_FLOATING(scvtf);
-	static constexpr auto unsigned_cross =
-		UML_SIMD_CROSS_INTEGER_TO_FLOATING(ucvtf);
-#undef UML_SIMD_CROSS_INTEGER_TO_FLOATING
 	if (decoded.source_gpr) {
 		const unsigned index = (decoded.integer_width == 64U ? 3U : 0U) +
 			decoded.shape;
@@ -940,13 +898,6 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 			return (decoded.unsigned_source ? unsigned_zero :
 				signed_zero)[index];
 		return (decoded.unsigned_source ? unsigned_gpr : signed_gpr)[index];
-	}
-	if (decoded.integer_width != decoded.destination_width) {
-		const unsigned index = decoded.destination_width == 16U ?
-			(decoded.integer_width == 64U ? 1U : 0U) :
-			decoded.destination_width == 32U ? 2U : 3U;
-		return (decoded.unsigned_source ? unsigned_cross :
-			signed_cross)[index];
 	}
 	return (decoded.unsigned_source ? unsigned_simd : signed_simd)[
 		decoded.shape];
@@ -1258,17 +1209,6 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	uml_arm64_gadget_floating_horizontal_##name##_2s, \
 	uml_arm64_gadget_floating_horizontal_##name##_4s, \
 	uml_arm64_gadget_floating_horizontal_##name##_2d}
-	if (decoded.operation ==
-			detail::FloatingHorizontalOperation::absolute_maximum ||
-	    decoded.operation ==
-			detail::FloatingHorizontalOperation::absolute_minimum) {
-		if (!host_has_faminmax())
-			return uml_arm64_gadget_floating_horizontal_absolute_software;
-		static constexpr auto maximum = UML_HORIZONTAL_VECTOR(famax_native);
-		static constexpr auto minimum = UML_HORIZONTAL_VECTOR(famin_native);
-		return (decoded.operation == detail::FloatingHorizontalOperation::
-			absolute_maximum ? maximum : minimum)[vector_shape];
-	}
 	static constexpr std::array scalar_binary{
 		UML_HORIZONTAL_SCALAR(fabd_scalar),
 		std::array<Gadget, 3>{},
@@ -1324,89 +1264,6 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	const unsigned shape = decoded.width == 32U ? 2U :
 		decoded.vector_bytes == 16U ? 1U : 0U;
 	return reduction[operation][shape];
-}
-
-[[nodiscard]] Gadget floating_scale_gadget(
-	const detail::FloatingScale &decoded) noexcept
-{
-	static constexpr std::array native{
-		uml_arm64_gadget_floating_scale_native_4h,
-		uml_arm64_gadget_floating_scale_native_8h,
-		uml_arm64_gadget_floating_scale_native_2s,
-		uml_arm64_gadget_floating_scale_native_4s,
-		uml_arm64_gadget_floating_scale_native_2d};
-	static constexpr std::array software{
-		uml_arm64_gadget_floating_scale_software_4h,
-		uml_arm64_gadget_floating_scale_software_8h,
-		uml_arm64_gadget_floating_scale_software_2s,
-		uml_arm64_gadget_floating_scale_software_4s,
-		uml_arm64_gadget_floating_scale_software_2d};
-	const unsigned shape = decoded.width == 16U ?
-		(decoded.vector_bytes == 16U ? 1U : 0U) :
-		decoded.width == 32U ?
-			(decoded.vector_bytes == 16U ? 3U : 2U) : 4U;
-	return (host_has_fp8() ? native : software)[shape];
-}
-
-[[nodiscard]] Gadget fp8_gadget(const detail::Fp8Instruction &decoded) noexcept
-{
-	using Operation = detail::Fp8Operation;
-	if (decoded.operation == Operation::convert_to_half ||
-	    decoded.operation == Operation::convert_to_bfloat) {
-		if (!host_has_fp8())
-			return uml_arm64_gadget_fp8_software;
-		const unsigned format = decoded.operation == Operation::convert_to_bfloat ?
-			1U : 0U;
-		return uml_arm64_fp8_native_up_table[format * 4U +
-			(decoded.upper ? 2U : 0U) + decoded.source2];
-	}
-	if (decoded.operation == Operation::convert_from_half ||
-	    decoded.operation == Operation::convert_from_single) {
-		if (!host_has_fp8())
-			return uml_arm64_gadget_fp8_software;
-		const unsigned index = decoded.operation == Operation::convert_from_half ?
-			(decoded.lanes == 8U ? 1U : 0U) : (decoded.upper ? 3U : 2U);
-		return uml_arm64_fp8_native_down_table[index];
-	}
-	if (decoded.operation == Operation::dot_half) {
-		if (!host_has_fp8dot2())
-			return uml_arm64_gadget_fp8_software;
-		const unsigned q = decoded.lanes == 8U;
-		return decoded.by_element ?
-			uml_arm64_fp8_native_dot_h_indexed_table[q * 8U + decoded.index] :
-			uml_arm64_fp8_native_dot_h_vector_table[q];
-	}
-	if (decoded.operation == Operation::dot_single) {
-		if (!host_has_fp8dot4())
-			return uml_arm64_gadget_fp8_software;
-		const unsigned q = decoded.lanes == 4U;
-		return decoded.by_element ?
-			uml_arm64_fp8_native_dot_s_indexed_table[q * 4U + decoded.index] :
-			uml_arm64_fp8_native_dot_s_vector_table[q];
-	}
-	if (decoded.operation == Operation::multiply_half) {
-		if (!host_has_fp8fma())
-			return uml_arm64_gadget_fp8_software;
-		return decoded.by_element ?
-			uml_arm64_fp8_native_mul_h_indexed_table[
-				decoded.selection * 16U + decoded.index] :
-			uml_arm64_fp8_native_mul_h_vector_table[decoded.selection];
-	}
-	if (decoded.operation == Operation::multiply_single) {
-		if (!host_has_fp8fma())
-			return uml_arm64_gadget_fp8_software;
-		return decoded.by_element ?
-			uml_arm64_fp8_native_mul_s_indexed_table[
-				decoded.selection * 16U + decoded.index] :
-			uml_arm64_fp8_native_mul_s_vector_table[decoded.selection];
-	}
-	if (decoded.operation == Operation::matrix_half)
-		return host_has_f8f16mm() ?
-			uml_arm64_fp8_native_matrix_table[0] :
-			uml_arm64_gadget_fp8_software;
-	return host_has_f8f32mm() ?
-		uml_arm64_fp8_native_matrix_table[1] :
-		uml_arm64_gadget_fp8_software;
 }
 
 [[nodiscard]] Gadget bfloat_conversion_gadget(
@@ -1521,39 +1378,6 @@ using SimdUnaryGadgets = std::array<Gadget, 11>;
 	return decoded.by_element ?
 		indexed[operation * 8U + decoded.index] :
 		vector[operation];
-}
-
-[[nodiscard]] Gadget half_matrix_gadget(const detail::HalfMatrix &decoded) noexcept
-{
-	const bool native =
-		decoded.widening ? host_has_f16f32mm() : host_has_f16mm();
-	if (!native)
-		return uml_arm64_gadget_half_matrix_software;
-	static constexpr std::array gadgets{
-		uml_arm64_gadget_half_matrix_native_non_widening,
-		uml_arm64_gadget_half_matrix_native_widening};
-	return gadgets[decoded.widening];
-}
-
-[[nodiscard]] Gadget half_dot_gadget(const detail::HalfDot &decoded) noexcept
-{
-	if (!host_has_f16f32dot())
-		return uml_arm64_gadget_half_dot_software;
-	static constexpr std::array vector{
-		uml_arm64_gadget_half_dot_native_vector_2s,
-		uml_arm64_gadget_half_dot_native_vector_4s};
-#define UML_HALF_DOT_INDEXED(shape) \
-	uml_arm64_gadget_half_dot_native_indexed_##shape##_0, \
-	uml_arm64_gadget_half_dot_native_indexed_##shape##_1, \
-	uml_arm64_gadget_half_dot_native_indexed_##shape##_2, \
-	uml_arm64_gadget_half_dot_native_indexed_##shape##_3
-	static constexpr std::array indexed{
-		UML_HALF_DOT_INDEXED(2s), UML_HALF_DOT_INDEXED(4s)};
-#undef UML_HALF_DOT_INDEXED
-	return decoded.by_element ?
-		indexed[static_cast<unsigned>(decoded.wide) * 4U +
-			decoded.index] :
-		vector[decoded.wide];
 }
 
 [[nodiscard]] Gadget floating_reciprocal_gadget(
@@ -2546,45 +2370,6 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
 	return (extend ? tbx : tbl)[shape];
 }
 
-[[nodiscard]] Gadget simd_lut_native_gadget(
-	unsigned shape, unsigned part) noexcept
-{
-	static constexpr std::array<Gadget, 4> luti2_b{
-		uml_arm64_gadget_simd_lut_native_luti2_b_0,
-		uml_arm64_gadget_simd_lut_native_luti2_b_1,
-		uml_arm64_gadget_simd_lut_native_luti2_b_2,
-		uml_arm64_gadget_simd_lut_native_luti2_b_3};
-	static constexpr std::array<Gadget, 8> luti2_h{
-		uml_arm64_gadget_simd_lut_native_luti2_h_0,
-		uml_arm64_gadget_simd_lut_native_luti2_h_1,
-		uml_arm64_gadget_simd_lut_native_luti2_h_2,
-		uml_arm64_gadget_simd_lut_native_luti2_h_3,
-		uml_arm64_gadget_simd_lut_native_luti2_h_4,
-		uml_arm64_gadget_simd_lut_native_luti2_h_5,
-		uml_arm64_gadget_simd_lut_native_luti2_h_6,
-		uml_arm64_gadget_simd_lut_native_luti2_h_7};
-	static constexpr std::array<Gadget, 2> luti4_b{
-		uml_arm64_gadget_simd_lut_native_luti4_b_0,
-		uml_arm64_gadget_simd_lut_native_luti4_b_1};
-        static constexpr std::array<Gadget, 4> luti4_h{
-            uml_arm64_gadget_simd_lut_native_luti4_h_0,
-            uml_arm64_gadget_simd_lut_native_luti4_h_1,
-            uml_arm64_gadget_simd_lut_native_luti4_h_2,
-            uml_arm64_gadget_simd_lut_native_luti4_h_3};
-        switch (shape) {
-        case 0:
-          return part < luti2_b.size() ? luti2_b[part] : nullptr;
-        case 1:
-          return part < luti2_h.size() ? luti2_h[part] : nullptr;
-        case 2:
-          return part < luti4_b.size() ? luti4_b[part] : nullptr;
-        case 3:
-          return part < luti4_h.size() ? luti4_h[part] : nullptr;
-        default:
-          return nullptr;
-        }
-}
-
 [[nodiscard]] Gadget simd_aes_gadget(unsigned operation,
                                      bool force_software) noexcept {
   const bool native = !force_software && host_has_aes();
@@ -2654,38 +2439,6 @@ decode_simd_indexed_floating_element(std::uint32_t instruction) noexcept
   default:
     return nullptr;
   }
-}
-
-[[nodiscard]] Gadget simd_sm3tt_gadget(unsigned operation, unsigned index,
-                                       bool force_software) noexcept {
-  static constexpr std::array<Gadget, 16> native{
-      uml_arm64_gadget_simd_sm3tt1a_0, uml_arm64_gadget_simd_sm3tt1a_1,
-      uml_arm64_gadget_simd_sm3tt1a_2, uml_arm64_gadget_simd_sm3tt1a_3,
-      uml_arm64_gadget_simd_sm3tt1b_0, uml_arm64_gadget_simd_sm3tt1b_1,
-      uml_arm64_gadget_simd_sm3tt1b_2, uml_arm64_gadget_simd_sm3tt1b_3,
-      uml_arm64_gadget_simd_sm3tt2a_0, uml_arm64_gadget_simd_sm3tt2a_1,
-      uml_arm64_gadget_simd_sm3tt2a_2, uml_arm64_gadget_simd_sm3tt2a_3,
-      uml_arm64_gadget_simd_sm3tt2b_0, uml_arm64_gadget_simd_sm3tt2b_1,
-      uml_arm64_gadget_simd_sm3tt2b_2, uml_arm64_gadget_simd_sm3tt2b_3};
-  static constexpr std::array<Gadget, 16> software{
-      uml_arm64_gadget_simd_sm3tt1a_0_soft,
-      uml_arm64_gadget_simd_sm3tt1a_1_soft,
-      uml_arm64_gadget_simd_sm3tt1a_2_soft,
-      uml_arm64_gadget_simd_sm3tt1a_3_soft,
-      uml_arm64_gadget_simd_sm3tt1b_0_soft,
-      uml_arm64_gadget_simd_sm3tt1b_1_soft,
-      uml_arm64_gadget_simd_sm3tt1b_2_soft,
-      uml_arm64_gadget_simd_sm3tt1b_3_soft,
-      uml_arm64_gadget_simd_sm3tt2a_0_soft,
-      uml_arm64_gadget_simd_sm3tt2a_1_soft,
-      uml_arm64_gadget_simd_sm3tt2a_2_soft,
-      uml_arm64_gadget_simd_sm3tt2a_3_soft,
-      uml_arm64_gadget_simd_sm3tt2b_0_soft,
-      uml_arm64_gadget_simd_sm3tt2b_1_soft,
-      uml_arm64_gadget_simd_sm3tt2b_2_soft,
-      uml_arm64_gadget_simd_sm3tt2b_3_soft};
-  return (!force_software && host_has_sm3() ? native
-                                            : software)[operation * 4U + index];
 }
 
 [[nodiscard]] Gadget simd_xar_gadget(

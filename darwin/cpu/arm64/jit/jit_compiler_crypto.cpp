@@ -151,59 +151,6 @@ JitCompilerFamilies::emit_simd_sha512(std::uint32_t instruction) {
 }
 
 [[nodiscard]] bool
-JitCompilerFamilies::emit_simd_sm(std::uint32_t instruction) {
-  const auto three_operation = instruction & 0xffe0'fc00U;
-  const bool partw1 = three_operation == 0xce60'c000U;
-  const bool partw2 = three_operation == 0xce60'c400U;
-  const bool key = three_operation == 0xce60'c800U;
-  const bool four = (instruction & 0xffe0'8000U) == 0xce40'0000U;
-  const bool indexed = (instruction & 0xffe0'c000U) == 0xce40'8000U;
-  const bool round = (instruction & 0xffff'fc00U) == 0xcec0'8400U;
-  if (!partw1 && !partw2 && !key && !four && !indexed && !round)
-    return false;
-
-  const bool family3 = partw1 || partw2 || four || indexed;
-  if ((family3 &&
-       !host_capabilities().has(ArmFeature::sm3)) ||
-      (!family3 &&
-       !host_capabilities().has(ArmFeature::sm4)))
-    return false;
-
-  const unsigned destination = instruction & 31U;
-  const unsigned first = (instruction >> 5) & 31U;
-  const unsigned second = (instruction >> 16) & 31U;
-  const bool reads_destination = partw1 || partw2 || indexed || round;
-  const auto native_first = read_native_vector(first, 1U);
-  auto native_second = NativeVector{};
-  if (!round) {
-    native_second =
-        second == first ? native_first : read_native_vector(second, 2U);
-  }
-  auto native_third = NativeVector{};
-  if (four) {
-    const unsigned third = (instruction >> 10) & 31U;
-    native_third =
-        third == first
-            ? native_first
-            : !round && third == second
-                  ? native_second
-                  : read_native_vector(third, 3U);
-  }
-  const auto native_destination =
-      write_native_vector(destination, reads_destination, 0U);
-  auto native = (instruction & ~((31U << 5) | 31U)) |
-                (native_first.host << 5) | native_destination.host;
-  if (!round)
-    native =
-        (native & ~(31U << 16)) | (native_second.host << 16);
-  if (four)
-    native = (native & ~(31U << 10)) | (native_third.host << 10);
-  emit(native);
-  commit_native_vector(native_destination, destination);
-  return true;
-}
-
-[[nodiscard]] bool
 JitCompilerFamilies::emit_simd_sha3(std::uint32_t instruction) {
   if (!host_capabilities().sha3)
     return false;
