@@ -33,9 +33,9 @@
  */
 
 .macro scalar_unsigned_inplace_register load, bits64, reg, prefix
-	.set .Lipmem\@, 0x8000 | (\reg * 8)
-scalar_unsigned_fast \load, \bits64, 0, 0, \prefix\()_r_\reg, .Lipmem\@
-scalar_unsigned_fast \load, \bits64, 0, 1, \prefix\()_r_sp_\reg, .Lipmem\@
+	.set Lipmem\@, 0x8000 | (\reg * 8)
+scalar_unsigned_fast \load, \bits64, 0, 0, \prefix\()_r_\reg, Lipmem\@
+scalar_unsigned_fast \load, \bits64, 0, 1, \prefix\()_r_sp_\reg, Lipmem\@
 .endm
 
 .macro scalar_unsigned_inplace_modes load, bits64, prefix

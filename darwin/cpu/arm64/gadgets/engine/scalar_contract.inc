@@ -84,20 +84,20 @@ NAME(uml_arm64_scalar_contract_begin):
 .macro scalar_entry name, forward, family, destination, first=scalar_none, second=scalar_none, third=scalar_none, words=1
  .if \forward == 0
  gadget \name
- .set .Lscalar_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
+ .set Lscalar_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
 #if __APPLE__
  .pushsection __DATA_CONST,__gadget_scalar
 #else
  .pushsection .data.rel.ro.gadget_scalar,"aw"
 #endif
  .quad NAME(uml_arm64_gadget_\name)
- scalar_pointer \name, 1, .Lscalar_sources\@
- scalar_pointer \name, 2, .Lscalar_sources\@
- scalar_pointer \name, 3, .Lscalar_sources\@
- scalar_pointer \name, 4, .Lscalar_sources\@
- scalar_pointer \name, 5, .Lscalar_sources\@
- scalar_pointer \name, 6, .Lscalar_sources\@
- scalar_pointer \name, 7, .Lscalar_sources\@
+ scalar_pointer \name, 1, Lscalar_sources\@
+ scalar_pointer \name, 2, Lscalar_sources\@
+ scalar_pointer \name, 3, Lscalar_sources\@
+ scalar_pointer \name, 4, Lscalar_sources\@
+ scalar_pointer \name, 5, Lscalar_sources\@
+ scalar_pointer \name, 6, Lscalar_sources\@
+ scalar_pointer \name, 7, Lscalar_sources\@
  .short \destination, \first, \second, \third
  .short \family, \words
  .long 0
@@ -111,11 +111,11 @@ NAME(uml_arm64_scalar_contract_begin):
  * section preserves the original bank's entry sizes and cache-line phase.
  * Each participating template's last parameter is its forwarding mask. */
 .macro scalar_variants forward, first, second, third, generator, arguments:vararg
- .set .Lvariant_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
- .if \forward == 0 && .Lvariant_sources\@ != 0
+ .set Lvariant_sources\@, ((\first != scalar_none) & 1) | (((\second != scalar_none) & 1) << 1) | (((\third != scalar_none) & 1) << 2)
+ .if \forward == 0 && Lvariant_sources\@ != 0
  .pushsection GADGET_SECTION_FORWARD
  .irp mask, 1, 2, 3, 4, 5, 6, 7
- .if (\mask & .Lvariant_sources\@) == \mask
+ .if (\mask & Lvariant_sources\@) == \mask
  \generator \arguments, \mask
  .endif
  .endr

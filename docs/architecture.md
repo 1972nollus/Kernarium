@@ -258,7 +258,12 @@ on a 16 KiB page and each part starts on its boundary plus the phase
 `engine.S` alone, and uml-darwin and the shipped and automation iOS runtimes
 carry it identically; only the C++ code after it moves with unrelated changes.
 A call to a helper outside the region branches to that helper's veneer, the
-only words that encode a distance out of the region. The FEAT_AFP twins
+only words that encode a distance out of the region. Its private labels take
+the Mach-O assembler-temporary prefix `L`, which keeps them out of the symbol
+table; a branch to one in another part encodes its distance past the nearest
+named symbol before it as a signed 24-bit addend, so such a target must lie
+within 8 MiB of one, and the cold part names only its bounds and is 0.1 MB.
+The FEAT_AFP twins
 follow every base part: they run only on a host with FEAT_AFP, where they need
 the same fixed placement, and elsewhere their position moves no base entry.
 
