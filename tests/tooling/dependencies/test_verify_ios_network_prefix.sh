@@ -109,9 +109,12 @@ copy_fixture "$CASE"
 archive "$CASE/lib/libglib-2.0.a" iphoneos arm64-apple-ios18.0
 expect_cmake_diagnostic "lib/libglib-2.0.a" verify "$CASE" ios
 
-# Every member counts, not only the first one that matches.
+# Every member counts, not only the first one that matches. A member built
+# for iOS 11 carries a legacy minimum-version command instead of a
+# build-version command.
 for member in iphoneos:arm64-apple-ios18.0 \
-	iphonesimulator:arm64-apple-ios26.0-simulator; do
+	iphonesimulator:arm64-apple-ios26.0-simulator \
+	iphoneos:arm64-apple-ios11.0; do
 	CASE="$TEST_ROOT/mixed-members-${member#*:}"
 	copy_fixture "$CASE"
 	xcrun --sdk "${member%%:*}" clang -target "${member#*:}" \

@@ -153,11 +153,14 @@ independent `vk_provider=venus-kosmickrisp`. The build compiles KosmicKrisp as
 `KosmicKrisp.framework`, injects its `vkGetInstanceProcAddr` directly into
 Venus, and disables host Vulkan-loader discovery and downstream downloads.
 Prefix and runtime verification require exactly that provider set and reject a
-second Vulkan provider, an ambient loader, a platform mismatch, a source tree
-its series no longer records, or a duplicate framework copy. Host builds generate and test
-the protocol from the authenticated SDK registry before compiling Venus;
-generated codecs are build outputs rather than installed payload, and the
-prefix records the generator source tree and generated-header digest.
+second Vulkan provider, an ambient loader, a `dlopen` or `dlsym` import in
+the renderer or KosmicKrisp, a platform mismatch, a source tree its series no
+longer records, or a duplicate framework copy. libepoxy keeps its `dlopen`,
+which its Apple topic limits to the packaged `MesaEGL.framework`. Host builds
+generate and test the protocol from the authenticated SDK registry before
+compiling Venus; generated codecs are build outputs rather than installed
+payload, and the prefix records the generator source tree and generated-header
+digest.
 
 The maintained virglrenderer series and the guest Mesa series under
 `tools/rootfs/vulkan/` form one compatibility epoch. The host translates
